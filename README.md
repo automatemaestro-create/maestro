@@ -32,6 +32,7 @@ La documentation complète se trouve dans le dossier [`docs/`](./docs). Ordre de
 | 07 | [Guide de démarrage](./docs/07-guide-de-demarrage.md) | Comment lancer un premier prototype concrètement |
 | 08 | [Glossaire](./docs/08-glossaire.md) | Le vocabulaire du projet |
 | 09 | [Exemple concret & coûts](./docs/09-exemple-chiffre.md) | Un projet déroulé : nombre d'agents, durée, budget (abonnement 20 $ vs API) |
+| 10 | [Workflow Git & tickets](./docs/10-workflow-git.md) | Convention de branches/commits, cycle de vie d'un ticket, commandes `/ticket-start`, `/ticket-finish`, `/branch-cleanup` |
 
 Les versions **Word (.docx)** prêtes à partager sont dans [`deliverables/`](./deliverables).
 
