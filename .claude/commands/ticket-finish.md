@@ -49,7 +49,7 @@ l'état partagé (push, création/mise à jour de MR) si un point n'est pas clai
      réellement terminé et prêt pour revue ; si oui, `glab mr update <mr> --ready`.
    - **Si elle existe déjà et n'est plus en Draft** : ne rien faire de plus sur la MR.
 
-7. Fais avancer le label du ticket : `glab issue update <iid> --label "status::review" --unlabel "status::in-progress"`.
+7. Fais avancer le label du ticket : `glab issue update <iid> --label "workflow::en revue" --unlabel "workflow::en cours"`. Ne touche pas aux labels `agent::*` ni `prio::*`.
 
 8. Termine par un résumé : lien de la MR, état (Draft/Ready), et rappelle que le merge reste
    une action humaine (personne — pas même toi — ne doit merger automatiquement).

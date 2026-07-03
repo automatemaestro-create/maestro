@@ -1,7 +1,11 @@
 # Workflow Git & tickets — Maestro
 
-**Version :** 0.1
+**Version :** 0.2
 Objectif : que chaque ticket GitLab soit traité de façon prévisible — même branche, même convention de commit, même cycle de vie — que ce soit un humain ou un agent Claude Code qui l'exécute.
+
+> Ce document décrit le schéma de labels **réellement utilisé** sur le projet GitLab (créé par
+> l'automatisation `MaestroAgents` dès la Phase 0). Ne pas réinventer de nouveaux labels
+> `type::`/`status::`/`priority::` en anglais — utiliser ceux ci-dessous.
 
 ---
 
@@ -12,7 +16,7 @@ Objectif : que chaque ticket GitLab soit traité de façon prévisible — même
 ```
 main ──●──●──────●──────────●──●──▶
         \        \          \
-         feat/12-…  fix/15-…  chore/3-…
+         feat/12-…  fix/15-…  chore/8-…
               (courte durée de vie, supprimée après merge)
 ```
 
@@ -36,10 +40,10 @@ Règles :
 
 | Label du ticket | Préfixe de branche | Exemple |
 |---|---|---|
-| `type::feature` | `feat` | `feat/12-endpoint-login` |
+| `type::feature` | `feat` | `feat/6-boucle-orchestration` |
 | `type::bug` | `fix` | `fix/15-session-expiree-trop-tot` |
-| `type::chore` | `chore` | `chore/3-init-squelette-monorepo` |
-| `type::docs` | `docs` | `docs/20-guide-contribution` |
+| `type::infra` | `chore` | `chore/8-journalisation-couts` |
+| `type::doc` | `docs` | `docs/10-guide-contribution` |
 
 La commande [`/ticket-start`](../.claude/commands/ticket-start.md) applique cette règle automatiquement.
 
@@ -75,41 +79,59 @@ Closes #12
 
 ## 3. Labels GitLab (scoped labels)
 
-Trois familles de labels **exclusifs entre eux** (`::` = un seul actif par famille sur GitLab) :
+Quatre familles de labels **exclusifs entre eux** (`::` = un seul actif par famille sur GitLab),
+déjà en place sur le projet :
 
 | Famille | Valeurs | Usage |
 |---|---|---|
-| `type::` | `feature`, `bug`, `chore`, `docs` | Nature du ticket → détermine le préfixe de branche |
-| `status::` | `todo`, `in-progress`, `review` | Où en est le ticket (le board Kanban GitLab se filtre dessus) |
-| `priority::` | `high`, `medium`, `low` | Urgence, pour le tri du backlog |
+| `type::` | `feature`, `bug`, `doc`, `infra` | Nature du ticket → détermine le préfixe de branche (§1) |
+| `agent::` | `dev`, `bdd`, `devops`, `design`, `qa`, `orchestrateur` | Quel rôle/agent Maestro traite ce ticket — reflète les agents décrits dans le [README](../README.md) |
+| `workflow::` | `à faire`, `en cours`, `en revue`, `terminé` | Où en est le ticket (cycle de vie, §5) |
+| `prio::` | `haute`, `moyenne`, `basse` | Urgence, pour le tri du backlog |
 
-`status::todo` est le défaut à la création (posé par les templates d'issue, §4). Il n'y a pas de `status::done` : un ticket terminé est simplement **fermé** (fermeture automatique via `Closes #iid` au merge de la MR).
+`workflow::à faire` est le défaut à la création (posé par les templates d'issue, §4).
+Contrairement à un schéma classique todo/in-progress/review, celui-ci a un état terminal
+explicite `workflow::terminé`, posé **en plus** de la fermeture de l'issue (les deux vont
+ensemble — voir issue #1 comme référence).
 
-Les labels sont créés une fois pour toutes via [`scripts/gitlab/bootstrap.sh`](../scripts/gitlab/bootstrap.sh).
+Les labels sont créés une fois pour toutes (idempotent) via
+[`scripts/gitlab/bootstrap.sh`](../scripts/gitlab/bootstrap.sh).
+
+`agent::*` et `prio::*` ne sont pas touchés par les commandes `/ticket-*` : ils relèvent du
+triage (fait à la création du ticket), pas du cycle Git.
 
 ---
 
 ## 4. Templates GitLab
 
-- **Issues** (`.gitlab/issue_templates/`) : `Feature.md`, `Bug.md`, `Chore.md`. Posent la structure attendue (contexte, critères d'acceptation) et appliquent `status::todo` + le bon `type::*` via une quick action `/label` intégrée au template.
-- **Merge Request** (`.gitlab/merge_request_templates/Default.md`) : checklist de definition of done + rappel `Closes #`.
+- **Issues** (`.gitlab/issue_templates/`) : `Feature.md`, `Bug.md`, `Doc.md`, `Infra.md` — un
+  par valeur de `type::*`. Posent la structure attendue (contexte, critères d'acceptation) et
+  appliquent `workflow::à faire` + le bon `type::*` via une quick action `/label` intégrée au
+  template. Le label `agent::*` est à ajouter manuellement au triage (aucun template ne peut
+  deviner quel agent est concerné).
+- **Merge Request** (`.gitlab/merge_request_templates/Default.md`) : checklist de definition
+  of done + rappel `Closes #`.
 
 ---
 
 ## 5. Cycle de vie d'un ticket
 
 ```
-todo ──/ticket-start──▶ in-progress ──/ticket-finish──▶ review ──(merge humain)──▶ fermé
-                                                                        │
-                                                                  /branch-cleanup
+à faire ──/ticket-start──▶ en cours ──/ticket-finish──▶ en revue ──(merge humain)──▶ terminé
+                                                                          │
+                                                                    /branch-cleanup
 ```
 
-1. **`todo`** — le ticket existe, personne ne travaille dessus.
-2. **`/ticket-start <iid>`** — crée/checkout la branche, assigne le ticket à l'exécutant, passe le label en `status::in-progress`.
+1. **`workflow::à faire`** — le ticket existe, personne ne travaille dessus.
+2. **`/ticket-start <iid>`** — crée/checkout la branche, assigne le ticket à l'exécutant, passe
+   le label en `workflow::en cours`.
 3. Développement sur la branche (commits `Refs #<iid>`).
-4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec `Closes #<iid>`, passe le label en `status::review`.
-5. **Revue + merge** — **toujours une action humaine** (voir garde-fous, §6). Le merge ferme le ticket automatiquement.
-6. **`/branch-cleanup`** — une fois la MR mergée : supprime la branche locale et distante, revient sur `main` à jour.
+4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec
+   `Closes #<iid>`, passe le label en `workflow::en revue`.
+5. **Revue + merge** — **toujours une action humaine** (voir garde-fous, §6). Le merge ferme
+   le ticket automatiquement.
+6. **`/branch-cleanup`** — une fois la MR mergée : supprime la branche locale et distante,
+   revient sur `main` à jour, et pose `workflow::terminé` sur le ticket.
 
 Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
@@ -135,4 +157,8 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
 ## 8. Portée actuelle
 
-Ce workflow couvre la gestion des branches et des tickets. Il ne couvre **pas encore** de pipeline CI (`.gitlab-ci.yml`) — le monorepo est encore un squelette sans code exécutable (voir [roadmap](./06-roadmap.md), Phase 0). Quand du code apparaît dans `apps/`, `core/` ou `packages/`, ajouter un pipeline de lint/test et faire du "pipeline vert" une condition de passage `status::review` → merge.
+Ce workflow couvre la gestion des branches et des tickets. Il ne couvre **pas encore** de
+pipeline CI (`.gitlab-ci.yml`) — le monorepo est encore un squelette sans code exécutable (voir
+[roadmap](./06-roadmap.md), Phase 0). Quand du code apparaît dans `apps/`, `core/` ou
+`packages/`, ajouter un pipeline de lint/test et faire du "pipeline vert" une condition de
+passage `workflow::en revue` → merge.

@@ -6,15 +6,23 @@ Monorepo en phase de cadrage (Phase 0 — POC, voir [docs/06-roadmap.md](./docs/
 
 - **Jamais de commit direct sur `main`.** Toujours travailler sur une branche de ticket.
 - **Un ticket GitLab = une branche = une Merge Request.**
-- Nommage de branche : `<type>/<iid>-<slug>` (ex. `feat/12-endpoint-login`). Le `type` vient du label `type::*` du ticket (`feature`→`feat`, `bug`→`fix`, `chore`→`chore`, `docs`→`docs`).
+- Nommage de branche : `<type>/<iid>-<slug>` (ex. `feat/6-boucle-orchestration`). Le `type` vient du label `type::*` du ticket (`feature`→`feat`, `bug`→`fix`, `infra`→`chore`, `doc`→`docs`).
 - Convention de commit : Conventional Commits + `Refs #<iid>` sur les commits intermédiaires, `Closes #<iid>` sur le commit final ou la description de la MR.
 - Détail complet : [docs/10-workflow-git.md](./docs/10-workflow-git.md).
 
+## Labels GitLab (déjà en place — ne pas en réinventer d'autres)
+
+Le projet utilise **`type::`** (`feature`/`bug`/`doc`/`infra`), **`agent::`**
+(`dev`/`bdd`/`devops`/`design`/`qa`/`orchestrateur`), **`workflow::`** (`à faire`/`en cours`/`en revue`/`terminé`,
+avec accents) et **`prio::`** (`haute`/`moyenne`/`basse`) — tous en français. Ne pas créer de
+`status::*`/`priority::*`/`type::docs`/`type::chore` en anglais : ça a déjà été tenté et ça
+fait doublon avec l'existant.
+
 ## Commandes disponibles
 
-- `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le label en `status::in-progress`.
-- `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le label en `status::review`.
-- `/branch-cleanup` — après merge d'une MR : supprime la branche locale + distante, revient sur `main` à jour.
+- `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le label en `workflow::en cours`.
+- `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le label en `workflow::en revue`.
+- `/branch-cleanup` — après merge d'une MR : supprime la branche locale + distante, revient sur `main` à jour, pose `workflow::terminé`.
 
 ## Outillage requis
 

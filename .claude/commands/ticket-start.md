@@ -21,7 +21,7 @@ dès qu'une vérification échoue au lieu de forcer la suite.
    labels et les critères d'acceptation.
 
 5. Détermine le préfixe de branche à partir du label `type::*` du ticket :
-   `type::feature`→`feat`, `type::bug`→`fix`, `type::chore`→`chore`, `type::docs`→`docs`.
+   `type::feature`→`feat`, `type::bug`→`fix`, `type::infra`→`chore`, `type::doc`→`docs`.
    Si aucun label `type::*` n'est présent, déduis le type du titre/de la description, ou
    demande à l'utilisateur si ambigu.
 
@@ -39,10 +39,11 @@ dès qu'une vérification échoue au lieu de forcer la suite.
 8. Récupère ton identifiant GitLab (`glab api user` → champ `username`) et assigne le
    ticket à toi-même tout en faisant avancer le statut :
    ```
-   glab issue update $ARGUMENTS --assignee <username> --label "status::in-progress" --unlabel "status::todo"
+   glab issue update $ARGUMENTS --assignee <username> --label "workflow::en cours" --unlabel "workflow::à faire"
    ```
-   Si le label `status::todo` n'existe pas encore sur le ticket, ignore l'échec du
-   `--unlabel` (ce n'est pas bloquant).
+   Si le label `workflow::à faire` n'existe pas encore sur le ticket, ignore l'échec du
+   `--unlabel` (ce n'est pas bloquant). Ne touche pas aux labels `agent::*` ni `prio::*` —
+   ils relèvent du triage, pas de ce workflow.
 
 9. Termine par un résumé court : nom de la branche créée, titre du ticket, et la liste des
    critères d'acceptation trouvés dans la description — pour cadrer le travail qui commence.

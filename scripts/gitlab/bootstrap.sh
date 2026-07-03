@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Prépare le projet GitLab pour le workflow décrit dans docs/10-workflow-git.md.
-# À exécuter une fois, après `glab auth login`, depuis la racine du dépôt.
+# Idempotent : recrée le schéma de labels réel du projet (agent::/prio::/workflow::/type::)
+# s'il manque, sans toucher à ce qui existe déjà. À exécuter après `glab auth login`,
+# depuis la racine du dépôt (ou sur un nouveau projet qui doit reproduire ce schéma).
 set -euo pipefail
 
 if ! command -v glab >/dev/null 2>&1; then
@@ -24,21 +26,30 @@ create_label() {
   glab label create --name "$name" --color "$color" --description "$description"
 }
 
-# type:: — nature du ticket, détermine le préfixe de branche
-create_label "type::feature" "#428BCA" "Nouvelle fonctionnalité"
-create_label "type::bug"     "#D9534F" "Comportement incorrect à corriger"
-create_label "type::chore"   "#8E8E8E" "Tâche technique (config, dépendances, nettoyage)"
-create_label "type::docs"    "#5BC0DE" "Documentation"
+# type:: — nature du ticket, détermine le préfixe de branche (docs/10-workflow-git.md §1)
+create_label "type::feature" "#1f75cb" "Nouvelle fonctionnalité"
+create_label "type::bug"     "#cc0033" "Comportement incorrect à corriger"
+create_label "type::doc"     "#767676" "Documentation"
+create_label "type::infra"   "#6699cc" "Infrastructure, configuration, environnement"
 
-# status:: — cycle de vie du ticket (posé/mis à jour par les commandes /ticket-*)
-create_label "status::todo"        "#EDEDED" "Pas encore démarré"
-create_label "status::in-progress" "#F0AD4E" "En cours de développement"
-create_label "status::review"      "#FF8C00" "MR ouverte, en attente de revue"
+# agent:: — quel agent/rôle Maestro traite ce ticket (voir README.md)
+create_label "agent::orchestrateur" "#6b4fbb" "Chef de projet / orchestrateur"
+create_label "agent::dev"           "#1aaa55" "Développeur"
+create_label "agent::bdd"           "#dd5f53" "Base de données"
+create_label "agent::devops"        "#e67e22" "DevOps"
+create_label "agent::design"        "#cd5b91" "Designer"
+create_label "agent::qa"            "#009966" "QA / Testeur"
 
-# priority:: — tri du backlog
-create_label "priority::high"   "#B60205" "À traiter en priorité"
-create_label "priority::medium" "#FBCA04" "Priorité normale"
-create_label "priority::low"    "#0E8A16" "Peut attendre"
+# workflow:: — cycle de vie du ticket (posé/mis à jour par les commandes /ticket-*)
+create_label "workflow::à faire"  "#8e8e8e" "Pas encore démarré"
+create_label "workflow::en cours" "#1f75cb" "En cours de développement"
+create_label "workflow::en revue" "#e67e22" "MR ouverte, en attente de revue"
+create_label "workflow::terminé"  "#1aaa55" "Ticket terminé et mergé"
+
+# prio:: — tri du backlog
+create_label "prio::haute"   "#cc0033" "À traiter en priorité"
+create_label "prio::moyenne" "#ec9d00" "Priorité normale"
+create_label "prio::basse"   "#388e3c" "Peut attendre"
 
 echo "Labels prêts."
 

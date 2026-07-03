@@ -9,4 +9,4 @@
 ## Contexte
 <!-- Environnement, version, logs pertinents -->
 
-/label ~"type::bug" ~"status::todo"
+/label ~"type::bug" ~"workflow::à faire"

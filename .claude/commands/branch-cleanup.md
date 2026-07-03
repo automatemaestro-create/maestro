@@ -12,14 +12,15 @@ le statut de merge n'est pas confirmé par GitLab.
 2. `git fetch --prune origin` pour rafraîchir l'état des branches distantes.
 
 3. Liste les branches locales autres que `main` (`git branch --format='%(refname:short)'`).
-   Pour chacune :
+   Pour chacune (le nom suit `<type>/<iid>-<slug>`, donc `<iid>` s'extrait du nom) :
    - trouve sa MR avec `glab mr view <branche> --output json` (échec de la commande = aucune
      MR trouvée) ;
    - si aucune MR n'est trouvée, laisse la branche telle quelle (pas de suppression sans MR
      identifiée) ;
    - inspecte le champ `state` du JSON retourné ; s'il n'est pas exactement `merged`, laisse
      la branche telle quelle ;
-   - si `state` vaut `merged`, ajoute la branche à la liste des candidates au nettoyage.
+   - si `state` vaut `merged`, ajoute la branche (et l'`iid` extrait de son nom) à la liste des
+     candidates au nettoyage.
 
 4. S'il y a des candidates :
    - si l'une d'elles est la branche courante, bascule d'abord dessus vers `main` ;
@@ -28,7 +29,11 @@ le statut de merge n'est pas confirmé par GitLab.
      branche n'est pas fusionnée localement, c'est le signal que quelque chose ne colle pas ;
      arrête-toi et signale-le au lieu de forcer) ;
    - si la branche distante existe encore (GitLab ne l'a pas supprimée automatiquement au
-     merge) : `git push origin --delete <branche>`.
+     merge) : `git push origin --delete <branche>` ;
+   - pose l'état terminal sur le ticket associé :
+     `glab issue update <iid> --label "workflow::terminé" --unlabel "workflow::en revue"`
+     (le merge a déjà dû fermer l'issue via `Closes #<iid>` — cette commande ajoute juste le
+     label, elle ne rouvre/ferme rien).
 
 5. Si aucune candidate n'est trouvée, contente-toi de remettre `main` à jour
    (`git checkout main && git pull origin main`) et dis-le.

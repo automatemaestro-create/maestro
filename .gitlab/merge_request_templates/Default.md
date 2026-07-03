@@ -9,4 +9,4 @@ Closes #
 - [ ] Documentation mise à jour si applicable
 - [ ] Pipeline CI verte (si configurée)
 
-/label ~"status::review"
+/label ~"workflow::en revue"
