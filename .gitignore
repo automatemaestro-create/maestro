@@ -38,3 +38,9 @@ Thumbs.db
 coverage/
 .cache/
 tmp/
+
+# --- Livrables bureautiques (déjà versionnés sur Drive) ---
+deliverables/
+*.docx
+*.pptx
+~$*
