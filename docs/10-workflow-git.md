@@ -130,6 +130,30 @@ pas du cycle Git.
 > (migration ticket #12) : le natif apporte l'état « En revue » que les statuts système n'avaient
 > pas, et évite d'avoir deux mécanismes à tenir synchronisés.
 
+### 3.3 Dates & time tracking — renseignés automatiquement
+
+Les champs natifs **Dates** (widget *Start and due date*) et **Time tracking** du ticket sont
+remplis automatiquement le long du cycle de vie, pour donner une vue de charge et de délai sans
+saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` via le helper
+[`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) — pas de GID en dur.
+
+| Champ | Quand | Comment | Commande / helper |
+|---|---|---|---|
+| **Date de début** | `/ticket-start` | = jour du démarrage (aujourd'hui). Conservée si déjà posée. | `lib.sh start-dates <iid>` |
+| **Échéance** (due date) | `/ticket-start` | = début + délai dérivé de `prio::` : `haute` → 2 j, `moyenne` → 5 j, `basse` → 10 j (défaut `moyenne`). | `lib.sh start-dates <iid>` |
+| **Temps passé** | `/ticket-finish` | temps écoulé depuis la date de début, **proposé puis confirmé/ajusté** par l'humain avant d'être loggé (jamais en silence). | `lib.sh get-start-date` / `elapsed-days` / `log-time` |
+
+- **Délais d'échéance ajustables** : surcharger `GL_DUE_DELAY_HAUTE` / `GL_DUE_DELAY_MOYENNE` /
+  `GL_DUE_DELAY_BASSE` (en jours) dans l'environnement.
+- **Pas d'estimation automatique** : `timeEstimate` n'est pas posé (aucune source fiable côté
+  automatisation). Le champ reste disponible à la main dans GitLab si besoin.
+- **Le temps passé est calendaire, pas de l'effort net** : `elapsed-days` compte les jours
+  calendaires (nuits/week-ends compris). `/ticket-finish` le **propose** comme plafond et laisse
+  l'humain corriger — d'où l'absence de log silencieux (cohérent avec les garde-fous §6).
+- **Idempotence** : ré-exécuter `/ticket-start` garde la date de début d'origine (ne la réinitialise
+  pas à aujourd'hui) et se contente de recalculer l'échéance. `/ticket-finish` vérifie le temps déjà
+  loggé (`get-time-spent`) et demande avant d'en rajouter, pour ne pas doubler.
+
 ---
 
 ## 4. Templates GitLab
