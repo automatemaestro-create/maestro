@@ -36,5 +36,5 @@ Ces commandes utilisent le CLI `glab` (authentifié via `glab auth login`) pour 
 
 - Ne jamais merger ou fermer une MR automatiquement — le merge est toujours une décision humaine.
 - Ne jamais force-push une branche déjà poussée.
-- Supprimer une branche locale avec `git branch -d` (jamais `-D`), et une branche distante seulement si `glab` confirme que sa MR est `merged`.
+- Ne supprimer une branche (locale ou distante) que si `glab` confirme que sa MR est `merged`. Une fois cette confirmation acquise, la suppression locale se fait avec `git branch -D` (le projet merge en **squash**, donc `-d` refuserait la branche à tort) — jamais `-D` sur une branche dont le merge n'est pas confirmé par GitLab.
 - Avant `/ticket-start`, vérifier qu'il n'y a pas de changements non commités sur la branche courante ; sinon s'arrêter et demander quoi en faire.
