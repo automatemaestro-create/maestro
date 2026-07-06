@@ -1,5 +1,5 @@
 ---
-description: Démarre le travail sur un ticket GitLab (branche + assignation + label in-progress)
+description: Démarre le travail sur un ticket GitLab (branche + assignation + statut « En cours »)
 argument-hint: <issue-iid>
 allowed-tools: Bash(git:*), Bash(glab:*)
 ---
@@ -36,14 +36,20 @@ dès qu'une vérification échoue au lieu de forcer la suite.
    git checkout -b <type>/<iid>-<slug>
    ```
 
-8. Récupère ton identifiant GitLab (`glab api user` → champ `username`) et assigne le
-   ticket à toi-même tout en faisant avancer le statut :
-   ```
-   glab issue update $ARGUMENTS --assignee <username> --label "workflow::en cours" --unlabel "workflow::à faire"
-   ```
-   Si le label `workflow::à faire` n'existe pas encore sur le ticket, ignore l'échec du
-   `--unlabel` (ce n'est pas bloquant). Ne touche pas aux labels `agent::*` ni `prio::*` —
-   ils relèvent du triage, pas de ce workflow.
+8. Assigne le ticket et fais passer son **Status natif** à « En cours ». Le cycle de vie est
+   porté par le champ **Status** de GitLab (lifecycle « Maestro »), pas par des labels — voir
+   @docs/10-workflow-git.md §3.
+   - Assignation : récupère ton username (`glab api user` → champ `username`), puis
+     `glab issue update $ARGUMENTS --assignee <username>`.
+   - Statut : résous l'ID global du work item à partir de l'iid, puis pose « En cours » :
+     ```
+     glab api graphql -f query='{ project(fullPath:"maestro-group4345327/maestro") { workItems(iids:["'"$ARGUMENTS"'"]) { nodes { id } } } }'
+     glab api graphql -f query='mutation { workItemUpdate(input:{ id:"<work-item-gid>", statusWidget:{ status:"gid://gitlab/WorkItems::Statuses::Custom::Status/1020450" } }){ errors } }'
+     ```
+     Le GID `…/Custom::Status/1020450` = « En cours » du lifecycle « Maestro » (table des GIDs
+     dans @docs/10-workflow-git.md §3 ; s'ils ne correspondent plus — lifecycle recréé —
+     re-résous-les par nom via `allowedStatuses`). Vérifie que `errors` est vide. Ne touche pas
+     aux labels `agent::*` / `prio::*` / `type::*` (ils relèvent du triage, pas de ce workflow).
 
 9. Termine par un résumé court : nom de la branche créée, titre du ticket, et la liste des
    critères d'acceptation trouvés dans la description — pour cadrer le travail qui commence.

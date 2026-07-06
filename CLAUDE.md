@@ -10,19 +10,23 @@ Monorepo en phase de cadrage (Phase 0 — POC, voir [docs/06-roadmap.md](./docs/
 - Convention de commit : Conventional Commits + `Refs #<iid>` sur les commits intermédiaires, `Closes #<iid>` sur le commit final ou la description de la MR.
 - Détail complet : [docs/10-workflow-git.md](./docs/10-workflow-git.md).
 
-## Labels GitLab (déjà en place — ne pas en réinventer d'autres)
+## Statut & labels GitLab (déjà en place — ne pas en réinventer d'autres)
 
-Le projet utilise **`type::`** (`feature`/`bug`/`doc`/`infra`), **`agent::`**
-(`dev`/`bdd`/`devops`/`design`/`qa`/`orchestrateur`), **`workflow::`** (`à faire`/`en cours`/`en revue`/`terminé`,
-avec accents) et **`prio::`** (`haute`/`moyenne`/`basse`) — tous en français. Ne pas créer de
-`status::*`/`priority::*`/`type::docs`/`type::chore` en anglais : ça a déjà été tenté et ça
-fait doublon avec l'existant.
+Le **cycle de vie** d'un ticket est porté par le **champ Status natif** de GitLab (lifecycle
+custom « Maestro » : À faire / En cours / En revue / Terminé / Abandonné / Doublon), **pas** par
+des labels — voir [docs/10 §3](./docs/10-workflow-git.md). Les commandes `/ticket-*` le posent
+via `glab api graphql` (`workItemUpdate` → `statusWidget`).
+
+Les **labels** ne servent qu'à catégoriser : **`type::`** (`feature`/`bug`/`doc`/`infra`),
+**`agent::`** (`dev`/`bdd`/`devops`/`design`/`qa`/`orchestrateur`) et **`prio::`**
+(`haute`/`moyenne`/`basse`) — tous en français. Ne pas recréer de `workflow::*` (remplacé par le
+champ Status), ni de `status::*`/`priority::*`/`type::docs`/`type::chore` en anglais.
 
 ## Commandes disponibles
 
-- `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le label en `workflow::en cours`.
-- `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le label en `workflow::en revue`.
-- `/branch-cleanup` — après merge d'une MR : supprime la branche locale + distante, revient sur `main` à jour, pose `workflow::terminé`.
+- `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le **statut** à `En cours`.
+- `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le **statut** à `En revue`.
+- `/branch-cleanup` — après merge d'une MR : supprime la branche locale + distante, revient sur `main` à jour, pose le **statut** `Terminé`.
 
 ## Outillage requis
 

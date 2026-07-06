@@ -1,11 +1,12 @@
 # Workflow Git & tickets — Maestro
 
-**Version :** 0.2
+**Version :** 0.3
 Objectif : que chaque ticket GitLab soit traité de façon prévisible — même branche, même convention de commit, même cycle de vie — que ce soit un humain ou un agent Claude Code qui l'exécute.
 
-> Ce document décrit le schéma de labels **réellement utilisé** sur le projet GitLab (créé par
-> l'automatisation `MaestroAgents` dès la Phase 0). Ne pas réinventer de nouveaux labels
-> `type::`/`status::`/`priority::` en anglais — utiliser ceux ci-dessous.
+> Le **cycle de vie** d'un ticket est porté par le **champ Status natif** de GitLab (lifecycle
+> custom « Maestro », voir §3), pas par des labels. Les labels restants (`type::`, `agent::`,
+> `prio::`) servent à la **catégorisation** (nature, rôle, priorité), pas au suivi d'avancement.
+> Ne pas réinventer de labels `workflow::`/`status::` : le suivi passe par le champ Status.
 
 ---
 
@@ -77,28 +78,53 @@ Closes #12
 
 ---
 
-## 3. Labels GitLab (scoped labels)
+## 3. Statut natif (cycle de vie) & labels
 
-Quatre familles de labels **exclusifs entre eux** (`::` = un seul actif par famille sur GitLab),
-déjà en place sur le projet :
+### 3.1 Le champ Status — le cycle de vie
+
+L'avancement d'un ticket est porté par le **champ Status natif** de GitLab (work items), via un
+lifecycle custom **« Maestro »** attaché aux types *Issue* et *Task*. Six statuts :
+
+| Statut | Catégorie | Rôle | GID (`gid://gitlab/WorkItems::Statuses::Custom::Status/`) |
+|---|---|---|---|
+| **À faire** | `to_do` | défaut à l'ouverture d'un ticket | `…/1020449` |
+| **En cours** | `in_progress` | posé par [`/ticket-start`](../.claude/commands/ticket-start.md) | `…/1020450` |
+| **En revue** | `in_progress` | posé par [`/ticket-finish`](../.claude/commands/ticket-finish.md) (MR ouverte) | `…/1020451` |
+| **Terminé** | `done` | posé par [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) (après merge) | `…/1020452` |
+| **Abandonné** | `canceled` | ticket clos sans être réalisé (won't do) | `…/1020453` |
+| **Doublon** | `canceled` | défaut « doublon » | `…/1020454` |
+
+Lifecycle : `gid://gitlab/WorkItems::Statuses::Custom::Lifecycle/1003066`.
+
+- Le champ Status **n'est pas un label** : il s'affiche dans le panneau *Status* du ticket et
+  alimente les boards « par statut », mais n'apparaît pas comme pastille dans les listes d'issues.
+- Un seul statut actif à la fois. `À faire` est automatique à la création (défaut du lifecycle) —
+  rien à poser à l'ouverture.
+- Les commandes `/ticket-*` posent le statut via `glab api graphql` (mutation `workItemUpdate` →
+  `statusWidget`), après avoir résolu l'ID du work item depuis l'iid :
+  `{ project(fullPath:"maestro-group4345327/maestro") { workItems(iids:["<iid>"]) { nodes { id } } } }`.
+- **Re-dériver les GIDs** (si le lifecycle est un jour recréé) :
+  `glab api graphql -f query='{ group(fullPath:"maestro-group4345327") { lifecycles { nodes { name statuses { id name } } } } }'`.
+
+### 3.2 Les labels — catégorisation (hors cycle de vie)
+
+Trois familles de labels **scoped** (`::` = une seule valeur active par famille), pour trier le
+backlog — **pas** pour suivre l'avancement (c'est le rôle du champ Status) :
 
 | Famille | Valeurs | Usage |
 |---|---|---|
 | `type::` | `feature`, `bug`, `doc`, `infra` | Nature du ticket → détermine le préfixe de branche (§1) |
-| `agent::` | `dev`, `bdd`, `devops`, `design`, `qa`, `orchestrateur` | Quel rôle/agent Maestro traite ce ticket — reflète les agents décrits dans le [README](../README.md) |
-| `workflow::` | `à faire`, `en cours`, `en revue`, `terminé` | Où en est le ticket (cycle de vie, §5) |
+| `agent::` | `dev`, `bdd`, `devops`, `design`, `qa`, `orchestrateur` | Rôle/agent Maestro qui traite le ticket (voir [README](../README.md)) |
 | `prio::` | `haute`, `moyenne`, `basse` | Urgence, pour le tri du backlog |
 
-`workflow::à faire` est le défaut à la création (posé par les templates d'issue, §4).
-Contrairement à un schéma classique todo/in-progress/review, celui-ci a un état terminal
-explicite `workflow::terminé`, posé **en plus** de la fermeture de l'issue (les deux vont
-ensemble — voir issue #1 comme référence).
+Ces labels sont créés (idempotent) via [`scripts/gitlab/bootstrap.sh`](../scripts/gitlab/bootstrap.sh),
+et **ne sont pas touchés** par les commandes `/ticket-*` : ils relèvent du triage (à la création),
+pas du cycle Git.
 
-Les labels sont créés une fois pour toutes (idempotent) via
-[`scripts/gitlab/bootstrap.sh`](../scripts/gitlab/bootstrap.sh).
-
-`agent::*` et `prio::*` ne sont pas touchés par les commandes `/ticket-*` : ils relèvent du
-triage (fait à la création du ticket), pas du cycle Git.
+> **Historique.** Le suivi d'avancement reposait auparavant sur une famille de labels `workflow::`
+> (`à faire`/`en cours`/`en revue`/`terminé`). Elle a été remplacée par le champ Status natif
+> (migration ticket #12) : le natif apporte l'état « En revue » que les statuts système n'avaient
+> pas, et évite d'avoir deux mécanismes à tenir synchronisés.
 
 ---
 
@@ -106,9 +132,9 @@ triage (fait à la création du ticket), pas du cycle Git.
 
 - **Issues** (`.gitlab/issue_templates/`) : `Feature.md`, `Bug.md`, `Doc.md`, `Infra.md` — un
   par valeur de `type::*`. Posent la structure attendue (contexte, critères d'acceptation) et
-  appliquent `workflow::à faire` + le bon `type::*` via une quick action `/label` intégrée au
-  template. Le label `agent::*` est à ajouter manuellement au triage (aucun template ne peut
-  deviner quel agent est concerné).
+  appliquent le bon `type::*` via une quick action `/label`. Le statut **« À faire »** est le
+  défaut du lifecycle à la création (rien à poser). Le label `agent::*` est à ajouter
+  manuellement au triage (aucun template ne peut deviner quel agent est concerné).
 - **Merge Request** (`.gitlab/merge_request_templates/Default.md`) : checklist de definition
   of done + rappel `Closes #`.
 
@@ -117,21 +143,23 @@ triage (fait à la création du ticket), pas du cycle Git.
 ## 5. Cycle de vie d'un ticket
 
 ```
-à faire ──/ticket-start──▶ en cours ──/ticket-finish──▶ en revue ──(merge humain)──▶ terminé
+À faire ──/ticket-start──▶ En cours ──/ticket-finish──▶ En revue ──(merge humain)──▶ Terminé
                                                                           │
                                                                     /branch-cleanup
 ```
 
-1. **`workflow::à faire`** — le ticket existe, personne ne travaille dessus.
+(les noms ci-dessus sont les **statuts** du champ Status natif, §3)
+
+1. **À faire** — le ticket existe (statut par défaut à la création), personne ne travaille dessus.
 2. **`/ticket-start <iid>`** — crée/checkout la branche, assigne le ticket à l'exécutant, passe
-   le label en `workflow::en cours`.
+   le **statut** à `En cours`.
 3. Développement sur la branche (commits `Refs #<iid>`).
 4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec
-   `Closes #<iid>`, passe le label en `workflow::en revue`.
+   `Closes #<iid>`, passe le **statut** à `En revue`.
 5. **Revue + merge** — **toujours une action humaine** (voir garde-fous, §6). Le merge ferme
    le ticket automatiquement.
 6. **`/branch-cleanup`** — une fois la MR mergée : supprime la branche locale et distante,
-   revient sur `main` à jour, et pose `workflow::terminé` sur le ticket.
+   revient sur `main` à jour, et pose le **statut** `Terminé` sur le ticket.
 
 Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
@@ -152,6 +180,9 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
 - [`glab`](https://gitlab.com/gitlab-org/cli) installé et authentifié : `glab auth login`.
 - Vérifier l'accès : `glab issue list` doit lister les tickets du projet.
+- **Windows / Git Credential Manager** : si un `git push`/`pull` reste bloqué sur une demande
+  d'identifiants, forcer `glab` comme credential helper le temps de la commande —
+  `git -c credential.helper='!glab auth git-credential' push -u origin <branche>`.
 
 ---
 
@@ -161,4 +192,4 @@ Ce workflow couvre la gestion des branches et des tickets. Il ne couvre **pas en
 pipeline CI (`.gitlab-ci.yml`) — le monorepo est encore un squelette sans code exécutable (voir
 [roadmap](./06-roadmap.md), Phase 0). Quand du code apparaît dans `apps/`, `core/` ou
 `packages/`, ajouter un pipeline de lint/test et faire du "pipeline vert" une condition de
-passage `workflow::en revue` → merge.
+passage `En revue` → merge.

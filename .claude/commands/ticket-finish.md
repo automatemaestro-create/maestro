@@ -1,5 +1,5 @@
 ---
-description: Termine le travail sur le ticket courant (push + MR + label review)
+description: Termine le travail sur le ticket courant (push + MR + statut « En revue »)
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
 allowed-tools: Bash(git:*), Bash(glab:*)
 ---
@@ -28,6 +28,9 @@ l'état partagé (push, création/mise à jour de MR) si un point n'est pas clai
 
 5. Pousse la branche : `git push -u origin $(git branch --show-current)`. Ne fais jamais de
    `--force` ici — si le push est rejeté, arrête-toi et explique pourquoi plutôt que de forcer.
+   Si le push **reste bloqué** sur une demande d'identifiants (typique sous Windows avec Git
+   Credential Manager), relance-le en forçant `glab` comme credential helper :
+   `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!glab auth git-credential' push -u origin $(git branch --show-current)`.
 
 6. Vérifie si une MR existe déjà pour cette branche avec
    `glab mr view $(git branch --show-current) --output json`. Si la commande échoue, aucune
@@ -49,7 +52,16 @@ l'état partagé (push, création/mise à jour de MR) si un point n'est pas clai
      réellement terminé et prêt pour revue ; si oui, `glab mr update <mr> --ready`.
    - **Si elle existe déjà et n'est plus en Draft** : ne rien faire de plus sur la MR.
 
-7. Fais avancer le label du ticket : `glab issue update <iid> --label "workflow::en revue" --unlabel "workflow::en cours"`. Ne touche pas aux labels `agent::*` ni `prio::*`.
+7. Fais passer le **Status natif** du ticket à « En revue » (le cycle de vie est porté par le
+   champ Status, pas par des labels — voir @docs/10-workflow-git.md §3). Résous l'ID global du
+   work item depuis l'iid, puis pose le statut :
+   ```
+   glab api graphql -f query='{ project(fullPath:"maestro-group4345327/maestro") { workItems(iids:["<iid>"]) { nodes { id } } } }'
+   glab api graphql -f query='mutation { workItemUpdate(input:{ id:"<work-item-gid>", statusWidget:{ status:"gid://gitlab/WorkItems::Statuses::Custom::Status/1020451" } }){ errors } }'
+   ```
+   `…/Custom::Status/1020451` = « En revue » du lifecycle « Maestro » (table dans
+   @docs/10-workflow-git.md §3). Vérifie que `errors` est vide. Ne touche pas aux labels
+   `agent::*` / `prio::*` / `type::*`.
 
 8. Termine par un résumé : lien de la MR, état (Draft/Ready), et rappelle que le merge reste
    une action humaine (personne — pas même toi — ne doit merger automatiquement).
