@@ -30,6 +30,11 @@ champ Status), ni de `status::*`/`priority::*`/`type::docs`/`type::chore` en ang
 - `/branch-cleanup` — après merge d'une MR : supprime la branche locale + distante, revient sur `main` à jour, pose le **statut** `Terminé`.
 - `/ticket-abandon <iid> [doublon]` — clôt un ticket sans le réaliser : statut `Abandonné` (won't-do) ou `Doublon`, raison consignée, ticket fermé.
 
+Commandes de **supervision** (lecture seule — n'écrivent jamais : ni statut, ni MR, ni merge) :
+
+- `/backlog [opened|all]` — vue d'ensemble du backlog groupée par **statut natif**, avec `agent::`/`prio::` et ce qui attend une revue / est prêt à merger.
+- `/mr-review <mr|branche>` — synthèse d'une MR (état, aptitude au merge, pipeline, threads, diff) pour éclairer la **décision de merge humaine**. Ne merge jamais.
+
 ## Outillage requis
 
 Ces commandes utilisent le CLI `glab` (authentifié via `glab auth login`) pour lire/écrire les issues et MR GitLab. Si `glab auth status` échoue, arrêter et demander à l'utilisateur de s'authentifier plutôt que de continuer sans.
