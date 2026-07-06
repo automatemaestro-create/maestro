@@ -40,11 +40,12 @@ create_label "agent::devops"        "#e67e22" "DevOps"
 create_label "agent::design"        "#cd5b91" "Designer"
 create_label "agent::qa"            "#009966" "QA / Testeur"
 
-# workflow:: — cycle de vie du ticket (posé/mis à jour par les commandes /ticket-*)
-create_label "workflow::à faire"  "#8e8e8e" "Pas encore démarré"
-create_label "workflow::en cours" "#1f75cb" "En cours de développement"
-create_label "workflow::en revue" "#e67e22" "MR ouverte, en attente de revue"
-create_label "workflow::terminé"  "#1aaa55" "Ticket terminé et mergé"
+# Le cycle de vie du ticket n'est PLUS porté par des labels : il l'est par le champ **Status
+# natif** de GitLab (lifecycle custom « Maestro » : À faire / En cours / En revue / Terminé /
+# Abandonné / Doublon), voir docs/10-workflow-git.md §3. On ne crée donc plus de labels
+# `workflow::*` ici. Le lifecycle et le board « par statut » se configurent via l'API work items
+# (`lifecycleCreate` / `lifecycleAttachWorkItemType` / `boardListCreate` avec `statusId`) —
+# commandes de référence dans docs/10 §3 ; ils n'ont besoin d'être posés qu'une fois.
 
 # prio:: — tri du backlog
 create_label "prio::haute"   "#cc0033" "À traiter en priorité"
