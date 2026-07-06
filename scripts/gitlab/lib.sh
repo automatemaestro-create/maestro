@@ -82,6 +82,18 @@ gl_set_status() {
   esac
 }
 
+# --- Lecture / reporting ------------------------------------------------------------------------
+# gl_backlog [state] -> JSON des work items du projet avec leur STATUT NATIF, leurs labels et
+# leurs assignés. state ∈ opened (défaut) | closed | all. Requête canonique du backlog : elle
+# lit le statut par son nom (aucun GID), et sert de source unique à /backlog comme aux futurs
+# outils (Control Tower, agents). La mise en forme (regroupement par statut) est laissée à
+# l'appelant — jq n'est pas requis.
+gl_backlog() {
+  local state="${1:-opened}"
+  case "$state" in opened|closed|all) ;; *) echo "state invalide : $state (opened|closed|all)" >&2; return 2 ;; esac
+  glab api graphql -f query='{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: '"$state"', first: 100) { nodes { iid title widgets { ... on WorkItemWidgetStatus { status { name } } ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }' 2>/dev/null
+}
+
 # --- Utilitaires de nommage ---------------------------------------------------------------------
 # gl_slug <titre> -> slug de branche : minuscules, accents retirés, non-alphanum -> '-',
 # tirets collapsés, tronqué à 40 caractères, sans tiret de bord.
@@ -119,11 +131,13 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     workitem-gid)   gl_workitem_gid "$@" ;;
     status-gid)     gl_status_gid "$@" ;;
     set-status)     gl_set_status "$@" ;;
+    backlog)        gl_backlog "$@" ;;
     slug)           gl_slug "$@" ;;
     branch-prefix)  gl_branch_prefix "$@" ;;
     *)
       echo "usage: bash scripts/gitlab/lib.sh <sous-commande> [args]" >&2
-      echo "  require | workitem-gid <iid> | status-gid <nom> | set-status <iid> <nom> | slug <titre> | branch-prefix <type>" >&2
+      echo "  require | workitem-gid <iid> | status-gid <nom> | set-status <iid> <nom>" >&2
+      echo "  backlog [opened|closed|all] | slug <titre> | branch-prefix <type>" >&2
       exit 2 ;;
   esac
 fi

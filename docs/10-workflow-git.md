@@ -176,6 +176,16 @@ pas du cycle Git.
 peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** : statut `Abandonné`
 (won't-do) ou `Doublon` (catégorie `canceled`), raison consignée en commentaire, ticket fermé.
 
+**Supervision (lecture seule).** Deux commandes n'écrivent rien et servent à piloter, en attendant
+la Control Tower (Phase 1) :
+
+- [`/backlog`](../.claude/commands/backlog.md) `[opened|all]` — vue d'ensemble du backlog groupée
+  par **statut natif** (§3.1), avec `agent::`/`prio::` et la mise en avant de ce qui **attend une
+  revue / est prêt à merger**. S'appuie sur `lib.sh backlog` (requête canonique du backlog).
+- [`/mr-review`](../.claude/commands/mr-review.md) `<mr|branche>` — synthèse d'une MR (aptitude au
+  merge, pipeline, threads bloquants, résumé du diff) pour **éclairer la décision de merge humaine**.
+  Conforme au garde-fou §6 : elle **ne merge, ne ferme, ni n'approuve jamais**.
+
 Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
 ---
@@ -195,11 +205,12 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
 - [`glab`](https://gitlab.com/gitlab-org/cli) installé et authentifié : `glab auth login`.
 - Vérifier l'accès : `glab issue list` doit lister les tickets du projet.
-- Les commandes `/ticket-*` s'appuient sur le helper [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh)
-  (bash), qui factorise les appels glab (résolution work-item, statut par nom, slug, préfixe de
+- Les commandes `/ticket-*` et `/backlog` s'appuient sur le helper
+  [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels glab
+  (résolution work-item, statut par nom, **listing du backlog** avec statut natif, slug, préfixe de
   branche). Il est **sourçable** (`. scripts/gitlab/lib.sh`) et **exécutable en sous-commandes**
-  (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`) — pratique pour les futurs scripts et
-  agents. Vérif rapide : `bash scripts/gitlab/lib.sh require`.
+  (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`, `… backlog opened`) — pratique pour les
+  futurs scripts et agents. Vérif rapide : `bash scripts/gitlab/lib.sh require`.
 - **Windows / Git Credential Manager** : si un `git push`/`pull` reste bloqué sur une demande
   d'identifiants, forcer `glab` comme credential helper le temps de la commande —
   `git -c credential.helper='!glab auth git-credential' push -u origin <branche>`.
