@@ -211,6 +211,11 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   branche). Il est **sourçable** (`. scripts/gitlab/lib.sh`) et **exécutable en sous-commandes**
   (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`, `… backlog opened`) — pratique pour les
   futurs scripts et agents. Vérif rapide : `bash scripts/gitlab/lib.sh require`.
+- **Bilan de santé** : [`bash scripts/gitlab/doctor.sh`](../scripts/gitlab/doctor.sh) (lecture seule)
+  vérifie auth, labels, statuts du lifecycle résolvables par nom, et **détecte les dérives**
+  (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à
+  nettoyer). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
+  dérives — utile en CI).
 - **Windows / Git Credential Manager** : si un `git push`/`pull` reste bloqué sur une demande
   d'identifiants, forcer `glab` comme credential helper le temps de la commande —
   `git -c credential.helper='!glab auth git-credential' push -u origin <branche>`.
