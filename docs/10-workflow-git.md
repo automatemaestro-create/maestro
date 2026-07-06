@@ -156,10 +156,14 @@ pas du cycle Git.
 3. Développement sur la branche (commits `Refs #<iid>`).
 4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec
    `Closes #<iid>`, passe le **statut** à `En revue`.
-5. **Revue + merge** — **toujours une action humaine** (voir garde-fous, §6). Le merge ferme
-   le ticket automatiquement.
-6. **`/branch-cleanup`** — une fois la MR mergée : supprime la branche locale et distante,
-   revient sur `main` à jour, et pose le **statut** `Terminé` sur le ticket.
+5. **Revue + merge** — **toujours une action humaine** (voir garde-fous, §6). Le merge fait
+   trois choses **automatiquement** : il **ferme** le ticket (via `Closes #`), **passe son
+   statut à `Terminé`** (la fermeture pose le statut « done » du lifecycle) et **supprime la
+   branche distante** (case « Delete source branch », pré-cochée — décochable au merge si on
+   veut garder la branche).
+6. **`/branch-cleanup`** — comme GitLab a déjà géré le distant et le statut (étape 5), cette
+   commande ne fait plus que le **ménage local** : supprime la branche **locale** mergée et
+   remet `main` à jour.
 
 Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
@@ -171,8 +175,8 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
 - **Aucune commande n'effectue de merge ou de fermeture de MR automatiquement.** La revue et le merge restent une décision humaine.
 - **Aucun force-push** sur une branche déjà poussée.
-- La suppression de branche locale utilise toujours `git branch -d` (jamais `-D`) : Git refuse de supprimer une branche non mergée, ce qui protège d'une perte de travail.
-- Une branche distante n'est supprimée que si GitLab confirme que sa MR est à l'état `merged`.
+- Une branche (locale ou distante) n'est supprimée que si **GitLab confirme que sa MR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
+- Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par GitLab.
 
 ---
 
