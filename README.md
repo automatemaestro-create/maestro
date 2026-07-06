@@ -34,7 +34,7 @@ La documentation complète se trouve dans le dossier [`docs/`](./docs). Ordre de
 | 09 | [Exemple concret & coûts](./docs/09-exemple-chiffre.md) | Un projet déroulé : nombre d'agents, durée, budget (abonnement 20 $ vs API) |
 | 10 | [Workflow Git & tickets](./docs/10-workflow-git.md) | Convention de branches/commits, cycle de vie d'un ticket, commandes `/ticket-start`, `/ticket-finish`, `/branch-cleanup` |
 
-Les versions **Word (.docx)** prêtes à partager sont dans [`deliverables/`](./deliverables).
+Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — ce dossier est **hors dépôt** (versionné sur le Drive de l'équipe), pas dans Git.
 
 ---
 
@@ -45,7 +45,7 @@ Les versions **Word (.docx)** prêtes à partager sont dans [`deliverables/`](./
 | 🧭 **Chef de projet** | Décompose les objectifs en tickets, priorise, assigne | « Découper l'epic en 6 tickets, définir les dépendances » |
 | 💻 **Développeur** | Écrit et modifie le code | « Implémenter l'endpoint `/login` » |
 | 🗄️ **Base de données** | Schéma, migrations, requêtes | « Ajouter la table `sessions` + migration » |
-| ⚙️ **DevOps** | CI/CD, infra, déploiement | « Configurer le pipeline GitHub Actions » |
+| ⚙️ **DevOps** | CI/CD, infra, déploiement | « Configurer le pipeline GitLab CI » |
 | 🎨 **Designer** | UI/UX, maquettes, design system | « Proposer l'écran de connexion » |
 | 🧪 **QA / Testeur** | Tests, validation, revue | « Écrire les tests e2e du parcours d'inscription » |
 
