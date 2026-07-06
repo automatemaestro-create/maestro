@@ -25,8 +25,8 @@ champ Status), ni de `status::*`/`priority::*`/`type::docs`/`type::chore` en ang
 ## Commandes disponibles
 
 - `/ticket-create <type> <titre>` — crée un ticket bien formé (corps de template + labels `type::`/`agent::`/`prio::`), statut `À faire` par défaut. Ne crée pas de branche (c'est le rôle de `/ticket-start`).
-- `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le **statut** à `En cours`.
-- `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le **statut** à `En revue`.
+- `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le **statut** à `En cours`, et pose les **dates** (début = aujourd'hui, échéance = début + délai selon `prio::`).
+- `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le **statut** à `En revue`, et **propose le temps passé** (écoulé depuis le début) à confirmer avant de le logger.
 - `/branch-cleanup` — après merge d'une MR : supprime la branche locale + distante, revient sur `main` à jour, pose le **statut** `Terminé`.
 - `/ticket-abandon <iid> [doublon]` — clôt un ticket sans le réaliser : statut `Abandonné` (won't-do) ou `Doublon`, raison consignée, ticket fermé.
 
@@ -39,7 +39,7 @@ Commandes de **supervision** (lecture seule — n'écrivent jamais : ni statut, 
 
 Ces commandes utilisent le CLI `glab` (authentifié via `glab auth login`) pour lire/écrire les issues et MR GitLab. Si `glab auth status` échoue, arrêter et demander à l'utilisateur de s'authentifier plutôt que de continuer sans.
 
-Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les appels `glab` (résolution du work-item, pose du **statut par nom** — pas de GID en dur —, slug, préfixe de branche, listing du backlog). Sourçable (`. scripts/gitlab/lib.sh`) ou en sous-commandes (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`).
+Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les appels `glab` (résolution du work-item, pose du **statut par nom** — pas de GID en dur —, **dates & time tracking** via `start-dates`/`log-time`, slug, préfixe de branche, listing du backlog). Sourçable (`. scripts/gitlab/lib.sh`) ou en sous-commandes (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`).
 
 Bilan de santé (lecture seule) : `bash scripts/gitlab/doctor.sh` vérifie auth/labels/lifecycle et **détecte les dérives** statut↔MR (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à nettoyer).
 

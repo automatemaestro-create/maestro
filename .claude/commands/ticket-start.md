@@ -47,8 +47,19 @@ dès qu'une vérification échoue au lieu de forcer la suite.
      Ne touche pas aux labels `agent::*` / `prio::*` / `type::*` (ils relèvent du triage, pas de ce
      workflow).
 
-9. Termine par un résumé court : nom de la branche créée, titre du ticket, et la liste des
-   critères d'acceptation trouvés dans la description — pour cadrer le travail qui commence.
+9. Renseigne les **dates** du ticket (voir @docs/10-workflow-git.md §3.3) :
+   ```
+   bash scripts/gitlab/lib.sh start-dates $ARGUMENTS
+   ```
+   Le helper pose la **date de début = aujourd'hui** (conservée telle quelle si le ticket en avait
+   déjà une — ré-exécution sûre) et l'**échéance = début + un délai dérivé du label `prio::`**
+   (`haute` → 2 j, `moyenne` → 5 j, `basse` → 10 j ; défaut `moyenne` si absent). Vérifie que la
+   commande réussit ; en cas d'échec, signale-le mais ne bloque pas la création de branche déjà
+   faite.
+
+10. Termine par un résumé court : nom de la branche créée, titre du ticket, les dates posées
+   (début / échéance), et la liste des critères d'acceptation trouvés dans la description — pour
+   cadrer le travail qui commence.
 
 Ne crée pas encore de Merge Request à ce stade (il n'y a pas encore de commit à proposer) —
 c'est le rôle de `/ticket-finish`.
