@@ -7,4 +7,4 @@
 - [ ]
 - [ ]
 
-/label ~"type::infra" ~"workflow::à faire"
+/label ~"type::infra"

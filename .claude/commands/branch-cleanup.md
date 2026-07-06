@@ -29,11 +29,19 @@ le statut de merge n'est pas confirmé par GitLab.
      branche n'est pas fusionnée localement, c'est le signal que quelque chose ne colle pas ;
      arrête-toi et signale-le au lieu de forcer) ;
    - si la branche distante existe encore (GitLab ne l'a pas supprimée automatiquement au
-     merge) : `git push origin --delete <branche>` ;
-   - pose l'état terminal sur le ticket associé :
-     `glab issue update <iid> --label "workflow::terminé" --unlabel "workflow::en revue"`
-     (le merge a déjà dû fermer l'issue via `Closes #<iid>` — cette commande ajoute juste le
-     label, elle ne rouvre/ferme rien).
+     merge) : `git push origin --delete <branche>` (si un `git pull`/`push` reste bloqué sur
+     une demande d'identifiants — Windows + Git Credential Manager — relance-le en forçant
+     `glab` : `git -c credential.helper='!glab auth git-credential' <commande>`) ;
+   - pose l'état terminal **Status natif « Terminé »** sur le ticket associé (le cycle de vie
+     est porté par le champ Status, pas par des labels — voir @docs/10-workflow-git.md §3).
+     Résous l'ID global du work item depuis l'iid, puis pose le statut :
+     ```
+     glab api graphql -f query='{ project(fullPath:"maestro-group4345327/maestro") { workItems(iids:["<iid>"]) { nodes { id } } } }'
+     glab api graphql -f query='mutation { workItemUpdate(input:{ id:"<work-item-gid>", statusWidget:{ status:"gid://gitlab/WorkItems::Statuses::Custom::Status/1020452" } }){ errors } }'
+     ```
+     `…/Custom::Status/1020452` = « Terminé » du lifecycle « Maestro ». Le merge a déjà dû
+     fermer l'issue via `Closes #<iid>` — poser le statut ne rouvre/ferme rien, il reflète
+     juste l'aboutissement.
 
 5. Si aucune candidate n'est trouvée, contente-toi de remettre `main` à jour
    (`git checkout main && git pull origin main`) et dis-le.

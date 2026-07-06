@@ -8,4 +8,4 @@
 - [ ]
 - [ ]
 
-/label ~"type::doc" ~"workflow::à faire"
+/label ~"type::doc"

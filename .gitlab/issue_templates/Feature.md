@@ -11,4 +11,4 @@
 ## Notes techniques
 <!-- Contraintes, dépendances, fichiers/modules concernés -->
 
-/label ~"type::feature" ~"workflow::à faire"
+/label ~"type::feature"
