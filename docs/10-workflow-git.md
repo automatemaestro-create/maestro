@@ -90,9 +90,9 @@ lifecycle custom **« Maestro »** attaché aux types *Issue* et *Task*. Six sta
 | **À faire** | `to_do` | défaut à l'ouverture d'un ticket | `…/1020449` |
 | **En cours** | `in_progress` | posé par [`/ticket-start`](../.claude/commands/ticket-start.md) | `…/1020450` |
 | **En revue** | `in_progress` | posé par [`/ticket-finish`](../.claude/commands/ticket-finish.md) (MR ouverte) | `…/1020451` |
-| **Terminé** | `done` | posé par [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) (après merge) | `…/1020452` |
-| **Abandonné** | `canceled` | ticket clos sans être réalisé (won't do) | `…/1020453` |
-| **Doublon** | `canceled` | défaut « doublon » | `…/1020454` |
+| **Terminé** | `done` | posé automatiquement au merge (fermeture via `Closes #`) | `…/1020452` |
+| **Abandonné** | `canceled` | posé par [`/ticket-abandon`](../.claude/commands/ticket-abandon.md) (won't-do) | `…/1020453` |
+| **Doublon** | `canceled` | posé par [`/ticket-abandon <iid> doublon`](../.claude/commands/ticket-abandon.md) | `…/1020454` |
 
 Lifecycle : `gid://gitlab/WorkItems::Statuses::Custom::Lifecycle/1003066`.
 
@@ -100,10 +100,14 @@ Lifecycle : `gid://gitlab/WorkItems::Statuses::Custom::Lifecycle/1003066`.
   alimente les boards « par statut », mais n'apparaît pas comme pastille dans les listes d'issues.
 - Un seul statut actif à la fois. `À faire` est automatique à la création (défaut du lifecycle) —
   rien à poser à l'ouverture.
-- Les commandes `/ticket-*` posent le statut via `glab api graphql` (mutation `workItemUpdate` →
-  `statusWidget`), après avoir résolu l'ID du work item depuis l'iid :
-  `{ project(fullPath:"maestro-group4345327/maestro") { workItems(iids:["<iid>"]) { nodes { id } } } }`.
-- **Re-dériver les GIDs** (si le lifecycle est un jour recréé) :
+- Les commandes `/ticket-*` posent le statut via le helper partagé
+  [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (`set-status <iid> <nom>`), qui résout l'ID
+  du work item depuis l'iid **et dérive le GID du statut par son nom** dans le lifecycle « Maestro »
+  — d'où l'absence de GID en dur dans les commandes, et la robustesse à une recréation du
+  lifecycle. Sous le capot : mutation `workItemUpdate` → `statusWidget`, après résolution de l'iid
+  via `{ project(fullPath:"maestro-group4345327/maestro") { workItems(iids:["<iid>"]) { nodes { id } } } }`.
+- **Inspecter les GIDs manuellement** (les GIDs de la table ci-dessus n'ont plus besoin d'être
+  recopiés — `lib.sh` les redécouvre — mais pour vérifier) :
   `glab api graphql -f query='{ group(fullPath:"maestro-group4345327") { lifecycles { nodes { name statuses { id name } } } } }'`.
 
 ### 3.2 Les labels — catégorisation (hors cycle de vie)
@@ -143,13 +147,16 @@ pas du cycle Git.
 ## 5. Cycle de vie d'un ticket
 
 ```
-À faire ──/ticket-start──▶ En cours ──/ticket-finish──▶ En revue ──(merge humain)──▶ Terminé
-                                                                          │
-                                                                    /branch-cleanup
+/ticket-create ──▶ À faire ──/ticket-start──▶ En cours ──/ticket-finish──▶ En revue ──(merge humain)──▶ Terminé
+                      │                            │                             │
+                      └────────────────/ticket-abandon────────────────┘                    /branch-cleanup
+                                   (Abandonné / Doublon)
 ```
 
 (les noms ci-dessus sont les **statuts** du champ Status natif, §3)
 
+0. **`/ticket-create <type> <titre>`** — crée un ticket bien formé (corps de template, labels
+   `type::`/`agent::`/`prio::`), statut `À faire` par défaut. Ne crée pas de branche.
 1. **À faire** — le ticket existe (statut par défaut à la création), personne ne travaille dessus.
 2. **`/ticket-start <iid>`** — crée/checkout la branche, assigne le ticket à l'exécutant, passe
    le **statut** à `En cours`.
@@ -164,6 +171,10 @@ pas du cycle Git.
 6. **`/branch-cleanup`** — comme GitLab a déjà géré le distant et le statut (étape 5), cette
    commande ne fait plus que le **ménage local** : supprime la branche **locale** mergée et
    remet `main` à jour.
+
+**Voie « non réalisé ».** À tout moment (depuis `À faire`, `En cours` ou `En revue`), un ticket
+peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** : statut `Abandonné`
+(won't-do) ou `Doublon` (catégorie `canceled`), raison consignée en commentaire, ticket fermé.
 
 Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
@@ -184,6 +195,11 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
 - [`glab`](https://gitlab.com/gitlab-org/cli) installé et authentifié : `glab auth login`.
 - Vérifier l'accès : `glab issue list` doit lister les tickets du projet.
+- Les commandes `/ticket-*` s'appuient sur le helper [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh)
+  (bash), qui factorise les appels glab (résolution work-item, statut par nom, slug, préfixe de
+  branche). Il est **sourçable** (`. scripts/gitlab/lib.sh`) et **exécutable en sous-commandes**
+  (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`) — pratique pour les futurs scripts et
+  agents. Vérif rapide : `bash scripts/gitlab/lib.sh require`.
 - **Windows / Git Credential Manager** : si un `git push`/`pull` reste bloqué sur une demande
   d'identifiants, forcer `glab` comme credential helper le temps de la commande —
   `git -c credential.helper='!glab auth git-credential' push -u origin <branche>`.
