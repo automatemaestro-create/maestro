@@ -9,4 +9,5 @@ Closes #
 - [ ] Documentation mise à jour si applicable
 - [ ] Pipeline CI verte (si configurée)
 
-/label ~"workflow::en revue"
+<!-- Le statut du ticket est posé par /ticket-finish (→ « En revue »), pas depuis la MR :
+     une MR ouverte en Draft ne doit pas marquer le ticket « en revue ». -->
