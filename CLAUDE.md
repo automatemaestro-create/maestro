@@ -39,7 +39,9 @@ Commandes de **supervision** (lecture seule — n'écrivent jamais : ni statut, 
 
 Ces commandes utilisent le CLI `glab` (authentifié via `glab auth login`) pour lire/écrire les issues et MR GitLab. Si `glab auth status` échoue, arrêter et demander à l'utilisateur de s'authentifier plutôt que de continuer sans.
 
-Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les appels `glab` (résolution du work-item, pose du **statut par nom** — pas de GID en dur —, slug et préfixe de branche). Sourçable (`. scripts/gitlab/lib.sh`) ou en sous-commandes (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`).
+Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les appels `glab` (résolution du work-item, pose du **statut par nom** — pas de GID en dur —, slug, préfixe de branche, listing du backlog). Sourçable (`. scripts/gitlab/lib.sh`) ou en sous-commandes (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`).
+
+Bilan de santé (lecture seule) : `bash scripts/gitlab/doctor.sh` vérifie auth/labels/lifecycle et **détecte les dérives** statut↔MR (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à nettoyer).
 
 ## Garde-fous (autonomie sous supervision)
 
