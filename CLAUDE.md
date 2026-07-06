@@ -24,13 +24,17 @@ champ Status), ni de `status::*`/`priority::*`/`type::docs`/`type::chore` en ang
 
 ## Commandes disponibles
 
+- `/ticket-create <type> <titre>` — crée un ticket bien formé (corps de template + labels `type::`/`agent::`/`prio::`), statut `À faire` par défaut. Ne crée pas de branche (c'est le rôle de `/ticket-start`).
 - `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le **statut** à `En cours`.
 - `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le **statut** à `En revue`.
 - `/branch-cleanup` — après merge d'une MR : supprime la branche locale + distante, revient sur `main` à jour, pose le **statut** `Terminé`.
+- `/ticket-abandon <iid> [doublon]` — clôt un ticket sans le réaliser : statut `Abandonné` (won't-do) ou `Doublon`, raison consignée, ticket fermé.
 
 ## Outillage requis
 
 Ces commandes utilisent le CLI `glab` (authentifié via `glab auth login`) pour lire/écrire les issues et MR GitLab. Si `glab auth status` échoue, arrêter et demander à l'utilisateur de s'authentifier plutôt que de continuer sans.
+
+Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les appels `glab` (résolution du work-item, pose du **statut par nom** — pas de GID en dur —, slug et préfixe de branche). Sourçable (`. scripts/gitlab/lib.sh`) ou en sous-commandes (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`).
 
 ## Garde-fous (autonomie sous supervision)
 

@@ -1,0 +1,3 @@
+# Les scripts shell doivent rester en LF même sous Windows (core.autocrlf=true),
+# sinon un CR en fin de ligne casse bash (shebang « #!/usr/bin/env bash\r », etc.).
+*.sh text eol=lf

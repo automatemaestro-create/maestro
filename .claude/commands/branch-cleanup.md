@@ -1,6 +1,6 @@
 ---
 description: Nettoie les branches de tickets déjà mergées et revient sur main à jour
-allowed-tools: Bash(git:*), Bash(glab:*)
+allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
 
 Nettoie les branches **locales** de tickets déjà mergés et remet `main` à jour, selon les
@@ -12,7 +12,7 @@ merge n'est pas confirmé par GitLab.
 > fermeture via `Closes #` pose le statut « done » du lifecycle). Cette commande ne couvre donc
 > que ce que GitLab ne peut pas toucher : ta copie **locale**.
 
-1. `glab auth status` — arrête-toi si non authentifié.
+1. `bash scripts/gitlab/lib.sh require` — arrête-toi si glab absent ou non authentifié.
 
 2. `git fetch --prune origin` pour rafraîchir l'état des branches distantes.
 

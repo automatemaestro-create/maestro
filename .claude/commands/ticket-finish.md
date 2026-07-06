@@ -1,7 +1,7 @@
 ---
 description: Termine le travail sur le ticket courant (push + MR + statut « En revue »)
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
-allowed-tools: Bash(git:*), Bash(glab:*)
+allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
 
 Tu vas clôturer le cycle de développement de la branche courante selon les règles de
@@ -12,7 +12,7 @@ l'état partagé (push, création/mise à jour de MR) si un point n'est pas clai
    de la branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si
    aucun IID ne peut être déterminé, demande-le à l'utilisateur.
 
-2. Vérifie `glab auth status` ; arrête-toi si non authentifié.
+2. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require` ; arrête-toi si non authentifié.
 
 3. Regarde `git status --porcelain`. S'il reste des changements non commités :
    - montre un résumé (`git diff --stat`),
@@ -53,15 +53,13 @@ l'état partagé (push, création/mise à jour de MR) si un point n'est pas clai
    - **Si elle existe déjà et n'est plus en Draft** : ne rien faire de plus sur la MR.
 
 7. Fais passer le **Status natif** du ticket à « En revue » (le cycle de vie est porté par le
-   champ Status, pas par des labels — voir @docs/10-workflow-git.md §3). Résous l'ID global du
-   work item depuis l'iid, puis pose le statut :
+   champ Status, pas par des labels — voir @docs/10-workflow-git.md §3) :
    ```
-   glab api graphql -f query='{ project(fullPath:"maestro-group4345327/maestro") { workItems(iids:["<iid>"]) { nodes { id } } } }'
-   glab api graphql -f query='mutation { workItemUpdate(input:{ id:"<work-item-gid>", statusWidget:{ status:"gid://gitlab/WorkItems::Statuses::Custom::Status/1020451" } }){ errors } }'
+   bash scripts/gitlab/lib.sh set-status <iid> "En revue"
    ```
-   `…/Custom::Status/1020451` = « En revue » du lifecycle « Maestro » (table dans
-   @docs/10-workflow-git.md §3). Vérifie que `errors` est vide. Ne touche pas aux labels
-   `agent::*` / `prio::*` / `type::*`.
+   Le helper résout le work item depuis l'iid et **dérive le GID du statut par nom** depuis le
+   lifecycle « Maestro » (pas de GID en dur). Vérifie que la commande réussit. Ne touche pas aux
+   labels `agent::*` / `prio::*` / `type::*`.
 
 8. Termine par un résumé : lien de la MR, état (Draft/Ready), et rappelle que le merge reste
    une action humaine (personne — pas même toi — ne doit merger automatiquement).
