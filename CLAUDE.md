@@ -26,7 +26,7 @@ champ Status), ni de `status::*`/`priority::*`/`type::docs`/`type::chore` en ang
 
 - `/ticket-create <type> <titre>` — crée un ticket bien formé (corps de template + labels `type::`/`agent::`/`prio::`), statut `À faire` par défaut. Ne crée pas de branche (c'est le rôle de `/ticket-start`).
 - `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le **statut** à `En cours`, et pose les **dates** (début = aujourd'hui, échéance = début + délai selon `prio::`).
-- `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le **statut** à `En revue`, et **propose le temps passé** (écoulé depuis le début) à confirmer avant de le logger.
+- `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le **statut** à `En revue`, et **estime automatiquement le temps passé** (jugement de l'agent sur la portée du travail) puis le loggue, sans confirmation.
 - `/branch-cleanup` — après merge d'une MR : supprime la branche locale + distante, revient sur `main` à jour, pose le **statut** `Terminé`.
 - `/ticket-abandon <iid> [doublon]` — clôt un ticket sans le réaliser : statut `Abandonné` (won't-do) ou `Doublon`, raison consignée, ticket fermé.
 
