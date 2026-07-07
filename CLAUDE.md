@@ -1,6 +1,6 @@
 # Maestro — Instructions pour Claude Code
 
-Monorepo en phase de cadrage (Phase 0 — POC, voir [docs/06-roadmap.md](./docs/06-roadmap.md)). Squelette de dossiers en place (`apps/`, `core/`, `agents/`, `packages/`, `infra/`), pas encore de code applicatif ni de CI.
+Monorepo en phase de cadrage (Phase 0 — POC, voir [docs/06-roadmap.md](./docs/06-roadmap.md)). Squelette de dossiers en place (`apps/`, `core/`, `agents/`, `packages/`, `infra/`), pas encore de code applicatif. CI minimale en place : `.gitlab-ci.yml` lint les scripts shell (shellcheck) — un pipeline vert est requis avant merge.
 
 ## Règles Git obligatoires
 

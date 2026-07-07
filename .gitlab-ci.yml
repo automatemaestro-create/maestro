@@ -1,0 +1,27 @@
+# Pipeline CI Maestro — Phase 0 (voir docs/10-workflow-git.md §8).
+#
+# Périmètre volontairement minimal : on lint les scripts shell (shellcheck), qui sont
+# aujourd'hui le seul code exécutable du dépôt. Pas encore de job de test applicatif — le
+# monorepo est un squelette. Le pipeline s'étoffera quand du code apparaîtra dans
+# apps/ / core/ / packages/, et « pipeline vert » deviendra une condition de merge.
+
+stages:
+  - lint
+
+shellcheck:
+  stage: lint
+  image: koalaman/shellcheck-alpine:stable
+  script:
+    - shellcheck --version
+    - |
+      files=$(find scripts -type f -name '*.sh' | sort)
+      if [ -z "$files" ]; then
+        echo "Aucun script *.sh à analyser."
+        exit 0
+      fi
+      echo "Scripts analysés :"
+      printf '  %s\n' $files
+      # Sévérité 'warning' : bloque sur les vrais problèmes (variables non définies, tests
+      # douteux, redirections cassées…) sans pinailler sur le style (SC2086/SC1091 = niveau
+      # 'info', tolérés). À durcir en '--severity=style' quand les scripts seront stabilisés.
+      shellcheck --severity=warning $files

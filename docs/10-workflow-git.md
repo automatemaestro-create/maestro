@@ -251,10 +251,14 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
 ---
 
-## 8. Portée actuelle
+## 8. Intégration continue (CI)
 
-Ce workflow couvre la gestion des branches et des tickets. Il ne couvre **pas encore** de
-pipeline CI (`.gitlab-ci.yml`) — le monorepo est encore un squelette sans code exécutable (voir
-[roadmap](./06-roadmap.md), Phase 0). Quand du code apparaît dans `apps/`, `core/` ou
-`packages/`, ajouter un pipeline de lint/test et faire du "pipeline vert" une condition de
-passage `En revue` → merge.
+Un pipeline minimal existe : [`.gitlab-ci.yml`](../.gitlab-ci.yml) — stage `lint`, job `shellcheck`
+qui passe [shellcheck](https://www.shellcheck.net/) (sévérité `warning`) sur les scripts
+`scripts/**/*.sh` (`lib.sh`, `doctor.sh`, `bootstrap.sh`), aujourd'hui le seul code exécutable du
+dépôt. Un **pipeline vert est la condition de passage `En revue` → merge**.
+
+Périmètre volontairement restreint à la Phase 0 : **pas encore** de job de test applicatif — le
+monorepo reste un squelette. Quand du code apparaît dans `apps/`, `core/` ou `packages/`, étendre
+le pipeline avec les lint/test correspondants (et durcir la sévérité shellcheck vers `style` une
+fois les scripts stabilisés).
