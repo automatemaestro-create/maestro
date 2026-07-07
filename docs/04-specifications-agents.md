@@ -35,7 +35,7 @@ Structure type d'un playbook :
 
 ## 2. Catalogue des agents par défaut
 
-| Agent | Rôle | Compétences (tags) | Modèle conseillé |
+| Agent | Rôle | Compétences (tags) | Modèle conseillé (défaut POC — Claude) |
 |-------|------|--------------------|------------------|
 | 🧭 Chef de projet | Orchestration, découpage, priorisation | `planning`, `routing`, `synthesis` | Opus |
 | 💻 Développeur | Code applicatif | `backend`, `frontend`, `api`, `refactor` | Sonnet |
@@ -43,6 +43,8 @@ Structure type d'un playbook :
 | ⚙️ DevOps | CI/CD, infra, déploiement | `ci-cd`, `infra`, `deploy`, `docker` | Sonnet |
 | 🎨 Designer | UI/UX, maquettes, design system | `ui`, `ux`, `design-system`, `figma` | Sonnet |
 | 🧪 QA / Testeur | Tests, validation, revue | `tests`, `e2e`, `review`, `qa` | Sonnet (ou Haiku pour checks simples) |
+
+> **Le fournisseur est configurable par agent** (voir §4 et [stack §2](./02-stack-technique.md)). Les modèles ci-dessus sont le **défaut Claude du POC** ; on peut affecter à chaque agent un autre fournisseur/modèle (OpenAI, Google, ouvert/local) **sans changer son rôle ni son playbook** — c'est l'objet de la couche d'abstraction.
 
 > Le **routage** (doc 01 §3.2) s'appuie sur ces tags + un classifieur léger pour les cas ambigus.
 
@@ -136,7 +138,7 @@ Depuis la Control Tower, l'utilisateur peut créer un agent en définissant :
 2. **Prompt système** (identité, ton, contraintes).
 3. **Compétences/tags** (pour le routage).
 4. **Outils** à lui lier (avec permissions scopées).
-5. **Modèle** (selon complexité/coût).
+5. **Fournisseur + modèle** (selon complexité, coût, souveraineté) — Claude, OpenAI, Google, modèle ouvert/local… via la **couche d'abstraction** ; par défaut, le Claude du POC.
 6. **Playbook** initial (workflow), ensuite versionné.
 
 ---
