@@ -29,12 +29,18 @@ dès qu'une vérification échoue au lieu de forcer la suite.
    (minuscules, accents retirés, non-alphanumérique → `-`, tronqué à ~40 caractères). Le nom de
    branche est `<type>/<iid>-<slug>`.
 
-7. Mets `main` à jour puis crée la branche :
+7. Mets `main` à jour, **nettoie au passage les branches déjà mergées**, puis crée la branche :
    ```
    git checkout main
    git pull origin main
+   bash scripts/gitlab/lib.sh cleanup-merged
    git checkout -b <type>/<iid>-<slug>
    ```
+   `cleanup-merged` est le pendant **automatique** de `/branch-cleanup` : maintenant qu'on est sur
+   `main` à jour et que l'arbre est propre, il supprime les branches **locales** (hors `main` et hors
+   branche courante) dont **GitLab confirme la MR `merged`** — et rien d'autre (garde-fou
+   @docs/10-workflow-git.md §6). S'il n'y a rien à nettoyer, il le dit et n'a aucun effet.
+   `/branch-cleanup` reste disponible pour un nettoyage explicite hors démarrage de ticket.
 
 8. Assigne le ticket et fais passer son **Status natif** à « En cours ». Le cycle de vie est
    porté par le champ **Status** de GitLab (lifecycle « Maestro »), pas par des labels — voir
