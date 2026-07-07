@@ -3,9 +3,10 @@ description: Nettoie les branches de tickets déjà mergées et revient sur main
 allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
 
-Nettoie les branches **locales** de tickets déjà mergés et remet `main` à jour, selon les
-garde-fous de @docs/10-workflow-git.md §6. Ne supprime **jamais** une branche dont le statut de
-merge n'est pas confirmé par GitLab.
+Nettoie les branches **locales** de tickets déjà mergés et remet `main` à jour. Ne supprime
+**jamais** une branche dont le statut de merge n'est pas confirmé par GitLab (garde-fou détaillé
+dans `docs/10-workflow-git.md` §6, non chargé automatiquement — à n'ouvrir qu'en cas de doute ;
+cette commande est autosuffisante).
 
 > Au merge, GitLab fait déjà le reste automatiquement : suppression de la branche **distante**
 > (case « Delete source branch », pré-cochée) et passage du ticket au statut **Terminé** (la

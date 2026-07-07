@@ -4,8 +4,9 @@ argument-hint: "<iid> [doublon [<iid-original>]]  — sans « doublon », c'est 
 allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
 
-Tu vas **clôturer un ticket sans qu'il soit réalisé**, selon @docs/10-workflow-git.md §3. Deux
-variantes, portées par le champ **Status natif** (lifecycle « Maestro »), catégorie `canceled` :
+Tu vas **clôturer un ticket sans qu'il soit réalisé** (cette commande est autosuffisante ; réf.
+complète `docs/10-workflow-git.md` §3, non chargée automatiquement, à n'ouvrir qu'en cas de doute).
+Deux variantes, portées par le champ **Status natif** (lifecycle « Maestro »), catégorie `canceled` :
 - **Abandonné** (won't-do) — décision de ne pas faire ce ticket.
 - **Doublon** — ce ticket fait double emploi avec un autre.
 

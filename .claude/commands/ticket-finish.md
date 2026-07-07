@@ -4,9 +4,11 @@ argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le conti
 allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
 
-Tu vas clôturer le cycle de développement de la branche courante selon les règles de
-@docs/10-workflow-git.md. Arrête-toi et demande confirmation avant toute action qui modifie
-l'état partagé (push, création/mise à jour de MR) si un point n'est pas clair.
+Tu vas clôturer le cycle de développement de la branche courante selon les règles de Maestro
+(résumées ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`,
+non chargée automatiquement, à n'ouvrir qu'en cas de doute). Arrête-toi et demande confirmation
+avant toute action qui modifie l'état partagé (push, création/mise à jour de MR) si un point n'est
+pas clair.
 
 1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom
    de la branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si
@@ -16,8 +18,10 @@ l'état partagé (push, création/mise à jour de MR) si un point n'est pas clai
 
 3. Regarde `git status --porcelain`. S'il reste des changements non commités :
    - montre un résumé (`git diff --stat`),
-   - propose un message de commit au format Conventional Commits avec `Refs #<iid>` en pied
-     (voir @docs/10-workflow-git.md §2),
+   - propose un message de commit **Conventional Commits** : en-tête `<type>(<scope>): <résumé impératif>`
+     (types : `feat`/`fix`/`chore`/`docs`/`refactor`/`test`/`ci`/`build`/`perf` ; `scope` optionnel)
+     et pied `Refs #<iid>` (le hook `commit-msg` refuse tout message hors convention ; détail
+     `docs/10-workflow-git.md` §2),
    - demande confirmation à l'utilisateur avant de committer.
    Ne commite jamais silencieusement sans montrer ce qui va être committé.
 
@@ -53,7 +57,7 @@ l'état partagé (push, création/mise à jour de MR) si un point n'est pas clai
    - **Si elle existe déjà et n'est plus en Draft** : ne rien faire de plus sur la MR.
 
 7. Fais passer le **Status natif** du ticket à « En revue » (le cycle de vie est porté par le
-   champ Status, pas par des labels — voir @docs/10-workflow-git.md §3) :
+   champ Status, pas par des labels — voir `docs/10-workflow-git.md` §3) :
    ```
    bash scripts/gitlab/lib.sh set-status <iid> "En revue"
    ```
@@ -62,7 +66,7 @@ l'état partagé (push, création/mise à jour de MR) si un point n'est pas clai
    labels `agent::*` / `prio::*` / `type::*`.
 
 8. Renseigne le **temps passé** — **estimé automatiquement, sans demander de confirmation** (voir
-   @docs/10-workflow-git.md §3.3) :
+   `docs/10-workflow-git.md` §3.3) :
    - Vérifie d'abord ce qui est déjà loggé : `bash scripts/gitlab/lib.sh get-time-spent <iid>`
      (secondes). Si le résultat **n'est pas `0`**, du temps a déjà été enregistré — n'en rajoute
      pas (idempotence : ne double pas un cycle déjà loggé) et passe à la suite.
