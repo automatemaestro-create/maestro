@@ -31,9 +31,16 @@ n'ouvre le doc qu'en cas de doute).
    `success`/`failed`/`running`/absent, sans le faire échouer si aucun pipeline n'est configuré (le
    monorepo n'a pas encore de CI — `docs/10-workflow-git.md` §8).
 
-5. Résumé des changements : `glab mr diff <cible>` — **résume** (fichiers touchés, nature des
-   modifications), ne recopie pas le diff entier. Si le diff est volumineux, donne les fichiers et
-   les points saillants.
+5. Résumé des changements : par défaut, ne réinjecte qu'un **résumé** du diff (fichiers touchés +
+   volume), **pas le diff détaillé**, qui gonfle inutilement le contexte. `glab mr diff` n'expose
+   pas de `--stat` natif dans cette version ; dérive le résumé localement en pipant le diff brut
+   dans `git apply` :
+   - stat lisible (fichiers + `+`/`-` par fichier + total) : `glab mr diff <cible> --raw | git apply --stat` ;
+   - format machine (`ajouts  retraits  fichier` par ligne) : `glab mr diff <cible> --raw | git apply --numstat`.
+
+   Ne récupère le **diff détaillé** (`glab mr diff <cible>`) que sur **demande explicite** de
+   l'utilisateur, ou si un point précis exige de lire les lignes modifiées — et même alors, cible le
+   fichier concerné et résume, ne recopie pas tout.
 
 6. Threads non résolus : si `blocking_discussions_resolved` vaut `false`, signale-le. Pour le détail
    éventuel, tu peux lire les discussions en **lecture seule** via

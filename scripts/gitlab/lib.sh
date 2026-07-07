@@ -131,6 +131,94 @@ gl_backlog() {
   gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: '"$state"', first: 100) { nodes { iid title widgets { ... on WorkItemWidgetStatus { status { name } } ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }'
 }
 
+# gl_backlog_table [state] -> projette le JSON de gl_backlog en une TABLE PLATE COMPACTE (une ligne
+# par ticket) pour réinjecter beaucoup moins de contexte que le JSON imbriqué. Le JSON brut reste
+# disponible via gl_backlog / la sous-commande `backlog` pour tout appelant qui en a besoin.
+#
+# Format de sortie (source unique, exploitable par /backlog comme par les futurs outils — Control
+# Tower, agents) : TSV (séparateur TABULATION), une ligne d'en-tête préfixée « # » que les
+# consommateurs machine peuvent ignorer, puis une ligne par ticket :
+#     iid <TAB> statut <TAB> prio <TAB> agent <TAB> assigne <TAB> titre
+# Les valeurs `prio`/`agent` sont le suffixe nu du label (« moyenne », « devops ») ; un champ vide
+# (prio/agent/assigné absent) est rendu « - ». Le statut est le statut NATIF (widget Status).
+#
+# Projection en awk pur (pas de jq requis) : le parsing suit la même approche grep/sed/awk que le
+# reste de ce fichier, donc la commande fonctionne à l'identique que jq soit installé ou non.
+gl_backlog_table() {
+  local state="${1:-opened}" json
+  json="$(gl_backlog "$state")" || return 1
+  printf '# iid\tstatut\tprio\tagent\tassigne\ttitre\n'
+  printf '%s\n' "$json" | awk '
+    {
+      n = split($0, parts, /\{"iid":"/)
+      for (i = 2; i <= n; i++) {
+        node = parts[i]
+        match(node, /^[0-9]+/); iid = substr(node, RSTART, RLENGTH)
+
+        title = "-"
+        if (match(node, /","title":"/)) {
+          rest = substr(node, RSTART + RLENGTH)
+          if (match(rest, /","widgets":/)) title = substr(rest, 1, RSTART - 1)
+        }
+        gsub(/\\u0026/, "\\&", title); gsub(/\\u003e/, ">", title); gsub(/\\u003c/, "<", title)
+
+        status = "-"
+        if (match(node, /"status":\{"name":"[^"]*"/)) {
+          m = substr(node, RSTART, RLENGTH); sub(/.*"name":"/, "", m); sub(/"$/, "", m); status = m
+        }
+
+        prio = "-"; agent = "-"
+        if (match(node, /prio::[a-z]+/))  prio  = substr(node, RSTART + 6, RLENGTH - 6)
+        if (match(node, /agent::[a-z]+/)) agent = substr(node, RSTART + 7, RLENGTH - 7)
+
+        assignee = "-"
+        if (match(node, /"username":"[^"]*"/)) {
+          m = substr(node, RSTART, RLENGTH); sub(/.*"username":"/, "", m); sub(/"$/, "", m); assignee = m
+        }
+
+        printf "%s\t%s\t%s\t%s\t%s\t%s\n", iid, status, prio, agent, assignee, title
+      }
+    }
+  '
+}
+
+# gl_issue_brief <iid> -> projection compacte de `glab issue view <iid>` : uniquement le titre, les
+# labels et la section « Critères d'acceptation ». Le reste du corps (Description, « Pourquoi
+# maintenant ? »…) est écarté. Utilisé par /ticket-start à la place du `glab issue view` intégral
+# pour réinjecter moins de contexte (le view complet reste disponible en direct si besoin).
+# Parsing en awk pur (pas de jq requis).
+gl_issue_brief() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_issue_brief <iid>" >&2; return 2; fi
+  local raw
+  raw="$(glab issue view "$iid" 2>/dev/null)" || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
+  # Deux formats de « critères d'acceptation » coexistent dans le backlog : les tickets récents
+  # (issue templates) posent un titre de section « ## Critères d'acceptation » suivi d'une liste
+  # « - [ ] … » ; les tickets plus anciens l'écrivent en paragraphe inline (« Critères d'acceptation :
+  # … »). Le mot « acceptation » n'a pas d'accent → on l'utilise comme ancre robuste aux deux formes
+  # (avec ou sans accent sur « Critères »). En forme titre on capture les lignes suivantes jusqu'au
+  # prochain titre ; en forme inline on n'imprime que la ligne elle-même.
+  printf '%s\n' "$raw" | awk -v iid="$iid" '
+    ph == 1 {
+      if (crit == 0 && $0 ~ /[Aa]cceptation/) {
+        print ""; print $0
+        if ($0 ~ /^#+[ \t]/) crit = 1
+        next
+      }
+      if (crit && $0 ~ /^#+[ \t]/) crit = 0
+      if (crit) print $0
+      next
+    }
+    /^--$/ {
+      printf "#%s — %s\n", iid, title
+      if (labels != "") printf "labels: %s\n", labels
+      ph = 1; next
+    }
+    /^title:/  { t = $0; sub(/^title:[ \t]*/,  "", t); title  = t; next }
+    /^labels:/ { l = $0; sub(/^labels:[ \t]*/, "", l); labels = l; next }
+  '
+}
+
 # --- Dates & time tracking ----------------------------------------------------------------------
 # Renseignés automatiquement le long du cycle de vie (voir docs/10-workflow-git.md §3.3) :
 #   • date de début + échéance  → posées par /ticket-start (gl_start_dates)
@@ -324,6 +412,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     status-gid)     gl_status_gid "$@" ;;
     set-status)     gl_set_status "$@" ;;
     backlog)        gl_backlog "$@" ;;
+    backlog-table)  gl_backlog_table "$@" ;;
+    issue-brief)    gl_issue_brief "$@" ;;
     prio)           gl_prio "$@" ;;
     prio-delay)     gl_prio_delay "$@" ;;
     get-start-date) gl_get_start_date "$@" ;;
@@ -339,7 +429,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     *)
       echo "usage: bash scripts/gitlab/lib.sh <sous-commande> [args]" >&2
       echo "  require | workitem-gid <iid> | status-gid <nom> | set-status <iid> <nom>" >&2
-      echo "  backlog [opened|closed|all] | slug <titre> | branch-prefix <type>" >&2
+      echo "  backlog [opened|closed|all]        (JSON brut du backlog)" >&2
+      echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
+      echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
+      echo "  slug <titre> | branch-prefix <type>" >&2
       echo "  Dates & temps :" >&2
       echo "    start-dates <iid>            (début=aujourd'hui + échéance selon prio)" >&2
       echo "    set-dates <iid> [début] [échéance]   get-start-date <iid>" >&2

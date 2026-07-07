@@ -12,12 +12,15 @@ n'ouvrir qu'en cas de doute.
 
 1. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Arrête-toi si non authentifié.
 
-2. Récupère le backlog avec le statut natif via le helper :
-   `bash scripts/gitlab/lib.sh backlog <state>` où `<state>` vaut `opened` (défaut, si `$ARGUMENTS`
-   est vide) ou `all` (si l'utilisateur passe `all`). Le JSON renvoyé contient, par work item :
-   `iid`, `title`, le **statut natif** (`widgets[].status.name`), les labels
-   (`widgets[].labels.nodes[].title` → familles `type::`/`agent::`/`prio::`) et les assignés
-   (`widgets[].assignees.nodes[].username`). Les widgets sans donnée sont des `{}` à ignorer.
+2. Récupère le backlog (statut natif compris) en **table plate compacte** via le helper :
+   `bash scripts/gitlab/lib.sh backlog-table <state>` où `<state>` vaut `opened` (défaut, si
+   `$ARGUMENTS` est vide) ou `all` (si l'utilisateur passe `all`). Sortie **TSV** : une ligne
+   d'en-tête préfixée `#` (à ignorer) puis une ligne par ticket, colonnes séparées par TABULATION :
+   `iid`, `statut` (**statut natif**), `prio`, `agent`, `assigne`, `titre`. Les valeurs
+   `prio`/`agent` sont le suffixe nu du label (`moyenne`, `devops`, familles `prio::`/`agent::`) ;
+   un champ `prio`/`agent`/`assigne` absent vaut `-`. Cette projection réinjecte beaucoup moins que
+   le JSON imbriqué ; le JSON brut complet reste disponible via
+   `bash scripts/gitlab/lib.sh backlog <state>` si tu as besoin d'un détail non projeté.
 
 3. Récupère les Merge Requests ouvertes pour enrichir la vue « prêt à merger » :
    `glab mr list --output json`. Pour chaque MR, note `iid`, `title`, `state`, le caractère brouillon
