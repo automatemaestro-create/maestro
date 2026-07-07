@@ -25,3 +25,12 @@ shellcheck:
       # douteux, redirections cassées…) sans pinailler sur le style (SC2086/SC1091 = niveau
       # 'info', tolérés). À durcir en '--severity=style' quand les scripts seront stabilisés.
       shellcheck --severity=warning $files
+
+# Lint du code Python (maestro/, tests/). La config des règles vit dans pyproject.toml
+# ([tool.ruff]). N'installe que ruff : pas besoin du SDK ni d'une clé API pour le lint.
+python-lint:
+  stage: lint
+  image: python:3.11-slim
+  script:
+    - pip install --no-cache-dir "ruff>=0.6,<1.0"
+    - ruff check .
