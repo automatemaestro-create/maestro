@@ -62,6 +62,33 @@ Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — 
 
 ---
 
+## 🛠️ Développement (Phase 0)
+
+Stack **Python 3.11+** (option A du [doc stack](./docs/02-stack-technique.md)), moteur d'agents = **Claude Agent SDK**.
+
+**Prérequis :** Python 3.11+, Node.js 20+ (requis par le Claude Agent SDK), Docker (bases locales optionnelles), une **clé API Anthropic**.
+
+```bash
+# 1. Environnement virtuel + installation (éditable, avec outils dev)
+python -m venv .venv
+source .venv/bin/activate            # Windows : .venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+
+# 2. Secrets : copier le gabarit et renseigner la clé (le .env n'est jamais commité)
+cp .env.example .env                 # Windows : Copy-Item .env.example .env
+#   … puis éditer .env pour y mettre ANTHROPIC_API_KEY
+
+# 3. Vérifier que tout est prêt (SDK importable + clé API lue)
+maestro-check-env
+
+# 4. (optionnel) Bases locales PostgreSQL + Redis — voir infra/README.md
+docker compose -f infra/docker-compose.yml up -d
+```
+
+Qualité : `ruff check .` (lint, lancé aussi en CI) · `pytest` (tests) · `mypy maestro` (types).
+
+---
+
 ## 🚦 Statut
 
 Projet en phase de **cadrage**. Voir la [roadmap](./docs/06-roadmap.md) pour les prochaines étapes.
