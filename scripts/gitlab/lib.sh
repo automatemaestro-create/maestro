@@ -23,6 +23,12 @@ GL_DUE_DELAY_HAUTE="${GL_DUE_DELAY_HAUTE:-2}"
 GL_DUE_DELAY_MOYENNE="${GL_DUE_DELAY_MOYENNE:-5}"
 GL_DUE_DELAY_BASSE="${GL_DUE_DELAY_BASSE:-10}"
 
+# Retry des LECTURES GraphQL (voir gl_graphql_read) : l'endpoint GraphQL de GitLab renvoie
+# parfois une réponse vide (hoquet réseau / rate-limit). On ré-essaie jusqu'à GL_GQL_RETRIES
+# tentatives, avec GL_GQL_RETRY_DELAY seconde(s) de pause entre deux. Surchargeable.
+GL_GQL_RETRIES="${GL_GQL_RETRIES:-3}"
+GL_GQL_RETRY_DELAY="${GL_GQL_RETRY_DELAY:-1}"
+
 # --- Pré-requis ---------------------------------------------------------------------------------
 # Vérifie que glab est installé ET authentifié. À appeler en tête des commandes.
 gl_require_glab() {
@@ -36,13 +42,38 @@ gl_require_glab() {
   fi
 }
 
+# --- Lecture GraphQL (avec retry) ---------------------------------------------------------------
+# gl_graphql_read <query> -> exécute une LECTURE GraphQL et imprime la réponse JSON brute.
+# Réessaie tant que la réponse revient VIDE (l'endpoint GraphQL de GitLab hoquette par
+# intermittence : réponse vide/tronquée sur rate-limit ou aléa réseau), jusqu'à GL_GQL_RETRIES
+# tentatives avec GL_GQL_RETRY_DELAY s de pause. Ne réessaie QUE sur réponse vide : une réponse
+# non vide — même porteuse d'erreurs applicatives GraphQL — est rendue telle quelle, l'appelant
+# reste responsable de son parsing.
+# ⚠ Réservé aux LECTURES. Ne jamais envelopper une mutation : un retry pourrait la ré-appliquer
+# (ex. gl_log_time est additif → double comptage). Les mutations gardent leur appel direct à glab.
+gl_graphql_read() {
+  local query="$1"
+  if [ -z "$query" ]; then echo "gl_graphql_read : requête manquante" >&2; return 2; fi
+  local attempt=1 out
+  while :; do
+    out="$(glab api graphql -f query="$query" 2>/dev/null)"
+    if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
+    if [ "$attempt" -ge "$GL_GQL_RETRIES" ]; then
+      echo "gl_graphql_read : réponse vide de l'API GraphQL après $attempt tentative(s)" >&2
+      return 1
+    fi
+    sleep "$GL_GQL_RETRY_DELAY"
+    attempt=$((attempt + 1))
+  done
+}
+
 # --- Résolution d'identifiants ------------------------------------------------------------------
 # gl_workitem_gid <iid> -> imprime le GID global du work item (gid://gitlab/WorkItem/<n>).
 gl_workitem_gid() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "gl_workitem_gid : iid manquant" >&2; return 2; fi
   local gid
-  gid="$(glab api graphql -f query='{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { id } } } }' 2>/dev/null \
+  gid="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { id } } } }' \
         | grep -o 'gid://gitlab/WorkItem/[0-9]\+' | head -1)"
   if [ -z "$gid" ]; then echo "Work item #$iid introuvable dans $GL_PROJECT" >&2; return 1; fi
   printf '%s\n' "$gid"
@@ -55,7 +86,7 @@ gl_status_gid() {
   local name="$1"
   if [ -z "$name" ]; then echo "gl_status_gid : nom de statut manquant" >&2; return 2; fi
   local raw block pair gid
-  raw="$(glab api graphql -f query='{ group(fullPath:"'"$GL_GROUP"'") { lifecycles { nodes { name statuses { id name } } } } }' 2>/dev/null)"
+  raw="$(gl_graphql_read '{ group(fullPath:"'"$GL_GROUP"'") { lifecycles { nodes { name statuses { id name } } } } }')"
   if [ -z "$raw" ]; then echo "Impossible de lire les lifecycles du groupe $GL_GROUP" >&2; return 1; fi
   # Isole le bloc statuses du lifecycle Maestro : après '"name":"Maestro","statuses":[' jusqu'au ']'.
   block="${raw#*\"name\":\"$GL_LIFECYCLE\",\"statuses\":[}"
@@ -97,7 +128,7 @@ gl_set_status() {
 gl_backlog() {
   local state="${1:-opened}"
   case "$state" in opened|closed|all) ;; *) echo "state invalide : $state (opened|closed|all)" >&2; return 2 ;; esac
-  glab api graphql -f query='{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: '"$state"', first: 100) { nodes { iid title widgets { ... on WorkItemWidgetStatus { status { name } } ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }' 2>/dev/null
+  gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: '"$state"', first: 100) { nodes { iid title widgets { ... on WorkItemWidgetStatus { status { name } } ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }'
 }
 
 # --- Dates & time tracking ----------------------------------------------------------------------
@@ -111,7 +142,7 @@ gl_backlog() {
 gl_prio() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "gl_prio : iid manquant" >&2; return 2; fi
-  glab api graphql -f query='{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } } } } } }' 2>/dev/null \
+  gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } } } } } }' \
     | grep -o 'prio::[a-z]*' | head -1
 }
 
@@ -130,7 +161,7 @@ gl_prio_delay() {
 gl_get_start_date() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "gl_get_start_date : iid manquant" >&2; return 2; fi
-  glab api graphql -f query='{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetStartAndDueDate { startDate } } } } } }' 2>/dev/null \
+  gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetStartAndDueDate { startDate } } } } } }' \
     | grep -o '"startDate":"[0-9-]*"' | head -1 | sed 's/.*"startDate":"//; s/"$//'
 }
 
@@ -140,7 +171,7 @@ gl_get_time_spent() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "gl_get_time_spent : iid manquant" >&2; return 2; fi
   local v
-  v="$(glab api graphql -f query='{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetTimeTracking { totalTimeSpent } } } } } }' 2>/dev/null \
+  v="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetTimeTracking { totalTimeSpent } } } } } }' \
     | grep -o '"totalTimeSpent":[0-9]*' | head -1 | sed 's/.*://')"
   printf '%s\n' "${v:-0}"
 }
@@ -244,6 +275,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   cmd="${1:-}"; [ "$#" -gt 0 ] && shift
   case "$cmd" in
     require)        gl_require_glab ;;
+    graphql-read)   gl_graphql_read "$@" ;;
     workitem-gid)   gl_workitem_gid "$@" ;;
     status-gid)     gl_status_gid "$@" ;;
     set-status)     gl_set_status "$@" ;;

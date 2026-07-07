@@ -58,15 +58,30 @@ else
 fi
 
 # --- 3. Lifecycle « Maestro » -------------------------------------------------------------------
+# Une SEULE lecture GraphQL (avec retry, via gl_graphql_read) pour les 6 statuts : on lit le
+# lifecycle une fois puis on vérifie chaque nom contre ce résultat. Évite le faux « incohérent »
+# que 6 appels indépendants pouvaient déclencher dès qu'un seul retombait vide (réponse muette
+# intermittente de l'API).
 section "3. Lifecycle « $GL_LIFECYCLE » (statuts résolvables par nom)"
-lifecycle_ok=1
-for s in "À faire" "En cours" "En revue" "Terminé" "Abandonné" "Doublon"; do
-  gl_status_gid "$s" >/dev/null 2>&1 || { err "statut « $s » non résolu dans le lifecycle"; lifecycle_ok=0; }
-done
-if [ "$lifecycle_ok" = 1 ]; then
-  ok "6 statuts résolus par nom — set-status opérationnel (aucun GID en dur)"
+lifecycle_raw="$(gl_graphql_read '{ group(fullPath:"'"$GL_GROUP"'") { lifecycles { nodes { name statuses { id name } } } } }')"
+if [ -z "$lifecycle_raw" ]; then
+  err "lecture du lifecycle « $GL_LIFECYCLE » impossible (API GraphQL muette après retries) → réessayer"
+elif ! printf '%s' "$lifecycle_raw" | grep -q '"name":"'"$GL_LIFECYCLE"'"'; then
+  err "lifecycle « $GL_LIFECYCLE » introuvable dans le groupe $GL_GROUP → voir docs/10-workflow-git.md §3 (re-création)"
 else
-  err "lifecycle « $GL_LIFECYCLE » incohérent → voir docs/10-workflow-git.md §3 (re-création)"
+  # Isole le bloc statuses du lifecycle Maestro (même logique que gl_status_gid) pour ne pas
+  # confondre avec un statut homonyme d'un autre lifecycle.
+  lifecycle_block="${lifecycle_raw#*\"name\":\"$GL_LIFECYCLE\",\"statuses\":[}"
+  lifecycle_block="${lifecycle_block%%]*}"
+  missing_status=""
+  for s in "À faire" "En cours" "En revue" "Terminé" "Abandonné" "Doublon"; do
+    printf '%s' "$lifecycle_block" | grep -q '"name":"'"$s"'"' || missing_status="${missing_status:+$missing_status, }$s"
+  done
+  if [ -z "$missing_status" ]; then
+    ok "6 statuts résolus par nom (1 appel) — set-status opérationnel (aucun GID en dur)"
+  else
+    err "statut(s) non résolu(s) dans le lifecycle « $GL_LIFECYCLE » : $missing_status → voir docs/10-workflow-git.md §3"
+  fi
 fi
 
 # --- 4. Dérive statut ↔ réalité -----------------------------------------------------------------
