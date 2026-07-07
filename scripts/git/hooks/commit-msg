@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Hook commit-msg — valide la convention de commit Maestro (voir docs/10-workflow-git.md §2) :
+#   1. Conventional Commits : <type>(<scope>): <description>
+#      type ∈ feat|fix|chore|docs|refactor|test|ci|build|perf
+#   2. Référence au ticket : « Refs #<iid> » ou « Closes #<iid> » quelque part dans le message.
+#
+# Exemptions : commits de merge / revert / reapply / fixup! / squash! / amend!.
+# Bypass ponctuel : git commit --no-verify
+set -u
+
+msg_file="$1"
+
+# Message utile : on coupe la partie diff de `--verbose` (à partir de la ligne « scissors »),
+# puis on retire les lignes de commentaire (# ...).
+body="$(sed '/^#.*>8/,$d' "$msg_file" | grep -v '^#' || true)"
+# Sujet = première ligne non vide.
+subject="$(printf '%s\n' "$body" | sed '/^[[:space:]]*$/d' | head -n1)"
+
+# Exemptions : messages générés/spéciaux qui n'ont pas à suivre la convention.
+case "$subject" in
+  "Merge "*|"Revert "*|"Reapply "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
+esac
+
+types='feat|fix|chore|docs|refactor|test|ci|build|perf'
+
+header_ok=1
+printf '%s' "$subject" | grep -qE "^($types)(\([a-z0-9._/-]+\))?!?: .+" || header_ok=0
+
+ref_ok=1
+printf '%s\n' "$body" | grep -qE '(Refs|Closes) #[0-9]+' || ref_ok=0
+
+if [ "$header_ok" = 1 ] && [ "$ref_ok" = 1 ]; then
+  exit 0
+fi
+
+{
+  echo "✗ Message de commit non conforme (docs/10-workflow-git.md §2)."
+  echo
+  if [ "$header_ok" = 0 ]; then
+    echo "  • En-tête attendu : <type>(<scope>): <description>"
+    echo "    type ∈ ${types//|/, }"
+    echo "    reçu : ${subject:-<vide>}"
+  fi
+  if [ "$ref_ok" = 0 ]; then
+    echo "  • Référence ticket manquante : ajoute « Refs #<iid> » (ou « Closes #<iid> ») en pied."
+  fi
+  echo
+  echo "  Exemple :"
+  echo "    feat(api): ajouter l'endpoint POST /login"
+  echo
+  echo "    Closes #12"
+  echo
+  echo "  Bypass ponctuel : git commit --no-verify"
+} >&2
+exit 1
