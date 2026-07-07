@@ -45,6 +45,8 @@ Bilan de santé (lecture seule) : `bash scripts/gitlab/doctor.sh` vérifie auth/
 
 Hooks git : `bash scripts/git/install-hooks.sh` (une fois par clone) active le hook `commit-msg` qui valide la convention de commit (Conventional Commits + `Refs`/`Closes #<iid>`). Bypass ponctuel : `git commit --no-verify`.
 
+Provisionnement d'un nouveau projet : `bash scripts/gitlab/bootstrap.sh` (labels) puis `bash scripts/gitlab/bootstrap-lifecycle.sh` (lifecycle « Maestro » — idempotent, dry-run par défaut, `--apply` pour créer sur un projet vierge).
+
 ## Garde-fous (autonomie sous supervision)
 
 - Ne jamais merger ou fermer une MR automatiquement — le merge est toujours une décision humaine.

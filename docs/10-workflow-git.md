@@ -114,6 +114,11 @@ Lifecycle : `gid://gitlab/WorkItems::Statuses::Custom::Lifecycle/1003066`.
 - **Inspecter les GIDs manuellement** (les GIDs de la table ci-dessus n'ont plus besoin d'être
   recopiés — `lib.sh` les redécouvre — mais pour vérifier) :
   `glab api graphql -f query='{ group(fullPath:"maestro-group4345327") { lifecycles { nodes { name statuses { id name } } } } }'`.
+- **Reproduire le lifecycle sur un nouveau projet** :
+  [`bash scripts/gitlab/bootstrap-lifecycle.sh`](../scripts/gitlab/bootstrap-lifecycle.sh) recrée le
+  lifecycle « Maestro » (6 statuts + attache aux types Issue/Task) via `lifecycleCreate` /
+  `lifecycleAttachWorkItemType`. **Idempotent** (ne fait rien si « Maestro » existe déjà) et
+  **dry-run par défaut** (imprime les mutations ; `--apply` pour créer, réservé à un projet vierge).
 
 ### 3.2 Les labels — catégorisation (hors cycle de vie)
 
