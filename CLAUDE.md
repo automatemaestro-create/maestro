@@ -43,6 +43,8 @@ Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les a
 
 Bilan de santé (lecture seule) : `bash scripts/gitlab/doctor.sh` vérifie auth/labels/lifecycle et **détecte les dérives** statut↔MR (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à nettoyer).
 
+Hooks git : `bash scripts/git/install-hooks.sh` (une fois par clone) active le hook `commit-msg` qui valide la convention de commit (Conventional Commits + `Refs`/`Closes #<iid>`). Bypass ponctuel : `git commit --no-verify`.
+
 ## Garde-fous (autonomie sous supervision)
 
 - Ne jamais merger ou fermer une MR automatiquement — le merge est toujours une décision humaine.

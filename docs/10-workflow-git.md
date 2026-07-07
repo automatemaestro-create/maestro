@@ -76,6 +76,11 @@ Valide les identifiants et retourne un JWT.
 Closes #12
 ```
 
+**Vérification automatique.** Un hook git [`commit-msg`](../scripts/git/hooks/commit-msg) (versionné,
+activé par `bash scripts/git/install-hooks.sh`) refuse localement tout message hors convention :
+en-tête Conventional Commits **et** présence de `Refs #<iid>` ou `Closes #<iid>`. Exemptions :
+merge / revert / `fixup!` / `squash!`. Bypass ponctuel : `git commit --no-verify`.
+
 ---
 
 ## 3. Statut natif (cycle de vie) & labels
@@ -247,6 +252,9 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à
   nettoyer). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
   dérives — utile en CI).
+- **Hooks git** : `bash scripts/git/install-hooks.sh` (une fois par clone) active le hook
+  [`commit-msg`](../scripts/git/hooks/commit-msg) qui valide la convention de commit (§2). Pose
+  `core.hooksPath` ; désactivation : `git config --unset core.hooksPath`.
 - **Windows / Git Credential Manager** : si un `git push`/`pull` reste bloqué sur une demande
   d'identifiants, forcer `glab` comme credential helper le temps de la commande —
   `git -c credential.helper='!glab auth git-credential' push -u origin <branche>`.

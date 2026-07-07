@@ -1,3 +1,7 @@
 # Les scripts shell doivent rester en LF même sous Windows (core.autocrlf=true),
 # sinon un CR en fin de ligne casse bash (shebang « #!/usr/bin/env bash\r », etc.).
 *.sh text eol=lf
+
+# Les hooks git n'ont pas d'extension .sh mais sont aussi du bash : même règle LF,
+# sinon le hook installé casse au checkout sous Windows.
+scripts/git/hooks/* text eol=lf
