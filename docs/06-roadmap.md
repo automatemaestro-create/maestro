@@ -34,14 +34,15 @@ gantt
 
 ## Phase 0 — POC (preuve de concept)
 
-**But :** valider le cœur orchestrateur-workers avec le Claude Agent SDK.
+**But :** valider le cœur orchestrateur-workers avec le Claude Agent SDK, **derrière une frontière d'abstraction fournisseur**.
 
 - Mettre en place le dépôt, l'environnement, l'accès au Claude Agent SDK.
+- Poser la **couche d'abstraction fournisseur** (interface `ModelProvider` : `fournisseur + modèle + credentials`) comme frontière d'architecture — **un seul fournisseur câblé (Claude)** pour l'instant, mais l'interface est en place (O7 / ENF-11).
 - Un **orchestrateur** qui décompose un objectif simple en 2-3 tâches.
 - **Deux agents** (ex. Développeur + BDD) qui exécutent une tâche chacun.
 - Exécution **en ligne de commande** (pas encore d'UI), résultats dans des fichiers.
 
-**Critère de sortie :** un objectif → des tâches → 2 agents produisent un résultat exploitable.
+**Critère de sortie :** un objectif → des tâches → 2 agents produisent un résultat exploitable ; le fournisseur de modèle est accédé via l'interface d'abstraction (pas d'appel Claude en dur dans la logique d'agent).
 
 ---
 
@@ -65,6 +66,7 @@ gantt
 **But :** équipe d'agents complète, personnalisation, observabilité.
 
 - **Les 6 agents** par défaut opérationnels (+ création d'agents personnalisés).
+- **Premier fournisseur non-Anthropic branché** via la couche d'abstraction (valide l'agnosticisme de bout en bout — O7 : ≥ 1 fournisseur non-Anthropic en V1).
 - **Éditeur de playbooks versionnés** dans l'UI, application à chaud.
 - **Observabilité Langfuse** intégrée (traces, coûts, évaluation).
 - **Contrôle de capacité** (instances par agent) depuis l'UI.
@@ -91,7 +93,7 @@ gantt
 ## Au-delà (idées V3+)
 
 - Marketplace d'agents et de playbooks partageables.
-- Support multi-fournisseurs de modèles via couche d'abstraction.
+- **Catalogue étendu de fournisseurs** et **sélection automatique du modèle** par coût/latence/souveraineté (la couche d'abstraction, elle, existe dès la Phase 0 ; ici on enrichit le catalogue et l'auto-sélection).
 - Apprentissage des préférences de l'équipe (mémoire long terme enrichie).
 - Mode « revue par les pairs » entre agents (débat/consensus à la AutoGen).
 

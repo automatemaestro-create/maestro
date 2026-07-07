@@ -4,7 +4,7 @@ Vocabulaire du projet, par ordre alphabétique.
 
 **A2A (Agent-to-Agent)** — Protocole standard (introduit par Google) de communication directe entre agents, bâti sur HTTP/JSON-RPC/SSE. Éléments clés : Agent Card, Task, Message. Complémentaire de MCP — A2A relie les agents entre eux, MCP relie les agents aux outils.
 
-**Agent** — Une entité IA spécialisée (basée sur un modèle Claude) avec un rôle, des outils et un playbook, capable d'exécuter des tâches de façon autonome.
+**Agent** — Une entité IA spécialisée (basée sur un modèle d'IA — Claude par défaut au POC, mais **le fournisseur est configurable par agent**) avec un rôle, des outils et un playbook, capable d'exécuter des tâches de façon autonome.
 
 **Auto-assignation (routage)** — Mécanisme qui attribue automatiquement une tâche au bon agent, selon ses compétences déclarées et un classifieur léger.
 
@@ -15,6 +15,8 @@ Vocabulaire du projet, par ordre alphabétique.
 **Claude Agent SDK** — Bibliothèque d'Anthropic pour construire des agents en production, bâtie sur le même harnais que Claude Code. Fournit sous-agents, sessions, MCP et exécution parallèle.
 
 **Control Tower** — L'interface web de Maestro : poste de pilotage pour superviser, configurer et interagir avec les agents.
+
+**Couche d'abstraction modèle (model gateway)** — Interface (`ModelProvider`, style **LiteLLM**) qui isole le moteur d'agents du fournisseur d'IA : la config d'un agent porte `fournisseur + modèle + credentials`. Elle rend Maestro **agnostique** — le POC ne câble que Claude, mais OpenAI, Google ou des modèles ouverts/locaux s'ajoutent par configuration, sans refonte (voir O7 / ENF-11).
 
 **Dépendance (de tâche)** — Relation indiquant qu'une tâche ne peut démarrer qu'après l'achèvement d'une autre.
 
@@ -32,7 +34,7 @@ Vocabulaire du projet, par ordre alphabétique.
 
 **MCP (Model Context Protocol)** — Standard pour connecter des outils et intégrations (Git, base de données, Slack…) aux agents.
 
-**Modèle (Opus / Sonnet / Haiku)** — Les modèles Claude. Opus pour les tâches complexes (orchestrateur), Sonnet pour les workers, Haiku pour les tâches simples et le routage.
+**Modèle (Opus / Sonnet / Haiku)** — Les modèles Claude, **défaut du POC** : Opus pour les tâches complexes (orchestrateur), Sonnet pour les workers, Haiku pour les tâches simples et le routage. Le **fournisseur est configurable par agent** via la couche d'abstraction modèle — d'autres modèles (OpenAI, Google, ouverts/locaux) sont utilisables.
 
 **Orchestrateur (Conductor)** — L'agent « chef » qui décompose un objectif en tâches, les délègue et synthétise les résultats. Incarné par l'agent Chef de projet.
 

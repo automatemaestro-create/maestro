@@ -101,7 +101,7 @@ Le « cerveau » de routage. Responsabilités :
 - **Planification** : établir le graphe de dépendances entre tâches.
 - **Synthèse** : agréger les résultats des workers en un livrable cohérent.
 
-Implémenté comme un agent Claude (modèle puissant, ex. *Opus*) avec un prompt système dédié.
+Implémenté comme un agent doté d'un modèle puissant (ex. Claude *Opus* par défaut au POC) avec un prompt système dédié. Le **fournisseur est configurable** via la couche d'abstraction (voir [stack §2](./02-stack-technique.md)).
 
 ### 3.2 Routeur de tâches (auto-assignation)
 
@@ -134,8 +134,9 @@ Le **planificateur** ne libère une tâche dans la file que lorsque toutes ses d
 
 ### 3.4 Runtime d'un agent
 
-Chaque agent est une instance du **Claude Agent SDK** configurée avec :
+Chaque agent s'exécute derrière une **couche d'abstraction fournisseur** : il déclare un `fournisseur + modèle`, et la couche route vers le runtime adéquat. Au POC, ce runtime est le **Claude Agent SDK** (agents Claude) ; d'autres fournisseurs (OpenAI, Google, modèles ouverts/locaux) s'ajoutent par configuration, sans refonte. Chaque agent est configuré avec :
 
+- un **fournisseur + modèle** (Claude par défaut au POC ; configurable — voir [stack §2](./02-stack-technique.md)) ;
 - un **prompt système** (rôle, ton, contraintes) ;
 - un **playbook** (workflow d'étapes, voir [doc 04](./04-specifications-agents.md)) injecté au démarrage de chaque tâche ;
 - un **jeu d'outils** (fichiers, exécution de code, serveurs **MCP**) ;
@@ -253,7 +254,8 @@ Les **playbooks** et configurations d'agents sont stockés en base et **versionn
 
 | Décision | Choix retenu | Pourquoi |
 |----------|--------------|----------|
-| Pattern d'orchestration | Orchestrateur-workers (natif Agent SDK) au départ | Recommandé par Anthropic ; simple, flexible, composable |
+| Fournisseur de modèle | Couche d'abstraction (choix `fournisseur + modèle` par agent) ; Claude câblé au POC | Agnosticisme, pas de lock-in (O7 / ENF-11) |
+| Pattern d'orchestration | Orchestrateur-workers (natif Agent SDK, runtime Claude) au départ | Recommandé par Anthropic ; simple, flexible, composable |
 | Parallélisme | File de tâches + workers | Découple création/exécution, relances, montée en charge |
 | Communication inter-agents | Tableau noir partagé + mailbox pub/sub + protocole A2A | Coordination sans couplage, handoff direct, standard interopérable |
 | Durabilité des exécutions | Workflows durables (ex. Temporal) | Reprise sur panne, tâches longues, pas de perte de travail |

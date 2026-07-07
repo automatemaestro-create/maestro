@@ -18,11 +18,13 @@ Construire un logiciel mobilise plusieurs métiers : gestion de projet, dévelop
 
 L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de **chef d'orchestre** (qui dirige et arbitre).
 
+**Indépendance vis-à-vis des modèles.** Maestro n'est lié à **aucun fournisseur d'IA**. Chaque agent est **configurable** pour tourner sur le fournisseur et le modèle de son choix — Claude, mais aussi OpenAI, Google, ou des modèles **ouverts/locaux**. Le POC démarre sur Claude, mais derrière une **couche d'abstraction** qui rend l'ajout d'un autre fournisseur **déclaratif** (de la configuration, pas une refonte).
+
 ### 1.3 Proposition de valeur
 
 - **Pour un fondateur / chef de projet :** transformer une idée en travail concret réparti, sans gérer manuellement chaque outil.
 - **Pour une équipe technique :** automatiser les tâches répétitives et paralléliser le travail multi-métiers.
-- **Différenciateur :** ce n'est pas *un* assistant, c'est une **équipe coordonnée**, pilotable et personnalisable.
+- **Différenciateur :** ce n'est pas *un* assistant, c'est une **équipe coordonnée**, pilotable et personnalisable — et **agnostique au fournisseur d'IA** (chaque agent sur le modèle de son choix, sans lock-in).
 
 ---
 
@@ -38,12 +40,13 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 | O4 — Parallélisme | Plusieurs agents travaillent simultanément | ≥ 5 agents actifs en parallèle sans collision |
 | O5 — Supervision | Une interface unique pour monitorer, configurer, interagir | Toutes les actions clés réalisables depuis l'UI |
 | O6 — Évolutivité des workflows | Les instructions de chaque agent évoluent sans redéploiement | Modification d'un *playbook* en < 1 min, sans redéploiement |
+| O7 — Indépendance fournisseur | Chaque agent configurable avec n'importe quel fournisseur/modèle (y compris hors Anthropic), derrière une couche d'abstraction | Ajouter un fournisseur = configuration (pas de refonte) ; ≥ 1 fournisseur non-Anthropic branché en V1 |
 
 ### 2.2 Non-objectifs (hors périmètre initial)
 
 - Remplacer entièrement une équipe humaine sans aucune supervision.
 - Garantir un code « production-ready » sans relecture sur des sujets critiques.
-- Supporter dès le départ des dizaines de fournisseurs de modèles (on cible Claude en priorité, l'architecture reste agnostique).
+- Livrer **dès le POC** des intégrations clé-en-main pour des dizaines de fournisseurs de modèles. L'**agnosticisme** est un objectif de premier ordre (O7) porté par une couche d'abstraction, mais le POC n'implémente concrètement que **Claude** ; les autres fournisseurs s'ajoutent ensuite par configuration.
 - Marketplace publique d'agents tiers (envisageable en V2+).
 
 ---
@@ -142,16 +145,17 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 | ENF-04 | **Sûreté / contrôle** | Garde-fous : validation humaine, liste d'actions interdites, plafond de dépense par tâche/jour. |
 | ENF-05 | **Observabilité** | Traçage complet (entrées, sorties, outils, tokens, coût) de chaque exécution. |
 | ENF-06 | **Fiabilité** | Reprise sur erreur : une tâche échouée est relancée ou re-routée ; pas de perte de travail (workflows durables). |
-| ENF-07 | **Coût** | Suivi et limitation des dépenses ; choix du modèle par agent (modèle léger pour les tâches simples). |
-| ENF-08 | **Modularité** | Ajout/remplacement d'un agent ou d'un outil sans refonte. |
+| ENF-07 | **Coût** | Suivi et limitation des dépenses ; choix du **fournisseur et du modèle** par agent (modèle léger — voire local — pour les tâches simples). |
+| ENF-08 | **Modularité** | Ajout/remplacement d'un agent, d'un outil ou d'un **fournisseur de modèle** sans refonte. |
 | ENF-09 | **Confidentialité** | Données et secrets chiffrés ; possibilité d'auto-hébergement de l'observabilité. |
 | ENF-10 | **Expérience** | Interface **multilingue** (français par défaut, autres langues activables via internationalisation / i18n), claire et compréhensible par un profil non technique. |
+| ENF-11 | **Agnosticisme modèle** | Le moteur d'agents est isolé derrière une **couche d'abstraction fournisseur** : la config d'un agent porte `fournisseur + modèle + credentials`. Aucun couplage dur à un fournisseur unique. |
 
 ---
 
 ## 6. Contraintes et hypothèses
 
-- **Modèle d'IA principal :** famille **Claude** via le **Claude Agent SDK** (orchestration, sous-agents, MCP natifs). Architecture conçue pour rester agnostique au fournisseur.
+- **Modèles d'IA :** l'architecture est **agnostique au fournisseur** — chaque agent choisit son fournisseur + modèle derrière une **couche d'abstraction** (« model gateway »). Le **POC démarre sur la famille Claude** (via le **Claude Agent SDK** : orchestration, sous-agents, MCP natifs), qui reste le runtime des agents Claude ; les autres fournisseurs (OpenAI, Google, modèles ouverts/locaux) s'ajoutent par configuration, **sans refonte**.
 - **Coût des modèles :** facturation à l'usage (tokens) — le suivi des coûts est une exigence de premier ordre.
 - **Maturité de l'écosystème :** l'orchestration multi-agents évolue vite ; privilégier des **patterns simples et composables** plutôt que des frameworks lourds, et concevoir pour le changement.
 - **Supervision humaine :** indispensable pour les actions à fort impact (le but est l'assistance augmentée, pas l'absence totale de contrôle).
@@ -168,7 +172,7 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 | Action destructrice d'un agent | Élevé | Bac à sable, permissions scopées, validation humaine, liste d'actions interdites. |
 | Sur-ingénierie initiale | Moyen | Commencer par le pattern orchestrateur-workers natif ; complexifier seulement si mesurablement utile. |
 | Collisions sur ressources partagées | Moyen | Verrous/locks sur ressources, branches Git par tâche, file de tâches. |
-| Dépendance forte à un fournisseur | Moyen | Couche d'abstraction modèle ; outils standard (MCP). |
+| Dépendance forte à un fournisseur | Élevé | **Couche d'abstraction modèle de premier ordre** (choix fournisseur + modèle par agent, ENF-11/O7) ; outils standard (MCP). |
 
 ---
 

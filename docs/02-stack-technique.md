@@ -9,8 +9,9 @@
 
 | Domaine | Choix recommandé | Alternatives sérieuses |
 |---------|------------------|------------------------|
-| **Moteur d'agents** | **Claude Agent SDK** (Python *ou* TypeScript) | LangGraph, CrewAI, AutoGen/AG2 |
-| **Modèles** | Claude **Opus** (orchestrateur), **Sonnet** (workers), **Haiku** (routage/classif.) | Modèles ouverts via couche d'abstraction |
+| **Abstraction fournisseur** | **Couche « model gateway »** (interface `ModelProvider`, style **LiteLLM**) — choix fournisseur + modèle par agent | Proxy LiteLLM, ou runtime agnostique (LangGraph, Pydantic AI) |
+| **Moteur d'agents** | **Claude Agent SDK** (Python *ou* TypeScript) — runtime des agents **Claude** derrière l'abstraction | LangGraph, CrewAI, AutoGen/AG2 |
+| **Modèles** | **POC : Claude** — Opus (orchestrateur), Sonnet (workers), Haiku (routage/classif.) | **Tout fournisseur via la couche** : OpenAI, Google, modèles ouverts/locaux |
 | **Orchestration de flux** | Agent SDK natif → **LangGraph** si flux d'état complexes | CrewAI (rôles), AutoGen (conversations) |
 | **File de tâches / durabilité** | **Temporal** (durable) ou Celery/BullMQ + Redis (simple) | RabbitMQ, AWS SQS |
 | **Backend / API** | **FastAPI** (Python) | NestJS / Fastify (Node) |
@@ -32,9 +33,18 @@
 
 ---
 
-## 2. Moteur d'agents : pourquoi le Claude Agent SDK
+## 2. Moteur d'agents & abstraction fournisseur
 
-Le **Claude Agent SDK** est la bibliothèque d'Anthropic pour construire des agents en production, bâtie sur le même « harnais » que Claude Code. Il offre nativement ce dont Maestro a besoin :
+> 🔑 **Principe d'agnosticisme (O7 / ENF-11).** Le moteur d'agents est placé **derrière une couche d'abstraction fournisseur** (interface `ModelProvider` / « model gateway », style **LiteLLM**) : la config de chaque agent porte `fournisseur + modèle + credentials`. Le **POC n'implémente que le fournisseur Claude** (via l'Agent SDK), mais l'interface permet d'ajouter OpenAI, Google ou des modèles ouverts/locaux **par configuration, sans refonte**. On ne se lie donc jamais durement à un fournisseur unique.
+
+**Deux stratégies pour les agents non-Claude**, selon le besoin (à trancher hors POC) :
+
+- **Proxy de modèle** (ex. **LiteLLM**) devant le runtime : on garde un runtime unique et on route l'appel modèle vers le fournisseur choisi. Simple, mais on perd une partie des atouts *natifs* de l'Agent SDK (sous-agents, MCP) pour les modèles non-Claude.
+- **Runtime agnostique** (ex. **LangGraph**, **Pydantic AI**) pour les agents dont le fournisseur n'est pas Claude, l'Agent SDK restant le runtime optimal des agents Claude.
+
+### Pourquoi le Claude Agent SDK comme premier fournisseur
+
+Le **Claude Agent SDK** est la bibliothèque d'Anthropic pour construire des agents en production, bâtie sur le même « harnais » que Claude Code. Il offre nativement ce dont Maestro a besoin **pour les agents Claude** :
 
 - **Sous-agents (subagents)** : un agent « lead » délègue à des spécialistes ayant leur propre modèle, prompt et outils — exactement le pattern orchestrateur-workers.
 - **Exécution parallèle** : les sous-agents travaillent en parallèle avec un **contexte isolé**, sur un système de fichiers partagé, et remontent leurs résultats au lead.
@@ -144,11 +154,11 @@ Le **protocole A2A (Agent-to-Agent)**, introduit par Google, standardise la **co
 
 ## 10. Récapitulatif des décisions
 
-1. **Claude Agent SDK** comme socle, pattern **orchestrateur-workers** natif.
+1. **Couche d'abstraction fournisseur** (« model gateway ») en frontière : choix `fournisseur + modèle` par agent. Le **Claude Agent SDK** est le runtime des agents **Claude** (câblé pour le POC), pattern **orchestrateur-workers** natif ; les autres fournisseurs s'ajoutent par configuration.
 2. **Python/FastAPI** pour backend+agents (ou tout-TypeScript selon l'équipe).
 3. **PostgreSQL + pgvector + Redis** pour données, mémoire et file.
 4. **Next.js** pour la Control Tower, temps réel via WebSocket.
 5. **Langfuse** pour l'observabilité.
 6. **Docker** + **branche Git par tâche** pour l'isolation.
 7. **MCP** pour toutes les intégrations.
-8. Rester **modulaire** : on doit pouvoir remplacer un agent, un outil ou le framework d'orchestration sans tout refondre.
+8. Rester **modulaire** : on doit pouvoir remplacer un agent, un outil, un **fournisseur de modèle** ou le framework d'orchestration sans tout refondre.
