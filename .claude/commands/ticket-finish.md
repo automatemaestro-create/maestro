@@ -61,23 +61,20 @@ l'état partagé (push, création/mise à jour de MR) si un point n'est pas clai
    lifecycle « Maestro » (pas de GID en dur). Vérifie que la commande réussit. Ne touche pas aux
    labels `agent::*` / `prio::*` / `type::*`.
 
-8. Renseigne le **temps passé** (voir @docs/10-workflow-git.md §3.3). Le temps est **proposé, pas
-   loggé en silence** — cohérent avec les garde-fous « montrer avant d'agir » :
-   - Récupère la date de début : `bash scripts/gitlab/lib.sh get-start-date <iid>`. Si elle est
-     vide (ticket démarré sans `/ticket-start`), demande à l'utilisateur combien de temps loggé
-     plutôt que d'inventer.
-   - Calcule le temps écoulé : `bash scripts/gitlab/lib.sh elapsed-days <date-début>` (jours
-     calendaires depuis le début).
-   - Vérifie ce qui est déjà loggé : `bash scripts/gitlab/lib.sh get-time-spent <iid>` (secondes).
-     Si le résultat n'est pas `0`, du temps a déjà été enregistré — **signale-le et demande** avant
-     d'en ajouter, pour ne pas doubler.
-   - **Propose** une durée au format GitLab (`2h`, `1h 30m`, `1d`…). Le nombre de jours écoulés est
-     un plafond calendaire (nuits/week-ends compris), pas l'effort réel : suggère une valeur
-     plausible et **laisse l'utilisateur confirmer ou ajuster**. S'il valide, logge-la :
+8. Renseigne le **temps passé** — **estimé automatiquement, sans demander de confirmation** (voir
+   @docs/10-workflow-git.md §3.3) :
+   - Vérifie d'abord ce qui est déjà loggé : `bash scripts/gitlab/lib.sh get-time-spent <iid>`
+     (secondes). Si le résultat **n'est pas `0`**, du temps a déjà été enregistré — n'en rajoute
+     pas (idempotence : ne double pas un cycle déjà loggé) et passe à la suite.
+   - Sinon, **estime toi-même l'effort** d'après la **portée réelle du travail** de la branche
+     (ampleur du diff, nombre et nature des commits, ce que tu as fait durant la session) — pas le
+     temps calendaire écoulé, qui n'est qu'un plafond peu fidèle. Traduis-la en une durée au format
+     GitLab (`30m`, `1h`, `2h 30m`, `1d`…).
+   - Logge-la directement, sans question :
      ```
-     bash scripts/gitlab/lib.sh log-time <iid> "<durée validée>" "Cycle de dev (start->finish)"
+     bash scripts/gitlab/lib.sh log-time <iid> "<durée estimée>" "Cycle de dev (start->finish)"
      ```
-   - Si l'utilisateur ne veut rien logger, n'appelle pas `log-time` et passe à la suite.
+   - Indique dans le résumé final la durée estimée et loggée (transparence a posteriori).
 
 9. Termine par un résumé : lien de la MR, état (Draft/Ready), le temps loggé le cas échéant, et
    rappelle que le merge reste une action humaine (personne — pas même toi — ne doit merger

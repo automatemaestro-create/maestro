@@ -141,18 +141,20 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
 |---|---|---|---|
 | **Date de début** | `/ticket-start` | = jour du démarrage (aujourd'hui). Conservée si déjà posée. | `lib.sh start-dates <iid>` |
 | **Échéance** (due date) | `/ticket-start` | = début + délai dérivé de `prio::` : `haute` → 2 j, `moyenne` → 5 j, `basse` → 10 j (défaut `moyenne`). | `lib.sh start-dates <iid>` |
-| **Temps passé** | `/ticket-finish` | temps écoulé depuis la date de début, **proposé puis confirmé/ajusté** par l'humain avant d'être loggé (jamais en silence). | `lib.sh get-start-date` / `elapsed-days` / `log-time` |
+| **Temps passé** | `/ticket-finish` | **estimé automatiquement par l'agent** d'après la portée du travail (diff, commits, contexte) et loggé directement, sans confirmation. | `lib.sh log-time` (`get-time-spent` pour l'idempotence) |
 
 - **Délais d'échéance ajustables** : surcharger `GL_DUE_DELAY_HAUTE` / `GL_DUE_DELAY_MOYENNE` /
   `GL_DUE_DELAY_BASSE` (en jours) dans l'environnement.
-- **Pas d'estimation automatique** : `timeEstimate` n'est pas posé (aucune source fiable côté
-  automatisation). Le champ reste disponible à la main dans GitLab si besoin.
-- **Le temps passé est calendaire, pas de l'effort net** : `elapsed-days` compte les jours
-  calendaires (nuits/week-ends compris). `/ticket-finish` le **propose** comme plafond et laisse
-  l'humain corriger — d'où l'absence de log silencieux (cohérent avec les garde-fous §6).
+- **Temps passé estimé par l'agent, pas mesuré** : le temps calendaire écoulé (`elapsed-days`) vaut
+  0 le jour même et n'est de toute façon pas de l'effort net. `/ticket-finish` demande donc à l'agent
+  qui clôt le ticket d'**estimer l'effort d'après la portée du travail** (diff, commits, contexte de
+  session) et de le logger **directement, sans confirmation** (choix explicite : pas de prompt à
+  chaque clôture). Le helper `elapsed-days` reste disponible comme repère.
+- **Pas d'estimation prévisionnelle (`timeEstimate`)** : seul le temps *passé* est renseigné ; le
+  champ Estimation reste disponible à la main dans GitLab si besoin.
 - **Idempotence** : ré-exécuter `/ticket-start` garde la date de début d'origine (ne la réinitialise
   pas à aujourd'hui) et se contente de recalculer l'échéance. `/ticket-finish` vérifie le temps déjà
-  loggé (`get-time-spent`) et demande avant d'en rajouter, pour ne pas doubler.
+  loggé (`get-time-spent`) et **n'en rajoute pas** si un cycle est déjà enregistré, pour ne pas doubler.
 
 ---
 
