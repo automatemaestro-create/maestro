@@ -4,9 +4,10 @@ argument-hint: <issue-iid>
 allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
 
-Tu vas démarrer le travail sur le ticket GitLab d'IID `$ARGUMENTS` selon les règles de
-@docs/10-workflow-git.md. Suis ces étapes dans l'ordre et arrête-toi (en expliquant pourquoi)
-dès qu'une vérification échoue au lieu de forcer la suite.
+Tu vas démarrer le travail sur le ticket GitLab d'IID `$ARGUMENTS` selon les règles de Maestro
+(résumées ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`,
+non chargée automatiquement, à n'ouvrir qu'en cas de doute). Suis ces étapes dans l'ordre et
+arrête-toi (en expliquant pourquoi) dès qu'une vérification échoue au lieu de forcer la suite.
 
 1. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur avant de continuer.
 
@@ -39,12 +40,12 @@ dès qu'une vérification échoue au lieu de forcer la suite.
    `cleanup-merged` est le pendant **automatique** de `/branch-cleanup` : maintenant qu'on est sur
    `main` à jour et que l'arbre est propre, il supprime les branches **locales** (hors `main` et hors
    branche courante) dont **GitLab confirme la MR `merged`** — et rien d'autre (garde-fou
-   @docs/10-workflow-git.md §6). S'il n'y a rien à nettoyer, il le dit et n'a aucun effet.
+   `docs/10-workflow-git.md` §6). S'il n'y a rien à nettoyer, il le dit et n'a aucun effet.
    `/branch-cleanup` reste disponible pour un nettoyage explicite hors démarrage de ticket.
 
 8. Assigne le ticket et fais passer son **Status natif** à « En cours ». Le cycle de vie est
    porté par le champ **Status** de GitLab (lifecycle « Maestro »), pas par des labels — voir
-   @docs/10-workflow-git.md §3.
+   `docs/10-workflow-git.md` §3.
    - Assignation : récupère ton username (`glab api user` → champ `username`), puis
      `glab issue update $ARGUMENTS --assignee <username>`.
    - Statut : `bash scripts/gitlab/lib.sh set-status $ARGUMENTS "En cours"`. Le helper résout le
@@ -53,7 +54,7 @@ dès qu'une vérification échoue au lieu de forcer la suite.
      Ne touche pas aux labels `agent::*` / `prio::*` / `type::*` (ils relèvent du triage, pas de ce
      workflow).
 
-9. Renseigne les **dates** du ticket (voir @docs/10-workflow-git.md §3.3) :
+9. Renseigne les **dates** du ticket (voir `docs/10-workflow-git.md` §3.3) :
    ```
    bash scripts/gitlab/lib.sh start-dates $ARGUMENTS
    ```

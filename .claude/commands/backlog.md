@@ -6,7 +6,9 @@ allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 
 Commande **de supervision, en lecture seule** : tu produis un tableau de bord du backlog pour aider
 au pilotage (avant que la Control Tower n'existe). Tu **ne modifies rien** — ni statut, ni label,
-ni assignation, ni MR. Suis le cycle de vie décrit dans @docs/10-workflow-git.md §3/§5.
+ni assignation, ni MR. Le cycle de vie (statut natif) est résumé ci-dessous — cette commande est
+autosuffisante ; réf. complète `docs/10-workflow-git.md` §3/§5, non chargée automatiquement, à
+n'ouvrir qu'en cas de doute.
 
 1. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Arrête-toi si non authentifié.
 

@@ -4,9 +4,11 @@ argument-hint: "<type: feature|bug|doc|infra> <titre>  (le reste peut être pré
 allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*), Read
 ---
 
-Tu vas créer un **nouveau ticket** GitLab bien formé selon @docs/10-workflow-git.md. C'est le
-pendant amont de `/ticket-start` : cette commande **crée** le ticket (statut « À faire », le défaut
-du lifecycle) mais **ne crée pas de branche** et **n'assigne pas** — c'est le rôle de
+Tu vas créer un **nouveau ticket** GitLab bien formé selon les règles de Maestro (résumées
+ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`, non
+chargée automatiquement, à n'ouvrir qu'en cas de doute). C'est le pendant amont de `/ticket-start` :
+cette commande **crée** le ticket (statut « À faire », le défaut du lifecycle) mais **ne crée pas de
+branche** et **n'assigne pas** — c'est le rôle de
 `/ticket-start <iid>` ensuite. Arrête-toi et demande dès qu'une information nécessaire manque au
 lieu d'inventer.
 
@@ -27,7 +29,7 @@ lieu d'inventer.
    d'acceptation). Ne fabrique pas de critères d'acceptation : si l'utilisateur ne les a pas
    fournis, laisse les cases `- [ ]` vides ou demande-les.
 
-5. Détermine les labels de catégorisation (voir @docs/10-workflow-git.md §3.2) :
+5. Détermine les labels de catégorisation (voir `docs/10-workflow-git.md` §3.2) :
    - `type::<type>` — **obligatoire**, déduit de l'étape 2.
    - `agent::<rôle>` — quel agent Maestro traitera le ticket
      (`dev`/`bdd`/`devops`/`design`/`qa`/`orchestrateur`). **Demande-le** si l'utilisateur ne l'a

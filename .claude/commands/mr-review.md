@@ -6,8 +6,9 @@ allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 
 Commande **de supervision, en lecture seule** : tu synthétises **une** Merge Request pour aider
 l'humain à décider s'il la merge. **Tu ne merges, ne fermes, n'approuves et ne modifies jamais**
-une MR ou un ticket (garde-fou @docs/10-workflow-git.md §6) — même si tout est vert, la décision
-de merge reste humaine.
+une MR ou un ticket — même si tout est vert, la décision de merge reste humaine (garde-fou détaillé
+dans `docs/10-workflow-git.md` §6, non chargé automatiquement ; cette commande est autosuffisante,
+n'ouvre le doc qu'en cas de doute).
 
 1. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Arrête-toi si non authentifié.
 
@@ -28,7 +29,7 @@ de merge reste humaine.
 4. État du pipeline : lis le pipeline de tête depuis le JSON (`pipeline`/`head_pipeline` → `status`)
    s'il est présent ; sinon, `glab ci status` (ou `glab ci view <source_branch>`). Rapporte
    `success`/`failed`/`running`/absent, sans le faire échouer si aucun pipeline n'est configuré (le
-   monorepo n'a pas encore de CI — @docs/10-workflow-git.md §8).
+   monorepo n'a pas encore de CI — `docs/10-workflow-git.md` §8).
 
 5. Résumé des changements : `glab mr diff <cible>` — **résume** (fichiers touchés, nature des
    modifications), ne recopie pas le diff entier. Si le diff est volumineux, donne les fichiers et
