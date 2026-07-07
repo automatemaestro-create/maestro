@@ -18,8 +18,12 @@ arrête-toi (en expliquant pourquoi) dès qu'une vérification échoue au lieu d
    changements non commités, arrête-toi et demande à l'utilisateur quoi en faire (les
    committer, les stasher, ou annuler) — ne prends pas cette décision à sa place.
 
-4. Récupère le ticket : `glab issue view $ARGUMENTS`. Note le titre, la description, les
-   labels et les critères d'acceptation.
+4. Récupère le ticket en version **compacte** (pour réinjecter moins de contexte) :
+   `bash scripts/gitlab/lib.sh issue-brief $ARGUMENTS`. Le helper ne renvoie que le titre, les
+   labels et la section « Critères d'acceptation » — l'essentiel pour cadrer le travail. Le
+   `glab issue view $ARGUMENTS` intégral (description complète, « Pourquoi maintenant ? »…) reste
+   disponible si tu as besoin de plus de détail, par exemple pour lever une ambiguïté de type au
+   point 5.
 
 5. Détermine le préfixe de branche à partir du label `type::*` du ticket, via le helper :
    `bash scripts/gitlab/lib.sh branch-prefix <valeur-type>` (`feature`→`feat`, `bug`→`fix`,
