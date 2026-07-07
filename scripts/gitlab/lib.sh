@@ -241,6 +241,50 @@ gl_log_time() {
   esac
 }
 
+# --- Nettoyage des branches locales -------------------------------------------------------------
+# gl_mr_state <branche> -> imprime l'état de la MR associée à la branche (opened|closed|merged),
+# vide si aucune MR n'est trouvée.
+gl_mr_state() {
+  local branch="$1"
+  if [ -z "$branch" ]; then echo "gl_mr_state : branche manquante" >&2; return 2; fi
+  glab mr view "$branch" --output json 2>/dev/null \
+    | grep -o '"state":"[a-z]*"' | head -1 | sed 's/.*:"//; s/"//'
+}
+
+# gl_cleanup_merged -> supprime les branches LOCALES (hors main et hors branche courante) dont
+# GitLab confirme la MR à l'état « merged ». Conçu pour tourner automatiquement (appelé par
+# /ticket-start après mise à jour de main) — c'est le pendant non-interactif de /branch-cleanup :
+#   • ne supprime QUE ce que GitLab confirme mergé (garde-fou docs/10 §6) — jamais une branche au
+#     statut incertain (opened/closed/aucune MR) ;
+#   • `git branch -D` est sûr ici car le merge est confirmé (le projet merge en squash) ;
+#   • ne change jamais de branche, n'écrit rien sur GitLab, et s'abstient si l'arbre est sale.
+gl_cleanup_merged() {
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "Nettoyage des branches ignoré : changements non commités présents." >&2
+    return 0
+  fi
+  # Pruning cosmétique des refs de suivi ; non bloquant (jamais de prompt d'identifiants) et non
+  # fatal : la décision de suppression s'appuie sur l'état MR côté GitLab, pas sur ce fetch.
+  GIT_TERMINAL_PROMPT=0 git fetch --prune origin >/dev/null 2>&1
+  local current branch state deleted=0 kept=0
+  current="$(git branch --show-current 2>/dev/null)"
+  while IFS= read -r branch; do
+    [ -z "$branch" ] && continue
+    [ "$branch" = "main" ] && continue
+    [ "$branch" = "$current" ] && continue
+    state="$(gl_mr_state "$branch")"
+    if [ "$state" = "merged" ]; then
+      if git branch -D "$branch" >/dev/null 2>&1; then
+        printf '  supprimée : %s (MR merged)\n' "$branch"
+        deleted=$((deleted + 1))
+      fi
+    else
+      kept=$((kept + 1))
+    fi
+  done < <(git branch --format='%(refname:short)')
+  printf 'Nettoyage des branches : %s supprimée(s), %s conservée(s).\n' "$deleted" "$kept"
+}
+
 # --- Utilitaires de nommage ---------------------------------------------------------------------
 # gl_slug <titre> -> slug de branche : minuscules, accents retirés, non-alphanum -> '-',
 # tirets collapsés, tronqué à 40 caractères, sans tiret de bord.
@@ -288,6 +332,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     set-dates)      gl_set_dates "$@" ;;
     start-dates)    gl_start_dates "$@" ;;
     log-time)       gl_log_time "$@" ;;
+    mr-state)       gl_mr_state "$@" ;;
+    cleanup-merged) gl_cleanup_merged "$@" ;;
     slug)           gl_slug "$@" ;;
     branch-prefix)  gl_branch_prefix "$@" ;;
     *)
@@ -299,6 +345,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    set-dates <iid> [début] [échéance]   get-start-date <iid>" >&2
       echo "    prio <iid>   prio-delay <prio>   elapsed-days <date>" >&2
       echo "    log-time <iid> <durée> [résumé]   get-time-spent <iid>" >&2
+      echo "  Branches :" >&2
+      echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
+      echo "    mr-state <branche>          (opened|closed|merged)" >&2
       exit 2 ;;
   esac
 fi

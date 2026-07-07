@@ -190,7 +190,9 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
    `type::`/`agent::`/`prio::`), statut `À faire` par défaut. Ne crée pas de branche.
 1. **À faire** — le ticket existe (statut par défaut à la création), personne ne travaille dessus.
 2. **`/ticket-start <iid>`** — crée/checkout la branche, assigne le ticket à l'exécutant, passe
-   le **statut** à `En cours`.
+   le **statut** à `En cours`. Comme il met `main` à jour au passage, il en profite pour **purger
+   automatiquement les branches locales déjà mergées** (`lib.sh cleanup-merged`, même garde-fou que
+   `/branch-cleanup` : uniquement celles dont GitLab confirme la MR `merged`).
 3. Développement sur la branche (commits `Refs #<iid>`).
 4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec
    `Closes #<iid>`, passe le **statut** à `En revue`.
@@ -201,7 +203,11 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
    veut garder la branche).
 6. **`/branch-cleanup`** — comme GitLab a déjà géré le distant et le statut (étape 5), cette
    commande ne fait plus que le **ménage local** : supprime la branche **locale** mergée et
-   remet `main` à jour.
+   remet `main` à jour. Ce ménage est en grande partie **automatisé** : `/ticket-start` lance
+   `cleanup-merged` à chaque démarrage de ticket (étape 2), donc les branches mergées disparaissent
+   d'elles-mêmes au fil de l'eau. `/branch-cleanup` reste utile pour un nettoyage **à la demande**
+   (ex. sans démarrer de nouveau ticket) ou pour supprimer aussi la branche distante si la case
+   « Delete source branch » avait été décochée au merge.
 
 **Voie « non réalisé ».** À tout moment (depuis `À faire`, `En cours` ou `En revue`), un ticket
 peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** : statut `Abandonné`
