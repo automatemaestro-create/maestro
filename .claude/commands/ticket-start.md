@@ -70,9 +70,18 @@ arrête-toi (en expliquant pourquoi) dès qu'une vérification échoue au lieu d
    commande réussit ; en cas d'échec, signale-le mais ne bloque pas la création de branche déjà
    faite.
 
-10. Termine par un résumé court : nom de la branche créée, titre du ticket, les dates posées
+10. Produis un résumé court : nom de la branche créée, titre du ticket, les dates posées
    (début / échéance), et la liste des critères d'acceptation trouvés dans la description — pour
    cadrer le travail qui commence.
 
-Ne crée pas encore de Merge Request à ce stade (il n'y a pas encore de commit à proposer) —
-c'est le rôle de `/ticket-finish`.
+11. **Enchaîne immédiatement sur l'implémentation.** Le résumé de l'étape 10 cadre le travail,
+   ce n'est **pas une demande de validation** : n'attends aucun « go » de l'utilisateur et
+   commence tout de suite à réaliser le ticket (les critères d'acceptation font foi). Ne
+   t'arrête pour demander que si le ticket est réellement ambigu au point de ne pas pouvoir
+   commencer.
+
+Ne crée pas encore de Merge Request à ce stade (il n'y a pas encore de commit à proposer). La
+**clôture** du cycle passe par les commandes dédiées : **`/ticket-ship`** (commit automatique +
+push + MR + statut) une fois le travail terminé, ou `/ticket-finish` si le commit est déjà fait.
+N'improvise jamais ce cycle à la main (`git commit`/`git push`/`glab mr create` directs hors de
+ces commandes) : les skills en sont la source unique.

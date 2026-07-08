@@ -197,7 +197,9 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
 2. **`/ticket-start <iid>`** — crée/checkout la branche, assigne le ticket à l'exécutant, passe
    le **statut** à `En cours`. Comme il met `main` à jour au passage, il en profite pour **purger
    automatiquement les branches locales déjà mergées** (`lib.sh cleanup-merged`, même garde-fou que
-   `/branch-cleanup` : uniquement celles dont GitLab confirme la MR `merged`).
+   `/branch-cleanup` : uniquement celles dont GitLab confirme la MR `merged`). Une fois le cadrage
+   résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé n'est pas une pause
+   d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).
 4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec
    `Closes #<iid>`, passe le **statut** à `En revue`.
@@ -210,6 +212,9 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
      committer → utiliser `/ticket-finish`) ou **en conflit**, et **jamais sur `main`**. Le hook
      `commit-msg` (§2) reste appliqué — pas de `--no-verify`. Pensé pour la **boucle d'orchestration**
      (ticket #34) : moins d'allers-retours manuels à chaque clôture.
+   - Dans les deux cas, la clôture passe par **ces commandes et rien d'autre** : ne pas
+     ré-implémenter le cycle à la main (`git commit`/`git push`/`glab mr create` ad hoc) — elles en
+     sont la source unique (ticket #37).
 5. **Revue + merge** — **toujours une action humaine** (voir garde-fous, §6). Le merge fait
    trois choses **automatiquement** : il **ferme** le ticket (via `Closes #`), **passe son
    statut à `Terminé`** (la fermeture pose le statut « done » du lifecycle) et **supprime la
