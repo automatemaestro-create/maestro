@@ -90,6 +90,16 @@ maestro-check-env
 docker compose -f infra/docker-compose.yml up -d
 ```
 
+**Essayer l'orchestrateur** (Chef de projet — objectif → tâches JSON) :
+
+```bash
+maestro-orchestrate "Créer une petite API REST de gestion de tâches avec sa base"
+```
+
+Il découpe l'objectif en 2 à 3 tâches structurées (titre, description, compétences
+requises, format de sortie, dépendances), validées contre le schéma partagé
+[`packages/shared/schemas/task.schema.json`](./packages/shared/README.md).
+
 Qualité : `ruff check .` (lint, lancé aussi en CI) · `pytest` (tests) · `mypy maestro` (types).
 
 ---

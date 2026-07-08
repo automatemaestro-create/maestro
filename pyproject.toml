@@ -14,6 +14,8 @@ dependencies = [
     "claude-agent-sdk>=0.1.0",
     # Chargement du .env local (non versionné).
     "python-dotenv>=1.0.0",
+    # Validation du schéma de tâche de l'orchestrateur (packages/shared, draft 2020-12).
+    "jsonschema>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -21,11 +23,15 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pytest>=8.0",
+    # Stubs de types pour jsonschema (mypy strict).
+    "types-jsonschema>=4.0",
 ]
 
 [project.scripts]
 # Vérifie que l'environnement est prêt (SDK importable + clé API lue).
 maestro-check-env = "maestro.check_env:main"
+# Démo : découpe un objectif en tâches JSON (orchestrateur, ticket #3).
+maestro-orchestrate = "maestro.orchestrator.cli:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).

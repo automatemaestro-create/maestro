@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.dev/schemas/task.schema.json",
+  "title": "Tache Maestro",
+  "description": "Une tache produite par l'orchestrateur (Chef de projet) a partir d'un objectif. Contrat partage entre l'orchestrateur, le routeur et les agents executants. Aligne sur l'entite TASK (docs/03-modele-de-donnees.md) et la fiche Chef de projet (docs/04-specifications-agents.md).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "titre",
+    "description",
+    "competences_requises",
+    "format_sortie"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Identifiant stable de la tache dans le plan (slug). Sert de referent aux dependances.",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "titre": {
+      "type": "string",
+      "description": "Intitule court et actionnable de la tache.",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "description": {
+      "type": "string",
+      "description": "Ce qu'il faut faire : objectif, perimetre et limites, assez precis pour deleguer sans ambiguite.",
+      "minLength": 1
+    },
+    "competences_requises": {
+      "type": "array",
+      "description": "Tags de competences necessaires (base du routage / auto-assignation). Ex. backend, frontend, api, sql, schema, migration, ci-cd, infra, deploy, ui, ux, design-system, tests, e2e, review, qa.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "format_sortie": {
+      "type": "string",
+      "description": "Le livrable attendu et sa forme (ex. 'Fichier SQL de migration', 'Composant React + story', 'Rapport de test'). Essentiel a une bonne delegation.",
+      "minLength": 1
+    },
+    "dependances": {
+      "type": "array",
+      "description": "Identifiants (champ id) des taches qui doivent etre terminees avant celle-ci. Doit referencer des taches du meme plan et rester acyclique. Vide si la tache n'a aucun prerequis.",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+      },
+      "uniqueItems": true,
+      "default": []
+    }
+  }
+}
