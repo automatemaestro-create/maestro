@@ -27,8 +27,9 @@ dev = [
 # Vérifie que l'environnement est prêt (SDK importable + clé API lue).
 maestro-check-env = "maestro.check_env:main"
 
-[tool.setuptools]
-packages = ["maestro"]
+[tool.setuptools.packages.find]
+# Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).
+include = ["maestro*"]
 
 [tool.ruff]
 line-length = 100
