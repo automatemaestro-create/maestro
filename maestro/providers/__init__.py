@@ -17,7 +17,7 @@ moteur.
 
 from __future__ import annotations
 
-from maestro.providers.base import Credentials, ModelProvider, ModelSpec
+from maestro.providers.base import AuthMode, Credentials, ModelProvider, ModelSpec
 from maestro.providers.claude import ClaudeProvider
 from maestro.providers.registry import (
     ProviderFactory,
@@ -29,6 +29,7 @@ from maestro.providers.registry import (
 )
 
 __all__ = [
+    "AuthMode",
     "ClaudeProvider",
     "Credentials",
     "ModelProvider",

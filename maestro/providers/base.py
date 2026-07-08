@@ -13,22 +13,44 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import ClassVar
+
+
+class AuthMode(StrEnum):
+    """Mode d'authentification d'un fournisseur — la « bascule » du ticket #30.
+
+    - ``SUBSCRIPTION`` (défaut) : authentification par **abonnement** (OAuth), sans
+      clé API. Pour Claude, c'est l'abonnement Claude Code — point de départ du POC.
+    - ``API_KEY`` : authentification par **clé API** (facturation à l'usage).
+    """
+
+    API_KEY = "api_key"
+    SUBSCRIPTION = "subscription"
 
 
 @dataclass(frozen=True)
 class Credentials:
     """Point d'injection des secrets d'authentification d'un fournisseur.
 
-    #32 ne définit que le *slot* (la frontière), pas la mécanique d'auth. Au POC,
-    le fournisseur Claude s'authentifie via l'**abonnement Claude Code** (OAuth de
-    l'Agent SDK) — donc **sans clé API** — ou via une clé API. Le contrat reste
-    donc volontairement neutre : ni la présence d'une clé ni un mode précis ne
-    sont imposés ici. Le ticket #30 y branchera la bascule des deux modes et la
-    règle de précédence.
+    #32 a défini le *slot* (la frontière) ; #30 y branche la **bascule** entre les
+    deux `AuthMode` et la règle de précédence (côté config → cf.
+    `claude.ClaudeProvider.from_settings`). Le mode `SUBSCRIPTION` ne requiert
+    aucune clé : le fournisseur Claude s'authentifie alors via l'abonnement Claude
+    Code (OAuth de l'Agent SDK) ou un `oauth_token` explicite (utile en CI). Le
+    mode `API_KEY` exige `api_key` — l'invariant est vérifié à la construction.
     """
 
+    auth_mode: AuthMode = AuthMode.SUBSCRIPTION
     api_key: str | None = None
+    oauth_token: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.auth_mode is AuthMode.API_KEY and not self.api_key:
+            raise ValueError(
+                "Mode d'authentification 'api_key' sans clé : renseignez `api_key`, "
+                "ou choisissez le mode 'subscription'."
+            )
 
 
 @dataclass(frozen=True)
