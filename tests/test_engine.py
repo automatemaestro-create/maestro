@@ -14,7 +14,12 @@ et ceux du ticket #35 :
 et ceux du ticket #8 :
 ⑤ le **coût par tâche** (tokens, coût, durée) est visible (TaskResult, synthèse,
    rapport structuré) et traçable (journal JSON par étape, relié par le run_id) ;
-⑥ les logs ne contiennent **aucun secret**.
+⑥ les logs ne contiennent **aucun secret** ;
+et ceux du ticket #7 :
+⑦ au moins 2 agents s'exécutent **simultanément** sans collision (rendez-vous forcé :
+   séquentiel ⇒ échec net) — y compris en aval d'une dépendance commune ;
+⑧ les résultats parallèles sont **correctement rassemblés** : ordre du plan dans le
+   rapport, livrable et usage attribués à la bonne tâche, sans fuite entre contextes.
 Plus la résilience : un échec de routage est consigné sans interrompre la boucle.
 """
 
@@ -127,11 +132,11 @@ def _plan_json():
     )
 
 
-def _engine(*, exec_provider=None, plan_json=None):
+def _engine(*, exec_provider=None, plan_json=None, max_parallele=None):
     planner = ConstantProvider(plan_json or _plan_json())
     orchestrator = Orchestrator(planner, model="claude-opus-4-8")
     execu = exec_provider if exec_provider is not None else RecordingProvider()
-    return OrchestrationEngine(execu, orchestrator)
+    return OrchestrationEngine(execu, orchestrator, max_parallele=max_parallele)
 
 
 # --- Critère ① : ≥3 tâches assignées et exécutées par les bons agents -----------------
@@ -399,6 +404,251 @@ def test_l_echec_de_routage_est_consigne_au_journal_avec_sa_duree():
     assert trace.statut == "echec"
     assert trace.erreur
     assert trace.usage.duree_ms is not None
+
+
+# --- Critères ⑦/⑧ (#7) : exécution parallèle des tâches indépendantes ------------------
+
+
+def _plan_paralleles_json():
+    # 2 tâches **sans dépendance**, routées vers deux agents distincts (bdd, qa).
+    return json.dumps(
+        [
+            {
+                "id": "schema-bdd",
+                "titre": "Schéma BDD",
+                "description": "Définir le schéma.",
+                "competences_requises": ["sql"],
+                "format_sortie": "SQL",
+                "dependances": [],
+            },
+            {
+                "id": "tests-api",
+                "titre": "Tests de l'API",
+                "description": "Tests d'intégration.",
+                "competences_requises": ["tests"],
+                "format_sortie": "Suite de tests",
+                "dependances": [],
+            },
+        ],
+        ensure_ascii=False,
+    )
+
+
+class RendezvousProvider(ModelProvider):
+    """Exécutant qui force la simultanéité : chaque appel attend `attendus` appels en vol.
+
+    En exécution séquentielle, le premier appel attendrait seul indéfiniment : le
+    timeout borne l'attente et transforme une régression (retour au séquentiel) en
+    échec de tâche net plutôt qu'en suite de tests suspendue. `usage`, si fourni,
+    est signalé par chaque appel *pendant* la simultanéité — pour vérifier que les
+    collecteurs de contextes concurrents ne se contaminent pas.
+    """
+
+    name = "rendezvous"
+
+    def __init__(self, attendus: int, *, usage: StepUsage | None = None) -> None:
+        self._attendus = attendus
+        self._usage = usage
+        self._en_vol = 0
+        self._complet = asyncio.Event()
+        self.pic = 0
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        self._en_vol += 1
+        self.pic = max(self.pic, self._en_vol)
+        if self._en_vol >= self._attendus:
+            self._complet.set()
+        await asyncio.wait_for(self._complet.wait(), timeout=5)
+        if self._usage is not None:
+            report_usage(self._usage)
+        self._en_vol -= 1
+        return f"LIVRABLE[{model}]"
+
+
+def test_deux_agents_s_executent_simultanement_sans_collision():
+    provider = RendezvousProvider(attendus=2)
+    report = asyncio.run(
+        _engine(exec_provider=provider, plan_json=_plan_paralleles_json()).run("Objectif")
+    )
+
+    # Le rendez-vous n'aboutit que si les deux appels sont en vol en même temps.
+    assert provider.pic >= 2
+    assert all(r.ok for r in report.resultats)
+    # Deux agents distincts ont travaillé simultanément, chacun sur sa tâche.
+    assert {r.agent for r in report.resultats} == {"bdd", "qa"}
+
+
+class TraceurProvider(ModelProvider):
+    """Livrable propre à chaque tâche ; la 1re du plan finit volontairement après la 2e."""
+
+    name = "traceur"
+
+    def __init__(self) -> None:
+        self.acheves: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        if "Schéma BDD" in prompt:
+            await asyncio.sleep(0.05)  # ne finit après tests-api que si l'exécution est parallèle
+            cle = "schema-bdd"
+        else:
+            cle = "tests-api"
+        self.acheves.append(cle)
+        return f"LIVRABLE {cle}"
+
+
+def test_les_resultats_paralleles_sont_rassembles_dans_l_ordre_du_plan():
+    provider = TraceurProvider()
+    journal = RunJournal()
+    report = asyncio.run(
+        _engine(exec_provider=provider, plan_json=_plan_paralleles_json()).run(
+            "Objectif", journal=journal
+        )
+    )
+
+    # tests-api finit la première (schema-bdd temporise) : achèvement inversé…
+    assert provider.acheves == ["tests-api", "schema-bdd"]
+    # …mais le rapport rassemble chaque livrable à sa place, dans l'ordre du plan.
+    assert [r.task_id for r in report.resultats] == ["schema-bdd", "tests-api"]
+    assert [r.sortie for r in report.resultats] == [
+        "LIVRABLE schema-bdd",
+        "LIVRABLE tests-api",
+    ]
+    # Le journal, lui, consigne dans l'ordre d'achèvement, chaque trace reliée par `etape`.
+    assert [rec.etape for rec in journal.records] == [
+        "planification",
+        "tests-api",
+        "schema-bdd",
+    ]
+
+
+class DiamantProvider(ModelProvider):
+    """Le socle (sans dépendance) répond immédiatement ; ses deux dépendantes se donnent
+    rendez-vous — prouve que le parallélisme opère aussi *en aval* d'une dépendance."""
+
+    name = "diamant"
+
+    def __init__(self) -> None:
+        self._en_vol = 0
+        self._complet = asyncio.Event()
+        self.pic = 0
+        self.prompts: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        self.prompts.append(prompt)
+        if "Résultats des tâches" not in prompt:  # le socle : seul prompt sans tableau noir
+            return "SOCLE POSÉ"
+        self._en_vol += 1
+        self.pic = max(self.pic, self._en_vol)
+        if self._en_vol >= 2:
+            self._complet.set()
+        await asyncio.wait_for(self._complet.wait(), timeout=5)
+        self._en_vol -= 1
+        return "DÉPENDANTE FAITE"
+
+
+def test_les_dependances_restent_respectees_en_parallele():
+    plan = json.dumps(
+        [
+            {
+                "id": "socle",
+                "titre": "Socle BDD",
+                "description": "Définir le schéma.",
+                "competences_requises": ["sql"],
+                "format_sortie": "SQL",
+                "dependances": [],
+            },
+            {
+                "id": "api",
+                "titre": "API des tâches",
+                "description": "Endpoints CRUD.",
+                "competences_requises": ["backend"],
+                "format_sortie": "Module d'API",
+                "dependances": ["socle"],
+            },
+            {
+                "id": "tests",
+                "titre": "Tests de l'API",
+                "description": "Tests d'intégration.",
+                "competences_requises": ["tests"],
+                "format_sortie": "Suite de tests",
+                "dependances": ["socle"],
+            },
+        ],
+        ensure_ascii=False,
+    )
+    provider = DiamantProvider()
+    report = asyncio.run(_engine(exec_provider=provider, plan_json=plan).run("Objectif"))
+
+    assert all(r.ok for r in report.resultats)
+    # Les deux dépendantes ont tourné en même temps, après le socle…
+    assert provider.pic == 2
+    # …et chacune a bien reçu le livrable du socle sur son tableau noir.
+    dependants = [p for p in provider.prompts if "Résultats des tâches" in p]
+    assert len(dependants) == 2
+    assert all("SOCLE POSÉ" in p for p in dependants)
+
+
+def test_pas_de_fuite_d_usage_entre_executions_paralleles():
+    # Chaque appel signale son usage *pendant* la simultanéité : si les collecteurs
+    # de contexte fuyaient entre tâches asyncio, une tâche compterait l'usage des deux.
+    usage = StepUsage(appels=1, tokens_entree=100, tokens_sortie=20, cout_usd=0.01)
+    provider = RendezvousProvider(attendus=2, usage=usage)
+    report = asyncio.run(
+        _engine(exec_provider=provider, plan_json=_plan_paralleles_json()).run("Objectif")
+    )
+
+    assert provider.pic >= 2
+    for r in report.resultats:
+        assert r.usage.appels == 1
+        assert r.usage.tokens_total == 120
+        assert r.usage.cout_usd == pytest.approx(0.01)
+    assert report.usage_totale.cout_usd == pytest.approx(0.02)
+
+
+class PicProvider(ModelProvider):
+    """Mesure le pic d'appels simultanés, chaque appel cédant brièvement la main."""
+
+    name = "pic"
+
+    def __init__(self) -> None:
+        self._en_vol = 0
+        self.pic = 0
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        self._en_vol += 1
+        self.pic = max(self.pic, self._en_vol)
+        await asyncio.sleep(0.01)
+        self._en_vol -= 1
+        return "LIVRABLE"
+
+
+def test_max_parallele_borne_le_nombre_d_executions_simultanees():
+    provider = PicProvider()
+    report = asyncio.run(
+        _engine(
+            exec_provider=provider, plan_json=_plan_paralleles_json(), max_parallele=1
+        ).run("Objectif")
+    )
+
+    assert all(r.ok for r in report.resultats)
+    assert provider.pic == 1  # jamais 2 en vol malgré des tâches indépendantes
+
+
+def test_max_parallele_invalide_est_refuse():
+    with pytest.raises(ValueError):
+        _engine(max_parallele=0)
 
 
 def test_le_journal_n_expose_aucun_secret(monkeypatch, caplog):
