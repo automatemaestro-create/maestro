@@ -2,7 +2,7 @@
 
 Aucun appel réseau : l'orchestrateur est exercé avec un `ModelProvider` factice
 qui renvoie une réponse canned. Couvre les deux critères d'acceptation :
-① un objectif produit 2 à 3 tâches JSON valides et bien formées ;
+① un objectif produit un plan de tâches (3 à 5) JSON valides et bien formées ;
 ② le schéma de tâche est documenté et validé (validation contre la JSON Schema
 partagée + règles inter-tâches).
 """
@@ -85,10 +85,10 @@ def _canned_plan_json():
     )
 
 
-# --- Critère ① : un objectif produit 2 à 3 tâches valides -----------------------------
+# --- Critère ① : un objectif produit un plan de tâches valides ------------------------
 
 
-def test_plan_produces_two_to_three_valid_tasks():
+def test_plan_produces_tasks_within_configured_range():
     provider = FakeProvider(_canned_plan_json())
     orchestrator = Orchestrator(provider, model="claude-opus-4-8")
 

@@ -34,6 +34,7 @@ from maestro.orchestrator.schema import (
     SCHEMA_PATH,
     Task,
     load_task_schema,
+    topological_order,
     validate_plan,
     validate_task,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "TaskValidationError",
     "build_user_prompt",
     "load_task_schema",
+    "topological_order",
     "validate_plan",
     "validate_task",
 ]

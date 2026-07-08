@@ -32,6 +32,9 @@ dev = [
 maestro-check-env = "maestro.check_env:main"
 # Démo : découpe un objectif en tâches JSON (orchestrateur, ticket #3).
 maestro-orchestrate = "maestro.orchestrator.cli:main"
+# Démo : déroule la boucle d'orchestration complète (assignation + exécution +
+# agrégation) et imprime la synthèse (moteur, ticket #6).
+maestro-run = "maestro.engine.cli:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).

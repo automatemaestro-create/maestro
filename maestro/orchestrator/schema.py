@@ -144,6 +144,40 @@ def validate_plan(tasks: Sequence[Mapping[str, Any]]) -> list[Task]:
     return parsed
 
 
+def topological_order(tasks: Sequence[Task]) -> list[Task]:
+    """Ordonne les tâches pour que chacune suive ses dépendances (tri de Kahn).
+
+    Suppose un plan **déjà validé** (`validate_plan`) : dépendances résolubles et
+    graphe acyclique. À rang de dépendance égal, conserve l'ordre du plan (tri
+    stable) pour un résultat déterministe — utile au moteur d'orchestration, qui
+    exécute les tâches dans cet ordre. Lève `TaskValidationError` si un cycle rend
+    l'ordonnancement impossible (ne devrait pas arriver après `validate_plan`).
+    """
+    by_id = {task.id: task for task in tasks}
+    indegree = {task.id: len(task.dependances) for task in tasks}
+    dependents: dict[str, list[str]] = {task.id: [] for task in tasks}
+    for task in tasks:
+        for dep in task.dependances:
+            dependents[dep].append(task.id)
+
+    # File des tâches sans prérequis, dans l'ordre du plan (stabilité).
+    ready = [task.id for task in tasks if indegree[task.id] == 0]
+    ordered: list[Task] = []
+    while ready:
+        current = ready.pop(0)
+        ordered.append(by_id[current])
+        for nxt in dependents[current]:
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0:
+                ready.append(nxt)
+
+    if len(ordered) != len(tasks):  # pragma: no cover - garanti acyclique en amont
+        raise TaskValidationError(
+            "Cycle de dépendances : ordonnancement topologique impossible."
+        )
+    return ordered
+
+
 def _ensure_acyclic(tasks: Sequence[Task]) -> None:
     """Détecte un cycle dans le graphe de dépendances (DFS à 3 couleurs)."""
     deps = {task.id: task.dependances for task in tasks}
