@@ -1,12 +1,14 @@
 # Pipeline CI Maestro — Phase 0 (voir docs/10-workflow-git.md §8).
 #
-# Périmètre volontairement minimal : on lint les scripts shell (shellcheck), qui sont
-# aujourd'hui le seul code exécutable du dépôt. Pas encore de job de test applicatif — le
-# monorepo est un squelette. Le pipeline s'étoffera quand du code apparaîtra dans
-# apps/ / core/ / packages/, et « pipeline vert » deviendra une condition de merge.
+# Deux étages :
+#   - lint : shellcheck (scripts shell) + ruff (code Python) ;
+#   - test : pytest (suite du dépôt) + mypy (typage strict du code applicatif).
+# « Pipeline vert » est une condition de merge. Les jobs Python installent leurs
+# dépendances depuis pyproject.toml (extra `dev`) — rien n'est figé en dur ici.
 
 stages:
   - lint
+  - test
 
 shellcheck:
   stage: lint
@@ -34,3 +36,29 @@ python-lint:
   script:
     - pip install --no-cache-dir "ruff>=0.6,<1.0"
     - ruff check .
+
+# Base cachée des jobs Python de test : installe le paquet en editable avec son extra
+# `dev` (pytest, mypy, stubs de types) — versions déclarées dans pyproject.toml, donc
+# reproductible et sans duplication ici. Les tests n'appellent aucun modèle (provider
+# factice), mais importer le paquet tire le SDK : on installe donc bien les deps runtime.
+.python-test:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install --no-cache-dir -e ".[dev]"
+
+# Exécute la suite de tests du dépôt (testpaths = tests/ dans pyproject.toml) ; le job
+# échoue si un test échoue.
+pytest:
+  extends: .python-test
+  script:
+    - pytest
+
+# Vérifie le typage statique du code applicatif (maestro/) en mode strict
+# ([tool.mypy] de pyproject.toml) ; le job échoue à la moindre erreur de type. On cible
+# maestro/ et non tests/ : les helpers de test ne sont pas annotés (le strict les
+# rejetterait) et ne sont pas du code applicatif.
+mypy:
+  extends: .python-test
+  script:
+    - mypy maestro
