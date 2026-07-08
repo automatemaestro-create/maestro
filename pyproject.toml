@@ -38,6 +38,9 @@ maestro-run = "maestro.engine.cli:main"
 # Démo : exécute une tâche de dev de bout en bout dans un espace isolé et imprime le
 # livrable produit (agent Développeur, ticket #4).
 maestro-dev = "maestro.agents.cli:main"
+# Démo : exécute une tâche BDD de bout en bout dans un espace isolé et imprime le
+# livrable produit (schéma, migrations, requêtes) (agent Base de données, ticket #5).
+maestro-bdd = "maestro.agents.database_cli:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).

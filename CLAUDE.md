@@ -38,6 +38,8 @@ Commandes de **supervision** (lecture seule — n'écrivent jamais : ni statut, 
 
 ## Outillage requis
 
+**Environnement Python : toujours utiliser le venv du repo (`.venv/`).** Les dépendances (`claude-agent-sdk`, `pytest`…) n'y sont installées que là — pas dans le `python` système. Lancer toute commande Python via cet interpréteur : sous Windows `.venv/Scripts/python.exe` (ex. `.venv/Scripts/python.exe -m pytest`), sous Unix `.venv/bin/python`. Avec le `python` système, la collecte des tests échoue dès l'import (`ModuleNotFoundError: No module named 'claude_agent_sdk'`).
+
 Ces commandes utilisent le CLI `glab` (authentifié via `glab auth login`) pour lire/écrire les issues et MR GitLab. Si `glab auth status` échoue, arrêter et demander à l'utilisateur de s'authentifier plutôt que de continuer sans.
 
 Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les appels `glab` (résolution du work-item, pose du **statut par nom** — pas de GID en dur —, **dates & time tracking** via `start-dates`/`log-time`, slug, préfixe de branche, listing du backlog). Sourçable (`. scripts/gitlab/lib.sh`) ou en sous-commandes (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`).
