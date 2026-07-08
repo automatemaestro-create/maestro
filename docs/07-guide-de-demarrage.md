@@ -9,7 +9,7 @@ Objectif : lancer un **premier prototype** concret (Phase 0). Pensé pour être 
 
 | Élément | Pour quoi | Note |
 |---------|-----------|------|
-| Une **clé API Anthropic** | Faire fonctionner les agents Claude | À récupérer sur la console Anthropic |
+| Un **accès modèle Claude** | Faire fonctionner les agents Claude | **Deux modes au choix** (voir §2.1) : abonnement Claude Code (défaut du POC, sans clé) **ou** clé API Anthropic |
 | **Python 3.11+** *ou* **Node.js 20+** | Selon l'option de langage choisie | Voir [doc 02 §1](./02-stack-technique.md) |
 | **Docker** | Bac à sable d'exécution + bases locales | Docker Desktop suffit pour démarrer |
 | **Git + un compte GitHub** | Versionnement, intégration code | — |
@@ -24,8 +24,26 @@ Objectif : lancer un **premier prototype** concret (Phase 0). Pensé pour être 
 ### Étape 1 — Préparer l'environnement
 1. Créer le dépôt Git du projet.
 2. Installer le Claude Agent SDK (Python ou TypeScript).
-3. Configurer la clé API Anthropic en **variable d'environnement** (jamais en dur dans le code).
+3. Choisir un **mode d'authentification** (voir §2.1) et le configurer via des **variables d'environnement** (jamais en dur dans le code) : copier `.env.example` vers `.env` et renseigner selon le mode.
 4. Lancer une base locale via Docker (PostgreSQL + Redis) — optionnel au tout début.
+
+#### 2.1 — Deux modes d'authentification (et leur bascule)
+
+Maestro s'authentifie auprès de Claude de **deux façons**, sélectionnables **sans toucher au code** (variable `CLAUDE_AUTH_MODE`) :
+
+| Mode | Quand l'utiliser | À configurer |
+|------|------------------|--------------|
+| **`subscription`** (défaut du POC) | On démarre sur un **abonnement Claude Code** (Pro/Max/Team) — pas de clé, pas de facturation à l'usage. | Se connecter une fois avec `claude` (login navigateur). En CI, générer un token longue durée : `claude setup-token`, puis le poser dans `CLAUDE_CODE_OAUTH_TOKEN`. |
+| **`api_key`** | Facturation à l'usage via la **console Anthropic** (ex. prod, quotas séparés). | Renseigner `ANTHROPIC_API_KEY` (à récupérer sur la console Anthropic). |
+
+**Règle de précédence** (comment le mode est choisi) :
+
+1. Si **`CLAUDE_AUTH_MODE`** est renseigné (`subscription` ou `api_key`), il **fait foi**.
+2. Sinon, déduction automatique : `ANTHROPIC_API_KEY` **présente** ⇒ mode `api_key` ; **absente** ⇒ mode `subscription`.
+
+En mode `api_key`, `ANTHROPIC_API_KEY` est **obligatoire** (sinon l'environnement est signalé incomplet). En mode `subscription`, Maestro **neutralise toute clé/bearer** présent dans l'environnement pour garantir que c'est bien l'abonnement (ou `CLAUDE_CODE_OAUTH_TOKEN`) qui est utilisé.
+
+> Vérification rapide : `maestro-check-env` affiche le mode retenu et confirme que l'authentification est prête, **sans** appel réseau ni affichage de secret.
 
 ### Étape 2 — Créer l'orchestrateur
 - Un script qui prend un objectif en langage naturel.

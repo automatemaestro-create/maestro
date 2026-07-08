@@ -9,6 +9,7 @@ import asyncio
 import pytest
 
 from maestro.providers import (
+    AuthMode,
     ClaudeProvider,
     Credentials,
     ModelSpec,
@@ -37,12 +38,16 @@ def test_resolve_returns_claude_bound_to_credentials():
 
 
 def test_claude_from_settings_reads_optional_api_key():
-    # La clé API reste optionnelle au POC (auth possible par abonnement).
+    # La clé API reste optionnelle : sans clé ni mode explicite, on retombe sur le
+    # mode 'subscription' (défaut POC). La bascule détaillée est couverte par test_auth.
     class _Settings:
         anthropic_api_key = None
+        claude_auth_mode = None
+        claude_oauth_token = None
 
     provider = ClaudeProvider.from_settings(_Settings())
     assert provider.credentials.api_key is None
+    assert provider.credentials.auth_mode is AuthMode.SUBSCRIPTION
 
 
 def test_unknown_provider_raises():

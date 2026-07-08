@@ -22,18 +22,32 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class Settings:
-    """Réglages dérivés de l'environnement. Immuable."""
+    """Réglages dérivés de l'environnement. Immuable.
+
+    `Settings` ne fait que *lire* l'environnement : la politique d'authentification
+    (bascule des modes, précédence, validation) vit dans la couche fournisseur
+    (`maestro.providers.claude.ClaudeProvider.from_settings`), qui consomme ces
+    champs bruts. Cela garde la config sans dépendance sur `maestro.providers`.
+    """
 
     anthropic_api_key: str | None
     anthropic_model: str
+    #: Sélecteur brut du mode d'auth Claude (`CLAUDE_AUTH_MODE`), ou None si absent.
+    #: Interprété par la couche fournisseur ; None ⇒ déduction (cf. précédence).
+    claude_auth_mode: str | None
+    #: Token OAuth d'abonnement Claude Code (`CLAUDE_CODE_OAUTH_TOKEN`), pour la CI.
+    claude_oauth_token: str | None
     database_url: str | None
     redis_url: str | None
 
     @classmethod
     def from_env(cls) -> Settings:
+        raw_mode = os.getenv("CLAUDE_AUTH_MODE")
         return cls(
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
             anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
+            claude_auth_mode=raw_mode.strip().lower() if raw_mode and raw_mode.strip() else None,
+            claude_oauth_token=os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or None,
             database_url=os.getenv("DATABASE_URL") or None,
             redis_url=os.getenv("REDIS_URL") or None,
         )
