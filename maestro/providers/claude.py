@@ -26,18 +26,21 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    ResultMessage,
     TextBlock,
+    ToolUseBlock,
     query,
 )
 
 from maestro.config import ConfigError, Settings
 from maestro.providers.base import AuthMode, Credentials, ModelProvider
 from maestro.providers.registry import register
+from maestro.telemetry import StepUsage, report_usage
 
 
 def _resolve_auth_mode(settings: Settings) -> AuthMode:
@@ -145,13 +148,7 @@ class ClaudeProvider(ModelProvider):
             env=self._auth_env(),
             tools=[],
         )
-        parts: list[str] = []
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                parts.extend(
-                    block.text for block in message.content if isinstance(block, TextBlock)
-                )
-        return "".join(parts)
+        return await _collect_response(prompt, options)
 
     async def run_agent(
         self,
@@ -184,13 +181,51 @@ class ClaudeProvider(ModelProvider):
             permission_mode="bypassPermissions",
             max_turns=self._MAX_TURNS,
         )
-        parts: list[str] = []
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                parts.extend(
-                    block.text for block in message.content if isinstance(block, TextBlock)
-                )
-        return "".join(parts)
+        return await _collect_response(prompt, options)
+
+
+async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
+    """Déroule `query`, assemble le texte de la réponse et signale l'usage (ticket #8).
+
+    Les noms d'outils sont relevés au fil des blocs `ToolUseBlock` ; le message
+    final `ResultMessage` porte tokens, coût et durée API — le tout est remonté
+    via `maestro.telemetry.report_usage` (sans effet hors `collect_usage()`).
+    """
+    parts: list[str] = []
+    outils: list[str] = []
+    async for message in query(prompt=prompt, options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    parts.append(block.text)
+                elif isinstance(block, ToolUseBlock) and block.name not in outils:
+                    outils.append(block.name)
+        elif isinstance(message, ResultMessage):
+            report_usage(_usage_from_result(message, tuple(outils)))
+    return "".join(parts)
+
+
+def _usage_from_result(result: ResultMessage, outils: tuple[str, ...]) -> StepUsage:
+    """Traduit le `ResultMessage` du SDK en mesure d'usage d'un appel modèle.
+
+    `tokens_entree` agrège le prompt direct et le cache (création + lecture) :
+    c'est la consommation réelle de l'appel, telle que le SDK la décompose.
+    `total_cost_usd` peut être None (le coût reste alors « inconnu », pas nul).
+    """
+    usage: dict[str, Any] = result.usage or {}
+    tokens_entree = sum(
+        int(usage.get(cle) or 0)
+        for cle in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    )
+    return StepUsage(
+        appels=1,
+        tokens_entree=tokens_entree,
+        tokens_sortie=int(usage.get("output_tokens") or 0),
+        cout_usd=result.total_cost_usd,
+        duree_api_ms=result.duration_api_ms,
+        tours=result.num_turns,
+        outils=outils,
+    )
 
 
 # Auto-enregistrement : importer ce module suffit à rendre « claude » résolvable.
