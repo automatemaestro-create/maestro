@@ -9,6 +9,14 @@ Assemble les briques du POC en une **boucle d'orchestration** :
    et recevant les résultats des tâches dont il dépend (tableau noir léger) ;
 4. les résultats sont **agrégés** en un `RunReport` (rapport structuré déterministe).
 
+Les rôles disposant d'un **runtime outillé** (#35 : `developpeur`, `bdd` — cf.
+`maestro.agents.default_runtimes`) exécutent leur tâche via ce runtime, dans un espace
+de travail isolé : leur `TaskResult` porte alors aussi les **fichiers produits**. Les
+autres rôles livrent leur texte via `generate()`, comme avant. Si le fournisseur ne
+sait pas exécuter d'agent outillé (`UnsupportedCapability`), le rôle **retombe sur le
+livrable texte** plutôt que d'échouer — la boucle reste utilisable avec un fournisseur
+texte-seul.
+
 Le moteur ne dépend que de `ModelProvider` : il reste **agnostique du fournisseur**.
 `OrchestrationEngine.default` câble le Claude du POC, comme `Orchestrator.default`.
 
@@ -19,16 +27,19 @@ rapport agrège les réussites comme les échecs.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from maestro.agents import default_runtimes
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.runtime import AgentRuntime
 from maestro.config import Settings, load_settings
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task, topological_order
-from maestro.providers.base import ModelProvider
+from maestro.providers.base import ModelProvider, UnsupportedCapability
 from maestro.router.router import RoutingError, assign
+from maestro.sandbox import ProducedFile
 
 #: Statuts terminaux d'une tâche, alignés sur la machine à états (docs/03 §3).
 STATUT_TERMINEE = "terminee"
@@ -41,7 +52,9 @@ class TaskResult:
 
     Miroir léger de l'entité `RUN` (docs/03) pour le POC : qui a fait quoi, avec quel
     statut et quel livrable. `sortie` porte le livrable si `terminee`, `erreur` la
-    cause si `echec` (auquel cas `sortie` est vide).
+    cause si `echec` (auquel cas `sortie` est vide). `fichiers` porte les fichiers
+    produits quand la tâche est passée par un runtime outillé (#35) — vide pour un
+    livrable texte.
     """
 
     task_id: str
@@ -53,6 +66,7 @@ class TaskResult:
     statut: str
     sortie: str
     erreur: str | None = None
+    fichiers: tuple[ProducedFile, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -71,6 +85,7 @@ class TaskResult:
             "statut": self.statut,
             "sortie": self.sortie,
             "erreur": self.erreur,
+            "fichiers": [f.to_dict() for f in self.fichiers],
         }
 
 
@@ -113,6 +128,10 @@ class RunReport:
             lignes.append(f"- Agent : {r.role} (`{r.agent}`) — compétences : {competences}")
             if r.ok:
                 lignes.extend(["", r.sortie, ""])
+                if r.fichiers:
+                    lignes.append(f"Fichiers produits ({len(r.fichiers)}) :")
+                    lignes.extend(f"- `{f.chemin}`" for f in r.fichiers)
+                    lignes.append("")
             else:
                 lignes.extend([f"- Échec : {r.erreur}", ""])
         return "\n".join(lignes).rstrip() + "\n"
@@ -136,10 +155,16 @@ class OrchestrationEngine:
         orchestrator: Orchestrator,
         *,
         agents: Sequence[Agent] = DEFAULT_AGENTS,
+        runtimes: Mapping[str, AgentRuntime] | None = None,
     ) -> None:
         self._provider = provider
         self._orchestrator = orchestrator
         self._agents = tuple(agents)
+        # Runtimes outillés, indexés par nom d'agent du catalogue. Par défaut, ceux
+        # du POC (`developpeur`, `bdd`) adossés au même fournisseur que le moteur.
+        self._runtimes = (
+            dict(runtimes) if runtimes is not None else default_runtimes(provider)
+        )
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> OrchestrationEngine:
@@ -180,18 +205,16 @@ class OrchestrationEngine:
             return _echec(task, agent="—", role="non assigné", score=0, erreur=str(exc))
 
         agent = assignment.agent
-        prompt = _build_task_prompt(task, [done[dep] for dep in task.dependances if dep in done])
+        dependances = [done[dep] for dep in task.dependances if dep in done]
         try:
-            sortie = await self._provider.generate(
-                prompt, model=agent.modele, system_prompt=agent.prompt_systeme
-            )
+            sortie, fichiers = await self._produce(agent, task, dependances)
         except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
             return _echec(
                 task, agent=agent.nom, role=agent.role, score=assignment.score, erreur=str(exc)
             )
 
         sortie = sortie.strip()
-        if not sortie:
+        if not sortie and not fichiers:
             return _echec(
                 task,
                 agent=agent.nom,
@@ -208,7 +231,35 @@ class OrchestrationEngine:
             score=assignment.score,
             statut=STATUT_TERMINEE,
             sortie=sortie,
+            fichiers=fichiers,
         )
+
+    async def _produce(
+        self, agent: Agent, task: Task, dependances: Sequence[TaskResult]
+    ) -> tuple[str, tuple[ProducedFile, ...]]:
+        """Produit le livrable de `task` : runtime outillé si le rôle en a un, sinon texte.
+
+        Un rôle outillé (#35) exécute la tâche dans un espace isolé et renvoie aussi
+        ses fichiers. Si le fournisseur ne sait pas exécuter d'agent outillé
+        (`UnsupportedCapability`), le rôle retombe sur son livrable texte via
+        `generate()` — même chemin que les rôles sans runtime.
+        """
+        runtime = self._runtimes.get(agent.nom)
+        if runtime is not None:
+            try:
+                outcome = await runtime.execute(
+                    _build_task_description(task, dependances),
+                    format_sortie=task.format_sortie,
+                )
+                return outcome.resume, outcome.fichiers
+            except UnsupportedCapability:
+                pass  # fournisseur texte-seul : repli sur le livrable texte
+        sortie = await self._provider.generate(
+            _build_task_prompt(task, dependances),
+            model=agent.modele,
+            system_prompt=agent.prompt_systeme,
+        )
+        return sortie, ()
 
 
 def _echec(task: Task, *, agent: str, role: str, score: int, erreur: str) -> TaskResult:
@@ -226,24 +277,38 @@ def _echec(task: Task, *, agent: str, role: str, score: int, erreur: str) -> Tas
     )
 
 
-def _build_task_prompt(task: Task, dependances: Sequence[TaskResult]) -> str:
-    """Compose le message confié à l'agent : la tâche + les livrables de ses dépendances.
+def _build_task_description(task: Task, dependances: Sequence[TaskResult]) -> str:
+    """Décrit la tâche et les livrables de ses dépendances (le « tableau noir »).
 
-    Les résultats des dépendances forment le « tableau noir » : l'agent voit ce que
-    les tâches prérequises ont produit, pour enchaîner de façon cohérente.
+    Les résultats des dépendances forment le tableau noir : l'agent voit ce que les
+    tâches prérequises ont produit, pour enchaîner de façon cohérente. C'est la
+    matière commune aux deux chemins d'exécution — runtime outillé et appel texte.
     """
     lignes = [
         f"Tâche : {task.titre}",
         "",
         "Description :",
         task.description,
-        "",
-        f"Format de sortie attendu : {task.format_sortie}",
     ]
     if dependances:
         lignes += ["", "Résultats des tâches dont celle-ci dépend :"]
         for dep in dependances:
             livrable = dep.sortie or "(aucune sortie — tâche en échec)"
             lignes += ["", f"— [{dep.titre}] (agent {dep.role}) :", livrable]
-    lignes += ["", "Produis maintenant le livrable demandé."]
+    return "\n".join(lignes)
+
+
+def _build_task_prompt(task: Task, dependances: Sequence[TaskResult]) -> str:
+    """Compose le message d'un livrable *texte* : la description + le format attendu.
+
+    Le chemin outillé n'en a pas besoin : le runtime encadre lui-même la description
+    avec les consignes de son rôle (cf. `maestro.agents.runtime._build_prompt`).
+    """
+    lignes = [
+        _build_task_description(task, dependances),
+        "",
+        f"Format de sortie attendu : {task.format_sortie}",
+        "",
+        "Produis maintenant le livrable demandé.",
+    ]
     return "\n".join(lignes)
