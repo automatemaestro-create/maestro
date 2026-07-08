@@ -1,0 +1,262 @@
+"""Tests du runtime outillé générique et de ses profils de rôle (ticket #35).
+
+Reprend la couverture des runtimes dédiés du Développeur (#4) et du BDD (#5), portée
+sur le runtime **générique** qui les factorise. Aucun appel réseau : l'exécution
+agentique est pilotée par un `ModelProvider` factice qui écrit *réellement* des
+fichiers dans l'espace de travail fourni. Couvre :
+① le runtime exécute une tâche de bout en bout et **capture un résultat exploitable**
+   (compte-rendu + fichiers produits) dans un **contexte isolé** ;
+② les profils (`DEVELOPER_PROFILE`, `DATABASE_PROFILE`) paramètrent le même runtime
+   (modèle, outils, prompts, garde-fous du rôle) ;
+③ ajouter un rôle outillé = déclarer un profil, sans nouveau code (critère #35).
+Plus : capacité optionnelle refusée proprement, validation d'entrée, sérialisation.
+"""
+
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from maestro.agents import (
+    DATABASE_PROFILE,
+    DEFAULT_TOOLS,
+    DEVELOPER_PROFILE,
+    TOOLED_PROFILES,
+    AgentOutcome,
+    AgentRuntime,
+    RoleProfile,
+)
+from maestro.providers.base import ModelProvider, UnsupportedCapability
+from maestro.sandbox import ProducedFile
+
+
+class WritingProvider(ModelProvider):
+    """Fournisseur factice outillé : écrit des fichiers dans le workspace et enregistre l'appel."""
+
+    name = "writing"
+
+    def __init__(self, files: dict[str, str], resume: str = "Fait.") -> None:
+        self._files = files
+        self._resume = resume
+        self.calls: list[dict[str, object]] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):  # pragma: no cover
+        raise AssertionError("un rôle outillé doit passer par run_agent, pas generate")
+
+    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "model": model,
+                "system_prompt": system_prompt,
+                "workspace": workspace,
+                "tools": tuple(tools),
+            }
+        )
+        for chemin, contenu in self._files.items():
+            cible = Path(workspace) / chemin
+            cible.parent.mkdir(parents=True, exist_ok=True)
+            cible.write_text(contenu, encoding="utf-8")
+        return self._resume
+
+
+class TextOnlyProvider(ModelProvider):
+    """Fournisseur *sans* exécution outillée : n'implémente que `generate`."""
+
+    name = "text-only"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        return "texte"
+
+
+# --- ① Exécution de bout en bout, résultat exploitable, contexte isolé ----------------
+
+
+def test_execute_capture_les_fichiers_produits():
+    provider = WritingProvider(
+        files={"app.py": "print('ok')", "README.md": "# Démo"},
+        resume="J'ai créé app.py et README.md.",
+    )
+    runtime = AgentRuntime(provider, DEVELOPER_PROFILE)
+
+    outcome = asyncio.run(runtime.execute("Écris un hello world"))
+
+    assert isinstance(outcome, AgentOutcome)
+    assert outcome.a_produit
+    assert outcome.role == "Développeur"
+    assert outcome.resume == "J'ai créé app.py et README.md."
+    par_chemin = {f.chemin: f.contenu for f in outcome.fichiers}
+    assert par_chemin == {"app.py": "print('ok')", "README.md": "# Démo"}
+
+
+def test_execute_sans_fichier_marque_a_produit_faux():
+    runtime = AgentRuntime(WritingProvider(files={}, resume="Rien à faire."), DEVELOPER_PROFILE)
+    outcome = asyncio.run(runtime.execute("Ne rien produire"))
+    assert not outcome.a_produit
+    assert outcome.fichiers == ()
+
+
+def test_execute_fournit_un_workspace_isole_a_l_agent():
+    provider = WritingProvider(files={"a.txt": "x"})
+    runtime = AgentRuntime(provider, DEVELOPER_PROFILE)
+
+    outcome = asyncio.run(runtime.execute("Tâche"))
+
+    (call,) = provider.calls
+    workspace = call["workspace"]
+    # L'agent a reçu un répertoire dédié, distinct du cwd du test.
+    assert Path(workspace) != Path.cwd()
+    assert str(workspace) == outcome.workspace
+    # Hors keep_workspace, l'espace est nettoyé après capture.
+    assert not Path(workspace).exists()
+
+
+def test_execute_keep_workspace_conserve_le_repertoire():
+    provider = WritingProvider(files={"a.txt": "x"})
+    runtime = AgentRuntime(provider, DEVELOPER_PROFILE)
+
+    outcome = asyncio.run(runtime.execute("Tâche", keep_workspace=True))
+
+    chemin = Path(outcome.workspace)
+    try:
+        assert chemin.is_dir()
+        assert (chemin / "a.txt").read_text(encoding="utf-8") == "x"
+    finally:
+        (chemin / "a.txt").unlink()
+        chemin.rmdir()
+
+
+# --- ② Les profils paramètrent le même runtime -----------------------------------------
+
+
+def test_profil_developpeur_transmet_modele_prompt_et_outils():
+    provider = WritingProvider(files={"a.txt": "x"})
+    runtime = AgentRuntime(provider, DEVELOPER_PROFILE)
+
+    asyncio.run(runtime.execute("Tâche", format_sortie="Un module Python"))
+
+    (call,) = provider.calls
+    assert call["model"] == "claude-sonnet-5"
+    assert "Bash" in call["tools"] and "Write" in call["tools"]
+    assert "Développeur" in (call["system_prompt"] or "")
+    # La consigne de format de sortie est bien injectée dans le prompt.
+    assert "Un module Python" in call["prompt"]
+    assert "Tâche de développement" in call["prompt"]
+
+
+def test_profil_bdd_porte_le_garde_fou_migration_destructive():
+    # Le garde-fou du rôle (docs/04 §2) doit être présent dans le prompt système : pas
+    # de base réelle/production, opérations destructives à valider par un humain.
+    provider = WritingProvider(files={"schema.sql": "-- vide"})
+    runtime = AgentRuntime(provider, DATABASE_PROFILE)
+
+    asyncio.run(runtime.execute("Conçois un schéma clients"))
+
+    (call,) = provider.calls
+    systeme = (call["system_prompt"] or "").lower()
+    assert "production" in systeme
+    assert "validation humaine" in systeme
+    assert "Tâche de base de données" in call["prompt"]
+    assert "base jetable" in call["prompt"]
+
+
+def test_profil_bdd_prefixe_son_espace_de_travail():
+    provider = WritingProvider(files={"schema.sql": "-- vide"})
+    runtime = AgentRuntime(provider, DATABASE_PROFILE)
+
+    outcome = asyncio.run(runtime.execute("Tâche"))
+
+    assert "maestro-bdd-" in Path(outcome.workspace).name
+    assert outcome.role == "Base de données"
+
+
+def test_les_profils_outilles_sont_ceux_du_catalogue():
+    # Les clés de routage de la boucle : les noms d'agents du catalogue (#6).
+    assert [p.nom for p in TOOLED_PROFILES] == ["developpeur", "bdd"]
+    assert all(p.outils == DEFAULT_TOOLS for p in TOOLED_PROFILES)
+
+
+# --- ③ Ajouter un rôle outillé = déclarer un profil (critère #35) ----------------------
+
+
+def test_un_nouveau_role_outille_ne_demande_qu_un_profil():
+    # Un 3e rôle outillé fonctionne sans nouveau code : le runtime générique suffit.
+    devops = RoleProfile(
+        nom="devops",
+        role="DevOps",
+        modele="claude-sonnet-5",
+        outils=DEFAULT_TOOLS,
+        prompt_systeme="Tu es l'agent DevOps de Maestro.",
+        intro_tache="Tâche d'infrastructure à réaliser de bout en bout :",
+        consignes="Écris les fichiers du livrable dans le répertoire courant.",
+        consigne_finale="Résume ce que tu as produit.",
+        workspace_prefix="maestro-devops-",
+    )
+    provider = WritingProvider(files={"Dockerfile": "FROM python:3.12"})
+    runtime = AgentRuntime(provider, devops)
+
+    outcome = asyncio.run(runtime.execute("Conteneurise l'app"))
+
+    assert outcome.role == "DevOps"
+    assert outcome.a_produit
+    (call,) = provider.calls
+    assert "DevOps" in (call["system_prompt"] or "")
+    assert "maestro-devops-" in Path(str(call["workspace"])).name
+
+
+def test_le_runtime_accepte_des_surcharges_ponctuelles():
+    # Modèle/outils/prompt système restent surchargeables sans toucher au profil.
+    provider = WritingProvider(files={"a.txt": "x"})
+    runtime = AgentRuntime(
+        provider, DEVELOPER_PROFILE, model="claude-opus-4-8", tools=("Read", "Write")
+    )
+
+    asyncio.run(runtime.execute("Tâche"))
+
+    (call,) = provider.calls
+    assert call["model"] == "claude-opus-4-8"
+    assert call["tools"] == ("Read", "Write")
+
+
+# --- Garde-fous : entrée, capacité, sérialisation -------------------------------------
+
+
+def test_execute_refuse_une_description_vide():
+    runtime = AgentRuntime(WritingProvider(files={}), DEVELOPER_PROFILE)
+    with pytest.raises(ValueError):
+        asyncio.run(runtime.execute("   "))
+
+
+def test_execute_propage_capacite_non_supportee():
+    # Un fournisseur texte-seul n'expose pas run_agent : la base lève UnsupportedCapability.
+    runtime = AgentRuntime(TextOnlyProvider(), DATABASE_PROFILE)
+    with pytest.raises(UnsupportedCapability):
+        asyncio.run(runtime.execute("Tâche"))
+
+
+def test_outcome_synthese_et_to_dict():
+    outcome = AgentOutcome(
+        role="Base de données",
+        resume="Compte-rendu.",
+        fichiers=(ProducedFile(chemin="schema.sql", contenu="CREATE TABLE t (id INT);"),),
+        workspace="/tmp/ws",
+    )
+    synthese = outcome.synthese()
+    assert "Base de données" in synthese
+    assert "1 fichier(s) produit(s)" in synthese
+    assert "Compte-rendu." in synthese
+    assert "`schema.sql`" in synthese
+
+    data = outcome.to_dict()
+    assert data["role"] == "Base de données"
+    assert data["a_produit"] is True
+    assert data["workspace"] == "/tmp/ws"
+    assert data["fichiers"] == [
+        {"chemin": "schema.sql", "contenu": "CREATE TABLE t (id INT);"}
+    ]

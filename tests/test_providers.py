@@ -119,6 +119,32 @@ def test_claude_generate_assembles_text(monkeypatch):
     assert result == "Bonjour le monde"
 
 
+def test_claude_generate_n_expose_aucun_outil(monkeypatch):
+    # Critère #35 : generate est *texte seul* — tools=[] retire au CLI sous-jacent
+    # jusqu'à ses outils par défaut (l'exécution outillée passe par run_agent).
+    class FakeTextBlock:
+        def __init__(self, text):
+            self.text = text
+
+    class FakeAssistantMessage:
+        def __init__(self, content):
+            self.content = content
+
+    vu: dict[str, object] = {}
+
+    async def fake_query(*, prompt, options):
+        vu["tools"] = options.tools
+        yield FakeAssistantMessage([FakeTextBlock("texte")])
+
+    monkeypatch.setattr(claude_mod, "query", fake_query)
+    monkeypatch.setattr(claude_mod, "AssistantMessage", FakeAssistantMessage)
+    monkeypatch.setattr(claude_mod, "TextBlock", FakeTextBlock)
+
+    provider = ClaudeProvider(Credentials())
+    asyncio.run(provider.generate("Salut", model="claude-opus-4-8"))
+    assert vu["tools"] == []
+
+
 def test_run_agent_est_optionnel_et_refuse_par_defaut():
     # Capacité optionnelle (ticket #4) : un fournisseur qui ne l'implémente pas la refuse.
     class TextOnly(ModelProvider):

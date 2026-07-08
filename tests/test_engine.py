@@ -1,15 +1,22 @@
-"""Tests du moteur d'orchestration : la boucle complète (ticket #6).
+"""Tests du moteur d'orchestration : la boucle complète (tickets #6 puis #35).
 
 Aucun appel réseau : la **planification** et l'**exécution** sont pilotées par des
-`ModelProvider` factices. Couvre les deux critères d'acceptation du ticket :
+`ModelProvider` factices. Couvre les critères d'acceptation du ticket #6 :
 ① au moins 3 tâches sont assignées et exécutées par les **bons agents** (ordre des
    dépendances respecté, résultats des dépendances transmis) ;
-② les résultats sont **agrégés** (RunReport : synthèse + rapport structuré).
+② les résultats sont **agrégés** (RunReport : synthèse + rapport structuré) ;
+et ceux du ticket #35 :
+③ une tâche routée vers `developpeur`/`bdd` s'exécute via le **runtime outillé** dans
+   un workspace isolé, et les fichiers produits remontent dans le RunReport
+   (`to_dict()` et `synthese()`) ;
+④ les rôles sans runtime outillé livrent leur texte via `generate()` — y compris en
+   **repli** quand le fournisseur n'a pas d'exécution outillée.
 Plus la résilience : un échec de routage est consigné sans interrompre la boucle.
 """
 
 import asyncio
 import json
+from pathlib import Path
 
 from maestro.engine import OrchestrationEngine
 from maestro.orchestrator import Orchestrator
@@ -32,7 +39,7 @@ class ConstantProvider(ModelProvider):
 
 
 class RecordingProvider(ModelProvider):
-    """Exécutant factice : enregistre chaque appel et renvoie un livrable unique."""
+    """Exécutant factice texte-seul : enregistre chaque appel et renvoie un livrable unique."""
 
     name = "recording"
 
@@ -45,6 +52,32 @@ class RecordingProvider(ModelProvider):
     async def generate(self, prompt, *, model, system_prompt=None):
         self.calls.append({"prompt": prompt, "model": model, "system_prompt": system_prompt})
         return f"LIVRABLE[{model}] pour l'appel #{len(self.calls)}"
+
+
+class ToolingProvider(ModelProvider):
+    """Exécutant factice complet : `run_agent` écrit des fichiers, `generate` rend du texte."""
+
+    name = "tooling"
+
+    def __init__(self, files: dict[str, str]) -> None:
+        self._files = files
+        self.run_calls: list[dict[str, object]] = []
+        self.generate_calls: list[dict[str, object]] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        self.generate_calls.append({"prompt": prompt, "model": model})
+        return f"TEXTE #{len(self.generate_calls)}"
+
+    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools):
+        self.run_calls.append(
+            {"prompt": prompt, "model": model, "workspace": str(workspace), "tools": tuple(tools)}
+        )
+        for chemin, contenu in self._files.items():
+            (Path(workspace) / chemin).write_text(contenu, encoding="utf-8")
+        return f"OUTILLE #{len(self.run_calls)}"
 
 
 def _plan_json():
@@ -179,3 +212,86 @@ def test_reponse_vide_de_l_agent_marque_la_tache_en_echec():
     assert len(report.reussies) == 0
     assert all(r.statut == "echec" for r in report.resultats)
     assert all("vide" in (r.erreur or "") for r in report.resultats)
+
+
+# --- Critères ③/④ (#35) : routage vers les runtimes outillés --------------------------
+
+
+def test_taches_dev_et_bdd_passent_par_le_runtime_outille():
+    # Plan : bdd → developpeur → qa. Avec un fournisseur outillé, bdd et developpeur
+    # s'exécutent via run_agent (workspace isolé) ; qa, sans runtime, via generate.
+    provider = ToolingProvider(files={"livrable.txt": "contenu"})
+    report = asyncio.run(_engine(exec_provider=provider).run("Objectif"))
+
+    assert all(r.ok for r in report.resultats)
+    assert len(provider.run_calls) == 2  # schema-bdd puis api-taches
+    assert len(provider.generate_calls) == 1  # tests-api (qa, texte)
+
+    # Chaque exécution outillée a reçu son propre workspace isolé, hors cwd, nettoyé.
+    workspaces = [str(c["workspace"]) for c in provider.run_calls]
+    assert len(set(workspaces)) == 2
+    for ws in workspaces:
+        assert Path(ws) != Path.cwd()
+        assert not Path(ws).exists()
+
+    # Les fichiers produits remontent sur les tâches outillées, pas sur la tâche texte.
+    bdd, dev, qa = report.resultats
+    assert [f.chemin for f in bdd.fichiers] == ["livrable.txt"]
+    assert [f.chemin for f in dev.fichiers] == ["livrable.txt"]
+    assert qa.fichiers == ()
+
+
+def test_fichiers_produits_remontent_dans_le_rapport():
+    provider = ToolingProvider(files={"livrable.txt": "contenu"})
+    report = asyncio.run(_engine(exec_provider=provider).run("Objectif"))
+
+    # to_dict : les fichiers (chemin + contenu) figurent dans le rapport structuré.
+    data = report.to_dict()
+    assert data["resultats"][0]["fichiers"] == [
+        {"chemin": "livrable.txt", "contenu": "contenu"}
+    ]
+    assert data["resultats"][2]["fichiers"] == []
+
+    # synthese : les fichiers produits sont listés sous la tâche.
+    synthese = report.synthese()
+    assert "Fichiers produits (1) :" in synthese
+    assert "`livrable.txt`" in synthese
+
+
+def test_le_runtime_outille_recoit_le_tableau_noir_et_le_format():
+    provider = ToolingProvider(files={"livrable.txt": "contenu"})
+    asyncio.run(_engine(exec_provider=provider).run("Objectif"))
+
+    # api-taches (2e exécution outillée) reçoit le livrable de schema-bdd…
+    prompt_dev = str(provider.run_calls[1]["prompt"])
+    assert "OUTILLE #1" in prompt_dev
+    # …et le format de sortie de la tâche est transmis au runtime.
+    assert "Module d'API" in prompt_dev
+    # La tâche qa (texte) reçoit à son tour le compte-rendu du developpeur.
+    assert "OUTILLE #2" in str(provider.generate_calls[0]["prompt"])
+
+
+def test_fournisseur_texte_seul_replie_les_roles_outilles_sur_generate():
+    # Critère ④ : sans exécution outillée chez le fournisseur (UnsupportedCapability),
+    # developpeur et bdd livrent leur texte via generate() au lieu d'échouer.
+    provider = RecordingProvider()
+    report = asyncio.run(_engine(exec_provider=provider).run("Objectif"))
+
+    assert all(r.ok for r in report.resultats)
+    assert len(provider.calls) == 3  # les 3 tâches sont passées par generate
+    assert all(r.fichiers == () for r in report.resultats)
+
+
+def test_runtimes_injectes_remplacent_le_cablage_par_defaut():
+    # `runtimes={}` désactive le chemin outillé : tout passe par generate, même avec
+    # un fournisseur outillé — le câblage est injectable (tests, configurations).
+    provider = ToolingProvider(files={"livrable.txt": "contenu"})
+    planner = ConstantProvider(_plan_json())
+    orchestrator = Orchestrator(planner, model="claude-opus-4-8")
+    engine = OrchestrationEngine(provider, orchestrator, runtimes={})
+
+    report = asyncio.run(engine.run("Objectif"))
+
+    assert all(r.ok for r in report.resultats)
+    assert provider.run_calls == []
+    assert len(provider.generate_calls) == 3

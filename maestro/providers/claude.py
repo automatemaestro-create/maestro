@@ -133,10 +133,17 @@ class ClaudeProvider(ModelProvider):
         model: str,
         system_prompt: str | None = None,
     ) -> str:
+        """Appel modèle **texte seul** : aucun outil n'est exposé au CLI sous-jacent.
+
+        `tools=[]` (→ `--tools ""`) retire au CLI jusqu'à ses outils par défaut :
+        `generate` ne peut ni lire ni écrire de fichier, ni lancer de shell — c'est
+        le contrat de la capacité (l'exécution outillée passe par `run_agent`).
+        """
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
             env=self._auth_env(),
+            tools=[],
         )
         parts: list[str] = []
         async for message in query(prompt=prompt, options=options):

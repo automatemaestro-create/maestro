@@ -36,11 +36,12 @@ maestro-orchestrate = "maestro.orchestrator.cli:main"
 # agrégation) et imprime la synthèse (moteur, ticket #6).
 maestro-run = "maestro.engine.cli:main"
 # Démo : exécute une tâche de dev de bout en bout dans un espace isolé et imprime le
-# livrable produit (agent Développeur, ticket #4).
-maestro-dev = "maestro.agents.cli:main"
+# livrable produit (agent Développeur, ticket #4 ; CLI factorisé par #35).
+maestro-dev = "maestro.agents.runtime_cli:main_dev"
 # Démo : exécute une tâche BDD de bout en bout dans un espace isolé et imprime le
-# livrable produit (schéma, migrations, requêtes) (agent Base de données, ticket #5).
-maestro-bdd = "maestro.agents.database_cli:main"
+# livrable produit (schéma, migrations, requêtes) (agent Base de données, ticket #5 ;
+# CLI factorisé par #35).
+maestro-bdd = "maestro.agents.runtime_cli:main_bdd"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).
