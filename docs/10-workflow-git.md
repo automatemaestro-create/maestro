@@ -201,6 +201,15 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
 3. Développement sur la branche (commits `Refs #<iid>`).
 4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec
    `Closes #<iid>`, passe le **statut** à `En revue`.
+   - **Raccourci « zéro friction » : [`/ticket-ship`](../.claude/commands/ticket-ship.md).** Quand
+     le travail est terminé mais **pas encore committé**, `/ticket-ship` enchaîne **en une seule
+     action** : il **commite d'office** les changements en attente (message Conventional Commits
+     généré + `Closes #<iid>`, **sans confirmation** — même parti pris que l'auto-estimation du temps,
+     §3.3) puis **délègue à `/ticket-finish`** (source unique du push/MR/statut/temps ; son étape de
+     commit est alors sans objet, l'arbre étant propre). Il **refuse** si l'arbre est **vide** (rien à
+     committer → utiliser `/ticket-finish`) ou **en conflit**, et **jamais sur `main`**. Le hook
+     `commit-msg` (§2) reste appliqué — pas de `--no-verify`. Pensé pour la **boucle d'orchestration**
+     (ticket #34) : moins d'allers-retours manuels à chaque clôture.
 5. **Revue + merge** — **toujours une action humaine** (voir garde-fous, §6). Le merge fait
    trois choses **automatiquement** : il **ferme** le ticket (via `Closes #`), **passe son
    statut à `Terminé`** (la fermeture pose le statut « done » du lifecycle) et **supprime la
@@ -241,6 +250,17 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 - Une branche (locale ou distante) n'est supprimée que si **GitLab confirme que sa MR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
 - Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par GitLab.
 
+**Adossement à la couche permissions (Claude Code).** Ces garde-fous ne reposent pas que sur les
+consignes des commandes : ils sont aussi **filtrés par l'allowlist** [`.claude/settings.json`](../.claude/settings.json)
+(§7.1). Elle **autorise sans prompt** les commandes git/`glab` **non destructrices** du workflow (pour
+que `/ticket-ship` s'enchaîne sans blocage), pose en **`deny`** les actions que les garde-fous
+interdisent (**force-push** `git push --force`/`-f`/`--force-with-lease`, **`glab mr merge`**,
+**`glab mr close`**) et en **`ask`** (confirmation explicite, jamais silencieuse) les actions
+sensibles hors chemin nominal (`git commit --no-verify`, `git reset --hard`, `git clean`,
+`glab issue close`). C'est un **filet de sécurité complémentaire** au jugement de l'agent, pas un
+remplacement : le matching est par préfixe (une variante d'ordre de drapeaux peut y échapper), donc
+la consigne « jamais de force-push / merge / close auto » reste la règle première.
+
 ---
 
 ## 7. Prérequis
@@ -269,6 +289,30 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 - **Windows / Git Credential Manager** : si un `git push`/`pull` reste bloqué sur une demande
   d'identifiants, forcer `glab` comme credential helper le temps de la commande —
   `git -c credential.helper='!glab auth git-credential' push -u origin <branche>`.
+
+### 7.1 Permissions Claude Code (allowlist)
+
+Pour que les commandes du workflow — en particulier [`/ticket-ship`](../.claude/commands/ticket-ship.md) —
+s'enchaînent **sans prompt de permission répété**, le dépôt versionne une allowlist
+[`.claude/settings.json`](../.claude/settings.json) (partagée par toute l'équipe ; les surcharges
+personnelles vont dans `.claude/settings.local.json`, non versionné).
+
+| Catégorie | Effet | Contenu (préfixes de commande) |
+|---|---|---|
+| **`allow`** | exécuté sans prompt | Lectures/écritures **non destructrices** du workflow : `git status`/`diff`/`log`/`show`/`branch`/`checkout`/`fetch`/`pull`/`add`/`commit`/`push`/`rev-parse`/`ls-files` ; `glab` `auth status`, `api user`/`graphql`, `issue` view/list/update/note, `mr` view/list/create/update ; `bash scripts/gitlab/lib.sh`, `… doctor.sh`, `… git/install-hooks.sh`. |
+| **`ask`** | confirmation explicite (jamais silencieux) | `git commit --no-verify` (le bypass du hook reste possible mais **volontaire**), `git reset --hard`, `git clean`, `glab issue close`. |
+| **`deny`** | bloqué | Ce que les garde-fous (§6) interdisent : `git push --force` / `-f` / `--force-with-lease`, `glab mr merge`, `glab mr close`. |
+
+- **`git commit`/`push` en `allow`** couvrent le chemin nominal de `/ticket-ship` et `/ticket-finish` ;
+  le hook `commit-msg` (§2) s'applique toujours (le commit passe par lui), et le push non forcé est
+  la seule forme autorisée — les variantes `--force` sont en `deny`.
+- **Précédence** : `deny` > `ask` > `allow`. Le matching est **par préfixe** : robuste pour les formes
+  canoniques, mais une variante à l'ordre de drapeaux inhabituel peut y échapper — d'où le rappel du §6
+  que la **consigne** (jamais de force-push/merge/close auto) reste la garantie première, l'allowlist
+  n'étant qu'un filet.
+- **Régénérer / auditer** : le fichier est du JSON simple ; toute évolution de l'allowlist est une
+  **décision humaine** (un agent ne s'auto-accorde pas de permissions — l'écriture de ce fichier par
+  Claude Code est d'ailleurs interceptée et demande validation).
 
 ---
 

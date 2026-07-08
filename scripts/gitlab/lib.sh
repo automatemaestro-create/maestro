@@ -42,6 +42,20 @@ gl_require_glab() {
   fi
 }
 
+# gl_current_user -> imprime le username de l'utilisateur glab authentifié (pour l'auto-assignation
+# du ticket par /ticket-start). Parse `glab api user` en shell pur (grep/sed) — pas de dépendance à
+# jq/python, et entièrement couvert par l'allowlist `bash scripts/gitlab/lib.sh:*` (docs/10 §7.1),
+# pour que /ticket-start ne déclenche aucun prompt de permission sur cette étape.
+gl_current_user() {
+  local u
+  u="$(glab api user 2>/dev/null | grep -o '"username":"[^"]*"' | head -1 | sed 's/.*"username":"//; s/"$//')"
+  if [ -z "$u" ]; then
+    echo "gl_current_user : username introuvable (glab authentifié ? cf. require)" >&2
+    return 1
+  fi
+  printf '%s\n' "$u"
+}
+
 # --- Lecture GraphQL (avec retry) ---------------------------------------------------------------
 # gl_graphql_read <query> -> exécute une LECTURE GraphQL et imprime la réponse JSON brute.
 # Réessaie tant que la réponse revient VIDE (l'endpoint GraphQL de GitLab hoquette par
@@ -407,6 +421,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   cmd="${1:-}"; [ "$#" -gt 0 ] && shift
   case "$cmd" in
     require)        gl_require_glab ;;
+    current-user)   gl_current_user ;;
     graphql-read)   gl_graphql_read "$@" ;;
     workitem-gid)   gl_workitem_gid "$@" ;;
     status-gid)     gl_status_gid "$@" ;;
@@ -428,7 +443,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     branch-prefix)  gl_branch_prefix "$@" ;;
     *)
       echo "usage: bash scripts/gitlab/lib.sh <sous-commande> [args]" >&2
-      echo "  require | workitem-gid <iid> | status-gid <nom> | set-status <iid> <nom>" >&2
+      echo "  require | current-user | workitem-gid <iid> | status-gid <nom> | set-status <iid> <nom>" >&2
       echo "  backlog [opened|closed|all]        (JSON brut du backlog)" >&2
       echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2

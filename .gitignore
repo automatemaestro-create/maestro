@@ -35,6 +35,9 @@ Thumbs.db
 .vscode/
 *.swp
 
+# --- Claude Code (surcharges personnelles ; .claude/settings.json reste versionné) ---
+.claude/settings.local.json
+
 # --- Divers ---
 coverage/
 .cache/
