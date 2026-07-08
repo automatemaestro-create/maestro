@@ -8,6 +8,7 @@ Monorepo en phase de cadrage (Phase 0 — POC, voir [docs/06-roadmap.md](./docs/
 - **Un ticket GitLab = une branche = une Merge Request.**
 - Nommage de branche : `<type>/<iid>-<slug>` (ex. `feat/6-boucle-orchestration`). Le `type` vient du label `type::*` du ticket (`feature`→`feat`, `bug`→`fix`, `infra`→`chore`, `doc`→`docs`).
 - Convention de commit : Conventional Commits + `Refs #<iid>` sur les commits intermédiaires, `Closes #<iid>` sur le commit final ou la description de la MR.
+- **La clôture du travail passe par les skills dédiés** : `/ticket-ship` (commit auto + push + MR + statut) quand le travail est terminé, ou `/ticket-finish` si le commit est déjà fait. Ne jamais ré-implémenter ce cycle à la main (`git commit`/`git push`/`glab mr create` directs hors de ces commandes) — les skills en sont la source unique.
 - Détail complet : [docs/10-workflow-git.md](./docs/10-workflow-git.md).
 
 ## Statut & labels GitLab (déjà en place — ne pas en réinventer d'autres)
@@ -25,7 +26,7 @@ champ Status), ni de `status::*`/`priority::*`/`type::docs`/`type::chore` en ang
 ## Commandes disponibles
 
 - `/ticket-create <type> <titre>` — crée un ticket bien formé (corps de template + labels `type::`/`agent::`/`prio::`), statut `À faire` par défaut. Ne crée pas de branche (c'est le rôle de `/ticket-start`).
-- `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le **statut** à `En cours`, pose les **dates** (début = aujourd'hui, échéance = début + délai selon `prio::`), et **purge au passage les branches locales déjà mergées** (`cleanup-merged`, même garde-fou que `/branch-cleanup`).
+- `/ticket-start <iid>` — crée la branche à partir du ticket, l'assigne, passe le **statut** à `En cours`, pose les **dates** (début = aujourd'hui, échéance = début + délai selon `prio::`), et **purge au passage les branches locales déjà mergées** (`cleanup-merged`, même garde-fou que `/branch-cleanup`). Puis **enchaîne directement sur l'implémentation** : le résumé de cadrage n'est pas une pause d'autorisation, aucun « go » n'est attendu.
 - `/ticket-finish` — pousse la branche, ouvre/met à jour la MR (`Closes #<iid>`), passe le **statut** à `En revue`, et **estime automatiquement le temps passé** (jugement de l'agent sur la portée du travail) puis le loggue, sans confirmation.
 - `/ticket-ship` — **clôture zéro friction** : depuis un ticket en cours, **commite d'office** les changements en attente (message Conventional Commits généré + `Closes #<iid>`, sans confirmation) puis enchaîne `/ticket-finish`. Refuse si l'arbre est vide ou en conflit, et jamais sur `main`. À utiliser quand le travail est terminé et qu'on veut clore en une seule action ; `/ticket-finish` reste le choix si le commit est déjà fait.
 - `/branch-cleanup` — après merge d'une MR : supprime la branche locale + distante, revient sur `main` à jour, pose le **statut** `Terminé`.

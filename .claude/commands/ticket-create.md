@@ -32,12 +32,16 @@ lieu d'inventer.
 5. Détermine les labels de catégorisation (voir `docs/10-workflow-git.md` §3.2) :
    - `type::<type>` — **obligatoire**, déduit de l'étape 2.
    - `agent::<rôle>` — quel agent Maestro traitera le ticket
-     (`dev`/`bdd`/`devops`/`design`/`qa`/`orchestrateur`). **Demande-le** si l'utilisateur ne l'a
-     pas indiqué : aucun template ne peut le deviner.
+     (`dev`/`bdd`/`devops`/`design`/`qa`/`orchestrateur`). S'il ne se déduit pas clairement du
+     contenu du ticket, **demande-le** à l'utilisateur ; s'il est évident (ex. un ticket sur le
+     workflow d'orchestration → `orchestrateur`), pose-le et signale ton choix dans le résumé.
    - `prio::<niveau>` — `haute`/`moyenne`/`basse`. Par défaut `prio::moyenne` si non précisé.
 
-6. Montre à l'utilisateur un récapitulatif **avant** création (titre, type, labels, corps) et
-   demande confirmation. Ne crée rien tant qu'il n'a pas validé.
+6. Montre un récapitulatif **avant** création (titre, type, labels, corps). Si la création du
+   ticket a été **explicitement demandée** par l'utilisateur (ou enchaînée par une commande ou une
+   boucle d'orchestration amont), ce récapitulatif est **informatif, pas bloquant** : crée
+   directement, sans attendre de validation. Ne demande confirmation **que** s'il a fallu deviner
+   une information structurante (type ambigu, doute sur l'intention, contenu largement inventé).
 
 7. Crée le ticket (le corps multi-lignes passe par un fichier temporaire pour éviter les soucis de
    quoting) :
@@ -51,5 +55,8 @@ lieu d'inventer.
    Ne pose **pas** de statut : « À faire » est le défaut du lifecycle à la création. N'assigne pas
    et ne crée pas de branche.
 
-8. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels, et propose la suite —
-   `/ticket-start <iid>` pour démarrer le travail.
+8. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels. Puis la suite :
+   - si l'utilisateur a demandé (explicitement ou par le contexte de la conversation) de
+     **réaliser** le travail, enchaîne directement sur `/ticket-start <iid>` sans attendre de
+     « go » ;
+   - sinon, propose simplement `/ticket-start <iid>` pour démarrer plus tard.
