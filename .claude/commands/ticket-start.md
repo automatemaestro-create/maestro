@@ -50,8 +50,10 @@ arrête-toi (en expliquant pourquoi) dès qu'une vérification échoue au lieu d
 8. Assigne le ticket et fais passer son **Status natif** à « En cours ». Le cycle de vie est
    porté par le champ **Status** de GitLab (lifecycle « Maestro »), pas par des labels — voir
    `docs/10-workflow-git.md` §3.
-   - Assignation : récupère ton username (`glab api user` → champ `username`), puis
-     `glab issue update $ARGUMENTS --assignee <username>`.
+   - Assignation : récupère ton username via le helper
+     `bash scripts/gitlab/lib.sh current-user` (il parse `glab api user` en shell pur — pas de
+     dépendance à `jq`/`python`, et c'est couvert par l'allowlist pour ne pas déclencher de prompt),
+     puis `glab issue update $ARGUMENTS --assignee <username>`.
    - Statut : `bash scripts/gitlab/lib.sh set-status $ARGUMENTS "En cours"`. Le helper résout le
      work item depuis l'iid et **dérive le GID du statut par nom** depuis le lifecycle « Maestro »
      (pas de GID en dur, robuste à une recréation du lifecycle). Vérifie que la commande réussit.
