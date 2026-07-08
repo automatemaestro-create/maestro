@@ -1,0 +1,129 @@
+"""Catalogue des agents exécutants et leurs compétences (ticket #6).
+
+Matérialise le catalogue d'agents par défaut (docs/04-specifications-agents.md §2)
+et les entités `AGENT`/`CAPABILITY` (docs/03-modele-de-donnees.md) : chaque agent
+déclare ses **compétences** (tags) — base de l'auto-assignation par le routeur
+(`maestro.router`) — et le **modèle** + **prompt système** avec lesquels il exécute
+ses tâches via la couche fournisseur (`ModelProvider`).
+
+Ne figurent ici que les **agents exécutants** (Développeur, BDD, DevOps, Designer,
+QA) : le Chef de projet n'exécute pas de tâche, il les découpe (`maestro.orchestrator`)
+et synthétise. Le catalogue est **statique** au POC ; en V1 il proviendra de la base
+(table AGENT) et sera éditable depuis la Control Tower — sans changer le contrat.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+#: Modèle par défaut des exécutants au POC (Claude Sonnet, cf. docs/04 §2). Le rôle
+#: est indépendant du fournisseur/modèle : on peut le remplacer sans le toucher.
+_MODELE_EXECUTANT = "claude-sonnet-5"
+
+
+@dataclass(frozen=True)
+class Agent:
+    """Un agent exécutant : une identité, des compétences, un modèle, un playbook.
+
+    `competences` sont les tags de l'entité CAPABILITY : le routeur y confronte les
+    `competences_requises` d'une tâche pour l'auto-assignation. `prompt_systeme`
+    dérive du playbook (docs/04 §3) et cadre l'exécution ; `modele` est le modèle
+    conseillé par défaut (POC Claude), remplaçable sans changer le rôle.
+    """
+
+    nom: str
+    role: str
+    competences: frozenset[str]
+    modele: str
+    prompt_systeme: str
+
+    def couverture(self, competences_requises: frozenset[str]) -> int:
+        """Nombre de compétences requises que cet agent possède (score de routage)."""
+        return len(competences_requises & self.competences)
+
+
+def _prompt_systeme(role: str, mission: str, garde_fous: str) -> str:
+    """Compose le prompt système d'exécution d'un agent depuis sa fiche (docs/04 §3).
+
+    Forme commune : identité + mission, contrat d'entrée/sortie (une tâche → son
+    `format_sortie`), garde-fous propres au rôle. Volontairement resserré : l'agent
+    doit rendre le livrable, pas commenter.
+    """
+    return f"""\
+Tu es l'agent {role} de Maestro. {mission}
+
+On te confie UNE tâche précise : titre, description, format de sortie attendu, et \
+le cas échéant les résultats des tâches dont elle dépend. Réalise-la dans ton \
+domaine de compétence et rends STRICTEMENT le livrable décrit par son « format de \
+sortie ».
+
+Garde-fous : {garde_fous}
+
+Réponds directement par le livrable demandé, sans préambule ni méta-commentaire."""
+
+
+#: Les cinq agents exécutants par défaut (docs/04 §2). L'ordre fait foi pour départager
+#: les ex æquo de routage (cf. `maestro.router.assign`) : les compétences étant deux à
+#: deux disjointes ici, ce départage ne joue qu'en cas de tâche multi-domaine.
+DEFAULT_AGENTS: tuple[Agent, ...] = (
+    Agent(
+        nom="developpeur",
+        role="Développeur",
+        competences=frozenset({"backend", "frontend", "api", "refactor"}),
+        modele=_MODELE_EXECUTANT,
+        prompt_systeme=_prompt_systeme(
+            "Développeur",
+            "Tu implémentes et modifies le code applicatif.",
+            "tu travailles sur une branche dédiée et ouvres une PR ; tu ne fusionnes "
+            "pas sans validation ni QA.",
+        ),
+    ),
+    Agent(
+        nom="bdd",
+        role="Base de données",
+        competences=frozenset({"sql", "schema", "migration", "data"}),
+        modele=_MODELE_EXECUTANT,
+        prompt_systeme=_prompt_systeme(
+            "Base de données",
+            "Tu conçois le schéma, écris les migrations et optimises les requêtes.",
+            "toute migration destructive (drop, perte de données) requiert une "
+            "validation humaine ; jamais directement en production.",
+        ),
+    ),
+    Agent(
+        nom="devops",
+        role="DevOps",
+        competences=frozenset({"ci-cd", "infra", "deploy", "docker"}),
+        modele=_MODELE_EXECUTANT,
+        prompt_systeme=_prompt_systeme(
+            "DevOps",
+            "Tu construis les pipelines CI/CD, l'infrastructure et les déploiements.",
+            "tout déploiement (surtout en production) passe par une validation "
+            "humaine ; respecte les plafonds de ressources.",
+        ),
+    ),
+    Agent(
+        nom="designer",
+        role="Designer",
+        competences=frozenset({"ui", "ux", "design-system", "figma"}),
+        modele=_MODELE_EXECUTANT,
+        prompt_systeme=_prompt_systeme(
+            "Designer",
+            "Tu proposes écrans, maquettes et composants conformes à la charte.",
+            "respecte le design system existant ; tu proposes, tu ne remplaces pas la "
+            "charte sans accord.",
+        ),
+    ),
+    Agent(
+        nom="qa",
+        role="QA / Testeur",
+        competences=frozenset({"tests", "e2e", "review", "qa"}),
+        modele=_MODELE_EXECUTANT,
+        prompt_systeme=_prompt_systeme(
+            "QA / Testeur",
+            "Tu écris et exécutes les tests, valides les livrables et fais la revue.",
+            "tu peux bloquer une tâche jugée non conforme et la renvoyer au "
+            "Développeur.",
+        ),
+    ),
+)

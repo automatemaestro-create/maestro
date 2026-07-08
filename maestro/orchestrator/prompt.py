@@ -9,9 +9,11 @@ validée par `maestro.orchestrator.schema`.
 
 from __future__ import annotations
 
-#: Fourchette visée (critère d'acceptation #3). Guidage, pas une règle de schéma.
-MIN_TASKS = 2
-MAX_TASKS = 3
+#: Fourchette visée. Guidage, pas une règle de schéma. MIN relevé à 3 pour le
+#: critère d'acceptation du ticket #6 (la boucle assigne/exécute **au moins 3**
+#: tâches) ; MAX élargi à 5 pour laisser au modèle la latitude d'un plan cohérent.
+MIN_TASKS = 3
+MAX_TASKS = 5
 
 ORCHESTRATOR_SYSTEM_PROMPT = f"""\
 Tu es le Chef de projet (orchestrateur) de Maestro. Ta mission : transformer un \

@@ -96,9 +96,22 @@ docker compose -f infra/docker-compose.yml up -d
 maestro-orchestrate "Créer une petite API REST de gestion de tâches avec sa base"
 ```
 
-Il découpe l'objectif en 2 à 3 tâches structurées (titre, description, compétences
+Il découpe l'objectif en 3 à 5 tâches structurées (titre, description, compétences
 requises, format de sortie, dépendances), validées contre le schéma partagé
 [`packages/shared/schemas/task.schema.json`](./packages/shared/README.md).
+
+**Dérouler la boucle d'orchestration complète** (objectif → tâches → assignation
+automatique aux bons agents → exécution → synthèse agrégée) :
+
+```bash
+maestro-run "Créer une petite API REST de gestion de tâches avec sa base"
+```
+
+Le moteur planifie, **assigne chaque tâche à l'agent le plus compétent** (règles de
+compétences), exécute les tâches dans l'ordre de leurs dépendances en transmettant
+les résultats intermédiaires, puis imprime la **synthèse** (`--json` pour le rapport
+structuré). Aperçu de l'implémentation : `maestro/agents/` (catalogue + compétences),
+`maestro/router/` (assignation), `maestro/engine/` (boucle + agrégation).
 
 Qualité : `ruff check .` (lint, lancé aussi en CI) · `pytest` (tests) · `mypy maestro` (types).
 
