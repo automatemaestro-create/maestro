@@ -81,7 +81,12 @@ class RunJournal:
 
     @property
     def records(self) -> tuple[StepRecord, ...]:
-        """Les étapes consignées, dans l'ordre d'exécution."""
+        """Les étapes consignées, dans l'ordre de consignation.
+
+        C'est l'ordre d'**achèvement** : des tâches exécutées en parallèle (#7) y
+        apparaissent dans l'ordre où elles finissent, chacune reliée à sa tâche par
+        `etape`. Le rapport (`RunReport`), lui, garde l'ordre du plan.
+        """
         return tuple(self._records)
 
     @property

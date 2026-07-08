@@ -4,10 +4,21 @@ Assemble les briques du POC en une **boucle d'orchestration** :
 
 1. l'orchestrateur (#3) découpe l'objectif en tâches validées ;
 2. le routeur (#6) assigne chaque tâche à l'agent le plus compétent ;
-3. le moteur exécute les tâches **dans l'ordre des dépendances** (tri topologique),
-   chaque agent produisant son livrable via la couche fournisseur (`ModelProvider`)
-   et recevant les résultats des tâches dont il dépend (tableau noir léger) ;
+3. le moteur exécute les tâches en respectant les dépendances, **en parallèle dès
+   qu'elles sont indépendantes** (#7) : chaque tâche démarre sitôt ses dépendances
+   résolues, chaque agent produisant son livrable via la couche fournisseur
+   (`ModelProvider`) et recevant les résultats des tâches dont il dépend (tableau
+   noir léger) ;
 4. les résultats sont **agrégés** en un `RunReport` (rapport structuré déterministe).
+
+L'exécution parallèle (#7) n'introduit aucun état partagé entre tâches : chaque
+exécution ne reçoit que les résultats de **ses** dépendances, la mesure d'usage (#8)
+est isolée par le contexte (`contextvars`, copié par tâche asyncio — pas de fuite
+entre agents), et chaque exécution outillée ouvre son propre espace de travail
+jetable (`maestro.sandbox`). Le rassemblement reste déterministe : les résultats du
+rapport suivent l'ordre topologique du plan, pas l'ordre d'achèvement.
+`max_parallele` plafonne au besoin le nombre d'exécutions simultanées (illimité par
+défaut — les plans du POC sont petits).
 
 Les rôles disposant d'un **runtime outillé** (#35 : `developpeur`, `bdd` — cf.
 `maestro.agents.default_runtimes`) exécutent leur tâche via ce runtime, dans un espace
@@ -33,6 +44,7 @@ la synthèse comme dans le rapport structuré, et traçable par le `run_id`.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from time import perf_counter
@@ -105,9 +117,10 @@ class TaskResult:
 class RunReport:
     """Agrégat déterministe d'une exécution : l'objectif et le résultat de chaque tâche.
 
-    `resultats` est dans l'**ordre d'exécution** (topologique). Le rapport n'appelle
-    aucun modèle : il assemble ce que la boucle a collecté (choix « rapport structuré »
-    du ticket #6).
+    `resultats` est dans l'**ordre topologique du plan** — un ordre déterministe,
+    indépendant de l'ordre d'achèvement des tâches exécutées en parallèle (#7). Le
+    rapport n'appelle aucun modèle : il assemble ce que la boucle a collecté (choix
+    « rapport structuré » du ticket #6).
 
     `run_id` relie le rapport aux lignes du journal d'exécution (#8) ;
     `planification` porte l'usage de l'étape de planification, qui s'ajoute à celui
@@ -187,10 +200,16 @@ class OrchestrationEngine:
         *,
         agents: Sequence[Agent] = DEFAULT_AGENTS,
         runtimes: Mapping[str, AgentRuntime] | None = None,
+        max_parallele: int | None = None,
     ) -> None:
+        if max_parallele is not None and max_parallele < 1:
+            raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
         self._provider = provider
         self._orchestrator = orchestrator
         self._agents = tuple(agents)
+        # Plafond d'exécutions simultanées (#7) — None : illimité. Utile pour ménager
+        # les limites de débit d'un fournisseur sur un plan très large.
+        self._max_parallele = max_parallele
         # Runtimes outillés, indexés par nom d'agent du catalogue. Par défaut, ceux
         # du POC (`developpeur`, `bdd`) adossés au même fournisseur que le moteur.
         self._runtimes = (
@@ -219,21 +238,48 @@ class OrchestrationEngine:
         valide, il n'y a rien à orchestrer. En revanche, les échecs *par tâche*
         (routage, exécution) sont consignés, pas propagés.
 
+        Les tâches **indépendantes s'exécutent en parallèle** (#7) : chacune reçoit
+        sa propre tâche asyncio et démarre dès que toutes ses dépendances sont
+        résolues — une dépendance en échec ne bloque pas (son résultat, consigné,
+        alimente le tableau noir comme avant). Les résultats sont rassemblés dans
+        l'ordre topologique du plan, déterministe quel que soit l'ordre d'achèvement.
+
         Chaque étape est consignée dans `journal` (#8) — un `RunJournal` neuf par
         défaut ; en injecter un permet d'inspecter les traces ou de fixer le
-        `run_id`. Le rapport porte ce `run_id` et l'usage par tâche.
+        `run_id`. Le rapport porte ce `run_id` et l'usage par tâche. Les traces des
+        tâches parallèles y apparaissent dans l'ordre d'achèvement.
         """
         journal = journal if journal is not None else RunJournal()
         plan_usage, tasks = await self._plan(objective, journal)
-        done: dict[str, TaskResult] = {}
-        resultats: list[TaskResult] = []
-        for task in topological_order(tasks):
-            result = await self._execute(task, done, journal)
-            done[task.id] = result
-            resultats.append(result)
+        ordered = topological_order(tasks)
+        # Sémaphore créé ici (et pas au constructeur) : lié à la boucle asyncio de
+        # cette exécution, il ne survit pas d'un `run` à l'autre.
+        semaphore = (
+            asyncio.Semaphore(self._max_parallele) if self._max_parallele else None
+        )
+        en_vol: dict[str, asyncio.Task[TaskResult]] = {}
+
+        async def _des_que_prete(task: Task) -> TaskResult:
+            # Attend ses seules dépendances : chaque exécution ne voit que le
+            # tableau noir qui la concerne, aucun état partagé entre tâches. Le
+            # sémaphore n'est pris qu'une fois les dépendances résolues, pour ne
+            # pas occuper un créneau à attendre (ni s'interbloquer).
+            dependances = [await en_vol[dep] for dep in task.dependances]
+            if semaphore is None:
+                return await self._execute(task, dependances, journal)
+            async with semaphore:
+                return await self._execute(task, dependances, journal)
+
+        # Créées dans l'ordre topologique, les tâches asyncio des dépendances
+        # existent toujours avant celles qui les attendent. `_execute` ne levant
+        # jamais, le TaskGroup ne se déclenche que sur un bug interne.
+        async with asyncio.TaskGroup() as tg:
+            for task in ordered:
+                en_vol[task.id] = tg.create_task(_des_que_prete(task))
+
         return RunReport(
             objectif=objective,
-            resultats=tuple(resultats),
+            resultats=tuple(en_vol[task.id].result() for task in ordered),
             run_id=journal.run_id,
             planification=plan_usage,
         )
@@ -275,13 +321,17 @@ class OrchestrationEngine:
         return usage, tasks
 
     async def _execute(
-        self, task: Task, done: dict[str, TaskResult], journal: RunJournal
+        self, task: Task, dependances: Sequence[TaskResult], journal: RunJournal
     ) -> TaskResult:
         """Assigne, exécute et consigne une tâche ; renvoie son `TaskResult` (jamais d'exception).
 
+        `dependances` porte les résultats (déjà acquis) des tâches dont celle-ci
+        dépend — sa seule vue sur le reste de l'exécution, y compris en parallèle.
         La durée horloge est chronométrée autour de l'étape complète ; tokens, coût
         et outils sont récoltés auprès du fournisseur (`collect_usage`) quand il les
-        signale. Le tout est porté par le résultat et consigné au journal.
+        signale — le collecteur vit dans le contexte de la tâche asyncio courante,
+        donc sans fuite entre exécutions simultanées. Le tout est porté par le
+        résultat et consigné au journal.
         """
         debut = perf_counter()
         entree = task.description
@@ -291,7 +341,6 @@ class OrchestrationEngine:
             except RoutingError as exc:
                 result = _echec(task, agent="—", role="non assigné", score=0, erreur=str(exc))
             else:
-                dependances = [done[dep] for dep in task.dependances if dep in done]
                 entree = _build_task_description(task, dependances)
                 result = await self._realise(assignment.agent, task, entree, assignment.score)
         result = replace(result, usage=recolte.total.avec_duree(_ecoule_ms(debut)))
