@@ -23,6 +23,7 @@ from maestro.providers import (
 )
 from maestro.providers import claude as claude_mod
 from maestro.providers.base import ModelProvider
+from maestro.telemetry import collect_usage
 
 
 def test_claude_is_registered():
@@ -201,3 +202,98 @@ def test_claude_run_agent_cable_le_workspace_les_outils_et_assemble_le_texte(mon
     assert vu["tools"] == ["Read", "Write"]
     assert vu["allowed_tools"] == ["Read", "Write"]
     assert vu["permission_mode"] == "bypassPermissions"
+
+
+# --- Ticket #8 : remontée de l'usage (tokens, coût, durée, outils) ---------------------
+
+
+class FakeTextBlock:
+    def __init__(self, text):
+        self.text = text
+
+
+class FakeToolUseBlock:
+    def __init__(self, name):
+        self.name = name
+
+
+class FakeAssistantMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class FakeResultMessage:
+    """Reflet minimal du ResultMessage du SDK : tokens, coût, durée API, tours."""
+
+    def __init__(self, *, usage=None, total_cost_usd=None, duration_api_ms=0, num_turns=1):
+        self.usage = usage
+        self.total_cost_usd = total_cost_usd
+        self.duration_api_ms = duration_api_ms
+        self.num_turns = num_turns
+
+
+def _patch_sdk(monkeypatch, fake_query):
+    monkeypatch.setattr(claude_mod, "query", fake_query)
+    monkeypatch.setattr(claude_mod, "AssistantMessage", FakeAssistantMessage)
+    monkeypatch.setattr(claude_mod, "TextBlock", FakeTextBlock)
+    monkeypatch.setattr(claude_mod, "ToolUseBlock", FakeToolUseBlock)
+    monkeypatch.setattr(claude_mod, "ResultMessage", FakeResultMessage)
+
+
+def test_claude_generate_signale_l_usage_au_collecteur(monkeypatch):
+    # Le ResultMessage final (tokens, coût, durée API) remonte via collect_usage ;
+    # les tokens d'entrée agrègent le prompt direct et le cache.
+    async def fake_query(*, prompt, options):
+        yield FakeAssistantMessage([FakeTextBlock("Réponse")])
+        yield FakeResultMessage(
+            usage={
+                "input_tokens": 100,
+                "cache_creation_input_tokens": 15,
+                "cache_read_input_tokens": 5,
+                "output_tokens": 30,
+            },
+            total_cost_usd=0.042,
+            duration_api_ms=1200,
+            num_turns=1,
+        )
+
+    _patch_sdk(monkeypatch, fake_query)
+    provider = ClaudeProvider(Credentials())
+
+    with collect_usage() as recolte:
+        result = asyncio.run(provider.generate("Salut", model="claude-opus-4-8"))
+
+    assert result == "Réponse"
+    assert recolte.total.appels == 1
+    assert recolte.total.tokens_entree == 120
+    assert recolte.total.tokens_sortie == 30
+    assert recolte.total.cout_usd == pytest.approx(0.042)
+    assert recolte.total.duree_api_ms == 1200
+    assert recolte.total.tours == 1
+
+
+def test_claude_run_agent_releve_les_outils_utilises(monkeypatch):
+    # Les noms d'outils des ToolUseBlock remontent, dédupliqués, dans l'usage.
+    async def fake_query(*, prompt, options):
+        yield FakeAssistantMessage(
+            [FakeToolUseBlock("Write"), FakeTextBlock("j'écris"), FakeToolUseBlock("Bash")]
+        )
+        yield FakeAssistantMessage([FakeToolUseBlock("Write"), FakeTextBlock(" puis livré.")])
+        yield FakeResultMessage(usage={"output_tokens": 10}, num_turns=2)
+
+    _patch_sdk(monkeypatch, fake_query)
+    provider = ClaudeProvider(Credentials())
+
+    with collect_usage() as recolte:
+        result = asyncio.run(
+            provider.run_agent(
+                "Code ceci", model="claude-sonnet-5",
+                workspace=Path("/tmp/ws-xyz"), tools=("Write", "Bash"),
+            )
+        )
+
+    assert result == "j'écris puis livré."
+    assert recolte.total.outils == ("Write", "Bash")
+    assert recolte.total.tours == 2
+    # Coût non rapporté par le SDK → inconnu (None), pas zéro.
+    assert recolte.total.cout_usd is None

@@ -10,17 +10,31 @@ et ceux du ticket #35 :
    un workspace isolé, et les fichiers produits remontent dans le RunReport
    (`to_dict()` et `synthese()`) ;
 ④ les rôles sans runtime outillé livrent leur texte via `generate()` — y compris en
-   **repli** quand le fournisseur n'a pas d'exécution outillée.
+   **repli** quand le fournisseur n'a pas d'exécution outillée ;
+et ceux du ticket #8 :
+⑤ le **coût par tâche** (tokens, coût, durée) est visible (TaskResult, synthèse,
+   rapport structuré) et traçable (journal JSON par étape, relié par le run_id) ;
+⑥ les logs ne contiennent **aucun secret**.
 Plus la résilience : un échec de routage est consigné sans interrompre la boucle.
 """
 
 import asyncio
 import json
+import logging
 from pathlib import Path
+
+import pytest
 
 from maestro.engine import OrchestrationEngine
 from maestro.orchestrator import Orchestrator
 from maestro.providers.base import ModelProvider
+from maestro.telemetry import (
+    LOGGER_NAME,
+    MARQUEUR_SECRET,
+    RunJournal,
+    StepUsage,
+    report_usage,
+)
 
 
 class ConstantProvider(ModelProvider):
@@ -295,3 +309,108 @@ def test_runtimes_injectes_remplacent_le_cablage_par_defaut():
     assert all(r.ok for r in report.resultats)
     assert provider.run_calls == []
     assert len(provider.generate_calls) == 3
+
+
+# --- Critères ⑤/⑥ (#8) : coût par tâche visible et traçable, logs sans secret ----------
+
+
+class MeteredProvider(ModelProvider):
+    """Exécutant texte factice qui signale l'usage de chaque appel (ticket #8)."""
+
+    name = "metered"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        report_usage(
+            StepUsage(
+                appels=1, tokens_entree=100, tokens_sortie=20,
+                cout_usd=0.01, duree_api_ms=50, tours=1,
+            )
+        )
+        return "LIVRABLE mesuré"
+
+
+def test_le_cout_par_tache_est_visible_dans_le_rapport():
+    report = asyncio.run(_engine(exec_provider=MeteredProvider()).run("Objectif"))
+
+    assert report.run_id  # l'exécution est traçable dans le journal via ce run_id
+    for r in report.resultats:
+        assert r.usage.appels == 1
+        assert r.usage.tokens_total == 120
+        assert r.usage.cout_usd == pytest.approx(0.01)
+        assert r.usage.duree_ms is not None  # durée horloge toujours mesurée
+
+    # Le total agrège les 3 tâches (le planificateur factice ne rapporte rien).
+    assert report.usage_totale.cout_usd == pytest.approx(0.03)
+
+    # Visible dans le rapport structuré…
+    data = report.to_dict()
+    assert data["run_id"] == report.run_id
+    assert data["resultats"][0]["usage"]["cout_usd"] == 0.01
+    assert data["usage_totale"]["cout_usd"] == pytest.approx(0.03)
+
+    # …comme dans la synthèse Markdown (par tâche et en total).
+    synthese = report.synthese()
+    assert "Usage total (planification incluse)" in synthese
+    assert synthese.count("coût 0.0100 $") == 3
+
+
+def test_chaque_etape_est_consignee_dans_le_journal():
+    journal = RunJournal(run_id="run-42")
+    report = asyncio.run(
+        _engine(exec_provider=MeteredProvider()).run("Objectif", journal=journal)
+    )
+
+    # Une trace par étape — la planification d'abord, puis les tâches dans l'ordre.
+    assert [r.etape for r in journal.records] == [
+        "planification", "schema-bdd", "api-taches", "tests-api",
+    ]
+    assert all(r.run_id == "run-42" for r in journal.records)
+    assert report.run_id == "run-42"
+
+    # Chaque trace porte l'entrée, la sortie et l'usage de l'étape.
+    tache = journal.records[1]
+    assert "Schéma BDD" in tache.entree
+    assert tache.sortie == "LIVRABLE mesuré"
+    assert tache.usage.cout_usd == pytest.approx(0.01)
+
+
+def test_l_echec_de_routage_est_consigne_au_journal_avec_sa_duree():
+    plan = json.dumps(
+        [
+            {
+                "id": "strategie",
+                "titre": "Stratégie produit",
+                "description": "Cadrer la stratégie.",
+                "competences_requises": ["planning"],  # aucun exécutant ne la couvre
+                "format_sortie": "Note",
+                "dependances": [],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    journal = RunJournal()
+    asyncio.run(_engine(plan_json=plan).run("Objectif", journal=journal))
+
+    trace = journal.records[-1]
+    assert trace.etape == "strategie"
+    assert trace.statut == "echec"
+    assert trace.erreur
+    assert trace.usage.duree_ms is not None
+
+
+def test_le_journal_n_expose_aucun_secret(monkeypatch, caplog):
+    # Critère ⑥ : un secret présent dans l'environnement (et recraché par un
+    # livrable) n'atteint jamais les lignes du journal.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "cle-api-ultra-secrete")
+    provider = ConstantProvider("Voici cle-api-ultra-secrete et sk-ant-api03-abcdef12345")
+
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        asyncio.run(_engine(exec_provider=provider).run("Objectif"))
+
+    assert caplog.messages  # le journal a bien émis des lignes
+    assert "cle-api-ultra-secrete" not in caplog.text
+    assert "sk-ant-api03-abcdef12345" not in caplog.text
+    assert MARQUEUR_SECRET in caplog.text
