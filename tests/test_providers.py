@@ -5,6 +5,7 @@ L'authentification réelle et l'appel live relèvent du ticket #30.
 """
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +15,7 @@ from maestro.providers import (
     Credentials,
     ModelSpec,
     UnknownProviderError,
+    UnsupportedCapability,
     available_providers,
     register,
     resolve_provider,
@@ -115,3 +117,61 @@ def test_claude_generate_assembles_text(monkeypatch):
     provider = ClaudeProvider(Credentials())
     result = asyncio.run(provider.generate("Salut", model="claude-opus-4-8"))
     assert result == "Bonjour le monde"
+
+
+def test_run_agent_est_optionnel_et_refuse_par_defaut():
+    # Capacité optionnelle (ticket #4) : un fournisseur qui ne l'implémente pas la refuse.
+    class TextOnly(ModelProvider):
+        name = "text-only"
+
+        def supports(self, model):
+            return True
+
+        async def generate(self, prompt, *, model, system_prompt=None):
+            return "texte"
+
+    with pytest.raises(UnsupportedCapability):
+        asyncio.run(
+            TextOnly().run_agent(
+                "fais", model="m", workspace=Path("."), tools=("Read",)
+            )
+        )
+
+
+def test_claude_run_agent_cable_le_workspace_les_outils_et_assemble_le_texte(monkeypatch):
+    # La frontière fixe cwd/tools/permission pour une exécution outillée isolée, sans réseau.
+    class FakeTextBlock:
+        def __init__(self, text):
+            self.text = text
+
+    class FakeAssistantMessage:
+        def __init__(self, content):
+            self.content = content
+
+    vu: dict[str, object] = {}
+
+    async def fake_query(*, prompt, options):
+        vu["prompt"] = prompt
+        vu["cwd"] = options.cwd
+        vu["tools"] = options.tools
+        vu["allowed_tools"] = options.allowed_tools
+        vu["permission_mode"] = options.permission_mode
+        yield FakeAssistantMessage([FakeTextBlock("Livré.")])
+
+    monkeypatch.setattr(claude_mod, "query", fake_query)
+    monkeypatch.setattr(claude_mod, "AssistantMessage", FakeAssistantMessage)
+    monkeypatch.setattr(claude_mod, "TextBlock", FakeTextBlock)
+
+    provider = ClaudeProvider(Credentials())
+    ws = Path("/tmp/ws-xyz")
+    result = asyncio.run(
+        provider.run_agent(
+            "Code ceci", model="claude-sonnet-5", workspace=ws, tools=("Read", "Write")
+        )
+    )
+
+    assert result == "Livré."
+    assert vu["cwd"] == ws
+    assert vu["tools"] == ["Read", "Write"]
+    assert vu["allowed_tools"] == ["Read", "Write"]
+    assert vu["permission_mode"] == "bypassPermissions"

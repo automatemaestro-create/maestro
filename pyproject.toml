@@ -35,6 +35,9 @@ maestro-orchestrate = "maestro.orchestrator.cli:main"
 # Démo : déroule la boucle d'orchestration complète (assignation + exécution +
 # agrégation) et imprime la synthèse (moteur, ticket #6).
 maestro-run = "maestro.engine.cli:main"
+# Démo : exécute une tâche de dev de bout en bout dans un espace isolé et imprime le
+# livrable produit (agent Développeur, ticket #4).
+maestro-dev = "maestro.agents.cli:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).
