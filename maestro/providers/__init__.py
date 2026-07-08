@@ -17,7 +17,13 @@ moteur.
 
 from __future__ import annotations
 
-from maestro.providers.base import AuthMode, Credentials, ModelProvider, ModelSpec
+from maestro.providers.base import (
+    AuthMode,
+    Credentials,
+    ModelProvider,
+    ModelSpec,
+    UnsupportedCapability,
+)
 from maestro.providers.claude import ClaudeProvider
 from maestro.providers.registry import (
     ProviderFactory,
@@ -36,6 +42,7 @@ __all__ = [
     "ModelSpec",
     "ProviderFactory",
     "UnknownProviderError",
+    "UnsupportedCapability",
     "available_providers",
     "register",
     "resolve_provider",

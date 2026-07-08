@@ -24,6 +24,8 @@ ambiant.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from pathlib import Path
 from typing import ClassVar
 
 from claude_agent_sdk import (
@@ -64,6 +66,9 @@ class ClaudeProvider(ModelProvider):
 
     #: Préfixe des identifiants de modèles Claude (ex. `claude-opus-4-8`).
     _MODEL_PREFIX: ClassVar[str] = "claude-"
+
+    #: Plafond de tours d'une exécution agentique (garde-fou anti-boucle, docs/02 §7).
+    _MAX_TURNS: ClassVar[int] = 40
 
     def __init__(self, credentials: Credentials) -> None:
         self._credentials = credentials
@@ -132,6 +137,45 @@ class ClaudeProvider(ModelProvider):
             model=model,
             system_prompt=system_prompt,
             env=self._auth_env(),
+        )
+        parts: list[str] = []
+        async for message in query(prompt=prompt, options=options):
+            if isinstance(message, AssistantMessage):
+                parts.extend(
+                    block.text for block in message.content if isinstance(block, TextBlock)
+                )
+        return "".join(parts)
+
+    async def run_agent(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+        workspace: Path,
+        tools: Sequence[str],
+    ) -> str:
+        """Lance une exécution *agentique outillée* de l'Agent SDK dans `workspace`.
+
+        Confie `tools` au modèle et fixe `workspace` comme répertoire de travail
+        (`cwd`) : le sous-agent y produit ses fichiers. `permission_mode` est
+        `bypassPermissions` — l'exécution est **non interactive** (aucun humain pour
+        confirmer), l'isolation reposant sur le répertoire dédié et sur la restriction
+        de `tools`. `max_turns` borne la boucle (garde-fou anti-emballement).
+
+        Limite POC assumée : l'isolation est *au niveau du système de fichiers* — un
+        shell pourrait en principe adresser des chemins hors du `cwd`. Le renfort
+        (conteneur Docker par tâche) est prévu hors POC, sans changer cette signature.
+        """
+        options = ClaudeAgentOptions(
+            model=model,
+            system_prompt=system_prompt,
+            env=self._auth_env(),
+            cwd=workspace,
+            tools=list(tools),
+            allowed_tools=list(tools),
+            permission_mode="bypassPermissions",
+            max_turns=self._MAX_TURNS,
         )
         parts: list[str] = []
         async for message in query(prompt=prompt, options=options):

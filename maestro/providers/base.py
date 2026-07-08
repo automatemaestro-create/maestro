@@ -12,9 +12,22 @@ registre (voir `maestro.providers.registry`) — sans toucher au moteur.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import ClassVar
+
+
+class UnsupportedCapability(RuntimeError):
+    """Levée quand un fournisseur ne sait pas honorer une capacité *optionnelle*.
+
+    Le POC n'exige de tout fournisseur que `generate` (texte). L'exécution
+    *agentique outillée* (`run_agent`) est une capacité **native de l'Agent SDK**
+    (donc de Claude) : un fournisseur qui n'en dispose pas la refuse explicitement
+    plutôt que de la simuler. Le moteur peut ainsi *tester* la capacité sans présumer
+    du fournisseur.
+    """
 
 
 class AuthMode(StrEnum):
@@ -96,3 +109,27 @@ class ModelProvider(ABC):
         sous-agents) sans changer la nature de la frontière.
         """
         raise NotImplementedError
+
+    async def run_agent(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+        workspace: Path,
+        tools: Sequence[str],
+    ) -> str:
+        """Exécution *agentique outillée* : renvoie le compte-rendu final de l'agent.
+
+        Le modèle dispose des outils `tools` (fichiers, shell…) et travaille dans
+        `workspace`, son **répertoire de travail isolé** (cf. `maestro.sandbox`), où
+        il produit un livrable concret (des fichiers). Là où `generate` rend du texte,
+        `run_agent` *agit* dans un espace dédié.
+
+        Capacité **optionnelle** : la base la refuse (`UnsupportedCapability`) ; un
+        fournisseur outillé (Claude via l'Agent SDK) la surcharge. Le moteur reste
+        agnostique — il teste la capacité, il ne présume pas du fournisseur.
+        """
+        raise UnsupportedCapability(
+            f"Le fournisseur {self.name!r} n'expose pas d'exécution agentique outillée."
+        )
