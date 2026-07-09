@@ -7,8 +7,13 @@ ligne JSON par étape : entrée, sortie, outils, tokens, coût, durée. Fine cou
 autour de `OrchestrationEngine.default` : elle sert à *exercer* le flux de bout en
 bout contre le vrai fournisseur Claude.
 
+Garde-fous (#9) : `--plafond-cout <usd>` et `--timeout <s>` arment le plafond de
+dépense et le time-out **par tâche** ; une tâche classée sensible déclenche une
+**demande de validation** posée sur la console (refusée par défaut si l'entrée
+n'est pas interactive — fail-safe).
+
 Code de sortie : 0 si toutes les tâches réussissent, 1 si au moins une échoue (ou
-en cas d'erreur de configuration / planification).
+en cas d'erreur de configuration / planification), 2 si l'appel est mal formé.
 """
 
 from __future__ import annotations
@@ -20,33 +25,58 @@ import sys
 from collections.abc import Sequence
 
 from maestro.config import ConfigError
+from maestro.engine.guardrails import DemandeValidation, Guardrails
 from maestro.engine.loop import OrchestrationEngine
 from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import LOGGER_NAME
 
+_USAGE = (
+    "Usage : maestro-run [--json] [--trace] [--plafond-cout <usd>] [--timeout <s>] "
+    '"<objectif en langage naturel>"'
+)
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    usage = 'Usage : maestro-run [--json] [--trace] "<objectif en langage naturel>"'
     if args and args[0] in {"-h", "--help"}:
-        print(usage, file=sys.stderr)
+        print(_USAGE, file=sys.stderr)
         return 0
 
     as_json = False
-    while args and args[0] in {"--json", "--trace"}:
+    plafond_cout: float | None = None
+    timeout: float | None = None
+    while args and args[0] in {"--json", "--trace", "--plafond-cout", "--timeout"}:
         flag = args.pop(0)
         if flag == "--json":
             as_json = True
-        else:
+        elif flag == "--trace":
             _activer_trace()
+        else:
+            valeur = _valeur_numerique(flag, args)
+            if valeur is None:
+                return 2
+            if flag == "--plafond-cout":
+                plafond_cout = valeur
+            else:
+                timeout = valeur
 
     objective = " ".join(args).strip()
     if not objective:
-        print(usage, file=sys.stderr)
+        print(_USAGE, file=sys.stderr)
         return 2
 
     try:
-        engine = OrchestrationEngine.default()
+        guardrails = Guardrails(
+            plafond_cout_usd=plafond_cout,
+            timeout_s=timeout,
+            validateur=_validation_console,
+        )
+    except ValueError as exc:
+        print(f"Garde-fous : {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        engine = OrchestrationEngine.default(guardrails=guardrails)
         report = asyncio.run(engine.run(objective))
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
@@ -60,6 +90,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print(report.synthese())
     return 0 if not report.echouees else 1
+
+
+def _valeur_numerique(flag: str, args: list[str]) -> float | None:
+    """Consomme et convertit la valeur de `flag` ; None (et message) si invalide."""
+    if not args:
+        print(f"{flag} attend une valeur numérique.\n{_USAGE}", file=sys.stderr)
+        return None
+    brut = args.pop(0)
+    try:
+        return float(brut)
+    except ValueError:
+        print(f"{flag} attend une valeur numérique (reçu : {brut!r}).", file=sys.stderr)
+        return None
+
+
+def _validation_console(demande: DemandeValidation) -> bool:
+    """Demande de validation humaine sur la console (#9) — refus par défaut.
+
+    Bloque la boucle asyncio le temps de la réponse : assumé pour la démo CLI
+    (un humain, une console). Une entrée non interactive (EOF) vaut refus —
+    même fail-safe que l'absence de validateur.
+    """
+    print(
+        f"\n[Validation requise] {demande.titre} — agent {demande.role} "
+        f"(`{demande.agent}`)\n  Raison : {demande.raison}\n"
+        f"  Description : {demande.description}",
+        file=sys.stderr,
+    )
+    try:
+        reponse = input("Approuver cette action sensible ? [o/N] ")
+    except EOFError:
+        print("(entrée non interactive — action refusée)", file=sys.stderr)
+        return False
+    return reponse.strip().lower() in {"o", "oui", "y", "yes"}
 
 
 def _activer_trace() -> None:

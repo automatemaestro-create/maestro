@@ -17,6 +17,7 @@ from __future__ import annotations
 from maestro.telemetry.journal import LOGGER_NAME, RunJournal, StepRecord
 from maestro.telemetry.redact import MARQUEUR_SECRET, redact_secrets
 from maestro.telemetry.usage import (
+    PlafondDepenseDepasse,
     StepUsage,
     UsageCollector,
     collect_usage,
@@ -26,6 +27,7 @@ from maestro.telemetry.usage import (
 __all__ = [
     "LOGGER_NAME",
     "MARQUEUR_SECRET",
+    "PlafondDepenseDepasse",
     "RunJournal",
     "StepRecord",
     "StepUsage",
