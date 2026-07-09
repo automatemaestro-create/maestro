@@ -223,6 +223,10 @@ def test_echec_de_routage_consigne_sans_interrompre_la_boucle():
     echec = report.echouees[0]
     assert echec.task_id == "strategie"
     assert echec.statut == "echec"
+    # Repli explicite (#42) : la tâche est marquée « à assigner », pas mal routée
+    # (le classifieur, servi par le fournisseur factice, ne rend rien d'exploitable).
+    assert echec.role == "à assigner"
+    assert "à assigner" in (echec.erreur or "")
 
 
 def test_reponse_vide_de_l_agent_marque_la_tache_en_echec():
