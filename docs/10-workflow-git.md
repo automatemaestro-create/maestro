@@ -242,6 +242,15 @@ la Control Tower (Phase 1) :
   merge, pipeline, threads bloquants, résumé du diff) pour **éclairer la décision de merge humaine**.
   Conforme au garde-fou §6 : elle **ne merge, ne ferme, ni n'approuve jamais**.
 
+**Remédiation CI.** [`/pipeline-fix`](../.claude/commands/pipeline-fix.md) `[mr|branche]` — quand
+le pipeline d'une MR est rouge : diagnostique les jobs en échec (traces synthétisées via les
+helpers `lib.sh pipeline-*`), **corrige en local** quand c'est corrigeable (lint/test/typage),
+committe (`Refs #<iid>`), pousse et suit le nouveau pipeline jusqu'au verdict (2 tentatives max ;
+re-déclenchement `glab ci run` si le push n'a pas déclenché de pipeline). Un échec d'infrastructure
+(runner, secret, flaky) est signalé tel quel — au plus un `glab ci retry`, jamais de correctif
+inventé. Elle écrit des **commits**, mais jamais le cycle de vie : ni statut, ni MR, ni merge (§6),
+ni commit sur `main` (voir §8).
+
 Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
 ---
@@ -329,12 +338,17 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
 
 ## 8. Intégration continue (CI)
 
-Un pipeline minimal existe : [`.gitlab-ci.yml`](../.gitlab-ci.yml) — stage `lint`, job `shellcheck`
-qui passe [shellcheck](https://www.shellcheck.net/) (sévérité `warning`) sur les scripts
-`scripts/**/*.sh` (`lib.sh`, `doctor.sh`, `bootstrap.sh`), aujourd'hui le seul code exécutable du
-dépôt. Un **pipeline vert est la condition de passage `En revue` → merge**.
+Le pipeline [`.gitlab-ci.yml`](../.gitlab-ci.yml) a deux étages : `lint` — `shellcheck`
+(sévérité `warning`, scripts `scripts/**/*.sh`) et `python-lint` (ruff) — puis `test` — `pytest`
+(suite du dépôt) et `mypy` (typage strict de `maestro/`). Un **pipeline vert est la condition de
+passage `En revue` → merge**.
 
-Périmètre volontairement restreint à la Phase 0 : **pas encore** de job de test applicatif — le
-monorepo reste un squelette. Quand du code apparaît dans `apps/`, `core/` ou `packages/`, étendre
-le pipeline avec les lint/test correspondants (et durcir la sévérité shellcheck vers `style` une
-fois les scripts stabilisés).
+**Pipeline rouge ?** La remédiation passe par
+[`/pipeline-fix`](../.claude/commands/pipeline-fix.md) (voir §5) : diagnostic des jobs en échec,
+correctif local quand c'est corrigeable, commit `Refs #<iid>` poussé sur la branche, suivi du
+nouveau pipeline. Les briques réutilisables vivent dans `lib.sh` : `pipeline-latest <ref>`,
+`pipeline-status <id>`, `pipeline-failed-jobs <id>`, `job-trace <job-id> [lignes]`,
+`pipeline-wait <id> [timeout]` (parsing shell pur, comme le reste du fichier). Reproduire les
+contrôles en local avant de pousser : mêmes commandes que les jobs (ruff/pytest/mypy via le venv
+du repo ; shellcheck sur des fins de ligne LF — la CI checkout en LF, une copie Windows CRLF
+produit des faux SC1017).
