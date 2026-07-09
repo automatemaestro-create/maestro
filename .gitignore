@@ -43,6 +43,9 @@ coverage/
 .cache/
 tmp/
 
+# --- Artefacts de la démo POC (maestro-demo, ticket #10) ---
+sortie-demo/
+
 # --- Livrables bureautiques (déjà versionnés sur Drive) ---
 deliverables/
 *.docx

@@ -19,6 +19,7 @@ en cas d'erreur de configuration / planification), 2 si l'appel est mal formé.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import sys
@@ -37,6 +38,7 @@ _USAGE = (
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    console_tolerante()
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] in {"-h", "--help"}:
         print(_USAGE, file=sys.stderr)
@@ -50,7 +52,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if flag == "--json":
             as_json = True
         elif flag == "--trace":
-            _activer_trace()
+            activer_trace()
         else:
             valeur = _valeur_numerique(flag, args)
             if valeur is None:
@@ -69,7 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         guardrails = Guardrails(
             plafond_cout_usd=plafond_cout,
             timeout_s=timeout,
-            validateur=_validation_console,
+            validateur=validation_console,
         )
     except ValueError as exc:
         print(f"Garde-fous : {exc}", file=sys.stderr)
@@ -105,7 +107,22 @@ def _valeur_numerique(flag: str, args: list[str]) -> float | None:
         return None
 
 
-def _validation_console(demande: DemandeValidation) -> bool:
+def console_tolerante() -> None:
+    """Rend stdout/stderr tolérants aux caractères hors de l'encodage de la console.
+
+    Les synthèses imprimées contiennent les livrables des agents — n'importe quel
+    Unicode peut s'y trouver, qu'une console Windows héritée (cp1252) ne sait pas
+    encoder : sans cela, `print` planterait après une exécution pourtant réussie.
+    Les caractères inencodables sont remplacés à l'affichage seulement ; les
+    artefacts écrits sur disque restent en UTF-8 intacts. Partagée avec
+    `maestro-demo` (ticket #10).
+    """
+    for flux in (sys.stdout, sys.stderr):
+        if isinstance(flux, io.TextIOWrapper):
+            flux.reconfigure(errors="replace")
+
+
+def validation_console(demande: DemandeValidation) -> bool:
     """Demande de validation humaine sur la console (#9) — refus par défaut.
 
     Bloque la boucle asyncio le temps de la réponse : assumé pour la démo CLI
@@ -126,8 +143,10 @@ def _validation_console(demande: DemandeValidation) -> bool:
     return reponse.strip().lower() in {"o", "oui", "y", "yes"}
 
 
-def _activer_trace() -> None:
+def activer_trace() -> None:
     """Émet le journal d'exécution (JSON Lines, #8) sur stderr.
+
+    Partagée avec `maestro-demo` (ticket #10) — d'où sa visibilité publique.
 
     Configure le logger `maestro.trace` sans toucher au root : la synthèse reste
     seule sur stdout, le journal part sur stderr (redirigeable vers un fichier).
