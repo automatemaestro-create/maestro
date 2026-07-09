@@ -19,6 +19,11 @@ dependencies = [
     # File de tâches et workers parallèles (ticket #41) — broker/backend Redis
     # (cf. docs/02-stack-technique.md : Celery + Redis pour démarrer).
     "celery[redis]>=5.3",
+    # Backend Control Tower (ticket #46) : API REST + WebSocket temps réel
+    # (cf. docs/02-stack-technique.md §4 : FastAPI + Redis Pub/Sub).
+    "fastapi>=0.110",
+    # Serveur ASGI de l'API (`maestro-api`) ; [standard] apporte le support WebSocket.
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +33,9 @@ dev = [
     "pytest>=8.0",
     # Stubs de types pour jsonschema (mypy strict).
     "types-jsonschema>=4.0",
+    # Client des tests d'API (TestClient de Starlette, REST + WebSocket, ticket #46).
+    # Starlette a déprécié httpx au profit de httpx2 pour son TestClient.
+    "httpx2>=2.0",
 ]
 
 [project.scripts]
@@ -48,6 +56,8 @@ maestro-dev = "maestro.agents.runtime_cli:main_dev"
 # livrable produit (schéma, migrations, requêtes) (agent Base de données, ticket #5 ;
 # CLI factorisé par #35).
 maestro-bdd = "maestro.agents.runtime_cli:main_bdd"
+# Backend Control Tower : sert l'API REST + WebSocket (bus Redis, ticket #46).
+maestro-api = "maestro.controltower.cli:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).
