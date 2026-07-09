@@ -12,7 +12,7 @@ Objectif : lancer un **premier prototype** concret (Phase 0). Pensé pour être 
 | Un **accès modèle Claude** | Faire fonctionner les agents Claude | **Deux modes au choix** (voir §2.1) : abonnement Claude Code (défaut du POC, sans clé) **ou** clé API Anthropic |
 | **Python 3.11+** *ou* **Node.js 20+** | Selon l'option de langage choisie | Voir [doc 02 §1](./02-stack-technique.md) |
 | **Docker** | Bac à sable d'exécution + bases locales | Docker Desktop suffit pour démarrer |
-| **Git + un compte GitHub** | Versionnement, intégration code | — |
+| **Git + un compte GitLab** | Versionnement, intégration code | Le dépôt du projet et sa CI sont hébergés sur GitLab |
 | Le **Claude Agent SDK** | Moteur d'agents | Paquet Python ou TypeScript |
 
 > ⚠️ Vérifier la documentation officielle d'Anthropic pour les noms de paquets et commandes exacts (l'écosystème évolue vite).
@@ -67,30 +67,38 @@ En mode `api_key`, `ANTHROPIC_API_KEY` est **obligatoire** (sinon l'environnemen
 
 ---
 
-## 3. Squelette de projet conseillé
+## 3. Squelette du projet (état réel)
+
+**Tout le code du POC vit dans le paquet Python `maestro/`.** Les dossiers `agents/` et
+`core/` à la racine, hérités du cadrage initial, sont des **placeholders** : chacun contient
+un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` → `maestro/agents/`,
+`core/router/` → `maestro/router/`).
 
 ```
-maestro/
+(racine du dépôt)
+├── maestro/            # 📦 Paquet Python du POC — le code vit ici
+│   ├── agents/         #   Catalogue des rôles + runtime outillé (Développeur, BDD…)
+│   ├── engine/         #   Boucle d'orchestration + garde-fous (CLI maestro-run)
+│   ├── orchestrator/   #   Décomposition objectif → tâches structurées
+│   ├── providers/      #   Abstraction fournisseur (ModelProvider, Claude au POC)
+│   ├── router/         #   Auto-assignation des tâches aux agents
+│   ├── sandbox/        #   Espace de travail isolé par tâche
+│   ├── telemetry/      #   Journal des étapes, usage/coûts, redaction des secrets
+│   ├── check_env.py    #   Vérification d'environnement (maestro-check-env)
+│   ├── config.py       #   Modes d'authentification (§2.1)
+│   └── demo.py         #   Démo de bout en bout (voir doc 11)
+├── tests/              # Tests pytest du paquet
 ├── apps/
-│   ├── api/            # Backend FastAPI (ou NestJS)
-│   └── web/            # Control Tower (Next.js)
-├── agents/
-│   ├── orchestrator/   # Agent Chef de projet
-│   ├── developer/
-│   ├── database/
-│   ├── devops/
-│   ├── designer/
-│   └── qa/
-├── core/
-│   ├── router/         # Auto-assignation
-│   ├── queue/          # File de tâches & workers
-│   ├── playbooks/      # Playbooks versionnés (Markdown)
-│   └── sandbox/        # Isolation d'exécution
+│   ├── api/            # Backend FastAPI (placeholder — Phase 1)
+│   └── web/            # Control Tower Next.js (placeholder — Phase 1)
+├── agents/             # Placeholders par rôle (README de renvoi vers maestro/agents/)
+├── core/               # Placeholders router/queue/playbooks/sandbox (README de renvoi)
 ├── packages/
-│   └── shared/         # Types & schémas partagés
+│   └── shared/         # Types & schémas partagés (task.schema.json)
 ├── infra/
 │   ├── docker-compose.yml
 │   └── migrations/
+├── scripts/            # Outillage GitLab (lib.sh, doctor.sh…) + hooks git
 └── docs/               # Cette documentation
 ```
 

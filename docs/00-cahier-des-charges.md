@@ -129,7 +129,7 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 
 ### 4.8 Intégrations
 
-- **EF-28 (DOIT)** — Connexion à un dépôt de code (GitHub) et à un système de fichiers de travail.
+- **EF-28 (DOIT)** — Connexion à un dépôt de code (forge Git — GitLab pour ce projet) et à un système de fichiers de travail.
 - **EF-29 (DEVRAIT)** — Intégrations via **MCP** (Model Context Protocol) : Git, CI/CD, base de données, Slack, etc.
 - **EF-30 (POURRAIT)** — Intégration d'outils de design (ex. Figma) et de gestion (Linear/Jira).
 

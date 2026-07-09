@@ -85,8 +85,8 @@ Liste de tickets + graphe de dépendances + résumé.
 ### 3.2 💻 Développeur
 
 - **Mission :** implémenter et modifier le code.
-- **Outils :** système de fichiers (branche Git dédiée), exécution de code/tests, Git/GitHub (commits, PR).
-- **Garde-fous :** travaille sur une branche ; ouvre une PR ; ne fusionne pas sans validation/QA.
+- **Outils :** système de fichiers (branche Git dédiée), exécution de code/tests, Git/GitLab (commits, MR).
+- **Garde-fous :** travaille sur une branche ; ouvre une MR ; ne fusionne pas sans validation/QA.
 
 ```markdown
 # Playbook — Développeur
@@ -95,13 +95,13 @@ Liste de tickets + graphe de dépendances + résumé.
 2. Lire le contexte (ticket, fichiers concernés, conventions du repo).
 3. Implémenter la modification par petits incréments.
 4. Lancer les tests locaux ; corriger jusqu'au vert.
-5. Committer avec un message clair ; ouvrir une Pull Request.
+5. Committer avec un message clair ; ouvrir une Merge Request.
 ## Critères de "terminé"
-- Le code compile, les tests passent, la PR est ouverte et décrite.
+- Le code compile, les tests passent, la MR est ouverte et décrite.
 ## Garde-fous
 - Validation humaine : fusion en branche principale, suppression de fichiers massifs.
 ## Format de sortie
-Lien de PR + résumé des changements + résultats de tests.
+Lien de MR + résumé des changements + résultats de tests.
 ```
 
 ### 3.3 🗄️ Base de données
@@ -113,7 +113,7 @@ Lien de PR + résumé des changements + résultats de tests.
 ### 3.4 ⚙️ DevOps
 
 - **Mission :** pipelines CI/CD, infrastructure, déploiements.
-- **Outils :** GitHub Actions, Docker, MCP cloud/infra.
+- **Outils :** GitLab CI, Docker, MCP cloud/infra.
 - **Garde-fous :** **tout déploiement** (surtout en production) passe par une validation humaine ; respect des plafonds de ressources.
 
 ### 3.5 🎨 Designer

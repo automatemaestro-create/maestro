@@ -23,7 +23,7 @@
 | **Frontend** | **Next.js + React + TypeScript + Tailwind + shadcn/ui** | Remix, SvelteKit |
 | **Observabilité LLM** | **Langfuse** (open source, auto-hébergeable) | LangSmith (intégré LangChain) |
 | **Isolation d'exécution** | **Docker** par tâche (→ micro-VM si besoin) | E2B, Firecracker, gVisor |
-| **CI/CD & versionnement** | **Git + GitHub + GitHub Actions** | GitLab CI |
+| **CI/CD & versionnement** | **Git + GitLab + GitLab CI** (choix effectif du projet) | GitHub + GitHub Actions |
 | **Conteneurisation / déploiement** | **Docker Compose** (dev) → **Kubernetes** (échelle) | Fly.io, Render, ECS |
 | **Authentification** | **Clerk** ou **Auth.js** | Supabase Auth, Keycloak |
 
@@ -124,7 +124,7 @@ Deux protocoles complémentaires :
 
 Le **MCP (Model Context Protocol)** standardise le branchement d'outils aux agents. Serveurs MCP utiles :
 
-- **GitHub / Git** : lecture/écriture de code, PR, revues.
+- **GitLab / Git** : lecture/écriture de code, MR (merge requests), revues.
 - **Base de données** : exécution de migrations et requêtes (agent BDD).
 - **CI/CD & cloud** : déclenchement de pipelines, déploiements (agent DevOps).
 - **Design** : Figma (agent Designer).
