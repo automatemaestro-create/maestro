@@ -1,0 +1,125 @@
+{
+  "description": "Jeu de test d'assignation (ticket #42, critère MVP n°3) : des tâches variées et l'agent attendu pour chacune. Les tâches sont conformes à task.schema.json ; agent_attendu est un nom du catalogue (docs/04 §2) ou null quand le bon comportement est le repli « à assigner ». Consommé par maestro.router.evaluation et tests/test_router.py — le routage doit y atteindre au moins 9/10.",
+  "cas": [
+    {
+      "tache": {
+        "id": "api-endpoints",
+        "titre": "Exposer l'API REST des tâches",
+        "description": "Créer les endpoints CRUD de gestion des tâches dans le backend (création, lecture, mise à jour, suppression).",
+        "competences_requises": ["api", "backend"],
+        "format_sortie": "Module d'API avec ses routes"
+      },
+      "agent_attendu": "developpeur"
+    },
+    {
+      "tache": {
+        "id": "migration-echeance",
+        "titre": "Migration : colonne d'échéance",
+        "description": "Écrire la migration SQL ajoutant la colonne date_echeance à la table task, avec reprise des données existantes.",
+        "competences_requises": ["sql", "migration"],
+        "format_sortie": "Fichier SQL de migration"
+      },
+      "agent_attendu": "bdd"
+    },
+    {
+      "tache": {
+        "id": "pipeline-ci",
+        "titre": "Pipeline CI de lint et de tests",
+        "description": "Mettre en place le pipeline d'intégration continue qui lint le code et exécute la suite de tests à chaque push.",
+        "competences_requises": ["ci-cd"],
+        "format_sortie": "Fichier de configuration CI"
+      },
+      "agent_attendu": "devops"
+    },
+    {
+      "tache": {
+        "id": "maquette-login",
+        "titre": "Maquette de l'écran de connexion",
+        "description": "Concevoir la maquette de l'écran de connexion (champs, états d'erreur, responsive), conforme à la charte.",
+        "competences_requises": ["ui", "figma"],
+        "format_sortie": "Maquette Figma"
+      },
+      "agent_attendu": "designer"
+    },
+    {
+      "tache": {
+        "id": "tests-e2e-inscription",
+        "titre": "Tests e2e du parcours d'inscription",
+        "description": "Écrire les tests de bout en bout du parcours d'inscription : formulaire, confirmation par email, premier login.",
+        "competences_requises": ["e2e", "tests"],
+        "format_sortie": "Suite de tests e2e"
+      },
+      "agent_attendu": "qa"
+    },
+    {
+      "tache": {
+        "id": "refactor-paiement",
+        "titre": "Refactorer le module de paiement",
+        "description": "Extraire la logique de paiement dupliquée dans un service dédié, sans changement de comportement.",
+        "competences_requises": ["refactor"],
+        "format_sortie": "Code refactoré avec tests au vert"
+      },
+      "agent_attendu": "developpeur"
+    },
+    {
+      "tache": {
+        "id": "docker-app",
+        "titre": "Conteneuriser l'application",
+        "description": "Écrire le Dockerfile et la configuration compose pour exécuter l'application et ses dépendances en local.",
+        "competences_requises": ["docker", "infra"],
+        "format_sortie": "Dockerfile + docker-compose.yml"
+      },
+      "agent_attendu": "devops"
+    },
+    {
+      "tache": {
+        "id": "optimisation-requetes",
+        "titre": "Optimiser les requêtes lentes",
+        "description": "Analyser les requêtes les plus lentes du tableau de bord et les optimiser (index, réécriture, pagination).",
+        "competences_requises": ["sql", "data"],
+        "format_sortie": "Rapport d'analyse + requêtes optimisées"
+      },
+      "agent_attendu": "bdd"
+    },
+    {
+      "tache": {
+        "id": "revue-mr",
+        "titre": "Revue de la MR d'authentification",
+        "description": "Relire la merge request d'authentification : conformité aux critères d'acceptation, couverture de tests, régressions.",
+        "competences_requises": ["review", "qa"],
+        "format_sortie": "Rapport de revue"
+      },
+      "agent_attendu": "qa"
+    },
+    {
+      "tache": {
+        "id": "deploiement-schema-staging",
+        "titre": "Déployer le schéma en staging",
+        "description": "Déployer la dernière version du schéma de base de données sur l'environnement de staging via le pipeline de déploiement.",
+        "competences_requises": ["deploy", "schema"],
+        "format_sortie": "Déploiement staging vérifié"
+      },
+      "agent_attendu": "devops"
+    },
+    {
+      "tache": {
+        "id": "audit-accessibilite",
+        "titre": "Audit d'accessibilité des écrans",
+        "description": "Vérifier contrastes, navigation clavier et compatibilité lecteurs d'écran sur les maquettes des écrans principaux.",
+        "competences_requises": ["accessibilite"],
+        "format_sortie": "Rapport d'audit d'accessibilité"
+      },
+      "agent_attendu": "designer"
+    },
+    {
+      "tache": {
+        "id": "communique-presse",
+        "titre": "Rédiger le communiqué de presse",
+        "description": "Annoncer le lancement du produit à la presse spécialisée : messages clés, citation, contacts presse.",
+        "competences_requises": ["communication"],
+        "format_sortie": "Communiqué de presse d'une page"
+      },
+      "agent_attendu": null
+    }
+  ]
+}

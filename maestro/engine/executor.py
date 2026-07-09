@@ -29,7 +29,8 @@ from maestro.agents.runtime import AgentRuntime
 from maestro.engine.guardrails import DemandeValidation, Guardrails
 from maestro.orchestrator.schema import Task
 from maestro.providers.base import ModelProvider, UnsupportedCapability
-from maestro.router.router import RoutingError, assign
+from maestro.router.classifier import TaskClassifier
+from maestro.router.router import Router
 from maestro.sandbox import ProducedFile
 from maestro.telemetry import RunJournal, StepUsage, collect_usage
 
@@ -146,9 +147,16 @@ class LocalExecutor(TaskExecutor):
         agents: Sequence[Agent] = DEFAULT_AGENTS,
         runtimes: Mapping[str, AgentRuntime] | None = None,
         guardrails: Guardrails | None = None,
+        router: Router | None = None,
     ) -> None:
         self._provider = provider
-        self._agents = tuple(agents)
+        # Routage combiné (#42) : règles de compétences + classifieur léger adossé
+        # au même fournisseur. Un routeur injecté remplace `agents` pour le routage.
+        self._router = (
+            router
+            if router is not None
+            else Router(tuple(agents), classifier=TaskClassifier(provider))
+        )
         # Garde-fous par tâche (#9). Le défaut laisse plafond et time-out inactifs
         # mais garde la détection d'actions sensibles (refusées sans validateur).
         self._guardrails = guardrails if guardrails is not None else Guardrails()
@@ -177,14 +185,18 @@ class LocalExecutor(TaskExecutor):
         debut = perf_counter()
         entree = task.description
         with collect_usage(plafond_cout_usd=self._guardrails.plafond_cout_usd) as recolte:
-            try:
-                assignment = assign(task, self._agents)
-            except RoutingError as exc:
-                result = _echec(task, agent="—", role="non assigné", score=0, erreur=str(exc))
+            decision = await self._router.route(task)
+            if decision.agent is None:
+                # Repli explicite (#42) : tâche marquée « à assigner » plutôt que
+                # mal routée — l'assignation revient à un humain.
+                result = _echec(
+                    task, agent="—", role="à assigner", score=decision.score,
+                    erreur=decision.raison,
+                )
             else:
                 entree = _build_task_description(task, dependances)
                 result = await self._realise_gardee(
-                    assignment.agent, task, entree, assignment.score, journal
+                    decision.agent, task, entree, decision.score, journal
                 )
         result = replace(result, usage=recolte.total.avec_duree(_ecoule_ms(debut)))
         journal.consigne(
