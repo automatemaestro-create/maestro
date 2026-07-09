@@ -5,9 +5,9 @@ Aucun appel réseau : la **planification** et l'**exécution** sont pilotées pa
 ① au moins 3 tâches sont assignées et exécutées par les **bons agents** (ordre des
    dépendances respecté, résultats des dépendances transmis) ;
 ② les résultats sont **agrégés** (RunReport : synthèse + rapport structuré) ;
-et ceux du ticket #35 :
-③ une tâche routée vers `developpeur`/`bdd` s'exécute via le **runtime outillé** dans
-   un workspace isolé, et les fichiers produits remontent dans le RunReport
+et ceux du ticket #35 (étendus au QA par #45) :
+③ une tâche routée vers `developpeur`/`bdd`/`qa` s'exécute via le **runtime outillé**
+   dans un workspace isolé, et les fichiers produits remontent dans le RunReport
    (`to_dict()` et `synthese()`) ;
 ④ les rôles sans runtime outillé livrent leur texte via `generate()` — y compris en
    **repli** quand le fournisseur n'a pas d'exécution outillée ;
@@ -255,43 +255,41 @@ def test_reponse_vide_de_l_agent_marque_la_tache_en_echec():
     assert all(r.statut == STATUT_BLOQUEE for r in aval)
 
 
-# --- Critères ③/④ (#35) : routage vers les runtimes outillés --------------------------
+# --- Critères ③/④ (#35, QA outillé par #45) : routage vers les runtimes outillés ------
 
 
-def test_taches_dev_et_bdd_passent_par_le_runtime_outille():
-    # Plan : bdd → developpeur → qa. Avec un fournisseur outillé, bdd et developpeur
-    # s'exécutent via run_agent (workspace isolé) ; qa, sans runtime, via generate.
+def test_taches_dev_bdd_et_qa_passent_par_le_runtime_outille():
+    # Plan : bdd → developpeur → qa. Avec un fournisseur outillé, les trois rôles
+    # s'exécutent via run_agent (workspace isolé) — le QA compris (#45) : il exécute
+    # sa tâche de bout en bout dans une exécution d'orchestration complète.
     provider = ToolingProvider(files={"livrable.txt": "contenu"})
     report = asyncio.run(_engine(exec_provider=provider).run("Objectif"))
 
     assert all(r.ok for r in report.resultats)
-    assert len(provider.run_calls) == 2  # schema-bdd puis api-taches
-    assert len(provider.generate_calls) == 1  # tests-api (qa, texte)
+    assert len(provider.run_calls) == 3  # schema-bdd, api-taches, tests-api
+    assert provider.generate_calls == []
 
     # Chaque exécution outillée a reçu son propre workspace isolé, hors cwd, nettoyé.
     workspaces = [str(c["workspace"]) for c in provider.run_calls]
-    assert len(set(workspaces)) == 2
+    assert len(set(workspaces)) == 3
     for ws in workspaces:
         assert Path(ws) != Path.cwd()
         assert not Path(ws).exists()
 
-    # Les fichiers produits remontent sur les tâches outillées, pas sur la tâche texte.
-    bdd, dev, qa = report.resultats
-    assert [f.chemin for f in bdd.fichiers] == ["livrable.txt"]
-    assert [f.chemin for f in dev.fichiers] == ["livrable.txt"]
-    assert qa.fichiers == ()
+    # Les fichiers produits remontent sur chacune des tâches outillées.
+    for resultat in report.resultats:
+        assert [f.chemin for f in resultat.fichiers] == ["livrable.txt"]
 
 
 def test_fichiers_produits_remontent_dans_le_rapport():
     provider = ToolingProvider(files={"livrable.txt": "contenu"})
     report = asyncio.run(_engine(exec_provider=provider).run("Objectif"))
 
-    # to_dict : les fichiers (chemin + contenu) figurent dans le rapport structuré.
+    # to_dict : les fichiers (chemin + contenu) figurent dans le rapport structuré,
+    # pour chaque tâche outillée (qa compris, #45).
     data = report.to_dict()
-    assert data["resultats"][0]["fichiers"] == [
-        {"chemin": "livrable.txt", "contenu": "contenu"}
-    ]
-    assert data["resultats"][2]["fichiers"] == []
+    for resultat in data["resultats"]:
+        assert resultat["fichiers"] == [{"chemin": "livrable.txt", "contenu": "contenu"}]
 
     # synthese : les fichiers produits sont listés sous la tâche.
     synthese = report.synthese()
@@ -308,8 +306,38 @@ def test_le_runtime_outille_recoit_le_tableau_noir_et_le_format():
     assert "OUTILLE #1" in prompt_dev
     # …et le format de sortie de la tâche est transmis au runtime.
     assert "Module d'API" in prompt_dev
-    # La tâche qa (texte) reçoit à son tour le compte-rendu du developpeur.
-    assert "OUTILLE #2" in str(provider.generate_calls[0]["prompt"])
+    # La tâche qa (outillée elle aussi, #45) reçoit à son tour le compte-rendu du
+    # developpeur sur son tableau noir : la matière de sa revue.
+    prompt_qa = str(provider.run_calls[2]["prompt"])
+    assert "OUTILLE #2" in prompt_qa
+    assert "Suite de tests" in prompt_qa
+
+
+def test_role_sans_runtime_livre_son_texte_meme_avec_fournisseur_outille():
+    # Critère ④ : un rôle *sans* profil outillé (designer) reste sur le chemin texte
+    # (generate) même quand le fournisseur sait exécuter des agents outillés.
+    plan = json.dumps(
+        [
+            {
+                "id": "maquette",
+                "titre": "Maquette de l'écran",
+                "description": "Proposer la maquette.",
+                "competences_requises": ["ui"],
+                "format_sortie": "Spec d'écran",
+                "dependances": [],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    provider = ToolingProvider(files={"livrable.txt": "contenu"})
+    report = asyncio.run(_engine(exec_provider=provider, plan_json=plan).run("Objectif"))
+
+    (resultat,) = report.resultats
+    assert resultat.ok
+    assert resultat.agent == "designer"
+    assert provider.run_calls == []
+    assert len(provider.generate_calls) == 1
+    assert resultat.fichiers == ()
 
 
 def test_fournisseur_texte_seul_replie_les_roles_outilles_sur_generate():

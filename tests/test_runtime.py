@@ -6,8 +6,8 @@ agentique est pilotée par un `ModelProvider` factice qui écrit *réellement* d
 fichiers dans l'espace de travail fourni. Couvre :
 ① le runtime exécute une tâche de bout en bout et **capture un résultat exploitable**
    (compte-rendu + fichiers produits) dans un **contexte isolé** ;
-② les profils (`DEVELOPER_PROFILE`, `DATABASE_PROFILE`) paramètrent le même runtime
-   (modèle, outils, prompts, garde-fous du rôle) ;
+② les profils (`DEVELOPER_PROFILE`, `DATABASE_PROFILE`, `QA_PROFILE` — #45) paramètrent
+   le même runtime (modèle, outils, prompts, garde-fous du rôle) ;
 ③ ajouter un rôle outillé = déclarer un profil, sans nouveau code (critère #35).
 Plus : capacité optionnelle refusée proprement, validation d'entrée, sérialisation.
 """
@@ -21,6 +21,7 @@ from maestro.agents import (
     DATABASE_PROFILE,
     DEFAULT_TOOLS,
     DEVELOPER_PROFILE,
+    QA_PROFILE,
     TOOLED_PROFILES,
     AgentOutcome,
     AgentRuntime,
@@ -176,9 +177,37 @@ def test_profil_bdd_prefixe_son_espace_de_travail():
     assert outcome.role == "Base de données"
 
 
+def test_profil_qa_porte_le_garde_fou_verdict_explicite():
+    # La particularité du rôle (docs/04 §3.6, #45) doit être dans le prompt système :
+    # verdict explicite (conforme / non conforme), et ne jamais corriger soi-même le
+    # livrable évalué — la correction revient au rôle producteur.
+    provider = WritingProvider(files={"rapport.md": "# Revue"})
+    runtime = AgentRuntime(provider, QA_PROFILE)
+
+    asyncio.run(runtime.execute("Valide le livrable de l'API"))
+
+    (call,) = provider.calls
+    systeme = (call["system_prompt"] or "").lower()
+    assert "verdict" in systeme
+    assert "non conforme" in systeme
+    assert "tu ne les réécris pas" in systeme
+    assert "Tâche de qualité" in call["prompt"]
+    assert "verdict explicite" in call["prompt"]
+
+
+def test_profil_qa_prefixe_son_espace_de_travail():
+    provider = WritingProvider(files={"rapport.md": "# Revue"})
+    runtime = AgentRuntime(provider, QA_PROFILE)
+
+    outcome = asyncio.run(runtime.execute("Tâche"))
+
+    assert "maestro-qa-" in Path(outcome.workspace).name
+    assert outcome.role == "QA / Testeur"
+
+
 def test_les_profils_outilles_sont_ceux_du_catalogue():
     # Les clés de routage de la boucle : les noms d'agents du catalogue (#6).
-    assert [p.nom for p in TOOLED_PROFILES] == ["developpeur", "bdd"]
+    assert [p.nom for p in TOOLED_PROFILES] == ["developpeur", "bdd", "qa"]
     assert all(p.outils == DEFAULT_TOOLS for p in TOOLED_PROFILES)
 
 
