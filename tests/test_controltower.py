@@ -88,6 +88,12 @@ def test_sante(client):
     assert reponse.json() == {"statut": "ok"}
 
 
+def test_cors_ouvert_pour_l_ui(client):
+    """L'UI (apps/web, #47) est servie sur une autre origine : le CORS doit répondre."""
+    reponse = client.get("/api/sante", headers={"Origin": "http://localhost:3000"})
+    assert reponse.headers["access-control-allow-origin"] == "*"
+
+
 def test_liste_des_taches_statut_agent_cout(client, state):
     """La liste des tâches expose statut, agent assigné et coût (source du Kanban)."""
     state.appliquer(_statut_tache("t1", "en_cours"))

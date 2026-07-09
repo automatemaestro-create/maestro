@@ -32,6 +32,7 @@ from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from maestro.config import load_settings
@@ -131,6 +132,16 @@ def create_app(
         title="Maestro — Control Tower",
         description="État de l'orchestration (REST) et flux d'événements (WebSocket).",
         lifespan=lifespan,
+    )
+    # L'UI (apps/web, ticket #47) est servie sur une autre origine que l'API
+    # (Next.js sur :3000, API sur :8000) : sans CORS le navigateur bloque les
+    # appels REST. Origines ouvertes au POC — l'API n'écoute qu'en local
+    # (127.0.0.1, cf. cli.py) et ne porte aucune authentification à restreindre.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
     )
 
     @app.get("/api/sante")
