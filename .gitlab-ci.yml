@@ -62,3 +62,28 @@ mypy:
   extends: .python-test
   script:
     - mypy maestro
+
+# Lint + build de l'UI Control Tower (apps/web, ticket #47) : ESLint puis
+# `next build`, qui vérifie aussi le typage TypeScript. Ne tourne que si le
+# front (ou ce fichier) change — un pipeline purement Python reste rapide.
+# `npm ci` s'appuie sur le lockfile versionné ; le cache npm est réutilisé
+# entre pipelines tant que le lockfile ne bouge pas.
+web-build:
+  stage: test
+  image: node:22-alpine
+  rules:
+    - changes:
+        paths:
+          - apps/web/**/*
+          - .gitlab-ci.yml
+  cache:
+    key:
+      files:
+        - apps/web/package-lock.json
+    paths:
+      - apps/web/.npm/
+  script:
+    - cd apps/web
+    - npm ci --cache .npm --prefer-offline
+    - npm run lint
+    - npm run build
