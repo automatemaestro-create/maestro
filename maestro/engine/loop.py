@@ -40,6 +40,14 @@ horloge chronométrée ici, tokens/coût/outils récoltés auprès du fournisseu
 `maestro.telemetry.collect_usage`, le tout consigné dans un `RunJournal` (une ligne
 JSON par étape) et porté par les `TaskResult` — le coût par tâche est visible dans
 la synthèse comme dans le rapport structuré, et traçable par le `run_id`.
+
+Chaque tâche est exécutée sous **garde-fous** (#9, `maestro.engine.guardrails`) :
+plafond de dépense (armé sur le collecteur d'usage — la tâche est stoppée dès que
+son coût cumulé dépasse), time-out (la réalisation est annulée au-delà du délai),
+et validation humaine (une tâche classée sensible déclenche une `DemandeValidation`
+**avant** exécution — refusée, elle est stoppée sans avoir rien lancé ; la demande
+et la décision sont consignées au journal). Un garde-fou déclenché produit un
+`TaskResult` en échec — même résilience que le reste : la boucle continue.
 """
 
 from __future__ import annotations
@@ -54,6 +62,7 @@ from maestro.agents import default_runtimes
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.runtime import AgentRuntime
 from maestro.config import Settings, load_settings
+from maestro.engine.guardrails import DemandeValidation, Guardrails
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task, topological_order
 from maestro.providers.base import ModelProvider, UnsupportedCapability
@@ -201,6 +210,7 @@ class OrchestrationEngine:
         agents: Sequence[Agent] = DEFAULT_AGENTS,
         runtimes: Mapping[str, AgentRuntime] | None = None,
         max_parallele: int | None = None,
+        guardrails: Guardrails | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -210,6 +220,9 @@ class OrchestrationEngine:
         # Plafond d'exécutions simultanées (#7) — None : illimité. Utile pour ménager
         # les limites de débit d'un fournisseur sur un plan très large.
         self._max_parallele = max_parallele
+        # Garde-fous par tâche (#9). Le défaut laisse plafond et time-out inactifs
+        # mais garde la détection d'actions sensibles (refusées sans validateur).
+        self._guardrails = guardrails if guardrails is not None else Guardrails()
         # Runtimes outillés, indexés par nom d'agent du catalogue. Par défaut, ceux
         # du POC (`developpeur`, `bdd`) adossés au même fournisseur que le moteur.
         self._runtimes = (
@@ -217,7 +230,9 @@ class OrchestrationEngine:
         )
 
     @classmethod
-    def default(cls, settings: Settings | None = None) -> OrchestrationEngine:
+    def default(
+        cls, settings: Settings | None = None, *, guardrails: Guardrails | None = None
+    ) -> OrchestrationEngine:
         """Moteur par défaut du POC : planification et exécution via Claude (config).
 
         Importe le fournisseur ici (et non en tête de module) pour ne pas lier le
@@ -228,7 +243,7 @@ class OrchestrationEngine:
         settings = settings or load_settings()
         provider = ClaudeProvider.from_settings(settings)
         orchestrator = Orchestrator(provider, model=settings.anthropic_model)
-        return cls(provider, orchestrator)
+        return cls(provider, orchestrator, guardrails=guardrails)
 
     async def run(self, objective: str, *, journal: RunJournal | None = None) -> RunReport:
         """Exécute la boucle complète pour `objective` et renvoie l'agrégat.
@@ -332,17 +347,22 @@ class OrchestrationEngine:
         signale — le collecteur vit dans le contexte de la tâche asyncio courante,
         donc sans fuite entre exécutions simultanées. Le tout est porté par le
         résultat et consigné au journal.
+
+        Le collecteur est armé du **plafond de dépense** (#9) : le coût cumulé de la
+        tâche (routage + réalisation) ne peut pas le dépasser sans la stopper.
         """
         debut = perf_counter()
         entree = task.description
-        with collect_usage() as recolte:
+        with collect_usage(plafond_cout_usd=self._guardrails.plafond_cout_usd) as recolte:
             try:
                 assignment = assign(task, self._agents)
             except RoutingError as exc:
                 result = _echec(task, agent="—", role="non assigné", score=0, erreur=str(exc))
             else:
                 entree = _build_task_description(task, dependances)
-                result = await self._realise(assignment.agent, task, entree, assignment.score)
+                result = await self._realise_gardee(
+                    assignment.agent, task, entree, assignment.score, journal
+                )
         result = replace(result, usage=recolte.total.avec_duree(_ecoule_ms(debut)))
         journal.consigne(
             etape=task.id,
@@ -356,6 +376,77 @@ class OrchestrationEngine:
             usage=result.usage,
         )
         return result
+
+    async def _realise_gardee(
+        self, agent: Agent, task: Task, description: str, score: int, journal: RunJournal
+    ) -> TaskResult:
+        """Réalise la tâche sous garde-fous (#9) : validation humaine, puis time-out.
+
+        Une tâche sensible non approuvée est stoppée **avant** toute exécution.
+        Le time-out ne court que sur la réalisation elle-même : l'attente d'une
+        décision humaine n'y est pas comptée. Le plafond de dépense, lui, est armé
+        plus haut (sur le collecteur d'usage de `_execute`) — son dépassement
+        remonte en exception du fournisseur, muée ici en échec comme les autres.
+        """
+        refus = await self._valide_si_sensible(agent, task, score, journal)
+        if refus is not None:
+            return refus
+        try:
+            async with asyncio.timeout(self._guardrails.timeout_s):
+                return await self._realise(agent, task, description, score)
+        except TimeoutError:
+            return _echec(
+                task,
+                agent=agent.nom,
+                role=agent.role,
+                score=score,
+                erreur=(
+                    f"time-out : la tâche a dépassé {self._guardrails.timeout_s:g} s "
+                    "— exécution stoppée."
+                ),
+            )
+
+    async def _valide_si_sensible(
+        self, agent: Agent, task: Task, score: int, journal: RunJournal
+    ) -> TaskResult | None:
+        """Déclenche la validation humaine si la tâche est sensible (#9).
+
+        Renvoie None si la tâche peut s'exécuter (anodine, ou approuvée) ; sinon le
+        `TaskResult` d'échec de la tâche stoppée. La demande et la décision sont
+        consignées au journal (étape dédiée `<task.id>:validation`, statuts alignés
+        sur l'entité APPROVAL de docs/03), que la décision soit oui ou non.
+        """
+        raison = self._guardrails.raison_sensible(task)
+        if raison is None:
+            return None
+        demande = DemandeValidation(
+            task_id=task.id,
+            titre=task.titre,
+            description=task.description,
+            agent=agent.nom,
+            role=agent.role,
+            raison=raison,
+        )
+        approuve, detail = await self._guardrails.demande_validation(demande)
+        journal.consigne(
+            etape=f"{task.id}:validation",
+            nom=f"Validation humaine — {task.titre}",
+            agent=agent.nom,
+            role=agent.role,
+            statut="approuve" if approuve else "refuse",
+            entree=raison,
+            sortie=detail,
+            usage=StepUsage(),
+        )
+        if approuve:
+            return None
+        return _echec(
+            task,
+            agent=agent.nom,
+            role=agent.role,
+            score=score,
+            erreur=f"action sensible ({raison}) : {detail} — tâche stoppée avant exécution.",
+        )
 
     async def _realise(
         self, agent: Agent, task: Task, description: str, score: int

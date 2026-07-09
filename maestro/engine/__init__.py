@@ -11,10 +11,19 @@ transforme un objectif en résultats agrégés :
 
 Le moteur ne dépend que de la couche d'abstraction fournisseur (`ModelProvider`) :
 il reste agnostique du fournisseur, exactement comme l'orchestrateur.
+
+Chaque tâche s'exécute sous **garde-fous** (#9, `maestro.engine.guardrails`) :
+plafond de dépense, time-out, et validation humaine des actions sensibles —
+configurables via `Guardrails` injecté au moteur.
 """
 
 from __future__ import annotations
 
+from maestro.engine.guardrails import (
+    MOTS_SENSIBLES,
+    DemandeValidation,
+    Guardrails,
+)
 from maestro.engine.loop import (
     STATUT_ECHEC,
     STATUT_TERMINEE,
@@ -24,9 +33,12 @@ from maestro.engine.loop import (
 )
 
 __all__ = [
-    "STATUT_ECHEC",
-    "STATUT_TERMINEE",
+    "DemandeValidation",
+    "Guardrails",
+    "MOTS_SENSIBLES",
     "OrchestrationEngine",
     "RunReport",
+    "STATUT_ECHEC",
+    "STATUT_TERMINEE",
     "TaskResult",
 ]
