@@ -343,6 +343,118 @@ gl_log_time() {
   esac
 }
 
+# --- Pipelines CI ---------------------------------------------------------------------------------
+# Helpers REST pour le diagnostic de pipeline (/pipeline-fix — voir docs/10-workflow-git.md §8).
+# Même parti pris que le reste du fichier : parsing shell pur (grep/sed/awk), pas de jq/python.
+
+# gl_project_enc -> chemin du projet URL-encodé pour l'API REST ("groupe%2Fprojet").
+# (Les helpers GraphQL utilisent GL_PROJECT tel quel ; REST exige l'encodage du "/".)
+gl_project_enc() {
+  printf '%s\n' "$GL_PROJECT" | sed 's,/,%2F,g'
+}
+
+# gl_pipeline_latest <ref> -> dernier pipeline de la branche, en une ligne TSV :
+#   id <TAB> status <TAB> sha <TAB> web_url
+# Code 1 (et message) si aucun pipeline n'existe pour cette ref.
+gl_pipeline_latest() {
+  local ref="$1"
+  if [ -z "$ref" ]; then echo "usage: gl_pipeline_latest <ref>" >&2; return 2; fi
+  local raw id status sha url
+  raw="$(glab api "projects/$(gl_project_enc)/pipelines?ref=$ref&per_page=1" 2>/dev/null)"
+  if [ -z "$raw" ] || [ "$raw" = "[]" ]; then
+    echo "Aucun pipeline pour la ref « $ref » dans $GL_PROJECT" >&2
+    return 1
+  fi
+  id="$(printf '%s' "$raw" | grep -o '"id":[0-9]*' | head -1 | sed 's/.*://')"
+  status="$(printf '%s' "$raw" | grep -o '"status":"[a-z_]*"' | head -1 | sed 's/.*:"//; s/"//')"
+  sha="$(printf '%s' "$raw" | grep -o '"sha":"[0-9a-f]*"' | head -1 | sed 's/.*:"//; s/"//')"
+  url="$(printf '%s' "$raw" | grep -o '"web_url":"[^"]*/pipelines/[0-9]*"' | head -1 | sed 's/.*:"//; s/"//')"
+  printf '%s\t%s\t%s\t%s\n' "$id" "$status" "$sha" "$url"
+}
+
+# gl_pipeline_status <pipeline-id> -> imprime le statut courant du pipeline (created|pending|
+# running|success|failed|canceled|skipped|manual…). Le premier "status" du JSON détaillé est
+# celui du pipeline lui-même (les objets imbriqués — user, commit — viennent après).
+gl_pipeline_status() {
+  local pid="$1"
+  if [ -z "$pid" ]; then echo "usage: gl_pipeline_status <pipeline-id>" >&2; return 2; fi
+  local status
+  status="$(glab api "projects/$(gl_project_enc)/pipelines/$pid" 2>/dev/null \
+    | grep -o '"status":"[a-z_]*"' | head -1 | sed 's/.*:"//; s/"//')"
+  if [ -z "$status" ]; then echo "Pipeline $pid introuvable dans $GL_PROJECT" >&2; return 1; fi
+  printf '%s\n' "$status"
+}
+
+# gl_pipeline_failed_jobs <pipeline-id> -> jobs en échec du pipeline, une ligne TSV par job :
+#   id <TAB> name <TAB> stage <TAB> failure_reason
+# S'appuie sur le filtre serveur `scope[]=failed` (seuls les jobs rouges reviennent) et sur
+# l'ordre stable des premiers champs du JSON job ("id","status","stage","name") pour ne matcher
+# que les objets job de tête — jamais les objets imbriqués (user/commit/pipeline), dont l'ordre
+# de champs diffère. Le failure_reason est cherché dans le corps du job courant uniquement.
+gl_pipeline_failed_jobs() {
+  local pid="$1"
+  if [ -z "$pid" ]; then echo "usage: gl_pipeline_failed_jobs <pipeline-id>" >&2; return 2; fi
+  local raw
+  raw="$(glab api "projects/$(gl_project_enc)/pipelines/$pid/jobs?scope[]=failed&per_page=50" 2>/dev/null)"
+  if [ -z "$raw" ]; then echo "Jobs du pipeline $pid illisibles dans $GL_PROJECT" >&2; return 1; fi
+  if [ "$raw" = "[]" ]; then echo "Aucun job en échec dans le pipeline $pid." >&2; return 0; fi
+  printf '# id\tname\tstage\tfailure_reason\n'
+  printf '%s' "$raw" | awk '
+    {
+      s = $0
+      hdr = "\"id\":[0-9]+,\"status\":\"failed\",\"stage\":\"[^\"]*\",\"name\":\"[^\"]*\""
+      while (match(s, hdr)) {
+        seg = substr(s, RSTART, RLENGTH)
+        s = substr(s, RSTART + RLENGTH)
+        id = seg;    sub(/^"id":/, "", id);          sub(/,.*$/, "", id)
+        stage = seg; sub(/^.*"stage":"/, "", stage); sub(/",.*$/, "", stage)
+        name = seg;  sub(/^.*"name":"/, "", name);   sub(/"$/, "", name)
+        body = s
+        if (match(s, hdr)) body = substr(s, 1, RSTART - 1)
+        reason = "-"
+        if (match(body, /"failure_reason":"[^"]*"/)) {
+          reason = substr(body, RSTART, RLENGTH)
+          sub(/^"failure_reason":"/, "", reason); sub(/"$/, "", reason)
+        }
+        printf "%s\t%s\t%s\t%s\n", id, name, stage, reason
+      }
+    }
+  '
+}
+
+# gl_job_trace <job-id> [lignes] -> queue de la trace du job (défaut : 100 dernières lignes).
+# C'est la matière première du diagnostic ; l'appelant en extrait les lignes d'erreur utiles
+# plutôt que de recopier le log brut.
+gl_job_trace() {
+  local jid="$1" lines="${2:-100}"
+  if [ -z "$jid" ]; then echo "usage: gl_job_trace <job-id> [lignes]" >&2; return 2; fi
+  local raw
+  raw="$(glab api "projects/$(gl_project_enc)/jobs/$jid/trace" 2>/dev/null)"
+  if [ -z "$raw" ]; then echo "Trace du job $jid vide ou illisible dans $GL_PROJECT" >&2; return 1; fi
+  printf '%s\n' "$raw" | tail -n "$lines"
+}
+
+# gl_pipeline_wait <pipeline-id> [timeout-s] -> suit le pipeline jusqu'à un état terminal et
+# imprime le statut final. Codes retour : 0 = success ; 1 = failed/canceled/skipped/manual ;
+# 3 = timeout (défaut 900 s), le dernier statut observé est quand même imprimé.
+gl_pipeline_wait() {
+  local pid="$1" timeout="${2:-900}" poll=15 waited=0 status
+  if [ -z "$pid" ]; then echo "usage: gl_pipeline_wait <pipeline-id> [timeout-s]" >&2; return 2; fi
+  while :; do
+    status="$(gl_pipeline_status "$pid")" || return 1
+    case "$status" in
+      success) printf '%s\n' "$status"; return 0 ;;
+      failed|canceled|skipped|manual) printf '%s\n' "$status"; return 1 ;;
+    esac
+    if [ "$waited" -ge "$timeout" ]; then
+      echo "gl_pipeline_wait : délai dépassé (${timeout}s) — dernier statut : $status" >&2
+      printf '%s\n' "$status"
+      return 3
+    fi
+    sleep "$poll"; waited=$((waited + poll))
+  done
+}
+
 # --- Nettoyage des branches locales -------------------------------------------------------------
 # gl_mr_state <branche> -> imprime l'état de la MR associée à la branche (opened|closed|merged),
 # vide si aucune MR n'est trouvée.
@@ -439,6 +551,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     log-time)       gl_log_time "$@" ;;
     mr-state)       gl_mr_state "$@" ;;
     cleanup-merged) gl_cleanup_merged "$@" ;;
+    pipeline-latest)      gl_pipeline_latest "$@" ;;
+    pipeline-status)      gl_pipeline_status "$@" ;;
+    pipeline-failed-jobs) gl_pipeline_failed_jobs "$@" ;;
+    job-trace)            gl_job_trace "$@" ;;
+    pipeline-wait)        gl_pipeline_wait "$@" ;;
     slug)           gl_slug "$@" ;;
     branch-prefix)  gl_branch_prefix "$@" ;;
     *)
@@ -456,6 +573,12 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  Branches :" >&2
       echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
+      echo "  Pipelines CI :" >&2
+      echo "    pipeline-latest <ref>            (id/status/sha/url du dernier pipeline de la branche)" >&2
+      echo "    pipeline-status <pipeline-id>    (statut courant)" >&2
+      echo "    pipeline-failed-jobs <pipeline-id>  (jobs rouges : id/name/stage/failure_reason)" >&2
+      echo "    job-trace <job-id> [lignes]      (queue de la trace du job)" >&2
+      echo "    pipeline-wait <pipeline-id> [timeout-s]  (suit jusqu'au verdict, 0=success)" >&2
       exit 2 ;;
   esac
 fi
