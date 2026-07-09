@@ -45,13 +45,13 @@ Ces commandes utilisent le CLI `glab` (authentifié via `glab auth login`) pour 
 
 Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les appels `glab` (résolution du work-item, pose du **statut par nom** — pas de GID en dur —, **dates & time tracking** via `start-dates`/`log-time`, slug, préfixe de branche, listing du backlog). Sourçable (`. scripts/gitlab/lib.sh`) ou en sous-commandes (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`).
 
-Bilan de santé (lecture seule) : `bash scripts/gitlab/doctor.sh` vérifie auth/labels/lifecycle et **détecte les dérives** statut↔MR (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à nettoyer).
+Bilan de santé (lecture seule) : `bash scripts/gitlab/doctor.sh` vérifie auth/labels/lifecycle et **détecte les dérives** statut↔MR (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à nettoyer, réglage de merge « pipeline vert requis » retombé).
 
 Hooks git : `bash scripts/git/install-hooks.sh` (une fois par clone) active le hook `commit-msg` qui valide la convention de commit (Conventional Commits + `Refs`/`Closes #<iid>`). Bypass ponctuel : `git commit --no-verify`.
 
 Permissions (allowlist) : [`.claude/settings.json`](./.claude/settings.json) (versionné, partagé) **autorise sans prompt** les commandes git/`glab` non destructrices du workflow (`git status`/`diff`/`add`/`commit`/`push`/`pull`, `glab issue`/`mr` view/create/update, `glab api graphql`, `bash scripts/gitlab/lib.sh`…) pour que `/ticket-ship` et les autres commandes s'enchaînent sans blocage. Les actions destructrices restent barrées côté permissions, en écho aux garde-fous : **`deny`** sur les force-push (`git push --force`/`-f`/`--force-with-lease`) et sur `glab mr merge`/`mr close` ; **`ask`** (confirmation explicite, jamais silencieux) sur `git commit --no-verify`, `git reset --hard`, `git clean`, `glab issue close`. Les surcharges personnelles vont dans `.claude/settings.local.json` (non versionné).
 
-Provisionnement d'un nouveau projet : `bash scripts/gitlab/bootstrap.sh` (labels) puis `bash scripts/gitlab/bootstrap-lifecycle.sh` (lifecycle « Maestro » — idempotent, dry-run par défaut, `--apply` pour créer sur un projet vierge).
+Provisionnement d'un nouveau projet : `bash scripts/gitlab/bootstrap.sh` (labels + réglages de merge, dont **pipeline vert requis pour merger** — `only_allow_merge_if_pipeline_succeeds`) puis `bash scripts/gitlab/bootstrap-lifecycle.sh` (lifecycle « Maestro » — idempotent, dry-run par défaut, `--apply` pour créer sur un projet vierge).
 
 ## Garde-fous (autonomie sous supervision)
 

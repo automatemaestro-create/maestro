@@ -55,13 +55,20 @@ create_label "prio::basse"   "#388e3c" "Peut attendre"
 echo "Labels prêts."
 
 # Réglages projet recommandés (best-effort : selon le tier GitLab, certains champs
-# peuvent être ignorés silencieusement par l'API).
+# peuvent être ignorés silencieusement par l'API) :
+#   - remove_source_branch_after_merge / squash_option : hygiène de merge (squash + ménage) ;
+#   - only_allow_merge_if_pipeline_succeeds=true + allow_merge_on_skipped_pipeline=false :
+#     GitLab fait respecter lui-même « pipeline vert avant merge » (docs/10-workflow-git.md §6) —
+#     une MR au pipeline rouge (ou sauté) n'est pas mergeable. Dérive surveillée par doctor.sh.
+# PUT idempotent : ré-exécution sans effet ni erreur.
 project_path="$(glab repo view --output json 2>/dev/null | grep -o '"path_with_namespace":"[^"]*"' | cut -d'"' -f4 || true)"
 if [ -n "$project_path" ]; then
   glab api "projects/$(printf '%s' "$project_path" | sed 's/\//%2F/g')" \
     -X PUT \
     -F remove_source_branch_after_merge=true \
     -F squash_option=default_on \
+    -F only_allow_merge_if_pipeline_succeeds=true \
+    -F allow_merge_on_skipped_pipeline=false \
     >/dev/null 2>&1 || echo "Réglages projet non appliqués (droits insuffisants ou champ non supporté) — à faire manuellement dans Settings > Merge requests."
 fi
 
