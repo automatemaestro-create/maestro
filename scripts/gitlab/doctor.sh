@@ -140,6 +140,28 @@ else
   warn "hors dépôt git — contrôle des branches locales ignoré"
 fi
 
+# --- 6. Réglages de merge du projet ---------------------------------------------------------------
+# Dérive si le projet n'exige plus un pipeline vert pour merger (posé par bootstrap.sh, voir
+# docs/10-workflow-git.md §6). Lecture REST directe — l'encodage du chemin projet est inline
+# pour rester autosuffisant. `allow_merge_on_skipped_pipeline` peut revenir `null` selon le
+# tier : seul `false` explicite vaut ✓.
+section "6. Réglages de merge du projet"
+proj_raw="$(glab api "projects/$(printf '%s' "$GL_PROJECT" | sed 's,/,%2F,g')" 2>/dev/null)"
+if [ -z "$proj_raw" ]; then
+  warn "réglages du projet illisibles (API muette) — contrôle ignoré"
+else
+  if printf '%s' "$proj_raw" | grep -q '"only_allow_merge_if_pipeline_succeeds":true'; then
+    ok "only_allow_merge_if_pipeline_succeeds=true — pipeline vert requis pour merger"
+  else
+    warn "only_allow_merge_if_pipeline_succeeds ≠ true : une MR au pipeline rouge est mergeable → relancer scripts/gitlab/bootstrap.sh"
+  fi
+  if printf '%s' "$proj_raw" | grep -q '"allow_merge_on_skipped_pipeline":false'; then
+    ok "allow_merge_on_skipped_pipeline=false — un pipeline sauté ne permet pas de merger"
+  else
+    warn "allow_merge_on_skipped_pipeline ≠ false : un pipeline sauté permettrait de merger → relancer scripts/gitlab/bootstrap.sh"
+  fi
+fi
+
 # --- Résumé -------------------------------------------------------------------------------------
 section "Résumé"
 printf '  %d erreur(s), %d avertissement(s)\n' "$errors" "$warns"

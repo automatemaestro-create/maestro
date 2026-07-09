@@ -254,6 +254,12 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 - **Aucun force-push** sur une branche déjà poussée.
 - Une branche (locale ou distante) n'est supprimée que si **GitLab confirme que sa MR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
 - Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par GitLab.
+- **Une MR au pipeline rouge n'est pas mergeable.** Le réglage projet
+  `only_allow_merge_if_pipeline_succeeds=true` (complété par `allow_merge_on_skipped_pipeline=false`)
+  fait appliquer par **GitLab lui-même** la règle « pipeline vert avant merge » (§8) : le bouton de
+  merge reste grisé tant que le pipeline échoue ou est sauté. Provisionné par
+  [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh) (PUT idempotent), surveillé par
+  [`doctor.sh`](../scripts/gitlab/doctor.sh) (dérive signalée si le réglage retombe).
 
 **Adossement à la couche permissions (Claude Code).** Ces garde-fous ne reposent pas que sur les
 consignes des commandes : ils sont aussi **filtrés par l'allowlist** [`.claude/settings.json`](../.claude/settings.json)
@@ -286,7 +292,7 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 - **Bilan de santé** : [`bash scripts/gitlab/doctor.sh`](../scripts/gitlab/doctor.sh) (lecture seule)
   vérifie auth, labels, statuts du lifecycle résolvables par nom, et **détecte les dérives**
   (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à
-  nettoyer). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
+  nettoyer, réglage de merge « pipeline vert » retombé — §6). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
   dérives — utile en CI).
 - **Hooks git** : `bash scripts/git/install-hooks.sh` (une fois par clone) active le hook
   [`commit-msg`](../scripts/git/hooks/commit-msg) qui valide la convention de commit (§2). Pose
