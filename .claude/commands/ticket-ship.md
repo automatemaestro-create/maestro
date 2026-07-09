@@ -62,8 +62,9 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
 6. **Enchaîne `/ticket-finish`.** Une fois le commit créé, l'arbre est propre : invoque la commande
    **`/ticket-finish`** (sans argument — elle relira l'IID depuis la branche — ou passe `<iid>`).
    Elle prend le relais pour : push de la branche (jamais de `--force`), création/mise à jour de la
-   MR en Draft avec `Closes #<iid>`, passage du **statut** à « En revue », et **log automatique du
-   temps** (estimé d'après la portée du travail). **Ne ré-implémente pas ces étapes ici** :
+   MR en Draft avec `Closes #<iid>` et sa **checklist cochée sur ce qui est vérifié** (conventions,
+   tests/doc d'après le diff, pipeline verte), passage du **statut** à « En revue », et **log
+   automatique du temps** (estimé d'après la portée du travail). **Ne ré-implémente pas ces étapes ici** :
    `/ticket-finish` en est la source unique, et son étape de commit sera sans objet (arbre déjà
    propre) — elle passera directement au push.
 

@@ -176,7 +176,13 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
   défaut du lifecycle à la création (rien à poser). Le label `agent::*` est à ajouter
   manuellement au triage (aucun template ne peut deviner quel agent est concerné).
 - **Merge Request** (`.gitlab/merge_request_templates/Default.md`) : checklist de definition
-  of done + rappel `Closes #`.
+  of done + rappel `Closes #`. La checklist est un **constat, pas un formulaire** :
+  `/ticket-finish` coche lui-même les cases qu'il a **effectivement vérifiées** (conventions de
+  branche/commit, tests et doc jugés d'après le diff, pipeline verte constatée via `glab ci
+  status`) et laisse vides les autres — notamment « Pipeline CI verte » tant que le pipeline du
+  push n'a pas réellement réussi. En cas de re-exécution, il remet la checklist à jour dans la
+  description de la MR sans toucher au reste (idempotent) et **ne décoche jamais** une case déjà
+  cochée (elle peut venir d'un humain). Les cases restées vides sont l'affaire du relecteur.
 
 ---
 
@@ -202,7 +208,8 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
    d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).
 4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec
-   `Closes #<iid>`, passe le **statut** à `En revue`.
+   `Closes #<iid>`, **coche dans sa checklist les cases qu'il a pu vérifier** (§4), passe le
+   **statut** à `En revue`.
    - **Raccourci « zéro friction » : [`/ticket-ship`](../.claude/commands/ticket-ship.md).** Quand
      le travail est terminé mais **pas encore committé**, `/ticket-ship` enchaîne **en une seule
      action** : il **commite d'office** les changements en attente (message Conventional Commits
