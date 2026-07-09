@@ -24,6 +24,12 @@ sur Redis Pub/Sub (canal `maestro.evenements`, via le pont
 `maestro.controltower.bridge`) : le backend Control Tower (`maestro-api`) les
 rediffuse aux clients WebSocket. Requiert le même Redis que `--queue`.
 
+`--messagerie` (#44) active la **messagerie inter-agents** (boîtes aux lettres
+Redis Pub/Sub, `maestro.messaging`) : l'agent qui termine une tâche à
+dépendants annonce l'issue par message (handoff) et chaque tâche aval attend ce
+message avant de démarrer. L'échange est journalisé (visible avec `--trace`, et
+dans la Control Tower avec `--publier`). Requiert le même Redis que `--queue`.
+
 Code de sortie : 0 si toutes les tâches réussissent, 1 si au moins une échoue (ou
 en cas d'erreur de configuration / planification), 2 si l'appel est mal formé.
 """
@@ -44,8 +50,8 @@ from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import LOGGER_NAME
 
 _USAGE = (
-    "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--plafond-cout <usd>] "
-    '[--timeout <s>] "<objectif en langage naturel>"'
+    "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--messagerie] "
+    '[--plafond-cout <usd>] [--timeout <s>] "<objectif en langage naturel>"'
 )
 
 
@@ -58,9 +64,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     as_json = False
     via_queue = False
+    messagerie = False
     plafond_cout: float | None = None
     timeout: float | None = None
-    flags_connus = {"--json", "--trace", "--queue", "--publier", "--plafond-cout", "--timeout"}
+    flags_connus = {
+        "--json", "--trace", "--queue", "--publier", "--messagerie",
+        "--plafond-cout", "--timeout",
+    }
     while args and args[0] in flags_connus:
         flag = args.pop(0)
         if flag == "--json":
@@ -71,6 +81,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             via_queue = True
         elif flag == "--publier":
             activer_publication_evenements()
+        elif flag == "--messagerie":
+            messagerie = True
         else:
             valeur = _valeur_numerique(flag, args)
             if valeur is None:
@@ -104,7 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     try:
-        engine = _build_engine(via_queue=via_queue, guardrails=guardrails)
+        engine = _build_engine(via_queue=via_queue, guardrails=guardrails, messagerie=messagerie)
         report = asyncio.run(engine.run(objective))
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
@@ -120,17 +132,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0 if not report.echouees else 1
 
 
-def _build_engine(*, via_queue: bool, guardrails: Guardrails) -> OrchestrationEngine:
+def _build_engine(
+    *, via_queue: bool, guardrails: Guardrails, messagerie: bool = False
+) -> OrchestrationEngine:
     """Construit la boucle : locale par défaut, distribuée (file #41) avec `--queue`.
 
     L'import de `maestro.queue` (donc de Celery) reste local à la branche
-    distribuée : le chemin historique n'en dépend pas.
+    distribuée : le chemin historique n'en dépend pas. `--messagerie` (#44)
+    branche les boîtes aux lettres Redis Pub/Sub (l'instance de la config,
+    comme `--publier`) — la connexion est paresseuse, et une publication en
+    échec est abandonnée sans gêner l'exécution (relais résilient).
     """
+    mailbox = None
+    if messagerie:
+        from maestro.config import load_settings
+        from maestro.messaging import RedisMailbox
+
+        mailbox = RedisMailbox(load_settings().redis_url)
     if via_queue:
         from maestro.queue import create_distributed_engine
 
-        return create_distributed_engine()
-    return OrchestrationEngine.default(guardrails=guardrails)
+        return create_distributed_engine(mailbox=mailbox)
+    return OrchestrationEngine.default(guardrails=guardrails, mailbox=mailbox)
 
 
 def _valeur_numerique(flag: str, args: list[str]) -> float | None:

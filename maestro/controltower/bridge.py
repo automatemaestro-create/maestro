@@ -29,6 +29,7 @@ from typing import Any
 from maestro.controltower.events import (
     CANAL_EVENEMENTS,
     EVENEMENT_AGENT_ACTIVITE,
+    EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_STATUT,
     REDIS_URL_DEFAUT,
     Event,
@@ -41,10 +42,16 @@ _ETAPE_PLANIFICATION = "planification"
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).
 _SUFFIXE_VALIDATION = ":validation"
 
+#: Suffixe des étapes de messagerie inter-agents (#44 — cf.
+#: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
+_SUFFIXE_MESSAGE = ":message"
+
 
 def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     """Convertit une ligne de journal (`StepRecord.to_dict`) en événements du bus.
 
+    - les étapes `<tache>:message` (#44) deviennent des **messages
+      inter-agents** (entité AGENT_MESSAGE — handoff, notification…) ;
     - l'étape `planification` et les étapes `<tache>:validation` deviennent des
       **activités d'agent** (l'orchestrateur planifie, un humain tranche) ;
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
@@ -59,16 +66,23 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         return ()
     usage = record.get("usage")
     cout_brut = usage.get("cout_usd") if isinstance(usage, Mapping) else None
+    est_message = etape.endswith(_SUFFIXE_MESSAGE)
     est_activite = etape == _ETAPE_PLANIFICATION or etape.endswith(_SUFFIXE_VALIDATION)
-    if est_activite:
+    if est_message:
+        type_evenement = EVENEMENT_MESSAGE_INTER_AGENTS
+        tache_id = etape.removesuffix(_SUFFIXE_MESSAGE)
+        detail = str(record.get("sortie") or "")
+    elif est_activite:
+        type_evenement = EVENEMENT_AGENT_ACTIVITE
         tache_id = "" if etape == _ETAPE_PLANIFICATION else etape.removesuffix(_SUFFIXE_VALIDATION)
         detail = str(record.get("sortie") or record.get("erreur") or "")
     else:
+        type_evenement = EVENEMENT_TACHE_STATUT
         tache_id = etape
         detail = str(record.get("erreur") or "")
     return (
         Event(
-            type=EVENEMENT_AGENT_ACTIVITE if est_activite else EVENEMENT_TACHE_STATUT,
+            type=type_evenement,
             run_id=str(record.get("run_id", "")),
             tache_id=tache_id,
             titre=str(record.get("nom", "")),
