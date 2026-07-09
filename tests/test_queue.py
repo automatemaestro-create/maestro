@@ -18,6 +18,9 @@ appel modèle) changent. Couvre les critères d'acceptation du ticket #41 :
 ④ mise en file → exécution → remontée couverte de bout en bout, y compris via
    la boucle complète (`OrchestrationEngine` + `CeleryExecutor`) : dépendances
    (tableau noir) transmises aux workers, rapport agrégé, journal consigné.
+
+Plus le DAG (#43) : une tâche dont une dépendance a échoué n'est **jamais mise en
+file** — blocage explicite côté orchestrateur, aucun message orphelin.
 """
 
 import asyncio
@@ -123,6 +126,27 @@ class FailingProvider(ModelProvider):
         return True
 
     async def generate(self, prompt, *, model, system_prompt=None):
+        raise RuntimeError("panne du modèle")
+
+
+class CompteurDePannesProvider(ModelProvider):
+    """Exécutant factice en panne qui **compte** ses appels.
+
+    Sert à prouver qu'aucune tâche aval n'a été mise en file (#43) : un appel
+    modèle = une tâche consommée par un worker. Les workers embarqués partagent
+    le process du test, le compteur est donc directement observable.
+    """
+
+    name = "compteur-pannes"
+
+    def __init__(self) -> None:
+        self.appels = 0
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        self.appels += 1
         raise RuntimeError("panne du modèle")
 
 
@@ -372,6 +396,39 @@ def test_boucle_complete_via_la_file(app):
         "tests-api",
     ]
     assert all(rec.statut == "terminee" for rec in journal.records)
+
+
+def test_une_dependance_en_echec_ne_met_jamais_l_aval_en_file(app):
+    # DAG (#43) : le plan est une chaîne et sa racine échoue côté worker. Les
+    # tâches aval ne doivent jamais devenir des messages : un seul appel modèle
+    # atteint les workers, l'aval est bloqué côté orchestrateur (statut explicite).
+    exec_provider = CompteurDePannesProvider()
+    configurer_worker(provider_factory=lambda: exec_provider)
+    planner = EchoProvider(_plan_json())
+    engine = OrchestrationEngine(
+        planner,
+        Orchestrator(planner, model="claude-opus-4-8"),
+        executor=CeleryExecutor(app, timeout_s=30),
+    )
+    journal = RunJournal(run_id="run-bloque")
+
+    with start_worker(app, pool="solo", perform_ping_check=False, hostname="agent1@maestro"):
+        report = asyncio.run(engine.run("Créer une API de gestion de tâches", journal=journal))
+
+    # Seule la racine a été mise en file et consommée (un unique appel modèle).
+    assert exec_provider.appels == 1
+    racine, *aval = report.resultats
+    assert racine.statut == "echec"
+    assert racine.worker == "agent1@maestro"
+    # L'aval est bloqué sans exécution : statut explicite, aucun worker touché.
+    assert [r.statut for r in aval] == ["bloquee", "bloquee"]
+    assert all(r.worker == "" for r in aval)
+    assert [rec.statut for rec in journal.records] == [
+        "terminee",  # planification
+        "echec",  # schema-bdd (racine)
+        "bloquee",  # api-taches
+        "bloquee",  # tests-api
+    ]
 
 
 def test_sans_worker_le_delai_devient_un_echec_consigne(app):
