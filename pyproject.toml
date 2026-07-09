@@ -56,6 +56,9 @@ maestro-dev = "maestro.agents.runtime_cli:main_dev"
 # livrable produit (schéma, migrations, requêtes) (agent Base de données, ticket #5 ;
 # CLI factorisé par #35).
 maestro-bdd = "maestro.agents.runtime_cli:main_bdd"
+# Démo : exécute une tâche de qualité de bout en bout dans un espace isolé et imprime
+# le livrable produit (tests, rapport de revue, verdict) (agent QA, ticket #45).
+maestro-qa = "maestro.agents.runtime_cli:main_qa"
 # Backend Control Tower : sert l'API REST + WebSocket (bus Redis, ticket #46).
 maestro-api = "maestro.controltower.cli:main"
 

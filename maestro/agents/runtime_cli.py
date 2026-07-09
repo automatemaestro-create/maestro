@@ -1,9 +1,10 @@
-"""Démo en ligne de commande des rôles outillés (tickets #4, #5, factorisée par #35).
+"""Démo en ligne de commande des rôles outillés (tickets #4, #5, #45, factorisée par #35).
 
-`maestro-dev "<tâche>"` et `maestro-bdd "<tâche>"` exécutent une tâche **de bout en
-bout** dans un espace de travail isolé via le runtime générique (`AgentRuntime.default`,
-vrai fournisseur Claude) paramétré par le profil du rôle, puis impriment le compte-rendu
-et la liste des fichiers produits. `--json` imprime le résultat structuré ; `--keep`
+`maestro-dev "<tâche>"`, `maestro-bdd "<tâche>"` et `maestro-qa "<tâche>"` exécutent une
+tâche **de bout en bout** dans un espace de travail isolé via le runtime générique
+(`AgentRuntime.default`, vrai fournisseur Claude) paramétré par le profil du rôle, puis
+impriment le compte-rendu et la liste des fichiers produits. `--json` imprime le résultat
+structuré ; `--keep`
 conserve l'espace de travail et affiche son chemin (pour inspecter le livrable). Fine
 couche autour de `AgentRuntime`, pour *exercer* le flux contre le vrai SDK.
 
@@ -20,6 +21,7 @@ from collections.abc import Sequence
 
 from maestro.agents.database import DATABASE_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
+from maestro.agents.qa import QA_PROFILE
 from maestro.agents.runtime import AgentRuntime, RoleProfile
 from maestro.config import ConfigError
 from maestro.providers.base import UnsupportedCapability
@@ -74,4 +76,11 @@ def main_bdd(argv: Sequence[str] | None = None) -> int:
     """Point d'entrée de `maestro-bdd` : le rôle Base de données."""
     return _main(
         DATABASE_PROFILE, prog="maestro-bdd", tache="tâche de base de données", argv=argv
+    )
+
+
+def main_qa(argv: Sequence[str] | None = None) -> int:
+    """Point d'entrée de `maestro-qa` : le rôle QA / Testeur."""
+    return _main(
+        QA_PROFILE, prog="maestro-qa", tache="tâche de qualité (tests, revue)", argv=argv
     )
