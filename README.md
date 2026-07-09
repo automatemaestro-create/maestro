@@ -33,6 +33,7 @@ La documentation complète se trouve dans le dossier [`docs/`](./docs). Ordre de
 | 08 | [Glossaire](./docs/08-glossaire.md) | Le vocabulaire du projet |
 | 09 | [Exemple concret & coûts](./docs/09-exemple-chiffre.md) | Un projet déroulé : nombre d'agents, durée, budget (abonnement 20 $ vs API) |
 | 10 | [Workflow Git & tickets](./docs/10-workflow-git.md) | Convention de branches/commits, cycle de vie d'un ticket, commandes `/ticket-start`, `/ticket-finish`, `/branch-cleanup` |
+| 11 | [Démo de bout en bout du POC](./docs/11-demo-poc.md) | Lancer `maestro-demo`, le parcours objectif → tâches → agents → fichiers, et la validation du critère de sortie Phase 0 |
 
 Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — ce dossier est **hors dépôt** (versionné sur le Drive de l'équipe), pas dans Git.
 

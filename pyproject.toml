@@ -35,6 +35,9 @@ maestro-orchestrate = "maestro.orchestrator.cli:main"
 # Démo : déroule la boucle d'orchestration complète (assignation + exécution +
 # agrégation) et imprime la synthèse (moteur, ticket #6).
 maestro-run = "maestro.engine.cli:main"
+# Démo de bout en bout du POC : boucle complète + artefacts dans des fichiers +
+# vérification du critère de sortie Phase 0 (ticket #10).
+maestro-demo = "maestro.demo:main"
 # Démo : exécute une tâche de dev de bout en bout dans un espace isolé et imprime le
 # livrable produit (agent Développeur, ticket #4 ; CLI factorisé par #35).
 maestro-dev = "maestro.agents.runtime_cli:main_dev"
