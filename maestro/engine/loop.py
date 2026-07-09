@@ -43,6 +43,14 @@ horloge chronométrée, tokens/coût/outils récoltés auprès du fournisseur vi
 `maestro.telemetry.collect_usage`, le tout consigné dans un `RunJournal` (une ligne
 JSON par étape) et porté par les `TaskResult` — le coût par tâche est visible dans
 la synthèse comme dans le rapport structuré, et traçable par le `run_id`.
+
+Avec une **messagerie inter-agents** injectée (#44, `mailbox=`), le relais entre
+tâches dépendantes devient un **handoff observable** (critère MVP n°7) : l'agent
+qui termine une tâche à dépendants **annonce** l'issue par message (diffusion,
+`maestro.messaging`), et chaque tâche aval n'est transmise à l'exécuteur qu'à
+**réception** du message de ses dépendances. L'échange est journalisé (#8) et
+visible dans le flux d'événements de la Control Tower (#46). Sans messagerie
+(défaut), la synchronisation reste purement en process — comportement historique.
 """
 
 from __future__ import annotations
@@ -66,6 +74,8 @@ from maestro.engine.executor import (
     _ecoule_ms,
 )
 from maestro.engine.guardrails import Guardrails
+from maestro.messaging.handoff import HandoffRelais
+from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task, topological_order
 from maestro.providers.base import ModelProvider
@@ -191,6 +201,7 @@ class OrchestrationEngine:
         max_parallele: int | None = None,
         guardrails: Guardrails | None = None,
         executor: TaskExecutor | None = None,
+        mailbox: Mailbox | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -198,6 +209,9 @@ class OrchestrationEngine:
         # Plafond d'exécutions simultanées (#7) — None : illimité. Utile pour ménager
         # les limites de débit d'un fournisseur sur un plan très large.
         self._max_parallele = max_parallele
+        # Messagerie inter-agents (#44) — None : pas de handoff par message, la
+        # synchronisation des dépendances reste purement en process.
+        self._mailbox = mailbox
         # Frontière d'exécution (#41) : en process par défaut ; un exécuteur injecté
         # (ex. `maestro.queue.CeleryExecutor`) distribue les tâches à des workers.
         self._executor = (
@@ -210,7 +224,11 @@ class OrchestrationEngine:
 
     @classmethod
     def default(
-        cls, settings: Settings | None = None, *, guardrails: Guardrails | None = None
+        cls,
+        settings: Settings | None = None,
+        *,
+        guardrails: Guardrails | None = None,
+        mailbox: Mailbox | None = None,
     ) -> OrchestrationEngine:
         """Moteur par défaut du POC : planification et exécution via Claude (config).
 
@@ -222,7 +240,7 @@ class OrchestrationEngine:
         settings = settings or load_settings()
         provider = ClaudeProvider.from_settings(settings)
         orchestrator = Orchestrator(provider, model=settings.anthropic_model)
-        return cls(provider, orchestrator, guardrails=guardrails)
+        return cls(provider, orchestrator, guardrails=guardrails, mailbox=mailbox)
 
     async def run(self, objective: str, *, journal: RunJournal | None = None) -> RunReport:
         """Exécute la boucle complète pour `objective` et renvoie l'agrégat.
@@ -245,10 +263,24 @@ class OrchestrationEngine:
         défaut ; en injecter un permet d'inspecter les traces ou de fixer le
         `run_id`. Le rapport porte ce `run_id` et l'usage par tâche. Les traces des
         tâches parallèles y apparaissent dans l'ordre d'achèvement.
+
+        Avec une messagerie injectée (#44), le passage de relais est **observable** :
+        l'issue de chaque tâche à dépendants est annoncée par message (handoff ou
+        notification, journalisé), et la tâche aval attend ce message avant de
+        démarrer — la synchronisation en process (#43) reste le filet de sécurité
+        (une annonce perdue ne suspend pas l'exécution au-delà du time-out).
         """
         journal = journal if journal is not None else RunJournal()
         plan_usage, tasks = await self._plan(objective, journal)
         ordered = topological_order(tasks)
+        dependants = _dependants_directs(ordered)
+        # Boîte de diffusion ouverte avant toute exécution (pub/sub sans rejeu :
+        # aucune annonce ne peut être manquée) — None sans messagerie (#44).
+        relais = (
+            await HandoffRelais.ouvrir(self._mailbox, journal)
+            if self._mailbox is not None
+            else None
+        )
         # Sémaphore créé ici (et pas au constructeur) : lié à la boucle asyncio de
         # cette exécution, il ne survit pas d'un `run` à l'autre.
         semaphore = (
@@ -262,22 +294,37 @@ class OrchestrationEngine:
             # sémaphore n'est pris qu'une fois les dépendances résolues, pour ne
             # pas occuper un créneau à attendre (ni s'interbloquer).
             dependances = [await en_vol[dep] for dep in task.dependances]
+            if relais is not None:
+                # Handoff (#44) : la tâche ne démarre qu'une fois le message de
+                # chacune de ses dépendances relevé dans la boîte aux lettres.
+                for dep in task.dependances:
+                    await relais.attend(dep)
             insatisfaites = [dep for dep in dependances if not dep.ok]
             if insatisfaites:
                 # Blocage aval (#43) : la tâche n'atteint jamais l'exécuteur — ni
                 # exécution ni mise en file — et le blocage cascade sur l'aval.
-                return _consigne_blocage(task, insatisfaites, journal)
-            if semaphore is None:
-                return await self._executor.execute(task, dependances, journal)
-            async with semaphore:
-                return await self._executor.execute(task, dependances, journal)
+                result = _consigne_blocage(task, insatisfaites, journal)
+            elif semaphore is None:
+                result = await self._executor.execute(task, dependances, journal)
+            else:
+                async with semaphore:
+                    result = await self._executor.execute(task, dependances, journal)
+            if relais is not None and dependants[task.id]:
+                # L'agent qui termine annonce l'issue à l'aval (handoff ou
+                # notification) — publication journalisée, résiliente.
+                await relais.annonce(task, result, dependants[task.id])
+            return result
 
-        # Créées dans l'ordre topologique, les tâches asyncio des dépendances
-        # existent toujours avant celles qui les attendent. `execute` ne levant
-        # jamais, le TaskGroup ne se déclenche que sur un bug interne.
-        async with asyncio.TaskGroup() as tg:
-            for task in ordered:
-                en_vol[task.id] = tg.create_task(_des_que_prete(task))
+        try:
+            # Créées dans l'ordre topologique, les tâches asyncio des dépendances
+            # existent toujours avant celles qui les attendent. `execute` ne levant
+            # jamais, le TaskGroup ne se déclenche que sur un bug interne.
+            async with asyncio.TaskGroup() as tg:
+                for task in ordered:
+                    en_vol[task.id] = tg.create_task(_des_que_prete(task))
+        finally:
+            if relais is not None:
+                await relais.fermer()
 
         return RunReport(
             objectif=objective,
@@ -321,6 +368,20 @@ class OrchestrationEngine:
             usage=usage,
         )
         return usage, tasks
+
+
+def _dependants_directs(tasks: Sequence[Task]) -> dict[str, list[str]]:
+    """Inverse le graphe de dépendances : pour chaque tâche, qui dépend d'elle.
+
+    C'est le carnet d'adresses du handoff (#44) : une tâche sans dépendant n'a
+    personne à qui passer la main (aucune annonce), une tâche à dépendants
+    annonce son issue pour les débloquer. Les ids sont dans l'ordre du plan.
+    """
+    dependants: dict[str, list[str]] = {task.id: [] for task in tasks}
+    for task in tasks:
+        for dep in task.dependances:
+            dependants[dep].append(task.id)
+    return dependants
 
 
 def _consigne_blocage(

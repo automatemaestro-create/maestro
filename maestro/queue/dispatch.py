@@ -40,6 +40,7 @@ from maestro.engine.executor import (
     _ecoule_ms,
 )
 from maestro.engine.loop import OrchestrationEngine
+from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.queue.celery_app import NOM_TACHE_EXECUTER
@@ -151,6 +152,7 @@ def create_distributed_engine(
     *,
     app: Celery | None = None,
     timeout_s: float | None = TIMEOUT_RESULTAT_S,
+    mailbox: Mailbox | None = None,
 ) -> OrchestrationEngine:
     """Boucle d'orchestration branchée sur la file : le pendant distribué de `default`.
 
@@ -158,7 +160,8 @@ def create_distributed_engine(
     comme `OrchestrationEngine.default`) ; l'**exécution** des tâches part dans
     la file, vers les workers démarrés par ailleurs (`celery -A maestro.queue
     worker`). Les garde-fous d'exécution (#9) s'appliquent côté worker — voir
-    `maestro.queue.worker.configurer_worker`.
+    `maestro.queue.worker.configurer_worker`. `mailbox` (#44) branche la
+    messagerie inter-agents (handoff observable) sur la boucle, comme en local.
     """
     from maestro.providers.claude import ClaudeProvider
 
@@ -166,5 +169,8 @@ def create_distributed_engine(
     provider = ClaudeProvider.from_settings(settings)
     orchestrator = Orchestrator(provider, model=settings.anthropic_model)
     return OrchestrationEngine(
-        provider, orchestrator, executor=CeleryExecutor(app, timeout_s=timeout_s)
+        provider,
+        orchestrator,
+        executor=CeleryExecutor(app, timeout_s=timeout_s),
+        mailbox=mailbox,
     )
