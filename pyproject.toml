@@ -16,6 +16,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
     # Validation du schéma de tâche de l'orchestrateur (packages/shared, draft 2020-12).
     "jsonschema>=4.0",
+    # File de tâches et workers parallèles (ticket #41) — broker/backend Redis
+    # (cf. docs/02-stack-technique.md : Celery + Redis pour démarrer).
+    "celery[redis]>=5.3",
 ]
 
 [project.optional-dependencies]
@@ -65,6 +68,17 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["claude_agent_sdk.*"]
 ignore_missing_imports = true
+
+# Celery/kombu n'expose pas de stubs typés : on tolère l'import (mypy strict).
+[[tool.mypy.overrides]]
+module = ["celery.*", "kombu.*"]
+ignore_missing_imports = true
+
+# `@shared_task` (celery, non typé) rendrait la tâche « untyped » aux yeux du
+# mode strict : dérogation limitée au module worker.
+[[tool.mypy.overrides]]
+module = ["maestro.queue.worker"]
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

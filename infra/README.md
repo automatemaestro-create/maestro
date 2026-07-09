@@ -23,3 +23,7 @@ docker compose -f infra/docker-compose.yml down -v    # arrête + supprime le vo
 Ces valeurs correspondent aux variables `DATABASE_URL` / `REDIS_URL` de
 [`.env.example`](../.env.example). Ce sont des identifiants de **développement
 local uniquement** — aucun secret de production ici.
+
+Redis sert de **broker et backend de résultats** à la file de tâches
+([`maestro/queue/`](../maestro/queue/), ticket #41) — la même instance portera
+le pub/sub temps réel (tickets suivants).

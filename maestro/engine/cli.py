@@ -12,6 +12,13 @@ dépense et le time-out **par tâche** ; une tâche classée sensible déclenche
 **demande de validation** posée sur la console (refusée par défaut si l'entrée
 n'est pas interactive — fail-safe).
 
+`--queue` (#41) exécute les tâches via la **file Celery + Redis** au lieu du
+process courant : Redis lancé (infra/docker-compose.yml) et au moins un worker
+démarré (`celery -A maestro.queue worker --pool=solo`) sont requis. Les
+garde-fous s'appliquant alors **côté worker**, `--plafond-cout`/`--timeout` ne
+sont pas combinables avec `--queue` (une tâche sensible y est refusée par
+défaut — fail-safe sans validateur).
+
 Code de sortie : 0 si toutes les tâches réussissent, 1 si au moins une échoue (ou
 en cas d'erreur de configuration / planification), 2 si l'appel est mal formé.
 """
@@ -32,8 +39,8 @@ from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import LOGGER_NAME
 
 _USAGE = (
-    "Usage : maestro-run [--json] [--trace] [--plafond-cout <usd>] [--timeout <s>] "
-    '"<objectif en langage naturel>"'
+    "Usage : maestro-run [--json] [--trace] [--queue] [--plafond-cout <usd>] "
+    '[--timeout <s>] "<objectif en langage naturel>"'
 )
 
 
@@ -45,14 +52,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     as_json = False
+    via_queue = False
     plafond_cout: float | None = None
     timeout: float | None = None
-    while args and args[0] in {"--json", "--trace", "--plafond-cout", "--timeout"}:
+    while args and args[0] in {"--json", "--trace", "--queue", "--plafond-cout", "--timeout"}:
         flag = args.pop(0)
         if flag == "--json":
             as_json = True
         elif flag == "--trace":
             activer_trace()
+        elif flag == "--queue":
+            via_queue = True
         else:
             valeur = _valeur_numerique(flag, args)
             if valeur is None:
@@ -67,6 +77,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_USAGE, file=sys.stderr)
         return 2
 
+    if via_queue and (plafond_cout is not None or timeout is not None):
+        print(
+            "--plafond-cout/--timeout ne sont pas combinables avec --queue : les "
+            "garde-fous s'appliquent côté worker (maestro.queue.worker.configurer_worker).",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         guardrails = Guardrails(
             plafond_cout_usd=plafond_cout,
@@ -78,7 +96,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     try:
-        engine = OrchestrationEngine.default(guardrails=guardrails)
+        engine = _build_engine(via_queue=via_queue, guardrails=guardrails)
         report = asyncio.run(engine.run(objective))
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
@@ -92,6 +110,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print(report.synthese())
     return 0 if not report.echouees else 1
+
+
+def _build_engine(*, via_queue: bool, guardrails: Guardrails) -> OrchestrationEngine:
+    """Construit la boucle : locale par défaut, distribuée (file #41) avec `--queue`.
+
+    L'import de `maestro.queue` (donc de Celery) reste local à la branche
+    distribuée : le chemin historique n'en dépend pas.
+    """
+    if via_queue:
+        from maestro.queue import create_distributed_engine
+
+        return create_distributed_engine()
+    return OrchestrationEngine.default(guardrails=guardrails)
 
 
 def _valeur_numerique(flag: str, args: list[str]) -> float | None:
