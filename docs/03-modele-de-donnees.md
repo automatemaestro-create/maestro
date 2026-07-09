@@ -142,7 +142,7 @@ L'**historique versionné** du workflow d'un agent. Permet de modifier les instr
 Un ticket de travail. Champs notables :
 - `format_sortie` : ce que l'agent doit produire (essentiel pour une bonne délégation).
 - `competences_requises` : sert au routage.
-- `statut` : `backlog`, `prete`, `assignee`, `en_cours`, `en_attente_validation`, `terminee`, `echec`.
+- `statut` : `backlog`, `prete`, `assignee`, `en_cours`, `en_attente_validation`, `terminee`, `echec`, `bloquee` (dépendance en échec — la tâche n'est jamais mise en file ni exécutée).
 - Auto-relation `TASK → TASK` : graphe de **dépendances**.
 
 ### RUN
@@ -171,6 +171,7 @@ Les **messages inter-agents** (la « boîte aux lettres » / mailbox). Champs : 
 stateDiagram-v2
     [*] --> backlog
     backlog --> prete: dépendances satisfaites
+    backlog --> bloquee: dépendance en échec (ou elle-même bloquée)
     prete --> assignee: routeur choisit un agent
     assignee --> en_cours: worker disponible
     en_cours --> en_attente_validation: action sensible
@@ -179,6 +180,7 @@ stateDiagram-v2
     en_cours --> terminee: objectif atteint
     en_cours --> echec: erreur
     echec --> prete: relance / re-routage
+    bloquee --> prete: dépendance relancée avec succès
     terminee --> [*]
 ```
 

@@ -32,8 +32,11 @@ Le moteur ne dépend que de `ModelProvider` : il reste **agnostique du fournisse
 `OrchestrationEngine.default` câble le Claude du POC, comme `Orchestrator.default`.
 
 La boucle est **résiliente** : un échec de routage ou d'exécution est consigné dans
-le résultat de la tâche (`statut = "echec"`) et n'interrompt pas les autres — le
-rapport agrège les réussites comme les échecs.
+le résultat de la tâche (`statut = "echec"`) et n'interrompt pas les tâches
+indépendantes. En revanche, les tâches **aval** d'un échec sont **bloquées** (#43) :
+statut explicite `bloquee`, jamais transmises à l'exécuteur (donc jamais mises en
+file), blocage propagé en cascade — pas d'exécution orpheline. Le rapport agrège
+réussites, échecs et blocages.
 
 Chaque étape (planification comprise) est **journalisée et mesurée** (#8) : durée
 horloge chronométrée, tokens/coût/outils récoltés auprès du fournisseur via
@@ -54,6 +57,7 @@ from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.runtime import AgentRuntime
 from maestro.config import Settings, load_settings
 from maestro.engine.executor import (
+    STATUT_BLOQUEE,
     STATUT_ECHEC,
     STATUT_TERMINEE,
     LocalExecutor,
@@ -68,6 +72,7 @@ from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal, StepUsage, collect_usage
 
 __all__ = [
+    "STATUT_BLOQUEE",
     "STATUT_ECHEC",
     "STATUT_TERMINEE",
     "OrchestrationEngine",
@@ -103,7 +108,17 @@ class RunReport:
     @property
     def echouees(self) -> tuple[TaskResult, ...]:
         """Sous-ensemble des tâches en échec (routage ou exécution)."""
-        return tuple(r for r in self.resultats if not r.ok)
+        return tuple(r for r in self.resultats if r.statut == STATUT_ECHEC)
+
+    @property
+    def bloquees(self) -> tuple[TaskResult, ...]:
+        """Sous-ensemble des tâches bloquées par une dépendance en échec (#43).
+
+        Jamais exécutées ni mises en file : leur `erreur` cite les dépendances non
+        satisfaites. Toujours vide si `echouees` l'est (un blocage a forcément un
+        échec en amont).
+        """
+        return tuple(r for r in self.resultats if r.statut == STATUT_BLOQUEE)
 
     @property
     def usage_totale(self) -> StepUsage:
@@ -125,7 +140,12 @@ class RunReport:
         for r in self.resultats:
             # Marqueurs en texte (pas d'emoji) : portables sur une console Windows
             # héritée (cp1252) comme en UTF-8, sans faire planter l'affichage.
-            etat = "[terminée]" if r.ok else "[échec]"
+            if r.ok:
+                etat = "[terminée]"
+            elif r.statut == STATUT_BLOQUEE:
+                etat = "[bloquée]"
+            else:
+                etat = "[échec]"
             competences = ", ".join(r.competences_requises)
             lignes.append(f"## {etat} {r.titre}")
             lignes.append(f"- Agent : {r.role} (`{r.agent}`) — compétences : {competences}")
@@ -138,6 +158,8 @@ class RunReport:
                     lignes.append(f"Fichiers produits ({len(r.fichiers)}) :")
                     lignes.extend(f"- `{f.chemin}`" for f in r.fichiers)
                     lignes.append("")
+            elif r.statut == STATUT_BLOQUEE:
+                lignes.extend([f"- Bloquée : {r.erreur}", ""])
             else:
                 lignes.extend([f"- Échec : {r.erreur}", ""])
         return "\n".join(lignes).rstrip() + "\n"
@@ -148,6 +170,7 @@ class RunReport:
             "objectif": self.objectif,
             "run_id": self.run_id,
             "reussies": len(self.reussies),
+            "bloquees": len(self.bloquees),
             "total": len(self.resultats),
             "planification": self.planification.to_dict(),
             "usage_totale": self.usage_totale.to_dict(),
@@ -210,10 +233,13 @@ class OrchestrationEngine:
         (routage, exécution) sont consignés, pas propagés.
 
         Les tâches **indépendantes s'exécutent en parallèle** (#7) : chacune reçoit
-        sa propre tâche asyncio et démarre dès que toutes ses dépendances sont
-        résolues — une dépendance en échec ne bloque pas (son résultat, consigné,
-        alimente le tableau noir comme avant). Les résultats sont rassemblés dans
-        l'ordre topologique du plan, déterministe quel que soit l'ordre d'achèvement.
+        sa propre tâche asyncio et n'est transmise à l'exécuteur (donc mise en file,
+        en mode distribué) que lorsque **toutes** ses dépendances sont terminées
+        avec succès (#43). Une dépendance en échec (ou elle-même bloquée) **bloque**
+        la tâche : statut explicite `bloquee`, consigné au journal, sans aucune
+        exécution ni mise en file — le blocage se propage ainsi en cascade sur tout
+        l'aval. Les résultats sont rassemblés dans l'ordre topologique du plan,
+        déterministe quel que soit l'ordre d'achèvement.
 
         Chaque étape est consignée dans `journal` (#8) — un `RunJournal` neuf par
         défaut ; en injecter un permet d'inspecter les traces ou de fixer le
@@ -236,6 +262,11 @@ class OrchestrationEngine:
             # sémaphore n'est pris qu'une fois les dépendances résolues, pour ne
             # pas occuper un créneau à attendre (ni s'interbloquer).
             dependances = [await en_vol[dep] for dep in task.dependances]
+            insatisfaites = [dep for dep in dependances if not dep.ok]
+            if insatisfaites:
+                # Blocage aval (#43) : la tâche n'atteint jamais l'exécuteur — ni
+                # exécution ni mise en file — et le blocage cascade sur l'aval.
+                return _consigne_blocage(task, insatisfaites, journal)
             if semaphore is None:
                 return await self._executor.execute(task, dependances, journal)
             async with semaphore:
@@ -290,3 +321,42 @@ class OrchestrationEngine:
             usage=usage,
         )
         return usage, tasks
+
+
+def _consigne_blocage(
+    task: Task, insatisfaites: Sequence[TaskResult], journal: RunJournal
+) -> TaskResult:
+    """Construit et consigne le résultat `bloquee` d'une tâche à l'aval d'un échec (#43).
+
+    `insatisfaites` porte les résultats non réussis des dépendances de `task`
+    (échec direct, ou blocage hérité en cascade) : l'erreur les cite pour rendre la
+    cause traçable dans le rapport comme au journal. Aucun agent n'a été sollicité
+    ni aucun message mis en file — l'usage est nul.
+    """
+    causes = ", ".join(f"{dep.task_id} ({dep.statut})" for dep in insatisfaites)
+    result = TaskResult(
+        task_id=task.id,
+        titre=task.titre,
+        agent="—",
+        role="non exécutée",
+        competences_requises=task.competences_requises,
+        score=0,
+        statut=STATUT_BLOQUEE,
+        sortie="",
+        erreur=(
+            f"dépendance(s) non satisfaite(s) : {causes} — tâche bloquée, "
+            "jamais exécutée ni mise en file."
+        ),
+    )
+    journal.consigne(
+        etape=task.id,
+        nom=task.titre,
+        agent=result.agent,
+        role=result.role,
+        statut=result.statut,
+        entree=task.description,
+        sortie="",
+        erreur=result.erreur,
+        usage=StepUsage(),
+    )
+    return result

@@ -35,8 +35,11 @@ from maestro.sandbox import ProducedFile
 from maestro.telemetry import RunJournal, StepUsage, collect_usage
 
 #: Statuts terminaux d'une tâche, alignés sur la machine à états (docs/03 §3).
+#: `bloquee` (#43) : la tâche n'a jamais été exécutée ni mise en file, une de ses
+#: dépendances ayant échoué (ou été bloquée en cascade).
 STATUT_TERMINEE = "terminee"
 STATUT_ECHEC = "echec"
+STATUT_BLOQUEE = "bloquee"
 
 
 @dataclass(frozen=True)

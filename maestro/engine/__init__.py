@@ -19,11 +19,17 @@ configurables via `Guardrails` injecté au moteur.
 L'exécution d'une tâche passe par la frontière injectable `TaskExecutor` (#41) :
 `LocalExecutor` en process par défaut, ou `maestro.queue.CeleryExecutor` pour
 distribuer les tâches à des workers via la file Celery + Redis.
+
+Les dépendances du plan forment un **DAG** validé en amont (#43, cycles rejetés à
+`validate_plan`) : une tâche n'atteint l'exécuteur que lorsque toutes ses
+dépendances sont terminées, et l'échec d'une dépendance **bloque** son aval
+(statut `STATUT_BLOQUEE`, aucune exécution orpheline).
 """
 
 from __future__ import annotations
 
 from maestro.engine.executor import (
+    STATUT_BLOQUEE,
     STATUT_ECHEC,
     STATUT_TERMINEE,
     LocalExecutor,
@@ -47,6 +53,7 @@ __all__ = [
     "MOTS_SENSIBLES",
     "OrchestrationEngine",
     "RunReport",
+    "STATUT_BLOQUEE",
     "STATUT_ECHEC",
     "STATUT_TERMINEE",
     "TaskExecutor",

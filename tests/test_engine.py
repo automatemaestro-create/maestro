@@ -19,7 +19,14 @@ et ceux du ticket #7 :
 ⑦ au moins 2 agents s'exécutent **simultanément** sans collision (rendez-vous forcé :
    séquentiel ⇒ échec net) — y compris en aval d'une dépendance commune ;
 ⑧ les résultats parallèles sont **correctement rassemblés** : ordre du plan dans le
-   rapport, livrable et usage attribués à la bonne tâche, sans fuite entre contextes.
+   rapport, livrable et usage attribués à la bonne tâche, sans fuite entre contextes ;
+et ceux du ticket #43 (DAG) :
+⑨ une tâche n'est **transmise à l'exécuteur** (donc mise en file, en distribué) que
+   lorsque toutes ses dépendances sont terminées avec succès ;
+⑩ un **échec de dépendance bloque** les tâches aval : statut explicite `bloquee`,
+   aucune exécution orpheline, cause citée, blocage propagé en cascade ;
+⑪ un **cycle de dépendances** est rejeté à la validation du plan (avant toute
+   exécution).
 Plus la résilience : un échec de routage est consigné sans interrompre la boucle.
 """
 
@@ -30,8 +37,15 @@ from pathlib import Path
 
 import pytest
 
-from maestro.engine import OrchestrationEngine
-from maestro.orchestrator import Orchestrator
+from maestro.engine import (
+    STATUT_BLOQUEE,
+    STATUT_ECHEC,
+    STATUT_TERMINEE,
+    OrchestrationEngine,
+    TaskExecutor,
+    TaskResult,
+)
+from maestro.orchestrator import Orchestrator, TaskValidationError
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import (
     LOGGER_NAME,
@@ -230,11 +244,15 @@ def test_echec_de_routage_consigne_sans_interrompre_la_boucle():
 
 
 def test_reponse_vide_de_l_agent_marque_la_tache_en_echec():
+    # Plan en chaîne : seule la racine s'exécute (et échoue — réponse vide) ; ses
+    # tâches aval sont bloquées sans exécution (#43), pas marquées « echec ».
     report = asyncio.run(_engine(exec_provider=ConstantProvider("   ")).run("Objectif"))
 
     assert len(report.reussies) == 0
-    assert all(r.statut == "echec" for r in report.resultats)
-    assert all("vide" in (r.erreur or "") for r in report.resultats)
+    racine, *aval = report.resultats
+    assert racine.statut == STATUT_ECHEC
+    assert "vide" in (racine.erreur or "")
+    assert all(r.statut == STATUT_BLOQUEE for r in aval)
 
 
 # --- Critères ③/④ (#35) : routage vers les runtimes outillés --------------------------
@@ -668,3 +686,173 @@ def test_le_journal_n_expose_aucun_secret(monkeypatch, caplog):
     assert "cle-api-ultra-secrete" not in caplog.text
     assert "sk-ant-api03-abcdef12345" not in caplog.text
     assert MARQUEUR_SECRET in caplog.text
+
+
+# --- Critères ⑨/⑩/⑪ (#43) : DAG — transmission conditionnée, blocage aval, cycles -----
+
+
+class ScriptedExecutor(TaskExecutor):
+    """Exécuteur factice : issue scriptée par tâche, appels enregistrés.
+
+    C'est la frontière même du #41 (exécution locale ou mise en file) : ce que la
+    boucle ne lui transmet pas n'est ni exécuté ni mis en file. `executees` trace
+    les tâches transmises (dans l'ordre), `dependances_recues` le tableau noir vu
+    par chacune.
+    """
+
+    def __init__(self, echecs: frozenset[str] = frozenset()) -> None:
+        self._echecs = echecs
+        self.executees: list[str] = []
+        self.dependances_recues: dict[str, tuple[TaskResult, ...]] = {}
+
+    async def execute(self, task, dependances, journal):
+        self.executees.append(task.id)
+        self.dependances_recues[task.id] = tuple(dependances)
+        en_echec = task.id in self._echecs
+        return TaskResult(
+            task_id=task.id,
+            titre=task.titre,
+            agent="factice",
+            role="Factice",
+            competences_requises=task.competences_requises,
+            score=1,
+            statut=STATUT_ECHEC if en_echec else STATUT_TERMINEE,
+            sortie="" if en_echec else f"LIVRABLE {task.id}",
+            erreur="panne scriptée" if en_echec else None,
+        )
+
+
+def _engine_scripte(plan_json: str, *, echecs: frozenset[str] = frozenset()):
+    """Boucle branchée sur un `ScriptedExecutor` (la planification reste factice)."""
+    planner = ConstantProvider(plan_json)
+    executor = ScriptedExecutor(echecs)
+    engine = OrchestrationEngine(
+        planner, Orchestrator(planner, model="claude-opus-4-8"), executor=executor
+    )
+    return engine, executor
+
+
+def _tache_dag(id: str, *, dependances: tuple[str, ...] = ()) -> dict[str, object]:
+    return {
+        "id": id,
+        "titre": f"Tâche {id}",
+        "description": f"Réaliser la tâche {id}.",
+        "competences_requises": ["backend"],
+        "format_sortie": "Texte",
+        "dependances": list(dependances),
+    }
+
+
+def _plan_diamant_json() -> str:
+    # socle ─┬─> gauche ─┬─> pointe (gauche échouera dans les tests de blocage)
+    #        └─> droite ──┘
+    return json.dumps(
+        [
+            _tache_dag("socle"),
+            _tache_dag("gauche", dependances=("socle",)),
+            _tache_dag("droite", dependances=("socle",)),
+            _tache_dag("pointe", dependances=("gauche", "droite")),
+        ],
+        ensure_ascii=False,
+    )
+
+
+def test_une_tache_n_est_transmise_qu_apres_ses_dependances_terminees():
+    # Critère ⑨ : quand une tâche atteint l'exécuteur (= la mise en file, en
+    # distribué), toutes ses dépendances sont déjà terminées avec succès.
+    engine, executor = _engine_scripte(_plan_diamant_json())
+    report = asyncio.run(engine.run("Objectif"))
+
+    assert all(r.ok for r in report.resultats)
+    ordre = executor.executees
+    assert ordre.index("socle") < ordre.index("gauche")
+    assert ordre.index("socle") < ordre.index("droite")
+    assert ordre.index("pointe") == 3
+    for deps in executor.dependances_recues.values():
+        assert all(d.statut == STATUT_TERMINEE for d in deps)
+    assert {d.task_id for d in executor.dependances_recues["pointe"]} == {
+        "gauche",
+        "droite",
+    }
+
+
+def test_un_echec_de_dependance_bloque_l_aval_sans_execution_orpheline():
+    # Critère ⑩ : `gauche` échoue → `pointe` n'atteint jamais l'exécuteur et porte
+    # un statut explicite ; `droite`, indépendante de l'échec, s'exécute normalement.
+    engine, executor = _engine_scripte(_plan_diamant_json(), echecs=frozenset({"gauche"}))
+    report = asyncio.run(engine.run("Objectif"))
+
+    assert sorted(executor.executees) == ["droite", "gauche", "socle"]  # jamais « pointe »
+    par_id = {r.task_id: r for r in report.resultats}
+    assert par_id["droite"].ok
+    assert par_id["gauche"].statut == STATUT_ECHEC
+    pointe = par_id["pointe"]
+    assert pointe.statut == STATUT_BLOQUEE
+    # La cause est citée : la dépendance en échec, et elle seule.
+    assert "gauche (echec)" in (pointe.erreur or "")
+    assert "droite" not in (pointe.erreur or "")
+    assert report.echouees == (par_id["gauche"],)
+    assert report.bloquees == (pointe,)
+
+
+def test_le_blocage_se_propage_en_cascade():
+    # racine (échec) → milieu (bloquée, cause : racine) → feuille (bloquée, cause :
+    # milieu — le blocage hérité est lui-même une dépendance non satisfaite).
+    plan = json.dumps(
+        [
+            _tache_dag("racine"),
+            _tache_dag("milieu", dependances=("racine",)),
+            _tache_dag("feuille", dependances=("milieu",)),
+        ],
+        ensure_ascii=False,
+    )
+    engine, executor = _engine_scripte(plan, echecs=frozenset({"racine"}))
+    report = asyncio.run(engine.run("Objectif"))
+
+    assert executor.executees == ["racine"]
+    par_id = {r.task_id: r for r in report.resultats}
+    assert par_id["milieu"].statut == STATUT_BLOQUEE
+    assert "racine (echec)" in (par_id["milieu"].erreur or "")
+    assert par_id["feuille"].statut == STATUT_BLOQUEE
+    assert "milieu (bloquee)" in (par_id["feuille"].erreur or "")
+
+
+def test_le_blocage_est_consigne_au_journal_et_visible_dans_le_rapport():
+    plan = json.dumps(
+        [_tache_dag("racine"), _tache_dag("aval", dependances=("racine",))],
+        ensure_ascii=False,
+    )
+    engine, _ = _engine_scripte(plan, echecs=frozenset({"racine"}))
+    journal = RunJournal(run_id="run-dag")
+    report = asyncio.run(engine.run("Objectif", journal=journal))
+
+    # Journal : l'étape bloquée est consignée avec son statut explicite, sans usage.
+    trace = next(rec for rec in journal.records if rec.etape == "aval")
+    assert trace.statut == STATUT_BLOQUEE
+    assert "jamais exécutée ni mise en file" in (trace.erreur or "")
+    # Rapport : la synthèse distingue le blocage de l'échec, le dict le chiffre.
+    synthese = report.synthese()
+    assert "[bloquée] Tâche aval" in synthese
+    assert "- Bloquée : dépendance(s) non satisfaite(s)" in synthese
+    assert report.to_dict()["bloquees"] == 1
+    # Aucun agent ni worker n'a été sollicité pour la tâche bloquée.
+    bloquee = report.bloquees[0]
+    assert bloquee.worker == ""
+    assert bloquee.usage.appels == 0
+
+
+def test_un_plan_cyclique_est_rejete_a_la_validation():
+    # Critère ⑪ : le cycle est refusé avant toute exécution — l'exécuteur n'est
+    # jamais sollicité (la validation du plan vit dans `validate_plan`, cf. #3).
+    plan = json.dumps(
+        [
+            _tache_dag("a", dependances=("b",)),
+            _tache_dag("b", dependances=("a",)),
+        ],
+        ensure_ascii=False,
+    )
+    engine, executor = _engine_scripte(plan)
+
+    with pytest.raises(TaskValidationError, match="[Cc]ycle"):
+        asyncio.run(engine.run("Objectif"))
+    assert executor.executees == []
