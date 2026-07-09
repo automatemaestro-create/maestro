@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 #: Taille max d'un fichier dont on capture le contenu (octets). Au-delà, on garde le
 #: chemin mais pas le contenu : un livrable exploitable n'a pas à charger en mémoire
@@ -42,6 +43,11 @@ class ProducedFile:
     def to_dict(self) -> dict[str, str | None]:
         """Réémet le fichier en dict JSON-sérialisable."""
         return {"chemin": self.chemin, "contenu": self.contenu}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ProducedFile:
+        """Reconstruit le fichier depuis sa forme `to_dict` (aller-retour JSON, #41)."""
+        return cls(chemin=str(data["chemin"]), contenu=data.get("contenu"))
 
 
 @dataclass(frozen=True)

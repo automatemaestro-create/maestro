@@ -19,7 +19,7 @@ Un fournisseur qui ne rapporte pas de coût n'est pas plafonnable (coût « inco
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -113,6 +113,24 @@ class StepUsage:
             "tours": self.tours,
             "outils": list(self.outils),
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> StepUsage:
+        """Reconstruit une mesure depuis sa forme `to_dict` (aller-retour JSON, #41).
+
+        `tokens_total` (dérivé) est ignoré ; les clés absentes retombent sur les
+        défauts — la mesure d'un worker qui ne rapporte rien reste valide.
+        """
+        return cls(
+            appels=data.get("appels", 0),
+            tokens_entree=data.get("tokens_entree", 0),
+            tokens_sortie=data.get("tokens_sortie", 0),
+            cout_usd=data.get("cout_usd"),
+            duree_ms=data.get("duree_ms"),
+            duree_api_ms=data.get("duree_api_ms"),
+            tours=data.get("tours", 0),
+            outils=tuple(data.get("outils", ())),
+        )
 
 
 class UsageCollector:

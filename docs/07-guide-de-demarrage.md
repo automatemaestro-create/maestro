@@ -81,6 +81,7 @@ un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` �
 │   ├── engine/         #   Boucle d'orchestration + garde-fous (CLI maestro-run)
 │   ├── orchestrator/   #   Décomposition objectif → tâches structurées
 │   ├── providers/      #   Abstraction fournisseur (ModelProvider, Claude au POC)
+│   ├── queue/          #   File de tâches Celery + Redis, workers parallèles (Phase 1)
 │   ├── router/         #   Auto-assignation des tâches aux agents
 │   ├── sandbox/        #   Espace de travail isolé par tâche
 │   ├── telemetry/      #   Journal des étapes, usage/coûts, redaction des secrets
@@ -129,3 +130,27 @@ un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` �
 ## 6. Prochaines étapes après le POC
 
 Passer à la **Phase 1 (MVP)** : introduire la file de tâches, le parallélisme à l'échelle, la Control Tower v1 et le human-in-the-loop. Voir la [roadmap](./06-roadmap.md).
+
+### 6.1 — File de tâches et workers parallèles (disponible — ticket #41)
+
+Première brique Phase 1 en place : les tâches de l'orchestrateur peuvent partir dans une
+**file Celery + Redis** et être consommées par des **workers séparés** (plusieurs agents
+réellement en parallèle, hors du process de l'orchestrateur). Trois terminaux :
+
+```bash
+# 1. Redis local (broker + backend de résultats — instance mutualisée, cf. infra/)
+docker compose -f infra/docker-compose.yml up -d redis
+
+# 2. Un worker par agent souhaité en parallèle (sous Windows : --pool=solo)
+celery -A maestro.queue worker --pool=solo -n agent1@%h
+celery -A maestro.queue worker --pool=solo -n agent2@%h   # 2e terminal
+
+# 3. La boucle d'orchestration, branchée sur la file
+maestro-run --queue "Créer une API de gestion de tâches"
+```
+
+Le statut et le résultat de chaque tâche (livrable, erreur, fichiers produits, usage)
+remontent à l'orchestrateur via le backend de résultats ; la synthèse indique le worker
+qui a exécuté chaque tâche. Les garde-fous (#9) s'appliquent **côté worker**
+(`maestro.queue.worker.configurer_worker`) — une tâche sensible y est refusée par défaut.
+Détails : [`maestro/queue/`](../maestro/queue/) et [`core/queue/README.md`](../core/queue/README.md).

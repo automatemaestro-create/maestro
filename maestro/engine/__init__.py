@@ -15,30 +15,40 @@ il reste agnostique du fournisseur, exactement comme l'orchestrateur.
 Chaque tâche s'exécute sous **garde-fous** (#9, `maestro.engine.guardrails`) :
 plafond de dépense, time-out, et validation humaine des actions sensibles —
 configurables via `Guardrails` injecté au moteur.
+
+L'exécution d'une tâche passe par la frontière injectable `TaskExecutor` (#41) :
+`LocalExecutor` en process par défaut, ou `maestro.queue.CeleryExecutor` pour
+distribuer les tâches à des workers via la file Celery + Redis.
 """
 
 from __future__ import annotations
 
+from maestro.engine.executor import (
+    STATUT_ECHEC,
+    STATUT_TERMINEE,
+    LocalExecutor,
+    TaskExecutor,
+    TaskResult,
+)
 from maestro.engine.guardrails import (
     MOTS_SENSIBLES,
     DemandeValidation,
     Guardrails,
 )
 from maestro.engine.loop import (
-    STATUT_ECHEC,
-    STATUT_TERMINEE,
     OrchestrationEngine,
     RunReport,
-    TaskResult,
 )
 
 __all__ = [
     "DemandeValidation",
     "Guardrails",
+    "LocalExecutor",
     "MOTS_SENSIBLES",
     "OrchestrationEngine",
     "RunReport",
     "STATUT_ECHEC",
     "STATUT_TERMINEE",
+    "TaskExecutor",
     "TaskResult",
 ]
