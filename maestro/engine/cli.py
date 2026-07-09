@@ -19,6 +19,11 @@ garde-fous s'appliquant alors **côté worker**, `--plafond-cout`/`--timeout` ne
 sont pas combinables avec `--queue` (une tâche sensible y est refusée par
 défaut — fail-safe sans validateur).
 
+`--publier` (#46) publie chaque étape du journal en **événement temps réel**
+sur Redis Pub/Sub (canal `maestro.evenements`, via le pont
+`maestro.controltower.bridge`) : le backend Control Tower (`maestro-api`) les
+rediffuse aux clients WebSocket. Requiert le même Redis que `--queue`.
+
 Code de sortie : 0 si toutes les tâches réussissent, 1 si au moins une échoue (ou
 en cas d'erreur de configuration / planification), 2 si l'appel est mal formé.
 """
@@ -39,7 +44,7 @@ from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import LOGGER_NAME
 
 _USAGE = (
-    "Usage : maestro-run [--json] [--trace] [--queue] [--plafond-cout <usd>] "
+    "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--plafond-cout <usd>] "
     '[--timeout <s>] "<objectif en langage naturel>"'
 )
 
@@ -55,7 +60,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     via_queue = False
     plafond_cout: float | None = None
     timeout: float | None = None
-    while args and args[0] in {"--json", "--trace", "--queue", "--plafond-cout", "--timeout"}:
+    flags_connus = {"--json", "--trace", "--queue", "--publier", "--plafond-cout", "--timeout"}
+    while args and args[0] in flags_connus:
         flag = args.pop(0)
         if flag == "--json":
             as_json = True
@@ -63,6 +69,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             activer_trace()
         elif flag == "--queue":
             via_queue = True
+        elif flag == "--publier":
+            activer_publication_evenements()
         else:
             valeur = _valeur_numerique(flag, args)
             if valeur is None:
@@ -172,6 +180,22 @@ def validation_console(demande: DemandeValidation) -> bool:
         print("(entrée non interactive — action refusée)", file=sys.stderr)
         return False
     return reponse.strip().lower() in {"o", "oui", "y", "yes"}
+
+
+def activer_publication_evenements() -> None:
+    """Publie le journal (#8) en événements temps réel sur Redis Pub/Sub (#46).
+
+    Branche le pont télémétrie → bus (`maestro.controltower.bridge`) sur le
+    Redis de la config (`REDIS_URL`, l'instance du docker-compose par défaut) :
+    chaque étape consignée part sur le canal `maestro.evenements`, que le
+    backend Control Tower (`maestro-api`) rediffuse en WebSocket. La connexion
+    est paresseuse : sans Redis joignable, l'échec de publication est signalé
+    sur stderr (politique des handlers logging) sans gêner l'exécution.
+    """
+    from maestro.config import load_settings
+    from maestro.controltower.bridge import activer_publication, publieur_redis
+
+    activer_publication(publieur_redis(load_settings().redis_url))
 
 
 def activer_trace() -> None:
