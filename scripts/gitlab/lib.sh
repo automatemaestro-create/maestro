@@ -233,6 +233,77 @@ gl_issue_brief() {
   '
 }
 
+# --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
+# Convention (docs/10-workflow-git.md §5.1) : un besoin qui dépasse ~1 session de travail est porté
+# par un ticket PARENT de suivi dont la description contient une section « ## Sous-tickets » :
+# checklist ORDONNÉE « - [ ] #<iid> — <titre> » (ordre de réalisation, lot final tests+doc).
+# Chaque sous-ticket commence sa description par « Sous-ticket de #<parent> » (marqueur parsé par
+# gl_parent_of) et est lié au parent via un issue link « relates to » (gl_issue_link).
+
+# gl_issue_link <iid> <iid-cible> -> lie deux tickets du projet (issue link « relates to »).
+# Idempotent : un lien déjà présent (409 « already assigned ») est traité comme un succès.
+gl_issue_link() {
+  local iid="$1" target="$2"
+  if [ -z "$iid" ] || [ -z "$target" ]; then echo "usage: gl_issue_link <iid> <iid-cible>" >&2; return 2; fi
+  local out
+  # target_project_id voyage dans le CORPS de la requête : chemin BRUT ("groupe/projet"), pas
+  # l'encodage %2F (réservé au chemin d'URL) — encodé, l'API répond « 404 Project Not Found ».
+  out="$(glab api "projects/$(gl_project_enc)/issues/$iid/links" \
+        -f target_project_id="$GL_PROJECT" -f target_issue_iid="$target" 2>&1)"
+  case "$out" in
+    *'"source_issue"'*)   printf 'Lien posé : #%s ↔ #%s\n' "$iid" "$target" ;;
+    *'already assigned'*) printf 'Lien déjà présent : #%s ↔ #%s\n' "$iid" "$target" ;;
+    *) echo "Échec du lien #$iid ↔ #$target : $out" >&2; return 1 ;;
+  esac
+}
+
+# gl_parent_of <iid> -> imprime l'iid du ticket PARENT si <iid> est un sous-ticket (marqueur
+# « Sous-ticket de #<parent> » dans sa description), rien (code 1) sinon.
+gl_parent_of() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_parent_of <iid>" >&2; return 2; fi
+  local raw
+  raw="$(glab issue view "$iid" 2>/dev/null)" || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
+  printf '%s\n' "$raw" | grep -o 'Sous-ticket de #[0-9]\+' | head -1 | grep -o '[0-9]\+$'
+}
+
+# gl_subtickets <iid-parent> -> liste ORDONNÉE des sous-tickets déclarés dans la checklist
+# « ## Sous-tickets » du parent, enrichie du statut natif (une seule requête backlog, pas N).
+# Sortie TSV : iid <TAB> coche(x|-) <TAB> statut <TAB> titre  (ligne d'en-tête « # » à ignorer).
+# Code 1 si le ticket n'a pas de section « ## Sous-tickets » (ce n'est pas un ticket parent) —
+# c'est le test utilisé par /ticket-start pour détecter un parent de suivi.
+gl_subtickets() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_subtickets <iid-parent>" >&2; return 2; fi
+  local raw rows table siid coche titre statut
+  raw="$(glab issue view "$iid" 2>/dev/null)" || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
+  rows="$(printf '%s\n' "$raw" | awk '
+    insec {
+      if ($0 ~ /^#+[ \t]/) { insec = 0; next }
+      if ($0 ~ /^- \[[ xX]\] #[0-9]+/) {
+        coche = ($0 ~ /^- \[[xX]\]/) ? "x" : "-"
+        match($0, /#[0-9]+/)
+        id = substr($0, RSTART + 1, RLENGTH - 1)
+        titre = substr($0, RSTART + RLENGTH)
+        sub(/^[-—–: \t]+/, "", titre)
+        printf "%s\t%s\t%s\n", id, coche, titre
+      }
+      next
+    }
+    /^#+[ \t]+Sous-tickets/ { insec = 1 }
+  ')"
+  if [ -z "$rows" ]; then
+    echo "Pas de section « ## Sous-tickets » dans #$iid — pas un ticket parent." >&2
+    return 1
+  fi
+  table="$(gl_backlog_table all)" || table=""
+  printf '# iid\tcoche\tstatut\ttitre\n'
+  while IFS=$'\t' read -r siid coche titre; do
+    statut="$(printf '%s\n' "$table" | awk -F '\t' -v id="$siid" '$1 == id { print $2; exit }')"
+    printf '%s\t%s\t%s\t%s\n' "$siid" "$coche" "${statut:-?}" "$titre"
+  done <<< "$rows"
+}
+
 # --- Dates & time tracking ----------------------------------------------------------------------
 # Renseignés automatiquement le long du cycle de vie (voir docs/10-workflow-git.md §3.3) :
 #   • date de début + échéance  → posées par /ticket-start (gl_start_dates)
@@ -541,6 +612,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     backlog)        gl_backlog "$@" ;;
     backlog-table)  gl_backlog_table "$@" ;;
     issue-brief)    gl_issue_brief "$@" ;;
+    issue-link)     gl_issue_link "$@" ;;
+    parent-of)      gl_parent_of "$@" ;;
+    subtickets)     gl_subtickets "$@" ;;
     prio)           gl_prio "$@" ;;
     prio-delay)     gl_prio_delay "$@" ;;
     get-start-date) gl_get_start_date "$@" ;;
@@ -565,6 +639,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
       echo "  slug <titre> | branch-prefix <type>" >&2
+      echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
+      echo "    issue-link <iid> <iid-cible>    (lie deux tickets — relates to, idempotent)" >&2
+      echo "    parent-of <iid>                 (iid du parent si <iid> est un sous-ticket)" >&2
+      echo "    subtickets <iid-parent>         (checklist ## Sous-tickets : iid/coche/statut/titre)" >&2
       echo "  Dates & temps :" >&2
       echo "    start-dates <iid>            (début=aujourd'hui + échéance selon prio)" >&2
       echo "    set-dates <iid> [début] [échéance]   get-start-date <iid>" >&2

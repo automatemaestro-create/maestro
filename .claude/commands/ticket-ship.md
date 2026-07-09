@@ -68,6 +68,22 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    `/ticket-finish` en est la source unique, et son étape de commit sera sans objet (arbre déjà
    propre) — elle passera directement au push.
 
-7. Résumé final : reprends le résumé produit par `/ticket-finish` (lien de la MR, état Draft/Ready,
-   temps loggé) et préfixe-le du **commit créé** (hash court + en-tête). Rappelle que le **merge
-   reste une décision humaine** — `/ticket-ship` ne merge, ni ne ferme, ni ne force-push jamais.
+7. **Sous-ticket d'un parent de suivi ?** Vérifie : `bash scripts/gitlab/lib.sh parent-of <iid>`.
+   Si un parent est trouvé (convention `docs/10-workflow-git.md` §5.1), prépare l'**annonce de la
+   suite** pour le résumé final :
+   - Liste les lots : `bash scripts/gitlab/lib.sh subtickets <iid-parent>`. Profites-en pour
+     **cocher** dans la checklist du parent les lots au statut « Terminé » encore décochés
+     (mise à jour idempotente de la description via `glab issue update <iid-parent>
+     --description "$(cat <fichier>)"` ; ne **décoche jamais** une case déjà cochée).
+   - S'il reste, après le ticket qu'on vient de shipper, un sous-ticket au statut « À faire »
+     dans l'ordre de la checklist, c'est le **prochain lot** : annonce « après le merge de cette
+     MR → `/ticket-start <iid-suivant>` ».
+   - Si le lot shippé est le **dernier encore ouvert**, annonce que le **parent sera fermable
+     après le merge** (toutes les cases cochées, y compris le lot tests) — sa fermeture reste une
+     décision humaine/orchestrateur : `/ticket-ship` ne ferme rien, pas même le parent.
+
+8. Résumé final : reprends le résumé produit par `/ticket-finish` (lien de la MR, état Draft/Ready,
+   temps loggé) et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
+   ajoute l'annonce de l'étape 7 (prochain lot à démarrer après merge, ou parent fermable).
+   Rappelle que le **merge reste une décision humaine** — `/ticket-ship` ne merge, ni ne ferme,
+   ni ne force-push jamais.

@@ -1,6 +1,6 @@
 # Workflow Git & tickets — Maestro
 
-**Version :** 0.3
+**Version :** 0.4
 Objectif : que chaque ticket GitLab soit traité de façon prévisible — même branche, même convention de commit, même cycle de vie — que ce soit un humain ou un agent Claude Code qui l'exécute.
 
 > Le **cycle de vie** d'un ticket est porté par le **champ Status natif** de GitLab (lifecycle
@@ -26,7 +26,7 @@ Règles :
 1. **Jamais de commit direct sur `main`.** Tout changement passe par une branche + une Merge Request (MR).
 2. **Une branche = un ticket = une MR.** Pas de branche fourre-tout multi-tickets.
 3. Une branche part toujours de `main` à jour (`git pull origin main` avant `git checkout -b`).
-4. Une branche est **courte** : quelques heures à quelques jours. Si un ticket prend plus longtemps, il est probablement trop gros — le redécouper.
+4. Une branche est **courte** : quelques heures à quelques jours. Si un ticket prend plus longtemps, il est probablement trop gros — le redécouper (§5.1).
 5. La branche est supprimée (locale + distante) dès que la MR est mergée.
 
 ### Nommage des branches
@@ -235,6 +235,40 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
    (ex. sans démarrer de nouveau ticket) ou pour supprimer aussi la branche distante si la case
    « Delete source branch » avait été décochée au merge.
 
+### 5.1 Découpage en sous-tickets — besoins trop gros & tests différés
+
+Un ticket doit tenir en **~1 session de travail** (§1, règle 4) — chaque session `/ticket-start`
+reste ainsi légère en contexte. Au-delà (plusieurs couches touchées, plus de 3-4 critères
+d'acceptation, plusieurs livrables indépendants), le besoin est porté par un **ticket parent de
+suivi** + des **sous-tickets** (introduit par le ticket #53) :
+
+- **Parent de suivi** — pas de branche, pas de code, pas de MR. Sa description porte l'objectif
+  global et une section `## Sous-tickets` : la checklist **ordonnée** (ordre de réalisation) des
+  lots, au format `- [ ] #<iid> — <titre>`. Il reste ouvert tant que toutes les cases ne sont pas
+  cochées — **en particulier celle du lot tests final** — et sa fermeture est une **décision
+  humaine/orchestrateur** (pas de MR → pas de `Closes #` automatique). Les cases sont cochées au
+  fil de l'eau par les commandes (synchronisation idempotente : cocher les lots « Terminé »,
+  jamais décocher).
+- **Sous-tickets** — un lot = ~1 session, **1 à 3 critères d'acceptation**, et surtout chaque lot
+  est **mergeable directement sur `main` sans casser l'existant** (code additif ou inoffensif tant
+  que les lots suivants manquent). La description de chaque sous-ticket **commence par**
+  `Sous-ticket de #<parent> — lot <n>/<total>.` (marqueur parsé par `lib.sh parent-of`), et le
+  sous-ticket est **lié** au parent (issue link « relates to », posé par
+  `lib.sh issue-link <parent> <sous-iid>`).
+- **Tests différés** — les tests sont un **sous-ticket dédié**, par défaut le **lot final
+  « tests + doc »**. Les lots intermédiaires n'embarquent des tests que si leur logique est
+  critique, et portent la mention « Tests différés → #<iid-du-lot-tests> » — livrer un lot
+  intermédiaire sans tests est donc **prévu**, pas un oubli (la case « Tests » de la checklist de
+  MR reste vide, le relecteur sait pourquoi).
+
+Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subtickets`) :
+
+| Commande | Besoin/ticket trop gros | Ticket parent | Sous-ticket |
+|---|---|---|---|
+| `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, lot tests en dernier) | — | — |
+| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | **redirige** vers le premier lot ouvert « À faire » (et synchronise la checklist) ; **s'arrête** si ce lot est « En cours »/« En revue » (travail en cours ou MR précédente non mergée) | vérifie que les lots **précédents** de la checklist sont « Terminé », sinon s'arrête |
+| `/ticket-ship` | — | — | **annonce le prochain lot** à démarrer après merge (ou que le parent est fermable si c'était le dernier), et coche les lots terminés dans la checklist du parent |
+
 **Voie « non réalisé ».** À tout moment (depuis `À faire`, `En cours` ou `En revue`), un ticket
 peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** : statut `Abandonné`
 (won't-do) ou `Doublon` (catégorie `canceled`), raison consignée en commentaire, ticket fermé.
@@ -297,7 +331,8 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 - Les commandes `/ticket-*` et `/backlog` s'appuient sur le helper
   [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels glab
   (résolution work-item, statut par nom, **listing du backlog** avec statut natif, slug, préfixe de
-  branche). Il est **sourçable** (`. scripts/gitlab/lib.sh`) et **exécutable en sous-commandes**
+  branche, **sous-tickets** — `issue-link`/`parent-of`/`subtickets`, §5.1). Il est **sourçable**
+  (`. scripts/gitlab/lib.sh`) et **exécutable en sous-commandes**
   (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`, `… backlog opened`) — pratique pour les
   futurs scripts et agents. Vérif rapide : `bash scripts/gitlab/lib.sh require`.
   - **Robustesse des lectures** : toutes les **lectures** GraphQL passent par `gl_graphql_read`, qui
