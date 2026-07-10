@@ -16,8 +16,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { chargerAgents, chargerTaches, reassignerTache, urlEvenements } from "./api";
-import type { EtatAgent, Evenement, Tache } from "./types";
+import {
+  chargerAgents,
+  chargerTaches,
+  chargerValidations,
+  deciderValidation,
+  reassignerTache,
+  urlEvenements,
+} from "./api";
+import type { EtatAgent, Evenement, Tache, Validation } from "./types";
 
 /** Longueur du fil d'activité conservé côté client. */
 const MAX_EVENEMENTS = 50;
@@ -32,6 +39,8 @@ export type ControlTower = {
   taches: Tache[];
   agents: EtatAgent[];
   evenements: Evenement[];
+  /** Demandes de validation humaine (#48), en attente comme tranchées. */
+  validations: Validation[];
   /** WebSocket ouverte : les mises à jour arrivent en temps réel. */
   connecte: boolean;
   /** Premier chargement REST encore en cours. */
@@ -39,12 +48,15 @@ export type ControlTower = {
   /** API injoignable au dernier chargement (null si tout va bien). */
   erreur: string | null;
   reassigner: (tacheId: string, agent: string) => Promise<void>;
+  /** Tranche une demande de validation : le moteur reprend ou annule la tâche. */
+  decider: (tacheId: string, approuve: boolean) => Promise<void>;
 };
 
 export function useControlTower(): ControlTower {
   const [taches, setTaches] = useState<Tache[]>([]);
   const [agents, setAgents] = useState<EtatAgent[]>([]);
   const [evenements, setEvenements] = useState<Evenement[]>([]);
+  const [validations, setValidations] = useState<Validation[]>([]);
   const [connecte, setConnecte] = useState(false);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
@@ -53,12 +65,11 @@ export function useControlTower(): ControlTower {
 
   const recharger = useCallback(async () => {
     try {
-      const [nouvellesTaches, nouveauxAgents] = await Promise.all([
-        chargerTaches(),
-        chargerAgents(),
-      ]);
+      const [nouvellesTaches, nouveauxAgents, nouvellesValidations] =
+        await Promise.all([chargerTaches(), chargerAgents(), chargerValidations()]);
       setTaches(nouvellesTaches);
       setAgents(nouveauxAgents);
+      setValidations(nouvellesValidations);
       setErreur(null);
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
@@ -142,5 +153,25 @@ export function useControlTower(): ControlTower {
     [recharger],
   );
 
-  return { taches, agents, evenements, connecte, chargement, erreur, reassigner };
+  const decider = useCallback(
+    async (tacheId: string, approuve: boolean) => {
+      await deciderValidation(tacheId, approuve);
+      // Même mécanique que la réassignation : le WebSocket confirmera, le
+      // rechargement direct fait disparaître la demande sans attendre.
+      await recharger();
+    },
+    [recharger],
+  );
+
+  return {
+    taches,
+    agents,
+    evenements,
+    validations,
+    connecte,
+    chargement,
+    erreur,
+    reassigner,
+    decider,
+  };
 }

@@ -22,6 +22,13 @@ Côté producteur, les événements sont **sourcés depuis la télémétrie** (#
 maestro-run --publier "<objectif>"   # publie chaque étape du journal sur Redis
 ```
 
+Human-in-the-loop (#48) : avec `--validation-ui`, les tâches sensibles se
+mettent en pause et attendent la décision prise depuis l'UI (pas de time-out) :
+
+```bash
+maestro-run --publier --validation-ui "<objectif>"
+```
+
 ## Endpoints
 
 | Méthode | Chemin | Rôle |
@@ -31,10 +38,13 @@ maestro-run --publier "<objectif>"   # publie chaque étape du journal sur Redis
 | GET | `/api/agents` | agents : libre/occupé, tâche courante, compteurs, coût cumulé |
 | GET | `/api/executions/{run_id}` | détail d'une exécution : trace et coût agrégé |
 | POST | `/api/taches/{id}/reassigner` | réassignation manuelle `{"agent": "..."}` (Kanban) |
+| GET | `/api/validations` | demandes de validation humaine : contexte, statut, décision (#48) |
+| POST | `/api/validations/{tache_id}/decision` | décision humaine `{"approuve": true|false}` — 409 si déjà tranchée |
 | WS | `/ws/evenements` | flux d'événements JSON |
 
 Types d'événements diffusés : `tache.statut`, `tache.reassignation`,
-`agent.activite`, `message.inter_agents` (forme : `Event.to_dict`).
+`agent.activite`, `message.inter_agents`, `validation.demande`,
+`validation.decision` (forme : `Event.to_dict`).
 
 ## Tests
 

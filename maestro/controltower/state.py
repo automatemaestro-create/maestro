@@ -30,6 +30,8 @@ from maestro.controltower.events import (
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_STATUT,
+    EVENEMENT_VALIDATION_DECISION,
+    EVENEMENT_VALIDATION_DEMANDE,
     Event,
 )
 from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
@@ -37,6 +39,12 @@ from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINE
 #: Statuts d'agent exposés par l'API (docs/05 §2.1 : libre / occupé / désactivé…).
 AGENT_LIBRE = "libre"
 AGENT_OCCUPE = "occupe"
+
+#: Statuts d'une demande de validation humaine (#48), alignés sur l'entité
+#: APPROVAL (docs/03) : en attente de décision, puis approuvée ou refusée.
+VALIDATION_EN_ATTENTE = "en_attente"
+VALIDATION_APPROUVEE = "approuvee"
+VALIDATION_REFUSEE = "refusee"
 
 #: Statuts de tâche *terminaux* (machine à états docs/03 §3) : l'agent redevient
 #: libre et les compteurs de la fiche agent s'incrémentent.
@@ -113,6 +121,47 @@ class EtatAgent:
 
 
 @dataclass
+class EtatValidation:
+    """Une demande de validation humaine (#48) : le contexte pour trancher, puis la décision.
+
+    Miroir de la `DemandeValidation` du moteur (docs/03, entité APPROVAL) : la
+    tâche mise en pause (id, titre, description — l'action que l'agent
+    réaliserait), l'agent qui l'exécuterait et la `raison` de la classification
+    sensible. `statut` suit `VALIDATION_*` ; `decision` porte le détail humain
+    de l'issue (« approuvée depuis la Control Tower »…) une fois tranchée.
+    """
+
+    tache_id: str
+    titre: str = ""
+    description: str = ""
+    agent: str = ""
+    role: str = ""
+    raison: str = ""
+    statut: str = VALIDATION_EN_ATTENTE
+    decision: str = ""
+    horodatage: str = ""
+
+    @property
+    def en_attente(self) -> bool:
+        """La demande attend-elle encore une décision humaine ?"""
+        return self.statut == VALIDATION_EN_ATTENTE
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet la demande en dict JSON-sérialisable (la forme du REST)."""
+        return {
+            "tache_id": self.tache_id,
+            "titre": self.titre,
+            "description": self.description,
+            "agent": self.agent,
+            "role": self.role,
+            "raison": self.raison,
+            "statut": self.statut,
+            "decision": self.decision,
+            "horodatage": self.horodatage,
+        }
+
+
+@dataclass
 class EtatExecution:
     """Le détail d'une exécution : les événements d'un `run_id`, dans l'ordre reçu.
 
@@ -142,8 +191,9 @@ class EtatExecution:
 class ControlTowerState:
     """L'état courant de l'orchestration, reconstruit du flux d'événements.
 
-    Trois vues, chacune derrière un endpoint REST : `taches` (Kanban),
-    `agents` (fiches et charge), `execution(run_id)` (détail d'un run).
+    Quatre vues, chacune derrière un endpoint REST : `taches` (Kanban),
+    `agents` (fiches et charge), `execution(run_id)` (détail d'un run),
+    `validations` (demandes de validation humaine, #48).
     """
 
     def __init__(self, agents: Sequence[Agent] = DEFAULT_AGENTS) -> None:
@@ -152,6 +202,7 @@ class ControlTowerState:
             a.nom: EtatAgent(nom=a.nom, role=a.role) for a in agents
         }
         self._executions: dict[str, EtatExecution] = {}
+        self._validations: dict[str, EtatValidation] = {}
 
     # ------------------------------------------------------------------ lecture
 
@@ -175,6 +226,14 @@ class ControlTowerState:
         """Le détail de l'exécution `run_id`, ou None si aucune trace reçue."""
         return self._executions.get(run_id)
 
+    def validations(self) -> list[EtatValidation]:
+        """Les demandes de validation humaine, dans l'ordre de première apparition."""
+        return list(self._validations.values())
+
+    def validation(self, tache_id: str) -> EtatValidation | None:
+        """La demande de validation de la tâche `tache_id`, ou None si aucune."""
+        return self._validations.get(tache_id)
+
     # ----------------------------------------------------------------- écriture
 
     def appliquer(self, event: Event) -> None:
@@ -194,6 +253,10 @@ class ControlTowerState:
             self._applique_reassignation(event)
         elif event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}:
             self._applique_activite(event)
+        elif event.type == EVENEMENT_VALIDATION_DEMANDE:
+            self._applique_validation_demande(event)
+        elif event.type == EVENEMENT_VALIDATION_DECISION:
+            self._applique_validation_decision(event)
 
     def _applique_statut_tache(self, event: Event) -> None:
         """Met à jour la tâche visée et la fiche de l'agent qui l'a portée."""
@@ -250,3 +313,38 @@ class ControlTowerState:
             event.agent, EtatAgent(nom=event.agent, role=event.role)
         )
         agent.derniere_activite = event.horodatage or agent.derniere_activite
+
+    def _applique_validation_demande(self, event: Event) -> None:
+        """Enregistre une demande de validation humaine (#48) — en attente de décision.
+
+        Une nouvelle demande sur la même tâche (autre run, re-tentative) remplace
+        la précédente : le moteur attend toujours la décision de la **dernière**
+        demande publiée, l'historique complet reste dans le journal (#8).
+        """
+        self._validations[event.tache_id] = EtatValidation(
+            tache_id=event.tache_id,
+            titre=event.titre,
+            description=event.description,
+            agent=event.agent,
+            role=event.role,
+            raison=event.detail,
+            horodatage=event.horodatage,
+        )
+
+    def _applique_validation_decision(self, event: Event) -> None:
+        """Tranche une demande de validation (#48) : approuvée ou refusée.
+
+        Idempotent : réappliquer la même décision (application directe par
+        l'endpoint puis rediffusion par la pompe) laisse l'état inchangé. Une
+        décision sur une demande inconnue est ignorée — la projection est un
+        miroir, pas une source de vérité.
+        """
+        demande = self._validations.get(event.tache_id)
+        if demande is None:
+            return
+        demande.statut = (
+            VALIDATION_APPROUVEE if event.statut == VALIDATION_APPROUVEE
+            else VALIDATION_REFUSEE
+        )
+        demande.decision = event.detail or demande.decision
+        demande.horodatage = event.horodatage or demande.horodatage

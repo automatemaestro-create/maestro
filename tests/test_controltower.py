@@ -15,7 +15,11 @@ critères d'acceptation du ticket #46 :
    projection, diffusion aux clients WebSocket, 404/422 sur tâche ou agent
    inconnus ;
 ④ pont télémétrie → événements : une ligne de journal (#8) devient
-   l'événement attendu, y compris via un vrai `RunJournal`.
+   l'événement attendu, y compris via un vrai `RunJournal` ;
+⑤ validations humaines (#48) : la demande publiée par le moteur apparaît avec
+   son contexte (agent, tâche, action, justification), la décision prise via
+   l'API fait reprendre (ou annule) le validateur en attente — sans time-out —
+   et une demande ne se tranche qu'une fois (409 ensuite).
 """
 
 import asyncio
@@ -29,13 +33,21 @@ from maestro.controltower import (
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_STATUT,
+    EVENEMENT_VALIDATION_DECISION,
+    EVENEMENT_VALIDATION_DEMANDE,
+    VALIDATION_APPROUVEE,
+    VALIDATION_EN_ATTENTE,
+    VALIDATION_REFUSEE,
     ControlTowerState,
     Event,
     InMemoryEventBus,
+    ValidateurControlTower,
     activer_publication,
     create_app,
     evenements_depuis_step,
 )
+from maestro.controltower.validation import evenement_demande
+from maestro.engine.guardrails import DemandeValidation
 from maestro.telemetry import LOGGER_NAME, RunJournal, StepUsage
 
 
@@ -284,6 +296,181 @@ def test_le_journal_publie_ses_etapes_en_evenements():
     assert event.type == EVENEMENT_TACHE_STATUT
     assert event.run_id == "run-42" and event.tache_id == "t1"
     assert event.cout_usd == pytest.approx(0.05)
+
+
+# ------------------------------------------------- ⑤ Validations humaines
+
+
+def _demande_evenement(tache_id="t-sensible", **surcharge):
+    """Événement `validation.demande` prêt à l'emploi pour les scénarios."""
+    defauts = dict(
+        type=EVENEMENT_VALIDATION_DEMANDE,
+        tache_id=tache_id,
+        titre="Déployer en production",
+        agent="devops",
+        role="DevOps / SRE",
+        statut=VALIDATION_EN_ATTENTE,
+        detail="mot sensible « deploi » détecté dans la tâche",
+        description="Déployer l'API du mini-CRM sur l'environnement de production.",
+    )
+    defauts.update(surcharge)
+    return Event(**defauts)
+
+
+def _demande_moteur(task_id="t-sensible"):
+    """La `DemandeValidation` telle que le moteur la construit (#9)."""
+    return DemandeValidation(
+        task_id=task_id,
+        titre="Déployer en production",
+        description="Déployer l'API du mini-CRM sur l'environnement de production.",
+        agent="devops",
+        role="DevOps / SRE",
+        raison="mot sensible « deploi » détecté dans la tâche",
+    )
+
+
+def _attend_que(condition, timeout_s=5.0):
+    """Attend (côté thread de test) que `condition()` rende une valeur vraie."""
+    import time
+
+    fin = time.monotonic() + timeout_s
+    while time.monotonic() < fin:
+        valeur = condition()
+        if valeur:
+            return valeur
+        time.sleep(0.01)
+    raise AssertionError("condition non remplie avant le time-out du test")
+
+
+def test_demande_de_validation_apparait_avec_son_contexte(client, state):
+    """La demande expose tout ce qu'il faut pour trancher (critère #48 n°2)."""
+    state.appliquer(_demande_evenement())
+
+    (validation,) = client.get("/api/validations").json()
+
+    assert validation["statut"] == VALIDATION_EN_ATTENTE
+    assert validation["tache_id"] == "t-sensible"
+    assert validation["titre"] == "Déployer en production"
+    assert validation["agent"] == "devops" and validation["role"] == "DevOps / SRE"
+    assert "deploi" in validation["raison"]  # la justification de la classification
+    assert "production" in validation["description"]  # l'action demandée
+
+
+def test_decision_met_a_jour_l_etat_et_diffuse(client, bus, state):
+    """La décision part vers les clients WebSocket (donc le moteur) et le REST."""
+    state.appliquer(_demande_evenement())
+
+    with client.websocket_connect("/ws/evenements") as ws:
+        reponse = client.post(
+            "/api/validations/t-sensible/decision", json={"approuve": True}
+        )
+        recu = ws.receive_json()
+
+    assert reponse.status_code == 200
+    assert recu["type"] == EVENEMENT_VALIDATION_DECISION
+    assert recu["tache_id"] == "t-sensible"
+    assert recu["statut"] == VALIDATION_APPROUVEE
+
+    (validation,) = client.get("/api/validations").json()
+    assert validation["statut"] == VALIDATION_APPROUVEE
+    assert validation["decision"] == "approuvée depuis la Control Tower"
+
+
+def test_decision_refus(client, state):
+    state.appliquer(_demande_evenement())
+    client.post("/api/validations/t-sensible/decision", json={"approuve": False})
+    (validation,) = client.get("/api/validations").json()
+    assert validation["statut"] == VALIDATION_REFUSEE
+    assert validation["decision"] == "refusée depuis la Control Tower"
+
+
+def test_decision_sans_demande_404(client):
+    reponse = client.post("/api/validations/fantome/decision", json={"approuve": True})
+    assert reponse.status_code == 404
+
+
+def test_demande_deja_tranchee_409(client, state):
+    """Jamais deux décisions : la première fait foi, la seconde est refusée."""
+    state.appliquer(_demande_evenement())
+    premier = client.post("/api/validations/t-sensible/decision", json={"approuve": False})
+    second = client.post("/api/validations/t-sensible/decision", json={"approuve": True})
+
+    assert premier.status_code == 200 and second.status_code == 409
+    (validation,) = client.get("/api/validations").json()
+    assert validation["statut"] == VALIDATION_REFUSEE  # la décision n'a pas bougé
+
+
+@pytest.mark.parametrize(
+    ("statut", "attendu"),
+    [(VALIDATION_APPROUVEE, True), (VALIDATION_REFUSEE, False)],
+)
+def test_validateur_rend_la_decision_humaine(statut, attendu):
+    """Le validateur publie la demande puis attend la décision qui le vise."""
+
+    async def scenario():
+        bus = InMemoryEventBus()
+        validateur = ValidateurControlTower(bus)
+        demandes = []
+
+        async def decideur():
+            async for event in bus.subscribe():
+                if event.type != EVENEMENT_VALIDATION_DEMANDE:
+                    continue
+                demandes.append(event)
+                # Une décision visant une autre tâche doit être ignorée.
+                await bus.publish(Event(
+                    type=EVENEMENT_VALIDATION_DECISION, tache_id="autre",
+                    statut=VALIDATION_APPROUVEE,
+                ))
+                await bus.publish(Event(
+                    type=EVENEMENT_VALIDATION_DECISION, tache_id="t-sensible",
+                    statut=statut,
+                ))
+                return
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(decideur())
+            await asyncio.sleep(0)  # laisse l'abonnement du décideur se poser
+            resultat = await validateur(_demande_moteur())
+
+        assert resultat is attendu
+        (demande,) = demandes
+        assert demande.tache_id == "t-sensible"
+        assert demande.statut == VALIDATION_EN_ATTENTE
+        assert demande.description  # le contexte voyage avec la demande
+
+    asyncio.run(scenario())
+
+
+def test_validateur_expurge_les_secrets_de_la_demande():
+    """Ce qui part sur le bus est montrable — même filet que le journal (#8)."""
+    demande = _demande_moteur()
+    demande = DemandeValidation(
+        task_id=demande.task_id, titre=demande.titre,
+        description="Déployer avec la clé sk-ant-abcdefghijklmnop.",
+        agent=demande.agent, role=demande.role, raison=demande.raison,
+    )
+    event = evenement_demande(demande)
+    assert "sk-ant-" not in event.description
+    assert "[secret masqué]" in event.description
+
+
+def test_bout_en_bout_pause_ui_decision_reprise(client, bus):
+    """Critères #48 : la tâche attend, la demande est dans l'UI, la décision la libère."""
+    validateur = ValidateurControlTower(bus)
+    attente = client.portal.start_task_soon(validateur, _demande_moteur())
+
+    # La demande publiée par le moteur est projetée puis servie par le REST.
+    validations = _attend_que(lambda: client.get("/api/validations").json())
+    assert validations[0]["statut"] == VALIDATION_EN_ATTENTE
+    assert not attente.done()  # la tâche est bien en pause, sans time-out
+
+    reponse = client.post(
+        "/api/validations/t-sensible/decision", json={"approuve": True}
+    )
+
+    assert reponse.status_code == 200
+    assert attente.result(timeout=5) is True  # le moteur reprend la tâche
 
 
 # --------------------------------------------------------- Bus & modèle

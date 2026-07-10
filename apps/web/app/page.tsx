@@ -2,19 +2,30 @@
 
 /**
  * Le tableau de bord de la Control Tower (ticket #47) : état des agents,
- * Kanban des tâches avec réassignation manuelle, fil d'activité — le tout mis
- * à jour en temps réel par WebSocket, sans rechargement (critère MVP n°4).
+ * Kanban des tâches avec réassignation manuelle, fil d'activité, validations
+ * humaines en attente (#48) — le tout mis à jour en temps réel par WebSocket,
+ * sans rechargement (critère MVP n°4).
  */
 
 import { EnTete } from "@/components/EnTete";
 import { FilActivite } from "@/components/FilActivite";
 import { Kanban } from "@/components/Kanban";
 import { PanneauAgents } from "@/components/PanneauAgents";
+import { PanneauValidations } from "@/components/PanneauValidations";
 import { useControlTower } from "@/lib/useControlTower";
 
 export default function TableauDeBord() {
-  const { taches, agents, evenements, connecte, chargement, erreur, reassigner } =
-    useControlTower();
+  const {
+    taches,
+    agents,
+    evenements,
+    validations,
+    connecte,
+    chargement,
+    erreur,
+    reassigner,
+    decider,
+  } = useControlTower();
 
   const couts = agents
     .map((a) => a.cout_usd)
@@ -37,6 +48,7 @@ export default function TableauDeBord() {
         <p className="text-sm text-neutral-500">Chargement de l&apos;état…</p>
       ) : (
         <>
+          <PanneauValidations validations={validations} decider={decider} />
           <PanneauAgents agents={agents} />
           <Kanban taches={taches} agents={agents} reassigner={reassigner} />
           <FilActivite evenements={evenements} />
