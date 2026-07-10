@@ -6,7 +6,10 @@ d'acceptation du ticket #9 :
 
 ① une tâche dépassant le **plafond de dépense** est stoppée (y compris en cours de
    route : le travail postérieur au dépassement n'a pas lieu), son coût restant
-   visible ; sous le plafond, rien ne change ;
+   visible ; sous le plafond, rien ne change. Depuis #56, le plafond est un budget
+   de l'**exécution entière**, adossé à la comptabilité par tâche (#55) : le cumul
+   des tâches compte, et une exécution au budget épuisé n'en démarre plus aucune
+   (tests différés du parent #49 → #59) ;
 ② une tâche dépassant le **time-out** est stoppée, sans gêner les autres tâches ;
 ③ une **action sensible** déclenche une demande de validation humaine avant toute
    exécution : approuvée elle s'exécute, refusée elle est stoppée sans avoir rien
@@ -93,11 +96,13 @@ def _plan_sensible():
     )
 
 
-def _engine(*, exec_provider=None, plan_json=None, guardrails=None):
+def _engine(*, exec_provider=None, plan_json=None, guardrails=None, max_parallele=None):
     planner = ConstantProvider(plan_json or _plan_anodin())
     orchestrator = Orchestrator(planner, model="claude-opus-4-8")
     execu = exec_provider if exec_provider is not None else RecordingProvider()
-    return OrchestrationEngine(execu, orchestrator, guardrails=guardrails)
+    return OrchestrationEngine(
+        execu, orchestrator, guardrails=guardrails, max_parallele=max_parallele
+    )
 
 
 # --- Critère ① : plafond de dépense par tâche ------------------------------------------
@@ -147,6 +152,69 @@ def test_sous_le_plafond_la_tache_s_execute_normalement():
     assert all(r.ok for r in report.resultats)
     assert provider.acheves == 1
     assert report.usage_totale.cout_usd == pytest.approx(0.012)
+
+
+def _plan_deux_taches_independantes():
+    # Deux tâches sans dépendance (aucun blocage aval #43 possible), routées par
+    # mots-clés vers qa — sérialisées dans les tests par max_parallele=1.
+    return json.dumps(
+        [
+            _tache("tests-api", "Tests de l'API", "Tests d'intégration.", ["tests"]),
+            _tache("tests-charge", "Tests de charge", "Campagne de charge.", ["tests"]),
+        ],
+        ensure_ascii=False,
+    )
+
+
+def test_le_plafond_est_un_budget_d_execution_pas_par_tache():
+    # Chaque tâche (0.012 $) tient sous le plafond (0.02 $) ; leur cumul le crève :
+    # la première aboutit, la seconde est stoppée en cours de route (#56).
+    provider = DepensierProvider()
+    guardrails = Guardrails(plafond_cout_usd=0.02)
+    report = asyncio.run(
+        _engine(
+            exec_provider=provider,
+            plan_json=_plan_deux_taches_independantes(),
+            guardrails=guardrails,
+            max_parallele=1,
+        ).run("Objectif")
+    )
+
+    premiere, seconde = report.resultats
+    assert premiere.ok
+    assert premiere.usage.cout_usd == pytest.approx(0.012)
+    assert seconde.statut == "echec"
+    assert "plafond de dépense dépassé" in (seconde.erreur or "")
+    # Stoppée entre ses deux signalements (0.018 $ puis 0.024 $ de cumul run) :
+    # le travail postérieur n'a pas eu lieu, le coût engagé reste visible.
+    assert provider.acheves == 1
+    assert seconde.usage.cout_usd == pytest.approx(0.012)
+
+
+def test_une_execution_au_budget_epuise_ne_demarre_plus_aucune_tache():
+    # La première tâche crève le plafond ; la seconde, indépendante, est refusée
+    # à l'entrée de l'exécution — avant routage et sans aucun appel modèle (#56).
+    provider = DepensierProvider()
+    guardrails = Guardrails(plafond_cout_usd=0.01)
+    report = asyncio.run(
+        _engine(
+            exec_provider=provider,
+            plan_json=_plan_deux_taches_independantes(),
+            guardrails=guardrails,
+            max_parallele=1,
+        ).run("Objectif")
+    )
+
+    premiere, seconde = report.resultats
+    assert premiere.statut == "echec"
+    assert "plafond de dépense dépassé" in (premiere.erreur or "")
+    assert seconde.statut == "echec"
+    assert "plafond de dépense dépassé" in (seconde.erreur or "")
+    # Jamais démarrée : ni agent élu, ni appel modèle, ni coût engagé.
+    assert seconde.agent == "—" and seconde.role == "non exécutée"
+    assert seconde.usage.appels == 0
+    assert seconde.usage.cout_usd is None
+    assert provider.acheves == 0
 
 
 # --- Critère ② : time-out par tâche -----------------------------------------------------

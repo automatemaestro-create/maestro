@@ -11,7 +11,11 @@ Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #4
 - **Validations humaines** (#48, docs/05 §2.6) : les actions sensibles mettent la
   tâche en pause et apparaissent en tête de tableau de bord avec leur contexte
   (agent, tâche, action demandée, justification) — **Approuver** fait reprendre la
-  tâche, **Refuser** l'annule proprement ; la décision est journalisée côté moteur.
+  tâche, **Refuser** l'annule proprement ; la décision est journalisée côté moteur ;
+- **Coûts par exécution** (#58, docs/05 §2.5 — critère MVP n°6) : le grand livre
+  de chaque run (`GET /api/executions/{run_id}/cout`, #57) — part de planification,
+  coût par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat de
+  l'exécution ; chaque carte Kanban affiche aussi le coût détaillé de sa tâche.
 
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 
