@@ -9,10 +9,12 @@ fournisseur sans télémétrie fonctionne tel quel, ses étapes remontent simple
 sans usage. Le contexte se propageant à travers `await`, le canal traverse toutes
 les couches (orchestrateur, runtime outillé) sans paramètre supplémentaire.
 
-Ce canal porte aussi le **plafond de dépense** (ticket #9) : c'est ici que le coût
-cumulé d'une étape est visible au fil des appels, donc ici qu'il se contrôle. Un
-collecteur ouvert avec `plafond_cout_usd` lève `PlafondDepenseDepasse` depuis
-`report_usage` dès que le cumul dépasse le plafond — l'appel modèle en cours est
+Ce canal **relaie** aussi le plafond de dépense (ticket #9) : c'est entre deux
+appels modèle que la dépense se contrôle. Un collecteur ouvert avec un contrôle
+de dépense (`plafond=`) le consulte à chaque mesure — sans rien compter lui-même :
+le contrôle (`maestro.telemetry.costs.PlafondDepense`, #56) relit la comptabilité
+par tâche de l'exécution, source unique du coût, et lève `PlafondDepenseDepasse`
+depuis `report_usage` dès que le plafond est dépassé — l'appel modèle en cours est
 déjà comptabilisé (le coût reste visible), mais la suite de l'étape est stoppée.
 Un fournisseur qui ne rapporte pas de coût n'est pas plafonnable (coût « inconnu »).
 """
@@ -23,18 +25,9 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar
 
 _T = TypeVar("_T", int, float)
-
-
-class PlafondDepenseDepasse(RuntimeError):
-    """Levée quand le coût cumulé d'une étape dépasse son plafond de dépense (#9).
-
-    Émise depuis `report_usage` (donc depuis le fournisseur, entre deux appels
-    modèle) : elle interrompt l'étape en cours, que l'appelant consigne comme
-    stoppée par le garde-fou.
-    """
 
 
 def _somme_optionnelle(a: _T | None, b: _T | None) -> _T | None:
@@ -133,17 +126,33 @@ class StepUsage:
         )
 
 
+class ControleDepense(Protocol):
+    """Contrôle de dépense consulté par le collecteur à chaque mesure (#9).
+
+    `verifie` reçoit l'usage cumulé de l'étape en cours et lève
+    (`PlafondDepenseDepasse`) si la dépense de l'exécution dépasse son plafond.
+    L'implémentation du POC est `maestro.telemetry.costs.PlafondDepense`, adossée
+    à la comptabilité par tâche (#56) — le protocole évite au canal de mesure de
+    dépendre de la comptabilité, qui se construit au-dessus de lui.
+    """
+
+    def verifie(self, en_cours: StepUsage) -> None:
+        """Lève si la dépense de l'exécution, `en_cours` compris, crève le plafond."""
+        ...
+
+
 class UsageCollector:
     """Accumule les mesures signalées pendant un bloc `collect_usage()`.
 
-    Avec `plafond_cout_usd`, fait aussi office de garde-fou de dépense (#9) :
-    chaque mesure est d'abord comptabilisée (le coût reste visible), puis le cumul
-    est confronté au plafond — dépassé, `add` lève `PlafondDepenseDepasse`.
+    Avec `plafond`, relaie le garde-fou de dépense (#9) : chaque mesure est
+    d'abord comptabilisée (le coût reste visible), puis le contrôle est consulté
+    avec le cumul de l'étape. C'est lui qui confronte la dépense de l'exécution
+    à son plafond (#56) — le collecteur ne tient aucun compte parallèle.
     """
 
-    def __init__(self, *, plafond_cout_usd: float | None = None) -> None:
+    def __init__(self, *, plafond: ControleDepense | None = None) -> None:
         self._total = StepUsage()
-        self._plafond_cout_usd = plafond_cout_usd
+        self._plafond = plafond
 
     @property
     def total(self) -> StepUsage:
@@ -151,15 +160,10 @@ class UsageCollector:
         return self._total
 
     def add(self, usage: StepUsage) -> None:
-        """Ajoute une mesure à l'agrégat ; lève si le plafond de dépense est dépassé."""
+        """Ajoute une mesure à l'agrégat, puis soumet le cumul au contrôle de dépense."""
         self._total = self._total.fusion(usage)
-        cout = self._total.cout_usd
-        plafond = self._plafond_cout_usd
-        if plafond is not None and cout is not None and cout > plafond:
-            raise PlafondDepenseDepasse(
-                f"plafond de dépense dépassé : {cout:.4f} $ consommés pour un plafond "
-                f"de {self._plafond_cout_usd:.4f} $ — tâche stoppée."
-            )
+        if self._plafond is not None:
+            self._plafond.verifie(self._total)
 
 
 #: Collecteur actif du contexte courant (None hors de tout `collect_usage()`).
@@ -169,15 +173,16 @@ _COLLECTEUR: ContextVar[UsageCollector | None] = ContextVar(
 
 
 @contextmanager
-def collect_usage(*, plafond_cout_usd: float | None = None) -> Iterator[UsageCollector]:
+def collect_usage(*, plafond: ControleDepense | None = None) -> Iterator[UsageCollector]:
     """Ouvre un collecteur : les `report_usage` du bloc s'y accumulent.
 
     Un bloc imbriqué masque le collecteur englobant (pas de double comptage) ;
-    à la sortie, le collecteur précédent est restauré. `plafond_cout_usd` arme le
-    garde-fou de dépense (#9) sur ce bloc : dépassé, le `report_usage` fautif lève
+    à la sortie, le collecteur précédent est restauré. `plafond` arme le garde-fou
+    de dépense (#9) sur ce bloc : à chaque mesure, le contrôle confronte la dépense
+    de l'exécution à son plafond et le `report_usage` fautif lève
     `PlafondDepenseDepasse` chez l'appelant du fournisseur.
     """
-    collector = UsageCollector(plafond_cout_usd=plafond_cout_usd)
+    collector = UsageCollector(plafond=plafond)
     token = _COLLECTEUR.set(collector)
     try:
         yield collector
@@ -190,8 +195,9 @@ def report_usage(usage: StepUsage) -> None:
 
     C'est le point d'entrée des fournisseurs : appelé après chaque appel modèle,
     sans qu'ils aient à savoir si quelqu'un écoute. Si le collecteur actif est
-    plafonné (#9) et que ce signalement fait dépasser le plafond, l'appel lève
-    `PlafondDepenseDepasse` — c'est ainsi que le garde-fou stoppe l'étape.
+    plafonné (#9) et que ce signalement fait dépasser le plafond de dépense de
+    l'exécution (#56), l'appel lève `PlafondDepenseDepasse` — c'est ainsi que le
+    garde-fou stoppe l'étape.
     """
     collector = _COLLECTEUR.get()
     if collector is not None:

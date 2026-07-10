@@ -5,7 +5,8 @@ cette brique le **réorganise en comptabilité** : une entrée par tâche
 (`TaskCost`), l'étape de planification à part, et l'agrégat de l'exécution
 (`RunCost`) — la vue « coût de l'exécution, traçable par tâche » du critère MVP
 n°6 (parent #49), que l'API Control Tower exposera (#57) et sur laquelle le
-plafond de dépense s'adossera (#56).
+plafond de dépense s'adosse (`PlafondDepense`, #56) : le garde-fou (#9) relit ce
+grand livre à chaque mesure d'usage, sans compteur parallèle.
 
 L'attribution suit la convention d'étape du journal : `planification` pour
 l'orchestrateur, `<tache>` pour l'étape de la tâche elle-même, et
@@ -129,3 +130,44 @@ class RunCost:
             "total": self.total.to_dict(),
             "taches": [tache.to_dict() for tache in self.taches],
         }
+
+
+class PlafondDepenseDepasse(RuntimeError):
+    """Levée quand la dépense d'une exécution dépasse son plafond (#9).
+
+    Émise depuis `report_usage` (donc depuis le fournisseur, entre deux appels
+    modèle) quand `PlafondDepense.verifie` constate le dépassement : elle
+    interrompt l'étape en cours, que l'appelant consigne comme stoppée par le
+    garde-fou.
+    """
+
+
+class PlafondDepense:
+    """Garde-fou de dépense d'une exécution (#9), adossé au grand livre (#56).
+
+    C'est le contrôle que le collecteur d'usage consulte à chaque mesure
+    (`collect_usage(plafond=...)`). Il ne tient **aucun compteur** : à chaque
+    vérification, la dépense déjà engagée est relue dans la comptabilité de
+    l'exécution (`RunCost.depuis_journal`) — la télémétrie est la source unique
+    du coût — et complétée de l'usage de l'étape en cours, pas encore consignée
+    au journal. Les étapes parallèles encore en vol ne comptent qu'à leur
+    consignation : léger sous-comptage transitoire assumé (POC), jamais de
+    double comptage.
+    """
+
+    def __init__(self, journal: RunJournal, plafond_cout_usd: float) -> None:
+        if plafond_cout_usd <= 0:
+            raise ValueError(
+                f"plafond_cout_usd doit être > 0 (reçu : {plafond_cout_usd})."
+            )
+        self._journal = journal
+        self._plafond_cout_usd = plafond_cout_usd
+
+    def verifie(self, en_cours: StepUsage) -> None:
+        """Lève `PlafondDepenseDepasse` si la dépense du run, `en_cours` compris, dépasse."""
+        cout = RunCost.depuis_journal(self._journal).total.fusion(en_cours).cout_usd
+        if cout is not None and cout > self._plafond_cout_usd:
+            raise PlafondDepenseDepasse(
+                f"plafond de dépense dépassé : {cout:.4f} $ consommés sur l'exécution "
+                f"pour un plafond de {self._plafond_cout_usd:.4f} $ — tâche stoppée."
+            )

@@ -17,9 +17,10 @@ par construction — le moteur ne dépend que de `ModelProvider` — et prouvé 
 suite de tests, qui déroule cette même démo sur des fournisseurs factices
 (tests/test_demo.py). Le parcours complet est documenté dans docs/11-demo-poc.md.
 
-Garde-fous (#9) : le plafond de dépense et le time-out par tâche sont **armés par
-défaut** (bonne pratique docs/07 §4), ajustables par options ; une tâche sensible
-déclenche une validation console (refusée si l'entrée n'est pas interactive).
+Garde-fous (#9) : le plafond de dépense (budget de l'exécution entière, #56) et
+le time-out (par tâche) sont **armés par défaut** (bonne pratique docs/07 §4),
+ajustables par options ; une tâche sensible déclenche une validation console
+(refusée si l'entrée n'est pas interactive).
 
 Code de sortie : 0 si la démo tourne de bout en bout **et** que le critère de
 sortie est validé ; 1 sinon (tâche en échec, critère non rempli, erreur de
@@ -224,7 +225,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=float,
         default=PLAFOND_COUT_DEFAUT_USD,
         metavar="USD",
-        help=f"plafond de dépense par tâche en USD (défaut : {PLAFOND_COUT_DEFAUT_USD:g})",
+        help=f"plafond de dépense de l'exécution en USD (défaut : {PLAFOND_COUT_DEFAUT_USD:g})",
     )
     parser.add_argument(
         "--timeout",

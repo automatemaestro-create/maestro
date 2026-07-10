@@ -1,12 +1,15 @@
 """Garde-fous du POC : plafond de dépense, time-out, validation humaine (ticket #9).
 
 Matérialise les « limites globales » de docs/01 §5 au niveau de la boucle
-d'orchestration, en trois protections **par tâche** :
+d'orchestration, en trois protections appliquées à chaque tâche :
 
-- **plafond de dépense** (`plafond_cout_usd`) : la tâche est stoppée dès que son
-  coût cumulé dépasse le plafond. L'application passe par le canal d'usage de la
-  télémétrie (`maestro.telemetry.collect_usage(plafond_cout_usd=...)`) — c'est là
-  que le coût est visible au fil des appels modèle, donc là qu'il se contrôle ;
+- **plafond de dépense** (`plafond_cout_usd`) : budget de l'**exécution entière** —
+  la tâche qui fait déborder le coût cumulé du run est stoppée, et une exécution
+  au budget épuisé n'en démarre plus aucune. Les garde-fous ne comptent rien
+  eux-mêmes (#56) : ce module ne porte que le seuil, le contrôle
+  (`maestro.telemetry.PlafondDepense`) relit la comptabilité par tâche de
+  l'exécution (#55) à chaque mesure d'usage — `maestro/telemetry` est la source
+  unique du coût ;
 - **time-out** (`timeout_s`) : la tâche est annulée si sa réalisation excède le
   délai (l'attente d'une validation humaine n'y est pas comptée) ;
 - **validation humaine** : une tâche classée **sensible** (déploiement, production,
@@ -75,9 +78,11 @@ Validateur = Callable[[DemandeValidation], bool | Awaitable[bool]]
 class Guardrails:
     """Garde-fous appliqués par la boucle à chaque tâche. Immuable.
 
-    `plafond_cout_usd` et `timeout_s` sont inactifs à None ; `mots_sensibles` pilote
-    la classification (vide = détection désactivée) ; `validateur` est le canal de
-    la décision humaine — absent, toute action sensible est refusée (fail-safe).
+    `plafond_cout_usd` (budget de l'exécution entière, contrôlé via la comptabilité
+    par tâche — #56) et `timeout_s` (par tâche) sont inactifs à None ;
+    `mots_sensibles` pilote la classification (vide = détection désactivée) ;
+    `validateur` est le canal de la décision humaine — absent, toute action
+    sensible est refusée (fail-safe).
     """
 
     plafond_cout_usd: float | None = None

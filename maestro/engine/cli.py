@@ -7,10 +7,11 @@ ligne JSON par étape : entrée, sortie, outils, tokens, coût, durée. Fine cou
 autour de `OrchestrationEngine.default` : elle sert à *exercer* le flux de bout en
 bout contre le vrai fournisseur Claude.
 
-Garde-fous (#9) : `--plafond-cout <usd>` et `--timeout <s>` arment le plafond de
-dépense et le time-out **par tâche** ; une tâche classée sensible déclenche une
-**demande de validation** posée sur la console (refusée par défaut si l'entrée
-n'est pas interactive — fail-safe).
+Garde-fous (#9) : `--plafond-cout <usd>` arme le plafond de dépense de
+l'**exécution entière** (adossé à la comptabilité par tâche, #56) et
+`--timeout <s>` le time-out **par tâche** ; une tâche classée sensible déclenche
+une **demande de validation** posée sur la console (refusée par défaut si
+l'entrée n'est pas interactive — fail-safe).
 
 `--queue` (#41) exécute les tâches via la **file Celery + Redis** au lieu du
 process courant : Redis lancé (infra/docker-compose.yml) et au moins un worker

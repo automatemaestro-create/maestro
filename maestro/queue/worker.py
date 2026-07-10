@@ -146,6 +146,9 @@ def executer_tache(
     porte les résultats des tâches prérequises (le tableau noir), résolus côté
     orchestrateur — les workers ne partagent aucun état. `run_id` relie les
     traces du worker (journal JSON local à son process) à l'exécution globale.
+    Ce journal reconstruit à chaque message ne voit que la tâche courante : un
+    plafond de dépense configuré côté worker (#56) s'applique donc à la tâche
+    seule, pas à l'exécution entière.
 
     Le résultat porte le nom du worker (`worker`) : c'est ce qui rend visible la
     répartition des tâches entre workers distincts (critère MVP n°2).
