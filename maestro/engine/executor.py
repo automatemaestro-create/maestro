@@ -32,7 +32,13 @@ from maestro.providers.base import ModelProvider, UnsupportedCapability
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
 from maestro.sandbox import ProducedFile
-from maestro.telemetry import RunJournal, StepUsage, collect_usage
+from maestro.telemetry import (
+    PlafondDepense,
+    PlafondDepenseDepasse,
+    RunJournal,
+    StepUsage,
+    collect_usage,
+)
 
 #: Statuts terminaux d'une tâche, alignés sur la machine à états (docs/03 §3).
 #: `bloquee` (#43) : la tâche n'a jamais été exécutée ni mise en file, une de ses
@@ -160,7 +166,8 @@ class LocalExecutor(TaskExecutor):
             if router is not None
             else Router(tuple(agents), classifier=TaskClassifier(provider))
         )
-        # Garde-fous par tâche (#9). Le défaut laisse plafond et time-out inactifs
+        # Garde-fous (#9) : plafond de dépense par exécution (#56), time-out et
+        # validation par tâche. Le défaut laisse plafond et time-out inactifs
         # mais garde la détection d'actions sensibles (refusées sans validateur).
         self._guardrails = guardrails if guardrails is not None else Guardrails()
         # Runtimes outillés, indexés par nom d'agent du catalogue. Par défaut, ceux
@@ -182,25 +189,40 @@ class LocalExecutor(TaskExecutor):
         donc sans fuite entre exécutions simultanées. Le tout est porté par le
         résultat et consigné au journal.
 
-        Le collecteur est armé du **plafond de dépense** (#9) : le coût cumulé de la
-        tâche (routage + réalisation) ne peut pas le dépasser sans la stopper.
+        Le collecteur est armé du **plafond de dépense** (#9), adossé à la
+        comptabilité par tâche de l'exécution (#56) : la dépense confrontée au
+        plafond est celle du run entier (étapes déjà consignées au `journal` +
+        étape en cours), pas celle de la seule tâche — et une exécution au budget
+        déjà épuisé ne démarre plus aucune tâche.
         """
         debut = perf_counter()
         entree = task.description
-        with collect_usage(plafond_cout_usd=self._guardrails.plafond_cout_usd) as recolte:
-            decision = await self._router.route(task)
-            if decision.agent is None:
-                # Repli explicite (#42) : tâche marquée « à assigner » plutôt que
-                # mal routée — l'assignation revient à un humain.
-                result = _echec(
-                    task, agent="—", role="à assigner", score=decision.score,
-                    erreur=decision.raison,
-                )
+        # Un contrôle par exécution (#56) : il ne compte rien lui-même, il relit
+        # le grand livre du `journal` à chaque mesure — planification et tâches
+        # achevées comptent autant que la tâche courante.
+        plafond = (
+            PlafondDepense(journal, self._guardrails.plafond_cout_usd)
+            if self._guardrails.plafond_cout_usd is not None
+            else None
+        )
+        with collect_usage(plafond=plafond) as recolte:
+            refus = _refus_plafond_creve(task, plafond)
+            if refus is not None:
+                result = refus
             else:
-                entree = _build_task_description(task, dependances)
-                result = await self._realise_gardee(
-                    decision.agent, task, entree, decision.score, journal
-                )
+                decision = await self._router.route(task)
+                if decision.agent is None:
+                    # Repli explicite (#42) : tâche marquée « à assigner » plutôt que
+                    # mal routée — l'assignation revient à un humain.
+                    result = _echec(
+                        task, agent="—", role="à assigner", score=decision.score,
+                        erreur=decision.raison,
+                    )
+                else:
+                    entree = _build_task_description(task, dependances)
+                    result = await self._realise_gardee(
+                        decision.agent, task, entree, decision.score, journal
+                    )
         result = replace(result, usage=recolte.total.avec_duree(_ecoule_ms(debut)))
         journal.consigne(
             etape=task.id,
@@ -340,6 +362,23 @@ class LocalExecutor(TaskExecutor):
             system_prompt=agent.prompt_systeme,
         )
         return sortie, ()
+
+
+def _refus_plafond_creve(task: Task, plafond: PlafondDepense | None) -> TaskResult | None:
+    """Le refus de `task` si le budget de l'exécution est déjà épuisé (#56), sinon None.
+
+    Consulté à l'entrée de l'exécution : une exécution déjà au-delà de son plafond
+    ne démarre plus aucune tâche — le routage lui-même serait de la dépense. La
+    tâche est stoppée avant tout appel modèle, échec consigné avec la même cause
+    qu'un dépassement en cours de tâche.
+    """
+    if plafond is None:
+        return None
+    try:
+        plafond.verifie(StepUsage())
+    except PlafondDepenseDepasse as exc:
+        return _echec(task, agent="—", role="non exécutée", score=0, erreur=str(exc))
+    return None
 
 
 def _echec(task: Task, *, agent: str, role: str, score: int, erreur: str) -> TaskResult:
