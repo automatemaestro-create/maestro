@@ -7,7 +7,11 @@ Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #4
 - **Kanban** des tâches par statut (machine à états docs/03 §3) ;
 - **Réassignation manuelle** d'une tâche à un autre agent depuis chaque carte
   (EF-11/EF-20) ;
-- **Fil d'activité** en direct (statuts, activités d'agents, messages inter-agents).
+- **Fil d'activité** en direct (statuts, activités d'agents, messages inter-agents) ;
+- **Validations humaines** (#48, docs/05 §2.6) : les actions sensibles mettent la
+  tâche en pause et apparaissent en tête de tableau de bord avec leur contexte
+  (agent, tâche, action demandée, justification) — **Approuver** fait reprendre la
+  tâche, **Refuser** l'annule proprement ; la décision est journalisée côté moteur.
 
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 
@@ -22,7 +26,8 @@ Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
    ```
 
    Côté moteur, `maestro-run --publier` (ou un worker de la file #41) alimente le
-   canal d'événements.
+   canal d'événements ; ajouter `--validation-ui` pour router les demandes de
+   validation humaine vers ce tableau de bord (#48) au lieu de la console.
 
 2. **UI** :
 

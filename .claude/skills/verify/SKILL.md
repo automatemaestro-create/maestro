@@ -38,6 +38,11 @@ Flux qui valent la peine d'être pilotés :
 - apparition/évolution des cartes Kanban pendant que le scénario publie ;
 - réassignation via le `<select>` d'une carte → la carte change d'agent et le
   fil d'activité affiche « réassignée à … » ;
+- validation humaine (#48) : publier un `validation.demande` → le panneau
+  « Validations en attente » apparaît en tête avec le contexte (agent, tâche,
+  action, motif) ; cliquer **Approuver**/**Refuser** → la carte disparaît et un
+  abonné du bus reçoit le `validation.decision` (c'est lui qui libère le
+  moteur en pause) ;
 - absence de rechargement : poser `window.__marqueur = 42` après le goto et
   vérifier qu'il est intact à la fin ;
 - coupure/reprise : tuer le process backend → badge « Reconnexion… » ; le

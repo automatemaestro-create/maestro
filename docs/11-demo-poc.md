@@ -24,7 +24,7 @@ Cette page boucle la **Phase 0** (ticket #10) : comment lancer la démo complèt
 
 L'**objectif par défaut** est choisi pour mobiliser les deux agents du POC — un domaine 🗄️ Base de données (schéma, migration) et un domaine 💻 Développeur (backend, API) : *« Prototyper la gestion des contacts d'un mini-CRM, volontairement minimal (démo de POC) : concevoir le schéma SQL de la table des contacts avec une migration simple, puis implémenter en Python une API REST minimale — un seul module, deux endpoints (créer un contact, lister les contacts) — qui s'appuie sur ce schéma. […] »* Son périmètre est **explicitement borné** (« minimal », « un seul module ») pour que chaque tâche tienne dans le budget de tours du runtime outillé — le garde-fou anti-emballement du fournisseur.
 
-Les **garde-fous** ([#9](./06-roadmap.md), docs/07 §4) sont armés d'office : plafond de dépense **5 $ par tâche** (`--plafond-cout`), time-out **600 s par tâche** (`--timeout`). Une tâche classée sensible demanderait une validation sur la console — refusée par défaut si l'entrée n'est pas interactive (fail-safe).
+Les **garde-fous** ([#9](./06-roadmap.md), docs/07 §4) sont armés d'office : plafond de dépense **5 $ par tâche** (`--plafond-cout`), time-out **600 s par tâche** (`--timeout`). Une tâche classée sensible demanderait une validation sur la console — refusée par défaut si l'entrée n'est pas interactive (fail-safe). Pour valider depuis la **Control Tower** plutôt que la console (#48), passer par `maestro-run --publier --validation-ui` : la demande apparaît dans l'UI (apps/web) et la tâche attend la décision humaine sans time-out.
 
 **Code de sortie** : `0` si la démo tourne de bout en bout **et** que le critère de sortie est validé ; `1` sinon ; `2` si l'appel est mal formé.
 

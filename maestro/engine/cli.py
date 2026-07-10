@@ -24,6 +24,14 @@ sur Redis Pub/Sub (canal `maestro.evenements`, via le pont
 `maestro.controltower.bridge`) : le backend Control Tower (`maestro-api`) les
 rediffuse aux clients WebSocket. Requiert le même Redis que `--queue`.
 
+`--validation-ui` (#48) route les demandes de validation humaine vers la
+**Control Tower** au lieu de la console : la tâche sensible passe en pause, la
+demande apparaît dans l'UI (contexte : agent, tâche, action, justification) et
+l'exécution reprend (ou s'annule) selon la décision prise depuis l'UI — sans
+time-out silencieux. Requiert le même Redis que `--publier` (et `maestro-api`
+lancé) ; non combinable avec `--queue` (les garde-fous s'appliquent alors côté
+worker, qui refuse les tâches sensibles — fail-safe).
+
 `--messagerie` (#44) active la **messagerie inter-agents** (boîtes aux lettres
 Redis Pub/Sub, `maestro.messaging`) : l'agent qui termine une tâche à
 dépendants annonce l'issue par message (handoff) et chaque tâche aval attend ce
@@ -44,14 +52,15 @@ import sys
 from collections.abc import Sequence
 
 from maestro.config import ConfigError
-from maestro.engine.guardrails import DemandeValidation, Guardrails
+from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
 from maestro.engine.loop import OrchestrationEngine
 from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import LOGGER_NAME
 
 _USAGE = (
     "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--messagerie] "
-    '[--plafond-cout <usd>] [--timeout <s>] "<objectif en langage naturel>"'
+    "[--validation-ui] [--plafond-cout <usd>] [--timeout <s>] "
+    '"<objectif en langage naturel>"'
 )
 
 
@@ -65,11 +74,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     as_json = False
     via_queue = False
     messagerie = False
+    validation_ui = False
     plafond_cout: float | None = None
     timeout: float | None = None
     flags_connus = {
         "--json", "--trace", "--queue", "--publier", "--messagerie",
-        "--plafond-cout", "--timeout",
+        "--validation-ui", "--plafond-cout", "--timeout",
     }
     while args and args[0] in flags_connus:
         flag = args.pop(0)
@@ -83,6 +93,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             activer_publication_evenements()
         elif flag == "--messagerie":
             messagerie = True
+        elif flag == "--validation-ui":
+            validation_ui = True
         else:
             valeur = _valeur_numerique(flag, args)
             if valeur is None:
@@ -104,12 +116,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if via_queue and validation_ui:
+        print(
+            "--validation-ui n'est pas combinable avec --queue : les garde-fous "
+            "s'appliquent côté worker, qui refuse les tâches sensibles (fail-safe).",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         guardrails = Guardrails(
             plafond_cout_usd=plafond_cout,
             timeout_s=timeout,
-            validateur=validation_console,
+            validateur=_validateur_ui() if validation_ui else validation_console,
         )
     except ValueError as exc:
         print(f"Garde-fous : {exc}", file=sys.stderr)
@@ -203,6 +222,19 @@ def validation_console(demande: DemandeValidation) -> bool:
         print("(entrée non interactive — action refusée)", file=sys.stderr)
         return False
     return reponse.strip().lower() in {"o", "oui", "y", "yes"}
+
+
+def _validateur_ui() -> Validateur:
+    """Construit le validateur Control Tower (#48) sur le Redis de la config.
+
+    Les demandes de validation partent sur le canal `maestro.evenements` (l'UI
+    les affiche via `maestro-api`) et la décision humaine en revient par le
+    même canal. Import local : seul ce chemin dépend de la Control Tower.
+    """
+    from maestro.config import load_settings
+    from maestro.controltower.validation import validateur_redis
+
+    return validateur_redis(load_settings().redis_url)
 
 
 def activer_publication_evenements() -> None:

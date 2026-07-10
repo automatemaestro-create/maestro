@@ -35,11 +35,15 @@ from typing import Any
 #: `tache.statut` suit la machine à états de docs/03 §3 ; `tache.reassignation`
 #: est l'acte manuel du Kanban (EF-11/EF-20) ; `agent.activite` couvre la
 #: planification et les validations humaines ; `message.inter_agents` porte la
-#: messagerie A2A (entité AGENT_MESSAGE, docs/03 §2).
+#: messagerie A2A (entité AGENT_MESSAGE, docs/03 §2) ; `validation.demande` et
+#: `validation.decision` portent le human-in-the-loop (#48, entité APPROVAL de
+#: docs/03) — le moteur demande, la Control Tower rend la décision humaine.
 EVENEMENT_TACHE_STATUT = "tache.statut"
 EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation"
 EVENEMENT_AGENT_ACTIVITE = "agent.activite"
 EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"
+EVENEMENT_VALIDATION_DEMANDE = "validation.demande"
+EVENEMENT_VALIDATION_DECISION = "validation.decision"
 
 #: Canal Redis Pub/Sub des événements — sur l'instance mutualisée avec la file
 #: de tâches (#41), d'où un canal nommé plutôt que le canal par défaut.
@@ -64,7 +68,9 @@ class Event:
     le type (une activité d'agent n'a pas forcément de `tache_id`). `cout_usd`
     porte le coût de l'étape quand la télémétrie (#8) l'a rapporté — None sinon
     (inconnu, à distinguer d'un coût nul). `detail` est un texte libre déjà
-    expurgé des secrets par le journal amont (`redact_secrets`).
+    expurgé des secrets par le journal amont (`redact_secrets`). `description`
+    porte le contexte long d'une demande de validation (#48 : l'action que
+    l'agent réaliserait, telle que décrite par la tâche) — vide ailleurs.
     """
 
     type: str
@@ -75,6 +81,7 @@ class Event:
     role: str = ""
     statut: str = ""
     detail: str = ""
+    description: str = ""
     cout_usd: float | None = None
     horodatage: str = field(default_factory=_horodatage)
 
@@ -89,6 +96,7 @@ class Event:
             "role": self.role,
             "statut": self.statut,
             "detail": self.detail,
+            "description": self.description,
             "cout_usd": self.cout_usd,
             "horodatage": self.horodatage,
         }
@@ -109,6 +117,7 @@ class Event:
             role=data.get("role", ""),
             statut=data.get("statut", ""),
             detail=data.get("detail", ""),
+            description=data.get("description", ""),
             cout_usd=data.get("cout_usd"),
             horodatage=data.get("horodatage", ""),
         )

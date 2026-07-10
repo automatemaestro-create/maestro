@@ -11,8 +11,12 @@ Endpoints :
 - `GET  /api/agents` — l'état des agents (libre/occupé, charge, compteurs) ;
 - `GET  /api/executions/{run_id}` — le détail d'une exécution (trace, coût) ;
 - `POST /api/taches/{tache_id}/reassigner` — réassignation manuelle (Kanban) ;
+- `GET  /api/validations` — les demandes de validation humaine (#48 : en
+  attente d'abord le contexte, puis l'issue une fois tranchée) ;
+- `POST /api/validations/{tache_id}/decision` — la décision humaine
+  (approuver/refuser) : le moteur, en attente sur le bus, reprend ou annule ;
 - `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
-  des agents, messages inter-agents), au format `Event.to_dict`.
+  des agents, messages inter-agents, validations), au format `Event.to_dict`.
 
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
 événement sur l'état (`ControlTowerState`) puis le rediffuse aux WebSockets
@@ -38,18 +42,29 @@ from pydantic import BaseModel
 from maestro.config import load_settings
 from maestro.controltower.events import (
     EVENEMENT_TACHE_REASSIGNATION,
+    EVENEMENT_VALIDATION_DECISION,
     Event,
     EventBus,
     InMemoryEventBus,
     RedisEventBus,
 )
-from maestro.controltower.state import ControlTowerState
+from maestro.controltower.state import (
+    VALIDATION_APPROUVEE,
+    VALIDATION_REFUSEE,
+    ControlTowerState,
+)
 
 
 class ReassignationRequete(BaseModel):
     """Corps de la réassignation manuelle : l'agent qui reprend la tâche."""
 
     agent: str
+
+
+class DecisionRequete(BaseModel):
+    """Corps de la décision humaine (#48) : approuver ou refuser l'action sensible."""
+
+    approuve: bool
 
 
 class Diffusion:
@@ -198,6 +213,49 @@ def create_app(
         state.appliquer(event)
         await bus.publish(event)
         return tache.to_dict()
+
+    @app.get("/api/validations")
+    async def validations() -> list[dict[str, Any]]:
+        """Les demandes de validation humaine (#48) : contexte, statut, décision."""
+        return [v.to_dict() for v in state.validations()]
+
+    @app.post("/api/validations/{tache_id}/decision")
+    async def decider(tache_id: str, requete: DecisionRequete) -> dict[str, Any]:
+        """Tranche une demande de validation (#48) : la décision part vers le moteur.
+
+        Applique la décision à l'état (le REST répond déjà à jour) puis la
+        publie sur le bus — le moteur, en attente sur ce même bus, reprend la
+        tâche (approbation) ou l'annule proprement (refus), et la pompe
+        réapplique l'événement sans effet (idempotence). 404 si aucune demande
+        pour cette tâche, 409 si elle est déjà tranchée (jamais deux décisions).
+        """
+        demande = state.validation(tache_id)
+        if demande is None:
+            raise HTTPException(
+                status_code=404, detail=f"aucune demande de validation : {tache_id}"
+            )
+        if not demande.en_attente:
+            raise HTTPException(
+                status_code=409,
+                detail=f"demande déjà tranchée ({demande.statut}) : {tache_id}",
+            )
+        approuve = requete.approuve
+        event = Event(
+            type=EVENEMENT_VALIDATION_DECISION,
+            tache_id=tache_id,
+            titre=demande.titre,
+            agent=demande.agent,
+            role=demande.role,
+            statut=VALIDATION_APPROUVEE if approuve else VALIDATION_REFUSEE,
+            detail=(
+                "approuvée depuis la Control Tower"
+                if approuve
+                else "refusée depuis la Control Tower"
+            ),
+        )
+        state.appliquer(event)
+        await bus.publish(event)
+        return demande.to_dict()
 
     @app.websocket("/ws/evenements")
     async def evenements(websocket: WebSocket) -> None:
