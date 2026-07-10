@@ -5,6 +5,23 @@
  * front restent des chaînes libres : le flux peut s'enrichir sans casser l'UI.
  */
 
+/**
+ * La mesure d'usage d'une étape (`StepUsage.to_dict`, #57) : tokens
+ * entrée/sortie, coût estimé, durées. `cout_usd` et les durées restent null
+ * quand rien n'a été rapporté (inconnu ≠ nul).
+ */
+export type Usage = {
+  appels: number;
+  tokens_entree: number;
+  tokens_sortie: number;
+  tokens_total: number;
+  cout_usd: number | null;
+  duree_ms: number | null;
+  duree_api_ms: number | null;
+  tours: number;
+  outils: string[];
+};
+
 /** Une tâche telle que servie par `GET /api/taches` — la carte du Kanban. */
 export type Tache = {
   id: string;
@@ -14,6 +31,7 @@ export type Tache = {
   role: string;
   run_id: string;
   cout_usd: number | null;
+  usage: Usage | null;
   horodatage: string;
 };
 
@@ -41,7 +59,30 @@ export type Evenement = {
   detail: string;
   description: string;
   cout_usd: number | null;
+  usage: Usage | null;
   horodatage: string;
+};
+
+/** L'entrée « tâche » du grand livre d'un run (`TaskCost.to_dict`, #57). */
+export type CoutTache = {
+  tache_id: string;
+  nom: string;
+  agent: string;
+  role: string;
+  statut: string;
+  usage: Usage;
+};
+
+/**
+ * Le grand livre d'une exécution, servi par `GET /api/executions/{run_id}/cout`
+ * (`RunCost.to_dict`, #57) : la part de planification (l'orchestrateur), le
+ * coût par tâche et l'agrégat du run — la matière du panneau Coûts (#58).
+ */
+export type CoutExecution = {
+  run_id: string;
+  planification: Usage;
+  total: Usage;
+  taches: CoutTache[];
 };
 
 /**

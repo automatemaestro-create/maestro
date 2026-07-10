@@ -18,13 +18,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   chargerAgents,
+  chargerCoutExecution,
   chargerTaches,
   chargerValidations,
   deciderValidation,
   reassignerTache,
   urlEvenements,
 } from "./api";
-import type { EtatAgent, Evenement, Tache, Validation } from "./types";
+import type {
+  CoutExecution,
+  EtatAgent,
+  Evenement,
+  Tache,
+  Validation,
+} from "./types";
 
 /** Longueur du fil d'activité conservé côté client. */
 const MAX_EVENEMENTS = 50;
@@ -41,6 +48,8 @@ export type ControlTower = {
   evenements: Evenement[];
   /** Demandes de validation humaine (#48), en attente comme tranchées. */
   validations: Validation[];
+  /** Grands livres des exécutions connues (#57) : coût par tâche et agrégat. */
+  couts: CoutExecution[];
   /** WebSocket ouverte : les mises à jour arrivent en temps réel. */
   connecte: boolean;
   /** Premier chargement REST encore en cours. */
@@ -57,6 +66,7 @@ export function useControlTower(): ControlTower {
   const [agents, setAgents] = useState<EtatAgent[]>([]);
   const [evenements, setEvenements] = useState<Evenement[]>([]);
   const [validations, setValidations] = useState<Validation[]>([]);
+  const [couts, setCouts] = useState<CoutExecution[]>([]);
   const [connecte, setConnecte] = useState(false);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
@@ -67,9 +77,16 @@ export function useControlTower(): ControlTower {
     try {
       const [nouvellesTaches, nouveauxAgents, nouvellesValidations] =
         await Promise.all([chargerTaches(), chargerAgents(), chargerValidations()]);
+      // Les grands livres (#57) se chargent après les tâches : les run_id
+      // connus en sont dérivés (le backend a une exécution pour chacun).
+      const runIds = [
+        ...new Set(nouvellesTaches.map((t) => t.run_id).filter(Boolean)),
+      ];
+      const nouveauxCouts = await Promise.all(runIds.map(chargerCoutExecution));
       setTaches(nouvellesTaches);
       setAgents(nouveauxAgents);
       setValidations(nouvellesValidations);
+      setCouts(nouveauxCouts);
       setErreur(null);
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
@@ -168,6 +185,7 @@ export function useControlTower(): ControlTower {
     agents,
     evenements,
     validations,
+    couts,
     connecte,
     chargement,
     erreur,

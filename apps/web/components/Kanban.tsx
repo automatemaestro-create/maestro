@@ -10,7 +10,13 @@
 
 import { useState } from "react";
 
-import { formatCout, formatHeure, libelleStatut } from "@/lib/format";
+import {
+  formatCout,
+  formatDuree,
+  formatHeure,
+  formatTokens,
+  libelleStatut,
+} from "@/lib/format";
 import type { EtatAgent, Tache } from "@/lib/types";
 
 type Reassigner = (tacheId: string, agent: string) => Promise<void>;
@@ -132,6 +138,15 @@ function CarteTache({
           {tache.horodatage ? ` · ${formatHeure(tache.horodatage)}` : ""}
         </span>
       </p>
+      {tache.usage && (
+        <p
+          className="mt-0.5 flex justify-between gap-2 text-xs text-neutral-500 dark:text-neutral-400"
+          title={`${formatTokens(tache.usage.tokens_entree)} tokens en entrée / ${formatTokens(tache.usage.tokens_sortie)} en sortie`}
+        >
+          <span>🪙 {formatTokens(tache.usage.tokens_total)} tokens</span>
+          <span>⏱ {formatDuree(tache.usage.duree_ms)}</span>
+        </p>
+      )}
       <select
         aria-label={`Réassigner la tâche ${tache.titre || tache.id}`}
         className="mt-2 w-full rounded border border-neutral-300 bg-transparent px-1.5 py-1 text-xs text-neutral-600 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:[&>option]:bg-neutral-900"
