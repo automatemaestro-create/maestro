@@ -1,6 +1,6 @@
 # Workflow Git & tickets — Maestro
 
-**Version :** 0.4
+**Version :** 0.5
 Objectif : que chaque ticket GitLab soit traité de façon prévisible — même branche, même convention de commit, même cycle de vie — que ce soit un humain ou un agent Claude Code qui l'exécute.
 
 > Le **cycle de vie** d'un ticket est porté par le **champ Status natif** de GitLab (lifecycle
@@ -111,6 +111,8 @@ Lifecycle : `gid://gitlab/WorkItems::Statuses::Custom::Lifecycle/1003066`.
   — d'où l'absence de GID en dur dans les commandes, et la robustesse à une recréation du
   lifecycle. Sous le capot : mutation `workItemUpdate` → `statusWidget`, après résolution de l'iid
   via `{ project(fullPath:"maestro-group4345327/maestro") { workItems(iids:["<iid>"]) { nodes { id } } } }`.
+  `/ticket-start` passe par `begin <iid>`, qui groupe ce même statut avec l'assignation et les
+  dates en une seule mutation multi-widgets (§5).
 - **Inspecter les GIDs manuellement** (les GIDs de la table ci-dessus n'ont plus besoin d'être
   recopiés — `lib.sh` les redécouvre — mais pour vérifier) :
   `glab api graphql -f query='{ group(fullPath:"maestro-group4345327") { lifecycles { nodes { name statuses { id name } } } } }'`.
@@ -149,8 +151,8 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
 
 | Champ | Quand | Comment | Commande / helper |
 |---|---|---|---|
-| **Date de début** | `/ticket-start` | = jour du démarrage (aujourd'hui). Conservée si déjà posée. | `lib.sh start-dates <iid>` |
-| **Échéance** (due date) | `/ticket-start` | = début + délai dérivé de `prio::` : `haute` → 2 j, `moyenne` → 5 j, `basse` → 10 j (défaut `moyenne`). | `lib.sh start-dates <iid>` |
+| **Date de début** | `/ticket-start` | = jour du démarrage (aujourd'hui). Conservée si déjà posée. | `lib.sh begin <iid>` (groupé, §5) ; unitaire : `start-dates <iid>` |
+| **Échéance** (due date) | `/ticket-start` | = début + délai dérivé de `prio::` : `haute` → 2 j, `moyenne` → 5 j, `basse` → 10 j (défaut `moyenne`). | `lib.sh begin <iid>` (groupé, §5) ; unitaire : `start-dates <iid>` |
 | **Temps passé** | `/ticket-finish` | **estimé automatiquement par l'agent** d'après la portée du travail (diff, commits, contexte) et loggé directement, sans confirmation. | `lib.sh log-time` (`get-time-spent` pour l'idempotence) |
 
 - **Délais d'échéance ajustables** : surcharger `GL_DUE_DELAY_HAUTE` / `GL_DUE_DELAY_MOYENNE` /
@@ -201,11 +203,29 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
    `type::`/`agent::`/`prio::`), statut `À faire` par défaut. Ne crée pas de branche.
 1. **À faire** — le ticket existe (statut par défaut à la création), personne ne travaille dessus.
 2. **`/ticket-start <iid>`** — crée/checkout la branche, assigne le ticket à l'exécutant, passe
-   le **statut** à `En cours`. Comme il met `main` à jour au passage, il en profite pour **purger
-   automatiquement les branches locales déjà mergées** (`lib.sh cleanup-merged`, même garde-fou que
-   `/branch-cleanup` : uniquement celles dont GitLab confirme la MR `merged`). Une fois le cadrage
-   résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé n'est pas une pause
-   d'autorisation, aucun « go » n'est attendu.
+   le **statut** à `En cours`. Le chemin nominal tient en deux helpers et un bloc git (refonte
+   ticket #60, pour réduire la cérémonie et le contexte réinjecté à chaque démarrage) :
+   - **`lib.sh start-brief <iid>`** — tout le préflight en un appel et **une seule lecture du
+     ticket** (un unique `glab issue view`, rejoué pour toutes les projections) : pré-requis
+     (`glab` authentifié), arbre propre, brief compact (titre/labels/critères — l'essentiel pour
+     cadrer, la description intégrale reste disponible via `glab issue view` en cas de doute),
+     détection parent de suivi / sous-ticket (rang de lot, tests différés, contrôle des lots
+     précédents — §5.1) et branche proposée (préfixe dérivé du label `type::` §1, slug du titre).
+     Le helper est **informatif** : les avertissements sont dans sa sortie, la décision — démarrer,
+     rediriger, s'arrêter, proposer un découpage — reste à l'agent.
+   - **Bloc git en une commande composée** : `git checkout main && git pull origin main &&
+     lib.sh cleanup-merged && git checkout -b <branche>`. Comme il met `main` à jour au passage,
+     il en profite pour **purger automatiquement les branches locales déjà mergées**
+     (`cleanup-merged`, même garde-fou que `/branch-cleanup` : uniquement celles dont GitLab
+     confirme la MR `merged`, §6 ; s'il n'y a rien à nettoyer, aucun effet).
+   - **`lib.sh begin <iid>`** — assignation (username auto-résolu via `glab api user`, parsé en
+     shell pur — pas de dépendance à `jq`/`python`, et couvert par l'allowlist §7.1 pour ne pas
+     déclencher de prompt), statut « En cours » (GID dérivé par nom, §3.1) et dates début/échéance
+     (§3.3) en **une seule mutation** `workItemUpdate` multi-widgets. Les sous-commandes unitaires
+     (`current-user`, `set-status`, `start-dates`…) restent disponibles pour les autres commandes
+     et les cas hors nominal.
+   Une fois le cadrage résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé
+   n'est pas une pause d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).
 4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec
    `Closes #<iid>`, **coche dans sa checklist les cases qu'il a pu vérifier** (§4), passe le
@@ -338,7 +358,8 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 - Les commandes `/ticket-*` et `/backlog` s'appuient sur le helper
   [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels glab
   (résolution work-item, statut par nom, **listing du backlog** avec statut natif, slug, préfixe de
-  branche, **sous-tickets** — `issue-link`/`parent-of`/`subtickets`, §5.1). Il est **sourçable**
+  branche, **sous-tickets** — `issue-link`/`parent-of`/`subtickets`, §5.1 — et **démarrage de
+  ticket** — `start-brief`/`begin`, §5). Il est **sourçable**
   (`. scripts/gitlab/lib.sh`) et **exécutable en sous-commandes**
   (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`, `… backlog opened`) — pratique pour les
   futurs scripts et agents. Vérif rapide : `bash scripts/gitlab/lib.sh require`.
