@@ -22,10 +22,15 @@ lieu d'inventer.
 3. Détermine le **titre** depuis `$ARGUMENTS`. S'il est absent ou vague, demande-le.
 
 4. **Évalue la taille du besoin** (convention de découpage, `docs/10-workflow-git.md` §5.1). Un
-   ticket doit tenir en **~1 session de travail**. Si le besoin dépasse cette taille — plusieurs
-   couches touchées (script + commande + doc + UI…), plus de 3-4 critères d'acceptation, ou
-   plusieurs livrables indépendants — ne crée pas un ticket monolithique : crée un **ticket
-   parent de suivi + des sous-tickets liés** :
+   ticket doit tenir en **~1 session de travail**. Le nombre de critères d'acceptation ne suffit
+   pas à en juger : inspecte **toute la matière du besoin** — notes techniques et références
+   croisées (tickets, docs, composants cités) comprises — et **compte les couches/composants
+   distincts** touchés (moteur, backend, UI, script, commande, doc…). **Dès 2 couches
+   distinctes, découpe**, même avec 3 critères d'acceptation ou moins (contre-exemple de
+   référence : le #48, 3 critères seulement mais moteur + backend + UI — passé à tort pour
+   petit). Si le besoin dépasse ainsi la taille d'une session — ≥ 2 couches touchées, plus de
+   3-4 critères d'acceptation, ou plusieurs livrables indépendants — ne crée pas un ticket
+   monolithique : crée un **ticket parent de suivi + des sous-tickets liés** :
    - **Parent de suivi** : un ticket du type du besoin dont la description porte l'objectif
      global et une section `## Sous-tickets` — la checklist **ordonnée** des lots (remplie une
      fois les sous-tickets créés). Le parent ne porte ni branche ni code ; il **ne se ferme que

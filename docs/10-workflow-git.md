@@ -238,9 +238,16 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
 ### 5.1 Découpage en sous-tickets — besoins trop gros & tests différés
 
 Un ticket doit tenir en **~1 session de travail** (§1, règle 4) — chaque session `/ticket-start`
-reste ainsi légère en contexte. Au-delà (plusieurs couches touchées, plus de 3-4 critères
-d'acceptation, plusieurs livrables indépendants), le besoin est porté par un **ticket parent de
-suivi** + des **sous-tickets** (introduit par le ticket #53) :
+reste ainsi légère en contexte. L'évaluation de taille se fait sur la **description intégrale**
+— notes techniques et références croisées comprises, pas seulement le nombre de critères
+d'acceptation — en **comptant les couches/composants distincts** touchés (moteur, backend, UI,
+script, commande, doc…) : **≥ 2 couches ⇒ découpage proposé**, même avec 3 critères
+d'acceptation ou moins. Contre-exemple de référence : le **#48** n'affichait que 3 critères —
+sous le seuil « plus de 3-4 critères » — mais ses notes techniques annonçaient trois couches
+(moteur/file #41, backend Control Tower #46, UI #47) ; il aurait dû être découpé (correctif
+ticket #54). Au-delà d'une session (≥ 2 couches touchées, plus de 3-4 critères d'acceptation,
+plusieurs livrables indépendants), le besoin est porté par un **ticket parent de suivi** + des
+**sous-tickets** (introduit par le ticket #53) :
 
 - **Parent de suivi** — pas de branche, pas de code, pas de MR. Sa description porte l'objectif
   global et une section `## Sous-tickets` : la checklist **ordonnée** (ordre de réalisation) des
