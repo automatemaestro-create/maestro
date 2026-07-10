@@ -3,6 +3,17 @@
 Aucun appel réseau. Couvre les critères d'acceptation : le coût par étape est
 mesuré, agrégé et traçable (run_id) ; les textes journalisés sont expurgés des
 secrets (valeurs d'environnement comme motifs de clés).
+
+Couvre aussi le suivi de coût par tâche (#49, tests différés → #59) :
+
+- **comptabilité par tâche** (#55) : `RunCost.depuis_journal` attribue chaque
+  ligne du journal à sa tâche (annexes comprises), une seule fois — le total
+  retombe sur `RunJournal.usage_totale` — et s'exporte en JSON (la forme de
+  l'API, #57) ;
+- **plafond de dépense** (#56) : `PlafondDepense` relit ce grand livre à chaque
+  vérification (aucun compteur parallèle) et lève `PlafondDepenseDepasse` au
+  dépassement — relayé par `report_usage` chez l'appelant du fournisseur, la
+  mesure fautive restant comptée (le coût reste visible).
 """
 
 import json
@@ -11,8 +22,12 @@ import logging
 import pytest
 
 from maestro.telemetry import (
+    ETAPE_PLANIFICATION,
     LOGGER_NAME,
     MARQUEUR_SECRET,
+    PlafondDepense,
+    PlafondDepenseDepasse,
+    RunCost,
     RunJournal,
     StepUsage,
     collect_usage,
@@ -188,3 +203,124 @@ def test_usage_totale_agrege_les_etapes():
 
 def test_chaque_journal_recoit_un_run_id_distinct():
     assert RunJournal().run_id != RunJournal().run_id
+
+
+# --- Comptabilité par tâche (#55) --------------------------------------------------------
+
+
+def test_depuis_journal_attribue_chaque_ligne_a_sa_tache():
+    journal = RunJournal(run_id="run-compta")
+    _consigne(journal, etape=ETAPE_PLANIFICATION, nom="Planification",
+              agent="orchestrateur", role="Orchestrateur",
+              usage=StepUsage(appels=1, cout_usd=0.01))
+    _consigne(journal, etape="t1", usage=StepUsage(
+        appels=1, tokens_entree=100, tokens_sortie=10, cout_usd=0.02))
+    _consigne(journal, etape="t2", nom="Tâche 2", agent="qa", role="QA / Testeur",
+              usage=StepUsage(appels=1, cout_usd=0.04))
+    # Étape annexe de t1 (validation humaine) : rattachée à sa tâche, pas une entrée à part.
+    _consigne(journal, etape="t1:validation", statut="approuve",
+              usage=StepUsage(cout_usd=0.005))
+
+    cout = RunCost.depuis_journal(journal)
+
+    assert cout.run_id == "run-compta"
+    assert cout.planification.cout_usd == pytest.approx(0.01)
+    # Une entrée par tâche, dans l'ordre de première apparition au journal.
+    assert [t.tache_id for t in cout.taches] == ["t1", "t2"]
+    t1, t2 = cout.taches
+    assert t1.nom == "Tâche 1" and t1.agent == "dev"  # l'identité vient de l'étape de la tâche
+    assert t1.usage.cout_usd == pytest.approx(0.025)  # étape + annexe fusionnées
+    assert t2.usage.cout_usd == pytest.approx(0.04)
+    # Chaque ligne comptée exactement une fois : le total retombe sur le journal.
+    assert cout.total.cout_usd == pytest.approx(journal.usage_totale.cout_usd)
+    assert cout.total.appels == journal.usage_totale.appels
+
+
+def test_une_tache_connue_par_sa_seule_annexe_reste_sans_identite():
+    # Comptabilité partielle en cours de run : une annexe peut précéder l'étape de la tâche.
+    journal = RunJournal()
+    _consigne(journal, etape="t1:message", statut="envoye",
+              usage=StepUsage(appels=1, cout_usd=0.01))
+
+    (tache,) = RunCost.depuis_journal(journal).taches
+
+    assert tache.tache_id == "t1"
+    assert tache.nom == "" and tache.agent == "" and tache.statut == ""
+    assert tache.usage.cout_usd == pytest.approx(0.01)  # l'usage est déjà compté
+
+
+def test_le_cout_inconnu_reste_inconnu_dans_la_comptabilite():
+    # Un fournisseur qui ne rapporte pas de coût laisse la tâche à coût None (≠ 0).
+    journal = RunJournal()
+    _consigne(journal, usage=StepUsage(appels=1))
+
+    cout = RunCost.depuis_journal(journal)
+
+    assert cout.taches[0].usage.cout_usd is None
+    assert cout.total.cout_usd is None
+
+
+def test_la_comptabilite_s_exporte_en_json():
+    journal = RunJournal(run_id="run-json")
+    _consigne(journal, etape=ETAPE_PLANIFICATION, nom="Planification",
+              agent="orchestrateur", role="Orchestrateur",
+              usage=StepUsage(appels=1, cout_usd=0.01))
+    _consigne(journal, etape="t1", usage=StepUsage(appels=1, tokens_entree=7, cout_usd=0.02))
+
+    forme = RunCost.depuis_journal(journal).to_dict()
+
+    assert forme["run_id"] == "run-json"
+    assert forme["planification"]["cout_usd"] == pytest.approx(0.01)
+    assert forme["total"]["cout_usd"] == pytest.approx(0.03)
+    (t1,) = forme["taches"]
+    assert t1["tache_id"] == "t1" and t1["usage"]["tokens_entree"] == 7
+    json.dumps(forme)  # la forme de l'API (#57) : JSON-sérialisable de bout en bout
+
+
+# --- Plafond de dépense (#56) ------------------------------------------------------------
+
+
+def test_le_plafond_relit_la_comptabilite_a_chaque_verification():
+    journal = RunJournal()
+    plafond = PlafondDepense(journal, plafond_cout_usd=0.03)
+    plafond.verifie(StepUsage(cout_usd=0.02))  # 0.02 ≤ 0.03 : rien à signaler
+
+    _consigne(journal, usage=StepUsage(cout_usd=0.02))
+
+    # Même mesure en cours, mais le grand livre a bougé : le contrôle le voit
+    # (aucun compteur interne — la télémétrie est la source unique du coût).
+    with pytest.raises(PlafondDepenseDepasse) as exc:
+        plafond.verifie(StepUsage(cout_usd=0.02))
+    assert "plafond de dépense dépassé" in str(exc.value)
+
+
+def test_atteindre_le_plafond_sans_le_depasser_ne_stoppe_rien():
+    journal = RunJournal()
+    _consigne(journal, usage=StepUsage(cout_usd=0.01))
+    PlafondDepense(journal, plafond_cout_usd=0.01).verifie(StepUsage())  # ne lève pas
+
+
+def test_un_cout_inconnu_n_est_pas_plafonnable():
+    # Fournisseur muet sur le coût : dépense inconnue, le garde-fou n'a pas prise.
+    journal = RunJournal()
+    _consigne(journal, usage=StepUsage(appels=3))
+    PlafondDepense(journal, plafond_cout_usd=0.0001).verifie(StepUsage(appels=1))
+
+
+def test_un_plafond_invalide_est_refuse():
+    for invalide in (0, -1.5):
+        with pytest.raises(ValueError):
+            PlafondDepense(RunJournal(), invalide)
+
+
+def test_report_usage_leve_chez_l_appelant_quand_le_plafond_creve():
+    # Le canal de mesure relaie le garde-fou (#9) : le signalement fautif lève,
+    # mais la mesure est déjà comptabilisée — le coût du dépassement reste visible.
+    plafond = PlafondDepense(RunJournal(), plafond_cout_usd=0.01)
+    with collect_usage(plafond=plafond) as recolte:
+        report_usage(StepUsage(appels=1, cout_usd=0.008))
+        with pytest.raises(PlafondDepenseDepasse):
+            report_usage(StepUsage(appels=1, cout_usd=0.008))
+
+    assert recolte.total.appels == 2
+    assert recolte.total.cout_usd == pytest.approx(0.016)

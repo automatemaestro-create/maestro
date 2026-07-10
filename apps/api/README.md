@@ -34,9 +34,10 @@ maestro-run --publier --validation-ui "<objectif>"
 | Méthode | Chemin | Rôle |
 |---|---|---|
 | GET | `/api/sante` | vitalité du service |
-| GET | `/api/taches` | tâches : statut, agent assigné, coût (source du Kanban) |
+| GET | `/api/taches` | tâches : statut, agent assigné, coût détaillé — tokens, durée (source du Kanban) |
 | GET | `/api/agents` | agents : libre/occupé, tâche courante, compteurs, coût cumulé |
 | GET | `/api/executions/{run_id}` | détail d'une exécution : trace et coût agrégé |
+| GET | `/api/executions/{run_id}/cout` | grand livre du run (#57, critère MVP n°6) : coût par tâche (tokens entrée/sortie, coût estimé, durée), part de planification et agrégat |
 | POST | `/api/taches/{id}/reassigner` | réassignation manuelle `{"agent": "..."}` (Kanban) |
 | GET | `/api/validations` | demandes de validation humaine : contexte, statut, décision (#48) |
 | POST | `/api/validations/{tache_id}/decision` | décision humaine `{"approuve": true|false}` — 409 si déjà tranchée |

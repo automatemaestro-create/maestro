@@ -84,7 +84,7 @@ un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` �
 │   ├── queue/          #   File de tâches Celery + Redis, workers parallèles (Phase 1)
 │   ├── router/         #   Auto-assignation des tâches aux agents
 │   ├── sandbox/        #   Espace de travail isolé par tâche
-│   ├── telemetry/      #   Journal des étapes, usage/coûts, redaction des secrets
+│   ├── telemetry/      #   Journal des étapes, comptabilité de coût par tâche, secrets expurgés
 │   ├── check_env.py    #   Vérification d'environnement (maestro-check-env)
 │   ├── config.py       #   Modes d'authentification (§2.1)
 │   └── demo.py         #   Démo de bout en bout (voir doc 11)
@@ -110,8 +110,8 @@ un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` �
 1. **Déléguer précisément.** Toujours fournir à un agent : objectif, format de sortie, outils à utiliser, limites. C'est ce qui évite doublons et oublis.
 2. **Commencer simple.** Pas de framework lourd avant d'en avoir besoin ; l'Agent SDK natif suffit pour le POC.
 3. **Isoler.** Une branche Git par tâche, un conteneur par exécution.
-4. **Plafonner.** Mettre tout de suite un plafond de dépense et un time-out par tâche.
-5. **Tracer.** Logger coûts et étapes dès le premier jour.
+4. **Plafonner.** Mettre tout de suite un plafond de dépense (budget de l'exécution, adossé à la comptabilité par tâche — #56) et un time-out par tâche.
+5. **Tracer.** Logger coûts et étapes dès le premier jour — le coût est comptabilisé **par tâche** et agrégé par exécution (#55, critère MVP n°6).
 6. **Garder l'humain dans la boucle.** Les actions sensibles attendent une validation, même au POC.
 7. **Modulariser.** Chaque agent et chaque outil doit être remplaçable sans tout casser.
 
@@ -152,5 +152,7 @@ maestro-run --queue "Créer une API de gestion de tâches"
 Le statut et le résultat de chaque tâche (livrable, erreur, fichiers produits, usage)
 remontent à l'orchestrateur via le backend de résultats ; la synthèse indique le worker
 qui a exécuté chaque tâche. Les garde-fous (#9) s'appliquent **côté worker**
-(`maestro.queue.worker.configurer_worker`) — une tâche sensible y est refusée par défaut.
+(`maestro.queue.worker.configurer_worker`) — une tâche sensible y est refusée par défaut,
+et un plafond de dépense configuré là ne voit que la tâche courante (le journal du worker
+est reconstruit à chaque message), pas l'exécution entière (#56).
 Détails : [`maestro/queue/`](../maestro/queue/) et [`core/queue/README.md`](../core/queue/README.md).

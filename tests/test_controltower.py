@@ -6,7 +6,10 @@ de diffusion sont ceux de la production, seul le transport change. Couvre les
 critères d'acceptation du ticket #46 :
 
 ① endpoints REST : liste des tâches (statut, agent, coût), état des agents,
-   détail d'une exécution (404 sur un run inconnu) ;
+   détail d'une exécution (404 sur un run inconnu) — et le **grand livre** d'un
+   run (#57, tests différés du parent #49 → #59) : coût par tâche (tokens,
+   coût estimé, durée), part de planification et agrégat, même convention
+   d'attribution que la comptabilité du journal (#55) ;
 ② flux WebSocket : les événements publiés sur le bus (statut de tâche,
    activité agent, message inter-agents) arrivent en JSON aux clients, et
    l'état REST est déjà à jour quand l'événement est reçu (pompe : état
@@ -48,7 +51,7 @@ from maestro.controltower import (
 )
 from maestro.controltower.validation import evenement_demande
 from maestro.engine.guardrails import DemandeValidation
-from maestro.telemetry import LOGGER_NAME, RunJournal, StepUsage
+from maestro.telemetry import LOGGER_NAME, RunCost, RunJournal, StepUsage
 
 
 def _statut_tache(tache_id, statut, *, agent="developpeur", role="Développeur",
@@ -172,6 +175,114 @@ def test_execution_inconnue_404(client):
     assert client.get("/api/executions/nulle-part").status_code == 404
 
 
+# ------------------------------------------- ①bis Grand livre d'un run (#57)
+
+
+def test_la_tache_expose_sa_mesure_detaillee(client, state):
+    """La carte Kanban porte le coût détaillé (#57) : tokens, coût, durée."""
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-1", tache_id="t1",
+        agent="developpeur", role="Développeur", statut="terminee", cout_usd=0.3,
+        usage=StepUsage(appels=1, tokens_entree=500, tokens_sortie=40,
+                        cout_usd=0.3, duree_ms=2000),
+    ))
+
+    (tache,) = client.get("/api/taches").json()
+
+    assert tache["cout_usd"] == pytest.approx(0.3)
+    assert tache["usage"]["tokens_total"] == 540
+    assert tache["usage"]["duree_ms"] == 2000
+
+
+def test_grand_livre_d_une_execution(client, state):
+    """`/executions/{run_id}/cout` : planification, coût par tâche, agrégat (MVP n°6)."""
+    state.appliquer(Event(
+        type=EVENEMENT_AGENT_ACTIVITE, run_id="run-1",
+        agent="orchestrateur", role="Orchestrateur", statut="terminee",
+        usage=StepUsage(appels=1, tokens_entree=200, tokens_sortie=20, cout_usd=0.1),
+    ))
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-1", tache_id="t1",
+        titre="Implémenter", agent="developpeur", role="Développeur",
+        statut="terminee", cout_usd=0.4,
+        usage=StepUsage(appels=2, tokens_entree=1000, tokens_sortie=150,
+                        cout_usd=0.4, duree_ms=1200),
+    ))
+
+    cout = client.get("/api/executions/run-1/cout").json()
+
+    assert cout["run_id"] == "run-1"
+    assert cout["planification"]["cout_usd"] == pytest.approx(0.1)
+    (t1,) = cout["taches"]
+    assert t1["tache_id"] == "t1" and t1["agent"] == "developpeur"
+    assert t1["usage"]["tokens_entree"] == 1000 and t1["usage"]["duree_ms"] == 1200
+    assert cout["total"]["cout_usd"] == pytest.approx(0.5)
+    assert cout["total"]["tokens_total"] == 1370
+
+
+def test_grand_livre_execution_inconnue_404(client):
+    assert client.get("/api/executions/nulle-part/cout").status_code == 404
+
+
+def test_grand_livre_rattache_les_annexes_a_leur_tache(client, state):
+    """Validation (#48) et message (#44) fusionnent dans leur tâche ; un événement
+    qui ne rapporte qu'un `cout_usd` (producteur minimaliste) compte pour ce coût."""
+    state.appliquer(_statut_tache("t1", "terminee", cout_usd=0.2))  # sans mesure détaillée
+    state.appliquer(Event(
+        type=EVENEMENT_AGENT_ACTIVITE, run_id="run-1", tache_id="t1",
+        agent="devops", role="DevOps / SRE", statut="approuve",
+        usage=StepUsage(appels=1, cout_usd=0.05),
+    ))
+    state.appliquer(Event(
+        type=EVENEMENT_MESSAGE_INTER_AGENTS, run_id="run-1", tache_id="t1",
+        agent="qa", role="QA / Testeur", detail="handoff",
+        usage=StepUsage(cout_usd=0.01),
+    ))
+
+    cout = client.get("/api/executions/run-1/cout").json()
+
+    (t1,) = cout["taches"]
+    assert t1["usage"]["cout_usd"] == pytest.approx(0.26)
+    # L'identité de la tâche vient de son événement `tache.statut`, pas des annexes.
+    assert t1["agent"] == "developpeur" and t1["statut"] == "terminee"
+    assert cout["total"]["cout_usd"] == pytest.approx(0.26)
+
+
+def test_grand_livre_sans_mesure_rapportee(client, state):
+    """Aucune télémétrie : la tâche n'a pas d'entrée comptable, le total reste inconnu."""
+    state.appliquer(_statut_tache("t1", "en_cours"))
+
+    cout = client.get("/api/executions/run-1/cout").json()
+
+    assert cout["taches"] == []
+    assert cout["total"]["cout_usd"] is None  # inconnu, pas nul
+
+
+def test_le_grand_livre_api_retombe_sur_la_comptabilite_du_journal(client, state):
+    """Même convention des deux côtés (#55/#57) : le journal projeté en événements
+    donne, via l'API, exactement le grand livre de `RunCost.depuis_journal`."""
+    journal = RunJournal(run_id="run-9")
+    journal.consigne(etape="planification", nom="Planification de l'objectif",
+                     agent="orchestrateur", role="Orchestrateur", statut="terminee",
+                     entree="objectif", sortie="2 tâche(s) planifiée(s)",
+                     usage=StepUsage(appels=1, tokens_entree=300, tokens_sortie=30,
+                                     cout_usd=0.05))
+    journal.consigne(etape="t1", nom="Implémenter", agent="developpeur",
+                     role="Développeur", statut="terminee", entree="e", sortie="s",
+                     usage=StepUsage(appels=2, tokens_entree=1000, tokens_sortie=100,
+                                     cout_usd=0.3, duree_ms=1000))
+    journal.consigne(etape="t1:validation", nom="Validation — Implémenter",
+                     agent="devops", role="DevOps / SRE", statut="approuve",
+                     entree="e", sortie="s", usage=StepUsage())
+    for record in journal.records:
+        for event in evenements_depuis_step(record.to_dict()):
+            state.appliquer(event)
+
+    cout = client.get("/api/executions/run-9/cout").json()
+
+    assert cout == RunCost.depuis_journal(journal).to_dict()
+
+
 # ----------------------------------------------------------- ② WebSocket
 
 
@@ -274,6 +385,22 @@ def test_lignes_planification_et_validation_deviennent_activites():
     assert activite_plan.tache_id == "" and "planifiée" in activite_plan.detail
     assert activite_valid.type == EVENEMENT_AGENT_ACTIVITE
     assert activite_valid.tache_id == "t2" and activite_valid.statut == "refuse"
+
+
+def test_la_ligne_de_journal_embarque_la_mesure_complete():
+    """L'événement porte la mesure d'usage entière (#57), pas le seul raccourci `cout_usd`."""
+    record = {
+        "run_id": "run-7", "etape": "t1", "nom": "Implémenter",
+        "agent": "developpeur", "role": "Développeur", "statut": "terminee",
+        "usage": {"appels": 2, "tokens_entree": 100, "tokens_sortie": 10,
+                  "cout_usd": 0.12, "duree_ms": 1500},
+    }
+
+    (event,) = evenements_depuis_step(record)
+
+    assert event.usage == StepUsage(appels=2, tokens_entree=100, tokens_sortie=10,
+                                    cout_usd=0.12, duree_ms=1500)
+    assert event.cout_usd == pytest.approx(0.12)  # le raccourci scalaire reste posé
 
 
 def test_ligne_illisible_ne_produit_aucun_evenement():
@@ -481,6 +608,17 @@ def test_evenement_aller_retour_json():
     event = _statut_tache("t1", "terminee", cout_usd=1.5)
     assert Event.from_json(event.to_json()) == event
     assert Event.from_json(event.to_json().encode("utf-8")) == event
+
+
+def test_evenement_avec_usage_aller_retour_json():
+    """La mesure d'usage (#57) voyage en JSON sans perte (`StepUsage.from_dict`)."""
+    event = Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-1", tache_id="t1",
+        statut="terminee", cout_usd=0.3,
+        usage=StepUsage(appels=1, tokens_entree=10, tokens_sortie=2,
+                        cout_usd=0.3, duree_ms=800, outils=("Read", "Bash")),
+    )
+    assert Event.from_json(event.to_json()) == event
 
 
 def test_bus_memoire_plusieurs_abonnes():
