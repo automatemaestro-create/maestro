@@ -6,7 +6,7 @@
  * (`maestro-api`, 127.0.0.1:8000). Le WebSocket dérive de la même URL.
  */
 
-import type { EtatAgent, Tache, Validation } from "./types";
+import type { CoutExecution, EtatAgent, Tache, Validation } from "./types";
 
 const API_URL = (
   process.env.NEXT_PUBLIC_MAESTRO_API_URL ?? "http://localhost:8000"
@@ -38,6 +38,13 @@ export function chargerAgents(): Promise<EtatAgent[]> {
 /** Les demandes de validation humaine (#48) : contexte, statut, décision. */
 export function chargerValidations(): Promise<Validation[]> {
   return chargerJson<Validation[]>("/api/validations");
+}
+
+/** Le grand livre d'une exécution (#57) : coût par tâche et agrégat du run. */
+export function chargerCoutExecution(runId: string): Promise<CoutExecution> {
+  return chargerJson<CoutExecution>(
+    `/api/executions/${encodeURIComponent(runId)}/cout`,
+  );
 }
 
 /**

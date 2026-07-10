@@ -2,15 +2,16 @@
 
 /**
  * Le tableau de bord de la Control Tower (ticket #47) : état des agents,
- * Kanban des tâches avec réassignation manuelle, fil d'activité, validations
- * humaines en attente (#48) — le tout mis à jour en temps réel par WebSocket,
- * sans rechargement (critère MVP n°4).
+ * Kanban des tâches avec réassignation manuelle, coûts par exécution (#58),
+ * fil d'activité, validations humaines en attente (#48) — le tout mis à jour
+ * en temps réel par WebSocket, sans rechargement (critère MVP n°4).
  */
 
 import { EnTete } from "@/components/EnTete";
 import { FilActivite } from "@/components/FilActivite";
 import { Kanban } from "@/components/Kanban";
 import { PanneauAgents } from "@/components/PanneauAgents";
+import { PanneauCouts } from "@/components/PanneauCouts";
 import { PanneauValidations } from "@/components/PanneauValidations";
 import { useControlTower } from "@/lib/useControlTower";
 
@@ -20,6 +21,7 @@ export default function TableauDeBord() {
     agents,
     evenements,
     validations,
+    couts,
     connecte,
     chargement,
     erreur,
@@ -27,10 +29,11 @@ export default function TableauDeBord() {
     decider,
   } = useControlTower();
 
-  const couts = agents
+  const coutsAgents = agents
     .map((a) => a.cout_usd)
     .filter((c): c is number => c !== null);
-  const coutTotal = couts.length > 0 ? couts.reduce((s, c) => s + c, 0) : null;
+  const coutTotal =
+    coutsAgents.length > 0 ? coutsAgents.reduce((s, c) => s + c, 0) : null;
 
   return (
     <main className="mx-auto flex w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 sm:p-6">
@@ -51,6 +54,7 @@ export default function TableauDeBord() {
           <PanneauValidations validations={validations} decider={decider} />
           <PanneauAgents agents={agents} />
           <Kanban taches={taches} agents={agents} reassigner={reassigner} />
+          <PanneauCouts couts={couts} />
           <FilActivite evenements={evenements} />
         </>
       )}
