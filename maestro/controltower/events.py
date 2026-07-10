@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from maestro.telemetry.usage import StepUsage
+
 #: Types d'événements diffusés (docs/05 §2.1 : flux d'activité temps réel).
 #: `tache.statut` suit la machine à états de docs/03 §3 ; `tache.reassignation`
 #: est l'acte manuel du Kanban (EF-11/EF-20) ; `agent.activite` couvre la
@@ -65,8 +67,10 @@ class Event:
     """Un fait daté de l'orchestration, prêt à voyager en JSON.
 
     `type` est l'un des `EVENEMENT_*` ; les autres champs sont renseignés selon
-    le type (une activité d'agent n'a pas forcément de `tache_id`). `cout_usd`
-    porte le coût de l'étape quand la télémétrie (#8) l'a rapporté — None sinon
+    le type (une activité d'agent n'a pas forcément de `tache_id`). `usage`
+    porte la mesure complète de l'étape (tokens entrée/sortie, coût, durée —
+    la matière de la comptabilité par tâche, #57) quand la télémétrie (#8) l'a
+    rapportée ; `cout_usd` en reste le raccourci scalaire — None sinon
     (inconnu, à distinguer d'un coût nul). `detail` est un texte libre déjà
     expurgé des secrets par le journal amont (`redact_secrets`). `description`
     porte le contexte long d'une demande de validation (#48 : l'action que
@@ -83,6 +87,7 @@ class Event:
     detail: str = ""
     description: str = ""
     cout_usd: float | None = None
+    usage: StepUsage | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -98,6 +103,7 @@ class Event:
             "detail": self.detail,
             "description": self.description,
             "cout_usd": self.cout_usd,
+            "usage": self.usage.to_dict() if self.usage is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -108,6 +114,7 @@ class Event:
         Les clés absentes retombent sur les défauts : un producteur minimaliste
         (seul `type` est requis) reste lisible.
         """
+        usage_brut = data.get("usage")
         return cls(
             type=data["type"],
             run_id=data.get("run_id", ""),
@@ -119,6 +126,7 @@ class Event:
             detail=data.get("detail", ""),
             description=data.get("description", ""),
             cout_usd=data.get("cout_usd"),
+            usage=StepUsage.from_dict(usage_brut) if isinstance(usage_brut, Mapping) else None,
             horodatage=data.get("horodatage", ""),
         )
 
