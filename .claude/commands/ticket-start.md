@@ -51,9 +51,15 @@ arrête-toi (en expliquant pourquoi) dès qu'une vérification échoue au lieu d
    **arrête-toi** et explique : ce lot dépend d'une MR précédente non mergée — la faire merger
    d'abord. Sinon, continue normalement (un sous-ticket se démarre comme un ticket ordinaire).
 
-7. **Ticket trop gros ?** S'il n'est ni un parent ni un sous-ticket mais dépasse manifestement
-   ~1 session de travail (plus de 3-4 critères d'acceptation, plusieurs couches touchées —
-   script + commande + doc + UI…), **ne l'enchaîne pas tel quel** : propose à l'utilisateur de le
+7. **Ticket trop gros ?** S'il n'est ni un parent ni un sous-ticket, évalue sa taille sur la
+   **description intégrale**, pas sur le seul `issue-brief` : lis `glab issue view $ARGUMENTS`
+   — notes techniques et références croisées (tickets, docs, composants cités) comprises — et
+   **compte les couches/composants distincts** touchés (moteur, backend, UI, script, commande,
+   doc…). Le nombre de critères d'acceptation ne suffit pas : **dès 2 couches distinctes,
+   propose le découpage**, même avec 3 critères ou moins (contre-exemple de référence : le #48,
+   3 critères seulement mais moteur + backend + UI — enchaîné à tort). Si le ticket dépasse
+   ainsi ~1 session de travail (≥ 2 couches touchées, ou plus de 3-4 critères d'acceptation),
+   **ne l'enchaîne pas tel quel** : propose à l'utilisateur de le
    **découper** — le ticket courant devient le parent (section `## Sous-tickets` ajoutée à sa
    description), les sous-tickets sont créés et liés selon la convention de `/ticket-create`
    (1 à 3 critères chacun, chacun mergeable seul sur `main`, lot final « tests + doc »,
