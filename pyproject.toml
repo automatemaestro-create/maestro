@@ -61,6 +61,9 @@ maestro-bdd = "maestro.agents.runtime_cli:main_bdd"
 maestro-qa = "maestro.agents.runtime_cli:main_qa"
 # Backend Control Tower : sert l'API REST + WebSocket (bus Redis, ticket #46).
 maestro-api = "maestro.controltower.cli:main"
+# Démo : Control Tower autonome — API réelle sur bus mémoire + scénario d'événements
+# factices, pour regarder l'UI sans Redis ni orchestration (ticket #65).
+maestro-controltower-demo = "maestro.controltower.demo:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).

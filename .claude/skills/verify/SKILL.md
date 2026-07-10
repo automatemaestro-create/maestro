@@ -5,25 +5,24 @@ description: Vérifier de bout en bout la Control Tower (API FastAPI + UI Next.j
 
 # Vérifier Maestro de bout en bout
 
-## Backend Control Tower (API REST + WebSocket)
+## Lancer l'ensemble (API + UI)
 
-Pas besoin de Redis ni de Docker : l'app FastAPI réelle tourne sur le bus
-mémoire (`InMemoryEventBus`) — mêmes endpoints que la production, seul le
-transport change. Lancer un petit script qui appelle
-`maestro.controltower.app.create_app(bus=...)` sous uvicorn
-(`uvicorn.Config`/`Server` programmatiques) et publie un scénario d'événements
-(`Event`, types `EVENEMENT_*` de `maestro.controltower.events`) sur le bus
-depuis une tâche asyncio du même process. Toujours utiliser
-`.venv/Scripts/python.exe` (jamais le python système).
-
-## UI (apps/web, Next.js)
+Ne pas réécrire de lanceur ad hoc : le script du ticket #65 fait tout
+(nettoyage des anciennes sessions sur :8000/:3000, API de démo sur bus
+mémoire — `maestro.controltower.demo`, app FastAPI réelle + scénario
+d'événements factices en continu —, UI Next.js pointée dessus) :
 
 ```bash
-cd apps/web
-NEXT_PUBLIC_MAESTRO_API_URL=http://127.0.0.1:<port-api> npm run dev   # port 3000
+bash scripts/controltower/start.sh          # UI sur :3000, API sur :8000
+bash scripts/controltower/start.sh --stop   # arrêt
 ```
 
-La variable est lue au démarrage du dev server (inlinée au build en prod).
+Pour un scénario **sur mesure** (autres événements, autre timing), s'inspirer
+de `maestro/controltower/demo.py` : `create_app(bus=InMemoryEventBus())` sous
+uvicorn programmatique, événements `EVENEMENT_*` publiés depuis une tâche
+asyncio du même process, toujours via `.venv/Scripts/python.exe` (jamais le
+python système). L'UI lit `NEXT_PUBLIC_MAESTRO_API_URL` au démarrage du dev
+server (inlinée au build en prod).
 
 ## Piloter le navigateur
 
