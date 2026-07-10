@@ -206,13 +206,21 @@ gl_issue_brief() {
   if [ -z "$iid" ]; then echo "usage: gl_issue_brief <iid>" >&2; return 2; fi
   local raw
   raw="$(glab issue view "$iid" 2>/dev/null)" || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
-  # Deux formats de « critères d'acceptation » coexistent dans le backlog : les tickets récents
-  # (issue templates) posent un titre de section « ## Critères d'acceptation » suivi d'une liste
-  # « - [ ] … » ; les tickets plus anciens l'écrivent en paragraphe inline (« Critères d'acceptation :
-  # … »). Le mot « acceptation » n'a pas d'accent → on l'utilise comme ancre robuste aux deux formes
-  # (avec ou sans accent sur « Critères »). En forme titre on capture les lignes suivantes jusqu'au
-  # prochain titre ; en forme inline on n'imprime que la ligne elle-même.
-  printf '%s\n' "$raw" | awk -v iid="$iid" '
+  printf '%s\n' "$raw" | gl_issue_brief_render "$iid"
+}
+
+# gl_issue_brief_render <iid> — cœur de gl_issue_brief, séparé pour être rejoué sur un ticket DÉJÀ
+# LU (stdin = sortie brute de `glab issue view`) : gl_start_brief s'en sert pour ne lire le ticket
+# qu'une seule fois et enchaîner toutes les projections sur le même texte.
+# Deux formats de « critères d'acceptation » coexistent dans le backlog : les tickets récents
+# (issue templates) posent un titre de section « ## Critères d'acceptation » suivi d'une liste
+# « - [ ] … » ; les tickets plus anciens l'écrivent en paragraphe inline (« Critères d'acceptation :
+# … »). Le mot « acceptation » n'a pas d'accent → on l'utilise comme ancre robuste aux deux formes
+# (avec ou sans accent sur « Critères »). En forme titre on capture les lignes suivantes jusqu'au
+# prochain titre ; en forme inline on n'imprime que la ligne elle-même.
+gl_issue_brief_render() {
+  local iid="$1"
+  awk -v iid="$iid" '
     ph == 1 {
       if (crit == 0 && $0 ~ /[Aa]cceptation/) {
         print ""; print $0
@@ -275,9 +283,22 @@ gl_parent_of() {
 gl_subtickets() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_subtickets <iid-parent>" >&2; return 2; fi
-  local raw rows table siid coche titre statut
+  local raw rows
   raw="$(glab issue view "$iid" 2>/dev/null)" || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
-  rows="$(printf '%s\n' "$raw" | awk '
+  rows="$(printf '%s\n' "$raw" | gl_subticket_rows)"
+  if [ -z "$rows" ]; then
+    echo "Pas de section « ## Sous-tickets » dans #$iid — pas un ticket parent." >&2
+    return 1
+  fi
+  printf '%s\n' "$rows" | gl_subtickets_enrich
+}
+
+# gl_subticket_rows — cœur du parsing de gl_subtickets, séparé pour être rejoué sur un ticket DÉJÀ
+# LU (stdin = sortie brute de `glab issue view`) : imprime les lignes de la checklist
+# « ## Sous-tickets » en TSV brut (iid <TAB> coche(x|-) <TAB> titre), rien si la section est
+# absente. gl_start_brief s'en sert pour détecter un parent de suivi sans relire le ticket.
+gl_subticket_rows() {
+  awk '
     insec {
       if ($0 ~ /^#+[ \t]/) { insec = 0; next }
       if ($0 ~ /^- \[[ xX]\] #[0-9]+/) {
@@ -291,17 +312,151 @@ gl_subtickets() {
       next
     }
     /^#+[ \t]+Sous-tickets/ { insec = 1 }
-  ')"
-  if [ -z "$rows" ]; then
-    echo "Pas de section « ## Sous-tickets » dans #$iid — pas un ticket parent." >&2
-    return 1
-  fi
+  '
+}
+
+# gl_subtickets_enrich — enrichit du STATUT NATIF les lignes TSV de gl_subticket_rows (stdin) et
+# imprime la table finale « iid/coche/statut/titre » (une seule requête backlog, pas N).
+gl_subtickets_enrich() {
+  local table siid coche titre statut
   table="$(gl_backlog_table all)" || table=""
   printf '# iid\tcoche\tstatut\ttitre\n'
   while IFS=$'\t' read -r siid coche titre; do
     statut="$(printf '%s\n' "$table" | awk -F '\t' -v id="$siid" '$1 == id { print $2; exit }')"
     printf '%s\t%s\t%s\t%s\n' "$siid" "$coche" "${statut:-?}" "$titre"
-  done <<< "$rows"
+  done
+}
+
+# --- Démarrage de ticket (/ticket-start : préflight + mutation groupée) --------------------------
+# Deux helpers pour que /ticket-start remplace une dizaine d'allers-retours par deux (ticket #61) :
+# gl_start_brief fait tout le préflight en UNE lecture du ticket, gl_begin pose assignation,
+# statut et dates en UNE mutation. Les sous-commandes unitaires restent disponibles à côté.
+
+# gl_start_brief <iid> -> préflight complet de /ticket-start en un appel et UNE SEULE lecture du
+# ticket (un unique `glab issue view`, rejoué pour toutes les projections ; seule autre lecture :
+# la checklist du parent si <iid> est un sous-ticket). Vérifie les pré-requis (gl_require_glab) et
+# l'arbre propre, puis imprime un bloc compact : titre/labels/critères (gl_issue_brief_render),
+# selon le cas marqueur sous-ticket (parent, rang « lot n/total », tests différés, contrôle du
+# statut des lots précédents) ou checklist « ## Sous-tickets » (parent de suivi — qui ne porte ni
+# branche ni code : pas de branche proposée dans ce cas), et enfin la branche proposée
+# (gl_branch_prefix depuis le label type:: + gl_slug du titre).
+# Informatif : les avertissements (lot précédent non mergé, label type:: absent) sont dans la
+# sortie ; la décision — démarrer, rediriger, s'arrêter — reste à l'appelant. Code retour non nul
+# seulement sur vrai échec (pré-requis, arbre sale, ticket introuvable).
+gl_start_brief() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_start_brief <iid>" >&2; return 2; fi
+  gl_require_glab || return 1
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "Arbre de travail non propre : changements non commités — les committer, stasher ou annuler avant de démarrer." >&2
+    return 1
+  fi
+  local raw
+  raw="$(glab issue view "$iid" 2>/dev/null)" || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
+
+  printf '%s\n' "$raw" | gl_issue_brief_render "$iid"
+
+  # Parent de suivi ? (section « ## Sous-tickets » dans la description déjà lue)
+  local rows
+  rows="$(printf '%s\n' "$raw" | gl_subticket_rows)"
+  if [ -n "$rows" ]; then
+    printf '\nparent de suivi — ne porte ni branche ni code ; rediriger vers le premier lot ouvert :\n'
+    printf '%s\n' "$rows" | gl_subtickets_enrich
+    return 0
+  fi
+
+  # Sous-ticket ? (marqueur « Sous-ticket de #<parent> ») → rang de lot + contrôle des lots
+  # précédents (ordre de la checklist du parent — ils doivent être « Terminé », donc mergés).
+  local parent
+  parent="$(printf '%s\n' "$raw" | grep -o 'Sous-ticket de #[0-9]\+' | head -1 | grep -o '[0-9]\+$')"
+  if [ -n "$parent" ]; then
+    local ptable total rank blocked deferred
+    ptable="$(gl_subtickets "$parent" 2>/dev/null | tail -n +2)"
+    printf '\n'
+    if [ -n "$ptable" ]; then
+      total="$(printf '%s\n' "$ptable" | awk 'END { print NR }')"
+      rank="$(printf '%s\n' "$ptable" | awk -F '\t' -v id="$iid" '$1 == id { print NR; exit }')"
+      printf 'sous-ticket de #%s — lot %s/%s\n' "$parent" "${rank:-?}" "$total"
+      blocked="$(printf '%s\n' "$ptable" | awk -F '\t' -v id="$iid" '$1 == id { exit } $3 != "Terminé" { printf "#%s (%s) ", $1, $3 }')"
+      if [ -n "$blocked" ]; then
+        printf 'lots précédents : ⚠ non mergés : %s— faire merger avant de démarrer ce lot\n' "$blocked"
+      else
+        printf 'lots précédents : OK (tous « Terminé »)\n'
+      fi
+    else
+      printf 'sous-ticket de #%s (checklist du parent illisible — contrôler les lots précédents à la main)\n' "$parent"
+    fi
+    deferred="$(printf '%s\n' "$raw" | grep -o '[Tt]ests différés[^#]*#[0-9]\+' | head -1 | grep -o '[0-9]\+$')"
+    if [ -n "$deferred" ]; then printf 'tests différés → #%s\n' "$deferred"; fi
+  fi
+
+  # Branche proposée : préfixe depuis le label type:: + slug du titre.
+  local title labels type prefix slug
+  title="$(printf '%s\n' "$raw" | sed -n 's/^title:[[:space:]]*//p' | head -1)"
+  labels="$(printf '%s\n' "$raw" | sed -n 's/^labels:[[:space:]]*//p' | head -1)"
+  type="$(printf '%s' "$labels" | grep -o 'type::[a-z]*' | head -1)"
+  slug="$(gl_slug "$title")"
+  if [ -n "$type" ] && prefix="$(gl_branch_prefix "$type" 2>/dev/null)"; then
+    printf '\nbranche proposée : %s/%s-%s\n' "$prefix" "$iid" "$slug"
+  else
+    printf '\nbranche proposée : <type>/%s-%s (label type:: absent — préfixe à déduire : feat|fix|chore|docs)\n' "$iid" "$slug"
+  fi
+}
+
+# gl_begin <iid> [username] -> démarrage groupé du ticket : assignation (username auto-résolu si
+# absent) + statut « En cours » + dates début/échéance (mêmes règles que gl_start_dates : début =
+# aujourd'hui conservé si déjà posé — idempotent —, échéance = début + délai selon prio::) en UNE
+# SEULE mutation workItemUpdate multi-widgets (assigneesWidget + statusWidget +
+# startAndDueDateWidget). Le GID du work item, la date de début existante et la priorité sont
+# résolus en une lecture combinée. NB : assigneeIds REMPLACE la liste des assignés (sémantique
+# voulue au démarrage : le ticket passe à celui qui le démarre).
+gl_begin() {
+  local iid="$1" user="${2:-}"
+  if [ -z "$iid" ]; then echo "usage: gl_begin <iid> [username]" >&2; return 2; fi
+
+  # Assigné : sans argument, `glab api user` donne username + id en un appel ; avec argument,
+  # résolution GraphQL du username fourni.
+  local ugid uraw
+  if [ -z "$user" ]; then
+    uraw="$(glab api user 2>/dev/null)"
+    user="$(printf '%s' "$uraw" | grep -o '"username":"[^"]*"' | head -1 | sed 's/.*"username":"//; s/"$//')"
+    ugid="$(printf '%s' "$uraw" | grep -o '"id":[0-9]*' | head -1 | sed 's/.*://')"
+    ugid="${ugid:+gid://gitlab/User/$ugid}"
+  else
+    ugid="$(gl_graphql_read '{ user(username:"'"$user"'") { id } }' | grep -o 'gid://gitlab/User/[0-9]\+' | head -1)"
+  fi
+  if [ -z "$user" ] || [ -z "$ugid" ]; then
+    echo "gl_begin : assigné irrésoluble (username « ${user:-?} ») — glab authentifié ? (cf. require)" >&2
+    return 1
+  fi
+
+  # Lecture combinée du work item : GID + date de début déjà posée + label prio, en une requête.
+  local wraw wiid start prio
+  wraw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { id widgets { ... on WorkItemWidgetStartAndDueDate { startDate } ... on WorkItemWidgetLabels { labels { nodes { title } } } } } } } }')"
+  wiid="$(printf '%s' "$wraw" | grep -o 'gid://gitlab/WorkItem/[0-9]\+' | head -1)"
+  if [ -z "$wiid" ]; then echo "Work item #$iid introuvable dans $GL_PROJECT" >&2; return 1; fi
+  start="$(printf '%s' "$wraw" | grep -o '"startDate":"[0-9-]*"' | head -1 | sed 's/.*"startDate":"//; s/"$//')"
+  prio="$(printf '%s' "$wraw" | grep -o 'prio::[a-z]*' | head -1)"
+
+  # Statut par nom (même robustesse que gl_set_status) et calcul des dates (règles gl_start_dates).
+  local sid today delay due
+  sid="$(gl_status_gid "En cours")" || return 1
+  today="$(date +%F)"
+  [ -z "$start" ] && start="$today"
+  delay="$(gl_prio_delay "$prio")"
+  due="$(date -d "$start +$delay days" +%F 2>/dev/null)"
+  if [ -z "$due" ]; then echo "gl_begin : calcul de l'échéance impossible (commande date indisponible ?)" >&2; return 1; fi
+
+  # La mutation groupée — appel direct à glab, jamais enveloppé de retry (cf. gl_graphql_read).
+  local out
+  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", assigneesWidget:{ assigneeIds:["'"$ugid"'"] }, statusWidget:{ status:"'"$sid"'" }, startAndDueDateWidget:{ startDate:"'"$start"'", dueDate:"'"$due"'" } }){ errors } }' 2>&1)"
+  case "$out" in
+    *'"errors":[]'*)
+      printf '#%s démarré : assigné=%s, statut « En cours », début=%s, échéance=%s\n' "$iid" "$user" "$start" "$due"
+      printf '  (priorité %s → échéance à +%s j)\n' "${prio:-prio::moyenne (défaut)}" "$delay"
+      ;;
+    *) echo "Échec du démarrage groupé de #$iid : $out" >&2; return 1 ;;
+  esac
 }
 
 # --- Dates & time tracking ----------------------------------------------------------------------
@@ -615,6 +770,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issue-link)     gl_issue_link "$@" ;;
     parent-of)      gl_parent_of "$@" ;;
     subtickets)     gl_subtickets "$@" ;;
+    start-brief)    gl_start_brief "$@" ;;
+    begin)          gl_begin "$@" ;;
     prio)           gl_prio "$@" ;;
     prio-delay)     gl_prio_delay "$@" ;;
     get-start-date) gl_get_start_date "$@" ;;
@@ -643,6 +800,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    issue-link <iid> <iid-cible>    (lie deux tickets — relates to, idempotent)" >&2
       echo "    parent-of <iid>                 (iid du parent si <iid> est un sous-ticket)" >&2
       echo "    subtickets <iid-parent>         (checklist ## Sous-tickets : iid/coche/statut/titre)" >&2
+      echo "  Démarrage de ticket (/ticket-start) :" >&2
+      echo "    start-brief <iid>            (préflight en une lecture : pré-requis, arbre propre, brief, parent/sous-ticket, branche proposée)" >&2
+      echo "    begin <iid> [username]       (assignation + « En cours » + dates en une mutation groupée)" >&2
       echo "  Dates & temps :" >&2
       echo "    start-dates <iid>            (début=aujourd'hui + échéance selon prio)" >&2
       echo "    set-dates <iid> [début] [échéance]   get-start-date <iid>" >&2
