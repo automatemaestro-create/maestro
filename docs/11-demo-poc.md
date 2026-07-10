@@ -100,4 +100,4 @@ Exécution réelle sur le fournisseur Claude (mode abonnement, docs/07 §2.1), o
 
 ## 6. Et après ?
 
-Le POC est bouclé : le jalon de décision « fin Phase 0 » de la [roadmap](./06-roadmap.md) (*le pattern orchestrateur-workers donne-t-il des résultats fiables ?*) peut être tranché sur pièces. La suite est la **Phase 1 (MVP)** : file de tâches, parallélisme à l'échelle, Control Tower v1, human-in-the-loop.
+Le POC est bouclé : le jalon de décision « fin Phase 0 » de la [roadmap](./06-roadmap.md) (*le pattern orchestrateur-workers donne-t-il des résultats fiables ?*) peut être tranché sur pièces. La suite est la **Phase 1 (MVP)** : file de tâches, parallélisme à l'échelle, Control Tower v1, human-in-the-loop — elle se boucle à son tour par la [démo de bout en bout du MVP](./12-demo-mvp.md) (les 7 critères du §8 vérifiés + verdict go/no-go).
