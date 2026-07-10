@@ -22,15 +22,15 @@ lieu d'inventer.
 3. Détermine le **titre** depuis `$ARGUMENTS`. S'il est absent ou vague, demande-le.
 
 4. **Évalue la taille du besoin** (convention de découpage, `docs/10-workflow-git.md` §5.1). Un
-   ticket doit tenir en **~1 session de travail**. Le nombre de critères d'acceptation ne suffit
-   pas à en juger : inspecte **toute la matière du besoin** — notes techniques et références
-   croisées (tickets, docs, composants cités) comprises — et **compte les couches/composants
-   distincts** touchés (moteur, backend, UI, script, commande, doc…). **Dès 2 couches
-   distinctes, découpe**, même avec 3 critères d'acceptation ou moins (contre-exemple de
-   référence : le #48, 3 critères seulement mais moteur + backend + UI — passé à tort pour
-   petit). Si le besoin dépasse ainsi la taille d'une session — ≥ 2 couches touchées, plus de
-   3-4 critères d'acceptation, ou plusieurs livrables indépendants — ne crée pas un ticket
-   monolithique : crée un **ticket parent de suivi + des sous-tickets liés** :
+   ticket doit tenir en **~1 session de travail**, et la taille se juge en **charge estimée** sur
+   **toute la matière du besoin** — notes techniques et références croisées (tickets, docs,
+   composants cités) comprises, pas seulement le nombre de critères d'acceptation. Les
+   **couches/composants distincts** touchés (moteur, backend, UI, script, commande, doc…) sont un
+   **signal** qui oblige à estimer finement, pas un déclencheur automatique : un script + sa doc
+   tiennent en une session (ticket unique) ; le #48 — moteur + backend + UI, trois couches
+   substantielles — non. Si le besoin **dépasse ~1 session** — plusieurs couches substantielles,
+   plus de 3-4 critères d'acceptation, ou plusieurs livrables indépendants — ne crée pas un
+   ticket monolithique : crée un **ticket parent de suivi + des sous-tickets liés** :
    - **Parent de suivi** : un ticket du type du besoin dont la description porte l'objectif
      global et une section `## Sous-tickets` — la checklist **ordonnée** des lots (remplie une
      fois les sous-tickets créés). Le parent ne porte ni branche ni code ; il **ne se ferme que
@@ -50,7 +50,9 @@ lieu d'inventer.
      réalisation**, lot tests en dernier) via `glab issue update <iid-parent> --description
      "$(cat <fichier>)"`.
 
-   Si le besoin tient en une session, continue simplement : ticket unique, étapes suivantes.
+   Si le besoin tient en une session, continue simplement : **ticket unique**, même s'il est
+   multi-facettes — matérialise alors les facettes par une **checklist interne** dans la
+   description (pas de parent ni de sous-tickets). Étapes suivantes.
 
 5. Charge le squelette de description depuis le template correspondant et lis-le :
    `feature`→`.gitlab/issue_templates/Feature.md`, `bug`→`Bug.md`, `doc`→`Doc.md`,

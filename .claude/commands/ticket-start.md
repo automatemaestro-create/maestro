@@ -18,25 +18,32 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    - **Parent de suivi** (la sortie liste une checklist `## Sous-tickets`) : il ne porte ni
      branche ni code — ne le démarre pas. Coche au passage (`- [x]`) les lots « Terminé » encore
      décochés dans sa description (`glab issue update <iid> --description "$(cat <fichier>)"`,
-     idempotent — ne jamais décocher une case cochée). Puis selon le **premier sous-ticket
-     ouvert** dans l'ordre de la checklist : « À faire » → reprends l'étape 1 avec son iid (c'est
+     idempotent — ne jamais décocher une case cochée). Puis parcours la checklist dans l'ordre en
+     **sautant les lots livrés** (« Terminé » ou « En revue » — une MR en attente de merge ne
+     bloque pas la suite) : au **premier lot « À faire »**, reprends l'étape 1 avec son iid (c'est
      lui qu'on démarre ; si le parent était « À faire », passe-le « En cours » via
-     `bash scripts/gitlab/lib.sh set-status <iid-parent> "En cours"`) ; « En cours »/« En revue »
-     → arrête-toi et dis quel lot bloque et ce qu'on attend (fin du travail, ou merge de sa MR) ;
-     aucun ouvert → signale que le parent est **fermable** (toutes cases cochées), rien à démarrer.
+     `bash scripts/gitlab/lib.sh set-status <iid-parent> "En cours"`). Arrête-toi seulement si un
+     lot est « En cours » (travail déjà en route) ; s'il ne reste aucun « À faire », rien à
+     démarrer : parent **fermable** si tout est « Terminé » (toutes cases cochées), sinon tout est
+     livré et on n'attend plus que des merges.
    - **Sous-ticket** : la sortie donne le parent, le rang (« lot n/total »), les tests différés
-     éventuels et le contrôle des lots précédents. Si elle signale des lots précédents non mergés
-     (⚠), arrête-toi : les faire merger d'abord. Sinon, il se démarre comme un ticket ordinaire.
-   - **Ticket trop gros ?** (ni parent ni sous-ticket) : évalue la taille sur la **description
-     intégrale** (`glab issue view $ARGUMENTS`, notes techniques et références croisées comprises)
-     en comptant les **couches/composants distincts** touchés (moteur, backend, UI, script,
-     commande, doc…) : **≥ 2 couches ⇒ découpage**, même avec 3 critères ou moins (contre-exemple
-     de référence : #48), de même qu'au-delà de 3-4 critères d'acceptation. Ne l'enchaîne pas tel
-     quel : propose le découpage — le ticket devient le parent (section `## Sous-tickets`), les
-     sous-tickets sont créés et liés selon la convention de `/ticket-create` (1-3 critères chacun,
-     mergeables seuls sur `main`, lot final « tests + doc », `lib.sh issue-link`), puis on démarre
-     le premier lot. Contrairement à l'étape 4, c'est une **vraie pause** : attends la décision de
-     l'utilisateur.
+     éventuels et le contrôle des lots précédents. Si elle signale des lots précédents non livrés
+     (⚠ — encore « À faire » ou « En cours »), arrête-toi : les terminer d'abord. Un lot précédent
+     « En revue » (MR ouverte pas encore mergée) ne bloque pas : les lots sont additifs et la
+     branche part de `main`. Sinon, il se démarre comme un ticket ordinaire.
+   - **Ticket trop gros ?** (ni parent ni sous-ticket) : évalue la **charge estimée** sur la
+     **description intégrale** (`glab issue view $ARGUMENTS`, notes techniques et références
+     croisées comprises). Les **couches/composants distincts** touchés (moteur, backend, UI,
+     script, commande, doc…) sont un **signal** qui oblige à estimer finement, pas un déclencheur
+     automatique : ne propose le découpage que si le travail **dépasse ~1 session** — plusieurs
+     couches substantielles (étalon : #48, moteur + backend + UI), plus de 3-4 critères
+     d'acceptation, ou des livrables indépendants. Un besoin multi-facettes qui tient en une
+     session (ex. un script + sa doc) se démarre tel quel, au besoin avec une checklist interne
+     dans sa description. Au-delà du seuil, ne l'enchaîne pas tel quel : propose le découpage —
+     le ticket devient le parent (section `## Sous-tickets`), les sous-tickets sont créés et liés
+     selon la convention de `/ticket-create` (1-3 critères chacun, mergeables seuls sur `main`,
+     lot final « tests + doc », `lib.sh issue-link`), puis on démarre le premier lot.
+     Contrairement à l'étape 4, c'est une **vraie pause** : attends la décision de l'utilisateur.
    - **Branche proposée sans préfixe** (label `type::` absent) : déduis le type du titre/de la
      description, ou demande à l'utilisateur si ambigu.
 

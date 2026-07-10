@@ -258,16 +258,19 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
 ### 5.1 Découpage en sous-tickets — besoins trop gros & tests différés
 
 Un ticket doit tenir en **~1 session de travail** (§1, règle 4) — chaque session `/ticket-start`
-reste ainsi légère en contexte. L'évaluation de taille se fait sur la **description intégrale**
-— notes techniques et références croisées comprises, pas seulement le nombre de critères
-d'acceptation — en **comptant les couches/composants distincts** touchés (moteur, backend, UI,
-script, commande, doc…) : **≥ 2 couches ⇒ découpage proposé**, même avec 3 critères
-d'acceptation ou moins. Contre-exemple de référence : le **#48** n'affichait que 3 critères —
-sous le seuil « plus de 3-4 critères » — mais ses notes techniques annonçaient trois couches
-(moteur/file #41, backend Control Tower #46, UI #47) ; il aurait dû être découpé (correctif
-ticket #54). Au-delà d'une session (≥ 2 couches touchées, plus de 3-4 critères d'acceptation,
-plusieurs livrables indépendants), le besoin est porté par un **ticket parent de suivi** + des
-**sous-tickets** (introduit par le ticket #53) :
+reste ainsi légère en contexte. L'évaluation de taille se fait en **charge estimée**, sur la
+**description intégrale** — notes techniques et références croisées comprises, pas seulement le
+nombre de critères d'acceptation. Les **couches/composants distincts** touchés (moteur, backend,
+UI, script, commande, doc…) sont un **signal d'alerte** qui oblige à estimer finement, **pas un
+déclencheur automatique** (recalibrage ticket #63 : le découpage a un coût fixe par lot — cycle
+branche/MR/pipeline/merge complet, session repartant à froid — à ne payer que s'il évite une
+session qui déborde). Étalon : le **#48** n'affichait que 3 critères mais ses notes techniques
+annonçaient trois couches substantielles (moteur/file #41, backend Control Tower #46, UI #47) —
+il aurait dû être découpé (correctif ticket #54) ; à l'inverse, un script + sa doc tiennent en
+une session et restent un **ticket unique**, au besoin avec une **checklist interne** dans sa
+description (pas de parent ni de sous-tickets). Au-delà d'une session (plusieurs couches
+substantielles, plus de 3-4 critères d'acceptation, plusieurs livrables indépendants), le besoin
+est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit par le ticket #53) :
 
 - **Parent de suivi** — pas de branche, pas de code, pas de MR. Sa description porte l'objectif
   global et une section `## Sous-tickets` : la checklist **ordonnée** (ordre de réalisation) des
@@ -281,7 +284,10 @@ plusieurs livrables indépendants), le besoin est porté par un **ticket parent 
   que les lots suivants manquent). La description de chaque sous-ticket **commence par**
   `Sous-ticket de #<parent> — lot <n>/<total>.` (marqueur parsé par `lib.sh parent-of`), et le
   sous-ticket est **lié** au parent (issue link « relates to », posé par
-  `lib.sh issue-link <parent> <sous-iid>`).
+  `lib.sh issue-link <parent> <sous-iid>`). C'est cette propriété (lots additifs, branchés depuis
+  `main`) qui permet d'**enchaîner les lots sans attendre le merge** du précédent : un lot
+  « En revue » (MR ouverte) ne bloque pas le suivant, seul un lot encore « À faire » ou
+  « En cours » l'arrête (recalibrage ticket #63).
 - **Tests différés** — les tests sont un **sous-ticket dédié**, par défaut le **lot final
   « tests + doc »**. Les lots intermédiaires n'embarquent des tests que si leur logique est
   critique, et portent la mention « Tests différés → #<iid-du-lot-tests> » — livrer un lot
@@ -293,8 +299,8 @@ Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subti
 | Commande | Besoin/ticket trop gros | Ticket parent | Sous-ticket |
 |---|---|---|---|
 | `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, lot tests en dernier) | — | — |
-| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | **redirige** vers le premier lot ouvert « À faire » (et synchronise la checklist) ; **s'arrête** si ce lot est « En cours »/« En revue » (travail en cours ou MR précédente non mergée) | vérifie que les lots **précédents** de la checklist sont « Terminé », sinon s'arrête |
-| `/ticket-ship` | — | — | **annonce le prochain lot** à démarrer après merge (ou que le parent est fermable si c'était le dernier), et coche les lots terminés dans la checklist du parent |
+| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | **redirige** vers le premier lot « À faire » (et synchronise la checklist), en sautant les lots livrés — « Terminé » ou « En revue » ; **s'arrête** si un lot est « En cours » (travail en route) ou s'il ne reste que des « En revue » (tout est livré, on n'attend plus que des merges) | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une MR en attente de merge ne bloque pas), sinon s'arrête |
+| `/ticket-ship` | — | — | **annonce le prochain lot**, démarrable dès maintenant sans attendre le merge (ou que le parent est fermable si c'était le dernier), et coche les lots terminés dans la checklist du parent |
 
 **Voie « non réalisé ».** À tout moment (depuis `À faire`, `En cours` ou `En revue`), un ticket
 peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** : statut `Abandonné`
