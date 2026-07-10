@@ -7,9 +7,12 @@ WebSocket. Stack retenue : FastAPI + WebSocket + Redis Pub/Sub (docs/02 §4).
 Endpoints :
 
 - `GET  /api/sante` — vitalité du service ;
-- `GET  /api/taches` — les tâches (statut, agent, coût) : la source du Kanban ;
+- `GET  /api/taches` — les tâches (statut, agent, coût détaillé — tokens,
+  durée) : la source du Kanban ;
 - `GET  /api/agents` — l'état des agents (libre/occupé, charge, compteurs) ;
 - `GET  /api/executions/{run_id}` — le détail d'une exécution (trace, coût) ;
+- `GET  /api/executions/{run_id}/cout` — le grand livre du run (#57) : coût
+  par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat ;
 - `POST /api/taches/{tache_id}/reassigner` — réassignation manuelle (Kanban) ;
 - `GET  /api/validations` — les demandes de validation humaine (#48 : en
   attente d'abord le contexte, puis l'issue une fois tranchée) ;
@@ -166,7 +169,7 @@ def create_app(
 
     @app.get("/api/taches")
     async def taches() -> list[dict[str, Any]]:
-        """Les tâches connues : statut, agent assigné, coût — la source du Kanban."""
+        """Les tâches connues : statut, agent, coût détaillé (#57) — la source du Kanban."""
         return [t.to_dict() for t in state.taches()]
 
     @app.get("/api/agents")
@@ -181,6 +184,21 @@ def create_app(
         if detail is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return detail.to_dict()
+
+    @app.get("/api/executions/{run_id}/cout")
+    async def cout_execution(run_id: str) -> dict[str, Any]:
+        """Le grand livre d'une exécution (#57) : coût par tâche et agrégat du run.
+
+        La comptabilité du lot #55 (forme `RunCost.to_dict`) reconstruite du
+        flux d'événements : `planification` (l'usage de l'orchestrateur),
+        `taches` (tokens entrée/sortie, coût estimé, durée par tâche) et
+        `total` (l'agrégat de l'exécution) — sans la trace événement par
+        événement du détail. 404 si aucune trace reçue pour ce `run_id`.
+        """
+        detail = state.execution(run_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        return detail.cout.to_dict()
 
     @app.post("/api/taches/{tache_id}/reassigner")
     async def reassigner(tache_id: str, requete: ReassignationRequete) -> dict[str, Any]:

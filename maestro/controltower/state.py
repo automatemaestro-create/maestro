@@ -21,7 +21,7 @@ une seconde application via la pompe de diffusion, sans effet).
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
@@ -35,6 +35,8 @@ from maestro.controltower.events import (
     Event,
 )
 from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
+from maestro.telemetry.costs import RunCost, TaskCost
+from maestro.telemetry.usage import StepUsage
 
 #: Statuts d'agent exposés par l'API (docs/05 §2.1 : libre / occupé / désactivé…).
 AGENT_LIBRE = "libre"
@@ -61,7 +63,10 @@ class EtatTache:
 
     Miroir léger de l'entité TASK + le coût de son dernier run (docs/05 §2.2 :
     titre, agent assigné, statut, coût). `cout_usd` reste None tant qu'aucune
-    télémétrie n'a rapporté de coût (inconnu ≠ nul).
+    télémétrie n'a rapporté de coût (inconnu ≠ nul) ; `usage` en est la mesure
+    détaillée (tokens entrée/sortie, coût, durée — #57), posée par le dernier
+    passage de la tâche qui en a rapporté une. La ventilation par exécution
+    reste du côté du grand livre du run (`EtatExecution.cout`).
     """
 
     id: str
@@ -71,6 +76,7 @@ class EtatTache:
     role: str = ""
     run_id: str = ""
     cout_usd: float | None = None
+    usage: StepUsage | None = None
     horodatage: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,6 +89,7 @@ class EtatTache:
             "role": self.role,
             "run_id": self.run_id,
             "cout_usd": self.cout_usd,
+            "usage": self.usage.to_dict() if self.usage is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -167,7 +174,8 @@ class EtatExecution:
 
     Pendant API du `RunJournal` (#8) : la trace consultable d'un run — étapes,
     statuts, coûts — reliée aux tâches par `tache_id`. `cout_usd` agrège les
-    coûts rapportés par les événements du run.
+    coûts rapportés par les événements du run ; `cout` en est la vue
+    comptable (#57) : le grand livre du run, coût par tâche et agrégat.
     """
 
     run_id: str
@@ -179,11 +187,58 @@ class EtatExecution:
         couts = [e.cout_usd for e in self.evenements if e.cout_usd is not None]
         return sum(couts) if couts else None
 
+    @property
+    def cout(self) -> RunCost:
+        """Le grand livre du run (#57) : coût par tâche et agrégat, depuis les événements.
+
+        Même convention d'attribution que `RunCost.depuis_journal` (#55),
+        transposée au flux d'événements — le bus ne transporte pas le journal :
+        l'activité sans tâche est la planification (l'orchestrateur), un
+        `tache.statut` fait foi pour l'identité de sa tâche, activités et
+        messages rattachés à une tâche (validation #48, message #44) fusionnent
+        leur usage dans la sienne. Un événement qui ne rapporte qu'un
+        `cout_usd` (producteur minimaliste) est compté pour ce seul coût.
+        """
+        planification = StepUsage()
+        entrees: dict[str, TaskCost] = {}
+        for event in self.evenements:
+            usage = event.usage
+            if usage is None and event.cout_usd is not None:
+                usage = StepUsage(cout_usd=event.cout_usd)
+            if usage is None:
+                continue
+            if event.type == EVENEMENT_TACHE_STATUT and event.tache_id:
+                entree = entrees.get(event.tache_id) or TaskCost(tache_id=event.tache_id)
+                entrees[event.tache_id] = replace(
+                    entree,
+                    nom=event.titre,
+                    agent=event.agent,
+                    role=event.role,
+                    statut=event.statut,
+                    usage=entree.usage.fusion(usage),
+                )
+            elif event.type == EVENEMENT_AGENT_ACTIVITE and not event.tache_id:
+                planification = planification.fusion(usage)
+            elif (
+                event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}
+                and event.tache_id
+            ):
+                entree = entrees.get(event.tache_id) or TaskCost(tache_id=event.tache_id)
+                entrees[event.tache_id] = replace(
+                    entree, usage=entree.usage.fusion(usage)
+                )
+        return RunCost(
+            run_id=self.run_id,
+            planification=planification,
+            taches=tuple(entrees.values()),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Réémet l'exécution en dict JSON-sérialisable (la forme du REST)."""
         return {
             "run_id": self.run_id,
             "cout_usd": self.cout_usd,
+            "cout": self.cout.to_dict(),
             "evenements": [e.to_dict() for e in self.evenements],
         }
 
@@ -269,6 +324,8 @@ class ControlTowerState:
         tache.horodatage = event.horodatage or tache.horodatage
         if event.cout_usd is not None:
             tache.cout_usd = event.cout_usd
+        if event.usage is not None:
+            tache.usage = event.usage
 
         if event.agent in _AGENTS_NON_EXECUTANTS:
             return

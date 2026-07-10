@@ -35,6 +35,7 @@ from maestro.controltower.events import (
     Event,
 )
 from maestro.telemetry import LOGGER_NAME
+from maestro.telemetry.usage import StepUsage
 
 #: Étape du journal qui n'est pas une tâche : la planification de l'orchestrateur.
 _ETAPE_PLANIFICATION = "planification"
@@ -57,6 +58,11 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
       portant statut, agent, rôle et coût rapporté (#8).
 
+    Chaque événement embarque la **mesure d'usage** de son étape (tokens,
+    coût, durée — forme `StepUsage`) quand le journal en porte une : c'est la
+    matière de la comptabilité par tâche côté Control Tower (#57), annexes
+    comprises (validation, message — usage nul aujourd'hui, compté s'il vient).
+
     Une ligne illisible (pas un objet JSON de journal) ne produit **aucun**
     événement plutôt qu'un événement faux — le flux temps réel est un miroir,
     pas une source de vérité.
@@ -65,6 +71,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     if not isinstance(etape, str) or not etape:
         return ()
     usage = record.get("usage")
+    mesure = StepUsage.from_dict(usage) if isinstance(usage, Mapping) else None
     cout_brut = usage.get("cout_usd") if isinstance(usage, Mapping) else None
     est_message = etape.endswith(_SUFFIXE_MESSAGE)
     est_activite = etape == _ETAPE_PLANIFICATION or etape.endswith(_SUFFIXE_VALIDATION)
@@ -91,6 +98,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             statut=str(record.get("statut", "")),
             detail=detail,
             cout_usd=float(cout_brut) if isinstance(cout_brut, int | float) else None,
+            usage=mesure,
             horodatage=str(record.get("horodatage", "")),
         ),
     )
