@@ -340,7 +340,7 @@ gl_subtickets_enrich() {
 # statut des lots précédents) ou checklist « ## Sous-tickets » (parent de suivi — qui ne porte ni
 # branche ni code : pas de branche proposée dans ce cas), et enfin la branche proposée
 # (gl_branch_prefix depuis le label type:: + gl_slug du titre).
-# Informatif : les avertissements (lot précédent non mergé, label type:: absent) sont dans la
+# Informatif : les avertissements (lot précédent non livré, label type:: absent) sont dans la
 # sortie ; la décision — démarrer, rediriger, s'arrêter — reste à l'appelant. Code retour non nul
 # seulement sur vrai échec (pré-requis, arbre sale, ticket introuvable).
 gl_start_brief() {
@@ -366,7 +366,8 @@ gl_start_brief() {
   fi
 
   # Sous-ticket ? (marqueur « Sous-ticket de #<parent> ») → rang de lot + contrôle des lots
-  # précédents (ordre de la checklist du parent — ils doivent être « Terminé », donc mergés).
+  # précédents (ordre de la checklist du parent — ils doivent être livrés : « Terminé » ou
+  # « En revue », les lots étant additifs et mergeables seuls depuis main ; ticket #63).
   local parent
   parent="$(printf '%s\n' "$raw" | grep -o 'Sous-ticket de #[0-9]\+' | head -1 | grep -o '[0-9]\+$')"
   if [ -n "$parent" ]; then
@@ -377,11 +378,11 @@ gl_start_brief() {
       total="$(printf '%s\n' "$ptable" | awk 'END { print NR }')"
       rank="$(printf '%s\n' "$ptable" | awk -F '\t' -v id="$iid" '$1 == id { print NR; exit }')"
       printf 'sous-ticket de #%s — lot %s/%s\n' "$parent" "${rank:-?}" "$total"
-      blocked="$(printf '%s\n' "$ptable" | awk -F '\t' -v id="$iid" '$1 == id { exit } $3 != "Terminé" { printf "#%s (%s) ", $1, $3 }')"
+      blocked="$(printf '%s\n' "$ptable" | awk -F '\t' -v id="$iid" '$1 == id { exit } $3 != "Terminé" && $3 != "En revue" { printf "#%s (%s) ", $1, $3 }')"
       if [ -n "$blocked" ]; then
-        printf 'lots précédents : ⚠ non mergés : %s— faire merger avant de démarrer ce lot\n' "$blocked"
+        printf 'lots précédents : ⚠ non livrés : %s— les terminer (au moins « En revue ») avant de démarrer ce lot\n' "$blocked"
       else
-        printf 'lots précédents : OK (tous « Terminé »)\n'
+        printf 'lots précédents : OK (tous livrés — « Terminé » ou « En revue »)\n'
       fi
     else
       printf 'sous-ticket de #%s (checklist du parent illisible — contrôler les lots précédents à la main)\n' "$parent"
