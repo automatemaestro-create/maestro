@@ -10,7 +10,10 @@ d'acceptation du ticket #9 :
    de l'**exécution entière**, adossé à la comptabilité par tâche (#55) : le cumul
    des tâches compte, et une exécution au budget épuisé n'en démarre plus aucune
    (tests différés du parent #49 → #59) ;
-② une tâche dépassant le **time-out** est stoppée, sans gêner les autres tâches ;
+② une tâche dépassant le **time-out** est stoppée, sans gêner les autres tâches —
+   et depuis #64 l'échéance est **ferme** : elle reprend la main même si
+   l'annulation de la réalisation reste suspendue (sous-processus SDK non
+   coopératif), la tâche zombie étant détachée et l'aval bloqué proprement ;
 ③ une **action sensible** déclenche une demande de validation humaine avant toute
    exécution : approuvée elle s'exécute, refusée elle est stoppée sans avoir rien
    lancé — et sans validateur configuré (ou validateur en panne), le refus est le
@@ -22,8 +25,9 @@ import json
 
 import pytest
 
-from maestro.engine import DemandeValidation, Guardrails, OrchestrationEngine
+from maestro.engine import DemandeValidation, Guardrails, OrchestrationEngine, executor
 from maestro.engine.guardrails import _normalise  # test ciblé de la normalisation
+from maestro.engine.runner import run_borne
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.providers.base import ModelProvider
@@ -261,6 +265,60 @@ def test_une_tache_dans_les_temps_n_est_pas_stoppee():
     report = asyncio.run(_engine(guardrails=guardrails).run("Objectif"))
 
     assert all(r.ok for r in report.resultats)
+
+
+class InannulableProvider(ModelProvider):
+    """Simule l'aléa du #64 : la réalisation avale l'annulation et ne s'éteint jamais.
+
+    C'est le comportement observé du transport SDK : le time-out expire,
+    l'annulation est délivrée… et reste suspendue. Seule une échéance ferme —
+    qui n'exige aucune coopération — peut rendre la main.
+    """
+
+    name = "inannulable"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        if "Schéma BDD" not in prompt:
+            return "LIVRABLE"
+        while True:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                continue  # annulation avalée, comme le sous-processus suspendu
+
+
+def test_le_timeout_reprend_la_main_meme_si_l_annulation_reste_suspendue(monkeypatch):
+    # Régression #64 : la réalisation ignore l'annulation — l'échéance ferme doit
+    # quand même consigner l'échec, laisser la boucle continuer, bloquer l'aval et
+    # rendre le rapport (`run_borne` : la zombie ne suspend pas non plus la
+    # fermeture de la boucle, là où `asyncio.run` attendrait indéfiniment).
+    monkeypatch.setattr(executor, "_GRACE_ANNULATION_S", 0.05)
+    plan = json.dumps(
+        [
+            _tache("schema-bdd", "Schéma BDD", "Définir le schéma.", ["sql"]),
+            _tache("tests-api", "Tests de l'API", "Tests d'intégration.", ["tests"]),
+            _tache("revue", "Revue finale", "Relire le schéma.", ["tests"], ["schema-bdd"]),
+        ],
+        ensure_ascii=False,
+    )
+    guardrails = Guardrails(timeout_s=0.2)
+    report = run_borne(
+        _engine(
+            exec_provider=InannulableProvider(), plan_json=plan, guardrails=guardrails
+        ).run("Objectif"),
+        grace_s=0.05,
+    )
+
+    par_id = {r.task_id: r for r in report.resultats}
+    suspendue = par_id["schema-bdd"]
+    assert suspendue.statut == "echec"
+    assert "time-out" in (suspendue.erreur or "")
+    assert "détachée" in (suspendue.erreur or "")  # l'annulation n'a pas coopéré
+    assert par_id["tests-api"].ok  # la boucle continue : l'autre tâche aboutit
+    assert par_id["revue"].statut == "bloquee"  # l'aval est bloqué proprement
 
 
 # --- Critère ③ : validation humaine des actions sensibles -------------------------------

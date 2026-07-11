@@ -181,8 +181,11 @@ l'auto-assignation (100 % sur le jeu de test, repli explicite plutôt qu'un mauv
 
 1. **Time-out non recouvré sur blocage du runtime outillé** (bug **#64**, découvert pendant les
    essais : une tâche QA au tableau noir volumineux est restée suspendue au-delà du `--timeout`,
-   le sous-processus SDK ne rendant pas la main). À corriger tôt en Phase 2 : c'est un
-   garde-fou.
+   le sous-processus SDK ne rendant pas la main). **Réserve levée** : le time-out est depuis
+   une **échéance ferme** (`maestro.engine.executor`) — à l'expiration, l'échec est consigné et
+   l'aval bloqué même si l'annulation reste suspendue (réalisation détachée), et la fermeture
+   de la boucle est elle-même bornée (`maestro.engine.runner`) pour que le rapport soit
+   toujours rendu.
 2. **Aléas du fournisseur** : sur un des essais, le SDK a rendu une erreur immédiate
    (« error result: success ») — le moteur a réagi comme prévu (échec consigné, aval bloqué
    avec raison, notification inter-agents), mais il n'y a pas encore de **relance automatique**

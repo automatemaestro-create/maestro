@@ -26,7 +26,6 @@ est propre au process du worker.
 
 from __future__ import annotations
 
-import asyncio
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -38,6 +37,7 @@ from celery.signals import celeryd_after_setup
 from maestro.config import load_settings
 from maestro.engine.executor import LocalExecutor, TaskResult
 from maestro.engine.guardrails import Guardrails
+from maestro.engine.runner import run_borne
 from maestro.orchestrator.schema import Task, validate_task
 from maestro.providers.base import ModelProvider
 from maestro.queue.celery_app import NOM_TACHE_EXECUTER
@@ -157,6 +157,8 @@ def executer_tache(
     task = Task.from_dict(task_data)
     dependances = [TaskResult.from_dict(d) for d in dependances_data]
     journal = RunJournal(run_id=run_id)
-    result = asyncio.run(_executeur().execute(task, dependances, journal))
+    # Arrêt borné (#64) : les garde-fous s'appliquant côté worker, une réalisation
+    # détachée par le time-out ne peut pas suspendre la remontée du résultat.
+    result = run_borne(_executeur().execute(task, dependances, journal))
     result = replace(result, worker=_nom_du_worker(self.request))
     return result.to_dict()
