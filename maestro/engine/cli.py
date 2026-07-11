@@ -45,7 +45,6 @@ en cas d'erreur de configuration / planification), 2 si l'appel est mal formé.
 
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 import logging
@@ -55,6 +54,7 @@ from collections.abc import Sequence
 from maestro.config import ConfigError
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
 from maestro.engine.loop import OrchestrationEngine
+from maestro.engine.runner import run_borne
 from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import LOGGER_NAME
 
@@ -137,7 +137,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         engine = _build_engine(via_queue=via_queue, guardrails=guardrails, messagerie=messagerie)
-        report = asyncio.run(engine.run(objective))
+        # Arrêt borné (#64) : une réalisation détachée par le time-out ne peut pas
+        # suspendre la fermeture de la boucle — le rapport est toujours rendu.
+        report = run_borne(engine.run(objective))
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
         return 1

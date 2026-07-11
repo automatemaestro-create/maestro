@@ -47,6 +47,11 @@ STATUT_TERMINEE = "terminee"
 STATUT_ECHEC = "echec"
 STATUT_BLOQUEE = "bloquee"
 
+#: Délai de grâce accordé à l'annulation d'une réalisation en dépassement (#64) :
+#: le temps, dans le cas nominal, que le SDK ferme son sous-processus. Au-delà,
+#: la tâche est détachée — le time-out ne dépend jamais de sa coopération.
+_GRACE_ANNULATION_S: float = 5.0
+
 
 @dataclass(frozen=True)
 class TaskResult:
@@ -247,24 +252,40 @@ class LocalExecutor(TaskExecutor):
         décision humaine n'y est pas comptée. Le plafond de dépense, lui, est armé
         plus haut (sur le collecteur d'usage de `execute`) — son dépassement
         remonte en exception du fournisseur, muée ici en échec comme les autres.
+
+        Le time-out est une **échéance ferme** (#64) : la réalisation court dans sa
+        propre tâche asyncio et l'attente est bornée par `asyncio.wait`, qui rend
+        la main à l'échéance sans rien exiger de la tâche — là où `asyncio.timeout`
+        restait suspendu quand le transport du SDK avalait l'annulation. À
+        l'échéance, l'échec est consigné immédiatement ; l'annulation de la
+        réalisation n'est qu'un vœu (`_annule_ou_detache`), jamais une attente.
         """
         refus = await self._valide_si_sensible(agent, task, score, journal)
         if refus is not None:
             return refus
+        timeout_s = self._guardrails.timeout_s
+        if timeout_s is None:
+            return await self._realise(agent, task, description, score)
+        realisation = asyncio.create_task(
+            self._realise(agent, task, description, score),
+            name=f"maestro-realisation:{task.id}",
+        )
         try:
-            async with asyncio.timeout(self._guardrails.timeout_s):
-                return await self._realise(agent, task, description, score)
-        except TimeoutError:
-            return _echec(
-                task,
-                agent=agent.nom,
-                role=agent.role,
-                score=score,
-                erreur=(
-                    f"time-out : la tâche a dépassé {self._guardrails.timeout_s:g} s "
-                    "— exécution stoppée."
-                ),
-            )
+            fini, _ = await asyncio.wait({realisation}, timeout=timeout_s)
+        except asyncio.CancelledError:
+            # Annulation externe (arrêt de l'exécution) : relayée à la réalisation.
+            realisation.cancel()
+            raise
+        if realisation in fini:
+            return realisation.result()
+        issue = await _annule_ou_detache(realisation)
+        return _echec(
+            task,
+            agent=agent.nom,
+            role=agent.role,
+            score=score,
+            erreur=f"time-out : la tâche a dépassé {timeout_s:g} s — {issue}.",
+        )
 
     async def _valide_si_sensible(
         self, agent: Agent, task: Task, score: int, journal: RunJournal
@@ -362,6 +383,36 @@ class LocalExecutor(TaskExecutor):
             system_prompt=agent.prompt_systeme,
         )
         return sortie, ()
+
+
+async def _annule_ou_detache(realisation: asyncio.Task[TaskResult]) -> str:
+    """Éteint une réalisation en dépassement sans jamais s'y suspendre (#64).
+
+    Tente l'annulation coopérative pendant un court délai de grâce — le cas
+    nominal, où le SDK ferme son sous-processus et la tâche s'éteint. Si
+    l'annulation reste suspendue (transport qui l'avale, attente de terminaison
+    du sous-processus), la tâche est **détachée** : son issue tardive est absorbée
+    (`_absorbe_issue_tardive`) et plus rien n'en dépend — elle sera abandonnée à
+    la fermeture de la boucle (`maestro.engine.runner`). Renvoie le détail à
+    consigner dans l'erreur de time-out.
+    """
+    realisation.cancel()
+    _, suspendues = await asyncio.wait({realisation}, timeout=_GRACE_ANNULATION_S)
+    if not suspendues:
+        return "exécution stoppée"
+    realisation.add_done_callback(_absorbe_issue_tardive)
+    return "réalisation détachée (annulation restée suspendue)"
+
+
+def _absorbe_issue_tardive(realisation: asyncio.Task[TaskResult]) -> None:
+    """Absorbe l'issue d'une réalisation détachée (#64) : son échec est déjà consigné.
+
+    Sans cette relève, une exception tardive de la tâche zombie serait signalée
+    par asyncio (« exception was never retrieved ») alors qu'elle n'apprend rien :
+    le time-out a déjà été consigné au journal et l'aval bloqué.
+    """
+    if not realisation.cancelled():
+        realisation.exception()
 
 
 def _refus_plafond_creve(task: Task, plafond: PlafondDepense | None) -> TaskResult | None:

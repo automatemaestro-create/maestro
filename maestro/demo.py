@@ -30,7 +30,6 @@ configuration ou de planification) ; 2 si l'appel est mal formé.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import re
 import sys
@@ -42,6 +41,7 @@ from maestro.config import ConfigError
 from maestro.engine.cli import activer_trace, console_tolerante, validation_console
 from maestro.engine.guardrails import Guardrails
 from maestro.engine.loop import OrchestrationEngine, RunReport
+from maestro.engine.runner import run_borne
 from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import RunJournal
 
@@ -189,7 +189,9 @@ def run_demo(engine: OrchestrationEngine, *, objectif: str, dossier: Path) -> in
     """
     journal = RunJournal()
     try:
-        report = asyncio.run(engine.run(objectif, journal=journal))
+        # Arrêt borné (#64) : une réalisation détachée par le time-out ne peut pas
+        # suspendre la fermeture de la boucle — artefacts et verdict sont toujours rendus.
+        report = run_borne(engine.run(objectif, journal=journal))
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
         return 1
