@@ -357,10 +357,29 @@ class ControlTowerState:
         tache = self._taches.get(event.tache_id)
         if tache is None:
             return  # tâche inconnue : rien à réassigner (l'endpoint a déjà renvoyé 404)
+        origine = tache.agent
         tache.agent = event.agent
         tache.role = event.role or tache.role
         tache.statut = event.statut or "assignee"
         tache.horodatage = event.horodatage or tache.horodatage
+
+        # Répercute la réassignation sur les fiches agents (#52) : l'agent
+        # d'origine est libéré s'il portait encore cette tâche, le nouvel agent
+        # passe occupé tant que le statut de la tâche n'est pas terminal.
+        if origine != event.agent and origine not in _AGENTS_NON_EXECUTANTS:
+            ancien = self._agents.get(origine)
+            if ancien is not None and ancien.tache_courante == event.tache_id:
+                ancien.statut = AGENT_LIBRE
+                ancien.tache_courante = ""
+        if event.agent in _AGENTS_NON_EXECUTANTS:
+            return
+        agent = self._agents.setdefault(
+            event.agent, EtatAgent(nom=event.agent, role=event.role)
+        )
+        agent.derniere_activite = event.horodatage or agent.derniere_activite
+        if tache.statut not in _STATUTS_TERMINAUX:
+            agent.statut = AGENT_OCCUPE
+            agent.tache_courante = event.tache_id
 
     def _applique_activite(self, event: Event) -> None:
         """Trace l'activité d'un acteur (planification, validation, message A2A)."""

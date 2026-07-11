@@ -323,21 +323,28 @@ def test_websocket_plusieurs_clients_recoivent_chacun_tout(client, bus):
 
 
 def test_reassignation_manuelle_met_a_jour_et_diffuse(client, bus, state):
-    """Le POST du Kanban réassigne la tâche et les clients WebSocket le voient."""
-    state.appliquer(_statut_tache("t1", "echec"))
+    """Le POST du Kanban réassigne la tâche, les fiches agents suivent, les WebSocket le voient."""
+    state.appliquer(_statut_tache("t1", "en_cours", agent="qa", role="QA / Testeur"))
 
     with client.websocket_connect("/ws/evenements") as ws:
-        reponse = client.post("/api/taches/t1/reassigner", json={"agent": "qa"})
+        reponse = client.post("/api/taches/t1/reassigner", json={"agent": "bdd"})
         recu = ws.receive_json()
 
     assert reponse.status_code == 200
-    assert reponse.json()["agent"] == "qa"
+    assert reponse.json()["agent"] == "bdd"
     assert reponse.json()["statut"] == "assignee"
     assert recu["type"] == EVENEMENT_TACHE_REASSIGNATION
-    assert recu["tache_id"] == "t1" and recu["agent"] == "qa"
+    assert recu["tache_id"] == "t1" and recu["agent"] == "bdd"
 
     tache = client.get("/api/taches").json()[0]
-    assert tache["agent"] == "qa" and tache["role"] == "QA / Testeur"
+    assert tache["agent"] == "bdd" and tache["role"] == "Base de données"
+
+    # Les fiches agents suivent (#52). À ce stade l'événement a été appliqué
+    # deux fois (endpoint puis pompe) : les assertions valent aussi idempotence.
+    par_nom = {a["nom"]: a for a in client.get("/api/agents").json()}
+    assert par_nom["qa"]["statut"] == "libre" and par_nom["qa"]["tache_courante"] == ""
+    assert par_nom["bdd"]["statut"] == "occupe"
+    assert par_nom["bdd"]["tache_courante"] == "t1"
 
 
 def test_reassignation_tache_inconnue_404(client):
@@ -349,6 +356,22 @@ def test_reassignation_agent_inconnu_422(client, state):
     state.appliquer(_statut_tache("t1", "echec"))
     reponse = client.post("/api/taches/t1/reassigner", json={"agent": "stagiaire"})
     assert reponse.status_code == 422
+
+
+def test_reassignation_ne_libere_pas_un_agent_passe_a_autre_chose(state):
+    """L'agent d'origine occupé sur une **autre** tâche n'est pas libéré à tort."""
+    state.appliquer(_statut_tache("t1", "echec", agent="qa", role="QA / Testeur"))
+    state.appliquer(_statut_tache("t2", "en_cours", agent="qa", role="QA / Testeur"))
+
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_REASSIGNATION, tache_id="t1",
+        agent="bdd", role="Base de données", statut="assignee",
+    ))
+
+    assert state.agent("qa").statut == "occupe"
+    assert state.agent("qa").tache_courante == "t2"
+    assert state.agent("bdd").statut == "occupe"
+    assert state.agent("bdd").tache_courante == "t1"
 
 
 # ------------------------------------------- ④ Pont télémétrie → événements
