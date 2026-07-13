@@ -67,13 +67,15 @@ python-lint:
 
 # Exécute la suite de tests du dépôt (testpaths = tests/ dans pyproject.toml) avec la
 # couverture du code applicatif (pytest-cov, ticket #38) ; le job échoue si un test
-# échoue ou si la couverture passe sous le seuil (83 % mesurés à la pose du seuil —
-# marge de 3 points pour absorber les variations sans laisser la couverture s'éroder).
+# échoue ou si la couverture passe sous le seuil. La métrique exclut les points
+# d'entrée CLI/démo ([tool.coverage.run] omit, ticket #89 — smoke tests en
+# contrepartie) et reflète le code métier : 94 % mesurés à la pose du seuil, marge
+# de 4 points pour absorber les variations sans laisser la couverture s'éroder.
 # La clé `coverage:` remonte le taux dans GitLab (badge, affichage MR).
 pytest:
   extends: .python-test
   script:
-    - pytest --cov=maestro --cov-fail-under=80
+    - pytest --cov=maestro --cov-fail-under=90
   coverage: '/TOTAL.*? (100(?:\.\d+)?\%|[1-9]?\d(?:\.\d+)?\%)/'
 
 # Vérifie le typage statique du code applicatif (maestro/) en mode strict
