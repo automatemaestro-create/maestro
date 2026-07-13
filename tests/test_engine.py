@@ -5,10 +5,10 @@ Aucun appel réseau : la **planification** et l'**exécution** sont pilotées pa
 ① au moins 3 tâches sont assignées et exécutées par les **bons agents** (ordre des
    dépendances respecté, résultats des dépendances transmis) ;
 ② les résultats sont **agrégés** (RunReport : synthèse + rapport structuré) ;
-et ceux du ticket #35 (étendus au QA par #45) :
-③ une tâche routée vers `developpeur`/`bdd`/`qa` s'exécute via le **runtime outillé**
-   dans un workspace isolé, et les fichiers produits remontent dans le RunReport
-   (`to_dict()` et `synthese()`) ;
+et ceux du ticket #35 (étendus au QA par #45, au DevOps par #67) :
+③ une tâche routée vers `developpeur`/`bdd`/`qa`/`devops` s'exécute via le **runtime
+   outillé** dans un workspace isolé, et les fichiers produits remontent dans le
+   RunReport (`to_dict()` et `synthese()`) ;
 ④ les rôles sans runtime outillé livrent leur texte via `generate()` — y compris en
    **repli** quand le fournisseur n'a pas d'exécution outillée ;
 et ceux du ticket #8 :
@@ -311,6 +311,48 @@ def test_le_runtime_outille_recoit_le_tableau_noir_et_le_format():
     prompt_qa = str(provider.run_calls[2]["prompt"])
     assert "OUTILLE #2" in prompt_qa
     assert "Suite de tests" in prompt_qa
+
+
+def test_tache_devops_s_execute_de_bout_en_bout_via_le_runtime_outille():
+    # Critère ③ étendu par #67 : une tâche routée vers `devops` (compétences de son
+    # domaine) s'exécute via le runtime outillé dans un workspace isolé, et son
+    # livrable (fichiers produits) remonte dans le RunReport — résultat exploitable.
+    plan = json.dumps(
+        [
+            {
+                "id": "pipeline-ci",
+                "titre": "Pipeline CI",
+                "description": "Mettre en place le pipeline de lint et de tests.",
+                "competences_requises": ["ci-cd", "docker"],
+                "format_sortie": "Configuration CI",
+                "dependances": [],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    provider = ToolingProvider(files={".gitlab-ci.yml": "stages: [lint, test]"})
+    report = asyncio.run(_engine(exec_provider=provider, plan_json=plan).run("Objectif"))
+
+    (resultat,) = report.resultats
+    assert resultat.ok
+    assert resultat.agent == "devops"
+    assert provider.generate_calls == []
+
+    # Exécution outillée dans un workspace isolé (hors cwd), nettoyé après capture,
+    # avec le format de sortie de la tâche transmis au runtime.
+    (appel,) = provider.run_calls
+    ws = Path(str(appel["workspace"]))
+    assert ws != Path.cwd()
+    assert not ws.exists()
+    assert "Configuration CI" in str(appel["prompt"])
+
+    # Le livrable remonte dans le rapport : fichiers produits + synthèse exploitable.
+    assert [f.chemin for f in resultat.fichiers] == [".gitlab-ci.yml"]
+    data = report.to_dict()
+    assert data["resultats"][0]["fichiers"] == [
+        {"chemin": ".gitlab-ci.yml", "contenu": "stages: [lint, test]"}
+    ]
+    assert ".gitlab-ci.yml" in report.synthese()
 
 
 def test_role_sans_runtime_livre_son_texte_meme_avec_fournisseur_outille():

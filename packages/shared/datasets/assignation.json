@@ -113,6 +113,26 @@
     },
     {
       "tache": {
+        "id": "secrets-pipeline",
+        "titre": "Sécuriser les secrets du pipeline",
+        "description": "Déplacer les secrets du pipeline de déploiement vers des variables protégées et masquées, et documenter la procédure de rotation des jetons.",
+        "competences_requises": ["ci-cd", "infra"],
+        "format_sortie": "Configuration CI sécurisée + procédure de rotation"
+      },
+      "agent_attendu": "devops"
+    },
+    {
+      "tache": {
+        "id": "supervision-alertes",
+        "titre": "Mettre en place la supervision applicative",
+        "description": "Installer la supervision de l'application (métriques, sondes de disponibilité) et configurer les alertes en cas d'indisponibilité.",
+        "competences_requises": ["monitoring"],
+        "format_sortie": "Configuration de supervision + règles d'alerte"
+      },
+      "agent_attendu": "devops"
+    },
+    {
+      "tache": {
         "id": "communique-presse",
         "titre": "Rédiger le communiqué de presse",
         "description": "Annoncer le lancement du produit à la presse spécialisée : messages clés, citation, contacts presse.",

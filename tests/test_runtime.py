@@ -6,8 +6,9 @@ agentique est pilotée par un `ModelProvider` factice qui écrit *réellement* d
 fichiers dans l'espace de travail fourni. Couvre :
 ① le runtime exécute une tâche de bout en bout et **capture un résultat exploitable**
    (compte-rendu + fichiers produits) dans un **contexte isolé** ;
-② les profils (`DEVELOPER_PROFILE`, `DATABASE_PROFILE`, `QA_PROFILE` — #45) paramètrent
-   le même runtime (modèle, outils, prompts, garde-fous du rôle) ;
+② les profils (`DEVELOPER_PROFILE`, `DATABASE_PROFILE`, `QA_PROFILE` — #45,
+   `DEVOPS_PROFILE` — #67) paramètrent le même runtime (modèle, outils, prompts,
+   garde-fous du rôle) ;
 ③ ajouter un rôle outillé = déclarer un profil, sans nouveau code (critère #35).
 Plus : capacité optionnelle refusée proprement, validation d'entrée, sérialisation.
 """
@@ -21,6 +22,7 @@ from maestro.agents import (
     DATABASE_PROFILE,
     DEFAULT_TOOLS,
     DEVELOPER_PROFILE,
+    DEVOPS_PROFILE,
     QA_PROFILE,
     TOOLED_PROFILES,
     AgentOutcome,
@@ -205,9 +207,37 @@ def test_profil_qa_prefixe_son_espace_de_travail():
     assert outcome.role == "QA / Testeur"
 
 
+def test_profil_devops_porte_le_garde_fou_deploiement_valide_par_un_humain():
+    # La particularité du rôle (docs/04 §3.4, #67) doit être dans le prompt système :
+    # jamais de déploiement vers un environnement réel, tout déploiement passe par une
+    # validation humaine, plafonds de ressources respectés.
+    provider = WritingProvider(files={".gitlab-ci.yml": "stages: [lint]"})
+    runtime = AgentRuntime(provider, DEVOPS_PROFILE)
+
+    asyncio.run(runtime.execute("Mets en place le pipeline CI"))
+
+    (call,) = provider.calls
+    systeme = (call["system_prompt"] or "").lower()
+    assert "ne déploies jamais" in systeme
+    assert "validation humaine" in systeme
+    assert "plafonds de ressources" in systeme
+    assert "Tâche d'infrastructure" in call["prompt"]
+    assert "validation humaine" in call["prompt"]
+
+
+def test_profil_devops_prefixe_son_espace_de_travail():
+    provider = WritingProvider(files={".gitlab-ci.yml": "stages: [lint]"})
+    runtime = AgentRuntime(provider, DEVOPS_PROFILE)
+
+    outcome = asyncio.run(runtime.execute("Tâche"))
+
+    assert "maestro-devops-" in Path(outcome.workspace).name
+    assert outcome.role == "DevOps"
+
+
 def test_les_profils_outilles_sont_ceux_du_catalogue():
     # Les clés de routage de la boucle : les noms d'agents du catalogue (#6).
-    assert [p.nom for p in TOOLED_PROFILES] == ["developpeur", "bdd", "qa"]
+    assert [p.nom for p in TOOLED_PROFILES] == ["developpeur", "bdd", "devops", "qa"]
     assert all(p.outils == DEFAULT_TOOLS for p in TOOLED_PROFILES)
 
 
@@ -215,28 +245,30 @@ def test_les_profils_outilles_sont_ceux_du_catalogue():
 
 
 def test_un_nouveau_role_outille_ne_demande_qu_un_profil():
-    # Un 3e rôle outillé fonctionne sans nouveau code : le runtime générique suffit.
-    devops = RoleProfile(
-        nom="devops",
-        role="DevOps",
+    # Un rôle outillé inédit fonctionne sans nouveau code : le runtime générique
+    # suffit. (Le DevOps, qui servait ici d'exemple, est un vrai profil depuis #67 —
+    # on prend le « Rédacteur technique », l'agent personnalisé de docs/04 §4.)
+    redacteur = RoleProfile(
+        nom="redacteur",
+        role="Rédacteur technique",
         modele="claude-sonnet-5",
         outils=DEFAULT_TOOLS,
-        prompt_systeme="Tu es l'agent DevOps de Maestro.",
-        intro_tache="Tâche d'infrastructure à réaliser de bout en bout :",
+        prompt_systeme="Tu es l'agent Rédacteur technique de Maestro.",
+        intro_tache="Tâche de rédaction à réaliser de bout en bout :",
         consignes="Écris les fichiers du livrable dans le répertoire courant.",
         consigne_finale="Résume ce que tu as produit.",
-        workspace_prefix="maestro-devops-",
+        workspace_prefix="maestro-redacteur-",
     )
-    provider = WritingProvider(files={"Dockerfile": "FROM python:3.12"})
-    runtime = AgentRuntime(provider, devops)
+    provider = WritingProvider(files={"guide.md": "# Guide"})
+    runtime = AgentRuntime(provider, redacteur)
 
-    outcome = asyncio.run(runtime.execute("Conteneurise l'app"))
+    outcome = asyncio.run(runtime.execute("Rédige le guide d'installation"))
 
-    assert outcome.role == "DevOps"
+    assert outcome.role == "Rédacteur technique"
     assert outcome.a_produit
     (call,) = provider.calls
-    assert "DevOps" in (call["system_prompt"] or "")
-    assert "maestro-devops-" in Path(str(call["workspace"])).name
+    assert "Rédacteur technique" in (call["system_prompt"] or "")
+    assert "maestro-redacteur-" in Path(str(call["workspace"])).name
 
 
 def test_le_runtime_accepte_des_surcharges_ponctuelles():

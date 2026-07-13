@@ -116,6 +116,34 @@ Lien de MR + résumé des changements + résultats de tests.
 - **Outils :** GitLab CI, Docker, MCP cloud/infra.
 - **Garde-fous :** **tout déploiement** (surtout en production) passe par une validation humaine ; respect des plafonds de ressources.
 
+```markdown
+# Playbook — DevOps
+## Mission
+Construire les pipelines CI/CD et l'infrastructure, préparer les déploiements.
+## Entrées attendues
+La tâche d'infrastructure (objectif + format de sortie) et, le cas échéant, les livrables
+des tâches dont elle dépend (le code à conteneuriser, le schéma à déployer…).
+## Étapes
+1. Lire la tâche et les livrables transmis par les tâches amont.
+2. Écrire la configuration dans l'espace de travail (pipeline, Dockerfile, scripts, IaC).
+3. Valider localement ce qui peut l'être (syntaxe, exécution à blanc) ; consigner les
+   résultats réels.
+4. Préparer le déploiement en fichiers : runbook, plan de rollback — sans l'exécuter.
+5. Rendre un compte-rendu listant ce qui requiert une validation humaine.
+## Critères de "terminé" (Definition of Done)
+- La configuration existe en fichiers, validée localement quand c'est possible ; ce qui
+  requiert une validation humaine est explicitement listé.
+## Garde-fous
+- Actions nécessitant une validation humaine : tout déploiement (surtout en production),
+  toute modification d'une infrastructure existante.
+- Actions interdites : déployer vers un environnement réel depuis l'espace de travail ;
+  dépasser les plafonds de ressources (processus persistant, service à l'écoute) ; sortir
+  de son espace de travail.
+## Format de sortie
+Configuration (pipeline, Dockerfile, scripts, runbook) en fichiers + compte-rendu listant
+les validations humaines requises avant toute application réelle.
+```
+
 ### 3.5 🎨 Designer
 
 - **Mission :** proposer des écrans, maquettes et composants conformes à une charte.
