@@ -6,7 +6,16 @@
  * (`maestro-api`, 127.0.0.1:8000). Le WebSocket dérive de la même URL.
  */
 
-import type { CoutExecution, EtatAgent, Tache, Validation } from "./types";
+import type {
+  CoutExecution,
+  EtatAgent,
+  PlaybookDetail,
+  PlaybookFiche,
+  Tache,
+  Validation,
+  VersionPlaybook,
+  VersionPlaybookDetail,
+} from "./types";
 
 const API_URL = (
   process.env.NEXT_PUBLIC_MAESTRO_API_URL ?? "http://localhost:8000"
@@ -48,16 +57,18 @@ export function chargerCoutExecution(runId: string): Promise<CoutExecution> {
 }
 
 /**
- * POST JSON dont l'échec relaye le `detail` du backend : c'est le message
- * montré à l'utilisateur (404 tâche inconnue, 409 demande déjà tranchée…).
+ * Envoi JSON (POST par défaut) dont l'échec relaye le `detail` du backend :
+ * c'est le message montré à l'utilisateur (404 tâche inconnue, 409 demande
+ * déjà tranchée, 422 contenu vide…).
  */
 async function envoyerJson(
   chemin: string,
   corps: unknown,
   refusParDefaut: string,
+  methode: "POST" | "PUT" = "POST",
 ): Promise<void> {
   const reponse = await fetch(`${API_URL}${chemin}`, {
-    method: "POST",
+    method: methode,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(corps),
   });
@@ -71,6 +82,66 @@ async function envoyerJson(
     }
     throw new Error(detail);
   }
+}
+
+/** Les playbooks des agents (#76) : version courante et provenance de chacun. */
+export function chargerPlaybooks(): Promise<PlaybookFiche[]> {
+  return chargerJson<PlaybookFiche[]>("/api/playbooks");
+}
+
+/** Le playbook courant d'un agent, contenu compris (celui chargé par le moteur). */
+export function chargerPlaybook(agent: string): Promise<PlaybookDetail> {
+  return chargerJson<PlaybookDetail>(
+    `/api/playbooks/${encodeURIComponent(agent)}`,
+  );
+}
+
+/** L'historique des versions du playbook d'un agent (métadonnées seules, EF-25). */
+export function chargerVersionsPlaybook(
+  agent: string,
+): Promise<VersionPlaybook[]> {
+  return chargerJson<VersionPlaybook[]>(
+    `/api/playbooks/${encodeURIComponent(agent)}/versions`,
+  );
+}
+
+/** Une version passée du playbook, contenu compris. */
+export function chargerVersionPlaybook(
+  agent: string,
+  version: number,
+): Promise<VersionPlaybookDetail> {
+  return chargerJson<VersionPlaybookDetail>(
+    `/api/playbooks/${encodeURIComponent(agent)}/versions/${version}`,
+  );
+}
+
+/**
+ * Publie une nouvelle version du playbook (`PUT /api/playbooks/{agent}`, #77) :
+ * le contenu intégral, qui devient la version courante chargée par les moteurs
+ * construits ensuite (l'application à chaud est le lot #78).
+ */
+export function ecrirePlaybook(agent: string, contenu: string): Promise<void> {
+  return envoyerJson(
+    `/api/playbooks/${encodeURIComponent(agent)}`,
+    { contenu },
+    "publication refusée",
+    "PUT",
+  );
+}
+
+/**
+ * Retour arrière (EF-25) : republie une version passée comme nouvelle courante
+ * (`POST /api/playbooks/{agent}/restaurer`). L'historique reste append-only.
+ */
+export function restaurerPlaybook(
+  agent: string,
+  version: number,
+): Promise<void> {
+  return envoyerJson(
+    `/api/playbooks/${encodeURIComponent(agent)}/restaurer`,
+    { version },
+    "restauration refusée",
+  );
 }
 
 /** Réassigne manuellement une tâche à un agent (`POST /api/taches/{id}/reassigner`). */

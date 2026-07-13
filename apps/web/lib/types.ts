@@ -102,6 +102,40 @@ export type Validation = {
   horodatage: string;
 };
 
+/**
+ * La fiche du playbook d'un agent (`GET /api/playbooks`, #76) : version
+ * courante et provenance. `version` 0 et `source` « defaut » tant que le
+ * playbook n'a jamais été édité (le contenu effectif est le prompt du code).
+ */
+export type PlaybookFiche = {
+  agent: string;
+  role: string;
+  version: number;
+  nb_versions: number;
+  source: string;
+  cree_le: string | null;
+};
+
+/** La fiche avec le contenu effectif (`GET /api/playbooks/{agent}`). */
+export type PlaybookDetail = PlaybookFiche & { contenu: string };
+
+/**
+ * Une entrée de l'historique d'un playbook
+ * (`GET /api/playbooks/{agent}/versions`, EF-25) — métadonnées seules.
+ */
+export type VersionPlaybook = {
+  agent: string;
+  version: number;
+  cree_le: string;
+};
+
+/** Une version passée, contenu compris (`GET .../versions/{version}`). */
+export type VersionPlaybookDetail = VersionPlaybook & { contenu: string };
+
+/** Provenances d'un playbook (maestro/controltower/app.py, #76). */
+export const PLAYBOOK_SOURCE_DEFAUT = "defaut";
+export const PLAYBOOK_SOURCE_STOCKAGE = "stockage";
+
 /** Statuts d'agent exposés par l'API (maestro/controltower/state.py). */
 export const AGENT_LIBRE = "libre";
 export const AGENT_OCCUPE = "occupe";
