@@ -130,16 +130,17 @@ class AgentRuntime:
 
     @classmethod
     def default(cls, profile: RoleProfile, settings: Settings | None = None) -> AgentRuntime:
-        """Runtime par défaut du POC pour `profile` : exécution outillée via Claude (config).
+        """Runtime par défaut pour `profile` : fournisseur et modèle issus de la config (#69).
 
-        Importe le fournisseur ici (et non en tête de module) pour ne pas lier le
-        runtime agnostique à un fournisseur concret : seul ce raccourci connaît Claude.
+        Importe la fabrique ici (et non en tête de module) pour ne pas lier le
+        runtime agnostique à un fournisseur concret : le choix vit dans la config
+        (`MAESTRO_PROVIDER`), plus dans le code. Un fournisseur sans exécution
+        outillée lèvera `UnsupportedCapability` à l'exécution — propagé tel quel.
         """
-        from maestro.providers.claude import ClaudeProvider
+        from maestro.providers.factory import provider_from_settings
 
         settings = settings or load_settings()
-        provider = ClaudeProvider.from_settings(settings)
-        return cls(provider, profile)
+        return cls(provider_from_settings(settings), profile, model=settings.model)
 
     async def execute(
         self,

@@ -84,7 +84,8 @@ class ModelProvider(ABC):
 
     Le moteur ne dépend que de cette interface : il résout un fournisseur par son
     nom (`ModelSpec.provider`), lui confie un modèle + un prompt, et récupère le
-    texte de la réponse. Le POC ne câble que Claude (voir `claude.ClaudeProvider`).
+    texte de la réponse. Sont câblés : Claude (`claude.ClaudeProvider`) et tout
+    endpoint compatible OpenAI (`openai_compat.OpenAICompatProvider`, #69).
     """
 
     #: Nom stable du fournisseur, tel que référencé par `ModelSpec.provider`.

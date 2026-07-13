@@ -1,4 +1,4 @@
-"""Fournisseur Claude — seule implémentation câblée au POC (tickets #32 puis #30).
+"""Fournisseur Claude — le fournisseur historique du POC (tickets #32 puis #30).
 
 Adapte l'interface `ModelProvider` au **Claude Agent SDK** (`claude_agent_sdk`),
 runtime des agents Claude. #30 y branche les **deux modes d'authentification** —

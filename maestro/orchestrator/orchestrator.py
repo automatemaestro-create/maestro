@@ -5,8 +5,8 @@ modèle **via la couche d'abstraction fournisseur** (`ModelProvider`, ticket #32
 extrait le tableau JSON de la réponse, puis le valide contre le schéma partagé.
 
 Le cœur (`plan`) ne dépend que de `ModelProvider` : il reste **agnostique du
-fournisseur**. Le raccourci `Orchestrator.default` câble Claude (seul fournisseur
-du POC) en dérivant les credentials de la config, sans polluer le cœur.
+fournisseur**. Le raccourci `Orchestrator.default` résout fournisseur et modèle
+depuis la config (`MAESTRO_PROVIDER`/`MAESTRO_MODEL`, #69), sans polluer le cœur.
 """
 
 from __future__ import annotations
@@ -34,16 +34,16 @@ class Orchestrator:
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> Orchestrator:
-        """Orchestrateur par défaut du POC : fournisseur Claude issu de la config.
+        """Orchestrateur par défaut : fournisseur et modèle issus de la config (#69).
 
-        Importé ici (et non en tête de module) pour ne pas lier le cœur agnostique
-        à un fournisseur concret : seul ce raccourci connaît Claude.
+        Importe la fabrique ici (et non en tête de module) pour ne pas lier le cœur
+        agnostique à un fournisseur concret : le choix vit dans la config
+        (`MAESTRO_PROVIDER`/`MAESTRO_MODEL`), plus dans le code.
         """
-        from maestro.providers.claude import ClaudeProvider
+        from maestro.providers.factory import default_model, provider_from_settings
 
         settings = settings or load_settings()
-        provider = ClaudeProvider.from_settings(settings)
-        return cls(provider, model=settings.anthropic_model)
+        return cls(provider_from_settings(settings), model=default_model(settings))
 
     async def plan(self, objective: str) -> list[Task]:
         """Produit le plan de tâches pour `objective`.

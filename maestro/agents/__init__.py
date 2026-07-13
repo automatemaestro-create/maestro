@@ -21,7 +21,7 @@ Ajouter un rôle outillé = déclarer un profil et l'inscrire dans `TOOLED_PROFI
 
 from __future__ import annotations
 
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.catalog import DEFAULT_AGENTS, Agent, agents_pour
 from maestro.agents.database import DATABASE_PROFILE
 from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
@@ -46,14 +46,20 @@ TOOLED_PROFILES: tuple[RoleProfile, ...] = (
 )
 
 
-def default_runtimes(provider: ModelProvider) -> dict[str, AgentRuntime]:
+def default_runtimes(
+    provider: ModelProvider, *, model: str | None = None
+) -> dict[str, AgentRuntime]:
     """Construit les runtimes outillés par défaut, indexés par nom d'agent du catalogue.
 
     C'est le câblage que consomme la boucle d'orchestration : une tâche routée vers
     l'un de ces noms (`developpeur`, `bdd`, `devops`, `designer`, `qa`) s'exécute via
-    son runtime outillé plutôt que par un appel texte.
+    son runtime outillé plutôt que par un appel texte. `model` (optionnel, #69)
+    impose un modèle unique à tous les rôles — sinon chacun garde celui de son profil.
     """
-    return {profile.nom: AgentRuntime(provider, profile) for profile in TOOLED_PROFILES}
+    return {
+        profile.nom: AgentRuntime(provider, profile, model=model)
+        for profile in TOOLED_PROFILES
+    }
 
 
 __all__ = [
@@ -69,5 +75,6 @@ __all__ = [
     "AgentOutcome",
     "AgentRuntime",
     "RoleProfile",
+    "agents_pour",
     "default_runtimes",
 ]

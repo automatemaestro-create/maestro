@@ -14,7 +14,7 @@ et synthétise. Le catalogue est **statique** au POC ; en V1 il proviendra de la
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 #: Modèle par défaut des exécutants au POC (Claude Sonnet, cf. docs/04 §2). Le rôle
 #: est indépendant du fournisseur/modèle : on peut le remplacer sans le toucher.
@@ -127,3 +127,15 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
         ),
     ),
 )
+
+
+def agents_pour(modele: str | None) -> tuple[Agent, ...]:
+    """Le catalogue par défaut, chaque agent basculé sur `modele` s'il est renseigné.
+
+    C'est la moitié « exécutants » de la bascule par configuration (#69) :
+    `MAESTRO_MODEL` impose un modèle unique à tous les rôles sans toucher au
+    catalogue ni à la logique d'agent. `None` rend le catalogue tel quel.
+    """
+    if not modele:
+        return DEFAULT_AGENTS
+    return tuple(replace(agent, modele=modele) for agent in DEFAULT_AGENTS)

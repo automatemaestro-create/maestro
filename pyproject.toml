@@ -24,6 +24,9 @@ dependencies = [
     "fastapi>=0.110",
     # Serveur ASGI de l'API (`maestro-api`) ; [standard] apporte le support WebSocket.
     "uvicorn[standard]>=0.30",
+    # Client HTTP asynchrone du fournisseur compatible OpenAI (ticket #69) ; sert
+    # aussi de client aux tests d'API (TestClient de Starlette, ticket #46).
+    "httpx2>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -35,9 +38,6 @@ dev = [
     "pytest-cov>=5.0",
     # Stubs de types pour jsonschema (mypy strict).
     "types-jsonschema>=4.0",
-    # Client des tests d'API (TestClient de Starlette, REST + WebSocket, ticket #46).
-    # Starlette a déprécié httpx au profit de httpx2 pour son TestClient.
-    "httpx2>=2.0",
 ]
 
 [project.scripts]

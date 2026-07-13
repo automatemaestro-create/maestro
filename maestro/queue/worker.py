@@ -19,9 +19,9 @@ Deux familles d'échec, deux canaux :
   et l'exception remonte à l'orchestrateur, qui la mue en échec de tâche.
 
 Le fournisseur du worker est construit **paresseusement** (au premier message),
-via une fabrique remplaçable par `configurer_worker` — le Claude du POC par
-défaut, un fournisseur factice dans les tests d'intégration. La configuration
-est propre au process du worker.
+via une fabrique remplaçable par `configurer_worker` — celui que désigne la
+config par défaut (`MAESTRO_PROVIDER`, #69), un fournisseur factice dans les
+tests d'intégration. La configuration est propre au process du worker.
 """
 
 from __future__ import annotations
@@ -34,6 +34,8 @@ from typing import Any
 from celery import shared_task
 from celery.signals import celeryd_after_setup
 
+from maestro.agents import default_runtimes
+from maestro.agents.catalog import agents_pour
 from maestro.config import load_settings
 from maestro.engine.executor import LocalExecutor, TaskResult
 from maestro.engine.guardrails import Guardrails
@@ -48,19 +50,19 @@ from maestro.telemetry import RunJournal
 ProviderFactory = Callable[[], ModelProvider]
 
 
-def _fabrique_claude() -> ModelProvider:
-    """Fournisseur par défaut des workers : le Claude du POC, configuré par l'env.
+def _fabrique_configuree() -> ModelProvider:
+    """Fournisseur par défaut des workers : celui que désigne la config (#69).
 
     Importé ici (et non en tête de module) pour garder le worker agnostique du
-    fournisseur — seule cette fabrique par défaut connaît Claude, comme
+    fournisseur — le choix vit dans la config (`MAESTRO_PROVIDER`), comme pour
     `OrchestrationEngine.default`.
     """
-    from maestro.providers.claude import ClaudeProvider
+    from maestro.providers.factory import provider_from_settings
 
-    return ClaudeProvider.from_settings(load_settings())
+    return provider_from_settings(load_settings())
 
 
-_provider_factory: ProviderFactory = _fabrique_claude
+_provider_factory: ProviderFactory = _fabrique_configuree
 _guardrails: Guardrails | None = None
 _executor: LocalExecutor | None = None
 
@@ -117,18 +119,30 @@ def configurer_worker(
 
 
 def reinitialiser_worker() -> None:
-    """Rétablit la configuration par défaut du worker (fabrique Claude, garde-fous défaut)."""
+    """Rétablit la configuration par défaut du worker (fabrique configurée, garde-fous défaut)."""
     global _provider_factory, _guardrails, _executor
-    _provider_factory = _fabrique_claude
+    _provider_factory = _fabrique_configuree
     _guardrails = None
     _executor = None
 
 
 def _executeur() -> LocalExecutor:
-    """L'exécuteur du process worker, construit paresseusement au premier message."""
+    """L'exécuteur du process worker, construit paresseusement au premier message.
+
+    Le modèle des exécutants suit la config du process (`MAESTRO_MODEL`, #69),
+    que la fabrique de fournisseur soit celle par défaut ou une injectée : la
+    config porte le modèle, la fabrique porte le fournisseur.
+    """
     global _executor
     if _executor is None:
-        _executor = LocalExecutor(_provider_factory(), guardrails=_guardrails)
+        provider = _provider_factory()
+        modele = load_settings().model
+        _executor = LocalExecutor(
+            provider,
+            agents=agents_pour(modele),
+            runtimes=default_runtimes(provider, model=modele),
+            guardrails=_guardrails,
+        )
     return _executor
 
 

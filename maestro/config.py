@@ -39,10 +39,23 @@ class Settings:
     claude_oauth_token: str | None
     database_url: str | None
     redis_url: str | None
+    #: Fournisseur de modèles de l'exécution (`MAESTRO_PROVIDER`) : nom d'un
+    #: fournisseur configurable (cf. `maestro.providers.factory`). Défaut : `claude`.
+    provider: str = "claude"
+    #: Modèle unique imposé à tous les rôles (`MAESTRO_MODEL`), ou None : chaque
+    #: rôle garde alors son modèle par défaut (catalogue/profils du POC).
+    model: str | None = None
+    #: Clé API de l'endpoint compatible OpenAI (`OPENAI_API_KEY`), ou None :
+    #: aucune en-tête d'auth (endpoints locaux type Ollama/vLLM).
+    openai_api_key: str | None = None
+    #: Racine de l'endpoint compatible OpenAI (`OPENAI_BASE_URL`) — l'endpoint
+    #: OpenAI officiel par défaut, remplaçable par tout endpoint au même dialecte.
+    openai_base_url: str = "https://api.openai.com/v1"
 
     @classmethod
     def from_env(cls) -> Settings:
         raw_mode = os.getenv("CLAUDE_AUTH_MODE")
+        raw_provider = os.getenv("MAESTRO_PROVIDER")
         return cls(
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
             anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
@@ -50,6 +63,11 @@ class Settings:
             claude_oauth_token=os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or None,
             database_url=os.getenv("DATABASE_URL") or None,
             redis_url=os.getenv("REDIS_URL") or None,
+            provider=(raw_provider.strip().lower() if raw_provider else "") or "claude",
+            model=(os.getenv("MAESTRO_MODEL") or "").strip() or None,
+            openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+            openai_base_url=os.getenv("OPENAI_BASE_URL", "").strip()
+            or "https://api.openai.com/v1",
         )
 
     def require_api_key(self) -> str:
