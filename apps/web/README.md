@@ -23,7 +23,13 @@ Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #4
   restaurer republie, rien n'est réécrit). Une version publiée s'applique **à
   chaud** (#78, EF-26) : le moteur relit la version courante à chaque tâche —
   elle vaut pour l'exécution suivante sans redémarrage, et la version utilisée
-  est tracée sur chaque résultat (`playbook_version`, journal compris).
+  est tracée sur chaque résultat (`playbook_version`, journal compris) ;
+- **Catalogue des agents** (#73, EF-03) : la page `/catalogue` liste les agents
+  du catalogue effectif (#72, API `/api/catalogue`) — ceux du code en lecture
+  seule, et les **personnalisés** qu'on y crée, modifie et supprime depuis un
+  formulaire complet (nom, rôle, compétences, fournisseur/modèle, playbook).
+  Un agent personnalisé est persisté hors du code et chargé par les moteurs
+  construits ensuite.
 
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 

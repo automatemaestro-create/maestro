@@ -132,9 +132,47 @@ export type VersionPlaybook = {
 /** Une version passée, contenu compris (`GET .../versions/{version}`). */
 export type VersionPlaybookDetail = VersionPlaybook & { contenu: string };
 
+/**
+ * Une fiche du catalogue d'agents (`GET /api/catalogue`, #72) : les agents par
+ * défaut du code (`source` « defaut ») et les personnalisés persistés
+ * (« personnalise »). Les dates ne sont posées que sur les personnalisés ;
+ * `modele` null signifie « le modèle par défaut des exécutants » et
+ * `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
+ */
+export type AgentCatalogue = {
+  nom: string;
+  role: string;
+  competences: string[];
+  modele: string | null;
+  fournisseur: string | null;
+  source: string;
+  cree_le: string | null;
+  modifie_le: string | null;
+};
+
+/** La fiche avec sa définition complète (`GET /api/catalogue/{nom}`). */
+export type AgentCatalogueDetail = AgentCatalogue & { playbook: string };
+
+/**
+ * Les champs éditables d'un agent personnalisé (#73) : le corps de
+ * `POST /api/catalogue` (avec le nom en plus) et de `PUT /api/catalogue/{nom}`
+ * (le nom vit dans l'URL — c'est la clé de routage, il ne change pas).
+ */
+export type DefinitionAgent = {
+  role: string;
+  competences: string[];
+  playbook: string;
+  modele: string | null;
+  fournisseur: string | null;
+};
+
 /** Provenances d'un playbook (maestro/controltower/app.py, #76). */
 export const PLAYBOOK_SOURCE_DEFAUT = "defaut";
 export const PLAYBOOK_SOURCE_STOCKAGE = "stockage";
+
+/** Provenances d'une fiche du catalogue d'agents (maestro/controltower/app.py, #72). */
+export const AGENT_SOURCE_DEFAUT = "defaut";
+export const AGENT_SOURCE_PERSONNALISE = "personnalise";
 
 /** Statuts d'agent exposés par l'API (maestro/controltower/state.py). */
 export const AGENT_LIBRE = "libre";
