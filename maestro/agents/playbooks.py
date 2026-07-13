@@ -13,10 +13,13 @@ jamais réécrit. Un agent jamais édité retombe sur son playbook « du code »
 (`PLAYBOOK_DEFAUTS`, les prompts système des profils outillés) : un dépôt vide
 reproduit exactement le comportement actuel, ce qui rend ce lot mergeable seul.
 
-Le chargement s'applique aux deux chemins d'exécution — catalogue texte
-(`avec_playbooks`) et runtimes outillés (`maestro.agents.default_runtimes`) — au
-**câblage** du moteur ; l'application à chaud en cours de vie du process est le
-lot #78. L'API de lecture/écriture vit dans `maestro.controltower.app`.
+Le chargement s'applique aux deux chemins d'exécution — appel texte et runtimes
+outillés — **à chaud** (#78) : l'exécuteur (`LocalExecutor(playbooks=...)`) relit
+la version courante à chaque tâche et trace la version utilisée sur le résultat
+comme au journal ; une édition publiée vaut pour l'exécution suivante, moteur et
+workers ne redémarrent pas. `avec_playbooks` et `default_runtimes(playbooks=...)`
+restent le chargement **figé au câblage** (un instantané, pour les usages
+une-fois). L'API de lecture/écriture vit dans `maestro.controltower.app`.
 """
 
 from __future__ import annotations
@@ -194,8 +197,10 @@ class PlaybookStore:
     def prompt_systeme(self, agent: str, defaut: str) -> str:
         """Le prompt système effectif de `agent` : la version courante stockée, sinon `defaut`.
 
-        C'est le point de chargement du moteur : tant que le playbook n'a jamais
-        été édité, chaque chemin d'exécution garde exactement son prompt du code.
+        Le point de chargement **figé au câblage** (`avec_playbooks`,
+        `default_runtimes(playbooks=...)`) ; l'exécuteur, lui, relit `lire()` à
+        chaque tâche (#78). Tant que le playbook n'a jamais été édité, chaque
+        chemin d'exécution garde exactement son prompt du code.
         """
         courant = self.lire(agent)
         return courant.contenu if courant is not None else defaut
@@ -210,9 +215,11 @@ class PlaybookStore:
 def avec_playbooks(agents: Sequence[Agent], store: PlaybookStore) -> tuple[Agent, ...]:
     """Le catalogue `agents`, chaque prompt système remplacé par son playbook stocké.
 
-    La moitié « exécution texte » du chargement (#76) — la moitié outillée passe
-    par `maestro.agents.default_runtimes(playbooks=...)`. Un agent jamais édité
-    garde son prompt du code : un dépôt vide rend le catalogue à l'identique.
+    La moitié « exécution texte » du chargement **figé au câblage** (#76) — la
+    moitié outillée passe par `maestro.agents.default_runtimes(playbooks=...)`.
+    C'est un instantané : le câblage par défaut du moteur passe désormais par
+    l'application à chaud (#78, `LocalExecutor(playbooks=...)`). Un agent jamais
+    édité garde son prompt du code : un dépôt vide rend le catalogue à l'identique.
     """
     return tuple(
         replace(agent, prompt_systeme=store.prompt_systeme(agent.nom, agent.prompt_systeme))

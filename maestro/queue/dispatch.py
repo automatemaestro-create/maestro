@@ -128,6 +128,9 @@ class CeleryExecutor(TaskExecutor):
             sortie=result.sortie,
             erreur=result.erreur,
             usage=result.usage,
+            # La version de playbook utilisée (#78) voyage avec le résultat : le
+            # worker l'a résolue et estampillée, l'orchestrateur la trace aussi.
+            playbook_version=result.playbook_version,
         )
         return result
 

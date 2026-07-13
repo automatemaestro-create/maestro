@@ -64,7 +64,7 @@ from typing import Any
 
 from maestro.agents import default_runtimes
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent, agents_pour
-from maestro.agents.playbooks import PlaybookStore, avec_playbooks
+from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.config import Settings, load_settings
 from maestro.engine.executor import (
@@ -164,6 +164,8 @@ class RunReport:
             lignes.append(f"- Agent : {r.role} (`{r.agent}`) — compétences : {competences}")
             if r.worker:
                 lignes.append(f"- Worker : `{r.worker}`")
+            if r.playbook_version is not None:
+                lignes.append(f"- Playbook : v{r.playbook_version}")
             lignes.append(f"- Usage : {r.usage.resume_court()}")
             if r.ok:
                 lignes.extend(["", r.sortie, ""])
@@ -205,6 +207,7 @@ class OrchestrationEngine:
         guardrails: Guardrails | None = None,
         executor: TaskExecutor | None = None,
         mailbox: Mailbox | None = None,
+        playbooks: PlaybookStore | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -217,11 +220,18 @@ class OrchestrationEngine:
         self._mailbox = mailbox
         # Frontière d'exécution (#41) : en process par défaut ; un exécuteur injecté
         # (ex. `maestro.queue.CeleryExecutor`) distribue les tâches à des workers.
+        # `playbooks` (#78) : le dépôt versionné que l'exécuteur local relit à
+        # chaque tâche — l'application à chaud ; ignoré si un exécuteur est injecté
+        # (en distribué, chaque worker câble le sien).
         self._executor = (
             executor
             if executor is not None
             else LocalExecutor(
-                provider, agents=agents, runtimes=runtimes, guardrails=guardrails
+                provider,
+                agents=agents,
+                runtimes=runtimes,
+                guardrails=guardrails,
+                playbooks=playbooks,
             )
         )
 
@@ -241,24 +251,25 @@ class OrchestrationEngine:
         geste l'orchestrateur, le catalogue d'exécutants et les runtimes outillés.
 
         Les prompts système des exécutants sont chargés depuis le **stockage
-        versionné des playbooks** (#76) : un agent édité depuis la Control Tower
-        exécute avec son playbook courant, un agent jamais édité garde son prompt
-        du code. Le chargement a lieu ici, à la construction du moteur —
-        l'application à chaud en cours de vie du process est le lot #78.
+        versionné des playbooks** (#76) et appliqués **à chaud** (#78) : le dépôt
+        est passé à l'exécuteur, qui relit la version courante à chaque tâche —
+        une édition publiée depuis la Control Tower vaut pour l'exécution
+        suivante, sans reconstruire le moteur ni redémarrer le process. Un agent
+        jamais édité garde son prompt du code.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
         settings = settings or load_settings()
         provider = provider_from_settings(settings)
         orchestrator = Orchestrator(provider, model=default_model(settings))
-        playbooks = PlaybookStore.default(settings)
         return cls(
             provider,
             orchestrator,
-            agents=avec_playbooks(agents_pour(settings.model), playbooks),
-            runtimes=default_runtimes(provider, model=settings.model, playbooks=playbooks),
+            agents=agents_pour(settings.model),
+            runtimes=default_runtimes(provider, model=settings.model),
             guardrails=guardrails,
             mailbox=mailbox,
+            playbooks=PlaybookStore.default(settings),
         )
 
     async def run(self, objective: str, *, journal: RunJournal | None = None) -> RunReport:

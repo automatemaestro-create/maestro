@@ -36,6 +36,9 @@ class StepRecord:
 
     `etape` est l'identifiant de l'étape dans l'exécution (id de tâche, ou
     « planification ») ; `entree`/`sortie`/`erreur` sont déjà expurgées des secrets.
+    `playbook_version` (#78) est la version du playbook stocké avec laquelle
+    l'agent a exécuté la tâche — None hors tâche d'agent, ou si l'agent a exécuté
+    avec son prompt du code (playbook jamais édité).
     """
 
     run_id: str
@@ -49,6 +52,7 @@ class StepRecord:
     sortie: str
     erreur: str | None
     usage: StepUsage
+    playbook_version: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trace en dict JSON-sérialisable (la ligne du journal)."""
@@ -64,6 +68,7 @@ class StepRecord:
             "sortie": self.sortie,
             "erreur": self.erreur,
             "usage": self.usage.to_dict(),
+            "playbook_version": self.playbook_version,
         }
 
 
@@ -110,6 +115,7 @@ class RunJournal:
         sortie: str,
         usage: StepUsage,
         erreur: str | None = None,
+        playbook_version: int | None = None,
     ) -> StepRecord:
         """Consigne une étape (textes expurgés des secrets) et émet sa ligne JSON."""
         record = StepRecord(
@@ -124,6 +130,7 @@ class RunJournal:
             sortie=redact_secrets(sortie),
             erreur=redact_secrets(erreur) if erreur is not None else None,
             usage=usage,
+            playbook_version=playbook_version,
         )
         self._records.append(record)
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))

@@ -115,6 +115,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[dict[str, Any], .
             "statut": statut,
             "outils": usage.get("outils", []),
             "usage": usage,
+            "playbook_version": record.get("playbook_version"),
         },
     }
     appels = usage.get("appels")
