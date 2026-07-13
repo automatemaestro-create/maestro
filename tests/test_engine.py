@@ -5,10 +5,10 @@ Aucun appel réseau : la **planification** et l'**exécution** sont pilotées pa
 ① au moins 3 tâches sont assignées et exécutées par les **bons agents** (ordre des
    dépendances respecté, résultats des dépendances transmis) ;
 ② les résultats sont **agrégés** (RunReport : synthèse + rapport structuré) ;
-et ceux du ticket #35 (étendus au QA par #45, au DevOps par #67) :
-③ une tâche routée vers `developpeur`/`bdd`/`qa`/`devops` s'exécute via le **runtime
-   outillé** dans un workspace isolé, et les fichiers produits remontent dans le
-   RunReport (`to_dict()` et `synthese()`) ;
+et ceux du ticket #35 (étendus au QA par #45, au DevOps par #67, au Designer par #68) :
+③ une tâche routée vers `developpeur`/`bdd`/`qa`/`devops`/`designer` s'exécute via le
+   **runtime outillé** dans un workspace isolé, et les fichiers produits remontent dans
+   le RunReport (`to_dict()` et `synthese()`) ;
 ④ les rôles sans runtime outillé livrent leur texte via `generate()` — y compris en
    **repli** quand le fournisseur n'a pas d'exécution outillée ;
 et ceux du ticket #8 :
@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pytest
 
+from maestro.agents import default_runtimes
 from maestro.engine import (
     STATUT_BLOQUEE,
     STATUT_ECHEC,
@@ -355,9 +356,54 @@ def test_tache_devops_s_execute_de_bout_en_bout_via_le_runtime_outille():
     assert ".gitlab-ci.yml" in report.synthese()
 
 
+def test_tache_designer_s_execute_de_bout_en_bout_via_le_runtime_outille():
+    # Critère ③ étendu par #68 : une tâche routée vers `designer` (compétences de son
+    # domaine) s'exécute via le runtime outillé dans un workspace isolé, et son
+    # livrable (fichiers produits) remonte dans le RunReport — résultat exploitable.
+    plan = json.dumps(
+        [
+            {
+                "id": "maquette-connexion",
+                "titre": "Maquette de l'écran de connexion",
+                "description": "Concevoir la maquette de l'écran de connexion selon la charte.",
+                "competences_requises": ["ui", "figma"],
+                "format_sortie": "Spec d'écran",
+                "dependances": [],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    provider = ToolingProvider(files={"ecran-connexion.md": "# Écran de connexion"})
+    report = asyncio.run(_engine(exec_provider=provider, plan_json=plan).run("Objectif"))
+
+    (resultat,) = report.resultats
+    assert resultat.ok
+    assert resultat.agent == "designer"
+    assert provider.generate_calls == []
+
+    # Exécution outillée dans un workspace isolé (hors cwd), nettoyé après capture,
+    # avec le format de sortie de la tâche transmis au runtime.
+    (appel,) = provider.run_calls
+    ws = Path(str(appel["workspace"]))
+    assert ws != Path.cwd()
+    assert not ws.exists()
+    assert "Spec d'écran" in str(appel["prompt"])
+
+    # Le livrable remonte dans le rapport : fichiers produits + synthèse exploitable.
+    assert [f.chemin for f in resultat.fichiers] == ["ecran-connexion.md"]
+    data = report.to_dict()
+    assert data["resultats"][0]["fichiers"] == [
+        {"chemin": "ecran-connexion.md", "contenu": "# Écran de connexion"}
+    ]
+    assert "ecran-connexion.md" in report.synthese()
+
+
 def test_role_sans_runtime_livre_son_texte_meme_avec_fournisseur_outille():
-    # Critère ④ : un rôle *sans* profil outillé (designer) reste sur le chemin texte
-    # (generate) même quand le fournisseur sait exécuter des agents outillés.
+    # Critère ④ : un rôle sans runtime outillé reste sur le chemin texte (generate)
+    # même quand le fournisseur sait exécuter des agents outillés. Les cinq rôles du
+    # catalogue étant tous outillés depuis #68, on matérialise le cas en retirant le
+    # designer du câblage — le comportement qu'aurait tout agent ajouté au catalogue
+    # avant de recevoir son profil.
     plan = json.dumps(
         [
             {
@@ -372,7 +418,12 @@ def test_role_sans_runtime_livre_son_texte_meme_avec_fournisseur_outille():
         ensure_ascii=False,
     )
     provider = ToolingProvider(files={"livrable.txt": "contenu"})
-    report = asyncio.run(_engine(exec_provider=provider, plan_json=plan).run("Objectif"))
+    runtimes = default_runtimes(provider)
+    del runtimes["designer"]
+    orchestrator = Orchestrator(ConstantProvider(plan), model="claude-opus-4-8")
+    engine = OrchestrationEngine(provider, orchestrator, runtimes=runtimes)
+
+    report = asyncio.run(engine.run("Objectif"))
 
     (resultat,) = report.resultats
     assert resultat.ok

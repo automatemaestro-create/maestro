@@ -133,6 +133,26 @@
     },
     {
       "tache": {
+        "id": "design-system-composants",
+        "titre": "Décliner les composants du design system",
+        "description": "Spécifier les composants réutilisables (boutons, formulaires, alertes) avec leurs états et leurs design tokens, conformément à la charte.",
+        "competences_requises": ["design-system", "ui"],
+        "format_sortie": "Guide de composants + design tokens"
+      },
+      "agent_attendu": "designer"
+    },
+    {
+      "tache": {
+        "id": "parcours-onboarding",
+        "titre": "Prototyper le parcours d'onboarding",
+        "description": "Concevoir le parcours d'accueil des nouveaux utilisateurs : enchaînement des écrans, wireframes basse fidélité et points de friction à lever.",
+        "competences_requises": ["prototypage"],
+        "format_sortie": "Wireframes du parcours + notes UX"
+      },
+      "agent_attendu": "designer"
+    },
+    {
+      "tache": {
         "id": "communique-presse",
         "titre": "Rédiger le communiqué de presse",
         "description": "Annoncer le lancement du produit à la presse spécialisée : messages clés, citation, contacts presse.",
