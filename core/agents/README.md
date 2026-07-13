@@ -15,7 +15,8 @@ et exécutable comme un agent par défaut.
   d'origine.
 - Lecture/écriture par le code : `maestro.agents.store.AgentStore` ; par HTTP :
   les endpoints `/api/catalogue` de l'API Control Tower
-  (`maestro/controltower/app.py`) — création, modification, suppression.
+  (`maestro/controltower/app.py`) — création, modification, suppression ; depuis
+  l'UI : la page `/catalogue` de la Control Tower (#73, `apps/web`).
 - Racine remplaçable par `MAESTRO_AGENTS_DIR` (cf. `.env.example`).
 
 Les définitions écrites ici sont des **données d'exécution** : elles ne sont pas
@@ -27,3 +28,6 @@ même stockage au POC (fichiers partagés). Sans runtime outillé, un agent
 personnalisé exécute par le chemin texte, cadré par son playbook et son modèle.
 En V1, ce stockage passera en base (entité `AGENT`, docs/03) sans changer le
 contrat.
+
+Tests (#71) : `tests/test_agent_store.py` (dépôt, catalogue effectif, routage,
+exécution) et `tests/test_controltower.py` §⑦ (API `/api/catalogue`).

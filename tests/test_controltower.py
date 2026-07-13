@@ -27,7 +27,15 @@ critères d'acceptation du ticket #46 :
    playbooks du catalogue (défaut du code tant que jamais édité), publication
    d'une nouvelle version, historique consultable, retour arrière par
    republication — et les refus : agent hors catalogue (404, sans création de
-   dossier orphelin), contenu vide (422), version inconnue (404).
+   dossier orphelin), contenu vide (422), version inconnue (404) ;
+⑦ catalogue d'agents (#72, tests différés du parent #70 → #71) : liste du
+   catalogue effectif (agents du code puis personnalisés, avec provenance),
+   création/modification/suppression d'un agent personnalisé — répercutées
+   immédiatement sur la vue `GET /api/agents` — et les refus : nom déjà pris
+   (409), agent par défaut intouchable (403), définition invalide (422), nom
+   inconnu ou hors slug (404, sans fichier orphelin). Le dépôt et le catalogue
+   effectif eux-mêmes (routage, exécution) sont couverts dans
+   `tests/test_agent_store.py`.
 """
 
 import asyncio
@@ -36,7 +44,9 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from maestro.agents.catalog import DEFAULT_AGENTS
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
+from maestro.agents.store import AgentDefinition, AgentStore
 from maestro.controltower import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
@@ -739,6 +749,196 @@ def test_une_version_inconnue_rend_404(client_pb):
     ).status_code == 404
     # Le refus n'a rien publié : l'historique n'a pas bougé.
     assert client_pb.get("/api/playbooks/qa").json()["version"] == 1
+
+
+# ------------------------------------------------- ⑦ Catalogue d'agents (#72)
+
+
+@pytest.fixture()
+def depot_agents(tmp_path):
+    """Dépôt d'agents personnalisés vierge injecté dans l'app — jamais le `core/agents/` réel."""
+    return AgentStore(tmp_path / "agents")
+
+
+@pytest.fixture()
+def client_cat(bus, depot_agents):
+    """TestClient de l'app sur dépôt temporaire (état par défaut : catalogue effectif)."""
+    with TestClient(create_app(bus=bus, agents_store=depot_agents)) as client:
+        yield client
+
+
+def _corps_agent(nom="redacteur", **overrides):
+    """Corps de création valide prêt à l'emploi (un rédacteur technique)."""
+    corps = {
+        "nom": nom,
+        "role": "Rédacteur technique",
+        "competences": ["redaction", "documentation"],
+        "playbook": "Tu rédiges la documentation technique demandée.",
+    }
+    corps.update(overrides)
+    return corps
+
+
+def test_le_catalogue_expose_les_agents_du_code_puis_les_personnalises(client_cat):
+    client_cat.post("/api/catalogue", json=_corps_agent())
+
+    fiches = client_cat.get("/api/catalogue").json()
+
+    # L'ordre est celui du catalogue effectif — celui que chargent les moteurs.
+    assert [f["nom"] for f in fiches[: len(DEFAULT_AGENTS)]] == [
+        a.nom for a in DEFAULT_AGENTS
+    ]
+    assert all(f["source"] == "defaut" for f in fiches[: len(DEFAULT_AGENTS)])
+    assert fiches[-1]["nom"] == "redacteur"
+    assert fiches[-1]["source"] == "personnalise"
+    assert all("playbook" not in f for f in fiches)  # métadonnées seules sur la liste
+
+
+def test_la_fiche_d_un_agent_par_defaut_rend_sa_definition_du_code(client_cat):
+    fiche = client_cat.get("/api/catalogue/developpeur").json()
+
+    developpeur = next(a for a in DEFAULT_AGENTS if a.nom == "developpeur")
+    assert fiche["source"] == "defaut" and fiche["role"] == developpeur.role
+    assert fiche["playbook"] == developpeur.prompt_systeme
+    assert fiche["cree_le"] is None  # la définition vit dans le code, sans dates
+
+
+def test_creer_un_agent_le_rend_visible_catalogue_et_vue_agents(client_cat, depot_agents):
+    reponse = client_cat.post("/api/catalogue", json=_corps_agent())
+
+    assert reponse.status_code == 201
+    fiche = reponse.json()
+    assert fiche["source"] == "personnalise" and fiche["cree_le"]
+    assert fiche["playbook"] == "Tu rédiges la documentation technique demandée."
+    # Persisté hors du code : le dépôt porte le fichier de la définition.
+    assert (depot_agents.racine / "redacteur.json").is_file()
+    # Et l'agent entre immédiatement dans la vue de supervision (cible de
+    # réassignation manuelle), sans attendre un redémarrage.
+    par_nom = {a["nom"]: a for a in client_cat.get("/api/agents").json()}
+    assert par_nom["redacteur"]["role"] == "Rédacteur technique"
+
+
+def test_un_agent_persiste_est_present_des_le_demarrage(bus, depot_agents):
+    depot_agents.ecrire(
+        AgentDefinition(
+            nom="veilleur",
+            role="Veille technologique",
+            competences=("veille",),
+            playbook="Tu fais la veille.",
+        )
+    )
+
+    with TestClient(create_app(bus=bus, agents_store=depot_agents)) as client:
+        noms = {a["nom"] for a in client.get("/api/agents").json()}
+
+    # L'état par défaut se construit sur le catalogue effectif : les agents
+    # personnalisés déjà persistés sont là dès le démarrage, comme ceux du code.
+    assert "veilleur" in noms
+
+
+@pytest.mark.parametrize("nom", ["developpeur", "orchestrateur"])
+def test_creer_sous_un_nom_reserve_est_refuse_en_409(client_cat, nom):
+    reponse = client_cat.post("/api/catalogue", json=_corps_agent(nom=nom))
+
+    assert reponse.status_code == 409
+
+
+def test_creer_deux_fois_le_meme_nom_est_refuse_en_409(client_cat):
+    assert client_cat.post("/api/catalogue", json=_corps_agent()).status_code == 201
+    reponse = client_cat.post("/api/catalogue", json=_corps_agent())
+
+    assert reponse.status_code == 409
+    # La modification passe par PUT, pas par une recréation.
+    assert "PUT /api/catalogue" in reponse.json()["detail"]
+
+
+def test_creer_une_definition_invalide_est_refuse_en_422(client_cat, depot_agents):
+    sans_competence = client_cat.post(
+        "/api/catalogue", json=_corps_agent(competences=[])
+    )
+    nom_hors_slug = client_cat.post(
+        "/api/catalogue", json=_corps_agent(nom="../evasion")
+    )
+
+    assert sans_competence.status_code == 422
+    assert nom_hors_slug.status_code == 422
+    # Aucun refus n'a rien persisté — pas de fichier orphelin dans le dépôt.
+    assert depot_agents.noms() == ()
+
+
+def test_modifier_remplace_la_definition_et_garde_la_date_de_creation(client_cat):
+    creee = client_cat.post("/api/catalogue", json=_corps_agent()).json()
+
+    reponse = client_cat.put(
+        "/api/catalogue/redacteur",
+        json={
+            "role": "Rédacteur senior",
+            "competences": ["redaction"],
+            "playbook": "Consignes éditées.",
+        },
+    )
+
+    assert reponse.status_code == 200
+    fiche = client_cat.get("/api/catalogue/redacteur").json()
+    assert fiche["role"] == "Rédacteur senior"
+    assert fiche["playbook"] == "Consignes éditées."
+    assert fiche["cree_le"] == creee["cree_le"]  # remplacement, pas re-création
+    # La vue de supervision suit le nouveau rôle.
+    par_nom = {a["nom"]: a for a in client_cat.get("/api/agents").json()}
+    assert par_nom["redacteur"]["role"] == "Rédacteur senior"
+
+
+def test_modifier_une_definition_invalide_est_refuse_en_422(client_cat):
+    client_cat.post("/api/catalogue", json=_corps_agent())
+
+    reponse = client_cat.put(
+        "/api/catalogue/redacteur",
+        json={"role": "Rédacteur", "competences": [], "playbook": "x"},
+    )
+
+    assert reponse.status_code == 422
+    # Le refus n'a pas touché la définition en place.
+    assert client_cat.get("/api/catalogue/redacteur").json()["competences"] == [
+        "redaction", "documentation",
+    ]
+
+
+def test_supprimer_retire_l_agent_du_catalogue_et_de_la_vue(client_cat, depot_agents):
+    client_cat.post("/api/catalogue", json=_corps_agent())
+
+    reponse = client_cat.delete("/api/catalogue/redacteur")
+
+    assert reponse.status_code == 200
+    assert reponse.json() == {"nom": "redacteur", "supprime": True}
+    assert depot_agents.noms() == ()
+    assert client_cat.get("/api/catalogue/redacteur").status_code == 404
+    noms = {a["nom"] for a in client_cat.get("/api/agents").json()}
+    assert "redacteur" not in noms
+
+
+def test_un_agent_par_defaut_est_intouchable_en_403(client_cat):
+    """Défini par le code : ni modifiable ni supprimable ici (playbook via /api/playbooks)."""
+    modification = client_cat.put(
+        "/api/catalogue/developpeur",
+        json={"role": "Autre", "competences": ["x"], "playbook": "x"},
+    )
+    suppression = client_cat.delete("/api/catalogue/developpeur")
+
+    assert modification.status_code == 403
+    assert suppression.status_code == 403
+    assert "/api/playbooks" in modification.json()["detail"]
+
+
+def test_un_nom_inconnu_ou_hors_slug_rend_404(client_cat, depot_agents):
+    # Inconnu du dépôt, ou hors slug (une faute d'URL n'est jamais un chemin disque).
+    for nom in ("stagiaire", "Redacteur", "a.b"):
+        assert client_cat.get(f"/api/catalogue/{nom}").status_code == 404
+        assert client_cat.put(
+            f"/api/catalogue/{nom}",
+            json={"role": "x", "competences": ["x"], "playbook": "x"},
+        ).status_code == 404
+        assert client_cat.delete(f"/api/catalogue/{nom}").status_code == 404
+    assert depot_agents.noms() == ()
 
 
 # --------------------------------------------------------- Bus & modèle

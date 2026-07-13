@@ -222,6 +222,17 @@ Depuis la Control Tower, l'utilisateur peut créer un agent en définissant :
 5. **Fournisseur + modèle** (selon complexité, coût, souveraineté) — Claude, OpenAI, Google, modèle ouvert/local… via la **couche d'abstraction** ; par défaut, le Claude du POC.
 6. **Playbook** initial (workflow), ensuite versionné.
 
+**Disponible au POC** (EF-03, tickets #70/#72/#73) : la définition — nom, rôle,
+compétences, playbook (qui sert de prompt système d'exécution), fournisseur/modèle —
+se crée depuis la page `/catalogue` de la Control Tower ou l'API `/api/catalogue`,
+et se **persiste hors du code** (`core/agents/<nom>.json`, racine remplaçable par
+`MAESTRO_AGENTS_DIR`). Le catalogue effectif d'une exécution assemble les agents par
+défaut du code puis les personnalisés : un agent créé est **routable et exécutable**
+par les moteurs construits ensuite ([guide de démarrage §6.3](./07-guide-de-demarrage.md)).
+Restent pour la suite : la **liaison d'outils** scopés (au POC, un agent personnalisé
+exécute par le chemin texte, sans runtime outillé) et l'**exécution multi-fournisseurs**
+(le champ `fournisseur` est déclaratif, le moteur exécute sur `MAESTRO_PROVIDER`).
+
 ---
 
 ## 5. Coordination et communication entre agents

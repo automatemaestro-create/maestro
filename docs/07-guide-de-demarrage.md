@@ -192,3 +192,27 @@ que l'API). La version utilisée est **tracée** sur chaque tâche (`playbook_ve
 le résultat, au journal #8 et dans les métadonnées Langfuse) ; un agent jamais édité
 garde exactement son prompt du code.
 Détails : [`core/playbooks/README.md`](../core/playbooks/README.md).
+
+### 6.3 — Agents personnalisés : le catalogue devient dynamique (disponible — tickets #72/#73)
+
+Le catalogue d'agents n'est plus figé au code (EF-03) : un **agent personnalisé** se
+définit entièrement hors du code — nom, rôle, compétences (tags de routage), playbook
+(son prompt système d'exécution), fournisseur/modèle — et se persiste dans un dépôt
+dédié (`core/agents/`, un fichier `<nom>.json` par agent, racine remplaçable par
+`MAESTRO_AGENTS_DIR`). La création passe par la page `/catalogue` de la Control
+Tower (#73) ou par l'API (`GET/POST /api/catalogue`,
+`GET/PUT/DELETE /api/catalogue/{nom}`).
+
+Le **catalogue effectif** d'une exécution assemble les agents par défaut du code
+(inchangés, prioritaires à score de routage égal) puis les personnalisés du dépôt :
+un agent créé est **routable et exécutable** comme un agent du code — la tâche qui
+porte ses compétences lui est assignée, et il produit son livrable cadré par son
+playbook et son modèle. Le chargement se fait **au câblage** (construction du moteur,
+premier message d'un worker, démarrage de l'API) : un agent créé vaut pour les moteurs
+construits ensuite ; workers et API doivent voir le même stockage. Les agents par
+défaut restent définis par le code : leur fiche est en lecture seule dans le catalogue
+(403 en modification/suppression), seul leur playbook s'édite — via `/api/playbooks`
+(§6.2). Au POC, le champ `fournisseur` est déclaratif (le moteur exécute sur le
+fournisseur configuré, `MAESTRO_PROVIDER`) et un agent personnalisé exécute par le
+chemin texte (pas de runtime outillé).
+Détails : [`core/agents/README.md`](../core/agents/README.md).
