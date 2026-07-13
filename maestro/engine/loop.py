@@ -29,7 +29,8 @@ rapport suivent l'ordre topologique du plan, pas l'ordre d'achèvement.
 défaut — les plans du POC sont petits).
 
 Le moteur ne dépend que de `ModelProvider` : il reste **agnostique du fournisseur**.
-`OrchestrationEngine.default` câble le Claude du POC, comme `Orchestrator.default`.
+`OrchestrationEngine.default` résout fournisseur et modèle depuis la config
+(`MAESTRO_PROVIDER`/`MAESTRO_MODEL`, #69), comme `Orchestrator.default`.
 
 La boucle est **résiliente** : un échec de routage ou d'exécution est consigné dans
 le résultat de la tâche (`statut = "echec"`) et n'interrompt pas les tâches
@@ -61,7 +62,8 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents import default_runtimes
+from maestro.agents.catalog import DEFAULT_AGENTS, Agent, agents_pour
 from maestro.agents.runtime import AgentRuntime
 from maestro.config import Settings, load_settings
 from maestro.engine.executor import (
@@ -230,17 +232,26 @@ class OrchestrationEngine:
         guardrails: Guardrails | None = None,
         mailbox: Mailbox | None = None,
     ) -> OrchestrationEngine:
-        """Moteur par défaut du POC : planification et exécution via Claude (config).
+        """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
-        Importe le fournisseur ici (et non en tête de module) pour ne pas lier le
-        moteur agnostique à un fournisseur concret : seul ce raccourci connaît Claude.
+        Importe la fabrique ici (et non en tête de module) pour ne pas lier le
+        moteur agnostique à un fournisseur concret : le choix vit dans la config
+        (`MAESTRO_PROVIDER`). `MAESTRO_MODEL`, s'il est renseigné, bascule d'un même
+        geste l'orchestrateur, le catalogue d'exécutants et les runtimes outillés.
         """
-        from maestro.providers.claude import ClaudeProvider
+        from maestro.providers.factory import default_model, provider_from_settings
 
         settings = settings or load_settings()
-        provider = ClaudeProvider.from_settings(settings)
-        orchestrator = Orchestrator(provider, model=settings.anthropic_model)
-        return cls(provider, orchestrator, guardrails=guardrails, mailbox=mailbox)
+        provider = provider_from_settings(settings)
+        orchestrator = Orchestrator(provider, model=default_model(settings))
+        return cls(
+            provider,
+            orchestrator,
+            agents=agents_pour(settings.model),
+            runtimes=default_runtimes(provider, model=settings.model),
+            guardrails=guardrails,
+            mailbox=mailbox,
+        )
 
     async def run(self, objective: str, *, journal: RunJournal | None = None) -> RunReport:
         """Exécute la boucle complète pour `objective` et renvoie l'agrégat.

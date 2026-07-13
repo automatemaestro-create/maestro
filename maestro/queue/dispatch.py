@@ -156,18 +156,19 @@ def create_distributed_engine(
 ) -> OrchestrationEngine:
     """Boucle d'orchestration branchée sur la file : le pendant distribué de `default`.
 
-    La **planification** reste dans le process de l'orchestrateur (Claude du POC,
-    comme `OrchestrationEngine.default`) ; l'**exécution** des tâches part dans
-    la file, vers les workers démarrés par ailleurs (`celery -A maestro.queue
-    worker`). Les garde-fous d'exécution (#9) s'appliquent côté worker — voir
-    `maestro.queue.worker.configurer_worker`. `mailbox` (#44) branche la
-    messagerie inter-agents (handoff observable) sur la boucle, comme en local.
+    La **planification** reste dans le process de l'orchestrateur (fournisseur
+    désigné par la config, comme `OrchestrationEngine.default`, #69) ;
+    l'**exécution** des tâches part dans la file, vers les workers démarrés par
+    ailleurs (`celery -A maestro.queue worker`). Les garde-fous d'exécution (#9)
+    s'appliquent côté worker — voir `maestro.queue.worker.configurer_worker`.
+    `mailbox` (#44) branche la messagerie inter-agents (handoff observable) sur
+    la boucle, comme en local.
     """
-    from maestro.providers.claude import ClaudeProvider
+    from maestro.providers.factory import default_model, provider_from_settings
 
     settings = settings or load_settings()
-    provider = ClaudeProvider.from_settings(settings)
-    orchestrator = Orchestrator(provider, model=settings.anthropic_model)
+    provider = provider_from_settings(settings)
+    orchestrator = Orchestrator(provider, model=default_model(settings))
     return OrchestrationEngine(
         provider,
         orchestrator,
