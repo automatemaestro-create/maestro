@@ -92,7 +92,7 @@ class _MoteurFactice:
     def __init__(self, report):
         self._report = report
 
-    async def run(self, objectif):
+    async def run(self, objectif, *, journal=None):
         return self._report
 
 

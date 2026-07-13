@@ -22,8 +22,9 @@ le time-out (par tâche) sont **armés par défaut** (bonne pratique docs/07 §4
 ajustables par options ; une tâche sensible déclenche une validation console
 (refusée si l'entrée n'est pas interactive).
 
-L'export Langfuse (#81) s'applique comme pour `maestro-run` : purement
-configuratif (clés `LANGFUSE_*` dans l'environnement), sans option dédiée.
+L'export Langfuse (#81) et l'évaluation en fin de run (#80 : scores de
+réussite sur la trace) s'appliquent comme pour `maestro-run` : purement
+configuratifs (clés `LANGFUSE_*` dans l'environnement), sans option dédiée.
 
 Code de sortie : 0 si la démo tourne de bout en bout **et** que le critère de
 sortie est validé ; 1 sinon (tâche en échec, critère non rempli, erreur de
@@ -46,7 +47,7 @@ from maestro.engine.guardrails import Guardrails
 from maestro.engine.loop import OrchestrationEngine, RunReport
 from maestro.engine.runner import run_borne
 from maestro.orchestrator.errors import OrchestratorError
-from maestro.telemetry import RunJournal, activer_export_langfuse
+from maestro.telemetry import RunJournal, activer_export_langfuse, evaluer_run_langfuse
 
 #: Objectif par défaut de la démo : deux domaines de compétences (schéma/SQL puis
 #: backend/API) pour que le plan mobilise les agents BDD **et** Développeur. Le
@@ -184,13 +185,21 @@ def _nom_sur(task_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "-", task_id) or "tache"
 
 
-def run_demo(engine: OrchestrationEngine, *, objectif: str, dossier: Path) -> int:
+def run_demo(
+    engine: OrchestrationEngine,
+    *,
+    objectif: str,
+    dossier: Path,
+    journal: RunJournal | None = None,
+) -> int:
     """Déroule la démo sur `engine` : exécution, artefacts, verdict ; renvoie le code de sortie.
 
     Séparée de `main()` pour être exerçable telle quelle sur un moteur factice
     (tests/test_demo.py) — la vraie démo et les tests partagent ce même parcours.
+    Un `journal` injecté permet à l'appelant de relire l'exécution consignée
+    (c'est ainsi que `main()` l'évalue dans Langfuse, #80).
     """
-    journal = RunJournal()
+    journal = journal if journal is not None else RunJournal()
     try:
         # Arrêt borné (#64) : une réalisation détachée par le time-out ne peut pas
         # suspendre la fermeture de la boucle — artefacts et verdict sont toujours rendus.
@@ -272,7 +281,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Configuration : {exc}", file=sys.stderr)
         return 1
 
-    return run_demo(engine, objectif=objectif, dossier=Path(args.sortie))
+    journal = RunJournal()
+    code = run_demo(engine, objectif=objectif, dossier=Path(args.sortie), journal=journal)
+    # Évaluation (#80) : les scores de l'exécution partent sur sa trace Langfuse —
+    # même bascule configurative que l'export, no-op sans clés.
+    evaluer_run_langfuse(journal)
+    return code
 
 
 if __name__ == "__main__":  # pragma: no cover
