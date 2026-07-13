@@ -22,7 +22,12 @@ critères d'acceptation du ticket #46 :
 ⑤ validations humaines (#48) : la demande publiée par le moteur apparaît avec
    son contexte (agent, tâche, action, justification), la décision prise via
    l'API fait reprendre (ou annule) le validateur en attente — sans time-out —
-   et une demande ne se tranche qu'une fois (409 ensuite).
+   et une demande ne se tranche qu'une fois (409 ensuite) ;
+⑥ playbooks versionnés (#76, tests différés du parent #74 → #75) : lecture des
+   playbooks du catalogue (défaut du code tant que jamais édité), publication
+   d'une nouvelle version, historique consultable, retour arrière par
+   republication — et les refus : agent hors catalogue (404, sans création de
+   dossier orphelin), contenu vide (422), version inconnue (404).
 """
 
 import asyncio
@@ -31,6 +36,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.controltower import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
@@ -622,6 +628,117 @@ def test_bout_en_bout_pause_ui_decision_reprise(client, bus):
 
     assert reponse.status_code == 200
     assert attente.result(timeout=5) is True  # le moteur reprend la tâche
+
+
+# ------------------------------------------------- ⑥ Playbooks versionnés (#76)
+
+
+@pytest.fixture()
+def depot(tmp_path):
+    """Dépôt versionné vierge injecté dans l'app — jamais le `core/playbooks/` réel."""
+    return PlaybookStore(tmp_path / "playbooks")
+
+
+@pytest.fixture()
+def client_pb(bus, state, depot):
+    """TestClient de l'app branchée sur le dépôt temporaire."""
+    with TestClient(create_app(bus=bus, state=state, playbooks=depot)) as client:
+        yield client
+
+
+def test_la_liste_expose_les_playbooks_du_catalogue(client_pb):
+    """Tous les rôles éditables apparaissent, au défaut du code tant que rien n'est publié."""
+    fiches = client_pb.get("/api/playbooks").json()
+
+    assert {f["agent"] for f in fiches} == set(PLAYBOOK_DEFAUTS)
+    for fiche in fiches:
+        assert fiche["source"] == "defaut"
+        assert fiche["version"] == 0 and fiche["nb_versions"] == 0
+        assert fiche["cree_le"] is None
+        assert "contenu" not in fiche  # métadonnées seules sur la liste
+
+
+def test_le_playbook_jamais_edite_rend_le_prompt_du_code(client_pb):
+    fiche = client_pb.get("/api/playbooks/developpeur").json()
+
+    assert fiche["source"] == "defaut" and fiche["version"] == 0
+    assert fiche["role"] == PLAYBOOK_DEFAUTS["developpeur"].role
+    assert fiche["contenu"] == PLAYBOOK_DEFAUTS["developpeur"].contenu
+
+
+def test_publier_puis_relire_une_nouvelle_version(client_pb):
+    reponse = client_pb.put(
+        "/api/playbooks/developpeur", json={"contenu": "Consignes éditées."}
+    )
+
+    assert reponse.status_code == 200
+    assert reponse.json()["version"] == 1
+
+    fiche = client_pb.get("/api/playbooks/developpeur").json()
+    assert fiche["source"] == "stockage" and fiche["version"] == 1
+    assert fiche["contenu"] == "Consignes éditées."
+    assert fiche["cree_le"]
+
+
+def test_l_historique_et_les_versions_passees_sont_consultables(client_pb):
+    client_pb.put("/api/playbooks/qa", json={"contenu": "Consignes v1."})
+    client_pb.put("/api/playbooks/qa", json={"contenu": "Consignes v2."})
+
+    versions = client_pb.get("/api/playbooks/qa/versions").json()
+
+    # L'historique, de la première à la courante — métadonnées seules.
+    assert [v["version"] for v in versions] == [1, 2]
+    assert all("contenu" not in v for v in versions)
+    # Une version passée se lit avec son contenu, sans devenir la courante.
+    passee = client_pb.get("/api/playbooks/qa/versions/1").json()
+    assert passee["contenu"] == "Consignes v1."
+    assert client_pb.get("/api/playbooks/qa").json()["version"] == 2
+
+
+def test_restaurer_republie_une_version_passee(client_pb):
+    client_pb.put("/api/playbooks/bdd", json={"contenu": "Consignes v1."})
+    client_pb.put("/api/playbooks/bdd", json={"contenu": "Consignes v2."})
+
+    reponse = client_pb.post("/api/playbooks/bdd/restaurer", json={"version": 1})
+
+    # Le retour arrière (EF-25) crée une version de plus, rien n'est réécrit.
+    assert reponse.status_code == 200
+    assert reponse.json()["version"] == 3
+    fiche = client_pb.get("/api/playbooks/bdd").json()
+    assert fiche["version"] == 3 and fiche["contenu"] == "Consignes v1."
+    versions = client_pb.get("/api/playbooks/bdd/versions").json()
+    assert [v["version"] for v in versions] == [1, 2, 3]
+
+
+def test_un_agent_hors_catalogue_est_refuse_sans_dossier_orphelin(client_pb, depot):
+    """Une faute de frappe dans l'URL ne crée jamais de playbook orphelin."""
+    assert client_pb.get("/api/playbooks/stagiaire").status_code == 404
+    assert client_pb.put(
+        "/api/playbooks/stagiaire", json={"contenu": "x"}
+    ).status_code == 404
+    assert client_pb.get("/api/playbooks/stagiaire/versions").status_code == 404
+    assert client_pb.post(
+        "/api/playbooks/stagiaire/restaurer", json={"version": 1}
+    ).status_code == 404
+    assert not (depot.racine / "stagiaire").exists()
+
+
+def test_un_contenu_vide_est_refuse_en_422(client_pb):
+    reponse = client_pb.put("/api/playbooks/developpeur", json={"contenu": "  \n"})
+
+    assert reponse.status_code == 422
+    assert client_pb.get("/api/playbooks/developpeur").json()["version"] == 0
+
+
+def test_une_version_inconnue_rend_404(client_pb):
+    client_pb.put("/api/playbooks/qa", json={"contenu": "Consignes v1."})
+
+    assert client_pb.get("/api/playbooks/qa/versions/9").status_code == 404
+    assert client_pb.post(
+        "/api/playbooks/qa/restaurer", json={"version": 9}
+    ).status_code == 404
+    # Le refus n'a rien publié : l'historique n'a pas bougé.
+    assert client_pb.get("/api/playbooks/qa").json()["version"] == 1
 
 
 # --------------------------------------------------------- Bus & modèle
