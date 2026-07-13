@@ -257,6 +257,8 @@ class StubClassifierModel(ModelProvider):
             return '{"agent": "devops", "confiance": 0.9}'
         if "accessibilité" in texte:
             return '{"agent": "designer", "confiance": 0.85}'
+        if "onboarding" in texte or "wireframe" in texte:
+            return '{"agent": "designer", "confiance": 0.85}'
         return '{"agent": null, "confiance": 0.2}'
 
 

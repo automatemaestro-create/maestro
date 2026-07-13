@@ -7,8 +7,8 @@ fichiers dans l'espace de travail fourni. Couvre :
 ① le runtime exécute une tâche de bout en bout et **capture un résultat exploitable**
    (compte-rendu + fichiers produits) dans un **contexte isolé** ;
 ② les profils (`DEVELOPER_PROFILE`, `DATABASE_PROFILE`, `QA_PROFILE` — #45,
-   `DEVOPS_PROFILE` — #67) paramètrent le même runtime (modèle, outils, prompts,
-   garde-fous du rôle) ;
+   `DEVOPS_PROFILE` — #67, `DESIGNER_PROFILE` — #68) paramètrent le même runtime
+   (modèle, outils, prompts, garde-fous du rôle) ;
 ③ ajouter un rôle outillé = déclarer un profil, sans nouveau code (critère #35).
 Plus : capacité optionnelle refusée proprement, validation d'entrée, sérialisation.
 """
@@ -21,6 +21,7 @@ import pytest
 from maestro.agents import (
     DATABASE_PROFILE,
     DEFAULT_TOOLS,
+    DESIGNER_PROFILE,
     DEVELOPER_PROFILE,
     DEVOPS_PROFILE,
     QA_PROFILE,
@@ -235,9 +236,38 @@ def test_profil_devops_prefixe_son_espace_de_travail():
     assert outcome.role == "DevOps"
 
 
+def test_profil_designer_porte_le_garde_fou_charte_non_remplacee_sans_accord():
+    # La particularité du rôle (docs/04 §3.5, #68) doit être dans le prompt système :
+    # le design system et la charte existants font foi, l'agent propose sans les
+    # remplacer — toute évolution reste soumise à accord.
+    provider = WritingProvider(files={"ecran-connexion.md": "# Écran"})
+    runtime = AgentRuntime(provider, DESIGNER_PROFILE)
+
+    asyncio.run(runtime.execute("Conçois la maquette de l'écran de connexion"))
+
+    (call,) = provider.calls
+    systeme = (call["system_prompt"] or "").lower()
+    assert "design system" in systeme
+    assert "sans accord" in systeme
+    assert "proposition" in systeme
+    assert "Tâche de design" in call["prompt"]
+    assert "charte" in call["prompt"]
+
+
+def test_profil_designer_prefixe_son_espace_de_travail():
+    provider = WritingProvider(files={"ecran-connexion.md": "# Écran"})
+    runtime = AgentRuntime(provider, DESIGNER_PROFILE)
+
+    outcome = asyncio.run(runtime.execute("Tâche"))
+
+    assert "maestro-designer-" in Path(outcome.workspace).name
+    assert outcome.role == "Designer"
+
+
 def test_les_profils_outilles_sont_ceux_du_catalogue():
-    # Les clés de routage de la boucle : les noms d'agents du catalogue (#6).
-    assert [p.nom for p in TOOLED_PROFILES] == ["developpeur", "bdd", "devops", "qa"]
+    # Les clés de routage de la boucle : les noms d'agents du catalogue (#6). Depuis
+    # #68, les cinq agents exécutants du catalogue sont tous outillés.
+    assert [p.nom for p in TOOLED_PROFILES] == ["developpeur", "bdd", "devops", "designer", "qa"]
     assert all(p.outils == DEFAULT_TOOLS for p in TOOLED_PROFILES)
 
 

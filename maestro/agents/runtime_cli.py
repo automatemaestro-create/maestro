@@ -1,7 +1,7 @@
-"""Démo en ligne de commande des rôles outillés (tickets #4, #5, #45, #67 ; factorisée par #35).
+"""Démo en ligne de commande des rôles outillés (#4, #5, #45, #67, #68 ; factorisée par #35).
 
-`maestro-dev "<tâche>"`, `maestro-bdd "<tâche>"`, `maestro-qa "<tâche>"` et
-`maestro-devops "<tâche>"` exécutent une
+`maestro-dev "<tâche>"`, `maestro-bdd "<tâche>"`, `maestro-qa "<tâche>"`,
+`maestro-devops "<tâche>"` et `maestro-designer "<tâche>"` exécutent une
 tâche **de bout en bout** dans un espace de travail isolé via le runtime générique
 (`AgentRuntime.default`, vrai fournisseur Claude) paramétré par le profil du rôle, puis
 impriment le compte-rendu et la liste des fichiers produits. `--json` imprime le résultat
@@ -21,6 +21,7 @@ import sys
 from collections.abc import Sequence
 
 from maestro.agents.database import DATABASE_PROFILE
+from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
 from maestro.agents.devops import DEVOPS_PROFILE
 from maestro.agents.qa import QA_PROFILE
@@ -94,5 +95,15 @@ def main_devops(argv: Sequence[str] | None = None) -> int:
         DEVOPS_PROFILE,
         prog="maestro-devops",
         tache="tâche d'infrastructure (CI/CD, déploiement)",
+        argv=argv,
+    )
+
+
+def main_designer(argv: Sequence[str] | None = None) -> int:
+    """Point d'entrée de `maestro-designer` : le rôle Designer."""
+    return _main(
+        DESIGNER_PROFILE,
+        prog="maestro-designer",
+        tache="tâche de design (écrans, maquettes, composants)",
         argv=argv,
     )

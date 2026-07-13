@@ -14,8 +14,8 @@ un sous-agent du SDK qui exécute une tâche de bout en bout dans un espace isol
 renvoie un livrable exploitable (`AgentOutcome`). Le runtime est **générique**
 (`AgentRuntime`, ticket #35) et paramétré par un profil de rôle (`RoleProfile`) :
 le Développeur (`DEVELOPER_PROFILE`, ticket #4), la Base de données
-(`DATABASE_PROFILE`, ticket #5), le QA / Testeur (`QA_PROFILE`, ticket #45) et le
-DevOps (`DEVOPS_PROFILE`, ticket #67).
+(`DATABASE_PROFILE`, ticket #5), le QA / Testeur (`QA_PROFILE`, ticket #45), le
+DevOps (`DEVOPS_PROFILE`, ticket #67) et le Designer (`DESIGNER_PROFILE`, ticket #68).
 Ajouter un rôle outillé = déclarer un profil et l'inscrire dans `TOOLED_PROFILES`.
 """
 
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.database import DATABASE_PROFILE
+from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
 from maestro.agents.devops import DEVOPS_PROFILE
 from maestro.agents.qa import QA_PROFILE
@@ -40,6 +41,7 @@ TOOLED_PROFILES: tuple[RoleProfile, ...] = (
     DEVELOPER_PROFILE,
     DATABASE_PROFILE,
     DEVOPS_PROFILE,
+    DESIGNER_PROFILE,
     QA_PROFILE,
 )
 
@@ -48,8 +50,8 @@ def default_runtimes(provider: ModelProvider) -> dict[str, AgentRuntime]:
     """Construit les runtimes outillés par défaut, indexés par nom d'agent du catalogue.
 
     C'est le câblage que consomme la boucle d'orchestration : une tâche routée vers
-    l'un de ces noms (`developpeur`, `bdd`, `devops`, `qa`) s'exécute via son runtime outillé
-    plutôt que par un appel texte.
+    l'un de ces noms (`developpeur`, `bdd`, `devops`, `designer`, `qa`) s'exécute via
+    son runtime outillé plutôt que par un appel texte.
     """
     return {profile.nom: AgentRuntime(provider, profile) for profile in TOOLED_PROFILES}
 
@@ -58,6 +60,7 @@ __all__ = [
     "DATABASE_PROFILE",
     "DEFAULT_AGENTS",
     "DEFAULT_TOOLS",
+    "DESIGNER_PROFILE",
     "DEVELOPER_PROFILE",
     "DEVOPS_PROFILE",
     "QA_PROFILE",

@@ -150,6 +150,34 @@ les validations humaines requises avant toute application réelle.
 - **Outils :** MCP Figma, génération de specs UI, design tokens.
 - **Garde-fous :** respecte le design system existant ; propose, ne remplace pas la charte sans accord.
 
+```markdown
+# Playbook — Designer
+## Mission
+Proposer des écrans, maquettes et composants conformes à la charte.
+## Entrées attendues
+La tâche de design (objectif + format de sortie), la charte / le design system quand ils
+existent, et le cas échéant les livrables des tâches dont elle dépend.
+## Étapes
+1. Lire la tâche, la charte et les livrables transmis par les tâches amont.
+2. Cadrer le besoin : parcours, écrans, composants et états à couvrir.
+3. Produire le livrable en fichiers dans l'espace de travail : spécifications d'écran,
+   maquettes/wireframes (HTML ou SVG au POC), design tokens, guide de composants.
+4. Vérifier la conformité à la charte et l'accessibilité (contrastes, navigation
+   clavier, libellés).
+5. Rendre un compte-rendu listant les partis pris et toute évolution de charte proposée.
+## Critères de "terminé" (Definition of Done)
+- Le livrable existe en fichiers, conforme à la charte ; les partis pris et propositions
+  d'évolution sont explicitement signalés.
+## Garde-fous
+- Actions nécessitant une validation humaine : toute évolution de la charte ou du design
+  system (l'agent propose, il ne remplace pas sans accord).
+- Actions interdites : réécrire la charte existante de sa propre initiative ; sortir de
+  son espace de travail.
+## Format de sortie
+Spécifications d'écran, maquettes/wireframes, design tokens (fichiers) + compte-rendu
+listant les partis pris et les propositions soumises à accord.
+```
+
 ### 3.6 🧪 QA / Testeur
 
 - **Mission :** écrire et exécuter les tests, valider les livrables, faire la revue.
