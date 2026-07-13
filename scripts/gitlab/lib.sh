@@ -241,6 +241,39 @@ gl_issue_brief_render() {
   '
 }
 
+# --- Milestone de phase ---------------------------------------------------------------------------
+# gl_current_milestone -> imprime le TITRE du milestone de la « phase courante » : le milestone
+# ACTIF le plus ancien (tri par échéance croissante) qui n'est pas déjà soldé — c'est-à-dire ayant
+# au moins un ticket ouvert, OU aucun ticket (phase pas encore entamée). Un milestone actif dont
+# tous les tickets sont fermés est SAUTÉ : la phase est finie, seule sa fermeture — décision
+# humaine (jalon go/no-go de la roadmap) — reste à faire, et doctor.sh la suggère. La règle est
+# volontairement indépendante des dates prévisionnelles des milestones : le réel peut être en
+# avance sur elles. Sortie vide + code 1 si aucun candidat (aucun milestone actif, ou tous
+# soldés) ; /ticket-create omet alors simplement --milestone à la création.
+gl_current_milestone() {
+  local raw title
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { milestones(state: active, sort: DUE_DATE_ASC, first: 20) { nodes { title stats { totalIssuesCount closedIssuesCount } } } } }')" || return 1
+  title="$(printf '%s' "$raw" | awk '
+    {
+      n = split($0, parts, /\{"title":"/)
+      for (i = 2; i <= n; i++) {
+        node = parts[i]
+        t = node; sub(/".*$/, "", t)
+        gsub(/\\u0026/, "\\&", t); gsub(/\\u003e/, ">", t); gsub(/\\u003c/, "<", t)
+        total = 0; closed = 0
+        if (match(node, /"totalIssuesCount":[0-9]+/))  { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); total = m + 0 }
+        if (match(node, /"closedIssuesCount":[0-9]+/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); closed = m + 0 }
+        if (total == 0 || closed < total) { print t; exit }
+      }
+    }
+  ')"
+  if [ -z "$title" ]; then
+    echo "gl_current_milestone : aucun milestone actif non soldé (rien à poser)" >&2
+    return 1
+  fi
+  printf '%s\n' "$title"
+}
+
 # --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
 # Convention (docs/10-workflow-git.md §5.1) : un besoin qui dépasse ~1 session de travail est porté
 # par un ticket PARENT de suivi dont la description contient une section « ## Sous-tickets » :
@@ -768,6 +801,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     backlog)        gl_backlog "$@" ;;
     backlog-table)  gl_backlog_table "$@" ;;
     issue-brief)    gl_issue_brief "$@" ;;
+    current-milestone) gl_current_milestone ;;
     issue-link)     gl_issue_link "$@" ;;
     parent-of)      gl_parent_of "$@" ;;
     subtickets)     gl_subtickets "$@" ;;
@@ -796,6 +830,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  backlog [opened|closed|all]        (JSON brut du backlog)" >&2
       echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
+      echo "  current-milestone                  (titre du milestone de la phase courante — actif le plus ancien non soldé)" >&2
       echo "  slug <titre> | branch-prefix <type>" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid> <iid-cible>    (lie deux tickets — relates to, idempotent)" >&2
