@@ -64,6 +64,7 @@ from typing import Any
 
 from maestro.agents import default_runtimes
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent, agents_pour
+from maestro.agents.playbooks import PlaybookStore, avec_playbooks
 from maestro.agents.runtime import AgentRuntime
 from maestro.config import Settings, load_settings
 from maestro.engine.executor import (
@@ -238,17 +239,24 @@ class OrchestrationEngine:
         moteur agnostique à un fournisseur concret : le choix vit dans la config
         (`MAESTRO_PROVIDER`). `MAESTRO_MODEL`, s'il est renseigné, bascule d'un même
         geste l'orchestrateur, le catalogue d'exécutants et les runtimes outillés.
+
+        Les prompts système des exécutants sont chargés depuis le **stockage
+        versionné des playbooks** (#76) : un agent édité depuis la Control Tower
+        exécute avec son playbook courant, un agent jamais édité garde son prompt
+        du code. Le chargement a lieu ici, à la construction du moteur —
+        l'application à chaud en cours de vie du process est le lot #78.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
         settings = settings or load_settings()
         provider = provider_from_settings(settings)
         orchestrator = Orchestrator(provider, model=default_model(settings))
+        playbooks = PlaybookStore.default(settings)
         return cls(
             provider,
             orchestrator,
-            agents=agents_pour(settings.model),
-            runtimes=default_runtimes(provider, model=settings.model),
+            agents=avec_playbooks(agents_pour(settings.model), playbooks),
+            runtimes=default_runtimes(provider, model=settings.model, playbooks=playbooks),
             guardrails=guardrails,
             mailbox=mailbox,
         )
