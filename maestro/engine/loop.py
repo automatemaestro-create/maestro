@@ -63,9 +63,10 @@ from time import perf_counter
 from typing import Any
 
 from maestro.agents import default_runtimes
-from maestro.agents.catalog import DEFAULT_AGENTS, Agent, agents_pour
+from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.runtime import AgentRuntime
+from maestro.agents.store import AgentStore, catalogue
 from maestro.config import Settings, load_settings
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
@@ -256,6 +257,13 @@ class OrchestrationEngine:
         une édition publiée depuis la Control Tower vaut pour l'exécution
         suivante, sans reconstruire le moteur ni redémarrer le process. Un agent
         jamais édité garde son prompt du code.
+
+        Le catalogue d'exécutants est le catalogue **effectif** (#72) : les
+        agents par défaut plus les agents personnalisés persistés
+        (`MAESTRO_AGENTS_DIR`, sinon `core/agents/`), chargés ici, à la
+        construction du moteur — un agent créé ensuite vaut pour les moteurs
+        construits après lui. Sans runtime outillé, un agent personnalisé
+        produit son livrable par le chemin texte, cadré par son playbook.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -265,7 +273,7 @@ class OrchestrationEngine:
         return cls(
             provider,
             orchestrator,
-            agents=agents_pour(settings.model),
+            agents=catalogue(AgentStore.default(settings), settings.model),
             runtimes=default_runtimes(provider, model=settings.model),
             guardrails=guardrails,
             mailbox=mailbox,

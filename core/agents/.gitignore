@@ -1,0 +1,4 @@
+# Les définitions d'agents personnalisés écrites à chaud (API #72) sont des
+# données d'exécution, pas du code : on ne les commite pas.
+*.json
+*.tmp
