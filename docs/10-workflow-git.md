@@ -433,8 +433,10 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
 
 Le pipeline [`.gitlab-ci.yml`](../.gitlab-ci.yml) a deux étages : `lint` — `shellcheck`
 (sévérité `warning`, scripts `scripts/**/*.sh`) et `python-lint` (ruff) — puis `test` — `pytest`
-(suite du dépôt) et `mypy` (typage strict de `maestro/`). Un **pipeline vert est la condition de
-passage `En revue` → merge**.
+(suite du dépôt, avec **couverture** pytest-cov : taux remonté dans GitLab via la clé `coverage:`
+du job, échec sous `--cov-fail-under=80`) et `mypy` (typage strict de `maestro/`). Les jobs Python
+partagent un **cache pip** (clé sur `pyproject.toml`) qui accélère le `before_script` d'un run à
+l'autre. Un **pipeline vert est la condition de passage `En revue` → merge**.
 
 **Pipeline rouge ?** La remédiation passe par
 [`/pipeline-fix`](../.claude/commands/pipeline-fix.md) (voir §5) : diagnostic des jobs en échec,

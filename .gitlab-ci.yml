@@ -2,13 +2,29 @@
 #
 # Deux étages :
 #   - lint : shellcheck (scripts shell) + ruff (code Python) ;
-#   - test : pytest (suite du dépôt) + mypy (typage strict du code applicatif).
+#   - test : pytest (suite du dépôt, avec couverture pytest-cov) + mypy (typage
+#     strict du code applicatif).
 # « Pipeline vert » est une condition de merge. Les jobs Python installent leurs
 # dépendances depuis pyproject.toml (extra `dev`) — rien n'est figé en dur ici.
 
 stages:
   - lint
   - test
+
+# Cache pip partagé par les jobs Python (lint + test, ticket #38) : les wheels
+# téléchargés sont conservés dans le dépôt (.cache/pip, déjà gitignoré) et réutilisés
+# entre pipelines tant que pyproject.toml ne change pas — sur un run avec cache chaud,
+# le before_script se réduit à une installation depuis le cache local.
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+.pip-cache:
+  cache:
+    key:
+      files:
+        - pyproject.toml
+    paths:
+      - .cache/pip
 
 shellcheck:
   stage: lint
@@ -33,8 +49,9 @@ shellcheck:
 python-lint:
   stage: lint
   image: python:3.11-slim
+  extends: .pip-cache
   script:
-    - pip install --no-cache-dir "ruff>=0.6,<1.0"
+    - pip install "ruff>=0.6,<1.0"
     - ruff check .
 
 # Base cachée des jobs Python de test : installe le paquet en editable avec son extra
@@ -44,15 +61,20 @@ python-lint:
 .python-test:
   stage: test
   image: python:3.11-slim
+  extends: .pip-cache
   before_script:
-    - pip install --no-cache-dir -e ".[dev]"
+    - pip install -e ".[dev]"
 
-# Exécute la suite de tests du dépôt (testpaths = tests/ dans pyproject.toml) ; le job
-# échoue si un test échoue.
+# Exécute la suite de tests du dépôt (testpaths = tests/ dans pyproject.toml) avec la
+# couverture du code applicatif (pytest-cov, ticket #38) ; le job échoue si un test
+# échoue ou si la couverture passe sous le seuil (83 % mesurés à la pose du seuil —
+# marge de 3 points pour absorber les variations sans laisser la couverture s'éroder).
+# La clé `coverage:` remonte le taux dans GitLab (badge, affichage MR).
 pytest:
   extends: .python-test
   script:
-    - pytest
+    - pytest --cov=maestro --cov-fail-under=80
+  coverage: '/TOTAL.*? (100(?:\.\d+)?\%|[1-9]?\d(?:\.\d+)?\%)/'
 
 # Vérifie le typage statique du code applicatif (maestro/) en mode strict
 # ([tool.mypy] de pyproject.toml) ; le job échoue à la moindre erreur de type. On cible

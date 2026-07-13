@@ -31,6 +31,8 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pytest>=8.0",
+    # Couverture de code du job CI `pytest` (rapport + seuil --cov-fail-under, ticket #38).
+    "pytest-cov>=5.0",
     # Stubs de types pour jsonschema (mypy strict).
     "types-jsonschema>=4.0",
     # Client des tests d'API (TestClient de Starlette, REST + WebSocket, ticket #46).
