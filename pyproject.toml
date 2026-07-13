@@ -108,3 +108,17 @@ disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+# Points d'entrée CLI/démo exclus de la métrique (ticket #89) : fines couches
+# d'invocation quasi intestables en unitaire (serveur bloquant, vrai fournisseur),
+# dont le poids masquait les dérives du code métier. Chacun garde un smoke test
+# d'invocation (tests/test_cli_smoke.py) qui casse si l'import ou l'interface casse.
+omit = [
+    "maestro/check_env.py",
+    "maestro/engine/cli.py",
+    "maestro/orchestrator/cli.py",
+    "maestro/controltower/cli.py",
+    "maestro/controltower/demo.py",
+    "maestro/agents/runtime_cli.py",
+]
