@@ -7,7 +7,10 @@
  */
 
 import type {
+  AgentCatalogue,
+  AgentCatalogueDetail,
   CoutExecution,
+  DefinitionAgent,
   EtatAgent,
   PlaybookDetail,
   PlaybookFiche,
@@ -57,20 +60,23 @@ export function chargerCoutExecution(runId: string): Promise<CoutExecution> {
 }
 
 /**
- * Envoi JSON (POST par défaut) dont l'échec relaye le `detail` du backend :
- * c'est le message montré à l'utilisateur (404 tâche inconnue, 409 demande
- * déjà tranchée, 422 contenu vide…).
+ * Envoi JSON (POST par défaut, corps optionnel — un DELETE n'en porte pas)
+ * dont l'échec relaye le `detail` du backend : c'est le message montré à
+ * l'utilisateur (404 tâche inconnue, 409 demande déjà tranchée, 422 contenu
+ * vide…).
  */
 async function envoyerJson(
   chemin: string,
   corps: unknown,
   refusParDefaut: string,
-  methode: "POST" | "PUT" = "POST",
+  methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<void> {
   const reponse = await fetch(`${API_URL}${chemin}`, {
     method: methode,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(corps),
+    ...(corps !== undefined && {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corps),
+    }),
   });
   if (!reponse.ok) {
     let detail = `${refusParDefaut} (${reponse.status})`;
@@ -141,6 +147,57 @@ export function restaurerPlaybook(
     `/api/playbooks/${encodeURIComponent(agent)}/restaurer`,
     { version },
     "restauration refusée",
+  );
+}
+
+/** Le catalogue d'agents (#72) : les agents par défaut du code puis les personnalisés. */
+export function chargerCatalogue(): Promise<AgentCatalogue[]> {
+  return chargerJson<AgentCatalogue[]>("/api/catalogue");
+}
+
+/** La définition complète d'un agent du catalogue, playbook compris. */
+export function chargerAgentCatalogue(
+  nom: string,
+): Promise<AgentCatalogueDetail> {
+  return chargerJson<AgentCatalogueDetail>(
+    `/api/catalogue/${encodeURIComponent(nom)}`,
+  );
+}
+
+/**
+ * Crée un agent personnalisé (`POST /api/catalogue`, #73) : persisté hors du
+ * code, il est routable et exécutable par les moteurs construits ensuite.
+ */
+export function creerAgent(
+  nom: string,
+  definition: DefinitionAgent,
+): Promise<void> {
+  return envoyerJson("/api/catalogue", { nom, ...definition }, "création refusée");
+}
+
+/**
+ * Remplace la définition d'un agent personnalisé (`PUT /api/catalogue/{nom}`) :
+ * l'intégrale, pas un diff — le nom, clé de routage, ne change pas.
+ */
+export function modifierAgent(
+  nom: string,
+  definition: DefinitionAgent,
+): Promise<void> {
+  return envoyerJson(
+    `/api/catalogue/${encodeURIComponent(nom)}`,
+    definition,
+    "modification refusée",
+    "PUT",
+  );
+}
+
+/** Supprime un agent personnalisé du catalogue (`DELETE /api/catalogue/{nom}`). */
+export function supprimerAgent(nom: string): Promise<void> {
+  return envoyerJson(
+    `/api/catalogue/${encodeURIComponent(nom)}`,
+    undefined,
+    "suppression refusée",
+    "DELETE",
   );
 }
 
