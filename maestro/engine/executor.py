@@ -25,6 +25,7 @@ from typing import Any
 
 from maestro.agents import default_runtimes
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.engine.guardrails import DemandeValidation, Guardrails
 from maestro.orchestrator.schema import Task
@@ -64,7 +65,10 @@ class TaskResult:
     livrable texte. `usage` porte le coût de la tâche (#8) : tokens, coût, durée,
     outils — durée horloge toujours mesurée, le reste selon ce que le fournisseur
     rapporte. `worker` identifie le worker qui a exécuté la tâche quand elle est
-    passée par la file (#41) — vide en exécution locale.
+    passée par la file (#41) — vide en exécution locale. `playbook_version` (#78)
+    est la version du playbook stocké avec laquelle l'agent a exécuté — None si
+    l'agent a exécuté avec son prompt du code (playbook jamais édité, ou pas de
+    dépôt câblé).
     """
 
     task_id: str
@@ -79,6 +83,7 @@ class TaskResult:
     fichiers: tuple[ProducedFile, ...] = ()
     usage: StepUsage = StepUsage()
     worker: str = ""
+    playbook_version: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -100,6 +105,7 @@ class TaskResult:
             "fichiers": [f.to_dict() for f in self.fichiers],
             "usage": self.usage.to_dict(),
             "worker": self.worker,
+            "playbook_version": self.playbook_version,
         }
 
     @classmethod
@@ -124,6 +130,7 @@ class TaskResult:
             ),
             usage=StepUsage.from_dict(data.get("usage", {})),
             worker=data.get("worker", ""),
+            playbook_version=data.get("playbook_version"),
         )
 
 
@@ -162,8 +169,14 @@ class LocalExecutor(TaskExecutor):
         runtimes: Mapping[str, AgentRuntime] | None = None,
         guardrails: Guardrails | None = None,
         router: Router | None = None,
+        playbooks: PlaybookStore | None = None,
     ) -> None:
         self._provider = provider
+        # Application à chaud des playbooks (#78) : la version courante est relue
+        # dans ce dépôt à chaque tâche — une édition publiée via la Control Tower
+        # vaut pour l'exécution suivante, sans reconstruire l'exécuteur ni
+        # redémarrer le process. None : prompts figés au câblage (agents/runtimes).
+        self._playbooks = playbooks
         # Routage combiné (#42) : règles de compétences + classifieur léger adossé
         # au même fournisseur. Un routeur injecté remplace `agents` pour le routage.
         self._router = (
@@ -225,9 +238,14 @@ class LocalExecutor(TaskExecutor):
                     )
                 else:
                     entree = _build_task_description(task, dependances)
+                    # Application à chaud (#78) : le playbook courant est résolu
+                    # ici, à chaque tâche — jamais retenu entre deux exécutions.
+                    playbook = self._playbook_courant(decision.agent.nom)
                     result = await self._realise_gardee(
-                        decision.agent, task, entree, decision.score, journal
+                        decision.agent, task, entree, decision.score, journal, playbook
                     )
+                    if playbook is not None:
+                        result = replace(result, playbook_version=playbook.version)
         result = replace(result, usage=recolte.total.avec_duree(_ecoule_ms(debut)))
         journal.consigne(
             etape=task.id,
@@ -239,11 +257,31 @@ class LocalExecutor(TaskExecutor):
             sortie=result.sortie,
             erreur=result.erreur,
             usage=result.usage,
+            playbook_version=result.playbook_version,
         )
         return result
 
+    def _playbook_courant(self, agent: str) -> PlaybookVersion | None:
+        """La version courante du playbook stocké de `agent`, relue à chaque tâche (#78).
+
+        C'est la relecture par tâche qui rend l'édition applicable **à chaud** :
+        aucun état de playbook ne vit dans l'exécuteur, la version publiée la plus
+        récente au moment où la tâche démarre est celle qui exécute. None sans
+        dépôt câblé, ou pour un agent jamais édité — l'exécution garde alors les
+        prompts du code (catalogue et runtimes), comportement d'origine.
+        """
+        if self._playbooks is None:
+            return None
+        return self._playbooks.lire(agent)
+
     async def _realise_gardee(
-        self, agent: Agent, task: Task, description: str, score: int, journal: RunJournal
+        self,
+        agent: Agent,
+        task: Task,
+        description: str,
+        score: int,
+        journal: RunJournal,
+        playbook: PlaybookVersion | None,
     ) -> TaskResult:
         """Réalise la tâche sous garde-fous (#9) : validation humaine, puis time-out.
 
@@ -265,9 +303,9 @@ class LocalExecutor(TaskExecutor):
             return refus
         timeout_s = self._guardrails.timeout_s
         if timeout_s is None:
-            return await self._realise(agent, task, description, score)
+            return await self._realise(agent, task, description, score, playbook)
         realisation = asyncio.create_task(
-            self._realise(agent, task, description, score),
+            self._realise(agent, task, description, score, playbook),
             name=f"maestro-realisation:{task.id}",
         )
         try:
@@ -330,11 +368,16 @@ class LocalExecutor(TaskExecutor):
         )
 
     async def _realise(
-        self, agent: Agent, task: Task, description: str, score: int
+        self,
+        agent: Agent,
+        task: Task,
+        description: str,
+        score: int,
+        playbook: PlaybookVersion | None,
     ) -> TaskResult:
         """Produit le livrable de `task` et le mue en `TaskResult` (échec consigné, jamais levé)."""
         try:
-            sortie, fichiers = await self._produce(agent, task, description)
+            sortie, fichiers = await self._produce(agent, task, description, playbook)
         except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
             return _echec(task, agent=agent.nom, role=agent.role, score=score, erreur=str(exc))
 
@@ -360,7 +403,7 @@ class LocalExecutor(TaskExecutor):
         )
 
     async def _produce(
-        self, agent: Agent, task: Task, description: str
+        self, agent: Agent, task: Task, description: str, playbook: PlaybookVersion | None
     ) -> tuple[str, tuple[ProducedFile, ...]]:
         """Produit le livrable de `task` : runtime outillé si le rôle en a un, sinon texte.
 
@@ -369,18 +412,26 @@ class LocalExecutor(TaskExecutor):
         aussi ses fichiers. Si le fournisseur ne sait pas exécuter d'agent outillé
         (`UnsupportedCapability`), le rôle retombe sur son livrable texte via
         `generate()` — même chemin que les rôles sans runtime.
+
+        `playbook` est la version courante du playbook stocké (#78) : son contenu
+        remplace le prompt système sur les **deux** chemins — surcharge ponctuelle
+        du runtime outillé, prompt de l'appel texte. None : prompts du code.
         """
         runtime = self._runtimes.get(agent.nom)
         if runtime is not None:
             try:
-                outcome = await runtime.execute(description, format_sortie=task.format_sortie)
+                outcome = await runtime.execute(
+                    description,
+                    format_sortie=task.format_sortie,
+                    system_prompt=playbook.contenu if playbook is not None else None,
+                )
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:
                 pass  # fournisseur texte-seul : repli sur le livrable texte
         sortie = await self._provider.generate(
             _build_task_prompt(description, task.format_sortie),
             model=agent.modele,
-            system_prompt=agent.prompt_systeme,
+            system_prompt=playbook.contenu if playbook is not None else agent.prompt_systeme,
         )
         return sortie, ()
 

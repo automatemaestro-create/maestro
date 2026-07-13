@@ -148,6 +148,7 @@ class AgentRuntime:
         *,
         format_sortie: str | None = None,
         keep_workspace: bool = False,
+        system_prompt: str | None = None,
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
@@ -155,6 +156,11 @@ class AgentRuntime:
         puis **capture les fichiers produits** avant que l'espace ne soit nettoyé (sauf
         `keep_workspace=True`). Lève `ValueError` si la description est vide ; propage
         `UnsupportedCapability` si le fournisseur n'exécute pas d'agent outillé.
+
+        `system_prompt` remplace, pour **cette exécution**, le prompt système du
+        runtime : c'est le canal de l'application à chaud des playbooks (#78) —
+        l'exécuteur passe la version courante du playbook stocké, sans reconstruire
+        le runtime. None : le prompt câblé à la construction (comportement d'origine).
         """
         description = description.strip()
         if not description:
@@ -167,7 +173,7 @@ class AgentRuntime:
             resume = await self._provider.run_agent(
                 prompt,
                 model=self._model,
-                system_prompt=self._system_prompt,
+                system_prompt=system_prompt or self._system_prompt,
                 workspace=ws.path,
                 tools=self._tools,
             )

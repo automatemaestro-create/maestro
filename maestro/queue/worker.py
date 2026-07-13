@@ -36,7 +36,7 @@ from celery.signals import celeryd_after_setup
 
 from maestro.agents import default_runtimes
 from maestro.agents.catalog import agents_pour
-from maestro.agents.playbooks import PlaybookStore, avec_playbooks
+from maestro.agents.playbooks import PlaybookStore
 from maestro.config import load_settings
 from maestro.engine.executor import LocalExecutor, TaskResult
 from maestro.engine.guardrails import Guardrails
@@ -133,19 +133,23 @@ def _executeur() -> LocalExecutor:
     Le modèle des exécutants suit la config du process (`MAESTRO_MODEL`, #69),
     que la fabrique de fournisseur soit celle par défaut ou une injectée : la
     config porte le modèle, la fabrique porte le fournisseur. Les prompts système
-    sont chargés depuis le stockage versionné des playbooks (#76) à la
-    construction — l'application à chaud est le lot #78.
+    viennent du stockage versionné des playbooks (#76), appliqué **à chaud**
+    (#78) : l'exécuteur — bien que construit une seule fois par process — relit
+    la version courante à chaque tâche consommée, donc une édition publiée vaut
+    pour le message suivant sans redémarrer le worker. Le dépôt est celui de la
+    config (`MAESTRO_PLAYBOOKS_DIR`) : au POC sur fichiers, workers et API
+    Control Tower doivent voir le même stockage.
     """
     global _executor
     if _executor is None:
         provider = _provider_factory()
         settings = load_settings()
-        playbooks = PlaybookStore.default(settings)
         _executor = LocalExecutor(
             provider,
-            agents=avec_playbooks(agents_pour(settings.model), playbooks),
-            runtimes=default_runtimes(provider, model=settings.model, playbooks=playbooks),
+            agents=agents_pour(settings.model),
+            runtimes=default_runtimes(provider, model=settings.model),
             guardrails=_guardrails,
+            playbooks=PlaybookStore.default(settings),
         )
     return _executor
 

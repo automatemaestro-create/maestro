@@ -19,9 +19,10 @@ DevOps (`DEVOPS_PROFILE`, ticket #67) et le Designer (`DESIGNER_PROFILE`, ticket
 Ajouter un rôle outillé = déclarer un profil et l'inscrire dans `TOOLED_PROFILES`.
 
 Les **playbooks** (instructions d'un rôle) sont éditables hors du code via un
-stockage versionné (`maestro.agents.playbooks`, ticket #76) : au câblage du moteur,
-le playbook stocké remplace le prompt système du catalogue comme des runtimes —
-un agent jamais édité garde exactement ses prompts du code.
+stockage versionné (`maestro.agents.playbooks`, ticket #76) et appliqués **à
+chaud** (#78) : l'exécuteur relit la version courante à chaque tâche, une édition
+publiée vaut pour l'exécution suivante sans redémarrage — un agent jamais édité
+garde exactement ses prompts du code.
 """
 
 from __future__ import annotations
@@ -70,8 +71,10 @@ def default_runtimes(
     l'un de ces noms (`developpeur`, `bdd`, `devops`, `designer`, `qa`) s'exécute via
     son runtime outillé plutôt que par un appel texte. `model` (optionnel, #69)
     impose un modèle unique à tous les rôles — sinon chacun garde celui de son profil.
-    `playbooks` (optionnel, #76) charge le prompt système de chaque rôle depuis son
-    playbook versionné — un rôle jamais édité garde le prompt de son profil.
+    `playbooks` (optionnel, #76) **fige** le prompt système de chaque rôle sur son
+    playbook versionné du moment — un instantané au câblage ; l'application à
+    chaud (#78) passe, elle, par `LocalExecutor(playbooks=...)`, qui relit le
+    dépôt à chaque tâche et surcharge ces runtimes ponctuellement.
     """
     return {
         profile.nom: AgentRuntime(
