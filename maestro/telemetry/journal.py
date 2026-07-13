@@ -6,8 +6,9 @@ Les enregistrements sont émis en **JSON Lines** sur le logger `maestro.trace`
 (silencieux tant qu'aucun handler n'est configuré — cf. `maestro-run --trace`).
 
 Le format plat `run_id` / `etape` / `horodatage` / `usage` est pensé pour se
-mapper plus tard sur les traces et observations de **Langfuse** sans changer les
-appelants : brancher un exporteur suffira.
+mapper sur les traces et observations de **Langfuse** sans changer les
+appelants : c'est ce que fait l'exporteur `maestro.telemetry.langfuse` (#81),
+posé en handler sur ce même logger — purement configuratif, no-op sans clés.
 
 Aucun secret ne doit atteindre les logs : entrée, sortie et erreur passent par
 `redact_secrets` avant d'être conservées ou émises.

@@ -22,6 +22,9 @@ le time-out (par tâche) sont **armés par défaut** (bonne pratique docs/07 §4
 ajustables par options ; une tâche sensible déclenche une validation console
 (refusée si l'entrée n'est pas interactive).
 
+L'export Langfuse (#81) s'applique comme pour `maestro-run` : purement
+configuratif (clés `LANGFUSE_*` dans l'environnement), sans option dédiée.
+
 Code de sortie : 0 si la démo tourne de bout en bout **et** que le critère de
 sortie est validé ; 1 sinon (tâche en échec, critère non rempli, erreur de
 configuration ou de planification) ; 2 si l'appel est mal formé.
@@ -43,7 +46,7 @@ from maestro.engine.guardrails import Guardrails
 from maestro.engine.loop import OrchestrationEngine, RunReport
 from maestro.engine.runner import run_borne
 from maestro.orchestrator.errors import OrchestratorError
-from maestro.telemetry import RunJournal
+from maestro.telemetry import RunJournal, activer_export_langfuse
 
 #: Objectif par défaut de la démo : deux domaines de compétences (schéma/SQL puis
 #: backend/API) pour que le plan mobilise les agents BDD **et** Développeur. Le
@@ -249,6 +252,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     if args.trace:
         activer_trace()
+    # Export Langfuse (#81) : purement configuratif — no-op sans clés dans l'env.
+    activer_export_langfuse()
     objectif = " ".join(args.objectif).strip() or OBJECTIF_DEFAUT
 
     try:

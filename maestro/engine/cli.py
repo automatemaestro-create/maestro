@@ -39,6 +39,12 @@ dépendants annonce l'issue par message (handoff) et chaque tâche aval attend c
 message avant de démarrer. L'échange est journalisé (visible avec `--trace`, et
 dans la Control Tower avec `--publier`). Requiert le même Redis que `--queue`.
 
+L'export **Langfuse** (#81) ne passe pas par une option : il est purement
+configuratif. Dès que `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` sont dans
+l'environnement, chaque exécution produit sa trace Langfuse (étapes, outils
+appelés, durées, tokens et coûts par tâche — cf. `maestro.telemetry.langfuse`) ;
+sans elles, rien ne change.
+
 Code de sortie : 0 si toutes les tâches réussissent, 1 si au moins une échoue (ou
 en cas d'erreur de configuration / planification), 2 si l'appel est mal formé.
 """
@@ -56,7 +62,7 @@ from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
 from maestro.engine.loop import OrchestrationEngine
 from maestro.engine.runner import run_borne
 from maestro.orchestrator.errors import OrchestratorError
-from maestro.telemetry import LOGGER_NAME
+from maestro.telemetry import LOGGER_NAME, activer_export_langfuse
 
 _USAGE = (
     "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--messagerie] "
@@ -134,6 +140,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         print(f"Garde-fous : {exc}", file=sys.stderr)
         return 2
+
+    # Export Langfuse (#81) : purement configuratif — no-op sans clés dans l'env.
+    activer_export_langfuse()
 
     try:
         engine = _build_engine(via_queue=via_queue, guardrails=guardrails, messagerie=messagerie)

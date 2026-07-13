@@ -51,6 +51,13 @@ class Settings:
     #: Racine de l'endpoint compatible OpenAI (`OPENAI_BASE_URL`) — l'endpoint
     #: OpenAI officiel par défaut, remplaçable par tout endpoint au même dialecte.
     openai_base_url: str = "https://api.openai.com/v1"
+    #: Clés du projet Langfuse (`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`), ou
+    #: None : export de traces désactivé — l'intégration est optionnelle (#81).
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    #: Hôte Langfuse (`LANGFUSE_HOST`) — le cloud par défaut, remplaçable par une
+    #: instance auto-hébergée.
+    langfuse_host: str = "https://cloud.langfuse.com"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -68,6 +75,10 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             openai_base_url=os.getenv("OPENAI_BASE_URL", "").strip()
             or "https://api.openai.com/v1",
+            langfuse_public_key=os.getenv("LANGFUSE_PUBLIC_KEY") or None,
+            langfuse_secret_key=os.getenv("LANGFUSE_SECRET_KEY") or None,
+            langfuse_host=os.getenv("LANGFUSE_HOST", "").strip()
+            or "https://cloud.langfuse.com",
         )
 
     def require_api_key(self) -> str:
