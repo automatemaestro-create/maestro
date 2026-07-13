@@ -1,6 +1,6 @@
 """Télémétrie de Maestro : journalisation des étapes et des coûts (ticket #8).
 
-Cinq briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
+Six briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
 
 - `StepUsage` + `collect_usage`/`report_usage` : la mesure d'usage d'un appel
   modèle (tokens, coût, durée, outils) et son canal de remontée par contexte —
@@ -17,7 +17,11 @@ Cinq briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
 - `PlafondDepense` : le plafond de dépense (#9) adossé à ce grand livre (#56) —
   consulté par le collecteur à chaque mesure, il relit la comptabilité de
   l'exécution (source unique du coût, aucun compteur parallèle) et lève
-  `PlafondDepenseDepasse` au dépassement.
+  `PlafondDepenseDepasse` au dépassement ;
+- `activer_export_langfuse` : l'exporteur Langfuse du journal (#81) — posé en
+  handler sur le logger `maestro.trace`, il mue chaque exécution en trace
+  Langfuse (une observation par étape, tokens et coûts #55 au format natif) ;
+  purement configuratif, no-op sans clés Langfuse dans l'environnement.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from maestro.telemetry.costs import (
     TaskCost,
 )
 from maestro.telemetry.journal import LOGGER_NAME, RunJournal, StepRecord
+from maestro.telemetry.langfuse import activer_export_langfuse
 from maestro.telemetry.redact import MARQUEUR_SECRET, redact_secrets
 from maestro.telemetry.usage import (
     StepUsage,
@@ -50,6 +55,7 @@ __all__ = [
     "StepUsage",
     "TaskCost",
     "UsageCollector",
+    "activer_export_langfuse",
     "collect_usage",
     "redact_secrets",
     "report_usage",
