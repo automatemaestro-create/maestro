@@ -1,7 +1,10 @@
 /**
  * Barre d'en-tête du tableau de bord : identité, état de la connexion temps
- * réel et coût cumulé (docs/05 §2.1 — « lisibilité du coût »).
+ * réel, accès aux playbooks (#77) et coût cumulé (docs/05 §2.1 — « lisibilité
+ * du coût »).
  */
+
+import Link from "next/link";
 
 import { formatCout } from "@/lib/format";
 
@@ -34,7 +37,13 @@ export function EnTete({ connecte, coutTotal }: Props) {
         />
         {connecte ? "Temps réel connecté" : "Reconnexion…"}
       </span>
-      <span className="ml-auto text-sm text-neutral-600 dark:text-neutral-400">
+      <Link
+        href="/playbooks"
+        className="ml-auto text-sm text-neutral-600 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-200"
+      >
+        📖 Playbooks
+      </Link>
+      <span className="text-sm text-neutral-600 dark:text-neutral-400">
         💰 Coût cumulé : <span className="font-medium">{formatCout(coutTotal)}</span>
       </span>
     </header>

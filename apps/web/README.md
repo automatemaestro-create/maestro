@@ -15,7 +15,13 @@ Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #4
 - **Coûts par exécution** (#58, docs/05 §2.5 — critère MVP n°6) : le grand livre
   de chaque run (`GET /api/executions/{run_id}/cout`, #57) — part de planification,
   coût par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat de
-  l'exécution ; chaque carte Kanban affiche aussi le coût détaillé de sa tâche.
+  l'exécution ; chaque carte Kanban affiche aussi le coût détaillé de sa tâche ;
+- **Éditeur de playbooks** (#77, EF-24/EF-25) : la page `/playbooks` liste les
+  playbooks versionnés des agents (#76, API `/api/playbooks`), publie une nouvelle
+  version depuis un éditeur plein texte et montre l'historique, chaque version
+  antérieure étant consultable et restaurable (le dépôt est append-only :
+  restaurer republie, rien n'est réécrit). Une version publiée est chargée par
+  les moteurs construits ensuite — l'application à chaud est le lot #78.
 
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 

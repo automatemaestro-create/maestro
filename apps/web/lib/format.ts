@@ -42,6 +42,14 @@ export function formatHeure(horodatage: string): string {
   return date.toLocaleTimeString("fr-FR");
 }
 
+/** La date et l'heure locales d'un horodatage ISO du backend (chaîne vide si absent). */
+export function formatDateHeure(horodatage: string): string {
+  if (!horodatage) return "";
+  const date = new Date(horodatage);
+  if (Number.isNaN(date.getTime())) return horodatage;
+  return date.toLocaleString("fr-FR");
+}
+
 /** Libellés français des statuts de tâche (machine à états docs/03 §3). */
 const LIBELLES_STATUT: Record<string, string> = {
   assignee: "Assignée",
