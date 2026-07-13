@@ -61,6 +61,10 @@ maestro-bdd = "maestro.agents.runtime_cli:main_bdd"
 # Démo : exécute une tâche de qualité de bout en bout dans un espace isolé et imprime
 # le livrable produit (tests, rapport de revue, verdict) (agent QA, ticket #45).
 maestro-qa = "maestro.agents.runtime_cli:main_qa"
+# Démo : exécute une tâche d'infrastructure de bout en bout dans un espace isolé et
+# imprime le livrable produit (pipeline, Dockerfile, scripts, runbook) (agent DevOps,
+# ticket #67).
+maestro-devops = "maestro.agents.runtime_cli:main_devops"
 # Backend Control Tower : sert l'API REST + WebSocket (bus Redis, ticket #46).
 maestro-api = "maestro.controltower.cli:main"
 # Démo : Control Tower autonome — API réelle sur bus mémoire + scénario d'événements

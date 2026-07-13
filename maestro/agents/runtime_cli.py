@@ -1,6 +1,7 @@
-"""Démo en ligne de commande des rôles outillés (tickets #4, #5, #45, factorisée par #35).
+"""Démo en ligne de commande des rôles outillés (tickets #4, #5, #45, #67 ; factorisée par #35).
 
-`maestro-dev "<tâche>"`, `maestro-bdd "<tâche>"` et `maestro-qa "<tâche>"` exécutent une
+`maestro-dev "<tâche>"`, `maestro-bdd "<tâche>"`, `maestro-qa "<tâche>"` et
+`maestro-devops "<tâche>"` exécutent une
 tâche **de bout en bout** dans un espace de travail isolé via le runtime générique
 (`AgentRuntime.default`, vrai fournisseur Claude) paramétré par le profil du rôle, puis
 impriment le compte-rendu et la liste des fichiers produits. `--json` imprime le résultat
@@ -21,6 +22,7 @@ from collections.abc import Sequence
 
 from maestro.agents.database import DATABASE_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
+from maestro.agents.devops import DEVOPS_PROFILE
 from maestro.agents.qa import QA_PROFILE
 from maestro.agents.runtime import AgentRuntime, RoleProfile
 from maestro.config import ConfigError
@@ -83,4 +85,14 @@ def main_qa(argv: Sequence[str] | None = None) -> int:
     """Point d'entrée de `maestro-qa` : le rôle QA / Testeur."""
     return _main(
         QA_PROFILE, prog="maestro-qa", tache="tâche de qualité (tests, revue)", argv=argv
+    )
+
+
+def main_devops(argv: Sequence[str] | None = None) -> int:
+    """Point d'entrée de `maestro-devops` : le rôle DevOps."""
+    return _main(
+        DEVOPS_PROFILE,
+        prog="maestro-devops",
+        tache="tâche d'infrastructure (CI/CD, déploiement)",
+        argv=argv,
     )

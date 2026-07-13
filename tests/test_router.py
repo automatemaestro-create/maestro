@@ -253,6 +253,8 @@ class StubClassifierModel(ModelProvider):
         texte = prompt.lower()
         if "déployer" in texte or "staging" in texte:
             return '{"agent": "devops", "confiance": 0.9}'
+        if "supervision" in texte or "alerte" in texte:
+            return '{"agent": "devops", "confiance": 0.9}'
         if "accessibilité" in texte:
             return '{"agent": "designer", "confiance": 0.85}'
         return '{"agent": null, "confiance": 0.2}'
