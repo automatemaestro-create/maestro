@@ -246,7 +246,7 @@ L'autonomie n'est pas l'absence de contrôle. Trois niveaux de garde-fous :
 
 ## 6. Évolution sans redéploiement
 
-Les **playbooks** et configurations d'agents sont stockés en base et **versionnés**. Modifier le workflow d'un agent depuis l'UI met à jour la base ; l'agent recharge sa configuration au démarrage de la tâche suivante — **sans redéploiement**. Cela répond à l'exigence « workflow qui évolue selon le besoin ».
+Les **playbooks** et configurations d'agents sont stockés hors du code et **versionnés** (au POC : sur fichiers, `core/playbooks/` — en base à la V1, sans changer le contrat). Modifier le workflow d'un agent depuis l'UI met à jour le stockage ; l'agent recharge sa configuration au démarrage de la tâche suivante — **sans redéploiement** (réalisé : tickets #76 à #78, la version utilisée étant tracée sur chaque exécution). Cela répond à l'exigence « workflow qui évolue selon le besoin ».
 
 ---
 

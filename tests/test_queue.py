@@ -20,7 +20,10 @@ appel modèle) changent. Couvre les critères d'acceptation du ticket #41 :
    (tableau noir) transmises aux workers, rapport agrégé, journal consigné.
 
 Plus le DAG (#43) : une tâche dont une dépendance a échoué n'est **jamais mise en
-file** — blocage explicite côté orchestrateur, aucun message orphelin.
+file** — blocage explicite côté orchestrateur, aucun message orphelin. Et les
+playbooks versionnés (#78, tests différés → #75) : une version publiée entre deux
+messages s'applique au suivant sans redémarrer le worker, la version utilisée
+remonte avec le résultat.
 """
 
 import asyncio
@@ -93,7 +96,7 @@ class RecordingProvider(ModelProvider):
         return True
 
     async def generate(self, prompt, *, model, system_prompt=None):
-        self.calls.append({"prompt": prompt, "model": model})
+        self.calls.append({"prompt": prompt, "model": model, "system_prompt": system_prompt})
         return f"LIVRABLE pour l'appel #{len(self.calls)}"
 
 
@@ -267,6 +270,30 @@ def test_les_fichiers_produits_remontent_en_artefacts(app):
     result = TaskResult.from_dict(brut)
     assert result.ok
     assert result.fichiers == (ProducedFile(chemin="livrable.txt", contenu="contenu produit"),)
+
+
+def test_le_playbook_edite_s_applique_au_worker_sans_redemarrage(app, tmp_path, monkeypatch):
+    # Application à chaud côté worker (#78, tests différés du parent #74 → #75) :
+    # l'exécuteur du worker — construit une fois au premier message — relit le
+    # dépôt (`MAESTRO_PLAYBOOKS_DIR`) à chaque tâche consommée. Une version
+    # publiée entre deux messages vaut pour le suivant, et la version utilisée
+    # remonte estampillée sur le résultat.
+    from maestro.agents.playbooks import PlaybookStore
+
+    monkeypatch.setenv("MAESTRO_PLAYBOOKS_DIR", str(tmp_path))
+    provider = RecordingProvider()
+    configurer_worker(provider_factory=lambda: provider)
+
+    with start_worker(app, pool="solo", perform_ping_check=False):
+        avant = app.send_task(NOM_TACHE_EXECUTER, args=[_tache("avant-edition"), [], "run-pb"])
+        premier = TaskResult.from_dict(avant.get(timeout=30))
+        PlaybookStore(tmp_path).ecrire("developpeur", "Playbook édité pour le worker.")
+        apres = app.send_task(NOM_TACHE_EXECUTER, args=[_tache("apres-edition"), [], "run-pb"])
+        second = TaskResult.from_dict(apres.get(timeout=30))
+
+    assert premier.playbook_version is None  # dépôt vide : prompt du code
+    assert second.playbook_version == 1  # l'édition a pris effet sans redémarrage
+    assert provider.calls[-1]["system_prompt"] == "Playbook édité pour le worker."
 
 
 def test_un_echec_d_agent_remonte_en_echec_de_tache(app):
@@ -467,11 +494,22 @@ def test_task_result_fait_l_aller_retour_json():
         fichiers=(ProducedFile(chemin="livrable.txt", contenu="contenu"),),
         usage=StepUsage(appels=1, tokens_entree=100, tokens_sortie=20, cout_usd=0.01),
         worker="agent1@maestro",
+        playbook_version=3,
     )
 
     rejoue = TaskResult.from_dict(json.loads(json.dumps(result.to_dict())))
 
     assert rejoue == result
+
+
+def test_task_result_tolere_l_absence_de_version_de_playbook():
+    # Un résultat émis avant #78 (ou par un worker sans dépôt) reste lisible.
+    result = TaskResult.from_dict(
+        {"task_id": "t1", "titre": "T", "agent": "developpeur", "role": "Développeur",
+         "competences_requises": [], "score": 1, "statut": "terminee", "sortie": "ok"}
+    )
+
+    assert result.playbook_version is None
 
 
 def test_step_usage_from_dict_tolere_les_champs_derives_et_absents():

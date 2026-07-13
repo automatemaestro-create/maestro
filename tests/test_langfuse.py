@@ -141,6 +141,16 @@ def test_une_tache_avec_appels_modele_devient_une_generation_chiffree():
     assert corps["metadata"]["outils"] == ["Read"]
 
 
+def test_la_version_de_playbook_voyage_dans_les_metadonnees():
+    # Traçabilité de la version utilisée (#78 → #75) : visible dans Langfuse aussi.
+    _, observation = evenements_depuis_step(_ligne(playbook_version=3))
+    assert observation["body"]["metadata"]["playbook_version"] == 3
+
+    # Prompt du code (playbook jamais édité, ou ligne d'avant #78) : None, pas 0.
+    _, sans_version = evenements_depuis_step(_ligne())
+    assert sans_version["body"]["metadata"]["playbook_version"] is None
+
+
 def test_une_etape_sans_appel_modele_devient_un_span():
     ligne = _ligne(etape="t1:validation", statut="approuve", usage=StepUsage().to_dict())
 

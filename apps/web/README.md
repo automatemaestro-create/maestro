@@ -20,8 +20,10 @@ Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #4
   playbooks versionnés des agents (#76, API `/api/playbooks`), publie une nouvelle
   version depuis un éditeur plein texte et montre l'historique, chaque version
   antérieure étant consultable et restaurable (le dépôt est append-only :
-  restaurer republie, rien n'est réécrit). Une version publiée est chargée par
-  les moteurs construits ensuite — l'application à chaud est le lot #78.
+  restaurer republie, rien n'est réécrit). Une version publiée s'applique **à
+  chaud** (#78, EF-26) : le moteur relit la version courante à chaque tâche —
+  elle vaut pour l'exécution suivante sans redémarrage, et la version utilisée
+  est tracée sur chaque résultat (`playbook_version`, journal compris).
 
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 

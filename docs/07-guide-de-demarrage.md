@@ -112,7 +112,7 @@ un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` �
 │   ├── api/            # Backend FastAPI (placeholder — Phase 1)
 │   └── web/            # Control Tower Next.js (placeholder — Phase 1)
 ├── agents/             # Placeholders par rôle (README de renvoi vers maestro/agents/)
-├── core/               # Placeholders router/queue/playbooks/sandbox (README de renvoi)
+├── core/               # playbooks/ : stockage versionné des playbooks (#76, §6.2) ; le reste : README de renvoi
 ├── packages/
 │   └── shared/         # Types & schémas partagés (task.schema.json)
 ├── infra/
@@ -175,3 +175,20 @@ qui a exécuté chaque tâche. Les garde-fous (#9) s'appliquent **côté worker*
 et un plafond de dépense configuré là ne voit que la tâche courante (le journal du worker
 est reconstruit à chaque message), pas l'exécution entière (#56).
 Détails : [`maestro/queue/`](../maestro/queue/) et [`core/queue/README.md`](../core/queue/README.md).
+
+### 6.2 — Playbooks versionnés, appliqués à chaud (disponible — tickets #76 à #78)
+
+Les instructions de chaque agent (son **playbook**, [doc 04 §1](./04-specifications-agents.md))
+sont sorties du code : un stockage versionné **append-only** (`core/playbooks/`, racine
+remplaçable par `MAESTRO_PLAYBOOKS_DIR`) porte l'historique complet, consultable et
+restaurable — restaurer republie une version passée, rien n'est réécrit (EF-24/EF-25).
+L'édition passe par la page `/playbooks` de la Control Tower (#77) ou par l'API
+(`GET/PUT /api/playbooks/{agent}`, `POST /api/playbooks/{agent}/restaurer`).
+
+L'application est **à chaud** (#78, EF-26) : le moteur — et chaque worker de la file —
+relit la version courante **à chaque tâche** ; une version publiée vaut pour l'exécution
+suivante, sans redéploiement ni redémarrage (les workers doivent voir le même stockage
+que l'API). La version utilisée est **tracée** sur chaque tâche (`playbook_version` sur
+le résultat, au journal #8 et dans les métadonnées Langfuse) ; un agent jamais édité
+garde exactement son prompt du code.
+Détails : [`core/playbooks/README.md`](../core/playbooks/README.md).
