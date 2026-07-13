@@ -1,0 +1,3 @@
+# Les versions de playbooks écrites à chaud (API #76) sont des données
+# d'exécution, pas du code : on ne les commite pas.
+*/

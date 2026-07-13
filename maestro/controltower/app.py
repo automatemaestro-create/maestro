@@ -18,6 +18,14 @@ Endpoints :
   attente d'abord le contexte, puis l'issue une fois tranchée) ;
 - `POST /api/validations/{tache_id}/decision` — la décision humaine
   (approuver/refuser) : le moteur, en attente sur le bus, reprend ou annule ;
+- `GET  /api/playbooks` — les playbooks des agents (#76 : version courante et
+  provenance — défaut du code ou stockage versionné) ;
+- `GET  /api/playbooks/{agent}` — le playbook courant d'un agent (contenu) ;
+- `PUT  /api/playbooks/{agent}` — publie une nouvelle version du playbook ;
+- `GET  /api/playbooks/{agent}/versions` — l'historique des versions ;
+- `GET  /api/playbooks/{agent}/versions/{version}` — une version passée ;
+- `POST /api/playbooks/{agent}/restaurer` — retour arrière (EF-25) : republie
+  une version passée comme nouvelle version courante ;
 - `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
   des agents, messages inter-agents, validations), au format `Event.to_dict`.
 
@@ -42,6 +50,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.config import load_settings
 from maestro.controltower.events import (
     EVENEMENT_TACHE_REASSIGNATION,
@@ -68,6 +77,18 @@ class DecisionRequete(BaseModel):
     """Corps de la décision humaine (#48) : approuver ou refuser l'action sensible."""
 
     approuve: bool
+
+
+class PlaybookEcritureRequete(BaseModel):
+    """Corps d'écriture d'un playbook (#76) : le nouveau contenu Markdown, intégral."""
+
+    contenu: str
+
+
+class PlaybookRestaurationRequete(BaseModel):
+    """Corps du retour arrière (#76) : la version passée à republier comme courante."""
+
+    version: int
 
 
 class Diffusion:
@@ -122,7 +143,10 @@ async def _pompe(bus: EventBus, state: ControlTowerState, diffusion: Diffusion) 
 
 
 def create_app(
-    *, bus: EventBus | None = None, state: ControlTowerState | None = None
+    *,
+    bus: EventBus | None = None,
+    state: ControlTowerState | None = None,
+    playbooks: PlaybookStore | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -130,9 +154,14 @@ def create_app(
     la configuration des tests et d'une démo mono-process. La production passe
     par `create_default_app` (bus Redis). La pompe vit avec l'app (lifespan) :
     démarrée à l'ouverture, annulée à l'arrêt, bus refermé derrière elle.
+
+    `playbooks` (#76) est le dépôt versionné servi par les endpoints
+    `/api/playbooks` — par défaut celui de la config (`MAESTRO_PLAYBOOKS_DIR`,
+    sinon `core/playbooks/` du dépôt) ; les tests en injectent un temporaire.
     """
     bus = bus if bus is not None else InMemoryEventBus()
     state = state if state is not None else ControlTowerState()
+    playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     diffusion = Diffusion()
 
     @asynccontextmanager
@@ -274,6 +303,101 @@ def create_app(
         state.appliquer(event)
         await bus.publish(event)
         return demande.to_dict()
+
+    def _exige_playbook_connu(agent: str) -> None:
+        """404 si `agent` n'est pas un agent à playbook (la clé de `PLAYBOOK_DEFAUTS`).
+
+        L'API n'édite que les playbooks des rôles du catalogue : pas de création
+        de playbook orphelin par une simple faute de frappe dans l'URL.
+        """
+        if agent not in PLAYBOOK_DEFAUTS:
+            raise HTTPException(
+                status_code=404,
+                detail=f"playbook inconnu : {agent} (voir GET /api/playbooks)",
+            )
+
+    def _fiche_playbook(agent: str, *, avec_contenu: bool) -> dict[str, Any]:
+        """La fiche du playbook d'un agent : version courante et provenance.
+
+        `version` 0 et `source` « defaut » tant que le playbook n'a jamais été
+        édité : le contenu effectif est alors le prompt du code (#76, repli).
+        """
+        defaut = PLAYBOOK_DEFAUTS[agent]
+        courant = playbooks.lire(agent)
+        fiche: dict[str, Any] = {
+            "agent": agent,
+            "role": defaut.role,
+            "version": courant.version if courant else 0,
+            "nb_versions": len(playbooks.numeros(agent)),
+            "source": "stockage" if courant else "defaut",
+            "cree_le": courant.cree_le if courant else None,
+        }
+        if avec_contenu:
+            fiche["contenu"] = courant.contenu if courant else defaut.contenu
+        return fiche
+
+    @app.get("/api/playbooks")
+    async def playbooks_liste() -> list[dict[str, Any]]:
+        """Les playbooks des agents (#76) : version courante et provenance de chacun."""
+        return [_fiche_playbook(agent, avec_contenu=False) for agent in PLAYBOOK_DEFAUTS]
+
+    @app.get("/api/playbooks/{agent}")
+    async def playbook_courant(agent: str) -> dict[str, Any]:
+        """Le playbook courant d'un agent : le contenu effectivement chargé par le moteur."""
+        _exige_playbook_connu(agent)
+        return _fiche_playbook(agent, avec_contenu=True)
+
+    @app.put("/api/playbooks/{agent}")
+    async def ecrire_playbook(agent: str, requete: PlaybookEcritureRequete) -> dict[str, Any]:
+        """Publie une nouvelle version du playbook (le contenu intégral, pas un diff).
+
+        La version créée devient la courante : elle sera chargée par les moteurs
+        construits ensuite (l'application à chaud d'un moteur déjà en vie est le
+        lot #78). 422 si le contenu est vide.
+        """
+        _exige_playbook_connu(agent)
+        try:
+            version = playbooks.ecrire(agent, requete.contenu)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return version.to_dict()
+
+    @app.get("/api/playbooks/{agent}/versions")
+    async def versions_playbook(agent: str) -> list[dict[str, Any]]:
+        """L'historique consultable (EF-25) : les versions, de la première à la courante.
+
+        Métadonnées seules — le contenu d'une version passée se lit sur
+        `GET /api/playbooks/{agent}/versions/{version}`.
+        """
+        _exige_playbook_connu(agent)
+        return [v.to_dict(avec_contenu=False) for v in playbooks.versions(agent)]
+
+    @app.get("/api/playbooks/{agent}/versions/{version}")
+    async def version_playbook(agent: str, version: int) -> dict[str, Any]:
+        """Une version passée du playbook, contenu compris. 404 si elle n'existe pas."""
+        _exige_playbook_connu(agent)
+        lue = playbooks.lire(agent, version)
+        if lue is None:
+            raise HTTPException(
+                status_code=404, detail=f"version inconnue : {agent} v{version}"
+            )
+        return lue.to_dict()
+
+    @app.post("/api/playbooks/{agent}/restaurer")
+    async def restaurer_playbook(
+        agent: str, requete: PlaybookRestaurationRequete
+    ) -> dict[str, Any]:
+        """Retour arrière (EF-25) : republie une version passée comme nouvelle courante.
+
+        L'historique reste linéaire — rien n'est supprimé, la restauration crée
+        une version de plus. 404 si la version demandée n'existe pas.
+        """
+        _exige_playbook_connu(agent)
+        try:
+            version = playbooks.restaurer(agent, requete.version)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return version.to_dict()
 
     @app.websocket("/ws/evenements")
     async def evenements(websocket: WebSocket) -> None:

@@ -36,6 +36,7 @@ from celery.signals import celeryd_after_setup
 
 from maestro.agents import default_runtimes
 from maestro.agents.catalog import agents_pour
+from maestro.agents.playbooks import PlaybookStore, avec_playbooks
 from maestro.config import load_settings
 from maestro.engine.executor import LocalExecutor, TaskResult
 from maestro.engine.guardrails import Guardrails
@@ -131,16 +132,19 @@ def _executeur() -> LocalExecutor:
 
     Le modèle des exécutants suit la config du process (`MAESTRO_MODEL`, #69),
     que la fabrique de fournisseur soit celle par défaut ou une injectée : la
-    config porte le modèle, la fabrique porte le fournisseur.
+    config porte le modèle, la fabrique porte le fournisseur. Les prompts système
+    sont chargés depuis le stockage versionné des playbooks (#76) à la
+    construction — l'application à chaud est le lot #78.
     """
     global _executor
     if _executor is None:
         provider = _provider_factory()
-        modele = load_settings().model
+        settings = load_settings()
+        playbooks = PlaybookStore.default(settings)
         _executor = LocalExecutor(
             provider,
-            agents=agents_pour(modele),
-            runtimes=default_runtimes(provider, model=modele),
+            agents=avec_playbooks(agents_pour(settings.model), playbooks),
+            runtimes=default_runtimes(provider, model=settings.model, playbooks=playbooks),
             guardrails=_guardrails,
         )
     return _executor

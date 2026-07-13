@@ -45,6 +45,9 @@ class Settings:
     #: Modèle unique imposé à tous les rôles (`MAESTRO_MODEL`), ou None : chaque
     #: rôle garde alors son modèle par défaut (catalogue/profils du POC).
     model: str | None = None
+    #: Racine du stockage versionné des playbooks (`MAESTRO_PLAYBOOKS_DIR`), ou
+    #: None : le dossier `core/playbooks/` du dépôt (cf. maestro.agents.playbooks, #76).
+    playbooks_dir: str | None = None
     #: Clé API de l'endpoint compatible OpenAI (`OPENAI_API_KEY`), ou None :
     #: aucune en-tête d'auth (endpoints locaux type Ollama/vLLM).
     openai_api_key: str | None = None
@@ -72,6 +75,7 @@ class Settings:
             redis_url=os.getenv("REDIS_URL") or None,
             provider=(raw_provider.strip().lower() if raw_provider else "") or "claude",
             model=(os.getenv("MAESTRO_MODEL") or "").strip() or None,
+            playbooks_dir=(os.getenv("MAESTRO_PLAYBOOKS_DIR") or "").strip() or None,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             openai_base_url=os.getenv("OPENAI_BASE_URL", "").strip()
             or "https://api.openai.com/v1",

@@ -17,6 +17,11 @@ le Développeur (`DEVELOPER_PROFILE`, ticket #4), la Base de données
 (`DATABASE_PROFILE`, ticket #5), le QA / Testeur (`QA_PROFILE`, ticket #45), le
 DevOps (`DEVOPS_PROFILE`, ticket #67) et le Designer (`DESIGNER_PROFILE`, ticket #68).
 Ajouter un rôle outillé = déclarer un profil et l'inscrire dans `TOOLED_PROFILES`.
+
+Les **playbooks** (instructions d'un rôle) sont éditables hors du code via un
+stockage versionné (`maestro.agents.playbooks`, ticket #76) : au câblage du moteur,
+le playbook stocké remplace le prompt système du catalogue comme des runtimes —
+un agent jamais édité garde exactement ses prompts du code.
 """
 
 from __future__ import annotations
@@ -26,6 +31,13 @@ from maestro.agents.database import DATABASE_PROFILE
 from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
 from maestro.agents.devops import DEVOPS_PROFILE
+from maestro.agents.playbooks import (
+    PLAYBOOK_DEFAUTS,
+    PlaybookDefaut,
+    PlaybookStore,
+    PlaybookVersion,
+    avec_playbooks,
+)
 from maestro.agents.qa import QA_PROFILE
 from maestro.agents.runtime import (
     DEFAULT_TOOLS,
@@ -47,7 +59,10 @@ TOOLED_PROFILES: tuple[RoleProfile, ...] = (
 
 
 def default_runtimes(
-    provider: ModelProvider, *, model: str | None = None
+    provider: ModelProvider,
+    *,
+    model: str | None = None,
+    playbooks: PlaybookStore | None = None,
 ) -> dict[str, AgentRuntime]:
     """Construit les runtimes outillés par défaut, indexés par nom d'agent du catalogue.
 
@@ -55,9 +70,20 @@ def default_runtimes(
     l'un de ces noms (`developpeur`, `bdd`, `devops`, `designer`, `qa`) s'exécute via
     son runtime outillé plutôt que par un appel texte. `model` (optionnel, #69)
     impose un modèle unique à tous les rôles — sinon chacun garde celui de son profil.
+    `playbooks` (optionnel, #76) charge le prompt système de chaque rôle depuis son
+    playbook versionné — un rôle jamais édité garde le prompt de son profil.
     """
     return {
-        profile.nom: AgentRuntime(provider, profile, model=model)
+        profile.nom: AgentRuntime(
+            provider,
+            profile,
+            model=model,
+            system_prompt=(
+                playbooks.prompt_systeme(profile.nom, profile.prompt_systeme)
+                if playbooks is not None
+                else None
+            ),
+        )
         for profile in TOOLED_PROFILES
     }
 
@@ -69,12 +95,17 @@ __all__ = [
     "DESIGNER_PROFILE",
     "DEVELOPER_PROFILE",
     "DEVOPS_PROFILE",
+    "PLAYBOOK_DEFAUTS",
     "QA_PROFILE",
     "TOOLED_PROFILES",
     "Agent",
     "AgentOutcome",
     "AgentRuntime",
+    "PlaybookDefaut",
+    "PlaybookStore",
+    "PlaybookVersion",
     "RoleProfile",
     "agents_pour",
+    "avec_playbooks",
     "default_runtimes",
 ]
