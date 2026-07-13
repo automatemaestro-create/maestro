@@ -42,8 +42,9 @@ dans la Control Tower avec `--publier`). Requiert le même Redis que `--queue`.
 L'export **Langfuse** (#81) ne passe pas par une option : il est purement
 configuratif. Dès que `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` sont dans
 l'environnement, chaque exécution produit sa trace Langfuse (étapes, outils
-appelés, durées, tokens et coûts par tâche — cf. `maestro.telemetry.langfuse`) ;
-sans elles, rien ne change.
+appelés, durées, tokens et coûts par tâche — cf. `maestro.telemetry.langfuse`)
+et reçoit en fin de run ses **scores d'évaluation** (#80 : réussite globale,
+taux de tâches réussies) ; sans elles, rien ne change.
 
 Code de sortie : 0 si toutes les tâches réussissent, 1 si au moins une échoue (ou
 en cas d'erreur de configuration / planification), 2 si l'appel est mal formé.
@@ -62,7 +63,12 @@ from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
 from maestro.engine.loop import OrchestrationEngine
 from maestro.engine.runner import run_borne
 from maestro.orchestrator.errors import OrchestratorError
-from maestro.telemetry import LOGGER_NAME, activer_export_langfuse
+from maestro.telemetry import (
+    LOGGER_NAME,
+    RunJournal,
+    activer_export_langfuse,
+    evaluer_run_langfuse,
+)
 
 _USAGE = (
     "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--messagerie] "
@@ -144,17 +150,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Export Langfuse (#81) : purement configuratif — no-op sans clés dans l'env.
     activer_export_langfuse()
 
+    journal = RunJournal()
     try:
         engine = _build_engine(via_queue=via_queue, guardrails=guardrails, messagerie=messagerie)
         # Arrêt borné (#64) : une réalisation détachée par le time-out ne peut pas
         # suspendre la fermeture de la boucle — le rapport est toujours rendu.
-        report = run_borne(engine.run(objective))
+        report = run_borne(engine.run(objective, journal=journal))
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
         return 1
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
         return 1
+
+    # Évaluation (#80) : les scores de l'exécution partent sur sa trace Langfuse —
+    # même bascule configurative que l'export, no-op sans clés.
+    evaluer_run_langfuse(journal)
 
     if as_json:
         print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))

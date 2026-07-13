@@ -61,9 +61,28 @@ En mode `api_key`, `ANTHROPIC_API_KEY` est **obligatoire** (sinon l'environnemen
 
 ### Étape 5 — Observer
 - Logger chaque étape (entrée, sortie, outils, tokens, coût).
-- Brancher **Langfuse** plus tard pour des traces visuelles.
+- Brancher **Langfuse** pour des traces visuelles et l'évaluation des exécutions — disponible, purement configuratif (voir §2.2).
 
 **Résultat attendu :** taper un objectif → obtenir des tâches → voir 2 agents produire un résultat exploitable.
+
+#### 2.2 — Observabilité Langfuse (optionnelle — traces #81, évaluation #80)
+
+L'intégration Langfuse est **purement configurative** : aucune option CLI, aucun changement de code. Elle se pilote par trois variables d'environnement (gabarit dans `.env.example`) :
+
+| Variable | Rôle |
+|----------|------|
+| `LANGFUSE_PUBLIC_KEY` | Clé publique du projet Langfuse (Settings → API Keys). |
+| `LANGFUSE_SECRET_KEY` | Clé secrète du même projet. Jamais commitée ni logguée. |
+| `LANGFUSE_HOST` | Hôte de l'instance. Défaut : `https://cloud.langfuse.com` — pointez votre instance auto-hébergée le cas échéant. |
+
+Avec les **deux clés** renseignées, chaque exécution (`maestro-run`, `maestro-demo`) produit :
+
+- sa **trace** (une par run, id = `run_id` — le même que dans le rapport, le journal #8 et la Control Tower) : une observation par étape, les appels modèle en *générations* avec tokens et coûts au format natif (#55), le reste (validation humaine, messages inter-agents, blocages) en *spans* ;
+- ses **scores d'évaluation** en fin de run (#80) : `run-reussi` (booléen — 1 si toutes les tâches sont terminées) et `taux-reussite` (0..1 — part des tâches réussies), posés sur la trace et exploitables dans Langfuse pour filtrer, agréger et comparer les exécutions.
+
+**Mode dégradé sans Langfuse** : sans les deux clés, rien n'est branché — aucun export, aucun score, fonctionnement strictement identique. Et un Langfuse configuré mais **injoignable** ne fait jamais échouer une exécution : l'échec d'envoi est signalé (politique des handlers logging) puis avalé.
+
+En mode file (`--queue`, #41), l'export s'active côté **orchestrateur** seulement — le résultat de chaque tâche, usage des workers compris, y est déjà consigné ; activer aussi les workers compterait chaque tâche deux fois.
 
 ---
 

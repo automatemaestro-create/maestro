@@ -27,6 +27,13 @@ En mode file (#41), l'export s'active côté **orchestrateur** seulement : le
 résultat de chaque tâche (usage worker compris) y est déjà consigné par
 `CeleryExecutor` — activer aussi les workers compterait chaque tâche deux fois.
 
+L'**évaluation** des exécutions (#80) complète l'export : en fin de run,
+`evaluer_run_langfuse` pose sur la trace des **scores** dérivés du journal —
+réussite globale et taux de tâches réussies — via la même API d'ingestion,
+exploitables dans Langfuse pour filtrer, agréger et comparer les exécutions.
+Même bascule configurative, même résilience : sans clés, aucun envoi ; un
+Langfuse injoignable n'affecte jamais l'exécution évaluée.
+
 Le journal amont expurge déjà les secrets (`redact_secrets`) : ce qui part
 vers Langfuse est ce qui partait déjà dans les logs.
 """
@@ -37,12 +44,12 @@ import json
 import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from maestro.config import Settings, load_settings
-from maestro.telemetry.costs import ETAPE_PLANIFICATION
-from maestro.telemetry.journal import LOGGER_NAME
+from maestro.telemetry.costs import ETAPE_PLANIFICATION, RunCost
+from maestro.telemetry.journal import LOGGER_NAME, RunJournal
 
 #: Délai maximal d'une publication (connexion + réponse) : l'export est synchrone
 #: (handler logging), un Langfuse injoignable ralentit l'étape mais ne suspend
@@ -55,6 +62,15 @@ _NOM_TRACE = "maestro-run"
 #: Niveau Langfuse par statut d'étape (défaut : DEFAULT). `echec` est une erreur ;
 #: `bloquee` (#43) et `refuse` (#9) signalent sans être des erreurs de l'étape.
 _NIVEAUX = {"echec": "ERROR", "bloquee": "WARNING", "refuse": "WARNING"}
+
+#: Seule issue réussie d'une tâche (convention de statut du journal,
+#: cf. `maestro.engine.executor.STATUT_TERMINEE`) — échec, blocage ou refus n'en sont pas.
+_STATUT_REUSSI = "terminee"
+
+#: Noms des scores d'évaluation d'une exécution (#80), posés sur sa trace :
+#: la réussite globale (booléen) et la part de tâches réussies (0..1).
+SCORE_RUN_REUSSI = "run-reussi"
+SCORE_TAUX_REUSSITE = "taux-reussite"
 
 
 def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
@@ -225,3 +241,84 @@ def activer_export_langfuse(settings: Settings | None = None) -> logging.Handler
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
     return handler
+
+
+def scores_depuis_journal(journal: RunJournal) -> tuple[dict[str, Any], ...]:
+    """Évalue une exécution consignée : les événements `score-create` de sa trace (#80).
+
+    L'évaluation relit la comptabilité par tâche (#55) — la télémétrie est la
+    source unique de l'issue, aucun verdict parallèle — et pose deux scores sur
+    la trace de l'exécution (`run_id`), exploitables dans Langfuse (filtres,
+    agrégats, comparaison entre exécutions) :
+
+    - **`run-reussi`** (booléen) : 1 si toutes les tâches sont terminées avec
+      succès, 0 dès qu'une a échoué ou été bloquée (#43) ;
+    - **`taux-reussite`** (numérique, 0..1) : la part de tâches réussies.
+
+    Le commentaire de chaque score détaille le décompte (réussites, échecs,
+    blocages). Un journal sans aucune tâche (planification seule, ou échouée)
+    n'a rien à évaluer : aucun score plutôt qu'un score faux.
+    """
+    taches = RunCost.depuis_journal(journal).taches
+    if not taches:
+        return ()
+    reussies = sum(1 for t in taches if t.statut == _STATUT_REUSSI)
+    echecs = sum(1 for t in taches if t.statut == "echec")
+    bloquees = sum(1 for t in taches if t.statut == "bloquee")
+    commentaire = (
+        f"{reussies}/{len(taches)} tâche(s) réussie(s) — "
+        f"{echecs} échec(s), {bloquees} bloquée(s)."
+    )
+    horodatage = datetime.now(UTC).isoformat(timespec="seconds")
+    scores = (
+        (SCORE_RUN_REUSSI, "BOOLEAN", 1 if reussies == len(taches) else 0),
+        (SCORE_TAUX_REUSSITE, "NUMERIC", reussies / len(taches)),
+    )
+    return tuple(
+        _evenement(
+            "score-create",
+            horodatage,
+            {
+                "id": str(uuid.uuid4()),
+                "traceId": journal.run_id,
+                "name": nom,
+                "value": valeur,
+                "dataType": type_score,
+                "comment": commentaire,
+            },
+        )
+        for nom, type_score, valeur in scores
+    )
+
+
+def evaluer_run_langfuse(
+    journal: RunJournal, settings: Settings | None = None
+) -> tuple[dict[str, Any], ...]:
+    """Publie les scores d'évaluation d'une exécution ; no-op sans clés Langfuse (#80).
+
+    À appeler en **fin d'exécution** (rapport rendu, journal complet) : les
+    scores dérivés du journal partent sur la trace que l'exporteur (#81) a
+    construite au fil des étapes, via la même API d'ingestion. Même politique
+    que l'export : purement configuratif (sans les deux clés, aucun envoi,
+    fonctionnement identique — le mode dégradé) et **résilient** (un Langfuse
+    injoignable est signalé en avertissement sur le logger du module, jamais
+    propagé à l'exécution évaluée). Renvoie les événements publiés — vide si
+    l'intégration est désactivée, s'il n'y a rien à évaluer ou si la
+    publication a échoué.
+    """
+    settings = settings or load_settings()
+    if not (settings.langfuse_public_key and settings.langfuse_secret_key):
+        return ()
+    evenements = scores_depuis_journal(journal)
+    if not evenements:
+        return ()
+    try:
+        publieur_langfuse(settings)(evenements)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Scores Langfuse non publiés (run %s) — l'exécution n'est pas affectée.",
+            journal.run_id,
+            exc_info=True,
+        )
+        return ()
+    return evenements

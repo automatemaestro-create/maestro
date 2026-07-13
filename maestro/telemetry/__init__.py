@@ -22,6 +22,9 @@ Six briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
   handler sur le logger `maestro.trace`, il mue chaque exécution en trace
   Langfuse (une observation par étape, tokens et coûts #55 au format natif) ;
   purement configuratif, no-op sans clés Langfuse dans l'environnement.
+  `evaluer_run_langfuse` (#80) complète l'export en fin de run : les scores
+  d'évaluation dérivés du journal (réussite globale, taux de tâches réussies)
+  partent sur la trace de l'exécution — même bascule, même résilience.
 """
 
 from __future__ import annotations
@@ -34,7 +37,11 @@ from maestro.telemetry.costs import (
     TaskCost,
 )
 from maestro.telemetry.journal import LOGGER_NAME, RunJournal, StepRecord
-from maestro.telemetry.langfuse import activer_export_langfuse
+from maestro.telemetry.langfuse import (
+    activer_export_langfuse,
+    evaluer_run_langfuse,
+    scores_depuis_journal,
+)
 from maestro.telemetry.redact import MARQUEUR_SECRET, redact_secrets
 from maestro.telemetry.usage import (
     StepUsage,
@@ -57,6 +64,8 @@ __all__ = [
     "UsageCollector",
     "activer_export_langfuse",
     "collect_usage",
+    "evaluer_run_langfuse",
     "redact_secrets",
     "report_usage",
+    "scores_depuis_journal",
 ]
