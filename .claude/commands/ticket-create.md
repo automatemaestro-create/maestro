@@ -43,8 +43,8 @@ lieu d'inventer.
    - **Tests différés** : les tests sont un **sous-ticket dédié** — par défaut le **lot final
      « tests + doc »**. Les lots intermédiaires n'embarquent des tests que si leur logique est
      critique, et portent la mention « Tests différés → #<iid-du-lot-tests> ».
-   - **Mécanique** : crée d'abord le **parent** (étapes 5 à 8, section `## Sous-tickets` encore
-     vide), puis chaque **sous-ticket** (étapes 5 à 8 pour chacun), lie chaque sous-ticket au
+   - **Mécanique** : crée d'abord le **parent** (étapes 5 à 9, section `## Sous-tickets` encore
+     vide), puis chaque **sous-ticket** (étapes 5 à 9 pour chacun), lie chaque sous-ticket au
      parent — `bash scripts/gitlab/lib.sh issue-link <iid-parent> <iid-sous-ticket>` — et termine
      en remplissant la checklist du parent (`- [ ] #<iid> — <titre>`, dans l'**ordre de
      réalisation**, lot tests en dernier) via `glab issue update <iid-parent> --description
@@ -70,27 +70,36 @@ lieu d'inventer.
      workflow d'orchestration → `orchestrateur`), pose-le et signale ton choix dans le résumé.
    - `prio::<niveau>` — `haute`/`moyenne`/`basse`. Par défaut `prio::moyenne` si non précisé.
 
-7. Montre un récapitulatif **avant** création (titre, type, labels, corps — pour un découpage :
-   le parent et la liste ordonnée des lots). Si la création du
+7. Montre un récapitulatif **avant** création (titre, type, labels, milestone, corps — pour un
+   découpage : le parent et la liste ordonnée des lots). Si la création du
    ticket a été **explicitement demandée** par l'utilisateur (ou enchaînée par une commande ou une
    boucle d'orchestration amont), ce récapitulatif est **informatif, pas bloquant** : crée
    directement, sans attendre de validation. Ne demande confirmation **que** s'il a fallu deviner
    une information structurante (type ambigu, doute sur l'intention, contenu largement inventé).
 
-8. Crée le ticket (le corps multi-lignes passe par un fichier temporaire pour éviter les soucis de
+8. Détermine le **milestone de phase** : celui de la phase courante, résolu par
+   `bash scripts/gitlab/lib.sh current-milestone` (= le milestone **actif le plus ancien non
+   soldé** — un milestone dont tous les tickets sont fermés est sauté, sa fermeture étant une
+   décision humaine). Si l'utilisateur a explicitement demandé un autre milestone, respecte son
+   choix. Si le helper ne retourne rien (aucun milestone actif non soldé), **omets** simplement
+   l'option — ne bloque pas la création pour ça.
+
+9. Crée le ticket (le corps multi-lignes passe par un fichier temporaire pour éviter les soucis de
    quoting) :
    ```
    glab issue create \
      --title "<titre>" \
      --label "type::<type>,agent::<rôle>,prio::<niveau>" \
+     --milestone "<milestone-de-phase>" \
      --description "$(cat <fichier-de-corps>)" \
      --yes
    ```
    Ne pose **pas** de statut : « À faire » est le défaut du lifecycle à la création. N'assigne pas
    et ne crée pas de branche.
 
-9. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels — pour un découpage :
-   le parent et chaque sous-ticket avec son rang dans la checklist. Puis la suite :
+10. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels et son milestone —
+   pour un découpage : le parent et chaque sous-ticket avec son rang dans la checklist. Puis la
+   suite :
    - si l'utilisateur a demandé (explicitement ou par le contexte de la conversation) de
      **réaliser** le travail, enchaîne directement sur `/ticket-start <iid>` sans attendre de
      « go » (pour un découpage : sur le **premier sous-ticket** de la checklist, jamais sur le

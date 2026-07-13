@@ -162,6 +162,62 @@ else
   fi
 fi
 
+# --- 7. Milestones de phase -----------------------------------------------------------------------
+# Dérives autour du milestone de phase (docs/10-workflow-git.md §3.4) : un ticket OUVERT sans
+# milestone (l'outillage pose la phase courante à la création — lib.sh current-milestone) ; un
+# milestone actif ENTIÈREMENT SOLDÉ (la phase est finie : sa fermeture — décision humaine, jamais
+# faite ici — est à faire pour que la phase suivante devienne la courante).
+section "7. Milestones de phase"
+ms_raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { milestones(state: active, sort: DUE_DATE_ASC, first: 20) { nodes { title stats { totalIssuesCount closedIssuesCount } } } } }')"
+if [ -z "$ms_raw" ]; then
+  warn "milestones illisibles (API muette) — contrôle ignoré"
+else
+  soldes="$(printf '%s' "$ms_raw" | awk '
+    {
+      n = split($0, parts, /\{"title":"/)
+      for (i = 2; i <= n; i++) {
+        node = parts[i]
+        t = node; sub(/".*$/, "", t)
+        total = 0; closed = -1
+        if (match(node, /"totalIssuesCount":[0-9]+/))  { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); total = m + 0 }
+        if (match(node, /"closedIssuesCount":[0-9]+/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); closed = m + 0 }
+        if (total > 0 && closed == total) print t
+      }
+    }
+  ')"
+  if [ -z "$soldes" ]; then
+    ok "aucun milestone actif entièrement soldé"
+  else
+    while IFS= read -r t; do
+      [ -z "$t" ] && continue
+      warn "milestone « $t » actif mais entièrement soldé → à fermer (décision humaine) pour que la phase suivante devienne la courante"
+    done <<EOF
+$soldes
+EOF
+  fi
+  courant="$(gl_current_milestone 2>/dev/null)"
+  if [ -n "$courant" ]; then
+    ok "phase courante : « $courant » (milestone posé par /ticket-create sur les nouveaux tickets)"
+  else
+    warn "aucun milestone actif non soldé — /ticket-create créera les prochains tickets sans milestone"
+  fi
+fi
+
+wi_raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: opened, first: 100) { nodes { iid widgets { ... on WorkItemWidgetMilestone { milestone { title } } } } } } }' 2>/dev/null)"
+if [ -z "$wi_raw" ]; then
+  warn "tickets ouverts illisibles (API muette) — contrôle des milestones manquants ignoré"
+else
+  nomiles="$(printf '%s' "$wi_raw" | sed 's/{"iid":/\n{"iid":/g' \
+    | awk '/^\{"iid":"/ && !/"milestone":\{"title":"/ { match($0, /"iid":"[0-9]+/); print substr($0, RSTART + 7, RLENGTH - 7) }')"
+  if [ -z "$nomiles" ]; then
+    ok "tous les tickets ouverts portent un milestone"
+  else
+    for iid in $nomiles; do
+      warn "#$iid ouvert sans milestone → poser celui de sa phase : glab issue update $iid -m \"<titre>\""
+    done
+  fi
+fi
+
 # --- Résumé -------------------------------------------------------------------------------------
 section "Résumé"
 printf '  %d erreur(s), %d avertissement(s)\n' "$errors" "$warns"

@@ -168,6 +168,23 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
   pas à aujourd'hui) et se contente de recalculer l'échéance. `/ticket-finish` vérifie le temps déjà
   loggé (`get-time-spent`) et **n'en rajoute pas** si un cycle est déjà enregistré, pour ne pas doubler.
 
+### 3.4 Milestone de phase — posé à la création
+
+Chaque ticket est rattaché au **milestone de la phase de la roadmap** pendant laquelle il est
+réalisé (« Phase 0 — POC », « Phase 1 — MVP »… — voir [docs/06-roadmap.md](./06-roadmap.md)), pour
+que la vue par milestone reflète l'avancement réel de chaque phase.
+
+- **À la création** : `/ticket-create` pose le milestone de la **phase courante**, résolu par
+  `bash scripts/gitlab/lib.sh current-milestone` = le **milestone actif le plus ancien non soldé**
+  (ayant au moins un ticket ouvert, ou aucun ticket si la phase n'est pas entamée). La règle est
+  volontairement **indépendante des dates prévisionnelles** des milestones : le réel peut être en
+  avance sur elles. Un milestone explicitement demandé par l'utilisateur prime ; sans milestone
+  actif non soldé, l'option est simplement omise.
+- **Fin de phase** : un milestone actif dont tous les tickets sont fermés est **sauté** par le
+  helper ; sa **fermeture** reste une **décision humaine** (jalon go/no-go de la roadmap) — aucune
+  commande ne ferme un milestone. `doctor.sh` (§7) signale les milestones actifs entièrement
+  soldés à fermer, ainsi que les tickets ouverts sans milestone.
+
 ---
 
 ## 4. Templates GitLab
