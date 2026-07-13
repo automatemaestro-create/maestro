@@ -6,8 +6,11 @@ sert pour l'auto-assignation ; le moteur (`maestro.engine`) pour l'exécution.
 
     from maestro.agents import DEFAULT_AGENTS
 
-Le catalogue est statique au POC ; il proviendra de la base en V1 (table AGENT)
-sans changer ce contrat.
+Le catalogue n'est plus figé au code (#72, EF-03) : des **agents personnalisés**
+se définissent hors du code (`maestro.agents.store`, dépôt `core/agents/`, API
+Control Tower `/api/catalogue`) et `catalogue()` assemble le catalogue effectif —
+les agents par défaut, puis les personnalisés. En V1 ce dépôt passera en base
+(table AGENT) sans changer ce contrat.
 
 Au-delà de l'identité (`Agent`), certains rôles disposent d'un **runtime outillé** —
 un sous-agent du SDK qui exécute une tâche de bout en bout dans un espace isolé et
@@ -45,6 +48,12 @@ from maestro.agents.runtime import (
     AgentOutcome,
     AgentRuntime,
     RoleProfile,
+)
+from maestro.agents.store import (
+    NOMS_RESERVES,
+    AgentDefinition,
+    AgentStore,
+    catalogue,
 )
 from maestro.providers.base import ModelProvider
 
@@ -98,17 +107,21 @@ __all__ = [
     "DESIGNER_PROFILE",
     "DEVELOPER_PROFILE",
     "DEVOPS_PROFILE",
+    "NOMS_RESERVES",
     "PLAYBOOK_DEFAUTS",
     "QA_PROFILE",
     "TOOLED_PROFILES",
     "Agent",
+    "AgentDefinition",
     "AgentOutcome",
     "AgentRuntime",
+    "AgentStore",
     "PlaybookDefaut",
     "PlaybookStore",
     "PlaybookVersion",
     "RoleProfile",
     "agents_pour",
     "avec_playbooks",
+    "catalogue",
     "default_runtimes",
 ]

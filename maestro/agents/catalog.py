@@ -6,10 +6,11 @@ déclare ses **compétences** (tags) — base de l'auto-assignation par le route
 (`maestro.router`) — et le **modèle** + **prompt système** avec lesquels il exécute
 ses tâches via la couche fournisseur (`ModelProvider`).
 
-Ne figurent ici que les **agents exécutants** (Développeur, BDD, DevOps, Designer,
-QA) : le Chef de projet n'exécute pas de tâche, il les découpe (`maestro.orchestrator`)
-et synthétise. Le catalogue est **statique** au POC ; en V1 il proviendra de la base
-(table AGENT) et sera éditable depuis la Control Tower — sans changer le contrat.
+Ne figurent ici que les **agents exécutants par défaut** (Développeur, BDD, DevOps,
+Designer, QA) : le Chef de projet n'exécute pas de tâche, il les découpe
+(`maestro.orchestrator`) et synthétise. Ce module reste la part « du code » du
+catalogue ; les **agents personnalisés** (#72, EF-03) se définissent hors du code
+(`maestro.agents.store`) et `catalogue()` assemble le catalogue effectif.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from dataclasses import dataclass, replace
 
 #: Modèle par défaut des exécutants au POC (Claude Sonnet, cf. docs/04 §2). Le rôle
 #: est indépendant du fournisseur/modèle : on peut le remplacer sans le toucher.
-_MODELE_EXECUTANT = "claude-sonnet-5"
+MODELE_EXECUTANT_DEFAUT = "claude-sonnet-5"
 
 
 @dataclass(frozen=True)
@@ -70,7 +71,7 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
         nom="developpeur",
         role="Développeur",
         competences=frozenset({"backend", "frontend", "api", "refactor"}),
-        modele=_MODELE_EXECUTANT,
+        modele=MODELE_EXECUTANT_DEFAUT,
         prompt_systeme=_prompt_systeme(
             "Développeur",
             "Tu implémentes et modifies le code applicatif.",
@@ -82,7 +83,7 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
         nom="bdd",
         role="Base de données",
         competences=frozenset({"sql", "schema", "migration", "data"}),
-        modele=_MODELE_EXECUTANT,
+        modele=MODELE_EXECUTANT_DEFAUT,
         prompt_systeme=_prompt_systeme(
             "Base de données",
             "Tu conçois le schéma, écris les migrations et optimises les requêtes.",
@@ -94,7 +95,7 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
         nom="devops",
         role="DevOps",
         competences=frozenset({"ci-cd", "infra", "deploy", "docker"}),
-        modele=_MODELE_EXECUTANT,
+        modele=MODELE_EXECUTANT_DEFAUT,
         prompt_systeme=_prompt_systeme(
             "DevOps",
             "Tu construis les pipelines CI/CD, l'infrastructure et les déploiements.",
@@ -106,7 +107,7 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
         nom="designer",
         role="Designer",
         competences=frozenset({"ui", "ux", "design-system", "figma"}),
-        modele=_MODELE_EXECUTANT,
+        modele=MODELE_EXECUTANT_DEFAUT,
         prompt_systeme=_prompt_systeme(
             "Designer",
             "Tu proposes écrans, maquettes et composants conformes à la charte.",
@@ -118,7 +119,7 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
         nom="qa",
         role="QA / Testeur",
         competences=frozenset({"tests", "e2e", "review", "qa"}),
-        modele=_MODELE_EXECUTANT,
+        modele=MODELE_EXECUTANT_DEFAUT,
         prompt_systeme=_prompt_systeme(
             "QA / Testeur",
             "Tu écris et exécutes les tests, valides les livrables et fais la revue.",

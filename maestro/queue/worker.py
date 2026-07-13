@@ -35,8 +35,8 @@ from celery import shared_task
 from celery.signals import celeryd_after_setup
 
 from maestro.agents import default_runtimes
-from maestro.agents.catalog import agents_pour
 from maestro.agents.playbooks import PlaybookStore
+from maestro.agents.store import AgentStore, catalogue
 from maestro.config import load_settings
 from maestro.engine.executor import LocalExecutor, TaskResult
 from maestro.engine.guardrails import Guardrails
@@ -138,7 +138,10 @@ def _executeur() -> LocalExecutor:
     la version courante à chaque tâche consommée, donc une édition publiée vaut
     pour le message suivant sans redémarrer le worker. Le dépôt est celui de la
     config (`MAESTRO_PLAYBOOKS_DIR`) : au POC sur fichiers, workers et API
-    Control Tower doivent voir le même stockage.
+    Control Tower doivent voir le même stockage. Le catalogue d'exécutants est
+    le catalogue **effectif** (#72) — agents par défaut plus personnalisés
+    (`MAESTRO_AGENTS_DIR`, même exigence de stockage partagé) — chargé ici, à la
+    construction : un agent créé ensuite attend le redémarrage du worker.
     """
     global _executor
     if _executor is None:
@@ -146,7 +149,7 @@ def _executeur() -> LocalExecutor:
         settings = load_settings()
         _executor = LocalExecutor(
             provider,
-            agents=agents_pour(settings.model),
+            agents=catalogue(AgentStore.default(settings), settings.model),
             runtimes=default_runtimes(provider, model=settings.model),
             guardrails=_guardrails,
             playbooks=PlaybookStore.default(settings),

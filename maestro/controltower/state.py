@@ -291,6 +291,26 @@ class ControlTowerState:
 
     # ----------------------------------------------------------------- écriture
 
+    def ajouter_agent(self, nom: str, role: str) -> None:
+        """Inscrit un agent dans la vue, fiche libre — l'acte de création du #72.
+
+        Un agent personnalisé créé via l'API apparaît ainsi immédiatement dans
+        `GET /api/agents` et devient cible de réassignation manuelle, sans
+        attendre un redémarrage. Idempotent : une fiche existante garde ses
+        compteurs, seul son rôle est rafraîchi.
+        """
+        fiche = self._agents.setdefault(nom, EtatAgent(nom=nom, role=role))
+        fiche.role = role or fiche.role
+
+    def retirer_agent(self, nom: str) -> None:
+        """Retire la fiche d'un agent supprimé du catalogue (#72).
+
+        La projection reste événementielle : une activité ultérieure portée par
+        ce nom (trace d'un moteur encore câblé sur l'ancien catalogue) referait
+        apparaître la fiche — la suppression n'efface pas l'histoire du flux.
+        """
+        self._agents.pop(nom, None)
+
     def appliquer(self, event: Event) -> None:
         """Projette `event` sur l'état : tâches, agents et trace d'exécution.
 

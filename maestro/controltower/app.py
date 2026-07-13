@@ -26,6 +26,14 @@ Endpoints :
 - `GET  /api/playbooks/{agent}/versions/{version}` — une version passée ;
 - `POST /api/playbooks/{agent}/restaurer` — retour arrière (EF-25) : republie
   une version passée comme nouvelle version courante ;
+- `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
+  défaut du code et les personnalisés persistés, avec leur provenance ;
+- `GET  /api/catalogue/{nom}` — la définition complète d'un agent (playbook
+  compris) ;
+- `POST /api/catalogue` — crée un agent personnalisé (persisté hors du code,
+  routable et exécutable par les moteurs construits ensuite) ;
+- `PUT  /api/catalogue/{nom}` — remplace la définition d'un agent personnalisé ;
+- `DELETE /api/catalogue/{nom}` — supprime un agent personnalisé ;
 - `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
   des agents, messages inter-agents, validations), au format `Event.to_dict`.
 
@@ -50,7 +58,9 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
+from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
 from maestro.config import load_settings
 from maestro.controltower.events import (
     EVENEMENT_TACHE_REASSIGNATION,
@@ -89,6 +99,35 @@ class PlaybookRestaurationRequete(BaseModel):
     """Corps du retour arrière (#76) : la version passée à republier comme courante."""
 
     version: int
+
+
+class AgentCreationRequete(BaseModel):
+    """Corps de création d'un agent personnalisé (#72) : sa définition complète.
+
+    `modele` est optionnel (None : le modèle par défaut des exécutants) ;
+    `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
+    """
+
+    nom: str
+    role: str
+    competences: list[str]
+    playbook: str
+    modele: str | None = None
+    fournisseur: str | None = None
+
+
+class AgentModificationRequete(BaseModel):
+    """Corps de modification d'un agent personnalisé (#72) : la définition intégrale.
+
+    Un remplacement, pas un diff — le nom, lui, vit dans l'URL et ne change pas
+    (c'est la clé de routage et de stockage).
+    """
+
+    role: str
+    competences: list[str]
+    playbook: str
+    modele: str | None = None
+    fournisseur: str | None = None
 
 
 class Diffusion:
@@ -147,6 +186,7 @@ def create_app(
     bus: EventBus | None = None,
     state: ControlTowerState | None = None,
     playbooks: PlaybookStore | None = None,
+    agents_store: AgentStore | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -158,9 +198,16 @@ def create_app(
     `playbooks` (#76) est le dépôt versionné servi par les endpoints
     `/api/playbooks` — par défaut celui de la config (`MAESTRO_PLAYBOOKS_DIR`,
     sinon `core/playbooks/` du dépôt) ; les tests en injectent un temporaire.
+
+    `agents_store` (#72) est le dépôt des agents personnalisés servi par les
+    endpoints `/api/catalogue` — par défaut celui de la config
+    (`MAESTRO_AGENTS_DIR`, sinon `core/agents/` du dépôt). L'état par défaut se
+    construit sur le catalogue **effectif** : les agents personnalisés déjà
+    persistés sont présents dès le démarrage, comme ceux du code.
     """
     bus = bus if bus is not None else InMemoryEventBus()
-    state = state if state is not None else ControlTowerState()
+    agents_store = agents_store if agents_store is not None else AgentStore.default()
+    state = state if state is not None else ControlTowerState(catalogue(agents_store))
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     diffusion = Diffusion()
 
@@ -187,7 +234,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_methods=["GET", "POST", "PUT"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
     )
 
@@ -398,6 +445,164 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return version.to_dict()
+
+    def _fiche_defaut(agent: Agent, *, avec_playbook: bool) -> dict[str, Any]:
+        """La fiche catalogue d'un agent par défaut : sa définition « du code ».
+
+        `source` « defaut », sans dates : la définition vit dans le code
+        (`maestro.agents.catalog`), seule l'édition de son playbook passe par
+        le stockage versionné (`/api/playbooks`).
+        """
+        fiche: dict[str, Any] = {
+            "nom": agent.nom,
+            "role": agent.role,
+            "competences": sorted(agent.competences),
+            "modele": agent.modele,
+            "fournisseur": None,
+            "source": "defaut",
+            "cree_le": None,
+            "modifie_le": None,
+        }
+        if avec_playbook:
+            fiche["playbook"] = agent.prompt_systeme
+        return fiche
+
+    def _fiche_personnalise(
+        definition: AgentDefinition, *, avec_playbook: bool
+    ) -> dict[str, Any]:
+        """La fiche catalogue d'un agent personnalisé : sa définition persistée (#72)."""
+        fiche = definition.to_dict(avec_playbook=avec_playbook)
+        fiche["source"] = "personnalise"
+        return fiche
+
+    def _personnalise_ou_none(nom: str) -> AgentDefinition | None:
+        """La définition persistée de `nom`, ou None (nom hors slug compris — jamais levé)."""
+        try:
+            return agents_store.lire(nom)
+        except ValueError:
+            return None
+
+    def _exige_personnalise(nom: str) -> AgentDefinition:
+        """La définition personnalisée de `nom`, ou l'erreur HTTP qui explique son absence.
+
+        403 sur un agent par défaut (défini par le code : ni modifiable ni
+        supprimable ici — son playbook s'édite via `/api/playbooks`), 404 sur
+        un nom inconnu du dépôt.
+        """
+        if nom in NOMS_RESERVES:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"agent par défaut ou acteur système : {nom} — défini par le "
+                    "code, ni modifiable ni supprimable (playbook éditable via "
+                    "PUT /api/playbooks/{agent})."
+                ),
+            )
+        definition = _personnalise_ou_none(nom)
+        if definition is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"agent personnalisé inconnu : {nom} (voir GET /api/catalogue)",
+            )
+        return definition
+
+    @app.get("/api/catalogue")
+    async def catalogue_liste() -> list[dict[str, Any]]:
+        """Le catalogue d'agents (#72) : les agents par défaut puis les personnalisés.
+
+        Métadonnées seules (le playbook d'une fiche se lit sur
+        `GET /api/catalogue/{nom}`), dans l'ordre du catalogue effectif — celui
+        que les moteurs chargent au démarrage.
+        """
+        return [_fiche_defaut(a, avec_playbook=False) for a in DEFAULT_AGENTS] + [
+            _fiche_personnalise(d, avec_playbook=False) for d in agents_store.lister()
+        ]
+
+    @app.get("/api/catalogue/{nom}")
+    async def catalogue_fiche(nom: str) -> dict[str, Any]:
+        """La définition complète d'un agent du catalogue, playbook compris."""
+        defaut = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
+        if defaut is not None:
+            return _fiche_defaut(defaut, avec_playbook=True)
+        definition = _personnalise_ou_none(nom)
+        if definition is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"agent inconnu : {nom} (voir GET /api/catalogue)",
+            )
+        return _fiche_personnalise(definition, avec_playbook=True)
+
+    @app.post("/api/catalogue", status_code=201)
+    async def creer_agent(requete: AgentCreationRequete) -> dict[str, Any]:
+        """Crée un agent personnalisé (#72) : définition persistée hors du code.
+
+        L'agent entre immédiatement dans la vue `GET /api/agents` (cible de
+        réassignation manuelle) ; il est routable et exécutable par les moteurs
+        et workers construits ensuite, qui chargent le catalogue effectif à
+        leur démarrage. 409 si le nom est déjà pris (agent par défaut, acteur
+        système ou personnalisé existant), 422 si la définition est invalide.
+        """
+        if requete.nom in NOMS_RESERVES or _personnalise_ou_none(requete.nom) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"nom déjà pris : {requete.nom} — modification d'un agent "
+                    "personnalisé via PUT /api/catalogue/{nom}."
+                ),
+            )
+        try:
+            definition = agents_store.ecrire(
+                AgentDefinition(
+                    nom=requete.nom,
+                    role=requete.role,
+                    competences=tuple(requete.competences),
+                    playbook=requete.playbook,
+                    modele=requete.modele,
+                    fournisseur=requete.fournisseur,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        state.ajouter_agent(definition.nom, definition.role)
+        return _fiche_personnalise(definition, avec_playbook=True)
+
+    @app.put("/api/catalogue/{nom}")
+    async def modifier_agent(nom: str, requete: AgentModificationRequete) -> dict[str, Any]:
+        """Remplace la définition d'un agent personnalisé (l'intégrale, pas un diff).
+
+        La définition modifiée vaut pour les moteurs construits ensuite. 403
+        sur un agent par défaut (défini par le code), 404 si l'agent n'existe
+        pas, 422 si la nouvelle définition est invalide.
+        """
+        _exige_personnalise(nom)
+        try:
+            definition = agents_store.ecrire(
+                AgentDefinition(
+                    nom=nom,
+                    role=requete.role,
+                    competences=tuple(requete.competences),
+                    playbook=requete.playbook,
+                    modele=requete.modele,
+                    fournisseur=requete.fournisseur,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        state.ajouter_agent(definition.nom, definition.role)
+        return _fiche_personnalise(definition, avec_playbook=True)
+
+    @app.delete("/api/catalogue/{nom}")
+    async def supprimer_agent(nom: str) -> dict[str, Any]:
+        """Supprime un agent personnalisé du catalogue.
+
+        Sa fiche quitte la vue `GET /api/agents` ; les moteurs construits
+        ensuite ne le chargent plus. 403 sur un agent par défaut, 404 s'il
+        n'existe pas.
+        """
+        _exige_personnalise(nom)
+        agents_store.supprimer(nom)
+        state.retirer_agent(nom)
+        return {"nom": nom, "supprime": True}
 
     @app.websocket("/ws/evenements")
     async def evenements(websocket: WebSocket) -> None:
