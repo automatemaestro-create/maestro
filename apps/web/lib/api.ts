@@ -9,10 +9,12 @@
 import type {
   AgentCatalogue,
   AgentCatalogueDetail,
+  AnalyticsCouts,
   CoutExecution,
   DefinitionAgent,
   EtatAgent,
   FilChat,
+  PasSerie,
   PlaybookDetail,
   PlaybookFiche,
   Tache,
@@ -57,6 +59,25 @@ export function chargerValidations(): Promise<Validation[]> {
 export function chargerCoutExecution(runId: string): Promise<CoutExecution> {
   return chargerJson<CoutExecution>(
     `/api/executions/${encodeURIComponent(runId)}/cout`,
+  );
+}
+
+/**
+ * La vue coûts & analytics (`GET /api/analytics/couts`, #87) : agrégats par
+ * tâche, par agent et par exécution, total et série temporelle du coût.
+ * `depuis` (ISO) restreint la fenêtre — la période sélectionnable de l'UI ;
+ * `pas` fixe la granularité des seaux de la série (minute/heure/jour).
+ */
+export function chargerAnalyticsCouts(options: {
+  depuis?: string;
+  pas?: PasSerie;
+}): Promise<AnalyticsCouts> {
+  const params = new URLSearchParams();
+  if (options.depuis !== undefined) params.set("depuis", options.depuis);
+  if (options.pas !== undefined) params.set("pas", options.pas);
+  const requete = params.toString();
+  return chargerJson<AnalyticsCouts>(
+    `/api/analytics/couts${requete ? `?${requete}` : ""}`,
   );
 }
 

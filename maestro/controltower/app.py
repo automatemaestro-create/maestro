@@ -17,6 +17,9 @@ Endpoints :
 - `GET  /api/executions/{run_id}` — le détail d'une exécution (trace, coût) ;
 - `GET  /api/executions/{run_id}/cout` — le grand livre du run (#57) : coût
   par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat ;
+- `GET  /api/analytics/couts` — la vue coûts & analytics (#87) : agrégats par
+  tâche, par agent et par exécution, total et série temporelle du coût
+  (`depuis` pour la période, `pas` pour la granularité des seaux) ;
 - `POST /api/taches/{tache_id}/reassigner` — réassignation manuelle (Kanban) ;
 - `GET  /api/validations` — les demandes de validation humaine (#48 : en
   attente d'abord le contexte, puis l'issue une fois tranchée) ;
@@ -62,6 +65,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -73,6 +77,7 @@ from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
 from maestro.config import load_settings
+from maestro.controltower.analytics import PAS_HEURE, PAS_VALIDES, agrege_couts
 from maestro.controltower.chat import (
     ChatStore,
     RepondeurChat,
@@ -349,6 +354,36 @@ def create_app(
         if detail is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return detail.cout.to_dict()
+
+    @app.get("/api/analytics/couts")
+    async def analytics_couts(depuis: str | None = None, pas: str = PAS_HEURE) -> dict[str, Any]:
+        """La vue coûts & analytics (#87) : agrégats transverses et série temporelle.
+
+        Recalculée des exécutions projetées, avec la même convention
+        d'attribution que le grand livre d'un run (#57) : coût agrégé par
+        tâche, par agent (planification comprise) et par exécution, total, et
+        série temporelle du coût en seaux de `pas` (minute/heure/jour).
+        `depuis` (ISO-8601, réputé UTC sans fuseau) restreint la fenêtre — la
+        période sélectionnable de l'UI. 422 sur un `pas` ou un `depuis`
+        invalide.
+        """
+        if pas not in PAS_VALIDES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"pas invalide : {pas} (attendus : {', '.join(PAS_VALIDES)})",
+            )
+        borne = None
+        if depuis is not None:
+            try:
+                borne = datetime.fromisoformat(depuis)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"depuis invalide : {depuis} (attendu : horodatage ISO-8601)",
+                ) from exc
+            if borne.tzinfo is None:
+                borne = borne.replace(tzinfo=UTC)
+        return agrege_couts(state.executions(), depuis=borne, pas=pas).to_dict()
 
     @app.post("/api/taches/{tache_id}/reassigner")
     async def reassigner(tache_id: str, requete: ReassignationRequete) -> dict[str, Any]:

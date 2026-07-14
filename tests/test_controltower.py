@@ -44,7 +44,12 @@ critères d'acceptation du ticket #46 :
    personnalisé du catalogue — et les refus : agent hors catalogue (404, sans
    fil orphelin), message vide (422), réponse indisponible (502, le message
    utilisateur restant acquis et diffusé). Le canal lui-même (persistance,
-   répondeurs, messagerie) est couvert dans `tests/test_chat.py`.
+   répondeurs, messagerie) est couvert dans `tests/test_chat.py` ;
+⑨ vue coûts & analytics (#87) : agrégats transverses par tâche (cumul des
+   re-tentatives), par agent (planification comprise) et par exécution, série
+   temporelle en seaux (minute/heure/jour), fenêtre `depuis` (période
+   sélectionnable), cohérence avec les grands livres (#57) — et les refus :
+   `pas` ou `depuis` invalides (422).
 """
 
 import asyncio
@@ -312,6 +317,138 @@ def test_le_grand_livre_api_retombe_sur_la_comptabilite_du_journal(client, state
     cout = client.get("/api/executions/run-9/cout").json()
 
     assert cout == RunCost.depuis_journal(journal).to_dict()
+
+
+# ----------------------------------------- ①ter Vue coûts & analytics (#87)
+
+
+def _usage(cout_usd, *, entree=100, sortie=10, appels=1):
+    """Mesure d'usage compacte pour les scénarios analytics."""
+    return StepUsage(appels=appels, tokens_entree=entree, tokens_sortie=sortie,
+                     cout_usd=cout_usd)
+
+
+@pytest.fixture()
+def state_analytics(state):
+    """Deux exécutions datées : planification, tâche re-tentée, agents distincts."""
+    state.appliquer(Event(
+        type=EVENEMENT_AGENT_ACTIVITE, run_id="run-1",
+        agent="orchestrateur", role="Orchestrateur",
+        usage=_usage(0.10, entree=300, sortie=30),
+        horodatage="2026-07-14T10:00:05+00:00",
+    ))
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-1", tache_id="t1",
+        titre="Implémenter", agent="developpeur", role="Développeur",
+        statut="terminee", usage=_usage(0.40, entree=1000, sortie=150, appels=2),
+        horodatage="2026-07-14T10:20:00+00:00",
+    ))
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-1", tache_id="t2",
+        titre="Vérifier", agent="qa", role="QA / Testeur",
+        statut="terminee", usage=_usage(0.05, entree=200, sortie=20),
+        horodatage="2026-07-14T10:45:00+00:00",
+    ))
+    # Re-tentative de t1 dans un second run, une heure plus tard.
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_STATUT, run_id="run-2", tache_id="t1",
+        titre="Implémenter", agent="developpeur", role="Développeur",
+        statut="echec", usage=_usage(0.20, entree=500, sortie=50),
+        horodatage="2026-07-14T11:30:00+00:00",
+    ))
+    return state
+
+
+def test_analytics_agrege_par_tache_agent_et_execution(client, state_analytics):
+    """`/api/analytics/couts` : agrégats transverses par tâche, agent, exécution."""
+    vue = client.get("/api/analytics/couts").json()
+
+    assert vue["total"]["cout_usd"] == pytest.approx(0.75)
+    assert vue["total"]["tokens_total"] == 2250
+
+    # Par exécution : ordre chronologique, bornes et tâches distinctes du run.
+    r1, r2 = vue["executions"]
+    assert r1["run_id"] == "run-1" and r1["nb_taches"] == 2
+    assert r1["debut"] == "2026-07-14T10:00:05+00:00"
+    assert r1["fin"] == "2026-07-14T10:45:00+00:00"
+    assert r1["usage"]["cout_usd"] == pytest.approx(0.55)
+    assert r2["run_id"] == "run-2" and r2["usage"]["cout_usd"] == pytest.approx(0.20)
+
+    # Par agent : tri par coût décroissant, planification comprise (orchestrateur).
+    assert [a["agent"] for a in vue["agents"]] == ["developpeur", "orchestrateur", "qa"]
+    dev = vue["agents"][0]
+    assert dev["usage"]["cout_usd"] == pytest.approx(0.60) and dev["taches"] == 1
+    assert vue["agents"][1]["taches"] == 0  # planification : hors tâche
+
+    # Par tâche : t1 cumule ses deux runs, l'identité suit le dernier statut vu.
+    t1 = next(t for t in vue["taches"] if t["tache_id"] == "t1")
+    assert t1["executions"] == 2 and t1["statut"] == "echec"
+    assert t1["usage"]["cout_usd"] == pytest.approx(0.60)
+
+
+def test_analytics_serie_temporelle_selon_le_pas(client, state_analytics):
+    """La série regroupe l'usage en seaux du `pas` demandé (minute/heure/jour)."""
+    vue = client.get("/api/analytics/couts").json()  # pas par défaut : heure
+    assert [p["periode"] for p in vue["serie"]] == [
+        "2026-07-14T10:00:00+00:00", "2026-07-14T11:00:00+00:00",
+    ]
+    assert vue["serie"][0]["usage"]["cout_usd"] == pytest.approx(0.55)
+
+    par_jour = client.get("/api/analytics/couts", params={"pas": "jour"}).json()
+    (seau,) = par_jour["serie"]
+    assert seau["periode"] == "2026-07-14T00:00:00+00:00"
+    assert seau["usage"]["cout_usd"] == pytest.approx(0.75)
+
+    par_minute = client.get("/api/analytics/couts", params={"pas": "minute"}).json()
+    assert len(par_minute["serie"]) == 4  # chaque événement daté dans son seau
+
+
+def test_analytics_fenetre_depuis(client, state_analytics):
+    """`depuis` restreint toutes les vues à la fenêtre demandée (période sélectionnable)."""
+    vue = client.get(
+        "/api/analytics/couts", params={"depuis": "2026-07-14T11:00:00+00:00"}
+    ).json()
+
+    assert vue["depuis"] == "2026-07-14T11:00:00+00:00"
+    assert vue["total"]["cout_usd"] == pytest.approx(0.20)
+    assert [r["run_id"] for r in vue["executions"]] == ["run-2"]
+    assert [a["agent"] for a in vue["agents"]] == ["developpeur"]
+    (t1,) = vue["taches"]
+    assert t1["executions"] == 1 and len(vue["serie"]) == 1
+
+
+def test_analytics_depuis_sans_fuseau_repute_utc(client, state_analytics):
+    """Un `depuis` naïf est réputé UTC — la convention des horodatages du bus."""
+    vue = client.get(
+        "/api/analytics/couts", params={"depuis": "2026-07-14T11:00:00"}
+    ).json()
+    assert vue["total"]["cout_usd"] == pytest.approx(0.20)
+
+
+def test_analytics_sans_execution(client):
+    """Aucune trace : vues vides et total inconnu (None, pas 0)."""
+    vue = client.get("/api/analytics/couts").json()
+    assert vue["executions"] == [] and vue["agents"] == []
+    assert vue["taches"] == [] and vue["serie"] == []
+    assert vue["total"]["cout_usd"] is None
+
+
+def test_analytics_retombe_sur_les_grands_livres(client, state_analytics):
+    """Le total analytics égale la somme des grands livres des runs (#57) :
+    même convention d'attribution, aucun double comptage."""
+    vue = client.get("/api/analytics/couts").json()
+    totaux = [
+        client.get(f"/api/executions/{r}/cout").json()["total"]["cout_usd"]
+        for r in ("run-1", "run-2")
+    ]
+    assert vue["total"]["cout_usd"] == pytest.approx(sum(totaux))
+
+
+def test_analytics_pas_ou_depuis_invalides_422(client):
+    assert client.get("/api/analytics/couts", params={"pas": "semaine"}).status_code == 422
+    assert client.get(
+        "/api/analytics/couts", params={"depuis": "pas-une-date"}
+    ).status_code == 422
 
 
 # ----------------------------------------------------------- ② WebSocket

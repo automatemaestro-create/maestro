@@ -23,6 +23,18 @@ Six briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
 
 from __future__ import annotations
 
+from maestro.controltower.analytics import (
+    PAS_HEURE,
+    PAS_JOUR,
+    PAS_MINUTE,
+    PAS_VALIDES,
+    AnalyticsCouts,
+    CoutAgent,
+    CoutExecutionResume,
+    CoutTacheAgregee,
+    PointCout,
+    agrege_couts,
+)
 from maestro.controltower.app import create_app, create_default_app
 from maestro.controltower.bridge import (
     JournalEventHandler,
@@ -81,12 +93,20 @@ __all__ = [
     "EVENEMENT_TACHE_STATUT",
     "EVENEMENT_VALIDATION_DECISION",
     "EVENEMENT_VALIDATION_DEMANDE",
+    "PAS_HEURE",
+    "PAS_JOUR",
+    "PAS_MINUTE",
+    "PAS_VALIDES",
     "UTILISATEUR",
     "VALIDATION_APPROUVEE",
     "VALIDATION_EN_ATTENTE",
     "VALIDATION_REFUSEE",
+    "AnalyticsCouts",
     "ChatStore",
     "ControlTowerState",
+    "CoutAgent",
+    "CoutExecutionResume",
+    "CoutTacheAgregee",
     "EtatAgent",
     "EtatExecution",
     "EtatTache",
@@ -96,6 +116,7 @@ __all__ = [
     "InMemoryEventBus",
     "JournalEventHandler",
     "MessageChat",
+    "PointCout",
     "RedisEventBus",
     "RepondeurChat",
     "RepondeurModele",
@@ -104,6 +125,7 @@ __all__ = [
     "ServiceChat",
     "ValidateurControlTower",
     "activer_publication",
+    "agrege_couts",
     "create_app",
     "create_default_app",
     "evenements_depuis_step",
