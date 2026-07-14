@@ -1,0 +1,4 @@
+# Les fils de chat utilisateur ↔ agent écrits à chaud (API #84) sont des
+# données d'exécution, pas du code : on ne les commite pas.
+*.jsonl
+*.tmp

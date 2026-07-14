@@ -8,6 +8,10 @@ tâche (#57), message inter-agents, une demande de validation humaine (#48)
 laissée en attente (le panneau reste cliquable), puis une pulsation QA
 périodique qui montre le flux temps réel.
 
+Le chat utilisateur ↔ agent (#84) répond en **scripté** (`RepondeurScripte` :
+aucun modèle appelé, aucune authentification requise) sur un fil **éphémère**
+(répertoire temporaire) : la démo n'écrit rien dans `core/chat/`.
+
 C'est le backend du lancement local en une commande
 (`scripts/controltower/start.sh`, skill `control-tower`) ; la vraie
 orchestration branchée sur Redis passe par `maestro-api` (`cli.py`).
@@ -19,9 +23,12 @@ import argparse
 import asyncio
 import itertools
 import sys
+import tempfile
 from collections.abc import Sequence
+from pathlib import Path
 
 from maestro.controltower.app import create_app
+from maestro.controltower.chat import ChatStore, RepondeurScripte
 from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
@@ -211,7 +218,14 @@ async def _servir(hote: str, port: int) -> int:
     import uvicorn
 
     bus = InMemoryEventBus()
-    config = uvicorn.Config(create_app(bus=bus), host=hote, port=port, log_level="warning")
+    app = create_app(
+        bus=bus,
+        # Chat de démo (#84) : réponses scriptées (aucun modèle ni auth) sur un
+        # fil éphémère — la démo ne laisse aucune trace dans core/chat/.
+        chat_store=ChatStore(Path(tempfile.mkdtemp(prefix="maestro-chat-demo-"))),
+        chat_repondeur=RepondeurScripte(),
+    )
+    config = uvicorn.Config(app, host=hote, port=port, log_level="warning")
     server = uvicorn.Server(config)
     serveur = asyncio.create_task(server.serve())
     # La pompe de l'app s'abonne au démarrage (lifespan) : publier avant, c'est

@@ -39,13 +39,16 @@ from maestro.telemetry.usage import StepUsage
 #: planification et les validations humaines ; `message.inter_agents` porte la
 #: messagerie A2A (entité AGENT_MESSAGE, docs/03 §2) ; `validation.demande` et
 #: `validation.decision` portent le human-in-the-loop (#48, entité APPROVAL de
-#: docs/03) — le moteur demande, la Control Tower rend la décision humaine.
+#: docs/03) — le moteur demande, la Control Tower rend la décision humaine ;
+#: `chat.message` porte le chat utilisateur ↔ agent (#84) : `agent` désigne le
+#: fil, `statut` l'auteur (« utilisateur »/« agent »), `detail` le contenu.
 EVENEMENT_TACHE_STATUT = "tache.statut"
 EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation"
 EVENEMENT_AGENT_ACTIVITE = "agent.activite"
 EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"
 EVENEMENT_VALIDATION_DEMANDE = "validation.demande"
 EVENEMENT_VALIDATION_DECISION = "validation.decision"
+EVENEMENT_CHAT_MESSAGE = "chat.message"
 
 #: Canal Redis Pub/Sub des événements — sur l'instance mutualisée avec la file
 #: de tâches (#41), d'où un canal nommé plutôt que le canal par défaut.
