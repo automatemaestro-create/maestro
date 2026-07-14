@@ -307,6 +307,10 @@ class ControlTowerState:
         """Le détail de l'exécution `run_id`, ou None si aucune trace reçue."""
         return self._executions.get(run_id)
 
+    def executions(self) -> list[EtatExecution]:
+        """Les exécutions connues, dans l'ordre de première apparition (#87)."""
+        return list(self._executions.values())
+
     def validations(self) -> list[EtatValidation]:
         """Les demandes de validation humaine, dans l'ordre de première apparition."""
         return list(self._validations.values())

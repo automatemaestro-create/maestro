@@ -93,6 +93,60 @@ export type CoutExecution = {
   taches: CoutTache[];
 };
 
+/** Granularité de la série temporelle analytics (maestro/controltower/analytics.py, #87). */
+export type PasSerie = "minute" | "heure" | "jour";
+
+/** La ligne « par agent » de la vue analytics (`CoutAgent.to_dict`, #87). */
+export type CoutAgentAgrege = {
+  agent: string;
+  role: string;
+  /** Tâches distinctes auxquelles son usage a été attribué (0 : planification). */
+  taches: number;
+  usage: Usage;
+};
+
+/** La ligne « par tâche » de la vue analytics (`CoutTacheAgregee.to_dict`, #87). */
+export type CoutTacheAgregee = {
+  tache_id: string;
+  nom: string;
+  agent: string;
+  role: string;
+  statut: string;
+  /** Exécutions où la tâche est apparue (> 1 : re-tentatives, dépense cumulée). */
+  executions: number;
+  usage: Usage;
+};
+
+/** La ligne « par exécution » de la vue analytics (`CoutExecutionResume.to_dict`, #87). */
+export type CoutExecutionResume = {
+  run_id: string;
+  nb_taches: number;
+  debut: string;
+  fin: string;
+  usage: Usage;
+};
+
+/** Un seau de la série temporelle (`PointCout.to_dict`, #87) : usage cumulé sur la période. */
+export type PointCout = {
+  periode: string;
+  usage: Usage;
+};
+
+/**
+ * La vue coûts & analytics, servie par `GET /api/analytics/couts`
+ * (`AnalyticsCouts.to_dict`, #87) : agrégats transverses par tâche, par agent
+ * et par exécution, total de la fenêtre et série temporelle du coût.
+ */
+export type AnalyticsCouts = {
+  depuis: string | null;
+  pas: string;
+  total: Usage;
+  executions: CoutExecutionResume[];
+  agents: CoutAgentAgrege[];
+  taches: CoutTacheAgregee[];
+  serie: PointCout[];
+};
+
 /**
  * Une demande de validation humaine telle que servie par `GET /api/validations`
  * (#48, `EtatValidation.to_dict`) : le contexte pour trancher — tâche, agent,
