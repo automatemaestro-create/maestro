@@ -216,3 +216,26 @@ défaut restent définis par le code : leur fiche est en lecture seule dans le c
 fournisseur configuré, `MAESTRO_PROVIDER`) et un agent personnalisé exécute par le
 chemin texte (pas de runtime outillé).
 Détails : [`core/agents/README.md`](../core/agents/README.md).
+
+### 6.4 — Chat utilisateur ↔ agent (disponible — tickets #84/#85)
+
+Chaque agent du catalogue — par défaut ou personnalisé (§6.3) — se **contacte
+directement** depuis la Control Tower (EF-19) : la page `/chat` de l'UI (#85) ouvre un
+fil de conversation par agent, ou par l'API (`GET /api/chat/{agent}` relit le fil,
+`POST /api/chat/{agent}/messages` envoie un message et rend la paire message/réponse).
+La réponse est produite par le **fournisseur configuré** (`MAESTRO_PROVIDER`), cadrée
+par le **playbook courant** de l'agent (§6.2 : la version éditée fait foi, rechargée à
+chaque message) et par un cadre de conversation explicite — c'est un échange direct,
+pas une tâche à livrer.
+
+Le fil est **persisté** (`core/chat/`, un fichier JSONL append-only par agent, racine
+remplaçable par `MAESTRO_CHAT_DIR`) : l'historique se recharge au retour sur la page,
+et survit à un redémarrage de l'API. Chaque message — envoi comme réponse — transite
+par la **messagerie inter-agents** (#44, la boîte de l'agent) et part en événement
+`chat.message` sur le WebSocket `/ws/evenements` : les clients temps réel voient le
+message utilisateur dès l'envoi, puis la réponse quand elle tombe. Si la réponse ne
+peut pas être produite (fournisseur en échec), l'API répond 502 mais le message
+utilisateur reste acquis — relancer ne perd pas le fil. La démo locale
+(`scripts/controltower/start.sh`, #65) répond en **scripté** sur un fil éphémère :
+aucun modèle appelé, rien d'écrit dans `core/chat/`.
+Détails : [`core/chat/README.md`](../core/chat/README.md).

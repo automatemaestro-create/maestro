@@ -158,7 +158,7 @@ Une **demande de validation humaine** (human-in-the-loop) sur une action sensibl
 Les **outils** disponibles (souvent des serveurs MCP) et leur **liaison** à un agent avec des **permissions** scopées.
 
 ### MESSAGE
-Les messages échangés dans un run, y compris les conversations utilisateur ↔ agent (fonction « chat » de l'UI).
+Les messages échangés dans un run, y compris les conversations utilisateur ↔ agent (fonction « chat » de l'UI). Au POC, les fils de chat sont persistés **sur fichiers** (`core/chat/`, un JSONL append-only par agent — tickets #82/#84) ; cette entité les reprendra en base à la V1 sans changer le contrat de l'API `/api/chat`.
 
 ### AGENT_MESSAGE
 Les **messages inter-agents** (la « boîte aux lettres » / mailbox). Champs : `from_agent`, `to_agent` (`null` si diffusion/broadcast), `type` (`handoff`, `requete`, `reponse`, `notification`), `task_id` (contexte), `payload`, `statut` (`envoye`, `lu`, `traite`). Support de la messagerie directe et du protocole A2A (EF-31 à EF-34). Omis du diagramme ER ci-dessus pour la lisibilité, comme `MEMORY_CHUNK`.
