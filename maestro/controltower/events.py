@@ -41,10 +41,13 @@ from maestro.telemetry.usage import StepUsage
 #: `validation.decision` portent le human-in-the-loop (#48, entité APPROVAL de
 #: docs/03) — le moteur demande, la Control Tower rend la décision humaine ;
 #: `chat.message` porte le chat utilisateur ↔ agent (#84) : `agent` désigne le
-#: fil, `statut` l'auteur (« utilisateur »/« agent »), `detail` le contenu.
+#: fil, `statut` l'auteur (« utilisateur »/« agent »), `detail` le contenu ;
+#: `agent.capacite` porte le contrôle de capacité (#86, EF-21) : `statut` l'état
+#: résultant (« active »/« desactive ») et `instances` le plafond résultant.
 EVENEMENT_TACHE_STATUT = "tache.statut"
 EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation"
 EVENEMENT_AGENT_ACTIVITE = "agent.activite"
+EVENEMENT_AGENT_CAPACITE = "agent.capacite"
 EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"
 EVENEMENT_VALIDATION_DEMANDE = "validation.demande"
 EVENEMENT_VALIDATION_DECISION = "validation.decision"
@@ -78,6 +81,8 @@ class Event:
     expurgé des secrets par le journal amont (`redact_secrets`). `description`
     porte le contexte long d'une demande de validation (#48 : l'action que
     l'agent réaliserait, telle que décrite par la tâche) — vide ailleurs.
+    `instances` porte le plafond d'instances résultant d'un réglage de capacité
+    (#86, entité AGENT `instances_max`) — None ailleurs.
     """
 
     type: str
@@ -91,6 +96,7 @@ class Event:
     description: str = ""
     cout_usd: float | None = None
     usage: StepUsage | None = None
+    instances: int | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -107,6 +113,7 @@ class Event:
             "description": self.description,
             "cout_usd": self.cout_usd,
             "usage": self.usage.to_dict() if self.usage is not None else None,
+            "instances": self.instances,
             "horodatage": self.horodatage,
         }
 
@@ -130,6 +137,7 @@ class Event:
             description=data.get("description", ""),
             cout_usd=data.get("cout_usd"),
             usage=StepUsage.from_dict(usage_brut) if isinstance(usage_brut, Mapping) else None,
+            instances=data.get("instances"),
             horodatage=data.get("horodatage", ""),
         )
 

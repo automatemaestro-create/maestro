@@ -23,6 +23,7 @@ import {
   chargerValidations,
   deciderValidation,
   reassignerTache,
+  reglerCapaciteAgent,
   urlEvenements,
 } from "./api";
 import type {
@@ -59,6 +60,11 @@ export type ControlTower = {
   reassigner: (tacheId: string, agent: string) => Promise<void>;
   /** Tranche une demande de validation : le moteur reprend ou annule la tâche. */
   decider: (tacheId: string, approuve: boolean) => Promise<void>;
+  /** Règle la capacité d'un agent (#86) : activer/désactiver, instances. */
+  reglerCapacite: (
+    nom: string,
+    reglage: { actif?: boolean; instances?: number },
+  ) => Promise<void>;
 };
 
 export function useControlTower(): ControlTower {
@@ -180,6 +186,16 @@ export function useControlTower(): ControlTower {
     [recharger],
   );
 
+  const reglerCapacite = useCallback(
+    async (nom: string, reglage: { actif?: boolean; instances?: number }) => {
+      await reglerCapaciteAgent(nom, reglage);
+      // Même mécanique : l'événement `agent.capacite` arrivera par le
+      // WebSocket, le rechargement direct met la fiche à jour sans attendre.
+      await recharger();
+    },
+    [recharger],
+  );
+
   return {
     taches,
     agents,
@@ -191,5 +207,6 @@ export function useControlTower(): ControlTower {
     erreur,
     reassigner,
     decider,
+    reglerCapacite,
   };
 }

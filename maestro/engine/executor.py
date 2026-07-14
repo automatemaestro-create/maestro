@@ -19,11 +19,13 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any
 
 from maestro.agents import default_runtimes
+from maestro.agents.capacity import CapacityStore, JaugeInstances
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
@@ -170,6 +172,7 @@ class LocalExecutor(TaskExecutor):
         guardrails: Guardrails | None = None,
         router: Router | None = None,
         playbooks: PlaybookStore | None = None,
+        capacites: CapacityStore | None = None,
     ) -> None:
         self._provider = provider
         # Application à chaud des playbooks (#78) : la version courante est relue
@@ -177,6 +180,12 @@ class LocalExecutor(TaskExecutor):
         # vaut pour l'exécution suivante, sans reconstruire l'exécuteur ni
         # redémarrer le process. None : prompts figés au câblage (agents/runtimes).
         self._playbooks = playbooks
+        # Contrôle de capacité (#86, EF-21) : agents désactivés écartés du routage
+        # et exécutions simultanées bornées au plafond d'instances, réglages relus
+        # à chaud dans ce dépôt à chaque tâche. None : capacité illimitée
+        # (comportement historique — tests et câblages sans Control Tower).
+        self._capacites = capacites
+        self._jauge = JaugeInstances()
         # Routage combiné (#42) : règles de compétences + classifieur léger adossé
         # au même fournisseur. Un routeur injecté remplace `agents` pour le routage.
         self._router = (
@@ -228,7 +237,7 @@ class LocalExecutor(TaskExecutor):
             if refus is not None:
                 result = refus
             else:
-                decision = await self._router.route(task)
+                decision = await self._router.route(task, exclus=self._desactives())
                 if decision.agent is None:
                     # Repli explicite (#42) : tâche marquée « à assigner » plutôt que
                     # mal routée — l'assignation revient à un humain.
@@ -241,9 +250,12 @@ class LocalExecutor(TaskExecutor):
                     # Application à chaud (#78) : le playbook courant est résolu
                     # ici, à chaque tâche — jamais retenu entre deux exécutions.
                     playbook = self._playbook_courant(decision.agent.nom)
-                    result = await self._realise_gardee(
-                        decision.agent, task, entree, decision.score, journal, playbook
-                    )
+                    # Contrôle de capacité (#86) : l'agent au complet retient la
+                    # tâche jusqu'à la libération d'un créneau d'instance.
+                    async with self._creneau_capacite(decision.agent.nom):
+                        result = await self._realise_gardee(
+                            decision.agent, task, entree, decision.score, journal, playbook
+                        )
                     if playbook is not None:
                         result = replace(result, playbook_version=playbook.version)
         result = replace(result, usage=recolte.total.avec_duree(_ecoule_ms(debut)))
@@ -260,6 +272,30 @@ class LocalExecutor(TaskExecutor):
             playbook_version=result.playbook_version,
         )
         return result
+
+    def _desactives(self) -> frozenset[str]:
+        """Les agents désactivés (#86), relus dans le dépôt à chaque tâche.
+
+        C'est la moitié « ne reçoit plus de tâches » du contrôle de capacité :
+        le routage les écarte des candidats — la tâche va au meilleur agent
+        restant, ou en repli « à assigner ». Vide sans dépôt câblé.
+        """
+        if self._capacites is None:
+            return frozenset()
+        return self._capacites.inactifs()
+
+    def _creneau_capacite(self, nom: str) -> AbstractAsyncContextManager[None]:
+        """Un créneau d'exécution de l'agent `nom`, borné à son plafond d'instances (#86).
+
+        Le plafond est relu dans le dépôt à chaque prise (application à chaud,
+        comme les playbooks) : ajuster les instances depuis la Control Tower
+        vaut pour la prochaine tâche disputée. Sans dépôt câblé, aucun plafond —
+        comportement historique.
+        """
+        capacites = self._capacites
+        if capacites is None:
+            return nullcontext()
+        return self._jauge.creneau(nom, lambda: capacites.lire(nom).instances)
 
     def _playbook_courant(self, agent: str) -> PlaybookVersion | None:
         """La version courante du playbook stocké de `agent`, relue à chaque tâche (#78).

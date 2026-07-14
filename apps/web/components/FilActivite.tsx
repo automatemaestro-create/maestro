@@ -7,7 +7,9 @@
 
 import { formatHeure, libelleStatut } from "@/lib/format";
 import {
+  CAPACITE_ACTIVE,
   EVENEMENT_AGENT_ACTIVITE,
+  EVENEMENT_AGENT_CAPACITE,
   EVENEMENT_MESSAGE_INTER_AGENTS,
   EVENEMENT_TACHE_REASSIGNATION,
   EVENEMENT_TACHE_STATUT,
@@ -18,6 +20,7 @@ const ICONES: Record<string, string> = {
   [EVENEMENT_TACHE_STATUT]: "📋",
   [EVENEMENT_TACHE_REASSIGNATION]: "🔀",
   [EVENEMENT_AGENT_ACTIVITE]: "🤖",
+  [EVENEMENT_AGENT_CAPACITE]: "🎚️",
   [EVENEMENT_MESSAGE_INTER_AGENTS]: "✉️",
 };
 
@@ -30,6 +33,10 @@ function resume(evenement: Evenement): string {
       return `${sujet} — ${libelleStatut(evenement.statut)}${
         evenement.agent ? ` (${evenement.agent})` : ""
       }`;
+    case EVENEMENT_AGENT_CAPACITE:
+      return `${evenement.agent} — ${
+        evenement.statut === CAPACITE_ACTIVE ? "activé" : "désactivé"
+      }${evenement.instances !== null ? `, ${evenement.instances} instance(s)` : ""}`;
     case EVENEMENT_MESSAGE_INTER_AGENTS:
       return `${evenement.agent} → message${sujet ? ` (${sujet})` : ""}`;
     default:

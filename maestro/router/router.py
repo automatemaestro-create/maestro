@@ -24,7 +24,7 @@ catalogue départage les ex æquo, `RoutingError` si aucune compétence couverte
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 from maestro.agents.catalog import Agent
@@ -100,10 +100,23 @@ class Router:
         self._classifier = classifier
         self._seuil = seuil_confiance
 
-    async def route(self, task: Task) -> RoutingDecision:
-        """Route `task` : agent assigné, ou décision « à assigner » — sans jamais lever."""
+    async def route(
+        self, task: Task, *, exclus: Collection[str] = frozenset()
+    ) -> RoutingDecision:
+        """Route `task` : agent assigné, ou décision « à assigner » — sans jamais lever.
+
+        `exclus` écarte des candidats les agents **désactivés** (contrôle de
+        capacité, #86/EF-21) : un agent désactivé ne reçoit plus de tâches — la
+        tâche va au meilleur agent restant, ou part en repli « à assigner » si
+        plus personne n'est disponible (jamais routée vers un exclu).
+        """
+        candidats_actifs = tuple(a for a in self._agents if a.nom not in exclus)
+        if not candidats_actifs:
+            return self._repli(
+                task, raison="tous les agents du catalogue sont désactivés"
+            )
         required = frozenset(task.competences_requises)
-        couvertures = [(agent, agent.couverture(required)) for agent in self._agents]
+        couvertures = [(agent, agent.couverture(required)) for agent in candidats_actifs]
         meilleur_score = max(score for _, score in couvertures)
         ex_aequo = tuple(agent for agent, score in couvertures if score == meilleur_score)
 
@@ -117,8 +130,8 @@ class Router:
             )
 
         # Ambigu : ex æquo (le classifieur départage les seuls candidats à égalité)
-        # ou aucun recouvrement (il choisit parmi tout le catalogue, depuis le texte).
-        candidats = ex_aequo if meilleur_score > 0 else self._agents
+        # ou aucun recouvrement (il choisit parmi les agents actifs, depuis le texte).
+        candidats = ex_aequo if meilleur_score > 0 else candidats_actifs
         return await self._departage(task, candidats, required)
 
     async def _departage(

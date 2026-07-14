@@ -26,10 +26,22 @@ stockage versionné (`maestro.agents.playbooks`, ticket #76) et appliqués **à
 chaud** (#78) : l'exécuteur relit la version courante à chaque tâche, une édition
 publiée vaut pour l'exécution suivante sans redémarrage — un agent jamais édité
 garde exactement ses prompts du code.
+
+La **capacité** d'un agent (#86, EF-21) — activé/désactivé, plafond d'instances —
+se règle de la même façon hors du code (`maestro.agents.capacity`, dépôt
+`core/capacite/`, API Control Tower `/api/agents/{nom}/capacite`) et est relue à
+chaud à chaque tâche : un agent désactivé ne reçoit plus de tâches, ses
+exécutions simultanées sont bornées à son plafond.
 """
 
 from __future__ import annotations
 
+from maestro.agents.capacity import (
+    INSTANCES_DEFAUT,
+    CapaciteAgent,
+    CapacityStore,
+    JaugeInstances,
+)
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent, agents_pour
 from maestro.agents.database import DATABASE_PROFILE
 from maestro.agents.designer import DESIGNER_PROFILE
@@ -107,6 +119,7 @@ __all__ = [
     "DESIGNER_PROFILE",
     "DEVELOPER_PROFILE",
     "DEVOPS_PROFILE",
+    "INSTANCES_DEFAUT",
     "NOMS_RESERVES",
     "PLAYBOOK_DEFAUTS",
     "QA_PROFILE",
@@ -116,6 +129,9 @@ __all__ = [
     "AgentOutcome",
     "AgentRuntime",
     "AgentStore",
+    "CapaciteAgent",
+    "CapacityStore",
+    "JaugeInstances",
     "PlaybookDefaut",
     "PlaybookStore",
     "PlaybookVersion",

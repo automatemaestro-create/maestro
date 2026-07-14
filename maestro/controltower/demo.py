@@ -27,6 +27,7 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from maestro.agents.capacity import CapacityStore
 from maestro.controltower.app import create_app
 from maestro.controltower.chat import ChatStore, RepondeurScripte
 from maestro.controltower.events import (
@@ -224,6 +225,9 @@ async def _servir(hote: str, port: int) -> int:
         # fil éphémère — la démo ne laisse aucune trace dans core/chat/.
         chat_store=ChatStore(Path(tempfile.mkdtemp(prefix="maestro-chat-demo-"))),
         chat_repondeur=RepondeurScripte(),
+        # Capacités éphémères (#86) : activer/désactiver ou régler les instances
+        # depuis l'UI de démo n'écrit rien dans core/capacite/.
+        capacites=CapacityStore(Path(tempfile.mkdtemp(prefix="maestro-capacite-demo-"))),
     )
     config = uvicorn.Config(app, host=hote, port=port, log_level="warning")
     server = uvicorn.Server(config)

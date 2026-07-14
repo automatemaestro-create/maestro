@@ -24,9 +24,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from maestro.agents.capacity import INSTANCES_DEFAUT, CapaciteAgent
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
+    EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_STATUT,
@@ -41,6 +43,11 @@ from maestro.telemetry.usage import StepUsage
 #: Statuts d'agent exposés par l'API (docs/05 §2.1 : libre / occupé / désactivé…).
 AGENT_LIBRE = "libre"
 AGENT_OCCUPE = "occupe"
+
+#: États portés par un événement `agent.capacite` (#86) : l'agent résultant est
+#: activé (il reçoit des tâches) ou désactivé (il n'en reçoit plus).
+CAPACITE_ACTIVE = "active"
+CAPACITE_DESACTIVE = "desactive"
 
 #: Statuts d'une demande de validation humaine (#48), alignés sur l'entité
 #: APPROVAL (docs/03) : en attente de décision, puis approuvée ou refusée.
@@ -96,12 +103,15 @@ class EtatTache:
 
 @dataclass
 class EtatAgent:
-    """La ligne « agent » de la projection : statut, charge et compteurs.
+    """La ligne « agent » de la projection : statut, charge, compteurs et capacité.
 
     Alimente l'écran Agents (docs/05 §2.3) : occupé/libre, tâche courante,
     tâches traitées, coût cumulé, dernière activité. Les agents du catalogue
     (`maestro.agents.catalog`) sont présents dès le démarrage, statut libre ;
     un acteur hors catalogue (l'orchestrateur) apparaît à sa première activité.
+    `actif` et `instances` (#86, EF-21) reflètent le contrôle de capacité :
+    un agent désactivé ne reçoit plus de tâches, `instances` plafonne ses
+    exécutions simultanées — le `statut` reste, lui, l'activité (libre/occupé).
     """
 
     nom: str
@@ -112,6 +122,8 @@ class EtatAgent:
     taches_echouees: int = 0
     cout_usd: float | None = None
     derniere_activite: str = ""
+    actif: bool = True
+    instances: int = INSTANCES_DEFAUT
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet l'agent en dict JSON-sérialisable (la forme du REST)."""
@@ -124,6 +136,8 @@ class EtatAgent:
             "taches_echouees": self.taches_echouees,
             "cout_usd": self.cout_usd,
             "derniere_activite": self.derniere_activite,
+            "actif": self.actif,
+            "instances": self.instances,
         }
 
 
@@ -251,11 +265,23 @@ class ControlTowerState:
     `validations` (demandes de validation humaine, #48).
     """
 
-    def __init__(self, agents: Sequence[Agent] = DEFAULT_AGENTS) -> None:
+    def __init__(
+        self,
+        agents: Sequence[Agent] = DEFAULT_AGENTS,
+        capacites: Sequence[CapaciteAgent] = (),
+    ) -> None:
         self._taches: dict[str, EtatTache] = {}
         self._agents: dict[str, EtatAgent] = {
             a.nom: EtatAgent(nom=a.nom, role=a.role) for a in agents
         }
+        # Capacités persistées (#86) : les réglages déjà stockés (agents
+        # désactivés, plafonds d'instances) sont visibles dès le démarrage,
+        # comme le catalogue. Un réglage orphelin (agent disparu) est ignoré.
+        for capacite in capacites:
+            fiche = self._agents.get(capacite.nom)
+            if fiche is not None:
+                fiche.actif = capacite.actif
+                fiche.instances = capacite.instances
         self._executions: dict[str, EtatExecution] = {}
         self._validations: dict[str, EtatValidation] = {}
 
@@ -328,6 +354,8 @@ class ControlTowerState:
             self._applique_reassignation(event)
         elif event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}:
             self._applique_activite(event)
+        elif event.type == EVENEMENT_AGENT_CAPACITE:
+            self._applique_capacite(event)
         elif event.type == EVENEMENT_VALIDATION_DEMANDE:
             self._applique_validation_demande(event)
         elif event.type == EVENEMENT_VALIDATION_DECISION:
@@ -409,6 +437,26 @@ class ControlTowerState:
             event.agent, EtatAgent(nom=event.agent, role=event.role)
         )
         agent.derniere_activite = event.horodatage or agent.derniere_activite
+
+    def _applique_capacite(self, event: Event) -> None:
+        """Règle la capacité d'un agent (#86) : activé/désactivé, plafond d'instances.
+
+        L'événement porte l'état **résultant** (statut `active`/`desactive`,
+        `instances`) : le réappliquer (application directe par l'endpoint puis
+        rediffusion par la pompe) laisse l'état inchangé — idempotence, comme
+        la réassignation. Un champ absent ne touche pas la valeur en place.
+        """
+        if event.agent in _AGENTS_NON_EXECUTANTS:
+            return
+        agent = self._agents.setdefault(
+            event.agent, EtatAgent(nom=event.agent, role=event.role)
+        )
+        if event.statut == CAPACITE_ACTIVE:
+            agent.actif = True
+        elif event.statut == CAPACITE_DESACTIVE:
+            agent.actif = False
+        if event.instances is not None:
+            agent.instances = event.instances
 
     def _applique_validation_demande(self, event: Event) -> None:
         """Enregistre une demande de validation humaine (#48) — en attente de décision.

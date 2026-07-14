@@ -9,7 +9,11 @@ Endpoints :
 - `GET  /api/sante` — vitalité du service ;
 - `GET  /api/taches` — les tâches (statut, agent, coût détaillé — tokens,
   durée) : la source du Kanban ;
-- `GET  /api/agents` — l'état des agents (libre/occupé, charge, compteurs) ;
+- `GET  /api/agents` — l'état des agents (libre/occupé, charge, compteurs,
+  capacité : actif/instances) ;
+- `POST /api/agents/{nom}/capacite` — le contrôle de capacité (#86, EF-21) :
+  active/désactive l'agent et/ou ajuste son plafond d'instances — persisté
+  (`maestro.agents.capacity`) et relu à chaud par moteur et workers ;
 - `GET  /api/executions/{run_id}` — le détail d'une exécution (trace, coût) ;
 - `GET  /api/executions/{run_id}/cout` — le grand livre du run (#57) : coût
   par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat ;
@@ -64,6 +68,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
@@ -76,6 +81,7 @@ from maestro.controltower.chat import (
     ServiceChat,
 )
 from maestro.controltower.events import (
+    EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_VALIDATION_DECISION,
     Event,
@@ -84,6 +90,8 @@ from maestro.controltower.events import (
     RedisEventBus,
 )
 from maestro.controltower.state import (
+    CAPACITE_ACTIVE,
+    CAPACITE_DESACTIVE,
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
     ControlTowerState,
@@ -101,6 +109,18 @@ class DecisionRequete(BaseModel):
     """Corps de la décision humaine (#48) : approuver ou refuser l'action sensible."""
 
     approuve: bool
+
+
+class CapaciteRequete(BaseModel):
+    """Corps du contrôle de capacité (#86) : les réglages à poser, champ par champ.
+
+    Chaque champ est optionnel — None laisse la valeur en place : on peut
+    désactiver sans toucher aux instances, et inversement. Au moins un champ
+    doit être renseigné (sinon 422 : il n'y a rien à régler).
+    """
+
+    actif: bool | None = None
+    instances: int | None = None
 
 
 class PlaybookEcritureRequete(BaseModel):
@@ -210,6 +230,7 @@ def create_app(
     mailbox: Mailbox | None = None,
     chat_store: ChatStore | None = None,
     chat_repondeur: RepondeurChat | None = None,
+    capacites: CapacityStore | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -235,10 +256,22 @@ def create_app(
     production de la réponse — par défaut le fournisseur configuré, cadré par
     le playbook courant de l'agent ; la démo (#65) et les tests injectent un
     répondeur scripté.
+
+    `capacites` (#86) est le dépôt du contrôle de capacité servi par
+    `POST /api/agents/{nom}/capacite` — par défaut celui de la config
+    (`MAESTRO_CAPACITE_DIR`, sinon `core/capacite/` du dépôt) : le même que
+    relisent moteur et workers, pour que le réglage ait un effet réel. L'état
+    par défaut est amorcé des réglages déjà persistés (un état injecté reste,
+    lui, tel quel — la configuration des tests).
     """
     bus = bus if bus is not None else InMemoryEventBus()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
-    state = state if state is not None else ControlTowerState(catalogue(agents_store))
+    capacites = capacites if capacites is not None else CapacityStore.default()
+    state = (
+        state
+        if state is not None
+        else ControlTowerState(catalogue(agents_store), capacites=capacites.lister())
+    )
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
     chat = ServiceChat(
@@ -324,7 +357,8 @@ def create_app(
         Applique l'événement à l'état (le REST répond déjà à jour) puis le
         publie sur le bus — les clients WebSocket voient la réassignation, et
         la pompe la réapplique sans effet (idempotence). 404 si la tâche est
-        inconnue, 422 si l'agent ne l'est pas.
+        inconnue, 422 si l'agent ne l'est pas — ou s'il est **désactivé** (#86 :
+        un agent désactivé ne reçoit plus de tâches, réassignation comprise).
         """
         tache = state.tache(tache_id)
         if tache is None:
@@ -334,6 +368,14 @@ def create_app(
             raise HTTPException(
                 status_code=422,
                 detail=f"agent inconnu : {requete.agent} (voir GET /api/agents)",
+            )
+        if not agent.actif:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"agent désactivé : {agent.nom} — il ne reçoit plus de tâches "
+                    "(le réactiver via POST /api/agents/{nom}/capacite)."
+                ),
             )
         event = Event(
             type=EVENEMENT_TACHE_REASSIGNATION,
@@ -348,6 +390,56 @@ def create_app(
         state.appliquer(event)
         await bus.publish(event)
         return tache.to_dict()
+
+    @app.post("/api/agents/{nom}/capacite")
+    async def regler_capacite(nom: str, requete: CapaciteRequete) -> dict[str, Any]:
+        """Règle la capacité d'un agent (#86, EF-21) : actif/désactivé, instances.
+
+        Persiste le réglage dans le dépôt partagé — celui que moteur et workers
+        relisent à chaque tâche : un agent désactivé ne reçoit plus de tâches,
+        le plafond d'instances borne ses exécutions simultanées. Applique
+        l'événement `agent.capacite` à l'état (le REST répond déjà à jour) puis
+        le publie sur le bus — les fiches agents des clients WebSocket suivent
+        en temps réel, et la pompe le réapplique sans effet (idempotence).
+        404 si l'agent est inconnu, 422 si la requête ne règle rien ou si le
+        plafond d'instances est invalide (< 1).
+        """
+        fiche = state.agent(nom)
+        if fiche is None:
+            raise HTTPException(
+                status_code=404, detail=f"agent inconnu : {nom} (voir GET /api/agents)"
+            )
+        if requete.actif is None and requete.instances is None:
+            raise HTTPException(
+                status_code=422,
+                detail="rien à régler : renseigner `actif` et/ou `instances`.",
+            )
+        courante = capacites.lire(nom)
+        try:
+            capacite = capacites.ecrire(
+                CapaciteAgent(
+                    nom=nom,
+                    actif=courante.actif if requete.actif is None else requete.actif,
+                    instances=(
+                        courante.instances
+                        if requete.instances is None
+                        else requete.instances
+                    ),
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        event = Event(
+            type=EVENEMENT_AGENT_CAPACITE,
+            agent=nom,
+            role=fiche.role,
+            statut=CAPACITE_ACTIVE if capacite.actif else CAPACITE_DESACTIVE,
+            instances=capacite.instances,
+            detail="capacité réglée depuis la Control Tower",
+        )
+        state.appliquer(event)
+        await bus.publish(event)
+        return fiche.to_dict()
 
     @app.get("/api/validations")
     async def validations() -> list[dict[str, Any]]:
@@ -637,11 +729,13 @@ def create_app(
         """Supprime un agent personnalisé du catalogue.
 
         Sa fiche quitte la vue `GET /api/agents` ; les moteurs construits
-        ensuite ne le chargent plus. 403 sur un agent par défaut, 404 s'il
-        n'existe pas.
+        ensuite ne le chargent plus. Son réglage de capacité (#86) part avec
+        lui — un homonyme recréé plus tard repartira des défauts. 403 sur un
+        agent par défaut, 404 s'il n'existe pas.
         """
         _exige_personnalise(nom)
         agents_store.supprimer(nom)
+        capacites.supprimer(nom)
         state.retirer_agent(nom)
         return {"nom": nom, "supprime": True}
 

@@ -43,6 +43,7 @@ from maestro.controltower.chat import (
 from maestro.controltower.events import (
     CANAL_EVENEMENTS,
     EVENEMENT_AGENT_ACTIVITE,
+    EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_CHAT_MESSAGE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_REASSIGNATION,
@@ -55,6 +56,8 @@ from maestro.controltower.events import (
     RedisEventBus,
 )
 from maestro.controltower.state import (
+    CAPACITE_ACTIVE,
+    CAPACITE_DESACTIVE,
     VALIDATION_APPROUVEE,
     VALIDATION_EN_ATTENTE,
     VALIDATION_REFUSEE,
@@ -68,7 +71,10 @@ from maestro.controltower.validation import ValidateurControlTower, validateur_r
 
 __all__ = [
     "CANAL_EVENEMENTS",
+    "CAPACITE_ACTIVE",
+    "CAPACITE_DESACTIVE",
     "EVENEMENT_AGENT_ACTIVITE",
+    "EVENEMENT_AGENT_CAPACITE",
     "EVENEMENT_CHAT_MESSAGE",
     "EVENEMENT_MESSAGE_INTER_AGENTS",
     "EVENEMENT_TACHE_REASSIGNATION",
