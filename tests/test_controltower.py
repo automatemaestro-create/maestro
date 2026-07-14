@@ -35,7 +35,16 @@ critères d'acceptation du ticket #46 :
    (409), agent par défaut intouchable (403), définition invalide (422), nom
    inconnu ou hors slug (404, sans fichier orphelin). Le dépôt et le catalogue
    effectif eux-mêmes (routage, exécution) sont couverts dans
-   `tests/test_agent_store.py`.
+   `tests/test_agent_store.py` ;
+⑧ chat utilisateur ↔ agent (#84, tests différés du parent #82 → #83) : fil
+   vide tant que l'agent n'a jamais été contacté, envoi d'un message rendant
+   la paire message/réponse, fil persisté (relu par le GET, survivant à un
+   redémarrage de l'app), exposition temps réel (chaque message part en
+   `chat.message` sur le WebSocket, réponse comprise), chat avec un agent
+   personnalisé du catalogue — et les refus : agent hors catalogue (404, sans
+   fil orphelin), message vide (422), réponse indisponible (502, le message
+   utilisateur restant acquis et diffusé). Le canal lui-même (persistance,
+   répondeurs, messagerie) est couvert dans `tests/test_chat.py`.
 """
 
 import asyncio
@@ -49,22 +58,28 @@ from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import AgentDefinition, AgentStore
 from maestro.controltower import (
     EVENEMENT_AGENT_ACTIVITE,
+    EVENEMENT_CHAT_MESSAGE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DECISION,
     EVENEMENT_VALIDATION_DEMANDE,
+    UTILISATEUR,
     VALIDATION_APPROUVEE,
     VALIDATION_EN_ATTENTE,
     VALIDATION_REFUSEE,
+    ChatStore,
     ControlTowerState,
     Event,
     InMemoryEventBus,
+    RepondeurChat,
+    RepondeurScripte,
     ValidateurControlTower,
     activer_publication,
     create_app,
     evenements_depuis_step,
 )
+from maestro.controltower.chat import AUTEUR_AGENT, AUTEUR_UTILISATEUR
 from maestro.controltower.validation import evenement_demande
 from maestro.engine.guardrails import DemandeValidation
 from maestro.telemetry import LOGGER_NAME, RunCost, RunJournal, StepUsage
@@ -939,6 +954,140 @@ def test_un_nom_inconnu_ou_hors_slug_rend_404(client_cat, depot_agents):
         ).status_code == 404
         assert client_cat.delete(f"/api/catalogue/{nom}").status_code == 404
     assert depot_agents.noms() == ()
+
+
+# ------------------------------------------- ⑧ Chat utilisateur ↔ agent (#84)
+
+
+@pytest.fixture()
+def depot_chat(tmp_path):
+    """Fil de chat sur répertoire temporaire — jamais le `core/chat/` réel."""
+    return ChatStore(tmp_path / "chat")
+
+
+@pytest.fixture()
+def client_chat(bus, depot_chat):
+    """TestClient de l'app avec répondeur scripté (zéro modèle) sur fil temporaire."""
+    with TestClient(
+        create_app(bus=bus, chat_store=depot_chat, chat_repondeur=RepondeurScripte())
+    ) as client:
+        yield client
+
+
+def test_le_fil_d_un_agent_jamais_contacte_est_vide(client_chat):
+    fil = client_chat.get("/api/chat/qa").json()
+
+    assert fil["agent"] == "qa" and fil["role"] == "QA / Testeur"
+    assert fil["messages"] == []
+
+
+def test_envoyer_un_message_rend_la_paire_et_persiste_le_fil(client_chat, depot_chat):
+    """Le POST rend message + réponse ; le GET relit le même fil, persisté sur disque."""
+    reponse = client_chat.post("/api/chat/qa/messages", json={"contenu": "Bonjour"})
+
+    assert reponse.status_code == 201
+    corps = reponse.json()
+    assert corps["agent"] == "qa" and corps["role"] == "QA / Testeur"
+    envoye, repondu = corps["messages"]
+    assert envoye["auteur"] == UTILISATEUR and envoye["contenu"] == "Bonjour"
+    assert repondu["auteur"] == "qa" and "Bonjour" in repondu["contenu"]
+
+    # Le fil relu par le GET est exactement la paire rendue par le POST.
+    assert client_chat.get("/api/chat/qa").json()["messages"] == [envoye, repondu]
+    # Et il est bien persisté (un fichier JSONL par agent).
+    assert (depot_chat.racine / "qa.jsonl").is_file()
+
+
+def test_le_fil_survit_a_un_redemarrage_de_l_app(client_chat, depot_chat):
+    """La persistance du fil : une nouvelle app sur le même dépôt relit tout."""
+    client_chat.post("/api/chat/qa/messages", json={"contenu": "Avant redémarrage"})
+
+    with TestClient(
+        create_app(chat_store=depot_chat, chat_repondeur=RepondeurScripte())
+    ) as nouveau_client:
+        messages = nouveau_client.get("/api/chat/qa").json()["messages"]
+
+    assert [m["auteur"] for m in messages] == [UTILISATEUR, "qa"]
+    assert messages[0]["contenu"] == "Avant redémarrage"
+
+
+def test_websocket_diffuse_le_fil_en_temps_reel(client_chat):
+    """Chaque message part en `chat.message` : l'envoi dès sa publication, puis la réponse."""
+    with client_chat.websocket_connect("/ws/evenements") as ws:
+        corps = client_chat.post(
+            "/api/chat/qa/messages", json={"contenu": "Où en est la revue ?"}
+        ).json()
+        aller = ws.receive_json()
+        retour = ws.receive_json()
+
+    envoye, repondu = corps["messages"]
+    assert aller["type"] == EVENEMENT_CHAT_MESSAGE
+    assert aller["agent"] == "qa" and aller["statut"] == AUTEUR_UTILISATEUR
+    assert aller["detail"] == "Où en est la revue ?"
+    assert aller["horodatage"] == envoye["horodatage"]
+    assert retour["type"] == EVENEMENT_CHAT_MESSAGE
+    assert retour["statut"] == AUTEUR_AGENT
+    assert retour["detail"] == repondu["contenu"]
+
+
+def test_chat_avec_un_agent_personnalise_du_catalogue(bus, depot_chat, tmp_path):
+    """Le chat s'adresse au catalogue effectif : un agent créé (#72) est joignable."""
+    app = create_app(
+        bus=bus,
+        agents_store=AgentStore(tmp_path / "agents"),
+        chat_store=depot_chat,
+        chat_repondeur=RepondeurScripte(),
+    )
+    with TestClient(app) as client:
+        client.post("/api/catalogue", json=_corps_agent())
+
+        reponse = client.post("/api/chat/redacteur/messages", json={"contenu": "Bonjour"})
+
+        assert reponse.status_code == 201
+        assert reponse.json()["role"] == "Rédacteur technique"
+        fil = client.get("/api/chat/redacteur").json()
+        assert len(fil["messages"]) == 2
+
+
+def test_chat_agent_hors_catalogue_404_sans_fil_orphelin(client_chat, depot_chat):
+    """Un nom inconnu ou hors slug n'ouvre jamais de fil (ni fichier) orphelin."""
+    for nom in ("stagiaire", "a.b", "Redacteur"):
+        assert client_chat.get(f"/api/chat/{nom}").status_code == 404
+        assert client_chat.post(
+            f"/api/chat/{nom}/messages", json={"contenu": "Bonjour"}
+        ).status_code == 404
+    assert not depot_chat.racine.exists()  # aucun refus n'a rien écrit
+
+
+def test_un_message_vide_est_refuse_en_422(client_chat, depot_chat):
+    reponse = client_chat.post("/api/chat/qa/messages", json={"contenu": "  \n"})
+
+    assert reponse.status_code == 422
+    assert client_chat.get("/api/chat/qa").json()["messages"] == []
+    assert not depot_chat.racine.exists()  # le refus n'a rien persisté
+
+
+def test_reponse_indisponible_502_le_message_reste_acquis(bus, depot_chat):
+    """Le 502 ne concerne que la réponse : le message est persisté et déjà diffusé."""
+
+    class RepondeurEnPanne(RepondeurChat):
+        async def repondre(self, agent, fil):
+            raise RuntimeError("fournisseur indisponible")
+
+    app = create_app(bus=bus, chat_store=depot_chat, chat_repondeur=RepondeurEnPanne())
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/evenements") as ws:
+            reponse = client.post("/api/chat/qa/messages", json={"contenu": "Bonjour"})
+            recu = ws.receive_json()
+
+        assert reponse.status_code == 502
+        assert "fournisseur indisponible" in reponse.json()["detail"]
+        # Le message utilisateur est acquis : persisté, servi par le GET, diffusé.
+        (message,) = client.get("/api/chat/qa").json()["messages"]
+        assert message["auteur"] == UTILISATEUR
+
+    assert recu["type"] == EVENEMENT_CHAT_MESSAGE
+    assert recu["statut"] == AUTEUR_UTILISATEUR
 
 
 # --------------------------------------------------------- Bus & modèle

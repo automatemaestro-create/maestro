@@ -22,4 +22,7 @@ Les fils écrits ici sont des **données d'exécution** : elles ne sont pas
 commitées (voir `.gitignore`). En V1, ce stockage passera en base (entité
 `AGENT_MESSAGE`, docs/03) sans changer le contrat.
 
-Tests (#83) : différés au lot final du parent #82.
+Tests (#83) : le canal lui-même (persistance, répondeurs, flux d'un envoi)
+est couvert par `tests/test_chat.py` ; son exposition HTTP (REST `/api/chat`
++ WebSocket `chat.message`) par `tests/test_controltower.py` (section ⑧).
+Mode d'emploi : [guide de démarrage §6.4](../../docs/07-guide-de-demarrage.md).
