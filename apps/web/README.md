@@ -29,7 +29,12 @@ Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #4
   seule, et les **personnalisés** qu'on y crée, modifie et supprime depuis un
   formulaire complet (nom, rôle, compétences, fournisseur/modèle, playbook).
   Un agent personnalisé est persisté hors du code et chargé par les moteurs
-  construits ensuite.
+  construits ensuite ;
+- **Chat par agent** (#85, lot 2 de #82) : la page `/chat` ouvre un fil de
+  conversation avec chaque agent du catalogue (#84, API `/api/chat`) — envoi,
+  réponse de l'agent (cadrée par son playbook courant) et réception en temps
+  réel par le WebSocket (`chat.message`). Le fil est persisté côté backend :
+  l'historique se recharge au retour sur la page.
 
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 
