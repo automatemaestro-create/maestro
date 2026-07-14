@@ -34,8 +34,14 @@ Endpoints :
   routable et exécutable par les moteurs construits ensuite) ;
 - `PUT  /api/catalogue/{nom}` — remplace la définition d'un agent personnalisé ;
 - `DELETE /api/catalogue/{nom}` — supprime un agent personnalisé ;
+- `GET  /api/chat/{agent}` — le fil de conversation utilisateur ↔ agent (#84),
+  persisté et relu du `ChatStore` ;
+- `POST /api/chat/{agent}/messages` — envoie un message à l'agent et rend la
+  paire message/réponse (le fil est aussi diffusé en `chat.message` sur le
+  WebSocket, réponse comprise) ;
 - `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
-  des agents, messages inter-agents, validations), au format `Event.to_dict`.
+  des agents, messages inter-agents, validations, chat), au format
+  `Event.to_dict`.
 
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
 événement sur l'état (`ControlTowerState`) puis le rediffuse aux WebSockets
@@ -62,6 +68,13 @@ from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
 from maestro.config import load_settings
+from maestro.controltower.chat import (
+    ChatStore,
+    RepondeurChat,
+    RepondeurModele,
+    ReponseIndisponible,
+    ServiceChat,
+)
 from maestro.controltower.events import (
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_VALIDATION_DECISION,
@@ -75,6 +88,7 @@ from maestro.controltower.state import (
     VALIDATION_REFUSEE,
     ControlTowerState,
 )
+from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 
 
 class ReassignationRequete(BaseModel):
@@ -128,6 +142,12 @@ class AgentModificationRequete(BaseModel):
     playbook: str
     modele: str | None = None
     fournisseur: str | None = None
+
+
+class ChatEnvoiRequete(BaseModel):
+    """Corps d'un envoi de chat (#84) : le message de l'utilisateur à l'agent."""
+
+    contenu: str
 
 
 class Diffusion:
@@ -187,6 +207,9 @@ def create_app(
     state: ControlTowerState | None = None,
     playbooks: PlaybookStore | None = None,
     agents_store: AgentStore | None = None,
+    mailbox: Mailbox | None = None,
+    chat_store: ChatStore | None = None,
+    chat_repondeur: RepondeurChat | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -204,11 +227,28 @@ def create_app(
     (`MAESTRO_AGENTS_DIR`, sinon `core/agents/` du dépôt). L'état par défaut se
     construit sur le catalogue **effectif** : les agents personnalisés déjà
     persistés sont présents dès le démarrage, comme ceux du code.
+
+    `mailbox`, `chat_store` et `chat_repondeur` (#84) portent le chat
+    utilisateur ↔ agent des endpoints `/api/chat` : la messagerie inter-agents
+    où transitent les échanges (mémoire par défaut, Redis en production), le
+    fil persisté (`MAESTRO_CHAT_DIR`, sinon `core/chat/` du dépôt) et la
+    production de la réponse — par défaut le fournisseur configuré, cadré par
+    le playbook courant de l'agent ; la démo (#65) et les tests injectent un
+    répondeur scripté.
     """
     bus = bus if bus is not None else InMemoryEventBus()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
     state = state if state is not None else ControlTowerState(catalogue(agents_store))
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
+    mailbox = mailbox if mailbox is not None else InMemoryMailbox()
+    chat = ServiceChat(
+        store=chat_store if chat_store is not None else ChatStore.default(),
+        repondeur=(
+            chat_repondeur if chat_repondeur is not None else RepondeurModele(playbooks=playbooks)
+        ),
+        mailbox=mailbox,
+        bus=bus,
+    )
     diffusion = Diffusion()
 
     @asynccontextmanager
@@ -220,6 +260,7 @@ def create_app(
             pompe.cancel()
             with suppress(asyncio.CancelledError):
                 await pompe
+            await mailbox.close()
             await bus.close()
 
     app = FastAPI(
@@ -604,6 +645,61 @@ def create_app(
         state.retirer_agent(nom)
         return {"nom": nom, "supprime": True}
 
+    def _exige_agent_du_catalogue(nom: str) -> Agent:
+        """La fiche catalogue de `nom` (défaut ou personnalisé), ou l'erreur 404.
+
+        Le chat ne s'adresse qu'aux agents du catalogue effectif — celui que
+        les moteurs chargent : un nom inconnu n'ouvre pas de fil orphelin.
+        """
+        defaut = next((a for a in DEFAULT_AGENTS if a.nom == nom), None)
+        if defaut is not None:
+            return defaut
+        definition = _personnalise_ou_none(nom)
+        if definition is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"agent inconnu : {nom} (voir GET /api/catalogue)",
+            )
+        return definition.to_agent()
+
+    @app.get("/api/chat/{agent}")
+    async def fil_chat(agent: str) -> dict[str, Any]:
+        """Le fil de conversation utilisateur ↔ agent (#84), relu de la persistance.
+
+        Vide tant que l'agent n'a jamais été contacté ; 404 si l'agent n'est
+        pas au catalogue.
+        """
+        fiche = _exige_agent_du_catalogue(agent)
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "messages": [m.to_dict() for m in chat.fil(fiche.nom)],
+        }
+
+    @app.post("/api/chat/{agent}/messages", status_code=201)
+    async def envoyer_chat(agent: str, requete: ChatEnvoiRequete) -> dict[str, Any]:
+        """Envoie un message utilisateur à l'agent et rend la paire message/réponse.
+
+        Le message et la réponse sont persistés au fil, passés par la
+        messagerie inter-agents (#44) et diffusés en `chat.message` sur le
+        WebSocket — les clients temps réel voient le message dès l'envoi puis
+        la réponse quand elle tombe. 404 si l'agent n'est pas au catalogue,
+        422 sur un message vide, 502 si la réponse n'a pas pu être produite
+        (le message utilisateur reste acquis : relancer ne perd pas le fil).
+        """
+        fiche = _exige_agent_du_catalogue(agent)
+        try:
+            message, reponse = await chat.envoyer(fiche, requete.contenu)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "messages": [message.to_dict(), reponse.to_dict()],
+        }
+
     @app.websocket("/ws/evenements")
     async def evenements(websocket: WebSocket) -> None:
         """Flux temps réel : chaque événement du bus part en JSON sur la socket.
@@ -648,9 +744,14 @@ def create_default_app() -> FastAPI:
 
     Consomme le canal `maestro.evenements` de l'instance `REDIS_URL` (celle du
     docker-compose par défaut — la même que la file de tâches #41), alimenté
-    côté moteur par `maestro.controltower.bridge`. C'est la cible *factory*
-    d'uvicorn : `uvicorn --factory maestro.controltower.app:create_default_app`
+    côté moteur par `maestro.controltower.bridge` ; le chat (#84) transite par
+    la messagerie Redis de la même instance (boîtes `maestro.boite.<agent>`).
+    C'est la cible *factory* d'uvicorn :
+    `uvicorn --factory maestro.controltower.app:create_default_app`
     (ou le script `maestro-api`).
     """
     settings = load_settings()
-    return create_app(bus=RedisEventBus(settings.redis_url))
+    return create_app(
+        bus=RedisEventBus(settings.redis_url),
+        mailbox=RedisMailbox(settings.redis_url),
+    )
