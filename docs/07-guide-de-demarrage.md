@@ -239,3 +239,23 @@ utilisateur reste acquis — relancer ne perd pas le fil. La démo locale
 (`scripts/controltower/start.sh`, #65) répond en **scripté** sur un fil éphémère :
 aucun modèle appelé, rien d'écrit dans `core/chat/`.
 Détails : [`core/chat/README.md`](../core/chat/README.md).
+
+### 6.5 — Contrôle de capacité : activer/désactiver, instances (disponible — ticket #86)
+
+La capacité de chaque agent se pilote depuis les **fiches agents** de la Control Tower
+(EF-21) : un bouton active/désactive l'agent, des boutons **+ / −** ajustent son nombre
+d'instances — ou par l'API (`POST /api/agents/{nom}/capacite`, corps `{"actif": bool,
+"instances": int}`, chaque champ optionnel). Le réglage est **persisté**
+(`core/capacite/`, un fichier `<nom>.json` par agent réglé, racine remplaçable par
+`MAESTRO_CAPACITE_DIR`) et relu **à chaud** à chaque tâche, comme les playbooks (§6.2) :
+il vaut pour la tâche suivante, sans redémarrage — workers et API doivent voir le même
+stockage.
+
+L'effet est **réel** sur l'exécution : un agent **désactivé** est écarté des candidats
+du routage — la tâche va au meilleur agent restant, ou part en repli « à assigner » —
+et refuse aussi la réassignation manuelle (422) ; le plafond d'**instances** borne ses
+exécutions simultanées — une tâche routée vers un agent au complet attend qu'un créneau
+se libère (par défaut : une instance par agent). L'état de capacité est **reflété en
+temps réel** sur les fiches (événement `agent.capacite` sur le WebSocket). Limite POC :
+la jauge d'instances est par process (pas encore de coordination inter-workers, EF-16).
+Détails : [`core/capacite/README.md`](../core/capacite/README.md).

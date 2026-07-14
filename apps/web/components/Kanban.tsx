@@ -120,7 +120,9 @@ function CarteTache({
     }
   };
 
-  const candidats = agents.filter((a) => a.nom !== tache.agent);
+  // Un agent désactivé ne reçoit plus de tâches (#86) : il n'est pas proposé
+  // à la réassignation — l'API la refuserait de toute façon (422).
+  const candidats = agents.filter((a) => a.nom !== tache.agent && a.actif);
 
   return (
     <article className="rounded-md border border-neutral-200 bg-white p-2.5 text-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900">

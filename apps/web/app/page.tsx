@@ -27,6 +27,7 @@ export default function TableauDeBord() {
     erreur,
     reassigner,
     decider,
+    reglerCapacite,
   } = useControlTower();
 
   const coutsAgents = agents
@@ -52,7 +53,7 @@ export default function TableauDeBord() {
       ) : (
         <>
           <PanneauValidations validations={validations} decider={decider} />
-          <PanneauAgents agents={agents} />
+          <PanneauAgents agents={agents} reglerCapacite={reglerCapacite} />
           <Kanban taches={taches} agents={agents} reassigner={reassigner} />
           <PanneauCouts couts={couts} />
           <FilActivite evenements={evenements} />

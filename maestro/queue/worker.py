@@ -35,6 +35,7 @@ from celery import shared_task
 from celery.signals import celeryd_after_setup
 
 from maestro.agents import default_runtimes
+from maestro.agents.capacity import CapacityStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.store import AgentStore, catalogue
 from maestro.config import load_settings
@@ -142,6 +143,11 @@ def _executeur() -> LocalExecutor:
     le catalogue **effectif** (#72) — agents par défaut plus personnalisés
     (`MAESTRO_AGENTS_DIR`, même exigence de stockage partagé) — chargé ici, à la
     construction : un agent créé ensuite attend le redémarrage du worker.
+    Le **contrôle de capacité** (#86) est relu à chaque tâche dans le dépôt
+    partagé (`MAESTRO_CAPACITE_DIR`) : un agent désactivé depuis la Control
+    Tower n'est plus routé par les workers dès le message suivant. Le plafond
+    d'instances, lui, borne les exécutions simultanées **par process** au POC
+    (pas encore de coordination inter-workers — cf. maestro.agents.capacity).
     """
     global _executor
     if _executor is None:
@@ -153,6 +159,7 @@ def _executeur() -> LocalExecutor:
             runtimes=default_runtimes(provider, model=settings.model),
             guardrails=_guardrails,
             playbooks=PlaybookStore.default(settings),
+            capacites=CapacityStore.default(settings),
         )
     return _executor
 

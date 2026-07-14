@@ -63,6 +63,7 @@ from time import perf_counter
 from typing import Any
 
 from maestro.agents import default_runtimes
+from maestro.agents.capacity import CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.runtime import AgentRuntime
@@ -209,6 +210,7 @@ class OrchestrationEngine:
         executor: TaskExecutor | None = None,
         mailbox: Mailbox | None = None,
         playbooks: PlaybookStore | None = None,
+        capacites: CapacityStore | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -221,9 +223,9 @@ class OrchestrationEngine:
         self._mailbox = mailbox
         # Frontière d'exécution (#41) : en process par défaut ; un exécuteur injecté
         # (ex. `maestro.queue.CeleryExecutor`) distribue les tâches à des workers.
-        # `playbooks` (#78) : le dépôt versionné que l'exécuteur local relit à
-        # chaque tâche — l'application à chaud ; ignoré si un exécuteur est injecté
-        # (en distribué, chaque worker câble le sien).
+        # `playbooks` (#78) et `capacites` (#86) : les dépôts que l'exécuteur local
+        # relit à chaque tâche — l'application à chaud ; ignorés si un exécuteur est
+        # injecté (en distribué, chaque worker câble les siens).
         self._executor = (
             executor
             if executor is not None
@@ -233,6 +235,7 @@ class OrchestrationEngine:
                 runtimes=runtimes,
                 guardrails=guardrails,
                 playbooks=playbooks,
+                capacites=capacites,
             )
         )
 
@@ -264,6 +267,12 @@ class OrchestrationEngine:
         construction du moteur — un agent créé ensuite vaut pour les moteurs
         construits après lui. Sans runtime outillé, un agent personnalisé
         produit son livrable par le chemin texte, cadré par son playbook.
+
+        Le **contrôle de capacité** (#86, EF-21) est branché sur le dépôt
+        configuré (`MAESTRO_CAPACITE_DIR`, sinon `core/capacite/`), relu à
+        chaud à chaque tâche : un agent désactivé depuis la Control Tower ne
+        reçoit plus de tâches, et ses exécutions simultanées sont bornées à
+        son plafond d'instances.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -278,6 +287,7 @@ class OrchestrationEngine:
             guardrails=guardrails,
             mailbox=mailbox,
             playbooks=PlaybookStore.default(settings),
+            capacites=CapacityStore.default(settings),
         )
 
     async def run(self, objective: str, *, journal: RunJournal | None = None) -> RunReport:

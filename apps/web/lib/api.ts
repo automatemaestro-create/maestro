@@ -211,6 +211,23 @@ export function reassignerTache(tacheId: string, agent: string): Promise<void> {
   );
 }
 
+/**
+ * Règle la capacité d'un agent (`POST /api/agents/{nom}/capacite`, #86,
+ * EF-21) : activer/désactiver et/ou ajuster le plafond d'instances. Chaque
+ * champ omis laisse la valeur en place ; le réglage est persisté côté backend
+ * et pris en compte par le moteur et les workers dès la tâche suivante.
+ */
+export function reglerCapaciteAgent(
+  nom: string,
+  reglage: { actif?: boolean; instances?: number },
+): Promise<void> {
+  return envoyerJson(
+    `/api/agents/${encodeURIComponent(nom)}/capacite`,
+    reglage,
+    "réglage de capacité refusé",
+  );
+}
+
 /** Le fil de chat utilisateur ↔ agent (`GET /api/chat/{agent}`, #84), persisté. */
 export function chargerFilChat(agent: string): Promise<FilChat> {
   return chargerJson<FilChat>(`/api/chat/${encodeURIComponent(agent)}`);

@@ -1,0 +1,4 @@
+# Les réglages de capacité écrits à chaud (API #86) sont des données
+# d'exécution, pas du code : on ne les commite pas.
+*.json
+*.tmp

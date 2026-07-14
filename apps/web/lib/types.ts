@@ -35,7 +35,12 @@ export type Tache = {
   horodatage: string;
 };
 
-/** Un agent tel que servi par `GET /api/agents` — la fiche du panneau Agents. */
+/**
+ * Un agent tel que servi par `GET /api/agents` — la fiche du panneau Agents.
+ * `actif` et `instances` (#86, EF-21) portent le contrôle de capacité : un
+ * agent désactivé ne reçoit plus de tâches, `instances` plafonne ses
+ * exécutions simultanées — `statut` reste l'activité (libre/occupé).
+ */
 export type EtatAgent = {
   nom: string;
   role: string;
@@ -45,6 +50,8 @@ export type EtatAgent = {
   taches_echouees: number;
   cout_usd: number | null;
   derniere_activite: string;
+  actif: boolean;
+  instances: number;
 };
 
 /** Un événement du flux `WS /ws/evenements` — la ligne du fil d'activité. */
@@ -60,6 +67,7 @@ export type Evenement = {
   description: string;
   cout_usd: number | null;
   usage: Usage | null;
+  instances: number | null;
   horodatage: string;
 };
 
@@ -200,6 +208,10 @@ export const AGENT_SOURCE_PERSONNALISE = "personnalise";
 export const AGENT_LIBRE = "libre";
 export const AGENT_OCCUPE = "occupe";
 
+/** États portés par un événement `agent.capacite` (#86, maestro/controltower/state.py). */
+export const CAPACITE_ACTIVE = "active";
+export const CAPACITE_DESACTIVE = "desactive";
+
 /** Statuts d'une demande de validation humaine (maestro/controltower/state.py). */
 export const VALIDATION_EN_ATTENTE = "en_attente";
 export const VALIDATION_APPROUVEE = "approuvee";
@@ -209,6 +221,7 @@ export const VALIDATION_REFUSEE = "refusee";
 export const EVENEMENT_TACHE_STATUT = "tache.statut";
 export const EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation";
 export const EVENEMENT_AGENT_ACTIVITE = "agent.activite";
+export const EVENEMENT_AGENT_CAPACITE = "agent.capacite";
 export const EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents";
 export const EVENEMENT_VALIDATION_DEMANDE = "validation.demande";
 export const EVENEMENT_VALIDATION_DECISION = "validation.decision";
