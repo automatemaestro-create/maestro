@@ -12,6 +12,7 @@ import type {
   CoutExecution,
   DefinitionAgent,
   EtatAgent,
+  FilChat,
   PlaybookDetail,
   PlaybookFiche,
   Tache,
@@ -207,6 +208,28 @@ export function reassignerTache(tacheId: string, agent: string): Promise<void> {
     `/api/taches/${encodeURIComponent(tacheId)}/reassigner`,
     { agent },
     "réassignation refusée",
+  );
+}
+
+/** Le fil de chat utilisateur ↔ agent (`GET /api/chat/{agent}`, #84), persisté. */
+export function chargerFilChat(agent: string): Promise<FilChat> {
+  return chargerJson<FilChat>(`/api/chat/${encodeURIComponent(agent)}`);
+}
+
+/**
+ * Envoie un message utilisateur à l'agent (`POST /api/chat/{agent}/messages`,
+ * #84) : la réponse est produite dans la requête, la paire message/réponse
+ * rejoint le fil persisté et part en `chat.message` sur le WebSocket. Un échec
+ * de réponse (502) ne perd pas le message utilisateur, déjà acquis au fil.
+ */
+export function envoyerMessageChat(
+  agent: string,
+  contenu: string,
+): Promise<void> {
+  return envoyerJson(
+    `/api/chat/${encodeURIComponent(agent)}/messages`,
+    { contenu },
+    "envoi refusé",
   );
 }
 

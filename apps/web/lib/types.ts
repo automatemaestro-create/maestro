@@ -166,6 +166,28 @@ export type DefinitionAgent = {
   fournisseur: string | null;
 };
 
+/**
+ * Un message du fil de chat utilisateur ↔ agent (`MessageChat.to_dict`, #84) :
+ * `agent` est le fil d'appartenance (le nom d'agent du catalogue), `auteur`
+ * l'émetteur — `utilisateur` ou ce même nom d'agent.
+ */
+export type MessageChat = {
+  agent: string;
+  auteur: string;
+  contenu: string;
+  horodatage: string;
+};
+
+/** Le fil complet d'un agent (`GET /api/chat/{agent}`, #84). */
+export type FilChat = {
+  agent: string;
+  role: string;
+  messages: MessageChat[];
+};
+
+/** L'auteur « humain » d'un message du fil (maestro/controltower/chat.py, #84). */
+export const CHAT_AUTEUR_UTILISATEUR = "utilisateur";
+
 /** Provenances d'un playbook (maestro/controltower/app.py, #76). */
 export const PLAYBOOK_SOURCE_DEFAUT = "defaut";
 export const PLAYBOOK_SOURCE_STOCKAGE = "stockage";
@@ -190,3 +212,4 @@ export const EVENEMENT_AGENT_ACTIVITE = "agent.activite";
 export const EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents";
 export const EVENEMENT_VALIDATION_DEMANDE = "validation.demande";
 export const EVENEMENT_VALIDATION_DECISION = "validation.decision";
+export const EVENEMENT_CHAT_MESSAGE = "chat.message";
