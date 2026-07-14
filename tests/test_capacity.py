@@ -22,7 +22,6 @@ Couvre les trois critères d'acceptation, couche par couche :
 """
 
 import asyncio
-import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -426,7 +425,8 @@ def test_reassignation_vers_un_agent_desactive_422(client, bus):
 
     # Réactivé, la réassignation reprend — un agent désactivé n'est pas perdu.
     client.post("/api/agents/developpeur/capacite", json={"actif": True})
-    assert client.post("/api/taches/t1/reassigner", json={"agent": "developpeur"}).status_code == 200
+    relance = client.post("/api/taches/t1/reassigner", json={"agent": "developpeur"})
+    assert relance.status_code == 200
 
 
 def test_supprimer_un_agent_personnalise_purge_son_reglage(client, capacites):
