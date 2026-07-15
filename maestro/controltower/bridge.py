@@ -47,6 +47,10 @@ _SUFFIXE_VALIDATION = ":validation"
 #: `maestro.engine.executor`, `SUFFIXE_ETAPE_RELANCE`).
 _SUFFIXE_RELANCE = ":relance"
 
+#: Suffixe des étapes de début d'exécution (#98 — cf.
+#: `maestro.engine.executor`, `SUFFIXE_ETAPE_DEBUT`).
+_SUFFIXE_DEBUT = ":debut"
+
 #: Suffixe des étapes de messagerie inter-agents (#44 — cf.
 #: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
 _SUFFIXE_MESSAGE = ":message"
@@ -61,6 +65,9 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
       `<tache>:relance` (#91) deviennent des **activités d'agent**
       (l'orchestrateur planifie, un humain tranche, le moteur relance — la
       raison de chaque relance voyage dans `detail`) ;
+    - les étapes `<tache>:debut` (#98) deviennent le **début** de leur tâche :
+      événement `tache.statut` au statut `en_cours` (agent, heure de début),
+      sans usage ni coût — rien n'entre au grand livre avant l'issue ;
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
       portant statut, agent, rôle et coût rapporté (#8).
 
@@ -80,6 +87,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     mesure = StepUsage.from_dict(usage) if isinstance(usage, Mapping) else None
     cout_brut = usage.get("cout_usd") if isinstance(usage, Mapping) else None
     est_message = etape.endswith(_SUFFIXE_MESSAGE)
+    est_debut = etape.endswith(_SUFFIXE_DEBUT)
     est_activite = etape == _ETAPE_PLANIFICATION or etape.endswith(
         (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE)
     )
@@ -87,6 +95,14 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         type_evenement = EVENEMENT_MESSAGE_INTER_AGENTS
         tache_id = etape.removesuffix(_SUFFIXE_MESSAGE)
         detail = str(record.get("sortie") or "")
+    elif est_debut:
+        type_evenement = EVENEMENT_TACHE_STATUT
+        tache_id = etape.removesuffix(_SUFFIXE_DEBUT)
+        detail = str(record.get("sortie") or "")
+        # Le début ne porte aucune dépense : la mesure viendra avec l'issue de
+        # la tâche — rien n'entre au grand livre (ni ne s'affiche) avant.
+        mesure = None
+        cout_brut = None
     elif est_activite:
         type_evenement = EVENEMENT_AGENT_ACTIVITE
         tache_id = (

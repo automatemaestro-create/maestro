@@ -41,6 +41,7 @@ from maestro.agents import default_runtimes
 from maestro.engine import (
     STATUT_BLOQUEE,
     STATUT_ECHEC,
+    STATUT_EN_COURS,
     STATUT_TERMINEE,
     OrchestrationEngine,
     TaskExecutor,
@@ -511,18 +512,41 @@ def test_chaque_etape_est_consignee_dans_le_journal():
         _engine(exec_provider=MeteredProvider()).run("Objectif", journal=journal)
     )
 
-    # Une trace par étape — la planification d'abord, puis les tâches dans l'ordre.
+    # Une trace par étape — la planification d'abord, puis chaque tâche dans
+    # l'ordre : son début (#98) puis son issue.
     assert [r.etape for r in journal.records] == [
-        "planification", "schema-bdd", "api-taches", "tests-api",
+        "planification",
+        "schema-bdd:debut", "schema-bdd",
+        "api-taches:debut", "api-taches",
+        "tests-api:debut", "tests-api",
     ]
     assert all(r.run_id == "run-42" for r in journal.records)
     assert report.run_id == "run-42"
 
     # Chaque trace porte l'entrée, la sortie et l'usage de l'étape.
-    tache = journal.records[1]
+    tache = journal.records[2]
     assert "Schéma BDD" in tache.entree
     assert tache.sortie == "LIVRABLE mesuré"
     assert tache.usage.cout_usd == pytest.approx(0.01)
+
+
+def test_le_debut_de_chaque_tache_est_consigne_avant_son_issue():
+    """Kanban vivant (#98) : chaque tâche ouvre par une étape `<id>:debut` —
+    statut `en_cours`, agent élu, usage nul — la matière de la colonne
+    « En cours » de la Control Tower (agent, heure de début)."""
+    journal = RunJournal(run_id="run-98")
+    asyncio.run(_engine().run("Objectif", journal=journal))
+
+    debut = next(r for r in journal.records if r.etape == "schema-bdd:debut")
+    issue = next(r for r in journal.records if r.etape == "schema-bdd")
+    assert debut.statut == STATUT_EN_COURS
+    assert debut.nom == "Schéma BDD"
+    # L'agent et le rôle sont ceux de l'issue : le routage a déjà tranché.
+    assert debut.agent and (debut.agent, debut.role) == (issue.agent, issue.role)
+    assert "démarrage" in debut.sortie
+    # Usage nul : rien n'entre au grand livre avant l'issue de la tâche.
+    assert debut.usage == StepUsage()
+    assert debut.horodatage
 
 
 def test_l_echec_de_routage_est_consigne_au_journal_avec_sa_duree():
@@ -662,12 +686,17 @@ def test_les_resultats_paralleles_sont_rassembles_dans_l_ordre_du_plan():
         "LIVRABLE schema-bdd",
         "LIVRABLE tests-api",
     ]
-    # Le journal, lui, consigne dans l'ordre d'achèvement, chaque trace reliée par `etape`.
-    assert [rec.etape for rec in journal.records] == [
+    # Le journal, lui, consigne dans l'ordre d'achèvement, chaque trace reliée
+    # par `etape` — et chaque début (#98) précède l'issue de sa tâche (l'ordre
+    # relatif des débuts entre tâches parallèles, lui, n'est pas garanti).
+    etapes = [rec.etape for rec in journal.records]
+    assert [e for e in etapes if not e.endswith(":debut")] == [
         "planification",
         "tests-api",
         "schema-bdd",
     ]
+    for tache_id in ("schema-bdd", "tests-api"):
+        assert etapes.index(f"{tache_id}:debut") < etapes.index(tache_id)
 
 
 class DiamantProvider(ModelProvider):

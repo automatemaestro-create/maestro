@@ -37,6 +37,7 @@ from __future__ import annotations
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
     STATUT_ECHEC,
+    STATUT_EN_COURS,
     STATUT_TERMINEE,
     LocalExecutor,
     TaskExecutor,
@@ -63,6 +64,7 @@ __all__ = [
     "RunReport",
     "STATUT_BLOQUEE",
     "STATUT_ECHEC",
+    "STATUT_EN_COURS",
     "STATUT_TERMINEE",
     "TaskExecutor",
     "TaskResult",

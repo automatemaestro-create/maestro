@@ -25,10 +25,11 @@ import pytest
 from maestro.engine import (
     STATUT_BLOQUEE,
     STATUT_ECHEC,
+    STATUT_EN_COURS,
     OrchestrationEngine,
     PolitiqueRelance,
 )
-from maestro.engine.executor import SUFFIXE_ETAPE_RELANCE
+from maestro.engine.executor import SUFFIXE_ETAPE_DEBUT, SUFFIXE_ETAPE_RELANCE
 from maestro.engine.guardrails import Guardrails
 from maestro.engine.retry import est_transitoire
 from maestro.orchestrator import Orchestrator
@@ -288,6 +289,27 @@ def test_un_echec_transitoire_est_relance_et_reussit_a_la_2e_tentative():
     assert "aléa SDK simulé" in relance.entree
     assert "tentative 1/3" in relance.sortie
     assert relance.agent == resultat.agent
+
+
+def test_chaque_tentative_rouvre_une_etape_de_debut():
+    """Kanban vivant (#98) : un début (`<tache>:debut`, statut `en_cours`) est
+    consigné par tentative — la carte « En cours » de la Control Tower se
+    rafraîchit au redémarrage, le geste est explicite dans la trace."""
+    provider = FlakyProvider(pannes=1)
+    journal = RunJournal()
+    engine = _engine(
+        exec_provider=provider, relance=PolitiqueRelance(max_tentatives=3, backoff_s=0)
+    )
+    report = asyncio.run(engine.run("Objectif", journal=journal))
+
+    (resultat,) = report.resultats
+    assert resultat.ok
+    debuts = [r for r in journal.records if r.etape.endswith(SUFFIXE_ETAPE_DEBUT)]
+    assert [d.statut for d in debuts] == [STATUT_EN_COURS, STATUT_EN_COURS]
+    assert "démarrage" in debuts[0].sortie
+    assert "redémarrage" in debuts[1].sortie and "tentative 2/3" in debuts[1].sortie
+    # Chaque début porte l'agent élu et un usage nul (pas de double compte).
+    assert all(d.agent == resultat.agent and d.usage == StepUsage() for d in debuts)
 
 
 def test_le_grand_livre_agrege_l_usage_de_toutes_les_tentatives():

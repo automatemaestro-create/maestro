@@ -51,9 +51,17 @@ STATUT_TERMINEE = "terminee"
 STATUT_ECHEC = "echec"
 STATUT_BLOQUEE = "bloquee"
 
+#: Statut *non terminal* d'une tâche en train de s'exécuter (docs/03 §3) — celui
+#: que porte l'événement de début (#98) : la colonne « En cours » du Kanban.
+STATUT_EN_COURS = "en_cours"
+
 #: Suffixe des étapes de relance au journal (#91) : `<task.id>:relance`, une par
 #: relance déclenchée — le pont Control Tower les mue en activités d'agent.
 SUFFIXE_ETAPE_RELANCE = ":relance"
+
+#: Suffixe des étapes de début d'exécution au journal (#98) : `<task.id>:debut`,
+#: une par tentative — le pont Control Tower les mue en statuts `en_cours`.
+SUFFIXE_ETAPE_DEBUT = ":debut"
 
 #: Délai de grâce accordé à l'annulation d'une réalisation en dépassement (#64) :
 #: le temps, dans le cas nominal, que le SDK ferme son sous-processus. Au-delà,
@@ -426,7 +434,10 @@ class LocalExecutor(TaskExecutor):
     ) -> TaskResult:
         """Produit le livrable de `task` et le mue en `TaskResult` (échec consigné, jamais levé).
 
-        Un échec **transitoire** de la production (aléa fournisseur : erreur
+        Chaque tentative s'ouvre sur une étape de **début** au journal (#98,
+        `<task.id>:debut`) : la Control Tower voit la tâche passer « en cours »
+        (agent, heure de début) dès qu'elle démarre — et redémarrer à chaque
+        relance. Un échec **transitoire** de la production (aléa fournisseur : erreur
         immédiate, crash du sous-processus SDK, réponse vide) est **relancé**
         selon la politique (#91, ENF-06) — jusqu'à `max_tentatives` exécutions,
         backoff entre deux. Chaque relance est consignée au journal (étape
@@ -442,6 +453,7 @@ class LocalExecutor(TaskExecutor):
         max_tentatives = relance.max_tentatives if relance is not None else 1
         tentative = 1
         while True:
+            self._consigne_debut(task, agent, tentative, max_tentatives, journal)
             try:
                 sortie, fichiers = await self._produce(agent, task, description, playbook)
             except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
@@ -482,6 +494,38 @@ class LocalExecutor(TaskExecutor):
             )
             await asyncio.sleep(attente_s)
             tentative += 1
+
+    def _consigne_debut(
+        self,
+        task: Task,
+        agent: Agent,
+        tentative: int,
+        max_tentatives: int,
+        journal: RunJournal,
+    ) -> None:
+        """Trace le début d'exécution au journal (#98) — donc au fil temps réel de la Control Tower.
+
+        Étape dédiée `<task.id>:debut` (même modèle que `:validation` et
+        `:relance`), que le pont (`maestro.controltower.bridge`) mue en statut
+        de tâche `en_cours` : le Kanban voit la tâche démarrer (agent, heure de
+        début) avant son issue. Rejouée à chaque tentative de relance (#91) —
+        la carte « En cours » se rafraîchit au redémarrage. Usage nul : rien
+        n'entre au grand livre avant l'issue de la tâche.
+        """
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_DEBUT}",
+            nom=task.titre,
+            agent=agent.nom,
+            role=agent.role,
+            statut=STATUT_EN_COURS,
+            entree="",
+            sortie=(
+                "démarrage de la tâche"
+                if tentative == 1
+                else f"redémarrage de la tâche (tentative {tentative}/{max_tentatives})"
+            ),
+            usage=StepUsage(),
+        )
 
     def _consigne_relance(
         self,
