@@ -22,7 +22,7 @@ from maestro.providers import (
     unregister,
 )
 from maestro.providers import claude as claude_mod
-from maestro.providers.base import ModelProvider
+from maestro.providers.base import ModelProvider, TurnLimitReached
 from maestro.telemetry import collect_usage
 
 
@@ -297,3 +297,36 @@ def test_claude_run_agent_releve_les_outils_utilises(monkeypatch):
     assert recolte.total.tours == 2
     # Coût non rapporté par le SDK → inconnu (None), pas zéro.
     assert recolte.total.cout_usd is None
+
+
+# --- Ticket #91 : le plafond de tours est mué en erreur typée de la couche -------------
+
+
+def test_claude_mue_le_plafond_de_tours_en_erreur_typee(monkeypatch):
+    # Le CLI rend un résultat `error_max_turns`, que le SDK relève en exception
+    # générique : la frontière la mue en TurnLimitReached — reconnaissable par le
+    # moteur (jamais relancée, #91) sans lire d'erreur propre au SDK.
+    async def fake_query(*, prompt, options):
+        raise Exception("Claude Code returned an error result: error_max_turns")
+        yield  # jamais atteint : fait de fake_query un générateur asynchrone
+
+    _patch_sdk(monkeypatch, fake_query)
+    provider = ClaudeProvider(Credentials())
+
+    with pytest.raises(TurnLimitReached, match="plafond de tours"):
+        asyncio.run(provider.generate("Salut", model="claude-opus-4-8"))
+
+
+def test_claude_laisse_passer_les_autres_erreurs_sdk_inchangees(monkeypatch):
+    # Un crash quelconque du sous-processus n'est PAS un plafond de tours : il
+    # remonte tel quel (c'est l'aléa transitoire que la relance #91 cible).
+    async def fake_query(*, prompt, options):
+        raise Exception("Fatal error in message reader")
+        yield  # jamais atteint : fait de fake_query un générateur asynchrone
+
+    _patch_sdk(monkeypatch, fake_query)
+    provider = ClaudeProvider(Credentials())
+
+    with pytest.raises(Exception, match="Fatal error in message reader") as excinfo:
+        asyncio.run(provider.generate("Salut", model="claude-opus-4-8"))
+    assert not isinstance(excinfo.value, TurnLimitReached)

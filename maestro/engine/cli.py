@@ -13,6 +13,12 @@ l'**exécution entière** (adossé à la comptabilité par tâche, #56) et
 une **demande de validation** posée sur la console (refusée par défaut si
 l'entrée n'est pas interactive — fail-safe).
 
+Relance automatique (#91, ENF-06) : les échecs **transitoires** (aléa
+fournisseur — erreur immédiate, crash du sous-processus SDK) sont relancés avec
+backoff, **2 relances par défaut** (3 tentatives, `maestro.engine.retry`).
+`--relances <n>` ajuste le nombre de relances (`0` : désactivé). Les échecs non
+transitoires (time-out, plafonds, refus de validation) ne sont jamais relancés.
+
 `--queue` (#41) exécute les tâches via la **file Celery + Redis** au lieu du
 process courant : Redis lancé (infra/docker-compose.yml) et au moins un worker
 démarré (`celery -A maestro.queue worker --pool=solo`) sont requis. Les
@@ -61,6 +67,7 @@ from collections.abc import Sequence
 from maestro.config import ConfigError
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
 from maestro.engine.loop import OrchestrationEngine
+from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.engine.runner import run_borne
 from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import (
@@ -72,7 +79,7 @@ from maestro.telemetry import (
 
 _USAGE = (
     "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--messagerie] "
-    "[--validation-ui] [--plafond-cout <usd>] [--timeout <s>] "
+    "[--validation-ui] [--plafond-cout <usd>] [--timeout <s>] [--relances <n>] "
     '"<objectif en langage naturel>"'
 )
 
@@ -90,9 +97,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     validation_ui = False
     plafond_cout: float | None = None
     timeout: float | None = None
+    relances: int | None = None
     flags_connus = {
         "--json", "--trace", "--queue", "--publier", "--messagerie",
-        "--validation-ui", "--plafond-cout", "--timeout",
+        "--validation-ui", "--plafond-cout", "--timeout", "--relances",
     }
     while args and args[0] in flags_connus:
         flag = args.pop(0)
@@ -114,6 +122,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 2
             if flag == "--plafond-cout":
                 plafond_cout = valeur
+            elif flag == "--relances":
+                if valeur != int(valeur) or valeur < 0:
+                    print(
+                        f"--relances attend un entier ≥ 0 (reçu : {valeur:g}).",
+                        file=sys.stderr,
+                    )
+                    return 2
+                relances = int(valeur)
             else:
                 timeout = valeur
 
@@ -122,10 +138,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_USAGE, file=sys.stderr)
         return 2
 
-    if via_queue and (plafond_cout is not None or timeout is not None):
+    if via_queue and (plafond_cout is not None or timeout is not None or relances is not None):
         print(
-            "--plafond-cout/--timeout ne sont pas combinables avec --queue : les "
-            "garde-fous s'appliquent côté worker (maestro.queue.worker.configurer_worker).",
+            "--plafond-cout/--timeout/--relances ne sont pas combinables avec --queue : "
+            "garde-fous et relance s'appliquent côté worker "
+            "(maestro.queue.worker.configurer_worker).",
             file=sys.stderr,
         )
         return 2
@@ -152,7 +169,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     journal = RunJournal()
     try:
-        engine = _build_engine(via_queue=via_queue, guardrails=guardrails, messagerie=messagerie)
+        engine = _build_engine(
+            via_queue=via_queue,
+            guardrails=guardrails,
+            messagerie=messagerie,
+            relance=_politique_relance(relances),
+        )
         # Arrêt borné (#64) : une réalisation détachée par le time-out ne peut pas
         # suspendre la fermeture de la boucle — le rapport est toujours rendu.
         report = run_borne(engine.run(objective, journal=journal))
@@ -174,8 +196,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0 if not report.echouees else 1
 
 
+def _politique_relance(relances: int | None) -> PolitiqueRelance | None:
+    """Traduit `--relances <n>` en politique (#91) : n relances = n+1 tentatives.
+
+    Sans le flag (None), la politique par défaut du moteur (2 relances) ; `0`
+    désactive la relance (comportement d'avant ENF-06).
+    """
+    if relances is None:
+        return RELANCE_DEFAUT
+    if relances == 0:
+        return None
+    return PolitiqueRelance(max_tentatives=relances + 1)
+
+
 def _build_engine(
-    *, via_queue: bool, guardrails: Guardrails, messagerie: bool = False
+    *,
+    via_queue: bool,
+    guardrails: Guardrails,
+    messagerie: bool = False,
+    relance: PolitiqueRelance | None = None,
 ) -> OrchestrationEngine:
     """Construit la boucle : locale par défaut, distribuée (file #41) avec `--queue`.
 
@@ -183,7 +222,8 @@ def _build_engine(
     distribuée : le chemin historique n'en dépend pas. `--messagerie` (#44)
     branche les boîtes aux lettres Redis Pub/Sub (l'instance de la config,
     comme `--publier`) — la connexion est paresseuse, et une publication en
-    échec est abandonnée sans gêner l'exécution (relais résilient).
+    échec est abandonnée sans gêner l'exécution (relais résilient). `relance`
+    (#91) ne s'applique qu'en local — côté file, chaque worker câble la sienne.
     """
     mailbox = None
     if messagerie:
@@ -195,7 +235,7 @@ def _build_engine(
         from maestro.queue import create_distributed_engine
 
         return create_distributed_engine(mailbox=mailbox)
-    return OrchestrationEngine.default(guardrails=guardrails, mailbox=mailbox)
+    return OrchestrationEngine.default(guardrails=guardrails, mailbox=mailbox, relance=relance)
 
 
 def _valeur_numerique(flag: str, args: list[str]) -> float | None:

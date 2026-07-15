@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 from celery.contrib.testing.worker import start_worker, test_worker_started
 
-from maestro.engine import OrchestrationEngine, TaskResult
+from maestro.engine import OrchestrationEngine, PolitiqueRelance, TaskResult
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.providers.base import ModelProvider
@@ -64,7 +64,14 @@ def app():
 
 @pytest.fixture(autouse=True)
 def _worker_reinitialise():
-    """Rend au worker sa configuration par défaut après chaque test."""
+    """Rend au worker sa configuration par défaut après chaque test.
+
+    Neutralise aussi la relance automatique (#91), armée par défaut sur les
+    workers : ces tests comptent les appels modèle et simulent des pannes —
+    la relance elle-même est couverte par test_retry.py (et le câblage worker
+    par `test_le_worker_relance_un_echec_transitoire`).
+    """
+    configurer_worker(relance=PolitiqueRelance(max_tentatives=1))
     yield
     reinitialiser_worker()
 
@@ -308,6 +315,41 @@ def test_un_echec_d_agent_remonte_en_echec_de_tache(app):
     result = TaskResult.from_dict(brut)
     assert result.statut == "echec"
     assert "panne du modèle" in (result.erreur or "")
+
+
+def test_le_worker_relance_un_echec_transitoire(app):
+    # Câblage worker de la relance automatique (#91, ENF-06) : un aléa
+    # fournisseur transitoire est relancé côté worker — la tâche aboutit et le
+    # résultat remonte en succès (la mécanique complète est dans test_retry.py).
+    class FlakyProvider(ModelProvider):
+        name = "flaky-worker"
+
+        def __init__(self) -> None:
+            self.appels = 0
+
+        def supports(self, model: str) -> bool:
+            return True
+
+        async def generate(self, prompt, *, model, system_prompt=None):
+            self.appels += 1
+            if self.appels == 1:
+                raise RuntimeError("aléa SDK simulé")
+            return "LIVRABLE après relance"
+
+    provider = FlakyProvider()
+    configurer_worker(
+        provider_factory=lambda: provider,
+        relance=PolitiqueRelance(max_tentatives=2, backoff_s=0),
+    )
+
+    with start_worker(app, pool="solo", perform_ping_check=False):
+        async_result = app.send_task(NOM_TACHE_EXECUTER, args=[_tache(), [], "run-q4b"])
+        brut = async_result.get(timeout=30)
+
+    result = TaskResult.from_dict(brut)
+    assert result.statut == "terminee"
+    assert result.sortie == "LIVRABLE après relance"
+    assert provider.appels == 2
 
 
 def test_une_tache_malformee_est_refusee_sans_execution(app):
