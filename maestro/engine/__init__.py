@@ -16,6 +16,12 @@ Chaque tâche s'exécute sous **garde-fous** (#9, `maestro.engine.guardrails`) :
 plafond de dépense, time-out, et validation humaine des actions sensibles —
 configurables via `Guardrails` injecté au moteur.
 
+Les échecs **transitoires** (aléa fournisseur : erreur immédiate, crash du
+sous-processus SDK) sont **relancés automatiquement** (#91, ENF-06,
+`maestro.engine.retry`) : politique `PolitiqueRelance` (tentatives, backoff),
+armée par défaut sur `OrchestrationEngine.default()`. Les échecs non
+transitoires (time-out ferme, plafonds, refus de validation) ne le sont jamais.
+
 L'exécution d'une tâche passe par la frontière injectable `TaskExecutor` (#41) :
 `LocalExecutor` en process par défaut, ou `maestro.queue.CeleryExecutor` pour
 distribuer les tâches à des workers via la file Celery + Redis.
@@ -45,6 +51,7 @@ from maestro.engine.loop import (
     OrchestrationEngine,
     RunReport,
 )
+from maestro.engine.retry import PolitiqueRelance
 
 __all__ = [
     "DemandeValidation",
@@ -52,6 +59,7 @@ __all__ = [
     "LocalExecutor",
     "MOTS_SENSIBLES",
     "OrchestrationEngine",
+    "PolitiqueRelance",
     "RunReport",
     "STATUT_BLOQUEE",
     "STATUT_ECHEC",

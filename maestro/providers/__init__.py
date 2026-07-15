@@ -25,6 +25,7 @@ from maestro.providers.base import (
     Credentials,
     ModelProvider,
     ModelSpec,
+    TurnLimitReached,
     UnsupportedCapability,
 )
 from maestro.providers.claude import ClaudeProvider
@@ -48,6 +49,7 @@ __all__ = [
     "OpenAICompatError",
     "OpenAICompatProvider",
     "ProviderFactory",
+    "TurnLimitReached",
     "UnknownProviderError",
     "UnsupportedCapability",
     "available_providers",

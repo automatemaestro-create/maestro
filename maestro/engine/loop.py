@@ -79,6 +79,7 @@ from maestro.engine.executor import (
     _ecoule_ms,
 )
 from maestro.engine.guardrails import Guardrails
+from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
@@ -211,6 +212,7 @@ class OrchestrationEngine:
         mailbox: Mailbox | None = None,
         playbooks: PlaybookStore | None = None,
         capacites: CapacityStore | None = None,
+        relance: PolitiqueRelance | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -225,7 +227,8 @@ class OrchestrationEngine:
         # (ex. `maestro.queue.CeleryExecutor`) distribue les tâches à des workers.
         # `playbooks` (#78) et `capacites` (#86) : les dépôts que l'exécuteur local
         # relit à chaque tâche — l'application à chaud ; ignorés si un exécuteur est
-        # injecté (en distribué, chaque worker câble les siens).
+        # injecté (en distribué, chaque worker câble les siens — `relance` (#91)
+        # comprise, cf. maestro.queue.worker.configurer_worker).
         self._executor = (
             executor
             if executor is not None
@@ -236,6 +239,7 @@ class OrchestrationEngine:
                 guardrails=guardrails,
                 playbooks=playbooks,
                 capacites=capacites,
+                relance=relance,
             )
         )
 
@@ -246,6 +250,7 @@ class OrchestrationEngine:
         *,
         guardrails: Guardrails | None = None,
         mailbox: Mailbox | None = None,
+        relance: PolitiqueRelance | None = RELANCE_DEFAUT,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -273,6 +278,12 @@ class OrchestrationEngine:
         chaud à chaque tâche : un agent désactivé depuis la Control Tower ne
         reçoit plus de tâches, et ses exécutions simultanées sont bornées à
         son plafond d'instances.
+
+        La **relance automatique** (#91, ENF-06) est **armée par défaut**
+        (`PolitiqueRelance()` : 3 tentatives, backoff exponentiel) : sur ce
+        moteur — celui des vrais runs —, un aléa fournisseur transitoire ne
+        condamne plus l'exécution. `relance=None` la désactive ;
+        `relance=PolitiqueRelance(...)` l'ajuste.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -288,6 +299,7 @@ class OrchestrationEngine:
             mailbox=mailbox,
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
+            relance=relance,
         )
 
     async def run(self, objective: str, *, journal: RunJournal | None = None) -> RunReport:

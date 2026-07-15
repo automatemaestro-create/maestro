@@ -38,9 +38,19 @@ from claude_agent_sdk import (
 )
 
 from maestro.config import ConfigError, Settings
-from maestro.providers.base import AuthMode, Credentials, ModelProvider
+from maestro.providers.base import (
+    AuthMode,
+    Credentials,
+    ModelProvider,
+    TurnLimitReached,
+)
 from maestro.providers.registry import register
 from maestro.telemetry import StepUsage, report_usage
+
+#: Marqueur du plafond de tours dans les erreurs du SDK : le CLI rend un résultat
+#: `is_error=True` de sous-type `error_max_turns`, que le SDK relève en exception
+#: « Claude Code returned an error result: error_max_turns ».
+_MARQUEUR_MAX_TURNS = "error_max_turns"
 
 
 def _resolve_auth_mode(settings: Settings) -> AuthMode:
@@ -190,18 +200,29 @@ async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
     Les noms d'outils sont relevés au fil des blocs `ToolUseBlock` ; le message
     final `ResultMessage` porte tokens, coût et durée API — le tout est remonté
     via `maestro.telemetry.report_usage` (sans effet hors `collect_usage()`).
+
+    Le **plafond de tours** (`max_turns`) est mué en `TurnLimitReached` (#91) :
+    c'est le contrat de la couche d'abstraction — le moteur reconnaît ainsi un
+    garde-fou déterministe (jamais relancé) sans lire d'erreur propre au SDK.
     """
     parts: list[str] = []
     outils: list[str] = []
-    async for message in query(prompt=prompt, options=options):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    parts.append(block.text)
-                elif isinstance(block, ToolUseBlock) and block.name not in outils:
-                    outils.append(block.name)
-        elif isinstance(message, ResultMessage):
-            report_usage(_usage_from_result(message, tuple(outils)))
+    try:
+        async for message in query(prompt=prompt, options=options):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        parts.append(block.text)
+                    elif isinstance(block, ToolUseBlock) and block.name not in outils:
+                        outils.append(block.name)
+            elif isinstance(message, ResultMessage):
+                report_usage(_usage_from_result(message, tuple(outils)))
+    except Exception as exc:
+        if _MARQUEUR_MAX_TURNS in str(exc):
+            raise TurnLimitReached(
+                f"plafond de tours atteint (max_turns) : {exc}"
+            ) from exc
+        raise
     return "".join(parts)
 
 

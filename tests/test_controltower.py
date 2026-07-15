@@ -578,6 +578,21 @@ def test_lignes_planification_et_validation_deviennent_activites():
     assert activite_valid.tache_id == "t2" and activite_valid.statut == "refuse"
 
 
+def test_ligne_de_relance_devient_activite_avec_sa_raison():
+    """Une relance (#91) part au fil temps réel en activité d'agent, raison comprise."""
+    relance = {"run_id": "r", "etape": "t3:relance", "nom": "Relance — Implémenter",
+               "agent": "developpeur", "role": "Développeur", "statut": "relance",
+               "entree": "aléa SDK (crash du sous-processus).",
+               "sortie": "échec transitoire (tentative 1/3) : aléa SDK (crash du "
+                         "sous-processus). — relance dans 2 s."}
+
+    (activite,) = evenements_depuis_step(relance)
+
+    assert activite.type == EVENEMENT_AGENT_ACTIVITE
+    assert activite.tache_id == "t3" and activite.statut == "relance"
+    assert "aléa SDK" in activite.detail and "relance" in activite.detail
+
+
 def test_la_ligne_de_journal_embarque_la_mesure_complete():
     """L'événement porte la mesure d'usage entière (#57), pas le seul raccourci `cout_usd`."""
     record = {

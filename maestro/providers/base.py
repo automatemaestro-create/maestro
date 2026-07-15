@@ -30,6 +30,17 @@ class UnsupportedCapability(RuntimeError):
     """
 
 
+class TurnLimitReached(RuntimeError):
+    """Levée quand une exécution agentique a épuisé son plafond de tours (#91).
+
+    C'est le garde-fou anti-emballement des exécutions outillées (ex. `max_turns`
+    de l'Agent SDK) : chaque fournisseur mue son signal natif en cette exception
+    pour que le moteur le reconnaisse **sans présumer du fournisseur**. Échec non
+    transitoire par nature — relancer reproduirait le même emballement — donc
+    jamais relancé par la relance automatique (`maestro.engine.retry`, ENF-06).
+    """
+
+
 class AuthMode(StrEnum):
     """Mode d'authentification d'un fournisseur — la « bascule » du ticket #30.
 

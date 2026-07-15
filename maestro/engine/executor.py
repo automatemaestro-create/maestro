@@ -30,6 +30,7 @@ from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.engine.guardrails import DemandeValidation, Guardrails
+from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.orchestrator.schema import Task
 from maestro.providers.base import ModelProvider, UnsupportedCapability
 from maestro.router.classifier import TaskClassifier
@@ -49,6 +50,10 @@ from maestro.telemetry import (
 STATUT_TERMINEE = "terminee"
 STATUT_ECHEC = "echec"
 STATUT_BLOQUEE = "bloquee"
+
+#: Suffixe des étapes de relance au journal (#91) : `<task.id>:relance`, une par
+#: relance déclenchée — le pont Control Tower les mue en activités d'agent.
+SUFFIXE_ETAPE_RELANCE = ":relance"
 
 #: Délai de grâce accordé à l'annulation d'une réalisation en dépassement (#64) :
 #: le temps, dans le cas nominal, que le SDK ferme son sous-processus. Au-delà,
@@ -173,8 +178,15 @@ class LocalExecutor(TaskExecutor):
         router: Router | None = None,
         playbooks: PlaybookStore | None = None,
         capacites: CapacityStore | None = None,
+        relance: PolitiqueRelance | None = None,
     ) -> None:
         self._provider = provider
+        # Relance automatique (#91, ENF-06) : les échecs transitoires de la
+        # réalisation (aléa fournisseur — crash du sous-processus SDK, erreur
+        # immédiate) sont relancés selon cette politique, avec backoff. None :
+        # aucune relance (comportement historique). Les échecs non transitoires
+        # (plafonds, refus de validation, time-out) ne sont jamais relancés.
+        self._relance = relance
         # Application à chaud des playbooks (#78) : la version courante est relue
         # dans ce dépôt à chaque tâche — une édition publiée via la Control Tower
         # vaut pour l'exécution suivante, sans reconstruire l'exécuteur ni
@@ -339,9 +351,9 @@ class LocalExecutor(TaskExecutor):
             return refus
         timeout_s = self._guardrails.timeout_s
         if timeout_s is None:
-            return await self._realise(agent, task, description, score, playbook)
+            return await self._realise(agent, task, description, score, playbook, journal)
         realisation = asyncio.create_task(
-            self._realise(agent, task, description, score, playbook),
+            self._realise(agent, task, description, score, playbook, journal),
             name=f"maestro-realisation:{task.id}",
         )
         try:
@@ -410,32 +422,97 @@ class LocalExecutor(TaskExecutor):
         description: str,
         score: int,
         playbook: PlaybookVersion | None,
+        journal: RunJournal,
     ) -> TaskResult:
-        """Produit le livrable de `task` et le mue en `TaskResult` (échec consigné, jamais levé)."""
-        try:
-            sortie, fichiers = await self._produce(agent, task, description, playbook)
-        except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
-            return _echec(task, agent=agent.nom, role=agent.role, score=score, erreur=str(exc))
+        """Produit le livrable de `task` et le mue en `TaskResult` (échec consigné, jamais levé).
 
-        sortie = sortie.strip()
-        if not sortie and not fichiers:
-            return _echec(
-                task,
-                agent=agent.nom,
-                role=agent.role,
-                score=score,
-                erreur="réponse vide de l'agent.",
+        Un échec **transitoire** de la production (aléa fournisseur : erreur
+        immédiate, crash du sous-processus SDK, réponse vide) est **relancé**
+        selon la politique (#91, ENF-06) — jusqu'à `max_tentatives` exécutions,
+        backoff entre deux. Chaque relance est consignée au journal (étape
+        `<task.id>:relance`, raison portée), donc visible au fil temps réel de
+        la Control Tower ; le coût de **toutes** les tentatives est agrégé par
+        le collecteur de `execute` et porté par l'étape finale de la tâche. Un
+        échec **non transitoire** (`est_transitoire` : plafond de coût, plafond
+        de tours, capacité absente) sort immédiatement — jamais relancé. Sous
+        time-out (#64), l'échéance ferme borne la boucle entière, relances et
+        attentes comprises : à l'échéance, aucune nouvelle tentative.
+        """
+        relance = self._relance
+        max_tentatives = relance.max_tentatives if relance is not None else 1
+        tentative = 1
+        while True:
+            try:
+                sortie, fichiers = await self._produce(agent, task, description, playbook)
+            except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
+                if not est_transitoire(exc):
+                    return _echec(
+                        task, agent=agent.nom, role=agent.role, score=score, erreur=str(exc)
+                    )
+                cause = str(exc)
+            else:
+                sortie = sortie.strip()
+                if sortie or fichiers:
+                    return TaskResult(
+                        task_id=task.id,
+                        titre=task.titre,
+                        agent=agent.nom,
+                        role=agent.role,
+                        competences_requises=task.competences_requises,
+                        score=score,
+                        statut=STATUT_TERMINEE,
+                        sortie=sortie,
+                        fichiers=fichiers,
+                    )
+                cause = "réponse vide de l'agent."
+            if relance is None or tentative >= max_tentatives:
+                return _echec(
+                    task,
+                    agent=agent.nom,
+                    role=agent.role,
+                    score=score,
+                    erreur=cause if tentative == 1 else (
+                        f"{cause} — échec transitoire persistant après "
+                        f"{tentative} tentatives (relances épuisées)."
+                    ),
+                )
+            attente_s = relance.attente_s(tentative)
+            self._consigne_relance(
+                task, agent, tentative, max_tentatives, cause, attente_s, journal
             )
-        return TaskResult(
-            task_id=task.id,
-            titre=task.titre,
+            await asyncio.sleep(attente_s)
+            tentative += 1
+
+    def _consigne_relance(
+        self,
+        task: Task,
+        agent: Agent,
+        tentative: int,
+        max_tentatives: int,
+        cause: str,
+        attente_s: float,
+        journal: RunJournal,
+    ) -> None:
+        """Trace une relance au journal (#91) — donc au fil temps réel de la Control Tower.
+
+        Étape dédiée `<task.id>:relance` (même modèle que `:validation`), que le
+        pont (`maestro.controltower.bridge`) mue en activité d'agent. `entree`
+        porte la **raison** (l'échec transitoire constaté), `sortie` le geste (la
+        relance qui vient). Usage nul : le coût réel de toutes les tentatives est
+        porté par l'étape finale de la tâche — pas de double compte au grand livre.
+        """
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_RELANCE}",
+            nom=f"Relance — {task.titre}",
             agent=agent.nom,
             role=agent.role,
-            competences_requises=task.competences_requises,
-            score=score,
-            statut=STATUT_TERMINEE,
-            sortie=sortie,
-            fichiers=fichiers,
+            statut="relance",
+            entree=cause,
+            sortie=(
+                f"échec transitoire (tentative {tentative}/{max_tentatives}) : {cause} "
+                f"— relance dans {attente_s:g} s."
+            ),
+            usage=StepUsage(),
         )
 
     async def _produce(

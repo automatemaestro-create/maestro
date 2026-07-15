@@ -41,6 +41,7 @@ from maestro.agents.store import AgentStore, catalogue
 from maestro.config import load_settings
 from maestro.engine.executor import LocalExecutor, TaskResult
 from maestro.engine.guardrails import Guardrails
+from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.engine.runner import run_borne
 from maestro.orchestrator.schema import Task, validate_task
 from maestro.providers.base import ModelProvider
@@ -66,6 +67,10 @@ def _fabrique_configuree() -> ModelProvider:
 
 _provider_factory: ProviderFactory = _fabrique_configuree
 _guardrails: Guardrails | None = None
+#: Relance automatique des échecs transitoires (#91, ENF-06) — armée par défaut
+#: sur les workers (les vrais runs), comme sur `OrchestrationEngine.default()`.
+#: `configurer_worker(relance=PolitiqueRelance(max_tentatives=1))` la neutralise.
+_relance: PolitiqueRelance = RELANCE_DEFAUT
 _executor: LocalExecutor | None = None
 
 #: Identité du worker, rapportée sur chaque résultat (`TaskResult.worker`).
@@ -105,26 +110,32 @@ def configurer_worker(
     *,
     provider_factory: ProviderFactory | None = None,
     guardrails: Guardrails | None = None,
+    relance: PolitiqueRelance | None = None,
 ) -> None:
-    """Configure l'exécution de CE process worker (fournisseur, garde-fous).
+    """Configure l'exécution de CE process worker (fournisseur, garde-fous, relance).
 
     À appeler avant la consommation (démarrage du worker, ou fixture de test).
     Ne touche que le process courant : chaque worker se configure lui-même.
     L'exécuteur courant est invalidé — il sera reconstruit au prochain message.
+    `relance` (#91) remplace la politique armée par défaut — la neutraliser se
+    fait par `PolitiqueRelance(max_tentatives=1)` (None : inchangée).
     """
-    global _provider_factory, _guardrails, _executor
+    global _provider_factory, _guardrails, _relance, _executor
     if provider_factory is not None:
         _provider_factory = provider_factory
     if guardrails is not None:
         _guardrails = guardrails
+    if relance is not None:
+        _relance = relance
     _executor = None
 
 
 def reinitialiser_worker() -> None:
     """Rétablit la configuration par défaut du worker (fabrique configurée, garde-fous défaut)."""
-    global _provider_factory, _guardrails, _executor
+    global _provider_factory, _guardrails, _relance, _executor
     _provider_factory = _fabrique_configuree
     _guardrails = None
+    _relance = RELANCE_DEFAUT
     _executor = None
 
 
@@ -160,6 +171,7 @@ def _executeur() -> LocalExecutor:
             guardrails=_guardrails,
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
+            relance=_relance,
         )
     return _executor
 

@@ -43,6 +43,10 @@ _ETAPE_PLANIFICATION = "planification"
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).
 _SUFFIXE_VALIDATION = ":validation"
 
+#: Suffixe des étapes de relance automatique (#91 — cf.
+#: `maestro.engine.executor`, `SUFFIXE_ETAPE_RELANCE`).
+_SUFFIXE_RELANCE = ":relance"
+
 #: Suffixe des étapes de messagerie inter-agents (#44 — cf.
 #: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
 _SUFFIXE_MESSAGE = ":message"
@@ -53,8 +57,10 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
 
     - les étapes `<tache>:message` (#44) deviennent des **messages
       inter-agents** (entité AGENT_MESSAGE — handoff, notification…) ;
-    - l'étape `planification` et les étapes `<tache>:validation` deviennent des
-      **activités d'agent** (l'orchestrateur planifie, un humain tranche) ;
+    - l'étape `planification` et les étapes `<tache>:validation` et
+      `<tache>:relance` (#91) deviennent des **activités d'agent**
+      (l'orchestrateur planifie, un humain tranche, le moteur relance — la
+      raison de chaque relance voyage dans `detail`) ;
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
       portant statut, agent, rôle et coût rapporté (#8).
 
@@ -74,14 +80,20 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     mesure = StepUsage.from_dict(usage) if isinstance(usage, Mapping) else None
     cout_brut = usage.get("cout_usd") if isinstance(usage, Mapping) else None
     est_message = etape.endswith(_SUFFIXE_MESSAGE)
-    est_activite = etape == _ETAPE_PLANIFICATION or etape.endswith(_SUFFIXE_VALIDATION)
+    est_activite = etape == _ETAPE_PLANIFICATION or etape.endswith(
+        (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE)
+    )
     if est_message:
         type_evenement = EVENEMENT_MESSAGE_INTER_AGENTS
         tache_id = etape.removesuffix(_SUFFIXE_MESSAGE)
         detail = str(record.get("sortie") or "")
     elif est_activite:
         type_evenement = EVENEMENT_AGENT_ACTIVITE
-        tache_id = "" if etape == _ETAPE_PLANIFICATION else etape.removesuffix(_SUFFIXE_VALIDATION)
+        tache_id = (
+            ""
+            if etape == _ETAPE_PLANIFICATION
+            else etape.removesuffix(_SUFFIXE_VALIDATION).removesuffix(_SUFFIXE_RELANCE)
+        )
         detail = str(record.get("sortie") or record.get("erreur") or "")
     else:
         type_evenement = EVENEMENT_TACHE_STATUT

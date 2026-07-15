@@ -8,6 +8,7 @@ propagée) et rendre la main malgré une tâche zombie qui avale son annulation.
 """
 
 import asyncio
+import gc
 from time import perf_counter
 
 import pytest
@@ -49,3 +50,8 @@ def test_run_borne_rend_la_main_malgre_une_tache_zombie():
     debut = perf_counter()
     assert run_borne(principal(), grace_s=0.05) == "rapport"
     assert perf_counter() - debut < 2  # la fermeture est bornée, jamais suspendue
+    # Finalise la zombie abandonnée ICI : retenue par un cycle, elle n'est
+    # détruite qu'au GC cyclique — sans ce collect, son « Task was destroyed
+    # but it is pending! » (logger asyncio) fuirait dans le caplog d'un test
+    # ultérieur au gré du timing du GC.
+    gc.collect()
