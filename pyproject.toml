@@ -27,6 +27,9 @@ dependencies = [
     # Client HTTP asynchrone du fournisseur compatible OpenAI (ticket #69) ; sert
     # aussi de client aux tests d'API (TestClient de Starlette, ticket #46).
     "httpx2>=2.0",
+    # Workflows durables (Phase 3, ticket #94) : SDK Python Temporal. Socle de la
+    # migration du moteur d'exécution vers des workflows/activités durables (#95).
+    "temporalio>=1.7",
 ]
 
 [project.optional-dependencies]
@@ -74,6 +77,9 @@ maestro-api = "maestro.controltower.cli:main"
 # Démo : Control Tower autonome — API réelle sur bus mémoire + scénario d'événements
 # factices, pour regarder l'UI sans Redis ni orchestration (ticket #65).
 maestro-controltower-demo = "maestro.controltower.demo:main"
+# Démo : workflow + worker hello-world contre le Temporal local (socle des
+# workflows durables, ticket #94).
+maestro-temporal-demo = "maestro.temporal_demo:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).
@@ -121,4 +127,7 @@ omit = [
     "maestro/controltower/cli.py",
     "maestro/controltower/demo.py",
     "maestro/agents/runtime_cli.py",
+    # Démo Temporal (ticket #94) : exige un serveur Temporal vivant — smoke test
+    # différé au lot tests + doc (#93).
+    "maestro/temporal_demo.py",
 ]
