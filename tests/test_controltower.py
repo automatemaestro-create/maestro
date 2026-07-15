@@ -593,6 +593,26 @@ def test_ligne_de_relance_devient_activite_avec_sa_raison():
     assert "aléa SDK" in activite.detail and "relance" in activite.detail
 
 
+def test_ligne_de_debut_devient_statut_en_cours_sans_depense():
+    """Un début de tâche (#98) part au fil temps réel en `tache.statut` `en_cours`
+    — agent et heure de début posés, sans usage ni coût (rien au grand livre
+    avant l'issue)."""
+    debut = {"run_id": "r", "etape": "t3:debut", "nom": "Implémenter",
+             "agent": "developpeur", "role": "Développeur", "statut": "en_cours",
+             "horodatage": "2026-07-15T10:00:00+00:00",
+             "entree": "", "sortie": "démarrage de la tâche",
+             "usage": StepUsage().to_dict()}
+
+    (event,) = evenements_depuis_step(debut)
+
+    assert event.type == EVENEMENT_TACHE_STATUT
+    assert event.tache_id == "t3" and event.statut == "en_cours"
+    assert event.agent == "developpeur" and event.titre == "Implémenter"
+    assert event.horodatage == "2026-07-15T10:00:00+00:00"
+    assert "démarrage" in event.detail
+    assert event.usage is None and event.cout_usd is None
+
+
 def test_la_ligne_de_journal_embarque_la_mesure_complete():
     """L'événement porte la mesure d'usage entière (#57), pas le seul raccourci `cout_usd`."""
     record = {
@@ -630,6 +650,37 @@ def test_le_journal_publie_ses_etapes_en_evenements():
     assert event.type == EVENEMENT_TACHE_STATUT
     assert event.run_id == "run-42" and event.tache_id == "t1"
     assert event.cout_usd == pytest.approx(0.05)
+
+
+def test_du_debut_a_l_issue_le_kanban_suit_la_tache(client, state):
+    """Bout en bout #98 : le journal du moteur, projeté en événements, fait vivre
+    la colonne « En cours » — la tâche y entre à son début (agent, heure de
+    début), l'agent est occupé, puis l'issue la bascule et libère l'agent."""
+    journal = RunJournal(run_id="run-98")
+    journal.consigne(etape="t1:debut", nom="Implémenter", agent="developpeur",
+                     role="Développeur", statut="en_cours", entree="",
+                     sortie="démarrage de la tâche", usage=StepUsage())
+    for event in evenements_depuis_step(journal.records[-1].to_dict()):
+        state.appliquer(event)
+
+    (tache,) = client.get("/api/taches").json()
+    assert tache["id"] == "t1" and tache["statut"] == "en_cours"
+    assert tache["agent"] == "developpeur"
+    assert tache["horodatage"]  # l'heure de début affichée par la carte Kanban
+    assert tache["cout_usd"] is None and tache["usage"] is None  # rien avant l'issue
+    agent = next(a for a in client.get("/api/agents").json() if a["nom"] == "developpeur")
+    assert agent["statut"] == "occupe" and agent["tache_courante"] == "t1"
+
+    journal.consigne(etape="t1", nom="Implémenter", agent="developpeur",
+                     role="Développeur", statut="terminee", entree="e", sortie="s",
+                     usage=StepUsage(appels=1, cout_usd=0.1, duree_ms=1200))
+    for event in evenements_depuis_step(journal.records[-1].to_dict()):
+        state.appliquer(event)
+
+    (tache,) = client.get("/api/taches").json()
+    assert tache["statut"] == "terminee" and tache["cout_usd"] == pytest.approx(0.1)
+    agent = next(a for a in client.get("/api/agents").json() if a["nom"] == "developpeur")
+    assert agent["statut"] == "libre" and agent["tache_courante"] == ""
 
 
 # ------------------------------------------------- ⑤ Validations humaines

@@ -134,8 +134,8 @@ def test_journal_relie_planification_et_taches_au_run_id(tmp_path):
     ]
     assert {ligne["etape"] for ligne in lignes} == {
         "planification",
-        "schema-contacts",
-        "api-contacts",
+        "schema-contacts:debut", "schema-contacts",
+        "api-contacts:debut", "api-contacts",
     }
     # Toutes les étapes portent le run_id du dossier d'artefacts.
     assert {ligne["run_id"] for ligne in lignes} == {racine.name.removeprefix("run-")}

@@ -59,7 +59,7 @@ Chaque exécution écrit sous `sortie-demo/run-<run_id>/` (le `run_id` relie tou
 |----------|---------|
 | `synthese.md` | L'agrégat Markdown : récap chiffré (tâches réussies, usage total) puis livrable par tâche |
 | `rapport.json` | Le rapport structuré complet (`RunReport.to_dict()`) : statuts, livrables, fichiers, usage par tâche |
-| `journal.jsonl` | Le journal d'exécution (#8) : une ligne JSON par étape (planification, tâches, validations), secrets expurgés |
+| `journal.jsonl` | Le journal d'exécution (#8) : une ligne JSON par étape (planification, débuts de tâche (#98), tâches, validations), secrets expurgés |
 | `verdict.md` | Le verdict du critère de sortie Phase 0, volet par volet, avec preuves |
 | `livrables/<tâche>/livrable.md` | Le livrable texte de chaque tâche réussie |
 | `livrables/<tâche>/fichiers/…` | Les fichiers produits par les runtimes outillés (SQL, code…) |
