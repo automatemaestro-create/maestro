@@ -1,5 +1,6 @@
-# Environnement de développement local — Maestro (POC Phase 0)
-# Bases locales optionnelles : PostgreSQL (données/traces) + Redis (file de tâches, pub/sub).
+# Environnement de développement local — Maestro
+# Services locaux optionnels : PostgreSQL (données/traces) + Redis (file de tâches,
+# pub/sub) + Temporal (workflows durables, Phase 3).
 services:
   postgres:
     image: postgres:16
@@ -17,5 +18,22 @@ services:
     ports:
       - "6379:6379"
 
+  # Temporal local (workflows durables, ticket #94) : serveur de développement
+  # tout-en-un (`temporal server start-dev`) avec UI web intégrée. L'état est
+  # persisté en SQLite dans le volume `temporal-data` — les workflows survivent
+  # au redémarrage du conteneur. gRPC : localhost:7233 (SDK) ; UI : http://localhost:8233.
+  # Le volume est monté sur /home/temporal (propriété de l'utilisateur non-root
+  # `temporal` de l'image) : monté ailleurs (ex. /data), le point de montage
+  # appartiendrait à root et SQLite ne pourrait pas créer sa base.
+  temporal:
+    image: temporalio/temporal:latest
+    command: server start-dev --ip 0.0.0.0 --db-filename /home/temporal/temporal.db
+    ports:
+      - "7233:7233"
+      - "8233:8233"
+    volumes:
+      - temporal-data:/home/temporal
+
 volumes:
   pgdata:
+  temporal-data:

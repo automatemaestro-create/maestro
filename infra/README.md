@@ -1,8 +1,8 @@
-# Infrastructure locale — Maestro (Phase 0)
+# Infrastructure locale — Maestro
 
-Bases de données locales **optionnelles** pour le développement : PostgreSQL
-(données / traces) et Redis (file de tâches, pub/sub). Cf.
-[docs/02 §4](../docs/02-stack-technique.md).
+Services locaux **optionnels** pour le développement : PostgreSQL
+(données / traces), Redis (file de tâches, pub/sub) et Temporal (workflows
+durables, Phase 3). Cf. [docs/02 §4](../docs/02-stack-technique.md).
 
 ## Démarrer / arrêter
 
@@ -19,11 +19,25 @@ docker compose -f infra/docker-compose.yml down -v    # arrête + supprime le vo
 |------------|-------------------------------------------------------|-------------------|
 | PostgreSQL | `postgresql://maestro:maestro@localhost:5432/maestro` | maestro / maestro |
 | Redis      | `redis://localhost:6379/0`                            | —                 |
+| Temporal   | `localhost:7233` (gRPC) — UI : <http://localhost:8233> | —                |
 
-Ces valeurs correspondent aux variables `DATABASE_URL` / `REDIS_URL` de
-[`.env.example`](../.env.example). Ce sont des identifiants de **développement
-local uniquement** — aucun secret de production ici.
+Ces valeurs correspondent aux variables `DATABASE_URL` / `REDIS_URL` /
+`TEMPORAL_ADDRESS` de [`.env.example`](../.env.example). Ce sont des identifiants
+de **développement local uniquement** — aucun secret de production ici.
 
 Redis sert de **broker et backend de résultats** à la file de tâches
 ([`maestro/queue/`](../maestro/queue/), ticket #41) — la même instance portera
 le pub/sub temps réel (tickets suivants).
+
+## Temporal (workflows durables — ticket #94)
+
+Le service `temporal` démarre un serveur **Temporal de développement** tout-en-un
+(`temporal server start-dev`) : le serveur gRPC écoute sur `localhost:7233`
+(l'adresse utilisée par le SDK Python `temporalio`, surchargée par
+`TEMPORAL_ADDRESS`) et l'**UI web** sur <http://localhost:8233>. L'état est
+persisté en SQLite dans le volume `temporal-data` : les workflows survivent au
+redémarrage du conteneur. Vérification rapide : `maestro-temporal-demo`
+(workflow + worker hello-world, [`maestro/temporal_demo.py`](../maestro/temporal_demo.py))
+doit imprimer `Bonjour, Maestro !` et l'exécution apparaît dans l'UI. C'est le
+socle de la migration du moteur d'exécution vers des workflows durables
+(tickets #95 et #96, parent #92).
