@@ -251,6 +251,7 @@ class OrchestrationEngine:
         guardrails: Guardrails | None = None,
         mailbox: Mailbox | None = None,
         relance: PolitiqueRelance | None = RELANCE_DEFAUT,
+        max_parallele: int | None = None,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -284,6 +285,12 @@ class OrchestrationEngine:
         moteur — celui des vrais runs —, un aléa fournisseur transitoire ne
         condamne plus l'exécution. `relance=None` la désactive ;
         `relance=PolitiqueRelance(...)` l'ajuste.
+
+        `max_parallele` (#100) pose le **plafond global** du run — le plafond
+        transverse, prioritaire sur la capacité par agent (#86) qui s'applique
+        en dessous : quel que soit le nombre d'instances accordé à un agent,
+        jamais plus de `max_parallele` tâches en vol toutes files confondues.
+        None (défaut) : illimité, comportement historique.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -300,6 +307,7 @@ class OrchestrationEngine:
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
             relance=relance,
+            max_parallele=max_parallele,
         )
 
     async def run(self, objective: str, *, journal: RunJournal | None = None) -> RunReport:

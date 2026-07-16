@@ -111,13 +111,26 @@ function FicheAgent({
         {agent.role || "—"}
       </p>
       <dl className="mt-2 space-y-1 text-xs text-neutral-600 dark:text-neutral-400">
-        {occupe && agent.tache_courante && (
+        {occupe && agent.taches_en_cours.length > 1 ? (
           <div className="flex justify-between gap-2">
-            <dt>Tâche courante</dt>
-            <dd className="truncate font-medium" title={agent.tache_courante}>
-              {agent.tache_courante}
+            <dt>Tâches en cours</dt>
+            <dd
+              className="truncate font-medium"
+              title={agent.taches_en_cours.join(", ")}
+            >
+              {agent.taches_en_cours.length} en parallèle
             </dd>
           </div>
+        ) : (
+          occupe &&
+          agent.tache_courante && (
+            <div className="flex justify-between gap-2">
+              <dt>Tâche courante</dt>
+              <dd className="truncate font-medium" title={agent.tache_courante}>
+                {agent.tache_courante}
+              </dd>
+            </div>
+          )
         )}
         <div className="flex justify-between gap-2">
           <dt>Terminées / échouées</dt>

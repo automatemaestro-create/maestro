@@ -105,25 +105,50 @@ class EtatTache:
 class EtatAgent:
     """La ligne « agent » de la projection : statut, charge, compteurs et capacité.
 
-    Alimente l'écran Agents (docs/05 §2.3) : occupé/libre, tâche courante,
+    Alimente l'écran Agents (docs/05 §2.3) : occupé/libre, tâches en cours,
     tâches traitées, coût cumulé, dernière activité. Les agents du catalogue
     (`maestro.agents.catalog`) sont présents dès le démarrage, statut libre ;
     un acteur hors catalogue (l'orchestrateur) apparaît à sa première activité.
     `actif` et `instances` (#86, EF-21) reflètent le contrôle de capacité :
     un agent désactivé ne reçoit plus de tâches, `instances` plafonne ses
     exécutions simultanées — le `statut` reste, lui, l'activité (libre/occupé).
+
+    En multi-instances (#100), un agent porte **plusieurs tâches à la fois** :
+    `taches_en_cours` les liste dans l'ordre de démarrage — c'est la charge de
+    l'écran Agents (docs/05 §2.1) — et l'agent ne redevient libre qu'à l'issue
+    de la **dernière** ; `tache_courante` (la plus récemment démarrée encore en
+    vol) reste exposée pour les clients mono-instance.
     """
 
     nom: str
     role: str = ""
-    statut: str = AGENT_LIBRE
-    tache_courante: str = ""
+    taches_en_cours: list[str] = field(default_factory=list)
     taches_terminees: int = 0
     taches_echouees: int = 0
     cout_usd: float | None = None
     derniere_activite: str = ""
     actif: bool = True
     instances: int = INSTANCES_DEFAUT
+
+    @property
+    def statut(self) -> str:
+        """L'activité de l'agent : occupé dès qu'une tâche est en vol, libre sinon."""
+        return AGENT_OCCUPE if self.taches_en_cours else AGENT_LIBRE
+
+    @property
+    def tache_courante(self) -> str:
+        """La tâche la plus récemment démarrée encore en vol — vide si l'agent est libre."""
+        return self.taches_en_cours[-1] if self.taches_en_cours else ""
+
+    def commence(self, tache_id: str) -> None:
+        """Enregistre `tache_id` parmi les tâches en vol (idempotent — un seul créneau)."""
+        if tache_id and tache_id not in self.taches_en_cours:
+            self.taches_en_cours.append(tache_id)
+
+    def termine(self, tache_id: str) -> None:
+        """Libère le créneau de `tache_id` — les autres instances restent en vol."""
+        if tache_id in self.taches_en_cours:
+            self.taches_en_cours.remove(tache_id)
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet l'agent en dict JSON-sérialisable (la forme du REST)."""
@@ -132,6 +157,7 @@ class EtatAgent:
             "role": self.role,
             "statut": self.statut,
             "tache_courante": self.tache_courante,
+            "taches_en_cours": list(self.taches_en_cours),
             "taches_terminees": self.taches_terminees,
             "taches_echouees": self.taches_echouees,
             "cout_usd": self.cout_usd,
@@ -386,9 +412,9 @@ class ControlTowerState:
         )
         agent.derniere_activite = event.horodatage or agent.derniere_activite
         if event.statut in _STATUTS_TERMINAUX:
-            agent.statut = AGENT_LIBRE
-            if agent.tache_courante == event.tache_id:
-                agent.tache_courante = ""
+            # Multi-instances (#100) : seule l'instance de CETTE tâche se libère —
+            # l'agent reste occupé tant qu'une autre de ses tâches est en vol.
+            agent.termine(event.tache_id)
             if event.statut == STATUT_TERMINEE:
                 agent.taches_terminees += 1
             elif event.statut == STATUT_ECHEC:
@@ -397,8 +423,7 @@ class ControlTowerState:
                 agent.cout_usd = (agent.cout_usd or 0.0) + event.cout_usd
         else:
             # Statut non terminal (assignee, en_cours…) : l'agent est au travail.
-            agent.statut = AGENT_OCCUPE
-            agent.tache_courante = event.tache_id
+            agent.commence(event.tache_id)
 
     def _applique_reassignation(self, event: Event) -> None:
         """Réassigne la tâche à l'agent visé (acte manuel du Kanban, EF-11/EF-20).
@@ -416,13 +441,12 @@ class ControlTowerState:
         tache.horodatage = event.horodatage or tache.horodatage
 
         # Répercute la réassignation sur les fiches agents (#52) : l'agent
-        # d'origine est libéré s'il portait encore cette tâche, le nouvel agent
-        # passe occupé tant que le statut de la tâche n'est pas terminal.
+        # d'origine rend le créneau de cette tâche (ses autres instances restent
+        # en vol, #100), le nouvel agent la porte tant qu'elle n'est pas terminale.
         if origine != event.agent and origine not in _AGENTS_NON_EXECUTANTS:
             ancien = self._agents.get(origine)
-            if ancien is not None and ancien.tache_courante == event.tache_id:
-                ancien.statut = AGENT_LIBRE
-                ancien.tache_courante = ""
+            if ancien is not None:
+                ancien.termine(event.tache_id)
         if event.agent in _AGENTS_NON_EXECUTANTS:
             return
         agent = self._agents.setdefault(
@@ -430,8 +454,7 @@ class ControlTowerState:
         )
         agent.derniere_activite = event.horodatage or agent.derniere_activite
         if tache.statut not in _STATUTS_TERMINAUX:
-            agent.statut = AGENT_OCCUPE
-            agent.tache_courante = event.tache_id
+            agent.commence(event.tache_id)
 
     def _applique_activite(self, event: Event) -> None:
         """Trace l'activité d'un acteur (planification, validation, message A2A)."""
