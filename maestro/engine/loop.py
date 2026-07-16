@@ -65,6 +65,7 @@ from typing import Any
 from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.mcp import McpStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.store import AgentStore, catalogue
@@ -212,6 +213,7 @@ class OrchestrationEngine:
         mailbox: Mailbox | None = None,
         playbooks: PlaybookStore | None = None,
         capacites: CapacityStore | None = None,
+        mcp: McpStore | None = None,
         relance: PolitiqueRelance | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
@@ -225,10 +227,10 @@ class OrchestrationEngine:
         self._mailbox = mailbox
         # Frontière d'exécution (#41) : en process par défaut ; un exécuteur injecté
         # (ex. `maestro.queue.CeleryExecutor`) distribue les tâches à des workers.
-        # `playbooks` (#78) et `capacites` (#86) : les dépôts que l'exécuteur local
-        # relit à chaque tâche — l'application à chaud ; ignorés si un exécuteur est
-        # injecté (en distribué, chaque worker câble les siens — `relance` (#91)
-        # comprise, cf. maestro.queue.worker.configurer_worker).
+        # `playbooks` (#78), `capacites` (#86) et `mcp` (#104) : les dépôts que
+        # l'exécuteur local relit à chaque tâche — l'application à chaud ; ignorés
+        # si un exécuteur est injecté (en distribué, chaque worker câble les siens —
+        # `relance` (#91) comprise, cf. maestro.queue.worker.configurer_worker).
         self._executor = (
             executor
             if executor is not None
@@ -239,6 +241,7 @@ class OrchestrationEngine:
                 guardrails=guardrails,
                 playbooks=playbooks,
                 capacites=capacites,
+                mcp=mcp,
                 relance=relance,
             )
         )
@@ -280,6 +283,12 @@ class OrchestrationEngine:
         reçoit plus de tâches, et ses exécutions simultanées sont bornées à
         son plafond d'instances.
 
+        Les **serveurs MCP par agent** (#104) sont branchés sur le dépôt
+        configuré (`MAESTRO_MCP_DIR`, sinon `core/mcp/`), relu à chaud à
+        chaque tâche : les serveurs déclarés pour un agent sont montés par la
+        couche SDK sur ses exécutions outillées — un serveur indisponible est
+        un échec propre, jamais relancé.
+
         La **relance automatique** (#91, ENF-06) est **armée par défaut**
         (`PolitiqueRelance()` : 3 tentatives, backoff exponentiel) : sur ce
         moteur — celui des vrais runs —, un aléa fournisseur transitoire ne
@@ -306,6 +315,7 @@ class OrchestrationEngine:
             mailbox=mailbox,
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
+            mcp=McpStore.default(settings),
             relance=relance,
             max_parallele=max_parallele,
         )

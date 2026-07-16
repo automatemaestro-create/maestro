@@ -27,6 +27,7 @@ from typing import Any
 from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore, JaugeInstances
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.mcp import McpStore, ServeurMcp
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.engine.guardrails import DemandeValidation, Guardrails
@@ -186,9 +187,15 @@ class LocalExecutor(TaskExecutor):
         router: Router | None = None,
         playbooks: PlaybookStore | None = None,
         capacites: CapacityStore | None = None,
+        mcp: McpStore | None = None,
         relance: PolitiqueRelance | None = None,
     ) -> None:
         self._provider = provider
+        # Serveurs MCP par agent (#104) : les déclarations sont relues à chaud
+        # dans ce dépôt à chaque tâche — comme les playbooks (#78) — et montées
+        # par la couche SDK sur les exécutions outillées de l'agent. None :
+        # aucun serveur (comportement historique).
+        self._mcp = mcp
         # Relance automatique (#91, ENF-06) : les échecs transitoires de la
         # réalisation (aléa fournisseur — crash du sous-processus SDK, erreur
         # immédiate) sont relancés selon cette politique, avec backoff. None :
@@ -267,17 +274,37 @@ class LocalExecutor(TaskExecutor):
                     )
                 else:
                     entree = _build_task_description(task, dependances)
-                    # Application à chaud (#78) : le playbook courant est résolu
-                    # ici, à chaque tâche — jamais retenu entre deux exécutions.
+                    # Application à chaud (#78, #104) : playbook courant et
+                    # serveurs MCP déclarés sont résolus ici, à chaque tâche —
+                    # jamais retenus entre deux exécutions. Une déclaration MCP
+                    # invalide (validée à la lecture) est un échec propre,
+                    # avant toute exécution.
                     playbook = self._playbook_courant(decision.agent.nom)
-                    # Contrôle de capacité (#86) : l'agent au complet retient la
-                    # tâche jusqu'à la libération d'un créneau d'instance.
-                    async with self._creneau_capacite(decision.agent.nom):
-                        result = await self._realise_gardee(
-                            decision.agent, task, entree, decision.score, journal, playbook
+                    try:
+                        serveurs_mcp = self._serveurs_mcp(decision.agent.nom)
+                    except ValueError as exc:
+                        result = _echec(
+                            task,
+                            agent=decision.agent.nom,
+                            role=decision.agent.role,
+                            score=decision.score,
+                            erreur=str(exc),
                         )
-                    if playbook is not None:
-                        result = replace(result, playbook_version=playbook.version)
+                    else:
+                        # Contrôle de capacité (#86) : l'agent au complet retient
+                        # la tâche jusqu'à la libération d'un créneau d'instance.
+                        async with self._creneau_capacite(decision.agent.nom):
+                            result = await self._realise_gardee(
+                                decision.agent,
+                                task,
+                                entree,
+                                decision.score,
+                                journal,
+                                playbook,
+                                serveurs_mcp,
+                            )
+                        if playbook is not None:
+                            result = replace(result, playbook_version=playbook.version)
         result = replace(result, usage=recolte.total.avec_duree(_ecoule_ms(debut)))
         journal.consigne(
             etape=task.id,
@@ -317,6 +344,19 @@ class LocalExecutor(TaskExecutor):
             return nullcontext()
         return self._jauge.creneau(nom, lambda: capacites.lire(nom).instances)
 
+    def _serveurs_mcp(self, agent: str) -> tuple[ServeurMcp, ...]:
+        """Les serveurs MCP déclarés pour `agent`, relus à chaque tâche (#104).
+
+        Même application **à chaud** que les playbooks : une déclaration ajoutée
+        ou corrigée dans le dépôt vaut pour la tâche suivante, sans redémarrage.
+        Propage le `ValueError` de la validation à la lecture — l'appelant le
+        mue en échec de tâche consigné. Vide sans dépôt câblé, ou pour un agent
+        sans déclaration — comportement d'origine.
+        """
+        if self._mcp is None:
+            return ()
+        return self._mcp.lire(agent)
+
     def _playbook_courant(self, agent: str) -> PlaybookVersion | None:
         """La version courante du playbook stocké de `agent`, relue à chaque tâche (#78).
 
@@ -338,6 +378,7 @@ class LocalExecutor(TaskExecutor):
         score: int,
         journal: RunJournal,
         playbook: PlaybookVersion | None,
+        serveurs_mcp: tuple[ServeurMcp, ...] = (),
     ) -> TaskResult:
         """Réalise la tâche sous garde-fous (#9) : validation humaine, puis time-out.
 
@@ -359,9 +400,11 @@ class LocalExecutor(TaskExecutor):
             return refus
         timeout_s = self._guardrails.timeout_s
         if timeout_s is None:
-            return await self._realise(agent, task, description, score, playbook, journal)
+            return await self._realise(
+                agent, task, description, score, playbook, serveurs_mcp, journal
+            )
         realisation = asyncio.create_task(
-            self._realise(agent, task, description, score, playbook, journal),
+            self._realise(agent, task, description, score, playbook, serveurs_mcp, journal),
             name=f"maestro-realisation:{task.id}",
         )
         try:
@@ -430,6 +473,7 @@ class LocalExecutor(TaskExecutor):
         description: str,
         score: int,
         playbook: PlaybookVersion | None,
+        serveurs_mcp: tuple[ServeurMcp, ...],
         journal: RunJournal,
     ) -> TaskResult:
         """Produit le livrable de `task` et le mue en `TaskResult` (échec consigné, jamais levé).
@@ -455,7 +499,9 @@ class LocalExecutor(TaskExecutor):
         while True:
             self._consigne_debut(task, agent, tentative, max_tentatives, journal)
             try:
-                sortie, fichiers = await self._produce(agent, task, description, playbook)
+                sortie, fichiers = await self._produce(
+                    agent, task, description, playbook, serveurs_mcp
+                )
             except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
                 if not est_transitoire(exc):
                     return _echec(
@@ -560,7 +606,12 @@ class LocalExecutor(TaskExecutor):
         )
 
     async def _produce(
-        self, agent: Agent, task: Task, description: str, playbook: PlaybookVersion | None
+        self,
+        agent: Agent,
+        task: Task,
+        description: str,
+        playbook: PlaybookVersion | None,
+        serveurs_mcp: tuple[ServeurMcp, ...] = (),
     ) -> tuple[str, tuple[ProducedFile, ...]]:
         """Produit le livrable de `task` : runtime outillé si le rôle en a un, sinon texte.
 
@@ -573,6 +624,11 @@ class LocalExecutor(TaskExecutor):
         `playbook` est la version courante du playbook stocké (#78) : son contenu
         remplace le prompt système sur les **deux** chemins — surcharge ponctuelle
         du runtime outillé, prompt de l'appel texte. None : prompts du code.
+
+        `serveurs_mcp` (#104) n'équipe que le chemin **outillé** : le chemin
+        texte n'expose aucun outil (c'est son contrat), MCP compris — un agent
+        sans runtime outillé, ou un repli texte-seul, exécute sans ses serveurs
+        (comportement documenté, docs/04 §6).
         """
         runtime = self._runtimes.get(agent.nom)
         if runtime is not None:
@@ -581,6 +637,7 @@ class LocalExecutor(TaskExecutor):
                     description,
                     format_sortie=task.format_sortie,
                     system_prompt=playbook.contenu if playbook is not None else None,
+                    mcp_serveurs=serveurs_mcp,
                 )
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:

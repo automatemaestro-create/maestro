@@ -87,7 +87,9 @@ class OutilleEnregistreur(ModelProvider):
     async def generate(self, prompt, *, model, system_prompt=None):  # pragma: no cover
         return "TEXTE"
 
-    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools):
+    async def run_agent(
+        self, prompt, *, model, system_prompt=None, workspace, tools, mcp_serveurs=()
+    ):
         self.run_calls.append({"prompt": prompt, "system_prompt": system_prompt})
         (Path(workspace) / "livrable.txt").write_text("contenu", encoding="utf-8")
         return f"OUTILLE #{len(self.run_calls)}"

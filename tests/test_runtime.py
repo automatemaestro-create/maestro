@@ -50,7 +50,9 @@ class WritingProvider(ModelProvider):
     async def generate(self, prompt, *, model, system_prompt=None):  # pragma: no cover
         raise AssertionError("un rôle outillé doit passer par run_agent, pas generate")
 
-    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools):
+    async def run_agent(
+        self, prompt, *, model, system_prompt=None, workspace, tools, mcp_serveurs=()
+    ):
         self.calls.append(
             {
                 "prompt": prompt,

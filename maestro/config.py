@@ -57,6 +57,9 @@ class Settings:
     #: Racine du dépôt des capacités d'agents (`MAESTRO_CAPACITE_DIR`), ou
     #: None : le dossier `core/capacite/` du dépôt (cf. maestro.agents.capacity, #86).
     capacite_dir: str | None = None
+    #: Racine du dépôt des serveurs MCP déclarés par agent (`MAESTRO_MCP_DIR`), ou
+    #: None : le dossier `core/mcp/` du dépôt (cf. maestro.agents.mcp, #104).
+    mcp_dir: str | None = None
     #: Clé API de l'endpoint compatible OpenAI (`OPENAI_API_KEY`), ou None :
     #: aucune en-tête d'auth (endpoints locaux type Ollama/vLLM).
     openai_api_key: str | None = None
@@ -88,6 +91,7 @@ class Settings:
             agents_dir=(os.getenv("MAESTRO_AGENTS_DIR") or "").strip() or None,
             chat_dir=(os.getenv("MAESTRO_CHAT_DIR") or "").strip() or None,
             capacite_dir=(os.getenv("MAESTRO_CAPACITE_DIR") or "").strip() or None,
+            mcp_dir=(os.getenv("MAESTRO_MCP_DIR") or "").strip() or None,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             openai_base_url=os.getenv("OPENAI_BASE_URL", "").strip()
             or "https://api.openai.com/v1",

@@ -13,7 +13,9 @@ indépendante du fournisseur :
   les causes déterministes qui reproduiraient le même échec — plafond de coût
   (`PlafondDepenseDepasse`), plafond de tours (`TurnLimitReached`, mué par chaque
   fournisseur depuis son signal natif), capacité non supportée
-  (`UnsupportedCapability`).
+  (`UnsupportedCapability`), serveur MCP indisponible (`McpServerUnavailable`,
+  #104 — déclaration, secret ou serveur à corriger : relancer coûterait sans
+  rien changer).
 
 Les deux autres échecs *jamais relancés* du cahier des charges n'atteignent pas
 cette classification par construction : le **time-out d'échéance ferme** (#64)
@@ -30,7 +32,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from maestro.providers.base import TurnLimitReached, UnsupportedCapability
+from maestro.providers.base import (
+    McpServerUnavailable,
+    TurnLimitReached,
+    UnsupportedCapability,
+)
 from maestro.telemetry import PlafondDepenseDepasse
 
 
@@ -73,11 +79,16 @@ def est_transitoire(erreur: BaseException) -> bool:
 
     Classification par exclusion : les seules causes **non transitoires** qui
     remontent en exception de la réalisation sont les plafonds (coût du run,
-    tours de l'exécution agentique) et une capacité que le fournisseur n'a pas —
-    relancer reproduirait le même échec. Tout le reste (crash du sous-processus
-    SDK, erreur immédiate du CLI, coupure réseau…) est un aléa fournisseur :
-    présumé transitoire, c'est la cible d'ENF-06.
+    tours de l'exécution agentique), une capacité que le fournisseur n'a pas et
+    un serveur MCP indisponible (#104 : déclaration, secret ou serveur à
+    corriger) — relancer reproduirait le même échec. Tout le reste (crash du
+    sous-processus SDK, erreur immédiate du CLI, coupure réseau…) est un aléa
+    fournisseur : présumé transitoire, c'est la cible d'ENF-06.
     """
     return not isinstance(
-        erreur, PlafondDepenseDepasse | TurnLimitReached | UnsupportedCapability
+        erreur,
+        PlafondDepenseDepasse
+        | TurnLimitReached
+        | UnsupportedCapability
+        | McpServerUnavailable,
     )

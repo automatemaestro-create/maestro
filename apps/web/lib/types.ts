@@ -199,11 +199,29 @@ export type VersionPlaybook = {
 export type VersionPlaybookDetail = VersionPlaybook & { contenu: string };
 
 /**
+ * Un serveur MCP déclaré pour un agent (`ServeurMcp.to_dict`, #104) : une
+ * commande locale (`type` « stdio » : commande + args + env) ou un endpoint
+ * distant (« sse »/« http » : url + headers). Forme publique : les valeurs
+ * d'env/headers sans référence `${VAR}` sont masquées par le backend.
+ */
+export type ServeurMcp = {
+  nom: string;
+  type: string;
+  commande: string;
+  args: string[];
+  url: string;
+  env: Record<string, string>;
+  headers: Record<string, string>;
+};
+
+/**
  * Une fiche du catalogue d'agents (`GET /api/catalogue`, #72) : les agents par
  * défaut du code (`source` « defaut ») et les personnalisés persistés
  * (« personnalise »). Les dates ne sont posées que sur les personnalisés ;
  * `modele` null signifie « le modèle par défaut des exécutants » et
  * `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
+ * `mcp_serveurs` (#104) liste les serveurs MCP déclarés (lecture seule à ce
+ * lot) ; `mcp_erreur` porte la cause si la déclaration stockée est invalide.
  */
 export type AgentCatalogue = {
   nom: string;
@@ -214,6 +232,8 @@ export type AgentCatalogue = {
   source: string;
   cree_le: string | null;
   modifie_le: string | null;
+  mcp_serveurs: ServeurMcp[];
+  mcp_erreur: string | null;
 };
 
 /** La fiche avec sa définition complète (`GET /api/catalogue/{nom}`). */

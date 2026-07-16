@@ -1,0 +1,4 @@
+# Les déclarations MCP (<agent>.json) sont de la configuration VERSIONNÉE :
+# elles se commitent (secrets par référence ${VAR}, jamais en clair). Seuls
+# les fichiers temporaires d'écriture sont ignorés.
+*.tmp
