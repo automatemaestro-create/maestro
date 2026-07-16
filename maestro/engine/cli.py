@@ -19,6 +19,12 @@ backoff, **2 relances par défaut** (3 tentatives, `maestro.engine.retry`).
 `--relances <n>` ajuste le nombre de relances (`0` : désactivé). Les échecs non
 transitoires (time-out, plafonds, refus de validation) ne sont jamais relancés.
 
+`--parallele <n>` (#100) pose le **plafond global** de concurrence du run — le
+plafond transverse, prioritaire sur la capacité par agent (#86) qui s'applique
+en dessous : utile pour ménager les limites de débit du fournisseur sur un run
+de charge (les aléas croissent avec la concurrence, docs/13 §4.3). Sans le
+flag : illimité (les plans restent petits).
+
 `--queue` (#41) exécute les tâches via la **file Celery + Redis** au lieu du
 process courant : Redis lancé (infra/docker-compose.yml) et au moins un worker
 démarré (`celery -A maestro.queue worker --pool=solo`) sont requis. Les
@@ -80,7 +86,7 @@ from maestro.telemetry import (
 _USAGE = (
     "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--messagerie] "
     "[--validation-ui] [--plafond-cout <usd>] [--timeout <s>] [--relances <n>] "
-    '"<objectif en langage naturel>"'
+    '[--parallele <n>] "<objectif en langage naturel>"'
 )
 
 
@@ -98,9 +104,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     plafond_cout: float | None = None
     timeout: float | None = None
     relances: int | None = None
+    parallele: int | None = None
     flags_connus = {
         "--json", "--trace", "--queue", "--publier", "--messagerie",
         "--validation-ui", "--plafond-cout", "--timeout", "--relances",
+        "--parallele",
     }
     while args and args[0] in flags_connus:
         flag = args.pop(0)
@@ -130,6 +138,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                     return 2
                 relances = int(valeur)
+            elif flag == "--parallele":
+                if valeur != int(valeur) or valeur < 1:
+                    print(
+                        f"--parallele attend un entier ≥ 1 (reçu : {valeur:g}).",
+                        file=sys.stderr,
+                    )
+                    return 2
+                parallele = int(valeur)
             else:
                 timeout = valeur
 
@@ -174,6 +190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             guardrails=guardrails,
             messagerie=messagerie,
             relance=_politique_relance(relances),
+            max_parallele=parallele,
         )
         # Arrêt borné (#64) : une réalisation détachée par le time-out ne peut pas
         # suspendre la fermeture de la boucle — le rapport est toujours rendu.
@@ -215,6 +232,7 @@ def _build_engine(
     guardrails: Guardrails,
     messagerie: bool = False,
     relance: PolitiqueRelance | None = None,
+    max_parallele: int | None = None,
 ) -> OrchestrationEngine:
     """Construit la boucle : locale par défaut, distribuée (file #41) avec `--queue`.
 
@@ -224,6 +242,7 @@ def _build_engine(
     comme `--publier`) — la connexion est paresseuse, et une publication en
     échec est abandonnée sans gêner l'exécution (relais résilient). `relance`
     (#91) ne s'applique qu'en local — côté file, chaque worker câble la sienne.
+    `max_parallele` (#100) pose le plafond global du run sur les deux chemins.
     """
     mailbox = None
     if messagerie:
@@ -234,8 +253,10 @@ def _build_engine(
     if via_queue:
         from maestro.queue import create_distributed_engine
 
-        return create_distributed_engine(mailbox=mailbox)
-    return OrchestrationEngine.default(guardrails=guardrails, mailbox=mailbox, relance=relance)
+        return create_distributed_engine(mailbox=mailbox, max_parallele=max_parallele)
+    return OrchestrationEngine.default(
+        guardrails=guardrails, mailbox=mailbox, relance=relance, max_parallele=max_parallele
+    )
 
 
 def _valeur_numerique(flag: str, args: list[str]) -> float | None:

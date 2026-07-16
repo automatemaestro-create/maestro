@@ -40,12 +40,16 @@ export type Tache = {
  * `actif` et `instances` (#86, EF-21) portent le contrôle de capacité : un
  * agent désactivé ne reçoit plus de tâches, `instances` plafonne ses
  * exécutions simultanées — `statut` reste l'activité (libre/occupé).
+ * `taches_en_cours` (#100) liste les tâches portées en même temps par les
+ * instances de l'agent (ordre de démarrage) ; `tache_courante` reste la plus
+ * récemment démarrée encore en vol.
  */
 export type EtatAgent = {
   nom: string;
   role: string;
   statut: string;
   tache_courante: string;
+  taches_en_cours: string[];
   taches_terminees: number;
   taches_echouees: number;
   cout_usd: number | null;

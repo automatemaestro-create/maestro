@@ -259,3 +259,37 @@ se libère (par défaut : une instance par agent). L'état de capacité est **re
 temps réel** sur les fiches (événement `agent.capacite` sur le WebSocket). Limite POC :
 la jauge d'instances est par process (pas encore de coordination inter-workers, EF-16).
 Détails : [`core/capacite/README.md`](../core/capacite/README.md).
+
+### 6.6 — Scalabilité horizontale : run de charge multi-instances (disponible — ticket #100)
+
+Le nombre d'instances (§6.5) est un **vrai parallélisme par agent** : le moteur exécute
+en même temps jusqu'à N tâches d'un même agent, où N est son plafond d'instances — un
+agent désactivé reste à 0 (repli « à assigner »). Le **plafond global** du run reste
+prioritaire (plafond transverse) : `maestro-run --parallele <n>` le pose depuis la CLI,
+la capacité par agent s'applique en dessous. Sans le flag, seul le plafond par agent
+joue.
+
+Run de charge de démonstration — plusieurs tâches indépendantes pour un même agent :
+
+```bash
+# 1. Monter l'agent visé à 2 instances : fiches agents de l'UI (boutons + / −),
+#    ou l'API de la Control Tower si elle tourne (§6.5)
+curl -X POST http://localhost:8000/api/agents/bdd/capacite \
+  -H "Content-Type: application/json" -d '{"instances": 2}'
+
+# 2. Lancer le run de charge, plafond global posé pour ménager le fournisseur
+#    (les aléas croissent avec la concurrence — docs/13 §4.3 ; la relance #91
+#    est armée par défaut)
+maestro-run --parallele 2 --publier "Écrire quatre requêtes SQL d'analyse \
+indépendantes (ventes par mois, par région, par produit, par client)"
+```
+
+Dans la Control Tower, la fiche de l'agent porte alors **plusieurs tâches à la fois**
+(« n en parallèle ») et ne repasse « Libre » qu'à l'issue de la dernière ; coûts,
+journal et grand livre restent attribués **par tâche**, sans mélange entre instances.
+Le scénario complet est rejoué sur fournisseurs factices dans
+[`tests/test_scalabilite.py`](../tests/test_scalabilite.py) (parallélisme réel borné à
+N, agent désactivé à 0, priorité du plafond global, comptabilité et temps réel par
+tâche). Limite POC inchangée : la jauge est **par process** (en distribué, chaque
+worker borne les siennes — la coordination inter-workers viendra avec la persistance
+partagée, EF-16).

@@ -183,6 +183,45 @@ def test_etat_des_agents_catalogue_et_compteurs(client, state):
     assert dev["cout_usd"] == pytest.approx(0.7)
 
 
+def test_un_agent_multi_instances_ne_se_libere_qu_a_la_derniere_tache(client, state):
+    """Deux instances au travail (#100) : la fiche porte les deux tâches, sans mélange.
+
+    L'issue d'une instance ne libère que son créneau — l'agent reste occupé tant
+    que l'autre travaille, et `tache_courante` reste la plus récemment démarrée
+    encore en vol (compatibilité mono-instance).
+    """
+    state.appliquer(_statut_tache("t1", "en_cours"))
+    state.appliquer(_statut_tache("t2", "en_cours"))
+    dev = {a["nom"]: a for a in client.get("/api/agents").json()}["developpeur"]
+    assert dev["statut"] == "occupe"
+    assert dev["taches_en_cours"] == ["t1", "t2"]
+    assert dev["tache_courante"] == "t2"
+
+    state.appliquer(_statut_tache("t1", "terminee", cout_usd=0.3))
+    dev = {a["nom"]: a for a in client.get("/api/agents").json()}["developpeur"]
+    assert dev["statut"] == "occupe"  # l'autre instance travaille encore
+    assert dev["taches_en_cours"] == ["t2"]
+    assert dev["taches_terminees"] == 1
+
+    state.appliquer(_statut_tache("t2", "echec", cout_usd=0.2))
+    dev = {a["nom"]: a for a in client.get("/api/agents").json()}["developpeur"]
+    assert dev["statut"] == "libre"
+    assert dev["taches_en_cours"] == [] and dev["tache_courante"] == ""
+    assert dev["taches_terminees"] == 1 and dev["taches_echouees"] == 1
+    assert dev["cout_usd"] == pytest.approx(0.5)
+
+
+def test_le_redemarrage_d_une_tache_n_occupe_qu_un_creneau(state):
+    """Une relance (#91) rejoue `en_cours` pour la même tâche : un seul créneau occupé."""
+    state.appliquer(_statut_tache("t1", "en_cours"))
+    state.appliquer(_statut_tache("t1", "en_cours"))  # redémarrage après relance
+
+    assert state.agent("developpeur").taches_en_cours == ["t1"]
+
+    state.appliquer(_statut_tache("t1", "terminee"))
+    assert state.agent("developpeur").statut == "libre"
+
+
 def test_tache_bloquee_sans_executant_ne_touche_pas_les_agents(client, state):
     """Une tâche bloquée (#43, agent « — ») apparaît sans créer d'agent fantôme."""
     state.appliquer(_statut_tache("t9", "bloquee", agent="—", role="non exécutée"))
@@ -540,6 +579,21 @@ def test_reassignation_ne_libere_pas_un_agent_passe_a_autre_chose(state):
     assert state.agent("qa").tache_courante == "t2"
     assert state.agent("bdd").statut == "occupe"
     assert state.agent("bdd").tache_courante == "t1"
+
+
+def test_reassignation_ne_rend_que_le_creneau_de_la_tache_deplacee(state):
+    """Multi-instances (#100) : réassigner une des tâches d'un agent laisse l'autre en vol."""
+    state.appliquer(_statut_tache("t1", "en_cours", agent="qa", role="QA / Testeur"))
+    state.appliquer(_statut_tache("t2", "en_cours", agent="qa", role="QA / Testeur"))
+
+    state.appliquer(Event(
+        type=EVENEMENT_TACHE_REASSIGNATION, tache_id="t1",
+        agent="bdd", role="Base de données", statut="assignee",
+    ))
+
+    assert state.agent("qa").statut == "occupe"
+    assert state.agent("qa").taches_en_cours == ["t2"]
+    assert state.agent("bdd").taches_en_cours == ["t1"]
 
 
 # ------------------------------------------- ④ Pont télémétrie → événements

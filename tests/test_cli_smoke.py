@@ -144,6 +144,28 @@ def test_run_nominal_imprime_la_synthese(monkeypatch, capsys):
     assert capsys.readouterr().out  # la synthèse Markdown est bien imprimée
 
 
+def test_run_refuse_un_parallele_invalide(capsys):
+    # Le plafond global (#100) est un entier ≥ 1 : zéro et fractions sont refusés.
+    assert engine_cli.main(["--parallele", "0", "Objectif"]) == 2
+    assert "--parallele" in capsys.readouterr().err
+    assert engine_cli.main(["--parallele", "1.5", "Objectif"]) == 2
+    assert "--parallele" in capsys.readouterr().err
+
+
+def test_run_transmet_le_plafond_global_au_moteur(monkeypatch, capsys):
+    recus = {}
+
+    def _default(**kwargs):
+        recus.update(kwargs)
+        return _MoteurFactice(_rapport_ok())
+
+    monkeypatch.setattr(OrchestrationEngine, "default", staticmethod(_default))
+
+    assert engine_cli.main(["--parallele", "2", "Objectif"]) == 0
+    assert recus["max_parallele"] == 2
+    assert capsys.readouterr().out
+
+
 # --- maestro-api (maestro/controltower/cli.py) --------------------------------------------
 
 

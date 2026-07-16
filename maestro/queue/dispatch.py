@@ -156,6 +156,7 @@ def create_distributed_engine(
     app: Celery | None = None,
     timeout_s: float | None = TIMEOUT_RESULTAT_S,
     mailbox: Mailbox | None = None,
+    max_parallele: int | None = None,
 ) -> OrchestrationEngine:
     """Boucle d'orchestration branchée sur la file : le pendant distribué de `default`.
 
@@ -165,7 +166,10 @@ def create_distributed_engine(
     ailleurs (`celery -A maestro.queue worker`). Les garde-fous d'exécution (#9)
     s'appliquent côté worker — voir `maestro.queue.worker.configurer_worker`.
     `mailbox` (#44) branche la messagerie inter-agents (handoff observable) sur
-    la boucle, comme en local.
+    la boucle, comme en local. `max_parallele` (#100) borne le nombre de tâches
+    **mises en file simultanément** — le plafond global transverse, côté
+    orchestrateur ; la capacité par agent (#86), elle, se joue dans chaque
+    worker (par process, cf. maestro.agents.capacity).
     """
     from maestro.providers.factory import default_model, provider_from_settings
 
@@ -177,4 +181,5 @@ def create_distributed_engine(
         orchestrator,
         executor=CeleryExecutor(app, timeout_s=timeout_s),
         mailbox=mailbox,
+        max_parallele=max_parallele,
     )
