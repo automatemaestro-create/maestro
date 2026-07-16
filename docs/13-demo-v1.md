@@ -242,3 +242,5 @@ d'exécution** face aux aléas du fournisseur. Réserves :
    affineraient le Kanban.
 4. **Langfuse et le fournisseur non-Anthropic restent à exercer en conditions réelles** (tous
    deux configuratifs et couverts par les tests, aucun des deux branché pendant la démo).
+   — *Levée depuis : runs réels et validation Langfuse consignés dans
+   [docs/14](./14-run-fournisseur-non-anthropic.md) (#99).*
