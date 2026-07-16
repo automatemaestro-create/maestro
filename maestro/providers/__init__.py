@@ -23,6 +23,7 @@ from __future__ import annotations
 from maestro.providers.base import (
     AuthMode,
     Credentials,
+    McpServerUnavailable,
     ModelProvider,
     ModelSpec,
     TurnLimitReached,
@@ -44,6 +45,7 @@ __all__ = [
     "AuthMode",
     "ClaudeProvider",
     "Credentials",
+    "McpServerUnavailable",
     "ModelProvider",
     "ModelSpec",
     "OpenAICompatError",

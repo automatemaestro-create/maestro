@@ -16,7 +16,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:  # import de typage seul — pas de dépendance d'exécution vers agents
+    from maestro.agents.mcp import ServeurMcp
 
 
 class UnsupportedCapability(RuntimeError):
@@ -38,6 +41,19 @@ class TurnLimitReached(RuntimeError):
     pour que le moteur le reconnaisse **sans présumer du fournisseur**. Échec non
     transitoire par nature — relancer reproduirait le même emballement — donc
     jamais relancé par la relance automatique (`maestro.engine.retry`, ENF-06).
+    """
+
+
+class McpServerUnavailable(RuntimeError):
+    """Levée quand un serveur MCP déclaré ne peut pas être monté (#104).
+
+    Couvre les deux empêchements : une déclaration **non montable** (variable
+    d'environnement référencée absente — `maestro.agents.mcp.resolus`) et un
+    serveur **injoignable à l'ouverture de session** (échec de démarrage ou de
+    connexion, authentification requise — constaté par le fournisseur). Le
+    message nomme le serveur et la cause : c'est l'« erreur propre » du contrat,
+    consignée au journal comme tout échec de tâche. Non transitoire par nature
+    (configuration ou secret à corriger) — jamais relancée (ENF-06).
     """
 
 
@@ -130,6 +146,7 @@ class ModelProvider(ABC):
         system_prompt: str | None = None,
         workspace: Path,
         tools: Sequence[str],
+        mcp_serveurs: Sequence[ServeurMcp] = (),
     ) -> str:
         """Exécution *agentique outillée* : renvoie le compte-rendu final de l'agent.
 
@@ -137,6 +154,14 @@ class ModelProvider(ABC):
         `workspace`, son **répertoire de travail isolé** (cf. `maestro.sandbox`), où
         il produit un livrable concret (des fichiers). Là où `generate` rend du texte,
         `run_agent` *agit* dans un espace dédié.
+
+        `mcp_serveurs` (#104) sont les serveurs MCP déclarés par l'agent, **déjà
+        résolus** (`maestro.agents.mcp.resolus` — plus aucune référence
+        `${VAR}`) : un fournisseur qui honore la capacité les monte sur la
+        session (et rien d'autre — aucune configuration MCP ambiante), ou lève
+        `McpServerUnavailable` si l'un d'eux est injoignable. La déclaration
+        reste agnostique : la traduction vers le format natif vit ici, jamais
+        dans la logique d'agent.
 
         Capacité **optionnelle** : la base la refuse (`UnsupportedCapability`) ; un
         fournisseur outillé (Claude via l'Agent SDK) la surcharge. Le moteur reste

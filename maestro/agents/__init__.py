@@ -32,6 +32,11 @@ se règle de la même façon hors du code (`maestro.agents.capacity`, dépôt
 `core/capacite/`, API Control Tower `/api/agents/{nom}/capacite`) et est relue à
 chaud à chaque tâche : un agent désactivé ne reçoit plus de tâches, ses
 exécutions simultanées sont bornées à son plafond.
+
+Les **serveurs MCP** d'un agent (#104) se déclarent hors du code
+(`maestro.agents.mcp`, dépôt `core/mcp/<agent>.json` versionné — secrets par
+référence `${VAR}`, jamais en clair) et sont relus à chaud à chaque tâche puis
+montés par la couche SDK sur les exécutions outillées de l'agent.
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ from maestro.agents.database import DATABASE_PROFILE
 from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
 from maestro.agents.devops import DEVOPS_PROFILE
+from maestro.agents.mcp import TYPES_SERVEUR, McpStore, ServeurMcp
 from maestro.agents.playbooks import (
     PLAYBOOK_DEFAUTS,
     PlaybookDefaut,
@@ -124,6 +130,7 @@ __all__ = [
     "PLAYBOOK_DEFAUTS",
     "QA_PROFILE",
     "TOOLED_PROFILES",
+    "TYPES_SERVEUR",
     "Agent",
     "AgentDefinition",
     "AgentOutcome",
@@ -132,10 +139,12 @@ __all__ = [
     "CapaciteAgent",
     "CapacityStore",
     "JaugeInstances",
+    "McpStore",
     "PlaybookDefaut",
     "PlaybookStore",
     "PlaybookVersion",
     "RoleProfile",
+    "ServeurMcp",
     "agents_pour",
     "avec_playbooks",
     "catalogue",

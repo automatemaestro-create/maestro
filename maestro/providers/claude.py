@@ -26,12 +26,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    McpServerConfig,
     ResultMessage,
+    SystemMessage,
     TextBlock,
     ToolUseBlock,
     query,
@@ -41,9 +43,13 @@ from maestro.config import ConfigError, Settings
 from maestro.providers.base import (
     AuthMode,
     Credentials,
+    McpServerUnavailable,
     ModelProvider,
     TurnLimitReached,
 )
+
+if TYPE_CHECKING:  # import de typage seul — pas de dépendance d'exécution vers agents
+    from maestro.agents.mcp import ServeurMcp
 from maestro.providers.registry import register
 from maestro.telemetry import StepUsage, report_usage
 
@@ -51,6 +57,11 @@ from maestro.telemetry import StepUsage, report_usage
 #: `is_error=True` de sous-type `error_max_turns`, que le SDK relève en exception
 #: « Claude Code returned an error result: error_max_turns ».
 _MARQUEUR_MAX_TURNS = "error_max_turns"
+
+#: États acceptables d'un serveur MCP au message d'ouverture de session (`init`) :
+#: connecté, ou connexion encore en cours. « failed », « needs-auth » et
+#: « disabled » (et un serveur déclaré absent de la session) valent indisponible.
+_MCP_STATUTS_OK = frozenset({"connected", "pending"})
 
 
 def _resolve_auth_mode(settings: Settings) -> AuthMode:
@@ -168,6 +179,7 @@ class ClaudeProvider(ModelProvider):
         system_prompt: str | None = None,
         workspace: Path,
         tools: Sequence[str],
+        mcp_serveurs: Sequence[ServeurMcp] = (),
     ) -> str:
         """Lance une exécution *agentique outillée* de l'Agent SDK dans `workspace`.
 
@@ -176,6 +188,15 @@ class ClaudeProvider(ModelProvider):
         `bypassPermissions` — l'exécution est **non interactive** (aucun humain pour
         confirmer), l'isolation reposant sur le répertoire dédié et sur la restriction
         de `tools`. `max_turns` borne la boucle (garde-fou anti-emballement).
+
+        Les serveurs `mcp_serveurs` (#104, déjà résolus) sont montés sur la
+        session via `mcp_servers` de l'Agent SDK ; `strict_mcp_config` verrouille
+        la session sur **cette seule liste** — aucune configuration MCP ambiante
+        (utilisateur, projet, plugin) n'est jamais chargée, serveurs déclarés ou
+        pas (permissions scopées, docs/02 §7). Le message d'ouverture de session
+        porte l'état de chaque serveur : un serveur déclaré non connecté lève
+        `McpServerUnavailable` (serveur et cause nommés) **avant** que l'agent ne
+        travaille sans ses capacités.
 
         Limite POC assumée : l'isolation est *au niveau du système de fichiers* — un
         shell pourrait en principe adresser des chemins hors du `cwd`. Le renfort
@@ -190,11 +211,20 @@ class ClaudeProvider(ModelProvider):
             allowed_tools=list(tools),
             permission_mode="bypassPermissions",
             max_turns=self._MAX_TURNS,
+            mcp_servers={s.nom: _config_mcp_sdk(s) for s in mcp_serveurs},
+            strict_mcp_config=True,
         )
-        return await _collect_response(prompt, options)
+        return await _collect_response(
+            prompt, options, serveurs_mcp=frozenset(s.nom for s in mcp_serveurs)
+        )
 
 
-async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
+async def _collect_response(
+    prompt: str,
+    options: ClaudeAgentOptions,
+    *,
+    serveurs_mcp: frozenset[str] = frozenset(),
+) -> str:
     """Déroule `query`, assemble le texte de la réponse et signale l'usage (ticket #8).
 
     Les noms d'outils sont relevés au fil des blocs `ToolUseBlock` ; le message
@@ -204,6 +234,10 @@ async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
     Le **plafond de tours** (`max_turns`) est mué en `TurnLimitReached` (#91) :
     c'est le contrat de la couche d'abstraction — le moteur reconnaît ainsi un
     garde-fou déterministe (jamais relancé) sans lire d'erreur propre au SDK.
+
+    `serveurs_mcp` (#104) sont les serveurs attendus sur la session : leur état
+    est contrôlé au message d'ouverture (`init`) — un serveur non connecté lève
+    `McpServerUnavailable` et stoppe l'exécution avant le travail de l'agent.
     """
     parts: list[str] = []
     outils: list[str] = []
@@ -215,6 +249,9 @@ async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
                         parts.append(block.text)
                     elif isinstance(block, ToolUseBlock) and block.name not in outils:
                         outils.append(block.name)
+            elif isinstance(message, SystemMessage):
+                if serveurs_mcp and message.subtype == "init":
+                    _verifie_serveurs_mcp(message.data, serveurs_mcp)
             elif isinstance(message, ResultMessage):
                 report_usage(_usage_from_result(message, tuple(outils)))
     except Exception as exc:
@@ -224,6 +261,58 @@ async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
             ) from exc
         raise
     return "".join(parts)
+
+
+def _config_mcp_sdk(serveur: ServeurMcp) -> McpServerConfig:
+    """Traduit une déclaration `ServeurMcp` (résolue) au format `mcp_servers` du SDK.
+
+    C'est la couture fournisseur du #104 : la forme agnostique (commande locale
+    ou URL + options) devient la config native de l'Agent SDK — stdio
+    (`command`/`args`/`env`) ou distant (`url`/`headers`). Les options vides ne
+    sont pas émises (défauts du SDK).
+    """
+    config: dict[str, Any]
+    if serveur.type == "stdio":
+        config = {"type": "stdio", "command": serveur.commande}
+        if serveur.args:
+            config["args"] = list(serveur.args)
+        if serveur.env:
+            config["env"] = dict(serveur.env)
+    else:
+        config = {"type": serveur.type, "url": serveur.url}
+        if serveur.headers:
+            config["headers"] = dict(serveur.headers)
+    # La forme est garantie par la validation à la lecture (maestro.agents.mcp) :
+    # le cast borne juste le dict dynamique aux TypedDict du SDK.
+    return cast("McpServerConfig", config)
+
+
+def _verifie_serveurs_mcp(data: dict[str, Any], attendus: frozenset[str]) -> None:
+    """Contrôle l'état des serveurs MCP déclarés au message d'ouverture de session.
+
+    `data` est le corps du message système `init` du SDK : `mcp_servers` y liste
+    `{name, status}` pour chaque serveur de la session. Tout serveur attendu
+    absent ou hors état acceptable (`_MCP_STATUTS_OK`) lève
+    `McpServerUnavailable` — l'« erreur propre » du contrat (#104), avec le
+    serveur et la cause (le détail `error` du SDK quand il le donne).
+    """
+    etats: dict[str, dict[str, Any]] = {
+        str(entree.get("name")): entree
+        for entree in data.get("mcp_servers", ())
+        if isinstance(entree, dict)
+    }
+    problemes: list[str] = []
+    for nom in sorted(attendus):
+        etat = etats.get(nom)
+        if etat is None:
+            problemes.append(f"{nom} : absent de la session")
+        elif etat.get("status") not in _MCP_STATUTS_OK:
+            cause = etat.get("error") or f"état « {etat.get('status')} »"
+            problemes.append(f"{nom} : {cause}")
+    if problemes:
+        raise McpServerUnavailable(
+            "serveur(s) MCP indisponible(s) — " + " ; ".join(problemes) + "."
+        )
 
 
 def _usage_from_result(result: ResultMessage, outils: tuple[str, ...]) -> StepUsage:

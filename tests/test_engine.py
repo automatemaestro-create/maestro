@@ -106,7 +106,9 @@ class ToolingProvider(ModelProvider):
         self.generate_calls.append({"prompt": prompt, "model": model})
         return f"TEXTE #{len(self.generate_calls)}"
 
-    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools):
+    async def run_agent(
+        self, prompt, *, model, system_prompt=None, workspace, tools, mcp_serveurs=()
+    ):
         self.run_calls.append(
             {"prompt": prompt, "model": model, "workspace": str(workspace), "tools": tuple(tools)}
         )

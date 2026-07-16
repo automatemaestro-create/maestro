@@ -26,6 +26,7 @@ import {
   AGENT_SOURCE_DEFAUT,
   type AgentCatalogueDetail,
   type DefinitionAgent,
+  type ServeurMcp,
 } from "@/lib/types";
 
 /** Miroir du slug accepté par le backend (`_NOM_AGENT`, maestro/agents/store.py). */
@@ -404,6 +405,8 @@ export function EditeurAgent({
         )}
       </section>
 
+      <SectionServeursMcp fiche={fiche} />
+
       <section
         aria-label={`Suppression de ${nom}`}
         className="flex flex-wrap items-center gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800"
@@ -443,6 +446,90 @@ export function EditeurAgent({
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * Les serveurs MCP déclarés d'un agent (#104), en lecture seule à ce lot : la
+ * déclaration vit dans `core/mcp/<agent>.json` (versionnée avec le dépôt) et
+ * le moteur la monte sur les exécutions outillées de l'agent. Les valeurs de
+ * secrets sont masquées par le backend — seules les références `${VAR}`
+ * restent lisibles. Une déclaration invalide affiche sa cause exacte.
+ */
+function SectionServeursMcp({ fiche }: { fiche: AgentCatalogueDetail }) {
+  if (fiche.mcp_erreur === null && fiche.mcp_serveurs.length === 0) {
+    return null;
+  }
+  return (
+    <section aria-label={`Serveurs MCP de ${fiche.nom}`}>
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+        🔌 Serveurs MCP
+      </h3>
+      {fiche.mcp_erreur !== null ? (
+        <p
+          role="alert"
+          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
+        >
+          Déclaration invalide : {fiche.mcp_erreur}
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {fiche.mcp_serveurs.map((serveur) => (
+            <li
+              key={serveur.nom}
+              className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{serveur.nom}</span>
+                <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                  {serveur.type}
+                </span>
+                <code className="truncate font-mono text-neutral-600 dark:text-neutral-400">
+                  {serveur.type === "stdio"
+                    ? [serveur.commande, ...serveur.args].join(" ")
+                    : serveur.url}
+                </code>
+              </div>
+              <CouplesMasques
+                libelle={serveur.type === "stdio" ? "env" : "headers"}
+                valeurs={serveur.type === "stdio" ? serveur.env : serveur.headers}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+        Déclarés dans{" "}
+        <code className="font-mono">core/mcp/{fiche.nom}.json</code> et montés
+        sur les exécutions outillées de l&apos;agent — lecture seule à ce lot.
+      </p>
+    </section>
+  );
+}
+
+/** Les paires clé → valeur (masquée) d'un serveur : env (stdio) ou headers (distant). */
+function CouplesMasques({
+  libelle,
+  valeurs,
+}: {
+  libelle: string;
+  valeurs: ServeurMcp["env"];
+}) {
+  const couples = Object.entries(valeurs);
+  if (couples.length === 0) {
+    return null;
+  }
+  return (
+    <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-neutral-500 dark:text-neutral-400">
+      {couples.map(([cle, valeur]) => (
+        <div key={cle} className="flex gap-1">
+          <dt className="font-mono">
+            {libelle}.{cle}
+          </dt>
+          <dd className="font-mono">= {valeur}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -501,6 +588,7 @@ function FicheDefaut({ fiche }: { fiche: AgentCatalogueDetail }) {
           .
         </p>
       </section>
+      <SectionServeursMcp fiche={fiche} />
       <section aria-label={`Playbook du code de ${fiche.nom}`}>
         <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
           📖 Playbook du code

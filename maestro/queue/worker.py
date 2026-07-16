@@ -36,6 +36,7 @@ from celery.signals import celeryd_after_setup
 
 from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
+from maestro.agents.mcp import McpStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.store import AgentStore, catalogue
 from maestro.config import load_settings
@@ -159,6 +160,8 @@ def _executeur() -> LocalExecutor:
     Tower n'est plus routé par les workers dès le message suivant. Le plafond
     d'instances, lui, borne les exécutions simultanées **par process** au POC
     (pas encore de coordination inter-workers — cf. maestro.agents.capacity).
+    Les **serveurs MCP par agent** (#104) sont relus de la même façon
+    (`MAESTRO_MCP_DIR`) et montés sur les exécutions outillées de l'agent.
     """
     global _executor
     if _executor is None:
@@ -171,6 +174,7 @@ def _executeur() -> LocalExecutor:
             guardrails=_guardrails,
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
+            mcp=McpStore.default(settings),
             relance=_relance,
         )
     return _executor

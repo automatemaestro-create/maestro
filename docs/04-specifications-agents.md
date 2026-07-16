@@ -252,3 +252,55 @@ Modes de coordination concrets :
 - **Remontée :** chaque résultat revient à l'orchestrateur, qui synthétise et arbitre les conflits.
 
 Garde-fous : chaque message est **tracé** (EF-34), des **plafonds de tours** évitent les boucles infinies, et l'on privilégie l'**état partagé** + des messages **ciblés** pour maîtriser les coûts. L'**isolation** des contextes (EF-14) reste assurée : communiquer ne signifie pas partager tout son contexte.
+
+---
+
+## 6. Serveurs MCP par agent
+
+Le **Model Context Protocol** relie les agents aux outils externes (Slack, gestion de tickets, Figma, cloud…) sans connecteur ad hoc — complémentaire d'A2A (§5). Depuis le ticket #104 (parent #101), chaque agent peut **déclarer des serveurs MCP**, montés par le moteur sur ses exécutions.
+
+### 6.1 Déclaration (versionnée, hors du code)
+
+Un fichier JSON par agent — `core/mcp/<agent>.json` (racine remplaçable par `MAESTRO_MCP_DIR`), **versionné avec le dépôt Git** et **validé à la lecture** (une déclaration invalide est refusée avec sa cause exacte, jamais montée à moitié) :
+
+```json
+{
+  "serveurs": [
+    {
+      "nom": "gitlab",
+      "type": "stdio",
+      "commande": "npx",
+      "args": ["-y", "@zereight/mcp-gitlab"],
+      "env": { "GITLAB_PERSONAL_ACCESS_TOKEN": "${GITLAB_TOKEN}" }
+    },
+    {
+      "nom": "slack",
+      "type": "http",
+      "url": "https://mcp.example.com/slack",
+      "headers": { "Authorization": "Bearer ${SLACK_MCP_TOKEN}" }
+    }
+  ]
+}
+```
+
+Deux formes, verrouillées sur leur `type` : une **commande locale** (`stdio` : `commande` + `args` + `env`) ou un **endpoint distant** (`sse`/`http` : `url` + `headers`). Le `nom` (slug `[a-z0-9_-]`) préfixe les outils exposés à l'agent (`mcp__<nom>__<outil>`).
+
+**Secrets — jamais en clair** (anticipe le chantier sécurité #102) : les valeurs d'`env`/`headers` portent des références `${VARIABLE}` résolues depuis l'environnement **au moment du montage** — la valeur effective n'existe qu'en mémoire, jamais dans le fichier versionné. L'API/UI masque d'ailleurs toute valeur littérale (seules les références `${VAR}` restent lisibles).
+
+### 6.2 Montage à l'exécution
+
+Le moteur relit la déclaration **à chaud à chaque tâche** (comme les playbooks, #78) et confie la liste à la **couche SDK** (`ModelProvider.run_agent(mcp_serveurs=…)`) : aucune logique d'agent n'appelle un fournisseur en direct, la traduction vers le format natif (Agent SDK pour Claude) vit dans la couche fournisseur. La session est **verrouillée sur les serveurs déclarés** : aucune configuration MCP ambiante (utilisateur, projet, plugin) n'est jamais chargée — permissions scopées (docs/02 §7).
+
+Les serveurs n'équipent que les **exécutions outillées** : le chemin texte (`generate` — agents sans runtime outillé, ou repli d'un fournisseur texte-seul) n'expose aucun outil, MCP compris.
+
+### 6.3 Serveur indisponible — comportement garanti
+
+Une tâche dont un serveur MCP déclaré ne peut pas être monté **échoue proprement, avant le travail de l'agent** — plutôt que de le laisser produire un livrable amputé de ses capacités :
+
+- **déclaration invalide** (JSON illisible, type inconnu, forme ambiguë…) : refusée à la lecture, échec de tâche avec la cause exacte ;
+- **référence `${VAR}` sans variable d'environnement** : serveur « non montable », échec avant tout appel modèle ;
+- **serveur injoignable à l'ouverture de session** (démarrage/connexion en échec, authentification requise) : échec avec le serveur et la cause nommés (`McpServerUnavailable`).
+
+Dans les trois cas l'erreur est **tracée** comme tout échec de tâche (journal du run, fil temps réel de la Control Tower, Langfuse) et **jamais relancée** (ENF-06) : la cause est déterministe — corriger la déclaration, le secret ou le serveur, la tâche suivante repart à chaud.
+
+**Disponible au POC** (#104, lot 1/4 du parent #101) : déclaration validée, montage sur les exécutions outillées, affichage lecture seule sur la fiche agent (page `/catalogue`). Les pilotes concrets (Slack #105, gestion de tickets #106) et les tests (#103) suivent dans les lots du parent.

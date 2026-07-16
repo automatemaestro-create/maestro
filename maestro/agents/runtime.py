@@ -18,10 +18,12 @@ d'un éventuel repli).
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from maestro.agents.mcp import ServeurMcp, resolus
 from maestro.config import Settings, load_settings
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import ProducedFile, isolated_workspace
@@ -149,6 +151,7 @@ class AgentRuntime:
         format_sortie: str | None = None,
         keep_workspace: bool = False,
         system_prompt: str | None = None,
+        mcp_serveurs: Sequence[ServeurMcp] = (),
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
@@ -161,6 +164,13 @@ class AgentRuntime:
         runtime : c'est le canal de l'application à chaud des playbooks (#78) —
         l'exécuteur passe la version courante du playbook stocké, sans reconstruire
         le runtime. None : le prompt câblé à la construction (comportement d'origine).
+
+        `mcp_serveurs` (#104) sont les serveurs MCP déclarés par l'agent pour
+        **cette exécution** (relus à chaud par l'exécuteur, comme le playbook) :
+        leurs références `${VAR}` sont résolues ici — les secrets n'existent
+        qu'en mémoire, jamais dans la déclaration — puis la liste est confiée au
+        fournisseur, qui la monte via sa couche SDK. Un serveur non montable ou
+        injoignable lève `McpServerUnavailable` (jamais relancé, ENF-06).
         """
         description = description.strip()
         if not description:
@@ -169,6 +179,9 @@ class AgentRuntime:
             )
 
         prompt = _build_prompt(self._profile, description, format_sortie)
+        # Résolution avant d'ouvrir l'espace : une déclaration non montable
+        # échoue proprement sans créer (ni nettoyer) de répertoire de travail.
+        montables = resolus(mcp_serveurs, os.environ)
         with isolated_workspace(prefix=self._profile.workspace_prefix, keep=keep_workspace) as ws:
             resume = await self._provider.run_agent(
                 prompt,
@@ -176,6 +189,7 @@ class AgentRuntime:
                 system_prompt=system_prompt or self._system_prompt,
                 workspace=ws.path,
                 tools=self._tools,
+                mcp_serveurs=montables,
             )
             # Capture *dans* le contexte : hors `keep`, l'espace disparaît à la sortie.
             fichiers = ws.produced_files()
