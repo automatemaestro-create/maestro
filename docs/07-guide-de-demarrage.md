@@ -293,3 +293,70 @@ N, agent désactivé à 0, priorité du plafond global, comptabilité et temps r
 tâche). Limite POC inchangée : la jauge est **par process** (en distribué, chaque
 worker borne les siennes — la coordination inter-workers viendra avec la persistance
 partagée, EF-16).
+
+### 6.7 — Serveurs MCP par agent : capacités externes déclarées (disponible — tickets #104 à #106)
+
+Un agent peut se voir brancher des **capacités externes** (Slack, gestion de tickets,
+Figma, cloud…) via le **Model Context Protocol**, sans coder de connecteur ad hoc : on
+**déclare** les serveurs MCP d'un agent, le moteur les **monte** sur ses exécutions
+outillées. Changer d'outil (Linear plutôt que GitLab, par exemple) = changer la
+déclaration, pas le code.
+
+**Déclarer un serveur sur un agent** — un fichier par agent dans `core/mcp/`
+(`<agent>.json`, racine remplaçable par `MAESTRO_MCP_DIR`), de la forme
+`{"serveurs": [...]}` où chaque serveur est une **commande locale** (`type` « stdio » :
+`commande` + `args` + `env`) ou un **endpoint distant** (« sse »/« http » : `url` +
+`headers`) — format détaillé : [doc 04 §6](./04-specifications-agents.md) :
+
+```jsonc
+// core/mcp/qa.json — l'agent qa reçoit un serveur de gestion de tickets GitLab
+{
+  "serveurs": [
+    {
+      "nom": "gitlab",
+      "type": "stdio",
+      "commande": "npx",
+      "args": ["-y", "@zereight/mcp-gitlab"],
+      "env": { "GITLAB_PERSONAL_ACCESS_TOKEN": "${GITLAB_TOKEN}" }
+    }
+  ]
+}
+```
+
+La déclaration est **validée à la lecture** et relue **à chaud** à chaque tâche, comme
+les playbooks (§6.2) : une déclaration ajoutée ou corrigée vaut pour la tâche suivante,
+sans redémarrage ; une déclaration invalide est un **échec de tâche propre** (cause
+exacte consignée, l'agent n'exécute pas), jamais un montage à moitié. Les serveurs
+n'équipent que les **exécutions outillées** — le chemin texte n'expose aucun outil, MCP
+compris. Côté fournisseur Claude, la session est **verrouillée sur la seule liste
+déclarée** (`strict_mcp_config` — aucune config MCP ambiante) et le premier tour du
+modèle n'est envoyé qu'une fois tous les serveurs déclarés **connectés** : un serveur
+en échec (démarrage, authentification) ou jamais connecté lève une erreur propre
+(`McpServerUnavailable`, serveur et cause nommés) **avant** tout appel modèle — jamais
+relancée (ENF-06 : configuration ou secret à corriger). Les fiches agents de la page
+`/catalogue` affichent les serveurs déclarés (lecture seule).
+
+**Gestion des secrets** — les déclarations sont de la **configuration versionnée** :
+les tokens n'y figurent **jamais en clair**. Les valeurs d'`env`/`headers` portent des
+références `${VARIABLE}` résolues depuis l'environnement (`.env`, cf.
+[`.env.example`](../.env.example)) au moment du montage — les valeurs effectives ne
+vivent qu'en mémoire ; une variable absente rend le serveur indisponible (échec propre
+avant tout appel). La forme publique (API/UI) **masque** toute valeur littérale et les
+journaux caviardent les motifs de tokens connus (`xoxb-`, `glpat-`…).
+
+**Pilotes disponibles** — deux intégrations réelles servent de référence :
+
+- **Slack** ([doc 15](./15-pilote-mcp-slack.md), ticket #105) : l'agent `devops`
+  (serveur déclaré dans [`core/mcp/devops.json`](../core/mcp/devops.json), token via
+  `${SLACK_BOT_TOKEN}`) poste les **notifications de supervision** d'un run — fin de
+  run, validation humaine en attente — via `maestro-run --notifier devops` ;
+- **Tickets GitLab** ([doc 16](./16-pilote-mcp-tickets-gitlab.md), ticket #106) :
+  l'agent `qa` (serveur déclaré dans `core/mcp/qa.json`, token via `${GITLAB_TOKEN}`,
+  toolset restreint aux issues — ni merge ni suppression) **lit et crée des tickets**
+  pendant un run réel.
+
+Le socle est rejoué sans réseau dans [`tests/test_mcp.py`](../tests/test_mcp.py)
+(déclarations et validation à la lecture, résolution des secrets, montage par le
+moteur, application à chaud, échecs propres, couture SDK) et le volet catalogue dans
+[`tests/test_controltower.py`](../tests/test_controltower.py). Détails :
+[`core/mcp/README.md`](../core/mcp/README.md).

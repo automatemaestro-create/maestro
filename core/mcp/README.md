@@ -44,4 +44,9 @@ résolu au moment du montage (anticipe le chantier sécurité #102).
   validation humaine en attente) via `maestro-run --notifier devops`.
   Configuration et démo : [docs/15](../../docs/15-pilote-mcp-slack.md).
 
-Tests (#103, lot final du parent #101) : différés — voir le ticket.
+Tests (#103, lot final du parent #101) : le socle est rejoué sans réseau dans
+[`tests/test_mcp.py`](../../tests/test_mcp.py) (validation à la lecture,
+résolution des secrets, montage par le moteur, application à chaud, échecs
+propres, couture SDK) ; le volet catalogue (lecture seule, valeurs masquées)
+dans [`tests/test_controltower.py`](../../tests/test_controltower.py).
+Guide : [docs/07 §6.7](../../docs/07-guide-de-demarrage.md).
