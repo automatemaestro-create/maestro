@@ -76,6 +76,18 @@ def _worker_reinitialise():
     reinitialiser_worker()
 
 
+@pytest.fixture(autouse=True)
+def _depot_mcp_isole(tmp_path, monkeypatch):
+    """Isole les workers de test des déclarations MCP versionnées du dépôt.
+
+    Le worker relit `MAESTRO_MCP_DIR` (défaut : `core/mcp/`) à chaque tâche :
+    sans cette isolation, une déclaration réelle (ex. `core/mcp/qa.json`, #106)
+    s'appliquerait aux exécutants factices — et ferait échouer leurs tâches là
+    où ses secrets (`${GITLAB_TOKEN}`) n'existent pas, comme en CI.
+    """
+    monkeypatch.setenv("MAESTRO_MCP_DIR", str(tmp_path / "mcp"))
+
+
 class EchoProvider(ModelProvider):
     """Exécutant factice : renvoie toujours le même livrable."""
 

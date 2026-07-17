@@ -25,6 +25,7 @@ _ENV_SENSIBLES: tuple[str, ...] = (
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
     "DATABASE_URL",
+    "GITLAB_TOKEN",
     "REDIS_URL",
     "SLACK_BOT_TOKEN",
 )
@@ -34,11 +35,13 @@ _ENV_SENSIBLES: tuple[str, ...] = (
 _LONGUEUR_MIN = 8
 
 #: Motifs de secrets reconnaissables hors environnement (clés Anthropic `sk-ant-…`,
-#: dont les tokens OAuth `sk-ant-oat…`, clés génériques `sk-…` assez longues, et
-#: tokens Slack `xoxb-…`/`xoxp-…` — pilote MCP Slack #105).
+#: dont les tokens OAuth `sk-ant-oat…`, clés génériques `sk-…` assez longues,
+#: tokens GitLab `glpat-…` — pilote MCP tickets #106 — et tokens Slack
+#: `xoxb-…`/`xoxp-…` — pilote MCP Slack #105).
 _MOTIFS_SECRETS: tuple[re.Pattern[str], ...] = (
     re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}"),
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"glpat-[A-Za-z0-9_-]{8,}"),
     re.compile(r"xox[a-z]-[A-Za-z0-9-]{10,}"),
 )
 

@@ -23,6 +23,14 @@ serveurs déclarés sur ses exécutions outillées, sans connecteur ad hoc.
 - Affichage : fiche agent de la page `/catalogue` (lecture seule à ce lot).
 - Racine remplaçable par `MAESTRO_MCP_DIR` (cf. `.env.example`).
 
+## Déclarations en place
+
+- [`qa.json`](./qa.json) — serveur **GitLab** (`@zereight/mcp-gitlab`, stdio via
+  `npx`) pour le pilote gestion de tickets (#106) : l'agent QA lit et crée des
+  tickets du backlog au fil d'un run. Restreint au toolset `issues` en mode
+  `modify` (ni suppression, ni merge) ; token via `${GITLAB_TOKEN}` — voir
+  [docs/16](../../docs/16-pilote-mcp-tickets-gitlab.md).
+
 Contrairement aux dépôts voisins (données d'exécution non commitées), les
 déclarations écrites ici sont de la **configuration versionnée** : elles se
 commitent avec le dépôt. Les **secrets n'y figurent jamais en clair** — les
