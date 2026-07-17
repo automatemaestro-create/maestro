@@ -36,6 +36,12 @@ critères d'acceptation du ticket #46 :
    inconnu ou hors slug (404, sans fichier orphelin). Le dépôt et le catalogue
    effectif eux-mêmes (routage, exécution) sont couverts dans
    `tests/test_agent_store.py` ;
+⑦bis volet MCP des fiches catalogue (#104, tests différés du parent #101 →
+   #103) : serveurs déclarés exposés en lecture seule (valeurs de secrets
+   masquées, références `${VAR}` visibles), volet vide sans déclaration,
+   déclaration invalide rendue avec sa cause (`mcp_erreur`) sans casser la
+   fiche ni le listing. Le socle lui-même (dépôt, résolution, montage par le
+   moteur, couture SDK) est couvert dans `tests/test_mcp.py` ;
 ⑧ chat utilisateur ↔ agent (#84, tests différés du parent #82 → #83) : fil
    vide tant que l'agent n'a jamais été contacté, envoi d'un message rendant
    la paire message/réponse, fil persisté (relu par le GET, survivant à un
@@ -53,12 +59,14 @@ critères d'acceptation du ticket #46 :
 """
 
 import asyncio
+import json
 import logging
 
 import pytest
 from fastapi.testclient import TestClient
 
 from maestro.agents.catalog import DEFAULT_AGENTS
+from maestro.agents.mcp import McpStore
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import AgentDefinition, AgentStore
 from maestro.controltower import (
@@ -1211,6 +1219,76 @@ def test_un_nom_inconnu_ou_hors_slug_rend_404(client_cat, depot_agents):
         ).status_code == 404
         assert client_cat.delete(f"/api/catalogue/{nom}").status_code == 404
     assert depot_agents.noms() == ()
+
+
+# ----------------------------- ⑦bis Volet MCP des fiches catalogue (#104 → #103)
+
+
+@pytest.fixture()
+def depot_mcp(tmp_path):
+    """Dépôt de déclarations MCP vierge injecté dans l'app — jamais le `core/mcp/` réel."""
+    racine = tmp_path / "mcp"
+    racine.mkdir()
+    return McpStore(racine)
+
+
+@pytest.fixture()
+def client_mcp(bus, depot_agents, depot_mcp):
+    """TestClient de l'app branchée sur les dépôts temporaires (agents + MCP)."""
+    with TestClient(
+        create_app(bus=bus, agents_store=depot_agents, mcp=depot_mcp)
+    ) as client:
+        yield client
+
+
+def test_la_fiche_expose_les_serveurs_mcp_declares_valeurs_masquees(client_mcp, depot_mcp):
+    (depot_mcp.racine / "qa.json").write_text(
+        json.dumps(
+            {
+                "serveurs": [
+                    {
+                        "nom": "tickets",
+                        "type": "stdio",
+                        "commande": "npx",
+                        "args": ["-y", "@zereight/mcp-gitlab"],
+                        "env": {
+                            "GITLAB_TOKEN": "${GITLAB_TOKEN}",
+                            "EN_CLAIR": "secret-pose-par-erreur",
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fiche = client_mcp.get("/api/catalogue/qa").json()
+
+    assert fiche["mcp_erreur"] is None
+    (serveur,) = fiche["mcp_serveurs"]
+    assert (serveur["nom"], serveur["type"]) == ("tickets", "stdio")
+    # Forme publique : la référence ${VAR} reste lisible, le littéral (un secret
+    # potentiel) est masqué — jamais réémis vers l'UI.
+    assert serveur["env"]["GITLAB_TOKEN"] == "${GITLAB_TOKEN}"
+    assert "secret-pose-par-erreur" not in json.dumps(fiche)
+
+
+def test_un_agent_sans_declaration_mcp_a_un_volet_vide(client_mcp):
+    fiche = client_mcp.get("/api/catalogue/developpeur").json()
+    assert fiche["mcp_serveurs"] == [] and fiche["mcp_erreur"] is None
+
+
+def test_une_declaration_invalide_rend_la_cause_sans_casser_la_fiche(client_mcp, depot_mcp):
+    (depot_mcp.racine / "qa.json").write_text("{pas du json", encoding="utf-8")
+
+    fiche = client_mcp.get("/api/catalogue/qa").json()
+    listing = client_mcp.get("/api/catalogue")
+
+    # La misconfiguration est visible depuis l'UI, fiche et listing intacts.
+    assert fiche["mcp_serveurs"] == []
+    assert "déclaration MCP illisible" in fiche["mcp_erreur"]
+    assert listing.status_code == 200
+    assert any(f["nom"] == "qa" for f in listing.json())
 
 
 # ------------------------------------------- ⑧ Chat utilisateur ↔ agent (#84)
