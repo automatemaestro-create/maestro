@@ -24,16 +24,19 @@ ambiant.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    ClaudeSDKClient,
     McpServerConfig,
+    McpServerStatus,
     ResultMessage,
-    SystemMessage,
     TextBlock,
     ToolUseBlock,
     query,
@@ -58,10 +61,19 @@ from maestro.telemetry import StepUsage, report_usage
 #: « Claude Code returned an error result: error_max_turns ».
 _MARQUEUR_MAX_TURNS = "error_max_turns"
 
-#: États acceptables d'un serveur MCP au message d'ouverture de session (`init`) :
-#: connecté, ou connexion encore en cours. « failed », « needs-auth » et
-#: « disabled » (et un serveur déclaré absent de la session) valent indisponible.
-_MCP_STATUTS_OK = frozenset({"connected", "pending"})
+#: États d'un serveur MCP qui valent échec définitif (statut `get_mcp_status`) :
+#: démarrage/connexion en échec, authentification requise, serveur désactivé.
+#: « pending » n'en fait pas partie : c'est l'état transitoire du démarrage
+#: (npx qui télécharge, endpoint lent), attendu jusqu'à `_MCP_CONNEXION_MAX_S`.
+_MCP_STATUTS_ECHEC = frozenset({"failed", "needs-auth", "disabled"})
+
+#: Délai maximal accordé à la connexion des serveurs MCP déclarés avant l'échec
+#: propre (`McpServerUnavailable`). Large : le premier `npx -y` d'un serveur
+#: télécharge son paquet. Le time-out par tâche du moteur (#64) borne le tout.
+_MCP_CONNEXION_MAX_S: float = 60.0
+
+#: Période du sondage de statut pendant l'attente de connexion des serveurs MCP.
+_MCP_SONDAGE_S: float = 0.5
 
 
 def _resolve_auth_mode(settings: Settings) -> AuthMode:
@@ -193,10 +205,14 @@ class ClaudeProvider(ModelProvider):
         session via `mcp_servers` de l'Agent SDK ; `strict_mcp_config` verrouille
         la session sur **cette seule liste** — aucune configuration MCP ambiante
         (utilisateur, projet, plugin) n'est jamais chargée, serveurs déclarés ou
-        pas (permissions scopées, docs/02 §7). Le message d'ouverture de session
-        porte l'état de chaque serveur : un serveur déclaré non connecté lève
-        `McpServerUnavailable` (serveur et cause nommés) **avant** que l'agent ne
-        travaille sans ses capacités.
+        pas (permissions scopées, docs/02 §7). La session est alors **pilotée**
+        (`ClaudeSDKClient`) : le premier tour n'est envoyé qu'une fois tous les
+        serveurs déclarés **connectés** (statut sondé, délai borné) — constat du
+        pilote #105 : le CLI enregistre les outils MCP *après* son ouverture de
+        session, et un premier tour parti trop tôt s'exécute sans eux, l'agent
+        concluant sans ses capacités. Un serveur en échec (démarrage, auth) ou
+        jamais connecté à l'échéance lève `McpServerUnavailable` (serveur et
+        cause nommés) **avant** tout appel modèle.
 
         Limite POC assumée : l'isolation est *au niveau du système de fichiers* — un
         shell pourrait en principe adresser des chemins hors du `cwd`. Le renfort
@@ -214,17 +230,14 @@ class ClaudeProvider(ModelProvider):
             mcp_servers={s.nom: _config_mcp_sdk(s) for s in mcp_serveurs},
             strict_mcp_config=True,
         )
-        return await _collect_response(
-            prompt, options, serveurs_mcp=frozenset(s.nom for s in mcp_serveurs)
+        if not mcp_serveurs:
+            return await _collect_response(prompt, options)
+        return await _collect_response_pilotee(
+            prompt, options, attendus=frozenset(s.nom for s in mcp_serveurs)
         )
 
 
-async def _collect_response(
-    prompt: str,
-    options: ClaudeAgentOptions,
-    *,
-    serveurs_mcp: frozenset[str] = frozenset(),
-) -> str:
+async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
     """Déroule `query`, assemble le texte de la réponse et signale l'usage (ticket #8).
 
     Les noms d'outils sont relevés au fil des blocs `ToolUseBlock` ; le message
@@ -234,26 +247,12 @@ async def _collect_response(
     Le **plafond de tours** (`max_turns`) est mué en `TurnLimitReached` (#91) :
     c'est le contrat de la couche d'abstraction — le moteur reconnaît ainsi un
     garde-fou déterministe (jamais relancé) sans lire d'erreur propre au SDK.
-
-    `serveurs_mcp` (#104) sont les serveurs attendus sur la session : leur état
-    est contrôlé au message d'ouverture (`init`) — un serveur non connecté lève
-    `McpServerUnavailable` et stoppe l'exécution avant le travail de l'agent.
     """
     parts: list[str] = []
     outils: list[str] = []
     try:
         async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        parts.append(block.text)
-                    elif isinstance(block, ToolUseBlock) and block.name not in outils:
-                        outils.append(block.name)
-            elif isinstance(message, SystemMessage):
-                if serveurs_mcp and message.subtype == "init":
-                    _verifie_serveurs_mcp(message.data, serveurs_mcp)
-            elif isinstance(message, ResultMessage):
-                report_usage(_usage_from_result(message, tuple(outils)))
+            _absorbe(message, parts, outils)
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
             raise TurnLimitReached(
@@ -261,6 +260,101 @@ async def _collect_response(
             ) from exc
         raise
     return "".join(parts)
+
+
+async def _collect_response_pilotee(
+    prompt: str, options: ClaudeAgentOptions, *, attendus: frozenset[str]
+) -> str:
+    """Comme `_collect_response`, mais en session pilotée : serveurs MCP connectés d'abord.
+
+    Le CLI ouvre sa session sans attendre ses serveurs MCP (statut « pending »),
+    et n'enregistre leurs outils qu'à la connexion : en one-shot, le premier
+    tour du modèle partirait sans eux (constat du pilote #105). La session
+    pilotée (`ClaudeSDKClient`) n'envoie donc `prompt` qu'une fois tous les
+    serveurs `attendus` connectés (`_attend_serveurs_mcp` — échec propre sinon).
+
+    En mode piloté, le CLI signale un résultat en échec (`error_max_turns`,
+    `error_during_execution`…) par un `ResultMessage` d'erreur au lieu d'une
+    exception : il est mué ici en `TurnLimitReached`/`RuntimeError` pour rendre
+    les deux chemins indistinguables vus du moteur.
+    """
+    parts: list[str] = []
+    outils: list[str] = []
+    async with ClaudeSDKClient(options) as client:
+        await _attend_serveurs_mcp(client, attendus)
+        await client.query(prompt)
+        async for message in client.receive_response():
+            _absorbe(message, parts, outils)
+            if isinstance(message, ResultMessage) and message.is_error:
+                detail = message.result or message.subtype
+                if _MARQUEUR_MAX_TURNS in message.subtype:
+                    raise TurnLimitReached(
+                        f"plafond de tours atteint (max_turns) : {detail}"
+                    )
+                raise RuntimeError(f"Claude Code returned an error result: {detail}")
+    return "".join(parts)
+
+
+async def _attend_serveurs_mcp(client: ClaudeSDKClient, attendus: frozenset[str]) -> None:
+    """Bloque jusqu'à la connexion des serveurs `attendus`, sinon `McpServerUnavailable`.
+
+    Sonde le statut réel des serveurs de la session (`get_mcp_status`) :
+    tous connectés → la session peut commencer ; un serveur en échec
+    (`_MCP_STATUTS_ECHEC` : démarrage/connexion en échec, authentification
+    requise, désactivé) → erreur propre immédiate, serveur et cause nommés ;
+    encore en attente à l'échéance (`_MCP_CONNEXION_MAX_S`) → idem, un
+    « pending » sans fin est un serveur qui ne viendra pas. C'est la garantie
+    du contrat #104 : l'agent ne travaille jamais amputé de ses capacités.
+    """
+    echeance = monotonic() + _MCP_CONNEXION_MAX_S
+    while True:
+        statuts = await client.get_mcp_status()
+        etats: dict[str, McpServerStatus] = {
+            str(entree.get("name")): entree
+            for entree in statuts.get("mcpServers", ())
+            if isinstance(entree, dict)
+        }
+        echecs: list[str] = []
+        en_attente: list[str] = []
+        for nom in sorted(attendus):
+            etat = etats.get(nom)
+            if etat is None:
+                en_attente.append(f"{nom} : absent de la session")
+            elif etat.get("status") in _MCP_STATUTS_ECHEC:
+                cause = etat.get("error") or f"état « {etat.get('status')} »"
+                echecs.append(f"{nom} : {cause}")
+            elif etat.get("status") != "connected":
+                en_attente.append(f"{nom} : connexion en cours")
+        if echecs:
+            raise McpServerUnavailable(
+                "serveur(s) MCP indisponible(s) — " + " ; ".join(echecs) + "."
+            )
+        if not en_attente:
+            return
+        if monotonic() >= echeance:
+            raise McpServerUnavailable(
+                "serveur(s) MCP indisponible(s) — toujours pas connecté(s) après "
+                f"{_MCP_CONNEXION_MAX_S:g} s : " + " ; ".join(en_attente) + "."
+            )
+        await asyncio.sleep(_MCP_SONDAGE_S)
+
+
+def _absorbe(message: Any, parts: list[str], outils: list[str]) -> None:
+    """Absorbe un message du flux SDK : texte et outils relevés, usage signalé (#8).
+
+    Facteur commun des deux chemins (`query` one-shot, session pilotée) : les
+    blocs texte s'ajoutent à `parts`, chaque outil vu une fois à `outils`, et le
+    `ResultMessage` remonte tokens/coût/durée via `report_usage` — y compris sur
+    un résultat en échec (le coût d'un `error_max_turns` compte au grand livre).
+    """
+    if isinstance(message, AssistantMessage):
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                parts.append(block.text)
+            elif isinstance(block, ToolUseBlock) and block.name not in outils:
+                outils.append(block.name)
+    elif isinstance(message, ResultMessage):
+        report_usage(_usage_from_result(message, tuple(outils)))
 
 
 def _config_mcp_sdk(serveur: ServeurMcp) -> McpServerConfig:
@@ -285,34 +379,6 @@ def _config_mcp_sdk(serveur: ServeurMcp) -> McpServerConfig:
     # La forme est garantie par la validation à la lecture (maestro.agents.mcp) :
     # le cast borne juste le dict dynamique aux TypedDict du SDK.
     return cast("McpServerConfig", config)
-
-
-def _verifie_serveurs_mcp(data: dict[str, Any], attendus: frozenset[str]) -> None:
-    """Contrôle l'état des serveurs MCP déclarés au message d'ouverture de session.
-
-    `data` est le corps du message système `init` du SDK : `mcp_servers` y liste
-    `{name, status}` pour chaque serveur de la session. Tout serveur attendu
-    absent ou hors état acceptable (`_MCP_STATUTS_OK`) lève
-    `McpServerUnavailable` — l'« erreur propre » du contrat (#104), avec le
-    serveur et la cause (le détail `error` du SDK quand il le donne).
-    """
-    etats: dict[str, dict[str, Any]] = {
-        str(entree.get("name")): entree
-        for entree in data.get("mcp_servers", ())
-        if isinstance(entree, dict)
-    }
-    problemes: list[str] = []
-    for nom in sorted(attendus):
-        etat = etats.get(nom)
-        if etat is None:
-            problemes.append(f"{nom} : absent de la session")
-        elif etat.get("status") not in _MCP_STATUTS_OK:
-            cause = etat.get("error") or f"état « {etat.get('status')} »"
-            problemes.append(f"{nom} : {cause}")
-    if problemes:
-        raise McpServerUnavailable(
-            "serveur(s) MCP indisponible(s) — " + " ; ".join(problemes) + "."
-        )
 
 
 def _usage_from_result(result: ResultMessage, outils: tuple[str, ...]) -> StepUsage:

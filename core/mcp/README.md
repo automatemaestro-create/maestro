@@ -29,4 +29,11 @@ commitent avec le dépôt. Les **secrets n'y figurent jamais en clair** — les
 valeurs d'`env`/`headers` référencent l'environnement (`${VARIABLE}`),
 résolu au moment du montage (anticipe le chantier sécurité #102).
 
+## Déclarations en place
+
+- [`devops.json`](./devops.json) — serveur **Slack** (pilote #105) : l'agent
+  `devops` poste les notifications de supervision d'un run (fin de run,
+  validation humaine en attente) via `maestro-run --notifier devops`.
+  Configuration et démo : [docs/15](../../docs/15-pilote-mcp-slack.md).
+
 Tests (#103, lot final du parent #101) : différés — voir le ticket.
