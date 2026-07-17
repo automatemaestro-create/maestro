@@ -289,7 +289,7 @@ Deux formes, verrouillées sur leur `type` : une **commande locale** (`stdio` : 
 
 ### 6.2 Montage à l'exécution
 
-Le moteur relit la déclaration **à chaud à chaque tâche** (comme les playbooks, #78) et confie la liste à la **couche SDK** (`ModelProvider.run_agent(mcp_serveurs=…)`) : aucune logique d'agent n'appelle un fournisseur en direct, la traduction vers le format natif (Agent SDK pour Claude) vit dans la couche fournisseur. La session est **verrouillée sur les serveurs déclarés** : aucune configuration MCP ambiante (utilisateur, projet, plugin) n'est jamais chargée — permissions scopées (docs/02 §7).
+Le moteur relit la déclaration **à chaud à chaque tâche** (comme les playbooks, #78) et confie la liste à la **couche SDK** (`ModelProvider.run_agent(mcp_serveurs=…)`) : aucune logique d'agent n'appelle un fournisseur en direct, la traduction vers le format natif (Agent SDK pour Claude) vit dans la couche fournisseur. La session est **verrouillée sur les serveurs déclarés** : aucune configuration MCP ambiante (utilisateur, projet, plugin) n'est jamais chargée — permissions scopées (docs/02 §7). Elle est aussi **retenue jusqu'à la connexion des serveurs** (statut sondé, délai borné à 60 s) : le CLI enregistre les outils MCP après son ouverture de session, et sans ce sas le premier tour du modèle partirait sans eux — l'agent conclurait amputé de ses capacités (constat du pilote #105, corrigé dans la couche fournisseur).
 
 Les serveurs n'équipent que les **exécutions outillées** : le chemin texte (`generate` — agents sans runtime outillé, ou repli d'un fournisseur texte-seul) n'expose aucun outil, MCP compris.
 
@@ -299,8 +299,8 @@ Une tâche dont un serveur MCP déclaré ne peut pas être monté **échoue prop
 
 - **déclaration invalide** (JSON illisible, type inconnu, forme ambiguë…) : refusée à la lecture, échec de tâche avec la cause exacte ;
 - **référence `${VAR}` sans variable d'environnement** : serveur « non montable », échec avant tout appel modèle ;
-- **serveur injoignable à l'ouverture de session** (démarrage/connexion en échec, authentification requise) : échec avec le serveur et la cause nommés (`McpServerUnavailable`).
+- **serveur injoignable** (démarrage/connexion en échec, authentification requise, ou jamais connecté avant l'échéance du sas de connexion) : échec avec le serveur et la cause nommés (`McpServerUnavailable`), avant tout appel modèle.
 
 Dans les trois cas l'erreur est **tracée** comme tout échec de tâche (journal du run, fil temps réel de la Control Tower, Langfuse) et **jamais relancée** (ENF-06) : la cause est déterministe — corriger la déclaration, le secret ou le serveur, la tâche suivante repart à chaud.
 
-**Disponible au POC** (#104, lot 1/4 du parent #101) : déclaration validée, montage sur les exécutions outillées, affichage lecture seule sur la fiche agent (page `/catalogue`). Les pilotes concrets (Slack #105, gestion de tickets #106) et les tests (#103) suivent dans les lots du parent.
+**Disponible au POC** (#104, lot 1/4 du parent #101) : déclaration validée, montage sur les exécutions outillées, affichage lecture seule sur la fiche agent (page `/catalogue`). **Premier pilote livré** : Slack (#105) — l'agent `devops`, équipé du serveur MCP Slack ([core/mcp/devops.json](../core/mcp/devops.json)), poste les notifications de supervision d'un run (fin de run, validation humaine en attente) via `maestro-run --notifier devops` — voir [docs/15](./15-pilote-mcp-slack.md). Le pilote gestion de tickets (#106) et les tests (#103) suivent dans les lots du parent.

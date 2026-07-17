@@ -51,6 +51,14 @@ dépendants annonce l'issue par message (handoff) et chaque tâche aval attend c
 message avant de démarrer. L'échange est journalisé (visible avec `--trace`, et
 dans la Control Tower avec `--publier`). Requiert le même Redis que `--queue`.
 
+`--notifier <agent>` (#105) branche les **notifications de supervision Slack**
+(`maestro.supervision`) : l'agent nommé (ex. `devops`), équipé de son serveur
+MCP Slack déclaré (#104, `core/mcp/<agent>.json`), poste sur le canal
+`MAESTRO_SLACK_CANAL` la fin de run (bilan tâches/coût) et chaque validation
+humaine en attente — best-effort : un échec de notification est consigné au
+journal sans altérer le run. Non combinable avec `--queue` (les garde-fous, donc
+la notification de validation, s'appliquent côté worker).
+
 L'export **Langfuse** (#81) ne passe pas par une option : il est purement
 configuratif. Dès que `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` sont dans
 l'environnement, chaque exécution produit sa trace Langfuse (étapes, outils
@@ -85,8 +93,8 @@ from maestro.telemetry import (
 
 _USAGE = (
     "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--messagerie] "
-    "[--validation-ui] [--plafond-cout <usd>] [--timeout <s>] [--relances <n>] "
-    '[--parallele <n>] "<objectif en langage naturel>"'
+    "[--validation-ui] [--notifier <agent>] [--plafond-cout <usd>] [--timeout <s>] "
+    '[--relances <n>] [--parallele <n>] "<objectif en langage naturel>"'
 )
 
 
@@ -101,14 +109,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     via_queue = False
     messagerie = False
     validation_ui = False
+    notifier_agent: str | None = None
     plafond_cout: float | None = None
     timeout: float | None = None
     relances: int | None = None
     parallele: int | None = None
     flags_connus = {
         "--json", "--trace", "--queue", "--publier", "--messagerie",
-        "--validation-ui", "--plafond-cout", "--timeout", "--relances",
-        "--parallele",
+        "--validation-ui", "--notifier", "--plafond-cout", "--timeout",
+        "--relances", "--parallele",
     }
     while args and args[0] in flags_connus:
         flag = args.pop(0)
@@ -124,6 +133,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             messagerie = True
         elif flag == "--validation-ui":
             validation_ui = True
+        elif flag == "--notifier":
+            if not args or args[0].startswith("--"):
+                print(
+                    "--notifier attend un nom d'agent équipé MCP (ex. devops).",
+                    file=sys.stderr,
+                )
+                return 2
+            notifier_agent = args.pop(0)
         else:
             valeur = _valeur_numerique(flag, args)
             if valeur is None:
@@ -169,12 +186,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if via_queue and notifier_agent is not None:
+        print(
+            "--notifier n'est pas combinable avec --queue : les garde-fous (donc la "
+            "notification de validation) s'appliquent côté worker — lancez le run "
+            "en local pour la supervision Slack (#105).",
+            file=sys.stderr,
+        )
+        return 2
+
+    journal = RunJournal()
+    # Notificateur de supervision (#105) : construit avant les garde-fous — sa
+    # configuration (canal, agent équipé, déclaration MCP) échoue proprement
+    # avant tout appel modèle, et son enveloppe s'ajoute au validateur choisi.
+    notificateur = None
+    if notifier_agent is not None:
+        from maestro.supervision import NotificateurRun
+
+        try:
+            notificateur = NotificateurRun.default(notifier_agent)
+        except ConfigError as exc:
+            print(f"Configuration : {exc}", file=sys.stderr)
+            return 1
+    validateur: Validateur = _validateur_ui() if validation_ui else validation_console
+    if notificateur is not None:
+        validateur = notificateur.validateur_notifiant(validateur, journal)
 
     try:
         guardrails = Guardrails(
             plafond_cout_usd=plafond_cout,
             timeout_s=timeout,
-            validateur=_validateur_ui() if validation_ui else validation_console,
+            validateur=validateur,
         )
     except ValueError as exc:
         print(f"Garde-fous : {exc}", file=sys.stderr)
@@ -183,7 +225,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Export Langfuse (#81) : purement configuratif — no-op sans clés dans l'env.
     activer_export_langfuse()
 
-    journal = RunJournal()
     try:
         engine = _build_engine(
             via_queue=via_queue,
@@ -201,6 +242,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
         return 1
+
+    if notificateur is not None:
+        # Fin de run (#105) : le bilan part sur le canal de supervision — avant
+        # l'évaluation, pour que l'étape de notification parte aussi sur la
+        # trace. Best-effort : un échec est consigné au journal, jamais levé.
+        run_borne(notificateur.fin_de_run(report, journal))
 
     # Évaluation (#80) : les scores de l'exécution partent sur sa trace Langfuse —
     # même bascule configurative que l'export, no-op sans clés.

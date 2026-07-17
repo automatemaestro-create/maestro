@@ -60,6 +60,10 @@ class Settings:
     #: Racine du dépôt des serveurs MCP déclarés par agent (`MAESTRO_MCP_DIR`), ou
     #: None : le dossier `core/mcp/` du dépôt (cf. maestro.agents.mcp, #104).
     mcp_dir: str | None = None
+    #: Canal Slack des notifications de supervision (`MAESTRO_SLACK_CANAL`), ou
+    #: None : le notificateur de run (#105, maestro.supervision) refuse alors de
+    #: se construire — pas de canal, pas de notification.
+    slack_canal: str | None = None
     #: Clé API de l'endpoint compatible OpenAI (`OPENAI_API_KEY`), ou None :
     #: aucune en-tête d'auth (endpoints locaux type Ollama/vLLM).
     openai_api_key: str | None = None
@@ -92,6 +96,7 @@ class Settings:
             chat_dir=(os.getenv("MAESTRO_CHAT_DIR") or "").strip() or None,
             capacite_dir=(os.getenv("MAESTRO_CAPACITE_DIR") or "").strip() or None,
             mcp_dir=(os.getenv("MAESTRO_MCP_DIR") or "").strip() or None,
+            slack_canal=(os.getenv("MAESTRO_SLACK_CANAL") or "").strip() or None,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             openai_base_url=os.getenv("OPENAI_BASE_URL", "").strip()
             or "https://api.openai.com/v1",
