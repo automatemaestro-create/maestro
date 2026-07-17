@@ -1,0 +1,15 @@
+{
+  "serveurs": [
+    {
+      "nom": "gitlab",
+      "type": "stdio",
+      "commande": "npx",
+      "args": ["-y", "@zereight/mcp-gitlab"],
+      "env": {
+        "GITLAB_PERSONAL_ACCESS_TOKEN": "${GITLAB_TOKEN}",
+        "GITLAB_TOOLSETS": "issues",
+        "GITLAB_PERMISSION_MODE": "modify"
+      }
+    }
+  ]
+}
