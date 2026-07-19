@@ -51,6 +51,10 @@ _SUFFIXE_RELANCE = ":relance"
 #: `maestro.engine.executor`, `SUFFIXE_ETAPE_DEBUT`).
 _SUFFIXE_DEBUT = ":debut"
 
+#: Suffixe des étapes de refus d'outil (#110 — cf.
+#: `maestro.engine.executor`, `SUFFIXE_ETAPE_REFUS`).
+_SUFFIXE_REFUS = ":refus-outil"
+
 #: Suffixe des étapes de messagerie inter-agents (#44 — cf.
 #: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
 _SUFFIXE_MESSAGE = ":message"
@@ -61,10 +65,11 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
 
     - les étapes `<tache>:message` (#44) deviennent des **messages
       inter-agents** (entité AGENT_MESSAGE — handoff, notification…) ;
-    - l'étape `planification` et les étapes `<tache>:validation` et
-      `<tache>:relance` (#91) deviennent des **activités d'agent**
-      (l'orchestrateur planifie, un humain tranche, le moteur relance — la
-      raison de chaque relance voyage dans `detail`) ;
+    - l'étape `planification` et les étapes `<tache>:validation`,
+      `<tache>:relance` (#91) et `<tache>:refus-outil` (#110) deviennent des
+      **activités d'agent** (l'orchestrateur planifie, un humain tranche, le
+      moteur relance, la politique de permissions refuse un outil — la raison
+      voyage dans `detail`) ;
     - les étapes `<tache>:debut` (#98) deviennent le **début** de leur tâche :
       événement `tache.statut` au statut `en_cours` (agent, heure de début),
       sans usage ni coût — rien n'entre au grand livre avant l'issue ;
@@ -89,7 +94,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_message = etape.endswith(_SUFFIXE_MESSAGE)
     est_debut = etape.endswith(_SUFFIXE_DEBUT)
     est_activite = etape == _ETAPE_PLANIFICATION or etape.endswith(
-        (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE)
+        (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE, _SUFFIXE_REFUS)
     )
     if est_message:
         type_evenement = EVENEMENT_MESSAGE_INTER_AGENTS
@@ -108,7 +113,9 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         tache_id = (
             ""
             if etape == _ETAPE_PLANIFICATION
-            else etape.removesuffix(_SUFFIXE_VALIDATION).removesuffix(_SUFFIXE_RELANCE)
+            else etape.removesuffix(_SUFFIXE_VALIDATION)
+            .removesuffix(_SUFFIXE_RELANCE)
+            .removesuffix(_SUFFIXE_REFUS)
         )
         detail = str(record.get("sortie") or record.get("erreur") or "")
     else:

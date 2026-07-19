@@ -84,7 +84,8 @@ class MontageEnregistreur(ModelProvider):
         return "TEXTE"
 
     async def run_agent(
-        self, prompt, *, model, system_prompt=None, workspace, tools, mcp_serveurs=()
+        self, prompt, *, model, system_prompt=None, workspace, tools,
+        mcp_serveurs=(), politique=None, on_refus=None,
     ):
         self.run_calls.append({"mcp_serveurs": tuple(mcp_serveurs)})
         (Path(workspace) / "livrable.txt").write_text("contenu", encoding="utf-8")

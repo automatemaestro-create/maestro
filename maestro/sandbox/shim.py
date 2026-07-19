@@ -9,8 +9,8 @@ le code de sortie du CLI remonte inchangé.
 
 Fine couche volontairement sans logique : tout le durcissement (montages, réseau,
 privilèges) vit dans `maestro.sandbox.container`, le protocole d'invocation
-(variables `MAESTRO_SANDBOX_*`) y est documenté. Tests différés → #107 (smoke test
-d'invocation, comme les autres points d'entrée CLI).
+(variables `MAESTRO_SANDBOX_*`) y est documenté. Smoke test d'invocation (comme
+les autres points d'entrée CLI) : tests/test_isolation.py (#107).
 """
 
 from __future__ import annotations

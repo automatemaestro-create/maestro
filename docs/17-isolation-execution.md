@@ -12,7 +12,8 @@ activation et ses limites. Le mode **non isolé reste le défaut** à ce stade.
 > serveurs MCP stdio) avec les droits du process qui les héberge. L'ouverture
 > MCP (#101) et le multi-instances (#100) élargissent cette exposition : un
 > serveur MCP tiers ou du code produit défaillant ne doit pas pouvoir toucher
-> au poste. Tests différés → #107 (lot final du parent).
+> au poste. Tests : `tests/test_isolation.py` (#107) ; modèle de menace :
+> [docs/19](./19-securite-modele-de-menace.md).
 
 ---
 
@@ -128,5 +129,7 @@ consigné au journal, comme les autres échecs.
 - **Arrêt brutal** : si le process hôte est tué net, un conteneur peut survivre
   jusqu'à la fermeture de son stdin (`--rm` le nettoie alors). Le time-out par
   tâche (#64) reste la borne nominale ;
-- **Tests différés → #107** (lot final du parent #102), comme prévu au
-  découpage.
+- **Tests** (#107) : câblage, commande durcie et shim couverts par
+  `tests/test_isolation.py` ; le lancement **réel** d'un conteneur exige Docker,
+  absent des runners CI — procédure de smoke test manuelle dans
+  [docs/19 §4](./19-securite-modele-de-menace.md).

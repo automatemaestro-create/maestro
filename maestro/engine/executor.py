@@ -28,6 +28,7 @@ from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore, JaugeInstances
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore, ServeurMcp
+from maestro.agents.permissions import PermissionStore, PolitiqueOutils
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
@@ -64,6 +65,16 @@ SUFFIXE_ETAPE_RELANCE = ":relance"
 #: Suffixe des étapes de début d'exécution au journal (#98) : `<task.id>:debut`,
 #: une par tentative — le pont Control Tower les mue en statuts `en_cours`.
 SUFFIXE_ETAPE_DEBUT = ":debut"
+
+#: Suffixe des étapes de refus d'outil au journal (#110) : `<task.id>:refus-outil`,
+#: une par violation de la politique allow/deny — le pont Control Tower les mue
+#: en activités d'agent. Le refus est propre : la tâche poursuit son cours.
+SUFFIXE_ETAPE_REFUS = ":refus-outil"
+
+#: Statut des étapes de refus d'outil (#110) — aligné sur le vocabulaire des
+#: étapes annexes (`:validation` porte approuve/refuse) mais distinct : ici
+#: c'est un appel d'outil qui est refusé, pas la tâche.
+STATUT_REFUS_OUTIL = "refus_outil"
 
 #: Délai de grâce accordé à l'annulation d'une réalisation en dépassement (#64) :
 #: le temps, dans le cas nominal, que le SDK ferme son sous-processus. Au-delà,
@@ -190,6 +201,7 @@ class LocalExecutor(TaskExecutor):
         capacites: CapacityStore | None = None,
         mcp: McpStore | None = None,
         secrets: SecretStore | None = None,
+        permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
     ) -> None:
         self._provider = provider
@@ -198,6 +210,13 @@ class LocalExecutor(TaskExecutor):
         # par la couche SDK sur les exécutions outillées de l'agent. None :
         # aucun serveur (comportement historique).
         self._mcp = mcp
+        # Politiques de permissions par agent (#110) : allow/deny par outil (et
+        # par serveur MCP), relues à chaud dans ce dépôt à chaque tâche et
+        # appliquées à l'exécution — outils refusés retirés de la session,
+        # serveurs MCP refusés jamais montés, le reste refusé au vol et tracé
+        # (`:refus-outil`) sans condamner le run. None : aucune politique
+        # (comportement historique).
+        self._permissions = permissions
         # Coffre des secrets par agent (#109) : quand il est câblé ET provisionné,
         # les références ${VAR} des déclarations MCP se résolvent dans le coffre
         # de l'agent seulement — un agent ne voit que ses propres secrets. None,
@@ -282,14 +301,16 @@ class LocalExecutor(TaskExecutor):
                     )
                 else:
                     entree = _build_task_description(task, dependances)
-                    # Application à chaud (#78, #104) : playbook courant et
-                    # serveurs MCP déclarés sont résolus ici, à chaque tâche —
-                    # jamais retenus entre deux exécutions. Une déclaration MCP
-                    # invalide (validée à la lecture) est un échec propre,
-                    # avant toute exécution.
+                    # Application à chaud (#78, #104, #110) : playbook courant,
+                    # serveurs MCP déclarés et politique de permissions sont
+                    # résolus ici, à chaque tâche — jamais retenus entre deux
+                    # exécutions. Une déclaration MCP ou une politique invalide
+                    # (validées à la lecture) est un échec propre, avant toute
+                    # exécution.
                     playbook = self._playbook_courant(decision.agent.nom)
                     try:
                         serveurs_mcp = self._serveurs_mcp(decision.agent.nom)
+                        politique = self._politique_permissions(decision.agent.nom)
                     except ValueError as exc:
                         result = _echec(
                             task,
@@ -310,6 +331,7 @@ class LocalExecutor(TaskExecutor):
                                 journal,
                                 playbook,
                                 serveurs_mcp,
+                                politique,
                             )
                         if playbook is not None:
                             result = replace(result, playbook_version=playbook.version)
@@ -365,6 +387,20 @@ class LocalExecutor(TaskExecutor):
             return ()
         return self._mcp.lire(agent)
 
+    def _politique_permissions(self, agent: str) -> PolitiqueOutils | None:
+        """La politique allow/deny de `agent`, relue à chaque tâche (#110).
+
+        Même application **à chaud** que les playbooks et les déclarations
+        MCP : une politique ajoutée ou corrigée dans le dépôt vaut pour la
+        tâche suivante, sans redémarrage. Propage le `ValueError` de la
+        validation à la lecture — l'appelant le mue en échec de tâche
+        consigné. None sans dépôt câblé, ou pour un agent sans politique —
+        tout permis, comportement d'origine.
+        """
+        if self._permissions is None:
+            return None
+        return self._permissions.lire(agent)
+
     def _playbook_courant(self, agent: str) -> PlaybookVersion | None:
         """La version courante du playbook stocké de `agent`, relue à chaque tâche (#78).
 
@@ -387,6 +423,7 @@ class LocalExecutor(TaskExecutor):
         journal: RunJournal,
         playbook: PlaybookVersion | None,
         serveurs_mcp: tuple[ServeurMcp, ...] = (),
+        politique: PolitiqueOutils | None = None,
     ) -> TaskResult:
         """Réalise la tâche sous garde-fous (#9) : validation humaine, puis time-out.
 
@@ -409,10 +446,12 @@ class LocalExecutor(TaskExecutor):
         timeout_s = self._guardrails.timeout_s
         if timeout_s is None:
             return await self._realise(
-                agent, task, description, score, playbook, serveurs_mcp, journal
+                agent, task, description, score, playbook, serveurs_mcp, politique, journal
             )
         realisation = asyncio.create_task(
-            self._realise(agent, task, description, score, playbook, serveurs_mcp, journal),
+            self._realise(
+                agent, task, description, score, playbook, serveurs_mcp, politique, journal
+            ),
             name=f"maestro-realisation:{task.id}",
         )
         try:
@@ -482,6 +521,7 @@ class LocalExecutor(TaskExecutor):
         score: int,
         playbook: PlaybookVersion | None,
         serveurs_mcp: tuple[ServeurMcp, ...],
+        politique: PolitiqueOutils | None,
         journal: RunJournal,
     ) -> TaskResult:
         """Produit le livrable de `task` et le mue en `TaskResult` (échec consigné, jamais levé).
@@ -508,7 +548,7 @@ class LocalExecutor(TaskExecutor):
             self._consigne_debut(task, agent, tentative, max_tentatives, journal)
             try:
                 sortie, fichiers = await self._produce(
-                    agent, task, description, playbook, serveurs_mcp
+                    agent, task, description, playbook, serveurs_mcp, politique, journal
                 )
             except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
                 if not est_transitoire(exc):
@@ -613,6 +653,34 @@ class LocalExecutor(TaskExecutor):
             usage=StepUsage(),
         )
 
+    def _consigne_refus(
+        self,
+        task: Task,
+        agent: Agent,
+        outil: str,
+        raison: str,
+        journal: RunJournal,
+    ) -> None:
+        """Trace un refus d'outil au journal (#110) — donc au fil temps réel de la Control Tower.
+
+        Étape dédiée `<task.id>:refus-outil` (même modèle que `:validation` et
+        `:relance`), que le pont (`maestro.controltower.bridge`) mue en
+        activité d'agent : la violation est visible au moment où elle se
+        produit — l'agent, lui, a reçu le motif et poursuit sa tâche. `entree`
+        porte l'outil demandé, `sortie` le motif du refus. Usage nul : le coût
+        de la tâche est porté par son étape finale.
+        """
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_REFUS}",
+            nom=f"Outil refusé — {task.titre}",
+            agent=agent.nom,
+            role=agent.role,
+            statut=STATUT_REFUS_OUTIL,
+            entree=outil,
+            sortie=raison,
+            usage=StepUsage(),
+        )
+
     async def _produce(
         self,
         agent: Agent,
@@ -620,6 +688,8 @@ class LocalExecutor(TaskExecutor):
         description: str,
         playbook: PlaybookVersion | None,
         serveurs_mcp: tuple[ServeurMcp, ...] = (),
+        politique: PolitiqueOutils | None = None,
+        journal: RunJournal | None = None,
     ) -> tuple[str, tuple[ProducedFile, ...]]:
         """Produit le livrable de `task` : runtime outillé si le rôle en a un, sinon texte.
 
@@ -640,6 +710,13 @@ class LocalExecutor(TaskExecutor):
         résolvent dans l'environnement scopé de l'agent (#109) : son coffre
         seul quand un `SecretStore` provisionné est câblé — relu ici, à chaque
         tâche, comme le reste ; un coffre invalide est un échec propre.
+
+        `politique` (#110) ne s'applique de même qu'au chemin **outillé** (le
+        chemin texte n'expose aucun outil) : le runtime retire les outils
+        refusés du montage, écarte les serveurs MCP refusés, et le fournisseur
+        refuse au vol le reste — chaque violation est consignée au `journal`
+        (étape `:refus-outil`), donc visible au fil temps réel, sans jamais
+        condamner la tâche.
         """
         runtime = self._runtimes.get(agent.nom)
         if runtime is not None:
@@ -651,6 +728,14 @@ class LocalExecutor(TaskExecutor):
                     mcp_serveurs=serveurs_mcp,
                     environ=(
                         self._secrets.environ(agent.nom) if self._secrets is not None else None
+                    ),
+                    politique=politique,
+                    on_refus=(
+                        None
+                        if journal is None
+                        else lambda outil, raison: self._consigne_refus(
+                            task, agent, outil, raison, journal
+                        )
                     ),
                 )
                 return outcome.resume, outcome.fichiers

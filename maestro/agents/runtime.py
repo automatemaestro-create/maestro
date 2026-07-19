@@ -19,11 +19,12 @@ d'un éventuel repli).
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from maestro.agents.mcp import ServeurMcp, resolus
+from maestro.agents.permissions import PolitiqueOutils
 from maestro.config import Settings, load_settings
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import ProducedFile, isolated_workspace
@@ -153,6 +154,8 @@ class AgentRuntime:
         system_prompt: str | None = None,
         mcp_serveurs: Sequence[ServeurMcp] = (),
         environ: Mapping[str, str] | None = None,
+        politique: PolitiqueOutils | None = None,
+        on_refus: Callable[[str, str], None] | None = None,
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
@@ -177,6 +180,15 @@ class AgentRuntime:
         le **coffre scopé** de l'agent quand un `SecretStore` est câblé en
         amont (l'agent ne résout que ses propres secrets) ; None :
         l'environnement du process (comportement historique #104).
+
+        `politique` (#110) est la politique allow/deny de l'agent, appliquée
+        au **montage** : les outils intégrés refusés sont retirés de la
+        session, un serveur MCP refusé n'est jamais monté (ses secrets ne
+        sont pas même résolus). Elle est aussi confiée au fournisseur pour le
+        **refus au vol** du reste (outil MCP refusé individuellement) —
+        chaque refus est signalé via `on_refus(outil, raison)`, le canal de
+        traçage de l'appelant. None : aucune politique (comportement
+        historique).
         """
         description = description.strip()
         if not description:
@@ -185,6 +197,9 @@ class AgentRuntime:
             )
 
         prompt = _build_prompt(self._profile, description, format_sortie)
+        outils = self._tools if politique is None else politique.filtre_outils(self._tools)
+        if politique is not None:
+            mcp_serveurs = [s for s in mcp_serveurs if politique.serveur_autorise(s.nom)]
         # Résolution avant d'ouvrir l'espace : une déclaration non montable
         # échoue proprement sans créer (ni nettoyer) de répertoire de travail.
         montables = resolus(mcp_serveurs, os.environ if environ is None else environ)
@@ -194,8 +209,10 @@ class AgentRuntime:
                 model=self._model,
                 system_prompt=system_prompt or self._system_prompt,
                 workspace=ws.path,
-                tools=self._tools,
+                tools=outils,
                 mcp_serveurs=montables,
+                politique=politique,
+                on_refus=on_refus,
             )
             # Capture *dans* le contexte : hors `keep`, l'espace disparaît à la sortie.
             fichiers = ws.produced_files()

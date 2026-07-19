@@ -66,6 +66,7 @@ from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore
+from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
@@ -216,6 +217,7 @@ class OrchestrationEngine:
         capacites: CapacityStore | None = None,
         mcp: McpStore | None = None,
         secrets: SecretStore | None = None,
+        permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
@@ -245,6 +247,7 @@ class OrchestrationEngine:
                 capacites=capacites,
                 mcp=mcp,
                 secrets=secrets,
+                permissions=permissions,
                 relance=relance,
             )
         )
@@ -296,6 +299,13 @@ class OrchestrationEngine:
         que ses propres secrets ; coffre absent, résolution historique dans
         l'environnement du process.
 
+        Les **politiques de permissions par agent** (#110) sont branchées sur
+        le dépôt configuré (`MAESTRO_PERMISSIONS_DIR`, sinon
+        `core/permissions/`), relu à chaud à chaque tâche : allow/deny par
+        outil (et par serveur MCP) appliqué à l'exécution — outils refusés
+        retirés de la session, serveurs refusés jamais montés, violation au
+        vol refusée proprement et tracée sans condamner le run.
+
         La **relance automatique** (#91, ENF-06) est **armée par défaut**
         (`PolitiqueRelance()` : 3 tentatives, backoff exponentiel) : sur ce
         moteur — celui des vrais runs —, un aléa fournisseur transitoire ne
@@ -324,6 +334,7 @@ class OrchestrationEngine:
             capacites=CapacityStore.default(settings),
             mcp=McpStore.default(settings),
             secrets=SecretStore.default(settings),
+            permissions=PermissionStore.default(settings),
             relance=relance,
             max_parallele=max_parallele,
         )
