@@ -7,9 +7,12 @@ C'est l'isolation *au niveau du système de fichiers* — suffisante pour que de
 parallèles n'écrasent pas leurs fichiers (le pendant de « branche Git par tâche »,
 docs/02 §7).
 
-Évolution prévue (hors POC) : adosser cet espace à un **conteneur Docker jetable** par
-tâche (isolation des processus/réseau, plafonds de ressources), sans changer ce
-contrat — `Workspace` reste la frontière que voit l'agent.
+Le renfort prévu est livré en opt-in par le ticket #108 : en mode isolé
+(`MAESTRO_ISOLATION=conteneur`), l'exécution outillée qui travaille dans cet espace
+tourne dans un **conteneur Docker durci** jetable (isolation des processus/réseau,
+plafonds de ressources — cf. `maestro.sandbox.container`), sans changer ce contrat —
+`Workspace` reste la frontière que voit l'agent, le répertoire étant monté dans le
+conteneur.
 """
 
 from __future__ import annotations
