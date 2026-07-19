@@ -37,6 +37,7 @@ from celery.signals import celeryd_after_setup
 from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.mcp import McpStore
+from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import AgentStore, catalogue
@@ -181,6 +182,7 @@ def _executeur() -> LocalExecutor:
             capacites=CapacityStore.default(settings),
             mcp=McpStore.default(settings),
             secrets=SecretStore.default(settings),
+            permissions=PermissionStore.default(settings),
             relance=_relance,
         )
     return _executor

@@ -135,6 +135,7 @@ omit = [
     # différé au lot tests + doc (#93).
     "maestro/temporal_demo.py",
     # Shim du mode isolé (ticket #108) : fine couche d'invocation vers `docker run`,
-    # exige un démon Docker vivant — smoke test différé au lot tests + doc (#107).
+    # exige un démon Docker vivant — smoke test en contrepartie (#107,
+    # tests/test_isolation.py).
     "maestro/sandbox/shim.py",
 ]

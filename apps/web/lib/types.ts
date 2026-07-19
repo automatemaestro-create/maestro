@@ -215,6 +215,17 @@ export type ServeurMcp = {
 };
 
 /**
+ * La politique de permissions d'un agent (`PolitiqueOutils.to_dict`, #110) :
+ * allow/deny par outil — noms d'outils intégrés, `mcp__<serveur>` pour un
+ * serveur MCP entier, `mcp__<serveur>__<outil>` pour un outil MCP précis.
+ * `deny` l'emporte ; `allow` vide = tout ce que le profil expose est permis.
+ */
+export type PolitiquePermissions = {
+  allow: string[];
+  deny: string[];
+};
+
+/**
  * Une fiche du catalogue d'agents (`GET /api/catalogue`, #72) : les agents par
  * défaut du code (`source` « defaut ») et les personnalisés persistés
  * (« personnalise »). Les dates ne sont posées que sur les personnalisés ;
@@ -222,6 +233,9 @@ export type ServeurMcp = {
  * `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
  * `mcp_serveurs` (#104) liste les serveurs MCP déclarés (lecture seule à ce
  * lot) ; `mcp_erreur` porte la cause si la déclaration stockée est invalide.
+ * `permissions` (#110) porte la politique allow/deny effective appliquée à
+ * l'exécution (null : aucune politique — tout permis) ; `permissions_erreur`
+ * la cause si la politique stockée est invalide.
  */
 export type AgentCatalogue = {
   nom: string;
@@ -234,6 +248,8 @@ export type AgentCatalogue = {
   modifie_le: string | null;
   mcp_serveurs: ServeurMcp[];
   mcp_erreur: string | null;
+  permissions: PolitiquePermissions | null;
+  permissions_erreur: string | null;
 };
 
 /** La fiche avec sa définition complète (`GET /api/catalogue/{nom}`). */

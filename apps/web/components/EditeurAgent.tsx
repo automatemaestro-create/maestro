@@ -406,6 +406,7 @@ export function EditeurAgent({
       </section>
 
       <SectionServeursMcp fiche={fiche} />
+      <SectionPermissions fiche={fiche} />
 
       <section
         aria-label={`Suppression de ${nom}`}
@@ -445,6 +446,92 @@ export function EditeurAgent({
           </button>
         )}
       </section>
+    </div>
+  );
+}
+
+/**
+ * La politique de permissions d'un agent (#110), en lecture seule : la
+ * politique allow/deny par outil que le moteur applique à l'exécution
+ * (`core/permissions/<agent>.json`, versionnée avec le dépôt). Sans
+ * politique, rien n'est affiché quand tout va bien — le comportement par
+ * défaut (tous les outils du profil) n'a pas besoin d'un panneau ; une
+ * politique invalide affiche sa cause exacte.
+ */
+function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
+  if (fiche.permissions_erreur === null && fiche.permissions === null) {
+    return null;
+  }
+  return (
+    <section aria-label={`Permissions de ${fiche.nom}`}>
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+        🛡️ Permissions
+      </h3>
+      {fiche.permissions_erreur !== null ? (
+        <p
+          role="alert"
+          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
+        >
+          Politique invalide : {fiche.permissions_erreur}
+        </p>
+      ) : (
+        fiche.permissions !== null && (
+          <div className="flex flex-col gap-2">
+            <ListeEntreesPolitique
+              libelle="allow"
+              vide="vide — tout ce que le profil expose est permis (hors deny)"
+              entrees={fiche.permissions.allow}
+              classeEntree="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+            />
+            <ListeEntreesPolitique
+              libelle="deny"
+              vide="vide — aucun outil interdit"
+              entrees={fiche.permissions.deny}
+              classeEntree="bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+            />
+          </div>
+        )
+      )}
+      <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+        Politique effective, appliquée à l&apos;exécution (deny l&apos;emporte ;
+        un appel refusé est tracé au fil d&apos;activité sans condamner le
+        run). Déclarée dans{" "}
+        <code className="font-mono">core/permissions/{fiche.nom}.json</code> —
+        lecture seule à ce lot.
+      </p>
+    </section>
+  );
+}
+
+/** Une liste d'entrées (allow ou deny) de la politique, ou son état « vide ». */
+function ListeEntreesPolitique({
+  libelle,
+  vide,
+  entrees,
+  classeEntree,
+}: {
+  libelle: string;
+  vide: string;
+  entrees: string[];
+  classeEntree: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
+      <span className="font-mono font-medium text-neutral-600 dark:text-neutral-400">
+        {libelle}
+      </span>
+      {entrees.length === 0 ? (
+        <span className="text-neutral-500 dark:text-neutral-400">{vide}</span>
+      ) : (
+        entrees.map((entree) => (
+          <code
+            key={entree}
+            className={`rounded-full px-2 py-0.5 font-mono ${classeEntree}`}
+          >
+            {entree}
+          </code>
+        ))
+      )}
     </div>
   );
 }
@@ -589,6 +676,7 @@ function FicheDefaut({ fiche }: { fiche: AgentCatalogueDetail }) {
         </p>
       </section>
       <SectionServeursMcp fiche={fiche} />
+      <SectionPermissions fiche={fiche} />
       <section aria-label={`Playbook du code de ${fiche.nom}`}>
         <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
           📖 Playbook du code

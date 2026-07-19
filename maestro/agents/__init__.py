@@ -43,6 +43,13 @@ le **coffre par agent** (`maestro.agents.secrets`, dépôt local `core/secrets/`
 jamais versionné) : dès qu'il est provisionné, chaque agent ne résout ses
 références `${VAR}` que dans son propre coffre, et toute valeur servie est
 masquée si elle réapparaît en sortie (journal, traces, livrables).
+
+Les **permissions** d'un agent (#110) se déclarent hors du code de la même
+façon (`maestro.agents.permissions`, dépôt `core/permissions/<agent>.json`
+versionné) : une politique allow/deny par outil (et par serveur MCP), relue à
+chaud à chaque tâche et appliquée à l'exécution — outils refusés retirés de la
+session, serveurs refusés jamais montés, violation au vol refusée proprement
+et tracée sans condamner le run.
 """
 
 from __future__ import annotations
@@ -59,6 +66,7 @@ from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
 from maestro.agents.devops import DEVOPS_PROFILE
 from maestro.agents.mcp import TYPES_SERVEUR, McpStore, ServeurMcp
+from maestro.agents.permissions import PermissionStore, PolitiqueOutils
 from maestro.agents.playbooks import (
     PLAYBOOK_DEFAUTS,
     PlaybookDefaut,
@@ -147,9 +155,11 @@ __all__ = [
     "CapacityStore",
     "JaugeInstances",
     "McpStore",
+    "PermissionStore",
     "PlaybookDefaut",
     "PlaybookStore",
     "PlaybookVersion",
+    "PolitiqueOutils",
     "RoleProfile",
     "SecretStore",
     "ServeurMcp",

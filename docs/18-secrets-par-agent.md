@@ -12,7 +12,8 @@ sans lui, rien ne change.
 > **Pourquoi** : jusqu'ici tout secret était visible de tout le process
 > (`os.environ`), et chaque intégration MCP (#101 : Slack #105, GitLab #106…)
 > en ajoute. En cas de compromission d'un agent ou de fuite de journal, tout
-> partait d'un coup. Tests différés → #107 (lot final du parent).
+> partait d'un coup. Tests : `tests/test_secrets.py` (#107) ; modèle de
+> menace : [docs/19](./19-securite-modele-de-menace.md).
 
 ---
 
@@ -106,9 +107,10 @@ EOF
 
 ## 5. Vérification du masquage
 
-Le critère « masquage vérifié » est instrumenté par les tests différés du lot
-final (#107) : valeur de coffre réapparaissant dans une sortie d'agent →
-`[secret masqué]` au journal, dans l'export Langfuse et les événements Control
-Tower ; scoping → serveur indisponible pour l'agent non détenteur. En
-attendant, la vérification manuelle tient en un run avec coffre provisionné et
+Le critère « masquage vérifié » est instrumenté par les tests du lot final
+(#107, `tests/test_secrets.py`) : valeur de coffre réapparaissant dans une
+sortie d'agent → `[secret masqué]` au journal (qui alimente l'export Langfuse
+et les événements Control Tower) ; scoping → serveur indisponible pour l'agent
+non détenteur, même si la variable existe dans l'environnement du process. En
+complément, la vérification manuelle tient en un run avec coffre provisionné et
 `maestro-run --trace` : aucun `glpat-…`/`xoxb-…` ne doit apparaître en clair.

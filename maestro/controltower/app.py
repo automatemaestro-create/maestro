@@ -34,8 +34,10 @@ Endpoints :
 - `POST /api/playbooks/{agent}/restaurer` — retour arrière (EF-25) : republie
   une version passée comme nouvelle version courante ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
-  défaut du code et les personnalisés persistés, avec leur provenance et leurs
-  serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) ;
+  défaut du code et les personnalisés persistés, avec leur provenance, leurs
+  serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
+  leur politique de permissions effective (#110, lecture seule —
+  `permissions`/`permissions_erreur`) ;
 - `GET  /api/catalogue/{nom}` — la définition complète d'un agent (playbook
   compris) ;
 - `POST /api/catalogue` — crée un agent personnalisé (persisté hors du code,
@@ -76,6 +78,7 @@ from pydantic import BaseModel
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore
+from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
 from maestro.config import load_settings
@@ -239,6 +242,7 @@ def create_app(
     chat_repondeur: RepondeurChat | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
+    permissions: PermissionStore | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -276,11 +280,18 @@ def create_app(
     **lecture seule** sur les fiches du catalogue (`mcp_serveurs`, valeurs de
     secrets masquées) — par défaut celui de la config (`MAESTRO_MCP_DIR`, sinon
     `core/mcp/` du dépôt) : le même que montent moteur et workers.
+
+    `permissions` (#110) est le dépôt des politiques allow/deny par agent,
+    affichées en **lecture seule** sur les fiches du catalogue (`permissions`,
+    la politique effective appliquée à l'exécution) — par défaut celui de la
+    config (`MAESTRO_PERMISSIONS_DIR`, sinon `core/permissions/` du dépôt) :
+    le même que relisent moteur et workers.
     """
     bus = bus if bus is not None else InMemoryEventBus()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
     mcp = mcp if mcp is not None else McpStore.default()
+    permissions = permissions if permissions is not None else PermissionStore.default()
     state = (
         state
         if state is not None
@@ -638,6 +649,24 @@ def create_app(
             return {"mcp_serveurs": [], "mcp_erreur": str(exc)}
         return {"mcp_serveurs": [s.to_dict() for s in serveurs], "mcp_erreur": None}
 
+    def _volet_permissions(nom: str) -> dict[str, Any]:
+        """Le volet « permissions » d'une fiche catalogue (#110), lecture seule.
+
+        `permissions` porte la politique allow/deny effective (celle que le
+        moteur applique à l'exécution — None : aucune politique, tout ce que
+        le profil expose est permis) ; `permissions_erreur` porte la cause
+        exacte si la politique stockée est invalide — même contrat de
+        visibilité que `mcp_erreur`.
+        """
+        try:
+            politique = permissions.lire(nom)
+        except ValueError as exc:
+            return {"permissions": None, "permissions_erreur": str(exc)}
+        return {
+            "permissions": politique.to_dict() if politique is not None else None,
+            "permissions_erreur": None,
+        }
+
     def _fiche_defaut(agent: Agent, *, avec_playbook: bool) -> dict[str, Any]:
         """La fiche catalogue d'un agent par défaut : sa définition « du code ».
 
@@ -655,6 +684,7 @@ def create_app(
             "cree_le": None,
             "modifie_le": None,
             **_volet_mcp(agent.nom),
+            **_volet_permissions(agent.nom),
         }
         if avec_playbook:
             fiche["playbook"] = agent.prompt_systeme
@@ -667,6 +697,7 @@ def create_app(
         fiche = definition.to_dict(avec_playbook=avec_playbook)
         fiche["source"] = "personnalise"
         fiche.update(_volet_mcp(definition.nom))
+        fiche.update(_volet_permissions(definition.nom))
         return fiche
 
     def _personnalise_ou_none(nom: str) -> AgentDefinition | None:

@@ -25,7 +25,7 @@ ambiant.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -34,6 +34,9 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    HookContext,
+    HookJSONOutput,
+    HookMatcher,
     McpServerConfig,
     McpServerStatus,
     ResultMessage,
@@ -41,6 +44,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
     query,
 )
+from claude_agent_sdk.types import HookInput
 
 from maestro.config import ConfigError, Settings
 from maestro.providers.base import (
@@ -52,8 +56,9 @@ from maestro.providers.base import (
 )
 from maestro.sandbox.container import IsolationConfig
 
-if TYPE_CHECKING:  # import de typage seul — pas de dépendance d'exécution vers agents
+if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
+    from maestro.agents.permissions import PolitiqueOutils
 from maestro.providers.registry import register
 from maestro.telemetry import StepUsage, report_usage
 
@@ -202,6 +207,8 @@ class ClaudeProvider(ModelProvider):
         workspace: Path,
         tools: Sequence[str],
         mcp_serveurs: Sequence[ServeurMcp] = (),
+        politique: PolitiqueOutils | None = None,
+        on_refus: Callable[[str, str], None] | None = None,
     ) -> str:
         """Lance une exécution *agentique outillée* de l'Agent SDK dans `workspace`.
 
@@ -234,6 +241,14 @@ class ClaudeProvider(ModelProvider):
         `MAESTRO_SANDBOX_*` que le shim traduit en `docker run` (accès accordés
         énumérés dans `maestro.sandbox.container`, doc : docs/17). Le chemin texte
         (`generate`) n'est jamais isolé : il n'expose aucun outil, c'est son contrat.
+
+        `politique` (#110) arme le **refus au vol** : un hook PreToolUse — le
+        seul point de contrôle consulté sous `bypassPermissions` — confronte
+        chaque appel d'outil à la politique allow/deny de l'agent. Un appel
+        interdit est refusé avec son motif (le modèle le lit et poursuit) et
+        signalé via `on_refus` — jamais mué en échec de run. Les outils déjà
+        filtrés au montage ne repassent par ce hook que par sûreté : son vrai
+        travail est l'outil MCP refusé individuellement sur un serveur monté.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -252,12 +267,55 @@ class ClaudeProvider(ModelProvider):
             max_turns=self._MAX_TURNS,
             mcp_servers={s.nom: _config_mcp_sdk(s) for s in mcp_serveurs},
             strict_mcp_config=True,
+            hooks=(
+                {"PreToolUse": [HookMatcher(hooks=[_hook_permissions(politique, on_refus)])]}
+                if politique is not None
+                else None
+            ),
         )
         if not mcp_serveurs:
             return await _collect_response(prompt, options)
         return await _collect_response_pilotee(
             prompt, options, attendus=frozenset(s.nom for s in mcp_serveurs)
         )
+
+
+def _hook_permissions(
+    politique: PolitiqueOutils, on_refus: Callable[[str, str], None] | None
+) -> Callable[[HookInput, str | None, HookContext], Any]:
+    """Le hook PreToolUse qui applique la politique allow/deny de l'agent (#110).
+
+    Consulté par le CLI avant **chaque** appel d'outil, y compris sous
+    `bypassPermissions` (seul point de contrôle restant dans ce mode). Un
+    appel permis rend une sortie vide (le flux normal continue) ; un appel
+    interdit rend un `permissionDecision: deny` motivé — le modèle lit le
+    motif et poursuit sa tâche — et signale la violation via `on_refus`
+    (canal de traçage de l'exécuteur : journal + fil temps réel). Le hook ne
+    lève jamais : un traçage en échec est avalé — l'observation ne casse pas
+    l'exécution observée.
+    """
+
+    async def hook(
+        input_data: HookInput, tool_use_id: str | None, context: HookContext
+    ) -> HookJSONOutput:
+        outil = str(input_data.get("tool_name") or "")
+        if not outil or politique.autorise(outil):
+            return {}
+        raison = politique.raison_refus(outil)
+        if on_refus is not None:
+            try:
+                on_refus(outil, raison)
+            except Exception:  # noqa: BLE001 — le traçage ne casse jamais l'exécution
+                pass
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": raison,
+            }
+        }
+
+    return hook
 
 
 async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:

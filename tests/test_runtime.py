@@ -51,7 +51,8 @@ class WritingProvider(ModelProvider):
         raise AssertionError("un rôle outillé doit passer par run_agent, pas generate")
 
     async def run_agent(
-        self, prompt, *, model, system_prompt=None, workspace, tools, mcp_serveurs=()
+        self, prompt, *, model, system_prompt=None, workspace, tools,
+        mcp_serveurs=(), politique=None, on_refus=None,
     ):
         self.calls.append(
             {

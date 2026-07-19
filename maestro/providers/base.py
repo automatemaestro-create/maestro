@@ -12,14 +12,15 @@ registre (voir `maestro.providers.registry`) — sans toucher au moteur.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-if TYPE_CHECKING:  # import de typage seul — pas de dépendance d'exécution vers agents
+if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
+    from maestro.agents.permissions import PolitiqueOutils
 
 
 class UnsupportedCapability(RuntimeError):
@@ -147,6 +148,8 @@ class ModelProvider(ABC):
         workspace: Path,
         tools: Sequence[str],
         mcp_serveurs: Sequence[ServeurMcp] = (),
+        politique: PolitiqueOutils | None = None,
+        on_refus: Callable[[str, str], None] | None = None,
     ) -> str:
         """Exécution *agentique outillée* : renvoie le compte-rendu final de l'agent.
 
@@ -162,6 +165,16 @@ class ModelProvider(ABC):
         `McpServerUnavailable` si l'un d'eux est injoignable. La déclaration
         reste agnostique : la traduction vers le format natif vit ici, jamais
         dans la logique d'agent.
+
+        `politique` (#110) est la politique allow/deny de l'agent, **déjà
+        appliquée en amont** au montage (outils filtrés, serveurs MCP refusés
+        non montés) : le fournisseur qui la reçoit doit en plus **refuser au
+        vol** tout appel d'outil qu'elle interdit (ex. un outil MCP refusé
+        individuellement sur un serveur monté) — refus propre servi au modèle,
+        qui poursuit sa tâche ; la violation n'est jamais fatale au run. Chaque
+        refus est signalé via `on_refus(outil, raison)` quand il est fourni —
+        c'est le canal de traçage de l'appelant (journal, fil temps réel) ; un
+        échec du callback ne doit jamais casser l'exécution observée.
 
         Capacité **optionnelle** : la base la refuse (`UnsupportedCapability`) ; un
         fournisseur outillé (Claude via l'Agent SDK) la surcharge. Le moteur reste
