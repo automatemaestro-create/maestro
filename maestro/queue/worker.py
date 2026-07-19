@@ -38,6 +38,7 @@ from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.mcp import McpStore
 from maestro.agents.playbooks import PlaybookStore
+from maestro.agents.secrets import SecretStore
 from maestro.agents.store import AgentStore, catalogue
 from maestro.config import load_settings
 from maestro.engine.executor import LocalExecutor, TaskResult
@@ -161,7 +162,11 @@ def _executeur() -> LocalExecutor:
     d'instances, lui, borne les exécutions simultanées **par process** au POC
     (pas encore de coordination inter-workers — cf. maestro.agents.capacity).
     Les **serveurs MCP par agent** (#104) sont relus de la même façon
-    (`MAESTRO_MCP_DIR`) et montés sur les exécutions outillées de l'agent.
+    (`MAESTRO_MCP_DIR`) et montés sur les exécutions outillées de l'agent ;
+    leurs références `${VAR}` se résolvent dans le **coffre de secrets par
+    agent** (#109, `MAESTRO_SECRETS_DIR` — stockage partagé, même exigence que
+    les autres dépôts) dès qu'il est provisionné : un agent ne voit que les
+    siens, côté workers comme en local.
     """
     global _executor
     if _executor is None:
@@ -175,6 +180,7 @@ def _executeur() -> LocalExecutor:
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
             mcp=McpStore.default(settings),
+            secrets=SecretStore.default(settings),
             relance=_relance,
         )
     return _executor

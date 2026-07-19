@@ -27,10 +27,12 @@ fournisseur…) est consigné au journal (#8, étapes `notification` /
 validation. Symétriquement, son coût est consigné sur son étape propre, hors du
 rapport du run (le `RunReport` est déjà agrégé quand la notification part).
 
-Côté secrets : le token Slack vit dans l'environnement (`${SLACK_BOT_TOKEN}`,
-résolu au montage — #104) ; il ne figure ni dans la déclaration versionnée, ni
-dans les prompts confiés à l'agent, et le journal l'expurgerait de toute façon
-(`maestro.telemetry.redact_secrets`, valeur d'env + motif `xox…`).
+Côté secrets : le token Slack est référencé (`${SLACK_BOT_TOKEN}`) et résolu au
+montage (#104) — depuis le **coffre de l'agent notificateur** quand le coffre
+par agent (#109) est provisionné, sinon depuis l'environnement du process. Il
+ne figure ni dans la déclaration versionnée, ni dans les prompts confiés à
+l'agent, et le journal l'expurgerait de toute façon
+(`maestro.telemetry.redact_secrets`, valeur servie + motif `xox…`).
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from typing import Any
 from maestro.agents import default_runtimes
 from maestro.agents.mcp import McpStore
 from maestro.agents.runtime import AgentRuntime
+from maestro.agents.secrets import SecretStore
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.engine.executor import STATUT_ECHEC, STATUT_TERMINEE
 from maestro.engine.guardrails import DemandeValidation, Validateur
@@ -88,11 +91,16 @@ class NotificateurRun:
         agent: str,
         canal: str,
         mcp: McpStore,
+        secrets: SecretStore | None = None,
     ) -> None:
         self._runtime = runtime
         self._agent = agent
         self._canal = canal
         self._mcp = mcp
+        # Coffre par agent (#109) : le token Slack se résout dans le coffre de
+        # l'agent notificateur quand il est provisionné. None : environnement
+        # du process (comportement historique).
+        self._secrets = secrets
 
     @classmethod
     def default(cls, agent: str = "devops", settings: Settings | None = None) -> NotificateurRun:
@@ -132,7 +140,9 @@ class NotificateurRun:
                 f"({mcp.racine / f'{agent}.json'}) : le notificateur n'aurait aucun "
                 "outil pour poster — déclarez le serveur Slack (docs/04 §6)."
             )
-        return cls(runtime, agent=agent, canal=canal, mcp=mcp)
+        return cls(
+            runtime, agent=agent, canal=canal, mcp=mcp, secrets=SecretStore.default(settings)
+        )
 
     async def fin_de_run(self, report: Any, journal: RunJournal) -> None:
         """Poste le bilan de `report` (un `RunReport`) : tâches, usage, run_id.
@@ -195,6 +205,11 @@ class NotificateurRun:
                     _mission_publication(message, self._canal),
                     system_prompt=_PROMPT_SUPERVISION.format(role=self._runtime.profile.role),
                     mcp_serveurs=serveurs,
+                    environ=(
+                        self._secrets.environ(self._agent)
+                        if self._secrets is not None
+                        else None
+                    ),
                 )
             except Exception as exc:  # best-effort : la supervision ne casse jamais le run
                 statut, sortie, erreur = STATUT_ECHEC, "", str(exc)

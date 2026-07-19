@@ -28,6 +28,11 @@ yarn-error.log*
 *.pem
 *.key
 secrets/
+# Coffre des secrets par agent (#109) : seul le README est versionné, jamais
+# un coffre <agent>.json.
+!core/secrets/
+core/secrets/*
+!core/secrets/README.md
 
 # --- OS / éditeurs ---
 .DS_Store

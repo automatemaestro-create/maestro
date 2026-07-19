@@ -37,6 +37,12 @@ Les **serveurs MCP** d'un agent (#104) se déclarent hors du code
 (`maestro.agents.mcp`, dépôt `core/mcp/<agent>.json` versionné — secrets par
 référence `${VAR}`, jamais en clair) et sont relus à chaud à chaque tâche puis
 montés par la couche SDK sur les exécutions outillées de l'agent.
+
+Les **secrets** de ces intégrations (#109) sortent de l'environnement global via
+le **coffre par agent** (`maestro.agents.secrets`, dépôt local `core/secrets/`
+jamais versionné) : dès qu'il est provisionné, chaque agent ne résout ses
+références `${VAR}` que dans son propre coffre, et toute valeur servie est
+masquée si elle réapparaît en sortie (journal, traces, livrables).
 """
 
 from __future__ import annotations
@@ -67,6 +73,7 @@ from maestro.agents.runtime import (
     AgentRuntime,
     RoleProfile,
 )
+from maestro.agents.secrets import SecretStore
 from maestro.agents.store import (
     NOMS_RESERVES,
     AgentDefinition,
@@ -144,6 +151,7 @@ __all__ = [
     "PlaybookStore",
     "PlaybookVersion",
     "RoleProfile",
+    "SecretStore",
     "ServeurMcp",
     "agents_pour",
     "avec_playbooks",

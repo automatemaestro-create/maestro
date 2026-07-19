@@ -30,6 +30,7 @@ from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore, ServeurMcp
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
+from maestro.agents.secrets import SecretStore
 from maestro.engine.guardrails import DemandeValidation, Guardrails
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.orchestrator.schema import Task
@@ -188,6 +189,7 @@ class LocalExecutor(TaskExecutor):
         playbooks: PlaybookStore | None = None,
         capacites: CapacityStore | None = None,
         mcp: McpStore | None = None,
+        secrets: SecretStore | None = None,
         relance: PolitiqueRelance | None = None,
     ) -> None:
         self._provider = provider
@@ -196,6 +198,12 @@ class LocalExecutor(TaskExecutor):
         # par la couche SDK sur les exécutions outillées de l'agent. None :
         # aucun serveur (comportement historique).
         self._mcp = mcp
+        # Coffre des secrets par agent (#109) : quand il est câblé ET provisionné,
+        # les références ${VAR} des déclarations MCP se résolvent dans le coffre
+        # de l'agent seulement — un agent ne voit que ses propres secrets. None,
+        # ou coffre non provisionné : résolution dans l'environnement du process
+        # (comportement historique #104).
+        self._secrets = secrets
         # Relance automatique (#91, ENF-06) : les échecs transitoires de la
         # réalisation (aléa fournisseur — crash du sous-processus SDK, erreur
         # immédiate) sont relancés selon cette politique, avec backoff. None :
@@ -628,7 +636,10 @@ class LocalExecutor(TaskExecutor):
         `serveurs_mcp` (#104) n'équipe que le chemin **outillé** : le chemin
         texte n'expose aucun outil (c'est son contrat), MCP compris — un agent
         sans runtime outillé, ou un repli texte-seul, exécute sans ses serveurs
-        (comportement documenté, docs/04 §6).
+        (comportement documenté, docs/04 §6). Leurs références `${VAR}` se
+        résolvent dans l'environnement scopé de l'agent (#109) : son coffre
+        seul quand un `SecretStore` provisionné est câblé — relu ici, à chaque
+        tâche, comme le reste ; un coffre invalide est un échec propre.
         """
         runtime = self._runtimes.get(agent.nom)
         if runtime is not None:
@@ -638,6 +649,9 @@ class LocalExecutor(TaskExecutor):
                     format_sortie=task.format_sortie,
                     system_prompt=playbook.contenu if playbook is not None else None,
                     mcp_serveurs=serveurs_mcp,
+                    environ=(
+                        self._secrets.environ(agent.nom) if self._secrets is not None else None
+                    ),
                 )
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:

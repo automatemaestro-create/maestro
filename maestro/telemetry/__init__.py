@@ -6,7 +6,9 @@ Six briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
   modèle (tokens, coût, durée, outils) et son canal de remontée par contexte —
   les fournisseurs signalent, l'appelant récolte, sans changer la signature de
   `ModelProvider` ;
-- `redact_secrets` : rédaction des secrets avant toute journalisation ;
+- `redact_secrets` : rédaction des secrets avant toute journalisation —
+  `enregistre_secret` (#109) y ajoute à chaud les secrets réellement servis
+  (coffre par agent, références `${VAR}` résolues) ;
 - `RunJournal`/`StepRecord` : le journal structuré d'une exécution — une ligne
   JSON par étape sur le logger `maestro.trace` — base préparant l'intégration
   future de Langfuse ;
@@ -42,7 +44,7 @@ from maestro.telemetry.langfuse import (
     evaluer_run_langfuse,
     scores_depuis_journal,
 )
-from maestro.telemetry.redact import MARQUEUR_SECRET, redact_secrets
+from maestro.telemetry.redact import MARQUEUR_SECRET, enregistre_secret, redact_secrets
 from maestro.telemetry.usage import (
     StepUsage,
     UsageCollector,
@@ -64,6 +66,7 @@ __all__ = [
     "UsageCollector",
     "activer_export_langfuse",
     "collect_usage",
+    "enregistre_secret",
     "evaluer_run_langfuse",
     "redact_secrets",
     "report_usage",
