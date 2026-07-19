@@ -60,6 +60,16 @@ class Settings:
     #: Racine du dépôt des serveurs MCP déclarés par agent (`MAESTRO_MCP_DIR`), ou
     #: None : le dossier `core/mcp/` du dépôt (cf. maestro.agents.mcp, #104).
     mcp_dir: str | None = None
+    #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None :
+    #: exécution directe sur l'hôte (défaut). Seule valeur reconnue : `conteneur`.
+    #: Interprété et validé par la couche sandbox (maestro.sandbox.container, #108).
+    isolation: str | None = None
+    #: Image Docker du mode isolé (`MAESTRO_ISOLATION_IMAGE`), ou None : l'image
+    #: dédiée par défaut (`maestro-sandbox:latest`, construite depuis infra/sandbox/).
+    isolation_image: str | None = None
+    #: Réseau Docker du mode isolé (`MAESTRO_ISOLATION_RESEAU`), ou None : `bridge`
+    #: (sortant seul, aucun port publié). `none` coupe tout réseau (diagnostic).
+    isolation_reseau: str | None = None
     #: Canal Slack des notifications de supervision (`MAESTRO_SLACK_CANAL`), ou
     #: None : le notificateur de run (#105, maestro.supervision) refuse alors de
     #: se construire — pas de canal, pas de notification.
@@ -96,6 +106,10 @@ class Settings:
             chat_dir=(os.getenv("MAESTRO_CHAT_DIR") or "").strip() or None,
             capacite_dir=(os.getenv("MAESTRO_CAPACITE_DIR") or "").strip() or None,
             mcp_dir=(os.getenv("MAESTRO_MCP_DIR") or "").strip() or None,
+            isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
+            isolation_image=(os.getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
+            isolation_reseau=(os.getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()
+            or None,
             slack_canal=(os.getenv("MAESTRO_SLACK_CANAL") or "").strip() or None,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             openai_base_url=os.getenv("OPENAI_BASE_URL", "").strip()

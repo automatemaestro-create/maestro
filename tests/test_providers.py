@@ -47,6 +47,7 @@ def test_claude_from_settings_reads_optional_api_key():
         anthropic_api_key = None
         claude_auth_mode = None
         claude_oauth_token = None
+        isolation = None  # mode isolé (#108) non demandé : exécution sur l'hôte
 
     provider = ClaudeProvider.from_settings(_Settings())
     assert provider.credentials.api_key is None

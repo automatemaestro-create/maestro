@@ -29,6 +29,21 @@ Redis sert de **broker et backend de résultats** à la file de tâches
 ([`maestro/queue/`](../maestro/queue/), ticket #41) — la même instance portera
 le pub/sub temps réel (tickets suivants).
 
+## Image du mode isolé (ticket #108)
+
+[`sandbox/Dockerfile`](./sandbox/Dockerfile) définit l'**image dédiée** du mode
+isolé : quand `MAESTRO_ISOLATION=conteneur` est posé dans le `.env`, chaque
+exécution outillée d'agent tourne dans un conteneur durci jetable construit sur
+cette image (CLI Claude Code + outillage minimal, utilisateur non-root). À
+construire une fois :
+
+```bash
+docker build -t maestro-sandbox:latest infra/sandbox
+```
+
+Accès accordés, activation et limites :
+[docs/17-isolation-execution.md](../docs/17-isolation-execution.md).
+
 ## Temporal (workflows durables — ticket #94)
 
 Le service `temporal` démarre un serveur **Temporal de développement** tout-en-un

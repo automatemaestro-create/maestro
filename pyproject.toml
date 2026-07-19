@@ -80,6 +80,10 @@ maestro-controltower-demo = "maestro.controltower.demo:main"
 # Démo : workflow + worker hello-world contre le Temporal local (socle des
 # workflows durables, ticket #94).
 maestro-temporal-demo = "maestro.temporal_demo:main"
+# Shim du mode isolé (ticket #108) : passé en `cli_path` à l'Agent SDK quand
+# MAESTRO_ISOLATION=conteneur, il relaie le lancement du CLI vers `docker run`
+# durci. Invoqué par le fournisseur, pas à la main.
+maestro-sandbox-shim = "maestro.sandbox.shim:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).
@@ -130,4 +134,7 @@ omit = [
     # Démo Temporal (ticket #94) : exige un serveur Temporal vivant — smoke test
     # différé au lot tests + doc (#93).
     "maestro/temporal_demo.py",
+    # Shim du mode isolé (ticket #108) : fine couche d'invocation vers `docker run`,
+    # exige un démon Docker vivant — smoke test différé au lot tests + doc (#107).
+    "maestro/sandbox/shim.py",
 ]

@@ -50,6 +50,7 @@ from maestro.providers.base import (
     ModelProvider,
     TurnLimitReached,
 )
+from maestro.sandbox.container import IsolationConfig
 
 if TYPE_CHECKING:  # import de typage seul — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -106,8 +107,14 @@ class ClaudeProvider(ModelProvider):
     #: Plafond de tours d'une exécution agentique (garde-fou anti-boucle, docs/02 §7).
     _MAX_TURNS: ClassVar[int] = 40
 
-    def __init__(self, credentials: Credentials) -> None:
+    def __init__(
+        self, credentials: Credentials, *, isolation: IsolationConfig | None = None
+    ) -> None:
         self._credentials = credentials
+        # Mode isolé (#108) : quand il est actif, `run_agent` lance le CLI dans un
+        # conteneur durci via le shim (`cli_path`). None : exécution sur l'hôte
+        # (comportement historique, défaut).
+        self._isolation = isolation
 
     @property
     def credentials(self) -> Credentials:
@@ -116,11 +123,13 @@ class ClaudeProvider(ModelProvider):
 
     @classmethod
     def from_settings(cls, settings: Settings) -> ClaudeProvider:
-        """Construit le fournisseur en dérivant les credentials de la config.
+        """Construit le fournisseur en dérivant credentials et isolation de la config.
 
         Applique la bascule des modes (`_resolve_auth_mode`) puis valide le mode
         retenu : `api_key` exige `ANTHROPIC_API_KEY` ; `subscription` n'exige rien
         (auth par abonnement Claude Code, ou `CLAUDE_CODE_OAUTH_TOKEN` en CI).
+        Le mode isolé (#108, `MAESTRO_ISOLATION`) est validé ici aussi — une
+        config d'isolation bancale casse au câblage, pas en cours d'exécution.
         """
         mode = _resolve_auth_mode(settings)
         if mode is AuthMode.API_KEY and not settings.anthropic_api_key:
@@ -134,7 +143,8 @@ class ClaudeProvider(ModelProvider):
                 auth_mode=mode,
                 api_key=settings.anthropic_api_key,
                 oauth_token=settings.claude_oauth_token,
-            )
+            ),
+            isolation=IsolationConfig.from_settings(settings),
         )
 
     def supports(self, model: str) -> bool:
@@ -214,15 +224,28 @@ class ClaudeProvider(ModelProvider):
         jamais connecté à l'échéance lève `McpServerUnavailable` (serveur et
         cause nommés) **avant** tout appel modèle.
 
-        Limite POC assumée : l'isolation est *au niveau du système de fichiers* — un
-        shell pourrait en principe adresser des chemins hors du `cwd`. Le renfort
-        (conteneur Docker par tâche) est prévu hors POC, sans changer cette signature.
+        Par défaut, l'isolation est *au niveau du système de fichiers* — un shell
+        pourrait en principe adresser des chemins hors du `cwd`. Le renfort est le
+        **mode isolé** opt-in (#108, `MAESTRO_ISOLATION=conteneur`) : le CLI — et
+        tout ce qu'il lance, outils, Bash, serveurs MCP stdio, code produit —
+        tourne alors dans un conteneur Docker durci jetable, seul `workspace`
+        étant monté. Le branchement tient en deux options SDK : `cli_path` pointe
+        le shim (`maestro-sandbox-shim`) au lieu du CLI, `env` porte le protocole
+        `MAESTRO_SANDBOX_*` que le shim traduit en `docker run` (accès accordés
+        énumérés dans `maestro.sandbox.container`, doc : docs/17). Le chemin texte
+        (`generate`) n'est jamais isolé : il n'expose aucun outil, c'est son contrat.
         """
+        env = self._auth_env()
+        cli_path: Path | None = None
+        if self._isolation is not None:
+            cli_path = self._isolation.shim
+            env |= self._isolation.env_sandbox(workspace)
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
-            env=self._auth_env(),
+            env=env,
             cwd=workspace,
+            cli_path=cli_path,
             tools=list(tools),
             allowed_tools=list(tools),
             permission_mode="bypassPermissions",
