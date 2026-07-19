@@ -1,0 +1,13 @@
+{
+  "serveurs": [
+    {
+      "nom": "figma",
+      "type": "stdio",
+      "commande": "npx",
+      "args": ["-y", "cursor-talk-to-figma-mcp@0.3.5"],
+      "env": {
+        "FIGMA_CHANNEL": "${FIGMA_CHANNEL}"
+      }
+    }
+  ]
+}

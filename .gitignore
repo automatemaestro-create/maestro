@@ -57,3 +57,6 @@ deliverables/
 *.docx
 *.pptx
 ~$*
+
+# Artefacts de session du navigateur automatisé (MCP Playwright)
+.playwright-mcp/

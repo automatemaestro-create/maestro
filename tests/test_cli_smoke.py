@@ -11,6 +11,7 @@ détectée même hors métrique. Aucun appel réseau, aucun serveur réellement 
 
 import sys
 import types
+from dataclasses import replace
 
 import pytest
 
@@ -142,6 +143,29 @@ def test_run_nominal_imprime_la_synthese(monkeypatch, capsys):
 
     assert engine_cli.main(["Prototyper un mini-CRM"]) == 0
     assert capsys.readouterr().out  # la synthèse Markdown est bien imprimée
+
+
+def test_run_restitution_expurgee_des_secrets_servis(monkeypatch, capsys):
+    # #115 : un secret servi pendant le run (canal Figma, token…) peut ressurgir
+    # dans l'objectif cité ou un livrable — la restitution (--json comme la
+    # synthèse) est expurgée, au même titre que la trace.
+    from maestro.telemetry import MARQUEUR_SECRET, enregistre_secret
+
+    canal = "canal-cli-smoke-9z8y7x"
+    enregistre_secret(canal)
+    rapport = _rapport_ok()
+    rapport = replace(
+        rapport,
+        resultats=(replace(rapport.resultats[0], sortie=f"Canal rejoint : {canal}."),),
+    )
+    monkeypatch.setattr(
+        OrchestrationEngine, "default", staticmethod(lambda **_: _MoteurFactice(rapport))
+    )
+
+    assert engine_cli.main(["--json", "Objectif"]) == 0
+    sortie = capsys.readouterr().out
+    assert canal not in sortie
+    assert MARQUEUR_SECRET in sortie
 
 
 def test_run_refuse_un_parallele_invalide(capsys):

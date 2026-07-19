@@ -30,19 +30,24 @@ serveurs déclarés sur ses exécutions outillées, sans connecteur ad hoc.
   tickets du backlog au fil d'un run. Restreint au toolset `issues` en mode
   `modify` (ni suppression, ni merge) ; token via `${GITLAB_TOKEN}` — voir
   [docs/16](../../docs/16-pilote-mcp-tickets-gitlab.md).
+- [`devops.json`](./devops.json) — serveur **Slack** (pilote #105) : l'agent
+  `devops` poste les notifications de supervision d'un run (fin de run,
+  validation humaine en attente) via `maestro-run --notifier devops`.
+  Configuration et démo : [docs/15](../../docs/15-pilote-mcp-slack.md).
+- [`designer.json`](./designer.json) — serveur **Talk to Figma**
+  (`cursor-talk-to-figma-mcp`, stdio via `npx`) pour le pilote Figma (#115) :
+  l'agent designer crée frames, formes et textes **en temps réel** dans le
+  fichier Figma où tourne le plugin compagnon (relais WebSocket local), et lit
+  le contenu existant pour s'y adapter. Pas de token d'API : le secret est le
+  **canal d'appairage** (`${FIGMA_CHANNEL}`) ; les outils de suppression sont
+  barrés par [core/permissions/designer.json](../permissions/designer.json) —
+  voir [docs/20](../../docs/20-pilote-mcp-figma.md).
 
 Contrairement aux dépôts voisins (données d'exécution non commitées), les
 déclarations écrites ici sont de la **configuration versionnée** : elles se
 commitent avec le dépôt. Les **secrets n'y figurent jamais en clair** — les
 valeurs d'`env`/`headers` référencent l'environnement (`${VARIABLE}`),
 résolu au moment du montage (anticipe le chantier sécurité #102).
-
-## Déclarations en place
-
-- [`devops.json`](./devops.json) — serveur **Slack** (pilote #105) : l'agent
-  `devops` poste les notifications de supervision d'un run (fin de run,
-  validation humaine en attente) via `maestro-run --notifier devops`.
-  Configuration et démo : [docs/15](../../docs/15-pilote-mcp-slack.md).
 
 Tests (#103, lot final du parent #101) : le socle est rejoué sans réseau dans
 [`tests/test_mcp.py`](../../tests/test_mcp.py) (validation à la lecture,

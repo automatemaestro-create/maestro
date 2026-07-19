@@ -30,6 +30,11 @@ différés des lots (#104 socle, #105/#106 pilotes purement configuratifs) :
    **connectés** (statut sondé, délai borné) — un serveur en échec, absent ou
    jamais connecté lève `McpServerUnavailable` avant que l'agent ne travaille
    sans ses capacités.
+⑥ **pilote Figma** (#115) : la déclaration versionnée du designer (serveur
+   « Talk to Figma », canal d'appairage `${FIGMA_CHANNEL}`) ne porte aucun
+   secret en clair, le canal résolu est expurgé des journaux, son absence rend
+   le serveur indisponible avant tout appel modèle, et la politique de
+   permissions (#110) barre les outils de suppression Figma.
 
 L'affichage lecture seule du volet MCP des fiches catalogue (API `/api/catalogue`)
 est couvert dans `tests/test_controltower.py`.
@@ -741,3 +746,66 @@ def test_sans_serveur_declare_la_session_reste_verrouillee(monkeypatch, tmp_path
     assert _run_agent(provider, tmp_path, ()) == "Livré."
     assert vu["mcp_servers"] == {}
     assert vu["strict"] is True
+
+
+# --- ⑥ Pilote Figma (#115) : déclaration du designer, canal jamais en clair -------------
+
+
+def _depot_du_repo(nom: str) -> Path:
+    """La racine `core/<nom>/` du dépôt Git — les configurations réellement versionnées."""
+    return Path(__file__).resolve().parents[1] / "core" / nom
+
+
+def test_le_designer_declare_le_serveur_figma_sans_secret_en_clair():
+    # La déclaration versionnée du pilote #115 : serveur « Talk to Figma » en
+    # commande locale, canal d'appairage en référence ${FIGMA_CHANNEL} — jamais
+    # de valeur littérale dans le dépôt Git.
+    (serveur,) = McpStore(_depot_du_repo("mcp")).lire("designer")
+
+    assert (serveur.nom, serveur.type, serveur.commande) == ("figma", "stdio", "npx")
+    assert serveur.env == {"FIGMA_CHANNEL": "${FIGMA_CHANNEL}"}
+    # Forme publique (API/UI) : la référence reste visible — c'est le contrat
+    # qui prouve qu'aucun littéral n'y figure (un littéral serait masqué).
+    assert serveur.to_dict()["env"] == {"FIGMA_CHANNEL": "${FIGMA_CHANNEL}"}
+
+
+def test_le_canal_figma_resolu_est_expurge_des_journaux():
+    # Le canal n'existe qu'en mémoire après résolution, et s'il réapparaît dans
+    # une sortie (journal, trace, rapport), il est masqué : la résolution
+    # l'enregistre au registre de rédaction (#109).
+    from maestro.telemetry.redact import MARQUEUR_SECRET, redact_secrets
+
+    canal = "canal-appairage-figma-8f3a2c"
+    (serveur,) = McpStore(_depot_du_repo("mcp")).lire("designer")
+
+    (monte,) = resolus([serveur], {"FIGMA_CHANNEL": canal})
+
+    assert monte.env == {"FIGMA_CHANNEL": canal}  # forme montable, en mémoire seulement
+    journal = f"L'agent a rejoint le canal {canal} puis créé le frame."
+    assert canal not in redact_secrets(journal)
+    assert MARQUEUR_SECRET in redact_secrets(journal)
+
+
+def test_le_canal_figma_absent_rend_le_serveur_indisponible():
+    # Sans FIGMA_CHANNEL (plugin pas lancé, appairage pas fait), le serveur est
+    # indisponible : échec propre avant tout appel modèle, jamais relancé.
+    (serveur,) = McpStore(_depot_du_repo("mcp")).lire("designer")
+
+    with pytest.raises(McpServerUnavailable, match="FIGMA_CHANNEL"):
+        resolus([serveur], {})
+
+
+def test_la_politique_du_designer_barre_les_suppressions_figma():
+    # Écho du garde-fou du rôle (« il propose, il ne remplace pas ») côté
+    # permissions (#110) : les outils de suppression du serveur Figma sont
+    # barrés, la création et la lecture restent permises.
+    from maestro.agents.permissions import PermissionStore
+
+    politique = PermissionStore(_depot_du_repo("permissions")).lire("designer")
+
+    assert politique is not None
+    assert politique.serveur_autorise("figma")
+    for outil in ("create_frame", "create_text", "get_document_info", "join_channel"):
+        assert politique.autorise(f"mcp__figma__{outil}")
+    for outil in ("delete_node", "delete_multiple_nodes"):
+        assert not politique.autorise(f"mcp__figma__{outil}")
