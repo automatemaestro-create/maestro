@@ -89,6 +89,7 @@ from maestro.telemetry import (
     RunJournal,
     activer_export_langfuse,
     evaluer_run_langfuse,
+    redact_secrets,
 )
 
 _USAGE = (
@@ -253,10 +254,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     # même bascule configurative que l'export, no-op sans clés.
     evaluer_run_langfuse(journal)
 
+    # Restitution expurgée (#115, même exigence que la trace) : un secret servi
+    # pendant le run (canal Figma, token…) peut ressurgir dans l'objectif cité
+    # ou dans un livrable de l'agent — masqué ici comme partout ailleurs.
     if as_json:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        print(redact_secrets(json.dumps(report.to_dict(), ensure_ascii=False, indent=2)))
     else:
-        print(report.synthese())
+        print(redact_secrets(report.synthese()))
     return 0 if not report.echouees else 1
 
 

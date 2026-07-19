@@ -10,10 +10,12 @@ tokens, guide de composants) dans un espace de travail isolé.
 
 Particularité du Designer (docs/04 §3.5, playbook `agents/designer/README.md`) : il
 **respecte le design system et la charte existants** — il propose, il ne remplace pas
-la charte sans accord. Au POC, sans MCP Figma (outils fichiers + shell uniquement), les
-maquettes se matérialisent en fichiers (wireframes HTML/SVG, specs Markdown, tokens) et
-le compte-rendu signale explicitement toute évolution de charte proposée, soumise à
-accord avant adoption.
+la charte sans accord. Les maquettes se matérialisent en fichiers (wireframes HTML/SVG,
+specs Markdown, tokens) et le compte-rendu signale explicitement toute évolution de
+charte proposée, soumise à accord avant adoption. Depuis le pilote #115, sa déclaration
+MCP versionnée (`core/mcp/designer.json`, socle #104) lui monte en plus le serveur
+« Talk to Figma » : quand le relais et le plugin compagnon tournent (docs/20), il crée
+et lit des éléments directement dans un fichier Figma — sans rien changer à ce profil.
 """
 
 from __future__ import annotations
@@ -41,8 +43,9 @@ charte sans accord — toute évolution du design system est signalée comme une
 proposition soumise à accord avant adoption."""
 
 #: Profil du Designer : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2), outils
-#: fichiers + shell (docs/02 §7 : permissions scopées — pas de MCP Figma au POC),
-#: consignes de conformité à la charte et d'évolution soumise à accord. `nom`
+#: fichiers + shell (docs/02 §7 : permissions scopées) — les outils Figma arrivent par
+#: la déclaration MCP versionnée (core/mcp/designer.json, pilote #115), pas par ce
+#: profil. Consignes de conformité à la charte et d'évolution soumise à accord. `nom`
 #: correspond à l'agent `designer` du catalogue.
 DESIGNER_PROFILE = RoleProfile(
     nom="designer",
