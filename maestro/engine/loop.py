@@ -68,6 +68,7 @@ from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.runtime import AgentRuntime
+from maestro.agents.secrets import SecretStore
 from maestro.agents.store import AgentStore, catalogue
 from maestro.config import Settings, load_settings
 from maestro.engine.executor import (
@@ -214,6 +215,7 @@ class OrchestrationEngine:
         playbooks: PlaybookStore | None = None,
         capacites: CapacityStore | None = None,
         mcp: McpStore | None = None,
+        secrets: SecretStore | None = None,
         relance: PolitiqueRelance | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
@@ -242,6 +244,7 @@ class OrchestrationEngine:
                 playbooks=playbooks,
                 capacites=capacites,
                 mcp=mcp,
+                secrets=secrets,
                 relance=relance,
             )
         )
@@ -287,7 +290,11 @@ class OrchestrationEngine:
         configuré (`MAESTRO_MCP_DIR`, sinon `core/mcp/`), relu à chaud à
         chaque tâche : les serveurs déclarés pour un agent sont montés par la
         couche SDK sur ses exécutions outillées — un serveur indisponible est
-        un échec propre, jamais relancé.
+        un échec propre, jamais relancé. Leurs références `${VAR}` se résolvent
+        dans le **coffre de secrets par agent** (#109, `MAESTRO_SECRETS_DIR`,
+        sinon `core/secrets/`) dès qu'il est provisionné : chaque agent ne voit
+        que ses propres secrets ; coffre absent, résolution historique dans
+        l'environnement du process.
 
         La **relance automatique** (#91, ENF-06) est **armée par défaut**
         (`PolitiqueRelance()` : 3 tentatives, backoff exponentiel) : sur ce
@@ -316,6 +323,7 @@ class OrchestrationEngine:
             playbooks=PlaybookStore.default(settings),
             capacites=CapacityStore.default(settings),
             mcp=McpStore.default(settings),
+            secrets=SecretStore.default(settings),
             relance=relance,
             max_parallele=max_parallele,
         )

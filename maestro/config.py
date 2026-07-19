@@ -60,6 +60,10 @@ class Settings:
     #: Racine du dépôt des serveurs MCP déclarés par agent (`MAESTRO_MCP_DIR`), ou
     #: None : le dossier `core/mcp/` du dépôt (cf. maestro.agents.mcp, #104).
     mcp_dir: str | None = None
+    #: Racine du coffre des secrets par agent (`MAESTRO_SECRETS_DIR`), ou
+    #: None : le dossier `core/secrets/` du dépôt (cf. maestro.agents.secrets,
+    #: #109 — jamais versionné, scoping actif dès que la racine existe).
+    secrets_dir: str | None = None
     #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None :
     #: exécution directe sur l'hôte (défaut). Seule valeur reconnue : `conteneur`.
     #: Interprété et validé par la couche sandbox (maestro.sandbox.container, #108).
@@ -106,6 +110,7 @@ class Settings:
             chat_dir=(os.getenv("MAESTRO_CHAT_DIR") or "").strip() or None,
             capacite_dir=(os.getenv("MAESTRO_CAPACITE_DIR") or "").strip() or None,
             mcp_dir=(os.getenv("MAESTRO_MCP_DIR") or "").strip() or None,
+            secrets_dir=(os.getenv("MAESTRO_SECRETS_DIR") or "").strip() or None,
             isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
             isolation_image=(os.getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
             isolation_reseau=(os.getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()

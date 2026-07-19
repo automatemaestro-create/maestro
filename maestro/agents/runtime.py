@@ -19,7 +19,7 @@ d'un éventuel repli).
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -152,6 +152,7 @@ class AgentRuntime:
         keep_workspace: bool = False,
         system_prompt: str | None = None,
         mcp_serveurs: Sequence[ServeurMcp] = (),
+        environ: Mapping[str, str] | None = None,
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
@@ -171,6 +172,11 @@ class AgentRuntime:
         qu'en mémoire, jamais dans la déclaration — puis la liste est confiée au
         fournisseur, qui la monte via sa couche SDK. Un serveur non montable ou
         injoignable lève `McpServerUnavailable` (jamais relancé, ENF-06).
+
+        `environ` (#109) est l'environnement de résolution de ces références :
+        le **coffre scopé** de l'agent quand un `SecretStore` est câblé en
+        amont (l'agent ne résout que ses propres secrets) ; None :
+        l'environnement du process (comportement historique #104).
         """
         description = description.strip()
         if not description:
@@ -181,7 +187,7 @@ class AgentRuntime:
         prompt = _build_prompt(self._profile, description, format_sortie)
         # Résolution avant d'ouvrir l'espace : une déclaration non montable
         # échoue proprement sans créer (ni nettoyer) de répertoire de travail.
-        montables = resolus(mcp_serveurs, os.environ)
+        montables = resolus(mcp_serveurs, os.environ if environ is None else environ)
         with isolated_workspace(prefix=self._profile.workspace_prefix, keep=keep_workspace) as ws:
             resume = await self._provider.run_agent(
                 prompt,

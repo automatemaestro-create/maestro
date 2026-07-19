@@ -20,7 +20,11 @@ Les **secrets** (tokens d'API des serveurs) ne sont **jamais en clair** dans
 une déclaration versionnée : les valeurs d'`env`/`headers` portent des
 références `${VARIABLE}` résolues depuis l'environnement au moment du montage
 (`resolus`) — une variable absente rend le serveur indisponible, erreur propre
-avant tout appel modèle. Cette convention anticipe le chantier sécurité (#102).
+avant tout appel modèle. Cette convention anticipe le chantier sécurité (#102) ;
+le #109 la complète : `environ` peut être le **coffre scopé** de l'agent
+(`maestro.agents.secrets.SecretStore.environ`) — un agent ne résout alors que
+ses propres secrets — et toute valeur résolue est enregistrée au registre de
+rédaction (masquée si elle réapparaît en sortie).
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from typing import Any
 
 from maestro.config import Settings, load_settings
 from maestro.providers.base import McpServerUnavailable
+from maestro.telemetry.redact import enregistre_secret
 
 #: Types de serveurs déclarables : une commande locale (stdio) ou un endpoint
 #: distant (sse/http). Le type « sdk » (instance en process) est hors périmètre :
@@ -210,15 +215,23 @@ def resolus(serveurs: Sequence[ServeurMcp], environ: Mapping[str, str]) -> tuple
 
 
 def _resout(valeur: str, environ: Mapping[str, str], serveur: ServeurMcp) -> str:
-    """`valeur` avec ses références `${VAR}` remplacées, ou `McpServerUnavailable`."""
-    manquantes = sorted(
-        {nom for nom in _REFERENCE_ENV.findall(valeur) if not environ.get(nom)}
-    )
+    """`valeur` avec ses références `${VAR}` remplacées, ou `McpServerUnavailable`.
+
+    Chaque valeur résolue est un secret par convention (#109) : elle est
+    enregistrée au registre de rédaction avant d'être servie — masquée si elle
+    réapparaît dans un journal, une trace ou un livrable.
+    """
+    references = _REFERENCE_ENV.findall(valeur)
+    manquantes = sorted({nom for nom in references if not environ.get(nom)})
     if manquantes:
         raise McpServerUnavailable(
-            f"serveur MCP {serveur.nom!r} non montable : variable(s) d'environnement "
-            f"absente(s) : {', '.join(manquantes)} (référencée(s) par sa déclaration)."
+            f"serveur MCP {serveur.nom!r} non montable : référence(s) non "
+            f"résolue(s) : {', '.join(manquantes)} — absente(s) de l'environnement "
+            "de résolution (le coffre de l'agent si un coffre est provisionné, "
+            "sinon l'environnement du process)."
         )
+    for nom in references:
+        enregistre_secret(environ[nom])
     return _REFERENCE_ENV.sub(lambda m: environ[m.group(1)], valeur)
 
 
