@@ -39,6 +39,10 @@ class Settings:
     claude_oauth_token: str | None
     database_url: str | None
     redis_url: str | None
+    #: Adresse gRPC du serveur Temporal (`TEMPORAL_ADDRESS`) — moteur des workflows
+    #: durables (#94/#95). Défaut : l'instance locale du docker-compose
+    #: (localhost:7233, cf. infra/README.md).
+    temporal_address: str = "localhost:7233"
     #: Fournisseur de modèles de l'exécution (`MAESTRO_PROVIDER`) : nom d'un
     #: fournisseur configurable (cf. `maestro.providers.factory`). Défaut : `claude`.
     provider: str = "claude"
@@ -107,6 +111,7 @@ class Settings:
             claude_oauth_token=os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or None,
             database_url=os.getenv("DATABASE_URL") or None,
             redis_url=os.getenv("REDIS_URL") or None,
+            temporal_address=(os.getenv("TEMPORAL_ADDRESS") or "").strip() or "localhost:7233",
             provider=(raw_provider.strip().lower() if raw_provider else "") or "claude",
             model=(os.getenv("MAESTRO_MODEL") or "").strip() or None,
             playbooks_dir=(os.getenv("MAESTRO_PLAYBOOKS_DIR") or "").strip() or None,
