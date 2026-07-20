@@ -1,16 +1,6 @@
 {
   "serveurs": [
     {
-      "nom": "figma",
-      "type": "stdio",
-      "commande": "npx",
-      "args": ["-y", "cursor-talk-to-figma-mcp@0.3.5"],
-      "env": {
-        "FIGMA_CHANNEL": "${FIGMA_CHANNEL}"
-      },
-      "optionnel": true
-    },
-    {
       "nom": "figma-officiel",
       "type": "http",
       "url": "https://mcp.figma.com/mcp",

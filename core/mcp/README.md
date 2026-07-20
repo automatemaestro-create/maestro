@@ -34,22 +34,17 @@ serveurs déclarés sur ses exécutions outillées, sans connecteur ad hoc.
   `devops` poste les notifications de supervision d'un run (fin de run,
   validation humaine en attente) via `maestro-run --notifier devops`.
   Configuration et démo : [docs/15](../../docs/15-pilote-mcp-slack.md).
-- [`designer.json`](./designer.json) — deux voies **Figma**, toutes deux
-  **optionnelles** (`"optionnel": true`, #125 : la voie dont le secret n'est
-  pas fourni est omise du montage, sans échec) :
-  - serveur **Talk to Figma** (`cursor-talk-to-figma-mcp`, stdio via `npx`,
-    pilote #115) : l'agent designer crée frames, formes et textes **en temps
-    réel** dans le fichier Figma où tourne le plugin compagnon (relais
-    WebSocket local), et lit le contenu existant pour s'y adapter. Pas de
-    token d'API : le secret est le **canal d'appairage** (`${FIGMA_CHANNEL}`) ;
-    les outils de suppression sont barrés par
-    [core/permissions/designer.json](../permissions/designer.json) ;
-  - serveur **MCP officiel Figma** (`https://mcp.figma.com/mcp`, http,
-    variante #125) : monté seulement quand un humain a fourni un token OAuth
-    (`${FIGMA_OAUTH_TOKEN}`, scope `mcp:connect`) — Maestro ne mène **aucune
-    authentification automatique**.
-
-  Voir [docs/20](../../docs/20-pilote-mcp-figma.md) (variante officielle : §6).
+- [`designer.json`](./designer.json) — serveur **MCP officiel Figma**
+  (`https://mcp.figma.com/mcp`, http, bascule #128 après le pilote #115 et
+  l'évaluation #125) : l'agent designer crée et lit des éléments d'un fichier
+  Figma (`use_figma`, `get_design_context`, `create_new_file`…). Monté
+  seulement quand un humain a fourni un token OAuth (`${FIGMA_OAUTH_TOKEN}`,
+  scope `mcp:connect`) — Maestro ne mène **aucune authentification
+  automatique** ; le serveur est **optionnel** (`"optionnel": true`) : sans
+  token, il est omis du montage, sans échec. L'ancien mode « Talk to Figma »
+  (pilote #115 : plugin compagnon + relais WebSocket + canal d'appairage) est
+  retiré de la configuration active — trace historique et repli documenté dans
+  [docs/20](../../docs/20-pilote-mcp-figma.md).
 
 Contrairement aux dépôts voisins (données d'exécution non commitées), les
 déclarations écrites ici sont de la **configuration versionnée** : elles se
