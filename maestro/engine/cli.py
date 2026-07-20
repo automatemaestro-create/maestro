@@ -35,6 +35,16 @@ garde-fous s'appliquant alors **côté worker**, `--plafond-cout`/`--timeout` ne
 sont pas combinables avec `--queue` (une tâche sensible y est refusée par
 défaut — fail-safe sans validateur).
 
+`--durable` (#95) fait du run un **workflow Temporal** durable (un run = un
+workflow, une tâche = une activité, `maestro.durable`) : Temporal lancé
+(infra/docker-compose.yml) est requis. Un worker est embarqué dans ce process le
+temps du run — les garde-fous (plafond, time-out, validation console), la relance
+(#91) et la publication (#46) opèrent donc comme en local ; planification,
+dépendances/handoffs et blocages passent par le workflow. Mode **opt-in** : sans
+le flag, l'exécution en process reste le défaut. Non combinable avec `--queue`
+(frontières d'exécution exclusives) ni, à ce stade, avec `--messagerie`/
+`--validation-ui`/`--notifier`/`--parallele`.
+
 `--publier` (#46) publie chaque étape du journal en **événement temps réel**
 sur Redis Pub/Sub (canal `maestro.evenements`, via le pont
 `maestro.controltower.bridge`) : le backend Control Tower (`maestro-api`) les
@@ -80,6 +90,7 @@ import json
 import logging
 import sys
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from maestro.config import ConfigError
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
@@ -95,9 +106,12 @@ from maestro.telemetry import (
     redact_secrets,
 )
 
+if TYPE_CHECKING:
+    from maestro.durable import DurableEngine
+
 _USAGE = (
-    "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--messagerie] "
-    "[--validation-ui] [--notifier <agent>] [--plafond-cout <usd>] "
+    "Usage : maestro-run [--json] [--trace] [--queue] [--durable] [--publier] "
+    "[--messagerie] [--validation-ui] [--notifier <agent>] [--plafond-cout <usd>] "
     "[--plafond-tokens <n>] [--timeout <s>] "
     '[--relances <n>] [--parallele <n>] "<objectif en langage naturel>"'
 )
@@ -112,6 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     as_json = False
     via_queue = False
+    via_durable = False
     messagerie = False
     validation_ui = False
     notifier_agent: str | None = None
@@ -121,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     relances: int | None = None
     parallele: int | None = None
     flags_connus = {
-        "--json", "--trace", "--queue", "--publier", "--messagerie",
+        "--json", "--trace", "--queue", "--durable", "--publier", "--messagerie",
         "--validation-ui", "--notifier", "--plafond-cout", "--plafond-tokens",
         "--timeout", "--relances", "--parallele",
     }
@@ -133,6 +148,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             activer_trace()
         elif flag == "--queue":
             via_queue = True
+        elif flag == "--durable":
+            via_durable = True
         elif flag == "--publier":
             activer_publication_evenements()
         elif flag == "--messagerie":
@@ -214,6 +231,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
+    if via_durable and via_queue:
+        print(
+            "--durable et --queue sont deux frontières d'exécution exclusives "
+            "(workflow Temporal vs file Celery) : choisissez-en une.",
+            file=sys.stderr,
+        )
+        return 2
+    if via_durable and (messagerie or validation_ui or notifier_agent is not None):
+        print(
+            "--durable ne se combine pas encore avec --messagerie/--validation-ui/"
+            "--notifier (#95, lot 2/5) : en mode durable les dépendances/handoffs "
+            "passent par le workflow et la validation humaine par la console. Ces "
+            "transports Redis viendront dans un lot ultérieur.",
+            file=sys.stderr,
+        )
+        return 2
+    if via_durable and parallele is not None:
+        print(
+            "--parallele n'est pas géré en mode --durable : le plafond global de "
+            "concurrence n'est pas encore porté par le workflow (#95, lot 2/5).",
+            file=sys.stderr,
+        )
+        return 2
+
     journal = RunJournal()
     # Notificateur de supervision (#105) : construit avant les garde-fous — sa
     # configuration (canal, agent équipé, déclaration MCP) échoue proprement
@@ -248,6 +289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         engine = _build_engine(
             via_queue=via_queue,
+            via_durable=via_durable,
             guardrails=guardrails,
             messagerie=messagerie,
             relance=_politique_relance(relances),
@@ -299,21 +341,30 @@ def _politique_relance(relances: int | None) -> PolitiqueRelance | None:
 def _build_engine(
     *,
     via_queue: bool,
+    via_durable: bool = False,
     guardrails: Guardrails,
     messagerie: bool = False,
     relance: PolitiqueRelance | None = None,
     max_parallele: int | None = None,
-) -> OrchestrationEngine:
-    """Construit la boucle : locale par défaut, distribuée (file #41) avec `--queue`.
+) -> OrchestrationEngine | DurableEngine:
+    """Construit la boucle : locale par défaut, distribuée (#41) ou durable (#95).
 
-    L'import de `maestro.queue` (donc de Celery) reste local à la branche
-    distribuée : le chemin historique n'en dépend pas. `--messagerie` (#44)
-    branche les boîtes aux lettres Redis Pub/Sub (l'instance de la config,
+    L'import de `maestro.queue` (Celery) comme de `maestro.durable` (Temporal)
+    reste local à sa branche : le chemin historique n'en dépend pas. `--durable`
+    (#95) fait du run un workflow Temporal (un run = un workflow, une tâche = une
+    activité) : garde-fous (#9) et relance (#91) sont posés sur le worker embarqué
+    dans ce process, la validation humaine passe par la console. `--messagerie`
+    (#44) branche les boîtes aux lettres Redis Pub/Sub (l'instance de la config,
     comme `--publier`) — la connexion est paresseuse, et une publication en
     échec est abandonnée sans gêner l'exécution (relais résilient). `relance`
-    (#91) ne s'applique qu'en local — côté file, chaque worker câble la sienne.
-    `max_parallele` (#100) pose le plafond global du run sur les deux chemins.
+    (#91) ne s'applique qu'en local et en durable — côté file, chaque worker câble
+    la sienne. `max_parallele` (#100) pose le plafond global du run en local et en
+    file (non géré en durable, cf. validation d'arguments).
     """
+    if via_durable:
+        from maestro.durable import DurableEngine
+
+        return DurableEngine(guardrails=guardrails, relance=relance)
     mailbox = None
     if messagerie:
         from maestro.config import load_settings

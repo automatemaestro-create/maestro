@@ -80,6 +80,10 @@ maestro-controltower-demo = "maestro.controltower.demo:main"
 # Démo : workflow + worker hello-world contre le Temporal local (socle des
 # workflows durables, ticket #94).
 maestro-temporal-demo = "maestro.temporal_demo:main"
+# Worker Temporal autonome du mode durable (ticket #95) : sert le workflow de run
+# et ses activités sur la file dédiée (déploiement réel ; la démo CLI --durable
+# embarque son propre worker). Pendant durable de `celery -A maestro.queue worker`.
+maestro-durable-worker = "maestro.durable.worker:main"
 # Shim du mode isolé (ticket #108) : passé en `cli_path` à l'Agent SDK quand
 # MAESTRO_ISOLATION=conteneur, il relaie le lancement du CLI vers `docker run`
 # durci. Invoqué par le fournisseur, pas à la main.
@@ -134,6 +138,10 @@ omit = [
     # Démo Temporal (ticket #94) : exige un serveur Temporal vivant — smoke test
     # différé au lot tests + doc (#93).
     "maestro/temporal_demo.py",
+    # Mode durable (ticket #95) : moteur d'exécution sur Temporal (workflow + activités
+    # + worker + orchestrateur). Exige un serveur Temporal vivant et un vrai fournisseur
+    # de bout en bout — tests différés au lot tests + doc (#93).
+    "maestro/durable/*",
     # Shim du mode isolé (ticket #108) : fine couche d'invocation vers `docker run`,
     # exige un démon Docker vivant — smoke test en contrepartie (#107,
     # tests/test_isolation.py).
