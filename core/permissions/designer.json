@@ -1,4 +1,4 @@
 {
   "allow": [],
-  "deny": ["mcp__figma__delete_node", "mcp__figma__delete_multiple_nodes"]
+  "deny": []
 }

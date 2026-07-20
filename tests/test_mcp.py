@@ -31,14 +31,16 @@ différés des lots (#104 socle, #105/#106 pilotes purement configuratifs) :
    **connectés** (statut sondé, délai borné) — un serveur en échec, absent ou
    jamais connecté lève `McpServerUnavailable` avant que l'agent ne travaille
    sans ses capacités.
-⑥ **pilote Figma** (#115, variante officielle #125) : la déclaration versionnée
-   du designer (serveur « Talk to Figma », canal d'appairage `${FIGMA_CHANNEL}` ;
-   serveur MCP **officiel** en http, token OAuth fourni par l'humain via
-   `${FIGMA_OAUTH_TOKEN}` — jamais d'authentification automatique) ne porte
-   aucun secret en clair, canal et token résolus sont expurgés des journaux,
-   les deux serveurs sont **optionnels** — seule la voie dont le secret est
-   fourni est montée, aucune n'échoue par absence de l'autre — et la politique
-   de permissions (#110) barre les outils de suppression Figma.
+⑥ **MCP Figma** (#115, bascule officielle #125/#128) : la déclaration versionnée
+   du designer est le seul serveur MCP **officiel** Figma en http, token OAuth
+   fourni par l'humain via `${FIGMA_OAUTH_TOKEN}` — jamais d'authentification
+   automatique, aucun secret en clair. Le token résolu est expurgé des journaux,
+   le serveur est **optionnel** — sans token, il est omis du montage, sans
+   échec —, plus aucune configuration active ne référence l'ancien mode « Talk
+   to Figma » (`cursor-talk-to-figma-mcp`/`FIGMA_CHANNEL`, #128), et la
+   politique de permissions (#110) revue laisse passer les outils officiels
+   (aucun outil de suppression dédié à barrer — garde-fou porté par le prompt
+   du rôle, docs/20).
 
 L'affichage lecture seule du volet MCP des fiches catalogue (API `/api/catalogue`)
 est couvert dans `tests/test_controltower.py`.
@@ -783,7 +785,7 @@ def test_sans_serveur_declare_la_session_reste_verrouillee(monkeypatch, tmp_path
     assert vu["strict"] is True
 
 
-# --- ⑥ Pilote Figma (#115, variante officielle #125) : secrets jamais en clair ----------
+# --- ⑥ MCP Figma (#115, bascule officielle #125/#128) : secrets jamais en clair ---------
 
 
 def _depot_du_repo(nom: str) -> Path:
@@ -791,58 +793,49 @@ def _depot_du_repo(nom: str) -> Path:
     return Path(__file__).resolve().parents[1] / "core" / nom
 
 
-def _serveurs_designer() -> tuple[ServeurMcp, ServeurMcp]:
-    """Les deux serveurs Figma déclarés pour le designer : communautaire, officiel."""
-    figma, officiel = McpStore(_depot_du_repo("mcp")).lire("designer")
-    return figma, officiel
+def _serveur_designer() -> ServeurMcp:
+    """Le serveur Figma officiel, seule déclaration du designer depuis la bascule #128."""
+    (officiel,) = McpStore(_depot_du_repo("mcp")).lire("designer")
+    return officiel
 
 
-def test_le_designer_declare_les_serveurs_figma_sans_secret_en_clair():
-    # La déclaration versionnée : serveur « Talk to Figma » (#115) en commande
-    # locale + serveur MCP OFFICIEL Figma (#125) en endpoint http — secrets en
-    # références ${VAR}, jamais de valeur littérale dans le dépôt Git.
-    figma, officiel = _serveurs_designer()
+def test_le_designer_declare_le_serveur_officiel_figma_sans_secret_en_clair():
+    # La déclaration versionnée : le serveur MCP OFFICIEL Figma (#125, bascule
+    # #128) en endpoint http — token en référence ${VAR}, jamais de valeur
+    # littérale dans le dépôt Git.
+    officiel = _serveur_designer()
 
-    assert (figma.nom, figma.type, figma.commande) == ("figma", "stdio", "npx")
-    assert figma.env == {"FIGMA_CHANNEL": "${FIGMA_CHANNEL}"}
     assert (officiel.nom, officiel.type) == ("figma-officiel", "http")
     assert officiel.url == "https://mcp.figma.com/mcp"
     assert officiel.headers == {"Authorization": "Bearer ${FIGMA_OAUTH_TOKEN}"}
-    # Les deux voies sont optionnelles : seule celle dont le secret est fourni
-    # est montée — aucune n'échoue par absence de l'autre.
-    assert figma.optionnel and officiel.optionnel
+    # Optionnel : sans token fourni, le serveur est omis du montage, sans échec.
+    assert officiel.optionnel
     # Forme publique (API/UI) : la référence reste visible — c'est le contrat
     # qui prouve qu'aucun littéral n'y figure (un littéral serait masqué).
-    assert figma.to_dict()["env"] == {"FIGMA_CHANNEL": "${FIGMA_CHANNEL}"}
     assert officiel.to_dict()["headers"] == {"Authorization": "Bearer ${FIGMA_OAUTH_TOKEN}"}
 
 
-def test_le_canal_figma_resolu_est_expurge_des_journaux():
-    # Le canal n'existe qu'en mémoire après résolution, et s'il réapparaît dans
-    # une sortie (journal, trace, rapport), il est masqué : la résolution
-    # l'enregistre au registre de rédaction (#109).
-    from maestro.telemetry.redact import MARQUEUR_SECRET, redact_secrets
-
-    canal = "canal-appairage-figma-8f3a2c"
-
-    (monte,) = resolus(_serveurs_designer(), {"FIGMA_CHANNEL": canal})
-
-    assert monte.nom == "figma"
-    assert monte.env == {"FIGMA_CHANNEL": canal}  # forme montable, en mémoire seulement
-    journal = f"L'agent a rejoint le canal {canal} puis créé le frame."
-    assert canal not in redact_secrets(journal)
-    assert MARQUEUR_SECRET in redact_secrets(journal)
+def test_aucune_configuration_active_ne_reference_l_ancien_mode_talk_to_figma():
+    # #128 : le mode « Talk to Figma » (pilote #115 — plugin compagnon, relais
+    # WebSocket, canal d'appairage) est retiré de la configuration active. Sa
+    # trace ne survit que dans docs/20 (historique + repli documenté).
+    for declaration in sorted(_depot_du_repo("mcp").glob("*.json")):
+        contenu = declaration.read_text(encoding="utf-8")
+        assert "cursor-talk-to-figma" not in contenu, declaration.name
+        assert "FIGMA_CHANNEL" not in contenu, declaration.name
+    for politique in sorted(_depot_du_repo("permissions").glob("*.json")):
+        assert "mcp__figma__" not in politique.read_text(encoding="utf-8"), politique.name
 
 
 def test_le_token_officiel_fourni_par_l_humain_monte_le_serveur_et_reste_masque():
     # #125 : le token OAuth est une ACTION HUMAINE (env aujourd'hui, coffre ou
-    # Control Tower demain) — fourni, il monte la voie officielle seule ; et il
-    # est enregistré au registre de rédaction à la résolution (#109).
+    # Control Tower demain) — fourni, il monte la voie officielle ; et il est
+    # enregistré au registre de rédaction à la résolution (#109).
     from maestro.telemetry.redact import MARQUEUR_SECRET, redact_secrets
 
     token = "figd-oauth-mcp-connect-4b7e91"
 
-    (monte,) = resolus(_serveurs_designer(), {"FIGMA_OAUTH_TOKEN": token})
+    (monte,) = resolus([_serveur_designer()], {"FIGMA_OAUTH_TOKEN": token})
 
     assert monte.nom == "figma-officiel"
     assert monte.headers == {"Authorization": f"Bearer {token}"}
@@ -851,24 +844,17 @@ def test_le_token_officiel_fourni_par_l_humain_monte_le_serveur_et_reste_masque(
     assert MARQUEUR_SECRET in redact_secrets(journal)
 
 
-def test_sans_canal_ni_token_les_serveurs_figma_sont_omis_pas_d_echec():
-    # #125 : les deux voies sont optionnelles — sans appairage ni token, une
-    # tâche de design s'exécute simplement sans outils Figma (plus d'échec au
-    # montage comme au pilote #115) ; les deux secrets fournis montent les deux.
-    assert resolus(_serveurs_designer(), {}) == ()
-
-    montes = resolus(
-        _serveurs_designer(), {"FIGMA_CHANNEL": "canal-x", "FIGMA_OAUTH_TOKEN": "tok-y"}
-    )
-    assert [s.nom for s in montes] == ["figma", "figma-officiel"]
+def test_sans_token_le_serveur_figma_est_omis_pas_d_echec():
+    # Le serveur est optionnel (#125) : sans token, une tâche de design
+    # s'exécute simplement sans outils Figma (plus d'échec au montage comme au
+    # pilote #115).
+    assert resolus([_serveur_designer()], {}) == ()
 
 
 def test_la_declaration_officielle_se_traduit_au_format_sdk():
     # La voie officielle est un endpoint http standard côté SDK : url + header
     # Authorization résolu — aucun couplage à un fournisseur de modèle.
-    _, officiel = _serveurs_designer()
-
-    (monte,) = resolus([officiel], {"FIGMA_OAUTH_TOKEN": "tok-sdk"})
+    (monte,) = resolus([_serveur_designer()], {"FIGMA_OAUTH_TOKEN": "tok-sdk"})
 
     assert claude_mod._config_mcp_sdk(monte) == {
         "type": "http",
@@ -877,17 +863,18 @@ def test_la_declaration_officielle_se_traduit_au_format_sdk():
     }
 
 
-def test_la_politique_du_designer_barre_les_suppressions_figma():
-    # Écho du garde-fou du rôle (« il propose, il ne remplace pas ») côté
-    # permissions (#110) : les outils de suppression du serveur Figma sont
-    # barrés, la création et la lecture restent permises.
+def test_la_politique_du_designer_laisse_passer_les_outils_officiels():
+    # Politique revue à la bascule #128 : le serveur officiel n'expose aucun
+    # outil de suppression dédié (l'édition passe par le seul `use_figma`,
+    # insécable — docs/20) ; le garde-fou « il propose, il ne remplace pas »
+    # est porté par le prompt du rôle, pas par un deny à la granularité de
+    # l'outil. La politique versionnée reste en place, vide de tout nom
+    # d'outil de l'ancien serveur communautaire.
     from maestro.agents.permissions import PermissionStore
 
     politique = PermissionStore(_depot_du_repo("permissions")).lire("designer")
 
     assert politique is not None
-    assert politique.serveur_autorise("figma")
-    for outil in ("create_frame", "create_text", "get_document_info", "join_channel"):
-        assert politique.autorise(f"mcp__figma__{outil}")
-    for outil in ("delete_node", "delete_multiple_nodes"):
-        assert not politique.autorise(f"mcp__figma__{outil}")
+    assert politique.serveur_autorise("figma-officiel")
+    for outil in ("use_figma", "get_design_context", "get_metadata", "create_new_file"):
+        assert politique.autorise(f"mcp__figma-officiel__{outil}")

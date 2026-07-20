@@ -344,7 +344,7 @@ vivent qu'en mémoire ; une variable absente rend le serveur indisponible (éche
 avant tout appel). La forme publique (API/UI) **masque** toute valeur littérale et les
 journaux caviardent les motifs de tokens connus (`xoxb-`, `glpat-`…).
 
-**Pilotes disponibles** — deux intégrations réelles servent de référence :
+**Pilotes disponibles** — trois intégrations réelles servent de référence :
 
 - **Slack** ([doc 15](./15-pilote-mcp-slack.md), ticket #105) : l'agent `devops`
   (serveur déclaré dans [`core/mcp/devops.json`](../core/mcp/devops.json), token via
@@ -353,7 +353,11 @@ journaux caviardent les motifs de tokens connus (`xoxb-`, `glpat-`…).
 - **Tickets GitLab** ([doc 16](./16-pilote-mcp-tickets-gitlab.md), ticket #106) :
   l'agent `qa` (serveur déclaré dans `core/mcp/qa.json`, token via `${GITLAB_TOKEN}`,
   toolset restreint aux issues — ni merge ni suppression) **lit et crée des tickets**
-  pendant un run réel.
+  pendant un run réel ;
+- **Figma** ([doc 20](./20-pilote-mcp-figma.md), tickets #115/#125/#128) : l'agent
+  `designer` (serveur MCP **officiel** Figma déclaré dans `core/mcp/designer.json`,
+  token OAuth fourni par l'humain via `${FIGMA_OAUTH_TOKEN}`, serveur **optionnel** —
+  omis du montage sans token) **crée et lit des éléments** d'un fichier Figma.
 
 Le mode d'obtention du secret varie d'un outil à l'autre (token statique,
 appairage, OAuth verrouillé) : grille complète dans [doc 21](./21-configuration-mcp.md).

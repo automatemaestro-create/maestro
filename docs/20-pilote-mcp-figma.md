@@ -1,12 +1,20 @@
 # Pilote MCP Figma — l'agent designer crée dans un fichier (ticket #115)
 
-**Version :** 0.2 — variante serveur MCP officiel (§6, ticket #125)
+**Version :** 0.3 — bascule sur le serveur MCP officiel (§7, ticket #128)
 Troisième pilote concret du socle MCP (#104, parent #101) : l'agent **designer**,
 équipé d'un serveur MCP « Talk to Figma », **crée des éléments dans un fichier
 Figma en temps réel** (frames, formes, textes — visibles dans le fichier pendant
 le run) et lit le contenu existant pour s'y adapter. Cette page consigne le
 choix du serveur, l'architecture d'appairage, les exigences sur les secrets et
 la démonstration réelle.
+
+> **⚠ Bascule (ticket #128, 2026-07-20)** : la configuration active de l'agent
+> designer est désormais le **serveur MCP officiel Figma seul** (§6, bascule
+> §7) — plus aucune configuration active ne référence
+> `cursor-talk-to-figma-mcp` ni `FIGMA_CHANNEL`. Les sections §1 à §5 (pilote
+> « Talk to Figma », #115) sont conservées telles quelles en **trace
+> historique** et servent de **repli documenté** (§7.2) si aucun token
+> officiel n'est disponible.
 
 > **Principe** : aucun connecteur Figma dans Maestro. C'est l'agent `designer`
 > du catalogue, équipé par sa **déclaration MCP versionnée**
@@ -342,14 +350,59 @@ ne peut donc pas s'y exprimer à la granularité de l'outil : soit on laisse
 soit on le barre en `deny` pour un usage **lecture seule** du serveur officiel
 (design-to-code) en gardant la création au pont communautaire.
 
-Les deux voies sont désormais **démontrées en réel** (§4 pour le pont
-communautaire, ci-dessus pour l'officielle) et coexistent en serveurs
-optionnels : le pont communautaire reste la référence **sans token** (100 %
-headless et agnostique, y compris pour l'obtention du secret) ; la voie
-officielle est préférable dès qu'un token est disponible (ni relais, ni
-plugin, granularité design-to-code supérieure), au prix d'un token éphémère à
-renouveler à la main. La config `figma-officiel` posée en portée locale du CLI
+Les deux voies sont **démontrées en réel** (§4 pour le pont communautaire,
+ci-dessus pour l'officielle). Elles ont d'abord coexisté en serveurs
+optionnels (#125) ; depuis le ticket #128, la voie officielle est la **seule
+configuration active** (§7) — le pont communautaire reste le repli documenté
+sans token (§7.2). La config `figma-officiel` posée en portée locale du CLI
 (`~/.claude.json`) sert à l'**authentification humaine** (obtention/refresh du
 token) mais n'est **pas** utilisée par les runs Maestro — la retirer via
 `claude mcp remove figma-officiel` est sans effet sur cette variante (hors
 renouvellement du token).
+
+## 7. Bascule sur la voie officielle (ticket #128)
+
+L'évaluation #125 ayant validé la voie token de bout en bout (§6, écriture
+comprise), la configuration active bascule sur le **serveur officiel seul** —
+plus simple (ni relais, ni plugin, ni canal éphémère) et d'une granularité
+design-to-code supérieure.
+
+### 7.1 Ce qui change dans la configuration active
+
+- **[core/mcp/designer.json](../core/mcp/designer.json)** ne déclare plus que
+  `figma-officiel` (endpoint `http`, `Authorization: Bearer
+  ${FIGMA_OAUTH_TOKEN}`, `"optionnel": true` — sans token, le serveur est omis
+  du montage, une tâche de design sans Figma ne casse pas) ;
+- **`.env.example`** ne porte plus que `FIGMA_OAUTH_TOKEN` (`FIGMA_CHANNEL`
+  retiré) ; côté rédaction, `FIGMA_CHANNEL` sort de la liste des variables
+  sensibles de [maestro/telemetry/redact.py](../maestro/telemetry/redact.py) —
+  le token officiel y reste, et tout secret résolu au montage passe de toute
+  façon par le registre des secrets servis (#109) ;
+- **[core/permissions/designer.json](../core/permissions/designer.json)**
+  revue avec les outils du serveur officiel : les `deny` de l'ancien serveur
+  (`mcp__figma__delete_node`…) n'ont plus d'objet, et le serveur officiel
+  n'expose **aucun outil de suppression dédié** (limite structurelle relevée
+  au §6 : l'édition passe par le seul `use_figma`, insécable). La politique
+  reste en place, vide — le garde-fou « il propose, il ne remplace pas »
+  (docs/04 §3.5) est porté par le prompt du rôle ;
+- les tests ancrés sur l'ancien mode
+  ([tests/test_mcp.py](../tests/test_mcp.py), section ⑥) sont réécrits :
+  déclaration officielle seule et sans secret en clair, token expurgé, serveur
+  omis sans token, politique revue, et **aucune configuration active** ne
+  référençant `cursor-talk-to-figma-mcp` ni `FIGMA_CHANNEL`.
+
+Le relais `socket.ts` et le plugin compagnon n'ont jamais été versionnés dans
+le repo : leur retrait est purement documentaire (les instructions de
+lancement restent au §2.4, trace historique).
+
+### 7.2 Repli « Talk to Figma » (sans token officiel)
+
+La contrainte de la voie officielle demeure (§6) : le token n'est émis qu'à
+des **clients OAuth pré-approuvés** (enregistrement dynamique fermé), il est
+**emprunté** à un client approuvé et **renouvelé à la main** (refresh non géré
+par Maestro). Si aucun token n'est disponible, le pont communautaire reste la
+voie 100 % headless et agnostique : re-déclarer le serveur `figma` dans
+`core/mcp/designer.json` (déclaration du §2.1, `"optionnel": true` conseillé),
+re-renseigner `FIGMA_CHANNEL` (et le réintégrer aux variables sensibles de
+`redact.py` — le registre #109 masque de toute façon la valeur résolue), puis
+suivre la mise en route du §2.4 (relais + plugin + canal).
