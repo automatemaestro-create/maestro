@@ -51,5 +51,20 @@
       "Bash(glab mr close:*)",
       "Bash(glab ci delete:*)"
     ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"$CLAUDE_PROJECT_DIR/.claude/hooks/maestro-demande-ticket.json\"",
+            "shell": "bash",
+            "timeout": 10,
+            "statusMessage": "Rappel traçabilité ticket"
+          }
+        ]
+      }
+    ]
   }
 }

@@ -427,6 +427,34 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
   **décision humaine** (un agent ne s'auto-accorde pas de permissions — l'écriture de ce fichier par
   Claude Code est d'ailleurs interceptée et demande validation).
 
+### 7.2 Traçabilité des demandes — hook `UserPromptSubmit`
+
+**Principe.** Aucune demande de travail ne doit rester hors de GitLab : chaque prompt utilisateur
+se consigne dans un ticket, **sans confirmation** (même parti pris d'autonomie que le reste du
+workflow). Un hook Claude Code [`UserPromptSubmit`](https://docs.claude.com/en/docs/claude-code/hooks)
+injecte le rappel à chaque prompt.
+
+**Règle appliquée par l'agent** — à réception d'un prompt :
+
+| Cas | Action |
+|---|---|
+| La demande **relève du ticket en cours ou d'un ticket existant** du backlog | **Mettre à jour ce ticket** : commentaire (`glab issue note -m`), et **description** si le périmètre change. |
+| La demande **est nouvelle** (aucun ticket ne la couvre) | **Créer un ticket** via [`/ticket-create`](../.claude/commands/ticket-create.md) (labels `type::`/`agent::`/`prio::`, milestone courant §3.4). |
+| **Exceptions — rien à tracer** | Les commandes `/ticket-*` elles-mêmes (déjà tracées par le workflow) et les **échanges purement conversationnels** sans travail demandé. |
+
+**Mécanisme (versionné, fonctionne sur tout clone).** Deux fichiers portés par le dépôt :
+
+- [`.claude/settings.json`](../.claude/settings.json) déclare le hook `UserPromptSubmit` (bloc
+  `hooks`) : il exécute `cat "$CLAUDE_PROJECT_DIR/.claude/hooks/maestro-demande-ticket.json"`.
+  `$CLAUDE_PROJECT_DIR` est fourni par Claude Code (racine du dépôt) — le chemin est donc **relatif
+  au clone**, sans dépendance à un emplacement machine.
+- [`.claude/hooks/maestro-demande-ticket.json`](../.claude/hooks/maestro-demande-ticket.json) est le
+  **payload** : un JSON `UserPromptSubmit` (`suppressOutput: true` + `hookSpecificOutput.additionalContext`)
+  dont le `cat` sur stdout devient le rappel injecté dans le contexte de l'agent.
+
+Comme l'allowlist (§7.1), ce hook est **partagé par l'équipe** ; toute surcharge personnelle (ex.
+désactiver le rappel en local) passe par `.claude/settings.local.json`, non versionné.
+
 ---
 
 ## 8. Intégration continue (CI)
