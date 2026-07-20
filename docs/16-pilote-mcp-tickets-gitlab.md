@@ -89,6 +89,10 @@ compte bot) : il fonctionne à l'identique — l'API GitLab l'accepte en
 `Authorization: Bearer` — mais **expire en ~2 h** (rafraîchi par `glab`, pas
 par Maestro) ; pour un usage récurrent, préférer le PAT.
 
+Dans la grille des modes d'auth MCP ([docs/21 §2](./21-configuration-mcp.md)),
+GitLab est le cas le plus simple : **token statique saisissable** — un humain
+le crée dans l'UI de l'outil, Maestro le consomme tel quel.
+
 ## 3. Le token ne transite jamais en clair (critère du ticket)
 
 Mêmes exigences que le pilote Slack (#105) — défense en profondeur, trois

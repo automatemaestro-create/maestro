@@ -355,6 +355,9 @@ journaux caviardent les motifs de tokens connus (`xoxb-`, `glpat-`…).
   toolset restreint aux issues — ni merge ni suppression) **lit et crée des tickets**
   pendant un run réel.
 
+Le mode d'obtention du secret varie d'un outil à l'autre (token statique,
+appairage, OAuth verrouillé) : grille complète dans [doc 21](./21-configuration-mcp.md).
+
 Le socle est rejoué sans réseau dans [`tests/test_mcp.py`](../tests/test_mcp.py)
 (déclarations et validation à la lecture, résolution des secrets, montage par le
 moteur, application à chaud, échecs propres, couture SDK) et le volet catalogue dans

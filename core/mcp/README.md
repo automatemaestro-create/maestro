@@ -63,3 +63,7 @@ résolution des secrets, montage par le moteur, application à chaud, échecs
 propres, couture SDK) ; le volet catalogue (lecture seule, valeurs masquées)
 dans [`tests/test_controltower.py`](../../tests/test_controltower.py).
 Guide : [docs/07 §6.7](../../docs/07-guide-de-demarrage.md).
+
+Classification des **modes d'authentification** de ces serveurs (token statique
+/ appairage sans token / OAuth verrouillé) et pré-requis pour leur
+configuration depuis la Control Tower : [docs/21](../../docs/21-configuration-mcp.md) (#126).
