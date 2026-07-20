@@ -1,6 +1,6 @@
 # Pilote MCP Figma — l'agent designer crée dans un fichier (ticket #115)
 
-**Version :** 0.1
+**Version :** 0.2 — variante serveur MCP officiel (§6, ticket #125)
 Troisième pilote concret du socle MCP (#104, parent #101) : l'agent **designer**,
 équipé d'un serveur MCP « Talk to Figma », **crée des éléments dans un fichier
 Figma en temps réel** (frames, formes, textes — visibles dans le fichier pendant
@@ -72,21 +72,37 @@ agent designer ──(stdio)── serveur MCP ──(ws://localhost:3055)──
       "args": ["-y", "cursor-talk-to-figma-mcp@0.3.5"],
       "env": {
         "FIGMA_CHANNEL": "${FIGMA_CHANNEL}"
-      }
+      },
+      "optionnel": true
+    },
+    {
+      "nom": "figma-officiel",
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${FIGMA_OAUTH_TOKEN}"
+      },
+      "optionnel": true
     }
   ]
 }
 ```
 
 Conformément au contrat du socle (#104, [docs/04 §6](./04-specifications-agents.md)),
-le serveur est monté **à chaud** sur chaque exécution outillée de l'agent, et
-une variable absente rend le serveur indisponible : sans appairage Figma
-(`FIGMA_CHANNEL` vide), la tâche échoue proprement **avant tout appel modèle**.
+les serveurs sont montés **à chaud** sur chaque exécution outillée de l'agent.
+Les deux voies sont déclarées **optionnelles** (`"optionnel": true`, notion
+introduite au #125) : un serveur optionnel dont le secret n'est pas fourni est
+**omis du montage** au lieu de faire échouer la tâche — seule la voie
+configurée (canal d'appairage **ou** token OAuth du serveur officiel, §6) est
+montée, et une tâche de design sans besoin Figma s'exécute sans outils Figma.
+(Au pilote #115 initial, le serveur communautaire était requis : sans canal, la
+tâche échouait avant tout appel modèle — sémantique remplacée par l'omission.)
 
 La référence `${FIGMA_CHANNEL}` joue un double rôle : elle **conditionne le
 montage** à un appairage effectif, et elle **enregistre le canal au registre de
 rédaction** au moment de la résolution (#109) — le canal est masqué
-(`[secret masqué]`) partout où il réapparaîtrait en sortie.
+(`[secret masqué]`) partout où il réapparaîtrait en sortie. `${FIGMA_OAUTH_TOKEN}`
+suit exactement le même régime (§6).
 
 ### 2.2 Politique de permissions (versionnée)
 
@@ -230,10 +246,110 @@ coût 0,4548 $, durée 99,0 s.
   fermé ou relais éteint = outils en échec propre.
 - Le **canal est éphémère** : régénéré à chaque session du plugin, à reporter
   dans `FIGMA_CHANNEL` avant chaque campagne de runs.
-- Le serveur est monté sur **toute exécution outillée** du designer : une tâche
-  de design sans besoin Figma échouera au montage si `FIGMA_CHANNEL` est
-  absent — retirer la déclaration (ou renseigner le canal) selon la campagne.
+- Les serveurs Figma sont **optionnels** depuis le #125 : une tâche de design
+  sans `FIGMA_CHANNEL` ni `FIGMA_OAUTH_TOKEN` s'exécute **sans outils Figma**
+  (plus d'échec au montage). Revers : une mission Figma lancée sans secret
+  n'échoue plus d'emblée — l'agent produira un livrable local sans toucher au
+  fichier ; vérifier l'appairage/le token avant une campagne Figma.
 - Le relais demande `bun` (script du dépôt amont) ; le serveur MCP lui-même
   tourne sous node via `npx`.
 - Sécurité locale : le relais écoute sur `localhost:3055` sans autre
   authentification que le canal — ne pas l'exposer au-delà du poste.
+
+## 6. Variante serveur MCP officiel Figma (ticket #125)
+
+Le serveur MCP **officiel** (`https://mcp.figma.com/mcp`, écriture sur le
+canvas incluse) est plus simple que le pont communautaire — ni relais, ni
+plugin, ni canal éphémère — mais son accès est verrouillé (constats du
+2026-07-19, §1) : **OAuth uniquement** (scope `mcp:connect` — un PAT est
+refusé, `Bearer` comme `X-Figma-Token` → 401) et **enregistrement dynamique de
+client fermé** (`POST /v1/oauth/mcp/register` → 403, réservé aux clients
+approuvés : Claude Code, Cursor, VS Code…).
+
+**Décision : implémenté en variante, authentification humaine.** La voie
+officielle est **branchée** dans la déclaration versionnée du designer
+(`figma-officiel`, §2.1) mais Maestro **ne mène aucune authentification
+automatique** — pas de flux OAuth embarqué, pas de réutilisation du token
+stocké par le CLI Claude (couplage au fournisseur contraire à O7/ENF-11).
+L'obtention du token est une **action humaine** :
+
+1. l'utilisateur obtient un access token OAuth valide (scope `mcp:connect`)
+   via un client approuvé par Figma — ou plus tard via un enregistrement de
+   client propre à Maestro si Figma l'ouvre ;
+2. il le fournit à Maestro : `FIGMA_OAUTH_TOKEN` dans `.env`, ou dans le
+   [coffre du designer](./18-secrets-par-agent.md) (`core/secrets/designer.json`)
+   pour le scoper au seul agent ; à terme, la **Control Tower** portera la
+   saisie/rotation de ce secret (même canal que le coffre #109) ;
+3. au montage, la référence `${FIGMA_OAUTH_TOKEN}` est résolue et envoyée en
+   `Authorization: Bearer` — token enregistré au registre de rédaction (#109),
+   masqué partout en sortie. Sans token, le serveur est **omis** (serveur
+   optionnel, §2.1) : rien n'échoue, la voie officielle n'existe simplement
+   pas encore.
+
+Côté moteur, la voie est un endpoint `http` **standard** du socle #104
+(déclaration → résolution → config SDK `url` + `headers`) : aucun couplage à un
+fournisseur de modèle, la bascule reste purement configurative.
+
+**Démonstration réelle (2026-07-19, `run_id 953bfdc079fb`)** — la voie
+officielle est **validée de bout en bout**, écriture comprise, dès qu'un token
+est fourni. Run headless (`maestro-run`, `FIGMA_CHANNEL` neutralisé pour ne
+monter que la voie officielle) : 4/4 tâches réussies, 5 appels modèle,
+~1,16 $, 489 s. L'agent designer a enchaîné `whoami`, `create_new_file`
+(nouveau fichier, clé consignée au compte-rendu), `use_figma` (frame
+« Maestro — test 125 » 720×460 : bandeau, titre, sous-titre, carte — 7 nœuds),
+`get_screenshot`, puis une relecture indépendante `get_metadata` +
+`get_design_context` : **7/7 éléments présents et conformes**, contrastes
+WCAG AA vérifiés. **Aucun refus d'écriture** malgré le siège `View`/tier
+`starter` — le gating par plan ne s'est pas manifesté sur ce parcours.
+Confirmation opérationnelle des atouts attendus : ni relais, ni plugin, ni
+canal — le token seul suffit.
+
+**Seule contrainte opérationnelle restante : la durée de vie du token.** Le
+refresh n'est **pas** géré par Maestro — token expiré = serveur qui refuse la
+connexion (échec propre au montage), à renouveler côté humain (re-copier le
+token rafraîchi par le CLI), jusqu'à la prise en charge par la Control Tower.
+
+**Sondes au premier token fourni (2026-07-19)** — deux constats sur pièces :
+
+1. **PAT refusé, OAuth seul passe.** Un PAT `figd_` valide et multi-scopes
+   (file_content, file_comments, library…, vérifié contre l'API REST) reste
+   refusé par le serveur MCP — `initialize` → 401 dans les deux en-têtes
+   (`Authorization: Bearer` → « figd_ tokens must be passed via X-Figma-Token » ;
+   `X-Figma-Token` → « Unauthorized », `WWW-Authenticate: … scope="mcp:connect"`).
+   **Aucun scope de PAT n'ouvre le MCP officiel.**
+2. **Relevé des capacités** avec un access token OAuth `mcp:connect` (obtenu
+   par l'humain via l'authentification interactive du CLI Claude, client
+   approuvé, puis reporté dans `FIGMA_OAUTH_TOKEN`) : `initialize` → 200
+   (« Figma MCP Server » 1.0.0, capacités `prompts`/`resources`/`tools`, sans
+   `Mcp-Session-Id`) et `tools/list` → **26 outils**. Lecture/design-to-code :
+   `get_design_context` (outil primaire), `get_metadata`, `get_variable_defs`,
+   `get_screenshot`, `get_libraries`, `search_design_system`,
+   `download_assets`, suite Code Connect, shaders… **Écriture sur le canvas
+   confirmée au catalogue** : `use_figma` (« create, edit, generate, or sync
+   any design » — outil large, création **et** édition), `generate_figma_design`
+   (import URL/HTML), `generate_diagram`, `create_new_file`, `upload_assets`.
+   `whoami` situe le compte : plan **tier `starter`** (gratuit), siège
+   **`View`** — pas d'en-tête `X-Figma-Plan-Tier` au handshake, le gating
+   s'exprime donc à l'appel : l'écriture réelle avec ce siège reste à exercer
+   lors d'un premier run designer.
+
+**Permissions — limite structurelle relevée** : contrairement au pont
+communautaire (~40 outils granulaires, `delete_node` isolable et barré), le
+serveur officiel n'expose **aucun outil de suppression dédié** — l'édition
+passe par le seul `use_figma`, insécable. Le garde-fou « il ne détruit rien »
+ne peut donc pas s'y exprimer à la granularité de l'outil : soit on laisse
+`use_figma` (le garde-fou repose alors sur le prompt du rôle, docs/04 §3.5),
+soit on le barre en `deny` pour un usage **lecture seule** du serveur officiel
+(design-to-code) en gardant la création au pont communautaire.
+
+Les deux voies sont désormais **démontrées en réel** (§4 pour le pont
+communautaire, ci-dessus pour l'officielle) et coexistent en serveurs
+optionnels : le pont communautaire reste la référence **sans token** (100 %
+headless et agnostique, y compris pour l'obtention du secret) ; la voie
+officielle est préférable dès qu'un token est disponible (ni relais, ni
+plugin, granularité design-to-code supérieure), au prix d'un token éphémère à
+renouveler à la main. La config `figma-officiel` posée en portée locale du CLI
+(`~/.claude.json`) sert à l'**authentification humaine** (obtention/refresh du
+token) mais n'est **pas** utilisée par les runs Maestro — la retirer via
+`claude mcp remove figma-officiel` est sans effet sur cette variante (hors
+renouvellement du token).

@@ -20,7 +20,11 @@ Les **secrets** (tokens d'API des serveurs) ne sont **jamais en clair** dans
 une déclaration versionnée : les valeurs d'`env`/`headers` portent des
 références `${VARIABLE}` résolues depuis l'environnement au moment du montage
 (`resolus`) — une variable absente rend le serveur indisponible, erreur propre
-avant tout appel modèle. Cette convention anticipe le chantier sécurité (#102) ;
+avant tout appel modèle. Un serveur déclaré **optionnel** (`"optionnel": true`,
+#125) fait exception : ses références non résolues l'**omettent du montage** au
+lieu de faire échouer la tâche — c'est le canal des capacités qui ne s'activent
+que lorsqu'un humain a fourni le secret (ex. token OAuth du serveur officiel
+Figma). Cette convention anticipe le chantier sécurité (#102) ;
 le #109 la complète : `environ` peut être le **coffre scopé** de l'agent
 (`maestro.agents.secrets.SecretStore.environ`) — un agent ne résout alors que
 ses propres secrets — et toute valeur résolue est enregistrée au registre de
@@ -72,6 +76,11 @@ class ServeurMcp:
     `url` + `headers`). Les valeurs d'`env`/`headers` peuvent référencer
     l'environnement (`${VARIABLE}`) — c'est le canal des secrets, jamais en
     clair dans une déclaration versionnée.
+
+    `optionnel` (#125) : un serveur optionnel dont une référence ne se résout
+    pas est **omis du montage** (la tâche s'exécute sans lui) au lieu de la
+    faire échouer — pour les capacités activées par un secret fourni par
+    l'humain (env aujourd'hui, coffre #109 ou Control Tower demain).
     """
 
     nom: str
@@ -81,6 +90,7 @@ class ServeurMcp:
     url: str = ""
     env: dict[str, str] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
+    optionnel: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la déclaration en dict JSON-sérialisable, **valeurs masquées**.
@@ -97,6 +107,7 @@ class ServeurMcp:
             "url": self.url,
             "env": {cle: _masque(valeur) for cle, valeur in self.env.items()},
             "headers": {cle: _masque(valeur) for cle, valeur in self.headers.items()},
+            "optionnel": self.optionnel,
         }
 
     @classmethod
@@ -110,6 +121,9 @@ class ServeurMcp:
             url=str(data.get("url", "")),
             env={str(k): str(v) for k, v in dict(data.get("env", {})).items()},
             headers={str(k): str(v) for k, v in dict(data.get("headers", {})).items()},
+            # Pas de coercition : un « optionnel » non booléen est refusé à la
+            # validation plutôt qu'interprété (une chaîne "false" serait vraie).
+            optionnel=data.get("optionnel", False),
         )
 
 
@@ -202,16 +216,27 @@ def resolus(serveurs: Sequence[ServeurMcp], environ: Mapping[str, str]) -> tuple
     par le runtime juste avant de confier les serveurs au fournisseur. Une
     variable absente rend le serveur **indisponible**
     (`McpServerUnavailable`) : échec propre, déterministe (jamais relancé),
-    avant tout appel modèle.
+    avant tout appel modèle. Exception (#125) : un serveur **optionnel** dont
+    une référence ne se résout pas est **omis** du résultat — la tâche
+    s'exécute sans lui, c'est le contrat des capacités activées par un secret
+    fourni par l'humain.
     """
-    return tuple(
-        replace(
-            serveur,
-            env={k: _resout(v, environ, serveur) for k, v in serveur.env.items()},
-            headers={k: _resout(v, environ, serveur) for k, v in serveur.headers.items()},
-        )
-        for serveur in serveurs
-    )
+    montables: list[ServeurMcp] = []
+    for serveur in serveurs:
+        try:
+            montables.append(
+                replace(
+                    serveur,
+                    env={k: _resout(v, environ, serveur) for k, v in serveur.env.items()},
+                    headers={
+                        k: _resout(v, environ, serveur) for k, v in serveur.headers.items()
+                    },
+                )
+            )
+        except McpServerUnavailable:
+            if not serveur.optionnel:
+                raise
+    return tuple(montables)
 
 
 def _resout(valeur: str, environ: Mapping[str, str], serveur: ServeurMcp) -> str:
@@ -258,6 +283,11 @@ def _valide(serveur: ServeurMcp, *, agent: str) -> ServeurMcp:
         raise ValueError(
             f"type invalide pour le {ici} : {serveur.type!r} "
             f"(attendu : {', '.join(TYPES_SERVEUR)})."
+        )
+    if not isinstance(serveur.optionnel, bool):
+        raise ValueError(
+            f"optionnel invalide pour le {ici} : {serveur.optionnel!r} "
+            "(booléen attendu — true/false)."
         )
     if serveur.type == "stdio":
         if not serveur.commande.strip():

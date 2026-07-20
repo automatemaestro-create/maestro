@@ -203,6 +203,9 @@ export type VersionPlaybookDetail = VersionPlaybook & { contenu: string };
  * commande locale (`type` « stdio » : commande + args + env) ou un endpoint
  * distant (« sse »/« http » : url + headers). Forme publique : les valeurs
  * d'env/headers sans référence `${VAR}` sont masquées par le backend.
+ * `optionnel` (#125) : serveur omis du montage (sans échec) tant que ses
+ * références ne sont pas résolues — capacité activée par un secret fourni
+ * par l'humain.
  */
 export type ServeurMcp = {
   nom: string;
@@ -212,6 +215,7 @@ export type ServeurMcp = {
   url: string;
   env: Record<string, string>;
   headers: Record<string, string>;
+  optionnel: boolean;
 };
 
 /**
