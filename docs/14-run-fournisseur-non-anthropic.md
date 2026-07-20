@@ -102,7 +102,13 @@ appel après démarrage paie le chargement du modèle en mémoire (~37 s observ�
 
 ## 6. Suites
 
-- **#113** — rendre le plafond de dépense opérant sur les fournisseurs sans coût
-  rapporté (plafond en tokens ou barème de prix par modèle).
+- **#113 — résolu** : le plafond de dépense est désormais opérant sur les
+  fournisseurs sans coût rapporté via un **plafond en tokens** (`--plafond-tokens`),
+  contrôlé par le même `PlafondDepense` que le plafond en USD ; la synthèse du run
+  indique lequel des deux a réellement tenu (au lieu d'un plafond silencieusement
+  sans prise). Le barème de prix par modèle n'a pas été retenu — la comptabilité
+  n'évalue aucun prix par principe (#55).
+- L'exécution **outillée** multi-fournisseurs et l'ancrage documentaire des petits
+  modèles restent hors périmètre du POC (docs/04 §4).
 - L'exécution **outillée** multi-fournisseurs et l'ancrage documentaire des petits
   modèles restent hors périmètre du POC (docs/04 §4).

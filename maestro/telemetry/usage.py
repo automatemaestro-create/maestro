@@ -16,7 +16,9 @@ le contrôle (`maestro.telemetry.costs.PlafondDepense`, #56) relit la comptabili
 par tâche de l'exécution, source unique du coût, et lève `PlafondDepenseDepasse`
 depuis `report_usage` dès que le plafond est dépassé — l'appel modèle en cours est
 déjà comptabilisé (le coût reste visible), mais la suite de l'étape est stoppée.
-Un fournisseur qui ne rapporte pas de coût n'est pas plafonnable (coût « inconnu »).
+Un fournisseur qui ne rapporte pas de coût échappe au plafond *en USD* (coût
+« inconnu ») mais reste plafonnable **en tokens** (#113) : le même contrôle
+(`PlafondDepense`) accepte un plafond en tokens, toujours opérant.
 """
 
 from __future__ import annotations
@@ -130,10 +132,11 @@ class ControleDepense(Protocol):
     """Contrôle de dépense consulté par le collecteur à chaque mesure (#9).
 
     `verifie` reçoit l'usage cumulé de l'étape en cours et lève
-    (`PlafondDepenseDepasse`) si la dépense de l'exécution dépasse son plafond.
-    L'implémentation du POC est `maestro.telemetry.costs.PlafondDepense`, adossée
-    à la comptabilité par tâche (#56) — le protocole évite au canal de mesure de
-    dépendre de la comptabilité, qui se construit au-dessus de lui.
+    (`PlafondDepenseDepasse`) si la dépense de l'exécution dépasse son plafond (en
+    USD **ou en tokens**, #113). L'implémentation du POC est
+    `maestro.telemetry.costs.PlafondDepense`, adossée à la comptabilité par tâche
+    (#56) — le protocole évite au canal de mesure de dépendre de la comptabilité,
+    qui se construit au-dessus de lui.
     """
 
     def verifie(self, en_cours: StepUsage) -> None:

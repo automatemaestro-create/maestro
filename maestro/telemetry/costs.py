@@ -19,6 +19,13 @@ La comptabilité n'évalue **aucun prix** : le coût estimé est celui rapporté
 le fournisseur via la couche `ModelProvider` (#32) — la tarification par modèle
 reste de son côté, jamais en dur ici. Un fournisseur qui ne rapporte pas de coût
 laisse la tâche à coût « inconnu » (None, à distinguer d'un coût nul).
+
+Ce coût inconnu rendrait le plafond de dépense inopérant sur un tel fournisseur
+(#113) : `PlafondDepense` accepte donc un **plafond en tokens** en complément (ou
+à la place) du plafond de coût — les tokens, eux, sont toujours rapportés. Le
+plafond en USD garde la main dès que le coût est connu ; le plafond en tokens
+prend le relais sinon, et `resume_controle_depense` dit à l'opérateur lequel des
+deux tient réellement (au lieu d'un plafond silencieusement sans prise).
 """
 
 from __future__ import annotations
@@ -153,21 +160,94 @@ class PlafondDepense:
     au journal. Les étapes parallèles encore en vol ne comptent qu'à leur
     consignation : léger sous-comptage transitoire assumé (POC), jamais de
     double comptage.
+
+    Deux seuils, dont au moins un doit être posé : `plafond_cout_usd` (budget en
+    USD, sans prise sur un fournisseur qui ne rapporte pas de coût) et
+    `plafond_tokens` (budget en tokens, opérant sur tout fournisseur — les tokens
+    sont toujours rapportés, #113). Les deux sont vérifiés : le franchissement de
+    l'un ou l'autre stoppe la tâche.
     """
 
-    def __init__(self, journal: RunJournal, plafond_cout_usd: float) -> None:
-        if plafond_cout_usd <= 0:
+    def __init__(
+        self,
+        journal: RunJournal,
+        plafond_cout_usd: float | None = None,
+        *,
+        plafond_tokens: int | None = None,
+    ) -> None:
+        if plafond_cout_usd is None and plafond_tokens is None:
+            raise ValueError(
+                "PlafondDepense exige au moins un plafond (coût en USD ou tokens)."
+            )
+        if plafond_cout_usd is not None and plafond_cout_usd <= 0:
             raise ValueError(
                 f"plafond_cout_usd doit être > 0 (reçu : {plafond_cout_usd})."
             )
+        if plafond_tokens is not None and plafond_tokens <= 0:
+            raise ValueError(
+                f"plafond_tokens doit être > 0 (reçu : {plafond_tokens})."
+            )
         self._journal = journal
         self._plafond_cout_usd = plafond_cout_usd
+        self._plafond_tokens = plafond_tokens
 
     def verifie(self, en_cours: StepUsage) -> None:
-        """Lève `PlafondDepenseDepasse` si la dépense du run, `en_cours` compris, dépasse."""
-        cout = RunCost.depuis_journal(self._journal).total.fusion(en_cours).cout_usd
-        if cout is not None and cout > self._plafond_cout_usd:
+        """Lève `PlafondDepenseDepasse` si la dépense du run, `en_cours` compris, dépasse.
+
+        Le coût passe d'abord (le message le plus parlant quand il est connu), les
+        tokens ensuite — le seuil en tokens tient même quand le coût est inconnu.
+        """
+        total = RunCost.depuis_journal(self._journal).total.fusion(en_cours)
+        cout = total.cout_usd
+        if (
+            self._plafond_cout_usd is not None
+            and cout is not None
+            and cout > self._plafond_cout_usd
+        ):
             raise PlafondDepenseDepasse(
                 f"plafond de dépense dépassé : {cout:.4f} $ consommés sur l'exécution "
                 f"pour un plafond de {self._plafond_cout_usd:.4f} $ — tâche stoppée."
             )
+        if (
+            self._plafond_tokens is not None
+            and total.tokens_total > self._plafond_tokens
+        ):
+            raise PlafondDepenseDepasse(
+                f"plafond de tokens dépassé : {total.tokens_total} tokens consommés sur "
+                f"l'exécution pour un plafond de {self._plafond_tokens} — tâche stoppée."
+            )
+
+
+def resume_controle_depense(
+    plafond_cout_usd: float | None,
+    plafond_tokens: int | None,
+    usage: StepUsage,
+) -> str:
+    """Décrit en une ligne le contrôle de dépense actif, pour l'opérateur (#113).
+
+    Rend visible le cas « plafond silencieusement inopérant » : un plafond de coût
+    armé sur un fournisseur qui ne rapporte pas de coût (`usage.cout_usd` None) n'a
+    aucune prise — seul un plafond en tokens plafonne alors réellement. Destinée à
+    la synthèse du run et au rapport JSON (`RunReport`), pas à la logique de
+    contrôle (portée par `PlafondDepense.verifie`).
+    """
+    controles: list[str] = []
+    if plafond_tokens is not None:
+        controles.append(f"tokens ({usage.tokens_total}/{plafond_tokens})")
+    if plafond_cout_usd is not None:
+        if usage.cout_usd is not None:
+            controles.append(f"coût réel ({usage.cout_usd:.4f}/{plafond_cout_usd:.4f} $)")
+        elif plafond_tokens is None:
+            # Le seul plafond posé est sans prise : la dépense n'est bornée par rien.
+            return (
+                f"plafond de coût de {plafond_cout_usd:.4f} $ armé mais SANS PRISE — "
+                "le fournisseur ne rapporte pas de coût ; armez un plafond en tokens "
+                "(--plafond-tokens) pour plafonner ce run."
+            )
+        else:
+            controles.append(
+                f"coût inopérant ({plafond_cout_usd:.4f} $ — fournisseur sans coût rapporté)"
+            )
+    if not controles:
+        return "aucun plafond armé"
+    return "plafond actif — " + ", ".join(controles)

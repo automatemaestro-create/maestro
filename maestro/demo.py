@@ -242,6 +242,16 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help=f"plafond de dépense de l'exécution en USD (défaut : {PLAFOND_COUT_DEFAUT_USD:g})",
     )
     parser.add_argument(
+        "--plafond-tokens",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "plafond de dépense en tokens — le seul opérant sur un fournisseur qui "
+            "ne rapporte pas de coût (#113 ; défaut : aucun)"
+        ),
+    )
+    parser.add_argument(
         "--timeout",
         type=float,
         default=TIMEOUT_DEFAUT_S,
@@ -268,6 +278,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         guardrails = Guardrails(
             plafond_cout_usd=args.plafond_cout,
+            plafond_tokens=args.plafond_tokens,
             timeout_s=args.timeout,
             validateur=validation_console,
         )

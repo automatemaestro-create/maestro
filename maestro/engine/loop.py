@@ -88,7 +88,12 @@ from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task, topological_order
 from maestro.providers.base import ModelProvider
-from maestro.telemetry import RunJournal, StepUsage, collect_usage
+from maestro.telemetry import (
+    RunJournal,
+    StepUsage,
+    collect_usage,
+    resume_controle_depense,
+)
 
 __all__ = [
     "STATUT_BLOQUEE",
@@ -112,12 +117,19 @@ class RunReport:
     `run_id` relie le rapport aux lignes du journal d'exécution (#8) ;
     `planification` porte l'usage de l'étape de planification, qui s'ajoute à celui
     des tâches dans `usage_totale`.
+
+    `plafond_cout_usd`/`plafond_tokens` sont les seuils du garde-fou de dépense (#9)
+    tels qu'armés pour ce run : le rapport en tire `controle_depense`, la ligne qui
+    dit à l'opérateur quel contrôle a réellement tenu (#113) — coût réel, ou tokens
+    quand le fournisseur ne rapporte pas de coût.
     """
 
     objectif: str
     resultats: tuple[TaskResult, ...]
     run_id: str = ""
     planification: StepUsage = StepUsage()
+    plafond_cout_usd: float | None = None
+    plafond_tokens: int | None = None
 
     @property
     def reussies(self) -> tuple[TaskResult, ...]:
@@ -147,6 +159,18 @@ class RunReport:
             total = total.fusion(r.usage)
         return total
 
+    @property
+    def controle_depense(self) -> str:
+        """Le contrôle de dépense qui a réellement tenu ce run, en clair (#113).
+
+        Dit à l'opérateur si le plafond en USD avait prise (coût rapporté) ou si
+        seul le plafond en tokens plafonnait — au lieu d'un garde-fou silencieusement
+        inopérant sur un fournisseur sans coût rapporté.
+        """
+        return resume_controle_depense(
+            self.plafond_cout_usd, self.plafond_tokens, self.usage_totale
+        )
+
     def synthese(self) -> str:
         """Rend l'agrégat en Markdown : récap chiffré puis livrable par tâche."""
         lignes = [
@@ -154,6 +178,7 @@ class RunReport:
             "",
             f"{len(self.reussies)}/{len(self.resultats)} tâche(s) réussie(s).",
             f"Usage total (planification incluse) : {self.usage_totale.resume_court()}",
+            f"Contrôle de dépense : {self.controle_depense}",
             "",
         ]
         for r in self.resultats:
@@ -195,6 +220,9 @@ class RunReport:
             "total": len(self.resultats),
             "planification": self.planification.to_dict(),
             "usage_totale": self.usage_totale.to_dict(),
+            "plafond_cout_usd": self.plafond_cout_usd,
+            "plafond_tokens": self.plafond_tokens,
+            "controle_depense": self.controle_depense,
             "resultats": [r.to_dict() for r in self.resultats],
         }
 
@@ -223,6 +251,11 @@ class OrchestrationEngine:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
         self._orchestrator = orchestrator
+        # Garde-fous du run (#9) : retenus ici pour que le rapport dise quel contrôle
+        # de dépense a tenu (#113). Le défaut laisse les plafonds inactifs. En mode
+        # distribué (exécuteur injecté), les garde-fous s'appliquent côté worker :
+        # ce que retient l'orchestrateur ne reflète alors que ce qu'on lui a passé.
+        self._guardrails = guardrails if guardrails is not None else Guardrails()
         # Plafond d'exécutions simultanées (#7) — None : illimité. Utile pour ménager
         # les limites de débit d'un fournisseur sur un plan très large.
         self._max_parallele = max_parallele
@@ -428,6 +461,8 @@ class OrchestrationEngine:
             resultats=tuple(en_vol[task.id].result() for task in ordered),
             run_id=journal.run_id,
             planification=plan_usage,
+            plafond_cout_usd=self._guardrails.plafond_cout_usd,
+            plafond_tokens=self._guardrails.plafond_tokens,
         )
 
     async def _plan(self, objective: str, journal: RunJournal) -> tuple[StepUsage, list[Task]]:

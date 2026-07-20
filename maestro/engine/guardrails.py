@@ -3,13 +3,15 @@
 Matérialise les « limites globales » de docs/01 §5 au niveau de la boucle
 d'orchestration, en trois protections appliquées à chaque tâche :
 
-- **plafond de dépense** (`plafond_cout_usd`) : budget de l'**exécution entière** —
-  la tâche qui fait déborder le coût cumulé du run est stoppée, et une exécution
-  au budget épuisé n'en démarre plus aucune. Les garde-fous ne comptent rien
-  eux-mêmes (#56) : ce module ne porte que le seuil, le contrôle
-  (`maestro.telemetry.PlafondDepense`) relit la comptabilité par tâche de
-  l'exécution (#55) à chaque mesure d'usage — `maestro/telemetry` est la source
-  unique du coût ;
+- **plafond de dépense** (`plafond_cout_usd` en USD, `plafond_tokens` en tokens) :
+  budget de l'**exécution entière** — la tâche qui fait déborder le cumul du run
+  est stoppée, et une exécution au budget épuisé n'en démarre plus aucune. Les
+  deux seuils sont indépendants et cumulables ; le seuil en tokens reste opérant
+  sur un fournisseur qui ne rapporte pas de coût (#113), quand le seuil en USD n'a
+  aucune prise. Les garde-fous ne comptent rien eux-mêmes (#56) : ce module ne
+  porte que les seuils, le contrôle (`maestro.telemetry.PlafondDepense`) relit la
+  comptabilité par tâche de l'exécution (#55) à chaque mesure d'usage —
+  `maestro/telemetry` est la source unique du coût comme des tokens ;
 - **time-out** (`timeout_s`) : la tâche est annulée si sa réalisation excède le
   délai (l'attente d'une validation humaine n'y est pas comptée) ;
 - **validation humaine** : une tâche classée **sensible** (déploiement, production,
@@ -78,14 +80,17 @@ Validateur = Callable[[DemandeValidation], bool | Awaitable[bool]]
 class Guardrails:
     """Garde-fous appliqués par la boucle à chaque tâche. Immuable.
 
-    `plafond_cout_usd` (budget de l'exécution entière, contrôlé via la comptabilité
-    par tâche — #56) et `timeout_s` (par tâche) sont inactifs à None ;
-    `mots_sensibles` pilote la classification (vide = détection désactivée) ;
+    `plafond_cout_usd` (budget en USD) et `plafond_tokens` (budget en tokens),
+    tous deux contrôlés via la comptabilité par tâche (#56) et inactifs à None,
+    plafonnent l'exécution entière ; le seuil en tokens reste opérant sur un
+    fournisseur sans coût rapporté (#113). `timeout_s` (par tâche) est inactif à
+    None ; `mots_sensibles` pilote la classification (vide = détection désactivée) ;
     `validateur` est le canal de la décision humaine — absent, toute action
     sensible est refusée (fail-safe).
     """
 
     plafond_cout_usd: float | None = None
+    plafond_tokens: int | None = None
     timeout_s: float | None = None
     validateur: Validateur | None = None
     mots_sensibles: tuple[str, ...] = MOTS_SENSIBLES
@@ -94,6 +99,10 @@ class Guardrails:
         if self.plafond_cout_usd is not None and self.plafond_cout_usd <= 0:
             raise ValueError(
                 f"plafond_cout_usd doit être > 0 (reçu : {self.plafond_cout_usd})."
+            )
+        if self.plafond_tokens is not None and self.plafond_tokens <= 0:
+            raise ValueError(
+                f"plafond_tokens doit être > 0 (reçu : {self.plafond_tokens})."
             )
         if self.timeout_s is not None and self.timeout_s <= 0:
             raise ValueError(f"timeout_s doit être > 0 (reçu : {self.timeout_s}).")

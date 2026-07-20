@@ -282,8 +282,15 @@ class LocalExecutor(TaskExecutor):
         # le grand livre du `journal` à chaque mesure — planification et tâches
         # achevées comptent autant que la tâche courante.
         plafond = (
-            PlafondDepense(journal, self._guardrails.plafond_cout_usd)
-            if self._guardrails.plafond_cout_usd is not None
+            PlafondDepense(
+                journal,
+                self._guardrails.plafond_cout_usd,
+                plafond_tokens=self._guardrails.plafond_tokens,
+            )
+            if (
+                self._guardrails.plafond_cout_usd is not None
+                or self._guardrails.plafond_tokens is not None
+            )
             else None
         )
         with collect_usage(plafond=plafond) as recolte:
