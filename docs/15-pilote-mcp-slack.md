@@ -60,6 +60,10 @@ SLACK_TEAM_ID=T0XXXXXXX
 MAESTRO_SLACK_CANAL=C0XXXXXXX  # ou le nom du canal où le bot est invité
 ```
 
+Dans la grille des modes d'auth MCP ([docs/21 §2](./21-configuration-mcp.md)),
+Slack relève du **token statique saisissable** : émis par l'outil (installation
+de l'app sur le workspace), sans expiration par défaut, consommé tel quel.
+
 ### 2.3 Déclaration MCP de l'agent (déjà versionnée)
 
 [core/mcp/devops.json](../core/mcp/devops.json) équipe l'agent `devops` du
