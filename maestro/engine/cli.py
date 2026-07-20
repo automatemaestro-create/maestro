@@ -11,7 +11,10 @@ Garde-fous (#9) : `--plafond-cout <usd>` arme le plafond de dépense de
 l'**exécution entière** (adossé à la comptabilité par tâche, #56) et
 `--timeout <s>` le time-out **par tâche** ; une tâche classée sensible déclenche
 une **demande de validation** posée sur la console (refusée par défaut si
-l'entrée n'est pas interactive — fail-safe).
+l'entrée n'est pas interactive — fail-safe). `--plafond-tokens <n>` arme un
+plafond **en tokens** : le seul opérant sur un fournisseur qui ne rapporte pas de
+coût (`--plafond-cout` reste alors sans prise, #113). Les deux sont cumulables ; la
+synthèse dit lequel a tenu.
 
 Relance automatique (#91, ENF-06) : les échecs **transitoires** (aléa
 fournisseur — erreur immédiate, crash du sous-processus SDK) sont relancés avec
@@ -94,7 +97,8 @@ from maestro.telemetry import (
 
 _USAGE = (
     "Usage : maestro-run [--json] [--trace] [--queue] [--publier] [--messagerie] "
-    "[--validation-ui] [--notifier <agent>] [--plafond-cout <usd>] [--timeout <s>] "
+    "[--validation-ui] [--notifier <agent>] [--plafond-cout <usd>] "
+    "[--plafond-tokens <n>] [--timeout <s>] "
     '[--relances <n>] [--parallele <n>] "<objectif en langage naturel>"'
 )
 
@@ -112,13 +116,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     validation_ui = False
     notifier_agent: str | None = None
     plafond_cout: float | None = None
+    plafond_tokens: int | None = None
     timeout: float | None = None
     relances: int | None = None
     parallele: int | None = None
     flags_connus = {
         "--json", "--trace", "--queue", "--publier", "--messagerie",
-        "--validation-ui", "--notifier", "--plafond-cout", "--timeout",
-        "--relances", "--parallele",
+        "--validation-ui", "--notifier", "--plafond-cout", "--plafond-tokens",
+        "--timeout", "--relances", "--parallele",
     }
     while args and args[0] in flags_connus:
         flag = args.pop(0)
@@ -148,6 +153,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 2
             if flag == "--plafond-cout":
                 plafond_cout = valeur
+            elif flag == "--plafond-tokens":
+                if valeur != int(valeur) or valeur < 1:
+                    print(
+                        f"--plafond-tokens attend un entier ≥ 1 (reçu : {valeur:g}).",
+                        file=sys.stderr,
+                    )
+                    return 2
+                plafond_tokens = int(valeur)
             elif flag == "--relances":
                 if valeur != int(valeur) or valeur < 0:
                     print(
@@ -172,10 +185,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_USAGE, file=sys.stderr)
         return 2
 
-    if via_queue and (plafond_cout is not None or timeout is not None or relances is not None):
+    if via_queue and (
+        plafond_cout is not None
+        or plafond_tokens is not None
+        or timeout is not None
+        or relances is not None
+    ):
         print(
-            "--plafond-cout/--timeout/--relances ne sont pas combinables avec --queue : "
-            "garde-fous et relance s'appliquent côté worker "
+            "--plafond-cout/--plafond-tokens/--timeout/--relances ne sont pas "
+            "combinables avec --queue : garde-fous et relance s'appliquent côté worker "
             "(maestro.queue.worker.configurer_worker).",
             file=sys.stderr,
         )
@@ -216,6 +234,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         guardrails = Guardrails(
             plafond_cout_usd=plafond_cout,
+            plafond_tokens=plafond_tokens,
             timeout_s=timeout,
             validateur=validateur,
         )

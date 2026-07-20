@@ -9,7 +9,9 @@ d'acceptation du ticket #9 :
    visible ; sous le plafond, rien ne change. Depuis #56, le plafond est un budget
    de l'**exécution entière**, adossé à la comptabilité par tâche (#55) : le cumul
    des tâches compte, et une exécution au budget épuisé n'en démarre plus aucune
-   (tests différés du parent #49 → #59) ;
+   (tests différés du parent #49 → #59). Depuis #113, un **plafond en tokens** double
+   le plafond en USD : opérant même sur un fournisseur qui ne rapporte pas de coût,
+   et le rapport dit lequel des deux contrôles a réellement tenu ;
 ② une tâche dépassant le **time-out** est stoppée, sans gêner les autres tâches —
    et depuis #64 l'échéance est **ferme** : elle reprend la main même si
    l'annulation de la réalisation reste suspendue (sous-processus SDK non
@@ -219,6 +221,74 @@ def test_une_execution_au_budget_epuise_ne_demarre_plus_aucune_tache():
     assert seconde.usage.appels == 0
     assert seconde.usage.cout_usd is None
     assert provider.acheves == 0
+
+
+# --- Plafond en tokens : opérant sans coût rapporté (#113) -----------------------------
+
+
+class SansCoutProvider(ModelProvider):
+    """Rapporte des tokens à chaque signalement mais jamais de coût (cout_usd None).
+
+    Reproduit le fournisseur `openai` du run réel #99 : le dialecte chat completions
+    remonte prompt/completion_tokens sans prix. Deux signalements de 400 tokens par
+    appel — le cumul (800) sert à tester le plafond en tokens.
+    """
+
+    name = "sans-cout"
+
+    def __init__(self) -> None:
+        self.acheves = 0
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        report_usage(StepUsage(appels=1, tokens_sortie=400, cout_usd=None))
+        report_usage(StepUsage(appels=1, tokens_sortie=400, cout_usd=None))
+        self.acheves += 1
+        return "LIVRABLE sans coût rapporté"
+
+
+def test_le_plafond_en_tokens_stoppe_un_run_sans_cout_rapporte():
+    # Cœur du #113 : sans coût rapporté, seul le plafond en tokens a prise. Il
+    # stoppe la tâche en cours de route, comme le plafond en USD sur un coût connu.
+    provider = SansCoutProvider()
+    guardrails = Guardrails(plafond_tokens=500)
+    report = asyncio.run(_engine(exec_provider=provider, guardrails=guardrails).run("Objectif"))
+
+    tache = report.resultats[0]
+    assert tache.statut == "echec"
+    assert "plafond de tokens dépassé" in (tache.erreur or "")
+    # Stoppée sur le second signalement (400 puis 800 de cumul > 500) : le travail
+    # postérieur au dépassement n'a pas eu lieu…
+    assert provider.acheves == 0
+    # …mais les tokens engagés (et le coût, toujours inconnu) restent visibles.
+    assert tache.usage.tokens_total == 800
+    assert tache.usage.cout_usd is None
+
+
+def test_le_rapport_dit_que_le_controle_en_tokens_a_tenu_sans_cout():
+    # Critère ② du #113 : l'opérateur voit quel contrôle était actif, pas un
+    # plafond silencieusement inopérant.
+    provider = SansCoutProvider()
+    guardrails = Guardrails(plafond_tokens=100_000)
+    report = asyncio.run(_engine(exec_provider=provider, guardrails=guardrails).run("Objectif"))
+
+    assert all(r.ok for r in report.resultats)
+    assert "tokens" in report.controle_depense
+    assert "Contrôle de dépense : plafond actif — tokens" in report.synthese()
+    assert report.to_dict()["plafond_tokens"] == 100_000
+
+
+def test_le_rapport_signale_un_plafond_de_cout_sans_prise():
+    # Le piège que le #113 rend visible : plafond en USD armé, mais le fournisseur
+    # ne rapporte pas de coût — le rapport le dit au lieu de laisser croire à un filet.
+    provider = SansCoutProvider()
+    guardrails = Guardrails(plafond_cout_usd=5.0)
+    report = asyncio.run(_engine(exec_provider=provider, guardrails=guardrails).run("Objectif"))
+
+    assert all(r.ok for r in report.resultats)  # rien ne l'a stoppé : aucune prise
+    assert "SANS PRISE" in report.controle_depense
 
 
 # --- Critère ② : time-out par tâche -----------------------------------------------------
@@ -474,5 +544,7 @@ def test_les_mots_sensibles_sont_configurables():
 def test_les_garde_fous_invalides_sont_refuses():
     with pytest.raises(ValueError):
         Guardrails(plafond_cout_usd=0)
+    with pytest.raises(ValueError):
+        Guardrails(plafond_tokens=0)
     with pytest.raises(ValueError):
         Guardrails(timeout_s=-1)

@@ -33,6 +33,7 @@ from maestro.telemetry import (
     collect_usage,
     redact_secrets,
     report_usage,
+    resume_controle_depense,
 )
 
 # --- StepUsage : agrégation ------------------------------------------------------------
@@ -301,7 +302,8 @@ def test_atteindre_le_plafond_sans_le_depasser_ne_stoppe_rien():
 
 
 def test_un_cout_inconnu_n_est_pas_plafonnable():
-    # Fournisseur muet sur le coût : dépense inconnue, le garde-fou n'a pas prise.
+    # Fournisseur muet sur le coût : dépense inconnue, le plafond *en USD* n'a pas
+    # prise (mais le plafond en tokens, lui, plafonne — cf. tests #113 plus bas).
     journal = RunJournal()
     _consigne(journal, usage=StepUsage(appels=3))
     PlafondDepense(journal, plafond_cout_usd=0.0001).verifie(StepUsage(appels=1))
@@ -311,6 +313,76 @@ def test_un_plafond_invalide_est_refuse():
     for invalide in (0, -1.5):
         with pytest.raises(ValueError):
             PlafondDepense(RunJournal(), invalide)
+
+
+# --- Plafond en tokens : opérant sans coût rapporté (#113) ----------------------------
+
+
+def test_le_plafond_en_tokens_stoppe_un_fournisseur_sans_cout_rapporte():
+    # Cœur du #113 : coût inconnu (None), mais les tokens sont toujours rapportés —
+    # le plafond en tokens plafonne là où le plafond en USD serait sans prise.
+    journal = RunJournal()
+    _consigne(journal, usage=StepUsage(appels=1, tokens_sortie=800, cout_usd=None))
+    plafond = PlafondDepense(journal, plafond_tokens=1000)
+
+    # 800 (déjà consigné) + 150 en cours ≤ 1000 : rien à signaler.
+    plafond.verifie(StepUsage(tokens_entree=150))
+
+    # 800 + 300 > 1000 : le garde-fou stoppe, alors même que le coût reste inconnu.
+    with pytest.raises(PlafondDepenseDepasse) as exc:
+        plafond.verifie(StepUsage(tokens_entree=300))
+    assert "plafond de tokens dépassé" in str(exc.value)
+
+
+def test_les_deux_plafonds_cohabitent_le_premier_creve_stoppe():
+    # Coût et tokens armés ensemble : le coût connu tranche d'abord, sinon les tokens.
+    journal = RunJournal()
+    _consigne(journal, usage=StepUsage(appels=1, tokens_sortie=10, cout_usd=0.05))
+    plafond = PlafondDepense(journal, plafond_cout_usd=0.04, plafond_tokens=10_000)
+    with pytest.raises(PlafondDepenseDepasse) as exc:
+        plafond.verifie(StepUsage())
+    assert "plafond de dépense dépassé" in str(exc.value)  # le coût, pas les tokens
+
+
+def test_un_plafond_en_tokens_invalide_est_refuse():
+    for invalide in (0, -3):
+        with pytest.raises(ValueError):
+            PlafondDepense(RunJournal(), plafond_tokens=invalide)
+
+
+def test_un_controle_sans_aucun_plafond_est_refuse():
+    with pytest.raises(ValueError):
+        PlafondDepense(RunJournal())
+
+
+# --- resume_controle_depense : quel contrôle a réellement tenu (#113) -----------------
+
+
+def test_resume_dit_cout_reel_quand_le_fournisseur_rapporte_un_cout():
+    resume = resume_controle_depense(1.0, None, StepUsage(cout_usd=0.5, tokens_sortie=42))
+    assert "coût réel" in resume and "0.5000/1.0000 $" in resume
+
+
+def test_resume_signale_un_plafond_de_cout_sans_prise():
+    # Le cas visé par #113 : plafond en USD armé, fournisseur muet sur le coût.
+    resume = resume_controle_depense(1.0, None, StepUsage(appels=1, tokens_sortie=42))
+    assert "SANS PRISE" in resume
+    assert "--plafond-tokens" in resume
+
+
+def test_resume_annonce_le_plafond_en_tokens_actif():
+    resume = resume_controle_depense(None, 1000, StepUsage(appels=1, tokens_sortie=200))
+    assert "tokens (200/1000)" in resume
+
+
+def test_resume_expose_le_cout_inoperant_quand_les_tokens_prennent_le_relais():
+    resume = resume_controle_depense(1.0, 1000, StepUsage(appels=1, tokens_sortie=200))
+    assert "tokens (200/1000)" in resume
+    assert "coût inopérant" in resume
+
+
+def test_resume_sans_aucun_plafond():
+    assert resume_controle_depense(None, None, StepUsage()) == "aucun plafond armé"
 
 
 def test_report_usage_leve_chez_l_appelant_quand_le_plafond_creve():

@@ -19,7 +19,9 @@ Six briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
 - `PlafondDepense` : le plafond de dépense (#9) adossé à ce grand livre (#56) —
   consulté par le collecteur à chaque mesure, il relit la comptabilité de
   l'exécution (source unique du coût, aucun compteur parallèle) et lève
-  `PlafondDepenseDepasse` au dépassement ;
+  `PlafondDepenseDepasse` au dépassement d'un plafond en USD **ou en tokens**
+  (#113, opérant même sur un fournisseur sans coût rapporté) ;
+  `resume_controle_depense` dit à l'opérateur lequel des deux contrôles tient ;
 - `activer_export_langfuse` : l'exporteur Langfuse du journal (#81) — posé en
   handler sur le logger `maestro.trace`, il mue chaque exécution en trace
   Langfuse (une observation par étape, tokens et coûts #55 au format natif) ;
@@ -37,6 +39,7 @@ from maestro.telemetry.costs import (
     PlafondDepenseDepasse,
     RunCost,
     TaskCost,
+    resume_controle_depense,
 )
 from maestro.telemetry.journal import LOGGER_NAME, RunJournal, StepRecord
 from maestro.telemetry.langfuse import (
@@ -70,5 +73,6 @@ __all__ = [
     "evaluer_run_langfuse",
     "redact_secrets",
     "report_usage",
+    "resume_controle_depense",
     "scores_depuis_journal",
 ]
