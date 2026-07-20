@@ -34,14 +34,22 @@ serveurs déclarés sur ses exécutions outillées, sans connecteur ad hoc.
   `devops` poste les notifications de supervision d'un run (fin de run,
   validation humaine en attente) via `maestro-run --notifier devops`.
   Configuration et démo : [docs/15](../../docs/15-pilote-mcp-slack.md).
-- [`designer.json`](./designer.json) — serveur **Talk to Figma**
-  (`cursor-talk-to-figma-mcp`, stdio via `npx`) pour le pilote Figma (#115) :
-  l'agent designer crée frames, formes et textes **en temps réel** dans le
-  fichier Figma où tourne le plugin compagnon (relais WebSocket local), et lit
-  le contenu existant pour s'y adapter. Pas de token d'API : le secret est le
-  **canal d'appairage** (`${FIGMA_CHANNEL}`) ; les outils de suppression sont
-  barrés par [core/permissions/designer.json](../permissions/designer.json) —
-  voir [docs/20](../../docs/20-pilote-mcp-figma.md).
+- [`designer.json`](./designer.json) — deux voies **Figma**, toutes deux
+  **optionnelles** (`"optionnel": true`, #125 : la voie dont le secret n'est
+  pas fourni est omise du montage, sans échec) :
+  - serveur **Talk to Figma** (`cursor-talk-to-figma-mcp`, stdio via `npx`,
+    pilote #115) : l'agent designer crée frames, formes et textes **en temps
+    réel** dans le fichier Figma où tourne le plugin compagnon (relais
+    WebSocket local), et lit le contenu existant pour s'y adapter. Pas de
+    token d'API : le secret est le **canal d'appairage** (`${FIGMA_CHANNEL}`) ;
+    les outils de suppression sont barrés par
+    [core/permissions/designer.json](../permissions/designer.json) ;
+  - serveur **MCP officiel Figma** (`https://mcp.figma.com/mcp`, http,
+    variante #125) : monté seulement quand un humain a fourni un token OAuth
+    (`${FIGMA_OAUTH_TOKEN}`, scope `mcp:connect`) — Maestro ne mène **aucune
+    authentification automatique**.
+
+  Voir [docs/20](../../docs/20-pilote-mcp-figma.md) (variante officielle : §6).
 
 Contrairement aux dépôts voisins (données d'exécution non commitées), les
 déclarations écrites ici sont de la **configuration versionnée** : elles se

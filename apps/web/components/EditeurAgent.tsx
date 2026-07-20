@@ -571,6 +571,14 @@ function SectionServeursMcp({ fiche }: { fiche: AgentCatalogueDetail }) {
                 <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
                   {serveur.type}
                 </span>
+                {serveur.optionnel ? (
+                  <span
+                    className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                    title="Serveur omis du montage (sans échec) tant que son secret n'est pas fourni"
+                  >
+                    optionnel
+                  </span>
+                ) : null}
                 <code className="truncate font-mono text-neutral-600 dark:text-neutral-400">
                   {serveur.type === "stdio"
                     ? [serveur.commande, ...serveur.args].join(" ")

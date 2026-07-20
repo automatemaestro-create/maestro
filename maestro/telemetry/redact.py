@@ -31,6 +31,7 @@ _ENV_SENSIBLES: tuple[str, ...] = (
     "CLAUDE_CODE_OAUTH_TOKEN",
     "DATABASE_URL",
     "FIGMA_CHANNEL",
+    "FIGMA_OAUTH_TOKEN",
     "GITLAB_TOKEN",
     "REDIS_URL",
     "SLACK_BOT_TOKEN",

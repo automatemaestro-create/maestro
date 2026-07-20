@@ -283,7 +283,7 @@ Un fichier JSON par agent — `core/mcp/<agent>.json` (racine remplaçable par `
 }
 ```
 
-Deux formes, verrouillées sur leur `type` : une **commande locale** (`stdio` : `commande` + `args` + `env`) ou un **endpoint distant** (`sse`/`http` : `url` + `headers`). Le `nom` (slug `[a-z0-9_-]`) préfixe les outils exposés à l'agent (`mcp__<nom>__<outil>`).
+Deux formes, verrouillées sur leur `type` : une **commande locale** (`stdio` : `commande` + `args` + `env`) ou un **endpoint distant** (`sse`/`http` : `url` + `headers`). Le `nom` (slug `[a-z0-9_-]`) préfixe les outils exposés à l'agent (`mcp__<nom>__<outil>`). Un serveur peut se déclarer **`"optionnel": true`** (#125) : si l'une de ses références `${VAR}` ne se résout pas au montage, il est **omis** (la tâche s'exécute sans lui) au lieu de la faire échouer — le canal des capacités qui ne s'activent que lorsqu'un humain a fourni le secret (ex. la variante serveur officiel Figma, [docs/20 §6](./20-pilote-mcp-figma.md)).
 
 **Secrets — jamais en clair** (anticipe le chantier sécurité #102) : les valeurs d'`env`/`headers` portent des références `${VARIABLE}` résolues depuis l'environnement **au moment du montage** — la valeur effective n'existe qu'en mémoire, jamais dans le fichier versionné. L'API/UI masque d'ailleurs toute valeur littérale (seules les références `${VAR}` restent lisibles).
 
@@ -298,7 +298,7 @@ Les serveurs n'équipent que les **exécutions outillées** : le chemin texte (`
 Une tâche dont un serveur MCP déclaré ne peut pas être monté **échoue proprement, avant le travail de l'agent** — plutôt que de le laisser produire un livrable amputé de ses capacités :
 
 - **déclaration invalide** (JSON illisible, type inconnu, forme ambiguë…) : refusée à la lecture, échec de tâche avec la cause exacte ;
-- **référence `${VAR}` sans variable d'environnement** : serveur « non montable », échec avant tout appel modèle ;
+- **référence `${VAR}` sans variable d'environnement** : serveur « non montable », échec avant tout appel modèle — sauf serveur déclaré **optionnel** (#125), alors simplement omis du montage ;
 - **serveur injoignable** (démarrage/connexion en échec, authentification requise, ou jamais connecté avant l'échéance du sas de connexion) : échec avec le serveur et la cause nommés (`McpServerUnavailable`), avant tout appel modèle.
 
 Dans les trois cas l'erreur est **tracée** comme tout échec de tâche (journal du run, fil temps réel de la Control Tower, Langfuse) et **jamais relancée** (ENF-06) : la cause est déterministe — corriger la déclaration, le secret ou le serveur, la tâche suivante repart à chaud.
