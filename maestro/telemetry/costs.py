@@ -39,6 +39,12 @@ from maestro.telemetry.usage import StepUsage
 #: Étape du journal qui n'appartient à aucune tâche : la planification (#8).
 ETAPE_PLANIFICATION = "planification"
 
+#: Étape du journal qui n'appartient à aucune tâche : la reprise d'un run
+#: interrompu (#96) — un marqueur de run, pas un travail d'agent. Usage nul par
+#: construction (aucun modèle n'est sollicité pour reprendre) : l'exclure du
+#: grand livre lui évite une entrée de tâche fantôme, sans rien changer au total.
+ETAPE_REPRISE = "reprise"
+
 
 @dataclass(frozen=True)
 class TaskCost:
@@ -105,6 +111,11 @@ class RunCost:
         for record in journal.records:
             if record.etape == ETAPE_PLANIFICATION:
                 planification = planification.fusion(record.usage)
+                continue
+            if record.etape == ETAPE_REPRISE:
+                # Marqueur de run (#96), rattaché à aucune tâche : rien à
+                # comptabiliser — les étapes qu'il annonce sont, elles, réintégrées
+                # au journal (`RunJournal.reconstitue`) et comptées à leur place.
                 continue
             tache_id = record.etape.split(":", 1)[0]
             entree = entrees.get(tache_id)

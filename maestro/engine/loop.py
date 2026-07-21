@@ -94,6 +94,7 @@ from maestro.telemetry import (
     collect_usage,
     resume_controle_depense,
 )
+from maestro.telemetry.costs import RunCost, TaskCost
 
 __all__ = [
     "STATUT_BLOQUEE",
@@ -158,6 +159,39 @@ class RunReport:
         for r in self.resultats:
             total = total.fusion(r.usage)
         return total
+
+    @property
+    def grand_livre(self) -> RunCost:
+        """Le grand livre du run (#55/#57) : coût par tâche et agrégat, depuis l'agrégat.
+
+        Pendant de `RunCost.depuis_journal`, mais sourcé du **rapport** plutôt que
+        du journal d'un process. La distinction devient essentielle en mode
+        durable repris (#96) : l'agrégat est assemblé depuis l'historique
+        Temporal, donc il porte l'avant **et** l'après reprise, là où le journal
+        du process qui reprend n'a vu que l'après (les étapes acquises ont été
+        consignées par le process disparu, et les activités qui reprennent
+        tiennent chacune leur propre journal).
+
+        L'attribution est directe — une entrée par tâche du plan, plus l'usage de
+        planification — sans la convention d'étapes annexes du journal : le
+        rapport ne porte que les issues de tâches, annexes déjà fusionnées dans
+        l'usage de chacune.
+        """
+        return RunCost(
+            run_id=self.run_id,
+            planification=self.planification,
+            taches=tuple(
+                TaskCost(
+                    tache_id=r.task_id,
+                    nom=r.titre,
+                    agent=r.agent,
+                    role=r.role,
+                    statut=r.statut,
+                    usage=r.usage,
+                )
+                for r in self.resultats
+            ),
+        )
 
     @property
     def controle_depense(self) -> str:

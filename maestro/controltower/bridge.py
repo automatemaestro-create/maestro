@@ -40,6 +40,14 @@ from maestro.telemetry.usage import StepUsage
 #: Étape du journal qui n'est pas une tâche : la planification de l'orchestrateur.
 _ETAPE_PLANIFICATION = "planification"
 
+#: Étape du journal qui n'est pas une tâche : la reprise d'un run interrompu
+#: (#96 — cf. `maestro.telemetry.costs.ETAPE_REPRISE`).
+_ETAPE_REPRISE = "reprise"
+
+#: Étapes rattachées au **run**, pas à une tâche : elles deviennent des activités
+#: d'agent sans `tache_id` (l'orchestrateur planifie, le moteur reprend).
+_ETAPES_RUN = (_ETAPE_PLANIFICATION, _ETAPE_REPRISE)
+
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).
 _SUFFIXE_VALIDATION = ":validation"
 
@@ -65,11 +73,13 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
 
     - les étapes `<tache>:message` (#44) deviennent des **messages
       inter-agents** (entité AGENT_MESSAGE — handoff, notification…) ;
-    - l'étape `planification` et les étapes `<tache>:validation`,
-      `<tache>:relance` (#91) et `<tache>:refus-outil` (#110) deviennent des
-      **activités d'agent** (l'orchestrateur planifie, un humain tranche, le
-      moteur relance, la politique de permissions refuse un outil — la raison
-      voyage dans `detail`) ;
+    - les étapes `planification` et `reprise` (#96) et les étapes
+      `<tache>:validation`, `<tache>:relance` (#91) et `<tache>:refus-outil`
+      (#110) deviennent des **activités d'agent** (l'orchestrateur planifie, le
+      moteur reprend un run interrompu, un humain tranche, le moteur relance, la
+      politique de permissions refuse un outil — la raison voyage dans
+      `detail`) ; `planification` et `reprise` portent sur le run entier, donc
+      sans `tache_id` ;
     - les étapes `<tache>:debut` (#98) deviennent le **début** de leur tâche :
       événement `tache.statut` au statut `en_cours` (agent, heure de début),
       sans usage ni coût — rien n'entre au grand livre avant l'issue ;
@@ -93,7 +103,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     cout_brut = usage.get("cout_usd") if isinstance(usage, Mapping) else None
     est_message = etape.endswith(_SUFFIXE_MESSAGE)
     est_debut = etape.endswith(_SUFFIXE_DEBUT)
-    est_activite = etape == _ETAPE_PLANIFICATION or etape.endswith(
+    est_activite = etape in _ETAPES_RUN or etape.endswith(
         (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE, _SUFFIXE_REFUS)
     )
     if est_message:
@@ -112,7 +122,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         type_evenement = EVENEMENT_AGENT_ACTIVITE
         tache_id = (
             ""
-            if etape == _ETAPE_PLANIFICATION
+            if etape in _ETAPES_RUN
             else etape.removesuffix(_SUFFIXE_VALIDATION)
             .removesuffix(_SUFFIXE_RELANCE)
             .removesuffix(_SUFFIXE_REFUS)
