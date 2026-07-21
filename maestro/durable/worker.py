@@ -26,6 +26,10 @@ import asyncio
 from temporalio.client import Client
 from temporalio.service import RPCError
 from temporalio.worker import Worker
+from temporalio.worker.workflow_sandbox import (
+    SandboxedWorkflowRunner,
+    SandboxRestrictions,
+)
 
 from maestro.config import load_settings
 from maestro.durable.activities import consigner_blocage, executer_tache, planifier
@@ -34,6 +38,25 @@ from maestro.durable.workflow import MaestroRunWorkflow
 #: File de tâches Temporal dédiée au run durable (analogue de `FILE_TACHES` côté
 #: Celery) : le workflow et ses activités s'y enregistrent, le client y planifie.
 FILE_DURABLE = "maestro-durable"
+
+#: Bac à sable des workflows, avec le paquet `maestro` en **passe-droit**.
+#:
+#: Par défaut, le bac à sable réimporte tout module touché par le code de
+#: workflow dans un espace isolé, en le remplaçant par un mandataire (« proxy »)
+#: qui surveille les accès non déterministes. Nos modules définissent des classes
+#: qui en héritent d'autres (fournisseurs, exécuteurs) : réimportés ainsi, ils
+#: sous-classent un mandataire, ce que le bac à sable ne sait pas faire
+#: (« Using subclasses of proxied objects is unsupported ») — la construction du
+#: worker échouait alors, quel que soit le run.
+#:
+#: Le passe-droit lève l'ambiguïté : le code Maestro est importé **une seule
+#: fois**, normalement. Le déterminisme du workflow n'y perd rien — il ne tient
+#: pas au bac à sable mais à la discipline du module `workflow` (aucun I/O, aucune
+#: horloge : tout passe par des activités). Recommandation Temporal pour les
+#: modules de premier rang, dont on maîtrise le contenu.
+BAC_A_SABLE = SandboxedWorkflowRunner(
+    restrictions=SandboxRestrictions.default.with_passthrough_modules("maestro")
+)
 
 
 def construire_worker(client: Client, *, task_queue: str = FILE_DURABLE) -> Worker:
@@ -48,6 +71,7 @@ def construire_worker(client: Client, *, task_queue: str = FILE_DURABLE) -> Work
         task_queue=task_queue,
         workflows=[MaestroRunWorkflow],
         activities=[planifier, executer_tache, consigner_blocage],
+        workflow_runner=BAC_A_SABLE,
     )
 
 

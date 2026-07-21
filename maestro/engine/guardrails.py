@@ -28,6 +28,7 @@ outillées classées côté serveur (docs/03, entité APPROVAL) sans changer ce 
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import unicodedata
 from collections.abc import Awaitable, Callable
@@ -129,9 +130,19 @@ class Guardrails:
         if self.validateur is None:
             return False, "aucun validateur humain configuré — refus par défaut"
         try:
-            decision: Any = self.validateur(demande)
-            if inspect.isawaitable(decision):
-                decision = await decision
+            decision: Any
+            if inspect.iscoroutinefunction(self.validateur):
+                decision = await self.validateur(demande)
+            else:
+                # Validateur **synchrone** (console #9 : `input()`) : exécuté hors
+                # de la boucle d'événements. Appelé directement, il la bloquerait
+                # tout le temps de la délibération humaine — anodin en local, mais
+                # fatal en mode durable (#96), où la boucle doit continuer à battre
+                # le cœur des activités : un worker qui ne bat plus est réputé mort
+                # et sa tâche relancée sous 30 s, en pleine question à l'opérateur.
+                decision = await asyncio.to_thread(self.validateur, demande)
+                if inspect.isawaitable(decision):
+                    decision = await decision
         except Exception as exc:  # fail-safe : un validateur en panne ne laisse rien passer
             return False, f"validateur en erreur ({exc}) — refus par défaut"
         if decision:

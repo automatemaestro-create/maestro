@@ -24,20 +24,33 @@ posée par `configurer_worker` avant la consommation — même modèle que
 peut voyager en argument d'activité ; il vit dans le process du worker (embarqué
 dans celui du CLI pour la démo, cf. `maestro.durable.engine`).
 
-Relance : la relance applicative (#91, ENF-06) reste **la seule couche qui
-relance** — la politique de retry Temporal des activités est neutralisée côté
-workflow (`maximum_attempts=1`). Les deux mécanismes composent ainsi proprement,
-sans double relance (note technique du #95).
+Relance : la relance applicative (#91, ENF-06) reste la seule couche qui rattrape
+l'**aléa fournisseur** — elle vit dans l'activité, au plus près de l'appel modèle.
+Temporal ne double jamais cette relance ; il ne rattrape que ce qu'elle ne peut
+pas rattraper, parce qu'elle meurt avec le process : la **perte du worker**
+(#96). Les deux couches composent donc par partage du domaine, pas par
+neutralisation de l'une (exigence du parent #92) :
+
+- chaque activité tient un **battement de cœur** pendant son travail
+  (`_avec_battement`) : un worker tué cesse de battre, le serveur s'en aperçoit en
+  quelques secondes et redonne l'activité au worker suivant, au lieu d'attendre le
+  « start-to-close » (jusqu'à une heure pour une tâche) ;
+- les échecs **applicatifs déterministes** (plan invalide, tâche non conforme au
+  schéma) sont levés `non_retryable` : les rejouer ne donnerait jamais un autre
+  résultat, aucune des deux couches ne s'y essaie.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import replace
 from time import perf_counter
-from typing import Any
+from typing import Any, TypeVar
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore
@@ -65,6 +78,13 @@ from maestro.telemetry import RunJournal, collect_usage
 #: Fabrique du fournisseur du worker : appelée une fois par process, à la
 #: construction paresseuse de l'exécuteur (comme `maestro.queue.worker`).
 ProviderFactory = Callable[[], ModelProvider]
+
+#: Période du battement de cœur des activités (#96) — nettement sous le
+#: `heartbeat_timeout` posé côté workflow (`BATTEMENT_ACTIVITE`), pour qu'un
+#: worker vivant mais occupé ne soit jamais pris pour un worker mort.
+PERIODE_BATTEMENT_S = 10.0
+
+T = TypeVar("T")
 
 
 def _fabrique_configuree() -> ModelProvider:
@@ -150,6 +170,37 @@ def _executeur() -> LocalExecutor:
     return _executor
 
 
+async def _avec_battement(travail: Awaitable[T]) -> T:
+    """Attend `travail` en signalant périodiquement que ce worker est vivant (#96).
+
+    Le battement de cœur est ce qui rend la reprise sur panne **rapide** : une
+    activité d'agent peut tourner une heure, et sans signe de vie le serveur ne
+    saurait distinguer un worker occupé d'un worker mort avant l'expiration du
+    « start-to-close ». Battre toutes les `PERIODE_BATTEMENT_S` ramène la
+    détection à quelques secondes — au-delà, le serveur redonne l'activité au
+    worker suivant, qui la reprend là où le workflow l'attend.
+
+    Hors contexte d'activité (appel direct, test), c'est une simple attente : le
+    battement n'a alors personne à qui parler.
+    """
+    if not activity.in_activity():
+        return await travail
+    batteur = asyncio.ensure_future(_bat_le_coeur())
+    try:
+        return await travail
+    finally:
+        batteur.cancel()
+        with suppress(asyncio.CancelledError):
+            await batteur
+
+
+async def _bat_le_coeur() -> None:
+    """Signale l'activité vivante jusqu'à annulation (compagnon de `_avec_battement`)."""
+    while True:
+        await asyncio.sleep(PERIODE_BATTEMENT_S)
+        activity.heartbeat()
+
+
 @activity.defn
 async def planifier(payload: dict[str, Any]) -> dict[str, Any]:
     """Active la planification : découpe l'objectif en tâches et consigne l'étape.
@@ -167,7 +218,7 @@ async def planifier(payload: dict[str, Any]) -> dict[str, Any]:
     orchestrator = _orchestrateur()
     with collect_usage() as recolte:
         try:
-            tasks = await orchestrator.plan(objectif)
+            tasks = await _avec_battement(orchestrator.plan(objectif))
         except Exception as exc:
             journal.consigne(
                 etape="planification",
@@ -180,7 +231,12 @@ async def planifier(payload: dict[str, Any]) -> dict[str, Any]:
                 erreur=str(exc),
                 usage=recolte.total.avec_duree(_ecoule_ms(debut)),
             )
-            raise
+            # Non rejouable : un plan refusé (réponse indécodable, schéma
+            # enfreint) le sera identiquement au coup suivant. La CLI le
+            # présente comme en local — sans plan, rien à orchestrer.
+            raise ApplicationError(
+                str(exc), type=type(exc).__name__, non_retryable=True
+            ) from exc
     usage = recolte.total.avec_duree(_ecoule_ms(debut))
     journal.consigne(
         etape="planification",
@@ -207,11 +263,18 @@ async def executer_tache(payload: dict[str, Any]) -> dict[str, Any]:
     activités. L'usage porté par le résultat est le vrai coût mesuré par
     `LocalExecutor` (#8), consigné au même journal que tout le reste (#46/#55).
     """
-    validate_task(payload["task"])
+    try:
+        validate_task(payload["task"])
+    except Exception as exc:
+        # Non rejouable : une tâche non conforme au schéma le restera. La tâche
+        # est refusée avant toute exécution — rien n'a été dépensé.
+        raise ApplicationError(
+            str(exc), type=type(exc).__name__, non_retryable=True
+        ) from exc
     task = Task.from_dict(payload["task"])
     dependances = [TaskResult.from_dict(d) for d in payload.get("dependances", ())]
     journal = RunJournal(run_id=payload.get("run_id"))
-    result = await _executeur().execute(task, dependances, journal)
+    result = await _avec_battement(_executeur().execute(task, dependances, journal))
     # Identité de l'exécutant, rapportée sur le résultat (`TaskResult.worker`) —
     # ici la file d'activités Temporal qui a porté la tâche (critère MVP n°2).
     result = replace(result, worker=f"temporal/{activity.info().task_queue}")

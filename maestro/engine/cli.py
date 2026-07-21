@@ -45,6 +45,16 @@ le flag, l'exécution en process reste le défaut. Non combinable avec `--queue`
 (frontières d'exécution exclusives) ni, à ce stade, avec `--messagerie`/
 `--validation-ui`/`--notifier`/`--parallele`.
 
+`--reprendre <run_id>` (#96) **reprend un run durable interrompu** au lieu d'en
+lancer un nouveau : le run vit côté Temporal, pas dans ce process — une CLI tuée
+(ou une API redémarrée) ne le perd pas. Le `run_id` est celui qu'affichent le
+journal, la trace et la Control Tower. Les tâches déjà réussies ne sont **pas
+ré-exécutées** (leur résultat vient de l'historique) : l'amont n'est pas repayé,
+et la reprise est consignée avec sa raison. Le flag implique `--durable` et se
+passe d'objectif (il est déjà dans le run repris). Si c'est le **worker** qui est
+tombé, aucune commande n'est nécessaire : le run repart dès qu'un worker revient
+sur la file (`python -m maestro.durable.worker`).
+
 `--publier` (#46) publie chaque étape du journal en **événement temps réel**
 sur Redis Pub/Sub (canal `maestro.evenements`, via le pont
 `maestro.controltower.bridge`) : le backend Control Tower (`maestro-api`) les
@@ -90,7 +100,7 @@ import json
 import logging
 import sys
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from maestro.config import ConfigError
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
@@ -110,7 +120,8 @@ if TYPE_CHECKING:
     from maestro.durable import DurableEngine
 
 _USAGE = (
-    "Usage : maestro-run [--json] [--trace] [--queue] [--durable] [--publier] "
+    "Usage : maestro-run [--json] [--trace] [--queue] [--durable] "
+    "[--reprendre <run_id>] [--publier] "
     "[--messagerie] [--validation-ui] [--notifier <agent>] [--plafond-cout <usd>] "
     "[--plafond-tokens <n>] [--timeout <s>] "
     '[--relances <n>] [--parallele <n>] "<objectif en langage naturel>"'
@@ -127,6 +138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     as_json = False
     via_queue = False
     via_durable = False
+    reprendre: str | None = None
     messagerie = False
     validation_ui = False
     notifier_agent: str | None = None
@@ -136,9 +148,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     relances: int | None = None
     parallele: int | None = None
     flags_connus = {
-        "--json", "--trace", "--queue", "--durable", "--publier", "--messagerie",
-        "--validation-ui", "--notifier", "--plafond-cout", "--plafond-tokens",
-        "--timeout", "--relances", "--parallele",
+        "--json", "--trace", "--queue", "--durable", "--reprendre", "--publier",
+        "--messagerie", "--validation-ui", "--notifier", "--plafond-cout",
+        "--plafond-tokens", "--timeout", "--relances", "--parallele",
     }
     while args and args[0] in flags_connus:
         flag = args.pop(0)
@@ -149,6 +161,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif flag == "--queue":
             via_queue = True
         elif flag == "--durable":
+            via_durable = True
+        elif flag == "--reprendre":
+            if not args or args[0].startswith("--"):
+                print(
+                    "--reprendre attend le run_id du run durable à reprendre "
+                    "(celui du journal / de la Control Tower).",
+                    file=sys.stderr,
+                )
+                return 2
+            reprendre = args.pop(0)
+            # Reprendre, c'est se rattacher à un workflow Temporal : le mode
+            # durable est impliqué, pas à redemander.
             via_durable = True
         elif flag == "--publier":
             activer_publication_evenements()
@@ -198,8 +222,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 timeout = valeur
 
     objective = " ".join(args).strip()
-    if not objective:
+    if not objective and reprendre is None:
         print(_USAGE, file=sys.stderr)
+        return 2
+    if objective and reprendre is not None:
+        print(
+            f"--reprendre reprend le run « {reprendre} » : son objectif est déjà "
+            "celui du run repris, ne le redonnez pas en argument.",
+            file=sys.stderr,
+        )
         return 2
 
     if via_queue and (
@@ -255,7 +286,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
-    journal = RunJournal()
+    # Reprise (#96) : le journal du process qui reprend porte le `run_id` du run
+    # repris — c'est lui qui rattache ses étapes à celles d'avant l'interruption,
+    # dans la trace comme au grand livre.
+    journal = RunJournal(run_id=reprendre) if reprendre is not None else RunJournal()
     # Notificateur de supervision (#105) : construit avant les garde-fous — sa
     # configuration (canal, agent équipé, déclaration MCP) échoue proprement
     # avant tout appel modèle, et son enveloppe s'ajoute au validateur choisi.
@@ -297,7 +331,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         # Arrêt borné (#64) : une réalisation détachée par le time-out ne peut pas
         # suspendre la fermeture de la boucle — le rapport est toujours rendu.
-        report = run_borne(engine.run(objective, journal=journal))
+        if reprendre is not None:
+            # `--reprendre` a imposé le mode durable : le moteur est le durable.
+            durable = cast("DurableEngine", engine)
+            report = run_borne(durable.reprendre(reprendre, journal=journal))
+        else:
+            report = run_borne(engine.run(objective, journal=journal))
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
         return 1
