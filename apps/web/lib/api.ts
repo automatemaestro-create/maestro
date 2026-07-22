@@ -17,6 +17,8 @@ import type {
   PasSerie,
   PlaybookDetail,
   PlaybookFiche,
+  PropositionPlaybook,
+  PropositionPlaybookDetail,
   Tache,
   Validation,
   VersionPlaybook,
@@ -169,6 +171,57 @@ export function restaurerPlaybook(
     `/api/playbooks/${encodeURIComponent(agent)}/restaurer`,
     { version },
     "restauration refusée",
+  );
+}
+
+/**
+ * Les propositions d'auto-amélioration en brouillon d'un agent (#111) :
+ * métadonnées et justification, sans le contenu. Une proposition n'est jamais
+ * la version courante tant qu'elle n'a pas été appliquée.
+ */
+export function chargerPropositionsPlaybook(
+  agent: string,
+): Promise<PropositionPlaybook[]> {
+  return chargerJson<PropositionPlaybook[]>(
+    `/api/playbooks/${encodeURIComponent(agent)}/propositions`,
+  );
+}
+
+/** Une proposition en brouillon, contenu compris — de quoi la relire avant d'agir. */
+export function chargerPropositionPlaybook(
+  agent: string,
+  numero: number,
+): Promise<PropositionPlaybookDetail> {
+  return chargerJson<PropositionPlaybookDetail>(
+    `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}`,
+  );
+}
+
+/**
+ * Adopte une proposition (#140) : son contenu devient la version courante,
+ * chargée à chaud par le moteur dès la tâche suivante (#78), et elle sort des
+ * brouillons.
+ */
+export function appliquerPropositionPlaybook(
+  agent: string,
+  numero: number,
+): Promise<void> {
+  return envoyerJson(
+    `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/appliquer`,
+    undefined,
+    "application refusée",
+  );
+}
+
+/** Écarte une proposition (#140) : elle disparaît, la version courante ne bouge pas. */
+export function rejeterPropositionPlaybook(
+  agent: string,
+  numero: number,
+): Promise<void> {
+  return envoyerJson(
+    `/api/playbooks/${encodeURIComponent(agent)}/propositions/${numero}/rejeter`,
+    undefined,
+    "rejet refusé",
   );
 }
 
