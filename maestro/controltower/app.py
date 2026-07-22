@@ -54,12 +54,17 @@ Endpoints :
   `Event.to_dict`.
 
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
-événement sur l'état (`ControlTowerState`) puis le rediffuse aux WebSockets
-connectées — l'ordre « état d'abord, diffusion ensuite » garantit qu'un client
-qui reçoit un événement lit un REST déjà à jour. `create_app` s'injecte bus et
-état (les tests d'API tournent sur `InMemoryEventBus`, sans Redis) ;
-`create_default_app` câble le `RedisEventBus` de production (canal
-`maestro.evenements`, alimenté par `maestro.controltower.bridge` côté moteur).
+événement sur l'état (`ControlTowerState`), le **consigne** au journal durable
+(`EventLog`, #97) puis le rediffuse aux WebSockets connectées — l'ordre « état
+d'abord, diffusion ensuite » garantit qu'un client qui reçoit un événement lit
+un REST déjà à jour. Au démarrage, le lifespan **rejoue** le journal pour
+reconstruire la projection (exécutions, grands livres, analytics, tâches,
+agents, validations) d'avant un redémarrage de l'API : l'état survit à la vie du
+process (#97). `create_app` s'injecte bus, état et journal (les tests d'API
+tournent sur `InMemoryEventBus`/`InMemoryEventLog`, sans Redis) ;
+`create_default_app` câble le `RedisEventBus` et le `RedisEventLog` de production
+(canal `maestro.evenements`, alimenté par `maestro.controltower.bridge` côté
+moteur ; journal persistant sur la liste `maestro.evenements:journal`).
 """
 
 from __future__ import annotations
@@ -98,6 +103,11 @@ from maestro.controltower.events import (
     EventBus,
     InMemoryEventBus,
     RedisEventBus,
+)
+from maestro.controltower.persistence import (
+    EventLog,
+    InMemoryEventLog,
+    RedisEventLog,
 )
 from maestro.controltower.state import (
     CAPACITE_ACTIVE,
@@ -210,17 +220,34 @@ class Diffusion:
 _LOGGER = logging.getLogger("maestro.controltower")
 
 
-async def _pompe(bus: EventBus, state: ControlTowerState, diffusion: Diffusion) -> None:
-    """Le seul consommateur du bus : projette sur l'état **puis** rediffuse.
+async def _pompe(
+    bus: EventBus,
+    state: ControlTowerState,
+    diffusion: Diffusion,
+    event_log: EventLog,
+) -> None:
+    """Le seul consommateur du bus : projette sur l'état, **persiste**, puis rediffuse.
 
     Cet ordre rend le flux cohérent pour les clients : à réception d'un
-    événement WebSocket, l'état REST le reflète déjà. Une panne du bus (Redis
-    injoignable…) arrête le flux temps réel mais pas l'API : le REST continue
+    événement WebSocket, l'état REST le reflète déjà. Chaque événement est
+    consigné au journal durable (#97) entre la projection et la diffusion —
+    c'est la mémoire longue qui, rejouée au démarrage, reconstruit l'état après
+    un redémarrage de l'API. Une panne de **persistance** (Redis injoignable le
+    temps d'un événement) est tracée mais n'interrompt pas le flux temps réel :
+    le seul risque est que cet événement manque au prochain rejeu. Une panne du
+    **bus**, elle, arrête le flux temps réel mais pas l'API : le REST continue
     de servir l'état déjà projeté — la panne est tracée, pas avalée.
     """
     try:
         async for event in bus.subscribe():
             state.appliquer(event)
+            try:
+                await event_log.consigner(event)
+            except Exception:
+                _LOGGER.exception(
+                    "Échec de persistance d'un événement : il manquera au prochain "
+                    "rejeu au démarrage (flux temps réel et projection préservés)."
+                )
             diffusion.diffuser(event)
     except asyncio.CancelledError:
         raise
@@ -243,6 +270,7 @@ def create_app(
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
     permissions: PermissionStore | None = None,
+    event_log: EventLog | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -286,8 +314,19 @@ def create_app(
     la politique effective appliquée à l'exécution) — par défaut celui de la
     config (`MAESTRO_PERMISSIONS_DIR`, sinon `core/permissions/` du dépôt) :
     le même que relisent moteur et workers.
+
+    `event_log` (#97) est le **journal durable des événements** que la pompe
+    consigne et que le lifespan **rejoue au démarrage** pour reconstruire la
+    projection (exécutions, grands livres, analytics, tâches, agents,
+    validations) après un redémarrage de l'API — par défaut un journal mémoire
+    (pas de durabilité inter-redémarrage : la configuration des tests et d'une
+    démo mono-process). La production câble `RedisEventLog` via
+    `create_default_app`. Un état injecté (`state`) reste tel quel puis reçoit
+    le rejeu par-dessus (idempotent : les événements reconstruisent le même
+    état).
     """
     bus = bus if bus is not None else InMemoryEventBus()
+    event_log = event_log if event_log is not None else InMemoryEventLog()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
     mcp = mcp if mcp is not None else McpStore.default()
@@ -311,7 +350,20 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        pompe = asyncio.create_task(_pompe(bus, state, diffusion))
+        # Rejeu du journal durable (#97) **avant** d'ouvrir la pompe : la
+        # projection retrouve l'historique (exécutions, grands livres, analytics)
+        # d'avant le redémarrage, puis la pompe prend le relais du flux à venir.
+        # Un journal illisible (Redis absent au démarrage…) est tracé sans bloquer
+        # l'API : elle repart sur la projection courante (vide en production).
+        try:
+            for event in await event_log.relire():
+                state.appliquer(event)
+        except Exception:
+            _LOGGER.exception(
+                "Rejeu du journal des événements impossible : démarrage sur la "
+                "projection courante (l'historique persisté n'a pas pu être relu)."
+            )
+        pompe = asyncio.create_task(_pompe(bus, state, diffusion, event_log))
         try:
             yield
         finally:
@@ -320,6 +372,7 @@ def create_app(
                 await pompe
             await mailbox.close()
             await bus.close()
+            await event_log.close()
 
     app = FastAPI(
         title="Maestro — Control Tower",
@@ -932,6 +985,9 @@ def create_default_app() -> FastAPI:
     docker-compose par défaut — la même que la file de tâches #41), alimenté
     côté moteur par `maestro.controltower.bridge` ; le chat (#84) transite par
     la messagerie Redis de la même instance (boîtes `maestro.boite.<agent>`).
+    Les événements y sont aussi **persistés** (#97) sur la liste Redis
+    `maestro.evenements:journal` et rejoués au démarrage : l'état de la Control
+    Tower survit au redémarrage de l'API.
     C'est la cible *factory* d'uvicorn :
     `uvicorn --factory maestro.controltower.app:create_default_app`
     (ou le script `maestro-api`).
@@ -940,4 +996,5 @@ def create_default_app() -> FastAPI:
     return create_app(
         bus=RedisEventBus(settings.redis_url),
         mailbox=RedisMailbox(settings.redis_url),
+        event_log=RedisEventLog(settings.redis_url),
     )
