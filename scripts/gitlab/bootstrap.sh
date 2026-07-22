@@ -60,6 +60,11 @@ echo "Labels prêts."
 #   - only_allow_merge_if_pipeline_succeeds=true + allow_merge_on_skipped_pipeline=false :
 #     GitLab fait respecter lui-même « pipeline vert avant merge » (docs/10-workflow-git.md §6) —
 #     une MR au pipeline rouge (ou sauté) n'est pas mergeable. Dérive surveillée par doctor.sh.
+#   - shared_runners_enabled=false : les pipelines tournent sur le **runner de projet local**
+#     par défaut (docs/10-workflow-git.md §8). Les runners partagés GitLab, au quota de minutes
+#     durablement épuisé, sont coupés — sinon un job non-taggé pouvait y atterrir et retomber en
+#     `ci_quota_exceeded`. Contrepartie : le runner local doit être en ligne, sinon les jobs
+#     restent `pending` (et le merge, qui exige un pipeline vert, est bloqué).
 # PUT idempotent : ré-exécution sans effet ni erreur.
 project_path="$(glab repo view --output json 2>/dev/null | grep -o '"path_with_namespace":"[^"]*"' | cut -d'"' -f4 || true)"
 if [ -n "$project_path" ]; then
@@ -69,7 +74,8 @@ if [ -n "$project_path" ]; then
     -F squash_option=default_on \
     -F only_allow_merge_if_pipeline_succeeds=true \
     -F allow_merge_on_skipped_pipeline=false \
-    >/dev/null 2>&1 || echo "Réglages projet non appliqués (droits insuffisants ou champ non supporté) — à faire manuellement dans Settings > Merge requests."
+    -F shared_runners_enabled=false \
+    >/dev/null 2>&1 || echo "Réglages projet non appliqués (droits insuffisants ou champ non supporté) — à faire manuellement dans Settings > Merge requests / CI-CD > Runners."
 fi
 
 echo "Bootstrap terminé."
