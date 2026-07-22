@@ -135,13 +135,10 @@ omit = [
     "maestro/controltower/cli.py",
     "maestro/controltower/demo.py",
     "maestro/agents/runtime_cli.py",
-    # Démo Temporal (ticket #94) : exige un serveur Temporal vivant — smoke test
-    # différé au lot tests + doc (#93).
+    # Démo Temporal (ticket #94) : point d'entrée d'invocation autour d'un serveur
+    # Temporal vivant, comme les autres démos ci-dessus. Smoke test en contrepartie
+    # (tests/test_cli_smoke.py, #93).
     "maestro/temporal_demo.py",
-    # Mode durable (ticket #95) : moteur d'exécution sur Temporal (workflow + activités
-    # + worker + orchestrateur). Exige un serveur Temporal vivant et un vrai fournisseur
-    # de bout en bout — tests différés au lot tests + doc (#93).
-    "maestro/durable/*",
     # Shim du mode isolé (ticket #108) : fine couche d'invocation vers `docker run`,
     # exige un démon Docker vivant — smoke test en contrepartie (#107,
     # tests/test_isolation.py).

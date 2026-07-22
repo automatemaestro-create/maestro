@@ -367,3 +367,79 @@ Le socle est rejoué sans réseau dans [`tests/test_mcp.py`](../tests/test_mcp.p
 moteur, application à chaud, échecs propres, couture SDK) et le volet catalogue dans
 [`tests/test_controltower.py`](../tests/test_controltower.py). Détails :
 [`core/mcp/README.md`](../core/mcp/README.md).
+
+### 6.8 — Workflows durables : reprise sur panne et persistance (disponible — tickets #94 à #97)
+
+Première brique de la **Phase 3 « Durabilité & scalabilité »** ([roadmap](./06-roadmap.md)) :
+les runs peuvent devenir **durables** en s'exécutant sur **Temporal**. Un run interrompu
+(CLI tuée, worker qui tombe, API redémarrée) **reprend où il en était sans repayer
+l'amont** — les tâches déjà réussies ne sont pas ré-exécutées, leur résultat vient de
+l'historique du workflow. Le modèle : **un run = un workflow, une tâche = une activité**
+(le workflow orchestre — planification, dépendances/handoffs, blocages — et délègue tout
+l'I/O, dont les appels modèle, à des activités, condition du déterminisme que Temporal
+exige). Le mode est **opt-in** : sans le drapeau, l'exécution en process reste le défaut.
+
+**Mise en route** — Temporal tourne en local via le docker-compose du dépôt (serveur de
+développement tout-en-un, UI web comprise, état persisté en SQLite dans un volume) :
+
+```bash
+# 1. Le serveur Temporal (gRPC localhost:7233, UI http://localhost:8233)
+docker compose -f infra/docker-compose.yml up -d temporal
+
+# 2. Un run durable — un worker est embarqué dans ce process, le temps du run
+maestro-run --durable "Créer une API de gestion de tâches"
+```
+
+En mode embarqué, garde-fous (plafond, time-out, validation console), relance
+automatique (#91) et publication temps réel (#46) opèrent **comme en local** : les
+activités partagent le logger de trace du process. Pour un déploiement réel, on fait
+plutôt tourner un **worker persistant** à côté (à l'image d'un worker Celery) :
+
+```bash
+python -m maestro.durable.worker   # sert la file « maestro-durable » jusqu'à Ctrl-C
+```
+
+**Reprise sur panne** — le run vit côté Temporal, pas dans le process qui le suit. Si ce
+process disparaît (CLI tuée, API redémarrée), on rattache un process neuf par le seul
+`run_id` (celui qu'affichent le journal, la trace et la Control Tower) :
+
+```bash
+maestro-run --reprendre <run_id>   # implique --durable ; l'objectif est déjà dans le run
+```
+
+La reprise **interroge l'état acquis** du run (planification et tâches abouties),
+**consigne la reprise** (césure visible sur la trace et le fil temps réel, avec sa raison
+et ce qui ne sera pas repayé), puis attend l'issue. Si c'est le **worker** qui est tombé,
+aucune commande n'est nécessaire : le run repart de lui-même dès qu'un worker revient sur
+la file. Les deux couches de relance **composent proprement** : l'aléa **fournisseur**
+reste du ressort de la relance applicative (#91), qui vit dans l'activité ; l'aléa
+**d'infrastructure** (perte du worker) est du seul ressort de Temporal — les échecs
+applicatifs déterministes (plan invalide) ne sont jamais rejoués.
+
+**Persistance de l'état Control Tower** (#97) — l'état du poste de pilotage (exécutions,
+grands livres, analytics, tâches, agents, validations) est projeté depuis un **flux
+d'événements**. Un **journal durable** (`EventLog`) consigne chaque événement et le
+**rejoue au démarrage** de l'API : l'état survit désormais au redémarrage du process
+(auparavant, seuls les artefacts JSON du moteur subsistaient). En production, le journal
+est une **liste Redis** (event sourcing, sur l'instance déjà mutualisée avec la file, le
+bus et les boîtes) ; en test et mono-process, un journal mémoire.
+
+**Limites connues (POC).** Le mode durable est **opt-in** et le moteur en process reste le
+défaut — il ne doit jamais régresser pendant ce chantier. `--durable` n'est **pas encore
+combinable** avec `--queue` (frontières d'exécution exclusives), ni avec `--messagerie` /
+`--validation-ui` / `--notifier` / `--parallele` (en durable, dépendances et handoffs
+passent par le workflow et la validation humaine par la console) : ces transports Redis et
+le plafond global viendront dans un lot ultérieur. Le journal des événements n'a **pas de
+rétention bornée** (la liste croît avec l'historique, pour préserver l'historique complet)
+et la bascule vers PostgreSQL (entités RUN/TASK, [doc 03](./03-modele-de-donnees.md)) avec
+sa politique de rétention viendra ensuite substituer un stockage requêtable au rejeu
+intégral.
+
+Tout est rejoué **sans serveur Temporal réel ni appel modèle** dans
+[`tests/test_durable.py`](../tests/test_durable.py) : l'**environnement de test Temporal**
+(serveur *time-skipping*, binaire téléchargé une fois puis mis en cache) et des
+fournisseurs factices couvrent l'exécution workflow + activités, le blocage aval, la
+reprise sans repayer l'amont et la planification invalide ; la persistance de l'état
+Control Tower est couverte dans
+[`tests/test_controltower.py`](../tests/test_controltower.py). Détails :
+[`maestro/durable/`](../maestro/durable/) et [`infra/README.md`](../infra/README.md).

@@ -15,7 +15,7 @@ from dataclasses import replace
 
 import pytest
 
-from maestro import check_env
+from maestro import check_env, temporal_demo
 from maestro.agents import runtime_cli
 from maestro.config import Settings
 from maestro.controltower import cli as controltower_cli
@@ -249,6 +249,35 @@ def test_demo_controltower_nominal_sert_sur_l_ecoute_demandee(monkeypatch):
 
     assert controltower_demo.main(["--port", "9100"]) == 0
     assert appels == {"hote": controltower_demo.HOTE_DEFAUT, "port": 9100}
+
+
+# --- maestro-temporal-demo (maestro/temporal_demo.py) -------------------------------------
+
+
+def test_temporal_demo_signale_le_serveur_injoignable(monkeypatch, capsys):
+    # Serveur Temporal absent : le bridge lève (RPCError/RuntimeError), main() rend 1
+    # et indique comment démarrer le serveur — pas de trace nue.
+    async def _connect_ko(*_args, **_kwargs):
+        raise RuntimeError("Failed client connect")
+
+    monkeypatch.setattr(temporal_demo.Client, "connect", _connect_ko)
+
+    assert temporal_demo.main() == 1
+    sortie = capsys.readouterr().out
+    assert "injoignable" in sortie
+    assert "docker compose" in sortie
+
+
+def test_temporal_demo_nominal_imprime_le_resultat(monkeypatch, capsys):
+    # On coupe au niveau de `_executer` (worker + workflow bloquants) : main() se
+    # réduit alors à son câblage — adresse résolue, résultat imprimé, code 0.
+    async def _executer_factice(adresse):
+        return "Bonjour, Maestro !"
+
+    monkeypatch.setattr(temporal_demo, "_executer", _executer_factice)
+
+    assert temporal_demo.main() == 0
+    assert "Bonjour, Maestro !" in capsys.readouterr().out
 
 
 # --- maestro-dev/bdd/qa/devops/designer (maestro/agents/runtime_cli.py) -------------------
