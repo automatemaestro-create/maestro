@@ -443,3 +443,26 @@ reprise sans repayer l'amont et la planification invalide ; la persistance de l'
 Control Tower est couverte dans
 [`tests/test_controltower.py`](../tests/test_controltower.py). Détails :
 [`maestro/durable/`](../maestro/durable/) et [`infra/README.md`](../infra/README.md).
+
+### 6.9 — Auto-amélioration des playbooks : proposer une révision depuis les échecs (disponible — ticket #111)
+
+Deuxième brique de la **Phase 3** ([roadmap](./06-roadmap.md)) : après un run en échec, une
+**analyse déclenchée à la demande** relit les échecs consignés d'un agent (journal #8 → pont #46)
+et fait rédiger, par la couche fournisseur, une **version révisée de son playbook**. Le
+résultat est une **proposition en brouillon** (provenance « proposition », §6.2) — jamais
+la version courante, **jamais chargée par le moteur** tant qu'un humain ne l'a pas appliquée.
+
+```bash
+# Déclencher l'analyse des échecs d'un agent sur un run donné (un appel modèle)
+curl -X POST http://localhost:8000/api/playbooks/developpeur/propositions \
+     -H 'Content-Type: application/json' -d '{"run_id": "<run_id>"}'
+```
+
+Les propositions apparaissent **en tête de l'historique** de l'éditeur de playbook (page
+`/playbooks`), avec leur justification : **Appliquer** publie le contenu candidat comme
+version courante — donc chargée à chaud dès la tâche suivante (#78) — et **Rejeter** retire
+le brouillon sans toucher à la version courante. Le déclenchement reste **manuel par
+prudence sur le coût** : une analyse = un appel modèle, à réserver aux échecs qu'on soupçonne
+de venir du playbook. Boucle complète, garde-fous et limites :
+[doc 22](./22-auto-amelioration-playbooks.md) ; tests sur fournisseurs factices :
+[`tests/test_auto_amelioration.py`](../tests/test_auto_amelioration.py).

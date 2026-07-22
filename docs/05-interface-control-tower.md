@@ -49,7 +49,7 @@ Vue d'ensemble en temps réel :
   - Identité (nom, rôle, modèle, compétences/tags).
   - **Prompt système** éditable.
   - **Outils** liés et leurs permissions.
-  - **Éditeur de playbook** avec **historique des versions** et retour arrière (EF-25).
+  - **Éditeur de playbook** avec **historique des versions** et retour arrière (EF-25). L'historique porte aussi les **propositions d'auto-amélioration** en attente — brouillons issus des échecs d'un run, à appliquer ou rejeter au clic ([docs/22](./22-auto-amelioration-playbooks.md)).
   - **Chat** : conversation directe avec l'agent (EF-19).
   - Statistiques de l'agent (tâches traitées, taux de réussite, coût moyen).
 

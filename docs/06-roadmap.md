@@ -84,7 +84,7 @@ gantt
 - **Workflows durables** (migration vers Temporal) : reprise sur panne, tâches longues.
 - **Scalabilité horizontale** : plusieurs instances par agent, montée en charge.
 - **Intégrations MCP avancées** : Figma, Linear/Jira, Slack, cloud providers.
-- **Auto-amélioration des playbooks** (l'agent propose des corrections à partir de ses échecs).
+- **Auto-amélioration des playbooks** (l'agent propose des corrections à partir de ses échecs) — livré : analyse à la demande d'un run en échec → proposition en brouillon, appliquée ou rejetée depuis l'UI ([docs/22](./22-auto-amelioration-playbooks.md), #111).
 - Renforcement **sécurité** (micro-VM, gestion fine des secrets et permissions).
 - Éventuelle migration/ajout de **LangGraph** pour les flux d'état complexes.
 

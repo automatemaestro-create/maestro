@@ -12,6 +12,13 @@ tickets #76 à #78, exigences EF-24 à EF-26.
 - Un agent **sans version stockée** retombe sur son playbook « du code » (les
   prompts système de `maestro/agents/`) : ce dossier vide reproduit exactement le
   comportement d'origine.
+- Les **propositions** d'auto-amélioration (#111) vivent à part, dans un
+  sous-dossier `<agent>/propositions/` : `p0001.md` (contenu candidat) +
+  `p0001.json` (justification), numérotation propre. Elles ne sont **jamais**
+  renvoyées par `lire()`/`versions()` — le moteur ne peut donc pas en charger
+  une ; appliquer une proposition publie son contenu comme version ordinaire
+  (`vNNNN.md`), rejeter la supprime. Détails :
+  [docs/22](../../docs/22-auto-amelioration-playbooks.md).
 - Lecture/écriture par le code : `maestro.agents.playbooks.PlaybookStore` ; par
   HTTP : les endpoints `/api/playbooks` de l'API Control Tower
   (`maestro/controltower/app.py`).
