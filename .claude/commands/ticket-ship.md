@@ -72,9 +72,13 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    Si un parent est trouvé (convention `docs/10-workflow-git.md` §5.1), prépare l'**annonce de la
    suite** pour le résumé final :
    - Liste les lots : `bash scripts/gitlab/lib.sh subtickets <iid-parent>`. Profites-en pour
-     **cocher** dans la checklist du parent les lots au statut « Terminé » encore décochés
-     (mise à jour idempotente de la description via `glab issue update <iid-parent>
-     --description "$(cat <fichier>)"` ; ne **décoche jamais** une case déjà cochée).
+     **cocher** dans la checklist du parent les lots au statut « Terminé » encore décochés.
+     **Relis et réécris la description uniquement via les helpers** :
+     `bash scripts/gitlab/lib.sh get-description <iid-parent> > <fichier>`, tu édites le fichier,
+     puis `bash scripts/gitlab/lib.sh set-description <iid-parent> <fichier>`. N'improvise
+     **jamais** une lecture du type `glab issue view --output json | python` : elle corrompt
+     l'UTF-8 en mojibake (« â€” » au lieu de « — ») et l'a déjà repoussé dans un parent (#141).
+     Mise à jour idempotente : ne **décoche jamais** une case déjà cochée.
    - S'il reste, après le ticket qu'on vient de shipper, un sous-ticket au statut « À faire »
      dans l'ordre de la checklist, c'est le **prochain lot** : annonce qu'il est **démarrable dès
      maintenant** — « prochain lot : `/ticket-start <iid-suivant>` (sans attendre le merge : le
