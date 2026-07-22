@@ -79,12 +79,15 @@ pas clair.
      ```
      (exemple : remplace chaque `[x]`/`[ ]` par le résultat réel de l'étape 6)
    - **Si elle existe déjà** : commence par remettre sa checklist à jour, de façon **idempotente** —
-     repars du champ `description` du JSON, modifie **uniquement** l'état des cases de la section
-     `## Checklist` (jamais le reste, notamment le `Closes #<iid>`) : coche les cases vérifiées à
-     l'étape 6, et **ne décoche jamais** une case déjà cochée (un humain a pu la cocher). Si la
-     section `## Checklist` manque, ajoute-la en fin de description. Si rien ne change, ne fais pas
-     d'update. La description passe par un fichier temporaire :
-     `glab mr update <mr> --description "$(cat <fichier>)"`.
+     modifie **uniquement** l'état des cases de la section `## Checklist` (jamais le reste,
+     notamment le `Closes #<iid>`) : coche les cases vérifiées à l'étape 6, et **ne décoche
+     jamais** une case déjà cochée (un humain a pu la cocher). Si la section `## Checklist`
+     manque, ajoute-la en fin de description. Si rien ne change, ne fais pas d'update.
+     **Relis et réécris la description uniquement via les helpers** :
+     `bash scripts/gitlab/lib.sh get-mr-description <mr> > <fichier>`, tu édites le fichier, puis
+     `bash scripts/gitlab/lib.sh set-mr-description <mr> <fichier>`. N'improvise **jamais** une
+     lecture du type `glab mr view --output json | python` : elle corrompt l'UTF-8 en mojibake
+     (« â€” » au lieu de « — ») — voir #141.
      - Ensuite, si elle est **en Draft** : demande à l'utilisateur si le travail est réellement
        terminé et prêt pour revue ; si oui, `glab mr update <mr> --ready`.
      - Si elle n'est **plus en Draft** : ne rien faire de plus sur la MR.

@@ -603,6 +603,133 @@ gl_log_time() {
   esac
 }
 
+# --- Descriptions : lecture/écriture fidèles aux octets (ticket #141) ------------------------------
+# Relire puis réécrire une description GitLab (cocher la checklist d'un parent, mettre à jour celle
+# d'une MR) est un aller-retour à risque : il a corrompu #111 le 2026-07-22 en y repoussant du
+# mojibake (« â€” » au lieu de « — », « Ã© » au lieu de « é »).
+#
+# La cause n'est PAS glab, qui émet du bon UTF-8 : c'est un consommateur qui re-décode les octets —
+# typiquement `sys.stdin` de Python, en cp1252 sous Windows. Le piège précis :
+#   PYTHONIOENCODING=utf-8 glab ... | python     <-- la variable s'applique à GLAB, pas à python :
+#                                                    bash ne la propage pas au reste du pipeline,
+#                                                    elle n'a donc AUCUN effet.
+#   glab ... | PYTHONIOENCODING=utf-8 python     <-- correct (variable sur le lecteur)
+#
+# Ces helpers suppriment l'improvisation : tout reste en shell, qui est byte-transparent, donc les
+# octets traversent inchangés quelles que soient la locale et la plateforme. Les commandes
+# /ticket-start, /ticket-ship et /ticket-finish doivent passer par eux plutôt que d'inventer une
+# lecture. Vérifier une correction d'encodage se fait par OCTETS, jamais à l'affichage : un terminal
+# cp1252 réaffiche le mojibake de façon plausible (em-dash correct = e2 80 94).
+
+# gl_json_string_field <champ> -> lit un JSON sur stdin, imprime la valeur DÉSÉCHAPPÉE du champ
+# chaîne <champ>. Balayage awk sous LC_ALL=C : sûr en UTF-8, car les octets d'une séquence
+# multi-octets valent tous >= 0x80 et ne peuvent donc jamais collisionner avec les délimiteurs
+# ASCII (" et \) que l'on cherche. Le JSON de GitLab rend les non-ASCII en UTF-8 brut ; seuls
+# \n, \", \\ et quelques &/</> (&/</>) sont échappés.
+gl_json_string_field() {
+  local champ="$1"
+  if [ -z "$champ" ]; then echo "usage: gl_json_string_field <champ>" >&2; return 2; fi
+  LC_ALL=C awk -v champ="$champ" '
+    { buf = buf $0 }
+    END {
+      cle = "\"" champ "\":\""
+      i = index(buf, cle)
+      if (i == 0) exit 1
+      p = i + length(cle); n = length(buf); out = ""
+      while (p <= n) {
+        c = substr(buf, p, 1)
+        if (c == "\\") {
+          e = substr(buf, p + 1, 1)
+          if      (e == "n") out = out "\n"
+          else if (e == "t") out = out "\t"
+          else if (e == "r") out = out "\r"
+          else if (e == "u") {
+            hex = substr(buf, p + 2, 4)
+            if      (hex == "0026") out = out "&"
+            else if (hex == "003c") out = out "<"
+            else if (hex == "003e") out = out ">"
+            else                    out = out "\\u" hex   # échappement inconnu : laissé tel quel
+            p += 6; continue
+          }
+          else out = out e            # \" \\ \/ … : le caractère littéral
+          p += 2; continue
+        }
+        if (c == "\"") break
+        out = out c
+        p++
+      }
+      printf "%s", out
+    }
+  '
+}
+
+# gl_get_description <iid> -> la description du ticket <iid>, en UTF-8 intact, sur stdout.
+gl_get_description() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_get_description <iid>" >&2; return 2; fi
+  glab api "projects/$(gl_project_enc)/issues/$iid" 2>/dev/null | gl_json_string_field description
+}
+
+# gl_set_description <iid> <fichier> -> remplace la description du ticket <iid> par le contenu du
+# fichier (UTF-8). L'écriture par argument est fidèle : bash est byte-transparent.
+gl_set_description() {
+  local iid="$1" fichier="$2"
+  if [ -z "$iid" ] || [ -z "$fichier" ]; then echo "usage: gl_set_description <iid> <fichier>" >&2; return 2; fi
+  if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
+  if ! glab issue update "$iid" --description "$(cat "$fichier")" >/dev/null 2>&1; then
+    echo "Échec de la mise à jour de la description de #$iid" >&2; return 1
+  fi
+  printf 'Description de #%s mise à jour.\n' "$iid"
+}
+
+# gl_get_mr_description <mr> -> la description de la MR <mr>, en UTF-8 intact, sur stdout.
+gl_get_mr_description() {
+  local mr="$1"
+  if [ -z "$mr" ]; then echo "usage: gl_get_mr_description <mr>" >&2; return 2; fi
+  glab api "projects/$(gl_project_enc)/merge_requests/$mr" 2>/dev/null | gl_json_string_field description
+}
+
+# gl_set_mr_description <mr> <fichier> -> remplace la description de la MR <mr> par le fichier.
+gl_set_mr_description() {
+  local mr="$1" fichier="$2"
+  if [ -z "$mr" ] || [ -z "$fichier" ]; then echo "usage: gl_set_mr_description <mr> <fichier>" >&2; return 2; fi
+  if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
+  if ! glab mr update "$mr" --description "$(cat "$fichier")" >/dev/null 2>&1; then
+    echo "Échec de la mise à jour de la description de !$mr" >&2; return 1
+  fi
+  printf 'Description de !%s mise à jour.\n' "$mr"
+}
+
+# gl_roundtrip_description <iid> -> validation REPRODUCTIBLE de la fidélité (ticket #141) : lit la
+# description, la réécrit telle quelle, la relit, puis compare OCTET POUR OCTET. C'est la preuve
+# qu'un aller-retour ne perd rien sur un texte à accents et em-dash. Sans effet de bord quand tout
+# va bien : on réécrit un contenu identique. Code 0 si fidèle, 1 sinon.
+gl_roundtrip_description() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_roundtrip_description <iid>" >&2; return 2; fi
+  local avant apres taille
+  avant="$(mktemp)" || return 1
+  apres="$(mktemp)" || { rm -f "$avant"; return 1; }
+  if ! gl_get_description "$iid" > "$avant" || [ ! -s "$avant" ]; then
+    echo "Description vide ou illisible pour #$iid" >&2
+    rm -f "$avant" "$apres"; return 1
+  fi
+  if ! gl_set_description "$iid" "$avant" >/dev/null; then
+    rm -f "$avant" "$apres"; return 1
+  fi
+  if ! gl_get_description "$iid" > "$apres"; then
+    rm -f "$avant" "$apres"; return 1
+  fi
+  if cmp -s "$avant" "$apres"; then
+    taille="$(wc -c < "$avant" | tr -d ' ')"
+    printf 'Aller-retour fidèle sur #%s : %s octets identiques.\n' "$iid" "$taille"
+    rm -f "$avant" "$apres"; return 0
+  fi
+  echo "ALLER-RETOUR INFIDÈLE sur #$iid — les octets ont changé :" >&2
+  cmp "$avant" "$apres" >&2
+  rm -f "$avant" "$apres"; return 1
+}
+
 # --- Pipelines CI ---------------------------------------------------------------------------------
 # Helpers REST pour le diagnostic de pipeline (/pipeline-fix — voir docs/10-workflow-git.md §8).
 # Même parti pris que le reste du fichier : parsing shell pur (grep/sed/awk), pas de jq/python.
@@ -817,6 +944,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     log-time)       gl_log_time "$@" ;;
     mr-state)       gl_mr_state "$@" ;;
     cleanup-merged) gl_cleanup_merged "$@" ;;
+    get-description)    gl_get_description "$@" ;;
+    set-description)    gl_set_description "$@" ;;
+    get-mr-description) gl_get_mr_description "$@" ;;
+    set-mr-description) gl_set_mr_description "$@" ;;
+    roundtrip-description) gl_roundtrip_description "$@" ;;
     pipeline-latest)      gl_pipeline_latest "$@" ;;
     pipeline-status)      gl_pipeline_status "$@" ;;
     pipeline-failed-jobs) gl_pipeline_failed_jobs "$@" ;;
@@ -844,6 +976,12 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    set-dates <iid> [début] [échéance]   get-start-date <iid>" >&2
       echo "    prio <iid>   prio-delay <prio>   elapsed-days <date>" >&2
       echo "    log-time <iid> <durée> [résumé]   get-time-spent <iid>" >&2
+      echo "  Descriptions (aller-retour fidèle aux octets — à utiliser au lieu d'improviser une lecture) :" >&2
+      echo "    get-description <iid>              (description du ticket, UTF-8 intact, sur stdout)" >&2
+      echo "    set-description <iid> <fichier>    (remplace la description du ticket par le fichier)" >&2
+      echo "    get-mr-description <mr>            (idem pour une MR)" >&2
+      echo "    set-mr-description <mr> <fichier>  (idem pour une MR)" >&2
+      echo "    roundtrip-description <iid>        (valide la fidélité : lit/réécrit/relit et compare les octets)" >&2
       echo "  Branches :" >&2
       echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2

@@ -17,8 +17,12 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    proposée. Il est informatif : la décision (démarrer, rediriger, s'arrêter) reste la tienne :
    - **Parent de suivi** (la sortie liste une checklist `## Sous-tickets`) : il ne porte ni
      branche ni code — ne le démarre pas. Coche au passage (`- [x]`) les lots « Terminé » encore
-     décochés dans sa description (`glab issue update <iid> --description "$(cat <fichier>)"`,
-     idempotent — ne jamais décocher une case cochée). Puis parcours la checklist dans l'ordre en
+     décochés dans sa description. **Relis et réécris la description uniquement via les helpers**
+     (`bash scripts/gitlab/lib.sh get-description <iid> > <fichier>`, tu édites le fichier, puis
+     `bash scripts/gitlab/lib.sh set-description <iid> <fichier>`) : n'improvise **jamais** une
+     lecture du type `glab issue view --output json | python`, qui corrompt l'UTF-8 en mojibake
+     (« â€” » au lieu de « — ») et l'a déjà repoussé dans un parent — voir #141. Mise à jour
+     idempotente : ne jamais décocher une case cochée. Puis parcours la checklist dans l'ordre en
      **sautant les lots livrés** (« Terminé » ou « En revue » — une MR en attente de merge ne
      bloque pas la suite) : au **premier lot « À faire »**, reprends l'étape 1 avec son iid (c'est
      lui qu'on démarre ; si le parent était « À faire », passe-le « En cours » via
