@@ -33,6 +33,8 @@ Endpoints :
 - `GET  /api/playbooks/{agent}/versions/{version}` — une version passée ;
 - `POST /api/playbooks/{agent}/restaurer` — retour arrière (EF-25) : republie
   une version passée comme nouvelle version courante ;
+- `GET  /api/playbooks/{agent}/propositions` — les propositions d'auto-amélioration
+  en brouillon (#111 : jamais courantes, jamais chargées tant que non appliquées) ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
   défaut du code et les personnalisés persistés, avec leur provenance, leurs
   serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
@@ -609,6 +611,8 @@ def create_app(
 
         `version` 0 et `source` « defaut » tant que le playbook n'a jamais été
         édité : le contenu effectif est alors le prompt du code (#76, repli).
+        `provenance` est celle de la version courante (« humain » — une proposition
+        n'est jamais courante, #111), None quand le contenu vient du code.
         """
         defaut = PLAYBOOK_DEFAUTS[agent]
         courant = playbooks.lire(agent)
@@ -618,6 +622,7 @@ def create_app(
             "version": courant.version if courant else 0,
             "nb_versions": len(playbooks.numeros(agent)),
             "source": "stockage" if courant else "defaut",
+            "provenance": courant.provenance if courant else None,
             "cree_le": courant.cree_le if courant else None,
         }
         if avec_contenu:
@@ -670,6 +675,16 @@ def create_app(
                 status_code=404, detail=f"version inconnue : {agent} v{version}"
             )
         return lue.to_dict()
+
+    @app.get("/api/playbooks/{agent}/propositions")
+    async def propositions_playbook(agent: str) -> list[dict[str, Any]]:
+        """Les propositions d'auto-amélioration en brouillon (#111), listées à part des versions.
+
+        Métadonnées + justification (sans le contenu) — une proposition n'est jamais la
+        version courante et le moteur ne la charge pas tant qu'elle n'est pas appliquée.
+        """
+        _exige_playbook_connu(agent)
+        return [p.to_dict(avec_contenu=False) for p in playbooks.propositions(agent)]
 
     @app.post("/api/playbooks/{agent}/restaurer")
     async def restaurer_playbook(
