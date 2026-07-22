@@ -85,6 +85,7 @@ from maestro.controltower import (
     ControlTowerState,
     Event,
     InMemoryEventBus,
+    InMemoryEventLog,
     RepondeurChat,
     RepondeurScripte,
     ValidateurControlTower,
@@ -305,6 +306,50 @@ def test_grand_livre_d_une_execution(client, state):
 
 def test_grand_livre_execution_inconnue_404(client):
     assert client.get("/api/executions/nulle-part/cout").status_code == 404
+
+
+def test_le_grand_livre_survit_au_redemarrage_de_l_api():
+    """Persistance #97 (critère #93) : les grands livres sont reconstruits au redémarrage.
+
+    Un run passé a laissé sa trace dans le **journal durable** (`EventLog`). Une API
+    qui redémarre repart sur une projection **vide**, puis **rejoue** le journal au
+    démarrage (lifespan) : exécutions, tâches et grand livre réapparaissent à
+    l'identique — sans quoi seuls les artefacts JSON du moteur subsisteraient (docs/13
+    §5, réserve 2). Un journal mémoire pré-rempli tient lieu de « session précédente ».
+    """
+    journal = InMemoryEventLog()
+    evenements = [
+        Event(type=EVENEMENT_AGENT_ACTIVITE, run_id="run-persistant",
+              agent="orchestrateur", role="Orchestrateur", statut="terminee",
+              usage=StepUsage(appels=1, tokens_entree=200, tokens_sortie=20, cout_usd=0.1)),
+        Event(type=EVENEMENT_TACHE_STATUT, run_id="run-persistant", tache_id="t1",
+              titre="Schéma", agent="bdd", role="Base de données", statut="terminee",
+              cout_usd=0.4,
+              usage=StepUsage(appels=2, tokens_entree=1000, tokens_sortie=150,
+                              cout_usd=0.4, duree_ms=900)),
+        Event(type=EVENEMENT_TACHE_STATUT, run_id="run-persistant", tache_id="t2",
+              titre="API", agent="developpeur", role="Développeur", statut="terminee",
+              cout_usd=0.2,
+              usage=StepUsage(appels=1, tokens_entree=500, tokens_sortie=60,
+                              cout_usd=0.2, duree_ms=400)),
+    ]
+
+    async def _consigner():
+        for event in evenements:
+            await journal.consigner(event)
+
+    asyncio.run(_consigner())  # la « session précédente » a persisté ses événements
+
+    # Redémarrage : app neuve, projection vide, MÊME journal → rejeu au démarrage.
+    app = create_app(bus=InMemoryEventBus(), state=ControlTowerState(), event_log=journal)
+    with TestClient(app) as redemarree:
+        taches = {t["id"] for t in redemarree.get("/api/taches").json()}
+        cout = redemarree.get("/api/executions/run-persistant/cout").json()
+
+    assert taches == {"t1", "t2"}  # les tâches du run passé ont resurgi
+    assert cout["planification"]["cout_usd"] == pytest.approx(0.1)
+    assert {t["tache_id"] for t in cout["taches"]} == {"t1", "t2"}
+    assert cout["total"]["cout_usd"] == pytest.approx(0.7)  # 0.1 + 0.4 + 0.2 rejoués
 
 
 def test_grand_livre_rattache_les_annexes_a_leur_tache(client, state):
