@@ -9,6 +9,8 @@ Ce document décrit chaque agent par défaut : son **rôle**, ses **compétences
 
 Un **playbook** est le **workflow d'un agent** : la liste d'étapes/instructions qu'il suit pour accomplir ses tâches. C'est un document structuré (Markdown), **versionné** et **modifiable depuis l'UI sans redéploiement** (exigences EF-24 à EF-26).
 
+Un playbook peut aussi **se réviser à partir des échecs de l'agent** : après un run en échec, une analyse déclenchée à la demande produit une **proposition** de version révisée — un brouillon que le moteur ne charge jamais tant qu'un humain ne l'a pas appliquée depuis l'UI ([docs/22](./22-auto-amelioration-playbooks.md), #111).
+
 Structure type d'un playbook :
 
 ```markdown
