@@ -9,21 +9,33 @@
  * Le dépôt est append-only (#76) : publier comme restaurer créent une version
  * de plus, rien n'est jamais réécrit — la restauration est donc toujours
  * réversible, aucune confirmation n'est demandée.
+ *
+ * L'historique porte aussi les **propositions** d'auto-amélioration en attente
+ * (#111/#140) : des brouillons suggérés à partir des échecs d'un run, affichés
+ * à part des versions humaines, avec leur justification. Ils ne sont jamais
+ * chargés par le moteur tant qu'on ne les a pas appliqués au clic (le contenu
+ * devient alors la version courante, chargée à chaud #78) ; un rejet les retire
+ * sans toucher à la version courante.
  */
 
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  appliquerPropositionPlaybook,
   chargerPlaybook,
+  chargerPropositionPlaybook,
+  chargerPropositionsPlaybook,
   chargerVersionPlaybook,
   chargerVersionsPlaybook,
   ecrirePlaybook,
+  rejeterPropositionPlaybook,
   restaurerPlaybook,
 } from "@/lib/api";
 import { formatDateHeure } from "@/lib/format";
 import {
   PLAYBOOK_SOURCE_DEFAUT,
   type PlaybookDetail,
+  type PropositionPlaybook,
   type VersionPlaybook,
 } from "@/lib/types";
 
@@ -37,18 +49,22 @@ export function EditeurPlaybook({
 }) {
   const [fiche, setFiche] = useState<PlaybookDetail | null>(null);
   const [versions, setVersions] = useState<VersionPlaybook[]>([]);
+  const [propositions, setPropositions] = useState<PropositionPlaybook[]>([]);
   const [contenu, setContenu] = useState("");
   const [chargement, setChargement] = useState(true);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
   const recharger = useCallback(async () => {
-    const [nouvelleFiche, nouvellesVersions] = await Promise.all([
-      chargerPlaybook(agent),
-      chargerVersionsPlaybook(agent),
-    ]);
+    const [nouvelleFiche, nouvellesVersions, nouvellesPropositions] =
+      await Promise.all([
+        chargerPlaybook(agent),
+        chargerVersionsPlaybook(agent),
+        chargerPropositionsPlaybook(agent),
+      ]);
     setFiche(nouvelleFiche);
     setVersions(nouvellesVersions);
+    setPropositions(nouvellesPropositions);
     return nouvelleFiche;
   }, [agent]);
 
@@ -76,16 +92,21 @@ export function EditeurPlaybook({
     };
   }, [recharger]);
 
-  // La publication et la restauration partagent la même mécanique : l'action,
-  // puis rechargement (fiche + historique) et resynchronisation de l'éditeur
-  // sur la nouvelle version courante.
-  const executer = async (action: () => Promise<void>) => {
+  // Publication, restauration et application d'une proposition partagent la même
+  // mécanique : l'action, puis rechargement (fiche + historique + propositions)
+  // et resynchronisation de l'éditeur sur la nouvelle version courante.
+  // `resynchroniser: false` pour le rejet, qui ne change pas la version courante :
+  // l'éditeur garde alors les modifications en cours de l'utilisateur.
+  const executer = async (
+    action: () => Promise<void>,
+    { resynchroniser = true }: { resynchroniser?: boolean } = {},
+  ) => {
     setEnCours(true);
     setErreur(null);
     try {
       await action();
       const nouvelleFiche = await recharger();
-      setContenu(nouvelleFiche.contenu);
+      if (resynchroniser) setContenu(nouvelleFiche.contenu);
       await onPublication();
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
@@ -170,13 +191,37 @@ export function EditeurPlaybook({
           <span className="ml-2 rounded-full bg-neutral-200 px-2 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
             {versions.length}
           </span>
+          {propositions.length > 0 && (
+            <span className="ml-2 rounded-full bg-violet-200 px-2 text-xs normal-case text-violet-900 dark:bg-violet-900 dark:text-violet-200">
+              {propositions.length} en attente
+            </span>
+          )}
         </h3>
-        {versions.length === 0 ? (
-          <p className="text-sm text-neutral-500">
+        {versions.length === 0 && (
+          <p className="mb-1 text-sm text-neutral-500">
             Aucune version publiée : l&apos;agent suit encore le playbook du code.
           </p>
-        ) : (
+        )}
+        {(propositions.length > 0 || versions.length > 0) && (
           <ul className="flex flex-col gap-1">
+            {/* Les propositions d'abord : elles attendent une décision. */}
+            {[...propositions].reverse().map((proposition) => (
+              <LigneProposition
+                key={`p${proposition.version}`}
+                agent={agent}
+                proposition={proposition}
+                enCours={enCours}
+                appliquer={(numero) =>
+                  void executer(() => appliquerPropositionPlaybook(agent, numero))
+                }
+                rejeter={(numero) =>
+                  void executer(
+                    () => rejeterPropositionPlaybook(agent, numero),
+                    { resynchroniser: false },
+                  )
+                }
+              />
+            ))}
             {[...versions].reverse().map((version) => (
               <LigneVersion
                 key={version.version}
@@ -193,6 +238,100 @@ export function EditeurPlaybook({
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * Une proposition en attente : visuellement distincte des versions (cadre violet,
+ * étiquette de provenance, justification en clair), et tranchée au clic —
+ * appliquer (elle devient la version courante) ou rejeter (elle disparaît).
+ */
+function LigneProposition({
+  agent,
+  proposition,
+  enCours,
+  appliquer,
+  rejeter,
+}: {
+  agent: string;
+  proposition: PropositionPlaybook;
+  enCours: boolean;
+  appliquer: (numero: number) => void;
+  rejeter: (numero: number) => void;
+}) {
+  const [contenu, setContenu] = useState<string | null>(null);
+  const [ouverte, setOuverte] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  // Comme pour une version, le contenu candidat se charge à la première
+  // consultation (la liste des propositions ne porte que les métadonnées).
+  const basculer = async () => {
+    if (!ouverte && contenu === null) {
+      try {
+        setContenu(
+          (await chargerPropositionPlaybook(agent, proposition.version)).contenu,
+        );
+      } catch (e) {
+        setErreur(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
+    setErreur(null);
+    setOuverte(!ouverte);
+  };
+
+  return (
+    <li className="rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-sm shadow-sm dark:border-violet-900 dark:bg-violet-950">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-mono text-xs font-medium">
+          p{proposition.version}
+        </span>
+        <span className="rounded-full bg-violet-200 px-2 text-xs text-violet-900 dark:bg-violet-900 dark:text-violet-200">
+          {proposition.provenance}
+        </span>
+        <span className="text-xs text-neutral-500 dark:text-neutral-400">
+          {formatDateHeure(proposition.cree_le)}
+        </span>
+        <div className="ml-auto flex gap-2">
+          <button
+            type="button"
+            onClick={() => void basculer()}
+            className="rounded-md border border-violet-300 px-2 py-1 text-xs text-violet-800 hover:bg-violet-100 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-900"
+          >
+            {ouverte ? "Masquer" : "Voir"}
+          </button>
+          <button
+            type="button"
+            disabled={enCours}
+            onClick={() => appliquer(proposition.version)}
+            className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            Appliquer
+          </button>
+          <button
+            type="button"
+            disabled={enCours}
+            onClick={() => rejeter(proposition.version)}
+            className="rounded-md border border-rose-300 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950"
+          >
+            Rejeter
+          </button>
+        </div>
+      </div>
+      {proposition.justification && (
+        <p className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-violet-900 dark:text-violet-200">
+          {proposition.justification}
+        </p>
+      )}
+      {erreur && (
+        <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{erreur}</p>
+      )}
+      {ouverte && contenu !== null && (
+        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-white p-2 font-mono text-xs text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300">
+          {contenu}
+        </pre>
+      )}
+    </li>
   );
 }
 

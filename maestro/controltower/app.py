@@ -37,6 +37,11 @@ Endpoints :
   en brouillon (#111 : jamais courantes, jamais chargées tant que non appliquées) ;
 - `POST /api/playbooks/{agent}/propositions` — analyse **à la demande** les échecs
   d'un run (`run_id`) et génère une proposition de révision du playbook (#139) ;
+- `GET  /api/playbooks/{agent}/propositions/{numero}` — une proposition, contenu compris ;
+- `POST /api/playbooks/{agent}/propositions/{numero}/appliquer` — l'action humaine (#140) :
+  la proposition devient la version courante (chargée à chaud, #78) et quitte les brouillons ;
+- `POST /api/playbooks/{agent}/propositions/{numero}/rejeter` — écarte la proposition sans
+  toucher à la version courante ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
   défaut du code et les personnalisés persistés, avec leur provenance, leurs
   serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
@@ -710,6 +715,49 @@ def create_app(
         """
         _exige_playbook_connu(agent)
         return [p.to_dict(avec_contenu=False) for p in playbooks.propositions(agent)]
+
+    @app.get("/api/playbooks/{agent}/propositions/{numero}")
+    async def proposition_playbook(agent: str, numero: int) -> dict[str, Any]:
+        """Une proposition en brouillon, contenu compris — de quoi la relire avant d'agir.
+
+        404 si elle n'existe pas (jamais créée, ou déjà appliquée/rejetée).
+        """
+        _exige_playbook_connu(agent)
+        lue = playbooks.lire_proposition(agent, numero)
+        if lue is None:
+            raise HTTPException(
+                status_code=404, detail=f"proposition inconnue : {agent} p{numero}"
+            )
+        return lue.to_dict()
+
+    @app.post("/api/playbooks/{agent}/propositions/{numero}/appliquer")
+    async def appliquer_proposition_playbook(agent: str, numero: int) -> dict[str, Any]:
+        """L'action humaine qui adopte une proposition (#140) : elle devient la courante.
+
+        Le contenu candidat rejoint l'historique comme version ordinaire — donc chargée
+        à chaud par le moteur dès la tâche suivante (#78) — et sort des brouillons.
+        Renvoie la version publiée. 404 si la proposition n'existe pas.
+        """
+        _exige_playbook_connu(agent)
+        try:
+            version = playbooks.appliquer_proposition(agent, numero)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return version.to_dict()
+
+    @app.post("/api/playbooks/{agent}/propositions/{numero}/rejeter")
+    async def rejeter_proposition_playbook(agent: str, numero: int) -> dict[str, Any]:
+        """Écarte une proposition (#140) : elle disparaît, la version courante ne bouge pas.
+
+        Renvoie la proposition rejetée (contenu compris — l'appelant garde une trace de
+        ce qu'il vient d'écarter). 404 si elle n'existe pas.
+        """
+        _exige_playbook_connu(agent)
+        try:
+            rejetee = playbooks.rejeter_proposition(agent, numero)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return rejetee.to_dict()
 
     def _agent_du_catalogue(nom: str) -> Agent:
         """La fiche catalogue de `nom` (modèle, prompt du code) — un rôle du code au pire.

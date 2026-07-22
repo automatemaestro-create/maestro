@@ -199,6 +199,28 @@ export type VersionPlaybook = {
 export type VersionPlaybookDetail = VersionPlaybook & { contenu: string };
 
 /**
+ * Une proposition d'auto-amélioration en brouillon
+ * (`GET /api/playbooks/{agent}/propositions`, #111) : une version candidate
+ * suggérée à partir des échecs d'un run, jamais courante et jamais chargée par
+ * le moteur tant qu'un humain ne l'a pas appliquée. `version` est son numéro de
+ * brouillon (numérotation propre, distincte de celle des versions) et
+ * `justification` la raison liée aux échecs analysés (absente si le modèle n'en
+ * a pas rendu).
+ */
+export type PropositionPlaybook = {
+  agent: string;
+  version: number;
+  cree_le: string;
+  provenance: string;
+  justification?: string;
+};
+
+/** Une proposition, contenu compris (`GET .../propositions/{numero}`). */
+export type PropositionPlaybookDetail = PropositionPlaybook & {
+  contenu: string;
+};
+
+/**
  * Un serveur MCP déclaré pour un agent (`ServeurMcp.to_dict`, #104) : une
  * commande locale (`type` « stdio » : commande + args + env) ou un endpoint
  * distant (« sse »/« http » : url + headers). Forme publique : les valeurs

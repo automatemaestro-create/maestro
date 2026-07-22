@@ -25,6 +25,9 @@ Les **propositions** d'auto-amélioration (#111) sont des brouillons versionnés
 (`proposer`/`propositions`, sous-dossier `propositions/`, provenance « proposition ») :
 suggérées à partir des échecs d'un run, elles ne deviennent jamais la version courante
 et ne sont jamais chargées par le moteur tant qu'une action humaine ne les a pas appliquées.
+Cette action humaine est `appliquer_proposition` (le contenu candidat devient la version
+courante, chargée à chaud) ou `rejeter_proposition` (le brouillon disparaît, la version
+courante ne bouge pas) — l'UI playbooks les câble au clic (#140).
 """
 
 from __future__ import annotations
@@ -292,6 +295,36 @@ class PlaybookStore:
             justification=justification,
         )
 
+    def appliquer_proposition(self, agent: str, numero: int) -> PlaybookVersion:
+        """Applique la proposition n° `numero` : son contenu devient la version courante.
+
+        L'action humaine attendue par le brouillon (#111) : le contenu candidat rejoint
+        l'historique comme version ordinaire (« humain » — c'est une personne qui
+        l'endosse), donc chargée à chaud par le moteur dès la tâche suivante (#78), et
+        le brouillon quitte la liste des propositions. Publication **avant** retrait :
+        si le retrait échouait, la proposition resterait visible (rejetable) plutôt que
+        perdue. Lève `ValueError` si la proposition n'existe pas.
+        """
+        proposition = self.lire_proposition(agent, numero)
+        if proposition is None:
+            raise ValueError(f"proposition inconnue pour l'agent {agent!r} : {numero}")
+        version = self.ecrire(agent, proposition.contenu)
+        self._supprimer_proposition(agent, numero)
+        return version
+
+    def rejeter_proposition(self, agent: str, numero: int) -> PlaybookVersion:
+        """Rejette la proposition n° `numero` : elle disparaît, la version courante ne bouge pas.
+
+        Rend la proposition retirée (son contenu reste disponible à l'appelant, qui
+        vient de la lire). Le rejet est sans regret : une proposition se régénère à la
+        demande depuis les échecs d'un run (#139). Lève `ValueError` si elle n'existe pas.
+        """
+        proposition = self.lire_proposition(agent, numero)
+        if proposition is None:
+            raise ValueError(f"proposition inconnue pour l'agent {agent!r} : {numero}")
+        self._supprimer_proposition(agent, numero)
+        return proposition
+
     def prompt_systeme(self, agent: str, defaut: str) -> str:
         """Le prompt système effectif de `agent` : la version courante stockée, sinon `defaut`.
 
@@ -324,6 +357,16 @@ class PlaybookStore:
             return None
         justification = donnees.get("justification") if isinstance(donnees, dict) else None
         return justification if isinstance(justification, str) else None
+
+    def _supprimer_proposition(self, agent: str, numero: int) -> None:
+        """Retire le brouillon n° `numero` (contenu + sidecar) — appliqué ou rejeté.
+
+        Ne touche jamais aux versions : seule la file des propositions en attente se
+        vide, l'historique du playbook reste append-only.
+        """
+        dossier = self._dossier_propositions(agent)
+        (dossier / _nom_proposition(numero)).unlink(missing_ok=True)
+        (dossier / _nom_meta_proposition(numero)).unlink(missing_ok=True)
 
     @staticmethod
     def _ecrire_justification(dossier: Path, numero: int, justification: str) -> None:
