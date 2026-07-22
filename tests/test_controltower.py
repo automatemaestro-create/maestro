@@ -1011,8 +1011,27 @@ def test_publier_puis_relire_une_nouvelle_version(client_pb):
 
     fiche = client_pb.get("/api/playbooks/developpeur").json()
     assert fiche["source"] == "stockage" and fiche["version"] == 1
+    assert fiche["provenance"] == "humain"  # version éditée = provenance « humain » (#111)
     assert fiche["contenu"] == "Consignes éditées."
     assert fiche["cree_le"]
+
+
+def test_les_propositions_se_listent_a_part_de_la_version_courante(client_pb, depot):
+    """#111 : une proposition en brouillon est listée à part et ne devient jamais courante."""
+    client_pb.put("/api/playbooks/qa", json={"contenu": "Consignes courantes."})
+    depot.proposer("qa", "Consignes proposées.", justification="échecs analysés : timeout.")
+
+    propositions = client_pb.get("/api/playbooks/qa/propositions").json()
+    assert len(propositions) == 1
+    assert propositions[0]["provenance"] == "proposition"
+    assert propositions[0]["justification"] == "échecs analysés : timeout."
+    assert "contenu" not in propositions[0]  # métadonnées seules
+    # La version courante et son historique ignorent la proposition.
+    assert client_pb.get("/api/playbooks/qa").json()["version"] == 1
+    assert client_pb.get("/api/playbooks/qa").json()["contenu"] == "Consignes courantes."
+    assert len(client_pb.get("/api/playbooks/qa/versions").json()) == 1
+    # Endpoint borné aux agents à playbook connus.
+    assert client_pb.get("/api/playbooks/stagiaire/propositions").status_code == 404
 
 
 def test_l_historique_et_les_versions_passees_sont_consultables(client_pb):

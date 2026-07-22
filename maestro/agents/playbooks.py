@@ -20,10 +20,16 @@ comme au journal ; une édition publiée vaut pour l'exécution suivante, moteur
 workers ne redémarrent pas. `avec_playbooks` et `default_runtimes(playbooks=...)`
 restent le chargement **figé au câblage** (un instantané, pour les usages
 une-fois). L'API de lecture/écriture vit dans `maestro.controltower.app`.
+
+Les **propositions** d'auto-amélioration (#111) sont des brouillons versionnés à part
+(`proposer`/`propositions`, sous-dossier `propositions/`, provenance « proposition ») :
+suggérées à partir des échecs d'un run, elles ne deviennent jamais la version courante
+et ne sont jamais chargées par le moteur tant qu'une action humaine ne les a pas appliquées.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import Sequence
@@ -48,19 +54,37 @@ _NOM_AGENT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 #: pour que l'ordre lexicographique des noms suive l'ordre numérique.
 _FICHIER_VERSION = re.compile(r"^v(\d{4,})\.md$")
 
+#: Provenances d'une version : « humain » pour une version écrite ou restaurée par une
+#: personne (le comportement existant, #76), « proposition » pour un brouillon suggéré par
+#: l'analyse d'auto-amélioration (#111). Une proposition n'est jamais chargée par le moteur.
+PROVENANCE_HUMAIN = "humain"
+PROVENANCE_PROPOSITION = "proposition"
+
+#: Les propositions en brouillon vivent dans un sous-dossier `propositions/` de l'agent, avec
+#: leur propre numérotation (`pNNNN.md` + sidecar `pNNNN.json` pour la justification), **hors**
+#: de la numérotation des versions courantes : `numeros()`/`lire()` ne les voient jamais, donc
+#: le chargement à chaud du moteur (#78) ne charge jamais une proposition (#111).
+_DOSSIER_PROPOSITIONS = "propositions"
+_FICHIER_PROPOSITION = re.compile(r"^p(\d{4,})\.md$")
+
 
 @dataclass(frozen=True)
 class PlaybookVersion:
     """Une version du playbook d'un agent — l'entité PLAYBOOK_VERSION (docs/03).
 
     `contenu` est le playbook intégral (Markdown, docs/04 §1) ; `cree_le` son
-    horodatage de publication (ISO 8601, UTC).
+    horodatage de publication (ISO 8601, UTC). `provenance` distingue une version
+    écrite ou restaurée par une personne (« humain », le cas courant) d'un brouillon
+    proposé par l'auto-amélioration (« proposition », #111) ; `justification` porte,
+    pour une proposition, la raison liée aux échecs analysés (None sinon).
     """
 
     agent: str
     version: int
     contenu: str
     cree_le: str
+    provenance: str = PROVENANCE_HUMAIN
+    justification: str | None = None
 
     def to_dict(self, *, avec_contenu: bool = True) -> dict[str, Any]:
         """Réémet la version en dict JSON-sérialisable (métadonnées seules si demandé)."""
@@ -68,7 +92,10 @@ class PlaybookVersion:
             "agent": self.agent,
             "version": self.version,
             "cree_le": self.cree_le,
+            "provenance": self.provenance,
         }
+        if self.justification is not None:
+            fiche["justification"] = self.justification
         if avec_contenu:
             fiche["contenu"] = self.contenu
         return fiche
@@ -194,6 +221,77 @@ class PlaybookStore:
             raise ValueError(f"version inconnue pour l'agent {agent!r} : {version}")
         return self.ecrire(agent, source.contenu)
 
+    def numeros_propositions(self, agent: str) -> tuple[int, ...]:
+        """Les numéros des propositions en brouillon de `agent`, croissants (vide si aucune)."""
+        dossier = self._dossier_propositions(agent)
+        if not dossier.is_dir():
+            return ()
+        return tuple(
+            sorted(
+                int(m.group(1))
+                for chemin in dossier.iterdir()
+                if (m := _FICHIER_PROPOSITION.match(chemin.name))
+            )
+        )
+
+    def propositions(self, agent: str) -> tuple[PlaybookVersion, ...]:
+        """Les propositions en brouillon de `agent` (provenance « proposition »), croissantes.
+
+        Distinctes des versions courantes (#111) : listées à part, jamais renvoyées par
+        `lire()`/`versions()`, donc jamais chargées par le moteur.
+        """
+        return tuple(
+            proposition
+            for numero in self.numeros_propositions(agent)
+            if (proposition := self.lire_proposition(agent, numero)) is not None
+        )
+
+    def lire_proposition(self, agent: str, numero: int) -> PlaybookVersion | None:
+        """La proposition n° `numero` de `agent` (contenu + justification), ou None si absente."""
+        chemin = self._dossier_propositions(agent) / _nom_proposition(numero)
+        if not chemin.is_file():
+            return None
+        return PlaybookVersion(
+            agent=agent,
+            version=numero,
+            contenu=chemin.read_text(encoding="utf-8"),
+            cree_le=_horodatage(chemin),
+            provenance=PROVENANCE_PROPOSITION,
+            justification=self._lire_justification(agent, numero),
+        )
+
+    def proposer(
+        self, agent: str, contenu: str, justification: str | None = None
+    ) -> PlaybookVersion:
+        """Enregistre `contenu` comme nouvelle proposition en brouillon du playbook de `agent`.
+
+        Une proposition (#111) est une version candidate marquée « proposition » : elle
+        **ne devient pas la version courante** et n'est jamais chargée par le moteur — elle
+        attend une application (ou un rejet) humaine. `justification` porte la raison liée
+        aux échecs analysés. Écriture atomique (fichier temporaire puis renommage, le sidecar
+        de justification avant le contenu) ; lève `ValueError` sur un contenu vide.
+        """
+        if not contenu.strip():
+            raise ValueError(f"contenu de proposition vide pour l'agent {agent!r}.")
+        dossier = self._dossier_propositions(agent)
+        dossier.mkdir(parents=True, exist_ok=True)
+        numeros = self.numeros_propositions(agent)
+        numero = numeros[-1] + 1 if numeros else 1
+        if justification is not None:
+            self._ecrire_justification(dossier, numero, justification)
+        chemin = dossier / _nom_proposition(numero)
+        temporaire = dossier / (chemin.name + ".tmp")
+        temporaire.write_text(contenu, encoding="utf-8")
+        os.replace(temporaire, chemin)
+        return PlaybookVersion(
+            agent=agent,
+            version=numero,
+            contenu=contenu,
+            cree_le=_horodatage(chemin),
+            provenance=PROVENANCE_PROPOSITION,
+            justification=justification,
+        )
+
     def prompt_systeme(self, agent: str, defaut: str) -> str:
         """Le prompt système effectif de `agent` : la version courante stockée, sinon `defaut`.
 
@@ -210,6 +308,33 @@ class PlaybookStore:
         if not _NOM_AGENT.match(agent):
             raise ValueError(f"nom d'agent invalide : {agent!r} (slug [a-z0-9_-] attendu).")
         return self._racine / agent
+
+    def _dossier_propositions(self, agent: str) -> Path:
+        """Le sous-dossier des propositions en brouillon de `agent` (hors versions courantes)."""
+        return self._dossier(agent) / _DOSSIER_PROPOSITIONS
+
+    def _lire_justification(self, agent: str, numero: int) -> str | None:
+        """La justification stockée pour la proposition n° `numero` (None si absente/illisible)."""
+        meta = self._dossier_propositions(agent) / _nom_meta_proposition(numero)
+        if not meta.is_file():
+            return None
+        try:
+            donnees = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        justification = donnees.get("justification") if isinstance(donnees, dict) else None
+        return justification if isinstance(justification, str) else None
+
+    @staticmethod
+    def _ecrire_justification(dossier: Path, numero: int, justification: str) -> None:
+        """Écrit (atomiquement) le sidecar de justification d'une proposition."""
+        meta = dossier / _nom_meta_proposition(numero)
+        temporaire = dossier / (meta.name + ".tmp")
+        temporaire.write_text(
+            json.dumps({"justification": justification}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(temporaire, meta)
 
 
 def avec_playbooks(agents: Sequence[Agent], store: PlaybookStore) -> tuple[Agent, ...]:
@@ -230,6 +355,16 @@ def avec_playbooks(agents: Sequence[Agent], store: PlaybookStore) -> tuple[Agent
 def _nom_fichier(version: int) -> str:
     """Le nom de fichier d'une version (`v0001.md`) — zéros de tête pour le tri."""
     return f"v{version:04d}.md"
+
+
+def _nom_proposition(numero: int) -> str:
+    """Le nom de fichier d'une proposition en brouillon (`p0001.md`) — zéros de tête pour le tri."""
+    return f"p{numero:04d}.md"
+
+
+def _nom_meta_proposition(numero: int) -> str:
+    """Le nom du sidecar de justification d'une proposition (`p0001.json`)."""
+    return f"p{numero:04d}.json"
 
 
 def _horodatage(chemin: Path) -> str:

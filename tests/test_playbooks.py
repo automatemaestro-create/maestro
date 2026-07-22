@@ -152,9 +152,10 @@ def test_ecrire_publie_des_versions_successives(store):
     assert courant is not None
     assert courant.version == 2 and courant.contenu == "Consignes v2."
     assert v1.cree_le  # horodatage de publication posé (ISO, cf. to_dict ci-dessous)
+    # Une version écrite est de provenance « humain » (#111) ; pas de justification.
     assert v1.to_dict() == {
         "agent": "developpeur", "version": 1, "cree_le": v1.cree_le,
-        "contenu": "Consignes v1.",
+        "provenance": "humain", "contenu": "Consignes v1.",
     }
     assert "contenu" not in v1.to_dict(avec_contenu=False)
 
@@ -195,6 +196,55 @@ def test_un_contenu_vide_est_refuse(store):
     with pytest.raises(ValueError, match="vide"):
         store.ecrire("developpeur", "   \n")
     assert store.numeros("developpeur") == ()
+
+
+# --- Propositions d'auto-amélioration (#111, lot 1/4) : provenance + brouillons ---
+# Le reste du parcours (échec simulé → génération par l'analyse → application manuelle,
+# lots #139/#140) est couvert par le lot tests final #137. Ici, l'invariant *critique* :
+# une proposition ne devient jamais la version courante et n'est jamais chargée.
+
+
+def test_proposer_ne_touche_pas_la_version_courante(store):
+    store.ecrire("developpeur", "Consignes courantes.")
+
+    proposition = store.proposer(
+        "developpeur", "Consignes proposées.", justification="2 échecs : outil X en timeout."
+    )
+
+    # La proposition est un brouillon numéroté à part, provenance « proposition ».
+    assert proposition.version == 1 and proposition.provenance == "proposition"
+    assert proposition.justification == "2 échecs : outil X en timeout."
+    # Elle ne devient PAS la version courante : lire()/numeros()/prompt_systeme inchangés,
+    # donc le moteur (chargement à chaud #78) ne la charge jamais.
+    courant = store.lire("developpeur")
+    assert courant is not None and courant.contenu == "Consignes courantes."
+    assert store.numeros("developpeur") == (1,)
+    assert store.prompt_systeme("developpeur", "repli") == "Consignes courantes."
+
+
+def test_les_propositions_se_listent_a_part_avec_justification(store):
+    p1 = store.proposer("qa", "Brouillon 1.", justification="raison 1")
+    p2 = store.proposer("qa", "Brouillon 2.")  # justification optionnelle
+
+    assert store.numeros_propositions("qa") == (1, 2)
+    assert (p1.version, p2.version) == (1, 2)
+    listees = store.propositions("qa")
+    assert [p.version for p in listees] == [1, 2]
+    # Les métadonnées exposent provenance + justification, jamais le contenu ici ;
+    # une justification absente n'apparaît pas dans le dict.
+    meta1 = listees[0].to_dict(avec_contenu=False)
+    assert meta1["provenance"] == "proposition" and meta1["justification"] == "raison 1"
+    assert "contenu" not in meta1
+    assert "justification" not in listees[1].to_dict(avec_contenu=False)
+    # Aucune version courante n'a été créée par les propositions.
+    assert store.numeros("qa") == () and store.lire("qa") is None
+
+
+def test_une_proposition_de_contenu_vide_est_refusee(store):
+    with pytest.raises(ValueError, match="vide"):
+        store.proposer("developpeur", "   \n")
+    assert store.numeros_propositions("developpeur") == ()
+    assert store.lire_proposition("developpeur", 1) is None
 
 
 @pytest.mark.parametrize("nom", ["../evasion", "Developpeur", "a/b", "point.", ""])
