@@ -35,6 +35,8 @@ Endpoints :
   une version passée comme nouvelle version courante ;
 - `GET  /api/playbooks/{agent}/propositions` — les propositions d'auto-amélioration
   en brouillon (#111 : jamais courantes, jamais chargées tant que non appliquées) ;
+- `POST /api/playbooks/{agent}/propositions` — analyse **à la demande** les échecs
+  d'un run (`run_id`) et génère une proposition de révision du playbook (#139) ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
   défaut du code et les personnalisés persistés, avec leur provenance, leurs
   serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
@@ -90,6 +92,11 @@ from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
 from maestro.config import load_settings
 from maestro.controltower.analytics import PAS_HEURE, PAS_VALIDES, agrege_couts
+from maestro.controltower.auto_amelioration import (
+    AnalyseurEchecs,
+    RevisionIndisponible,
+    echecs_du_run,
+)
 from maestro.controltower.chat import (
     ChatStore,
     RepondeurChat,
@@ -155,6 +162,16 @@ class PlaybookRestaurationRequete(BaseModel):
     """Corps du retour arrière (#76) : la version passée à republier comme courante."""
 
     version: int
+
+
+class PlaybookPropositionRequete(BaseModel):
+    """Corps d'une demande de proposition d'auto-amélioration (#139) : le run à analyser.
+
+    `run_id` désigne l'exécution dont les échecs de l'agent alimentent l'analyse. Le
+    déclenchement est **à la demande** (ce POST), jamais automatique en fin de run.
+    """
+
+    run_id: str
 
 
 class AgentCreationRequete(BaseModel):
@@ -269,6 +286,7 @@ def create_app(
     mailbox: Mailbox | None = None,
     chat_store: ChatStore | None = None,
     chat_repondeur: RepondeurChat | None = None,
+    analyseur: AnalyseurEchecs | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
     permissions: PermissionStore | None = None,
@@ -298,6 +316,12 @@ def create_app(
     production de la réponse — par défaut le fournisseur configuré, cadré par
     le playbook courant de l'agent ; la démo (#65) et les tests injectent un
     répondeur scripté.
+
+    `analyseur` (#139) produit les propositions d'auto-amélioration servies par
+    `POST /api/playbooks/{agent}/propositions` : à la demande, il analyse les
+    échecs d'un run via la couche fournisseur et enregistre un brouillon (#138).
+    Par défaut il partage le dépôt `playbooks` et résout son fournisseur par
+    config ; les tests (#137) en injectent un à fournisseur factice.
 
     `capacites` (#86) est le dépôt du contrôle de capacité servi par
     `POST /api/agents/{nom}/capacite` — par défaut celui de la config
@@ -339,6 +363,7 @@ def create_app(
         else ControlTowerState(catalogue(agents_store), capacites=capacites.lister())
     )
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
+    analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
     chat = ServiceChat(
         store=chat_store if chat_store is not None else ChatStore.default(),
@@ -685,6 +710,58 @@ def create_app(
         """
         _exige_playbook_connu(agent)
         return [p.to_dict(avec_contenu=False) for p in playbooks.propositions(agent)]
+
+    def _agent_du_catalogue(nom: str) -> Agent:
+        """La fiche catalogue de `nom` (modèle, prompt du code) — un rôle du code au pire.
+
+        Sert à l'analyse d'auto-amélioration, qui a besoin du modèle de l'agent. Les
+        playbooks n'existent que pour les rôles du code (`_exige_playbook_connu`), toujours
+        présents dans `DEFAULT_AGENTS` : le repli garantit une fiche même si le catalogue
+        effectif ne renvoyait pas ce nom.
+        """
+        for agent in (*catalogue(agents_store), *DEFAULT_AGENTS):
+            if agent.nom == nom:
+                return agent
+        # Injoignable en pratique : `_exige_playbook_connu` a déjà garanti un rôle du code.
+        raise HTTPException(  # pragma: no cover - garanti connu en amont
+            status_code=404, detail=f"agent inconnu : {nom}"
+        )
+
+    @app.post("/api/playbooks/{agent}/propositions")
+    async def proposer_playbook(
+        agent: str, requete: PlaybookPropositionRequete
+    ) -> dict[str, Any]:
+        """Analyse **à la demande** les échecs d'un run → proposition de révision (#139).
+
+        L'analyse relit les échecs consignés du run `run_id` imputables à `agent`, confie
+        à la couche fournisseur la rédaction d'une version révisée du playbook, et
+        l'enregistre en **brouillon** (provenance « proposition », #138) — jamais la version
+        courante, jamais appliquée sans action humaine (lot UI #140). Renvoie la proposition
+        créée (métadonnées + justification + contenu). 404 si le run est inconnu, 422 s'il
+        n'a aucun échec pour cet agent, 502 si la génération échoue.
+        """
+        _exige_playbook_connu(agent)
+        execution = state.execution(requete.run_id)
+        if execution is None:
+            raise HTTPException(
+                status_code=404, detail=f"exécution inconnue : {requete.run_id}"
+            )
+        echecs = echecs_du_run(execution, agent)
+        if not echecs:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"aucun échec consigné pour l'agent {agent} dans le run "
+                    f"{requete.run_id} : rien à proposer."
+                ),
+            )
+        try:
+            proposition = await analyseur.proposer_revision(
+                _agent_du_catalogue(agent), requete.run_id, echecs
+            )
+        except RevisionIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return proposition.to_dict()
 
     @app.post("/api/playbooks/{agent}/restaurer")
     async def restaurer_playbook(
