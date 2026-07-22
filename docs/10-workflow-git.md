@@ -466,6 +466,18 @@ du job, échec sous `--cov-fail-under=80`) et `mypy` (typage strict de `maestro/
 partagent un **cache pip** (clé sur `pyproject.toml`) qui accélère le `before_script` d'un run à
 l'autre. Un **pipeline vert est la condition de passage `En revue` → merge**.
 
+**Où tournent les pipelines ?** Sur le **runner de projet local** `runner-local-poc` (poste Sam,
+exécuteur Docker), **par défaut et pour tout pipeline** — MR comprises. Les **runners partagés**
+GitLab sont **désactivés** au niveau projet (`shared_runners_enabled=false`, posé par
+[`bootstrap.sh`](../scripts/gitlab/bootstrap.sh)) : leur quota de minutes CI étant durablement
+épuisé, un job non-taggé qui y atterrissait retombait en `ci_quota_exceeded` (jobs « not
+started »). Aucun `tags:` n'est nécessaire dans [`.gitlab-ci.yml`](../.gitlab-ci.yml) — le runner
+local accepte les jobs non-taggés (`run_untagged`) et devient l'unique cible. **Contrepartie
+opérationnelle** : le runner doit être **en ligne** (Docker Desktop démarré + conteneur du runner
+actif) ; sinon les jobs restent **`pending`** (et non plus `ci_quota_exceeded`), et le merge — qui
+exige un pipeline vert — reste bloqué. S'assurer qu'il est en ligne **en amont de chaque MR** fait
+donc partie du flux de clôture (`/ticket-finish`, `/ticket-ship`, `/pipeline-fix`).
+
 **Pipeline rouge ?** La remédiation passe par
 [`/pipeline-fix`](../.claude/commands/pipeline-fix.md) (voir §5) : diagnostic des jobs en échec,
 correctif local quand c'est corrigeable, commit `Refs #<iid>` poussé sur la branche, suivi du
