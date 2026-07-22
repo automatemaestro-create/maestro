@@ -1,11 +1,15 @@
 """Backend Control Tower : API REST + flux temps réel de l'orchestration (ticket #46).
 
-Six briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
+Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
 
 - `Event` + `EventBus` (`InMemoryEventBus`, `RedisEventBus`) : le fait daté qui
   circule (statut de tâche, activité d'agent, message inter-agents, validation
   humaine, chat) et son bus de diffusion — mémoire pour les tests, Redis
   Pub/Sub en production ;
+- `EventLog` (`InMemoryEventLog`, `RedisEventLog`) : le journal **durable** des
+  événements (#97) — pendant persistant du bus éphémère, rejoué au démarrage
+  pour reconstruire la projection après un redémarrage de l'API (liste Redis en
+  production, mémoire pour les tests) ;
 - `ControlTowerState` : la projection de l'état courant (tâches, agents,
   exécutions, validations) qui alimente les endpoints REST ;
 - `maestro.controltower.bridge` : le pont télémétrie (#8) → bus — chaque ligne
@@ -67,6 +71,12 @@ from maestro.controltower.events import (
     InMemoryEventBus,
     RedisEventBus,
 )
+from maestro.controltower.persistence import (
+    CLE_JOURNAL_EVENEMENTS,
+    EventLog,
+    InMemoryEventLog,
+    RedisEventLog,
+)
 from maestro.controltower.state import (
     CAPACITE_ACTIVE,
     CAPACITE_DESACTIVE,
@@ -83,6 +93,7 @@ from maestro.controltower.validation import ValidateurControlTower, validateur_r
 
 __all__ = [
     "CANAL_EVENEMENTS",
+    "CLE_JOURNAL_EVENEMENTS",
     "CAPACITE_ACTIVE",
     "CAPACITE_DESACTIVE",
     "EVENEMENT_AGENT_ACTIVITE",
@@ -113,11 +124,14 @@ __all__ = [
     "EtatValidation",
     "Event",
     "EventBus",
+    "EventLog",
     "InMemoryEventBus",
+    "InMemoryEventLog",
     "JournalEventHandler",
     "MessageChat",
     "PointCout",
     "RedisEventBus",
+    "RedisEventLog",
     "RepondeurChat",
     "RepondeurModele",
     "RepondeurScripte",

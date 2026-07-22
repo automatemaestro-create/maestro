@@ -6,10 +6,14 @@ endpoints REST (liste des tâches, état des agents, détail d'une exécution),
 pendant que le WebSocket rediffuse le flux brut. Même modèle que l'UI
 (docs/05) : un client charge l'état via le REST puis suit les événements.
 
-La projection est **en mémoire** (POC Phase 0) : elle vit avec le process de
-l'API et se reconstruit en rejouant les événements reçus depuis son démarrage.
-La persistance PostgreSQL (entités TASK/RUN/AGENT de docs/03) viendra s'y
-substituer sans changer le contrat des endpoints.
+La projection est **en mémoire** : elle vit avec le process de l'API et se
+reconstruit en rejouant les événements. Sa durabilité vient du **journal**
+(`maestro.controltower.persistence`, #97) : la pompe y consigne chaque
+événement et le lifespan le rejoue au démarrage — l'état (exécutions, grands
+livres, analytics, tâches, agents, validations) survit ainsi au redémarrage de
+l'API, sans que cette classe ait à connaître le stockage. La persistance
+PostgreSQL (entités TASK/RUN/AGENT de docs/03) viendra ensuite substituer un
+stockage requêtable au rejeu intégral, sans changer le contrat des endpoints.
 
 Toutes les mutations passent par `appliquer(event)`, appelé depuis la boucle
 asyncio de l'API (un seul écrivain, pas de verrou nécessaire). L'application
