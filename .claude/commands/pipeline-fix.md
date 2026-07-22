@@ -39,8 +39,16 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
 4. **Diagnostic du pipeline** : `bash scripts/gitlab/lib.sh pipeline-latest <branche>` →
    `id / status / sha / url` (TSV).
    - `success` → rien à corriger : dis-le et arrête-toi.
-   - `created` / `pending` / `running` → le verdict n'est pas tombé : suis-le avec
-     `bash scripts/gitlab/lib.sh pipeline-wait <id>` puis reprends selon le statut final.
+   - `created` / `pending` / `running` → le verdict n'est pas tombé. Un pipeline **`pending`
+     durable** est le symptôme classique d'un **runner local hors ligne** (runners partagés coupés,
+     #135) : ce n'est **pas** un problème de code (ne diagnostique pas les jobs). Assure d'abord le
+     runner en ligne — **l'échec du helper n'interrompt pas la remédiation**, il est signalé (voir
+     `docs/10-workflow-git.md` §8) :
+     ```
+     bash scripts/gitlab/ensure-runner.sh || echo "⚠ runner local non démarré — remédiation poursuivie"
+     ```
+     puis suis le verdict avec `bash scripts/gitlab/lib.sh pipeline-wait <id>` et reprends selon le
+     statut final.
    - `failed` → continue.
    - Aucun pipeline pour la branche alors qu'un commit vient d'être poussé ? Déclenche-le :
      `glab ci run -b <branche>` (cas observé sur la MR 31 : un push interrompu peut ne pas

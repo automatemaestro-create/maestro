@@ -475,8 +475,22 @@ started »). Aucun `tags:` n'est nécessaire dans [`.gitlab-ci.yml`](../.gitlab-
 local accepte les jobs non-taggés (`run_untagged`) et devient l'unique cible. **Contrepartie
 opérationnelle** : le runner doit être **en ligne** (Docker Desktop démarré + conteneur du runner
 actif) ; sinon les jobs restent **`pending`** (et non plus `ci_quota_exceeded`), et le merge — qui
-exige un pipeline vert — reste bloqué. S'assurer qu'il est en ligne **en amont de chaque MR** fait
-donc partie du flux de clôture (`/ticket-finish`, `/ticket-ship`, `/pipeline-fix`).
+exige un pipeline vert — reste bloqué.
+
+Cette mise en ligne est **automatisée** par le helper idempotent
+[`scripts/gitlab/ensure-runner.sh`](../scripts/gitlab/ensure-runner.sh) : no-op si le runner est
+déjà `online`, sinon il démarre Docker Desktop (si le démon est éteint) puis le conteneur
+`gitlab-runner`, et poll jusqu'à `online`. Il **échoue proprement** (code non nul + message) sans
+jamais lever d'exception bloquante, et il est **paramétrable par variables d'environnement**
+(`MAESTRO_RUNNER_ID`, `MAESTRO_RUNNER_CONTAINER`, `MAESTRO_DOCKER_DESKTOP`, les fenêtres de
+polling — voir l'en-tête du script). Il est **câblé dans les skills de clôture avant le push /
+avant l'attente du verdict** — [`/ticket-finish`](../.claude/commands/ticket-finish.md) et
+[`/pipeline-fix`](../.claude/commands/pipeline-fix.md), donc `/ticket-ship` par ricochet —, appelé
+en `bash scripts/gitlab/ensure-runner.sh || …` : **son échec n'interrompt pas la clôture**, il est
+seulement signalé. Un **hook global** (sur tout `git push`) a été écarté : il se déclencherait sur
+des push sans rapport et bloquerait le push le temps du démarrage de Docker. S'assurer que le
+runner est en ligne **en amont de chaque MR** reste donc intégré au flux de clôture
+(`/ticket-finish`, `/ticket-ship`, `/pipeline-fix`), désormais sans geste manuel.
 
 **Pipeline rouge ?** La remédiation passe par
 [`/pipeline-fix`](../.claude/commands/pipeline-fix.md) (voir §5) : diagnostic des jobs en échec,

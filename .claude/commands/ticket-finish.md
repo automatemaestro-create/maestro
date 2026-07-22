@@ -30,7 +30,15 @@ pas clair.
    rapporte le résultat. S'il n'y en a pas (probable tant que le monorepo est un squelette
    sans code), dis-le simplement et continue.
 
-5. Pousse la branche : `git push -u origin $(git branch --show-current)`. Ne fais jamais de
+5. **Avant de pousser, assure le runner CI local en ligne** : les runners partagés étant
+   désactivés (#135), le runner de projet local est l'unique cible ; s'il est hors ligne, le
+   pipeline déclenché par le push resterait `pending` et bloquerait le merge (pipeline vert
+   requis). Lance le helper idempotent — **son échec n'interrompt jamais la clôture**, il est
+   seulement signalé (voir `docs/10-workflow-git.md` §8) :
+   ```
+   bash scripts/gitlab/ensure-runner.sh || echo "⚠ runner local non démarré — clôture poursuivie, à surveiller sur la MR"
+   ```
+   Puis pousse la branche : `git push -u origin $(git branch --show-current)`. Ne fais jamais de
    `--force` ici — si le push est rejeté, arrête-toi et explique pourquoi plutôt que de forcer.
    Si le push **reste bloqué** sur une demande d'identifiants (typique sous Windows avec Git
    Credential Manager), relance-le en forçant `glab` comme credential helper :
