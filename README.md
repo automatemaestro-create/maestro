@@ -36,6 +36,7 @@ La documentation complète se trouve dans le dossier [`docs/`](./docs). Ordre de
 | 11 | [Démo de bout en bout du POC](./docs/11-demo-poc.md) | Lancer `maestro-demo`, le parcours objectif → tâches → agents → fichiers, et la validation du critère de sortie Phase 0 |
 | 12 | [Démo de bout en bout du MVP](./docs/12-demo-mvp.md) | Rejouer la démo supervisée (Control Tower, validation humaine, coûts), la vérification des 7 critères du MVP et le verdict go/no-go de fin de Phase 1 |
 | 13 | [Démo V1 : un projet réel de bout en bout](./docs/13-demo-v1.md) | Le projet « Dépensio » mené par l'équipe complète (validation UI, chat, capacité, analytics), le rapport de coûts des 6 runs et le verdict go/no-go de fin de Phase 2 |
+| 23 | [Démo V2 : fiabilité et durabilité](./docs/23-demo-v2.md) | « Dépensio » rejoué en 6/6 avec relance automatique, une reprise de run durable chiffrée (0 $ de re-paiement de l'amont) et le verdict go/no-go de fin de Phase 3 (LangGraph vs Agent SDK) |
 
 Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — ce dossier est **hors dépôt** (versionné sur le Drive de l'équipe), pas dans Git.
 

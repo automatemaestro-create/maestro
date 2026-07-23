@@ -86,7 +86,7 @@ gantt
 - **Intégrations MCP avancées** : Figma, Linear/Jira, Slack, cloud providers.
 - **Auto-amélioration des playbooks** (l'agent propose des corrections à partir de ses échecs) — livré : analyse à la demande d'un run en échec → proposition en brouillon, appliquée ou rejetée depuis l'UI ([docs/22](./22-auto-amelioration-playbooks.md), #111).
 - Renforcement **sécurité** (micro-VM, gestion fine des secrets et permissions).
-- Éventuelle migration/ajout de **LangGraph** pour les flux d'état complexes.
+- Éventuelle migration/ajout de **LangGraph** pour les flux d'état complexes — *tranché en fin de Phase 3 : **non**, l'Agent SDK + Temporal couvrent durabilité, reprise et rejouabilité sans le paradigme de graphe d'états ([docs/23 §5](./23-demo-v2.md)) ; option rouverte si de vrais flux à états cycliques apparaissent.*
 
 ---
 
@@ -107,3 +107,9 @@ gantt
 | Fin Phase 1 | Le parallélisme et l'auto-assignation tiennent-ils la charge cible ? |
 | Fin Phase 2 | Les coûts sont-ils maîtrisés et l'UI suffisante au pilotage quotidien ? |
 | Fin Phase 3 | Faut-il un framework d'orchestration dédié (LangGraph) ou rester sur l'Agent SDK ? |
+
+> **Verdicts rendus.** Chaque jalon est tranché **sur pièces** dans la démo de fin de phase :
+> Phase 0 → [docs/11](./11-demo-poc.md), Phase 1 → [docs/12](./12-demo-mvp.md),
+> Phase 2 → [docs/13](./13-demo-v1.md), **Phase 3 → [docs/23](./23-demo-v2.md)** (verdict :
+> **NO-GO sur LangGraph**, rester sur l'Agent SDK adossé à Temporal pour la durabilité — la
+> porte reste ouverte si de vrais flux d'état complexes apparaissent).
