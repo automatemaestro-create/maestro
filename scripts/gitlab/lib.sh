@@ -274,6 +274,110 @@ gl_current_milestone() {
   printf '%s\n' "$title"
 }
 
+# gl_milestones -> table plate des milestones du projet, du plus ancien au plus récent (tri par
+# échéance croissante, comme gl_current_milestone). Sert à /milestone-presentation : choisir le
+# milestone à présenter, et lever une ambiguïté quand l'utilisateur donne un fragment de titre.
+#
+# Sortie TSV (en-tête préfixée « # » ignorable par les consommateurs machine) :
+#     titre <TAB> etat <TAB> debut <TAB> echeance <TAB> fermes <TAB> total
+# `etat` vaut `active`/`closed` ; une date absente vaut « - ». Le titre vient EN PREMIER parce
+# qu'il est la clé (c'est lui qu'on repasse à gl_milestone_issues), et en dernier viennent les
+# compteurs, de largeur fixe.
+gl_milestones() {
+  local raw
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { milestones(sort: DUE_DATE_ASC, first: 50) { nodes { title state startDate dueDate stats { totalIssuesCount closedIssuesCount } } } } }')" || return 1
+  printf '# titre\tetat\tdebut\techeance\tfermes\ttotal\n'
+  printf '%s\n' "$raw" | awk '
+    {
+      n = split($0, parts, /\{"title":"/)
+      for (i = 2; i <= n; i++) {
+        node = parts[i]
+        title = node; sub(/".*$/, "", title)
+        gsub(/\\u0026/, "\\&", title); gsub(/\\u003e/, ">", title); gsub(/\\u003c/, "<", title)
+
+        etat = "-"
+        if (match(node, /"state":"[^"]*"/)) {
+          m = substr(node, RSTART, RLENGTH); sub(/.*:"/, "", m); sub(/"$/, "", m); etat = m
+        }
+
+        debut = "-"; echeance = "-"
+        if (match(node, /"startDate":"[0-9-]+"/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:"/, "", m); sub(/"$/, "", m); debut = m }
+        if (match(node, /"dueDate":"[0-9-]+"/))   { m = substr(node, RSTART, RLENGTH); sub(/.*:"/, "", m); sub(/"$/, "", m); echeance = m }
+
+        total = 0; fermes = 0
+        if (match(node, /"totalIssuesCount":[0-9]+/))  { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); total = m + 0 }
+        if (match(node, /"closedIssuesCount":[0-9]+/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); fermes = m + 0 }
+
+        printf "%s\t%s\t%s\t%s\t%d\t%d\n", title, etat, debut, echeance, fermes, total
+      }
+    }
+  '
+}
+
+# gl_milestone_issues <titre-exact> -> table plate des tickets d'un milestone, même modèle compact
+# que gl_backlog_table (une ligne par ticket, projection awk sans dépendance à jq).
+#
+# Le titre doit être EXACT (c'est le filtre `milestoneTitle` de l'API) : la résolution d'un
+# fragment (« Phase 3 ») est le travail de l'appelant, via gl_milestones. Un titre inconnu ne
+# lève pas d'erreur côté API — il rend simplement zéro ticket, d'où le garde-fou ci-dessous.
+#
+# Sortie TSV (en-tête préfixée « # » ignorable) :
+#     iid <TAB> statut <TAB> type <TAB> agent <TAB> prio <TAB> titre
+# `statut` est le statut NATIF (widget Status : À faire / En cours / En revue / Terminé /
+# Abandonné / Doublon) ; `type`/`agent`/`prio` sont le suffixe nu du label (« feature »,
+# « dev », « moyenne ») ; un champ absent vaut « - ». Les tickets sortent du plus récent au plus
+# ancien (ordre de l'API) ; l'appelant regroupe et trie selon sa présentation.
+gl_milestone_issues() {
+  local title="$1"
+  if [ -z "$title" ]; then echo "usage: gl_milestone_issues <titre-exact-du-milestone>" >&2; return 2; fi
+  # Le titre voyage dans la requête GraphQL : on échappe guillemets et antislashs, sans quoi un
+  # titre exotique casserait la requête (les titres de phase n'en ont pas, mais le helper est
+  # générique — il sera rappelé sur des projets provisionnés par bootstrap.sh).
+  local escaped
+  escaped="$(printf '%s' "$title" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  local raw
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(milestoneTitle:["'"$escaped"'"], first: 100) { nodes { iid title state widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetStatus { status { name } } } } } } }')" || return 1
+
+  local rows
+  rows="$(printf '%s\n' "$raw" | awk '
+    {
+      n = split($0, parts, /\{"iid":"/)
+      for (i = 2; i <= n; i++) {
+        node = parts[i]
+        match(node, /^[0-9]+/); iid = substr(node, RSTART, RLENGTH)
+
+        # Le titre du TICKET est celui qui suit immédiatement son iid : on borne sur le champ
+        # suivant (`state`) pour ne pas ramasser un `"title"` de label plus loin dans le nœud.
+        titre = "-"
+        if (match(node, /","title":"/)) {
+          rest = substr(node, RSTART + RLENGTH)
+          if (match(rest, /","state":"/)) titre = substr(rest, 1, RSTART - 1)
+        }
+        gsub(/\\u0026/, "\\&", titre); gsub(/\\u003e/, ">", titre); gsub(/\\u003c/, "<", titre)
+
+        statut = "-"
+        if (match(node, /"status":\{"name":"[^"]*"/)) {
+          m = substr(node, RSTART, RLENGTH); sub(/.*"name":"/, "", m); sub(/"$/, "", m); statut = m
+        }
+
+        type = "-"; agent = "-"; prio = "-"
+        if (match(node, /type::[a-z]+/))  type  = substr(node, RSTART + 6, RLENGTH - 6)
+        if (match(node, /agent::[a-z]+/)) agent = substr(node, RSTART + 7, RLENGTH - 7)
+        if (match(node, /prio::[a-z]+/))  prio  = substr(node, RSTART + 6, RLENGTH - 6)
+
+        printf "%s\t%s\t%s\t%s\t%s\t%s\n", iid, statut, type, agent, prio, titre
+      }
+    }
+  ')"
+
+  if [ -z "$rows" ]; then
+    echo "gl_milestone_issues : aucun ticket pour le milestone « $title » (titre exact attendu — cf. lib.sh milestones)" >&2
+    return 1
+  fi
+  printf '# iid\tstatut\ttype\tagent\tprio\ttitre\n'
+  printf '%s\n' "$rows"
+}
+
 # --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
 # Convention (docs/10-workflow-git.md §5.1) : un besoin qui dépasse ~1 session de travail est porté
 # par un ticket PARENT de suivi dont la description contient une section « ## Sous-tickets » :
@@ -929,6 +1033,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     backlog-table)  gl_backlog_table "$@" ;;
     issue-brief)    gl_issue_brief "$@" ;;
     current-milestone) gl_current_milestone ;;
+    milestones)        gl_milestones ;;
+    milestone-issues)  gl_milestone_issues "$@" ;;
     issue-link)     gl_issue_link "$@" ;;
     parent-of)      gl_parent_of "$@" ;;
     subtickets)     gl_subtickets "$@" ;;
@@ -963,6 +1069,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
       echo "  current-milestone                  (titre du milestone de la phase courante — actif le plus ancien non soldé)" >&2
+      echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
+      echo "  milestone-issues <titre-exact>     (tickets d'un milestone : iid/statut/type/agent/prio/titre, TSV)" >&2
       echo "  slug <titre> | branch-prefix <type>" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid> <iid-cible>    (lie deux tickets — relates to, idempotent)" >&2

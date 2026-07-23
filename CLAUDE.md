@@ -38,6 +38,7 @@ Commandes de **supervision** (lecture seule — n'écrivent jamais : ni statut, 
 
 - `/backlog [opened|all]` — vue d'ensemble du backlog groupée par **statut natif**, avec `agent::`/`prio::` et ce qui attend une revue / est prêt à merger.
 - `/mr-review <mr|branche>` — synthèse d'une MR (état, aptitude au merge, pipeline, threads, diff) pour éclairer la **décision de merge humaine**. Ne merge jamais.
+- `/milestone-presentation [milestone]` — **présentation HTML** des travaux d'un milestone (défaut : la phase courante ; un fragment de titre suffit, ex. `Phase 3`). Regroupe les tickets par **état** (Livré / En revue / En cours / À venir) puis par `type::`, et y joint des **captures de la Control Tower prises en direct**. Produit un fichier **autonome** `docs/presentations/<slug>.html` (CSS en ligne, images en base64) — il n'est pas commité, c'est une décision humaine. N'écrit rien côté GitLab.
 
 ## Outillage requis
 
@@ -45,11 +46,13 @@ Commandes de **supervision** (lecture seule — n'écrivent jamais : ni statut, 
 
 Ces commandes utilisent le CLI `glab` (authentifié via `glab auth login`) pour lire/écrire les issues et MR GitLab. Si `glab auth status` échoue, arrêter et demander à l'utilisateur de s'authentifier plutôt que de continuer sans.
 
-Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les appels `glab` (résolution du work-item, pose du **statut par nom** — pas de GID en dur —, **dates & time tracking** via `start-dates`/`log-time`, slug, préfixe de branche, listing du backlog, **sous-tickets** via `issue-link`/`parent-of`/`subtickets`). Sourçable (`. scripts/gitlab/lib.sh`) ou en sous-commandes (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`).
+Elles s'appuient sur le helper bash `scripts/gitlab/lib.sh`, qui factorise les appels `glab` (résolution du work-item, pose du **statut par nom** — pas de GID en dur —, **dates & time tracking** via `start-dates`/`log-time`, slug, préfixe de branche, listing du backlog, **milestones** via `milestones`/`milestone-issues`, **sous-tickets** via `issue-link`/`parent-of`/`subtickets`). Sourçable (`. scripts/gitlab/lib.sh`) ou en sous-commandes (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`).
 
 **Descriptions GitLab : toujours passer par les helpers** `get-description`/`set-description` (ticket) et `get-mr-description`/`set-mr-description` (MR) pour tout aller-retour lecture→réécriture — cocher la checklist d'un parent, mettre à jour celle d'une MR. Ne **jamais** improviser un `glab issue view --output json | python` : sous Windows, `sys.stdin` décode en cp1252 et repousse du mojibake (« Ã© » au lieu de « é ») dans la description — c'est arrivé sur un parent (#141). Le piège classique est d'écrire `PYTHONIOENCODING=utf-8 glab … | python`, où la variable s'applique à `glab` et **n'est pas propagée** au python du pipeline ; les helpers restent en shell pur, byte-transparent. Vérifier une correction d'encodage se fait **par octets**, jamais à l'affichage (un terminal cp1252 réaffiche le mojibake de façon plausible).
 
 Bilan de santé (lecture seule) : `bash scripts/gitlab/doctor.sh` vérifie auth/labels/lifecycle et **détecte les dérives** statut↔MR (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à nettoyer, réglage de merge « pipeline vert requis » retombé).
+
+Présentations de milestone (`/milestone-presentation`) : `scripts/presentation/` porte les trois étapes — `captures.sh` (captures de la Control Tower : monte une stack **de production** sur ses propres ports 8010/3010, `playwright-core` + Edge installés dans un dossier temporaire, jamais dans le dépôt), `captures.mjs` (le pilotage du navigateur) et `build.py` (JSON → HTML autonome, gabarit et CSS inclus). Les captures **ne passent pas par le serveur de dev** : en mode dev, la WebSocket de rechargement à chaud de Next échoue dans le navigateur headless et bloque l'hydratation — toutes les pages sortiraient en « Reconnexion… / Chargement de l'état… ».
 
 Hooks git : `bash scripts/git/install-hooks.sh` (une fois par clone) active le hook `commit-msg` qui valide la convention de commit (Conventional Commits + `Refs`/`Closes #<iid>`). Bypass ponctuel : `git commit --no-verify`.
 
