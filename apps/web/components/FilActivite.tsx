@@ -5,46 +5,9 @@
  * page, l'état de référence restant le REST.
  */
 
-import { formatHeure, libelleStatut } from "@/lib/format";
-import {
-  CAPACITE_ACTIVE,
-  EVENEMENT_AGENT_ACTIVITE,
-  EVENEMENT_AGENT_CAPACITE,
-  EVENEMENT_MESSAGE_INTER_AGENTS,
-  EVENEMENT_TACHE_REASSIGNATION,
-  EVENEMENT_TACHE_STATUT,
-  type Evenement,
-} from "@/lib/types";
-
-const ICONES: Record<string, string> = {
-  [EVENEMENT_TACHE_STATUT]: "📋",
-  [EVENEMENT_TACHE_REASSIGNATION]: "🔀",
-  [EVENEMENT_AGENT_ACTIVITE]: "🤖",
-  [EVENEMENT_AGENT_CAPACITE]: "🎚️",
-  [EVENEMENT_MESSAGE_INTER_AGENTS]: "✉️",
-};
-
-function resume(evenement: Evenement): string {
-  const sujet = evenement.titre || evenement.tache_id || evenement.run_id;
-  switch (evenement.type) {
-    case EVENEMENT_TACHE_REASSIGNATION:
-      return `${sujet} réassignée à ${evenement.agent}`;
-    case EVENEMENT_TACHE_STATUT:
-      return `${sujet} — ${libelleStatut(evenement.statut)}${
-        evenement.agent ? ` (${evenement.agent})` : ""
-      }`;
-    case EVENEMENT_AGENT_CAPACITE:
-      return `${evenement.agent} — ${
-        evenement.statut === CAPACITE_ACTIVE ? "activé" : "désactivé"
-      }${evenement.instances !== null ? `, ${evenement.instances} instance(s)` : ""}`;
-    case EVENEMENT_MESSAGE_INTER_AGENTS:
-      return `${evenement.agent} → message${sujet ? ` (${sujet})` : ""}`;
-    default:
-      return `${evenement.agent || "?"}${sujet ? ` — ${sujet}` : ""}${
-        evenement.statut ? ` : ${libelleStatut(evenement.statut)}` : ""
-      }`;
-  }
-}
+import { iconeEvenement, resumeEvenement } from "@/lib/evenements";
+import { formatHeure } from "@/lib/format";
+import { type Evenement } from "@/lib/types";
 
 export function FilActivite({ evenements }: { evenements: Evenement[] }) {
   return (
@@ -61,9 +24,9 @@ export function FilActivite({ evenements }: { evenements: Evenement[] }) {
             <span className="shrink-0 font-mono text-xs text-neutral-400 dark:text-neutral-500">
               {formatHeure(evenement.horodatage)}
             </span>
-            <span className="shrink-0">{ICONES[evenement.type] ?? "•"}</span>
+            <span className="shrink-0">{iconeEvenement(evenement)}</span>
             <span className="min-w-0 truncate" title={evenement.detail || undefined}>
-              {resume(evenement)}
+              {resumeEvenement(evenement)}
             </span>
           </li>
         ))}
