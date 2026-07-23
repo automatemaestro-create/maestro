@@ -1,20 +1,29 @@
 @import "tailwindcss";
 
-:root {
+/* Le thème est piloté par l'attribut `data-theme` de <html> (#118) : le variant
+   `dark:` suit le choix de l'utilisateur (clair / sombre / système) au lieu de
+   `prefers-color-scheme`, que le script d'init du layout a déjà résolu avant le
+   premier rendu. L'attribut est toujours posé — il n'y a pas d'état « ni l'un
+   ni l'autre » où les styles sombres seraient inertes. */
+@custom-variant dark (&:where([data-theme="sombre"], [data-theme="sombre"] *));
+
+:root,
+[data-theme="clair"] {
   --background: #ffffff;
   --foreground: #171717;
+  /* Aligne les éléments natifs (champs, ascenseurs) sur le thème choisi. */
+  color-scheme: light;
+}
+
+[data-theme="sombre"] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  color-scheme: dark;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {

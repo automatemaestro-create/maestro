@@ -103,11 +103,40 @@ export function IconeNotifications(props: Props) {
   );
 }
 
-export function IconeTheme(props: Props) {
+/** Thème clair (#118). */
+export function IconeSoleil(props: Props) {
   return (
     <Trait {...props}>
       <circle cx="12" cy="12" r="4" />
       <path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
+    </Trait>
+  );
+}
+
+/** Thème sombre (#118). */
+export function IconeLune(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z" />
+    </Trait>
+  );
+}
+
+/** Thème « système » : on suit la préférence de l'appareil (#118). */
+export function IconeEcran(props: Props) {
+  return (
+    <Trait {...props}>
+      <rect x="2.5" y="4" width="19" height="12.5" rx="2" />
+      <path d="M8.5 20.5h7M12 16.5v4" />
+    </Trait>
+  );
+}
+
+/** Marque l'option retenue dans un menu. */
+export function IconeCoche(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="m4.5 12.5 5 5 10-11" />
     </Trait>
   );
 }

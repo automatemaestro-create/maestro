@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 
 import { BarreLaterale } from "@/components/BarreLaterale";
 import { BarreSuperieure } from "@/components/BarreSuperieure";
+import { BasculeTheme } from "@/components/BasculeTheme";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 
 /** Clé du choix de repli (grand écran uniquement). */
@@ -47,7 +48,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1">
         <BarreLaterale repliee={repliee} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <BarreSuperieure repliee={repliee} basculerRepli={basculerRepli} />
+          <BarreSuperieure
+            repliee={repliee}
+            basculerRepli={basculerRepli}
+            theme={<BasculeTheme />}
+          />
           {/* `@container` : la sidebar prend de la largeur au contenu, donc les
               grilles des pages se calent sur la largeur **réelle** de cette
               zone (`@md:`, `@3xl:`…) et non sur celle de la fenêtre. */}
