@@ -10,8 +10,7 @@
  * estompée (pas de squelette, pas de saut de mise en page).
  */
 
-import Link from "next/link";
-
+import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { GraphiqueEvolutionCout } from "@/components/GraphiqueEvolutionCout";
 import { RepartitionAgents } from "@/components/RepartitionAgents";
 import {
@@ -34,47 +33,14 @@ export default function PageCouts() {
   const [periode, setPeriode] = useState<Periode>(
     PERIODES.find((p) => p.id === "tout") ?? PERIODES[0],
   );
-  const { vue, connecte, chargement, rafraichissement, erreur } =
+  // Le statut du flux temps réel est porté par la barre supérieure du shell
+  // (#117) : la page n'a plus qu'à consommer les agrégats.
+  const { vue, chargement, rafraichissement, erreur } =
     useAnalyticsCouts(periode);
 
   return (
-    <main className="mx-auto flex w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 sm:p-6">
-      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-neutral-200 pb-4 dark:border-neutral-800">
-        <h1 className="text-xl font-semibold tracking-tight">
-          📊 Maestro — Coûts & analytics
-        </h1>
-        <span
-          className={
-            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium " +
-            (connecte
-              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-              : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300")
-          }
-        >
-          <span
-            className={
-              "size-1.5 rounded-full " +
-              (connecte ? "bg-emerald-500" : "animate-pulse bg-amber-500")
-            }
-          />
-          {connecte ? "Temps réel connecté" : "Reconnexion…"}
-        </span>
-        <Link
-          href="/"
-          className="ml-auto text-sm text-neutral-600 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-200"
-        >
-          ← Tableau de bord
-        </Link>
-      </header>
-      {erreur && (
-        <p
-          role="alert"
-          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          API injoignable : {erreur} — vérifier que le backend tourne (
-          <code className="font-mono">maestro-api</code>).
-        </p>
-      )}
+    <>
+      <BanniereErreurApi erreur={erreur} />
       {/* La rangée de filtres : une seule, au-dessus de tout ce qu'elle borne —
           chaque vue en dessous (compteurs, graphiques, tables) suit la même
           fenêtre, les chiffres concordent toujours. */}
@@ -133,7 +99,7 @@ export default function PageCouts() {
           <TableExecutions executions={vue.executions} />
         </div>
       )}
-    </main>
+    </>
   );
 }
 

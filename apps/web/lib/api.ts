@@ -29,6 +29,11 @@ const API_URL = (
   process.env.NEXT_PUBLIC_MAESTRO_API_URL ?? "http://localhost:8000"
 ).replace(/\/+$/, "");
 
+/** L'URL du backend visé — celle qu'affiche la page Paramètres (#117). */
+export function urlApi(): string {
+  return API_URL;
+}
+
 /** L'URL du flux d'événements temps réel (`WS /ws/evenements`). */
 export function urlEvenements(): string {
   return API_URL.replace(/^http/, "ws") + "/ws/evenements";
