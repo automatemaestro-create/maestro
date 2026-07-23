@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { BarreLaterale } from "@/components/BarreLaterale";
 import { BarreSuperieure } from "@/components/BarreSuperieure";
 import { BasculeTheme } from "@/components/BasculeTheme";
+import { CentreNotifications } from "@/components/CentreNotifications";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 
 /** Clé du choix de repli (grand écran uniquement). */
@@ -51,6 +52,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <BarreSuperieure
             repliee={repliee}
             basculerRepli={basculerRepli}
+            notifications={<CentreNotifications />}
             theme={<BasculeTheme />}
           />
           {/* `@container` : la sidebar prend de la largeur au contenu, donc les
