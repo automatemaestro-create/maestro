@@ -2,6 +2,15 @@
 
 Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #47 :
 
+- **Shell applicatif de backoffice** (#117, lot 1 de la refonte UX #116) : une
+  **sidebar** de navigation commune à toutes les pages (Tableau de bord · Agents ·
+  Playbooks · Chat · Coûts & analytics · Validations · Paramètres) avec état actif
+  et **version repliée en icônes** — imposée sous `lg`, au choix au-delà (le repli
+  est mémorisé) ; une **barre supérieure** qui porte le titre de la page, le statut
+  du flux temps réel et le coût cumulé, et réserve les emplacements des lots
+  suivants (notifications #119, thème #118, aide #122). Les pages ne rendent plus
+  que leur contenu : l'état temps réel est ouvert **une fois** par le shell
+  (`lib/etatGlobal.tsx`) et diffusé par contexte ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **Kanban** des tâches par statut (machine à états docs/03 §3) ;
@@ -35,6 +44,10 @@ Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #4
   réponse de l'agent (cadrée par son playbook courant) et réception en temps
   réel par le WebSocket (`chat.message`). Le fil est persisté côté backend :
   l'historique se recharge au retour sur la page.
+
+Deux pages sont **provisoires** en attendant leur lot : `/validations` (les
+demandes de #48 sorties du tableau de bord, en attente et déjà tranchées — le
+centre de notifications est #119) et `/parametres` (la page structurée est #121).
 
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 

@@ -30,7 +30,9 @@ export function PanneauAgents({
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
         Agents
       </h2>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {/* Colonnes calées sur la largeur de la zone de contenu (#117), pas sur
+          celle de la fenêtre : la sidebar en prend une part variable. */}
+      <div className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 @7xl:grid-cols-6">
         {agents.map((agent) => (
           <FicheAgent
             key={agent.nom}
@@ -155,7 +157,9 @@ function FicheAgent({
           </div>
         )}
       </dl>
-      <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-100 pt-2 text-xs dark:border-neutral-800">
+      {/* `flex-wrap` : en colonne étroite, le bouton passe sous les instances
+          au lieu d'élargir la carte (et donc toute la page). */}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-2 text-xs dark:border-neutral-800">
         <div className="flex items-center gap-1.5 text-neutral-600 dark:text-neutral-400">
           <span>Instances</span>
           <button
