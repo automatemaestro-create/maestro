@@ -6,10 +6,10 @@
  * cumulé (docs/05 §2.1 — « lisibilité du coût »), qui suivent l'utilisateur de
  * page en page au lieu d'être refaits dans chaque en-tête.
  *
- * Les trois emplacements de droite sont **réservés** aux lots suivants de
- * #116 : notifications (#119), thème (#118), aide (#122/#123). Chacun est un
- * `slot` que son lot remplira ; en attendant, un bouton inerte tient la place
- * pour que la barre ne bouge pas quand le lot arrive.
+ * Les emplacements de droite sont des `slots` que leur lot de #116 remplit : le
+ * thème est livré (#118), les notifications (#119) et l'aide (#122/#123) sont
+ * encore tenues par un bouton inerte, pour que la barre ne bouge pas quand le
+ * lot arrive.
  */
 
 import { usePathname } from "next/navigation";
@@ -20,7 +20,6 @@ import {
   IconeDeplier,
   IconeNotifications,
   IconeReplier,
-  IconeTheme,
 } from "@/components/Icones";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatCout } from "@/lib/format";
@@ -32,8 +31,8 @@ type Props = {
   basculerRepli: () => void;
   /** Cloche de notifications — lot #119. */
   notifications?: ReactNode;
-  /** Bascule clair/sombre — lot #118. */
-  theme?: ReactNode;
+  /** Bascule clair / sombre / système (#118). */
+  theme: ReactNode;
   /** Accès à l'aide (guide, assistant) — lots #122/#123. */
   aide?: ReactNode;
 };
@@ -112,9 +111,7 @@ export function BarreSuperieure({
               Icone={IconeNotifications}
             />
           )}
-          {theme ?? (
-            <EmplacementReserve libelle="Thème" lot={118} Icone={IconeTheme} />
-          )}
+          {theme}
           {aide ?? (
             <EmplacementReserve libelle="Aide" lot={122} Icone={IconeAide} />
           )}
