@@ -1,54 +1,65 @@
 "use client";
 
 /**
- * La page Paramètres (#117, lot 1 de #116) — **provisoire** : le shell a besoin
- * d'une destination pour son entrée de menu, la page structurée (sections,
- * réglages persistés) est le lot #121. En attendant, elle affiche ce qui est
- * déjà réglable, c'est-à-dire la cible de l'API, et annonce ce qui vient.
+ * La page Paramètres de la Control Tower (#121, lot 5 de #116) : la
+ * configuration regroupée en un endroit, organisée en sections nommées et
+ * navigables par ancres (sous-menu à gauche, `lib/parametres.ts`).
+ *
+ * Le principe de la page : **ce qui est réglable l'est vraiment ici**, et ce qui
+ * ne l'est pas encore le dit — d'où ça se règle aujourd'hui (variable
+ * d'environnement, option de lancement) et vers quelle page de l'interface aller
+ * quand il y en a une. Aucune section n'est un lien mort ni un interrupteur sans
+ * effet.
+ *
+ * Les réglages branchés sur l'API existante sont ceux de la capacité des agents
+ * (#86 : activer/désactiver, plafond d'instances) ; le thème (#118) et le repli
+ * de la barre latérale (#117) sont des préférences du poste, portées par les
+ * mêmes modules que les contrôles de la barre supérieure — ils s'appliquent
+ * immédiatement, des deux côtés.
  */
 
-import { urlApi } from "@/lib/api";
+import { NavigationParametres } from "@/components/parametres/NavigationParametres";
+import { ParametresAgents } from "@/components/parametres/ParametresAgents";
+import { ParametresApparence } from "@/components/parametres/ParametresApparence";
+import { ParametresCouts } from "@/components/parametres/ParametresCouts";
+import { ParametresFournisseurs } from "@/components/parametres/ParametresFournisseurs";
+import { ParametresGeneral } from "@/components/parametres/ParametresGeneral";
+import { ParametresNotifications } from "@/components/parametres/ParametresNotifications";
+import {
+  EspaceDefilement,
+  SectionParametres,
+} from "@/components/parametres/SectionParametres";
+import { SECTIONS_PARAMETRES, type IdSection } from "@/lib/parametres";
 
-/** Les sections annoncées par #121, dans l'ordre où elles arriveront. */
-const SECTIONS_A_VENIR = [
-  "Apparence — thème clair/sombre et densité d'affichage (lot #118)",
-  "Notifications — ce qui remonte, et comment (lot #119)",
-  "Connexion — URL de l'API et du flux temps réel",
-  "Modèles & fournisseurs — clés, plafonds de coût",
-];
+/**
+ * Le contenu de chaque section, par ancre — le sommaire, lui, vit dans
+ * `lib/parametres`. Le `Record` sur l'union des ancres rend l'oubli impossible :
+ * une section déclarée sans contenu ne compile pas.
+ */
+const CONTENUS: Record<IdSection, () => React.ReactNode> = {
+  general: ParametresGeneral,
+  apparence: ParametresApparence,
+  agents: ParametresAgents,
+  fournisseurs: ParametresFournisseurs,
+  couts: ParametresCouts,
+  notifications: ParametresNotifications,
+};
 
 export default function PageParametres() {
   return (
-    <>
-      <section
-        aria-label="Connexion au backend"
-        className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
-      >
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-          Connexion
-        </h2>
-        <p className="text-sm text-neutral-600 dark:text-neutral-300">
-          API Control Tower : <code className="font-mono">{urlApi()}</code>
-        </p>
-        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-          Réglée au build par <code className="font-mono">NEXT_PUBLIC_MAESTRO_API_URL</code>{" "}
-          — elle deviendra modifiable ici avec la page structurée (#121).
-        </p>
-      </section>
-
-      <section
-        aria-label="Réglages à venir"
-        className="rounded-lg border border-dashed border-neutral-300 p-4 dark:border-neutral-700"
-      >
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-          À venir
-        </h2>
-        <ul className="list-inside list-disc space-y-1 text-sm text-neutral-600 dark:text-neutral-400">
-          {SECTIONS_A_VENIR.map((section) => (
-            <li key={section}>{section}</li>
-          ))}
-        </ul>
-      </section>
-    </>
+    <div className="flex flex-col gap-6 @3xl:flex-row @3xl:items-start @3xl:gap-8">
+      <NavigationParametres />
+      <div className="flex min-w-0 flex-1 flex-col gap-6">
+        {SECTIONS_PARAMETRES.map((section) => {
+          const Contenu = CONTENUS[section.id];
+          return (
+            <SectionParametres key={section.id} section={section}>
+              <Contenu />
+            </SectionParametres>
+          );
+        })}
+        <EspaceDefilement />
+      </div>
+    </div>
   );
 }

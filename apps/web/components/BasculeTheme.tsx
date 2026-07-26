@@ -21,7 +21,7 @@ import {
 } from "@/components/Icones";
 import {
   appliquer,
-  CLE_THEME,
+  ecouterChoix,
   ecouterSysteme,
   ecrireChoix,
   lireChoix,
@@ -56,17 +56,16 @@ export function BasculeTheme() {
     return ecouterSysteme(() => appliquer("systeme"));
   }, [choix]);
 
-  // Un autre onglet a changé le thème : le suivre plutôt que diverger.
-  useEffect(() => {
-    const surStockage = (evenement: StorageEvent) => {
-      if (evenement.key !== CLE_THEME) return;
-      const autre = lireChoix();
-      setChoix(autre);
-      appliquer(autre);
-    };
-    window.addEventListener("storage", surStockage);
-    return () => window.removeEventListener("storage", surStockage);
-  }, []);
+  // Le thème a changé ailleurs — section Apparence des Paramètres (#121) ou
+  // autre onglet : le suivre plutôt que diverger.
+  useEffect(
+    () =>
+      ecouterChoix((autre) => {
+        setChoix(autre);
+        appliquer(autre);
+      }),
+    [],
+  );
 
   // Fermeture du menu : clic à l'extérieur ou Échap (le focus revient alors au
   // bouton, sans quoi il retomberait sur le document).

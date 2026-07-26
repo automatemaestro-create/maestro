@@ -19,6 +19,7 @@ import type {
   PlaybookFiche,
   PropositionPlaybook,
   PropositionPlaybookDetail,
+  Sante,
   Tache,
   Validation,
   VersionPlaybook,
@@ -45,6 +46,16 @@ async function chargerJson<T>(chemin: string): Promise<T> {
     throw new Error(`${chemin} a répondu ${reponse.status}`);
   }
   return (await reponse.json()) as T;
+}
+
+/**
+ * La sonde de vitalité du backend (`GET /api/sante`) : ce que teste le bouton
+ * « Tester la connexion » des Paramètres (#121). Le WebSocket dit si le flux
+ * temps réel est ouvert ; ceci dit si le REST répond, ce qui n'est pas la même
+ * panne (backend éteint, mauvaise URL, CORS).
+ */
+export function chargerSante(): Promise<Sante> {
+  return chargerJson<Sante>("/api/sante");
 }
 
 /** Les tâches connues du backend — la source du Kanban. */

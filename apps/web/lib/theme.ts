@@ -24,6 +24,16 @@ const ATTRIBUT_THEME = "data-theme";
 
 const REQUETE_SOMBRE = "(prefers-color-scheme: dark)";
 
+/**
+ * Événement interne au document, émis à chaque écriture du choix.
+ *
+ * L'événement `storage` du navigateur ne prévient que les **autres** onglets :
+ * sans celui-ci, deux contrôles de thème d'une même page (la bascule de la barre
+ * supérieure et la section Apparence des Paramètres, #121) divergeraient dès que
+ * l'un des deux sert à changer le thème.
+ */
+const EVENEMENT_CHOIX = "maestro:theme";
+
 /** Le choix persisté, ou « système » à défaut (première visite, stockage bloqué). */
 export function lireChoix(): ChoixTheme {
   try {
@@ -45,6 +55,30 @@ export function ecrireChoix(choix: ChoixTheme): void {
   } catch {
     // Voir `lireChoix` : l'absence de persistance ne doit pas casser la bascule.
   }
+  // Le choix voyage dans l'événement : les abonnés restent d'accord même quand
+  // le stockage est indisponible et que `lireChoix` rendrait l'ancienne valeur.
+  window.dispatchEvent(new CustomEvent(EVENEMENT_CHOIX, { detail: choix }));
+}
+
+/**
+ * Suit les changements de choix, d'où qu'ils viennent : un autre contrôle de la
+ * même page (événement interne) ou un autre onglet (`storage`). Rend la
+ * fonction de retrait.
+ */
+export function ecouterChoix(rappel: (choix: ChoixTheme) => void): () => void {
+  const surInterne = (evenement: Event) => {
+    rappel((evenement as CustomEvent<ChoixTheme>).detail);
+  };
+  const surStockage = (evenement: StorageEvent) => {
+    if (evenement.key !== CLE_THEME) return;
+    rappel(lireChoix());
+  };
+  window.addEventListener(EVENEMENT_CHOIX, surInterne);
+  window.addEventListener("storage", surStockage);
+  return () => {
+    window.removeEventListener(EVENEMENT_CHOIX, surInterne);
+    window.removeEventListener("storage", surStockage);
+  };
 }
 
 /** Résout « système » contre la préférence courante de l'OS. */
