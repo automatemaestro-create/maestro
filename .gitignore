@@ -41,8 +41,11 @@ Thumbs.db
 .vscode/
 *.swp
 
-# --- Claude Code (surcharges personnelles ; .claude/settings.json reste versionné) ---
+# --- Claude Code (surcharges personnelles ; .claude/settings.json et .mcp.json restent versionnés) ---
 .claude/settings.local.json
+# Profil du navigateur piloté par le MCP chrome-maestro, quand MAESTRO_CHROME_PROFILE
+# n'est pas posé (défaut de .mcp.json) : session de navigation locale, jamais versionnée.
+.maestro/
 
 # --- Divers ---
 coverage/
