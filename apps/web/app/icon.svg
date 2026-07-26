@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Favicon Maestro (#120) : tuile autonome + monogramme « M », reprend la
+       géométrie de components/Logo.tsx. Contrairement au logo in-app (currentColor),
+       un favicon n'a pas de contexte de page : la tuile est donc opaque et les
+       couleurs basculent selon prefers-color-scheme pour rester nettes sur un
+       onglet clair comme sombre. -->
+  <style>
+    :root { --tuile: #171717; --mark: #fafafa; }
+    @media (prefers-color-scheme: dark) {
+      :root { --tuile: #fafafa; --mark: #0a0a0a; }
+    }
+  </style>
+  <rect width="32" height="32" rx="7" fill="var(--tuile)" />
+  <path d="M7 24V10l9 8 9-8v14" fill="none" stroke="var(--mark)"
+        stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="16" cy="6.75" r="2.1" fill="var(--mark)" />
+</svg>

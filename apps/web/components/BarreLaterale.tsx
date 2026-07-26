@@ -11,6 +11,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { LogoMaestro } from "@/components/Logo";
 import { entreeCourante, MENU } from "@/lib/navigation";
 
 export function BarreLaterale({ repliee }: { repliee: boolean }) {
@@ -33,8 +34,10 @@ export function BarreLaterale({ repliee }: { repliee: boolean }) {
         className="flex h-14 shrink-0 items-center gap-2 px-4 text-neutral-900 dark:text-neutral-100"
         title="Maestro — Control Tower"
       >
-        {/* Logo provisoire : l'identité visuelle est le lot #120. */}
-        <span className="text-xl leading-none">🎼</span>
+        {/* Repliée, la sidebar masque le libellé : le glyphe seul (variante
+            compacte) subsiste. Le mark hérite de `currentColor` — lisible en
+            clair comme en sombre. */}
+        <LogoMaestro className="size-7 shrink-0" />
         <span
           className={
             "truncate text-sm font-semibold tracking-tight " + libelleVisible
