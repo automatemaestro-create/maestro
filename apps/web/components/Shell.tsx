@@ -17,9 +17,11 @@ import { BarreSuperieure } from "@/components/BarreSuperieure";
 import { BasculeTheme } from "@/components/BasculeTheme";
 import { CentreNotifications } from "@/components/CentreNotifications";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
-
-/** Clé du choix de repli (grand écran uniquement). */
-const CLE_REPLI = "maestro.sidebar.repliee";
+import {
+  ecouterRepliSidebar,
+  ecrireRepliSidebar,
+  lireRepliSidebar,
+} from "@/lib/preferences";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const [repliee, setRepliee] = useState(false);
@@ -27,22 +29,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
   // Lu après l'hydratation : le rendu serveur ne connaît pas le localStorage,
   // le lire pendant le rendu ferait diverger les deux arbres. Restitution
   // différée d'un tick (même mécanique que useControlTower) : l'effet lui-même
-  // ne déclenche aucun setState synchrone.
+  // ne déclenche aucun setState synchrone. L'abonnement, lui, suit ensuite les
+  // changements venus d'ailleurs — section Apparence des Paramètres (#121) ou
+  // autre onglet.
   useEffect(() => {
-    const tick = setTimeout(
-      () => setRepliee(window.localStorage.getItem(CLE_REPLI) === "1"),
-      0,
-    );
-    return () => clearTimeout(tick);
+    const tick = setTimeout(() => setRepliee(lireRepliSidebar()), 0);
+    const detacher = ecouterRepliSidebar(setRepliee);
+    return () => {
+      clearTimeout(tick);
+      detacher();
+    };
   }, []);
 
-  const basculerRepli = () => {
-    setRepliee((avant) => {
-      const apres = !avant;
-      window.localStorage.setItem(CLE_REPLI, apres ? "1" : "0");
-      return apres;
-    });
-  };
+  // Le stockage tranche : on écrit, l'abonnement ci-dessus met l'état à jour —
+  // ici comme depuis les Paramètres, un seul chemin de bascule.
+  const basculerRepli = () => ecrireRepliSidebar(!repliee);
 
   return (
     <FournisseurEtatGlobal>

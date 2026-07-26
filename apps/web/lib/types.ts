@@ -22,6 +22,11 @@ export type Usage = {
   outils: string[];
 };
 
+/** La réponse de la sonde de vitalité (`GET /api/sante`) : `{ statut: "ok" }`. */
+export type Sante = {
+  statut: string;
+};
+
 /** Une tâche telle que servie par `GET /api/taches` — la carte du Kanban. */
 export type Tache = {
   id: string;
