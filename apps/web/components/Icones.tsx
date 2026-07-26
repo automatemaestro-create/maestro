@@ -1,8 +1,8 @@
 /**
  * Le jeu d'icônes du shell applicatif (#117) : des traits SVG à `currentColor`,
  * lisibles à 20 px comme à 24 px — la sidebar repliée n'est plus qu'une colonne
- * d'icônes, il leur faut un contour net plutôt qu'un emoji. L'identité visuelle
- * définitive (logo, palette) est le lot #120.
+ * d'icônes, il leur faut un contour net plutôt qu'un emoji. Le logo de marque,
+ * lui, est un mark plein à part : voir `components/Logo.tsx` (#120).
  */
 
 import type { SVGProps } from "react";
