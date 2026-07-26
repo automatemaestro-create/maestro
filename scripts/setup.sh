@@ -12,10 +12,15 @@
 #   - IDEMPOTENT : relancé sur une machine déjà prête, tout ressort en « DÉJÀ FAIT ».
 #   - NON DESTRUCTIF : n'écrase jamais un .env existant ; .claude/settings.local.json est
 #     FUSIONNÉ clé par clé, sans toucher à ce qui y est déjà posé.
-#   - AUCUNE INSTALLATION SILENCIEUSE : un prérequis manquant (python, node, glab…) est signalé
-#     avec la commande d'installation exacte de la plateforme — jamais installé d'office.
+#   - INSTALLE CE QUI MANQUE : un prérequis absent (python, node, npm, git, glab) est installé
+#     D'OFFICE via le gestionnaire de paquets de la plateforme (winget / brew / apt), sans rien
+#     demander — puis le PATH de la session est rafraîchi et l'outil re-détecté. `--no-install`
+#     (ou MAESTRO_AUTO_INSTALL=0) pour s'en tenir au signalement.
 #   - NON INTERACTIF : le script ne pose aucune question. Ce qui exige un humain (authentifications,
 #     secrets à renseigner) sort dans la section « Reste à faire » du rapport.
+#   - FRANC SUR SES LIMITES : ce qu'un script ne peut pas contourner est dit, pas masqué —
+#     gestionnaire de paquets absent, élévation refusée, ou binaire installé mais encore hors PATH
+#     (Windows : winget met à jour l'environnement persistant, pas le shell déjà lancé).
 #   - TOUT SE DÉROULE : une étape en échec n'interrompt pas les suivantes. Le script rend un
 #     rapport final et sort en code non nul si une étape DURE a échoué.
 #   - AUCUN SECRET : ni lu, ni affiché, ni écrit dans un fichier versionné.
@@ -36,9 +41,10 @@ NODE_MIN="${MAESTRO_NODE_MIN:-20}"         # exigé par le Claude Agent SDK
 ETAPES_CONNUES="prerequis venv env hooks web mcp verif"
 
 # --- Drapeaux -----------------------------------------------------------------------------------
-MODE_CHECK=0     # --check : diagnostic seul, aucune écriture
-ETAPES_ONLY=""   # --only  : liste d'étapes à exécuter (défaut : toutes)
-ETAPES_SKIP=""   # --skip  : liste d'étapes à sauter
+MODE_CHECK=0                                     # --check : diagnostic seul, aucune écriture
+AUTO_INSTALL="${MAESTRO_AUTO_INSTALL:-1}"        # --no-install : ne rien installer, juste signaler
+ETAPES_ONLY=""                                   # --only  : étapes à exécuter (défaut : toutes)
+ETAPES_SKIP=""                                   # --skip  : étapes à sauter
 
 usage() {
   cat <<USAGE
@@ -47,13 +53,15 @@ Mise en route d'un clone Maestro (socle local).
   bash scripts/setup.sh [options]
 
 Options :
-  --check            Diagnostic seul : rapporte ce qui manque sans rien écrire.
+  --check            Diagnostic seul : rapporte ce qui manque, sans rien écrire ni installer.
+  --no-install       N'installe aucun outil manquant, contente-toi de le signaler.
   --only <étapes>    N'exécute que ces étapes (séparées par des virgules).
   --skip <étapes>    Saute ces étapes (séparées par des virgules).
   -h, --help         Cette aide.
 
 Étapes : ${ETAPES_CONNUES// /, }
-  prerequis  python >= ${PYTHON_MIN}, node >= ${NODE_MIN}, npm, git, glab
+  prerequis  python >= ${PYTHON_MIN}, node >= ${NODE_MIN}, npm, git, glab — installés d'office
+             s'ils manquent (winget / brew / apt)
   venv       .venv/ + pip install -e ".[dev]"
   env        .env créé depuis .env.example (jamais écrasé)
   hooks      hook git commit-msg (scripts/git/install-hooks.sh)
@@ -69,7 +77,8 @@ USAGE
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --check)   MODE_CHECK=1 ;;
+    --check)      MODE_CHECK=1 ;;
+    --no-install) AUTO_INSTALL=0 ;;
     --only)    ETAPES_ONLY="${2:-}"; shift ;;
     --skip)    ETAPES_SKIP="${2:-}"; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -165,9 +174,9 @@ version_ok() {
   return 1
 }
 
-# commande_install <outil> : la commande d'installation de la plateforme courante. On l'AFFICHE,
-# on ne l'exécute jamais — installer un runtime engage la machine (droits admin, redémarrage),
-# c'est une décision de l'utilisateur.
+# commande_install <outil> : la commande d'installation de la plateforme courante. Le script
+# installe lui-même (installe_outil) ; cette commande n'est affichée qu'en REPLI, quand il n'a pas
+# pu le faire — pas de gestionnaire de paquets, élévation refusée, ou --no-install.
 commande_install() {
   case "$1" in
     python)
@@ -196,6 +205,96 @@ commande_install() {
       esac ;;
     *) echo "voir la documentation de $1" ;;
   esac
+}
+
+# --- Installation automatique des outils manquants ----------------------------------------------
+# paquet_id <outil> : identifiant du paquet pour le gestionnaire de la plateforme. `npm` partage
+# celui de `node` (npm est livré avec) — la déduplication par identifiant évite de l'installer deux
+# fois. Chaîne vide = pas de paquet connu ici, on retombera sur le message de commande_install.
+paquet_id() {
+  case "$OS/$1" in
+    windows/python) echo "Python.Python.3.12" ;;
+    windows/node|windows/npm) echo "OpenJS.NodeJS.LTS" ;;
+    windows/git)    echo "Git.Git" ;;
+    windows/glab)   echo "GLab.GLab" ;;
+    macos/python)   echo "python@3.12" ;;
+    macos/node|macos/npm) echo "node" ;;
+    macos/git)      echo "git" ;;
+    macos/glab)     echo "glab" ;;
+    linux/python)   echo "python3 python3-venv python3-pip" ;;
+    linux/node|linux/npm) echo "nodejs npm" ;;
+    linux/git)      echo "git" ;;
+    *)              echo "" ;;   # glab n'est pas dans les dépôts apt standard
+  esac
+}
+
+# installe_outil <outil> : installe sans poser de question. Codes de retour :
+#   0 installé · 1 la commande d'installation a échoué · 2 pas de gestionnaire de paquets
+#   3 aucun paquet connu pour cet outil sur cette plateforme
+# Les prompts d'ÉLÉVATION (UAC sous Windows, mot de passe sudo) viennent du système d'exploitation
+# et ne peuvent pas être supprimés depuis un script non privilégié : quand ils apparaissent ou sont
+# refusés, l'installation échoue et c'est rapporté tel quel — on ne prétend pas les avoir évités.
+installe_outil() {
+  local outil="$1" paquet
+  paquet="$(paquet_id "$outil")"
+  [ -n "$paquet" ] || return 3
+
+  case "$OS" in
+    windows)
+      command -v winget >/dev/null 2>&1 || return 2
+      execute_journalise "install-$outil" \
+        winget install --id "$paquet" --exact --silent --disable-interactivity \
+                       --accept-package-agreements --accept-source-agreements \
+        || return 1 ;;
+    macos)
+      command -v brew >/dev/null 2>&1 || return 2
+      execute_journalise "install-$outil" brew install "$paquet" || return 1 ;;
+    linux)
+      command -v apt-get >/dev/null 2>&1 || return 2
+      # sudo -n : n'installe que si l'élévation est déjà accordée (ou si on est root) — sinon le
+      # script bloquerait sur une invite de mot de passe, ce qu'il ne doit jamais faire.
+      if [ "$(id -u 2>/dev/null)" = 0 ]; then
+        # shellcheck disable=SC2086  # $paquet porte volontairement plusieurs paquets
+        execute_journalise "install-$outil" env DEBIAN_FRONTEND=noninteractive apt-get install -y $paquet || return 1
+      elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        # shellcheck disable=SC2086
+        execute_journalise "install-$outil" sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y $paquet || return 1
+      else
+        return 2
+      fi ;;
+    *) return 2 ;;
+  esac
+  return 0
+}
+
+# Rend visibles dans CETTE session les binaires qui viennent d'être installés.
+# Sous Windows c'est indispensable : winget écrit dans l'environnement PERSISTANT (registre), que
+# le shell déjà lancé ne relit jamais. On recompose donc le PATH depuis les valeurs Machine + User
+# du registre, converties en chemins POSIX. Ailleurs, les gestionnaires installent dans des dossiers
+# déjà présents dans le PATH : vider le cache de résolution de bash suffit.
+rafraichir_path() {
+  hash -r 2>/dev/null || true
+  [ "$OS" = windows ] || return 0
+  command -v powershell.exe >/dev/null 2>&1 || return 0
+  command -v cygpath >/dev/null 2>&1 || return 0
+
+  local brut chemin ajouts=""
+  brut="$(powershell.exe -NoProfile -Command \
+    '[Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [Environment]::GetEnvironmentVariable("PATH","User")' \
+    2>/dev/null | tr -d '\r')"
+  [ -n "$brut" ] || return 0
+
+  local IFS=';'
+  for chemin in $brut; do
+    [ -n "$chemin" ] || continue
+    chemin="$(cygpath -u "$chemin" 2>/dev/null)" || continue
+    [ -n "$chemin" ] && [ -d "$chemin" ] || continue
+    case ":$PATH:" in *":$chemin:"*) continue ;; esac
+    ajouts="$ajouts:$chemin"
+  done
+  [ -n "$ajouts" ] && export PATH="$PATH$ajouts"
+  hash -r 2>/dev/null || true
+  return 0
 }
 
 # Exécute une commande longue en la journalisant ; imprime le chemin du log en cas d'échec.
@@ -265,68 +364,150 @@ etape_demandee() {
 # Étapes
 # ================================================================================================
 
-# --- 1. Prérequis : présence et version des outils. Aucun n'est installé d'office. ---------------
-PREREQUIS_DURS_OK=1   # 0 dès qu'un outil indispensable manque (les étapes suivantes s'adaptent)
+# --- 1. Prérequis : détecter, installer ce qui manque, re-détecter --------------------------------
+# `python` et `git` sont DURS (sans eux les étapes suivantes n'ont rien à faire) ; `node`/`npm` ne
+# bloquent que apps/web, et `glab` que le workflow de tickets.
+OUTILS_REQUIS="python node npm git glab"
+PREREQUIS_DURS_OK=1
+NB_OUTILS_MANQUANTS=0
 NODE_PRESENT=0
 GLAB_PRESENT=0
 
+outil_est_dur() { case "$1" in python|git) return 0 ;; *) return 1 ;; esac; }
+
+# Version minimale exigée pour un outil (vide s'il n'y a pas de plancher).
+minimum_pour() {
+  case "$1" in python) printf '%s' "$PYTHON_MIN" ;; node) printf '%s' "$NODE_MIN" ;; *) printf '—' ;; esac
+}
+
+# detecte_outil <outil> : imprime la version trouvée et renvoie
+#   0 = présent et à la version minimale · 1 = absent · 3 = présent mais TROP ANCIEN.
+# La distinction compte : « absent » et « trop ancien » n'appellent ni le même diagnostic ni le
+# même remède, et les confondre produit des messages faux (cf. Node 18 des dépôts Debian stable,
+# installé sans erreur mais sous le minimum exigé).
+detecte_outil() {
+  local version
+  case "$1" in
+    python)
+      if detecte_python_amorce; then printf '%s (%s)\n' "$PY_BOOT_VERSION" "${PY_BOOT[*]}"; return 0; fi
+      command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || return 1
+      version="$( { python3 -V || python -V; } 2>&1 | cut -d' ' -f2)"
+      printf '%s\n' "${version:-inconnue}"
+      return 3 ;;
+    node)
+      command -v node >/dev/null 2>&1 || return 1
+      version="$(node -v 2>/dev/null)"; version="${version#v}"
+      printf '%s\n' "$version"
+      version_ok "$version" "$NODE_MIN" || return 3 ;;
+    npm)
+      command -v npm >/dev/null 2>&1 || return 1
+      npm -v 2>/dev/null ;;
+    git)
+      command -v git >/dev/null 2>&1 || return 1
+      git --version 2>/dev/null | cut -d' ' -f3 ;;
+    glab)
+      command -v glab >/dev/null 2>&1 || return 1
+      glab --version 2>/dev/null | head -1 | cut -d' ' -f2 ;;
+    *) return 1 ;;
+  esac
+}
+
 etape_prerequis() {
-  local manquants=() version m
+  local outil version paquet code detail=""
+  local manquants=() installes=()
+  local paquets_traites=" "
+  declare -A raison=()   # outil -> pourquoi il manque encore, si on n'a pas su le poser
 
-  if detecte_python_amorce; then
-    printf '  ✓ python %s (%s)\n' "$PY_BOOT_VERSION" "${PY_BOOT[*]}"
-  else
-    PREREQUIS_DURS_OK=0
-    manquants+=("python >= $PYTHON_MIN → $(commande_install python)")
-  fi
-
-  if command -v node >/dev/null 2>&1; then
-    version="$(node -v 2>/dev/null)"; version="${version#v}"
-    if version_ok "$version" "$NODE_MIN"; then
-      NODE_PRESENT=1
-      printf '  ✓ node %s\n' "$version"
-    else
-      manquants+=("node >= $NODE_MIN (trouvé $version) → $(commande_install node)")
-    fi
-  else
-    manquants+=("node >= $NODE_MIN → $(commande_install node)")
-  fi
-
-  if command -v npm >/dev/null 2>&1; then
-    printf '  ✓ npm %s\n' "$(npm -v 2>/dev/null)"
-  else
-    NODE_PRESENT=0
-    manquants+=("npm → $(commande_install npm)")
-  fi
-
-  if command -v git >/dev/null 2>&1; then
-    printf '  ✓ %s\n' "$(git --version 2>/dev/null)"
-  else
-    PREREQUIS_DURS_OK=0
-    manquants+=("git → $(commande_install git)")
-  fi
-
-  # glab n'est pas dur : il sert au workflow de tickets, pas à faire tourner Maestro.
-  if command -v glab >/dev/null 2>&1; then
-    GLAB_PRESENT=1
-    printf '  ✓ %s\n' "$(glab --version 2>/dev/null | head -1)"
-  else
-    manquants+=("glab (workflow de tickets) → $(commande_install glab)")
-  fi
-
-  if [ "${#manquants[@]}" -eq 0 ]; then
-    rapport OK prerequis "prérequis : tous présents"
-    return 0
-  fi
-
-  for m in "${manquants[@]}"; do
-    printf '    à installer : %s\n' "$m" >&2
-    reste "Installer $m"
+  # 1) État initial. « Trop ancien » compte comme manquant : on tente la mise à niveau par la même
+  # voie que l'installation.
+  for outil in $OUTILS_REQUIS; do
+    version="$(detecte_outil "$outil")"; code=$?
+    case "$code" in
+      0) printf '  ✓ %s %s\n' "$outil" "$version" ;;
+      3) printf '  ~ %s %s présent, sous le minimum %s — mise à niveau tentée\n' \
+           "$outil" "$version" "$(minimum_pour "$outil")"
+         manquants+=("$outil") ;;
+      *) manquants+=("$outil") ;;
+    esac
   done
-  if [ "$PREREQUIS_DURS_OK" = 0 ]; then
-    echec_dur prerequis "prérequis : ${#manquants[@]} manquant(s) — python et git sont indispensables"
+
+  # 2) Installation d'office de ce qui manque (sauf --check / --no-install).
+  for outil in "${manquants[@]}"; do
+    if [ "$MODE_CHECK" = 1 ]; then
+      raison["$outil"]="absent — serait installé automatiquement (--check : rien fait)"
+      continue
+    fi
+    if [ "$AUTO_INSTALL" != 1 ]; then
+      raison["$outil"]="installation désactivée (--no-install) → $(commande_install "$outil")"
+      continue
+    fi
+    # npm est livré avec node : un seul paquet pour les deux, on ne l'installe pas deux fois.
+    paquet="$(paquet_id "$outil")"
+    if [ -n "$paquet" ] && [ "$paquets_traites" != "${paquets_traites/ $paquet /}" ]; then
+      continue
+    fi
+    printf '  … installation de %s — peut prendre plusieurs minutes\n' "$outil"
+    installe_outil "$outil"; code=$?
+    [ -n "$paquet" ] && paquets_traites="$paquets_traites$paquet "
+    case "$code" in
+      0) installes+=("$outil") ;;
+      2) raison["$outil"]="pas de gestionnaire de paquets utilisable ici → $(commande_install "$outil")" ;;
+      3) raison["$outil"]="aucun paquet connu pour cette plateforme → $(commande_install "$outil")" ;;
+      *) raison["$outil"]="l'installation a échoué → $(commande_install "$outil")" ;;
+    esac
+  done
+  # Les binaires fraîchement installés ne sont pas encore visibles de ce shell : on recharge.
+  [ "${#installes[@]}" -gt 0 ] && rafraichir_path
+
+  # 3) État final — c'est lui qui fait foi, pas le fait d'avoir lancé une installation.
+  manquants=()
+  for outil in $OUTILS_REQUIS; do
+    version="$(detecte_outil "$outil")"; code=$?
+    if [ "$code" = 0 ]; then
+      case " ${installes[*]-} " in
+        *" $outil "*) printf '  ✓ %s %s (installé à l'\''instant)\n' "$outil" "$version" ;;
+      esac
+      case "$outil" in node) NODE_PRESENT=1 ;; glab) GLAB_PRESENT=1 ;; esac
+      continue
+    fi
+    manquants+=("$outil")
+    outil_est_dur "$outil" && PREREQUIS_DURS_OK=0
+    if [ "$code" = 3 ]; then
+      # Présent mais sous le minimum : le dire tel quel. Le gestionnaire de paquets de la
+      # plateforme ne propose pas toujours mieux (Debian stable plafonne Node à 18) — c'est une
+      # limite de la distribution, pas un ratage du script, et ça se règle par une autre source.
+      raison["$outil"]="version $version trouvée, minimum requis $(minimum_pour "$outil") → $(commande_install "$outil")"
+    else
+      # Installé à l'instant mais toujours introuvable : le PATH du terminal courant est en retard.
+      case " ${installes[*]-} " in
+        *" $outil "*) raison["$outil"]="installé, mais pas encore dans le PATH — rouvre le terminal et relance" ;;
+      esac
+    fi
+    if [ "$MODE_CHECK" = 1 ]; then
+      printf '  ~ %s : %s\n' "$outil" "${raison[$outil]:-absent}"
+    else
+      printf '  ✗ %s : %s\n' "$outil" "${raison[$outil]:-absent}" >&2
+    fi
+    reste "$outil — ${raison[$outil]:-à installer : $(commande_install "$outil")}"
+  done
+  # npm suit node : sans lui, apps/web ne peut rien installer.
+  command -v npm >/dev/null 2>&1 || NODE_PRESENT=0
+
+  # detecte_outil est appelée en SUBSTITUTION DE COMMANDE, donc dans un sous-shell : le PY_BOOT
+  # qu'elle renseigne meurt avec lui. On re-détecte ici, dans le shell courant, sinon les étapes
+  # venv et mcp se croient sans interpréteur — le script annonçait « prérequis : tous présents »
+  # puis sautait le venv pour « python introuvable », et se déclarait prêt malgré tout.
+  detecte_python_amorce || true
+
+  # 4) Rapport.
+  NB_OUTILS_MANQUANTS="${#manquants[@]}"
+  [ "${#installes[@]}" -gt 0 ] && detail=" — installé(s) : ${installes[*]}"
+  if [ "${#manquants[@]}" -eq 0 ]; then
+    rapport OK prerequis "prérequis : tous présents${detail}"
+  elif [ "$PREREQUIS_DURS_OK" = 0 ]; then
+    echec_dur prerequis "prérequis : ${manquants[*]} toujours absent(s)${detail}"
   else
-    rapport IGNORE prerequis "prérequis : ${#manquants[@]} manquant(s), non bloquants"
+    rapport IGNORE prerequis "prérequis : ${manquants[*]} absent(s), non bloquants${detail}"
   fi
 }
 
@@ -649,6 +830,11 @@ fi
 
 if [ "$MODE_CHECK" = 1 ]; then
   printf '\nDiagnostic terminé. Pour appliquer : bash scripts/setup.sh\n'
+elif [ "$NB_OUTILS_MANQUANTS" -gt 0 ]; then
+  # Aucune étape dure n'a échoué, mais tout n'est pas là : ne pas annoncer une machine prête.
+  printf '\nEnvironnement local monté, mais %d outil(s) manque(nt) encore — voir « Reste à faire »\n' \
+    "$NB_OUTILS_MANQUANTS"
+  printf 'ci-dessus. Les étapes qui en dépendent ont été sautées.\n'
 else
   printf '\nEnvironnement local prêt. Lancer la Control Tower : bash scripts/controltower/start.sh\n'
 fi

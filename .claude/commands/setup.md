@@ -15,15 +15,26 @@ Le script est **idempotent** et **non destructif** (il n'écrase ni le `.env` ni
 1. **Diagnostic d'abord** : `bash scripts/setup.sh --check`. Cette forme n'écrit **rien** — elle
    dit seulement ce qui manque. Lis le rapport et annonce en une phrase ce qui va être monté.
 
-2. **Prérequis manquants ?** Le rapport liste chaque outil absent avec la commande d'installation
-   de la plateforme. **Ne les installe pas toi-même** : installer un runtime engage la machine
-   (droits admin, redémarrage). Donne les commandes à l'utilisateur et arrête-toi si `python` ou
-   `git` manquent — les étapes suivantes ne pourraient rien faire.
+2. **Prérequis manquants ?** Le script les **installe lui-même** (winget / brew / apt) — tu n'as
+   rien à lancer à la main, et surtout **n'installe rien toi-même en parallèle** : tu doublerais le
+   travail du script et tu masquerais son diagnostic. Préviens seulement l'utilisateur de ce qui va
+   être installé, et qu'une invite d'**élévation** (UAC sous Windows) peut apparaître : elle vient
+   du système, le script ne peut pas la supprimer.
 
 3. **Applique** : `bash scripts/setup.sh`. Compte quelques minutes au premier passage
-   (`pip install -e ".[dev]"` puis `npm ci` dans `apps/web`). Le script déroule toutes les étapes
-   même si l'une échoue, puis rend un rapport ; un code de sortie non nul signale au moins une
-   étape dure en échec.
+   (installation des outils manquants, puis `pip install -e ".[dev]"` et `npm ci` dans `apps/web`).
+   Le script déroule toutes les étapes même si l'une échoue, puis rend un rapport ; un code de
+   sortie non nul signale au moins une étape dure en échec.
+
+   Trois situations que le script **signale sans pouvoir les résoudre** — relaie-les telles
+   quelles, ne prétends pas que la machine est prête :
+   - *« installé, mais pas encore dans le PATH »* — l'installation a réussi, mais le terminal
+     courant garde son ancien environnement. Il faut **rouvrir le terminal** et relancer.
+   - *« version X trouvée, minimum requis Y »* — le gestionnaire de paquets de la plateforme ne
+     propose pas mieux (Debian stable plafonne Node à 18, par exemple). Le remède passe par une
+     autre source, indiquée dans le message.
+   - *« pas de gestionnaire de paquets utilisable ici »* — pas de winget/brew/apt, ou élévation
+     refusée. Donne la commande d'installation, c'est le seul recours.
 
 4. **Une étape en échec ?** Le script imprime le chemin de son log
    (`${TMPDIR:-/tmp}/maestro-setup/<étape>.log`). Ouvre-le, diagnostique, corrige si c'est
@@ -71,5 +82,6 @@ n'est pas livré, ces deux points restent manuels — renvoie à `docs/10-workfl
 signale que sans runner en ligne les pipelines de MR restent `pending`.
 
 **Garde-fous.** Cette commande ne touche ni à Git (pas de commit, pas de branche, pas de push) ni à
-GitLab (ni statut, ni MR) : elle prépare une machine, rien d'autre. Elle n'installe aucun logiciel
-d'office et n'écrit aucun secret dans un fichier versionné.
+GitLab (ni statut, ni MR) : elle prépare une machine, rien d'autre. Elle n'écrit aucun secret dans
+un fichier versionné. Elle **installe en revanche des logiciels** sur la machine (c'est son objet) :
+si l'utilisateur veut s'en tenir au diagnostic, c'est `bash scripts/setup.sh --no-install`.
