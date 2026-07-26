@@ -90,9 +90,52 @@ cp .env.example .env                 # Windows : Copy-Item .env.example .env
 # 3. Vérifier que tout est prêt (SDK importable + mode d'auth configuré)
 maestro-check-env
 
-# 4. (optionnel) Bases locales PostgreSQL + Redis — voir infra/README.md
+# 4. Hook git de convention de commit (une fois par clone)
+bash scripts/git/install-hooks.sh
+
+# 5. (optionnel) Bases locales PostgreSQL + Redis — voir infra/README.md
 docker compose -f infra/docker-compose.yml up -d
 ```
+
+### Mise en route côté Claude Code
+
+Le dépôt embarque sa propre configuration de l'outil : un clone récupère
+automatiquement les commandes `/ticket-*`, les skills, les permissions et les
+serveurs MCP, sans rien réinstaller.
+
+| Ce que le clone reprend | Où c'est versionné |
+|---|---|
+| Commandes `/ticket-create`, `/ticket-start`, `/ticket-ship`, `/backlog`, `/mr-review`, `/pipeline-fix`, `/branch-cleanup`, `/milestone-presentation` | [`.claude/commands/`](./.claude/commands/) |
+| Skills `control-tower` et `verify` | [`.claude/skills/`](./.claude/skills/) |
+| Permissions (allow / ask / deny) et hook de traçabilité des demandes | [`.claude/settings.json`](./.claude/settings.json), [`.claude/hooks/`](./.claude/hooks/) |
+| Serveurs MCP `chrome-maestro` (navigateur) et `figma-officiel` | [`.mcp.json`](./.mcp.json) |
+
+Trois gestes restent **par machine**, parce qu'ils touchent à des chemins locaux
+ou à une authentification personnelle :
+
+1. **Approuver les serveurs MCP du dépôt.** Au premier lancement, Claude Code
+   demande confirmation avant de monter les serveurs déclarés dans `.mcp.json`
+   (`claude mcp list` les affiche alors « Pending approval »). C'est volontaire :
+   un `.mcp.json` est du code exécutable, il se relit avant d'être approuvé.
+2. **Choisir le profil du navigateur.** `chrome-maestro` pilote Chrome via
+   `@playwright/mcp` ; sans réglage, il crée un profil neuf dans
+   `.maestro/chrome-profile` (gitignoré). Pour réutiliser des sessions déjà
+   ouvertes, posez `MAESTRO_CHROME_PROFILE` sur un profil **dédié** — jamais le
+   profil Chrome principal, dont le pilotage est refusé depuis Chrome 136. Le
+   plus simple est le bloc `env` de `.claude/settings.local.json` (non versionné) :
+
+   ```json
+   { "env": { "MAESTRO_CHROME_PROFILE": "C:\\Users\\<vous>\\.maestro\\chrome-profile" } }
+   ```
+
+3. **S'authentifier auprès de Figma.** `figma-officiel` est un serveur HTTP en
+   OAuth : chaque personne s'y connecte avec son propre compte, via `/mcp` dans
+   une session interactive. Rien à committer.
+
+> Deux couches de MCP coexistent dans ce dépôt, à ne pas confondre :
+> [`.mcp.json`](./.mcp.json) équipe **Claude Code**, l'outil avec lequel on
+> développe ; [`core/mcp/<agent>.json`](./core/mcp/README.md) équipe les **agents
+> Maestro**, le produit. Voir [docs/21](./docs/21-configuration-mcp.md).
 
 **Essayer l'orchestrateur** (Chef de projet — objectif → tâches JSON) :
 

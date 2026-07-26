@@ -35,9 +35,12 @@
       "Bash(glab ci retry:*)",
       "Bash(bash scripts/gitlab/lib.sh:*)",
       "Bash(bash scripts/gitlab/doctor.sh:*)",
-      "Bash(bash scripts/git/install-hooks.sh:*)"
+      "Bash(bash scripts/git/install-hooks.sh:*)",
+      "mcp__chrome-maestro",
+      "mcp__figma-officiel"
     ],
     "ask": [
+      "mcp__chrome-maestro__browser_run_code_unsafe",
       "Bash(git commit --no-verify:*)",
       "Bash(git reset --hard:*)",
       "Bash(git clean:*)",
