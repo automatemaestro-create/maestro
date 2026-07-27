@@ -128,6 +128,10 @@ ou à une authentification personnelle :
    { "env": { "MAESTRO_CHROME_PROFILE": "C:\\Users\\<vous>\\.maestro\\chrome-profile" } }
    ```
 
+   Ce profil n'accepte **qu'un consommateur à la fois** (verrou ProcessSingleton
+   de Chrome) : la fenêtre pilotée par le MCP se ferme dès que la séquence est
+   terminée, sans quoi elle bloque tout autre outil visant le même dossier.
+
 3. **S'authentifier auprès de Figma.** `figma-officiel` est un serveur HTTP en
    OAuth : chaque personne s'y connecte avec son propre compte, via `/mcp` dans
    une session interactive. Rien à committer.
