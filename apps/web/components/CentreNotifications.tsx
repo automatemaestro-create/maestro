@@ -77,7 +77,9 @@ export function CentreNotifications() {
       : "Notifications";
 
   return (
-    <div ref={conteneur} className="relative">
+    // `data-guide` : la visite guidée (#122) éclaire la cloche — et s'y replie
+    // quand aucune validation n'est en attente sur le tableau de bord.
+    <div ref={conteneur} data-guide="notifications" className="relative">
       <button
         ref={declencheur}
         type="button"
