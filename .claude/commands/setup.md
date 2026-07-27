@@ -58,15 +58,27 @@ Le script est **idempotent** et **non destructif** (il n'écrase ni le `.env` ni
      ticket. Si des clés manquent par rapport au gabarit (dérive signalée par le script), montre
      leur **nom** et le commentaire correspondant de `.env.example`, jamais leur valeur.
 
-   - **`glab auth login`** — flux interactif (navigateur). Dis à l'utilisateur de le lancer
-     lui-même, puis vérifie avec `glab auth status`.
+     Signale que le `.env` est la **source** de deux valeurs recopiées dans le bloc `env` de
+     `.claude/settings.local.json` (`MAESTRO_CHROME_PROFILE`, `CLAUDE_CODE_OAUTH_TOKEN`) : les y
+     modifier à la main ne sert à rien, la prochaine exécution du script les réalignera sur le
+     `.env`. C'est voulu — c'est ce qui fait qu'une rotation de token se propage.
 
-   - **Serveurs MCP** — `.mcp.json` est versionné, mais Claude Code demande une **approbation** au
-     premier lancement (`claude mcp list` les affiche « Pending approval »). Explique que c'est
-     volontaire : un `.mcp.json` est du code exécutable, il se relit avant d'être approuvé.
+   - **`glab`** — plus rien à faire si `GITLAB_TOKEN` est renseigné dans le `.env` : le script
+     s'authentifie tout seul (`glab auth login --stdin`, token jamais passé en ligne de commande).
+     Ce n'est que **sans** token que le rapport renvoie vers `glab auth login` interactif — dans ce
+     cas, dis à l'utilisateur de le lancer lui-même, ou de poser un PAT (scope `api`) dans le
+     `.env`, ce qui est plus durable.
 
-   - **Figma** — serveur HTTP en OAuth, une authentification **par personne**, via `/mcp` dans une
-     session Claude Code interactive. Rien à committer.
+   - **Serveurs MCP** — rien à approuver : `enabledMcpjsonServers`, que le script écrit dans
+     `.claude/settings.local.json`, **est** le registre d'approbation de Claude Code. Ne réclame
+     pas une approbation manuelle, elle est déjà faite.
+
+   - **Figma** — serveur HTTP en OAuth : **un clic** via `/mcp` dans une session Claude Code
+     interactive, mis en cache ensuite, une fois par personne. C'est volontairement resté
+     interactif : le `FIGMA_OAUTH_TOKEN` du `.env` sert la couche **produit**
+     (`core/mcp/designer.json`), où aucun humain n'est là pour cliquer ; l'imposer aussi à Claude
+     Code alourdirait la mise en route (ce token s'obtient via un client OAuth approuvé par Figma)
+     et casserait le serveur pour qui n'en a pas. Rien à committer.
 
 6. **Vérifie** : relance `bash scripts/setup.sh --check`. Tout doit ressortir en `OK` ou
    `DÉJÀ FAIT`, sauf ce qui dépend encore d'un geste humain non fait. Si l'utilisateur a renseigné
