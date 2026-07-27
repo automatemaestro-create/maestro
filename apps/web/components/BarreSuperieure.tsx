@@ -7,16 +7,15 @@
  * page en page au lieu d'être refaits dans chaque en-tête.
  *
  * Les emplacements de droite sont des `slots` que leur lot de #116 remplit : le
- * thème est livré (#118), les notifications (#119) et l'aide (#122/#123) sont
- * encore tenues par un bouton inerte, pour que la barre ne bouge pas quand le
- * lot arrive.
+ * thème (#118) et l'aide (#122) sont livrés, les notifications sont encore
+ * tenues par un bouton inerte quand la barre est rendue sans elles, pour que sa
+ * géométrie ne bouge pas.
  */
 
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import {
-  IconeAide,
   IconeDeplier,
   IconeNotifications,
   IconeReplier,
@@ -33,8 +32,8 @@ type Props = {
   notifications?: ReactNode;
   /** Bascule clair / sombre / système (#118). */
   theme: ReactNode;
-  /** Accès à l'aide (guide, assistant) — lots #122/#123. */
-  aide?: ReactNode;
+  /** Menu d'aide — visite guidée (#122), assistant à venir (#123). */
+  aide: ReactNode;
 };
 
 export function BarreSuperieure({
@@ -96,6 +95,7 @@ export function BarreSuperieure({
         {/* Masqué sur les écrans les plus étroits : le titre de page y a la
             priorité, et le coût reste lisible dans la page elle-même. */}
         <span
+          data-guide="cout-cumule"
           className="hidden whitespace-nowrap text-sm text-neutral-600 sm:inline dark:text-neutral-400"
           title="Coût cumulé rapporté par les agents"
         >
@@ -112,9 +112,7 @@ export function BarreSuperieure({
             />
           )}
           {theme}
-          {aide ?? (
-            <EmplacementReserve libelle="Aide" lot={122} Icone={IconeAide} />
-          )}
+          {aide}
         </div>
       </div>
     </header>

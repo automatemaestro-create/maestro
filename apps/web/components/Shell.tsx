@@ -16,6 +16,8 @@ import { BarreLaterale } from "@/components/BarreLaterale";
 import { BarreSuperieure } from "@/components/BarreSuperieure";
 import { BasculeTheme } from "@/components/BasculeTheme";
 import { CentreNotifications } from "@/components/CentreNotifications";
+import { GuidePriseEnMain } from "@/components/GuidePriseEnMain";
+import { MenuAide } from "@/components/MenuAide";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import {
   ecouterRepliSidebar,
@@ -55,15 +57,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
             basculerRepli={basculerRepli}
             notifications={<CentreNotifications />}
             theme={<BasculeTheme />}
+            aide={<MenuAide />}
           />
           {/* `@container` : la sidebar prend de la largeur au contenu, donc les
               grilles des pages se calent sur la largeur **réelle** de cette
-              zone (`@md:`, `@3xl:`…) et non sur celle de la fenêtre. */}
-          <main className="@container mx-auto flex w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 sm:p-6">
+              zone (`@md:`, `@3xl:`…) et non sur celle de la fenêtre.
+              `data-guide` : ancre de repli de la visite guidée (#122) quand la
+              page ne rend pas encore le panneau qu'une étape vise. */}
+          <main
+            data-guide="contenu"
+            className="@container mx-auto flex w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 sm:p-6"
+          >
             {children}
           </main>
         </div>
       </div>
+      {/* Hors flux (position fixe) : la visite se superpose au shell entier. */}
+      <GuidePriseEnMain />
     </FournisseurEtatGlobal>
   );
 }

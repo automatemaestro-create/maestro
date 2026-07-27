@@ -50,7 +50,7 @@ export function Kanban({ taches, agents, reassigner }: Props) {
   ];
 
   return (
-    <section aria-label="Tâches (Kanban)">
+    <section data-guide="kanban" aria-label="Tâches (Kanban)">
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
         Tâches
       </h2>

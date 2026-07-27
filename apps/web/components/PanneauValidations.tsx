@@ -28,6 +28,7 @@ export function PanneauValidations({
 
   return (
     <section
+      data-guide="validations"
       aria-label="Validations en attente"
       className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/40"
     >

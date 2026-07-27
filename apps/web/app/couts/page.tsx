@@ -107,6 +107,7 @@ export default function PageCouts() {
 function Compteurs({ vue }: { vue: AnalyticsCouts }) {
   return (
     <section
+      data-guide="couts"
       aria-label="Totaux de la période"
       className="grid grid-cols-2 gap-3 sm:grid-cols-4"
     >

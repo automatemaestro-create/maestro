@@ -31,6 +31,7 @@ export function BarreLaterale({ repliee }: { repliee: boolean }) {
     >
       <Link
         href="/"
+        data-guide="marque"
         className="flex h-14 shrink-0 items-center gap-2 px-4 text-neutral-900 dark:text-neutral-100"
         title="Maestro — Control Tower"
       >
@@ -49,6 +50,7 @@ export function BarreLaterale({ repliee }: { repliee: boolean }) {
 
       <nav
         id="navigation-principale"
+        data-guide="navigation"
         aria-label="Navigation principale"
         className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2"
       >
