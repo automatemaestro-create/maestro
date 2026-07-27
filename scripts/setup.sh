@@ -352,6 +352,17 @@ detecte_python_utilisable() {
   return 1
 }
 
+# Les étapes venv/web/mcp/verif s'appuient sur des constats faits par `prerequis`. Avec
+# --only/--skip cette étape peut ne pas avoir tourné : on redétecte à la demande, sinon elles
+# concluent à tort qu'un outil manque (« --only mcp » rapportait « python introuvable » sur une
+# machine parfaitement équipée). Idempotent et sans effet de bord.
+assure_detection() {
+  [ "${#PY_BOOT[@]}" -gt 0 ] || detecte_python_amorce >/dev/null 2>&1 || true
+  if detecte_outil node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then NODE_PRESENT=1; fi
+  if command -v glab >/dev/null 2>&1; then GLAB_PRESENT=1; fi
+  return 0
+}
+
 # Étape demandée ? (respecte --only et --skip)
 etape_demandee() {
   local etape="$1"
@@ -682,10 +693,41 @@ etape_mcp() {
   # propagerait pas au bout du pipeline) — sans lui, Windows encode stdout en cp1252 et le rapport
   # ressort en mojibake (« d?j? align? »). Cf. CLAUDE.md § Outillage requis.
   sortie="$(PYTHONIOENCODING=utf-8 "${PY_CMD[@]}" - \
-      "$cible" "$RACINE/.mcp.json" "$profil" "$MODE_CHECK" <<'PY' 2>&1
+      "$cible" "$RACINE/.mcp.json" "$profil" "$MODE_CHECK" "$RACINE/.env" <<'PY' 2>&1
 import json, os, sys
 
 cible, mcp_json, profil, mode_check = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
+chemin_env = sys.argv[5]
+
+# Variables PILOTÉES PAR LE .env : Claude Code ne lit pas ce fichier (cf. .env.example), donc les
+# valeurs dont ses serveurs MCP ont besoin sont recopiées ici. Ce sont des valeurs DÉRIVÉES : une
+# rotation dans le .env doit se propager, sinon un token renouvelé ne prendrait jamais effet.
+# C'est la seule exception à la règle « ne jamais écraser une clé déjà posée » — et elle ne vaut
+# que pour ces noms-là, quand le .env porte une valeur non vide. Toute autre clé du bloc `env`,
+# ou celles-ci quand le .env est vide, restent intactes.
+PILOTEES_PAR_ENV = ("MAESTRO_CHROME_PROFILE", "CLAUDE_CODE_OAUTH_TOKEN")
+
+def lire_env(chemin):
+    """Extrait CLE=valeur d'un .env, sans l'exécuter (un `source` exécuterait du code arbitraire)."""
+    valeurs = {}
+    if not os.path.exists(chemin):
+        return valeurs
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            for ligne in f:
+                ligne = ligne.strip()
+                if not ligne or ligne.startswith("#") or "=" not in ligne:
+                    continue
+                cle, _, valeur = ligne.partition("=")
+                cle = cle.strip()
+                valeur = valeur.strip().strip('"').strip("'")
+                if cle and valeur:
+                    valeurs[cle] = valeur
+    except OSError:
+        pass
+    return valeurs
+
+depuis_env = lire_env(chemin_env)
 
 reglages = {}
 if os.path.exists(cible):
@@ -702,6 +744,18 @@ env = reglages.setdefault("env", {})
 if not isinstance(env, dict):
     print("ERREUR|la clé 'env' n'est pas un objet — laissé intact")
     raise SystemExit(0)
+
+# Synchronisation depuis le .env. On ne compare et n'annonce que des NOMS de clés : aucune valeur
+# n'est imprimée, un secret ne doit jamais transiter par la sortie du script.
+for cle in PILOTEES_PAR_ENV:
+    voulue = depuis_env.get(cle)
+    if voulue is None:
+        continue
+    if env.get(cle) != voulue:
+        env[cle] = voulue
+        changements.append(cle + " (depuis .env)")
+
+# Profil du navigateur : à défaut de valeur dans le .env, on pose le défaut de la machine.
 if "MAESTRO_CHROME_PROFILE" not in env:
     env["MAESTRO_CHROME_PROFILE"] = profil
     changements.append("MAESTRO_CHROME_PROFILE")
@@ -745,8 +799,56 @@ PY
     *)        echec_dur mcp "Claude Code : fusion de settings.local.json impossible — ${sortie:-sortie vide}" ;;
   esac
 
-  reste "Approuver les serveurs MCP du dépôt au premier lancement de Claude Code (claude mcp list les affiche « Pending approval »)"
-  reste "S'authentifier auprès de Figma via /mcp dans une session Claude Code interactive (OAuth, par personne)"
+  # Pas de « approuver les serveurs MCP » ici : `enabledMcpjsonServers`, que l'on vient d'écrire,
+  # EST le registre d'approbation de Claude Code. L'annoncer comme un geste manuel serait faux.
+  #
+  # Figma reste en revanche une authentification interactive, et c'est délibéré : le serveur
+  # `figma-officiel` de .mcp.json est en OAuth, un clic dans le navigateur mis en cache ensuite.
+  # Le remplacer par `Authorization: Bearer ${FIGMA_OAUTH_TOKEN}` rendrait la mise en route PLUS
+  # lourde — ce token s'obtient « via un client approuvé par Figma » (docs/20 §287) — et casserait
+  # le serveur pour qui n'en a pas, un Bearer vide échouant là où l'OAuth fonctionne. Le
+  # FIGMA_OAUTH_TOKEN du .env sert la couche produit (core/mcp/designer.json), où aucun humain
+  # n'est là pour cliquer.
+  reste "Figma : s'authentifier via /mcp dans une session Claude Code interactive (OAuth, un clic, par personne)"
+}
+
+# --- Authentification GitLab sans geste manuel ----------------------------------------------------
+# valeur_env <clé> : lit une valeur du .env SANS le sourcer (un `source` exécuterait le fichier).
+# La valeur n'est jamais imprimée par l'appelant — elle ne sert qu'à alimenter un stdin.
+valeur_env() {
+  local cle="$1" ligne
+  [ -f "$RACINE/.env" ] || return 1
+  ligne="$(grep -m1 -E "^[[:space:]]*${cle}=" "$RACINE/.env" 2>/dev/null)" || return 1
+  ligne="${ligne#*=}"
+  ligne="${ligne%\"}"; ligne="${ligne#\"}"
+  ligne="${ligne%\'}"; ligne="${ligne#\'}"
+  [ -n "$ligne" ] || return 1
+  printf '%s' "$ligne"
+}
+
+# Hôte GitLab déduit du remote `origin` (défaut gitlab.com) — pas de valeur codée en dur, le dépôt
+# peut vivre sur une instance auto-hébergée.
+hote_gitlab() {
+  local url
+  url="$(git -C "$RACINE" remote get-url origin 2>/dev/null)" || { echo "gitlab.com"; return 0; }
+  case "$url" in
+    *://*) url="${url#*://}"; url="${url#*@}"; printf '%s\n' "${url%%/*}" ;;
+    *@*:*) url="${url#*@}"; printf '%s\n' "${url%%:*}" ;;
+    *)     echo "gitlab.com" ;;
+  esac
+}
+
+# Authentifie glab à partir de GITLAB_TOKEN du .env. Le token passe par STDIN, jamais par argv :
+# une ligne de commande est lisible par tout processus de la machine (ps/Gestionnaire des tâches).
+# Renvoie 0 si glab est authentifié à la sortie.
+authentifie_glab() {
+  local token hote
+  token="$(valeur_env GITLAB_TOKEN)" || return 1
+  hote="$(hote_gitlab)"
+  printf '  … authentification glab depuis GITLAB_TOKEN (%s)\n' "$hote"
+  # La sortie est jetée : glab y réaffiche parfois des éléments de configuration.
+  printf '%s' "$token" | glab auth login --hostname "$hote" --stdin >/dev/null 2>&1 || return 1
+  glab auth status >/dev/null 2>&1
 }
 
 # --- 7. Vérification finale ----------------------------------------------------------------------
@@ -758,9 +860,14 @@ etape_verif() {
   if [ "$GLAB_PRESENT" = 1 ]; then
     if glab auth status >/dev/null 2>&1; then
       rapport OK verif "glab authentifié"
+    elif [ "$MODE_CHECK" = 1 ] && valeur_env GITLAB_TOKEN >/dev/null 2>&1; then
+      # --check n'écrit rien, pas même une configuration glab.
+      rapport IGNORE verif "glab : s'authentifierait depuis GITLAB_TOKEN du .env (--check : rien fait)"
+    elif authentifie_glab; then
+      rapport OK verif "glab authentifié depuis GITLAB_TOKEN du .env"
     else
       rapport IGNORE verif "glab installé mais non authentifié"
-      reste "S'authentifier auprès de GitLab : glab auth login"
+      reste "S'authentifier auprès de GitLab : glab auth login (ou renseigner GITLAB_TOKEN dans le .env)"
     fi
   else
     rapport IGNORE verif "glab absent — workflow de tickets indisponible"
@@ -793,6 +900,7 @@ for etape in $ETAPES_CONNUES; do
     continue
   fi
   printf '[%s]\n' "$etape"
+  [ "$etape" = prerequis ] || assure_detection
   "etape_$etape"
   printf '\n'
 done
