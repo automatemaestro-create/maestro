@@ -57,7 +57,9 @@ Endpoints :
   persisté et relu du `ChatStore` ;
 - `POST /api/chat/{agent}/messages` — envoie un message à l'agent et rend la
   paire message/réponse (le fil est aussi diffusé en `chat.message` sur le
-  WebSocket, réponse comprise) ;
+  WebSocket, réponse comprise) ; `assistance` (#123) y désigne le **canal
+  d'aide** — mêmes endpoints, fiche hors catalogue et réponses sans modèle
+  (`maestro.controltower.assistance`) ;
 - `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
   des agents, messages inter-agents, validations, chat), au format
   `Event.to_dict`.
@@ -97,6 +99,11 @@ from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
 from maestro.config import load_settings
 from maestro.controltower.analytics import PAS_HEURE, PAS_VALIDES, agrege_couts
+from maestro.controltower.assistance import (
+    AGENT_ASSISTANCE,
+    NOM_ASSISTANCE,
+    RepondeurAssistance,
+)
 from maestro.controltower.auto_amelioration import (
     AnalyseurEchecs,
     RevisionIndisponible,
@@ -291,6 +298,7 @@ def create_app(
     mailbox: Mailbox | None = None,
     chat_store: ChatStore | None = None,
     chat_repondeur: RepondeurChat | None = None,
+    assistance_repondeur: RepondeurChat | None = None,
     analyseur: AnalyseurEchecs | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
@@ -321,6 +329,12 @@ def create_app(
     production de la réponse — par défaut le fournisseur configuré, cadré par
     le playbook courant de l'agent ; la démo (#65) et les tests injectent un
     répondeur scripté.
+
+    `assistance_repondeur` (#123) porte le **canal d'aide** `/api/chat/assistance` :
+    un second `ServiceChat` sur le même fil persisté, la même messagerie et le même
+    bus que le chat, mais avec son propre répondeur — par défaut
+    `RepondeurAssistance`, déterministe et sans modèle (les questions portent sur
+    l'outil, pas sur le projet ; voir `maestro.controltower.assistance`).
 
     `analyseur` (#139) produit les propositions d'auto-amélioration servies par
     `POST /api/playbooks/{agent}/propositions` : à la demande, il analyse les
@@ -370,10 +384,22 @@ def create_app(
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
+    chat_store = chat_store if chat_store is not None else ChatStore.default()
     chat = ServiceChat(
-        store=chat_store if chat_store is not None else ChatStore.default(),
+        store=chat_store,
         repondeur=(
             chat_repondeur if chat_repondeur is not None else RepondeurModele(playbooks=playbooks)
+        ),
+        mailbox=mailbox,
+        bus=bus,
+    )
+    # Le canal d'aide (#123) : mêmes rouages que le chat — persistance, messagerie,
+    # bus — pour que le fil se relise et se diffuse à l'identique ; seul le
+    # répondeur change, l'assistant ne parlant pas du projet mais de l'outil.
+    assistance = ServiceChat(
+        store=chat_store,
+        repondeur=(
+            assistance_repondeur if assistance_repondeur is not None else RepondeurAssistance()
         ),
         mailbox=mailbox,
         bus=bus,
@@ -1041,18 +1067,30 @@ def create_app(
             )
         return definition.to_agent()
 
+    def _canal_chat(nom: str) -> tuple[Agent, ServiceChat]:
+        """La fiche et le service qui portent le fil `nom` — agent, ou assistant (#123).
+
+        Le canal d'aide se sert des mêmes endpoints que le chat : `assistance`
+        résout sur une fiche hors catalogue et sur son propre `ServiceChat`, tout
+        autre nom sur l'agent du catalogue et le chat ordinaire. L'UI n'a donc
+        qu'un seul contrat REST à connaître, le nom du fil départage.
+        """
+        if nom == NOM_ASSISTANCE:
+            return AGENT_ASSISTANCE, assistance
+        return _exige_agent_du_catalogue(nom), chat
+
     @app.get("/api/chat/{agent}")
     async def fil_chat(agent: str) -> dict[str, Any]:
         """Le fil de conversation utilisateur ↔ agent (#84), relu de la persistance.
 
         Vide tant que l'agent n'a jamais été contacté ; 404 si l'agent n'est
-        pas au catalogue.
+        pas au catalogue. `assistance` (#123) désigne le canal d'aide.
         """
-        fiche = _exige_agent_du_catalogue(agent)
+        fiche, service = _canal_chat(agent)
         return {
             "agent": fiche.nom,
             "role": fiche.role,
-            "messages": [m.to_dict() for m in chat.fil(fiche.nom)],
+            "messages": [m.to_dict() for m in service.fil(fiche.nom)],
         }
 
     @app.post("/api/chat/{agent}/messages", status_code=201)
@@ -1065,10 +1103,11 @@ def create_app(
         la réponse quand elle tombe. 404 si l'agent n'est pas au catalogue,
         422 sur un message vide, 502 si la réponse n'a pas pu être produite
         (le message utilisateur reste acquis : relancer ne perd pas le fil).
+        `assistance` (#123) désigne le canal d'aide, qui répond sans modèle.
         """
-        fiche = _exige_agent_du_catalogue(agent)
+        fiche, service = _canal_chat(agent)
         try:
-            message, reponse = await chat.envoyer(fiche, requete.contenu)
+            message, reponse = await service.envoyer(fiche, requete.contenu)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ReponseIndisponible as exc:

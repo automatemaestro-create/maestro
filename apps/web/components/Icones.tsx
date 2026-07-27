@@ -151,6 +151,29 @@ export function IconeAide(props: Props) {
   );
 }
 
+/**
+ * L'assistant d'aide (#123) : la bulle du chat frappée d'une étincelle — elle se
+ * distingue de `IconeChat` (le chat avec un agent) sans changer de famille, les
+ * deux restant des conversations.
+ */
+export function IconeAssistant(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M20 13.5a2.5 2.5 0 0 1-2.5 2.5H8l-4 4V5.5A2.5 2.5 0 0 1 6.5 3h5" />
+      <path d="m18 2.5 1 2.5 2.5 1-2.5 1-1 2.5-1-2.5L14.5 6 17 5Z" />
+    </Trait>
+  );
+}
+
+/** Croix de fermeture — panneaux et surfaces flottantes. */
+export function IconeFermer(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </Trait>
+  );
+}
+
 /** Chevron de repli de la sidebar — pointe vers la gauche (replier). */
 export function IconeReplier(props: Props) {
   return (

@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from "react";
 
+import { AssistantFlottant } from "@/components/AssistantFlottant";
 import { BarreLaterale } from "@/components/BarreLaterale";
 import { BarreSuperieure } from "@/components/BarreSuperieure";
 import { BasculeTheme } from "@/components/BasculeTheme";
@@ -63,16 +64,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
               grilles des pages se calent sur la largeur **réelle** de cette
               zone (`@md:`, `@3xl:`…) et non sur celle de la fenêtre.
               `data-guide` : ancre de repli de la visite guidée (#122) quand la
-              page ne rend pas encore le panneau qu'une étape vise. */}
+              page ne rend pas encore le panneau qu'une étape vise.
+              `pb-24` : la bande que le bouton de l'assistant (#123) occupe en bas
+              à droite est réservée — aucun contenu ne se termine sous lui, donc
+              aucune action de la page (décider une validation…) ne finit
+              masquée. */}
           <main
             data-guide="contenu"
-            className="@container mx-auto flex w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 sm:p-6"
+            className="@container mx-auto flex w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 pb-24 sm:p-6 sm:pb-24"
           >
             {children}
           </main>
         </div>
       </div>
-      {/* Hors flux (position fixe) : la visite se superpose au shell entier. */}
+      {/* Hors flux (position fixe) : la visite se superpose au shell entier, et
+          l'assistant (#123) flotte sur toutes les pages — la visite passant
+          par-dessus lui (`z-40`/`z-50` contre `z-30`). */}
+      <AssistantFlottant />
       <GuidePriseEnMain />
     </FournisseurEtatGlobal>
   );
