@@ -2,16 +2,19 @@
 # Assure que le runner CI de projet local est EN LIGNE avant une opération qui dépend de la CI.
 #
 # Contexte (docs/10-workflow-git.md §8) : depuis #135 les runners partagés GitLab sont désactivés
-# (`shared_runners_enabled=false`), donc `runner-local-poc` (poste Sam, exécuteur Docker Desktop)
-# est l'UNIQUE cible des pipelines. S'il est hors ligne, les jobs restent `pending` et le merge
-# (pipeline vert requis) est bloqué silencieusement. Ce helper, câblé dans les skills de clôture
-# (/ticket-finish, /pipeline-fix, donc /ticket-ship par ricochet), le remet en ligne d'office.
+# (`shared_runners_enabled=false`), donc le runner de PROJET de la machine est l'UNIQUE cible des
+# pipelines. S'il est hors ligne, les jobs restent `pending` et le merge (pipeline vert requis) est
+# bloqué silencieusement. Ce helper, câblé dans les skills de clôture (/ticket-finish,
+# /pipeline-fix, donc /ticket-ship par ricochet), le remet en ligne d'office.
 #
 # Idempotent : no-op si le runner est déjà `online`. Sinon : démarre Docker Desktop si le démon
 # n'est pas actif, (re)démarre le conteneur du runner, puis poll jusqu'à `online`. En cas d'échec
 # (démon injoignable, timeout, glab non authentifié) il RENVOIE un code non nul avec un message —
 # jamais une exception bloquante : l'appelant (skill de clôture) doit enchaîner malgré tout
 # (`bash scripts/gitlab/ensure-runner.sh || …`).
+#
+# Le runner n'est pas CRÉÉ ici : sa création (côté GitLab + conteneur) est le rôle de
+# scripts/gitlab/setup-runner.sh, appelé par le parcours de mise en route (#146).
 #
 # Deux usages :
 #   1. Exécuté :   bash scripts/gitlab/ensure-runner.sh
@@ -20,16 +23,20 @@
 #       activé que dans la branche d'exécution directe.)
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+racine="$(cd "$here/../.." && pwd)"
 # shellcheck source=scripts/gitlab/lib.sh
 . "$here/lib.sh"
 
 # --- Configuration (surchargeable par variables d'environnement) --------------------------------
-# ID du runner de projet local (glab api runners/<id>). Documenté #135 ; surchargeable si le
-# runner est ré-enregistré. MAESTRO_RUNNER_NAME ne sert qu'aux messages.
-MAESTRO_RUNNER_ID="${MAESTRO_RUNNER_ID:-54385112}"
-MAESTRO_RUNNER_NAME="${MAESTRO_RUNNER_NAME:-runner-local-poc}"
+# Id du runner de projet. VOLONTAIREMENT SANS DÉFAUT CODÉ EN DUR (#146) : un id est propre à une
+# machine, celui d'un poste est faux sur tous les autres. Il est résolu à l'exécution par
+# runner_id() — variable d'environnement, puis réglages locaux, puis API GitLab.
+MAESTRO_RUNNER_ID="${MAESTRO_RUNNER_ID:-}"
+MAESTRO_RUNNER_NAME="${MAESTRO_RUNNER_NAME:-runner de projet}"   # ne sert qu'aux messages
 # Nom du conteneur Docker hébergeant le gitlab-runner.
 MAESTRO_RUNNER_CONTAINER="${MAESTRO_RUNNER_CONTAINER:-gitlab-runner}"
+# Réglages locaux de Claude Code (non versionnés) où setup-runner.sh persiste l'id du runner.
+MAESTRO_LOCAL_SETTINGS="${MAESTRO_LOCAL_SETTINGS:-$racine/.claude/settings.local.json}"
 # Chemin de l'exécutable Docker Desktop (Windows), lancé via Start-Process si le démon est éteint.
 MAESTRO_DOCKER_DESKTOP="${MAESTRO_DOCKER_DESKTOP:-C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe}"
 # Fenêtres de polling (secondes).
@@ -49,9 +56,73 @@ os_kind() {
   esac
 }
 
+# Nom de la machine — sert à distinguer les runners quand le projet en compte plusieurs (un par
+# poste). `hostname` manque sur certains conteneurs minimaux, d'où les replis.
+machine_nom() {
+  local nom
+  nom="$(hostname 2>/dev/null)"
+  [ -n "$nom" ] || nom="${COMPUTERNAME:-${HOSTNAME:-machine}}"
+  printf '%s\n' "$nom"
+}
+
+# --- Résolution de l'id du runner ---------------------------------------------------------------
+# Trois sources, de la plus explicite à la plus déduite. Aucune n'est codée en dur : le même clone
+# doit fonctionner sur n'importe quel poste (#146).
+
+# 1. Réglages locaux : env.MAESTRO_RUNNER_ID de .claude/settings.local.json, posé par
+#    setup-runner.sh. Lecture en shell pur (grep/sed) comme le reste des helpers — la clé et sa
+#    valeur sont des chiffres, aucun risque d'échappement JSON à interpréter.
+runner_id_persiste() {
+  local id
+  [ -f "$MAESTRO_LOCAL_SETTINGS" ] || return 1
+  id="$(tr -d ' \t\r\n' < "$MAESTRO_LOCAL_SETTINGS" \
+        | grep -o '"MAESTRO_RUNNER_ID":"[0-9]\+"' | head -1 | grep -o '[0-9]\+')"
+  [ -n "$id" ] || return 1
+  printf '%s\n' "$id"
+}
+
+# 2. API GitLab : les runners de PROJET déclarés sur le dépôt. Un seul → c'est le nôtre. Plusieurs
+#    (un poste par personne) → celui dont la description porte le nom de cette machine, convention
+#    posée par setup-runner.sh. La paire « id + description » est extraite d'un seul motif : dans
+#    la réponse, `"id":<n>,"description":"…"` n'apparaît que sur les runners (l'objet imbriqué
+#    `created_by` a bien un `id`, mais suivi de `"username"`).
+runner_id_decouvert() {
+  local raw entrees id
+  raw="$(glab api "projects/$(gl_project_enc)/runners?type=project_type&per_page=100" 2>/dev/null)"
+  [ -n "$raw" ] || return 1
+  entrees="$(printf '%s' "$raw" | grep -o '"id":[0-9]\+,"description":"[^"]*"')"
+  [ -n "$entrees" ] || return 1
+
+  if [ "$(printf '%s\n' "$entrees" | wc -l)" -eq 1 ]; then
+    printf '%s\n' "$entrees" | grep -o '[0-9]\+' | head -1
+    return 0
+  fi
+  id="$(printf '%s\n' "$entrees" | grep -F "$(machine_nom)" | head -1 | grep -o '[0-9]\+' | head -1)"
+  if [ -z "$id" ]; then
+    fail "plusieurs runners de projet et aucun au nom de cette machine ($(machine_nom)) — préciser MAESTRO_RUNNER_ID"
+    return 1
+  fi
+  printf '%s\n' "$id"
+}
+
+# runner_id -> id du runner de cette machine. Mémoïse dans MAESTRO_RUNNER_ID (la résolution par
+# l'API coûte un appel réseau, et ensure_runner interroge le statut en boucle).
+runner_id() {
+  local id
+  if [ -n "$MAESTRO_RUNNER_ID" ]; then printf '%s\n' "$MAESTRO_RUNNER_ID"; return 0; fi
+  if id="$(runner_id_persiste)" || id="$(runner_id_decouvert)"; then
+    MAESTRO_RUNNER_ID="$id"
+    printf '%s\n' "$id"
+    return 0
+  fi
+  return 1
+}
+
 # Statut courant du runner ("online"/"offline"/… ; vide si injoignable).
 runner_status() {
-  glab api "runners/$MAESTRO_RUNNER_ID" 2>/dev/null \
+  local id
+  id="$(runner_id)" || return 1
+  glab api "runners/$id" 2>/dev/null \
     | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4
 }
 runner_is_online() { [ "$(runner_status)" = "online" ]; }
@@ -91,12 +162,17 @@ wait_until() {
   return 1
 }
 
+# Le conteneur du runner existe-t-il sur cette machine (démarré ou non) ?
+conteneur_existe() {
+  docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$MAESTRO_RUNNER_CONTAINER"
+}
+
 # S'assure que le conteneur du runner tourne (le démarre au besoin).
 ensure_container() {
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$MAESTRO_RUNNER_CONTAINER"; then
     return 0
   fi
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$MAESTRO_RUNNER_CONTAINER"; then
+  if conteneur_existe; then
     log "démarrage du conteneur $MAESTRO_RUNNER_CONTAINER…"
     if docker start "$MAESTRO_RUNNER_CONTAINER" >/dev/null 2>&1; then
       return 0
@@ -104,22 +180,29 @@ ensure_container() {
     fail "échec du démarrage du conteneur $MAESTRO_RUNNER_CONTAINER"
     return 1
   fi
-  fail "conteneur $MAESTRO_RUNNER_CONTAINER absent — l'enregistrer d'abord (docs/10 §8)"
+  fail "conteneur $MAESTRO_RUNNER_CONTAINER absent — le créer : bash scripts/gitlab/setup-runner.sh"
   return 1
 }
 
 # Point d'entrée : remet le runner en ligne si besoin. 0 = en ligne, non nul = échec propre.
 ensure_runner() {
+  local id
   if ! gl_require_glab >/dev/null 2>&1; then
     fail "glab non authentifié — impossible de vérifier le runner (glab auth login)"
     return 1
   fi
 
+  if ! id="$(runner_id)"; then
+    fail "aucun runner de projet trouvé pour ce clone — le créer : bash scripts/gitlab/setup-runner.sh"
+    return 1
+  fi
+  MAESTRO_RUNNER_ID="$id"
+
   if runner_is_online; then
-    log "runner $MAESTRO_RUNNER_NAME déjà en ligne."
+    log "$MAESTRO_RUNNER_NAME #$id déjà en ligne."
     return 0
   fi
-  log "runner $MAESTRO_RUNNER_NAME hors ligne — tentative de démarrage."
+  log "$MAESTRO_RUNNER_NAME #$id hors ligne — tentative de démarrage."
 
   # 1. Démon Docker.
   if ! docker_is_up; then
@@ -141,10 +224,10 @@ ensure_runner() {
 
   # 3. Attente du passage `online`.
   if wait_until "$MAESTRO_RUNNER_TIMEOUT" "$MAESTRO_RUNNER_POLL" runner_is_online; then
-    log "runner $MAESTRO_RUNNER_NAME en ligne."
+    log "$MAESTRO_RUNNER_NAME #$id en ligne."
     return 0
   fi
-  fail "runner $MAESTRO_RUNNER_NAME toujours hors ligne après ${MAESTRO_RUNNER_TIMEOUT}s"
+  fail "$MAESTRO_RUNNER_NAME #$id toujours hors ligne après ${MAESTRO_RUNNER_TIMEOUT}s"
   return 1
 }
 

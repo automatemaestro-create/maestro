@@ -466,8 +466,8 @@ du job, échec sous `--cov-fail-under=80`) et `mypy` (typage strict de `maestro/
 partagent un **cache pip** (clé sur `pyproject.toml`) qui accélère le `before_script` d'un run à
 l'autre. Un **pipeline vert est la condition de passage `En revue` → merge**.
 
-**Où tournent les pipelines ?** Sur le **runner de projet local** `runner-local-poc` (poste Sam,
-exécuteur Docker), **par défaut et pour tout pipeline** — MR comprises. Les **runners partagés**
+**Où tournent les pipelines ?** Sur le **runner de projet local de la machine** (exécuteur Docker —
+`runner-local-poc` sur le poste d'origine), **par défaut et pour tout pipeline** — MR comprises. Les **runners partagés**
 GitLab sont **désactivés** au niveau projet (`shared_runners_enabled=false`, posé par
 [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh)) : leur quota de minutes CI étant durablement
 épuisé, un job non-taggé qui y atterrissait retombait en `ci_quota_exceeded` (jobs « not
@@ -477,7 +477,25 @@ opérationnelle** : le runner doit être **en ligne** (Docker Desktop démarré 
 actif) ; sinon les jobs restent **`pending`** (et non plus `ci_quota_exceeded`), et le merge — qui
 exige un pipeline vert — reste bloqué.
 
-Cette mise en ligne est **automatisée** par le helper idempotent
+**Créer le runner d'une nouvelle machine** est le rôle de
+[`scripts/gitlab/setup-runner.sh`](../scripts/gitlab/setup-runner.sh) (#146), appelé par l'étape
+`runner` de [`scripts/setup.sh`](../scripts/setup.sh) — donc par la commande
+[`/setup`](../.claude/commands/setup.md). Il installe et démarre Docker si besoin, puis, si aucun
+conteneur `gitlab-runner` n'existe sur la machine : crée le runner côté GitLab
+(`POST /user/runners`, type projet, jobs non-taggés), monte le conteneur, l'enregistre, et attend
+son passage `online`. Il est **idempotent** (un runner déjà monté ⇒ simple remise en ligne) et
+n'expose jamais le **jeton** d'enregistrement : il transite par l'environnement du conteneur, pas
+par une ligne de commande. Le **jeton `glab` doit porter la portée `create_runner`** pour que la
+création aboutisse.
+
+L'**id du runner** est propre à chaque machine : il est persisté dans le bloc `env` de
+`.claude/settings.local.json` (non versionné). `ensure-runner.sh` le résout dans cet ordre —
+variable d'environnement `MAESTRO_RUNNER_ID`, puis ce fichier, puis **découverte par l'API** (les
+runners de projet du dépôt ; s'il y en a plusieurs, celui dont la description porte le nom de la
+machine). Plus aucun id n'est codé en dur : l'ancien défaut `54385112`, propre au poste d'origine,
+était faux sur tout autre clone.
+
+La mise en ligne est **automatisée** par le helper idempotent
 [`scripts/gitlab/ensure-runner.sh`](../scripts/gitlab/ensure-runner.sh) : no-op si le runner est
 déjà `online`, sinon il démarre Docker Desktop (si le démon est éteint) puis le conteneur
 `gitlab-runner`, et poll jusqu'à `online`. Il **échoue proprement** (code non nul + message) sans

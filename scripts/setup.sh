@@ -25,8 +25,11 @@
 #     rapport final et sort en code non nul si une étape DURE a échoué.
 #   - AUCUN SECRET : ni lu, ni affiché, ni écrit dans un fichier versionné.
 #
-# Ce script couvre l'environnement local. Docker et le runner CI de projet arrivent au lot 2
-# (#146) ; en attendant ils restent manuels (docs/10-workflow-git.md §8).
+# Le volet « conteneurs + CI » (Docker + runner de projet, #146) est délégué à
+# scripts/gitlab/setup-runner.sh, appelé par l'étape `runner` : il crée le runner de CETTE machine
+# s'il n'existe pas encore, sans quoi les pipelines de MR restent `pending`
+# (docs/10-workflow-git.md §8). Les bases locales (PostgreSQL/Redis/Temporal) restent optionnelles,
+# derrière `--with-infra`.
 #
 # Pas de `set -e` : les étapes doivent toutes se dérouler, chacune gère son erreur.
 
@@ -38,11 +41,12 @@ LOG_DIR="${TMPDIR:-/tmp}/maestro-setup"
 # --- Configuration (surchargeable par variables d'environnement) --------------------------------
 PYTHON_MIN="${MAESTRO_PYTHON_MIN:-3.11}"   # exigé par pyproject.toml (requires-python)
 NODE_MIN="${MAESTRO_NODE_MIN:-20}"         # exigé par le Claude Agent SDK
-ETAPES_CONNUES="prerequis venv env hooks web mcp verif"
+ETAPES_CONNUES="prerequis venv env hooks web mcp runner infra verif"
 
 # --- Drapeaux -----------------------------------------------------------------------------------
 MODE_CHECK=0                                     # --check : diagnostic seul, aucune écriture
 AUTO_INSTALL="${MAESTRO_AUTO_INSTALL:-1}"        # --no-install : ne rien installer, juste signaler
+WITH_INFRA=0                                     # --with-infra : démarrer aussi les bases locales
 ETAPES_ONLY=""                                   # --only  : étapes à exécuter (défaut : toutes)
 ETAPES_SKIP=""                                   # --skip  : étapes à sauter
 
@@ -55,6 +59,7 @@ Mise en route d'un clone Maestro (socle local).
 Options :
   --check            Diagnostic seul : rapporte ce qui manque, sans rien écrire ni installer.
   --no-install       N'installe aucun outil manquant, contente-toi de le signaler.
+  --with-infra       Démarre aussi les bases locales (PostgreSQL, Redis, Temporal) via Docker.
   --only <étapes>    N'exécute que ces étapes (séparées par des virgules).
   --skip <étapes>    Saute ces étapes (séparées par des virgules).
   -h, --help         Cette aide.
@@ -67,11 +72,11 @@ Options :
   hooks      hook git commit-msg (scripts/git/install-hooks.sh)
   web        dépendances npm de apps/web
   mcp        .claude/settings.local.json (profil navigateur + serveurs MCP du dépôt)
+  runner     Docker + runner CI de projet de cette machine (scripts/gitlab/setup-runner.sh)
+  infra      bases locales PostgreSQL/Redis/Temporal — uniquement avec --with-infra
   verif      glab auth status + maestro-check-env
 
 Le script ne pose aucune question : ce qui exige un humain est listé en fin de rapport.
-Docker et le runner CI de projet ne sont pas encore couverts (lot 2, ticket #146) :
-voir docs/10-workflow-git.md §8.
 USAGE
 }
 
@@ -79,6 +84,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --check)      MODE_CHECK=1 ;;
     --no-install) AUTO_INSTALL=0 ;;
+    --with-infra) WITH_INFRA=1 ;;
     --only)    ETAPES_ONLY="${2:-}"; shift ;;
     --skip)    ETAPES_SKIP="${2:-}"; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -96,6 +102,9 @@ done
 RAPPORT=()
 RESTE=()
 NB_ECHECS_DURS=0
+# Échecs SOUPLES : l'étape a raté sans compromettre le socle local (Docker/runner/bases locales).
+# Ils ne font pas sortir en erreur, mais interdisent d'annoncer une machine entièrement prête.
+NB_ECHECS_SOUPLES=0
 
 rapport() {
   local statut="$1" etape="$2" detail="$3"
@@ -851,7 +860,89 @@ authentifie_glab() {
   glab auth status >/dev/null 2>&1
 }
 
-# --- 7. Vérification finale ----------------------------------------------------------------------
+# assure_glab_auth : glab utilisable pour les étapes qui en dépendent (runner, verif). Idempotent —
+# ne tente l'authentification depuis le .env que si la session ne l'est pas déjà, et jamais en
+# --check, qui n'écrit rien, pas même une configuration glab.
+assure_glab_auth() {
+  command -v glab >/dev/null 2>&1 || return 1
+  if glab auth status >/dev/null 2>&1; then return 0; fi
+  [ "$MODE_CHECK" = 1 ] && return 1
+  authentifie_glab
+}
+
+# --- 7. Docker + runner CI de projet : délégation à scripts/gitlab/setup-runner.sh ----------------
+# Le détail (installation de Docker, création du runner côté GitLab, conteneur, enregistrement)
+# vit dans setup-runner.sh, utilisable seul. Ici : transmission des drapeaux, progression laissée
+# à l'écran, et reprise de ses lignes `RESULTAT|<volet>|<statut>|<détail>` dans le rapport commun.
+# Un échec est SOUPLE : sans runner on ne peut pas merger, mais le socle local reste utilisable.
+etape_runner() {
+  local script="$RACINE/scripts/gitlab/setup-runner.sh" log="$LOG_DIR/runner.log"
+  local args=() tag volet statut detail
+
+  if [ ! -f "$script" ]; then
+    rapport IGNORE runner "runner : $script introuvable, étape sautée"
+    return 0
+  fi
+  [ "$MODE_CHECK" = 1 ] && args+=(--check)
+  [ "$AUTO_INSTALL" = 1 ] || args+=(--no-install)
+
+  # setup-runner.sh a besoin d'un glab authentifié (création/lecture du runner) et l'étape `verif`
+  # ne tourne qu'après lui : on avance l'authentification, qui sera « déjà faite » au bilan.
+  assure_glab_auth || true
+
+  mkdir -p "$LOG_DIR"
+  # La progression s'affiche en direct ; les lignes RESULTAT| sont retirées de l'écran (le rapport
+  # les reformate juste après) mais conservées dans le log, d'où on les relit.
+  bash "$script" ${args[@]+"${args[@]}"} 2>&1 | tee "$log" | grep -v '^RESULTAT|'
+
+  # Lecture du log (et non du pipeline) : `rapport` doit s'exécuter dans CE shell pour alimenter le
+  # tableau final — au bout d'un pipe, il le remplirait dans un sous-shell qui meurt aussitôt.
+  while IFS='|' read -r tag volet statut detail; do
+    [ "$tag" = RESULTAT ] || continue
+    case "$statut" in
+      OK|DEJA|IGNORE) rapport "$statut" "$volet" "$detail" ;;
+      ECHEC)
+        rapport ECHEC "$volet" "$detail"
+        NB_ECHECS_SOUPLES=$((NB_ECHECS_SOUPLES + 1))
+        reste "$volet — $detail (relancer : bash scripts/gitlab/setup-runner.sh)" ;;
+    esac
+  done < "$log"
+}
+
+# --- 8. Bases locales (optionnelles) : PostgreSQL / Redis / Temporal ------------------------------
+# Proposées, pas imposées : elles ne servent qu'aux exécutions durables (Phase 3) et pèsent
+# plusieurs gigaoctets d'images. Sans --with-infra, l'étape se contente de rappeler la commande.
+etape_infra() {
+  local compose="$RACINE/infra/docker-compose.yml"
+
+  if [ "$WITH_INFRA" != 1 ]; then
+    rapport IGNORE infra "bases locales : non demandées (--with-infra pour PostgreSQL/Redis/Temporal)"
+    return 0
+  fi
+  if [ ! -f "$compose" ]; then
+    rapport IGNORE infra "bases locales : infra/docker-compose.yml introuvable, étape sautée"
+    return 0
+  fi
+  if [ "$MODE_CHECK" = 1 ]; then
+    rapport IGNORE infra "bases locales : à démarrer (docker compose up -d) (--check : rien lancé)"
+    return 0
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    rapport IGNORE infra "bases locales : démon Docker injoignable, étape sautée"
+    return 0
+  fi
+
+  printf '  … démarrage des bases locales — le premier lancement télécharge les images\n'
+  if execute_journalise infra docker compose -f "$compose" up -d; then
+    rapport OK infra "bases locales : PostgreSQL, Redis et Temporal démarrés"
+  else
+    rapport ECHEC infra "bases locales : docker compose up -d a échoué"
+    NB_ECHECS_SOUPLES=$((NB_ECHECS_SOUPLES + 1))
+    reste "Bases locales : relancer docker compose -f infra/docker-compose.yml up -d"
+  fi
+}
+
+# --- 9. Vérification finale ----------------------------------------------------------------------
 # Étape SOUPLE : sur un clone frais le .env n'est pas encore renseigné, un échec ici est un
 # renseignement, pas une faute — il ne fait pas sortir le script en erreur.
 etape_verif() {
@@ -928,9 +1019,6 @@ if [ "${#RESTE[@]}" -gt 0 ]; then
   done
 fi
 
-printf '\nNon couvert par ce script (lot 2, ticket #146) : Docker et le runner CI de projet —\n'
-printf 'voir docs/10-workflow-git.md §8 en attendant.\n'
-
 if [ "$NB_ECHECS_DURS" -gt 0 ]; then
   printf '\n%d étape(s) en échec. Corriger puis relancer : bash scripts/setup.sh\n' "$NB_ECHECS_DURS" >&2
   exit 1
@@ -943,6 +1031,14 @@ elif [ "$NB_OUTILS_MANQUANTS" -gt 0 ]; then
   printf '\nEnvironnement local monté, mais %d outil(s) manque(nt) encore — voir « Reste à faire »\n' \
     "$NB_OUTILS_MANQUANTS"
   printf 'ci-dessus. Les étapes qui en dépendent ont été sautées.\n'
+elif [ "$NB_ECHECS_SOUPLES" -gt 0 ]; then
+  # Socle local en place, mais Docker/runner (ou les bases locales) n'ont pas abouti : le dire,
+  # plutôt que d'annoncer une machine prête. Sans runner en ligne, les pipelines de MR restent
+  # « pending » et le merge est bloqué (docs/10-workflow-git.md §8).
+  printf '\nEnvironnement local monté, mais %d étape(s) non bloquante(s) n'\''ont pas abouti —\n' \
+    "$NB_ECHECS_SOUPLES"
+  printf 'voir « Reste à faire » ci-dessus. Sans runner en ligne, les pipelines de MR restent\n'
+  printf '« pending » et le merge est bloqué.\n'
 else
   printf '\nEnvironnement local prêt. Lancer la Control Tower : bash scripts/controltower/start.sh\n'
 fi
