@@ -42,9 +42,13 @@ from maestro.config import Settings, load_settings
 _NOM_AGENT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 #: Noms réservés : les agents par défaut du code (un agent personnalisé ne peut pas
-#: les masquer) et l'orchestrateur (acteur système de la Control Tower).
+#: les masquer) et les acteurs système de la Control Tower — l'orchestrateur, et
+#: l'assistant du canal d'aide (#123, `maestro.controltower.assistance.NOM_ASSISTANCE` :
+#: la chaîne est répétée ici plutôt qu'importée, la couche agents ne dépendant pas de
+#: la Control Tower). Sans cette réserve, un agent personnalisé homonyme partagerait le
+#: fil `core/chat/assistance.jsonl` de l'assistant et serait masqué par lui au chat.
 NOMS_RESERVES: frozenset[str] = frozenset(
-    {agent.nom for agent in DEFAULT_AGENTS} | {"orchestrateur"}
+    {agent.nom for agent in DEFAULT_AGENTS} | {"orchestrateur", "assistance"}
 )
 
 

@@ -21,6 +21,10 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   persisté (`ChatStore`), réponse produite par le fournisseur configuré
   (`RepondeurModele`) ou scriptée (`RepondeurScripte`), flux d'un envoi
   (`ServiceChat` : persistance, messagerie #44, diffusion `chat.message`) ;
+- `maestro.controltower.assistance` : le canal d'**aide à l'utilisateur** (#123)
+  — même infrastructure que le chat sur le fil réservé `assistance`, mais une
+  fiche hors catalogue (`AGENT_ASSISTANCE`) et un répondeur déterministe
+  (`RepondeurAssistance`) : les questions portent sur l'outil, pas sur le projet ;
 - `create_app` / `create_default_app` : l'app FastAPI (REST + WebSocket) et sa
   déclinaison de production (`maestro-api`).
 """
@@ -40,6 +44,14 @@ from maestro.controltower.analytics import (
     agrege_couts,
 )
 from maestro.controltower.app import create_app, create_default_app
+from maestro.controltower.assistance import (
+    AGENT_ASSISTANCE,
+    NOM_ASSISTANCE,
+    SUJETS_ASSISTANCE,
+    RepondeurAssistance,
+    SujetAssistance,
+    repondre_assistance,
+)
 from maestro.controltower.bridge import (
     JournalEventHandler,
     activer_publication,
@@ -92,6 +104,7 @@ from maestro.controltower.state import (
 from maestro.controltower.validation import ValidateurControlTower, validateur_redis
 
 __all__ = [
+    "AGENT_ASSISTANCE",
     "CANAL_EVENEMENTS",
     "CLE_JOURNAL_EVENEMENTS",
     "CAPACITE_ACTIVE",
@@ -104,10 +117,12 @@ __all__ = [
     "EVENEMENT_TACHE_STATUT",
     "EVENEMENT_VALIDATION_DECISION",
     "EVENEMENT_VALIDATION_DEMANDE",
+    "NOM_ASSISTANCE",
     "PAS_HEURE",
     "PAS_JOUR",
     "PAS_MINUTE",
     "PAS_VALIDES",
+    "SUJETS_ASSISTANCE",
     "UTILISATEUR",
     "VALIDATION_APPROUVEE",
     "VALIDATION_EN_ATTENTE",
@@ -132,11 +147,13 @@ __all__ = [
     "PointCout",
     "RedisEventBus",
     "RedisEventLog",
+    "RepondeurAssistance",
     "RepondeurChat",
     "RepondeurModele",
     "RepondeurScripte",
     "ReponseIndisponible",
     "ServiceChat",
+    "SujetAssistance",
     "ValidateurControlTower",
     "activer_publication",
     "agrege_couts",
@@ -144,5 +161,6 @@ __all__ = [
     "create_default_app",
     "evenements_depuis_step",
     "publieur_redis",
+    "repondre_assistance",
     "validateur_redis",
 ]

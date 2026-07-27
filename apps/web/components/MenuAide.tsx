@@ -3,12 +3,13 @@
 /**
  * Le menu d'aide de la barre supérieure (#122, lot 6 de #116) : le point
  * d'entrée de l'accompagnement, présent sur toutes les pages via le shell. Il
- * porte pour l'instant la **relance de la visite guidée** — qui ne se déclenche
- * d'elle-même qu'à la première visite — et reste l'emplacement de l'assistant
- * à venir (#123).
+ * porte la **relance de la visite guidée** — qui ne se déclenche d'elle-même
+ * qu'à la première visite — et l'ouverture de l'**assistant** (#123), dont le
+ * bouton flottant reste le point d'entrée principal : on le retrouve ici parce
+ * que c'est là qu'on cherche de l'aide.
  *
  * Un menu plutôt qu'un bouton direct, pour cette raison même : la géométrie de
- * la barre ne bougera pas quand le lot suivant y ajoutera son entrée.
+ * la barre n'a pas bougé quand le lot suivant y a ajouté son entrée.
  *
  * Le comportement du menu (clic à l'extérieur, Échap, focus rendu au bouton)
  * reprend celui de la bascule de thème (#118, `BasculeTheme`).
@@ -17,6 +18,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { IconeAide } from "@/components/Icones";
+import { ouvrirAssistant } from "@/lib/assistance";
 import { ETAPES_GUIDE, lancerGuide } from "@/lib/guide";
 
 export function MenuAide() {
@@ -86,6 +88,23 @@ export function MenuAide() {
             <span className="text-sm font-medium">Visite guidée</span>
             <span className="text-xs text-neutral-500 dark:text-neutral-400">
               Redécouvrir la Control Tower en {ETAPES_GUIDE.length} étapes
+            </span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              // Le menu se referme, mais le focus va au panneau (qui prend la
+              // main sur sa zone de saisie), pas au bouton d'aide : c'est là que
+              // l'utilisateur écrit sa question.
+              setOuvert(false);
+              ouvrirAssistant();
+            }}
+            className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          >
+            <span className="text-sm font-medium">Poser une question</span>
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              Ouvrir l&apos;assistant, sans quitter la page
             </span>
           </button>
         </div>
