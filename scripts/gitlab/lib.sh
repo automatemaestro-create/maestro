@@ -844,6 +844,32 @@ gl_project_enc() {
   printf '%s\n' "$GL_PROJECT" | sed 's,/,%2F,g'
 }
 
+# gl_project_id -> id NUMÉRIQUE du projet. Certains endpoints ne prennent pas le chemin encodé
+# (POST /user/runners veut un `project_id` entier — cf. setup-runner.sh, #146).
+gl_project_id() {
+  local id
+  id="$(glab api "projects/$(gl_project_enc)" 2>/dev/null | grep -o '"id":[0-9]\+' | head -1 | grep -o '[0-9]\+')"
+  if [ -z "$id" ]; then
+    echo "gl_project_id : projet $GL_PROJECT introuvable (glab authentifié ? cf. require)" >&2
+    return 1
+  fi
+  printf '%s\n' "$id"
+}
+
+# gl_host -> hôte GitLab du dépôt, déduit du remote `origin` (défaut gitlab.com). Rien n'est codé
+# en dur : le workflow doit tenir sur une instance auto-hébergée. Gère les deux formes d'URL
+# (https://hote/groupe/projet et git@hote:groupe/projet).
+gl_host() {
+  local url racine
+  racine="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  url="$(git -C "$racine" remote get-url origin 2>/dev/null)" || { echo "gitlab.com"; return 0; }
+  case "$url" in
+    *://*) url="${url#*://}"; url="${url#*@}"; printf '%s\n' "${url%%/*}" ;;
+    *@*:*) url="${url#*@}"; printf '%s\n' "${url%%:*}" ;;
+    *)     echo "gitlab.com" ;;
+  esac
+}
+
 # gl_pipeline_latest <ref> -> dernier pipeline de la branche, en une ligne TSV :
 #   id <TAB> status <TAB> sha <TAB> web_url
 # Code 1 (et message) si aucun pipeline n'existe pour cette ref.
@@ -1060,6 +1086,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     pipeline-failed-jobs) gl_pipeline_failed_jobs "$@" ;;
     job-trace)            gl_job_trace "$@" ;;
     pipeline-wait)        gl_pipeline_wait "$@" ;;
+    project-enc)    gl_project_enc ;;
+    project-id)     gl_project_id ;;
+    host)           gl_host ;;
     slug)           gl_slug "$@" ;;
     branch-prefix)  gl_branch_prefix "$@" ;;
     *)
@@ -1072,6 +1101,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
       echo "  milestone-issues <titre-exact>     (tickets d'un milestone : iid/statut/type/agent/prio/titre, TSV)" >&2
       echo "  slug <titre> | branch-prefix <type>" >&2
+      echo "  project-enc | project-id | host   (chemin encodé, id numérique, hôte GitLab du remote)" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid> <iid-cible>    (lie deux tickets — relates to, idempotent)" >&2
       echo "    parent-of <iid>                 (iid du parent si <iid> est un sous-ticket)" >&2

@@ -1,5 +1,5 @@
 ---
-description: Met en route un clone du dépôt — venv, .env, hooks git, dépendances web, serveurs MCP — et prend en charge les authentifications interactives
+description: Met en route un clone du dépôt — venv, .env, hooks git, dépendances web, serveurs MCP, Docker et runner CI — et prend en charge les authentifications interactives
 allowed-tools: Bash(bash:*), Bash(git:*), Bash(glab:*), Bash(npm:*), Bash(node:*), Bash(python:*), Bash(claude:*), Read, Edit
 ---
 
@@ -80,6 +80,19 @@ Le script est **idempotent** et **non destructif** (il n'écrase ni le `.env` ni
      Code alourdirait la mise en route (ce token s'obtient via un client OAuth approuvé par Figma)
      et casserait le serveur pour qui n'en a pas. Rien à committer.
 
+   - **Docker / runner CI** — l'étape `runner` délègue à `scripts/gitlab/setup-runner.sh` : Docker
+     est installé et démarré comme les autres prérequis, puis le **runner de projet de cette
+     machine** est créé côté GitLab, monté en conteneur et enregistré (son id est persisté dans le
+     bloc `env` de `.claude/settings.local.json`, jamais dans un fichier versionné). Un échec ici
+     est **non bloquant pour le socle local**, mais il faut le dire tel quel : sans runner en ligne,
+     les pipelines de MR restent `pending` et le merge est bloqué (`docs/10-workflow-git.md` §8).
+     Deux cas que le script signale sans pouvoir les résoudre — relaie-les :
+     - *« le démon ne répond pas »* après une installation de Docker Desktop : il faut souvent
+       **fermer la session** (voire redémarrer) puis relancer `bash scripts/setup.sh --only runner` ;
+     - *« la portée create_runner manque »* : le jeton GitLab utilisé n'a pas le droit de créer un
+       runner. C'est une décision humaine — un PAT avec la portée `create_runner`, ou la création du
+       runner depuis l'interface GitLab.
+
 6. **Vérifie** : relance `bash scripts/setup.sh --check`. Tout doit ressortir en `OK` ou
    `DÉJÀ FAIT`, sauf ce qui dépend encore d'un geste humain non fait. Si l'utilisateur a renseigné
    son `.env`, confirme avec `maestro-check-env` (via le venv du dépôt :
@@ -89,9 +102,10 @@ Le script est **idempotent** et **non destructif** (il n'écrase ni le `.env` ni
    (avec la commande exacte pour chaque point), et la suite — `bash scripts/controltower/start.sh`
    pour voir la Control Tower, `maestro-run "<objectif>"` pour dérouler une orchestration.
 
-**Pas encore couvert** (lot 2, ticket #146) : Docker et le **runner CI de projet**. Tant que ce lot
-n'est pas livré, ces deux points restent manuels — renvoie à `docs/10-workflow-git.md` §8, et
-signale que sans runner en ligne les pipelines de MR restent `pending`.
+**Optionnel : les bases locales** (PostgreSQL / Redis / Temporal, `infra/docker-compose.yml`) ne
+sont **pas** montées par défaut — plusieurs gigaoctets d'images pour des services qui ne servent
+qu'aux exécutions durables. Le rapport le rappelle ; ne les démarre que si l'utilisateur le demande :
+`bash scripts/setup.sh --with-infra` (ou `--only infra --with-infra`).
 
 **Garde-fous.** Cette commande ne touche ni à Git (pas de commit, pas de branche, pas de push) ni à
 GitLab (ni statut, ni MR) : elle prépare une machine, rien d'autre. Elle n'écrit aucun secret dans
