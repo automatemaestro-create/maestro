@@ -13,9 +13,13 @@ mémoire — `maestro.controltower.demo`, app FastAPI réelle + scénario
 d'événements factices en continu —, UI Next.js pointée dessus) :
 
 ```bash
-bash scripts/controltower/start.sh          # UI sur :3000, API sur :8000
-bash scripts/controltower/start.sh --stop   # arrêt
+bash scripts/controltower/start.sh --no-browser   # UI sur :3000, API sur :8000
+bash scripts/controltower/start.sh --stop         # arrêt
 ```
+
+`--no-browser` est important ici : sans lui, le script ouvre sa propre fenêtre
+et **arrête la stack dès qu'elle est fermée** (#149) — ce qui couperait l'API
+sous le navigateur qu'on pilote. Avec l'option, c'est `--stop` qui fait foi.
 
 Pour un scénario **sur mesure** (autres événements, autre timing), s'inspirer
 de `maestro/controltower/demo.py` : `create_app(bus=InMemoryEventBus())` sous
