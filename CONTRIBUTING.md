@@ -26,7 +26,7 @@ prend en charge ce qu'il ne peut pas faire seul (authentifications interactives,
 
 | Geste | Comment |
 |---|---|
-| **Secrets partagés** du `.env` (marqués `# [partagé]` dans [`.env.example`](./.env.example)) | `bash scripts/env-pull.sh` — les récupère depuis les variables CI/CD du projet, sans écraser ce qui est déjà posé ([docs/10 §8](./docs/10-workflow-git.md)) |
+| **Secrets partagés** du `.env` (marqués `# [partagé]` dans [`.env.example`](./.env.example)) | `bash scripts/env-pull.sh` — les récupère depuis les variables CI/CD du projet, sans écraser ce qui est déjà posé ([docs/10 §7.3](./docs/10-workflow-git.md)) |
 | **Secrets personnels** du `.env` (marqués `# [perso]` : jetons nominatifs, chemins de machine) | à renseigner à la main, une fois |
 | **Figma** | s'authentifier via `/mcp` dans une session Claude Code (OAuth, un clic, par personne) |
 | **Réglages machine** de Claude Code | `scripts/setup.sh` écrit `.claude/settings.local.json` (non versionné) ; [`.claude/settings.local.example.json`](./.claude/settings.local.example.json) documente les clés attendues — c'est une **référence à lire**, pas un fichier à recopier |
@@ -158,6 +158,7 @@ Ces règles sont doublées par la couche permissions de [`.claude/settings.json`
 | Question | Fichier |
 |---|---|
 | Le workflow Git complet (statuts, découpage, CI, worktrees) | [docs/10-workflow-git.md](./docs/10-workflow-git.md) |
+| Ce qui change quand on travaille **à plusieurs** (synthèse) | [docs/10 §10](./docs/10-workflow-git.md) |
 | Ce que le projet est et où il en est | [README.md](./README.md), [docs/06-roadmap.md](./docs/06-roadmap.md) |
 | Les règles telles que l'agent les applique | [CLAUDE.md](./CLAUDE.md) |
 | Démarrer la Control Tower en local | skill `control-tower` |
