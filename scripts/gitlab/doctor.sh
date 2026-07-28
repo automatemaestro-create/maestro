@@ -167,12 +167,57 @@ else
   fi
 fi
 
-# --- 7. Milestones de phase -----------------------------------------------------------------------
+# --- 7. Runner CI de projet -----------------------------------------------------------------------
+# Première cause de MR bloquée (#157) : les runners partagés sont désactivés
+# (`shared_runners_enabled=false`, #135) et le merge exige un pipeline vert — si aucun runner de
+# PROJET n'est en ligne, les jobs restent `pending` et personne ne merge, sans qu'aucun message ne
+# le dise. Contrôle SOUPLE (avertissement) : le runner de la machine peut être légitimement éteint
+# pendant qu'on code ; ce qui compte est de savoir qu'il faudra le rallumer avant la MR.
+# Une seule lecture REST : /projects/:id/runners porte déjà `status` pour chaque runner.
+section "7. Runner CI de projet (§8)"
+runners_raw="$(glab api "projects/$(gl_project_enc)/runners?type=project_type&per_page=100" 2>/dev/null)"
+if [ -z "$runners_raw" ]; then
+  warn "runners de projet illisibles (API muette) — contrôle ignoré"
+elif [ "$runners_raw" = "[]" ]; then
+  warn "aucun runner de projet déclaré : les pipelines resteront « pending » (runners partagés désactivés)"
+  warn "  → en créer un sur cette machine : bash scripts/gitlab/setup-runner.sh"
+else
+  # Un runner par ligne. `"id":<n>,"description":"…"` n'apparaît que sur les runners : l'objet
+  # imbriqué `created_by` a bien un `id`, mais suivi de `"username"` (même repère que
+  # ensure-runner.sh). `status` se lit ensuite dans la ligne, sans confusion possible avec
+  # `job_execution_status`, dont le nom ne contient pas la séquence `"status":`.
+  runners_lignes="$(printf '%s' "$runners_raw" | sed 's/},{"id":/}\n{"id":/g')"
+  runners_en_ligne="$(printf '%s\n' "$runners_lignes" | grep -F '"status":"online"')"
+  if [ -n "$runners_en_ligne" ]; then
+    while IFS= read -r ligne; do
+      [ -z "$ligne" ] && continue
+      rid="$(printf '%s' "$ligne" | grep -o '"id":[0-9]\+' | head -1 | grep -o '[0-9]\+')"
+      rdesc="$(printf '%s' "$ligne" | grep -o '"description":"[^"]*"' | head -1 | cut -d'"' -f4)"
+      ok "runner de projet en ligne : ${rdesc:-sans description} (#${rid:-?})"
+    done <<EOF
+$runners_en_ligne
+EOF
+  else
+    hors_ligne=""
+    while IFS= read -r ligne; do
+      [ -z "$ligne" ] && continue
+      rdesc="$(printf '%s' "$ligne" | grep -o '"description":"[^"]*"' | head -1 | cut -d'"' -f4)"
+      rstat="$(printf '%s' "$ligne" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)"
+      hors_ligne="${hors_ligne:+$hors_ligne, }${rdesc:-?} (${rstat:-?})"
+    done <<EOF
+$runners_lignes
+EOF
+    warn "aucun runner de projet en ligne — les jobs resteront « pending » et le merge sera bloqué [$hors_ligne]"
+    warn "  → rallumer celui de cette machine : bash scripts/gitlab/ensure-runner.sh"
+  fi
+fi
+
+# --- 8. Milestones de phase -----------------------------------------------------------------------
 # Dérives autour du milestone de phase (docs/10-workflow-git.md §3.4) : un ticket OUVERT sans
 # milestone (l'outillage pose la phase courante à la création — lib.sh current-milestone) ; un
 # milestone actif ENTIÈREMENT SOLDÉ (la phase est finie : sa fermeture — décision humaine, jamais
 # faite ici — est à faire pour que la phase suivante devienne la courante).
-section "7. Milestones de phase"
+section "8. Milestones de phase"
 ms_raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { milestones(state: active, sort: DUE_DATE_ASC, first: 20) { nodes { title stats { totalIssuesCount closedIssuesCount } } } } }')"
 if [ -z "$ms_raw" ]; then
   warn "milestones illisibles (API muette) — contrôle ignoré"
