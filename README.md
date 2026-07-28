@@ -83,8 +83,10 @@ installe les **prérequis** manquants (Python 3.11+, Node.js 20+, git, [`glab`](
 via winget / brew / apt), crée le **`.venv`** et y installe le paquet en éditable (`pip install -e ".[dev]"`),
 copie **`.env.example` vers `.env`**, active le **hook git** `commit-msg`, installe les dépendances
 **npm de `apps/web`**, complète **`.claude/settings.local.json`** (profil navigateur + serveurs MCP du
-dépôt) et monte le **runner CI de cette machine** (Docker + [`setup-runner.sh`](./scripts/gitlab/setup-runner.sh),
-sans lequel les pipelines de MR restent `pending` — [docs/10 §8](./docs/10-workflow-git.md)).
+dépôt) et monte le **runner CI de cette machine** (Docker + [`setup-runner.sh`](./scripts/gitlab/setup-runner.sh)).
+Ce runner-là est le **secours** : la CI de l'équipe est servie par un **runner partagé** monté une
+fois sur une machine qui reste allumée (`setup-runner.sh --partage`) — sans aucun runner en ligne,
+les pipelines de MR restent `pending` ([docs/10 §8.1](./docs/10-workflow-git.md)).
 
 Il est **idempotent** (relancé sur une machine prête, tout ressort en `DÉJÀ FAIT`) et **non
 destructif** : un `.env` existant n'est **jamais** écrasé, et `settings.local.json` est **fusionné
@@ -136,8 +138,12 @@ bash scripts/git/install-hooks.sh
 # 5. Dépendances de l'UI Control Tower
 cd apps/web && npm ci && cd ../..
 
-# 6. Runner CI de cette machine (Docker requis) — sinon les pipelines de MR restent `pending`
+# 6. Runner CI de cette machine (Docker requis) — secours quand le runner partagé est éteint
 bash scripts/gitlab/setup-runner.sh
+
+# 6 bis. À FAIRE UNE FOIS POUR L'ÉQUIPE, sur une machine qui reste allumée : le runner partagé,
+#        celui qui permet de merger quand tous les postes sont éteints (docs/10 §8.1)
+bash scripts/gitlab/setup-runner.sh --partage
 
 # 7. (optionnel) Bases locales PostgreSQL + Redis + Temporal — voir infra/README.md
 docker compose -f infra/docker-compose.yml up -d

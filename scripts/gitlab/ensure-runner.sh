@@ -1,24 +1,35 @@
 #!/usr/bin/env bash
-# Assure que le runner CI de projet local est EN LIGNE avant une opération qui dépend de la CI.
+# Assure qu'un runner CI de projet est EN LIGNE avant une opération qui dépend de la CI.
 #
 # Contexte (docs/10-workflow-git.md §8) : depuis #135 les runners partagés GitLab sont désactivés
-# (`shared_runners_enabled=false`), donc le runner de PROJET de la machine est l'UNIQUE cible des
-# pipelines. S'il est hors ligne, les jobs restent `pending` et le merge (pipeline vert requis) est
-# bloqué silencieusement. Ce helper, câblé dans les skills de clôture (/ticket-finish,
-# /pipeline-fix, donc /ticket-ship par ricochet), le remet en ligne d'office.
+# (`shared_runners_enabled=false`), donc les runners de PROJET du dépôt sont l'UNIQUE cible des
+# pipelines. Si aucun n'est en ligne, les jobs restent `pending` et le merge (pipeline vert requis)
+# est bloqué silencieusement. Ce helper, câblé dans les skills de clôture (/ticket-finish,
+# /pipeline-fix, donc /ticket-ship par ricochet), remet la CI en ligne d'office.
 #
-# Idempotent : no-op si le runner est déjà `online`. Sinon : démarre Docker Desktop si le démon
-# n'est pas actif, (re)démarre le conteneur du runner, puis poll jusqu'à `online`. En cas d'échec
-# (démon injoignable, timeout, glab non authentifié) il RENVOIE un code non nul avec un message —
-# jamais une exception bloquante : l'appelant (skill de clôture) doit enchaîner malgré tout
+# PLUSIEURS RUNNERS (#158) : le projet en compte désormais potentiellement plusieurs — un runner
+# PARTAGÉ hébergé sur une machine qui reste allumée, plus le runner LOCAL de chaque poste en
+# secours. N'importe lequel prend les jobs (tous non-taggés), donc le helper est un no-op DÈS QU'AU
+# MOINS UN est `online` : inutile de réveiller Docker sur un portable quand la CI est déjà servie.
+# Ce n'est que si AUCUN n'est en ligne qu'il monte celui de CETTE machine — résolu via
+# `MAESTRO_RUNNER_ID`, puis les réglages locaux, puis l'API (voir runner_id).
+#
+# Idempotent. Quand il doit agir : démarre Docker Desktop si le démon n'est pas actif, (re)démarre
+# le conteneur du runner, puis poll jusqu'à `online`. En cas d'échec (démon injoignable, timeout,
+# glab non authentifié) il RENVOIE un code non nul avec un message — jamais une exception
+# bloquante : l'appelant (skill de clôture) doit enchaîner malgré tout
 # (`bash scripts/gitlab/ensure-runner.sh || …`).
+#
+# `--strict` (ou MAESTRO_RUNNER_STRICT=1) cible le runner de CETTE machine et ignore les autres :
+# c'est ce que veut la mise en route (setup-runner.sh), qui rend compte du poste courant, pas de
+# l'état global de la CI.
 #
 # Le runner n'est pas CRÉÉ ici : sa création (côté GitLab + conteneur) est le rôle de
 # scripts/gitlab/setup-runner.sh, appelé par le parcours de mise en route (#146).
 #
 # Deux usages :
-#   1. Exécuté :   bash scripts/gitlab/ensure-runner.sh
-#   2. Sourcé :    . scripts/gitlab/ensure-runner.sh ; ensure_runner
+#   1. Exécuté :   bash scripts/gitlab/ensure-runner.sh [--strict]
+#   2. Sourcé :    . scripts/gitlab/ensure-runner.sh ; ensure_runner [--strict]
 #      (comme lib.sh, ce fichier n'impose pas son mode d'erreur quand il est sourcé : `set` n'est
 #       activé que dans la branche d'exécution directe.)
 
@@ -33,6 +44,8 @@ racine="$(cd "$here/../.." && pwd)"
 # runner_id() — variable d'environnement, puis réglages locaux, puis API GitLab.
 MAESTRO_RUNNER_ID="${MAESTRO_RUNNER_ID:-}"
 MAESTRO_RUNNER_NAME="${MAESTRO_RUNNER_NAME:-runner de projet}"   # ne sert qu'aux messages
+# 1 = ne considérer QUE le runner de cette machine (voir --strict dans l'en-tête).
+MAESTRO_RUNNER_STRICT="${MAESTRO_RUNNER_STRICT:-0}"
 # Nom du conteneur Docker hébergeant le gitlab-runner.
 MAESTRO_RUNNER_CONTAINER="${MAESTRO_RUNNER_CONTAINER:-gitlab-runner}"
 # Réglages locaux de Claude Code (non versionnés) où setup-runner.sh persiste l'id du runner.
@@ -81,25 +94,60 @@ runner_id_persiste() {
   printf '%s\n' "$id"
 }
 
-# 2. API GitLab : les runners de PROJET déclarés sur le dépôt. Un seul → c'est le nôtre. Plusieurs
-#    (un poste par personne) → celui dont la description porte le nom de cette machine, convention
-#    posée par setup-runner.sh. La paire « id + description » est extraite d'un seul motif : dans
-#    la réponse, `"id":<n>,"description":"…"` n'apparaît que sur les runners (l'objet imbriqué
-#    `created_by` a bien un `id`, mais suivi de `"username"`).
-runner_id_decouvert() {
-  local raw entrees id
+# Inventaire des runners de PROJET du dépôt, une ligne « <id>|<statut>|<description> » chacun.
+# Source unique du parsing (la découverte d'id et le contrôle « un runner est-il en ligne ? » en
+# dépendent tous les deux). La réponse arrive sur une seule ligne : on la redécoupe sur la frontière
+# entre deux runners (`},{"id":`) pour rester en shell pur, puis on lit chaque champ dans SON
+# enregistrement — indispensable depuis qu'ils sont plusieurs, un `grep -o` global mélangerait les
+# statuts. Le premier `"id"` d'un enregistrement est bien celui du runner : celui de l'objet
+# imbriqué `created_by` vient après.
+runners_projet() {
+  local raw ligne id statut desc
   raw="$(glab api "projects/$(gl_project_enc)/runners?type=project_type&per_page=100" 2>/dev/null)"
   [ -n "$raw" ] || return 1
-  entrees="$(printf '%s' "$raw" | grep -o '"id":[0-9]\+,"description":"[^"]*"')"
+  # `printf '%s\n'` et pas `'%s'` : la réponse de glab n'a pas de fin de ligne finale, et un
+  # `read` sur une dernière ligne non terminée renvoie non nul — le corps de boucle serait sauté.
+  # Le saut de ligne du remplacement sed est écrit en dur (« \ » suivi d'une vraie fin de ligne) :
+  # `\n` côté remplacement est une extension GNU que le sed de macOS ne comprend pas.
+  printf '%s\n' "$raw" \
+    | sed 's/},{"id":/}\
+{"id":/g' \
+    | while IFS= read -r ligne; do
+        id="$(printf '%s' "$ligne" | grep -o '"id":[0-9]\+' | head -1 | grep -o '[0-9]\+')"
+        [ -n "$id" ] || continue
+        statut="$(printf '%s' "$ligne" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)"
+        desc="$(printf '%s' "$ligne" | grep -o '"description":"[^"]*"' | head -1 | cut -d'"' -f4)"
+        printf '%s|%s|%s\n' "$id" "${statut:-inconnu}" "$desc"
+      done
+}
+
+# Premier runner de projet EN LIGNE, quelle que soit la machine qui l'héberge : « <id>|<description> »
+# sur la sortie standard, code non nul si aucun. C'est le contrôle qui rend ensure_runner no-op
+# quand le runner partagé fait déjà le travail (#158).
+runner_online_quelconque() {
+  local ligne
+  ligne="$(runners_projet | grep '|online|' | head -1)"
+  [ -n "$ligne" ] || return 1
+  printf '%s|%s\n' "${ligne%%|*}" "${ligne#*|online|}"
+}
+
+# 2. API GitLab : les runners de PROJET déclarés sur le dépôt. Un seul → c'est le nôtre. Plusieurs
+#    (le runner partagé + un par poste) → celui dont la description porte le nom de cette machine,
+#    convention posée par setup-runner.sh. On préfère le motif du runner LOCAL (`maestro-<machine>`)
+#    au simple nom de machine : sur l'hôte du runner partagé, les deux descriptions le contiennent.
+runner_id_decouvert() {
+  local entrees id
+  entrees="$(runners_projet)" || return 1
   [ -n "$entrees" ] || return 1
 
   if [ "$(printf '%s\n' "$entrees" | wc -l)" -eq 1 ]; then
-    printf '%s\n' "$entrees" | grep -o '[0-9]\+' | head -1
+    printf '%s\n' "${entrees%%|*}"
     return 0
   fi
-  id="$(printf '%s\n' "$entrees" | grep -F "$(machine_nom)" | head -1 | grep -o '[0-9]\+' | head -1)"
+  id="$(printf '%s\n' "$entrees" | grep -F "maestro-$(machine_nom)" | head -1 | cut -d'|' -f1)"
+  [ -n "$id" ] || id="$(printf '%s\n' "$entrees" | grep -F "$(machine_nom)" | head -1 | cut -d'|' -f1)"
   if [ -z "$id" ]; then
-    fail "plusieurs runners de projet et aucun au nom de cette machine ($(machine_nom)) — préciser MAESTRO_RUNNER_ID"
+    fail "plusieurs runners de projet et aucun au nom de cette machine ($(machine_nom)) — préciser MAESTRO_RUNNER_ID, ou monter le runner de ce poste (bash scripts/gitlab/setup-runner.sh)"
     return 1
   fi
   printf '%s\n' "$id"
@@ -184,12 +232,27 @@ ensure_container() {
   return 1
 }
 
-# Point d'entrée : remet le runner en ligne si besoin. 0 = en ligne, non nul = échec propre.
+# Point d'entrée : remet un runner en ligne si besoin. 0 = CI servie, non nul = échec propre.
+#   ensure_runner            n'importe quel runner de projet en ligne suffit (défaut)
+#   ensure_runner --strict   seul celui de CETTE machine compte
 ensure_runner() {
-  local id
+  local id strict="$MAESTRO_RUNNER_STRICT" deja
+  case "${1:-}" in
+    --strict) strict=1 ;;
+    "")       ;;
+    *)        fail "option inconnue : $1 (attendu : --strict)"; return 2 ;;
+  esac
+
   if ! gl_require_glab >/dev/null 2>&1; then
     fail "glab non authentifié — impossible de vérifier le runner (glab auth login)"
     return 1
+  fi
+
+  # Un autre runner du projet (typiquement le runner partagé toujours allumé) tient déjà la CI :
+  # ne rien démarrer ici — c'est tout l'intérêt d'en avoir un permanent (#158).
+  if [ "$strict" != 1 ] && deja="$(runner_online_quelconque)"; then
+    log "runner de projet #${deja%%|*} déjà en ligne (${deja#*|}) — rien à démarrer."
+    return 0
   fi
 
   if ! id="$(runner_id)"; then
@@ -234,6 +297,6 @@ ensure_runner() {
 # --- Exécution directe (pas quand sourcé) -------------------------------------------------------
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   set -uo pipefail
-  ensure_runner
+  ensure_runner "$@"
   exit $?
 fi
