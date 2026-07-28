@@ -363,6 +363,22 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   [`doctor.sh`](../scripts/gitlab/doctor.sh) (§6). Côté local, rien ne change pour
   `/branch-cleanup` : il supprime la branche **locale** et tolère une branche distante déjà
   supprimée.
+- **La revue est *best-effort*, pas bloquante.** À plusieurs, personne ne sait spontanément ce qui
+  attend qui : le projet garde donc `approvals_before_merge=0` (une approbation obligatoire
+  recréerait une dépendance entre personnes, et le merge resterait de toute façon humain) et joue
+  sur la **visibilité** — arbitrage du chantier #155.
+  - `/ticket-finish` **pose un relecteur** sur la MR : `bash scripts/gitlab/lib.sh set-reviewer`
+    choisit un **membre humain du projet distinct de l'auteur**, résolu via l'API des membres —
+    **aucun nom en dur** ; les comptes d'automatisation sont écartés par la variable `GL_BOT_USERS`
+    (défaut `MaestroAgents` : ce compte est un utilisateur GitLab ordinaire, `User.bot` y vaut
+    `false`, l'API seule ne suffit donc pas à l'exclure). La désignation **tourne** entre les
+    candidats (graine = iid de la MR : même MR → même relecteur, MR différentes → charge répartie)
+    et elle est **idempotente** : un relecteur déjà posé — par un humain ou par un passage
+    précédent — n'est **jamais** remplacé. Best-effort jusqu'au bout : sur un projet à une seule
+    personne, il n'y a pas de candidat et la clôture se poursuit sans relecteur.
+  - `/backlog` affiche la **file de revue** en tête (`bash scripts/gitlab/lib.sh review-queue`) :
+    MR ouvertes **la plus ancienne d'abord**, avec `age_j` (l'ancienneté, c'est elle qui déclenche
+    la relecture), l'état `draft`/`ready`, le statut du pipeline, l'auteur et le relecteur.
 - **Une MR au pipeline rouge n'est pas mergeable.** Le réglage projet
   `only_allow_merge_if_pipeline_succeeds=true` (complété par `allow_merge_on_skipped_pipeline=false`)
   fait appliquer par **GitLab lui-même** la règle « pipeline vert avant merge » (§8) : le bouton de

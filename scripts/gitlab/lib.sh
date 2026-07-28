@@ -23,6 +23,17 @@ GL_DUE_DELAY_HAUTE="${GL_DUE_DELAY_HAUTE:-2}"
 GL_DUE_DELAY_MOYENNE="${GL_DUE_DELAY_MOYENNE:-5}"
 GL_DUE_DELAY_BASSE="${GL_DUE_DELAY_BASSE:-10}"
 
+# Revue best-effort (voir la section « Revue » plus bas) : comptes d'AUTOMATISATION à ne jamais
+# désigner comme relecteur, séparés par des virgules. Le compte de l'agent Maestro n'est pas un
+# « bot » au sens de GitLab (`User.bot` y vaut false : c'est un compte utilisateur ordinaire), il ne
+# peut donc pas être écarté par l'API seule. Cette liste est une CONFIGURATION d'instance — c'est le
+# compte à exclure qui est nommé, jamais le relecteur, qui reste résolu dynamiquement.
+GL_BOT_USERS="${GL_BOT_USERS:-MaestroAgents}"
+
+# Niveau d'accès minimal d'un relecteur (30 = Developer) : en dessous, le membre ne peut ni pousser
+# ni merger, donc le désigner n'aurait pas de sens.
+GL_REVIEWER_MIN_ACCESS="${GL_REVIEWER_MIN_ACCESS:-30}"
+
 # Retry des LECTURES GraphQL (voir gl_graphql_read) : l'endpoint GraphQL de GitLab renvoie
 # parfois une réponse vide (hoquet réseau / rate-limit). On ré-essaie jusqu'à GL_GQL_RETRIES
 # tentatives, avec GL_GQL_RETRY_DELAY seconde(s) de pause entre deux. Surchargeable.
@@ -1039,6 +1050,208 @@ gl_pipeline_wait() {
   done
 }
 
+# --- Revue best-effort : relecteur désigné + file de revue ---------------------------------------
+# Arbitrage du chantier « travail à plusieurs » (#155/#161) : l'approbation n'est PAS rendue
+# obligatoire (`approvals_before_merge` reste à 0 — une approbation bloquante recréerait une
+# dépendance entre personnes et le merge reste une décision humaine, §6). Ce qui est outillé, c'est
+# la VISIBILITÉ : chaque MR porte un relecteur désigné (gl_set_reviewer, posé par /ticket-finish) et
+# la file d'attente est affichée en tête de /backlog (gl_review_queue).
+
+# gl_project_humans [access-min] -> membres HUMAINS du projet éligibles à une revue, une ligne TSV
+# par membre : username <TAB> access_level, triés par username (ordre stable, d'où la reproductibilité
+# de gl_pick_reviewer). Sont écartés : les bots GitLab (`User.bot`), les comptes non actifs, les
+# comptes d'automatisation listés dans GL_BOT_USERS, et les niveaux d'accès < access-min
+# (défaut GL_REVIEWER_MIN_ACCESS). Membres directs ET hérités du groupe.
+gl_project_humans() {
+  local min="${1:-$GL_REVIEWER_MIN_ACCESS}" raw
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { projectMembers(relations:[DIRECT,INHERITED], first:100) { nodes { accessLevel { integerValue } user { username bot state } } } } }')" || return 1
+  printf '%s\n' "$raw" | awk -v min="$min" -v bots=",$GL_BOT_USERS," '
+    {
+      n = split($0, parts, /\{"accessLevel":\{"integerValue":/)
+      for (i = 2; i <= n; i++) {
+        node = parts[i]
+        match(node, /^[0-9]+/); lvl = substr(node, RSTART, RLENGTH) + 0
+        if (lvl < min) continue
+        if (node ~ /"bot":true/) continue
+        if (node !~ /"state":"active"/) continue
+        if (!match(node, /"username":"[^"]*"/)) continue
+        u = substr(node, RSTART, RLENGTH); sub(/^"username":"/, "", u); sub(/"$/, "", u)
+        if (index(bots, "," u ",")) continue
+        printf "%s\t%s\n", u, lvl
+      }
+    }
+  ' | sort -u
+}
+
+# gl_pick_reviewer [auteur] [graine] -> imprime le username d'un relecteur humain DIFFÉRENT de
+# l'auteur (défaut : l'utilisateur glab courant). Aucun nom n'est codé en dur : les candidats
+# viennent de l'API des membres (gl_project_humans).
+# La graine (l'iid de la MR en pratique) sert de ROTATION : même MR -> même relecteur (la pose est
+# donc reproductible et idempotente), MR différentes -> relecteurs répartis plutôt que toujours le
+# même. Code 1 si aucun candidat (projet à une seule personne) : l'appelant continue sans relecteur,
+# la revue est best-effort.
+gl_pick_reviewer() {
+  local auteur="${1:-}" graine="${2:-0}"
+  [ -n "$auteur" ] || auteur="$(gl_current_user 2>/dev/null)"
+  local candidats n idx
+  candidats="$(gl_project_humans | awk -F'\t' -v a="$auteur" '$1 != a { print $1 }')" || return 1
+  n="$(printf '%s\n' "$candidats" | grep -c .)"
+  if [ "$n" -eq 0 ]; then
+    echo "gl_pick_reviewer : aucun relecteur humain disponible (hors auteur « ${auteur:-?} » et comptes d'automatisation « $GL_BOT_USERS »)" >&2
+    return 1
+  fi
+  graine="$(printf '%s' "$graine" | tr -cd '0-9')"
+  [ -n "$graine" ] || graine=0
+  idx=$(( graine % n + 1 ))
+  printf '%s\n' "$candidats" | sed -n "${idx}p"
+}
+
+# gl_mr_iid [mr|branche] -> imprime l'iid de la MR OUVERTE désignée : un nombre est rendu tel quel,
+# un nom de branche est résolu via l'API (défaut : la branche courante). Code 1 si aucune MR ouverte.
+gl_mr_iid() {
+  local ref="${1:-}"
+  [ -n "$ref" ] || ref="$(git branch --show-current 2>/dev/null)"
+  if [ -z "$ref" ]; then echo "gl_mr_iid : ni MR ni branche à résoudre" >&2; return 2; fi
+  case "$ref" in
+    *[!0-9]*) ;;
+    *) printf '%s\n' "$ref"; return 0 ;;
+  esac
+  local iid
+  iid="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { mergeRequests(state: opened, sourceBranches:["'"$ref"'"], first:1) { nodes { iid } } } }' \
+        | grep -o '"iid":"[0-9]*"' | head -1 | sed 's/.*:"//; s/"//')"
+  if [ -z "$iid" ]; then echo "Aucune MR ouverte pour la branche « $ref » dans $GL_PROJECT" >&2; return 1; fi
+  printf '%s\n' "$iid"
+}
+
+# gl_mr_review_info <mr|branche> -> « auteur <TAB> relecteurs » (relecteurs séparés par des virgules,
+# champ vide si aucun). Une seule lecture GraphQL, parsing shell pur.
+gl_mr_review_info() {
+  local ref="${1:-}" mr raw auteur rev
+  mr="$(gl_mr_iid "$ref")" || return 1
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { mergeRequest(iid:"'"$mr"'") { author { username } reviewers { nodes { username } } } } }')" || return 1
+  case "$raw" in
+    *'"reviewers"'*) ;;
+    *) echo "gl_mr_review_info : MR !$mr illisible dans $GL_PROJECT" >&2; return 1 ;;
+  esac
+  auteur="$(printf '%s' "$raw" | grep -o '"author":{"username":"[^"]*"' | head -1 | sed 's/.*"username":"//; s/"$//')"
+  # Les relecteurs se lisent APRÈS la clé "reviewers" : l'auteur, lu plus haut, ne doit pas y entrer.
+  rev="$(printf '%s' "$raw" | sed 's/.*"reviewers"//' | grep -o '"username":"[^"]*"' \
+         | sed 's/.*"username":"//; s/"$//' | awk '{ out = (NR == 1 ? $0 : out "," $0) } END { if (NR) print out }')"
+  printf '%s\t%s\n' "$auteur" "$rev"
+}
+
+# gl_mr_reviewers <mr|branche> -> relecteurs actuellement posés sur la MR (CSV, vide si aucun).
+gl_mr_reviewers() {
+  local info
+  info="$(gl_mr_review_info "$@")" || return 1
+  printf '%s\n' "$info" | cut -f2
+}
+
+# gl_set_reviewer [mr|branche] [username] -> pose un relecteur humain sur la MR (défaut : la MR
+# ouverte de la branche courante ; relecteur choisi par gl_pick_reviewer, graine = iid de la MR).
+# IDEMPOTENT et non destructif : si un relecteur est DÉJÀ posé (par un humain ou par un passage
+# précédent), il est conservé tel quel — la fonction ne remplace jamais. Refuse de désigner l'auteur.
+# Best-effort par nature : sur un projet à une seule personne, elle échoue proprement (code 1) et
+# l'appelant poursuit sans relecteur.
+gl_set_reviewer() {
+  local ref="${1:-}" who="${2:-}" mr info auteur rev out
+  mr="$(gl_mr_iid "$ref")" || return 1
+  info="$(gl_mr_review_info "$mr")" || return 1
+  IFS=$'\t' read -r auteur rev <<< "$info"
+  if [ -n "$rev" ]; then
+    printf 'MR !%s : relecteur déjà posé (@%s) — inchangé.\n' "$mr" "$rev"
+    return 0
+  fi
+  if [ -z "$who" ]; then
+    who="$(gl_pick_reviewer "$auteur" "$mr")" || return 1
+  fi
+  if [ "$who" = "$auteur" ]; then
+    echo "gl_set_reviewer : @$who est l'auteur de la MR !$mr — le relecteur doit en être distinct." >&2
+    return 1
+  fi
+  out="$(glab mr update "$mr" --reviewer "$who" 2>&1)" || {
+    echo "gl_set_reviewer : échec de la pose du relecteur @$who sur !$mr : $out" >&2
+    return 1
+  }
+  printf 'MR !%s : relecteur → @%s (auteur @%s).\n' "$mr" "$who" "$auteur"
+}
+
+# gl_review_queue -> file des MR OUVERTES en attente de revue, la plus ANCIENNE d'abord, une ligne
+# TSV par MR (en-tête préfixée « # » à ignorer côté machine) :
+#     mr <TAB> age_j <TAB> etat <TAB> pipeline <TAB> auteur <TAB> relecteur <TAB> branche <TAB> titre
+# `age_j` = jours écoulés depuis la création (c'est l'ancienneté qui déclenche la relecture),
+# `etat` ∈ draft|ready, `pipeline` = statut du dernier pipeline en minuscules (success/failed/
+# running/…, « - » si aucun), `relecteur` = CSV des relecteurs posés (« - » si personne).
+# Le préfixe « Draft: » du titre est retiré : l'information est déjà dans la colonne `etat`.
+gl_review_queue() {
+  local raw lignes
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { mergeRequests(state: opened, sort: CREATED_ASC, first: 50) { nodes { iid title createdAt draft sourceBranch author { username } reviewers { nodes { username } } headPipeline { status } } } } }')" || return 1
+  printf '# mr\tage_j\tetat\tpipeline\tauteur\trelecteur\tbranche\ttitre\n'
+  # 1re passe (awk) : projection des champs. 2e passe (shell) : l'ancienneté, calculée par `date`
+  # via gl_elapsed_days — mktime() n'existe pas dans tous les awk (mawk), on ne s'y appuie pas.
+  lignes="$(printf '%s\n' "$raw" | awk '
+    {
+      n = split($0, parts, /\{"iid":"/)
+      for (i = 2; i <= n; i++) {
+        node = parts[i]
+        match(node, /^[0-9]+/); iid = substr(node, RSTART, RLENGTH)
+
+        titre = "-"
+        if (match(node, /","title":"/)) {
+          rest = substr(node, RSTART + RLENGTH)
+          if (match(rest, /","createdAt":"/)) titre = substr(rest, 1, RSTART - 1)
+        }
+        gsub(/\\u0026/, "\\&", titre); gsub(/\\u003e/, ">", titre); gsub(/\\u003c/, "<", titre)
+        sub(/^Draft: /, "", titre)
+
+        cree = "-"
+        if (match(node, /"createdAt":"[0-9-]+/)) {
+          cree = substr(node, RSTART, RLENGTH); sub(/^"createdAt":"/, "", cree)
+        }
+
+        etat = (node ~ /"draft":true/) ? "draft" : "ready"
+
+        branche = "-"
+        if (match(node, /"sourceBranch":"[^"]*"/)) {
+          branche = substr(node, RSTART, RLENGTH); sub(/^"sourceBranch":"/, "", branche); sub(/"$/, "", branche)
+        }
+
+        auteur = "-"
+        if (match(node, /"author":\{"username":"[^"]*"/)) {
+          auteur = substr(node, RSTART, RLENGTH); sub(/^.*"username":"/, "", auteur); sub(/"$/, "", auteur)
+        }
+
+        # Relecteurs : uniquement ceux du bloc "reviewers" de CE nœud (l auteur est déjà consommé).
+        rel = "-"
+        if (match(node, /"reviewers":\{"nodes":\[[^]]*\]/)) {
+          bloc = substr(node, RSTART, RLENGTH); liste = ""
+          while (match(bloc, /"username":"[^"]*"/)) {
+            u = substr(bloc, RSTART, RLENGTH); sub(/^"username":"/, "", u); sub(/"$/, "", u)
+            liste = (liste == "" ? u : liste "," u)
+            bloc = substr(bloc, RSTART + RLENGTH)
+          }
+          if (liste != "") rel = liste
+        }
+
+        pipe = "-"
+        if (match(node, /"headPipeline":\{"status":"[A-Z_]*"/)) {
+          pipe = substr(node, RSTART, RLENGTH); sub(/^.*"status":"/, "", pipe); sub(/"$/, "", pipe)
+          pipe = tolower(pipe)
+        }
+
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", iid, cree, etat, pipe, auteur, rel, branche, titre
+      }
+    }
+  ')"
+  [ -n "$lignes" ] || return 0
+  local mr cree etat pipe auteur rel branche titre age
+  while IFS=$'\t' read -r mr cree etat pipe auteur rel branche titre; do
+    [ -n "$mr" ] || continue
+    age="$(gl_elapsed_days "$cree" 2>/dev/null)" || age="-"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$mr" "$age" "$etat" "$pipe" "$auteur" "$rel" "$branche" "$titre"
+  done <<< "$lignes"
+}
+
 # --- Nettoyage des branches locales -------------------------------------------------------------
 # gl_mr_state <branche> -> imprime l'état de la MR associée à la branche (opened|closed|merged),
 # vide si aucune MR n'est trouvée.
@@ -1231,6 +1444,12 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     start-dates)    gl_start_dates "$@" ;;
     log-time)       gl_log_time "$@" ;;
     mr-state)       gl_mr_state "$@" ;;
+    project-humans) gl_project_humans "$@" ;;
+    pick-reviewer)  gl_pick_reviewer "$@" ;;
+    mr-iid)         gl_mr_iid "$@" ;;
+    mr-reviewers)   gl_mr_reviewers "$@" ;;
+    set-reviewer)   gl_set_reviewer "$@" ;;
+    review-queue)   gl_review_queue "$@" ;;
     cleanup-merged) gl_cleanup_merged "$@" ;;
     branch-for)     gl_branch_for "$@" ;;
     start-branch)   gl_start_branch "$@" ;;
@@ -1285,6 +1504,13 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  Branches :" >&2
       echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
+      echo "  Revue best-effort (relecteur désigné + file de revue) :" >&2
+      echo "    review-queue                     (MR ouvertes en attente de revue, la plus ancienne d'abord — TSV)" >&2
+      echo "    set-reviewer [mr|branche] [user] (pose un relecteur humain ≠ auteur ; idempotent, ne remplace jamais)" >&2
+      echo "    mr-reviewers [mr|branche]        (relecteurs posés, CSV — vide si aucun)" >&2
+      echo "    pick-reviewer [auteur] [graine]  (choisit un relecteur humain, rotation par graine)" >&2
+      echo "    project-humans [access-min]      (membres humains éligibles : username/niveau, TSV)" >&2
+      echo "    mr-iid [mr|branche]              (iid de la MR ouverte — défaut : branche courante)" >&2
       echo "  Pipelines CI :" >&2
       echo "    pipeline-latest <ref>            (id/status/sha/url du dernier pipeline de la branche)" >&2
       echo "    pipeline-status <pipeline-id>    (statut courant)" >&2

@@ -28,16 +28,28 @@ n'ouvrir qu'en cas de doute.
    (quelqu'un se l'est attribué sans l'avoir démarré), et un « En cours » assigné est en travail —
    `/ticket-start` refuse de le démarrer.
 
-3. Récupère les Merge Requests ouvertes pour enrichir la vue « prêt à merger » :
-   `glab mr list --output json`. Pour chaque MR, note `iid`, `title`, `state`, le caractère brouillon
-   (`draft`/`work_in_progress`) et `source_branch`. Rattache une MR à son ticket via l'`iid` extrait
-   du nom de branche (`<type>/<iid>-<slug>`).
+3. Récupère la **file de revue** — les MR ouvertes en attente de relecture :
+   `bash scripts/gitlab/lib.sh review-queue`. Sortie **TSV**, une ligne d'en-tête préfixée `#` (à
+   ignorer) puis une ligne par MR, **la plus ancienne d'abord** : `mr`, `age_j` (jours écoulés
+   depuis la création), `etat` (`draft`/`ready`), `pipeline` (statut du dernier pipeline, `-` si
+   aucun), `auteur`, `relecteur` (CSV des relecteurs posés, `-` si personne), `branche`, `titre`.
+   Rattache une MR à son ticket via l'`iid` extrait du nom de branche (`<type>/<iid>-<slug>`).
 
-4. Rends un **compte rendu Markdown** clair, groupé par **statut natif**, dans cet ordre (le plus
+4. Rends un **compte rendu Markdown** clair. Commence par le bloc **⏳ MR en attente de revue**,
+   **en tête de sortie** : c'est lui qui déclenche la relecture. Une ligne par MR de la file, dans
+   l'ordre rendu (la plus ancienne d'abord) : `!<mr>` — titre, `#<iid>` du ticket, **ancienneté**
+   (`ouverte depuis <age_j> j`), état `draft`/`ready`, pipeline, et le relecteur (`à relire par
+   @<relecteur>`, ou **« aucun relecteur »** — anomalie à signaler, `/ticket-finish` en pose un).
+   Mets en évidence les MR les plus **anciennes** (celles qui traînent) et celles au **pipeline
+   rouge** (non mergeables en l'état). La revue est **best-effort** : un relecteur désigné n'est pas
+   une approbation obligatoire, et le merge reste une décision humaine.
+   Enchaîne ensuite sur le backlog groupé par **statut natif**, dans cet ordre (le plus
    actionnable d'abord) :
    1. **🔍 En revue** — action humaine attendue (merge). Pour chaque ticket, affiche
       `#<iid> — <titre>` puis, si une MR est rattachée : son état (Draft/Ready) et un lien
-      `!<iid-mr>`. C'est la section « prêt à merger / attend une revue ».
+      `!<iid-mr>`. C'est la section « prêt à merger / attend une revue » — vue côté **tickets**,
+      là où le bloc ⏳ de tête est la vue côté **MR** ; ne répète pas ici l'ancienneté ni le
+      relecteur. Signale un ticket « En revue » **sans MR** (dérive — cf. `doctor.sh`).
    2. **🛠 En cours** — c'est ici que se lit qui travaille sur quoi : mets l'assigné en évidence
       (`pris par @<assigne>`), et signale les tickets « En cours » **sans** assigné, anomalie à
       corriger (statut posé à la main ou assignation perdue).
@@ -51,9 +63,10 @@ n'ouvrir qu'en cas de doute.
    `prio::` (haute → moyenne → basse) puis par iid.
 
 5. Termine par une **synthèse chiffrée** : nombre de tickets par statut, **combien sont libres**
-   (« À faire » sans assigné) et la répartition des « En cours » par personne, plus un rappel des
-   actions suggérées (ex. « 2 en revue à merger », « 3 tickets libres à prendre »). N'invente pas
-   de chiffres : ne compte que ce que la table contient. Rappelle que le merge reste une décision
+   (« À faire » sans assigné), la répartition des « En cours » par personne, ainsi que le nombre de
+   **MR en attente de revue** et l'ancienneté de la plus vieille, plus un rappel des actions
+   suggérées (ex. « 2 MR à relire, la plus ancienne depuis 4 j », « 3 tickets libres à prendre »).
+   N'invente pas de chiffres : ne compte que ce que la table contient. Rappelle que le merge reste une décision
    humaine et propose `/mr-review <mr>` pour inspecter une MR précise avant de merger.
 
 Ne lance aucune commande d'écriture (`glab issue update`, `mr merge`, `set-status`, `git push`…) :
