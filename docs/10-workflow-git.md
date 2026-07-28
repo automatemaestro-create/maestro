@@ -354,6 +354,15 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 - **Aucun force-push** sur une branche déjà poussée.
 - Une branche (locale ou distante) n'est supprimée que si **GitLab confirme que sa MR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
 - Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par GitLab.
+- **La suppression de la branche source est portée par la MR elle-même.** `/ticket-finish` crée la
+  MR avec `--remove-source-branch` : la case « Supprimer la branche source » est cochée d'office,
+  et c'est **GitLab** qui supprime la branche **distante** au merge. Le drapeau est posé sur la MR
+  plutôt que hérité du seul défaut projet `remove_source_branch_after_merge=true` — lui aussi
+  provisionné par [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh), mais en *best-effort* (l'échec
+  du PUT est avalé), donc insuffisant comme unique garantie ; sa dérive est désormais signalée par
+  [`doctor.sh`](../scripts/gitlab/doctor.sh) (§6). Côté local, rien ne change pour
+  `/branch-cleanup` : il supprime la branche **locale** et tolère une branche distante déjà
+  supprimée.
 - **Une MR au pipeline rouge n'est pas mergeable.** Le réglage projet
   `only_allow_merge_if_pipeline_succeeds=true` (complété par `allow_merge_on_skipped_pipeline=false`)
   fait appliquer par **GitLab lui-même** la règle « pipeline vert avant merge » (§8) : le bouton de
@@ -402,7 +411,7 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 - **Bilan de santé** : [`bash scripts/gitlab/doctor.sh`](../scripts/gitlab/doctor.sh) (lecture seule)
   vérifie auth, labels, statuts du lifecycle résolvables par nom, et **détecte les dérives**
   (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à
-  nettoyer, réglage de merge « pipeline vert » retombé — §6). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
+  nettoyer, réglages de merge « pipeline vert » ou « suppression de la branche source » retombés — §6). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
   dérives — utile en CI).
 - **Hooks git** : posés par `scripts/setup.sh` (étape `hooks`), qui délègue à
   `bash scripts/git/install-hooks.sh` — lançable seul, une fois par clone. Active le hook
