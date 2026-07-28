@@ -257,6 +257,10 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
      committer → utiliser `/ticket-finish`) ou **en conflit**, et **jamais sur `main`**. Le hook
      `commit-msg` (§2) reste appliqué — pas de `--no-verify`. Pensé pour la **boucle d'orchestration**
      (ticket #34) : moins d'allers-retours manuels à chaque clôture.
+   - **Garde-fou commun aux deux** : avant la moindre écriture, elles vérifient que le ticket visé
+     est bien celui de la session — iid cohérent avec la branche courante, ticket non assigné à
+     quelqu'un d'autre (`lib.sh close-guard`, §6). Sinon elles s'arrêtent en nommant le motif ;
+     seule une demande explicite de l'utilisateur permet de passer outre.
    - Dans les deux cas, la clôture passe par **ces commandes et rien d'autre** : ne pas
      ré-implémenter le cycle à la main (`git commit`/`git push`/`glab mr create` ad hoc) — elles en
      sont la source unique (ticket #37).
@@ -395,6 +399,31 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   commun, `4` en retard **avec** conflit probable, `2` usage, `1` état illisible. L'heuristique est
   volontairement grossière (git seul tranche vraiment) : elle vise les **fichiers aimants**
   touchés par presque tous les tickets — `CLAUDE.md`, ce document, `scripts/gitlab/lib.sh`.
+- **Aucune clôture d'un ticket que la session ne traite pas.** `/ticket-finish` et `/ticket-ship`
+  vérifient, **avant toute écriture** (commit, push, MR, statut, relecteur, temps), que le ticket
+  visé est bien celui de la session : `bash scripts/gitlab/lib.sh close-guard <iid> [branche]`.
+  C'est le pendant en *sortie* de l'anti-collision d'entrée de `/ticket-start` (`issue-taken`, §5) —
+  sans lui, un `/ticket-finish 158` lancé depuis `chore/163-…` faisait basculer **#158** « En
+  revue », y accrochait la MR de la branche de #163, un relecteur et le temps d'un travail qui
+  n'était pas le sien ; via `/ticket-ship`, le commit généré portait en plus un `Closes #158` qui
+  aurait fermé le ticket d'un autre au merge. Deux contrôles, de force très inégale :
+  - **cohérence iid ↔ branche courante** (motif `<type>/<iid>-<slug>`, §1) — purement local, donc
+    toujours disponible : c'est le contrôle **fort**, la branche étant le seul témoin fiable de ce
+    que la session travaille réellement ;
+  - **propriété du ticket** (assignés, via `issue-owner`) — contrôle **faible** tant que l'équipe
+    partage un même compte `glab` (le bot `MaestroAgents`, cf. `GL_BOT_USERS`) : il n'attrape que
+    les tickets assignés à une **personne nommée**, jamais deux sessions du même compte.
+
+  Codes de retour : `0` cohérent, `3` la branche porte un **autre** ticket, `4` ticket assigné à
+  quelqu'un d'autre, `5` branche sans iid (`main`, nom hors convention) — cohérence invérifiable,
+  `1` ticket illisible (verdict **partiel** : le contrôle local est passé, on signale et on
+  poursuit), `2` usage ; priorité `3 > 4 > 5`. Une lecture dégradée ne vaut **pas** « ticket
+  libre » : `issue-owner` échoue franchement quand le projet est illisible (`"project":null`)
+  plutôt que de rendre des champs vides, que l'appelant lirait comme un feu vert. Le helper reste
+  **consultatif** — il n'écrit rien, ce sont les commandes qui refusent — et le refus est
+  **franchissable sur demande explicite** de l'utilisateur (reprise assumée d'un ticket laissé en
+  plan par quelqu'un qui a lâché le sujet), **jamais en silence** : il est alors rappelé dans le
+  résumé de clôture.
 - Une branche (locale ou distante) n'est supprimée que si **GitLab confirme que sa MR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
 - Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par GitLab.
 - **La suppression de la branche source est portée par la MR elle-même.** `/ticket-finish` crée la
@@ -465,7 +494,8 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
   [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels glab
   (résolution work-item, statut par nom, **listing du backlog** avec statut natif, slug, préfixe de
   branche, **sous-tickets** — `issue-link`/`parent-of`/`subtickets`, §5.1 —, **démarrage de
-  ticket** — `start-brief`/`begin`, §5 — et **retard sur `origin/main`** — `behind-main`, §6).
+  ticket** — `start-brief`/`begin`, §5 —, **retard sur `origin/main`** — `behind-main`, §6 — et
+  **garde-fou de clôture** — `close-guard`/`branch-iid`, §6).
   Il est **sourçable**
   (`. scripts/gitlab/lib.sh`) et **exécutable en sous-commandes**
   (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`, `… backlog opened`) — pratique pour les

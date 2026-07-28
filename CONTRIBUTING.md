@@ -142,7 +142,11 @@ Ce qu'aucune commande — et personne — ne fait automatiquement :
 - **merger ou fermer une MR** ;
 - **force-push** une branche déjà poussée (`--force`, `--force-with-lease`) ;
 - **supprimer une branche** dont GitLab ne confirme pas la MR comme `merged` ;
-- **committer sur `main`**.
+- **committer sur `main`** ;
+- **clôturer un ticket qui n'est pas celui de la session** : `/ticket-finish` et `/ticket-ship`
+  s'arrêtent avant toute écriture si l'iid visé ne correspond pas à la branche courante, ou si le
+  ticket est assigné à quelqu'un d'autre — de sorte qu'on ne pose jamais une MR, un statut ni un
+  temps sur le travail d'un collègue.
 
 Ces règles sont doublées par la couche permissions de [`.claude/settings.json`](./.claude/settings.json)
 (`deny` sur les force-push et `glab mr merge`/`close`) — un filet, pas un remplacement du jugement.

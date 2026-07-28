@@ -227,6 +227,10 @@ gl_issue_owner() {
   # aussi, légitimement, sur un ticket sans assigné.
   case "$raw" in
     *'"workItems":{"nodes":[]}'*) echo "gl_issue_owner : ticket #$iid introuvable dans $GL_PROJECT" >&2; return 1 ;;
+    # Projet inconnu (ou droits insuffisants) : GraphQL répond « "project":null » avec un code 0.
+    # Sans ce cas, la fonction imprimerait deux champs vides — lus par l'appelant comme « ticket
+    # libre », c'est-à-dire un feu vert (gl_close_guard, gl_start_brief). Mieux vaut l'erreur.
+    *'"project":null'*) echo "gl_issue_owner : projet $GL_PROJECT illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
   esac
   statut="$(printf '%s' "$raw" | grep -o '"status":{"name":"[^"]*"' | head -1 | sed 's/.*"name":"//; s/"$//')"
   assignes="$(printf '%s' "$raw" | grep -o '"username":"[^"]*"' | sed 's/.*"username":"//; s/"$//' \
@@ -1565,6 +1569,106 @@ gl_behind_main() {
   return 3
 }
 
+# --- Garde-fou de clôture : la session traite-t-elle bien ce ticket ? ----------------------------
+# gl_branch_iid [branche] -> imprime l'iid porté par le NOM de la branche (motif
+# `<type>/<iid>-<slug>`, docs/10 §2), et rien (code 1) si le nom n'en porte pas — `main`, branche
+# hors convention, HEAD détachée. Purement local : aucune lecture GitLab, donc disponible sans
+# réseau et vérifiable sans dépôt distant.
+gl_branch_iid() {
+  local branche="${1:-}" iid
+  branche="${branche:-$(git branch --show-current 2>/dev/null)}"
+  [ -n "$branche" ] || return 1
+  # Le slug est toléré absent (`chore/164`) : c'est l'iid qui porte l'information.
+  iid="$(printf '%s\n' "$branche" | sed -n 's|^[a-z]\{1,\}/\([0-9]\{1,\}\)\(-.*\)\{0,1\}$|\1|p')"
+  [ -n "$iid" ] || return 1
+  printf '%s\n' "$iid"
+}
+
+# gl_close_guard <iid> [branche] -> « cette session traite-t-elle vraiment ce ticket ? », à
+# consulter AVANT toute écriture de /ticket-finish et /ticket-ship (commit, push, MR, statut,
+# relecteur, temps). C'est le pendant en SORTIE du garde-fou d'entrée de /ticket-start
+# (gl_issue_taken, #159) : rien n'empêchait jusqu'ici un `/ticket-finish 158` lancé depuis
+# `chore/163-…` de faire basculer #158 « En revue » et d'y logger le temps du travail d'un autre,
+# ni une session ayant récupéré la branche d'un collègue de clôturer à sa place.
+#
+# Deux contrôles, de force très inégale :
+#   1. cohérence iid ↔ branche courante — LOCAL, toujours disponible, c'est le contrôle FORT :
+#      la branche est le seul témoin fiable de ce que la session travaille réellement ;
+#   2. propriété du ticket (assignés, via gl_issue_owner) — une lecture GitLab, contrôle FAIBLE
+#      tant que l'équipe partage un même compte glab (le bot, cf. GL_BOT_USERS) : il n'attrape que
+#      les tickets assignés à une personne nommée. Il reste utile — c'est exactement le cas d'un
+#      ticket pris à la main par un humain — mais ne doit jamais être le seul filet.
+#
+# Comme gl_behind_main, la fonction est CONSULTATIVE : elle n'écrit rien, imprime son constat et
+# laisse la décision à l'appelant — le refus reste franchissable sur demande explicite de
+# l'utilisateur (reprise assumée d'un ticket laissé en plan), jamais en silence.
+#
+# Codes de retour, pour l'appelant :
+#   0 = cohérent, rien à signaler         3 = la branche porte un AUTRE ticket
+#   4 = ticket assigné à quelqu'un d'autre
+#   5 = branche sans iid (`main`, hors convention) — cohérence invérifiable
+#   1 = ticket illisible (GitLab injoignable) : verdict partiel, à signaler sans bloquer
+#   2 = usage
+# Priorité quand plusieurs constats tombent : 3 > 4 > 5. Appeler en
+# `bash … close-guard <iid> || verdict=$?` pour ne pas interrompre une clôture sous `set -e`.
+gl_close_guard() {
+  local iid="$1" branche="${2:-}" iid_branche owner statut assignes moi
+  local decalage=0 tiers=0 inverifiable=0
+  if [ -z "$iid" ]; then echo "usage: gl_close_guard <iid> [branche]" >&2; return 2; fi
+  branche="${branche:-$(git branch --show-current 2>/dev/null)}"
+  if [ -z "$branche" ]; then
+    echo "gl_close_guard : branche indéterminée (HEAD détachée ?) — la préciser en argument." >&2
+    return 2
+  fi
+
+  # 1. Cohérence iid ↔ branche (local).
+  iid_branche="$(gl_branch_iid "$branche")" || iid_branche=""
+  if [ -z "$iid_branche" ]; then
+    printf "⚠ branche « %s » : aucun iid dans son nom — cohérence avec #%s invérifiable.\n" "$branche" "$iid"
+    printf "  (convention « <type>/<iid>-<slug> », docs/10 §2 ; sur main aucune clôture n'a lieu d'être)\n"
+    inverifiable=1
+  elif [ "$iid_branche" != "$iid" ]; then
+    printf "⚠ décalage ticket ↔ branche : « %s » porte le ticket #%s, pas #%s.\n" "$branche" "$iid_branche" "$iid"
+    printf "  clôturer #%s d'ici poserait la MR de #%s sur #%s — statut, relecteur et temps compris.\n" \
+      "$iid" "$iid_branche" "$iid"
+    printf "  cette session peut clôturer #%s ; pour #%s, reprendre sa branche (bash scripts/gitlab/lib.sh branch-for %s).\n" \
+      "$iid_branche" "$iid" "$iid"
+    decalage=1
+  else
+    printf "ticket #%s ↔ branche « %s » : cohérents.\n" "$iid" "$branche"
+  fi
+
+  # 2. Propriété du ticket (une lecture GitLab). Son échec ne masque jamais le constat local.
+  owner="$(gl_issue_owner "$iid" 2>/dev/null)" || owner=""
+  # Une lecture muette (deux champs vides) ne vaut PAS « ticket libre » : un ticket réel porte
+  # toujours un statut (« À faire » par défaut). Sans ce test, une réponse dégradée passerait pour
+  # un feu vert — le sens du doute doit aller vers le refus, pas vers l'écriture.
+  if [ -z "${owner//[[:space:]]/}" ]; then
+    printf "  propriété de #%s : indéterminée (ticket illisible — GitLab injoignable ?).\n" "$iid"
+    [ "$decalage" -eq 1 ] && return 3
+    [ "$inverifiable" -eq 1 ] && return 5
+    return 1
+  fi
+  IFS=$'\t' read -r statut assignes <<< "$owner"
+  moi="$(gl_current_user 2>/dev/null)"
+  if [ -z "$assignes" ]; then
+    printf "propriété de #%s : « %s », aucun assigné (ticket libre).\n" "$iid" "${statut:-statut non posé}"
+  elif [ -n "$moi" ] && printf '%s' ",$assignes," | grep -q ",$moi,"; then
+    printf "propriété de #%s : « %s », assigné à %s — dont moi (%s).\n" \
+      "$iid" "${statut:-statut non posé}" "$assignes" "$moi"
+  else
+    printf "⚠ #%s appartient à quelqu'un d'autre : « %s », assigné à %s (moi : %s).\n" \
+      "$iid" "${statut:-statut non posé}" "$assignes" "${moi:-inconnu}"
+    printf "  clôturer à sa place lui pose une MR, un relecteur et un temps qu'il n'a pas demandés.\n"
+    tiers=1
+  fi
+
+  [ "$decalage" -eq 1 ] && return 3
+  [ "$tiers" -eq 1 ] && return 4
+  [ "$inverifiable" -eq 1 ] && return 5
+  return 0
+}
+
 # --- Dispatcher (uniquement quand exécuté directement, pas quand sourcé) -------------------------
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   cmd="${1:-}"; [ "$#" -gt 0 ] && shift
@@ -1608,6 +1712,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     branch-for)     gl_branch_for "$@" ;;
     start-branch)   gl_start_branch "$@" ;;
     behind-main)    gl_behind_main "$@" ;;
+    branch-iid)     gl_branch_iid "$@" ;;
+    close-guard)    gl_close_guard "$@" ;;
     get-description)    gl_get_description "$@" ;;
     set-description)    gl_set_description "$@" ;;
     get-mr-description) gl_get_mr_description "$@" ;;
@@ -1661,6 +1767,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
       echo "    behind-main [branche]       (retard sur origin/main + conflit probable ; 0=à jour, 3=en retard, 4=+conflit)" >&2
+      echo "  Garde-fou de clôture (session ↔ ticket, avant toute écriture de /ticket-finish|ship) :" >&2
+      echo "    branch-iid [branche]        (iid porté par le nom de la branche ; rien si hors convention)" >&2
+      echo "    close-guard <iid> [branche] (0=cohérent, 3=autre ticket, 4=ticket d'un tiers, 5=branche sans iid, 1=ticket illisible)" >&2
       echo "  Revue best-effort (relecteur désigné + file de revue) :" >&2
       echo "    review-queue                     (MR ouvertes en attente de revue, la plus ancienne d'abord — TSV)" >&2
       echo "    set-reviewer [mr|branche] [user] (pose un relecteur humain ≠ auteur ; idempotent, ne remplace jamais)" >&2
