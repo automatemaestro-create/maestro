@@ -51,11 +51,15 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    - **Branche proposée sans préfixe** (label `type::` absent) : déduis le type du titre/de la
      description, ou demande à l'utilisateur si ambigu.
 
-2. **Branche** — mets `main` à jour, purge les branches déjà mergées et crée la branche proposée,
-   en **une seule commande composée** :
+2. **Branche** — un seul appel, qui met `main` à jour, purge les branches déjà mergées et crée (ou
+   rejoint) la branche proposée :
    ```
-   git checkout main && git pull origin main && bash scripts/gitlab/lib.sh cleanup-merged && git checkout -b <branche-proposée>
+   bash scripts/gitlab/lib.sh start-branch <branche-proposée>
    ```
+   Le helper s'adapte au répertoire de travail (docs/10 §9) : dans le clone principal il passe par
+   `main` ; dans un **worktree** il branche directement sur `origin/main` (`main` y est déjà
+   emprunté par le clone principal, un `git checkout main` échouerait) et ne fait rien si la
+   branche est déjà celle du worktree.
 
 3. **Démarrage groupé** : `bash scripts/gitlab/lib.sh begin $ARGUMENTS` — assignation, statut
    natif « En cours » et dates (début = aujourd'hui, échéance selon `prio::`) en une seule
