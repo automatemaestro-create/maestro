@@ -196,6 +196,53 @@ gl_backlog_table() {
   '
 }
 
+# gl_issue_owner <iid> -> imprime « <statut><TAB><assignés> » : le statut NATIF (widget Status) et
+# les usernames des assignés séparés par des virgules. Un champ vide signifie « non posé » pour le
+# statut, « personne » (ticket LIBRE) pour les assignés. Une seule lecture GraphQL, parsing shell
+# pur (pas de jq) — même approche que gl_backlog_table, en ciblant un seul ticket.
+# Sert l'ANTI-COLLISION du travail à plusieurs (#159) : `glab issue view` n'expose ni le statut
+# natif ni de quoi décider, donc gl_start_brief s'appuie là-dessus pour dire si un ticket est déjà
+# pris — et /ticket-start pour refuser de le démarrer (gl_begin REMPLACE la liste des assignés :
+# démarrer un ticket pris le retirerait en silence à son propriétaire).
+gl_issue_owner() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_issue_owner <iid>" >&2; return 2; fi
+  local raw statut assignes
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetStatus { status { name } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }')" || return 1
+  if [ -z "$raw" ]; then echo "gl_issue_owner : lecture du ticket #$iid impossible" >&2; return 1; fi
+  # Ticket inexistant : la requête réussit mais rend « "workItems":{"nodes":[]} ». Sans ce
+  # garde-fou, la fonction imprimerait deux champs vides — que l'appelant lirait comme « statut non
+  # posé, ticket libre ». On cible bien le nœud workItems : « "nodes":[] » tout court se produit
+  # aussi, légitimement, sur un ticket sans assigné.
+  case "$raw" in
+    *'"workItems":{"nodes":[]}'*) echo "gl_issue_owner : ticket #$iid introuvable dans $GL_PROJECT" >&2; return 1 ;;
+  esac
+  statut="$(printf '%s' "$raw" | grep -o '"status":{"name":"[^"]*"' | head -1 | sed 's/.*"name":"//; s/"$//')"
+  assignes="$(printf '%s' "$raw" | grep -o '"username":"[^"]*"' | sed 's/.*"username":"//; s/"$//' \
+              | awk '{ out = (NR == 1 ? $0 : out "," $0) } END { if (NR) print out }')"
+  printf '%s\t%s\n' "$statut" "$assignes"
+}
+
+# gl_issue_taken <iid> [moi] -> code 0 (et message sur stdout) si le ticket est DÉJÀ PRIS PAR
+# QUELQU'UN D'AUTRE : statut « En cours » et assigné à un username différent de l'utilisateur glab
+# courant (résolu par gl_current_user si l'argument est absent). Code 1 sinon (libre, à moi, ou
+# statut différent). Prédicat volontairement étroit — c'est la seule situation où deux personnes se
+# marchent dessus ; un ticket « En revue »/« Terminé » assigné à un tiers relève d'un autre sujet.
+gl_issue_taken() {
+  local iid="$1" moi="${2:-}"
+  if [ -z "$iid" ]; then echo "usage: gl_issue_taken <iid> [username]" >&2; return 2; fi
+  local owner statut assignes
+  owner="$(gl_issue_owner "$iid")" || return 1
+  IFS=$'\t' read -r statut assignes <<< "$owner"
+  [ "$statut" = "En cours" ] || return 1
+  [ -n "$assignes" ] || return 1
+  [ -n "$moi" ] || moi="$(gl_current_user 2>/dev/null)"
+  # Appartenance exacte à la liste (les virgules encadrantes évitent qu'« alice » matche
+  # « alice-bot ») : si je suis dans les assignés, le ticket est à moi, pas « pris ».
+  if [ -n "$moi" ] && printf '%s' ",$assignes," | grep -q ",$moi,"; then return 1; fi
+  printf '%s\n' "$assignes"
+}
+
 # gl_issue_brief <iid> -> projection compacte de `glab issue view <iid>` : uniquement le titre, les
 # labels et la section « Critères d'acceptation ». Le reste du corps (Description, « Pourquoi
 # maintenant ? »…) est écarté. Utilisé par /ticket-start à la place du `glab issue view` intégral
@@ -470,16 +517,18 @@ gl_subtickets_enrich() {
 # statut et dates en UNE mutation. Les sous-commandes unitaires restent disponibles à côté.
 
 # gl_start_brief <iid> -> préflight complet de /ticket-start en un appel et UNE SEULE lecture du
-# ticket (un unique `glab issue view`, rejoué pour toutes les projections ; seule autre lecture :
-# la checklist du parent si <iid> est un sous-ticket). Vérifie les pré-requis (gl_require_glab) et
-# l'arbre propre, puis imprime un bloc compact : titre/labels/critères (gl_issue_brief_render),
-# selon le cas marqueur sous-ticket (parent, rang « lot n/total », tests différés, contrôle du
-# statut des lots précédents) ou checklist « ## Sous-tickets » (parent de suivi — qui ne porte ni
-# branche ni code : pas de branche proposée dans ce cas), et enfin la branche proposée
-# (gl_branch_prefix depuis le label type:: + gl_slug du titre).
-# Informatif : les avertissements (lot précédent non livré, label type:: absent) sont dans la
-# sortie ; la décision — démarrer, rediriger, s'arrêter — reste à l'appelant. Code retour non nul
-# seulement sur vrai échec (pré-requis, arbre sale, ticket introuvable).
+# ticket (un unique `glab issue view`, rejoué pour toutes les projections ; autres lectures : le
+# statut/assigné du ticket, et la checklist du parent si <iid> est un sous-ticket). Vérifie les
+# pré-requis (gl_require_glab) et l'arbre propre, puis imprime un bloc compact : titre/labels/
+# critères (gl_issue_brief_render), la ligne « statut : … — libre / pris par … » (gl_issue_owner,
+# avec ⚠ si le ticket est « En cours » chez quelqu'un d'autre), selon le cas marqueur sous-ticket
+# (parent, rang « lot n/total », tests différés, contrôle du statut des lots précédents) ou
+# checklist « ## Sous-tickets » (parent de suivi — qui ne porte ni branche ni code : pas de branche
+# proposée dans ce cas), et enfin la branche proposée (gl_branch_prefix depuis le label type:: +
+# gl_slug du titre).
+# Informatif : les avertissements (ticket déjà pris, lot précédent non livré, label type:: absent)
+# sont dans la sortie ; la décision — démarrer, rediriger, s'arrêter — reste à l'appelant. Code
+# retour non nul seulement sur vrai échec (pré-requis, arbre sale, ticket introuvable).
 gl_start_brief() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_start_brief <iid>" >&2; return 2; fi
@@ -492,6 +541,27 @@ gl_start_brief() {
   raw="$(glab issue view "$iid" 2>/dev/null)" || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
 
   printf '%s\n' "$raw" | gl_issue_brief_render "$iid"
+
+  # Statut natif + assigné (gl_issue_owner) : de quoi voir d'un coup d'œil si le ticket est LIBRE
+  # ou DÉJÀ PRIS — `glab issue view` n'expose pas le statut natif. Avertissement explicite quand il
+  # est « En cours » chez quelqu'un d'autre : /ticket-start doit s'arrêter là plutôt que de lui
+  # retirer l'assignation en silence (gl_begin remplace la liste des assignés).
+  local owner statut assignes moi
+  owner="$(gl_issue_owner "$iid" 2>/dev/null)"
+  IFS=$'\t' read -r statut assignes <<< "$owner"
+  printf '\n'
+  if [ -z "$owner" ]; then
+    printf 'statut : ? — appartenance illisible (lecture GitLab en échec) : à vérifier à la main\n'
+  elif [ -z "$assignes" ]; then
+    printf 'statut : %s — libre (aucun assigné)\n' "${statut:-?}"
+  else
+    printf 'statut : %s — pris par : %s\n' "${statut:-?}" "$assignes"
+    moi="$(gl_current_user 2>/dev/null)"
+    if [ "$statut" = "En cours" ] && ! printf '%s' ",$assignes," | grep -q ",${moi:-__aucun__},"; then
+      printf '⚠ déjà pris par %s — ne pas démarrer : le démarrer retirerait son assignation.\n' "$assignes"
+      printf '  Reprise seulement sur demande explicite de la personne qui pilote.\n'
+    fi
+  fi
 
   # Parent de suivi ? (section « ## Sous-tickets » dans la description déjà lue)
   local rows
@@ -1142,6 +1212,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     backlog)        gl_backlog "$@" ;;
     backlog-table)  gl_backlog_table "$@" ;;
     issue-brief)    gl_issue_brief "$@" ;;
+    issue-owner)    gl_issue_owner "$@" ;;
+    issue-taken)    gl_issue_taken "$@" ;;
     current-milestone) gl_current_milestone ;;
     milestones)        gl_milestones ;;
     milestone-issues)  gl_milestone_issues "$@" ;;
@@ -1183,6 +1255,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  backlog [opened|closed|all]        (JSON brut du backlog)" >&2
       echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
+      echo "  issue-owner <iid>                  (statut natif + assignés du ticket, TSV — vide = libre)" >&2
+      echo "  issue-taken <iid> [username]       (0 + assignés si le ticket est « En cours » chez quelqu'un d'autre)" >&2
       echo "  current-milestone                  (titre du milestone de la phase courante — actif le plus ancien non soldé)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
       echo "  milestone-issues <titre-exact>     (tickets d'un milestone : iid/statut/type/agent/prio/titre, TSV)" >&2

@@ -13,8 +13,15 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    vérifie les pré-requis (`glab` authentifié — sinon arrête-toi et demande un `glab auth login`)
    et l'arbre propre (changements non commités → arrête-toi et demande quoi en faire : committer,
    stasher ou annuler — ne décide pas à la place de l'utilisateur), puis imprime le brief du
-   ticket (titre, labels, critères d'acceptation), le cas parent/sous-ticket et la branche
-   proposée. Il est informatif : la décision (démarrer, rediriger, s'arrêter) reste la tienne :
+   ticket (titre, labels, critères d'acceptation), la ligne `statut : … — libre / pris par …`, le
+   cas parent/sous-ticket et la branche proposée. Il est informatif : la décision (démarrer,
+   rediriger, s'arrêter) reste la tienne :
+   - **Ticket déjà pris** (la sortie porte `⚠ déjà pris par <username>` — statut « En cours »
+     assigné à quelqu'un d'autre) : **arrête-toi**. Quelqu'un travaille dessus et l'étape 3
+     (`begin`) **remplace** la liste des assignés : le démarrer lui retirerait son ticket en
+     silence. Dis qui l'a pris et oriente vers un ticket libre (`/backlog`, section « Libres »).
+     Ne le reprends que sur **demande explicite** de l'utilisateur (la personne a lâché le sujet,
+     ticket resté « En cours » à l'abandon) — dans ce cas seulement, enchaîne les étapes 2 à 4.
    - **Parent de suivi** (la sortie liste une checklist `## Sous-tickets`) : il ne porte ni
      branche ni code — ne le démarre pas. Coche au passage (`- [x]`) les lots « Terminé » encore
      décochés dans sa description. **Relis et réécris la description uniquement via les helpers**
