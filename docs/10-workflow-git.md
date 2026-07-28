@@ -494,16 +494,59 @@ second est fusionné clé par clé), rapport complet et code de sortie non nul s
 `--skip` : c'est la décision du script qui est testée, jamais l'installation elle-même — la suite
 tourne donc en CI sans démon Docker ni accès réseau.
 
-**Où tournent les pipelines ?** Sur le **runner de projet local de la machine** (exécuteur Docker —
-`runner-local-poc` sur le poste d'origine), **par défaut et pour tout pipeline** — MR comprises. Les **runners partagés**
+**Où tournent les pipelines ?** Sur les **runners de projet** du dépôt (exécuteur Docker), **par
+défaut et pour tout pipeline** — MR comprises. Les **runners partagés**
 GitLab sont **désactivés** au niveau projet (`shared_runners_enabled=false`, posé par
 [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh)) : leur quota de minutes CI étant durablement
 épuisé, un job non-taggé qui y atterrissait retombait en `ci_quota_exceeded` (jobs « not
-started »). Aucun `tags:` n'est nécessaire dans [`.gitlab-ci.yml`](../.gitlab-ci.yml) — le runner
-local accepte les jobs non-taggés (`run_untagged`) et devient l'unique cible. **Contrepartie
-opérationnelle** : le runner doit être **en ligne** (Docker Desktop démarré + conteneur du runner
+started »). Aucun `tags:` n'est nécessaire dans [`.gitlab-ci.yml`](../.gitlab-ci.yml) — les runners
+de projet acceptent les jobs non-taggés (`run_untagged`) et sont l'unique cible. **Contrepartie
+opérationnelle** : au moins un runner doit être **en ligne** (Docker démarré + conteneur du runner
 actif) ; sinon les jobs restent **`pending`** (et non plus `ci_quota_exceeded`), et le merge — qui
 exige un pipeline vert — reste bloqué.
+
+### 8.1 Deux types de runner — partagé (permanent) et locaux (secours)
+
+À plusieurs sur des clones distincts (#155), un unique runner sur le poste d'une personne fait
+d'elle un **point de blocage** : personne ne peut merger quand sa machine est éteinte. Le projet
+distingue donc deux rôles, avec la **même** mécanique et le même script (#158) :
+
+| | **Partagé** — `runner-partage-<machine>` | **Local** — `maestro-<machine>` |
+|---|---|---|
+| Où | une machine qui **reste allumée** (serveur, poste dédié) | le poste de chacun |
+| Rôle | sert la CI de l'équipe en permanence | **secours** quand le partagé est indisponible |
+| Montage | `bash scripts/gitlab/setup-runner.sh --partage` | `bash scripts/gitlab/setup-runner.sh` (via `/setup`) |
+| Jobs simultanés | `concurrent ≥ 2` — deux personnes ne font pas la queue | valeur par défaut du runner |
+
+Les deux acceptent les jobs **non-taggés** : n'importe lequel prend n'importe quel job, rien à
+déclarer dans [`.gitlab-ci.yml`](../.gitlab-ci.yml). C'est ce qui rend le secours automatique — si
+le runner permanent tombe, le runner local d'un poste allumé prend le relais sans changer une
+ligne de configuration.
+
+**Monter le runner partagé** (une fois, sur la machine qui reste en ligne) :
+
+```bash
+bash scripts/gitlab/setup-runner.sh --partage
+```
+
+Prérequis : **Docker**, un jeton `glab` portant la portée **`create_runner`**, et — le seul qui ne
+se vérifie pas par script — une **machine qui ne s'éteint pas** (veille comprise : un runner
+endormi est un runner hors ligne). Le conteneur est monté en `--restart always`, il revient donc
+seul après un redémarrage.
+
+Le script **refuse de détourner** un runner local existant : si la machine héberge déjà un
+conteneur `gitlab-runner` enregistré sous `maestro-<machine>`, il s'arrête en indiquant comment
+monter le partagé **à côté**, dans un conteneur et un volume distincts :
+
+```bash
+MAESTRO_RUNNER_CONTAINER=gitlab-runner-partage \
+MAESTRO_RUNNER_VOLUME=gitlab-runner-partage-config \
+bash scripts/gitlab/setup-runner.sh --partage
+```
+
+`concurrent` est un réglage **global** du démon `gitlab-runner`, absent des options de
+`gitlab-runner register` : le script l'écrit dans `config.toml` puis redémarre le conteneur. C'est
+idempotent — une valeur déjà suffisante n'est pas touchée (surcharge : `MAESTRO_RUNNER_CONCURRENT`).
 
 **Créer le runner d'une nouvelle machine** est le rôle de
 [`scripts/gitlab/setup-runner.sh`](../scripts/gitlab/setup-runner.sh) (#146), appelé par l'étape
@@ -520,13 +563,19 @@ L'**id du runner** est propre à chaque machine : il est persisté dans le bloc 
 `.claude/settings.local.json` (non versionné). `ensure-runner.sh` le résout dans cet ordre —
 variable d'environnement `MAESTRO_RUNNER_ID`, puis ce fichier, puis **découverte par l'API** (les
 runners de projet du dépôt ; s'il y en a plusieurs, celui dont la description porte le nom de la
-machine). Plus aucun id n'est codé en dur : l'ancien défaut `54385112`, propre au poste d'origine,
-était faux sur tout autre clone.
+machine — le motif `maestro-<machine>` du runner local prime, les deux descriptions portant le nom
+de la machine sur l'hôte du runner partagé). Plus aucun id n'est codé en dur : l'ancien défaut
+`54385112`, propre au poste d'origine, était faux sur tout autre clone.
 
 La mise en ligne est **automatisée** par le helper idempotent
-[`scripts/gitlab/ensure-runner.sh`](../scripts/gitlab/ensure-runner.sh) : no-op si le runner est
-déjà `online`, sinon il démarre Docker Desktop (si le démon est éteint) puis le conteneur
-`gitlab-runner`, et poll jusqu'à `online`. Il **échoue proprement** (code non nul + message) sans
+[`scripts/gitlab/ensure-runner.sh`](../scripts/gitlab/ensure-runner.sh). Comme n'importe quel
+runner de projet prend n'importe quel job, il est **no-op dès qu'au moins un est `online`** — le
+runner partagé qui tient la CI dispense de réveiller Docker sur un portable. Ce n'est que si
+**aucun** n'est en ligne qu'il monte celui de **cette** machine : démarrage de Docker Desktop (si
+le démon est éteint), puis du conteneur `gitlab-runner`, et polling jusqu'à `online`.
+`--strict` (ou `MAESTRO_RUNNER_STRICT=1`) restreint au runner de la machine courante en ignorant
+les autres — c'est ce qu'utilise la mise en route, qui rend compte du poste et non de l'état global
+de la CI. Il **échoue proprement** (code non nul + message) sans
 jamais lever d'exception bloquante, et il est **paramétrable par variables d'environnement**
 (`MAESTRO_RUNNER_ID`, `MAESTRO_RUNNER_CONTAINER`, `MAESTRO_DOCKER_DESKTOP`, les fenêtres de
 polling — voir l'en-tête du script). Il est **câblé dans les skills de clôture avant le push /
@@ -537,6 +586,8 @@ seulement signalé. Un **hook global** (sur tout `git push`) a été écarté : 
 des push sans rapport et bloquerait le push le temps du démarrage de Docker. S'assurer que le
 runner est en ligne **en amont de chaque MR** reste donc intégré au flux de clôture
 (`/ticket-finish`, `/ticket-ship`, `/pipeline-fix`), désormais sans geste manuel.
+
+### 8.2 Pipeline rouge — remédiation
 
 **Pipeline rouge ?** La remédiation passe par
 [`/pipeline-fix`](../.claude/commands/pipeline-fix.md) (voir §5) : diagnostic des jobs en échec,

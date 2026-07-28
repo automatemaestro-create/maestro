@@ -5,8 +5,21 @@
 #   bash scripts/gitlab/setup-runner.sh              # monte ce qui manque
 #   bash scripts/gitlab/setup-runner.sh --check      # diagnostic seul : n'installe rien, ne crée rien
 #   bash scripts/gitlab/setup-runner.sh --no-install # ne pas installer Docker s'il manque
+#   bash scripts/gitlab/setup-runner.sh --partage    # runner PARTAGÉ (machine toujours allumée)
 #
 # Appelé par scripts/setup.sh (étape `runner`), mais utilisable seul.
+#
+# DEUX TYPES DE RUNNER (#158) — même mécanique, deux rôles :
+#   • LOCAL (défaut) : le runner de CE poste, description `maestro-<machine>`. Il s'éteint avec la
+#     machine ; c'est le secours.
+#   • PARTAGÉ (`--partage`) : le runner de l'équipe, description `runner-partage-<machine>`, monté
+#     UNE fois sur une machine qui reste allumée. C'est lui qui permet de merger quand tous les
+#     postes sont éteints. Il relève `concurrent` (≥ 2) pour servir plusieurs personnes à la fois —
+#     réglage global du runner, absent des options de `gitlab-runner register`, donc appliqué dans
+#     config.toml. Prérequis : Docker, un jeton `glab` portant la portée `create_runner`, et une
+#     machine qui ne s'éteint pas (docs/10 §8).
+# Les deux acceptent les jobs NON-TAGGÉS : n'importe lequel prend n'importe quel job, aucun `tags:`
+# n'est à poser dans .gitlab-ci.yml.
 #
 # Deux volets, dans cet ordre — le second dépend du premier :
 #
@@ -51,9 +64,13 @@ MAESTRO_RUNNER_VOLUME="${MAESTRO_RUNNER_VOLUME:-gitlab-runner-config}"       # v
 # Image par défaut des jobs qui n'en déclarent pas. Tous les jobs de .gitlab-ci.yml posent la leur ;
 # celle-ci n'est qu'un filet exigé par l'exécuteur Docker.
 MAESTRO_RUNNER_JOB_IMAGE="${MAESTRO_RUNNER_JOB_IMAGE:-alpine:latest}"
+# Jobs simultanés du runner partagé (clé `concurrent` de config.toml). ≥ 2 pour que deux personnes
+# ne se mettent pas en file d'attente l'une derrière l'autre.
+MAESTRO_RUNNER_CONCURRENT="${MAESTRO_RUNNER_CONCURRENT:-2}"
 
 # --- Drapeaux -----------------------------------------------------------------------------------
 MODE_CHECK=0
+MODE_PARTAGE=0
 AUTO_INSTALL="${MAESTRO_AUTO_INSTALL:-1}"
 
 usage() {
@@ -65,6 +82,10 @@ Docker + runner CI de projet pour cette machine.
 Options :
   --check       Diagnostic seul : n'installe rien, ne crée rien, n'écrit rien.
   --no-install  N'installe pas Docker s'il manque, contente-toi de le signaler.
+  --partage     Monte le runner PARTAGÉ de l'équipe (description « runner-partage-<machine> »,
+                concurrent >= $MAESTRO_RUNNER_CONCURRENT) au lieu du runner local de ce poste.
+                À lancer sur une machine qui reste allumée : c'est ce runner qui permet de merger
+                quand tous les postes sont éteints.
   -h, --help    Cette aide.
 USAGE
 }
@@ -73,6 +94,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --check)      MODE_CHECK=1 ;;
     --no-install) AUTO_INSTALL=0 ;;
+    --partage)    MODE_PARTAGE=1 ;;
     -h|--help)    usage; exit 0 ;;
     *)            printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -230,8 +252,16 @@ volet_docker() {
 # ================================================================================================
 
 # Description du runner : elle porte le nom de la machine, c'est ce qui permet de retrouver LE
-# runner de ce poste quand le projet en compte plusieurs (cf. runner_id_decouvert).
-description_runner() { printf 'maestro-%s (setup-runner.sh)\n' "$(machine_nom)"; }
+# runner de ce poste quand le projet en compte plusieurs (cf. runner_id_decouvert). Le préfixe
+# distingue le rôle — `maestro-` pour le runner local d'un poste, `runner-partage-` pour celui de
+# l'équipe : la liste des runners du projet se lit alors sans avoir à demander à qui est quoi.
+description_runner() {
+  if [ "$MODE_PARTAGE" = 1 ]; then
+    printf 'runner-partage-%s (setup-runner.sh --partage)\n' "$(machine_nom)"
+  else
+    printf 'maestro-%s (setup-runner.sh)\n' "$(machine_nom)"
+  fi
+}
 
 # Persiste l'id du runner dans .claude/settings.local.json (non versionné, .gitignore) : Claude Code
 # injecte ce bloc `env` dans l'environnement des commandes qu'il lance, et ensure-runner.sh sait
@@ -354,8 +384,46 @@ enregistre_runner() {
         --description "$(description_runner)"
 }
 
+# Relève le nombre de jobs simultanés du runner à AU MOINS $MAESTRO_RUNNER_CONCURRENT. `concurrent`
+# est un réglage GLOBAL du démon gitlab-runner : il ne vit que dans config.toml (aucune option de
+# `gitlab-runner register` ne l'expose), d'où l'édition en place puis le redémarrage du conteneur —
+# le démon relit bien son fichier tout seul, mais on ne veut pas parier sur le moment.
+# Idempotent : ne touche à rien si la valeur est déjà suffisante (cas du second passage).
+# MSYS_NO_PATHCONV : sans lui, Git Bash réécrit « /etc/gitlab-runner/… » en chemin Windows.
+regle_concurrent() {
+  local cible="$MAESTRO_RUNNER_CONCURRENT" actuel
+  actuel="$(MSYS_NO_PATHCONV=1 docker exec "$MAESTRO_RUNNER_CONTAINER" \
+              sed -n 's/^concurrent *= *\([0-9]\{1,\}\).*/\1/p' /etc/gitlab-runner/config.toml \
+            2>/dev/null | head -1)"
+  if [ -n "$actuel" ] && [ "$actuel" -ge "$cible" ] 2>/dev/null; then
+    return 0
+  fi
+
+  # `1i` en repli : `concurrent` est une clé de premier niveau, elle doit précéder toute section
+  # [[runners]] — l'ajouter en fin de fichier l'enfermerait dans la dernière.
+  if ! MSYS_NO_PATHCONV=1 journalise runner-concurrent \
+        docker exec "$MAESTRO_RUNNER_CONTAINER" sh -c \
+          "f=/etc/gitlab-runner/config.toml
+           if grep -q '^concurrent *=' \"\$f\"; then
+             sed -i 's/^concurrent *=.*/concurrent = $cible/' \"\$f\"
+           else
+             sed -i '1i concurrent = $cible' \"\$f\"
+           fi"; then
+    return 1
+  fi
+  journalise runner-restart docker restart "$MAESTRO_RUNNER_CONTAINER" || return 1
+  info "jobs simultanés (concurrent) portés à $cible"
+}
+
+# Description d'un runner déjà connu, lue dans l'inventaire de projet (ensure-runner.sh).
+description_de_runner() {
+  runners_projet 2>/dev/null | grep "^$1|" | head -1 | cut -d'|' -f3-
+}
+
 volet_runner() {
-  local id
+  local id role desc
+  role="runner de projet"
+  [ "$MODE_PARTAGE" = 1 ] && role="runner partagé"
 
   if ! gl_require_glab >/dev/null 2>&1; then
     resultat runner IGNORE "glab non authentifié — runner non vérifié (glab auth login)"
@@ -369,13 +437,24 @@ volet_runner() {
       resultat runner ECHEC "conteneur $MAESTRO_RUNNER_CONTAINER présent, mais aucun runner de projet côté GitLab — supprimer le conteneur (docker rm -f $MAESTRO_RUNNER_CONTAINER) puis relancer"
       return 1
     fi
+    desc="$(description_de_runner "$id")"
+    # En mode partagé, on ne DÉTOURNE pas le runner local d'un poste : le conteneur existant reste
+    # le sien. Monter les deux sur la même machine est possible, mais c'est un choix explicite
+    # (conteneur + volume distincts), pas un effet de bord de cette commande.
+    if [ "$MODE_PARTAGE" = 1 ] && ! printf '%s' "$desc" | grep -q '^runner-partage-'; then
+      resultat runner ECHEC "le conteneur $MAESTRO_RUNNER_CONTAINER héberge le runner local #$id (« $desc ») — monter le runner partagé sur une machine dédiée, ou ici dans un conteneur à part : MAESTRO_RUNNER_CONTAINER=gitlab-runner-partage MAESTRO_RUNNER_VOLUME=gitlab-runner-partage-config bash scripts/gitlab/setup-runner.sh --partage"
+      return 1
+    fi
     if [ "$MODE_CHECK" = 1 ]; then
       resultat runner IGNORE "runner #$id enregistré sur cette machine — statut non forcé (--check : rien fait)"
       return 0
     fi
     persiste_runner_id "$id" || true
-    if ensure_runner; then
-      resultat runner DEJA "runner de projet #$id enregistré et en ligne"
+    [ "$MODE_PARTAGE" = 1 ] && { regle_concurrent || info "concurrent non réglé — le runner reste utilisable"; }
+    # --strict : la mise en route rend compte de CETTE machine. Sans lui, ensure_runner se
+    # contenterait d'un autre runner du projet déjà en ligne et le rapport serait faux (#158).
+    if ensure_runner --strict; then
+      resultat runner DEJA "$role #$id enregistré et en ligne"
       return 0
     fi
     resultat runner ECHEC "runner #$id enregistré mais pas en ligne (voir le message ci-dessus)"
@@ -383,11 +462,15 @@ volet_runner() {
   fi
 
   if [ "$MODE_CHECK" = 1 ]; then
-    resultat runner IGNORE "aucun runner sur cette machine — serait créé et enregistré (--check : rien fait)"
+    resultat runner IGNORE "aucun runner sur cette machine — un $role serait créé et enregistré (--check : rien fait)"
     return 0
   fi
 
-  info "création du runner de projet côté GitLab…"
+  if [ "$MODE_PARTAGE" = 1 ]; then
+    info "runner PARTAGÉ : à monter sur une machine qui reste allumée — c'est lui qui sert la CI quand les postes sont éteints"
+  fi
+
+  info "création du $role côté GitLab…"
   if ! cree_runner_gitlab; then
     resultat runner ECHEC "création du runner impossible — le jeton glab doit porter la portée « create_runner » (glab auth login, ou un token projet dédié)"
     return 1
@@ -414,10 +497,16 @@ volet_runner() {
 
   persiste_runner_id "$id" || true
 
+  # Après l'enregistrement (config.toml existe désormais) et AVANT l'attente : le réglage redémarre
+  # le conteneur, donc le passage `online` doit être constaté après lui, pas avant.
+  if [ "$MODE_PARTAGE" = 1 ] && ! regle_concurrent; then
+    info "concurrent non réglé — le runner reste utilisable, mais un seul job à la fois"
+  fi
+
   info "attente du passage en ligne…"
   MAESTRO_RUNNER_ID="$id"
   if wait_until "$MAESTRO_RUNNER_TIMEOUT" "$MAESTRO_RUNNER_POLL" runner_is_online; then
-    resultat runner OK "runner de projet #$id créé, enregistré et en ligne"
+    resultat runner OK "$role #$id créé, enregistré et en ligne"
     return 0
   fi
   resultat runner ECHEC "runner #$id créé et enregistré, mais toujours hors ligne après ${MAESTRO_RUNNER_TIMEOUT}s"
@@ -427,7 +516,11 @@ volet_runner() {
 # ================================================================================================
 # Déroulé
 # ================================================================================================
-printf '\nDocker + runner CI de projet — %s\n' "$RACINE"
+if [ "$MODE_PARTAGE" = 1 ]; then
+  printf '\nDocker + runner CI PARTAGÉ (%s) — %s\n' "$(description_runner)" "$RACINE"
+else
+  printf '\nDocker + runner CI de projet — %s\n' "$RACINE"
+fi
 if [ "$MODE_CHECK" = 1 ]; then
   printf 'Mode --check : diagnostic seul, rien ne sera installé ni créé.\n'
 fi

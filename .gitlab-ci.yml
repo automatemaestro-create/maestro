@@ -7,12 +7,13 @@
 # « Pipeline vert » est une condition de merge. Les jobs Python installent leurs
 # dépendances depuis pyproject.toml (extra `dev`) — rien n'est figé en dur ici.
 #
-# Exécution : ces jobs tournent sur le **runner de projet local** (runner-local-poc,
-# Docker) par défaut. Les runners partagés sont désactivés au niveau projet
+# Exécution : ces jobs tournent sur les **runners de projet** (exécuteur Docker) — le
+# runner PARTAGÉ hébergé sur une machine toujours allumée, et le runner LOCAL de chaque
+# poste en secours. Les runners partagés GitLab, eux, sont désactivés au niveau projet
 # (shared_runners_enabled=false, cf. scripts/gitlab/bootstrap.sh) car leur quota est
-# épuisé ; aucun `tags:` n'est donc nécessaire (le runner local accepte les jobs
-# non-taggés). Le runner doit être en ligne, sinon les jobs restent `pending`.
-# Détail : docs/10-workflow-git.md §8.
+# épuisé ; aucun `tags:` n'est donc nécessaire (les runners de projet acceptent les jobs
+# non-taggés, n'importe lequel prend n'importe quel job). Au moins un doit être en ligne,
+# sinon les jobs restent `pending`. Détail : docs/10-workflow-git.md §8.
 
 stages:
   - lint
