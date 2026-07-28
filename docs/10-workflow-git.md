@@ -382,6 +382,18 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
 - **Aucune commande n'effectue de merge ou de fermeture de MR automatiquement.** La revue et le merge restent une décision humaine.
 - **Aucun force-push** sur une branche déjà poussée.
+- **Aucun rebase automatique.** Le retard d'une branche sur `origin/main` est *signalé*, jamais
+  rattrapé d'office : `bash scripts/gitlab/lib.sh behind-main [branche]` imprime le nombre de
+  commits de retard, les fichiers modifiés **des deux côtés** depuis la base commune (le « conflit
+  probable ») et la commande de rebase — sans rien écrire. `/ticket-finish` l'appelle **avant le
+  push**, en `… behind-main || echo "verdict=$?"` : son code de retour est *lu*, jamais bloquant —
+  la clôture se poursuit et le constat remonte dans le résumé final. De sorte que le conflit
+  n'apparaisse plus seulement dans l'UI GitLab, après coup. Motif du refus d'automatiser : un
+  rebase réécrit l'historique d'une branche déjà poussée et appellerait le force-push interdit
+  ci-dessus. Codes de retour, pour un appelant scripté — `0` à jour, `3` en retard sans fichier
+  commun, `4` en retard **avec** conflit probable, `2` usage, `1` état illisible. L'heuristique est
+  volontairement grossière (git seul tranche vraiment) : elle vise les **fichiers aimants**
+  touchés par presque tous les tickets — `CLAUDE.md`, ce document, `scripts/gitlab/lib.sh`.
 - Une branche (locale ou distante) n'est supprimée que si **GitLab confirme que sa MR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
 - Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par GitLab.
 - **La suppression de la branche source est portée par la MR elle-même.** `/ticket-finish` crée la
@@ -437,6 +449,13 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 > `GITLAB_TOKEN` du `.env` et crée le runner CI de la machine (§8). Ce qui est détaillé ici est le
 > **quoi et le pourquoi**, plus une check-list à dérouler à la main.
 
+> **Un humain qui arrive lit [`CONTRIBUTING.md`](../CONTRIBUTING.md)**, pas ce document. Ce
+> fichier-ci est exhaustif (et `CLAUDE.md` est écrit pour l'agent) : `CONTRIBUTING.md` tient en une
+> page le chemin `setup.sh` → ticket libre via `/backlog` → `/ticket-start` → `/ticket-ship`, dit
+> qui relit et qui merge, et renvoie ici pour le détail. C'est **le seul point d'entrée à
+> connaître** ; tout ce qu'il affirme est une redite volontaire de ce document, jamais une règle
+> nouvelle.
+
 - [`glab`](https://gitlab.com/gitlab-org/cli) installé et authentifié : `glab auth login`
   (automatique via `scripts/setup.sh` si le `.env` porte un `GITLAB_TOKEN` — le jeton passe par
   stdin, jamais par une ligne de commande).
@@ -444,8 +463,9 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 - Les commandes `/ticket-*` et `/backlog` s'appuient sur le helper
   [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels glab
   (résolution work-item, statut par nom, **listing du backlog** avec statut natif, slug, préfixe de
-  branche, **sous-tickets** — `issue-link`/`parent-of`/`subtickets`, §5.1 — et **démarrage de
-  ticket** — `start-brief`/`begin`, §5). Il est **sourçable**
+  branche, **sous-tickets** — `issue-link`/`parent-of`/`subtickets`, §5.1 —, **démarrage de
+  ticket** — `start-brief`/`begin`, §5 — et **retard sur `origin/main`** — `behind-main`, §6).
+  Il est **sourçable**
   (`. scripts/gitlab/lib.sh`) et **exécutable en sous-commandes**
   (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`, `… backlog opened`) — pratique pour les
   futurs scripts et agents. Vérif rapide : `bash scripts/gitlab/lib.sh require`.
@@ -490,6 +510,17 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
 - **Régénérer / auditer** : le fichier est du JSON simple ; toute évolution de l'allowlist est une
   **décision humaine** (un agent ne s'auto-accorde pas de permissions — l'écriture de ce fichier par
   Claude Code est d'ailleurs interceptée et demande validation).
+- **Réglages machine (`.claude/settings.local.json`, non versionné)** : rien ne les annonçait, d'où
+  le gabarit versionné [`.claude/settings.local.example.json`](../.claude/settings.local.example.json)
+  — les clés attendues avec des **valeurs neutres**, et **aucun secret** (un jeton n'a pas sa place
+  dans un fichier suivi ; `CLAUDE_CODE_OAUTH_TOKEN` est recopié depuis le `.env` par `setup.sh`, il
+  ne s'écrit jamais à la main ici). Clés couvertes : `env.MAESTRO_CHROME_PROFILE` (profil du
+  navigateur piloté par `chrome-maestro`), `env.MAESTRO_RUNNER_ID` (runner CI de cette machine,
+  §8.1), `enabledMcpjsonServers` (approbation des serveurs de `.mcp.json`) et `permissions.allow`
+  (surcharges personnelles). C'est une **référence à lire, pas un fichier à recopier** : le vrai
+  `settings.local.json` est écrit et fusionné clé par clé par l'étape `mcp` de `setup.sh`, qui
+  renvoie vers le gabarit en `--check`. Les worktrees y ajoutent `MAESTRO_PORT_API`/
+  `MAESTRO_PORT_UI`, posés par `worktree.sh` (§9) — pas à la main.
 
 ### 7.2 Traçabilité des demandes — hook `UserPromptSubmit`
 

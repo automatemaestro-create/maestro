@@ -1,0 +1,13 @@
+{
+  "env": {
+    "MAESTRO_CHROME_PROFILE": "C:\\Users\\<vous>\\.maestro\\chrome-profile",
+    "MAESTRO_RUNNER_ID": "00000000"
+  },
+  "enabledMcpjsonServers": [
+    "chrome-maestro",
+    "figma-officiel"
+  ],
+  "permissions": {
+    "allow": []
+  }
+}

@@ -1474,6 +1474,76 @@ gl_start_branch() {
   printf 'Branche créée : %s (depuis origin/main).\n' "$branche"
 }
 
+# --- Retard sur origin/main ----------------------------------------------------------------------
+# gl_behind_main [branche] -> « ma branche a-t-elle pris du retard sur origin/main ? », à consulter
+# AVANT le push (/ticket-finish). Purement CONSULTATIF : cette fonction ne rebase pas, ne pousse
+# pas et n'écrit rien — elle imprime le constat et la commande de rebase, dont le déclenchement
+# reste une décision humaine. Un rebase réécrit l'historique d'une branche déjà poussée et
+# appellerait un force-push, interdit par les garde-fous (docs/10 §6).
+#
+# Le « conflit probable » est une heuristique de FICHIERS : ceux modifiés des deux côtés depuis la
+# base commune. Volontairement grossière (git seul tranche vraiment), mais c'est exactement le
+# signal qui manque sur les fichiers aimants à conflits — CLAUDE.md, docs/10, ce fichier-ci.
+#
+# Codes de retour, pour l'appelant :
+#   0 = à jour, rien à faire          3 = en retard, aucun fichier commun (rebase a priori serein)
+#   4 = en retard + conflit probable  2 = usage   1 = état illisible (pas d'origin/main, etc.)
+# Un code non nul n'est donc PAS une erreur, juste un constat : l'appeler en
+# `bash … behind-main || echo "verdict=$?"` pour lire le verdict sans interrompre une clôture
+# sous `set -e` — c'est ce que fait /ticket-finish.
+gl_behind_main() {
+  local branche="${1:-}" base derriere devant communs nb
+  branche="${branche:-$(git branch --show-current 2>/dev/null)}"
+  if [ -z "$branche" ]; then
+    echo "gl_behind_main : branche indéterminée (HEAD détachée ?) — la préciser en argument." >&2
+    return 2
+  fi
+  case "$branche" in
+    main|master)
+      printf 'Branche « %s » : rien à comparer avec origin/main.\n' "$branche"
+      return 0 ;;
+  esac
+
+  # Fetch non bloquant (jamais de prompt d'identifiants) : sans réseau on compare au dernier
+  # origin/main connu, ce qui reste plus utile que de ne rien dire.
+  GIT_TERMINAL_PROMPT=0 git fetch origin main >/dev/null 2>&1
+  if ! git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+    echo "gl_behind_main : origin/main introuvable — contrôle du retard sauté." >&2
+    return 1
+  fi
+  if ! base="$(git merge-base "$branche" origin/main 2>/dev/null)" || [ -z "$base" ]; then
+    echo "gl_behind_main : aucune base commune entre « $branche » et origin/main." >&2
+    return 1
+  fi
+  derriere="$(git rev-list --count "$branche..origin/main" 2>/dev/null)" || derriere=0
+  devant="$(git rev-list --count "origin/main..$branche" 2>/dev/null)" || devant=0
+
+  if [ "${derriere:-0}" -eq 0 ]; then
+    printf "Branche « %s » à jour avec origin/main (%s commit(s) d'avance).\n" "$branche" "${devant:-0}"
+    return 0
+  fi
+
+  # Intersection des fichiers touchés de part et d'autre de la base commune.
+  communs="$(comm -12 \
+      <(git diff --name-only "$base" "$branche" 2>/dev/null | sort -u) \
+      <(git diff --name-only "$base" origin/main 2>/dev/null | sort -u))"
+
+  printf "⚠ Branche « %s » en retard : %s commit(s) derrière origin/main (%s d'avance).\n" \
+    "$branche" "$derriere" "${devant:-0}"
+  if [ -n "$communs" ]; then
+    nb="$(printf '%s\n' "$communs" | wc -l | tr -d '[:space:]')"
+    printf '  conflit probable — %s fichier(s) modifié(s) des deux côtés :\n' "$nb"
+    printf '%s\n' "$communs" | sed 's/^/    - /'
+  else
+    printf '  aucun fichier modifié des deux côtés — rebase a priori sans conflit.\n'
+  fi
+  printf '  rebase proposé (décision humaine, jamais automatique) :\n'
+  printf '    git fetch origin main && git rebase origin/main\n'
+
+  if [ -n "$communs" ]; then return 4; fi
+  return 3
+}
+
 # --- Dispatcher (uniquement quand exécuté directement, pas quand sourcé) -------------------------
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   cmd="${1:-}"; [ "$#" -gt 0 ] && shift
@@ -1516,6 +1586,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     cleanup-merged) gl_cleanup_merged "$@" ;;
     branch-for)     gl_branch_for "$@" ;;
     start-branch)   gl_start_branch "$@" ;;
+    behind-main)    gl_behind_main "$@" ;;
     get-description)    gl_get_description "$@" ;;
     set-description)    gl_set_description "$@" ;;
     get-mr-description) gl_get_mr_description "$@" ;;
@@ -1568,6 +1639,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  Branches :" >&2
       echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
+      echo "    behind-main [branche]       (retard sur origin/main + conflit probable ; 0=à jour, 3=en retard, 4=+conflit)" >&2
       echo "  Revue best-effort (relecteur désigné + file de revue) :" >&2
       echo "    review-queue                     (MR ouvertes en attente de revue, la plus ancienne d'abord — TSV)" >&2
       echo "    set-reviewer [mr|branche] [user] (pose un relecteur humain ≠ auteur ; idempotent, ne remplace jamais)" >&2

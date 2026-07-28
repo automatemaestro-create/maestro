@@ -30,7 +30,27 @@ pas clair.
    rapporte le résultat. S'il n'y en a pas (probable tant que le monorepo est un squelette
    sans code), dis-le simplement et continue.
 
-5. **Avant de pousser, assure le runner CI local en ligne** : les runners partagés étant
+5. **Avant de pousser, regarde si la branche a pris du retard sur `origin/main`** — à plusieurs,
+   `CLAUDE.md`, `docs/10-workflow-git.md` et `scripts/gitlab/lib.sh` sont touchés par presque tous
+   les tickets, et sans ce contrôle le conflit n'apparaît que dans l'UI GitLab, après coup :
+   ```
+   bash scripts/gitlab/lib.sh behind-main || echo "verdict=$? (3=en retard, 4=+conflit probable)"
+   ```
+   Le helper est **consultatif** : il n'écrit rien et ne rebase jamais, et son code de retour
+   n'interrompt donc pas la clôture (`0` à jour, `3` en retard sans fichier commun, `4` en retard
+   **avec conflit probable** — les fichiers modifiés des deux côtés sont listés). **Ne rebase
+   jamais de toi-même** : un rebase réécrit
+   l'historique d'une branche déjà poussée et appellerait un force-push, interdit par les
+   garde-fous (`docs/10-workflow-git.md` §6). Selon le constat :
+   - `0` → rien à dire, poursuis.
+   - `3` → **signale-le** dans le résumé final (« n commits de retard, rebase serein possible »)
+     et poursuis la clôture : GitLab mergera sans difficulté.
+   - `4` → **signale-le et propose le rebase à l'utilisateur** (`git fetch origin main && git
+     rebase origin/main`), en nommant les fichiers concernés. La clôture **n'est pas bloquée** :
+     s'il ne se prononce pas, pousse quand même et laisse la mention dans le résumé — c'est le
+     relecteur ou l'auteur qui tranchera, la MR affichant le conflit.
+
+6. **Assure le runner CI local en ligne** : les runners partagés étant
    désactivés (#135), le runner de projet local est l'unique cible ; s'il est hors ligne, le
    pipeline déclenché par le push resterait `pending` et bloquerait le merge (pipeline vert
    requis). Lance le helper idempotent — **son échec n'interrompt jamais la clôture**, il est
@@ -44,7 +64,7 @@ pas clair.
    Credential Manager), relance-le en forçant `glab` comme credential helper :
    `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!glab auth git-credential' push -u origin $(git branch --show-current)`.
 
-6. Évalue la **checklist de definition of done** de la MR (les quatre cases du template
+7. Évalue la **checklist de definition of done** de la MR (les quatre cases du template
    `.gitlab/merge_request_templates/Default.md`) : pour chacune, détermine si tu peux la cocher
    (`- [x]`) parce que tu l'as **effectivement vérifiée**, ou si elle reste vide (`- [ ]`). La
    checklist est un constat, pas un formulaire — et le merge reste une décision humaine.
@@ -60,12 +80,12 @@ pas clair.
      par la MR). En cours, échoué ou absent → laisse vide (juste après le push, le pipeline vient
      souvent de démarrer : une case vide ici est normale, le relecteur verra le verdict sur la MR).
 
-7. Vérifie si une MR existe déjà pour cette branche avec
+8. Vérifie si une MR existe déjà pour cette branche avec
    `glab mr view $(git branch --show-current) --output json`. Si la commande échoue, aucune
    MR n'existe encore. Si elle réussit, inspecte le JSON retourné (champs `state` —
    `opened`/`closed`/`merged` —, `draft` et `description`) plutôt que de parser une sortie texte.
    - **Si elle n'existe pas** : crée-la en Draft, liée au ticket, avec la checklist **telle
-     qu'évaluée à l'étape 6** (chaque case en `[x]` ou `[ ]` selon le constat) :
+     qu'évaluée à l'étape 7** (chaque case en `[x]` ou `[ ]` selon le constat) :
      ```
      glab mr create --draft --target-branch main --remove-source-branch \
        --title "<titre du ticket>" \
@@ -77,10 +97,10 @@ pas clair.
      - [x] Documentation mise à jour si applicable
      - [ ] Pipeline CI verte (si configurée)"
      ```
-     (exemple : remplace chaque `[x]`/`[ ]` par le résultat réel de l'étape 6)
+     (exemple : remplace chaque `[x]`/`[ ]` par le résultat réel de l'étape 7)
    - **Si elle existe déjà** : commence par remettre sa checklist à jour, de façon **idempotente** —
      modifie **uniquement** l'état des cases de la section `## Checklist` (jamais le reste,
-     notamment le `Closes #<iid>`) : coche les cases vérifiées à l'étape 6, et **ne décoche
+     notamment le `Closes #<iid>`) : coche les cases vérifiées à l'étape 7, et **ne décoche
      jamais** une case déjà cochée (un humain a pu la cocher). Si la section `## Checklist`
      manque, ajoute-la en fin de description. Si rien ne change, ne fais pas d'update.
      **Relis et réécris la description uniquement via les helpers** :
@@ -92,7 +112,7 @@ pas clair.
        terminé et prêt pour revue ; si oui, `glab mr update <mr> --ready`.
      - Si elle n'est **plus en Draft** : ne rien faire de plus sur la MR.
 
-8. **Pose un relecteur sur la MR** — dans les deux cas (créée à l'instant ou déjà existante), une
+9. **Pose un relecteur sur la MR** — dans les deux cas (créée à l'instant ou déjà existante), une
    fois la MR en place :
    ```
    bash scripts/gitlab/lib.sh set-reviewer || echo "⚠ relecteur non posé — clôture poursuivie"
@@ -105,7 +125,7 @@ pas clair.
    n'interrompt jamais la clôture** (ex. projet à une seule personne : aucun candidat), il est
    seulement signalé. Le relecteur désigné remonte ensuite dans la file de revue de `/backlog`.
 
-9. Fais passer le **Status natif** du ticket à « En revue » (le cycle de vie est porté par le
+10. Fais passer le **Status natif** du ticket à « En revue » (le cycle de vie est porté par le
    champ Status, pas par des labels — voir `docs/10-workflow-git.md` §3) :
    ```
    bash scripts/gitlab/lib.sh set-status <iid> "En revue"
@@ -114,7 +134,7 @@ pas clair.
    lifecycle « Maestro » (pas de GID en dur). Vérifie que la commande réussit. Ne touche pas aux
    labels `agent::*` / `prio::*` / `type::*`.
 
-10. Renseigne le **temps passé** — **estimé automatiquement, sans demander de confirmation** (voir
+11. Renseigne le **temps passé** — **estimé automatiquement, sans demander de confirmation** (voir
    `docs/10-workflow-git.md` §3.3) :
    - Vérifie d'abord ce qui est déjà loggé : `bash scripts/gitlab/lib.sh get-time-spent <iid>`
      (secondes). Si le résultat **n'est pas `0`**, du temps a déjà été enregistré — n'en rajoute
@@ -129,7 +149,8 @@ pas clair.
      ```
    - Indique dans le résumé final la durée estimée et loggée (transparence a posteriori).
 
-11. Termine par un résumé : lien de la MR, état (Draft/Ready), le **relecteur posé** (ou pourquoi
-   il n'y en a pas), les cases de la checklist cochées et celles restées vides (avec un mot sur
-   pourquoi), le temps loggé le cas échéant, et rappelle que le merge reste une action humaine
-   (personne — pas même toi — ne doit merger automatiquement).
+12. Termine par un résumé : lien de la MR, état (Draft/Ready), le **relecteur posé** (ou pourquoi
+   il n'y en a pas), le **retard éventuel sur `origin/main`** relevé à l'étape 5 (et le rebase
+   proposé si un conflit est probable), les cases de la checklist cochées et celles restées vides
+   (avec un mot sur pourquoi), le temps loggé le cas échéant, et rappelle que le merge reste une
+   action humaine (personne — pas même toi — ne doit merger automatiquement).
