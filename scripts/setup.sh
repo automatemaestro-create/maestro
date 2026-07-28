@@ -84,7 +84,8 @@ Options :
   prerequis  python >= ${PYTHON_MIN}, node >= ${NODE_MIN}, npm, git, glab — installés d'office
              s'ils manquent (winget / brew / apt)
   venv       .venv/ + pip install -e ".[dev]"
-  env        .env créé depuis .env.example (jamais écrasé)
+  env        .env créé depuis .env.example (jamais écrasé) ; les clés partagées encore
+             vides sont signalées, avec le script qui les récupère (scripts/env-pull.sh)
   hooks      hook git commit-msg (scripts/git/install-hooks.sh)
   web        dépendances npm de apps/web
   mcp        .claude/settings.local.json (profil navigateur + serveurs MCP du dépôt)
@@ -805,6 +806,25 @@ etape_venv() {
 # --- 4. .env : copie du gabarit, JAMAIS d'écrasement ---------------------------------------------
 # Si le .env existe déjà, on se contente de signaler les clés présentes dans le gabarit et absentes
 # du .env (dérive de gabarit). Aucune VALEUR n'est lue ni affichée — uniquement des noms de clés.
+
+# Clés PARTAGÉES encore à compléter (#162) : celles que le gabarit marque « # [partagé] » et que le
+# .env laisse vides. Elles ne se devinent pas et ne se demandent plus une par une — elles vivent
+# dans les variables CI/CD du projet, d'où scripts/env-pull.sh les recopie. La convention de
+# marquage n'est PAS redupliquée ici : c'est env-pull.sh qui la porte (--manquantes, sans réseau).
+env_cles_partagees_manquantes() {
+  local script="$RACINE/scripts/env-pull.sh"
+  [ -f "$script" ] || return 0
+  bash "$script" --manquantes 2>/dev/null | tr '\n' ' ' | sed 's/ $//'
+}
+
+# Ajoute au « Reste à faire » l'invitation à récupérer les clés partagées, s'il en manque.
+env_reste_partagees() {
+  local manquantes
+  manquantes="$(env_cles_partagees_manquantes)"
+  [ -n "$manquantes" ] || return 0
+  reste "Clés partagées encore vides — bash scripts/env-pull.sh les récupère des variables CI/CD du projet (rien à demander à personne, rien à écraser) : $manquantes"
+}
+
 etape_env() {
   local gabarit="$RACINE/.env.example" cible="$RACINE/.env" cles_gabarit cles_env absentes
 
@@ -823,6 +843,7 @@ etape_env() {
       return 0
     fi
     reste "Renseigner .env — mode d'authentification Claude (CLAUDE_AUTH_MODE : subscription ou api_key), cf. docs/07-guide-de-demarrage.md §2.1"
+    env_reste_partagees
     return 0
   fi
 
@@ -840,6 +861,7 @@ etape_env() {
   else
     rapport DEJA env ".env présent (préservé) et aligné sur le gabarit"
   fi
+  env_reste_partagees
 }
 
 # --- 5. Hooks git : délégation au script dédié (déjà idempotent) ---------------------------------
