@@ -22,6 +22,12 @@ n'ouvrir qu'en cas de doute.
    le JSON imbriqué ; le JSON brut complet reste disponible via
    `bash scripts/gitlab/lib.sh backlog <state>` si tu as besoin d'un détail non projeté.
 
+   La colonne `assigne` porte l'**anti-collision du travail à plusieurs** : `-` = ticket **libre**,
+   sinon le ticket est **pris** par cette personne. Un ticket est **libre à prendre** quand il est
+   à la fois au statut « À faire » **et** sans assigné ; un « À faire » déjà assigné est réservé
+   (quelqu'un se l'est attribué sans l'avoir démarré), et un « En cours » assigné est en travail —
+   `/ticket-start` refuse de le démarrer.
+
 3. Récupère les Merge Requests ouvertes pour enrichir la vue « prêt à merger » :
    `glab mr list --output json`. Pour chaque MR, note `iid`, `title`, `state`, le caractère brouillon
    (`draft`/`work_in_progress`) et `source_branch`. Rattache une MR à son ticket via l'`iid` extrait
@@ -32,18 +38,23 @@ n'ouvrir qu'en cas de doute.
    1. **🔍 En revue** — action humaine attendue (merge). Pour chaque ticket, affiche
       `#<iid> — <titre>` puis, si une MR est rattachée : son état (Draft/Ready) et un lien
       `!<iid-mr>`. C'est la section « prêt à merger / attend une revue ».
-   2. **🛠 En cours**
-   3. **📋 À faire**
+   2. **🛠 En cours** — c'est ici que se lit qui travaille sur quoi : mets l'assigné en évidence
+      (`pris par @<assigne>`), et signale les tickets « En cours » **sans** assigné, anomalie à
+      corriger (statut posé à la main ou assignation perdue).
+   3. **📋 À faire**, en deux sous-groupes dans cet ordre : **🆓 Libres** (aucun assigné — les
+      tickets qu'on peut prendre tout de suite, c'est le geste quotidien de répartition) puis
+      **🔒 Réservés** (`pris par @<assigne>` — déjà attribués, ne pas les prendre sans en parler).
    4. Les autres statuts éventuels (`Terminé`/`Abandonné`/`Doublon`) **uniquement** si `all` a été
       demandé.
    Pour chaque ticket d'une section, montre sur une ligne : `#<iid>`, le titre, le label `agent::`,
-   le `prio::`, et l'assigné s'il y en a un. Trie chaque section par `prio::` (haute → moyenne →
-   basse) puis par iid.
+   le `prio::`, et l'**appartenance** — `pris par @<assigne>` ou `libre`. Trie chaque section par
+   `prio::` (haute → moyenne → basse) puis par iid.
 
-5. Termine par une **synthèse chiffrée** : nombre de tickets par statut, et un rappel des actions
-   suggérées (ex. « 2 en revue à merger », « 3 à faire non assignés »). N'invente pas de chiffres :
-   ne compte que ce que le JSON contient. Rappelle que le merge reste une décision humaine et
-   propose `/mr-review <mr>` pour inspecter une MR précise avant de merger.
+5. Termine par une **synthèse chiffrée** : nombre de tickets par statut, **combien sont libres**
+   (« À faire » sans assigné) et la répartition des « En cours » par personne, plus un rappel des
+   actions suggérées (ex. « 2 en revue à merger », « 3 tickets libres à prendre »). N'invente pas
+   de chiffres : ne compte que ce que la table contient. Rappelle que le merge reste une décision
+   humaine et propose `/mr-review <mr>` pour inspecter une MR précise avant de merger.
 
 Ne lance aucune commande d'écriture (`glab issue update`, `mr merge`, `set-status`, `git push`…) :
 cette commande observe, elle n'agit pas.
