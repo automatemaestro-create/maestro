@@ -16,6 +16,11 @@ dist/
 build/
 .next/
 out/
+
+# Outils provisionnés localement par scripts/setup.sh (#153) : le Node épinglé par
+# .node-version et les paquets MCP installés avec lui. Jamais versionnés — ce sont des
+# binaires propres à la plateforme, reconstruits par `bash scripts/setup.sh --only node`.
+.tools/
 *.log
 npm-debug.log*
 pnpm-debug.log*

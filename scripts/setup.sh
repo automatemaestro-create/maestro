@@ -41,7 +41,20 @@ LOG_DIR="${TMPDIR:-/tmp}/maestro-setup"
 # --- Configuration (surchargeable par variables d'environnement) --------------------------------
 PYTHON_MIN="${MAESTRO_PYTHON_MIN:-3.11}"   # exigé par pyproject.toml (requires-python)
 NODE_MIN="${MAESTRO_NODE_MIN:-20}"         # exigé par le Claude Agent SDK
-ETAPES_CONNUES="prerequis venv env hooks web mcp runner infra verif"
+
+# Node ÉPINGLÉ par le dépôt (#153). Le fichier .node-version est la source unique de la version ;
+# elle est provisionnée sous .tools/node/ (gitignoré) et prend le pas sur le Node du système pour
+# tout le reste du script. C'est ce qui rend le dépôt indépendant du gestionnaire de versions de
+# chaque poste : une bascule `nvm use 18` ne casse plus ni apps/web ni les serveurs MCP.
+NODE_PIN_FILE="$RACINE/.node-version"
+NODE_PIN="$(tr -d ' \t\r\n' < "$NODE_PIN_FILE" 2>/dev/null || true)"
+NODE_PIN="${NODE_PIN#v}"
+OUTILS_DIR="$RACINE/.tools"
+# @playwright/mcp est épinglé lui aussi : `@latest` ferait dériver le serveur `chrome-maestro`
+# d'un clone à l'autre, et c'est du code exécuté à chaque démarrage de Claude Code.
+PLAYWRIGHT_MCP_VERSION="${MAESTRO_PLAYWRIGHT_MCP_VERSION:-0.0.78}"
+
+ETAPES_CONNUES="node prerequis venv env hooks web mcp runner infra verif"
 
 # --- Drapeaux -----------------------------------------------------------------------------------
 MODE_CHECK=0                                     # --check : diagnostic seul, aucune écriture
@@ -65,6 +78,9 @@ Options :
   -h, --help         Cette aide.
 
 Étapes : ${ETAPES_CONNUES// /, }
+  node       Node ${NODE_PIN:-(.node-version)} provisionné sous .tools/node/ (téléchargement vérifié
+             par SHA-256) + @playwright/mcp ${PLAYWRIGHT_MCP_VERSION} — sans droits admin, et
+             prioritaire sur le Node du système pour les étapes suivantes
   prerequis  python >= ${PYTHON_MIN}, node >= ${NODE_MIN}, npm, git, glab — installés d'office
              s'ils manquent (winget / brew / apt)
   venv       .venv/ + pip install -e ".[dev]"
@@ -214,6 +230,134 @@ commande_install() {
       esac ;;
     *) echo "voir la documentation de $1" ;;
   esac
+}
+
+# --- Node épinglé par le dépôt (.node-version → .tools/node/) ------------------------------------
+# Emplacement du Node vendoré. Versionné par le pin : changer .node-version provisionne à côté,
+# sans écraser l'ancien — un retour en arrière ne retélécharge rien.
+node_local_root()   { printf '%s/node/v%s\n' "$OUTILS_DIR" "$NODE_PIN"; }
+node_local_bindir() {
+  if [ "$OS" = windows ]; then node_local_root; else printf '%s/bin\n' "$(node_local_root)"; fi
+}
+node_local_exe() {
+  if [ "$OS" = windows ]; then printf '%s/node.exe\n' "$(node_local_bindir)"
+  else printf '%s/node\n' "$(node_local_bindir)"; fi
+}
+
+# Version réellement installée sous .tools/node/ (vide si absente ou inexécutable).
+node_local_version() {
+  local exe version
+  exe="$(node_local_exe)"
+  [ -x "$exe" ] || return 1
+  version="$("$exe" -v 2>/dev/null)" || return 1
+  printf '%s\n' "${version#v}"
+}
+
+# Le Node vendoré est-il présent ET exactement à la version épinglée ?
+node_local_ok() {
+  local version
+  version="$(node_local_version)" || return 1
+  [ "$version" = "$NODE_PIN" ]
+}
+
+# Nom de plateforme et extension d'archive utilisés par nodejs.org, séparés par une espace.
+# Renvoie 1 si le couple OS/architecture n'est pas distribué en binaire officiel.
+node_archive_slug() {
+  local arch
+  arch="$(uname -m 2>/dev/null)"
+  case "$arch" in
+    x86_64|amd64)  arch=x64 ;;
+    arm64|aarch64) arch=arm64 ;;
+    *) return 1 ;;
+  esac
+  case "$OS" in
+    windows) printf 'win-%s zip\n'     "$arch" ;;
+    macos)   printf 'darwin-%s tar.gz\n' "$arch" ;;
+    linux)   printf 'linux-%s tar.xz\n'  "$arch" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Empreinte SHA-256 d'un fichier, quel que soit l'outil disponible (coreutils ou BSD/macOS).
+somme_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1
+  else return 1; fi
+}
+
+# Extrait l'archive Node dans le dossier courant de travail. `unzip` n'est pas garanti sous Git
+# Bash : on retombe alors sur Expand-Archive de PowerShell, toujours présent sous Windows.
+extrait_archive_node() {
+  local archive="$1" dest="$2"
+  case "$archive" in
+    *.zip)
+      if command -v unzip >/dev/null 2>&1; then
+        execute_journalise node-extract unzip -q "$archive" -d "$dest"
+      elif command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+        execute_journalise node-extract powershell.exe -NoProfile -Command Expand-Archive \
+          -Path "$(cygpath -w "$archive")" -DestinationPath "$(cygpath -w "$dest")" -Force
+      else
+        return 1
+      fi ;;
+    *) execute_journalise node-extract tar -xf "$archive" -C "$dest" ;;
+  esac
+}
+
+# provisionne_node : télécharge, VÉRIFIE puis installe le Node épinglé. Codes de retour :
+#   0 installé · 1 téléchargement/extraction en échec · 2 pas de quoi télécharger ou hacher
+#   3 plateforme sans binaire officiel · 4 empreinte de référence introuvable · 5 empreinte INVALIDE
+# La vérification n'est pas décorative : le script exécute ensuite ce binaire, et le télécharge en
+# clair depuis un miroir. Une archive dont l'empreinte ne correspond pas est jetée, pas installée.
+provisionne_node() {
+  local slug ext base url tmp archive attendue obtenue racine code
+  # Garde-fou : cette fonction fait un `rm -rf` sur un chemin construit à partir du pin. Vide, il
+  # désignerait .tools/node/v — jamais de suppression sur un chemin qu'on n'a pas entièrement.
+  [ -n "$NODE_PIN" ] || return 3
+  read -r slug ext <<EOF || return 3
+$(node_archive_slug)
+EOF
+  [ -n "${slug:-}" ] && [ -n "${ext:-}" ] || return 3
+  command -v curl >/dev/null 2>&1 || return 2
+  command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || return 2
+
+  base="node-v$NODE_PIN-$slug"
+  url="https://nodejs.org/dist/v$NODE_PIN"
+  tmp="$OUTILS_DIR/.telechargement"
+  rm -rf "$tmp"
+  mkdir -p "$tmp" "$OUTILS_DIR/node" || return 1
+  archive="$tmp/$base.$ext"
+
+  execute_journalise node-download curl -fsSL --retry 2 -o "$archive" "$url/$base.$ext" || {
+    rm -rf "$tmp"; return 1; }
+  execute_journalise node-shasums curl -fsSL --retry 2 -o "$tmp/SHASUMS256.txt" "$url/SHASUMS256.txt" || {
+    rm -rf "$tmp"; return 1; }
+
+  attendue="$(awk -v f="$base.$ext" '$2 == f || $2 == "./" f { print $1 }' "$tmp/SHASUMS256.txt" | head -1)"
+  [ -n "$attendue" ] || { rm -rf "$tmp"; return 4; }
+  obtenue="$(somme_sha256 "$archive")" || { rm -rf "$tmp"; return 2; }
+  [ "$obtenue" = "$attendue" ] || { rm -rf "$tmp"; return 5; }
+
+  extrait_archive_node "$archive" "$tmp"; code=$?
+  [ "$code" = 0 ] || { rm -rf "$tmp"; return 1; }
+
+  racine="$tmp/$base"
+  [ -d "$racine" ] || { rm -rf "$tmp"; return 1; }
+  rm -rf "$(node_local_root)"
+  mv "$racine" "$(node_local_root)" || { rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+  node_local_ok || return 1
+  return 0
+}
+
+# Chemin du CLI @playwright/mcp installé localement (qu'il existe ou non).
+mcp_playwright_cli() { printf '%s/mcp/node_modules/@playwright/mcp/cli.js\n' "$OUTILS_DIR"; }
+
+# Version de @playwright/mcp installée sous .tools/mcp/ (vide si absent).
+mcp_playwright_version() {
+  local pkg="$OUTILS_DIR/mcp/node_modules/@playwright/mcp/package.json"
+  [ -f "$pkg" ] || return 1
+  # Lecture au grep plutôt qu'avec node : cette fonction sert aussi quand aucun node n'est utilisable.
+  grep -m1 '"version"' "$pkg" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
 }
 
 # --- Installation automatique des outils manquants ----------------------------------------------
@@ -384,7 +528,84 @@ etape_demandee() {
 # Étapes
 # ================================================================================================
 
-# --- 1. Prérequis : détecter, installer ce qui manque, re-détecter --------------------------------
+# --- 1. Node épinglé : .node-version → .tools/node/, puis @playwright/mcp ------------------------
+# Cette étape passe AVANT `prerequis` à dessein : une fois le Node du dépôt en tête du PATH, les
+# étapes suivantes (dont `prerequis` et `web`) le voient comme le node de la session. Un poste dont
+# le node global est absent, trop ancien, ou détourné par `nvm use 18` n'a donc rien à réparer.
+# Rien n'est installé hors de .tools/ : aucun droit admin, aucune modification du système.
+etape_node() {
+  local code bindir cli version version_mcp prefix
+
+  if [ -z "$NODE_PIN" ]; then
+    rapport IGNORE node "node : aucune version lisible dans .node-version, étape sautée"
+    return 0
+  fi
+
+  # 1) Le Node du dépôt.
+  if node_local_ok; then
+    rapport DEJA node "node : v$NODE_PIN déjà provisionné (.tools/node/)"
+  else
+    version="$(node_local_version || true)"
+    if [ "$MODE_CHECK" = 1 ]; then
+      if [ -n "$version" ]; then
+        rapport IGNORE node "node : .tools/node/ porte v$version, attendu v$NODE_PIN — à reprovisionner (--check : rien fait)"
+      else
+        rapport IGNORE node "node : v$NODE_PIN à provisionner dans .tools/node/ (--check : rien téléchargé)"
+      fi
+      return 0
+    fi
+    printf '  … téléchargement de Node v%s — peut prendre une minute\n' "$NODE_PIN"
+    provisionne_node; code=$?
+    case "$code" in
+      0) rapport OK node "node : v$NODE_PIN provisionné dans .tools/node/ (empreinte SHA-256 vérifiée)" ;;
+      2) rapport IGNORE node "node : curl ou sha256sum indisponible, provisionnement sauté" ; return 0 ;;
+      3) rapport IGNORE node "node : pas de binaire officiel pour cette plateforme, provisionnement sauté" ; return 0 ;;
+      4) echec_dur node "node : empreinte de référence introuvable pour v$NODE_PIN — rien installé" ; return 0 ;;
+      5) echec_dur node "node : EMPREINTE SHA-256 INVALIDE — archive rejetée, rien installé" ; return 0 ;;
+      *) echec_dur node "node : téléchargement ou extraction de v$NODE_PIN impossible" ; return 0 ;;
+    esac
+  fi
+
+  # 2) Le Node du dépôt prend la tête du PATH pour tout le reste du script.
+  bindir="$(node_local_bindir)"
+  if [ -d "$bindir" ]; then
+    case ":$PATH:" in
+      *":$bindir:"*) ;;
+      *) export PATH="$bindir:$PATH" ;;
+    esac
+    hash -r 2>/dev/null || true
+    NODE_PRESENT=1
+  fi
+
+  # 3) @playwright/mcp, épinglé, installé AVEC ce Node — c'est ce que lance le serveur
+  # `chrome-maestro` de .mcp.json via scripts/mcp/playwright-mcp.mjs.
+  cli="$(mcp_playwright_cli)"
+  version_mcp="$(mcp_playwright_version || true)"
+  if [ -f "$cli" ] && [ "$version_mcp" = "$PLAYWRIGHT_MCP_VERSION" ]; then
+    rapport DEJA node "@playwright/mcp $PLAYWRIGHT_MCP_VERSION déjà installé (.tools/mcp/)"
+    return 0
+  fi
+  if [ "$MODE_CHECK" = 1 ]; then
+    rapport IGNORE node "@playwright/mcp $PLAYWRIGHT_MCP_VERSION à installer dans .tools/mcp/ (--check : rien installé)"
+    return 0
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    rapport IGNORE node "@playwright/mcp : npm introuvable, installation sautée"
+    return 0
+  fi
+  prefix="$OUTILS_DIR/mcp"
+  mkdir -p "$prefix"
+  if execute_journalise node-mcp-install \
+      npm install --prefix "$prefix" --no-audit --no-fund --loglevel error \
+                  "@playwright/mcp@$PLAYWRIGHT_MCP_VERSION"; then
+    rapport OK node "@playwright/mcp $PLAYWRIGHT_MCP_VERSION installé (.tools/mcp/)"
+  else
+    # Non bloquant : le wrapper sait retomber sur npx si le paquet local manque.
+    rapport IGNORE node "@playwright/mcp : installation en échec, le serveur MCP retombera sur npx"
+  fi
+}
+
+# --- 2. Prérequis : détecter, installer ce qui manque, re-détecter --------------------------------
 # `python` et `git` sont DURS (sans eux les étapes suivantes n'ont rien à faire) ; `node`/`npm` ne
 # bloquent que apps/web, et `glab` que le workflow de tickets.
 OUTILS_REQUIS="python node npm git glab"
@@ -531,7 +752,7 @@ etape_prerequis() {
   fi
 }
 
-# --- 2. venv : .venv/ + installation éditable du paquet et de son extra `dev` --------------------
+# --- 3. venv : .venv/ + installation éditable du paquet et de son extra `dev` --------------------
 # Idempotence : un témoin .venv/.maestro-setup-stamp est posé après installation ; on ne réinstalle
 # que s'il manque ou si pyproject.toml a bougé depuis (dépendances modifiées).
 etape_venv() {
@@ -581,7 +802,7 @@ etape_venv() {
   rapport OK venv "venv : .venv/ prêt (paquet éditable + extra dev installés)"
 }
 
-# --- 3. .env : copie du gabarit, JAMAIS d'écrasement ---------------------------------------------
+# --- 4. .env : copie du gabarit, JAMAIS d'écrasement ---------------------------------------------
 # Si le .env existe déjà, on se contente de signaler les clés présentes dans le gabarit et absentes
 # du .env (dérive de gabarit). Aucune VALEUR n'est lue ni affichée — uniquement des noms de clés.
 etape_env() {
@@ -621,7 +842,7 @@ etape_env() {
   fi
 }
 
-# --- 4. Hooks git : délégation au script dédié (déjà idempotent) ---------------------------------
+# --- 5. Hooks git : délégation au script dédié (déjà idempotent) ---------------------------------
 etape_hooks() {
   local attendu="scripts/git/hooks" actuel
   actuel="$(git -C "$RACINE" config core.hooksPath 2>/dev/null)"
@@ -641,7 +862,7 @@ etape_hooks() {
   fi
 }
 
-# --- 5. apps/web : dépendances npm de la Control Tower -------------------------------------------
+# --- 6. apps/web : dépendances npm de la Control Tower -------------------------------------------
 # Réinstalle si node_modules/ est absent ou plus ancien que le lockfile.
 etape_web() {
   local web="$RACINE/apps/web" lock ok=1
@@ -681,7 +902,7 @@ etape_web() {
   rapport OK web "apps/web : dépendances npm installées"
 }
 
-# --- 6. Claude Code : .claude/settings.local.json (profil navigateur + serveurs MCP) -------------
+# --- 7. Claude Code : .claude/settings.local.json (profil navigateur + serveurs MCP) -------------
 # Fusion clé par clé : ce qui est déjà posé n'est jamais remplacé. Le fichier n'est pas versionné
 # (.gitignore) et ne porte que des chemins machine — aucun secret. L'approbation effective des
 # serveurs MCP et l'OAuth Figma restent des gestes interactifs, rappelés dans « Reste à faire ».
@@ -870,7 +1091,7 @@ assure_glab_auth() {
   authentifie_glab
 }
 
-# --- 7. Docker + runner CI de projet : délégation à scripts/gitlab/setup-runner.sh ----------------
+# --- 8. Docker + runner CI de projet : délégation à scripts/gitlab/setup-runner.sh ----------------
 # Le détail (installation de Docker, création du runner côté GitLab, conteneur, enregistrement)
 # vit dans setup-runner.sh, utilisable seul. Ici : transmission des drapeaux, progression laissée
 # à l'écran, et reprise de ses lignes `RESULTAT|<volet>|<statut>|<détail>` dans le rapport commun.
@@ -909,7 +1130,7 @@ etape_runner() {
   done < "$log"
 }
 
-# --- 8. Bases locales (optionnelles) : PostgreSQL / Redis / Temporal ------------------------------
+# --- 9. Bases locales (optionnelles) : PostgreSQL / Redis / Temporal ------------------------------
 # Proposées, pas imposées : elles ne servent qu'aux exécutions durables (Phase 3) et pèsent
 # plusieurs gigaoctets d'images. Sans --with-infra, l'étape se contente de rappeler la commande.
 etape_infra() {
@@ -942,7 +1163,7 @@ etape_infra() {
   fi
 }
 
-# --- 9. Vérification finale ----------------------------------------------------------------------
+# --- 10. Vérification finale ---------------------------------------------------------------------
 # Étape SOUPLE : sur un clone frais le .env n'est pas encore renseigné, un échec ici est un
 # renseignement, pas une faute — il ne fait pas sortir le script en erreur.
 etape_verif() {
