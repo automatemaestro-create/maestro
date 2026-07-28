@@ -581,6 +581,45 @@ injecte le rappel à chaque prompt.
 Comme l'allowlist (§7.1), ce hook est **partagé par l'équipe** ; toute surcharge personnelle (ex.
 désactiver le rappel en local) passe par `.claude/settings.local.json`, non versionné.
 
+### 7.3 Secrets partagés — `[perso]` / `[partagé]` et `env-pull.sh`
+
+**Le problème.** À plusieurs, la moitié d'un `.env` n'appartient à personne en particulier : les
+clés Langfuse, le bot Slack et les endpoints sont les mêmes pour toute l'équipe. Les faire circuler
+à la demande (« tu peux me renvoyer le token ? ») coûte un aller-retour à chaque arrivant et laisse
+des secrets traîner dans les canaux de discussion (#162).
+
+**L'arbitrage.** Chaque clé de [`.env.example`](../.env.example) porte un **marqueur**, sur la
+ligne de commentaire qui l'introduit — et qui vaut **jusqu'au marqueur suivant** :
+
+| Marqueur | Ce que c'est | Où vit la valeur |
+|---|---|---|
+| `# [perso]` | jeton nominatif, chemin de machine, service local | **chez vous** — le seul geste manuel qui reste sur un clone frais |
+| `# [partagé]` | secret du projet, endpoint, identifiants d'espace de travail | **variables CI/CD du projet GitLab** (masquées, réservées aux membres) |
+
+```bash
+bash scripts/env-pull.sh              # complète le .env avec les clés partagées qui manquent
+bash scripts/env-pull.sh --check      # diagnostic seul — n'écrit rien, ne lit aucune valeur
+bash scripts/env-pull.sh --manquantes # juste les noms à compléter (ce qu'interroge setup.sh)
+```
+
+Quatre promesses, que [`tests/test_env_pull.py`](../tests/test_env_pull.py) épingle :
+
+- **le gabarit fait foi** — la liste des clés partagées est *lue* dans `.env.example`, jamais
+  recopiée dans le script : annoter une nouvelle clé là-bas suffit ;
+- **non destructif** — une clé déjà renseignée n'est **jamais** écrasée, même si la variable CI/CD
+  dit autre chose, et les clés `[perso]` ne sont pas même regardées ;
+- **aucune valeur imprimée** — la sortie ne porte que des *noms* de clés et des comptes ; les
+  valeurs ne traversent ni l'affichage ni un argument de commande (lisible par tout processus de la
+  machine), seulement des fichiers temporaires en 0600 effacés en sortie ;
+- **franc sur ce qu'il ne peut pas** — une clé partagée absente des variables du projet est dite
+  comme telle, avec la commande qui la publie. Rien n'est deviné.
+
+**Publier une valeur partagée** est un geste de **mainteneur**, une fois par clé :
+
+```bash
+glab variable set LANGFUSE_SECRET_KEY --masked < valeur.txt
+```
+
 ---
 
 ## 8. Intégration continue (CI)
@@ -849,3 +888,50 @@ le rôle de `/branch-cleanup`, après confirmation du merge par GitLab (§6).
 - Si la branche modifie `pyproject.toml` ou `apps/web/package.json`, les dépendances partagées ne
   correspondent plus : créer le worktree avec `--sans-liens`, puis l'équiper avec
   `bash scripts/setup.sh`.
+
+---
+
+## 10. Travail à plusieurs — plusieurs personnes, plusieurs clones
+
+Le workflow décrit plus haut a d'abord été réglé pour **une personne, un clone**. Passer à
+plusieurs ne change aucune règle : cela **rend coûteux** ce qui n'était qu'inconfortable. Cette
+section est la **synthèse** du chantier #155 — elle n'introduit rien, elle dit où chaque mécanisme
+est traité et pourquoi il existe.
+
+| Ce qui casse à plusieurs | Le mécanisme | Où |
+|---|---|---|
+| Deux sessions sur le même clone se marchent dessus (`HEAD` partagé) | un **worktree par session** — ports Control Tower et profil de navigateur dédiés | §9 |
+| Deux personnes démarrent le **même ticket** ; `begin` remplace les assignés et le retire à son propriétaire | **anti-collision** : `start-brief` dit « libre » ou « ⚠ déjà pris par … », `/backlog` sépare les tickets libres | §5 |
+| Une session clôture un ticket **qui n'est pas le sien** (MR, relecteur et temps posés à la place d'un autre) | **garde-fou de clôture** : `close-guard` compare l'iid visé à la branche courante *et* aux assignés | §6 |
+| Les lots d'un parent s'attendent en file alors qu'ils sont indépendants | marqueur **`(parallèle)`** dans la checklist ; `startables` liste **tous** les lots prenables | §5.1 |
+| Une branche vieillit pendant qu'`origin/main` avance ; le conflit se découvre au merge | **alerte de retard** avant le push : `behind-main` (commits de retard + fichiers modifiés des deux côtés) | §6 |
+| Une MR ouverte n'est relue par personne, faute de savoir qu'elle attend | **revue best-effort outillée** : relecteur posé d'office (jamais remplacé) + **file de revue** en tête de `/backlog`, la plus ancienne d'abord | §6 |
+| La CI dépend du poste d'**une** personne : elle éteint sa machine, l'équipe ne merge plus | **runner partagé permanent** (`--partage`, machine toujours allumée), les runners locaux en secours | §8.1 |
+| Un échec de lint occupe le runner de quelqu'un d'autre pour une faute de frappe | **filet CI local** : `bash scripts/ci/local.sh` rejoue les jobs du pipeline avant le push | §8 |
+| La moitié du `.env` circule à la main, de canal en canal | marqueurs **`[perso]` / `[partagé]`** + `env-pull.sh`, qui complète sans jamais écraser | §7.3 |
+
+**Rien n'est bloquant.** Aucun de ces mécanismes n'interdit quoi que ce soit : ils *disent*, et la
+décision reste humaine. `behind-main` et `close-guard` rendent un **code de retour lu, jamais
+fatal** (`… || verdict=$?`) ; la revue n'exige **aucune approbation** — c'est la visibilité qui la
+déclenche ; la pose d'un relecteur est **best-effort** (sur un projet à une seule personne, il n'y
+a pas de candidat et la clôture se poursuit). Les seuls refus durs restent ceux des garde-fous de
+§6 : pas de merge automatique, pas de force-push, pas de suppression de branche non mergée.
+
+**Deux personnes, une machine chacune : le parcours.**
+
+1. `bash scripts/setup.sh` puis `bash scripts/env-pull.sh` — le poste est équipé, les secrets
+   partagés arrivent des variables CI/CD (§7.3).
+2. `/backlog` → prendre un ticket de la section **Libres** (§5) ; s'il est marqué `(parallèle)`
+   dans un parent, quelqu'un d'autre peut prendre le lot voisin en même temps (§5.1).
+3. `/ticket-start <iid>` — s'arrête si le ticket est déjà pris ; sinon branche, statut, dates.
+4. `bash scripts/ci/local.sh` avant de pousser (§8).
+5. `/ticket-ship` — retard sur `origin/main` signalé, garde-fou de clôture, MR, relecteur désigné.
+6. La MR apparaît en tête de `/backlog` chez tout le monde jusqu'à son merge — **décision humaine**
+   (§6).
+
+> **Tests.** Ces comportements sont couverts par [`tests/test_collaboration.py`](../tests/test_collaboration.py)
+> (helpers `lib.sh` + contrôle runner de `doctor.sh`), [`tests/test_env_pull.py`](../tests/test_env_pull.py)
+> et [`tests/test_ci_local.py`](../tests/test_ci_local.py) — même parti pris que
+> [`test_setup.py`](../tests/test_setup.py) et [`test_worktree.py`](../tests/test_worktree.py) :
+> dépôt jetable, **ni réseau ni Docker ni compte GitLab** (un `glab` factice répond depuis une
+> fixture et journalise les appels), on teste la **décision** des scripts et non l'API.
