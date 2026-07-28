@@ -721,7 +721,53 @@ runner est en ligne **en amont de chaque MR** reste donc intégré au flux de cl
 (`/ticket-finish`, `/ticket-ship`, `/pipeline-fix`), désormais sans geste manuel — et d'autant
 plus au bon endroit depuis #165, la MR étant le **seul** moment où un pipeline démarre.
 
-### 8.2 Pipeline rouge — remédiation
+### 8.2 Ménage des conteneurs de jobs sur la machine du runner
+
+L'exécuteur `docker` du runner crée **deux conteneurs éphémères par job** —
+`runner-<jeton>-project-<id>-concurrent-<n>-<hash>-predefined` (clone, cache, artefacts) et
+`…-build` (le script du job), plus un `…-svc-<n>` par service — et les supprime en fin de job.
+**Sauf quand il est tué en cours de route** (Docker Desktop arrêté, poste éteint, job annulé) : le
+ménage n'a alors jamais lieu et les conteneurs restent `Exited` indéfiniment. Le constat qui a
+motivé #166 : 8 résidus pour ~1,5 Go sur un poste, issus de deux pipelines interrompus à une
+semaine d'intervalle, plus 16 volumes de cache répartis sur 4 enregistrements successifs du
+runner. Rien ne le signale, et ça grossit en silence sur la machine de chaque personne qui héberge
+un runner.
+
+[`scripts/gitlab/clean-runner-containers.sh`](../scripts/gitlab/clean-runner-containers.sh) s'en
+charge, **câblé à côté de `ensure-runner.sh`** dans [`/ticket-finish`](../.claude/commands/ticket-finish.md)
+et [`/pipeline-fix`](../.claude/commands/pipeline-fix.md) (donc `/ticket-ship` par ricochet) :
+préparer la CI avant la MR est aussi le bon moment pour ramasser les restes du pipeline précédent.
+Appelé en `|| …`, **son échec n'interrompt jamais la clôture**, et il est **silencieux quand il n'y
+a rien à faire**. Contrairement à `ensure-runner.sh`, il n'est **pas** court-circuité quand le
+runner partagé tient la CI : le ménage est local à la machine.
+
+**Jamais `docker container prune` ni `docker system prune`.** Sur un poste de développement, ils
+détruiraient les conteneurs arrêtés des **autres** projets (bases de données, n8n, stacks compose
+au repos). La suppression se fait exclusivement par `docker rm`, conteneur par conteneur, sur une
+liste filtrée par nom — et **trois garde-fous** valident chaque candidat, parce qu'un conteneur
+`Exited` n'est pas forcément un déchet :
+
+1. **État `exited`** — un job en cours d'exécution est `running`, écarté d'office.
+2. **Job encore vivant** — le conteneur `-predefined` **sort (code 0) pendant que le job continue**
+   dans `-build` ; le supprimer casserait l'envoi des artefacts. Les conteneurs sont donc regroupés
+   par job (le préfixe jusqu'au hash) et **tout le groupe est épargné** dès qu'un de ses conteneurs
+   tourne encore. C'est le garde-fou qui compte vraiment.
+3. **Ancienneté** — au cas où le second conteneur du job ne serait pas encore créé (quelques
+   secondes entre les étapes), rien n'est effacé avant `MAESTRO_CLEAN_AGE_MIN` minutes (10 par
+   défaut). Une date de fin illisible vaut « trop récent » : on s'abstient.
+
+Les **volumes de cache** (`runner-<hash>-cache-…`, un jeu par enregistrement du runner) ne sont
+**jamais supprimés automatiquement** — ceux de l'enregistrement courant accélèrent les jobs. Le
+script se contente de les **signaler** quand il en trouve plusieurs jeux ; leur purge est un geste
+explicite, `--volumes`, qui conserve le jeu le plus récent (l'enregistrement courant) et s'appuie
+sur le refus natif de `docker volume rm` pour un volume monté. `--check` donne le diagnostic sans
+rien supprimer. Côté **permissions** ([`.claude/settings.json`](../.claude/settings.json)), seules
+les deux formes non destructives sont pré-autorisées — l'appel nu (celui des skills) et `--check` ;
+`--volumes` demande une confirmation, comme il se doit pour un geste explicite. Invariants testés par
+[`tests/test_clean_runner_containers.py`](../tests/test_clean_runner_containers.py), sur un faux
+CLI `docker` — ni réseau, ni Docker, ni conteneur réel.
+
+### 8.3 Pipeline rouge — remédiation
 
 **Pipeline rouge ?** La remédiation passe par
 [`/pipeline-fix`](../.claude/commands/pipeline-fix.md) (voir §5) : diagnostic des jobs en échec,

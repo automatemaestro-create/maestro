@@ -83,6 +83,14 @@ pas clair.
    ```
    bash scripts/gitlab/ensure-runner.sh || echo "⚠ runner local non démarré — clôture poursuivie, à surveiller sur la MR"
    ```
+   **Ramasse au passage les restes du pipeline précédent** (#166) : un runner tué en cours de job
+   laisse ses conteneurs éphémères derrière lui, et personne ne les enlève. Même statut que
+   ci-dessus — **best-effort, jamais bloquant**, et silencieux quand il n'y a rien à faire. Il
+   n'est **pas** conditionné à ce qui précède : le ménage est local à la machine, il vaut aussi
+   quand c'est le runner partagé qui sert la CI.
+   ```
+   bash scripts/gitlab/clean-runner-containers.sh || echo "⚠ ménage des conteneurs CI incomplet — clôture poursuivie"
+   ```
    Puis pousse la branche : `git push -u origin $(git branch --show-current)`. Ne fais jamais de
    `--force` ici — si le push est rejeté, arrête-toi et explique pourquoi plutôt que de forcer.
    Si le push **reste bloqué** sur une demande d'identifiants (typique sous Windows avec Git

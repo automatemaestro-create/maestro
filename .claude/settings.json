@@ -35,6 +35,8 @@
       "Bash(glab ci retry:*)",
       "Bash(bash scripts/gitlab/lib.sh:*)",
       "Bash(bash scripts/gitlab/doctor.sh:*)",
+      "Bash(bash scripts/gitlab/clean-runner-containers.sh)",
+      "Bash(bash scripts/gitlab/clean-runner-containers.sh --check)",
       "Bash(bash scripts/git/install-hooks.sh:*)",
       "mcp__chrome-maestro",
       "mcp__figma-officiel"
