@@ -99,7 +99,7 @@ liste_jobs() {
   printf '  %-12s %-6s %s\n' python-lint  lint "ruff check ."
   printf '  %-12s %-6s %s\n' pytest       test "pytest --cov=maestro --cov-fail-under=$COUVERTURE_MIN"
   printf '  %-12s %-6s %s\n' mypy         test "mypy maestro"
-  printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm run build (dans apps/web)"
+  printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm test && npm run build (dans apps/web)"
 }
 
 while [ $# -gt 0 ]; do
@@ -310,6 +310,14 @@ job_mypy() {
 }
 
 # --- Job web-build ---------------------------------------------------------------------------------
+# Le décompte de Vitest, lu sur SA ligne de résumé (« Tests  N failed | M passed »). On vise
+# « Tests » et non « Test Files » — qui compte des FICHIERS —, ni le détail par fichier
+# (« (1 test | 1 failed) »), qui porte les mêmes mots et arrive plus tôt dans le journal : un
+# simple `grep -oE '[0-9]+ failed' | head -1` rapporterait le mauvais nombre.
+resume_vitest() { # <failed|passed>
+  grep -E '^[[:space:]]*Tests[[:space:]]' "$JOURNAL" 2>/dev/null | grep -oE "[0-9]+ $1"
+}
+
 # Le pipeline ne joue ce job que si apps/web (ou .gitlab-ci.yml) change : même règle ici, évaluée
 # sur ce que la branche apporte à origin/main, travail non commité compris — c'est ce qui partira
 # au push. « --only web-build » passe outre (on l'a demandé explicitement).
@@ -339,16 +347,26 @@ job_web() {
     return 2
   }
   # `npm ci` de la CI n'est pas rejoué : il retélécharge le monde alors que setup.sh a déjà posé
-  # node_modules depuis le même lockfile. On enchaîne lint puis build, comme le job.
+  # node_modules depuis le même lockfile. On enchaîne lint, tests puis build, comme le job.
   PATH="$bindir:$PATH" execute npm --prefix apps/web run lint || {
     DETAIL="eslint : erreur(s) — voir le journal"
     return 1
   }
+  # NO_COLOR : sans lui, Vitest colore son résumé et les codes ANSI s'intercalent dans la ligne
+  # qu'on lit juste après — elle ne commencerait même plus par « Tests ».
+  PATH="$bindir:$PATH" NO_COLOR=1 execute npm --prefix apps/web test || {
+    DETAIL="vitest : $(resume_vitest failed | head -1)"
+    [ "$DETAIL" != "vitest : " ] || DETAIL="vitest : échec(s), voir le journal"
+    return 1
+  }
+  # Le total des tests, pour que le job dise ce qu'il a joué et non seulement qu'il est vert.
+  local tests
+  tests="$(resume_vitest passed | head -1)"
   PATH="$bindir:$PATH" execute npm --prefix apps/web run build || {
     DETAIL="next build : échec (le typage TypeScript y est vérifié)"
     return 1
   }
-  DETAIL="eslint + next build verts"
+  DETAIL="eslint + vitest (${tests:-?}) + next build verts"
   return 0
 }
 

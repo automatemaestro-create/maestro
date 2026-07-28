@@ -1,0 +1,180 @@
+/**
+ * Lot 1 de la refonte UX (#117) : le shell de backoffice — le menu unique, la
+ * sidebar qui en désigne la page courante, la barre supérieure qui en reprend
+ * le titre, et le repli mémorisé d'une page à l'autre.
+ *
+ * Ce que ces tests protègent en propre : `MENU` est la **source unique** des
+ * pages (sidebar et barre supérieure la lisent toutes deux), et l'état de repli
+ * fait l'aller-retour par le `localStorage` plutôt que par un état React local
+ * — c'est ce qui permet à la section Apparence des Paramètres (#121) de piloter
+ * la même bascule sans connaître le shell.
+ */
+
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+
+import { BarreLaterale } from "@/components/BarreLaterale";
+import { BarreSuperieure } from "@/components/BarreSuperieure";
+import { entreeCourante, MENU } from "@/lib/navigation";
+
+import { agentFactice, poserChemin, rendreAvecEtat } from "./aides";
+
+describe("le menu (lib/navigation)", () => {
+  it("porte les sept sections annoncées par la refonte", () => {
+    expect(MENU.map((entree) => entree.libelle)).toEqual([
+      "Tableau de bord",
+      "Agents",
+      "Playbooks",
+      "Chat",
+      "Coûts & analytics",
+      "Validations",
+      "Paramètres",
+    ]);
+  });
+
+  it("désigne l'entrée qui porte le chemin courant", () => {
+    expect(entreeCourante("/couts")?.libelle).toBe("Coûts & analytics");
+    expect(entreeCourante("/parametres")?.libelle).toBe("Paramètres");
+  });
+
+  it("rattache un sous-chemin à sa section", () => {
+    // `/playbooks/dev` reste sous « Playbooks » : sans quoi l'entrée perdrait
+    // sa mise en évidence dès qu'on ouvre un détail.
+    expect(entreeCourante("/playbooks/dev")?.href).toBe("/playbooks");
+  });
+
+  it("ne rend la racine active que sur la racine", () => {
+    // Le piège du `startsWith` : « / » préfixe TOUS les chemins, le tableau de
+    // bord resterait donc actif sur chaque page.
+    expect(entreeCourante("/")?.href).toBe("/");
+    expect(entreeCourante("/chat")?.href).toBe("/chat");
+  });
+
+  it("ne désigne aucune entrée pour un chemin inconnu", () => {
+    expect(entreeCourante("/inexistant")).toBeUndefined();
+  });
+});
+
+describe("la sidebar (BarreLaterale)", () => {
+  it("rend un lien par section, dans l'ordre du menu", () => {
+    render(<BarreLaterale repliee={false} />);
+    const navigation = screen.getByRole("navigation", {
+      name: "Navigation principale",
+    });
+    const liens = within(navigation).getAllByRole("link");
+    expect(liens.map((lien) => lien.getAttribute("href"))).toEqual(
+      MENU.map((entree) => entree.href),
+    );
+  });
+
+  it("marque la page courante pour les lecteurs d'écran", () => {
+    poserChemin("/couts");
+    render(<BarreLaterale repliee={false} />);
+    expect(screen.getByRole("link", { name: /Coûts & analytics/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      screen.getByRole("link", { name: /Tableau de bord/ }),
+    ).not.toHaveAttribute("aria-current");
+  });
+
+  it("garde chaque section atteignable une fois repliée", () => {
+    // Repliée, la sidebar masque les libellés : c'est le `title` (et l'icône)
+    // qui portent alors le nom de la section — les liens doivent rester tous là.
+    render(<BarreLaterale repliee />);
+    const navigation = screen.getByRole("navigation", {
+      name: "Navigation principale",
+    });
+    expect(within(navigation).getAllByRole("link")).toHaveLength(MENU.length);
+    for (const { libelle } of MENU) {
+      expect(within(navigation).getByTitle(libelle)).toBeInTheDocument();
+    }
+  });
+});
+
+describe("la barre supérieure (BarreSuperieure)", () => {
+  const barre = (repliee = false, basculer = () => {}) => (
+    <BarreSuperieure
+      repliee={repliee}
+      basculerRepli={basculer}
+      theme={<span>thème</span>}
+      aide={<span>aide</span>}
+    />
+  );
+
+  it("titre la page d'après le menu", () => {
+    poserChemin("/chat");
+    rendreAvecEtat(barre());
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Chat");
+  });
+
+  it("retombe sur « Control Tower » hors des pages du menu", () => {
+    poserChemin("/inexistant");
+    rendreAvecEtat(barre());
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "Control Tower",
+    );
+  });
+
+  it("annonce le flux temps réel connecté, puis la reconnexion", () => {
+    const { unmount } = rendreAvecEtat(barre(), { connecte: true });
+    expect(screen.getByText("Temps réel connecté")).toBeInTheDocument();
+    unmount();
+
+    rendreAvecEtat(barre(), { connecte: false });
+    expect(screen.getByText("Reconnexion…")).toBeInTheDocument();
+  });
+
+  it("cumule le coût rapporté par les agents", () => {
+    rendreAvecEtat(barre(), {
+      agents: [
+        agentFactice({ nom: "dev", cout_usd: 0.5 }),
+        agentFactice({ nom: "qa", cout_usd: 0.25 }),
+      ],
+    });
+    // Espace insécable étroit de `Intl` en fr-FR : on cible le nombre.
+    expect(screen.getByText(/0,75/)).toBeInTheDocument();
+  });
+
+  it("distingue « aucun coût rapporté » de « coût nul »", () => {
+    // Un agent qui n'a rien rapporté (cout_usd null) ne vaut pas 0 $ : la barre
+    // affiche un tiret, sans quoi on lirait une gratuité qui n'existe pas.
+    rendreAvecEtat(barre(), { agents: [agentFactice({ cout_usd: null })] });
+    expect(screen.getByTitle(/Coût cumulé/)).toHaveTextContent("—");
+  });
+
+  it("bascule le repli et décrit l'état de la navigation", async () => {
+    const utilisateur = userEvent.setup();
+    let bascules = 0;
+    rendreAvecEtat(barre(false, () => (bascules += 1)));
+
+    const bouton = screen.getByRole("button", { name: "Replier la navigation" });
+    expect(bouton).toHaveAttribute("aria-expanded", "true");
+    expect(bouton).toHaveAttribute("aria-controls", "navigation-principale");
+
+    await utilisateur.click(bouton);
+    expect(bascules).toBe(1);
+  });
+
+  it("propose de déplier quand la navigation est repliée", () => {
+    rendreAvecEtat(barre(true));
+    expect(
+      screen.getByRole("button", { name: "Déplier la navigation" }),
+    ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("réserve la place des notifications tant qu'aucune ne lui est donnée", () => {
+    // La géométrie de la barre ne doit pas bouger d'un lot à l'autre : sans
+    // cloche, l'emplacement est tenu par un bouton désactivé.
+    rendreAvecEtat(barre());
+    expect(
+      screen.getByRole("button", { name: /Notifications — bientôt disponible/ }),
+    ).toBeDisabled();
+  });
+});
+
+// Le repli lui-même (persistance, notification des autres contrôles) est couvert
+// par `parametres.test.tsx`, aux côtés des préférences du poste ; ici on ne
+// vérifie que la géométrie qu'il commande.
