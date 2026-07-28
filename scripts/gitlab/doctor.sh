@@ -141,10 +141,10 @@ else
 fi
 
 # --- 6. Réglages de merge du projet ---------------------------------------------------------------
-# Dérive si le projet n'exige plus un pipeline vert pour merger (posé par bootstrap.sh, voir
-# docs/10-workflow-git.md §6). Lecture REST directe — l'encodage du chemin projet est inline
-# pour rester autosuffisant. `allow_merge_on_skipped_pipeline` peut revenir `null` selon le
-# tier : seul `false` explicite vaut ✓.
+# Dérive si le projet n'exige plus un pipeline vert pour merger, ou ne supprime plus la branche
+# source au merge (tous posés par bootstrap.sh, voir docs/10-workflow-git.md §6). Lecture REST
+# directe — l'encodage du chemin projet est inline pour rester autosuffisant. Ces champs peuvent
+# revenir `null` selon le tier : seule la valeur explicite attendue vaut ✓.
 section "6. Réglages de merge du projet"
 proj_raw="$(glab api "projects/$(printf '%s' "$GL_PROJECT" | sed 's,/,%2F,g')" 2>/dev/null)"
 if [ -z "$proj_raw" ]; then
@@ -159,6 +159,11 @@ else
     ok "allow_merge_on_skipped_pipeline=false — un pipeline sauté ne permet pas de merger"
   else
     warn "allow_merge_on_skipped_pipeline ≠ false : un pipeline sauté permettrait de merger → relancer scripts/gitlab/bootstrap.sh"
+  fi
+  if printf '%s' "$proj_raw" | grep -q '"remove_source_branch_after_merge":true'; then
+    ok "remove_source_branch_after_merge=true — la branche source est supprimée au merge"
+  else
+    warn "remove_source_branch_after_merge ≠ true : les branches distantes s'accumuleraient après merge → relancer scripts/gitlab/bootstrap.sh"
   fi
 fi
 

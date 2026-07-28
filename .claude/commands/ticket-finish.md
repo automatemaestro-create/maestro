@@ -67,7 +67,7 @@ pas clair.
    - **Si elle n'existe pas** : crée-la en Draft, liée au ticket, avec la checklist **telle
      qu'évaluée à l'étape 6** (chaque case en `[x]` ou `[ ]` selon le constat) :
      ```
-     glab mr create --draft --target-branch main \
+     glab mr create --draft --target-branch main --remove-source-branch \
        --title "<titre du ticket>" \
        --description "Closes #<iid>
 

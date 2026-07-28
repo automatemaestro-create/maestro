@@ -56,7 +56,9 @@ echo "Labels prêts."
 
 # Réglages projet recommandés (best-effort : selon le tier GitLab, certains champs
 # peuvent être ignorés silencieusement par l'API) :
-#   - remove_source_branch_after_merge / squash_option : hygiène de merge (squash + ménage) ;
+#   - remove_source_branch_after_merge / squash_option : hygiène de merge (squash + ménage).
+#     Ce PUT étant best-effort, le défaut projet ne suffit pas comme garantie : /ticket-finish pose
+#     aussi `--remove-source-branch` sur chaque MR, et doctor.sh surveille la dérive du réglage ;
 #   - only_allow_merge_if_pipeline_succeeds=true + allow_merge_on_skipped_pipeline=false :
 #     GitLab fait respecter lui-même « pipeline vert avant merge » (docs/10-workflow-git.md §6) —
 #     une MR au pipeline rouge (ou sauté) n'est pas mergeable. Dérive surveillée par doctor.sh.
