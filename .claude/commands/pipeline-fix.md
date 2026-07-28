@@ -48,9 +48,11 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      `docs/10-workflow-git.md` §8) :
      ```
      bash scripts/gitlab/ensure-runner.sh || echo "⚠ runner local non démarré — remédiation poursuivie"
+     bash scripts/gitlab/clean-runner-containers.sh || echo "⚠ ménage des conteneurs CI incomplet — remédiation poursuivie"
      ```
-     puis suis le verdict avec `bash scripts/gitlab/lib.sh pipeline-wait <id>` et reprends selon le
-     statut final.
+     Le second ramasse les conteneurs de jobs laissés par un runner tué en cours de route (#166) —
+     best-effort et silencieux quand il n'y a rien à faire. Puis suis le verdict avec
+     `bash scripts/gitlab/lib.sh pipeline-wait <id>` et reprends selon le statut final.
    - `failed` → continue.
    - Aucun pipeline alors qu'un commit vient d'être poussé ? **Vérifie d'abord qu'une MR est
      ouverte** sur la branche : sans MR, il est normal qu'il n'y ait rien (la CI ne se déclenche
