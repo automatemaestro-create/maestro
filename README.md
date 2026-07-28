@@ -18,6 +18,10 @@ Un chef d'orchestre (*maestro*) ne joue d'aucun instrument pendant le concert : 
 
 ## 📚 Documentation
 
+**Vous venez contribuer ?** Commencez par [`CONTRIBUTING.md`](./CONTRIBUTING.md) : du clone à la
+première Merge Request en une page (mise en route, prendre un ticket, conventions, `/ticket-ship`,
+qui relit et qui merge).
+
 La documentation complète se trouve dans le dossier [`docs/`](./docs). Ordre de lecture conseillé :
 
 | # | Document | Pour quoi faire |

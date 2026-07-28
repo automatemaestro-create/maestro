@@ -88,7 +88,8 @@ Options :
              vides sont signalées, avec le script qui les récupère (scripts/env-pull.sh)
   hooks      hook git commit-msg (scripts/git/install-hooks.sh)
   web        dépendances npm de apps/web
-  mcp        .claude/settings.local.json (profil navigateur + serveurs MCP du dépôt)
+  mcp        .claude/settings.local.json (profil navigateur + serveurs MCP du dépôt) —
+             clés machine attendues : .claude/settings.local.example.json
   runner     Docker + runner CI de projet de cette machine (scripts/gitlab/setup-runner.sh)
   infra      bases locales PostgreSQL/Redis/Temporal — uniquement avec --with-infra
   verif      glab auth status + maestro-check-env
@@ -928,8 +929,11 @@ etape_web() {
 # Fusion clé par clé : ce qui est déjà posé n'est jamais remplacé. Le fichier n'est pas versionné
 # (.gitignore) et ne porte que des chemins machine — aucun secret. L'approbation effective des
 # serveurs MCP et l'OAuth Figma restent des gestes interactifs, rappelés dans « Reste à faire ».
+# Le gabarit versionné .claude/settings.local.example.json documente les clés attendues ; il sert
+# de RÉFÉRENCE À LIRE, pas de fichier à recopier — c'est cette étape qui écrit le vrai fichier.
 etape_mcp() {
-  local cible="$RACINE/.claude/settings.local.json" profil sortie etat detail
+  local cible="$RACINE/.claude/settings.local.json" exemple="$RACINE/.claude/settings.local.example.json"
+  local profil sortie etat detail
 
   if ! detecte_python_utilisable; then
     rapport IGNORE mcp "Claude Code : python introuvable, fusion de settings.local.json sautée"
@@ -1050,6 +1054,12 @@ PY
     MODIFIE)  rapport OK mcp "Claude Code : settings.local.json complété ($detail)" ;;
     *)        echec_dur mcp "Claude Code : fusion de settings.local.json impossible — ${sortie:-sortie vide}" ;;
   esac
+
+  # Le gabarit est signalé en --check (diagnostic, où l'on cherche à comprendre ce qui manque) :
+  # en mode écriture, le fichier vient d'être complété et l'annoncer n'apprendrait rien.
+  if [ "$MODE_CHECK" = 1 ] && [ -f "$exemple" ]; then
+    rapport IGNORE mcp "Claude Code : clés machine attendues — voir .claude/settings.local.example.json (aucun secret)"
+  fi
 
   # Pas de « approuver les serveurs MCP » ici : `enabledMcpjsonServers`, que l'on vient d'écrire,
   # EST le registre d'approbation de Claude Code. L'annoncer comme un geste manuel serait faux.
