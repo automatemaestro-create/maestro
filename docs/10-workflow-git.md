@@ -627,9 +627,19 @@ glab variable set LANGFUSE_SECRET_KEY --masked < valeur.txt
 Le pipeline [`.gitlab-ci.yml`](../.gitlab-ci.yml) a deux étages : `lint` — `shellcheck`
 (sévérité `warning`, scripts `scripts/**/*.sh`) et `python-lint` (ruff) — puis `test` — `pytest`
 (suite du dépôt, avec **couverture** pytest-cov : taux remonté dans GitLab via la clé `coverage:`
-du job, échec sous `--cov-fail-under=90`) et `mypy` (typage strict de `maestro/`). Les jobs Python
-partagent un **cache pip** (clé sur `pyproject.toml`) qui accélère le `before_script` d'un run à
-l'autre. Un **pipeline vert est la condition de passage `En revue` → merge**.
+du job, échec sous `--cov-fail-under=90`), `mypy` (typage strict de `maestro/`) et `web-build`
+(l'UI Control Tower). Les jobs Python partagent un **cache pip** (clé sur `pyproject.toml`) qui
+accélère le `before_script` d'un run à l'autre. Un **pipeline vert est la condition de passage
+`En revue` → merge**.
+
+Le **front** (`apps/web`) a son propre job, `web-build`, qui enchaîne `npm run lint` (ESLint),
+`npm test` (la suite **Vitest** de l'interface, #124) puis `npm run build` (`next build`, qui
+vérifie aussi le typage TypeScript). Les trois tiennent dans **un seul** job parce que
+l'installation des dépendances (`npm ci`) pèse bien plus que les contrôles eux-mêmes : la refaire
+deux fois de plus n'apprendrait rien et occuperait d'autant le runner de l'équipe (§8.1) ; l'ordre
+va du plus rapide au plus lent, pour que le verdict tombe tôt quand il est rouge. Le job ne se
+déclenche que si `apps/web/**` (ou `.gitlab-ci.yml`) change — un pipeline purement Python reste
+rapide — et son cache npm porte sur le lockfile versionné.
 
 Les **scripts shell** ne sont pas seulement lintés : le parcours de mise en route
 ([`scripts/setup.sh`](../scripts/setup.sh), §7) a sa propre suite pytest

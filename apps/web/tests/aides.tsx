@@ -1,0 +1,270 @@
+/**
+ * Les aides partagées des tests de la Control Tower (#124) : ce que jsdom ne
+ * fournit pas, les fabriques d'objets du domaine, et le rendu d'un composant
+ * dans le contexte que le shell lui donne en vrai.
+ *
+ * Principe des fabriques : **des valeurs par défaut complètes, un `Partial` en
+ * argument**. Un test ne pose que le champ qui l'intéresse (le statut d'une
+ * validation, le coût d'un agent) et reste lisible ; ajouter un champ au type
+ * côté backend ne casse pas trente tests, seulement la fabrique.
+ */
+
+import { render, type RenderResult } from "@testing-library/react";
+import type { ReactNode } from "react";
+
+import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
+import type { ControlTower } from "@/lib/useControlTower";
+import type {
+  EtatAgent,
+  Evenement,
+  MessageChat,
+  Tache,
+  Validation,
+} from "@/lib/types";
+
+// --- Préférence système (thème #118) ---------------------------------------
+
+const REQUETE_SOMBRE = "(prefers-color-scheme: dark)";
+
+type EcouteurMedia = (evenement: MediaQueryListEvent) => void;
+
+let ecouteursMedia = new Set<EcouteurMedia>();
+let systemeSombre = false;
+
+/**
+ * Installe le `matchMedia` que jsdom n'a pas. Appelé avant chaque test
+ * (`setup.ts`) : l'OS y est en clair par défaut, et sans écouteur hérité du
+ * test précédent.
+ */
+export function installerMatchMedia(): void {
+  ecouteursMedia = new Set();
+  systemeSombre = false;
+  window.matchMedia = ((requete: string) => ({
+    media: requete,
+    // Getter et non valeur figée : une bascule d'OS doit être vue par les
+    // appels suivants sans qu'on ait à réinstaller quoi que ce soit.
+    get matches() {
+      return requete === REQUETE_SOMBRE && systemeSombre;
+    },
+    addEventListener: (_type: string, ecouteur: EcouteurMedia) => {
+      ecouteursMedia.add(ecouteur);
+    },
+    removeEventListener: (_type: string, ecouteur: EcouteurMedia) => {
+      ecouteursMedia.delete(ecouteur);
+    },
+    // L'API dépréciée, au cas où une dépendance s'en sert encore.
+    addListener: (ecouteur: EcouteurMedia) => ecouteursMedia.add(ecouteur),
+    removeListener: (ecouteur: EcouteurMedia) => ecouteursMedia.delete(ecouteur),
+    onchange: null,
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+
+/** Règle la préférence de l'OS **sans** prévenir personne (état de départ). */
+export function poserPreferenceSysteme(sombre: boolean): void {
+  systemeSombre = sombre;
+}
+
+/**
+ * Bascule la préférence de l'OS **en cours de session** et notifie les
+ * abonnés — le cas que le mode « système » doit suivre (coucher du soleil,
+ * réglage changé dans une autre fenêtre).
+ */
+export function basculerPreferenceSysteme(sombre: boolean): void {
+  systemeSombre = sombre;
+  for (const ecouteur of [...ecouteursMedia]) {
+    ecouteur({ matches: sombre, media: REQUETE_SOMBRE } as MediaQueryListEvent);
+  }
+}
+
+// --- Chemin courant et routeur (navigation #117, visite guidée #122) -------
+
+let chemin = "/";
+
+/** Le chemin que `usePathname` rendra — le mock vit dans `setup.ts`. */
+export function poserChemin(nouveau: string): void {
+  chemin = nouveau;
+}
+
+export function cheminCourant(): string {
+  return chemin;
+}
+
+/**
+ * Les navigations demandées par `router.push` depuis le dernier test. La visite
+ * guidée s'en sert pour amener l'utilisateur sur la page d'une étape : c'est
+ * l'observable qui dit qu'elle l'a fait.
+ */
+export const navigations: string[] = [];
+
+/** Le routeur factice de `next/navigation` — poussée enregistrée, pas jouée. */
+export function routeurFactice() {
+  return {
+    push: (url: string) => {
+      navigations.push(url);
+      chemin = url;
+    },
+    replace: (url: string) => {
+      navigations.push(url);
+      chemin = url;
+    },
+    back: () => {},
+    forward: () => {},
+    refresh: () => {},
+    prefetch: () => {},
+  };
+}
+
+// --- Fil de l'assistant (assistance #123) ----------------------------------
+
+/** Ce que `useChat` rendra au panneau d'assistance — réglé par le test. */
+export type FilFactice = {
+  messages: MessageChat[];
+  connecte: boolean;
+  chargement: boolean;
+  erreur: string | null;
+  envoi: boolean;
+  envoyer: (contenu: string) => Promise<void>;
+};
+
+function filParDefaut(): FilFactice {
+  return {
+    messages: [],
+    connecte: true,
+    chargement: false,
+    erreur: null,
+    envoi: false,
+    envoyer: async () => {},
+  };
+}
+
+let fil: FilFactice = filParDefaut();
+
+export function poserFilAssistance(partiel: Partial<FilFactice> = {}): void {
+  fil = { ...filParDefaut(), ...partiel };
+}
+
+export function filAssistanceCourant(): FilFactice {
+  return fil;
+}
+
+export function messageFactice(partiel: Partial<MessageChat> = {}): MessageChat {
+  return {
+    agent: "assistance",
+    auteur: "utilisateur",
+    contenu: "Bonjour",
+    horodatage: "2026-07-28T10:00:00Z",
+    ...partiel,
+  };
+}
+
+// --- État temps réel (contexte du shell) -----------------------------------
+
+function etatParDefaut(): ControlTower {
+  return {
+    taches: [],
+    agents: [],
+    evenements: [],
+    validations: [],
+    couts: [],
+    connecte: true,
+    chargement: false,
+    erreur: null,
+    reassigner: async () => {},
+    decider: async () => {},
+    reglerCapacite: async () => {},
+  };
+}
+
+let etatGlobal: ControlTower = etatParDefaut();
+
+/** Règle ce que le hook temps réel (mocké dans `setup.ts`) va rendre. */
+export function poserEtatGlobal(partiel: Partial<ControlTower> = {}): void {
+  etatGlobal = { ...etatParDefaut(), ...partiel };
+}
+
+export function etatGlobalCourant(): ControlTower {
+  return etatGlobal;
+}
+
+/**
+ * Rend un composant sous le fournisseur d'état du shell — le contexte qu'il a
+ * en vrai. Le fournisseur est le **vrai** (`lib/etatGlobal`) : seule la source
+ * temps réel sous lui est factice, si bien que ce qu'il calcule lui-même (le
+ * coût cumulé) reste exercé.
+ */
+export function rendreAvecEtat(
+  ui: ReactNode,
+  partiel: Partial<ControlTower> = {},
+): RenderResult {
+  poserEtatGlobal(partiel);
+  return render(<FournisseurEtatGlobal>{ui}</FournisseurEtatGlobal>);
+}
+
+// --- Fabriques du domaine --------------------------------------------------
+
+export function agentFactice(partiel: Partial<EtatAgent> = {}): EtatAgent {
+  return {
+    nom: "dev",
+    role: "Développeur",
+    statut: "libre",
+    tache_courante: "",
+    taches_en_cours: [],
+    taches_terminees: 0,
+    taches_echouees: 0,
+    cout_usd: null,
+    derniere_activite: "2026-07-28T10:00:00Z",
+    actif: true,
+    instances: 1,
+    ...partiel,
+  };
+}
+
+export function tacheFactice(partiel: Partial<Tache> = {}): Tache {
+  return {
+    id: "T-1",
+    run_id: "run-1",
+    titre: "Écrire les tests",
+    statut: "assignee",
+    agent: "dev",
+    role: "Développeur",
+    cout_usd: null,
+    usage: null,
+    horodatage: "2026-07-28T10:00:00Z",
+    ...partiel,
+  };
+}
+
+export function evenementFactice(partiel: Partial<Evenement> = {}): Evenement {
+  return {
+    type: "tache.statut",
+    run_id: "run-1",
+    tache_id: "T-1",
+    titre: "Écrire les tests",
+    agent: "dev",
+    role: "Développeur",
+    statut: "en_cours",
+    detail: "",
+    description: "",
+    cout_usd: null,
+    usage: null,
+    instances: null,
+    horodatage: "2026-07-28T10:00:00Z",
+    ...partiel,
+  };
+}
+
+export function validationFactice(partiel: Partial<Validation> = {}): Validation {
+  return {
+    tache_id: "T-1",
+    titre: "Publier la version 1.2",
+    description: "Pousser l'image en production",
+    agent: "devops",
+    role: "Ops",
+    raison: "Action irréversible",
+    statut: "en_attente",
+    decision: "",
+    horodatage: "2026-07-28T10:00:00Z",
+    ...partiel,
+  };
+}
