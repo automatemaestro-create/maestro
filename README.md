@@ -70,7 +70,53 @@ Les versions **Word (.docx)** prêtes à partager sont dans `deliverables/` — 
 
 Stack **Python 3.11+** (option A du [doc stack](./docs/02-stack-technique.md)), moteur d'agents = **Claude Agent SDK**.
 
-**Prérequis :** Python 3.11+, Node.js 20+ (requis par le Claude Agent SDK), Docker (bases locales optionnelles), et un **accès modèle Claude** — au choix un **abonnement Claude Code** (défaut du POC, sans clé) ou une **clé API Anthropic** (voir ci-dessous).
+### Mise en route : une commande
+
+Sur un clone frais — Windows (Git Bash), macOS ou Linux :
+
+```bash
+bash scripts/setup.sh
+```
+
+[`scripts/setup.sh`](./scripts/setup.sh) est la **source unique** du parcours de mise en route. Il
+installe les **prérequis** manquants (Python 3.11+, Node.js 20+, git, [`glab`](https://gitlab.com/gitlab-org/cli) —
+via winget / brew / apt), crée le **`.venv`** et y installe le paquet en éditable (`pip install -e ".[dev]"`),
+copie **`.env.example` vers `.env`**, active le **hook git** `commit-msg`, installe les dépendances
+**npm de `apps/web`**, complète **`.claude/settings.local.json`** (profil navigateur + serveurs MCP du
+dépôt) et monte le **runner CI de cette machine** (Docker + [`setup-runner.sh`](./scripts/gitlab/setup-runner.sh),
+sans lequel les pipelines de MR restent `pending` — [docs/10 §8](./docs/10-workflow-git.md)).
+
+Il est **idempotent** (relancé sur une machine prête, tout ressort en `DÉJÀ FAIT`) et **non
+destructif** : un `.env` existant n'est **jamais** écrasé, et `settings.local.json` est **fusionné
+clé par clé**. Il ne pose **aucune question** — ce qui exige un humain (authentifications, secrets à
+renseigner) sort dans la section « Reste à faire » de son rapport final.
+
+| Variante | Effet |
+|---|---|
+| `bash scripts/setup.sh --check` | Diagnostic seul : dit ce qui manque, **n'écrit rien** |
+| `bash scripts/setup.sh --no-install` | N'installe aucun outil, se contente de le signaler |
+| `bash scripts/setup.sh --only <étapes>` · `--skip <étapes>` | Rejoue / saute des étapes : `prerequis`, `venv`, `env`, `hooks`, `web`, `mcp`, `runner`, `infra`, `verif` |
+| `bash scripts/setup.sh --with-infra` | Démarre en plus les bases locales PostgreSQL / Redis / Temporal (`infra/`) |
+
+Dans une session Claude Code, la commande [`/setup`](./.claude/commands/setup.md) lance ce même
+script et **prend en charge le « Reste à faire »** : authentification Figma, accompagnement du
+remplissage du `.env`, diagnostic d'une étape en échec.
+
+**Le geste qui reste : renseigner le `.env`** (jamais commité). Deux modes d'authentification
+Claude, sélectionnables via `CLAUDE_AUTH_MODE` :
+
+- **`subscription`** (défaut du POC, **sans clé**) — se connecter une fois via `claude` ; en CI,
+  poser `CLAUDE_CODE_OAUTH_TOKEN` obtenu par `claude setup-token` ;
+- **`api_key`** — renseigner `ANTHROPIC_API_KEY` (console Anthropic).
+
+Précédence : `CLAUDE_AUTH_MODE` fait foi ; sinon clé présente ⇒ `api_key`, sinon `subscription`.
+Détails : [docs/07 §2.1](./docs/07-guide-de-demarrage.md). Puis vérifier : `maestro-check-env`.
+
+<details>
+<summary>Repli : les mêmes étapes à la main</summary>
+
+Utile pour comprendre ce que fait le script, ou sur une machine où il ne peut pas aboutir
+(pas de gestionnaire de paquets, élévation refusée). Le chemin nominal reste `scripts/setup.sh`.
 
 ```bash
 # 1. Environnement virtuel + installation (éditable, avec outils dev)
@@ -80,12 +126,6 @@ pip install -e ".[dev]"
 
 # 2. Secrets : copier le gabarit et choisir un mode d'auth (le .env n'est jamais commité)
 cp .env.example .env                 # Windows : Copy-Item .env.example .env
-#   Deux modes d'authentification Claude, sélectionnables via CLAUDE_AUTH_MODE :
-#     • subscription (défaut) : abonnement Claude Code, SANS clé — se connecter via `claude`
-#       (ou, en CI, poser CLAUDE_CODE_OAUTH_TOKEN via `claude setup-token`).
-#     • api_key : renseigner ANTHROPIC_API_KEY (console Anthropic).
-#   Précédence : CLAUDE_AUTH_MODE fait foi ; sinon clé présente ⇒ api_key, sinon subscription.
-#   Détails : docs/07-guide-de-demarrage.md §2.1.
 
 # 3. Vérifier que tout est prêt (SDK importable + mode d'auth configuré)
 maestro-check-env
@@ -93,9 +133,17 @@ maestro-check-env
 # 4. Hook git de convention de commit (une fois par clone)
 bash scripts/git/install-hooks.sh
 
-# 5. (optionnel) Bases locales PostgreSQL + Redis — voir infra/README.md
+# 5. Dépendances de l'UI Control Tower
+cd apps/web && npm ci && cd ../..
+
+# 6. Runner CI de cette machine (Docker requis) — sinon les pipelines de MR restent `pending`
+bash scripts/gitlab/setup-runner.sh
+
+# 7. (optionnel) Bases locales PostgreSQL + Redis + Temporal — voir infra/README.md
 docker compose -f infra/docker-compose.yml up -d
 ```
+
+</details>
 
 ### Mise en route côté Claude Code
 
@@ -110,31 +158,32 @@ serveurs MCP, sans rien réinstaller.
 | Permissions (allow / ask / deny) et hook de traçabilité des demandes | [`.claude/settings.json`](./.claude/settings.json), [`.claude/hooks/`](./.claude/hooks/) |
 | Serveurs MCP `chrome-maestro` (navigateur) et `figma-officiel` | [`.mcp.json`](./.mcp.json) |
 
-Trois gestes restent **par machine**, parce qu'ils touchent à des chemins locaux
-ou à une authentification personnelle :
+Ce qui touche à des **chemins locaux** est posé par `scripts/setup.sh` (étape `mcp`), qui
+complète `.claude/settings.local.json` — non versionné — sans écraser ce qui s'y trouve déjà :
 
-1. **Approuver les serveurs MCP du dépôt.** Au premier lancement, Claude Code
-   demande confirmation avant de monter les serveurs déclarés dans `.mcp.json`
-   (`claude mcp list` les affiche alors « Pending approval »). C'est volontaire :
-   un `.mcp.json` est du code exécutable, il se relit avant d'être approuvé.
-2. **Choisir le profil du navigateur.** `chrome-maestro` pilote Chrome via
-   `@playwright/mcp` ; sans réglage, il crée un profil neuf dans
-   `.maestro/chrome-profile` (gitignoré). Pour réutiliser des sessions déjà
-   ouvertes, posez `MAESTRO_CHROME_PROFILE` sur un profil **dédié** — jamais le
-   profil Chrome principal, dont le pilotage est refusé depuis Chrome 136. Le
-   plus simple est le bloc `env` de `.claude/settings.local.json` (non versionné) :
+1. **Approbation des serveurs MCP du dépôt.** `enabledMcpjsonServers` **est** le registre
+   d'approbation de Claude Code : le script y inscrit les serveurs déclarés dans `.mcp.json`,
+   il n'y a donc plus de « Pending approval » à lever à la main. Le corollaire vaut d'être
+   dit : un `.mcp.json` est du **code exécutable**, il se relit avant d'être approuvé — la
+   revue se fait donc à la MR, pas au premier lancement.
+2. **Profil du navigateur.** `chrome-maestro` pilote Chrome via `@playwright/mcp` ; le script
+   pose `MAESTRO_CHROME_PROFILE` sur `~/.maestro/chrome-profile` s'il n'est pas déjà défini.
+   Pour réutiliser des sessions déjà ouvertes, pointez un profil **dédié** — jamais le profil
+   Chrome principal, dont le pilotage est refusé depuis Chrome 136 — via le `.env`, qui **fait
+   foi** (le script recopie la valeur à chaque passage, ce qui fait qu'une rotation se propage) :
 
-   ```json
-   { "env": { "MAESTRO_CHROME_PROFILE": "C:\\Users\\<vous>\\.maestro\\chrome-profile" } }
+   ```dotenv
+   MAESTRO_CHROME_PROFILE=C:\Users\<vous>\.maestro\chrome-profile
    ```
 
    Ce profil n'accepte **qu'un consommateur à la fois** (verrou ProcessSingleton
    de Chrome) : la fenêtre pilotée par le MCP se ferme dès que la séquence est
    terminée, sans quoi elle bloque tout autre outil visant le même dossier.
 
-3. **S'authentifier auprès de Figma.** `figma-officiel` est un serveur HTTP en
-   OAuth : chaque personne s'y connecte avec son propre compte, via `/mcp` dans
-   une session interactive. Rien à committer.
+Un seul geste reste **manuel, par personne**, parce qu'il exige une authentification
+individuelle : **s'authentifier auprès de Figma.** `figma-officiel` est un serveur HTTP en
+OAuth — chaque personne s'y connecte avec son propre compte, via `/mcp` dans une session
+interactive, un clic mis en cache ensuite. Rien à committer.
 
 > Deux couches de MCP coexistent dans ce dépôt, à ne pas confondre :
 > [`.mcp.json`](./.mcp.json) équipe **Claude Code**, l'outil avec lequel on
