@@ -26,14 +26,35 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    Si c'est `main` (ou `master`), **arrête-toi immédiatement** : on ne committe jamais sur `main`.
    Rappelle qu'il faut démarrer un ticket (`/ticket-start <iid>`) pour obtenir une branche.
 
-4. **Contrôle de l'arbre de travail** (`git status --porcelain`) — deux refus possibles :
+4. **Garde-fou de clôture : ce ticket est-il bien celui de la session ?** Le contrôle vient **avant
+   le commit**, et pas seulement avant le push : le message généré à l'étape 6 porte
+   `Closes #<iid>`, donc un iid étranger ferait **fermer le ticket d'un autre** au merge.
+   ```
+   bash scripts/gitlab/lib.sh close-guard <iid> || verdict=$?
+   ```
+   Le helper n'écrit rien ; son verdict, lui, **arrête la commande** :
+   - `0` → cohérent, poursuis.
+   - `3` → la branche courante porte un **autre** ticket : **arrête-toi**, dis lequel, et propose
+     de shipper *celui-là* ou de revenir sur la branche du ticket visé
+     (`bash scripts/gitlab/lib.sh branch-for <iid>`).
+   - `4` → le ticket est assigné à **quelqu'un d'autre** : **arrête-toi** et nomme la personne.
+   - `5` → branche sans iid (nom hors convention) : **arrête-toi**, la cohérence est invérifiable
+     (le cas `main` est déjà refusé à l'étape 3).
+   - `1` → verdict **partiel** (ticket illisible) : le contrôle local est passé, signale-le et
+     poursuis.
+   Un refus n'est **franchissable que sur demande explicite** de l'utilisateur (reprise assumée
+   d'un ticket laissé en plan), jamais en silence — et il est alors rappelé dans le résumé final.
+   `/ticket-finish` rejouera ce même contrôle à son étape 3 : c'est voulu (il est sans effet de
+   bord et reste ainsi autosuffisant quand on l'appelle seul).
+
+5. **Contrôle de l'arbre de travail** (`git status --porcelain`) — deux refus possibles :
    - **Arbre vide** (aucun changement en attente) : arrête-toi. Il n'y a rien à committer ; si le
      travail est déjà committé, c'est `/ticket-finish` qu'il faut lancer, pas `/ticket-ship`.
    - **Conflit en cours** (fusion/rebase non résolu : `git ls-files --unmerged` non vide, ou lignes
      `UU`/`AA`/`DD`/`AU`/`UA`/`DU`/`UD` dans `git status --porcelain`) : arrête-toi et demande à
      l'utilisateur de résoudre le conflit d'abord. Ne committe jamais un arbre en conflit.
 
-5. **Commit automatique, sans confirmation** (choix explicite du ticket #34 : zéro blocage manuel,
+6. **Commit automatique, sans confirmation** (choix explicite du ticket #34 : zéro blocage manuel,
    cohérent avec l'auto-estimation du temps de `/ticket-finish`). Ne demande **pas** de validation
    du message — mais **montre** ce que tu committes (transparence a posteriori) :
    - Affiche un résumé : `git diff --stat HEAD` (inclut le staged) et la liste des fichiers.
@@ -59,7 +80,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
      **N'utilise jamais `--no-verify`** : si le hook refuse le message, corrige le message et
      réessaie — ne le contourne pas.
 
-6. **Enchaîne `/ticket-finish`.** Une fois le commit créé, l'arbre est propre : invoque la commande
+7. **Enchaîne `/ticket-finish`.** Une fois le commit créé, l'arbre est propre : invoque la commande
    **`/ticket-finish`** (sans argument — elle relira l'IID depuis la branche — ou passe `<iid>`).
    Elle prend le relais pour : push de la branche (jamais de `--force`), création/mise à jour de la
    MR en Draft avec `Closes #<iid>` et sa **checklist cochée sur ce qui est vérifié** (conventions,
@@ -68,7 +89,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    `/ticket-finish` en est la source unique, et son étape de commit sera sans objet (arbre déjà
    propre) — elle passera directement au push.
 
-7. **Sous-ticket d'un parent de suivi ?** Vérifie : `bash scripts/gitlab/lib.sh parent-of <iid>`.
+8. **Sous-ticket d'un parent de suivi ?** Vérifie : `bash scripts/gitlab/lib.sh parent-of <iid>`.
    Si un parent est trouvé (convention `docs/10-workflow-git.md` §5.1), prépare l'**annonce de la
    suite** pour le résumé final :
    - Liste les lots : `bash scripts/gitlab/lib.sh subtickets <iid-parent>`. Profites-en pour
@@ -89,8 +110,8 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
      après le merge** (toutes les cases cochées, y compris le lot tests) — sa fermeture reste une
      décision humaine/orchestrateur : `/ticket-ship` ne ferme rien, pas même le parent.
 
-8. Résumé final : reprends le résumé produit par `/ticket-finish` (lien de la MR, état Draft/Ready,
+9. Résumé final : reprends le résumé produit par `/ticket-finish` (lien de la MR, état Draft/Ready,
    temps loggé) et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
-   ajoute l'annonce de l'étape 7 (prochain lot démarrable dès maintenant, ou parent fermable).
+   ajoute l'annonce de l'étape 8 (prochain lot démarrable dès maintenant, ou parent fermable).
    Rappelle que le **merge reste une décision humaine** — `/ticket-ship` ne merge, ni ne ferme,
    ni ne force-push jamais.
