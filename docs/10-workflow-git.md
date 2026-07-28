@@ -376,7 +376,15 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 
 ## 7. Prérequis
 
-- [`glab`](https://gitlab.com/gitlab-org/cli) installé et authentifié : `glab auth login`.
+> **Tout ce qui suit est monté par une commande** sur un clone frais :
+> [`bash scripts/setup.sh`](../scripts/setup.sh) — ou [`/setup`](../.claude/commands/setup.md) en
+> session Claude Code. Il installe `glab`, active le hook `commit-msg`, s'authentifie depuis le
+> `GITLAB_TOKEN` du `.env` et crée le runner CI de la machine (§8). Ce qui est détaillé ici est le
+> **quoi et le pourquoi**, plus une check-list à dérouler à la main.
+
+- [`glab`](https://gitlab.com/gitlab-org/cli) installé et authentifié : `glab auth login`
+  (automatique via `scripts/setup.sh` si le `.env` porte un `GITLAB_TOKEN` — le jeton passe par
+  stdin, jamais par une ligne de commande).
 - Vérifier l'accès : `glab issue list` doit lister les tickets du projet.
 - Les commandes `/ticket-*` et `/backlog` s'appuient sur le helper
   [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels glab
@@ -396,7 +404,8 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
   (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à
   nettoyer, réglage de merge « pipeline vert » retombé — §6). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
   dérives — utile en CI).
-- **Hooks git** : `bash scripts/git/install-hooks.sh` (une fois par clone) active le hook
+- **Hooks git** : posés par `scripts/setup.sh` (étape `hooks`), qui délègue à
+  `bash scripts/git/install-hooks.sh` — lançable seul, une fois par clone. Active le hook
   [`commit-msg`](../scripts/git/hooks/commit-msg) qui valide la convention de commit (§2). Pose
   `core.hooksPath` ; désactivation : `git config --unset core.hooksPath`.
 - **Windows / Git Credential Manager** : si un `git push`/`pull` reste bloqué sur une demande
@@ -462,9 +471,19 @@ désactiver le rappel en local) passe par `.claude/settings.local.json`, non ver
 Le pipeline [`.gitlab-ci.yml`](../.gitlab-ci.yml) a deux étages : `lint` — `shellcheck`
 (sévérité `warning`, scripts `scripts/**/*.sh`) et `python-lint` (ruff) — puis `test` — `pytest`
 (suite du dépôt, avec **couverture** pytest-cov : taux remonté dans GitLab via la clé `coverage:`
-du job, échec sous `--cov-fail-under=80`) et `mypy` (typage strict de `maestro/`). Les jobs Python
+du job, échec sous `--cov-fail-under=90`) et `mypy` (typage strict de `maestro/`). Les jobs Python
 partagent un **cache pip** (clé sur `pyproject.toml`) qui accélère le `before_script` d'un run à
 l'autre. Un **pipeline vert est la condition de passage `En revue` → merge**.
+
+Les **scripts shell** ne sont pas seulement lintés : le parcours de mise en route
+([`scripts/setup.sh`](../scripts/setup.sh), §7) a sa propre suite pytest
+[`tests/test_setup.py`](../tests/test_setup.py) (#147), qui monte un **dépôt jetable** dans un
+répertoire temporaire et y lance le script pour vérifier ses invariants — `--check` n'écrit rien,
+deuxième passage entièrement en `DÉJÀ FAIT`, `.env` et `settings.local.json` jamais écrasés (le
+second est fusionné clé par clé), rapport complet et code de sortie non nul sur échec dur. Les
+étapes réseau / Docker (`venv`, `web`, `runner`, `infra`, `verif`) y sont **neutralisées** par
+`--skip` : c'est la décision du script qui est testée, jamais l'installation elle-même — la suite
+tourne donc en CI sans démon Docker ni accès réseau.
 
 **Où tournent les pipelines ?** Sur le **runner de projet local de la machine** (exécuteur Docker —
 `runner-local-poc` sur le poste d'origine), **par défaut et pour tout pipeline** — MR comprises. Les **runners partagés**

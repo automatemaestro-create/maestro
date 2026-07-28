@@ -11,9 +11,13 @@ Objectif : lancer un **premier prototype** concret (Phase 0). Pensé pour être 
 |---------|-----------|------|
 | Un **accès modèle Claude** | Faire fonctionner les agents Claude | **Deux modes au choix** (voir §2.1) : abonnement Claude Code (défaut du POC, sans clé) **ou** clé API Anthropic |
 | **Python 3.11+** *ou* **Node.js 20+** | Selon l'option de langage choisie | Voir [doc 02 §1](./02-stack-technique.md) |
-| **Docker** | Bac à sable d'exécution + bases locales | Docker Desktop suffit pour démarrer |
+| **Docker** | Bac à sable d'exécution + bases locales + runner CI de la machine | Docker Desktop suffit pour démarrer |
 | **Git + un compte GitLab** | Versionnement, intégration code | Le dépôt du projet et sa CI sont hébergés sur GitLab |
 | Le **Claude Agent SDK** | Moteur d'agents | Paquet Python ou TypeScript |
+
+> **Rien de tout cela n'est à installer à la main** sur un clone du dépôt :
+> [`scripts/setup.sh`](../scripts/setup.sh) (§2, étape 1) installe ce qui manque via le
+> gestionnaire de paquets de la plateforme. Ce tableau dit **pourquoi** chaque brique est là.
 
 > ⚠️ Vérifier la documentation officielle d'Anthropic pour les noms de paquets et commandes exacts (l'écosystème évolue vite).
 
@@ -22,10 +26,33 @@ Objectif : lancer un **premier prototype** concret (Phase 0). Pensé pour être 
 ## 2. Étapes du POC (Phase 0)
 
 ### Étape 1 — Préparer l'environnement
-1. Créer le dépôt Git du projet.
-2. Installer le Claude Agent SDK (Python ou TypeScript).
-3. Choisir un **mode d'authentification** (voir §2.1) et le configurer via des **variables d'environnement** (jamais en dur dans le code) : copier `.env.example` vers `.env` et renseigner selon le mode.
-4. Lancer une base locale via Docker (PostgreSQL + Redis) — optionnel au tout début.
+
+Sur un clone du dépôt, tout le parcours tient en **une commande**, idempotente et non
+destructive — [`scripts/setup.sh`](../scripts/setup.sh) (ou, en session Claude Code, la commande
+[`/setup`](../.claude/commands/setup.md), qui l'appelle et prend en charge ce qu'un script ne peut
+pas faire seul) :
+
+```bash
+bash scripts/setup.sh            # monte ce qui manque
+bash scripts/setup.sh --check    # diagnostic seul — n'écrit rien
+```
+
+Elle couvre les prérequis absents (Python, Node, git, `glab`), le `.venv` et ses dépendances, la
+copie de `.env.example` vers `.env`, le hook git de convention de commit, les dépendances de
+`apps/web`, les réglages locaux de Claude Code (profil navigateur + serveurs MCP) et le **runner
+CI de la machine** ([docs/10 §8](./10-workflow-git.md)). Détail des étapes et des drapeaux
+(`--only`, `--skip`, `--with-infra`, `--no-install`) : [README § Développement](../README.md).
+
+Il reste ensuite **deux gestes humains**, listés par le script sous « Reste à faire » :
+
+1. **Renseigner le `.env`** : choisir un **mode d'authentification** (voir §2.1) et le configurer
+   par variables d'environnement, jamais en dur dans le code. Vérification : `maestro-check-env`.
+2. **S'authentifier auprès de Figma** (OAuth, un clic par personne via `/mcp`) — seulement si l'on
+   travaille sur la couche design.
+
+> Les bases locales (PostgreSQL / Redis / Temporal) ne sont **pas** montées par défaut : elles ne
+> servent qu'aux exécutions durables et pèsent plusieurs gigaoctets d'images.
+> `bash scripts/setup.sh --with-infra` quand le besoin s'en fait sentir.
 
 #### 2.1 — Deux modes d'authentification (et leur bascule)
 
