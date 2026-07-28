@@ -442,6 +442,16 @@ gl_milestone_issues() {
 # checklist ORDONNÉE « - [ ] #<iid> — <titre> » (ordre de réalisation, lot final tests+doc).
 # Chaque sous-ticket commence sa description par « Sous-ticket de #<parent> » (marqueur parsé par
 # gl_parent_of) et est lié au parent via un issue link « relates to » (gl_issue_link).
+#
+# MARQUEUR « (parallèle) » (ticket #160) — un lot dont le titre de checklist se termine par
+# « (parallèle) » déclare qu'il **ne dépend pas** des autres lots parallèles qui le précèdent :
+# deux personnes peuvent les prendre en même temps sans que /ticket-start n'en bloque un. Le
+# marqueur est FACULTATIF, et son absence conserve le comportement séquentiel d'origine. D'où la
+# règle de blocage, appliquée par gl_start_brief et gl_subtickets_startables :
+#   un lot précédent non livré (ni « Terminé » ni « En revue ») bloque, SAUF si le lot visé ET ce
+#   lot précédent portent tous deux le marqueur.
+# Un lot NON marqué reste donc barré par tout ce qui le précède — c'est ce qui garde le lot final
+# « tests + doc » derrière l'ensemble des lots, marqueurs compris.
 
 # gl_issue_link <iid> <iid-cible> -> lie deux tickets du projet (issue link « relates to »).
 # Idempotent : un lien déjà présent (409 « already assigned ») est traité comme un succès.
@@ -472,7 +482,9 @@ gl_parent_of() {
 
 # gl_subtickets <iid-parent> -> liste ORDONNÉE des sous-tickets déclarés dans la checklist
 # « ## Sous-tickets » du parent, enrichie du statut natif (une seule requête backlog, pas N).
-# Sortie TSV : iid <TAB> coche(x|-) <TAB> statut <TAB> titre  (ligne d'en-tête « # » à ignorer).
+# Sortie TSV : iid <TAB> coche(x|-) <TAB> statut <TAB> par(∥|-) <TAB> titre  (ligne d'en-tête « # »
+# à ignorer). La colonne « par » porte le marqueur « (parallèle) », retiré du titre pour que le
+# marqueur ne soit lu qu'à un seul endroit.
 # Code 1 si le ticket n'a pas de section « ## Sous-tickets » (ce n'est pas un ticket parent) —
 # c'est le test utilisé par /ticket-start pour détecter un parent de suivi.
 gl_subtickets() {
@@ -490,8 +502,11 @@ gl_subtickets() {
 
 # gl_subticket_rows — cœur du parsing de gl_subtickets, séparé pour être rejoué sur un ticket DÉJÀ
 # LU (stdin = sortie brute de `glab issue view`) : imprime les lignes de la checklist
-# « ## Sous-tickets » en TSV brut (iid <TAB> coche(x|-) <TAB> titre), rien si la section est
-# absente. gl_start_brief s'en sert pour détecter un parent de suivi sans relire le ticket.
+# « ## Sous-tickets » en TSV brut (iid <TAB> coche(x|-) <TAB> par(∥|-) <TAB> titre), rien si la
+# section est absente. gl_start_brief s'en sert pour détecter un parent de suivi sans relire le
+# ticket. Le marqueur « (parallèle) » de fin de titre est extrait dans sa propre colonne : détection
+# sur le titre minusculé et motif « parall[^)]* » plutôt qu'une classe [eè], parce qu'un awk orienté
+# octets (mawk) ne sait pas faire tenir le « è » (2 octets en UTF-8) dans une classe de caractères.
 gl_subticket_rows() {
   awk '
     insec {
@@ -502,7 +517,12 @@ gl_subticket_rows() {
         id = substr($0, RSTART + 1, RLENGTH - 1)
         titre = substr($0, RSTART + RLENGTH)
         sub(/^[-—–: \t]+/, "", titre)
-        printf "%s\t%s\t%s\n", id, coche, titre
+        par = "-"
+        if (tolower(titre) ~ /\([ \t]*parall[^)]*\)[ \t]*$/) {
+          par = "∥"
+          sub(/[ \t]*\([ \t]*[Pp]arall[^)]*\)[ \t]*$/, "", titre)
+        }
+        printf "%s\t%s\t%s\t%s\n", id, coche, par, titre
       }
       next
     }
@@ -511,15 +531,38 @@ gl_subticket_rows() {
 }
 
 # gl_subtickets_enrich — enrichit du STATUT NATIF les lignes TSV de gl_subticket_rows (stdin) et
-# imprime la table finale « iid/coche/statut/titre » (une seule requête backlog, pas N).
+# imprime la table finale « iid/coche/statut/par/titre » (une seule requête backlog, pas N).
 gl_subtickets_enrich() {
-  local table siid coche titre statut
+  local table siid coche par titre statut
   table="$(gl_backlog_table all)" || table=""
-  printf '# iid\tcoche\tstatut\ttitre\n'
-  while IFS=$'\t' read -r siid coche titre; do
+  printf '# iid\tcoche\tstatut\tpar\ttitre\n'
+  while IFS=$'\t' read -r siid coche par titre; do
     statut="$(printf '%s\n' "$table" | awk -F '\t' -v id="$siid" '$1 == id { print $2; exit }')"
-    printf '%s\t%s\t%s\t%s\n' "$siid" "$coche" "${statut:-?}" "$titre"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$siid" "$coche" "${statut:-?}" "$par" "$titre"
   done
+}
+
+# gl_subtickets_startables — stdin = table enrichie de gl_subtickets SANS son en-tête. Imprime les
+# lots « À faire » que la règle de blocage laisse démarrer **maintenant** (« #<iid> — <titre> »,
+# suffixé « (parallèle) » pour les lots marqués), rien s'il n'en reste aucun. C'est ce qui permet à
+# /ticket-start de proposer, sur un parent, TOUS les lots démarrables et plus seulement le premier.
+gl_subtickets_startables() {
+  awk -F '\t' '
+    { iid[NR] = $1; statut[NR] = $3; par[NR] = $4; titre[NR] = $5; n = NR }
+    END {
+      for (i = 1; i <= n; i++) {
+        if (statut[i] != "À faire") continue
+        bloque = 0
+        for (j = 1; j < i; j++) {
+          if (statut[j] == "Terminé" || statut[j] == "En revue") continue
+          if (par[i] == "∥" && par[j] == "∥") continue
+          bloque = 1
+          break
+        }
+        if (!bloque) printf "  #%s — %s%s\n", iid[i], titre[i], (par[i] == "∥" ? " (parallèle)" : "")
+      }
+    }
+  '
 }
 
 # --- Démarrage de ticket (/ticket-start : préflight + mutation groupée) --------------------------
@@ -578,8 +621,18 @@ gl_start_brief() {
   local rows
   rows="$(printf '%s\n' "$raw" | gl_subticket_rows)"
   if [ -n "$rows" ]; then
-    printf '\nparent de suivi — ne porte ni branche ni code ; rediriger vers le premier lot ouvert :\n'
-    printf '%s\n' "$rows" | gl_subtickets_enrich
+    local ptable startables
+    ptable="$(printf '%s\n' "$rows" | gl_subtickets_enrich)"
+    printf '\nparent de suivi — ne porte ni branche ni code ; rediriger vers un lot démarrable :\n'
+    printf '%s\n' "$ptable"
+    startables="$(printf '%s\n' "$ptable" | tail -n +2 | gl_subtickets_startables)"
+    printf '\n'
+    if [ -n "$startables" ]; then
+      printf 'lots démarrables maintenant (les lots « parallèle » ne se bloquent pas entre eux) :\n'
+      printf '%s\n' "$startables"
+    else
+      printf 'lots démarrables maintenant : aucun (tout est livré, en cours, ou bloqué par un lot précédent)\n'
+    fi
     return 0
   fi
 
@@ -589,18 +642,27 @@ gl_start_brief() {
   local parent
   parent="$(printf '%s\n' "$raw" | grep -o 'Sous-ticket de #[0-9]\+' | head -1 | grep -o '[0-9]\+$')"
   if [ -n "$parent" ]; then
-    local ptable total rank blocked deferred
+    local ptable total rank self_par blocked deferred
     ptable="$(gl_subtickets "$parent" 2>/dev/null | tail -n +2)"
     printf '\n'
     if [ -n "$ptable" ]; then
       total="$(printf '%s\n' "$ptable" | awk 'END { print NR }')"
       rank="$(printf '%s\n' "$ptable" | awk -F '\t' -v id="$iid" '$1 == id { print NR; exit }')"
       printf 'sous-ticket de #%s — lot %s/%s\n' "$parent" "${rank:-?}" "$total"
-      blocked="$(printf '%s\n' "$ptable" | awk -F '\t' -v id="$iid" '$1 == id { exit } $3 != "Terminé" && $3 != "En revue" { printf "#%s (%s) ", $1, $3 }')"
+      # Marqueur « (parallèle) » du lot visé : il neutralise le blocage par les AUTRES lots
+      # marqués qui le précèdent (voir la règle en tête de section). Un lot non marqué, lui,
+      # reste barré par tout lot précédent non livré — marqueur compris.
+      self_par="$(printf '%s\n' "$ptable" | awk -F '\t' -v id="$iid" '$1 == id { print $4; exit }')"
+      [ "$self_par" = "∥" ] && printf 'lot marqué « parallèle » — indépendant des autres lots marqués du parent\n'
+      blocked="$(printf '%s\n' "$ptable" | awk -F '\t' -v id="$iid" -v self_par="$self_par" '
+        $1 == id { exit }
+        $3 == "Terminé" || $3 == "En revue" { next }
+        self_par == "∥" && $4 == "∥" { next }
+        { printf "#%s (%s) ", $1, $3 }')"
       if [ -n "$blocked" ]; then
         printf 'lots précédents : ⚠ non livrés : %s— les terminer (au moins « En revue ») avant de démarrer ce lot\n' "$blocked"
       else
-        printf 'lots précédents : OK (tous livrés — « Terminé » ou « En revue »)\n'
+        printf 'lots précédents : OK (aucun lot bloquant — livrés ou marqués « parallèle »)\n'
       fi
     else
       printf 'sous-ticket de #%s (checklist du parent illisible — contrôler les lots précédents à la main)\n' "$parent"
@@ -1433,6 +1495,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issue-link)     gl_issue_link "$@" ;;
     parent-of)      gl_parent_of "$@" ;;
     subtickets)     gl_subtickets "$@" ;;
+    startables)     gl_subtickets "$@" | tail -n +2 | gl_subtickets_startables ;;
     start-brief)    gl_start_brief "$@" ;;
     begin)          gl_begin "$@" ;;
     prio)           gl_prio "$@" ;;
@@ -1484,7 +1547,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid> <iid-cible>    (lie deux tickets — relates to, idempotent)" >&2
       echo "    parent-of <iid>                 (iid du parent si <iid> est un sous-ticket)" >&2
-      echo "    subtickets <iid-parent>         (checklist ## Sous-tickets : iid/coche/statut/titre)" >&2
+      echo "    subtickets <iid-parent>         (checklist ## Sous-tickets : iid/coche/statut/par/titre)" >&2
+      echo "    startables <iid-parent>         (lots « À faire » démarrables maintenant)" >&2
       echo "  Démarrage de ticket (/ticket-start) :" >&2
       echo "    start-brief <iid>            (préflight en une lecture : pré-requis, arbre propre, brief, parent/sous-ticket, branche proposée)" >&2
       echo "    branch-for <iid>             (nom de la branche de travail du ticket)" >&2

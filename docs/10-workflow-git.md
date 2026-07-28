@@ -310,14 +310,44 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
   critique, et portent la mention « Tests différés → #<iid-du-lot-tests> » — livrer un lot
   intermédiaire sans tests est donc **prévu**, pas un oubli (la case « Tests » de la checklist de
   MR reste vide, le relecteur sait pourquoi).
+- **Lots parallélisables** (ticket #160) — la sérialisation des lots protège les vraies
+  dépendances, mais elle est souvent **artificielle** : les lots sont déjà additifs et mergeables
+  seuls sur `main`, et deux personnes se bloquent alors mutuellement pour rien. Un lot dont le
+  titre dans la checklist du parent se termine par **`(parallèle)`** déclare qu'il **ne dépend pas
+  des autres lots marqués qui le précèdent** :
+
+  ```markdown
+  ## Sous-tickets
+
+  - [x] #157 — Filet CI local + contrôle doctor du runner
+  - [ ] #158 — Runner CI partagé toujours en ligne (parallèle)
+  - [ ] #159 — Anti-collision sur les tickets (parallèle)
+  - [ ] #156 — Tests + doc du chantier
+  ```
+
+  La règle de blocage appliquée par `lib.sh start-brief` est alors : **un lot précédent non livré
+  (ni « Terminé » ni « En revue ») bloque, sauf si le lot visé *et* ce lot précédent sont tous
+  deux marqués.** Trois conséquences :
+  - #158 et #159 sont **démarrables en même temps** par deux personnes, quel que soit l'état de
+    l'autre ;
+  - un lot **non marqué** reste barré par tout ce qui le précède — le lot final **« tests + doc »
+    n'est donc jamais marqué**, et attend bien l'ensemble des lots ;
+  - un lot non marqué en milieu de checklist (#157 ci-dessus) fait **barrière** : les lots
+    parallèles qui le suivent l'attendent, ce qui permet d'exprimer un socle commun.
+
+  Le marqueur est **facultatif** : sans lui, le comportement séquentiel d'origine est conservé.
+  `lib.sh subtickets` l'expose dans une colonne `par` (`∥`/`-`) et `lib.sh startables <parent>`
+  liste directement les lots « À faire » que rien ne bloque — c'est ce que `/ticket-start` affiche
+  sur un parent (tous les lots démarrables, plus seulement le premier) et ce que `/ticket-ship`
+  annonce après un lot.
 
 Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subtickets`) :
 
 | Commande | Besoin/ticket trop gros | Ticket parent | Sous-ticket |
 |---|---|---|---|
-| `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, lot tests en dernier) | — | — |
-| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | **redirige** vers le premier lot « À faire » (et synchronise la checklist), en sautant les lots livrés — « Terminé » ou « En revue » ; **s'arrête** si un lot est « En cours » (travail en route) ou s'il ne reste que des « En revue » (tout est livré, on n'attend plus que des merges) | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une MR en attente de merge ne bloque pas), sinon s'arrête |
-| `/ticket-ship` | — | — | **annonce le prochain lot**, démarrable dès maintenant sans attendre le merge (ou que le parent est fermable si c'était le dernier), et coche les lots terminés dans la checklist du parent |
+| `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, marqueur `(parallèle)` sur les lots indépendants, lot tests en dernier) | — | — |
+| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ parent fermable si tout est « Terminé », sinon le travail est en route (« En cours ») ou livré et on n'attend plus que des merges | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une MR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête |
+| `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou que le parent est fermable si c'était le dernier), et coche les lots terminés dans la checklist du parent |
 
 **Voie « non réalisé ».** À tout moment (depuis `À faire`, `En cours` ou `En revue`), un ticket
 peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** : statut `Abandonné`
