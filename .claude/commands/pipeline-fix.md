@@ -37,7 +37,9 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      automatique — on ne committe pas sur `main` ; propose d'ouvrir un ticket de bug à la place.
 
 4. **Diagnostic du pipeline** : `bash scripts/gitlab/lib.sh pipeline-latest <branche>` →
-   `id / status / sha / url` (TSV).
+   `id / status / sha / url` (TSV). Depuis #165 la CI ne tourne **que sur les MR** : le pipeline
+   d'une branche est celui de sa MR, et c'est le helper qui va le chercher là — ne le remplace pas
+   par un `glab ci status`/`glab ci view <branche>`, qui ne voit que les pipelines de branche.
    - `success` → rien à corriger : dis-le et arrête-toi.
    - `created` / `pending` / `running` → le verdict n'est pas tombé. Un pipeline **`pending`
      durable** est le symptôme classique d'un **runner local hors ligne** (runners partagés coupés,
@@ -50,9 +52,12 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      puis suis le verdict avec `bash scripts/gitlab/lib.sh pipeline-wait <id>` et reprends selon le
      statut final.
    - `failed` → continue.
-   - Aucun pipeline pour la branche alors qu'un commit vient d'être poussé ? Déclenche-le :
-     `glab ci run -b <branche>` (cas observé sur la MR 31 : un push interrompu peut ne pas
-     déclencher de pipeline), puis `pipeline-wait`.
+   - Aucun pipeline alors qu'un commit vient d'être poussé ? **Vérifie d'abord qu'une MR est
+     ouverte** sur la branche : sans MR, il est normal qu'il n'y ait rien (la CI ne se déclenche
+     plus au push — #165) et la suite est `/ticket-ship`, pas un déclenchement forcé. MR ouverte et
+     toujours rien ? Déclenche manuellement : `glab ci run -b <branche>` (autorisé par les règles
+     `workflow` ; cas observé sur la MR 31 : un push interrompu peut ne pas déclencher de
+     pipeline), puis `pipeline-wait`.
 
 5. **Jobs rouges** : `bash scripts/gitlab/lib.sh pipeline-failed-jobs <pipeline-id>` →
    `id / name / stage / failure_reason` par job en échec.
@@ -96,8 +101,9 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!glab auth git-credential' push origin <branche>`.
 
 9. **Vérifie qu'un nouveau pipeline démarre** : `bash scripts/gitlab/lib.sh pipeline-latest
-   <branche>` — son `sha` doit être celui de `git rev-parse HEAD`. S'il ne démarre pas (~30 s),
-   déclenche-le : `glab ci run -b <branche>`.
+   <branche>` — son `sha` doit être celui de `git rev-parse HEAD`. Un push sur la branche source
+   d'une MR **ouverte** relance bien la CI (#165) ; s'il ne démarre pas (~30 s), déclenche-le :
+   `glab ci run -b <branche>`.
 
 10. **Suis le verdict** : `bash scripts/gitlab/lib.sh pipeline-wait <nouveau-pipeline-id>`
     (statut final imprimé ; code 0 = success).

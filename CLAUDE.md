@@ -1,6 +1,6 @@
 # Maestro — Instructions pour Claude Code
 
-Monorepo en phase de cadrage (Phase 0 — POC, voir [docs/06-roadmap.md](./docs/06-roadmap.md)). Squelette de dossiers en place (`apps/`, `core/`, `agents/`, `packages/`, `infra/`), pas encore de code applicatif. CI minimale en place : `.gitlab-ci.yml` lint les scripts shell (shellcheck) — un pipeline vert est requis avant merge.
+Monorepo en phase de cadrage (Phase 0 — POC, voir [docs/06-roadmap.md](./docs/06-roadmap.md)). Squelette de dossiers en place (`apps/`, `core/`, `agents/`, `packages/`, `infra/`), pas encore de code applicatif. CI minimale en place : `.gitlab-ci.yml` lint les scripts shell (shellcheck) — un pipeline vert est requis avant merge. **La CI ne se déclenche que sur les Merge Requests** ([docs/10 §8](./docs/10-workflow-git.md)) : ni au push sur une branche sans MR, ni sur `main` après le merge — avant la MR, on se vérifie en local avec `bash scripts/ci/local.sh`.
 
 ## Règles Git obligatoires
 

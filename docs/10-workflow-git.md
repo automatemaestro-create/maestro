@@ -197,9 +197,10 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
 - **Merge Request** (`.gitlab/merge_request_templates/Default.md`) : checklist de definition
   of done + rappel `Closes #`. La checklist est un **constat, pas un formulaire** :
   `/ticket-finish` coche lui-même les cases qu'il a **effectivement vérifiées** (conventions de
-  branche/commit, tests et doc jugés d'après le diff, pipeline verte constatée via `glab ci
-  status`) et laisse vides les autres — notamment « Pipeline CI verte » tant que le pipeline du
-  push n'a pas réellement réussi. En cas de re-exécution, il remet la checklist à jour dans la
+  branche/commit, tests et doc jugés d'après le diff, pipeline verte constatée via `lib.sh
+  pipeline-latest`) et laisse vides les autres — notamment « Pipeline CI verte », qui est
+  **normalement vide au premier passage** : la CI ne démarrant qu'avec la MR (§8), le pipeline
+  naît après le constat. En cas de re-exécution, il remet la checklist à jour dans la
   description de la MR sans toucher au reste (idempotent) et **ne décoche jamais** une case déjà
   cochée (elle peut venir d'un humain). Les cases restées vides sont l'affaire du relecteur.
 
@@ -571,8 +572,33 @@ second est fusionné clé par clé), rapport complet et code de sortie non nul s
 `--skip` : c'est la décision du script qui est testée, jamais l'installation elle-même — la suite
 tourne donc en CI sans démon Docker ni accès réseau.
 
-**Où tournent les pipelines ?** Sur les **runners de projet** du dépôt (exécuteur Docker), **par
-défaut et pour tout pipeline** — MR comprises. Les **runners partagés**
+**Quand un pipeline se déclenche ?** **Uniquement sur les Merge Requests** (#165). Le bloc
+`workflow: rules:` de [`.gitlab-ci.yml`](../.gitlab-ci.yml) ne laisse passer que
+`$CI_PIPELINE_SOURCE == "merge_request_event"` — la **création** d'une MR, puis chaque **push sur
+sa branche source** tant qu'elle est ouverte — et les déclenchements **manuels** (`web`, le bouton
+« Run pipeline » ; `api`, `glab ci run -b <branche>`, le repli de `/pipeline-fix`). Tout le reste
+tombe en `when: never` : un push sur une branche **sans MR**, le push sur **`main` après le
+merge**, les tags. Avant ces règles, une même branche payait **trois** pipelines — pendant le
+développement, à la clôture du ticket, puis sur `main` une fois mergée — pour un seul verdict
+réellement lu, celui qui conditionne le merge ; sur le runner unique de l'équipe (§8.1), c'est
+autant d'attente pour les autres. Trois conséquences pratiques :
+
+- **Vérifier son travail avant la MR est un geste local** :
+  [`scripts/ci/local.sh`](../scripts/ci/local.sh) rejoue les mêmes jobs sur le poste (#157) — c'est
+  lui qui remplace les pipelines de branche, et il ne dépend d'aucun runner.
+- **Le pipeline d'une MR est « détaché »** : sa ref est `refs/merge-requests/<iid>/head`, pas le
+  nom de la branche. `glab ci status` / `glab ci view <branche>` ne le voient donc **pas** ;
+  `lib.sh pipeline-latest <branche>` si — il se rabat sur les pipelines de la MR quand la ref n'en
+  porte aucun —, et c'est lui qu'utilisent `/pipeline-fix`, `/ticket-finish` et `/mr-review`. La
+  file de revue (`lib.sh review-queue`) lit `headPipeline` en GraphQL : elle n'est pas concernée.
+- **La case « Pipeline CI verte » de la MR est vide au premier passage**, et c'est normal :
+  `/ticket-finish` pousse **puis** ouvre la MR, donc le pipeline naît *après* le constat (§6).
+
+Le garde-fou de merge est inchangé : `only_allow_merge_if_pipeline_succeeds` regarde le pipeline
+de **tête de la MR**, qui existe toujours — une MR sans pipeline vert reste non mergeable.
+
+**Où tournent les pipelines ?** Sur les **runners de projet** du dépôt (exécuteur Docker), quel que
+soit le pipeline. Les **runners partagés**
 GitLab sont **désactivés** au niveau projet (`shared_runners_enabled=false`, posé par
 [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh)) : leur quota de minutes CI étant durablement
 épuisé, un job non-taggé qui y atterrissait retombait en `ci_quota_exceeded` (jobs « not
@@ -662,7 +688,8 @@ en `bash scripts/gitlab/ensure-runner.sh || …` : **son échec n'interrompt pas
 seulement signalé. Un **hook global** (sur tout `git push`) a été écarté : il se déclencherait sur
 des push sans rapport et bloquerait le push le temps du démarrage de Docker. S'assurer que le
 runner est en ligne **en amont de chaque MR** reste donc intégré au flux de clôture
-(`/ticket-finish`, `/ticket-ship`, `/pipeline-fix`), désormais sans geste manuel.
+(`/ticket-finish`, `/ticket-ship`, `/pipeline-fix`), désormais sans geste manuel — et d'autant
+plus au bon endroit depuis #165, la MR étant le **seul** moment où un pipeline démarre.
 
 ### 8.2 Pipeline rouge — remédiation
 

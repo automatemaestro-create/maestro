@@ -27,9 +27,11 @@ n'ouvre le doc qu'en cas de doute).
    - volume : `changes_count`.
 
 4. État du pipeline : lis le pipeline de tête depuis le JSON (`pipeline`/`head_pipeline` → `status`)
-   s'il est présent ; sinon, `glab ci status` (ou `glab ci view <source_branch>`). Rapporte
-   `success`/`failed`/`running`/absent, sans le faire échouer si aucun pipeline n'est configuré (le
-   monorepo n'a pas encore de CI — `docs/10-workflow-git.md` §8).
+   — c'est la source qui fait foi, la CI ne se déclenchant que sur les MR (`docs/10-workflow-git.md`
+   §8). S'il est absent du JSON, `bash scripts/gitlab/lib.sh pipeline-latest <source_branch>` (qui
+   retombe sur les pipelines de la MR) ; pas `glab ci status`, qui ne voit que les pipelines de
+   branche. Rapporte `success`/`failed`/`running`/absent, sans faire échouer la synthèse si aucun
+   pipeline n'a encore tourné.
 
 5. Résumé des changements : par défaut, ne réinjecte qu'un **résumé** du diff (fichiers touchés +
    volume), **pas le diff détaillé**, qui gonfle inutilement le contexte. `glab mr diff` n'expose
