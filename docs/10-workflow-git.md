@@ -547,3 +547,74 @@ nouveau pipeline. Les briques réutilisables vivent dans `lib.sh` : `pipeline-la
 contrôles en local avant de pousser : mêmes commandes que les jobs (ruff/pytest/mypy via le venv
 du repo ; shellcheck sur des fins de ligne LF — la CI checkout en LF, une copie Windows CRLF
 produit des faux SC1017).
+
+## 9. Deux tickets en parallèle — un worktree par session
+
+Un clone n'a qu'**un seul répertoire de travail** : deux sessions Claude Code ouvertes dessus
+partagent le même `HEAD`, et la branche créée par l'une change les fichiers sous les pieds de
+l'autre. Pour traiter **deux tickets en même temps**, on ouvre un **worktree git** par ticket —
+un second répertoire de travail sur *le même dépôt* (objets, refs, remotes et configuration
+partagés), avec sa propre branche empruntée. Pas de second clone, pas de re-fetch (#152).
+
+```bash
+bash scripts/git/worktree.sh 152          # crée (ou complète) le worktree du ticket #152
+bash scripts/git/worktree.sh list         # les worktrees en place, avec leurs ports
+bash scripts/git/worktree.sh remove 152   # retire le worktree — jamais la branche
+```
+
+Le script fait plus qu'un `git worktree add` : il résout la branche comme
+[`/ticket-start`](../.claude/commands/ticket-start.md) (`lib.sh branch-for`) et la crée depuis
+`origin/main`, recopie le `.env` (gitignoré, donc absent du worktree), **partage par lien**
+`.venv/` et `.tools/` (jonction sous Windows : aucun droit administrateur), **installe** les
+dépendances de `apps/web` et écrit un `.claude/settings.local.json` dédié. Il ne reste qu'à ouvrir
+une session Claude Code sur le dossier créé et à y lancer `/ticket-start <iid>`.
+
+Pourquoi `node_modules` s'installe au lieu d'être partagé, lui : **Turbopack refuse un
+`node_modules` lié** (« Symlink `[project]/node_modules` is invalid, it points out of the
+filesystem root ») et l'UI ne démarre alors pas du tout. C'est le seul artefact dupliqué ;
+l'installation est déléguée à `scripts/setup.sh --only web`, source unique du parcours (§7).
+
+**Ce qui doit différer d'une session à l'autre** — et que le script pose d'office :
+
+| Ressource | Pourquoi | Valeur dans le worktree |
+|---|---|---|
+| Ports Control Tower | l'API et l'UI de la seconde session tueraient celles de la première | `MAESTRO_PORT_API` = 8000 + (iid mod 100), `MAESTRO_PORT_UI` = 3000 + (iid mod 100) |
+| Profil du navigateur MCP | Chrome n'accepte **qu'un consommateur par profil** (verrou ProcessSingleton) | `MAESTRO_CHROME_PROFILE` = `~/.maestro/chrome-profile-<iid>` |
+
+Le reste suit tout seul : les **hooks git** sont une configuration du dépôt (`core.hooksPath`,
+partagée par tous les worktrees) dont le chemin est **relatif**, donc résolu depuis la racine du
+worktree courant ; `glab` fonctionne depuis n'importe quel worktree.
+
+**Ce que le workflow adapte.** `main` ne peut être emprunté que par **un seul** worktree à la
+fois : tout `git checkout main` échoue ailleurs que dans le clone principal. D'où
+`lib.sh start-branch <branche>`, appelé par `/ticket-start` : dans le clone principal il met
+`main` à jour et purge les branches mergées ; dans un worktree il branche directement sur
+`origin/main`, et ne fait rien si la branche est déjà celle du worktree. De même,
+[`/branch-cleanup`](../.claude/commands/branch-cleanup.md) ne bascule pas sur `main` depuis un
+worktree — la fin de vie de celui-ci passe par `worktree.sh remove <iid>`, depuis le clone
+principal, une fois la MR mergée. La **branche n'est jamais supprimée par ce script** : cela reste
+le rôle de `/branch-cleanup`, après confirmation du merge par GitLab (§6).
+
+> ⚠ **Ne jamais retirer un worktree à la main** (`rm -rf`, ou `git worktree remove` lancé
+> directement). Les artefacts partagés sont des **jonctions**, qu'une suppression récursive
+> **traverse** : elle vide alors le `.venv` et le `node_modules` du **clone principal**. Et comme
+> ces dossiers sont gitignorés, git ne les voit pas comme « fichiers non suivis » et ne s'arrête
+> pas — la commande réussit, les dégâts sont silencieux (constaté sur #152, d'où le test de
+> régression `test_remove_ne_vide_pas_les_artefacts_du_clone_principal`). `worktree.sh remove`
+> **délie d'abord, retire ensuite**, et refuse tout worktree porteur de changements non commités.
+> En cas de dégât : `.venv/Scripts/python.exe -m pip install --force-reinstall -e ".[dev]"`
+> (une réinstallation simple ne suffit pas — les métadonnées des paquets amputés sont intactes,
+> donc pip les croit installés).
+
+**Limites assumées.**
+
+- Le **runner CI est unique** (§8) : les pipelines des deux MR se **sérialisent**. Plus lent,
+  jamais bloquant.
+- Le venv partagé porte `maestro` en **mode éditable pointé sur le clone principal**. Le finder
+  correspondant passe *après* le `PathFinder` de Python : le `maestro/` du répertoire courant
+  l'emporte donc, **tant que les commandes sont lancées depuis la racine du worktree** (c'est le
+  cas de `.venv/Scripts/python.exe -m pytest`). Les **points d'entrée console** (`maestro-run`,
+  `maestro-demo`…) restent, eux, pointés sur le clone principal.
+- Si la branche modifie `pyproject.toml` ou `apps/web/package.json`, les dépendances partagées ne
+  correspondent plus : créer le worktree avec `--sans-liens`, puis l'équiper avec
+  `bash scripts/setup.sh`.

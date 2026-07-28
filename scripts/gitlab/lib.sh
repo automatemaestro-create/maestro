@@ -529,15 +529,12 @@ gl_start_brief() {
   fi
 
   # Branche proposée : préfixe depuis le label type:: + slug du titre.
-  local title labels type prefix slug
-  title="$(printf '%s\n' "$raw" | sed -n 's/^title:[[:space:]]*//p' | head -1)"
-  labels="$(printf '%s\n' "$raw" | sed -n 's/^labels:[[:space:]]*//p' | head -1)"
-  type="$(printf '%s' "$labels" | grep -o 'type::[a-z]*' | head -1)"
-  slug="$(gl_slug "$title")"
-  if [ -n "$type" ] && prefix="$(gl_branch_prefix "$type" 2>/dev/null)"; then
-    printf '\nbranche proposée : %s/%s-%s\n' "$prefix" "$iid" "$slug"
+  local branche code
+  branche="$(printf '%s\n' "$raw" | gl_branch_from_raw "$iid")"; code=$?
+  if [ "$code" = 0 ]; then
+    printf '\nbranche proposée : %s\n' "$branche"
   else
-    printf '\nbranche proposée : <type>/%s-%s (label type:: absent — préfixe à déduire : feat|fix|chore|docs)\n' "$iid" "$slug"
+    printf '\nbranche proposée : %s (label type:: absent — préfixe à déduire : feat|fix|chore|docs)\n' "$branche"
   fi
 }
 
@@ -1045,6 +1042,93 @@ gl_branch_prefix() {
   esac
 }
 
+# --- Branche de travail & worktrees --------------------------------------------------------------
+# gl_branch_from_raw <iid> (stdin = sortie brute de `glab issue view`) -> nom de la branche de
+# travail : <préfixe du label type::>/<iid>-<slug du titre>. Fonction PURE : elle ne lit pas le
+# ticket, ce qui permet à gl_start_brief de la nourrir avec la lecture qu'il a déjà faite.
+# Sans label type::, imprime le préfixe littéral « <type> » et renvoie 3 — à l'appelant de le
+# déduire du titre plutôt que de fabriquer une branche mal nommée.
+gl_branch_from_raw() {
+  local iid="$1" raw title labels type prefix slug
+  raw="$(cat)"
+  title="$(printf '%s\n' "$raw" | sed -n 's/^title:[[:space:]]*//p' | head -1)"
+  labels="$(printf '%s\n' "$raw" | sed -n 's/^labels:[[:space:]]*//p' | head -1)"
+  type="$(printf '%s' "$labels" | grep -o 'type::[a-z]*' | head -1)"
+  slug="$(gl_slug "$title")"
+  if [ -n "$type" ] && prefix="$(gl_branch_prefix "$type" 2>/dev/null)"; then
+    printf '%s/%s-%s\n' "$prefix" "$iid" "$slug"
+    return 0
+  fi
+  printf '<type>/%s-%s\n' "$iid" "$slug"
+  return 3
+}
+
+# gl_branch_for <iid> -> même chose, en lisant le ticket (une lecture). Sert à scripts/git/worktree.sh,
+# qui n'a pas de brief sous la main.
+gl_branch_for() {
+  local iid="$1" raw
+  if [ -z "$iid" ]; then echo "usage: gl_branch_for <iid>" >&2; return 2; fi
+  gl_require_glab || return 1
+  raw="$(glab issue view "$iid" 2>/dev/null)" || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
+  printf '%s\n' "$raw" | gl_branch_from_raw "$iid"
+}
+
+# Sommes-nous dans un worktree LIÉ (`git worktree add`) plutôt que dans le clone principal ?
+# Signature universelle et sans dépendance de version : à la racine d'un worktree lié, `.git` est
+# un FICHIER (« gitdir: … ») là où le clone principal porte un répertoire.
+gl_in_linked_worktree() {
+  local top
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -f "$top/.git" ]
+}
+
+# gl_start_branch <branche> -> place le dépôt sur la branche de travail, que l'on soit dans le
+# clone principal ou dans un worktree lié (docs/10-workflow-git.md §9). Idempotent, trois cas :
+#   - déjà sur la branche (situation normale dans un worktree créé par scripts/git/worktree.sh) ;
+#   - branche locale existante -> bascule ;
+#   - branche absente -> création depuis `origin/main` à jour.
+# Dans le clone principal, `main` est rafraîchi et les branches mergées purgées au passage. Dans un
+# worktree lié on ne passe JAMAIS par `git checkout main` : `main` est déjà emprunté par le clone
+# principal, et git refuse d'emprunter deux fois la même branche.
+gl_start_branch() {
+  local branche="$1" courante
+  if [ -z "$branche" ]; then echo "usage: gl_start_branch <branche>" >&2; return 2; fi
+  case "$branche" in
+    *'<type>'*)
+      echo "Branche sans préfixe : « $branche » — déduire le type (feat|fix|chore|docs) avant de démarrer." >&2
+      return 2 ;;
+  esac
+
+  courante="$(git branch --show-current 2>/dev/null)"
+  if [ "$courante" = "$branche" ]; then
+    GIT_TERMINAL_PROMPT=0 git fetch origin main >/dev/null 2>&1
+    printf 'Déjà sur %s — rien à créer.\n' "$branche"
+    return 0
+  fi
+
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "Arbre de travail non propre : committer, stasher ou annuler avant de changer de branche." >&2
+    return 1
+  fi
+
+  if git show-ref --verify --quiet "refs/heads/$branche"; then
+    git checkout "$branche" || return 1
+    printf 'Branche existante : %s (bascule).\n' "$branche"
+    return 0
+  fi
+
+  if gl_in_linked_worktree; then
+    git fetch origin main || return 1
+    git checkout -b "$branche" origin/main || return 1
+  else
+    git checkout main || return 1
+    git pull origin main || return 1
+    gl_cleanup_merged
+    git checkout -b "$branche" || return 1
+  fi
+  printf 'Branche créée : %s (depuis origin/main).\n' "$branche"
+}
+
 # --- Dispatcher (uniquement quand exécuté directement, pas quand sourcé) -------------------------
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   cmd="${1:-}"; [ "$#" -gt 0 ] && shift
@@ -1076,6 +1160,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     log-time)       gl_log_time "$@" ;;
     mr-state)       gl_mr_state "$@" ;;
     cleanup-merged) gl_cleanup_merged "$@" ;;
+    branch-for)     gl_branch_for "$@" ;;
+    start-branch)   gl_start_branch "$@" ;;
     get-description)    gl_get_description "$@" ;;
     set-description)    gl_set_description "$@" ;;
     get-mr-description) gl_get_mr_description "$@" ;;
@@ -1108,6 +1194,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    subtickets <iid-parent>         (checklist ## Sous-tickets : iid/coche/statut/titre)" >&2
       echo "  Démarrage de ticket (/ticket-start) :" >&2
       echo "    start-brief <iid>            (préflight en une lecture : pré-requis, arbre propre, brief, parent/sous-ticket, branche proposée)" >&2
+      echo "    branch-for <iid>             (nom de la branche de travail du ticket)" >&2
+      echo "    start-branch <branche>       (place le dépôt sur la branche — clone principal ou worktree lié, idempotent)" >&2
       echo "    begin <iid> [username]       (assignation + « En cours » + dates en une mutation groupée)" >&2
       echo "  Dates & temps :" >&2
       echo "    start-dates <iid>            (début=aujourd'hui + échéance selon prio)" >&2

@@ -47,7 +47,7 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="bash introuvable")
 besoin_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
 
 # Ordre de ETAPES_CONNUES dans scripts/setup.sh — le rapport final le suit.
-ETAPES = ("prerequis", "venv", "env", "hooks", "web", "mcp", "runner", "infra", "verif")
+ETAPES = ("node", "prerequis", "venv", "env", "hooks", "web", "mcp", "runner", "infra", "verif")
 
 # Étapes à neutraliser pour rester hors ligne (voir le docstring du module).
 HORS_LIGNE = ("--skip", "venv,web,runner,infra,verif")

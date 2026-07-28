@@ -28,6 +28,12 @@ cette commande est autosuffisante).
    - si `state` vaut `merged`, ajoute la branche (et l'`iid` extrait de son nom) à la liste des
      candidates au nettoyage.
 
+> **Dans un worktree** (`git worktree`, docs/10 §9) : ne bascule pas sur `main` — il est emprunté
+> par le clone principal et `git checkout main` y échoue. Le nettoyage se réduit alors à la
+> suppression des branches mergées (étape 4, dernier point) ; la fin de vie du worktree lui-même
+> passe par `bash scripts/git/worktree.sh remove <iid>`, à lancer depuis le clone principal une
+> fois la MR mergée. Repère : à la racine d'un worktree, `.git` est un fichier, pas un dossier.
+
 4. S'il y a des candidates :
    - si l'une d'elles est la branche courante, bascule d'abord dessus vers `main` ;
    - `git checkout main && git pull origin main` ;

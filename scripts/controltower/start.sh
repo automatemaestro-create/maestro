@@ -8,13 +8,15 @@
 #   - l'UI Next.js (apps/web) pointée sur cette API — port 3000 ;
 # ouvre une fenêtre de navigateur sur l'UI, et arrête l'ensemble dès que cette
 # fenêtre est fermée. Le script, lui, rend la main tout de suite : c'est un chien
-# de garde détaché qui attend la fermeture. Les logs vont dans un dossier temporaire.
+# de garde détaché qui attend la fermeture. Les logs vont dans un dossier temporaire,
+# propre au couple de ports — deux sessions parallèles ne se marchent donc pas dessus.
 #
 #   bash scripts/controltower/start.sh               # (re)démarre tout + navigateur
 #   bash scripts/controltower/start.sh --no-browser  # sans navigateur ni arrêt auto
 #   bash scripts/controltower/start.sh --stop        # arrête seulement (nettoyage)
 #
-# Ports surchargables : MAESTRO_PORT_API (défaut 8000), MAESTRO_PORT_UI (3000).
+# Ports surchargables : MAESTRO_PORT_API (défaut 8000), MAESTRO_PORT_UI (3000). Un worktree créé
+# par scripts/git/worktree.sh les reçoit d'office, dérivés du numéro de ticket (#152).
 # Navigateur surchargeable : MAESTRO_BROWSER (binaire de la famille Chromium).
 
 set -euo pipefail
@@ -23,7 +25,10 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$RACINE/scripts/controltower/start.sh"
 PORT_API="${MAESTRO_PORT_API:-8000}"
 PORT_UI="${MAESTRO_PORT_UI:-3000}"
-LOG_DIR="${TMPDIR:-/tmp}/maestro-controltower"
+# Dossier de travail INDEXÉ PAR LES PORTS (#152) : deux sessions Claude Code — une par worktree —
+# lancent chacune leur Control Tower sur ses propres ports. Un dossier commun leur ferait partager
+# le jeton de session et le PID du chien de garde, et la seconde arrêterait la première.
+LOG_DIR="${TMPDIR:-/tmp}/maestro-controltower-${PORT_API}-${PORT_UI}"
 URL_UI="http://localhost:${PORT_UI}"
 
 # Trace de la session courante. Le chien de garde ne nettoie que si le jeton qu'il
@@ -35,7 +40,10 @@ FICHIER_CHIEN="$LOG_DIR/chien-de-garde.pid"
 # Profil jetable de la fenêtre ouverte par le script. Son nom sert aussi de
 # marqueur : c'est en cherchant les processus dont la ligne de commande le
 # contient qu'on sait si la fenêtre est encore ouverte (voir navigateur_actif).
-MARQUEUR_NAVIGATEUR="maestro-profil-navigateur"
+# Les ports en font partie, pour la même raison que LOG_DIR : la recherche se fait
+# par SOUS-CHAÎNE, donc un marqueur commun à deux sessions ferait prendre à l'une
+# la fenêtre de l'autre pour la sienne — et fermer_navigateur tuerait la mauvaise.
+MARQUEUR_NAVIGATEUR="maestro-profil-navigateur-${PORT_API}-${PORT_UI}"
 PROFIL_NAVIGATEUR="$LOG_DIR/$MARQUEUR_NAVIGATEUR"
 
 # Windows (Git Bash) ou Unix : le repérage des PID par port et le kill diffèrent.

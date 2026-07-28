@@ -34,9 +34,12 @@ plutôt que de promettre un `--stop`.
 - `--no-browser` : démarre sans ouvrir de fenêtre — donc **sans arrêt
   automatique**. À utiliser quand on pilote soi-même un navigateur (skill
   `verify`) ou qu'on veut juste la stack en tâche de fond.
-- Logs : `${TMPDIR:-/tmp}/maestro-controltower/{api,ui}.log` en cas de souci,
-  `navigateur.log` pour le chien de garde.
-- Ports surchargables : `MAESTRO_PORT_API`, `MAESTRO_PORT_UI`.
+- Logs : `${TMPDIR:-/tmp}/maestro-controltower-<portAPI>-<portUI>/{api,ui}.log` en cas
+  de souci, `navigateur.log` pour le chien de garde.
+- Ports surchargables : `MAESTRO_PORT_API`, `MAESTRO_PORT_UI` — et **tout est indexé
+  dessus** (dossier de logs, jeton de session, profil de la fenêtre), de sorte que deux
+  sessions parallèles (un worktree par ticket, docs/10 §9) ne s'arrêtent pas l'une
+  l'autre. Un worktree créé par `scripts/git/worktree.sh` reçoit ses ports d'office.
 - Navigateur : Edge/Chrome/Chromium détecté automatiquement, surchargeable via
   `MAESTRO_BROWSER`. La fenêtre utilise un **profil jetable** dédié — jamais
   `MAESTRO_CHROME_PROFILE` (celui du MCP `chrome-maestro`), qu'elle bloquerait
