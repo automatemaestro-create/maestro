@@ -43,12 +43,19 @@ lieu d'inventer.
    - **Tests différés** : les tests sont un **sous-ticket dédié** — par défaut le **lot final
      « tests + doc »**. Les lots intermédiaires n'embarquent des tests que si leur logique est
      critique, et portent la mention « Tests différés → #<iid-du-lot-tests> ».
+   - **Lots parallélisables** : suffixe le titre du lot dans la checklist du parent par
+     **`(parallèle)`** quand il **ne dépend pas** des lots parallèles qui le précèdent — c'est le
+     cas courant, les lots étant déjà additifs et mergeables seuls sur `main`. `/ticket-start` ne
+     bloque alors plus ces lots entre eux : deux personnes peuvent les prendre en même temps. Le
+     marqueur est **facultatif** ; un lot **sans** marqueur reste barré tant que tout ce qui le
+     précède n'est pas livré — c'est ce qu'on veut pour le **lot final « tests + doc »** (jamais
+     marqué) et pour un lot socle dont les suivants dépendent réellement.
    - **Mécanique** : crée d'abord le **parent** (étapes 5 à 9, section `## Sous-tickets` encore
      vide), puis chaque **sous-ticket** (étapes 5 à 9 pour chacun), lie chaque sous-ticket au
      parent — `bash scripts/gitlab/lib.sh issue-link <iid-parent> <iid-sous-ticket>` — et termine
-     en remplissant la checklist du parent (`- [ ] #<iid> — <titre>`, dans l'**ordre de
-     réalisation**, lot tests en dernier) via `glab issue update <iid-parent> --description
-     "$(cat <fichier>)"`.
+     en remplissant la checklist du parent (`- [ ] #<iid> — <titre>`, ou
+     `- [ ] #<iid> — <titre> (parallèle)`, dans l'**ordre de réalisation**, lot tests en dernier)
+     via `glab issue update <iid-parent> --description "$(cat <fichier>)"`.
 
    Si le besoin tient en une session, continue simplement : **ticket unique**, même s'il est
    multi-facettes — matérialise alors les facettes par une **checklist interne** dans la

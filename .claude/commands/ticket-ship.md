@@ -79,10 +79,12 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
      **jamais** une lecture du type `glab issue view --output json | python` : elle corrompt
      l'UTF-8 en mojibake (« â€” » au lieu de « — ») et l'a déjà repoussé dans un parent (#141).
      Mise à jour idempotente : ne **décoche jamais** une case déjà cochée.
-   - S'il reste, après le ticket qu'on vient de shipper, un sous-ticket au statut « À faire »
-     dans l'ordre de la checklist, c'est le **prochain lot** : annonce qu'il est **démarrable dès
+   - Demande les lots ouverts que rien ne bloque :
+     `bash scripts/gitlab/lib.sh startables <iid-parent>` (les lots marqués « (parallèle) » ne se
+     bloquent pas entre eux — docs/10 §5.1). S'il en reste, annonce-les **démarrables dès
      maintenant** — « prochain lot : `/ticket-start <iid-suivant>` (sans attendre le merge : le
-     lot shippé est « En revue », les lots sont mergeables seuls depuis `main`) ».
+     lot shippé est « En revue », les lots sont mergeables seuls depuis `main`) » — et, s'il y en
+     a plusieurs, précise qu'ils sont **prenables en parallèle** par d'autres personnes.
    - Si le lot shippé est le **dernier encore ouvert**, annonce que le **parent sera fermable
      après le merge** (toutes les cases cochées, y compris le lot tests) — sa fermeture reste une
      décision humaine/orchestrateur : `/ticket-ship` ne ferme rien, pas même le parent.

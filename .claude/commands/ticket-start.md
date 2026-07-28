@@ -29,19 +29,22 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      `bash scripts/gitlab/lib.sh set-description <iid> <fichier>`) : n'improvise **jamais** une
      lecture du type `glab issue view --output json | python`, qui corrompt l'UTF-8 en mojibake
      (« â€” » au lieu de « — ») et l'a déjà repoussé dans un parent — voir #141. Mise à jour
-     idempotente : ne jamais décocher une case cochée. Puis parcours la checklist dans l'ordre en
-     **sautant les lots livrés** (« Terminé » ou « En revue » — une MR en attente de merge ne
-     bloque pas la suite) : au **premier lot « À faire »**, reprends l'étape 1 avec son iid (c'est
-     lui qu'on démarre ; si le parent était « À faire », passe-le « En cours » via
-     `bash scripts/gitlab/lib.sh set-status <iid-parent> "En cours"`). Arrête-toi seulement si un
-     lot est « En cours » (travail déjà en route) ; s'il ne reste aucun « À faire », rien à
-     démarrer : parent **fermable** si tout est « Terminé » (toutes cases cochées), sinon tout est
-     livré et on n'attend plus que des merges.
-   - **Sous-ticket** : la sortie donne le parent, le rang (« lot n/total »), les tests différés
-     éventuels et le contrôle des lots précédents. Si elle signale des lots précédents non livrés
-     (⚠ — encore « À faire » ou « En cours »), arrête-toi : les terminer d'abord. Un lot précédent
-     « En revue » (MR ouverte pas encore mergée) ne bloque pas : les lots sont additifs et la
-     branche part de `main`. Sinon, il se démarre comme un ticket ordinaire.
+     idempotente : ne jamais décocher une case cochée. Puis appuie-toi sur la section **« lots
+     démarrables maintenant »** de la sortie : elle liste **tous** les lots « À faire » que rien ne
+     bloque — pas seulement le premier, les lots marqués **« (parallèle) »** ne se bloquant pas
+     entre eux (docs/10 §5.1). Démarre le **premier de cette liste** en reprenant l'étape 1 avec
+     son iid, et **annonce les autres** comme prenables en parallèle par quelqu'un d'autre (si le
+     parent était « À faire », passe-le « En cours » via
+     `bash scripts/gitlab/lib.sh set-status <iid-parent> "En cours"`). Si la liste est vide, rien à
+     démarrer : parent **fermable** si tout est « Terminé » (toutes cases cochées), sinon le
+     travail est déjà en route (« En cours ») ou livré et on n'attend plus que des merges.
+   - **Sous-ticket** : la sortie donne le parent, le rang (« lot n/total »), le marqueur
+     « parallèle » éventuel, les tests différés et le contrôle des lots précédents. Si elle
+     signale des lots précédents non livrés (⚠ — encore « À faire » ou « En cours »), arrête-toi :
+     les terminer d'abord. Ne bloquent **pas** : un lot précédent « En revue » (MR ouverte pas
+     encore mergée — les lots sont additifs et la branche part de `main`), ni un lot précédent
+     marqué « (parallèle) » quand le lot visé l'est aussi (ils sont indépendants par déclaration).
+     Sinon, il se démarre comme un ticket ordinaire.
    - **Ticket trop gros ?** (ni parent ni sous-ticket) : évalue la **charge estimée** sur la
      **description intégrale** (`glab issue view $ARGUMENTS`, notes techniques et références
      croisées comprises). Les **couches/composants distincts** touchés (moteur, backend, UI,
@@ -75,8 +78,10 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
 
 4. **Résumé court, puis enchaîne immédiatement sur l'implémentation** : nom de la branche, titre
    du ticket, dates posées, critères d'acceptation ; pour un sous-ticket, le parent, le rang du
-   lot et ses tests différés (« tests différés → #<iid> » : livrer sans tests est prévu, pas un
-   oubli). Le résumé cadre le travail, ce n'est **pas une demande de validation** : n'attends
+   lot, ses tests différés (« tests différés → #<iid> » : livrer sans tests est prévu, pas un
+   oubli) et, s'il y en a, les **autres lots démarrables en parallèle** (`bash
+   scripts/gitlab/lib.sh startables <iid-parent>`) — de quoi permettre à quelqu'un d'autre d'en
+   prendre un tout de suite. Le résumé cadre le travail, ce n'est **pas une demande de validation** : n'attends
    aucun « go » et commence tout de suite (les critères d'acceptation font foi). Ne t'arrête pour
    demander que si le ticket est réellement ambigu au point de ne pas pouvoir commencer.
 
