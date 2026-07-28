@@ -69,7 +69,9 @@ dates. **Ne créez pas la branche à la main** : le nommage et le statut en dép
   `commit-msg` refuse tout message hors convention — c'est voulu.
 - **Python** : toujours via le venv du dépôt (`.venv/Scripts/python.exe` sous Windows,
   `.venv/bin/python` sous Unix). Le `python` système n'a pas les dépendances.
-- **Avant de pousser**, rejouer la CI en local évite un aller-retour :
+- **La CI distante ne tourne que sur les Merge Requests** : un push sur votre branche ne déclenche
+  rien tant que la MR n'est pas ouverte, et `main` n'est plus rejoué après le merge
+  ([docs/10 §8](./docs/10-workflow-git.md)). Le filet, c'est donc le local :
 
   ```bash
   bash scripts/ci/local.sh      # les mêmes jobs que le pipeline : shellcheck, ruff,

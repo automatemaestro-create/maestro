@@ -15,6 +15,26 @@
 # non-taggés, n'importe lequel prend n'importe quel job). Au moins un doit être en ligne,
 # sinon les jobs restent `pending`. Détail : docs/10-workflow-git.md §8.
 
+# Quand un pipeline se déclenche : UNIQUEMENT sur les Merge Requests (ticket #165). Sans ces
+# règles, GitLab crée un pipeline de branche à CHAQUE push : la CI tournait donc pendant le
+# développement, encore à la clôture du ticket, puis une troisième fois sur `main` après le merge
+# — trois passages sur le runner unique de l'équipe (§8.1) pour un seul verdict utile, celui qui
+# conditionne le merge de la MR. Ce qu'on garde :
+#   - merge_request_event : création d'une MR, puis chaque push sur sa branche source tant qu'elle
+#     est ouverte. C'est ce pipeline que regarde `only_allow_merge_if_pipeline_succeeds`, donc le
+#     garde-fou « pipeline vert avant merge » est intact ;
+#   - web / api : déclenchement MANUEL et explicite (bouton « Run pipeline », `glab ci run -b …`
+#     — le repli de /pipeline-fix quand un push n'a pas produit de pipeline). Jamais automatique.
+# Tout le reste — push sur une branche sans MR, push sur `main` après merge, tags — ne déclenche
+# plus rien. Vérifier son travail AVANT d'ouvrir la MR se fait en local avec `scripts/ci/local.sh`,
+# qui rejoue ces mêmes jobs sur le poste. Détail : docs/10-workflow-git.md §8.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "api"
+    - when: never
+
 stages:
   - lint
   - test

@@ -1010,16 +1010,37 @@ gl_host() {
   esac
 }
 
+# gl_mr_pipelines <branche> -> JSON brut du dernier pipeline RATTACHÉ À LA MR ouverte de cette
+# branche source (liste d'un élément), vide + code 1 si aucune MR ouverte n'en porte la branche.
+# Raison d'être (#165) : la CI ne se déclenche plus que sur les Merge Requests, et un pipeline de
+# MR est « détaché » — sa ref est refs/merge-requests/<iid>/head, pas le nom de la branche. Le
+# filtre `pipelines?ref=<branche>` ne le voit donc pas ; l'endpoint des pipelines de la MR, si.
+gl_mr_pipelines() {
+  local branch="$1" iid
+  if [ -z "$branch" ]; then echo "usage: gl_mr_pipelines <branche>" >&2; return 2; fi
+  iid="$(glab api "projects/$(gl_project_enc)/merge_requests?source_branch=$branch&state=opened&per_page=1" 2>/dev/null \
+    | grep -o '"iid":[0-9]*' | head -1 | sed 's/.*://')"
+  [ -n "$iid" ] || return 1
+  glab api "projects/$(gl_project_enc)/merge_requests/$iid/pipelines?per_page=1" 2>/dev/null
+}
+
 # gl_pipeline_latest <ref> -> dernier pipeline de la branche, en une ligne TSV :
 #   id <TAB> status <TAB> sha <TAB> web_url
-# Code 1 (et message) si aucun pipeline n'existe pour cette ref.
+# Cherche d'abord du côté de la MR ouverte de la branche — le cas NORMAL depuis #165, et cet
+# endpoint remonte AUSSI les pipelines de branche ou manuels du même sha, donc la même vue que le
+# garde-fou de merge ; puis, à défaut de MR, les pipelines portant la ref (`main`, branche sans MR,
+# déclenchement manuel `glab ci run -b`).
+# Code 1 (et message) si aucun pipeline n'existe ni pour la MR, ni pour la ref.
 gl_pipeline_latest() {
   local ref="$1"
   if [ -z "$ref" ]; then echo "usage: gl_pipeline_latest <ref>" >&2; return 2; fi
   local raw id status sha url
-  raw="$(glab api "projects/$(gl_project_enc)/pipelines?ref=$ref&per_page=1" 2>/dev/null)"
+  raw="$(gl_mr_pipelines "$ref")" || raw=""
   if [ -z "$raw" ] || [ "$raw" = "[]" ]; then
-    echo "Aucun pipeline pour la ref « $ref » dans $GL_PROJECT" >&2
+    raw="$(glab api "projects/$(gl_project_enc)/pipelines?ref=$ref&per_page=1" 2>/dev/null)"
+  fi
+  if [ -z "$raw" ] || [ "$raw" = "[]" ]; then
+    echo "Aucun pipeline pour « $ref » dans $GL_PROJECT (ni sur la ref, ni sur sa MR ouverte — la CI ne tourne que sur les MR, cf. docs/10 §8)" >&2
     return 1
   fi
   id="$(printf '%s' "$raw" | grep -o '"id":[0-9]*' | head -1 | sed 's/.*://')"

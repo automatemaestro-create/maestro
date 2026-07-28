@@ -75,10 +75,12 @@ pas clair.
      (`git diff main...HEAD --stat`) — des tests touchés avec le code, ou un diff sans surface à
      tester (doc, config, prompts…) → coche ; du code applicatif sans test associé → laisse vide.
    - **Documentation mise à jour si applicable** : même logique, d'après le diff.
-   - **Pipeline CI verte (si configurée)** : ne coche que si le dernier pipeline de la branche est
-     **réellement réussi** au moment de la vérification (`glab ci status`, ou le pipeline remonté
-     par la MR). En cours, échoué ou absent → laisse vide (juste après le push, le pipeline vient
-     souvent de démarrer : une case vide ici est normale, le relecteur verra le verdict sur la MR).
+   - **Pipeline CI verte (si configurée)** : ne coche que si le dernier pipeline est **réellement
+     réussi** au moment de la vérification (`bash scripts/gitlab/lib.sh pipeline-latest <branche>`,
+     qui retrouve aussi le pipeline porté par la MR). En cours, échoué ou absent → laisse vide.
+     **Une case vide est le cas NORMAL ici** : la CI ne se déclenche qu'à partir de la MR (#165,
+     docs/10 §8), donc à la première clôture d'un ticket **aucun pipeline n'existe encore** à ce
+     stade — il naîtra de l'étape 8. Le relecteur verra le verdict sur la MR ; n'attends pas.
 
 8. Vérifie si une MR existe déjà pour cette branche avec
    `glab mr view $(git branch --show-current) --output json`. Si la commande échoue, aucune
