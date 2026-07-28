@@ -92,7 +92,20 @@ pas clair.
        terminé et prêt pour revue ; si oui, `glab mr update <mr> --ready`.
      - Si elle n'est **plus en Draft** : ne rien faire de plus sur la MR.
 
-8. Fais passer le **Status natif** du ticket à « En revue » (le cycle de vie est porté par le
+8. **Pose un relecteur sur la MR** — dans les deux cas (créée à l'instant ou déjà existante), une
+   fois la MR en place :
+   ```
+   bash scripts/gitlab/lib.sh set-reviewer || echo "⚠ relecteur non posé — clôture poursuivie"
+   ```
+   Sans argument, le helper vise la MR ouverte de la branche courante ; il choisit un **membre
+   humain du projet distinct de l'auteur** (résolu via l'API des membres — jamais un nom en dur,
+   jamais le compte d'automatisation) et **ne remplace jamais** un relecteur déjà posé (idempotent :
+   un relecteur choisi à la main est conservé). La revue reste **best-effort** — l'approbation n'est
+   pas obligatoire (`approvals_before_merge=0`) et le merge reste une décision humaine : **son échec
+   n'interrompt jamais la clôture** (ex. projet à une seule personne : aucun candidat), il est
+   seulement signalé. Le relecteur désigné remonte ensuite dans la file de revue de `/backlog`.
+
+9. Fais passer le **Status natif** du ticket à « En revue » (le cycle de vie est porté par le
    champ Status, pas par des labels — voir `docs/10-workflow-git.md` §3) :
    ```
    bash scripts/gitlab/lib.sh set-status <iid> "En revue"
@@ -101,7 +114,7 @@ pas clair.
    lifecycle « Maestro » (pas de GID en dur). Vérifie que la commande réussit. Ne touche pas aux
    labels `agent::*` / `prio::*` / `type::*`.
 
-9. Renseigne le **temps passé** — **estimé automatiquement, sans demander de confirmation** (voir
+10. Renseigne le **temps passé** — **estimé automatiquement, sans demander de confirmation** (voir
    `docs/10-workflow-git.md` §3.3) :
    - Vérifie d'abord ce qui est déjà loggé : `bash scripts/gitlab/lib.sh get-time-spent <iid>`
      (secondes). Si le résultat **n'est pas `0`**, du temps a déjà été enregistré — n'en rajoute
@@ -116,7 +129,7 @@ pas clair.
      ```
    - Indique dans le résumé final la durée estimée et loggée (transparence a posteriori).
 
-10. Termine par un résumé : lien de la MR, état (Draft/Ready), les cases de la checklist cochées
-   et celles restées vides (avec un mot sur pourquoi), le temps loggé le cas échéant, et rappelle
-   que le merge reste une action humaine (personne — pas même toi — ne doit merger
-   automatiquement).
+11. Termine par un résumé : lien de la MR, état (Draft/Ready), le **relecteur posé** (ou pourquoi
+   il n'y en a pas), les cases de la checklist cochées et celles restées vides (avec un mot sur
+   pourquoi), le temps loggé le cas échéant, et rappelle que le merge reste une action humaine
+   (personne — pas même toi — ne doit merger automatiquement).
