@@ -42,6 +42,11 @@ Endpoints :
   la proposition devient la version courante (chargée à chaud, #78) et quitte les brouillons ;
 - `POST /api/playbooks/{agent}/propositions/{numero}/rejeter` — écarte la proposition sans
   toucher à la version courante ;
+- `GET  /api/mcp/registre` — la bibliothèque curée de serveurs MCP (#131) :
+  templates recherchables (`q`, par nom/tag) portant transport, gabarit `${VAR}`,
+  mode d'auth (docs/21), variables à fournir et procédure côté outil ; seule une
+  entrée servie ici est instanciable (garde-fou supply-chain, docs/19) ;
+- `GET  /api/mcp/registre/{id}` — une entrée curée (404 hors allowlist) ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
   défaut du code et les personnalisés persistés, avec leur provenance, leurs
   serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
@@ -94,6 +99,7 @@ from pydantic import BaseModel
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore
+from maestro.agents.mcp_registry import RegistreMcp
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
@@ -302,6 +308,7 @@ def create_app(
     analyseur: AnalyseurEchecs | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
+    registre_mcp: RegistreMcp | None = None,
     permissions: PermissionStore | None = None,
     event_log: EventLog | None = None,
 ) -> FastAPI:
@@ -354,6 +361,12 @@ def create_app(
     secrets masquées) — par défaut celui de la config (`MAESTRO_MCP_DIR`, sinon
     `core/mcp/` du dépôt) : le même que montent moteur et workers.
 
+    `registre_mcp` (#131) est la **bibliothèque curée** de serveurs MCP servie
+    par `/api/mcp/registre` : des templates recherchables (nom/tag) portant
+    transport, gabarit `${VAR}`, mode d'auth (docs/21) et procédure côté outil —
+    par défaut le seed en code (`RegistreMcp.curee()`, l'allowlist supply-chain
+    du garde-fou docs/19). Les tests en injectent un registre restreint.
+
     `permissions` (#110) est le dépôt des politiques allow/deny par agent,
     affichées en **lecture seule** sur les fiches du catalogue (`permissions`,
     la politique effective appliquée à l'exécution) — par défaut celui de la
@@ -375,6 +388,7 @@ def create_app(
     agents_store = agents_store if agents_store is not None else AgentStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
     mcp = mcp if mcp is not None else McpStore.default()
+    registre_mcp = registre_mcp if registre_mcp is not None else RegistreMcp.curee()
     permissions = permissions if permissions is not None else PermissionStore.default()
     state = (
         state
@@ -949,6 +963,31 @@ def create_app(
                 detail=f"agent personnalisé inconnu : {nom} (voir GET /api/catalogue)",
             )
         return definition
+
+    @app.get("/api/mcp/registre")
+    async def mcp_registre(q: str = "") -> list[dict[str, Any]]:
+        """La bibliothèque curée de serveurs MCP (#131), recherchable par nom/tag.
+
+        `q` filtre par nom, id, description ou tag (recherche libre, insensible
+        à la casse et aux accents ; vide → tout le registre). Chaque entrée est
+        un **template** : transport, gabarit d'exécution `${VAR}` (jamais de
+        secret), mode d'auth (docs/21), variables à fournir (`secrets`) et lien
+        de procédure côté outil (`procedure_url`) — de quoi guider la
+        configuration. `curee: true` marque l'appartenance à l'allowlist : seule
+        une entrée servie ici est instanciable (garde-fou supply-chain, docs/19).
+        """
+        return [e.to_dict() for e in registre_mcp.rechercher(q)]
+
+    @app.get("/api/mcp/registre/{id}")
+    async def mcp_registre_entree(id: str) -> dict[str, Any]:
+        """Une entrée curée du registre MCP (#131) — 404 si l'id est hors allowlist."""
+        entree = registre_mcp.get(id)
+        if entree is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"serveur MCP inconnu du registre curé : {id} (voir GET /api/mcp/registre)",
+            )
+        return entree.to_dict()
 
     @app.get("/api/catalogue")
     async def catalogue_liste() -> list[dict[str, Any]]:

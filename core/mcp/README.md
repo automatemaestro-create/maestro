@@ -46,6 +46,29 @@ serveurs déclarés sur ses exécutions outillées, sans connecteur ad hoc.
   retiré de la configuration active — trace historique et repli documenté dans
   [docs/20](../../docs/20-pilote-mcp-figma.md).
 
+## Registre curé (bibliothèque recherchable, #131)
+
+Un **fichier par agent** répond à *« quels serveurs cet agent monte-t-il ? »*
+mais pas à *« quelles intégrations existe-t-il, et comment les configurer ? »*.
+C'est le rôle du **registre curé** (`maestro.agents.mcp_registry`, parent #129) :
+une bibliothèque de **templates** de serveurs MCP, recherchable par nom/tag,
+chaque entrée portant transport, gabarit d'exécution `${VAR}`, **mode d'auth**
+([docs/21](../../docs/21-configuration-mcp.md)), variables à fournir et lien de
+procédure côté outil. Le seed initial (GitLab, Slack, Figma officiel) dérive des
+déclarations ci-dessus.
+
+- Un **template** (`EntreeRegistre`) est versionné et agnostique du modèle ;
+  l'**instanciation** (`RegistreMcp.instancier`) le transforme en `ServeurMcp`
+  montable — c'est l'unique voie template → liaison.
+- **Garde-fou supply-chain** ([docs/19](../../docs/19-securite-modele-de-menace.md)) :
+  *découverte ≠ installation*. Seule une entrée de l'**allowlist curée** (le seed
+  `SEED`, en clair et revu en revue de code) est instanciable — jamais de
+  `npx -y <pkg arbitraire>`.
+- Exposé par l'API : `GET /api/mcp/registre` (liste + `?q=` recherche) et
+  `GET /api/mcp/registre/{id}`. Cœur critique (recherche + garde-fou) testé dans
+  [`tests/test_mcp_registry.py`](../../tests/test_mcp_registry.py) ; couverture
+  intégrale (UI, migration, liaison par agent) **différée au lot 5/5 → #134**.
+
 Contrairement aux dépôts voisins (données d'exécution non commitées), les
 déclarations écrites ici sont de la **configuration versionnée** : elles se
 commitent avec le dépôt. Les **secrets n'y figurent jamais en clair** — les
