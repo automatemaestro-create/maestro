@@ -132,6 +132,11 @@ Pour éclairer une décision de merge : `/mr-review <mr>` (synthèse état + pip
   et personne ne peut merger ([docs/10 §8.1](./docs/10-workflow-git.md)).
 - **Bilan de santé** (lecture seule) : `bash scripts/gitlab/doctor.sh` détecte les dérives
   (ticket « En revue » sans MR, branche mergée à nettoyer, réglages de merge retombés).
+- **Laisser la machine dérouler le backlog** : `bash scripts/orchestrate/run.sh` traite les tickets
+  libres du milestone courant un par un — un worktree et une session Claude Code chacun, de
+  `/ticket-start` à `/ticket-ship`, avec reprise automatique après la limite d'usage de 5 h. À
+  lancer dans un terminal à part (`--dry-run` d'abord pour voir le plan) ; il produit des **MR en
+  Draft à relire** et ne merge jamais ([docs/10 §11](./docs/10-workflow-git.md)).
 
 ---
 
@@ -159,6 +164,7 @@ Ces règles sont doublées par la couche permissions de [`.claude/settings.json`
 |---|---|
 | Le workflow Git complet (statuts, découpage, CI, worktrees) | [docs/10-workflow-git.md](./docs/10-workflow-git.md) |
 | Ce qui change quand on travaille **à plusieurs** (synthèse) | [docs/10 §10](./docs/10-workflow-git.md) |
+| Laisser la machine **dérouler le backlog** sans supervision | [docs/10 §11](./docs/10-workflow-git.md), commande `/orchestrate` |
 | Ce que le projet est et où il en est | [README.md](./README.md), [docs/06-roadmap.md](./docs/06-roadmap.md) |
 | Les règles telles que l'agent les applique | [CLAUDE.md](./CLAUDE.md) |
 | Démarrer la Control Tower en local | skill `control-tower` |
