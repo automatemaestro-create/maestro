@@ -21,8 +21,8 @@
 #   plan.tsv        le plan figé au démarrage : rang, iid, parent, prio, titre
 #   resume.tsv      une ligne par ticket TERMINÉ : iid, verdict, mr, duree_s, cout_usd, raison
 #   <iid>.session   présent dès que le ticket est pris en main -> c'est le ticket en cours
-#   <iid>.*         tout le reste (json, log, worktree.log, et le jsonl du lot #176 s'il arrive)
-#                   sert de témoin d'activité, par sa date de modification
+#   <iid>.*         tout le reste (jsonl, json, log, worktree.log) — sert de témoin d'activité,
+#                   par sa date de modification
 #   run.log         la sortie de la console, pour un run détaché
 #
 # --- « En cours » se déduit, il ne se lit pas ---------------------------------------------------------
@@ -132,7 +132,7 @@ titre_section() { printf '\n%s── %s%s\n' "$C_B" "$*" "$C_0"; }
 
 # plus_recent <fichier…> : la plus récente des dates de modification, ou rien si aucun fichier
 # lisible. Les arguments inexistants sont ignorés — l'appelant passe des globs qui peuvent ne rien
-# matcher (le `<iid>.jsonl` du lot #176, par exemple, n'existe pas encore).
+# matcher : un `<iid>.jsonl` n'existe qu'une fois la session lancée.
 plus_recent() {
   local f t max=""
   for f in "$@"; do
@@ -218,7 +218,7 @@ worktree_de_branche() {
 }
 
 # activite_du_ticket <run-dir> <iid> : la plus récente écriture attribuable à ce ticket, côté run
-# (`<iid>.json`, `.log`, `.session`, et le `.jsonl` du lot #176 s'il arrive) ET côté worktree
+# (`<iid>.jsonl`, le flux de la session posé par #176, puis `.json`, `.log`, `.session`) ET worktree
 # (l'index git, touché à chaque `git add`/`status` de la session). C'est le seul moyen de distinguer
 # une session qui travaille d'une session morte : `<iid>.json` reste vide jusqu'à la toute fin.
 activite_du_ticket() {
@@ -229,6 +229,10 @@ activite_du_ticket() {
   [ -n "$branche" ] && wt="$(worktree_de_branche "$branche")"
   if [ -n "$wt" ] && [ -d "$wt" ]; then
     index="$(git -C "$wt" rev-parse --git-path index 2>/dev/null)"
+    # `--git-path` rend un chemin ABSOLU pour un worktree lié, mais RELATIF (« .git/index ») pour
+    # un répertoire de travail principal : sans cette reprise, il serait résolu depuis le dossier
+    # d'où l'on a lancé la commande, et l'activité passerait pour nulle.
+    case "$index" in /* | ?:[/\\]*) ;; *) [ -n "$index" ] && index="$wt/$index" ;; esac
     if [ -n "$index" ] && t="$(plus_recent "$index" 2>/dev/null)"; then
       if [ -z "$a" ] || [ "$t" -gt "$a" ]; then a="$t"; fi
     fi

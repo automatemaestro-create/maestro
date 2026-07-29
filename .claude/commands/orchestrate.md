@@ -52,6 +52,12 @@ toi-même.
    sortie brute de la console) — et l'**arrêt d'urgence** : `touch .maestro/orchestrate/STOP` — pris
    en compte entre deux tickets **et pendant une attente** de reprise.
 
+   **Dis ce que la console montre** (#176) : elle n'est pas muette entre le début d'un ticket et son
+   verdict, elle égrène **une ligne compacte par action** de la session (`· Edit core/models/mcp.py`,
+   `· Bash pytest -q`) — le flux brut restant dans `<run-id>/<iid>.jsonl`, et `<iid>.json` ne
+   portant que le résultat final (coût, verdict). C'est ce qui distingue « ça travaille » de « c'est
+   planté » quand on a la fenêtre sous les yeux ; `status.sh` couvre le cas contraire.
+
    **Dis la réserve, sans la noyer** : la console ne dépend plus de ta session, mais rien ne
    garantit qu'elle survive à un parent qui enfermerait ses descendants (job object Windows). Le
    filet existe — le plan reste sur disque, `--plan <run-id>/plan.tsv` le rejoue et les tickets déjà
@@ -91,7 +97,9 @@ Ensuite seulement, apporte ce que la sortie ne dit pas :
 2. Si l'en-tête annonce **« en cours ? — rien d'écrit depuis … »**, dis franchement que c'est une
    **déduction** : `run.sh` n'écrit pas de PID, l'état se lit sur la date des dernières écritures du
    run et de son worktree. Une session qui réfléchit longuement et une session morte laissent la
-   même trace ; `tail -f .maestro/orchestrate/<run-id>/run.log` (run détaché) tranche.
+   même trace ; ce qui tranche, c'est le **flux d'activité** — `tail -f
+   .maestro/orchestrate/<run-id>/run.log` sur un run détaché, ou `<run-id>/<iid>.jsonl` pour le
+   détail brut de la session en cours.
 3. Si des tickets ont réussi, enchaîne sur la **file de revue** :
    `bash scripts/gitlab/lib.sh review-queue` — c'est là que le travail du run attend un humain.
 4. Rappelle les **worktrees à retirer** une fois leurs MR mergées :

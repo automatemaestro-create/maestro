@@ -1,7 +1,7 @@
-"""Tests de la boucle d'orchestration autonome — `scripts/orchestrate/` (ticket #172, parent #167).
+"""Tests de la boucle d'orchestration autonome — `scripts/orchestrate/` (tickets #172 et #175).
 
-Tests différés des lots #168 à #171, réunis ici selon la convention de découpage
-(`docs/10-workflow-git.md` §5.1).
+Tests différés des lots #168 à #171 (parent #167) puis #176-#177 (parent #174), réunis ici selon
+la convention de découpage (`docs/10-workflow-git.md` §5.1).
 
 **Ni réseau, ni quota, ni écriture GitLab.** Trois bouchons posés en tête de `PATH` ou par
 variable d'environnement remplacent tout ce qui sortirait de la machine :
@@ -19,6 +19,10 @@ variable d'environnement remplacent tout ce qui sortirait de la machine :
 **Un dépôt jetable.** Chaque test monte dans `tmp_path` un mini-clone qui ne porte que les
 scripts visés, `scripts/gitlab/lib.sh` et un `.claude/settings.json` synthétique. Le vrai
 dépôt n'est jamais touché : `HOME` et `TMPDIR` sont eux aussi redirigés.
+
+`status.sh` (#177) lit en plus **le dépôt lui-même** (branche, worktree, commits) : les rares
+tests qui portent là-dessus initialisent un vrai dépôt git dans `tmp_path` — toujours en local,
+sans `origin` distant, avec une simple référence `refs/remotes/origin/main` posée à la main.
 """
 
 from __future__ import annotations
@@ -36,8 +40,10 @@ import pytest
 
 RACINE = Path(__file__).resolve().parent.parent
 BASH = shutil.which("bash")
+GIT = shutil.which("git")
 
 pytestmark = pytest.mark.skipif(BASH is None, reason="bash introuvable")
+besoin_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
 
 # Les scripts sous test, recopiés tels quels dans le dépôt jetable.
 SCRIPTS = (
@@ -45,6 +51,7 @@ SCRIPTS = (
     "scripts/orchestrate/queue.sh",
     "scripts/orchestrate/guard.sh",
     "scripts/orchestrate/run.sh",
+    "scripts/orchestrate/status.sh",
     "scripts/orchestrate/settings.run.json",
 )
 
@@ -53,6 +60,9 @@ SCRIPTS = (
 # telle que lib.sh la compose — si lib.sh change de requête, ces tests le diront.
 STUB_GLAB = r"""#!/usr/bin/env bash
 FIX="$MAESTRO_FIXTURES"
+# Tout appel est journalisé : c'est ce qui permet de vérifier qu'une option comme `--no-gitlab`
+# n'interroge VRAIMENT rien, plutôt que de se contenter du message qu'elle imprime.
+printf '%s\n' "$*" >> "$FIX/glab.log"
 case "$1 $2" in
   "auth status") exit 0 ;;
 esac
@@ -176,11 +186,17 @@ class Depot:
 
     # --- Lancement -------------------------------------------------------------------------------
     def lance(
-        self, script: str, *args: str, env: dict[str, str] | None = None
+        self,
+        script: str,
+        *args: str,
+        env: dict[str, str] | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess:
+        # Le script est appelé par son chemin ABSOLU : les scripts se repèrent sur `BASH_SOURCE`,
+        # donc ils doivent marcher depuis n'importe quel répertoire — `cwd` sert à le vérifier.
         return subprocess.run(
-            [BASH, f"scripts/orchestrate/{script}", *args],
-            cwd=self.racine,
+            [BASH, str(self.racine / "scripts/orchestrate" / script), *args],
+            cwd=cwd or self.racine,
             env={**self.env, **(env or {})},
             capture_output=True,
             text=True,
@@ -854,3 +870,388 @@ def test_une_limite_d_usage_annoncee_dans_le_flux_est_detectee(depot: Depot) -> 
     # Avec --max-reprises 0 la boucle renonce tout de suite : ce qui est vérifié ici, c'est qu'elle
     # a bien RECONNU une limite d'usage (et non un échec ordinaire, qui ne la mentionnerait pas).
     assert "limite d'usage" in r.stdout, "le flux est lu, pas seulement le résultat final"
+
+
+def test_un_flux_sans_saut_de_ligne_final_ne_perd_pas_son_resultat(depot: Depot) -> None:
+    """La dernière ligne d'un flux EST l'objet `result` : la perdre, c'est perdre le verdict."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"system","subtype":"init"}}\\n'
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":7.75}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "tronque",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    dossier = depot.racine / ".maestro/orchestrate/tronque"
+    assert '"type":"result"' in (dossier / "130.json").read_text(encoding="utf-8")
+    assert "7.75" in (dossier / "resume.tsv").read_text(encoding="utf-8")
+
+
+def test_sans_objet_result_le_dernier_evenement_en_tient_lieu(depot: Depot) -> None:
+    """Repli pour un CLI plus ancien (ou un flux coupé) : mieux vaut la dernière ligne que rien."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"system","subtype":"init","total_cost_usd":0.01}}\\n'
+        printf '{{"is_error":false,"subtype":"success","total_cost_usd":2.5}}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "repli",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    resume = (depot.racine / ".maestro/orchestrate/repli/resume.tsv").read_text(encoding="utf-8")
+    assert "2.5" in resume and "0.01" not in resume, "le repli prend la dernière ligne, pas la 1re"
+
+
+def test_la_session_reprise_passe_aussi_par_le_flux(depot: Depot) -> None:
+    """Les DEUX invocations de `lance_session` sont concernées : sans quoi la console redeviendrait
+    muette juste après une reprise — exactement le moment où l'on regarde."""
+    depot.ticket(130, "Ticket interrompu")
+    depot.mr("feat/130-ticket-interrompu", "opened")
+    claude = _claude_stub(depot, f"""
+        if printf '%s\\n' "$@" | grep -q -- '--resume'; then
+          printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+          printf '{{"type":"assistant","message":{{"content":[{{"type":"tool_use",'
+          printf '"name":"Bash","input":{{"command":"pytest -q"}}}}]}}}}\\n'
+          printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":6}}\\n'
+          exit 0
+        fi
+        printf '{{"type":"result","is_error":true,"total_cost_usd":1,'
+        printf '"result":"Claude AI usage limit reached"}}\\n'
+        exit 1
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "flux-reprise",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "· Bash pytest -q" in r.stdout, "la reprise doit rester bavarde, elle aussi"
+    dossier = depot.racine / ".maestro/orchestrate/flux-reprise"
+    assert "6" in (dossier / "resume.tsv").read_text(encoding="utf-8")
+    # Chaque tentative repart sur un flux propre, et c'est porteur : la détection de limite grepe
+    # le `.jsonl` entier, donc un marqueur laissé par la tentative précédente ferait attendre puis
+    # reprendre une session qui vient pourtant d'aboutir — indéfiniment.
+    jsonl = (dossier / "130.jsonl").read_text(encoding="utf-8")
+    assert "usage limit reached" not in jsonl, "le flux de la tentative précédente doit être effacé"
+
+
+# =====================================================================================
+# status.sh — savoir où en est un run, hors de sa console (#177)
+# =====================================================================================
+
+def _run_dir(
+    depot: Depot,
+    run_id: str,
+    plan: list[tuple[int, int, str, str]],
+    *,
+    resume: list[tuple] | None = None,
+    sessions: tuple[int, ...] = (),
+    journal: str | None = None,
+    age: int = 0,
+) -> Path:
+    """Monte à la main un répertoire de run, tel que `run.sh` le laisse derrière lui.
+
+    Écrire ces fichiers plutôt que de lancer un vrai run est ce qui permet de poser les cas que
+    `status.sh` doit distinguer — dont ceux qu'un run ne produit qu'en tombant en panne. `age`
+    vieillit toutes les dates de modification : c'est le seul levier sur les états qui se
+    déduisent du silence (« interrompu », « en cours ? »).
+    """
+    dossier = depot.racine / ".maestro/orchestrate" / run_id
+    dossier.mkdir(parents=True, exist_ok=True)
+    (dossier / "plan.tsv").write_text(
+        "# rang\tiid\tparent\tprio\ttitre\n"
+        + "".join(f"{r}\t{i}\t{p}\t{prio}\tTicket {i}\n" for r, i, p, prio in plan),
+        encoding="utf-8",
+        newline="\n",
+    )
+    if resume is not None:
+        (dossier / "resume.tsv").write_text(
+            "# iid\tverdict\tmr\tduree_s\tcout_usd\traison\n"
+            + "".join("\t".join(str(c) for c in ligne) + "\n" for ligne in resume),
+            encoding="utf-8",
+            newline="\n",
+        )
+    for iid in sessions:
+        (dossier / f"{iid}.session").write_text(
+            "11111111-2222-4333-a444-555555555555", encoding="utf-8", newline="\n"
+        )
+        (dossier / f"{iid}.log").write_text("", encoding="utf-8", newline="\n")
+    if journal is not None:
+        (dossier / "run.log").write_text(journal, encoding="utf-8", newline="\n")
+    if age:
+        quand = time.time() - age
+        for chemin in (*sorted(dossier.rglob("*")), dossier):
+            os.utime(chemin, (quand, quand))
+    return dossier
+
+
+def _init_git(depot: Depot, branche: str) -> None:
+    """Fait du dépôt jetable un vrai dépôt git, posé sur `branche`, avec un `origin/main` local.
+
+    Aucun distant : `refs/remotes/origin/main` est une simple référence locale — c'est tout ce que
+    `status.sh` lit pour compter les commits d'avance, et ça évite un dépôt *bare* de plus.
+    """
+    assert GIT is not None
+
+    def git(*args: str) -> None:
+        subprocess.run(  # noqa: S603
+            [GIT, *args], cwd=str(depot.racine), check=True, capture_output=True
+        )
+
+    git("init", "--quiet", "--initial-branch=main")
+    git("config", "user.email", "test@maestro.invalid")
+    git("config", "user.name", "Maestro Test")
+    # Le journal du run vit sous .maestro/ : ignoré ici comme dans le vrai dépôt, sans quoi il
+    # apparaîtrait dans les « fichiers modifiés » du worktree.
+    (depot.racine / ".gitignore").write_text(".maestro/\n", encoding="utf-8", newline="\n")
+    git("add", "-A")
+    git("-c", "core.hooksPath=", "commit", "--quiet", "-m", "chore: depot jetable")
+    git("update-ref", "refs/remotes/origin/main", "HEAD")
+    git("checkout", "--quiet", "-b", branche)
+
+
+def test_aucun_run_est_un_cas_normal_pas_une_erreur(depot: Depot) -> None:
+    r = depot.lance("status.sh")
+    assert r.returncode == 0, r.stderr
+    assert "Aucun run d'orchestration" in r.stdout
+    assert "run.sh --dry-run" in r.stdout, "on dit comment en lancer un"
+
+
+def test_un_run_en_cours_montre_le_ticket_courant_le_reste_et_le_bilan(depot: Depot) -> None:
+    depot.ticket(131, "Ticket en cours", statut="En cours")
+    _run_dir(
+        depot,
+        "20260729-090000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne"), (3, 132, "-", "moyenne")],
+        resume=[(130, "OK", "99", 600, "3.50", "-")],
+        sessions=(131,),
+    )
+    r = depot.lance("status.sh")
+    assert r.returncode == 0, r.stderr
+    assert "— en cours" in r.stdout
+    assert "En cours — #131" in r.stdout
+    assert "Reste au plan (1)" in r.stdout and "#132" in r.stdout
+    assert "Traités (1)" in r.stdout and "#130" in r.stdout
+    assert "GitLab     ticket « En cours »" in r.stdout, "le statut du ticket courant est relu"
+    assert "status.sh --watch" in r.stdout and "touch" in r.stdout, "suivre / arrêter sont donnés"
+
+
+def test_un_run_termine_rend_son_bilan_et_ne_se_dit_plus_en_cours(depot: Depot) -> None:
+    _run_dir(
+        depot,
+        "20260729-100000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
+        resume=[
+            (130, "OK", "99", 620, "3.50", "-"),
+            (131, "ECHEC", "-", 300, "1.20", "MR « aucune », statut « En cours »"),
+        ],
+    )
+    r = depot.lance("status.sh")
+    assert r.returncode == 0, r.stderr
+    assert "— terminé" in r.stdout
+    assert "Traités (2)" in r.stdout
+    assert "10min20" in r.stdout, "la durée d'un ticket est rendue lisible"
+    assert "review-queue" in r.stdout, "le travail d'un run terminé attend une revue humaine"
+    assert "En cours — " not in r.stdout, "plus aucun ticket n'est en cours"
+
+
+def test_un_run_detache_arrete_est_lu_dans_son_journal(depot: Depot) -> None:
+    """Le code de sortie écrit par le lanceur tranche : sans lui, un run coupé en plein plan
+    passerait pour « interrompu » alors qu'il s'est arrêté de lui-même (limite hebdomadaire…)."""
+    _run_dir(
+        depot,
+        "20260729-110000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
+        resume=[(130, "OK", "99", 600, "3.50", "-")],
+        journal="[1/2] #130\n\n--- run 20260729-110000 terminé (code 1) ---\n",
+    )
+    r = depot.lance("status.sh")
+    assert r.returncode == 0, r.stderr
+    assert "terminé (code 1)" in r.stdout
+    assert "Reste au plan (1)" in r.stdout, "ce qui n'a pas été traité reste visible"
+
+
+def test_un_run_sans_activite_recente_est_dit_interrompu(depot: Depot) -> None:
+    """Aucun ticket pris en main et plus rien d'écrit : le run est mort sans le dire."""
+    _run_dir(
+        depot,
+        "20260729-120000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
+        resume=[(130, "OK", "99", 600, "3.50", "-")],
+        age=7200,
+    )
+    r = depot.lance("status.sh")
+    assert r.returncode == 0, r.stderr
+    assert "interrompu" in r.stdout
+    assert "reprendre" in r.stdout and "--plan" in r.stdout, "le plan sur disque est le filet"
+
+
+def test_un_silence_prolonge_fait_douter_l_en_tete_sans_trancher(depot: Depot) -> None:
+    """Sans PID, une session qui réfléchit et une session morte se ressemblent : on le dit."""
+    depot.ticket(131, "Ticket peut-être bloqué", statut="En cours")
+    _run_dir(
+        depot,
+        "20260729-130000",
+        [(1, 131, "-", "moyenne")],
+        resume=[],
+        sessions=(131,),
+        age=7200,
+    )
+    r = depot.lance("status.sh")
+    assert r.returncode == 0, r.stderr
+    assert "en cours ?" in r.stdout, "le doute est dans l'en-tête, pas seulement plus bas"
+    assert "rien d'écrit depuis 2h00" in r.stdout
+    assert "peut-être bloquée ou morte" in r.stdout
+
+
+def test_un_repertoire_de_run_sans_plan_le_dit(depot: Depot) -> None:
+    (depot.racine / ".maestro/orchestrate/20260729-140000").mkdir(parents=True)
+    r = depot.lance("status.sh")
+    assert r.returncode == 0, r.stderr
+    assert "sans plan" in r.stdout
+
+
+def test_le_fichier_stop_est_signale(depot: Depot) -> None:
+    _run_dir(depot, "20260729-150000", [(1, 130, "-", "haute")], resume=[], sessions=(130,))
+    (depot.racine / ".maestro/orchestrate/STOP").touch()
+    r = depot.lance("status.sh")
+    assert "arrêt demandé" in r.stdout
+    assert "s'arrêtera entre deux tickets" in r.stdout
+
+
+def test_le_run_par_defaut_est_le_plus_recent_et_run_id_cible_un_autre(depot: Depot) -> None:
+    _run_dir(depot, "20260728-080000", [(1, 130, "-", "haute")],
+             resume=[(130, "OK", "99", 60, "1")])
+    _run_dir(depot, "20260729-080000", [(1, 140, "-", "haute")],
+             resume=[(140, "OK", "98", 60, "1")])
+
+    defaut = depot.lance("status.sh")
+    assert "Run 20260729-080000" in defaut.stdout and "#140" in defaut.stdout
+
+    cible = depot.lance("status.sh", "--run-id", "20260728-080000")
+    assert "Run 20260728-080000" in cible.stdout and "#130" in cible.stdout
+
+    inconnu = depot.lance("status.sh", "--run-id", "jamais-vu")
+    assert inconnu.returncode == 1
+    assert "--list" in inconnu.stderr, "on oriente vers la liste plutôt que de laisser deviner"
+
+
+def test_la_liste_enumere_les_runs_connus(depot: Depot) -> None:
+    _run_dir(depot, "20260728-080000", [(1, 130, "-", "haute")],
+             resume=[(130, "OK", "99", 60, "1")])
+    _run_dir(depot, "20260729-080000", [(1, 140, "-", "haute"), (2, 141, "-", "haute")], resume=[])
+    r = depot.lance("status.sh", "--list")
+    assert r.returncode == 0, r.stderr
+    lignes = [x for x in r.stdout.splitlines() if x.strip().startswith("20260")]
+    assert len(lignes) == 2
+    assert lignes[0].strip().startswith("20260728"), "du plus ancien au plus récent"
+    assert "2 ticket(s)" in lignes[1] and "0 traité(s)" in lignes[1]
+
+
+def test_le_suivi_ne_boucle_pas_sur_un_run_qui_ne_tourne_plus(depot: Depot) -> None:
+    """`--watch` sur un run terminé doit rendre la main : une boucle infinie n'apprend plus rien."""
+    _run_dir(
+        depot,
+        "20260729-160000",
+        [(1, 130, "-", "haute")],
+        resume=[(130, "OK", "99", 600, "3.50", "-")],
+    )
+    debut = time.monotonic()
+    r = depot.lance("status.sh", "--watch", "30")
+    assert r.returncode == 0, r.stderr
+    assert time.monotonic() - debut < 25, "un seul passage, pas d'attente"
+    assert "rafraîchi toutes les 30 s" in r.stdout
+
+
+def test_sans_gitlab_rien_n_est_interroge(depot: Depot) -> None:
+    """La promesse « hors ligne » se vérifie sur les appels réellement émis, pas sur le message."""
+    depot.ticket(131, "Ticket en cours", statut="En cours")
+    _run_dir(depot, "20260729-170000", [(1, 131, "-", "moyenne")], resume=[], sessions=(131,))
+    r = depot.lance("status.sh", "--no-gitlab")
+    assert r.returncode == 0, r.stderr
+    assert "non interrogé (--no-gitlab)" in r.stdout
+    assert "En cours — #131" in r.stdout, "tout le reste est lu en local"
+    assert not (depot.fixtures / "glab.log").exists(), "pas même un « glab auth status »"
+
+
+def test_status_n_ecrit_rien(depot: Depot) -> None:
+    """Un run en cours doit pouvoir être observé sans risquer de le perturber."""
+    dossier = _run_dir(
+        depot, "20260729-180000", [(1, 131, "-", "moyenne")], resume=[], sessions=(131,)
+    )
+    depot.ticket(131, "Ticket en cours", statut="En cours")
+
+    def empreinte() -> dict[str, tuple[int, int]]:
+        return {
+            str(c.relative_to(dossier)): (c.stat().st_size, c.stat().st_mtime_ns)
+            for c in sorted(dossier.rglob("*"))
+        }
+
+    avant = empreinte()
+    assert depot.lance("status.sh").returncode == 0
+    assert empreinte() == avant
+
+
+@besoin_git
+def test_le_worktree_est_le_signal_de_progression(depot: Depot) -> None:
+    """`<iid>.json` reste vide jusqu'à la fin : ce qui dit que ça avance, ce sont les commits."""
+    branche = "feat/130-ticket-130"
+    _init_git(depot, branche)
+    depot.ticket(130, "Ticket en cours", statut="En cours")
+    depot.mr(branche, "opened")
+    _run_dir(depot, "20260729-190000", [(1, 130, "-", "haute")], resume=[], sessions=(130,))
+
+    assert GIT is not None
+
+    def git(*args: str) -> None:
+        subprocess.run(  # noqa: S603
+            [GIT, *args], cwd=str(depot.racine), check=True, capture_output=True
+        )
+
+    (depot.racine / "livrable.txt").write_text("le travail\n", encoding="utf-8", newline="\n")
+    git("add", "livrable.txt")
+    git("-c", "core.hooksPath=", "commit", "--quiet", "-m", "feat: premiere moitie")
+    (depot.racine / "livrable.txt").write_text("en cours\n", encoding="utf-8", newline="\n")
+
+    r = depot.lance("status.sh")
+    assert r.returncode == 0, r.stderr
+    assert f"[{branche}]" in r.stdout, "le worktree du ticket est nommé avec sa branche"
+    assert "commits    1 en avance sur origin/main" in r.stdout
+    assert "feat: premiere moitie" in r.stdout
+    assert "fichiers   1 modifié(s) : livrable.txt" in r.stdout
+    assert "MR !99 ouverte" in r.stdout, "l'état GitLab complète ce que le disque sait"
+
+
+@besoin_git
+def test_l_activite_suit_le_worktree_et_pas_seulement_le_journal(depot: Depot) -> None:
+    """Une session qui édite sans rien écrire dans le répertoire du run travaille quand même."""
+    branche = "feat/130-ticket-130"
+    _init_git(depot, branche)
+    depot.ticket(130, "Ticket en cours", statut="En cours")
+    _run_dir(
+        depot, "20260729-200000", [(1, 130, "-", "haute")], resume=[], sessions=(130,), age=7200
+    )
+    # L'index git est touché à chaque `git add`/`status` de la session : c'est lui qui vit.
+    assert GIT is not None
+    subprocess.run(  # noqa: S603
+        [GIT, "status", "--porcelain"], cwd=str(depot.racine), check=True, capture_output=True
+    )
+
+    r = depot.lance("status.sh", "--no-gitlab")
+    assert r.returncode == 0, r.stderr
+    assert "en cours ?" not in r.stdout, "le worktree bouge : le run n'est pas muet"
+    assert "peut-être bloquée" not in r.stdout
+
+    # « Depuis n'importe quel terminal » est la raison d'être de la commande : lancée d'ailleurs,
+    # elle doit lire le même worktree. `git rev-parse --git-path index` rend un chemin RELATIF sur
+    # un répertoire de travail principal — non repris, il se résoudrait depuis le mauvais dossier
+    # et l'activité du ticket retomberait sur les seuls fichiers du run, tous vieillis ici.
+    ailleurs = depot.lance("status.sh", "--no-gitlab", cwd=depot.racine.parent)
+    assert ailleurs.returncode == 0, ailleurs.stderr
+    assert "en cours ?" not in ailleurs.stdout
+    assert ailleurs.stdout.count("commits") == r.stdout.count("commits")
