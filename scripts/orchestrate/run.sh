@@ -60,6 +60,7 @@ MODELE="${MAESTRO_ORCHESTRATE_MODELE:-opus}"
 PLAN_IMPOSE=""
 MILESTONE=""
 RUN_ID=""
+TEST_REPRISE=""
 
 usage() {
   cat <<'USAGE'
@@ -76,9 +77,15 @@ Options :
   --plan <fichier>     Utilise un plan déjà calculé (TSV de queue.sh) au lieu d'en calculer un.
   --milestone <titre>  Transmis à queue.sh (par défaut : la phase courante).
   --run-id <id>        Identifiant du run. Défaut : horodatage.
+  --max-reprises <n>   Reprises maximales après limite d'usage, par ticket. Défaut : 3.
+  --test-reprise <f>   Diagnostic : dit si la sortie de session <f> serait vue comme une limite
+                       d'usage, et combien de temps la boucle attendrait. N'exécute rien d'autre.
   -h, --help           Cette aide.
 
-Arrêt d'urgence : créer .maestro/orchestrate/STOP (testé entre deux tickets).
+Limite d'usage : la boucle attend jusqu'au reset et REPREND la même session (--resume). Au-delà de
+5 h 30 d'attente cumulée sur un ticket, c'est la limite hebdomadaire : le run s'arrête proprement.
+
+Arrêt d'urgence : créer .maestro/orchestrate/STOP (testé entre deux tickets et pendant l'attente).
 Le run ne merge, ne ferme et ne force-push jamais : il laisse N MR en Draft à relire.
 USAGE
 }
@@ -93,6 +100,10 @@ while [ $# -gt 0 ]; do
     --plan) PLAN_IMPOSE="${2:-}"; shift ;;
     --milestone) MILESTONE="${2:-}"; shift ;;
     --run-id) RUN_ID="${2:-}"; shift ;;
+    --max-reprises) MAESTRO_ORCHESTRATE_MAX_REPRISES="${2:-3}"; shift ;;
+    # Diagnostic de la détection de limite d'usage sur une sortie de session capturée : c'est ce qui
+    # rend la reprise vérifiable sans attendre de vraiment taper la limite.
+    --test-reprise) TEST_REPRISE="${2:-}"; shift ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -119,9 +130,12 @@ secondes() {
   esac
 }
 
+# Les attentes de reprise se comptent en heures : au-delà, « 1501min59 » ne se lit plus.
 duree_lisible() {
   local s="$1"
-  if [ "$s" -lt 60 ]; then printf '%ds' "$s"; else printf '%dmin%02d' $((s / 60)) $((s % 60)); fi
+  if [ "$s" -lt 60 ]; then printf '%ds' "$s"
+  elif [ "$s" -lt 3600 ]; then printf '%dmin%02d' $((s / 60)) $((s % 60))
+  else printf '%dh%02d' $((s / 3600)) $(((s % 3600) / 60)); fi
 }
 
 # champ_json <fichier> <clé> : la valeur SCALAIRE d'une clé de premier niveau. Suffisant pour les
@@ -170,6 +184,115 @@ arret_demande() {
   return 0
 }
 
+# --- Limite d'usage : détecter, attendre, reprendre (#171) --------------------------------------------
+# La limite de 5 h n'est pas un échec du ticket, c'est une pause. Un script shell ne consomme aucun
+# quota : il peut dormir jusqu'au reset et reprendre LA MÊME session, avec le travail déjà fait dans
+# son contexte. C'est tout l'intérêt d'avoir mis le pilote hors de Claude Code.
+#
+# Trois filets, parce que la forme exacte du signal en mode `-p` n'est pas contractuelle et a déjà
+# changé d'une version à l'autre. Les marqueurs viennent du classifieur d'erreurs du CLI lui-même
+# (« usage limit reached », « rate limited », « 529 », « credit balance too low ») :
+#   1. une heure de reset explicite (epoch, ISO 8601, ou le « …|<epoch> » historique) -> on dort
+#      jusqu'à reset + MARGE_REPRISE_S ;
+#   2. le message sans heure de reset -> paliers de PALIER_REPRISE_S ;
+#   3. rien de tout cela -> ce n'est pas une limite, c'est un échec ordinaire.
+MARGE_REPRISE_S="${MAESTRO_ORCHESTRATE_MARGE:-120}"
+PALIER_REPRISE_S="${MAESTRO_ORCHESTRATE_PALIER:-900}"
+PLAFOND_ATTENTE_S="${MAESTRO_ORCHESTRATE_PLAFOND:-19800}"   # 5 h 30 : au-delà, c'est l'hebdomadaire
+MAX_REPRISES="${MAESTRO_ORCHESTRATE_MAX_REPRISES:-3}"
+PLAFOND_ATTEINT=0
+
+# limite_atteinte <fichier…> : 0 si l'un des fichiers porte la marque d'une limite d'usage.
+limite_atteinte() {
+  grep -qiE 'usage limit reached|rate.?limit|too many requests|"?api_error_status"?[[:space:]]*:?[[:space:]]*"?429|credit balance' "$@" 2>/dev/null
+}
+
+# reset_epoch <fichier…> : l'instant de reset en secondes Unix, si l'un des fichiers l'expose.
+# Trois écritures rencontrées : « usage limit reached|<epoch> », un champ « …reset…: <epoch> » (en
+# secondes ou en millisecondes), et un horodatage ISO 8601. Rien si aucune n'est présente.
+reset_epoch() {
+  local brut
+
+  brut="$(grep -ohE 'usage limit reached\|[0-9]{10,13}' "$@" 2>/dev/null | head -1 | grep -oE '[0-9]{10,13}')"
+  [ -z "$brut" ] && brut="$(grep -ohiE '"[a-z_]*reset[a-z_]*"[[:space:]]*:[[:space:]]*"?[0-9]{10,13}' "$@" 2>/dev/null | head -1 | grep -oE '[0-9]{10,13}$')"
+  if [ -n "$brut" ]; then
+    # 13 chiffres = millisecondes. Sans cette conversion, l'attente serait ~1 000 fois trop longue.
+    [ "${#brut}" -ge 13 ] && brut="${brut%???}"
+    printf '%s' "$brut"
+    return 0
+  fi
+
+  local iso
+  iso="$(grep -ohiE '"[a-z_]*reset[a-z_]*"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+' "$@" 2>/dev/null |
+    head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+')"
+  [ -n "$iso" ] || return 1
+  date -u -d "${iso}Z" +%s 2>/dev/null || return 1
+}
+
+# delai_avant_reprise <json> <log> : imprime le nombre de secondes à attendre et renvoie 0 si une
+# limite d'usage est en cause, 1 sinon (échec ordinaire — pas de reprise).
+delai_avant_reprise() {
+  limite_atteinte "$@" || return 1
+  local epoch maintenant delai
+  if epoch="$(reset_epoch "$@")" && [ -n "$epoch" ]; then
+    maintenant="$(date +%s)"
+    delai=$((epoch - maintenant + MARGE_REPRISE_S))
+    # Un reset déjà passé (horloge décalée, en-tête périmé) ne doit pas produire une attente nulle
+    # qui relancerait en boucle sur la même limite : on retombe sur le palier.
+    [ "$delai" -lt 60 ] && delai="$PALIER_REPRISE_S"
+    printf '%s' "$delai"
+    return 0
+  fi
+  printf '%s' "$PALIER_REPRISE_S"
+  return 0
+}
+
+# patiente <secondes> : attend, en tranches, pour que le fichier STOP reste entendu pendant une
+# attente qui peut durer des heures. Renvoie 1 si l'arrêt a été demandé.
+patiente() {
+  local reste="$1" tranche
+  printf '  %slimite d'\''usage atteinte%s — attente de %s avant reprise (fin vers %s).\n' \
+    "$C_Y" "$C_0" "$(duree_lisible "$reste")" "$(date -d "+$reste seconds" '+%H:%M' 2>/dev/null || echo '?')"
+  while [ "$reste" -gt 0 ]; do
+    [ -f "$STOP" ] && return 1
+    tranche=60
+    [ "$reste" -lt 60 ] && tranche="$reste"
+    sleep "$tranche"
+    reste=$((reste - tranche))
+  done
+  return 0
+}
+
+# lance_session <iid> <dest> <uuid> <mode> : une session, neuve ou reprise. En reprise, `--resume`
+# rouvre la conversation interrompue — sans quoi la session repartirait de zéro et referait le
+# travail déjà payé. Si la reprise échoue (session perdue), on repart à froid sur un UUID neuf :
+# le prompt et /ticket-start sont idempotents, le travail déjà commité est retrouvé sur la branche.
+lance_session() {
+  local iid="$1" dest="$2" uuid="$3" mode="$4" code
+  if [ "$mode" = "reprise" ]; then
+    ( cd "$dest" && timeout "$TIMEOUT_S" "$CLAUDE_BIN" -p "$(prompt_reprise "$iid")" \
+        --resume "$uuid" \
+        --output-format json \
+        --permission-mode acceptEdits \
+        --settings "$RACINE/scripts/orchestrate/settings.run.json" \
+        --max-budget-usd "$BUDGET" \
+        --model "$MODELE" </dev/null ) >"$RUN_DIR/$iid.json" 2>"$RUN_DIR/$iid.log"
+    code=$?
+    [ "$code" -eq 0 ] && return 0
+    if limite_atteinte "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.log"; then return "$code"; fi
+    printf '  reprise de session impossible — redémarrage à froid (le travail déjà commité est sur la branche).\n'
+    uuid="$(genere_uuid)"
+    printf '%s' "$uuid" >"$RUN_DIR/$iid.session"
+  fi
+  ( cd "$dest" && timeout "$TIMEOUT_S" "$CLAUDE_BIN" -p "$(prompt_ticket "$iid")" \
+      --session-id "$uuid" \
+      --output-format json \
+      --permission-mode acceptEdits \
+      --settings "$RACINE/scripts/orchestrate/settings.run.json" \
+      --max-budget-usd "$BUDGET" \
+      --model "$MODELE" </dev/null ) >"$RUN_DIR/$iid.json" 2>"$RUN_DIR/$iid.log"
+}
+
 # --- Le prompt d'une session ------------------------------------------------------------------------
 # Écrit pour être IDEMPOTENT : une session relancée sur un ticket déjà entamé doit reprendre, pas
 # recommencer. C'est ce qui rend une reprise après interruption (#171) sans danger.
@@ -192,6 +315,40 @@ Règles de ce run autonome :
 - Si tu ne peux pas terminer, écris en TOUTE DERNIÈRE LIGNE : ORCHESTRATE: ECHEC <raison courte>.
 PROMPT
 }
+
+# Le prompt de reprise s'adresse à une conversation QUI A DÉJÀ SON CONTEXTE : inutile de lui
+# réexpliquer le ticket, il faut au contraire éviter qu'elle recommence ce qu'elle a fait.
+prompt_reprise() {
+  cat <<PROMPT
+Reprends exactement là où tu t'es arrêté sur le ticket #$1 : la session a été interrompue par la
+limite d'usage, pas par une erreur. Ne recommence rien de ce qui est déjà fait — regarde d'abord
+l'état de la branche (git status, git log) avant d'agir. Termine l'implémentation puis clôture avec
+/ticket-ship. Toujours aucune validation humaine à attendre.
+PROMPT
+}
+
+# --- Diagnostic de la détection de limite d'usage -----------------------------------------------------
+# Placé avant tout le reste : il ne demande ni glab, ni plan, ni répertoire de run — il ne fait que
+# rejouer le jugement de la boucle sur une sortie de session déjà capturée.
+if [ -n "$TEST_REPRISE" ]; then
+  [ -r "$TEST_REPRISE" ] || { printf 'run.sh : fichier illisible — %s\n' "$TEST_REPRISE" >&2; exit 2; }
+  if delai="$(delai_avant_reprise "$TEST_REPRISE" "$TEST_REPRISE")"; then
+    epoch="$(reset_epoch "$TEST_REPRISE" "$TEST_REPRISE")" || epoch=""
+    printf 'LIMITE D'\''USAGE détectée — attente de %s (%s s)\n' "$(duree_lisible "$delai")" "$delai"
+    if [ -n "$epoch" ]; then
+      printf '  reset annoncé : %s (epoch %s) + %s s de marge\n' \
+        "$(date -d "@$epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')" "$epoch" "$MARGE_REPRISE_S"
+    else
+      printf '  aucune heure de reset exposée — palier de %s\n' "$(duree_lisible "$PALIER_REPRISE_S")"
+    fi
+    [ "$delai" -gt "$PLAFOND_ATTENTE_S" ] &&
+      printf '  ⚠ au-delà du plafond de %s : traité comme une limite hebdomadaire, le run s'\''arrêterait.\n' \
+        "$(duree_lisible "$PLAFOND_ATTENTE_S")"
+    exit 0
+  fi
+  printf 'PAS UNE LIMITE D'\''USAGE — échec ordinaire, aucune reprise ne serait tentée.\n'
+  exit 1
+fi
 
 # --- Préflight ---------------------------------------------------------------------------------------
 gl_require_glab || exit 1
@@ -256,7 +413,8 @@ if [ "$DRY" = 1 ]; then
   printf '  2. session dédiée     %s -p … --session-id <uuid> --settings scripts/orchestrate/settings.run.json\n' "$CLAUDE_BIN"
   printf '                        --permission-mode acceptEdits --model %s --max-budget-usd %s\n' "$MODELE" "$BUDGET"
   printf '  3. verdict            MR ouverte ET statut « En revue » (lu dans GitLab, pas dans la sortie)\n'
-  printf '  4. sur échec          lots suivants du même parent sautés, run poursuivi\n'
+  printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis reprise de la même session (--resume)\n'
+  printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'
   rm -rf "$RUN_DIR"
   exit 0
 fi
@@ -338,23 +496,63 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
   WORKTREES="$WORKTREES $iid"
   printf '  worktree : %s\n' "$dest"
 
-  # 2. La session dédiée. `--session-id` fixe est ce qui rendra la reprise possible (#171).
+  # 2. La session dédiée, avec reprise automatique si la limite d'usage tombe au milieu (#171).
   uuid="$(uuid_du_ticket "$iid")"
   debut=$SECONDS
-  ( cd "$dest" && timeout "$TIMEOUT_S" "$CLAUDE_BIN" -p "$(prompt_ticket "$iid")" \
-      --session-id "$uuid" \
-      --output-format json \
-      --permission-mode acceptEdits \
-      --settings "$RACINE/scripts/orchestrate/settings.run.json" \
-      --max-budget-usd "$BUDGET" \
-      --model "$MODELE" </dev/null ) >"$RUN_DIR/$iid.json" 2>"$RUN_DIR/$iid.log"
-  code=$?
-  duree=$((SECONDS - debut))
-  cout="$(champ_json "$RUN_DIR/$iid.json" total_cost_usd)"
+  attente_cumulee=0
+  tentative=0
+  reprises=0
+  mode=neuf
+  cout=0
 
-  if [ "$code" -eq 124 ]; then
-    printf '  %s✗%s session interrompue au bout de %s (timeout)\n' "$C_R" "$C_0" "$(duree_lisible "$TIMEOUT_S")"
-  fi
+  while :; do
+    tentative=$((tentative + 1))
+    lance_session "$iid" "$dest" "$uuid" "$mode"
+    code=$?
+    cout="$(champ_json "$RUN_DIR/$iid.json" total_cost_usd)"
+
+    if [ "$code" -eq 124 ]; then
+      printf '  %s✗%s session interrompue au bout de %s (timeout)\n' "$C_R" "$C_0" "$(duree_lisible "$TIMEOUT_S")"
+      break
+    fi
+
+    # Une limite d'usage n'est pas un échec du ticket : c'est une pause. On attend, puis on reprend
+    # LA MÊME session — le travail déjà fait reste dans son contexte.
+    if ! delai="$(delai_avant_reprise "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.log")"; then
+      break
+    fi
+
+    if [ "$reprises" -ge "$MAX_REPRISES" ]; then
+      printf '  %s✗%s limite d'\''usage encore atteinte après %s reprise(s) — on passe au ticket suivant.\n' \
+        "$C_R" "$C_0" "$reprises"
+      break
+    fi
+
+    attente_cumulee=$((attente_cumulee + delai))
+    if [ "$attente_cumulee" -gt "$PLAFOND_ATTENTE_S" ]; then
+      printf '\n%sLimite hebdomadaire%s — %s d'\''attente cumulée sur #%s dépassent le plafond de %s.\n' \
+        "$C_Y" "$C_0" "$(duree_lisible "$attente_cumulee")" "$iid" "$(duree_lisible "$PLAFOND_ATTENTE_S")"
+      printf 'Ce n'\''est plus une fenêtre de 5 h : le run s'\''arrête proprement, à relancer plus tard.\n'
+      consigne "$iid" ECHEC - "$((SECONDS - debut))" "${cout:-0}" "limite hebdomadaire (attente > $(duree_lisible "$PLAFOND_ATTENTE_S"))"
+      NB_ECHEC=$((NB_ECHEC + 1))
+      PLAFOND_ATTEINT=1
+      break 2
+    fi
+
+    if ! patiente "$delai"; then
+      printf '  arrêt demandé pendant l'\''attente — run interrompu.\n'
+      consigne "$iid" ECHEC - "$((SECONDS - debut))" "${cout:-0}" "arrêt demandé pendant l'attente de reprise"
+      NB_ECHEC=$((NB_ECHEC + 1))
+      break 2
+    fi
+
+    reprises=$((reprises + 1))
+    mode=reprise
+    printf '  reprise %s/%s de la session #%s…\n' "$reprises" "$MAX_REPRISES" "$iid"
+  done
+  duree=$((SECONDS - debut))
+  [ "$reprises" -eq 0 ] || printf '  (%s reprise(s) après limite d'\''usage, %s d'\''attente)\n' \
+    "$reprises" "$(duree_lisible "$attente_cumulee")"
 
   # 3. Le verdict, lu dans GitLab.
   etat_mr="$(gl_mr_state "$branche" 2>/dev/null)"
@@ -381,6 +579,10 @@ printf '%sRésumé du run %s%s\n' "$C_B" "$RUN_ID" "$C_0"
 printf '  %s✓%s %s réussi(s) · %s✗%s %s en échec · %s~%s %s sauté(s)\n' \
   "$C_G" "$C_0" "$NB_OK" "$C_R" "$C_0" "$NB_ECHEC" "$C_Y" "$C_0" "$NB_SAUTE"
 printf '  journal : %s\n' "$RUN_DIR"
+if [ "$PLAFOND_ATTEINT" = 1 ]; then
+  printf '\n  %sRun arrêté sur une limite hebdomadaire%s — le reste du plan est intact.\n' "$C_Y" "$C_0"
+  printf '  Relancer plus tard reprendra là où on en est : bash scripts/orchestrate/run.sh\n'
+fi
 if [ -n "$WORKTREES" ]; then
   printf '\n  Worktrees montés — à retirer APRÈS le merge de leur MR (jamais avant : la branche y vit) :\n'
   for i in $WORKTREES; do printf '    bash scripts/git/worktree.sh remove %s\n' "$i"; done
