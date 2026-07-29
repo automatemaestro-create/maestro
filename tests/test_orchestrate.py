@@ -779,3 +779,78 @@ def test_sans_le_marqueur_la_sortie_reste_sans_couleur(depot: Depot) -> None:
     assert r.returncode == 0, r.stderr
     assert "#130" in r.stdout
     assert "\x1b[" not in r.stdout
+
+
+# =====================================================================================
+# Le flux d'activité en direct (#176)
+# =====================================================================================
+
+def _stub_flux(depot: Depot) -> str:
+    """Un bouchon qui émet un vrai flux stream-json : plusieurs événements, `result` en dernier.
+
+    Le premier événement porte un `total_cost_usd` LEURRE : c'est la régression que ce lot peut
+    introduire (`champ_json` prend la première occurrence d'une clé), et elle serait silencieuse.
+    """
+    # Concaténation implicite : chaque ligne de source reste courte, le JSON produit tient sur une
+    # seule ligne — c'est le format du flux, un objet par ligne.
+    flux = "\n".join([
+        '{"type":"system","subtype":"init","total_cost_usd":0.01}',
+        '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read",'
+        '"input":{"file_path":"docs/21-configuration-mcp.md"}}]}}',
+        '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit",'
+        '"input":{"file_path":"core/models/mcp.py"}},{"type":"tool_use","name":"Bash",'
+        '"input":{"command":"pytest -q"}}]}}',
+        '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":4.2}',
+    ])
+    return _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        cat <<'FLUX'
+{flux}
+FLUX
+        exit 0
+    """)
+
+
+def test_le_flux_donne_une_ligne_par_action_et_garde_le_resultat_final(depot: Depot) -> None:
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _stub_flux(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "flux",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    # 1. La console dit ce que la session fabrique, au lieu de rester muette.
+    assert "· Read docs/21-configuration-mcp.md" in r.stdout
+    assert "· Edit core/models/mcp.py" in r.stdout
+    assert "· Bash pytest -q" in r.stdout, "les tool_use multiples d'un événement sont tous vus"
+
+    dossier = depot.racine / ".maestro/orchestrate/flux"
+    # 2. Le flux brut est archivé en entier…
+    lignes = [x for x in (dossier / "130.jsonl").read_text(encoding="utf-8").splitlines() if x]
+    assert len(lignes) == 4
+
+    # 3. …mais <iid>.json ne porte QUE le résultat final : sinon le coût lu serait le leurre.
+    final = (dossier / "130.json").read_text(encoding="utf-8")
+    assert '"type":"result"' in final
+    assert "0.01" not in final
+    resume = (dossier / "resume.tsv").read_text(encoding="utf-8")
+    assert "4.2" in resume and "0.01" not in resume
+
+
+def test_une_limite_d_usage_annoncee_dans_le_flux_est_detectee(depot: Depot) -> None:
+    """Le signal peut n'apparaître qu'au fil du flux, sans jamais atteindre l'objet `result`."""
+    depot.ticket(130, "Ticket bloqué")
+    claude = _claude_stub(depot, r"""
+        LOIN=$(( $(date +%s) + 120 ))
+        printf '{"type":"system","subtype":"init"}\n'
+        printf '{"type":"assistant","message":{"content":[{"type":"text",'
+        printf '"text":"Claude AI usage limit reached|%s"}]}}\n' "$LOIN"
+        exit 1
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "limite-flux", "--max-reprises", "0",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    # Avec --max-reprises 0 la boucle renonce tout de suite : ce qui est vérifié ici, c'est qu'elle
+    # a bien RECONNU une limite d'usage (et non un échec ordinaire, qui ne la mentionnerait pas).
+    assert "limite d'usage" in r.stdout, "le flux est lu, pas seulement le résultat final"
