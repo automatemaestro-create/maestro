@@ -1026,6 +1026,25 @@ Pour chaque ticket : `scripts/git/worktree.sh <iid>` (§9) monte son répertoire
 ports, puis une session dédiée est lancée en mode `-p`, avec un `--session-id` fixe — la clé de la
 reprise.
 
+**La console dit ce que la session fabrique (#176).** En `--output-format json`, le CLI n'écrit
+qu'à la fin : entre la ligne `[n/N] #<iid> — …` et le verdict, la console restait muette jusqu'à
+45 minutes, et rien ne distinguait « ça travaille » de « c'est planté ». La session tourne donc en
+**`--output-format stream-json --verbose`** — un objet JSON par ligne, au fil de l'eau — dont
+`run.sh` tire **une ligne compacte par action** :
+
+```
+  · Read docs/21-configuration-mcp.md
+  · Edit core/models/mcp.py
+  · Bash pytest -q
+```
+
+**Deux fichiers, et c'est ce partage qui rend le mode sûr** : le flux brut va dans `<iid>.jsonl`, et
+`<iid>.json` ne reçoit **que l'objet `result` final**. Le coût, le verdict et la détection de limite
+d'usage lisent ce dernier, or ils prennent la **première** occurrence d'une clé — y déverser tout le
+flux ferait rapporter le coût d'un événement intermédiaire, une régression silencieuse. Si aucun
+`result` n'est passé (CLI plus ancien, flux coupé), la dernière ligne en tient lieu. Les **deux**
+invocations sont concernées, session neuve *et* reprise `--resume`.
+
 **Le verdict vient de GitLab, pas de la prose de la session.** Un ticket est réussi si, et seulement
 si, sa branche porte une **MR ouverte** *et* que son statut natif est **« En revue »** — exactement
 ce que `/ticket-ship` laisse derrière lui. Une session peut conclure « c'est fait » en s'étant
@@ -1041,9 +1060,10 @@ le plan), `--budget <usd>` par ticket, `--timeout <durée>` par ticket, et le fi
 `.maestro/orchestrate/STOP`, pris en compte entre deux tickets **et pendant une attente**.
 
 Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<iid>.session`
-(l'UUID), `<iid>.json` (le résultat brut — coût, `permission_denials`), `<iid>.log`, et `resume.tsv`
-(une ligne par ticket : verdict, MR, durée, coût, raison). Un run lancé avec `--detach` y ajoute
-`lancer.sh` (ce qui a été lancé) et `run.log` (toute la sortie de la console).
+(l'UUID), `<iid>.jsonl` (le flux d'activité complet), `<iid>.json` (le seul résultat final — coût,
+`permission_denials`), `<iid>.log` (stderr), et `resume.tsv` (une ligne par ticket : verdict, MR,
+durée, coût, raison). Un run lancé avec `--detach` y ajoute `lancer.sh` (ce qui a été lancé) et
+`run.log` (toute la sortie de la console, flux d'activité compris).
 
 ### 11.4 La limite d'usage est une pause, pas un échec
 
@@ -1070,10 +1090,11 @@ limite**.
 
 ### 11.5 Savoir où en est un run — `status.sh`
 
-La console d'un run répond très bien à « où ça en est ? »… tant qu'on l'a sous les yeux. Fenêtre
-fermée, autre poste, run lancé la veille : il ne restait que le répertoire du run, et la seule façon
-de trancher entre « ça travaille » et « c'est planté » était d'aller regarder à la main les *mtimes*
-d'un worktree. `scripts/orchestrate/status.sh` (#177) fait cette lecture une fois pour toutes :
+La console d'un run répond très bien à « où ça en est ? » — depuis #176 elle égrène même chaque
+action — mais seulement tant qu'on l'a sous les yeux. Fenêtre fermée, autre poste, run lancé la
+veille : il ne restait que le répertoire du run, et la seule façon de trancher entre « ça travaille »
+et « c'est planté » était d'aller regarder à la main les *mtimes* d'un worktree.
+`scripts/orchestrate/status.sh` (#177) fait cette lecture une fois pour toutes :
 
 ```bash
 bash scripts/orchestrate/status.sh                     # le run le plus récent, une fois
@@ -1127,6 +1148,11 @@ retirer un worktree (la branche y vit jusqu'au merge — `scripts/git/worktree.s
 
 > **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) — même parti pris que le
 > reste : dépôt jetable, **ni réseau, ni quota, ni écriture GitLab**. Un `glab` factice répond
-> depuis des fixtures, `MAESTRO_CLAUDE_BIN` remplace le CLI, `MAESTRO_ORCHESTRATE_WORKTREE` le
-> montage de worktree et `MAESTRO_ORCHESTRATE_SPAWN` l'ouverture de console, si bien qu'aucune
-> branche, aucune session ni aucune fenêtre réelles ne sont créées.
+> depuis des fixtures (et **journalise ses appels**, ce qui rend vérifiable une promesse comme
+> `--no-gitlab`), `MAESTRO_CLAUDE_BIN` remplace le CLI, `MAESTRO_ORCHESTRATE_WORKTREE` le montage
+> de worktree et `MAESTRO_ORCHESTRATE_SPAWN` l'ouverture de console, si bien qu'aucune branche,
+> aucune session ni aucune fenêtre réelles ne sont créées. Le **flux stream-json** se joue par un
+> bouchon qui émet plusieurs événements, dont un coût leurre en tête — la régression que §11.3
+> décrit. `status.sh` se teste sur des répertoires de run **écrits à la main** (c'est le seul moyen
+> de poser un run interrompu ou muet) dont les dates de modification sont vieillies, et sur un vrai
+> petit dépôt git local pour le volet worktree.
