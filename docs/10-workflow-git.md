@@ -959,6 +959,7 @@ automatique** quand la limite d'usage de 5 h tombe au milieu.
 bash scripts/orchestrate/queue.sh --check   # l'ordre de traitement, et ce qui a été écarté
 bash scripts/orchestrate/run.sh --dry-run   # le plan et ce qui serait fait — rien n'est lancé
 bash scripts/orchestrate/run.sh             # le run, dans un terminal laissé ouvert
+bash scripts/orchestrate/run.sh --detach    # idem, dans une console indépendante — rend la main
 touch .maestro/orchestrate/STOP             # arrêt d'urgence
 ```
 
@@ -974,6 +975,34 @@ relancer. C'est la raison d'être de tout le découpage qui suit.
 
 Corollaire pratique : **un run se lance hors de Claude Code**, dans un terminal Git Bash laissé
 ouvert (il survit à la fermeture de Claude Code, pas à celle du terminal).
+
+**Le lancer depuis une session reste possible — `--detach` (#173).** La contrainte porte sur ce que
+le pilote *est*, pas sur qui appuie sur le bouton : `--detach` relance le script dans une **console
+indépendante**, puis rend la main tout de suite. Le pilote y est bien un shell dans son propre
+processus — ni une session Claude Code, ni un travail d'arrière-plan suspendu à une session, qui
+mourrait avec elle. Ce qui l'en distingue en pratique :
+
+| | Pilote |
+|---|---|
+| `/loop`, sous-agents | ✗ consomme le quota du travail piloté, meurt avec la limite d'usage |
+| arrière-plan d'une session | ✗ ne consomme rien, mais s'arrête quand la session s'arrête |
+| `--detach` | ✓ shell détaché — survit à la session dans le cas courant |
+| terminal ouvert par la personne | ✓ shell, ne dépend d'aucun processus tiers |
+
+`--detach` écrit un **lanceur** (`<run-id>/lancer.sh`) que la console se contente d'exécuter — les
+guillemets imbriqués sous `cmd /c start` sont un nid à erreurs, et un lanceur sur disque est lisible
+et rejouable à la main. Il **ne calcule pas le plan** : c'est le run détaché qui le fige, avec le
+`--run-id` qu'on lui impose (deux calculs risqueraient de diverger). La sortie passe par `tee` dans
+`<run-id>/run.log`, pour qu'une fenêtre fermée n'emporte pas la seule trace de ce qui s'est passé —
+la fenêtre gardant ses **couleurs**, que `tee` lui ferait perdre, et le journal en étant débarrassé
+en fin de run (il se relit plus tard, souvent par un outil).
+Combiné à `--dry-run`, il n'a rien à détacher : le plan s'affiche en direct, en lecture seule.
+
+**Ce qu'il ne garantit pas**, et qu'il annonce lui-même : la console ne dépend plus du shell
+appelant, mais rien n'assure qu'elle survive à un parent qui enfermerait ses descendants (*job
+object* Windows). Le filet est le plan sur disque — `--plan <run-id>/plan.tsv` le rejoue, les
+tickets déjà livrés étant sautés d'eux-mêmes (§11.4). Qui veut la certitude plutôt que le filet
+lance la commande **sans** `--detach` dans son propre terminal.
 
 ### 11.2 L'ordre, figé une fois — `queue.sh`
 
@@ -1012,7 +1041,8 @@ le plan), `--budget <usd>` par ticket, `--timeout <durée>` par ticket, et le fi
 
 Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<iid>.session`
 (l'UUID), `<iid>.json` (le résultat brut — coût, `permission_denials`), `<iid>.log`, et `resume.tsv`
-(une ligne par ticket : verdict, MR, durée, coût, raison).
+(une ligne par ticket : verdict, MR, durée, coût, raison). Un run lancé avec `--detach` y ajoute
+`lancer.sh` (ce qui a été lancé) et `run.log` (toute la sortie de la console).
 
 ### 11.4 La limite d'usage est une pause, pas un échec
 
@@ -1060,5 +1090,6 @@ retirer un worktree (la branche y vit jusqu'au merge — `scripts/git/worktree.s
 
 > **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) — même parti pris que le
 > reste : dépôt jetable, **ni réseau, ni quota, ni écriture GitLab**. Un `glab` factice répond
-> depuis des fixtures, `MAESTRO_CLAUDE_BIN` remplace le CLI et `MAESTRO_ORCHESTRATE_WORKTREE` le
-> montage de worktree, si bien qu'aucune branche ni aucune session réelles ne sont créées.
+> depuis des fixtures, `MAESTRO_CLAUDE_BIN` remplace le CLI, `MAESTRO_ORCHESTRATE_WORKTREE` le
+> montage de worktree et `MAESTRO_ORCHESTRATE_SPAWN` l'ouverture de console, si bien qu'aucune
+> branche, aucune session ni aucune fenêtre réelles ne sont créées.

@@ -13,6 +13,8 @@ variable d'environnement remplacent tout ce qui sortirait de la machine :
   d'usage, reprise) et **ne consomme aucun quota**.
 * le montage de worktree — via `MAESTRO_ORCHESTRATE_WORKTREE` : une commande qui imprime un
   dossier déjà là, donc **aucune branche ni aucun worktree réels** ne sont créés.
+* l'ouverture d'une console — via `MAESTRO_ORCHESTRATE_SPAWN` (#173) : une commande qui reçoit le
+  lanceur au lieu qu'une vraie fenêtre s'ouvre, donc **aucune console** ne surgit pendant les tests.
 
 **Un dépôt jetable.** Chaque test monte dans `tmp_path` un mini-clone qui ne porte que les
 scripts visés, `scripts/gitlab/lib.sh` et un `.claude/settings.json` synthétique. Le vrai
@@ -234,6 +236,19 @@ def _claude_stub(depot: Depot, corps: str) -> str:
     chemin = depot.racine.parent / "bin" / "claude-stub"
     chemin.write_text(
         "#!/usr/bin/env bash\n" + textwrap.dedent(corps), encoding="utf-8", newline="\n"
+    )
+    chemin.chmod(0o755)
+    return str(chemin)
+
+
+def _spawn_stub(depot: Depot, corps: str = "") -> str:
+    """Bouchon de `MAESTRO_ORCHESTRATE_SPAWN` : note le lanceur reçu, n'ouvre aucune console."""
+    chemin = depot.racine.parent / "bin" / "spawn-stub"
+    chemin.write_text(
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$1" > "$MAESTRO_FIXTURES/spawn.txt"\n'
+        + textwrap.dedent(corps),
+        encoding="utf-8",
+        newline="\n",
     )
     chemin.chmod(0o755)
     return str(chemin)
@@ -657,3 +672,110 @@ def test_une_attente_trop_longue_est_lue_comme_la_limite_hebdomadaire(depot: Dep
     assert "Limite hebdomadaire" in r.stdout
     resume = (depot.racine / ".maestro/orchestrate/hebdo/resume.tsv").read_text(encoding="utf-8")
     assert "131" not in resume, "le reste du plan est laissé intact pour un prochain run"
+
+
+# =====================================================================================
+# Le lancement détaché (#173)
+# =====================================================================================
+
+def test_detach_ecrit_un_lanceur_et_rend_la_main_sans_calculer_le_plan(depot: Depot) -> None:
+    """`--detach` prépare et délègue : le plan est figé par le run détaché, pas ici."""
+    claude = _claude_stub(depot, 'echo "aucune session ne démarre côté pilote" >&2\nexit 1\n')
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    spawn = _spawn_stub(depot)
+    r = depot.lance(
+        "run.sh", "--detach", "--plan", plan, "--run-id", "detache", "--max", "1",
+        env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_SPAWN": spawn},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    lanceur = depot.racine / ".maestro/orchestrate/detache/lancer.sh"
+    assert lanceur.exists(), "la console n'exécute qu'un lanceur écrit sur disque"
+    corps = lanceur.read_text(encoding="utf-8")
+    commande = next(ligne for ligne in corps.splitlines() if ligne.startswith("bash "))
+    assert "run.sh" in commande and "--max 1" in commande, "les options d'origine sont repassées"
+    assert "--detach" not in commande, "sans quoi la console relancerait une console, à l'infini"
+    assert commande.count("--run-id") == 1, "le run-id est imposé une fois, pas repris en double"
+    assert "MAESTRO_ORCHESTRATE_COULEUR=1" in corps, "la fenêtre est un écran : couleurs gardées"
+
+    dossier = depot.racine / ".maestro/orchestrate/detache"
+    assert not (dossier / "plan.tsv").exists(), "deux calculs du plan risqueraient de diverger"
+    # Comparaison sur la fin du chemin : bash le rend en style MSYS, Python en style Windows.
+    recu = (depot.fixtures / "spawn.txt").read_text(encoding="utf-8").strip()
+    assert recu.endswith("/detache/lancer.sh"), f"la console reçoit le lanceur, pas {recu}"
+    assert "reprendre" in r.stdout, "le filet en cas de console tuée est annoncé au lancement"
+
+
+def test_detach_avec_dry_run_reste_en_lecture_seule(depot: Depot) -> None:
+    """Rien à détacher pour un plan qui s'affiche en une seconde — et aucune trace laissée."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    spawn = _spawn_stub(depot)
+    r = depot.lance(
+        "run.sh", "--detach", "--dry-run", "--plan", plan, "--run-id", "sec",
+        env={"MAESTRO_ORCHESTRATE_SPAWN": spawn},
+    )
+    assert r.returncode == 0, r.stderr
+    assert "#130" in r.stdout, "le plan s'affiche en direct"
+    assert not (depot.fixtures / "spawn.txt").exists(), "aucune console n'est ouverte"
+    assert not (depot.racine / ".maestro/orchestrate/sec").exists()
+
+
+def test_un_lancement_detache_en_echec_ne_laisse_pas_de_run_fantome(depot: Depot) -> None:
+    """Un journal annoncé mais jamais écrit vaudrait pire que pas de journal du tout."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    spawn = _spawn_stub(depot, "exit 1\n")
+    r = depot.lance(
+        "run.sh", "--detach", "--plan", plan, "--run-id", "rate",
+        env={"MAESTRO_CLAUDE_BIN": "true", "MAESTRO_ORCHESTRATE_SPAWN": spawn},
+    )
+    assert r.returncode == 1
+    assert "n'a pas démarré" in r.stderr
+    assert not (depot.racine / ".maestro/orchestrate/rate").exists()
+
+
+def test_le_lanceur_detache_lance_vraiment_le_run(depot: Depot) -> None:
+    """Le lanceur est le seul lien entre le pilote et le run : on l'exécute pour de bon."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1.25}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    spawn = _spawn_stub(depot)
+    depot.lance(
+        "run.sh", "--detach", "--plan", plan, "--run-id", "vrai",
+        env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_SPAWN": spawn},
+    )
+
+    lanceur = depot.racine / ".maestro/orchestrate/vrai/lancer.sh"
+    r = subprocess.run(
+        [BASH, str(lanceur)],
+        cwd=depot.racine,
+        env={**depot.env, "MAESTRO_CLAUDE_BIN": claude},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    resume = (depot.racine / ".maestro/orchestrate/vrai/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tOK" in resume
+    journal = (depot.racine / ".maestro/orchestrate/vrai/run.log").read_text(encoding="utf-8")
+    assert "#130" in journal, "la sortie survit à la fermeture de la fenêtre"
+
+    # La fenêtre est un écran (couleurs), le journal se relit plus tard et souvent par un outil
+    # (pas de codes ANSI) — `tee` les enverrait pourtant aux deux.
+    assert "\x1b[" in r.stdout, "la console garde ses couleurs malgré le tee"
+    assert "\x1b[" not in journal, "le journal est décoloré en fin de run"
+
+
+def test_sans_le_marqueur_la_sortie_reste_sans_couleur(depot: Depot) -> None:
+    """Le contre-test : hors console détachée, une sortie redirigée ne doit pas être colorée."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "terne")
+    assert r.returncode == 0, r.stderr
+    assert "#130" in r.stdout
+    assert "\x1b[" not in r.stdout
