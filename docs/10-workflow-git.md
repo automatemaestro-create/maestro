@@ -960,6 +960,7 @@ bash scripts/orchestrate/queue.sh --check   # l'ordre de traitement, et ce qui a
 bash scripts/orchestrate/run.sh --dry-run   # le plan et ce qui serait fait — rien n'est lancé
 bash scripts/orchestrate/run.sh             # le run, dans un terminal laissé ouvert
 bash scripts/orchestrate/run.sh --detach    # idem, dans une console indépendante — rend la main
+bash scripts/orchestrate/status.sh --watch  # où en est le run, depuis n'importe quel terminal
 touch .maestro/orchestrate/STOP             # arrêt d'urgence
 ```
 
@@ -1067,7 +1068,43 @@ l'**hebdomadaire** : le run s'arrête proprement plutôt que de dormir des jours
 session capturée — c'est ce qui rend la reprise vérifiable **sans attendre de vraiment taper la
 limite**.
 
-### 11.5 Les garde-fous d'une session sans humain
+### 11.5 Savoir où en est un run — `status.sh`
+
+La console d'un run répond très bien à « où ça en est ? »… tant qu'on l'a sous les yeux. Fenêtre
+fermée, autre poste, run lancé la veille : il ne restait que le répertoire du run, et la seule façon
+de trancher entre « ça travaille » et « c'est planté » était d'aller regarder à la main les *mtimes*
+d'un worktree. `scripts/orchestrate/status.sh` (#177) fait cette lecture une fois pour toutes :
+
+```bash
+bash scripts/orchestrate/status.sh                     # le run le plus récent, une fois
+bash scripts/orchestrate/status.sh --watch [sec]       # ... et rafraîchi tant qu'il tourne
+bash scripts/orchestrate/status.sh --run-id <id>       # un run précis   (--list les énumère)
+bash scripts/orchestrate/status.sh --no-gitlab         # hors ligne : tout sauf l'état GitLab
+```
+
+En une sortie : l'état du run, le **ticket en cours** et son temps écoulé, les **commits et fichiers
+modifiés de son worktree**, sa **dernière activité**, son **état GitLab** (statut, MR), le **reste du
+plan** et le **bilan des traités** (verdict, MR, durée, coût). Le script est en **lecture seule** —
+il n'écrit ni dans le run, ni dans le dépôt, ni dans GitLab, et ne touche pas à `run.sh` (bash relit
+un script au fil de son exécution : un run en cours doit pouvoir être observé sans risque).
+
+Deux partis pris valent d'être connus :
+
+- **Le worktree est le meilleur signal de progression.** Pendant une session, `<iid>.json` reste
+  vide — le CLI n'écrit son résultat qu'à la fin. Ce qui dit vraiment que ça avance, ce sont les
+  commits et les fichiers modifiés du worktree du ticket, lus avec git, en local.
+- **« En cours » se déduit, il ne se lit pas.** `run.sh` n'écrit pas de PID : le ticket en cours est
+  le premier du plan qui a un `<iid>.session` sans ligne dans `resume.tsv`. Un run tué au milieu
+  laisse exactement la même trace qu'un run qui travaille — d'où la ligne **activité**, qui date la
+  dernière écriture (répertoire du run *et* index git du worktree) et bascule l'en-tête en
+  « en cours ? » au-delà de 15 min de silence (`MAESTRO_ORCHESTRATE_SILENCE`). C'est une déduction
+  présentée comme telle, pas un verdict.
+
+**Aucun run en cours est un cas normal**, pas une erreur : le script le dit et sort en 0.
+[`/orchestrate --status`](../.claude/commands/orchestrate.md) s'appuie dessus plutôt que de
+recomposer la lecture au coup par coup.
+
+### 11.6 Les garde-fous d'une session sans humain
 
 Deux couches, parce qu'une seule tomberait :
 

@@ -47,9 +47,10 @@ toi-même.
    Il ouvre une console indépendante, imprime le run-id, le journal et la commande de reprise, et
    rend la main immédiatement. Rappelle les options utiles, qui se combinent avec `--detach` :
    `--max <n>` pour borner le run, `--budget <usd>` par ticket, `--timeout <durée>` par ticket,
-   `--modele <alias>`. Puis le **suivi** (`tail -f .maestro/orchestrate/<run-id>/run.log`) et
-   l'**arrêt d'urgence** : `touch .maestro/orchestrate/STOP` — pris en compte entre deux tickets
-   **et pendant une attente** de reprise.
+   `--modele <alias>`. Puis le **suivi** — `bash scripts/orchestrate/status.sh --watch` (où en est
+   le run, depuis n'importe quel terminal) ou `tail -f .maestro/orchestrate/<run-id>/run.log` (la
+   sortie brute de la console) — et l'**arrêt d'urgence** : `touch .maestro/orchestrate/STOP` — pris
+   en compte entre deux tickets **et pendant une attente** de reprise.
 
    **Dis la réserve, sans la noyer** : la console ne dépend plus de ta session, mais rien ne
    garantit qu'elle survive à un parent qui enfermerait ses descendants (job object Windows). Le
@@ -69,17 +70,31 @@ Rien n'est lancé, aucun répertoire de run n'est laissé derrière.
 
 ### `--status` — où en est le dernier run
 
-1. Trouve le run le plus récent : `ls -1 .maestro/orchestrate/ | grep -v STOP | sort | tail -1`.
-   Pour un run lancé avec `--detach`, `run.log` porte toute la sortie de la console — c'est là qu'on
-   lit ce qui s'est passé quand la fenêtre a été fermée.
-2. Lis son bilan : `cat .maestro/orchestrate/<run-id>/resume.tsv` (colonnes
-   `iid / verdict / mr / duree_s / cout_usd / raison`) et compare-le à `plan.tsv` pour dire ce qui
-   reste à traiter.
-3. Résume : tickets réussis (avec le lien de leur MR), en échec (avec la raison et le chemin du
-   journal `<iid>.log`), sautés (et pourquoi — lot dépendant d'un échec, ou ticket pris entre-temps).
-4. Si des tickets ont réussi, enchaîne sur la **file de revue** :
+**Une seule commande porte toute la lecture** (`status.sh`, #177) — ne recompose jamais à la main
+ce qu'elle dit déjà (choix du run, plan restant, bilan, worktree, état GitLab) :
+
+```
+bash scripts/orchestrate/status.sh
+```
+
+Elle prend le run le plus récent et imprime en une passe : l'état du run et son heure de départ, le
+**ticket en cours** avec son temps écoulé, les **commits et fichiers modifiés de son worktree**, sa
+**dernière activité**, son **état GitLab** (statut du ticket, MR ouverte), le **reste du plan** et le
+**bilan des traités** (verdict, MR, durée, coût). Options utiles : `--run-id <id>` pour un run
+précis, `--list` pour les runs connus, `--watch [sec]` pour rafraîchir tant que le run tourne,
+`--no-gitlab` hors ligne. **Aucun run n'est pas une erreur** : le script le dit et sort en 0.
+
+Ensuite seulement, apporte ce que la sortie ne dit pas :
+
+1. **Commente** ce qui a échoué et pourquoi — le journal `<run-id>/<iid>.log` porte le détail — et
+   ce qui a été sauté (lot dépendant d'un échec, ou ticket pris entre-temps).
+2. Si l'en-tête annonce **« en cours ? — rien d'écrit depuis … »**, dis franchement que c'est une
+   **déduction** : `run.sh` n'écrit pas de PID, l'état se lit sur la date des dernières écritures du
+   run et de son worktree. Une session qui réfléchit longuement et une session morte laissent la
+   même trace ; `tail -f .maestro/orchestrate/<run-id>/run.log` (run détaché) tranche.
+3. Si des tickets ont réussi, enchaîne sur la **file de revue** :
    `bash scripts/gitlab/lib.sh review-queue` — c'est là que le travail du run attend un humain.
-5. Rappelle les **worktrees à retirer** une fois leurs MR mergées :
+4. Rappelle les **worktrees à retirer** une fois leurs MR mergées :
    `bash scripts/git/worktree.sh remove <iid>` — jamais avant le merge, la branche y vit.
 
 ### `--resume <run-id>` — reprendre un run interrompu
@@ -90,8 +105,9 @@ tickets déjà livrés seront sautés d'eux-mêmes, la boucle relisant leur stat
 ```
 bash scripts/orchestrate/run.sh --plan .maestro/orchestrate/<run-id>/plan.tsv
 ```
-Vérifie d'abord que le fichier existe, et dis combien de tickets du plan restent à traiter d'après
-`resume.tsv`.
+Vérifie d'abord que le fichier existe, et dis combien de tickets du plan restent à traiter — c'est
+exactement ce que `bash scripts/orchestrate/status.sh --run-id <run-id>` imprime (et
+`--list` retrouve le run-id si l'utilisateur ne l'a pas sous la main).
 
 ## Diagnostic d'une reprise après limite d'usage
 
