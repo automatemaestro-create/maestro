@@ -14,12 +14,14 @@ ne fait que la lancer, l'expliquer et lire son journal. Ne réimplémente **jama
 main (calcul de l'ordre, montage de worktree, lancement de session, verdict) : la boucle en est le
 seul endroit.
 
-**Ce que tu ne peux pas faire depuis ici.** Un run se pilote **hors de Claude Code**, dans un
-terminal à part. La raison est structurelle : une boucle lancée depuis une session consommerait le
-même quota que le travail piloté — la limite d'usage tuerait le pilote en même temps que la session,
-et plus rien ne pourrait programmer la reprise. Tu prépares, tu expliques, tu relis ; **c'est
-l'utilisateur qui lance la commande dans son terminal**. Les seules exceptions sont les modes en
-lecture seule (`--dry-run`, `--status`), que tu peux exécuter directement.
+**Ce que le pilote doit être — et ce que tu peux lancer.** Le pilote d'un run est **toujours un
+script shell**, jamais une session Claude Code : une boucle écrite en `/loop` ou en sous-agents
+consommerait le même quota que le travail piloté, la limite d'usage les tuerait ensemble, et plus
+personne ne programmerait la reprise. Cela n'interdit pas de **démarrer** un run depuis ici :
+`--detach` (#173) relance le script dans une **console indépendante** et rend la main tout de suite
+— le pilote y est bien un shell, dans son propre processus. Ce qui reste exclu, c'est de lancer un
+run **en arrière-plan de ta session** (il mourrait avec elle), et de réimplémenter la boucle
+toi-même.
 
 ## Selon `$ARGUMENTS`
 
@@ -36,15 +38,25 @@ lecture seule (`--dry-run`, `--status`), que tu peux exécuter directement.
      rien ne pourra être mergé au matin ;
    - `git status --porcelain` sur le clone principal : un arbre sale n'empêche pas le run (chaque
      ticket a son worktree) mais mérite d'être signalé.
-3. **Donne la commande à lancer**, telle quelle, dans un terminal Git Bash **laissé ouvert** — elle
-   survit à la fermeture de Claude Code, pas à celle du terminal :
+3. **Demande le feu vert, puis lance.** Un run crée des branches, committe, pousse et ouvre N Merge
+   Requests : c'est une action visible de l'extérieur, elle se confirme — jamais au fil de l'eau.
+   Une fois le go donné :
    ```
-   bash scripts/orchestrate/run.sh
+   bash scripts/orchestrate/run.sh --detach
    ```
-   Rappelle les options utiles : `--max <n>` pour borner le run, `--budget <usd>` par ticket,
-   `--timeout <durée>` par ticket, `--modele <alias>`. Et l'**arrêt d'urgence** :
-   `touch .maestro/orchestrate/STOP` — pris en compte entre deux tickets **et pendant une attente**
-   de reprise.
+   Il ouvre une console indépendante, imprime le run-id, le journal et la commande de reprise, et
+   rend la main immédiatement. Rappelle les options utiles, qui se combinent avec `--detach` :
+   `--max <n>` pour borner le run, `--budget <usd>` par ticket, `--timeout <durée>` par ticket,
+   `--modele <alias>`. Puis le **suivi** (`tail -f .maestro/orchestrate/<run-id>/run.log`) et
+   l'**arrêt d'urgence** : `touch .maestro/orchestrate/STOP` — pris en compte entre deux tickets
+   **et pendant une attente** de reprise.
+
+   **Dis la réserve, sans la noyer** : la console ne dépend plus de ta session, mais rien ne
+   garantit qu'elle survive à un parent qui enfermerait ses descendants (job object Windows). Le
+   filet existe — le plan reste sur disque, `--plan <run-id>/plan.tsv` le rejoue et les tickets déjà
+   livrés sont sautés d'eux-mêmes. Si l'utilisateur veut la certitude plutôt que le filet, donne-lui
+   la commande **sans** `--detach` à lancer dans son propre terminal Git Bash laissé ouvert : c'est
+   le seul montage qui ne dépende d'aucun processus tiers.
 4. **Dis ce que le run produira** : N Merge Requests **en Draft** à relire, une par ticket. Le run
    ne merge, ne ferme et ne force-push **jamais** — le merge reste une décision humaine.
 
@@ -58,6 +70,8 @@ Rien n'est lancé, aucun répertoire de run n'est laissé derrière.
 ### `--status` — où en est le dernier run
 
 1. Trouve le run le plus récent : `ls -1 .maestro/orchestrate/ | grep -v STOP | sort | tail -1`.
+   Pour un run lancé avec `--detach`, `run.log` porte toute la sortie de la console — c'est là qu'on
+   lit ce qui s'est passé quand la fenêtre a été fermée.
 2. Lis son bilan : `cat .maestro/orchestrate/<run-id>/resume.tsv` (colonnes
    `iid / verdict / mr / duree_s / cout_usd / raison`) et compare-le à `plan.tsv` pour dire ce qui
    reste à traiter.

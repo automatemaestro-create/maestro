@@ -53,6 +53,7 @@ STOP="$ORCH_DIR/STOP"
 CLAUDE_BIN="${MAESTRO_CLAUDE_BIN:-claude}"   # surchargeable : stub dans les tests (#172)
 
 DRY=0
+DETACH=0
 MAX=0
 BUDGET="${MAESTRO_ORCHESTRATE_BUDGET:-15}"
 TIMEOUT_BRUT="${MAESTRO_ORCHESTRATE_TIMEOUT:-45m}"
@@ -70,6 +71,9 @@ La boucle d'orchestration autonome — un ticket, une session Claude Code.
 
 Options :
   --dry-run            N'exécute rien : affiche le plan et ce qui serait fait.
+  --detach             Relance le run dans une console indépendante et rend la main tout de suite.
+                       C'est ce qui permet de démarrer un run depuis une session Claude Code : le
+                       pilote reste un script shell, dans son propre processus.
   --max <n>            Nombre maximal de tickets traités (0 = tout le plan).
   --budget <usd>       Plafond de dépense par ticket (--max-budget-usd). Défaut : 15.
   --timeout <durée>    Délai maximal par ticket : 45m, 90m, 2700… Défaut : 45m.
@@ -90,9 +94,14 @@ Le run ne merge, ne ferme et ne force-push jamais : il laisse N MR en Draft à r
 USAGE
 }
 
+# Les arguments d'origine, gardés tels quels : `--detach` les repasse au run détaché, à l'exception
+# de `--detach` lui-même (sans quoi la console relancerait une console, indéfiniment).
+ARGS_ORIG=("$@")
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
+    --detach | --detache | --détaché) DETACH=1 ;;
     --max) MAX="${2:-0}"; shift ;;
     --budget) BUDGET="${2:-15}"; shift ;;
     --timeout) TIMEOUT_BRUT="${2:-45m}"; shift ;;
@@ -110,7 +119,18 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if [ -t 1 ]; then
+# `--detach` avec `--dry-run` n'aurait rien à détacher : le plan s'affiche en une seconde, et une
+# console qui se refermerait aussitôt ne le montrerait à personne. On reste en direct, en lecture
+# seule — et sans laisser de répertoire de run derrière soi.
+if [ "$DETACH" = 1 ] && [ "$DRY" = 1 ]; then
+  printf 'run.sh : --detach sans effet avec --dry-run — le plan s'\''affiche ici, rien n'\''est lancé.\n' >&2
+  DETACH=0
+fi
+
+# `--detach` fait passer la sortie par `tee` : stdout n'est plus un terminal, et le run détaché
+# perdrait ses couleurs alors qu'il s'affiche bel et bien dans une fenêtre. Le lanceur pose donc ce
+# marqueur — et décolore le journal en fin de run, les codes n'ayant de sens que devant un écran.
+if [ -t 1 ] || [ "${MAESTRO_ORCHESTRATE_COULEUR:-0}" = 1 ]; then
   C_G=$'\033[32m'; C_Y=$'\033[33m'; C_R=$'\033[31m'; C_B=$'\033[1m'; C_0=$'\033[0m'
 else
   C_G=''; C_Y=''; C_R=''; C_B=''; C_0=''
@@ -370,6 +390,107 @@ RUN_DIR="$ORCH_DIR/$RUN_ID"
 mkdir -p "$RUN_DIR" || { printf 'run.sh : impossible de créer %s\n' "$RUN_DIR" >&2; exit 1; }
 PLAN="$RUN_DIR/plan.tsv"
 RESUME="$RUN_DIR/resume.tsv"
+
+# --- Lancement détaché (#173) -------------------------------------------------------------------------
+# `--detach` relance CE script, sans `--detach`, dans une console qui n'appartient plus au processus
+# courant, puis rend la main. C'est ce qui permet à une session Claude Code de démarrer un run : le
+# pilote reste un script shell dans SON PROPRE processus — il ne consomme aucun quota et n'est pas
+# suspendu à la session, donc la limite d'usage ne l'emporte pas avec elle (cf. l'en-tête).
+#
+# Le plan n'est PAS calculé ici : c'est le run détaché qui le fige, une fois, avec le `--run-id`
+# qu'on lui impose. Deux calculs (un ici, un là-bas) risqueraient de diverger.
+#
+# La commande n'est pas passée en ligne au shell de la console — les guillemets imbriqués sous
+# `cmd /c start` sont un nid à erreurs. On écrit un lanceur dans le répertoire du run, que la console
+# se contente d'exécuter : ce qui part est lisible, et rejouable tel quel à la main.
+detacher() {
+  local lanceur="$RUN_DIR/lancer.sh" journal="$RUN_DIR/run.log" arg
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '# Lanceur du run %s, écrit par « run.sh --detach ». Rejouable tel quel.\n' "$RUN_ID"
+    printf 'cd %q || exit 1\n' "$RACINE"
+    # La fenêtre est bien un écran : le run doit y garder ses couleurs, que `tee` lui ferait perdre.
+    printf 'export MAESTRO_ORCHESTRATE_COULEUR=1\n'
+    printf 'bash %q' "$RACINE/scripts/orchestrate/run.sh"
+    for arg in "$@"; do printf ' %q' "$arg"; done
+    # `tee` garde la sortie lisible dans la fenêtre ET sur disque : une console qui se referme (ou
+    # qu'on ferme) ne doit pas emporter la seule trace de ce qui s'est passé.
+    printf ' 2>&1 | tee -a %q\n' "$journal"
+    printf 'code=${PIPESTATUS[0]}\n'
+    # Le journal, lui, se relit plus tard et souvent par un outil : on l'y décolore une fois, à la
+    # fin. Pendant le run il porte les codes, ce qu'un `tail -f` vers un terminal rend correctement.
+    printf 'sed -i '\''s/\\x1b\\[[0-9;]*m//g'\'' %q 2>/dev/null\n' "$journal"
+    printf 'printf "\\n--- run %s terminé (code %%s) ---\\n" "$code"\n' "$RUN_ID"
+    # Sans pause, la fenêtre se refermerait sur le résumé sans laisser le lire. Pas de pause quand
+    # l'entrée n'est pas un terminal : détaché sous Unix, le lanceur y resterait indéfiniment.
+    printf '[ -t 0 ] && { printf "Entrée pour fermer cette fenêtre. "; read -r _; }\n'
+    printf 'exit "$code"\n'
+  } >"$lanceur" || return 1
+  chmod +x "$lanceur" 2>/dev/null
+
+  # Couture de test (#173) : la commande reçoit le chemin du lanceur au lieu qu'une vraie console
+  # s'ouvre — c'est ce qui rend `--detach` vérifiable sans fenêtre ni quota.
+  if [ -n "${MAESTRO_ORCHESTRATE_SPAWN:-}" ]; then
+    "$MAESTRO_ORCHESTRATE_SPAWN" "$lanceur"
+    return $?
+  fi
+
+  case "$(uname -s 2>/dev/null)" in
+    MINGW* | MSYS* | CYGWIN*)
+      # `start` ouvre une console détenue par l'explorateur, pas par ce shell. Le premier argument
+      # est le TITRE de la fenêtre, pas la commande : l'omettre ferait passer le chemin de bash pour
+      # un titre. Et `//c`, pas `/c` — MSYS convertirait « /c » en chemin de fichier.
+      local bash_exe
+      bash_exe="$(cygpath -w "$(command -v bash)" 2>/dev/null)" || return 1
+      cmd //c start "Maestro - run $RUN_ID" "$bash_exe" "$lanceur"
+      ;;
+    *)
+      # Pas de fenêtre à ouvrir ici : « détaché » veut dire hors du groupe de processus courant, la
+      # sortie restant lisible dans run.log. `setsid` quand il existe, sinon `nohup`.
+      if command -v setsid >/dev/null 2>&1; then
+        setsid nohup bash "$lanceur" >/dev/null 2>&1 </dev/null &
+      else
+        nohup bash "$lanceur" >/dev/null 2>&1 </dev/null &
+      fi
+      ;;
+  esac
+}
+
+if [ "$DETACH" = 1 ]; then
+  args_enfant=()
+  saute_valeur=0
+  for a in ${ARGS_ORIG+"${ARGS_ORIG[@]}"}; do
+    if [ "$saute_valeur" = 1 ]; then saute_valeur=0; continue; fi
+    case "$a" in
+      --detach | --detache | --détaché) continue ;;
+      # Retiré ici, réimposé juste après : le lanceur doit porter le run-id une fois, pas deux.
+      --run-id) saute_valeur=1; continue ;;
+    esac
+    args_enfant+=("$a")
+  done
+  # Le run-id est imposé : sans lui, le run détaché en tirerait un autre de l'horodatage et on
+  # annoncerait un journal qui ne serait jamais écrit. Une valeur déjà passée par l'appelant est
+  # reprise telle quelle — c'est celle qui a servi à créer RUN_DIR.
+  args_enfant+=(--run-id "$RUN_ID")
+
+  if ! detacher ${args_enfant+"${args_enfant[@]}"}; then
+    printf 'run.sh : le lancement détaché a échoué — le run n'\''a pas démarré.\n' >&2
+    rm -rf "$RUN_DIR"
+    exit 1
+  fi
+
+  printf '\n%sRun %s lancé dans une console détachée.%s\n' "$C_B" "$RUN_ID" "$C_0"
+  printf '  journal    %s\n' "$RUN_DIR"
+  printf '  sortie     %s/run.log\n' "$RUN_DIR"
+  printf '  suivre     tail -f %s/run.log\n' "$RUN_DIR"
+  printf '  arrêter    touch %s\n' "$STOP"
+  printf '  reprendre  bash scripts/orchestrate/run.sh --plan %s/plan.tsv\n' "$RUN_DIR"
+  printf '\n%sCe que ce mode ne garantit pas%s : la console ne dépend plus de ce shell, mais rien\n' "$C_Y" "$C_0"
+  printf 'n'\''assure qu'\''elle survive à un parent qui enfermerait ses descendants (job object Windows).\n'
+  printf 'Si le run s'\''arrête avec lui, le plan reste : la commande « reprendre » le rejoue, les tickets\n'
+  printf 'déjà livrés étant sautés d'\''eux-mêmes.\n'
+  exit 0
+fi
 
 # --- Le plan, figé une fois --------------------------------------------------------------------------
 if [ -n "$PLAN_IMPOSE" ]; then
