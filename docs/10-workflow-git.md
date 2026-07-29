@@ -945,3 +945,120 @@ a pas de candidat et la clôture se poursuit). Les seuls refus durs restent ceux
 > [`test_setup.py`](../tests/test_setup.py) et [`test_worktree.py`](../tests/test_worktree.py) :
 > dépôt jetable, **ni réseau ni Docker ni compte GitLab** (un `glab` factice répond depuis une
 > fixture et journalise les appels), on teste la **décision** des scripts et non l'API.
+
+## 11. Traitement autonome du backlog — la boucle d'orchestration
+
+Traiter un ticket demande d'ordinaire une présence du début à la fin : ouvrir une session,
+`/ticket-start`, laisser faire, `/ticket-ship`, recommencer. Quand le backlog contient une suite de
+lots entièrement décrits, c'est du travail séquentiel qui n'attend qu'un pilote. La boucle
+d'orchestration (`scripts/orchestrate/`, parent #167) le déroule **sans supervision** : un ticket =
+**un worktree** = **une session Claude Code**, de `/ticket-start` à `/ticket-ship`, avec **reprise
+automatique** quand la limite d'usage de 5 h tombe au milieu.
+
+```bash
+bash scripts/orchestrate/queue.sh --check   # l'ordre de traitement, et ce qui a été écarté
+bash scripts/orchestrate/run.sh --dry-run   # le plan et ce qui serait fait — rien n'est lancé
+bash scripts/orchestrate/run.sh             # le run, dans un terminal laissé ouvert
+touch .maestro/orchestrate/STOP             # arrêt d'urgence
+```
+
+La commande [`/orchestrate`](../.claude/commands/orchestrate.md) prépare, explique et relit un run ;
+**le script en reste la source unique**.
+
+### 11.1 Pourquoi le pilote est un script shell
+
+Une boucle écrite en `/loop` ou en sous-agents consommerait le **même quota** que le travail
+piloté : la limite d'usage tuerait le pilote en même temps que la session pilotée, et plus rien ne
+pourrait programmer la reprise. Un script shell ne consomme aucun quota — il peut attendre et
+relancer. C'est la raison d'être de tout le découpage qui suit.
+
+Corollaire pratique : **un run se lance hors de Claude Code**, dans un terminal Git Bash laissé
+ouvert (il survit à la fermeture de Claude Code, pas à celle du terminal).
+
+### 11.2 L'ordre, figé une fois — `queue.sh`
+
+Le plan est calculé **au démarrage** et ne bouge plus : deux appels sur le même backlog rendent le
+même plan, et un run reste reproductible même si le backlog évolue pendant qu'il tourne.
+
+| Règle | Pourquoi |
+|---|---|
+| Seuls les tickets **« À faire » et non assignés** du **milestone courant** | un ticket assigné est le travail de quelqu'un (§5) ; un autre milestone n'est pas la phase en cours |
+| Les **parents de suivi sont écartés**, remplacés par leurs lots **dans l'ordre de la checklist** | un parent ne porte ni branche ni code (§5.1) ; c'est la checklist qui encode les dépendances |
+| Les lots d'un même parent restent **contigus**, le parent héritant de leur priorité maximale | s'intercaler ferait partir le lot suivant d'un `origin/main` qui a bougé pour rien |
+| Le reste trié par `prio::` puis iid croissant | pour que l'ordre soit reproductible |
+
+`--check` ajoute sur stderr le détail des **écartés avec leur raison** : sans lui, une absence est
+indistinguable d'un bug.
+
+### 11.3 Un ticket, une session — `run.sh`
+
+Pour chaque ticket : `scripts/git/worktree.sh <iid>` (§9) monte son répertoire de travail et ses
+ports, puis une session dédiée est lancée en mode `-p`, avec un `--session-id` fixe — la clé de la
+reprise.
+
+**Le verdict vient de GitLab, pas de la prose de la session.** Un ticket est réussi si, et seulement
+si, sa branche porte une **MR ouverte** *et* que son statut natif est **« En revue »** — exactement
+ce que `/ticket-ship` laisse derrière lui. Une session peut conclure « c'est fait » en s'étant
+trompée, ou échouer après avoir tout livré.
+
+**Sur échec**, le ticket est laissé en l'état et **les lots suivants du même parent sont sautés**
+(ils partiraient d'une base incomplète) ; les autres groupes s'enchaînent — une erreur à 2 h du
+matin ne doit pas geler le reste de la nuit. Un ticket **pris par quelqu'un d'autre** entre le calcul
+du plan et son tour est sauté, pas volé : son statut est relu juste avant de le prendre.
+
+Garde-fous : `--max <n>` (compte les tickets **tentés**, pour qu'une panne systématique n'épuise pas
+le plan), `--budget <usd>` par ticket, `--timeout <durée>` par ticket, et le fichier
+`.maestro/orchestrate/STOP`, pris en compte entre deux tickets **et pendant une attente**.
+
+Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<iid>.session`
+(l'UUID), `<iid>.json` (le résultat brut — coût, `permission_denials`), `<iid>.log`, et `resume.tsv`
+(une ligne par ticket : verdict, MR, durée, coût, raison).
+
+### 11.4 La limite d'usage est une pause, pas un échec
+
+Trois filets de détection, parce que la forme exacte du signal en mode `-p` n'est pas contractuelle
+(les marqueurs sont ceux du classifieur d'erreurs du CLI : `usage limit reached`, `rate limited`,
+`429`, `credit balance`) :
+
+1. **heure de reset explicite** — epoch, millisecondes ou ISO 8601 → attente jusqu'au reset + 2 min ;
+2. **le message sans heure de reset** → paliers de 15 min ;
+3. **rien de tout cela** → ce n'est pas une limite, c'est un échec ordinaire : aucune reprise.
+
+Un reset **déjà passé** retombe sur le palier, sinon la boucle relancerait aussitôt sur la même
+limite. La reprise se fait en **`--resume <uuid>`** : la conversation repart avec le travail déjà
+fait dans son contexte. Si la session est perdue, **redémarrage à froid** — le prompt et
+`/ticket-start` sont idempotents, et le travail commité est sur la branche.
+
+Au-delà de **5 h 30** d'attente cumulée sur un ticket, ce n'est plus une fenêtre de 5 h mais
+l'**hebdomadaire** : le run s'arrête proprement plutôt que de dormir des jours. `--max-reprises`
+(3 par défaut) borne les tentatives.
+
+`bash scripts/orchestrate/run.sh --test-reprise <fichier.json>` rejoue ce jugement sur une sortie de
+session capturée — c'est ce qui rend la reprise vérifiable **sans attendre de vraiment taper la
+limite**.
+
+### 11.5 Les garde-fous d'une session sans humain
+
+Deux couches, parce qu'une seule tomberait :
+
+- `scripts/orchestrate/settings.run.json`, passé au CLI par `--settings` avec
+  `--permission-mode acceptEdits` : il **conserve les règles `deny` du dépôt** (§6) — ce que
+  `--dangerously-skip-permissions` neutraliserait — et n'ajoute au `allow` que ce dont une session
+  de dev a besoin sans personne devant l'écran. Une commande hors liste n'est pas un blocage : elle
+  est refusée et **tracée dans `permission_denials`**, ce qui sert à compléter la liste plutôt qu'à
+  l'élargir à l'aveugle.
+- `scripts/orchestrate/guard.sh`, branché en hook **`PreToolUse`** : il refuse **en dur, quel que
+  soit le mode de permission**, force-push, `glab mr merge`/`close`, `glab ci delete`,
+  `git reset --hard`, `git commit --no-verify` et **tout commit sur `main`**.
+  `guard.sh --check` vérifie que la copie des `deny` n'a pas dérivé du dépôt **et** que le hook
+  refuse bien chacune d'elles — sans quoi la seconde couche donnerait une fausse sécurité.
+
+**Ce qu'un run ne fait jamais** : merger, fermer une MR, force-pusher, fermer un parent de suivi, ou
+retirer un worktree (la branche y vit jusqu'au merge — `scripts/git/worktree.sh remove <iid>` après,
+§9). Un run produit **N Merge Requests en Draft à relire** : le merge reste une décision humaine
+(§6), et la file de revue les remonte (§10).
+
+> **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) — même parti pris que le
+> reste : dépôt jetable, **ni réseau, ni quota, ni écriture GitLab**. Un `glab` factice répond
+> depuis des fixtures, `MAESTRO_CLAUDE_BIN` remplace le CLI et `MAESTRO_ORCHESTRATE_WORKTREE` le
+> montage de worktree, si bien qu'aucune branche ni aucune session réelles ne sont créées.

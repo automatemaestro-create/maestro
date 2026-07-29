@@ -336,9 +336,14 @@ def test_web_build_joue_sur_une_modification_non_commitee(clone: Clone) -> None:
     )
     acheve = clone.lance("--skip", "shellcheck,python-lint,pytest,mypy")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    assert "eslint + next build verts" in ligne_du_job(acheve.stdout, "web-build")
+    # Le libellé du job énumère les étapes jouées, et #124 y a intercalé vitest entre eslint et
+    # next build : on vise les deux bornes plutôt que la phrase entière, pour que l'ajout d'une
+    # étape ne casse plus un test qui porte, lui, sur le PÉRIMÈTRE (le travail non commité compte).
+    ligne = ligne_du_job(acheve.stdout, "web-build")
+    assert "eslint" in ligne and "next build verts" in ligne
     lances = [a for a in clone.appels() if a.startswith("npm ")]
     assert any("run lint" in a for a in lances)
+    assert any("test" in a for a in lances)
     assert any("run build" in a for a in lances)
 
 
