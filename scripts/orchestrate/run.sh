@@ -31,7 +31,8 @@
 # .maestro/orchestrate/<run-id>/
 #   plan.tsv          le plan figé au démarrage (sortie de queue.sh)
 #   <iid>.session     l'UUID de la session du ticket (clé de la reprise, #171)
-#   <iid>.json        le résultat brut de la session (coût, usage, permission_denials…)
+#   <iid>.jsonl       le flux d'activité de la session, un événement par ligne (#176)
+#   <iid>.json        le résultat FINAL de la session seul (coût, usage, permission_denials…)
 #   <iid>.log         ce que la session a écrit sur stderr
 #   resume.tsv        une ligne par ticket : iid, verdict, MR, durée, coût, raison
 #
@@ -283,6 +284,63 @@ patiente() {
   return 0
 }
 
+# --- Le flux d'activité d'une session (#176) ----------------------------------------------------------
+# `--output-format stream-json` fait émettre au CLI un objet JSON PAR LIGNE, au fil de l'eau, là où
+# `json` n'en écrivait qu'un seul À LA FIN : c'est ce qui permet à la console de dire ce que la
+# session fabrique, au lieu de rester muette jusqu'à 45 minutes sur un ticket.
+#
+# Le flux brut va dans `<iid>.jsonl`. `<iid>.json`, lui, ne reçoit QUE l'objet `result` final — le
+# verdict, le coût et la détection de limite d'usage le lisent, et `champ_json` prend la PREMIÈRE
+# occurrence d'une clé : y déverser tout le flux ferait rapporter le coût d'un événement
+# intermédiaire, une régression silencieuse. Repli sur la dernière ligne si aucun `result` n'est
+# passé — un CLI plus ancien, ou un bouchon de test qui n'émet qu'un objet.
+tronque() { # <texte> [largeur] : une ligne de progression ne doit jamais noyer la sortie.
+  local s="$1" n="${2:-64}"
+  if [ "${#s}" -gt "$n" ]; then printf '%s…' "${s:0:$n}"; else printf '%s' "$s"; fi
+}
+
+# imprime_outils <ligne> : une ligne « assistant » peut porter PLUSIEURS `tool_use` — on les découpe
+# sur leur marqueur plutôt que d'en montrer un seul. L'extraction est volontairement approximative
+# (grep, pas un parseur JSON) : c'est un fil d'activité, pas une donnée dont dépend un verdict.
+imprime_outils() {
+  local reste="$1" nom cible
+  while :; do
+    case "$reste" in
+      *'"type":"tool_use"'*) reste="${reste#*\"type\":\"tool_use\"}" ;;
+      *) break ;;
+    esac
+    nom="$(printf '%s' "$reste" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)"
+    [ -n "$nom" ] || continue
+    cible="$(printf '%s' "$reste" |
+      grep -o '"\(file_path\|command\|pattern\|path\|url\|description\)":"[^"]*"' |
+      head -1 | cut -d'"' -f4)"
+    # Les chemins absolus du worktree mangeraient la ligne pour ne rien apprendre à personne.
+    cible="${cible#"$RACINE/"}"
+    printf '  · %s%s\n' "$nom" "${cible:+ $(tronque "$cible")}"
+  done
+}
+
+formate_flux() { # <iid> : lit le flux sur stdin, l'archive, et en tire une ligne par action
+  local iid="$1" ligne resultat="" derniere=""
+  local jsonl="$RUN_DIR/$iid.jsonl"
+  : >"$jsonl"
+  : >"$RUN_DIR/$iid.json"
+  # `|| [ -n "$ligne" ]` : sans lui, un flux qui ne se termine pas par un saut de ligne perdrait sa
+  # DERNIÈRE ligne — c'est-à-dire l'objet `result`, donc le coût et le verdict.
+  while IFS= read -r ligne || [ -n "$ligne" ]; do
+    [ -n "$ligne" ] || continue
+    printf '%s\n' "$ligne" >>"$jsonl"
+    derniere="$ligne"
+    case "$ligne" in *'"type":"result"'*) resultat="$ligne" ;; esac
+    case "$ligne" in
+      *'"type":"assistant"'*'"type":"tool_use"'*) imprime_outils "$ligne" ;;
+    esac
+  done
+  [ -n "$resultat" ] || resultat="$derniere"
+  [ -n "$resultat" ] && printf '%s\n' "$resultat" >"$RUN_DIR/$iid.json"
+  return 0
+}
+
 # lance_session <iid> <dest> <uuid> <mode> : une session, neuve ou reprise. En reprise, `--resume`
 # rouvre la conversation interrompue — sans quoi la session repartirait de zéro et referait le
 # travail déjà payé. Si la reprise échoue (session perdue), on repart à froid sur un UUID neuf :
@@ -292,25 +350,27 @@ lance_session() {
   if [ "$mode" = "reprise" ]; then
     ( cd "$dest" && timeout "$TIMEOUT_S" "$CLAUDE_BIN" -p "$(prompt_reprise "$iid")" \
         --resume "$uuid" \
-        --output-format json \
+        --output-format stream-json --verbose \
         --permission-mode acceptEdits \
         --settings "$RACINE/scripts/orchestrate/settings.run.json" \
         --max-budget-usd "$BUDGET" \
-        --model "$MODELE" </dev/null ) >"$RUN_DIR/$iid.json" 2>"$RUN_DIR/$iid.log"
-    code=$?
+        --model "$MODELE" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
+    # Le code du CLI, pas celui du formateur : c'est lui qui dit si la session a abouti.
+    code=${PIPESTATUS[0]}
     [ "$code" -eq 0 ] && return 0
-    if limite_atteinte "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.log"; then return "$code"; fi
+    if limite_atteinte "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log"; then return "$code"; fi
     printf '  reprise de session impossible — redémarrage à froid (le travail déjà commité est sur la branche).\n'
     uuid="$(genere_uuid)"
     printf '%s' "$uuid" >"$RUN_DIR/$iid.session"
   fi
   ( cd "$dest" && timeout "$TIMEOUT_S" "$CLAUDE_BIN" -p "$(prompt_ticket "$iid")" \
       --session-id "$uuid" \
-      --output-format json \
+      --output-format stream-json --verbose \
       --permission-mode acceptEdits \
       --settings "$RACINE/scripts/orchestrate/settings.run.json" \
       --max-budget-usd "$BUDGET" \
-      --model "$MODELE" </dev/null ) >"$RUN_DIR/$iid.json" 2>"$RUN_DIR/$iid.log"
+      --model "$MODELE" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
+  return "${PIPESTATUS[0]}"
 }
 
 # --- Le prompt d'une session ------------------------------------------------------------------------
@@ -639,7 +699,7 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
 
     # Une limite d'usage n'est pas un échec du ticket : c'est une pause. On attend, puis on reprend
     # LA MÊME session — le travail déjà fait reste dans son contexte.
-    if ! delai="$(delai_avant_reprise "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.log")"; then
+    if ! delai="$(delai_avant_reprise "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log")"; then
       break
     fi
 
