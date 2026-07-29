@@ -626,6 +626,20 @@ def _masque(valeur: str) -> str:
     return valeur if _REFERENCE_ENV.search(valeur) else _VALEUR_MASQUEE
 
 
+def valide_serveur(serveur: ServeurMcp, *, source: str = "déclaration") -> ServeurMcp:
+    """La déclaration `serveur` telle quelle si elle est valide, sinon `ValueError`.
+
+    Le même contrôle que `McpStore.lire` applique à chaque serveur d'un fichier,
+    exposé pour les producteurs de déclarations hors dépôt (ex. le registre curé
+    #131, qui instancie un template en `ServeurMcp` et refuse une entrée mal
+    formée avec sa cause). `source` nomme l'origine dans les messages d'erreur
+    (un agent, une entrée de registre) à la place du fichier d'un agent ; la mise
+    en forme `(…)` attendue par `_valide` est posée ici, pour que l'appelant n'ait
+    à donner qu'un libellé.
+    """
+    return _valide(serveur, contexte=f"({source})")
+
+
 def _doublons(noms: Any) -> list[str]:
     """Les valeurs apparaissant plus d'une fois dans `noms`, triées (vide si aucune)."""
     vus = list(noms)
