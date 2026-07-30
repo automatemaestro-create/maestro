@@ -91,8 +91,9 @@ lire du code ou relire une MR pendant que le ticket avance à côté ([docs/10 �
 ```
 
 commite ce qui est en attente, pousse, ouvre la Merge Request (`Closes #<iid>`, checklist
-renseignée), pose un relecteur, passe le ticket « En revue » et loggue le temps. Si le commit est
-déjà fait, `/ticket-finish` fait la même chose sans l'étape de commit.
+renseignée), passe le ticket « En revue » et loggue le temps. Aucun relecteur n'est désigné au
+passage — voir §5. Si le commit est déjà fait, `/ticket-finish` fait la même chose sans l'étape de
+commit.
 
 Ces commandes sont la **source unique** de la clôture : ne rejouez pas `git push` +
 `glab mr create` à la main.
@@ -111,9 +112,11 @@ git fetch origin main && git rebase origin/main
 
 ## 5. Qui relit, qui merge
 
-- **La revue est best-effort** : un relecteur est posé automatiquement (un humain ≠ l'auteur) et la
-  file de revue s'affiche dans `/backlog`, mais l'approbation **n'est pas bloquante**. Personne
-  n'attend l'autre pour avancer.
+- **La revue est best-effort** : personne n'est désigné d'office relecteur — c'est la **file de
+  revue** de `/backlog` (les MR ouvertes, la plus ancienne d'abord) qui appelle une relecture, et
+  l'approbation **n'est pas bloquante**. Personne n'attend l'autre pour avancer. Pour vous attribuer
+  une MR — ou en confier une à quelqu'un — la pose se fait à la main :
+  `bash scripts/gitlab/lib.sh set-reviewer <mr|branche> [username]`.
 - **Le merge est toujours une décision humaine** — jamais un agent, jamais automatique. La
   condition technique est un **pipeline vert**.
 - **Pipeline rouge ?** `/pipeline-fix` diagnostique et corrige ce qui l'est en local.
