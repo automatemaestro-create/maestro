@@ -1050,6 +1050,24 @@ si, sa branche porte une **MR ouverte** *et* que son statut natif est **« En re
 ce que `/ticket-ship` laisse derrière lui. Une session peut conclure « c'est fait » en s'étant
 trompée, ou échouer après avoir tout livré.
 
+**Une session qui croit faire une pause termine le ticket (#178).** En mode `-p`, **la fin du tour
+est la fin du processus** : une session qui rend la main sur « j'attends la fin du run de couverture,
+je poursuivrai dès le verdict » ne sera jamais réveillée. Le CLI sort en `end_turn` / `success` /
+**code 0**, indiscernable d'une session qui a réellement fini. C'est le mode d'échec le plus coûteux
+observé sur le premier run réel — il ne perd pas un ticket, il perd **la file derrière lui** (1
+livré, 1 échec, 3 lots sautés). Deux réponses :
+
+- **le prompt** interdit désormais d'attendre un **résultat** autant qu'une **validation** : un
+  résultat manquant s'obtient **en avant-plan**, sinon on tranche sans lui en le disant, sinon on
+  sort sur `ORCHESTRATE: ECHEC`. Sa consigne de reprise couvre aussi le **travail non commité** —
+  un arbre sale sans aucun commit est précisément la trace qu'une session perdue laisse, et la
+  version précédente, qui ne parlait que de commits, ne la déclenchait pas ;
+- **la boucle regarde le worktree** avant de consigner l'échec, et distingue deux situations que
+  « MR "aucune", statut "À faire" » confondait : `session terminée sans clôture, 5 fichier(s) non
+  commité(s)` (rattrapable — le travail est là, la console dit où) contre `session terminée sans
+  rien produire (worktree propre)` (à refaire). Les commits d'avance sur `origin/main` comptent au
+  même titre : une session peut s'être arrêtée juste avant `/ticket-ship`.
+
 **Sur échec**, le ticket est laissé en l'état et **les lots suivants du même parent sont sautés**
 (ils partiraient d'une base incomplète) ; les autres groupes s'enchaînent — une erreur à 2 h du
 matin ne doit pas geler le reste de la nuit. Un ticket **pris par quelqu'un d'autre** entre le calcul

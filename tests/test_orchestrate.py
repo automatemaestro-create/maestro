@@ -1255,3 +1255,131 @@ def test_l_activite_suit_le_worktree_et_pas_seulement_le_journal(depot: Depot) -
     assert ailleurs.returncode == 0, ailleurs.stderr
     assert "en cours ?" not in ailleurs.stdout
     assert ailleurs.stdout.count("commits") == r.stdout.count("commits")
+
+
+# =====================================================================================
+# Une session qui rend la main sans verdict (#178)
+# =====================================================================================
+# Le mode d'échec le plus coûteux du premier run réel : la session croit faire une pause
+# (« j'attends la fin du run de couverture »), or en `claude -p` la fin du tour est la fin du
+# processus. Le CLI sort en `end_turn` / `success` / code 0 — indiscernable d'une session qui a
+# fini — et le ticket reste « À faire », son travail non commité dans le worktree.
+#
+# Les tests reprennent `_init_git` : distinguer « a produit sans clore » de « n'a rien produit »
+# se lit dans un vrai dépôt git, pas dans un dossier quelconque. Toujours sans quota ni réseau :
+# le bouchon `claude` joue la sortie en code 0 sans MR, et écrit (ou non) dans le worktree.
+
+def _stub_sans_cloture(depot: Depot, corps: str = "") -> str:
+    """Un `claude` qui sort comme un succès sans avoir rien clos — le cas du run 20260729-132807."""
+    return _claude_stub(depot, textwrap.dedent(corps) + """
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":6.04,'
+        printf '"result":"Je poursuivrai avec /ticket-ship des le verdict connu."}\\n'
+        exit 0
+    """)
+
+
+@besoin_git
+def test_une_session_qui_croit_faire_une_pause_dit_le_travail_laisse_dans_le_worktree(
+    depot: Depot,
+) -> None:
+    depot.ticket(130, "Ticket a traiter")
+    # Le plan d'abord : écrit dans le dépôt jetable, il doit être commité par `_init_git` pour ne
+    # pas compter comme du travail de la session.
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    _init_git(depot, "feat/130-ticket-a-traiter")
+    claude = _stub_sans_cloture(depot, """
+        for f in un deux trois quatre cinq; do printf 'travail\\n' > "$f.txt"; done
+    """)
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "pause",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+
+    assert r.returncode == 1, "sans MR ni « En revue », c'est un échec : le code 0 ne dit rien"
+    resume = (depot.racine / ".maestro/orchestrate/pause/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tECHEC" in resume
+    assert "session terminée sans clôture, 5 fichier(s) non commité(s)" in resume, (
+        "la raison consignée doit être exploitable, pas seulement « MR aucune, statut À faire »"
+    )
+    assert "MR « aucune »" in resume, "le verdict GitLab reste dit, il n'est pas remplacé"
+    assert "le travail est conservé dans" in r.stdout, "la console dit où le retrouver"
+
+
+@besoin_git
+def test_une_session_qui_n_a_rien_laisse_est_dite_telle_quelle(depot: Depot) -> None:
+    """L'autre moitié de la distinction : un worktree propre est à refaire, pas à reprendre."""
+    depot.ticket(130, "Ticket a traiter")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    _init_git(depot, "feat/130-ticket-a-traiter")
+    claude = _stub_sans_cloture(depot)
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "vide",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+
+    assert r.returncode == 1
+    resume = (depot.racine / ".maestro/orchestrate/vide/resume.tsv").read_text(encoding="utf-8")
+    assert "session terminée sans rien produire (worktree propre)" in resume
+    assert "non commité" not in resume
+    assert "le travail est conservé dans" not in r.stdout, "il n'y a rien à conserver"
+
+
+@besoin_git
+def test_un_travail_commite_mais_non_clos_compte_aussi_comme_du_travail_en_attente(
+    depot: Depot,
+) -> None:
+    """Une session peut avoir tout commité et s'être arrêtée juste avant `/ticket-ship`."""
+    depot.ticket(130, "Ticket a traiter")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    _init_git(depot, "feat/130-ticket-a-traiter")
+    claude = _stub_sans_cloture(depot, """
+        printf 'le travail\\n' > livrable.txt
+        git add livrable.txt >/dev/null 2>&1
+        git -c core.hooksPath= commit --quiet -m 'feat: livrable' >/dev/null 2>&1
+    """)
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "commite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+
+    assert r.returncode == 1
+    resume = (depot.racine / ".maestro/orchestrate/commite/resume.tsv").read_text(encoding="utf-8")
+    assert "session terminée sans clôture, 1 commit(s) sur la branche" in resume
+    assert "le travail est conservé dans" in r.stdout
+
+
+def test_le_prompt_interdit_d_attendre_un_resultat_et_couvre_le_travail_non_commite(
+    depot: Depot,
+) -> None:
+    """Les deux causes du run perdu : le prompt ne parlait que de *validation*, et sa consigne de
+    reprise ne couvrait que les *commits* — pas l'arbre sale qu'une session interrompue laisse."""
+    depot.ticket(130, "Ticket a traiter")
+    claude = _claude_stub(depot, """
+        # `-p` est le premier argument : le prompt est le second.
+        printf '%s' "$2" > "$MAESTRO_FIXTURES/prompt.txt"
+        printf '{"type":"result","subtype":"success","is_error":false}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "prompt",
+                env={"MAESTRO_CLAUDE_BIN": claude})
+
+    prompt = (depot.fixtures / "prompt.txt").read_text(encoding="utf-8")
+    assert "N'attends AUCUN RÉSULTAT" in prompt
+    assert "ORCHESTRATE: ECHEC" in prompt, "la sortie franche reste la troisième issue"
+    assert "modifications non commitées" in prompt, (
+        "un arbre sale sans commit est la trace d'une session perdue : elle doit la reprendre"
+    )
+
+
+def test_le_prompt_de_reprise_porte_la_meme_interdiction(depot: Depot) -> None:
+    depot.ticket(130, "Ticket interrompu")
+    claude = _claude_stub(depot, """
+        if printf '%s\\n' "$@" | grep -q -- '--resume'; then
+          printf '%s' "$2" > "$MAESTRO_FIXTURES/prompt-reprise.txt"
+          printf '{"is_error":false,"subtype":"success","total_cost_usd":2}\\n'; exit 0
+        fi
+        printf '{"is_error":true,"result":"Claude AI usage limit reached"}\\n'
+        exit 1
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "prompt-reprise",
+                env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "1"})
+
+    prompt = (depot.fixtures / "prompt-reprise.txt").read_text(encoding="utf-8")
+    assert "aucun résultat différé" in prompt
+    assert "ORCHESTRATE: ECHEC" in prompt
