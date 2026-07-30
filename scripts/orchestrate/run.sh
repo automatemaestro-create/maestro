@@ -654,6 +654,12 @@ fi
 
 printf '# iid\tverdict\tmr\tduree_s\tcout_usd\traison\n' >"$RESUME"
 
+# Ramassage des worktrees soldés avant de commencer (#197). C'est ici que l'accumulation fait le plus
+# mal : un worktree pèse ~535 Mo et ce run va en monter un par ticket, sans personne devant pour
+# faire le ménage. Best-effort et muet quand il n'y a rien à retirer ; un ramassage impossible (glab
+# hors ligne) ne doit pas empêcher un run de partir.
+bash "$RACINE/scripts/git/worktree.sh" gc --auto </dev/null || true
+
 # --- La boucle ----------------------------------------------------------------------------------------
 NB_OK=0
 NB_ECHEC=0
@@ -833,8 +839,11 @@ if [ "$PLAFOND_ATTEINT" = 1 ]; then
   printf '  Relancer plus tard reprendra là où on en est : bash scripts/orchestrate/run.sh\n'
 fi
 if [ -n "$WORKTREES" ]; then
-  printf '\n  Worktrees montés — à retirer APRÈS le merge de leur MR (jamais avant : la branche y vit) :\n'
-  for i in $WORKTREES; do printf '    bash scripts/git/worktree.sh remove %s\n' "$i"; done
+  # Rien à faire : le ramassage (#197) les retirera de lui-même dès que GitLab confirmera leur MR
+  # mergée — au prochain /ticket-start, au prochain /branch-cleanup ou au prochain run. On les liste
+  # quand même : c'est là que dort le travail si une session a échoué sans clôturer.
+  printf '\n  Worktrees montés (retirés d'\''office quand leur MR sera mergée — docs/10 §9.2) :\n'
+  for i in $WORKTREES; do printf '    #%s\n' "$i"; done
 fi
 printf '\n  Le merge reste une décision humaine : ce run n'\''a rien mergé ni fermé.\n'
 printf '  File de revue : bash scripts/gitlab/lib.sh review-queue\n\n'

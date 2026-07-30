@@ -82,6 +82,12 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    - **échec** (branche déjà empruntée par un autre worktree, ticket sans label `type::`) →
      arrête-toi et rapporte le message, qui nomme la cause.
 
+   Au passage, `ensure` **ramasse les worktrees dont le travail est soldé** (MR mergée ou ticket
+   fermé, confirmé par `glab` — #197, docs/10 §9.2), comme `start-branch` purge les branches
+   mergées à l'étape suivante. Muet quand il n'y a rien à faire ; s'il **signale** un worktree
+   conservé parce qu'il porte du travail non sauvegardé, relaie-le dans ton résumé — c'est du
+   travail que personne n'attend plus là.
+
    ⚠ La relocalisation déplace le répertoire de travail, **pas le bloc `env`** : une session
    relocalisée garde les ports Control Tower et le profil de navigateur du clone principal
    (mesuré sur #181 — `EnterWorktree` ne réévalue que les caches liés au CWD). `ensure` affiche

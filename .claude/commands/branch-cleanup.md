@@ -3,7 +3,8 @@ description: Nettoie les branches de tickets déjà mergées et revient sur main
 allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
 
-Nettoie les branches **locales** de tickets déjà mergés et remet `main` à jour. Ne supprime
+Nettoie les branches **locales** de tickets déjà mergés, **ramasse les worktrees devenus inutiles**
+et remet `main` à jour. Ne supprime
 **jamais** une branche dont le statut de merge n'est pas confirmé par GitLab (garde-fou détaillé
 dans `docs/10-workflow-git.md` §6, non chargé automatiquement — à n'ouvrir qu'en cas de doute ;
 cette commande est autosuffisante).
@@ -30,11 +31,22 @@ cette commande est autosuffisante).
 
 > **Dans un worktree** (`git worktree`, docs/10 §9) : ne bascule pas sur `main` — il est emprunté
 > par le clone principal et `git checkout main` y échoue. Le nettoyage se réduit alors à la
-> suppression des branches mergées (étape 4, dernier point) ; la fin de vie du worktree lui-même
-> passe par `bash scripts/git/worktree.sh remove <iid>`, à lancer depuis le clone principal une
-> fois la MR mergée. Repère : à la racine d'un worktree, `.git` est un fichier, pas un dossier.
+> suppression des branches mergées (étape 4, dernier point). Repère : à la racine d'un worktree,
+> `.git` est un fichier, pas un dossier.
 
-4. S'il y a des candidates :
+4. **Avant de supprimer quoi que ce soit**, ramasse les worktrees dont le travail est soldé :
+   ```
+   bash scripts/git/worktree.sh gc
+   ```
+   Cet ordre n'est pas cosmétique : `git branch -D` **refuse** une branche empruntée par un
+   worktree (« checked out at … »), donc sans ce passage les candidates de l'étape 3 resteraient
+   là sans que rien ne le dise. `gc` retire uniquement les worktrees dont `glab` confirme la MR
+   mergée ou le ticket fermé, **jamais** celui de la session courante ni un worktree porteur de
+   travail non sauvegardé — qu'il signale au lieu de le supprimer (docs/10 §9.2). Il ne supprime
+   aucune branche : c'est l'étape suivante qui s'en charge. Relaie ses éventuelles alertes dans
+   ton résumé final, et `--check` d'abord si tu veux voir avant d'agir.
+
+5. S'il y a des candidates :
    - si l'une d'elles est la branche courante, bascule d'abord dessus vers `main` ;
    - `git checkout main && git pull origin main` ;
    - pour chaque candidate : `git branch -D <branche>`. Le `-D` (forcé) est **sûr ici** parce que
@@ -49,8 +61,9 @@ cette commande est autosuffisante).
    - le **statut** du ticket est déjà `Terminé` (posé automatiquement à la fermeture par le
      merge) — rien à faire ; tu peux le vérifier si besoin, mais ne le repose pas.
 
-5. Si aucune candidate n'est trouvée, contente-toi de remettre `main` à jour
+6. Si aucune candidate n'est trouvée, contente-toi de remettre `main` à jour
    (`git checkout main && git pull origin main`) et dis-le.
 
-6. Termine par un résumé des branches supprimées (locale/distante) et de celles laissées de
-   côté avec la raison (pas de MR, MR pas encore mergée).
+7. Termine par un résumé des branches supprimées (locale/distante) et de celles laissées de
+   côté avec la raison (pas de MR, MR pas encore mergée), suivi des **worktrees retirés** à
+   l'étape 4 et de ceux que `gc` a conservés en signalant du travail non sauvegardé.

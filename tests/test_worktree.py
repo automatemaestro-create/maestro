@@ -56,6 +56,7 @@ class Depot:
     worktrees: Path
     home: Path
     fauxbin: Path
+    verdicts: dict[str, str] | None = None
 
     # --- exécution ---
     def lance(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -74,6 +75,13 @@ class Depot:
             environnement.pop(cle, None)
         environnement["HOME"] = str(self.home)
         environnement["MAESTRO_WORKTREE_DIR"] = str(self.worktrees)
+        # Ramassage des worktrees (#197) : désactivé par défaut dans les tests de création — il
+        # interrogerait GitLab, absent d'ici. Les tests du ramassage le rallument avec un verdict
+        # imposé (`impose_verdicts`), seule couture par laquelle ils disent ce qui est « soldé ».
+        environnement["MAESTRO_WORKTREE_GC"] = "0"
+        if self.verdicts is not None:
+            environnement.pop("MAESTRO_WORKTREE_GC")
+            environnement["MAESTRO_WORKTREE_VERDICT"] = str(self.fauxbin / "verdict")
         environnement["PATH"] = os.pathsep.join(
             [str(self.fauxbin), environnement.get("PATH", "")]
         )
@@ -103,6 +111,31 @@ class Depot:
             check=True,
         )
         return acheve.stdout.strip()
+
+    # --- couture du ramassage (#197) ---
+    def impose_verdicts(self, verdicts: dict[str, str]) -> None:
+        """Impose la réponse de `lib.sh worktree-done` pour chaque iid — et rallume le ramassage.
+
+        Valeur : la ligne de verdict telle que `gc` la lit, en TSV —
+        « <fini|actif|inconnu><TAB><sha de merge><TAB><raison> ». Un iid absent de la table rend une
+        ligne vide, ce que `gc` doit traiter comme « je ne sais pas », donc « je n'y touche pas ».
+        """
+        self.verdicts = dict(verdicts)
+        table = self.fauxbin / "verdicts.tsv"
+        table.write_text(
+            "".join(f"{iid}\t{ligne}\n" for iid, ligne in self.verdicts.items()),
+            encoding="utf-8",
+            newline="\n",
+        )
+        shim = self.fauxbin / "verdict"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            f"awk -F'\\t' -v iid=\"$1\" 'iid == $1 {{ print $2 \"\\t\" $3 \"\\t\" $4; exit }}'"
+            f' "{str(table).replace(chr(92), "/")}"\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        shim.chmod(0o755)
 
     # --- raccourcis ---
     def worktree(self, nom: str = "152-essai") -> Path:
@@ -478,3 +511,244 @@ def test_ensure_refuse_un_iid_non_numerique(depot: Depot) -> None:
     acheve = depot.lance("ensure", "chore/152", "--branche", BRANCHE)
     assert acheve.returncode == 2
     assert "IID de ticket attendu" in acheve.stderr
+
+
+# --- Ramassage `gc` (#197) -------------------------------------------------------------------
+# Un worktree pèse ~535 Mo et #181 en a fait la voie par défaut : sans ramassage, ils s'accumulent
+# (9 worktrees soldés constatés le 2026-07-30, ~4,8 Go). `gc` les retire — mais rien n'est plus
+# cher qu'un ramassage trop zélé : les tests ci-dessous portent d'abord sur ses REFUS.
+#
+# La question « ce travail est-il soldé ? » est posée à GitLab via `lib.sh worktree-done`, remplacé
+# ici par `Depot.impose_verdicts` : ni réseau, ni glab, ni écriture GitLab.
+
+
+def _verdict_ligne(verdict: str, raison: str, sha: str = "-") -> str:
+    """La ligne TSV que rend `lib.sh worktree-done` : « <verdict><TAB><sha><TAB><raison> ».
+
+    Le sha vaut « - » quand il n'y en a pas — un champ VIDE serait avalé côté shell, où la
+    tabulation est un séparateur blanc (deux d'affilée comptent pour une), et la raison prendrait
+    la place du sha.
+    """
+    return f"{verdict}\t{sha}\t{raison}"
+
+
+def _commit_local(depot: Depot, wt: Path, texte: str) -> str:
+    """Commite dans le worktree SANS pousser, et rend le sha obtenu."""
+    (wt / "travail.txt").write_text(texte, encoding="utf-8", newline="\n")
+    depot.git("add", "-A", cwd=wt)
+    depot.git("-c", "core.hooksPath=", "commit", "--quiet", "-m", "chore: travail", cwd=wt)
+    return depot.git("rev-parse", "HEAD", cwd=wt)
+
+
+def test_gc_retire_un_worktree_dont_la_mr_est_mergee(depot: Depot) -> None:
+    """Le cas nominal — et la branche, elle, survit : sa suppression reste à /branch-cleanup."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout
+    assert "MR !42 mergée" in acheve.stdout
+    assert not depot.worktree().exists()
+    assert BRANCHE in depot.git("branch", "--list", BRANCHE)
+    # Le clone principal n'est ni retiré, ni amputé de ses artefacts partagés (jonctions, #152).
+    assert (depot.racine / ".git").is_dir()
+    for lourd in (".venv", ".tools", "apps/web/node_modules"):
+        assert (depot.racine / lourd / "marqueur.txt").read_text(encoding="utf-8") == lourd
+
+
+def test_gc_ne_touche_pas_un_worktree_actif(depot: Depot) -> None:
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket #152 « open » (MR « aucune »)")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 conservé" in acheve.stdout
+    assert depot.worktree().exists()
+
+
+def test_gc_ne_deduit_jamais_le_merge_du_nom_de_la_branche(depot: Depot) -> None:
+    """Verdict « inconnu » (glab absent, hors ligne, ticket illisible) : on ne touche à rien.
+
+    Ne rien savoir n'autorise rien — même garde-fou que `cleanup-merged` sur les branches
+    (docs/10 §6) : `chore/152-…` a tout l'air d'un ticket clos, ce n'est pas une preuve.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("inconnu", "glab indisponible")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert depot.worktree().exists()
+    assert "0 retiré(s)" in acheve.stdout
+
+
+def test_gc_sans_verdict_du_tout_ne_retire_rien(depot: Depot) -> None:
+    """Même exigence, cas dégradé : une réponse vide n'est pas un feu vert."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert depot.worktree().exists()
+
+
+def test_gc_refuse_et_signale_un_travail_non_commite(depot: Depot) -> None:
+    """Le ticket est soldé côté GitLab, mais le worktree porte des fichiers non commités.
+
+    Mieux vaut 535 Mo de trop qu'un fichier perdu : on garde, et on le DIT (le silence serait le
+    vrai défaut — personne ne va inspecter un worktree qu'il croit ramassé).
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    (depot.worktree() / "README.md").write_text("modifié", encoding="utf-8", newline="\n")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "non commité" in acheve.stdout
+    assert depot.worktree().exists()
+    # Rien n'a été délié au passage : le worktree reste utilisable tel quel.
+    assert (depot.worktree() / ".venv" / "marqueur.txt").is_file()
+
+
+def test_gc_refuse_et_signale_des_commits_non_pousses(depot: Depot) -> None:
+    """Un commit qui n'est jamais parti vers `origin` n'existe que là : il n'est pas jetable."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _commit_local(depot, depot.worktree(), "jamais poussé")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "ticket #152 fermé (MR « aucune »)")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "non poussé" in acheve.stdout
+    assert depot.worktree().exists()
+
+
+def test_gc_retire_malgre_le_squash_grace_au_sha_de_merge(depot: Depot) -> None:
+    """Le piège qui rendrait `gc` inutile : le projet merge en **squash**.
+
+    Les commits de la branche ne sont donc jamais des ancêtres de `main`, et GitLab supprime la
+    branche distante au merge : `origin/main..HEAD` compte le travail de TOUT worktree mergé, et un
+    ramassage naïf refuserait chaque candidat. Le sha rendu par `worktree-done` (tête de la branche
+    source au moment du merge) est la référence qui tranche.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    sha = _commit_local(depot, depot.worktree(), "mergé en squash")
+    assert depot.git("rev-list", "--count", "origin/main..HEAD", cwd=depot.worktree()) == "1"
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée", sha)})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout
+    assert not depot.worktree().exists()
+
+
+def test_gc_retire_une_branche_recreee_depuis_main_apres_son_merge(depot: Depot) -> None:
+    """Le sha de merge a divergé, mais tout ce que porte le worktree est déjà sur `origin/main`.
+
+    Cas concret : le ticket est clos, sa branche a été supprimée puis re-créée depuis `main` (un
+    `/ticket-start` de trop, un worktree remonté). Comparer au sha de merge compterait alors comme
+    « non poussés » des commits qui sont sur `main` — d'où la question posée en premier : HEAD
+    est-il un ancêtre d'`origin/main` ?
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    wt = depot.worktree()
+    sha = _commit_local(depot, wt, "parti au merge, sur une ligne qui a divergé")
+
+    # `main` avance de son côté (le squash du travail, puis la suite) et le worktree repart de là.
+    (depot.racine / "README.md").write_text("suite", encoding="utf-8", newline="\n")
+    depot.git("add", "-A")
+    depot.git("-c", "core.hooksPath=", "commit", "--quiet", "-m", "chore: suite")
+    depot.git("push", "--quiet", "origin", "main")
+    depot.git("fetch", "--quiet", "origin", cwd=wt)
+    depot.git("reset", "--hard", "--quiet", "origin/main", cwd=wt)
+    assert depot.git("rev-list", "--count", f"{sha}..HEAD", cwd=wt) != "0", (
+        "le sha de merge doit bien avoir divergé, sinon le test ne prouve rien"
+    )
+
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée", sha)})
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout
+    assert not depot.worktree().exists()
+
+
+def test_gc_signale_un_commit_posterieur_au_merge(depot: Depot) -> None:
+    """Symétrique du précédent : ce qui a été commité APRÈS le merge n'est nulle part ailleurs."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    sha = _commit_local(depot, depot.worktree(), "mergé en squash")
+    _commit_local(depot, depot.worktree(), "ajouté après le merge")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée", sha)})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "1 commit(s) non poussé(s)" in acheve.stdout
+    assert depot.worktree().exists()
+
+
+def test_gc_ne_retire_jamais_le_worktree_de_la_session_courante(depot: Depot) -> None:
+    """On ne se retire pas le sol sous les pieds — même quand GitLab dit que c'est soldé.
+
+    Cas réel : `/ticket-ship` merge plus tard, mais la session tourne encore dans ce worktree ;
+    et un `gc` lancé depuis un worktree ne doit pas se saborder.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+
+    acheve = depot.lance("gc", cwd=depot.worktree())
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "session courante" in acheve.stdout
+    assert depot.worktree().exists()
+
+
+def test_gc_check_ne_retire_rien(depot: Depot) -> None:
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+
+    acheve = depot.lance("gc", "--check")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 à retirer" in acheve.stdout
+    assert "rien n'a été touché" in acheve.stdout
+    assert depot.worktree().exists()
+
+
+def test_gc_auto_est_muet_quand_il_n_y_a_rien_a_dire(depot: Depot) -> None:
+    """Le mode câblé dans `ensure` : il ne s'annonce que s'il agit ou s'il alerte.
+
+    Sans quoi chaque `/ticket-start` s'ouvrirait sur un inventaire dont personne n'a besoin.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket #152 « open » (MR « aucune »)")})
+
+    acheve = depot.lance("gc", "--auto")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert acheve.stdout.strip() == "", acheve.stdout
+
+
+def test_gc_ignore_une_branche_hors_convention(depot: Depot) -> None:
+    """Sans iid dans le nom, aucun ticket à interroger — donc aucune décision à prendre."""
+    depot.lance("create", "152", "--branche", "experimentation")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "hors convention" in acheve.stdout
+    assert depot.worktree("experimentation").exists()
+
+
+def test_ensure_ramasse_les_worktrees_soldes_avant_de_monter_le_sien(depot: Depot) -> None:
+    """Le câblage qui fait tout le ticket : plus aucun geste dédié à se rappeler (#197).
+
+    `/ticket-start` appelle `ensure` — c'est le seul moment où quelqu'un passe forcément par ici.
+    Et le verdict doit rester la DERNIÈRE ligne de stdout : le rapport de ramassage ne casse pas
+    le contrat de sortie sur lequel /ticket-start s'appuie (#181).
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+
+    acheve = depot.lance("ensure", "153", "--branche", "chore/153-suite")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert "#152 retiré" in acheve.stdout
+    assert not depot.worktree().exists(), "le worktree soldé devait être ramassé au passage"
+    verdict = _verdict(acheve)
+    assert verdict.startswith("WORKTREE ")
+    assert Path(verdict[len("WORKTREE ") :]).resolve() == depot.worktree("153-suite").resolve()
