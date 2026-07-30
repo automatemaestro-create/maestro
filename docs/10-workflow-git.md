@@ -1335,6 +1335,20 @@ limite. La reprise se fait en **`--resume <uuid>`** : la conversation repart ave
 fait dans son contexte. Si la session est perdue, **redémarrage à froid** — le prompt et
 `/ticket-start` sont idempotents, et le travail commité est sur la branche.
 
+Deux garde-fous encadrent ces filets, tous deux payés par un faux positif (#203) qui a endormi un
+run **après** un ticket livré, sans que son verdict GitLab soit jamais lu :
+
+- **Une session sortie en 0 n'est jamais une pause.** Elle est allée au bout de son tour : rien ne
+  l'a coupée, il n'y a rien à reprendre, on passe droit au verdict. La détection ne se consulte que
+  sur une session en **échec**.
+- **La télémétrie du flux n'est pas un refus.** Le CLI ouvre *chaque* session par un
+  `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":…}}` qui rapporte la
+  fenêtre de 5 h en cours — présent que la limite soit atteinte ou non. Depuis que le flux brut est
+  écrit dans `<iid>.jsonl` (§11.3) et grepé au même titre que le résultat, il faisait matcher
+  `rate limited` et livrait son `resetsAt` comme heure d'attente. Ces lignes sont donc **écartées
+  avant toute recherche**, sauf celles qui portent un vrai refus (`"status":"rejected"` — à ne pas
+  confondre avec `"overageStatus":"rejected"`, une autre clé du même objet).
+
 Au-delà de **5 h 30** d'attente cumulée sur un ticket, ce n'est plus une fenêtre de 5 h mais
 l'**hebdomadaire** : le run s'arrête proprement plutôt que de dormir des jours. `--max-reprises`
 (3 par défaut) borne les tentatives.
