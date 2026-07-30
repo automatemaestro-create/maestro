@@ -1147,12 +1147,14 @@ gl_pipeline_wait() {
   done
 }
 
-# --- Revue best-effort : relecteur désigné + file de revue ---------------------------------------
+# --- Revue best-effort : file de revue + relecteur posé à la main --------------------------------
 # Arbitrage du chantier « travail à plusieurs » (#155/#161) : l'approbation n'est PAS rendue
 # obligatoire (`approvals_before_merge` reste à 0 — une approbation bloquante recréerait une
 # dépendance entre personnes et le merge reste une décision humaine, §6). Ce qui est outillé, c'est
-# la VISIBILITÉ : chaque MR porte un relecteur désigné (gl_set_reviewer, posé par /ticket-finish) et
-# la file d'attente est affichée en tête de /backlog (gl_review_queue).
+# la VISIBILITÉ : la file d'attente est affichée en tête de /backlog (gl_review_queue), la plus
+# ancienne d'abord. La pose d'un relecteur (gl_set_reviewer) reste OUTILLÉE mais n'est plus
+# AUTOMATIQUE : depuis #196, /ticket-finish ne l'appelle plus — désigner un relecteur est un geste
+# humain explicite, la file de revue portant seule le signal « cette MR attend quelqu'un ».
 
 # gl_project_humans [access-min] -> membres HUMAINS du projet éligibles à une revue, une ligne TSV
 # par membre : username <TAB> access_level, triés par username (ordre stable, d'où la reproductibilité
@@ -1246,6 +1248,8 @@ gl_mr_reviewers() {
 
 # gl_set_reviewer [mr|branche] [username] -> pose un relecteur humain sur la MR (défaut : la MR
 # ouverte de la branche courante ; relecteur choisi par gl_pick_reviewer, graine = iid de la MR).
+# APPEL EXPLICITE UNIQUEMENT (#196) : aucune commande du workflow ne l'invoque — /ticket-finish ne
+# pose plus de relecteur d'office, la désignation étant un geste humain.
 # IDEMPOTENT et non destructif : si un relecteur est DÉJÀ posé (par un humain ou par un passage
 # précédent), il est conservé tel quel — la fonction ne remplace jamais. Refuse de désigner l'auteur.
 # Best-effort par nature : sur un projet à une seule personne, elle échoue proprement (code 1) et
@@ -1596,7 +1600,7 @@ gl_branch_iid() {
 
 # gl_close_guard <iid> [branche] -> « cette session traite-t-elle vraiment ce ticket ? », à
 # consulter AVANT toute écriture de /ticket-finish et /ticket-ship (commit, push, MR, statut,
-# relecteur, temps). C'est le pendant en SORTIE du garde-fou d'entrée de /ticket-start
+# temps). C'est le pendant en SORTIE du garde-fou d'entrée de /ticket-start
 # (gl_issue_taken, #159) : rien n'empêchait jusqu'ici un `/ticket-finish 158` lancé depuis
 # `chore/163-…` de faire basculer #158 « En revue » et d'y logger le temps du travail d'un autre,
 # ni une session ayant récupéré la branche d'un collègue de clôturer à sa place.
@@ -1639,7 +1643,7 @@ gl_close_guard() {
     inverifiable=1
   elif [ "$iid_branche" != "$iid" ]; then
     printf "⚠ décalage ticket ↔ branche : « %s » porte le ticket #%s, pas #%s.\n" "$branche" "$iid_branche" "$iid"
-    printf "  clôturer #%s d'ici poserait la MR de #%s sur #%s — statut, relecteur et temps compris.\n" \
+    printf "  clôturer #%s d'ici poserait la MR de #%s sur #%s — statut et temps compris.\n" \
       "$iid" "$iid_branche" "$iid"
     printf "  cette session peut clôturer #%s ; pour #%s, reprendre sa branche (bash scripts/gitlab/lib.sh branch-for %s).\n" \
       "$iid_branche" "$iid" "$iid"
@@ -1669,7 +1673,7 @@ gl_close_guard() {
   else
     printf "⚠ #%s appartient à quelqu'un d'autre : « %s », assigné à %s (moi : %s).\n" \
       "$iid" "${statut:-statut non posé}" "$assignes" "${moi:-inconnu}"
-    printf "  clôturer à sa place lui pose une MR, un relecteur et un temps qu'il n'a pas demandés.\n"
+    printf "  clôturer à sa place lui pose une MR et un temps qu'il n'a pas demandés.\n"
     tiers=1
   fi
 
@@ -1780,9 +1784,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  Garde-fou de clôture (session ↔ ticket, avant toute écriture de /ticket-finish|ship) :" >&2
       echo "    branch-iid [branche]        (iid porté par le nom de la branche ; rien si hors convention)" >&2
       echo "    close-guard <iid> [branche] (0=cohérent, 3=autre ticket, 4=ticket d'un tiers, 5=branche sans iid, 1=ticket illisible)" >&2
-      echo "  Revue best-effort (relecteur désigné + file de revue) :" >&2
+      echo "  Revue best-effort (file de revue ; relecteur posé à la main seulement) :" >&2
       echo "    review-queue                     (MR ouvertes en attente de revue, la plus ancienne d'abord — TSV)" >&2
-      echo "    set-reviewer [mr|branche] [user] (pose un relecteur humain ≠ auteur ; idempotent, ne remplace jamais)" >&2
+      echo "    set-reviewer [mr|branche] [user] (pose un relecteur humain ≠ auteur — appel MANUEL, aucune commande ne l'invoque)" >&2
       echo "    mr-reviewers [mr|branche]        (relecteurs posés, CSV — vide si aucun)" >&2
       echo "    pick-reviewer [auteur] [graine]  (choisit un relecteur humain, rotation par graine)" >&2
       echo "    project-humans [access-min]      (membres humains éligibles : username/niveau, TSV)" >&2

@@ -38,11 +38,13 @@ n'ouvrir qu'en cas de doute.
 4. Rends un **compte rendu Markdown** clair. Commence par le bloc **⏳ MR en attente de revue**,
    **en tête de sortie** : c'est lui qui déclenche la relecture. Une ligne par MR de la file, dans
    l'ordre rendu (la plus ancienne d'abord) : `!<mr>` — titre, `#<iid>` du ticket, **ancienneté**
-   (`ouverte depuis <age_j> j`), état `draft`/`ready`, pipeline, et le relecteur (`à relire par
-   @<relecteur>`, ou **« aucun relecteur »** — anomalie à signaler, `/ticket-finish` en pose un).
-   Mets en évidence les MR les plus **anciennes** (celles qui traînent) et celles au **pipeline
-   rouge** (non mergeables en l'état). La revue est **best-effort** : un relecteur désigné n'est pas
-   une approbation obligatoire, et le merge reste une décision humaine.
+   (`ouverte depuis <age_j> j`), état `draft`/`ready`, pipeline, et le relecteur s'il en a été posé
+   un (`à relire par @<relecteur>`, sinon **« aucun relecteur »** — ce n'est **pas** une anomalie :
+   depuis #196 aucune commande n'en pose, c'est donc le cas normal, et la MR n'en attend pas moins
+   une relecture). Mets en évidence les MR les plus **anciennes** (celles qui traînent) et celles au
+   **pipeline rouge** (non mergeables en l'état). La revue est **best-effort** : c'est cette file
+   qui appelle un relecteur, aucune approbation n'est obligatoire et le merge reste une décision
+   humaine.
    Enchaîne ensuite sur le backlog groupé par **statut natif**, dans cet ordre (le plus
    actionnable d'abord) :
    1. **🔍 En revue** — action humaine attendue (merge). Pour chaque ticket, affiche

@@ -400,11 +400,11 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   volontairement grossière (git seul tranche vraiment) : elle vise les **fichiers aimants**
   touchés par presque tous les tickets — `CLAUDE.md`, ce document, `scripts/gitlab/lib.sh`.
 - **Aucune clôture d'un ticket que la session ne traite pas.** `/ticket-finish` et `/ticket-ship`
-  vérifient, **avant toute écriture** (commit, push, MR, statut, relecteur, temps), que le ticket
+  vérifient, **avant toute écriture** (commit, push, MR, statut, temps), que le ticket
   visé est bien celui de la session : `bash scripts/gitlab/lib.sh close-guard <iid> [branche]`.
   C'est le pendant en *sortie* de l'anti-collision d'entrée de `/ticket-start` (`issue-taken`, §5) —
   sans lui, un `/ticket-finish 158` lancé depuis `chore/163-…` faisait basculer **#158** « En
-  revue », y accrochait la MR de la branche de #163, un relecteur et le temps d'un travail qui
+  revue », y accrochait la MR de la branche de #163 et le temps d'un travail qui
   n'était pas le sien ; via `/ticket-ship`, le commit généré portait en plus un `Closes #158` qui
   aurait fermé le ticket d'un autre au merge. Deux contrôles, de force très inégale :
   - **cohérence iid ↔ branche courante** (motif `<type>/<iid>-<slug>`, §1) — purement local, donc
@@ -439,18 +439,25 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   attend qui : le projet garde donc `approvals_before_merge=0` (une approbation obligatoire
   recréerait une dépendance entre personnes, et le merge resterait de toute façon humain) et joue
   sur la **visibilité** — arbitrage du chantier #155.
-  - `/ticket-finish` **pose un relecteur** sur la MR : `bash scripts/gitlab/lib.sh set-reviewer`
-    choisit un **membre humain du projet distinct de l'auteur**, résolu via l'API des membres —
+  - **Aucun relecteur n'est posé automatiquement** (#196). `/ticket-finish` l'a fait un temps
+    (#161) ; ce n'est plus le cas : désigner un relecteur attribue une MR à quelqu'un qui ne l'a
+    pas demandé, alors que la file de revue donne déjà le signal « cette MR attend quelqu'un ». La
+    **visibilité** suffit donc, et la désignation redevient un **geste humain explicite**.
+  - Le helper reste **outillé pour cette pose manuelle** :
+    `bash scripts/gitlab/lib.sh set-reviewer [mr|branche] [username]` choisit, à défaut d'un nom
+    donné, un **membre humain du projet distinct de l'auteur**, résolu via l'API des membres —
     **aucun nom en dur** ; les comptes d'automatisation sont écartés par la variable `GL_BOT_USERS`
     (défaut `MaestroAgents` : ce compte est un utilisateur GitLab ordinaire, `User.bot` y vaut
     `false`, l'API seule ne suffit donc pas à l'exclure). La désignation **tourne** entre les
     candidats (graine = iid de la MR : même MR → même relecteur, MR différentes → charge répartie)
-    et elle est **idempotente** : un relecteur déjà posé — par un humain ou par un passage
-    précédent — n'est **jamais** remplacé. Best-effort jusqu'au bout : sur un projet à une seule
-    personne, il n'y a pas de candidat et la clôture se poursuit sans relecteur.
+    et elle est **idempotente** : un relecteur déjà posé n'est **jamais** remplacé. Sur un projet à
+    une seule personne, il n'y a pas de candidat et le helper échoue proprement (code `1`). Aucune
+    commande du workflow ne l'appelle — c'est un outil, plus une étape.
   - `/backlog` affiche la **file de revue** en tête (`bash scripts/gitlab/lib.sh review-queue`) :
     MR ouvertes **la plus ancienne d'abord**, avec `age_j` (l'ancienneté, c'est elle qui déclenche
-    la relecture), l'état `draft`/`ready`, le statut du pipeline, l'auteur et le relecteur.
+    la relecture), l'état `draft`/`ready`, le statut du pipeline, l'auteur et le relecteur s'il en
+    a été posé un à la main (colonne à « - » sinon, cas désormais normal). C'est **elle seule** qui
+    porte le signal de revue.
 - **Une MR au pipeline rouge n'est pas mergeable.** Le réglage projet
   `only_allow_merge_if_pipeline_succeeds=true` (complété par `allow_merge_on_skipped_pipeline=false`)
   fait appliquer par **GitLab lui-même** la règle « pipeline vert avant merge » (§8) : le bouton de
@@ -956,10 +963,10 @@ est traité et pourquoi il existe.
 |---|---|---|
 | Deux sessions sur le même clone se marchent dessus (`HEAD` partagé) | un **worktree par session** — ports Control Tower et profil de navigateur dédiés | §9 |
 | Deux personnes démarrent le **même ticket** ; `begin` remplace les assignés et le retire à son propriétaire | **anti-collision** : `start-brief` dit « libre » ou « ⚠ déjà pris par … », `/backlog` sépare les tickets libres | §5 |
-| Une session clôture un ticket **qui n'est pas le sien** (MR, relecteur et temps posés à la place d'un autre) | **garde-fou de clôture** : `close-guard` compare l'iid visé à la branche courante *et* aux assignés | §6 |
+| Une session clôture un ticket **qui n'est pas le sien** (MR et temps posés à la place d'un autre) | **garde-fou de clôture** : `close-guard` compare l'iid visé à la branche courante *et* aux assignés | §6 |
 | Les lots d'un parent s'attendent en file alors qu'ils sont indépendants | marqueur **`(parallèle)`** dans la checklist ; `startables` liste **tous** les lots prenables | §5.1 |
 | Une branche vieillit pendant qu'`origin/main` avance ; le conflit se découvre au merge | **alerte de retard** avant le push : `behind-main` (commits de retard + fichiers modifiés des deux côtés) | §6 |
-| Une MR ouverte n'est relue par personne, faute de savoir qu'elle attend | **revue best-effort outillée** : relecteur posé d'office (jamais remplacé) + **file de revue** en tête de `/backlog`, la plus ancienne d'abord | §6 |
+| Une MR ouverte n'est relue par personne, faute de savoir qu'elle attend | **revue best-effort outillée** : **file de revue** en tête de `/backlog`, la plus ancienne d'abord (aucun relecteur posé d'office, #196 ; `set-reviewer` reste là pour une pose manuelle) | §6 |
 | La CI dépend du poste d'**une** personne : elle éteint sa machine, l'équipe ne merge plus | **runner partagé permanent** (`--partage`, machine toujours allumée), les runners locaux en secours | §8.1 |
 | Un échec de lint occupe le runner de quelqu'un d'autre pour une faute de frappe | **filet CI local** : `bash scripts/ci/local.sh` rejoue les jobs du pipeline avant le push | §8 |
 | La moitié du `.env` circule à la main, de canal en canal | marqueurs **`[perso]` / `[partagé]`** + `env-pull.sh`, qui complète sans jamais écraser | §7.3 |
@@ -967,8 +974,8 @@ est traité et pourquoi il existe.
 **Rien n'est bloquant.** Aucun de ces mécanismes n'interdit quoi que ce soit : ils *disent*, et la
 décision reste humaine. `behind-main` et `close-guard` rendent un **code de retour lu, jamais
 fatal** (`… || verdict=$?`) ; la revue n'exige **aucune approbation** — c'est la visibilité qui la
-déclenche ; la pose d'un relecteur est **best-effort** (sur un projet à une seule personne, il n'y
-a pas de candidat et la clôture se poursuit). Les seuls refus durs restent ceux des garde-fous de
+déclenche ; et **aucun relecteur n'est désigné d'office** (#196), la pose restant un geste humain
+outillé par `set-reviewer`. Les seuls refus durs restent ceux des garde-fous de
 §6 : pas de merge automatique, pas de force-push, pas de suppression de branche non mergée.
 
 **Deux personnes, une machine chacune : le parcours.**
@@ -979,7 +986,8 @@ a pas de candidat et la clôture se poursuit). Les seuls refus durs restent ceux
    dans un parent, quelqu'un d'autre peut prendre le lot voisin en même temps (§5.1).
 3. `/ticket-start <iid>` — s'arrête si le ticket est déjà pris ; sinon branche, statut, dates.
 4. `bash scripts/ci/local.sh` avant de pousser (§8).
-5. `/ticket-ship` — retard sur `origin/main` signalé, garde-fou de clôture, MR, relecteur désigné.
+5. `/ticket-ship` — retard sur `origin/main` signalé, garde-fou de clôture, MR (sans relecteur
+   désigné : c'est la file de revue qui appelle un relecteur, §6).
 6. La MR apparaît en tête de `/backlog` chez tout le monde jusqu'à son merge — **décision humaine**
    (§6).
 

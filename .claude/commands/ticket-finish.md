@@ -18,9 +18,8 @@ pas clair.
 
 3. **Garde-fou de clôture : cette session traite-t-elle bien ce ticket ?** À plusieurs, rien
    n'empêchait jusqu'ici un `/ticket-finish <iid>` lancé depuis la branche d'un *autre* ticket de
-   basculer ce ticket-là « En revue », d'y poser une MR, un relecteur et le temps d'un travail qui
-   n'est pas le sien. Ce contrôle vient **avant toute écriture** (commit, push, MR, statut,
-   relecteur, temps) :
+   basculer ce ticket-là « En revue », d'y poser une MR et le temps d'un travail qui n'est pas le
+   sien. Ce contrôle vient **avant toute écriture** (commit, push, MR, statut, temps) :
    ```
    bash scripts/gitlab/lib.sh close-guard <iid> || verdict=$?
    ```
@@ -31,7 +30,7 @@ pas clair.
      soit de clôturer *ce* ticket-là, soit de revenir sur la branche du ticket visé
      (`bash scripts/gitlab/lib.sh branch-for <iid>`).
    - `4` → **arrête-toi** : le ticket est assigné à **quelqu'un d'autre**. Nomme la personne : le
-     clôturer à sa place lui poserait une MR, un relecteur et un temps qu'elle n'a pas demandés.
+     clôturer à sa place lui poserait une MR et un temps qu'elle n'a pas demandés.
    - `5` → **arrête-toi** : la branche ne porte aucun iid (`main`, nom hors convention), donc la
      cohérence est invérifiable — et sur `main` il n'y a de toute façon rien à clôturer.
    - `1` → verdict **partiel** (ticket illisible, GitLab injoignable) : le contrôle local est
@@ -147,18 +146,12 @@ pas clair.
        terminé et prêt pour revue ; si oui, `glab mr update <mr> --ready`.
      - Si elle n'est **plus en Draft** : ne rien faire de plus sur la MR.
 
-10. **Pose un relecteur sur la MR** — dans les deux cas (créée à l'instant ou déjà existante), une
-   fois la MR en place :
-   ```
-   bash scripts/gitlab/lib.sh set-reviewer || echo "⚠ relecteur non posé — clôture poursuivie"
-   ```
-   Sans argument, le helper vise la MR ouverte de la branche courante ; il choisit un **membre
-   humain du projet distinct de l'auteur** (résolu via l'API des membres — jamais un nom en dur,
-   jamais le compte d'automatisation) et **ne remplace jamais** un relecteur déjà posé (idempotent :
-   un relecteur choisi à la main est conservé). La revue reste **best-effort** — l'approbation n'est
-   pas obligatoire (`approvals_before_merge=0`) et le merge reste une décision humaine : **son échec
-   n'interrompt jamais la clôture** (ex. projet à une seule personne : aucun candidat), il est
-   seulement signalé. Le relecteur désigné remonte ensuite dans la file de revue de `/backlog`.
+10. **Ne pose aucun relecteur sur la MR** (#196) — la désignation d'un relecteur est un **geste
+   humain**, jamais automatique : n'appelle pas `lib.sh set-reviewer` et n'utilise pas
+   `glab mr update --reviewer`. Le helper reste disponible pour une pose explicite, sur demande.
+   La revue reste **best-effort** — l'approbation n'est pas obligatoire
+   (`approvals_before_merge=0`) et le merge reste une décision humaine ; la visibilité des MR en
+   attente est portée par la **file de revue** en tête de `/backlog` (la plus ancienne d'abord).
 
 11. Fais passer le **Status natif** du ticket à « En revue » (le cycle de vie est porté par le
    champ Status, pas par des labels — voir `docs/10-workflow-git.md` §3) :
@@ -184,9 +177,9 @@ pas clair.
      ```
    - Indique dans le résumé final la durée estimée et loggée (transparence a posteriori).
 
-13. Termine par un résumé : lien de la MR, état (Draft/Ready), le **relecteur posé** (ou pourquoi
-   il n'y en a pas), le **retard éventuel sur `origin/main`** relevé à l'étape 6 (et le rebase
-   proposé si un conflit est probable), les cases de la checklist cochées et celles restées vides
+13. Termine par un résumé : lien de la MR, état (Draft/Ready), le **retard éventuel sur
+   `origin/main`** relevé à l'étape 6 (et le rebase proposé si un conflit est probable), les cases
+   de la checklist cochées et celles restées vides
    (avec un mot sur pourquoi), le temps loggé le cas échéant, et rappelle que le merge reste une
    action humaine (personne — pas même toi — ne doit merger automatiquement). Si un refus du
    garde-fou de l'étape 3 a été **franchi sur demande explicite**, dis-le en tête du résumé (quel

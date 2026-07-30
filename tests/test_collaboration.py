@@ -8,9 +8,10 @@ module couvre ce qu'ils ont ajouté à [`scripts/gitlab/lib.sh`](../scripts/gitl
   est déjà pris **avant** de le démarrer, `begin` REMPLAÇANT la liste des assignés ;
 * **lots parallélisables** (#160) — `subtickets` / `startables` : le marqueur « (parallèle) » et la
   règle de blocage entre lots d'un parent ;
-* **revue best-effort** (#161) — `project-humans` / `pick-reviewer` / `set-reviewer` /
-  `review-queue` : un relecteur humain ≠ auteur, jamais remplacé, et la file la plus ancienne
-  d'abord ;
+* **revue best-effort** (#161, révisé par #196) — `project-humans` / `pick-reviewer` /
+  `set-reviewer` / `review-queue` : un relecteur humain ≠ auteur, jamais remplacé, et la file la
+  plus ancienne d'abord. Depuis #196 la pose n'est plus **automatique** : le helper reste outillé
+  pour un appel manuel, mais aucune commande du workflow ne l'invoque ;
 * **retard sur `origin/main`** (#163) — `behind-main` : le constat et l'heuristique de conflit ;
 * **garde-fou de clôture** (#164) — `branch-iid` / `close-guard` : la session traite-t-elle bien
   ce ticket ;
@@ -713,7 +714,7 @@ def test_start_brief_sur_un_sous_ticket_controle_les_lots_precedents(depot: Depo
 
 
 # =================================================================================================
-# Revue best-effort : relecteur désigné et file de revue (#161)
+# Revue best-effort : file de revue et relecteur posé à la main (#161, révisé par #196)
 # =================================================================================================
 
 
@@ -835,6 +836,30 @@ def test_set_reviewer_refuse_de_designer_l_auteur(depot: Depot) -> None:
     assert acheve.returncode == 1
     assert "est l'auteur de la MR" in acheve.stderr
     assert [a for a in depot.appels() if a.startswith("mr\tupdate")] == []
+
+
+def test_aucune_commande_ne_pose_de_relecteur_automatiquement() -> None:
+    """#196 : la pose d'un relecteur reste outillée, mais n'est plus AUTOMATIQUE.
+
+    Le helper `set-reviewer` continue d'exister et de fonctionner (tests ci-dessus) ; ce qui
+    disparaît, c'est son **appel** par le cycle de clôture — désigner un relecteur attribue une MR
+    à quelqu'un qui ne l'a pas demandé, alors que la file de revue porte déjà le signal. Cette
+    règle vit dans des **prompts** (`.claude/commands/*.md`), pas dans du code : seule une lecture
+    de ces fichiers peut la garder. On cherche donc une *invocation* (une ligne de commande), pas
+    une mention — les commandes ont le droit de nommer le helper pour dire de ne pas l'appeler.
+    """
+    invocations: list[str] = []
+    for commande in sorted((RACINE / ".claude" / "commands").glob("*.md")):
+        lignes = commande.read_text(encoding="utf-8").splitlines()
+        for numero, ligne in enumerate(lignes, 1):
+            nue = ligne.strip()
+            appel_helper = nue.startswith("bash ") and "set-reviewer" in nue
+            appel_glab = nue.startswith("glab ") and "--reviewer" in nue
+            if appel_helper or appel_glab:
+                invocations.append(f"{commande.name}:{numero}: {nue}")
+    assert invocations == [], (
+        "pose automatique de relecteur réintroduite (#196) :\n" + "\n".join(invocations)
+    )
 
 
 def test_review_queue_rend_la_plus_ancienne_d_abord_avec_son_anciennete(depot: Depot) -> None:
