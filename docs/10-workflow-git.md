@@ -1266,9 +1266,30 @@ le plan), `--budget <usd>` par ticket, `--timeout <durée>` par ticket, et le fi
 
 Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<iid>.session`
 (l'UUID), `<iid>.jsonl` (le flux d'activité complet), `<iid>.json` (le seul résultat final — coût,
-`permission_denials`), `<iid>.log` (stderr), et `resume.tsv` (une ligne par ticket : verdict, MR,
-durée, coût, raison). Un run lancé avec `--detach` y ajoute `lancer.sh` (ce qui a été lancé) et
-`run.log` (toute la sortie de la console, flux d'activité compris).
+`permission_denials`), `<iid>.resultat.txt` (le même, **en clair**), `<iid>.log` (stderr), et
+`resume.tsv` (une ligne par ticket : verdict, MR, durée, coût, raison). Un run lancé avec
+`--detach` y ajoute `lancer.sh` (ce qui a été lancé) et `run.log` (toute la sortie de la console,
+flux d'activité compris).
+
+**Après un run, le résultat d'une session se lit à l'œil nu** (#180). `<iid>.json` est le premier
+fichier qu'on ouvre après un échec, et il est écrit sur **une seule ligne minifiée** — 13 Ko d'une
+traite pour un ticket : le post-mortem du run `20260729-132807` a demandé un script Python pour en
+tirer le message final et la liste des refus. Ce fichier ne change pas pour autant — il reste brut
+et byte-transparent, parce que c'est **lui** que grepent le verdict, le coût et la détection de
+limite d'usage (§11.4). La même matière est écrite **à côté**, en clair, dans
+`<iid>.resultat.txt` : verdict GitLab, état de session, durée, coût, **refus de permission** (comptés
+par outil puis détaillés, §11.7) et **message final désescapé**. Une session morte sans rendre la
+main — le cas le plus opaque — le dit et renvoie au flux et à la sortie d'erreur, plutôt que de
+laisser une vue vide. La lecture est faite en `awk`, sans `jq` ni Python : le pilote est un script
+shell, il le reste. Pour un journal écrit **avant** ce lot, ou pour relire depuis un autre poste :
+
+```bash
+bash scripts/orchestrate/run.sh --resultat .maestro/orchestrate/<run-id>/<iid>.json
+```
+
+Le **coût** y est arrondi à deux décimales, comme dans `resume.tsv` et dans la console :
+`total_cost_usd` sort du CLI en flottant brut (`10.686978499999995`), qui n'apprend rien de plus que
+`10.69` et déborde de toutes les colonnes.
 
 **Ce journal ne s'accumule plus sans fin** (#198). Rien ne le nettoyait : `run.sh` crée un
 répertoire **par lancement** et ses deux `rm -rf` sont des renoncements (lancement détaché en
@@ -1279,7 +1300,11 @@ non tronqué : c'est lui qui décide désormais de la croissance. Deux gestes, p
 
 - **rétention** — seuls les **N runs les plus récents** sont conservés
   (`MAESTRO_ORCHESTRATE_JOURNAL_RUNS`, défaut 10) ; les répertoires **vides** que laissent les
-  sorties précoces (plan vide, `queue.sh` en échec) sont ramassés ;
+  sorties précoces sont ramassés. Ces sorties-là n'en laissent d'ailleurs plus (#180) : un backlog
+  vide ou un `queue.sh` en échec **renonce à son run** au lieu d'abandonner un dossier horodaté qui
+  ne porte qu'un plan sans ligne — quatre de ces vestiges traînaient, qu'aucune rétention ne
+  ramassait puisqu'ils n'étaient pas strictement vides. Le renoncement s'arrête net dès qu'un autre
+  fichier est là : un journal qui a servi n'est jamais emporté ;
 - **compaction** — le `<iid>.jsonl` d'un ticket **terminé** est gzippé en `<iid>.jsonl.gz`, à
   relire avec `zcat`/`zgrep`. Jamais avant le verdict : tant que le ticket tourne, la détection de
   limite d'usage relit ce flux **entier** à chaque tentative (§11.4).
@@ -1381,21 +1406,14 @@ merge reste une décision humaine (§6), et la file de revue les remonte (§10).
 
 L'`allow` de `settings.run.json` se complète **à partir des refus observés**, jamais à l'aveugle.
 Chaque session laisse ce qu'elle n'a pas pu faire dans `permission_denials`, à la fin de son
-`<iid>.json` :
+`<iid>.json` — et depuis #180 la liste se lit **en clair**, sans script, dans la vue que le run
+écrit à côté (§11.3) :
 
 ```bash
-# Coup d'œil : combien de refus, sur quels outils (le .json est minifié — #180 lui ajoutera une vue lisible)
-grep -o '"tool_name":"[^"]*"' .maestro/orchestrate/<run-id>/<iid>.json | sort | uniq -c
+cat .maestro/orchestrate/<run-id>/<iid>.resultat.txt      # refus comptés par outil, puis détaillés
 
-# La liste, en clair. PYTHONIOENCODING est indispensable sous Windows : sans lui, une commande
-# refusée contenant un accent fait tomber le print en UnicodeEncodeError (stdout en cp1252). La
-# variable doit porter sur PYTHON — devant un `glab … |`, bash ne la propage pas au pipeline.
-PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe - <<'PY'
-import json, pathlib
-p = pathlib.Path(".maestro/orchestrate/<run-id>/<iid>.json")
-for r in json.loads(p.read_text(encoding="utf-8"))["permission_denials"]:
-    print("-", r["tool_name"], "—", r["tool_input"].get("command", r["tool_input"]))
-PY
+# Pour un journal antérieur à #180, qui n'en porte pas :
+bash scripts/orchestrate/run.sh --resultat .maestro/orchestrate/<run-id>/<iid>.json
 ```
 
 Un refus **ne bloque pas le run** : sans humain pour approuver, l'appel est simplement refusé et la

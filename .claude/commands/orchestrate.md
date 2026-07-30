@@ -56,8 +56,9 @@ toi-même.
    verdict, elle égrène **une ligne compacte par action** de la session (`· Edit core/models/mcp.py`,
    `· Bash pytest -q`) — le flux brut restant dans `<run-id>/<iid>.jsonl` (gzippé en `.jsonl.gz`
    dès le verdict rendu, #198 — `zcat`/`zgrep` pour le relire), et `<iid>.json` ne portant que le
-   résultat final (coût, verdict). C'est ce qui distingue « ça travaille » de « c'est planté »
-   quand on a la fenêtre sous les yeux ; `status.sh` couvre le cas contraire.
+   résultat final (coût, verdict), doublé d'un `<iid>.resultat.txt` **lisible** (#180). C'est ce qui
+   distingue « ça travaille » de « c'est planté » quand on a la fenêtre sous les yeux ;
+   `status.sh` couvre le cas contraire.
 
    **Dis la réserve, sans la noyer** : la console ne dépend plus de ta session, mais rien ne
    garantit qu'elle survive à un parent qui enfermerait ses descendants (job object Windows). Le
@@ -93,7 +94,9 @@ précis, `--list` pour les runs connus, `--watch [sec]` pour rafraîchir tant qu
 
 Ensuite seulement, apporte ce que la sortie ne dit pas :
 
-1. **Commente** ce qui a échoué et pourquoi — le journal `<run-id>/<iid>.log` porte le détail — et
+1. **Commente** ce qui a échoué et pourquoi — `<run-id>/<iid>.resultat.txt` porte le détail **en
+   clair** (#180 : état de session, durée, coût, refus de permission, message final ; `<iid>.log`
+   ne garde que stderr, et `<iid>.json` est minifié) — et
    ce qui a été sauté (lot dépendant d'un échec, ou ticket pris entre-temps). Une raison en
    **« session terminée sans clôture, N fichier(s) non commité(s) »** (#178) est un échec
    **rattrapable** : la session a produit puis rendu la main sans clore, le travail est intact dans

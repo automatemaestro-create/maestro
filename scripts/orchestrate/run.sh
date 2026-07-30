@@ -34,6 +34,7 @@
 #   <iid>.jsonl       le flux d'activité de la session, un événement par ligne (#176) — gzippé en
 #                     `<iid>.jsonl.gz` dès le verdict rendu (#198), à relire avec zcat/zgrep
 #   <iid>.json        le résultat FINAL de la session seul (coût, usage, permission_denials…)
+#   <iid>.resultat.txt  le même, mais LISIBLE (#180) : verdict, coût, durée, refus, message final
 #   <iid>.log         ce que la session a écrit sur stderr
 #   resume.tsv        une ligne par ticket : iid, verdict, MR, durée, coût, raison
 #
@@ -68,6 +69,7 @@ PLAN_IMPOSE=""
 MILESTONE=""
 RUN_ID=""
 TEST_REPRISE=""
+LIRE_RESULTAT=""
 
 usage() {
   cat <<'USAGE'
@@ -90,6 +92,9 @@ Options :
   --max-reprises <n>   Reprises maximales après limite d'usage, par ticket. Défaut : 3.
   --test-reprise <f>   Diagnostic : dit si la sortie de session <f> serait vue comme une limite
                        d'usage, et combien de temps la boucle attendrait. N'exécute rien d'autre.
+  --resultat <f>       Diagnostic : relit un <iid>.json de session et l'imprime EN CLAIR (état,
+                       coût, durée, refus de permission, message final). N'exécute rien d'autre.
+                       Un run écrit déjà cette vue à côté, dans <iid>.resultat.txt.
   -h, --help           Cette aide.
 
 Limite d'usage : la boucle attend jusqu'au reset et REPREND la même session (--resume). Au-delà de
@@ -119,6 +124,8 @@ while [ $# -gt 0 ]; do
     # Diagnostic de la détection de limite d'usage sur une sortie de session capturée : c'est ce qui
     # rend la reprise vérifiable sans attendre de vraiment taper la limite.
     --test-reprise) TEST_REPRISE="${2:-}"; shift ;;
+    # Même esprit : relire à l'œil un résultat de session déjà capturé, sans rien lancer (#180).
+    --resultat | --résultat) LIRE_RESULTAT="${2:-}"; shift ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -162,6 +169,21 @@ duree_lisible() {
   if [ "$s" -lt 60 ]; then printf '%ds' "$s"
   elif [ "$s" -lt 3600 ]; then printf '%dmin%02d' $((s / 60)) $((s % 60))
   else printf '%dh%02d' $((s / 3600)) $(((s % 3600) / 60)); fi
+}
+
+# arrondi_cout <valeur> : le coût, à deux décimales. `total_cost_usd` sort du CLI en flottant brut
+# (« 10.686978499999995 ») : les quinze chiffres n'apprennent rien de plus que les deux premiers et
+# débordent de toutes les colonnes. `LC_ALL=C` n'est pas décoratif — sous une locale française,
+# printf rendrait « 10,69 », que `status.sh` additionne ensuite en awk (et lirait 10).
+arrondi_cout() {
+  local v="${1:-0}"
+  [ -n "$v" ] || v=0
+  # Une valeur qui n'est pas un nombre (champ absent, « ? ») est rendue telle quelle plutôt que
+  # transformée en 0,00 : mieux vaut un affichage bizarre qu'un coût inventé.
+  case "$v" in
+    *[!0-9.eE+-]*) printf '%s' "$v"; return 0 ;;
+  esac
+  LC_ALL=C printf '%.2f' "$v" 2>/dev/null || printf '%s' "$v"
 }
 
 # champ_json <fichier> <clé> : la valeur SCALAIRE d'une clé de premier niveau. Suffisant pour les
@@ -383,6 +405,243 @@ compacte_flux() {
   return 0
 }
 
+# --- Le résultat d'une session, EN CLAIR (#180) -------------------------------------------------------
+# `<iid>.json` est le premier fichier qu'on ouvre après un échec — et il est écrit en UNE SEULE LIGNE
+# minifiée : 3,3 ko pour un ticket, 13 ko pour un autre. Le post-mortem du run 20260729-132807 a
+# demandé un script Python pour en tirer le message final et la liste des refus.
+#
+# On ne le remplace pas : il reste brut, byte-transparent, et c'est lui que `champ_json`,
+# `limite_atteinte` et `reset_epoch` grepent — le toucher casserait le verdict, le coût et la
+# détection de limite d'usage. On écrit LA MÊME MATIÈRE À CÔTÉ, en clair, dans `<iid>.resultat.txt`.
+#
+# La lecture du JSON est faite en awk, sans dépendance à `jq` (que personne n'a garanti sur la
+# machine d'un run) et sans Python (le pilote est un script shell, il le reste). Elle est
+# volontairement minimale : les clés de PREMIER NIVEAU d'un objet `result`, pas un parseur général.
+# Elle sait en revanche lire une chaîne ÉCHAPPÉE — le message final tient sur une ligne, ses retours
+# à la ligne y sont des « \n » littéraux, et c'est justement ce qui le rend illisible tel quel.
+AWK_RESULTAT=$(cat <<'AWK'
+# desechappe(s) : rend une chaîne JSON telle qu'on la lit. « \uXXXX » est laissé tel quel : le CLI
+# est en Node, dont JSON.stringify n'échappe pas l'UTF-8 — les accents arrivent en clair.
+function desechappe(s,   out, i, c, n) {
+  out = ""; n = length(s)
+  for (i = 1; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (c != "\\") { out = out c; continue }
+    i++
+    c = substr(s, i, 1)
+    if (c == "n") out = out "\n"
+    else if (c == "t") out = out "\t"
+    else if (c == "r" || c == "b" || c == "f") out = out ""
+    else if (c == "u") { out = out substr(s, i - 1, 6); i += 4 }
+    else out = out c
+  }
+  return out
+}
+
+# chaine_a(s, p) : la chaîne qui commence au caractère p (le premier APRÈS le guillemet ouvrant),
+# rendue encore échappée. Un guillemet précédé d'un antislash ne ferme pas la chaîne.
+function chaine_a(s, p,   i, c, n, out) {
+  out = ""; n = length(s)
+  for (i = p; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (c == "\\") { out = out c substr(s, i + 1, 1); i++; continue }
+    if (c == "\"") break
+    out = out c
+  }
+  return out
+}
+
+# chaine(s, cle) : la valeur texte d'une clé. Chercher « "cle": » ne peut pas se tromper de cible en
+# tombant sur la prose : dans une chaîne JSON, tout guillemet est échappé.
+function chaine(s, cle) {
+  if (!match(s, "\"" cle "\"[ \t]*:[ \t]*\"")) return ""
+  return desechappe(chaine_a(s, RSTART + RLENGTH))
+}
+
+# scalaire(s, cle) : la valeur d'une clé non textuelle (nombre, booléen).
+function scalaire(s, cle,   v) {
+  if (!match(s, "\"" cle "\"[ \t]*:[ \t]*")) return ""
+  v = substr(s, RSTART + RLENGTH)
+  sub(/[,}].*$/, "", v)
+  return v
+}
+
+# tableau(s, cle) : le CONTENU du tableau d'une clé, crochets exclus. Compte les niveaux, en sachant
+# ignorer ce qui est dans une chaîne — une commande refusée contient volontiers un « } ».
+function tableau(s, cle,   i, n, c, prof, dans, esc, out) {
+  if (!match(s, "\"" cle "\"[ \t]*:[ \t]*\\[")) return ""
+  n = length(s); prof = 1; dans = 0; esc = 0; out = ""
+  for (i = RSTART + RLENGTH; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (esc) { esc = 0; out = out c; continue }
+    if (dans) {
+      if (c == "\\") esc = 1
+      else if (c == "\"") dans = 0
+      out = out c
+      continue
+    }
+    if (c == "\"") { dans = 1; out = out c; continue }
+    if (c == "[" || c == "{") prof++
+    else if (c == "]" || c == "}") { prof--; if (prof == 0) break }
+    out = out c
+  }
+  return out
+}
+
+# tronque(s, n) : n colonnes au plus. Le comptage se fait en CARACTÈRES, jamais en octets — couper
+# une séquence UTF-8 en deux laisserait un « ï¿½ » en bout de ligne, sur une commande accentuée.
+function tronque(s, n,   i, l, c, taille) {
+  if (largeur(s) <= n) return s
+  l = 0; i = 1
+  while (i <= length(s) && l < n) {
+    c = substr(s, i, 1)
+    taille = 1
+    if (match(c, /[\300-\337]/)) taille = 2
+    else if (match(c, /[\340-\357]/)) taille = 3
+    else if (match(c, /[\360-\367]/)) taille = 4
+    i += taille; l++
+  }
+  return substr(s, 1, i - 1) "…"
+}
+
+function duree_ms(ms,   s) {
+  if (ms == "" || ms + 0 <= 0) return ""
+  s = int(ms / 1000)
+  if (s < 60) return s "s"
+  if (s < 3600) return sprintf("%dmin%02d", s / 60, s % 60)
+  return sprintf("%dh%02d", s / 3600, (s % 3600) / 60)
+}
+
+# largeur(s) : le nombre de COLONNES d'un libellé. `length()` compte des octets (on tourne en
+# LC_ALL=C, pour le point décimal du coût) : sans retirer les octets de continuation UTF-8, « durée »
+# en pèserait 6 et décalerait sa ligne d'une colonne vers la gauche.
+function largeur(s,   t) { t = s; return length(t) - gsub(/[\200-\277]/, "", t) }
+
+function champ(nom, valeur,   n) {
+  n = 12 - largeur(nom)
+  if (n < 1) n = 1
+  printf "  %s%*s%s\n", nom, n, "", valeur
+}
+
+{ brut = brut $0 }
+
+END {
+  ligne = "Résultat de session"
+  if (iid != "")   ligne = ligne " — ticket #" iid
+  if (titre != "") ligne = ligne " · " titre
+  print ligne
+  sid = chaine(brut, "session_id")
+  ligne = ""
+  if (run != "") ligne = "run " run
+  if (sid != "") ligne = ligne (ligne != "" ? " · " : "") "session " sid
+  if (ligne != "") print ligne
+  print ""
+
+  # Le verdict vient de la boucle, donc de GitLab (MR ouverte ET statut « En revue ») — jamais de la
+  # prose ci-dessous, qui peut se croire réussie sans l'être. Absent quand on relit un vieux fichier.
+  if (verdict != "") {
+    v = verdict
+    if (verdict == "OK") v = "✓ OK"
+    else if (verdict == "ECHEC") v = "✗ ECHEC"
+    if (mr != "" && mr != "-") v = v " — MR !" mr
+    if (raison != "" && raison != "-") v = v " — " raison
+    champ("verdict", v)
+  }
+
+  if (brut == "") {
+    champ("session", "aucun résultat final — la session est morte sans rendre la main")
+    print ""
+    print "Le CLI n'écrit son objet `result` qu'à la toute fin : un fichier vide dit un timeout, un"
+    print "crash, ou un poste éteint. Il ne reste que le flux d'activité et la sortie d'erreur —"
+    print "  zcat <run>/" (iid != "" ? iid : "<iid>") ".jsonl.gz | tail -20      (ou le .jsonl s'il n'est pas encore compacté)"
+    print "  cat  <run>/" (iid != "" ? iid : "<iid>") ".log"
+    exit
+  }
+
+  etat = chaine(brut, "subtype")
+  if (etat == "") etat = "?"
+  if (scalaire(brut, "is_error") == "true") etat = etat " · EN ERREUR"
+  arret = chaine(brut, "stop_reason")
+  if (arret != "") etat = etat " · " arret
+  tours = scalaire(brut, "num_turns")
+  if (tours != "") etat = etat " · " tours " tours"
+  champ("session", etat)
+
+  d = duree_ms(scalaire(brut, "duration_ms"))
+  if (d == "" && duree != "" && duree + 0 > 0) d = duree_ms(duree * 1000)
+  if (d != "") {
+    api = duree_ms(scalaire(brut, "duration_api_ms"))
+    champ("durée", d (api != "" ? " (dont " api " d'API)" : ""))
+  }
+
+  cout = scalaire(brut, "total_cost_usd")
+  if (cout != "") champ("coût", sprintf("%.2f $", cout + 0))
+
+  # Les refus de permission : ce qu'on vient chercher en premier après un run décevant (§11.7). Un
+  # refus ne bloque pas la session — il se paie en tours et en dollars quand elle contourne, en run
+  # perdu quand elle ne peut pas. D'où le compte par outil, en tête, avant le détail.
+  nb = 0
+  contenu = tableau(brut, "permission_denials")
+  if (contenu != "") {
+    parts = split(contenu, morceaux, /"tool_name"[ \t]*:[ \t]*/)
+    for (k = 2; k <= parts; k++) {
+      m = morceaux[k]
+      if (substr(m, 1, 1) != "\"") continue
+      nb++
+      noms[nb] = desechappe(chaine_a(m, 2))
+      compte[noms[nb]]++
+      cible = ""
+      if (match(m, /"(command|skill|file_path|pattern|path|url|description)"[ \t]*:[ \t]*"/))
+        cible = desechappe(chaine_a(m, RSTART + RLENGTH))
+      gsub(/\n/, " ", cible)
+      cibles[nb] = cible
+    }
+  }
+  if (nb == 0) {
+    champ("refus", "aucun")
+  } else {
+    detail = ""
+    for (nom in compte) detail = detail (detail != "" ? ", " : "") nom " " compte[nom]
+    champ("refus", nb " — " detail)
+  }
+
+  if (nb > 0) {
+    print ""
+    print "── Refus de permission (" nb ")"
+    for (k = 1; k <= nb; k++)
+      printf "  - %s%s\n", noms[k], (cibles[k] != "" ? " — " tronque(cibles[k], 110) : "")
+    print ""
+    print "  Les instruire au cas par cas : docs/10-workflow-git.md §11.7. Une commande composée vaut"
+    print "  son maillon le plus faible, et un « cd » de confort en tête suffit à faire refuser le reste."
+  }
+
+  print ""
+  print "── Message final"
+  msg = chaine(brut, "result")
+  print (msg != "" ? msg : "  (aucun — la session n'a rien rendu)")
+}
+AWK
+)
+
+# vue_resultat <json> [iid] [titre] [verdict] [mr] [duree_s] [raison] [run-id] : la vue lisible, sur
+# stdout. `LC_ALL=C` pour le point décimal du coût, comme dans `arrondi_cout`.
+vue_resultat() {
+  local json="${1:-}"
+  [ -f "$json" ] || json=/dev/null
+  LC_ALL=C awk -v iid="${2:-}" -v titre="${3:-}" -v verdict="${4:-}" -v mr="${5:-}" \
+    -v duree="${6:-}" -v raison="${7:-}" -v run="${8:-}" "$AWK_RESULTAT" "$json"
+}
+
+# ecrit_resultat <iid> <titre> <verdict> <mr> <duree_s> <raison> : la même vue, à côté du JSON.
+# Best-effort de bout en bout : un awk absent ou fâché ne doit pas changer le sort d'un ticket qui
+# vient d'être livré — ce fichier est un confort de lecture, pas une donnée du run.
+ecrit_resultat() {
+  local iid="$1"
+  vue_resultat "$RUN_DIR/$iid.json" "$iid" "$2" "$3" "$4" "$5" "$6" "$RUN_ID" \
+    >"$RUN_DIR/$iid.resultat.txt" 2>/dev/null || true
+  return 0
+}
+
 # lance_session <iid> <dest> <uuid> <mode> : une session, neuve ou reprise. En reprise, `--resume`
 # rouvre la conversation interrompue — sans quoi la session repartirait de zéro et referait le
 # travail déjà payé. Si la reprise échoue (session perdue), on repart à froid sur un UUID neuf :
@@ -504,6 +763,18 @@ if [ -n "$TEST_REPRISE" ]; then
   exit 1
 fi
 
+# Relire un résultat de session déjà capturé (#180). Même place et même esprit que ci-dessus : ni
+# glab, ni plan, ni répertoire de run — juste la vue lisible d'un `<iid>.json`, sur stdout. C'est ce
+# qui rattrape les runs écrits AVANT ce lot, dont le journal ne porte pas de `.resultat.txt`.
+if [ -n "$LIRE_RESULTAT" ]; then
+  [ -r "$LIRE_RESULTAT" ] || { printf 'run.sh : fichier illisible — %s\n' "$LIRE_RESULTAT" >&2; exit 2; }
+  # L'iid se déduit du nom du fichier (« 130.json ») quand il en porte un : c'est le cas nominal.
+  iid_lu="$(basename "$LIRE_RESULTAT")"; iid_lu="${iid_lu%%.*}"
+  case "$iid_lu" in *[!0-9]* | '') iid_lu="" ;; esac
+  vue_resultat "$LIRE_RESULTAT" "$iid_lu" "" "" "" "" "" "$(basename "$(dirname "$LIRE_RESULTAT")")"
+  exit 0
+fi
+
 # --- Préflight ---------------------------------------------------------------------------------------
 gl_require_glab || exit 1
 
@@ -524,6 +795,25 @@ RUN_DIR="$ORCH_DIR/$RUN_ID"
 mkdir -p "$RUN_DIR" || { printf 'run.sh : impossible de créer %s\n' "$RUN_DIR" >&2; exit 1; }
 PLAN="$RUN_DIR/plan.tsv"
 RESUME="$RUN_DIR/resume.tsv"
+
+# renonce_au_run : retire le répertoire du run quand il ne s'y est RIEN passé (#180). Le `mkdir -p`
+# ci-dessus a lieu avant de savoir s'il y aura seulement quelque chose à traiter : un backlog vide,
+# un `queue.sh` en échec, et il reste un dossier horodaté qui ne porte qu'un plan sans ligne. Quatre
+# de ces vestiges traînaient dans `.maestro/orchestrate/` — ce que #198 ne ramasse pas, son critère
+# étant le répertoire strictement vide.
+#
+# Prudent par construction : il refuse dès qu'un autre fichier est là (une session, un bilan, un
+# lanceur), donc il ne peut pas emporter un journal qui a servi — y compris dans le cas tordu où
+# `--plan` désignerait le plan du run qu'on est en train d'écrire. Rend 1 s'il n'a rien retiré.
+renonce_au_run() {
+  local f
+  for f in "$RUN_DIR"/* "$RUN_DIR"/.[!.]*; do
+    [ -e "$f" ] || continue
+    case "${f##*/}" in plan.tsv) ;; *) return 1 ;; esac
+  done
+  rm -rf "$RUN_DIR" 2>/dev/null || return 1
+  return 0
+}
 
 # --- Lancement détaché (#173) -------------------------------------------------------------------------
 # `--detach` relance CE script, sans `--detach`, dans une console qui n'appartient plus au processus
@@ -639,9 +929,9 @@ else
     exit 1
   }
   if [ -n "$MILESTONE" ]; then
-    bash "$queue" --milestone "$MILESTONE" >"$PLAN" || exit 1
+    bash "$queue" --milestone "$MILESTONE" >"$PLAN" || { renonce_au_run; exit 1; }
   else
-    bash "$queue" >"$PLAN" || exit 1
+    bash "$queue" >"$PLAN" || { renonce_au_run; exit 1; }
   fi
 fi
 
@@ -653,6 +943,7 @@ printf 'journal : %s\n\n' "$RUN_DIR"
 
 if [ "$nb_plan" -eq 0 ]; then
   printf 'Rien à traiter : le plan est vide.\n'
+  renonce_au_run && printf 'Aucun journal laissé derrière : il n'\''aurait porté que ce plan vide.\n'
   exit 0
 fi
 
@@ -699,8 +990,10 @@ TRAITES=0
 PARENTS_ECHOUES=""
 WORKTREES=""
 
+# Le coût est arrondi ICI, à l'unique endroit qui écrit le bilan : `status.sh` le relit tel quel, et
+# une colonne à quinze décimales (« 10.686978499999995 ») ne dit rien de plus qu'à deux.
 consigne() { # <iid> <verdict> <mr> <duree> <cout> <raison>
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" >>"$RESUME"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$(arrondi_cout "${5:-0}")" "$6" >>"$RESUME"
 }
 
 # Le plan est lu sur le DESCRIPTEUR 3, pas sur stdin : `claude`, `glab` et `worktree.sh` sont lancés
@@ -804,6 +1097,9 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
         "$C_Y" "$C_0" "$(duree_lisible "$attente_cumulee")" "$iid" "$(duree_lisible "$PLAFOND_ATTENTE_S")"
       printf 'Ce n'\''est plus une fenêtre de 5 h : le run s'\''arrête proprement, à relancer plus tard.\n'
       consigne "$iid" ECHEC - "$((SECONDS - debut))" "${cout:-0}" "limite hebdomadaire (attente > $(duree_lisible "$PLAFOND_ATTENTE_S"))"
+      # Ces deux sorties quittent la boucle entière : sans cet appel, les seuls tickets à ne pas
+      # avoir de vue lisible seraient ceux qu'on ira justement relire (§11.7).
+      ecrit_resultat "$iid" "$titre" ECHEC - "$((SECONDS - debut))" "limite hebdomadaire"
       NB_ECHEC=$((NB_ECHEC + 1))
       PLAFOND_ATTEINT=1
       break 2
@@ -812,6 +1108,7 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
     if ! patiente "$delai"; then
       printf '  arrêt demandé pendant l'\''attente — run interrompu.\n'
       consigne "$iid" ECHEC - "$((SECONDS - debut))" "${cout:-0}" "arrêt demandé pendant l'attente de reprise"
+      ecrit_resultat "$iid" "$titre" ECHEC - "$((SECONDS - debut))" "arrêt demandé pendant l'attente de reprise"
       NB_ECHEC=$((NB_ECHEC + 1))
       break 2
     fi
@@ -830,8 +1127,10 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
   mr="$(gl_mr_iid "$branche" 2>/dev/null)"
   if [ "$etat_mr" = "opened" ] && [ "$statut" = "En revue" ]; then
     printf '  %s✓%s MR !%s ouverte, ticket « En revue » — %s, %s $\n' \
-      "$C_G" "$C_0" "${mr:-?}" "$(duree_lisible "$duree")" "${cout:-?}"
+      "$C_G" "$C_0" "${mr:-?}" "$(duree_lisible "$duree")" "$(arrondi_cout "${cout:-?}")"
     consigne "$iid" OK "${mr:--}" "$duree" "${cout:-0}" -
+    # La raison dit sur quoi repose le verdict : la MR est déjà nommée juste avant, le statut non.
+    ecrit_resultat "$iid" "$titre" OK "${mr:--}" "$duree" "ticket « En revue »"
     NB_OK=$((NB_OK + 1))
   else
     raison="MR « ${etat_mr:-aucune} », statut « ${statut:-?} »"
@@ -850,10 +1149,11 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
       raison="session terminée sans rien produire (worktree propre) — $raison"
     fi
     [ "$code" -eq 124 ] && raison="timeout — $raison"
-    printf '  %s✗%s %s — journal : %s\n' "$C_R" "$C_0" "$raison" "$RUN_DIR/$iid.log"
+    printf '  %s✗%s %s — journal : %s\n' "$C_R" "$C_0" "$raison" "$RUN_DIR/$iid.resultat.txt"
     [ -n "$detail" ] &&
       printf '    le travail est conservé dans %s — à reprendre, pas à refaire.\n' "$dest"
     consigne "$iid" ECHEC "${mr:--}" "$duree" "${cout:-0}" "$raison"
+    ecrit_resultat "$iid" "$titre" ECHEC "${mr:--}" "$duree" "$raison"
     NB_ECHEC=$((NB_ECHEC + 1))
     [ "$parent" != "-" ] && PARENTS_ECHOUES="$PARENTS_ECHOUES $parent"
   fi
