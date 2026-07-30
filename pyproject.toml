@@ -30,6 +30,9 @@ dependencies = [
     # Workflows durables (Phase 3, ticket #94) : SDK Python Temporal. Socle de la
     # migration du moteur d'exécution vers des workflows/activités durables (#95).
     "temporalio>=1.7",
+    # Chiffrement au repos des secrets du coffre (ticket #132, parent #102) :
+    # Fernet (AES-128-CBC + HMAC-SHA256). Import : `cryptography.fernet`.
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

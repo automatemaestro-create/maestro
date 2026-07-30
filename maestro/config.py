@@ -68,6 +68,11 @@ class Settings:
     #: None : le dossier `core/secrets/` du dépôt (cf. maestro.agents.secrets,
     #: #109 — jamais versionné, scoping actif dès que la racine existe).
     secrets_dir: str | None = None
+    #: Clé maîtresse de chiffrement au repos des secrets du coffre
+    #: (`MAESTRO_SECRETS_KEY`, clé Fernet urlsafe base64), ou None : le coffre
+    #: gère une clé locale auto-générée (`<racine>/.cle`, gitignorée) — le repli
+    #: du POC (cf. maestro.agents.chiffrement, #132). Côté serveur, hors du dépôt.
+    secrets_key: str | None = None
     #: Racine du dépôt des politiques de permissions par agent
     #: (`MAESTRO_PERMISSIONS_DIR`), ou None : le dossier `core/permissions/` du
     #: dépôt (cf. maestro.agents.permissions, #110 — allow/deny par outil).
@@ -120,6 +125,7 @@ class Settings:
             capacite_dir=(os.getenv("MAESTRO_CAPACITE_DIR") or "").strip() or None,
             mcp_dir=(os.getenv("MAESTRO_MCP_DIR") or "").strip() or None,
             secrets_dir=(os.getenv("MAESTRO_SECRETS_DIR") or "").strip() or None,
+            secrets_key=(os.getenv("MAESTRO_SECRETS_KEY") or "").strip() or None,
             permissions_dir=(os.getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,
             isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
             isolation_image=(os.getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
