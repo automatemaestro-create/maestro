@@ -25,7 +25,9 @@ Six briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
 - `activer_export_langfuse` : l'exporteur Langfuse du journal (#81) — posé en
   handler sur le logger `maestro.trace`, il mue chaque exécution en trace
   Langfuse (une observation par étape, tokens et coûts #55 au format natif) ;
-  purement configuratif, no-op sans clés Langfuse dans l'environnement.
+  purement configuratif, no-op sans clés Langfuse dans l'environnement, et
+  **idempotent** — le logger est global et les points d'entrée l'activent à
+  chaque invocation sans jamais le retirer (#195).
   `evaluer_run_langfuse` (#80) complète l'export en fin de run : les scores
   d'évaluation dérivés du journal (réussite globale, taux de tâches réussies)
   partent sur la trace de l'exécution — même bascule, même résilience.

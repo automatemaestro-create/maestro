@@ -658,6 +658,20 @@ second est fusionné clé par clé), rapport complet et code de sortie non nul s
 `--skip` : c'est la décision du script qui est testée, jamais l'installation elle-même — la suite
 tourne donc en CI sans démon Docker ni accès réseau.
 
+**Aucun test n'a besoin d'un backend, et [`tests/conftest.py`](../tests/conftest.py) l'impose**
+(#195) — le pendant Python du réseau débranché d'office côté UI
+([`apps/web/tests/setup.ts`](../apps/web/tests/setup.ts)). Le garde-fou vide les **clés Langfuse**
+de l'environnement du processus de test et fait **échouer le test** qui laisse un
+`LangfuseExportHandler` sur le logger global `maestro.trace`. Les deux moitiés comptent : sans la
+première, un poste dont l'intégration Langfuse est opérationnelle joue la même suite pour le même
+verdict en **17 min 51 s au lieu de 7 min 08 s** (`activer_export_langfuse()` est appelée par
+chaque point d'entrée, le handler survit au test qui l'a déclenché, et chaque ligne journalisée
+ensuite part en POST **synchrone** de 10 s de plafond — vers le vrai projet Langfuse, qu'elle
+pollue au passage) ; sans la seconde, la prochaine fuite du même genre repasserait inaperçue,
+puisqu'elle ne se manifeste que par de la lenteur. C'est aussi ce qui rend le filet CI local
+([`scripts/ci/local.sh`](../scripts/ci/local.sh), ci-dessous) comparable au job qu'il prédit : le
+runner, lui, n'a jamais eu de clés Langfuse dans son environnement.
+
 **Quand un pipeline se déclenche ?** **Uniquement sur les Merge Requests** (#165). Le bloc
 `workflow: rules:` de [`.gitlab-ci.yml`](../.gitlab-ci.yml) ne laisse passer que
 `$CI_PIPELINE_SOURCE == "merge_request_event"` — la **création** d'une MR, puis chaque **push sur

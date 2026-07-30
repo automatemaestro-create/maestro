@@ -233,13 +233,25 @@ def activer_export_langfuse(settings: Settings | None = None) -> logging.Handler
     exécution journalisée (#8) produit sa trace Langfuse, coûts compris (#55).
     S'active côté orchestrateur (cf. docstring du module) ; renvoie le handler
     posé (à retirer via `logging.getLogger(LOGGER_NAME).removeHandler(...)`).
+
+    **Idempotente** (#195) : `maestro.trace` est un logger *global* et les points
+    d'entrée appellent cette fonction à chaque invocation (`engine_cli.main`,
+    `maestro.demo.main`) sans jamais retirer le handler. Sans garde, N appels
+    dans un même processus accrochent N handlers, et chaque ligne journalisée
+    part alors N fois vers Langfuse : traces et coûts dupliqués, et autant de
+    POST synchrones (`_TIMEOUT_S` chacun) par ligne consignée. Un handler déjà
+    posé est donc renvoyé tel quel, sans en construire un second — changer de
+    `settings` en cours de processus suppose de retirer le handler d'abord.
     """
     settings = settings or load_settings()
     if not (settings.langfuse_public_key and settings.langfuse_secret_key):
         return None
-    handler = LangfuseExportHandler(publieur_langfuse(settings))
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.INFO)
+    for existant in logger.handlers:
+        if isinstance(existant, LangfuseExportHandler):
+            return existant
+    handler = LangfuseExportHandler(publieur_langfuse(settings))
     logger.addHandler(handler)
     return handler
 

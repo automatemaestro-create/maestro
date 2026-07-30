@@ -12,7 +12,11 @@ factice qui reçoit l'API d'ingestion. Couvre les critères du lot final (#80) :
   globale, taux de tâches réussies) partent sur la trace du run via la même API
   d'ingestion, dérivés de la comptabilité par tâche (#55) ;
 - **mode dégradé sans Langfuse** : sans les deux clés, aucun handler n'est posé
-  et aucun score n'est publié — fonctionnement strictement identique.
+  et aucun score n'est publié — fonctionnement strictement identique ;
+- **idempotence de l'activation** (#195) : `maestro.trace` étant un logger
+  global qu'aucun appelant ne nettoie, N activations ne laissent qu'un handler —
+  et la suite de tests elle-même ne publie jamais vers le vrai Langfuse
+  (garde-fou de `tests/conftest.py`).
 """
 
 import base64
@@ -20,11 +24,12 @@ import json
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 import httpx2
 import pytest
 
-from maestro.config import Settings
+from maestro.config import Settings, load_settings
 from maestro.telemetry import (
     ETAPE_PLANIFICATION,
     LOGGER_NAME,
@@ -345,6 +350,40 @@ def test_avec_les_deux_cles_le_handler_est_pose_et_retirable(logger_trace):
     assert handler in logger_trace.handlers
     logger_trace.removeHandler(handler)
     assert handler not in logger_trace.handlers
+
+
+def test_l_activation_repetee_ne_pose_qu_un_seul_handler(logger_trace):
+    # `maestro.trace` est un logger *global* et les points d'entrée activent l'export
+    # à chaque invocation, sans jamais le retirer (#195) : N activations dans un même
+    # processus ne doivent pas accrocher N handlers, sans quoi chaque ligne consignée
+    # part N fois — traces et coûts dupliqués, et N POST synchrones par ligne.
+    settings = _settings(langfuse_public_key="pk", langfuse_secret_key="sk")
+
+    premier = activer_export_langfuse(settings)
+    for _ in range(3):
+        assert activer_export_langfuse(settings) is premier  # le handler déjà posé
+
+    exporteurs = [h for h in logger_trace.handlers if isinstance(h, LangfuseExportHandler)]
+    assert exporteurs == [premier]
+
+    # L'idempotence n'interdit pas de réactiver : retiré, le handler se repose.
+    logger_trace.removeHandler(premier)
+    repose = activer_export_langfuse(settings)
+    assert repose is not None and repose is not premier
+
+
+def test_la_suite_de_tests_ne_publie_jamais_vers_le_vrai_langfuse(logger_trace):
+    # Garde-fou de `tests/conftest.py` : sur un poste dont le `.env` porte les vraies
+    # clés, l'activation « par défaut » (sans settings explicite — celle que font les
+    # `main()`) posait un handler, et la suite sortait sur le réseau à raison d'un POST
+    # synchrone par ligne journalisée : 17 min 51 s au lieu de 7 min 08 s (#195).
+    assert activer_export_langfuse() is None
+    assert not [h for h in logger_trace.handlers if isinstance(h, LangfuseExportHandler)]
+
+    # Rien ne peut viser le vrai hôte, même en construisant un publieur soi-même.
+    settings = load_settings()
+    assert not settings.langfuse_public_key and not settings.langfuse_secret_key
+    assert urlparse(settings.langfuse_host).hostname in {"127.0.0.1", "localhost"}
 
 
 # --- Évaluation des exécutions (#80) ------------------------------------------------------
