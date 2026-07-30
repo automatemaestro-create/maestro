@@ -485,14 +485,25 @@ TICKET_SIMPLE = corps_ticket(
 )
 
 
-def test_start_brief_refuse_un_arbre_non_propre(depot: Depot) -> None:
-    """Premier garde-fou : on ne démarre pas un ticket par-dessus le travail d'une autre session."""
+def test_start_brief_signale_un_arbre_non_propre_sans_bloquer(depot: Depot) -> None:
+    """Depuis #181, l'arbre sale est un AVERTISSEMENT et non plus un refus.
+
+    L'intention d'origine — ne pas démarrer par-dessus le travail d'une autre session — n'est pas
+    abandonnée, elle change de porteur : `/ticket-start` monte désormais un worktree par ticket, si
+    bien que des changements non commités ici restent derrière nous, intacts et hors du chemin.
+    Les refuser bloquerait le démarrage pour une saleté sans rapport avec le ticket visé. La
+    décision revient à la commande, seule à connaître le verdict de `worktree.sh ensure` :
+    bloquante sur « ICI » (on travaillerait dans cet arbre), anodine sur « WORKTREE ».
+    """
+    depot.pose_etat(issues={"159": TICKET_SIMPLE})
     (depot.racine / "fichier-a.txt").write_text("modifié\n", encoding="utf-8", newline="\n")
+
     acheve = depot.lib("start-brief", "159")
-    assert acheve.returncode == 1
-    assert "non propre" in acheve.stderr
-    # Et surtout : rien n'a été lu ni écrit côté GitLab.
-    assert depot.appels() == ["auth\tstatus"]
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "arbre de travail non propre" in acheve.stderr
+    assert "1 fichier(s) non commité(s)" in acheve.stderr, "le compte rend l'alerte actionnable"
+    # Le brief est bien rendu : c'est tout l'intérêt de ne plus sortir avant de l'imprimer.
+    assert "#159" in acheve.stdout
 
 
 def test_start_brief_annonce_un_ticket_libre(depot: Depot) -> None:

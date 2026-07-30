@@ -50,8 +50,13 @@ usage() {
 Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
 
   bash scripts/git/worktree.sh [create] <iid> [options]
+  bash scripts/git/worktree.sh ensure <iid> [--branche <nom>]
   bash scripts/git/worktree.sh list
   bash scripts/git/worktree.sh remove <iid|chemin> [--force]
+
+`ensure` est l'aiguillage de /ticket-start : il dit où la session doit travailler, en rendant
+en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà — cas d'orchestrate,
+qui monte le worktree lui-même) ou « WORKTREE <chemin> » (worktree prêt, s'y relocaliser).
 
 Options de création :
   --branche <nom>   Nom de branche imposé (par défaut : résolu depuis le ticket via glab).
@@ -77,6 +82,22 @@ depot_principal() {
   fi
   [ -n "$commun" ] || return 1
   dirname "$commun"
+}
+
+# worktree_de_branche <branche> : chemin du worktree qui a CETTE branche empruntée, s'il existe.
+#
+# git refuse la même branche dans deux worktrees — c'est un verrou d'exclusion mutuelle utile (deux
+# sessions sur le même ticket deviennent impossibles), mais son message brut ne dit pas OÙ elle est
+# prise, ce qui laisse l'appelant sans recours. On le lui dit.
+worktree_de_branche() {
+  local branche="$1" courant="" ligne
+  while IFS= read -r ligne; do
+    case "$ligne" in
+      worktree\ *) courant="${ligne#worktree }" ;;
+      "branch refs/heads/$branche") printf '%s' "$courant"; return 0 ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+  return 1
 }
 
 # Chemin natif (Windows) — ce qui part dans un JSON relu par des outils Windows doit être natif.
@@ -296,6 +317,15 @@ commande_create() {
     mkdir -p "$base" 2>/dev/null
     GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch origin main >/dev/null 2>&1
     if git -C "$principal" show-ref --verify --quiet "refs/heads/$branche"; then
+      # Le cas d'échec le plus fréquent, et le seul que git explique mal : la branche est déjà
+      # empruntée ailleurs. On nomme l'emprunteur plutôt que de laisser deviner.
+      local emprunteur
+      if emprunteur="$(cd "$principal" && worktree_de_branche "$branche")" && [ -n "$emprunteur" ]; then
+        erreur "branche « $branche » déjà empruntée par le worktree :"
+        printf '      %s\n' "$(chemin_natif "$emprunteur")" >&2
+        printf '  Y ouvrir la session, ou retirer ce worktree (worktree.sh remove %s).\n' "$iid" >&2
+        return 1
+      fi
       if ! sortie="$(git -C "$principal" worktree add "$dest" "$branche" 2>&1)"; then
         erreur "git worktree add a échoué (branche « $branche » déjà empruntée par un autre worktree ?)"
         printf '%s\n' "$sortie" >&2
@@ -312,6 +342,8 @@ commande_create() {
     fi
   fi
   dest="$(cd "$dest" && pwd)"
+  # Exposé à `ensure`, qui a besoin du chemin retenu sans avoir à le recalculer.
+  WORKTREE_DEST="$dest"
 
   # 4) .env — gitignoré, donc absent du worktree ; jamais écrasé s'il a déjà été adapté.
   if [ -f "$dest/.env" ]; then
@@ -373,9 +405,99 @@ commande_create() {
 
   # Chemin natif : c'est un dossier que l'utilisateur va ouvrir dans un outil Windows, pas dans
   # Git Bash — « E:\… » lui parle, « /e/… » non.
-  printf '\nPrêt. Ouvrir une seconde session Claude Code sur :\n\n  %s\n\n' "$(chemin_natif "$dest")"
-  printf 'Control Tower de cette session : http://localhost:%s (API :%s).\n' "$port_ui" "$port_api"
-  printf 'Le ticket reste à démarrer depuis cette session : /ticket-start %s\n' "$iid"
+  if [ "${VIA_ENSURE:-0}" = 1 ]; then
+    # Appelé par `ensure` : la session VA se relocaliser ici, il n'y a pas de seconde session à
+    # ouvrir ni de /ticket-start à relancer. En revanche il faut dire les ports et le profil — une
+    # session relocalisée en cours de route ne les hérite PAS (mesuré sur #181 : EnterWorktree ne
+    # réévalue que les caches liés au CWD, le bloc `env` est résolu au démarrage de la session).
+    printf '\nWorktree prêt : %s\n' "$(chemin_natif "$dest")"
+    printf '  Control Tower de ce worktree : http://localhost:%s (API :%s)\n' "$port_ui" "$port_api"
+    printf '  profil de navigateur dédié   : %s\n' "$profil"
+    printf '  ⚠ non hérités par une session relocalisée (bloc env résolu au démarrage) :\n'
+    printf '    les passer explicitement pour démarrer la stack ou piloter le navigateur.\n'
+  else
+    printf '\nPrêt. Ouvrir une seconde session Claude Code sur :\n\n  %s\n\n' "$(chemin_natif "$dest")"
+    printf 'Control Tower de cette session : http://localhost:%s (API :%s).\n' "$port_ui" "$port_api"
+    printf 'Le ticket reste à démarrer depuis cette session : /ticket-start %s\n' "$iid"
+  fi
+}
+
+# --- ensure -----------------------------------------------------------------------------------------
+# « Où doit travailler la session qui démarre le ticket #<iid> ? » — l'aiguillage appelé par
+# /ticket-start (#181), pour que le clone principal cesse de changer de branche à chaque ticket.
+#
+# Rend UNE ligne de verdict, en DERNIER sur stdout, pour que l'appelant n'ait pas à interpréter le
+# rapport humain qui la précède :
+#
+#   ICI <chemin>        le répertoire courant est déjà le bon endroit — rien n'a été monté
+#   WORKTREE <chemin>   le worktree du ticket est prêt : la session doit s'y relocaliser
+#
+# Les trois situations d'appel (docs/10 §9) retombent sur ces deux verdicts :
+#   - clone principal sur `main`             -> WORKTREE : le cas nominal, celui que le ticket vise ;
+#   - worktree DÉJÀ sur la branche du ticket -> ICI : c'est le cas de `orchestrate/run.sh`, qui monte
+#     lui-même le worktree avant d'y lancer la session. Il ne doit surtout pas en naître un second ;
+#   - worktree d'un AUTRE ticket             -> WORKTREE : l'emplacement se résout depuis le clone
+#     principal (`depot_principal`), il reste donc correct.
+#
+# Le clone principal DÉJÀ sur la branche du ticket rend « ICI » lui aussi : c'est une reprise de
+# travail en cours, et l'en déloger serait gratuit et risqué. Le nouveau régime s'installe ticket
+# par ticket, sans migration.
+commande_ensure() {
+  local iid="" branche=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --branche) branche="${2:-}"; shift ;;
+      -h|--help) usage; return 0 ;;
+      -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
+      *)  iid="$1" ;;
+    esac
+    shift
+  done
+
+  case "$iid" in
+    '') echo "usage: bash scripts/git/worktree.sh ensure <iid>" >&2; return 2 ;;
+    *[!0-9]*) echo "IID de ticket attendu (nombre) : « $iid »" >&2; return 2 ;;
+  esac
+
+  if [ -z "$branche" ]; then
+    branche="$(bash "$ICI/../gitlab/lib.sh" branch-for "$iid")" || {
+      erreur "branche introuvable pour #$iid (glab authentifié ?) — sinon : --branche <nom>"
+      return 1
+    }
+  fi
+  case "$branche" in
+    *'<type>'*)
+      erreur "ticket #$iid sans label type:: — poser le label, ou imposer --branche <nom>"
+      return 1 ;;
+  esac
+
+  # Déjà au bon endroit ? Le test porte sur la BRANCHE du répertoire courant, jamais sur son
+  # chemin : sous Windows git répond « E:/… » là où Git Bash répond « /e/… », et une comparaison
+  # de chemins passerait à côté (même piège que dans `commande_remove`).
+  local courante racine
+  courante="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [ -n "$courante" ] && [ "$courante" = "$branche" ]; then
+    racine="$(git rev-parse --path-format=absolute --show-toplevel 2>/dev/null)" || racine="$(pwd)"
+    # Chemin NATIF : ce verdict est consommé par l'outil de relocalisation de session côté
+    # Windows, pas par Git Bash. Un « /tmp/… » de MSYS y serait résolu en « E:\tmp\… ».
+    printf 'ICI %s\n' "$(chemin_natif "$racine")"
+    return 0
+  fi
+
+  # Affectation explicite plutôt que préfixe `VIA_ENSURE=1 commande_create …` : devant un APPEL DE
+  # FONCTION, la persistance de l'affectation dépend du mode POSIX du shell. On ne parie pas.
+  local code
+  WORKTREE_DEST=""
+  VIA_ENSURE=1
+  commande_create "$iid" --branche "$branche"
+  code=$?
+  VIA_ENSURE=0
+  [ "$code" -eq 0 ] || return "$code"
+  if [ -z "$WORKTREE_DEST" ]; then
+    erreur "worktree monté mais chemin introuvable — état inattendu, ne pas relocaliser la session"
+    return 1
+  fi
+  printf 'WORKTREE %s\n' "$(chemin_natif "$WORKTREE_DEST")"
 }
 
 # --- list ------------------------------------------------------------------------------------------
@@ -495,6 +617,7 @@ cmd="${1:-}"
 [ "$#" -gt 0 ] && shift
 case "$cmd" in
   create)      commande_create "$@" ;;
+  ensure)      commande_ensure "$@" ;;
   list)        commande_list "$@" ;;
   remove)      commande_remove "$@" ;;
   -h|--help|'') usage ;;

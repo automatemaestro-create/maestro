@@ -577,7 +577,7 @@ gl_subtickets_startables() {
 # gl_start_brief <iid> -> préflight complet de /ticket-start en un appel et UNE SEULE lecture du
 # ticket (un unique `glab issue view`, rejoué pour toutes les projections ; autres lectures : le
 # statut/assigné du ticket, et la checklist du parent si <iid> est un sous-ticket). Vérifie les
-# pré-requis (gl_require_glab) et l'arbre propre, puis imprime un bloc compact : titre/labels/
+# pré-requis (gl_require_glab), signale un arbre sale, puis imprime un bloc compact : titre/labels/
 # critères (gl_issue_brief_render), la ligne « statut : … — libre / pris par … » (gl_issue_owner,
 # avec ⚠ si le ticket est « En cours » chez quelqu'un d'autre), selon le cas marqueur sous-ticket
 # (parent, rang « lot n/total », tests différés, contrôle du statut des lots précédents) ou
@@ -586,14 +586,24 @@ gl_subtickets_startables() {
 # gl_slug du titre).
 # Informatif : les avertissements (ticket déjà pris, lot précédent non livré, label type:: absent)
 # sont dans la sortie ; la décision — démarrer, rediriger, s'arrêter — reste à l'appelant. Code
-# retour non nul seulement sur vrai échec (pré-requis, arbre sale, ticket introuvable).
+# retour non nul seulement sur vrai échec (pré-requis, ticket introuvable) — l'arbre sale est
+# depuis #181 un avertissement, pas un refus : le travail se fait dans le worktree du ticket.
 gl_start_brief() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_start_brief <iid>" >&2; return 2; fi
   gl_require_glab || return 1
-  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-    echo "Arbre de travail non propre : changements non commités — les committer, stasher ou annuler avant de démarrer." >&2
-    return 1
+  # Arbre sale : AVERTISSEMENT, plus un refus (#181). Depuis que /ticket-start monte un worktree
+  # par ticket, le travail ne se fait plus forcément ici : des changements non commités dans le
+  # répertoire courant restent alors derrière nous, intacts et hors du chemin — les refuser
+  # bloquerait le démarrage pour une saleté sans rapport avec le ticket. La décision revient à
+  # l'appelant, qui seul connaît le verdict de `worktree.sh ensure` : bloquant si « ICI » (on
+  # travaillerait DANS cet arbre), anodin si « WORKTREE ».
+  local sales
+  sales="$(git status --porcelain 2>/dev/null | grep -c .)" || sales=0
+  if [ "${sales:-0}" -gt 0 ]; then
+    printf '⚠ arbre de travail non propre : %s fichier(s) non commité(s) dans %s\n' \
+      "$sales" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" >&2
+    printf '  Sans objet si un worktree est monté pour ce ticket ; à trancher sinon.\n' >&2
   fi
   local raw
   raw="$(glab issue view "$iid" 2>/dev/null)" || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
@@ -1748,7 +1758,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    subtickets <iid-parent>         (checklist ## Sous-tickets : iid/coche/statut/par/titre)" >&2
       echo "    startables <iid-parent>         (lots « À faire » démarrables maintenant)" >&2
       echo "  Démarrage de ticket (/ticket-start) :" >&2
-      echo "    start-brief <iid>            (préflight en une lecture : pré-requis, arbre propre, brief, parent/sous-ticket, branche proposée)" >&2
+      echo "    start-brief <iid>            (préflight en une lecture : pré-requis, arbre sale signalé, brief, parent/sous-ticket, branche proposée)" >&2
       echo "    branch-for <iid>             (nom de la branche de travail du ticket)" >&2
       echo "    start-branch <branche>       (place le dépôt sur la branche — clone principal ou worktree lié, idempotent)" >&2
       echo "    begin <iid> [username]       (assignation + « En cours » + dates en une mutation groupée)" >&2
