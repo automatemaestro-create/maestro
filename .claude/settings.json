@@ -38,6 +38,10 @@
       "Bash(bash scripts/gitlab/clean-runner-containers.sh)",
       "Bash(bash scripts/gitlab/clean-runner-containers.sh --check)",
       "Bash(bash scripts/git/install-hooks.sh:*)",
+      "Bash(bash scripts/git/worktree.sh ensure:*)",
+      "Bash(bash scripts/git/worktree.sh list:*)",
+      "Bash(bash scripts/git/worktree.sh gc:*)",
+      "EnterWorktree",
       "mcp__chrome-maestro",
       "mcp__figma-officiel"
     ],

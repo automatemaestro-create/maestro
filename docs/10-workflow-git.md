@@ -893,6 +893,21 @@ l'appelant n'ait pas à interpréter le rapport humain qui la précède :
 | `WORKTREE <chemin>` | clone principal sur `main` ; ou worktree d'un **autre** ticket | **relocalise la session** dans ce chemin (outil `EnterWorktree`), puis continue |
 | `ICI <chemin>` | on est **déjà** sur la branche du ticket | ne relocalise rien et continue sur place |
 
+> **Les deux gestes de cette étape sont autorisés sans confirmation** (#199) :
+> [`.claude/settings.json`](../.claude/settings.json) porte `EnterWorktree` et les verbes non
+> destructifs de `worktree.sh` (`ensure`, `list`, `gc`) dans son `allow`. Sans eux, `/ticket-start`
+> s'interrompait deux fois de suite sur son seul geste automatique, alors que la commande venait
+> d'être demandée explicitement et que le verdict `WORKTREE` vient du **script**, pas d'une décision
+> d'agent — ce qui contredisait la règle « le résumé de cadrage n'est pas une pause d'autorisation »
+> (§5). Ce n'est pas un élargissement du régime de permissions : monter un répertoire de travail et
+> s'y placer n'écrit rien côté GitLab, ne supprime aucune branche et ne force-pushe rien. Deux
+> pièges appris au passage : le `allowed-tools:` du frontmatter d'une commande **ne vaut pas
+> permission** (`/ticket-start` déclarait déjà `EnterWorktree` et la question restait posée), et
+> `EnterWorktree` s'écrit **nu, sans spécificateur** — comme `Skill` (§11.7), il ne déclare pas de
+> `ruleContentField`, donc une règle paramétrée ne matcherait jamais rien. `worktree.sh remove`
+> reste **hors** de l'`allow` : son `--force` passe outre les changements non commités, c'est
+> exactement le genre de geste qui mérite une confirmation.
+
 Le cas `ICI` n'est pas un détail de confort : c'est lui qui garde
 [`scripts/orchestrate/run.sh`](../scripts/orchestrate/run.sh) intact (§11). La boucle autonome monte
 elle-même le worktree avant d'y lancer sa session ; un second worktree y serait une régression
