@@ -660,6 +660,81 @@ def test_un_echec_ordinaire_ne_declenche_aucune_reprise(depot: Depot, contenu: s
     assert "PAS UNE LIMITE" in r.stdout
 
 
+# =====================================================================================
+# La télémétrie du flux stream-json n'est pas un refus (#203)
+# =====================================================================================
+# Le CLI ouvre CHAQUE session par un événement qui rapporte la fenêtre de 5 h en cours — y compris
+# une session qui ira au bout. Depuis que le flux brut est grepé (#176), il faisait dormir un run
+# jusqu'au reset après un ticket pourtant LIVRÉ. Noter `overageStatus` : « rejected » dès que
+# l'organisation interdit le dépassement, sur une ligne qui n'est pas un refus pour autant.
+def _evenement_fenetre(statut: str, reset: int) -> str:
+    """L'événement d'ouverture du flux, tel que le CLI l'écrit."""
+    return (
+        '{"type":"rate_limit_event","rate_limit_info":{"status":"' + statut + '",'
+        '"resetsAt":' + str(reset) + ',"rateLimitType":"five_hour",'
+        '"overageStatus":"rejected","isUsingOverage":false},"session_id":"06cacb83"}'
+    )
+
+
+def test_la_telemetrie_de_fenetre_n_est_pas_une_limite(depot: Depot) -> None:
+    futur = int(time.time()) + 3600
+    f = _fixture_limite(
+        depot, "telemetrie",
+        _evenement_fenetre("allowed", futur) + "\n"
+        + '{"type":"result","subtype":"success","is_error":false,"result":"livré"}\n',
+    )
+    r = depot.lance("run.sh", "--test-reprise", f)
+    assert r.returncode == 1, r.stdout
+    assert "PAS UNE LIMITE" in r.stdout
+
+
+def test_un_refus_dans_le_meme_evenement_reste_une_limite(depot: Depot) -> None:
+    """Le filtre écarte l'information, pas le refus — sinon il masquerait ce qu'il doit détecter."""
+    futur = int(time.time()) + 3600
+    f = _fixture_limite(
+        depot, "refus",
+        _evenement_fenetre("rejected", futur) + "\n"
+        + '{"type":"result","is_error":true,"result":"usage limit reached"}\n',
+    )
+    r = depot.lance("run.sh", "--test-reprise", f)
+    assert r.returncode == 0, r.stdout
+    assert "LIMITE D'USAGE détectée" in r.stdout
+    secondes = int(r.stdout.split("(")[1].split(" s)")[0])
+    assert 3500 < secondes <= 3600 + 130, "l'heure de reset du refus reste celle qu'on attend"
+
+
+def test_une_session_reussie_ne_part_jamais_en_reprise(depot: Depot) -> None:
+    """La ceinture des bretelles : sortie en 0 ⇒ verdict GitLab, sans passer par la détection.
+
+    La session dit ici « usage limit reached » dans son message final — le marqueur SURVIT au
+    filtre, et c'est voulu : une session qui travaille justement sur les limites d'usage en écrit
+    les mots (celle-ci en est un cas réel). Seule la sortie en 0 doit alors la sauver.
+
+    Le plafond est mis à 1 s pour qu'une régression échoue *vite* : toute limite détectée
+    dépasserait alors le cumul autorisé et arrêterait le run au lieu de dormir jusqu'au reset.
+    """
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    compteur = depot.racine.parent / "appels-succes"
+    futur = int(time.time()) + 3600
+    claude = _claude_stub(depot, f"""
+        n=$(( $(cat "{compteur}" 2>/dev/null || echo 0) + 1 )); echo "$n" > "{compteur}"
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '%s\\n' '{_evenement_fenetre("allowed", futur)}'
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2,'
+        printf '"result":"corrigé le message usage limit reached"}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "succes",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PLAFOND": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert compteur.read_text().strip() == "1", "une seule session : aucune reprise"
+    assert "limite d'usage" not in r.stdout.lower()
+    resume = (depot.racine / ".maestro/orchestrate/succes/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tOK" in resume, "le verdict GitLab est lu — le ticket livré n'est pas dit en échec"
+
+
 def test_apres_la_limite_la_session_reprend_au_lieu_de_recommencer(depot: Depot) -> None:
     depot.ticket(130, "Ticket interrompu")
     compteur = depot.racine.parent / "appels"

@@ -270,19 +270,57 @@ PLAFOND_ATTENTE_S="${MAESTRO_ORCHESTRATE_PLAFOND:-19800}"   # 5 h 30 : au-delà,
 MAX_REPRISES="${MAESTRO_ORCHESTRATE_MAX_REPRISES:-3}"
 PLAFOND_ATTEINT=0
 
+# --- Ce qui n'est PAS un signal de limite (#203) ------------------------------------------------
+# Le CLI ouvre CHAQUE session par un événement d'information qui rapporte la fenêtre de 5 h en
+# cours — présent que la limite soit atteinte ou non, et jusque dans une session qui ira au bout :
+#
+#   {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":<epoch>,…}}
+#
+# Depuis que le flux brut est écrit dans `<iid>.jsonl` (#176) et que ce fichier est grepé au même
+# titre que le résultat, cette ligne faisait matcher `rate.?limit` et livrait son `resetsAt` à
+# `reset_epoch` : une session sortie en SUCCÈS partait dormir jusqu'au prochain reset, son verdict
+# GitLab n'était jamais lu, et le ticket pourtant livré était consigné en échec.
+#
+# On écarte donc ces lignes avant toute recherche — sauf celles qui portent un vrai refus,
+# `"status":"rejected"`. Le motif exige le guillemet ouvrant : sans lui, `"overageStatus":"rejected"`
+# (une AUTRE clé du même objet, « rejected » dès que l'org interdit le dépassement) sauverait la
+# ligne et rendrait le filtre inopérant sur le cas exact qui l'a motivé.
+#
+# Le filtre porte sur la LIGNE, pas sur le fichier : un `.jsonl` est un événement par ligne, et une
+# vraie limite arrive dans un autre événement, conservé tel quel.
+flux_utile() {
+  local f
+  local -a lisibles=()
+  for f in "$@"; do [ -f "$f" ] && lisibles+=("$f"); done
+  [ "${#lisibles[@]}" -gt 0 ] || return 0
+  LC_ALL=C awk '
+    /"type"[[:space:]]*:[[:space:]]*"rate_limit_event"/ {
+      if ($0 !~ /"status"[[:space:]]*:[[:space:]]*"rejected"/) next
+    }
+    { print }
+  ' "${lisibles[@]}" 2>/dev/null
+}
+
 # limite_atteinte <fichier…> : 0 si l'un des fichiers porte la marque d'une limite d'usage.
 limite_atteinte() {
-  grep -qiE 'usage limit reached|rate.?limit|too many requests|"?api_error_status"?[[:space:]]*:?[[:space:]]*"?429|credit balance' "$@" 2>/dev/null
+  local n
+  # `grep -c` et non `-q` : sous `pipefail`, un `-q` fermerait le tube dès la première
+  # correspondance, et le SIGPIPE du filtre en amont deviendrait le code de retour du pipeline —
+  # une VRAIE limite ressortirait alors en « pas de limite ». On compte, donc on lit tout.
+  n="$(flux_utile "$@" | grep -ciE 'usage limit reached|rate.?limit|too many requests|"?api_error_status"?[[:space:]]*:?[[:space:]]*"?429|credit balance')" || n=0
+  [ "${n:-0}" -gt 0 ]
 }
 
 # reset_epoch <fichier…> : l'instant de reset en secondes Unix, si l'un des fichiers l'expose.
 # Trois écritures rencontrées : « usage limit reached|<epoch> », un champ « …reset…: <epoch> » (en
 # secondes ou en millisecondes), et un horodatage ISO 8601. Rien si aucune n'est présente.
+# Lit le même flux filtré que `limite_atteinte` : le `resetsAt` d'un événement d'information annonce
+# la fin de la fenêtre courante, pas une attente à tenir.
 reset_epoch() {
   local brut
 
-  brut="$(grep -ohE 'usage limit reached\|[0-9]{10,13}' "$@" 2>/dev/null | head -1 | grep -oE '[0-9]{10,13}')"
-  [ -z "$brut" ] && brut="$(grep -ohiE '"[a-z_]*reset[a-z_]*"[[:space:]]*:[[:space:]]*"?[0-9]{10,13}' "$@" 2>/dev/null | head -1 | grep -oE '[0-9]{10,13}$')"
+  brut="$(flux_utile "$@" | grep -oE 'usage limit reached\|[0-9]{10,13}' | head -1 | grep -oE '[0-9]{10,13}')"
+  [ -z "$brut" ] && brut="$(flux_utile "$@" | grep -oiE '"[a-z_]*reset[a-z_]*"[[:space:]]*:[[:space:]]*"?[0-9]{10,13}' | head -1 | grep -oE '[0-9]{10,13}$')"
   if [ -n "$brut" ]; then
     # 13 chiffres = millisecondes. Sans cette conversion, l'attente serait ~1 000 fois trop longue.
     [ "${#brut}" -ge 13 ] && brut="${brut%???}"
@@ -291,7 +329,7 @@ reset_epoch() {
   fi
 
   local iso
-  iso="$(grep -ohiE '"[a-z_]*reset[a-z_]*"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+' "$@" 2>/dev/null |
+  iso="$(flux_utile "$@" | grep -oiE '"[a-z_]*reset[a-z_]*"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+' |
     head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+')"
   [ -n "$iso" ] || return 1
   date -u -d "${iso}Z" +%s 2>/dev/null || return 1
@@ -1076,6 +1114,13 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
 
     if [ "$code" -eq 124 ]; then
       printf '  %s✗%s session interrompue au bout de %s (timeout)\n' "$C_R" "$C_0" "$(duree_lisible "$TIMEOUT_S")"
+      break
+    fi
+
+    # Une session sortie en 0 est allée au bout de son tour : rien ne l'a coupée, et il n'y a rien à
+    # reprendre. On passe droit au verdict GitLab. Sans ce garde-fou, tout faux positif de la
+    # détection renvoyait en attente un ticket DÉJÀ LIVRÉ, sans jamais lire ce verdict (#203).
+    if [ "$code" -eq 0 ]; then
       break
     fi
 
