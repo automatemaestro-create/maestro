@@ -442,6 +442,45 @@ def test_check_detecte_une_regle_deny_oubliee(depot: Depot) -> None:
 
 
 # =====================================================================================
+# settings.run.json — l'allowlist des sessions autonomes (#179)
+# =====================================================================================
+# Ces trois tests gardent des décisions qui ont coûté un run entier à apprendre (§11.7). Ils lisent
+# le fichier VERSIONNÉ, pas la copie du dépôt jetable : c'est le régime réel des runs qui est en
+# jeu.
+
+def _allow() -> list:
+    chemin = RACINE / "scripts/orchestrate/settings.run.json"
+    return json.loads(chemin.read_text(encoding="utf-8"))["permissions"]["allow"]
+
+
+def test_une_session_autonome_peut_invoquer_les_skills() -> None:
+    """Sans `Skill`, la session de #130 a refait le cycle /ticket-start À LA MAIN (100 tours)."""
+    allow = _allow()
+    assert "Skill" in allow, "le tool Skill doit être autorisé, et nu"
+    # Le tool Skill ne déclare pas de `ruleContentField` (là où Bash expose `command`) : une règle
+    # `Skill(ticket-start)` ne matcherait jamais rien tout en donnant l'illusion d'autoriser.
+    assert not [r for r in allow if r.startswith("Skill(")], \
+        "une règle Skill avec spécificateur ne matche rien — elle donnerait une fausse sécurité"
+
+
+def test_le_decor_de_pipeline_est_autorise() -> None:
+    """Une chaîne vaut son maillon le plus faible : un `echo` de confort la faisait tomber."""
+    allow = _allow()
+    for binaire in ("cd", "echo", "printf", "grep", "sed"):
+        assert f"Bash({binaire}:*)" in allow, \
+            f"{binaire} manquant : il ferait tomber des chaînes dont tout le reste est autorisé"
+
+
+def test_les_refus_merites_ne_sont_pas_leves() -> None:
+    """#178 a fermé le mode d'échec « la session attend un résultat » — ne pas le rouvrir ici."""
+    allow = _allow()
+    assert not [r for r in allow if r.startswith("Bash(sleep")], \
+        "les attentes actives ont coûté le run de #131 : un résultat s'obtient en avant-plan"
+    assert "Bash(bash:*)" not in allow, \
+        "« bash » tout court exécuterait n'importe quel script, hors du dépôt compris"
+
+
+# =====================================================================================
 # run.sh — la boucle (#170)
 # =====================================================================================
 

@@ -404,6 +404,12 @@ lance_session() {
 # viendra jamais. Le CLI sort en `end_turn`, `success`, code 0 — indiscernable d'une session qui a
 # vraiment fini. Le ticket est resté « À faire » avec son travail non commité, et les lots suivants
 # de son parent ont été sautés.
+#
+# Il dit aussi la FORME des appels shell (#179), parce qu'elle se paie en refus silencieux : onze des
+# dix-sept refus du premier run ne venaient pas d'un geste interdit mais d'un emballage que
+# l'allowlist ne reconnaissait plus — un `cd "<worktree>" &&` inutile en tête (la session y est déjà),
+# un chemin absolu là où la règle borne un chemin relatif, un `echo` de confort en fin de chaîne. Une
+# commande chaînée n'est autorisée que si CHACUN de ses morceaux l'est.
 prompt_ticket() {
   cat <<PROMPT
 Tu traites intégralement le ticket GitLab #$1 de ce dépôt, seul et sans supervision humaine.
@@ -422,6 +428,13 @@ Règles de ce run autonome :
   serait perdu avec son travail. Un résultat qui te manque s'obtient EN AVANT-PLAN (lance la
   commande et attends-la dans le même tour), sinon tranche sans lui en le disant, sinon sors sur
   ORCHESTRATE: ECHEC. Ne lance rien en arrière-plan dont tu aurais besoin ensuite.
+- Tes commandes passent une allowlist, et une commande chaînée n'est autorisée que si CHACUN de
+  ses morceaux l'est : préfère un appel par commande à une longue chaîne « && », qu'un seul
+  maillon inattendu fait refuser en entier. Tu es déjà DANS le worktree du ticket : inutile de
+  commencer par « cd », et appelle les scripts du dépôt en chemin RELATIF (« bash
+  scripts/gitlab/lib.sh … ») sans préfixe de variable d'environnement devant l'interpréteur —
+  sous ces deux formes-là, la règle qui autorise la commande ne la reconnaît plus et l'appel est
+  refusé sans que personne soit là pour l'approuver.
 - Si la branche du ticket existe déjà et porte des commits, OU si le worktree contient des
   modifications non commitées, REPRENDS ce travail au lieu de recommencer : commence par regarder
   git status et git log. Tu es peut-être la reprise d'une session interrompue, et un arbre sale
