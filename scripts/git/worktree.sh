@@ -124,11 +124,13 @@ decalage_ports() {
 # avec le clone principal plutôt que de les réinstaller. Sous Windows, une JONCTION (mklink /J) —
 # contrairement à un lien symbolique, elle ne demande aucun droit administrateur.
 #
-# Le venv partagé se comporte correctement depuis un worktree : le paquet `maestro` y est installé
-# en mode éditable et pointe vers le clone principal, mais le finder correspondant passe APRÈS le
-# PathFinder de Python — le `maestro/` du répertoire courant l'emporte donc, tant que les commandes
-# sont lancées depuis la racine du worktree. Les points d'entrée console (`maestro-run`…), eux,
-# restent pointés sur le clone principal.
+# Le venv partagé porte `maestro` en mode éditable POINTÉ SUR LE CLONE PRINCIPAL. Le finder
+# correspondant passe APRÈS le PathFinder de Python, donc le `maestro/` d'ici l'emporte — mais
+# seulement si la racine du worktree est dans `sys.path`, et c'est LE LANCEUR qui l'y met, pas le
+# répertoire d'où l'on lance : `python -m …` ajoute le répertoire courant, un point d'entrée console
+# (`maestro-run`, `pytest`…) ajoute le dossier du script. Lancé par son script console depuis un
+# worktree, pytest testait ainsi le code du clone principal (#194) — voir docs/10 §9.
+# Règle : depuis un worktree, TOUJOURS `python -m`.
 lier() {
   local src="$1" dst="$2" src_w dst_w
   [ -e "$src" ] || return 2      # rien à partager

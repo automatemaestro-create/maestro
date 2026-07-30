@@ -17,6 +17,10 @@
 #   - LES INTERPRÉTEURS DU DÉPÔT, jamais ceux du système : le venv (.venv/) et le Node vendoré
 #     (.tools/node/, épinglé par .node-version). Un `nvm use 18` ou un python global n'a donc
 #     aucune prise sur le verdict — c'est tout l'intérêt d'un filet censé prédire la CI.
+#   - ET LE CODE D'ICI, jamais celui d'un autre répertoire de travail : le venv est PARTAGÉ entre le
+#     clone principal et ses worktrees (docs/10 §9), où il installe `maestro` en éditable pointé sur
+#     le clone principal. Lancer pytest par son script console y ferait tester la branche du voisin
+#     (#194) : c'est `python -m pytest`, et une sonde le vérifie avant de jouer le job.
 #   - AUCUN RÉSEAU, aucune installation : le script se sert de ce que scripts/setup.sh a posé.
 #     Ce qui manque est dit, avec la commande qui l'obtient — jamais installé dans le dos.
 #   - MÊMES ÉTAGES QUE LA CI : lint puis test ; un étage en échec ARRÊTE le pipeline, comme
@@ -97,7 +101,7 @@ liste_jobs() {
   printf '  %-12s %-6s %s\n' JOB ÉTAGE COMMANDE
   printf '  %-12s %-6s %s\n' shellcheck   lint "shellcheck --severity=$SHELLCHECK_SEVERITE \$(find scripts -name '*.sh')"
   printf '  %-12s %-6s %s\n' python-lint  lint "ruff check ."
-  printf '  %-12s %-6s %s\n' pytest       test "pytest --cov=maestro --cov-fail-under=$COUVERTURE_MIN"
+  printf '  %-12s %-6s %s\n' pytest       test "python -m pytest --cov=maestro --cov-fail-under=$COUVERTURE_MIN"
   printf '  %-12s %-6s %s\n' mypy         test "mypy maestro"
   printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm test && npm run build (dans apps/web)"
 }
@@ -280,13 +284,68 @@ job_ruff() {
   return 1
 }
 
+# Où `import maestro` se résout POUR LE LANCEUR ET LE RÉPERTOIRE du job — la question qui décide si
+# le verdict de pytest est digne de foi (#194). Le `.venv` est partagé par jonction entre le clone
+# principal et ses worktrees (docs/10 §9) et y installe `maestro` en éditable POINTÉ SUR LE CLONE
+# PRINCIPAL : un lanceur qui n'ajoute pas le répertoire courant à `sys.path` importe alors le code
+# d'une AUTRE branche. La sonde tourne dans le même répertoire et par le même python que le job
+# — c'est ce qui la rend fidèle — et compare côté Python, où les chemins n'ont pas à traverser la
+# conversion MSYS.
+sonde_maestro() { # <python> → « ICI » | « AILLEURS <chemin> » | « ABSENT <erreur> »
+  ( cd "$RACINE" && "$1" - <<'PY' 2>/dev/null
+import os
+
+attendu = os.path.join(os.getcwd(), "maestro")
+try:
+    import maestro
+except Exception as erreur:  # large à dessein : tout import raté rend le job non jouable
+    print("ABSENT", erreur)
+else:
+    paquet = os.path.dirname(os.path.realpath(maestro.__file__))
+    memes = os.path.normcase(paquet) == os.path.normcase(os.path.realpath(attendu))
+    print("ICI" if memes else "AILLEURS " + paquet)
+PY
+  )
+}
+
 job_pytest() {
-  local exe couverture tests
-  exe="$(venv_bin pytest)" || {
+  local exe couverture tests sonde
+  # pytest est lancé par `python -m`, mais c'est bien la présence du SCRIPT CONSOLE qui dit s'il est
+  # installé dans le venv du dépôt : `python -m pytest` sur un venv sans pytest sortirait en 1, donc
+  # en ÉCHEC, là où « outil absent » doit rendre IGNORÉ (même traitement que ruff et mypy).
+  venv_bin pytest >/dev/null || {
     DETAIL="pytest absent du venv du dépôt — bash scripts/setup.sh --only venv"
     return 2
   }
-  execute "$exe" --cov=maestro "--cov-fail-under=$COUVERTURE_MIN"
+  exe="$(venv_bin python)" || {
+    DETAIL="python absent du venv du dépôt — bash scripts/setup.sh --only venv"
+    return 2
+  }
+  # Un job qui ne teste pas le code d'ici ne rend NI vert NI rouge : les deux mentiraient. Le rouge
+  # se voit (couverture 0 %) ; le vert, lui, passe inaperçu — un correctif cassé sort vert parce que
+  # le code fautif n'a jamais été chargé. On le dit, et le verdict n'en tient pas compte.
+  sonde="$(sonde_maestro "$exe")"
+  case "$sonde" in
+    ICI) ;;
+    AILLEURS*)
+      DETAIL="couverture et tests non mesurables ici : « import maestro » résout vers ${sonde#AILLEURS } au lieu du dépôt courant (venv partagé, docs/10 §9)"
+      return 2
+      ;;
+    ABSENT*)
+      DETAIL="le paquet maestro ne s'importe pas (${sonde#ABSENT }) — bash scripts/setup.sh --only venv"
+      return 2
+      ;;
+    *)
+      DETAIL="impossible de vérifier quel paquet maestro serait testé (sonde muette) — le verdict serait sans valeur"
+      return 2
+      ;;
+  esac
+  # `python -m` et non le script console `pytest` : lui seul ajoute le répertoire courant à
+  # `sys.path` (le script console, lui, y met le dossier du script — #194). Sans ça, dans un
+  # worktree, les tests s'exécutent contre le `maestro/` du clone principal pendant que
+  # `--cov=maestro` instrumente celui d'ici — d'où une couverture à 0 %, et surtout un verdict qui
+  # ne porte pas sur la branche qu'on s'apprête à pousser.
+  execute "$exe" -m pytest --cov=maestro "--cov-fail-under=$COUVERTURE_MIN"
   local code=$?
   couverture="$(grep -E '^TOTAL' "$JOURNAL" 2>/dev/null | tail -1 | awk '{print $NF}')"
   tests="$(grep -oE '[0-9]+ (passed|failed|error)[^=]*' "$JOURNAL" 2>/dev/null | tail -1 | sed 's/[[:space:]]*$//')"
