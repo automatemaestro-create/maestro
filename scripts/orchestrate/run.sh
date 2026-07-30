@@ -205,6 +205,26 @@ arret_demande() {
   return 0
 }
 
+# travail_en_attente <dest> : « <fichiers non commités> <commits hors origin/main> » du worktree.
+#
+# Une session peut sortir en code 0 sans avoir rien clos (#178) — elle croyait faire une pause. Le
+# verdict GitLab la classe ECHEC à juste titre, mais « MR "aucune", statut "À faire" » ne dit pas
+# l'essentiel : le travail est-il PERDU, ou dort-il dans le worktree ? Ces deux compteurs tranchent,
+# et la différence est actionnable — un worktree qui porte du travail se rattrape par une session
+# ciblée sur la seule clôture, un worktree vide est à refaire.
+#
+# Lecture seule et sans réseau : `git status` local, et les commits comptés contre `origin/main`
+# SEULEMENT si la référence existe (dans un dépôt qui n'a pas de distant, ne rien dire vaut mieux
+# que compter toute l'histoire). Un `dest` qui n'est pas un dépôt git rend « 0 0 » sans bruit.
+travail_en_attente() {
+  local dest="$1" modifs commits=0
+  modifs="$(git -C "$dest" status --porcelain 2>/dev/null | grep -c .)" || modifs=0
+  if git -C "$dest" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    commits="$(git -C "$dest" rev-list --count origin/main..HEAD 2>/dev/null)" || commits=0
+  fi
+  printf '%s %s' "${modifs:-0}" "${commits:-0}"
+}
+
 # --- Limite d'usage : détecter, attendre, reprendre (#171) --------------------------------------------
 # La limite de 5 h n'est pas un échec du ticket, c'est une pause. Un script shell ne consomme aucun
 # quota : il peut dormir jusqu'au reset et reprendre LA MÊME session, avec le travail déjà fait dans
@@ -376,6 +396,14 @@ lance_session() {
 # --- Le prompt d'une session ------------------------------------------------------------------------
 # Écrit pour être IDEMPOTENT : une session relancée sur un ticket déjà entamé doit reprendre, pas
 # recommencer. C'est ce qui rend une reprise après interruption (#171) sans danger.
+#
+# Il interdit deux formes d'attente, et la seconde a coûté un run entier (#178). Attendre une
+# VALIDATION était déjà exclu — personne ne lira une question. Attendre un RÉSULTAT ne l'était pas,
+# et une session a rendu la main sur « j'attends la fin du run de couverture (notification
+# automatique) » : en mode `-p`, la fin du tour est la fin du processus, aucune notification ne
+# viendra jamais. Le CLI sort en `end_turn`, `success`, code 0 — indiscernable d'une session qui a
+# vraiment fini. Le ticket est resté « À faire » avec son travail non commité, et les lots suivants
+# de son parent ont été sautés.
 prompt_ticket() {
   cat <<PROMPT
 Tu traites intégralement le ticket GitLab #$1 de ce dépôt, seul et sans supervision humaine.
@@ -388,8 +416,16 @@ Règles de ce run autonome :
 - N'attends AUCUNE validation : personne ne lira une question. Le résumé de cadrage de
   /ticket-start n'est pas une pause. Si un choix se présente, tranche, et dis dans le résumé
   final ce que tu as tranché et pourquoi.
-- Si la branche du ticket existe déjà et porte des commits, REPRENDS ce travail au lieu de
-  recommencer : tu es peut-être la reprise d'une session interrompue.
+- N'attends AUCUN RÉSULTAT différé non plus, et ne rends JAMAIS la main en annonçant que tu
+  reprendras « dès que » quelque chose sera prêt (tâche de fond, suite de tests, pipeline,
+  notification). Ce processus s'arrête à la fin de ton tour : rien ne te réveillera, et le ticket
+  serait perdu avec son travail. Un résultat qui te manque s'obtient EN AVANT-PLAN (lance la
+  commande et attends-la dans le même tour), sinon tranche sans lui en le disant, sinon sors sur
+  ORCHESTRATE: ECHEC. Ne lance rien en arrière-plan dont tu aurais besoin ensuite.
+- Si la branche du ticket existe déjà et porte des commits, OU si le worktree contient des
+  modifications non commitées, REPRENDS ce travail au lieu de recommencer : commence par regarder
+  git status et git log. Tu es peut-être la reprise d'une session interrompue, et un arbre sale
+  sans aucun commit est précisément la trace qu'elle laisse.
 - Ne merge jamais, ne ferme jamais une MR, ne force-push jamais — un garde-fou les refuse de
   toute façon.
 - Si tu ne peux pas terminer, écris en TOUTE DERNIÈRE LIGNE : ORCHESTRATE: ECHEC <raison courte>.
@@ -403,7 +439,10 @@ prompt_reprise() {
 Reprends exactement là où tu t'es arrêté sur le ticket #$1 : la session a été interrompue par la
 limite d'usage, pas par une erreur. Ne recommence rien de ce qui est déjà fait — regarde d'abord
 l'état de la branche (git status, git log) avant d'agir. Termine l'implémentation puis clôture avec
-/ticket-ship. Toujours aucune validation humaine à attendre.
+/ticket-ship. Toujours aucune validation humaine à attendre, et aucun résultat différé non plus :
+ce processus s'arrête à la fin de ton tour, ne rends pas la main en annonçant que tu reprendras
+plus tard — obtiens ce qui te manque en avant-plan, tranche sans lui, ou sors sur
+ORCHESTRATE: ECHEC.
 PROMPT
 }
 
@@ -746,8 +785,24 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
     NB_OK=$((NB_OK + 1))
   else
     raison="MR « ${etat_mr:-aucune} », statut « ${statut:-?} »"
+    # Ce que la session a laissé derrière elle : c'est cela qui dit si l'échec est rattrapable.
+    reste="$(travail_en_attente "$dest")"
+    n_modifs="${reste%% *}"; n_modifs="${n_modifs:-0}"
+    n_commits="${reste##* }"; n_commits="${n_commits:-0}"
+    detail=""
+    [ "$n_modifs" -gt 0 ] && detail="$n_modifs fichier(s) non commité(s)"
+    # « sur la branche » et non « sans MR » : l'état de la MR est déjà dit juste après, et il
+    # arrive qu'elle existe sans que le statut ait suivi.
+    [ "$n_commits" -gt 0 ] && detail="${detail:+$detail, }$n_commits commit(s) sur la branche"
+    if [ -n "$detail" ]; then
+      raison="session terminée sans clôture, $detail — $raison"
+    else
+      raison="session terminée sans rien produire (worktree propre) — $raison"
+    fi
     [ "$code" -eq 124 ] && raison="timeout — $raison"
     printf '  %s✗%s %s — journal : %s\n' "$C_R" "$C_0" "$raison" "$RUN_DIR/$iid.log"
+    [ -n "$detail" ] &&
+      printf '    le travail est conservé dans %s — à reprendre, pas à refaire.\n' "$dest"
     consigne "$iid" ECHEC "${mr:--}" "$duree" "${cout:-0}" "$raison"
     NB_ECHEC=$((NB_ECHEC + 1))
     [ "$parent" != "-" ] && PARENTS_ECHOUES="$PARENTS_ECHOUES $parent"

@@ -93,7 +93,13 @@ précis, `--list` pour les runs connus, `--watch [sec]` pour rafraîchir tant qu
 Ensuite seulement, apporte ce que la sortie ne dit pas :
 
 1. **Commente** ce qui a échoué et pourquoi — le journal `<run-id>/<iid>.log` porte le détail — et
-   ce qui a été sauté (lot dépendant d'un échec, ou ticket pris entre-temps).
+   ce qui a été sauté (lot dépendant d'un échec, ou ticket pris entre-temps). Une raison en
+   **« session terminée sans clôture, N fichier(s) non commité(s) »** (#178) est un échec
+   **rattrapable** : la session a produit puis rendu la main sans clore, le travail est intact dans
+   le worktree du ticket (`../maestro-worktrees/<iid>-<slug>`, que la console du run a imprimé) et
+   se termine par une session ouverte là, jusqu'à `/ticket-ship` — surtout pas en repartant de
+   zéro. Une raison en **« sans rien produire (worktree propre) »** est l'inverse : il n'y a rien à
+   récupérer, le ticket se relance tel quel.
 2. Si l'en-tête annonce **« en cours ? — rien d'écrit depuis … »**, dis franchement que c'est une
    **déduction** : `run.sh` n'écrit pas de PID, l'état se lit sur la date des dernières écritures du
    run et de son worktree. Une session qui réfléchit longuement et une session morte laissent la
