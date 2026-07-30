@@ -14,7 +14,10 @@ Ce qui est vérifié :
 * **un étage lint rouge arrête le pipeline**, comme GitLab ;
 * **`web-build` suit la même règle de périmètre** que le pipeline (apps/web modifié ou non) ;
 * **shellcheck analyse un miroir en LF** : une copie de travail Windows en CRLF ne doit pas
-  inventer des SC1017 que la CI ne verra jamais.
+  inventer des SC1017 que la CI ne verra jamais ;
+* **pytest teste le code d'ICI** (#194) : lancé par `python -m` et non par le script console, et
+  précédé d'une sonde qui rend le job `IGNORÉ` — jamais rouge — si `import maestro` se résout dans
+  un autre répertoire de travail.
 
 **Ni réseau ni vrais outils.** Un dépôt jetable est monté dans `tmp_path`, avec des **shims** en
 tête du `PATH` (`shellcheck`, `docker`, `npm`) et de faux exécutables dans son `.venv` / son
@@ -77,6 +80,24 @@ printf '%%b' "${!sortie:-}"
 exit "${!code:-0}"
 """
 
+# Le python du venv sert à DEUX choses dans `job_pytest` : la SONDE qui dit où `import maestro` se
+# résout (« python - », script sur stdin), puis pytest lui-même (« python -m pytest »). Un seul shim
+# à deux branches — c'est ce qui permet de rejouer un worktree dont le venv partagé importe le
+# `maestro` d'un AUTRE répertoire de travail (#194) sans venv ni worktree réels.
+SHIM_PYTHON = """\
+#!/usr/bin/env bash
+printf 'python %s\\n' "$*" >> "$MAESTRO_FAUX_JOURNAL"
+case " $* " in
+  *" -m pytest "*)
+    printf '%b' "${MAESTRO_FAUX_PYTEST_SORTIE:-}"
+    exit "${MAESTRO_FAUX_PYTEST_CODE:-0}"
+    ;;
+esac
+cat >/dev/null                       # la sonde arrive par stdin : on la draine sans la lire
+printf '%b' "${MAESTRO_FAUX_SONDE_SORTIE:-ICI\\n}"
+exit "${MAESTRO_FAUX_SONDE_CODE:-0}"
+"""
+
 # shellcheck a son propre shim : il doit pouvoir REFUSER un fichier à retour chariot, comme le
 # vrai (SC1017). C'est ce qui permet de vérifier que le script lui présente un miroir en LF.
 SHIM_SHELLCHECK = """\
@@ -111,10 +132,10 @@ class Clone:
         cible.write_text(corps or SHIM % {"nom": Path(nom).stem}, encoding="utf-8", newline="\n")
         cible.chmod(0o755)
 
-    def pose_outil_venv(self, nom: str) -> None:
+    def pose_outil_venv(self, nom: str, corps: str | None = None) -> None:
         """Un outil du venv du dépôt, dans les deux dispositions (Windows et Unix)."""
-        self.pose_shim(f"{nom}.exe", self.racine / ".venv" / "Scripts")
-        self.pose_shim(nom, self.racine / ".venv" / "bin")
+        self.pose_shim(f"{nom}.exe", self.racine / ".venv" / "Scripts", corps)
+        self.pose_shim(nom, self.racine / ".venv" / "bin", corps)
 
     def pose_node(self) -> None:
         """Le Node vendoré et son npm, dans les deux dispositions."""
@@ -129,6 +150,7 @@ class Clone:
         self.pose_shim("shellcheck", corps=SHIM_SHELLCHECK)
         for outil in ("ruff", "pytest", "mypy"):
             self.pose_outil_venv(outil)
+        self.pose_outil_venv("python", corps=SHIM_PYTHON)
         self.pose_node()
 
     # --- exécution ---
@@ -167,6 +189,11 @@ class Clone:
             check=True,
             capture_output=True,
         )
+
+
+def lancements_pytest(appels: list[str]) -> list[str]:
+    """Les appels qui ont RÉELLEMENT joué la suite — `python -m pytest`, jamais la sonde."""
+    return [appel for appel in appels if "-m pytest" in appel]
 
 
 def ligne_du_job(sortie: str, job: str) -> str:
@@ -286,7 +313,7 @@ def test_un_etage_lint_rouge_arrete_le_pipeline_comme_gitlab(clone: Clone) -> No
     assert "NON JOUÉ" in ligne_du_job(acheve.stdout, "pytest")
     assert "étage lint en échec" in acheve.stdout
     # …et l'étage test n'a effectivement pas tourné.
-    assert not any(a.startswith("pytest ") for a in clone.appels())
+    assert lancements_pytest(clone.appels()) == []
 
 
 def test_un_outil_absent_est_ignore_pas_compte_en_echec(clone: Clone) -> None:
@@ -313,6 +340,88 @@ def test_ne_dit_jamais_vert_quand_rien_n_a_tourne(clone: Clone) -> None:
     assert acheve.returncode == 0
     assert "Verdict : AUCUN JOB JOUÉ" in acheve.stdout
     assert clone.appels() == []
+
+
+# --- Le code testé est celui d'ICI (#194) ---------------------------------------------------------
+
+
+def test_pytest_est_lance_par_python_m_et_non_par_le_script_console(clone: Clone) -> None:
+    """Régression #194 : le script console ne met pas le répertoire courant dans `sys.path`.
+
+    Dans un worktree, le `.venv` est partagé avec le clone principal et y installe `maestro` en
+    éditable **pointé sur celui-ci** (docs/10 §9). Lancé par `pytest.exe`, le job jouait donc les
+    tests d'ici contre le code de LÀ-BAS, pendant que `--cov=maestro` — un chemin, lui, relatif au
+    répertoire courant — instrumentait la copie d'ici : couverture 0 %, faux rouge. Et le faux vert
+    symétrique, plus grave, ne se voyait pas. `python -m` remet le répertoire courant en tête.
+    """
+    clone.equipe_tout()
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_PYTEST_SORTIE="TOTAL 100 0 95%\\n12 passed in 1.2s\\n",
+    )
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    lances = lancements_pytest(clone.appels())
+    assert len(lances) == 1, clone.appels()
+    assert lances[0].startswith("python -m pytest ")
+    assert f"--cov=maestro --cov-fail-under={SEUIL}" in lances[0]
+    # Le script console n'est jamais appelé — c'est lui qui résolvait `maestro` ailleurs.
+    assert not any(appel.startswith("pytest ") for appel in clone.appels())
+    # `--list` annonce la commande réellement jouée, pas celle du pipeline.
+    assert "python -m pytest" in clone.lance("--list").stdout
+
+
+def test_pytest_ignore_quand_maestro_se_resout_ailleurs(clone: Clone) -> None:
+    """Un job qui ne testerait pas le code d'ici ne rend NI vert NI rouge : il se déclare IGNORÉ.
+
+    C'est le filet du filet : si le mécanisme de #194 revenait par une autre porte, le verdict
+    dirait pourquoi il ne vaut rien, au lieu de rendre un rouge faux (ou un vert faux).
+    """
+    clone.equipe_tout()
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_SONDE_SORTIE="AILLEURS /ailleurs/Maestro/maestro\\n",
+    )
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "IGNORÉ" in ligne
+    assert "/ailleurs/Maestro/maestro" in ligne     # la raison NOMME le paquet qui aurait été testé
+    assert "docs/10 §9" in ligne
+    # Jamais un rouge : le verdict est partiel…
+    assert "Verdict : VERT (partiel)" in acheve.stdout
+    assert "Verdict : ÉCHEC" not in acheve.stdout
+    # …et la suite n'a pas tourné pour rien (près de 20 min pour un verdict sans valeur).
+    assert lancements_pytest(clone.appels()) == []
+
+
+def test_pytest_ignore_quand_la_sonde_est_muette(clone: Clone) -> None:
+    """Sonde sans réponse : on ignore quel code serait testé, donc le verdict serait sans valeur."""
+    clone.equipe_tout()
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_SONDE_SORTIE="\\n",
+        MAESTRO_FAUX_SONDE_CODE="1",
+    )
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "IGNORÉ" in ligne
+    assert lancements_pytest(clone.appels()) == []
+
+
+def test_pytest_absent_du_venv_reste_ignore_et_non_rouge(clone: Clone) -> None:
+    """`python -m pytest` sur un venv sans pytest sortirait en 1 : ce serait un faux rouge.
+
+    D'où le contrôle de présence maintenu sur le SCRIPT CONSOLE, qui reste le marqueur
+    d'installation — même si ce n'est plus lui qu'on lance.
+    """
+    clone.equipe_tout()
+    for chemin in ("Scripts/pytest.exe", "bin/pytest"):
+        (clone.racine / ".venv" / chemin).unlink()
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "IGNORÉ" in ligne
+    assert "scripts/setup.sh --only venv" in ligne
+    assert lancements_pytest(clone.appels()) == []
 
 
 # --- Périmètre de web-build -----------------------------------------------------------------------

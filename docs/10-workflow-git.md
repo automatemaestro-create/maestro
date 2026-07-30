@@ -685,7 +685,8 @@ autant d'attente pour les autres. Trois conséquences pratiques :
 
 - **Vérifier son travail avant la MR est un geste local** :
   [`scripts/ci/local.sh`](../scripts/ci/local.sh) rejoue les mêmes jobs sur le poste (#157) — c'est
-  lui qui remplace les pipelines de branche, et il ne dépend d'aucun runner.
+  lui qui remplace les pipelines de branche, et il ne dépend d'aucun runner. Depuis un **worktree**,
+  il teste bien le code d'ici : voir §9 pour le piège d'import que cela suppose d'éviter (#194).
 - **Le pipeline d'une MR est « détaché »** : sa ref est `refs/merge-requests/<iid>/head`, pas le
   nom de la branche. `glab ci status` / `glab ci view <branche>` ne le voient donc **pas** ;
   `lib.sh pipeline-latest <branche>` si — il se rabat sur les pipelines de la MR quand la ref n'en
@@ -955,11 +956,49 @@ le rôle de `/branch-cleanup`, après confirmation du merge par GitLab (§6).
 
 - Le **runner CI est unique** (§8) : les pipelines des deux MR se **sérialisent**. Plus lent,
   jamais bloquant.
-- Le venv partagé porte `maestro` en **mode éditable pointé sur le clone principal**. Le finder
-  correspondant passe *après* le `PathFinder` de Python : le `maestro/` du répertoire courant
-  l'emporte donc, **tant que les commandes sont lancées depuis la racine du worktree** (c'est le
-  cas de `.venv/Scripts/python.exe -m pytest`). Les **points d'entrée console** (`maestro-run`,
-  `maestro-demo`…) restent, eux, pointés sur le clone principal.
+- Le venv partagé porte `maestro` en **mode éditable pointé sur le clone principal** — un `.pth`
+  qui installe un finder vers `<clone principal>/maestro`. Ce finder passe *après* le `PathFinder`
+  de Python : le `maestro/` d'ici l'emporte, **mais seulement si la racine du worktree est dans
+  `sys.path`**. Et ce qui l'y met n'est pas le répertoire d'où l'on lance — c'est **le lanceur**.
+
+  | Lancement, depuis la racine du worktree | ce que Python ajoute à `sys.path` | `import maestro` |
+  |---|---|---|
+  | `.venv/Scripts/python.exe -m pytest` (ou `-c`, ou stdin) | le **répertoire courant** | le **worktree** ✅ |
+  | `.venv/Scripts/pytest.exe` — script console | le dossier du **script** (`.venv/Scripts`) | le **clone principal** ❌ |
+
+  Les **points d'entrée console** (`maestro-run`, `maestro-demo`, `pytest`, `ruff`…) tombent tous
+  dans la seconde ligne. **Toujours passer par `python -m`** depuis un worktree.
+
+  Mesuré sur #194, sur la même sonde et le même commit — la troisième ligne est le contrefactuel
+  qui isole la cause, puisqu'elle ne change *que* `sys.path` :
+
+  | Lanceur | `import maestro` résout vers |
+  |---|---|
+  | `pytest.exe` | `E:\…\Maestro\maestro` (clone principal) |
+  | `PYTHONPATH=<worktree> pytest.exe` | `E:\…\194-…\maestro` (worktree) |
+  | `python.exe -m pytest` | `E:\…\194-…\maestro` (worktree) |
+
+  Attention à ne pas confondre avec `sys.path[0]`, qui vaut ici le dossier des tests dans les trois
+  cas : pytest l'y insère lui-même. Ce qui décide, c'est la **présence de la racine du worktree
+  quelque part** dans `sys.path` — pas la tête de liste.
+
+  > ⚠ **Ce piège a produit un faux verdict de CI locale pendant tout #181 (#194).**
+  > `scripts/ci/local.sh` lançait `pytest` par son script console : les tests du worktree
+  > s'exécutaient contre le `maestro/` **de la branche sortie dans le clone principal**, pendant que
+  > `--cov=maestro` — résolu, lui, comme un chemin relatif au répertoire courant — instrumentait la
+  > copie d'ici. Les deux ne coïncidant sur rien, la couverture tombait à **0 %** et le seuil rendait
+  > un `ÉCHEC` là où la CI, sur le même commit, était verte. Le faux rouge n'était que la partie
+  > visible : le **faux vert** est le vrai danger — un correctif cassé sort vert si le code fautif
+  > n'a jamais été chargé. Mesuré sur #195 : `local.sh --only pytest` rendait *1 failed, couverture
+  > 0 %* quand `python -m pytest` sur le même commit rendait *940 passed, 94,14 %*, identique à la
+  > CI. Depuis, `job_pytest` lance `python -m pytest` **et** sonde d'abord où `import maestro` se
+  > résout : s'il pointe ailleurs, le job est annoncé `IGNORÉ` avec sa raison et **n'entre pas dans
+  > le verdict** — un filet qui ment est pire que pas de filet.
+  >
+  > Les autres jobs ne sont **pas** concernés, et c'est vérifié : `ruff` et `mypy` reçoivent des
+  > **chemins** relatifs à la racine du worktree et analysent donc bien les fichiers d'ici (contrôlé
+  > en glissant une erreur de typage dans un fichier n'existant que dans le worktree — `mypy maestro`
+  > la signale). Seul l'**import à l'exécution** est en cause.
 - Si la branche modifie `pyproject.toml` ou `apps/web/package.json`, les dépendances partagées ne
   correspondent plus : créer le worktree avec `--sans-liens`, puis l'équiper avec
   `bash scripts/setup.sh`.
