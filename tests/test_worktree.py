@@ -386,3 +386,95 @@ def test_start_branch_refuse_une_branche_sans_prefixe(depot: Depot) -> None:
     acheve = depot.lib("start-branch", "<type>/152-essai")
     assert acheve.returncode == 2
     assert "déduire le type" in acheve.stderr
+
+
+# --- Aiguillage `ensure` (#181) -------------------------------------------------------------
+# `/ticket-start` ne bascule plus la branche du répertoire courant : il demande à `ensure` OÙ la
+# session doit travailler, et s'y relocalise. Trois situations d'appel, deux verdicts — et c'est
+# la dernière ligne de stdout qui les porte, pour que l'appelant n'ait pas à lire le rapport.
+
+
+def _verdict(acheve: subprocess.CompletedProcess[str]) -> str:
+    """La dernière ligne non vide de stdout — le contrat de sortie de `ensure`."""
+    lignes = [ligne for ligne in acheve.stdout.splitlines() if ligne.strip()]
+    return lignes[-1] if lignes else ""
+
+
+def test_ensure_depuis_le_clone_principal_monte_le_worktree_et_ne_bouge_pas_main(
+    depot: Depot,
+) -> None:
+    """Le cas nominal, et la raison d'être du ticket : `main` ne doit plus changer de branche."""
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    verdict = _verdict(acheve)
+    assert verdict.startswith("WORKTREE "), f"verdict inattendu : {verdict!r}"
+    assert Path(verdict[len("WORKTREE ") :]).resolve() == depot.worktree().resolve()
+
+    assert depot.git("branch", "--show-current") == "main", (
+        "le clone principal doit rester où il était — c'est tout l'objet de #181"
+    )
+    assert depot.git("branch", "--show-current", cwd=depot.worktree()) == BRANCHE
+
+
+def test_ensure_depuis_le_worktree_du_ticket_ne_monte_rien(depot: Depot) -> None:
+    """Le cas d'`orchestrate/run.sh`, qui monte le worktree lui-même avant d'y lancer la session :
+    un second worktree y serait une régression franche."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    wt = depot.worktree()
+    avant = depot.git("worktree", "list", "--porcelain").count("worktree ")
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE, cwd=wt)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    verdict = _verdict(acheve)
+    assert verdict.startswith("ICI "), f"verdict inattendu : {verdict!r}"
+    assert Path(verdict[len("ICI ") :]).resolve() == wt.resolve()
+
+    apres = depot.git("worktree", "list", "--porcelain").count("worktree ")
+    assert apres == avant, "aucun worktree ne doit être monté quand on est déjà au bon endroit"
+
+
+def test_ensure_depuis_le_worktree_d_un_autre_ticket_monte_le_bon(depot: Depot) -> None:
+    """L'emplacement se résout depuis le clone principal : il reste correct où qu'on appelle."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    autre_branche = "chore/153-autre"
+
+    acheve = depot.lance("ensure", "153", "--branche", autre_branche, cwd=depot.worktree())
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    verdict = _verdict(acheve)
+    assert verdict.startswith("WORKTREE ")
+    assert Path(verdict[len("WORKTREE ") :]).resolve() == depot.worktree("153-autre").resolve()
+    assert depot.git("branch", "--show-current", cwd=depot.worktree("153-autre")) == autre_branche
+    assert depot.git("branch", "--show-current") == "main"
+
+
+def test_ensure_annonce_les_ports_et_dit_qu_ils_ne_suivent_pas_la_relocalisation(
+    depot: Depot,
+) -> None:
+    """Mesuré sur #181 : `EnterWorktree` ne réévalue pas le bloc `env`. Une session relocalisée
+    garde donc les ports et le profil du clone principal — l'outil doit le dire, pas seulement
+    la doc, parce que c'est au moment de démarrer la stack que ça mord."""
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert "8052" in acheve.stdout and "3052" in acheve.stdout, "les ports dédiés sont annoncés"
+    assert "non hérités par une session relocalisée" in acheve.stdout
+
+
+def test_creation_dit_ou_la_branche_est_deja_empruntee(depot: Depot) -> None:
+    """git refuse la même branche dans deux worktrees — c'est un verrou utile, mais son message
+    ne dit pas OÙ elle est prise. Ici le clone principal la tient : il doit être nommé."""
+    depot.git("checkout", "--quiet", "-b", BRANCHE)
+
+    acheve = depot.lance("create", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 1
+    assert "déjà empruntée par le worktree" in acheve.stderr
+    assert "principal" in acheve.stderr, "le chemin de l'emprunteur doit apparaître"
+
+
+def test_ensure_refuse_un_iid_non_numerique(depot: Depot) -> None:
+    acheve = depot.lance("ensure", "chore/152", "--branche", BRANCHE)
+    assert acheve.returncode == 2
+    assert "IID de ticket attendu" in acheve.stderr

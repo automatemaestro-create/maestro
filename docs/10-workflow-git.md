@@ -846,8 +846,52 @@ Le script fait plus qu'un `git worktree add` : il résout la branche comme
 [`/ticket-start`](../.claude/commands/ticket-start.md) (`lib.sh branch-for`) et la crée depuis
 `origin/main`, recopie le `.env` (gitignoré, donc absent du worktree), **partage par lien**
 `.venv/` et `.tools/` (jonction sous Windows : aucun droit administrateur), **installe** les
-dépendances de `apps/web` et écrit un `.claude/settings.local.json` dédié. Il ne reste qu'à ouvrir
-une session Claude Code sur le dossier créé et à y lancer `/ticket-start <iid>`.
+dépendances de `apps/web` et écrit un `.claude/settings.local.json` dédié.
+
+### 9.1 Monté d'office par `/ticket-start` (#181)
+
+Ces trois commandes restent disponibles, mais **on n'a plus à y penser** : `/ticket-start` monte
+lui-même le worktree du ticket, et le **clone principal ne change plus jamais de branche**. On peut
+donc y rester sur `main` — lire le code de référence, préparer un autre sujet, relire une MR —
+pendant qu'un ticket est en cours ailleurs. Le parallélisme devient le régime par défaut au lieu
+d'une option à se rappeler.
+
+L'aiguillage tient dans une sous-commande, appelée à l'étape 2 de `/ticket-start` :
+
+```bash
+bash scripts/git/worktree.sh ensure <iid>
+```
+
+Elle monte le worktree si besoin et rend son verdict **en dernière ligne de stdout**, pour que
+l'appelant n'ait pas à interpréter le rapport humain qui la précède :
+
+| Verdict | Situation | Ce que fait `/ticket-start` |
+|---|---|---|
+| `WORKTREE <chemin>` | clone principal sur `main` ; ou worktree d'un **autre** ticket | **relocalise la session** dans ce chemin (outil `EnterWorktree`), puis continue |
+| `ICI <chemin>` | on est **déjà** sur la branche du ticket | ne relocalise rien et continue sur place |
+
+Le cas `ICI` n'est pas un détail de confort : c'est lui qui garde
+[`scripts/orchestrate/run.sh`](../scripts/orchestrate/run.sh) intact (§11). La boucle autonome monte
+elle-même le worktree avant d'y lancer sa session ; un second worktree y serait une régression
+franche. Le clone principal **déjà** sur la branche du ticket rend `ICI` lui aussi — c'est une
+reprise de travail en cours, et l'en déloger de force serait gratuit et risqué. Le nouveau régime
+s'installe ticket par ticket, sans migration.
+
+> ⚠ **La relocalisation déplace le répertoire de travail, pas le bloc `env`.** Mesuré sur #181 :
+> `EnterWorktree` ne réévalue que les caches liés au CWD (sections du prompt système, mémoire,
+> plans) ; `MAESTRO_PORT_API`/`_UI` et `MAESTRO_CHROME_PROFILE` sont résolus au **démarrage** de la
+> session et gardent donc les valeurs du clone principal. Une session relocalisée est isolée côté
+> **fichiers**, pas côté **ports Control Tower ni profil de navigateur** — exactement la collision
+> que le tableau ci-dessous cherche à éviter. `ensure` **affiche** les valeurs propres au worktree :
+> pour un ticket qui démarre la stack ou pilote le navigateur, les passer explicitement, ou ouvrir
+> une **session neuve** sur le worktree (elle, chargera son `settings.local.json`). Pour tous les
+> autres — script, backend, doc — la relocalisation est complète.
+
+Conséquence de bord : `start-brief` (étape 1) ne **refuse** plus un arbre de travail non propre, il
+le **signale**. Puisque le travail part dans un autre répertoire, des changements non commités dans
+celui-ci restent intacts et hors du chemin ; les refuser bloquerait le démarrage pour une saleté
+sans rapport avec le ticket. La décision revient à la commande, seule à connaître le verdict :
+bloquante sur `ICI`, anodine sur `WORKTREE`.
 
 Pourquoi `node_modules` s'installe au lieu d'être partagé, lui : **Turbopack refuse un
 `node_modules` lié** (« Symlink `[project]/node_modules` is invalid, it points out of the

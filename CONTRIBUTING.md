@@ -53,8 +53,12 @@ quelqu'un d'autre est **déjà pris**, le démarrer le lui retirerait.
 /ticket-start <iid>
 ```
 
-crée la branche (`<type>/<iid>-<slug>`), vous assigne, passe le statut à « En cours » et pose les
-dates. **Ne créez pas la branche à la main** : le nommage et le statut en dépendent.
+monte le **worktree du ticket** et y bascule la session, crée la branche (`<type>/<iid>-<slug>`),
+vous assigne, passe le statut à « En cours » et pose les dates. **Ne créez ni la branche ni le
+worktree à la main** : le nommage, le statut et les ports dédiés en dépendent.
+
+Votre clone principal, lui, **ne change pas de branche** : il reste sur `main`, disponible pour
+lire du code ou relire une MR pendant que le ticket avance à côté ([docs/10 §9.1](./docs/10-workflow-git.md)).
 
 > Besoin d'un ticket qui n'existe pas encore ? `/ticket-create <type> <titre>`. Au-delà d'environ
 > une session de travail, il propose un **découpage** en sous-tickets ([docs/10 §5.1](./docs/10-workflow-git.md)).
@@ -123,10 +127,10 @@ Pour éclairer une décision de merge : `/mr-review <mr>` (synthèse état + pip
 
 ## 6. Travailler à plusieurs
 
-- **Deux tickets en parallèle** : un **worktree** par session —
-  `bash scripts/git/worktree.sh <iid>` monte un second répertoire de travail sur le même dépôt,
-  avec ses propres ports Control Tower et son profil de navigateur. Deux sessions Claude Code sur
-  le même dossier se marchent dessus ([docs/10 §9](./docs/10-workflow-git.md)).
+- **Deux tickets en parallèle** : rien à faire de particulier — `/ticket-start` monte un
+  **worktree** par ticket, avec ses propres ports Control Tower et son profil de navigateur. Deux
+  sessions Claude Code sur le même dossier se marcheraient dessus ; elles n'y sont plus
+  ([docs/10 §9](./docs/10-workflow-git.md)). Le geste manuel reste `bash scripts/git/worktree.sh <iid>`.
 - **La CI est partagée** : un runner monté sur une machine toujours allumée sert toute l'équipe ;
   celui de votre poste est un secours. Sans aucun runner en ligne, les pipelines restent `pending`
   et personne ne peut merger ([docs/10 §8.1](./docs/10-workflow-git.md)).
