@@ -1640,3 +1640,184 @@ def test_le_menage_automatique_se_tait_quand_il_n_a_rien_fait(depot: Depot) -> N
     r = depot.lance("journal.sh", "gc", "--auto")
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == ""
+
+
+# =====================================================================================
+# Le résultat d'une session, lisible à l'œil nu (#180)
+# =====================================================================================
+
+def _objet_result(**champs) -> str:
+    """Un objet `result` tel que le CLI l'écrit : minifié, sur une ligne, accents en clair.
+
+    `json.dumps` reproduit exactement ce qui rend `<iid>.json` illisible — les retours à la ligne du
+    message final y sont des « \\n » littéraux, et les antislashs d'une commande refusée y sont
+    doublés. C'est cette matière-là que la vue doit désescaper.
+    """
+    base = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "duration_ms": 2086510,
+        "duration_api_ms": 1308490,
+        "num_turns": 100,
+        "result": "Le ticket est traité.\n\n## Résumé\n\n- un point « accentué »\n- un autre",
+        "stop_reason": "end_turn",
+        "session_id": "dba6a0ea-f843-441a-aed1-218fb3162221",
+        "total_cost_usd": 10.686978499999995,
+        "permission_denials": [
+            {"tool_name": "Skill", "tool_use_id": "t1",
+             "tool_input": {"skill": "ticket-start", "args": "130"}},
+            {"tool_name": "Bash", "tool_use_id": "t2",
+             "tool_input": {"command": 'cd "E:/Projets" && git status', "description": "état"}},
+        ],
+    }
+    base.update(champs)
+    return json.dumps(base, ensure_ascii=False, separators=(",", ":"))
+
+
+def _stub_resultat(depot: Depot, corps_json: str, *, iid: int = 130, code: int = 0,
+                   statut: str | None = "En revue") -> str:
+    """Un bouchon `claude` qui recrache un flux écrit dans un fichier.
+
+    Passer par un fichier plutôt que par des `printf` évite d'avoir à échapper deux fois le JSON
+    (une fois pour Python, une fois pour le shell) — et c'est justement l'échappement qu'on teste.
+    """
+    (depot.fixtures / f"flux-{iid}.jsonl").write_text(
+        '{"type":"system","subtype":"init"}\n' + corps_json + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    corps = ""
+    if statut:
+        corps += (
+            f"printf '%s' '{_statut_json(str(iid), statut)}' "
+            f'> "$MAESTRO_FIXTURES/owner-{iid}.json"\n'
+        )
+    corps += f'cat "$MAESTRO_FIXTURES/flux-{iid}.jsonl"\nexit {code}\n'
+    return _claude_stub(depot, corps)
+
+
+def test_le_resultat_d_une_session_se_lit_a_l_oeil_apres_le_run(depot: Depot) -> None:
+    """Le cœur du ticket : après un run, plus besoin d'un script pour lire ce qui s'est passé."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _stub_resultat(depot, _objet_result())
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "lisible",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    vue = (depot.racine / ".maestro/orchestrate/lisible/130.resultat.txt").read_text(
+        encoding="utf-8"
+    )
+    # 1. De quoi on parle, et ce que GitLab en a dit — le verdict ne vient jamais de la prose.
+    #    Le titre est celui du PLAN (« Ticket 130 » ici) : la vue est écrite par la boucle.
+    assert "ticket #130" in vue and "Ticket 130" in vue
+    assert "✓ OK" in vue and "MR !99" in vue
+    # 2. Ce qu'on vient y chercher : coût, durée, refus.
+    assert "10.69 $" in vue and "10.686978499999995" not in vue
+    assert "34min46" in vue, "duration_ms se lit en heures et minutes, pas en millisecondes"
+    assert "- Skill — ticket-start" in vue
+    assert '- Bash — cd "E:/Projets" && git status' in vue
+    # 3. Le message final DÉSESCAPÉ : c'est ce qui distingue une vue lisible du JSON brut.
+    assert "\\n" not in vue, "les retours à la ligne sont de vrais retours à la ligne"
+    assert "## Résumé" in vue and "« accentué »" in vue
+    assert len(vue.splitlines()) > 10
+
+
+def test_la_vue_lisible_ne_touche_pas_au_json_dont_depend_le_verdict(depot: Depot) -> None:
+    """`champ_json` et `limite_atteinte` grepent `<iid>.json` : il reste brut, et sur une ligne."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    attendu = _objet_result()
+    claude = _stub_resultat(depot, attendu)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "intact",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    dossier = depot.racine / ".maestro/orchestrate/intact"
+    brut = (dossier / "130.json").read_text(encoding="utf-8")
+    assert brut.strip() == attendu, "le fichier machine est recopié tel quel, octet pour octet"
+    assert len(brut.strip().splitlines()) == 1
+    assert "130\tOK\t99" in (dossier / "resume.tsv").read_text(encoding="utf-8")
+
+
+def test_le_cout_est_arrondi_dans_le_bilan_et_dans_la_console(depot: Depot) -> None:
+    """Quinze décimales n'apprennent rien de plus que deux, et débordent de toutes les colonnes."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _stub_resultat(depot, _objet_result())
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "arrondi",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    resume = (depot.racine / ".maestro/orchestrate/arrondi/resume.tsv").read_text(encoding="utf-8")
+    assert "\t10.69\t" in resume, "le coût consigné tient en deux décimales"
+    assert "10.686978499999995" not in resume
+    assert "10.69 $" in r.stdout and "10.686978499999995" not in r.stdout
+    # Le point décimal, pas la virgule : `status.sh` additionne cette colonne en awk.
+    assert "10,69" not in resume
+
+
+def test_une_session_morte_sans_resultat_le_dit_au_lieu_d_une_vue_vide(depot: Depot) -> None:
+    """Un `<iid>.json` vide est le cas le plus opaque de tous — et le plus fréquent en échec."""
+    depot.ticket(130, "Ticket à traiter")
+    claude = _claude_stub(depot, "exit 1\n")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "muet",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 1
+    vue = (depot.racine / ".maestro/orchestrate/muet/130.resultat.txt").read_text(encoding="utf-8")
+    assert "✗ ECHEC" in vue
+    assert "aucun résultat final" in vue
+    # Sans résultat, la vue ne peut que dire où regarder : le flux et la sortie d'erreur.
+    assert "130.jsonl.gz" in vue and "130.log" in vue
+    assert "130.resultat.txt" in r.stdout, "la console pointe la vue lisible, pas le JSON minifié"
+
+
+def test_la_vue_lisible_se_rejoue_sur_un_journal_deja_ecrit(depot: Depot) -> None:
+    """Les runs d'avant ce lot n'ont pas de `.resultat.txt` : `--resultat` les rattrape."""
+    vieux = depot.racine / "130.json"
+    vieux.write_text(_objet_result(), encoding="utf-8", newline="\n")
+    r = depot.lance("run.sh", "--resultat", str(vieux))
+    assert r.returncode == 0, r.stderr
+    assert "ticket #130" in r.stdout, "l'iid se déduit du nom du fichier"
+    assert "## Résumé" in r.stdout and "- Skill — ticket-start" in r.stdout
+    assert "10.69 $" in r.stdout
+    # Diagnostic = lecture seule : ni run, ni journal, ni appel à GitLab.
+    assert not (depot.racine / ".maestro").exists()
+    assert not (depot.fixtures / "glab.log").exists()
+
+
+def test_un_resultat_illisible_est_refuse_sans_rien_inventer(depot: Depot) -> None:
+    r = depot.lance("run.sh", "--resultat", str(depot.racine / "jamais-ecrit.json"))
+    assert r.returncode == 2
+    assert "illisible" in r.stderr
+
+
+def test_un_plan_vide_ne_laisse_pas_de_repertoire_de_run(depot: Depot) -> None:
+    """Quatre vestiges de ce genre traînaient dans `.maestro/orchestrate/` — dont aucun n'était
+    strictement vide, donc aucun ramassable par la rétention de #198."""
+    # Bouchon qui échoue bruyamment : sans lui, le test emprunterait le `claude` de la machine —
+    # vert sur un poste de dev, rouge en CI où le CLI n'existe pas (le préflight le réclame avant
+    # même de lire le plan). Un plan vide ne doit de toute façon démarrer aucune session.
+    claude = _claude_stub(depot, 'echo "la session ne doit jamais démarrer" >&2\nexit 1\n')
+    plan = _plan(depot, [])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "sans-suite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "le plan est vide" in r.stdout
+    assert not (depot.racine / ".maestro/orchestrate/sans-suite").exists()
+
+
+def test_un_journal_qui_a_servi_n_est_jamais_emporte_par_ce_renoncement(depot: Depot) -> None:
+    """Le garde-fou du renoncement : il ne retire un run que s'il ne porte QUE son plan."""
+    dossier = depot.racine / ".maestro/orchestrate/deja-la"
+    dossier.mkdir(parents=True)
+    (dossier / "resume.tsv").write_text("# iid\n130\tOK\t99\t60\t1.00\t-\n", encoding="utf-8")
+    claude = _claude_stub(depot, 'echo "la session ne doit jamais démarrer" >&2\nexit 1\n')
+    plan = _plan(depot, [])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "deja-la",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (dossier / "resume.tsv").exists(), "un bilan déjà écrit n'est pas un run sans suite"

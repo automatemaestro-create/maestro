@@ -21,9 +21,9 @@
 #   plan.tsv        le plan figé au démarrage : rang, iid, parent, prio, titre
 #   resume.tsv      une ligne par ticket TERMINÉ : iid, verdict, mr, duree_s, cout_usd, raison
 #   <iid>.session   présent dès que le ticket est pris en main -> c'est le ticket en cours
-#   <iid>.*         tout le reste (jsonl, json, log, worktree.log) — sert de témoin d'activité,
-#                   par sa date de modification. Le glob couvre aussi le `<iid>.jsonl.gz` que
-#                   `run.sh` laisse une fois le ticket compacté (#198) : la date, elle, ne bouge pas
+#   <iid>.*         tout le reste (jsonl, json, resultat.txt, log, worktree.log) — sert de témoin
+#                   d'activité, par sa date de modification. Le glob couvre aussi le `<iid>.jsonl.gz`
+#                   que `run.sh` laisse une fois le ticket compacté (#198) : la date ne bouge pas
 #   run.log         la sortie de la console, pour un run détaché
 #
 # --- « En cours » se déduit, il ne se lit pas ---------------------------------------------------------
@@ -398,7 +398,7 @@ affiche_run() {
   # `dir` sur sa propre ligne : bash développe TOUS les mots d'un `local` avant de créer les
   # variables, donc « local id="$1" dir="$ORCH_DIR/$id" » lirait l'`id` de l'appelant (inexistant
   # ici, et `set -u` le refuse).
-  local id="$1" nb_plan nb_traites courant debut age activite code libelle silence
+  local id="$1" nb_plan nb_traites courant debut age activite code libelle silence f
   local dir="$ORCH_DIR/$id"
 
   nb_plan=0
@@ -471,6 +471,14 @@ affiche_run() {
 
   titre_section "Suite"
   [ -f "$dir/run.log" ] && printf '   sortie     tail -f %s/run.log\n' "$(relatif "$dir")"
+  # La vue lisible d'une session (#180) : c'est elle qu'on ouvre après un ticket décevant, pas le
+  # `<iid>.json` minifié. On ne la propose que si un ticket a déjà rendu son verdict.
+  for f in "$dir"/*.resultat.txt; do
+    [ -e "$f" ] || continue
+    printf '   résultat   cat %s/<iid>.resultat.txt %s(verdict, coût, refus de permission, message final)%s\n' \
+      "$(relatif "$dir")" "$C_D" "$C_0"
+    break
+  done
   case "$ETAT" in
     en-cours)
       printf '   suivre     bash scripts/orchestrate/status.sh --watch\n'
