@@ -862,6 +862,7 @@ partagés), avec sa propre branche empruntée. Pas de second clone, pas de re-fe
 bash scripts/git/worktree.sh 152          # crée (ou complète) le worktree du ticket #152
 bash scripts/git/worktree.sh list         # les worktrees en place, avec leurs ports
 bash scripts/git/worktree.sh remove 152   # retire le worktree — jamais la branche
+bash scripts/git/worktree.sh gc           # ramasse ceux dont le travail est soldé (§9.2)
 ```
 
 Le script fait plus qu'un `git worktree add` : il résout la branche comme
@@ -937,9 +938,9 @@ fois : tout `git checkout main` échoue ailleurs que dans le clone principal. D'
 `main` à jour et purge les branches mergées ; dans un worktree il branche directement sur
 `origin/main`, et ne fait rien si la branche est déjà celle du worktree. De même,
 [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) ne bascule pas sur `main` depuis un
-worktree — la fin de vie de celui-ci passe par `worktree.sh remove <iid>`, depuis le clone
-principal, une fois la MR mergée. La **branche n'est jamais supprimée par ce script** : cela reste
-le rôle de `/branch-cleanup`, après confirmation du merge par GitLab (§6).
+worktree. La fin de vie du worktree, elle, ne demande **aucun geste** : elle est ramassée d'office
+(§9.2). La **branche n'est jamais supprimée par ce script** : cela reste le rôle de
+`/branch-cleanup`, après confirmation du merge par GitLab (§6).
 
 > ⚠ **Ne jamais retirer un worktree à la main** (`rm -rf`, ou `git worktree remove` lancé
 > directement). Les artefacts partagés sont des **jonctions**, qu'une suppression récursive
@@ -951,6 +952,72 @@ le rôle de `/branch-cleanup`, après confirmation du merge par GitLab (§6).
 > En cas de dégât : `.venv/Scripts/python.exe -m pip install --force-reinstall -e ".[dev]"`
 > (une réinstallation simple ne suffit pas — les métadonnées des paquets amputés sont intactes,
 > donc pip les croit installés).
+
+### 9.2 Ramassés d'office quand le travail est soldé (#197)
+
+Ouvrir un worktree était automatique depuis #181, le refermer restait un **geste manuel** — donc un
+geste que personne ne faisait. Constat du 2026-07-30 : **9 worktrees, 9 tickets fermés et MR
+mergées**, soit 100 % de déchets. Le coût n'est pas la duplication du dépôt (`.git` est partagé,
+`.venv`/`.tools` le sont par jonction) mais le `node_modules` **installé sur place** — 498 Mo des
+535 Mo d'un worktree, 93 %. À l'échelle d'un run `/orchestrate` de dix tickets, ~5 Go en silence.
+
+```bash
+bash scripts/git/worktree.sh gc            # ramasse ce qui est soldé
+bash scripts/git/worktree.sh gc --check    # dit ce qu'il retirerait, sans rien toucher
+```
+
+C'est le **symétrique de `cleanup-merged`** (#23), qui purge les branches locales mergées au
+démarrage d'un ticket. Même principe, même garde-fou : la fin du travail est **confirmée par
+GitLab**, jamais déduite du nom de la branche.
+
+**Ce qui déclenche le retrait** (`lib.sh worktree-done <iid> <branche>`, une lecture dans le cas
+nominal) : la **MR de la branche est mergée**, ou le **ticket est fermé** (réalisé, abandonné,
+doublon). Tout le reste est conservé — y compris un verdict **inconnu** (glab absent, hors ligne,
+ticket illisible) : ne rien savoir n'autorise rien.
+
+**Trois refus**, dans cet ordre :
+
+| Refus | Pourquoi |
+|---|---|
+| le worktree de la **session courante** | on ne se retire pas le sol sous les pieds |
+| un worktree porteur de **travail non sauvegardé** | signalé, jamais supprimé en silence — mieux vaut 535 Mo de trop qu'un commit perdu |
+| un verdict autre que « fini » | le nom `chore/152-…` n'est pas une preuve de merge (§6) |
+
+Le second refus a une subtilité qui décide de tout : **le projet merge en squash**. Les commits
+d'une branche mergée ne sont donc jamais des ancêtres de `main`, et GitLab supprime la branche
+distante au merge — un « ai-je des commits en avance ? » mesuré sur `origin/main..HEAD` compterait
+le travail de *tout* worktree mergé et ferait refuser chaque candidat, rendant le ramassage inutile.
+La bonne question n'est pas « suis-je en avance ? » mais **« ce que je porte est-il sur le
+serveur ? »**, posée dans cet ordre :
+
+1. **HEAD est-il un ancêtre d'`origin/main`** ? Alors tout est là-bas, quelle que soit l'histoire de
+   la branche — y compris une branche **re-créée depuis `main`** après son merge, dont le sha de
+   merge a divergé ;
+2. sinon `origin/<branche>`, s'il existe encore (branche poussée, MR pas encore mergée, ou case de
+   suppression décochée) ;
+3. sinon le **sha de merge** rendu par `worktree-done` — la tête de la branche source au moment du
+   merge, seule trace locale de ce qui est parti ;
+4. sinon `origin/main`, cas de la branche **jamais poussée** (ticket fermé sans MR), où ses commits
+   locaux sont précisément le travail à ne pas perdre.
+
+**Où c'est câblé** — nulle part une commande dédiée :
+
+| Moment | Appel | Pourquoi là |
+|---|---|---|
+| `/ticket-start` | `worktree.sh ensure` → `gc --auto` | le seul point de passage garanti d'un ticket ; muet quand il n'y a rien à faire |
+| [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) | `worktree.sh gc`, **avant** la purge des branches | le merge vient d'être confirmé, c'est le moment le plus précoce |
+| `scripts/orchestrate/run.sh` | `gc --auto` au démarrage du run | c'est là que l'accumulation fait le plus mal, sans personne devant |
+
+L'ordre dans `/branch-cleanup` n'est pas cosmétique : `git branch -D` **refuse** une branche
+empruntée par un worktree (« checked out at … »). Sans ramassage préalable, les branches des
+worktrees soldés étaient comptées « conservées » et restaient indéfiniment — les deux ménages se
+bloquaient l'un l'autre.
+
+`gc` ne supprime **aucune branche** et n'écrit **rien** dans GitLab. Le retrait passe par la même
+séquence que `remove` — délier, puis retirer (le garde-fou de #152 ci-dessus, écrit une seule fois
+dans le script). `MAESTRO_WORKTREE_GC=0` désactive le passage automatique ; les tests, eux, imposent
+le verdict par `MAESTRO_WORKTREE_VERDICT` et tournent donc sans réseau ni glab
+([`test_worktree.py`](../tests/test_worktree.py)).
 
 **Limites assumées.**
 
@@ -1265,9 +1332,10 @@ Deux couches, parce qu'une seule tomberait :
   refuse bien chacune d'elles — sans quoi la seconde couche donnerait une fausse sécurité.
 
 **Ce qu'un run ne fait jamais** : merger, fermer une MR, force-pusher, fermer un parent de suivi, ou
-retirer un worktree (la branche y vit jusqu'au merge — `scripts/git/worktree.sh remove <iid>` après,
-§9). Un run produit **N Merge Requests en Draft à relire** : le merge reste une décision humaine
-(§6), et la file de revue les remonte (§10).
+retirer le worktree d'un ticket qu'il vient de traiter — la branche y vit jusqu'au merge. Le
+ramassage de son **démarrage** (§9.2) ne touche que les worktrees dont GitLab confirme le travail
+soldé, donc jamais ceux du run en cours. Un run produit **N Merge Requests en Draft à relire** : le
+merge reste une décision humaine (§6), et la file de revue les remonte (§10).
 
 ### 11.7 Après un run : instruire les refus de permission
 

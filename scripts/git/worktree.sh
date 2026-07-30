@@ -9,6 +9,7 @@
 #   bash scripts/git/worktree.sh 152             # crée (ou complète) le worktree du ticket #152
 #   bash scripts/git/worktree.sh list            # les worktrees en place, avec leurs ports
 #   bash scripts/git/worktree.sh remove 152      # retire le worktree (jamais la branche)
+#   bash scripts/git/worktree.sh gc              # ramasse ceux dont le travail est soldé
 #
 # Ce que la création met en place, au-delà du `git worktree add` :
 #   - la branche du ticket, résolue comme /ticket-start (lib.sh branch-for), depuis `origin/main` ;
@@ -29,6 +30,12 @@
 #
 # Ce script ne supprime jamais une branche : c'est le rôle de /branch-cleanup, après confirmation
 # du merge par GitLab (docs/10-workflow-git.md §6).
+#
+# Le cycle de vie se REFERME tout seul (#197). Un worktree pèse ~535 Mo (dont 93 % de node_modules
+# installé sur place) et #181 en a fait la voie par défaut de tout ticket : sans ramassage, un run
+# /orchestrate de dix tickets laisse ~5 Go derrière lui. `gc` retire ceux dont GitLab confirme le
+# travail soldé, et il est appelé d'office par `ensure` — le pendant, pour les worktrees, de ce que
+# `lib.sh cleanup-merged` fait aux branches locales depuis #23.
 
 set -uo pipefail
 
@@ -43,6 +50,7 @@ esac
 ok()     { printf '  ✓ %s\n' "$*"; }
 deja()   { printf '  = %s\n' "$*"; }
 ignore() { printf '  ~ %s\n' "$*"; }
+alerte() { printf '  ⚠ %s\n' "$*"; }
 erreur() { printf '  ✗ %s\n' "$*" >&2; }
 
 usage() {
@@ -53,10 +61,16 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
   bash scripts/git/worktree.sh ensure <iid> [--branche <nom>]
   bash scripts/git/worktree.sh list
   bash scripts/git/worktree.sh remove <iid|chemin> [--force]
+  bash scripts/git/worktree.sh gc [--check] [--auto]
 
 `ensure` est l'aiguillage de /ticket-start : il dit où la session doit travailler, en rendant
 en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà — cas d'orchestrate,
 qui monte le worktree lui-même) ou « WORKTREE <chemin> » (worktree prêt, s'y relocaliser).
+
+`gc` ramasse les worktrees dont le travail est SOLDÉ — MR mergée ou ticket fermé, confirmé par
+glab. Il tourne d'office au début d'`ensure` (donc de /ticket-start) : le retrait n'est pas un
+geste à se rappeler. `--check` diagnostique sans rien retirer, `--auto` ne parle que s'il a
+quelque chose à dire. MAESTRO_WORKTREE_GC=0 désactive le passage automatique.
 
 Options de création :
   --branche <nom>   Nom de branche imposé (par défaut : résolu depuis le ticket via glab).
@@ -473,6 +487,16 @@ commande_ensure() {
       return 1 ;;
   esac
 
+  # Ramassage des worktrees soldés (#197), AVANT de monter celui-ci et quel que soit le verdict qui
+  # suivra : c'est le seul moment où quelqu'un passe par ici à coup sûr, et le pendant exact du
+  # `cleanup-merged` que `start-branch` fait aux branches juste après. Best-effort et muet quand il
+  # n'y a rien à dire — un ramassage qui échoue ne doit pas empêcher un ticket de démarrer. En
+  # `--auto` il n'écrit que des lignes de compte rendu, jamais un verdict : le contrat « dernière
+  # ligne de stdout » d'`ensure` reste tenu.
+  if [ "${MAESTRO_WORKTREE_GC:-1}" != 0 ]; then
+    commande_gc --auto || true
+  fi
+
   # Déjà au bon endroit ? Le test porte sur la BRANCHE du répertoire courant, jamais sur son
   # chemin : sous Windows git répond « E:/… » là où Git Bash répond « /e/… », et une comparaison
   # de chemins passerait à côté (même piège que dans `commande_remove`).
@@ -587,31 +611,212 @@ commande_remove() {
     return 1
   fi
 
-  # Les liens PARTENT EN PREMIER : sans ça, `git worktree remove` descend dans les jonctions et
-  # vide le .venv et le node_modules du clone principal (constaté, #152).
-  local artefact
-  for artefact in .venv .tools apps/web/node_modules; do
-    if delier "$chemin/$artefact"; then
-      ok "$artefact délié — la cible du clone principal reste intacte"
-    fi
-  done
-
-  local args=(worktree remove) sortie
-  [ "$force" = 1 ] && args+=(--force)
-  if sortie="$(git -C "$principal" "${args[@]}" "$chemin" 2>&1)"; then
+  if retire_worktree "$chemin" "$force" 1; then
     ok "worktree retiré : $chemin"
     printf '\nLa branche, elle, est intacte — sa suppression passe par /branch-cleanup, après\n'
     printf 'confirmation du merge par GitLab.\n'
   else
-    # La cause est dans la sortie de git, et elle varie : « Filename too long » sur un
-    # node_modules profond, worktree verrouillé, fichiers restants… la montrer plutôt que de la
-    # deviner. Les liens ayant déjà été retirés, une reprise à la main ne risque plus rien.
     erreur "git worktree remove a échoué :"
-    printf '%s\n' "$sortie" >&2
+    printf '%s\n' "$RETRAIT_ERREUR" >&2
     printf '  Les liens ont déjà été retirés : le clone principal ne risque plus rien si le\n' >&2
     printf '  dossier doit être supprimé à la main.\n' >&2
     return 1
   fi
+}
+
+# --- gc : ramasser les worktrees soldés (#197) ------------------------------------------------------
+# travail_non_sauvegarde <chemin> <branche> [sha] -> « <fichiers non commités> <commits non poussés> ».
+#
+# Le garde-fou du ramassage : un worktree ne se retire que si ce qu'il porte est ailleurs. Les
+# fichiers non commités sont immédiats ; les commits demandent de choisir la BONNE référence, et
+# c'est là que la naïveté coûte cher — le projet mergeant en SQUASH, `origin/main..HEAD` compte les
+# commits de TOUTE branche mergée et ferait refuser chaque candidat. Par ordre de fiabilité :
+#   0. HEAD est un ANCÊTRE d'`origin/main` : tout ce qui est ici est déjà sur le serveur, quelle que
+#      soit l'histoire de la branche. C'est la formulation exacte de la question posée, et elle règle
+#      au passage la branche RECRÉÉE depuis `main` après son merge (son sha de merge a divergé, et le
+#      comparer ferait compter comme « non poussés » des commits qui sont sur `main`) ;
+#   1. `origin/<branche>` s'il existe encore (branche poussée, pas encore mergée ou suppression
+#      décochée au merge) — la référence exacte de ce que le serveur a reçu ;
+#   2. le <sha> de merge rendu par `lib.sh worktree-done` : la tête de la branche source au moment du
+#      merge, la seule trace locale de ce qui est parti quand GitLab a supprimé la branche distante ;
+#   3. `origin/main` en dernier recours — cas d'une branche JAMAIS poussée (ticket fermé sans MR),
+#      où ses commits locaux sont précisément le travail non sauvegardé.
+# Aucune référence trouvable (dépôt sans distant) : on rend « 0 », et c'est le seul cas où le
+# compteur peut mentir par défaut ; les fichiers non commités, eux, restent comptés.
+travail_non_sauvegarde() {
+  local chemin="$1" branche="$2" sha="${3:-}" modifs commits=0 base=""
+  modifs="$(git -C "$chemin" status --porcelain 2>/dev/null | grep -c .)" || modifs=0
+  if git -C "$chemin" merge-base --is-ancestor HEAD refs/remotes/origin/main >/dev/null 2>&1; then
+    printf '%s 0' "${modifs:-0}"
+    return 0
+  fi
+  if git -C "$chemin" rev-parse --verify -q "refs/remotes/origin/$branche" >/dev/null 2>&1; then
+    base="refs/remotes/origin/$branche"
+  elif [ -n "$sha" ] && git -C "$chemin" cat-file -e "$sha^{commit}" >/dev/null 2>&1; then
+    base="$sha"
+  elif git -C "$chemin" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1; then
+    base="refs/remotes/origin/main"
+  fi
+  [ -n "$base" ] && commits="$(git -C "$chemin" rev-list --count "$base..HEAD" 2>/dev/null)"
+  printf '%s %s' "${modifs:-0}" "${commits:-0}"
+}
+
+# retire_worktree <chemin> <force 0|1> <verbeux 0|1> : la séquence de retrait, écrite UNE FOIS —
+# délier PUIS retirer. L'ordre est le garde-fou de #152 : `git worktree remove` descend dans les
+# jonctions et viderait le .venv et le node_modules du CLONE PRINCIPAL. Rend 0 si le worktree est
+# parti ; sinon 1, la sortie de git étant laissée dans RETRAIT_ERREUR (sa cause varie : « Filename
+# too long » sur un node_modules profond, worktree verrouillé, dossier occupé par un shell…).
+RETRAIT_ERREUR=""
+retire_worktree() {
+  local chemin="$1" force="$2" verbeux="$3" principal artefact sortie
+  local args=(worktree remove)
+  principal="$(depot_principal)" || return 1
+  RETRAIT_ERREUR=""
+  for artefact in .venv .tools apps/web/node_modules; do
+    if delier "$chemin/$artefact" && [ "$verbeux" = 1 ]; then
+      ok "$artefact délié — la cible du clone principal reste intacte"
+    fi
+  done
+  [ "$force" = 1 ] && args+=(--force)
+  if sortie="$(git -C "$principal" "${args[@]}" "$chemin" 2>&1)"; then
+    return 0
+  fi
+  RETRAIT_ERREUR="$sortie"
+  return 1
+}
+
+# commande_gc [--check] [--auto] : retire les worktrees dont GitLab confirme le travail soldé.
+#
+# Trois refus, dans cet ordre, parce qu'ils ne coûtent pas la même chose :
+#   - le worktree de la SESSION COURANTE, jamais candidat (on ne se retire pas le sol sous les pieds) ;
+#   - un worktree porteur de TRAVAIL NON SAUVEGARDÉ : signalé, jamais supprimé en silence. C'est
+#     l'inverse du confort : mieux vaut 535 Mo de trop qu'un commit perdu ;
+#   - un verdict autre que « fini » — y compris « inconnu » (glab muet, hors ligne). Ne rien savoir
+#     n'autorise rien : le nom de la branche ne sert jamais de preuve de merge (docs/10 §6).
+#
+# Deux temps volontaires : on INVENTORIE d'abord, on décide ensuite. `git worktree remove` réécrit la
+# liste que l'on parcourrait.
+#
+# MAESTRO_WORKTREE_VERDICT remplace l'interrogation de GitLab par une commande qui reçoit
+# « <iid> <branche> » et imprime la ligne de verdict : c'est la couture par laquelle les tests font
+# tourner le ramassage sans réseau ni glab (même dispositif que MAESTRO_ORCHESTRATE_WORKTREE, #172).
+commande_gc() {
+  local check=0 auto=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check) check=1 ;;
+      --auto)  auto=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
+    esac
+    shift
+  done
+
+  local principal courant
+  principal="$(depot_principal)" || { erreur "hors d'un dépôt git"; return 1; }
+  # Format de git (« E:/… ») des deux côtés : Git Bash répondrait « /e/… » et la comparaison de
+  # chemins passerait à côté, exactement comme dans commande_remove.
+  courant="$(git rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
+
+  # Un couple « chemin<TAB>branche » par ligne : le chemin peut porter des espaces (« Projects
+  # Solutions »), la tabulation ne risque rien.
+  local ligne chemin="" paires=""
+  while IFS= read -r ligne; do
+    case "$ligne" in
+      worktree\ *) chemin="${ligne#worktree }" ;;
+      branch\ refs/heads/*)
+        [ "$chemin" = "$principal" ] && continue
+        paires="$paires$chemin"$'\t'"${ligne#branch refs/heads/}"$'\n' ;;
+    esac
+  done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
+
+  if [ -z "$paires" ]; then
+    [ "$auto" = 1 ] || printf '\nAucun worktree en place — rien à ramasser.\n\n'
+    return 0
+  fi
+
+  [ "$auto" = 1 ] || printf '\nRamassage des worktrees de %s\n\n' "$principal"
+
+  local branche nom iid brut verdict sha raison reste n_modifs n_commits detail
+  local retires=0 gardes=0 signales=0 echecs=0 rapport=""
+  while IFS=$'\t' read -r chemin branche; do
+    [ -n "$chemin" ] || continue
+    nom="${branche#*/}"
+    iid="${nom%%-*}"
+
+    if [ -n "$courant" ] && [ "$chemin" = "$courant" ]; then
+      gardes=$((gardes + 1))
+      [ "$auto" = 1 ] || rapport="$rapport$(ignore "$branche — session courante, jamais ramassée")"$'\n'
+      continue
+    fi
+
+    case "$iid" in
+      ''|*[!0-9]*)
+        gardes=$((gardes + 1))
+        [ "$auto" = 1 ] || rapport="$rapport$(ignore "$branche — nom hors convention, aucun ticket à interroger")"$'\n'
+        continue ;;
+    esac
+
+    if [ -n "${MAESTRO_WORKTREE_VERDICT:-}" ]; then
+      brut="$("$MAESTRO_WORKTREE_VERDICT" "$iid" "$branche" 2>/dev/null)"
+    else
+      brut="$(bash "$ICI/../gitlab/lib.sh" worktree-done "$iid" "$branche" 2>/dev/null)"
+    fi
+    # « - » marque un sha absent : dans un TSV lu par `read`, la tabulation est un séparateur BLANC
+    # (deux d'affilée comptent pour une seule), donc un champ vide décalerait la raison dans le sha.
+    IFS=$'\t' read -r verdict sha raison <<< "$brut"
+    [ "$sha" = "-" ] && sha=""
+
+    if [ "$verdict" != "fini" ]; then
+      gardes=$((gardes + 1))
+      [ "$auto" = 1 ] || rapport="$rapport$(deja "#$iid conservé — ${raison:-verdict indisponible}")"$'\n'
+      continue
+    fi
+
+    reste="$(travail_non_sauvegarde "$chemin" "$branche" "$sha")"
+    n_modifs="${reste%% *}"; n_commits="${reste##* }"
+    detail=""
+    [ "${n_modifs:-0}" -gt 0 ] && detail="$n_modifs fichier(s) non commité(s)"
+    [ "${n_commits:-0}" -gt 0 ] && detail="${detail:+$detail, }$n_commits commit(s) non poussé(s)"
+    if [ -n "$detail" ]; then
+      # Toujours dit, même en --auto : c'est le seul cas où se taire ferait perdre du travail.
+      signales=$((signales + 1))
+      gardes=$((gardes + 1))
+      rapport="$rapport$(alerte "#$iid conservé — $detail dans $(chemin_natif "$chemin")")"$'\n'
+      continue
+    fi
+
+    if [ "$check" = 1 ]; then
+      retires=$((retires + 1))
+      rapport="$rapport$(printf '  → #%s à retirer — %s' "$iid" "$raison")"$'\n'
+      continue
+    fi
+
+    if retire_worktree "$chemin" 0 0; then
+      retires=$((retires + 1))
+      rapport="$rapport$(ok "#$iid retiré — $raison")"$'\n'
+    else
+      # Construit à la main : `erreur` écrit sur stderr, la ligne sortirait donc du rapport (et hors
+      # de son ordre). Ici tout le compte rendu part sur stdout, en un bloc.
+      echecs=$((echecs + 1))
+      rapport="$rapport$(printf '  ✗ #%s non retiré : %s' "$iid" "$(printf '%s' "$RETRAIT_ERREUR" | head -1)")"$'\n'
+    fi
+  done <<< "$paires"
+
+  # En --auto (appelé par `ensure`, donc par /ticket-start) on ne parle que s'il y a quelque chose à
+  # dire : un retrait, un travail en danger, un échec. Le silence est le cas normal.
+  if [ "$auto" = 1 ] && [ "$retires" -eq 0 ] && [ "$signales" -eq 0 ] && [ "$echecs" -eq 0 ]; then
+    return 0
+  fi
+  [ "$auto" = 1 ] && printf '\n'
+  printf '%s' "$rapport"
+  if [ "$check" = 1 ]; then
+    printf 'Ramassage (--check) : %s à retirer, %s conservé(s) — rien n'\''a été touché.\n' "$retires" "$gardes"
+  else
+    printf 'Ramassage des worktrees : %s retiré(s), %s conservé(s).\n' "$retires" "$gardes"
+  fi
+  [ "$auto" = 1 ] && printf '\n'
+  return 0
 }
 
 # --- Aiguillage ------------------------------------------------------------------------------------
@@ -622,6 +827,7 @@ case "$cmd" in
   ensure)      commande_ensure "$@" ;;
   list)        commande_list "$@" ;;
   remove)      commande_remove "$@" ;;
+  gc)          commande_gc "$@" ;;
   -h|--help|'') usage ;;
   # Raccourci : un iid nu vaut `create <iid>`.
   *[!0-9]*)    printf 'Sous-commande inconnue : %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;

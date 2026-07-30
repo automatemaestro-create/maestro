@@ -134,6 +134,9 @@ Pour éclairer une décision de merge : `/mr-review <mr>` (synthèse état + pip
   **worktree** par ticket, avec ses propres ports Control Tower et son profil de navigateur. Deux
   sessions Claude Code sur le même dossier se marcheraient dessus ; elles n'y sont plus
   ([docs/10 §9](./docs/10-workflow-git.md)). Le geste manuel reste `bash scripts/git/worktree.sh <iid>`.
+  Et rien à ranger derrière : les worktrees dont la MR est mergée sont **ramassés d'office**
+  (`worktree.sh gc`, [§9.2](./docs/10-workflow-git.md)) — sauf s'ils portent du travail non
+  sauvegardé, qu'ils signalent alors au lieu de disparaître avec.
 - **La CI est partagée** : un runner monté sur une machine toujours allumée sert toute l'équipe ;
   celui de votre poste est un secours. Sans aucun runner en ligne, les pipelines restent `pending`
   et personne ne peut merger ([docs/10 §8.1](./docs/10-workflow-git.md)).

@@ -481,7 +481,7 @@ affiche_run() {
       ;;
     termine)
       printf '   revue      bash scripts/gitlab/lib.sh review-queue\n'
-      printf '   ménage     bash scripts/git/worktree.sh remove <iid>  %s(après le merge, jamais avant)%s\n' "$C_D" "$C_0"
+      printf '   ménage     %saucun — les worktrees sont ramassés d'\''office dès leur MR mergée (#197)%s\n' "$C_D" "$C_0"
       ;;
   esac
   printf '\n'

@@ -108,8 +108,10 @@ Ensuite seulement, apporte ce que la sortie ne dit pas :
    détail brut de la session en cours.
 3. Si des tickets ont réussi, enchaîne sur la **file de revue** :
    `bash scripts/gitlab/lib.sh review-queue` — c'est là que le travail du run attend un humain.
-4. Rappelle les **worktrees à retirer** une fois leurs MR mergées :
-   `bash scripts/git/worktree.sh remove <iid>` — jamais avant le merge, la branche y vit.
+4. **Ne rappelle aucun ménage de worktrees** : ils sont ramassés d'office dès que GitLab confirme
+   leur MR mergée (`worktree.sh gc`, câblé dans `/ticket-start`, `/branch-cleanup` et au début de
+   chaque run — docs/10 §9.2). La seule chose à relayer, c'est une **alerte** de `gc` : un worktree
+   conservé parce qu'il porte du travail non sauvegardé.
 
 ### `--resume <run-id>` — reprendre un run interrompu
 

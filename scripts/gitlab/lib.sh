@@ -1370,6 +1370,11 @@ gl_mr_state() {
 #     statut incertain (opened/closed/aucune MR) ;
 #   • `git branch -D` est sûr ici car le merge est confirmé (le projet merge en squash) ;
 #   • ne change jamais de branche, n'écrit rien sur GitLab, et s'abstient si l'arbre est sale.
+#
+# ⚠ Une branche EMPRUNTÉE PAR UN WORKTREE ne se supprime pas (`git branch -D` refuse : « checked out
+# at … »), et elle est alors comptée « conservée ». C'est pourquoi le ramassage des worktrees passe
+# AVANT cette purge dans /ticket-start comme dans /branch-cleanup (#197, docs/10 §9.2) : sans lui,
+# les branches des worktrees soldés restaient indéfiniment.
 gl_cleanup_merged() {
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     echo "Nettoyage des branches ignoré : changements non commités présents." >&2
@@ -1395,6 +1400,64 @@ gl_cleanup_merged() {
     fi
   done < <(git branch --format='%(refname:short)')
   printf 'Nettoyage des branches : %s supprimée(s), %s conservée(s).\n' "$deleted" "$kept"
+}
+
+# --- Fin de vie d'un worktree -------------------------------------------------------------------
+# gl_worktree_done <iid> [branche] -> « <verdict><TAB><sha><TAB><raison> » : la seule question que se
+# pose le ramassage de scripts/git/worktree.sh (#197) — ce worktree a-t-il encore une raison
+# d'exister ? La réponse vient de GitLab, JAMAIS du nom de la branche (garde-fou docs/10 §6).
+#
+#   fini     MR de la branche MERGÉE, ou ticket FERMÉ (réalisé, abandonné, doublon) ;
+#   actif    travail en cours (ticket ouvert, MR absente ou ouverte) — on n'y touche pas ;
+#   inconnu  GitLab illisible (glab absent, hors ligne, ticket introuvable) — on n'y touche pas
+#            non plus, et le code de retour 1 le dit : ne rien savoir n'autorise rien.
+#
+# Le <sha> n'est renseigné que sur un « fini » par merge, et vaut « - » sinon. C'est la tête de la
+# branche source AU MOMENT du merge, et la seule référence locale fiable pour distinguer « tout est
+# parti » de « il reste des commits ici » : le projet mergeant en SQUASH, les commits de la branche
+# ne sont pas des ancêtres de `main`, et GitLab supprime la branche distante au merge — il ne reste
+# donc ni `origin/<branche>` à comparer, ni ascendance à tester.
+#
+# « - » et non un champ vide : dans un TSV lu par `IFS=$'\t' read`, la tabulation est un séparateur
+# BLANC, donc deux tabulations consécutives comptent pour une seule et le champ suivant se décale
+# (le sha atterrirait dans la raison). Même convention que le plan de scripts/orchestrate/run.sh.
+#
+# Une seule lecture dans le cas nominal (MR mergée) ; deux quand il faut départager par le ticket.
+gl_worktree_done() {
+  local iid="$1" branche="${2:-}" json etat="" mr sha raw etat_ticket
+  if [ -z "$iid" ]; then echo "usage: gl_worktree_done <iid> [branche]" >&2; return 2; fi
+  gl_require_glab >/dev/null 2>&1 || { printf 'inconnu\t-\tglab indisponible ou non authentifié\n'; return 1; }
+
+  if [ -n "$branche" ]; then
+    # `head -1` sur la première clé de premier niveau : même lecture que gl_mr_state, dont l'état
+    # précède les objets imbriqués (auteur, jalon, pipeline) qui portent aussi une clé « state ».
+    json="$(glab mr view "$branche" --output json 2>/dev/null)"
+    if [ -n "$json" ]; then
+      etat="$(printf '%s' "$json" | grep -o '"state":"[a-z]*"' | head -1 | sed 's/.*:"//; s/"//')"
+      if [ "$etat" = "merged" ]; then
+        mr="$(printf '%s' "$json" | grep -o '"iid":[0-9]*' | head -1 | sed 's/.*://')"
+        # « "sha": » et non « _sha": » : diff_refs porte base_sha/head_sha/start_sha, que ce motif
+        # laisse de côté.
+        sha="$(printf '%s' "$json" | grep -o '"sha":"[0-9a-f]\{7,40\}"' | head -1 | sed 's/.*:"//; s/"//')"
+        printf 'fini\t%s\tMR !%s mergée\n' "${sha:--}" "${mr:-?}"
+        return 0
+      fi
+    fi
+  fi
+
+  # Pas de MR mergée : le ticket tranche. Lecture en TEXTE et non en JSON — la ligne « state: » y est
+  # de premier niveau, là où le JSON d'un ticket imbrique le `state` de son jalon (« closed » sur
+  # toute phase soldée), qu'un grep prendrait pour celui du ticket.
+  raw="$(glab issue view "$iid" 2>/dev/null)"
+  if [ -z "$raw" ]; then
+    printf 'inconnu\t-\tticket #%s illisible dans %s\n' "$iid" "$GL_PROJECT"
+    return 1
+  fi
+  etat_ticket="$(printf '%s\n' "$raw" | sed -n 's/^state:[[:space:]]*//p' | head -1)"
+  case "$etat_ticket" in
+    closed) printf 'fini\t-\tticket #%s fermé (MR « %s »)\n' "$iid" "${etat:-aucune}" ;;
+    ''|*)   printf 'actif\t-\tticket #%s « %s » (MR « %s »)\n' "$iid" "${etat_ticket:-?}" "${etat:-aucune}" ;;
+  esac
 }
 
 # --- Utilitaires de nommage ---------------------------------------------------------------------
@@ -1723,6 +1786,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     set-reviewer)   gl_set_reviewer "$@" ;;
     review-queue)   gl_review_queue "$@" ;;
     cleanup-merged) gl_cleanup_merged "$@" ;;
+    worktree-done)  gl_worktree_done "$@" ;;
     branch-for)     gl_branch_for "$@" ;;
     start-branch)   gl_start_branch "$@" ;;
     behind-main)    gl_behind_main "$@" ;;
@@ -1780,6 +1844,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  Branches :" >&2
       echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
+      echo "    worktree-done <iid> [branche] (fini|actif|inconnu + sha de merge + raison — fin de vie d'un worktree)" >&2
       echo "    behind-main [branche]       (retard sur origin/main + conflit probable ; 0=à jour, 3=en retard, 4=+conflit)" >&2
       echo "  Garde-fou de clôture (session ↔ ticket, avant toute écriture de /ticket-finish|ship) :" >&2
       echo "    branch-iid [branche]        (iid porté par le nom de la branche ; rien si hors convention)" >&2
