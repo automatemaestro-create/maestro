@@ -22,7 +22,8 @@
 #   resume.tsv      une ligne par ticket TERMINÉ : iid, verdict, mr, duree_s, cout_usd, raison
 #   <iid>.session   présent dès que le ticket est pris en main -> c'est le ticket en cours
 #   <iid>.*         tout le reste (jsonl, json, log, worktree.log) — sert de témoin d'activité,
-#                   par sa date de modification
+#                   par sa date de modification. Le glob couvre aussi le `<iid>.jsonl.gz` que
+#                   `run.sh` laisse une fois le ticket compacté (#198) : la date, elle, ne bouge pas
 #   run.log         la sortie de la console, pour un run détaché
 #
 # --- « En cours » se déduit, il ne se lit pas ---------------------------------------------------------
