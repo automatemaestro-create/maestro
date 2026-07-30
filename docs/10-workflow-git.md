@@ -1196,7 +1196,7 @@ Deux couches, parce qu'une seule tomberait :
   `--dangerously-skip-permissions` neutraliserait — et n'ajoute au `allow` que ce dont une session
   de dev a besoin sans personne devant l'écran. Une commande hors liste n'est pas un blocage : elle
   est refusée et **tracée dans `permission_denials`**, ce qui sert à compléter la liste plutôt qu'à
-  l'élargir à l'aveugle.
+  l'élargir à l'aveugle — la boucle de rétroaction est décrite en §11.7.
 - `scripts/orchestrate/guard.sh`, branché en hook **`PreToolUse`** : il refuse **en dur, quel que
   soit le mode de permission**, force-push, `glab mr merge`/`close`, `glab ci delete`,
   `git reset --hard`, `git commit --no-verify` et **tout commit sur `main`**.
@@ -1207,6 +1207,72 @@ Deux couches, parce qu'une seule tomberait :
 retirer un worktree (la branche y vit jusqu'au merge — `scripts/git/worktree.sh remove <iid>` après,
 §9). Un run produit **N Merge Requests en Draft à relire** : le merge reste une décision humaine
 (§6), et la file de revue les remonte (§10).
+
+### 11.7 Après un run : instruire les refus de permission
+
+L'`allow` de `settings.run.json` se complète **à partir des refus observés**, jamais à l'aveugle.
+Chaque session laisse ce qu'elle n'a pas pu faire dans `permission_denials`, à la fin de son
+`<iid>.json` :
+
+```bash
+# Coup d'œil : combien de refus, sur quels outils (le .json est minifié — #180 lui ajoutera une vue lisible)
+grep -o '"tool_name":"[^"]*"' .maestro/orchestrate/<run-id>/<iid>.json | sort | uniq -c
+
+# La liste, en clair. PYTHONIOENCODING est indispensable sous Windows : sans lui, une commande
+# refusée contenant un accent fait tomber le print en UnicodeEncodeError (stdout en cp1252). La
+# variable doit porter sur PYTHON — devant un `glab … |`, bash ne la propage pas au pipeline.
+PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe - <<'PY'
+import json, pathlib
+p = pathlib.Path(".maestro/orchestrate/<run-id>/<iid>.json")
+for r in json.loads(p.read_text(encoding="utf-8"))["permission_denials"]:
+    print("-", r["tool_name"], "—", r["tool_input"].get("command", r["tool_input"]))
+PY
+```
+
+Un refus **ne bloque pas le run** : sans humain pour approuver, l'appel est simplement refusé et la
+session se débrouille. C'est précisément le problème — **il se paie deux fois** : en tours et en
+dollars quand la session contourne, en run perdu quand elle ne peut pas. Sur le premier run réel
+(`20260729-132807`, **17 refus**), les deux sessions se sont vu refuser `/ticket-start` : celle de
+#130 a refait le cycle **à la main** — ce que CLAUDE.md interdit, les skills en étant la source
+unique — pour 100 tours, 34 min et 10,69 $ ; celle de #131 a fini sans même poser le statut du
+ticket, le refus des attentes actives lui ayant par ailleurs coûté le run (§11.3, #178).
+
+L'instruction se fait **au cas par cas** : la bonne question n'est pas « faut-il autoriser ? » mais
+« qu'est-ce qui a été refusé au juste ? ». Trois issues, et deux d'entre elles ne touchent pas à la
+liste :
+
+| Verdict | Geste |
+| --- | --- |
+| La commande relève de la liste | l'ajouter au `allow` de `settings.run.json` |
+| C'est une **forme d'appel** qu'aucune règle de préfixe ne peut reconnaître | corriger `prompt_ticket` (`run.sh`), pas la liste |
+| Le refus est **mérité** | le laisser, et écrire pourquoi dans le `$comment` du fichier |
+
+Deux pièges de lecture, découverts à ce prix, sans lesquels on instruit à côté :
+
+- **Une commande composée vaut son maillon le plus faible.** Le CLI la découpe sur `&&`, `;` et `|`
+  et exige que **chaque** morceau soit autorisé. Le refus de `grep -E "…" <fichier> | tail -8` ne
+  tenait qu'à `grep` — `tail` était autorisé, et rien d'autre n'était en cause. **Dix des dix-sept
+  refus** portaient de même un `cd "<worktree>" &&` en tête, que les sessions mettent **par
+  habitude alors que leur répertoire courant est déjà ce worktree** ; deux ne tenaient qu'à lui, les
+  huit autres y ajoutant un second morceau hors liste (`echo`, `printf`, `grep`, `sed`…).
+- **L'`allow` est l'union de `settings.run.json` et de `.claude/settings.json`**, là où le `deny`
+  est recopié à dessein (§11.6). Une commande « allowlistée dans le dépôt mais refusée en run »
+  n'existe donc pas : c'est son emballage qui a changé. Preuve du run : la MR !149 a bien été
+  ouverte par un `glab mr create` que **seul** `.claude/settings.json` autorise. On ne recopie pas
+  pour autant les verbes git/glab du dépôt — une copie de l'`allow` dériverait en silence, là où
+  `guard.sh --check` veille sur celle du `deny`.
+
+Une règle ne prend pas non plus toujours de spécificateur : **`Skill` s'autorise nu**, le tool ne
+déclarant pas de `ruleContentField` (`Skill(ticket-start)` ne matcherait rien), là où `Bash` expose
+`command` et `Write` `file_path`.
+
+Ce que la passe #179 a donné sur ces 17 refus : **11 levés** par six règles (`Skill`, puis `cd`,
+`echo`, `printf`, `grep`, `sed` — du décor de pipeline, sans pouvoir propre, mais qui faisait tomber
+des commandes déjà autorisées) ; **2 relèvent de la forme d'appel** et sont traités par le prompt
+(préfixe `PYTHONPATH=…` devant l'interpréteur, chemin absolu là où la règle borne un chemin
+relatif) ; **4 restent refusés à dessein** — les deux attentes actives (`for … sleep 6`,
+`until [ -s … ]; do sleep 3; done`) parce que les autoriser rouvrirait le mode d'échec que #178
+ferme, `jobs` pour la même raison, et `bash <script hors du dépôt>` qui serait du code arbitraire.
 
 > **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) — même parti pris que le
 > reste : dépôt jetable, **ni réseau, ni quota, ni écriture GitLab**. Un `glab` factice répond
