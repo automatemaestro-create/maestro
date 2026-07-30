@@ -81,7 +81,7 @@ from maestro.agents.runtime import (
     AgentRuntime,
     RoleProfile,
 )
-from maestro.agents.secrets import SecretStore
+from maestro.agents.secrets import EtatSecret, SecretStore
 from maestro.agents.store import (
     NOMS_RESERVES,
     AgentDefinition,
@@ -153,6 +153,7 @@ __all__ = [
     "AgentStore",
     "CapaciteAgent",
     "CapacityStore",
+    "EtatSecret",
     "IntegrationMcp",
     "JaugeInstances",
     "McpStore",
