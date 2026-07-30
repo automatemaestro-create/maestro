@@ -31,10 +31,15 @@
 # .maestro/orchestrate/<run-id>/
 #   plan.tsv          le plan figé au démarrage (sortie de queue.sh)
 #   <iid>.session     l'UUID de la session du ticket (clé de la reprise, #171)
-#   <iid>.jsonl       le flux d'activité de la session, un événement par ligne (#176)
+#   <iid>.jsonl       le flux d'activité de la session, un événement par ligne (#176) — gzippé en
+#                     `<iid>.jsonl.gz` dès le verdict rendu (#198), à relire avec zcat/zgrep
 #   <iid>.json        le résultat FINAL de la session seul (coût, usage, permission_denials…)
 #   <iid>.log         ce que la session a écrit sur stderr
 #   resume.tsv        une ligne par ticket : iid, verdict, MR, durée, coût, raison
+#
+# Le journal ne s'accumule plus sans fin (#198) : au démarrage d'un run, `journal.sh gc --auto` ne
+# garde que les N derniers runs et ramasse les répertoires vides — jamais le run courant, jamais un
+# run qui écrit encore. Diagnostic sans écriture : `journal.sh gc --check`.
 #
 # Arrêt d'urgence : créer .maestro/orchestrate/STOP — testé entre deux tickets.
 #
@@ -344,6 +349,9 @@ formate_flux() { # <iid> : lit le flux sur stdin, l'archive, et en tire une lign
   local iid="$1" ligne resultat="" derniere=""
   local jsonl="$RUN_DIR/$iid.jsonl"
   : >"$jsonl"
+  # Un `.jsonl.gz` laissé par une tentative précédente (run rejoué sous le même run-id) doit partir
+  # avec elle : deux traces du même ticket, dont une périmée, se liraient l'une pour l'autre.
+  rm -f "$jsonl.gz" 2>/dev/null
   : >"$RUN_DIR/$iid.json"
   # `|| [ -n "$ligne" ]` : sans lui, un flux qui ne se termine pas par un saut de ligne perdrait sa
   # DERNIÈRE ligne — c'est-à-dire l'objet `result`, donc le coût et le verdict.
@@ -358,6 +366,20 @@ formate_flux() { # <iid> : lit le flux sur stdin, l'archive, et en tire une lign
   done
   [ -n "$resultat" ] || resultat="$derniere"
   [ -n "$resultat" ] && printf '%s\n' "$resultat" >"$RUN_DIR/$iid.json"
+  return 0
+}
+
+# compacte_flux <iid> : le flux brut d'un ticket TERMINÉ n'a plus de lecteur — le coût, le verdict et
+# la détection de limite d'usage lisent `<iid>.json`, qui ne porte que l'objet `result`. Une fois le
+# verdict rendu on le gzippe donc : la matière de diagnostic reste (`zcat`, `zgrep`), le volume part.
+# JAMAIS avant : tant que le ticket tourne, `delai_avant_reprise` relit le `.jsonl` entier à chaque
+# tentative, et le compacter sous ses pieds ferait passer une pause pour un échec. Best-effort — un
+# gzip absent ou en échec ne coûte que de la place.
+compacte_flux() {
+  local jsonl="$RUN_DIR/$1.jsonl"
+  [ -s "$jsonl" ] || return 0
+  command -v gzip >/dev/null 2>&1 || return 0
+  gzip -f "$jsonl" 2>/dev/null || true
   return 0
 }
 
@@ -660,6 +682,15 @@ printf '# iid\tverdict\tmr\tduree_s\tcout_usd\traison\n' >"$RESUME"
 # hors ligne) ne doit pas empêcher un run de partir.
 bash "$RACINE/scripts/git/worktree.sh" gc --auto </dev/null || true
 
+# Ménage du journal, même esprit et même moment (#198) : sans lui, `.maestro/orchestrate/` ne fait
+# que grossir — rien n'y a jamais rien supprimé. Le run COURANT est nommé explicitement pour n'être
+# jamais candidat, et `|| true` vaut engagement : un ménage impossible ne fait pas échouer un run.
+# L'ordre compte : le plan a DÉJÀ été copié dans ce run (plus haut), donc rejouer le plan d'un vieux
+# run reste sans danger même si la rétention emporte le répertoire dont il sort.
+if [ "${MAESTRO_ORCHESTRATE_JOURNAL_GC:-1}" != 0 ]; then
+  bash "$RACINE/scripts/orchestrate/journal.sh" gc --auto --courant "$RUN_ID" </dev/null || true
+fi
+
 # --- La boucle ----------------------------------------------------------------------------------------
 NB_OK=0
 NB_ECHEC=0
@@ -826,6 +857,9 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
     NB_ECHEC=$((NB_ECHEC + 1))
     [ "$parent" != "-" ] && PARENTS_ECHOUES="$PARENTS_ECHOUES $parent"
   fi
+  # Le verdict est rendu : plus personne ne relira le flux brut de ce ticket (#198). Après le
+  # `consigne`, et dans les deux branches — un échec est justement ce qu'on ira relire, en `.gz`.
+  compacte_flux "$iid"
   printf '\n'
 done 3< <(grep -v '^#' "$PLAN")
 

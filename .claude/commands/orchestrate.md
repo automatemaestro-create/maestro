@@ -54,9 +54,10 @@ toi-même.
 
    **Dis ce que la console montre** (#176) : elle n'est pas muette entre le début d'un ticket et son
    verdict, elle égrène **une ligne compacte par action** de la session (`· Edit core/models/mcp.py`,
-   `· Bash pytest -q`) — le flux brut restant dans `<run-id>/<iid>.jsonl`, et `<iid>.json` ne
-   portant que le résultat final (coût, verdict). C'est ce qui distingue « ça travaille » de « c'est
-   planté » quand on a la fenêtre sous les yeux ; `status.sh` couvre le cas contraire.
+   `· Bash pytest -q`) — le flux brut restant dans `<run-id>/<iid>.jsonl` (gzippé en `.jsonl.gz`
+   dès le verdict rendu, #198 — `zcat`/`zgrep` pour le relire), et `<iid>.json` ne portant que le
+   résultat final (coût, verdict). C'est ce qui distingue « ça travaille » de « c'est planté »
+   quand on a la fenêtre sous les yeux ; `status.sh` couvre le cas contraire.
 
    **Dis la réserve, sans la noyer** : la console ne dépend plus de ta session, mais rien ne
    garantit qu'elle survive à un parent qui enfermerait ses descendants (job object Windows). Le

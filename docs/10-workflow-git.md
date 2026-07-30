@@ -1255,6 +1255,31 @@ Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<i
 durée, coût, raison). Un run lancé avec `--detach` y ajoute `lancer.sh` (ce qui a été lancé) et
 `run.log` (toute la sortie de la console, flux d'activité compris).
 
+**Ce journal ne s'accumule plus sans fin** (#198). Rien ne le nettoyait : `run.sh` crée un
+répertoire **par lancement** et ses deux `rm -rf` sont des renoncements (lancement détaché en
+échec, `--dry-run`), pas un ménage. Indolore tant que le journal ne portait que des logs — 41 Ko
+pour un run entier — mais le `<iid>.jsonl` de #176 est le flux `stream-json` **brut** d'une session,
+non tronqué : c'est lui qui décide désormais de la croissance. Deux gestes, portés par
+`scripts/orchestrate/journal.sh` et déclenchés **au démarrage de chaque run** :
+
+- **rétention** — seuls les **N runs les plus récents** sont conservés
+  (`MAESTRO_ORCHESTRATE_JOURNAL_RUNS`, défaut 10) ; les répertoires **vides** que laissent les
+  sorties précoces (plan vide, `queue.sh` en échec) sont ramassés ;
+- **compaction** — le `<iid>.jsonl` d'un ticket **terminé** est gzippé en `<iid>.jsonl.gz`, à
+  relire avec `zcat`/`zgrep`. Jamais avant le verdict : tant que le ticket tourne, la détection de
+  limite d'usage relit ce flux **entier** à chaque tentative (§11.4).
+
+```bash
+bash scripts/orchestrate/journal.sh gc --check   # ce qui partirait, sans rien écrire
+bash scripts/orchestrate/journal.sh gc           # le ménage, à la main
+```
+
+**Rien n'est retiré sous les pieds d'un run** : ni celui qui fait le ménage, ni un run dont la
+dernière écriture date de moins de `MAESTRO_ORCHESTRATE_SILENCE` (défaut 900 s). Faute de PID,
+l'activité se **déduit** ici comme dans `status.sh` (§11.5), et le doute profite au journal. Le
+ménage est **best-effort** de bout en bout — son échec ne fait jamais échouer un run —, et
+`MAESTRO_ORCHESTRATE_JOURNAL_GC=0` le désactive.
+
 ### 11.4 La limite d'usage est une pause, pas un échec
 
 Trois filets de détection, parce que la forme exacte du signal en mode `-p` n'est pas contractuelle

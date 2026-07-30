@@ -27,6 +27,7 @@ sans `origin` distant, avec une simple référence `refs/remotes/origin/main` po
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import shutil
@@ -52,6 +53,7 @@ SCRIPTS = (
     "scripts/orchestrate/guard.sh",
     "scripts/orchestrate/run.sh",
     "scripts/orchestrate/status.sh",
+    "scripts/orchestrate/journal.sh",
     "scripts/orchestrate/settings.run.json",
 )
 
@@ -840,6 +842,18 @@ def test_sans_le_marqueur_la_sortie_reste_sans_couleur(depot: Depot) -> None:
 # Le flux d'activité en direct (#176)
 # =====================================================================================
 
+def _flux(dossier: Path, iid: int = 130) -> str:
+    """Le flux archivé d'un ticket, qu'il soit encore brut ou déjà compacté (#198).
+
+    Ces tests-ci portent sur ce que le flux CONTIENT ; son format de stockage est le sujet de la
+    section « journal.sh », qui vérifie explicitement la compaction.
+    """
+    brut = dossier / f"{iid}.jsonl"
+    if brut.exists():
+        return brut.read_text(encoding="utf-8")
+    return gzip.decompress((dossier / f"{iid}.jsonl.gz").read_bytes()).decode("utf-8")
+
+
 def _stub_flux(depot: Depot) -> str:
     """Un bouchon qui émet un vrai flux stream-json : plusieurs événements, `result` en dernier.
 
@@ -882,7 +896,7 @@ def test_le_flux_donne_une_ligne_par_action_et_garde_le_resultat_final(depot: De
 
     dossier = depot.racine / ".maestro/orchestrate/flux"
     # 2. Le flux brut est archivé en entier…
-    lignes = [x for x in (dossier / "130.jsonl").read_text(encoding="utf-8").splitlines() if x]
+    lignes = [x for x in _flux(dossier).splitlines() if x]
     assert len(lignes) == 4
 
     # 3. …mais <iid>.json ne porte QUE le résultat final : sinon le coût lu serait le leurre.
@@ -975,7 +989,7 @@ def test_la_session_reprise_passe_aussi_par_le_flux(depot: Depot) -> None:
     # Chaque tentative repart sur un flux propre, et c'est porteur : la détection de limite grepe
     # le `.jsonl` entier, donc un marqueur laissé par la tentative précédente ferait attendre puis
     # reprendre une session qui vient pourtant d'aboutir — indéfiniment.
-    jsonl = (dossier / "130.jsonl").read_text(encoding="utf-8")
+    jsonl = _flux(dossier)
     assert "usage limit reached" not in jsonl, "le flux de la tentative précédente doit être effacé"
 
 
@@ -1422,3 +1436,207 @@ def test_le_prompt_de_reprise_porte_la_meme_interdiction(depot: Depot) -> None:
     prompt = (depot.fixtures / "prompt-reprise.txt").read_text(encoding="utf-8")
     assert "aucun résultat différé" in prompt
     assert "ORCHESTRATE: ECHEC" in prompt
+
+
+# =====================================================================================
+# journal.sh — la rétention du journal d'orchestration (#198)
+# =====================================================================================
+
+def _vieux_run(depot: Depot, run_id: str, *, age: int, flux: str | None = None) -> Path:
+    """Un répertoire de run figé dans le passé — `age` en secondes depuis sa dernière écriture.
+
+    L'âge est le seul levier sur les décisions de `journal.sh` : un run qui a écrit récemment est
+    présumé vivant, donc épargné quoi qu'il arrive. Sans vieillissement, tous les runs d'un test
+    seraient protégés et la rétention n'aurait jamais rien à ramasser.
+    """
+    dossier = _run_dir(depot, run_id, [(1, 130, "-", "moyenne")], resume=[])
+    if flux is not None:
+        (dossier / "130.jsonl").write_text(flux, encoding="utf-8", newline="\n")
+    quand = time.time() - age
+    for chemin in (*sorted(dossier.rglob("*")), dossier):
+        os.utime(chemin, (quand, quand))
+    return dossier
+
+
+def _runs_presents(depot: Depot) -> list[str]:
+    dossier = depot.racine / ".maestro/orchestrate"
+    return sorted(p.name for p in dossier.iterdir() if p.is_dir())
+
+
+def test_la_retention_ne_garde_que_les_runs_les_plus_recents(depot: Depot) -> None:
+    """Le cœur du ticket : sans elle, `.maestro/orchestrate/` ne fait que grossir."""
+    for i in range(1, 7):
+        _vieux_run(depot, f"run-{i:02d}", age=3600 + (7 - i) * 60)
+    r = depot.lance("journal.sh", "gc", env={"MAESTRO_ORCHESTRATE_JOURNAL_RUNS": "3"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _runs_presents(depot) == ["run-04", "run-05", "run-06"]
+
+
+def test_ni_le_run_courant_ni_un_run_qui_ecrit_encore_ne_sont_purges(depot: Depot) -> None:
+    """Purger sous les pieds d'un run détaché lui ferait perdre son journal — et `status.sh` avec.
+
+    Deux protections distinctes, éprouvées ensemble : le run que `run.sh` désigne (`--courant`) et
+    celui dont la dernière écriture est récente, seul indice d'activité en l'absence de PID.
+    """
+    for i in range(1, 4):
+        _vieux_run(depot, f"vieux-{i}", age=3600 + i * 60)
+    _vieux_run(depot, "courant", age=3600)
+    _run_dir(depot, "en-cours", [(1, 130, "-", "moyenne")])  # écrit à l'instant
+
+    r = depot.lance("journal.sh", "gc", "--courant", "courant",
+                    env={"MAESTRO_ORCHESTRATE_JOURNAL_RUNS": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    restants = _runs_presents(depot)
+    assert "courant" in restants, "le run désigné n'est jamais candidat"
+    assert "en-cours" in restants, "un run qui écrit encore est présumé vivant"
+    assert "vieux-1" in restants, "le plus récent des candidats tient dans la rétention"
+    assert "vieux-2" not in restants and "vieux-3" not in restants
+
+
+def test_check_dit_ce_qui_partirait_sans_rien_ecrire(depot: Depot) -> None:
+    _vieux_run(depot, "garde", age=3600, flux='{"type":"result"}\n')
+    _vieux_run(depot, "vieux", age=7200, flux='{"type":"result"}\n')
+    r = depot.lance("journal.sh", "gc", "--check",
+                    env={"MAESTRO_ORCHESTRATE_JOURNAL_RUNS": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "vieux à retirer" in r.stdout
+    assert "rien n'a été touché" in r.stdout
+    assert _runs_presents(depot) == ["garde", "vieux"], "--check ne supprime rien"
+    dossier = depot.racine / ".maestro/orchestrate/garde"
+    assert (dossier / "130.jsonl").exists(), "--check ne compacte rien non plus"
+    assert not (dossier / "130.jsonl.gz").exists()
+
+
+def test_un_repertoire_de_run_vide_est_ramasse(depot: Depot) -> None:
+    """Les sorties précoces de `run.sh` (plan vide, `queue.sh` en échec) laissent un `mkdir -p`
+    derrière elles : aucun `rm -rf` du script ne couvre ces chemins-là."""
+    vide = depot.racine / ".maestro/orchestrate/20260728-201836"
+    vide.mkdir(parents=True)
+    quand = time.time() - 3600
+    os.utime(vide, (quand, quand))
+    _vieux_run(depot, "plein", age=3600)
+
+    r = depot.lance("journal.sh", "gc")
+    assert r.returncode == 0, r.stdout + r.stderr
+    # La rétention par défaut (10) garderait les deux : un répertoire vide n'y entre pas, il ne
+    # porte rien à conserver.
+    assert _runs_presents(depot) == ["plein"]
+
+
+def test_un_repertoire_vide_tout_juste_cree_est_epargne(depot: Depot) -> None:
+    """Un run qui vient de démarrer est vide pendant les secondes que dure le calcul du plan."""
+    neuf = depot.racine / ".maestro/orchestrate/tout-neuf"
+    neuf.mkdir(parents=True)
+    r = depot.lance("journal.sh", "gc")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert neuf.exists(), "le vide n'autorise le retrait qu'une fois le silence installé"
+
+
+def test_le_flux_d_un_run_conserve_est_compacte_sans_le_rajeunir(depot: Depot) -> None:
+    """Compacter ne doit pas faire passer un vieux run pour un run actif : la date de la dernière
+    écriture est ce dont `status.sh` — et la rétention elle-même — déduisent l'activité."""
+    contenu = '{"type":"system"}\n{"type":"result","total_cost_usd":4.2}\n'
+    dossier = _vieux_run(depot, "garde", age=3600, flux=contenu)
+    avant = (dossier / "plan.tsv").stat().st_mtime
+
+    r = depot.lance("journal.sh", "gc")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (dossier / "130.jsonl").exists()
+    gz = dossier / "130.jsonl.gz"
+    assert gzip.decompress(gz.read_bytes()).decode("utf-8") == contenu, "rien n'est perdu"
+    assert abs(gz.stat().st_mtime - avant) < 5, "la date du flux survit à la compaction"
+
+
+def test_le_flux_est_compacte_une_fois_le_verdict_rendu(depot: Depot) -> None:
+    """Bout en bout : `run.sh` laisse un `.jsonl.gz`, pas un flux brut, dès le ticket terminé."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _stub_flux(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "compacte",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    dossier = depot.racine / ".maestro/orchestrate/compacte"
+    assert not (dossier / "130.jsonl").exists()
+    assert '"type":"result"' in _flux(dossier), "le flux reste relisible, compacté"
+    assert (dossier / "130.json").exists(), "le résultat final, lui, reste en clair"
+
+
+def test_la_compaction_attend_le_verdict_et_ne_casse_pas_la_reprise(depot: Depot) -> None:
+    """Compacter pendant le ticket ferait passer une pause pour un échec : `delai_avant_reprise`
+    relit le `.jsonl` ENTIER à chaque tentative pour y trouver la limite d'usage."""
+    depot.ticket(130, "Ticket interrompu")
+    depot.mr("feat/130-ticket-interrompu", "opened")
+    claude = _claude_stub(depot, f"""
+        if printf '%s\\n' "$@" | grep -q -- '--resume'; then
+          printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+          printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":6}}\\n'
+          exit 0
+        fi
+        printf '{{"type":"result","is_error":true,"result":"Claude AI usage limit reached"}}\\n'
+        exit 1
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "reprise-compacte",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "reprise 1/3" in r.stdout, "la limite est toujours détectée, donc le flux toujours lu"
+    dossier = depot.racine / ".maestro/orchestrate/reprise-compacte"
+    assert (dossier / "130.jsonl.gz").exists(), "la compaction a bien eu lieu, mais à la fin"
+    assert "usage limit reached" not in _flux(dossier), "la tentative perdue n'est pas réarchivée"
+
+
+def test_un_run_fait_le_menage_du_journal_en_demarrant(depot: Depot) -> None:
+    """La rétention n'est pas une commande à se rappeler : un run la déclenche en partant."""
+    for i in range(1, 4):
+        _vieux_run(depot, f"vieux-{i}", age=3600 + i * 60)
+    depot.ticket(130, "Ticket à traiter")
+    claude = _claude_stub(depot, """
+        printf '{"type":"result","subtype":"success","is_error":false}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "neuf",
+                env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_JOURNAL_RUNS": "1"})
+    restants = _runs_presents(depot)
+    assert "neuf" in restants, "le run qui fait le ménage ne se retire jamais lui-même"
+    assert "vieux-1" in restants
+    assert "vieux-2" not in restants and "vieux-3" not in restants
+
+
+def test_le_menage_du_journal_se_desactive(depot: Depot) -> None:
+    _vieux_run(depot, "vieux-1", age=3600)
+    _vieux_run(depot, "vieux-2", age=7200)
+    depot.ticket(130, "Ticket à traiter")
+    claude = _claude_stub(depot, """
+        printf '{"type":"result","subtype":"success","is_error":false}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "sans-menage",
+                env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_JOURNAL_RUNS": "1",
+                     "MAESTRO_ORCHESTRATE_JOURNAL_GC": "0"})
+    assert "vieux-2" in _runs_presents(depot)
+
+
+def test_un_seuil_de_retention_absurde_retombe_sur_le_defaut(depot: Depot) -> None:
+    """Un `RUNS=0` mal posé viderait le journal entier : on préfère le défaut au pire."""
+    for i in range(1, 4):
+        _vieux_run(depot, f"run-{i}", age=3600 + i * 60)
+    r = depot.lance("journal.sh", "gc", env={"MAESTRO_ORCHESTRATE_JOURNAL_RUNS": "0"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert len(_runs_presents(depot)) == 3
+
+
+def test_un_journal_absent_est_un_cas_normal_pas_une_erreur(depot: Depot) -> None:
+    r = depot.lance("journal.sh", "gc")
+    assert r.returncode == 0, r.stderr
+    assert "rien à ramasser" in r.stdout
+
+
+def test_le_menage_automatique_se_tait_quand_il_n_a_rien_fait(depot: Depot) -> None:
+    """`--auto` parle dans la console d'un run : le silence doit y être le cas normal."""
+    _vieux_run(depot, "seul", age=3600)
+    r = depot.lance("journal.sh", "gc", "--auto")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
