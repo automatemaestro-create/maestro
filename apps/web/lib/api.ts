@@ -12,11 +12,14 @@ import type {
   AnalyticsCouts,
   CoutExecution,
   DefinitionAgent,
+  EntreeRegistreMcp,
   EtatAgent,
   FilChat,
+  IntegrationPoolMcp,
   PasSerie,
   PlaybookDetail,
   PlaybookFiche,
+  PoolMcp,
   PropositionPlaybook,
   PropositionPlaybookDetail,
   Sante,
@@ -353,5 +356,101 @@ export function deciderValidation(
     `/api/validations/${encodeURIComponent(tacheId)}/decision`,
     { approuve },
     "décision refusée",
+  );
+}
+
+/**
+ * Comme `envoyerJson`, mais **rend le corps de la réponse** — pour les
+ * écritures dont l'appelant relit le résultat (l'intégration créée au pool).
+ */
+async function envoyerJsonEtLire<T>(
+  chemin: string,
+  corps: unknown,
+  refusParDefaut: string,
+  methode: "POST" | "PUT" = "POST",
+): Promise<T> {
+  const reponse = await fetch(`${API_URL}${chemin}`, {
+    method: methode,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(corps),
+  });
+  if (!reponse.ok) {
+    let detail = `${refusParDefaut} (${reponse.status})`;
+    try {
+      const contenu = (await reponse.json()) as { detail?: unknown };
+      if (typeof contenu.detail === "string") detail = contenu.detail;
+    } catch {
+      // corps non JSON : on garde le message générique
+    }
+    throw new Error(detail);
+  }
+  return (await reponse.json()) as T;
+}
+
+/**
+ * La bibliothèque curée de serveurs MCP (`GET /api/mcp/registre`, #131),
+ * recherchable par nom/tag (`q` vide → tout le registre). Chaque entrée guide
+ * sa configuration selon son mode d'auth ; seule une entrée servie ici est
+ * instanciable (garde-fou supply-chain, docs/19).
+ */
+export function chargerRegistreMcp(q = ""): Promise<EntreeRegistreMcp[]> {
+  const requete = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
+  return chargerJson<EntreeRegistreMcp[]>(`/api/mcp/registre${requete}`);
+}
+
+/**
+ * Le pool projet des intégrations MCP configurées (`GET /api/mcp/pool`, #133) :
+ * chaque intégration avec son mode d'auth et l'état (présent/valide) de ses
+ * secrets côté coffre projet — jamais une valeur de secret.
+ */
+export function chargerPoolMcp(): Promise<PoolMcp> {
+  return chargerJson<PoolMcp>("/api/mcp/pool");
+}
+
+/**
+ * Ajoute (ou reconfigure) une intégration du registre dans le pool projet
+ * (`POST /api/mcp/pool`, #133) : instancie l'entrée curée et pose ses secrets
+ * **une seule fois** dans le coffre projet chiffré. Rend l'intégration créée.
+ */
+export function ajouterIntegrationPoolMcp(corps: {
+  registre_id: string;
+  nom?: string;
+  secrets: { cle: string; valeur: string; expire_le?: string | null }[];
+}): Promise<IntegrationPoolMcp> {
+  return envoyerJsonEtLire<IntegrationPoolMcp>(
+    "/api/mcp/pool",
+    corps,
+    "ajout au pool refusé",
+  );
+}
+
+/**
+ * Retire une intégration du pool projet (`DELETE /api/mcp/pool/{id}`, #133) :
+ * la désactive chez chaque agent et purge les secrets qu'elle seule
+ * référençait.
+ */
+export function supprimerIntegrationPoolMcp(id: string): Promise<void> {
+  return envoyerJson(
+    `/api/mcp/pool/${encodeURIComponent(id)}`,
+    undefined,
+    "retrait du pool refusé",
+    "DELETE",
+  );
+}
+
+/**
+ * Fixe les intégrations du pool **activées** pour un agent
+ * (`PUT /api/mcp/activations/{agent}`, #133) : remplacement intégral (liste
+ * vide pour tout désactiver). L'écriture derrière l'interrupteur par agent.
+ */
+export function definirActivationsMcp(
+  agent: string,
+  integrations: string[],
+): Promise<void> {
+  return envoyerJson(
+    `/api/mcp/activations/${encodeURIComponent(agent)}`,
+    { integrations },
+    "activation refusée",
+    "PUT",
   );
 }

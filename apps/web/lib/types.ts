@@ -245,6 +245,87 @@ export type ServeurMcp = {
   optionnel: boolean;
 };
 
+/** Les trois modes d'auth classés par la revue #126 (maestro/agents/mcp_registry.py). */
+export const MCP_MODE_TOKEN = "token_statique";
+export const MCP_MODE_APPAIRAGE = "appairage";
+export const MCP_MODE_OAUTH = "oauth_importe";
+
+/**
+ * Une variable `${VAR}` à fournir pour instancier une entrée du registre
+ * (`VariableSecret.to_dict`, #131) : sa clé, une aide de saisie, et si c'est un
+ * vrai secret (token, à chiffrer/masquer) ou un identifiant non sensible mais
+ * requis (canal d'appairage, ID d'espace de travail).
+ */
+export type VariableSecret = {
+  cle: string;
+  description: string;
+  secret: boolean;
+};
+
+/**
+ * Une entrée du **registre curé** de serveurs MCP (`GET /api/mcp/registre`,
+ * #131) : un template recherchable portant transport, gabarit `${VAR}`, mode
+ * d'auth (docs/21), variables à fournir (`secrets`) et lien de procédure côté
+ * outil. `curee: true` marque l'appartenance à l'allowlist — seule une entrée
+ * servie ici est instanciable (garde-fou supply-chain, docs/19).
+ */
+export type EntreeRegistreMcp = {
+  id: string;
+  nom: string;
+  description: string;
+  mode_auth: string;
+  transport: string;
+  commande: string;
+  args: string[];
+  url: string;
+  env: Record<string, string>;
+  headers: Record<string, string>;
+  tags: string[];
+  secrets: VariableSecret[];
+  procedure_url: string;
+  optionnel: boolean;
+  curee: boolean;
+};
+
+/**
+ * L'état d'un secret d'une intégration du pool (#133), sans sa valeur :
+ * `present` dit s'il est configuré dans le coffre projet, `valide` s'il est
+ * résolvable au montage (un token OAuth expiré ne l'est plus), `ephemere`
+ * marque une valeur d'appairage jetable, `expire_le` l'échéance d'un token
+ * expirable.
+ */
+export type EtatSecretPool = {
+  cle: string;
+  description: string;
+  secret: boolean;
+  present: boolean;
+  valide: boolean;
+  ephemere: boolean;
+  expire_le: string | null;
+};
+
+/**
+ * Une intégration du **pool projet** (`GET /api/mcp/pool`, #133) : la
+ * déclaration instanciée (`serveur`, secrets masqués) enrichie de son mode
+ * d'auth, de sa procédure et de l'état de ses secrets côté coffre projet —
+ * jamais une valeur de secret. Le secret est saisi **une seule fois** ici, puis
+ * partagé par tout agent qui active l'intégration.
+ */
+export type IntegrationPoolMcp = {
+  id: string;
+  serveur: ServeurMcp;
+  mode_auth: string | null;
+  procedure_url: string;
+  curee: boolean;
+  secrets: EtatSecretPool[];
+};
+
+/** Le pool projet servi par `GET /api/mcp/pool` : ses intégrations + une cause d'erreur. */
+export type PoolMcp = {
+  integrations: IntegrationPoolMcp[];
+  erreur: string | null;
+};
+
 /**
  * La politique de permissions d'un agent (`PolitiqueOutils.to_dict`, #110) :
  * allow/deny par outil — noms d'outils intégrés, `mcp__<serveur>` pour un
@@ -262,11 +343,15 @@ export type PolitiquePermissions = {
  * (« personnalise »). Les dates ne sont posées que sur les personnalisés ;
  * `modele` null signifie « le modèle par défaut des exécutants » et
  * `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
- * `mcp_serveurs` (#104) liste les serveurs MCP déclarés (lecture seule à ce
- * lot) ; `mcp_erreur` porte la cause si la déclaration stockée est invalide.
- * `permissions` (#110) porte la politique allow/deny effective appliquée à
- * l'exécution (null : aucune politique — tout permis) ; `permissions_erreur`
- * la cause si la politique stockée est invalide.
+ * `mcp_serveurs` (#104) liste les serveurs MCP **effectifs** montés pour l'agent
+ * (héritage `<agent>.json` composé avec le pool activé) ; `mcp_erreur` porte la
+ * cause si une source est invalide. `mcp_pool` (#133) est le **pool projet** des
+ * intégrations configurables (avec l'état de leurs secrets), `mcp_pool_erreur`
+ * la cause si le pool stocké est invalide, et `mcp_activations` les ids du pool
+ * **activés** pour cet agent — de quoi remplacer l'affichage lecture seule par
+ * des interrupteurs par agent. `permissions` (#110) porte la politique
+ * allow/deny effective appliquée à l'exécution (null : aucune politique — tout
+ * permis) ; `permissions_erreur` la cause si la politique stockée est invalide.
  */
 export type AgentCatalogue = {
   nom: string;
@@ -279,6 +364,9 @@ export type AgentCatalogue = {
   modifie_le: string | null;
   mcp_serveurs: ServeurMcp[];
   mcp_erreur: string | null;
+  mcp_pool: IntegrationPoolMcp[];
+  mcp_pool_erreur: string | null;
+  mcp_activations: string[];
   permissions: PolitiquePermissions | null;
   permissions_erreur: string | null;
 };

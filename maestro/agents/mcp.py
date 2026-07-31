@@ -621,6 +621,24 @@ def _resout(valeur: str, environ: Mapping[str, str], serveur: ServeurMcp) -> str
     return _REFERENCE_ENV.sub(lambda m: environ[m.group(1)], valeur)
 
 
+def references_env(serveur: ServeurMcp) -> tuple[str, ...]:
+    """Les noms de variables `${VAR}` référencés par les valeurs d'`env`/`headers` de `serveur`.
+
+    Le **sous-ensemble** des valeurs qui portent une référence `${VARIABLE}` —
+    donc les secrets/identifiants qu'il faut fournir pour monter le serveur (par
+    opposition aux littéraux de configuration, ex. `GITLAB_TOOLSETS=issues`).
+    L'UI de configuration (lot #133) s'en sert pour rapprocher une intégration du
+    pool de l'état de ses secrets dans le coffre projet. Ordre d'apparition
+    préservé, doublons écartés.
+    """
+    noms: list[str] = []
+    for valeur in (*serveur.env.values(), *serveur.headers.values()):
+        for nom in _REFERENCE_ENV.findall(valeur):
+            if nom not in noms:
+                noms.append(nom)
+    return tuple(noms)
+
+
 def _masque(valeur: str) -> str:
     """La forme publique d'une valeur d'`env`/`headers` : référence visible, littéral masqué."""
     return valeur if _REFERENCE_ENV.search(valeur) else _VALEUR_MASQUEE

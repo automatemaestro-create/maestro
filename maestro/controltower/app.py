@@ -47,6 +47,17 @@ Endpoints :
   mode d'auth (docs/21), variables à fournir et procédure côté outil ; seule une
   entrée servie ici est instanciable (garde-fou supply-chain, docs/19) ;
 - `GET  /api/mcp/registre/{id}` — une entrée curée (404 hors allowlist) ;
+- `GET  /api/mcp/pool` — le **pool projet** des intégrations MCP configurées
+  (#133) : chaque intégration avec son mode d'auth et l'état (présent/valide)
+  de ses secrets côté coffre projet — jamais une valeur de secret ;
+- `POST /api/mcp/pool` — ajoute (ou reconfigure) une intégration au pool depuis
+  la bibliothèque : instancie l'entrée curée (garde-fou supply-chain) et pose
+  ses secrets **une seule fois** dans le coffre projet chiffré (#133) ;
+- `DELETE /api/mcp/pool/{id}` — retire une intégration du pool, désactive son id
+  chez chaque agent et purge les secrets qu'elle était seule à référencer ;
+- `PUT  /api/mcp/activations/{agent}` — fixe les intégrations du pool **activées**
+  pour un agent (#133) : l'écriture derrière l'interrupteur par agent qui
+  remplace l'affichage lecture seule des serveurs MCP ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
   défaut du code et les personnalisés persistés, avec leur provenance, leurs
   serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
@@ -98,10 +109,11 @@ from pydantic import BaseModel
 
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
-from maestro.agents.mcp import McpStore
+from maestro.agents.mcp import IntegrationMcp, McpStore, references_env
 from maestro.agents.mcp_registry import RegistreMcp
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
+from maestro.agents.secrets import SecretStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
 from maestro.config import load_settings
 from maestro.controltower.analytics import PAS_HEURE, PAS_VALIDES, agrege_couts
@@ -227,6 +239,48 @@ class ChatEnvoiRequete(BaseModel):
     contenu: str
 
 
+class SecretPoolRequete(BaseModel):
+    """Une valeur de secret saisie pour une intégration du pool (#133).
+
+    `cle` est le nom de la variable `${VAR}` du gabarit (ex. `GITLAB_TOKEN`),
+    `valeur` ce que l'humain saisit (token, canal d'appairage, token OAuth
+    importé). `expire_le` (ISO 8601) n'a de sens que pour un token OAuth
+    importé (`oauth_importe`) : c'est l'échéance qui rend sa validité visible.
+    Une valeur vide est ignorée (le secret reste à configurer).
+    """
+
+    cle: str
+    valeur: str
+    expire_le: str | None = None
+
+
+class IntegrationPoolRequete(BaseModel):
+    """Corps d'ajout d'une intégration au pool projet (#133) depuis la bibliothèque.
+
+    `registre_id` désigne l'entrée **curée** à instancier (garde-fou
+    supply-chain, docs/19 — un id hors registre est refusé). `nom` nomme la
+    liaison (le préfixe d'outils `mcp__<nom>__…`, défaut : l'id) ; `secrets`
+    porte les valeurs saisies **une seule fois**, stockées chiffrées côté
+    serveur dans le coffre projet partagé.
+    """
+
+    registre_id: str
+    nom: str | None = None
+    secrets: list[SecretPoolRequete] = []
+
+
+class ActivationsMcpRequete(BaseModel):
+    """Corps de l'activation des intégrations du pool pour un agent (#133).
+
+    Remplacement intégral : la liste `integrations` (des ids du pool) devient
+    l'ensemble activé de l'agent — une liste vide le désactive de toutes. C'est
+    ce que pose l'interrupteur par agent qui **remplace** l'affichage lecture
+    seule des serveurs MCP (critère #133).
+    """
+
+    integrations: list[str]
+
+
 class Diffusion:
     """Fan-out des événements vers les WebSockets connectées.
 
@@ -309,6 +363,7 @@ def create_app(
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
     registre_mcp: RegistreMcp | None = None,
+    secrets: SecretStore | None = None,
     permissions: PermissionStore | None = None,
     event_log: EventLog | None = None,
 ) -> FastAPI:
@@ -367,6 +422,13 @@ def create_app(
     par défaut le seed en code (`RegistreMcp.curee()`, l'allowlist supply-chain
     du garde-fou docs/19). Les tests en injectent un registre restreint.
 
+    `secrets` (#132/#133) est le **coffre chiffré** des secrets d'intégrations :
+    l'UI d'écriture (`POST /api/mcp/pool`) y pose les secrets du pool projet
+    **une seule fois** (coffre projet, `SecretStore.enregistrer_projet`), partagés
+    par tout agent qui active l'intégration — par défaut celui de la config
+    (`MAESTRO_SECRETS_DIR`, sinon `core/secrets/` du dépôt), le même que résolvent
+    moteur et workers au montage. Les tests en injectent un coffre temporaire.
+
     `permissions` (#110) est le dépôt des politiques allow/deny par agent,
     affichées en **lecture seule** sur les fiches du catalogue (`permissions`,
     la politique effective appliquée à l'exécution) — par défaut celui de la
@@ -389,6 +451,7 @@ def create_app(
     capacites = capacites if capacites is not None else CapacityStore.default()
     mcp = mcp if mcp is not None else McpStore.default()
     registre_mcp = registre_mcp if registre_mcp is not None else RegistreMcp.curee()
+    secrets = secrets if secrets is not None else SecretStore.default()
     permissions = permissions if permissions is not None else PermissionStore.default()
     state = (
         state
@@ -867,20 +930,100 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return version.to_dict()
 
-    def _volet_mcp(nom: str) -> dict[str, Any]:
-        """Le volet « serveurs MCP » d'une fiche catalogue (#104), lecture seule.
+    def _integration_pool_dict(
+        integration: IntegrationMcp, etats: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Une intégration du pool + l'état de ses secrets côté coffre projet (#133).
 
-        `mcp_serveurs` porte les déclarations du dépôt (forme publique : les
-        valeurs d'env/headers sans référence `${VAR}` sont masquées) ;
-        `mcp_erreur` porte la cause exacte si la déclaration est invalide — la
-        validation à la lecture rend la misconfiguration visible depuis l'UI
-        sans casser la fiche ni le listing.
+        Enrichit `IntegrationMcp.to_dict` (id + déclaration à secrets masqués) de
+        ce dont l'UI a besoin pour dire *où en est* l'intégration : son
+        `mode_auth` et sa `procedure_url` (repris de l'entrée curée quand l'id y
+        correspond), et pour **chaque** variable `${VAR}` requise, si son secret
+        est **présent** dans le coffre projet et **valide** (un token OAuth
+        expiré ne l'est plus). Aucune valeur de secret n'est jamais réémise.
+        """
+        entree = registre_mcp.get(integration.id)
+        requis = (
+            {v.cle: v for v in entree.secrets}
+            if entree is not None
+            else {cle: None for cle in references_env(integration.serveur)}
+        )
+        secrets_etat: list[dict[str, Any]] = []
+        for cle in requis:
+            variable = requis[cle]
+            etat = etats.get(cle)
+            secrets_etat.append(
+                {
+                    "cle": cle,
+                    "description": variable.description if variable is not None else "",
+                    "secret": variable.secret if variable is not None else True,
+                    "present": etat is not None,
+                    "valide": etat["valide"] if etat is not None else False,
+                    "ephemere": etat["ephemere"] if etat is not None else False,
+                    "expire_le": etat["expire_le"] if etat is not None else None,
+                }
+            )
+        return {
+            **integration.to_dict(),
+            "mode_auth": entree.mode_auth if entree is not None else None,
+            "procedure_url": entree.procedure_url if entree is not None else "",
+            "curee": entree is not None,
+            "secrets": secrets_etat,
+        }
+
+    def _pool_mcp() -> dict[str, Any]:
+        """Le pool projet des intégrations MCP + l'état de leurs secrets (#133).
+
+        `{integrations: [...], erreur}` : chaque intégration est enrichie de
+        l'état de ses secrets (coffre projet). `erreur` porte la cause si le
+        pool stocké est invalide — même contrat de visibilité que `mcp_erreur`
+        (la misconfiguration s'affiche sans casser la fiche ni le listing).
+        """
+        try:
+            integrations = mcp.pool()
+        except ValueError as exc:
+            return {"integrations": [], "erreur": str(exc)}
+        try:
+            etats = {e.cle: e.to_dict() for e in secrets.etat_projet()}
+        except ValueError:
+            # Coffre projet illisible : on sert le pool sans état de secret
+            # plutôt que de masquer les intégrations déjà configurées.
+            etats = {}
+        return {
+            "integrations": [_integration_pool_dict(i, etats) for i in integrations],
+            "erreur": None,
+        }
+
+    def _volet_mcp(nom: str) -> dict[str, Any]:
+        """Le volet « serveurs MCP » d'une fiche catalogue (#104, #133).
+
+        `mcp_serveurs` porte les serveurs **effectifs** montés pour l'agent
+        (déclaration héritée `<agent>.json` composée avec le pool activé, forme
+        publique à secrets masqués) ; `mcp_erreur` porte la cause exacte si une
+        source est invalide. `mcp_pool`/`mcp_pool_erreur` exposent le **pool
+        projet** (les intégrations configurables, avec l'état de leurs secrets)
+        et `mcp_activations` les ids **activés** pour cet agent — de quoi
+        remplacer l'affichage lecture seule par des interrupteurs par agent (#133).
         """
         try:
             serveurs = mcp.lire(nom)
+            volet_serveurs: dict[str, Any] = {
+                "mcp_serveurs": [s.to_dict() for s in serveurs],
+                "mcp_erreur": None,
+            }
         except ValueError as exc:
-            return {"mcp_serveurs": [], "mcp_erreur": str(exc)}
-        return {"mcp_serveurs": [s.to_dict() for s in serveurs], "mcp_erreur": None}
+            volet_serveurs = {"mcp_serveurs": [], "mcp_erreur": str(exc)}
+        pool = _pool_mcp()
+        try:
+            activations = list(mcp.activations(nom))
+        except ValueError:
+            activations = []
+        return {
+            **volet_serveurs,
+            "mcp_pool": pool["integrations"],
+            "mcp_pool_erreur": pool["erreur"],
+            "mcp_activations": activations,
+        }
 
     def _volet_permissions(nom: str) -> dict[str, Any]:
         """Le volet « permissions » d'une fiche catalogue (#110), lecture seule.
@@ -988,6 +1131,137 @@ def create_app(
                 detail=f"serveur MCP inconnu du registre curé : {id} (voir GET /api/mcp/registre)",
             )
         return entree.to_dict()
+
+    @app.get("/api/mcp/pool")
+    async def mcp_pool() -> dict[str, Any]:
+        """Le pool projet des intégrations MCP configurées (#133), avec l'état des secrets.
+
+        `{integrations: [...], erreur}` : les intégrations ajoutées au pool
+        depuis la bibliothèque, chacune enrichie de son mode d'auth et de
+        l'état (présent/valide) de ses secrets côté coffre projet — jamais une
+        valeur de secret. `erreur` porte la cause si le pool stocké est invalide.
+        C'est ce que liste la section « Intégrations MCP » des Paramètres.
+        """
+        return _pool_mcp()
+
+    @app.post("/api/mcp/pool", status_code=201)
+    async def ajouter_integration_pool(requete: IntegrationPoolRequete) -> dict[str, Any]:
+        """Ajoute (ou reconfigure) une intégration du registre dans le pool projet (#133).
+
+        Le parcours **configuration** du critère 1 : instancie l'entrée **curée**
+        `registre_id` (garde-fou supply-chain — 404 si hors allowlist, docs/19),
+        l'inscrit au pool (remplacement si l'id y est déjà — reconfiguration) et
+        pose ses secrets **une seule fois** dans le coffre projet chiffré, selon
+        le mode d'auth de l'entrée (token statique/appairage/OAuth importé). Une
+        valeur de secret vide est ignorée (le secret reste à configurer). 404 si
+        l'id est hors registre, 422 si une valeur/échéance est invalide.
+        """
+        entree = registre_mcp.get(requete.registre_id)
+        if entree is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"serveur MCP inconnu du registre curé : {requete.registre_id} "
+                    "(découverte ≠ installation, docs/19 ; voir GET /api/mcp/registre)."
+                ),
+            )
+        try:
+            serveur = registre_mcp.instancier(requete.registre_id, nom=requete.nom or None)
+            integration = IntegrationMcp(id=requete.registre_id, serveur=serveur)
+            pool = [i for i in mcp.pool() if i.id != integration.id]
+            pool.append(integration)
+            mcp.ecrire_pool(pool)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Les secrets, une seule fois, dans le coffre projet partagé. On ne
+        # retient que les variables déclarées par l'entrée curée (les autres
+        # n'ont pas de sens pour ce serveur) et on ignore les valeurs vides.
+        variables = {v.cle: v for v in entree.secrets}
+        for saisi in requete.secrets:
+            variable = variables.get(saisi.cle)
+            if variable is None or not saisi.valeur:
+                continue
+            try:
+                secrets.enregistrer_projet(
+                    saisi.cle,
+                    saisi.valeur,
+                    mode_auth=entree.mode_auth,
+                    secret=variable.secret,
+                    expire_le=saisi.expire_le or None,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            etats = {e.cle: e.to_dict() for e in secrets.etat_projet()}
+        except ValueError:
+            etats = {}
+        return _integration_pool_dict(integration, etats)
+
+    @app.delete("/api/mcp/pool/{id}")
+    async def retirer_integration_pool(id: str) -> dict[str, Any]:
+        """Retire une intégration du pool projet (#133) et fait le ménage derrière elle.
+
+        Sort l'intégration du pool, **désactive** son id chez tout agent qui
+        l'avait activée (sinon `McpStore.lire` casserait sur une activation
+        orpheline) et **supprime** du coffre projet les secrets qu'elle était
+        seule à référencer (un secret encore utilisé par une autre intégration
+        du pool reste). 404 si l'id n'est pas dans le pool.
+        """
+        try:
+            pool = list(mcp.pool())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        cible = next((i for i in pool if i.id == id), None)
+        if cible is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"intégration inconnue du pool : {id} (voir GET /api/mcp/pool).",
+            )
+        mcp.ecrire_pool([i for i in pool if i.id != id])
+        for agent in mcp.agents():
+            actives = mcp.activations(agent)
+            if id in actives:
+                mcp.ecrire_activations(agent, [a for a in actives if a != id])
+        # Secrets : ne retirer que ceux qu'aucune intégration restante ne référence.
+        references_restantes = {
+            cle for i in mcp.pool() for cle in references_env(i.serveur)
+        }
+        for cle in references_env(cible.serveur):
+            if cle not in references_restantes:
+                secrets.supprimer_projet(cle)
+        return {"id": id, "supprime": True}
+
+    @app.put("/api/mcp/activations/{agent}")
+    async def definir_activations_mcp(
+        agent: str, requete: ActivationsMcpRequete
+    ) -> dict[str, Any]:
+        """Fixe les intégrations du pool **activées** pour un agent (#133) — critère 2.
+
+        Remplacement intégral : `integrations` (des ids du pool) devient
+        l'ensemble activé de l'agent, vide pour tout désactiver. C'est l'écriture
+        derrière l'interrupteur par agent qui remplace l'affichage lecture seule
+        des serveurs MCP. 404 si l'agent n'est pas au catalogue, 422 si un id
+        n'est pas dans le pool (une activation orpheline casserait la lecture).
+        """
+        _exige_agent_du_catalogue(agent)
+        try:
+            pool_ids = {i.id for i in mcp.pool()}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        inconnues = sorted(set(requete.integrations) - pool_ids)
+        if inconnues:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"intégration(s) absente(s) du pool : {', '.join(inconnues)} "
+                    "(voir GET /api/mcp/pool)."
+                ),
+            )
+        try:
+            activees = mcp.ecrire_activations(agent, requete.integrations)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"agent": agent, "integrations": list(activees)}
 
     @app.get("/api/catalogue")
     async def catalogue_liste() -> list[dict[str, Any]]:
