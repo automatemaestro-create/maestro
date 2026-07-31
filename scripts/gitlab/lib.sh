@@ -1529,6 +1529,21 @@ gl_in_linked_worktree() {
   [ -f "$top/.git" ]
 }
 
+# gl_depot_principal -> racine du clone PRINCIPAL, d'où que l'on appelle (worktree lié compris) :
+# le répertoire git commun est partagé par tous les worktrees d'un dépôt, son parent est le clone
+# principal. Jumeau de `depot_principal` dans scripts/git/worktree.sh, qui appelle ce fichier en
+# SOUS-PROCESSUS (jamais en le sourçant) et ne peut donc pas la lui emprunter.
+gl_depot_principal() {
+  local commun
+  commun="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  if [ -z "$commun" ]; then
+    commun="$(git rev-parse --git-common-dir 2>/dev/null)" || return 1
+    commun="$(cd "$commun" 2>/dev/null && pwd)" || return 1
+  fi
+  [ -n "$commun" ] || return 1
+  dirname "$commun"
+}
+
 # gl_start_branch <branche> -> place le dépôt sur la branche de travail, que l'on soit dans le
 # clone principal ou dans un worktree lié (docs/10-workflow-git.md §9). Idempotent, trois cas :
 #   - déjà sur la branche (situation normale dans un worktree créé par scripts/git/worktree.sh) ;
@@ -1574,6 +1589,125 @@ gl_start_branch() {
     git checkout -b "$branche" || return 1
   fi
   printf 'Branche créée : %s (depuis origin/main).\n' "$branche"
+}
+
+# --- Mise à jour de la branche main locale --------------------------------------------------------
+# gl_worktree_de_main <clone-principal> -> chemin du répertoire de travail qui a `main` en HEAD,
+# vide si elle n'est empruntée nulle part. Détermine COMMENT avancer la ref (voir gl_sync_main).
+gl_worktree_de_main() {
+  local principal="$1" courant="" ligne
+  while IFS= read -r ligne; do
+    case "$ligne" in
+      worktree\ *)            courant="${ligne#worktree }" ;;
+      'branch refs/heads/main') printf '%s' "$courant"; return 0 ;;
+    esac
+  done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
+  return 1
+}
+
+# gl_sync_main [--check] -> avance `refs/heads/main` du CLONE PRINCIPAL sur `origin/main`, en
+# FAST-FORWARD seulement (#205).
+#
+# Le retard n'est pas un détail cosmétique : depuis #181, /ticket-start monte un worktree et y
+# relocalise la session, donc le clone principal ne change plus de branche et la branche « clone
+# principal » de gl_start_branch (`git checkout main && git pull`) n'est plus jamais empruntée.
+# Plus rien ne faisait avancer `main` — ce que montrent l'IDE, `git log` et un diff local sur le
+# clone principal restait figé au dernier /branch-cleanup. À NE PAS confondre avec `origin/main`,
+# lui déjà rafraîchi partout (gl_start_branch, gl_cleanup_merged, worktree.sh) : c'est de lui que
+# part chaque worktree de ticket, le code produit n'a donc jamais été en cause.
+#
+# Il n'existe aucun événement local à écouter : le merge a lieu sur GitLab et aucun hook git ne se
+# déclenche à ce moment-là (`post-merge` ne réagit qu'à un merge ou un pull LOCAL). D'où le
+# câblage aux points de passage obligés — `worktree.sh ensure` (donc tout /ticket-start, manuel
+# comme autonome) et /branch-cleanup — plutôt qu'un déclencheur événementiel qui n'existe pas.
+#
+# Deux façons d'avancer la ref, selon que `main` est empruntée ou non par un répertoire de travail :
+# posée directement (`update-ref`, aucun fichier touché, marche depuis un worktree), ou par
+# `merge --ff-only` DANS ce répertoire — sans quoi l'index y resterait sur l'ancien arbre et tout
+# le delta apparaîtrait en « supprimé/modifié ».
+#
+# S'ABSTIENT plutôt que de forcer, dans la lignée de gl_behind_main et de worktree.sh gc : ça dit,
+# ça ne casse pas. Jamais de `reset --hard`, jamais de non-fast-forward — un `main` local divergent
+# porte un commit que personne n'a poussé, l'écraser serait une perte de données.
+#
+# Codes de retour, pour l'appelant (best-effort : un code non nul n'est PAS une erreur fatale, il
+# ne doit interrompre ni un /ticket-start ni un run /orchestrate) :
+#   0 = à jour, ou mise à jour faite      3 = main local divergent (non fast-forward) — abstention
+#   1 = état illisible (hors dépôt git, origin/main absent)
+#   2 = usage                             4 = répertoire porteur de main non propre — abstention
+gl_sync_main() {
+  local check=0
+  case "${1:-}" in
+    --check) check=1 ;;
+    '') ;;
+    *) echo "usage: gl_sync_main [--check]" >&2; return 2 ;;
+  esac
+
+  local principal
+  principal="$(gl_depot_principal)" || {
+    echo "sync-main : hors d'un dépôt git — mise à jour de main sautée." >&2
+    return 1
+  }
+
+  # Fetch non bloquant (jamais de prompt d'identifiants, cf. gl_behind_main) : hors ligne on
+  # retombe sur le dernier origin/main connu, qu'un fetch précédent a pu avancer.
+  GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch origin main >/dev/null 2>&1
+  local cible locale
+  cible="$(git -C "$principal" rev-parse --verify --quiet refs/remotes/origin/main 2>/dev/null)"
+  if [ -z "$cible" ]; then
+    echo "sync-main : origin/main introuvable — mise à jour de main sautée." >&2
+    return 1
+  fi
+  locale="$(git -C "$principal" rev-parse --verify --quiet refs/heads/main 2>/dev/null)"
+
+  # Le cas de loin le plus fréquent, et le seul qui ne mérite aucune ligne : rien à faire.
+  [ "$locale" = "$cible" ] && return 0
+
+  if [ -n "$locale" ] && ! git -C "$principal" merge-base --is-ancestor "$locale" "$cible" 2>/dev/null; then
+    printf '⚠ sync-main : main local a divergé de origin/main — mise à jour sautée (jamais de force).\n' >&2
+    printf '  à trancher à la main : git -C "%s" log --oneline origin/main..main\n' "$principal" >&2
+    return 3
+  fi
+
+  local retard porteur
+  if [ -n "$locale" ]; then
+    retard="$(git -C "$principal" rev-list --count "$locale..$cible" 2>/dev/null)" || retard="?"
+  else
+    retard="0"   # `main` locale absente : ce n'est pas un retard, c'est une création
+  fi
+  porteur="$(gl_worktree_de_main "$principal")"
+
+  if [ -n "$porteur" ]; then
+    if [ -n "$(git -C "$porteur" status --porcelain 2>/dev/null)" ]; then
+      printf '⚠ sync-main : main en retard de %s commit(s), mais son répertoire de travail a des changements non commités — mise à jour sautée.\n' "$retard" >&2
+      printf '  %s\n' "$porteur" >&2
+      return 4
+    fi
+    if [ "$check" = 1 ]; then
+      printf 'sync-main : main avancerait de %s commit(s) (merge --ff-only dans %s).\n' "$retard" "$porteur"
+      return 0
+    fi
+    if ! git -C "$porteur" merge --ff-only origin/main >/dev/null 2>&1; then
+      printf '⚠ sync-main : fast-forward de main refusé par git — mise à jour sautée.\n' >&2
+      return 3
+    fi
+  else
+    if [ "$check" = 1 ]; then
+      printf 'sync-main : main avancerait de %s commit(s) (pose de la ref, aucun répertoire de travail concerné).\n' "$retard"
+      return 0
+    fi
+    # `main` n'est empruntée nulle part : la ref se pose directement, sans toucher au moindre
+    # fichier — c'est ce qui rend l'appel valide depuis un worktree. Le fast-forward vient d'être
+    # vérifié ; l'ancienne valeur est passée en dernier argument pour que git refuse d'écrire si
+    # quelqu'un a bougé la ref entre-temps.
+    if ! git -C "$principal" update-ref -m "sync-main : fast-forward sur origin/main" \
+        refs/heads/main "$cible" ${locale:+"$locale"} 2>/dev/null; then
+      printf '⚠ sync-main : pose de refs/heads/main refusée — mise à jour sautée.\n' >&2
+      return 3
+    fi
+  fi
+
+  printf 'main mis à jour : %s commit(s) repris depuis origin/main.\n' "$retard"
 }
 
 # --- Retard sur origin/main ----------------------------------------------------------------------
@@ -1789,6 +1923,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     worktree-done)  gl_worktree_done "$@" ;;
     branch-for)     gl_branch_for "$@" ;;
     start-branch)   gl_start_branch "$@" ;;
+    sync-main)      gl_sync_main "$@" ;;
     behind-main)    gl_behind_main "$@" ;;
     branch-iid)     gl_branch_iid "$@" ;;
     close-guard)    gl_close_guard "$@" ;;
@@ -1843,6 +1978,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    roundtrip-description <iid>        (valide la fidélité : lit/réécrit/relit et compare les octets)" >&2
       echo "  Branches :" >&2
       echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
+      echo "    sync-main [--check]         (avance main du clone principal sur origin/main, fast-forward seul ; 0=à jour/fait, 3=divergent, 4=arbre sale)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
       echo "    worktree-done <iid> [branche] (fini|actif|inconnu + sha de merge + raison — fin de vie d'un worktree)" >&2
       echo "    behind-main [branche]       (retard sur origin/main + conflit probable ; 0=à jour, 3=en retard, 4=+conflit)" >&2
