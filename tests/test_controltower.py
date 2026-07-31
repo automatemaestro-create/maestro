@@ -66,7 +66,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from maestro.agents.catalog import DEFAULT_AGENTS
-from maestro.agents.mcp import McpStore
+from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import AgentDefinition, AgentStore
 from maestro.controltower import (
@@ -1353,6 +1353,48 @@ def test_une_declaration_invalide_rend_la_cause_sans_casser_la_fiche(client_mcp,
     assert "déclaration MCP illisible" in fiche["mcp_erreur"]
     assert listing.status_code == 200
     assert any(f["nom"] == "qa" for f in listing.json())
+
+
+def test_la_fiche_reflete_la_composition_pool_activation(client_mcp, depot_mcp):
+    # Modèle pool ∩ activation (#130) vu par l'API : une intégration du pool
+    # projet activée pour l'agent apparaît sur sa fiche — le volet lit désormais
+    # la **composition** (`McpStore.lire`), pas un fichier hérité isolé. Valeurs
+    # masquées comme pour une déclaration héritée.
+    depot_mcp.ecrire_pool(
+        [
+            IntegrationMcp(
+                id="gitlab",
+                serveur=ServeurMcp(
+                    nom="tickets",
+                    type="stdio",
+                    commande="npx",
+                    args=("-y", "@zereight/mcp-gitlab"),
+                    env={"GITLAB_PERSONAL_ACCESS_TOKEN": "${GITLAB_TOKEN}"},
+                ),
+            )
+        ]
+    )
+    depot_mcp.ecrire_activations("qa", ["gitlab"])
+
+    fiche = client_mcp.get("/api/catalogue/qa").json()
+
+    assert fiche["mcp_erreur"] is None
+    (serveur,) = fiche["mcp_serveurs"]
+    assert (serveur["nom"], serveur["type"]) == ("tickets", "stdio")
+    assert serveur["env"]["GITLAB_PERSONAL_ACCESS_TOKEN"] == "${GITLAB_TOKEN}"
+
+
+def test_une_activation_vers_une_integration_absente_du_pool_rend_la_cause(client_mcp, depot_mcp):
+    # Garde-fou de composition (#130) exposé sans casser la fiche : activer un id
+    # que le pool ne porte pas est une misconfiguration, rendue comme `mcp_erreur`
+    # (même canal qu'une déclaration illisible), fiche et listing intacts.
+    depot_mcp.ecrire_activations("qa", ["fantome"])
+
+    fiche = client_mcp.get("/api/catalogue/qa").json()
+
+    assert fiche["mcp_serveurs"] == []
+    assert "absente(s) du pool : fantome" in fiche["mcp_erreur"]
+    assert client_mcp.get("/api/catalogue").status_code == 200
 
 
 # ------------------------------------------- ⑧ Chat utilisateur ↔ agent (#84)
