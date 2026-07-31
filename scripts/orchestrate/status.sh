@@ -52,6 +52,7 @@ RUN_ID=""
 WATCH=0
 INTERVALLE=20
 LISTE=0
+REPRENABLES=0
 SANS_GITLAB=0
 SEUIL_SILENCE="${MAESTRO_ORCHESTRATE_SILENCE:-900}"   # 15 min sans une écriture = ça mérite d'être dit
 
@@ -66,6 +67,9 @@ Options :
   --watch [sec]     Rafraîchit tant que le run tourne (défaut : toutes les 20 s), puis rend la
                     main sur l'état final. Le run suivi est fixé au démarrage.
   --list            Liste les runs connus, du plus ancien au plus récent, et s'arrête.
+  --reprenables     Les runs qu'on peut relancer, en TSV lisible par un script (une ligne par
+                    run : id, état, restant, début, silence, ticket en vol). Sortie vide = rien
+                    à reprendre. C'est ce que lisent « run.sh --resume » et /orchestrate.
   --no-gitlab       N'interroge pas GitLab (hors ligne, ou pour aller vite) : tout le reste,
                     plan et worktree compris, est lu en local.
   -h, --help        Cette aide.
@@ -89,6 +93,9 @@ while [ $# -gt 0 ]; do
       esac
       ;;
     --list | --liste) LISTE=1 ;;
+    # Une sortie destinée à un script n'a que faire d'un aller-retour réseau : on coupe GitLab ici
+    # plutôt que d'attendre de l'appelant qu'il pense à ajouter --no-gitlab.
+    --reprenables | --resumable) REPRENABLES=1; SANS_GITLAB=1 ;;
     --no-gitlab | --sans-gitlab) SANS_GITLAB=1 ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -393,37 +400,107 @@ affiche_bilan() { # <run-dir>
   done < "$dir/resume.tsv"
 }
 
-# affiche_run <run-id> : tout l'écran, et pose ETAT (en-cours / termine / interrompu / vide).
-affiche_run() {
+# --- L'état d'un run, décidé à un seul endroit ------------------------------------------------------
+# etat_du_run <run-id> : n'affiche RIEN et pose six variables globales —
+#
+#   R_ETAT        en-cours | termine | interrompu | vide
+#   R_NB_PLAN     tickets au plan          R_NB_TRAITES  tickets ayant rendu leur verdict
+#   R_COURANT     iid du ticket en vol (vide s'il n'y en a pas)
+#   R_ACTIVITE    dernière écriture du journal, en secondes Unix
+#   R_CODE        code de sortie laissé par le lanceur, s'il en a laissé un
+#
+# L'affichage les lit, la liste des runs reprenables aussi, et `run.sh --resume` s'y branche par
+# `--reprenables` : deux formules qui divergeraient se remarqueraient trop tard.
+#
+# Des GLOBALES, et pas une ligne TSV à reparser, pour une raison qui a coûté un smoke-test : `read`
+# avec `IFS=$'\t'` FUSIONNE les champs vides — le tab est un blanc IFS, donc un run sans ticket en
+# vol décalait toutes les colonnes suivantes d'un cran. Corollaire à connaître : cette fonction doit
+# être appelée DIRECTEMENT, jamais dans un `$( )`, qui perdrait ses affectations avec son sous-shell.
+#
+# Faute de PID, l'état se DÉDUIT (cf. l'en-tête) : le ticket en cours d'abord, le code de sortie
+# laissé par le lanceur ensuite, la complétude du bilan, et à défaut la fraîcheur des écritures. Un
+# run tué EN PLEIN TICKET reste donc « en-cours » : son témoin de session est là, personne n'a écrit
+# de code de sortie. C'est la dernière écriture qui le démasque — et c'est à l'appelant d'en tirer
+# les conséquences, pas à cette fonction de trancher à sa place.
+R_ETAT=""; R_NB_PLAN=0; R_NB_TRAITES=0; R_COURANT=""; R_ACTIVITE=""; R_CODE=""
+etat_du_run() {
   # `dir` sur sa propre ligne : bash développe TOUS les mots d'un `local` avant de créer les
   # variables, donc « local id="$1" dir="$ORCH_DIR/$id" » lirait l'`id` de l'appelant (inexistant
   # ici, et `set -u` le refuse).
+  local id="$1"
+  local dir="$ORCH_DIR/$id"
+
+  R_NB_PLAN=0
+  [ -f "$dir/plan.tsv" ] && R_NB_PLAN="$(grep -cv '^#' "$dir/plan.tsv" 2>/dev/null)"
+  R_NB_TRAITES=0
+  [ -f "$dir/resume.tsv" ] && R_NB_TRAITES="$(grep -cv '^#' "$dir/resume.tsv" 2>/dev/null)"
+  R_COURANT="$(ticket_en_cours "$dir")" || R_COURANT=""
+  R_ACTIVITE="$(plus_recent "$dir"/* 2>/dev/null)" || R_ACTIVITE=""
+  R_CODE=""
+  if [ -f "$dir/run.log" ]; then
+    R_CODE="$(grep -oE -- '--- run .* terminé \(code [0-9]+\)' "$dir/run.log" 2>/dev/null | tail -1 | grep -oE '[0-9]+\)$' | tr -d ')')"
+  fi
+
+  if [ "$R_NB_PLAN" -eq 0 ]; then R_ETAT=vide
+  elif [ -n "$R_CODE" ]; then R_ETAT=termine
+  elif [ -n "$R_COURANT" ]; then R_ETAT=en-cours
+  elif [ "$R_NB_TRAITES" -ge "$R_NB_PLAN" ]; then R_ETAT=termine
+  elif [ -n "$R_ACTIVITE" ] && [ $(( $(date +%s) - R_ACTIVITE )) -lt 300 ]; then R_ETAT=en-cours
+  else R_ETAT=interrompu
+  fi
+}
+
+# runs_reprenables : les runs qu'on peut RELANCER, du plus ancien au plus récent, une ligne TSV
+# chacun —
+#
+#   run-id <TAB> etat <TAB> nb_restants <TAB> debut-epoch <TAB> silence-s <TAB> iid-en-cours
+#
+# « Reprenable » tient en deux conditions : il reste des tickets sans verdict au plan, ET le run ne
+# tourne plus. La seconde ne se lit nulle part — pas de PID — et un run tué en plein ticket garderait
+# le visage d'un run qui travaille pour toujours. On l'écarte donc sur le SILENCE : plus rien d'écrit
+# depuis MAESTRO_ORCHESTRATE_SILENCE, ni dans le journal ni dans le worktree du ticket. La colonne
+# dit ce qu'il en est, pour que l'appelant PRÉVIENNE au lieu d'affirmer.
+#
+# Sortie vide = rien à reprendre, et c'est un cas NORMAL : le code de sortie reste 0. GitLab n'est
+# jamais interrogé (`--reprenables` force `--no-gitlab`) — la question « que reste-t-il à faire ? »
+# se répond avec le plan et le bilan, et cette liste s'affiche avant qu'on ait choisi quoi que ce
+# soit : elle doit être instantanée et marcher hors ligne.
+runs_reprenables() {
+  local id restants debut silence maintenant
+  maintenant="$(date +%s)"
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    etat_du_run "$id"
+    [ "$R_NB_PLAN" -gt 0 ] || continue
+    restants=$((R_NB_PLAN - R_NB_TRAITES))
+    [ "$restants" -gt 0 ] || continue
+
+    # Le silence se mesure sur le ticket en vol quand il y en a un : son worktree bouge (l'index git
+    # est touché à chaque `git add`/`status`) là où le répertoire du run peut rester muet plusieurs
+    # minutes d'affilée. À défaut, la dernière écriture du journal.
+    silence=""
+    [ -n "$R_COURANT" ] && { silence="$(activite_du_ticket "$ORCH_DIR/$id" "$R_COURANT")" || silence=""; }
+    [ -n "$silence" ] || silence="$R_ACTIVITE"
+    if [ -n "$silence" ]; then silence=$((maintenant - silence)); else silence=-1; fi
+
+    # Un run qui écrit encore n'est pas à reprendre : on le laisse travailler.
+    if [ "$R_ETAT" = "en-cours" ] && [ "$silence" -ge 0 ] && [ "$silence" -lt "$SEUIL_SILENCE" ]; then
+      continue
+    fi
+
+    debut="$(debut_du_run "$id" "$ORCH_DIR/$id")" || debut=""
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$R_ETAT" "$restants" "${debut:-0}" "$silence" "$R_COURANT"
+  done <<< "$(runs)"
+}
+
+# affiche_run <run-id> : tout l'écran, et pose ETAT (en-cours / termine / interrompu / vide).
+affiche_run() {
   local id="$1" nb_plan nb_traites courant debut age activite code libelle silence f
   local dir="$ORCH_DIR/$id"
 
-  nb_plan=0
-  [ -f "$dir/plan.tsv" ] && nb_plan="$(grep -cv '^#' "$dir/plan.tsv" 2>/dev/null)"
-  nb_traites=0
-  [ -f "$dir/resume.tsv" ] && nb_traites="$(grep -cv '^#' "$dir/resume.tsv" 2>/dev/null)"
-  courant="$(ticket_en_cours "$dir")" || courant=""
-
-  # L'état du run se déduit, faute de PID : le ticket en cours d'abord, le bilan complet ensuite, et
-  # à défaut la fraîcheur des écritures. Un run tué au milieu laisse la même trace qu'un run qui
-  # travaille — c'est la ligne « activité » qui tranche, et elle le dit sans prétendre à la
-  # certitude.
-  activite="$(plus_recent "$dir"/* 2>/dev/null)" || activite=""
-  code=""
-  if [ -f "$dir/run.log" ]; then
-    code="$(grep -oE -- '--- run .* terminé \(code [0-9]+\)' "$dir/run.log" 2>/dev/null | tail -1 | grep -oE '[0-9]+\)$' | tr -d ')')"
-  fi
-
-  if [ "$nb_plan" -eq 0 ]; then ETAT=vide
-  elif [ -n "$code" ]; then ETAT=termine
-  elif [ -n "$courant" ]; then ETAT=en-cours
-  elif [ "$nb_traites" -ge "$nb_plan" ]; then ETAT=termine
-  elif [ -n "$activite" ] && [ $(( $(date +%s) - activite )) -lt 300 ]; then ETAT=en-cours
-  else ETAT=interrompu
-  fi
+  etat_du_run "$id"
+  ETAT="$R_ETAT"; nb_plan="$R_NB_PLAN"; nb_traites="$R_NB_TRAITES"
+  courant="$R_COURANT"; activite="$R_ACTIVITE"; code="$R_CODE"
 
   # Un run « en cours » dont plus rien ne bouge est le cas qu'on doit repérer d'un coup d'œil : sans
   # PID à interroger, c'est la seule chose qui distingue une session qui travaille d'une session
@@ -447,6 +524,9 @@ affiche_run() {
 
   printf '%sRun %s%s — %s\n' "$C_B" "$id" "$C_0" "$libelle"
   printf '   journal    %s\n' "$dir"
+  # Un run de reprise porte le run dont il continue le plan : sans ça, on lirait deux journaux
+  # partiels sans voir qu'ils racontent la même liste de tickets.
+  [ -s "$dir/reprise-de" ] && printf '   reprise    du run %s\n' "$(cat "$dir/reprise-de" 2>/dev/null)"
   debut="$(debut_du_run "$id" "$dir")" || debut=""
   if [ -n "$debut" ]; then
     age=$(( $(date +%s) - debut ))
@@ -479,16 +559,22 @@ affiche_run() {
       "$(relatif "$dir")" "$C_D" "$C_0"
     break
   done
+  # « Reprendre » se propose partout où il reste des tickets sans verdict : un run interrompu, mais
+  # aussi un run arrêté proprement sur `--max`, sur STOP ou sur la limite hebdomadaire — et un run
+  # tué EN PLEIN TICKET, « en cours » de façade et silencieux depuis. On nomme le run-id, jamais un
+  # chemin de journal : c'est un argument qui se retient, et c'est celui que /orchestrate propose.
+  if [ "$((nb_plan - nb_traites))" -gt 0 ] && { [ "$ETAT" != "en-cours" ] || [ -n "$silence" ]; }; then
+    printf '   reprendre  /orchestrate --resume %s   %s(sans Claude Code : bash scripts/orchestrate/run.sh --resume %s)%s\n' \
+      "$id" "$C_D" "$id" "$C_0"
+    printf '              %s%s ticket(s) sans verdict — les livrés sont sautés d'\''eux-mêmes%s\n' \
+      "$C_D" "$((nb_plan - nb_traites))" "$C_0"
+  fi
   case "$ETAT" in
     en-cours)
       printf '   suivre     bash scripts/orchestrate/status.sh --watch\n'
       printf '   arrêter    touch %s\n' "$(relatif "$STOP")"
       ;;
-    interrompu)
-      printf '   reprendre  bash scripts/orchestrate/run.sh --plan %s/plan.tsv\n' "$(relatif "$dir")"
-      printf '              (les tickets déjà livrés sont sautés d'\''eux-mêmes)\n'
-      ;;
-    termine)
+    interrompu | termine)
       printf '   revue      bash scripts/gitlab/lib.sh review-queue\n'
       printf '   ménage     %saucun — les worktrees sont ramassés d'\''office dès leur MR mergée (#197)%s\n' "$C_D" "$C_0"
       ;;
@@ -498,12 +584,20 @@ affiche_run() {
 
 # --- Point d'entrée -----------------------------------------------------------------------------------
 
+# Avant tout le reste : c'est une sortie de données, pas un écran. Rien d'autre ne doit s'y mêler —
+# ni en-tête, ni couleur, ni « aucun run » en prose (l'absence se dit par une sortie vide).
+if [ "$REPRENABLES" = 1 ]; then
+  runs_reprenables
+  exit 0
+fi
+
 if [ "$LISTE" = 1 ]; then
   liste="$(runs)" || liste=""
   if [ -z "$liste" ]; then
     printf 'Aucun run dans %s.\n' "$ORCH_DIR"
     exit 0
   fi
+  reprenables="$(runs_reprenables)"
   printf '%sRuns connus%s — %s\n\n' "$C_B" "$C_0" "$ORCH_DIR"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
@@ -511,9 +605,13 @@ if [ "$LISTE" = 1 ]; then
     np=0; [ -f "$dir/plan.tsv" ] && np="$(grep -cv '^#' "$dir/plan.tsv" 2>/dev/null)"
     nt=0; [ -f "$dir/resume.tsv" ] && nt="$(grep -cv '^#' "$dir/resume.tsv" 2>/dev/null)"
     d="$(debut_du_run "$id" "$dir")" || d=""
-    printf '  %-18s %-17s %2s ticket(s) · %s traité(s)\n' "$id" "$([ -n "$d" ] && horodatage "$d")" "$np" "$nt"
+    marque=""
+    printf '%s\n' "$reprenables" | cut -f1 | grep -qxF "$id" && marque="  ${C_Y}↻ reprenable${C_0}"
+    printf '  %-18s %-17s %2s ticket(s) · %s traité(s)%s\n' \
+      "$id" "$([ -n "$d" ] && horodatage "$d")" "$np" "$nt" "$marque"
   done <<< "$liste"
   printf '\nDétail : bash scripts/orchestrate/status.sh --run-id <id>\n'
+  [ -n "$reprenables" ] && printf 'Reprendre : /orchestrate --resume <id>\n'
   exit 0
 fi
 

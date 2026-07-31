@@ -72,7 +72,16 @@ if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
   requete="$*"
   case "$requete" in
     *"milestones("*)      cat "$FIX/milestones.json" 2>/dev/null; exit 0 ;;
-    *"milestoneTitle:"*)  cat "$FIX/milestone-issues.json" 2>/dev/null; exit 0 ;;
+    *"milestoneTitle:"*)
+      # Le titre demandé sert de clé : sans ça, deux milestones rendraient forcément la même table
+      # de tickets, et `queue.sh --milestones` ne pourrait pas être testé sur des comptes distincts.
+      # Espaces → « _ » (les titres des tests sont en ASCII, cf. milestone_tickets côté Python).
+      titre="${requete#*milestoneTitle:[\"}"; titre="${titre%%\"*}"
+      par_titre="$FIX/milestone-issues-${titre// /_}.json"
+      if [ -f "$par_titre" ]; then cat "$par_titre"; else
+        cat "$FIX/milestone-issues.json" 2>/dev/null
+      fi
+      exit 0 ;;
     *"workItems(state:"*) cat "$FIX/backlog.json" 2>/dev/null; exit 0 ;;
     *"mergeRequests("*)   cat "$FIX/mr-iid.json" 2>/dev/null; exit 0 ;;
     *'workItems(iids:["'*)
@@ -123,9 +132,34 @@ class Depot:
 
     # --- Mise en place de l'état GitLab simulé ---------------------------------------------------
     def milestone(self, titre: str) -> None:
+        self.milestones([(titre, "active", 3, 10)])
+
+    def milestones(self, jalons: list[tuple[str, str, int, int]]) -> None:
+        """La table des milestones du projet : (titre, état, fermés, total) chacun.
+
+        Les dates sont fixes : `gl_current_milestone` trie déjà côté API (`sort: DUE_DATE_ASC`) et
+        le bouchon rend les nœuds dans l'ordre où on les écrit — c'est donc cet ordre-là qui fait
+        foi dans les tests, pas les dates.
+        """
+        noeuds = ",".join(
+            f'{{"title":"{t}","state":"{etat}","startDate":"2026-01-01","dueDate":"2026-12-31",'
+            f'"stats":{{"totalIssuesCount":{total},"closedIssuesCount":{fermes}}}}}'
+            for t, etat, fermes, total in jalons
+        )
         (self.fixtures / "milestones.json").write_text(
-            f'{{"data":{{"project":{{"milestones":{{"nodes":[{{"title":"{titre}",'
-            f'"stats":{{"totalIssuesCount":10,"closedIssuesCount":3}}}}]}}}}}}}}',
+            f'{{"data":{{"project":{{"milestones":{{"nodes":[{noeuds}]}}}}}}}}',
+            encoding="utf-8",
+        )
+
+    def milestone_tickets(self, titre: str, iids: list[int]) -> None:
+        """Les tickets d'UN milestone donné (les autres gardent la table de `publie`).
+
+        Le bouchon `glab` retrouve ce fichier par le titre demandé — d'où des titres ASCII dans les
+        tests qui s'en servent, la clé n'étant qu'un remplacement des espaces par « _ ».
+        """
+        noeuds = ",".join(self._noeud(str(iid)) for iid in iids)
+        (self.fixtures / f"milestone-issues-{titre.replace(' ', '_')}.json").write_text(
+            f'{{"data":{{"project":{{"workItems":{{"nodes":[{noeuds}]}}}}}}}}',
             encoding="utf-8",
         )
 
@@ -159,19 +193,21 @@ class Depot:
             "titre": titre, "statut": statut, "prio": prio, "type": type_, "assigne": assigne
         }
 
+    def _noeud(self, iid: str) -> str:
+        """Un ticket déclaré, au format de nœud que les deux tables partagent."""
+        t = self.tickets[iid]
+        assignes = f'{{"username":"{t["assigne"]}"}}' if t["assigne"] else ""
+        return (
+            f'{{"iid":"{iid}","title":"{t["titre"]}","state":"opened","widgets":['
+            f'{{"labels":{{"nodes":[{{"title":"type::{t["type"]}"}},'
+            f'{{"title":"prio::{t["prio"]}"}},{{"title":"agent::dev"}}]}}}},'
+            f'{{"status":{{"name":"{t["statut"]}"}}}},'
+            f'{{"assignees":{{"nodes":[{assignes}]}}}}]}}'
+        )
+
     def publie(self) -> None:
         """Compose les deux tables que `queue.sh` lit (milestone et backlog) depuis les tickets."""
-        noeuds = []
-        for iid, t in self.tickets.items():
-            assignes = f'{{"username":"{t["assigne"]}"}}' if t["assigne"] else ""
-            noeuds.append(
-                f'{{"iid":"{iid}","title":"{t["titre"]}","state":"opened","widgets":['
-                f'{{"labels":{{"nodes":[{{"title":"type::{t["type"]}"}},'
-                f'{{"title":"prio::{t["prio"]}"}},{{"title":"agent::dev"}}]}}}},'
-                f'{{"status":{{"name":"{t["statut"]}"}}}},'
-                f'{{"assignees":{{"nodes":[{assignes}]}}}}]}}'
-            )
-        jointure = ",".join(noeuds)
+        jointure = ",".join(self._noeud(iid) for iid in self.tickets)
         charge = f'{{"data":{{"project":{{"workItems":{{"nodes":[{jointure}]}}}}}}}}'
         (self.fixtures / "milestone-issues.json").write_text(charge, encoding="utf-8")
         (self.fixtures / "backlog.json").write_text(charge, encoding="utf-8")
@@ -1216,7 +1252,9 @@ def test_un_run_sans_activite_recente_est_dit_interrompu(depot: Depot) -> None:
     r = depot.lance("status.sh")
     assert r.returncode == 0, r.stderr
     assert "interrompu" in r.stdout
-    assert "reprendre" in r.stdout and "--plan" in r.stdout, "le plan sur disque est le filet"
+    # Le filet, c'est le plan resté sur disque — mais on le désigne par son RUN-ID (#204), pas par
+    # le chemin de son plan : un argument qui se retient est un argument qu'on retape.
+    assert "reprendre" in r.stdout and "--resume 20260729-120000" in r.stdout
 
 
 def test_un_silence_prolonge_fait_douter_l_en_tete_sans_trancher(depot: Depot) -> None:
@@ -1896,3 +1934,374 @@ def test_un_journal_qui_a_servi_n_est_jamais_emporte_par_ce_renoncement(depot: D
                     env={"MAESTRO_CLAUDE_BIN": claude})
     assert r.returncode == 0, r.stdout + r.stderr
     assert (dossier / "resume.tsv").exists(), "un bilan déjà écrit n'est pas un run sans suite"
+
+
+# =====================================================================================
+# Reprendre un run qui ne s'est pas terminé (#204)
+# =====================================================================================
+
+def _reprenables(depot: Depot) -> list[list[str]]:
+    """Les lignes de `status.sh --reprenables`, découpées sur les tabulations."""
+    r = depot.lance("status.sh", "--reprenables")
+    assert r.returncode == 0, r.stderr
+    return [ligne.split("\t") for ligne in r.stdout.splitlines() if ligne]
+
+
+def test_un_run_qui_a_tout_livre_n_est_pas_a_reprendre(depot: Depot) -> None:
+    _run_dir(
+        depot, "20260730-100000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
+        resume=[(130, "OK", 99, 600, "3.50", "-"), (131, "OK", 98, 300, "1.20", "-")],
+        age=4000,
+    )
+    assert _reprenables(depot) == [], "un plan entièrement soldé ne se rejoue pas"
+
+
+def test_un_run_interrompu_est_reprenable_avec_ce_qu_il_lui_reste(depot: Depot) -> None:
+    _run_dir(
+        depot, "20260730-100000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne"), (3, 132, "-", "basse")],
+        resume=[(130, "OK", 99, 600, "3.50", "-")],
+        age=4000,
+    )
+    lignes = _reprenables(depot)
+    assert len(lignes) == 1
+    run_id, etat, restants, _debut, silence, courant = lignes[0]
+    assert run_id == "20260730-100000"
+    assert etat == "interrompu"
+    assert restants == "2", "les tickets sans verdict, ticket en vol compris"
+    assert int(silence) >= 4000
+    assert courant == "", "ce run-là s'est arrêté entre deux tickets"
+    # La colonne vide est la raison pour laquelle cette sortie ne se relit pas avec
+    # « IFS=$'\t' read » : le tab est un blanc IFS, qui FUSIONNE les champs vides.
+    assert len(lignes[0]) == 6, "six colonnes, y compris quand la dernière est vide"
+
+
+def test_un_run_qui_ecrit_encore_n_est_pas_propose_a_la_reprise(depot: Depot) -> None:
+    """Le seul moyen de distinguer un run vivant d'un run mort, faute de PID : le silence."""
+    depot.ticket(131, "Ticket en cours", statut="En cours")
+    _run_dir(
+        depot, "20260730-100000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
+        resume=[(130, "OK", 99, 600, "3.50", "-")],
+        sessions=(131,),
+    )
+    assert _reprenables(depot) == [], "on ne propose pas de reprendre un run qui travaille"
+
+
+def test_un_run_tue_en_plein_ticket_est_reprenable_malgre_son_ticket_en_cours(
+    depot: Depot,
+) -> None:
+    """Machine éteinte au milieu : le témoin de session reste, personne n'écrit de code de sortie.
+
+    Sans le critère de silence, ce run garderait le visage d'un run qui travaille pour toujours —
+    et c'est précisément celui qu'on veut pouvoir reprendre.
+    """
+    _run_dir(
+        depot, "20260730-100000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
+        resume=[(130, "OK", 99, 600, "3.50", "-")],
+        sessions=(131,),
+        age=4000,
+    )
+    lignes = _reprenables(depot)
+    assert len(lignes) == 1
+    assert lignes[0][1] == "en-cours", "l'état déduit est dit tel quel, sans être maquillé"
+    assert lignes[0][5] == "131", "le ticket en vol est nommé : c'est lui qu'une reprise reprend"
+
+
+def test_les_runs_reprenables_ne_touchent_ni_a_gitlab_ni_au_disque(depot: Depot) -> None:
+    _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")], resume=[], age=4000)
+    avant = sorted(p.name for p in (depot.racine / ".maestro/orchestrate").rglob("*"))
+    assert _reprenables(depot)[0][0] == "20260730-100000"
+    assert not (depot.fixtures / "glab.log").exists(), "une liste qui doit marcher hors ligne"
+    apres = sorted(p.name for p in (depot.racine / ".maestro/orchestrate").rglob("*"))
+    assert avant == apres
+
+
+def test_la_liste_des_runs_signale_ceux_qu_on_peut_reprendre(depot: Depot) -> None:
+    _run_dir(depot, "20260729-090000", [(1, 130, "-", "haute")],
+             resume=[(130, "OK", 99, 60, "1.00", "-")], age=4000)
+    _run_dir(depot, "20260730-100000", [(1, 131, "-", "haute")], resume=[], age=4000)
+    r = depot.lance("status.sh", "--list")
+    assert r.returncode == 0, r.stderr
+    lignes = r.stdout.splitlines()
+    ligne_soldee = next(x for x in lignes if "20260729-090000" in x)
+    ligne_reprenable = next(x for x in lignes if "20260730-100000" in x)
+    assert "reprenable" not in ligne_soldee
+    assert "reprenable" in ligne_reprenable
+    assert "--resume" in r.stdout, "on dit quoi taper, pas seulement qu'il reste quelque chose"
+
+
+def test_un_run_interrompu_propose_sa_propre_reprise(depot: Depot) -> None:
+    """La vue détaillée nomme le run-id, jamais un chemin de journal à recopier."""
+    _run_dir(depot, "20260730-100000",
+             [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
+             resume=[(130, "OK", 99, 600, "3.50", "-")], age=4000)
+    r = depot.lance("status.sh", "--run-id", "20260730-100000", "--no-gitlab")
+    assert r.returncode == 0, r.stderr
+    assert "/orchestrate --resume 20260730-100000" in r.stdout
+    assert "1 ticket(s) sans verdict" in r.stdout
+
+
+def test_resume_rejoue_le_plan_du_run_vise_sans_le_recalculer(depot: Depot) -> None:
+    """Le backlog a pu bouger : un ordre recalculé n'aurait plus rien du run qu'on croit reprendre.
+
+    Aucun backlog n'est publié dans ce test — `queue.sh` échouerait s'il était appelé. C'est la
+    preuve que le plan vient bien du run repris.
+    """
+    depot.ticket(130, "Deja livre", statut="En revue")
+    depot.ticket(131, "Reste a faire")
+    depot.mr("feat/131-reste-a-faire", "opened")
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("131", "En revue")}' > "$MAESTRO_FIXTURES/owner-131.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+        exit 0
+    """)
+    source = _run_dir(
+        depot, "20260730-100000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
+        resume=[(130, "OK", 99, 600, "3.50", "-")],
+        age=4000,
+    )
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    nouveau = depot.racine / ".maestro/orchestrate/suite"
+    assert (nouveau / "plan.tsv").read_text(encoding="utf-8") == \
+        (source / "plan.tsv").read_text(encoding="utf-8")
+    assert (nouveau / "reprise-de").read_text(encoding="utf-8").strip() == "20260730-100000"
+    resume = (nouveau / "resume.tsv").read_text(encoding="utf-8")
+    assert "130\tSAUTE" in resume, "un ticket livré depuis se saute de lui-même, par son statut"
+    assert "131\tOK" in resume
+    assert "reprise du run 20260730-100000" in r.stdout
+
+
+def test_reprendre_n_ecrase_jamais_le_bilan_du_run_repris(depot: Depot) -> None:
+    """`resume.tsv` s'écrit en tête de run : rejouer dans le même répertoire effacerait tout."""
+    depot.ticket(130, "Deja livre", statut="En revue")
+    source = _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")],
+                      resume=[(130, "ECHEC", "-", 60, "1.00", "session coupée")], age=4000)
+    avant = (source / "resume.tsv").read_text(encoding="utf-8")
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite",
+                    env={"MAESTRO_CLAUDE_BIN": "true"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (source / "resume.tsv").read_text(encoding="utf-8") == avant
+    assert (depot.racine / ".maestro/orchestrate/suite/resume.tsv").exists()
+
+
+def test_resume_sans_argument_prend_le_run_reprenable_le_plus_recent(depot: Depot) -> None:
+    depot.ticket(131, "Reste a faire")
+    _run_dir(depot, "20260101-000000", [(1, 130, "-", "haute")],
+             resume=[(130, "OK", 99, 60, "1.00", "-")], age=4000)
+    _run_dir(depot, "20260202-000000", [(1, 131, "-", "haute")], resume=[], age=4000)
+    r = depot.lance("run.sh", "--resume", "--dry-run",
+                    env={"MAESTRO_CLAUDE_BIN": "true"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "reprise du run 20260202-000000" in r.stdout
+    assert "#131" in r.stdout
+
+
+def test_resume_sans_rien_a_reprendre_le_dit_et_ne_cree_aucun_run(depot: Depot) -> None:
+    _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")],
+             resume=[(130, "OK", 99, 60, "1.00", "-")], age=4000)
+    r = depot.lance("run.sh", "--resume", env={"MAESTRO_CLAUDE_BIN": "true"})
+    assert r.returncode == 1
+    assert "aucun run à reprendre" in r.stderr
+    assert "--detach" in r.stderr, "on oriente vers le run neuf plutôt que de laisser en plan"
+    runs = sorted(p.name for p in (depot.racine / ".maestro/orchestrate").iterdir())
+    assert runs == ["20260730-100000"], "rien de créé pour une reprise qui n'a pas eu lieu"
+
+
+def test_resume_sur_un_run_inconnu_est_refuse_sans_rien_inventer(depot: Depot) -> None:
+    r = depot.lance("run.sh", "--resume", "jamais-lance", env={"MAESTRO_CLAUDE_BIN": "true"})
+    assert r.returncode == 1
+    assert "n'a pas de plan lisible" in r.stderr
+    assert not (depot.racine / ".maestro/orchestrate/jamais-lance").exists()
+
+
+def test_resume_et_plan_ensemble_sont_refuses(depot: Depot) -> None:
+    """Deux façons de désigner le plan à jouer : en garder deux serait un piège silencieux."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--plan", plan,
+                    env={"MAESTRO_CLAUDE_BIN": "true"})
+    assert r.returncode == 2
+    assert "n'en garder qu'un" in r.stderr
+
+
+def test_le_ticket_en_vol_est_repris_au_lieu_d_etre_saute(depot: Depot) -> None:
+    """La victime de la coupure : `/ticket-start` lui a posé « En cours », donc le filtre de statut
+    l'écarterait comme s'il appartenait à quelqu'un d'autre — avec son worktree et son travail."""
+    depot.ticket(130, "Ticket en vol", statut="En cours")
+    depot.mr("feat/130-ticket-en-vol", "opened")
+    claude = _claude_stub(depot, f"""
+        printf '%s\\n' "$@" > "$MAESTRO_FIXTURES/argv.txt"
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+        exit 0
+    """)
+    _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")],
+             resume=[], sessions=(130,), age=4000)
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "repris en vol" in r.stdout
+    resume = (depot.racine / ".maestro/orchestrate/suite/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tOK" in resume and "SAUTE" not in resume
+
+    argv = (depot.fixtures / "argv.txt").read_text(encoding="utf-8")
+    assert "--resume" in argv, "la session de la coupure est rouverte, pas recommencée à zéro"
+    assert "11111111-2222-4333-a444-555555555555" in argv, "et c'est bien SON uuid"
+    # L'uuid a été recopié dans le journal neuf : la reprise suivante le retrouvera là.
+    session = depot.racine / ".maestro/orchestrate/suite/130.session"
+    assert session.read_text(encoding="utf-8").strip() == "11111111-2222-4333-a444-555555555555"
+
+
+def test_un_ticket_en_cours_que_le_run_n_avait_pas_en_main_reste_saute(depot: Depot) -> None:
+    """L'exception est étroite : sans témoin de session dans le run repris, « En cours » veut dire
+    qu'une autre session travaille dessus — et on ne lui prend pas son ticket."""
+    depot.ticket(130, "Pris par quelqu'un d'autre", statut="En cours", assigne="alice")
+    claude = _claude_stub(depot, 'echo "la session ne doit jamais démarrer" >&2\nexit 1\n')
+    _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")], resume=[], age=4000)
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, "un ticket sauté n'est pas un échec"
+    resume = (depot.racine / ".maestro/orchestrate/suite/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tSAUTE" in resume and "En cours" in resume
+
+
+def test_un_ticket_deja_solde_par_le_run_repris_n_est_pas_repris_en_vol(depot: Depot) -> None:
+    """Témoin de session ET ligne de bilan : le ticket a rendu son verdict, la coupure est venue
+    après. Son « En cours » est alors celui d'un échec, pas d'un travail en cours de session."""
+    depot.ticket(130, "Echoue puis laisse", statut="En cours")
+    claude = _claude_stub(depot, 'echo "la session ne doit jamais démarrer" >&2\nexit 1\n')
+    _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute"), (2, 131, "-", "haute")],
+             resume=[(130, "ECHEC", "-", 60, "1.00", "session terminée sans clôture")],
+             sessions=(130,), age=4000)
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite", "--max", "1",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    resume = (depot.racine / ".maestro/orchestrate/suite/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tSAUTE" in resume
+    assert "repris en vol" not in r.stdout
+
+
+def test_resume_avec_detach_passe_le_run_resolu_au_lanceur(depot: Depot) -> None:
+    """Le lanceur doit porter le run REPRIS, pas un « --resume » à re-résoudre : la liste aura
+    changé d'ici là — le run qu'on vient de créer y figurerait, entre autres."""
+    _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")], resume=[], age=4000)
+    spawn = _spawn_stub(depot)
+    r = depot.lance(
+        "run.sh", "--resume", "--detach", "--run-id", "detachee",
+        env={"MAESTRO_CLAUDE_BIN": "true", "MAESTRO_ORCHESTRATE_SPAWN": spawn},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    corps = (depot.racine / ".maestro/orchestrate/detachee/lancer.sh").read_text(encoding="utf-8")
+    commande = next(ligne for ligne in corps.splitlines() if ligne.startswith("bash "))
+    assert "--resume 20260730-100000" in commande, "le run repris est nommé, la valeur est résolue"
+    assert commande.count("--resume") == 1
+    assert commande.count("--run-id") == 1
+    assert "--detach" not in commande
+    assert "reprise    du run 20260730-100000" in r.stdout
+
+
+def test_le_journal_neuf_dit_de_quel_run_il_est_la_suite(depot: Depot) -> None:
+    """Deux journaux partiels racontent la même liste de tickets : ils doivent se répondre."""
+    depot.ticket(130, "Reste a faire")
+    _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")], resume=[], age=4000)
+    depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite",
+                env={"MAESTRO_CLAUDE_BIN": "true"})
+    r = depot.lance("status.sh", "--run-id", "suite", "--no-gitlab")
+    assert r.returncode == 0, r.stderr
+    assert "reprise    du run 20260730-100000" in r.stdout
+
+
+def test_une_reprise_sans_suite_ne_laisse_pas_de_repertoire(depot: Depot) -> None:
+    """Le renoncement (#180) doit aussi savoir jeter le marqueur de reprise qu'il vient de poser."""
+    claude = _claude_stub(depot, 'echo "la session ne doit jamais démarrer" >&2\nexit 1\n')
+    _run_dir(depot, "20260730-100000", [], resume=[], age=4000)
+    # Un plan vide n'est pas reprenable : on vise donc le run explicitement.
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "sans-suite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "le plan est vide" in r.stdout
+    assert not (depot.racine / ".maestro/orchestrate/sans-suite").exists()
+
+
+def test_reprendre_un_run_dans_son_propre_repertoire_est_refuse(depot: Depot) -> None:
+    """Le cas tordu qui viderait le bilan qu'on prétend préserver : plan recopié sur lui-même,
+    puis `resume.tsv` réécrit en tête de run."""
+    source = _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")],
+                      resume=[(130, "OK", 99, 60, "1.00", "-")], age=4000)
+    avant = (source / "resume.tsv").read_text(encoding="utf-8")
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "20260730-100000",
+                    env={"MAESTRO_CLAUDE_BIN": "true"})
+    assert r.returncode == 2
+    assert "son bilan serait écrasé" in r.stderr
+    assert (source / "resume.tsv").read_text(encoding="utf-8") == avant
+
+
+# =====================================================================================
+# Choisir le milestone d'un run neuf — queue.sh --milestones (#204)
+# =====================================================================================
+
+def _milestones(depot: Depot) -> list[list[str]]:
+    """Les lignes de `queue.sh --milestones`, en-tête « # » ôtée."""
+    r = depot.lance("queue.sh", "--milestones")
+    assert r.returncode == 0, r.stderr
+    return [ligne.split("\t") for ligne in r.stdout.splitlines()
+            if ligne and not ligne.startswith("#")]
+
+
+def test_seuls_les_milestones_actifs_sont_proposes_avec_leur_reste(depot: Depot) -> None:
+    depot.milestones([("Phase A", "active", 3, 10), ("Phase B", "active", 0, 4),
+                      ("Phase Z", "closed", 8, 8)])
+    depot.ticket(501, "A faire 1")
+    depot.ticket(502, "A faire 2")
+    depot.ticket(503, "Deja en revue", statut="En revue")
+    depot.ticket(504, "B faire 1")
+    depot.ticket(505, "B faire 2")
+    depot.ticket(506, "B en cours", statut="En cours")
+    depot.publie()
+    depot.milestone_tickets("Phase A", [501, 502, 503])
+    depot.milestone_tickets("Phase B", [504, 505, 506])
+
+    lignes = _milestones(depot)
+    assert [x[0] for x in lignes] == ["Phase A", "Phase B"], \
+        "une phase soldée n'est pas un run à lancer"
+
+    titre, courant, a_faire, ouverts, echeance = lignes[0]
+    assert (titre, courant) == ("Phase A", "1"), "la phase courante est marquée, pas devinée"
+    assert a_faire == "2", "les « À faire » et libres, pas les ouverts"
+    assert ouverts == "7" and echeance == "2026-12-31"
+
+    assert lignes[1][1] == "0", "les autres phases actives sont proposables sans être le défaut"
+    assert lignes[1][2] == "2"
+
+
+def test_un_milestone_dont_les_tickets_sont_deja_pris_n_a_rien_a_traiter(depot: Depot) -> None:
+    """Le compte suit le filtre de la boucle (« À faire » ET libre) : proposer un milestone dont
+    tout est assigné mènerait à un plan vide, et le choix serait un piège."""
+    depot.milestones([("Phase A", "active", 0, 2)])
+    depot.ticket(501, "Pris par alice", assigne="alice")
+    depot.ticket(502, "Pris par bob", assigne="bob")
+    depot.publie()
+    depot.milestone_tickets("Phase A", [501, 502])
+
+    lignes = _milestones(depot)
+    assert lignes[0][2] == "0", "aucun ticket que la boucle pourrait prendre"
+    assert lignes[0][3] == "2", "... alors qu'il reste bien deux tickets ouverts"
+
+
+def test_le_listing_des_milestones_n_imprime_aucun_plan(depot: Depot) -> None:
+    """C'est une sortie de données pour la question du milestone, pas un plan : rien d'autre ne doit
+    s'y mêler — et surtout aucun run n'est préparé."""
+    depot.milestones([("Phase A", "active", 0, 1)])
+    depot.ticket(501, "A faire")
+    depot.publie()
+    depot.milestone_tickets("Phase A", [501])
+
+    r = depot.lance("queue.sh", "--milestones")
+    assert r.returncode == 0, r.stderr
+    assert "501" not in r.stdout, "le plan n'est pas calculé ici"
+    assert not (depot.racine / ".maestro").exists()

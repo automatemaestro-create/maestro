@@ -146,7 +146,9 @@ Pour éclairer une décision de merge : `/mr-review <mr>` (synthèse état + pip
   libres du milestone courant un par un — un worktree et une session Claude Code chacun, de
   `/ticket-start` à `/ticket-ship`, avec reprise automatique après la limite d'usage de 5 h. À
   lancer dans un terminal à part (`--dry-run` d'abord pour voir le plan) ; il produit des **MR en
-  Draft à relire** et ne merge jamais ([docs/10 §11](./docs/10-workflow-git.md)).
+  Draft à relire** et ne merge jamais ([docs/10 §11](./docs/10-workflow-git.md)). Un run coupé
+  (console fermée, machine éteinte) se reprend par `--resume`, qui rejoue son plan sans rien
+  recalculer — `/orchestrate` le propose de lui-même au lancement ([§11.8](./docs/10-workflow-git.md)).
 
 ---
 

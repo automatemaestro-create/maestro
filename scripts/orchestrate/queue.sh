@@ -47,6 +47,7 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 CHECK=0
 MILESTONE=""
+LISTE_MILESTONES=0
 
 usage() {
   cat <<'USAGE'
@@ -59,6 +60,10 @@ Options :
                        écartés avec leur raison, et les groupes de lots formés.
   --milestone <titre>  Milestone à traiter (titre exact). Par défaut : la phase courante
                        (lib.sh current-milestone).
+  --milestones         N'imprime pas de plan : liste les milestones ACTIFS sur lesquels un run
+                       peut porter, avec ce qu'ils ont de traitable — titre, courant (0/1),
+                       « À faire » et libres, ouverts, échéance. C'est ce que /orchestrate lit
+                       pour proposer le choix du milestone avant un run neuf.
   -h, --help           Cette aide.
 
 Sortie (stdout, TSV) : rang, iid, parent, prio, titre. Lecture seule — n'écrit rien.
@@ -69,6 +74,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --check) CHECK=1 ;;
     --milestone) MILESTONE="${2:-}"; shift ;;
+    --milestones | --jalons) LISTE_MILESTONES=1 ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -84,6 +90,48 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/maestro-queue.XXXXXX")" || {
 }
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/vue"
+
+# --- 0. Les milestones sur lesquels un run peut porter (#204) --------------------------------------
+# `--milestones` répond à « quel milestone traiter ? », la question que /orchestrate pose avant de
+# lancer un run NEUF. Elle était tranchée en silence par la phase courante — le bon défaut, mais pas
+# toujours le bon choix : plusieurs milestones actifs peuvent porter du travail en même temps.
+#
+# Sortie TSV, du plus ancien au plus récent (l'ordre de gl_milestones), en-tête « # » ignorable :
+#     titre <TAB> courant <TAB> a_faire <TAB> ouverts <TAB> echeance
+#
+# `a_faire` compte ce que la boucle POURRAIT prendre — « À faire » ET libre, exactement le filtre du
+# §3 ci-dessous — et non les tickets ouverts : un milestone dont les « À faire » sont tous assignés
+# rendrait un plan vide, et le proposer serait un piège. Le compte reste **indicatif** sur un point,
+# dit ici plutôt que découvert plus tard : il ne défait pas les parents de suivi en leurs lots (ça
+# coûterait une lecture par ticket), donc un parent y compte pour un.
+#
+# Seuls les milestones ACTIFS sont listés : un milestone fermé est une phase soldée, on n'y lance pas
+# un run. Coût : deux lectures fixes (milestones, backlog ouvert) plus une par milestone actif.
+milestones_traitables() {
+  local courant titre echeance ouverts a_faire
+  courant="$(gl_current_milestone 2>/dev/null)" || courant=""
+  gl_backlog_table opened >"$TMP/backlog.tsv" || return 1
+  printf '# titre\tcourant\ta_faire\touverts\techeance\n'
+  gl_milestones | awk -F'\t' -v OFS='\t' '$1 !~ /^#/ && $2 == "active" { print $1, $4, $6 - $5 }' |
+    while IFS=$'\t' read -r titre echeance ouverts; do
+      [ -n "$titre" ] || continue
+      gl_milestone_issues "$titre" >"$TMP/milestone-liste.tsv" 2>/dev/null ||
+        : >"$TMP/milestone-liste.tsv"
+      a_faire="$(awk -F'\t' '
+        FNR == NR { if ($1 !~ /^#/) assigne[$1] = $5; next }
+        /^#/ { next }
+        $2 == "À faire" && (!($1 in assigne) || assigne[$1] == "-" || assigne[$1] == "") { n++ }
+        END { print n + 0 }' "$TMP/backlog.tsv" "$TMP/milestone-liste.tsv")"
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$titre" "$([ "$titre" = "$courant" ] && printf 1 || printf 0)" \
+        "$a_faire" "$ouverts" "$echeance"
+    done
+}
+
+if [ "$LISTE_MILESTONES" = 1 ]; then
+  milestones_traitables || exit 1
+  exit 0
+fi
 
 # --- 1. Le milestone ------------------------------------------------------------------------------
 if [ -z "$MILESTONE" ]; then
