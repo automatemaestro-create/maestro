@@ -44,8 +44,12 @@ export function EditeurPlaybook({
   onPublication,
 }: {
   agent: string;
-  /** Prévenir la page qu'une version a été publiée (la liste des fiches change). */
-  onPublication: () => void | Promise<void>;
+  /**
+   * Prévenir la page qu'une version a été publiée. Facultatif depuis #190 :
+   * l'onglet Playbook d'une fiche agent n'a pas de liste à rafraîchir, l'éditeur
+   * se resynchronisant déjà tout seul.
+   */
+  onPublication?: () => void | Promise<void>;
 }) {
   const [fiche, setFiche] = useState<PlaybookDetail | null>(null);
   const [versions, setVersions] = useState<VersionPlaybook[]>([]);
@@ -107,7 +111,7 @@ export function EditeurPlaybook({
       await action();
       const nouvelleFiche = await recharger();
       if (resynchroniser) setContenu(nouvelleFiche.contenu);
-      await onPublication();
+      await onPublication?.();
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
     } finally {
@@ -133,10 +137,10 @@ export function EditeurPlaybook({
     <div className="flex min-w-0 flex-1 flex-col gap-4">
       <section aria-label={`Playbook de ${agent}`}>
         <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            📖 Playbook · {agent}
-            {fiche.role ? ` (${fiche.role})` : ""}
-          </h2>
+          {/* Le nom de l'agent est porté par l'en-tête de la fiche (#190). */}
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+            📖 Playbook{fiche.role ? ` · ${fiche.role}` : ""}
+          </h3>
           <span className="text-xs text-neutral-500 dark:text-neutral-400">
             {jamaisEdite
               ? "version du code (jamais édité)"

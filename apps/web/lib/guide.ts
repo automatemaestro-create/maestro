@@ -51,7 +51,7 @@ export const ETAPES_GUIDE: EtapeGuide[] = [
     id: "navigation",
     titre: "La navigation",
     texte:
-      "Toutes les sections sont ici : tableau de bord, agents, playbooks, chat, coûts & analytics, validations et paramètres. Le bouton en haut à gauche replie la barre en un simple rail d'icônes.",
+      "Toutes les sections sont ici : tableau de bord, agents, chat, coûts & analytics, validations et paramètres. Une entrée par intention — un agent se consulte d'un seul endroit, ses facettes tenant en onglets sur sa fiche. Le bouton en haut à gauche replie la barre en un simple rail d'icônes.",
     ancres: ['[data-guide="navigation"]'],
   },
   {

@@ -13,8 +13,9 @@
  *    docs/21) et on l'**ajoute au pool** (`POST /api/mcp/pool`).
  *
  * L'activation d'une intégration **par agent** (l'autre moitié du ticket) vit sur
- * la fiche du catalogue (`EditeurAgent`), là où elle remplace l'affichage lecture
- * seule des serveurs MCP.
+ * la fiche de l'agent, onglet « MCP & permissions » depuis #190
+ * (`McpEtPermissionsAgent`), là où elle remplace l'affichage lecture seule des
+ * serveurs MCP.
  */
 
 import { useCallback, useEffect, useState } from "react";

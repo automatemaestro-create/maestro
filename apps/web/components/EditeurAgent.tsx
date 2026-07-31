@@ -5,16 +5,19 @@
  * le formulaire de définition — rôle, compétences, fournisseur/modèle,
  * playbook — branché sur l'API du lot 1 (#72, `/api/catalogue`).
  *
- * Deux entrées : `CreationAgent` (nouvel agent personnalisé, `POST`) et
- * `EditeurAgent` (fiche existante — modification `PUT` et suppression `DELETE`
- * d'un agent personnalisé ; les agents par défaut, définis par le code, sont
- * montrés en lecture seule, leur playbook s'éditant sur la page Playbooks).
- * Un agent créé ou modifié vaut pour les moteurs construits ensuite.
+ * Trois entrées, une par facette de la fiche agent (#190) : `CreationAgent`
+ * (nouvel agent personnalisé, `POST`), `EditeurAgent` (onglet Profil — fiche
+ * existante, modification `PUT` et suppression `DELETE` d'un agent
+ * personnalisé ; les agents par défaut, définis par le code, sont montrés en
+ * lecture seule, leur playbook s'éditant sur l'onglet Playbook) et
+ * `McpEtPermissionsAgent` (onglet MCP & permissions). Un agent créé ou modifié
+ * vaut pour les moteurs construits ensuite.
  */
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { cheminOnglet } from "@/lib/agents";
 import {
   chargerAgentCatalogue,
   creerAgent,
@@ -260,16 +263,20 @@ export function CreationAgent({
 }
 
 /**
- * La fiche d'un agent du catalogue : édition et suppression s'il est
- * personnalisé, lecture seule s'il vient du code (agent par défaut).
+ * L'onglet Profil d'un agent : édition et suppression s'il est personnalisé,
+ * lecture seule s'il vient du code (agent par défaut). Ses serveurs MCP et sa
+ * politique de permissions ont leur propre onglet (#190).
  */
 export function EditeurAgent({
   nom,
-  onChangement,
+  onSuppression,
 }: {
   nom: string;
-  /** Prévenir la page qu'une fiche a changé ou disparu : elle recharge la liste. */
-  onChangement: () => void | Promise<void>;
+  /**
+   * Prévenir la fiche que l'agent n'existe plus : elle n'a plus rien à montrer
+   * et revient à la liste. Une modification, elle, se resynchronise sur place.
+   */
+  onSuppression: () => void;
 }) {
   const [fiche, setFiche] = useState<AgentCatalogueDetail | null>(null);
   const [champs, setChamps] = useState<Champs>(CHAMPS_VIERGES);
@@ -316,7 +323,6 @@ export function EditeurAgent({
       // Resynchronisation sur la définition normalisée par le dépôt
       // (rôle épuré, compétences dédoublonnées, date de modification).
       setChamps(champsDepuis(await recharger()));
-      await onChangement();
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
     } finally {
@@ -329,8 +335,8 @@ export function EditeurAgent({
     setErreur(null);
     try {
       await supprimerAgent(nom);
-      await onChangement();
-      // Succès : la page retire cette fiche — le composant est démonté.
+      onSuppression();
+      // Succès : la fiche n'a plus d'objet — la navigation démonte ce composant.
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
       setEnCours(false);
@@ -360,10 +366,12 @@ export function EditeurAgent({
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4">
       <section aria-label={`Configuration de ${nom}`}>
+        {/* Le nom de l'agent est porté par l'en-tête de la fiche (#190) : la
+            section ne redit que ce qui lui est propre. */}
         <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            🤖 {nom}
-          </h2>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+            Définition
+          </h3>
           <span className="rounded-full bg-sky-100 px-2 text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-300">
             personnalisé
           </span>
@@ -409,9 +417,6 @@ export function EditeurAgent({
         )}
       </section>
 
-      <SectionServeursMcp fiche={fiche} />
-      <SectionPermissions fiche={fiche} />
-
       <section
         aria-label={`Suppression de ${nom}`}
         className="flex flex-wrap items-center gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800"
@@ -455,17 +460,73 @@ export function EditeurAgent({
 }
 
 /**
+ * L'onglet MCP & permissions d'un agent (#190) : ce que l'agent peut appeler —
+ * les serveurs MCP qu'on lui active, et la politique d'outils que le moteur
+ * applique à l'exécution.
+ *
+ * Ces deux sections étaient reléguées en bas de la fiche du catalogue, après le
+ * formulaire de définition et son bouton de suppression : elles n'avaient de
+ * page nulle part. Le contenu est inchangé — seul l'endroit l'est.
+ */
+export function McpEtPermissionsAgent({ nom }: { nom: string }) {
+  const [fiche, setFiche] = useState<AgentCatalogueDetail | null>(null);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  // Chargement différé d'un tick (même mécanique que useControlTower) :
+  // l'effet lui-même ne déclenche aucun setState synchrone.
+  useEffect(() => {
+    let abandonne = false;
+    const tick = setTimeout(() => {
+      chargerAgentCatalogue(nom)
+        .then((nouvelle) => {
+          if (!abandonne) setFiche(nouvelle);
+        })
+        .catch((e) => {
+          if (!abandonne) setErreur(e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => {
+          if (!abandonne) setChargement(false);
+        });
+    }, 0);
+    return () => {
+      abandonne = true;
+      clearTimeout(tick);
+    };
+  }, [nom]);
+
+  if (chargement) {
+    return <p className="text-sm text-neutral-500">Chargement de la fiche…</p>;
+  }
+  if (fiche === null) {
+    return (
+      <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
+        Fiche illisible : {erreur}
+      </p>
+    );
+  }
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-4">
+      <SectionServeursMcp fiche={fiche} />
+      <SectionPermissions fiche={fiche} />
+    </div>
+  );
+}
+
+/**
  * La politique de permissions d'un agent (#110), en lecture seule : la
  * politique allow/deny par outil que le moteur applique à l'exécution
- * (`core/permissions/<agent>.json`, versionnée avec le dépôt). Sans
- * politique, rien n'est affiché quand tout va bien — le comportement par
- * défaut (tous les outils du profil) n'a pas besoin d'un panneau ; une
- * politique invalide affiche sa cause exacte.
+ * (`core/permissions/<agent>.json`, versionnée avec le dépôt). Une politique
+ * invalide affiche sa cause exacte.
+ *
+ * L'absence de politique se dit désormais explicitement : la section était
+ * muette quand tout allait bien, ce qui se lisait comme un panneau de plus tout
+ * en bas de la fiche du catalogue ; sur son propre onglet (#190), le silence
+ * passerait pour un chargement raté.
  */
 function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
-  if (fiche.permissions_erreur === null && fiche.permissions === null) {
-    return null;
-  }
+  const sansPolitique =
+    fiche.permissions_erreur === null && fiche.permissions === null;
   return (
     <section aria-label={`Permissions de ${fiche.nom}`}>
       <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
@@ -477,6 +538,11 @@ function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
           className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
         >
           Politique invalide : {fiche.permissions_erreur}
+        </p>
+      ) : sansPolitique ? (
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          Aucune politique dédiée : l&apos;agent dispose de tous les outils que
+          son profil expose.
         </p>
       ) : (
         fiche.permissions !== null && (
@@ -744,22 +810,28 @@ function CouplesMasques({
 
 /**
  * La fiche en lecture seule d'un agent par défaut : défini par le code, ni
- * modifiable ni supprimable ici — seul son playbook s'édite, page Playbooks.
+ * modifiable ni supprimable ici — seul son playbook s'édite, onglet Playbook.
  */
 function FicheDefaut({ fiche }: { fiche: AgentCatalogueDetail }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4">
       <section aria-label={`Fiche de ${fiche.nom}`}>
+        {/* Le nom de l'agent est porté par l'en-tête de la fiche (#190). */}
         <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            🤖 {fiche.nom}
-            {fiche.role ? ` (${fiche.role})` : ""}
-          </h2>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+            Définition
+          </h3>
           <span className="rounded-full bg-neutral-200 px-2 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
             agent du code
           </span>
         </div>
         <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
+              Rôle
+            </dt>
+            <dd className="mt-1">{fiche.role}</dd>
+          </div>
           <div>
             <dt className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
               Compétences
@@ -786,19 +858,17 @@ function FicheDefaut({ fiche }: { fiche: AgentCatalogueDetail }) {
         </dl>
         <p className="mt-3 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
           Agent par défaut, défini par le code : ni modifiable ni supprimable
-          ici. Ses instructions s&apos;éditent (et se versionnent) depuis la
-          page{" "}
+          ici. Ses instructions s&apos;éditent (et se versionnent) depuis
+          l&apos;onglet{" "}
           <Link
-            href="/playbooks"
+            href={cheminOnglet(fiche.nom, "playbook")}
             className="font-medium text-neutral-900 underline dark:text-neutral-200"
           >
-            📖 Playbooks
+            📖 Playbook
           </Link>
           .
         </p>
       </section>
-      <SectionServeursMcp fiche={fiche} />
-      <SectionPermissions fiche={fiche} />
       <section aria-label={`Playbook du code de ${fiche.nom}`}>
         <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
           📖 Playbook du code

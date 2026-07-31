@@ -5,7 +5,7 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 
 - **Shell applicatif de backoffice** (#117, lot 1 de la refonte UX #116) : une
   **sidebar** de navigation commune à toutes les pages (Tableau de bord · Agents ·
-  Playbooks · Chat · Coûts & analytics · Validations · Paramètres) avec état actif
+  Chat · Coûts & analytics · Validations · Paramètres) avec état actif
   et **version repliée en icônes** — imposée sous `lg`, au choix au-delà (le repli
   est mémorisé) ; une **barre supérieure** qui porte le titre de la page, le statut
   du flux temps réel, le coût cumulé, puis la cloche de notifications (#119), la
@@ -35,7 +35,7 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 - **Assistant flottant** (#123) : un bouton en bas à droite ouvre un panneau
   d'aide sur l'outil, branché sur le fil de chat `assistance`
   (`/api/chat/assistance`) — historique persisté et réponses en temps réel comme
-  la page Chat. Il ne se ferme pas au clic extérieur (on le consulte *pendant*
+  l'onglet Chat d'un agent. Il ne se ferme pas au clic extérieur (on le consulte *pendant*
   qu'on agit) et le shell réserve la bande qu'il occupe pour ne masquer aucune
   action de la page ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
@@ -52,25 +52,35 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   de chaque run (`GET /api/executions/{run_id}/cout`, #57) — part de planification,
   coût par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat de
   l'exécution ; chaque carte Kanban affiche aussi le coût détaillé de sa tâche ;
-- **Éditeur de playbooks** (#77, EF-24/EF-25) : la page `/playbooks` liste les
-  playbooks versionnés des agents (#76, API `/api/playbooks`), publie une nouvelle
+- **Fiche agent à onglets** (#190, lot 1 de la navigation v2 #189) : l'entrée de
+  menu **Agents** mène à la liste (`/agents`) et chaque agent ouvre **une** fiche
+  dont les facettes tiennent en onglets — Profil, Playbook, MCP & permissions,
+  Chat (`/agents/<nom>/<onglet>`). Les trois pages qui regardaient le même objet
+  par trois chemins ont fusionné : `/catalogue`, `/playbooks` et `/chat/<agent>`
+  sont **redirigés vers le bon onglet** (`next.config.ts`, aucun signet ne casse)
+  et `?onglet=` porte l'intention jusqu'à la liste quand l'URL d'origine ne
+  nommait pas d'agent. `/chat` reste au menu pour le chat **global**, non lié à un
+  agent (chantier « Chat » de la Phase 6). Les onglets sont déclarés une seule
+  fois (`lib/agents.ts`), comme le menu l'est dans `lib/navigation.ts` ;
+- **Éditeur de playbooks** (#77, EF-24/EF-25) : l'onglet **Playbook** d'une fiche
+  agent porte son playbook versionné (#76, API `/api/playbooks`), publie une nouvelle
   version depuis un éditeur plein texte et montre l'historique, chaque version
   antérieure étant consultable et restaurable (le dépôt est append-only :
   restaurer republie, rien n'est réécrit). Une version publiée s'applique **à
   chaud** (#78, EF-26) : le moteur relit la version courante à chaque tâche —
   elle vaut pour l'exécution suivante sans redémarrage, et la version utilisée
   est tracée sur chaque résultat (`playbook_version`, journal compris) ;
-- **Catalogue des agents** (#73, EF-03) : la page `/catalogue` liste les agents
-  du catalogue effectif (#72, API `/api/catalogue`) — ceux du code en lecture
-  seule, et les **personnalisés** qu'on y crée, modifie et supprime depuis un
-  formulaire complet (nom, rôle, compétences, fournisseur/modèle, playbook).
-  Un agent personnalisé est persisté hors du code et chargé par les moteurs
-  construits ensuite ;
-- **Chat par agent** (#85, lot 2 de #82) : la page `/chat` ouvre un fil de
-  conversation avec chaque agent du catalogue (#84, API `/api/chat`) — envoi,
+- **Catalogue des agents** (#73, EF-03) : la liste `/agents` montre le catalogue
+  effectif (#72, API `/api/catalogue`) — ceux du code en lecture seule, et les
+  **personnalisés** qu'on y crée, puis modifie et supprime depuis l'onglet
+  **Profil** de leur fiche (formulaire complet : nom, rôle, compétences,
+  fournisseur/modèle, playbook). Un agent personnalisé est persisté hors du code
+  et chargé par les moteurs construits ensuite ;
+- **Chat par agent** (#85, lot 2 de #82) : l'onglet **Chat** d'une fiche agent
+  ouvre le fil de conversation avec lui (#84, API `/api/chat`) — envoi,
   réponse de l'agent (cadrée par son playbook courant) et réception en temps
   réel par le WebSocket (`chat.message`). Le fil est persisté côté backend :
-  l'historique se recharge au retour sur la page ;
+  l'historique se recharge au retour sur l'onglet ;
 - **Page Paramètres** (#121) : la configuration regroupée en six sections
   navigables par ancres (Général · Apparence · Agents & capacité · Fournisseurs &
   modèles · Coûts & plafonds · Notifications), avec un sous-menu qui suit le

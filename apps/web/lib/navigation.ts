@@ -11,7 +11,6 @@ import {
   IconeChat,
   IconeCouts,
   IconeParametres,
-  IconePlaybooks,
   IconeTableauDeBord,
   IconeValidations,
 } from "@/components/Icones";
@@ -23,10 +22,19 @@ export type EntreeMenu = {
   Icone: ComponentType<SVGProps<SVGSVGElement>>;
 };
 
+/**
+ * Une entrée par **intention** (#190) : « Agents » mène à la liste des agents,
+ * d'où chaque fiche ouvre ses onglets (profil, playbook, MCP & permissions,
+ * chat). Les anciennes entrées « Playbooks » et « Chat par agent » regardaient
+ * le même objet par une autre facette — elles sont devenues des onglets, leurs
+ * chemins restant servis par les redirections de `next.config.ts`.
+ *
+ * « Chat » subsiste et vise le chat **global**, non lié à un agent : c'est une
+ * intention distincte, portée par le chantier « Chat » de la Phase 6.
+ */
 export const MENU: EntreeMenu[] = [
   { href: "/", libelle: "Tableau de bord", Icone: IconeTableauDeBord },
-  { href: "/catalogue", libelle: "Agents", Icone: IconeAgents },
-  { href: "/playbooks", libelle: "Playbooks", Icone: IconePlaybooks },
+  { href: "/agents", libelle: "Agents", Icone: IconeAgents },
   { href: "/chat", libelle: "Chat", Icone: IconeChat },
   { href: "/couts", libelle: "Coûts & analytics", Icone: IconeCouts },
   { href: "/validations", libelle: "Validations", Icone: IconeValidations },
