@@ -1,27 +1,48 @@
-# core/mcp — Serveurs MCP déclarés par agent
+# core/mcp — Serveurs MCP : pool projet, activation par agent, déclarations héritées
 
-Dépôt des **déclarations de serveurs MCP** par agent (ticket #104, parent
-#101) : un agent peut se voir brancher des capacités externes (Slack, gestion
-de tickets, Figma, cloud…) via le Model Context Protocol — le moteur monte les
-serveurs déclarés sur ses exécutions outillées, sans connecteur ad hoc.
+Dépôt des **configurations de serveurs MCP** (ticket #104, parent #101) : un
+agent peut se voir brancher des capacités externes (Slack, gestion de tickets,
+Figma, cloud…) via le Model Context Protocol — le moteur monte les serveurs
+configurés sur ses exécutions outillées, sans connecteur ad hoc. Depuis le
+parent **#129**, deux modèles cohabitent sous cette racine : la **déclaration
+héritée** (un fichier par agent, #104) et le **pool projet + activation par
+agent** (#130), configurable **depuis la Control Tower** et alimenté par une
+**bibliothèque curée** (#131) ; `McpStore.lire(agent)` **compose** les deux.
 
 ## Fonctionnement
 
-- Un fichier par agent : `<agent>.json`, de la forme `{"serveurs": [...]}` —
-  chaque serveur est une **commande locale** (`type` « stdio » : `commande` +
-  `args` + `env`) ou un **endpoint distant** (« sse »/« http » : `url` +
-  `headers`). Format détaillé et exemple : [docs/04 §6](../../docs/04-specifications-agents.md).
-- **Validé à la lecture** (`maestro.agents.mcp.McpStore.lire`) : une
-  déclaration invalide est refusée avec sa cause exacte — échec de tâche
-  propre, jamais un montage à moitié.
+Trois fichiers cohabitent sous la racine (remplaçable par `MAESTRO_MCP_DIR`) :
+
+- **`<agent>.json`** (`{"serveurs": [...]}`) — la déclaration **héritée** d'un
+  agent (#104), un fichier par agent. Chaque serveur est une **commande locale**
+  (`type` « stdio » : `commande` + `args` + `env`) ou un **endpoint distant**
+  (« sse »/« http » : `url` + `headers`). Format et exemple : [docs/04 §6](../../docs/04-specifications-agents.md).
+- **`pool.json`** (`{"integrations": [...]}`) — le **pool projet** (#130) : une
+  intégration = un `id` stable + une déclaration `ServeurMcp`, **déclarée une
+  fois** (secret par `${VAR}` compris), partageable entre agents.
+- **`activations.json`** (`{"<agent>": ["id", …]}`) — les intégrations du pool
+  **activées** par agent (#130).
+
+- **Composition** (`maestro.agents.mcp.McpStore.lire`) : pour un agent, la
+  déclaration héritée **puis** les intégrations du pool activées pour lui. Sans
+  activation, le résultat est exactement la déclaration héritée — la
+  **rétro-compatibilité** du #104 (le pool n'est pas lu). En cas de collision de
+  `serveur.nom`, l'héritée l'emporte. Migration héritée → pool **outillée**
+  (`composer_migration`/`migrer`), jamais imposée.
+- **Validé à la lecture** : une source invalide (déclaration, pool, activation
+  vers une intégration absente du pool) est refusée avec sa cause exacte —
+  échec de tâche propre, jamais un montage à moitié.
 - Effet à l'exécution (`maestro/engine/executor.py`, relu **à chaud** à chaque
   tâche, comme les playbooks #78) : les serveurs sont montés par la **couche
   SDK** (`ModelProvider.run_agent`) sur les exécutions **outillées** de
   l'agent — le chemin texte n'expose aucun outil, MCP compris. Un serveur
   indisponible produit une erreur propre et tracée, **jamais relancée**
   (docs/04 §6.3).
-- Affichage : fiche agent de la page `/catalogue` (lecture seule à ce lot).
-- Racine remplaçable par `MAESTRO_MCP_DIR` (cf. `.env.example`).
+- **Écriture** : le pool et les activations sont **écrivables**
+  (`ecrire_pool`/`ecrire_activations`, atomiques et versionnés) — la Control
+  Tower en devient la source (#133), en remplacement de l'édition manuelle du
+  fichier. La fiche agent de la page `/catalogue` reste la vue **lecture seule**
+  de la composition (valeurs masquées).
 
 ## Déclarations en place
 
@@ -65,21 +86,39 @@ déclarations ci-dessus.
   `SEED`, en clair et revu en revue de code) est instanciable — jamais de
   `npx -y <pkg arbitraire>`.
 - Exposé par l'API : `GET /api/mcp/registre` (liste + `?q=` recherche) et
-  `GET /api/mcp/registre/{id}`. Cœur critique (recherche + garde-fou) testé dans
-  [`tests/test_mcp_registry.py`](../../tests/test_mcp_registry.py) ; couverture
-  intégrale (UI, migration, liaison par agent) **différée au lot 5/5 → #134**.
+  `GET /api/mcp/registre/{id}`. Recherche + garde-fou testés dans
+  [`tests/test_mcp_registry.py`](../../tests/test_mcp_registry.py).
+
+## Secrets — jamais en clair, chiffrés côté serveur (#132)
 
 Contrairement aux dépôts voisins (données d'exécution non commitées), les
-déclarations écrites ici sont de la **configuration versionnée** : elles se
-commitent avec le dépôt. Les **secrets n'y figurent jamais en clair** — les
-valeurs d'`env`/`headers` référencent l'environnement (`${VARIABLE}`),
-résolu au moment du montage (anticipe le chantier sécurité #102).
+déclarations écrites ici (`<agent>.json`, `pool.json`) sont de la
+**configuration versionnée** : elles se commitent avec le dépôt. Les **secrets
+n'y figurent jamais en clair** — les valeurs d'`env`/`headers` référencent
+l'environnement (`${VARIABLE}`), résolu au montage. Depuis #132 (parent #102),
+la valeur elle-même vit dans le **coffre de l'agent**
+(`maestro.agents.secrets.SecretStore`, dépôt voisin `core/secrets/`, gitignoré),
+**chiffré au repos** (Fernet), résolu dans ce coffre seul — un agent ne voit que
+ses propres secrets. Trois modes d'auth ([docs/21 §3.2](../../docs/21-configuration-mcp.md)) :
+token statique chiffré, valeur d'appairage éphémère, token OAuth importé
+expirable.
 
-Tests (#103, lot final du parent #101) : le socle est rejoué sans réseau dans
-[`tests/test_mcp.py`](../../tests/test_mcp.py) (validation à la lecture,
-résolution des secrets, montage par le moteur, application à chaud, échecs
-propres, couture SDK) ; le volet catalogue (lecture seule, valeurs masquées)
-dans [`tests/test_controltower.py`](../../tests/test_controltower.py).
+## Tests
+
+- Socle #104 (validation à la lecture, résolution des secrets, montage par le
+  moteur, application à chaud, échecs propres, couture SDK) rejoué sans réseau
+  dans [`tests/test_mcp.py`](../../tests/test_mcp.py) ; volet catalogue
+  (lecture seule, valeurs masquées, **composition pool ∩ activation**) dans
+  [`tests/test_controltower.py`](../../tests/test_controltower.py).
+- Parent #129 (sans réseau) : pool ∩ activation + rétro-compat
+  [`tests/test_mcp_pool.py`](../../tests/test_mcp_pool.py) (#130), registre +
+  recherche + garde-fou [`tests/test_mcp_registry.py`](../../tests/test_mcp_registry.py)
+  (#131), secrets chiffrés + 3 parcours
+  [`tests/test_secrets_chiffrement.py`](../../tests/test_secrets_chiffrement.py)
+  (#132), et le **parcours de bout en bout** (bibliothèque → pool → activation →
+  coffre chiffré → composition → montage)
+  [`tests/test_mcp_config.py`](../../tests/test_mcp_config.py) (#134).
+
 Guide : [docs/07 §6.7](../../docs/07-guide-de-demarrage.md).
 
 Classification des **modes d'authentification** de ces serveurs (token statique

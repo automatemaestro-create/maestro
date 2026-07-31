@@ -1,20 +1,24 @@
 # Configuration MCP — ce qui dépend du client, ce qui dépend de l'outil (ticket #126)
 
-**Version :** 0.1
+**Version :** 0.2 — §3 mis à jour après livraison du parent #129 (pool projet,
+bibliothèque curée, secrets chiffrés, écriture depuis la Control Tower).
 Revue transverse des intégrations MCP en place (GitLab #106, Slack #105,
 Figma #115/#125) sous un angle mis au jour par l'évaluation du serveur MCP
 officiel Figma : dans une configuration MCP, **tout ne se décide pas au même
 endroit**. Cette page classe chaque intégration par mode d'authentification et
-en tire les pré-requis pour la cible produit : **configurer les serveurs MCP
-depuis la Control Tower, pour n'importe quel fournisseur de modèle**.
+en tire les pré-requis pour la cible produit — **configurer les serveurs MCP
+depuis la Control Tower, pour n'importe quel fournisseur de modèle** — désormais
+réalisée par le parent #129 (§3.3).
 
 > **Principe** : le protocole MCP est standardisé, mais la responsabilité se
 > partage. La **déclaration du serveur** (où et comment le brancher) appartient
-> au **client** MCP — pour Maestro : `core/mcp/<agent>.json`. L'**émission du
-> secret** (procédure, scopes, durée de vie) appartient à l'**outil** — GitLab
-> émet ses PAT, Slack ses tokens de bot, Figma ses tokens OAuth. L'**OAuth**
-> est le cas hybride : le token est émis par l'outil mais négocié et détenu
-> **par client** — et l'outil peut restreindre quels clients ont ce droit.
+> au **client** MCP — pour Maestro : le fichier hérité `core/mcp/<agent>.json`
+> (#104) ou, depuis #129, le **pool projet** configurable depuis la Control
+> Tower (§3.3). L'**émission du secret** (procédure, scopes, durée de vie)
+> appartient à l'**outil** — GitLab émet ses PAT, Slack ses tokens de bot,
+> Figma ses tokens OAuth. L'**OAuth** est le cas hybride : le token est émis par
+> l'outil mais négocié et détenu **par client** — et l'outil peut restreindre
+> quels clients ont ce droit.
 
 ---
 
@@ -71,10 +75,10 @@ construire.
   montage sans échec — une UI peut donc proposer des intégrations non encore
   configurées sans casser les runs.
 
-### 3.2 À construire — trois modes de saisie dans l'UI
+### 3.2 Les trois parcours de saisie dans l'UI
 
-La classification du §2 impose à la future page de configuration de
-distinguer **trois parcours**, un par mode d'auth :
+La classification du §2 impose à la page de configuration de distinguer
+**trois parcours**, un par mode d'auth (tous trois livrés par #132/#133, §3.3) :
 
 1. **Secret statique saisissable** (GitLab, Slack, la plupart des PAT) : un
    champ secret + un lien vers la procédure de création côté outil. Stockage
@@ -90,8 +94,37 @@ distinguer **trois parcours**, un par mode d'auth :
    clients, ce mode peut migrer vers un vrai flux OAuth intégré (consentement
    dans le navigateur, refresh géré par la Control Tower).
 
-L'implémentation UI/API de cette page fera l'objet d'un ticket dédié, à
-rapprocher de la page Paramètres structurée (#121).
+### 3.3 Réalisation — le parent #129
+
+La cible du §3 est portée par le parent **#129** (« Bibliothèque de serveurs MCP
+configurables depuis la Control Tower »), en cinq lots dont le socle est en
+place. L'architecture livrée, détaillée dans [docs/04 §6.4](./04-specifications-agents.md) :
+
+- **Pool projet + activation par agent** (#130) : une intégration est déclarée
+  **une fois** dans le pool (`pool.json`), le secret saisi une fois, puis
+  **activée** par agent (`activations.json`). `McpStore.lire(agent)` **compose**
+  la déclaration héritée (§3.1, `core/mcp/<agent>.json`) et les intégrations du
+  pool activées ; **rétro-compatible** (sans activation, le comportement du #104
+  est strictement préservé) et migration outillée (`migrer`).
+- **Bibliothèque curée** (#131) : un registre de templates recherchable
+  (`GET /api/mcp/registre`), chaque entrée guidant sa configuration selon son
+  mode d'auth. **Garde-fou supply-chain** ([docs/19](./19-securite-modele-de-menace.md)) :
+  seule une entrée de l'allowlist curée est instanciable — *découverte ≠
+  installation*.
+- **Secrets chiffrés côté serveur** (#132, parent #102) : le token vit dans le
+  **coffre de l'agent**, chiffré au repos (Fernet), résolu au montage dans ce
+  coffre seul (un agent ne voit que les siens). Les **trois parcours** du §3.2
+  y sont implémentés (`SecretStore.enregistrer`/`renouveler`, état lisible sans
+  déchiffrer).
+- **Écriture depuis la Control Tower** (#133) : la Control Tower devient la
+  **source en écriture** de cette config (page Paramètres #121 — bibliothèque,
+  configuration, activation par agent), en remplacement de l'édition manuelle du
+  fichier. La fiche agent du catalogue reste la vue lecture seule de la
+  composition.
+
+Tests sans réseau (#134) : composition et rétro-compat, registre et garde-fou,
+secrets chiffrés et 3 parcours, et le **parcours de bout en bout** bibliothèque →
+pool → activation → coffre → montage ([tests/test_mcp_config.py](../tests/test_mcp_config.py)).
 
 ---
 
