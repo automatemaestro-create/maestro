@@ -30,9 +30,9 @@ cette commande est autosuffisante).
      candidates au nettoyage.
 
 > **Dans un worktree** (`git worktree`, docs/10 §9) : ne bascule pas sur `main` — il est emprunté
-> par le clone principal et `git checkout main` y échoue. Le nettoyage se réduit alors à la
-> suppression des branches mergées (étape 4, dernier point). Repère : à la racine d'un worktree,
-> `.git` est un fichier, pas un dossier.
+> par le clone principal et `git checkout main` y échoue. La mise à jour de `main`, elle, reste
+> possible : `lib.sh sync-main` (étape 5) travaille sur le clone principal quel que soit l'endroit
+> d'où on l'appelle. Repère : à la racine d'un worktree, `.git` est un fichier, pas un dossier.
 
 4. **Avant de supprimer quoi que ce soit**, ramasse les worktrees dont le travail est soldé :
    ```
@@ -47,8 +47,15 @@ cette commande est autosuffisante).
    ton résumé final, et `--check` d'abord si tu veux voir avant d'agir.
 
 5. S'il y a des candidates :
-   - si l'une d'elles est la branche courante, bascule d'abord dessus vers `main` ;
-   - `git checkout main && git pull origin main` ;
+   - si l'une d'elles est la branche courante **et que tu es dans le clone principal**, bascule
+     d'abord sur `main` (`git checkout main`) — on ne supprime pas une branche sous ses propres
+     pieds ;
+   - remets `main` à jour : `bash scripts/gitlab/lib.sh sync-main`. Le helper (#205) avance
+     `refs/heads/main` du **clone principal** sur `origin/main`, en **fast-forward seulement**,
+     d'où qu'on l'appelle — depuis un worktree il pose la ref sans toucher au moindre fichier, là
+     où un `git checkout main` échouerait. Il **s'abstient en le disant** si le répertoire porteur
+     de `main` a des changements non commités ou si `main` a divergé : relaie son message, ce
+     n'est jamais bloquant ;
    - pour chaque candidate : `git branch -D <branche>`. Le `-D` (forcé) est **sûr ici** parce que
      GitLab a déjà confirmé la MR comme `merged` (étape 3) — garantie plus forte que l'ancêtre
      git, et **nécessaire** car le projet merge en **squash** : la pointe de la branche n'est pas
@@ -62,7 +69,7 @@ cette commande est autosuffisante).
      merge) — rien à faire ; tu peux le vérifier si besoin, mais ne le repose pas.
 
 6. Si aucune candidate n'est trouvée, contente-toi de remettre `main` à jour
-   (`git checkout main && git pull origin main`) et dis-le.
+   (`bash scripts/gitlab/lib.sh sync-main`) et dis-le — le helper est muet quand elle l'est déjà.
 
 7. Termine par un résumé des branches supprimées (locale/distante) et de celles laissées de
    côté avec la raison (pas de MR, MR pas encore mergée), suivi des **worktrees retirés** à

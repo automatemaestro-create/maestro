@@ -1085,6 +1085,66 @@ le verdict par `MAESTRO_WORKTREE_VERDICT` et tournent donc sans réseau ni glab
   correspondent plus : créer le worktree avec `--sans-liens`, puis l'équiper avec
   `bash scripts/setup.sh`.
 
+### 9.3 `main` remis à jour d'office après chaque merge (#205)
+
+Troisième automatisme de la même famille, et le dernier qui manquait : `cleanup-merged` purge les
+**branches** mergées (#23), `gc` ramasse les **worktrees** soldés (§9.2), `sync-main` remet la
+branche **`main` locale** à niveau.
+
+Le retard est une conséquence directe de §9.1. Avant #181, `/ticket-start` passait par
+`git checkout main && git pull origin main` dans le clone principal — la mise à jour était un effet
+de bord du démarrage. Depuis que la session se relocalise dans un worktree, c'est l'autre branche de
+`gl_start_branch` qui gagne (celle qui part directement d'`origin/main`), et **plus rien ne fait
+avancer `refs/heads/main`** hors d'un `/branch-cleanup` explicite. Constaté à l'ouverture de #205 :
+6 commits de retard sur le clone principal.
+
+**Deux références, une seule en cause** — la distinction décide de la gravité :
+
+| Référence | État | Qui la rafraîchit |
+|---|---|---|
+| `origin/main` (remote-tracking) | à jour | le `fetch` de `gl_start_branch`, `gl_cleanup_merged`, `worktree.sh` |
+| `refs/heads/main` (branche locale) | **en retard** | plus personne depuis #181 |
+
+Chaque worktree de ticket part d'`origin/main` (`git worktree add -b <branche> origin/main`) : **le
+code produit n'a jamais été en cause**. Ce qui était périmé, c'est ce qu'on *lit* sur le clone
+principal — l'IDE, `git log`, un diff local.
+
+```bash
+bash scripts/gitlab/lib.sh sync-main            # avance main, en fast-forward seulement
+bash scripts/gitlab/lib.sh sync-main --check    # dit ce qu'il ferait, sans rien écrire
+```
+
+**Il n'y a aucun événement local à écouter** : le merge a lieu sur GitLab, et aucun hook git ne se
+déclenche à ce moment-là (`post-merge` ne réagit qu'à un merge ou un pull *local*). D'où un câblage
+aux **points de passage obligés** plutôt qu'un déclencheur qui n'existe pas :
+
+| Où | Quand |
+|---|---|
+| `worktree.sh ensure` | à chaque `/ticket-start`, manuel comme autonome — donc à chaque ticket d'un run `/orchestrate` |
+| `/branch-cleanup` | après un merge, à la place du `git checkout main && git pull origin main` d'avant |
+
+**Deux façons d'avancer la ref**, selon que `main` est empruntée ou non par un répertoire de
+travail. Si personne ne l'a en HEAD, la ref se pose seule (`update-ref`) — aucun fichier touché, ce
+qui rend l'appel valide depuis un worktree, là où un `git checkout main` échouerait. Si un
+répertoire la porte (le cas normal : le clone principal), il faut un `merge --ff-only` **dans ce
+répertoire**, sans quoi son index resterait sur l'ancien arbre et tout le delta apparaîtrait en
+« supprimé/modifié ».
+
+**Il s'abstient plutôt que de forcer**, comme `behind-main` (§6) et `gc` (§9.2) : ça *dit*, ça ne
+casse pas. Jamais de `reset --hard`, jamais de non-fast-forward.
+
+| Code | Situation | Ce qu'il fait |
+|---|---|---|
+| `0` | à jour, ou mise à jour faite | muet quand il n'y a rien à faire |
+| `3` | `main` local **divergent** | s'abstient — un commit non poussé, l'écraser serait une perte |
+| `4` | répertoire porteur de `main` **sale** | s'abstient et nomme le répertoire |
+| `1` | hors dépôt git, `origin/main` absent | s'abstient |
+
+Un code non nul n'est **pas fatal** pour l'appelant : une abstention n'empêche jamais un ticket de
+démarrer ni un run de continuer. Couvert par [`test_worktree.py`](../tests/test_worktree.py) — mise
+à jour depuis un worktree, ref posée sans répertoire de travail, les deux abstentions, idempotence,
+et le fait qu'`ensure` démarre le ticket même quand `main` ne peut pas suivre.
+
 ---
 
 ## 10. Travail à plusieurs — plusieurs personnes, plusieurs clones

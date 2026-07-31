@@ -752,3 +752,140 @@ def test_ensure_ramasse_les_worktrees_soldes_avant_de_monter_le_sien(depot: Depo
     verdict = _verdict(acheve)
     assert verdict.startswith("WORKTREE ")
     assert Path(verdict[len("WORKTREE ") :]).resolve() == depot.worktree("153-suite").resolve()
+
+
+# --- Mise à jour de `main` (#205) --------------------------------------------------------------
+# Depuis #181 la session travaille dans un worktree, donc plus personne ne repasse par `main` : la
+# branche locale du clone principal prenait du retard à chaque merge sans que rien ne la rattrape.
+# `lib.sh sync-main` la remet à niveau — en FAST-FORWARD SEULEMENT, et en s'abstenant dès qu'il y a
+# le moindre doute, comme `behind-main` et `gc` : ça dit, ça ne casse pas.
+
+
+def _avance_origin(depot: Depot, nom: str = "NOUVEAU.md") -> str:
+    """Simule un merge côté serveur : `origin/main` avance, le clone local reste en arrière.
+
+    Le commit est fabriqué depuis le clone principal (le seul répertoire qui ait `main`), poussé,
+    puis **défait localement** — refs de suivi comprises. Le clone se retrouve exactement dans
+    l'état de quelqu'un qui n'a pas encore vu le merge : seul un `fetch` peut le lui apprendre,
+    ce qui met aussi celui de `sync-main` à l'épreuve.
+    """
+    avant = depot.git("rev-parse", "HEAD")
+    (depot.racine / nom).write_text("du neuf sur main\n", encoding="utf-8", newline="\n")
+    depot.git("add", nom)
+    depot.git("-c", "core.hooksPath=", "commit", "--quiet", "-m", "feat: du neuf sur main")
+    depot.git("push", "--quiet", "origin", "main")
+    apres = depot.git("rev-parse", "HEAD")
+    depot.git("reset", "--hard", "--quiet", avant)
+    depot.git("update-ref", "refs/remotes/origin/main", avant)
+    return apres
+
+
+def test_sync_main_avance_main_du_clone_principal_depuis_un_worktree(depot: Depot) -> None:
+    """Le cas nominal : la session est ailleurs, et `main` se remet quand même à jour.
+
+    `main` étant empruntée par le clone principal, la ref ne suffit pas — l'index et les fichiers
+    doivent suivre, sans quoi tout le delta apparaîtrait en « supprimé » dans ce répertoire.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    attendu = _avance_origin(depot)
+
+    acheve = depot.lib("sync-main", cwd=depot.worktree())
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "main mis à jour : 1 commit(s)" in acheve.stdout
+    assert depot.git("rev-parse", "main") == attendu
+    assert (depot.racine / "NOUVEAU.md").exists(), "le répertoire de travail devait suivre la ref"
+    assert depot.git("status", "--porcelain") == ""
+
+
+def test_sync_main_est_muet_et_idempotent_quand_main_est_a_jour(depot: Depot) -> None:
+    """Le cas de loin le plus fréquent : rien à faire, donc rien à dire.
+
+    Sans ça, chaque `/ticket-start` s'ouvrirait sur une ligne de bruit — même exigence que le
+    `gc --auto` du ticket #197.
+    """
+    for _ in range(2):
+        acheve = depot.lib("sync-main")
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert acheve.stdout.strip() == "", acheve.stdout
+
+
+def test_sync_main_s_abstient_si_le_repertoire_porteur_de_main_est_sale(depot: Depot) -> None:
+    """Un `merge --ff-only` sur un arbre sale échouerait à mi-chemin : on n'essaie même pas."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    attendu_avant = depot.git("rev-parse", "main")
+    _avance_origin(depot)
+    (depot.racine / "README.md").write_text("travail en cours\n", encoding="utf-8", newline="\n")
+
+    acheve = depot.lib("sync-main", cwd=depot.worktree())
+    assert acheve.returncode == 4, acheve.stdout + acheve.stderr
+    assert "changements non commités" in acheve.stderr
+    assert depot.git("rev-parse", "main") == attendu_avant, "main ne devait pas bouger"
+
+
+def test_sync_main_s_abstient_si_main_a_diverge(depot: Depot) -> None:
+    """Un commit local jamais poussé : l'écraser serait une perte de données, jamais une synchro."""
+    _avance_origin(depot)
+    (depot.racine / "local.md").write_text("commit local\n", encoding="utf-8", newline="\n")
+    depot.git("add", "local.md")
+    depot.git("-c", "core.hooksPath=", "commit", "--quiet", "-m", "chore: commit local")
+    divergent = depot.git("rev-parse", "main")
+
+    acheve = depot.lib("sync-main")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "divergé" in acheve.stderr
+    assert depot.git("rev-parse", "main") == divergent, "main ne devait pas bouger"
+    assert (depot.racine / "local.md").exists(), "le commit local devait survivre intact"
+
+
+def test_sync_main_pose_la_ref_quand_main_n_est_empruntee_nulle_part(depot: Depot) -> None:
+    """Sans répertoire de travail sur `main`, la ref se pose seule — aucun fichier touché.
+
+    C'est ce qui rend l'appel valide même là où un `git checkout main` n'aurait aucun sens.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    attendu = _avance_origin(depot)
+    depot.git("checkout", "--quiet", "-b", "autre")
+
+    acheve = depot.lib("sync-main", cwd=depot.worktree())
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "main mis à jour : 1 commit(s)" in acheve.stdout
+    assert depot.git("rev-parse", "main") == attendu
+    assert depot.git("branch", "--show-current") == "autre", "on ne bascule sur rien"
+    assert not (depot.racine / "NOUVEAU.md").exists(), "aucun fichier ne devait bouger"
+
+
+def test_sync_main_check_ne_touche_a_rien(depot: Depot) -> None:
+    attendu_avant = depot.git("rev-parse", "main")
+    _avance_origin(depot)
+
+    acheve = depot.lib("sync-main", "--check")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "avancerait de 1 commit(s)" in acheve.stdout
+    assert depot.git("rev-parse", "main") == attendu_avant
+
+
+def test_ensure_met_main_a_jour_sans_casser_son_verdict(depot: Depot) -> None:
+    """Le câblage qui fait tout le ticket : aucun geste dédié à se rappeler.
+
+    `/ticket-start` appelle `ensure` — c'est le point de passage obligé de tout démarrage, manuel
+    comme autonome. Et le verdict doit rester la DERNIÈRE ligne de stdout : le compte rendu de
+    synchronisation ne casse pas le contrat de sortie sur lequel /ticket-start s'appuie (#181).
+    """
+    attendu = _avance_origin(depot)
+
+    acheve = depot.lance("ensure", "153", "--branche", "chore/153-suite")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "main mis à jour" in acheve.stdout
+    assert depot.git("rev-parse", "main") == attendu
+    assert _verdict(acheve).startswith("WORKTREE ")
+
+
+def test_ensure_demarre_le_ticket_meme_si_main_ne_peut_pas_suivre(depot: Depot) -> None:
+    """Une abstention est un signalement, jamais un blocage — le ticket doit partir quand même."""
+    _avance_origin(depot)
+    (depot.racine / "README.md").write_text("travail en cours\n", encoding="utf-8", newline="\n")
+
+    acheve = depot.lance("ensure", "153", "--branche", "chore/153-suite")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "changements non commités" in acheve.stderr
+    assert _verdict(acheve).startswith("WORKTREE ")

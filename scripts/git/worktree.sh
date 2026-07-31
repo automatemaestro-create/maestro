@@ -487,6 +487,25 @@ commande_ensure() {
       return 1 ;;
   esac
 
+  # Mise à jour de `main` dans le clone principal (#205), en fast-forward seulement. Même raison
+  # d'être ici que le ramassage ci-dessous : depuis #181 la session travaille dans un worktree, donc
+  # plus personne ne repasse par `main` — c'est ce point de passage-ci, qu'emprunte tout
+  # /ticket-start (manuel comme autonome), qui la remet à niveau. Best-effort et muet quand elle est
+  # déjà à jour ; ses abstentions (arbre porteur sale, divergence) sont relayées telles quelles et
+  # n'empêchent jamais un ticket de démarrer.
+  local sortie_sync code_sync
+  if [ "${MAESTRO_SYNC_MAIN:-1}" != 0 ]; then
+    sortie_sync="$(bash "$ICI/../gitlab/lib.sh" sync-main 2>&1)"
+    code_sync=$?
+    if [ -n "$sortie_sync" ]; then
+      if [ "$code_sync" -eq 0 ]; then
+        ok "$sortie_sync"
+      else
+        printf '%s\n' "$sortie_sync" | sed 's/^/  /' >&2
+      fi
+    fi
+  fi
+
   # Ramassage des worktrees soldés (#197), AVANT de monter celui-ci et quel que soit le verdict qui
   # suivra : c'est le seul moment où quelqu'un passe par ici à coup sûr, et le pendant exact du
   # `cleanup-merged` que `start-branch` fait aux branches juste après. Best-effort et muet quand il
