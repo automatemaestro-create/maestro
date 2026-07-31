@@ -70,6 +70,10 @@ MILESTONE=""
 RUN_ID=""
 TEST_REPRISE=""
 LIRE_RESULTAT=""
+REPRISE=0
+REPRISE_ID=""
+REPRISE_DIR=""
+REPRISE_AVEC_VALEUR=0
 
 usage() {
   cat <<'USAGE'
@@ -79,6 +83,10 @@ La boucle d'orchestration autonome — un ticket, une session Claude Code.
 
 Options :
   --dry-run            N'exécute rien : affiche le plan et ce qui serait fait.
+  --resume [<run-id>]  Reprend un run qui ne s'est pas terminé : rejoue SON plan, sans le
+                       recalculer. Sans argument, le run reprenable le plus récent. Les tickets
+                       déjà livrés se sautent d'eux-mêmes ; celui qui était en vol au moment de la
+                       coupure est repris. Se combine avec --detach.
   --detach             Relance le run dans une console indépendante et rend la main tout de suite.
                        C'est ce qui permet de démarrer un run depuis une session Claude Code : le
                        pilote reste un script shell, dans son propre processus.
@@ -97,8 +105,9 @@ Options :
                        Un run écrit déjà cette vue à côté, dans <iid>.resultat.txt.
   -h, --help           Cette aide.
 
-Limite d'usage : la boucle attend jusqu'au reset et REPREND la même session (--resume). Au-delà de
-5 h 30 d'attente cumulée sur un ticket, c'est la limite hebdomadaire : le run s'arrête proprement.
+Limite d'usage : la boucle attend jusqu'au reset et reprend la même session Claude. Au-delà de
+5 h 30 d'attente cumulée sur un ticket, c'est la limite hebdomadaire : le run s'arrête proprement —
+et c'est « --resume » qui le rejoue plus tard. Les runs reprenables : status.sh --reprenables.
 
 Arrêt d'urgence : créer .maestro/orchestrate/STOP (testé entre deux tickets et pendant l'attente).
 Le run ne merge, ne ferme et ne force-push jamais : il laisse N MR en Draft à relire.
@@ -118,6 +127,16 @@ while [ $# -gt 0 ]; do
     --timeout) TIMEOUT_BRUT="${2:-45m}"; shift ;;
     --modele | --model) MODELE="${2:-opus}"; shift ;;
     --plan) PLAN_IMPOSE="${2:-}"; shift ;;
+    # La valeur est FACULTATIVE (« --resume » seul = le run reprenable le plus récent) : on ne
+    # consomme l'argument suivant que s'il n'est pas lui-même une option, sans quoi
+    # « --resume --detach » avalerait le mode de lancement.
+    --resume | --reprendre)
+      REPRISE=1
+      case "${2:-}" in
+        '' | -*) ;;
+        *) REPRISE_ID="$2"; REPRISE_AVEC_VALEUR=1; shift ;;
+      esac
+      ;;
     --milestone) MILESTONE="${2:-}"; shift ;;
     --run-id) RUN_ID="${2:-}"; shift ;;
     --max-reprises) MAESTRO_ORCHESTRATE_MAX_REPRISES="${2:-3}"; shift ;;
@@ -207,6 +226,23 @@ uuid_du_ticket() {
   local f="$RUN_DIR/$1.session"
   [ -s "$f" ] || genere_uuid >"$f"
   cat "$f"
+}
+
+# reprend_en_vol <iid> : 0 si ce ticket est celui que le run REPRIS avait en main quand il a été
+# coupé — témoin de session présent dans son journal, et aucune ligne de bilan à son nom.
+#
+# C'est la seule exception au filtre « statut À faire » de la boucle, et elle est étroite à dessein.
+# Sans elle, une reprise laisse derrière elle la victime même de l'interruption : `/ticket-start` a
+# posé « En cours » sur ce ticket, donc la relecture de statut l'écarte comme s'il appartenait à
+# quelqu'un d'autre — alors que son worktree et son travail non commité nous attendent. Les autres
+# statuts (« En revue », « Terminé », pris par une session voisine) restent sautés comme avant.
+reprend_en_vol() {
+  [ "$REPRISE" = 1 ] || return 1
+  [ -s "$REPRISE_DIR/$1.session" ] || return 1
+  # Pas de bilan à son nom = la coupure l'a pris en vol. `!` sur l'awk : il sort 0 quand il TROUVE
+  # la ligne, et un resume.tsv absent (run coupé très tôt) vaut « aucun verdict », pas une erreur.
+  ! awk -F'\t' -v iid="$1" '$1 !~ /^#/ && $1 == iid { trouve = 1 } END { exit !trouve }' \
+    "$REPRISE_DIR/resume.tsv" 2>/dev/null
 }
 
 # prepare_worktree <iid> <branche> <journal> : monte le worktree du ticket et IMPRIME SON CHEMIN.
@@ -765,12 +801,14 @@ PROMPT
 }
 
 # Le prompt de reprise s'adresse à une conversation QUI A DÉJÀ SON CONTEXTE : inutile de lui
-# réexpliquer le ticket, il faut au contraire éviter qu'elle recommence ce qu'elle a fait.
+# réexpliquer le ticket, il faut au contraire éviter qu'elle recommence ce qu'elle a fait. Il sert
+# deux coupures que rien ne distingue vues d'ici — la limite d'usage (#171) et le run repris en vol
+# (#204) — d'où une formulation qui ne présume pas de la cause.
 prompt_reprise() {
   cat <<PROMPT
-Reprends exactement là où tu t'es arrêté sur le ticket #$1 : la session a été interrompue par la
-limite d'usage, pas par une erreur. Ne recommence rien de ce qui est déjà fait — regarde d'abord
-l'état de la branche (git status, git log) avant d'agir. Termine l'implémentation puis clôture avec
+Reprends exactement là où tu t'es arrêté sur le ticket #$1 : la session a été interrompue (limite
+d'usage, ou run coupé), pas par une erreur. Ne recommence rien de ce qui est déjà fait — regarde
+d'abord l'état de la branche (git status, git log) avant d'agir. Termine l'implémentation puis clôture avec
 /ticket-ship. Toujours aucune validation humaine à attendre, et aucun résultat différé non plus :
 ce processus s'arrête à la fin de ton tour, ne rends pas la main en annonçant que tu reprendras
 plus tard — obtiens ce qui te manque en avant-plan, tranche sans lui, ou sors sur
@@ -828,11 +866,59 @@ fi
 
 if arret_demande; then exit 0; fi
 
+# --- Reprise d'un run qui ne s'est pas terminé (#204) -------------------------------------------------
+# Reprendre, c'est REJOUER LE PLAN d'un run interrompu — pas en recalculer un. Le backlog a pu bouger
+# entre-temps (un ticket pris à la main, un lot ajouté, une priorité changée) et un ordre recalculé
+# n'aurait plus grand-chose à voir avec celui qu'on croit reprendre. Le plan est figé une fois, au
+# départ ; la relecture du statut de chaque ticket, elle, suffit à écarter ce qui a été livré depuis.
+#
+# Le journal, lui, est NEUF : `resume.tsv` s'écrit en tête de run, donc rejouer dans le répertoire du
+# run repris effacerait son bilan. Le lien entre les deux tient dans le fichier `reprise-de`.
+#
+# La résolution a lieu ICI, avant la création du répertoire et avant `--detach` : une reprise qui ne
+# désigne rien doit le dire tout de suite, pas dans une console qui s'ouvre pour se refermer.
+if [ "$REPRISE" = 1 ]; then
+  if [ -n "$PLAN_IMPOSE" ]; then
+    printf 'run.sh : --resume et --plan désignent tous deux le plan à jouer — n'\''en garder qu'\''un.\n' >&2
+    exit 2
+  fi
+  # Tolérant au copier-coller : le chemin d'un journal vaut son run-id.
+  [ -n "$REPRISE_ID" ] && REPRISE_ID="$(basename "${REPRISE_ID%/}")"
+  if [ -z "$REPRISE_ID" ]; then
+    # Le choix du run est délégué à `status.sh --reprenables`, source unique de « qu'est-ce qui est
+    # reprenable ? » : le plus récent est le dernier de sa liste, triée du plus ancien au plus récent.
+    REPRISE_ID="$(bash "$RACINE/scripts/orchestrate/status.sh" --reprenables 2>/dev/null | tail -1 | cut -f1)"
+    if [ -z "$REPRISE_ID" ]; then
+      printf 'run.sh : aucun run à reprendre — les plans connus ont tous rendu leur verdict.\n' >&2
+      printf '  les runs connus     bash scripts/orchestrate/status.sh --list\n' >&2
+      printf '  un run neuf         bash scripts/orchestrate/run.sh --detach\n' >&2
+      exit 1
+    fi
+  fi
+  REPRISE_DIR="$ORCH_DIR/$REPRISE_ID"
+  if [ ! -r "$REPRISE_DIR/plan.tsv" ]; then
+    printf 'run.sh : le run « %s » n'\''a pas de plan lisible — %s\n' "$REPRISE_ID" "$REPRISE_DIR/plan.tsv" >&2
+    printf '  les runs connus     bash scripts/orchestrate/status.sh --list\n' >&2
+    exit 1
+  fi
+  PLAN_IMPOSE="$REPRISE_DIR/plan.tsv"
+  # Rejouer un run DANS son propre répertoire écraserait le bilan qu'on prétend justement
+  # préserver : `resume.tsv` s'écrit en tête de run, et le plan se recopierait sur lui-même.
+  if [ -n "$RUN_ID" ] && [ "$RUN_ID" = "$REPRISE_ID" ]; then
+    printf 'run.sh : --run-id %s est le run repris lui-même — son bilan serait écrasé.\n' "$RUN_ID" >&2
+    printf '  une reprise écrit dans un journal NEUF : laisser --run-id de côté, ou en choisir un autre.\n' >&2
+    exit 2
+  fi
+fi
+
 [ -n "$RUN_ID" ] || RUN_ID="$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="$ORCH_DIR/$RUN_ID"
 mkdir -p "$RUN_DIR" || { printf 'run.sh : impossible de créer %s\n' "$RUN_DIR" >&2; exit 1; }
 PLAN="$RUN_DIR/plan.tsv"
 RESUME="$RUN_DIR/resume.tsv"
+# Deux journaux partiels qui racontent la même liste de tickets doivent se répondre : sans ce
+# fichier, rien ne dirait que celui-ci continue l'autre. `status.sh` l'affiche en en-tête.
+[ "$REPRISE" = 1 ] && printf '%s\n' "$REPRISE_ID" >"$RUN_DIR/reprise-de"
 
 # renonce_au_run : retire le répertoire du run quand il ne s'y est RIEN passé (#180). Le `mkdir -p`
 # ci-dessus a lieu avant de savoir s'il y aura seulement quelque chose à traiter : un backlog vide,
@@ -847,7 +933,9 @@ renonce_au_run() {
   local f
   for f in "$RUN_DIR"/* "$RUN_DIR"/.[!.]*; do
     [ -e "$f" ] || continue
-    case "${f##*/}" in plan.tsv) ;; *) return 1 ;; esac
+    # `reprise-de` est posé avec le répertoire, avant qu'on sache s'il y aura quelque chose à
+    # traiter : le compter comme une trace de travail retiendrait le vestige d'une reprise à vide.
+    case "${f##*/}" in plan.tsv | reprise-de) ;; *) return 1 ;; esac
   done
   rm -rf "$RUN_DIR" 2>/dev/null || return 1
   return 0
@@ -927,6 +1015,10 @@ if [ "$DETACH" = 1 ]; then
       --detach | --detache | --détaché) continue ;;
       # Retiré ici, réimposé juste après : le lanceur doit porter le run-id une fois, pas deux.
       --run-id) saute_valeur=1; continue ;;
+      # Même traitement, pour la même raison : « --resume » sans valeur a été résolu en un run-id
+      # précis, et le lanceur doit porter CE run-là. Le relancer non résolu le ferait rechoisir dans
+      # une liste qui aura changé — le run qu'on vient de créer y figurerait, entre autres.
+      --resume | --reprendre) saute_valeur="$REPRISE_AVEC_VALEUR"; continue ;;
     esac
     args_enfant+=("$a")
   done
@@ -934,6 +1026,7 @@ if [ "$DETACH" = 1 ]; then
   # annoncerait un journal qui ne serait jamais écrit. Une valeur déjà passée par l'appelant est
   # reprise telle quelle — c'est celle qui a servi à créer RUN_DIR.
   args_enfant+=(--run-id "$RUN_ID")
+  [ "$REPRISE" = 1 ] && args_enfant+=(--resume "$REPRISE_ID")
 
   if ! detacher ${args_enfant+"${args_enfant[@]}"}; then
     printf 'run.sh : le lancement détaché a échoué — le run n'\''a pas démarré.\n' >&2
@@ -942,11 +1035,12 @@ if [ "$DETACH" = 1 ]; then
   fi
 
   printf '\n%sRun %s lancé dans une console détachée.%s\n' "$C_B" "$RUN_ID" "$C_0"
+  [ "$REPRISE" = 1 ] && printf '  reprise    du run %s (son plan, rejoué)\n' "$REPRISE_ID"
   printf '  journal    %s\n' "$RUN_DIR"
   printf '  sortie     %s/run.log\n' "$RUN_DIR"
   printf '  suivre     tail -f %s/run.log\n' "$RUN_DIR"
   printf '  arrêter    touch %s\n' "$STOP"
-  printf '  reprendre  bash scripts/orchestrate/run.sh --plan %s/plan.tsv\n' "$RUN_DIR"
+  printf '  reprendre  bash scripts/orchestrate/run.sh --resume %s\n' "$RUN_ID"
   printf '\n%sCe que ce mode ne garantit pas%s : la console ne dépend plus de ce shell, mais rien\n' "$C_Y" "$C_0"
   printf 'n'\''assure qu'\''elle survive à un parent qui enfermerait ses descendants (job object Windows).\n'
   printf 'Si le run s'\''arrête avec lui, le plan reste : la commande « reprendre » le rejoue, les tickets\n'
@@ -975,6 +1069,7 @@ fi
 
 nb_plan="$(grep -cv '^#' "$PLAN")"
 printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
+[ "$REPRISE" = 1 ] && printf 'reprise du run %s — son plan, rejoué tel quel\n' "$REPRISE_ID"
 printf 'plan : %s ticket(s) · modèle %s · budget %s $/ticket · timeout %s/ticket\n' \
   "$nb_plan" "$MODELE" "$BUDGET" "$(duree_lisible "$TIMEOUT_S")"
 printf 'journal : %s\n\n' "$RUN_DIR"
@@ -997,8 +1092,9 @@ if [ "$DRY" = 1 ]; then
   printf '  2. session dédiée     %s -p … --session-id <uuid> --settings scripts/orchestrate/settings.run.json\n' "$CLAUDE_BIN"
   printf '                        --permission-mode acceptEdits --model %s --max-budget-usd %s\n' "$MODELE" "$BUDGET"
   printf '  3. verdict            MR ouverte ET statut « En revue » (lu dans GitLab, pas dans la sortie)\n'
-  printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis reprise de la même session (--resume)\n'
+  printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis réouverture de la même session Claude\n'
   printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'
+  printf '  6. run coupé          « run.sh --resume » rejoue CE plan, le ticket en vol compris\n'
   rm -rf "$RUN_DIR"
   exit 0
 fi
@@ -1059,8 +1155,15 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
 
   # Le plan est figé, l'état du backlog non : quelqu'un a pu prendre le ticket entre-temps. Le
   # relire coûte un appel et évite de retirer son travail à une autre session (docs/10 §5).
+  # L'exception — le ticket que le run repris avait en main — est justement celui dont le « En
+  # cours » vient de nous : le reprendre ne prend le travail de personne.
+  en_vol=0
   statut_actuel="$(gl_issue_owner "$iid" 2>/dev/null | cut -f1)"
-  if [ "$statut_actuel" != "À faire" ]; then
+  if [ "$statut_actuel" = "En cours" ] && reprend_en_vol "$iid"; then
+    en_vol=1
+    printf '  %s↻%s #%-4s repris en vol — le run %s l'\''avait en main à la coupure\n' \
+      "$C_Y" "$C_0" "$iid" "$REPRISE_ID"
+  elif [ "$statut_actuel" != "À faire" ]; then
     printf '  ~ #%-4s sauté — statut « %s » (le plan datait)\n' "$iid" "${statut_actuel:-?}"
     consigne "$iid" SAUTE - 0 0 "statut « ${statut_actuel:-?} » au moment de le prendre"
     NB_SAUTE=$((NB_SAUTE + 1))
@@ -1098,12 +1201,20 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
   printf '  worktree : %s\n' "$dest"
 
   # 2. La session dédiée, avec reprise automatique si la limite d'usage tombe au milieu (#171).
+  #    Un ticket repris en vol rouvre LA SESSION de la coupure : son uuid est recopié du journal
+  #    repris AVANT `uuid_du_ticket`, qui en générerait un neuf sinon — et repartir à froid ferait
+  #    repayer un contexte déjà constitué. Si elle n'est plus reprenable, `lance_session` redémarre
+  #    tout seul à froid : le prompt est idempotent et le travail commité est sur la branche.
+  mode=neuf
+  if [ "$en_vol" = 1 ] && cp "$REPRISE_DIR/$iid.session" "$RUN_DIR/$iid.session" 2>/dev/null; then
+    mode=reprise
+    printf '  session de la coupure rouverte (%s)\n' "$(cat "$RUN_DIR/$iid.session")"
+  fi
   uuid="$(uuid_du_ticket "$iid")"
   debut=$SECONDS
   attente_cumulee=0
   tentative=0
   reprises=0
-  mode=neuf
   cout=0
 
   while :; do
@@ -1215,7 +1326,8 @@ printf '  %s✓%s %s réussi(s) · %s✗%s %s en échec · %s~%s %s sauté(s)\n'
 printf '  journal : %s\n' "$RUN_DIR"
 if [ "$PLAFOND_ATTEINT" = 1 ]; then
   printf '\n  %sRun arrêté sur une limite hebdomadaire%s — le reste du plan est intact.\n' "$C_Y" "$C_0"
-  printf '  Relancer plus tard reprendra là où on en est : bash scripts/orchestrate/run.sh\n'
+  printf '  Le rejouer plus tard, sans recalculer l'\''ordre : /orchestrate --resume %s\n' "$RUN_ID"
+  printf '  (hors Claude Code : bash scripts/orchestrate/run.sh --resume %s)\n' "$RUN_ID"
 fi
 if [ -n "$WORKTREES" ]; then
   # Rien à faire : le ramassage (#197) les retirera de lui-même dès que GitLab confirmera leur MR

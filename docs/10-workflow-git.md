@@ -1144,9 +1144,11 @@ automatique** quand la limite d'usage de 5 h tombe au milieu.
 
 ```bash
 bash scripts/orchestrate/queue.sh --check   # l'ordre de traitement, et ce qui a été écarté
+bash scripts/orchestrate/queue.sh --milestones  # sur quel milestone lancer un run (§11.2)
 bash scripts/orchestrate/run.sh --dry-run   # le plan et ce qui serait fait — rien n'est lancé
 bash scripts/orchestrate/run.sh             # le run, dans un terminal laissé ouvert
 bash scripts/orchestrate/run.sh --detach    # idem, dans une console indépendante — rend la main
+bash scripts/orchestrate/run.sh --resume    # reprend un run qui ne s'est pas terminé (§11.8)
 bash scripts/orchestrate/status.sh --watch  # où en est le run, depuis n'importe quel terminal
 touch .maestro/orchestrate/STOP             # arrêt d'urgence
 ```
@@ -1188,9 +1190,9 @@ Combiné à `--dry-run`, il n'a rien à détacher : le plan s'affiche en direct,
 
 **Ce qu'il ne garantit pas**, et qu'il annonce lui-même : la console ne dépend plus du shell
 appelant, mais rien n'assure qu'elle survive à un parent qui enfermerait ses descendants (*job
-object* Windows). Le filet est le plan sur disque — `--plan <run-id>/plan.tsv` le rejoue, les
-tickets déjà livrés étant sautés d'eux-mêmes (§11.4). Qui veut la certitude plutôt que le filet
-lance la commande **sans** `--detach` dans son propre terminal.
+object* Windows). Le filet est le plan sur disque — `--resume <run-id>` le rejoue, les tickets déjà
+livrés étant sautés d'eux-mêmes et celui qui était en vol repris (§11.8). Qui veut la certitude
+plutôt que le filet lance la commande **sans** `--detach` dans son propre terminal.
 
 ### 11.2 L'ordre, figé une fois — `queue.sh`
 
@@ -1206,6 +1208,23 @@ même plan, et un run reste reproductible même si le backlog évolue pendant qu
 
 `--check` ajoute sur stderr le détail des **écartés avec leur raison** : sans lui, une absence est
 indistinguable d'un bug.
+
+**Le milestone, lui, se choisit** (#204). La phase courante reste le défaut — c'est presque toujours
+le bon — mais plusieurs milestones actifs peuvent porter du travail en même temps, et le run partait
+sur la phase courante **en silence**. `--milestones` dit sur quoi le choix porte :
+
+```bash
+bash scripts/orchestrate/queue.sh --milestones      # titre, courant, à faire et libres, ouverts, échéance
+bash scripts/orchestrate/queue.sh --milestone "Phase 5 — Socle réel (backend)"
+```
+
+Seuls les milestones **actifs** y figurent (un milestone fermé est une phase soldée), et la colonne
+qui décide est **`à faire`** — les tickets « À faire » **et libres**, le filtre du tableau ci-dessus,
+et non les tickets ouverts : proposer un milestone dont tout est déjà assigné mènerait à un plan
+vide. Le compte est **indicatif** sur un point : un parent de suivi y compte pour un, là où le run
+traitera ses lots. [`/orchestrate`](../.claude/commands/orchestrate.md) s'en sert pour **poser la
+question** avant un run neuf — et ne la pose que si le choix est réel : un seul candidat s'annonce
+sans rien demander.
 
 ### 11.3 Un ticket, une session — `run.sh`
 
@@ -1269,7 +1288,8 @@ Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<i
 `permission_denials`), `<iid>.resultat.txt` (le même, **en clair**), `<iid>.log` (stderr), et
 `resume.tsv` (une ligne par ticket : verdict, MR, durée, coût, raison). Un run lancé avec
 `--detach` y ajoute `lancer.sh` (ce qui a été lancé) et `run.log` (toute la sortie de la console,
-flux d'activité compris).
+flux d'activité compris) ; un run de **reprise** (§11.8), `reprise-de` — l'id du run dont il
+continue le plan.
 
 **Après un run, le résultat d'une session se lit à l'œil nu** (#180). `<iid>.json` est le premier
 fichier qu'on ouvre après un échec, et il est écrit sur **une seule ligne minifiée** — 13 Ko d'une
@@ -1370,6 +1390,7 @@ bash scripts/orchestrate/status.sh                     # le run le plus récent,
 bash scripts/orchestrate/status.sh --watch [sec]       # ... et rafraîchi tant qu'il tourne
 bash scripts/orchestrate/status.sh --run-id <id>       # un run précis   (--list les énumère)
 bash scripts/orchestrate/status.sh --no-gitlab         # hors ligne : tout sauf l'état GitLab
+bash scripts/orchestrate/status.sh --reprenables       # ce qui peut être repris, en TSV (§11.8)
 ```
 
 En une sortie : l'état du run, le **ticket en cours** et son temps écoulé, les **commits et fichiers
@@ -1388,7 +1409,9 @@ Deux partis pris valent d'être connus :
   laisse exactement la même trace qu'un run qui travaille — d'où la ligne **activité**, qui date la
   dernière écriture (répertoire du run *et* index git du worktree) et bascule l'en-tête en
   « en cours ? » au-delà de 15 min de silence (`MAESTRO_ORCHESTRATE_SILENCE`). C'est une déduction
-  présentée comme telle, pas un verdict.
+  présentée comme telle, pas un verdict. Cette même déduction, prise une fois pour toutes, sert de
+  source unique à `--reprenables` et donc à `run.sh --resume` (§11.8) : deux formules qui
+  divergeraient se remarqueraient trop tard.
 
 **Aucun run en cours est un cas normal**, pas une erreur : le script le dit et sort en 0.
 [`/orchestrate --status`](../.claude/commands/orchestrate.md) s'appuie dessus plutôt que de
@@ -1474,6 +1497,50 @@ des commandes déjà autorisées) ; **2 relèvent de la forme d'appel** et sont 
 relatif) ; **4 restent refusés à dessein** — les deux attentes actives (`for … sleep 6`,
 `until [ -s … ]; do sleep 3; done`) parce que les autoriser rouvrirait le mode d'échec que #178
 ferme, `jobs` pour la même raison, et `bash <script hors du dépôt>` qui serait du code arbitraire.
+
+### 11.8 Reprendre un run qui ne s'est pas terminé — `--resume`
+
+Un run s'interrompt de plusieurs façons, et aucune n'est rare : console fermée, machine éteinte,
+limite **hebdomadaire** (§11.4), `--max` atteint, `STOP` posé. Dans tous les cas le `plan.tsv` reste
+sur disque — c'est le filet. On le rejoue **tel quel**, sans recalculer l'ordre : le backlog a pu
+bouger depuis (ticket pris à la main, lot ajouté, priorité changée) et un plan recalculé n'aurait
+plus grand-chose à voir avec celui qu'on croit reprendre.
+
+```bash
+bash scripts/orchestrate/status.sh --reprenables      # ce qui peut être repris, en TSV
+bash scripts/orchestrate/run.sh --resume <run-id>     # rejoue SON plan
+bash scripts/orchestrate/run.sh --resume --detach     # le plus récent, en console indépendante
+```
+
+**Personne n'a de run-id à retenir** : sans argument, `--resume` prend le plus récent des runs
+reprenables, et [`/orchestrate`](../.claude/commands/orchestrate.md) **propose la reprise de
+lui-même** au lancement — le choix « reprendre / nouveau run » remplace alors le simple feu vert
+(#204). `status.sh --list` marque les runs reprenables d'un `↻`.
+
+Ce qu'un run reprenable est, exactement : il reste des tickets **sans verdict** à son plan, **et**
+il ne tourne plus. Le second point ne se lit nulle part — pas de PID (§11.5) — et un run tué **en
+plein ticket** garderait sinon le visage d'un run qui travaille pour toujours : son témoin de
+session est là, personne n'a écrit de code de sortie. Il est donc écarté sur le **silence**
+(`MAESTRO_ORCHESTRATE_SILENCE`), et la colonne le dit au lieu de trancher à sa place — l'appelant
+prévient, il n'affirme pas.
+
+Trois choses à savoir sur ce que la reprise fait du plan :
+
+- **Les tickets déjà livrés se sautent d'eux-mêmes.** La boucle relit le statut GitLab de chaque
+  ticket avant de le prendre et n'en prend aucun qui ne soit plus « À faire » — le même contrôle
+  anti-collision qu'un run ordinaire (§5).
+- **Le ticket qui était en vol est repris**, et c'est la seule exception à la règle ci-dessus.
+  `/ticket-start` lui a posé « En cours » : sans exception, une reprise laisserait derrière elle la
+  victime même de l'interruption, avec son worktree et son travail non commité. L'exception est
+  étroite — il faut que le run repris ait laissé **son** témoin de session **sans ligne de bilan** —
+  et sa session Claude est **rouverte** avec son uuid, comme après une limite d'usage (§11.4) : le
+  contexte déjà payé est conservé, et si la session est perdue la boucle repart à froid. Un ticket
+  « En cours » que le run repris n'avait **pas** en main appartient à quelqu'un d'autre : il reste
+  sauté.
+- **Le journal est neuf.** `resume.tsv` s'écrit en tête de run, donc rejouer dans le répertoire du
+  run repris effacerait son bilan. Le nouveau run porte un fichier `reprise-de` avec l'id de son
+  prédécesseur, et `status.sh` l'affiche en en-tête : deux journaux partiels qui racontent la même
+  liste de tickets doivent se répondre.
 
 > **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) — même parti pris que le
 > reste : dépôt jetable, **ni réseau, ni quota, ni écriture GitLab**. Un `glab` factice répond
