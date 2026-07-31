@@ -24,6 +24,7 @@ import { ParametresApparence } from "@/components/parametres/ParametresApparence
 import { ParametresCouts } from "@/components/parametres/ParametresCouts";
 import { ParametresFournisseurs } from "@/components/parametres/ParametresFournisseurs";
 import { ParametresGeneral } from "@/components/parametres/ParametresGeneral";
+import { ParametresMcp } from "@/components/parametres/ParametresMcp";
 import { ParametresNotifications } from "@/components/parametres/ParametresNotifications";
 import {
   EspaceDefilement,
@@ -41,6 +42,7 @@ const CONTENUS: Record<IdSection, () => React.ReactNode> = {
   apparence: ParametresApparence,
   agents: ParametresAgents,
   fournisseurs: ParametresFournisseurs,
+  mcp: ParametresMcp,
   couts: ParametresCouts,
   notifications: ParametresNotifications,
 };

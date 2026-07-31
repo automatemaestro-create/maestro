@@ -36,12 +36,13 @@ import { DECALAGE_ANCRE_PX, SECTIONS_PARAMETRES } from "@/lib/parametres";
 const racine = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("le sommaire des Paramètres (lib/parametres)", () => {
-  it("couvre les six domaines de configuration annoncés", () => {
+  it("couvre les domaines de configuration annoncés", () => {
     expect(SECTIONS_PARAMETRES.map((section) => section.id)).toEqual([
       "general",
       "apparence",
       "agents",
       "fournisseurs",
+      "mcp",
       "couts",
       "notifications",
     ]);

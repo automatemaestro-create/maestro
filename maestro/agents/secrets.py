@@ -78,6 +78,20 @@ _NOM_VARIABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #: listing des coffres — ce n'est pas un `<agent>.json`.
 _FICHIER_CLE = ".cle"
 
+#: Fichier du coffre **projet** (#133) : les secrets du pool projet
+#: d'intégrations MCP (`maestro.agents.mcp` — parent #129), saisis **une seule
+#: fois** et partagés par tous les agents qui activent l'intégration. Son
+#: underscore initial garantit qu'il n'est **jamais** un `<agent>.json` (un nom
+#: d'agent commence par `[a-z0-9]`), donc jamais confondu avec un agent ni pris
+#: pour cible de `lire`/`etat`/`environ(agent)` ; mais il **compte** pour
+#: `provisionne` (glob `*.json`) — poser un secret projet suffit à activer le
+#: scoping, comme n'importe quel coffre.
+_FICHIER_PROJET = "_projet.json"
+
+#: Étiquette du coffre projet dans les messages d'erreur, à la place du nom
+#: d'agent qui n'a pas de sens pour un coffre partagé par tous.
+_LABEL_PROJET = "projet"
+
 
 @dataclass(frozen=True)
 class EtatSecret:
@@ -208,12 +222,30 @@ class SecretStore:
         l'est pas. Lève `ValueError` (cause exacte, agent nommé) si le fichier est
         illisible, invalide, ou chiffré sans clé disponible.
         """
-        chemin = self._chemin(agent)
+        return self._lire_chemin(self._chemin(agent), agent)
+
+    def lire_projet(self) -> dict[str, str]:
+        """Les secrets **résolvables** du coffre projet (`_projet.json`, #133) — {} si absent.
+
+        Les secrets du **pool projet** d'intégrations MCP (parent #129), saisis
+        une seule fois et partagés : mêmes règles que `lire` (déchiffrement,
+        omission des entrées expirées, enregistrement au registre de rédaction).
+        `environ` les compose **sous** ceux de l'agent — le socle de « secret
+        saisi une seule fois ».
+        """
+        return self._lire_chemin(self._racine / _FICHIER_PROJET, _LABEL_PROJET)
+
+    def _lire_chemin(self, chemin: Path, label: str) -> dict[str, str]:
+        """Les secrets résolvables du fichier `chemin` (coffre agent ou projet).
+
+        Le corps partagé de `lire`/`lire_projet` : `label` nomme la source dans
+        les messages d'erreur (un agent, ou « projet »).
+        """
         if not chemin.is_file():
             return {}
         maintenant = datetime.now(UTC)
         secrets: dict[str, str] = {}
-        for entree in self._entrees(agent, chemin):
+        for entree in self._entrees(label, chemin):
             if entree.est_expire(maintenant):
                 continue  # token expiré : absent de la résolution (refus au montage)
             if entree.chiffre is not None:
@@ -233,12 +265,24 @@ class SecretStore:
         éphémère, validité et échéance d'un token expirable. Ne déchiffre rien.
         Lève `ValueError` si le fichier est illisible ou invalide.
         """
-        chemin = self._chemin(agent)
+        return self._etat_chemin(self._chemin(agent), agent)
+
+    def etat_projet(self) -> tuple[EtatSecret, ...]:
+        """L'**état** de chaque secret du coffre projet (`_projet.json`, #133) — () si absent.
+
+        Ce que sert l'UI de la bibliothèque MCP (lot #133) pour dire, sans rien
+        déchiffrer, quelles intégrations du pool sont configurées et lesquelles
+        demandent un renouvellement (token OAuth expiré).
+        """
+        return self._etat_chemin(self._racine / _FICHIER_PROJET, _LABEL_PROJET)
+
+    def _etat_chemin(self, chemin: Path, label: str) -> tuple[EtatSecret, ...]:
+        """L'état de chaque secret du fichier `chemin` (corps partagé de `etat`/`etat_projet`)."""
         if not chemin.is_file():
             return ()
         maintenant = datetime.now(UTC)
         etats: list[EtatSecret] = []
-        for entree in self._entrees(agent, chemin):
+        for entree in self._entrees(label, chemin):
             etats.append(
                 EtatSecret(
                     cle=entree.cle,
@@ -259,10 +303,19 @@ class SecretStore:
         les serveurs à référence deviennent indisponibles, échec propre) ;
         coffre **absent** → l'environnement du process, comportement
         historique. Propage le `ValueError` d'un coffre invalide.
+
+        Le coffre **projet** (#133) se compose **sous** celui de l'agent : les
+        secrets du pool projet d'intégrations MCP (parent #129), saisis une
+        seule fois, sont visibles de tout agent qui active l'intégration, mais
+        un secret propre à l'agent l'emporte sur l'homonyme projet (spécifique >
+        partagé). Sans coffre projet, la composition est sans effet — le
+        comportement historique.
         """
         if not self.provisionne:
             return os.environ
-        return self.lire(agent)
+        secrets = dict(self.lire_projet())  # partagé d'abord…
+        secrets.update(self.lire(agent))  # …l'agent l'emporte sur l'homonyme projet
+        return secrets
 
     def enregistrer(
         self,
@@ -290,7 +343,54 @@ class SecretStore:
         atomique. Lève `ValueError` **sans rien écrire** si le nom d'agent, la
         clé, le mode d'auth ou l'échéance sont invalides.
         """
-        self._chemin(agent)  # valide le nom d'agent
+        return self._enregistrer(
+            self._chemin(agent),  # valide le nom d'agent
+            agent,
+            cle,
+            valeur,
+            mode_auth=mode_auth,
+            secret=secret,
+            expire_le=expire_le,
+        )
+
+    def enregistrer_projet(
+        self,
+        cle: str,
+        valeur: str,
+        *,
+        mode_auth: str,
+        secret: bool = True,
+        expire_le: datetime | str | None = None,
+    ) -> EtatSecret:
+        """Pose (ou remplace) le secret `cle` du coffre **projet** (`_projet.json`, #133).
+
+        Le point d'écriture du pool projet d'intégrations MCP (parent #129) : le
+        secret est saisi **une seule fois** ici, puis partagé par tout agent qui
+        active l'intégration (`environ` le compose sous celui de l'agent). Mêmes
+        parcours d'auth que `enregistrer`, même écriture atomique et chiffrée.
+        """
+        return self._enregistrer(
+            self._racine / _FICHIER_PROJET,
+            _LABEL_PROJET,
+            cle,
+            valeur,
+            mode_auth=mode_auth,
+            secret=secret,
+            expire_le=expire_le,
+        )
+
+    def _enregistrer(
+        self,
+        chemin: Path,
+        label: str,
+        cle: str,
+        valeur: str,
+        *,
+        mode_auth: str,
+        secret: bool,
+        expire_le: datetime | str | None,
+    ) -> EtatSecret:
+        """Corps partagé de `enregistrer`/`enregistrer_projet` : valide, chiffre, écrit `chemin`."""
         if not _NOM_VARIABLE.match(cle):
             raise ValueError(
                 f"nom de variable invalide : {cle!r} "
@@ -311,11 +411,11 @@ class SecretStore:
         if expire_le is not None:
             _, echeance_iso = _horodatage(expire_le, contexte=f"pour {cle}")
             entree["expire_le"] = echeance_iso
-        brut = self._lire_brut(agent)
+        brut = self._lire_brut(chemin, label)
         brut[cle] = entree
-        self._ecrire(agent, brut)
+        self._ecrire(chemin, brut)
         # Relit l'entrée qu'on vient d'écrire pour rendre son état (validité comprise).
-        (etat,) = (e for e in self.etat(agent) if e.cle == cle)
+        (etat,) = (e for e in self._etat_chemin(chemin, label) if e.cle == cle)
         return etat
 
     def renouveler(
@@ -341,11 +441,24 @@ class SecretStore:
         provisionné, scoping actif) même vidé de cette clé. Lève `ValueError` si
         le nom d'agent est invalide.
         """
-        brut = self._lire_brut(agent)
+        return self._supprimer(self._chemin(agent), agent, cle)
+
+    def supprimer_projet(self, cle: str) -> bool:
+        """Retire le secret `cle` du coffre **projet** (`_projet.json`, #133) — vrai s'il existait.
+
+        Le pendant, côté pool projet, de `supprimer` : appelé quand une
+        intégration quitte le pool (parent #129) pour ne pas laisser traîner son
+        secret partagé. Idempotent (faux si la clé n'était pas là).
+        """
+        return self._supprimer(self._racine / _FICHIER_PROJET, _LABEL_PROJET, cle)
+
+    def _supprimer(self, chemin: Path, label: str, cle: str) -> bool:
+        """Corps partagé de `supprimer`/`supprimer_projet` : retire `cle` du fichier `chemin`."""
+        brut = self._lire_brut(chemin, label)
         if cle not in brut:
             return False
         del brut[cle]
-        self._ecrire(agent, brut)
+        self._ecrire(chemin, brut)
         return True
 
     # --- Interne ------------------------------------------------------------------------
@@ -367,33 +480,32 @@ class SecretStore:
             _parse_entree(agent, nom, brut) for nom, brut in data["secrets"].items()
         )
 
-    def _lire_brut(self, agent: str) -> dict[str, Any]:
-        """La table `secrets` **brute** de `agent` (forme stockée), {} si absente.
+    def _lire_brut(self, chemin: Path, label: str) -> dict[str, Any]:
+        """La table `secrets` **brute** du fichier `chemin` (forme stockée), {} si absente.
 
-        Sert les écritures (`enregistrer`/`supprimer`) : on relit la forme
-        stockée telle quelle pour fusionner sans toucher aux autres entrées.
-        Valide juste l'enveloppe `{"secrets": {...}}` — la validation fine des
-        entrées reste à la lecture (`_entrees`).
+        Sert les écritures (`enregistrer`/`supprimer` et leurs variantes projet) :
+        on relit la forme stockée telle quelle pour fusionner sans toucher aux
+        autres entrées. Valide juste l'enveloppe `{"secrets": {...}}` — la
+        validation fine des entrées reste à la lecture (`_entrees`). `label`
+        nomme la source dans les messages (un agent, ou « projet »).
         """
-        chemin = self._chemin(agent)
         if not chemin.is_file():
             return {}
         try:
             data = json.loads(chemin.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise ValueError(
-                f"coffre de secrets illisible pour l'agent {agent!r} ({chemin.name}) : {exc}"
+                f"coffre de secrets illisible pour l'agent {label!r} ({chemin.name}) : {exc}"
             ) from exc
         if not isinstance(data, dict) or not isinstance(data.get("secrets"), dict):
             raise ValueError(
-                f"coffre de secrets invalide pour l'agent {agent!r} ({chemin.name}) : "
+                f"coffre de secrets invalide pour l'agent {label!r} ({chemin.name}) : "
                 'objet {"secrets": {...}} attendu.'
             )
         return dict(data["secrets"])
 
-    def _ecrire(self, agent: str, secrets: Mapping[str, Any]) -> None:
-        """Écrit atomiquement le coffre `{"secrets": {...}}` de `agent`, racine créée au besoin."""
-        chemin = self._chemin(agent)
+    def _ecrire(self, chemin: Path, secrets: Mapping[str, Any]) -> None:
+        """Écrit atomiquement le coffre `{"secrets": {...}}` à `chemin`, racine créée au besoin."""
         self._racine.mkdir(parents=True, exist_ok=True)
         temporaire = chemin.with_suffix(chemin.suffix + ".tmp")
         temporaire.write_text(

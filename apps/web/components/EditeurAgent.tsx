@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   chargerAgentCatalogue,
   creerAgent,
+  definirActivationsMcp,
   modifierAgent,
   supprimerAgent,
 } from "@/lib/api";
@@ -26,8 +27,11 @@ import {
   AGENT_SOURCE_DEFAUT,
   type AgentCatalogueDetail,
   type DefinitionAgent,
+  type IntegrationPoolMcp,
   type ServeurMcp,
 } from "@/lib/types";
+
+import { Interrupteur } from "./parametres/SectionParametres";
 
 /** Miroir du slug accepté par le backend (`_NOM_AGENT`, maestro/agents/store.py). */
 const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
@@ -537,68 +541,178 @@ function ListeEntreesPolitique({
 }
 
 /**
- * Les serveurs MCP déclarés d'un agent (#104), en lecture seule à ce lot : la
- * déclaration vit dans `core/mcp/<agent>.json` (versionnée avec le dépôt) et
- * le moteur la monte sur les exécutions outillées de l'agent. Les valeurs de
- * secrets sont masquées par le backend — seules les références `${VAR}`
- * restent lisibles. Une déclaration invalide affiche sa cause exacte.
+ * Les serveurs MCP d'un agent (#133) : la section est passée **en écriture**.
+ * Chaque intégration du **pool projet** (configurée une fois depuis les
+ * Paramètres) porte un interrupteur qui l'active ou la désactive **pour cet
+ * agent** — ce qui remplace l'ancien affichage lecture seule. Les déclarations
+ * **héritées** (`core/mcp/<agent>.json`) restent affichées en lecture seule
+ * pendant la migration. Une source invalide affiche sa cause exacte.
  */
 function SectionServeursMcp({ fiche }: { fiche: AgentCatalogueDetail }) {
-  if (fiche.mcp_erreur === null && fiche.mcp_serveurs.length === 0) {
-    return null;
-  }
+  const [activations, setActivations] = useState<string[]>(
+    fiche.mcp_activations,
+  );
+  const [enCours, setEnCours] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  const basculer = async (id: string) => {
+    const cible = activations.includes(id)
+      ? activations.filter((a) => a !== id)
+      : [...activations, id];
+    setEnCours(id);
+    setErreur(null);
+    try {
+      await definirActivationsMcp(fiche.nom, cible);
+      setActivations(cible);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnCours(null);
+    }
+  };
+
+  // Les serveurs hérités (fichier `<agent>.json`) : ceux montés qui ne viennent
+  // pas d'une intégration du pool activée — encore en lecture seule (migration).
+  const nomsPoolActives = new Set(
+    fiche.mcp_pool
+      .filter((i) => activations.includes(i.id))
+      .map((i) => i.serveur.nom),
+  );
+  const herites = fiche.mcp_serveurs.filter((s) => !nomsPoolActives.has(s.nom));
+
   return (
     <section aria-label={`Serveurs MCP de ${fiche.nom}`}>
       <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
         🔌 Serveurs MCP
       </h3>
-      {fiche.mcp_erreur !== null ? (
+      {fiche.mcp_pool_erreur !== null && (
         <p
           role="alert"
-          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
+          className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
         >
-          Déclaration invalide : {fiche.mcp_erreur}
+          Pool invalide : {fiche.mcp_pool_erreur}
+        </p>
+      )}
+      {fiche.mcp_pool.length === 0 ? (
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          Aucune intégration au pool projet. Ajoutez-en depuis les{" "}
+          <Link
+            href="/parametres#mcp"
+            className="font-medium text-emerald-700 underline dark:text-emerald-400"
+          >
+            Paramètres → Intégrations MCP
+          </Link>
+          , puis activez-les ici pour cet agent.
         </p>
       ) : (
         <ul className="flex flex-col gap-2">
-          {fiche.mcp_serveurs.map((serveur) => (
-            <li
-              key={serveur.nom}
-              className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">{serveur.nom}</span>
-                <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                  {serveur.type}
-                </span>
-                {serveur.optionnel ? (
-                  <span
-                    className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-                    title="Serveur omis du montage (sans échec) tant que son secret n'est pas fourni"
-                  >
-                    optionnel
-                  </span>
-                ) : null}
-                <code className="truncate font-mono text-neutral-600 dark:text-neutral-400">
-                  {serveur.type === "stdio"
-                    ? [serveur.commande, ...serveur.args].join(" ")
-                    : serveur.url}
-                </code>
-              </div>
-              <CouplesMasques
-                libelle={serveur.type === "stdio" ? "env" : "headers"}
-                valeurs={serveur.type === "stdio" ? serveur.env : serveur.headers}
-              />
-            </li>
+          {fiche.mcp_pool.map((integration) => (
+            <LigneActivation
+              key={integration.id}
+              integration={integration}
+              actif={activations.includes(integration.id)}
+              enCours={enCours === integration.id}
+              basculer={() => void basculer(integration.id)}
+            />
           ))}
         </ul>
       )}
-      <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-        Déclarés dans{" "}
-        <code className="font-mono">core/mcp/{fiche.nom}.json</code> et montés
-        sur les exécutions outillées de l&apos;agent — lecture seule à ce lot.
-      </p>
+      {erreur && (
+        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+          {erreur}
+        </p>
+      )}
+      {fiche.mcp_erreur !== null && (
+        <p
+          role="alert"
+          className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
+        >
+          Déclaration invalide : {fiche.mcp_erreur}
+        </p>
+      )}
+      {herites.length > 0 && (
+        <div className="mt-3">
+          <p className="mb-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
+            Hérités de{" "}
+            <code className="font-mono">core/mcp/{fiche.nom}.json</code> —
+            lecture seule (à migrer vers le pool)
+          </p>
+          <ul className="flex flex-col gap-2">
+            {herites.map((serveur) => (
+              <li
+                key={serveur.nom}
+                className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{serveur.nom}</span>
+                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                    {serveur.type}
+                  </span>
+                  {serveur.optionnel ? (
+                    <span
+                      className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                      title="Serveur omis du montage (sans échec) tant que son secret n'est pas fourni"
+                    >
+                      optionnel
+                    </span>
+                  ) : null}
+                  <code className="truncate font-mono text-neutral-600 dark:text-neutral-400">
+                    {serveur.type === "stdio"
+                      ? [serveur.commande, ...serveur.args].join(" ")
+                      : serveur.url}
+                  </code>
+                </div>
+                <CouplesMasques
+                  libelle={serveur.type === "stdio" ? "env" : "headers"}
+                  valeurs={
+                    serveur.type === "stdio" ? serveur.env : serveur.headers
+                  }
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
+  );
+}
+
+/** Un interrupteur d'activation d'une intégration du pool pour l'agent (#133). */
+function LigneActivation({
+  integration,
+  actif,
+  enCours,
+  basculer,
+}: {
+  integration: IntegrationPoolMcp;
+  actif: boolean;
+  enCours: boolean;
+  basculer: () => void;
+}) {
+  // Un secret manquant ou expiré : l'intégration s'active, mais on prévient
+  // qu'elle ne montera pas tant que son secret n'est pas (re)configuré.
+  const secretManquant = integration.secrets.find((s) => !s.present || !s.valide);
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900">
+      <Interrupteur
+        libelle={`Activer ${integration.serveur.nom} pour cet agent`}
+        actif={actif}
+        desactive={enCours}
+        basculer={basculer}
+      />
+      <span className="font-medium">{integration.serveur.nom}</span>
+      <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+        {integration.serveur.type}
+      </span>
+      {actif && secretManquant && (
+        <span
+          className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+          title="Configurer le secret dans Paramètres → Intégrations MCP"
+        >
+          secret à configurer
+        </span>
+      )}
+    </li>
   );
 }
 

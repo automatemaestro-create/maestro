@@ -18,6 +18,7 @@ export type IdSection =
   | "apparence"
   | "agents"
   | "fournisseurs"
+  | "mcp"
   | "couts"
   | "notifications";
 
@@ -50,6 +51,12 @@ export const SECTIONS_PARAMETRES: SectionParametres[] = [
     id: "fournisseurs",
     libelle: "Fournisseurs & modèles",
     description: "Le fournisseur et le modèle de chaque agent du catalogue.",
+  },
+  {
+    id: "mcp",
+    libelle: "Intégrations MCP",
+    description:
+      "Configurer les serveurs MCP depuis la bibliothèque et alimenter le pool projet (#133).",
   },
   {
     id: "couts",
