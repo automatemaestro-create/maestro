@@ -21,11 +21,13 @@ import { entreeCourante, MENU } from "@/lib/navigation";
 import { agentFactice, poserChemin, rendreAvecEtat } from "./aides";
 
 describe("le menu (lib/navigation)", () => {
-  it("porte les sept sections annoncées par la refonte", () => {
+  it("porte une entrée par intention (#190)", () => {
+    // « Playbooks » et le chat par agent regardaient le même objet que
+    // « Agents » : ce sont désormais des onglets de la fiche agent. « Chat »
+    // subsiste pour le chat global, qui est une autre intention.
     expect(MENU.map((entree) => entree.libelle)).toEqual([
       "Tableau de bord",
       "Agents",
-      "Playbooks",
       "Chat",
       "Coûts & analytics",
       "Validations",
@@ -39,9 +41,9 @@ describe("le menu (lib/navigation)", () => {
   });
 
   it("rattache un sous-chemin à sa section", () => {
-    // `/playbooks/dev` reste sous « Playbooks » : sans quoi l'entrée perdrait
-    // sa mise en évidence dès qu'on ouvre un détail.
-    expect(entreeCourante("/playbooks/dev")?.href).toBe("/playbooks");
+    // La fiche d'un agent et ses onglets restent sous « Agents » : sans quoi
+    // l'entrée perdrait sa mise en évidence dès qu'on ouvre un détail.
+    expect(entreeCourante("/agents/dev/playbook")?.href).toBe("/agents");
   });
 
   it("ne rend la racine active que sur la racine", () => {

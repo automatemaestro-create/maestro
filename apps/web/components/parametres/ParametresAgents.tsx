@@ -31,7 +31,7 @@ export function ParametresAgents() {
       <EtatVide
         message="Aucun agent connu pour l'instant."
         releve="Le catalogue est servi par l'API : vérifiez la connexion dans la section Général."
-        lien={{ href: "/catalogue", libelle: "Ouvrir le catalogue d'agents" }}
+        lien={{ href: "/agents", libelle: "Ouvrir la liste des agents" }}
       />
     );
   }

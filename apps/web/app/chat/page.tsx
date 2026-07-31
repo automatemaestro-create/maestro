@@ -1,121 +1,46 @@
-"use client";
-
 /**
- * La page Chat de la Control Tower (ticket #85, lot 2 de #82) : converser
- * avec chaque agent du catalogue. Branchée sur l'API du lot 1 (#84,
- * `/api/chat`) : l'historique persisté se recharge au retour sur la page,
- * les nouveaux messages arrivent en temps réel par le WebSocket.
+ * La page Chat de la Control Tower — le chat **global**, non lié à un agent.
+ *
+ * Le chat *par agent* (#85) a rejoint la fiche agent en onglet (#190) : c'était
+ * la même intention que « Agents » vue par une autre facette, et le menu n'en
+ * garde qu'une par intention. Le chat global, lui, en est une distincte —
+ * s'adresser à l'orchestration plutôt qu'à un exécutant. Il est traité par le
+ * chantier « Chat » de la Phase 6 ; l'entrée de menu et cette route lui gardent
+ * leur place, sur le modèle des emplacements réservés de la barre supérieure
+ * (#117) : annoncés et inertes plutôt qu'absents.
+ *
+ * `/chat/<agent>`, lui, ne mène plus ici : `next.config.ts` le redirige vers
+ * l'onglet Chat de l'agent — aucun signet ne casse.
  */
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
 
-import { BanniereErreurApi } from "@/components/BanniereErreurApi";
-import { FilChat } from "@/components/FilChat";
-import { chargerCatalogue } from "@/lib/api";
-import type { AgentCatalogue } from "@/lib/types";
+import { AGENT_ASSISTANCE } from "@/lib/assistance";
 
 export default function PageChat() {
-  const [fiches, setFiches] = useState<AgentCatalogue[]>([]);
-  const [selection, setSelection] = useState<string | null>(null);
-  const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  const recharger = useCallback(async () => {
-    try {
-      const nouvelles = await chargerCatalogue();
-      setFiches(nouvelles);
-      // Le premier agent est sélectionné d'office ; une sélection existante
-      // survit au rechargement (un agent disparu retombe sur le premier).
-      setSelection((courante) =>
-        courante !== null && nouvelles.some((f) => f.nom === courante)
-          ? courante
-          : (nouvelles[0]?.nom ?? null),
-      );
-      setErreur(null);
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
-    } finally {
-      setChargement(false);
-    }
-  }, []);
-
-  // Chargement initial différé d'un tick (même mécanique que useControlTower) :
-  // l'effet lui-même ne déclenche aucun setState synchrone.
-  useEffect(() => {
-    const tick = setTimeout(() => void recharger(), 0);
-    return () => clearTimeout(tick);
-  }, [recharger]);
-
-  const fiche = fiches.find((f) => f.nom === selection);
-
   return (
-    <>
-      <BanniereErreurApi erreur={erreur} />
-      {chargement ? (
-        <p className="text-sm text-neutral-500">Chargement du catalogue…</p>
-      ) : (
-        <div className="flex flex-col gap-6 lg:flex-row">
-          <nav
-            aria-label="Agents du catalogue"
-            className="flex flex-row flex-wrap content-start gap-2 lg:w-56 lg:shrink-0 lg:flex-col"
-          >
-            {fiches.map((f) => (
-              <CarteAgent
-                key={f.nom}
-                fiche={f}
-                selectionnee={f.nom === selection}
-                selectionner={() => setSelection(f.nom)}
-              />
-            ))}
-          </nav>
-          {fiche !== undefined ? (
-            // `key` : changer d'agent remonte un fil neuf (état de saisie
-            // et WebSocket propres à chaque conversation).
-            <FilChat key={fiche.nom} agent={fiche.nom} role={fiche.role} />
-          ) : (
-            <p className="text-sm text-neutral-500">
-              Aucun agent au catalogue — en créer un depuis la page{" "}
-              <Link
-                href="/catalogue"
-                className="font-medium text-neutral-900 underline dark:text-neutral-200"
-              >
-                🧩 Agents
-              </Link>
-              .
-            </p>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-function CarteAgent({
-  fiche,
-  selectionnee,
-  selectionner,
-}: {
-  fiche: AgentCatalogue;
-  selectionnee: boolean;
-  selectionner: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={selectionner}
-      aria-current={selectionnee ? "true" : undefined}
-      className={
-        "rounded-md border px-3 py-2 text-left text-sm shadow-sm " +
-        (selectionnee
-          ? "border-neutral-400 bg-neutral-100 dark:border-neutral-600 dark:bg-neutral-800"
-          : "border-neutral-200 bg-white hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800")
-      }
-    >
-      <span className="block font-medium">🤖 {fiche.nom}</span>
-      <span className="mt-0.5 block text-xs text-neutral-500 dark:text-neutral-400">
-        {fiche.role}
-      </span>
-    </button>
+    <section aria-label="Chat global" className="flex flex-col gap-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+        💬 Chat global
+      </h2>
+      <p className="max-w-2xl text-sm text-neutral-600 dark:text-neutral-400">
+        Un fil unique pour parler à l&apos;orchestration — poser une demande sans
+        choisir d&apos;exécutant, suivre ce qui en découle. Il arrive avec le
+        chantier « Chat » de la Phase 6.
+      </p>
+      <p className="max-w-2xl text-sm text-neutral-600 dark:text-neutral-400">
+        En attendant, converser <strong>avec un agent</strong> se fait depuis sa
+        fiche, onglet Chat :{" "}
+        <Link
+          href="/agents?onglet=chat"
+          className="font-medium text-neutral-900 underline dark:text-neutral-200"
+        >
+          🧩 Agents
+        </Link>
+        . Et le panneau d&apos;assistance (le bouton flottant, fil «{" "}
+        {AGENT_ASSISTANCE} ») répond dès maintenant aux questions sur la Control
+        Tower elle-même.
+      </p>
+    </section>
   );
 }

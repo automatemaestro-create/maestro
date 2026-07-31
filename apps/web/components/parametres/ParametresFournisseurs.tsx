@@ -57,7 +57,7 @@ export function ParametresFournisseurs() {
             : "Aucun agent au catalogue."
         }
         releve="Le fournisseur et le modèle par défaut de l'exécution viennent de MAESTRO_PROVIDER et MAESTRO_MODEL, côté backend."
-        lien={{ href: "/catalogue", libelle: "Ouvrir le catalogue d'agents" }}
+        lien={{ href: "/agents", libelle: "Ouvrir la liste des agents" }}
       />
     );
   }
@@ -99,12 +99,12 @@ export function ParametresFournisseurs() {
         « Hérité » : l&apos;agent suit le fournisseur et le modèle de
         l&apos;exécution (<code className="font-mono">MAESTRO_PROVIDER</code> /{" "}
         <code className="font-mono">MAESTRO_MODEL</code>). Le choix par agent
-        s&apos;édite sur la fiche du{" "}
+        s&apos;édite sur l&apos;onglet Profil de la{" "}
         <Link
-          href="/catalogue"
+          href="/agents"
           className="font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
         >
-          catalogue
+          fiche de l&apos;agent
         </Link>
         .
       </p>

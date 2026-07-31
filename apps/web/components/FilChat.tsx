@@ -17,7 +17,18 @@ import { formatDateHeure, formatHeure } from "@/lib/format";
 import { CHAT_AUTEUR_UTILISATEUR, type MessageChat } from "@/lib/types";
 import { useChat } from "@/lib/useChat";
 
-export function FilChat({ agent, role }: { agent: string; role: string }) {
+export function FilChat({
+  agent,
+  role,
+}: {
+  agent: string;
+  /**
+   * Le rôle de l'agent, quand l'appelant le connaît déjà. Facultatif depuis
+   * #190 : l'onglet Chat d'une fiche agent n'a que le nom en main, et le rôle
+   * s'y lit sur l'onglet Profil — le charger ici ne vaudrait pas la requête.
+   */
+  role?: string;
+}) {
   const { messages, connecte, chargement, erreur, envoi, envoyer } =
     useChat(agent);
   const [brouillon, setBrouillon] = useState("");
@@ -52,10 +63,10 @@ export function FilChat({ agent, role }: { agent: string; role: string }) {
       className="flex min-w-0 flex-1 flex-col gap-3"
     >
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          💬 {agent}
-          {role ? ` (${role})` : ""}
-        </h2>
+        {/* Le nom de l'agent est porté par l'en-tête de la fiche (#190). */}
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+          💬 Conversation{role ? ` · ${role}` : ""}
+        </h3>
         <span
           className={
             "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium " +
