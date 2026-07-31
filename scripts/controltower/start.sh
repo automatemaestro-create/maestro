@@ -6,18 +6,31 @@
 #   - l'API de démo : app FastAPI réelle sur bus mémoire + scénario d'événements
 #     factices publié en continu (maestro.controltower.demo) — port 8000 ;
 #   - l'UI Next.js (apps/web) pointée sur cette API — port 3000 ;
-# ouvre une fenêtre de navigateur sur l'UI, et arrête l'ensemble dès que cette
-# fenêtre est fermée. Le script, lui, rend la main tout de suite : c'est un chien
-# de garde détaché qui attend la fermeture. Les logs vont dans un dossier temporaire,
-# propre au couple de ports — deux sessions parallèles ne se marchent donc pas dessus.
+# ouvre l'UI dans le navigateur par défaut du poste (#200), et arrête l'ensemble
+# dès que cette fenêtre est fermée. Le script, lui, rend la main tout de suite :
+# c'est un chien de garde détaché qui attend la fermeture. Les logs vont dans un
+# dossier temporaire, propre au couple de ports — deux sessions parallèles ne se
+# marchent donc pas dessus.
 #
-#   bash scripts/controltower/start.sh               # (re)démarre tout + navigateur
-#   bash scripts/controltower/start.sh --no-browser  # sans navigateur ni arrêt auto
-#   bash scripts/controltower/start.sh --stop        # arrête seulement (nettoyage)
+#   bash scripts/controltower/start.sh                     # (re)démarre tout + navigateur
+#   bash scripts/controltower/start.sh --no-browser        # sans navigateur ni arrêt auto
+#   bash scripts/controltower/start.sh --stop              # arrête seulement (nettoyage)
+#   bash scripts/controltower/start.sh --diagnostic-navigateur  # dit quel navigateur serait ouvert
 #
 # Ports surchargables : MAESTRO_PORT_API (défaut 8000), MAESTRO_PORT_UI (3000). Un worktree créé
 # par scripts/git/worktree.sh les reçoit d'office, dérivés du numéro de ticket (#152).
-# Navigateur surchargeable : MAESTRO_BROWSER (binaire de la famille Chromium).
+#
+# Choix du navigateur (#200), dans l'ordre :
+#   1. MAESTRO_BROWSER — binaire imposé (famille Chromium) ; il PRIME sur la détection.
+#   2. Le navigateur PAR DÉFAUT DU POSTE, lu à chaud depuis l'association système (registre
+#      Windows / xdg-settings Linux / LaunchServices macOS) — jamais figé dans le code : changer
+#      le défaut du poste change celui qu'ouvre le script. Chromium ⇒ fenêtre isolée sur profil
+#      jetable + arrêt auto ; hors Chromium (Firefox, Safari…) ⇒ ouverture dans CE navigateur via
+#      l'ouvreur système, mais sans profil jetable ni arrêt auto — la limite est dite, pas masquée.
+#   3. Défaut indétectable ⇒ repli sur un Chromium installé (comportement d'avant #200), annoncé.
+# MAESTRO_BROWSER_DEFAUT court-circuite la détection OS (poste sans bureau, CI, tests) : on lui
+# donne le binaire/identifiant du défaut, la classification Chromium/hors-Chromium s'applique
+# ensuite comme d'habitude. « --diagnostic-navigateur » imprime le verdict sans rien ouvrir.
 
 set -euo pipefail
 
@@ -159,17 +172,12 @@ attendre_http() {
   done
 }
 
-# Chemin d'un navigateur de la famille Chromium (Chrome/Edge/Chromium) : ce sont
-# ses options qu'on passe plus bas (--user-data-dir, --new-window).
-navigateur_choisi() {
-  if [ -n "${MAESTRO_BROWSER:-}" ]; then
-    if [ -x "$MAESTRO_BROWSER" ]; then
-      printf '%s' "$MAESTRO_BROWSER"
-      return 0
-    fi
-    echo "[navigateur] MAESTRO_BROWSER introuvable ou non exécutable : $MAESTRO_BROWSER" >&2
-    return 1
-  fi
+# Un Chromium INSTALLÉ sur la machine (Chrome/Edge/Chromium), premier trouvé — c'est le repli
+# quand on ne sait pas lire le navigateur par défaut du poste (#200). Ses options (--user-data-dir,
+# --new-window) sont celles de la fenêtre isolée. Ne consulte PAS MAESTRO_BROWSER : la priorité est
+# gérée par resoudre_strategie.
+chromium_installe() {
+  local appdata_local candidats candidat nom chemin
   if [ "$WINDOWS" = 1 ]; then
     appdata_local="${LOCALAPPDATA:-}"
     candidats="/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe
@@ -201,19 +209,256 @@ EOF
   return 1
 }
 
-# Nom du binaire du navigateur, puis les requêtes PowerShell qui s'en servent.
-# Restreindre la recherche à ce binaire n'est pas cosmétique : sans ce filtre, la
-# requête se compterait elle-même (sa propre ligne de commande contient le
-# marqueur), et la fenêtre ne serait jamais vue comme fermée. Les quotes internes
-# sont simples côté PowerShell, et les `$_` sont échappés : c'est du PowerShell,
-# pas du shell.
-NOM_NAVIGATEUR=""
-if chemin_navigateur="$(navigateur_choisi 2>/dev/null)"; then
-  NOM_NAVIGATEUR="$(basename "$chemin_navigateur")"
-fi
-PS_SELECTION="Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq '$NOM_NAVIGATEUR' -and \$_.CommandLine -like '*$MARQUEUR_NAVIGATEUR*' }"
-PS_COMPTER="($PS_SELECTION | Measure-Object).Count"
-PS_TERMINER="$PS_SELECTION | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }"
+# Famille d'un navigateur, d'après son binaire, son progId Windows, son .desktop Linux ou son
+# bundle macOS — on classe par SOUS-CHAÎNE du nom, ce qui marche pour toutes ces formes à la fois.
+# Un inconnu est prudemment rangé « autre » : on ne lui passera pas de drapeaux Chromium.
+famille_de() {
+  local base
+  base="${1##*/}"
+  base="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+  case "$base" in
+    *chrome* | *chromium* | *msedge* | *edge* | *brave* | *vivaldi* | *opera* | *thorium*)
+      printf 'chromium' ;;
+    *) printf 'autre' ;;
+  esac
+}
+
+# Convertit un chemin Windows (C:\a\b) en chemin POSIX (/c/a/b) — via cygpath si présent.
+vers_posix() {
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -u "$p" 2>/dev/null && return 0
+  fi
+  p="${p//\\//}"
+  case "$p" in
+    [A-Za-z]:/*) printf '/%s/%s' "$(printf '%s' "${p%%:*}" | tr '[:upper:]' '[:lower:]')" "${p#*:/}" ;;
+    *) printf '%s' "$p" ;;
+  esac
+}
+
+# Un jeton (chemin, nom court ou .desktop) → un exécutable invocable, ou 1. Sert au montage de la
+# fenêtre isolée quand le défaut est Chromium.
+chemin_executable() {
+  local t="$1" base chemin
+  [ -n "$t" ] || return 1
+  if [ -x "$t" ]; then
+    printf '%s' "$t"
+    return 0
+  fi
+  base="${t##*/}"
+  base="${base%.desktop}"
+  chemin="$(command -v "$base" 2>/dev/null || true)"
+  [ -n "$chemin" ] || return 1
+  printf '%s' "$chemin"
+}
+
+# Le navigateur par défaut du poste, lu à chaud depuis l'association système « https ».
+# Requête registre HKCU\...\UrlAssociations\https\UserChoice → progId → commande d'ouverture.
+PS_DEFAUT='$ErrorActionPreference="SilentlyContinue"; $p=(Get-ItemProperty "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice").ProgId; if(-not $p){exit}; Write-Output $p; $c=(Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\$p\shell\open\command")."(default)"; if($c){Write-Output $c}'
+
+_defaut_os_windows() {
+  local sortie progid cmd exe posix
+  sortie="$(powershell -NoProfile -NonInteractive -Command "$PS_DEFAUT" 2>/dev/null | tr -d '\r')"
+  progid="$(printf '%s\n' "$sortie" | sed -n '1p')"
+  cmd="$(printf '%s\n' "$sortie" | sed -n '2p')"
+  [ -n "$progid$cmd" ] || return 1
+  # Extrait l'exécutable de la commande (« "C:\...\chrome.exe" --single-argument %1 »).
+  case "$cmd" in
+    \"*) exe="${cmd#\"}"; exe="${exe%%\"*}" ;;
+    *) exe="${cmd%% *}" ;;
+  esac
+  if [ -n "$exe" ]; then
+    posix="$(vers_posix "$exe")"
+    printf '%s' "$posix"
+    return 0
+  fi
+  # Faute d'exécutable lisible, le progId (ChromeHTML, FirefoxURL…) suffit à classer la famille.
+  printf '%s' "$progid"
+}
+
+# Le binaire déclaré par un fichier .desktop (ligne Exec), les codes de champ %u/%U retirés.
+_binaire_du_desktop() {
+  local nom="$1" dir f ligne bin tok
+  for dir in "${XDG_DATA_HOME:-$HOME/.local/share}/applications" \
+    /usr/local/share/applications /usr/share/applications \
+    /var/lib/flatpak/exports/share/applications \
+    /var/lib/snapd/desktop/applications; do
+    f="$dir/$nom"
+    [ -f "$f" ] || continue
+    ligne="$(grep -m1 '^Exec=' "$f" 2>/dev/null)"
+    ligne="${ligne#Exec=}"
+    bin="${ligne%% *}"
+    [ -n "$bin" ] || continue
+    # « Exec=env VAR=val binaire %u » : sauter env et les affectations pour retrouver le binaire.
+    if [ "${bin##*/}" = "env" ]; then
+      for tok in $ligne; do
+        case "$tok" in env | *=*) continue ;; *) bin="$tok"; break ;; esac
+      done
+    fi
+    printf '%s' "$bin"
+    return 0
+  done
+  return 1
+}
+
+_defaut_os_linux() {
+  local nom bin
+  nom="$(xdg-settings get default-web-browser 2>/dev/null | head -1)"
+  [ -n "$nom" ] || nom="$(xdg-mime query default x-scheme-handler/https 2>/dev/null | head -1)"
+  [ -n "$nom" ] || return 1
+  bin="$(_binaire_du_desktop "$nom" 2>/dev/null || true)"
+  if [ -n "$bin" ]; then
+    printf '%s' "$bin"
+  else
+    printf '%s' "$nom"
+  fi
+}
+
+_defaut_os_macos() {
+  local plist bundle app
+  plist="$HOME/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist"
+  [ -f "$plist" ] || return 1
+  # Le handler du schéma http, extrait du bloc { … } qui le déclare (ordre des clés variable).
+  bundle="$(defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null | awk '
+    /\{/ { blk = ""; inblk = 1 }
+    inblk { blk = blk $0 }
+    /\}/ {
+      if (inblk && blk ~ /LSHandlerURLScheme = https?;/ && match(blk, /LSHandlerRoleAll = "?[^";]+/)) {
+        s = substr(blk, RSTART, RLENGTH); sub(/LSHandlerRoleAll = "?/, "", s); print s
+      }
+      inblk = 0
+    }' | head -1)"
+  [ -n "$bundle" ] || return 1
+  case "$bundle" in
+    com.google.chrome) app="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ;;
+    com.microsoft.edgemac) app="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" ;;
+    com.brave.browser) app="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" ;;
+    org.chromium.chromium) app="/Applications/Chromium.app/Contents/MacOS/Chromium" ;;
+    *) app="" ;;
+  esac
+  if [ -n "$app" ] && [ -x "$app" ]; then
+    printf '%s' "$app"
+  else
+    printf '%s' "$bundle"
+  fi
+}
+
+# Le navigateur par défaut du poste (jeton : chemin, nom court, .desktop ou bundle). MAESTRO_BROWSER_DEFAUT
+# court-circuite la détection OS (poste sans bureau, CI, tests).
+navigateur_defaut_os() {
+  if [ -n "${MAESTRO_BROWSER_DEFAUT:-}" ]; then
+    printf '%s' "$MAESTRO_BROWSER_DEFAUT"
+    return 0
+  fi
+  if [ "$WINDOWS" = 1 ]; then
+    _defaut_os_windows
+    return
+  fi
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) _defaut_os_macos ;;
+    *) _defaut_os_linux ;;
+  esac
+}
+
+# La commande d'ouverture « dans le navigateur par défaut » du poste (repli hors Chromium).
+ouvreur_systeme() {
+  if [ "$WINDOWS" = 1 ]; then
+    printf 'windows'
+    return 0
+  fi
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) command -v open >/dev/null 2>&1 && { printf 'open'; return 0; } ;;
+    *) command -v xdg-open >/dev/null 2>&1 && { printf 'xdg-open'; return 0; } ;;
+  esac
+  return 1
+}
+
+# Ouvre une URL dans le navigateur par défaut du poste (sans profil jetable ni arrêt auto).
+ouvrir_dans_defaut() {
+  local url="$1"
+  if [ "$WINDOWS" = 1 ]; then
+    powershell -NoProfile -NonInteractive -Command "Start-Process '$url'" >/dev/null 2>&1 && return 0
+    cmd //c start "" "$url" >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) open "$url" >/dev/null 2>&1 ;;
+    *) xdg-open "$url" >/dev/null 2>&1 ;;
+  esac
+}
+
+# Résout, une fois, COMMENT ouvrir l'UI. Pose STRAT_MODE / STRAT_FAMILLE / STRAT_CIBLE / STRAT_SOURCE
+# / STRAT_MSG. STRAT_MODE :
+#   isole  → fenêtre Chromium sur profil jetable + chien de garde (STRAT_CIBLE = exécutable) ;
+#   defaut → ouverture dans le navigateur par défaut via l'ouvreur système, sans arrêt auto ;
+#   aucun  → rien d'ouvrable automatiquement, l'utilisateur ouvre l'URL à la main.
+STRAT_MODE=""
+STRAT_FAMILLE=""
+STRAT_CIBLE=""
+STRAT_SOURCE=""
+STRAT_MSG=""
+resoudre_strategie() {
+  local defaut famille exe
+  STRAT_MODE=""; STRAT_FAMILLE=""; STRAT_CIBLE=""; STRAT_SOURCE=""; STRAT_MSG=""
+
+  # 1) MAESTRO_BROWSER prime toujours — fenêtre isolée Chromium forcée.
+  if [ -n "${MAESTRO_BROWSER:-}" ]; then
+    if [ -x "$MAESTRO_BROWSER" ]; then
+      STRAT_MODE="isole"; STRAT_FAMILLE="chromium"; STRAT_CIBLE="$MAESTRO_BROWSER"
+      STRAT_SOURCE="MAESTRO_BROWSER"
+      STRAT_MSG="navigateur imposé par MAESTRO_BROWSER : $(basename "$MAESTRO_BROWSER")"
+      return 0
+    fi
+    STRAT_MODE="aucun"; STRAT_FAMILLE="introuvable"; STRAT_SOURCE="MAESTRO_BROWSER"
+    STRAT_MSG="MAESTRO_BROWSER introuvable ou non exécutable : $MAESTRO_BROWSER"
+    return 0
+  fi
+
+  # 2) Le navigateur par défaut du poste, lu à chaud.
+  defaut="$(navigateur_defaut_os 2>/dev/null || true)"
+  if [ -n "$defaut" ]; then
+    famille="$(famille_de "$defaut")"
+    if [ "$famille" = "chromium" ]; then
+      if exe="$(chemin_executable "$defaut")"; then
+        STRAT_MODE="isole"; STRAT_FAMILLE="chromium"; STRAT_CIBLE="$exe"
+        STRAT_SOURCE="defaut-os"
+        STRAT_MSG="navigateur par défaut du poste : $(basename "$exe")"
+        return 0
+      fi
+      if exe="$(chromium_installe)"; then
+        STRAT_MODE="isole"; STRAT_FAMILLE="chromium"; STRAT_CIBLE="$exe"
+        STRAT_SOURCE="repli-chromium"
+        STRAT_MSG="défaut Chromium ($defaut) sans binaire localisable — repli sur $(basename "$exe")"
+        return 0
+      fi
+      # Chromium par défaut mais aucun binaire trouvable : on tombe sur l'ouvreur système plus bas.
+    else
+      # Défaut hors Chromium (Firefox, Safari…) : on l'ouvre TEL QUEL, la limite dite (critère #200).
+      STRAT_MODE="defaut"; STRAT_FAMILLE="autre"; STRAT_CIBLE="$defaut"
+      STRAT_SOURCE="defaut-os"
+      STRAT_MSG="navigateur par défaut hors famille Chromium ($(basename "${defaut%.desktop}")) — ouverture dans votre session, sans profil jetable ni arrêt automatique"
+      return 0
+    fi
+  fi
+
+  # 3) Défaut indétectable (ou Chromium sans binaire) → un Chromium installé, s'il y en a un.
+  if exe="$(chromium_installe)"; then
+    STRAT_MODE="isole"; STRAT_FAMILLE="chromium"; STRAT_CIBLE="$exe"
+    STRAT_SOURCE="repli-chromium"
+    STRAT_MSG="navigateur par défaut indétectable — repli sur un Chromium installé : $(basename "$exe")"
+    return 0
+  fi
+
+  # 4) Aucun Chromium : ouvrir dans le défaut via l'ouvreur système, sinon renoncer.
+  if ouvreur_systeme >/dev/null 2>&1; then
+    STRAT_MODE="defaut"; STRAT_FAMILLE="autre"; STRAT_SOURCE="repli-ouvreur"
+    STRAT_MSG="aucun Chromium trouvé — ouverture dans le navigateur par défaut du poste (sans arrêt automatique)"
+    return 0
+  fi
+  STRAT_MODE="aucun"; STRAT_FAMILLE="introuvable"; STRAT_SOURCE="aucun"
+  STRAT_MSG="aucun navigateur trouvé — ouvrir l'URL à la main"
+  return 0
+}
 
 MODE="demarrer"
 JETON_SURVEILLE=""
@@ -222,6 +467,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --stop) MODE="arreter" ;;
     --no-browser | --sans-navigateur) NAVIGATEUR_AUTO=0 ;;
+    # Dit quel navigateur serait ouvert, et comment, sans rien démarrer ni ouvrir.
+    --diagnostic-navigateur) MODE="diagnostic" ;;
     # Usage interne : le chien de garde se relance via ce même script.
     --chien-de-garde)
       MODE="surveiller"
@@ -236,14 +483,49 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# Stratégie navigateur résolue UNE FOIS, à chaud (association système + MAESTRO_BROWSER[_DEFAUT]).
+# Le chien de garde, relancé via ce même script, la recalcule à l'identique (env et poste inchangés).
+resoudre_strategie
+
+# Diagnostic : imprime le verdict (et le profil/marqueur, propres aux ports — l'indépendance de deux
+# sessions parallèles, #200/#152) sans démarrer la stack ni ouvrir de fenêtre.
+if [ "$MODE" = "diagnostic" ]; then
+  printf 'famille: %s\n' "$STRAT_FAMILLE"
+  printf 'mode: %s\n' "$STRAT_MODE"
+  printf 'source: %s\n' "$STRAT_SOURCE"
+  printf 'cible: %s\n' "$STRAT_CIBLE"
+  printf 'profil: %s\n' "$PROFIL_NAVIGATEUR"
+  printf 'marqueur: %s\n' "$MARQUEUR_NAVIGATEUR"
+  printf 'message: %s\n' "$STRAT_MSG"
+  exit 0
+fi
+
+# Nom du binaire de la fenêtre ISOLÉE (mode « isole » seulement), puis les requêtes PowerShell qui
+# s'en servent. Restreindre la recherche à ce binaire n'est pas cosmétique : sans ce filtre, la
+# requête se compterait elle-même (sa propre ligne de commande contient le marqueur), et la fenêtre
+# ne serait jamais vue comme fermée. Les quotes internes sont simples côté PowerShell, et les `$_`
+# sont échappés : c'est du PowerShell, pas du shell.
+NOM_NAVIGATEUR=""
+if [ "$STRAT_MODE" = "isole" ] && [ -n "$STRAT_CIBLE" ]; then
+  NOM_NAVIGATEUR="$(basename "$STRAT_CIBLE")"
+fi
+PS_SELECTION="Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq '$NOM_NAVIGATEUR' -and \$_.CommandLine -like '*$MARQUEUR_NAVIGATEUR*' }"
+PS_COMPTER="($PS_SELECTION | Measure-Object).Count"
+PS_TERMINER="$PS_SELECTION | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }"
+
 # ── Chien de garde ───────────────────────────────────────────────────────────
 # Ouvre la fenêtre, attend sa fermeture, puis arrête la stack. Tourne détaché :
 # c'est ce qui permet au script principal de rendre la main immédiatement.
 if [ "$MODE" = "surveiller" ]; then
   mkdir -p "$LOG_DIR"
-  if ! navigateur="$(navigateur_choisi)"; then
+  # Le chien de garde ne surveille QUE la fenêtre isolée (mode « isole ») : hors de ce cas, il n'y
+  # a pas de fenêtre à nous, donc rien à arrêter automatiquement.
+  if [ "$STRAT_MODE" != "isole" ] || [ -z "$STRAT_CIBLE" ]; then
+    echo "[chien de garde] pas de fenêtre isolée à surveiller (mode $STRAT_MODE) — abandon"
+    rm -f "$FICHIER_SESSION" "$FICHIER_CHIEN"
     exit 1
   fi
+  navigateur="$STRAT_CIBLE"
   echo "[chien de garde] session ${JETON_SURVEILLE} — ouverture de $URL_UI"
   # Profil jetable et dédié, pour deux raisons : sans lui la commande délègue à
   # l'instance du navigateur déjà ouverte et rend la main aussitôt (plus rien à
@@ -330,18 +612,31 @@ fi
 
 ARRET_AUTO=0
 if [ "$NAVIGATEUR_AUTO" = 1 ]; then
-  if navigateur="$(navigateur_choisi)"; then
-    JETON="$$-$(date +%s)"
-    printf '%s' "$JETON" >"$FICHIER_SESSION"
-    nohup bash "$SCRIPT" --chien-de-garde "$JETON" \
-      >>"$LOG_DIR/navigateur.log" 2>&1 &
-    echo "$!" >"$FICHIER_CHIEN"
-    ARRET_AUTO=1
-    echo "[navigateur] $(basename "$navigateur") — fenêtre sur $URL_UI"
-  else
-    echo "[navigateur] aucun navigateur de la famille Chromium trouvé — ouvrir $URL_UI à la main"
-    echo "[navigateur] (arrêt automatique désactivé ; MAESTRO_BROWSER pour désigner un binaire)"
-  fi
+  case "$STRAT_MODE" in
+    isole)
+      # Fenêtre isolée (profil jetable) + chien de garde qui l'arrête à sa fermeture (#149).
+      JETON="$$-$(date +%s)"
+      printf '%s' "$JETON" >"$FICHIER_SESSION"
+      nohup bash "$SCRIPT" --chien-de-garde "$JETON" \
+        >>"$LOG_DIR/navigateur.log" 2>&1 &
+      echo "$!" >"$FICHIER_CHIEN"
+      ARRET_AUTO=1
+      echo "[navigateur] $(basename "$STRAT_CIBLE") (défaut du poste) — fenêtre isolée sur $URL_UI, arrêt auto à la fermeture"
+      ;;
+    defaut)
+      # Défaut hors Chromium : on l'ouvre tel quel, la limite dite plutôt que masquée (#200).
+      echo "[navigateur] $STRAT_MSG"
+      if ouvrir_dans_defaut "$URL_UI"; then
+        echo "[navigateur] ouvert dans le navigateur par défaut — l'arrêter à la main : bash scripts/controltower/start.sh --stop"
+      else
+        echo "[navigateur] échec de l'ouverture automatique — ouvrir $URL_UI à la main"
+      fi
+      ;;
+    *)
+      echo "[navigateur] $STRAT_MSG"
+      echo "[navigateur] (arrêt automatique indisponible ; MAESTRO_BROWSER pour désigner un binaire Chromium)"
+      ;;
+  esac
 fi
 
 echo
