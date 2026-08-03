@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Bilan de santé (LECTURE SEULE) du setup GitLab Maestro + détection de dérive.
 # N'écrit jamais rien (ni statut, ni label, ni MR) — voir docs/10-workflow-git.md.
-# Réutilise scripts/gitlab/lib.sh (statut par nom, pas de GID en dur).
+# Réutilise scripts/gitlab/lib.sh (cycle de vie par nom de label, pas de GID en dur).
 #
 # Usage :  bash scripts/gitlab/doctor.sh [--strict]
 #   --strict : code de sortie non nul aussi en présence d'avertissements (utile en CI).
-# Code de sortie : 1 si un contrôle DUR échoue (auth, labels, lifecycle) ; sinon 0
+# Code de sortie : 1 si un contrôle DUR échoue (auth, labels de catégorisation, labels de cycle
+#   de vie) ; sinon 0
 #   (ou 1 avec --strict s'il reste des avertissements de dérive).
 set -uo pipefail
 
@@ -57,40 +58,44 @@ else
   err "labels manquants :$missing → relancer scripts/gitlab/bootstrap.sh"
 fi
 
-# --- 3. Lifecycle « Maestro » -------------------------------------------------------------------
-# Une SEULE lecture GraphQL (avec retry, via gl_graphql_read) pour les 6 statuts : on lit le
-# lifecycle une fois puis on vérifie chaque nom contre ce résultat. Évite le faux « incohérent »
-# que 6 appels indépendants pouvaient déclencher dès qu'un seul retombait vide (réponse muette
-# intermittente de l'API).
-section "3. Lifecycle « $GL_LIFECYCLE » (statuts résolvables par nom)"
-lifecycle_raw="$(gl_graphql_read '{ group(fullPath:"'"$GL_GROUP"'") { lifecycles { nodes { name statuses { id name } } } } }')"
-if [ -z "$lifecycle_raw" ]; then
-  err "lecture du lifecycle « $GL_LIFECYCLE » impossible (API GraphQL muette après retries) → réessayer"
-elif ! printf '%s' "$lifecycle_raw" | grep -q '"name":"'"$GL_LIFECYCLE"'"'; then
-  err "lifecycle « $GL_LIFECYCLE » introuvable dans le groupe $GL_GROUP → voir docs/10-workflow-git.md §3 (re-création)"
+# --- 3. Labels de cycle de vie « workflow:: » ----------------------------------------------------
+# Depuis #209 le cycle de vie n'est plus le champ Status natif (lifecycle custom « Maestro »,
+# Premium, disparu avec l'essai Ultimate) mais des labels scopés `workflow::*` — voir le contrat de
+# surface en tête de lib.sh. Une SEULE lecture (gl_workflow_gids, avec retry) pour les six, comme
+# la section le faisait pour les six statuts : on évite le faux « incohérent » que six appels
+# indépendants déclenchaient dès qu'un seul retombait vide.
+# NB : ce bloc est le minimum pour que le bilan reste juste après #209. La détection de DÉRIVE
+# propre aux labels (un ticket ouvert portant 0 ou ≥ 2 `workflow::*`, l'exclusion mutuelle n'étant
+# pas garantie sur le plan Free) relève du lot 3 de #207 — ticket #210.
+section "3. Labels de cycle de vie « $GL_WORKFLOW_SCOPE:: » (résolvables par nom)"
+workflow_gids="$(gl_workflow_gids 2>/dev/null)"
+if [ -z "$workflow_gids" ]; then
+  err "aucun label « $GL_WORKFLOW_SCOPE::* » lisible dans $GL_PROJECT → relancer scripts/gitlab/bootstrap.sh"
 else
-  # Isole le bloc statuses du lifecycle Maestro (même logique que gl_status_gid) pour ne pas
-  # confondre avec un statut homonyme d'un autre lifecycle.
-  lifecycle_block="${lifecycle_raw#*\"name\":\"$GL_LIFECYCLE\",\"statuses\":[}"
-  lifecycle_block="${lifecycle_block%%]*}"
-  missing_status=""
-  for s in "À faire" "En cours" "En revue" "Terminé" "Abandonné" "Doublon"; do
-    printf '%s' "$lifecycle_block" | grep -q '"name":"'"$s"'"' || missing_status="${missing_status:+$missing_status, }$s"
+  missing_workflow=""
+  for s in a-faire en-cours en-revue termine abandonne doublon; do
+    printf '%s\n' "$workflow_gids" | cut -f1 | grep -qx "$s" \
+      || missing_workflow="${missing_workflow:+$missing_workflow, }$GL_WORKFLOW_SCOPE::$s"
   done
-  if [ -z "$missing_status" ]; then
-    ok "6 statuts résolus par nom (1 appel) — set-status opérationnel (aucun GID en dur)"
+  if [ -z "$missing_workflow" ]; then
+    ok "6 labels de cycle de vie résolus par nom (1 appel) — set-workflow opérationnel (aucun GID en dur)"
   else
-    err "statut(s) non résolu(s) dans le lifecycle « $GL_LIFECYCLE » : $missing_status → voir docs/10-workflow-git.md §3"
+    err "label(s) de cycle de vie manquant(s) : $missing_workflow → relancer scripts/gitlab/bootstrap.sh"
   fi
 fi
 
 # --- 4. Dérive statut ↔ réalité -----------------------------------------------------------------
 section "4. Dérive statut ↔ réalité"
 
-# helper local : iid des work items d'un état GitLab (opened/closed) portant un statut donné
-iids_with_status() { # $1=opened|closed  $2=nom-statut
+# helper local : iid des work items d'un état GitLab (opened/closed) portant un cycle de vie donné.
+# Le cycle de vie est un LABEL depuis #209 : on filtre sur `workflow::<slug>` et non plus sur le
+# widget de statut. L'argument reste le LIBELLÉ (« En revue »), converti ici par gl_workflow_slug —
+# c'est le contrat de surface de lib.sh, le slug ne circule pas dans les appelants.
+iids_with_status() { # $1=opened|closed  $2=libellé de cycle de vie
+  local slug
+  slug="$(gl_workflow_slug "$2")" || return 1
   gl_backlog "$1" | sed 's/{"iid":/\n{"iid":/g' \
-    | grep -F '"status":{"name":"'"$2"'"}' \
+    | grep -F '"'"$GL_WORKFLOW_SCOPE"'::'"$slug"'"' \
     | grep -o '"iid":"[0-9]*"' | grep -o '[0-9]*'
 }
 
@@ -109,9 +114,9 @@ else
   done
 fi
 
-# 4b. Tickets fermés dont le statut est resté « actif »
+# 4b. Tickets fermés dont le cycle de vie est resté « actif »
 stuck_iids="$(gl_backlog closed | sed 's/{"iid":/\n{"iid":/g' \
-  | grep -E '"status":\{"name":"(À faire|En cours|En revue)"\}' \
+  | grep -E '"'"$GL_WORKFLOW_SCOPE"'::(a-faire|en-cours|en-revue)"' \
   | grep -o '"iid":"[0-9]*"' | grep -o '[0-9]*')"
 if [ -z "$stuck_iids" ]; then
   ok "aucun ticket fermé au statut encore actif"

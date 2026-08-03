@@ -2,12 +2,51 @@
 # Helpers glab partagés pour le workflow de tickets Maestro (voir docs/10-workflow-git.md).
 #
 # Deux usages :
-#   1. Sourcé depuis un autre script :   . scripts/gitlab/lib.sh ; gl_set_status 16 "En cours"
-#   2. Exécuté en sous-commandes :        bash scripts/gitlab/lib.sh set-status 16 "En cours"
+#   1. Sourcé depuis un autre script :   . scripts/gitlab/lib.sh ; gl_set_workflow 16 "En cours"
+#   2. Exécuté en sous-commandes :        bash scripts/gitlab/lib.sh set-workflow 16 "En cours"
 #
-# Les commandes /ticket-* s'appuient dessus pour ne PAS coder les GID de statut en dur :
-# gl_status_gid re-dérive l'ID depuis le lifecycle « Maestro » par NOM à chaque appel, donc
-# le workflow survit à une recréation du lifecycle (voir docs/10-workflow-git.md §3).
+# ================================================================================================
+# CONTRAT DE SURFACE DU CYCLE DE VIE — à lire avant d'y toucher (ticket #209, chantier #207)
+# ================================================================================================
+# Le cycle de vie d'un ticket (À faire / En cours / En revue / Terminé / Abandonné / Doublon) est
+# porté par des LABELS SCOPÉS « workflow::* », et non plus par le champ Status natif de GitLab :
+# les lifecycles custom sont une fonctionnalité Premium et l'essai Ultimate du groupe s'est terminé
+# le 2026-08-02 (voir docs/10-workflow-git.md §3). Deux vocabulaires coexistent donc, et la règle
+# est simple :
+#
+#   • SLUG      — « a-faire », « en-cours », « en-revue », « termine », « abandonne », « doublon ».
+#                 C'est le STOCKAGE : le suffixe du label côté GitLab, ASCII par nécessité (un nom
+#                 accentué devrait être ré-encodé dans chaque chemin `glab api` et à la création
+#                 des listes de board — piège d'encodage connu sous Git Bash/Windows).
+#   • LIBELLÉ   — « À faire », « En cours », « En revue », « Terminé », « Abandonné », « Doublon ».
+#                 C'est la SURFACE : le vocabulaire du domaine, celui de la doc et des commandes.
+#
+# Décision, tranchée une fois pour toutes et valable pour TOUS les helpers de ce fichier :
+#
+#   → EN SORTIE, toujours le LIBELLÉ. Colonne `statut` des TSV (backlog-table, milestone-issues,
+#     subtickets), gl_issue_owner, gl_start_brief, gl_close_guard : tous rendent « À faire », pas
+#     « a-faire ». Le slug ne sort JAMAIS de ce fichier — c'est un détail de stockage.
+#   → EN ENTRÉE, les DEUX sont acceptés (gl_set_workflow 16 "En cours" ≡ gl_set_workflow 16
+#     en-cours), la normalisation étant faite par gl_workflow_slug. Écrire en libellé reste la
+#     forme canonique dans les appelants.
+#
+# Pourquoi le libellé et pas le slug : les consommateurs comparent sur des chaînes en dur —
+# queue.sh (« $2 == "À faire" »), run.sh (« En cours » / « En revue »), doctor.sh, et
+# gl_subtickets_startables ici même. Garder le libellé fait de la bascule un changement INTERNE à
+# ce fichier : les lots 3 et 4 de #207 n'ont pas à réécrire leurs comparaisons, seulement à
+# renommer set-status → set-workflow. Passer aux slugs aurait propagé une rupture de contrat dans
+# quatre scripts pour ne gagner qu'un `sed` de moins ici. Vérifié à la bascule : queue.sh a
+# recommencé à compter des `a_faire` non nuls sans qu'une ligne y soit touchée.
+#
+# ⚠ L'EXCLUSION MUTUELLE EST À NOTRE CHARGE. Elle est Premium elle aussi : sur le plan Free, le
+# « :: » n'est que cosmétique et rien n'empêche un ticket de porter deux labels workflow::. Toute
+# pose doit donc AJOUTER la cible et RETIRER les cinq autres dans le MÊME appel (gl_set_workflow,
+# gl_begin) — jamais un ajout seul. La détection de dérive (0 ou ≥ 2 labels) est le rôle de
+# doctor.sh (lot 3 de #207).
+#
+# Comme pour les anciens GID de statut, aucun ID de label n'est codé en dur : gl_workflow_gids
+# les re-dérive par NOM à chaque appel, donc le workflow survit à une recréation des labels.
+# ================================================================================================
 #
 # NB : pas de `set -e` global — ce fichier est conçu pour être sourcé sans imposer son mode
 # d'erreur au script appelant. Chaque fonction renvoie un code non nul en cas d'échec.
@@ -15,7 +54,7 @@
 # --- Configuration (surchageable par variables d'environnement) --------------------------------
 GL_PROJECT="${GL_PROJECT:-maestro-group4345327/maestro}"
 GL_GROUP="${GL_GROUP:-${GL_PROJECT%%/*}}"   # groupe = tout ce qui précède le premier "/"
-GL_LIFECYCLE="${GL_LIFECYCLE:-Maestro}"      # nom du lifecycle custom portant le cycle de vie
+GL_WORKFLOW_SCOPE="${GL_WORKFLOW_SCOPE:-workflow}"  # scope des labels portant le cycle de vie
 
 # Délai (en jours) entre la date de début et l'échéance, par priorité. L'échéance est posée au
 # /ticket-start = début + délai. Surchargeable par variables d'environnement.
@@ -104,56 +143,135 @@ gl_workitem_gid() {
   printf '%s\n' "$gid"
 }
 
-# gl_status_gid <nom-de-statut> -> imprime le GID du statut, dérivé par NOM depuis le
-# lifecycle "$GL_LIFECYCLE" (scopé : on isole d'abord le bloc du lifecycle Maestro pour ne pas
-# confondre avec un statut homonyme d'un autre lifecycle).
-gl_status_gid() {
-  local name="$1"
-  if [ -z "$name" ]; then echo "gl_status_gid : nom de statut manquant" >&2; return 2; fi
-  local raw block pair gid
-  raw="$(gl_graphql_read '{ group(fullPath:"'"$GL_GROUP"'") { lifecycles { nodes { name statuses { id name } } } } }')"
-  if [ -z "$raw" ]; then echo "Impossible de lire les lifecycles du groupe $GL_GROUP" >&2; return 1; fi
-  # Isole le bloc statuses du lifecycle Maestro : après '"name":"Maestro","statuses":[' jusqu'au ']'.
-  block="${raw#*\"name\":\"$GL_LIFECYCLE\",\"statuses\":[}"
-  block="${block%%]*}"
-  # Cherche la paire id/name correspondante (ordre garanti par la requête : id puis name).
-  pair="$(printf '%s' "$block" \
-         | grep -o '"id":"gid://gitlab/WorkItems::Statuses::Custom::Status/[0-9]\+","name":"'"$name"'"' \
-         | head -1)"
-  gid="$(printf '%s' "$pair" | grep -o 'gid://gitlab/WorkItems::Statuses::Custom::Status/[0-9]\+' | head -1)"
-  if [ -z "$gid" ]; then
-    echo "Statut « $name » introuvable dans le lifecycle « $GL_LIFECYCLE »." >&2
-    echo "Statuts disponibles : À faire, En cours, En revue, Terminé, Abandonné, Doublon." >&2
+# --- Cycle de vie : slugs, libellés, GID de labels ----------------------------------------------
+# Voir le CONTRAT DE SURFACE en tête de fichier : slug = stockage (suffixe du label), libellé =
+# surface (ce que rendent tous les helpers). Ces trois fonctions sont le seul endroit du dépôt qui
+# connaît la correspondance entre les deux.
+
+# gl_workflow_slug <valeur> -> normalise une valeur de cycle de vie en SLUG (« En cours » →
+# « en-cours », « en-cours » → « en-cours »). Accepte donc indifféremment le libellé ou le slug,
+# c'est la porte d'entrée de toute écriture. Code 1 sur une valeur inconnue, avec la liste.
+gl_workflow_slug() {
+  local v="$1"
+  if [ -z "$v" ]; then echo "gl_workflow_slug : valeur manquante" >&2; return 2; fi
+  case "$v" in
+    "À faire"|"a-faire"|"À FAIRE")     printf 'a-faire\n' ;;
+    "En cours"|"en-cours")             printf 'en-cours\n' ;;
+    "En revue"|"en-revue")             printf 'en-revue\n' ;;
+    "Terminé"|"termine"|"Termine")     printf 'termine\n' ;;
+    "Abandonné"|"abandonne"|"Abandonne") printf 'abandonne\n' ;;
+    "Doublon"|"doublon")               printf 'doublon\n' ;;
+    *)
+      echo "Valeur de cycle de vie inconnue : « $v »." >&2
+      echo "Attendu : À faire | En cours | En revue | Terminé | Abandonné | Doublon" >&2
+      echo "  (les slugs a-faire|en-cours|en-revue|termine|abandonne|doublon sont acceptés aussi)" >&2
+      return 1 ;;
+  esac
+}
+
+# gl_workflow_label <slug> -> chemin inverse : rend le LIBELLÉ lisible d'un slug. C'est ce que
+# toutes les lectures appliquent avant de rendre la main, pour que le slug ne sorte jamais d'ici.
+# Une valeur inconnue est rendue TELLE QUELLE (pas d'erreur) : une lecture ne doit pas échouer sur
+# un label exotique posé à la main — l'appelant verra passer la valeur brute et pourra la signaler.
+gl_workflow_label() {
+  case "$1" in
+    a-faire)   printf 'À faire\n' ;;
+    en-cours)  printf 'En cours\n' ;;
+    en-revue)  printf 'En revue\n' ;;
+    termine)   printf 'Terminé\n' ;;
+    abandonne) printf 'Abandonné\n' ;;
+    doublon)   printf 'Doublon\n' ;;
+    *)         printf '%s\n' "$1" ;;
+  esac
+}
+
+# gl_awk_workflow -> imprime un fragment awk à CONCATÉNER en tête d'un programme awk qui doit lire
+# le cycle de vie dans un nœud JSON de work item. Définit une seule fonction :
+#     wf_libelle(node) -> le LIBELLÉ du label workflow:: porté par le nœud, « - » si absent.
+# Passé par substitution plutôt que recopié dans chaque projection (gl_backlog_table,
+# gl_milestone_issues) : la correspondance slug→libellé du contrat n'existe ainsi qu'à deux
+# endroits, ici et dans gl_workflow_label, et les deux se lisent côte à côte.
+# Le scope voyage par -v WF_SCOPE (cf. les appelants) pour rester cohérent avec GL_WORKFLOW_SCOPE
+# au lieu de figer « workflow » dans le motif.
+# NB : si un ticket porte PLUSIEURS labels du scope (dérive possible sur Free, cf. contrat), c'est
+# le premier rencontré qui est rendu — la détection de cette dérive est le rôle de doctor.sh.
+gl_awk_workflow() {
+  cat <<'AWK'
+function wf_libelle(node,   pre, s) {
+  pre = "\"" WF_SCOPE "::"
+  if (!match(node, pre "[a-z-]+\"")) return "-"
+  s = substr(node, RSTART + length(pre), RLENGTH - length(pre) - 1)
+  if (s == "a-faire")   return "À faire"
+  if (s == "en-cours")  return "En cours"
+  if (s == "en-revue")  return "En revue"
+  if (s == "termine")   return "Terminé"
+  if (s == "abandonne") return "Abandonné"
+  if (s == "doublon")   return "Doublon"
+  return s
+}
+AWK
+}
+
+# gl_workflow_gids -> imprime « <slug><TAB><gid> » pour les six labels du scope, dérivés par NOM en
+# UNE lecture (aucun ID codé en dur, cf. contrat en tête de fichier). C'est la brique qui permet à
+# une pose d'ajouter la cible ET de retirer les cinq autres dans le même appel : sans la liste
+# complète, on ne saurait pas quoi retirer.
+gl_workflow_gids() {
+  local raw rows
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { labels(searchTerm:"'"$GL_WORKFLOW_SCOPE"'::") { nodes { id title } } } }')" || return 1
+  # Ordre garanti par la requête : id puis title. On ne retient que les labels du scope exact —
+  # `searchTerm` est une recherche floue, elle pourrait ramener « anti-workflow::x ».
+  rows="$(printf '%s' "$raw" | grep -o '"id":"gid://gitlab/[A-Za-z]*Label/[0-9]\+","title":"'"$GL_WORKFLOW_SCOPE"'::[a-z-]*"' \
+         | sed 's|.*"id":"\(gid://gitlab/[A-Za-z]*Label/[0-9]*\)","title":"'"$GL_WORKFLOW_SCOPE"'::\([a-z-]*\)"|\2\t\1|')"
+  if [ -z "$rows" ]; then
+    echo "Aucun label « $GL_WORKFLOW_SCOPE::* » dans $GL_PROJECT — provisionner d'abord : bash scripts/gitlab/bootstrap.sh" >&2
     return 1
   fi
-  printf '%s\n' "$gid"
+  printf '%s\n' "$rows"
 }
 
 # --- Actions ------------------------------------------------------------------------------------
-# gl_set_status <iid> <nom-de-statut> -> pose le statut natif du ticket. Idempotent côté GitLab.
-gl_set_status() {
-  local iid="$1" name="$2"
-  if [ -z "$iid" ] || [ -z "$name" ]; then echo "usage: gl_set_status <iid> <nom-de-statut>" >&2; return 2; fi
-  local wiid sid out
-  wiid="$(gl_workitem_gid "$iid")" || return 1
-  sid="$(gl_status_gid "$name")"   || return 1
-  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", statusWidget:{ status:"'"$sid"'" } }){ errors } }' 2>&1)"
+# gl_set_workflow <iid> <valeur> -> pose le cycle de vie du ticket par les labels workflow::.
+# <valeur> accepte le libellé (« En cours ») comme le slug (« en-cours »).
+# EXCLUSION MUTUELLE : la cible est ajoutée et les cinq autres retirés dans la MÊME mutation —
+# l'exclusion des labels scopés étant Premium, rien côté GitLab ne l'assurerait à notre place
+# (cf. contrat en tête de fichier). Idempotent : reposer la valeur déjà présente ne change rien.
+gl_set_workflow() {
+  local iid="$1" valeur="$2"
+  if [ -z "$iid" ] || [ -z "$valeur" ]; then echo "usage: gl_set_workflow <iid> <valeur>" >&2; return 2; fi
+  local slug wiid gids cible retraits out
+  slug="$(gl_workflow_slug "$valeur")" || return 1
+  wiid="$(gl_workitem_gid "$iid")"     || return 1
+  gids="$(gl_workflow_gids)"           || return 1
+
+  cible="$(printf '%s\n' "$gids" | awk -F '\t' -v s="$slug" '$1 == s { print $2; exit }')"
+  if [ -z "$cible" ]; then
+    echo "Label « $GL_WORKFLOW_SCOPE::$slug » absent de $GL_PROJECT — provisionner : bash scripts/gitlab/bootstrap.sh" >&2
+    return 1
+  fi
+  # Les cinq autres, en liste GraphQL. removeLabelIds sur un label non porté est sans effet côté
+  # GitLab : on peut donc toujours les retirer tous, sans lire l'état courant du ticket.
+  retraits="$(printf '%s\n' "$gids" | awk -F '\t' -v s="$slug" '
+    $1 != s { printf "%s\"%s\"", (n++ ? "," : ""), $2 }')"
+
+  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", labelsWidget:{ addLabelIds:["'"$cible"'"], removeLabelIds:['"$retraits"'] } }){ errors } }' 2>&1)"
   case "$out" in
-    *'"errors":[]'*) printf 'Statut de #%s → « %s »\n' "$iid" "$name" ;;
-    *) echo "Échec de la pose du statut sur #$iid : $out" >&2; return 1 ;;
+    *'"errors":[]'*) printf 'Cycle de vie de #%s → « %s »\n' "$iid" "$(gl_workflow_label "$slug")" ;;
+    *) echo "Échec de la pose du cycle de vie sur #$iid : $out" >&2; return 1 ;;
   esac
 }
 
 # --- Lecture / reporting ------------------------------------------------------------------------
-# gl_backlog [state] -> JSON des work items du projet avec leur STATUT NATIF, leurs labels et
-# leurs assignés. state ∈ opened (défaut) | closed | all. Requête canonique du backlog : elle
-# lit le statut par son nom (aucun GID), et sert de source unique à /backlog comme aux futurs
-# outils (Control Tower, agents). La mise en forme (regroupement par statut) est laissée à
-# l'appelant — jq n'est pas requis.
+# gl_backlog [state] -> JSON des work items du projet avec leurs labels (dont le cycle de vie,
+# porté par workflow::*) et leurs assignés. state ∈ opened (défaut) | closed | all. Requête
+# canonique du backlog, source unique de /backlog comme des futurs outils (Control Tower, agents).
+# La mise en forme (regroupement par cycle de vie) est laissée à l'appelant — jq n'est pas requis.
+# Depuis #209 le cycle de vie est DANS le widget Labels, déjà demandé : la bascule a RETIRÉ le
+# widget de statut de cette requête plutôt que d'en ajouter un.
 gl_backlog() {
   local state="${1:-opened}"
   case "$state" in opened|closed|all) ;; *) echo "state invalide : $state (opened|closed|all)" >&2; return 2 ;; esac
-  gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: '"$state"', first: 100) { nodes { iid title widgets { ... on WorkItemWidgetStatus { status { name } } ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }'
+  gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: '"$state"', first: 100) { nodes { iid title widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }'
 }
 
 # gl_backlog_table [state] -> projette le JSON de gl_backlog en une TABLE PLATE COMPACTE (une ligne
@@ -165,7 +283,9 @@ gl_backlog() {
 # consommateurs machine peuvent ignorer, puis une ligne par ticket :
 #     iid <TAB> statut <TAB> prio <TAB> agent <TAB> assigne <TAB> titre
 # Les valeurs `prio`/`agent` sont le suffixe nu du label (« moyenne », « devops ») ; un champ vide
-# (prio/agent/assigné absent) est rendu « - ». Le statut est le statut NATIF (widget Status).
+# (prio/agent/assigné absent) est rendu « - ». Le `statut`, lui, est le LIBELLÉ du cycle de vie
+# (« À faire », « En revue » — jamais le slug du label : contrat de surface en tête de fichier),
+# et vaut « - » si le ticket ne porte aucun label workflow::.
 #
 # Projection en awk pur (pas de jq requis) : le parsing suit la même approche grep/sed/awk que le
 # reste de ce fichier, donc la commande fonctionne à l'identique que jq soit installé ou non.
@@ -173,7 +293,7 @@ gl_backlog_table() {
   local state="${1:-opened}" json
   json="$(gl_backlog "$state")" || return 1
   printf '# iid\tstatut\tprio\tagent\tassigne\ttitre\n'
-  printf '%s\n' "$json" | awk '
+  printf '%s\n' "$json" | awk -v WF_SCOPE="$GL_WORKFLOW_SCOPE" "$(gl_awk_workflow)"'
     {
       n = split($0, parts, /\{"iid":"/)
       for (i = 2; i <= n; i++) {
@@ -187,10 +307,7 @@ gl_backlog_table() {
         }
         gsub(/\\u0026/, "\\&", title); gsub(/\\u003e/, ">", title); gsub(/\\u003c/, "<", title)
 
-        status = "-"
-        if (match(node, /"status":\{"name":"[^"]*"/)) {
-          m = substr(node, RSTART, RLENGTH); sub(/.*"name":"/, "", m); sub(/"$/, "", m); status = m
-        }
+        status = wf_libelle(node)
 
         prio = "-"; agent = "-"
         if (match(node, /prio::[a-z]+/))  prio  = substr(node, RSTART + 6, RLENGTH - 6)
@@ -207,19 +324,20 @@ gl_backlog_table() {
   '
 }
 
-# gl_issue_owner <iid> -> imprime « <statut><TAB><assignés> » : le statut NATIF (widget Status) et
-# les usernames des assignés séparés par des virgules. Un champ vide signifie « non posé » pour le
-# statut, « personne » (ticket LIBRE) pour les assignés. Une seule lecture GraphQL, parsing shell
-# pur (pas de jq) — même approche que gl_backlog_table, en ciblant un seul ticket.
-# Sert l'ANTI-COLLISION du travail à plusieurs (#159) : `glab issue view` n'expose ni le statut
-# natif ni de quoi décider, donc gl_start_brief s'appuie là-dessus pour dire si un ticket est déjà
-# pris — et /ticket-start pour refuser de le démarrer (gl_begin REMPLACE la liste des assignés :
-# démarrer un ticket pris le retirerait en silence à son propriétaire).
+# gl_issue_owner <iid> -> imprime « <statut><TAB><assignés> » : le LIBELLÉ du cycle de vie (lu dans
+# le label workflow::, cf. contrat de surface en tête de fichier) et les usernames des assignés
+# séparés par des virgules. Un champ vide signifie « non posé » pour le cycle de vie, « personne »
+# (ticket LIBRE) pour les assignés. Une seule lecture GraphQL, parsing shell pur (pas de jq) —
+# même approche que gl_backlog_table, en ciblant un seul ticket.
+# Sert l'ANTI-COLLISION du travail à plusieurs (#159) : `glab issue view` expose bien les labels,
+# mais pas de quoi décider d'un coup d'œil, donc gl_start_brief s'appuie là-dessus pour dire si un
+# ticket est déjà pris — et /ticket-start pour refuser de le démarrer (gl_begin REMPLACE la liste
+# des assignés : démarrer un ticket pris le retirerait en silence à son propriétaire).
 gl_issue_owner() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_issue_owner <iid>" >&2; return 2; fi
   local raw statut assignes
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetStatus { status { name } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }')" || return 1
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }')" || return 1
   if [ -z "$raw" ]; then echo "gl_issue_owner : lecture du ticket #$iid impossible" >&2; return 1; fi
   # Ticket inexistant : la requête réussit mais rend « "workItems":{"nodes":[]} ». Sans ce
   # garde-fou, la fonction imprimerait deux champs vides — que l'appelant lirait comme « statut non
@@ -232,7 +350,11 @@ gl_issue_owner() {
     # libre », c'est-à-dire un feu vert (gl_close_guard, gl_start_brief). Mieux vaut l'erreur.
     *'"project":null'*) echo "gl_issue_owner : projet $GL_PROJECT illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
   esac
-  statut="$(printf '%s' "$raw" | grep -o '"status":{"name":"[^"]*"' | head -1 | sed 's/.*"name":"//; s/"$//')"
+  # Cycle de vie : slug du label workflow:: → libellé. Vide si le ticket n'en porte aucun (dérive
+  # possible sur Free, où l'exclusion n'est pas garantie : c'est doctor.sh qui la traque).
+  statut="$(printf '%s' "$raw" | grep -o '"'"$GL_WORKFLOW_SCOPE"'::[a-z-]*"' | head -1 \
+            | sed 's/^"'"$GL_WORKFLOW_SCOPE"':://; s/"$//')"
+  [ -n "$statut" ] && statut="$(gl_workflow_label "$statut")"
   assignes="$(printf '%s' "$raw" | grep -o '"username":"[^"]*"' | sed 's/.*"username":"//; s/"$//' \
               | awk '{ out = (NR == 1 ? $0 : out "," $0) } END { if (NR) print out }')"
   printf '%s\t%s\n' "$statut" "$assignes"
@@ -385,8 +507,9 @@ gl_milestones() {
 #
 # Sortie TSV (en-tête préfixée « # » ignorable) :
 #     iid <TAB> statut <TAB> type <TAB> agent <TAB> prio <TAB> titre
-# `statut` est le statut NATIF (widget Status : À faire / En cours / En revue / Terminé /
-# Abandonné / Doublon) ; `type`/`agent`/`prio` sont le suffixe nu du label (« feature »,
+# `statut` est le LIBELLÉ du cycle de vie (À faire / En cours / En revue / Terminé / Abandonné /
+# Doublon — lu dans le label workflow::, jamais son slug : contrat de surface en tête de fichier ;
+# « - » si le ticket n'en porte aucun) ; `type`/`agent`/`prio` sont le suffixe nu du label (« feature »,
 # « dev », « moyenne ») ; un champ absent vaut « - ». Les tickets sortent du plus récent au plus
 # ancien (ordre de l'API) ; l'appelant regroupe et trie selon sa présentation.
 gl_milestone_issues() {
@@ -398,10 +521,10 @@ gl_milestone_issues() {
   local escaped
   escaped="$(printf '%s' "$title" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   local raw
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(milestoneTitle:["'"$escaped"'"], first: 100) { nodes { iid title state widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetStatus { status { name } } } } } } }')" || return 1
+  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(milestoneTitle:["'"$escaped"'"], first: 100) { nodes { iid title state widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } } } } } }')" || return 1
 
   local rows
-  rows="$(printf '%s\n' "$raw" | awk '
+  rows="$(printf '%s\n' "$raw" | awk -v WF_SCOPE="$GL_WORKFLOW_SCOPE" "$(gl_awk_workflow)"'
     {
       n = split($0, parts, /\{"iid":"/)
       for (i = 2; i <= n; i++) {
@@ -417,10 +540,7 @@ gl_milestone_issues() {
         }
         gsub(/\\u0026/, "\\&", titre); gsub(/\\u003e/, ">", titre); gsub(/\\u003c/, "<", titre)
 
-        statut = "-"
-        if (match(node, /"status":\{"name":"[^"]*"/)) {
-          m = substr(node, RSTART, RLENGTH); sub(/.*"name":"/, "", m); sub(/"$/, "", m); statut = m
-        }
+        statut = wf_libelle(node)
 
         type = "-"; agent = "-"; prio = "-"
         if (match(node, /type::[a-z]+/))  type  = substr(node, RSTART + 6, RLENGTH - 6)
@@ -485,7 +605,7 @@ gl_parent_of() {
 }
 
 # gl_subtickets <iid-parent> -> liste ORDONNÉE des sous-tickets déclarés dans la checklist
-# « ## Sous-tickets » du parent, enrichie du statut natif (une seule requête backlog, pas N).
+# « ## Sous-tickets » du parent, enrichie du cycle de vie (une seule requête backlog, pas N).
 # Sortie TSV : iid <TAB> coche(x|-) <TAB> statut <TAB> par(∥|-) <TAB> titre  (ligne d'en-tête « # »
 # à ignorer). La colonne « par » porte le marqueur « (parallèle) », retiré du titre pour que le
 # marqueur ne soit lu qu'à un seul endroit.
@@ -534,8 +654,10 @@ gl_subticket_rows() {
   '
 }
 
-# gl_subtickets_enrich — enrichit du STATUT NATIF les lignes TSV de gl_subticket_rows (stdin) et
+# gl_subtickets_enrich — enrichit du CYCLE DE VIE les lignes TSV de gl_subticket_rows (stdin) et
 # imprime la table finale « iid/coche/statut/par/titre » (une seule requête backlog, pas N).
+# La colonne `statut` reprend telle quelle celle de gl_backlog_table : le LIBELLÉ (« À faire »),
+# jamais le slug — c'est sur ces libellés que gl_subtickets_startables compare.
 gl_subtickets_enrich() {
   local table siid coche par titre statut
   table="$(gl_backlog_table all)" || table=""
@@ -610,9 +732,9 @@ gl_start_brief() {
 
   printf '%s\n' "$raw" | gl_issue_brief_render "$iid"
 
-  # Statut natif + assigné (gl_issue_owner) : de quoi voir d'un coup d'œil si le ticket est LIBRE
-  # ou DÉJÀ PRIS — `glab issue view` n'expose pas le statut natif. Avertissement explicite quand il
-  # est « En cours » chez quelqu'un d'autre : /ticket-start doit s'arrêter là plutôt que de lui
+  # Cycle de vie + assigné (gl_issue_owner) : de quoi voir d'un coup d'œil si le ticket est LIBRE
+  # ou DÉJÀ PRIS, sans avoir à lire les labels à la main. Avertissement explicite quand il est
+  # « En cours » chez quelqu'un d'autre : /ticket-start doit s'arrêter là plutôt que de lui
   # retirer l'assignation en silence (gl_begin remplace la liste des assignés).
   local owner statut assignes moi
   owner="$(gl_issue_owner "$iid" 2>/dev/null)"
@@ -696,12 +818,14 @@ gl_start_brief() {
 }
 
 # gl_begin <iid> [username] -> démarrage groupé du ticket : assignation (username auto-résolu si
-# absent) + statut « En cours » + dates début/échéance (mêmes règles que gl_start_dates : début =
-# aujourd'hui conservé si déjà posé — idempotent —, échéance = début + délai selon prio::) en UNE
-# SEULE mutation workItemUpdate multi-widgets (assigneesWidget + statusWidget +
+# absent) + cycle de vie « En cours » + dates début/échéance (mêmes règles que gl_start_dates :
+# début = aujourd'hui conservé si déjà posé — idempotent —, échéance = début + délai selon prio::)
+# en UNE SEULE mutation workItemUpdate multi-widgets (assigneesWidget + labelsWidget +
 # startAndDueDateWidget). Le GID du work item, la date de début existante et la priorité sont
 # résolus en une lecture combinée. NB : assigneeIds REMPLACE la liste des assignés (sémantique
-# voulue au démarrage : le ticket passe à celui qui le démarre).
+# voulue au démarrage : le ticket passe à celui qui le démarre) ; labelsWidget, lui, est ADDITIF
+# (addLabelIds/removeLabelIds), ce qui préserve type::/agent::/prio:: — d'où le retrait explicite
+# des cinq autres workflow::, comme dans gl_set_workflow.
 gl_begin() {
   local iid="$1" user="${2:-}"
   if [ -z "$iid" ]; then echo "usage: gl_begin <iid> [username]" >&2; return 2; fi
@@ -730,9 +854,17 @@ gl_begin() {
   start="$(printf '%s' "$wraw" | grep -o '"startDate":"[0-9-]*"' | head -1 | sed 's/.*"startDate":"//; s/"$//')"
   prio="$(printf '%s' "$wraw" | grep -o 'prio::[a-z]*' | head -1)"
 
-  # Statut par nom (même robustesse que gl_set_status) et calcul des dates (règles gl_start_dates).
-  local sid today delay due
-  sid="$(gl_status_gid "En cours")" || return 1
+  # Labels workflow:: par nom (même robustesse que gl_set_workflow : aucun GID en dur, et les cinq
+  # autres retirés dans la même mutation) et calcul des dates (règles gl_start_dates).
+  local gids cible retraits today delay due
+  gids="$(gl_workflow_gids)" || return 1
+  cible="$(printf '%s\n' "$gids" | awk -F '\t' '$1 == "en-cours" { print $2; exit }')"
+  if [ -z "$cible" ]; then
+    echo "gl_begin : label « $GL_WORKFLOW_SCOPE::en-cours » absent — provisionner : bash scripts/gitlab/bootstrap.sh" >&2
+    return 1
+  fi
+  retraits="$(printf '%s\n' "$gids" | awk -F '\t' '
+    $1 != "en-cours" { printf "%s\"%s\"", (n++ ? "," : ""), $2 }')"
   today="$(date +%F)"
   [ -z "$start" ] && start="$today"
   delay="$(gl_prio_delay "$prio")"
@@ -741,10 +873,10 @@ gl_begin() {
 
   # La mutation groupée — appel direct à glab, jamais enveloppé de retry (cf. gl_graphql_read).
   local out
-  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", assigneesWidget:{ assigneeIds:["'"$ugid"'"] }, statusWidget:{ status:"'"$sid"'" }, startAndDueDateWidget:{ startDate:"'"$start"'", dueDate:"'"$due"'" } }){ errors } }' 2>&1)"
+  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", assigneesWidget:{ assigneeIds:["'"$ugid"'"] }, labelsWidget:{ addLabelIds:["'"$cible"'"], removeLabelIds:['"$retraits"'] }, startAndDueDateWidget:{ startDate:"'"$start"'", dueDate:"'"$due"'" } }){ errors } }' 2>&1)"
   case "$out" in
     *'"errors":[]'*)
-      printf '#%s démarré : assigné=%s, statut « En cours », début=%s, échéance=%s\n' "$iid" "$user" "$start" "$due"
+      printf '#%s démarré : assigné=%s, cycle de vie « En cours », début=%s, échéance=%s\n' "$iid" "$user" "$start" "$due"
       printf '  (priorité %s → échéance à +%s j)\n' "${prio:-prio::moyenne (défaut)}" "$delay"
       ;;
     *) echo "Échec du démarrage groupé de #$iid : $out" >&2; return 1 ;;
@@ -755,7 +887,7 @@ gl_begin() {
 # Renseignés automatiquement le long du cycle de vie (voir docs/10-workflow-git.md §3.3) :
 #   • date de début + échéance  → posées par /ticket-start (gl_start_dates)
 #   • temps passé               → proposé puis loggé par /ticket-finish (gl_log_time)
-# Tout passe par la mutation workItemUpdate, comme gl_set_status (widgets startAndDueDate / timeTracking).
+# Tout passe par la mutation workItemUpdate, comme gl_set_workflow (widgets startAndDueDate / timeTracking).
 
 # gl_prio <iid> -> imprime le label prio du ticket (« prio::haute » | « prio::moyenne » | « prio::basse »),
 # vide si absent.
@@ -1850,11 +1982,17 @@ gl_close_guard() {
   fi
 
   # 2. Propriété du ticket (une lecture GitLab). Son échec ne masque jamais le constat local.
-  owner="$(gl_issue_owner "$iid" 2>/dev/null)" || owner=""
-  # Une lecture muette (deux champs vides) ne vaut PAS « ticket libre » : un ticket réel porte
-  # toujours un statut (« À faire » par défaut). Sans ce test, une réponse dégradée passerait pour
-  # un feu vert — le sens du doute doit aller vers le refus, pas vers l'écriture.
-  if [ -z "${owner//[[:space:]]/}" ]; then
+  local owner_code=0
+  owner="$(gl_issue_owner "$iid" 2>/dev/null)" || owner_code=$?
+  # Le verdict d'illisibilité se lit sur le CODE DE RETOUR de gl_issue_owner, pas sur la vacuité
+  # de sa sortie. Du temps du statut natif les deux se confondaient — un ticket réel portait
+  # toujours un statut (« À faire » par défaut), donc deux champs vides trahissaient une réponse
+  # dégradée. Depuis que le cycle de vie est un LABEL (#209), un ticket peut légitimement n'en
+  # porter aucun (dérive que doctor.sh traque) : conserver le test sur la vacuité classerait un
+  # ticket sans label et sans assigné comme « illisible » et bloquerait sa clôture à tort.
+  # gl_issue_owner, lui, distingue déjà les vrais échecs (GraphQL muet, ticket introuvable, projet
+  # illisible) — le sens du doute continue donc d'aller vers le refus, sur un signal plus juste.
+  if [ "$owner_code" -ne 0 ]; then
     printf "  propriété de #%s : indéterminée (ticket illisible — GitLab injoignable ?).\n" "$iid"
     [ "$decalage" -eq 1 ] && return 3
     [ "$inverifiable" -eq 1 ] && return 5
@@ -1888,8 +2026,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     current-user)   gl_current_user ;;
     graphql-read)   gl_graphql_read "$@" ;;
     workitem-gid)   gl_workitem_gid "$@" ;;
-    status-gid)     gl_status_gid "$@" ;;
-    set-status)     gl_set_status "$@" ;;
+    set-workflow)   gl_set_workflow "$@" ;;
+    workflow-slug)  gl_workflow_slug "$@" ;;
+    workflow-label) gl_workflow_label "$@" ;;
+    workflow-gids)  gl_workflow_gids ;;
     backlog)        gl_backlog "$@" ;;
     backlog-table)  gl_backlog_table "$@" ;;
     issue-brief)    gl_issue_brief "$@" ;;
@@ -1944,11 +2084,16 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     branch-prefix)  gl_branch_prefix "$@" ;;
     *)
       echo "usage: bash scripts/gitlab/lib.sh <sous-commande> [args]" >&2
-      echo "  require | current-user | workitem-gid <iid> | status-gid <nom> | set-status <iid> <nom>" >&2
+      echo "  require | current-user | workitem-gid <iid>" >&2
+      echo "  Cycle de vie (labels workflow::*, cf. contrat en tête de lib.sh) :" >&2
+      echo "    set-workflow <iid> <valeur>   (pose la valeur ET retire les cinq autres, en un appel)" >&2
+      echo "                                  valeur = « À faire »… ou le slug « a-faire »… ; sortie toujours en libellé" >&2
+      echo "    workflow-slug <valeur>        (normalise en slug)   workflow-label <slug> (rend le libellé)" >&2
+      echo "    workflow-gids                 (les six labels du scope : slug/GID, dérivés par nom)" >&2
       echo "  backlog [opened|closed|all]        (JSON brut du backlog)" >&2
       echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
-      echo "  issue-owner <iid>                  (statut natif + assignés du ticket, TSV — vide = libre)" >&2
+      echo "  issue-owner <iid>                  (cycle de vie + assignés du ticket, TSV — vide = libre)" >&2
       echo "  issue-taken <iid> [username]       (0 + assignés si le ticket est « En cours » chez quelqu'un d'autre)" >&2
       echo "  current-milestone                  (titre du milestone de la phase courante — actif le plus ancien non soldé)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2

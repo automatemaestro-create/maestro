@@ -112,12 +112,34 @@ printf '%s\\n' "$MAESTRO_STUB_WORKTREE_DIR"
 """
 
 
+# Cycle de vie : libellé (surface) -> slug (stockage du label). Depuis #209 le cycle de vie est
+# porté par un label `workflow::<slug>` et non plus par le champ Status natif — les bouchons GraphQL
+# doivent donc répondre un widget Labels. Les tests continuent d'écrire et d'attendre le LIBELLÉ
+# (« À faire »), conformément au contrat de surface documenté en tête de scripts/gitlab/lib.sh.
+_SLUG_WORKFLOW = {
+    "À faire": "a-faire",
+    "En cours": "en-cours",
+    "En revue": "en-revue",
+    "Terminé": "termine",
+    "Abandonné": "abandonne",
+    "Doublon": "doublon",
+}
+
+
+def _label_workflow(statut: str) -> str:
+    """Le nœud de label portant le cycle de vie, ou une chaîne vide si `statut` est vide."""
+    if not statut:
+        return ""
+    return f'{{"title":"workflow::{_SLUG_WORKFLOW.get(statut, statut)}"}}'
+
+
 def _statut_json(iid: str, statut: str, assigne: str = "") -> str:
     """La réponse GraphQL que `gl_issue_owner` sait lire."""
     assignes = f'{{"username":"{assigne}"}}' if assigne else ""
     return (
         f'{{"data":{{"project":{{"workItems":{{"nodes":[{{"iid":"{iid}","widgets":['
-        f'{{"status":{{"name":"{statut}"}}}},{{"assignees":{{"nodes":[{assignes}]}}}}]}}]}}}}}}}}'
+        f'{{"labels":{{"nodes":[{_label_workflow(statut)}]}}}},'
+        f'{{"assignees":{{"nodes":[{assignes}]}}}}]}}]}}}}}}}}'
     )
 
 
@@ -197,11 +219,12 @@ class Depot:
         """Un ticket déclaré, au format de nœud que les deux tables partagent."""
         t = self.tickets[iid]
         assignes = f'{{"username":"{t["assigne"]}"}}' if t["assigne"] else ""
+        workflow = _label_workflow(t["statut"])
         return (
             f'{{"iid":"{iid}","title":"{t["titre"]}","state":"opened","widgets":['
             f'{{"labels":{{"nodes":[{{"title":"type::{t["type"]}"}},'
-            f'{{"title":"prio::{t["prio"]}"}},{{"title":"agent::dev"}}]}}}},'
-            f'{{"status":{{"name":"{t["statut"]}"}}}},'
+            f'{{"title":"prio::{t["prio"]}"}},{{"title":"agent::dev"}}'
+            f'{"," + workflow if workflow else ""}]}}}},'
             f'{{"assignees":{{"nodes":[{assignes}]}}}}]}}'
         )
 

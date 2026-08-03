@@ -138,13 +138,20 @@ sortie(code=1)
 
 
 def noeud_ticket(iid: str, titre: str, statut: str, labels: list[str], assignes: list[str]) -> dict:
-    """Un work item tel que le rend la requête backlog (ordre des clés : iid, title, widgets)."""
+    """Un work item tel que le rend la requête backlog (ordre des clés : iid, title, widgets).
+
+    `statut` reste un LIBELLÉ côté test (« En revue ») : depuis #209 il voyage dans le widget
+    Labels, sous la forme `workflow::<slug>`, aux côtés des `type::`/`agent::`/`prio::`.
+    """
     return {
         "iid": iid,
         "title": titre,
         "widgets": [
-            {"status": {"name": statut}},
-            {"labels": {"nodes": [{"title": label} for label in labels]}},
+            {
+                "labels": {
+                    "nodes": labels_workflow(statut) + [{"title": label} for label in labels]
+                }
+            },
             {"assignees": {"nodes": [{"username": u} for u in assignes]}},
         ],
     }
@@ -163,8 +170,29 @@ def colonnes(sortie: str) -> list[list[str]]:
     ]
 
 
+# Cycle de vie : libellé (surface) -> slug (stockage). Depuis #209 le cycle de vie est porté par un
+# LABEL `workflow::<slug>` et non plus par le champ Status natif — les doubles de test doivent donc
+# répondre un widget Labels. Les tests, eux, continuent d'écrire et d'attendre le LIBELLÉ : c'est
+# exactement le contrat de surface documenté en tête de scripts/gitlab/lib.sh.
+SLUG_WORKFLOW = {
+    "À faire": "a-faire",
+    "En cours": "en-cours",
+    "En revue": "en-revue",
+    "Terminé": "termine",
+    "Abandonné": "abandonne",
+    "Doublon": "doublon",
+}
+
+
+def labels_workflow(statut: str) -> list[dict]:
+    """Nœuds de labels d'un ticket portant le cycle de vie `statut` (vide si `statut` est vide)."""
+    if not statut:
+        return []
+    return [{"title": f"workflow::{SLUG_WORKFLOW.get(statut, statut)}"}]
+
+
 def reponse_owner(statut: str, assignes: list[str]) -> dict:
-    """Réponse de la requête statut+assignés d'un seul ticket (gl_issue_owner)."""
+    """Réponse de la requête cycle de vie + assignés d'un seul ticket (gl_issue_owner)."""
     return {
         "data": {
             "project": {
@@ -172,7 +200,7 @@ def reponse_owner(statut: str, assignes: list[str]) -> dict:
                     "nodes": [
                         {
                             "widgets": [
-                                {"status": {"name": statut}},
+                                {"labels": {"nodes": labels_workflow(statut)}},
                                 {"assignees": {"nodes": [{"username": u} for u in assignes]}},
                             ]
                         }
@@ -184,7 +212,7 @@ def reponse_owner(statut: str, assignes: list[str]) -> dict:
 
 
 def regle_owner(statut: str, assignes: list[str]) -> dict:
-    """Règle de réponse à la requête statut+assignés d'UN ticket.
+    """Règle de réponse à la requête cycle de vie + assignés d'UN ticket.
 
     Le fragment `workItems(iids:` est indispensable : la requête backlog porte elle aussi
     `WorkItemWidgetAssignees` et capterait la règle si elle était moins spécifique.
