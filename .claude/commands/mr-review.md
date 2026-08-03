@@ -61,4 +61,4 @@ n'ouvre le doc qu'en cas de doute).
    `glab mr merge` **de sa propre main**.
 
 N'exécute **aucune** commande d'écriture : ni `glab mr merge`/`close`/`approve`/`update`, ni
-`glab issue update`/`set-status`, ni `git push`. En cas de doute, abstiens-toi et demande.
+`glab issue update`/`set-workflow`, ni `git push`. En cas de doute, abstiens-toi et demande.

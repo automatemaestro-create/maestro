@@ -9,10 +9,11 @@ et remet `main` à jour. Ne supprime
 dans `docs/10-workflow-git.md` §6, non chargé automatiquement — à n'ouvrir qu'en cas de doute ;
 cette commande est autosuffisante).
 
-> Au merge, GitLab fait déjà le reste automatiquement : suppression de la branche **distante**
-> (case « Delete source branch », pré-cochée) et passage du ticket au statut **Terminé** (la
-> fermeture via `Closes #` pose le statut « done » du lifecycle). Cette commande ne couvre donc
-> que ce que GitLab ne peut pas toucher : ta copie **locale**.
+> Au merge, GitLab supprime déjà la branche **distante** (case « Delete source branch »,
+> pré-cochée) et **ferme** le ticket via `Closes #`. Mais il ne pose plus son état : depuis que le
+> cycle de vie est porté par les **labels `workflow::*`** (docs/10 §3), plus rien ne bascule un
+> ticket sur « Terminé » à sa fermeture — c'est cette commande qui le fait (étape 5). Elle couvre
+> donc ta copie **locale**, plus l'état que GitLab ne pose plus.
 
 1. `bash scripts/gitlab/lib.sh require` — arrête-toi si glab absent ou non authentifié.
 
@@ -65,12 +66,19 @@ cette commande est autosuffisante).
      (case décochée au merge) : `git push origin --delete <branche>` (si un `git pull`/`push`
      reste bloqué sur une demande d'identifiants — Windows + Git Credential Manager — relance-le
      en forçant `glab` : `git -c credential.helper='!glab auth git-credential' <commande>`) ;
-   - le **statut** du ticket est déjà `Terminé` (posé automatiquement à la fermeture par le
-     merge) — rien à faire ; tu peux le vérifier si besoin, mais ne le repose pas.
+   - pose l'**état** `Terminé` sur le ticket — la fermeture par le merge **ne le fait plus** (le
+     cycle de vie est porté par les labels `workflow::*`, et GitLab n'en pose aucun tout seul) :
+     ```
+     bash scripts/gitlab/lib.sh set-workflow <iid> "Terminé"
+     ```
+     Le helper retire les cinq autres `workflow::*` dans le **même** appel — l'exclusion mutuelle
+     des labels scopés étant Premium, rien ne l'assurerait à notre place (docs/10 §3). Idempotent :
+     le reposer sur un ticket déjà « Terminé » ne change rien.
 
 6. Si aucune candidate n'est trouvée, contente-toi de remettre `main` à jour
    (`bash scripts/gitlab/lib.sh sync-main`) et dis-le — le helper est muet quand elle l'est déjà.
 
 7. Termine par un résumé des branches supprimées (locale/distante) et de celles laissées de
-   côté avec la raison (pas de MR, MR pas encore mergée), suivi des **worktrees retirés** à
-   l'étape 4 et de ceux que `gc` a conservés en signalant du travail non sauvegardé.
+   côté avec la raison (pas de MR, MR pas encore mergée), des **tickets passés à « Terminé »**,
+   suivi des **worktrees retirés** à l'étape 4 et de ceux que `gc` a conservés en signalant du
+   travail non sauvegardé.

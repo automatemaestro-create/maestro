@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bilan de santé (LECTURE SEULE) du setup GitLab Maestro + détection de dérive.
-# N'écrit jamais rien (ni statut, ni label, ni MR) — voir docs/10-workflow-git.md.
+# N'écrit jamais rien (ni état, ni label, ni MR) — voir docs/10-workflow-git.md.
 # Réutilise scripts/gitlab/lib.sh (cycle de vie par nom de label, pas de GID en dur).
 #
 # Usage :  bash scripts/gitlab/doctor.sh [--strict]
@@ -64,10 +64,7 @@ fi
 # surface en tête de lib.sh. Une SEULE lecture (gl_workflow_gids, avec retry) pour les six, comme
 # la section le faisait pour les six statuts : on évite le faux « incohérent » que six appels
 # indépendants déclenchaient dès qu'un seul retombait vide.
-# NB : ce bloc est le minimum pour que le bilan reste juste après #209. La détection de DÉRIVE
-# propre aux labels (un ticket ouvert portant 0 ou ≥ 2 `workflow::*`, l'exclusion mutuelle n'étant
-# pas garantie sur le plan Free) relève du lot 3 de #207 — ticket #210.
-section "3. Labels de cycle de vie « $GL_WORKFLOW_SCOPE:: » (résolvables par nom)"
+section "3. Cycle de vie (labels $GL_WORKFLOW_SCOPE::* et colonnes du Kanban)"
 workflow_gids="$(gl_workflow_gids 2>/dev/null)"
 if [ -z "$workflow_gids" ]; then
   err "aucun label « $GL_WORKFLOW_SCOPE::* » lisible dans $GL_PROJECT → relancer scripts/gitlab/bootstrap.sh"
@@ -84,23 +81,78 @@ else
   fi
 fi
 
-# --- 4. Dérive statut ↔ réalité -----------------------------------------------------------------
-section "4. Dérive statut ↔ réalité"
+# Les colonnes du Kanban, posées par bootstrap-board.sh sur ces mêmes labels : sans elles les
+# tickets existent mais le board ne montre rien, ce qui était le symptôme visible de #207. Le board
+# est UNIQUE sur le plan Free, on le découvre donc plutôt que de figer un id. Deux dérives à
+# attraper — une colonne du flux manquante, et une liste qui n'en fait pas partie (dont les listes
+# ORPHELINES `"label":null` héritées des colonnes par statut, qui n'affichent plus rien et ne
+# partent pas toutes seules). L'ORDRE, lui, n'est pas contrôlé ici : il est cosmétique, et
+# bootstrap-board.sh le rétablit — le signaler ferait du bruit sans enjeu.
+board_flux="$GL_WORKFLOW_SCOPE::a-faire $GL_WORKFLOW_SCOPE::en-cours $GL_WORKFLOW_SCOPE::en-revue $GL_WORKFLOW_SCOPE::termine"
+board_id="$(glab api "projects/$(gl_project_enc)/boards" --output ndjson 2>/dev/null | grep -o '^{"id":[0-9]\+' | head -1 | grep -o '[0-9]\+')"
+if [ -z "$board_id" ]; then
+  warn "aucun board Kanban sur $GL_PROJECT — le créer une fois dans l'UI (Plan > Boards), puis : bash scripts/gitlab/bootstrap-board.sh"
+else
+  # Une liste par ligne (ndjson) ; « - » pour une liste orpheline, dont l'objet `label` est null.
+  board_listes="$(glab api "projects/$(gl_project_enc)/boards/$board_id/lists" --output ndjson 2>/dev/null | awk '
+    /^\{/ {
+      nom = "-"
+      if (match($0, /"label":\{/)) {
+        reste = substr($0, RSTART)
+        if (match(reste, /"name":"[^"]*"/)) nom = substr(reste, RSTART + 8, RLENGTH - 9)
+      }
+      print nom
+    }
+  ')"
+  if [ -z "$board_listes" ]; then
+    warn "colonnes du board #$board_id illisibles (API muette) — contrôle ignoré"
+  else
+    manquantes=""
+    for nom in $board_flux; do
+      printf '%s\n' "$board_listes" | grep -qx -- "$nom" || manquantes="${manquantes:+$manquantes, }$nom"
+    done
+    intruses=""
+    while IFS= read -r nom; do
+      [ -z "$nom" ] && continue
+      case " $board_flux " in *" $nom "*) continue ;; esac
+      [ "$nom" = "-" ] && nom="liste orpheline (label supprimé)"
+      intruses="${intruses:+$intruses, }$nom"
+    done <<EOF
+$board_listes
+EOF
+    if [ -z "$manquantes" ] && [ -z "$intruses" ]; then
+      ok "board #$board_id : 4 colonnes du flux (à-faire → en-cours → en-revue → terminé)"
+    else
+      [ -n "$manquantes" ] && warn "board #$board_id : colonne(s) manquante(s) : $manquantes → bash scripts/gitlab/bootstrap-board.sh"
+      [ -n "$intruses" ]   && warn "board #$board_id : liste(s) hors flux : $intruses → bash scripts/gitlab/bootstrap-board.sh"
+    fi
+  fi
+fi
 
-# helper local : iid des work items d'un état GitLab (opened/closed) portant un cycle de vie donné.
+# --- 4. Dérive cycle de vie ↔ réalité -----------------------------------------------------------
+section "4. Dérive cycle de vie ↔ réalité"
+
+# Les deux backlogs, lus UNE fois chacun : les trois contrôles ci-dessous s'en servent et
+# gl_backlog n'a pas de cache — une lecture par contrôle multiplierait les allers-retours d'un
+# bilan qui en fait déjà beaucoup. Découpés en un nœud par ligne dès ici, forme sur laquelle
+# travaillent aussi bien grep (4a, 4b) que awk (4c).
+backlog_opened="$(gl_backlog opened | sed 's/{"iid":/\n{"iid":/g')"
+backlog_closed="$(gl_backlog closed | sed 's/{"iid":/\n{"iid":/g')"
+
+# helper local : iid des work items d'un backlog déjà lu portant un cycle de vie donné.
 # Le cycle de vie est un LABEL depuis #209 : on filtre sur `workflow::<slug>` et non plus sur le
 # widget de statut. L'argument reste le LIBELLÉ (« En revue »), converti ici par gl_workflow_slug —
 # c'est le contrat de surface de lib.sh, le slug ne circule pas dans les appelants.
-iids_with_status() { # $1=opened|closed  $2=libellé de cycle de vie
+iids_with_workflow() { # $1=backlog découpé  $2=libellé de cycle de vie
   local slug
   slug="$(gl_workflow_slug "$2")" || return 1
-  gl_backlog "$1" | sed 's/{"iid":/\n{"iid":/g' \
+  printf '%s\n' "$1" \
     | grep -F '"'"$GL_WORKFLOW_SCOPE"'::'"$slug"'"' \
     | grep -o '"iid":"[0-9]*"' | grep -o '[0-9]*'
 }
 
 # 4a. Tickets « En revue » ouverts : une MR ouverte est-elle rattachée ?
-revue_iids="$(iids_with_status opened "En revue")"
+revue_iids="$(iids_with_workflow "$backlog_opened" "En revue")"
 open_mr_branches="$(glab mr list --output json 2>/dev/null | grep -o '"source_branch":"[^"]*"' | cut -d'"' -f4)"
 if [ -z "$revue_iids" ]; then
   ok "aucun ticket « En revue » en attente"
@@ -109,21 +161,57 @@ else
     if printf '%s\n' "$open_mr_branches" | grep -q "/$iid-"; then
       ok "#$iid « En revue » ↔ MR ouverte"
     else
-      warn "#$iid « En revue » sans MR ouverte rattachée (statut resté après merge/close ?)"
+      warn "#$iid « En revue » sans MR ouverte rattachée (état resté après merge/close ?)"
     fi
   done
 fi
 
 # 4b. Tickets fermés dont le cycle de vie est resté « actif »
-stuck_iids="$(gl_backlog closed | sed 's/{"iid":/\n{"iid":/g' \
+stuck_iids="$(printf '%s\n' "$backlog_closed" \
   | grep -E '"'"$GL_WORKFLOW_SCOPE"'::(a-faire|en-cours|en-revue)"' \
   | grep -o '"iid":"[0-9]*"' | grep -o '[0-9]*')"
 if [ -z "$stuck_iids" ]; then
-  ok "aucun ticket fermé au statut encore actif"
+  ok "aucun ticket fermé à l'état encore actif"
 else
   for iid in $stuck_iids; do
-    warn "#$iid est fermé mais son statut est encore « actif » (attendu : Terminé/Abandonné/Doublon)"
+    warn "#$iid est fermé mais son état est encore « actif » (attendu : Terminé/Abandonné/Doublon)"
   done
+fi
+
+# 4c. L'invariant « exactement un workflow:: par ticket ouvert ».
+# C'est LA dérive propre au dispositif par labels, et rien d'autre ne l'attrape : l'exclusion
+# mutuelle des labels scopés est une fonctionnalité Premium, donc sur Free le « :: » n'est que
+# cosmétique et rien n'empêche un ticket de porter deux valeurs à la fois (docs/10 §3, #207). Deux
+# cas, de causes opposées :
+#   • 0 label  → ticket échappé à la migration, ou créé depuis l'UI GitLab (qui ne connaît pas
+#                notre convention) : il n'est sur AUCUNE colonne du Kanban et sort de tous les
+#                comptes (`queue.sh` ne le verra pas, `/backlog` le rendra « - ») ;
+#   • ≥ 2      → pose partielle : un ajout sans le retrait des autres. Les lectures rendent alors
+#                le PREMIER label rencontré (cf. gl_awk_workflow), donc un état plausible mais
+#                arbitraire — le plus pernicieux des deux, puisque rien ne dépasse à l'affichage.
+# Aucune lecture supplémentaire (le backlog ouvert est déjà en main) ; comptage des labels du scope
+# nœud par nœud, en awk pur comme le reste du fichier.
+wf_derives="$(printf '%s\n' "$backlog_opened" | awk -v WF_SCOPE="$GL_WORKFLOW_SCOPE" '
+  /^\{"iid":"/ {
+    match($0, /"iid":"[0-9]+/); iid = substr($0, RSTART + 7, RLENGTH - 7)
+    n = 0; reste = $0; motif = "\"" WF_SCOPE "::[a-z-]+\""
+    while (match(reste, motif)) { n++; reste = substr(reste, RSTART + RLENGTH) }
+    if (n != 1) printf "%s\t%d\n", iid, n
+  }
+')"
+if [ -z "$wf_derives" ]; then
+  ok "tous les tickets ouverts portent exactement un label $GL_WORKFLOW_SCOPE::*"
+else
+  while IFS=$'\t' read -r iid n; do
+    [ -z "$iid" ] && continue
+    if [ "$n" = 0 ]; then
+      warn "#$iid ouvert sans label $GL_WORKFLOW_SCOPE::* — hors du Kanban et de tous les comptes → poser : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\""
+    else
+      warn "#$iid ouvert porte $n labels $GL_WORKFLOW_SCOPE::* (un seul attendu) — les lectures en rendent un au hasard → reposer le bon : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\""
+    fi
+  done <<EOF
+$wf_derives
+EOF
 fi
 
 # --- 5. Ménage des branches locales -------------------------------------------------------------

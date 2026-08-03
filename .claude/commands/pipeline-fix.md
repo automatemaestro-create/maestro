@@ -118,5 +118,5 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
     la MR n'a pas été modifiée et que **le merge reste une décision humaine**.
 
 N'exécute **aucune** action de cycle de vie : ni `glab mr merge`/`close`/`approve`/`update`, ni
-`set-status`, ni création de MR (c'est le rôle de `/ticket-finish`). Jamais de force-push, jamais
+`set-workflow`, ni création de MR (c'est le rôle de `/ticket-finish`). Jamais de force-push, jamais
 de `--no-verify`, jamais de commit sur `main`. En cas de doute, abstiens-toi et demande.
