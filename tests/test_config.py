@@ -16,4 +16,4 @@ def test_require_api_key_missing(monkeypatch):
 
 def test_default_model(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
-    assert Settings.from_env().anthropic_model == "claude-opus-4-8"
+    assert Settings.from_env().anthropic_model == "claude-opus-5"

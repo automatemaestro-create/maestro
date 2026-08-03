@@ -64,7 +64,13 @@ DETACH=0
 MAX=0
 BUDGET="${MAESTRO_ORCHESTRATE_BUDGET:-15}"
 TIMEOUT_BRUT="${MAESTRO_ORCHESTRATE_TIMEOUT:-45m}"
-MODELE="${MAESTRO_ORCHESTRATE_MODELE:-opus}"
+# Le modèle s'épingle **en toutes lettres**, jamais par alias (#206). `--model opus` est résolu par
+# le CLI, et sa cible bouge d'une version à l'autre : sur 2.1.215 elle valait encore
+# `claude-opus-4-8`. Un alias fait donc décider la version installée sur le poste à la place du
+# dépôt — deux machines ne traitent plus le backlog avec le même modèle, et le journal d'un run ne
+# dit pas sur quoi il a tourné. `MAESTRO_ORCHESTRATE_MODELE` et `--modele` restent libres d'y
+# remettre un alias, en connaissance de cause.
+MODELE="${MAESTRO_ORCHESTRATE_MODELE:-claude-opus-5}"
 PLAN_IMPOSE=""
 MILESTONE=""
 RUN_ID=""
@@ -93,7 +99,7 @@ Options :
   --max <n>            Nombre maximal de tickets traités (0 = tout le plan).
   --budget <usd>       Plafond de dépense par ticket (--max-budget-usd). Défaut : 15.
   --timeout <durée>    Délai maximal par ticket : 45m, 90m, 2700… Défaut : 45m.
-  --modele <alias>     Modèle des sessions. Défaut : opus.
+  --modele <modèle>    Modèle des sessions. Défaut : claude-opus-5.
   --plan <fichier>     Utilise un plan déjà calculé (TSV de queue.sh) au lieu d'en calculer un.
   --milestone <titre>  Transmis à queue.sh (par défaut : la phase courante).
   --run-id <id>        Identifiant du run. Défaut : horodatage.
@@ -125,7 +131,7 @@ while [ $# -gt 0 ]; do
     --max) MAX="${2:-0}"; shift ;;
     --budget) BUDGET="${2:-15}"; shift ;;
     --timeout) TIMEOUT_BRUT="${2:-45m}"; shift ;;
-    --modele | --model) MODELE="${2:-opus}"; shift ;;
+    --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
     --plan) PLAN_IMPOSE="${2:-}"; shift ;;
     # La valeur est FACULTATIVE (« --resume » seul = le run reprenable le plus récent) : on ne
     # consomme l'argument suivant que s'il n'est pas lui-même une option, sans quoi
