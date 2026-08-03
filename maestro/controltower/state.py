@@ -33,6 +33,7 @@ from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_AGENT_CAPACITE,
+    EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_STATUT,
@@ -58,6 +59,21 @@ CAPACITE_DESACTIVE = "desactive"
 VALIDATION_EN_ATTENTE = "en_attente"
 VALIDATION_APPROUVEE = "approuvee"
 VALIDATION_REFUSEE = "refusee"
+
+#: Statuts d'une **exécution** (#185, contrat #183) : en vol, menée à terme,
+#: interrompue par un humain, ou soldée en échec (au moins une tâche échouée, ou
+#: une planification impossible). Portés par l'événement `execution.statut` ;
+#: `fin` reste None tant que le run est en cours.
+EXECUTION_EN_COURS = "en_cours"
+EXECUTION_TERMINEE = "terminee"
+EXECUTION_ANNULEE = "annulee"
+EXECUTION_ECHEC = "echec"
+
+#: Statuts d'exécution **terminaux** : le run ne bouge plus, il n'est plus
+#: interruptible (`POST /api/executions/{run_id}/annuler` répond alors 409).
+STATUTS_EXECUTION_TERMINAUX = frozenset(
+    {EXECUTION_TERMINEE, EXECUTION_ANNULEE, EXECUTION_ECHEC}
+)
 
 #: Statuts de tâche *terminaux* (machine à états docs/03 §3) : l'agent redevient
 #: libre et les compteurs de la fiche agent s'incrémentent.
@@ -220,10 +236,62 @@ class EtatExecution:
     statuts, coûts — reliée aux tâches par `tache_id`. `cout_usd` agrège les
     coûts rapportés par les événements du run ; `cout` en est la vue
     comptable (#57) : le grand livre du run, coût par tâche et agrégat.
+
+    `objectif`, `statut` et `fin` portent le **cycle de vie du run** (#185) : ils
+    sont posés par les événements `execution.statut` que publie le pilotage par
+    l'API. Un run lancé **hors** de l'API (`maestro-run --publier`) n'en émet
+    aucun : il apparaît quand même dans la projection (ses étapes portent son
+    `run_id`), objectif inconnu et statut « en cours » — l'API n'a aucun signal
+    de sa fin. Ces trois champs se reconstruisent au rejeu du journal durable
+    (#97) comme le reste de la projection.
     """
 
     run_id: str
     evenements: list[Event] = field(default_factory=list)
+    objectif: str = ""
+    statut: str = EXECUTION_EN_COURS
+    fin: str | None = None
+
+    @property
+    def debut(self) -> str:
+        """L'horodatage du premier événement reçu pour ce run — vide si aucun.
+
+        Pour un run lancé par l'API c'est son événement de lancement ; pour un
+        run venu du journal d'un autre process, sa première étape consignée.
+        """
+        return self.evenements[0].horodatage if self.evenements else ""
+
+    @property
+    def nb_taches(self) -> int:
+        """Le nombre de tâches distinctes vues dans le run (0 avant planification)."""
+        return len(
+            {
+                e.tache_id
+                for e in self.evenements
+                if e.type == EVENEMENT_TACHE_STATUT and e.tache_id
+            }
+        )
+
+    def resume(self) -> dict[str, Any]:
+        """Le **résumé** du run (`ResumeExecution` du contrat #183), sans sa trace.
+
+        La forme que servent `GET /api/executions` et le lancement (#185) :
+        identité, objectif, statut, volume, coût et bornes temporelles. `ticket`
+        y est toujours None ici — la référence de ticket externe ne voyage pas
+        encore sur le bus (#187) : c'est le service de pilotage
+        (`maestro.controltower.executions`) qui la superpose pour les runs qu'il
+        a lancés.
+        """
+        return {
+            "run_id": self.run_id,
+            "objectif": self.objectif,
+            "statut": self.statut,
+            "nb_taches": self.nb_taches,
+            "cout_usd": self.cout_usd,
+            "ticket": None,
+            "debut": self.debut,
+            "fin": self.fin,
+        }
 
     @property
     def cout_usd(self) -> float | None:
@@ -278,10 +346,15 @@ class EtatExecution:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet l'exécution en dict JSON-sérialisable (la forme du REST)."""
+        """Réémet l'exécution en dict JSON-sérialisable (la forme du REST).
+
+        Le **résumé** du run (#185 : objectif, statut, volume, bornes) plus ce
+        que le résumé n'a pas : le grand livre (#57) et la trace événement par
+        événement — `GET /api/executions/{run_id}` sert donc l'état du run et sa
+        trace d'un seul appel.
+        """
         return {
-            "run_id": self.run_id,
-            "cout_usd": self.cout_usd,
+            **self.resume(),
             "cout": self.cout.to_dict(),
             "evenements": [e.to_dict() for e in self.evenements],
         }
@@ -394,6 +467,8 @@ class ControlTowerState:
             self._applique_validation_demande(event)
         elif event.type == EVENEMENT_VALIDATION_DECISION:
             self._applique_validation_decision(event)
+        elif event.type == EVENEMENT_EXECUTION_STATUT:
+            self._applique_execution_statut(event)
 
     def _applique_statut_tache(self, event: Event) -> None:
         """Met à jour la tâche visée et la fiche de l'agent qui l'a portée."""
@@ -488,6 +563,25 @@ class ControlTowerState:
             agent.actif = False
         if event.instances is not None:
             agent.instances = event.instances
+
+    def _applique_execution_statut(self, event: Event) -> None:
+        """Pose le cycle de vie d'un run (#185) : objectif, statut, heure de fin.
+
+        L'exécution existe déjà (`appliquer` l'a créée en rattachant l'événement
+        à son `run_id`) : il ne reste qu'à porter l'état **résultant**. `fin` est
+        posée sur un statut terminal et retirée si le run repasse en cours — un
+        événement sans `run_id` est ignoré (rien à rattacher). Idempotent :
+        réappliquer le même événement (application directe par le service puis
+        rediffusion par la pompe) laisse l'état inchangé.
+        """
+        execution = self._executions.get(event.run_id)
+        if execution is None:
+            return
+        execution.objectif = event.titre or execution.objectif
+        execution.statut = event.statut or execution.statut
+        execution.fin = (
+            event.horodatage if execution.statut in STATUTS_EXECUTION_TERMINAUX else None
+        )
 
     def _applique_validation_demande(self, event: Event) -> None:
         """Enregistre une demande de validation humaine (#48) — en attente de décision.
