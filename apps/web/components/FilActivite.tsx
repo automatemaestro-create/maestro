@@ -3,20 +3,59 @@
  * derniers événements reçus sur `WS /ws/evenements`, du plus récent au plus
  * ancien. Le fil est éphémère — il reflète le flux depuis l'ouverture de la
  * page, l'état de référence restant le REST.
+ *
+ * Deux réglages posés par le tableau de bord épuré (#191) : `limite` en fait un
+ * **aperçu** de quelques lignes plutôt qu'un panneau de plein format, et
+ * `renvoi` porte le lien vers la page qui héberge le fil complet. Ce renvoi est
+ * optionnel à dessein : la page Journal (chantier « Visibilité ») n'existe pas
+ * encore, et l'aperçu se suffit à lui-même en attendant — le jour où elle entre
+ * au menu, le lien s'allume sans toucher à ce composant.
  */
+
+import Link from "next/link";
 
 import { iconeEvenement, resumeEvenement } from "@/lib/evenements";
 import { formatHeure } from "@/lib/format";
 import { type Evenement } from "@/lib/types";
 
-export function FilActivite({ evenements }: { evenements: Evenement[] }) {
+export function FilActivite({
+  evenements,
+  limite,
+  renvoi,
+}: {
+  evenements: Evenement[];
+  /** Nombre d'entrées affichées ; toutes par défaut. */
+  limite?: number;
+  /** Page où le fil se consulte en entier, si elle existe. */
+  renvoi?: { href: string; libelle: string };
+}) {
+  const affiches =
+    limite === undefined ? evenements : evenements.slice(0, limite);
+  const masques = evenements.length - affiches.length;
+
   return (
-    <section aria-label="Activité en direct">
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-        Activité en direct
-      </h2>
+    <section data-guide="activite" aria-label="Activité en direct">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+          Activité en direct
+        </h2>
+        {renvoi ? (
+          <Link
+            href={renvoi.href}
+            className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-400"
+          >
+            {renvoi.libelle} →
+          </Link>
+        ) : (
+          masques > 0 && (
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              + {masques} événement(s) plus anciens
+            </span>
+          )
+        )}
+      </div>
       <ol className="space-y-1 text-sm">
-        {evenements.map((evenement, index) => (
+        {affiches.map((evenement, index) => (
           <li
             key={`${evenement.horodatage}-${index}`}
             className="flex items-baseline gap-2 rounded px-1 py-0.5"
@@ -30,7 +69,7 @@ export function FilActivite({ evenements }: { evenements: Evenement[] }) {
             </span>
           </li>
         ))}
-        {evenements.length === 0 && (
+        {affiches.length === 0 && (
           <li className="text-sm text-neutral-500">
             Aucun événement reçu pour l&apos;instant.
           </li>

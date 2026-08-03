@@ -44,3 +44,18 @@ export function entreeCourante(chemin: string): EntreeMenu | undefined {
       : chemin === entree.href || chemin.startsWith(`${entree.href}/`),
   );
 }
+
+/**
+ * L'entrée du menu qui porte ce libellé, ou `undefined` si la page n'existe pas
+ * (encore).
+ *
+ * Le tableau de bord épuré (#191) ne garde que l'essentiel et **renvoie** vers
+ * la page de chaque panneau qu'il a rangé. Résoudre ces renvois par le menu
+ * plutôt que par un chemin en dur donne deux propriétés : ils suivent d'eux-mêmes
+ * une réorganisation — « Agents » change de chemin en #190 — et un renvoi vers
+ * une page **pas encore créée** (le Journal du chantier « Visibilité ») ne
+ * s'allume que le jour où elle entre au menu, sans lien mort en attendant.
+ */
+export function entreeParLibelle(libelle: string): EntreeMenu | undefined {
+  return MENU.find((entree) => entree.libelle === libelle);
+}

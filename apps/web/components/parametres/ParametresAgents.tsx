@@ -6,11 +6,12 @@
  * désactivé ne reçoit plus de tâches, son plafond d'instances borne ses
  * exécutions simultanées.
  *
- * Le tableau Kanban montre les mêmes contrôles sur les fiches d'agent
- * (`PanneauAgents`) ; ici ils sont réunis en tableau, tous agents en regard —
- * la vue « configuration » plutôt que la vue « supervision ». Les deux passent
- * par le même `reglerCapacite` du contexte global : le réglage est persisté
- * côté backend et pris en compte dès la tâche suivante.
+ * Le tableau de bord portait les mêmes contrôles sur une fiche par agent ; son
+ * épuration (#191) les laisse ici, seuls et réunis en tableau, tous agents en
+ * regard — la vue « configuration », le tableau de bord ne gardant que le
+ * compte des agents actifs et occupés. `reglerCapacite` vient du contexte
+ * global : le réglage est persisté côté backend et pris en compte dès la tâche
+ * suivante.
  */
 
 import { useState } from "react";

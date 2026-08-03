@@ -8,11 +8,19 @@
  * tout sur une période sélectionnable et rafraîchi en temps réel par le
  * WebSocket. Pendant un rechargement, la vue précédente reste affichée,
  * estompée (pas de squelette, pas de saut de mise en page).
+ *
+ * Depuis #191, la page héberge aussi le **grand livre par exécution** (#58)
+ * que le tableau de bord empilait : le détail ligne à ligne, sous les agrégats
+ * qui le résument. Il vient du contexte partagé du shell et non de
+ * `useAnalyticsCouts` — il n'est donc pas borné par le filtre de période, d'où
+ * sa place à part, hors de la zone estompée pendant un rafraîchissement.
  */
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { GraphiqueEvolutionCout } from "@/components/GraphiqueEvolutionCout";
+import { PanneauCouts } from "@/components/PanneauCouts";
 import { RepartitionAgents } from "@/components/RepartitionAgents";
+import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   formatCout,
   formatDateHeure,
@@ -37,6 +45,9 @@ export default function PageCouts() {
   // (#117) : la page n'a plus qu'à consommer les agrégats.
   const { vue, chargement, rafraichissement, erreur } =
     useAnalyticsCouts(periode);
+  // Les grands livres, eux, sont déjà chargés par le contexte partagé (#117) :
+  // les relire ici ne coûte ni requête ni connexion supplémentaire.
+  const { couts } = useEtatGlobal();
 
   return (
     <>
@@ -99,6 +110,7 @@ export default function PageCouts() {
           <TableExecutions executions={vue.executions} />
         </div>
       )}
+      <PanneauCouts couts={couts} />
     </>
   );
 }

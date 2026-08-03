@@ -67,7 +67,10 @@ export function Kanban({ taches, agents, reassigner }: Props) {
                 {colonne.taches.length}
               </span>
             </h3>
-            <div className="space-y-2">
+            {/* Hauteur bornée (#191) : une colonne bien remplie déroule
+                chez elle plutôt que d'étirer la page — le tableau de bord
+                garde sa densité quel que soit le volume du run. */}
+            <div className="max-h-96 space-y-2 overflow-y-auto">
               {colonne.taches.map((tache) => (
                 <CarteTache
                   key={tache.id}

@@ -1,8 +1,13 @@
 /**
- * Le panneau Coûts du tableau de bord (docs/05 §2.5, ticket #58) : le grand
- * livre de chaque exécution, servi par `GET /api/executions/{run_id}/cout`
- * (#57) — la part de planification (l'orchestrateur), le coût par tâche
- * (tokens, coût estimé, durée) et l'agrégat du run (critère MVP n°6).
+ * Le grand livre de chaque exécution (docs/05 §2.5, ticket #58), servi par
+ * `GET /api/executions/{run_id}/cout` (#57) — la part de planification
+ * (l'orchestrateur), le coût par tâche (tokens, coût estimé, durée) et
+ * l'agrégat du run (critère MVP n°6).
+ *
+ * Rangé sur la page Coûts & analytics par #191 : c'est le **détail ligne à
+ * ligne** que les agrégats de cette page (par tâche, par agent, par exécution)
+ * résument. Le tableau de bord n'en garde que la dépense totale, en tuile, avec
+ * le renvoi ici.
  */
 
 import { formatCout, formatDuree, formatTokens } from "@/lib/format";
@@ -12,9 +17,9 @@ export function PanneauCouts({ couts }: { couts: CoutExecution[] }) {
   if (couts.length === 0) return null;
 
   return (
-    <section aria-label="Coûts par exécution">
+    <section aria-label="Grand livre par exécution">
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-        Coûts par exécution
+        Grand livre par exécution
       </h2>
       <div className="space-y-3">
         {couts.map((cout) => (
