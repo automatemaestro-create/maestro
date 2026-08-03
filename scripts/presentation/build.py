@@ -42,9 +42,14 @@ SCHEMA = """\
 
 # --- Vocabulaire ---------------------------------------------------------------------------------
 
-# Les statuts natifs GitLab (lifecycle « Maestro »), regroupés pour la lecture : un lecteur de
-# présentation veut savoir ce qui est acquis, ce qui bouge et ce qui reste — pas le détail du
-# cycle de vie. « En revue » garde sa case à lui : le travail est fait, le merge ne l'est pas.
+# Les états du cycle de vie (labels `workflow::*`, docs/10-workflow-git.md §3.1), regroupés pour la
+# lecture : un lecteur de présentation veut savoir ce qui est acquis, ce qui bouge et ce qui reste —
+# pas le détail du cycle de vie. « En revue » garde sa case à lui : le travail est fait, le merge ne
+# l'est pas.
+#
+# Ce sont les LIBELLÉS qui sont attendus ici, pas les slugs des labels : `lib.sh milestone-issues`
+# ne rend jamais autre chose (contrat de surface en tête de lib.sh), et un slug qui arriverait
+# jusqu'ici tomberait dans « À venir » via libelle_groupe.
 GROUPES: list[tuple[str, tuple[str, ...], str]] = [
     ("Livré", ("Terminé",), "Fusionné sur main."),
     ("En revue", ("En revue",), "Terminé, en attente de merge."),
@@ -109,7 +114,12 @@ def image_en_data_uri(chemin: Path) -> str | None:
 
 
 def libelle_groupe(statut: str) -> str:
-    """Le groupe d'affichage d'un statut natif ; les statuts inconnus tombent dans « À venir »."""
+    """Le groupe d'affichage d'un état du cycle de vie ; tout état inconnu tombe dans « À venir ».
+
+    Le repli couvre notamment le « - » que rendent les helpers pour un ticket ne portant AUCUN
+    label `workflow::` — cas devenu possible depuis #207 (un ticket ouvert à la main dans
+    l'interface web n'en reçoit pas), là où le champ Status natif en avait toujours un.
+    """
     for nom, statuts, _ in GROUPES:
         if statut in statuts:
             return nom

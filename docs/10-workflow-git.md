@@ -3,10 +3,11 @@
 **Version :** 0.5
 Objectif : que chaque ticket GitLab soit traité de façon prévisible — même branche, même convention de commit, même cycle de vie — que ce soit un humain ou un agent Claude Code qui l'exécute.
 
-> Le **cycle de vie** d'un ticket est porté par le **champ Status natif** de GitLab (lifecycle
-> custom « Maestro », voir §3), pas par des labels. Les labels restants (`type::`, `agent::`,
-> `prio::`) servent à la **catégorisation** (nature, rôle, priorité), pas au suivi d'avancement.
-> Ne pas réinventer de labels `workflow::`/`status::` : le suivi passe par le champ Status.
+> Le **cycle de vie** d'un ticket est porté par les labels scopés **`workflow::*`** (voir §3.1).
+> Les autres labels (`type::`, `agent::`, `prio::`) servent à la **catégorisation** (nature, rôle,
+> priorité), pas au suivi d'avancement. Ne pas réinventer de famille `status::` : le suivi passe
+> par `workflow::`, et **toute pose doit retirer les cinq autres valeurs** — l'exclusion mutuelle
+> des labels scopés est une fonctionnalité payante, elle est ici à la charge de l'outillage (§3.1).
 
 ---
 
@@ -83,54 +84,84 @@ merge / revert / `fixup!` / `squash!`. Bypass ponctuel : `git commit --no-verify
 
 ---
 
-## 3. Statut natif (cycle de vie) & labels
+## 3. Cycle de vie (labels `workflow::`) & labels de catégorisation
 
-### 3.1 Le champ Status — le cycle de vie
+### 3.1 Les labels `workflow::` — le cycle de vie
 
-L'avancement d'un ticket est porté par le **champ Status natif** de GitLab (work items), via un
-lifecycle custom **« Maestro »** attaché aux types *Issue* et *Task*. Six statuts :
+L'avancement d'un ticket est porté par une famille de **labels scopés `workflow::*`**. Six valeurs,
+dans l'ordre du flux :
 
-| Statut | Catégorie | Rôle | GID (`gid://gitlab/WorkItems::Statuses::Custom::Status/`) |
-|---|---|---|---|
-| **À faire** | `to_do` | défaut à l'ouverture d'un ticket | `…/1020449` |
-| **En cours** | `in_progress` | posé par [`/ticket-start`](../.claude/commands/ticket-start.md) | `…/1020450` |
-| **En revue** | `in_progress` | posé par [`/ticket-finish`](../.claude/commands/ticket-finish.md) (MR ouverte) | `…/1020451` |
-| **Terminé** | `done` | posé automatiquement au merge (fermeture via `Closes #`) | `…/1020452` |
-| **Abandonné** | `canceled` | posé par [`/ticket-abandon`](../.claude/commands/ticket-abandon.md) (won't-do) | `…/1020453` |
-| **Doublon** | `canceled` | posé par [`/ticket-abandon <iid> doublon`](../.claude/commands/ticket-abandon.md) | `…/1020454` |
+| Libellé | Label GitLab | Rôle |
+|---|---|---|
+| **À faire** | `workflow::a-faire` | posé à la création par [`/ticket-create`](../.claude/commands/ticket-create.md) |
+| **En cours** | `workflow::en-cours` | posé par [`/ticket-start`](../.claude/commands/ticket-start.md) |
+| **En revue** | `workflow::en-revue` | posé par [`/ticket-finish`](../.claude/commands/ticket-finish.md) (MR ouverte) |
+| **Terminé** | `workflow::termine` | posé par [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) après le merge |
+| **Abandonné** | `workflow::abandonne` | posé par [`/ticket-abandon`](../.claude/commands/ticket-abandon.md) (won't-do) |
+| **Doublon** | `workflow::doublon` | posé par [`/ticket-abandon <iid> doublon`](../.claude/commands/ticket-abandon.md) |
 
-Lifecycle : `gid://gitlab/WorkItems::Statuses::Custom::Lifecycle/1003066`.
+**Deux vocabulaires, une règle.** Le **slug** (`en-cours`) est le *stockage* — le suffixe du label
+côté GitLab, sans accent par nécessité : un nom accentué devrait être ré-encodé dans chaque chemin
+`glab api` et à la création des listes de board (piège d'encodage connu sous Git Bash/Windows). Le
+**libellé** (« En cours ») est la *surface* — le vocabulaire de la doc et des commandes. En
+**sortie**, `lib.sh` rend toujours le libellé (le slug ne sort jamais du helper) ; en **entrée**,
+les deux sont acceptés. Écrire en libellé reste la forme canonique.
 
-- Le champ Status **n'est pas un label** : il s'affiche dans le panneau *Status* du ticket et
-  alimente les boards « par statut », mais n'apparaît pas comme pastille dans les listes d'issues.
-- Un seul statut actif à la fois. `À faire` est automatique à la création (défaut du lifecycle) —
-  rien à poser à l'ouverture.
-- Les commandes `/ticket-*` posent le statut via le helper partagé
-  [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (`set-status <iid> <nom>`), qui résout l'ID
-  du work item depuis l'iid **et dérive le GID du statut par son nom** dans le lifecycle « Maestro »
-  — d'où l'absence de GID en dur dans les commandes, et la robustesse à une recréation du
-  lifecycle. Sous le capot : mutation `workItemUpdate` → `statusWidget`, après résolution de l'iid
-  via `{ project(fullPath:"maestro-group4345327/maestro") { workItems(iids:["<iid>"]) { nodes { id } } } }`.
-  `/ticket-start` passe par `begin <iid>`, qui groupe ce même statut avec l'assignation et les
-  dates en une seule mutation multi-widgets (§5).
-- **Inspecter les GIDs manuellement** (les GIDs de la table ci-dessus n'ont plus besoin d'être
-  recopiés — `lib.sh` les redécouvre — mais pour vérifier) :
-  `glab api graphql -f query='{ group(fullPath:"maestro-group4345327") { lifecycles { nodes { name statuses { id name } } } } }'`.
-- ⚠ **Cette section décrit un mécanisme qui n'existe plus.** Le champ Status natif est une
-  fonctionnalité Premium, perdue avec la fin de l'essai Ultimate du groupe le 2026-08-02 — la donnée
-  de statut avec lui. Le cycle de vie repasse sur des **labels `workflow::*`** (#207) : le
-  vocabulaire, les colonnes du board et le provisionnement sont dans
-  [`scripts/gitlab/bootstrap.sh`](../scripts/gitlab/bootstrap.sh) et
-  [`bootstrap-board.sh`](../scripts/gitlab/bootstrap-board.sh), la migration des tickets existants
-  dans [`migrate-workflow-labels.sh`](../scripts/gitlab/migrate-workflow-labels.sh)
-  (`--check` pour relire les déductions sans écrire). `bootstrap-lifecycle.sh`, qui recréait le
-  lifecycle, a été supprimé. **La réécriture complète de cette §3 est le lot 5 du chantier (#212)** ;
-  seul le renvoi mort est corrigé ici.
+- Les commandes `/ticket-*` posent le cycle de vie via le helper partagé
+  [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (`set-workflow <iid> <valeur>`), qui résout
+  l'ID du work item depuis l'iid **et dérive les ID des six labels par leur nom** — d'où l'absence
+  d'ID en dur dans les commandes, et la robustesse à une recréation des labels. Sous le capot :
+  mutation `workItemUpdate` → `labelsWidget`. `/ticket-start` passe par `begin <iid>`, qui groupe
+  cette pose avec l'assignation et les dates en une seule mutation multi-widgets (§5).
+- Un ticket **fermé** (`Closes #`) garde son label : la fermeture ne pose rien toute seule, c'est
+  `/branch-cleanup` qui passe le ticket à « Terminé » après le merge. `doctor.sh` signale la dérive
+  (ticket fermé encore « En cours », ticket « En revue » sans MR).
+- **Inspecter les labels manuellement** :
+  `glab api graphql -f query='{ project(fullPath:"maestro-group4345327/maestro") { labels(searchTerm:"workflow::") { nodes { id title } } } }'`.
 
-### 3.2 Les labels — catégorisation (hors cycle de vie)
+#### ⚠ L'exclusion mutuelle est à notre charge
 
-Trois familles de labels **scoped** (`::` = une seule valeur active par famille), pour trier le
-backlog — **pas** pour suivre l'avancement (c'est le rôle du champ Status) :
+Sur le plan **Free**, le `::` d'un label scopé n'est que **cosmétique** : rien côté GitLab
+n'empêche un ticket de porter `workflow::a-faire` **et** `workflow::en-revue` en même temps.
+L'invariant « exactement un `workflow::` par ticket » est donc tenu par l'**outillage** :
+
+> **Toute pose ajoute la cible et retire les cinq autres dans la même mutation** — jamais un ajout
+> seul. C'est le contrat de `gl_set_workflow` et de `gl_begin`, et la raison d'être de
+> `gl_workflow_gids`, qui dérive les six ID d'un coup : sans la liste complète, on ne saurait pas
+> quoi retirer.
+
+C'est la régression la plus probable du dispositif, et la seule qui ne se voit pas à l'œil nu sur
+une ligne de backlog — d'où un test dédié
+([`tests/test_cycle_de_vie.py`](../tests/test_cycle_de_vie.py)) et la détection de dérive (0 ou ≥ 2
+labels du scope) dans [`doctor.sh`](../scripts/gitlab/doctor.sh).
+
+#### Le board
+
+Les colonnes du Kanban suivent le flux : `a-faire` → `en-cours` → `en-revue` → `termine`.
+`abandonne` et `doublon` n'ont pas de colonne — ces tickets sont fermés, ils sortent du board. La
+configuration est dans [`bootstrap-board.sh`](../scripts/gitlab/bootstrap-board.sh), appelé par
+`bootstrap.sh` ; sur le plan Free un projet n'a qu'**un seul** board, qui est donc reconfiguré et
+jamais dupliqué.
+
+#### Pourquoi ce retour en arrière — à lire avant de vouloir « revenir au natif »
+
+Le cycle de vie a été porté un temps par le **champ Status natif** de GitLab (lifecycle custom
+« Maestro », tickets #12/#13). **Ce n'est pas un oubli si ce mécanisme a disparu, c'est une
+décision** (#207) : les lifecycles custom sont une fonctionnalité **Premium**, et le groupe était
+sur un **essai Ultimate terminé le 2026-08-02**. Le champ a été perdu à cette date, et la donnée de
+statut avec lui — d'où la migration des tickets existants par déduction
+([`migrate-workflow-labels.sh`](../scripts/gitlab/migrate-workflow-labels.sh), `--check` pour
+relire les déductions sans écrire).
+
+Sur le plan Free, les labels sont le **seul** mécanisme disponible. Si quelqu'un relit ceci en se
+disant qu'il faudrait revenir au statut natif : c'est une question d'**abonnement**, pas
+d'outillage. Le renversement par rapport à #12/#13 est assumé et documenté ici même pour qu'il ne
+soit pas défait par erreur.
+
+### 3.2 Les labels de catégorisation — `type::`, `agent::`, `prio::`
+
+Trois autres familles de labels **scoped**, pour trier le backlog — **pas** pour suivre
+l'avancement (c'est le rôle de `workflow::`, §3.1) :
 
 | Famille | Valeurs | Usage |
 |---|---|---|
@@ -139,13 +170,8 @@ backlog — **pas** pour suivre l'avancement (c'est le rôle du champ Status) :
 | `prio::` | `haute`, `moyenne`, `basse` | Urgence, pour le tri du backlog |
 
 Ces labels sont créés (idempotent) via [`scripts/gitlab/bootstrap.sh`](../scripts/gitlab/bootstrap.sh),
-et **ne sont pas touchés** par les commandes `/ticket-*` : ils relèvent du triage (à la création),
-pas du cycle Git.
-
-> **Historique.** Le suivi d'avancement reposait auparavant sur une famille de labels `workflow::`
-> (`à faire`/`en cours`/`en revue`/`terminé`). Elle a été remplacée par le champ Status natif
-> (migration ticket #12) : le natif apporte l'état « En revue » que les statuts système n'avaient
-> pas, et évite d'avoir deux mécanismes à tenir synchronisés.
+comme les `workflow::`, et **ne sont pas touchés** par les commandes `/ticket-*` : ils relèvent du
+triage (à la création), pas du cycle Git.
 
 ### 3.3 Dates & time tracking — renseignés automatiquement
 
@@ -196,8 +222,10 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
 
 - **Issues** (`.gitlab/issue_templates/`) : `Feature.md`, `Bug.md`, `Doc.md`, `Infra.md` — un
   par valeur de `type::*`. Posent la structure attendue (contexte, critères d'acceptation) et
-  appliquent le bon `type::*` via une quick action `/label`. Le statut **« À faire »** est le
-  défaut du lifecycle à la création (rien à poser). Le label `agent::*` est à ajouter
+  appliquent le bon `type::*` via une quick action `/label`. Le cycle de vie **« À faire »**
+  (`workflow::a-faire`) n'a **pas** de défaut côté GitLab : c'est `/ticket-create` qui le pose, dans
+  le même `--label` que la catégorisation (§3.1) — un ticket ouvert à la main depuis l'interface web
+  n'en porte donc aucun, dérive que `doctor.sh` signale. Le label `agent::*` est à ajouter
   manuellement au triage (aucun template ne peut deviner quel agent est concerné).
 - **Merge Request** (`.gitlab/merge_request_templates/Default.md`) : checklist de definition
   of done + rappel `Closes #`. La checklist est un **constat, pas un formulaire** :
@@ -220,13 +248,14 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
                                    (Abandonné / Doublon)
 ```
 
-(les noms ci-dessus sont les **statuts** du champ Status natif, §3)
+(les noms ci-dessus sont les **libellés** du cycle de vie, portés par les labels `workflow::*`, §3.1)
 
 0. **`/ticket-create <type> <titre>`** — crée un ticket bien formé (corps de template, labels
-   `type::`/`agent::`/`prio::`), statut `À faire` par défaut. Ne crée pas de branche.
-1. **À faire** — le ticket existe (statut par défaut à la création), personne ne travaille dessus.
+   `type::`/`agent::`/`prio::`), cycle de vie `À faire` posé dans le même appel. Ne crée pas de
+   branche.
+1. **À faire** — le ticket existe (`workflow::a-faire`), personne ne travaille dessus.
 2. **`/ticket-start <iid>`** — crée/checkout la branche, assigne le ticket à l'exécutant, passe
-   le **statut** à `En cours`. Le chemin nominal tient en deux helpers et un bloc git (refonte
+   le **cycle de vie** à `En cours`. Le chemin nominal tient en deux helpers et un bloc git (refonte
    ticket #60, pour réduire la cérémonie et le contexte réinjecté à chaque démarrage) :
    - **`lib.sh start-brief <iid>`** — tout le préflight en un appel et **une seule lecture du
      ticket** (un unique `glab issue view`, rejoué pour toutes les projections) : pré-requis
@@ -243,10 +272,10 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
      confirme la MR `merged`, §6 ; s'il n'y a rien à nettoyer, aucun effet).
    - **`lib.sh begin <iid>`** — assignation (username auto-résolu via `glab api user`, parsé en
      shell pur — pas de dépendance à `jq`/`python`, et couvert par l'allowlist §7.1 pour ne pas
-     déclencher de prompt), statut « En cours » (GID dérivé par nom, §3.1) et dates début/échéance
-     (§3.3) en **une seule mutation** `workItemUpdate` multi-widgets. Les sous-commandes unitaires
-     (`current-user`, `set-status`, `start-dates`…) restent disponibles pour les autres commandes
-     et les cas hors nominal.
+     déclencher de prompt), cycle de vie « En cours » (label ajouté et les cinq autres retirés,
+     §3.1) et dates début/échéance (§3.3) en **une seule mutation** `workItemUpdate`
+     multi-widgets. Les sous-commandes unitaires (`current-user`, `set-workflow`, `start-dates`…)
+     restent disponibles pour les autres commandes et les cas hors nominal.
    Une fois le cadrage résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé
    n'est pas une pause d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).
@@ -270,12 +299,14 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
      ré-implémenter le cycle à la main (`git commit`/`git push`/`glab mr create` ad hoc) — elles en
      sont la source unique (ticket #37).
 5. **Revue + merge** — **toujours une action humaine** (voir garde-fous, §6). Le merge fait
-   trois choses **automatiquement** : il **ferme** le ticket (via `Closes #`), **passe son
-   statut à `Terminé`** (la fermeture pose le statut « done » du lifecycle) et **supprime la
+   deux choses **automatiquement** : il **ferme** le ticket (via `Closes #`) et **supprime la
    branche distante** (case « Delete source branch », pré-cochée — décochable au merge si on
-   veut garder la branche).
-6. **`/branch-cleanup`** — comme GitLab a déjà géré le distant et le statut (étape 5), cette
-   commande ne fait plus que le **ménage local** : supprime la branche **locale** mergée et
+   veut garder la branche). Il **ne touche pas au cycle de vie** : depuis #207 c'est un label, et
+   la fermeture d'une issue n'en pose aucun — le ticket reste donc affiché « En revue » jusqu'à
+   l'étape 6. Cet écart transitoire est normal ; c'est sa persistance que `doctor.sh` signale
+   (ticket fermé au cycle de vie encore actif).
+6. **`/branch-cleanup`** — GitLab a géré le distant (étape 5), cette commande fait le **ménage
+   local** et **pose le cycle de vie `Terminé`** : supprime la branche **locale** mergée et
    remet `main` à jour. Ce ménage est en grande partie **automatisé** : `/ticket-start` lance
    `cleanup-merged` à chaque démarrage de ticket (étape 2), donc les branches mergées disparaissent
    d'elles-mêmes au fil de l'eau. `/branch-cleanup` reste utile pour un nettoyage **à la demande**
@@ -367,7 +398,7 @@ peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** 
 la Control Tower (Phase 1) :
 
 - [`/backlog`](../.claude/commands/backlog.md) `[opened|all]` — vue d'ensemble du backlog groupée
-  par **statut natif** (§3.1), avec `agent::`/`prio::` et la mise en avant de ce qui **attend une
+  par **cycle de vie** (§3.1), avec `agent::`/`prio::` et la mise en avant de ce qui **attend une
   revue / est prêt à merger**. S'appuie sur `lib.sh backlog` (requête canonique du backlog).
 - [`/mr-review`](../.claude/commands/mr-review.md) `<mr|branche>` — synthèse d'une MR (aptitude au
   merge, pipeline, threads bloquants, résumé du diff) pour **éclairer la décision de merge humaine**.
@@ -504,21 +535,21 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 - Vérifier l'accès : `glab issue list` doit lister les tickets du projet.
 - Les commandes `/ticket-*` et `/backlog` s'appuient sur le helper
   [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels glab
-  (résolution work-item, statut par nom, **listing du backlog** avec statut natif, slug, préfixe de
+  (résolution work-item, **cycle de vie** par nom — `set-workflow`, §3.1 —, **listing du backlog**, slug, préfixe de
   branche, **sous-tickets** — `issue-link`/`parent-of`/`subtickets`, §5.1 —, **démarrage de
   ticket** — `start-brief`/`begin`, §5 —, **retard sur `origin/main`** — `behind-main`, §6 — et
   **garde-fou de clôture** — `close-guard`/`branch-iid`, §6).
   Il est **sourçable**
   (`. scripts/gitlab/lib.sh`) et **exécutable en sous-commandes**
-  (`bash scripts/gitlab/lib.sh set-status <iid> "En cours"`, `… backlog opened`) — pratique pour les
+  (`bash scripts/gitlab/lib.sh set-workflow <iid> "En cours"`, `… backlog opened`) — pratique pour les
   futurs scripts et agents. Vérif rapide : `bash scripts/gitlab/lib.sh require`.
   - **Robustesse des lectures** : toutes les **lectures** GraphQL passent par `gl_graphql_read`, qui
     **ré-essaie sur réponse vide** (l'endpoint GraphQL de GitLab hoquette par intermittence). Réglable
-    via `GL_GQL_RETRIES` (défaut 3) et `GL_GQL_RETRY_DELAY` (défaut 1 s). Les **mutations** (statut,
-    dates, temps) gardent un appel direct — pas de retry, pour ne pas risquer une double application
+    via `GL_GQL_RETRIES` (défaut 3) et `GL_GQL_RETRY_DELAY` (défaut 1 s). Les **mutations** (cycle
+    de vie, dates, temps) gardent un appel direct — pas de retry, pour ne pas risquer une double application
     (ex. un timelog additif).
 - **Bilan de santé** : [`bash scripts/gitlab/doctor.sh`](../scripts/gitlab/doctor.sh) (lecture seule)
-  vérifie auth, labels, statuts du lifecycle résolvables par nom, et **détecte les dérives**
+  vérifie auth, labels (dont les six `workflow::*`), colonnes du board, et **détecte les dérives**
   (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à
   nettoyer, réglages de merge « pipeline vert » ou « suppression de la branche source » retombés — §6). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
   dérives — utile en CI).
@@ -1317,7 +1348,7 @@ flux ferait rapporter le coût d'un événement intermédiaire, une régression 
 invocations sont concernées, session neuve *et* reprise `--resume`.
 
 **Le verdict vient de GitLab, pas de la prose de la session.** Un ticket est réussi si, et seulement
-si, sa branche porte une **MR ouverte** *et* que son statut natif est **« En revue »** — exactement
+si, sa branche porte une **MR ouverte** *et* que son cycle de vie est **« En revue »** — exactement
 ce que `/ticket-ship` laisse derrière lui. Une session peut conclure « c'est fait » en s'étant
 trompée, ou échouer après avoir tout livré.
 

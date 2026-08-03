@@ -122,7 +122,11 @@ git fetch origin main && git rebase origin/main
 - **Pipeline rouge ?** `/pipeline-fix` diagnostique et corrige ce qui l'est en local.
 - **Après le merge** : `/branch-cleanup` supprime la branche **locale**, revient sur `main` à jour
   et passe le ticket « Terminé ». La branche **distante**, elle, est supprimée par GitLab au merge
-  (la MR est créée avec « supprimer la branche source »).
+  (la MR est créée avec « supprimer la branche source »). Le merge **ferme** le ticket mais ne le
+  passe pas « Terminé » tout seul — le cycle de vie est porté par un label `workflow::`
+  ([docs/10 §3.1](./docs/10-workflow-git.md)), et GitLab n'en pose aucun : un ticket fraîchement
+  mergé reste affiché « En revue » jusqu'à cette commande. C'est normal quelques minutes, pas
+  quelques jours.
 
 Pour éclairer une décision de merge : `/mr-review <mr>` (synthèse état + pipeline + threads + diff).
 
