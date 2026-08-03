@@ -18,14 +18,14 @@
  */
 
 import { lienExterneSur } from "@/lib/liens";
-import type { ReferenceExterne } from "@/lib/types";
+import type { ReferenceTicket } from "@/lib/types";
 
 type Props = {
   /**
    * La référence portée par la tâche. `null`/`undefined` — le cas courant tant
    * que le lot backend (#187) ne renseigne pas le champ — ne rend rien.
    */
-  reference: ReferenceExterne | null | undefined;
+  reference: ReferenceTicket | null | undefined;
   /** Le nom de la tâche, pour que le libellé accessible dise de quoi on parle. */
   tache?: string;
   /** Classes de placement laissées à l'appelant (marges, alignement). */
@@ -45,7 +45,7 @@ const STYLE_TEXTE = "text-neutral-500 dark:text-neutral-400";
 export function LienTicketExterne({ reference, tache, className }: Props) {
   if (!reference) return null;
 
-  const identifiant = (reference.identifiant ?? "").trim();
+  const identifiant = (reference.id ?? "").trim();
   const url = lienExterneSur(reference.url);
   // Ni identifiant lisible ni URL suivable : la référence n'apprend rien.
   if (!identifiant && url === null) return null;

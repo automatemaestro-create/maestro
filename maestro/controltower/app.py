@@ -85,6 +85,21 @@ Endpoints :
   des agents, messages inter-agents, validations, chat), au format
   `Event.to_dict`.
 
+Contrats d'API **v2** (#183 — formes figées des Phases 5/6, servies en fixtures
+par la démo ; **501** en production tant que leur lot n'est pas livré) :
+
+- `GET  /api/executions` — la liste des runs (résumés : statut, coût, dates,
+  ticket) ; `POST /api/executions` — lance un run (objectif + garde-fous) ;
+  `POST /api/executions/{run_id}/annuler` — interrompt un run en cours (#185) ;
+- `GET  /api/journal` — le journal requêtable (filtres agent / type / run /
+  période, tri, pagination) ;
+- `GET  /api/configuration` — le registre de configuration éditable (réglages
+  produit, couche 1 du cadrage sécurité #182) ;
+- `GET  /api/playbooks/propositions` — les propositions d'auto-amélioration
+  **tous agents confondus** (badge + notifications) ;
+- `GET  /api/chat/{agent}/flux` — le flux **SSE** d'une réponse de chat (trames
+  `debut`/`fragment`/`fin`).
+
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
 événement sur l'état (`ControlTowerState`), le **consigne** au journal durable
 (`EventLog`, #97) puis le rediffuse aux WebSockets connectées — l'ordre « état
@@ -102,6 +117,7 @@ moteur ; journal persistant sur la liste `maestro.evenements:journal`).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -110,6 +126,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from maestro.agents.capacity import CapaciteAgent, CapacityStore
@@ -149,6 +166,15 @@ from maestro.controltower.events import (
     RedisEventBus,
 )
 from maestro.controltower.executions import FabriqueMoteur, ServiceExecutions
+from maestro.controltower.fixtures import (
+    ORDRE_DESC,
+    ORDRES_JOURNAL,
+    TAILLE_PAGE_DEFAUT,
+    TAILLE_PAGE_MAX,
+    TRI_JOURNAL_HORODATAGE,
+    TRIS_JOURNAL,
+    FixturesControlTower,
+)
 from maestro.controltower.persistence import (
     EventLog,
     InMemoryEventLog,
@@ -170,7 +196,8 @@ class ReferenceTicketRequete(BaseModel):
 
     Générique : un identifiant lisible (`id`, ex. « #185 », « PROJ-42 ») et son
     `url` — vide quand seul l'identifiant est connu. GitLab, Jira ou Linear
-    passent par la même forme, aucun champ propre à un outil.
+    passent par la même forme, aucun champ propre à un outil. La référence
+    descend ensuite jusqu'aux tâches du run (contrat #183).
     """
 
     id: str
@@ -403,6 +430,7 @@ def create_app(
     secrets: SecretStore | None = None,
     permissions: PermissionStore | None = None,
     event_log: EventLog | None = None,
+    fixtures: FixturesControlTower | None = None,
     fabrique_moteur: FabriqueMoteur | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
@@ -482,6 +510,13 @@ def create_app(
     `create_default_app`. Un état injecté (`state`) reste tel quel puis reçoit
     le rejeu par-dessus (idempotent : les événements reconstruisent le même
     état).
+
+    `fixtures` (#183) branche les **contrats d'API v2** (routes des Phases 5/6 :
+    exécutions, journal requêtable, registre de configuration, propositions de
+    playbook globales, flux SSE d'un fil de chat) sur des **données factices**.
+    None (production) : ces routes répondent **501** — le contrat est stable, son
+    lot d'implémentation n'est pas encore livré. Fourni (la démo, #65) : elles
+    servent les fixtures, et la voie front code contre elles sans backend réel.
 
     `fabrique_moteur` (#185) construit le moteur de chaque exécution lancée par
     `POST /api/executions` — par défaut `OrchestrationEngine.default`, résolu au
@@ -580,6 +615,94 @@ def create_app(
     async def sante() -> dict[str, str]:
         """Vitalité du service (sonde de supervision)."""
         return {"statut": "ok"}
+
+    # --- Contrats d'API v2 (#183) : routes des Phases 5/6, formes JSON figées ---
+    # Le contrat (chemin, méthode, forme) est stable ; l'implémentation réelle
+    # vient dans les lots dédiés (Phase 5, #184+). Sans `fixtures` (production),
+    # ces routes répondent 501 ; branchées sur les fixtures (la démo), elles
+    # servent des données factices contre lesquelles la voie front code (docs/05 §6).
+    def _exige_fixtures() -> FixturesControlTower:
+        """Les fixtures v2, ou un 501 explicite tant que le lot réel n'est pas livré."""
+        if fixtures is None:
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    "route de contrat (API v2) non encore implémentée : servie en "
+                    "fixtures par la démo (maestro.controltower.demo, #183)."
+                ),
+            )
+        return fixtures
+
+    @app.get("/api/journal")
+    async def journal_requetable(
+        agent: str | None = None,
+        type: str | None = None,
+        run_id: str | None = None,
+        depuis: str | None = None,
+        jusqua: str | None = None,
+        tri: str = TRI_JOURNAL_HORODATAGE,
+        ordre: str = ORDRE_DESC,
+        page: int = 1,
+        taille: int = TAILLE_PAGE_DEFAUT,
+    ) -> dict[str, Any]:
+        """Le journal requêtable : filtres (agent / type / run / période), tri, pagination.
+
+        `depuis`/`jusqua` sont des horodatages ISO-8601 (bornes incluses).
+        422 sur un `tri`/`ordre` inconnu, une `page` < 1 ou une `taille` hors
+        [1, {max}].
+        """
+        fx = _exige_fixtures()
+        if tri not in TRIS_JOURNAL:
+            raise HTTPException(
+                status_code=422,
+                detail=f"tri invalide : {tri} (attendus : {', '.join(TRIS_JOURNAL)}).",
+            )
+        if ordre not in ORDRES_JOURNAL:
+            raise HTTPException(
+                status_code=422,
+                detail=f"ordre invalide : {ordre} (attendus : {', '.join(ORDRES_JOURNAL)}).",
+            )
+        if page < 1:
+            raise HTTPException(status_code=422, detail=f"page invalide : {page} (attendu ≥ 1).")
+        if not 1 <= taille <= TAILLE_PAGE_MAX:
+            raise HTTPException(
+                status_code=422,
+                detail=f"taille invalide : {taille} (attendu entre 1 et {TAILLE_PAGE_MAX}).",
+            )
+        return fx.journal(
+            agent=agent,
+            type=type,
+            run_id=run_id,
+            depuis=depuis,
+            jusqua=jusqua,
+            tri=tri,
+            ordre=ordre,
+            page=page,
+            taille=taille,
+        )
+
+    @app.get("/api/configuration")
+    async def configuration() -> dict[str, Any]:
+        """Le registre de configuration éditable (couche 1 du cadrage sécurité #182).
+
+        Les réglages produit (fournisseur, modèle, plafonds, isolation,
+        intégrations, rétention) : type, valeur courante (masquée si secret),
+        valeur par défaut, s'ils sont modifiables. Liste blanche stricte : aucune
+        écriture arbitraire de variable d'environnement.
+        """
+        return _exige_fixtures().configuration()
+
+    # Enregistrée **avant** `/api/playbooks/{agent}` (plus bas) pour que le chemin
+    # littéral l'emporte sur la capture `{agent}` (sinon agent = "propositions").
+    @app.get("/api/playbooks/propositions")
+    async def propositions_playbook_globales() -> list[dict[str, Any]]:
+        """Les propositions d'auto-amélioration, **tous agents confondus** (#111 global).
+
+        L'agrégat transverse qui alimente le badge d'attente et les notifications
+        (cadrage #182, items 8/9) — chaque proposition enrichie du `role` de son
+        agent. Le pendant temps réel est l'événement `playbook.proposition` du bus.
+        """
+        return _exige_fixtures().propositions_playbook()
 
     @app.get("/api/taches")
     async def taches() -> list[dict[str, Any]]:
@@ -1546,6 +1669,27 @@ def create_app(
             "role": fiche.role,
             "messages": [message.to_dict(), reponse.to_dict()],
         }
+
+    @app.get("/api/chat/{agent}/flux")
+    async def flux_chat(agent: str, contenu: str = "") -> StreamingResponse:
+        """Flux SSE d'une réponse de chat (#183, chantier *Conversation* Phase 5).
+
+        `GET /api/chat/{agent}/flux?contenu=…` ouvre un `text/event-stream` : une
+        trame `debut`, des trames `fragment` (incréments `delta`), puis une trame
+        `fin` portant le `MessageChat` complet — chacune en `data: <json>`. 404 si
+        l'agent n'est pas au catalogue (`assistance` désigne le canal d'aide) ;
+        501 tant que le streaming réel n'est pas livré (servi en fixtures par la
+        démo). La forme des trames est le contrat ; le contenu réel (modèle en
+        streaming) vient dans le lot dédié.
+        """
+        fx = _exige_fixtures()
+        fiche, _ = _canal_chat(agent)
+
+        async def flux() -> AsyncIterator[str]:
+            for trame in fx.flux_chat(fiche.nom, fiche.role, contenu):
+                yield f"data: {json.dumps(trame, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(flux(), media_type="text/event-stream")
 
     @app.websocket("/ws/evenements")
     async def evenements(websocket: WebSocket) -> None:

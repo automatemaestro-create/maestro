@@ -85,7 +85,7 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
                     {tache.nom || tache.tache_id}
                   </span>
                   <LienTicketExterne
-                    reference={tache.reference_externe}
+                    reference={tache.ticket}
                     tache={tache.nom || tache.tache_id}
                   />
                 </td>

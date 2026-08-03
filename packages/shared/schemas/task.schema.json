@@ -55,6 +55,26 @@
       },
       "uniqueItems": true,
       "default": []
+    },
+    "ticket": {
+      "type": "object",
+      "description": "Reference optionnelle du ticket externe dont releve la tache (#187) : identifiant lisible + URL. Generique (GitLab, Jira, Linear passent par la meme forme, aucun champ propre a un outil). Absente par defaut : un plan sans reference reste valide. Posee soit par l'origine du run, soit par un agent equipe du serveur MCP de l'outil.",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identifiant lisible du ticket (ex. '#183', 'PROJ-42'). Sert de libelle sur la carte du Kanban.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "url": {
+          "type": "string",
+          "description": "URL du ticket dans l'outil externe. Vide quand seul l'identifiant est connu (l'agent a nomme le ticket sans en donner le lien).",
+          "format": "uri",
+          "default": ""
+        }
+      }
     }
   }
 }

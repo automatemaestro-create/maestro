@@ -12,6 +12,12 @@ Le chat utilisateur ↔ agent (#84) répond en **scripté** (`RepondeurScripte` 
 aucun modèle appelé, aucune authentification requise) sur un fil **éphémère**
 (répertoire temporaire) : la démo n'écrit rien dans `core/chat/`.
 
+Depuis #183, la démo est aussi le **backend de fixtures** des contrats d'API v2
+(routes des Phases 5/6 : exécutions, journal requêtable, registre de
+configuration, propositions de playbook globales, flux SSE d'un fil de chat) :
+`create_app` reçoit un `FixturesControlTower`, et la voie front code contre ces
+formes figées sans attendre le backend réel.
+
 C'est le backend du lancement local en une commande
 (`scripts/controltower/start.sh`, skill `control-tower`) ; la vraie
 orchestration branchée sur Redis passe par `maestro-api` (`cli.py`).
@@ -38,7 +44,9 @@ from maestro.controltower.events import (
     Event,
     EventBus,
     InMemoryEventBus,
+    ReferenceTicket,
 )
+from maestro.controltower.fixtures import FixturesControlTower
 from maestro.telemetry.usage import StepUsage
 
 #: Écoute par défaut : locale, même défaut que `maestro-api` — et que l'UI
@@ -66,8 +74,14 @@ async def _avancer_tache(
     role: str,
     etapes: Sequence[str],
     usage: StepUsage | None = None,
+    ticket: ReferenceTicket | None = None,
 ) -> None:
-    """Fait avancer une tâche à travers `etapes` ; usage/coût posés sur la dernière."""
+    """Fait avancer une tâche à travers `etapes` ; usage/coût posés sur la dernière.
+
+    `ticket` (#183) rattache la tâche à un ticket externe : la référence voyage
+    avec chaque événement de statut — de quoi montrer le lien sur la carte du
+    Kanban (`GET /api/taches`) comme le ferait un vrai run parti d'un ticket.
+    """
     for i, statut in enumerate(etapes):
         dernier = i == len(etapes) - 1
         await bus.publish(
@@ -81,6 +95,7 @@ async def _avancer_tache(
                 statut=statut,
                 cout_usd=usage.cout_usd if usage is not None and dernier else None,
                 usage=usage if dernier else None,
+                ticket=ticket,
             )
         )
         await asyncio.sleep(PAUSE_ENTRE_STATUTS_S)
@@ -156,6 +171,11 @@ async def _scenario(bus: EventBus) -> None:
             tours=5,
             outils=("Write", "Edit", "Bash"),
         ),
+        # Référence de ticket externe (#183/#187) : la carte porte un lien vers le
+        # ticket dont elle relève — servi tel quel par `GET /api/taches`.
+        ticket=ReferenceTicket(
+            id="#42", url="https://gitlab.example/maestro/-/issues/42"
+        ),
     )
 
     await _avancer_tache(
@@ -228,6 +248,9 @@ async def _servir(hote: str, port: int) -> int:
         # Capacités éphémères (#86) : activer/désactiver ou régler les instances
         # depuis l'UI de démo n'écrit rien dans core/capacite/.
         capacites=CapacityStore(Path(tempfile.mkdtemp(prefix="maestro-capacite-demo-"))),
+        # Contrats d'API v2 (#183) : la démo sert les routes des Phases 5/6 en
+        # données factices — la voie front code contre elles sans backend réel.
+        fixtures=FixturesControlTower(),
     )
     config = uvicorn.Config(app, host=hote, port=port, log_level="warning")
     server = uvicorn.Server(config)
