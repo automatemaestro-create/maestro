@@ -10,6 +10,7 @@
  * le renvoi ici.
  */
 
+import { LienTicketExterne } from "@/components/LienTicketExterne";
 import { formatCout, formatDuree, formatTokens } from "@/lib/format";
 import type { CoutExecution, Usage } from "@/lib/types";
 
@@ -79,8 +80,14 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
                 key={tache.tache_id}
                 className="border-b border-neutral-100 dark:border-neutral-800/60"
               >
-                <td className="max-w-64 truncate py-1 pr-3" title={tache.tache_id}>
-                  {tache.nom || tache.tache_id}
+                <td className="max-w-64 py-1 pr-3">
+                  <span className="block truncate" title={tache.tache_id}>
+                    {tache.nom || tache.tache_id}
+                  </span>
+                  <LienTicketExterne
+                    reference={tache.reference_externe}
+                    tache={tache.nom || tache.tache_id}
+                  />
                 </td>
                 <td className="py-1 pr-3 text-neutral-500 dark:text-neutral-400">
                   {tache.agent

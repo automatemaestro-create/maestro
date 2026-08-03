@@ -18,6 +18,7 @@
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { GraphiqueEvolutionCout } from "@/components/GraphiqueEvolutionCout";
+import { LienTicketExterne } from "@/components/LienTicketExterne";
 import { PanneauCouts } from "@/components/PanneauCouts";
 import { RepartitionAgents } from "@/components/RepartitionAgents";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -194,8 +195,16 @@ function TableTaches({ taches }: { taches: CoutTacheAgregee[] }) {
                 key={tache.tache_id}
                 className="border-b border-neutral-100 dark:border-neutral-800/60"
               >
-                <td className="max-w-64 truncate py-1 pr-3" title={tache.tache_id}>
-                  {tache.nom || tache.tache_id}
+                <td className="max-w-64 py-1 pr-3">
+                  <span className="block truncate" title={tache.tache_id}>
+                    {tache.nom || tache.tache_id}
+                  </span>
+                  {/* Le ticket externe (#192) sous le nom : la colonne garde sa
+                      largeur, et la ligne d'une tâche sans référence ne bouge pas. */}
+                  <LienTicketExterne
+                    reference={tache.reference_externe}
+                    tache={tache.nom || tache.tache_id}
+                  />
                 </td>
                 <td className="py-1 pr-3 text-neutral-500 dark:text-neutral-400">
                   {tache.agent
