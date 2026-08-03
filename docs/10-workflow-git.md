@@ -116,11 +116,16 @@ Lifecycle : `gid://gitlab/WorkItems::Statuses::Custom::Lifecycle/1003066`.
 - **Inspecter les GIDs manuellement** (les GIDs de la table ci-dessus n'ont plus besoin d'être
   recopiés — `lib.sh` les redécouvre — mais pour vérifier) :
   `glab api graphql -f query='{ group(fullPath:"maestro-group4345327") { lifecycles { nodes { name statuses { id name } } } } }'`.
-- **Reproduire le lifecycle sur un nouveau projet** :
-  [`bash scripts/gitlab/bootstrap-lifecycle.sh`](../scripts/gitlab/bootstrap-lifecycle.sh) recrée le
-  lifecycle « Maestro » (6 statuts + attache aux types Issue/Task) via `lifecycleCreate` /
-  `lifecycleAttachWorkItemType`. **Idempotent** (ne fait rien si « Maestro » existe déjà) et
-  **dry-run par défaut** (imprime les mutations ; `--apply` pour créer, réservé à un projet vierge).
+- ⚠ **Cette section décrit un mécanisme qui n'existe plus.** Le champ Status natif est une
+  fonctionnalité Premium, perdue avec la fin de l'essai Ultimate du groupe le 2026-08-02 — la donnée
+  de statut avec lui. Le cycle de vie repasse sur des **labels `workflow::*`** (#207) : le
+  vocabulaire, les colonnes du board et le provisionnement sont dans
+  [`scripts/gitlab/bootstrap.sh`](../scripts/gitlab/bootstrap.sh) et
+  [`bootstrap-board.sh`](../scripts/gitlab/bootstrap-board.sh), la migration des tickets existants
+  dans [`migrate-workflow-labels.sh`](../scripts/gitlab/migrate-workflow-labels.sh)
+  (`--check` pour relire les déductions sans écrire). `bootstrap-lifecycle.sh`, qui recréait le
+  lifecycle, a été supprimé. **La réécriture complète de cette §3 est le lot 5 du chantier (#212)** ;
+  seul le renvoi mort est corrigé ici.
 
 ### 3.2 Les labels — catégorisation (hors cycle de vie)
 
