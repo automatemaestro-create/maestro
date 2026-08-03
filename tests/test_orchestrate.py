@@ -1235,7 +1235,7 @@ def test_un_run_termine_rend_son_bilan_et_ne_se_dit_plus_en_cours(depot: Depot) 
         [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
         resume=[
             (130, "OK", "99", 620, "3.50", "-"),
-            (131, "ECHEC", "-", 300, "1.20", "MR « aucune », statut « En cours »"),
+            (131, "ECHEC", "-", 300, "1.20", "MR « aucune », cycle de vie « En cours »"),
         ],
     )
     r = depot.lance("status.sh")
@@ -1486,7 +1486,7 @@ def test_une_session_qui_croit_faire_une_pause_dit_le_travail_laisse_dans_le_wor
     resume = (depot.racine / ".maestro/orchestrate/pause/resume.tsv").read_text(encoding="utf-8")
     assert "130\tECHEC" in resume
     assert "session terminée sans clôture, 5 fichier(s) non commité(s)" in resume, (
-        "la raison consignée doit être exploitable, pas seulement « MR aucune, statut À faire »"
+        "la raison consignée doit être exploitable, pas juste « MR aucune, cycle de vie À faire »"
     )
     assert "MR « aucune »" in resume, "le verdict GitLab reste dit, il n'est pas remplacé"
     assert "le travail est conservé dans" in r.stdout, "la console dit où le retrouver"

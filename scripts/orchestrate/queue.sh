@@ -19,6 +19,12 @@
 #    assigné est le travail de quelqu'un (anti-collision, docs/10 §5) ; un ticket d'un autre
 #    milestone n'est pas la phase en cours.
 #
+#    « À faire » est le LIBELLÉ du cycle de vie, porté depuis #207/#209 par un label `workflow::*`
+#    et non plus par le champ Status natif de GitLab. Ce fichier n'a pas à le savoir : lib.sh rend
+#    toujours le libellé dans la colonne `statut` de ses TSV, jamais le slug du label
+#    (« a-faire ») — contrat de surface documenté en tête de scripts/gitlab/lib.sh. Les
+#    comparaisons ci-dessous sont donc restées identiques à travers la bascule.
+#
 # 2. Les PARENTS DE SUIVI sont écartés : ils ne portent ni branche ni code (docs/10 §5.1). À leur
 #    place viennent leurs lots, DANS L'ORDRE DE LEUR CHECKLIST — c'est cet ordre qui encode les
 #    dépendances entre lots, et lui seul (le marqueur « (parallèle) » dit que deux lots peuvent
@@ -166,7 +172,7 @@ awk -F '\t' -v OFS='\t' -v ecartes="$TMP/ecartes.tsv" '
   /^#/ { next }
   {
     iid = $1; statut = $2; prio = $5; titre = $6
-    if (statut != "À faire") { print iid, "statut « " statut " »", titre > ecartes; next }
+    if (statut != "À faire") { print iid, "cycle de vie « " statut " »", titre > ecartes; next }
     a = (iid in assigne) ? assigne[iid] : "-"
     if (a != "-" && a != "") { print iid, "assigné à " a, titre > ecartes; next }
     print iid, prio, titre
