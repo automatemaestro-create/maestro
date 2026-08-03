@@ -19,12 +19,18 @@
 # --- Le verdict d'un ticket vient de GitLab, pas du texte de la session ---------------------------
 # Une session peut conclure « c'est fait » en s'étant trompée, ou échouer après avoir tout livré.
 # On ne lit donc pas sa prose : un ticket est réussi si, et seulement si, sa branche porte une MR
-# OUVERTE et son statut natif est « En revue » — exactement ce que `/ticket-ship` laisse derrière
+# OUVERTE et son cycle de vie est « En revue » — exactement ce que `/ticket-ship` laisse derrière
 # lui. C'est vérifiable, et ça ne dépend pas de la formulation du modèle.
 #
+# Ce cycle de vie est porté par un LABEL SCOPÉ `workflow::*` (#207/#209), le champ Status natif de
+# GitLab ayant disparu avec l'essai Ultimate du groupe. Rien à en savoir de plus ici : lib.sh rend
+# toujours le LIBELLÉ (« En revue »), jamais le slug du label (« en-revue ») — c'est son contrat de
+# surface, documenté en tête de scripts/gitlab/lib.sh. Les comparaisons de ce fichier portent donc
+# sur les mêmes chaînes qu'avant la bascule, et le changement de stockage ne se voit pas d'ici.
+#
 # --- Ce qu'un échec entraîne ------------------------------------------------------------------------
-# Le ticket est laissé en l'état (branche et statut « En cours »), et LES LOTS SUIVANTS DU MÊME
-# PARENT sont sautés : ils partiraient d'une base incomplète. Les autres groupes du plan
+# Le ticket est laissé en l'état (branche et cycle de vie « En cours »), et LES LOTS SUIVANTS DU
+# MÊME PARENT sont sautés : ils partiraient d'une base incomplète. Les autres groupes du plan
 # s'enchaînent normalement — une erreur à 2 h du matin ne doit pas geler le reste de la nuit.
 #
 # --- Journal --------------------------------------------------------------------------------------
@@ -237,11 +243,11 @@ uuid_du_ticket() {
 # reprend_en_vol <iid> : 0 si ce ticket est celui que le run REPRIS avait en main quand il a été
 # coupé — témoin de session présent dans son journal, et aucune ligne de bilan à son nom.
 #
-# C'est la seule exception au filtre « statut À faire » de la boucle, et elle est étroite à dessein.
+# C'est la seule exception au filtre « À faire » de la boucle, et elle est étroite à dessein.
 # Sans elle, une reprise laisse derrière elle la victime même de l'interruption : `/ticket-start` a
-# posé « En cours » sur ce ticket, donc la relecture de statut l'écarte comme s'il appartenait à
-# quelqu'un d'autre — alors que son worktree et son travail non commité nous attendent. Les autres
-# statuts (« En revue », « Terminé », pris par une session voisine) restent sautés comme avant.
+# posé « En cours » sur ce ticket, donc la relecture du cycle de vie l'écarte comme s'il appartenait
+# à quelqu'un d'autre — alors que son worktree et son travail non commité nous attendent. Les autres
+# états (« En revue », « Terminé », pris par une session voisine) restent sautés comme avant.
 reprend_en_vol() {
   [ "$REPRISE" = 1 ] || return 1
   [ -s "$REPRISE_DIR/$1.session" ] || return 1
@@ -277,10 +283,10 @@ arret_demande() {
 # travail_en_attente <dest> : « <fichiers non commités> <commits hors origin/main> » du worktree.
 #
 # Une session peut sortir en code 0 sans avoir rien clos (#178) — elle croyait faire une pause. Le
-# verdict GitLab la classe ECHEC à juste titre, mais « MR "aucune", statut "À faire" » ne dit pas
-# l'essentiel : le travail est-il PERDU, ou dort-il dans le worktree ? Ces deux compteurs tranchent,
-# et la différence est actionnable — un worktree qui porte du travail se rattrape par une session
-# ciblée sur la seule clôture, un worktree vide est à refaire.
+# verdict GitLab la classe ECHEC à juste titre, mais « MR "aucune", cycle de vie "À faire" » ne dit
+# pas l'essentiel : le travail est-il PERDU, ou dort-il dans le worktree ? Ces deux compteurs
+# tranchent, et la différence est actionnable — un worktree qui porte du travail se rattrape par
+# une session ciblée sur la seule clôture, un worktree vide est à refaire.
 #
 # Lecture seule et sans réseau : `git status` local, et les commits comptés contre `origin/main`
 # SEULEMENT si la référence existe (dans un dépôt qui n'a pas de distant, ne rien dire vaut mieux
@@ -617,8 +623,9 @@ END {
   if (ligne != "") print ligne
   print ""
 
-  # Le verdict vient de la boucle, donc de GitLab (MR ouverte ET statut « En revue ») — jamais de la
-  # prose ci-dessous, qui peut se croire réussie sans l'être. Absent quand on relit un vieux fichier.
+  # Le verdict vient de la boucle, donc de GitLab (MR ouverte ET cycle de vie « En revue ») — jamais
+  # de la prose ci-dessous, qui peut se croire réussie sans l'être. Absent quand on relit un vieux
+  # fichier.
   if (verdict != "") {
     v = verdict
     if (verdict == "OK") v = "✓ OK"
@@ -1097,7 +1104,7 @@ if [ "$DRY" = 1 ]; then
   printf '  1. worktree dédié     bash scripts/git/worktree.sh <iid>\n'
   printf '  2. session dédiée     %s -p … --session-id <uuid> --settings scripts/orchestrate/settings.run.json\n' "$CLAUDE_BIN"
   printf '                        --permission-mode acceptEdits --model %s --max-budget-usd %s\n' "$MODELE" "$BUDGET"
-  printf '  3. verdict            MR ouverte ET statut « En revue » (lu dans GitLab, pas dans la sortie)\n'
+  printf '  3. verdict            MR ouverte ET cycle de vie « En revue » (lu dans GitLab, pas dans la sortie)\n'
   printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis réouverture de la même session Claude\n'
   printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'
   printf '  6. run coupé          « run.sh --resume » rejoue CE plan, le ticket en vol compris\n'
@@ -1170,8 +1177,8 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
     printf '  %s↻%s #%-4s repris en vol — le run %s l'\''avait en main à la coupure\n' \
       "$C_Y" "$C_0" "$iid" "$REPRISE_ID"
   elif [ "$statut_actuel" != "À faire" ]; then
-    printf '  ~ #%-4s sauté — statut « %s » (le plan datait)\n' "$iid" "${statut_actuel:-?}"
-    consigne "$iid" SAUTE - 0 0 "statut « ${statut_actuel:-?} » au moment de le prendre"
+    printf '  ~ #%-4s sauté — cycle de vie « %s » (le plan datait)\n' "$iid" "${statut_actuel:-?}"
+    consigne "$iid" SAUTE - 0 0 "cycle de vie « ${statut_actuel:-?} » au moment de le prendre"
     NB_SAUTE=$((NB_SAUTE + 1))
     continue
   fi
@@ -1291,11 +1298,11 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
     printf '  %s✓%s MR !%s ouverte, ticket « En revue » — %s, %s $\n' \
       "$C_G" "$C_0" "${mr:-?}" "$(duree_lisible "$duree")" "$(arrondi_cout "${cout:-?}")"
     consigne "$iid" OK "${mr:--}" "$duree" "${cout:-0}" -
-    # La raison dit sur quoi repose le verdict : la MR est déjà nommée juste avant, le statut non.
+    # La raison dit sur quoi repose le verdict : la MR est déjà nommée juste avant, l'état non.
     ecrit_resultat "$iid" "$titre" OK "${mr:--}" "$duree" "ticket « En revue »"
     NB_OK=$((NB_OK + 1))
   else
-    raison="MR « ${etat_mr:-aucune} », statut « ${statut:-?} »"
+    raison="MR « ${etat_mr:-aucune} », cycle de vie « ${statut:-?} »"
     # Ce que la session a laissé derrière elle : c'est cela qui dit si l'échec est rattrapable.
     reste="$(travail_en_attente "$dest")"
     n_modifs="${reste%% *}"; n_modifs="${n_modifs:-0}"

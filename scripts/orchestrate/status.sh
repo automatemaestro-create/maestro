@@ -259,14 +259,19 @@ GL_CACHE_IID=""
 
 if [ "$SANS_GITLAB" = 0 ] && gl_require_glab 2>/dev/null; then GITLAB_OK=1; fi
 
-# etat_gitlab <iid> <branche> : « statut <TAB> etat-mr <TAB> iid-mr », depuis le cache si la dernière
-# lecture est récente. Rend une chaîne vide si GitLab n'est pas interrogeable — l'appelant le dit.
+# etat_gitlab <iid> <branche> : « cycle-de-vie <TAB> etat-mr <TAB> iid-mr », depuis le cache si la
+# dernière lecture est récente. Rend une chaîne vide si GitLab n'est pas interrogeable — l'appelant
+# le dit.
+#
+# Le cycle de vie vient de gl_issue_owner, qui le lit depuis le label `workflow::*` du ticket
+# (#207/#209) et le rend en LIBELLÉ (« En revue »), jamais en slug (« en-revue ») : seule la source
+# a changé à la bascule, pas la valeur affichée ici. Lecture seule, cache de 60 s inchangé.
 etat_gitlab() {
   local iid="$1" branche="$2" maintenant statut etat mr
   [ "$GITLAB_OK" = 1 ] || return 1
   maintenant="$(date +%s)"
   # Le cache porte l'iid : en `--watch`, la boucle passe au ticket suivant sans prévenir, et un
-  # cache indexé sur le seul temps afficherait pendant une minute le statut du ticket précédent.
+  # cache indexé sur le seul temps afficherait pendant une minute l'état du ticket précédent.
   if [ -n "$GL_CACHE" ] && [ "$GL_CACHE_IID" = "$iid" ] && [ $((maintenant - GL_DERNIERE)) -lt 60 ]; then
     printf '%s' "$GL_CACHE"
     return 0
@@ -350,7 +355,7 @@ affiche_ticket_en_cours() { # <run-dir> <iid>
   fi
 
   # GitLab en dernier : c'est ce que la boucle regardera pour rendre son verdict (MR ouverte ET
-  # statut « En revue »), donc le voir bouger, c'est voir le ticket toucher au but.
+  # cycle de vie « En revue »), donc le voir bouger, c'est voir le ticket toucher au but.
   if gl="$(etat_gitlab "$iid" "$branche")"; then
     IFS=$'\t' read -r statut etat_mr mr_iid <<< "$gl"
     if [ "$etat_mr" = "opened" ]; then
