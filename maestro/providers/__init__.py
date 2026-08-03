@@ -6,7 +6,7 @@ que de ces symboles, jamais d'un SDK fournisseur en direct :
 
     from maestro.providers import Credentials, ModelSpec, resolve_provider
 
-    spec = ModelSpec(provider="claude", model="claude-opus-4-8")
+    spec = ModelSpec(provider="claude", model="claude-opus-5")
     provider = resolve_provider(spec, Credentials())
     texte = await provider.generate("Bonjour", model=spec.model)
 

@@ -111,7 +111,7 @@ class Settings:
         raw_provider = os.getenv("MAESTRO_PROVIDER")
         return cls(
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
-            anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
+            anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-opus-5"),
             claude_auth_mode=raw_mode.strip().lower() if raw_mode and raw_mode.strip() else None,
             claude_oauth_token=os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or None,
             database_url=os.getenv("DATABASE_URL") or None,

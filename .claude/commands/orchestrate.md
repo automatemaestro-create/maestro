@@ -102,7 +102,7 @@ toi-même.
    Il ouvre une console indépendante, imprime le run-id, le journal et la commande de reprise, et
    rend la main immédiatement. Rappelle les options utiles, qui se combinent avec `--detach` :
    `--max <n>` pour borner le run, `--budget <usd>` par ticket, `--timeout <durée>` par ticket,
-   `--modele <alias>`. Puis le **suivi** — `bash scripts/orchestrate/status.sh --watch` (où en est
+   `--modele <modèle>`. Puis le **suivi** — `bash scripts/orchestrate/status.sh --watch` (où en est
    le run, depuis n'importe quel terminal) ou `tail -f .maestro/orchestrate/<run-id>/run.log` (la
    sortie brute de la console) — et l'**arrêt d'urgence** : `touch .maestro/orchestrate/STOP` — pris
    en compte entre deux tickets **et pendant une attente** de reprise.

@@ -106,7 +106,7 @@ class ClaudeProvider(ModelProvider):
 
     name: ClassVar[str] = "claude"
 
-    #: Préfixe des identifiants de modèles Claude (ex. `claude-opus-4-8`).
+    #: Préfixe des identifiants de modèles Claude (ex. `claude-opus-5`).
     _MODEL_PREFIX: ClassVar[str] = "claude-"
 
     #: Plafond de tours d'une exécution agentique (garde-fou anti-boucle, docs/02 §7).
