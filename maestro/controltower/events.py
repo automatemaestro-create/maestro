@@ -43,7 +43,12 @@ from maestro.telemetry.usage import StepUsage
 #: `chat.message` porte le chat utilisateur ↔ agent (#84) : `agent` désigne le
 #: fil, `statut` l'auteur (« utilisateur »/« agent »), `detail` le contenu ;
 #: `agent.capacite` porte le contrôle de capacité (#86, EF-21) : `statut` l'état
-#: résultant (« active »/« desactive ») et `instances` le plafond résultant.
+#: résultant (« active »/« desactive ») et `instances` le plafond résultant ;
+#: `execution.statut` porte le **cycle de vie d'un run** piloté par l'API (#185) :
+#: `statut` l'état résultant (« en_cours » au lancement, « terminee »/« echec » à
+#: l'issue, « annulee » sur interruption humaine), `titre` l'objectif et `detail`
+#: la raison — c'est le seul signal qui dise à la projection qu'un run a commencé
+#: ou fini, les étapes du journal ne parlant que de tâches.
 EVENEMENT_TACHE_STATUT = "tache.statut"
 EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation"
 EVENEMENT_AGENT_ACTIVITE = "agent.activite"
@@ -52,6 +57,7 @@ EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"
 EVENEMENT_VALIDATION_DEMANDE = "validation.demande"
 EVENEMENT_VALIDATION_DECISION = "validation.decision"
 EVENEMENT_CHAT_MESSAGE = "chat.message"
+EVENEMENT_EXECUTION_STATUT = "execution.statut"
 
 #: Canal Redis Pub/Sub des événements — sur l'instance mutualisée avec la file
 #: de tâches (#41), d'où un canal nommé plutôt que le canal par défaut.

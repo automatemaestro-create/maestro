@@ -21,6 +21,10 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   persisté (`ChatStore`), réponse produite par le fournisseur configuré
   (`RepondeurModele`) ou scriptée (`RepondeurScripte`), flux d'un envoi
   (`ServiceChat` : persistance, messagerie #44, diffusion `chat.message`) ;
+- `maestro.controltower.executions` : le **pilotage des exécutions** (#185) —
+  `ServiceExecutions` lance un run en tâche de fond de l'API, le suit dans la
+  projection et l'interrompt à la demande, ses étapes partant sur le bus par le
+  pont télémétrie comme celles d'un run lancé en ligne de commande ;
 - `maestro.controltower.assistance` : le canal d'**aide à l'utilisateur** (#123)
   — même infrastructure que le chat sur le fil réservé `assistance`, mais une
   fiche hors catalogue (`AGENT_ASSISTANCE`) et un répondeur déterministe
@@ -73,6 +77,7 @@ from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_CHAT_MESSAGE,
+    EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_STATUT,
@@ -83,6 +88,12 @@ from maestro.controltower.events import (
     InMemoryEventBus,
     RedisEventBus,
 )
+from maestro.controltower.executions import (
+    DELAI_ANNULATION_S,
+    FabriqueMoteur,
+    ServiceExecutions,
+    moteur_par_defaut,
+)
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
     EventLog,
@@ -92,6 +103,11 @@ from maestro.controltower.persistence import (
 from maestro.controltower.state import (
     CAPACITE_ACTIVE,
     CAPACITE_DESACTIVE,
+    EXECUTION_ANNULEE,
+    EXECUTION_ECHEC,
+    EXECUTION_EN_COURS,
+    EXECUTION_TERMINEE,
+    STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_APPROUVEE,
     VALIDATION_EN_ATTENTE,
     VALIDATION_REFUSEE,
@@ -109,19 +125,26 @@ __all__ = [
     "CLE_JOURNAL_EVENEMENTS",
     "CAPACITE_ACTIVE",
     "CAPACITE_DESACTIVE",
+    "DELAI_ANNULATION_S",
     "EVENEMENT_AGENT_ACTIVITE",
     "EVENEMENT_AGENT_CAPACITE",
     "EVENEMENT_CHAT_MESSAGE",
+    "EVENEMENT_EXECUTION_STATUT",
     "EVENEMENT_MESSAGE_INTER_AGENTS",
     "EVENEMENT_TACHE_REASSIGNATION",
     "EVENEMENT_TACHE_STATUT",
     "EVENEMENT_VALIDATION_DECISION",
     "EVENEMENT_VALIDATION_DEMANDE",
+    "EXECUTION_ANNULEE",
+    "EXECUTION_ECHEC",
+    "EXECUTION_EN_COURS",
+    "EXECUTION_TERMINEE",
     "NOM_ASSISTANCE",
     "PAS_HEURE",
     "PAS_JOUR",
     "PAS_MINUTE",
     "PAS_VALIDES",
+    "STATUTS_EXECUTION_TERMINAUX",
     "SUJETS_ASSISTANCE",
     "UTILISATEUR",
     "VALIDATION_APPROUVEE",
@@ -140,6 +163,7 @@ __all__ = [
     "Event",
     "EventBus",
     "EventLog",
+    "FabriqueMoteur",
     "InMemoryEventBus",
     "InMemoryEventLog",
     "JournalEventHandler",
@@ -153,6 +177,7 @@ __all__ = [
     "RepondeurScripte",
     "ReponseIndisponible",
     "ServiceChat",
+    "ServiceExecutions",
     "SujetAssistance",
     "ValidateurControlTower",
     "activer_publication",
@@ -160,6 +185,7 @@ __all__ = [
     "create_app",
     "create_default_app",
     "evenements_depuis_step",
+    "moteur_par_defaut",
     "publieur_redis",
     "repondre_assistance",
     "validateur_redis",

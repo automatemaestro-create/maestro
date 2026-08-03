@@ -14,7 +14,12 @@ Endpoints :
 - `POST /api/agents/{nom}/capacite` — le contrôle de capacité (#86, EF-21) :
   active/désactive l'agent et/ou ajuste son plafond d'instances — persisté
   (`maestro.agents.capacity`) et relu à chaud par moteur et workers ;
-- `GET  /api/executions/{run_id}` — le détail d'une exécution (trace, coût) ;
+- `GET  /api/executions` — les runs connus (en cours et passés), récents d'abord :
+  objectif, statut, volume, coût et bornes temporelles (#185) ;
+- `POST /api/executions` — **lance** une exécution (objectif + garde-fous) en
+  tâche de fond et rend son `run_id` immédiatement (#185) ;
+- `POST /api/executions/{run_id}/annuler` — interrompt un run en cours (#185) ;
+- `GET  /api/executions/{run_id}` — le détail d'une exécution (état, trace, coût) ;
 - `GET  /api/executions/{run_id}/cout` — le grand livre du run (#57) : coût
   par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat ;
 - `GET  /api/analytics/couts` — la vue coûts & analytics (#87) : agrégats par
@@ -143,6 +148,7 @@ from maestro.controltower.events import (
     InMemoryEventBus,
     RedisEventBus,
 )
+from maestro.controltower.executions import FabriqueMoteur, ServiceExecutions
 from maestro.controltower.persistence import (
     EventLog,
     InMemoryEventLog,
@@ -151,11 +157,42 @@ from maestro.controltower.persistence import (
 from maestro.controltower.state import (
     CAPACITE_ACTIVE,
     CAPACITE_DESACTIVE,
+    STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
     ControlTowerState,
 )
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
+
+
+class ReferenceTicketRequete(BaseModel):
+    """La référence d'un ticket externe posée au lancement d'un run (#185, contrat #183).
+
+    Générique : un identifiant lisible (`id`, ex. « #185 », « PROJ-42 ») et son
+    `url` — vide quand seul l'identifiant est connu. GitLab, Jira ou Linear
+    passent par la même forme, aucun champ propre à un outil.
+    """
+
+    id: str
+    url: str = ""
+
+
+class LancementExecutionRequete(BaseModel):
+    """Corps de lancement d'une exécution (#185) : objectif, garde-fous, ticket.
+
+    `objectif` est l'énoncé en langage naturel que l'orchestrateur décompose ;
+    les garde-fous (#9) plafonnent l'exécution — coût, tokens, time-out par
+    tâche, parallélisme —, chacun optionnel, None laissant le défaut du moteur.
+    `ticket` rattache le run à un ticket externe (optionnel). Une requête
+    invalide (objectif vide, garde-fou hors bornes) est refusée en 422.
+    """
+
+    objectif: str
+    plafond_cout_usd: float | None = None
+    plafond_tokens: int | None = None
+    timeout_tache_s: float | None = None
+    parallelisme: int | None = None
+    ticket: ReferenceTicketRequete | None = None
 
 
 class ReassignationRequete(BaseModel):
@@ -366,6 +403,7 @@ def create_app(
     secrets: SecretStore | None = None,
     permissions: PermissionStore | None = None,
     event_log: EventLog | None = None,
+    fabrique_moteur: FabriqueMoteur | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -444,6 +482,12 @@ def create_app(
     `create_default_app`. Un état injecté (`state`) reste tel quel puis reçoit
     le rejeu par-dessus (idempotent : les événements reconstruisent le même
     état).
+
+    `fabrique_moteur` (#185) construit le moteur de chaque exécution lancée par
+    `POST /api/executions` — par défaut `OrchestrationEngine.default`, résolu au
+    **premier lancement** et non à la construction de l'app : une API qui ne
+    lance aucun run ne résout aucun fournisseur. Les tests en injectent une
+    fabrique factice pour exercer le pilotage sans appeler de modèle.
     """
     bus = bus if bus is not None else InMemoryEventBus()
     event_log = event_log if event_log is not None else InMemoryEventLog()
@@ -482,6 +526,10 @@ def create_app(
         bus=bus,
     )
     diffusion = Diffusion()
+    # Pilotage des exécutions (#185) : lance sur le bus et la projection de
+    # cette app — le run est donc suivi par les mêmes rouages que n'importe
+    # quelle orchestration observée.
+    executions = ServiceExecutions(bus, state, fabrique_moteur=fabrique_moteur)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -502,6 +550,9 @@ def create_app(
         try:
             yield
         finally:
+            # Les runs en vol s'arrêtent **avant** la pompe et le bus : leur
+            # issue (annulation) a encore un canal pour être consignée.
+            await executions.fermer()
             pompe.cancel()
             with suppress(asyncio.CancelledError):
                 await pompe
@@ -540,13 +591,78 @@ def create_app(
         """L'état des agents : libre/occupé, tâche courante, compteurs, coût cumulé."""
         return [a.to_dict() for a in state.agents()]
 
+    @app.get("/api/executions")
+    async def executions_liste() -> list[dict[str, Any]]:
+        """Les runs connus (#185) : résumés, **récents d'abord**.
+
+        En cours comme passés, lancés depuis la Control Tower comme publiés par
+        un autre process (`maestro-run --publier`) : le suivi ne distingue pas
+        leur origine — la projection est la même. C'est la source de l'écran
+        *Exécutions & traces* (docs/05 §2.4).
+        """
+        return executions.resumes()
+
+    @app.post("/api/executions", status_code=202)
+    async def lancer_execution(requete: LancementExecutionRequete) -> dict[str, Any]:
+        """Lance une exécution (#185) et rend son résumé, `run_id` compris, **aussitôt**.
+
+        Le run se déroule **hors** de la requête HTTP (tâche de fond de l'API) :
+        la réponse ne dit pas ce qu'il a produit, elle dit qu'il est parti. La
+        suite arrive par le flux d'événements existant — chaque étape devient un
+        `tache.statut` du WebSocket et une ligne du Kanban — et se relit sur
+        `GET /api/executions/{run_id}`. 422 sur un objectif vide ou un garde-fou
+        hors bornes (les plafonds sont des maximums : ils doivent être > 0).
+        """
+        try:
+            return executions.lancer(
+                requete.objectif,
+                plafond_cout_usd=requete.plafond_cout_usd,
+                plafond_tokens=requete.plafond_tokens,
+                timeout_tache_s=requete.timeout_tache_s,
+                parallelisme=requete.parallelisme,
+                ticket=None if requete.ticket is None else requete.ticket.model_dump(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/executions/{run_id}/annuler")
+    async def annuler_execution(run_id: str) -> dict[str, Any]:
+        """Interrompt un run en cours (#185) : rend son résumé passé à « annulée ».
+
+        L'issue est consignée comme n'importe quel fait du run : elle apparaît
+        dans la projection (statut `annulee`, `fin` posée) **et** sur le flux
+        d'événements. 404 si le run est inconnu, 409 s'il est déjà soldé — un run
+        terminé n'est plus interruptible, et le dire vaut mieux que faire croire
+        à une annulation.
+        """
+        resume = executions.resume(run_id)
+        if resume is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
+            raise HTTPException(
+                status_code=409,
+                detail=f"exécution déjà soldée ({resume['statut']}) : {run_id}.",
+            )
+        annulee = await executions.annuler(run_id)
+        if annulee is None:  # pragma: no cover - le résumé vient d'être lu
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        return annulee
+
     @app.get("/api/executions/{run_id}")
     async def execution(run_id: str) -> dict[str, Any]:
-        """Le détail d'une exécution : sa trace événement par événement et son coût."""
+        """L'état d'une exécution (#185) : son résumé, sa trace et son coût.
+
+        Le résumé de `GET /api/executions` (objectif, statut, volume, bornes)
+        enrichi de ce qu'il ne porte pas : le grand livre du run (#57) et sa
+        trace événement par événement.
+        """
         detail = state.execution(run_id)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return detail.to_dict()
+        return {**detail.to_dict(), **(executions.resume(run_id) or {})}
 
     @app.get("/api/executions/{run_id}/cout")
     async def cout_execution(run_id: str) -> dict[str, Any]:
