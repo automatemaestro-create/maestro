@@ -38,6 +38,17 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   l'onglet Chat d'un agent. Il ne se ferme pas au clic extérieur (on le consulte *pendant*
   qu'on agit) et le shell réserve la bande qu'il occupe pour ne masquer aucune
   action de la page ;
+- **Tableau de bord épuré** (#191, lot 2 de la navigation v2 #189) : l'essentiel
+  en **un écran** — ce qui attend un arbitrage, quatre **indicateurs de tête**
+  (run en cours, tâches par statut, agents actifs, dépense), le Kanban, puis un
+  **aperçu** de l'activité. Les trois panneaux de plein format qui s'y empilaient
+  n'ont pas disparu, ils sont **rangés**, et chaque tuile **renvoie** vers la page
+  où le détail vit maintenant (fiches d'agent → Agents, grand livre par exécution
+  → Coûts & analytics). Les renvois sont résolus par le menu
+  (`entreeParLibelle`) et non par un chemin en dur : ils suivent une page qui
+  déménage, et **ne s'allument pas** vers une page qui n'existe pas encore — le
+  fil complet attend le Journal du chantier « Visibilité », l'aperçu se suffit
+  jusque-là, sans lien mort ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **Kanban** des tâches par statut (machine à états docs/03 §3) ;
@@ -51,7 +62,15 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 - **Coûts par exécution** (#58, docs/05 §2.5 — critère MVP n°6) : le grand livre
   de chaque run (`GET /api/executions/{run_id}/cout`, #57) — part de planification,
   coût par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat de
-  l'exécution ; chaque carte Kanban affiche aussi le coût détaillé de sa tâche ;
+  l'exécution ; chaque carte Kanban affiche aussi le coût détaillé de sa tâche.
+  Le grand livre est rangé sur la page **Coûts & analytics** depuis #191, sous les
+  agrégats qui le résument ;
+- **Lien vers le ticket externe** (#192, lot 3 de la navigation v2 #189) : une
+  tâche issue d'un ticket (#187) porte le lien vers lui sur sa carte Kanban et
+  dans les deux tables de coûts. L'URL vient du flux, donc d'une source non
+  fiable : un seul point de passage la valide (`lib/liens.ts`) et seuls `http` et
+  `https` sont suivis — une URL de schéma inattendu s'affiche en **texte**, jamais
+  en lien mort ni en `href` exécutable ;
 - **Fiche agent à onglets** (#190, lot 1 de la navigation v2 #189) : l'entrée de
   menu **Agents** mène à la liste (`/agents`) et chaque agent ouvre **une** fiche
   dont les facettes tiennent en onglets — Profil, Playbook, MCP & permissions,
@@ -151,21 +170,24 @@ rejoue à l'identique sur le poste avant d'ouvrir la MR.
 ### La suite de tests
 
 Posée par le ticket #124 (lot final de la refonte #116, où les tests des lots 1
-à 7 étaient différés — convention docs/10 §5.1). **Vitest + Testing Library**
-sur un DOM `jsdom` : ces tests portent sur le comportement et le rendu, pas sur
-le pixel — le bout en bout dans un vrai navigateur reste le rôle du skill
-`/verify`.
+à 7 étaient différés — convention docs/10 §5.1), étendue par #193 à la
+navigation v2 (#189, même convention). **Vitest + Testing Library** sur un DOM
+`jsdom` : ces tests portent sur le comportement et le rendu, pas sur le pixel —
+le bout en bout dans un vrai navigateur reste le rôle du skill `/verify`.
 
 | Fichier | Ce qu'il couvre |
 | --- | --- |
-| `tests/navigation.test.tsx` | Le menu unique, la sidebar, la barre supérieure (#117) |
+| `tests/navigation.test.tsx` | Le menu unique, la sidebar, la barre supérieure (#117) ; une entrée par intention et les renvois par libellé (#189) |
 | `tests/theme.test.tsx` | Choix clair/sombre/système, script d'init, accord des deux contrôles (#118) |
 | `tests/notifications.test.tsx` | Tri du notable, badge, décision depuis le panneau (#119) |
 | `tests/identite.test.tsx` | Le monogramme et ses déclinaisons favicon/ICO/PNG (#120) |
 | `tests/parametres.test.tsx` | Sommaire, ancres, préférences du poste (#121) |
-| `tests/guide.test.tsx` | Déclenchement unique, étapes, sortie clavier, ancres réelles (#122) |
+| `tests/guide.test.tsx` | Déclenchement unique, étapes, sortie clavier, ancres et pages réelles (#122, #193) |
 | `tests/assistant.test.tsx` | Ouverture, envoi, échec d'envoi, non-fermeture au clic extérieur (#123) |
 | `tests/shell.test.tsx` | La composition : les sept lots effectivement branchés dans le cadre |
+| `tests/agents.test.tsx` | La fiche agent à onglets, la liste, et la survie des chemins v1 par redirection (#190, testé en #193) |
+| `tests/tableau-de-bord.test.tsx` | Le tableau de bord épuré — ce qui reste, ce qui renvoie ailleurs — et le ticket externe dans les tables de coûts (#191/#192, testés en #193) |
+| `tests/ticket-externe.test.tsx` | Le filtrage d'URL et les cartes du Kanban (#192, livré avec le lot : logique critique) |
 
 Deux fichiers portent l'outillage plutôt que des tests :
 
@@ -177,8 +199,17 @@ Deux fichiers portent l'outillage plutôt que des tests :
   message) et `rendreAvecEtat`, qui monte un composant sous le **vrai**
   fournisseur d'état du shell avec une source temps réel factice.
 
-Deux tests méritent d'être connus parce qu'ils gardent des invariants qu'aucun
-outil n'attrape : celui qui **exécute** le script d'init du thème pour le
-confronter au module (sans quoi la page clignoterait au chargement), et celui
-qui vérifie que chaque ancre `data-guide` visée par la visite guidée est bien
-posée par un composant.
+Quelques tests méritent d'être connus parce qu'ils gardent des invariants
+qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
+
+- celui qui **exécute** le script d'init du thème pour le confronter au module,
+  sans quoi la page clignoterait au chargement ;
+- ceux qui confrontent une **liste déclarée** aux **routes réellement présentes**
+  sous `app/` : les entrées du menu (`lib/navigation.ts`), les destinations des
+  redirections v1 (`next.config.ts`) et les ancres `data-guide` visées par la
+  visite guidée. Une page supprimée laisserait sinon une entrée de menu vers un
+  404, un signet redirigé vers le vide et une étape de visite sans cible ;
+- celui qui vérifie que chaque redirection v1 vise un **onglet déclaré**
+  (`lib/agents.ts`). Le contrôle de route ne suffit pas ici : `[onglet]` répond à
+  *n'importe quel* segment, si bien qu'une faute de frappe rendrait bien une page
+  — le profil, silencieusement, au lieu de l'onglet demandé.

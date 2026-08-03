@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import { BarreLaterale } from "@/components/BarreLaterale";
 import { BarreSuperieure } from "@/components/BarreSuperieure";
-import { entreeCourante, MENU } from "@/lib/navigation";
+import { entreeCourante, entreeParLibelle, MENU } from "@/lib/navigation";
 
 import { agentFactice, poserChemin, rendreAvecEtat } from "./aides";
 
@@ -55,6 +55,67 @@ describe("le menu (lib/navigation)", () => {
 
   it("ne désigne aucune entrée pour un chemin inconnu", () => {
     expect(entreeCourante("/inexistant")).toBeUndefined();
+  });
+
+  // --- La navigation v2 (#189) : ce que le menu ne doit plus porter ---------
+
+  it("n'a plus d'entrée pour les pages fusionnées", () => {
+    // Le pendant du test d'intention ci-dessus, pris par l'autre bout : une
+    // entrée réintroduite ici rouvrirait un deuxième chemin vers le même objet,
+    // et se redirigerait elle-même (`next.config.ts`) — un aller simple.
+    const chemins = MENU.map((entree) => entree.href);
+    expect(chemins).not.toContain("/catalogue");
+    expect(chemins).not.toContain("/playbooks");
+  });
+
+  it("ne mène jamais deux entrées au même endroit", () => {
+    const chemins = MENU.map((entree) => entree.href);
+    expect(new Set(chemins).size).toBe(chemins.length);
+    const libelles = MENU.map((entree) => entree.libelle);
+    expect(new Set(libelles).size).toBe(libelles.length);
+  });
+
+  it("ne propose que des pages que l'application sert vraiment", async () => {
+    // Une entrée de menu vers une page supprimée est un 404 offert à un clic,
+    // et ni le lint ni le build ne le remarqueraient. On confronte le menu aux
+    // routes présentes sous `app/`.
+    const { existsSync } = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const app = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "app",
+    );
+
+    for (const { href, libelle } of MENU) {
+      const segments = href.split("/").filter((segment) => segment !== "");
+      expect(
+        existsSync(path.join(app, ...segments, "page.tsx")),
+        `l'entrée « ${libelle} » mène à « ${href} », qui n'a pas de page`,
+      ).toBe(true);
+    }
+  });
+});
+
+describe("les renvois par libellé (entreeParLibelle)", () => {
+  it("résout une page du menu", () => {
+    // Le tableau de bord épuré (#191) renvoie vers les pages qu'il a rangées en
+    // passant par là : un renvoi suit de lui-même une page qui déménage — c'est
+    // ce qui l'a fait suivre « Agents » de `/catalogue` à `/agents` (#190).
+    expect(entreeParLibelle("Agents")?.href).toBe("/agents");
+    expect(entreeParLibelle("Coûts & analytics")?.href).toBe("/couts");
+  });
+
+  it("reste muet sur une page qui n'existe pas encore", () => {
+    // Le Journal (chantier « Visibilité ») : le renvoi ne s'allumera que le
+    // jour où la page entre au menu, sans lien mort en attendant.
+    expect(entreeParLibelle("Journal")).toBeUndefined();
+  });
+
+  it("exige le libellé exact, sans à-peu-près", () => {
+    expect(entreeParLibelle("agents")).toBeUndefined();
+    expect(entreeParLibelle("Coûts")).toBeUndefined();
   });
 });
 

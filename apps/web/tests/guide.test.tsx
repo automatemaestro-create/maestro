@@ -26,6 +26,7 @@ import {
   lireGuideVu,
   marquerGuideVu,
 } from "@/lib/guide";
+import { entreeCourante } from "@/lib/navigation";
 
 import { navigations } from "./aides";
 
@@ -93,6 +94,21 @@ describe("le contenu de la visite (lib/guide)", () => {
           `l'ancre « ${nom} » (étape « ${etape.id} ») n'est posée par aucun composant`,
         ).toBe(true);
       }
+    }
+  });
+
+  it("ne présente que des pages que le menu porte encore", () => {
+    // Le pendant de l'ancre pour la *page* d'une étape (#193) : la visite
+    // navigue d'elle-même vers `chemin`, et la navigation v2 (#189) a déplacé
+    // des pages — `/catalogue` et `/playbooks` ne sont plus que des
+    // redirections. Une étape qui en viserait une ferait rebondir la visite
+    // hors de la page qu'elle prétend montrer, sans que rien ne proteste.
+    for (const etape of ETAPES_GUIDE) {
+      if (etape.chemin === undefined) continue;
+      expect(
+        entreeCourante(etape.chemin),
+        `l'étape « ${etape.id} » présente « ${etape.chemin} », qui n'est plus au menu`,
+      ).toBeDefined();
     }
   });
 

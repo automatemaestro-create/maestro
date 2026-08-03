@@ -14,11 +14,17 @@ import type { ReactNode } from "react";
 
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import type { ControlTower } from "@/lib/useControlTower";
+import { AGENT_SOURCE_DEFAUT } from "@/lib/types";
 import type {
+  AgentCatalogue,
+  CoutExecution,
+  CoutTache,
+  CoutTacheAgregee,
   EtatAgent,
   Evenement,
   MessageChat,
   Tache,
+  Usage,
   Validation,
 } from "@/lib/types";
 
@@ -234,6 +240,93 @@ export function tacheFactice(partiel: Partial<Tache> = {}): Tache {
     // Le cas courant est l'absence de ticket externe (#192) : les fabriques
     // partent de là, un test qui en veut un le passe en `partiel`.
     reference_externe: null,
+    ...partiel,
+  };
+}
+
+/**
+ * L'usage d'une ligne de coût — tout à zéro, rien de rapporté. Un test qui
+ * regarde un montant pose `cout_usd` ; les autres n'ont pas à s'en soucier.
+ */
+export function usageFactice(partiel: Partial<Usage> = {}): Usage {
+  return {
+    appels: 0,
+    tokens_entree: 0,
+    tokens_sortie: 0,
+    tokens_total: 0,
+    cout_usd: null,
+    duree_ms: null,
+    duree_api_ms: null,
+    tours: 0,
+    outils: [],
+    ...partiel,
+  };
+}
+
+/** Une ligne du grand livre d'un run (`PanneauCouts`). */
+export function coutTacheFactice(partiel: Partial<CoutTache> = {}): CoutTache {
+  return {
+    tache_id: "T-1",
+    nom: "Écrire les tests",
+    agent: "dev",
+    role: "Développeur",
+    statut: "terminee",
+    usage: usageFactice(),
+    reference_externe: null,
+    ...partiel,
+  };
+}
+
+/** Le grand livre d'une exécution (`GET /api/executions/{run_id}/cout`). */
+export function coutExecutionFactice(
+  partiel: Partial<CoutExecution> = {},
+): CoutExecution {
+  return {
+    run_id: "run-1",
+    planification: usageFactice(),
+    total: usageFactice(),
+    taches: [],
+    ...partiel,
+  };
+}
+
+/** Une ligne « par tâche » de la vue analytics (table de la page Coûts). */
+export function coutTacheAgregeeFactice(
+  partiel: Partial<CoutTacheAgregee> = {},
+): CoutTacheAgregee {
+  return {
+    tache_id: "T-1",
+    nom: "Écrire les tests",
+    agent: "dev",
+    role: "Développeur",
+    statut: "terminee",
+    executions: 1,
+    usage: usageFactice(),
+    reference_externe: null,
+    ...partiel,
+  };
+}
+
+/** Une fiche du catalogue, telle que la liste des agents (#190) la rend. */
+export function ficheCatalogueFactice(
+  partiel: Partial<AgentCatalogue> = {},
+): AgentCatalogue {
+  return {
+    nom: "dev",
+    role: "Développeur",
+    competences: [],
+    modele: null,
+    fournisseur: null,
+    source: AGENT_SOURCE_DEFAUT,
+    cree_le: null,
+    modifie_le: null,
+    mcp_serveurs: [],
+    mcp_erreur: null,
+    mcp_pool: [],
+    mcp_pool_erreur: null,
+    mcp_activations: [],
+    permissions: null,
+    permissions_erreur: null,
     ...partiel,
   };
 }
