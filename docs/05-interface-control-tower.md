@@ -210,3 +210,185 @@ renvoi (`→`) vers la page où il vit.
 │              │  10:12 ✅ Dev → PR #12   10:11 🔧 BDD → migration   …         │
 └──────────────┴──────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 6. Contrats d'API v2 (Phases 5/6) — formes JSON figées
+
+Le cadrage #182 répartit les prochaines améliorations en deux voies
+**parallèles** : Phase 5 (socle backend) et Phase 6 (Control Tower front). Pour les rendre
+réellement indépendantes, les **formes JSON** des routes à venir sont **arrêtées ici** et
+**servies en fixtures par la démo** (`maestro.controltower.demo`) : la voie front code contre
+elles sans attendre le backend réel (ticket #183).
+
+**État de livraison.** Ces routes sont déclarées dans `create_app` mais **répondent `501`** tant
+que leur lot n'est pas livré (Phase 5, #184+). Fournir des fixtures (`create_app(fixtures=…)`, ce
+que fait la démo) les fait servir des données factices cohérentes avec le scénario existant. La
+forme est le contrat ; le backend réel la remplira **à contrat identique** — les **exécutions**
+(§6.1) l'ont déjà fait : leur lot #185 est livré, elles ne passent donc plus ni par le `501` ni
+par les fixtures, et se servent de `maestro.controltower.executions`. Miroir TypeScript :
+[`apps/web/lib/types.ts`](../apps/web/lib/types.ts) ; fixtures : `maestro/controltower/fixtures.py`.
+
+Convention partagée avec les routes existantes : un champ **`null`** vaut « inconnu » et se
+distingue d'un zéro ou d'une absence ; les horodatages sont en **ISO-8601 UTC**.
+
+### 6.1 Exécutions — lancement, suivi, annulation (#185) — **livré**
+
+Piloter un vrai run depuis la Control Tower, sans passer par la CLI. Seule section de ce
+chapitre déjà implémentée (`maestro/controltower/executions.py`) : le contrat ci-dessous
+décrit le comportement réel, pas une fixture.
+
+- `GET /api/executions` → `ResumeExecution[]` — les runs connus (en cours et passés), récents
+  d'abord.
+- `POST /api/executions` → `202` + `ResumeExecution` — lance un run **en arrière-plan** (les
+  événements arrivent par le flux existant) et rend son `run_id` immédiatement. Corps
+  `LancementExecution`. `422` si l'objectif est vide ou un garde-fou est hors bornes — les
+  plafonds sont des maximums, ils doivent être **> 0**.
+- `POST /api/executions/{run_id}/annuler` → `ResumeExecution` — interrompt un run en cours (statut
+  `annulee`, `fin` posée). `404` si le run est inconnu, `409` s'il est déjà soldé — un run terminé
+  n'est plus interruptible, et le dire vaut mieux que faire croire à une annulation.
+
+```jsonc
+// LancementExecution (corps de POST /api/executions)
+{
+  "objectif": "Prototyper un mini-CRM",   // énoncé décomposé par l'orchestrateur
+  "plafond_cout_usd": 5.0,                 // null : défaut du moteur
+  "plafond_tokens": 200000,                // null : défaut du moteur
+  "timeout_tache_s": 600,                  // null : défaut du moteur
+  "parallelisme": 3,                       // null : défaut du moteur
+  "ticket": { "id": "#42", "url": "https://…/issues/42" }  // null : run sans ticket
+}
+
+// ResumeExecution (réponse)
+{
+  "run_id": "demo-live",
+  "objectif": "Prototyper un mini-CRM",
+  "statut": "en_cours",                    // en_cours | terminee | annulee | echec
+  "nb_taches": 5,
+  "cout_usd": 0.1665,                      // null : aucun coût rapporté
+  "ticket": { "id": "#42", "url": "https://…/issues/42" },  // null : sans ticket
+  "debut": "2026-07-30T09:00:00+00:00",
+  "fin": null                              // null tant que le run est en cours
+}
+```
+
+### 6.2 Journal requêtable — filtres, tri, pagination
+
+Une page de journal d'événements interrogeable, source de la future page *Logs* (Phase 6).
+
+- `GET /api/journal` → `PageJournal`. Paramètres de requête (tous optionnels) :
+  - **filtres** : `agent`, `type`, `run_id`, `depuis`, `jusqua` (fenêtre ISO-8601, bornes
+    incluses) ;
+  - **tri** : `tri` ∈ `horodatage` (défaut) | `agent` | `type`, `ordre` ∈ `desc` (défaut) | `asc` ;
+  - **pagination** : `page` (1-indexée, défaut 1), `taille` (défaut 50, max 200).
+  - `422` sur un `tri`/`ordre` inconnu, `page` < 1 ou `taille` hors [1, 200].
+
+```jsonc
+// PageJournal
+{
+  "entrees": [
+    {
+      "id": "j-0002",                       // id stable (référençable, triable)
+      "type": "tache.statut",
+      "run_id": "demo-live",
+      "tache_id": "demo-t1",
+      "agent": "bdd",
+      "role": "Base de données",
+      "statut": "en_cours",
+      "detail": "Concevoir le schéma SQL de la table contacts",
+      "horodatage": "2026-07-30T09:00:12+00:00"
+    }
+  ],
+  "total": 10,        // après filtres, AVANT pagination
+  "page": 1,
+  "taille": 50,
+  "pages": 1
+}
+```
+
+### 6.3 Registre de configuration
+
+Les **réglages produit éditables** (couche 1 du cadrage sécurité #182) : ils quittent
+l'environnement pour un registre versionné côté serveur, rechargé à chaud. **Liste blanche
+stricte** — aucune écriture arbitraire de variable d'environnement ; les secrets sont
+**write-only** (valeur masquée, jamais renvoyée en clair, #132).
+
+- `GET /api/configuration` → `RegistreConfiguration`.
+
+```jsonc
+// RegistreConfiguration
+{
+  "reglages": [
+    {
+      "cle": "plafond_cout_usd",
+      "valeur": "5.0",                       // masquée par des points si secret
+      "type": "decimal",                     // chaine | entier | decimal | booleen | secret
+      "description": "Plafond de coût (USD) d'une exécution avant arrêt du moteur.",
+      "categorie": "plafonds",               // modele | plafonds | execution | integrations | retention
+      "valeur_defaut": "10.0",
+      "modifiable": true,                    // false : lecture seule (hors liste blanche)
+      "secret": false,
+      "source": "stockage",                  // defaut (jamais édité) | stockage
+      "version": 3,                          // 0 au défaut ; incrémentée à chaque écriture
+      "modifie_le": "2026-07-29T08:05:00+00:00"  // null si jamais touché
+    }
+  ],
+  "version": 3,                              // version du registre versionné (append-only)
+  "erreur": null                             // cause si le stockage est illisible
+}
+```
+
+### 6.4 Propositions de playbook globales
+
+L'agrégat **transverse** des propositions d'auto-amélioration (#111 exposé par agent), source du
+badge d'attente et des notifications (items 8/9 du cadrage).
+
+- `GET /api/playbooks/propositions` → `PropositionPlaybookGlobale[]` — chaque proposition
+  (numéro de brouillon, provenance, justification) enrichie du `role` de son agent.
+- Pendant **temps réel** : l'événement `playbook.proposition` du WebSocket — un signal global
+  (sans `run_id`) que l'UI badge et pousse en notification.
+
+```jsonc
+// PropositionPlaybookGlobale
+{
+  "agent": "qa",
+  "role": "QA / Testeur",
+  "version": 1,                              // numéro de brouillon (numérotation propre)
+  "cree_le": "2026-07-30T18:42:00+00:00",
+  "provenance": "proposition",
+  "justification": "…"                       // raison liée aux échecs analysés
+}
+```
+
+### 6.5 Flux SSE d'un fil de chat
+
+Le rendu **en streaming** d'une réponse de chat (items 2/4/12 : assistant, chat global, chat
+direct).
+
+- `GET /api/chat/{agent}/flux?contenu=…` → `text/event-stream` — chaque `data: <json>` est un
+  `FragmentChat`. `404` si l'agent n'est pas au catalogue (`assistance` désigne le canal d'aide).
+
+```jsonc
+// FragmentChat (une trame SSE)
+{
+  "type": "fragment",        // debut (ouvre) | fragment (incrémente) | fin (clôt) | erreur
+  "agent": "qa",
+  "auteur": "agent",         // l'émetteur
+  "delta": " morceau",       // incrément de texte ; vide hors `fragment`
+  "message": null            // MessageChat complet sur la seule trame `fin`, null ailleurs
+}
+```
+
+### 6.6 Référence de ticket externe portée par une tâche (#187)
+
+Une carte du Kanban peut porter la référence du **ticket externe** dont elle relève — générique
+(GitLab, Jira, Linear passent par la même forme, aucun champ propre à un outil). Ce ticket fige la
+**donnée** ; son affichage sur la carte est un lot de la Phase 6.
+
+- Forme : `{ "id": "#183", "url": "https://…/issues/183" }` — `url` vide quand seul l'identifiant
+  est connu. **Absente par défaut** (`null`) : un plan sans référence reste valide.
+- Portée : le schéma de tâche partagé (`packages/shared/schemas/task.schema.json`, propriété
+  optionnelle `ticket`), la projection (`EtatTache.ticket`), les événements de tâche
+  (`Event.ticket`) et `GET /api/taches` — elle **survit au rejeu** du journal durable.
+- Alimentation : soit par l'origine du run (`ticket` de `POST /api/executions`), soit par un agent
+  équipé du serveur MCP de l'outil, **sans** que le moteur ne connaisse l'outil de ticketing.

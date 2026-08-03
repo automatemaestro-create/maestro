@@ -46,7 +46,7 @@ describe("LienTicketExterne", () => {
 
   it("ne rend rien sur une référence vide", () => {
     const { container } = render(
-      <LienTicketExterne reference={{ identifiant: "  ", url: "" }} />,
+      <LienTicketExterne reference={{ id: "  ", url: "" }} />,
     );
     expect(container).toBeEmptyDOMElement();
   });
@@ -54,7 +54,7 @@ describe("LienTicketExterne", () => {
   it("pose le lien en nouvel onglet avec noopener noreferrer", () => {
     render(
       <LienTicketExterne
-        reference={{ identifiant: "#192", url: "https://gitlab.test/i/192" }}
+        reference={{ id: "#192", url: "https://gitlab.test/i/192" }}
         tache="Écrire les tests"
       />,
     );
@@ -67,7 +67,7 @@ describe("LienTicketExterne", () => {
   it("URL non suivable : texte, jamais de lien mort", () => {
     render(
       <LienTicketExterne
-        reference={{ identifiant: "MAE-42", url: "javascript:alert(1)" }}
+        reference={{ id: "MAE-42", url: "javascript:alert(1)" }}
       />,
     );
     expect(screen.queryByRole("link")).toBeNull();
@@ -81,7 +81,7 @@ describe("carte du Kanban", () => {
       <Kanban
         taches={[
           tacheFactice({
-            reference_externe: { identifiant: "#192", url: "https://gitlab.test/i/192" },
+            ticket: { id: "#192", url: "https://gitlab.test/i/192" },
           }),
         ]}
         agents={[]}

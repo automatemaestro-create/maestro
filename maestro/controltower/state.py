@@ -40,6 +40,7 @@ from maestro.controltower.events import (
     EVENEMENT_VALIDATION_DECISION,
     EVENEMENT_VALIDATION_DEMANDE,
     Event,
+    ReferenceTicket,
 )
 from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
 from maestro.telemetry.costs import RunCost, TaskCost
@@ -93,7 +94,10 @@ class EtatTache:
     télémétrie n'a rapporté de coût (inconnu ≠ nul) ; `usage` en est la mesure
     détaillée (tokens entrée/sortie, coût, durée — #57), posée par le dernier
     passage de la tâche qui en a rapporté une. La ventilation par exécution
-    reste du côté du grand livre du run (`EtatExecution.cout`).
+    reste du côté du grand livre du run (`EtatExecution.cout`). `ticket` porte
+    la référence du ticket externe dont relève la tâche (#187, contrat #183) —
+    None tant qu'aucune n'a été transportée par un événement (inconnu ≠ absent) ;
+    posée par un événement de tâche, elle survit au rejeu du journal durable.
     """
 
     id: str
@@ -104,6 +108,7 @@ class EtatTache:
     run_id: str = ""
     cout_usd: float | None = None
     usage: StepUsage | None = None
+    ticket: ReferenceTicket | None = None
     horodatage: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -117,6 +122,7 @@ class EtatTache:
             "run_id": self.run_id,
             "cout_usd": self.cout_usd,
             "usage": self.usage.to_dict() if self.usage is not None else None,
+            "ticket": self.ticket.to_dict() if self.ticket is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -483,6 +489,8 @@ class ControlTowerState:
             tache.cout_usd = event.cout_usd
         if event.usage is not None:
             tache.usage = event.usage
+        if event.ticket is not None:
+            tache.ticket = event.ticket
 
         if event.agent in _AGENTS_NON_EXECUTANTS:
             return

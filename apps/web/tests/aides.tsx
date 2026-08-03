@@ -236,10 +236,10 @@ export function tacheFactice(partiel: Partial<Tache> = {}): Tache {
     role: "Développeur",
     cout_usd: null,
     usage: null,
-    horodatage: "2026-07-28T10:00:00Z",
     // Le cas courant est l'absence de ticket externe (#192) : les fabriques
     // partent de là, un test qui en veut un le passe en `partiel`.
-    reference_externe: null,
+    ticket: null,
+    horodatage: "2026-07-28T10:00:00Z",
     ...partiel,
   };
 }
@@ -272,7 +272,7 @@ export function coutTacheFactice(partiel: Partial<CoutTache> = {}): CoutTache {
     role: "Développeur",
     statut: "terminee",
     usage: usageFactice(),
-    reference_externe: null,
+    ticket: null,
     ...partiel,
   };
 }
@@ -302,7 +302,7 @@ export function coutTacheAgregeeFactice(
     statut: "terminee",
     executions: 1,
     usage: usageFactice(),
-    reference_externe: null,
+    ticket: null,
     ...partiel,
   };
 }
@@ -345,6 +345,7 @@ export function evenementFactice(partiel: Partial<Evenement> = {}): Evenement {
     cout_usd: null,
     usage: null,
     instances: null,
+    ticket: null,
     horodatage: "2026-07-28T10:00:00Z",
     ...partiel,
   };

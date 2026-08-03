@@ -79,6 +79,7 @@ from maestro.controltower.events import (
     EVENEMENT_CHAT_MESSAGE,
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_PLAYBOOK_PROPOSITION,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DECISION,
@@ -87,6 +88,7 @@ from maestro.controltower.events import (
     EventBus,
     InMemoryEventBus,
     RedisEventBus,
+    ReferenceTicket,
 )
 from maestro.controltower.executions import (
     DELAI_ANNULATION_S,
@@ -94,6 +96,7 @@ from maestro.controltower.executions import (
     ServiceExecutions,
     moteur_par_defaut,
 )
+from maestro.controltower.fixtures import FixturesControlTower
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
     EventLog,
@@ -131,6 +134,7 @@ __all__ = [
     "EVENEMENT_CHAT_MESSAGE",
     "EVENEMENT_EXECUTION_STATUT",
     "EVENEMENT_MESSAGE_INTER_AGENTS",
+    "EVENEMENT_PLAYBOOK_PROPOSITION",
     "EVENEMENT_TACHE_REASSIGNATION",
     "EVENEMENT_TACHE_STATUT",
     "EVENEMENT_VALIDATION_DECISION",
@@ -164,6 +168,7 @@ __all__ = [
     "EventBus",
     "EventLog",
     "FabriqueMoteur",
+    "FixturesControlTower",
     "InMemoryEventBus",
     "InMemoryEventLog",
     "JournalEventHandler",
@@ -171,6 +176,7 @@ __all__ = [
     "PointCout",
     "RedisEventBus",
     "RedisEventLog",
+    "ReferenceTicket",
     "RepondeurAssistance",
     "RepondeurChat",
     "RepondeurModele",

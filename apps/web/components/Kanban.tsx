@@ -136,7 +136,7 @@ function CarteTache({
       {/* Le ticket qui a motivé la tâche (#192) — absent : la carte est
           exactement celle d'avant, la marge partant avec le composant. */}
       <LienTicketExterne
-        reference={tache.reference_externe}
+        reference={tache.ticket}
         tache={tache.titre || tache.id}
         className="mt-1"
       />

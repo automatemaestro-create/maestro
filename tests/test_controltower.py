@@ -170,6 +170,7 @@ def test_liste_des_taches_statut_agent_cout(client, state):
         "id": "t2", "titre": "Relire", "statut": "terminee", "agent": "qa",
         "role": "QA / Testeur", "run_id": "run-1", "cout_usd": 0.25,
         "usage": None,  # aucune mesure détaillée rapportée (#57)
+        "ticket": None,  # aucune référence de ticket externe transportée (#183)
         "horodatage": t2["horodatage"],
     }
 

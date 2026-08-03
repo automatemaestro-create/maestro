@@ -44,6 +44,10 @@ from maestro.telemetry.usage import StepUsage
 #: fil, `statut` l'auteur (« utilisateur »/« agent »), `detail` le contenu ;
 #: `agent.capacite` porte le contrôle de capacité (#86, EF-21) : `statut` l'état
 #: résultant (« active »/« desactive ») et `instances` le plafond résultant ;
+#: `playbook.proposition` porte l'apparition d'une proposition d'auto-amélioration
+#: (#183, voie Phase 5/6) : `agent` le fil concerné, `role` son rôle, `statut` le
+#: numéro de brouillon (chaîne) et `detail` la justification — un signal **global**
+#: (sans `run_id`) que l'UI badge et pousse en notification (cadrage #182, item 9).
 #: `execution.statut` porte le **cycle de vie d'un run** piloté par l'API (#185) :
 #: `statut` l'état résultant (« en_cours » au lancement, « terminee »/« echec » à
 #: l'issue, « annulee » sur interruption humaine), `titre` l'objectif et `detail`
@@ -57,6 +61,7 @@ EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"
 EVENEMENT_VALIDATION_DEMANDE = "validation.demande"
 EVENEMENT_VALIDATION_DECISION = "validation.decision"
 EVENEMENT_CHAT_MESSAGE = "chat.message"
+EVENEMENT_PLAYBOOK_PROPOSITION = "playbook.proposition"
 EVENEMENT_EXECUTION_STATUT = "execution.statut"
 
 #: Canal Redis Pub/Sub des événements — sur l'instance mutualisée avec la file
@@ -75,6 +80,31 @@ def _horodatage() -> str:
 
 
 @dataclass(frozen=True)
+class ReferenceTicket:
+    """La référence d'un ticket externe portée par une tâche (#187, contrat #183).
+
+    Générique par construction — un identifiant lisible (`id`, ex. « #183 »,
+    « PROJ-42 ») et son `url` : GitLab, Jira ou Linear passent par la même forme,
+    aucun champ propre à un outil (`gitlab_iid`…). `url` reste vide quand seul
+    l'identifiant est connu (l'agent a nommé le ticket sans en donner le lien).
+    Une tâche sans ticket ne porte **pas** de référence (`None`) — un plan sans
+    référence reste valide.
+    """
+
+    id: str
+    url: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        """Réémet la référence en dict JSON-sérialisable (`{id, url}`)."""
+        return {"id": self.id, "url": self.url}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ReferenceTicket:
+        """Reconstruit une référence depuis sa forme `to_dict` (clés absentes → vides)."""
+        return cls(id=data.get("id", ""), url=data.get("url", ""))
+
+
+@dataclass(frozen=True)
 class Event:
     """Un fait daté de l'orchestration, prêt à voyager en JSON.
 
@@ -88,7 +118,10 @@ class Event:
     porte le contexte long d'une demande de validation (#48 : l'action que
     l'agent réaliserait, telle que décrite par la tâche) — vide ailleurs.
     `instances` porte le plafond d'instances résultant d'un réglage de capacité
-    (#86, entité AGENT `instances_max`) — None ailleurs.
+    (#86, entité AGENT `instances_max`) — None ailleurs. `ticket` porte la
+    référence du ticket externe dont relève la tâche (#187, contrat #183) — None
+    quand aucune n'est connue ; il voyage avec les événements de tâche pour que
+    l'UI l'affiche et qu'il survive au rejeu du journal durable.
     """
 
     type: str
@@ -103,6 +136,7 @@ class Event:
     cout_usd: float | None = None
     usage: StepUsage | None = None
     instances: int | None = None
+    ticket: ReferenceTicket | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -120,6 +154,7 @@ class Event:
             "cout_usd": self.cout_usd,
             "usage": self.usage.to_dict() if self.usage is not None else None,
             "instances": self.instances,
+            "ticket": self.ticket.to_dict() if self.ticket is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -131,6 +166,7 @@ class Event:
         (seul `type` est requis) reste lisible.
         """
         usage_brut = data.get("usage")
+        ticket_brut = data.get("ticket")
         return cls(
             type=data["type"],
             run_id=data.get("run_id", ""),
@@ -144,6 +180,11 @@ class Event:
             cout_usd=data.get("cout_usd"),
             usage=StepUsage.from_dict(usage_brut) if isinstance(usage_brut, Mapping) else None,
             instances=data.get("instances"),
+            ticket=(
+                ReferenceTicket.from_dict(ticket_brut)
+                if isinstance(ticket_brut, Mapping)
+                else None
+            ),
             horodatage=data.get("horodatage", ""),
         )
 

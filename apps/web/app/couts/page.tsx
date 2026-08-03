@@ -202,7 +202,7 @@ function TableTaches({ taches }: { taches: CoutTacheAgregee[] }) {
                   {/* Le ticket externe (#192) sous le nom : la colonne garde sa
                       largeur, et la ligne d'une tâche sans référence ne bouge pas. */}
                   <LienTicketExterne
-                    reference={tache.reference_externe}
+                    reference={tache.ticket}
                     tache={tache.nom || tache.tache_id}
                   />
                 </td>

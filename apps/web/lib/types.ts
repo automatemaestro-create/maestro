@@ -28,20 +28,11 @@ export type Sante = {
 };
 
 /**
- * La référence du ticket externe dont relève une tâche (#187) : un identifiant
- * lisible pour l'humain (« #192 », « MAE-42 ») et l'URL de la page qui le
- * porte. Générique par construction — GitLab, Jira ou Linear passent par la
- * même forme et l'UI n'en connaît aucun. `null` sur la tâche : aucune
- * référence, et la vue reste alors strictement inchangée. Les deux champs
- * peuvent être vides indépendamment : un identifiant sans URL s'affiche sans
- * lien, une URL de schéma inattendu n'est jamais suivie (`lienExterneSur`).
+ * Une tâche telle que servie par `GET /api/taches` — la carte du Kanban.
+ * `ticket` (#183/#187) porte la référence du ticket externe dont elle relève —
+ * `null` quand aucune n'a été transportée (inconnu ≠ absent). La vue reste
+ * alors strictement inchangée.
  */
-export type ReferenceExterne = {
-  identifiant: string;
-  url: string;
-};
-
-/** Une tâche telle que servie par `GET /api/taches` — la carte du Kanban. */
 export type Tache = {
   id: string;
   titre: string;
@@ -51,8 +42,8 @@ export type Tache = {
   run_id: string;
   cout_usd: number | null;
   usage: Usage | null;
+  ticket: ReferenceTicket | null;
   horodatage: string;
-  reference_externe: ReferenceExterne | null;
 };
 
 /**
@@ -78,7 +69,11 @@ export type EtatAgent = {
   instances: number;
 };
 
-/** Un événement du flux `WS /ws/evenements` — la ligne du fil d'activité. */
+/**
+ * Un événement du flux `WS /ws/evenements` — la ligne du fil d'activité.
+ * `ticket` (#183/#187) accompagne les événements de tâche : la référence de
+ * ticket externe voyage avec le flux — `null` quand aucune n'est portée.
+ */
 export type Evenement = {
   type: string;
   run_id: string;
@@ -92,6 +87,7 @@ export type Evenement = {
   cout_usd: number | null;
   usage: Usage | null;
   instances: number | null;
+  ticket: ReferenceTicket | null;
   horodatage: string;
 };
 
@@ -104,7 +100,7 @@ export type CoutTache = {
   statut: string;
   usage: Usage;
   /** Le ticket externe dont relève la tâche (#187), `null` s'il n'y en a pas. */
-  reference_externe: ReferenceExterne | null;
+  ticket: ReferenceTicket | null;
 };
 
 /**
@@ -142,7 +138,7 @@ export type CoutTacheAgregee = {
   executions: number;
   usage: Usage;
   /** Le ticket externe dont relève la tâche (#187), `null` s'il n'y en a pas. */
-  reference_externe: ReferenceExterne | null;
+  ticket: ReferenceTicket | null;
 };
 
 /** La ligne « par exécution » de la vue analytics (`CoutExecutionResume.to_dict`, #87). */
@@ -458,3 +454,171 @@ export const EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents";
 export const EVENEMENT_VALIDATION_DEMANDE = "validation.demande";
 export const EVENEMENT_VALIDATION_DECISION = "validation.decision";
 export const EVENEMENT_CHAT_MESSAGE = "chat.message";
+/**
+ * L'apparition d'une proposition d'auto-amélioration de playbook (#183) : un
+ * signal **global** (sans `run_id`) que l'UI badge et pousse en notification —
+ * `agent` le fil, `role` son rôle, `statut` le numéro de brouillon, `detail` la
+ * justification (cadrage #182, item 9).
+ */
+export const EVENEMENT_PLAYBOOK_PROPOSITION = "playbook.proposition";
+
+// ---------------------------------------------------------------------------
+// Contrats d'API v2 (#183) — formes JSON figées des routes des Phases 5/6,
+// servies en fixtures par la démo (maestro.controltower.demo, module
+// maestro/controltower/fixtures.py) et documentées à docs/05 §6. La voie front
+// code contre ces formes ; le backend réel les remplira à contrat identique —
+// les routes répondent 501 tant que leur lot n'est pas livré.
+// ---------------------------------------------------------------------------
+
+/**
+ * La référence d'un ticket externe portée par une tâche (`GET /api/taches`,
+ * #187) : identifiant lisible + URL. Générique — GitLab, Jira, Linear passent
+ * par la même forme (aucun champ propre à un outil). `url` est vide quand seul
+ * l'identifiant est connu (l'agent a nommé le ticket sans en donner le lien).
+ */
+export type ReferenceTicket = {
+  id: string;
+  url: string;
+};
+
+/** Statuts d'une exécution (maestro/controltower/state.py, #185). */
+export const EXECUTION_EN_COURS = "en_cours";
+export const EXECUTION_TERMINEE = "terminee";
+export const EXECUTION_ANNULEE = "annulee";
+export const EXECUTION_ECHEC = "echec";
+
+/**
+ * Le corps de `POST /api/executions` (#185) : l'objectif à décomposer, les
+ * garde-fous (chacun `null` laisse le défaut du moteur) et le ticket externe
+ * dont part le run (`null` si le run n'en relève d'aucun).
+ */
+export type LancementExecution = {
+  objectif: string;
+  plafond_cout_usd: number | null;
+  plafond_tokens: number | null;
+  timeout_tache_s: number | null;
+  parallelisme: number | null;
+  ticket: ReferenceTicket | null;
+};
+
+/**
+ * Le résumé d'une exécution (`GET /api/executions`, `POST /api/executions` et
+ * `.../annuler`, #185) : identité, `statut` (`EXECUTION_*`), nombre de tâches et
+ * coût cumulé (`null` : aucun coût rapporté, inconnu ≠ nul). `debut` est posé au
+ * lancement ; `fin` reste `null` tant que le run est en cours. `ticket` porte la
+ * référence externe si le run en relève.
+ */
+export type ResumeExecution = {
+  run_id: string;
+  objectif: string;
+  statut: string;
+  nb_taches: number;
+  cout_usd: number | null;
+  ticket: ReferenceTicket | null;
+  debut: string;
+  fin: string | null;
+};
+
+/** Clés de tri et sens du journal requêtable (maestro/controltower/fixtures.py). */
+export const TRI_JOURNAL_HORODATAGE = "horodatage";
+export const TRI_JOURNAL_AGENT = "agent";
+export const TRI_JOURNAL_TYPE = "type";
+export const ORDRE_ASC = "asc";
+export const ORDRE_DESC = "desc";
+
+/**
+ * Une entrée du journal requêtable (`GET /api/journal`) : un événement persisté
+ * doté d'un `id` stable (référençable, triable) — le reste reprend la forme d'un
+ * `Evenement` (type, run, tâche, agent, statut, détail, horodatage).
+ */
+export type EntreeJournal = {
+  id: string;
+  type: string;
+  run_id: string;
+  tache_id: string;
+  agent: string;
+  role: string;
+  statut: string;
+  detail: string;
+  horodatage: string;
+};
+
+/**
+ * Une page du journal requêtable (`GET /api/journal`) : les `entrees` de la
+ * page, le `total` (après filtres, **avant** pagination), la `page` courante
+ * (1-indexée), la `taille` de page et le nombre de `pages`.
+ */
+export type PageJournal = {
+  entrees: EntreeJournal[];
+  total: number;
+  page: number;
+  taille: number;
+  pages: number;
+};
+
+/** Types d'un réglage de configuration (maestro/controltower/fixtures.py). */
+export type TypeReglage = "chaine" | "entier" | "decimal" | "booleen" | "secret";
+
+/**
+ * Un réglage produit éditable (`GET /api/configuration`, couche 1 du cadrage
+ * sécurité #182) : sa `valeur` courante (masquée par des points si `secret`),
+ * son `type` (`TypeReglage`), sa `valeur_defaut`, s'il est `modifiable` depuis
+ * l'UI (liste blanche stricte), sa `source` (`defaut` tant qu'il n'a jamais été
+ * édité, `stockage` sinon), sa `version` (0 au défaut) et `modifie_le` (`null`
+ * sur un réglage jamais touché).
+ */
+export type ReglageConfiguration = {
+  cle: string;
+  valeur: string;
+  type: string;
+  description: string;
+  categorie: string;
+  valeur_defaut: string;
+  modifiable: boolean;
+  secret: boolean;
+  source: string;
+  version: number;
+  modifie_le: string | null;
+};
+
+/**
+ * Le registre de configuration (`GET /api/configuration`) : les `reglages`, la
+ * `version` du registre versionné (append-only) et une cause d'`erreur` si le
+ * stockage est illisible (même contrat de visibilité que `mcp_erreur`).
+ */
+export type RegistreConfiguration = {
+  reglages: ReglageConfiguration[];
+  version: number;
+  erreur: string | null;
+};
+
+/**
+ * Une proposition d'auto-amélioration vue **globalement**
+ * (`GET /api/playbooks/propositions`, #183) : la `PropositionPlaybook` de
+ * l'agent enrichie de son `role` — de quoi l'afficher (badge, notifications)
+ * sans un aller-retour par le catalogue. Le pendant temps réel est l'événement
+ * `EVENEMENT_PLAYBOOK_PROPOSITION` du WebSocket.
+ */
+export type PropositionPlaybookGlobale = PropositionPlaybook & { role: string };
+
+/** Types de trame d'un flux SSE de chat (maestro/controltower/fixtures.py). */
+export const FRAGMENT_CHAT_DEBUT = "debut";
+export const FRAGMENT_CHAT_DELTA = "fragment";
+export const FRAGMENT_CHAT_FIN = "fin";
+export const FRAGMENT_CHAT_ERREUR = "erreur";
+
+/**
+ * Une trame du flux SSE d'un fil de chat (`GET /api/chat/{agent}/flux`, #183) :
+ * chaque `data: <json>` du `text/event-stream` en est une. `type` dit son rôle
+ * (`debut` ouvre, `fragment` incrémente, `fin` clôt, `erreur` signale) ;
+ * `auteur` est l'émetteur (l'agent) ; `delta` porte l'incrément de texte (vide
+ * hors `fragment`) ; `message` le `MessageChat` complet reconstitué, posé sur la
+ * seule trame `fin` (`null` ailleurs).
+ */
+export type FragmentChat = {
+  type: string;
+  agent: string;
+  auteur: string;
+  delta: string;
+  message: MessageChat | null;
+};

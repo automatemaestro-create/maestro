@@ -56,7 +56,7 @@ vi.mock("@/lib/useAnalyticsCouts", async (original) => ({
 }));
 
 const referenceFactice = {
-  identifiant: "#192",
+  id: "#192",
   url: "https://gitlab.test/maestro/-/issues/192",
 };
 
@@ -319,7 +319,7 @@ describe("le ticket externe dans les tables de coûts (#192)", () => {
       <PanneauCouts
         couts={[
           coutExecutionFactice({
-            taches: [coutTacheFactice({ reference_externe: referenceFactice })],
+            taches: [coutTacheFactice({ ticket: referenceFactice })],
           }),
         ]}
       />,
@@ -346,8 +346,8 @@ describe("le ticket externe dans les tables de coûts (#192)", () => {
           coutExecutionFactice({
             taches: [
               coutTacheFactice({
-                reference_externe: {
-                  identifiant: "MAE-42",
+                ticket: {
+                  id: "MAE-42",
                   url: "javascript:alert(1)",
                 },
               }),
@@ -367,7 +367,7 @@ describe("le ticket externe dans les tables de coûts (#192)", () => {
       total: usageFactice(),
       executions: [],
       agents: [],
-      taches: [coutTacheAgregeeFactice({ reference_externe: referenceFactice })],
+      taches: [coutTacheAgregeeFactice({ ticket: referenceFactice })],
       serie: [],
     };
     rendreAvecEtat(<PageCouts />);
