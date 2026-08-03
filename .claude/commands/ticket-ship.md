@@ -5,7 +5,7 @@ allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
 
 Tu vas clôturer le ticket courant **en une seule action** : committer les changements en attente
-(message généré, sans confirmation) puis enchaîner **`/ticket-finish`** (push + MR + statut
+(message généré, sans confirmation) puis enchaîner **`/ticket-finish`** (push + MR + état
 « En revue » + log du temps). C'est le pendant « zéro friction » de `/ticket-finish`, pensé pour
 la boucle d'orchestration : là où `/ticket-finish` suppose un commit déjà fait et demande
 confirmation avant d'en créer un, `/ticket-ship` **commite d'office** ce qui est en attente puis
@@ -84,7 +84,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    **`/ticket-finish`** (sans argument — elle relira l'IID depuis la branche — ou passe `<iid>`).
    Elle prend le relais pour : push de la branche (jamais de `--force`), création/mise à jour de la
    MR en Draft avec `Closes #<iid>` et sa **checklist cochée sur ce qui est vérifié** (conventions,
-   tests/doc d'après le diff, pipeline verte), passage du **statut** à « En revue », et **log
+   tests/doc d'après le diff, pipeline verte), passage de l'**état** à « En revue », et **log
    automatique du temps** (estimé d'après la portée du travail). **Ne ré-implémente pas ces étapes ici** :
    `/ticket-finish` en est la source unique, et son étape de commit sera sans objet (arbre déjà
    propre) — elle passera directement au push.
@@ -93,7 +93,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    Si un parent est trouvé (convention `docs/10-workflow-git.md` §5.1), prépare l'**annonce de la
    suite** pour le résumé final :
    - Liste les lots : `bash scripts/gitlab/lib.sh subtickets <iid-parent>`. Profites-en pour
-     **cocher** dans la checklist du parent les lots au statut « Terminé » encore décochés.
+     **cocher** dans la checklist du parent les lots à l'état « Terminé » encore décochés.
      **Relis et réécris la description uniquement via les helpers** :
      `bash scripts/gitlab/lib.sh get-description <iid-parent> > <fichier>`, tu édites le fichier,
      puis `bash scripts/gitlab/lib.sh set-description <iid-parent> <fichier>`. N'improvise

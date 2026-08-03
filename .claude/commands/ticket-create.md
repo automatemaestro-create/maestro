@@ -1,5 +1,5 @@
 ---
-description: Crée un ticket GitLab bien formé (labels type::/agent::/prio:: + corps de template, statut « À faire »)
+description: Crée un ticket GitLab bien formé (labels type::/agent::/prio:: + corps de template, état « À faire »)
 argument-hint: "<type: feature|bug|doc|infra> <titre>  (le reste peut être précisé en dialogue)"
 allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*), Read
 ---
@@ -7,8 +7,8 @@ allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*), Read
 Tu vas créer un **nouveau ticket** GitLab bien formé selon les règles de Maestro (résumées
 ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`, non
 chargée automatiquement, à n'ouvrir qu'en cas de doute). C'est le pendant amont de `/ticket-start` :
-cette commande **crée** le ticket (statut « À faire », le défaut du lifecycle) mais **ne crée pas de
-branche** et **n'assigne pas** — c'est le rôle de
+cette commande **crée** le ticket (état « À faire », posé par le label `workflow::a-faire`) mais
+**ne crée pas de branche** et **n'assigne pas** — c'est le rôle de
 `/ticket-start <iid>` ensuite. Arrête-toi et demande dès qu'une information nécessaire manque au
 lieu d'inventer.
 
@@ -96,13 +96,16 @@ lieu d'inventer.
    ```
    glab issue create \
      --title "<titre>" \
-     --label "type::<type>,agent::<rôle>,prio::<niveau>" \
+     --label "type::<type>,agent::<rôle>,prio::<niveau>,workflow::a-faire" \
      --milestone "<milestone-de-phase>" \
      --description "$(cat <fichier-de-corps>)" \
      --yes
    ```
-   Ne pose **pas** de statut : « À faire » est le défaut du lifecycle à la création. N'assigne pas
-   et ne crée pas de branche.
+   Le `workflow::a-faire` n'est pas décoratif et **ne s'ajoute pas après coup** : le cycle de vie
+   étant porté par des labels (docs/10 §3), plus aucun défaut ne le pose à la création — un ticket
+   créé sans lui n'a **aucun** état, ce que `doctor.sh` signale comme une dérive. Le poser dans le
+   même `--label` évite un second appel, et c'est le seul cas du workflow où l'état ne passe pas par
+   `set-workflow` : il n'y a encore rien à retirer. N'assigne pas et ne crée pas de branche.
 
 10. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels et son milestone —
    pour un découpage : le parent et chaque sous-ticket avec son rang dans la checklist. Puis la

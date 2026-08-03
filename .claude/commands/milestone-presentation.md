@@ -28,7 +28,8 @@ aux tickets qu'elles illustrent**. Ne réécris pas le HTML à la main : le gaba
    Le titre retenu doit être **exact** pour l'étape suivante (c'est la clé de l'API).
 
 3. **Collecte les tickets** : `bash scripts/gitlab/lib.sh milestone-issues "<titre-exact>"`.
-   Sortie TSV : `iid`, `statut` (statut natif), `type`, `agent`, `prio`, `titre`. Garde **tous**
+   Sortie TSV : `iid`, `statut` (le libellé du cycle de vie, lu dans le label `workflow::*` ; `-`
+   si le ticket n'en porte aucun), `type`, `agent`, `prio`, `titre`. Garde **tous**
    les tickets : le rendu les regroupe lui-même par état (Livré / En revue / En cours / À venir /
    Écarté). N'invente aucun ticket et n'en écarte aucun de ton propre chef.
 
@@ -94,5 +95,5 @@ aux tickets qu'elles illustrent**. Ne réécris pas le HTML à la main : le gaba
    est écrit dans le dépôt mais **non commité** — dis-le, et laisse la décision de le versionner
    à l'utilisateur.
 
-Ne lance aucune commande d'écriture GitLab (`glab issue update`, `mr create`, `set-status`,
+Ne lance aucune commande d'écriture GitLab (`glab issue update`, `mr create`, `set-workflow`,
 `log-time`…) ni aucun `git commit`/`git push` : cette commande observe et produit un fichier.

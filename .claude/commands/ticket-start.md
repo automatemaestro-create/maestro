@@ -1,5 +1,5 @@
 ---
-description: Démarre le travail sur un ticket GitLab (branche + assignation + statut « En cours »)
+description: Démarre le travail sur un ticket GitLab (branche + assignation + état « En cours »)
 argument-hint: <issue-iid>
 allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*), EnterWorktree
 ---
@@ -20,7 +20,7 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      dans le répertoire qu'on quitte, intacts et hors du chemin — signale-les et continue. Si le
      verdict est `ICI`, on travaillerait **dans** cet arbre : arrête-toi alors et demande quoi en
      faire (committer, stasher, annuler) — ne décide pas à la place de l'utilisateur.
-   - **Ticket déjà pris** (la sortie porte `⚠ déjà pris par <username>` — statut « En cours »
+   - **Ticket déjà pris** (la sortie porte `⚠ déjà pris par <username>` — état « En cours »
      assigné à quelqu'un d'autre) : **arrête-toi**. Quelqu'un travaille dessus et l'étape 4
      (`begin`) **remplace** la liste des assignés : le démarrer lui retirerait son ticket en
      silence. Dis qui l'a pris et oriente vers un ticket libre (`/backlog`, section « Libres »).
@@ -39,7 +39,7 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      entre eux (docs/10 §5.1). Démarre le **premier de cette liste** en reprenant l'étape 1 avec
      son iid, et **annonce les autres** comme prenables en parallèle par quelqu'un d'autre (si le
      parent était « À faire », passe-le « En cours » via
-     `bash scripts/gitlab/lib.sh set-status <iid-parent> "En cours"`). Si la liste est vide, rien à
+     `bash scripts/gitlab/lib.sh set-workflow <iid-parent> "En cours"`). Si la liste est vide, rien à
      démarrer : parent **fermable** si tout est « Terminé » (toutes cases cochées), sinon le
      travail est déjà en route (« En cours ») ou livré et on n'attend plus que des merges.
    - **Sous-ticket** : la sortie donne le parent, le rang (« lot n/total »), le marqueur
@@ -107,10 +107,11 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    `origin/main` (`main` y est déjà emprunté par le clone principal, un `git checkout main`
    échouerait) et ne fait rien si la branche est déjà celle du worktree.
 
-4. **Démarrage groupé** : `bash scripts/gitlab/lib.sh begin $ARGUMENTS` — assignation, statut
-   natif « En cours » et dates (début = aujourd'hui, échéance selon `prio::`) en une seule
-   mutation. Vérifie que la commande réussit ; en cas d'échec, signale-le sans bloquer la branche
-   déjà créée. Ne touche pas aux labels `type::`/`agent::`/`prio::` (triage, pas ce workflow).
+4. **Démarrage groupé** : `bash scripts/gitlab/lib.sh begin $ARGUMENTS` — assignation, état
+   « En cours » (label `workflow::en-cours`, les cinq autres retirés dans le même appel) et dates
+   (début = aujourd'hui, échéance selon `prio::`) en une seule mutation. Vérifie que la commande
+   réussit ; en cas d'échec, signale-le sans bloquer la branche déjà créée. Ne touche pas aux
+   labels `type::`/`agent::`/`prio::` (triage, pas ce workflow).
 
 5. **Résumé court, puis enchaîne immédiatement sur l'implémentation** : nom de la branche, titre
    du ticket, dates posées, critères d'acceptation ; pour un sous-ticket, le parent, le rang du
@@ -122,5 +123,5 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    demander que si le ticket est réellement ambigu au point de ne pas pouvoir commencer.
 
 Pas de Merge Request à ce stade (aucun commit à proposer). La clôture passe par les commandes
-dédiées — `/ticket-ship` (commit auto + push + MR + statut) ou `/ticket-finish` (commit déjà
+dédiées — `/ticket-ship` (commit auto + push + MR + état) ou `/ticket-finish` (commit déjà
 fait) — jamais ré-implémentée à la main : les skills en sont la source unique.

@@ -1,5 +1,5 @@
 ---
-description: Termine le travail sur le ticket courant (push + MR + statut « En revue »)
+description: Termine le travail sur le ticket courant (push + MR + état « En revue »)
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
 allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
@@ -19,7 +19,7 @@ pas clair.
 3. **Garde-fou de clôture : cette session traite-t-elle bien ce ticket ?** À plusieurs, rien
    n'empêchait jusqu'ici un `/ticket-finish <iid>` lancé depuis la branche d'un *autre* ticket de
    basculer ce ticket-là « En revue », d'y poser une MR et le temps d'un travail qui n'est pas le
-   sien. Ce contrôle vient **avant toute écriture** (commit, push, MR, statut, temps) :
+   sien. Ce contrôle vient **avant toute écriture** (commit, push, MR, état, temps) :
    ```
    bash scripts/gitlab/lib.sh close-guard <iid> || verdict=$?
    ```
@@ -153,14 +153,15 @@ pas clair.
    (`approvals_before_merge=0`) et le merge reste une décision humaine ; la visibilité des MR en
    attente est portée par la **file de revue** en tête de `/backlog` (la plus ancienne d'abord).
 
-11. Fais passer le **Status natif** du ticket à « En revue » (le cycle de vie est porté par le
-   champ Status, pas par des labels — voir `docs/10-workflow-git.md` §3) :
+11. Fais passer l'**état** du ticket à « En revue » (le cycle de vie est porté par les labels
+   `workflow::*` — voir `docs/10-workflow-git.md` §3) :
    ```
-   bash scripts/gitlab/lib.sh set-status <iid> "En revue"
+   bash scripts/gitlab/lib.sh set-workflow <iid> "En revue"
    ```
-   Le helper résout le work item depuis l'iid et **dérive le GID du statut par nom** depuis le
-   lifecycle « Maestro » (pas de GID en dur). Vérifie que la commande réussit. Ne touche pas aux
-   labels `agent::*` / `prio::*` / `type::*`.
+   Le helper résout le work item depuis l'iid et **dérive les GID des six labels par nom** (pas de
+   GID en dur), puis ajoute la cible et **retire les cinq autres dans le même appel** — l'exclusion
+   mutuelle des labels scopés est Premium, donc rien ne l'assurerait à notre place. Vérifie que la
+   commande réussit. Ne touche pas aux labels `agent::*` / `prio::*` / `type::*`.
 
 12. Renseigne le **temps passé** — **estimé automatiquement, sans demander de confirmation** (voir
    `docs/10-workflow-git.md` §3.3) :
