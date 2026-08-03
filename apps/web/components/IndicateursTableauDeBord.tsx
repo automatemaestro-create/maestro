@@ -1,0 +1,168 @@
+/**
+ * Les indicateurs de tête du tableau de bord (#191, lot 2 de #189) : la réponse
+ * à « où en est-on ? » en une rangée de tuiles, là où cinq panneaux de plein
+ * format se disputaient l'écran.
+ *
+ * Chaque tuile est un **résumé qui renvoie** : le chiffre tient sur une ligne,
+ * le détail vit dans la page dédiée, et le lien y mène explicitement — rien
+ * n'est supprimé du produit, tout est rangé. Les chemins sont résolus par le
+ * menu (`entreeParLibelle`), source unique de la navigation : une page qui
+ * déménage emmène le renvoi avec elle.
+ *
+ * L'état vient du contexte partagé (`useEtatGlobal`, #117) via les props : ce
+ * composant ne charge rien et ne décide de rien — il compte.
+ */
+
+import Link from "next/link";
+
+import { formatCout } from "@/lib/format";
+import { entreeParLibelle } from "@/lib/navigation";
+import { AGENT_OCCUPE, type CoutExecution, type EtatAgent, type Tache } from "@/lib/types";
+
+/**
+ * Les statuts de tâche dont on a besoin ici (machine à états docs/03 §3, mêmes
+ * colonnes que le Kanban). Redéclarés localement plutôt qu'importés du Kanban :
+ * ce sont ses colonnes à lui, et les deux composants évoluent séparément.
+ */
+const STATUT_EN_COURS = "en_cours";
+const STATUT_BLOQUEE = "bloquee";
+const STATUT_TERMINEE = "terminee";
+const STATUT_ECHEC = "echec";
+
+/** Une tâche soldée ne compte plus dans ce qui est « en vol ». */
+const STATUTS_SOLDES = new Set([STATUT_TERMINEE, STATUT_ECHEC]);
+
+type Renvoi = { href: string; libelle: string };
+
+type Indicateur = {
+  libelle: string;
+  valeur: string;
+  detail: string;
+  /** Rendu en chasse fixe : un identifiant d'exécution, pas un compte. */
+  monospace?: boolean;
+  /** Infobulle quand la valeur peut être tronquée. */
+  titre?: string;
+  renvoi?: Renvoi;
+};
+
+export function IndicateursTableauDeBord({
+  taches,
+  agents,
+  couts,
+}: {
+  taches: Tache[];
+  agents: EtatAgent[];
+  couts: CoutExecution[];
+}) {
+  const enVol = taches.filter((t) => !STATUTS_SOLDES.has(t.statut));
+  const runsActifs = [
+    ...new Set(enVol.map((t) => t.run_id).filter(Boolean)),
+  ];
+  const compte = (statut: string) =>
+    taches.filter((t) => t.statut === statut).length;
+
+  const actifs = agents.filter((a) => a.actif);
+  const occupes = actifs.filter((a) => a.statut === AGENT_OCCUPE).length;
+
+  // Somme des grands livres (#57) plutôt que des coûts rapportés par agent : le
+  // grand livre porte AUSSI la part de planification (l'orchestrateur), qui
+  // n'est attribuée à aucun agent. D'où un total légèrement supérieur au « coût
+  // cumulé » de la barre supérieure — le détail de la tuile le dit, pour que
+  // l'écart se lise au lieu de passer pour une incohérence. Aucun coût rapporté
+  // ≠ coût nul : `formatCout` rend « — ».
+  const montants = couts
+    .map((c) => c.total.cout_usd)
+    .filter((c): c is number => c !== null);
+  const depense =
+    montants.length > 0 ? montants.reduce((somme, c) => somme + c, 0) : null;
+
+  const pageAgents = entreeParLibelle("Agents");
+  const pageCouts = entreeParLibelle("Coûts & analytics");
+
+  const indicateurs: Indicateur[] = [
+    {
+      libelle: "Run en cours",
+      valeur:
+        runsActifs.length === 0
+          ? "Aucun"
+          : runsActifs.length === 1
+            ? runsActifs[0]
+            : `${runsActifs.length} runs`,
+      monospace: runsActifs.length === 1,
+      titre: runsActifs.length === 1 ? runsActifs[0] : undefined,
+      detail:
+        enVol.length === 0
+          ? taches.length === 0
+            ? "aucune tâche connue"
+            : "toutes les tâches sont soldées"
+          : `${enVol.length} tâche(s) encore ouverte(s)`,
+    },
+    {
+      libelle: "Tâches",
+      valeur: String(taches.length),
+      detail: `${compte(STATUT_EN_COURS)} en cours · ${compte(STATUT_BLOQUEE)} bloquée(s) · ${compte(STATUT_ECHEC)} échec(s)`,
+    },
+    {
+      libelle: "Agents actifs",
+      valeur: `${actifs.length} / ${agents.length}`,
+      detail: `${occupes} occupé(s) · ${actifs.length - occupes} libre(s)`,
+      renvoi: pageAgents && {
+        href: pageAgents.href,
+        libelle: "Voir les agents",
+      },
+    },
+    {
+      libelle: "Dépense",
+      valeur: formatCout(depense),
+      detail: `${couts.length} exécution(s), planification comprise`,
+      renvoi: pageCouts && {
+        href: pageCouts.href,
+        libelle: "Détail par période",
+      },
+    },
+  ];
+
+  return (
+    <section
+      data-guide="indicateurs"
+      aria-label="Indicateurs de tête"
+      /* Colonnes calées sur la largeur de la zone de contenu (#117), pas sur
+         celle de la fenêtre : la sidebar en prend une part variable. */
+      className="grid grid-cols-1 gap-3 @sm:grid-cols-2 @4xl:grid-cols-4"
+    >
+      {indicateurs.map((indicateur) => (
+        <Tuile key={indicateur.libelle} indicateur={indicateur} />
+      ))}
+    </section>
+  );
+}
+
+function Tuile({ indicateur }: { indicateur: Indicateur }) {
+  return (
+    <article className="flex flex-col rounded-lg border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        {indicateur.libelle}
+      </p>
+      <p
+        className={
+          "mt-1 truncate font-semibold " +
+          (indicateur.monospace ? "font-mono text-base" : "text-2xl")
+        }
+        title={indicateur.titre}
+      >
+        {indicateur.valeur}
+      </p>
+      <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+        {indicateur.detail}
+      </p>
+      {indicateur.renvoi && (
+        <Link
+          href={indicateur.renvoi.href}
+          className="mt-2 text-xs font-medium text-sky-700 hover:underline dark:text-sky-400"
+        >
+          {indicateur.renvoi.libelle} →
+        </Link>
+      )}
+    </article>
+  );
+}
