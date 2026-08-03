@@ -27,6 +27,20 @@ export type Sante = {
   statut: string;
 };
 
+/**
+ * La référence du ticket externe dont relève une tâche (#187) : un identifiant
+ * lisible pour l'humain (« #192 », « MAE-42 ») et l'URL de la page qui le
+ * porte. Générique par construction — GitLab, Jira ou Linear passent par la
+ * même forme et l'UI n'en connaît aucun. `null` sur la tâche : aucune
+ * référence, et la vue reste alors strictement inchangée. Les deux champs
+ * peuvent être vides indépendamment : un identifiant sans URL s'affiche sans
+ * lien, une URL de schéma inattendu n'est jamais suivie (`lienExterneSur`).
+ */
+export type ReferenceExterne = {
+  identifiant: string;
+  url: string;
+};
+
 /** Une tâche telle que servie par `GET /api/taches` — la carte du Kanban. */
 export type Tache = {
   id: string;
@@ -38,6 +52,7 @@ export type Tache = {
   cout_usd: number | null;
   usage: Usage | null;
   horodatage: string;
+  reference_externe: ReferenceExterne | null;
 };
 
 /**
@@ -88,6 +103,8 @@ export type CoutTache = {
   role: string;
   statut: string;
   usage: Usage;
+  /** Le ticket externe dont relève la tâche (#187), `null` s'il n'y en a pas. */
+  reference_externe: ReferenceExterne | null;
 };
 
 /**
@@ -124,6 +141,8 @@ export type CoutTacheAgregee = {
   /** Exécutions où la tâche est apparue (> 1 : re-tentatives, dépense cumulée). */
   executions: number;
   usage: Usage;
+  /** Le ticket externe dont relève la tâche (#187), `null` s'il n'y en a pas. */
+  reference_externe: ReferenceExterne | null;
 };
 
 /** La ligne « par exécution » de la vue analytics (`CoutExecutionResume.to_dict`, #87). */

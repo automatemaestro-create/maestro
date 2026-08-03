@@ -10,6 +10,7 @@
 
 import { useState } from "react";
 
+import { LienTicketExterne } from "@/components/LienTicketExterne";
 import {
   formatCout,
   formatDuree,
@@ -132,6 +133,13 @@ function CarteTache({
       <p className="font-medium" title={tache.id}>
         {tache.titre || tache.id}
       </p>
+      {/* Le ticket qui a motivé la tâche (#192) — absent : la carte est
+          exactement celle d'avant, la marge partant avec le composant. */}
+      <LienTicketExterne
+        reference={tache.reference_externe}
+        tache={tache.titre || tache.id}
+        className="mt-1"
+      />
       <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
         🤖 {tache.agent || "non assignée"}
         {tache.role ? ` · ${tache.role}` : ""}

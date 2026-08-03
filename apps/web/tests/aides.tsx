@@ -231,6 +231,9 @@ export function tacheFactice(partiel: Partial<Tache> = {}): Tache {
     cout_usd: null,
     usage: null,
     horodatage: "2026-07-28T10:00:00Z",
+    // Le cas courant est l'absence de ticket externe (#192) : les fabriques
+    // partent de là, un test qui en veut un le passe en `partiel`.
+    reference_externe: null,
     ...partiel,
   };
 }
