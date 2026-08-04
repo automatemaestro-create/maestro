@@ -634,6 +634,30 @@ def test_max_borne_les_tickets_tentes_meme_en_cas_de_panne(depot: Depot) -> None
     assert "Plafond --max 1" in r.stdout
 
 
+def test_un_ticket_saute_avance_la_position_mais_pas_le_quota_de_max(depot: Depot) -> None:
+    """Les deux compteurs disent deux choses (#230) : la position suit le plan, sautés compris ;
+    `--max` ne compte que les tickets réellement TENTÉS, un saut ne coûtant rien."""
+    depot.ticket(130, "Pris par quelqu un d autre", statut="En cours", assigne="alice")
+    depot.ticket(131, "Ticket 131")
+    depot.ticket(132, "Ticket 132")
+    depot.mr("feat/131-ticket-131", "opened")
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("131", "En revue")}' > "$MAESTRO_FIXTURES/owner-131.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute"), (3, 132, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "positions", "--max", "1",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "[2/3] #131" in r.stdout, "#131 est le 2e du plan, même s'il est le 1er à être tenté"
+    assert "Plafond --max 1" in r.stdout
+    resume = (depot.racine / ".maestro/orchestrate/positions/resume.tsv").read_text(
+        encoding="utf-8")
+    iids = [x.split("\t")[0] for x in resume.splitlines() if not x.startswith("#")]
+    assert iids == ["130", "131"], "le saut n'a rien consommé, le plafond a arrêté avant #132"
+
+
 def test_le_fichier_stop_empeche_un_run_de_demarrer(depot: Depot) -> None:
     (depot.racine / ".maestro/orchestrate").mkdir(parents=True, exist_ok=True)
     (depot.racine / ".maestro/orchestrate/STOP").touch()
@@ -2216,6 +2240,31 @@ def test_resume_rejoue_le_plan_du_run_vise_sans_le_recalculer(depot: Depot) -> N
     assert "130\tSAUTE" in resume, "un ticket livré depuis se saute de lui-même, par son statut"
     assert "131\tOK" in resume
     assert "reprise du run 20260730-100000" in r.stdout
+
+
+def test_en_reprise_le_compteur_dit_la_position_dans_le_plan(depot: Depot) -> None:
+    """Une reprise saute tout ce qui a été livré depuis, or le compteur suivait les tickets TENTÉS :
+    le 3e du plan s'annonçait « [1/3] », et le run se terminait sur un compte qui n'y était pas."""
+    depot.ticket(130, "Deja livre", statut="En revue")
+    depot.ticket(131, "Livre aussi", statut="En revue")
+    depot.ticket(132, "Reste a faire")
+    depot.mr("feat/132-reste-a-faire", "opened")
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("132", "En revue")}' > "$MAESTRO_FIXTURES/owner-132.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+        exit 0
+    """)
+    _run_dir(
+        depot, "20260730-100000",
+        [(1, 130, "-", "haute"), (2, 131, "-", "haute"), (3, 132, "-", "moyenne")],
+        resume=[(130, "OK", 99, 600, "3.50", "-")],
+        age=4000,
+    )
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "[3/3] #132" in r.stdout, "le seul ticket restant est le 3e du plan, pas le 1er"
+    assert "[1/3]" not in r.stdout
 
 
 def test_reprendre_n_ecrase_jamais_le_bilan_du_run_repris(depot: Depot) -> None:
