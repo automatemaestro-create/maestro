@@ -80,14 +80,18 @@ printf '%%b' "${!sortie:-}"
 exit "${!code:-0}"
 """
 
-# Le python du venv sert à DEUX choses dans `job_pytest` : la SONDE qui dit où `import maestro` se
-# résout (« python - », script sur stdin), puis pytest lui-même (« python -m pytest »). Un seul shim
-# à deux branches — c'est ce qui permet de rejouer un worktree dont le venv partagé importe le
-# `maestro` d'un AUTRE répertoire de travail (#194) sans venv ni worktree réels.
+# Le python du venv sert à TROIS choses dans `job_pytest` : la SONDE qui dit où `import maestro` se
+# résout (« python - », script sur stdin), la disponibilité de pytest-xdist (« python -c import
+# xdist », #214), puis pytest lui-même (« python -m pytest »). Un seul shim à trois branches —
+# c'est ce qui permet de rejouer un worktree dont le venv partagé importe le `maestro` d'un AUTRE
+# répertoire de travail (#194), ou un venv d'avant #214, sans venv ni worktree réels.
 SHIM_PYTHON = """\
 #!/usr/bin/env bash
 printf 'python %s\\n' "$*" >> "$MAESTRO_FAUX_JOURNAL"
 case " $* " in
+  *"-c import xdist"*)
+    exit "${MAESTRO_FAUX_XDIST_CODE:-0}"
+    ;;
   *" -m pytest "*)
     printf '%b' "${MAESTRO_FAUX_PYTEST_SORTIE:-}"
     exit "${MAESTRO_FAUX_PYTEST_CODE:-0}"
@@ -97,6 +101,31 @@ cat >/dev/null                       # la sonde arrive par stdin : on la draine 
 printf '%b' "${MAESTRO_FAUX_SONDE_SORTIE:-ICI\\n}"
 exit "${MAESTRO_FAUX_SONDE_CODE:-0}"
 """
+
+# Le dépôt jetable a la FORME du vrai, en miniature : c'est ce qui rend le périmètre de pytest
+# (#214) observable. Une suite d'outillage n'y est pas déclarée comme telle — elle NOMME un script
+# du dépôt, exactement comme les vraies (`tests/test_orchestrate.py` cite `run.sh`), et c'est de
+# là que le script la déduit.
+ARBORESCENCE = {
+    "maestro/__init__.py": "",
+    "maestro/moteur.py": "def tourne() -> None: ...\n",
+    "tests/conftest.py": "# garde-fous communs\n",
+    "tests/test_moteur.py": "from maestro.moteur import tourne\n",
+    "tests/test_horloge.py": "# une suite applicative qui ne cite aucun script\n",
+    "tests/test_outillage.py": '"""Pilote scripts/gitlab/lib.sh dans un dépôt jetable."""\n',
+    "scripts/gitlab/lib.sh": "#!/usr/bin/env bash\necho lib\n",
+    # Une suite qui relit tout un répertoire le désigne par son NOM, jamais par celui de ses
+    # fichiers — comme test_collaboration avec `.claude/commands/*.md` (#196).
+    "tests/test_prompts.py": '"""Relit les prompts de .claude/commands/."""\n',
+    ".claude/commands/ticket-start.md": "# /ticket-start\n",
+    "docs/10-workflow-git.md": "# Workflow\n",
+    ".mcp.json": "{}\n",
+    # Comme dans le vrai dépôt : les artefacts posés par `equipe_tout` (venv, Node vendoré,
+    # node_modules) sont ignorés de git. Sans ça ils compteraient comme du travail non commité et
+    # ramèneraient tout diff au périmètre maximal — le filet serait juste, mais pour de mauvaises
+    # raisons, et ces tests ne prouveraient plus rien.
+    ".gitignore": ".venv/\n.tools/\nnode_modules/\n",
+}
 
 # shellcheck a son propre shim : il doit pouvoir REFUSER un fichier à retour chariot, comme le
 # vrai (SC1017). C'est ce qui permet de vérifier que le script lui présente un miroir en LF.
@@ -176,6 +205,13 @@ class Clone:
             timeout=180,
         )
 
+    def modifie(self, chemin: str, contenu: str = "# modifié\n") -> None:
+        """Un changement NON COMMITÉ — ce qui partira au push, donc ce que le périmètre regarde."""
+        cible = self.racine / chemin
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        with cible.open("a", encoding="utf-8", newline="\n") as fichier:
+            fichier.write(contenu)
+
     def appels(self) -> list[str]:
         if not self.journal.exists():
             return []
@@ -229,6 +265,10 @@ def clone(tmp_path: Path) -> Clone:
     (racine / ".node-version").write_text(f"v{NODE_PIN}\n", encoding="utf-8", newline="\n")
     (racine / "apps" / "web").mkdir(parents=True)
     (racine / "apps" / "web" / "package.json").write_text("{}\n", encoding="utf-8", newline="\n")
+    for chemin, contenu in ARBORESCENCE.items():
+        cible = racine / chemin
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        cible.write_text(contenu, encoding="utf-8", newline="\n")
 
     git("init", "--quiet", "--initial-branch=main", cwd=racine)
     git("config", "user.email", "test@maestro.invalid", cwd=racine)
@@ -248,11 +288,15 @@ def clone(tmp_path: Path) -> Clone:
 
 
 def test_list_reprend_les_reglages_de_gitlab_ci(clone: Clone) -> None:
-    """Seuil et sévérité sont LUS dans `.gitlab-ci.yml` : le filet suit le pipeline."""
+    """Seuil et sévérité sont LUS dans `.gitlab-ci.yml` : le filet suit le pipeline.
+
+    Le seuil se lit en « --complet » : c'est le seul mode qui l'applique (#214), le mode rapide
+    jouant un sous-ensemble qui ne peut pas le tenir.
+    """
     acheve = clone.lance("--list")
     assert acheve.returncode == 0, acheve.stderr
     assert f"--severity={SEVERITE}" in acheve.stdout
-    assert f"--cov-fail-under={SEUIL}" in acheve.stdout
+    assert f"--cov-fail-under={SEUIL}" in clone.lance("--complet", "--list").stdout
     # La sévérité citée dans un COMMENTAIRE du pipeline ne doit pas l'emporter.
     assert "--severity=error" not in acheve.stdout
     for job in ("shellcheck", "python-lint", "pytest", "mypy", "web-build"):
@@ -279,7 +323,10 @@ def test_les_alias_d_etage_se_developpent(clone: Clone) -> None:
 
 def test_tout_vert_quand_les_jobs_passent(clone: Clone) -> None:
     clone.equipe_tout()
+    # « --complet » : ces tests-ci portent sur les VERDICTS, pas sur le périmètre (#214). Le mode
+    # par défaut ne jouerait rien ici — le dépôt jetable est propre, donc aucun test n'est concerné.
     acheve = clone.lance(
+        "--complet",
         MAESTRO_FAUX_PYTEST_SORTIE="TOTAL 100 0 95%\\n12 passed in 1.2s\\n",
     )
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -293,7 +340,7 @@ def test_tout_vert_quand_les_jobs_passent(clone: Clone) -> None:
 def test_un_job_rouge_rend_un_verdict_rouge(clone: Clone) -> None:
     clone.equipe_tout()
     acheve = clone.lance(
-        "--only", "pytest",
+        "--complet", "--only", "pytest",
         MAESTRO_FAUX_PYTEST_CODE="1",
         MAESTRO_FAUX_PYTEST_SORTIE="TOTAL 100 20 80%\\n2 failed, 10 passed in 1.2s\\n",
     )
@@ -356,7 +403,7 @@ def test_pytest_est_lance_par_python_m_et_non_par_le_script_console(clone: Clone
     """
     clone.equipe_tout()
     acheve = clone.lance(
-        "--only", "pytest",
+        "--complet", "--only", "pytest",
         MAESTRO_FAUX_PYTEST_SORTIE="TOTAL 100 0 95%\\n12 passed in 1.2s\\n",
     )
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -422,6 +469,147 @@ def test_pytest_absent_du_venv_reste_ignore_et_non_rouge(clone: Clone) -> None:
     assert "IGNORÉ" in ligne
     assert "scripts/setup.sh --only venv" in ligne
     assert lancements_pytest(clone.appels()) == []
+
+
+# --- Périmètre de pytest (#214) -------------------------------------------------------------------
+# La suite complète coûte 9 min 57 s en série, dont 9 pour les ~360 tests d'outillage. Le filet ne
+# joue donc par défaut que les suites que le diff concerne, la suite entière restant celle du
+# pipeline de la MR (docs/10 §8). Un périmètre qui se trompe est pire que pas de périmètre : ces
+# tests épinglent la règle, et surtout son sens de dérive — dans le doute, on élargit.
+
+
+def suites_jouees(appels: list[str]) -> list[str]:
+    """Les fichiers de tests passés à pytest — vide quand il collecte toute la suite lui-même."""
+    lances = lancements_pytest(appels)
+    assert len(lances) == 1, appels
+    return [mot for mot in lances[0].split() if mot.startswith("tests/")]
+
+
+def test_une_modification_de_maestro_ne_joue_pas_l_outillage(clone: Clone) -> None:
+    """Le cas courant : on écrit du code applicatif, les tests qui pilotent des scripts n'ont rien
+    de neuf à dire — et ce sont eux qui coûtent 9 des 10 minutes."""
+    clone.equipe_tout()
+    clone.modifie("maestro/moteur.py")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    jouees = suites_jouees(clone.appels())
+    assert "tests/test_moteur.py" in jouees
+    # Une suite qui ne cite aucun script est APPLICATIVE par défaut : jamais sautée en silence.
+    assert "tests/test_horloge.py" in jouees
+    assert "tests/test_outillage.py" not in jouees
+    assert "maestro/** modifié" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_une_modification_de_script_ne_joue_que_les_suites_qui_le_nomment(clone: Clone) -> None:
+    clone.equipe_tout()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
+    assert "lib.sh" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_un_fichier_transverse_ramene_la_suite_entiere(clone: Clone) -> None:
+    """`conftest.py` vaut pour toute la suite : son périmètre, c'est tout."""
+    clone.equipe_tout()
+    clone.modifie("tests/conftest.py")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    # Aucun fichier passé : pytest collecte tout lui-même.
+    assert suites_jouees(clone.appels()) == []
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "toute la suite" in ligne and "transverse" in ligne
+
+
+def test_un_fichier_anonyme_est_rattrape_par_le_nom_de_son_dossier(clone: Clone) -> None:
+    """Repli du nom de fichier vers le nom du dossier : sans lui, toucher un prompt de
+    `.claude/commands/` rejouerait les 1100 tests — aucune suite ne cite un prompt par son nom,
+    elles parcourent le répertoire."""
+    clone.equipe_tout()
+    clone.modifie(".claude/commands/ticket-start.md", "une ligne de plus\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_prompts.py"]
+    assert "commands/" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_un_fichier_que_personne_ne_nomme_elargit_au_lieu_de_sauter(clone: Clone) -> None:
+    """Le sens de dérive du filet : ce qu'il ne sait pas classer, il le paye — il ne le saute
+    pas."""
+    clone.equipe_tout()
+    clone.modifie(".mcp.json", '{"serveurs": {}}\n')
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == []
+    assert "aucune suite ne nomme .mcp.json" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_la_prose_ne_declenche_aucune_suite(clone: Clone) -> None:
+    """Aucun test ne lit docs/ : jouer 1100 tests pour une phrase de doc serait absurde."""
+    clone.equipe_tout()
+    clone.modifie("docs/10-workflow-git.md", "une phrase de plus\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert lancements_pytest(clone.appels()) == []
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "HORS PÉRIM." in ligne
+    assert "aucune suite concernée" in ligne
+
+
+def test_le_mode_rapide_n_impose_pas_le_seuil_de_couverture(clone: Clone) -> None:
+    """Un sous-ensemble ne peut pas tenir le seuil : l'exiger rendrait un rouge mensonger."""
+    clone.equipe_tout()
+    clone.modifie("maestro/moteur.py")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "--cov-fail-under" not in lancements_pytest(clone.appels())[0]
+    # Et le verdict le dit, plutôt que de laisser croire à un vert qui vaut celui du pipeline.
+    assert "Périmètre réduit" in acheve.stdout
+
+
+def test_le_parallelisme_est_reserve_aux_suites_qui_le_rentabilisent(clone: Clone) -> None:
+    """`-n auto` coûte ~5,5 s de démarrage des workers, pour 1,5 s de suite applicative en série.
+
+    Il ne se justifie que sur les suites d'outillage, bornées par les processus qu'elles attendent
+    (mesuré : 9 min 57 s → 2 min 34 s sur la suite entière).
+    """
+    clone.equipe_tout()
+    clone.modifie("maestro/moteur.py")
+    clone.lance("--only", "pytest")
+    assert "-n auto" not in lancements_pytest(clone.appels())[0]
+
+    clone.journal.unlink()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    clone.lance("--only", "pytest")
+    assert "-n auto" in lancements_pytest(clone.appels())[0]
+
+
+def test_sans_pytest_xdist_le_filet_joue_en_serie_au_lieu_de_rougir(clone: Clone) -> None:
+    """Le venv d'un clone antérieur à #214 n'a pas xdist : `-n auto` y sortirait en erreur
+    d'arguments, un rouge qui ne parle pas du code. Le filet n'installe rien — il s'en passe."""
+    clone.equipe_tout()
+    # Un périmètre d'outillage : c'est là que `-n auto` serait passé si xdist était disponible.
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest", MAESTRO_FAUX_XDIST_CODE="1")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    lance = lancements_pytest(clone.appels())[0]
+    assert "-n auto" not in lance
+    assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "en série" in ligne and "setup.sh --only venv" in ligne
+
+
+def test_complet_rejoue_toute_la_suite_avec_sa_couverture(clone: Clone) -> None:
+    """L'échappatoire quand on veut le verdict du pipeline sans attendre le pipeline."""
+    clone.equipe_tout()
+    clone.modifie("maestro/moteur.py")
+    acheve = clone.lance("--complet", "--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    lance = lancements_pytest(clone.appels())[0]
+    assert suites_jouees(clone.appels()) == []
+    assert f"--cov=maestro --cov-fail-under={SEUIL}" in lance
+    assert "-n auto" in lance
+    assert "Périmètre réduit" not in acheve.stdout
 
 
 # --- Périmètre de web-build -----------------------------------------------------------------------

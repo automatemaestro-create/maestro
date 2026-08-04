@@ -100,10 +100,18 @@ python-lint:
 # contrepartie) et reflète le code métier : 94 % mesurés à la pose du seuil, marge
 # de 4 points pour absorber les variations sans laisser la couverture s'éroder.
 # La clé `coverage:` remonte le taux dans GitLab (badge, affichage MR).
+#
+# `-n auto` (pytest-xdist, ticket #214) : la suite se répartit sur autant de processus que le
+# runner a de cœurs. Les ~360 tests d'outillage montent chacun un dépôt git jetable et attendent
+# un script shell — ils sont bornés par des processus, pas par le CPU, et se parallélisent donc
+# presque idéalement (mesuré : 9 min 57 s en série contre 2 min 34 s, même verdict). C'est ici
+# que ça compte le plus : depuis #165 ce pipeline est le SEUL verdict complet, celui qui
+# conditionne le merge — et depuis #214 le filet local ne joue plus par défaut que le périmètre
+# du diff. pytest-cov agrège nativement la couverture des workers : le seuil est inchangé.
 pytest:
   extends: .python-test
   script:
-    - pytest --cov=maestro --cov-fail-under=90
+    - pytest -n auto --cov=maestro --cov-fail-under=90
   coverage: '/TOTAL.*? (100(?:\.\d+)?\%|[1-9]?\d(?:\.\d+)?\%)/'
 
 # Vérifie le typage statique du code applicatif (maestro/) en mode strict

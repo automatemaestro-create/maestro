@@ -79,8 +79,14 @@ lire du code ou relire une MR pendant que le ticket avance à côté ([docs/10 �
 
   ```bash
   bash scripts/ci/local.sh      # les mêmes jobs que le pipeline : shellcheck, ruff,
-                                # pytest (avec couverture), mypy, build de apps/web
+                                # pytest, mypy, build de apps/web
+  bash scripts/ci/local.sh --complet   # + la suite pytest ENTIÈRE et sa couverture
   ```
+
+  Par défaut, **pytest n'y joue que les suites concernées par votre diff** ([docs/10
+  §8.4](./docs/10-workflow-git.md)) : la suite complète prend 10 minutes, et c'est le pipeline de
+  la MR qui la joue — inutile de l'attendre à chaque itération. Le lint, lui, tourne toujours en
+  entier.
 
 ---
 
