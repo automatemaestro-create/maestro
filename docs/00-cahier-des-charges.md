@@ -68,8 +68,8 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 5. **Personnalisation d'un agent.** On modifie le *playbook* du Designer pour qu'il respecte une charte graphique précise ; le changement s'applique à la tâche suivante.
 6. **Discussion directe.** On ouvre un chat avec l'agent DevOps pour lui demander d'expliquer un choix ou de corriger le tir.
 7. **Pilotage de la capacité.** On augmente le nombre d'instances de l'agent Développeur pour absorber une charge importante.
-8. **Initier un projet sur son poste.** L'utilisateur désigne un dossier de son disque (vide, ou dépôt existant) ; les agents y travaillent réellement — les livrables atterrissent dans *son* projet, pas dans un dossier de sortie à recopier à la main. *(Proposé par [docs/24 §2](./24-projets-locaux-et-poste-de-travail.md), décision D1 en attente.)*
-9. **Partir d'un document.** L'utilisateur joint un cahier des charges (`.docx`, `.pdf`, Markdown) ou un dossier de références plutôt que de tout retaper ; le Chef de projet en tire un **brief structuré**, pose ses questions, et ne décompose qu'une fois le brief validé. *(Proposé par [docs/24 §3](./24-projets-locaux-et-poste-de-travail.md), décision D5 en attente.)*
+8. **Initier un projet sur son poste.** L'utilisateur désigne un dossier de son disque (vide, ou dépôt existant) ; les agents y travaillent réellement — les livrables atterrissent dans *son* projet, pas dans un dossier de sortie à recopier à la main. *(Retenu — [docs/24 §2](./24-projets-locaux-et-poste-de-travail.md), décision D1 rendue le 2026-08-04 ; **Phase 7**.)*
+9. **Partir d'un document.** L'utilisateur joint un cahier des charges (`.docx`, `.pdf`, Markdown) ou un dossier de références plutôt que de tout retaper ; le Chef de projet en tire un **brief structuré**, pose ses questions, et ne décompose qu'une fois le brief validé. *(Retenu — [docs/24 §3](./24-projets-locaux-et-poste-de-travail.md), décision D5 rendue le 2026-08-04 ; **Phase 8**.)*
 
 ---
 
@@ -135,24 +135,25 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 - **EF-29 (DEVRAIT)** — Intégrations via **MCP** (Model Context Protocol) : Git, CI/CD, base de données, Slack, etc.
 - **EF-30 (POURRAIT)** — Intégration d'outils de design (ex. Figma) et de gestion (Linear/Jira).
 
-### 4.9 Projet local et espace de travail *(proposé — [docs/24 §2](./24-projets-locaux-et-poste-de-travail.md))*
+### 4.9 Projet local et espace de travail *(retenu — [docs/24 §2](./24-projets-locaux-et-poste-de-travail.md), **Phase 7**)*
 
-> Ces exigences sont **proposées**, pas encore arrêtées : elles dépendent des décisions D1 et D2
-> de [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md). Elles comblent un trou constaté :
-> EF-28 n'est aujourd'hui satisfaite que par le dépôt de Maestro lui-même, et l'espace de travail
-> d'une tâche est un répertoire temporaire **détruit en fin d'exécution**.
+> Ces exigences sont **retenues** : les décisions D1 et D2 de
+> [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md) ont été rendues le 2026-08-04 (#218) et
+> ouvrent la **Phase 7**. Elles comblent un trou constaté : EF-28 n'est aujourd'hui satisfaite que
+> par le dépôt de Maestro lui-même, et l'espace de travail d'une tâche est un répertoire
+> temporaire **détruit en fin d'exécution**.
 
 - **EF-35 (DOIT)** — Un **projet** désigne une **racine sur le disque de l'utilisateur** (dossier neuf à créer, ou dépôt existant), avec son périmètre d'inclusion/exclusion. Tâches, exécutions et coûts s'y rattachent.
 - **EF-36 (DOIT)** — Les agents **ne travaillent jamais directement** dans la racine du projet : chaque tâche opère dans un espace dérivé (branche/worktree Git si le projet est versionné, copie sinon).
 - **EF-37 (DOIT)** — L'**application des modifications** dans le projet de l'utilisateur est une **action sensible** : elle passe par la validation humaine (EF-08), diff à l'appui.
 - **EF-38 (DOIT)** — Le système **refuse** une racine hors périmètre autorisé (racine de disque, dossier utilisateur nu, chemins sensibles) et empêche toute écriture au-dessus de la racine déclarée.
 
-### 4.10 Composition de l'objectif : sources et brief *(proposé — [docs/24 §3](./24-projets-locaux-et-poste-de-travail.md))*
+### 4.10 Composition de l'objectif : sources et brief *(retenu — [docs/24 §3](./24-projets-locaux-et-poste-de-travail.md), **Phase 8**)*
 
 - **EF-39 (DEVRAIT)** — Un objectif peut porter des **sources** : fichiers téléversés (`.md`, `.txt`, `.docx`, `.pdf`), dossier de références en lecture seule, URL. Elles sont ramenées à un format texte unique avant d'entrer dans le contexte.
 - **EF-40 (DEVRAIT)** — Avant toute décomposition, l'orchestrateur produit un **brief structuré** (objectif, périmètre, hors-périmètre, contraintes, critères d'acceptation, hypothèses), **peut poser des questions de clarification**, et le soumet à validation humaine.
 
-### 4.11 Distribution et installation *(proposé — [docs/24 §4](./24-projets-locaux-et-poste-de-travail.md))*
+### 4.11 Distribution et installation *(retenu — [docs/24 §4](./24-projets-locaux-et-poste-de-travail.md), **Phase 9**)*
 
 - **EF-41 (DEVRAIT)** — Le produit s'installe et se lance **sans chaîne de développement** (ni clone Git, ni gestion manuelle d'environnement) ; le premier lancement guide le choix du fournisseur, des accès et du premier projet.
 - **EF-42 (POURRAIT)** — Une **enveloppe de bureau** embarque la Control Tower et le backend local. Elle **n'est pas une variante du produit** : le mode web/serveur multi-utilisateurs reste de premier ordre, les deux partagent front et backend (décisions D3/D4).
@@ -174,8 +175,8 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 | ENF-09 | **Confidentialité** | Données et secrets chiffrés ; possibilité d'auto-hébergement de l'observabilité. |
 | ENF-10 | **Expérience** | Interface **multilingue** (français par défaut, autres langues activables via internationalisation / i18n), claire et compréhensible par un profil non technique. |
 | ENF-11 | **Agnosticisme modèle** | Le moteur d'agents est isolé derrière une **couche d'abstraction fournisseur** : la config d'un agent porte `fournisseur + modèle + credentials`. Aucun couplage dur à un fournisseur unique. |
-| ENF-12 | **Installabilité** *(proposé, [docs/24 §4](./24-projets-locaux-et-poste-de-travail.md))* | Le mode de distribution (local/bureau *vs* serveur) ne change que des **réglages** — persistance, authentification, isolation — jamais le code applicatif : un seul front, un seul backend. |
-| ENF-13 | **Intégrité du projet de l'utilisateur** *(proposé, [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md))* | Aucun travail d'agent n'atteint le projet sans passer par une validation humaine ; un projet versionné garde son retour arrière natif. Le contenu lu dans un projet est une **donnée**, jamais une consigne. |
+| ENF-12 | **Installabilité** *(retenu, [docs/24 §4](./24-projets-locaux-et-poste-de-travail.md) — D3/D4, **Phase 9**)* | Le mode de distribution (local/bureau *vs* serveur) ne change que des **réglages** — persistance, authentification, isolation — jamais le code applicatif : un seul front, un seul backend. |
+| ENF-13 | **Intégrité du projet de l'utilisateur** *(retenu, [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md) — D1/D2, **Phase 7**)* | Aucun travail d'agent n'atteint le projet sans passer par une validation humaine ; un projet versionné garde son retour arrière natif. Le contenu lu dans un projet est une **donnée**, jamais une consigne. |
 
 ---
 
@@ -199,9 +200,9 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 | Sur-ingénierie initiale | Moyen | Commencer par le pattern orchestrateur-workers natif ; complexifier seulement si mesurablement utile. |
 | Collisions sur ressources partagées | Moyen | Verrous/locks sur ressources, branches Git par tâche, file de tâches. |
 | Dépendance forte à un fournisseur | Élevé | **Couche d'abstraction modèle de premier ordre** (choix fournisseur + modèle par agent, ENF-11/O7) ; outils standard (MCP). |
-| **Perte de travail dans le projet de l'utilisateur** *(proposé)* | Élevé | Travail hors de la racine (branche/copie), application sous validation humaine (EF-36/EF-37), périmètre déclaré et racines interdites (EF-38). |
-| **Prompt injection par le contenu lu** (code du projet, document téléversé) *(proposé)* | Moyen | Contenu traité comme donnée et non comme consigne ; actions sensibles maintenues derrière la validation ; politique d'outils par agent. |
-| **Empaquetage d'une cible mouvante** *(proposé)* | Moyen | Le bureau vient **après** le projet local et l'ingestion ; d'abord un lanceur/installeur, l'enveloppe native ensuite ([docs/24 §4.8](./24-projets-locaux-et-poste-de-travail.md)). |
+| **Perte de travail dans le projet de l'utilisateur** *(Phase 7)* | Élevé | Travail hors de la racine (branche/copie), application sous validation humaine (EF-36/EF-37), périmètre déclaré et racines interdites (EF-38). |
+| **Prompt injection par le contenu lu** (code du projet, document téléversé) *(Phases 7-8)* | Moyen | Contenu traité comme donnée et non comme consigne ; actions sensibles maintenues derrière la validation ; politique d'outils par agent. |
+| **Empaquetage d'une cible mouvante** *(Phase 9)* | Moyen | Le bureau vient **après** le projet local et l'ingestion ; d'abord un lanceur/installeur, l'enveloppe native ensuite ([docs/24 §4.8](./24-projets-locaux-et-poste-de-travail.md)). |
 
 ---
 

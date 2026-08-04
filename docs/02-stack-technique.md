@@ -26,9 +26,9 @@
 | **CI/CD & versionnement** | **Git + GitLab + GitLab CI** (choix effectif du projet) | GitHub + GitHub Actions |
 | **Conteneurisation / déploiement** | **Docker Compose** (dev) → **Kubernetes** (échelle) | Fly.io, Render, ECS |
 | **Authentification** | **Clerk** ou **Auth.js** | Supabase Auth, Keycloak |
-| **Extraction de documents** *(proposé)* | **markitdown** (unifié) ou `python-docx` + `pypdf` — tout ramené à du Markdown | Unstructured, Tika |
-| **Empaquetage bureau** *(proposé)* | **Lanceur/installeur d'abord**, puis **Tauri** (WebView système, backend Python en *sidecar*) | Electron (~150 Mo contre ~10, sans gain ici) |
-| **Persistance selon le mode** *(proposé)* | **SQLite** en local/bureau, **PostgreSQL** en serveur — derrière **une seule** couche d'accès | Postgres embarqué, DuckDB |
+| **Extraction de documents** *(Phase 8)* | **markitdown** (unifié) ou `python-docx` + `pypdf` — tout ramené à du Markdown | Unstructured, Tika |
+| **Empaquetage bureau** *(Phase 9 — D4)* | **Lanceur/installeur d'abord**, puis **Tauri** (WebView système, backend Python en *sidecar*) | Electron (~150 Mo contre ~10, sans gain ici) |
+| **Persistance selon le mode** *(Phase 9 — D3)* | **SQLite** en local/bureau, **PostgreSQL** en serveur — derrière **une seule** couche d'accès | Postgres embarqué, DuckDB |
 
 > **Décision de langage.** Deux options cohérentes :
 > - **Option A — Python-centrée (recommandée pour démarrer) :** agents + backend en Python (Agent SDK Python + FastAPI), front en TypeScript. L'écosystème IA/données est le plus riche en Python.
@@ -119,7 +119,7 @@ Le parallélisme et la fiabilité reposent sur une **file de tâches**.
 
 ---
 
-### 7.1 Ce que le projet local change *(proposé — [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md))*
+### 7.1 Ce que le projet local change *(retenu — [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md), **Phase 7**)*
 
 Ouvrir un projet de l'utilisateur **déplace la frontière** posée ci-dessus : le contrat du mode
 isolé énumère aujourd'hui « aucun autre chemin de l'hôte monté » ([docs/17 §3](./17-isolation-execution.md)).

@@ -51,23 +51,24 @@ seul, la défense en profondeur vient de leur empilement (une politique d'outils
 limite ce que l'agent *demande*, l'isolation limite ce que le code *fait*, le
 coffre limite ce que chacun *voit*).
 
-### 2.1 Ce que l'ouverture aux projets locaux ajouterait *(proposé — [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md))*
+### 2.1 Ce que l'ouverture aux projets locaux ajoute *(retenu — [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md), **Phase 7**)*
 
 Le modèle ci-dessus repose sur une hypothèse forte : **les agents n'ont rien à faire hors de
-leur workspace jetable**. Le cadrage #215 propose de la lever — un projet de l'utilisateur,
-désigné par sa racine, deviendrait lisible et modifiable. L'actif « poste hôte » (§1) gagnerait
-alors un voisin : **le projet de l'utilisateur**, avec quatre menaces propres :
+leur workspace jetable**. Le cadrage #215 la lève — un projet de l'utilisateur, désigné par sa
+racine, devient lisible et modifiable. L'actif « poste hôte » (§1) gagne donc un voisin : **le
+projet de l'utilisateur**, avec quatre menaces propres :
 
-| Menace | Vecteur | Contre-mesure proposée |
+| Menace | Vecteur | Contre-mesure |
 |---|---|---|
 | Destruction du travail de l'utilisateur | agent défaillant, `Bash` mal formé, code produit | Travail hors de la racine (branche/worktree ou copie) ; **application sous validation humaine** (EF-37) ; retour arrière natif si le projet est versionné |
 | Évasion par la racine déclarée | `../..`, lien symbolique, chemin absolu | Racine **canonicalisée**, écriture refusée au-dessus ; **liste de racines interdites** (racine de disque, dossier utilisateur nu, `.ssh`, `AppData`, le dépôt Maestro) |
 | Exfiltration du code de l'utilisateur | `git push` vers un distant tiers, appel réseau d'un `Bash` permis | Politique d'outils par agent (#110) ; l'**égress non filtré** (§5) devient nettement plus gênant qu'aujourd'hui |
 | **Prompt injection par le contenu lu** | `README`, commentaire, dépendance, **document téléversé** ([docs/24 §3.4](./24-projets-locaux-et-poste-de-travail.md)) | Contenu traité comme **donnée, jamais comme consigne** (prompts systèmes) ; actions sensibles maintenues derrière la validation, ce qui borne les dégâts |
 
-Rien de tout cela n'est en vigueur : c'est la décision **D1** de
-[docs/24 §8](./24-projets-locaux-et-poste-de-travail.md). Tant qu'elle n'est pas prise, le
-modèle de menace de ce document s'applique inchangé.
+La décision **D1** de [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md) est **rendue**
+(2026-08-04, #218) : ces menaces et leurs contre-mesures sont **retenues**, et leur mise en œuvre
+est le travail de la **Phase 7**. Rien n'est en vigueur tant que cette phase n'a pas livré — le
+modèle de menace des §1 et §2 s'applique inchangé jusque-là, ce tableau disant ce qui l'attend.
 
 ## 3. Activation (récapitulatif)
 
