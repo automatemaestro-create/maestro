@@ -26,6 +26,9 @@
 | **CI/CD & versionnement** | **Git + GitLab + GitLab CI** (choix effectif du projet) | GitHub + GitHub Actions |
 | **Conteneurisation / déploiement** | **Docker Compose** (dev) → **Kubernetes** (échelle) | Fly.io, Render, ECS |
 | **Authentification** | **Clerk** ou **Auth.js** | Supabase Auth, Keycloak |
+| **Extraction de documents** *(proposé)* | **markitdown** (unifié) ou `python-docx` + `pypdf` — tout ramené à du Markdown | Unstructured, Tika |
+| **Empaquetage bureau** *(proposé)* | **Lanceur/installeur d'abord**, puis **Tauri** (WebView système, backend Python en *sidecar*) | Electron (~150 Mo contre ~10, sans gain ici) |
+| **Persistance selon le mode** *(proposé)* | **SQLite** en local/bureau, **PostgreSQL** en serveur — derrière **une seule** couche d'accès | Postgres embarqué, DuckDB |
 
 > **Décision de langage.** Deux options cohérentes :
 > - **Option A — Python-centrée (recommandée pour démarrer) :** agents + backend en Python (Agent SDK Python + FastAPI), front en TypeScript. L'écosystème IA/données est le plus riche en Python.
@@ -113,6 +116,24 @@ Le parallélisme et la fiabilité reposent sur une **file de tâches**.
 - **Branche Git par tâche** : évite les collisions sur les fichiers entre agents parallèles.
 - **Gestion des secrets** : coffre (ex. variables chiffrées, Vault) ; jamais de secret dans les prompts ni les logs.
 - **Plafonds** : budget par tâche/jour, time-outs, liste d'actions interdites.
+
+---
+
+### 7.1 Ce que le projet local change *(proposé — [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md))*
+
+Ouvrir un projet de l'utilisateur **déplace la frontière** posée ci-dessus : le contrat du mode
+isolé énumère aujourd'hui « aucun autre chemin de l'hôte monté » ([docs/17 §3](./17-isolation-execution.md)).
+Trois ajustements suivent, sans rien retirer de l'existant :
+
+- un **second montage** (la racine du projet, ou le répertoire de travail de la tâche) ;
+- une **racine canonicalisée** avec liste de racines interdites — la « branche Git par tâche »
+  cesse d'être un principe pour devenir le mécanisme réel (§7 ci-dessus) ;
+- l'**égress non filtré** (limite connue de [docs/19 §5](./19-securite-modele-de-menace.md))
+  devient plus gênant : le code de l'utilisateur est désormais à portée d'un `git push` mal
+  intentionné.
+
+En **distribution bureau**, le mode isolé suppose Docker sur le poste : il redevient une option
+pour postes équipés, le filet nominal étant alors le **périmètre du projet**.
 
 ---
 

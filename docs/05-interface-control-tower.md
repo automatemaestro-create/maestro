@@ -149,6 +149,32 @@ Quand un agent atteint une action sensible, une carte **« Validation requise »
 - Boutons **Approuver** / **Refuser** / **Modifier la consigne**.
 - Le run reste en pause jusqu'à la décision (EF-08).
 
+### 2.7 📁 Projets et composition d'un objectif *(proposé — [docs/24](./24-projets-locaux-et-poste-de-travail.md))*
+
+> Écrans **proposés**, pas encore spécifiés : ils dépendent des décisions D1, D2 et D5 de
+> [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md). Ils comblent le trou constaté au
+> §1 de ce cadrage : la Control Tower pilote des exécutions qui n'appartiennent à aucun projet
+> et dont les livrables atterrissent dans un dossier de sortie, jamais chez l'utilisateur.
+
+- **Projets** — la liste des projets, chacun avec sa **racine sur le disque**, son type
+  (nouveau / dépôt existant) et son périmètre. Le choix du dossier se fait par un **explorateur
+  servi par l'API** : un navigateur ne livre jamais de chemin absolu, c'est donc le backend —
+  qui tourne déjà sur le poste — qui énumère. Une racine hors périmètre autorisé est **refusée
+  avec son motif**, jamais silencieusement ignorée (EF-38).
+- **Composer un objectif** — le formulaire de lancement gagne, à côté du texte, des **sources**
+  (§6.1 étendu) : fichiers déposés, dossier de références en lecture seule, URL. L'extraction
+  est visible (ce qui a été lu, ce qui a été ignoré, le coût estimé).
+- **Valider le brief** — avant toute décomposition, le Chef de projet présente un **brief
+  structuré** (objectif, périmètre, hors-périmètre, contraintes, critères d'acceptation,
+  hypothèses) et **ses questions**. C'est le point de contrôle le plus rentable du produit :
+  corriger un plan coûte un message, corriger douze tâches coûte douze exécutions.
+- **Appliquer dans le projet** — la remise des livrables dans le dossier de l'utilisateur est
+  une **action sensible** : elle emprunte l'écran de validation ci-dessus (§2.6), diff à
+  l'appui. Rien de neuf côté mécanisme, un nouveau type d'action côté contenu.
+
+Le sélecteur de projet devient alors un élément permanent de la barre supérieure : le Kanban,
+les coûts et le journal se lisent **par projet**.
+
 ---
 
 ## 3. Parcours utilisateur clés
