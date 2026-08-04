@@ -533,3 +533,52 @@ pulsation périodique, chat scripté sur un fil éphémère (§6.4). Tout le res
 dans les deux modes** : ports (`MAESTRO_PORT_API`/`MAESTRO_PORT_UI`, dédiés par worktree),
 dossier de logs, nettoyage des sessions précédentes, chien de garde du navigateur et
 `--stop`. Détail d'usage : skill [`control-tower`](../.claude/skills/control-tower/SKILL.md).
+
+### 6.11 — Lancer, suivre et annuler un run (tickets #185, #187)
+
+En mode réel, le poste démarre vide : **c'est un run qui le remplit**. Deux voies, qui
+alimentent la même projection — le suivi ne distingue pas leur origine.
+
+**Depuis le dépôt** (ce que propose l'écran vide) :
+
+```bash
+maestro-run --publier "Prototyper un mini-CRM"
+```
+
+`--publier` est ce qui pousse les événements vers la Control Tower ; sans lui, le run
+se déroule mais le poste reste vide. Les autres drapeaux du moteur restent
+disponibles (`--parallele` §6.1, `--durable` §6.8).
+
+**Depuis la Control Tower**, par l'API (contrat figé : [doc 05 §6.1](./05-interface-control-tower.md)) :
+
+```bash
+# Lancer : 202 + le run_id, rendu AVANT que le run ne produise quoi que ce soit
+curl -X POST http://127.0.0.1:8000/api/executions \
+  -H 'Content-Type: application/json' \
+  -d '{"objectif": "Prototyper un mini-CRM", "plafond_cout_usd": 5.0}'
+
+curl http://127.0.0.1:8000/api/executions              # suivre : les runs, récents d'abord
+curl -X POST http://127.0.0.1:8000/api/executions/<run_id>/annuler   # annuler
+```
+
+Trois choses à savoir :
+
+- **Le lancement ne bloque pas.** Le run part en arrière-plan et son `run_id` est rendu
+  tout de suite : c'est ce qui permet de l'afficher « en cours » puis de le suivre par le
+  flux temps réel, sans attendre la fin. Une erreur survenue en arrière-plan (fournisseur
+  injoignable…) devient le **statut du run**, pas un 500 — la requête de lancement, elle,
+  est déjà partie.
+- **Les garde-fous se posent au lancement** : `plafond_cout_usd`, `plafond_tokens`,
+  `timeout_tache_s`, `parallelisme`. Absents (`null`), le moteur garde ses défauts ; hors
+  bornes ou objectif vide, la requête est refusée en **422** et **aucun run ne part**.
+- **Un run terminé n'est plus annulable** : `409` plutôt qu'une annulation de façade
+  (`404` si le `run_id` est inconnu).
+
+Un run peut porter une **référence de ticket externe** (`{"ticket": {"id": "#42", "url": "…"}}`,
+#187) : elle voyage du plan jusqu'à la projection, ressort par le REST et **survit au rejeu**
+du journal durable — la carte garde donc son lien après un redémarrage de l'API.
+
+Couverture : [`tests/test_executions.py`](../tests/test_executions.py) (routes et référence de
+ticket, sur l'app réelle en bus mémoire, moteur remplacé par un double) et
+[`tests/test_controltower_mode_reel.py`](../tests/test_controltower_mode_reel.py) (invariants du
+lanceur : mode réel par défaut, `--demo` explicite, diagnostic quand Redis manque).
