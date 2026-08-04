@@ -43,12 +43,22 @@
 #   <iid>.resultat.txt  le même, mais LISIBLE (#180) : verdict, coût, durée, refus, message final
 #   <iid>.log         ce que la session a écrit sur stderr
 #   resume.tsv        une ligne par ticket : iid, verdict, MR, durée, coût, raison
+#   pid               la carte d'identité du pilote (#213) : PID, WINPID, naissance, hôte — posée au
+#                     démarrage, retirée à la sortie, et seule chose qui permette de TUER un run
 #
 # Le journal ne s'accumule plus sans fin (#198) : au démarrage d'un run, `journal.sh gc --auto` ne
 # garde que les N derniers runs et ramasse les répertoires vides — jamais le run courant, jamais un
 # run qui écrit encore. Diagnostic sans écriture : `journal.sh gc --check`.
 #
 # Arrêt d'urgence : créer .maestro/orchestrate/STOP — testé entre deux tickets.
+#
+# --- Un seul run à la fois (#213) --------------------------------------------------------------------
+# Démarrer (ou reprendre) commence par TUER les runs encore en vol. Deux pilotes vivants, c'est le
+# même quota brûlé en double, un unique fichier STOP pour les deux, et une reprise qui rejoue le plan
+# d'un run toujours en train de le jouer. Le tri s'appuie sur la carte `pid` ci-dessus : jamais sur
+# un `claude.exe` trouvé au jugé — la session Claude Code interactive de l'utilisateur en est un.
+# Les runs tués restent REPRENABLES : on ne touche pas à leur journal. `--sans-kill` pour s'en
+# passer, `--tuer-les-runs` pour ne faire que ça.
 #
 # --- Coutures de test -------------------------------------------------------------------------------
 # Pour que la boucle soit vérifiable sans consommer de quota, sans réseau et sans créer de vraie
@@ -60,6 +70,8 @@ set -uo pipefail
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/gitlab/lib.sh
 . "$RACINE/scripts/gitlab/lib.sh"
+# shellcheck source=scripts/orchestrate/pilote.sh
+. "$RACINE/scripts/orchestrate/pilote.sh"
 
 ORCH_DIR="$RACINE/.maestro/orchestrate"
 STOP="$ORCH_DIR/STOP"
@@ -86,6 +98,8 @@ REPRISE=0
 REPRISE_ID=""
 REPRISE_DIR=""
 REPRISE_AVEC_VALEUR=0
+SANS_KILL=0
+TUER_SEUL=0
 
 usage() {
   cat <<'USAGE'
@@ -109,6 +123,8 @@ Options :
   --plan <fichier>     Utilise un plan déjà calculé (TSV de queue.sh) au lieu d'en calculer un.
   --milestone <titre>  Transmis à queue.sh (par défaut : la phase courante).
   --run-id <id>        Identifiant du run. Défaut : horodatage.
+  --sans-kill          Ne tue pas les runs encore en cours avant de démarrer (voir plus bas).
+  --tuer-les-runs      Ne fait QUE ça : tue les runs en cours, dit lesquels, et sort.
   --max-reprises <n>   Reprises maximales après limite d'usage, par ticket. Défaut : 3.
   --test-reprise <f>   Diagnostic : dit si la sortie de session <f> serait vue comme une limite
                        d'usage, et combien de temps la boucle attendrait. N'exécute rien d'autre.
@@ -116,6 +132,10 @@ Options :
                        coût, durée, refus de permission, message final). N'exécute rien d'autre.
                        Un run écrit déjà cette vue à côté, dans <iid>.resultat.txt.
   -h, --help           Cette aide.
+
+Un seul run à la fois : démarrer ou reprendre commence par TUER les runs encore en vol (leur pilote
+et la session Claude qu'il pilotait), parce que deux runs brûlent le même quota et se partagent un
+unique fichier STOP. Les runs tués gardent leur journal intact et restent reprenables.
 
 Limite d'usage : la boucle attend jusqu'au reset et reprend la même session Claude. Au-delà de
 5 h 30 d'attente cumulée sur un ticket, c'est la limite hebdomadaire : le run s'arrête proprement —
@@ -151,6 +171,10 @@ while [ $# -gt 0 ]; do
       ;;
     --milestone) MILESTONE="${2:-}"; shift ;;
     --run-id) RUN_ID="${2:-}"; shift ;;
+    # Un run en tue d'autres par défaut (#213) : ces deux options sont les seules façons d'en
+    # sortir — ne rien tuer, ou ne faire que ça.
+    --sans-kill | --no-kill) SANS_KILL=1 ;;
+    --tuer-les-runs | --kill-runs) TUER_SEUL=1 ;;
     --max-reprises) MAESTRO_ORCHESTRATE_MAX_REPRISES="${2:-3}"; shift ;;
     # Diagnostic de la détection de limite d'usage sur une sortie de session capturée : c'est ce qui
     # rend la reprise vérifiable sans attendre de vraiment taper la limite.
@@ -278,6 +302,46 @@ arret_demande() {
   [ -f "$STOP" ] || return 1
   printf '\n%sArrêt demandé%s — le fichier %s est présent. Run interrompu proprement.\n' "$C_Y" "$C_0" "$STOP"
   return 0
+}
+
+# tue_les_runs_en_vol [<run-id à épargner>] : arrête tout run dont le pilote tourne encore, et dit
+# lesquels. Rend le nombre de runs qu'il a fallu tuer (0 = personne, le cas courant).
+#
+# Muet quand il n'y a rien à tuer : c'est l'état normal, et une ligne « aucun run en cours » avant
+# chaque run n'apprendrait rien à personne.
+#
+# Ce qui est tué l'est SANS SOMMATION, et c'est voulu. La sortie propre existe déjà — le fichier
+# STOP — mais elle n'est lue qu'entre deux tickets : attendre qu'un run la voie, c'est attendre la
+# fin de la session en cours, jusqu'à 45 minutes. Or on est ici parce que quelqu'un veut lancer
+# maintenant. La brutalité se paie en travail non commité dans le worktree du ticket en vol ; elle
+# ne se paie PAS en travail perdu, le journal du run tué restant intact et rejouable (`--resume`),
+# ce que le rapport dit à chaque fois.
+tue_les_runs_en_vol() {
+  local exclu="${1:-}" id pid iid code n=0
+  while IFS=$'\t' read -r id pid iid; do
+    [ -n "${id:-}" ] || continue
+    if [ "$n" -eq 0 ]; then
+      printf '\n%sUn seul run à la fois%s — arrêt de ce qui tourne encore :\n' "$C_Y" "$C_0"
+    fi
+    n=$((n + 1))
+    pilote_tue "$ORCH_DIR/$id"; code=$?
+    case "$code" in
+      0) printf '  %s✗%s run %s (pid %s)%s — arrêté\n' "$C_Y" "$C_0" "$id" "$pid" \
+           "$([ -n "${iid:-}" ] && printf ', ticket #%s en vol' "$iid")" ;;
+      1) printf '  = run %s (pid %s) — terminé de lui-même entre-temps\n' "$id" "$pid" ;;
+      # Ni SIGKILL ni taskkill n'en sont venus à bout : le dire vaut mieux que laisser croire que la
+      # place est nette. On démarre quand même — refuser bloquerait sur une cause que l'utilisateur
+      # ne peut pas lever d'ici.
+      *) printf '  %s⚠%s run %s (pid %s) — TOUJOURS VIVANT malgré l'\''arrêt, deux runs vont cohabiter\n' \
+           "$C_R" "$C_0" "$id" "$pid" ;;
+    esac
+  done <<< "$(pilotes_vivants "$ORCH_DIR" "$exclu")"
+
+  if [ "$n" -gt 0 ]; then
+    printf '  Journaux intacts : ces runs restent reprenables (run.sh --resume <id>).\n'
+    printf '  Ce qu'\''une session interrompue avait commencé dort dans son worktree — status.sh --run-id <id>.\n\n'
+  fi
+  return "$n"
 }
 
 # travail_en_attente <dest> : « <fichiers non commités> <commits hors origin/main> » du worktree.
@@ -864,6 +928,18 @@ if [ -n "$LIRE_RESULTAT" ]; then
   exit 0
 fi
 
+# Ne faire QUE tuer (#213) : ni glab, ni plan, ni répertoire de run. C'est le geste de quelqu'un qui
+# veut la place nette sans lancer quoi que ce soit — et la couture par laquelle les tests vérifient
+# l'arrêt sans dérouler un run entier.
+if [ "$TUER_SEUL" = 1 ]; then
+  # La fonction rend le NOMBRE de runs arrêtés : elle « réussit » donc quand elle n'a rien eu à
+  # faire, et c'est le seul cas où il reste quelque chose à dire (elle est muette pour le reste).
+  if tue_les_runs_en_vol; then
+    printf 'Aucun run en cours — rien à arrêter.\n'
+  fi
+  exit 0
+fi
+
 # --- Préflight ---------------------------------------------------------------------------------------
 gl_require_glab || exit 1
 
@@ -878,6 +954,21 @@ if [ "$DRY" = 0 ] && ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
 fi
 
 if arret_demande; then exit 0; fi
+
+# --- La place nette : un seul run à la fois (#213) ----------------------------------------------------
+# AVANT la résolution de `--resume`, et l'ordre n'est pas indifférent : `status.sh --reprenables`
+# écarte les runs qui écrivent encore, donc un run tué juste après aurait été ignoré par
+# « --resume » sans argument — celui-là même qu'on vient d'interrompre, et le plus probablement visé.
+# Tué d'abord, il redevient candidat immédiatement : `status.sh` lit la carte `pid`, et un pilote
+# mort ne se cache plus derrière son silence récent.
+#
+# `--dry-run` n'y passe pas : il n'exécute rien, il n'a donc aucune place à faire.
+if [ "$DRY" = 0 ] && [ "$SANS_KILL" = 0 ]; then
+  tue_les_runs_en_vol "$RUN_ID"
+elif [ "$SANS_KILL" = 1 ] && [ "$DRY" = 0 ]; then
+  printf '%s--sans-kill%s : les runs en cours sont laissés en place — deux pilotes peuvent cohabiter.\n' \
+    "$C_Y" "$C_0"
+fi
 
 # --- Reprise d'un run qui ne s'est pas terminé (#204) -------------------------------------------------
 # Reprendre, c'est REJOUER LE PLAN d'un run interrompu — pas en recalculer un. Le backlog a pu bouger
@@ -948,7 +1039,8 @@ renonce_au_run() {
     [ -e "$f" ] || continue
     # `reprise-de` est posé avec le répertoire, avant qu'on sache s'il y aura quelque chose à
     # traiter : le compter comme une trace de travail retiendrait le vestige d'une reprise à vide.
-    case "${f##*/}" in plan.tsv | reprise-de) ;; *) return 1 ;; esac
+    # La carte `pid` (#213) est dans le même cas — elle décrit le processus, pas son travail.
+    case "${f##*/}" in plan.tsv | reprise-de | pid) ;; *) return 1 ;; esac
   done
   rm -rf "$RUN_DIR" 2>/dev/null || return 1
   return 0
@@ -1059,6 +1151,19 @@ if [ "$DETACH" = 1 ]; then
   printf 'Si le run s'\''arrête avec lui, le plan reste : la commande « reprendre » le rejoue, les tickets\n'
   printf 'déjà livrés étant sautés d'\''eux-mêmes.\n'
   exit 0
+fi
+
+# --- La carte du pilote (#213) ------------------------------------------------------------------------
+# ICI et pas plus haut : au-dessus, en mode détaché, c'est le processus APPELANT qui passait — sa
+# carte serait périmée à la seconde où il rend la main, et le prochain run croirait avoir un mort à
+# tuer. À partir de cette ligne, le processus courant EST le run.
+#
+# Le retrait passe par un trap : une sortie normale, un `exit` d'erreur ou un Ctrl-C laissent la
+# place nette. Un SIGKILL, lui, n'exécute aucun trap — d'où la vérification d'identité côté
+# `pilote_vivant`, qui est la vraie garantie. Une carte périmée ne fait jamais tuer personne.
+if [ "$DRY" = 0 ]; then
+  pilote_ecrit "$RUN_DIR" || printf 'run.sh : carte du pilote non écrite — ce run ne pourra pas être arrêté par un autre.\n' >&2
+  trap 'pilote_retire "$RUN_DIR"' EXIT
 fi
 
 # --- Le plan, figé une fois --------------------------------------------------------------------------

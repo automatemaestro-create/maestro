@@ -53,6 +53,7 @@ SCRIPTS = (
     "scripts/orchestrate/guard.sh",
     "scripts/orchestrate/run.sh",
     "scripts/orchestrate/status.sh",
+    "scripts/orchestrate/pilote.sh",
     "scripts/orchestrate/journal.sh",
     "scripts/orchestrate/settings.run.json",
 )
@@ -2001,7 +2002,11 @@ def test_un_run_interrompu_est_reprenable_avec_ce_qu_il_lui_reste(depot: Depot) 
 
 
 def test_un_run_qui_ecrit_encore_n_est_pas_propose_a_la_reprise(depot: Depot) -> None:
-    """Le seul moyen de distinguer un run vivant d'un run mort, faute de PID : le silence."""
+    """Sans carte de pilote (journal d'avant #213), le silence reste le seul témoin — et il vaut.
+
+    Le repli n'est pas décoratif : les journaux déjà sur disque n'ont pas de carte, et un run tué
+    par SIGKILL laisse la sienne sans que personne la retire.
+    """
     depot.ticket(131, "Ticket en cours", statut="En cours")
     _run_dir(
         depot, "20260730-100000",
@@ -2262,6 +2267,251 @@ def test_reprendre_un_run_dans_son_propre_repertoire_est_refuse(depot: Depot) ->
     assert r.returncode == 2
     assert "son bilan serait écrasé" in r.stderr
     assert (source / "resume.tsv").read_text(encoding="utf-8") == avant
+
+
+# =====================================================================================
+# Un seul run à la fois — carte du pilote et arrêt des runs en vol (#213)
+# =====================================================================================
+#
+# Ces tests-là lancent de VRAIS processus (un `sleep` qui pose sa carte comme un run le ferait) et
+# les tuent pour de bon : c'est le seul moyen de vérifier qu'un arrêt arrête. Aucun n'appelle Claude
+# ni GitLab — `--tuer-les-runs` ne touche ni au plan ni au réseau.
+
+
+def _pilote_factice(depot: Depot, dossier: Path, duree: int = 120) -> subprocess.Popen:
+    """Un processus bien vivant qui pose SA carte dans `dossier`, comme le ferait un run.
+
+    La carte est écrite par `pilote.sh` lui-même, pas fabriquée à la main : un test qui inventerait
+    le format ne vérifierait plus que sa propre invention (et la naissance, en ticks, ne se devine
+    pas depuis Python).
+    """
+    script = depot.racine.parent / "bin" / "faux-pilote"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        f'. "{depot.racine}/scripts/orchestrate/pilote.sh"\n'
+        'pilote_ecrit "$1"\n'
+        'sleep "$2"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    script.chmod(0o755)
+    proc = subprocess.Popen(
+        [BASH, str(script), str(dossier), str(duree)],
+        env=depot.env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    # On attend une carte COMPLÈTE, pas seulement présente : le fichier apparaît dès l'ouverture de
+    # la redirection, et un test qui le relirait dans cette fenêtre verrait ses retouches écrasées
+    # par la fin de l'écriture. `hote` est le dernier champ posé.
+    carte = dossier / "pid"
+    for _ in range(200):
+        if carte.exists() and "hote=" in carte.read_text(encoding="utf-8", errors="replace"):
+            return proc
+        time.sleep(0.05)
+    proc.kill()
+    raise AssertionError("le pilote factice n'a jamais posé sa carte")
+
+
+def _carte(dossier: Path, **remplacements: str) -> None:
+    """Réécrit la carte du pilote en changeant les champs demandés (PID recyclé, autre hôte…)."""
+    champs = dict(
+        ligne.split("=", 1)
+        for ligne in (dossier / "pid").read_text(encoding="utf-8").splitlines()
+        if "=" in ligne
+    )
+    champs.update(remplacements)
+    (dossier / "pid").write_text(
+        "".join(f"{c}={v}\n" for c, v in champs.items()), encoding="utf-8", newline="\n"
+    )
+
+
+def test_un_run_en_vol_est_arrete_avant_qu_un_autre_demarre(depot: Depot) -> None:
+    """Le cœur de #213 : le processus est réellement tué, pas seulement signalé.
+
+    On tue par `--tuer-les-runs`, qui est exactement le geste que tout démarrage fait d'office —
+    sans avoir à dérouler un run entier pour l'observer.
+    """
+    dossier = _run_dir(depot, "20260803-171434", [(1, 130, "-", "haute"), (2, 131, "-", "haute")],
+                       resume=[(130, "OK", 99, 600, "3.50", "-")], sessions=(131,))
+    proc = _pilote_factice(depot, dossier)
+    try:
+        r = depot.lance("run.sh", "--tuer-les-runs")
+        assert r.returncode == 0, r.stderr
+        assert proc.wait(timeout=30) is not None, "le pilote tourne toujours après son arrêt"
+        assert "20260803-171434" in r.stdout, "le run arrêté est nommé"
+        assert "#131" in r.stdout, "le ticket en vol est nommé : c'est lui qu'on interrompt"
+        assert "--resume" in r.stdout, "un run tué reste reprenable, et le rapport doit le dire"
+        assert (dossier / "plan.tsv").exists() and (dossier / "resume.tsv").exists(), \
+            "tuer un run ne touche pas à son journal"
+    finally:
+        proc.kill()
+
+
+def test_un_run_tue_redevient_reprenable_immediatement(depot: Depot) -> None:
+    """Sans la carte, le run qu'on vient de tuer resterait invisible un quart d'heure.
+
+    C'est ce qui rend cohérent l'enchaînement « je tue, puis je reprends » : `--reprenables` écarte
+    les runs qui écrivent encore, et celui-là vient tout juste d'écrire.
+    """
+    dossier = _run_dir(depot, "20260803-171434", [(1, 130, "-", "haute"), (2, 131, "-", "haute")],
+                       resume=[(130, "OK", 99, 600, "3.50", "-")], sessions=(131,))
+    proc = _pilote_factice(depot, dossier)
+    try:
+        assert _reprenables(depot) == [], "un run vivant ne se reprend pas : il travaille"
+        depot.lance("run.sh", "--tuer-les-runs")
+        proc.wait(timeout=30)
+        lignes = _reprenables(depot)
+        assert [ligne[0] for ligne in lignes] == ["20260803-171434"], \
+            "pilote mort : reprenable tout de suite, sans attendre que le silence s'installe"
+        assert lignes[0][1] == "interrompu"
+    finally:
+        proc.kill()
+
+
+def test_un_pilote_vivant_n_est_jamais_propose_a_la_reprise(depot: Depot) -> None:
+    """La carte l'emporte sur le silence : une session qui réfléchit longuement reste vivante."""
+    dossier = _run_dir(depot, "20260803-171434", [(1, 130, "-", "haute")], resume=[],
+                       sessions=(130,), age=4000)
+    proc = _pilote_factice(depot, dossier)
+    try:
+        assert _reprenables(depot) == [], \
+            "4000 s sans une écriture, mais le pilote répond : ce run n'est pas à reprendre"
+        r = depot.lance("status.sh", "--list")
+        assert "en cours" in r.stdout, "un run vivant se voit dans la liste"
+    finally:
+        proc.kill()
+
+
+def test_un_pid_recycle_n_est_jamais_tue(depot: Depot) -> None:
+    """Le garde-fou qui protège les processus des autres : le numéro seul ne prouve rien.
+
+    Un run tué par SIGKILL laisse sa carte derrière lui (aucun trap ne survit), et son numéro finit
+    par désigner quelqu'un d'autre. La naissance du processus, elle, ne se recycle pas.
+    """
+    dossier = _run_dir(depot, "20260803-171434", [(1, 130, "-", "haute")], resume=[])
+    proc = _pilote_factice(depot, dossier)
+    try:
+        _carte(dossier, naissance="999999999")
+        r = depot.lance("run.sh", "--tuer-les-runs")
+        assert r.returncode == 0, r.stderr
+        assert "Aucun run en cours" in r.stdout
+        assert proc.poll() is None, "un processus dont l'identité ne colle pas doit être épargné"
+    finally:
+        proc.kill()
+
+
+def test_une_carte_orpheline_ne_fait_ni_erreur_ni_degat(depot: Depot) -> None:
+    """Carte laissée par un run mort depuis longtemps : rien à tuer, et ce n'est pas une panne."""
+    dossier = _run_dir(depot, "20260803-171434", [(1, 130, "-", "haute")], resume=[])
+    proc = _pilote_factice(depot, dossier)
+    proc.kill()
+    proc.wait(timeout=30)
+    r = depot.lance("run.sh", "--tuer-les-runs")
+    assert r.returncode == 0, r.stderr
+    assert "Aucun run en cours" in r.stdout
+
+
+def test_un_run_qui_demarre_pose_sa_carte_et_la_retire_en_partant(depot: Depot) -> None:
+    """La carte vit le temps du run : posée avant le premier ticket, retirée à la sortie.
+
+    Le bouchon `claude` relève ce qui est sur le disque PENDANT la session — seul moment où la
+    carte du run courant existe.
+    """
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _claude_stub(depot, f"""
+        cat "$MAESTRO_STUB_WORKTREE_DIR"/.maestro/orchestrate/*/pid > "$MAESTRO_FIXTURES/carte.txt"
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "carte",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    pendant = (depot.fixtures / "carte.txt").read_text(encoding="utf-8")
+    assert "pid=" in pendant and "naissance=" in pendant, \
+        "un run en cours doit être identifiable, sans quoi personne ne peut l'arrêter"
+    assert not (depot.racine / ".maestro/orchestrate/carte/pid").exists(), \
+        "un run qui se termine proprement ne laisse pas sa carte derrière lui"
+
+
+def test_un_run_ne_se_tue_pas_lui_meme(depot: Depot) -> None:
+    """Le garde-fou de base : le run courant est exclu du tri, sans quoi il se suiciderait."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "seul",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    resume = (depot.racine / ".maestro/orchestrate/seul/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tOK" in resume, "le run est allé jusqu'au bout de son propre plan"
+
+
+def test_sans_kill_laisse_cohabiter_les_runs(depot: Depot) -> None:
+    """L'échappatoire explicite — et elle prévient, parce qu'elle rend le doublon possible."""
+    dossier = _run_dir(depot, "20260803-171434", [(1, 131, "-", "haute")], resume=[],
+                       sessions=(131,))
+    proc = _pilote_factice(depot, dossier)
+    try:
+        depot.ticket(130, "Ticket à traiter")
+        depot.mr("feat/130-ticket-a-traiter", "opened")
+        claude = _claude_stub(depot, f"""
+            printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+            printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+            exit 0
+        """)
+        plan = _plan(depot, [(1, 130, "-", "moyenne")])
+        r = depot.lance("run.sh", "--plan", plan, "--run-id", "cohabite", "--sans-kill",
+                        env={"MAESTRO_CLAUDE_BIN": claude})
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert proc.poll() is None, "--sans-kill ne tue rien"
+        assert "sans-kill" in r.stdout, "le doublon assumé se dit, il ne se subit pas"
+    finally:
+        proc.kill()
+
+
+def test_un_run_neuf_arrete_ce_qui_tourne_avant_de_partir(depot: Depot) -> None:
+    """Le geste est bien câblé dans un démarrage ordinaire, pas seulement dans `--tuer-les-runs`."""
+    dossier = _run_dir(depot, "20260803-171434", [(1, 131, "-", "haute")], resume=[],
+                       sessions=(131,))
+    proc = _pilote_factice(depot, dossier)
+    try:
+        depot.ticket(130, "Ticket à traiter")
+        depot.mr("feat/130-ticket-a-traiter", "opened")
+        claude = _claude_stub(depot, f"""
+            printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+            printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+            exit 0
+        """)
+        plan = _plan(depot, [(1, 130, "-", "moyenne")])
+        r = depot.lance("run.sh", "--plan", plan, "--run-id", "neuf",
+                        env={"MAESTRO_CLAUDE_BIN": claude})
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert proc.wait(timeout=30) is not None
+        assert "20260803-171434" in r.stdout, "le run arrêté est nommé avant que le nouveau parte"
+    finally:
+        proc.kill()
+
+
+def test_un_dry_run_ne_tue_rien(depot: Depot) -> None:
+    """`--dry-run` n'exécute rien : il n'a aucune place à faire, et ne doit pas en faire."""
+    dossier = _run_dir(depot, "20260803-171434", [(1, 131, "-", "haute")], resume=[],
+                       sessions=(131,))
+    proc = _pilote_factice(depot, dossier)
+    try:
+        plan = _plan(depot, [(1, 130, "-", "moyenne")])
+        r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "essai")
+        assert r.returncode == 0, r.stderr
+        assert proc.poll() is None, "regarder un plan n'arrête pas un run"
+    finally:
+        proc.kill()
 
 
 # =====================================================================================

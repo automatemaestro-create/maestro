@@ -26,13 +26,18 @@
 #                   que `run.sh` laisse une fois le ticket compacté (#198) : la date ne bouge pas
 #   run.log         la sortie de la console, pour un run détaché
 #
-# --- « En cours » se déduit, il ne se lit pas ---------------------------------------------------------
-# `run.sh` n'écrit pas de PID et ne dit pas « je suis vivant » : le ticket en cours est donc le
-# premier du plan qui a des fichiers de session SANS ligne de bilan. Un run tué au milieu laisse
-# exactement la même trace qu'un run qui travaille — d'où la ligne « activité », qui date la dernière
-# écriture (répertoire du run ET worktree du ticket) et signale le silence au-delà de
-# MAESTRO_ORCHESTRATE_SILENCE. C'est une déduction honnête, pas une certitude : elle est présentée
-# comme telle plutôt que maquillée en verdict.
+# --- « En cours » se lit quand c'est possible, se déduit sinon -----------------------------------------
+# Depuis #213, un run laisse dans son journal la carte d'identité de son pilote (`pid` : PID, WINPID,
+# naissance, hôte) : `pilote_vivant` répond alors par oui ou par non, sans interprétation — c'est
+# cette certitude qui permet de TUER un run avant d'en démarrer un autre. Le ticket en cours, lui,
+# reste déduit du plan (le premier qui a des fichiers de session SANS ligne de bilan).
+#
+# La déduction d'avant reste en place, et il ne faut pas la retirer : les journaux écrits avant #213
+# n'ont pas de carte, et un run tué par SIGKILL laisse la sienne derrière lui (aucun trap ne survit à
+# un SIGKILL — d'où la vérification d'identité, qui la démasque). Sans carte exploitable, on retombe
+# donc sur la ligne « activité » : la date de la dernière écriture (répertoire du run ET worktree du
+# ticket), signalée au-delà de MAESTRO_ORCHESTRATE_SILENCE. C'est une déduction honnête, pas une
+# certitude : elle est présentée comme telle plutôt que maquillée en verdict.
 #
 # --- Le signal de progression le plus fiable : le worktree --------------------------------------------
 # Pendant une session, `<iid>.json` reste vide (le CLI n'écrit son résultat qu'à la fin) : ce qui dit
@@ -44,6 +49,8 @@ set -uo pipefail
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/gitlab/lib.sh
 . "$RACINE/scripts/gitlab/lib.sh"
+# shellcheck source=scripts/orchestrate/pilote.sh
+. "$RACINE/scripts/orchestrate/pilote.sh"
 
 ORCH_DIR="$RACINE/.maestro/orchestrate"
 STOP="$ORCH_DIR/STOP"
@@ -413,6 +420,8 @@ affiche_bilan() { # <run-dir>
 #   R_COURANT     iid du ticket en vol (vide s'il n'y en a pas)
 #   R_ACTIVITE    dernière écriture du journal, en secondes Unix
 #   R_CODE        code de sortie laissé par le lanceur, s'il en a laissé un
+#   R_PILOTE      vivant | mort | inconnu — ce que dit la carte `pid` (#213), « inconnu » quand il
+#                 n'y en a pas (journal d'avant ce dispositif)
 #
 # L'affichage les lit, la liste des runs reprenables aussi, et `run.sh --resume` s'y branche par
 # `--reprenables` : deux formules qui divergeraient se remarqueraient trop tard.
@@ -422,12 +431,14 @@ affiche_bilan() { # <run-dir>
 # vol décalait toutes les colonnes suivantes d'un cran. Corollaire à connaître : cette fonction doit
 # être appelée DIRECTEMENT, jamais dans un `$( )`, qui perdrait ses affectations avec son sous-shell.
 #
-# Faute de PID, l'état se DÉDUIT (cf. l'en-tête) : le ticket en cours d'abord, le code de sortie
-# laissé par le lanceur ensuite, la complétude du bilan, et à défaut la fraîcheur des écritures. Un
-# run tué EN PLEIN TICKET reste donc « en-cours » : son témoin de session est là, personne n'a écrit
-# de code de sortie. C'est la dernière écriture qui le démasque — et c'est à l'appelant d'en tirer
-# les conséquences, pas à cette fonction de trancher à sa place.
-R_ETAT=""; R_NB_PLAN=0; R_NB_TRAITES=0; R_COURANT=""; R_ACTIVITE=""; R_CODE=""
+# L'état se DÉDUIT (cf. l'en-tête) : le ticket en cours d'abord, le code de sortie laissé par le
+# lanceur ensuite, la complétude du bilan, et à défaut la fraîcheur des écritures. Un run tué EN
+# PLEIN TICKET porterait le visage d'un run qui travaille — son témoin de session est là, personne
+# n'a écrit de code de sortie —, et c'est là que la carte du pilote tranche : `R_PILOTE = mort`
+# requalifie « en-cours » en « interrompu », sans attendre que le silence s'installe. Sans carte
+# (`inconnu`), on en reste à la dernière écriture, et c'est à l'appelant d'en tirer les
+# conséquences, pas à cette fonction de trancher à sa place.
+R_ETAT=""; R_NB_PLAN=0; R_NB_TRAITES=0; R_COURANT=""; R_ACTIVITE=""; R_CODE=""; R_PILOTE=inconnu
 etat_du_run() {
   # `dir` sur sa propre ligne : bash développe TOUS les mots d'un `local` avant de créer les
   # variables, donc « local id="$1" dir="$ORCH_DIR/$id" » lirait l'`id` de l'appelant (inexistant
@@ -446,10 +457,23 @@ etat_du_run() {
     R_CODE="$(grep -oE -- '--- run .* terminé \(code [0-9]+\)' "$dir/run.log" 2>/dev/null | tail -1 | grep -oE '[0-9]+\)$' | tr -d ')')"
   fi
 
+  # La carte du pilote (#213). « inconnu » n'est pas un échec : c'est un journal d'avant le
+  # dispositif, ou un run qui a fini et fait son ménage.
+  if [ -e "$(pilote_fichier "$dir")" ]; then
+    if pilote_vivant "$dir"; then R_PILOTE=vivant; else R_PILOTE=mort; fi
+  else
+    R_PILOTE=inconnu
+  fi
+
+  # L'ordre dit la hiérarchie des preuves : ce que le run a écrit avant tout (code de sortie, bilan
+  # complet — un plan soldé reste soldé, même si le pilote est mort depuis), la carte ensuite, la
+  # fraîcheur des écritures en dernier recours.
   if [ "$R_NB_PLAN" -eq 0 ]; then R_ETAT=vide
   elif [ -n "$R_CODE" ]; then R_ETAT=termine
-  elif [ -n "$R_COURANT" ]; then R_ETAT=en-cours
   elif [ "$R_NB_TRAITES" -ge "$R_NB_PLAN" ]; then R_ETAT=termine
+  elif [ "$R_PILOTE" = mort ]; then R_ETAT=interrompu
+  elif [ "$R_PILOTE" = vivant ]; then R_ETAT=en-cours
+  elif [ -n "$R_COURANT" ]; then R_ETAT=en-cours
   elif [ -n "$R_ACTIVITE" ] && [ $(( $(date +%s) - R_ACTIVITE )) -lt 300 ]; then R_ETAT=en-cours
   else R_ETAT=interrompu
   fi
@@ -461,10 +485,15 @@ etat_du_run() {
 #   run-id <TAB> etat <TAB> nb_restants <TAB> debut-epoch <TAB> silence-s <TAB> iid-en-cours
 #
 # « Reprenable » tient en deux conditions : il reste des tickets sans verdict au plan, ET le run ne
-# tourne plus. La seconde ne se lit nulle part — pas de PID — et un run tué en plein ticket garderait
-# le visage d'un run qui travaille pour toujours. On l'écarte donc sur le SILENCE : plus rien d'écrit
-# depuis MAESTRO_ORCHESTRATE_SILENCE, ni dans le journal ni dans le worktree du ticket. La colonne
-# dit ce qu'il en est, pour que l'appelant PRÉVIENNE au lieu d'affirmer.
+# tourne plus. La seconde se LIT quand le run a laissé sa carte (#213) — pilote mort, le run est
+# reprenable à la seconde même, sans attendre qu'un silence s'installe. C'est ce qui rend cohérent
+# l'enchaînement « je tue les runs en vol, puis je reprends le plus récent » : sans la carte, le run
+# qu'on vient d'interrompre resterait invisible ici pendant un quart d'heure, écarté pour cause
+# d'écritures trop fraîches.
+#
+# Sans carte exploitable (journal d'avant #213), on retombe sur le SILENCE : plus rien d'écrit depuis
+# MAESTRO_ORCHESTRATE_SILENCE, ni dans le journal ni dans le worktree du ticket. La colonne dit ce
+# qu'il en est, pour que l'appelant PRÉVIENNE au lieu d'affirmer.
 #
 # Sortie vide = rien à reprendre, et c'est un cas NORMAL : le code de sortie reste 0. GitLab n'est
 # jamais interrogé (`--reprenables` force `--no-gitlab`) — la question « que reste-t-il à faire ? »
@@ -488,10 +517,17 @@ runs_reprenables() {
     [ -n "$silence" ] || silence="$R_ACTIVITE"
     if [ -n "$silence" ]; then silence=$((maintenant - silence)); else silence=-1; fi
 
-    # Un run qui écrit encore n'est pas à reprendre : on le laisse travailler.
-    if [ "$R_ETAT" = "en-cours" ] && [ "$silence" -ge 0 ] && [ "$silence" -lt "$SEUIL_SILENCE" ]; then
-      continue
-    fi
+    # Un run qui tourne encore n'est pas à reprendre : on le laisse travailler. La carte tranche
+    # quand elle est là ; sinon c'est le silence qui sert de témoin, comme avant #213.
+    case "$R_PILOTE" in
+      vivant) continue ;;
+      mort) ;;
+      *)
+        if [ "$R_ETAT" = "en-cours" ] && [ "$silence" -ge 0 ] && [ "$silence" -lt "$SEUIL_SILENCE" ]; then
+          continue
+        fi
+        ;;
+    esac
 
     debut="$(debut_du_run "$id" "$ORCH_DIR/$id")" || debut=""
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$R_ETAT" "$restants" "${debut:-0}" "$silence" "$R_COURANT"
@@ -507,9 +543,11 @@ affiche_run() {
   ETAT="$R_ETAT"; nb_plan="$R_NB_PLAN"; nb_traites="$R_NB_TRAITES"
   courant="$R_COURANT"; activite="$R_ACTIVITE"; code="$R_CODE"
 
-  # Un run « en cours » dont plus rien ne bouge est le cas qu'on doit repérer d'un coup d'œil : sans
-  # PID à interroger, c'est la seule chose qui distingue une session qui travaille d'une session
-  # morte, et l'en-tête doit le porter autant que la ligne « activité ».
+  # Un run « en cours » dont plus rien ne bouge est le cas qu'on doit repérer d'un coup d'œil.
+  # Quand la carte du pilote est là (#213), la question ne se pose plus — un run vivant est vivant,
+  # même s'il réfléchit en silence depuis vingt minutes — et on ne calcule le silence que pour le
+  # dire au passage. Sans carte, c'est encore la seule chose qui distingue une session qui travaille
+  # d'une session morte, et l'en-tête doit le porter autant que la ligne « activité ».
   silence=""
   if [ "$ETAT" = "en-cours" ] && [ -n "$courant" ]; then
     silence="$(activite_du_ticket "$dir" "$courant")" || silence=""
@@ -521,9 +559,18 @@ affiche_run() {
 
   case "$ETAT" in
     en-cours)   libelle="${C_G}en cours${C_0}"
-                [ -n "$silence" ] && libelle="${C_Y}en cours ?${C_0} — rien d'écrit depuis $(duree_lisible "$silence")" ;;
+                [ -n "$silence" ] && libelle="${C_Y}en cours ?${C_0} — rien d'écrit depuis $(duree_lisible "$silence")"
+                # La carte lève le « ? » : le pilote répond, on le dit et on ne suppose plus rien —
+                # un silence prolongé n'est plus qu'une information de plus, pas un soupçon.
+                if [ "$R_PILOTE" = vivant ]; then
+                  libelle="${C_G}en cours${C_0} — pilote vivant (pid $(pilote_champ "$dir" pid))"
+                  [ -n "$silence" ] && libelle="$libelle, rien d'écrit depuis $(duree_lisible "$silence")"
+                fi ;;
     termine)    libelle="terminé${code:+ (code $code)}" ;;
-    interrompu) libelle="${C_Y}interrompu${C_0} — plus rien n'a été écrit depuis $(duree_lisible "$(( $(date +%s) - ${activite:-0} ))")" ;;
+    interrompu) libelle="${C_Y}interrompu${C_0} — plus rien n'a été écrit depuis $(duree_lisible "$(( $(date +%s) - ${activite:-0} ))")"
+                # Un pilote mort avec un ticket en vol : le cas d'un run tué (par un autre run, par
+                # la fermeture de sa console). Le dire évite de faire chercher un processus fantôme.
+                [ "$R_PILOTE" = mort ] && libelle="${C_Y}interrompu${C_0} — le pilote (pid $(pilote_champ "$dir" pid)) n'est plus là" ;;
     vide)       libelle="${C_D}sans plan${C_0} — répertoire créé, plan jamais écrit" ;;
   esac
 
@@ -612,6 +659,8 @@ if [ "$LISTE" = 1 ]; then
     d="$(debut_du_run "$id" "$dir")" || d=""
     marque=""
     printf '%s\n' "$reprenables" | cut -f1 | grep -qxF "$id" && marque="  ${C_Y}↻ reprenable${C_0}"
+    # Un run vivant se voit tout de suite : c'est celui qu'un nouveau run arrêterait (#213).
+    pilote_vivant "$dir" && marque="  ${C_G}● en cours${C_0}"
     printf '  %-18s %-17s %2s ticket(s) · %s traité(s)%s\n' \
       "$id" "$([ -n "$d" ] && horodatage "$d")" "$np" "$nt" "$marque"
   done <<< "$liste"

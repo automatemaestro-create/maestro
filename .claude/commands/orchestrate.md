@@ -82,11 +82,19 @@ toi-même.
    description. Si la question (a) est posée en même temps, précise dans l'intitulé que ce choix ne
    vaut **que** pour un run neuf — une reprise rejoue le plan de son run, milestone compris.
 
-   Deux nuances à porter, pas à taire : un candidat d'état `en-cours` est un run que **rien ne
-   prouve mort** (`run.sh` n'écrit pas de PID, l'état se déduit du silence) — dis-le, et si le
-   silence est court, propose d'abord `bash scripts/orchestrate/status.sh --run-id <id>`. Et
-   reprendre ne **fusionne** rien : le journal du run repris reste intact, le nouveau porte un
-   fichier `reprise-de` qui dit de qui il est la suite.
+   **Dis ce qui va être arrêté.** Lancer ou reprendre commence par **tuer les runs encore en vol**
+   (#213, docs/10 §11.9) : `bash scripts/orchestrate/status.sh --list` marque d'un `● en cours`
+   ceux qui tournent. S'il y en a, nomme-les dans la question — c'est une conséquence du feu vert,
+   pas une surprise à découvrir dans la console — en disant ce que ça coûte (la session en cours
+   est interrompue, son travail non commité reste dans le worktree de son ticket) et ce que ça ne
+   coûte pas (le journal est intact, le run reste reprenable). `--sans-kill` existe pour les
+   laisser cohabiter, mais ne le propose pas de toi-même : deux runs brûlent le même quota.
+
+   Deux nuances à porter, pas à taire : un candidat d'état `en-cours` **sans carte de pilote**
+   (journal d'avant #213) est un run que rien ne prouve mort — l'état s'y déduit du silence —,
+   dis-le, et si le silence est court, propose d'abord `bash scripts/orchestrate/status.sh
+   --run-id <id>`. Et reprendre ne **fusionne** rien : le journal du run repris reste intact, le
+   nouveau porte un fichier `reprise-de` qui dit de qui il est la suite.
 
    Une fois le go donné — et si le milestone retenu n'est pas celui dont le plan a été montré au
    point 1, **montre d'abord le sien** (`--dry-run --milestone "<titre>"`, gratuit) :
@@ -163,10 +171,12 @@ Ensuite seulement, apporte ce que la sortie ne dit pas :
    se termine par une session ouverte là, jusqu'à `/ticket-ship` — surtout pas en repartant de
    zéro. Une raison en **« sans rien produire (worktree propre) »** est l'inverse : il n'y a rien à
    récupérer, le ticket se relance tel quel.
-2. Si l'en-tête annonce **« en cours ? — rien d'écrit depuis … »**, dis franchement que c'est une
-   **déduction** : `run.sh` n'écrit pas de PID, l'état se lit sur la date des dernières écritures du
-   run et de son worktree. Une session qui réfléchit longuement et une session morte laissent la
-   même trace ; ce qui tranche, c'est le **flux d'activité** — `tail -f
+2. **« pilote vivant (pid …) »** est une certitude, pas une déduction (#213) : le run tourne, même
+   s'il est silencieux depuis vingt minutes. En revanche, si l'en-tête annonce **« en cours ? —
+   rien d'écrit depuis … »**, c'est qu'aucune carte de pilote n'est exploitable (journal d'avant
+   #213) : dis franchement que l'état se lit alors sur la date des dernières écritures du run et de
+   son worktree. Une session qui réfléchit longuement et une session morte y laissent la même
+   trace ; ce qui tranche, c'est le **flux d'activité** — `tail -f
    .maestro/orchestrate/<run-id>/run.log` sur un run détaché, ou `<run-id>/<iid>.jsonl` pour le
    détail brut de la session en cours.
 3. Si des tickets ont réussi, enchaîne sur la **file de revue** :
@@ -204,7 +214,12 @@ Ce que la reprise fait, et qu'il faut savoir dire :
   `reprise-de` avec l'id de son prédécesseur, et `status.sh` l'affiche en en-tête.
 
 Avant de lancer, dis combien de tickets restent — `bash scripts/orchestrate/status.sh --run-id
-<run-id>` l'imprime, et `--list` retrouve l'id (les runs reprenables y sont marqués `↻`).
+<run-id>` l'imprime, et `--list` retrouve l'id (les runs reprenables y sont marqués `↻`, ceux qui
+tournent encore d'un `● en cours`).
+
+**Une reprise tue, elle aussi, ce qui tourne encore** (#213) : c'est le même geste qu'au démarrage
+d'un run neuf, et il vaut y compris quand la cible de la reprise **est** le run en vol — le tuer
+puis rejouer son plan est précisément ce qu'on veut. Annonce-le avant de lancer.
 
 ## Diagnostic d'une reprise après limite d'usage
 

@@ -1459,10 +1459,10 @@ le plan), `--budget <usd>` par ticket, `--timeout <durée>` par ticket, et le fi
 Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<iid>.session`
 (l'UUID), `<iid>.jsonl` (le flux d'activité complet), `<iid>.json` (le seul résultat final — coût,
 `permission_denials`), `<iid>.resultat.txt` (le même, **en clair**), `<iid>.log` (stderr), et
-`resume.tsv` (une ligne par ticket : verdict, MR, durée, coût, raison). Un run lancé avec
-`--detach` y ajoute `lancer.sh` (ce qui a été lancé) et `run.log` (toute la sortie de la console,
-flux d'activité compris) ; un run de **reprise** (§11.8), `reprise-de` — l'id du run dont il
-continue le plan.
+`resume.tsv` (une ligne par ticket : verdict, MR, durée, coût, raison) et `pid` (la carte du
+pilote — §11.9 —, présente le temps du run). Un run lancé avec `--detach` y ajoute `lancer.sh` (ce
+qui a été lancé) et `run.log` (toute la sortie de la console, flux d'activité compris) ; un run de
+**reprise** (§11.8), `reprise-de` — l'id du run dont il continue le plan.
 
 **Après un run, le résultat d'une session se lit à l'œil nu** (#180). `<iid>.json` est le premier
 fichier qu'on ouvre après un échec, et il est écrit sur **une seule ligne minifiée** — 13 Ko d'une
@@ -1508,8 +1508,9 @@ bash scripts/orchestrate/journal.sh gc           # le ménage, à la main
 ```
 
 **Rien n'est retiré sous les pieds d'un run** : ni celui qui fait le ménage, ni un run dont la
-dernière écriture date de moins de `MAESTRO_ORCHESTRATE_SILENCE` (défaut 900 s). Faute de PID,
-l'activité se **déduit** ici comme dans `status.sh` (§11.5), et le doute profite au journal. Le
+dernière écriture date de moins de `MAESTRO_ORCHESTRATE_SILENCE` (défaut 900 s). L'activité se
+**déduit** ici du silence — le ménage n'a pas besoin de la carte du pilote (§11.9) pour être
+prudent, et le doute profite au journal. Le
 ménage est **best-effort** de bout en bout — son échec ne fait jamais échouer un run —, et
 `MAESTRO_ORCHESTRATE_JOURNAL_GC=0` le désactive.
 
@@ -1577,14 +1578,17 @@ Deux partis pris valent d'être connus :
 - **Le worktree est le meilleur signal de progression.** Pendant une session, `<iid>.json` reste
   vide — le CLI n'écrit son résultat qu'à la fin. Ce qui dit vraiment que ça avance, ce sont les
   commits et les fichiers modifiés du worktree du ticket, lus avec git, en local.
-- **« En cours » se déduit, il ne se lit pas.** `run.sh` n'écrit pas de PID : le ticket en cours est
-  le premier du plan qui a un `<iid>.session` sans ligne dans `resume.tsv`. Un run tué au milieu
-  laisse exactement la même trace qu'un run qui travaille — d'où la ligne **activité**, qui date la
-  dernière écriture (répertoire du run *et* index git du worktree) et bascule l'en-tête en
-  « en cours ? » au-delà de 15 min de silence (`MAESTRO_ORCHESTRATE_SILENCE`). C'est une déduction
-  présentée comme telle, pas un verdict. Cette même déduction, prise une fois pour toutes, sert de
-  source unique à `--reprenables` et donc à `run.sh --resume` (§11.8) : deux formules qui
-  divergeraient se remarqueraient trop tard.
+- **« En cours » se lit quand la carte est là, se déduit sinon.** Depuis #213 (§11.9) un run laisse
+  dans son journal la carte d'identité de son pilote (`pid`) : `status.sh` répond alors par oui ou
+  par non — « pilote vivant (pid 1234) » —, et un pilote mort requalifie le run en **interrompu**
+  sans attendre qu'un silence s'installe. Le **ticket** en cours, lui, reste déduit : c'est le
+  premier du plan qui a un `<iid>.session` sans ligne dans `resume.tsv`. Sans carte exploitable —
+  journal d'avant #213, ou run tué par SIGKILL, dont la carte survit à son processus — on retombe
+  sur la ligne **activité**, qui date la dernière écriture (répertoire du run *et* index git du
+  worktree) et bascule l'en-tête en « en cours ? » au-delà de 15 min de silence
+  (`MAESTRO_ORCHESTRATE_SILENCE`) : une déduction présentée comme telle, pas un verdict. Lecture et
+  déduction, prises une fois pour toutes, servent de source unique à `--reprenables` et donc à
+  `run.sh --resume` (§11.8) : deux formules qui divergeraient se remarqueraient trop tard.
 
 **Aucun run en cours est un cas normal**, pas une erreur : le script le dit et sort en 0.
 [`/orchestrate --status`](../.claude/commands/orchestrate.md) s'appuie dessus plutôt que de
@@ -1691,11 +1695,13 @@ lui-même** au lancement — le choix « reprendre / nouveau run » remplace alo
 (#204). `status.sh --list` marque les runs reprenables d'un `↻`.
 
 Ce qu'un run reprenable est, exactement : il reste des tickets **sans verdict** à son plan, **et**
-il ne tourne plus. Le second point ne se lit nulle part — pas de PID (§11.5) — et un run tué **en
-plein ticket** garderait sinon le visage d'un run qui travaille pour toujours : son témoin de
-session est là, personne n'a écrit de code de sortie. Il est donc écarté sur le **silence**
-(`MAESTRO_ORCHESTRATE_SILENCE`), et la colonne le dit au lieu de trancher à sa place — l'appelant
-prévient, il n'affirme pas.
+il ne tourne plus. Le second point se **lit** dans la carte du pilote quand elle est là (§11.9) : un
+run tué redevient reprenable **à la seconde même**, sans quoi celui qu'un démarrage vient
+d'interrompre resterait invisible un quart d'heure, écarté pour cause d'écritures trop fraîches.
+Sans carte — journal d'avant #213 —, un run tué **en plein ticket** garderait le visage d'un run qui
+travaille pour toujours (son témoin de session est là, personne n'a écrit de code de sortie) : il
+est alors écarté sur le **silence** (`MAESTRO_ORCHESTRATE_SILENCE`), et la colonne le dit au lieu de
+trancher à sa place — l'appelant prévient, il n'affirme pas.
 
 Trois choses à savoir sur ce que la reprise fait du plan :
 
@@ -1724,4 +1730,51 @@ Trois choses à savoir sur ce que la reprise fait du plan :
 > bouchon qui émet plusieurs événements, dont un coût leurre en tête — la régression que §11.3
 > décrit. `status.sh` se teste sur des répertoires de run **écrits à la main** (c'est le seul moyen
 > de poser un run interrompu ou muet) dont les dates de modification sont vieillies, et sur un vrai
-> petit dépôt git local pour le volet worktree.
+> petit dépôt git local pour le volet worktree. Seule exception à la règle « rien de réel » : les
+> tests de §11.9 lancent de **vrais processus** (un `sleep` qui pose sa carte comme un run le
+> ferait) et les tuent pour de bon — vérifier qu'un arrêt arrête ne se simule pas.
+
+### 11.9 Un seul run à la fois — la carte du pilote et l'arrêt des runs en vol (#213)
+
+**Démarrer ou reprendre un run commence par tuer ceux qui tournent encore.** Deux pilotes vivants,
+c'est le même quota brûlé en double, un unique fichier `STOP` pour les deux, et une reprise qui
+rejoue le plan d'un run toujours en train de le jouer. Le cas n'avait rien d'exceptionnel : on
+relance parce que le précédent « a l'air fini », et il ne l'était pas.
+
+```bash
+bash scripts/orchestrate/run.sh --tuer-les-runs   # ne fait QUE ça : arrête, dit lesquels, sort
+bash scripts/orchestrate/run.sh --sans-kill       # l'échappatoire : laisser cohabiter, en le disant
+```
+
+**La carte du pilote.** Un run pose au démarrage un fichier `<run-id>/pid` — PID, WINPID, naissance
+du processus, hôte — et le retire en partant (`trap`, donc aussi sur `exit` d'erreur ou Ctrl-C).
+C'est la brique qui manquait : `status.sh` *déduisait* l'activité de la fraîcheur des écritures,
+faute de mieux, et une déduction suffit à **dire** qu'un run semble mort, jamais à en **tuer** un.
+`scripts/orchestrate/pilote.sh` est le seul endroit qui sait l'écrire, la relire et s'en servir —
+`run.sh` et `status.sh` s'y branchent tous les deux.
+
+**Ce qui n'est jamais tué.** Uniquement les PID des cartes, et leurs descendants : jamais un
+`claude.exe` trouvé au jugé — la session Claude Code interactive de l'utilisateur en est un. Un
+numéro se recycle, et un run tué par SIGKILL laisse sa carte derrière lui (aucun trap ne survit à
+un SIGKILL) : c'est la **naissance** du processus, en ticks depuis le démarrage de la machine, qui
+démasque un PID réattribué. L'asymétrie est assumée — carte invérifiable, on s'abstient. Ne pas
+tuer un run mourant coûte un doublon signalé ; tuer le mauvais processus coûte le travail de
+quelqu'un d'autre.
+
+**Sous Windows, deux mondes de processus.** Le pilote est un `bash.exe` MSYS, la session un
+`claude.exe` natif que `/proc` ne liste pas et que `kill` n'atteint pas. D'où le WINPID enregistré
+à côté et le `taskkill //T //F`, qui descend l'arbre côté Windows — sans lui, la session survivrait
+à son pilote, rattachée à personne et toujours en train de consommer du quota.
+
+**L'arrêt est sans sommation, et c'est voulu.** La sortie propre existe — le fichier `STOP` — mais
+elle n'est lue qu'entre deux tickets : l'attendre, c'est attendre la fin de la session en cours,
+jusqu'à 45 min. Or on est là parce que quelqu'un veut lancer maintenant. Ce que ça coûte est borné
+et dit à chaque fois : le journal du run tué reste **intact**, donc **reprenable**
+(`run.sh --resume <id>`), et ce qu'une session avait commencé sans le committer dort dans le
+worktree de son ticket (`status.sh --run-id <id>`). Ce qui reste à la charge de l'humain, c'est le
+ticket resté « En cours » côté GitLab — comme après n'importe quelle interruption (§11.8).
+
+**L'ordre compte** : on tue *avant* de résoudre `--resume`. `status.sh --reprenables` écarte les
+runs qui écrivent encore ; un run tué juste après aurait donc été ignoré par un `--resume` sans
+argument — celui-là même qu'on vient d'interrompre, et le plus probablement visé. Tué d'abord, il
+redevient candidat immédiatement, la carte l'emportant sur la fraîcheur de ses dernières écritures.
