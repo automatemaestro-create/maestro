@@ -354,6 +354,7 @@ class LocalExecutor(TaskExecutor):
             erreur=result.erreur,
             usage=result.usage,
             playbook_version=result.playbook_version,
+            ticket=task.ticket,
         )
         return result
 
@@ -626,6 +627,7 @@ class LocalExecutor(TaskExecutor):
                 else f"redémarrage de la tâche (tentative {tentative}/{max_tentatives})"
             ),
             usage=StepUsage(),
+            ticket=task.ticket,
         )
 
     def _consigne_relance(

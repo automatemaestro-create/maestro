@@ -58,7 +58,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any
 
@@ -88,6 +88,7 @@ from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task, topological_order
 from maestro.providers.base import ModelProvider
+from maestro.references import ReferenceTicket
 from maestro.telemetry import (
     RunJournal,
     StepUsage,
@@ -406,7 +407,13 @@ class OrchestrationEngine:
             max_parallele=max_parallele,
         )
 
-    async def run(self, objective: str, *, journal: RunJournal | None = None) -> RunReport:
+    async def run(
+        self,
+        objective: str,
+        *,
+        journal: RunJournal | None = None,
+        ticket: ReferenceTicket | None = None,
+    ) -> RunReport:
         """Exécute la boucle complète pour `objective` et renvoie l'agrégat.
 
         Lève `ValueError` si l'objectif est vide et propage les erreurs de
@@ -433,9 +440,22 @@ class OrchestrationEngine:
         notification, journalisé), et la tâche aval attend ce message avant de
         démarrer — la synchronisation en process (#43) reste le filet de sécurité
         (une annonce perdue ne suspend pas l'exécution au-delà du time-out).
+
+        `ticket` (#187) est le **ticket dont part le run** : chaque
+        tâche du plan en hérite, sauf celle qui en porte déjà une (le plan a été
+        plus précis que le lancement — sa référence gagne). Le moteur ne fait
+        que la transporter : il ne l'interprète pas, n'appelle aucun outil de
+        ticketing et n'en connaît aucun.
         """
         journal = journal if journal is not None else RunJournal()
         plan_usage, tasks = await self._plan(objective, journal)
+        if ticket is not None:
+            tasks = [
+                task
+                if task.ticket is not None
+                else replace(task, ticket=ticket)
+                for task in tasks
+            ]
         ordered = topological_order(tasks)
         dependants = _dependants_directs(ordered)
         # Boîte de diffusion ouverte avant toute exécution (pub/sub sans rejeu :
@@ -585,5 +605,6 @@ def _consigne_blocage(
         sortie="",
         erreur=result.erreur,
         usage=StepUsage(),
+        ticket=task.ticket,
     )
     return result

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from maestro.references import ReferenceTicket, ticket_en_dict
 from maestro.telemetry.redact import redact_secrets
 from maestro.telemetry.usage import StepUsage
 
@@ -39,6 +40,10 @@ class StepRecord:
     `playbook_version` (#78) est la version du playbook stocké avec laquelle
     l'agent a exécuté la tâche — None hors tâche d'agent, ou si l'agent a exécuté
     avec son prompt du code (playbook jamais édité).
+    `ticket` (#187) est le ticket dont relève la tâche, quand il y en
+    a un : le journal est le **seul chemin** par lequel il atteint la Control
+    Tower (le pont #46 ne lit que ces lignes), d'où sa présence ici plutôt que
+    dans le seul plan.
     """
 
     run_id: str
@@ -53,6 +58,7 @@ class StepRecord:
     erreur: str | None
     usage: StepUsage
     playbook_version: int | None = None
+    ticket: ReferenceTicket | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trace en dict JSON-sérialisable (la ligne du journal)."""
@@ -69,6 +75,7 @@ class StepRecord:
             "erreur": self.erreur,
             "usage": self.usage.to_dict(),
             "playbook_version": self.playbook_version,
+            "ticket": ticket_en_dict(self.ticket),
         }
 
 
@@ -116,6 +123,7 @@ class RunJournal:
         usage: StepUsage,
         erreur: str | None = None,
         playbook_version: int | None = None,
+        ticket: ReferenceTicket | None = None,
     ) -> StepRecord:
         """Consigne une étape (textes expurgés des secrets) et émet sa ligne JSON."""
         record = StepRecord(
@@ -131,6 +139,7 @@ class RunJournal:
             erreur=redact_secrets(erreur) if erreur is not None else None,
             usage=usage,
             playbook_version=playbook_version,
+            ticket=ticket,
         )
         self._records.append(record)
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))

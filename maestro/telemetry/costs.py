@@ -33,6 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
+from maestro.references import ReferenceTicket, ticket_en_dict
 from maestro.telemetry.journal import RunJournal
 from maestro.telemetry.usage import StepUsage
 
@@ -55,6 +56,11 @@ class TaskCost:
     garderait comptées si elles en portaient un demain. `nom`, `agent`, `role`
     et `statut` viennent de l'étape de la tâche elle-même ; ils restent vides
     tant que seule une annexe a été consignée (tâche encore en cours).
+
+    `ticket` (#187) est le ticket dont relève la tâche : à la
+    différence de l'identité, elle est prise sur **n'importe quelle** étape qui
+    en porte une — l'annexe `<tache>:reference` en est justement le seul porteur
+    quand un agent la pose en cours d'exécution.
     """
 
     tache_id: str
@@ -63,6 +69,7 @@ class TaskCost:
     role: str = ""
     statut: str = ""
     usage: StepUsage = StepUsage()
+    ticket: ReferenceTicket | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet l'entrée en dict JSON-sérialisable (la forme de l'API, #57)."""
@@ -73,6 +80,7 @@ class TaskCost:
             "role": self.role,
             "statut": self.statut,
             "usage": self.usage.to_dict(),
+            "ticket": ticket_en_dict(self.ticket),
         }
 
 
@@ -121,6 +129,10 @@ class RunCost:
             entree = entrees.get(tache_id)
             if entree is None:
                 entree = TaskCost(tache_id=tache_id)
+            if record.ticket is not None:
+                # Le ticket externe (#187) vient de n'importe quelle étape de la
+                # tâche — l'annexe `:reference` n'en porte même que ça.
+                entree = replace(entree, ticket=record.ticket)
             if record.etape == tache_id:
                 # L'étape de la tâche elle-même : elle fait foi pour l'identité.
                 entree = replace(

@@ -36,6 +36,7 @@ from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_REASSIGNATION,
+    EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DECISION,
     EVENEMENT_VALIDATION_DEMANDE,
@@ -43,6 +44,7 @@ from maestro.controltower.events import (
     ReferenceTicket,
 )
 from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
+from maestro.references import ticket_en_dict
 from maestro.telemetry.costs import RunCost, TaskCost
 from maestro.telemetry.usage import StepUsage
 
@@ -257,6 +259,10 @@ class EtatExecution:
     objectif: str = ""
     statut: str = EXECUTION_EN_COURS
     fin: str | None = None
+    # Le ticket dont part le run (#187), posé par l'événement de lancement et
+    # reconstruit au rejeu comme le reste — c'est ce qui l'a fait passer du
+    # registre en mémoire du service de pilotage (#185) à la projection.
+    ticket: ReferenceTicket | None = None
 
     @property
     def debut(self) -> str:
@@ -283,10 +289,10 @@ class EtatExecution:
 
         La forme que servent `GET /api/executions` et le lancement (#185) :
         identité, objectif, statut, volume, coût et bornes temporelles. `ticket`
-        y est toujours None ici — la référence de ticket externe ne voyage pas
-        encore sur le bus (#187) : c'est le service de pilotage
-        (`maestro.controltower.executions`) qui la superpose pour les runs qu'il
-        a lancés.
+        est le ticket externe dont part le run (#187) — lu **ici**, dans la
+        projection, depuis l'événement de lancement : la référence voyage
+        désormais sur le bus, donc elle survit au redémarrage de l'API comme le
+        reste du résumé, là où le service de pilotage la tenait en mémoire.
         """
         return {
             "run_id": self.run_id,
@@ -294,7 +300,7 @@ class EtatExecution:
             "statut": self.statut,
             "nb_taches": self.nb_taches,
             "cout_usd": self.cout_usd,
-            "ticket": None,
+            "ticket": ticket_en_dict(self.ticket),
             "debut": self.debut,
             "fin": self.fin,
         }
@@ -320,6 +326,12 @@ class EtatExecution:
         planification = StepUsage()
         entrees: dict[str, TaskCost] = {}
         for event in self.evenements:
+            if event.ticket is not None and event.tache_id:
+                # Le ticket externe (#187) n'a pas de coût : il se pose même sur
+                # un événement sans usage — dont le `tache.reference`, qui n'en
+                # porte jamais — donc avant le filtre ci-dessous.
+                entree = entrees.get(event.tache_id) or TaskCost(tache_id=event.tache_id)
+                entrees[event.tache_id] = replace(entree, ticket=event.ticket)
             usage = event.usage
             if usage is None and event.cout_usd is not None:
                 usage = StepUsage(cout_usd=event.cout_usd)
@@ -465,6 +477,8 @@ class ControlTowerState:
             self._applique_statut_tache(event)
         elif event.type == EVENEMENT_TACHE_REASSIGNATION:
             self._applique_reassignation(event)
+        elif event.type == EVENEMENT_TACHE_REFERENCE:
+            self._applique_reference(event)
         elif event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}:
             self._applique_activite(event)
         elif event.type == EVENEMENT_AGENT_CAPACITE:
@@ -543,6 +557,24 @@ class ControlTowerState:
         if tache.statut not in _STATUTS_TERMINAUX:
             agent.commence(event.tache_id)
 
+    def _applique_reference(self, event: Event) -> None:
+        """Rattache une tâche à son ticket externe (#187) — et **rien d'autre**.
+
+        Le seul événement de tâche qui ne touche ni statut, ni agent, ni coût :
+        un agent qui découvre en cours de route le ticket dont relève sa tâche
+        (via le serveur MCP de son outil, #104) ne doit pas la faire bouger d'une
+        colonne du Kanban en le disant. La tâche est **créée** si elle est encore
+        inconnue — l'événement peut précéder la première étape consignée, et le
+        ticket attend alors sa carte. Idempotent (poser le même ticket deux fois
+        laisse l'état inchangé) ; un événement sans ticket lisible ne retire pas
+        celui en place : on ne débranche pas un lien par accident.
+        """
+        if not event.tache_id or event.ticket is None:
+            return
+        tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
+        tache.ticket = event.ticket
+        tache.run_id = event.run_id or tache.run_id
+
     def _applique_activite(self, event: Event) -> None:
         """Trace l'activité d'un acteur (planification, validation, message A2A)."""
         if event.agent in _AGENTS_NON_EXECUTANTS:
@@ -587,6 +619,10 @@ class ControlTowerState:
             return
         execution.objectif = event.titre or execution.objectif
         execution.statut = event.statut or execution.statut
+        if event.ticket is not None:
+            # Le ticket dont part le run (#187) : posé par le lancement, jamais
+            # retiré par les événements de fin, qui ne le portent pas.
+            execution.ticket = event.ticket
         execution.fin = (
             event.horodatage if execution.statut in STATUTS_EXECUTION_TERMINAUX else None
         )

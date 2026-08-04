@@ -64,6 +64,7 @@ from maestro.controltower.state import (
 )
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.guardrails import Guardrails
+from maestro.references import ReferenceTicket
 from maestro.telemetry import LOGGER_NAME, RunJournal, redact_secrets
 
 if TYPE_CHECKING:
@@ -120,10 +121,6 @@ class ServiceExecutions:
         self._state = state
         self._fabrique = fabrique_moteur if fabrique_moteur is not None else moteur_par_defaut
         self._runs: dict[str, asyncio.Task[None]] = {}
-        # Référence de ticket externe du lancement : tenue ici en attendant
-        # qu'elle voyage sur le bus (#187). Elle ne survit donc pas au
-        # redémarrage de l'API, contrairement au reste du résumé.
-        self._tickets: dict[str, dict[str, str]] = {}
         # Logger **propre à ce service** : le pont télémétrie s'y pose sans
         # toucher au logger global du journal (cf. docstring du module). Les
         # lignes remontent quand même à `maestro.trace` par propagation — un
@@ -144,23 +141,18 @@ class ServiceExecutions:
         publiés par un autre process (`maestro-run --publier`) : le suivi ne
         distingue pas leur origine.
         """
-        resumes = [self._avec_ticket(e.resume()) for e in self._state.executions()]
+        resumes = [e.resume() for e in self._state.executions()]
         return sorted(resumes, key=lambda r: str(r["debut"]), reverse=True)
 
     def resume(self, run_id: str) -> dict[str, Any] | None:
         """Le résumé du run `run_id`, ou None s'il est inconnu de la projection."""
         execution = self._state.execution(run_id)
-        return None if execution is None else self._avec_ticket(execution.resume())
+        return None if execution is None else execution.resume()
 
     def en_vol(self, run_id: str) -> bool:
         """Le run est-il porté par ce service et encore en cours ?"""
         tache = self._runs.get(run_id)
         return tache is not None and not tache.done()
-
-    def _avec_ticket(self, resume: dict[str, Any]) -> dict[str, Any]:
-        """Superpose au résumé la référence de ticket connue du lancement (#187)."""
-        ticket = self._tickets.get(str(resume["run_id"]))
-        return resume if ticket is None else {**resume, "ticket": dict(ticket)}
 
     # ----------------------------------------------------------------- écriture
 
@@ -172,7 +164,7 @@ class ServiceExecutions:
         plafond_tokens: int | None = None,
         timeout_tache_s: float | None = None,
         parallelisme: int | None = None,
-        ticket: Mapping[str, str] | None = None,
+        ticket: Mapping[str, str] | ReferenceTicket | None = None,
     ) -> dict[str, Any]:
         """Lance une exécution en tâche de fond et rend son résumé **immédiatement**.
 
@@ -181,6 +173,12 @@ class ServiceExecutions:
         (None : le défaut du moteur). La validation humaine d'une action sensible
         passe par la Control Tower elle-même (#48) : la demande apparaît dans
         `GET /api/validations` et le run reprend sur la décision.
+
+        `ticket` (#187) rattache le run au **ticket dont il part** :
+        elle est portée par l'événement de lancement (donc par la projection, et
+        donc elle survit au redémarrage) et **héritée par chaque tâche du plan**,
+        jusqu'à la carte du Kanban. Le service ne fait que la transmettre : ni
+        lui ni le moteur ne savent de quel outil de ticketing elle vient.
 
         Lève `ValueError` sur un objectif vide ou un garde-fou hors bornes (les
         plafonds sont des maximums : ils doivent être > 0) — la route en fait un
@@ -205,16 +203,28 @@ class ServiceExecutions:
             validateur=ValidateurControlTower(self._bus),
         )
 
+        reference = (
+            ticket
+            if isinstance(ticket, ReferenceTicket)
+            else ReferenceTicket.depuis(ticket)
+        )
+
         run_id = uuid.uuid4().hex[:12]
         self._demarrer()
-        if ticket is not None and ticket.get("id"):
-            self._tickets[run_id] = {"id": ticket["id"], "url": ticket.get("url", "")}
         # L'événement de lancement **avant** la tâche de fond : la projection
         # connaît le run (donc le résumé rendu est complet) avant qu'une seule
-        # étape ne puisse y arriver.
-        self._consigne(run_id, EXECUTION_EN_COURS, objectif, "lancée depuis la Control Tower")
+        # étape ne puisse y arriver. C'est lui qui porte le ticket du run (#187) :
+        # il part sur le bus, donc dans le journal durable — plus rien n'est tenu
+        # en mémoire par ce service.
+        self._consigne(
+            run_id,
+            EXECUTION_EN_COURS,
+            objectif,
+            "lancée depuis la Control Tower",
+            ticket=reference,
+        )
         tache = asyncio.get_running_loop().create_task(
-            self._derouler(run_id, objectif, garde_fous, parallelisme)
+            self._derouler(run_id, objectif, garde_fous, parallelisme, reference)
         )
         self._runs[run_id] = tache
         tache.add_done_callback(lambda _: self._runs.pop(run_id, None))
@@ -288,6 +298,7 @@ class ServiceExecutions:
         objectif: str,
         garde_fous: Guardrails,
         parallelisme: int | None,
+        ticket: ReferenceTicket | None = None,
     ) -> None:
         """Déroule le run en tâche de fond et consigne son issue.
 
@@ -296,11 +307,17 @@ class ServiceExecutions:
         projection et sur le flux), sa cause partant dans le détail. Seule
         l'annulation se propage, pour que la tâche finisse bien « annulée » (son
         issue, elle, a déjà été consignée par `annuler`).
+
+        `ticket` (#187) descend jusqu'au moteur, qui en dote chaque
+        tâche du plan : le ticket du run se retrouve ainsi sur chaque carte, par
+        le seul chemin du journal — le moteur n'a rien à savoir de son origine.
         """
         journal = RunJournal(run_id=run_id, logger=self._logger)
         try:
             moteur = self._fabrique(guardrails=garde_fous, max_parallele=parallelisme)
-            rapport = await moteur.run(objectif, journal=journal)
+            rapport = await moteur.run(
+                objectif, journal=journal, ticket=ticket
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -316,14 +333,24 @@ class ServiceExecutions:
             f"{len(rapport.reussies)}/{total} tâche(s) réussie(s)",
         )
 
-    def _consigne(self, run_id: str, statut: str, objectif: str, detail: str) -> None:
+    def _consigne(
+        self,
+        run_id: str,
+        statut: str,
+        objectif: str,
+        detail: str,
+        *,
+        ticket: ReferenceTicket | None = None,
+    ) -> None:
         """Émet le cycle de vie du run : projection d'abord, bus ensuite.
 
         Même ordre que les endpoints d'écriture de l'app (« état d'abord,
         diffusion ensuite ») : le REST répond déjà à jour, et la pompe
         réapplique l'événement sans effet (idempotence). L'objectif comme le
         détail sont expurgés des secrets avant de partir — ce qui va sur le bus
-        est montrable, même filet que le journal (#8).
+        est montrable, même filet que le journal (#8). Seul le **lancement**
+        porte une référence externe (#187) : la projection ne la retire pas aux
+        événements suivants, qui n'en savent rien.
         """
         self._emettre(
             Event(
@@ -334,6 +361,7 @@ class ServiceExecutions:
                 role=_ROLE_RUN,
                 statut=statut,
                 detail=redact_secrets(detail),
+                ticket=ticket,
             )
         )
 

@@ -30,10 +30,12 @@ from maestro.controltower.events import (
     CANAL_EVENEMENTS,
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
     REDIS_URL_DEFAUT,
     Event,
 )
+from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
 from maestro.telemetry import LOGGER_NAME
 from maestro.telemetry.usage import StepUsage
 
@@ -67,6 +69,10 @@ _SUFFIXE_REFUS = ":refus-outil"
 #: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
 _SUFFIXE_MESSAGE = ":message"
 
+#: Suffixe des étapes qui posent un ticket externe sur une tâche (#187 — cf.
+#: `maestro.references.consigne_ticket`).
+_SUFFIXE_REFERENCE = SUFFIXE_ETAPE_TICKET
+
 
 def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     """Convertit une ligne de journal (`StepRecord.to_dict`) en événements du bus.
@@ -83,8 +89,15 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     - les étapes `<tache>:debut` (#98) deviennent le **début** de leur tâche :
       événement `tache.statut` au statut `en_cours` (agent, heure de début),
       sans usage ni coût — rien n'entre au grand livre avant l'issue ;
+    - les étapes `<tache>:reference` (#187) deviennent un `tache.reference` :
+      elles ne portent que le **ticket externe** dont relève la tâche, sans rien
+      changer d'autre — c'est ainsi qu'un agent la rattache en cours de route ;
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
       portant statut, agent, rôle et coût rapporté (#8).
+
+    Chaque événement embarque la **référence externe** de son étape quand le
+    journal en porte une (#187) : c'est le seul chemin par lequel le ticket d'un
+    run atteint la Control Tower — le moteur ne fait que la transporter.
 
     Chaque événement embarque la **mesure d'usage** de son étape (tokens,
     coût, durée — forme `StepUsage`) quand le journal en porte une : c'est la
@@ -103,10 +116,18 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     cout_brut = usage.get("cout_usd") if isinstance(usage, Mapping) else None
     est_message = etape.endswith(_SUFFIXE_MESSAGE)
     est_debut = etape.endswith(_SUFFIXE_DEBUT)
+    est_reference = etape.endswith(_SUFFIXE_REFERENCE)
     est_activite = etape in _ETAPES_RUN or etape.endswith(
         (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE, _SUFFIXE_REFUS)
     )
-    if est_message:
+    if est_reference:
+        type_evenement = EVENEMENT_TACHE_REFERENCE
+        tache_id = etape.removesuffix(_SUFFIXE_REFERENCE)
+        detail = str(record.get("sortie") or "")
+        # Poser une référence ne coûte rien : rien à faire entrer au grand livre.
+        mesure = None
+        cout_brut = None
+    elif est_message:
         type_evenement = EVENEMENT_MESSAGE_INTER_AGENTS
         tache_id = etape.removesuffix(_SUFFIXE_MESSAGE)
         detail = str(record.get("sortie") or "")
@@ -144,6 +165,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             detail=detail,
             cout_usd=float(cout_brut) if isinstance(cout_brut, int | float) else None,
             usage=mesure,
+            ticket=ReferenceTicket.depuis(record.get("ticket")),
             horodatage=str(record.get("horodatage", "")),
         ),
     )

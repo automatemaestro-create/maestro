@@ -159,6 +159,7 @@ from maestro.controltower.chat import (
 from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_TACHE_REASSIGNATION,
+    EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_VALIDATION_DECISION,
     Event,
     EventBus,
@@ -189,6 +190,7 @@ from maestro.controltower.state import (
     ControlTowerState,
 )
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
+from maestro.references import ReferenceTicket
 
 
 class ReferenceTicketRequete(BaseModel):
@@ -202,6 +204,16 @@ class ReferenceTicketRequete(BaseModel):
 
     id: str
     url: str = ""
+
+    def en_reference(self) -> ReferenceTicket | None:
+        """La référence du modèle métier — None si elle n'apprend rien (ni id, ni URL).
+
+        Passe par `ReferenceTicket.depuis`, donc par la normalisation (#187) :
+        identifiant borné, URL non suivable (`javascript:`, chemin relatif)
+        jetée. Ce qui entre par l'API est traité comme ce qui arrive par le
+        flux — non fiable jusqu'à validation.
+        """
+        return ReferenceTicket.depuis({"id": self.id, "url": self.url})
 
 
 class LancementExecutionRequete(BaseModel):
@@ -743,7 +755,7 @@ def create_app(
                 plafond_tokens=requete.plafond_tokens,
                 timeout_tache_s=requete.timeout_tache_s,
                 parallelisme=requete.parallelisme,
-                ticket=None if requete.ticket is None else requete.ticket.model_dump(),
+                ticket=None if requete.ticket is None else requete.ticket.en_reference(),
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -868,6 +880,49 @@ def create_app(
             role=agent.role,
             statut="assignee",
             detail="réassignation manuelle (Control Tower)",
+        )
+        state.appliquer(event)
+        await bus.publish(event)
+        return tache.to_dict()
+
+    @app.post("/api/taches/{tache_id}/reference")
+    async def poser_reference(
+        tache_id: str, requete: ReferenceTicketRequete
+    ) -> dict[str, Any]:
+        """Rattache une tâche au **ticket externe** dont elle relève (#187).
+
+        Le second chemin de pose, celui de l'exécution en cours : un agent
+        équipé du serveur MCP de son outil de ticketing (#104) découvre le
+        ticket au fil de sa tâche et le pose ici — l'autre chemin étant le
+        lancement du run, qui part déjà d'un ticket. Ni cette route ni le moteur
+        ne connaissent l'outil : ils transportent un identifiant et une URL.
+
+        N'affecte **que** le ticket : ni statut, ni agent, ni coût ne bougent —
+        dire d'où vient une tâche ne la fait pas changer de colonne. Applique
+        l'événement à l'état (le REST répond déjà à jour) puis le publie sur le
+        bus, où le journal durable le reprend : le ticket survit au redémarrage.
+        404 si la tâche est inconnue, 422 si la référence n'apprend rien (ni
+        identifiant, ni URL en http(s)).
+        """
+        tache = state.tache(tache_id)
+        if tache is None:
+            raise HTTPException(status_code=404, detail=f"tâche inconnue : {tache_id}")
+        reference = requete.en_reference()
+        if reference is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "référence vide : il faut au moins un identifiant lisible, "
+                    "ou une URL en http(s)."
+                ),
+            )
+        event = Event(
+            type=EVENEMENT_TACHE_REFERENCE,
+            run_id=tache.run_id,
+            tache_id=tache_id,
+            titre=tache.titre,
+            detail=f"ticket externe {reference.id or reference.url}",
+            ticket=reference,
         )
         state.appliquer(event)
         await bus.publish(event)
