@@ -137,8 +137,14 @@ confirmer)* — un projet vit dans la durée : historique et coûts par projet, 
 itération sur un livrable existant, tests réellement exécutés. Son contenu dépend de ce que la
 Phase 7 aura appris de la vie réelle d'un projet ; elle se confirmera à ce moment-là.
 
-> **Tickets non créés.** Comme #182 pour les Phases 5 et 6, le découpage de chaque phase en lots
-> se fait au moment de l'ouvrir — les milestones sont des contenants, pas un backlog.
+> **Tickets : la Phase 7 est découpée, les Phases 8 et 9 non.** C'est le patron de #182, qui avait
+> créé les milestones des Phases 5 et 6 **et semé aussitôt leur premier lot de tickets** (#183,
+> #184 avec #185–#188, #189 avec #190–#193), en ne différant que les chantiers suivants « au
+> moment de les démarrer ». Ici : parent de suivi **#219** et huit lots — #221 (socle : entité
+> Projet et validation de la racine), puis #222, #223, #224, #225 et #226 **prenables en
+> parallèle**, #227 (application des livrables sous validation) et #220 (tests + doc).
+> Les Phases 8 et 9 restent des contenants vides à dessein : leur détail dépend de ce que la
+> Phase 7 aura produit — un brief vise un projet, et on n'empaquette pas une cible mouvante.
 
 ---
 
