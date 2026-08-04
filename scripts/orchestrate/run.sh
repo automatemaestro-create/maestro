@@ -1267,6 +1267,7 @@ NB_OK=0
 NB_ECHEC=0
 NB_SAUTE=0
 TRAITES=0
+POSITION=0
 PARENTS_ECHOUES=""
 WORKTREES=""
 
@@ -1282,6 +1283,14 @@ consigne() { # <iid> <verdict> <mr> <duree> <cout> <raison>
 while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
   [ -n "${iid:-}" ] || continue
   case "$rang" in '#'*) continue ;; esac
+
+  # La POSITION dans le plan, comptée sur toutes les lignes lues — sautées comprises. C'est elle et
+  # non `TRAITES` qui s'affiche : `TRAITES` compte les tickets TENTÉS (il borne `--max`, plus bas),
+  # or une reprise saute tout ce qui a été livré depuis, si bien que le premier ticket réellement
+  # traité s'annonçait « [1/6] » alors que le plan en était à son quatrième (#230). On ne se sert
+  # pas non plus du champ `rang` du plan : un `--plan` réduit à un sous-ensemble le donnerait
+  # décalé de son propre total (« [4/3] »), `nb_plan` étant compté sur ce fichier-là.
+  POSITION=$((POSITION + 1))
 
   if arret_demande; then break; fi
   if [ "$MAX" -gt 0 ] && [ "$TRAITES" -ge "$MAX" ]; then
@@ -1331,7 +1340,7 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
     continue
   fi
 
-  printf '%s[%s/%s] #%s — %s%s\n' "$C_B" "$TRAITES" "$nb_plan" "$iid" "$titre" "$C_0"
+  printf '%s[%s/%s] #%s — %s%s\n' "$C_B" "$POSITION" "$nb_plan" "$iid" "$titre" "$C_0"
 
   # 1. Le worktree : un répertoire de travail et des ports par ticket (docs/10 §9), pour que le
   #    clone principal reste utilisable pendant que le run tourne.

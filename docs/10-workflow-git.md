@@ -1845,6 +1845,13 @@ Trois choses à savoir sur ce que la reprise fait du plan :
   run repris effacerait son bilan. Le nouveau run porte un fichier `reprise-de` avec l'id de son
   prédécesseur, et `status.sh` l'affiche en en-tête : deux journaux partiels qui racontent la même
   liste de tickets doivent se répondre.
+- **Le compteur `[n/N]` dit la position dans le plan**, pas le rang du traitement (#230). Il se
+  compte sur **toutes** les lignes du plan, sautées comprises : reprendre un plan de six dont trois
+  sont livrés annonce le suivant `[4/6]` et se termine bien sur `[6/6]`. Compté sur les tickets
+  **tentés** — ce que fait toujours `--max`, à dessein, un ticket sauté ne coûtant rien —,
+  l'affichage repartait à `[1/6]`. Le champ `rang` du plan ne conviendrait pas davantage : un
+  `--plan` réduit à un sous-ensemble le donnerait décalé de son propre total (`[4/3]`), `N` étant
+  compté sur ce fichier-là.
 
 > **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) — même parti pris que le
 > reste : dépôt jetable, **ni réseau, ni quota, ni écriture GitLab**. Un `glab` factice répond
