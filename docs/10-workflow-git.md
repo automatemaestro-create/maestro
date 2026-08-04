@@ -1476,6 +1476,31 @@ Pour chaque ticket : `scripts/git/worktree.sh <iid>` (§9) monte son répertoire
 ports, puis une session dédiée est lancée en mode `-p`, avec un `--session-id` fixe — la clé de la
 reprise.
 
+**Le régime d'une session est épinglé par le dépôt, pas par le poste.** Deux réglages décident de
+ce que vaut le travail autonome, et tous deux sont passés **en toutes lettres** au CLI :
+
+| réglage | défaut | surcharge |
+| --- | --- | --- |
+| modèle (#206) | `claude-opus-5` | `--modele`, `MAESTRO_ORCHESTRATE_MODELE` |
+| effort (#217) | `xhigh` | `--effort`, `MAESTRO_ORCHESTRATE_EFFORT` |
+
+Le motif est le même dans les deux cas : **un réglage qu'on ne passe pas est un réglage que la
+machine choisit**, et aucune sortie de run ne le montre. Pour le modèle, c'était l'alias `opus`,
+résolu par le CLI vers une cible mobile (`claude-opus-4-8` encore en 2.1.215). Pour l'effort,
+c'était `~/.claude/settings.json` : `run.sh` ne passait aucun `--effort`, et comme `--settings`
+**ajoute** une couche au lieu de remplacer la chaîne — le même mécanisme que l'union du `allow`
+(§11.7) —, `settings.run.json` ne redéfinissant pas `effortLevel`, c'est le niveau de l'utilisateur
+qui s'appliquait. Trois dérives invisibles en découlaient : un clone sans ce réglage traitait le
+backlog à l'effort par défaut, un `/effort` posé un jour changeait le régime de **toutes** les
+sessions autonomes, et les coûts de `resume.tsv` n'étaient plus comparables d'une machine à l'autre.
+
+D'où deux conséquences pratiques : le niveau est **annoncé dans la ligne `plan :`** à côté du modèle,
+du budget et du timeout (donc dans `run.log` et dans `--dry-run` — relire un run dit sur quoi il a
+tourné), et un niveau inconnu est **refusé avant le premier ticket**. L'effort étant un ensemble
+fermé de cinq valeurs — `low`, `medium`, `high`, `xhigh`, `max` — contrairement à un nom de modèle
+qui est une chaîne ouverte, une faute de frappe se détecte : sans ce contrôle, le CLI refuserait la
+valeur à **chaque** session et le run brûlerait son plan en échecs jumeaux.
+
 **La console dit ce que la session fabrique (#176).** En `--output-format json`, le CLI n'écrit
 qu'à la fin : entre la ligne `[n/N] #<iid> — …` et le verdict, la console restait muette jusqu'à
 45 minutes, et rien ne distinguait « ça travaille » de « c'est planté ». La session tourne donc en

@@ -89,6 +89,17 @@ TIMEOUT_BRUT="${MAESTRO_ORCHESTRATE_TIMEOUT:-45m}"
 # dit pas sur quoi il a tourné. `MAESTRO_ORCHESTRATE_MODELE` et `--modele` restent libres d'y
 # remettre un alias, en connaissance de cause.
 MODELE="${MAESTRO_ORCHESTRATE_MODELE:-claude-opus-5}"
+# L'effort s'épingle pour la même raison que le modèle (#217), et il était le dernier réglage de
+# session à ne pas l'être : `run.sh` ne passait AUCUN `--effort`, si bien que le niveau venait de
+# `~/.claude/settings.json` du poste — donc du poste, pas du dépôt. Le mécanisme est le même que
+# pour les permissions : `--settings` AJOUTE une couche au lieu de remplacer la chaîne, et
+# `settings.run.json` ne redéfinissant pas `effortLevel`, c'est celui de l'utilisateur qui valait
+# (cf. l'union du `allow`, constatée au run de #179). Trois dérives qu'aucune sortie ne montrait :
+# un clone sans ce réglage traitait le backlog à l'effort par défaut, un `/effort` posé un jour
+# changeait le régime de TOUTES les sessions autonomes, et les coûts de `resume.tsv` n'étaient plus
+# comparables d'une machine à l'autre. `MAESTRO_ORCHESTRATE_EFFORT` et `--effort` restent libres
+# d'en sortir, en connaissance de cause.
+EFFORT="${MAESTRO_ORCHESTRATE_EFFORT:-xhigh}"
 PLAN_IMPOSE=""
 MILESTONE=""
 RUN_ID=""
@@ -120,6 +131,8 @@ Options :
   --budget <usd>       Plafond de dépense par ticket (--max-budget-usd). Défaut : 15.
   --timeout <durée>    Délai maximal par ticket : 45m, 90m, 2700… Défaut : 45m.
   --modele <modèle>    Modèle des sessions. Défaut : claude-opus-5.
+  --effort <niveau>    Effort de raisonnement des sessions : low, medium, high, xhigh, max.
+                       Défaut : xhigh.
   --plan <fichier>     Utilise un plan déjà calculé (TSV de queue.sh) au lieu d'en calculer un.
   --milestone <titre>  Transmis à queue.sh (par défaut : la phase courante).
   --run-id <id>        Identifiant du run. Défaut : horodatage.
@@ -158,6 +171,7 @@ while [ $# -gt 0 ]; do
     --budget) BUDGET="${2:-15}"; shift ;;
     --timeout) TIMEOUT_BRUT="${2:-45m}"; shift ;;
     --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
+    --effort) EFFORT="${2:-xhigh}"; shift ;;
     --plan) PLAN_IMPOSE="${2:-}"; shift ;;
     # La valeur est FACULTATIVE (« --resume » seul = le run reprenable le plus récent) : on ne
     # consomme l'argument suivant que s'il n'est pas lui-même une option, sans quoi
@@ -186,6 +200,18 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+# L'effort est un ENSEMBLE FERMÉ de cinq niveaux, là où un nom de modèle est une chaîne ouverte
+# (d'où l'absence de contrôle équivalent sur `--modele`) : une faute de frappe se voit donc, et il
+# vaut mieux la voir ici qu'au premier ticket. Le CLI refuserait la valeur à CHAQUE session, et le
+# run brûlerait son plan en échecs identiques avant que personne ne lise la cause.
+case "$EFFORT" in
+  low | medium | high | xhigh | max) ;;
+  *)
+    printf 'run.sh : effort inconnu « %s » — attendu low, medium, high, xhigh ou max.\n' "$EFFORT" >&2
+    exit 2
+    ;;
+esac
 
 # `--detach` avec `--dry-run` n'aurait rien à détacher : le plan s'affiche en une seconde, et une
 # console qui se refermerait aussitôt ne le montrerait à personne. On reste en direct, en lecture
@@ -806,7 +832,8 @@ lance_session() {
         --permission-mode acceptEdits \
         --settings "$RACINE/scripts/orchestrate/settings.run.json" \
         --max-budget-usd "$BUDGET" \
-        --model "$MODELE" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
+        --model "$MODELE" \
+        --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
     # Le code du CLI, pas celui du formateur : c'est lui qui dit si la session a abouti.
     code=${PIPESTATUS[0]}
     [ "$code" -eq 0 ] && return 0
@@ -821,7 +848,8 @@ lance_session() {
       --permission-mode acceptEdits \
       --settings "$RACINE/scripts/orchestrate/settings.run.json" \
       --max-budget-usd "$BUDGET" \
-      --model "$MODELE" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
+      --model "$MODELE" \
+      --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
   return "${PIPESTATUS[0]}"
 }
 
@@ -1188,8 +1216,8 @@ fi
 nb_plan="$(grep -cv '^#' "$PLAN")"
 printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
 [ "$REPRISE" = 1 ] && printf 'reprise du run %s — son plan, rejoué tel quel\n' "$REPRISE_ID"
-printf 'plan : %s ticket(s) · modèle %s · budget %s $/ticket · timeout %s/ticket\n' \
-  "$nb_plan" "$MODELE" "$BUDGET" "$(duree_lisible "$TIMEOUT_S")"
+printf 'plan : %s ticket(s) · modèle %s · effort %s · budget %s $/ticket · timeout %s/ticket\n' \
+  "$nb_plan" "$MODELE" "$EFFORT" "$BUDGET" "$(duree_lisible "$TIMEOUT_S")"
 printf 'journal : %s\n\n' "$RUN_DIR"
 
 if [ "$nb_plan" -eq 0 ]; then
@@ -1208,7 +1236,7 @@ if [ "$DRY" = 1 ]; then
   printf 'Mode --dry-run : rien n'\''a été lancé. Chaque ticket aurait été traité ainsi —\n'
   printf '  1. worktree dédié     bash scripts/git/worktree.sh <iid>\n'
   printf '  2. session dédiée     %s -p … --session-id <uuid> --settings scripts/orchestrate/settings.run.json\n' "$CLAUDE_BIN"
-  printf '                        --permission-mode acceptEdits --model %s --max-budget-usd %s\n' "$MODELE" "$BUDGET"
+  printf '                        --permission-mode acceptEdits --model %s --effort %s --max-budget-usd %s\n' "$MODELE" "$EFFORT" "$BUDGET"
   printf '  3. verdict            MR ouverte ET cycle de vie « En revue » (lu dans GitLab, pas dans la sortie)\n'
   printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis réouverture de la même session Claude\n'
   printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'

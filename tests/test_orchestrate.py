@@ -656,6 +656,118 @@ def test_une_duree_de_timeout_invalide_est_refusee(depot: Depot) -> None:
 
 
 # =====================================================================================
+# L'effort de raisonnement, épinglé par le dépôt (#217)
+# =====================================================================================
+#
+# Ce que ces tests protègent n'est pas une valeur mais une PROVENANCE. Avant #217, `run.sh` ne
+# passait aucun `--effort` et le niveau venait de `~/.claude/settings.json` du poste : un dépôt qui
+# ne dit rien laisse la machine décider, et rien dans la sortie d'un run ne le montre. Le bouchon
+# note donc les arguments reçus, et c'est sur eux qu'on juge — pas sur la prose du run.
+
+
+def _claude_note_les_arguments(depot: Depot, journal: Path) -> str:
+    """Bouchon qui consigne ses arguments, puis réussit comme /ticket-ship l'aurait fait."""
+    return _claude_stub(depot, f"""
+        printf '%s\\n' "$@" > "{journal}"
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+        exit 0
+    """)
+
+
+def test_l_effort_est_xhigh_sans_qu_on_le_demande(depot: Depot) -> None:
+    """Le défaut du dépôt, celui qui vaut quand personne ne passe l'option."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / "args-defaut"
+    claude = _claude_note_les_arguments(depot, journal)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "eff", env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    recus = journal.read_text(encoding="utf-8").splitlines()
+    assert "--effort" in recus, "sans l'option, l'effort viendrait des settings du poste"
+    assert recus[recus.index("--effort") + 1] == "xhigh"
+
+
+@pytest.mark.parametrize(
+    "args, env, attendu",
+    [
+        (["--effort", "max"], {}, "max"),
+        ([], {"MAESTRO_ORCHESTRATE_EFFORT": "high"}, "high"),
+        # L'option gagne sur la variable : c'est le geste le plus explicite des deux.
+        (["--effort", "low"], {"MAESTRO_ORCHESTRATE_EFFORT": "medium"}, "low"),
+    ],
+)
+def test_l_effort_se_surcharge_en_connaissance_de_cause(
+    depot: Depot, args: list[str], env: dict[str, str], attendu: str
+) -> None:
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / f"args-{attendu}"
+    claude = _claude_note_les_arguments(depot, journal)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance(
+        "run.sh", "--plan", plan, "--run-id", f"eff-{attendu}", *args,
+        env={"MAESTRO_CLAUDE_BIN": claude, **env},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    recus = journal.read_text(encoding="utf-8").splitlines()
+    assert recus[recus.index("--effort") + 1] == attendu
+
+
+def test_un_effort_inconnu_est_refuse_avant_le_premier_ticket(depot: Depot) -> None:
+    """Le CLI refuserait la valeur à chaque session : le run brûlerait son plan en échecs
+    jumeaux."""
+    r = depot.lance("run.sh", "--effort", "extra-high", "--dry-run")
+    assert r.returncode == 2
+    assert "effort inconnu" in r.stderr
+    assert "xhigh" in r.stderr, "le message nomme les niveaux acceptés"
+
+
+def test_la_session_reprise_porte_aussi_l_effort(depot: Depot) -> None:
+    """Deux invocations de `claude` dans la boucle — la reprise est la plus oubliable."""
+    depot.ticket(130, "Ticket interrompu")
+    journal = depot.racine.parent / "args-reprise"
+    claude = _claude_stub(depot, f"""
+        if printf '%s\\n' "$@" | grep -q -- '--resume'; then
+          printf '%s\\n' "$@" > "{journal}"
+          printf '{{"is_error":false,"subtype":"success","total_cost_usd":2}}'; exit 0
+        fi
+        printf '{{"is_error":true,"total_cost_usd":1,"result":"Claude AI usage limit reached"}}'
+        exit 1
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "eff-reprise", "--effort", "max",
+                env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "1"})
+    recus = journal.read_text(encoding="utf-8").splitlines()
+    assert recus[recus.index("--effort") + 1] == "max", "la session reprise garde le régime du run"
+
+
+def test_l_effort_est_annonce_dans_le_plan(depot: Depot) -> None:
+    """Journalisé à côté du modèle : relire un run doit dire sous quel régime il a tourné."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "eff-plan")
+    assert "effort xhigh" in r.stdout
+    assert "--effort xhigh" in r.stdout, "l'aperçu de la commande de session reste fidèle"
+
+
+def test_l_effort_traverse_le_lancement_detache(depot: Depot) -> None:
+    """Le run détaché est un autre processus : ce que l'appelant a choisi doit le suivre."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    spawn = _spawn_stub(depot)
+    claude = _claude_stub(depot, 'echo "aucune session côté pilote" >&2\nexit 1\n')
+    r = depot.lance(
+        "run.sh", "--detach", "--plan", plan, "--run-id", "eff-detache", "--effort", "max",
+        env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_SPAWN": spawn},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    lanceur = depot.racine / ".maestro/orchestrate/eff-detache/lancer.sh"
+    corps = lanceur.read_text(encoding="utf-8")
+    commande = next(ligne for ligne in corps.splitlines() if ligne.startswith("bash "))
+    assert "--effort max" in commande
+
+
+# =====================================================================================
 # La reprise après limite d'usage (#171)
 # =====================================================================================
 
