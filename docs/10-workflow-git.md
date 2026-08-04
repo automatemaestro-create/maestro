@@ -1743,6 +1743,7 @@ liste :
 | La commande relève de la liste | l'ajouter au `allow` de `settings.run.json` |
 | C'est une **forme d'appel** qu'aucune règle de préfixe ne peut reconnaître | corriger `prompt_ticket` (`run.sh`), pas la liste |
 | Le refus est **mérité** | le laisser, et écrire pourquoi dans le `$comment` du fichier |
+| Le refus vient du **CLI**, pas de la liste (écriture sous `.claude/`) | ne rien changer : le ticket se traite en session **interactive** (ci-dessous) |
 
 Deux pièges de lecture, découverts à ce prix, sans lesquels on instruit à côté :
 
@@ -1770,6 +1771,34 @@ des commandes déjà autorisées) ; **2 relèvent de la forme d'appel** et sont 
 relatif) ; **4 restent refusés à dessein** — les deux attentes actives (`for … sleep 6`,
 `until [ -s … ]; do sleep 3; done`) parce que les autoriser rouvrirait le mode d'échec que #178
 ferme, `jobs` pour la même raison, et `bash <script hors du dépôt>` qui serait du code arbitraire.
+
+**Un refus qui ne s'instruit pas : écrire sous `.claude/`** (#229). Le run `20260804-142402` a vu
+la session de #188 se faire refuser un `Write` **puis** un `Edit` sur
+`.claude/skills/control-tower/SKILL.md` — la mise à jour que son critère 4 demandait. Ce refus-là
+ne relève d'aucune des trois lignes ci-dessus, et surtout **aucune règle ne le lèvera** : rien dans
+le dépôt ne le produit. `settings.run.json` autorise `Write` et `Edit` **nus**, le run tourne en
+`--permission-mode acceptEdits`, `guard.sh` ne juge que les appels `Bash` et sort en 0 pour tout le
+reste (délibérément — §11.6), et ni `.claude/settings.json` ni `settings.local.json` ne portent de
+`deny`/`ask` sur ces outils. Le blocage vient du **CLI Claude Code lui-même** : `.claude/` est la
+surface de configuration de l'agent — permissions, hooks, skills, commandes —, et y écrire exige
+une approbation humaine explicite qu'aucun `allow` ni `acceptEdits` ne remplace. En `-p`, personne
+n'est là pour l'accorder. C'est le garde-fou qui empêche une boucle sans surveillance de réécrire
+ses propres permissions : on ne cherche pas à le contourner.
+
+Trois conséquences pratiques :
+
+- **Ne pas confondre avec un trou d'allowlist.** Ajouter `Write(.claude/**)` à `settings.run.json`
+  ne changerait rien — la couche qui refuse est en amont de la liste. Le seul symptôme visible est
+  le `permission_denials`, exactement comme un refus instruisible : c'est le chemin du `file_path`
+  qui les distingue.
+- **Une session qui le rencontre rend le contenu, elle ne contourne pas.** Un `printf … > <fichier>`
+  passerait peut-être la liste, et ce serait précisément l'échec. #188 a fait ce qu'il fallait :
+  contenu de remplacement intégral dans la description de sa MR, section « Reste à appliquer à la
+  main », plus un commentaire sur le ticket. Un humain l'applique ensuite en session interactive.
+- **Mieux vaut ne pas l'y envoyer.** Un ticket dont un critère touche `.claude/**` se traite en
+  session interactive dès le départ ; le mettre dans le périmètre d'un run autonome, c'est en
+  garantir la part manquante. `queue.sh` ne le détecte pas — c'est au rédacteur du ticket de le
+  dire, comme #229 le fait dans ses notes.
 
 ### 11.8 Reprendre un run qui ne s'est pas terminé — `--resume`
 
