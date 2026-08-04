@@ -123,6 +123,22 @@ Les humains qui utilisent la plateforme. `role` : `owner`, `admin`, `viewer`.
 ### PROJECT
 Un projet de travail (souvent rattaché à un dépôt de code). Regroupe des tâches et la configuration des agents qui y interviennent.
 
+> **Non implémentée à ce jour** — et c'est le trou que cadre [docs/24 §2.3](./24-projets-locaux-et-poste-de-travail.md).
+> L'entité gagnerait les champs qui la relient au disque : `racine` (chemin absolu — la
+> **frontière unique** de ce que les agents peuvent lire et écrire), `origine`
+> (`nouveau`/`existant`), `vcs` (`type`, `branche_base`, `distant` — `null` si non versionné) et
+> `perimetre` (`inclus`/`exclus`, ce dernier portant par défaut `.git`, `node_modules`, `.env`,
+> `**/secrets/**`). `TASK` et `RUN` porteraient alors un `projet_id` : c'est ce qui rend le
+> Kanban, les coûts et le journal filtrables par projet. *(Proposition — décisions D1/D2 de
+> [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md).)*
+
+### SOURCE *(proposée — [docs/24 §3.2](./24-projets-locaux-et-poste-de-travail.md))*
+Une **matière d'entrée** attachée à une exécution, à côté de l'objectif texte : `type`
+(`fichier`, `dossier`, `url`, `texte`), `nom`/`chemin`/`valeur`, `taille`, et le **texte
+extrait** (tout est ramené à du Markdown avant d'entrer dans le contexte — un seul format à
+tracer, à masquer et à chiffrer en tokens). Une source de type `dossier` est **en lecture
+seule** : c'est une référence, pas un projet.
+
 ### AGENT
 Un agent spécialisé. Champs clés :
 - `role` : `chef_de_projet`, `developpeur`, `bdd`, `devops`, `designer`, `qa`, ou personnalisé.

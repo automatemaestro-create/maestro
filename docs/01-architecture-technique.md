@@ -163,7 +163,7 @@ flowchart TD
 
 Les agents écrivent et exécutent du code → chaque exécution se fait dans un **conteneur isolé** (ou micro-VM), avec :
 
-- un système de fichiers de travail dédié (souvent une **branche Git** par tâche pour éviter les collisions) ;
+- un système de fichiers de travail dédié — aujourd'hui un **répertoire temporaire jetable**, créé vide et détruit en fin de tâche (`maestro.sandbox.workspace`). La « **branche Git** par tâche » reste un principe **non implémenté** : elle n'a de sens que le jour où une tâche travaille dans un vrai projet, ce que cadre [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md) ;
 - des permissions **scopées** (accès réseau/secret limité à ce dont l'agent a besoin) ;
 - des **plafonds** de temps et de dépense.
 
