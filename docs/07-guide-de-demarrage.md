@@ -263,8 +263,8 @@ par la **messagerie inter-agents** (#44, la boîte de l'agent) et part en évén
 message utilisateur dès l'envoi, puis la réponse quand elle tombe. Si la réponse ne
 peut pas être produite (fournisseur en échec), l'API répond 502 mais le message
 utilisateur reste acquis — relancer ne perd pas le fil. La démo locale
-(`scripts/controltower/start.sh`, #65) répond en **scripté** sur un fil éphémère :
-aucun modèle appelé, rien d'écrit dans `core/chat/`.
+(`scripts/controltower/start.sh --demo`, #65 ; mode explicite depuis #186, §6.10) répond
+en **scripté** sur un fil éphémère : aucun modèle appelé, rien d'écrit dans `core/chat/`.
 Détails : [`core/chat/README.md`](../core/chat/README.md).
 
 ### 6.5 — Contrôle de capacité : activer/désactiver, instances (disponible — ticket #86)
@@ -493,3 +493,43 @@ prudence sur le coût** : une analyse = un appel modèle, à réserver aux éche
 de venir du playbook. Boucle complète, garde-fous et limites :
 [doc 22](./22-auto-amelioration-playbooks.md) ; tests sur fournisseurs factices :
 [`tests/test_auto_amelioration.py`](../tests/test_auto_amelioration.py).
+
+### 6.10 — Lancer la Control Tower en local : mode réel par défaut (ticket #186)
+
+Le lancement local tient en une commande, qui démarre l'API, l'UI Next.js, ouvre le
+navigateur et arrête tout à la fermeture de la fenêtre (#149, #200) :
+
+```bash
+# Mode RÉEL (défaut) : maestro-api sur Redis, journal durable des événements (§6.8)
+bash scripts/controltower/start.sh
+
+# Mode DÉMO : scénario factice sur bus mémoire, aucun Redis requis
+bash scripts/controltower/start.sh --demo
+```
+
+**Le mode réel est le défaut** depuis #186. La simulation a longtemps été le seul moyen de
+« regarder l'UI vivre » ; elle n'a plus à l'être, et surtout un utilisateur qui découvre le
+produit ne doit pas prendre des données factices pour la réalité. Ce que cela change :
+
+- **Redis est une dépendance dure, vérifiée avant tout** (`maestro-api --verifier-redis`,
+  qui résout `REDIS_URL` comme le fait l'API elle-même). Absent, le script s'arrête en
+  donnant la commande exacte — `docker compose -f infra/docker-compose.yml up -d redis` —
+  et **ne retombe jamais en douce sur la démo** : un repli silencieux est précisément ce qui
+  ferait confondre les deux mondes. Le contrôle a lieu **avant** l'arrêt de la session en
+  place : un Redis manquant n'aura pas au passage coupé une Control Tower qui tournait.
+- **Le poste de pilotage démarre vide, et le dit.** Sans run, il n'y a ni tâche, ni
+  événement, ni validation : l'UI affiche alors quoi faire (lancer
+  `maestro-run --publier "<objectif>"`, ou repasser en `--demo`) au lieu d'aligner des
+  panneaux à zéro qui feraient croire à une panne. Une API **injoignable**, elle, reste
+  signalée par sa bannière d'erreur — l'écran vide *connecté* et l'écran vide *muet* ne se
+  diagnostiquent pas pareil.
+- **L'historique survit au redémarrage** : en mode réel, les événements passent par le
+  journal durable de #97 (liste Redis) et sont rejoués à l'ouverture de l'API.
+
+Le mode `--demo` reste le bon choix pour le **développement front**, le skill `/verify` et
+les captures de `/milestone-presentation` : app réelle, mêmes endpoints, mais bus mémoire et
+scénario simulé — Kanban peuplé, coûts par tâche, une validation laissée en attente,
+pulsation périodique, chat scripté sur un fil éphémère (§6.4). Tout le reste est **identique
+dans les deux modes** : ports (`MAESTRO_PORT_API`/`MAESTRO_PORT_UI`, dédiés par worktree),
+dossier de logs, nettoyage des sessions précédentes, chien de garde du navigateur et
+`--stop`. Détail d'usage : skill [`control-tower`](../.claude/skills/control-tower/SKILL.md).

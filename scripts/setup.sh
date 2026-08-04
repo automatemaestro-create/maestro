@@ -1293,6 +1293,10 @@ elif [ "$NB_ECHECS_SOUPLES" -gt 0 ]; then
   printf 'voir « Reste à faire » ci-dessus. Sans runner en ligne, les pipelines de MR restent\n'
   printf '« pending » et le merge est bloqué.\n'
 else
-  printf '\nEnvironnement local prêt. Lancer la Control Tower : bash scripts/controltower/start.sh\n'
+  # Le lanceur démarre en MODE RÉEL depuis #186 : il exige Redis, et le dit lui-même quand il
+  # manque. On annonce donc les deux modes ici plutôt que de laisser découvrir l'exigence.
+  printf '\nEnvironnement local prêt. Lancer la Control Tower :\n'
+  printf '  bash scripts/controltower/start.sh          # mode réel (Redis requis)\n'
+  printf '  bash scripts/controltower/start.sh --demo   # scénario de démonstration, sans Redis\n'
 fi
 exit 0
