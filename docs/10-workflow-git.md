@@ -919,6 +919,14 @@ donc que lorsqu'une suite d'outillage est dans le périmètre — et **jamais su
 `pytest-xdist`** (clone antérieur à #214) : il sonde, joue en série et le dit, plutôt que de
 rendre un rouge qui ne parle pas du code. Le rattrapage est `bash scripts/setup.sh --only venv`.
 
+Ce cas-là n'en est plus qu'un parmi d'autres : depuis #216, le filet demande à
+`setup.sh --derive` **tout ce que ce clone n'a pas pris** du dépôt (dépendances Python, paquets
+npm, version de Node) et le dit avant son verdict, dans un bloc « Dépendances en retard » qui porte
+la commande de rattrapage. Il **signale sans installer** — c'est le principe ci-dessus : changer
+l'environnement de quelqu'un qui attend un verdict, ce serait lui rendre le verdict d'un autre
+environnement. La réparation, elle, se déclenche d'office ailleurs : au démarrage d'un ticket
+(§9.4).
+
 **2. Un périmètre déduit du diff**, dans [`scripts/ci/local.sh`](../scripts/ci/local.sh) :
 
 ```bash
@@ -1257,6 +1265,69 @@ Un code non nul n'est **pas fatal** pour l'appelant : une abstention n'empêche 
 démarrer ni un run de continuer. Couvert par [`test_worktree.py`](../tests/test_worktree.py) — mise
 à jour depuis un worktree, ref posée sans répertoire de travail, les deux abstentions, idempotence,
 et le fait qu'`ensure` démarre le ticket même quand `main` ne peut pas suivre.
+
+### 9.4 Les dépendances ajoutées au dépôt suivent d'elles-mêmes (#216)
+
+Quatrième automatisme de la même famille, et la même leçon appliquée à autre chose que des refs :
+un **paquet ajouté au dépôt** n'arrive pas tout seul dans un clone déjà monté. Une entrée de
+`pyproject.toml`, un paquet de `apps/web/package-lock.json`, une version de `.node-version` : la CI
+les prend à chaque pipeline (`pip install -e ".[dev]"` en `before_script`), un clone neuf à son
+`/setup` — un clone existant, **jamais**, tant que personne n'y rejoue `setup.sh` de sa propre
+initiative.
+
+Le cas qui a ouvert le ticket est bénin et sert d'avertissement : #214 ajoute `pytest-xdist` à
+l'extra `dev`, et un clone d'avant garde une boucle de test en série — `local.sh` le dit, donc on
+le voit. Le prochain ne sera pas dit : un module applicatif manquant fait échouer la suite locale
+**à l'import**, sans que la cause saute aux yeux.
+
+**Rien n'était à écrire, seulement à câbler.** `setup.sh` sait détecter la dérive *et* la réparer
+depuis toujours — c'est ainsi que ses étapes décident si elles ont quelque chose à faire :
+
+| Étape | Ce qu'elle compare | Ce qu'elle rejoue |
+|---|---|---|
+| `venv` | `pyproject.toml` contre le témoin `.venv/.maestro-setup-stamp` | `pip install -e ".[dev]"` |
+| `web`  | `apps/web/package-lock.json` contre `apps/web/node_modules` | `npm ci` |
+| `node` | `.node-version` contre `node -v` du Node vendoré | provisionnement de `.tools/node/` |
+
+Ce qui manquait, c'était de l'**exposer** — d'où un mode dédié, lisible par un script, sans réseau
+ni écriture :
+
+```bash
+bash scripts/setup.sh --derive      # « <étape><TAB><raison> » par ligne ; 0 = à jour, 3 = dérive
+```
+
+Les prédicats sont partagés avec les étapes elles-mêmes : **ce que le déclencheur détecte est
+exactement ce que la réparation traite**, et les deux ne peuvent pas diverger.
+
+**Aucun hook git ne pouvait porter ça** — même raison qu'en §9.3, et c'est ce qui rend le câblage
+non négociable : le merge a lieu sur GitLab, et la mise à jour de `main` passe tantôt par
+`git merge --ff-only`, tantôt par `git update-ref` (§9.3), qui ne déclenche **rien**. Un
+`post-merge`/`post-checkout` ne se serait donc déclenché qu'une fois sur deux. D'où, là encore, les
+points de passage obligés :
+
+| Où | Ce qu'il fait |
+|---|---|
+| `worktree.sh ensure` — donc **tout `/ticket-start`**, manuel comme autonome | détecte (`--derive`), annonce, **répare** (`setup.sh --only <étapes>`) |
+| `scripts/ci/local.sh` | détecte et **signale seulement** — bloc « Dépendances en retard » avant le verdict (§8.4) |
+
+Trois règles, dans l'ordre d'importance :
+
+1. **Rien n'est réimplémenté.** Ni `pip` ni `npm` n'est appelé hors de `setup.sh` : `worktree.sh`
+   demande la dérive et déclenche la réparation, il ne l'écrit pas.
+2. **C'est le clone principal qu'on remet à niveau.** `.venv/` et `.tools/` y vivent, partagés par
+   lien avec tous les worktrees (§9) — et l'installation éditable de `maestro` doit continuer d'y
+   pointer (#194). Le `node_modules` d'un worktree, lui, est installé à sa création. Corollaire
+   pour `--derive` : dans un worktree, la dérive du **venv** s'évalue sur le clone principal. Le
+   `pyproject.toml` d'ici date de la création du worktree, comme tous ses fichiers ; le comparer au
+   témoin partagé crierait à la dérive à perpétuité, à chaque démarrage de ticket.
+3. **Ça ne bloque jamais un démarrage.** Même statut que `sync-main` : une mise à niveau en échec
+   est signalée, avec la commande de rattrapage, et le ticket part quand même.
+
+`MAESTRO_MAJ_DEPENDANCES=0` désactive le passage automatique. Couvert par
+[`test_setup.py`](../tests/test_setup.py) (dérive détectée / absente / réparée, et le fait que
+`--derive` n'écrit rien) et [`test_worktree.py`](../tests/test_worktree.py) (le câblage : qui
+appelle quoi, depuis un worktree comme depuis le clone principal, et l'échec non bloquant) —
+dépôts jetables, sans réseau ni vrai `pip`/`npm`.
 
 ---
 

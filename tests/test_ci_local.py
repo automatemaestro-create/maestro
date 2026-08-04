@@ -596,7 +596,11 @@ def test_sans_pytest_xdist_le_filet_joue_en_serie_au_lieu_de_rougir(clone: Clone
     assert "-n auto" not in lance
     assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
     ligne = ligne_du_job(acheve.stdout, "pytest")
-    assert "en série" in ligne and "setup.sh --only venv" in ligne
+    assert "en série" in ligne
+    # Le remède n'est plus accroché à ce job-là : il a rejoint le bloc « Dépendances en retard »
+    # (#216), qui couvre tout ce que le dépôt a ajouté depuis, pas seulement pytest-xdist.
+    assert "Dépendances en retard" in acheve.stdout
+    assert "setup.sh --only venv" in acheve.stdout
 
 
 def test_complet_rejoue_toute_la_suite_avec_sa_couverture(clone: Clone) -> None:
@@ -708,3 +712,63 @@ def test_shellcheck_absent_renvoie_a_l_image_du_pipeline(clone: Clone) -> None:
     ligne = ligne_du_job(acheve.stdout, "shellcheck")
     assert "IGNORÉ" in ligne
     assert IMAGE in ligne          # l'image vient bien de .gitlab-ci.yml
+
+
+# --- Dérive des dépendances (#216) ----------------------------------------------------------------
+# Le filet se sert de ce que `setup.sh` a posé ; encore faut-il que ce soit à jour. Il pose donc la
+# question à `setup.sh --derive` (sans réseau ni écriture) et SIGNALE — installer dans le dos de qui
+# lance un contrôle, ce serait changer l'environnement dont il attend un verdict (docs/10 §8.4).
+
+# `setup.sh` factice : il journalise ce qu'on lui demande et rend la dérive qu'on lui a dictée.
+SHIM_SETUP = """\
+#!/usr/bin/env bash
+printf 'setup %s\n' "$*" >> "$MAESTRO_FAUX_JOURNAL"
+[ "$1" = --derive ] || exit 0
+printf '%b' "${MAESTRO_FAUX_DERIVE:-}"
+exit "${MAESTRO_FAUX_DERIVE_CODE:-0}"
+"""
+
+DERIVE_VENV = "venv\tpyproject.toml modifié depuis la dernière installation du venv\n"
+
+
+def test_le_filet_signale_la_derive_sans_jamais_l_installer(clone: Clone) -> None:
+    clone.equipe_tout()
+    clone.pose_shim("setup.sh", clone.racine / "scripts", corps=SHIM_SETUP)
+
+    acheve = clone.lance(
+        "--only",
+        "mypy",
+        MAESTRO_FAUX_DERIVE=DERIVE_VENV,
+        MAESTRO_FAUX_DERIVE_CODE="3",
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Dépendances en retard" in acheve.stdout
+    assert "pyproject.toml modifié" in acheve.stdout
+    assert "bash scripts/setup.sh --only venv" in acheve.stdout
+    assert clone.appels().count("setup --derive") == 1
+    assert not [appel for appel in clone.appels() if "setup --only" in appel], (
+        "le filet demande, il n'installe pas"
+    )
+
+
+def test_le_filet_se_tait_quand_les_dependances_sont_a_jour(clone: Clone) -> None:
+    clone.equipe_tout()
+    clone.pose_shim("setup.sh", clone.racine / "scripts", corps=SHIM_SETUP)
+
+    acheve = clone.lance("--only", "mypy")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Dépendances en retard" not in acheve.stdout
+
+
+def test_le_filet_tourne_sans_sonde_de_derive(clone: Clone) -> None:
+    """Pas de `setup.sh` sous la main : le verdict reste rendu, sans bruit ni échec."""
+    clone.equipe_tout()
+    assert not (clone.racine / "scripts" / "setup.sh").exists()
+
+    acheve = clone.lance("--only", "mypy")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Verdict : VERT" in acheve.stdout
+    assert "Dépendances en retard" not in acheve.stdout

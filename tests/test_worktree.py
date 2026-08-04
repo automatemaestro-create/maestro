@@ -46,6 +46,20 @@ REGLAGES_PRINCIPAL = {
     "enabledMcpjsonServers": ["chrome-maestro", "figma-officiel"],
 }
 
+# `setup.sh` factice (#216) : il journalise ce qu'on lui demande, rend la dérive qu'on lui a mise
+# dans la table, et le code qu'on lui a demandé pour la réparation. Ni pip, ni npm, ni réseau —
+# ce qui est testé ici, c'est le CÂBLAGE (qui appelle quoi, avec quoi, et sans jamais bloquer).
+SHIM_SETUP = """\
+#!/usr/bin/env bash
+printf 'setup %s\\n' "$*" >> "$MAESTRO_FAUX_JOURNAL"
+if [ "$1" = --derive ]; then
+  [ -s "$MAESTRO_FAUX_DERIVE" ] || exit 0
+  cat "$MAESTRO_FAUX_DERIVE"
+  exit 3
+fi
+exit "${MAESTRO_FAUX_SETUP_CODE:-0}"
+"""
+
 
 @dataclass
 class Depot:
@@ -57,6 +71,8 @@ class Depot:
     home: Path
     fauxbin: Path
     verdicts: dict[str, str] | None = None
+    derive: str | None = None
+    code_setup: str = "0"
 
     # --- exécution ---
     def lance(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -82,6 +98,15 @@ class Depot:
         if self.verdicts is not None:
             environnement.pop("MAESTRO_WORKTREE_GC")
             environnement["MAESTRO_WORKTREE_VERDICT"] = str(self.fauxbin / "verdict")
+        # Mise à niveau des dépendances (#216) : même dispositif. Éteinte par défaut, rallumée par
+        # `impose_derive`, qui pose en même temps le `setup.sh` factice qu'elle appellera — le vrai
+        # installerait pour de bon.
+        environnement["MAESTRO_MAJ_DEPENDANCES"] = "0"
+        if self.derive is not None:
+            environnement.pop("MAESTRO_MAJ_DEPENDANCES")
+            environnement["MAESTRO_FAUX_JOURNAL"] = str(self.journal)
+            environnement["MAESTRO_FAUX_DERIVE"] = str(self.fauxbin / "derive.tsv")
+            environnement["MAESTRO_FAUX_SETUP_CODE"] = self.code_setup
         environnement["PATH"] = os.pathsep.join(
             [str(self.fauxbin), environnement.get("PATH", "")]
         )
@@ -136,6 +161,30 @@ class Depot:
             newline="\n",
         )
         shim.chmod(0o755)
+
+    # --- couture de la mise à niveau des dépendances (#216) ---
+    @property
+    def journal(self) -> Path:
+        """Ce que le `setup.sh` factice a reçu, un appel par ligne."""
+        return self.fauxbin / "appels-setup.txt"
+
+    def impose_derive(self, lignes: str, *, code_setup: str = "0") -> None:
+        """Impose la réponse de `setup.sh --derive` — et rallume la mise à niveau.
+
+        `lignes` : le TSV que rend le vrai mode (« <étape><TAB><raison> »), vide pour « à jour ».
+        `code_setup` : ce que rend la réparation (`--only …`), pour éprouver son échec.
+        """
+        self.derive = lignes
+        self.code_setup = code_setup
+        (self.fauxbin / "derive.tsv").write_text(lignes, encoding="utf-8", newline="\n")
+        setup = self.racine / "scripts" / "setup.sh"
+        setup.write_text(SHIM_SETUP, encoding="utf-8", newline="\n")
+        setup.chmod(0o755)
+
+    def appels_setup(self) -> list[str]:
+        if not self.journal.exists():
+            return []
+        return [ligne for ligne in self.journal.read_text(encoding="utf-8").splitlines() if ligne]
 
     # --- raccourcis ---
     def worktree(self, nom: str = "152-essai") -> Path:
@@ -889,3 +938,79 @@ def test_ensure_demarre_le_ticket_meme_si_main_ne_peut_pas_suivre(depot: Depot) 
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "changements non commités" in acheve.stderr
     assert _verdict(acheve).startswith("WORKTREE ")
+
+
+# --- Mise à niveau des dépendances (#216) ----------------------------------------------------
+# Un clone existant ne prend pas tout seul les paquets ajoutés au dépôt : la CI les prend à chaque
+# pipeline, un clone neuf à son `/setup`, un clone déjà monté jamais. `ensure` est le point de
+# passage obligé de tout /ticket-start — c'est là que la mise à niveau s'accroche, comme
+# `sync-main` (#205) et le ramassage (#197) avant elle. Elle SIGNALE et ne bloque jamais.
+
+DERIVE_VENV = "venv\tpyproject.toml modifié depuis la dernière installation du venv\n"
+
+
+def test_ensure_remet_les_dependances_a_niveau_en_appelant_setup(depot: Depot) -> None:
+    """Détection puis réparation, toutes deux déléguées à `setup.sh` : rien n'est réimplémenté."""
+    depot.impose_derive(DERIVE_VENV + "web\tapps/web/package-lock.json modifié\n")
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert depot.appels_setup() == ["setup --derive", "setup --only venv,web"], (
+        "la dérive est demandée à setup.sh, puis réparée par lui — jamais par un pip/npm d'ici"
+    )
+    assert "pyproject.toml modifié" in acheve.stdout + acheve.stderr, "la raison est annoncée"
+    assert _verdict(acheve).startswith("WORKTREE "), "le contrat de sortie tient toujours"
+
+
+def test_ensure_se_tait_quand_les_dependances_sont_a_jour(depot: Depot) -> None:
+    """Le cas de tous les jours : la sonde coûte trois comparaisons de dates, et ne dit rien."""
+    depot.impose_derive("")
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert depot.appels_setup() == ["setup --derive"], "rien à réparer, donc rien n'est installé"
+    assert "dépendances en retard" not in acheve.stdout
+    assert "mise à niveau" not in acheve.stdout
+
+
+def test_ensure_demarre_le_ticket_meme_si_la_mise_a_niveau_echoue(depot: Depot) -> None:
+    """Même statut que `sync-main` : un échec se dit, il n'interdit pas de démarrer un ticket."""
+    depot.impose_derive(DERIVE_VENV, code_setup="1")
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert _verdict(acheve).startswith("WORKTREE ")
+    assert depot.git("branch", "--show-current", cwd=depot.worktree()) == BRANCHE
+    assert "en échec" in acheve.stdout
+    assert "scripts/setup.sh --only venv" in acheve.stdout, "le rattrapage manuel est donné"
+
+
+def test_ensure_remet_a_niveau_le_clone_principal_meme_appele_depuis_un_worktree(
+    depot: Depot,
+) -> None:
+    """`.venv/` et `.tools/` vivent dans le clone principal, partagés par lien (docs/10 §9) : c'est
+    LUI qu'on équipe, où que la session soit — et l'installation éditable de `maestro` doit
+    continuer d'y pointer (#194). Le `setup.sh` factice n'existe que là : l'appel le prouve."""
+    depot.impose_derive(DERIVE_VENV)
+    depot.lance("create", "152", "--branche", BRANCHE)
+    assert not (depot.worktree() / "scripts" / "setup.sh").exists()
+
+    acheve = depot.lance("ensure", "153", "--branche", "chore/153-suite", cwd=depot.worktree())
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert depot.appels_setup() == ["setup --derive", "setup --only venv"]
+
+
+def test_ensure_ignore_une_sonde_indisponible(depot: Depot) -> None:
+    """Pas de `setup.sh` (dépôt partiel, clone en cours de montage) : ni bruit, ni blocage."""
+    depot.derive = ""      # rallume la mise à niveau sans poser le script factice
+    assert not (depot.racine / "scripts" / "setup.sh").exists()
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert _verdict(acheve).startswith("WORKTREE ")
+    assert "dépendances en retard" not in acheve.stdout
