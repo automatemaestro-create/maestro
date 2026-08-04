@@ -416,6 +416,8 @@ PERIMETRE_REDUIT=0
 PYTEST_JOUE=0
 #: Posé par la sonde quand pytest-xdist manque : le job tourne quand même, en série, et le dit.
 XDIST_ABSENT=0
+#: Dérive des dépendances (#216), en TSV « <étape><TAB><raison> » — voir `derive_dependances`.
+DERIVE_LIGNES=""
 
 # Déduit du diff les suites à jouer. Règle d'or : on n'élargit jamais en silence, mais on ne
 # rétrécit jamais sur une supposition — tout fichier dont personne ne parle ramène la suite entière.
@@ -559,13 +561,29 @@ EOF
 # `-n auto` sur un venv sans pytest-xdist sort en erreur d'arguments : un ROUGE qui ne parle
 # pas du code. Le venv d'un clone antérieur à #214 est dans ce cas tant que
 # `setup.sh --only venv` n'a pas rejoué `pip install -e ".[dev]"`. Comme pour tout ce qui
-# manque ici : on ne l'installe pas dans le dos, on s'en passe et on le dit.
+# manque ici : on ne l'installe pas dans le dos, on s'en passe et on le dit — le remède est
+# porté par le bloc « Dépendances en retard » du résumé, qui couvre tous les cas (#216).
 xdist_disponible() { # <python>
   if ( cd "$RACINE" && "$1" -c "import xdist" ) >/dev/null 2>&1; then
     return 0
   fi
   XDIST_ABSENT=1
   return 1
+}
+
+# Dérive des dépendances (#216) — la question que `pytest-xdist absent` posait pour un seul paquet :
+# ce clone a-t-il pris ce que le dépôt a ajouté depuis sa mise en route ? La réponse est demandée à
+# `setup.sh --derive`, qui la détient déjà (pyproject.toml, package-lock.json, .node-version) et ne
+# fait pour ça ni réseau ni écriture. Le filet, lui, SIGNALE : installer dans le dos de qui lance un
+# contrôle, c'est changer l'environnement dont il attend un verdict (docs/10 §8.4).
+derive_dependances() {
+  local setup="$RACINE/scripts/setup.sh" lignes code
+  [ -f "$setup" ] || return 0
+  lignes="$(bash "$setup" --derive 2>/dev/null)"
+  code=$?
+  # 3 = dérive ; 0 = à jour ; autre = sonde indisponible — dans les deux derniers cas, rien à dire.
+  [ "$code" -eq 3 ] && DERIVE_LIGNES="$lignes"
+  return 0
 }
 
 job_pytest() {
@@ -646,7 +664,7 @@ EOF
     DETAIL="$DETAIL — périmètre : toute la suite ($PERIMETRE_MOTIF)"
   fi
   if [ "$XDIST_ABSENT" = 1 ]; then
-    DETAIL="$DETAIL — en série (pytest-xdist absent du venv : bash scripts/setup.sh --only venv)"
+    DETAIL="$DETAIL — en série (pytest-xdist absent du venv)"
   fi
   [ "$code" -eq 0 ] || return 1
   return 0
@@ -864,6 +882,29 @@ if [ "$MODE_PYTEST" != complet ] && [ "$PYTEST_JOUE" = 1 ]; then
       "$C_Y" "$C_0" "$COUVERTURE_MIN"
   fi
 fi
+# Ce que ce clone n'a pas pris du dépôt (#216) : dit ici, jamais installé — c'est la contrepartie du
+# principe « aucune installation dans le dos ». Le cas historique (pytest-xdist absent, #214) en est
+# devenu un parmi d'autres : il rejoint le bloc au lieu d'avoir son message à lui.
+derive_dependances
+if [ -n "$DERIVE_LIGNES" ] || [ "$XDIST_ABSENT" = 1 ]; then
+  etapes=""
+  printf '%sDépendances en retard%s — ce clone n'\''a pas pris ce que le dépôt a ajouté depuis sa\n' \
+    "$C_Y" "$C_0"
+  printf 'mise en route :\n'
+  while IFS="$(printf '\t')" read -r etape raison; do
+    [ -n "$etape" ] || continue
+    case ",$etapes," in *",$etape,"*) ;; *) etapes="${etapes:+$etapes,}$etape" ;; esac
+    printf '  · %s : %s\n' "$etape" "$raison"
+  done <<EOF
+$DERIVE_LIGNES
+EOF
+  if [ "$XDIST_ABSENT" = 1 ]; then
+    printf '  · venv : pytest-xdist absent — la suite a tourné en série (#214)\n'
+    case ",$etapes," in *",venv,"*) ;; *) etapes="${etapes:+$etapes,}venv" ;; esac
+  fi
+  printf 'Rattrapage : bash scripts/setup.sh --only %s — rien n'\''est installé dans le dos ici.\n\n' "$etapes"
+fi
+
 if [ "$NB_ECHECS" -gt 0 ]; then
   printf '%sVerdict : ÉCHEC%s — %d job(s) rouge(s). La CI rendrait le même verdict : corriger avant de pousser.\n' \
     "$C_R" "$C_0" "$NB_ECHECS"

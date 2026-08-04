@@ -6,6 +6,7 @@
 #
 #   bash scripts/setup.sh            # monte ce qui manque
 #   bash scripts/setup.sh --check    # diagnostic seul — n'écrit RIEN
+#   bash scripts/setup.sh --derive   # dérive des dépendances, en TSV pour un script (0/3)
 #   bash scripts/setup.sh --help     # étapes disponibles et drapeaux
 #
 # Principes (README § Développement, docs/10-workflow-git.md §7) :
@@ -58,6 +59,7 @@ ETAPES_CONNUES="node prerequis venv env hooks web mcp runner infra verif"
 
 # --- Drapeaux -----------------------------------------------------------------------------------
 MODE_CHECK=0                                     # --check : diagnostic seul, aucune écriture
+MODE_DERIVE=0                                    # --derive : dérive des dépendances, en TSV
 AUTO_INSTALL="${MAESTRO_AUTO_INSTALL:-1}"        # --no-install : ne rien installer, juste signaler
 WITH_INFRA=0                                     # --with-infra : démarrer aussi les bases locales
 ETAPES_ONLY=""                                   # --only  : étapes à exécuter (défaut : toutes)
@@ -71,6 +73,9 @@ Mise en route d'un clone Maestro (socle local).
 
 Options :
   --check            Diagnostic seul : rapporte ce qui manque, sans rien écrire ni installer.
+  --derive           Dépendances périmées depuis la dernière mise en route, en TSV lisible par
+                     un script (« <étape><TAB><raison> », une ligne par étape à rejouer).
+                     N'écrit rien, ne touche pas au réseau. 0 = à jour, 3 = dérive.
   --no-install       N'installe aucun outil manquant, contente-toi de le signaler.
   --with-infra       Démarre aussi les bases locales (PostgreSQL, Redis, Temporal) via Docker.
   --only <étapes>    N'exécute que ces étapes (séparées par des virgules).
@@ -101,6 +106,7 @@ USAGE
 while [ $# -gt 0 ]; do
   case "$1" in
     --check)      MODE_CHECK=1 ;;
+    --derive)     MODE_DERIVE=1 ;;
     --no-install) AUTO_INSTALL=0 ;;
     --with-infra) WITH_INFRA=1 ;;
     --only)    ETAPES_ONLY="${2:-}"; shift ;;
@@ -518,6 +524,98 @@ assure_detection() {
   return 0
 }
 
+# --- Dérive des dépendances (#216) ---------------------------------------------------------------
+# « Ce clone a-t-il pris les dépendances ajoutées au dépôt depuis sa dernière mise en route ? »
+#
+# La détection n'est pas nouvelle : les étapes `venv`, `web` et `node` la font depuis toujours pour
+# décider si elles ont quelque chose à installer. Ce qui l'est, c'est de l'EXPOSER — les prédicats
+# ci-dessous sont la source unique, utilisée par les étapes ET par `--derive`, pour que le
+# déclencheur (worktree.sh ensure, donc /ticket-start) et la réparation ne puissent pas diverger.
+#
+# Aucune écriture, aucun réseau : trois comparaisons de dates de fichiers et un `node -v`.
+
+# Racine qui PORTE le venv examiné. Dans un worktree, `.venv/` est un lien vers celui du clone
+# principal (docs/10 §9) : le témoin d'installation appartient donc à un AUTRE répertoire de
+# travail, dont il faut aussi prendre le `pyproject.toml` pour que la comparaison ait un sens. Un
+# worktree est checkouté d'un bloc — tous ses fichiers datent de sa création, et comparer SON
+# pyproject.toml au témoin partagé crierait à la dérive à perpétuité, à chaque démarrage de ticket.
+racine_porteuse() {
+  local commun principal
+  # `.git` FICHIER = worktree lié ; ailleurs (clone principal, dépôt jetable de test), rien à faire.
+  [ -f "$RACINE/.git" ] || { printf '%s\n' "$RACINE"; return 0; }
+  commun="$(git -C "$RACINE" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  [ -n "$commun" ] || { printf '%s\n' "$RACINE"; return 0; }
+  principal="$(dirname "$commun")"
+  # Le venv d'ici est-il bien CELUI du clone principal ? Un worktree monté `--sans-liens` a le sien,
+  # et c'est alors lui qui fait foi.
+  if [ -f "$principal/pyproject.toml" ] && [ "$RACINE/.venv" -ef "$principal/.venv" ]; then
+    printf '%s\n' "$principal"
+  else
+    printf '%s\n' "$RACINE"
+  fi
+}
+
+# venv_perime <racine> : 0 si `pip install -e ".[dev]"` est à rejouer (raison sur stdout), 1 sinon.
+venv_perime() {
+  local temoin="$1/.venv/.maestro-setup-stamp"
+  if [ ! -f "$temoin" ]; then
+    printf 'dépendances Python jamais installées par setup.sh (témoin .venv/.maestro-setup-stamp absent)\n'
+    return 0
+  fi
+  if [ "$1/pyproject.toml" -nt "$temoin" ]; then
+    printf 'pyproject.toml modifié depuis la dernière installation du venv\n'
+    return 0
+  fi
+  return 1
+}
+
+# web_perime <racine> : 0 si `npm ci` est à rejouer. Évalué sur la racine COURANTE, elle : chaque
+# worktree a son propre apps/web/node_modules (Turbopack refuse un lien), donc ses propres dates.
+web_perime() {
+  local web="$1/apps/web" lock="$1/apps/web/package-lock.json"
+  [ -f "$web/package.json" ] || return 1
+  if [ ! -d "$web/node_modules" ]; then
+    printf 'dépendances npm jamais installées (apps/web/node_modules absent)\n'
+    return 0
+  fi
+  if [ -f "$lock" ] && [ "$lock" -nt "$web/node_modules" ]; then
+    printf 'apps/web/package-lock.json modifié depuis l'\''installation de apps/web/node_modules\n'
+    return 0
+  fi
+  return 1
+}
+
+# node_perime : 0 si le Node vendoré n'est pas à la version épinglée. Comparaison de CONTENU
+# (`.node-version` contre `node -v`), pas de dates : elle vaut donc depuis un worktree aussi.
+node_perime() {
+  local version
+  [ -n "$NODE_PIN" ] || return 1
+  version="$(node_local_version 2>/dev/null || true)"
+  [ "$version" = "$NODE_PIN" ] && return 1
+  if [ -n "$version" ]; then
+    printf '.node-version épingle v%s, .tools/node/ porte v%s\n' "$NODE_PIN" "$version"
+  else
+    printf '.node-version épingle v%s, absent de .tools/node/\n' "$NODE_PIN"
+  fi
+  return 0
+}
+
+# `--derive` : une ligne TSV par étape à rejouer (« <étape><TAB><raison> »), rien sur stdout si le
+# clone est à jour. 0 = à jour, 3 = dérive — un code, pas une phrase à analyser.
+rapport_derive() {
+  local porteuse raison nb=0
+  porteuse="$(racine_porteuse)"
+  if [ "$porteuse" != "$RACINE" ]; then
+    # Sur stderr : stdout ne porte que du TSV, pour que l'appelant le lise sans filtrer.
+    printf 'venv partagé — dérive évaluée dans le clone principal %s\n' "$porteuse" >&2
+  fi
+  if raison="$(venv_perime "$porteuse")"; then printf 'venv\t%s\n' "$raison"; nb=$((nb + 1)); fi
+  if raison="$(web_perime "$RACINE")";   then printf 'web\t%s\n'  "$raison"; nb=$((nb + 1)); fi
+  if raison="$(node_perime)";            then printf 'node\t%s\n' "$raison"; nb=$((nb + 1)); fi
+  [ "$nb" -eq 0 ] || return 3
+  return 0
+}
+
 # Étape demandée ? (respecte --only et --skip)
 etape_demandee() {
   local etape="$1"
@@ -758,7 +856,7 @@ etape_prerequis() {
 # Idempotence : un témoin .venv/.maestro-setup-stamp est posé après installation ; on ne réinstalle
 # que s'il manque ou si pyproject.toml a bougé depuis (dépendances modifiées).
 etape_venv() {
-  local pv temoin a_creer=0 a_installer=0
+  local pv temoin motif="" a_creer=0 a_installer=0
   pv="$(python_venv)"
   temoin="$RACINE/.venv/.maestro-setup-stamp"
 
@@ -768,7 +866,9 @@ etape_venv() {
   fi
 
   [ -x "$pv" ] || a_creer=1
-  if [ ! -f "$temoin" ] || [ "$RACINE/pyproject.toml" -nt "$temoin" ]; then a_installer=1; fi
+  # Le MÊME prédicat que `--derive` : ce que le déclencheur détecte, l'étape le répare (#216).
+  # Sur la racine COURANTE, elle : on équipe le clone dans lequel on est lancé.
+  motif="$(venv_perime "$RACINE")" && a_installer=1
 
   if [ "$a_creer" = 0 ] && [ "$a_installer" = 0 ]; then
     rapport DEJA venv "venv : .venv/ à jour (pyproject.toml inchangé depuis l'installation)"
@@ -778,10 +878,8 @@ etape_venv() {
   if [ "$MODE_CHECK" = 1 ]; then
     if [ "$a_creer" = 1 ]; then
       rapport IGNORE venv 'venv : .venv/ à créer puis pip install -e ".[dev]" (--check : rien écrit)'
-    elif [ ! -f "$temoin" ]; then
-      rapport IGNORE venv "venv : .venv/ présent mais jamais installé par ce script (--check : rien écrit)"
     else
-      rapport IGNORE venv "venv : dépendances à réinstaller, pyproject.toml a changé (--check : rien écrit)"
+      rapport IGNORE venv "venv : dépendances à réinstaller — $motif (--check : rien écrit)"
     fi
     return 0
   fi
@@ -888,7 +986,7 @@ etape_hooks() {
 # --- 6. apps/web : dépendances npm de la Control Tower -------------------------------------------
 # Réinstalle si node_modules/ est absent ou plus ancien que le lockfile.
 etape_web() {
-  local web="$RACINE/apps/web" lock ok=1
+  local web="$RACINE/apps/web" lock motif ok=1
 
   if [ ! -f "$web/package.json" ]; then
     rapport IGNORE web "apps/web : pas de package.json, étape sautée"
@@ -900,12 +998,13 @@ etape_web() {
   fi
 
   lock="$web/package-lock.json"
-  if [ -d "$web/node_modules" ] && { [ ! -f "$lock" ] || [ ! "$lock" -nt "$web/node_modules" ]; }; then
+  # Même prédicat que `--derive` (#216) : une seule définition de « ces dépendances ont dérivé ».
+  if ! motif="$(web_perime "$RACINE")"; then
     rapport DEJA web "apps/web : dépendances npm à jour"
     return 0
   fi
   if [ "$MODE_CHECK" = 1 ]; then
-    rapport IGNORE web "apps/web : dépendances npm à installer (--check : rien écrit)"
+    rapport IGNORE web "apps/web : dépendances npm à installer — $motif (--check : rien écrit)"
     return 0
   fi
 
@@ -1232,6 +1331,15 @@ etape_verif() {
 # ================================================================================================
 # Déroulé
 # ================================================================================================
+
+# `--derive` sort AVANT tout le reste : ni bannière, ni détection de prérequis (qui peut installer),
+# ni étape. C'est ce qui en fait une sonde appelable à chaud par un autre script — worktree.sh
+# ensure à chaque /ticket-start, scripts/ci/local.sh avant son verdict (#216).
+if [ "$MODE_DERIVE" = 1 ]; then
+  rapport_derive
+  exit $?
+fi
+
 printf '\nMise en route de Maestro — %s\n' "$RACINE"
 if [ "$MODE_CHECK" = 1 ]; then
   printf 'Mode --check : diagnostic seul, aucun fichier ne sera écrit.\n'

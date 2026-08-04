@@ -88,6 +88,11 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    conservé parce qu'il porte du travail non sauvegardé, relaie-le dans ton résumé — c'est du
    travail que personne n'attend plus là.
 
+   Il **remet aussi les dépendances du clone principal à niveau** quand le dépôt en a ajouté
+   (#216, docs/10 §9.4) — en appelant `scripts/setup.sh`, jamais `pip`/`npm` à la main. Muet quand
+   il n'y a rien à prendre ; s'il annonce une mise à niveau, ou qu'elle échoue (elle ne bloque
+   jamais un démarrage), relaie-le dans ton résumé.
+
    ⚠ La relocalisation déplace le répertoire de travail, **pas le bloc `env`** : une session
    relocalisée garde les ports Control Tower et le profil de navigateur du clone principal
    (mesuré sur #181 — `EnterWorktree` ne réévalue que les caches liés au CWD). `ensure` affiche

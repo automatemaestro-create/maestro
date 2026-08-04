@@ -621,3 +621,149 @@ def test_etape_runner_sautee_si_le_script_dedie_est_absent(depot: Depot) -> None
     assert resultat.returncode == 0
     assert statut(resultat.stdout, "runner") == "IGNORÉ"
     assert "introuvable" in detail(resultat.stdout, "runner")
+
+
+# --- Dérive des dépendances : `--derive` (#216) ------------------------------------------------
+# « Ce clone a-t-il pris les dépendances ajoutées au dépôt depuis sa mise en route ? » Le mode
+# expose la détection que les étapes faisaient déjà pour leur propre compte, sous une forme
+# qu'un script peut lire : TSV sur stdout, verdict dans le code de sortie (0 à jour / 3 dérive).
+# C'est ce qui permet à `worktree.sh ensure` — donc à tout /ticket-start — de réparer sans
+# réimplémenter pip ni npm, et à `ci/local.sh` de signaler sans rien installer.
+
+DERIVE_A_JOUR = 0
+DERIVE_DETECTEE = 3
+
+
+def date_fichier(chemin: Path, quand: float) -> None:
+    """Impose la date d'un fichier — la dérive se mesure en dates, pas en contenus."""
+    os.utime(chemin, (quand, quand))
+
+
+def prepare_venv(depot: Depot, *, a_jour: bool = True) -> Path:
+    """Un `.venv` déjà installé (témoin posé) et un `pyproject.toml` daté de part et d'autre.
+
+    Tout se passe dans le PASSÉ : une réparation repose le témoin à l'instant présent, qui doit
+    alors être postérieur au `pyproject.toml` — un fichier daté du futur ne dériverait jamais.
+    """
+    installation = os.stat(depot.racine).st_mtime - 3600
+    pyproject = depot.ecrire("pyproject.toml", '[project]\nname = "maestro"\n')
+    temoin = depot.racine / ".venv" / ".maestro-setup-stamp"
+    temoin.parent.mkdir(parents=True, exist_ok=True)
+    temoin.write_text("2026-08-04T00:00:00Z\n", encoding="utf-8", newline="\n")
+    date_fichier(temoin, installation)
+    date_fichier(pyproject, installation + (-60 if a_jour else 60))
+    return pyproject
+
+
+def lignes_derive(resultat: subprocess.CompletedProcess[str]) -> dict[str, str]:
+    """Le TSV de `--derive`, en table « étape → raison »."""
+    table: dict[str, str] = {}
+    for ligne in resultat.stdout.splitlines():
+        if not ligne.strip():
+            continue
+        etape, _, raison = ligne.partition("\t")
+        assert raison, f"ligne non tabulée : {ligne!r}"
+        table[etape] = raison
+    return table
+
+
+def test_derive_muette_quand_le_clone_est_a_jour(depot: Depot) -> None:
+    """Rien à dire = rien à lire : le silence est ce qui rend l'appel gratuit à chaque ticket."""
+    prepare_venv(depot)
+
+    resultat = depot.lance("--derive")
+
+    assert resultat.returncode == DERIVE_A_JOUR, resultat.stdout + resultat.stderr
+    assert resultat.stdout == ""
+
+
+def test_derive_signale_un_pyproject_plus_recent_que_l_installation(depot: Depot) -> None:
+    """Le cas qui a motivé le ticket : #214 ajoute pytest-xdist, ce clone ne l'a pas."""
+    prepare_venv(depot, a_jour=False)
+
+    resultat = depot.lance("--derive")
+
+    assert resultat.returncode == DERIVE_DETECTEE
+    assert "pyproject.toml" in lignes_derive(resultat)["venv"]
+
+
+def test_derive_signale_un_venv_jamais_installe_par_le_script(depot: Depot) -> None:
+    depot.ecrire("pyproject.toml", '[project]\nname = "maestro"\n')
+
+    resultat = depot.lance("--derive")
+
+    assert resultat.returncode == DERIVE_DETECTEE
+    assert "témoin" in lignes_derive(resultat)["venv"]
+
+
+def test_derive_signale_le_lockfile_npm(depot: Depot) -> None:
+    prepare_venv(depot)
+    depot.ecrire("apps/web/package.json", '{"name": "web"}\n')
+    node_modules = depot.racine / "apps" / "web" / "node_modules"
+    node_modules.mkdir(parents=True)
+    lock = depot.ecrire("apps/web/package-lock.json", '{"lockfileVersion": 3}\n')
+    date_fichier(lock, os.stat(node_modules).st_mtime + 60)
+
+    resultat = depot.lance("--derive")
+
+    assert resultat.returncode == DERIVE_DETECTEE
+    assert "package-lock.json" in lignes_derive(resultat)["web"]
+
+
+def test_derive_signale_la_version_de_node_epinglee(depot: Depot) -> None:
+    """`.node-version` se compare par CONTENU, pas par date : le verdict vaut aussi en worktree."""
+    prepare_venv(depot)
+    depot.ecrire(".node-version", "20.19.0\n")
+
+    resultat = depot.lance("--derive")
+
+    assert resultat.returncode == DERIVE_DETECTEE
+    assert "20.19.0" in lignes_derive(resultat)["node"]
+
+
+def test_derive_n_ecrit_rien_et_n_installe_rien(depot: Depot) -> None:
+    """Une sonde appelée à chaque /ticket-start et avant chaque filet local ne doit RIEN faire."""
+    prepare_venv(depot, a_jour=False)
+    depot.ecrire(".node-version", "20.19.0\n")
+    avant = depot.empreinte()
+
+    resultat = depot.lance("--derive", env={"MAESTRO_AUTO_INSTALL": "1"})
+
+    assert resultat.returncode == DERIVE_DETECTEE
+    assert depot.empreinte() == avant
+    assert not depot.env.exists()
+
+
+def test_derive_se_tait_apres_reparation_par_setup(depot: Depot) -> None:
+    """La boucle complète : dérive détectée → `setup.sh --only venv` → plus de dérive.
+
+    La réparation est celle du script, pas une réimplémentation : c'est l'étape `venv` qui
+    rejoue `pip install -e ".[dev]"` (ici un shim — ni réseau ni vrai pip) et repose le témoin.
+    """
+    prepare_venv(depot, a_jour=False)
+    for relatif in (".venv/Scripts/python.exe", ".venv/bin/python"):
+        shim = depot.racine / relatif
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
+        shim.chmod(0o755)
+
+    assert depot.lance("--derive").returncode == DERIVE_DETECTEE
+
+    repare = depot.lance("--only", "venv", "--no-install")
+    assert repare.returncode == 0, repare.stdout + repare.stderr
+    assert statut(repare.stdout, "venv") == "OK"
+
+    assert depot.lance("--derive").returncode == DERIVE_A_JOUR
+
+
+def test_derive_ignore_ce_que_le_depot_ne_porte_pas(depot: Depot) -> None:
+    """Pas d'`apps/web`, pas de `.node-version` : deux silences, pas deux fausses alertes."""
+    prepare_venv(depot)
+    assert not (depot.racine / "apps").exists()
+    assert not (depot.racine / ".node-version").exists()
+
+    resultat = depot.lance("--derive")
+
+    assert resultat.returncode == DERIVE_A_JOUR
+    assert "web" not in resultat.stdout
+    assert "node" not in resultat.stdout

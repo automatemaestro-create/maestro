@@ -72,6 +72,11 @@ glab. Il tourne d'office au début d'`ensure` (donc de /ticket-start) : le retra
 geste à se rappeler. `--check` diagnostique sans rien retirer, `--auto` ne parle que s'il a
 quelque chose à dire. MAESTRO_WORKTREE_GC=0 désactive le passage automatique.
 
+`ensure` remet aussi les DÉPENDANCES du clone principal à niveau, en appelant `scripts/setup.sh`
+(dérive détectée par `--derive`, réparée par `--only`) : un paquet ajouté au dépôt arrive ainsi
+sans geste à se rappeler. Il signale et n'interrompt jamais un démarrage de ticket.
+MAESTRO_MAJ_DEPENDANCES=0 le désactive.
+
 Options de création :
   --branche <nom>   Nom de branche imposé (par défaut : résolu depuis le ticket via glab).
   --ports <api:ui>  Ports Control Tower imposés (par défaut : dérivés de l'iid).
@@ -438,6 +443,60 @@ commande_create() {
   fi
 }
 
+# --- Mise à niveau des dépendances (#216) -------------------------------------------------------------
+# Un clone existant ne prend pas tout seul les dépendances ajoutées au dépôt : une entrée de
+# `pyproject.toml`, un paquet de `apps/web/package-lock.json`, une version de `.node-version`. La CI
+# les prend à chaque pipeline, un clone neuf à son `/setup` — un clone déjà monté, jamais, jusqu'à ce
+# que quelqu'un rejoue `setup.sh` de sa propre initiative.
+#
+# Aucun événement local ne s'y prête (même leçon que `sync-main`, #205 : le merge a lieu sur GitLab,
+# et la mise à jour de `main` passe tantôt par `git merge --ff-only`, tantôt par `git update-ref` —
+# qui ne déclenche aucun hook). Le déclencheur est donc ce point de passage obligé : tout
+# /ticket-start passe par `ensure`, manuel comme autonome.
+#
+# Trois règles, dans l'ordre d'importance :
+#   1. RIEN N'EST RÉIMPLÉMENTÉ : la détection comme la réparation sont celles de setup.sh
+#      (`--derive` puis `--only`). Ni pip ni npm ne sont appelés ici.
+#   2. C'EST LE CLONE PRINCIPAL qu'on remet à niveau : `.venv/` et `.tools/` y vivent, partagés par
+#      lien avec tous les worktrees (docs/10 §9), et l'installation éditable de `maestro` doit
+#      continuer d'y pointer (#194). Le `node_modules` du worktree, lui, est installé à sa création.
+#   3. ÇA NE BLOQUE JAMAIS un démarrage de ticket — même statut que `sync-main` : ça signale.
+# MAESTRO_MAJ_DEPENDANCES=0 la désactive.
+maj_dependances() {
+  local principal setup lignes code etape raison etapes="" sortie
+  [ "${MAESTRO_MAJ_DEPENDANCES:-1}" != 0 ] || return 0
+  principal="$(depot_principal)" || return 0
+  setup="$principal/scripts/setup.sh"
+  [ -f "$setup" ] || return 0
+
+  lignes="$(bash "$setup" --derive 2>/dev/null)"
+  code=$?
+  # 0 = à jour (on se tait) ; 3 = dérive ; autre = sonde indisponible, ce n'est pas un sujet ici.
+  [ "$code" -eq 3 ] || return 0
+
+  while IFS="$(printf '\t')" read -r etape raison; do
+    [ -n "$etape" ] || continue
+    case ",$etapes," in
+      *",$etape,"*) ;;
+      *) etapes="${etapes:+$etapes,}$etape" ;;
+    esac
+    alerte "dépendances en retard — $raison"
+  done <<EOF
+$lignes
+EOF
+  [ -n "$etapes" ] || return 0
+
+  # Annoncé AVANT de lancer : un `pip install` ou un `npm ci` laisse la console muette une minute.
+  printf '  … mise à niveau du clone principal (bash scripts/setup.sh --only %s)\n' "$etapes"
+  if sortie="$(bash "$setup" --only "$etapes" 2>&1)"; then
+    ok "dépendances à niveau ($etapes)"
+  else
+    alerte "mise à niveau des dépendances en échec — le ticket démarre quand même, rattrapage : (cd \"$principal\" && bash scripts/setup.sh --only $etapes)"
+    [ -z "$sortie" ] || printf '%s\n' "$sortie" | tail -3 | sed 's/^/    /' >&2
+  fi
+  return 0
+}
+
 # --- ensure -----------------------------------------------------------------------------------------
 # « Où doit travailler la session qui démarre le ticket #<iid> ? » — l'aiguillage appelé par
 # /ticket-start (#181), pour que le clone principal cesse de changer de branche à chaque ticket.
@@ -505,6 +564,10 @@ commande_ensure() {
       fi
     fi
   fi
+
+  # Dépendances du dépôt (#216), APRÈS `sync-main` : c'est lui qui vient de faire entrer dans le
+  # clone principal le `pyproject.toml` ou le `package-lock.json` d'où naît la dérive.
+  maj_dependances
 
   # Ramassage des worktrees soldés (#197), AVANT de monter celui-ci et quel que soit le verdict qui
   # suivra : c'est le seul moment où quelqu'un passe par ici à coup sûr, et le pendant exact du
