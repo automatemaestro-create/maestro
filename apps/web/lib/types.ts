@@ -448,6 +448,8 @@ export const VALIDATION_REFUSEE = "refusee";
 /** Types d'événements diffusés (maestro/controltower/events.py). */
 export const EVENEMENT_TACHE_STATUT = "tache.statut";
 export const EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation";
+/** #187 : rattache une tâche à son ticket externe — ne porte que `ticket`. */
+export const EVENEMENT_TACHE_REFERENCE = "tache.reference";
 export const EVENEMENT_AGENT_ACTIVITE = "agent.activite";
 export const EVENEMENT_AGENT_CAPACITE = "agent.capacite";
 export const EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents";

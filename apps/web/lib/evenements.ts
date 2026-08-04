@@ -12,6 +12,7 @@ import {
   EVENEMENT_AGENT_CAPACITE,
   EVENEMENT_MESSAGE_INTER_AGENTS,
   EVENEMENT_TACHE_REASSIGNATION,
+  EVENEMENT_TACHE_REFERENCE,
   EVENEMENT_TACHE_STATUT,
   EVENEMENT_VALIDATION_DECISION,
   EVENEMENT_VALIDATION_DEMANDE,
@@ -22,6 +23,7 @@ import {
 const ICONES: Record<string, string> = {
   [EVENEMENT_TACHE_STATUT]: "📋",
   [EVENEMENT_TACHE_REASSIGNATION]: "🔀",
+  [EVENEMENT_TACHE_REFERENCE]: "🎫",
   [EVENEMENT_AGENT_ACTIVITE]: "🤖",
   [EVENEMENT_AGENT_CAPACITE]: "🎚️",
   [EVENEMENT_MESSAGE_INTER_AGENTS]: "✉️",
@@ -40,6 +42,11 @@ export function resumeEvenement(evenement: Evenement): string {
   switch (evenement.type) {
     case EVENEMENT_TACHE_REASSIGNATION:
       return `${sujet} réassignée à ${evenement.agent}`;
+    case EVENEMENT_TACHE_REFERENCE:
+      // #187 : l'événement ne porte que le ticket — ni statut ni agent à dire.
+      return `${sujet} — ticket ${
+        evenement.ticket?.id || "externe"
+      }`;
     case EVENEMENT_TACHE_STATUT:
       return `${sujet} — ${libelleStatut(evenement.statut)}${
         evenement.agent ? ` (${evenement.agent})` : ""

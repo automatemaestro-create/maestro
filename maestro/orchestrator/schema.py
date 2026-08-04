@@ -24,6 +24,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
 from maestro.orchestrator.errors import TaskValidationError
+from maestro.references import ReferenceTicket
 
 #: Emplacement de la JSON Schema partagée, relatif à la racine du dépôt.
 #: `schema.py` → `orchestrator` → `maestro` → racine ; puis `packages/shared/...`.
@@ -63,6 +64,13 @@ class Task:
 
     Les champs multivalués sont des tuples (immuables) ; `to_dict` les réémet en
     listes pour un aller-retour JSON fidèle au schéma.
+
+    `ticket` (#187) porte le ticket dont relève la tâche — None dans
+    le cas courant, le plan n'en produisant pas de lui-même : elle est posée au
+    lancement d'un run (le run part d'un ticket) ou par un agent en cours
+    d'exécution. `to_dict` **omet** alors la clé plutôt que d'émettre `null` :
+    le schéma refuse les propriétés inconnues comme les objets malformés, et un
+    plan sans référence doit rester sérialisable tel quel.
     """
 
     id: str
@@ -71,6 +79,7 @@ class Task:
     competences_requises: tuple[str, ...]
     format_sortie: str
     dependances: tuple[str, ...] = ()
+    ticket: ReferenceTicket | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Task:
@@ -82,11 +91,12 @@ class Task:
             competences_requises=tuple(data["competences_requises"]),
             format_sortie=data["format_sortie"],
             dependances=tuple(data.get("dependances", ())),
+            ticket=ReferenceTicket.depuis(data.get("ticket")),
         )
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la tâche en dict JSON-sérialisable, conforme au schéma."""
-        return {
+        data: dict[str, Any] = {
             "id": self.id,
             "titre": self.titre,
             "description": self.description,
@@ -94,6 +104,9 @@ class Task:
             "format_sortie": self.format_sortie,
             "dependances": list(self.dependances),
         }
+        if self.ticket is not None:
+            data["ticket"] = self.ticket.to_dict()
+        return data
 
 
 def validate_task(data: Mapping[str, Any], *, where: str = "tâche") -> None:

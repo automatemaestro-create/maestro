@@ -34,6 +34,7 @@ from maestro.controltower.events import (
     EVENEMENT_TACHE_STATUT,
     Event,
 )
+from maestro.references import ReferenceTicket, ticket_en_dict
 from maestro.telemetry.usage import StepUsage
 
 if TYPE_CHECKING:  # import différé : seul le typage en a besoin (pas de cycle)
@@ -98,6 +99,7 @@ class CoutTacheAgregee:
     statut: str = ""
     executions: int = 0
     usage: StepUsage = StepUsage()
+    ticket: ReferenceTicket | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la ligne en dict JSON-sérialisable (la forme de l'API)."""
@@ -109,6 +111,7 @@ class CoutTacheAgregee:
             "statut": self.statut,
             "executions": self.executions,
             "usage": self.usage.to_dict(),
+            "ticket": ticket_en_dict(self.ticket),
         }
 
 
@@ -264,6 +267,12 @@ def agrege_couts(
     par_agent: dict[str, _Accumulateur] = {}
     par_tache: dict[str, _Accumulateur] = {}
     par_seau: dict[str, StepUsage] = {}
+    # Les tickets externes (#187) se collectent **à part** : ils n'ont pas de
+    # coût, donc ils arrivent aussi sur des événements sans usage (le
+    # `tache.reference` n'en porte jamais) — les accumuler dans `par_tache`
+    # y créerait des lignes à usage nul pour des tâches qui n'ont rien dépensé
+    # dans la fenêtre. Ils sont recollés à la construction des lignes.
+    references: dict[str, ReferenceTicket] = {}
 
     for execution in executions:
         for event in execution.evenements:
@@ -281,6 +290,8 @@ def agrege_couts(
                     run.fin, run.fin_brut = date, event.horodatage
             if event.tache_id:
                 run.taches.add(event.tache_id)
+                if event.ticket is not None:
+                    references[event.tache_id] = event.ticket
 
             usage = _usage_de(event)
             if usage is None:
@@ -345,6 +356,7 @@ def agrege_couts(
                 statut=acc.statut,
                 executions=len(acc.executions),
                 usage=acc.usage,
+                ticket=references.get(tache_id),
             )
             for tache_id, acc in sorted(
                 par_tache.items(), key=lambda item: _tri_par_cout(item[1].usage), reverse=True

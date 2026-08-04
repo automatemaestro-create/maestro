@@ -31,7 +31,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from maestro.references import ReferenceTicket as ReferenceTicket  # ré-export explicite
 from maestro.telemetry.usage import StepUsage
+
+# `ReferenceTicket` (#187, contrat #183) est **défini** dans `maestro.references`,
+# module feuille, et seulement ré-exporté ici : le journal (#8) le porte aussi, et
+# `controltower` important déjà `telemetry`, le garder dans ce module aurait fermé
+# un cycle d'imports. Les appelants historiques — `from
+# maestro.controltower.events import ReferenceTicket` — restent servis tels quels.
 
 #: Types d'événements diffusés (docs/05 §2.1 : flux d'activité temps réel).
 #: `tache.statut` suit la machine à états de docs/03 §3 ; `tache.reassignation`
@@ -55,6 +62,12 @@ from maestro.telemetry.usage import StepUsage
 #: ou fini, les étapes du journal ne parlant que de tâches.
 EVENEMENT_TACHE_STATUT = "tache.statut"
 EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation"
+#: `tache.reference` (#187) rattache une tâche à son **ticket externe** : seul
+#: `ticket` y est renseigné, tout le reste étant inchangé — c'est le seul
+#: événement de tâche qui ne touche ni statut, ni agent, ni coût, pour qu'un
+#: agent puisse nommer le ticket dont relève sa tâche en cours d'exécution sans
+#: la faire changer de colonne au Kanban.
+EVENEMENT_TACHE_REFERENCE = "tache.reference"
 EVENEMENT_AGENT_ACTIVITE = "agent.activite"
 EVENEMENT_AGENT_CAPACITE = "agent.capacite"
 EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"
@@ -77,31 +90,6 @@ REDIS_URL_DEFAUT = "redis://localhost:6379/0"
 def _horodatage() -> str:
     """Horodatage UTC ISO-8601, même précision que le journal (#8)."""
     return datetime.now(UTC).isoformat(timespec="seconds")
-
-
-@dataclass(frozen=True)
-class ReferenceTicket:
-    """La référence d'un ticket externe portée par une tâche (#187, contrat #183).
-
-    Générique par construction — un identifiant lisible (`id`, ex. « #183 »,
-    « PROJ-42 ») et son `url` : GitLab, Jira ou Linear passent par la même forme,
-    aucun champ propre à un outil (`gitlab_iid`…). `url` reste vide quand seul
-    l'identifiant est connu (l'agent a nommé le ticket sans en donner le lien).
-    Une tâche sans ticket ne porte **pas** de référence (`None`) — un plan sans
-    référence reste valide.
-    """
-
-    id: str
-    url: str = ""
-
-    def to_dict(self) -> dict[str, str]:
-        """Réémet la référence en dict JSON-sérialisable (`{id, url}`)."""
-        return {"id": self.id, "url": self.url}
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> ReferenceTicket:
-        """Reconstruit une référence depuis sa forme `to_dict` (clés absentes → vides)."""
-        return cls(id=data.get("id", ""), url=data.get("url", ""))
 
 
 @dataclass(frozen=True)
