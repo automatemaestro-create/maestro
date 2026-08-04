@@ -400,9 +400,20 @@ itération sur un livrable existant) dépend de ce que la Phase 7 aura appris su
 d'un projet — un milestone ouvert maintenant fixerait un périmètre qu'on ne connaît pas encore.
 Elle se confirmera à la livraison de la Phase 7.
 
-**Ce que ce cadrage ne fait toujours pas** : créer les **tickets** des Phases 7 à 9. Le
-découpage de chaque phase en lots reste à faire, phase par phase, au moment de l'ouvrir — comme
-#182 l'a fait pour les Phases 5 et 6.
+**Le découpage en tickets suit le patron de #182**, qui avait créé les milestones des Phases 5 et
+6 **et semé aussitôt leur premier lot** (#183 contrats d'API, #184 avec #185–#188, #189 avec
+#190–#193), en ne différant que les six « chantiers restant à ouvrir », créés au moment de les
+démarrer. Appliqué ici :
+
+- **Phase 7 — découpée** : parent de suivi **#219** et huit lots — **#221** (socle : entité Projet
+  et validation de la racine), puis **#222** (`projet_id` sur la tâche et le run), **#223** (API
+  des projets et explorateur de dossiers), **#224** (espace de travail dérivé : worktree ou
+  copie), **#225** (écran Projets) et **#226** (second montage du conteneur), tous cinq
+  **parallélisables** une fois le socle livré, enfin **#227** (application des livrables sous
+  validation humaine) et **#220** (tests + doc).
+- **Phases 8 et 9 — pas de tickets**, et c'est délibéré : leur contenu dépend de ce que la Phase 7
+  aura produit. Un brief vise un projet (§3.2) et on n'empaquette pas une cible mouvante (§4.8) ;
+  les découper maintenant reviendrait à figer des lots contre une couche qui n'existe pas encore.
 
 ---
 
