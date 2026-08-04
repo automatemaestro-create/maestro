@@ -83,6 +83,26 @@ n'est pas au menu : pas de lien mort en attendant.
 Le **coût cumulé** et le statut du flux temps réel vivent en permanence dans la
 barre supérieure, sur toutes les pages. Tout se met à jour par WebSocket.
 
+#### 2.1.1 Le poste vide — ce que montre un démarrage en mode réel (#186)
+
+Le lanceur local démarre en **mode réel** (`bash scripts/controltower/start.sh`,
+[doc 07 §6.10](./07-guide-de-demarrage.md)) : la Control Tower est branchée sur la
+vraie orchestration, donc **un premier démarrage n'a rien à afficher** — aucune
+tâche, aucun événement, aucune validation. Quatre panneaux à zéro feraient croire à
+une panne ; l'écran est donc remplacé par **ce qu'il faut faire pour le remplir**
+(`PosteVide`), avec les deux gestes possibles :
+
+- **lancer une orchestration** — `maestro-run --publier "<objectif>"` depuis le
+  dépôt, ou `POST /api/executions` depuis la Control Tower elle-même (§6.1) ;
+- **juste explorer l'interface** — `bash scripts/controltower/start.sh --demo`,
+  scénario factice sur bus mémoire, qui **dit** que ses données le sont.
+
+Ce n'est **pas un état d'erreur**, et la distinction est le point de conception :
+une API injoignable garde ses panneaux et sa bannière d'erreur, parce qu'un écran
+vide *et muet* ne se diagnostique pas comme un écran vide *et connecté*. Une fois
+le premier événement publié, le poste se remplit **sans rechargement** (WebSocket),
+et l'historique est rejoué au redémarrage de l'API (journal durable, #97).
+
 ### 2.2 📋 Tâches — tableau Kanban
 
 - Colonnes : *Backlog → Prête → En cours → En validation → Terminée / Échec*.
@@ -124,6 +144,14 @@ d'onglets, les cartes de la liste et la route dynamique la lisent toutes.
 - **Trace détaillée** d'un run : étapes, outils appelés, entrées/sorties, tokens, coût, durée, erreurs (EF-22).
 - Rejouer / relancer un run.
 - Lien vers la trace correspondante dans Langfuse.
+
+**Piloter un run sans quitter l'écran** (#185, livré) : lancement, suivi et
+annulation passent par les routes `/api/executions` dont le contrat est figé en
+§6.1. Le lancement rend la main **tout de suite** — le run part en arrière-plan et
+son `run_id` est connu avant qu'il ne produise quoi que ce soit —, ce qui permet
+d'afficher le run « en cours » puis de le suivre par le flux temps réel habituel.
+Un run **publié par un autre process** (`maestro-run --publier`, worker #41) est
+listé au même titre : le suivi lit la projection, il ne distingue pas l'origine.
 
 ### 2.5 💰 Coûts & analytics
 
