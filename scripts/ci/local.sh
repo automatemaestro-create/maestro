@@ -8,10 +8,25 @@
 # occuper son runner pour une faute de frappe. Ce script rejoue les mêmes contrôles en local :
 #
 #   bash scripts/ci/local.sh                    # tous les jobs applicables
+#   bash scripts/ci/local.sh --complet          # + la suite pytest ENTIÈRE et sa couverture
 #   bash scripts/ci/local.sh --only pytest,mypy # un sous-ensemble (noms de jobs ou d'étages)
 #   bash scripts/ci/local.sh --skip web-build
 #   bash scripts/ci/local.sh --strict           # code non nul aussi si un job n'a pas pu être joué
 #   bash scripts/ci/local.sh --list             # les jobs et leur commande
+#
+# PÉRIMÈTRE DE PYTEST (ticket #214) — par défaut le filet ne joue que les suites que le diff
+# concerne, pas les 1100 tests du dépôt. Le raisonnement : la suite complète coûte 9 min 57 s en
+# série, dont 9 pour les ~360 tests d'OUTILLAGE (ceux qui montent un dépôt git jetable et lancent
+# un script shell) ; les rejouer pendant qu'on écrit du code applicatif ne dit rien de neuf. La
+# suite complète reste jouée — par le pipeline de la MR, qui depuis #165 est de toute façon le
+# seul verdict lu et la condition de merge (docs/10 §8). D'où deux modes :
+#
+#   --rapide (DÉFAUT) : pytest sur le périmètre du diff, sans seuil de couverture (un
+#                       sous-ensemble ne peut pas le tenir) ; verdict annoncé PARTIEL ;
+#   --complet         : la suite entière avec sa couverture et son seuil — ce que joue la CI.
+#
+# Le lint, lui, tourne toujours en entier : il coûte quelques secondes et c'est l'échec le plus
+# bête à découvrir sur le runner de quelqu'un d'autre.
 #
 # Principes :
 #   - LES INTERPRÉTEURS DU DÉPÔT, jamais ceux du système : le venv (.venv/) et le Node vendoré
@@ -25,6 +40,9 @@
 #     Ce qui manque est dit, avec la commande qui l'obtient — jamais installé dans le dos.
 #   - MÊMES ÉTAGES QUE LA CI : lint puis test ; un étage en échec ARRÊTE le pipeline, comme
 #     GitLab. Le code de sortie est non nul dès le premier échec dur.
+#   - UN PÉRIMÈTRE RÉDUIT SE DIT : sélectionner des tests, c'est accepter de ne pas tout savoir.
+#     Le job annonce ce qu'il a joué et pourquoi, le verdict final porte la mention PARTIEL, et
+#     tout ce que le script ne sait pas classer élargit à la suite entière — jamais l'inverse.
 #   - UN JOB NON JOUABLE N'EST PAS UN ÉCHEC : outil absent ⇒ « IGNORÉ », verdict annoncé PARTIEL
 #     (et bloquant avec --strict). Mieux vaut un verdict honnêtement incomplet qu'un faux vert.
 #
@@ -61,7 +79,12 @@ lit_ci() { # <motif-grep-E> <défaut>
 SHELLCHECK_SEVERITE="$(lit_ci 'shellcheck --severity=[a-z]+' 'shellcheck --severity=warning')"
 SHELLCHECK_SEVERITE="${SHELLCHECK_SEVERITE##*=}"
 SHELLCHECK_IMAGE="${MAESTRO_SHELLCHECK_IMAGE:-$(lit_ci 'koalaman/shellcheck-alpine:[A-Za-z0-9._-]+' 'koalaman/shellcheck-alpine:stable')}"
-COUVERTURE_MIN="$(lit_ci 'pytest --cov=maestro --cov-fail-under=[0-9]+' 'pytest --cov=maestro --cov-fail-under=90')"
+# `[^#]*` entre la commande et le drapeau : la CI a gagné un `-n auto` (#214) et pourrait gagner
+# autre chose. Un motif qui collait les deux mots (« pytest --cov-fail-under=… ») cessait de
+# matcher ce jour-là, et le filet retombait en silence sur le seuil par défaut — un écart avec le
+# pipeline qui ne se voit qu'au moment où il fait mal. La classe exclut « # » pour ne pas
+# traverser un commentaire de fin de ligne.
+COUVERTURE_MIN="$(lit_ci 'pytest[^#]*--cov-fail-under=[0-9]+' 'pytest --cov-fail-under=90')"
 COUVERTURE_MIN="${COUVERTURE_MIN##*=}"
 
 # --- Jobs, par étage (mêmes noms que .gitlab-ci.yml) ----------------------------------------------
@@ -72,6 +95,8 @@ JOBS_CONNUS="$ETAGE_LINT $ETAGE_TEST"
 JOBS_ONLY=""
 JOBS_SKIP=""
 STRICT=0
+#: « rapide » = pytest sur le périmètre du diff (défaut, #214) ; « complet » = la suite entière.
+MODE_PYTEST=rapide
 
 usage() {
   cat <<USAGE
@@ -80,6 +105,10 @@ Filet CI local — rejoue les jobs de .gitlab-ci.yml avant de pousser.
   bash scripts/ci/local.sh [options]
 
 Options :
+  --rapide        (défaut) pytest ne joue que les suites concernées par le diff, sans seuil
+                  de couverture ; le verdict est annoncé PARTIEL.
+  --complet       pytest joue la suite ENTIÈRE avec sa couverture et son seuil — ce que fera
+                  le pipeline de la MR.
   --only <jobs>   N'exécute que ces jobs (séparés par des virgules). Les noms d'étages
                   « lint » et « test » sont acceptés et développés en leurs jobs.
   --skip <jobs>   Saute ces jobs (mêmes noms).
@@ -91,6 +120,14 @@ Jobs : ${JOBS_CONNUS// /, }
   lint : ${ETAGE_LINT// /, }
   test : ${ETAGE_TEST// /, }
 
+Le lint tourne toujours en entier. Le périmètre de pytest se déduit du diff avec origin/main,
+travail non commité compris :
+  maestro/**          les suites applicatives (celles qui ne pilotent aucun script du dépôt)
+  scripts/**, .claude/**, .gitlab*  les suites qui NOMMENT le fichier modifié
+  tests/test_*.py     elles-mêmes
+  conftest.py, pyproject.toml, ou tout chemin non classé   la suite entière
+  apps/web/**, docs/**, *.md   aucune suite pytest (web-build couvre le front)
+
 web-build ne tourne que si apps/web (ou .gitlab-ci.yml) change par rapport à origin/main —
 même règle que le pipeline. « --only web-build » le force.
 USAGE
@@ -101,7 +138,11 @@ liste_jobs() {
   printf '  %-12s %-6s %s\n' JOB ÉTAGE COMMANDE
   printf '  %-12s %-6s %s\n' shellcheck   lint "shellcheck --severity=$SHELLCHECK_SEVERITE \$(find scripts -name '*.sh')"
   printf '  %-12s %-6s %s\n' python-lint  lint "ruff check ."
-  printf '  %-12s %-6s %s\n' pytest       test "python -m pytest --cov=maestro --cov-fail-under=$COUVERTURE_MIN"
+  if [ "$MODE_PYTEST" = complet ]; then
+    printf '  %-12s %-6s %s\n' pytest     test "python -m pytest -n auto --cov=maestro --cov-fail-under=$COUVERTURE_MIN"
+  else
+    printf '  %-12s %-6s %s\n' pytest     test "python -m pytest <suites déduites du diff>  (--complet : toute la suite + couverture)"
+  fi
   printf '  %-12s %-6s %s\n' mypy         test "mypy maestro"
   printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm test && npm run build (dans apps/web)"
 }
@@ -111,6 +152,8 @@ while [ $# -gt 0 ]; do
     --only) JOBS_ONLY="${2:-}"; shift ;;
     --skip) JOBS_SKIP="${2:-}"; shift ;;
     --strict) STRICT=1 ;;
+    --rapide) MODE_PYTEST=rapide ;;
+    --complet) MODE_PYTEST=complet ;;
     --list) liste_jobs; exit 0 ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -179,6 +222,19 @@ node_bindir() {
 
 chemin_natif() {
   if [ "$WINDOWS" = 1 ] && command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi
+}
+
+# --- Ce que la branche apporte ---------------------------------------------------------------------
+# Les chemins (relatifs à la racine) que la branche modifie par rapport à origin/main, TRAVAIL NON
+# COMMITÉ COMPRIS : c'est ce qui partira au push, donc ce sur quoi le pipeline se prononcera. Sert
+# au périmètre de pytest (#214) comme à celui de web-build.
+fichiers_modifies() {
+  local base
+  base="$(git -C "$RACINE" merge-base origin/main HEAD 2>/dev/null)"
+  {
+    [ -n "$base" ] && git -C "$RACINE" diff --name-only "$base" -- 2>/dev/null
+    git -C "$RACINE" status --porcelain --untracked-files=all 2>/dev/null | cut -c4-
+  } | tr -d '"' | grep -v '^[[:space:]]*$' | sort -u
 }
 
 # --- Exécution d'un job ----------------------------------------------------------------------------
@@ -308,8 +364,212 @@ PY
   )
 }
 
+# --- Périmètre de pytest (#214) --------------------------------------------------------------------
+# Toutes les suites du dépôt, et celles dites d'OUTILLAGE — DÉDUITES, jamais listées à la main : une
+# suite est « outillage » si elle NOMME un script du dépôt (`scripts/**/*.sh`), ce qui est le cas de
+# celles qui montent un dépôt jetable pour piloter `lib.sh`, `run.sh`, `setup.sh`… Deux propriétés
+# tiennent à cette dérivation : une suite d'outillage nouvelle se classe toute seule, et une suite
+# qui ne nomme aucun script est APPLICATIVE par défaut — donc jouée dès que `maestro/` bouge, jamais
+# sautée en silence. Ce sont aussi, mesuré, les seules lentes : ~360 tests pour 9 des 10 minutes de
+# la suite, parce qu'elles attendent des processus.
+suites_toutes() { (cd "$RACINE" && find tests -maxdepth 1 -name 'test_*.py' 2>/dev/null | sort); }
+
+suites_outillage() {
+  local motifs=() script suites=()
+  mapfile -t suites < <(suites_toutes)
+  [ "${#suites[@]}" -gt 0 ] || return 0
+  while IFS= read -r script; do
+    [ -n "$script" ] || continue
+    motifs+=(-e "$(basename "$script")")
+  done < <(cd "$RACINE" && find scripts -type f -name '*.sh' 2>/dev/null)
+  [ "${#motifs[@]}" -gt 0 ] || return 0
+  (cd "$RACINE" && grep -lF "${motifs[@]}" "${suites[@]}" 2>/dev/null | sort)
+}
+
+# Les suites qui citent <chaîne> — le nom du fichier modifié. Ces tests-là invoquent le script ou
+# lisent le fichier par son chemin : le nommer est le lien le plus direct qu'on puisse observer
+# sans exécuter quoi que ce soit.
+suites_nommant() {
+  local suites=()
+  mapfile -t suites < <(suites_toutes)
+  [ "${#suites[@]}" -gt 0 ] || return 0
+  (cd "$RACINE" && grep -lF -- "$1" "${suites[@]}" 2>/dev/null | sort)
+}
+
+#: Résultat de `calcule_perimetre` : les suites à jouer (vide = aucune), pourquoi, et deux drapeaux.
+PERIMETRE_SUITES=""
+PERIMETRE_MOTIF=""
+PERIMETRE_TOUT=0
+PERIMETRE_OUTILLAGE=0
+#: Les raisons du périmètre, par famille : ce qui a tout élargi, ce qui a sélectionné des suites,
+#: ce qui n'a aucun effet sur pytest. Séparées, parce qu'on n'affiche que la famille qui explique
+#: le verdict rendu. `CHOISIES` accumule les suites retenues.
+RAISONS_TOUT=""
+RAISONS_CHOIX=""
+RAISONS_SANS=""
+CHOISIES=""
+#: Posé par le job pytest quand il n'a joué QU'UNE PARTIE de la suite — c'est ce que le verdict
+#: final doit dire, sous peine de laisser croire à un vert qui vaut celui du pipeline.
+PERIMETRE_REDUIT=0
+#: Le job pytest a-t-il été joué ? Un étage lint rouge, un `--skip pytest` ou un venv incomplet
+#: l'écartent : la mise en garde sur le périmètre n'aurait alors rien à qualifier.
+PYTEST_JOUE=0
+#: Posé par la sonde quand pytest-xdist manque : le job tourne quand même, en série, et le dit.
+XDIST_ABSENT=0
+
+# Déduit du diff les suites à jouer. Règle d'or : on n'élargit jamais en silence, mais on ne
+# rétrécit jamais sur une supposition — tout fichier dont personne ne parle ramène la suite entière.
+# Une raison, sans doublon, dans <variable> — le séparateur « | » est rendu en « , » à l'affichage.
+# Sans dédoublonnage, un diff de dix fichiers de prose répétait dix fois la même explication et
+# noyait la seule ligne que l'on lit vraiment.
+ajoute_raison() { # <nom-de-variable> <raison>
+  local courant="${!1}"
+  case "|$courant|" in
+    *"|$2|"*) return 0 ;;
+  esac
+  printf -v "$1" '%s' "$courant|$2"
+}
+
+rend_raisons() { printf '%s' "${1#|}" | tr '|' '
+' | paste -sd, - | sed 's/,/, /g'; }
+
+# La règle du NOM, appliquée à un fichier : les suites qui le citent, ou la suite entière si
+# personne ne le cite. Pose ses résultats dans CHOISIES / PERIMETRE_TOUT (variables de l'appelant).
+classe_par_nom() { # <chemin>
+  local base dossier nommant
+  base="$(basename "$1")"
+  nommant="$(suites_nommant "$base")"
+  if [ -n "$nommant" ]; then
+    CHOISIES="$CHOISIES$nommant"$'
+'
+    ajoute_raison RAISONS_CHOIX "$base"
+    return 0
+  fi
+  # Second essai, par le DOSSIER : une suite qui relit tout un répertoire le désigne par son
+  # nom, jamais par celui de ses fichiers — `test_collaboration` parcourt
+  # `.claude/commands/*.md` (#196) sans citer aucun prompt en particulier. Repli seulement :
+  # quand le nom du fichier a répondu, il est plus précis. Un dossier au nom banal
+  # sélectionnera trop de suites, ce qui reste le bon sens de l'erreur.
+  dossier="$(dirname "$1")"
+  if [ "$dossier" != "." ]; then
+    nommant="$(suites_nommant "$(basename "$dossier")")"
+  fi
+  if [ -z "$nommant" ]; then
+    PERIMETRE_TOUT=1
+    ajoute_raison RAISONS_TOUT "aucune suite ne nomme $base"
+  else
+    CHOISIES="$CHOISIES$nommant"$'
+'
+    ajoute_raison RAISONS_CHOIX "$(basename "$dossier")/"
+  fi
+}
+
+calcule_perimetre() {
+  PERIMETRE_SUITES=""
+  PERIMETRE_MOTIF=""
+  PERIMETRE_TOUT=0
+  PERIMETRE_OUTILLAGE=0
+  RAISONS_TOUT=""
+  RAISONS_CHOIX=""
+  RAISONS_SANS=""
+  CHOISIES=""
+
+  local modifies outillage applicatives fichier
+  modifies="$(fichiers_modifies)"
+  if [ -z "$modifies" ]; then
+    PERIMETRE_MOTIF="rien de modifié par rapport à origin/main"
+    return 0
+  fi
+
+  outillage="$(suites_outillage)"
+  applicatives="$(comm -23 <(suites_toutes) <(printf '%s
+' "$outillage" | grep -v '^$' || true))"
+
+  while IFS= read -r fichier; do
+    [ -n "$fichier" ] || continue
+    case "$fichier" in
+      # Le conftest et les dépendances valent pour toute la suite ; leur périmètre, c'est tout.
+      tests/conftest.py | pyproject.toml | .node-version | tests/*/*)
+        PERIMETRE_TOUT=1
+        ajoute_raison RAISONS_TOUT "$fichier (transverse)"
+        ;;
+      tests/test_*.py)
+        CHOISIES="$CHOISIES$fichier"$'
+'
+        ajoute_raison RAISONS_CHOIX "suite modifiée"
+        ;;
+      tests/*)
+        PERIMETRE_TOUT=1
+        ajoute_raison RAISONS_TOUT "$fichier (transverse)"
+        ;;
+      # Le couplage à l'intérieur de `maestro/` est réel et invisible d'ici (un module de
+      # télémétrie touché casse le moteur sans que son test le nomme) : on ne raffine donc PAS
+      # par module — toutes les suites applicatives, 40 s, et aucun faux négatif.
+      maestro/*)
+        CHOISIES="$CHOISIES$applicatives"$'
+'
+        ajoute_raison RAISONS_CHOIX "maestro/** modifié"
+        ;;
+      # Prose et front : aucune suite pytest ne les lit (web-build couvre apps/web).
+      docs/* | apps/web/*)
+        ajoute_raison RAISONS_SANS "${fichier%%/*}/ (sans effet sur pytest)"
+        ;;
+      # Les chemins IMBRIQUÉS passent par la règle du nom, y compris les .md :
+      # `.claude/commands/*.md` est lu par test_collaboration (#196). Seule la prose de la RACINE
+      # (README, CLAUDE.md…) est sans effet — d'où l'ordre de ces deux motifs.
+      */*)
+        classe_par_nom "$fichier"
+        ;;
+      *.md)
+        ajoute_raison RAISONS_SANS "prose (sans effet sur pytest)"
+        ;;
+      *)
+        classe_par_nom "$fichier"
+        ;;
+    esac
+  done <<EOF
+$modifies
+EOF
+
+  if [ "$PERIMETRE_TOUT" = 1 ]; then
+    # Quand le périmètre s'élargit à tout, seule la CAUSE de l'élargissement éclaire : citer au
+    # passage les fichiers de prose du même diff noierait la seule ligne qu'on lit vraiment.
+    PERIMETRE_MOTIF="$(rend_raisons "$RAISONS_TOUT")"
+    PERIMETRE_SUITES="$(suites_toutes)"
+    PERIMETRE_OUTILLAGE=1
+    return 0
+  fi
+  PERIMETRE_SUITES="$(printf '%s
+' "$CHOISIES" | grep -v '^$' | sort -u || true)"
+  if [ -n "$PERIMETRE_SUITES" ]; then
+    PERIMETRE_MOTIF="$(rend_raisons "$RAISONS_CHOIX")"
+  else
+    PERIMETRE_MOTIF="$(rend_raisons "$RAISONS_SANS")"
+  fi
+  # Le parallélisme ne paye que sur les suites d'outillage : ~5,5 s de démarrage des workers, à
+  # comparer aux 1,5 s de tests/test_engine.py en série. Elles seules valent qu'on les paye.
+  if [ -n "$outillage" ] && [ -n "$PERIMETRE_SUITES" ] &&
+    printf '%s
+' "$PERIMETRE_SUITES" | grep -qxF -f <(printf '%s
+' "$outillage"); then
+    PERIMETRE_OUTILLAGE=1
+  fi
+}
+
+# `-n auto` sur un venv sans pytest-xdist sort en erreur d'arguments : un ROUGE qui ne parle
+# pas du code. Le venv d'un clone antérieur à #214 est dans ce cas tant que
+# `setup.sh --only venv` n'a pas rejoué `pip install -e ".[dev]"`. Comme pour tout ce qui
+# manque ici : on ne l'installe pas dans le dos, on s'en passe et on le dit.
+xdist_disponible() { # <python>
+  if ( cd "$RACINE" && "$1" -c "import xdist" ) >/dev/null 2>&1; then
+    return 0
+  fi
+  XDIST_ABSENT=1
+  return 1
+}
+
 job_pytest() {
-  local exe couverture tests sonde
+  local exe couverture tests sonde args=() suite nb=0
   # pytest est lancé par `python -m`, mais c'est bien la présence du SCRIPT CONSOLE qui dit s'il est
   # installé dans le venv du dépôt : `python -m pytest` sur un venv sans pytest sortirait en 1, donc
   # en ÉCHEC, là où « outil absent » doit rendre IGNORÉ (même traitement que ruff et mypy).
@@ -340,16 +600,54 @@ job_pytest() {
       return 2
       ;;
   esac
+  if [ "$MODE_PYTEST" = complet ]; then
+    # Ce que joue la CI, au drapeau de parallélisme près : suite entière, couverture, seuil.
+    args=(--cov=maestro "--cov-fail-under=$COUVERTURE_MIN")
+    xdist_disponible "$exe" && args=(-n auto "${args[@]}")
+    PERIMETRE_MOTIF="--complet"
+  else
+    calcule_perimetre
+    if [ "$PERIMETRE_TOUT" = 1 ]; then
+      # Le périmètre couvre tout : autant le dire ainsi et laisser pytest collecter lui-même.
+      xdist_disponible "$exe" && args=(-n auto)
+    elif [ -z "$PERIMETRE_SUITES" ]; then
+      # Rien de testable n'a bougé (prose, front). Ni vert ni rouge : hors périmètre, comme
+      # web-build quand apps/web n'a pas changé.
+      DETAIL="aucune suite concernée — $PERIMETRE_MOTIF"
+      PERIMETRE_REDUIT=1
+      PYTEST_JOUE=1
+      return 3
+    else
+      if [ "$PERIMETRE_OUTILLAGE" = 1 ] && xdist_disponible "$exe"; then args=(-n auto); fi
+      while IFS= read -r suite; do
+        [ -n "$suite" ] || continue
+        args+=("$suite")
+        nb=$((nb + 1))
+      done <<EOF
+$PERIMETRE_SUITES
+EOF
+      PERIMETRE_REDUIT=1
+    fi
+  fi
   # `python -m` et non le script console `pytest` : lui seul ajoute le répertoire courant à
   # `sys.path` (le script console, lui, y met le dossier du script — #194). Sans ça, dans un
   # worktree, les tests s'exécutent contre le `maestro/` du clone principal pendant que
   # `--cov=maestro` instrumente celui d'ici — d'où une couverture à 0 %, et surtout un verdict qui
   # ne porte pas sur la branche qu'on s'apprête à pousser.
-  execute "$exe" -m pytest --cov=maestro "--cov-fail-under=$COUVERTURE_MIN"
+  PYTEST_JOUE=1
+  execute "$exe" -m pytest "${args[@]}"
   local code=$?
   couverture="$(grep -E '^TOTAL' "$JOURNAL" 2>/dev/null | tail -1 | awk '{print $NF}')"
   tests="$(grep -oE '[0-9]+ (passed|failed|error)[^=]*' "$JOURNAL" 2>/dev/null | tail -1 | sed 's/[[:space:]]*$//')"
   DETAIL="${tests:-$(derniere_ligne)}${couverture:+ — couverture $couverture (seuil $COUVERTURE_MIN %)}"
+  if [ "$nb" -gt 0 ]; then
+    DETAIL="$DETAIL — périmètre : $nb suite(s) ($PERIMETRE_MOTIF)"
+  elif [ "$MODE_PYTEST" != complet ]; then
+    DETAIL="$DETAIL — périmètre : toute la suite ($PERIMETRE_MOTIF)"
+  fi
+  if [ "$XDIST_ABSENT" = 1 ]; then
+    DETAIL="$DETAIL — en série (pytest-xdist absent du venv : bash scripts/setup.sh --only venv)"
+  fi
   [ "$code" -eq 0 ] || return 1
   return 0
 }
@@ -381,14 +679,8 @@ resume_vitest() { # <failed|passed>
 # sur ce que la branche apporte à origin/main, travail non commité compris — c'est ce qui partira
 # au push. « --only web-build » passe outre (on l'a demandé explicitement).
 web_concerne() {
-  local base modifs
   case " $JOBS_ONLY " in *" web-build "*) return 0 ;; esac
-  base="$(git -C "$RACINE" merge-base origin/main HEAD 2>/dev/null)"
-  modifs="$(
-    [ -n "$base" ] && git -C "$RACINE" diff --name-only "$base" -- 2>/dev/null
-    git -C "$RACINE" status --porcelain --untracked-files=all 2>/dev/null | cut -c4-
-  )"
-  printf '%s\n' "$modifs" | grep -qE '^"?(apps/web/|\.gitlab-ci\.yml$)'
+  fichiers_modifies | grep -qE '^(apps/web/|\.gitlab-ci\.yml$)'
 }
 
 job_web() {
@@ -524,7 +816,12 @@ joue_etage() {
 mkdir -p "$LOG_DIR"
 branche="$(git -C "$RACINE" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 printf '\n%sFilet CI local%s — %s\n' "$C_B" "$C_0" "$RACINE"
-printf 'branche : %s · les mêmes contrôles que .gitlab-ci.yml, avec le venv et le Node du dépôt\n\n' "${branche:-?}"
+printf 'branche : %s · les mêmes contrôles que .gitlab-ci.yml, avec le venv et le Node du dépôt\n' "${branche:-?}"
+if [ "$MODE_PYTEST" = complet ]; then
+  printf 'pytest  : suite entière + couverture (--complet)\n\n'
+else
+  printf 'pytest  : périmètre du diff (--complet pour la suite entière et sa couverture)\n\n'
+fi
 
 joue_etage lint "$ETAGE_LINT"
 
@@ -556,6 +853,17 @@ for ligne in ${RESULTATS[@]+"${RESULTATS[@]}"}; do
 done
 
 printf '\n'
+# Ce que le filet n'a PAS vérifié, dit avant le verdict — c'est la contrepartie assumée du mode
+# rapide (#214), et elle ne doit pas se lire entre les lignes.
+if [ "$MODE_PYTEST" != complet ] && [ "$PYTEST_JOUE" = 1 ]; then
+  if [ "$PERIMETRE_REDUIT" = 1 ]; then
+    printf '%sPérimètre réduit%s — pytest a joué les seules suites concernées par le diff, sans seuil\n' "$C_Y" "$C_0"
+    printf 'de couverture. La suite entière : « --complet » ici, ou le pipeline de la MR (docs/10 §8).\n\n'
+  else
+    printf '%sCouverture non vérifiée%s — le seuil de %s %% est appliqué en « --complet » et en CI.\n\n' \
+      "$C_Y" "$C_0" "$COUVERTURE_MIN"
+  fi
+fi
 if [ "$NB_ECHECS" -gt 0 ]; then
   printf '%sVerdict : ÉCHEC%s — %d job(s) rouge(s). La CI rendrait le même verdict : corriger avant de pousser.\n' \
     "$C_R" "$C_0" "$NB_ECHECS"

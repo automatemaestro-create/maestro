@@ -87,7 +87,7 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      |---|---|
      | `shellcheck` | `shellcheck --severity=warning scripts/**/*.sh` (normaliser les fins de ligne CRLF avant, comme la CI qui checkout en LF) |
      | `python-lint` | `<venv-python> -m ruff check .` |
-     | `pytest` | `<venv-python> -m pytest` |
+     | `pytest` | `<venv-python> -m pytest -n auto` (ou `… -m pytest tests/test_<suite>.py` pour reproduire le seul test rouge de la trace) |
      | `mypy` | `<venv-python> -m mypy maestro` |
    - committe en **commit intermédiaire** — pied **`Refs #<iid>`**, pas `Closes` (la MR porte déjà
      le `Closes`), hook `commit-msg` respecté, **jamais `--no-verify`** :

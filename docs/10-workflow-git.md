@@ -669,7 +669,8 @@ glab variable set LANGFUSE_SECRET_KEY --masked < valeur.txt
 
 Le pipeline [`.gitlab-ci.yml`](../.gitlab-ci.yml) a deux étages : `lint` — `shellcheck`
 (sévérité `warning`, scripts `scripts/**/*.sh`) et `python-lint` (ruff) — puis `test` — `pytest`
-(suite du dépôt, avec **couverture** pytest-cov : taux remonté dans GitLab via la clé `coverage:`
+(suite du dépôt **en parallèle** (`-n auto`, #214 — 1 min 53 s au lieu de ~10, §8.4), avec
+**couverture** pytest-cov : taux remonté dans GitLab via la clé `coverage:`
 du job, échec sous `--cov-fail-under=90`), `mypy` (typage strict de `maestro/`) et `web-build`
 (l'UI Control Tower). Les jobs Python partagent un **cache pip** (clé sur `pyproject.toml`) qui
 accélère le `before_script` d'un run à l'autre. Un **pipeline vert est la condition de passage
@@ -723,6 +724,8 @@ autant d'attente pour les autres. Trois conséquences pratiques :
   [`scripts/ci/local.sh`](../scripts/ci/local.sh) rejoue les mêmes jobs sur le poste (#157) — c'est
   lui qui remplace les pipelines de branche, et il ne dépend d'aucun runner. Depuis un **worktree**,
   il teste bien le code d'ici : voir §9 pour le piège d'import que cela suppose d'éviter (#194).
+  Depuis #214 il ne joue par défaut que les **suites concernées par le diff** (§8.4) : la suite
+  complète, c'est `--complet`, ou le pipeline de cette MR.
 - **Le pipeline d'une MR est « détaché »** : sa ref est `refs/merge-requests/<iid>/head`, pas le
   nom de la branche. `glab ci status` / `glab ci view <branche>` ne le voient donc **pas** ;
   `lib.sh pipeline-latest <branche>` si — il se rabat sur les pipelines de la MR quand la ref n'en
@@ -885,6 +888,80 @@ nouveau pipeline. Les briques réutilisables vivent dans `lib.sh` : `pipeline-la
 contrôles en local avant de pousser : mêmes commandes que les jobs (ruff/pytest/mypy via le venv
 du repo ; shellcheck sur des fins de ligne LF — la CI checkout en LF, une copie Windows CRLF
 produit des faux SC1017).
+
+### 8.4 Boucle courte en local, suite complète au pipeline (#214)
+
+**La suite complète ne se rejoue plus pendant le développement.** Elle est jouée par le pipeline
+de la MR, qui depuis #165 est de toute façon le **seul verdict complet** et la condition de merge.
+En local, le filet ne joue que ce que le diff concerne.
+
+Ce que coûtait l'ancien réflexe, mesuré sur le dépôt (1102 tests, poste 16 cœurs) :
+
+| Ce qu'on joue | Durée |
+|---|---|
+| Suite complète, en série | **9 min 57 s** |
+| Suite complète, `-n auto` | **2 min 34 s** |
+| Suite complète, `-n auto` + couverture (le job CI) | **1 min 53 s** |
+| Les 773 tests **hors outillage** | **46 s** |
+| Une suite ciblée (`tests/test_engine.py`, 30 tests) | **1,5 s** |
+
+Le diagnostic n'est pas « les tests sont lents » : ce sont les **~360 tests d'outillage** — ceux
+qui montent un dépôt git jetable et lancent un script shell ou un worker celery — qui pèsent 9 des
+10 minutes. Ils portent sur `scripts/`, pas sur `maestro/` : les rejouer pendant qu'on écrit du
+code applicatif n'apprend rien. Deux leviers en découlent.
+
+**1. `pytest-xdist` partout.** `-n auto` dans le job CI comme dans le filet local : ces tests
+attendent des processus, pas du CPU, et se parallélisent donc presque idéalement. Aucun test n'est
+sauté, aucun risque de faux vert — c'est le levier gratuit, et il profite d'abord au pipeline
+(1 min 53 s au lieu de ~10). Il ne paye pas en dessous d'une certaine taille : démarrer les
+workers coûte ~5,5 s, quand une suite applicative ciblée tourne en 1,5 s. Le filet ne le passe
+donc que lorsqu'une suite d'outillage est dans le périmètre — et **jamais sur un venv qui n'a pas
+`pytest-xdist`** (clone antérieur à #214) : il sonde, joue en série et le dit, plutôt que de
+rendre un rouge qui ne parle pas du code. Le rattrapage est `bash scripts/setup.sh --only venv`.
+
+**2. Un périmètre déduit du diff**, dans [`scripts/ci/local.sh`](../scripts/ci/local.sh) :
+
+```bash
+bash scripts/ci/local.sh              # défaut : lint complet + pytest sur le périmètre du diff
+bash scripts/ci/local.sh --complet    # la suite entière + la couverture — ce que fera la CI
+```
+
+Le périmètre se calcule sur `origin/main..HEAD` **plus le travail non commité** (c'est ce qui
+partira au push), fichier par fichier :
+
+| Ce qui change | Ce qui se joue |
+|---|---|
+| `maestro/**` | toutes les suites **applicatives** |
+| `scripts/**`, `.claude/**`, `.gitlab*`, `.env.example`… | les suites qui **nomment** le fichier |
+| `tests/test_*.py` | elles-mêmes |
+| `tests/conftest.py`, `pyproject.toml`, `.node-version` | la suite entière |
+| `docs/**`, `apps/web/**`, prose de la racine | aucune suite pytest (`web-build` couvre le front) |
+| **tout le reste** | la suite entière |
+
+Deux points de conception valent d'être compris avant d'y toucher.
+
+**Les suites d'outillage sont déduites, jamais listées.** Une suite est « outillage » si elle
+**nomme un script du dépôt** (`tests/test_orchestrate.py` cite `run.sh`, `test_collaboration.py`
+cite `lib.sh`…). La dérivation donne exactement les neuf attendues, et elle a deux propriétés
+qu'une liste écrite à la main n'aurait pas : une suite d'outillage nouvelle se classe toute seule,
+et une suite qui ne nomme aucun script est **applicative par défaut** — donc jouée dès que
+`maestro/` bouge, jamais sautée en silence.
+
+**On n'affine pas à l'intérieur de `maestro/`.** Sélectionner par module supposerait de lire le
+graphe d'imports : le couplage y est réel et invisible d'une recherche textuelle (un module de
+télémétrie touché casse le moteur sans que le test du moteur le nomme). Toutes les suites
+applicatives, 40 s, aucun faux négatif — le gain qu'apporterait un tri plus fin ne vaut pas le
+risque de rendre un vert qui n'a pas regardé le code fautif.
+
+**La contrepartie est assumée et dite.** Jouer moins en local, c'est découvrir plus de rouges dans
+le pipeline, sur le runner partagé de l'équipe (§8.1). Elle est bornée : le **lint tourne toujours
+en entier** (quelques secondes, et c'est l'échec le plus bête à faire découvrir à quelqu'un
+d'autre), les tests du code touché aussi, et `/pipeline-fix` traite le reste. Le filet, lui, ne
+laisse jamais croire à un vert qu'il n'a pas mérité : le job dit ce qu'il a joué et pourquoi, le
+verdict porte la mention **« Périmètre réduit »**, et le seuil de couverture — qu'un
+sous-ensemble ne peut pas tenir — n'est appliqué qu'en `--complet` et en CI. Le sens de dérive est
+toujours le même : **ce que le script ne sait pas classer élargit le périmètre**, il ne le
+rétrécit pas.
 
 ## 9. Deux tickets en parallèle — un worktree par session
 
