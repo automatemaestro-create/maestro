@@ -149,12 +149,14 @@ Quand un agent atteint une action sensible, une carte **« Validation requise »
 - Boutons **Approuver** / **Refuser** / **Modifier la consigne**.
 - Le run reste en pause jusqu'à la décision (EF-08).
 
-### 2.7 📁 Projets et composition d'un objectif *(proposé — [docs/24](./24-projets-locaux-et-poste-de-travail.md))*
+### 2.7 📁 Projets et composition d'un objectif *(retenu — [docs/24](./24-projets-locaux-et-poste-de-travail.md), **Phases 7 et 8**)*
 
-> Écrans **proposés**, pas encore spécifiés : ils dépendent des décisions D1, D2 et D5 de
-> [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md). Ils comblent le trou constaté au
-> §1 de ce cadrage : la Control Tower pilote des exécutions qui n'appartiennent à aucun projet
-> et dont les livrables atterrissent dans un dossier de sortie, jamais chez l'utilisateur.
+> Écrans **retenus** — décisions D1, D2 et D5 de
+> [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md) rendues le 2026-08-04 (#218) — mais
+> **pas encore spécifiés** au niveau de détail des §2.1 à 2.6 : ce travail est celui des Phases 7
+> (Projets) et 8 (sources et brief). Ils comblent le trou constaté au §1 de ce cadrage : la
+> Control Tower pilote des exécutions qui n'appartiennent à aucun projet et dont les livrables
+> atterrissent dans un dossier de sortie, jamais chez l'utilisateur.
 
 - **Projets** — la liste des projets, chacun avec sa **racine sur le disque**, son type
   (nouveau / dépôt existant) et son périmètre. Le choix du dossier se fait par un **explorateur

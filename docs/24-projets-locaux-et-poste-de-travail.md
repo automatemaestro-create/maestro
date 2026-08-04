@@ -1,12 +1,13 @@
 # Projets, ressources locales et poste de travail — cadrage (ticket #215)
 
-**Version :** 0.1
+**Version :** 1.0
 **Date :** 4 août 2026
-**Statut :** cadrage — **aucune décision prise seul**, aucun milestone créé.
+**Statut :** cadrage **tranché** — les sept décisions D1 à D7 ont été rendues le 2026-08-04 (§8),
+conformes aux recommandations ci-dessous ; les **milestones des Phases 7 à 9 sont créés** (#218).
 
 Ce document répond à quatre questions posées le 2026-08-04, **posées comme questions et
 traitées comme telles** : pour chacune, l'état réel du code, les options, une
-**recommandation argumentée**, et la **décision laissée à l'humain** (§8).
+**recommandation argumentée**, et la **décision laissée à l'humain** — rendue depuis (§8).
 
 1. Maestro devrait pouvoir **accéder aux ressources locales** de l'utilisateur pour initier
    un projet.
@@ -336,7 +337,7 @@ après.
 | [02 — Stack](./02-stack-technique.md) | Extraction de documents, empaquetage de bureau (Tauri/Electron/lanceur), SQLite *vs* PostgreSQL selon le mode |
 | [03 — Modèle de données](./03-modele-de-donnees.md) | PROJECT enrichie (racine, périmètre, vcs), SOURCE ajoutée, `projet_id` sur TASK/RUN |
 | [05 — Control Tower](./05-interface-control-tower.md) | Écran **Projets**, composition d'un objectif avec sources, validation du **brief**, application d'un diff |
-| [06 — Roadmap](./06-roadmap.md) | **Proposition** de Phases 7 à 10 (§7 ci-dessous) — aucun milestone créé |
+| [06 — Roadmap](./06-roadmap.md) | **Phases 7 à 9** planifiées avec leurs fenêtres (§7 ci-dessous), milestones créés par #218 ; Phase 10 à confirmer |
 | [17 — Isolation](./17-isolation-execution.md) | Le contrat du conteneur gagnera un **second montage** (le projet) |
 | [19 — Sécurité](./19-securite-modele-de-menace.md) | Le **projet de l'utilisateur** devient un actif ; menaces de §2.5 |
 
@@ -372,39 +373,60 @@ Recensé en analysant le code, à arbitrer avec le reste :
 
 ---
 
-## 7. Proposition de phases (aucun milestone créé)
+## 7. Phases 7 à 9 — planifiées (milestones créés)
 
-Les Phases 5 et 6 restent le cap immédiat et **ne sont pas modifiées** par ce cadrage. La suite,
-en quatre phases dont l'ordre est dicté par les dépendances réelles :
+Les Phases 5 et 6 restent le cap immédiat et **ne sont pas modifiées** par ce cadrage (D7). La
+suite, en quatre phases dont l'ordre est dicté par les dépendances réelles — les trois premières
+existent désormais comme **milestones GitLab** (#218), la quatrième reste à confirmer :
 
-| Phase proposée | But | Contenu | Dépend de |
-|---|---|---|---|
-| **7 — Projets & espace de travail réel** | Maestro travaille dans un vrai dossier | Entité Projet (racine, périmètre, vcs) ; workspace dérivé du projet ; **branche/worktree par tâche** ; application des livrables **sous validation** ; explorateur de dossiers servi par l'API ; extension du contrat d'isolation et du modèle de menace | Phase 5 (lancement de run par l'API, livré #185) |
-| **8 — De l'intention au brief** | Un objectif se compose, se discute, se valide | Sources typées (fichier/dossier/URL) ; extraction docx/pdf → Markdown ; **brief structuré** + questions de clarification ; validation avant décomposition ; plafond d'ingestion | Phase 7 (un brief vise un projet) |
-| **9 — Poste de travail : distribution** | Le produit s'installe | Mode local durci (jeton d'API local, SQLite) ; **lanceur/installeur** ; parcours de premier lancement ; puis **enveloppe Tauri** + mises à jour | Phases 7 et 8 (§4.8) |
-| **10 — Continuité & multi-projet** *(à confirmer)* | Un projet vit dans la durée | Historique et coûts par projet ; mémoire long terme ; itération sur un livrable existant ; boucle de vérification (tests exécutés) ; multi-utilisateur en mode serveur | Phase 7 |
+| Phase | But | Contenu | Dépend de | Fenêtre |
+|---|---|---|---|---|
+| **7 — Projets & espace de travail réel** | Maestro travaille dans un vrai dossier | Entité Projet (racine, périmètre, vcs) ; workspace dérivé du projet ; **branche/worktree par tâche** ; application des livrables **sous validation** ; explorateur de dossiers servi par l'API ; extension du contrat d'isolation et du modèle de menace | Phase 5 (lancement de run par l'API, livré #185) | 2027-03-18 → 2027-04-28 |
+| **8 — De l'intention au brief** | Un objectif se compose, se discute, se valide | Sources typées (fichier/dossier/URL) ; extraction docx/pdf → Markdown ; **brief structuré** + questions de clarification ; validation avant décomposition ; plafond d'ingestion | Phase 7 (un brief vise un projet) | 2027-04-29 → 2027-06-09 |
+| **9 — Poste de travail : distribution** | Le produit s'installe | Mode local durci (jeton d'API local, SQLite) ; **lanceur/installeur** ; parcours de premier lancement ; puis **enveloppe Tauri** + mises à jour | Phases 7 et 8 (§4.8) | 2027-06-10 → 2027-07-21 |
+| **10 — Continuité & multi-projet** *(à confirmer — pas de milestone)* | Un projet vit dans la durée | Historique et coûts par projet ; mémoire long terme ; itération sur un livrable existant ; boucle de vérification (tests exécutés) ; multi-utilisateur en mode serveur | Phase 7 | — |
+
+Les fenêtres suivent la **cadence historique** du projet (~6 semaines par phase, comme les Phases
+4 et 5) et s'enchaînent après l'échéance de la Phase 6 (2027-03-17). Elles sont des **repères de
+planification**, pas des engagements : une échéance de milestone se déplace sans rien casser.
 
 **Parallélisation possible** : la Phase 8 est majoritairement backend + un écran ; la Phase 9
 commence par de l'empaquetage. Elles peuvent se recouvrir partiellement une fois la Phase 7
-livrée — le patron « deux voies par couche » de #182 s'applique à nouveau.
+livrée — le patron « deux voies par couche » de #182 s'applique à nouveau. Les fenêtres ci-dessus
+sont séquentielles ; les avancer est une décision de planification, pas une révision du cadrage.
 
-**Ce que ce cadrage ne fait pas** : créer les milestones, créer les tickets, ni figer les
-échéances. C'est un geste explicite, à faire une fois les décisions du §8 prises.
+**Pourquoi la Phase 10 n'a pas de milestone** : son contenu (continuité, mémoire long terme,
+itération sur un livrable existant) dépend de ce que la Phase 7 aura appris sur la vie réelle
+d'un projet — un milestone ouvert maintenant fixerait un périmètre qu'on ne connaît pas encore.
+Elle se confirmera à la livraison de la Phase 7.
+
+**Ce que ce cadrage ne fait toujours pas** : créer les **tickets** des Phases 7 à 9. Le
+découpage de chaque phase en lots reste à faire, phase par phase, au moment de l'ouvrir — comme
+#182 l'a fait pour les Phases 5 et 6.
 
 ---
 
-## 8. Décisions à trancher
+## 8. Décisions rendues (2026-08-04)
 
-| # | Décision | Recommandation | Ce qu'elle engage |
+Les sept décisions ont été tranchées le **2026-08-04**, **conformes aux recommandations** de ce
+cadrage (#218). Chacune est désormais un acquis, pas une option ouverte :
+
+| # | Décision | Verdict | Ce qu'elle engage |
 |---|---|---|---|
 | **D1** | Maestro travaille-t-il sur les projets locaux de l'utilisateur ? | **Oui** — c'est la brique manquante n° 1 (§2.2) | Ouvre la Phase 7 ; élargit le modèle de menace (§2.5) |
 | **D2** | Patron d'écriture : direct, worktree, ou copie + diff ? | **Worktree/branche par tâche** si versionné, **copie + diff** sinon ; application = **action sensible** (§2.4) | Réutilise la validation humaine existante ; interdit l'écriture directe |
 | **D3** | Le bureau est-il la finalité ? | **Non — c'est une enveloppe, pas une variante** (§4.7). Le mode web/serveur reste de premier ordre | Un seul front, deux modes de distribution ; SQLite/Postgres, jeton local/comptes comme **réglages** |
 | **D4** | Quel empaquetage ? | **Lanceur/installeur d'abord**, **Tauri ensuite** ; Electron écarté (§4.5) | Le mode isolé Docker devient **optionnel** en distribution bureau (§4.6) |
 | **D5** | L'ingestion de documents passe-t-elle par un **brief validé** ? | **Oui** — c'est le point de contrôle le plus rentable (§3.3) | Ajoute une étape avant décomposition et le droit, pour l'orchestrateur, de poser des questions |
-| **D6** | Ordre des phases | **7 → 8 → 9**, la 10 à confirmer (§7) | Évite d'empaqueter une cible mouvante (§4.8) |
-| **D7** | Les Phases 5 et 6 changent-elles de périmètre ? | **Non** — elles vont au bout telles quelles | Ce cadrage ne perturbe pas le travail en cours |
+| **D6** | Ordre des phases | **7 → 8 → 9** ; la **10 reste à confirmer** et n'a pas de milestone (§7) | Évite d'empaqueter une cible mouvante (§4.8) |
+| **D7** | Les Phases 5 et 6 changent-elles de périmètre ? | **Non** — elles vont au bout telles quelles | Ce cadrage ne perturbe pas le travail en cours ; leurs milestones sont inchangés |
 
-> Tant que D1 à D7 ne sont pas tranchées, ce document reste une **proposition** : rien n'est
-> créé côté GitLab, et les modifications apportées aux autres documents sont **rédigées comme
-> des propositions explicites** (exigences marquées, phases annoncées comme telles).
+**Ce que ces décisions ont produit** (#218) : les milestones **Phase 7**, **Phase 8** et **Phase
+9** existent côté GitLab avec leurs fenêtres (§7), et les exigences dérivées de ce cadrage —
+EF-35 à EF-42, ENF-12, ENF-13, l'entité `PROJECT` enrichie, `SOURCE`, l'écran Projets, le second
+montage du conteneur, le projet de l'utilisateur comme actif — ne sont plus marquées « proposé,
+décision en attente » dans [00](./00-cahier-des-charges.md), [02](./02-stack-technique.md),
+[03](./03-modele-de-donnees.md), [05](./05-interface-control-tower.md),
+[17](./17-isolation-execution.md) et [19](./19-securite-modele-de-menace.md) : elles sont
+**retenues**. Ce qui reste ouvert est nommé comme tel — la Phase 10, et le découpage en tickets
+de chaque phase.

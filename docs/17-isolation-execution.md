@@ -114,12 +114,13 @@ image absente se constatent au lancement et remontent en **échec de tâche**
 consigné au journal, comme les autres échecs.
 
 > ⚠ **Ce contrat est celui d'un produit qui ne touche à aucun projet de l'utilisateur.** La
-> ligne « aucun autre chemin de l'hôte monté » est précisément ce que remet en cause le cadrage
-> [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md) : ouvrir un projet local ajouterait
-> un **second montage** (la racine du projet, ou le répertoire de travail de la tâche) et ferait
+> ligne « aucun autre chemin de l'hôte monté » est précisément ce que lève le cadrage
+> [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md) : ouvrir un projet local ajoute
+> un **second montage** (la racine du projet, ou le répertoire de travail de la tâche) et fait
 > du projet de l'utilisateur un **actif à protéger** au même titre que le poste hôte. Rien du
-> reste du tableau ne bougerait. Décision D1 en attente — tant qu'elle n'est pas prise, le
-> contrat ci-dessus reste intégralement en vigueur.
+> reste du tableau ne bouge. Décision D1 **rendue le 2026-08-04** (#218) : ce changement est le
+> travail de la **Phase 7**, et le contrat ci-dessus reste intégralement en vigueur **jusqu'à ce
+> qu'elle le modifie** — c'est ce document qui devra alors être mis à jour, pas contourné.
 
 ## 5. Limites connues (assumées au POC)
 
