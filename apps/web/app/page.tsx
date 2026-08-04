@@ -18,6 +18,10 @@
  * L'état vient du contexte partagé du shell (#117) : ce lot réorganise
  * l'affichage, la mécanique temps réel (WebSocket, rechargements coalescés) est
  * inchangée.
+ *
+ * Cas particulier depuis #186 : **rien à montrer**. Le lanceur local démarre
+ * désormais en mode réel, où un premier écran est légitimement vide — il porte
+ * alors `PosteVide`, qui dit quoi faire, plutôt que quatre panneaux à zéro.
  */
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
@@ -25,6 +29,7 @@ import { FilActivite } from "@/components/FilActivite";
 import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord";
 import { Kanban } from "@/components/Kanban";
 import { PanneauValidations } from "@/components/PanneauValidations";
+import { PosteVide } from "@/components/PosteVide";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle } from "@/lib/navigation";
 
@@ -42,6 +47,7 @@ export default function TableauDeBord() {
     evenements,
     validations,
     couts,
+    connecte,
     chargement,
     erreur,
     reassigner,
@@ -50,11 +56,24 @@ export default function TableauDeBord() {
 
   const journal = entreeParLibelle("Journal");
 
+  // Rien reçu, et l'API répond : le poste n'est pas en panne, il n'a pas encore
+  // de run à montrer (#186 — le mode réel est désormais le défaut du lanceur
+  // local). On explique quoi faire au lieu d'aligner quatre panneaux vides.
+  // Une API injoignable, elle, garde les panneaux : sa bannière dit déjà le
+  // problème, et conseiller « lancez un run » serait alors un contresens.
+  const rienARegarder =
+    erreur === null &&
+    taches.length === 0 &&
+    evenements.length === 0 &&
+    validations.length === 0;
+
   return (
     <>
       <BanniereErreurApi erreur={erreur} />
       {chargement ? (
         <p className="text-sm text-neutral-500">Chargement de l&apos;état…</p>
+      ) : rienARegarder ? (
+        <PosteVide connecte={connecte} />
       ) : (
         <>
           <PanneauValidations validations={validations} decider={decider} />

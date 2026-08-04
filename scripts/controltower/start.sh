@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Lancement local de la Control Tower en une commande (tickets #65, #149).
+# Lancement local de la Control Tower en une commande (tickets #65, #149, #186).
 #
 # Nettoie d'abord les anciennes sessions (uniquement les processus qui écoutent
 # sur les ports Maestro — jamais de kill large), puis démarre :
-#   - l'API de démo : app FastAPI réelle sur bus mémoire + scénario d'événements
-#     factices publié en continu (maestro.controltower.demo) — port 8000 ;
+#   - l'API — port 8000 —, en MODE RÉEL par défaut (maestro.controltower.cli,
+#     alias `maestro-api`) : bus Redis Pub/Sub et journal durable des événements
+#     (#97), donc l'historique rendu au redémarrage. C'est la vraie orchestration
+#     que le moteur alimente (`maestro-run --publier`, workers #41) ;
 #   - l'UI Next.js (apps/web) pointée sur cette API — port 3000 ;
 # ouvre l'UI dans le navigateur par défaut du poste (#200), et arrête l'ensemble
 # dès que cette fenêtre est fermée. Le script, lui, rend la main tout de suite :
@@ -12,10 +14,24 @@
 # dossier temporaire, propre au couple de ports — deux sessions parallèles ne se
 # marchent donc pas dessus.
 #
-#   bash scripts/controltower/start.sh                     # (re)démarre tout + navigateur
+# Le mode réel EXIGE Redis : il est vérifié AVANT de toucher à quoi que ce soit
+# (`maestro-api --verifier-redis`, qui résout REDIS_URL et rend le geste exact
+# pour le lancer). Absent, le script s'arrête en le disant — jamais de repli
+# silencieux sur la démo, qui ferait prendre des données factices pour la
+# réalité (#186). Ce scénario factice reste disponible, mais DEMANDÉ : `--demo`
+# (app réelle sur bus mémoire + événements simulés, aucun Redis requis) — c'est
+# le mode du développement front, du skill `verify` et des captures.
+#
+#   bash scripts/controltower/start.sh                     # (re)démarre tout + navigateur (réel)
+#   bash scripts/controltower/start.sh --demo              # scénario factice, sans Redis
 #   bash scripts/controltower/start.sh --no-browser        # sans navigateur ni arrêt auto
 #   bash scripts/controltower/start.sh --stop              # arrête seulement (nettoyage)
 #   bash scripts/controltower/start.sh --diagnostic-navigateur  # dit quel navigateur serait ouvert
+#
+# Tout le reste est IDENTIQUE dans les deux modes : mêmes ports (donc mêmes
+# dossiers de logs et profil de navigateur indexés dessus), même nettoyage des
+# anciennes sessions, même chien de garde et même arrêt automatique à la
+# fermeture de la fenêtre. Seul change ce qui alimente l'API.
 #
 # Ports surchargables : MAESTRO_PORT_API (défaut 8000), MAESTRO_PORT_UI (3000). Un worktree créé
 # par scripts/git/worktree.sh les reçoit d'office, dérivés du numéro de ticket (#152).
@@ -463,9 +479,13 @@ resoudre_strategie() {
 MODE="demarrer"
 JETON_SURVEILLE=""
 NAVIGATEUR_AUTO=1
+# Ce qui alimente l'API : « reel » (maestro-api sur Redis) par défaut depuis
+# #186, « demo » sur demande explicite (bus mémoire + scénario factice).
+STACK="reel"
 while [ $# -gt 0 ]; do
   case "$1" in
     --stop) MODE="arreter" ;;
+    --demo | --demonstration) STACK="demo" ;;
     --no-browser | --sans-navigateur) NAVIGATEUR_AUTO=0 ;;
     # Dit quel navigateur serait ouvert, et comment, sans rien démarrer ni ouvrir.
     --diagnostic-navigateur) MODE="diagnostic" ;;
@@ -490,6 +510,7 @@ resoudre_strategie
 # Diagnostic : imprime le verdict (et le profil/marqueur, propres aux ports — l'indépendance de deux
 # sessions parallèles, #200/#152) sans démarrer la stack ni ouvrir de fenêtre.
 if [ "$MODE" = "diagnostic" ]; then
+  printf 'stack: %s\n' "$STACK"
   printf 'famille: %s\n' "$STRAT_FAMILLE"
   printf 'mode: %s\n' "$STRAT_MODE"
   printf 'source: %s\n' "$STRAT_SOURCE"
@@ -569,6 +590,37 @@ if [ "$MODE" = "surveiller" ]; then
   exit 0
 fi
 
+# ── Préflight ────────────────────────────────────────────────────────────────
+# AVANT le nettoyage : ce qui manque ici empêche de démarrer, et il n'y a aucune
+# raison d'avoir arrêté la session en place (peut-être en train de servir) pour
+# le découvrir ensuite.
+
+# Toujours le python du venv (les dépendances ne sont que là — cf. CLAUDE.md).
+if [ "$WINDOWS" = 1 ]; then
+  PYTHON="$RACINE/.venv/Scripts/python.exe"
+else
+  PYTHON="$RACINE/.venv/bin/python"
+fi
+if [ "$MODE" = "demarrer" ] && [ ! -x "$PYTHON" ]; then
+  echo "Python du venv introuvable : $PYTHON (créer le venv et installer les deps)" >&2
+  exit 1
+fi
+
+# Mode réel : Redis est une dépendance dure. On la vérifie plutôt que de la
+# supposer — et on ne retombe PAS sur la démo, qui donnerait des données
+# factices pour la réalité. Le diagnostic (URL résolue, geste exact) vient du
+# CLI de l'API, seul endroit où REDIS_URL est résolue.
+if [ "$MODE" = "demarrer" ] && [ "$STACK" = "reel" ]; then
+  if ! (cd "$RACINE" && "$PYTHON" -m maestro.controltower.cli --verifier-redis); then
+    echo >&2
+    echo "Mode réel impossible sans Redis — rien n'a été démarré ni arrêté." >&2
+    echo "  · lancer Redis (ci-dessus), puis relancer cette commande ;" >&2
+    echo "  · ou explorer l'UI sur un scénario factice, sans Redis :" >&2
+    echo "      bash scripts/controltower/start.sh --demo" >&2
+    exit 1
+  fi
+fi
+
 # ── Nettoyage puis démarrage ─────────────────────────────────────────────────
 arreter_session
 
@@ -580,20 +632,15 @@ fi
 mkdir -p "$LOG_DIR"
 cd "$RACINE" || exit 1
 
-# Toujours le python du venv (les dépendances ne sont que là — cf. CLAUDE.md).
-if [ "$WINDOWS" = 1 ]; then
-  PYTHON="$RACINE/.venv/Scripts/python.exe"
+if [ "$STACK" = "demo" ]; then
+  echo "[api] démarrage sur :${PORT_API} — mode démo, scénario factice (log : $LOG_DIR/api.log)"
+  nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" \
+    >"$LOG_DIR/api.log" 2>&1 &
 else
-  PYTHON="$RACINE/.venv/bin/python"
+  echo "[api] démarrage sur :${PORT_API} — mode réel sur Redis (log : $LOG_DIR/api.log)"
+  nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" \
+    >"$LOG_DIR/api.log" 2>&1 &
 fi
-if [ ! -x "$PYTHON" ]; then
-  echo "Python du venv introuvable : $PYTHON (créer le venv et installer les deps)" >&2
-  exit 1
-fi
-
-echo "[api] démarrage sur :${PORT_API} (log : $LOG_DIR/api.log)"
-nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" \
-  >"$LOG_DIR/api.log" 2>&1 &
 if ! attendre_http "http://127.0.0.1:${PORT_API}/api/sante" 20; then
   echo "L'API ne répond pas sur :${PORT_API} — voir $LOG_DIR/api.log" >&2
   exit 1
@@ -640,7 +687,14 @@ if [ "$NAVIGATEUR_AUTO" = 1 ]; then
 fi
 
 echo
-echo "Control Tower prête : $URL_UI"
+if [ "$STACK" = "demo" ]; then
+  echo "Control Tower prête (mode démo — scénario FACTICE) : $URL_UI"
+else
+  echo "Control Tower prête (mode réel) : $URL_UI"
+  # Sans run, le poste de pilotage est vide — l'UI l'explique elle-même (#186),
+  # on redit ici le geste depuis le terminal.
+  echo "  alimenter : maestro-run --publier \"<objectif>\"  (le poste reste vide tant qu'aucun run ne publie)"
+fi
 echo "  API : http://127.0.0.1:${PORT_API}  ·  logs : $LOG_DIR/"
 if [ "$ARRET_AUTO" = 1 ]; then
   echo "  arrêt : fermer la fenêtre du navigateur (ou bash scripts/controltower/start.sh --stop)"
