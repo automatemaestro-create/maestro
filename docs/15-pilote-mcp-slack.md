@@ -187,4 +187,11 @@ Capture du canal : ![Notifications Slack du run](./assets/pilote-mcp-slack.png)
   session SDK) : quelques secondes et quelques centimes par événement — le prix
   du « zéro connecteur » au POC ; un transport direct est envisageable en V1
   sans changer le contrat.
-- Les tests du parent #101 sont différés au lot final : **tests différés → #103**.
+- Les tests du socle MCP du parent #101 vivent dans
+  [`tests/test_mcp.py`](../tests/test_mcp.py) (lot final #103) ; le notificateur
+  lui-même, resté à 0 % de couverture après ce lot, est couvert depuis #202 par
+  [`tests/test_supervision.py`](../tests/test_supervision.py) — les deux
+  événements, les refus de `NotificateurRun.default()` et le contrat
+  best-effort (l'échec de publication est consigné, jamais propagé au run ni à
+  la décision de validation). Suite hermétique : fournisseur factice, dépôts et
+  coffre temporaires, sortie réseau refusée.
