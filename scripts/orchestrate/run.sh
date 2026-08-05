@@ -870,6 +870,14 @@ lance_session() {
 # l'allowlist ne reconnaissait plus — un `cd "<worktree>" &&` inutile en tête (la session y est déjà),
 # un chemin absolu là où la règle borne un chemin relatif, un `echo` de confort en fin de chaîne. Une
 # commande chaînée n'est autorisée que si CHACUN de ses morceaux l'est.
+#
+# Onze runs plus tard (#235, parent #232 : 83 refus sur 16 sessions), il nomme aussi les trois formes
+# qu'AUCUNE règle ne peut matcher, quelle que soit la commande qu'elles habillent — saut de ligne,
+# substitution `$(…)`, heredoc. Elles ne se devinent pas depuis un refus, qui ne dit pas ce qui a
+# manqué, et la plus coûteuse tombe sur la DERNIÈRE action du ticket : huit sessions sur seize ont
+# buté sur un `glab mr create --description` multi-ligne, puis sur le `--description "$(cat …)"` par
+# lequel elles essayaient de s'en sortir. D'où le renvoi vers l'outil `Write` : un fichier s'écrit
+# avec lui, et c'est son CHEMIN qui entre dans la commande.
 prompt_ticket() {
   cat <<PROMPT
 Tu traites intégralement le ticket GitLab #$1 de ce dépôt, seul et sans supervision humaine.
@@ -895,6 +903,12 @@ Règles de ce run autonome :
   scripts/gitlab/lib.sh … ») sans préfixe de variable d'environnement devant l'interpréteur —
   sous ces deux formes-là, la règle qui autorise la commande ne la reconnaît plus et l'appel est
   refusé sans que personne soit là pour l'approuver.
+- Trois formes qu'AUCUNE règle ne peut reconnaître, quelle que soit la commande qu'elles habillent
+  et même si elle est autorisée : un SAUT DE LIGNE dans la commande, une SUBSTITUTION \$(…), un
+  HEREDOC (« <<'EOF' »). Tiens donc chaque appel sur UNE SEULE LIGNE, et n'y fais entrer aucun
+  texte long. Pour écrire un fichier — description de MR, corps de commentaire, note de travail —
+  sers-toi de l'outil Write, puis donne le CHEMIN de ce fichier à la commande : jamais
+  « cat > … <<'EOF' », jamais « --description "\$(cat …)" ».
 - Si la branche du ticket existe déjà et porte des commits, OU si le worktree contient des
   modifications non commitées, REPRENDS ce travail au lieu de recommencer : commence par regarder
   git status et git log. Tu es peut-être la reprise d'une session interrompue, et un arbre sale
@@ -1479,6 +1493,10 @@ printf '%sRésumé du run %s%s\n' "$C_B" "$RUN_ID" "$C_0"
 printf '  %s✓%s %s réussi(s) · %s✗%s %s en échec · %s~%s %s sauté(s)\n' \
   "$C_G" "$C_0" "$NB_OK" "$C_R" "$C_0" "$NB_ECHEC" "$C_Y" "$C_0" "$NB_SAUTE"
 printf '  journal : %s\n' "$RUN_DIR"
+# Le seul moment où quelqu'un lit ce run est celui-ci : c'est donc ici que l'invitation à instruire
+# les refus a une chance d'être suivie (#235). Sans elle, la boucle de rétroaction de §11.7 ne part
+# que si on y pense — et onze runs ont montré que non.
+printf '  refus de permission : bash scripts/orchestrate/journal.sh refus %s\n' "$RUN_ID"
 if [ "$PLAFOND_ATTEINT" = 1 ]; then
   printf '\n  %sRun arrêté sur une limite hebdomadaire%s — le reste du plan est intact.\n' "$C_Y" "$C_0"
   printf '  Le rejouer plus tard, sans recalculer l'\''ordre : /orchestrate --resume %s\n' "$RUN_ID"
