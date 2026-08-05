@@ -57,6 +57,12 @@ PORT_DEFAUT = 8000
 #: L'exécution factice à laquelle tout le scénario est rattaché.
 RUN_ID = "demo-live"
 
+#: Le projet dans lequel ce run travaille (#222) — le même que les fixtures du
+#: journal, pour qu'un `?projet=prj-demo` rende une vue cohérente d'un écran à
+#: l'autre. Le scénario laisse à dessein une tâche **hors projet** (`demo-t4`) :
+#: un travail sans projet reste normal, et c'est ce qui rend le filtre visible.
+PROJET_ID = "prj-demo"
+
 #: Cadence de la pulsation QA : assez lente pour rester lisible, assez rapide
 #: pour qu'un badge « Temps réel connecté » ait quelque chose à montrer.
 PERIODE_PULSATION_S = 20.0
@@ -75,12 +81,17 @@ async def _avancer_tache(
     etapes: Sequence[str],
     usage: StepUsage | None = None,
     ticket: ReferenceTicket | None = None,
+    projet_id: str | None = PROJET_ID,
 ) -> None:
     """Fait avancer une tâche à travers `etapes` ; usage/coût posés sur la dernière.
 
     `ticket` (#183) rattache la tâche à un ticket externe : la référence voyage
     avec chaque événement de statut — de quoi montrer le lien sur la carte du
     Kanban (`GET /api/taches`) comme le ferait un vrai run parti d'un ticket.
+
+    `projet_id` (#222) rattache la tâche à un **projet** et voyage de la même
+    façon : c'est ce que filtrent `GET /api/taches?projet=…` et la vue coûts.
+    None pour une tâche hors projet — le comportement d'avant ce lot.
     """
     for i, statut in enumerate(etapes):
         dernier = i == len(etapes) - 1
@@ -96,6 +107,7 @@ async def _avancer_tache(
                 cout_usd=usage.cout_usd if usage is not None and dernier else None,
                 usage=usage if dernier else None,
                 ticket=ticket,
+                projet_id=projet_id,
             )
         )
         await asyncio.sleep(PAUSE_ENTRE_STATUTS_S)
@@ -120,6 +132,10 @@ async def _scenario(bus: EventBus) -> None:
             usage=StepUsage(
                 appels=1, tokens_entree=2140, tokens_sortie=380, cout_usd=0.0210, duree_ms=4200
             ),
+            # La planification est une dépense du projet au même titre que les
+            # tâches (#222) : sans ce champ, le total filtré par projet serait
+            # inférieur à la somme des runs de ce projet.
+            projet_id=PROJET_ID,
         )
     )
     await asyncio.sleep(1)
@@ -209,6 +225,9 @@ async def _scenario(bus: EventBus) -> None:
         agent="designer",
         role="Designer",
         etapes=["assignee"],
+        # Hors projet à dessein (#222) : le Kanban filtré sur `prj-demo` ne
+        # doit pas la montrer — un travail sans projet reste du travail.
+        projet_id=None,
     )
 
     for n in itertools.count(1):

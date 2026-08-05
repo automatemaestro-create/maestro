@@ -56,6 +56,13 @@
       "uniqueItems": true,
       "default": []
     },
+    "projet_id": {
+      "type": "string",
+      "description": "Identifiant optionnel du projet (entite PROJECT, #221) auquel la tache appartient (#222). Absent par defaut : un plan sans projet reste valide et se deroule comme avant. Pose par le lancement du run, dont chaque tache du plan herite ; c'est ce qui permet aux vues (Kanban, couts, journal) de filtrer par projet.",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
     "ticket": {
       "type": "object",
       "description": "Reference optionnelle du ticket externe dont releve la tache (#187) : identifiant lisible + URL. Generique (GitLab, Jira, Linear passent par la meme forme, aucun champ propre a un outil). Absente par defaut : un plan sans reference reste valide. Posee soit par l'origine du run, soit par un agent equipe du serveur MCP de l'outil.",

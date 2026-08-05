@@ -131,9 +131,9 @@ Un projet de travail (souvent rattaché à un dépôt de code). Regroupe des tâ
 > (`nouveau`/`existant`), `vcs` (`type`, `branche_base`, `distant` — **détecté** à la
 > déclaration, `null` si non versionné : un projet non versionné reste déclarable) et
 > `perimetre` (`inclus`/`exclus`, ce dernier portant par défaut `.git`, `node_modules`, `.env`,
-> `**/secrets/**`). Restent à venir dans la phase : le `projet_id` porté par `TASK` et `RUN`
-> (#222 — c'est ce qui rendra le Kanban, les coûts et le journal filtrables par projet), l'API
-> (#223), l'espace de travail dérivé (#224) et l'application des livrables (#227).
+> `**/secrets/**`). Le **`projet_id` porté par `TASK` et `RUN`** est livré depuis #222 (voir ces
+> deux entités). Restent à venir dans la phase : l'API (#223), l'espace de travail dérivé (#224)
+> et l'application des livrables (#227).
 > *(Retenu — décisions D1/D2 de
 > [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md), rendues le 2026-08-04 ; **Phase 7**.)*
 
@@ -165,9 +165,10 @@ Un ticket de travail. Champs notables :
 - `competences_requises` : sert au routage.
 - `statut` : `backlog`, `prete`, `assignee`, `en_cours`, `en_attente_validation`, `terminee`, `echec`, `bloquee` (dépendance en échec — la tâche n'est jamais mise en file ni exécutée).
 - Auto-relation `TASK → TASK` : graphe de **dépendances**.
+- `projet_id` : le **projet** auquel la tâche appartient (#222) — **optionnel**, `null` valant « aucun projet » (le comportement d'avant la Phase 7 : une tâche sans projet reste une tâche). Posé au lancement d'un run et hérité par chaque tâche du plan, sauf celle qui en porte déjà un ; il traverse le journal (#8) et les événements (#46) jusqu'aux vues, que le Kanban, les coûts et le journal savent alors filtrer (`?projet=<id>`). Un travail sans `projet_id` n'apparaît dans **aucune** vue filtrée — on ne devine pas son appartenance.
 
 ### RUN
-Une **exécution** concrète d'une tâche par un agent. Trace les tokens, le **coût**, la durée, le statut. Une tâche peut avoir plusieurs runs (relances).
+Une **exécution** concrète d'une tâche par un agent. Trace les tokens, le **coût**, la durée, le statut. Une tâche peut avoir plusieurs runs (relances). `projet_id` (#222) dit dans quel **projet** le run travaille — même régime que sur `TASK` (optionnel, `null` hors projet) ; il est porté par l'événement de lancement, survit donc au redémarrage de l'API, et la planification le porte aussi pour que le total d'un projet reste égal à la somme de ses runs.
 
 ### TRACE_EVENT
 Les **événements détaillés** d'un run (appel d'outil, étape de raisonnement, erreur…). Alimente l'observabilité et l'UI. Synchronisé avec Langfuse.

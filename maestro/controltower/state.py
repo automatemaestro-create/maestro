@@ -100,6 +100,9 @@ class EtatTache:
     la référence du ticket externe dont relève la tâche (#187, contrat #183) —
     None tant qu'aucune n'a été transportée par un événement (inconnu ≠ absent) ;
     posée par un événement de tâche, elle survit au rejeu du journal durable.
+    `projet_id` porte le projet auquel la tâche appartient (#222) — None quand
+    elle ne relève d'aucun projet, ce qui reste le cas courant : c'est ce champ
+    que le Kanban filtre (`GET /api/taches?projet=…`).
     """
 
     id: str
@@ -111,6 +114,7 @@ class EtatTache:
     cout_usd: float | None = None
     usage: StepUsage | None = None
     ticket: ReferenceTicket | None = None
+    projet_id: str | None = None
     horodatage: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -125,6 +129,7 @@ class EtatTache:
             "cout_usd": self.cout_usd,
             "usage": self.usage.to_dict() if self.usage is not None else None,
             "ticket": self.ticket.to_dict() if self.ticket is not None else None,
+            "projet_id": self.projet_id,
             "horodatage": self.horodatage,
         }
 
@@ -263,6 +268,10 @@ class EtatExecution:
     # reconstruit au rejeu comme le reste — c'est ce qui l'a fait passer du
     # registre en mémoire du service de pilotage (#185) à la projection.
     ticket: ReferenceTicket | None = None
+    # Le projet dans lequel le run travaille (#222), posé par le même événement
+    # de lancement et hérité par ses tâches — None quand le run ne relève
+    # d'aucun projet (le comportement d'avant ce lot).
+    projet_id: str | None = None
 
     @property
     def debut(self) -> str:
@@ -293,6 +302,8 @@ class EtatExecution:
         projection, depuis l'événement de lancement : la référence voyage
         désormais sur le bus, donc elle survit au redémarrage de l'API comme le
         reste du résumé, là où le service de pilotage la tenait en mémoire.
+        `projet_id` (#222) vient du même événement et suit le même chemin : il
+        dit dans quel projet le run travaille, `null` s'il n'en relève d'aucun.
         """
         return {
             "run_id": self.run_id,
@@ -301,6 +312,7 @@ class EtatExecution:
             "nb_taches": self.nb_taches,
             "cout_usd": self.cout_usd,
             "ticket": ticket_en_dict(self.ticket),
+            "projet_id": self.projet_id,
             "debut": self.debut,
             "fin": self.fin,
         }
@@ -326,12 +338,19 @@ class EtatExecution:
         planification = StepUsage()
         entrees: dict[str, TaskCost] = {}
         for event in self.evenements:
-            if event.ticket is not None and event.tache_id:
-                # Le ticket externe (#187) n'a pas de coût : il se pose même sur
-                # un événement sans usage — dont le `tache.reference`, qui n'en
-                # porte jamais — donc avant le filtre ci-dessous.
+            if event.tache_id and (event.ticket is not None or event.projet_id is not None):
+                # Ni le ticket externe (#187) ni le projet (#222) n'ont de coût :
+                # ils se posent même sur un événement sans usage — dont le
+                # `tache.reference`, qui n'en porte jamais — donc avant le filtre
+                # ci-dessous. Un champ absent n'efface pas celui déjà en place.
                 entree = entrees.get(event.tache_id) or TaskCost(tache_id=event.tache_id)
-                entrees[event.tache_id] = replace(entree, ticket=event.ticket)
+                entrees[event.tache_id] = replace(
+                    entree,
+                    ticket=event.ticket if event.ticket is not None else entree.ticket,
+                    projet_id=(
+                        event.projet_id if event.projet_id is not None else entree.projet_id
+                    ),
+                )
             usage = event.usage
             if usage is None and event.cout_usd is not None:
                 usage = StepUsage(cout_usd=event.cout_usd)
@@ -408,9 +427,19 @@ class ControlTowerState:
 
     # ------------------------------------------------------------------ lecture
 
-    def taches(self) -> list[EtatTache]:
-        """Les tâches connues, dans l'ordre de première apparition."""
-        return list(self._taches.values())
+    def taches(self, projet: str | None = None) -> list[EtatTache]:
+        """Les tâches connues, dans l'ordre de première apparition.
+
+        `projet` (#222) restreint la vue aux tâches de ce projet — c'est le
+        filtre du Kanban. Sans lui, **toutes** les tâches sortent, celles sans
+        projet comprises : le champ est optionnel, ne pas filtrer reste le
+        comportement d'avant ce lot. Une tâche sans `projet_id` n'apparaît dans
+        aucune vue filtrée : on ne devine pas à quel projet elle appartiendrait.
+        """
+        taches = list(self._taches.values())
+        if projet is None:
+            return taches
+        return [t for t in taches if t.projet_id == projet]
 
     def tache(self, tache_id: str) -> EtatTache | None:
         """La tâche `tache_id`, ou None si inconnue de la projection."""
@@ -428,9 +457,18 @@ class ControlTowerState:
         """Le détail de l'exécution `run_id`, ou None si aucune trace reçue."""
         return self._executions.get(run_id)
 
-    def executions(self) -> list[EtatExecution]:
-        """Les exécutions connues, dans l'ordre de première apparition (#87)."""
-        return list(self._executions.values())
+    def executions(self, projet: str | None = None) -> list[EtatExecution]:
+        """Les exécutions connues, dans l'ordre de première apparition (#87).
+
+        `projet` (#222) restreint aux runs de ce projet — même convention que
+        `taches` : sans filtre, tous les runs sortent ; avec, un run sans projet
+        n'y figure pas. C'est par ce paramètre que la vue coûts & analytics se
+        restreint à un projet, sa matière étant ces mêmes exécutions.
+        """
+        executions = list(self._executions.values())
+        if projet is None:
+            return executions
+        return [e for e in executions if e.projet_id == projet]
 
     def validations(self) -> list[EtatValidation]:
         """Les demandes de validation humaine, dans l'ordre de première apparition."""
@@ -470,9 +508,18 @@ class ControlTowerState:
         casser la projection.
         """
         if event.run_id:
-            self._executions.setdefault(
+            execution = self._executions.setdefault(
                 event.run_id, EtatExecution(run_id=event.run_id)
-            ).evenements.append(event)
+            )
+            execution.evenements.append(event)
+            if event.projet_id is not None and execution.projet_id is None:
+                # Le projet du run (#222) est en principe posé par son événement
+                # de lancement — mais un run publié hors de l'API
+                # (`maestro-run --publier`, #87) n'en émet aucun : son
+                # appartenance ne peut alors venir que de ses étapes, dont
+                # chacune la porte. Le premier vu fait foi ; le lancement, quand
+                # il existe, l'a déjà posée avant toute étape.
+                execution.projet_id = event.projet_id
         if event.type == EVENEMENT_TACHE_STATUT:
             self._applique_statut_tache(event)
         elif event.type == EVENEMENT_TACHE_REASSIGNATION:
@@ -505,6 +552,8 @@ class ControlTowerState:
             tache.usage = event.usage
         if event.ticket is not None:
             tache.ticket = event.ticket
+        if event.projet_id is not None:
+            tache.projet_id = event.projet_id
 
         if event.agent in _AGENTS_NON_EXECUTANTS:
             return
@@ -573,6 +622,11 @@ class ControlTowerState:
             return
         tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
         tache.ticket = event.ticket
+        if event.projet_id is not None:
+            # L'appartenance au projet (#222) voyage sur tous les événements de
+            # tâche, celui-ci compris : la poser ici évite qu'une tâche connue
+            # par ce seul chemin arrive sans projet dans les vues filtrées.
+            tache.projet_id = event.projet_id
         tache.run_id = event.run_id or tache.run_id
 
     def _applique_activite(self, event: Event) -> None:
@@ -623,6 +677,10 @@ class ControlTowerState:
             # Le ticket dont part le run (#187) : posé par le lancement, jamais
             # retiré par les événements de fin, qui ne le portent pas.
             execution.ticket = event.ticket
+        if event.projet_id is not None:
+            # Le projet du run (#222) : même règle, posé au lancement et jamais
+            # retiré par un événement qui ne le porte pas.
+            execution.projet_id = event.projet_id
         execution.fin = (
             event.horodatage if execution.statut in STATUTS_EXECUTION_TERMINAUX else None
         )

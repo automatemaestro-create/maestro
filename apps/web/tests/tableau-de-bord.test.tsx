@@ -364,6 +364,7 @@ describe("le ticket externe dans les tables de coûts (#192)", () => {
     analytics.vue = {
       depuis: null,
       pas: "heure",
+      projet: null,
       total: usageFactice(),
       executions: [],
       agents: [],
@@ -381,6 +382,7 @@ describe("le ticket externe dans les tables de coûts (#192)", () => {
     analytics.vue = {
       depuis: null,
       pas: "heure",
+      projet: null,
       total: usageFactice(),
       executions: [],
       agents: [],

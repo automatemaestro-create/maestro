@@ -100,6 +100,7 @@ class CoutTacheAgregee:
     executions: int = 0
     usage: StepUsage = StepUsage()
     ticket: ReferenceTicket | None = None
+    projet_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la ligne en dict JSON-sérialisable (la forme de l'API)."""
@@ -112,6 +113,7 @@ class CoutTacheAgregee:
             "executions": self.executions,
             "usage": self.usage.to_dict(),
             "ticket": ticket_en_dict(self.ticket),
+            "projet_id": self.projet_id,
         }
 
 
@@ -129,6 +131,7 @@ class CoutExecutionResume:
     debut: str = ""
     fin: str = ""
     usage: StepUsage = StepUsage()
+    projet_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la ligne en dict JSON-sérialisable (la forme de l'API)."""
@@ -138,6 +141,7 @@ class CoutExecutionResume:
             "debut": self.debut,
             "fin": self.fin,
             "usage": self.usage.to_dict(),
+            "projet_id": self.projet_id,
         }
 
 
@@ -159,11 +163,13 @@ class AnalyticsCouts:
 
     `depuis` (ISO, ou None : tout l'historique projeté) et `pas` rappellent la
     fenêtre et la granularité demandées ; `total` retombe sur la somme des
-    grands livres des runs de la fenêtre.
+    grands livres des runs de la fenêtre. `projet` (#222) rappelle le projet
+    demandé — None quand la vue porte sur tout, projets confondus.
     """
 
     depuis: str | None = None
     pas: str = PAS_HEURE
+    projet: str | None = None
     total: StepUsage = StepUsage()
     executions: tuple[CoutExecutionResume, ...] = ()
     agents: tuple[CoutAgent, ...] = ()
@@ -175,6 +181,7 @@ class AnalyticsCouts:
         return {
             "depuis": self.depuis,
             "pas": self.pas,
+            "projet": self.projet,
             "total": self.total.to_dict(),
             "executions": [e.to_dict() for e in self.executions],
             "agents": [a.to_dict() for a in self.agents],
@@ -237,6 +244,7 @@ class _Accumulateur:
     fin: datetime | None = None
     debut_brut: str = ""
     fin_brut: str = ""
+    projet_id: str | None = None
 
 
 def _tri_par_cout(usage: StepUsage) -> tuple[float, int]:
@@ -249,6 +257,7 @@ def agrege_couts(
     *,
     depuis: datetime | None = None,
     pas: str = PAS_HEURE,
+    projet: str | None = None,
 ) -> AnalyticsCouts:
     """Agrège les coûts des exécutions projetées en vue analytique (#87).
 
@@ -256,6 +265,13 @@ def agrege_couts(
     de cette borne comptent — un événement sans horodatage lisible est alors
     écarté (fenêtre indémontrable) ; sans borne, il compte dans les agrégats
     mais pas dans la série. `pas` fixe la granularité des seaux temporels.
+
+    `projet` (#222) restreint la dépense à un projet : seuls les événements qui
+    **portent** ce `projet_id` comptent. Le filtre est posé événement par
+    événement plutôt que run par run — ce qui n'a pas d'appartenance n'entre
+    dans aucun total de projet, et une dépense reste comptée là où elle a été
+    engagée même si un run venait à en mélanger. Sans filtre, tout compte : le
+    champ est optionnel, ne pas filtrer reste le comportement d'avant ce lot.
     """
     if pas not in PAS_VALIDES:
         raise ValueError(f"pas invalide : {pas} (attendus : {', '.join(PAS_VALIDES)})")
@@ -273,9 +289,15 @@ def agrege_couts(
     # y créerait des lignes à usage nul pour des tâches qui n'ont rien dépensé
     # dans la fenêtre. Ils sont recollés à la construction des lignes.
     references: dict[str, ReferenceTicket] = {}
+    # Les projets (#222) se collectent comme les tickets, et pour la même
+    # raison : ils n'ont pas de coût et arrivent donc aussi sur des événements
+    # sans usage. Recollés à la construction des lignes.
+    projets: dict[str, str] = {}
 
     for execution in executions:
         for event in execution.evenements:
+            if projet is not None and event.projet_id != projet:
+                continue
             date = _parse_horodatage(event.horodatage)
             if depuis is not None and (date is None or date < depuis):
                 continue
@@ -288,10 +310,14 @@ def agrege_couts(
                     run.debut, run.debut_brut = date, event.horodatage
                 if run.fin is None or date > run.fin:
                     run.fin, run.fin_brut = date, event.horodatage
+            if event.projet_id is not None:
+                run.projet_id = event.projet_id
             if event.tache_id:
                 run.taches.add(event.tache_id)
                 if event.ticket is not None:
                     references[event.tache_id] = event.ticket
+                if event.projet_id is not None:
+                    projets[event.tache_id] = event.projet_id
 
             usage = _usage_de(event)
             if usage is None:
@@ -325,6 +351,7 @@ def agrege_couts(
     return AnalyticsCouts(
         depuis=depuis.isoformat() if depuis is not None else None,
         pas=pas,
+        projet=projet,
         total=total,
         executions=tuple(
             CoutExecutionResume(
@@ -333,6 +360,7 @@ def agrege_couts(
                 debut=acc.debut_brut,
                 fin=acc.fin_brut,
                 usage=acc.usage,
+                projet_id=acc.projet_id,
             )
             for run_id, acc in sorted(
                 par_execution.items(),
@@ -357,6 +385,7 @@ def agrege_couts(
                 executions=len(acc.executions),
                 usage=acc.usage,
                 ticket=references.get(tache_id),
+                projet_id=projets.get(tache_id),
             )
             for tache_id, acc in sorted(
                 par_tache.items(), key=lambda item: _tri_par_cout(item[1].usage), reverse=True

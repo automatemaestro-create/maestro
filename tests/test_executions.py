@@ -117,6 +117,7 @@ class MoteurDouble:
         self.appels: list[dict[str, object]] = []
         self.objectifs: list[str] = []
         self.tickets: list[ReferenceTicket | None] = []
+        self.projets: list[str | None] = []
         self.annule = False
 
     def __call__(self, **reglages: object) -> MoteurDouble:
@@ -130,12 +131,15 @@ class MoteurDouble:
         *,
         journal: object = None,
         ticket: ReferenceTicket | None = None,
+        projet_id: str | None = None,
     ) -> RunReport:
-        # `ticket` fait partie de la signature du vrai moteur (#187) : le service le
-        # lui passe pour qu'il en dote chaque tâche du plan. Le double la reproduit
-        # — sans quoi il ne testerait plus l'appel réellement effectué.
+        # `ticket` (#187) et `projet_id` (#222) font partie de la signature du vrai
+        # moteur : le service les lui passe pour qu'il en dote chaque tâche du plan.
+        # Le double la reproduit — sans quoi il ne testerait plus l'appel réellement
+        # effectué.
         self.objectifs.append(objectif)
         self.tickets.append(ticket)
+        self.projets.append(projet_id)
         if self.erreur is not None:
             raise self.erreur
         if self.bloquant:

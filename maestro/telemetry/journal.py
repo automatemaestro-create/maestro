@@ -44,6 +44,9 @@ class StepRecord:
     a un : le journal est le **seul chemin** par lequel il atteint la Control
     Tower (le pont #46 ne lit que ces lignes), d'où sa présence ici plutôt que
     dans le seul plan.
+    `projet_id` (#222) est le projet auquel la tâche appartient, quand il y en a
+    un — même raison d'être ici que `ticket` : le pont ne lit que ces lignes, et
+    sans elles l'appartenance n'atteindrait jamais les vues.
     """
 
     run_id: str
@@ -59,6 +62,7 @@ class StepRecord:
     usage: StepUsage
     playbook_version: int | None = None
     ticket: ReferenceTicket | None = None
+    projet_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trace en dict JSON-sérialisable (la ligne du journal)."""
@@ -76,6 +80,7 @@ class StepRecord:
             "usage": self.usage.to_dict(),
             "playbook_version": self.playbook_version,
             "ticket": ticket_en_dict(self.ticket),
+            "projet_id": self.projet_id,
         }
 
 
@@ -124,6 +129,7 @@ class RunJournal:
         erreur: str | None = None,
         playbook_version: int | None = None,
         ticket: ReferenceTicket | None = None,
+        projet_id: str | None = None,
     ) -> StepRecord:
         """Consigne une étape (textes expurgés des secrets) et émet sa ligne JSON."""
         record = StepRecord(
@@ -140,6 +146,7 @@ class RunJournal:
             usage=usage,
             playbook_version=playbook_version,
             ticket=ticket,
+            projet_id=projet_id,
         )
         self._records.append(record)
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))

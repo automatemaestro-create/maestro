@@ -239,6 +239,8 @@ export function tacheFactice(partiel: Partial<Tache> = {}): Tache {
     // Le cas courant est l'absence de ticket externe (#192) : les fabriques
     // partent de là, un test qui en veut un le passe en `partiel`.
     ticket: null,
+    // Idem pour le projet (#222) : le cas courant est la tâche hors projet.
+    projet_id: null,
     horodatage: "2026-07-28T10:00:00Z",
     ...partiel,
   };
@@ -273,6 +275,7 @@ export function coutTacheFactice(partiel: Partial<CoutTache> = {}): CoutTache {
     statut: "terminee",
     usage: usageFactice(),
     ticket: null,
+    projet_id: null,
     ...partiel,
   };
 }
@@ -303,6 +306,7 @@ export function coutTacheAgregeeFactice(
     executions: 1,
     usage: usageFactice(),
     ticket: null,
+    projet_id: null,
     ...partiel,
   };
 }
@@ -346,6 +350,7 @@ export function evenementFactice(partiel: Partial<Evenement> = {}): Evenement {
     usage: null,
     instances: null,
     ticket: null,
+    projet_id: null,
     horodatage: "2026-07-28T10:00:00Z",
     ...partiel,
   };
