@@ -268,7 +268,17 @@ function Bibliotheque({
     const tick = setTimeout(() => {
       void (async () => {
         try {
-          setEntrees(await chargerRegistreMcp(q));
+          const rendu = await chargerRegistreMcp(q);
+          setEntrees(rendu);
+          // Un panneau de configuration ne survit pas à la disparition de son
+          // entrée des résultats : on l'**oublie** au lieu de le rouvrir quand
+          // l'entrée revient (#231). Sans cet oubli, effacer la recherche
+          // remontait le panneau, donc son champ mot de passe, donc le
+          // remplissage automatique du gestionnaire de mots de passe qui avait
+          // sali la recherche — un champ qu'on ne pouvait plus vider.
+          setOuverte((o) =>
+            o !== null && rendu.some((entree) => entree.id === o) ? o : null,
+          );
           setErreur(null);
         } catch (e) {
           setErreur(e instanceof Error ? e.message : String(e));
@@ -285,8 +295,17 @@ function Bibliotheque({
       </h3>
       <label className={CLASSE_LIBELLE}>
         Rechercher une intégration (nom, tag…)
+        {/*
+          `name` + `autoComplete="off"` : un champ anonyme est exactement ce
+          qu'un gestionnaire de mots de passe prend pour un champ identifiant
+          (#231). Le nom le désigne pour ce qu'il est ; la vraie barrière reste
+          le `<form>` qui enferme les champs secrets plus bas, hors de portée
+          d'ici.
+        */}
         <input
           type="search"
+          name="recherche-integration-mcp"
+          autoComplete="off"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="figma, gitlab, slack…"
@@ -431,7 +450,20 @@ function FormulaireConfiguration({
   };
 
   return (
-    <div className="mt-3 flex flex-col gap-3 border-t border-neutral-100 pt-3 dark:border-neutral-800">
+    // Un vrai `<form>`, et pas une `<div>` : c'est lui qui **borne** la
+    // détection du gestionnaire de mots de passe (#231). Sans propriétaire de
+    // formulaire, un `<input type="password">` est apparié aux champs texte du
+    // document — ici la recherche de la bibliothèque, qui se remplissait alors
+    // d'un identifiant enregistré. La soumission est neutralisée : rien ne part
+    // au serveur par le navigateur, `ajouter` fait l'appel API.
+    <form
+      autoComplete="off"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!enCours && pret) void ajouter();
+      }}
+      className="mt-3 flex flex-col gap-3 border-t border-neutral-100 pt-3 dark:border-neutral-800"
+    >
       {entree.secrets.length === 0 ? (
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
           Cette intégration ne demande aucun secret — l&apos;ajouter au pool
@@ -471,9 +503,8 @@ function FormulaireConfiguration({
       )}
       <div className="flex flex-wrap items-center gap-3">
         <button
-          type="button"
+          type="submit"
           disabled={enCours || !pret}
-          onClick={() => void ajouter()}
           className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           {enCours
@@ -493,7 +524,7 @@ function FormulaireConfiguration({
           {erreur}
         </p>
       )}
-    </div>
+    </form>
   );
 }
 
@@ -519,12 +550,21 @@ function ChampSecret({
         </code>
         {variable.description ? ` — ${variable.description}` : ""}
       </span>
+      {/*
+        `new-password` et non `off` sur un champ masqué : Chrome **ignore
+        délibérément** `off` sur un champ de mot de passe (il n'honore que
+        `new-password`), ce qui laissait le gestionnaire proposer un
+        identifiant enregistré et remplir au passage le champ voisin qu'il
+        prenait pour son pendant (#231). La valeur dit ce qui est vrai — ce
+        token n'est pas un mot de passe connu du navigateur.
+      */}
       <input
         type={variable.secret ? "password" : "text"}
+        name={variable.cle}
         value={valeur}
         onChange={(e) => setValeur(e.target.value)}
         disabled={desactive}
-        autoComplete="off"
+        autoComplete={variable.secret ? "new-password" : "off"}
         placeholder={
           mode === MCP_MODE_APPAIRAGE ? "canal d'appairage" : "valeur à saisir"
         }

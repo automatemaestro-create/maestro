@@ -188,6 +188,7 @@ le bout en bout dans un vrai navigateur reste le rôle du skill `/verify`.
 | `tests/agents.test.tsx` | La fiche agent à onglets, la liste, et la survie des chemins v1 par redirection (#190, testé en #193) |
 | `tests/tableau-de-bord.test.tsx` | Le tableau de bord épuré — ce qui reste, ce qui renvoie ailleurs — et le ticket externe dans les tables de coûts (#191/#192, testés en #193) |
 | `tests/ticket-externe.test.tsx` | Le filtrage d'URL et les cartes du Kanban (#192, livré avec le lot : logique critique) |
+| `tests/parametres-mcp.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231) |
 
 Deux fichiers portent l'outillage plutôt que des tests :
 
@@ -212,4 +213,11 @@ qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
 - celui qui vérifie que chaque redirection v1 vise un **onglet déclaré**
   (`lib/agents.ts`). Le contrôle de route ne suffit pas ici : `[onglet]` répond à
   *n'importe quel* segment, si bien qu'une faute de frappe rendrait bien une page
-  — le profil, silencieusement, au lieu de l'onglet demandé.
+  — le profil, silencieusement, au lieu de l'onglet demandé ;
+- celui qui exige que les champs secrets de la bibliothèque MCP soient enfermés
+  dans un `<form>` et la recherche **dehors** (#231). Un `<input type="password">`
+  sans propriétaire de formulaire est apparié par le navigateur aux champs texte
+  du document : c'est ce qui remplissait la recherche d'un identifiant
+  enregistré. Rien dans un rendu ne distingue ce `<form>` d'une `<div>` — seule
+  cette frontière, testée pour elle-même, empêche un futur remaniement de
+  ramener le bug.
