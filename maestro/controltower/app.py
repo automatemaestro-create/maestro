@@ -63,6 +63,19 @@ Endpoints :
 - `PUT  /api/mcp/activations/{agent}` — fixe les intégrations du pool **activées**
   pour un agent (#133) : l'écriture derrière l'interrupteur par agent qui
   remplace l'affichage lecture seule des serveurs MCP ;
+- `GET  /api/projets` — les projets déclarés de l'utilisateur (#223, EF-35) :
+  racine canonicalisée sur le disque, origine, `vcs` détecté et périmètre ;
+- `GET  /api/projets/explorateur` — l'**explorateur de dossiers servi par
+  l'API** (docs/05 §2.7) : énumère les sous-dossiers d'un chemin (marqueur
+  « dépôt Git », projet déjà déclaré), borné aux **racines explorables** et aux
+  zones non sensibles — un dépassement est un **refus motivé**, jamais une
+  liste vide ;
+- `GET  /api/projets/{id}` — un projet déclaré ;
+- `POST /api/projets` — déclare un projet : racine **validée** (EF-38, refus
+  motivé en 422) et VCS **constaté** sur le disque ;
+- `PUT  /api/projets/{id}` — remplace la déclaration (l'intégrale, pas un diff) ;
+- `DELETE /api/projets/{id}` — oublie un projet, sans jamais toucher au dossier
+  sur le disque ;
 - `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
   défaut du code et les personnalisés persistés, avec leur provenance, leurs
   serveurs MCP déclarés (#104, lecture seule — `mcp_serveurs`/`mcp_erreur`) et
@@ -180,6 +193,12 @@ from maestro.controltower.persistence import (
     EventLog,
     InMemoryEventLog,
     RedisEventLog,
+)
+from maestro.controltower.projets import (
+    ProjetInconnu,
+    ServiceProjets,
+    detail_refus,
+    statut_http,
 )
 from maestro.controltower.state import (
     CAPACITE_ACTIVE,
@@ -312,6 +331,28 @@ class AgentModificationRequete(BaseModel):
     playbook: str
     modele: str | None = None
     fournisseur: str | None = None
+
+
+class ProjetRequete(BaseModel):
+    """Corps de déclaration d'un projet (#223) : sa racine sur le disque et son périmètre.
+
+    `racine` est le chemin **absolu** du projet sur le poste ; il est
+    canonicalisé et confronté aux racines interdites côté serveur (EF-38) — ce
+    qui arrive ici est une saisie, jamais une vérité. `origine` vaut `existant`
+    (on reprend un dossier) ou `nouveau` (on l'initie : le dossier est créé s'il
+    manque). `inclus`/`exclus` sont des motifs **relatifs à la racine** ; `null`
+    laisse les défauts du modèle (`.`, et l'exclusion de `.git`, `node_modules`,
+    `.env`, `**/secrets/**`).
+
+    Le `vcs` n'est délibérément **pas** un champ de requête : il est constaté sur
+    le disque, jamais déclaré — un client qui l'annoncerait pourrait mentir.
+    """
+
+    nom: str
+    racine: str
+    origine: str = "existant"
+    inclus: list[str] | None = None
+    exclus: list[str] | None = None
 
 
 class ChatEnvoiRequete(BaseModel):
@@ -465,6 +506,7 @@ def create_app(
     registre_mcp: RegistreMcp | None = None,
     secrets: SecretStore | None = None,
     permissions: PermissionStore | None = None,
+    projets: ServiceProjets | None = None,
     event_log: EventLog | None = None,
     fixtures: FixturesControlTower | None = None,
     fabrique_moteur: FabriqueMoteur | None = None,
@@ -537,6 +579,13 @@ def create_app(
     config (`MAESTRO_PERMISSIONS_DIR`, sinon `core/permissions/` du dépôt) :
     le même que relisent moteur et workers.
 
+    `projets` (#223) porte le CRUD des projets de l'utilisateur et l'explorateur
+    de dossiers servis par `/api/projets` — par défaut le service de la config
+    (dépôt `MAESTRO_PROJETS_DIR`, sinon `core/projets/` du dépôt ; racines
+    explorables `MAESTRO_EXPLORATEUR_RACINES`, sinon le dossier utilisateur).
+    Les tests en injectent un service sur dépôt temporaire, seule façon de fixer
+    les racines explorables sans dépendre du poste qui joue la suite.
+
     `event_log` (#97) est le **journal durable des événements** que la pompe
     consigne et que le lifespan **rejoue au démarrage** pour reconstruire la
     projection (exécutions, grands livres, analytics, tâches, agents,
@@ -568,6 +617,7 @@ def create_app(
     registre_mcp = registre_mcp if registre_mcp is not None else RegistreMcp.curee()
     secrets = secrets if secrets is not None else SecretStore.default()
     permissions = permissions if permissions is not None else PermissionStore.default()
+    projets = projets if projets is not None else ServiceProjets.default()
     state = (
         state
         if state is not None
@@ -1598,6 +1648,124 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"agent": agent, "integrations": list(activees)}
+
+    # --- Projets de l'utilisateur (#223) : CRUD et explorateur de dossiers ---
+    def _refus_projet(exc: Exception, *, explorateur: bool = False) -> HTTPException:
+        """Un refus du service des projets en `HTTPException` — motif compris.
+
+        Le corps est `{motif, message}` et non une phrase libre : l'écran
+        Projets doit pouvoir dire *pourquoi* une racine est refusée (docs/05
+        §2.7), ce qu'un texte à analyser ne lui permettrait pas. Le code vient
+        du motif (`statut_http`), avec 422 en repli — **jamais un 500** : une
+        racine hors périmètre est une réponse, pas une panne (critère #223).
+        """
+        return HTTPException(
+            status_code=statut_http(exc, explorateur=explorateur),
+            detail=detail_refus(exc),
+        )
+
+    def _motifs(valeur: list[str] | None) -> tuple[str, ...] | None:
+        """Les motifs de périmètre d'une requête — None laissant les défauts du modèle."""
+        return None if valeur is None else tuple(valeur)
+
+    # Enregistrée **avant** `/api/projets/{id_projet}` : « explorateur » est un
+    # identifiant de projet valide au regard du slug `ID_PROJET`, la capture
+    # l'avalerait donc si elle passait la première (même piège qu'au-dessus avec
+    # `/api/playbooks/propositions`).
+    @app.get("/api/projets/explorateur")
+    async def explorer_dossiers(chemin: str | None = None) -> dict[str, Any]:
+        """Énumère les **dossiers** de `chemin`, ou les racines explorables sans `chemin`.
+
+        La brique sans laquelle l'écran Projets ne peut pas exister : un
+        navigateur ne livre jamais de chemin absolu, c'est donc le backend — qui
+        tourne déjà sur le poste — qui énumère (docs/05 §2.7). Chaque entrée
+        porte son marqueur « dépôt Git » et l'identifiant du projet qui l'a déjà
+        déclarée. `parent` est `null` quand remonter sortirait des racines.
+
+        Ce n'est **pas** un « lis n'importe quel chemin » : hors des racines
+        explorables (dossier utilisateur par défaut, `MAESTRO_EXPLORATEUR_RACINES`,
+        et les racines des projets déclarés) ou dans une zone sensible (`.ssh`,
+        `AppData`, dossiers système, dépôt de Maestro), la route **refuse avec
+        son motif** — 403 — au lieu de rendre une liste vide. 404 sur un dossier
+        absent, 422 sur un chemin relatif ou un fichier.
+        """
+        try:
+            return projets.explorer(chemin)
+        except ValueError as exc:
+            raise _refus_projet(exc, explorateur=True) from exc
+
+    @app.get("/api/projets")
+    async def projets_liste() -> list[dict[str, Any]]:
+        """Les projets déclarés (#223), dans l'ordre des identifiants.
+
+        Forme du fichier stocké (docs/24 §2.3) : racine canonicalisée, origine,
+        `vcs` détecté (`null` si le projet n'est pas versionné) et périmètre. Un
+        fichier du dépôt illisible est **sauté** plutôt que de rendre la page
+        entière inutilisable ; `GET /api/projets/{id}` l'explique.
+        """
+        return projets.lister()
+
+    @app.get("/api/projets/{id_projet}")
+    async def projet_detail(id_projet: str) -> dict[str, Any]:
+        """Un projet déclaré. 404 s'il est inconnu, 422 si son fichier est illisible."""
+        try:
+            return projets.detail(id_projet)
+        except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.post("/api/projets", status_code=201)
+    async def creer_projet(requete: ProjetRequete) -> dict[str, Any]:
+        """Déclare un projet : racine validée (EF-38), VCS détecté, identifiant engendré.
+
+        `origine="nouveau"` crée le dossier s'il manque ; `existant` exige qu'il
+        soit là. 422 avec son **motif** si la racine est refusée par la
+        validation du lot 1 (racine de disque, dossier utilisateur nu, `.ssh`,
+        `AppData`, dossier système, dépôt de Maestro, chemin relatif, dossier
+        absent) ou déjà déclarée par un autre projet — jamais un 500.
+        """
+        try:
+            return projets.creer(
+                requete.nom,
+                requete.racine,
+                origine=requete.origine,
+                inclus=_motifs(requete.inclus),
+                exclus=_motifs(requete.exclus),
+            )
+        except ValueError as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.put("/api/projets/{id_projet}")
+    async def modifier_projet(id_projet: str, requete: ProjetRequete) -> dict[str, Any]:
+        """Remplace la déclaration d'un projet — l'intégrale, pas un diff (cf. `/api/catalogue`).
+
+        Le `vcs` est **re-détecté** sur la racine servie et `cree_le` est
+        préservé. 404 si le projet est inconnu, 422 motivé si la nouvelle racine
+        est refusée ou déjà déclarée ailleurs.
+        """
+        try:
+            return projets.remplacer(
+                id_projet,
+                requete.nom,
+                requete.racine,
+                origine=requete.origine,
+                inclus=_motifs(requete.inclus),
+                exclus=_motifs(requete.exclus),
+            )
+        except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.delete("/api/projets/{id_projet}")
+    async def supprimer_projet(id_projet: str) -> dict[str, Any]:
+        """Oublie un projet. Ne touche **jamais** au dossier sur le disque (#221).
+
+        Supprimer une déclaration n'est pas supprimer le travail de
+        l'utilisateur : seul le fichier du dépôt part. 404 si le projet est
+        inconnu.
+        """
+        try:
+            return projets.supprimer(id_projet)
+        except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
 
     @app.get("/api/catalogue")
     async def catalogue_liste() -> list[dict[str, Any]]:

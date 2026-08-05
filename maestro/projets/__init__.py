@@ -21,15 +21,16 @@ Trois responsabilités, une par module :
   sérialisation. Inerte : elle ne touche pas au disque (EF-35) ;
 - `maestro.projets.racine` — la **frontière** : `valider_racine` canonicalise et
   refuse **avec un motif** (racine de disque, dossier utilisateur, `.ssh`,
-  `AppData`, dépôt Maestro…), `chemin_dans_racine` interdit d'écrire au-dessus
-  de la racine déclarée, `detecter_vcs` constate Git sans jamais l'imposer
-  (EF-38) ;
+  `AppData`, dépôt Maestro…), `verifier_zone_interdite` en isole la part qui
+  vaut pour **tout** chemin (celle que réutilise l'explorateur de #223),
+  `chemin_dans_racine` interdit d'écrire au-dessus de la racine déclarée, et
+  `detecter_vcs` constate Git sans jamais l'imposer (EF-38) ;
 - `maestro.projets.store` — la persistance, un fichier JSON par projet sous
   `core/projets/` (ou `MAESTRO_PROJETS_DIR`), au patron des autres dépôts du POC.
 
 Ce que ce socle **ne fait pas** encore, et qui vient dans les lots suivants de la
-phase : le `projet_id` porté par la tâche et le run (#222), l'API et l'explorateur
-de dossiers (#223), l'espace de travail dérivé — worktree Git ou copie (#224),
+phase : le `projet_id` porté par la tâche et le run (#222), l'espace de travail
+dérivé — worktree Git ou copie (#224),
 l'écran Projets (#225), le montage en mode isolé (#226) et l'application des
 livrables sous validation humaine (#227). Les agents ne travaillent **jamais**
 directement dans la racine (EF-36) : rien ici n'ouvre cette porte, on ne fait que
@@ -55,6 +56,7 @@ from maestro.projets.racine import (
     chemin_dans_racine,
     detecter_vcs,
     valider_racine,
+    verifier_zone_interdite,
 )
 from maestro.projets.store import ProjetStore
 
@@ -74,4 +76,5 @@ __all__ = [
     "detecter_vcs",
     "nouvel_id",
     "valider_racine",
+    "verifier_zone_interdite",
 ]

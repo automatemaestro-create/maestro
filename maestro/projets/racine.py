@@ -13,6 +13,10 @@ la racine déclarée ») :
    Maestro lui-même. Un refus **porte son motif** (`RacineRefusee.motif`), jamais
    un `False` muet : l'écran Projets doit pouvoir dire *pourquoi*
    ([docs/05 §2.7](../../docs/05-interface-control-tower.md)).
+   La part de ces refus qui vaut pour **tout** chemin — et pas seulement pour
+   une racine de projet — est isolée dans `verifier_zone_interdite` : c'est
+   elle que réutilise l'explorateur de dossiers de l'API (#223), pour qu'une
+   zone interdite à la déclaration ne devienne pas lisible par ailleurs.
 2. **Empêcher d'écrire au-dessus** (`chemin_dans_racine`) — la seconde moitié
    d'EF-38. Tout chemin dérivé d'une racine passe par là : il est résolu puis
    vérifié **sous** la racine canonicalisée, ce qui neutralise aussi bien un
@@ -148,29 +152,10 @@ def valider_racine(chemin: Path | str, *, creer: bool = False) -> Path:
                 f"{utilisateur}.",
                 resolu,
             )
-        for nom in _SOUS_UTILISATEUR_INTERDITS:
-            if _est_sous(resolu, utilisateur / nom):
-                raise RacineRefusee(
-                    "chemin-sensible",
-                    f"Chemin sensible refusé : {resolu} est dans {utilisateur / nom}.",
-                    resolu,
-                )
 
-    for interdit in _systeme_interdits():
-        if _est_sous(resolu, Path(interdit)):
-            raise RacineRefusee(
-                "chemin-systeme",
-                f"Dossier système refusé : {resolu} est dans {interdit}.",
-                resolu,
-            )
+    verifier_zone_interdite(resolu)
 
     depot = _depot_maestro()
-    if _est_sous(resolu, depot):
-        raise RacineRefusee(
-            "depot-maestro",
-            f"Le dépôt de Maestro ne se prend pas lui-même pour projet : {resolu}.",
-            resolu,
-        )
     if _contient(resolu, depot):
         raise RacineRefusee(
             "au-dessus-du-depot-maestro",
@@ -193,6 +178,53 @@ def valider_racine(chemin: Path | str, *, creer: bool = False) -> Path:
             )
         resolu.mkdir(parents=True, exist_ok=True)
     return resolu
+
+
+def verifier_zone_interdite(chemin: Path) -> None:
+    """Refuse un chemin **déjà résolu** posé dans une zone sensible du poste (EF-38).
+
+    Les interdits qui valent pour **tout** chemin, qu'on le déclare comme racine
+    de projet (`valider_racine`) ou qu'on l'énumère depuis l'explorateur de
+    dossiers (`maestro.controltower.projets`, #223) : les secrets du profil
+    utilisateur (`.ssh`, `.aws`, `AppData`…), les dossiers système, et le dépôt
+    de Maestro lui-même.
+
+    Ce qui **reste** propre à une racine de projet vit dans `valider_racine` et
+    n'a rien à faire ici : on **traverse** légitimement son dossier utilisateur
+    ou le dossier qui contient le dépôt de Maestro pour atteindre un projet, on
+    ne peut simplement pas les déclarer tels quels. D'où la coupure : cette
+    fonction dit « ce chemin est interdit », `valider_racine` ajoute « et cette
+    racine-là n'est pas déclarable ».
+
+    Attend un chemin **résolu** (`canonique`) : elle compare, elle ne
+    canonicalise pas — un appelant qui lui passerait une saisie brute
+    contournerait la comparaison avec un `..`.
+    """
+    utilisateur = _dossier_utilisateur()
+    if utilisateur is not None:
+        for nom in _SOUS_UTILISATEUR_INTERDITS:
+            if _est_sous(chemin, utilisateur / nom):
+                raise RacineRefusee(
+                    "chemin-sensible",
+                    f"Chemin sensible refusé : {chemin} est dans {utilisateur / nom}.",
+                    chemin,
+                )
+
+    for interdit in _systeme_interdits():
+        if _est_sous(chemin, Path(interdit)):
+            raise RacineRefusee(
+                "chemin-systeme",
+                f"Dossier système refusé : {chemin} est dans {interdit}.",
+                chemin,
+            )
+
+    depot = _depot_maestro()
+    if _est_sous(chemin, depot):
+        raise RacineRefusee(
+            "depot-maestro",
+            f"Le dépôt de Maestro ne se prend pas lui-même pour projet : {chemin}.",
+            chemin,
+        )
 
 
 def chemin_dans_racine(racine: Path | str, chemin: Path | str) -> Path:

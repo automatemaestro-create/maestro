@@ -82,6 +82,13 @@ class Settings:
     #: un fichier <id>.json par projet : racine sur le disque, origine, vcs,
     #: périmètre). Ce sont les projets de l'utilisateur, jamais versionnés.
     projets_dir: str | None = None
+    #: Dossiers que l'**explorateur** de l'API accepte d'énumérer
+    #: (`MAESTRO_EXPLORATEUR_RACINES`, séparés par `os.pathsep` — `;` sous
+    #: Windows, `:` sous POSIX), ou None : le dossier utilisateur et les racines
+    #: des projets déjà déclarés (cf. maestro.controltower.projets, #223). C'est
+    #: une **frontière de lecture**, pas un confort : hors de ces dossiers,
+    #: `GET /api/projets/explorateur` refuse avec son motif.
+    explorateur_racines: str | None = None
     #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None :
     #: exécution directe sur l'hôte (défaut). Seule valeur reconnue : `conteneur`.
     #: Interprété et validé par la couche sandbox (maestro.sandbox.container, #108).
@@ -133,6 +140,7 @@ class Settings:
             secrets_key=(os.getenv("MAESTRO_SECRETS_KEY") or "").strip() or None,
             permissions_dir=(os.getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,
             projets_dir=(os.getenv("MAESTRO_PROJETS_DIR") or "").strip() or None,
+            explorateur_racines=(os.getenv("MAESTRO_EXPLORATEUR_RACINES") or "").strip() or None,
             isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
             isolation_image=(os.getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
             isolation_reseau=(os.getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()
