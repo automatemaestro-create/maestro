@@ -7,12 +7,26 @@
  * **Approuver** / **Refuser** qui appellent
  * `POST /api/validations/{tache_id}/decision`. Le moteur, en pause sur la
  * demande, reprend la tâche ou l'annule proprement selon la décision.
+ *
+ * Depuis #227 une demande peut porter un **diff** (EF-37) : « appliquer ce
+ * travail dans mon projet ? » est une action sensible de plus sur le même canal,
+ * et c'est le diff — fichiers touchés, lignes ajoutées/supprimées, branche à
+ * fusionner — qui remplace alors la description libre. Sans lui la question
+ * serait une signature à l'aveugle ; le refus, lui, n'écrit rien et laisse le
+ * travail consultable.
  */
 
 import { useState } from "react";
 
 import { formatHeure } from "@/lib/format";
-import { VALIDATION_EN_ATTENTE, type Validation } from "@/lib/types";
+import {
+  NATURE_AJOUT,
+  NATURE_MODIFICATION,
+  NATURE_SUPPRESSION,
+  VALIDATION_EN_ATTENTE,
+  type DiffProjet,
+  type Validation,
+} from "@/lib/types";
 
 type Decider = (tacheId: string, approuve: boolean) => Promise<void>;
 
@@ -83,10 +97,14 @@ function CarteValidation({
         {validation.role ? ` · ${validation.role}` : ""}
         {validation.horodatage ? ` · ${formatHeure(validation.horodatage)}` : ""}
       </p>
-      {validation.description && (
-        <p className="mt-2 whitespace-pre-wrap text-xs text-neutral-600 dark:text-neutral-300">
-          {validation.description}
-        </p>
+      {validation.diff ? (
+        <DiffApplication diff={validation.diff} />
+      ) : (
+        validation.description && (
+          <p className="mt-2 whitespace-pre-wrap text-xs text-neutral-600 dark:text-neutral-300">
+            {validation.description}
+          </p>
+        )
       )}
       {validation.raison && (
         <p className="mt-2 text-xs italic text-amber-700 dark:text-amber-400">
@@ -116,4 +134,65 @@ function CarteValidation({
       )}
     </article>
   );
+}
+
+/**
+ * Le diff d'une demande d'application dans le projet (#227, EF-37) : l'en-tête
+ * dit ce qui se produirait à l'accord — fusion d'une branche pour un projet
+ * versionné, écriture des fichiers sinon — puis chaque fichier avec ses lignes.
+ *
+ * Le tableau **défile** au-delà d'une quinzaine de fichiers plutôt que de
+ * pousser les boutons Approuver/Refuser hors de l'écran : une demande de
+ * validation dont on ne voit plus la réponse n'en est plus une.
+ */
+function DiffApplication({ diff }: { diff: DiffProjet }) {
+  return (
+    <div className="mt-2 rounded-md border border-neutral-200 bg-neutral-50 text-xs dark:border-neutral-700 dark:bg-neutral-950/60">
+      <p className="border-b border-neutral-200 px-2 py-1.5 text-neutral-700 dark:border-neutral-700 dark:text-neutral-300">
+        <span className="font-medium">
+          {diff.fichiers} fichier{diff.fichiers > 1 ? "s" : ""}
+        </span>{" "}
+        <span className="text-emerald-600 dark:text-emerald-400">+{diff.ajouts}</span>{" "}
+        <span className="text-rose-600 dark:text-rose-400">−{diff.suppressions}</span>
+        <br />
+        <span className="text-neutral-500 dark:text-neutral-400">
+          {diff.branche
+            ? `Fusion de ${diff.branche} vers ${diff.base}`
+            : "Écriture des fichiers dans le projet (non versionné)"}
+        </span>
+      </p>
+      <ul className="max-h-48 overflow-y-auto px-2 py-1.5 font-mono">
+        {diff.modifications.map((modification) => (
+          <li key={modification.chemin} className="flex items-baseline gap-2 py-0.5">
+            <span
+              aria-hidden
+              className={`w-3 shrink-0 text-center ${couleurNature(modification.nature)}`}
+            >
+              {SIGNE_NATURE[modification.nature] ?? "~"}
+            </span>
+            <span className="min-w-0 flex-1 break-all text-neutral-700 dark:text-neutral-300">
+              {modification.chemin}
+            </span>
+            <span className="shrink-0 text-neutral-500 dark:text-neutral-400">
+              {modification.binaire
+                ? "binaire"
+                : `+${modification.ajouts} −${modification.suppressions}`}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const SIGNE_NATURE: Record<string, string> = {
+  [NATURE_AJOUT]: "+",
+  [NATURE_MODIFICATION]: "~",
+  [NATURE_SUPPRESSION]: "−",
+};
+
+function couleurNature(nature: string): string {
+  if (nature === NATURE_AJOUT) return "text-emerald-600 dark:text-emerald-400";
+  if (nature === NATURE_SUPPRESSION) return "text-rose-600 dark:text-rose-400";
+  return "text-amber-600 dark:text-amber-400";
 }
