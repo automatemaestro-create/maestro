@@ -54,17 +54,29 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$RACINE/scripts/controltower/start.sh"
 PORT_API="${MAESTRO_PORT_API:-8000}"
 PORT_UI="${MAESTRO_PORT_UI:-3000}"
-# Dossier de travail INDEXÉ PAR LES PORTS (#152) : deux sessions Claude Code — une par worktree —
-# lancent chacune leur Control Tower sur ses propres ports. Un dossier commun leur ferait partager
-# le jeton de session et le PID du chien de garde, et la seconde arrêterait la première.
-LOG_DIR="${TMPDIR:-/tmp}/maestro-controltower-${PORT_API}-${PORT_UI}"
+# Deux dossiers, séparés par ce qu'on en fait (#234).
+#
+# Les JOURNAUX vont sous la racine du worktree : c'est vers eux que le script renvoie quand l'API ou
+# l'UI ne répond pas, et cette raison-là doit rester lisible par une session autonome (docs/10 §11),
+# qui n'a personne pour approuver l'ouverture d'un chemin absolu hors de son répertoire de travail.
+# `.maestro/` est gitignoré. Ils restent INDEXÉS PAR LES PORTS (#152), une même racine pouvant
+# porter deux stacks.
+LOG_DIR_REL=".maestro/controltower/${PORT_API}-${PORT_UI}"
+LOG_DIR="$RACINE/$LOG_DIR_REL"
+# L'ÉTAT VOLATIL, lui, reste hors du dépôt : jeton de session, PID du chien de garde et profil
+# jetable du navigateur ne se lisent jamais à la main, et un profil Chrome n'a rien à faire dans un
+# répertoire de travail — worktree.sh place celui du MCP dans $HOME pour la même raison. Indexé par
+# les ports pour le motif d'origine (#152) : deux sessions Claude Code — une par worktree — lancent
+# chacune leur Control Tower, et un dossier commun leur ferait partager jeton et PID du chien de
+# garde, la seconde arrêtant la première.
+ETAT_DIR="${TMPDIR:-/tmp}/maestro-controltower-${PORT_API}-${PORT_UI}"
 URL_UI="http://localhost:${PORT_UI}"
 
 # Trace de la session courante. Le chien de garde ne nettoie que si le jeton qu'il
 # surveille est toujours celui du fichier : un `--stop` manuel ou un relancement
 # l'invalide, ce qui l'empêche d'arrêter une session qui n'est plus la sienne.
-FICHIER_SESSION="$LOG_DIR/session"
-FICHIER_CHIEN="$LOG_DIR/chien-de-garde.pid"
+FICHIER_SESSION="$ETAT_DIR/session"
+FICHIER_CHIEN="$ETAT_DIR/chien-de-garde.pid"
 
 # Profil jetable de la fenêtre ouverte par le script. Son nom sert aussi de
 # marqueur : c'est en cherchant les processus dont la ligne de commande le
@@ -73,7 +85,7 @@ FICHIER_CHIEN="$LOG_DIR/chien-de-garde.pid"
 # par SOUS-CHAÎNE, donc un marqueur commun à deux sessions ferait prendre à l'une
 # la fenêtre de l'autre pour la sienne — et fermer_navigateur tuerait la mauvaise.
 MARQUEUR_NAVIGATEUR="maestro-profil-navigateur-${PORT_API}-${PORT_UI}"
-PROFIL_NAVIGATEUR="$LOG_DIR/$MARQUEUR_NAVIGATEUR"
+PROFIL_NAVIGATEUR="$ETAT_DIR/$MARQUEUR_NAVIGATEUR"
 
 # Windows (Git Bash) ou Unix : le repérage des PID par port et le kill diffèrent.
 case "$(uname -s)" in
@@ -538,7 +550,7 @@ PS_TERMINER="$PS_SELECTION | ForEach-Object { Stop-Process -Id \$_.ProcessId -Fo
 # Ouvre la fenêtre, attend sa fermeture, puis arrête la stack. Tourne détaché :
 # c'est ce qui permet au script principal de rendre la main immédiatement.
 if [ "$MODE" = "surveiller" ]; then
-  mkdir -p "$LOG_DIR"
+  mkdir -p "$LOG_DIR" "$ETAT_DIR"
   # Le chien de garde ne surveille QUE la fenêtre isolée (mode « isole ») : hors de ce cas, il n'y
   # a pas de fenêtre à nous, donc rien à arrêter automatiquement.
   if [ "$STRAT_MODE" != "isole" ] || [ -z "$STRAT_CIBLE" ]; then
@@ -629,31 +641,31 @@ if [ "$MODE" = "arreter" ]; then
   exit 0
 fi
 
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" "$ETAT_DIR"
 cd "$RACINE" || exit 1
 
 if [ "$STACK" = "demo" ]; then
-  echo "[api] démarrage sur :${PORT_API} — mode démo, scénario factice (log : $LOG_DIR/api.log)"
+  echo "[api] démarrage sur :${PORT_API} — mode démo, scénario factice (log : $LOG_DIR_REL/api.log)"
   nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" \
     >"$LOG_DIR/api.log" 2>&1 &
 else
-  echo "[api] démarrage sur :${PORT_API} — mode réel sur Redis (log : $LOG_DIR/api.log)"
+  echo "[api] démarrage sur :${PORT_API} — mode réel sur Redis (log : $LOG_DIR_REL/api.log)"
   nohup "$PYTHON" -m maestro.controltower.cli --port "$PORT_API" \
     >"$LOG_DIR/api.log" 2>&1 &
 fi
 if ! attendre_http "http://127.0.0.1:${PORT_API}/api/sante" 20; then
-  echo "L'API ne répond pas sur :${PORT_API} — voir $LOG_DIR/api.log" >&2
+  echo "L'API ne répond pas sur :${PORT_API} — voir $LOG_DIR_REL/api.log" >&2
   exit 1
 fi
 
-echo "[ui] démarrage sur :${PORT_UI} (log : $LOG_DIR/ui.log)"
+echo "[ui] démarrage sur :${PORT_UI} (log : $LOG_DIR_REL/ui.log)"
 cd "$RACINE/apps/web" || exit 1
 NEXT_PUBLIC_MAESTRO_API_URL="http://127.0.0.1:${PORT_API}" PORT="$PORT_UI" \
   nohup npm run dev >"$LOG_DIR/ui.log" 2>&1 &
 cd "$RACINE" || exit 1
 # Next.js (turbopack) peut mettre un moment à compiler la première page.
 if ! attendre_http "http://127.0.0.1:${PORT_UI}" 60; then
-  echo "L'UI ne répond pas sur :${PORT_UI} — voir $LOG_DIR/ui.log" >&2
+  echo "L'UI ne répond pas sur :${PORT_UI} — voir $LOG_DIR_REL/ui.log" >&2
   exit 1
 fi
 
@@ -695,7 +707,7 @@ else
   # on redit ici le geste depuis le terminal.
   echo "  alimenter : maestro-run --publier \"<objectif>\"  (le poste reste vide tant qu'aucun run ne publie)"
 fi
-echo "  API : http://127.0.0.1:${PORT_API}  ·  logs : $LOG_DIR/"
+echo "  API : http://127.0.0.1:${PORT_API}  ·  logs : $LOG_DIR_REL/"
 if [ "$ARRET_AUTO" = 1 ]; then
   echo "  arrêt : fermer la fenêtre du navigateur (ou bash scripts/controltower/start.sh --stop)"
 else

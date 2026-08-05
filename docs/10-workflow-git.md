@@ -971,6 +971,46 @@ sous-ensemble ne peut pas tenir — n'est appliqué qu'en `--complet` et en CI. 
 toujours le même : **ce que le script ne sait pas classer élargit le périmètre**, il ne le
 rétrécit pas.
 
+### 8.5 Un journal se lit là où on travaille (#234)
+
+Un job rouge ne vaut que par la **raison** qu'il donne, et cette raison est dans son journal. Le
+filet écrivait le sien dans `${TMPDIR:-/tmp}/maestro-ci-local/` et renvoyait vers ce chemin
+**absolu, hors du répertoire de travail** — que le CLI refuse d'ouvrir sans approbation. En session
+interactive c'est un clic ; en session autonome (§11) il n'y a personne pour le donner. Le flux du
+run de #200 montre le contraste à l'état pur : `tail -5` sur le scratchpad de la session **passe**,
+`tail -60 /tmp/maestro-ci-local/pytest.log` est **refusé**. La session a essayé cinq variantes
+(`grep -nE`, `grep | tail`, `awk`, `tail`) puis a abandonné — elle n'a jamais su pourquoi ses tests
+échouaient. **13 refus sur 5 sessions.** C'est le seul refus qui prive d'une **information** plutôt
+que d'un geste : les autres se contournent, celui-là rend aveugle sur son propre verdict.
+
+D'où la règle, qui vaut pour tout script du dépôt :
+
+> **Ce qu'un script invite à lire s'écrit sous la racine du worktree**, dans `.maestro/<domaine>/`
+> (gitignoré), et **le chemin affiché est relatif à cette racine**. Ce que personne ne lit —
+> brouillons de calcul, profils jetables, caches d'installation — reste dans le temporaire du
+> système.
+
+Le partage se fait sur *qui lit*, pas sur *qui écrit* :
+
+| Écrit sous la racine (`.maestro/…`) | Reste dans `${TMPDIR:-/tmp}` |
+| --- | --- |
+| `ci-local/<job>.log` — filet CI (§8.4) | miroir LF de shellcheck : effacé avant le verdict, jamais montré |
+| `setup/<étape>.log` — `setup.sh` et `setup-runner.sh`, cités en cas d'échec | fichiers de `env-pull.sh` : ils portent des **valeurs de secrets** |
+| `controltower/<api>-<ui>/{api,ui,navigateur}.log` | jeton de session, PID du chien de garde, profil jetable du navigateur |
+| `presentation/{api,build,ui}.log` | cache npm des captures : des centaines de Mo, partagés entre clones |
+| `orchestrate/<run-id>/` — déjà le cas depuis #167 | brouillon de calcul de `queue.sh` |
+
+Deux points à ne pas défaire :
+
+- **Le filet CI fait table rase à chaque lancement.** Dans `/tmp`, le système faisait le ménage ;
+  sous la racine, personne ne le ferait. Et un `pytest.log` de la veille laissé à côté d'un run qui
+  n'a pas joué pytest est pire qu'absent — il ment sur ce qui vient d'être vérifié.
+- **L'audit se refait par recherche.** `grep -rn "TMPDIR\|/tmp" scripts/` doit ne rendre que des
+  cas de la colonne de droite, et **chacun porte en commentaire la raison** de son maintien : la
+  vérification est ainsi une relecture, pas une réenquête. Le cas de `setup.sh` n'est pas
+  théorique — `/ticket-start` l'appelle pour rattraper une dérive de dépendances (§9.4), et c'est
+  une session sans humain qui en lit l'échec.
+
 ## 9. Deux tickets en parallèle — un worktree par session
 
 Un clone n'a qu'**un seul répertoire de travail** : deux sessions Claude Code ouvertes dessus

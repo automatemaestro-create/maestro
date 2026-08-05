@@ -36,8 +36,9 @@ Le script est **idempotent** et **non destructif** (il n'écrase ni le `.env` ni
    - *« pas de gestionnaire de paquets utilisable ici »* — pas de winget/brew/apt, ou élévation
      refusée. Donne la commande d'installation, c'est le seul recours.
 
-4. **Une étape en échec ?** Le script imprime le chemin de son log
-   (`${TMPDIR:-/tmp}/maestro-setup/<étape>.log`). Ouvre-le, diagnostique, corrige si c'est
+4. **Une étape en échec ?** Le script imprime le chemin de son log, relatif à la racine du dépôt
+   (`.maestro/setup/<étape>.log` — sous la racine, donc lisible sans approbation, #234). Ouvre-le,
+   diagnostique, corrige si c'est
    corrigeable en local (dépendance système absente, lockfile désynchronisé, droits) puis relance
    uniquement l'étape concernée : `bash scripts/setup.sh --only <étape>`. Si ce n'est pas
    corrigeable sans décision humaine (installer un logiciel, changer de version de Python),
