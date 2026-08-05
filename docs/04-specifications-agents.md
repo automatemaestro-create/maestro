@@ -48,6 +48,8 @@ Structure type d'un playbook :
 
 > **Le fournisseur est configurable par agent** (voir §4 et [stack §2](./02-stack-technique.md)). Les modèles ci-dessus sont le **défaut Claude du POC** ; on peut affecter à chaque agent un autre fournisseur/modèle (OpenAI, Google, ouvert/local) **sans changer son rôle ni son playbook** — c'est l'objet de la couche d'abstraction.
 
+> **Le plafond de tours l'est aussi** (#239) : chaque profil porte le sien (`RoleProfile.plafond_tours`), passé au fournisseur à chaque exécution outillée. Défaut conservateur de **40 tours** pour les rôles de production et d'analyse (Développeur, BDD, DevOps, QA) ; **120** pour le Designer, dont la boucle *rendre → regarder → reprendre* consomme des tours bien plus lourds (~71 000 tokens le tour, contre ~10 000 pour une tâche de validation — facteur 7). Une borne unique protégeait mal les uns en bridant les autres : elle avait dû être relevée globalement après un `error_max_turns` sur une tâche de conception ([docs/15 §4.3](./15-pilote-mcp-slack.md)), au prix de la protection de tous les autres. Un agent qui ne déclare rien reste borné par le défaut — jamais illimité — et l'échec nomme la borne qu'il a atteinte.
+
 > Le **routage** (doc 01 §3.2) s'appuie sur ces tags + un classifieur léger pour les cas ambigus.
 
 ---

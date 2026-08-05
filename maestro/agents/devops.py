@@ -18,6 +18,7 @@ validation humaine avant toute application réelle.
 from __future__ import annotations
 
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
+from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* DevOps : il doit matérialiser un livrable en fichiers
 #: (configuration de pipeline, Dockerfile, scripts, runbook) dans son répertoire de
@@ -67,4 +68,8 @@ DEVOPS_PROFILE = RoleProfile(
         "modification d'infrastructure)."
     ),
     workspace_prefix="maestro-devops-",
+    # Borne conservatrice (#239) : pipelines et runbooks se valident à blanc, sans
+    # la boucle rendre/regarder/reprendre du design. Un plafond atteint ici a
+    # signalé un emballement réel (run D de la démo v1, docs/13) — pas une borne trop courte.
+    plafond_tours=PLAFOND_TOURS_DEFAUT,
 )

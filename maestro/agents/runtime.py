@@ -26,7 +26,7 @@ from typing import Any
 from maestro.agents.mcp import ServeurMcp, resolus
 from maestro.agents.permissions import PolitiqueOutils
 from maestro.config import Settings, load_settings
-from maestro.providers.base import ModelProvider
+from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
 from maestro.sandbox import ProducedFile, isolated_workspace
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
@@ -44,6 +44,14 @@ class RoleProfile:
     synthèses). Les trois fragments de prompt (`intro_tache`, `consignes`,
     `consigne_finale`) encadrent la description de la tâche dans le message confié
     à l'agent ; `prompt_systeme` porte l'identité et les garde-fous du rôle.
+
+    `plafond_tours` (#239) est le garde-fou anti-boucle du rôle (docs/02 §7),
+    exprimé en tours de boucle agentique. Il vit **ici** et non dans le
+    fournisseur parce qu'un tour n'a pas de coût comparable d'un rôle à l'autre —
+    ~10 000 tokens pour une tâche de validation, ~70 000 pour une tâche de
+    conception : une borne unique protège mal les uns en bridant les autres. Le
+    défaut est celui de la couche fournisseur ; chaque profil du dépôt le déclare
+    tout de même, pour que sa valeur soit un choix lisible plutôt qu'un héritage.
     """
 
     nom: str
@@ -55,6 +63,7 @@ class RoleProfile:
     consignes: str
     consigne_finale: str
     workspace_prefix: str
+    plafond_tours: int = PLAFOND_TOURS_DEFAUT
 
 
 @dataclass(frozen=True)
@@ -119,12 +128,16 @@ class AgentRuntime:
         model: str | None = None,
         tools: Sequence[str] | None = None,
         system_prompt: str | None = None,
+        plafond_tours: int | None = None,
     ) -> None:
         self._provider = provider
         self._profile = profile
         self._model = model or profile.modele
         self._tools = tuple(tools) if tools is not None else profile.outils
         self._system_prompt = system_prompt or profile.prompt_systeme
+        # Surcharge du plafond du profil, comme `model`/`tools` : le câblage peut
+        # serrer ou desserrer la borne d'un rôle sans toucher à son profil.
+        self._plafond_tours = plafond_tours if plafond_tours is not None else profile.plafond_tours
 
     @property
     def profile(self) -> RoleProfile:
@@ -213,6 +226,7 @@ class AgentRuntime:
                 mcp_serveurs=montables,
                 politique=politique,
                 on_refus=on_refus,
+                plafond_tours=self._plafond_tours,
             )
             # Capture *dans* le contexte : hors `keep`, l'espace disparaît à la sortie.
             fichiers = ws.produced_files()

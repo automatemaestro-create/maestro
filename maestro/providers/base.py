@@ -22,6 +22,13 @@ if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution
     from maestro.agents.mcp import ServeurMcp
     from maestro.agents.permissions import PolitiqueOutils
 
+#: Plafond de tours appliqué à une exécution agentique dont l'appelant n'en fixe
+#: aucun (#239). Valeur **conservatrice** : c'est le garde-fou anti-boucle de
+#: docs/02 §7, pas une marge de confort — un agent qui a besoin de plus le déclare
+#: dans son profil (`maestro.agents.runtime.RoleProfile.plafond_tours`). Ce défaut
+#: existe pour qu'aucun appel ne soit jamais *illimité*, non pour dispenser de choisir.
+PLAFOND_TOURS_DEFAUT = 40
+
 
 class UnsupportedCapability(RuntimeError):
     """Levée quand un fournisseur ne sait pas honorer une capacité *optionnelle*.
@@ -42,6 +49,11 @@ class TurnLimitReached(RuntimeError):
     pour que le moteur le reconnaisse **sans présumer du fournisseur**. Échec non
     transitoire par nature — relancer reproduirait le même emballement — donc
     jamais relancé par la relance automatique (`maestro.engine.retry`, ENF-06).
+
+    Le plafond n'étant plus le même pour tous les agents (#239), le message
+    **nomme la borne effectivement appliquée** : un échec dit de quelle limite il
+    parle, et la lecture d'un journal distingue l'agent qu'on a serré trop court
+    de celui qui s'emballe vraiment.
     """
 
 
@@ -150,6 +162,7 @@ class ModelProvider(ABC):
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
+        plafond_tours: int = PLAFOND_TOURS_DEFAUT,
     ) -> str:
         """Exécution *agentique outillée* : renvoie le compte-rendu final de l'agent.
 
@@ -175,6 +188,15 @@ class ModelProvider(ABC):
         refus est signalé via `on_refus(outil, raison)` quand il est fourni —
         c'est le canal de traçage de l'appelant (journal, fil temps réel) ; un
         échec du callback ne doit jamais casser l'exécution observée.
+
+        `plafond_tours` (#239) borne la boucle agentique — le garde-fou
+        anti-emballement de docs/02 §7, dépassé ⇒ `TurnLimitReached`. Il est
+        **fourni par l'appelant** (le profil de l'agent, via `AgentRuntime`) et
+        non plus lu dans une constante du fournisseur : un tour n'a pas de coût
+        stable d'un rôle à l'autre (facteur 7 mesuré entre une tâche de
+        validation et une tâche de conception), donc une borne unique protège
+        mal les uns en bridant les autres. Un appel qui n'en fournit pas retombe
+        sur `PLAFOND_TOURS_DEFAUT` — jamais sur l'absence de borne.
 
         Capacité **optionnelle** : la base la refuse (`UnsupportedCapability`) ; un
         fournisseur outillé (Claude via l'Agent SDK) la surcharge. Le moteur reste

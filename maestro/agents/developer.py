@@ -15,6 +15,7 @@ que ce qui est propre au rôle.
 from __future__ import annotations
 
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
+from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* Développeur : il doit matérialiser un livrable en
 #: fichiers dans son répertoire de travail, pas se contenter d'afficher du code.
@@ -52,4 +53,8 @@ DEVELOPER_PROFILE = RoleProfile(
         "l'utiliser."
     ),
     workspace_prefix="maestro-dev-",
+    # Borne conservatrice (#239) : ses tours sont parmi les plus légers (~10 000
+    # tokens le tour, mesuré sur `validation-depenses`, 5 tours) — 40 laisse une
+    # marge large sans qu'un emballement coûte cher.
+    plafond_tours=PLAFOND_TOURS_DEFAUT,
 )

@@ -275,7 +275,7 @@ class BavardProvider(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None,
+        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None,
     ):
         self.run_calls.append({"mcp_serveurs": tuple(mcp_serveurs)})
         (jeton,) = [s.headers["Authorization"] for s in mcp_serveurs]

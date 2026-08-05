@@ -24,6 +24,7 @@ from maestro.agents import (
     DESIGNER_PROFILE,
     DEVELOPER_PROFILE,
     DEVOPS_PROFILE,
+    PLAFOND_TOURS_DEFAUT,
     QA_PROFILE,
     TOOLED_PROFILES,
     AgentOutcome,
@@ -52,7 +53,7 @@ class WritingProvider(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None,
+        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None,
     ):
         self.calls.append(
             {
@@ -61,6 +62,7 @@ class WritingProvider(ModelProvider):
                 "system_prompt": system_prompt,
                 "workspace": workspace,
                 "tools": tuple(tools),
+                "plafond_tours": plafond_tours,
             }
         )
         for chemin, contenu in self._files.items():
@@ -316,6 +318,55 @@ def test_le_runtime_accepte_des_surcharges_ponctuelles():
     (call,) = provider.calls
     assert call["model"] == "claude-opus-4-8"
     assert call["tools"] == ("Read", "Write")
+
+
+# --- ④ Plafond de tours réglable par agent (#239) --------------------------------------
+
+
+def test_le_runtime_transmet_le_plafond_du_profil():
+    # C'est le profil qui borne la boucle, pas le fournisseur : deux rôles aux
+    # tours de coûts très différents n'héritent plus de la même limite.
+    for profil, attendu in ((DEVELOPER_PROFILE, PLAFOND_TOURS_DEFAUT), (DESIGNER_PROFILE, 120)):
+        provider = WritingProvider(files={"a.txt": "x"})
+        asyncio.run(AgentRuntime(provider, profil).execute("Tâche"))
+        (call,) = provider.calls
+        assert call["plafond_tours"] == attendu
+
+
+def test_le_plafond_est_surchargeable_comme_le_modele():
+    # Même canal que `model`/`tools` : le câblage peut resserrer ou desserrer la
+    # borne d'un rôle sans toucher à son profil.
+    provider = WritingProvider(files={"a.txt": "x"})
+    asyncio.run(AgentRuntime(provider, DESIGNER_PROFILE, plafond_tours=12).execute("Tâche"))
+    (call,) = provider.calls
+    assert call["plafond_tours"] == 12
+
+
+def test_chaque_profil_outille_declare_un_plafond_borne():
+    # Déclaration explicite (#239) : la valeur d'un rôle est un choix lisible, pas
+    # un héritage silencieux — et aucune n'est absente, nulle ni négative.
+    assert all(isinstance(p.plafond_tours, int) and p.plafond_tours > 0 for p in TOOLED_PROFILES)
+    # Marge accrue pour la conception, défaut conservateur pour les autres.
+    assert DESIGNER_PROFILE.plafond_tours > PLAFOND_TOURS_DEFAUT
+    autres = [p for p in TOOLED_PROFILES if p is not DESIGNER_PROFILE]
+    assert all(p.plafond_tours == PLAFOND_TOURS_DEFAUT for p in autres)
+
+
+def test_un_profil_qui_ne_declare_rien_reste_borne_par_le_defaut():
+    # Le champ a un défaut : un profil tiers (agent personnalisé, docs/04 §4) qui
+    # l'ignore est borné quand même — jamais illimité.
+    redacteur = RoleProfile(
+        nom="redacteur",
+        role="Rédacteur technique",
+        modele="claude-sonnet-5",
+        outils=DEFAULT_TOOLS,
+        prompt_systeme="Tu es l'agent Rédacteur technique de Maestro.",
+        intro_tache="Tâche de rédaction :",
+        consignes="Écris les fichiers du livrable dans le répertoire courant.",
+        consigne_finale="Résume ce que tu as produit.",
+        workspace_prefix="maestro-redacteur-",
+    )
+    assert redacteur.plafond_tours == PLAFOND_TOURS_DEFAUT
 
 
 # --- Garde-fous : entrée, capacité, sérialisation -------------------------------------
