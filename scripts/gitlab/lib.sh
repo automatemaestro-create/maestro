@@ -1120,6 +1120,85 @@ gl_roundtrip_description() {
   rm -f "$avant" "$apres"; return 1
 }
 
+# --- Création : MR et notes, depuis un FICHIER (#233) ---------------------------------------------
+# Pourquoi ces helpers existent alors que `glab mr create` et `glab issue note` sont DÉJÀ autorisés
+# (docs/10-workflow-git.md §7.1) : la couche permissions de Claude Code découpe une commande sur ses
+# SAUTS DE LIGNE et ne sait matcher aucune SUBSTITUTION `$(…)`. Or une description de MR fait par
+# nature plusieurs lignes. La commande prescrite jusqu'ici par /ticket-finish était donc refusée
+# telle quelle, et ses deux replis naturels l'étaient tout autant — `--description "$(cat f)"`, puis
+# `D="$(cat f)"; glab mr create … "$D"`. 10 refus sur 8 sessions autonomes (#232, cause n°1), et
+# toujours sur la DERNIÈRE action du ticket : tout est commité, rien ne le déclare.
+#
+# Le remède ne demande AUCUN droit nouveau — il rend matchable une commande déjà autorisée. Le texte
+# voyage par FICHIER (écrit par l'outil Write, qui n'est pas une ligne de commande), l'appel reste
+# plat et court, et c'est `Bash(bash scripts/gitlab/lib.sh:*)` qui le couvre. Le `$(cat …)` survit,
+# mais à l'INTÉRIEUR du script, où aucune permission ne s'applique : c'est exactement le parti pris
+# de gl_set_description / gl_set_mr_description, dont ceci est le pendant à la CRÉATION.
+
+# gl_issue_title <iid> -> titre du ticket <iid>, UTF-8 intact, sur stdout. Même lecture REST +
+# décodage octet-transparent que gl_get_description (le `title` du ticket précède celui du
+# milestone dans la charge REST, donc la première occurrence est bien la bonne).
+gl_issue_title() {
+  local iid="$1" titre
+  if [ -z "$iid" ]; then echo "usage: gl_issue_title <iid>" >&2; return 2; fi
+  titre="$(glab api "projects/$(gl_project_enc)/issues/$iid" 2>/dev/null | gl_json_string_field title)"
+  if [ -z "$titre" ]; then echo "gl_issue_title : titre de #$iid illisible" >&2; return 1; fi
+  printf '%s\n' "$titre"
+}
+
+# gl_create_mr <iid> <fichier> [branche] -> ouvre la MR de <branche> (défaut : la branche courante)
+# en DRAFT vers main, avec --remove-source-branch, le TITRE lu depuis le ticket et la DESCRIPTION
+# lue depuis le fichier. Imprime l'URL de la MR en dernière ligne.
+# IDEMPOTENT : si une MR ouverte existe déjà pour la branche, sa description est mise à jour au lieu
+# d'échouer — /ticket-finish peut donc être rejoué (reprise de session, second passage après un
+# commit de plus) sans que la deuxième passe casse.
+# Ne merge ni ne dé-draft jamais : passer une MR en « prête » reste un geste explicite.
+gl_create_mr() {
+  local iid="$1" fichier="$2" branche="${3:-}" mr titre sortie
+  if [ -z "$iid" ] || [ -z "$fichier" ]; then
+    echo "usage: gl_create_mr <iid> <fichier> [branche]" >&2; return 2
+  fi
+  if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
+  if [ ! -s "$fichier" ]; then echo "gl_create_mr : $fichier est vide — description requise" >&2; return 1; fi
+  [ -n "$branche" ] || branche="$(git branch --show-current 2>/dev/null)"
+  if [ -z "$branche" ]; then echo "gl_create_mr : branche courante indéterminable" >&2; return 1; fi
+  case "$branche" in
+    main|master) echo "gl_create_mr : refus d'ouvrir une MR depuis « $branche »" >&2; return 1 ;;
+  esac
+
+  # Une MR ouverte porte déjà cette branche : on met sa description à jour, on ne recrée pas.
+  if mr="$(gl_mr_iid "$branche" 2>/dev/null)" && [ -n "$mr" ]; then
+    gl_set_mr_description "$mr" "$fichier" >/dev/null || return 1
+    printf 'MR !%s déjà ouverte pour « %s » — description mise à jour (aucune MR recréée).\n' "$mr" "$branche"
+    printf 'https://%s/%s/-/merge_requests/%s\n' "$(gl_host)" "$GL_PROJECT" "$mr"
+    return 0
+  fi
+
+  titre="$(gl_issue_title "$iid")" || return 1
+
+  # --yes : pas de confirmation interactive (une session autonome n'a personne pour répondre).
+  if ! sortie="$(glab mr create --yes --draft --target-branch main --remove-source-branch \
+      --source-branch "$branche" --title "$titre" --description "$(cat "$fichier")" 2>&1)"; then
+    printf '%s\n' "$sortie" >&2
+    echo "Échec de la création de la MR pour #$iid (branche « $branche »)" >&2
+    return 1
+  fi
+  printf '%s\n' "$sortie"
+}
+
+# gl_issue_note <iid> <fichier> -> poste le contenu du fichier en COMMENTAIRE sur le ticket <iid>.
+# Même raison d'être que gl_create_mr : `glab issue note -m "$(cat …)"` n'est pas matchable (#186).
+gl_issue_note() {
+  local iid="$1" fichier="$2"
+  if [ -z "$iid" ] || [ -z "$fichier" ]; then echo "usage: gl_issue_note <iid> <fichier>" >&2; return 2; fi
+  if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
+  if [ ! -s "$fichier" ]; then echo "gl_issue_note : $fichier est vide — rien à poster" >&2; return 1; fi
+  if ! glab issue note "$iid" -m "$(cat "$fichier")" >/dev/null 2>&1; then
+    echo "Échec de la publication du commentaire sur #$iid" >&2; return 1
+  fi
+  printf 'Commentaire posté sur #%s.\n' "$iid"
+}
+
 # --- Pipelines CI ---------------------------------------------------------------------------------
 # Helpers REST pour le diagnostic de pipeline (/pipeline-fix — voir docs/10-workflow-git.md §8).
 # Même parti pris que le reste du fichier : parsing shell pur (grep/sed/awk), pas de jq/python.
@@ -2072,6 +2151,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     get-mr-description) gl_get_mr_description "$@" ;;
     set-mr-description) gl_set_mr_description "$@" ;;
     roundtrip-description) gl_roundtrip_description "$@" ;;
+    issue-title)    gl_issue_title "$@" ;;
+    create-mr)      gl_create_mr "$@" ;;
+    issue-note)     gl_issue_note "$@" ;;
     pipeline-latest)      gl_pipeline_latest "$@" ;;
     pipeline-status)      gl_pipeline_status "$@" ;;
     pipeline-failed-jobs) gl_pipeline_failed_jobs "$@" ;;
@@ -2121,6 +2203,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    get-mr-description <mr>            (idem pour une MR)" >&2
       echo "    set-mr-description <mr> <fichier>  (idem pour une MR)" >&2
       echo "    roundtrip-description <iid>        (valide la fidélité : lit/réécrit/relit et compare les octets)" >&2
+      echo "  Création depuis un FICHIER (jamais de description multi-ligne ni de \$(cat …) sur la ligne de commande) :" >&2
+      echo "    create-mr <iid> <fichier> [branche]  (MR en Draft vers main, titre du ticket, description du fichier ;" >&2
+      echo "                                         idempotent : met à jour la MR ouverte existante au lieu d'échouer)" >&2
+      echo "    issue-note <iid> <fichier>          (poste le fichier en commentaire sur le ticket)" >&2
+      echo "    issue-title <iid>                   (titre du ticket, UTF-8 intact)" >&2
       echo "  Branches :" >&2
       echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
       echo "    sync-main [--check]         (avance main du clone principal sur origin/main, fast-forward seul ; 0=à jour/fait, 3=divergent, 4=arbre sale)" >&2
