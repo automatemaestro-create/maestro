@@ -67,15 +67,12 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
      - corps optionnel (le *pourquoi*, pas le *quoi*) ;
      - pied **`Closes #<iid>`** — `/ticket-ship` est l'action terminale du cycle de dev, donc le
        commit porte `Closes` (et non `Refs`) : GitLab fermera le ticket au merge.
-   - Committe directement, **hook `commit-msg` respecté** (il valide en-tête + `Closes #<iid>`) :
+   - Committe directement, **hook `commit-msg` respecté** (il valide en-tête + `Closes #<iid>`).
+     Le message passe par un **fichier** : écris-le avec l'outil `Write` dans ton scratchpad de
+     session — jamais un heredoc, jamais `-m "$(…)"`, la couche permissions découpant une commande
+     sur ses sauts de ligne et ne matchant aucune substitution (#233). Puis :
      ```
-     git commit -F - <<'EOF'
-     <type>(<scope>): <description>
-
-     <corps optionnel>
-
-     Closes #<iid>
-     EOF
+     git commit -F <fichier>
      ```
      **N'utilise jamais `--no-verify`** : si le hook refuse le message, corrige le message et
      réessaie — ne le contourne pas.

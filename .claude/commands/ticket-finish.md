@@ -47,6 +47,9 @@ pas clair.
      et pied `Refs #<iid>` (le hook `commit-msg` refuse tout message hors convention ; détail
      `docs/10-workflow-git.md` §2),
    - demande confirmation à l'utilisateur avant de committer.
+   Le message passe par un **fichier** (écrit avec l'outil `Write`, dans ton scratchpad de session)
+   puis `git commit -F <fichier>` — jamais `-m` sur plusieurs lignes ni `-m "$(…)"` : même refus
+   que pour la description de MR (#233).
    Ne commite jamais silencieusement sans montrer ce qui va être committé.
 
 5. Best-effort : si un outil de lint/test est détecté dans le dossier concerné (ex.
@@ -90,11 +93,16 @@ pas clair.
    ```
    bash scripts/gitlab/clean-runner-containers.sh || echo "⚠ ménage des conteneurs CI incomplet — clôture poursuivie"
    ```
-   Puis pousse la branche : `git push -u origin $(git branch --show-current)`. Ne fais jamais de
-   `--force` ici — si le push est rejeté, arrête-toi et explique pourquoi plutôt que de forcer.
+   Puis pousse la branche : `git push -u origin <nom-de-la-branche>` — **écris le nom lu à
+   l'étape 1**, jamais `$(git branch --show-current)` : la couche permissions ne sait matcher
+   aucune **substitution de commande**, et refuserait un `git push` par ailleurs autorisé (#233).
+   Ne fais jamais de `--force` ici — si le push est rejeté, arrête-toi et explique pourquoi plutôt
+   que de forcer.
    Si le push **reste bloqué** sur une demande d'identifiants (typique sous Windows avec Git
    Credential Manager), relance-le en forçant `glab` comme credential helper :
-   `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!glab auth git-credential' push -u origin $(git branch --show-current)`.
+   `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!glab auth git-credential' push -u origin <nom-de-la-branche>`
+   (ce repli garde un **préfixe de variable d'environnement**, immatchable lui aussi — c'est le
+   domaine de #235, pas de ce lot : s'il est refusé, signale-le au lieu d'inventer une variante).
 
 8. Évalue la **checklist de definition of done** de la MR (les quatre cases du template
    `.gitlab/merge_request_templates/Default.md`) : pour chacune, détermine si tu peux la cocher
@@ -114,37 +122,56 @@ pas clair.
      docs/10 §8), donc à la première clôture d'un ticket **aucun pipeline n'existe encore** à ce
      stade — il naîtra de l'étape 8. Le relecteur verra le verdict sur la MR ; n'attends pas.
 
-9. Vérifie si une MR existe déjà pour cette branche avec
-   `glab mr view $(git branch --show-current) --output json`. Si la commande échoue, aucune
-   MR n'existe encore. Si elle réussit, inspecte le JSON retourné (champs `state` —
-   `opened`/`closed`/`merged` —, `draft` et `description`) plutôt que de parser une sortie texte.
-   - **Si elle n'existe pas** : crée-la en Draft, liée au ticket, avec la checklist **telle
-     qu'évaluée à l'étape 8** (chaque case en `[x]` ou `[ ]` selon le constat) :
-     ```
-     glab mr create --draft --target-branch main --remove-source-branch \
-       --title "<titre du ticket>" \
-       --description "Closes #<iid>
+9. **Crée (ou mets à jour) la MR — la description passe toujours par un FICHIER.** Jamais de
+   description sur la ligne de commande : elle fait par nature plusieurs lignes, la couche
+   permissions découpe une commande sur ses sauts de ligne et la refuse, puis refuse aussi les deux
+   replis naturels (`--description "$(cat …)"`, `D="$(cat …)"; … "$D"`) — aucune règle ne peut
+   matcher une **substitution de commande**. C'est ce qui a fait tomber 8 sessions autonomes sur 16
+   (#233), et toujours ici, sur la **dernière action du ticket** : tout est commité, rien ne le
+   déclare. Le fichier n'est pas un contournement, c'est la forme normale (#232).
 
-     ## Checklist
-     - [x] Respecte les conventions de branche/commit (docs/10-workflow-git.md)
-     - [ ] Tests ajoutés/mis à jour si applicable
-     - [x] Documentation mise à jour si applicable
-     - [ ] Pipeline CI verte (si configurée)"
-     ```
-     (exemple : remplace chaque `[x]`/`[ ]` par le résultat réel de l'étape 8)
-   - **Si elle existe déjà** : commence par remettre sa checklist à jour, de façon **idempotente** —
-     modifie **uniquement** l'état des cases de la section `## Checklist` (jamais le reste,
-     notamment le `Closes #<iid>`) : coche les cases vérifiées à l'étape 8, et **ne décoche
-     jamais** une case déjà cochée (un humain a pu la cocher). Si la section `## Checklist`
-     manque, ajoute-la en fin de description. Si rien ne change, ne fais pas d'update.
-     **Relis et réécris la description uniquement via les helpers** :
-     `bash scripts/gitlab/lib.sh get-mr-description <mr> > <fichier>`, tu édites le fichier, puis
-     `bash scripts/gitlab/lib.sh set-mr-description <mr> <fichier>`. N'improvise **jamais** une
-     lecture du type `glab mr view --output json | python` : elle corrompt l'UTF-8 en mojibake
-     (« â€” » au lieu de « — ») — voir #141.
-     - Ensuite, si elle est **en Draft** : demande à l'utilisateur si le travail est réellement
-       terminé et prêt pour revue ; si oui, `glab mr update <mr> --ready`.
-     - Si elle n'est **plus en Draft** : ne rien faire de plus sur la MR.
+   1. **Une MR ouverte existe-t-elle déjà pour cette branche ?**
+      ```
+      bash scripts/gitlab/lib.sh mr-iid
+      ```
+      (sans argument : la branche courante ; code 1 + message si aucune MR ouverte).
+   2. **Prépare le fichier de description**, dans ton répertoire de scratchpad de session (ce n'est
+      pas un livrable, il n'a rien à faire dans le worktree). **Écris-le avec l'outil `Write`** —
+      pas avec `cat`/`echo`/un heredoc, qui rejoueraient exactement le problème que cette étape
+      évite.
+      - **Aucune MR** : contenu neuf — `Closes #<iid>`, une ligne vide, puis la section
+        `## Checklist` **telle qu'évaluée à l'étape 8** (chaque case en `[x]` ou `[ ]` selon le
+        constat réel) :
+        ```
+        Closes #<iid>
+
+        ## Checklist
+        - [x] Respecte les conventions de branche/commit (docs/10-workflow-git.md)
+        - [ ] Tests ajoutés/mis à jour si applicable
+        - [x] Documentation mise à jour si applicable
+        - [ ] Pipeline CI verte (si configurée)
+        ```
+      - **MR déjà ouverte** : pars de l'**existant**, la mise à jour remplaçant la description
+        entière. Relis-la **via le helper** — `bash scripts/gitlab/lib.sh get-mr-description <mr> >
+        <fichier>` — puis édite le fichier de façon **idempotente** : modifie **uniquement** l'état
+        des cases de la section `## Checklist` (jamais le reste, notamment le `Closes #<iid>`),
+        coche celles vérifiées à l'étape 8, et **ne décoche jamais** une case déjà cochée (un
+        humain a pu la cocher). Si la section `## Checklist` manque, ajoute-la en fin de
+        description. Si rien ne change, passe directement au point 4. N'improvise **jamais** une
+        lecture du type `glab mr view --output json | python` : elle corrompt l'UTF-8 en mojibake
+        (« â€” » au lieu de « — ») — voir #141.
+   3. **Un seul appel, plat et court**, dans les deux cas :
+      ```
+      bash scripts/gitlab/lib.sh create-mr <iid> <fichier>
+      ```
+      Le helper ouvre la MR en **Draft** vers `main` (`--remove-source-branch`), **titre lu depuis
+      le ticket**, description lue depuis le fichier, et imprime son URL. Il est **idempotent** :
+      si une MR ouverte existe déjà pour la branche, il met sa description à jour au lieu
+      d'échouer.
+   4. **Si la MR existait déjà et qu'elle est en Draft** : demande à l'utilisateur si le travail
+      est réellement terminé et prêt pour revue ; si oui, `glab mr update <mr> --ready`. Si elle
+      n'est **plus en Draft**, ne fais rien de plus sur la MR. Une MR **fraîchement créée** reste
+      en Draft : c'est voulu, le passage en « prête » est un geste explicite.
 
 10. **Ne pose aucun relecteur sur la MR** (#196) — la désignation d'un relecteur est un **geste
    humain**, jamais automatique : n'appelle pas `lib.sh set-reviewer` et n'utilise pas
