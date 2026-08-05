@@ -1876,8 +1876,8 @@ relatif) ; **4 restent refusés à dessein** — les deux attentes actives (`for
 `until [ -s … ]; do sleep 3; done`) parce que les autoriser rouvrirait le mode d'échec que #178
 ferme, `jobs` pour la même raison, et `bash <script hors du dépôt>` qui serait du code arbitraire.
 
-**Un refus qui ne s'instruit pas : écrire sous `.claude/`** (#229). Le run `20260804-142402` a vu
-la session de #188 se faire refuser un `Write` **puis** un `Edit` sur
+**Un refus qui ne s'instruit pas : écrire sous `.claude/`** (#229, **mesuré** par #238). Le run
+`20260804-142402` a vu la session de #188 se faire refuser un `Write` **puis** un `Edit` sur
 `.claude/skills/control-tower/SKILL.md` — la mise à jour que son critère 4 demandait. Ce refus-là
 ne relève d'aucune des trois lignes ci-dessus, et surtout **aucune règle ne le lèvera** : rien dans
 le dépôt ne le produit. `settings.run.json` autorise `Write` et `Edit` **nus**, le run tourne en
@@ -1889,12 +1889,44 @@ une approbation humaine explicite qu'aucun `allow` ni `acceptEdits` ne remplace.
 n'est là pour l'accorder. C'est le garde-fou qui empêche une boucle sans surveillance de réécrire
 ses propres permissions : on ne cherche pas à le contourner.
 
+#229 concluait cela **par déduction**, à partir des règles que le dépôt porte — `Write` et `Edit`
+**nus**. La déduction laissait un trou, et #238 est allé le boucher : une règle à **chemin
+explicite** (`Edit(.claude/skills/**)`) n'avait jamais été essayée, alors que la lecture du binaire
+du CLI suggérait qu'une telle règle est consultée **avant** le garde-fou. Le banc d'essai est dans
+le dépôt et se rejoue — quelques minutes, ~0,15 $ :
+
+```bash
+.venv/Scripts/python.exe scripts/claude/essai-ecriture-claude.py
+```
+
+Une session `claude -p` **jetable par variante**, dans un projet **hors du dépôt** (donc sans
+`.claude/settings.json`, sans hooks, sans `CLAUDE.md` de Maestro pour brouiller la mesure), au
+régime exact d'un run : `-p`, `--permission-mode acceptEdits`, `--settings <json>`. Chaque session
+reçoit la même consigne — d'abord un fichier **témoin** hors `.claude/`, sans lequel la mesure ne
+vaudrait rien, puis les écritures visées. Verdict du 2026-08-05 :
+
+| Ce qu'autorise le `allow` | Écriture sous `.claude/skills/` |
+| --- | --- |
+| `Write`, `Edit` **nus** — l'état du dépôt | **refusée** (reproduit #229) |
+| + `Write(.claude/skills/**)`, `Edit(.claude/skills/**)` | **refusée** |
+| + les mêmes en **chemin absolu** | **refusée** |
+| `Bash(cp:*)`, cible écrite en clair dans la commande | **refusée** |
+| `Bash(bash appliquer.sh:*)`, cible en argument du script | *passe* — voir « le repli » plus bas |
+
+Le témoin est écrit dans les cinq cas : c'est bien le garde-fou qui parle, pas une session inerte.
+**La conclusion de #229 tient donc, et pour une raison plus forte qu'elle ne le supposait** : le
+garde-fou n'est pas un défaut de matching qu'une règle mieux écrite comblerait, il est **en amont**
+du `allow` et il **déborde les outils de fichier** — un `cp` dont le CLI sait lire la cible tombe
+comme un `Write`. Détail de lecture qui compte pour la suite : ce blocage-là ressort en **erreur
+d'outil** (« Claude requested permissions to write to … ») et **n'apparaît pas** dans
+`permission_denials`, là où celui de `Write`/`Edit` y figure.
+
 Trois conséquences pratiques :
 
 - **Ne pas confondre avec un trou d'allowlist.** Ajouter `Write(.claude/**)` à `settings.run.json`
-  ne changerait rien — la couche qui refuse est en amont de la liste. Le seul symptôme visible est
-  le `permission_denials`, exactement comme un refus instruisible : c'est le chemin du `file_path`
-  qui les distingue.
+  ne changerait rien — c'est mesuré, plus déduit : la couche qui refuse est en amont de la liste. Le
+  seul symptôme visible est le `permission_denials`, exactement comme un refus instruisible : c'est
+  le chemin du `file_path` qui les distingue.
 - **Une session qui le rencontre rend le contenu, elle ne contourne pas.** Un `printf … > <fichier>`
   passerait peut-être la liste, et ce serait précisément l'échec. #188 a fait ce qu'il fallait :
   contenu de remplacement intégral dans la description de sa MR, section « Reste à appliquer à la
@@ -1903,6 +1935,29 @@ Trois conséquences pratiques :
   session interactive dès le départ ; le mettre dans le périmètre d'un run autonome, c'est en
   garantir la part manquante. `queue.sh` ne le détecte pas — c'est au rédacteur du ticket de le
   dire, comme #229 le fait dans ses notes.
+
+**Le repli, étudié et écarté** (#238). Le verdict étant négatif, restait à examiner un script du
+dépôt — `scripts/claude/appliquer.sh <source> <cible>`, borné à `skills`/`commands`/`agents` et
+allowlisté — qui rendrait le geste explicite et auditable au lieu de le laisser à un humain. La
+dernière ligne du tableau règle la question de faisabilité : **il fonctionnerait**. Il n'est pas
+retenu, et c'est bien la mesure qui permet de le dire plutôt que de le supposer :
+
+- **il ne passerait que parce que le CLI ne voit pas à travers un script.** L'avant-dernière ligne
+  est décisive : le même geste écrit en `cp` est bloqué. Le garde-fou couvre donc ce qu'il sait
+  lire, et `appliquer.sh` ne réussirait qu'en le lui cachant. C'est exactement le contournement que
+  ce paragraphe s'interdit, à ceci près qu'il serait versionné ;
+- **le gain est petit, la perte serait large.** Trois tickets en cinq semaines ont buté dessus
+  (#200, #186, #188) ; en face saute ce qui empêche une boucle sans surveillance de réécrire les
+  instructions que la boucle suivante exécutera. De ce point de vue `.claude/skills/**` n'est pas
+  moins sensible que `settings*.json`, que le ticket excluait pourtant d'emblée : un skill est du
+  prompt, et `/ticket-ship` en est un ;
+- **le confinement invoqué ne couvre pas le bon moment.** Worktree dédié, MR en Draft, merge humain
+  valent pour ce qui est *relu* ; rien ne garantit qu'un skill réécrit dans le worktree ne soit pas
+  relu par la session qui vient de l'écrire, avant qu'aucun humain n'ait vu le diff.
+
+Ce qui reste à faire est donc inchangé — rendre le contenu dans la MR (#188). Ce qui pourrait encore
+être gagné est **en amont** : ne pas envoyer un tel ticket dans un run, ce que `queue.sh` ne détecte
+toujours pas.
 
 ### 11.8 Reprendre un run qui ne s'est pas terminé — `--resume`
 
