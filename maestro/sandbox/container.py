@@ -19,6 +19,33 @@ au conteneur sont volontairement énumérés ici (montage du seul workspace,
 variables d'auth `ENV_TRANSMISES`, réseau sortant) et documentés dans
 docs/17-isolation-execution.md.
 
+**Le projet de l'utilisateur (#226, Phase 7)** déplace cette frontière, et c'est
+le seul endroit du contrat qui bouge. Jusqu'ici le workspace monté était un
+répertoire jetable créé vide : le conteneur ne touchait *aucun* chemin de
+l'hôte porteur de données. Depuis #224, une tâche rattachée à un projet
+travaille dans un espace **dérivé** de ce projet — worktree Git sur une branche
+`maestro/<tâche>`, ou copie du périmètre — et c'est lui qui est monté. Trois
+conséquences, portées ici :
+
+- l'espace dérivé **est** l'espace de travail de la tâche : le « second montage »
+  annoncé par docs/17 §3 se matérialise **à la place** du répertoire jetable sur
+  `/workspace`, il ne s'y ajoute pas un troisième chemin (ce serait monter deux
+  fois le même répertoire) ;
+- la **racine du projet n'est jamais montée** — ni ici ni ailleurs. C'est vérifié
+  plutôt que supposé, et deux fois : au câblage du protocole (`env_sandbox`) et
+  au dernier mètre avant `docker run` (`commande_docker`), qui est la seule porte
+  que rien ne contourne ;
+- les **exclusions du périmètre** (`.env`, `**/secrets/**`…) valent jusque dans
+  le conteneur : ce qui est exclu n'y est **pas monté**, chaque chemin exclu
+  étant recouvert d'un montage vide en lecture seule (`_masques`). Le cas n'est
+  pas théorique — la copie d'un projet non versionné écarte ces chemins d'office,
+  mais le **worktree** d'un projet versionné est une copie conforme de la
+  branche : un `.env` ou un `secrets/` **versionnés** y sont bel et bien.
+
+La rédaction des secrets du projet, elle, ne dépend pas du mode isolé (une tâche
+sur l'hôte fuit tout autant) : elle vit dans `maestro.projets.secrets` et est
+armée par `maestro.agents.runtime`.
+
 Choix d'implémentation (notes du ticket) : conteneur durci plutôt que micro-VM —
 sur le poste de développement Windows, Docker Desktop exécute déjà les conteneurs
 dans une VM utilitaire (WSL2) ; gVisor/Firecracker, Linux seulement, restent la
@@ -27,13 +54,19 @@ piste « serveur » (réévaluée avec #107/#102).
 
 from __future__ import annotations
 
+import atexit
+import os
 import shutil
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from maestro.config import ConfigError, Settings
+from maestro.projets.modele import Projet
+from maestro.projets.perimetre import Exclu, exclusions
+from maestro.projets.racine import canonique
 
 #: Valeur de `MAESTRO_ISOLATION` qui active le mode isolé. Toute autre valeur non
 #: vide est une erreur de config explicite (pas d'isolation « silencieusement absente »).
@@ -54,6 +87,35 @@ RESEAU_DEFAUT = "bridge"
 ENV_IMAGE = "MAESTRO_SANDBOX_IMAGE"
 ENV_RESEAU = "MAESTRO_SANDBOX_RESEAU"
 ENV_WORKSPACE = "MAESTRO_SANDBOX_WORKSPACE"
+
+#: Racine du projet de la tâche (#226), transmise **pour être refusée** : elle
+#: n'est jamais montée, et sa présence permet au shim de le vérifier au dernier
+#: mètre plutôt que de faire confiance à l'appelant. Absente : tâche sans projet.
+ENV_PROJET = "MAESTRO_SANDBOX_PROJET"
+
+#: Chemins du périmètre exclus, présents dans l'espace de travail et masqués dans
+#: le conteneur (#226). Une entrée par ligne, préfixée de sa nature — `d:` pour un
+#: dossier, `f:` pour un fichier —, le chemin étant relatif POSIX à l'espace :
+#: `f:.env`, `d:services/api/secrets`. Le saut de ligne sépare parce qu'il est le
+#: seul caractère qu'un nom de fichier ne porte pas en pratique, là où `;` et `:`
+#: sont l'un légal et l'autre partout dans les chemins Windows.
+ENV_MASQUES = "MAESTRO_SANDBOX_MASQUES"
+
+#: Point de montage de l'espace de travail dans le conteneur — préfixe des masques.
+POINT_MONTAGE = "/workspace"
+
+#: Plafond de masques. Au-delà, on **refuse** l'exécution au lieu de monter à
+#: moitié : dépasser 256 chemins exclus distincts signale un périmètre mal écrit
+#: (des motifs par fichier au lieu d'un motif par dossier), et un secret monté
+#: par débordement de liste serait exactement l'accident que ce lot ferme.
+_MASQUES_MAX = 256
+
+#: Séparateur des entrées de `ENV_MASQUES`.
+_SEPARATEUR_MASQUES = "\n"
+
+#: Répertoire des masques du processus courant (cf. `_vides`) — None tant qu'aucun
+#: périmètre n'a eu de chemin à masquer.
+_RACINE_VIDES: Path | None = None
 
 #: Variables d'authentification transmises au conteneur — la SEULE part de
 #: l'environnement hôte qui y entre. Les chaînes vides sont transmises telles
@@ -124,16 +186,46 @@ class IsolationConfig:
             shim=_chemin_shim(),
         )
 
-    def env_sandbox(self, workspace: Path) -> dict[str, str]:
+    def env_sandbox(self, workspace: Path, *, projet: Projet | None = None) -> dict[str, str]:
         """Les variables `MAESTRO_SANDBOX_*` à poser sur le sous-processus shim.
 
-        `workspace` est l'espace jetable de la tâche (`maestro.sandbox.workspace`) :
-        le seul chemin de l'hôte que le shim montera dans le conteneur.
+        `workspace` est l'espace de travail de la tâche (`maestro.sandbox`) : le
+        seul chemin de l'hôte que le shim montera dans le conteneur.
+
+        `projet` (#226) est le projet dans lequel la tâche travaille — auquel cas
+        `workspace` est l'espace **dérivé** de ce projet (#224), worktree ou copie.
+        Deux choses s'y ajoutent alors, et rien d'autre du contrat ne bouge :
+        la racine (`ENV_PROJET`), transmise pour que le shim la refuse, et la
+        liste des chemins exclus par le périmètre (`ENV_MASQUES`), que le shim
+        recouvrira de montages vides. None — une tâche sans `projet_id` — rend
+        exactement les trois variables d'avant.
+
+        Lève `ConfigError` si l'espace de travail est la racine du projet ou
+        vit dedans (EF-36 : les agents ne travaillent **jamais** dans la racine),
+        et si le périmètre exclut plus de chemins que `_MASQUES_MAX` — deux refus
+        francs plutôt qu'un montage approximatif.
         """
-        return {
+        protocole = {
             ENV_IMAGE: self.image,
             ENV_RESEAU: self.reseau,
             ENV_WORKSPACE: str(workspace),
+        }
+        if projet is None:
+            return protocole
+        racine = canonique(projet.racine_chemin)
+        _refuse_la_racine(workspace, racine)
+        masques = exclusions(workspace, projet.perimetre)
+        if len(masques) > _MASQUES_MAX:
+            raise ConfigError(
+                f"Périmètre du projet {projet.id} : {len(masques)} chemins exclus "
+                f"présents dans l'espace de travail, au-delà des {_MASQUES_MAX} que "
+                "le conteneur sait masquer. Élargissez les motifs (un dossier plutôt "
+                "que ses fichiers) — l'exécution est refusée plutôt que de monter "
+                "une partie de ce qui est exclu."
+            )
+        return protocole | {
+            ENV_PROJET: str(racine),
+            ENV_MASQUES: _SEPARATEUR_MASQUES.join(_encode(masque) for masque in masques),
         }
 
 
@@ -147,7 +239,10 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
     - **système de fichiers borné** : racine en lecture seule (`--read-only`),
       seuls le workspace de la tâche (monté sur `/workspace`, lecture-écriture)
       et deux tmpfs jetables (`/tmp`, home de l'utilisateur `agent` — l'état du
-      CLI ne survit pas au conteneur) sont inscriptibles ;
+      CLI ne survit pas au conteneur) sont inscriptibles. Quand la tâche
+      travaille dans un projet (#226), ce workspace est l'espace **dérivé** de
+      ce projet, **jamais sa racine** (refus explicite), et les chemins que son
+      périmètre exclut sont recouverts d'un montage vide en lecture seule ;
     - **réseau restreint** : `bridge` (sortant seul, aucun port publié) ou `none` ;
     - **privilèges retirés** : utilisateur non-root (image), `--cap-drop ALL`,
       `--security-opt no-new-privileges`, plafonds pids/mémoire/CPU ;
@@ -155,7 +250,9 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
       entrent — jamais l'environnement hôte entier.
 
     Lève `ConfigError` si le protocole `MAESTRO_SANDBOX_*` est absent : le shim
-    ne s'invoque que via le mode isolé du fournisseur, pas à la main.
+    ne s'invoque que via le mode isolé du fournisseur, pas à la main. Et si le
+    workspace à monter est la racine du projet (ou vit dedans) : c'est le dernier
+    contrôle avant `docker run`, celui que rien ne contourne.
     """
     image = (environ.get(ENV_IMAGE) or "").strip()
     reseau = (environ.get(ENV_RESEAU) or "").strip()
@@ -166,6 +263,9 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
             "le shim est lancé par le mode isolé du fournisseur "
             "(MAESTRO_ISOLATION=conteneur), pas directement."
         )
+    racine = (environ.get(ENV_PROJET) or "").strip()
+    if racine:
+        _refuse_la_racine(Path(workspace), Path(racine))
     commande = [
         "docker",
         "run",
@@ -190,14 +290,97 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
         "--cpus",
         _CPUS_MAX,
         "--volume",
-        f"{workspace}:/workspace",
+        f"{workspace}:{POINT_MONTAGE}",
         "--workdir",
-        "/workspace",
+        POINT_MONTAGE,
     ]
+    commande += _montages_masques(environ.get(ENV_MASQUES) or "")
     for variable in ENV_TRANSMISES:
         if variable in environ:
             commande += ["--env", f"{variable}={environ[variable]}"]
     return [*commande, image, "claude", *arguments]
+
+
+def _refuse_la_racine(workspace: Path, racine: Path) -> None:
+    """Refuse de monter un espace de travail qui **est** la racine ou vit dedans.
+
+    EF-36 dans sa forme la plus courte : les agents travaillent hors de la racine
+    déclarée. Le lot 4 (#224) le vérifie déjà côté hôte au montage du worktree ou
+    de la copie ; on le revérifie ici parce que le chemin traverse entre-temps un
+    protocole d'environnement, qu'un tiers peut poser, et parce que la même règle
+    vérifiée deux fois coûte deux comparaisons de chemins.
+
+    La comparaison se fait sur des chemins **résolus** : `racine/../racine`, un
+    lien symbolique vers la racine et une casse différente sous Windows désignent
+    tous le même dossier, et aucun ne doit passer.
+    """
+    cible = _resolu(workspace)
+    base = _resolu(racine)
+    if cible != base and base not in cible.parents:
+        return
+    raise ConfigError(
+        f"Montage refusé : l'espace de travail {workspace} est la racine du projet "
+        f"({racine}) ou vit dedans. Un agent travaille dans l'espace dérivé du "
+        "projet — worktree ou copie —, jamais dans la racine elle-même (EF-36)."
+    )
+
+
+def _resolu(chemin: Path) -> Path:
+    """Le chemin canonicalisé, tel quel s'il est illisible (comparaison au pire littérale)."""
+    try:
+        return Path(os.path.normcase(chemin.resolve()))
+    except OSError:
+        return Path(os.path.normcase(chemin))
+
+
+def _encode(masque: Exclu) -> str:
+    """Une entrée de `ENV_MASQUES` : `d:<chemin>` pour un dossier, `f:` pour un fichier."""
+    return f"{'d' if masque.dossier else 'f'}:{masque.chemin}"
+
+
+def _montages_masques(masques: str) -> list[str]:
+    """Les `--volume` qui recouvrent d'un vide chaque chemin exclu du périmètre.
+
+    « Ce qui est exclu n'est pas monté » : Docker n'ayant pas de motif
+    d'exclusion sur un montage, on monte le vide **par-dessus** — un fichier vide
+    sur un fichier, un dossier vide sur un dossier, tous deux en lecture seule.
+    Le contenu de l'hôte ne traverse jamais : c'est le vide qui est monté, et le
+    conteneur voit un `.env` de zéro octet là où le projet en versionnait un.
+
+    Les montages imbriqués sont ordonnés par Docker sur la profondeur de leur
+    destination : les masques s'appliquent donc bien **après** le montage de
+    l'espace, quel que soit leur rang dans la commande.
+    """
+    entrees = [entree for entree in masques.split(_SEPARATEUR_MASQUES) if entree.strip()]
+    if not entrees:
+        return []
+    vide_fichier, vide_dossier = _vides()
+    montages: list[str] = []
+    for entree in entrees:
+        nature, _, chemin = entree.partition(":")
+        if not chemin:
+            continue
+        source = vide_dossier if nature == "d" else vide_fichier
+        montages += ["--volume", f"{source}:{POINT_MONTAGE}/{chemin}:ro"]
+    return montages
+
+
+def _vides() -> tuple[Path, Path]:
+    """Le fichier vide et le dossier vide qui servent de masques, créés une fois.
+
+    Vivent dans le répertoire temporaire du système et non sous `.maestro/` :
+    personne ne les lit jamais — ce sont deux inodes sans contenu, dont l'unique
+    raison d'être est d'exister le temps du `docker run` (cf. CLAUDE.md, « ce que
+    personne ne lit reste dans `${TMPDIR:-/tmp}` »). Créés à la demande, partagés
+    par tous les masques du processus, et retirés à sa sortie.
+    """
+    global _RACINE_VIDES
+    if _RACINE_VIDES is None:
+        _RACINE_VIDES = Path(tempfile.mkdtemp(prefix="maestro-masque-"))
+        atexit.register(shutil.rmtree, _RACINE_VIDES, True)
+        (_RACINE_VIDES / "vide").touch()
+        (_RACINE_VIDES / "vide.d").mkdir()
+    return _RACINE_VIDES / "vide", _RACINE_VIDES / "vide.d"
 
 
 def _chemin_shim() -> Path:

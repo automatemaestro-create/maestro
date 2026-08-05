@@ -53,7 +53,7 @@ class WritingProvider(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None,
+        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None, projet=None,
     ):
         self.calls.append(
             {

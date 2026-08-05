@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, ClassVar
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
     from maestro.agents.permissions import PolitiqueOutils
+    from maestro.projets.modele import Projet
 
 #: Plafond de tours appliqué à une exécution agentique dont l'appelant n'en fixe
 #: aucun (#239). Valeur **conservatrice** : c'est le garde-fou anti-boucle de
@@ -163,6 +164,7 @@ class ModelProvider(ABC):
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
         plafond_tours: int = PLAFOND_TOURS_DEFAUT,
+        projet: Projet | None = None,
     ) -> str:
         """Exécution *agentique outillée* : renvoie le compte-rendu final de l'agent.
 
@@ -170,6 +172,14 @@ class ModelProvider(ABC):
         `workspace`, son **répertoire de travail isolé** (cf. `maestro.sandbox`), où
         il produit un livrable concret (des fichiers). Là où `generate` rend du texte,
         `run_agent` *agit* dans un espace dédié.
+
+        `projet` (#226) est le projet dans lequel la tâche travaille — `workspace`
+        est alors l'espace **dérivé** de ce projet (#224 : worktree ou copie), et
+        non plus un répertoire jetable. Un fournisseur qui **isole** l'exécution
+        s'en sert pour monter cet espace sans jamais monter la racine du projet,
+        et pour que les exclusions du périmètre tiennent jusque dans le conteneur
+        (`maestro.sandbox.container`). Les autres n'ont rien à en faire :
+        l'exécution voit le même `workspace` dans les deux cas.
 
         `mcp_serveurs` (#104) sont les serveurs MCP déclarés par l'agent, **déjà
         résolus** (`maestro.agents.mcp.resolus` — plus aucune référence

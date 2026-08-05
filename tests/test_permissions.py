@@ -78,7 +78,7 @@ class MontageEnregistreur(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None,
+        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None, projet=None,
     ):
         self.run_calls.append(
             {
@@ -104,7 +104,7 @@ class ViolateurProvider(MontageEnregistreur):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None,
+        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None, projet=None,
     ):
         if politique is not None and not politique.autorise("Bash") and on_refus is not None:
             on_refus("Bash", politique.raison_refus("Bash"))

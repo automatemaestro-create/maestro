@@ -477,7 +477,7 @@ class _FournisseurEcrivain(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None,
+        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None, projet=None,
     ):
         self.espaces.append(Path(workspace))
         (Path(workspace) / "RAPPORT.md").write_text("fait", encoding="utf-8")
