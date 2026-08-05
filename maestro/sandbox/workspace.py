@@ -55,24 +55,76 @@ class ProducedFile:
 
 @dataclass(frozen=True)
 class Workspace:
-    """Répertoire isolé où un agent exécute sa tâche et dépose son livrable."""
+    """Répertoire isolé où un agent exécute sa tâche et dépose son livrable.
+
+    `empreintes` recense ce qui s'y trouvait **avant** que l'agent ne travaille —
+    vide (None) pour l'espace jetable historique, créé vide, où tout fichier
+    présent est par construction un livrable. Depuis #224 l'espace peut être
+    **dérivé d'un projet** (worktree Git ou copie du périmètre) : il est alors
+    peuplé de centaines de fichiers que l'agent n'a pas écrits, et les recenser
+    comme livrables gonflerait le rapport du run de tout le dépôt de
+    l'utilisateur. L'empreinte (taille + date de modification à la nanoseconde)
+    est le moyen le moins cher de faire la différence, et le seul qui vaille
+    aussi bien pour un worktree que pour une copie.
+    """
 
     path: Path
+    empreintes: Mapping[str, tuple[int, int]] | None = None
+
+    @classmethod
+    def derive(cls, path: Path) -> Workspace:
+        """Un espace **déjà peuplé** : ce qui s'y trouve à cet instant n'est pas un livrable."""
+        return cls(path=path, empreintes=_empreintes(path))
 
     def produced_files(self) -> tuple[ProducedFile, ...]:
-        """Recense les fichiers présents, triés par chemin relatif (déterministe).
+        """Recense les fichiers **produits**, triés par chemin relatif (déterministe).
 
         Capture le contenu texte des fichiers raisonnables et laisse `contenu=None`
         pour le binaire/volumineux. Les répertoires (vides ou non) sont ignorés :
-        seul le fichier est un livrable.
+        seul le fichier est un livrable. Un fichier inchangé depuis la dérivation
+        de l'espace (cf. `empreintes`) n'en est pas un — c'est le projet, pas le
+        travail de l'agent.
         """
         fichiers: list[ProducedFile] = []
         for f in sorted(self.path.rglob("*")):
-            if not f.is_file():
+            if not f.is_file() or self._inchange(f):
                 continue
             rel = f.relative_to(self.path).as_posix()
             fichiers.append(ProducedFile(chemin=rel, contenu=_lire_texte(f)))
         return tuple(fichiers)
+
+    def _inchange(self, fichier: Path) -> bool:
+        """`fichier` est-il celui d'origine, tel que l'espace l'a reçu à sa dérivation ?"""
+        if self.empreintes is None:
+            return False
+        rel = fichier.relative_to(self.path).as_posix()
+        depart = self.empreintes.get(rel)
+        return depart is not None and depart == _empreinte(fichier)
+
+
+def _empreintes(path: Path) -> dict[str, tuple[int, int]]:
+    """L'empreinte de chaque fichier présent sous `path`, par chemin relatif POSIX."""
+    releve: dict[str, tuple[int, int]] = {}
+    for f in path.rglob("*"):
+        if f.is_file():
+            releve[f.relative_to(path).as_posix()] = _empreinte(f)
+    return releve
+
+
+def _empreinte(fichier: Path) -> tuple[int, int]:
+    """Taille et date de modification (ns) d'un fichier — `(-1, -1)` s'il est illisible.
+
+    Pas de somme de contrôle : relire tout un dépôt deux fois par tâche coûterait
+    plus cher que ce que la précision gagnée rapporte. Une réécriture à taille et
+    horodatage identiques à la nanoseconde n'existe pas en pratique ; un fichier
+    devenu illisible est traité comme modifié, ce qui le fait recenser plutôt que
+    disparaître en silence.
+    """
+    try:
+        etat = fichier.stat()
+    except OSError:
+        return (-1, -1)
+    return (etat.st_size, etat.st_mtime_ns)
 
 
 def _lire_texte(f: Path) -> str | None:

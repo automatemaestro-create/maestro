@@ -47,6 +47,7 @@ from maestro.engine.guardrails import Guardrails
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.engine.runner import run_borne
 from maestro.orchestrator.schema import Task, validate_task
+from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.queue.celery_app import NOM_TACHE_EXECUTER
 from maestro.telemetry import RunJournal
@@ -183,6 +184,7 @@ def _executeur() -> LocalExecutor:
             mcp=McpStore.default(settings),
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
+            projets=ProjetStore.default(settings),
             relance=_relance,
         )
     return _executor

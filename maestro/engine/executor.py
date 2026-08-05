@@ -35,6 +35,8 @@ from maestro.agents.secrets import SecretStore
 from maestro.engine.guardrails import DemandeValidation, Guardrails
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.orchestrator.schema import Task
+from maestro.projets.modele import Projet
+from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider, UnsupportedCapability
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
@@ -203,8 +205,15 @@ class LocalExecutor(TaskExecutor):
         secrets: SecretStore | None = None,
         permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
+        projets: ProjetStore | None = None,
     ) -> None:
         self._provider = provider
+        # Dépôt des projets (#224, EF-36) : quand une tâche porte un `projet_id`
+        # (#222), le projet est relu ici — à chaud, comme les autres dépôts — et
+        # l'espace de travail en est **dérivé** (worktree Git sur une branche
+        # `maestro/<tâche>`, ou copie du périmètre) au lieu d'un répertoire vide.
+        # None, ou tâche sans `projet_id` : le `mkdtemp()` historique.
+        self._projets = projets
         # Serveurs MCP par agent (#104) : les déclarations sont relues à chaud
         # dans ce dépôt à chaque tâche — comme les playbooks (#78) — et montées
         # par la couche SDK sur les exécutions outillées de l'agent. None :
@@ -422,6 +431,23 @@ class LocalExecutor(TaskExecutor):
         if self._playbooks is None:
             return None
         return self._playbooks.lire(agent)
+
+    def _projet(self, task: Task) -> Projet | None:
+        """Le projet dans lequel `task` travaille, relu à chaque tâche (#224, EF-36).
+
+        Même relecture **à chaud** que les playbooks : le périmètre ou la branche
+        de base corrigés depuis la Control Tower valent pour la tâche suivante.
+
+        None dans trois cas, tous ramenés au **`mkdtemp()` d'avant** plutôt qu'à
+        un échec : tâche sans `projet_id` (le critère explicite de #224), dépôt
+        non câblé (tests et câblages sans Control Tower), et projet référencé mais
+        absent du dépôt — un `projet_id` orphelin (projet oublié entre la
+        planification et l'exécution) ne condamne pas la tâche, il la ramène au
+        comportement qu'elle avait avant ce lot.
+        """
+        if task.projet_id is None or self._projets is None:
+            return None
+        return self._projets.lire(task.projet_id)
 
     async def _realise_gardee(
         self,
@@ -734,6 +760,11 @@ class LocalExecutor(TaskExecutor):
         refuse au vol le reste — chaque violation est consignée au `journal`
         (étape `:refus-outil`), donc visible au fil temps réel, sans jamais
         condamner la tâche.
+
+        Le **projet** de la tâche (#224) n'équipe lui aussi que le chemin
+        outillé : c'est de lui qu'est dérivé l'espace de travail (worktree ou
+        copie). Le chemin texte ne produit aucun fichier — il n'a pas d'espace
+        de travail du tout.
         """
         runtime = self._runtimes.get(agent.nom)
         if runtime is not None:
@@ -754,6 +785,8 @@ class LocalExecutor(TaskExecutor):
                             task, agent, outil, raison, journal
                         )
                     ),
+                    projet=self._projet(task),
+                    tache_id=task.id,
                 )
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:
