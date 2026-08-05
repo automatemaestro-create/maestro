@@ -17,7 +17,11 @@ Ce qui est vérifié :
   inventer des SC1017 que la CI ne verra jamais ;
 * **pytest teste le code d'ICI** (#194) : lancé par `python -m` et non par le script console, et
   précédé d'une sonde qui rend le job `IGNORÉ` — jamais rouge — si `import maestro` se résout dans
-  un autre répertoire de travail.
+  un autre répertoire de travail ;
+* **le journal d'un job rouge se lit là où on travaille** (#234, docs/10 §8.5) : sous
+  `<racine>/.maestro/ci-local/`, cité en chemin **relatif**, table rase à chaque lancement — un
+  chemin absolu hors du worktree met la raison de l'échec hors de portée d'une session autonome ;
+* **le typage web est jouable par `npm run typecheck`** (#236), et le filet le joue avant vitest.
 
 **Ni réseau ni vrais outils.** Un dépôt jetable est monté dans `tmp_path`, avec des **shims** en
 tête du `PATH` (`shellcheck`, `docker`, `npm`) et de faux exécutables dans son `.venv` / son
@@ -27,6 +31,7 @@ DÉCISIONS du script qui sont testées, jamais les outils eux-mêmes.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -772,3 +777,142 @@ def test_le_filet_tourne_sans_sonde_de_derive(clone: Clone) -> None:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "Verdict : VERT" in acheve.stdout
     assert "Dépendances en retard" not in acheve.stdout
+
+
+# --- Un journal qui se lit là où on travaille (#234) ---------------------------------------------
+# Un job rouge ne vaut que par la RAISON qu'il donne, et cette raison est dans son journal. Tant
+# qu'il vivait sous `${TMPDIR:-/tmp}`, le filet renvoyait vers un chemin ABSOLU HORS du répertoire
+# de travail — que le CLI refuse d'ouvrir sans approbation. En session interactive c'est un clic ;
+# en session autonome (docs/10 §11) il n'y a personne pour le donner : le run de #200 a essayé cinq
+# variantes puis a abandonné sans jamais savoir pourquoi ses tests échouaient (13 refus sur
+# 5 sessions). C'est le seul refus qui prive d'une INFORMATION plutôt que d'un geste.
+
+#: Assez de lignes pour dépasser l'extrait de 40 que le filet imprime — c'est ce qui déclenche le
+#: « … (suite dans … ) », donc le renvoi vers le journal, donc le refus qu'on a corrigé.
+SORTIE_LONGUE = "".join(f"maestro/module{i}.py:1: error: incompatible\\n" for i in range(60))
+
+
+def journal_ci(clone: Clone) -> Path:
+    return clone.racine / ".maestro" / "ci-local"
+
+
+def test_le_journal_d_un_job_rouge_est_sous_la_racine_et_cite_en_relatif(clone: Clone) -> None:
+    """Le cœur de #234 : le chemin imprimé se lit tel quel depuis le répertoire de travail."""
+    clone.equipe_tout()
+    acheve = clone.lance("--only", "mypy", MAESTRO_FAUX_MYPY_CODE="1",
+                         MAESTRO_FAUX_MYPY_SORTIE=SORTIE_LONGUE)
+
+    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
+    assert (journal_ci(clone) / "mypy.log").is_file(), "le journal doit vivre sous la racine"
+    assert "journal : .maestro/ci-local/mypy.log" in acheve.stdout
+    assert "(suite dans .maestro/ci-local/mypy.log)" in acheve.stdout
+    # Le point qui compte vraiment : AUCUNE forme absolue ne doit sortir, ni celle de la racine du
+    # clone, ni celle de l'ancien emplacement. C'est l'absolu qui déclenchait le refus, pas /tmp.
+    assert str(clone.racine) not in acheve.stdout
+    assert "maestro-ci-local" not in acheve.stdout
+    assert not (clone.tmp / "maestro-ci-local").exists(), \
+        "plus rien du filet ne s'écrit dans le temporaire du système"
+
+
+def test_le_journal_fait_table_rase_a_chaque_lancement(clone: Clone) -> None:
+    """Dans `/tmp` le système faisait le ménage ; sous la racine, personne ne le ferait.
+
+    Et un `pytest.log` de la veille laissé à côté d'un run qui n'a pas joué pytest est **pire
+    qu'absent** : il ment sur ce qui vient d'être vérifié.
+    """
+    clone.equipe_tout()
+    clone.lance("--only", "mypy")
+    fossile = journal_ci(clone) / "pytest.log"
+    fossile.write_text("verdict d'hier\n", encoding="utf-8", newline="\n")
+
+    acheve = clone.lance("--only", "mypy")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not fossile.exists(), "un journal d'un job non joué survivrait au lancement suivant"
+    assert (journal_ci(clone) / "mypy.log").is_file()
+
+
+def test_chaque_recours_au_temporaire_du_systeme_reste_justifie() -> None:
+    """L'audit de docs/10 §8.5 se refait par RECHERCHE, jamais par réenquête.
+
+    Ce qu'un script invite à lire va sous `.maestro/<domaine>/` ; ce que personne ne lit — miroir
+    de shellcheck, brouillon de `queue.sh`, fichiers porteurs de secrets d'`env-pull.sh` — reste
+    dans `${TMPDIR:-/tmp}` **avec la raison en commentaire**. Un nouvel emploi non justifié tombe
+    ici plutôt que dans le `permission_denials` d'un run, six mois plus tard.
+    """
+    motif = "${TMPDIR:-/tmp}"
+    sans_justification: list[str] = []
+    for script in sorted((RACINE / "scripts").rglob("*.sh")):
+        source = script.read_text(encoding="utf-8")
+        lignes = source.splitlines()
+        for numero, ligne in enumerate(lignes):
+            if motif not in ligne or ligne.lstrip().startswith("#"):
+                continue
+            # Deux exigences, parce qu'elles disent deux choses : le FICHIER a été arbitré contre
+            # le partage de §8.5 (il cite le ticket), et cet emploi-ci porte une explication assez
+            # près pour se lire avec lui. Un `${TMPDIR}` déposé sans un mot ne passe ni l'une ni
+            # l'autre.
+            voisinage = lignes[max(0, numero - 12):numero]
+            explique = any(ligne_haut.lstrip().startswith("#") for ligne_haut in voisinage)
+            if "#234" not in source or not explique:
+                sans_justification.append(f"{script.relative_to(RACINE).as_posix()}:{numero + 1}")
+    assert not sans_justification, (
+        "recours au temporaire du système sans la raison en commentaire (docs/10 §8.5) : "
+        + ", ".join(sans_justification)
+    )
+
+
+# --- Le typage web, jouable par `npm run` (#236) -------------------------------------------------
+# `npm run:*` est autorisé à une session autonome, jamais un `./node_modules/.bin/tsc` : 7 refus sur
+# 2 sessions pour la même vérification, retentée sous quatre habillages. Exposer le script tarit le
+# besoin au lieu d'élargir les droits — encore faut-il que quelqu'un le joue, sans quoi il pourrit.
+
+
+def test_web_build_verifie_le_typage_avant_les_tests_et_le_build(clone: Clone) -> None:
+    """L'ordre va du plus rapide au plus lent : l'erreur de typage tombe en clair, et tôt."""
+    clone.equipe_tout()
+    acheve = clone.lance("--only", "web-build")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    lances = [a for a in clone.appels() if a.startswith("npm ")]
+    jalons = ("run lint", "run typecheck", "test", "run build")
+    etapes = [a for a in lances if any(m in a for m in jalons)]
+    rangs = {mot: next(i for i, a in enumerate(etapes) if mot in a)
+             for mot in ("run lint", "run typecheck", "run build")}
+    assert rangs["run lint"] < rangs["run typecheck"] < rangs["run build"]
+    assert "tsc" in ligne_du_job(acheve.stdout, "web-build")
+
+
+def test_un_typage_rouge_arrete_le_job_avant_vitest(clone: Clone) -> None:
+    """Le gain du `typecheck` séparé : l'erreur est nommée, pas un `next build` rouge tardif."""
+    clone.equipe_tout()
+    clone.pose_shim(
+        "npm",
+        clone.racine / ".tools" / "node" / f"v{NODE_PIN}",
+        corps=(
+            "#!/usr/bin/env bash\n"
+            "printf 'npm %s\\n' \"$*\" >> \"$MAESTRO_FAUX_JOURNAL\"\n"
+            "case \" $* \" in *' run typecheck '*) exit 1 ;; esac\n"
+            "exit 0\n"
+        ),
+    )
+    acheve = clone.lance("--only", "web-build")
+
+    assert acheve.returncode == 1
+    ligne = ligne_du_job(acheve.stdout, "web-build")
+    assert "tsc --noEmit" in ligne and "typage" in ligne
+    assert not [a for a in clone.appels() if a.startswith("npm ") and "run build" in a], \
+        "le job doit s'arrêter au typage, sans payer le build"
+
+
+def test_le_script_typecheck_existe_et_la_ci_le_joue() -> None:
+    """Les deux moitiés du remède : le script exposé, et quelqu'un pour le jouer.
+
+    Le fichier VERSIONNÉ, pas la copie du dépôt jetable — c'est le régime réel des sessions qui
+    est en jeu, et un `typecheck` que personne ne lance ne resterait pas vert longtemps.
+    """
+    paquet = json.loads((RACINE / "apps" / "web" / "package.json").read_text(encoding="utf-8"))
+    assert paquet["scripts"].get("typecheck") == "tsc --noEmit", \
+        "sans ce script, une session n'a que `node …/tsc` — que rien n'autorise (#236)"
+    pipeline = (RACINE / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    assert "npm run typecheck" in pipeline, "un script jamais joué en CI finit par ne plus passer"

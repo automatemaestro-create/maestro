@@ -949,6 +949,13 @@ bash scripts/ci/local.sh              # défaut : lint complet + pytest sur le p
 bash scripts/ci/local.sh --complet    # la suite entière + la couverture — ce que fera la CI
 ```
 
+Chaque job écrit son journal sous **`.maestro/ci-local/<job>.log`** — sous la racine du worktree,
+et c'est ce **chemin relatif** que le script affiche quand un job rougit, extrait des 40 premières
+lignes à l'appui. Il vivait jusqu'à #234 dans `${TMPDIR:-/tmp}`, d'où le renvoi vers un absolu hors
+du répertoire de travail : lisible d'un clic en session interactive, hors de portée en session
+autonome. Le pourquoi et la règle générale qui en découle sont en §8.5. Table rase à chaque
+lancement — un journal d'hier à côté d'un run qui n'a pas joué ce job-là mentirait.
+
 Le périmètre se calcule sur `origin/main..HEAD` **plus le travail non commité** (c'est ce qui
 partira au push), fichier par fichier :
 
@@ -1781,6 +1788,25 @@ cat .maestro/orchestrate/<run-id>/<iid>.resultat.txt      # refus comptés par o
 bash scripts/orchestrate/run.sh --resultat .maestro/orchestrate/<run-id>/<iid>.json
 ```
 
+Ça, c'est **une** session. La question qu'on se pose après un run est l'autre — « qu'est-ce qui a
+été refusé, **en tout** ? » —, et y répondre demandait de dépouiller 16 JSON à la main. C'est ce
+qu'a coûté l'analyse fondant #232, et ce qu'aucune instruction ne fera deux fois. Depuis #235 c'est
+une commande, que le run **rappelle lui-même** dans son résumé de fin :
+
+```bash
+bash scripts/orchestrate/journal.sh refus            # le dernier run qui porte un résultat
+bash scripts/orchestrate/journal.sh refus <run-id>   # un run précis
+bash scripts/orchestrate/journal.sh refus --tous     # tout le journal, pour la tendance
+```
+
+Elle agrège les `permission_denials` **par outil**, puis **par commande** — en découpant chaque
+chaîne comme le CLI la découpe, si bien que chaque maillon compte pour lui-même —, avec la
+provenance (`#130 ×2, #131`) et un exemple. Lecture seule, en `awk`, sans `jq` ni Python. Trois
+choses n'apparaissent qu'à ce niveau-là : le **poids** d'une forme (six refus `env` sur cinq
+sessions ne se voient pas un par un), le **maillon** réellement fautif d'une commande composée, et
+les refus que **rien dans le dépôt ne lèvera**, comptés à part pour qu'on n'aille pas leur écrire
+une règle inutile.
+
 Un refus **ne bloque pas le run** : sans humain pour approuver, l'appel est simplement refusé et la
 session se débrouille. C'est précisément le problème — **il se paie deux fois** : en tours et en
 dollars quand la session contourne, en run perdu quand elle ne peut pas. Sur le premier run réel
@@ -1818,6 +1844,29 @@ Deux pièges de lecture, découverts à ce prix, sans lesquels on instruit à c�
 Une règle ne prend pas non plus toujours de spécificateur : **`Skill` s'autorise nu**, le tool ne
 déclarant pas de `ruleContentField` (`Skill(ticket-start)` ne matcherait rien), là où `Bash` expose
 `command` et `Write` `file_path`.
+
+**Quatre formes qu'aucune règle ne peut reconnaître** (#235). Elles ne dépendent pas de la commande
+qu'elles habillent : celle-ci a beau être allowlistée, l'appel tombe. C'est la deuxième ligne du
+tableau ci-dessus, et de loin la plus fréquente — le geste est dans la **forme**, donc dans
+`prompt_ticket` ou dans ce que le dépôt dicte à la session, jamais dans l'`allow`.
+
+| Forme | Pourquoi rien ne la matche | Le geste |
+| --- | --- | --- |
+| **Saut de ligne** dans la commande | le CLI découpe dessus et exige chaque morceau ; une `--description` de MR en porte par nature | écrire le texte avec l'outil `Write`, passer son **chemin** |
+| **Substitution** `$(…)` ou `` `…` `` | la règle matche du texte, pas le résultat d'une exécution — `--description "$(cat f)"` n'est jamais reconnu | idem : le chemin, pas le contenu |
+| **Heredoc** `<<'EOF'` | même cause que le saut de ligne, plus le corps qui suit | l'outil `Write`, jamais `cat > … <<'EOF'` |
+| **Chemin absolu hors du worktree** | les règles bornent des chemins **relatifs** ; l'absolu sort de la borne et demande une approbation | rester en relatif depuis le worktree — et n'y envoyer personne (§8.5) |
+
+Les trois premières sont la cause n°1 de #232 : **huit sessions sur seize** ont buté sur un
+`glab mr create --description` multi-ligne, puis sur le `"$(cat …)"` par lequel elles essayaient de
+s'en sortir — **sur la dernière action du ticket**, tout commité et rien pour le déclarer. Deux
+remèdes s'y répondent, et il faut les deux : `prompt_ticket` **nomme** les formes et renvoie vers
+`Write` (une session ne peut pas les deviner d'un refus, qui ne dit jamais ce qui a manqué), et le
+dépôt cesse de les **dicter** — `lib.sh create-mr <iid> <fichier>` / `issue-note <iid> <fichier>`
+font voyager le texte long par un **fichier**, l'appel restant plat et court (#233). Le `$(cat …)`
+survit, mais à l'**intérieur** du script, où aucune permission ne s'applique : c'est déjà le parti
+pris de `set-description` / `set-mr-description`, dont ce sont les pendants à la création. La
+quatrième relève de §8.5 — un journal ne s'écrit pas là où personne n'a le droit de le lire.
 
 Ce que la passe #179 a donné sur ces 17 refus : **11 levés** par six règles (`Skill`, puis `cd`,
 `echo`, `printf`, `grep`, `sed` — du décor de pipeline, sans pouvoir propre, mais qui faisait tomber
