@@ -23,6 +23,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from maestro.appartenance import projet_id_valide
 from maestro.orchestrator.errors import TaskValidationError
 from maestro.references import ReferenceTicket
 
@@ -71,6 +72,11 @@ class Task:
     d'exécution. `to_dict` **omet** alors la clé plutôt que d'émettre `null` :
     le schéma refuse les propriétés inconnues comme les objets malformés, et un
     plan sans référence doit rester sérialisable tel quel.
+
+    `projet_id` (#222) porte le **projet** auquel la tâche appartient — même
+    régime que `ticket` : None dans le cas courant (le plan n'en produit pas de
+    lui-même), posé au lancement d'un run et hérité par chaque tâche, et la clé
+    est **omise** de `to_dict` quand il n'y en a pas.
     """
 
     id: str
@@ -80,6 +86,7 @@ class Task:
     format_sortie: str
     dependances: tuple[str, ...] = ()
     ticket: ReferenceTicket | None = None
+    projet_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Task:
@@ -92,6 +99,7 @@ class Task:
             format_sortie=data["format_sortie"],
             dependances=tuple(data.get("dependances", ())),
             ticket=ReferenceTicket.depuis(data.get("ticket")),
+            projet_id=projet_id_valide(data.get("projet_id")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -106,6 +114,8 @@ class Task:
         }
         if self.ticket is not None:
             data["ticket"] = self.ticket.to_dict()
+        if self.projet_id is not None:
+            data["projet_id"] = self.projet_id
         return data
 
 

@@ -26,6 +26,7 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from maestro.appartenance import projet_id_valide
 from maestro.controltower.events import (
     CANAL_EVENEMENTS,
     EVENEMENT_AGENT_ACTIVITE,
@@ -97,7 +98,10 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
 
     Chaque événement embarque la **référence externe** de son étape quand le
     journal en porte une (#187) : c'est le seul chemin par lequel le ticket d'un
-    run atteint la Control Tower — le moteur ne fait que la transporter.
+    run atteint la Control Tower — le moteur ne fait que la transporter. Il en va
+    de même du **projet** auquel le travail appartient (`projet_id`, #222) : posé
+    au lancement du run, hérité par chaque tâche, il remonte aux vues par ces
+    seules lignes de journal.
 
     Chaque événement embarque la **mesure d'usage** de son étape (tokens,
     coût, durée — forme `StepUsage`) quand le journal en porte une : c'est la
@@ -166,6 +170,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             cout_usd=float(cout_brut) if isinstance(cout_brut, int | float) else None,
             usage=mesure,
             ticket=ReferenceTicket.depuis(record.get("ticket")),
+            projet_id=projet_id_valide(record.get("projet_id")),
             horodatage=str(record.get("horodatage", "")),
         ),
     )

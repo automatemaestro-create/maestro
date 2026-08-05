@@ -49,6 +49,7 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
+from maestro.appartenance import projet_id_valide
 from maestro.controltower.bridge import JournalEventHandler
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
@@ -134,14 +135,15 @@ class ServiceExecutions:
 
     # ------------------------------------------------------------------ lecture
 
-    def resumes(self) -> list[dict[str, Any]]:
+    def resumes(self, projet: str | None = None) -> list[dict[str, Any]]:
         """Les runs connus (`GET /api/executions`) : résumés, **récents d'abord**.
 
         Tous ceux dont la projection porte une trace — lancés par l'API comme
         publiés par un autre process (`maestro-run --publier`) : le suivi ne
-        distingue pas leur origine.
+        distingue pas leur origine. `projet` (#222) restreint aux runs de ce
+        projet ; sans lui, tous sortent, ceux sans projet compris.
         """
-        resumes = [e.resume() for e in self._state.executions()]
+        resumes = [e.resume() for e in self._state.executions(projet)]
         return sorted(resumes, key=lambda r: str(r["debut"]), reverse=True)
 
     def resume(self, run_id: str) -> dict[str, Any] | None:
@@ -165,6 +167,7 @@ class ServiceExecutions:
         timeout_tache_s: float | None = None,
         parallelisme: int | None = None,
         ticket: Mapping[str, str] | ReferenceTicket | None = None,
+        projet_id: str | None = None,
     ) -> dict[str, Any]:
         """Lance une exécution en tâche de fond et rend son résumé **immédiatement**.
 
@@ -179,6 +182,15 @@ class ServiceExecutions:
         donc elle survit au redémarrage) et **héritée par chaque tâche du plan**,
         jusqu'à la carte du Kanban. Le service ne fait que la transmettre : ni
         lui ni le moteur ne savent de quel outil de ticketing elle vient.
+
+        `projet_id` (#222) rattache le run au **projet dans lequel il
+        travaille** : même chemin que le ticket — porté par l'événement de
+        lancement, donc par la projection, et hérité par chaque tâche du plan.
+        Un identifiant qui n'en est pas un est écarté plutôt que refusé (le run
+        part alors sans projet, comme avant ce lot) ; l'existence du projet, elle,
+        se vérifie à la saisie, côté API des projets (#223). Tant que l'espace de
+        travail dérivé (#224) n'est pas là, le champ **rattache sans isoler** :
+        il ne change rien à ce que le run peut lire ou écrire.
 
         Lève `ValueError` sur un objectif vide ou un garde-fou hors bornes (les
         plafonds sont des maximums : ils doivent être > 0) — la route en fait un
@@ -208,23 +220,25 @@ class ServiceExecutions:
             if isinstance(ticket, ReferenceTicket)
             else ReferenceTicket.depuis(ticket)
         )
+        projet = projet_id_valide(projet_id)
 
         run_id = uuid.uuid4().hex[:12]
         self._demarrer()
         # L'événement de lancement **avant** la tâche de fond : la projection
         # connaît le run (donc le résumé rendu est complet) avant qu'une seule
-        # étape ne puisse y arriver. C'est lui qui porte le ticket du run (#187) :
-        # il part sur le bus, donc dans le journal durable — plus rien n'est tenu
-        # en mémoire par ce service.
+        # étape ne puisse y arriver. C'est lui qui porte le ticket du run (#187)
+        # et son projet (#222) : il part sur le bus, donc dans le journal
+        # durable — plus rien n'est tenu en mémoire par ce service.
         self._consigne(
             run_id,
             EXECUTION_EN_COURS,
             objectif,
             "lancée depuis la Control Tower",
             ticket=reference,
+            projet_id=projet,
         )
         tache = asyncio.get_running_loop().create_task(
-            self._derouler(run_id, objectif, garde_fous, parallelisme, reference)
+            self._derouler(run_id, objectif, garde_fous, parallelisme, reference, projet)
         )
         self._runs[run_id] = tache
         tache.add_done_callback(lambda _: self._runs.pop(run_id, None))
@@ -299,6 +313,7 @@ class ServiceExecutions:
         garde_fous: Guardrails,
         parallelisme: int | None,
         ticket: ReferenceTicket | None = None,
+        projet_id: str | None = None,
     ) -> None:
         """Déroule le run en tâche de fond et consigne son issue.
 
@@ -311,12 +326,14 @@ class ServiceExecutions:
         `ticket` (#187) descend jusqu'au moteur, qui en dote chaque
         tâche du plan : le ticket du run se retrouve ainsi sur chaque carte, par
         le seul chemin du journal — le moteur n'a rien à savoir de son origine.
+        `projet_id` (#222) descend par le même chemin et pour la même raison :
+        chaque tâche du plan en hérite, et l'appartenance remonte aux vues.
         """
         journal = RunJournal(run_id=run_id, logger=self._logger)
         try:
             moteur = self._fabrique(guardrails=garde_fous, max_parallele=parallelisme)
             rapport = await moteur.run(
-                objectif, journal=journal, ticket=ticket
+                objectif, journal=journal, ticket=ticket, projet_id=projet_id
             )
         except asyncio.CancelledError:
             raise
@@ -341,6 +358,7 @@ class ServiceExecutions:
         detail: str,
         *,
         ticket: ReferenceTicket | None = None,
+        projet_id: str | None = None,
     ) -> None:
         """Émet le cycle de vie du run : projection d'abord, bus ensuite.
 
@@ -349,8 +367,8 @@ class ServiceExecutions:
         réapplique l'événement sans effet (idempotence). L'objectif comme le
         détail sont expurgés des secrets avant de partir — ce qui va sur le bus
         est montrable, même filet que le journal (#8). Seul le **lancement**
-        porte une référence externe (#187) : la projection ne la retire pas aux
-        événements suivants, qui n'en savent rien.
+        porte une référence externe (#187) et un projet (#222) : la projection ne
+        les retire pas aux événements suivants, qui n'en savent rien.
         """
         self._emettre(
             Event(
@@ -362,6 +380,7 @@ class ServiceExecutions:
                 statut=statut,
                 detail=redact_secrets(detail),
                 ticket=ticket,
+                projet_id=projet_id,
             )
         )
 

@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from maestro.appartenance import projet_id_valide
 from maestro.references import ReferenceTicket as ReferenceTicket  # ré-export explicite
 from maestro.telemetry.usage import StepUsage
 
@@ -109,7 +110,13 @@ class Event:
     (#86, entité AGENT `instances_max`) — None ailleurs. `ticket` porte la
     référence du ticket externe dont relève la tâche (#187, contrat #183) — None
     quand aucune n'est connue ; il voyage avec les événements de tâche pour que
-    l'UI l'affiche et qu'il survive au rejeu du journal durable.
+    l'UI l'affiche et qu'il survive au rejeu du journal durable. `projet_id`
+    porte le **projet** auquel le travail appartient (#222, entité PROJECT de
+    #221) — None quand le travail ne relève d'aucun projet, ce qui est le
+    comportement d'avant ce lot : un consommateur qui ignore la clé n'est pas
+    cassé, et les vues qui filtrent par projet n'ont rien à voir. Il voyage sur
+    les événements de tâche comme sur ceux du cycle de vie d'un run, et survit
+    donc au rejeu du journal durable (#97) comme le reste.
     """
 
     type: str
@@ -125,6 +132,7 @@ class Event:
     usage: StepUsage | None = None
     instances: int | None = None
     ticket: ReferenceTicket | None = None
+    projet_id: str | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -143,6 +151,7 @@ class Event:
             "usage": self.usage.to_dict() if self.usage is not None else None,
             "instances": self.instances,
             "ticket": self.ticket.to_dict() if self.ticket is not None else None,
+            "projet_id": self.projet_id,
             "horodatage": self.horodatage,
         }
 
@@ -173,6 +182,10 @@ class Event:
                 if isinstance(ticket_brut, Mapping)
                 else None
             ),
+            # Un `projet_id` reçu du bus est traité comme tout ce qui vient de
+            # l'extérieur (#222) : normalisé, et écarté s'il n'est pas un
+            # identifiant de projet — il sert de nom de fichier au dépôt (#221).
+            projet_id=projet_id_valide(data.get("projet_id")),
             horodatage=data.get("horodatage", ""),
         )
 

@@ -355,6 +355,7 @@ class LocalExecutor(TaskExecutor):
             usage=result.usage,
             playbook_version=result.playbook_version,
             ticket=task.ticket,
+            projet_id=task.projet_id,
         )
         return result
 
@@ -510,6 +511,10 @@ class LocalExecutor(TaskExecutor):
             entree=raison,
             sortie=detail,
             usage=StepUsage(),
+            # Le projet (#222) est porté par **toutes** les étapes de la tâche,
+            # annexes comprises : c'est un critère de filtre, et une étape qui ne
+            # le porterait pas disparaîtrait des vues restreintes à ce projet.
+            projet_id=task.projet_id,
         )
         if approuve:
             return None
@@ -628,6 +633,7 @@ class LocalExecutor(TaskExecutor):
             ),
             usage=StepUsage(),
             ticket=task.ticket,
+            projet_id=task.projet_id,
         )
 
     def _consigne_relance(
@@ -660,6 +666,7 @@ class LocalExecutor(TaskExecutor):
                 f"— relance dans {attente_s:g} s."
             ),
             usage=StepUsage(),
+            projet_id=task.projet_id,
         )
 
     def _consigne_refus(
@@ -688,6 +695,7 @@ class LocalExecutor(TaskExecutor):
             entree=outil,
             sortie=raison,
             usage=StepUsage(),
+            projet_id=task.projet_id,
         )
 
     async def _produce(

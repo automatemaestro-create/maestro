@@ -32,6 +32,9 @@ export type Sante = {
  * `ticket` (#183/#187) porte la référence du ticket externe dont elle relève —
  * `null` quand aucune n'a été transportée (inconnu ≠ absent). La vue reste
  * alors strictement inchangée.
+ * `projet_id` (#222) porte le projet auquel la tâche appartient — `null` quand
+ * elle ne relève d'aucun projet. Le Kanban se restreint à un projet par
+ * `GET /api/taches?projet=<id>` ; sans le paramètre, toutes les tâches sortent.
  */
 export type Tache = {
   id: string;
@@ -43,6 +46,7 @@ export type Tache = {
   cout_usd: number | null;
   usage: Usage | null;
   ticket: ReferenceTicket | null;
+  projet_id: string | null;
   horodatage: string;
 };
 
@@ -73,6 +77,8 @@ export type EtatAgent = {
  * Un événement du flux `WS /ws/evenements` — la ligne du fil d'activité.
  * `ticket` (#183/#187) accompagne les événements de tâche : la référence de
  * ticket externe voyage avec le flux — `null` quand aucune n'est portée.
+ * `projet_id` (#222) voyage de la même façon, sur les événements de tâche comme
+ * sur ceux du cycle de vie d'un run — `null` hors de tout projet.
  */
 export type Evenement = {
   type: string;
@@ -88,6 +94,7 @@ export type Evenement = {
   usage: Usage | null;
   instances: number | null;
   ticket: ReferenceTicket | null;
+  projet_id: string | null;
   horodatage: string;
 };
 
@@ -101,6 +108,8 @@ export type CoutTache = {
   usage: Usage;
   /** Le ticket externe dont relève la tâche (#187), `null` s'il n'y en a pas. */
   ticket: ReferenceTicket | null;
+  /** Le projet auquel la tâche appartient (#222), `null` hors de tout projet. */
+  projet_id: string | null;
 };
 
 /**
@@ -139,6 +148,8 @@ export type CoutTacheAgregee = {
   usage: Usage;
   /** Le ticket externe dont relève la tâche (#187), `null` s'il n'y en a pas. */
   ticket: ReferenceTicket | null;
+  /** Le projet auquel la tâche appartient (#222), `null` hors de tout projet. */
+  projet_id: string | null;
 };
 
 /** La ligne « par exécution » de la vue analytics (`CoutExecutionResume.to_dict`, #87). */
@@ -148,6 +159,8 @@ export type CoutExecutionResume = {
   debut: string;
   fin: string;
   usage: Usage;
+  /** Le projet dans lequel le run travaille (#222), `null` hors de tout projet. */
+  projet_id: string | null;
 };
 
 /** Un seau de la série temporelle (`PointCout.to_dict`, #87) : usage cumulé sur la période. */
@@ -160,10 +173,13 @@ export type PointCout = {
  * La vue coûts & analytics, servie par `GET /api/analytics/couts`
  * (`AnalyticsCouts.to_dict`, #87) : agrégats transverses par tâche, par agent
  * et par exécution, total de la fenêtre et série temporelle du coût.
+ * `projet` (#222) rappelle le projet demandé (`?projet=<id>`) — `null` quand la
+ * vue porte sur tout, projets confondus.
  */
 export type AnalyticsCouts = {
   depuis: string | null;
   pas: string;
+  projet: string | null;
   total: Usage;
   executions: CoutExecutionResume[];
   agents: CoutAgentAgrege[];
@@ -501,6 +517,8 @@ export type LancementExecution = {
   timeout_tache_s: number | null;
   parallelisme: number | null;
   ticket: ReferenceTicket | null;
+  /** Le projet dans lequel le run travaille (#222) — `null` : aucun projet. */
+  projet_id: string | null;
 };
 
 /**
@@ -517,6 +535,8 @@ export type ResumeExecution = {
   nb_taches: number;
   cout_usd: number | null;
   ticket: ReferenceTicket | null;
+  /** Le projet dans lequel le run travaille (#222), `null` hors de tout projet. */
+  projet_id: string | null;
   debut: string;
   fin: string | null;
 };
@@ -531,7 +551,9 @@ export const ORDRE_DESC = "desc";
 /**
  * Une entrée du journal requêtable (`GET /api/journal`) : un événement persisté
  * doté d'un `id` stable (référençable, triable) — le reste reprend la forme d'un
- * `Evenement` (type, run, tâche, agent, statut, détail, horodatage).
+ * `Evenement` (type, run, tâche, agent, statut, détail, projet, horodatage).
+ * Le journal se restreint à un projet par `?projet=<id>` (#222) ; une entrée
+ * sans `projet_id` ne relève d'aucun et sort donc de toute vue filtrée.
  */
 export type EntreeJournal = {
   id: string;
@@ -542,6 +564,7 @@ export type EntreeJournal = {
   role: string;
   statut: string;
   detail: string;
+  projet_id: string | null;
   horodatage: string;
 };
 

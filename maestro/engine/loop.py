@@ -413,6 +413,7 @@ class OrchestrationEngine:
         *,
         journal: RunJournal | None = None,
         ticket: ReferenceTicket | None = None,
+        projet_id: str | None = None,
     ) -> RunReport:
         """Exécute la boucle complète pour `objective` et renvoie l'agrégat.
 
@@ -446,14 +447,27 @@ class OrchestrationEngine:
         plus précis que le lancement — sa référence gagne). Le moteur ne fait
         que la transporter : il ne l'interprète pas, n'appelle aucun outil de
         ticketing et n'en connaît aucun.
+
+        `projet_id` (#222) est le **projet dans lequel le run travaille** : même
+        régime que `ticket` — chaque tâche du plan en hérite, sauf celle qui en
+        porte déjà un. Le moteur ne fait ici que le transporter jusqu'au
+        journal, d'où il remonte aux vues ; c'est l'espace de travail dérivé
+        (#224) qui lui donnera un effet sur l'exécution.
         """
         journal = journal if journal is not None else RunJournal()
-        plan_usage, tasks = await self._plan(objective, journal)
+        plan_usage, tasks = await self._plan(objective, journal, projet_id)
         if ticket is not None:
             tasks = [
                 task
                 if task.ticket is not None
                 else replace(task, ticket=ticket)
+                for task in tasks
+            ]
+        if projet_id is not None:
+            tasks = [
+                task
+                if task.projet_id is not None
+                else replace(task, projet_id=projet_id)
                 for task in tasks
             ]
         ordered = topological_order(tasks)
@@ -519,11 +533,19 @@ class OrchestrationEngine:
             plafond_tokens=self._guardrails.plafond_tokens,
         )
 
-    async def _plan(self, objective: str, journal: RunJournal) -> tuple[StepUsage, list[Task]]:
+    async def _plan(
+        self, objective: str, journal: RunJournal, projet_id: str | None = None
+    ) -> tuple[StepUsage, list[Task]]:
         """Planifie l'objectif en consignant l'étape (usage et issue) dans le journal.
 
         Les erreurs de planification sont propagées (sans plan, rien à orchestrer)
         mais consignées d'abord : l'échec reste traçable dans le journal.
+
+        `projet_id` (#222) est porté par l'étape elle-même, alors qu'elle
+        précède le plan : la planification est une **dépense du projet** au même
+        titre que les tâches (c'est la convention du grand livre, #57), et
+        l'omettre creuserait un écart entre le total d'un projet et la somme de
+        ses runs.
         """
         debut = perf_counter()
         with collect_usage() as recolte:
@@ -540,6 +562,7 @@ class OrchestrationEngine:
                     sortie="",
                     erreur=str(exc),
                     usage=recolte.total.avec_duree(_ecoule_ms(debut)),
+                    projet_id=projet_id,
                 )
                 raise
         usage = recolte.total.avec_duree(_ecoule_ms(debut))
@@ -552,6 +575,7 @@ class OrchestrationEngine:
             entree=objective,
             sortie=f"{len(tasks)} tâche(s) planifiée(s)",
             usage=usage,
+            projet_id=projet_id,
         )
         return usage, tasks
 
@@ -606,5 +630,6 @@ def _consigne_blocage(
         erreur=result.erreur,
         usage=StepUsage(),
         ticket=task.ticket,
+        projet_id=task.projet_id,
     )
     return result

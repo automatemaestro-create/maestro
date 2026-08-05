@@ -24,11 +24,12 @@ projet réel, et réutilisable tel quel par l'API des projets (#223).
 
 from __future__ import annotations
 
-import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from maestro.appartenance import ID_PROJET as ID_PROJET  # ré-export explicite (#222)
 
 #: Les exclusions posées d'office au périmètre d'un projet (docs/24 §2.3) : la
 #: plomberie Git, les dépendances installées, et surtout les deux gisements de
@@ -47,9 +48,10 @@ ORIGINES: frozenset[str] = frozenset({"nouveau", "existant"})
 #: Identifiant de projet admissible comme nom de fichier — même verrou que les
 #: autres dépôts (`maestro.agents.store`) : slug sûr, sans séparateur ni point,
 #: ce qui interdit toute traversée de chemin depuis un identifiant venu de l'API.
-#: `\Z` et non `$` : `$` accepte un retour à la ligne final, et donc un nom de
-#: fichier qui en porte un.
-ID_PROJET = re.compile(r"^[a-z0-9][a-z0-9_-]*\Z")
+#: **Défini** dans `maestro.appartenance` (#222) et seulement ré-exporté ici (cf.
+#: l'import en tête) : le même contrat sert désormais à valider ce que le journal
+#: et les événements transportent. Les imports existants — `from
+#: maestro.projets.modele import ID_PROJET` — restent servis tels quels.
 
 #: Préfixe des identifiants engendrés (docs/24 §2.3 donne `prj-7f3a` en exemple).
 #: L'entropie vient d'un `uuid4` tronqué, comme les identifiants de run

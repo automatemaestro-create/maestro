@@ -222,8 +222,12 @@ class LancementExecutionRequete(BaseModel):
     `objectif` est l'énoncé en langage naturel que l'orchestrateur décompose ;
     les garde-fous (#9) plafonnent l'exécution — coût, tokens, time-out par
     tâche, parallélisme —, chacun optionnel, None laissant le défaut du moteur.
-    `ticket` rattache le run à un ticket externe (optionnel). Une requête
-    invalide (objectif vide, garde-fou hors bornes) est refusée en 422.
+    `ticket` rattache le run à un ticket externe (optionnel). `projet_id` (#222)
+    le rattache au **projet** dans lequel il travaille (optionnel, `null` :
+    aucun projet — le comportement d'avant ce lot). Une requête invalide
+    (objectif vide, garde-fou hors bornes) est refusée en 422 ; un `projet_id`
+    mal formé, lui, est **écarté** (le run part sans projet) plutôt que de faire
+    échouer le lancement — cf. `maestro.appartenance`.
     """
 
     objectif: str
@@ -232,6 +236,7 @@ class LancementExecutionRequete(BaseModel):
     timeout_tache_s: float | None = None
     parallelisme: int | None = None
     ticket: ReferenceTicketRequete | None = None
+    projet_id: str | None = None
 
 
 class ReassignationRequete(BaseModel):
@@ -355,6 +360,25 @@ class ActivationsMcpRequete(BaseModel):
     """
 
     integrations: list[str]
+
+
+def _projet_filtre(projet: str | None) -> str | None:
+    """Le filtre par projet d'une requête (#222) — None quand il n'y en a pas.
+
+    Le paramètre `projet` des vues qui agrègent (Kanban, coûts, exécutions,
+    journal). Absent ou vide (`?projet=`), il ne filtre rien : c'est la vue
+    complète, projets confondus, exactement comme avant ce lot.
+
+    Un identifiant qui n'en est pas un est passé **tel quel** plutôt que refusé
+    en 422 : tous les `projet_id` portés sont normalisés à l'entrée
+    (`projet_id_valide`), donc rien ne peut lui correspondre et la vue ressort
+    **vide**. C'est le comportement attendu d'un filtre — vide vaut mieux que
+    faux —, et cela évite de faire d'une faute de frappe une erreur d'API là où
+    un projet simplement inexistant rendrait, lui, la même liste vide.
+    """
+    if projet is None:
+        return None
+    return projet.strip() or None
 
 
 class Diffusion:
@@ -650,6 +674,7 @@ def create_app(
         agent: str | None = None,
         type: str | None = None,
         run_id: str | None = None,
+        projet: str | None = None,
         depuis: str | None = None,
         jusqua: str | None = None,
         tri: str = TRI_JOURNAL_HORODATAGE,
@@ -657,11 +682,12 @@ def create_app(
         page: int = 1,
         taille: int = TAILLE_PAGE_DEFAUT,
     ) -> dict[str, Any]:
-        """Le journal requêtable : filtres (agent / type / run / période), tri, pagination.
+        """Le journal requêtable : filtres (agent / type / run / projet / période), tri, pagination.
 
         `depuis`/`jusqua` sont des horodatages ISO-8601 (bornes incluses).
-        422 sur un `tri`/`ordre` inconnu, une `page` < 1 ou une `taille` hors
-        [1, {max}].
+        `projet` (#222) restreint aux entrées d'un projet ; sans lui, toutes
+        sortent, celles sans projet comprises. 422 sur un `tri`/`ordre` inconnu,
+        une `page` < 1 ou une `taille` hors [1, {max}].
         """
         fx = _exige_fixtures()
         if tri not in TRIS_JOURNAL:
@@ -685,6 +711,7 @@ def create_app(
             agent=agent,
             type=type,
             run_id=run_id,
+            projet=_projet_filtre(projet),
             depuis=depuis,
             jusqua=jusqua,
             tri=tri,
@@ -717,9 +744,16 @@ def create_app(
         return _exige_fixtures().propositions_playbook()
 
     @app.get("/api/taches")
-    async def taches() -> list[dict[str, Any]]:
-        """Les tâches connues : statut, agent, coût détaillé (#57) — la source du Kanban."""
-        return [t.to_dict() for t in state.taches()]
+    async def taches(projet: str | None = None) -> list[dict[str, Any]]:
+        """Les tâches connues : statut, agent, coût détaillé (#57) — la source du Kanban.
+
+        `projet` (#222) restreint le Kanban aux tâches d'un projet. Sans lui,
+        **toutes** les tâches sortent, celles sans projet comprises : le champ
+        est optionnel et ne pas filtrer reste le comportement d'avant ce lot.
+        Un identifiant qui n'en est pas un ne rend aucune tâche plutôt que la
+        liste entière — mieux vaut une vue vide qu'une vue fausse.
+        """
+        return [t.to_dict() for t in state.taches(_projet_filtre(projet))]
 
     @app.get("/api/agents")
     async def agents() -> list[dict[str, Any]]:
@@ -727,15 +761,16 @@ def create_app(
         return [a.to_dict() for a in state.agents()]
 
     @app.get("/api/executions")
-    async def executions_liste() -> list[dict[str, Any]]:
+    async def executions_liste(projet: str | None = None) -> list[dict[str, Any]]:
         """Les runs connus (#185) : résumés, **récents d'abord**.
 
         En cours comme passés, lancés depuis la Control Tower comme publiés par
         un autre process (`maestro-run --publier`) : le suivi ne distingue pas
         leur origine — la projection est la même. C'est la source de l'écran
-        *Exécutions & traces* (docs/05 §2.4).
+        *Exécutions & traces* (docs/05 §2.4). `projet` (#222) restreint aux runs
+        d'un projet ; sans lui, tous sortent, ceux sans projet compris.
         """
-        return executions.resumes()
+        return executions.resumes(_projet_filtre(projet))
 
     @app.post("/api/executions", status_code=202)
     async def lancer_execution(requete: LancementExecutionRequete) -> dict[str, Any]:
@@ -756,6 +791,7 @@ def create_app(
                 timeout_tache_s=requete.timeout_tache_s,
                 parallelisme=requete.parallelisme,
                 ticket=None if requete.ticket is None else requete.ticket.en_reference(),
+                projet_id=requete.projet_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -815,7 +851,9 @@ def create_app(
         return detail.cout.to_dict()
 
     @app.get("/api/analytics/couts")
-    async def analytics_couts(depuis: str | None = None, pas: str = PAS_HEURE) -> dict[str, Any]:
+    async def analytics_couts(
+        depuis: str | None = None, pas: str = PAS_HEURE, projet: str | None = None
+    ) -> dict[str, Any]:
         """La vue coûts & analytics (#87) : agrégats transverses et série temporelle.
 
         Recalculée des exécutions projetées, avec la même convention
@@ -823,8 +861,10 @@ def create_app(
         tâche, par agent (planification comprise) et par exécution, total, et
         série temporelle du coût en seaux de `pas` (minute/heure/jour).
         `depuis` (ISO-8601, réputé UTC sans fuseau) restreint la fenêtre — la
-        période sélectionnable de l'UI. 422 sur un `pas` ou un `depuis`
-        invalide.
+        période sélectionnable de l'UI. `projet` (#222) restreint la dépense à
+        un projet : seuls les événements qui portent ce `projet_id` comptent,
+        planification comprise — un travail sans projet n'entre dans le total
+        d'aucun. 422 sur un `pas` ou un `depuis` invalide.
         """
         if pas not in PAS_VALIDES:
             raise HTTPException(
@@ -842,7 +882,9 @@ def create_app(
                 ) from exc
             if borne.tzinfo is None:
                 borne = borne.replace(tzinfo=UTC)
-        return agrege_couts(state.executions(), depuis=borne, pas=pas).to_dict()
+        return agrege_couts(
+            state.executions(), depuis=borne, pas=pas, projet=_projet_filtre(projet)
+        ).to_dict()
 
     @app.post("/api/taches/{tache_id}/reassigner")
     async def reassigner(tache_id: str, requete: ReassignationRequete) -> dict[str, Any]:

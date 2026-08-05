@@ -61,6 +61,10 @@ class TaskCost:
     différence de l'identité, elle est prise sur **n'importe quelle** étape qui
     en porte une — l'annexe `<tache>:reference` en est justement le seul porteur
     quand un agent la pose en cours d'exécution.
+
+    `projet_id` (#222) est le projet auquel la tâche appartient, pris au même
+    régime que `ticket` : sur **n'importe quelle** étape qui en porte un — c'est
+    ce qui permet de filtrer la comptabilité par projet.
     """
 
     tache_id: str
@@ -70,6 +74,7 @@ class TaskCost:
     statut: str = ""
     usage: StepUsage = StepUsage()
     ticket: ReferenceTicket | None = None
+    projet_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet l'entrée en dict JSON-sérialisable (la forme de l'API, #57)."""
@@ -81,6 +86,7 @@ class TaskCost:
             "statut": self.statut,
             "usage": self.usage.to_dict(),
             "ticket": ticket_en_dict(self.ticket),
+            "projet_id": self.projet_id,
         }
 
 
@@ -133,6 +139,10 @@ class RunCost:
                 # Le ticket externe (#187) vient de n'importe quelle étape de la
                 # tâche — l'annexe `:reference` n'en porte même que ça.
                 entree = replace(entree, ticket=record.ticket)
+            if record.projet_id is not None:
+                # Le projet (#222) suit la même règle : n'importe quelle étape
+                # de la tâche fait foi, une étape sans projet n'efface rien.
+                entree = replace(entree, projet_id=record.projet_id)
             if record.etape == tache_id:
                 # L'étape de la tâche elle-même : elle fait foi pour l'identité.
                 entree = replace(

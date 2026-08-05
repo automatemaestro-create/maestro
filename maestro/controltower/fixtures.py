@@ -26,7 +26,9 @@ Phase 5, #184+) :
 
 La référence de ticket externe (#187) portée par une tâche n'est **pas** ici :
 c'est un champ de données (`Event.ticket`, `EtatTache.ticket`) servi par
-`GET /api/taches`, que la démo pose sur une tâche du scénario.
+`GET /api/taches`, que la démo pose sur une tâche du scénario. Il en va de même
+du `projet_id` (#222) — sauf pour le **journal**, qui n'est servi que d'ici :
+ses entrées le portent, et son filtre `projet` est implémenté ci-dessous.
 """
 
 from __future__ import annotations
@@ -65,6 +67,12 @@ FRAGMENT_CHAT_ERREUR = "erreur"
 #: s'y rattachent pour rester cohérentes avec ce que sert déjà `GET /api/taches`.
 _RUN_DEMO = "demo-live"
 
+#: Le projet du même scénario (#222) : le run de la démo travaille dans un
+#: projet, ce qui rend le filtre `?projet=` démontrable dès les fixtures. Une
+#: entrée peut le porter à None — un travail sans projet reste normal, c'est le
+#: comportement d'avant ce lot.
+_PROJET_DEMO = "prj-demo"
+
 
 class FixturesControlTower:
     """Les données factices des routes de contrat v2 (#183), servies par la démo.
@@ -85,6 +93,7 @@ class FixturesControlTower:
         agent: str | None = None,
         type: str | None = None,
         run_id: str | None = None,
+        projet: str | None = None,
         depuis: str | None = None,
         jusqua: str | None = None,
         tri: str = TRI_JOURNAL_HORODATAGE,
@@ -94,7 +103,7 @@ class FixturesControlTower:
     ) -> dict[str, Any]:
         """Une page du journal requêtable (`GET /api/journal`) : filtres, tri, pagination.
 
-        Filtre les entrées par `agent`, `type`, `run_id` et fenêtre temporelle
+        Filtre les entrées par `agent`, `type`, `run_id`, `projet` (#222) et fenêtre temporelle
         (`depuis`/`jusqua`, ISO-8601, bornes incluses, comparaison lexicale des
         horodatages ISO), trie sur `tri`/`ordre`, puis découpe en pages de
         `taille` (1-indexé). `total` est le compte **après filtres, avant
@@ -108,6 +117,10 @@ class FixturesControlTower:
             entrees = [e for e in entrees if e["type"] == type]
         if run_id:
             entrees = [e for e in entrees if e["run_id"] == run_id]
+        if projet:
+            # Une entrée sans projet (`None`) ne relève d'aucun : elle sort de
+            # toute vue filtrée plutôt que d'être rattachée au hasard (#222).
+            entrees = [e for e in entrees if e["projet_id"] == projet]
         if depuis:
             entrees = [e for e in entrees if e["horodatage"] >= depuis]
         if jusqua:
@@ -208,6 +221,7 @@ def _entree(
     tache_id: str = "",
     statut: str = "",
     detail: str = "",
+    projet_id: str | None = _PROJET_DEMO,
 ) -> dict[str, Any]:
     """Une entrée de journal figée — un événement persisté doté d'un id stable."""
     return {
@@ -219,6 +233,7 @@ def _entree(
         "role": role,
         "statut": statut,
         "detail": detail,
+        "projet_id": projet_id,
         "horodatage": horodatage,
     }
 
