@@ -647,3 +647,89 @@ export type FragmentChat = {
   delta: string;
   message: MessageChat | null;
 };
+
+/**
+ * Le gestionnaire de versions d'un projet (docs/05 §6.7) — **détecté** sur le
+ * disque, jamais déclaré par le client. `branche_base` est vide en HEAD
+ * détaché, `distant` `null` sur un dépôt purement local.
+ */
+export type VcsProjet = {
+  type: string;
+  branche_base: string;
+  distant: string | null;
+};
+
+/**
+ * Ce qu'un projet expose aux agents : motifs `inclus` et `exclus`, **relatifs à
+ * la racine** (style glob). `exclus` l'emporte sur `inclus`.
+ */
+export type PerimetreProjet = {
+  inclus: string[];
+  exclus: string[];
+};
+
+/**
+ * Un projet de l'utilisateur (`GET /api/projets`, #223) : une racine sur le
+ * disque et son périmètre. `racine` est **canonicalisée** et rendue en POSIX sur
+ * les trois OS ; `vcs` est `null` quand le projet n'est pas versionné — ce qui
+ * reste parfaitement déclarable.
+ */
+export type Projet = {
+  id: string;
+  nom: string;
+  racine: string;
+  origine: string;
+  vcs: VcsProjet | null;
+  perimetre: PerimetreProjet;
+  cree_le: string;
+  modifie_le: string;
+};
+
+/** Corps de `POST`/`PUT /api/projets` — le `vcs` n'y figure pas : il est constaté. */
+export type DeclarationProjet = {
+  nom: string;
+  racine: string;
+  origine: string;
+  inclus: string[] | null;
+  exclus: string[] | null;
+};
+
+/**
+ * Un dossier listé par l'explorateur : son `nom`, son `chemin` absolu, le
+ * marqueur `depot_git` (qui décide du patron d'écriture de #224) et le
+ * `projet_id` du projet qui l'a déjà déclaré — `null` sinon.
+ */
+export type DossierExplorateur = {
+  nom: string;
+  chemin: string;
+  depot_git: boolean;
+  projet_id: string | null;
+};
+
+/**
+ * Une page de l'explorateur de dossiers (`GET /api/projets/explorateur`, #223) :
+ * un navigateur ne livre jamais de chemin absolu, c'est le backend qui énumère
+ * (docs/05 §2.7). `chemin` est `null` sur la page d'entrée (les racines
+ * elles-mêmes) ; `parent` est `null` quand remonter sortirait des racines — la
+ * frontière se **voit** dans la réponse au lieu de se découvrir au clic suivant.
+ * `tronque` dit qu'au-delà de 500 entrées la liste est coupée.
+ */
+export type PageExplorateur = {
+  chemin: string | null;
+  parent: string | null;
+  racines: string[];
+  dossiers: DossierExplorateur[];
+  tronque: boolean;
+};
+
+/**
+ * Le corps d'erreur des routes projets : un **objet**, pas une phrase. `motif`
+ * est un code stable (`chemin-sensible`, `hors-racines-explorables`,
+ * `dossier-absent`…) que l'écran peut traduire ou router ; `message` la phrase
+ * lisible. Un refus en porte toujours un — l'explorateur ne rend jamais une
+ * liste vide à la place (docs/05 §6.7).
+ */
+export type RefusProjet = {
+  motif: string;
+  message: string;
+};

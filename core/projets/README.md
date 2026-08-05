@@ -52,9 +52,20 @@ produire des livrables à recopier à la main : l'espace de travail d'une tâche
   d'utilisateur (`.env`, `**/secrets/**`) plus la plomberie qu'on ne lit jamais
   (`.git`, `node_modules`) — docs/24 §2.5.
 - Lecture/écriture par le code : `maestro.projets.ProjetStore`
-  (`creer` / `lire` / `lister` / `par_racine` / `ecrire` / `supprimer`). L'API
-  HTTP et l'explorateur de dossiers viennent avec #223, l'écran avec #225.
+  (`creer` / `lire` / `lister` / `par_racine` / `ecrire` / `supprimer`) — le
+  **seul écrivain**, y compris pour l'API.
+- Lecture/écriture par l'API (#223) : `/api/projets` (liste, détail, création,
+  mise à jour, suppression) et `/api/projets/explorateur`, l'explorateur de
+  dossiers servi par le backend — formes JSON et motifs de refus au
+  [docs/05 §6.7](../../docs/05-interface-control-tower.md). L'écran vient avec
+  #225. Supprimer un projet par l'API **oublie sa déclaration** et ne touche
+  jamais au dossier sur le disque.
 - Racine du dépôt remplaçable par `MAESTRO_PROJETS_DIR` (cf. `.env.example`).
+  Les dossiers que l'explorateur accepte d'énumérer, eux, sont fixés par
+  `MAESTRO_EXPLORATEUR_RACINES` — défaut : le dossier utilisateur, plus les
+  racines des projets déjà déclarés. C'est une frontière de lecture : hors
+  d'elles, la route refuse **avec son motif** plutôt que de rendre une liste
+  vide.
 
 Les projets écrits ici sont des **données d'exécution** — et des chemins du
 poste de leur propriétaire : ils ne sont pas commités (voir `.gitignore`).
@@ -67,5 +78,10 @@ travaillent jamais directement dans la racine (EF-36) et aucune modification ne
 l'atteint sans validation humaine (EF-37) — c'est l'objet des lots #224 et #227.
 
 Tests (#221) : `tests/test_projets.py` (modèle, racines interdites, détection
-Git, dépôt). Le reste de la couverture et la doc de la phase reviennent au lot
-final #220.
+Git, dépôt). Le reste de la couverture — dont l'API et l'explorateur de #223 —
+et la doc de la phase reviennent au lot final #220.
+
+⚠ Un piège pour qui écrira ces tests : sous Windows, le `tmp_path` de pytest vit
+sous `C:/Users/<moi>/AppData/Local/Temp`, que la validation refuse **à raison**
+(`chemin-sensible`). La parade existe déjà — la fixture `_maison_isolee` de
+`tests/test_projets.py`, qui déplace `Path.home()` dans le dossier temporaire.

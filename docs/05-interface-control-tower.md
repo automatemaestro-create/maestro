@@ -190,7 +190,8 @@ Quand un agent atteint une action sensible, une carte **« Validation requise »
   (nouveau / dépôt existant) et son périmètre. Le choix du dossier se fait par un **explorateur
   servi par l'API** : un navigateur ne livre jamais de chemin absolu, c'est donc le backend —
   qui tourne déjà sur le poste — qui énumère. Une racine hors périmètre autorisé est **refusée
-  avec son motif**, jamais silencieusement ignorée (EF-38).
+  avec son motif**, jamais silencieusement ignorée (EF-38). Son **API est livrée** (#223) et
+  spécifiée au §6.7 : l'écran, lui, reste à faire (#225).
 - **Composer un objectif** — le formulaire de lancement gagne, à côté du texte, des **sources**
   (§6.1 étendu) : fichiers déposés, dossier de références en lecture seule, URL. L'extraction
   est visible (ce qui a été lu, ce qui a été ignoré, le coût estimé).
@@ -284,6 +285,11 @@ forme est le contrat ; le backend réel la remplira **à contrat identique** —
 (§6.1) l'ont déjà fait : leur lot #185 est livré, elles ne passent donc plus ni par le `501` ni
 par les fixtures, et se servent de `maestro.controltower.executions`. Miroir TypeScript :
 [`apps/web/lib/types.ts`](../apps/web/lib/types.ts) ; fixtures : `maestro/controltower/fixtures.py`.
+
+Ce chapitre est depuis devenu **le** répertoire des formes JSON de l'API, phases 5/6 ou non : les
+routes livrées après lui y sont documentées au même endroit et au même niveau de détail plutôt que
+dans un second chapitre concurrent (§6.7, les projets de la Phase 7). Une section porte donc la
+mention **livré** quand elle décrit du code réel, et reste une forme figée servie en fixtures sinon.
 
 Convention partagée avec les routes existantes : un champ **`null`** vaut « inconnu » et se
 distingue d'un zéro ou d'une absence ; les horodatages sont en **ISO-8601 UTC**.
@@ -448,3 +454,104 @@ Une carte du Kanban peut porter la référence du **ticket externe** dont elle r
   (`Event.ticket`) et `GET /api/taches` — elle **survit au rejeu** du journal durable.
 - Alimentation : soit par l'origine du run (`ticket` de `POST /api/executions`), soit par un agent
   équipé du serveur MCP de l'outil, **sans** que le moteur ne connaisse l'outil de ticketing.
+
+### 6.7 Projets de l'utilisateur — CRUD et explorateur de dossiers (#223) — **livré**
+
+Rendre l'entité `Projet` du lot #221 atteignable, et fournir la brique sans laquelle l'écran
+Projets (§2.7) ne peut pas exister : **l'explorateur servi par l'API**. Implémenté, pas en
+fixture (`maestro/controltower/projets.py`) — comme §6.1, le contrat ci-dessous décrit le
+comportement réel.
+
+- `GET /api/projets` → `Projet[]` — les projets déclarés, dans l'ordre des identifiants. Un
+  fichier du dépôt illisible est **sauté** plutôt que de rendre la liste inexploitable.
+- `GET /api/projets/{id}` → `Projet`. `404` si inconnu, `422` (`projet-illisible`) si son fichier
+  est corrompu — c'est ici qu'un projet sauté du listing s'explique.
+- `POST /api/projets` → `201` + `Projet`. Corps `DeclarationProjet`.
+- `PUT /api/projets/{id}` → `Projet` — **remplacement intégral**, pas un diff (même parti pris que
+  `PUT /api/catalogue/{nom}`) : un champ absent retombe sur son défaut, il n'est pas « conservé ».
+  `cree_le` est préservé, le `vcs` **re-détecté**.
+- `DELETE /api/projets/{id}` → `{ "id": …, "supprime": true }` — oublie la déclaration et **ne
+  touche jamais au dossier sur le disque** : oublier un projet n'est pas supprimer le travail de
+  l'utilisateur.
+- `GET /api/projets/explorateur?chemin=…` → `PageExplorateur` — énumère les **dossiers** de
+  `chemin` ; **sans `chemin`**, les racines explorables elles-mêmes (le point d'entrée).
+
+Le `vcs` n'est **jamais** un champ de requête : il est constaté sur le disque à chaque écriture.
+Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron d'écriture de
+#224 (worktree Git ou copie).
+
+```jsonc
+// DeclarationProjet (corps de POST et PUT)
+{
+  "nom": "Dépensio",
+  "racine": "D:/projets/depensio",  // chemin ABSOLU ; canonicalisé et validé côté serveur
+  "origine": "existant",            // existant (le dossier doit être là) | nouveau (il est créé)
+  "inclus": ["."],                  // null : défaut du modèle
+  "exclus": [".git", "node_modules", ".env", "**/secrets/**"]   // null : défaut du modèle
+}
+
+// Projet (réponse) — la forme du fichier stocké, cf. docs/24 §2.3
+{
+  "id": "prj-7f3a1c2b",
+  "nom": "Dépensio",
+  "racine": "D:/projets/depensio",  // canonicalisée, en POSIX sur les trois OS
+  "origine": "existant",
+  "vcs": { "type": "git", "branche_base": "main", "distant": "git@…" },  // null : non versionné
+  "perimetre": { "inclus": ["."], "exclus": [".git", "node_modules", ".env", "**/secrets/**"] },
+  "cree_le": "2026-08-05T09:00:00+00:00",
+  "modifie_le": "2026-08-05T09:00:00+00:00"
+}
+
+// PageExplorateur (réponse de GET /api/projets/explorateur)
+{
+  "chemin": "D:/projets",           // null : la page d'entrée (les racines explorables)
+  "parent": null,                   // null : remonter sortirait des racines — la frontière se voit
+  "racines": ["C:/Users/moi", "D:/projets"],   // les dossiers explorables, contenus dédoublonnés
+  "dossiers": [
+    {
+      "nom": "depensio",
+      "chemin": "D:/projets/depensio",
+      "depot_git": true,            // marqueur « dépôt Git » — décide du patron d'écriture (#224)
+      "projet_id": "prj-7f3a1c2b"   // null : dossier pas encore déclaré comme projet
+    }
+  ],
+  "tronque": false                  // true : au-delà de 500 entrées, la liste est coupée — et le dit
+}
+```
+
+**Un refus porte toujours son motif**, jamais une liste vide : « ce dossier n'a pas de
+sous-dossier » et « je refuse de regarder là » sont deux réponses différentes, et les confondre
+rend un explorateur inutilisable. Le corps d'erreur de ces six routes est donc un **objet** et non
+une phrase — `{ "motif": "chemin-sensible", "message": "…" }` — pour que l'écran puisse dire
+*pourquoi* (§2.7, EF-38) sans analyser du texte.
+
+| Motif | Code | Quand |
+|---|---|---|
+| `chemin-relatif`, `chemin-vide`, `pas-un-dossier`, `ancre-non-standard` | 422 | la saisie n'est pas un chemin de dossier absolu et local |
+| `racine-de-disque`, `dossier-utilisateur-nu`, `au-dessus-du-dossier-utilisateur`, `au-dessus-du-depot-maestro` | 422 | racine techniquement valide, mais trop haute pour un projet |
+| `chemin-sensible`, `chemin-systeme`, `depot-maestro` | 403 | zone interdite : `.ssh`, `AppData`, dossiers système, dépôt de Maestro |
+| `hors-racines-explorables`, `aucune-racine-explorable` | 403 | l'explorateur refuse de sortir de ses racines |
+| `acces-refuse` | 403 | l'OS refuse d'énumérer le dossier |
+| `dossier-absent` | 404 sur l'explorateur, 422 sur `POST`/`PUT` | le dossier n'existe pas — « pas là » côté lecture, saisie fautive côté déclaration |
+| `projet-inconnu` | 404 | l'identifiant n'est pas dans le dépôt |
+| `projet-illisible` | 422 | le fichier du dépôt existe mais ne se relit pas |
+| `requete-invalide` | 422 | refus sans motif propre (nom vide, origine inconnue, racine déjà déclarée) |
+
+**L'explorateur n'est pas un « lis n'importe quel chemin ».** L'API n'a pas d'authentification au
+POC (CORS `*` — limite connue de #182 et [docs/24 §6](./24-projets-locaux-et-poste-de-travail.md),
+durcie en Phase 9) : une route qui énumère le disque est une **frontière**, pas un confort. Elle
+en porte deux, superposées :
+
+1. **les racines explorables** — le dossier utilisateur par défaut, remplaçable par
+   `MAESTRO_EXPLORATEUR_RACINES` (séparateur `;` sous Windows, `:` sous POSIX), et **toujours**
+   les racines des projets déjà déclarés, explorables par construction. Une racine contenue dans
+   une autre est retirée de la liste : elle n'ajoute aucune permission ;
+2. **les zones interdites** de `maestro.projets.racine`, qui s'appliquent *à l'intérieur* des
+   racines — le dossier utilisateur se **traverse**, `~/.ssh` non. C'est la même liste que celle
+   qui refuse une racine de projet (#221), extraite en `verifier_zone_interdite` pour être
+   partagée : une zone interdite à la déclaration ne peut pas devenir lisible par l'explorateur.
+
+Le défaut mérite d'être connu **avant** le premier essai : sous Windows, les projets vivent
+souvent hors du dossier utilisateur (`D:/projets`). L'explorateur les refuse alors — avec un motif
+qui **nomme la variable à renseigner**, plutôt qu'un mur muet. Élargir est un geste explicite,
+c'était le but.
