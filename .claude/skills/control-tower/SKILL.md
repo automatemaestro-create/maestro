@@ -86,8 +86,11 @@ s'il est inconnu). Contrat complet : doc 05 §6.1 ; usage : doc 07 §6.10 et §6
 - `--no-browser` : démarre sans ouvrir de fenêtre — donc **sans arrêt
   automatique**. À utiliser quand on pilote soi-même un navigateur (skill
   `verify`) ou qu'on veut juste la stack en tâche de fond.
-- Logs : `${TMPDIR:-/tmp}/maestro-controltower-<portAPI>-<portUI>/{api,ui}.log` en cas
-  de souci, `navigateur.log` pour le chien de garde.
+- Logs : `.maestro/controltower/<portAPI>-<portUI>/{api,ui}.log` en cas de souci,
+  `navigateur.log` pour le chien de garde — sous la racine du worktree et affichés en
+  relatif, donc lisibles sans approbation (#234). Le jeton de session, le PID du chien de
+  garde et le profil jetable du navigateur restent, eux, dans le temporaire du système :
+  personne ne les lit, et un profil Chrome n'a rien à faire dans un répertoire de travail.
 - Ports surchargables : `MAESTRO_PORT_API`, `MAESTRO_PORT_UI` — et **tout est indexé
   dessus** (dossier de logs, jeton de session, profil de la fenêtre), de sorte que deux
   sessions parallèles (un worktree par ticket, docs/10 §9) ne s'arrêtent pas l'une

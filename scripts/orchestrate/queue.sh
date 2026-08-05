@@ -91,6 +91,9 @@ diag() { [ "$CHECK" = 1 ] && printf '%s\n' "$*" >&2; return 0; }
 
 gl_require_glab || exit 1
 
+# Brouillon de calcul, hors du dépôt et effacé au trap : son chemin n'est jamais imprimé, rien n'y
+# renvoie personne, et le plan — la seule sortie qui compte — part sur stdout puis dans le journal
+# du run. Il n'oriente donc aucune session vers un chemin hors du worktree (#234).
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/maestro-queue.XXXXXX")" || {
   echo "queue.sh : impossible de créer un dossier temporaire" >&2; exit 1
 }

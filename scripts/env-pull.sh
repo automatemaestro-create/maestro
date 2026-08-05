@@ -83,6 +83,10 @@ umask 077
 TEMPS=()
 nettoie() { [ "${#TEMPS[@]}" -gt 0 ] && rm -f "${TEMPS[@]}"; }
 trap nettoie EXIT
+# Hors du dépôt, à dessein (#234) : ces fichiers portent des VALEURS de secrets. Leur chemin n'est
+# jamais imprimé — donc rien n'oriente une session vers eux — et les écrire sous la racine ferait
+# transiter un secret par le répertoire de travail pour le seul confort d'une lecture qu'on ne veut
+# précisément pas rendre possible. Le `umask 077` et le trap de nettoyage ci-dessus font le reste.
 temporaire() {
   local f
   f="$(mktemp "${TMPDIR:-/tmp}/maestro-env-pull.XXXXXX")" || return 1

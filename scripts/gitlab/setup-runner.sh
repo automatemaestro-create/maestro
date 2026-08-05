@@ -56,7 +56,11 @@ RACINE="$(cd "$ici/../.." && pwd)"
 # shellcheck source=scripts/gitlab/ensure-runner.sh
 . "$ici/ensure-runner.sh"
 
-LOG_DIR="${TMPDIR:-/tmp}/maestro-setup"
+# Même dossier que setup.sh, qui délègue ici — et sous la racine pour la même raison (#234) : le
+# chemin du log imprimé en cas d'échec est la seule piste, et une session autonome ne peut pas
+# ouvrir un chemin absolu hors de son répertoire de travail. `.maestro/` est gitignoré.
+LOG_DIR_REL=".maestro/setup"
+LOG_DIR="$RACINE/$LOG_DIR_REL"
 
 # --- Configuration (surchargeable par variables d'environnement) --------------------------------
 MAESTRO_RUNNER_IMAGE="${MAESTRO_RUNNER_IMAGE:-gitlab/gitlab-runner:latest}"  # image du runner
@@ -126,7 +130,7 @@ journalise() {
   if "$@" >"$log" 2>&1; then
     return 0
   fi
-  printf '    (détail : %s)\n' "$log" >&2
+  printf '    (détail : %s)\n' "$LOG_DIR_REL/$nom.log" >&2
   return 1
 }
 

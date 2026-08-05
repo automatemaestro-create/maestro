@@ -37,7 +37,14 @@
 set -uo pipefail
 
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="${TMPDIR:-/tmp}/maestro-setup"
+# Journaux SOUS LA RACINE (#234) : quand une étape longue échoue, le script imprime le chemin de son
+# log — c'est là qu'est la cause. Un chemin absolu hors du répertoire de travail la met hors de
+# portée d'une session autonome (docs/10 §11), qui n'a personne pour approuver sa lecture. Le cas
+# n'est pas théorique : `/ticket-start` appelle `setup.sh --only <étapes>` pour rattraper une dérive
+# de dépendances (#216), et c'est une session sans humain qui en lit l'échec. `.maestro/` est
+# gitignoré.
+LOG_DIR_REL=".maestro/setup"
+LOG_DIR="$RACINE/$LOG_DIR_REL"
 
 # --- Configuration (surchargeable par variables d'environnement) --------------------------------
 PYTHON_MIN="${MAESTRO_PYTHON_MIN:-3.11}"   # exigé par pyproject.toml (requires-python)
@@ -467,7 +474,7 @@ execute_journalise() {
   if "$@" >"$log" 2>&1; then
     return 0
   fi
-  printf '    (détail : %s)\n' "$log" >&2
+  printf '    (détail : %s)\n' "$LOG_DIR_REL/$nom.log" >&2
   return 1
 }
 
