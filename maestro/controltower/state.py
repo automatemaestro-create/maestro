@@ -44,6 +44,7 @@ from maestro.controltower.events import (
     ReferenceTicket,
 )
 from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
+from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
 from maestro.telemetry.costs import RunCost, TaskCost
 from maestro.telemetry.usage import StepUsage
@@ -209,6 +210,12 @@ class EtatValidation:
     réaliserait), l'agent qui l'exécuterait et la `raison` de la classification
     sensible. `statut` suit `VALIDATION_*` ; `decision` porte le détail humain
     de l'issue (« approuvée depuis la Control Tower »…) une fois tranchée.
+
+    `diff` (#227, EF-37) n'est renseigné que pour une demande d'**application
+    dans le projet** : les fichiers que l'accord écrirait et la branche qu'il
+    fusionnerait. C'est ce que l'UI affiche sous la question — « appliquer ces
+    modifications ? » sans les montrer ne serait pas une validation, mais une
+    signature à l'aveugle.
     """
 
     tache_id: str
@@ -219,6 +226,7 @@ class EtatValidation:
     raison: str = ""
     statut: str = VALIDATION_EN_ATTENTE
     decision: str = ""
+    diff: DiffProjet | None = None
     horodatage: str = ""
 
     @property
@@ -237,6 +245,7 @@ class EtatValidation:
             "raison": self.raison,
             "statut": self.statut,
             "decision": self.decision,
+            "diff": self.diff.to_dict() if self.diff is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -699,6 +708,7 @@ class ControlTowerState:
             agent=event.agent,
             role=event.role,
             raison=event.detail,
+            diff=event.diff,
             horodatage=event.horodatage,
         )
 

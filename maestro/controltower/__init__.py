@@ -16,7 +16,9 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   de journal devient un événement, côté orchestrateur comme côté workers ;
 - `maestro.controltower.validation` : le validateur human-in-the-loop (#48) —
   le moteur publie ses demandes d'approbation sur le bus et attend la décision
-  prise depuis l'UI ;
+  prise depuis l'UI ; depuis #227 il porte aussi l'**application du travail dans
+  le projet de l'utilisateur** (`appliquer_sous_validation`, EF-37), diff en
+  pièce jointe ;
 - `maestro.controltower.chat` : le chat utilisateur ↔ agent (#84) — fil
   persisté (`ChatStore`), réponse produite par le fournisseur configuré
   (`RepondeurModele`) ou scriptée (`RepondeurScripte`), flux d'un envoi
@@ -120,7 +122,11 @@ from maestro.controltower.state import (
     EtatTache,
     EtatValidation,
 )
-from maestro.controltower.validation import ValidateurControlTower, validateur_redis
+from maestro.controltower.validation import (
+    ValidateurControlTower,
+    appliquer_sous_validation,
+    validateur_redis,
+)
 
 __all__ = [
     "AGENT_ASSISTANCE",
@@ -188,6 +194,7 @@ __all__ = [
     "ValidateurControlTower",
     "activer_publication",
     "agrege_couts",
+    "appliquer_sous_validation",
     "create_app",
     "create_default_app",
     "evenements_depuis_step",

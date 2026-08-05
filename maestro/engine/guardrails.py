@@ -33,9 +33,12 @@ import inspect
 import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from maestro.orchestrator.schema import Task
+
+if TYPE_CHECKING:  # pragma: no cover - annotation seule (cf. `DemandeValidation.diff`)
+    from maestro.projets.application import DiffProjet
 
 #: Mots-clés (normalisés sans accents) classant une tâche comme sensible, d'après
 #: les fiches de rôles (docs/04 : déploiement, migration destructive, suppression).
@@ -62,6 +65,14 @@ class DemandeValidation:
     Porte tout ce qu'un humain doit voir pour trancher : la tâche (id, titre,
     description), l'agent qui l'exécuterait, et la `raison` pour laquelle elle a
     été classée sensible.
+
+    `diff` (#227, EF-37) est la **pièce jointe** d'une demande d'application dans
+    le projet de l'utilisateur : les fichiers touchés et leurs lignes
+    ajoutées/supprimées, ce sans quoi « appliquer ces modifications ? » n'est pas
+    une question qu'on peut trancher. None pour toutes les autres actions
+    sensibles, qui se décrivent en texte. L'annotation est différée (`TYPE_CHECKING`)
+    pour garder ce module de garde-fous indépendant des projets à l'exécution :
+    c'est `maestro.projets.application` qui dépend de lui, jamais l'inverse.
     """
 
     task_id: str
@@ -70,6 +81,7 @@ class DemandeValidation:
     agent: str
     role: str
     raison: str
+    diff: DiffProjet | None = None
 
 
 #: Validateur humain : reçoit la demande, répond vrai (approuvée) ou faux (refusée).

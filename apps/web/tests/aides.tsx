@@ -369,6 +369,7 @@ export function validationFactice(partiel: Partial<Validation> = {}): Validation
     raison: "Action irréversible",
     statut: "en_attente",
     decision: "",
+    diff: null,
     horodatage: "2026-07-28T10:00:00Z",
     ...partiel,
   };

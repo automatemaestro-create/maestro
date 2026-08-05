@@ -27,7 +27,9 @@ Endpoints :
   (`depuis` pour la période, `pas` pour la granularité des seaux) ;
 - `POST /api/taches/{tache_id}/reassigner` — réassignation manuelle (Kanban) ;
 - `GET  /api/validations` — les demandes de validation humaine (#48 : en
-  attente d'abord le contexte, puis l'issue une fois tranchée) ;
+  attente d'abord le contexte, puis l'issue une fois tranchée). Une demande
+  d'**application dans le projet** (#227, EF-37) y porte en plus son `diff` :
+  les fichiers que l'accord écrirait et la branche qu'il fusionnerait ;
 - `POST /api/validations/{tache_id}/decision` — la décision humaine
   (approuver/refuser) : le moteur, en attente sur le bus, reprend ou annule ;
 - `GET  /api/playbooks` — les playbooks des agents (#76 : version courante et

@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from maestro.appartenance import projet_id_valide
+from maestro.projets.application import DiffProjet
 from maestro.references import ReferenceTicket as ReferenceTicket  # ré-export explicite
 from maestro.telemetry.usage import StepUsage
 
@@ -116,7 +117,11 @@ class Event:
     comportement d'avant ce lot : un consommateur qui ignore la clé n'est pas
     cassé, et les vues qui filtrent par projet n'ont rien à voir. Il voyage sur
     les événements de tâche comme sur ceux du cycle de vie d'un run, et survit
-    donc au rejeu du journal durable (#97) comme le reste.
+    donc au rejeu du journal durable (#97) comme le reste. `diff` porte les
+    **modifications qu'une application dans le projet écrirait** (#227, EF-37) —
+    fichiers touchés, lignes ajoutées/supprimées, branche à fusionner : la pièce
+    jointe d'une demande de validation dont la question est « applique-t-on
+    ceci ? », et None partout ailleurs.
     """
 
     type: str
@@ -133,6 +138,7 @@ class Event:
     instances: int | None = None
     ticket: ReferenceTicket | None = None
     projet_id: str | None = None
+    diff: DiffProjet | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -152,6 +158,7 @@ class Event:
             "instances": self.instances,
             "ticket": self.ticket.to_dict() if self.ticket is not None else None,
             "projet_id": self.projet_id,
+            "diff": self.diff.to_dict() if self.diff is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -164,6 +171,7 @@ class Event:
         """
         usage_brut = data.get("usage")
         ticket_brut = data.get("ticket")
+        diff_brut = data.get("diff")
         return cls(
             type=data["type"],
             run_id=data.get("run_id", ""),
@@ -186,6 +194,7 @@ class Event:
             # l'extérieur (#222) : normalisé, et écarté s'il n'est pas un
             # identifiant de projet — il sert de nom de fichier au dépôt (#221).
             projet_id=projet_id_valide(data.get("projet_id")),
+            diff=DiffProjet.from_dict(diff_brut) if isinstance(diff_brut, Mapping) else None,
             horodatage=data.get("horodatage", ""),
         )
 

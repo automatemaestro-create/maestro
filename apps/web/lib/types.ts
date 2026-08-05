@@ -201,8 +201,44 @@ export type Validation = {
   raison: string;
   statut: string;
   decision: string;
+  diff: DiffProjet | null;
   horodatage: string;
 };
+
+/**
+ * Un fichier du diff d'application (#227, `Modification.to_dict`) : le chemin
+ * **relatif à la racine du projet**, ce qui lui arrive, et de combien de lignes.
+ * `ajouts`/`suppressions` valent 0 quand `binaire` est vrai — on sait alors que
+ * le fichier change, pas de combien.
+ */
+export type ModificationProjet = {
+  chemin: string;
+  nature: string;
+  ajouts: number;
+  suppressions: number;
+  binaire: boolean;
+};
+
+/**
+ * Ce qu'une application écrirait dans le projet de l'utilisateur (#227, EF-37,
+ * `DiffProjet.to_dict`) — la pièce jointe d'une demande de validation dont la
+ * question est « applique-t-on ceci ? ». `branche` et `base` ne sont renseignées
+ * que pour un projet **versionné** : l'accord y vaut fusion de `branche` vers
+ * `base`, là où un projet non versionné voit ses fichiers recopiés dans la racine.
+ */
+export type DiffProjet = {
+  modifications: ModificationProjet[];
+  branche: string;
+  base: string;
+  fichiers: number;
+  ajouts: number;
+  suppressions: number;
+};
+
+/** Les natures d'une `ModificationProjet` (miroir des `NATURE_*` du moteur). */
+export const NATURE_AJOUT = "ajoute";
+export const NATURE_MODIFICATION = "modifie";
+export const NATURE_SUPPRESSION = "supprime";
 
 /**
  * La fiche du playbook d'un agent (`GET /api/playbooks`, #76) : version
