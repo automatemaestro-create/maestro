@@ -90,13 +90,12 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      | `pytest` | `<venv-python> -m pytest -n auto` (ou `… -m pytest tests/test_<suite>.py` pour reproduire le seul test rouge de la trace) |
      | `mypy` | `<venv-python> -m mypy maestro` |
    - committe en **commit intermédiaire** — pied **`Refs #<iid>`**, pas `Closes` (la MR porte déjà
-     le `Closes`), hook `commit-msg` respecté, **jamais `--no-verify`** :
+     le `Closes`), hook `commit-msg` respecté, **jamais `--no-verify`**. Le message passe par un
+     **fichier** : écris-le avec l'outil `Write` dans ton scratchpad de session — jamais un
+     heredoc, jamais `-m "$(…)"`, la couche permissions découpant une commande sur ses sauts de
+     ligne et ne matchant aucune substitution (#233). Puis :
      ```
-     git commit -F - <<'EOF'
-     fix(<scope>): <description du correctif>
-
-     Refs #<iid>
-     EOF
+     git commit -F <fichier>
      ```
    - pousse (jamais de `--force`) : `git push origin <branche>`. Si le push reste bloqué sur une
      demande d'identifiants, relance avec

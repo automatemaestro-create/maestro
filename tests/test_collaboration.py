@@ -906,6 +906,65 @@ def test_aucune_commande_ne_pose_de_relecteur_automatiquement() -> None:
     )
 
 
+def invocations_des_commandes() -> list[tuple[str, int, str]]:
+    """Les lignes de `.claude/commands/*.md` qui sont des APPELS, pas de la prose.
+
+    Même heuristique que le test #196 ci-dessus, et pour la même raison : ces commandes ont le
+    droit — le devoir, même — de *nommer* une forme interdite pour dire de ne pas l'employer. Seule
+    une ligne qui commence par le verbe est une prescription.
+    """
+    lignes: list[tuple[str, int, str]] = []
+    for commande in sorted((RACINE / ".claude" / "commands").glob("*.md")):
+        for numero, ligne in enumerate(commande.read_text(encoding="utf-8").splitlines(), 1):
+            nue = ligne.strip()
+            if nue.startswith(("bash ", "git ", "glab ", "npm ")):
+                lignes.append((commande.name, numero, nue))
+    return lignes
+
+
+def test_aucune_commande_ne_prescrit_de_forme_immatchable() -> None:
+    """#233 : la couche permissions découpe un appel sur ses SAUTS DE LIGNE et ne matche aucune
+    SUBSTITUTION `$(…)`.
+
+    Une commande prescrite sous l'une de ces deux formes est refusée *alors même que* le verbe est
+    autorisé, et le refus tombe sans personne pour l'accorder : 10 fois sur 8 sessions autonomes,
+    toujours sur la **dernière action du ticket**, quand tout est commité et que rien ne le
+    déclare. La règle vit dans des **prompts**, pas dans du code — seule une lecture de ces
+    fichiers peut la garder.
+    """
+    fautives = [
+        f"{nom}:{numero}: {nue}"
+        for nom, numero, nue in invocations_des_commandes()
+        if "$(" in nue or "<<" in nue
+    ]
+    assert fautives == [], (
+        "forme immatchable réintroduite dans un prompt (#233) — passer par un fichier :\n"
+        + "\n".join(fautives)
+    )
+
+
+def test_le_cycle_de_cloture_appelle_les_helpers_de_creation() -> None:
+    """Le pendant POSITIF du test ci-dessus, et la leçon de !198 : livrer `create-mr` ne sert à
+    rien tant que rien ne l'appelle.
+
+    Cette MR-là avait ajouté les trois helpers à `lib.sh` — testés, fonctionnels — sans toucher aux
+    prompts, restés sur le `glab mr create` multi-ligne. Tout était vert : aucun test ne regardait
+    le **raccordement**. C'est ce trou-ci que ce test bouche.
+    """
+    appels = [
+        (nom, nue) for nom, _, nue in invocations_des_commandes() if "lib.sh create-mr" in nue
+    ]
+    assert [nom for nom, _ in appels] == ["ticket-finish.md"], (
+        "`/ticket-finish` doit être le seul à créer la MR, et il doit le faire par le helper "
+        f"(#233) — trouvé : {appels}"
+    )
+    assert not [
+        f"{nom}:{numero}: {nue}"
+        for nom, numero, nue in invocations_des_commandes()
+        if "mr create" in nue
+    ], "un `glab mr create` direct est réapparu : sa description est multi-ligne, donc refusée"
+
+
 def test_review_queue_rend_la_plus_ancienne_d_abord_avec_son_anciennete(depot: Depot) -> None:
     aujourdhui = date.today()
     depot.pose_etat(
