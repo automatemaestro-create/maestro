@@ -60,6 +60,7 @@ from maestro.sandbox.container import IsolationConfig
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
     from maestro.agents.permissions import PolitiqueOutils
+    from maestro.projets.modele import Projet
 from maestro.providers.registry import register
 from maestro.telemetry import StepUsage, report_usage
 
@@ -208,6 +209,7 @@ class ClaudeProvider(ModelProvider):
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
         plafond_tours: int = PLAFOND_TOURS_DEFAUT,
+        projet: Projet | None = None,
     ) -> str:
         """Lance une exécution *agentique outillée* de l'Agent SDK dans `workspace`.
 
@@ -247,6 +249,12 @@ class ClaudeProvider(ModelProvider):
         énumérés dans `maestro.sandbox.container`, doc : docs/17). Le chemin texte
         (`generate`) n'est jamais isolé : il n'expose aucun outil, c'est son contrat.
 
+        `projet` (#226) suit le même chemin : c'est le projet dont `workspace` est
+        l'espace dérivé (#224). Le mode isolé le passe au protocole, qui monte cet
+        espace — jamais la racine — et masque dans le conteneur ce que le
+        périmètre exclut. Hors mode isolé il n'a rien à faire : le `cwd` est déjà
+        le bon, et c'est le seul chemin que l'agent voit.
+
         `politique` (#110) arme le **refus au vol** : un hook PreToolUse — le
         seul point de contrôle consulté sous `bypassPermissions` — confronte
         chaque appel d'outil à la politique allow/deny de l'agent. Un appel
@@ -259,7 +267,7 @@ class ClaudeProvider(ModelProvider):
         cli_path: Path | None = None
         if self._isolation is not None:
             cli_path = self._isolation.shim
-            env |= self._isolation.env_sandbox(workspace)
+            env |= self._isolation.env_sandbox(workspace, projet=projet)
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,

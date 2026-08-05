@@ -28,6 +28,12 @@ Trois responsabilités, une par module :
 - `maestro.projets.store` — la persistance, un fichier JSON par projet sous
   `core/projets/` (ou `MAESTRO_PROJETS_DIR`), au patron des autres dépôts du POC.
 
+Deux modules s'y sont ajoutés avec le montage en mode isolé (#226), parce qu'ils
+répondent à des questions du **projet** et non de la sandbox : `perimetre`
+**applique** au disque les motifs que `modele` déclarait (quels chemins le
+périmètre retire), et `secrets` fait couvrir par la rédaction (#109) les valeurs
+lues dans le projet de l'utilisateur — pas seulement celles de Maestro.
+
 Ce que ce socle **ne fait pas** encore, et qui vient dans les lots suivants de la
 phase : le `projet_id` porté par la tâche et le run (#222), l'espace de travail
 dérivé — worktree Git ou copie (#224),
@@ -50,6 +56,7 @@ from maestro.projets.modele import (
     Vcs,
     nouvel_id,
 )
+from maestro.projets.perimetre import Exclu, exclusions, fichiers_exclus
 from maestro.projets.racine import (
     RacineRefusee,
     canonique,
@@ -58,6 +65,7 @@ from maestro.projets.racine import (
     valider_racine,
     verifier_zone_interdite,
 )
+from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.projets.store import ProjetStore
 
 __all__ = [
@@ -66,6 +74,7 @@ __all__ = [
     "INCLUS_DEFAUT",
     "ORIGINES",
     "PREFIXE_ID",
+    "Exclu",
     "Perimetre",
     "Projet",
     "ProjetStore",
@@ -74,6 +83,9 @@ __all__ = [
     "canonique",
     "chemin_dans_racine",
     "detecter_vcs",
+    "enregistre_secrets_du_projet",
+    "exclusions",
+    "fichiers_exclus",
     "nouvel_id",
     "valider_racine",
     "verifier_zone_interdite",

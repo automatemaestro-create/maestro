@@ -154,6 +154,7 @@ class Publieur(ModelProvider):
         politique=None,
         on_refus=None,
         plafond_tours=None,
+        projet=None,
     ):
         self.appels.append(
             {

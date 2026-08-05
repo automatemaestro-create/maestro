@@ -27,6 +27,7 @@ from maestro.agents.mcp import ServeurMcp, resolus
 from maestro.agents.permissions import PolitiqueOutils
 from maestro.config import Settings, load_settings
 from maestro.projets.modele import Projet
+from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
 from maestro.sandbox import ProducedFile, espace_de_travail
 
@@ -213,6 +214,12 @@ class AgentRuntime:
         sinon — et jamais sa racine elle-même (`maestro.sandbox.projet`). None
         (une tâche sans `projet_id`) : le répertoire temporaire vide d'avant.
         `tache_id` ne sert qu'à nommer cette branche et ce répertoire.
+
+        Deux autres choses en dépendent (#226), inertes elles aussi sans lui :
+        les **secrets du projet** sont enregistrés auprès de la rédaction (#109)
+        avant que l'agent ne démarre, et le projet est passé au fournisseur, qui
+        en a besoin pour **monter** cet espace en mode isolé sans jamais monter
+        la racine (`maestro.sandbox.container`).
         """
         description = description.strip()
         if not description:
@@ -227,6 +234,13 @@ class AgentRuntime:
         # Résolution avant d'ouvrir l'espace : une déclaration non montable
         # échoue proprement sans créer (ni nettoyer) de répertoire de travail.
         montables = resolus(mcp_serveurs, os.environ if environ is None else environ)
+        # Avant d'ouvrir l'espace, jamais après (#226) : les valeurs des gisements
+        # de secrets du projet sont enregistrées auprès de la rédaction (#109),
+        # faute de quoi le `.env` d'un projet tiers — que ni les variables de
+        # Maestro ni les motifs de clés connus n'attrapent — ressortirait en clair
+        # dans un résumé d'agent ou une trace.
+        if projet is not None:
+            enregistre_secrets_du_projet(projet)
         with espace_de_travail(
             projet,
             tache_id=tache_id,
@@ -243,6 +257,7 @@ class AgentRuntime:
                 politique=politique,
                 on_refus=on_refus,
                 plafond_tours=self._plafond_tours,
+                projet=projet,
             )
             # Capture *dans* le contexte : hors `keep`, l'espace disparaît à la sortie.
             fichiers = ws.produced_files()
