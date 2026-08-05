@@ -72,6 +72,7 @@ from maestro.engine.loop import _consigne_blocage
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task, validate_task
+from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal, collect_usage
 
@@ -146,7 +147,7 @@ def _executeur() -> LocalExecutor:
 
     Câblé comme celui de la boucle locale et des workers de file (#41) : catalogue
     effectif (#72), runtimes outillés, playbooks (#78), capacité (#86), MCP (#104),
-    secrets (#109) et permissions (#110) relus **à chaud** dans les dépôts de la
+    secrets (#109), permissions (#110) et projets (#224) relus **à chaud** dans les dépôts de la
     config à chaque tâche — une édition publiée depuis la Control Tower vaut pour
     le message suivant, sans redémarrer le worker. Les garde-fous (#9) et la
     relance (#91) sont ceux posés par `configurer_worker`.
@@ -165,6 +166,7 @@ def _executeur() -> LocalExecutor:
             mcp=McpStore.default(settings),
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
+            projets=ProjetStore.default(settings),
             relance=_relance,
         )
     return _executor

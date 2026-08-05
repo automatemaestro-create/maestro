@@ -87,6 +87,7 @@ from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task, topological_order
+from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
 from maestro.telemetry import (
@@ -282,6 +283,7 @@ class OrchestrationEngine:
         secrets: SecretStore | None = None,
         permissions: PermissionStore | None = None,
         relance: PolitiqueRelance | None = None,
+        projets: ProjetStore | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -299,10 +301,11 @@ class OrchestrationEngine:
         self._mailbox = mailbox
         # Frontière d'exécution (#41) : en process par défaut ; un exécuteur injecté
         # (ex. `maestro.queue.CeleryExecutor`) distribue les tâches à des workers.
-        # `playbooks` (#78), `capacites` (#86) et `mcp` (#104) : les dépôts que
-        # l'exécuteur local relit à chaque tâche — l'application à chaud ; ignorés
-        # si un exécuteur est injecté (en distribué, chaque worker câble les siens —
-        # `relance` (#91) comprise, cf. maestro.queue.worker.configurer_worker).
+        # `playbooks` (#78), `capacites` (#86), `mcp` (#104) et `projets` (#224) :
+        # les dépôts que l'exécuteur local relit à chaque tâche — l'application à
+        # chaud ; ignorés si un exécuteur est injecté (en distribué, chaque worker
+        # câble les siens — `relance` (#91) comprise, cf.
+        # maestro.queue.worker.configurer_worker).
         self._executor = (
             executor
             if executor is not None
@@ -317,6 +320,7 @@ class OrchestrationEngine:
                 secrets=secrets,
                 permissions=permissions,
                 relance=relance,
+                projets=projets,
             )
         )
 
@@ -403,6 +407,7 @@ class OrchestrationEngine:
             mcp=McpStore.default(settings),
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
+            projets=ProjetStore.default(settings),
             relance=relance,
             max_parallele=max_parallele,
         )

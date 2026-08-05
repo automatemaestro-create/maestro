@@ -26,8 +26,9 @@ from typing import Any
 from maestro.agents.mcp import ServeurMcp, resolus
 from maestro.agents.permissions import PolitiqueOutils
 from maestro.config import Settings, load_settings
+from maestro.projets.modele import Projet
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
-from maestro.sandbox import ProducedFile, isolated_workspace
+from maestro.sandbox import ProducedFile, espace_de_travail
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
 #: explorer, shell. Volontairement restreint (docs/02 §7 : permissions scopées) —
@@ -169,10 +170,13 @@ class AgentRuntime:
         environ: Mapping[str, str] | None = None,
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
+        projet: Projet | None = None,
+        tache_id: str = "",
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
-        Ouvre un espace de travail isolé, y lance l'exécution agentique du fournisseur,
+        Ouvre l'espace de travail de la tâche (jetable, ou dérivé de `projet` —
+        cf. plus bas), y lance l'exécution agentique du fournisseur,
         puis **capture les fichiers produits** avant que l'espace ne soit nettoyé (sauf
         `keep_workspace=True`). Lève `ValueError` si la description est vide ; propage
         `UnsupportedCapability` si le fournisseur n'exécute pas d'agent outillé.
@@ -202,6 +206,13 @@ class AgentRuntime:
         chaque refus est signalé via `on_refus(outil, raison)`, le canal de
         traçage de l'appelant. None : aucune politique (comportement
         historique).
+
+        `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
+        l'espace de travail en est alors dérivé — worktree Git sur la branche
+        `maestro/<tache_id>` si le projet est versionné, copie de son périmètre
+        sinon — et jamais sa racine elle-même (`maestro.sandbox.projet`). None
+        (une tâche sans `projet_id`) : le répertoire temporaire vide d'avant.
+        `tache_id` ne sert qu'à nommer cette branche et ce répertoire.
         """
         description = description.strip()
         if not description:
@@ -216,7 +227,12 @@ class AgentRuntime:
         # Résolution avant d'ouvrir l'espace : une déclaration non montable
         # échoue proprement sans créer (ni nettoyer) de répertoire de travail.
         montables = resolus(mcp_serveurs, os.environ if environ is None else environ)
-        with isolated_workspace(prefix=self._profile.workspace_prefix, keep=keep_workspace) as ws:
+        with espace_de_travail(
+            projet,
+            tache_id=tache_id,
+            prefix=self._profile.workspace_prefix,
+            keep=keep_workspace,
+        ) as ws:
             resume = await self._provider.run_agent(
                 prompt,
                 model=self._model,
