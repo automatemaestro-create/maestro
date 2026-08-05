@@ -20,9 +20,12 @@ import type {
   CoutExecution,
   CoutTache,
   CoutTacheAgregee,
+  DossierExplorateur,
   EtatAgent,
   Evenement,
   MessageChat,
+  PageExplorateur,
+  Projet,
   Tache,
   Usage,
   Validation,
@@ -367,6 +370,51 @@ export function validationFactice(partiel: Partial<Validation> = {}): Validation
     statut: "en_attente",
     decision: "",
     horodatage: "2026-07-28T10:00:00Z",
+    ...partiel,
+  };
+}
+
+/** Un projet déclaré (#225) — versionné par défaut, c'est le cas courant. */
+export function projetFactice(partiel: Partial<Projet> = {}): Projet {
+  return {
+    id: "prj-7f3a1c2b",
+    nom: "Dépensio",
+    racine: "D:/projets/depensio",
+    origine: "existant",
+    vcs: { type: "git", branche_base: "main", distant: null },
+    perimetre: {
+      inclus: ["."],
+      exclus: [".git", "node_modules", ".env", "**/secrets/**"],
+    },
+    cree_le: "2026-08-05T09:00:00+00:00",
+    modifie_le: "2026-08-05T09:00:00+00:00",
+    ...partiel,
+  };
+}
+
+/** Un dossier rendu par l'explorateur (#225). */
+export function dossierFactice(
+  partiel: Partial<DossierExplorateur> = {},
+): DossierExplorateur {
+  return {
+    nom: "depensio",
+    chemin: "D:/projets/depensio",
+    depot_git: false,
+    projet_id: null,
+    ...partiel,
+  };
+}
+
+/** Une page de l'explorateur (#225) — le point d'entrée par défaut. */
+export function pageExplorateurFactice(
+  partiel: Partial<PageExplorateur> = {},
+): PageExplorateur {
+  return {
+    chemin: null,
+    parent: null,
+    racines: ["D:/projets"],
+    dossiers: [dossierFactice({ nom: "projets", chemin: "D:/projets" })],
+    tronque: false,
     ...partiel,
   };
 }

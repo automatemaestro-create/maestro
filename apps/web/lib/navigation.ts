@@ -11,6 +11,7 @@ import {
   IconeChat,
   IconeCouts,
   IconeParametres,
+  IconeProjets,
   IconeTableauDeBord,
   IconeValidations,
 } from "@/components/Icones";
@@ -31,9 +32,16 @@ export type EntreeMenu = {
  *
  * « Chat » subsiste et vise le chat **global**, non lié à un agent : c'est une
  * intention distincte, portée par le chantier « Chat » de la Phase 6.
+ *
+ * « Projets » (#225) vient juste après l'accueil parce qu'il porte le **cadre**
+ * de tout le reste : un agent, un coût, une validation appartiennent à un
+ * projet (Phase 7). Il précède donc les écrans qui s'y rapportent, plutôt que
+ * de se ranger parmi les réglages — déclarer où Maestro travaille n'est pas un
+ * paramètre du poste.
  */
 export const MENU: EntreeMenu[] = [
   { href: "/", libelle: "Tableau de bord", Icone: IconeTableauDeBord },
+  { href: "/projets", libelle: "Projets", Icone: IconeProjets },
   { href: "/agents", libelle: "Agents", Icone: IconeAgents },
   { href: "/chat", libelle: "Chat", Icone: IconeChat },
   { href: "/couts", libelle: "Coûts & analytics", Icone: IconeCouts },

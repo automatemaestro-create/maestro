@@ -27,6 +27,7 @@ describe("le menu (lib/navigation)", () => {
     // subsiste pour le chat global, qui est une autre intention.
     expect(MENU.map((entree) => entree.libelle)).toEqual([
       "Tableau de bord",
+      "Projets",
       "Agents",
       "Chat",
       "Coûts & analytics",

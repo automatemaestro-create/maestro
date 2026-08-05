@@ -11,17 +11,21 @@ import type {
   AgentCatalogueDetail,
   AnalyticsCouts,
   CoutExecution,
+  DeclarationProjet,
   DefinitionAgent,
   EntreeRegistreMcp,
   EtatAgent,
   FilChat,
   IntegrationPoolMcp,
+  PageExplorateur,
   PasSerie,
   PlaybookDetail,
   PlaybookFiche,
   PoolMcp,
+  Projet,
   PropositionPlaybook,
   PropositionPlaybookDetail,
+  RefusProjet,
   Sante,
   Tache,
   Validation,
@@ -453,4 +457,141 @@ export function definirActivationsMcp(
     "activation refusée",
     "PUT",
   );
+}
+
+// --- Projets de l'utilisateur (#225, API #223) ----------------------------
+//
+// Ces six routes n'empruntent pas les enveloppes ci-dessus parce qu'elles ne
+// refusent pas de la même façon : leur `detail` est un **objet**
+// `{motif, message}` et non une phrase (docs/05 §6.7). Le `motif` est un code
+// stable — c'est lui qui permet à l'écran de dire *pourquoi* une racine est
+// refusée (EF-38) sans analyser du texte, et de distinguer « je refuse de
+// regarder là » d'un dossier réellement vide. L'aplatir en `string` le
+// perdrait ; on le porte donc jusqu'au composant.
+
+/**
+ * Un refus motivé d'une route projets. `motif` est le code stable du backend
+ * (`chemin-sensible`, `hors-racines-explorables`, `dossier-absent`…), `message`
+ * la phrase à montrer. Un refus sans corps exploitable retombe sur
+ * `requete-invalide`, jamais sur une exception muette.
+ */
+export class ErreurProjet extends Error {
+  readonly motif: string;
+
+  constructor(motif: string, message: string) {
+    super(message);
+    this.name = "ErreurProjet";
+    this.motif = motif;
+  }
+}
+
+/** Le refus porté par une réponse en échec — motif compris quand il y en a un. */
+async function refusProjet(
+  reponse: Response,
+  refusParDefaut: string,
+): Promise<ErreurProjet> {
+  let motif = "requete-invalide";
+  let message = `${refusParDefaut} (${reponse.status})`;
+  try {
+    const contenu = (await reponse.json()) as { detail?: unknown };
+    const detail = contenu.detail;
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (detail !== null && typeof detail === "object") {
+      const refus = detail as Partial<RefusProjet>;
+      if (typeof refus.motif === "string") motif = refus.motif;
+      if (typeof refus.message === "string") message = refus.message;
+    }
+  } catch {
+    // corps non JSON : on garde le motif et le message génériques
+  }
+  return new ErreurProjet(motif, message);
+}
+
+/** Lecture d'une route projets, dont l'échec porte son motif. */
+async function lireProjets<T>(
+  chemin: string,
+  refusParDefaut: string,
+): Promise<T> {
+  const reponse = await fetch(`${API_URL}${chemin}`, { cache: "no-store" });
+  if (!reponse.ok) throw await refusProjet(reponse, refusParDefaut);
+  return (await reponse.json()) as T;
+}
+
+/** Écriture d'une route projets (corps optionnel : un DELETE n'en porte pas). */
+async function ecrireProjet<T>(
+  chemin: string,
+  corps: unknown,
+  refusParDefaut: string,
+  methode: "POST" | "PUT" | "DELETE" = "POST",
+): Promise<T> {
+  const reponse = await fetch(`${API_URL}${chemin}`, {
+    method: methode,
+    ...(corps !== undefined && {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corps),
+    }),
+  });
+  if (!reponse.ok) throw await refusProjet(reponse, refusParDefaut);
+  return (await reponse.json()) as T;
+}
+
+/** Les projets déclarés (`GET /api/projets`), dans l'ordre des identifiants. */
+export function chargerProjets(): Promise<Projet[]> {
+  return lireProjets<Projet[]>("/api/projets", "projets illisibles");
+}
+
+/**
+ * Une page de l'explorateur de dossiers (`GET /api/projets/explorateur`) :
+ * `chemin` `null` demande le point d'entrée, c'est-à-dire les racines
+ * explorables elles-mêmes. C'est le backend — qui tourne sur le poste — qui
+ * énumère : le navigateur ne fabrique jamais de chemin absolu.
+ */
+export function chargerExplorateur(
+  chemin: string | null = null,
+): Promise<PageExplorateur> {
+  const requete =
+    chemin === null ? "" : `?chemin=${encodeURIComponent(chemin)}`;
+  return lireProjets<PageExplorateur>(
+    `/api/projets/explorateur${requete}`,
+    "dossier illisible",
+  );
+}
+
+/**
+ * Déclare un projet (`POST /api/projets`) : la racine est **validée** côté
+ * serveur (EF-38) et le VCS constaté sur le disque — d'où la relecture du
+ * projet créé plutôt qu'une recopie de ce qui a été envoyé.
+ */
+export function creerProjet(declaration: DeclarationProjet): Promise<Projet> {
+  return ecrireProjet<Projet>("/api/projets", declaration, "projet refusé");
+}
+
+/**
+ * Remplace la déclaration d'un projet (`PUT /api/projets/{id}`) : l'intégrale,
+ * pas un diff — un champ omis retombe sur son défaut.
+ */
+export function modifierProjet(
+  id: string,
+  declaration: DeclarationProjet,
+): Promise<Projet> {
+  return ecrireProjet<Projet>(
+    `/api/projets/${encodeURIComponent(id)}`,
+    declaration,
+    "modification refusée",
+    "PUT",
+  );
+}
+
+/**
+ * Oublie un projet (`DELETE /api/projets/{id}`). Ne touche **jamais** au
+ * dossier sur le disque : oublier un projet n'est pas supprimer le travail.
+ */
+export function supprimerProjet(id: string): Promise<void> {
+  return ecrireProjet<{ id: string; supprime: boolean }>(
+    `/api/projets/${encodeURIComponent(id)}`,
+    undefined,
+    "suppression refusée",
+    "DELETE",
+  ).then(() => undefined);
 }
