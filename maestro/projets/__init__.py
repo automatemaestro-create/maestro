@@ -1,0 +1,77 @@
+"""Projets de l'utilisateur : l'entité, sa racine validée et sa persistance (#221).
+
+Le socle de la **Phase 7** (parent #219,
+[docs/24 §2](../../docs/24-projets-locaux-et-poste-de-travail.md)) :
+jusqu'ici Maestro produisait des livrables sans jamais travailler *dans* un
+projet — l'espace de travail d'une tâche était un `tempfile.mkdtemp()` créé vide
+et détruit en fin d'exécution (`maestro.sandbox.workspace`), et le dernier mètre
+(poser le travail chez l'utilisateur) était recopié à la main. Ce module pose la
+première pierre : **un projet a une racine sur le disque**, déclarée et validée.
+
+    from maestro.projets import ProjetStore
+
+    store = ProjetStore.default()
+    projet = store.creer("Dépensio", "D:/projets/depensio")
+    projet.vcs          # Vcs(type='git', branche_base='main', distant='git@…') ou None
+    projet.perimetre    # exclut d'office .git, node_modules, .env, **/secrets/**
+
+Trois responsabilités, une par module :
+
+- `maestro.projets.modele` — l'entité `Projet` (`Vcs`, `Perimetre`) et sa
+  sérialisation. Inerte : elle ne touche pas au disque (EF-35) ;
+- `maestro.projets.racine` — la **frontière** : `valider_racine` canonicalise et
+  refuse **avec un motif** (racine de disque, dossier utilisateur, `.ssh`,
+  `AppData`, dépôt Maestro…), `chemin_dans_racine` interdit d'écrire au-dessus
+  de la racine déclarée, `detecter_vcs` constate Git sans jamais l'imposer
+  (EF-38) ;
+- `maestro.projets.store` — la persistance, un fichier JSON par projet sous
+  `core/projets/` (ou `MAESTRO_PROJETS_DIR`), au patron des autres dépôts du POC.
+
+Ce que ce socle **ne fait pas** encore, et qui vient dans les lots suivants de la
+phase : le `projet_id` porté par la tâche et le run (#222), l'API et l'explorateur
+de dossiers (#223), l'espace de travail dérivé — worktree Git ou copie (#224),
+l'écran Projets (#225), le montage en mode isolé (#226) et l'application des
+livrables sous validation humaine (#227). Les agents ne travaillent **jamais**
+directement dans la racine (EF-36) : rien ici n'ouvre cette porte, on ne fait que
+déclarer où le projet se trouve.
+"""
+
+from __future__ import annotations
+
+from maestro.projets.modele import (
+    EXCLUS_DEFAUT,
+    ID_PROJET,
+    INCLUS_DEFAUT,
+    ORIGINES,
+    PREFIXE_ID,
+    Perimetre,
+    Projet,
+    Vcs,
+    nouvel_id,
+)
+from maestro.projets.racine import (
+    RacineRefusee,
+    canonique,
+    chemin_dans_racine,
+    detecter_vcs,
+    valider_racine,
+)
+from maestro.projets.store import ProjetStore
+
+__all__ = [
+    "EXCLUS_DEFAUT",
+    "ID_PROJET",
+    "INCLUS_DEFAUT",
+    "ORIGINES",
+    "PREFIXE_ID",
+    "Perimetre",
+    "Projet",
+    "ProjetStore",
+    "RacineRefusee",
+    "Vcs",
+    "canonique",
+    "chemin_dans_racine",
+    "detecter_vcs",
+    "nouvel_id",
+    "valider_racine",
+]

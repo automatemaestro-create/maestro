@@ -1,0 +1,5 @@
+# Les projets déclarés depuis la Control Tower (#221) sont des données
+# d'exécution — et des chemins du poste de leur propriétaire : on ne les
+# commite pas.
+*.json
+*.tmp
