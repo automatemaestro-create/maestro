@@ -123,13 +123,18 @@ Les humains qui utilisent la plateforme. `role` : `owner`, `admin`, `viewer`.
 ### PROJECT
 Un projet de travail (souvent rattaché à un dépôt de code). Regroupe des tâches et la configuration des agents qui y interviennent.
 
-> **Non implémentée à ce jour** — et c'est le trou que cadre [docs/24 §2.3](./24-projets-locaux-et-poste-de-travail.md).
-> L'entité gagne les champs qui la relient au disque : `racine` (chemin absolu — la
-> **frontière unique** de ce que les agents peuvent lire et écrire), `origine`
-> (`nouveau`/`existant`), `vcs` (`type`, `branche_base`, `distant` — `null` si non versionné) et
+> **Socle implémenté** (#221, `maestro.projets` — dépôt `core/projets/`, un fichier `<id>.json`
+> par projet) : l'entité porte les champs qui la relient au disque, cadrés par
+> [docs/24 §2.3](./24-projets-locaux-et-poste-de-travail.md) — `racine` (chemin absolu — la
+> **frontière unique** de ce que les agents peuvent lire et écrire, **canonicalisée** et refusée
+> avec son motif si elle tombe sur une racine interdite, EF-38), `origine`
+> (`nouveau`/`existant`), `vcs` (`type`, `branche_base`, `distant` — **détecté** à la
+> déclaration, `null` si non versionné : un projet non versionné reste déclarable) et
 > `perimetre` (`inclus`/`exclus`, ce dernier portant par défaut `.git`, `node_modules`, `.env`,
-> `**/secrets/**`). `TASK` et `RUN` porteront alors un `projet_id` : c'est ce qui rend le
-> Kanban, les coûts et le journal filtrables par projet. *(Retenu — décisions D1/D2 de
+> `**/secrets/**`). Restent à venir dans la phase : le `projet_id` porté par `TASK` et `RUN`
+> (#222 — c'est ce qui rendra le Kanban, les coûts et le journal filtrables par projet), l'API
+> (#223), l'espace de travail dérivé (#224) et l'application des livrables (#227).
+> *(Retenu — décisions D1/D2 de
 > [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md), rendues le 2026-08-04 ; **Phase 7**.)*
 
 ### SOURCE *(retenue — [docs/24 §3.2](./24-projets-locaux-et-poste-de-travail.md), **Phase 8**)*

@@ -77,6 +77,11 @@ class Settings:
     #: (`MAESTRO_PERMISSIONS_DIR`), ou None : le dossier `core/permissions/` du
     #: dépôt (cf. maestro.agents.permissions, #110 — allow/deny par outil).
     permissions_dir: str | None = None
+    #: Racine du dépôt des projets déclarés (`MAESTRO_PROJETS_DIR`), ou None :
+    #: le dossier `core/projets/` du dépôt (cf. maestro.projets.store, #221 —
+    #: un fichier <id>.json par projet : racine sur le disque, origine, vcs,
+    #: périmètre). Ce sont les projets de l'utilisateur, jamais versionnés.
+    projets_dir: str | None = None
     #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None :
     #: exécution directe sur l'hôte (défaut). Seule valeur reconnue : `conteneur`.
     #: Interprété et validé par la couche sandbox (maestro.sandbox.container, #108).
@@ -127,6 +132,7 @@ class Settings:
             secrets_dir=(os.getenv("MAESTRO_SECRETS_DIR") or "").strip() or None,
             secrets_key=(os.getenv("MAESTRO_SECRETS_KEY") or "").strip() or None,
             permissions_dir=(os.getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,
+            projets_dir=(os.getenv("MAESTRO_PROJETS_DIR") or "").strip() or None,
             isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
             isolation_image=(os.getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
             isolation_reseau=(os.getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()
