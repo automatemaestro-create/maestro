@@ -1563,17 +1563,57 @@ fermé de cinq valeurs — `low`, `medium`, `high`, `xhigh`, `max` — contraire
 qui est une chaîne ouverte, une faute de frappe se détecte : sans ce contrôle, le CLI refuserait la
 valeur à **chaque** session et le run brûlerait son plan en échecs jumeaux.
 
-**La console dit ce que la session fabrique (#176).** En `--output-format json`, le CLI n'écrit
-qu'à la fin : entre la ligne `[n/N] #<iid> — …` et le verdict, la console restait muette jusqu'à
-45 minutes, et rien ne distinguait « ça travaille » de « c'est planté ». La session tourne donc en
-**`--output-format stream-json --verbose`** — un objet JSON par ligne, au fil de l'eau — dont
-`run.sh` tire **une ligne compacte par action** :
+**La console dit ce que la session fabrique (#176) — et depuis #240, où en est le plan.** En
+`--output-format json`, le CLI n'écrit qu'à la fin : entre la ligne `[n/N] #<iid> — …` et le verdict,
+la console restait muette jusqu'à 45 minutes, et rien ne distinguait « ça travaille » de « c'est
+planté ». La session tourne donc en **`--output-format stream-json --verbose`** — un objet JSON par
+ligne, au fil de l'eau. #176 en tirait **une ligne par appel d'outil** (`· Read …`, `· Edit …`,
+`· Bash …`). Ce flot a rempli son office, mais il a remplacé « on ne sait rien » par « on ne voit
+rien » : plusieurs lignes par minute pendant 45 min et par ticket, un nom d'outil sans son résultat
+n'apprend rien, et **l'information qu'on cherche vraiment avait disparu de l'écran** — où en est le
+plan, quel ticket tourne, depuis combien de temps. Elle existait pourtant, mais **ailleurs** : dans
+`status.sh`, c'est-à-dire dans un autre terminal que le seul qu'on regarde.
+
+**Ce que la console rend, c'est donc la checklist du plan**, mise à jour au fil du run :
 
 ```
-  · Read docs/21-configuration-mcp.md
-  · Edit core/models/mcp.py
-  · Bash pytest -q
+  ✓  1. #237      4 min    1.20 $ MR !312  Compteur [n/N] faux en reprise de run
+  /  2. #240     12 min                    Console d'un run : une checklist vivante
+       · Edit scripts/orchestrate/run.sh
+     3. #241                               Écran Projets dans la Control Tower
+  run 16 min · ✓ 1 · ✗ 0 · ~ 0 · reste 1
 ```
+
+Le ticket courant porte un **rouet** et un **chrono**, plus **une seule** ligne d'action — le dernier
+outil appelé, réécrit sur place. Les tickets déjà jugés portent leur marque (`✓` livré, `✗` échec,
+`~` sauté), leur MR, leur durée et leur coût, lus dans `resume.tsv` ; le pied donne le cumul du run.
+L'attente d'une limite d'usage (§11.4) est un état comme un autre : le bloc reste à l'écran, marqué
+`=` et décompté jusqu'à l'heure de reprise, au lieu de paraître figé pendant des heures. Le flot
+d'outils de #176 reste disponible pour le diagnostic — **`--verbeux`**, ou
+`MAESTRO_ORCHESTRATE_VERBEUX=1` — et **désactive alors la vue** : les deux se disputeraient l'écran,
+et c'est justement quand on lit chaque ligne qu'on ne veut rien qui bouge.
+
+Trois points à connaître avant d'y toucher :
+
+- **la sortie d'un run n'est pas un terminal.** Le lanceur de `--detach` fait `… 2>&1 | tee -a
+  run.log` : stdout est un **tube** — c'est déjà toute la raison d'être de
+  `MAESTRO_ORCHESTRATE_COULEUR`. Y redessiner déverserait une frame par rafraîchissement dans
+  `run.log`, que le `sed` final ne nettoierait même pas (il ne retire que les séquences de couleur,
+  pas les déplacements de curseur). D'où **deux sorties** : stdout garde la trace permanente
+  (en-tête de ticket, **battement** d'une ligne par minute, verdicts), et les frames partent sur un
+  **descripteur dédié**, que le lanceur ouvre avant le tube (`exec 4>&1`, passé par
+  `MAESTRO_ORCHESTRATE_CONSOLE_FD`). Sans console — détachement Unix, CI, tests — aucune frame n'est
+  émise : la vue **retombe en plein texte**, une impression par ticket, sans animation ;
+- **le chrono demande une horloge, pas un événement.** La boucle est bloquée sur la lecture du flux :
+  rien n'y ferait avancer un compteur. C'est `read -t` qui bat la mesure — un tour toutes les 0,2 s,
+  qu'une ligne soit arrivée ou non —, ce qui évite tout processus d'affichage séparé (§11.9 n'a donc
+  rien de plus à tuer). Corollaire à ne pas défaire : sur expiration, `read` **affecte quand même**
+  ce qu'il a déjà lu de la ligne en cours, d'où le tampon qui la recolle — sans lui, un objet JSON
+  coupé par une expiration s'écrirait en **deux lignes** dans `<iid>.jsonl`, le fichier dont
+  dépendent le coût, le verdict et la détection de limite d'usage ;
+- **aucun appel réseau dans la boucle de redessin.** La vue ne lit que `plan.tsv` et `resume.tsv`,
+  déjà écrits — c'est ce qui la distingue de `status.sh`, qui interroge GitLab et reste la vue
+  « depuis un autre terminal » (§11.5).
 
 **Deux fichiers, et c'est ce partage qui rend le mode sûr** : le flux brut va dans `<iid>.jsonl`, et
 `<iid>.json` ne reçoit **que l'objet `result` final**. Le coût, le verdict et la détection de limite
@@ -1711,8 +1751,9 @@ limite**.
 
 ### 11.5 Savoir où en est un run — `status.sh`
 
-La console d'un run répond très bien à « où ça en est ? » — depuis #176 elle égrène même chaque
-action — mais seulement tant qu'on l'a sous les yeux. Fenêtre fermée, autre poste, run lancé la
+La console d'un run répond très bien à « où ça en est ? » — depuis #240 elle y répond même très
+directement, en tenant la checklist du plan à jour — mais seulement tant qu'on l'a sous les yeux.
+Fenêtre fermée, autre poste, run lancé la
 veille : il ne restait que le répertoire du run, et la seule façon de trancher entre « ça travaille »
 et « c'est planté » était d'aller regarder à la main les *mtimes* d'un worktree.
 `scripts/orchestrate/status.sh` (#177) fait cette lecture une fois pour toutes :
