@@ -1,4 +1,10 @@
-"""Garde-fous communs à toute la suite pytest (ticket #195).
+"""Garde-fous communs à toute la suite pytest (tickets #195 et #236).
+
+**Le verdict de la suite ne dépend pas du poste qui la joue** : ce qui traîne
+dans l'environnement — clés d'un `.env` renseigné, variables du bloc `env` d'un
+`.claude/settings.local.json` — est neutralisé ici, une fois pour toute la
+suite. Sans quoi le même code rend deux verdicts selon la machine, et c'est en
+local que ça se voit (la CI, elle, part d'un environnement nu).
 
 **Aucun test n'a besoin d'un backend** : la suite ne doit ni publier vers
 Langfuse, ni ouvrir de connexion vers `LANGFUSE_HOST`, quel que soit le `.env`
@@ -23,6 +29,16 @@ Deux garde-fous, ici parce qu'ils valent pour la suite entière :
 Les tests qui exercent réellement l'export (`tests/test_langfuse.py`) ne
 dépendent pas de l'environnement : ils passent un `Settings` explicite pointant
 un serveur d'ingestion factice, en local.
+
+Troisième garde-fou, même motif (#236) : **`MAESTRO_ORCHESTRATE_COULEUR` est
+neutralisée**. Elle force les couleurs de `scripts/orchestrate/run.sh` hors
+console (`[ -t 1 ] || [ "$MAESTRO_ORCHESTRATE_COULEUR" = 1 ]`) et se pose dans
+le bloc `env` d'un `.claude/settings.local.json`, d'où elle fuit dans
+l'environnement de toute session lancée depuis ce poste : la sortie capturée par
+un test arrive alors truffée de codes ANSI et
+`test_sans_le_marqueur_la_sortie_reste_sans_couleur` échoue **en local
+seulement**. Quatre sessions ont rouvert la même enquête pour cette fausse
+alerte ; c'est le dépôt, pas chaque run, qui doit la tarir.
 """
 
 import logging
@@ -38,6 +54,9 @@ _CLES_LANGFUSE = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
 #: chose le fait, il échoue immédiatement en local au lieu de sortir sur Internet.
 HOTE_LANGFUSE_NEUTRE = "http://127.0.0.1:9"
 
+#: La variable qui force les couleurs de `scripts/orchestrate/run.sh` hors console (#236).
+CLE_COULEUR_ORCHESTRATE = "MAESTRO_ORCHESTRATE_COULEUR"
+
 
 def _neutralise_langfuse() -> None:
     """Vide les clés Langfuse de l'environnement du processus de test.
@@ -52,10 +71,30 @@ def _neutralise_langfuse() -> None:
     os.environ["LANGFUSE_HOST"] = HOTE_LANGFUSE_NEUTRE
 
 
-# Posé à l'import du conftest, donc avant l'import du premier module de test :
+def _neutralise_couleur_orchestrate() -> None:
+    """Vide `MAESTRO_ORCHESTRATE_COULEUR` de l'environnement du processus de test.
+
+    `scripts/orchestrate/run.sh` colore sa sortie dès que la variable vaut `1`,
+    même quand `stdout` n'est pas un terminal — c'est ce qui permet à `--detach`
+    de garder ses couleurs dans la console qu'il ouvre (#176). Posée dans le bloc
+    `env` d'un `.claude/settings.local.json`, elle fuit dans l'environnement de
+    toutes les sessions de ce poste, donc dans les sous-processus lancés par
+    `tests/test_orchestrate.py`, dont la sortie ressort colorée : le contre-test
+    `test_sans_le_marqueur_la_sortie_reste_sans_couleur` échoue sur ce poste et
+    nulle part ailleurs (#236).
+
+    Mise à **vide** plutôt que supprimée, comme les clés Langfuse : `run.sh` lit
+    `${MAESTRO_ORCHESTRATE_COULEUR:-0}`, pour qui vide et absente valent 0, et une
+    valeur vide traverse sans surprise les `env={**os.environ, …}` des tests.
+    """
+    os.environ[CLE_COULEUR_ORCHESTRATE] = ""
+
+
+# Posés à l'import du conftest, donc avant l'import du premier module de test :
 # un test qui appelle `load_settings()` dès son import voit déjà l'environnement
 # neutralisé (la config relit `os.environ` à chaque appel, rien n'est mis en cache).
 _neutralise_langfuse()
+_neutralise_couleur_orchestrate()
 
 
 @pytest.fixture(autouse=True)

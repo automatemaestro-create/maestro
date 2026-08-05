@@ -144,7 +144,7 @@ liste_jobs() {
     printf '  %-12s %-6s %s\n' pytest     test "python -m pytest <suites déduites du diff>  (--complet : toute la suite + couverture)"
   fi
   printf '  %-12s %-6s %s\n' mypy         test "mypy maestro"
-  printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm test && npm run build (dans apps/web)"
+  printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm run typecheck && npm test && npm run build (dans apps/web)"
 }
 
 while [ $# -gt 0 ]; do
@@ -716,9 +716,18 @@ job_web() {
     return 2
   }
   # `npm ci` de la CI n'est pas rejoué : il retélécharge le monde alors que setup.sh a déjà posé
-  # node_modules depuis le même lockfile. On enchaîne lint, tests puis build, comme le job.
+  # node_modules depuis le même lockfile. On enchaîne lint, typage, tests puis build, comme le job.
   PATH="$bindir:$PATH" execute npm --prefix apps/web run lint || {
     DETAIL="eslint : erreur(s) — voir le journal"
+    return 1
+  }
+  # Le typage passe AVANT vitest et next build : il coûte quelques secondes là où ils en coûtent
+  # des dizaines, et rend l'erreur en clair au lieu d'un `next build` rouge en fin de course. C'est
+  # aussi ce qui garde le script `typecheck` vivant : exposé pour qu'une session vérifie TypeScript
+  # par `npm run typecheck` — la seule forme que la couche permissions autorise (#236) —, il
+  # pourrirait sans personne pour le jouer.
+  PATH="$bindir:$PATH" execute npm --prefix apps/web run typecheck || {
+    DETAIL="tsc --noEmit : erreur(s) de typage — voir le journal"
     return 1
   }
   # NO_COLOR : sans lui, Vitest colore son résumé et les codes ANSI s'intercalent dans la ligne
@@ -735,7 +744,7 @@ job_web() {
     DETAIL="next build : échec (le typage TypeScript y est vérifié)"
     return 1
   }
-  DETAIL="eslint + vitest (${tests:-?}) + next build verts"
+  DETAIL="eslint + tsc + vitest (${tests:-?}) + next build verts"
   return 0
 }
 
