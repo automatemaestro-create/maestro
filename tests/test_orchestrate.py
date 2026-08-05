@@ -1246,11 +1246,16 @@ FLUX
 
 
 def test_le_flux_donne_une_ligne_par_action_et_garde_le_resultat_final(depot: Depot) -> None:
+    """Le flot d'une ligne par appel d'outil : depuis #240 il ne survit qu'en `--verbeux`.
+
+    C'est le mode de diagnostic qui le porte désormais — le comportement par défaut est vérifié
+    par la section suivante, qui exige justement son absence.
+    """
     depot.ticket(130, "Ticket à traiter")
     depot.mr("feat/130-ticket-a-traiter", "opened")
     claude = _stub_flux(depot)
     plan = _plan(depot, [(1, 130, "-", "moyenne")])
-    r = depot.lance("run.sh", "--plan", plan, "--run-id", "flux",
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "flux", "--verbeux",
                     env={"MAESTRO_CLAUDE_BIN": claude})
     assert r.returncode == 0, r.stdout + r.stderr
 
@@ -1345,7 +1350,7 @@ def test_la_session_reprise_passe_aussi_par_le_flux(depot: Depot) -> None:
         exit 1
     """)
     plan = _plan(depot, [(1, 130, "-", "moyenne")])
-    r = depot.lance("run.sh", "--plan", plan, "--run-id", "flux-reprise",
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "flux-reprise", "--verbeux",
                     env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "1"})
     assert r.returncode == 0, r.stdout + r.stderr
     assert "· Bash pytest -q" in r.stdout, "la reprise doit rester bavarde, elle aussi"
@@ -1356,6 +1361,175 @@ def test_la_session_reprise_passe_aussi_par_le_flux(depot: Depot) -> None:
     # reprendre une session qui vient pourtant d'aboutir — indéfiniment.
     jsonl = _flux(dossier)
     assert "usage limit reached" not in jsonl, "le flux de la tentative précédente doit être effacé"
+
+
+# =====================================================================================
+# La console d'un run : une checklist vivante (#240)
+# =====================================================================================
+#
+# Ces tests n'ont pas de pseudo-terminal, et n'en ont pas besoin : `run.sh` choisit le descripteur
+# de ses frames, et `MAESTRO_ORCHESTRATE_CONSOLE` le fait pointer sur un FICHIER. Ce qu'une console
+# aurait reçu se relit donc à l'octet près — et son absence dans `stdout` est vérifiable, ce qui est
+# l'invariant central : `stdout` finit dans `run.log`, où une frame n'a rien à faire.
+
+def _console(depot: Depot) -> Path:
+    """Le fichier qui tient lieu de console pour les frames."""
+    return depot.racine.parent / "console.txt"
+
+
+def _stub_livre(depot: Depot) -> str:
+    """Un bouchon qui livre le ticket qu'on lui confie, quel qu'il soit.
+
+    L'iid se lit dans le prompt : un plan à plusieurs tickets réutilise le même bouchon, et poser
+    « En revue » sur tous d'entrée ferait sauter les suivants avant qu'ils soient pris.
+    """
+    gabarit = _statut_json("%s", "En revue")
+    return _claude_stub(depot, f"""
+        iid=$(printf '%s\\n' "$@" | grep -o 'GitLab #[0-9]*' | head -1 | tr -dc '0-9')
+        printf '{gabarit}' "$iid" > "$MAESTRO_FIXTURES/owner-$iid.json"
+        printf '{{"type":"assistant","message":{{"content":[{{"type":"tool_use",'
+        printf '"name":"Read","input":{{"file_path":"docs/21-configuration-mcp.md"}}}}]}}}}\\n'
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}\\n'
+        exit 0
+    """)
+
+
+def test_par_defaut_le_flot_d_outils_ne_s_imprime_plus_mais_rien_n_est_perdu(depot: Depot) -> None:
+    """Le critère central de #240 : l'écran cesse de défiler, le journal ne perd rien."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _stub_flux(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "muet",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "· Read docs/21-configuration-mcp.md" not in r.stdout
+    assert "· Edit core/models/mcp.py" not in r.stdout
+
+    dossier = depot.racine / ".maestro/orchestrate/muet"
+    # Le flux brut est intégral : c'est lui qui porte le diagnostic, et il n'a pas changé.
+    assert len([x for x in _flux(dossier).splitlines() if x]) == 4
+    # Et `<iid>.json` ne porte toujours que le résultat final — le coût, le verdict et la détection
+    # de limite d'usage le lisent (« à ne pas casser » du ticket).
+    final = (dossier / "130.json").read_text(encoding="utf-8")
+    assert '"type":"result"' in final and "0.01" not in final
+
+
+def test_la_variable_d_environnement_vaut_l_option_verbeuse(depot: Depot) -> None:
+    """`MAESTRO_ORCHESTRATE_VERBEUX=1` : de quoi rallumer le flot sans retoucher la ligne de
+    commande d'un run déjà lancé par un lanceur."""
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _stub_flux(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "verbeux-env",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_VERBEUX": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "· Read docs/21-configuration-mcp.md" in r.stdout
+
+
+def test_sans_console_la_vue_retombe_en_plein_texte(depot: Depot) -> None:
+    """Détachement Unix, CI, tests : personne ne peut redessiner. La checklist s'imprime alors une
+    fois par ticket, en clair — et SURTOUT sans une seule séquence de repositionnement, que le
+    `sed` final du lanceur ne retire pas (il ne connaît que les codes de couleur)."""
+    depot.ticket(130, "Ticket 130")
+    depot.mr("feat/130-ticket-130", "opened")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "texte",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    # Le marqueur « > » du ticket courant, et non le seul « 1. #130 » : le récapitulatif du plan
+    # imprimé au démarrage porte déjà celui-là, et le test passerait sans qu'aucune vue soit rendue.
+    assert ">  1. #130" in r.stdout, "la checklist du plan est rendue en plein texte"
+    assert "\x1b[" not in r.stdout, "aucune séquence ANSI ne doit atterrir dans run.log"
+
+
+def test_avec_une_console_les_frames_y_vont_et_jamais_dans_run_log(depot: Depot) -> None:
+    """Les deux flux sont séparés : les frames vers la console, la trace permanente vers stdout."""
+    depot.ticket(130, "Ticket 130")
+    depot.mr("feat/130-ticket-130", "opened")
+    console = _console(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "console",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert ". #130" in vue, "la checklist est dessinée sur la console"
+    assert "\x1b[" in vue, "et elle y est redessinée — c'est tout l'objet du descripteur dédié"
+
+    assert "\x1b[" not in r.stdout, "aucune frame dans le journal"
+    assert ">  1. #130" not in r.stdout, "ni la vue plein texte en double : la console la porte"
+    # Ce que `run.log` garde, lui : l'en-tête du ticket et son verdict — de quoi relire un run.
+    assert "[1/1] #130" in r.stdout
+
+
+def test_la_checklist_porte_les_verdicts_deja_rendus_et_le_cumul_du_run(depot: Depot) -> None:
+    """Au deuxième ticket, le premier n'est plus « à venir » : il porte sa marque, sa MR et son
+    coût, et le pied dit où en est le run — c'est l'information que le flot d'outils avait chassée
+    de l'écran."""
+    for iid in (130, 131):
+        depot.ticket(iid, f"Ticket {iid}")
+        depot.mr(f"feat/{iid}-ticket-{iid}", "opened")
+    console = _console(depot)
+    plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "checklist",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert "✓  1. #130" in vue, "le ticket livré porte sa marque dans la checklist"
+    assert "MR !99" in vue, "avec sa MR"
+    assert "2.00 $" in vue, "et son coût, arrondi comme dans resume.tsv"
+    assert "reste " in vue and "✓ 1" in vue, "le pied donne le cumul du run"
+
+
+def test_l_attente_et_la_reprise_sont_des_etats_de_la_vue(depot: Depot) -> None:
+    """Une limite d'usage se compte en heures : l'écran ne doit ni paraître figé, ni laisser croire
+    que la session rouverte est un ticket qui démarre. Et le chrono suit le TICKET — sans quoi il
+    repartirait de zéro à chaque tentative, alors que c'est la durée du ticket qu'on consigne."""
+    depot.ticket(130, "Ticket interrompu")
+    depot.mr("feat/130-ticket-interrompu", "opened")
+    gabarit = _statut_json("%s", "En revue")
+    claude = _claude_stub(depot, f"""
+        if printf '%s\\n' "$@" | grep -q -- '--resume'; then
+          iid=$(printf '%s\\n' "$@" | grep -o 'GitLab #[0-9]*' | head -1 | tr -dc '0-9')
+          printf '{gabarit}' "${{iid:-130}}" > "$MAESTRO_FIXTURES/owner-130.json"
+          printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":6}}\\n'
+          exit 0
+        fi
+        printf '{{"type":"result","is_error":true,"total_cost_usd":1,'
+        printf '"result":"Claude AI usage limit reached"}}\\n'
+        exit 1
+    """)
+    console = _console(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "attente",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "1",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert "en attente de la fin de la limite d'usage" in vue, "l'attente est un état, pas un gel"
+    assert "reprise 1/3" in vue, "et la reprise en est un autre"
+
+
+def test_le_mode_verbeux_eteint_la_vue_vivante(depot: Depot) -> None:
+    """Les deux se disputeraient l'écran — et c'est justement quand on lit chaque ligne qu'on ne
+    veut rien qui bouge."""
+    depot.ticket(130, "Ticket 130")
+    depot.mr("feat/130-ticket-130", "opened")
+    console = _console(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "verbeux-vue", "--verbeux",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "· Read docs/21-configuration-mcp.md" in r.stdout
+    assert not console.exists() or console.read_text(encoding="utf-8") == "", (
+        "aucune frame ne doit être dessinée en mode verbeux"
+    )
 
 
 # =====================================================================================

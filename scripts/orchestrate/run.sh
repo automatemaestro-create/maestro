@@ -64,6 +64,8 @@
 # Pour que la boucle soit vérifiable sans consommer de quota, sans réseau et sans créer de vraie
 # branche (#172) : MAESTRO_CLAUDE_BIN remplace le CLI, MAESTRO_ORCHESTRATE_WORKTREE remplace le
 # montage du worktree, et `glab` se substitue par le PATH (lib.sh l'appelle par son nom).
+# MAESTRO_ORCHESTRATE_CONSOLE (#240) fait de même pour l'écran : un fichier y tient lieu de console,
+# et les frames de la vue vivante s'y relisent sans pseudo-terminal.
 
 set -uo pipefail
 
@@ -111,6 +113,7 @@ REPRISE_DIR=""
 REPRISE_AVEC_VALEUR=0
 SANS_KILL=0
 TUER_SEUL=0
+VERBEUX="${MAESTRO_ORCHESTRATE_VERBEUX:-0}"
 
 usage() {
   cat <<'USAGE'
@@ -139,6 +142,8 @@ Options :
   --sans-kill          Ne tue pas les runs encore en cours avant de démarrer (voir plus bas).
   --tuer-les-runs      Ne fait QUE ça : tue les runs en cours, dit lesquels, et sort.
   --max-reprises <n>   Reprises maximales après limite d'usage, par ticket. Défaut : 3.
+  --verbeux            Diagnostic : réimprime une ligne par appel d'outil de la session, comme
+                       avant #240. Désactive la vue vivante (les deux se disputeraient l'écran).
   --test-reprise <f>   Diagnostic : dit si la sortie de session <f> serait vue comme une limite
                        d'usage, et combien de temps la boucle attendrait. N'exécute rien d'autre.
   --resultat <f>       Diagnostic : relit un <iid>.json de session et l'imprime EN CLAIR (état,
@@ -190,6 +195,7 @@ while [ $# -gt 0 ]; do
     --sans-kill | --no-kill) SANS_KILL=1 ;;
     --tuer-les-runs | --kill-runs) TUER_SEUL=1 ;;
     --max-reprises) MAESTRO_ORCHESTRATE_MAX_REPRISES="${2:-3}"; shift ;;
+    --verbeux | --verbose) VERBEUX=1 ;;
     # Diagnostic de la détection de limite d'usage sur une sortie de session capturée : c'est ce qui
     # rend la reprise vérifiable sans attendre de vraiment taper la limite.
     --test-reprise) TEST_REPRISE="${2:-}"; shift ;;
@@ -225,9 +231,9 @@ fi
 # perdrait ses couleurs alors qu'il s'affiche bel et bien dans une fenêtre. Le lanceur pose donc ce
 # marqueur — et décolore le journal en fin de run, les codes n'ayant de sens que devant un écran.
 if [ -t 1 ] || [ "${MAESTRO_ORCHESTRATE_COULEUR:-0}" = 1 ]; then
-  C_G=$'\033[32m'; C_Y=$'\033[33m'; C_R=$'\033[31m'; C_B=$'\033[1m'; C_0=$'\033[0m'
+  C_G=$'\033[32m'; C_Y=$'\033[33m'; C_R=$'\033[31m'; C_B=$'\033[1m'; C_D=$'\033[2m'; C_0=$'\033[0m'
 else
-  C_G=''; C_Y=''; C_R=''; C_B=''; C_0=''
+  C_G=''; C_Y=''; C_R=''; C_B=''; C_D=''; C_0=''
 fi
 
 # --- Utilitaires ------------------------------------------------------------------------------------
@@ -265,6 +271,194 @@ arrondi_cout() {
     *[!0-9.eE+-]*) printf '%s' "$v"; return 0 ;;
   esac
   LC_ALL=C printf '%.2f' "$v" 2>/dev/null || printf '%s' "$v"
+}
+
+# --- La vue vivante d'un run (#240) -------------------------------------------------------------------
+# Ce que la console d'un run doit montrer, c'est l'AVANCEMENT DU PLAN — pas la trace des appels
+# d'outils. Le flot d'une ligne par `tool_use` (#176) avait sorti la console du mutisme, mais il
+# défile trop vite pour être lu, et un nom d'outil sans son résultat n'apprend rien : il a remplacé
+# « on ne sait rien » par « on ne voit rien ». On garde donc UNE ligne d'action — la dernière,
+# réécrite sur place — et on rend, autour, la checklist du plan.
+#
+# --- Deux sorties, pour que `run.log` reste lisible ---------------------------------------------------
+# Piège central : la sortie d'un run N'EST PAS un terminal. Le lanceur de `--detach` fait
+# « … 2>&1 | tee -a run.log » — stdout est un TUBE (c'est déjà toute la raison d'être de
+# MAESTRO_ORCHESTRATE_COULEUR, juste au-dessus). Redessiner sur stdout déverserait dans `run.log` une
+# frame par rafraîchissement, que le `sed` final ne nettoierait même pas : il ne retire que les
+# séquences SGR « …m », pas les déplacements de curseur.
+#
+# D'où deux chemins, et un seul écrivain à la fois :
+#   · stdout    la trace permanente — en-tête de ticket, battements, verdicts. Va dans `run.log`.
+#   · $VUE_FD   les frames redessinées, vers la CONSOLE seule. Jamais dans `run.log`.
+# Le lanceur ouvre ce descripteur AVANT le tube (`exec 4>&1` : la fenêtre) et le passe par
+# MAESTRO_ORCHESTRATE_CONSOLE_FD ; hors détachement, un stdout de terminal fait l'affaire. Sans
+# console (détachement Unix, CI, tests), aucune frame n'est émise : la vue retombe en plein texte,
+# une impression par changement d'état. Le même mécanisme la rend TESTABLE sans pseudo-terminal —
+# il suffit d'ouvrir ce descripteur sur un fichier et d'y relire les frames.
+#
+# --- Le chrono demande une horloge, pas un événement --------------------------------------------------
+# La boucle est bloquée sur la lecture du flux de la session : rien ne peut y faire avancer un
+# compteur. C'est `read -t` qui sert d'horloge — un tour toutes les 0,2 s, qu'une ligne soit arrivée
+# ou non. Piège à connaître : sur expiration, bash AFFECTE quand même ce qu'il a déjà lu de la ligne
+# en cours. D'où le tampon `partiel` de `formate_flux`, sans lequel un objet JSON coupé par une
+# expiration serait écrit en DEUX lignes dans `<iid>.jsonl` — le fichier dont dépendent le coût, le
+# verdict et la détection de limite d'usage.
+SPIN='|/-\'                       # ASCII à dessein : la console Windows par défaut (conhost +
+                                  # Consolas) n'a pas les glyphes braille des jolis rouets.
+VUE_FD=""                         # descripteur des frames ; vide = pas de vue vivante
+VUE_LARGEUR=100                   # colonnes, résolues une fois — `tput` est un fork
+VUE_TICK=0.2                      # période de rafraîchissement, en secondes
+VUE_BATTEMENT_S="${MAESTRO_ORCHESTRATE_BATTEMENT:-60}"   # trace permanente pendant une session
+VUE_GABARIT=43                    # largeur du gabarit ASCII de `vue_ligne`, titre exclu
+VUE_AVANT=""; VUE_APRES=""; VUE_RANG=""; VUE_IID=""; VUE_TITRE=""
+# Le chrono affiché est celui du TICKET, pas de la tentative en cours. Une limite d'usage rend la
+# main puis relance une session : son processus repart à zéro, alors que le ticket, lui, dure depuis
+# le début — c'est la durée qu'on suit d'un bout à l'autre, et celle que le verdict consignera.
+VUE_DEBUT_TICKET=$SECONDS
+# L'état de reprise, affiché comme action tant que la session rouverte n'a rien fait d'autre : sans
+# lui, la vue d'un ticket repris est indiscernable de celle d'un ticket qui démarre.
+VUE_REPRISE=""
+
+vue_active() { [ -n "$VUE_FD" ]; }
+
+# vue_ouvre : choisit le descripteur des frames. Le mode verbeux n'en veut aucun — les deux se
+# disputeraient l'écran, et c'est justement quand on lit chaque ligne qu'on ne veut rien qui bouge.
+vue_ouvre() {
+  VUE_FD=""
+  if [ "$VERBEUX" != 1 ]; then
+    local fd="${MAESTRO_ORCHESTRATE_CONSOLE_FD:-}"
+    # Couture de test : MAESTRO_ORCHESTRATE_CONSOLE désigne un FICHIER qui tient lieu de console.
+    # C'est ce qui rend les frames vérifiables sans pseudo-terminal — on les relit, tout simplement.
+    if [ -n "${MAESTRO_ORCHESTRATE_CONSOLE:-}" ] && exec 9>>"$MAESTRO_ORCHESTRATE_CONSOLE"; then
+      VUE_FD=9
+    elif [ -n "$fd" ] && { : >&"$fd"; } 2>/dev/null; then
+      VUE_FD="$fd"
+    elif [ -t 1 ]; then
+      VUE_FD=1
+    fi
+  fi
+  # Sans console, personne ne regarde en direct : un tour toutes les 2 s suffit — et sous MSYS, un
+  # fork de moins par seconde n'est pas un détail.
+  vue_active || VUE_TICK=2
+
+  local n="${MAESTRO_ORCHESTRATE_LARGEUR:-}"
+  case "$n" in '' | *[!0-9]*) n="$(tput cols 2>/dev/null)" || n='' ;; esac
+  case "$n" in '' | *[!0-9]*) n=100 ;; esac
+  [ "$n" -lt 60 ] && n=100
+  VUE_LARGEUR="$n"
+  return 0
+}
+
+# vue_ligne <marqueur> <rang> <iid> <durée> <coût> <mr> <titre> : une ligne de checklist.
+# Tout ce qui est à largeur fixe est ASCII et passe AVANT le titre — `printf` compte en OCTETS, et un
+# « %-40s » sur un titre accentué décalerait toute la colonne suivante. Le titre, lui, est tronqué
+# à la construction : une ligne plus large que la console serait repliée par le terminal, et le
+# redessin suivant remonterait d'une ligne de trop — le bloc se dédoublerait à chaque frame.
+vue_ligne() {
+  printf '  %s %2s. #%-5s %8s %9s %-8s %s' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$(tronque "$7" $((VUE_LARGEUR - VUE_GABARIT - 3)))"
+}
+
+# La hauteur de la dernière frame vit DANS UN FICHIER et non dans une variable : la frame est
+# dessinée depuis le sous-shell du tube de la session, dont les affectations sont perdues au retour —
+# or c'est la boucle principale qui doit effacer le bloc avant d'imprimer un verdict.
+vue_hauteur() { local n; n="$(cat "$RUN_DIR/.vue-hauteur" 2>/dev/null)" || n=0; printf '%s' "${n:-0}"; }
+
+# vue_efface : retire le bloc de l'écran. À appeler avant toute impression permanente, sans quoi la
+# ligne atterrirait au milieu d'une frame et fausserait le compte de lignes des suivantes.
+vue_efface() {
+  vue_active || return 0
+  local n; n="$(vue_hauteur)"
+  [ "${n:-0}" -gt 0 ] || return 0
+  printf '\033[%sF\033[J' "$n" >&"$VUE_FD"
+  printf '0' >"$RUN_DIR/.vue-hauteur"
+  return 0
+}
+
+# vue_prepare <iid-courant> : la partie STATIQUE du bloc, calculée une fois par ticket — les lignes
+# des tickets déjà jugés (leur verdict est dans `resume.tsv`) et de ceux qui attendent leur tour.
+# Seules la ligne du ticket courant, son action et le pied changent d'une frame à l'autre.
+vue_prepare() {
+  local courant="$1" vu=0 rang iid parent prio titre bilan verdict mr duree cout marque
+  VUE_AVANT=""; VUE_APRES=""; VUE_RANG=""; VUE_IID="$courant"; VUE_TITRE=""
+  while IFS=$'\t' read -r rang iid parent prio titre; do
+    case "$rang" in '#'*) continue ;; esac
+    [ -n "${iid:-}" ] || continue
+    if [ "$iid" = "$courant" ]; then
+      VUE_RANG="$rang"; VUE_TITRE="$titre"; vu=1
+      continue
+    fi
+    bilan="$(awk -F'\t' -v i="$iid" '$1 == i { print; exit }' "$RESUME" 2>/dev/null)"
+    verdict=''; mr=''; duree=''; cout=''
+    [ -n "$bilan" ] && IFS=$'\t' read -r _ verdict mr duree cout _ <<<"$bilan"
+    case "${verdict:-}" in
+      OK)    marque="$C_G✓$C_0" ;;
+      ECHEC) marque="$C_R✗$C_0" ;;
+      SAUTE) marque="$C_Y~$C_0" ;;
+      *)     marque=' '; mr=''; duree=''; cout='' ;;
+    esac
+    case "${duree:-}" in '' | *[!0-9]*) duree='' ;; *) duree="$(duree_lisible "$duree")" ;; esac
+    case "${cout:-}" in '' | 0 | 0.00) cout='' ;; *) cout="$(arrondi_cout "$cout") \$" ;; esac
+    case "${mr:-}" in '' | '-') mr='' ;; *) mr="MR !$mr" ;; esac
+    if [ "$vu" = 0 ]; then
+      VUE_AVANT+="$(vue_ligne "$marque" "$rang" "$iid" "$duree" "$cout" "$mr" "$titre")"$'\n'
+    else
+      VUE_APRES+="$(vue_ligne "$marque" "$rang" "$iid" "$duree" "$cout" "$mr" "$titre")"$'\n'
+    fi
+  done < <(grep -v '^#' "$PLAN" 2>/dev/null)
+  return 0
+}
+
+# vue_dessine <marqueur> <secondes écoulées> <détail> [<frais>] : une frame.
+#
+# Chaque ligne se termine par « ESC[K » (efface jusqu'au bout) pour qu'une ligne qui raccourcit ne
+# laisse pas la traîne de la précédente, et le bloc entier part en UN SEUL `printf` : deux écritures
+# laisseraient voir un demi-bloc. `frais` = 1 redessine sans remonter le curseur — ce qu'il faut
+# après une impression permanente, qui a fait défiler l'écran sous le bloc.
+vue_dessine() {
+  vue_active || return 0
+  local marque="$1" ecoule="$2" detail="$3" frais="${4:-0}"
+  local corps="" n=0 ligne haut fin=$'\033[K\n'
+
+  while IFS= read -r ligne; do
+    [ -n "$ligne" ] || continue
+    corps+="$ligne$fin"; n=$((n + 1))
+  done <<<"$VUE_AVANT"
+
+  corps+="$C_B$(vue_ligne "$marque" "$VUE_RANG" "$VUE_IID" "$(duree_lisible "$ecoule")" '' '' \
+    "$VUE_TITRE")$C_0$fin"; n=$((n + 1))
+  corps+="$C_D$(printf '       %s' "${detail:+· $(tronque "$detail" $((VUE_LARGEUR - 11)))}")$C_0$fin"
+  n=$((n + 1))
+
+  while IFS= read -r ligne; do
+    [ -n "$ligne" ] || continue
+    corps+="$ligne$fin"; n=$((n + 1))
+  done <<<"$VUE_APRES"
+
+  corps+="$(printf '  run %s · %s✓ %s%s · %s✗ %s%s · %s~ %s%s · reste %s' \
+    "$(duree_lisible "$((SECONDS - RUN_DEBUT_S))")" \
+    "$C_G" "$NB_OK" "$C_0" "$C_R" "$NB_ECHEC" "$C_0" "$C_Y" "$NB_SAUTE" "$C_0" \
+    "$((nb_plan - POSITION))")$fin"; n=$((n + 1))
+
+  haut="$(vue_hauteur)"
+  [ "$frais" = 1 ] && haut=0
+  if [ "${haut:-0}" -gt 0 ]; then
+    printf '\033[%sF%s' "$haut" "$corps" >&"$VUE_FD"
+  else
+    printf '%s' "$corps" >&"$VUE_FD"
+  fi
+  printf '%s' "$n" >"$RUN_DIR/.vue-hauteur"
+  return 0
+}
+
+# vue_texte : la même checklist, en PLEIN TEXTE et sans animation — sur stdout, donc dans `run.log`
+# et partout où rien ne peut être redessiné (détachement Unix, CI, tests). Imprimée une fois par
+# ticket : c'est elle qui porte l'avancement quand il n'y a pas de console.
+vue_texte() {
+  printf '%s' "$VUE_AVANT"
+  vue_ligne '>' "$VUE_RANG" "$VUE_IID" '' '' '' "$VUE_TITRE"; printf '\n'
+  printf '%s' "$VUE_APRES"
+  return 0
 }
 
 # champ_json <fichier> <clé> : la valeur SCALAIRE d'une clé de premier niveau. Suffisant pour les
@@ -494,16 +688,27 @@ delai_avant_reprise() {
 # patiente <secondes> : attend, en tranches, pour que le fichier STOP reste entendu pendant une
 # attente qui peut durer des heures. Renvoie 1 si l'arrêt a été demandé.
 patiente() {
-  local reste="$1" tranche
+  local reste="$1" tranche fin
+  fin="$(date -d "+$reste seconds" '+%H:%M' 2>/dev/null || echo '?')"
   printf '  %slimite d'\''usage atteinte%s — attente de %s avant reprise (fin vers %s).\n' \
-    "$C_Y" "$C_0" "$(duree_lisible "$reste")" "$(date -d "+$reste seconds" '+%H:%M' 2>/dev/null || echo '?')"
+    "$C_Y" "$C_0" "$(duree_lisible "$reste")" "$fin"
+  # L'attente est un état du ticket comme un autre : le bloc reste à l'écran, marqué d'une pause et
+  # décompté — sans quoi la console paraît figée pendant les heures que dure une limite d'usage.
+  local frais=1
   while [ "$reste" -gt 0 ]; do
     [ -f "$STOP" ] && return 1
+    # La colonne « durée » reste celle du TICKET : c'est elle qu'on suit d'un bout à l'autre. Le
+    # temps d'attente, lui, est dit en clair dans le détail.
+    vue_dessine '=' "$((SECONDS - VUE_DEBUT_TICKET))" \
+      "en attente de la fin de la limite d'usage — reprise vers $fin (dans $(duree_lisible "$reste"))" \
+      "$frais"
+    frais=0
     tranche=60
     [ "$reste" -lt 60 ] && tranche="$reste"
     sleep "$tranche"
     reste=$((reste - tranche))
   done
+  vue_efface
   return 0
 }
 
@@ -522,10 +727,11 @@ tronque() { # <texte> [largeur] : une ligne de progression ne doit jamais noyer 
   if [ "${#s}" -gt "$n" ]; then printf '%s…' "${s:0:$n}"; else printf '%s' "$s"; fi
 }
 
-# imprime_outils <ligne> : une ligne « assistant » peut porter PLUSIEURS `tool_use` — on les découpe
-# sur leur marqueur plutôt que d'en montrer un seul. L'extraction est volontairement approximative
-# (grep, pas un parseur JSON) : c'est un fil d'activité, pas une donnée dont dépend un verdict.
-imprime_outils() {
+# outils_de <ligne> : les appels d'outils d'un événement « assistant », un « <nom> <cible> » par
+# ligne. Une ligne peut en porter PLUSIEURS — on les découpe sur leur marqueur plutôt que d'en
+# montrer un seul. L'extraction est volontairement approximative (grep, pas un parseur JSON) : c'est
+# un fil d'activité, pas une donnée dont dépend un verdict.
+outils_de() {
   local reste="$1" nom cible
   while :; do
     case "$reste" in
@@ -539,29 +745,102 @@ imprime_outils() {
       head -1 | cut -d'"' -f4)"
     # Les chemins absolus du worktree mangeraient la ligne pour ne rien apprendre à personne.
     cible="${cible#"$RACINE/"}"
-    printf '  · %s%s\n' "$nom" "${cible:+ $(tronque "$cible")}"
+    printf '%s%s\n' "$nom" "${cible:+ $(tronque "$cible")}"
   done
 }
 
-formate_flux() { # <iid> : lit le flux sur stdin, l'archive, et en tire une ligne par action
-  local iid="$1" ligne resultat="" derniere=""
+# formate_flux <iid> : lit le flux sur stdin, l'archive, et anime la vue du ticket (#240).
+#
+# La boucle bat au rythme de `read -t` (voir la section « vue vivante ») : un tour toutes les
+# VUE_TICK secondes, qu'une ligne soit arrivée ou non — c'est ce qui fait avancer le chrono et le
+# rouet quand la session réfléchit en silence. Trois sorties, bien distinctes :
+#   · `<iid>.jsonl`  le flux brut, intégral et inchangé — la matière de tout diagnostic ;
+#   · $VUE_FD        la frame redessinée, si une console existe ;
+#   · stdout         le battement (une ligne par minute) et, en `--verbeux` seulement, le flot
+#                    d'une ligne par appel d'outil d'avant #240.
+formate_flux() {
+  local iid="$1" ligne resultat="" derniere="" partiel="" code
   local jsonl="$RUN_DIR/$iid.jsonl"
   : >"$jsonl"
   # Un `.jsonl.gz` laissé par une tentative précédente (run rejoué sous le même run-id) doit partir
   # avec elle : deux traces du même ticket, dont une périmée, se liraient l'une pour l'autre.
   rm -f "$jsonl.gz" 2>/dev/null
   : >"$RUN_DIR/$iid.json"
-  # `|| [ -n "$ligne" ]` : sans lui, un flux qui ne se termine pas par un saut de ligne perdrait sa
-  # DERNIÈRE ligne — c'est-à-dire l'objet `result`, donc le coût et le verdict.
-  while IFS= read -r ligne || [ -n "$ligne" ]; do
-    [ -n "$ligne" ] || continue
-    printf '%s\n' "$ligne" >>"$jsonl"
-    derniere="$ligne"
-    case "$ligne" in *'"type":"result"'*) resultat="$ligne" ;; esac
-    case "$ligne" in
-      *'"type":"assistant"'*'"type":"tool_use"'*) imprime_outils "$ligne" ;;
-    esac
+
+  local ecoule=0 action="$VUE_REPRISE" dessinee='-' outils o
+  local tour=0 spin=0 dernier_battement=0 frais=1
+
+  vue_dessine "${SPIN:0:1}" "$((SECONDS - VUE_DEBUT_TICKET))" "$action" 1
+  frais=0
+
+  while :; do
+    ligne=""
+    if IFS= read -r -t "$VUE_TICK" ligne; then
+      ligne="$partiel$ligne"; partiel=""
+    else
+      code=$?
+      # > 128 = expiration du délai : simple battement d'horloge. Ce que `read` a déjà lu de la
+      # ligne en cours est mis de côté — le recoller est ce qui garde `<iid>.jsonl` fidèle.
+      if [ "$code" -gt 128 ]; then
+        partiel="$partiel$ligne"
+        ligne=""
+      else
+        # Fin de flux. `$partiel$ligne` : sans lui, un flux qui ne se termine pas par un saut de
+        # ligne perdrait sa DERNIÈRE ligne — c'est-à-dire l'objet `result`, donc le coût et le
+        # verdict.
+        ligne="$partiel$ligne"; partiel=""
+        if [ -n "$ligne" ]; then
+          printf '%s\n' "$ligne" >>"$jsonl"
+          derniere="$ligne"
+          case "$ligne" in *'"type":"result"'*) resultat="$ligne" ;; esac
+        fi
+        break
+      fi
+    fi
+
+    if [ -n "$ligne" ]; then
+      printf '%s\n' "$ligne" >>"$jsonl"
+      derniere="$ligne"
+      case "$ligne" in *'"type":"result"'*) resultat="$ligne" ;; esac
+      case "$ligne" in
+        *'"type":"assistant"'*'"type":"tool_use"'*)
+          outils="$(outils_de "$ligne")"
+          if [ -n "$outils" ]; then
+            # La DERNIÈRE : la ligne d'action dit ce que la session fait maintenant, pas ce qu'elle
+            # a fait il y a trois événements.
+            action="${outils##*$'\n'}"
+            if [ "$VERBEUX" = 1 ]; then
+              while IFS= read -r o; do [ -n "$o" ] && printf '  · %s\n' "$o"; done <<<"$outils"
+            fi
+          fi
+          ;;
+      esac
+    fi
+
+    tour=$((tour + 1))
+    ecoule=$((SECONDS - VUE_DEBUT_TICKET))
+
+    # Le battement : une ligne par minute sur stdout, donc dans `run.log`. C'est ce qui reste de
+    # l'activité d'une session quand on relit le journal — les frames, elles, ne s'y écrivent pas.
+    if [ "$VUE_BATTEMENT_S" -gt 0 ] && [ $((ecoule - dernier_battement)) -ge "$VUE_BATTEMENT_S" ]; then
+      dernier_battement="$ecoule"
+      printf '  … %s%s\n' "$(duree_lisible "$ecoule")" "${action:+ · $(tronque "$action")}"
+      # La ligne vient de faire défiler l'écran sous le bloc : la frame suivante se redessine
+      # entière, sans remonter le curseur, sous peine d'écraser ce qu'on vient d'imprimer.
+      frais=1
+    fi
+
+    # On redessine sur un battement d'horloge (ligne vide) ou sur un changement d'action, pas à
+    # chaque événement : un flux dense en émet des dizaines par seconde, et personne ne les lirait.
+    if [ -z "$ligne" ] || [ "$action" != "$dessinee" ]; then
+      dessinee="$action"
+      # Le rouet tourne moitié moins vite que la boucle : à 5 images par seconde il papillote.
+      [ $((tour % 2)) -eq 0 ] && spin=$(((spin + 1) % ${#SPIN}))
+      vue_dessine "${SPIN:$spin:1}" "$ecoule" "$action" "$frais"
+      frais=0
+    fi
   done
+
   [ -n "$resultat" ] || resultat="$derniere"
   [ -n "$resultat" ] && printf '%s\n' "$resultat" >"$RUN_DIR/$iid.json"
   return 0
@@ -838,6 +1117,8 @@ lance_session() {
     code=${PIPESTATUS[0]}
     [ "$code" -eq 0 ] && return 0
     if limite_atteinte "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log"; then return "$code"; fi
+    # Le bloc de la vue est encore à l'écran : la ligne qui suit doit s'imprimer SOUS lui, pas dedans.
+    vue_efface
     printf '  reprise de session impossible — redémarrage à froid (le travail déjà commité est sur la branche).\n'
     uuid="$(genere_uuid)"
     printf '%s' "$uuid" >"$RUN_DIR/$iid.session"
@@ -1081,8 +1362,9 @@ renonce_au_run() {
     [ -e "$f" ] || continue
     # `reprise-de` est posé avec le répertoire, avant qu'on sache s'il y aura quelque chose à
     # traiter : le compter comme une trace de travail retiendrait le vestige d'une reprise à vide.
-    # La carte `pid` (#213) est dans le même cas — elle décrit le processus, pas son travail.
-    case "${f##*/}" in plan.tsv | reprise-de | pid) ;; *) return 1 ;; esac
+    # La carte `pid` (#213) est dans le même cas — elle décrit le processus, pas son travail, tout
+    # comme la hauteur du bloc de la vue vivante (#240), qui décrit l'écran.
+    case "${f##*/}" in plan.tsv | reprise-de | pid | .vue-hauteur) ;; *) return 1 ;; esac
   done
   rm -rf "$RUN_DIR" 2>/dev/null || return 1
   return 0
@@ -1108,6 +1390,13 @@ detacher() {
     printf 'cd %q || exit 1\n' "$RACINE"
     # La fenêtre est bien un écran : le run doit y garder ses couleurs, que `tee` lui ferait perdre.
     printf 'export MAESTRO_ORCHESTRATE_COULEUR=1\n'
+    # …et un écran où l'on peut redessiner (#240). Le descripteur 4 est ouvert ICI, AVANT le tube :
+    # il désigne donc la fenêtre elle-même, là où le stdout du run n'est plus qu'un tube vers `tee`.
+    # C'est par lui que passent les frames de la vue vivante — et c'est ce qui garde `run.log` propre,
+    # le journal ne recevant que la trace permanente (le `sed` final ne retire que les séquences de
+    # couleur, pas les déplacements de curseur qu'un redessin sur stdout y aurait déversés).
+    printf 'exec 4>&1\n'
+    printf 'export MAESTRO_ORCHESTRATE_CONSOLE_FD=4\n'
     printf 'bash %q' "$RACINE/scripts/orchestrate/run.sh"
     for arg in "$@"; do printf ' %q' "$arg"; done
     # `tee` garde la sortie lisible dans la fenêtre ET sur disque : une console qui se referme (ou
@@ -1284,6 +1573,11 @@ TRAITES=0
 POSITION=0
 PARENTS_ECHOUES=""
 WORKTREES=""
+# L'origine du chrono du run, lue par le pied de la vue vivante (#240). `SECONDS` plutôt que `date` :
+# la frame se redessine plusieurs fois par seconde, et sous MSYS un fork y coûterait plus cher que
+# tout le reste du dessin.
+RUN_DEBUT_S=$SECONDS
+vue_ouvre
 
 # Le coût est arrondi ICI, à l'unique endroit qui écrit le bilan : `status.sh` le relit tel quel, et
 # une colonne à quinze décimales (« 10.686978499999995 ») ne dit rien de plus qu'à deux.
@@ -1385,11 +1679,25 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
   tentative=0
   reprises=0
   cout=0
+  # Le chrono de la vue suit le TICKET : posé ici, il traverse les reprises de session.
+  VUE_DEBUT_TICKET=$debut
+  VUE_REPRISE=""
+
+  # La checklist du plan, recalculée à chaque ticket (#240) : les verdicts déjà rendus viennent de
+  # `resume.tsv`, le reste du plan de `plan.tsv`. En plein texte sur stdout SEULEMENT quand rien ne
+  # peut être redessiné : avec une console, le bloc vivant la porte déjà, et l'imprimer en double
+  # ferait défiler deux fois la même chose. Ce que `run.log` garde alors, ce sont l'en-tête du
+  # ticket, les battements et le verdict — la trace permanente, qui suffit à relire un run.
+  vue_prepare "$iid"
+  vue_active || vue_texte
 
   while :; do
     tentative=$((tentative + 1))
     lance_session "$iid" "$dest" "$uuid" "$mode"
     code=$?
+    # Le bloc de la vue est retiré AVANT toute impression permanente : sans quoi la ligne suivante
+    # atterrirait au milieu d'une frame, et le compte de lignes des frames d'après serait faux.
+    vue_efface
     cout="$(champ_json "$RUN_DIR/$iid.json" total_cost_usd)"
 
     if [ "$code" -eq 124 ]; then
@@ -1440,6 +1748,9 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
 
     reprises=$((reprises + 1))
     mode=reprise
+    # La ligne va dans `run.log` ; la vue, elle, garde l'état sous les yeux tant que la session
+    # rouverte n'a pas appelé son premier outil — l'écran ne doit pas laisser croire à un départ.
+    VUE_REPRISE="reprise $reprises/$MAX_REPRISES après limite d'usage"
     printf '  reprise %s/%s de la session #%s…\n' "$reprises" "$MAX_REPRISES" "$iid"
   done
   duree=$((SECONDS - debut))
