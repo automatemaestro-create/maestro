@@ -48,6 +48,7 @@ from claude_agent_sdk.types import HookInput
 
 from maestro.config import ConfigError, Settings
 from maestro.providers.base import (
+    PLAFOND_TOURS_DEFAUT,
     AuthMode,
     Credentials,
     McpServerUnavailable,
@@ -108,9 +109,6 @@ class ClaudeProvider(ModelProvider):
 
     #: Préfixe des identifiants de modèles Claude (ex. `claude-opus-5`).
     _MODEL_PREFIX: ClassVar[str] = "claude-"
-
-    #: Plafond de tours d'une exécution agentique (garde-fou anti-boucle, docs/02 §7).
-    _MAX_TURNS: ClassVar[int] = 40
 
     def __init__(
         self, credentials: Credentials, *, isolation: IsolationConfig | None = None
@@ -209,6 +207,7 @@ class ClaudeProvider(ModelProvider):
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
+        plafond_tours: int = PLAFOND_TOURS_DEFAUT,
     ) -> str:
         """Lance une exécution *agentique outillée* de l'Agent SDK dans `workspace`.
 
@@ -216,7 +215,13 @@ class ClaudeProvider(ModelProvider):
         (`cwd`) : le sous-agent y produit ses fichiers. `permission_mode` est
         `bypassPermissions` — l'exécution est **non interactive** (aucun humain pour
         confirmer), l'isolation reposant sur le répertoire dédié et sur la restriction
-        de `tools`. `max_turns` borne la boucle (garde-fou anti-emballement).
+        de `tools`.
+
+        `plafond_tours` (#239) alimente le `max_turns` du SDK, qui borne la boucle
+        (garde-fou anti-emballement) : la valeur vient de l'appelant — le profil de
+        l'agent — et non plus d'une constante de ce fournisseur, qui imposait la même
+        borne à des tours au coût sans commune mesure. Elle est reportée telle quelle
+        dans le message de `TurnLimitReached`, pour qu'un échec nomme sa borne.
 
         Les serveurs `mcp_serveurs` (#104, déjà résolus) sont montés sur la
         session via `mcp_servers` de l'Agent SDK ; `strict_mcp_config` verrouille
@@ -264,7 +269,7 @@ class ClaudeProvider(ModelProvider):
             tools=list(tools),
             allowed_tools=list(tools),
             permission_mode="bypassPermissions",
-            max_turns=self._MAX_TURNS,
+            max_turns=plafond_tours,
             mcp_servers={s.nom: _config_mcp_sdk(s) for s in mcp_serveurs},
             strict_mcp_config=True,
             hooks=(
@@ -274,9 +279,12 @@ class ClaudeProvider(ModelProvider):
             ),
         )
         if not mcp_serveurs:
-            return await _collect_response(prompt, options)
+            return await _collect_response(prompt, options, plafond_tours=plafond_tours)
         return await _collect_response_pilotee(
-            prompt, options, attendus=frozenset(s.nom for s in mcp_serveurs)
+            prompt,
+            options,
+            attendus=frozenset(s.nom for s in mcp_serveurs),
+            plafond_tours=plafond_tours,
         )
 
 
@@ -318,7 +326,21 @@ def _hook_permissions(
     return hook
 
 
-async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
+def _erreur_plafond(plafond_tours: int | None, detail: object) -> TurnLimitReached:
+    """Compose l'erreur typée du plafond de tours en **nommant la borne appliquée** (#239).
+
+    Le plafond étant désormais réglé par agent, un « plafond atteint » qui ne dit
+    pas *lequel* n'apprend rien : le message porte donc le nombre de tours
+    effectivement passé au SDK. Reste le chemin texte (`generate`), qui ne fixe
+    aucun `max_turns` — la borne y est celle du SDK, nommée comme telle.
+    """
+    borne = f"{plafond_tours} tours" if plafond_tours is not None else "max_turns"
+    return TurnLimitReached(f"plafond de tours atteint ({borne}) : {detail}")
+
+
+async def _collect_response(
+    prompt: str, options: ClaudeAgentOptions, *, plafond_tours: int | None = None
+) -> str:
     """Déroule `query`, assemble le texte de la réponse et signale l'usage (ticket #8).
 
     Les noms d'outils sont relevés au fil des blocs `ToolUseBlock` ; le message
@@ -328,6 +350,8 @@ async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
     Le **plafond de tours** (`max_turns`) est mué en `TurnLimitReached` (#91) :
     c'est le contrat de la couche d'abstraction — le moteur reconnaît ainsi un
     garde-fou déterministe (jamais relancé) sans lire d'erreur propre au SDK.
+    `plafond_tours` est la borne posée par l'appelant (None sur le chemin texte,
+    qui n'en fixe aucune) : elle nomme la limite dans le message (#239).
     """
     parts: list[str] = []
     outils: list[str] = []
@@ -336,15 +360,17 @@ async def _collect_response(prompt: str, options: ClaudeAgentOptions) -> str:
             _absorbe(message, parts, outils)
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
-            raise TurnLimitReached(
-                f"plafond de tours atteint (max_turns) : {exc}"
-            ) from exc
+            raise _erreur_plafond(plafond_tours, exc) from exc
         raise
     return "".join(parts)
 
 
 async def _collect_response_pilotee(
-    prompt: str, options: ClaudeAgentOptions, *, attendus: frozenset[str]
+    prompt: str,
+    options: ClaudeAgentOptions,
+    *,
+    attendus: frozenset[str],
+    plafond_tours: int | None = None,
 ) -> str:
     """Comme `_collect_response`, mais en session pilotée : serveurs MCP connectés d'abord.
 
@@ -369,9 +395,7 @@ async def _collect_response_pilotee(
             if isinstance(message, ResultMessage) and message.is_error:
                 detail = message.result or message.subtype
                 if _MARQUEUR_MAX_TURNS in message.subtype:
-                    raise TurnLimitReached(
-                        f"plafond de tours atteint (max_turns) : {detail}"
-                    )
+                    raise _erreur_plafond(plafond_tours, detail)
                 raise RuntimeError(f"Claude Code returned an error result: {detail}")
     return "".join(parts)
 

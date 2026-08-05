@@ -164,7 +164,9 @@ Capture du canal : ![Notifications Slack du run](./assets/pilote-mcp-slack.png)
   tours, 0,80 $) — un aléa d'exécution, jamais relancé (ENF-06)… que la
   notification de fin de run a **fidèlement rapporté** (« 0/1 réussie(s), 1 en
   échec ») : c'est précisément le rôle de la supervision, y compris quand le
-  run tourne mal.
+  run tourne mal. *(Relu depuis #239 : ce n'était pas un aléa isolé mais la
+  borne unique du fournisseur, la même pour tous les rôles. Le plafond se règle
+  désormais par agent, porté par son profil — [docs/04 §2](./04-specifications-agents.md).)*
 - L'agent notificateur est resté dans sa mission : son compte-rendu précise
   qu'il a posté la notification **sans** entreprendre la tâche d'infrastructure
   décrite dans le message — le prompt système de supervision (surcharge à chaud,

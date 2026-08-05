@@ -18,6 +18,7 @@ n'a pas encore de rétro-boucle automatique, le verdict éclaire la décision hu
 from __future__ import annotations
 
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
+from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* QA : il doit matérialiser un livrable en fichiers
 #: (suite de tests, rapport de revue) dans son répertoire de travail, exécuter ce qui
@@ -64,4 +65,8 @@ QA_PROFILE = RoleProfile(
         "doit être renvoyé au rôle producteur."
     ),
     workspace_prefix="maestro-qa-",
+    # Borne conservatrice (#239) : rôle de lecture et d'analyse (relire les
+    # livrables amont, exécuter des tests, rendre un verdict) — c'est lui que le
+    # relevé global du plafond protégeait le moins bien, il garde le défaut.
+    plafond_tours=PLAFOND_TOURS_DEFAUT,
 )

@@ -115,7 +115,7 @@ Le parallélisme et la fiabilité reposent sur une **file de tâches**.
 - **Micro-VM (E2B / Firecracker / gVisor)** : isolation renforcée si les agents exécutent du code arbitraire à grande échelle.
 - **Branche Git par tâche** : évite les collisions sur les fichiers entre agents parallèles.
 - **Gestion des secrets** : coffre (ex. variables chiffrées, Vault) ; jamais de secret dans les prompts ni les logs.
-- **Plafonds** : budget par tâche/jour, time-outs, liste d'actions interdites.
+- **Plafonds** : budget par tâche/jour, time-outs, liste d'actions interdites, **plafond de tours par agent** (#239 — porté par le profil du rôle, cf. [docs/04 §2](./04-specifications-agents.md) ; un tour de conception pèse ~7× un tour de validation, d'où une borne réglée par rôle plutôt qu'une constante commune).
 
 ---
 

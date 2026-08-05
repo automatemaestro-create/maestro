@@ -108,7 +108,7 @@ class ToolingProvider(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None,
+        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None,
     ):
         self.run_calls.append(
             {"prompt": prompt, "model": model, "workspace": str(workspace), "tools": tuple(tools)}

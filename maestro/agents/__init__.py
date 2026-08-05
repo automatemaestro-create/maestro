@@ -88,7 +88,7 @@ from maestro.agents.store import (
     AgentStore,
     catalogue,
 )
-from maestro.providers.base import ModelProvider
+from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
 
 #: Les profils outillés du POC, dans l'ordre du catalogue. La boucle d'orchestration
 #: (`maestro.engine`) route les tâches assignées à ces rôles vers leur runtime.
@@ -142,6 +142,7 @@ __all__ = [
     "DEVOPS_PROFILE",
     "INSTANCES_DEFAUT",
     "NOMS_RESERVES",
+    "PLAFOND_TOURS_DEFAUT",
     "PLAYBOOK_DEFAUTS",
     "QA_PROFILE",
     "TOOLED_PROFILES",

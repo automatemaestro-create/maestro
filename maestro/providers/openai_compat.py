@@ -10,7 +10,11 @@ d'agent.
 
 Capacités : `generate` (texte) seulement — l'exécution *agentique outillée*
 (`run_agent`) reste refusée (`UnsupportedCapability`, comportement de la base) et
-le moteur replie alors sur le livrable texte. L'authentification passe par le slot
+le moteur replie alors sur le livrable texte. Sans boucle agentique, **aucun
+plafond de tours ne s'applique ici** (#239) : le `tours=1` remonté à la télémétrie
+mesure l'aller-retour HTTP (un appel = un tour), il ne borne rien.
+
+L'authentification passe par le slot
 `Credentials` : une clé API envoyée en `Bearer` si fournie, sinon aucune en-tête —
 le cas des endpoints locaux sans auth (Ollama, vLLM). Un endpoint qui exige une
 clé absente répond 401, signalé tel quel.

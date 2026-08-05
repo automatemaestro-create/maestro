@@ -21,6 +21,7 @@ reste ici que ce qui est propre au rôle.
 from __future__ import annotations
 
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
+from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* BDD : il doit matérialiser un livrable en fichiers
 #: (schéma, migrations, requêtes) dans son répertoire de travail, et porter le
@@ -67,4 +68,7 @@ DATABASE_PROFILE = RoleProfile(
         "l'appliquer, et signale toute opération destructive à valider par un humain."
     ),
     workspace_prefix="maestro-bdd-",
+    # Borne conservatrice (#239) : schémas et migrations tiennent en une douzaine
+    # de tours à ~13 000 tokens (mesuré sur `schema-depenses`) — le défaut suffit.
+    plafond_tours=PLAFOND_TOURS_DEFAUT,
 )

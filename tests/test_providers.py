@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from maestro.agents.mcp import ServeurMcp
 from maestro.providers import (
     AuthMode,
     ClaudeProvider,
@@ -22,7 +23,7 @@ from maestro.providers import (
     unregister,
 )
 from maestro.providers import claude as claude_mod
-from maestro.providers.base import ModelProvider, TurnLimitReached
+from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider, TurnLimitReached
 from maestro.telemetry import collect_usage
 
 
@@ -331,3 +332,123 @@ def test_claude_laisse_passer_les_autres_erreurs_sdk_inchangees(monkeypatch):
     with pytest.raises(Exception, match="Fatal error in message reader") as excinfo:
         asyncio.run(provider.generate("Salut", model="claude-opus-4-8"))
     assert not isinstance(excinfo.value, TurnLimitReached)
+
+
+# --- Ticket #239 : le plafond de tours vient de l'appelant, plus d'une constante -------
+
+
+def _max_turns_vu(monkeypatch, **kwargs):
+    """Lance `run_agent` sur un `query` factice et rend le `max_turns` passé au SDK."""
+    vu: dict[str, object] = {}
+
+    async def fake_query(*, prompt, options):
+        vu["max_turns"] = options.max_turns
+        yield FakeAssistantMessage([FakeTextBlock("Livré.")])
+
+    _patch_sdk(monkeypatch, fake_query)
+    asyncio.run(
+        ClaudeProvider(Credentials()).run_agent(
+            "Fais",
+            model="claude-sonnet-5",
+            workspace=Path("/tmp/ws-239"),
+            tools=("Read",),
+            **kwargs,
+        )
+    )
+    return vu["max_turns"]
+
+
+def test_claude_borne_la_boucle_sur_le_plafond_recu(monkeypatch):
+    # Le plafond n'est plus une constante de classe : c'est l'appelant (le profil
+    # de l'agent, via AgentRuntime) qui le fixe, et il arrive tel quel au SDK.
+    assert _max_turns_vu(monkeypatch, plafond_tours=120) == 120
+    assert _max_turns_vu(monkeypatch, plafond_tours=7) == 7
+
+
+def test_claude_sans_plafond_reste_borne_par_le_defaut(monkeypatch):
+    # Un appel qui n'en fournit pas retombe sur le défaut conservateur — jamais
+    # sur l'absence de borne (le garde-fou anti-boucle de docs/02 §7 tient seul).
+    assert _max_turns_vu(monkeypatch) == PLAFOND_TOURS_DEFAUT
+    assert PLAFOND_TOURS_DEFAUT > 0
+
+
+def test_le_message_du_plafond_nomme_la_borne_appliquee(monkeypatch):
+    # Un « plafond atteint » qui ne dit pas lequel n'apprend rien maintenant que
+    # chaque agent a le sien : le message porte la borne réellement appliquée.
+    async def fake_query(*, prompt, options):
+        raise Exception("Claude Code returned an error result: error_max_turns")
+        yield  # jamais atteint : fait de fake_query un générateur asynchrone
+
+    _patch_sdk(monkeypatch, fake_query)
+    provider = ClaudeProvider(Credentials())
+
+    with pytest.raises(TurnLimitReached, match=r"plafond de tours atteint \(15 tours\)"):
+        asyncio.run(
+            provider.run_agent(
+                "Fais",
+                model="claude-sonnet-5",
+                workspace=Path("/tmp/ws-239"),
+                tools=("Read",),
+                plafond_tours=15,
+            )
+        )
+
+
+def test_le_chemin_texte_nomme_la_borne_du_sdk_faute_de_plafond(monkeypatch):
+    # `generate` ne fixe aucun max_turns (pas de boucle agentique) : la borne est
+    # celle du SDK — le message la nomme comme telle plutôt que d'inventer un chiffre.
+    async def fake_query(*, prompt, options):
+        raise Exception("Claude Code returned an error result: error_max_turns")
+        yield  # jamais atteint : fait de fake_query un générateur asynchrone
+
+    _patch_sdk(monkeypatch, fake_query)
+
+    with pytest.raises(TurnLimitReached, match=r"plafond de tours atteint \(max_turns\)"):
+        asyncio.run(ClaudeProvider(Credentials()).generate("Salut", model="claude-opus-4-8"))
+
+
+def test_le_plafond_est_nomme_aussi_en_session_pilotee(monkeypatch, tmp_path):
+    # Session pilotée (serveurs MCP montés) : le CLI signale l'échec par un
+    # ResultMessage au lieu d'une exception — même erreur typée, même borne nommée.
+    class FakeErrorResultMessage(FakeResultMessage):
+        def __init__(self):
+            super().__init__()
+            self.is_error = True
+            self.subtype = "error_max_turns"
+            self.result = "Claude Code returned an error result"
+
+    class FakeClient:
+        def __init__(self, options):
+            self.options = options
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get_mcp_status(self):
+            return {"mcpServers": [{"name": "factice", "status": "connected"}]}
+
+        async def query(self, prompt):
+            return None
+
+        async def receive_response(self):
+            yield FakeErrorResultMessage()
+
+    monkeypatch.setattr(claude_mod, "ClaudeSDKClient", FakeClient)
+    monkeypatch.setattr(claude_mod, "ResultMessage", FakeErrorResultMessage)
+    monkeypatch.setattr(claude_mod, "AssistantMessage", FakeAssistantMessage)
+    monkeypatch.setattr(claude_mod, "TextBlock", FakeTextBlock)
+
+    with pytest.raises(TurnLimitReached, match=r"plafond de tours atteint \(33 tours\)"):
+        asyncio.run(
+            ClaudeProvider(Credentials()).run_agent(
+                "Fais",
+                model="claude-sonnet-5",
+                workspace=tmp_path,
+                tools=("Read",),
+                mcp_serveurs=(ServeurMcp(nom="factice", type="stdio", commande="python"),),
+                plafond_tours=33,
+            )
+        )
