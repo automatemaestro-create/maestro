@@ -677,10 +677,14 @@ accélère le `before_script` d'un run à l'autre. Un **pipeline vert est la con
 `En revue` → merge**.
 
 Le **front** (`apps/web`) a son propre job, `web-build`, qui enchaîne `npm run lint` (ESLint),
-`npm test` (la suite **Vitest** de l'interface, #124) puis `npm run build` (`next build`, qui
-vérifie aussi le typage TypeScript). Les trois tiennent dans **un seul** job parce que
+`npm run typecheck` (`tsc --noEmit`, #236), `npm test` (la suite **Vitest** de l'interface, #124)
+puis `npm run build` (`next build`, qui vérifie aussi le typage TypeScript). Le `typecheck` fait
+donc doublon avec le build : il existe pour rendre le typage vérifiable **seul**, en quelques
+secondes, et sous une forme qu'une session Claude Code peut lancer — la couche permissions
+autorise `npm run …`, jamais un `./node_modules/.bin/tsc` (#236) ; le jouer en CI et dans le filet
+local est ce qui l'empêche de pourrir. Les quatre tiennent dans **un seul** job parce que
 l'installation des dépendances (`npm ci`) pèse bien plus que les contrôles eux-mêmes : la refaire
-deux fois de plus n'apprendrait rien et occuperait d'autant le runner de l'équipe (§8.1) ; l'ordre
+trois fois de plus n'apprendrait rien et occuperait d'autant le runner de l'équipe (§8.1) ; l'ordre
 va du plus rapide au plus lent, pour que le verdict tombe tôt quand il est rouge. Le job ne se
 déclenche que si `apps/web/**` (ou `.gitlab-ci.yml`) change — un pipeline purement Python reste
 rapide — et son cache npm porte sur le lockfile versionné.
@@ -708,6 +712,17 @@ pollue au passage) ; sans la seconde, la prochaine fuite du même genre repasser
 puisqu'elle ne se manifeste que par de la lenteur. C'est aussi ce qui rend le filet CI local
 ([`scripts/ci/local.sh`](../scripts/ci/local.sh), ci-dessous) comparable au job qu'il prédit : le
 runner, lui, n'a jamais eu de clés Langfuse dans son environnement.
+
+Le même conftest neutralise, pour la même raison, **`MAESTRO_ORCHESTRATE_COULEUR`** (#236). Posée
+dans le bloc `env` d'un `.claude/settings.local.json` — c'est ce qui garde les couleurs de
+`run.sh --detach` dans la console qu'il ouvre (§11) —, elle fuit dans l'environnement de toute
+session de ce poste, donc des sous-processus de `tests/test_orchestrate.py`, dont la sortie
+capturée ressort truffée de codes ANSI : `test_sans_le_marqueur_la_sortie_reste_sans_couleur`
+échoue **en local seulement**, la CI restant verte. Quatre sessions ont rouvert la même enquête sur
+cette fausse alerte avant qu'on la tarisse à la source. La règle générale, dont Langfuse et la
+couleur ne sont que deux cas : **le verdict de la suite ne dépend pas du poste qui la joue** — ce
+qu'un `.env` ou un `settings.local.json` pose dans l'environnement se neutralise dans le conftest,
+pas dans le fichier du poste (non versionné, le prochain clone le reposerait).
 
 **Quand un pipeline se déclenche ?** **Uniquement sur les Merge Requests** (#165). Le bloc
 `workflow: rules:` de [`.gitlab-ci.yml`](../.gitlab-ci.yml) ne laisse passer que

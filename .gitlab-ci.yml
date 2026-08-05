@@ -153,5 +153,8 @@ web-build:
     - cd apps/web
     - npm ci --cache .npm --prefer-offline
     - npm run lint
+    # Le typage avant les tests et le build : quelques secondes, et l'erreur en clair plutôt
+    # qu'un `next build` rouge en fin de course (#236).
+    - npm run typecheck
     - npm test
     - npm run build
