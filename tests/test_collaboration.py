@@ -17,6 +17,11 @@ module couvre ce qu'ils ont ajouté à [`scripts/gitlab/lib.sh`](../scripts/gitl
   ce ticket ;
 * **contrôle doctor du runner** (#157) — section 7 de `doctor.sh`.
 
+S'y ajoute, parce que c'est le module qui outille `lib.sh` face à un `glab` factice, la **création
+depuis un fichier** (#233, parent #232) — `create-mr` / `issue-note` / `issue-title` : le texte
+long voyage par FICHIER pour qu'aucune commande d'une session autonome ne porte de saut de ligne
+ni de `$(…)`, formes qu'aucune règle de permission ne peut reconnaître (docs/10 §11.7).
+
 Même parti pris que [`test_setup.py`](test_setup.py) et [`test_worktree.py`](test_worktree.py) :
 un **dépôt jetable** monté dans `tmp_path`, sur lequel les VRAIS scripts sont lancés. Rien n'est
 jamais écrit dans le dépôt de travail (`HOME` est lui aussi redirigé).
@@ -78,8 +83,12 @@ args = sys.argv[1:]
 
 journal = os.environ.get("MAESTRO_FAUX_GLAB_JOURNAL")
 if journal:
+    # Une ligne PAR APPEL, quoi qu'on reçoive : les sauts de ligne d'une description sont
+    # échappés en « \n » littéral (#233). Sans ça, un `--description` multi-ligne — la matière
+    # même de ce que les helpers de création font voyager — casserait le découpage du journal
+    # et un test lirait un demi-appel.
     with open(journal, "a", encoding="utf-8") as f:
-        f.write("\t".join(args) + "\n")
+        f.write("\t".join(a.replace("\\", "\\\\").replace("\n", "\\n") for a in args) + "\n")
 
 
 def sortie(texte="", code=0):
@@ -126,6 +135,13 @@ if args[:2] == ["issue", "view"]:
 
 if args[:2] == ["mr", "update"]:
     sortie("Merge request mise à jour.\n")
+
+if args[:2] == ["mr", "create"]:
+    sortie(etat.get("mr_create_sortie", "MR ouverte : " + etat.get("mr_url", "") + "\n"),
+           code=etat.get("mr_create_code", 0))
+
+if args[:2] == ["issue", "note"]:
+    sortie("Commentaire ajouté.\n", code=etat.get("issue_note_code", 0))
 
 sortie(code=1)
 '''
@@ -1275,3 +1291,252 @@ def test_ensure_runner_s_arrete_si_glab_n_est_pas_authentifie(depot: Depot) -> N
     acheve = depot.ensure_runner()
     assert acheve.returncode == 1
     assert "glab non authentifié" in acheve.stderr
+
+
+# =================================================================================================
+# Création depuis un fichier : MR et notes (#233, parent #232)
+# =================================================================================================
+# Le texte long d'une MR ou d'un commentaire est la SEULE chose qu'une session autonome ne peut pas
+# faire tenir sur une ligne de commande, et les deux replis naturels sont pires que le mal : la
+# couche permissions découpe un appel sur ses SAUTS DE LIGNE et ne matche aucune SUBSTITUTION
+# `$(…)` (docs/10 §11.7). D'où ces helpers, qui prennent un CHEMIN — le `$(cat …)` survit, mais à
+# l'INTÉRIEUR du script, où aucune permission ne s'applique.
+#
+# Ce que ces tests gardent : le contenu arrive INTACT (c'est tout l'intérêt du détour par un
+# fichier), l'appel est IDEMPOTENT (la création est la dernière action du ticket, elle doit
+# supporter d'être rejouée), et un refus n'écrit RIEN — une MR sans description se découvrirait à
+# la revue, quand tout est déjà commité.
+
+BRANCHE = "chore/237-tests-doc-appels-dune-session-autonome-a"
+
+#: Le texte porte tout ce qui rend une commande immatchable — sauts de ligne, `$(…)`, backquotes,
+#: heredoc — plus des accents et un em-dash (le mojibake de #141). Il doit ressortir tel quel : ce
+#: qui casse une ligne de commande ne doit rien casser du tout quand il voyage par fichier.
+DESCRIPTION = (
+    "Closes #237\n"
+    "\n"
+    "## Checklist\n"
+    "- [x] Respecte les conventions de branche/commit — docs/10-workflow-git.md\n"
+    "- [ ] Tests ajoutés/mis à jour si applicable\n"
+    "\n"
+    "Formes que la ligne de commande ne supporterait pas : `$(cat fichier)`, `whoami`,\n"
+    "un heredoc `<<'EOF'`, et des accents « à é ù ».\n"
+)
+
+
+def regle_titre(iid: int, titre: str) -> dict:
+    """Réponse REST d'un ticket : `title` D'ABORD, celui du milestone ensuite.
+
+    L'ordre n'est pas décoratif — `gl_issue_title` prend la PREMIÈRE occurrence de `"title":"` dans
+    la charge, exactement comme `gl_get_description` pour la description. Le jour où GitLab
+    renverrait le milestone avant, ce test tomberait, et c'est ce qu'on veut.
+    """
+    return {
+        "contient": [f"issues/{iid}"],
+        "reponse": {
+            "iid": iid,
+            "title": titre,
+            "description": "peu importe",
+            "milestone": {"title": "Phase 7 — Projets & espace de travail réel"},
+        },
+    }
+
+
+def regle_mr_de_branche(iid: str | None) -> dict:
+    """Réponse à la résolution « quelle MR ouverte porte cette branche ? » (`gl_mr_iid`)."""
+    return {
+        "contient": ["mergeRequests(state: opened"],
+        "reponse": {
+            "data": {"project": {"mergeRequests": {"nodes": [] if iid is None else [{"iid": iid}]}}}
+        },
+    }
+
+
+def sur_une_branche(depot: Depot, branche: str = BRANCHE) -> None:
+    depot.git("checkout", "--quiet", "-b", branche)
+
+
+def appel(depot: Depot, *debut: str) -> str:
+    """L'unique appel `glab` commençant par ces arguments — échoue s'il y en a zéro ou deux."""
+    prefixe = "\t".join(debut)
+    trouves = [ligne for ligne in depot.appels() if ligne.startswith(prefixe)]
+    assert len(trouves) == 1, f"un seul {prefixe!r} attendu, reçu {len(trouves)} : {depot.appels()}"
+    return trouves[0]
+
+
+def valeur_option(ligne: str, option: str) -> str:
+    """La valeur qui suit `--option` dans un appel journalisé (arguments séparés par des TAB)."""
+    champs = ligne.split("\t")
+    assert option in champs, f"{option} absent de {champs}"
+    return champs[champs.index(option) + 1]
+
+
+def journalise(texte: str) -> str:
+    """Le texte tel que le journal du glab factice le rend — sauts de ligne échappés.
+
+    `rstrip` parce qu'une substitution de commande mange les sauts de ligne FINAUX, et seulement
+    ceux-là : c'est la seule altération que le détour par un fichier laisse passer.
+    """
+    return texte.rstrip("\n").replace("\n", "\\n")
+
+
+def fichier_description(depot: Depot, contenu: str = DESCRIPTION) -> Path:
+    chemin = depot.racine / "description-mr.md"
+    chemin.write_text(contenu, encoding="utf-8", newline="\n")
+    return chemin
+
+
+def ecritures(depot: Depot) -> list[str]:
+    """Les appels `glab` qui ÉCRIVENT côté GitLab — vides tant qu'un helper s'abstient."""
+    return [ligne for ligne in depot.appels() if any(verbe in ligne for verbe in ECRITURES)]
+
+
+def test_create_mr_ouvre_une_draft_avec_le_titre_du_ticket_et_le_fichier(depot: Depot) -> None:
+    """Le cas nominal : titre lu dans GitLab, description lue dans le fichier, MR en Draft.
+
+    Draft et `--remove-source-branch` sont dans le contrat : un run produit N MR **à relire**, il
+    ne dé-drafte ni ne merge jamais (docs/10 §11), et la branche part au merge comme partout.
+    """
+    depot.pose_etat(
+        graphql=[regle_mr_de_branche(None)],
+        rest=[regle_titre(237, "Tests + doc : appels d'une session autonome — allowlist")],
+    )
+    sur_une_branche(depot)
+    fichier = fichier_description(depot)
+
+    acheve = depot.lib("create-mr", "237", str(fichier))
+    assert acheve.returncode == 0, acheve.stderr
+
+    ligne = appel(depot, "mr", "create")
+    for drapeau in ("--draft", "--remove-source-branch", "--yes"):
+        assert f"\t{drapeau}" in ligne, f"{drapeau} attendu dans {ligne}"
+    assert valeur_option(ligne, "--target-branch") == "main"
+    assert valeur_option(ligne, "--source-branch") == BRANCHE
+    assert valeur_option(ligne, "--title").startswith("Tests + doc")
+    # L'em-dash du titre survit : il traverse REST puis un argument shell sans repasser par un
+    # décodage approximatif (#141).
+    assert "—" in valeur_option(ligne, "--title")
+
+
+def test_create_mr_transmet_le_fichier_octet_pour_octet(depot: Depot) -> None:
+    """Le cœur du détour par un fichier : ce qui casserait une ligne de commande passe intact.
+
+    Sauts de ligne, `$(…)`, backquotes et heredoc arrivent LITTÉRAUX côté `glab` — non réévalués,
+    non tronqués. Si quelqu'un « simplifiait » un jour le helper en passant le texte autrement,
+    c'est ici que ça se verrait.
+    """
+    depot.pose_etat(graphql=[regle_mr_de_branche(None)], rest=[regle_titre(237, "Titre")])
+    sur_une_branche(depot)
+    fichier = fichier_description(depot)
+
+    assert depot.lib("create-mr", "237", str(fichier)).returncode == 0
+
+    recue = valeur_option(appel(depot, "mr", "create"), "--description")
+    assert recue == journalise(DESCRIPTION)
+    assert "$(cat fichier)" in recue, "la substitution n'a pas été réévaluée : c'est du texte"
+
+
+def test_create_mr_met_a_jour_la_mr_deja_ouverte_au_lieu_d_echouer(depot: Depot) -> None:
+    """Idempotence : la création est la DERNIÈRE action du ticket, elle doit se rejouer.
+
+    Reprise de session, second passage après un commit de plus : `/ticket-finish` repasse ici et
+    ne doit ni échouer ni ouvrir une seconde MR sur la même branche.
+    """
+    depot.pose_etat(graphql=[regle_mr_de_branche("77")], rest=[regle_titre(237, "Titre")])
+    sur_une_branche(depot)
+    fichier = fichier_description(depot)
+
+    acheve = depot.lib("create-mr", "237", str(fichier))
+    assert acheve.returncode == 0, acheve.stderr
+    assert "!77" in acheve.stdout, "la MR retrouvée est nommée"
+    assert "merge_requests/77" in acheve.stdout, "l'URL reste rendue, comme à la création"
+
+    assert not [ligne for ligne in depot.appels() if ligne.startswith("mr\tcreate")], \
+        "une seconde MR aurait été ouverte sur la même branche"
+    assert valeur_option(appel(depot, "mr", "update"), "--description") == journalise(DESCRIPTION)
+
+
+def test_create_mr_refuse_depuis_main_sans_rien_ecrire(depot: Depot) -> None:
+    """`main` n'a pas de MR à ouvrir : le dire vaut mieux qu'un appel qui échouera plus loin."""
+    depot.pose_etat(graphql=[regle_mr_de_branche(None)], rest=[regle_titre(237, "Titre")])
+    fichier = fichier_description(depot)
+
+    acheve = depot.lib("create-mr", "237", str(fichier))
+    assert acheve.returncode == 1
+    assert "main" in acheve.stderr
+    assert not ecritures(depot)
+
+
+@pytest.mark.parametrize(
+    ("nom", "contenu", "attendu"),
+    [("absent.md", None, "introuvable"), ("vide.md", "", "vide")],
+)
+def test_create_mr_refuse_un_fichier_inutilisable(
+    depot: Depot, nom: str, contenu: str | None, attendu: str
+) -> None:
+    """Une MR sans description est pire qu'aucune MR : le helper s'arrête AVANT d'écrire.
+
+    Le fichier vide est le cas réel — un `Write` qui n'a rien écrit, ou le chemin de scratchpad
+    d'une session précédente.
+    """
+    depot.pose_etat(graphql=[regle_mr_de_branche(None)], rest=[regle_titre(237, "Titre")])
+    sur_une_branche(depot)
+    chemin = depot.racine / nom
+    if contenu is not None:
+        chemin.write_text(contenu, encoding="utf-8", newline="\n")
+
+    acheve = depot.lib("create-mr", "237", str(chemin))
+    assert acheve.returncode == 1
+    assert attendu in acheve.stderr
+    assert not ecritures(depot)
+
+
+def test_create_mr_signale_un_titre_illisible_plutot_que_d_en_inventer_un(depot: Depot) -> None:
+    """Sans titre, pas de MR : une MR intitulée « » ne se remarquerait qu'à la revue."""
+    depot.pose_etat(graphql=[regle_mr_de_branche(None)], rest=[])
+    sur_une_branche(depot)
+    fichier = fichier_description(depot)
+
+    acheve = depot.lib("create-mr", "237", str(fichier))
+    assert acheve.returncode == 1
+    assert "#237" in acheve.stderr
+    assert not [ligne for ligne in depot.appels() if ligne.startswith("mr\tcreate")]
+
+
+def test_issue_note_poste_le_fichier_tel_quel(depot: Depot) -> None:
+    """Le pendant de `create-mr` : `-m "$(cat …)"` n'est pas matchable non plus (#186)."""
+    note = "Note de travail — « à relire ».\n\nDeuxième paragraphe.\n"
+    fichier = fichier_description(depot, note)
+
+    acheve = depot.lib("issue-note", "237", str(fichier))
+    assert acheve.returncode == 0, acheve.stderr
+    assert valeur_option(appel(depot, "issue", "note", "237"), "-m") == journalise(note)
+
+
+def test_issue_note_refuse_un_fichier_vide_sans_rien_poster(depot: Depot) -> None:
+    fichier = fichier_description(depot, "")
+    acheve = depot.lib("issue-note", "237", str(fichier))
+    assert acheve.returncode == 1
+    assert "vide" in acheve.stderr
+    assert not ecritures(depot)
+
+
+def test_issue_title_rend_le_titre_en_utf8_intact(depot: Depot) -> None:
+    """Lecture seule, et fidèle : c'est ce titre qui devient celui de la MR."""
+    depot.pose_etat(rest=[regle_titre(237, "Tests + doc — appels « autonomes » d'une session")])
+    acheve = depot.lib("issue-title", "237")
+    assert acheve.returncode == 0, acheve.stderr
+    assert acheve.stdout.strip() == "Tests + doc — appels « autonomes » d'une session"
+    assert not ecritures(depot)
+
+
+def test_les_helpers_de_creation_sont_annonces_par_l_usage(depot: Depot) -> None:
+    """Un helper qu'on ne trouve pas n'existe pas : c'est l'usage qui l'apprend à une session.
+
+    Le refus d'un `glab mr create` multi-ligne tombe **sans humain pour l'expliquer** ; la seule
+    chose que la session puisse lire pour s'en sortir est la sortie d'usage de `lib.sh`.
+    """
+    usage = depot.lib().stderr
+    for verbe in ("create-mr", "issue-note", "issue-title"):
+        assert verbe in usage, f"{verbe} absent de l'usage de lib.sh"
+    assert "fichier" in usage.lower()

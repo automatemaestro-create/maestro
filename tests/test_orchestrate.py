@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from conftest import CLE_COULEUR_ORCHESTRATE  # le conftest du dossier, sur le sys.path de pytest
 
 RACINE = Path(__file__).resolve().parent.parent
 BASH = shutil.which("bash")
@@ -540,6 +541,80 @@ def test_les_refus_merites_ne_sont_pas_leves() -> None:
         "les attentes actives ont coûté le run de #131 : un résultat s'obtient en avant-plan"
     assert "Bash(bash:*)" not in allow, \
         "« bash » tout court exécuterait n'importe quel script, hors du dépôt compris"
+
+
+# --- Ce que onze runs de plus ont appris (#235, parent #232) -------------------------------------
+# 83 refus sur 16 sessions, dont quinze ne tenaient à AUCUNE règle de matching : l'outil
+# était
+# simplement absent de la liste, alors qu'aucun n'écrit hors du worktree. Deux d'entre eux
+# revenaient à CHAQUE run par construction — `env` sur la fausse alerte de la couleur (#236),
+# `node` sur un `tsc` sans script npm — et se sont payés en tours à chaque fois.
+
+@pytest.mark.parametrize(
+    ("regle", "pourquoi"),
+    [
+        ("Bash(env:*)", "lire l'environnement est le premier geste devant un test rouge en local"),
+        ("Bash(printenv:*)", "le pendant de `env`, que les sessions essaient tout autant"),
+        ("Bash(awk:*)", "le seul dépouillement de JSON sans jq ni Python, partout ici"),
+        ("Bash(command -v:*)", "« cet outil est-il là ? », que les scripts posent avant d'agir"),
+        ("Bash(git ls-remote:*)", "une lecture, comme `git config --get`"),
+        ("Bash(git config:*)", "n'écrit au pire que dans le dépôt du worktree"),
+        ("Bash(node:*)", "`npm run:*` passait, un outil sans script npm dédié non"),
+        ("Bash(npx:*)", "même raison que `node`"),
+    ],
+)
+def test_les_outils_absents_qui_ont_coute_quinze_refus_sont_autorises(
+    regle: str, pourquoi: str
+) -> None:
+    assert regle in _allow(), f"{regle} manquant — {pourquoi}"
+
+
+def test_le_destructif_et_l_interpreteur_nu_restent_dehors() -> None:
+    """Deux exclusions délibérées, que le `$comment` du fichier doit continuer d'expliquer.
+
+    Elles ne se redécouvrent pas au refus suivant : leur raison est écrite là où on regarde quand
+    on s'apprête à élargir la liste.
+    """
+    reglages = json.loads(
+        (RACINE / "scripts/orchestrate/settings.run.json").read_text(encoding="utf-8")
+    )
+    allow = reglages["permissions"]["allow"]
+    assert not [r for r in allow if r.startswith("Bash(rm")], \
+        "aucune règle de préfixe ne borne la cible de `rm` : ce serait `rm -rf <n'importe quoi>`"
+    assert "Bash(bash:*)" not in allow, \
+        "`bash <chemin absolu>` ferait sauter la borne des règles `Bash(bash scripts/…)`"
+    commentaire = " ".join(reglages["$comment"])
+    for mot in ("rm", "chemin absolu"):
+        assert mot in commentaire, f"l'exclusion de « {mot} » doit être expliquée dans le fichier"
+    assert "journal.sh refus" in commentaire, \
+        "la boucle de retour de §11.7 ne tient que si la commande qui l'outille est nommée ici"
+
+
+def test_le_prompt_nomme_les_trois_formes_qu_aucune_regle_ne_matche(depot: Depot) -> None:
+    """Elles ne se devinent PAS depuis un refus, qui ne dit jamais ce qui a manqué.
+
+    Et la plus coûteuse tombe sur la dernière action du ticket : huit sessions sur seize ont buté
+    sur un `glab mr create --description` multi-ligne, puis sur le `$(cat …)` par lequel elles
+    essayaient de s'en sortir. Le prompt doit donc les nommer, et dire le geste de remplacement.
+    """
+    depot.ticket(130, "Ticket a traiter")
+    claude = _claude_stub(depot, """
+        printf '%s' "$2" > "$MAESTRO_FIXTURES/prompt-formes.txt"
+        printf '{"type":"result","subtype":"success","is_error":false}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "formes",
+                env={"MAESTRO_CLAUDE_BIN": claude})
+
+    prompt = (depot.fixtures / "prompt-formes.txt").read_text(encoding="utf-8")
+    assert "SAUT DE LIGNE" in prompt
+    assert "SUBSTITUTION" in prompt and "$(" in prompt
+    assert "HEREDOC" in prompt
+    # Nommer l'interdit ne suffit pas : sans le geste de remplacement, la session cherche, et
+    # c'est cette recherche qui coûte des tours.
+    assert "l'outil Write" in prompt, "le remplacement doit être nommé, pas seulement l'interdit"
+    assert "CHEMIN de ce fichier" in prompt
 
 
 # =====================================================================================
@@ -1107,6 +1182,25 @@ def test_sans_le_marqueur_la_sortie_reste_sans_couleur(depot: Depot) -> None:
     assert r.returncode == 0, r.stderr
     assert "#130" in r.stdout
     assert "\x1b[" not in r.stdout
+
+
+def test_le_conftest_neutralise_la_couleur_heritee_du_poste() -> None:
+    """Le contre-test ci-dessus ne tient que si le poste ne pose pas la variable (#236).
+
+    `MAESTRO_ORCHESTRATE_COULEUR=1` dans le bloc `env` d'un `.claude/settings.local.json` fuit dans
+    l'environnement de toute session de ce poste, donc dans les sous-processus lancés ici : la
+    sortie ressort truffée de codes ANSI et le test précédent échoue **en local seulement**, la CI
+    restant verte. Quatre sessions ont rouvert la même enquête sur cette fausse alerte — c'est le
+    dépôt, pas chaque run, qui doit la tarir.
+
+    Vide plutôt que supprimée, comme les clés Langfuse : `run.sh` lit
+    `${MAESTRO_ORCHESTRATE_COULEUR:-0}`, pour qui vide et absente valent 0, et une valeur vide
+    traverse sans surprise les `env={**os.environ, …}` de ces tests.
+    """
+    assert os.environ.get(CLE_COULEUR_ORCHESTRATE) == "", (
+        "le conftest doit vider la variable à l'import, avant le premier module de test "
+        "(tests/conftest.py, #236)"
+    )
 
 
 # =====================================================================================
@@ -2739,3 +2833,175 @@ def test_le_listing_des_milestones_n_imprime_aucun_plan(depot: Depot) -> None:
     assert r.returncode == 0, r.stderr
     assert "501" not in r.stdout, "le plan n'est pas calculé ici"
     assert not (depot.racine / ".maestro").exists()
+
+
+# =====================================================================================
+# journal.sh refus — l'agrégat des permission_denials (#235, parent #232)
+# =====================================================================================
+# §11.7 pose le principe : l'`allow` se complète À PARTIR DES REFUS OBSERVÉS. Il n'était outillé
+# que par ticket (`<iid>.resultat.txt`, #180) ; la question qu'on se pose APRÈS un run est l'autre
+# — « qu'est-ce qui a été refusé, en tout ? » —, et y répondre demandait de dépouiller 16 JSON à la
+# main. Ce que l'agrégat voit et qu'une lecture ticket par ticket rate : le POIDS d'une forme, le
+# MAILLON FAIBLE d'une chaîne, et les refus que rien dans le dépôt ne lèvera.
+
+
+def _refus(*commandes: str, outil: str = "Bash") -> list[dict]:
+    champ = {"Bash": "command", "Skill": "skill"}.get(outil, "file_path")
+    return [
+        {"tool_name": outil, "tool_use_id": f"t{i}", "tool_input": {champ: cmd}}
+        for i, cmd in enumerate(commandes)
+    ]
+
+
+def _journal_refus(depot: Depot, run_id: str, sessions: dict[int, list[dict]]) -> Path:
+    """Un run déjà terminé, dont chaque session a laissé son `<iid>.json` — la matière de #180."""
+    plan = [(rang, iid, "-", "moyenne") for rang, iid in enumerate(sessions, 1)]
+    dossier = _run_dir(depot, run_id, plan)
+    for iid, refus in sessions.items():
+        objet = {
+            "type": "result", "subtype": "success", "is_error": False,
+            "total_cost_usd": 1.5, "permission_denials": refus,
+        }
+        (dossier / f"{iid}.json").write_text(
+            json.dumps(objet, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8", newline="\n",
+        )
+    return dossier
+
+
+def test_refus_compte_chaque_maillon_d_une_chaine_pour_lui_meme(depot: Depot) -> None:
+    """Le CLI découpe sur `&&`, `;` et `|` et exige CHAQUE morceau : l'agrégat doit faire pareil.
+
+    Sans ça, `grep … | tail -8` serait rangé sous « grep » alors que c'est le seul mot qui a fait
+    tomber la ligne — et on instruirait à côté, en ajoutant `tail`, déjà autorisé.
+    """
+    _journal_refus(depot, "chaines", {130: _refus(
+        'cd "E:/ailleurs" && git status',
+        'grep -nE "a|b" journal.log | tail -8',
+    )})
+    r = depot.lance("journal.sh", "refus", "chaines")
+
+    assert r.returncode == 0, r.stderr
+    for verbe in ("cd", "git status", "grep", "tail"):
+        assert verbe in r.stdout, f"le maillon « {verbe} » doit être compté pour lui-même"
+    assert "en commande composée" in r.stdout
+    # Un `grep -E "a|b"` est UNE commande, pas deux : le `|` entre guillemets ne coupe rien.
+    assert '  b"' not in r.stdout
+
+
+def test_refus_pese_une_forme_qu_une_lecture_ticket_par_ticket_raterait(depot: Depot) -> None:
+    """Six refus `env` sur cinq sessions ne se voient pas un par un : d'où le total."""
+    _journal_refus(depot, "poids", {
+        130: _refus("env | grep MAESTRO", "printf 'x'"),
+        131: _refus("env | grep LANGFUSE"),
+    })
+    r = depot.lance("journal.sh", "refus", "poids")
+
+    assert r.returncode == 0, r.stderr
+    assert "2 session(s)" in r.stdout
+    ligne = next(x for x in r.stdout.splitlines() if x.split()[1:2] == ["env"])
+    assert ligne.split()[0] == "2", f"les deux sessions doivent s'additionner : {ligne}"
+    assert "#130" in ligne and "#131" in ligne, "la provenance dit OÙ regarder"
+
+
+def test_refus_releve_les_formes_qu_aucune_regle_ne_matchera(depot: Depot) -> None:
+    """Ces trois-là ne s'instruisent pas en élargissant la liste : le geste est dans la FORME.
+
+    Elles sont relevées AVANT que la commande soit aplatie pour le TSV interne — le saut de ligne
+    n'y survivrait pas, et c'est justement la forme la plus coûteuse (huit sessions sur seize).
+    """
+    _journal_refus(depot, "formes", {130: _refus(
+        'glab mr create --description "ligne un\nligne deux"',
+        'glab mr create --description "$(cat brouillon.md)"',
+        "cat > note.md <<'EOF'\ntexte\nEOF",
+    )})
+    r = depot.lance("journal.sh", "refus", "formes")
+
+    assert r.returncode == 0, r.stderr
+    assert "Formes immatchables" in r.stdout
+    for forme in ("saut de ligne", "substitution", "heredoc"):
+        assert forme in r.stdout, f"la forme « {forme} » doit être nommée"
+    assert "l'outil Write" in r.stdout, "le geste de remplacement, pas seulement le constat"
+
+
+def test_refus_signale_a_part_ce_qu_aucune_regle_ne_levera(depot: Depot) -> None:
+    """Écrire sous `.claude/` vient du CLI, pas de la liste (#229) : aucune règle n'y peut rien."""
+    _journal_refus(depot, "claude", {130: _refus(
+        ".claude/skills/control-tower/SKILL.md", outil="Write",
+    )})
+    r = depot.lance("journal.sh", "refus", "claude")
+
+    assert r.returncode == 0, r.stderr
+    assert "Hors Bash" in r.stdout and "Write" in r.stdout
+    assert ".claude/" in r.stdout
+    assert "aucune règle ne les lèvera" in r.stdout
+
+
+def test_refus_agrege_tout_le_journal_ou_un_seul_run(depot: Depot) -> None:
+    """Deux portées, une même lecture : `--tous` pour la tendance, un run-id pour le run du jour."""
+    _journal_refus(depot, "20260801-100000", {130: _refus("awk '{print}' f")})
+    _journal_refus(depot, "20260804-100000", {131: _refus("npx tsc --noEmit")})
+
+    cible = depot.lance("journal.sh", "refus", "20260801-100000")
+    assert "1 session(s) · 1 refus" in cible.stdout
+    assert "npx" not in cible.stdout
+
+    tous = depot.lance("journal.sh", "refus", "--tous")
+    assert tous.returncode == 0, tous.stderr
+    assert "2 session(s) · 2 refus" in tous.stdout
+    assert "awk" in tous.stdout and "npx" in tous.stdout
+
+
+def test_refus_sans_argument_prend_le_dernier_run_qui_en_porte(depot: Depot) -> None:
+    """Un run tout frais dont aucune session n'a rendu la main masquerait le seul run lisible.
+
+    Les run-id sont horodatés : l'ordre alphabétique EST l'ordre chronologique, sans interroger le
+    système de fichiers.
+    """
+    _journal_refus(depot, "20260801-100000", {130: _refus("awk '{print}' f")})
+    _run_dir(depot, "20260805-090000", [(1, 999, "-", "haute")])  # parti, rien rendu
+
+    r = depot.lance("journal.sh", "refus")
+    assert r.returncode == 0, r.stderr
+    assert "20260801-100000" in r.stdout
+    assert "awk" in r.stdout
+
+
+def test_refus_ne_touche_a_rien_et_dit_franchement_qu_il_n_a_rien_trouve(depot: Depot) -> None:
+    """Lecture seule : `refus` sert à décider, il ne décide pas — et un run propre le dit."""
+    dossier = _journal_refus(depot, "propre", {130: []})
+    fichiers = [p for p in sorted(dossier.rglob("*")) if p.is_file()]
+    empreinte = {p: p.stat().st_mtime_ns for p in fichiers}
+
+    r = depot.lance("journal.sh", "refus", "propre")
+
+    assert r.returncode == 0, r.stderr
+    assert "Aucun refus de permission" in r.stdout
+    assert {p: p.stat().st_mtime_ns for p in fichiers} == empreinte
+
+
+def test_refus_nomme_les_runs_presents_quand_le_run_id_est_inconnu(depot: Depot) -> None:
+    """Une faute de frappe ne doit pas rendre un vide, qu'on lirait « rien à faire »."""
+    _journal_refus(depot, "20260801-100000", {130: _refus("awk '{print}' f")})
+    r = depot.lance("journal.sh", "refus", "20260801-999999")
+    assert r.returncode == 2
+    assert "run inconnu" in r.stderr
+    assert "20260801-100000" in r.stderr
+
+
+def test_la_console_renvoie_vers_l_agregat_en_fin_de_run(depot: Depot) -> None:
+    """Le seul moment où quelqu'un lit un run est celui-là : c'est là que l'invitation porte."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _claude_stub(depot, """
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "invite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+
+    assert "journal.sh refus invite" in r.stdout, (
+        "sans cette ligne, la boucle de retour de §11.7 ne part que si on y pense — "
+        "et onze runs ont montré que non"
+    )

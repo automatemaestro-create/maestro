@@ -158,14 +158,20 @@ rétablit seule et chaque reconnexion recharge l'état.
 
 ```bash
 npm run lint        # ESLint
+npm run typecheck   # tsc --noEmit — le typage seul, sans build
 npm test            # suite Vitest (une passe)
 npm run test:watch  # la même, en continu pendant le développement
 npm run build       # build de production (vérifie aussi le typage TS)
 ```
 
-Le job CI `web-build` (`.gitlab-ci.yml`) rejoue ces trois contrôles — lint,
-tests, build — quand `apps/web/` change, et `bash scripts/ci/local.sh` les
-rejoue à l'identique sur le poste avant d'ouvrir la MR.
+Le job CI `web-build` (`.gitlab-ci.yml`) rejoue ces quatre contrôles — lint,
+typage, tests, build — quand `apps/web/` change, et `bash scripts/ci/local.sh`
+les rejoue à l'identique sur le poste avant d'ouvrir la MR.
+
+`typecheck` fait doublon avec `next build`, qui vérifie déjà le typage : il
+existe pour le **vérifier seul**, en quelques secondes au lieu d'un build
+complet, et sous une forme qu'une session Claude Code peut lancer — la couche
+permissions autorise `npm run …`, jamais un `./node_modules/.bin/tsc` (#236).
 
 ### La suite de tests
 

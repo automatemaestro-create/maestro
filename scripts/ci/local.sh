@@ -43,6 +43,10 @@
 #   - UN PÉRIMÈTRE RÉDUIT SE DIT : sélectionner des tests, c'est accepter de ne pas tout savoir.
 #     Le job annonce ce qu'il a joué et pourquoi, le verdict final porte la mention PARTIEL, et
 #     tout ce que le script ne sait pas classer élargit à la suite entière — jamais l'inverse.
+#   - UN JOURNAL QUI SE LIT : les journaux vont sous <racine-du-worktree>/.maestro/ci-local/ et les
+#     chemins affichés sont RELATIFS à la racine (#234). Un job rouge ne vaut que par la raison
+#     qu'il donne ; un chemin absolu hors du répertoire de travail la met hors de portée d'une
+#     session autonome, qui n'a personne pour approuver sa lecture.
 #   - UN JOB NON JOUABLE N'EST PAS UN ÉCHEC : outil absent ⇒ « IGNORÉ », verdict annoncé PARTIEL
 #     (et bloquant avec --strict). Mieux vaut un verdict honnêtement incomplet qu'un faux vert.
 #
@@ -53,7 +57,16 @@ set -uo pipefail
 
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CI_YML="$RACINE/.gitlab-ci.yml"
-LOG_DIR="${TMPDIR:-/tmp}/maestro-ci-local"
+# JOURNAUX SOUS LA RACINE DU WORKTREE (#234), pas dans ${TMPDIR:-/tmp}. Quand un job échoue, le
+# renvoi vers son journal est la seule information qui dise POURQUOI — et c'est justement celle
+# qu'une session autonome (docs/10 §11) n'a pas le droit d'aller chercher : un chemin absolu hors du
+# répertoire de travail demande une approbation que personne n'est là pour donner. Sur le run de
+# #200, `tail /tmp/maestro-ci-local/pytest.log` a été refusé cinq fois de suite (13 refus sur
+# 5 sessions) et la session a fini par abandonner sans jamais lire l'échec de ses propres tests.
+# Sous la racine, le chemin s'écrit relatif et se lit sans rien demander ; `.maestro/` est gitignoré,
+# donc rien n'entre dans le dépôt.
+LOG_DIR_REL=".maestro/ci-local"
+LOG_DIR="$RACINE/$LOG_DIR_REL"
 
 case "$(uname -s 2>/dev/null)" in
   MINGW* | MSYS* | CYGWIN*) WINDOWS=1 ;;
@@ -144,7 +157,7 @@ liste_jobs() {
     printf '  %-12s %-6s %s\n' pytest     test "python -m pytest <suites déduites du diff>  (--complet : toute la suite + couverture)"
   fi
   printf '  %-12s %-6s %s\n' mypy         test "mypy maestro"
-  printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm test && npm run build (dans apps/web)"
+  printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm run typecheck && npm test && npm run build (dans apps/web)"
 }
 
 while [ $# -gt 0 ]; do
@@ -279,6 +292,13 @@ job_shellcheck() {
   # Miroir des scripts en fins de ligne LF. La CI checkout en LF ; une copie de travail Windows en
   # CRLF déclenche des SC1017 qui n'existent pas côté GitLab (docs/10 §8) — le filet mentirait dans
   # les deux sens. On analyse donc ce que la CI verra, pas ce que le disque contient.
+  #
+  # Ce miroir-ci RESTE dans le temporaire du système, contrairement aux journaux (#234) : il n'est
+  # jamais montré à personne — la sortie de shellcheck désigne les fichiers du dépôt en relatif, et
+  # le miroir est effacé avant même le verdict. Il n'oriente donc aucune session vers un chemin
+  # hors du worktree. Le déplacer sous la racine changerait en revanche le point de montage du repli
+  # docker (`-v "$tmp:/mnt"`) de la partition temporaire vers celle du dépôt : un risque de partage
+  # de volume, sans rien à y gagner.
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/maestro-ci-shellcheck.XXXXXX" 2>/dev/null)" || {
     DETAIL="impossible de créer un dossier temporaire"
     return 2
@@ -716,9 +736,18 @@ job_web() {
     return 2
   }
   # `npm ci` de la CI n'est pas rejoué : il retélécharge le monde alors que setup.sh a déjà posé
-  # node_modules depuis le même lockfile. On enchaîne lint, tests puis build, comme le job.
+  # node_modules depuis le même lockfile. On enchaîne lint, typage, tests puis build, comme le job.
   PATH="$bindir:$PATH" execute npm --prefix apps/web run lint || {
     DETAIL="eslint : erreur(s) — voir le journal"
+    return 1
+  }
+  # Le typage passe AVANT vitest et next build : il coûte quelques secondes là où ils en coûtent
+  # des dizaines, et rend l'erreur en clair au lieu d'un `next build` rouge en fin de course. C'est
+  # aussi ce qui garde le script `typecheck` vivant : exposé pour qu'une session vérifie TypeScript
+  # par `npm run typecheck` — la seule forme que la couche permissions autorise (#236) —, il
+  # pourrirait sans personne pour le jouer.
+  PATH="$bindir:$PATH" execute npm --prefix apps/web run typecheck || {
+    DETAIL="tsc --noEmit : erreur(s) de typage — voir le journal"
     return 1
   }
   # NO_COLOR : sans lui, Vitest colore son résumé et les codes ANSI s'intercalent dans la ligne
@@ -735,7 +764,7 @@ job_web() {
     DETAIL="next build : échec (le typage TypeScript y est vérifié)"
     return 1
   }
-  DETAIL="eslint + vitest (${tests:-?}) + next build verts"
+  DETAIL="eslint + tsc + vitest (${tests:-?}) + next build verts"
   return 0
 }
 
@@ -797,6 +826,7 @@ joue_etage() {
       entete_affichee=1
     fi
     JOURNAL="$LOG_DIR/$job.log"
+    JOURNAL_REL="$LOG_DIR_REL/$job.log"
     DETAIL=""
     debut=$SECONDS
     lance_job "$job"
@@ -809,9 +839,11 @@ joue_etage() {
         ;;
       1)
         printf '  %s %-12s %s  (%s)\n' "$(symbole ECHEC)" "$job" "$DETAIL" "$(duree_lisible $((SECONDS - debut)))"
-        printf '%s\n' "    ─── journal : $JOURNAL"
+        # Chemin RELATIF à la racine : tel quel, il se lit depuis le répertoire de travail — c'est
+        # tout l'objet de #234. L'afficher en absolu suffirait à rendre la suite illisible.
+        printf '%s\n' "    ─── journal : $JOURNAL_REL"
         sed -n '1,40p' "$JOURNAL" 2>/dev/null | sed 's/^/    /'
-        [ "$(wc -l <"$JOURNAL" 2>/dev/null || echo 0)" -gt 40 ] && printf '    … (suite dans %s)\n' "$JOURNAL"
+        [ "$(wc -l <"$JOURNAL" 2>/dev/null || echo 0)" -gt 40 ] && printf '    … (suite dans %s)\n' "$JOURNAL_REL"
         enregistre "$job" ECHEC "$DETAIL"
         NB_ECHECS=$((NB_ECHECS + 1))
         NB_JOUES=$((NB_JOUES + 1))
@@ -831,6 +863,10 @@ joue_etage() {
   return 0
 }
 
+# Table rase à chaque lancement (#234) : dans /tmp le système faisait le ménage, sous la racine
+# personne ne le ferait — les journaux s'y accumuleraient. Et un `pytest.log` d'hier laissé à côté
+# d'un run qui n'a pas joué pytest est pire qu'absent : il ment sur ce qui vient d'être vérifié.
+rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 branche="$(git -C "$RACINE" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 printf '\n%sFilet CI local%s — %s\n' "$C_B" "$C_0" "$RACINE"

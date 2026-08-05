@@ -28,8 +28,17 @@
 set -euo pipefail
 
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Le CACHE reste hors du dépôt, à dessein : c'est une installation npm (playwright-core, puis le
+# navigateur) de plusieurs centaines de Mo, partagée entre tous les clones et les worktrees, et le
+# dépôt n'a pas à la porter. Il n'oriente personne vers rien à lire — juste le dossier où l'outil
+# s'installe (#234).
 CACHE_NODE="${TMPDIR:-/tmp}/maestro-presentation/node"
-LOG_DIR="${TMPDIR:-/tmp}/maestro-presentation/logs"
+# Les JOURNAUX, eux, vont sous la racine du worktree : c'est vers eux que ce script renvoie quand
+# l'API, le build ou l'UI échoue, et un chemin absolu hors du répertoire de travail met cette
+# raison hors de portée d'une session autonome (docs/10 §11), qui n'a personne pour approuver sa
+# lecture. `.maestro/` est gitignoré.
+LOG_DIR_REL=".maestro/presentation"
+LOG_DIR="$RACINE/$LOG_DIR_REL"
 # Ports dédiés : on ne marche pas sur ceux de la stack de développement (8000/3000).
 PORT_API="${MAESTRO_PORT_API_CAPTURES:-8010}"
 PORT_UI="${MAESTRO_PORT_UI_CAPTURES:-3010}"
@@ -135,28 +144,28 @@ if [ "$DEMARRER" = 1 ]; then
     exit 1
   fi
 
-  echo "[captures] API de démo sur :${PORT_API} (log : $LOG_DIR/api.log)"
+  echo "[captures] API de démo sur :${PORT_API} (log : $LOG_DIR_REL/api.log)"
   (cd "$RACINE" && nohup "$PYTHON" -m maestro.controltower.demo --port "$PORT_API" \
     >"$LOG_DIR/api.log" 2>&1 &)
   if ! attendre_http "http://127.0.0.1:${PORT_API}/api/sante" 30; then
-    echo "[captures] ⚠ l'API n'a pas démarré — voir $LOG_DIR/api.log" >&2
+    echo "[captures] ⚠ l'API n'a pas démarré — voir $LOG_DIR_REL/api.log" >&2
     exit 1
   fi
 
-  echo "[captures] build de l'UI (log : $LOG_DIR/build.log)"
+  echo "[captures] build de l'UI (log : $LOG_DIR_REL/build.log)"
   if ! (cd "$RACINE/apps/web" \
         && NEXT_PUBLIC_MAESTRO_API_URL="http://127.0.0.1:${PORT_API}" \
            npm run build >"$LOG_DIR/build.log" 2>&1); then
-    echo "[captures] ⚠ le build de l'UI a échoué — voir $LOG_DIR/build.log" >&2
+    echo "[captures] ⚠ le build de l'UI a échoué — voir $LOG_DIR_REL/build.log" >&2
     exit 1
   fi
 
-  echo "[captures] UI sur :${PORT_UI} (log : $LOG_DIR/ui.log)"
+  echo "[captures] UI sur :${PORT_UI} (log : $LOG_DIR_REL/ui.log)"
   (cd "$RACINE/apps/web" \
     && NEXT_PUBLIC_MAESTRO_API_URL="http://127.0.0.1:${PORT_API}" \
        nohup npx next start --port "$PORT_UI" >"$LOG_DIR/ui.log" 2>&1 &)
   if ! attendre_http "http://127.0.0.1:${PORT_UI}" 60; then
-    echo "[captures] ⚠ l'UI n'a pas démarré — voir $LOG_DIR/ui.log" >&2
+    echo "[captures] ⚠ l'UI n'a pas démarré — voir $LOG_DIR_REL/ui.log" >&2
     exit 1
   fi
 fi
