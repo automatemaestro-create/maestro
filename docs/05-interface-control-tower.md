@@ -205,6 +205,47 @@ Quand un agent atteint une action sensible, une carte **« Validation requise »
 Le sélecteur de projet devient alors un élément permanent de la barre supérieure : le Kanban,
 les coûts et le journal se lisent **par projet**.
 
+#### 2.7.1 L'écran Projets (#225) — **livré**
+
+Le premier des quatre écrans ci-dessus est **spécifié et implémenté** : ce qui suit remplace, pour
+lui seul, la réserve « pas encore spécifié » de l'encadré. Les trois autres restent à la Phase 8.
+Implémentation : `apps/web/app/projets/page.tsx` et `apps/web/components/projets/`, contre les six
+routes du §6.7 ; couverture `apps/web/tests/projets.test.tsx`.
+
+**Place dans la navigation** — une entrée **« Projets »** juste après le tableau de bord, avant les
+écrans qui s'y rapporteront (agents, coûts, validations). Déclarer *où* Maestro travaille n'est pas
+un réglage du poste : ce n'est pas une section des Paramètres.
+
+**Ce que la liste montre**, une carte par projet : le **nom**, la **racine** canonicalisée telle que
+le backend l'a enregistrée, l'**origine** (« Dossier existant » / « Nouveau dossier »), le **VCS
+constaté** (`git · <branche>`, ou « Non versionné » — jamais tu, puisque c'est lui qui décide du
+patron d'écriture de #224), le **périmètre** (inclus, exclus) et les dates. Aucun projet déclaré
+n'est pas une liste vide mais une phrase qui dit ce qu'on perd à ne pas en déclarer.
+
+**Déclarer et modifier** passent par le **même formulaire**, parce que `PUT` est un remplacement
+intégral (§6.7) : deux formulaires distincts finiraient par ne plus porter les mêmes champs. Toute
+écriture est suivie d'un **rechargement de la liste** — la racine est canonicalisée et le VCS
+constaté côté serveur, donc afficher ce qu'on a envoyé ferait diverger l'écran du disque.
+L'**origine ne s'édite pas** après coup : elle raconte comment le projet est né, la réécrire ne
+changerait rien sur le disque.
+
+**Choisir la racine** — le point dur, et la raison d'être de l'explorateur du §6.7. La racine ne se
+tape pas : elle est toujours l'un des chemins **énumérés par l'API**. L'écran navigue dossier par
+dossier (entrer, remonter, revenir aux dossiers explorables), affiche le marqueur **dépôt Git** et
+grise les dossiers **déjà déclarés** par un autre projet. Le seul cas où le dossier visé n'existe pas
+encore — origine « nouveau » — se résout **sans exception à la règle** : le **parent** vient de
+l'explorateur et l'utilisateur ne saisit qu'un **nom de dossier**, refusé s'il contient un
+séparateur.
+
+**Un refus est une réponse** (EF-38), et il en porte trois choses : la **phrase** du backend, le
+**geste** qui en sort quand l'écran le connaît (élargir `MAESTRO_EXPLORATEUR_RACINES`, descendre
+d'un cran, choisir un sous-dossier…) et le **motif** brut, affiché tel quel — un code stable vaut
+mieux qu'une traduction approximative quand il faut chercher de l'aide. Un refus s'affiche **à
+l'endroit du geste refusé** (dans le formulaire, sur la carte, dans l'explorateur), **conserve la
+saisie en cours** et **laisse la page précédente** de l'explorateur à l'écran : l'erreur ne casse ni
+la navigation ni le reste de l'écran. Corollaire tenu par les tests : « ce dossier n'a pas de
+sous-dossier » et « je refuse de regarder là » ne s'affichent **jamais** pareil.
+
 ---
 
 ## 3. Parcours utilisateur clés

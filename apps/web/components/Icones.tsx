@@ -48,6 +48,15 @@ export function IconeAgents(props: Props) {
   );
 }
 
+export function IconeProjets(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4L11 8.5h8.5A1.5 1.5 0 0 1 21 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5Z" />
+      <path d="M3 10.5h18" />
+    </Trait>
+  );
+}
+
 export function IconePlaybooks(props: Props) {
   return (
     <Trait {...props}>
