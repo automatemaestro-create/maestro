@@ -20,7 +20,18 @@ procédure manuelle est documentée dans docs/19, §Vérification) :
    lancée, arguments du CLI relayés, code de sortie remonté inchangé ;
 ④ **câblage fournisseur Claude** : en mode isolé, `run_agent` pointe le SDK
    sur le shim (`cli_path`) et pose le protocole `MAESTRO_SANDBOX_*` ; hors
-   mode isolé, rien ne change ; `from_settings` valide l'isolation au câblage.
+   mode isolé, rien ne change ; `from_settings` valide l'isolation au câblage ;
+⑤ **second montage du projet** (#226, Phase 7 — tests différés au lot #220) :
+   le seul endroit du contrat de [docs/17 §3](../docs/17-isolation-execution.md)
+   que la Phase 7 déplace. Une tâche rattachée à un projet monte l'espace
+   **dérivé** de ce projet (#224) **à la place** du répertoire jetable, jamais
+   en plus ; la **racine du projet n'est jamais montée**, refusée deux fois — au
+   câblage du protocole (`env_sandbox`) et au dernier mètre avant `docker run`
+   (`commande_docker`), la seule porte que rien ne contourne — et sur des chemins
+   **résolus**, pour qu'un `..` ou une casse différente ne passent pas ; les
+   chemins **exclus** du périmètre sont recouverts d'un montage vide en lecture
+   seule, un périmètre qui en excède le plafond étant un refus franc plutôt
+   qu'un montage à moitié.
 """
 
 import asyncio
@@ -29,16 +40,20 @@ from pathlib import Path
 import pytest
 
 from maestro.config import ConfigError, Settings
+from maestro.projets.modele import Perimetre, Projet
 from maestro.providers import ClaudeProvider, Credentials
 from maestro.providers import claude as claude_mod
 from maestro.sandbox import container
 from maestro.sandbox import shim as shim_mod
 from maestro.sandbox.container import (
     ENV_IMAGE,
+    ENV_MASQUES,
+    ENV_PROJET,
     ENV_RESEAU,
     ENV_TRANSMISES,
     ENV_WORKSPACE,
     IMAGE_DEFAUT,
+    POINT_MONTAGE,
     IsolationConfig,
     commande_docker,
 )
@@ -309,3 +324,160 @@ def test_hors_mode_isole_rien_ne_change(monkeypatch, tmp_path):
 def test_from_settings_valide_l_isolation_au_cablage():
     with pytest.raises(ConfigError, match="MAESTRO_ISOLATION"):
         ClaudeProvider.from_settings(_settings(isolation="gvisor"))
+
+
+# --- ⑤ Le second montage du projet (#226, Phase 7) --------------------------------------
+
+
+def _projet_sur(racine: Path, **surcharges) -> Projet:
+    """Un projet déclaré sur `racine`, avec le périmètre par défaut sauf surcharge."""
+    champs = {
+        "id": "prj-depensio",
+        "nom": "Dépensio",
+        "racine": racine.as_posix(),
+        "origine": "existant",
+        "vcs": None,
+        "perimetre": Perimetre(),
+    }
+    champs.update(surcharges)
+    return Projet(**champs)
+
+
+def _montages(commande: list[str]) -> list[str]:
+    """Les arguments de `--volume` de la commande, dans l'ordre."""
+    return [commande[i + 1] for i, mot in enumerate(commande) if mot == "--volume"]
+
+
+def test_sans_projet_le_protocole_reste_celui_d_avant(shim_resolu, tmp_path):
+    """`None` — une tâche sans `projet_id` — rend exactement les trois variables d'avant."""
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    env = config.env_sandbox(tmp_path / "espace", projet=None)
+
+    assert set(env) == {ENV_IMAGE, ENV_RESEAU, ENV_WORKSPACE}
+
+
+def test_avec_un_projet_la_racine_est_transmise_pour_etre_refusee(shim_resolu, tmp_path):
+    """Elle voyage pour que le shim la vérifie au dernier mètre, jamais pour être montée."""
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    espace = tmp_path / "espace"
+    espace.mkdir()
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    env = config.env_sandbox(espace, projet=_projet_sur(racine))
+
+    assert env[ENV_PROJET] == str(racine.resolve())
+    assert env[ENV_WORKSPACE] == str(espace)
+
+
+def test_un_espace_de_travail_egal_a_la_racine_est_refuse_au_cablage(shim_resolu, tmp_path):
+    """EF-36 dans sa forme la plus courte : les agents travaillent hors de la racine."""
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    with pytest.raises(ConfigError, match="racine du projet"):
+        config.env_sandbox(racine, projet=_projet_sur(racine))
+
+
+def test_un_espace_de_travail_dans_la_racine_est_refuse_au_cablage(shim_resolu, tmp_path):
+    racine = tmp_path / "depensio"
+    (racine / "dedans").mkdir(parents=True)
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    with pytest.raises(ConfigError, match="racine du projet"):
+        config.env_sandbox(racine / "dedans", projet=_projet_sur(racine))
+
+
+def test_un_detour_par_double_point_ne_contourne_pas_le_refus(shim_resolu, tmp_path):
+    """La comparaison se fait sur des chemins résolus : `racine/../depensio` est la racine."""
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    with pytest.raises(ConfigError, match="racine du projet"):
+        config.env_sandbox(racine / ".." / "depensio", projet=_projet_sur(racine))
+
+
+def test_le_dernier_metre_avant_docker_refuse_aussi_la_racine(tmp_path):
+    """La seule porte que rien ne contourne : un protocole posé par un tiers y passe aussi."""
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    environ = {**_protocole(str(racine)), ENV_PROJET: str(racine)}
+
+    with pytest.raises(ConfigError, match="racine du projet"):
+        commande_docker(environ, [])
+
+
+def test_un_espace_derive_hors_de_la_racine_passe_les_deux_controles(tmp_path):
+    """Le montage se **substitue** au répertoire jetable : pas de troisième chemin monté."""
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    espace = tmp_path / "espace"
+    espace.mkdir()
+    environ = {**_protocole(str(espace)), ENV_PROJET: str(racine)}
+
+    montages = _montages(commande_docker(environ, ["--version"]))
+
+    assert montages == [f"{espace}:{POINT_MONTAGE}"]
+    assert all(montage.split(":")[0] != str(racine) for montage in montages)
+
+
+def test_les_chemins_exclus_sont_recouverts_d_un_montage_vide(tmp_path):
+    """« Ce qui est exclu n'est pas monté » : le vide est monté par-dessus, en lecture seule."""
+    espace = tmp_path / "espace"
+    espace.mkdir()
+    environ = {**_protocole(str(espace)), ENV_MASQUES: "f:.env\nd:services/secrets"}
+
+    masques = _montages(commande_docker(environ, []))[1:]
+
+    assert [m.rsplit(":", 2)[-2] for m in masques] == [
+        f"{POINT_MONTAGE}/.env",
+        f"{POINT_MONTAGE}/services/secrets",
+    ]
+    assert all(masque.endswith(":ro") for masque in masques)
+
+
+def test_un_masque_ne_laisse_jamais_passer_le_contenu_de_l_hote(tmp_path):
+    """C'est le vide qui est monté : le conteneur voit un `.env` de zéro octet."""
+    espace = tmp_path / "espace"
+    espace.mkdir()
+    (espace / ".env").write_text("SECRET=ne-doit-pas-sortir\n", encoding="utf-8")
+    environ = {**_protocole(str(espace)), ENV_MASQUES: "f:.env"}
+
+    masque = _montages(commande_docker(environ, []))[1]
+    source = Path(masque.rsplit(":", 2)[0])
+
+    assert source.read_bytes() == b""
+    assert source != espace / ".env"
+
+
+def test_un_env_versionne_du_worktree_est_masque(shim_resolu, tmp_path):
+    """Le worktree d'un projet versionné porte bien un `.env` **versionné** ; la copie, non."""
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    espace = tmp_path / "espace"
+    espace.mkdir()
+    (espace / ".env").write_text("SECRET=1\n", encoding="utf-8")
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    env = config.env_sandbox(espace, projet=_projet_sur(racine))
+
+    assert "f:.env" in env[ENV_MASQUES]
+
+
+def test_un_perimetre_qui_deborde_est_un_refus_franc(shim_resolu, tmp_path, monkeypatch):
+    """Un secret monté par débordement de liste serait exactement l'accident que #226 ferme."""
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    espace = tmp_path / "espace"
+    espace.mkdir()
+    for index in range(2):
+        (espace / f"secrets{index}").mkdir()
+    monkeypatch.setattr(container, "_MASQUES_MAX", 1)
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+    projet = _projet_sur(racine, perimetre=Perimetre(exclus=("secrets*",)))
+
+    with pytest.raises(ConfigError, match="chemins exclus"):
+        config.env_sandbox(espace, projet=projet)

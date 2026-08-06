@@ -51,11 +51,11 @@ seul, la défense en profondeur vient de leur empilement (une politique d'outils
 limite ce que l'agent *demande*, l'isolation limite ce que le code *fait*, le
 coffre limite ce que chacun *voit*).
 
-### 2.1 Ce que l'ouverture aux projets locaux ajoute *(retenu — [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md), **Phase 7**)*
+### 2.1 Ce que l'ouverture aux projets locaux ajoute *(en vigueur — [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md), **Phase 7** livrée)*
 
-Le modèle ci-dessus repose sur une hypothèse forte : **les agents n'ont rien à faire hors de
-leur workspace jetable**. Le cadrage #215 la lève — un projet de l'utilisateur, désigné par sa
-racine, devient lisible et modifiable. L'actif « poste hôte » (§1) gagne donc un voisin : **le
+Le modèle ci-dessus reposait sur une hypothèse forte : **les agents n'ont rien à faire hors de
+leur workspace jetable**. La Phase 7 la lève — un projet de l'utilisateur, désigné par sa
+racine, est lisible et modifiable. L'actif « poste hôte » (§1) a donc un voisin : **le
 projet de l'utilisateur**, avec quatre menaces propres :
 
 | Menace | Vecteur | Contre-mesure |
@@ -65,10 +65,31 @@ projet de l'utilisateur**, avec quatre menaces propres :
 | Exfiltration du code de l'utilisateur | `git push` vers un distant tiers, appel réseau d'un `Bash` permis | Politique d'outils par agent (#110) ; l'**égress non filtré** (§5) devient nettement plus gênant qu'aujourd'hui |
 | **Prompt injection par le contenu lu** | `README`, commentaire, dépendance, **document téléversé** ([docs/24 §3.4](./24-projets-locaux-et-poste-de-travail.md)) | Contenu traité comme **donnée, jamais comme consigne** (prompts systèmes) ; actions sensibles maintenues derrière la validation, ce qui borne les dégâts |
 
-La décision **D1** de [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md) est **rendue**
-(2026-08-04, #218) : ces menaces et leurs contre-mesures sont **retenues**, et leur mise en œuvre
-est le travail de la **Phase 7**. Rien n'est en vigueur tant que cette phase n'a pas livré — le
-modèle de menace des §1 et §2 s'applique inchangé jusque-là, ce tableau disant ce qui l'attend.
+La décision **D1** de [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md) a été rendue le
+2026-08-04 (#218) et la **Phase 7 a livré** : ce tableau décrit le modèle de menace **en
+vigueur**, et non plus ce qui l'attend. Où chaque contre-mesure vit dans le code :
+
+- **travail hors de la racine** — `maestro.sandbox.projet` (#224) dérive l'espace de travail :
+  worktree Git sur la branche `maestro/<tâche>` si le projet est versionné, copie de son
+  périmètre sinon. La racine elle-même n'est jamais le répertoire de travail d'un agent (EF-36),
+  ni un montage du conteneur en mode isolé (#226, [docs/17 §3](./17-isolation-execution.md)) ;
+- **application sous validation humaine** — `maestro.controltower.validation.appliquer_sous_validation`
+  (#227, EF-37) soumet « appliquer ce travail ? » au **même** validateur que les autres actions
+  sensibles (EF-08), diff en pièce jointe. Sur refus, rien n'est écrit et le travail reste
+  consultable ; sans validateur, l'application est refusée (fail-safe des garde-fous, #9) ;
+- **racine canonicalisée et racines interdites** — `maestro.projets.racine` (#221) : `..` écrasés
+  et liens résolus **avant** toute comparaison, refus **motivé** (jamais un `False` muet), et
+  `chemin_dans_racine` par où passe toute écriture. La même frontière borne l'explorateur de
+  l'API (#223), pour qu'une zone interdite à la déclaration ne devienne pas lisible par ailleurs ;
+- **exclusions du périmètre** — les gisements de secrets (`.env`, `**/secrets/**`, `.git`,
+  `node_modules`) sont écartés de l'espace de travail et masqués dans le conteneur, et
+  `maestro.projets.secrets` fait couvrir par la rédaction (#109) les valeurs lues dans le projet
+  de l'utilisateur — pas seulement celles de Maestro.
+
+Deux réserves demeurent, inchangées : l'**égress n'est toujours pas filtré par domaine** (§5) —
+la Phase 7 rend cette limite nettement plus gênante sans la traiter —, et le verdict de
+`chemin_dans_racine` porte sur l'état du disque **au moment de l'appel** (TOCTOU) : refermer
+cette fenêtre revient à qui *ouvre* le fichier, pas à qui calcule le chemin.
 
 ## 3. Activation (récapitulatif)
 

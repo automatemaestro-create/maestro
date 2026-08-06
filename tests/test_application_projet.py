@@ -12,6 +12,11 @@ une fonction du test, ce qui rend l'accord et le refus jouables sans UI. Les deu
 invariants qui coûtent le plus cher s'ils lâchent ont chacun leur test nommé :
 un refus **n'écrit rien** (ni partiellement, ni « presque »), et une suppression
 n'est **jamais** appliquée à un projet non versionné (ENF-13).
+
+La dernière section vient du lot final tests + doc (#220) : trois façons de perdre
+le travail de l'utilisateur que le reste du fichier ne mettait pas à l'épreuve —
+un diff qui écrirait au passage, une UI qui tombe pendant qu'on lui demande
+l'accord, et un refus qui emporterait la branche de tâche avec lui.
 """
 
 import asyncio
@@ -684,3 +689,75 @@ def test_un_chemin_hors_perimetre_leve_avant_meme_la_demande(
         )
     assert refus.value.motif == "hors-racine"
     assert not sollicite
+
+
+# --------------------------------------------------------------------------- #
+# Trois façons de perdre le travail de l'utilisateur (lot tests + doc, #220)
+# --------------------------------------------------------------------------- #
+
+
+def test_le_diff_n_ecrit_rien_dans_la_racine(tmp_path: Path) -> None:
+    """« Ce que le travail changerait » se demande **avant** d'avoir décidé."""
+    projet, espace = _projet_copie(tmp_path)
+    racine = Path(projet.racine)
+
+    diff = diff_du_travail(projet, espace=espace)
+
+    assert not diff.vide  # il y avait bien quelque chose à écrire…
+    assert (racine / "src" / "app.py").read_text(encoding="utf-8") == "un\ndeux\n"
+    assert not (racine / "src" / "neuf.py").exists()  # …et rien ne l'a été
+
+
+@besoin_de_git
+def test_le_diff_d_un_projet_versionne_laisse_la_racine_ou_elle_etait(tmp_path: Path) -> None:
+    """Le diff passe par Git : il pourrait déplacer la racine sans rien y écrire."""
+    projet, racine = _projet_git(tmp_path)
+    espace, branche = _worktree(racine, tmp_path)
+    (espace / "note.md").write_text("bonjour\n", encoding="utf-8")
+
+    diff = diff_du_travail(projet, branche=branche, espace=espace)
+
+    assert not diff.vide
+    assert _git(racine, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
+    assert _git(racine, "status", "--porcelain") == ""
+    assert not (racine / "note.md").exists()
+
+
+def test_un_validateur_qui_leve_ne_fait_rien_ecrire(tmp_path: Path) -> None:
+    """L'UI tombe pendant qu'on demande l'accord : c'est un refus, pas un blanc-seing."""
+    projet, espace = _projet_copie(tmp_path)
+
+    def _tombe(_: DemandeValidation) -> bool:
+        raise RuntimeError("l'onglet a été fermé pendant la demande")
+
+    resultat = asyncio.run(
+        appliquer_sous_validation(
+            projet, tache_id="t1", validateur=_tombe, espace=espace
+        )
+    )
+
+    assert resultat.statut == APPLICATION_REFUSEE
+    assert not (Path(projet.racine) / "src" / "neuf.py").exists()
+
+
+@besoin_de_git
+def test_un_refus_ne_supprime_jamais_la_branche_de_tache(tmp_path: Path) -> None:
+    """Refuser, c'est remettre à plus tard : le travail doit rester resoumettable."""
+    projet, racine = _projet_git(tmp_path)
+    espace, branche = _worktree(racine, tmp_path)
+    (espace / "note.md").write_text("bonjour\n", encoding="utf-8")
+
+    resultat = asyncio.run(
+        appliquer_sous_validation(
+            projet,
+            tache_id="t1",
+            validateur=lambda _: False,
+            branche=branche,
+            espace=espace,
+        )
+    )
+
+    assert resultat.statut == APPLICATION_REFUSEE
+    assert not (racine / "note.md").exists()
+    assert branche in _git(racine, "branch", "--list", branche)
+    assert (espace / "note.md").exists()  # le travail est resté dans son espace
