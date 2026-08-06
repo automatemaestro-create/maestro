@@ -47,6 +47,10 @@ cette commande est autosuffisante).
    aucune branche : c'est l'étape suivante qui s'en charge. Relaie ses éventuelles alertes dans
    ton résumé final, et `--check` d'abord si tu veux voir avant d'agir.
 
+   Sur ce même verdict, `gc` pose au passage le **cycle de vie « Terminé »** des tickets soldés
+   (#275, docs/10 §9.2) — la pose de l'étape 6 en devient idempotente, et reste due pour le ticket
+   de la MR qu'on vient de merger si son worktree n'existait pas ici.
+
 5. S'il y a des candidates :
    - si l'une d'elles est la branche courante **et que tu es dans le clone principal**, bascule
      d'abord sur `main` (`git checkout main`) — on ne supprime pas une branche sous ses propres

@@ -73,6 +73,7 @@ class Depot:
     verdicts: dict[str, str] | None = None
     derive: str | None = None
     code_setup: str = "0"
+    pose: bool = False
 
     # --- exécution ---
     def lance(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -98,6 +99,13 @@ class Depot:
         if self.verdicts is not None:
             environnement.pop("MAESTRO_WORKTREE_GC")
             environnement["MAESTRO_WORKTREE_VERDICT"] = str(self.fauxbin / "verdict")
+        # Pose du cycle de vie par le ramassage (#275) : ÉTEINTE par défaut, et ce défaut est un
+        # garde-fou, pas un confort. Sans lui, un test qui rallume `gc` appellerait le VRAI
+        # `lib.sh reconcile-workflow` avec des iid de fixture (« 152 »…) — sur un poste où `glab`
+        # est authentifié, ça poserait « Terminé » sur les vrais tickets du projet.
+        environnement["MAESTRO_WORKFLOW_POSE"] = "0"
+        if self.pose:
+            environnement["MAESTRO_WORKFLOW_POSE"] = str(self.fauxbin / "pose")
         # Mise à niveau des dépendances (#216) : même dispositif. Éteinte par défaut, rallumée par
         # `impose_derive`, qui pose en même temps le `setup.sh` factice qu'elle appellera — le vrai
         # installerait pour de bon.
@@ -161,6 +169,31 @@ class Depot:
             newline="\n",
         )
         shim.chmod(0o755)
+
+    # --- couture de la pose du cycle de vie (#275) ---
+    def impose_pose(self) -> None:
+        """Remplace `lib.sh reconcile-workflow` par un mouchard — et rallume la pose.
+
+        Le shim journalise l'iid reçu et imprime une ligne, ce que `gc` lit comme « quelque chose a
+        été posé ». Aucun appel à `glab`, donc ni réseau ni écriture GitLab.
+        """
+        self.pose = True
+        shim = self.fauxbin / "pose"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            f'printf \'%s\\n\' "$1" >> "{(self.fauxbin / "poses.txt").as_posix()}"\n'
+            "printf 'Cycle de vie de #%s → « Terminé »\\n' \"$1\"\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        shim.chmod(0o755)
+
+    def poses(self) -> list[str]:
+        """Les iid pour lesquels le ramassage a demandé la pose du cycle de vie."""
+        journal = self.fauxbin / "poses.txt"
+        if not journal.exists():
+            return []
+        return [ligne for ligne in journal.read_text(encoding="utf-8").splitlines() if ligne]
 
     # --- couture de la mise à niveau des dépendances (#216) ---
     @property
@@ -801,6 +834,108 @@ def test_ensure_ramasse_les_worktrees_soldes_avant_de_monter_le_sien(depot: Depo
     verdict = _verdict(acheve)
     assert verdict.startswith("WORKTREE ")
     assert Path(verdict[len("WORKTREE ") :]).resolve() == depot.worktree("153-suite").resolve()
+
+
+# --- Cycle de vie posé sur le verdict du ramassage (#275) ------------------------------------
+# Le merge FERME le ticket mais ne pose aucun label : depuis #207 seul `/branch-cleanup`, lancé à la
+# main, posait « Terminé ». La greffe est ici plutôt que dans `ensure` parce que « fini » — MR
+# mergée ou ticket fermé — est DÉJÀ la question de la réconciliation : aucune lecture de découverte
+# en plus, et les trois points de passage de `gc` en héritent d'un coup.
+#
+# `Depot.impose_pose` remplace `lib.sh reconcile-workflow` par un mouchard : ce qui est vérifié ici,
+# c'est QUAND `gc` demande la pose (et pour quel iid) — la règle « ne jamais écraser Abandonné /
+# Doublon », elle, est du ressort de `reconcile-workflow` et vit dans tests/test_cycle_de_vie.py.
+
+
+def test_gc_pose_le_cycle_de_vie_du_ticket_solde(depot: Depot) -> None:
+    """Cas nominal : worktree ramassé ⇒ cycle de vie du ticket posé, et le rapport le dit."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_pose()
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert depot.poses() == ["152"]
+    assert "cycle de vie → Terminé" in acheve.stdout
+
+
+def test_gc_ne_pose_aucun_cycle_de_vie_sur_un_verdict_non_solde(depot: Depot) -> None:
+    """« actif » ou « inconnu » : ne rien savoir n'autorise pas plus à écrire qu'à supprimer."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket #152 « open »")})
+    depot.impose_pose()
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert depot.poses() == []
+
+
+def test_gc_check_ne_pose_aucun_cycle_de_vie(depot: Depot) -> None:
+    """`--check` est un diagnostic : il ne retire rien, donc il n'écrit rien côté GitLab."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_pose()
+
+    acheve = depot.lance("gc", "--check")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert depot.poses() == []
+    assert depot.worktree().exists()
+
+
+def test_gc_pose_le_cycle_de_vie_meme_quand_le_worktree_est_conserve(depot: Depot) -> None:
+    """Travail non commité : le worktree reste, le ticket passe quand même « Terminé ».
+
+    Les deux décisions n'ont pas la même source. Le retrait dépend de ce que porte le répertoire
+    LOCAL ; le cycle de vie ne dépend que du verdict de GitLab. Les lier ferait qu'un fichier oublié
+    dans un worktree laisserait son ticket « En revue » sur le board pour toujours.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    (depot.worktree() / "brouillon.txt").write_text("en cours", encoding="utf-8", newline="\n")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_pose()
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert depot.poses() == ["152"], "le cycle de vie ne dépend pas de la propreté du worktree"
+    assert depot.worktree().exists(), "un travail non commité reste protégé"
+    assert "conservé" in acheve.stdout
+
+
+def test_ensure_pose_le_cycle_de_vie_des_tickets_soldes_au_passage(depot: Depot) -> None:
+    """Le câblage qui fait tout le ticket : `/ticket-start` passe par `ensure`, donc par `gc`.
+
+    Et le verdict reste la DERNIÈRE ligne de stdout — le contrat de sortie de #181 survit à la
+    ligne de pose ajoutée au rapport.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_pose()
+
+    acheve = depot.lance("ensure", "153", "--branche", "chore/153-suite")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert depot.poses() == ["152"]
+    assert _verdict(acheve).startswith("WORKTREE ")
+
+
+def test_gc_survit_a_une_pose_en_echec(depot: Depot) -> None:
+    """Pose impossible (glab absent, hors ligne) : le ramassage continue, muet sur ce point.
+
+    Même statut que `sync-main` : ça signale ou ça se tait, ça n'empêche jamais un ticket de
+    démarrer ni un run de continuer.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_pose()
+    (depot.fauxbin / "pose").write_text(
+        "#!/usr/bin/env bash\nexit 1\n", encoding="utf-8", newline="\n"
+    )
+    (depot.fauxbin / "pose").chmod(0o755)
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout
+    assert "cycle de vie" not in acheve.stdout
+    assert not depot.worktree().exists()
 
 
 # --- Mise à jour de `main` (#205) --------------------------------------------------------------

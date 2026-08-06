@@ -176,6 +176,10 @@ else
   for iid in $stuck_iids; do
     warn "#$iid est fermé mais son état est encore « actif » (attendu : Terminé/Abandonné/Doublon)"
   done
+  # Cette dérive-là a désormais sa réparation (#275) : on la nomme au lieu de laisser chercher — une
+  # seule fois, pas par ticket. Le diagnostic reste en LECTURE SEULE : doctor.sh ne répare rien de
+  # lui-même, c'est sa promesse, et le verbe est à appeler explicitement.
+  printf '    → tous réparables d'\''un coup : bash scripts/gitlab/lib.sh reconcile-workflow  (--check pour la liste)\n'
 fi
 
 # 4c. L'invariant « exactement un workflow:: par ticket ouvert ».
