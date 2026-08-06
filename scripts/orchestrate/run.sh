@@ -87,7 +87,20 @@ CLAUDE_BIN="${MAESTRO_CLAUDE_BIN:-claude}"   # surchargeable : stub dans les tes
 DRY=0
 DETACH=0
 MAX=0
-BUDGET="${MAESTRO_ORCHESTRATE_BUDGET:-15}"
+# Le budget n'a plus de défaut (#286) : sans `--budget`, AUCUN `--max-budget-usd` n'est passé au
+# CLI, et une session s'arrête sur son ticket, son timeout ou la limite d'usage — jamais sur un
+# montant. Les 15 $/ticket d'origine étaient le garde-fou d'une boucle neuve, quand on craignait
+# l'emballement ; à `claude-opus-5` + effort `xhigh` sur un gros lot, ils coupent une session EN
+# PLEIN TRAVAIL, et une coupure au plafond est indiscernable d'un échec — la session meurt sans
+# `/ticket-ship`, son travail reste non commité dans le worktree, et l'échec fait sauter les lots
+# suivants du même parent (§11.5). Deux runs du 2026-08-06 l'ont payé au même montant exact
+# (#277 et #245, 15.07 $ chacun) : 2 tickets perdus, 13 sautés en cascade, pour zéro livrable.
+# Un run reste borné par ce qui borne vraiment — `--timeout` par ticket, le fichier STOP, la limite
+# d'usage. Le montant, lui, ne borne rien d'utile tant qu'on ne le demande pas : `--budget <usd>` et
+# MAESTRO_ORCHESTRATE_BUDGET restent là pour le poser explicitement, vide ou 0 valant « pas de
+# plafond » (0 est aussi la seule façon d'annuler une variable déjà posée dans l'environnement, et
+# `--max-budget-usd 0` tuerait chaque session au premier jeton).
+BUDGET="${MAESTRO_ORCHESTRATE_BUDGET:-}"
 TIMEOUT_BRUT="${MAESTRO_ORCHESTRATE_TIMEOUT:-45m}"
 # Le modèle s'épingle **en toutes lettres**, jamais par alias (#206). `--model opus` est résolu par
 # le CLI, et sa cible bouge d'une version à l'autre : sur 2.1.215 elle valait encore
@@ -136,7 +149,9 @@ Options :
                        C'est ce qui permet de démarrer un run depuis une session Claude Code : le
                        pilote reste un script shell, dans son propre processus.
   --max <n>            Nombre maximal de tickets traités (0 = tout le plan).
-  --budget <usd>       Plafond de dépense par ticket (--max-budget-usd). Défaut : 15.
+  --budget <usd>       Plafond de dépense par ticket (--max-budget-usd). Par défaut AUCUN : une
+                       session va au bout de son ticket, de son timeout ou de la limite d'usage.
+                       0 (ou vide) vaut « pas de plafond ».
   --timeout <durée>    Délai maximal par ticket : 45m, 90m, 2700… Défaut : 45m.
   --modele <modèle>    Modèle des sessions. Défaut : claude-opus-5.
   --effort <niveau>    Effort de raisonnement des sessions : low, medium, high, xhigh, max.
@@ -178,7 +193,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1 ;;
     --detach | --detache | --détaché) DETACH=1 ;;
     --max) MAX="${2:-0}"; shift ;;
-    --budget) BUDGET="${2:-15}"; shift ;;
+    --budget) BUDGET="${2:-}"; shift ;;
     --timeout) TIMEOUT_BRUT="${2:-45m}"; shift ;;
     --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
     --effort) EFFORT="${2:-xhigh}"; shift ;;
@@ -223,6 +238,22 @@ case "$EFFORT" in
     exit 2
     ;;
 esac
+
+# Le plafond de dépense ne devient une option de session que s'il a été DEMANDÉ (#286) : c'est
+# `OPT_BUDGET` — vide par défaut — qui part au CLI, jamais `--max-budget-usd ""`. `0` y vaut « pas
+# de plafond », seule façon d'annuler une variable d'environnement déjà posée, et le repli évite
+# surtout qu'un `--max-budget-usd 0` parte tuer chaque session avant son premier outil. Un montant
+# illisible est refusé ici pour la même raison que l'effort juste au-dessus : le CLI le refuserait à
+# CHAQUE session et le run brûlerait son plan en échecs jumeaux.
+case "$BUDGET" in
+  '' | 0 | 0.0 | 0.00) BUDGET='' ;;
+  *[!0-9.]*)
+    printf 'run.sh : budget invalide « %s » — attendu un montant en dollars (ex. 20), ou 0 pour aucun plafond.\n' "$BUDGET" >&2
+    exit 2
+    ;;
+esac
+OPT_BUDGET=()
+[ -n "$BUDGET" ] && OPT_BUDGET=(--max-budget-usd "$BUDGET")
 
 # `--detach` avec `--dry-run` n'aurait rien à détacher : le plan s'affiche en une seconde, et une
 # console qui se refermerait aussitôt ne le montrerait à personne. On reste en direct, en lecture
@@ -1214,7 +1245,7 @@ lance_session() {
         --output-format stream-json --verbose \
         --permission-mode acceptEdits \
         --settings "$RACINE/scripts/orchestrate/settings.run.json" \
-        --max-budget-usd "$BUDGET" \
+        ${OPT_BUDGET+"${OPT_BUDGET[@]}"} \
         --model "$MODELE" \
         --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
     # Le code du CLI, pas celui du formateur : c'est lui qui dit si la session a abouti.
@@ -1232,7 +1263,7 @@ lance_session() {
       --output-format stream-json --verbose \
       --permission-mode acceptEdits \
       --settings "$RACINE/scripts/orchestrate/settings.run.json" \
-      --max-budget-usd "$BUDGET" \
+      ${OPT_BUDGET+"${OPT_BUDGET[@]}"} \
       --model "$MODELE" \
       --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
   return "${PIPESTATUS[0]}"
@@ -1637,8 +1668,13 @@ fi
 nb_plan="$(grep -cv '^#' "$PLAN")"
 printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
 [ "$REPRISE" = 1 ] && printf 'reprise du run %s — son plan, rejoué tel quel\n' "$REPRISE_ID"
-printf 'plan : %s ticket(s) · modèle %s · effort %s · budget %s $/ticket · timeout %s/ticket\n' \
-  "$nb_plan" "$MODELE" "$EFFORT" "$BUDGET" "$(duree_lisible "$TIMEOUT_S")"
+# Le régime de budget est ANNONCÉ dans les deux sens (#286) : « illimité » est un choix, pas un
+# oubli, et relire un run doit dire lequel des deux s'appliquait — un ticket coupé au plafond ne se
+# distingue d'un échec de session que par cette ligne.
+printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · timeout %s/ticket\n' \
+  "$nb_plan" "$MODELE" "$EFFORT" \
+  "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
+  "$(duree_lisible "$TIMEOUT_S")"
 printf 'journal : %s\n\n' "$RUN_DIR"
 
 if [ "$nb_plan" -eq 0 ]; then
@@ -1659,7 +1695,9 @@ if [ "$DRY" = 1 ]; then
   printf 'Chaque ticket aurait été traité ainsi —\n'
   printf '  1. worktree dédié     bash scripts/git/worktree.sh <iid>\n'
   printf '  2. session dédiée     %s -p … --session-id <uuid> --settings scripts/orchestrate/settings.run.json\n' "$CLAUDE_BIN"
-  printf '                        --permission-mode acceptEdits --model %s --effort %s --max-budget-usd %s\n' "$MODELE" "$EFFORT" "$BUDGET"
+  printf '                        --permission-mode acceptEdits --model %s --effort %s%s\n' \
+    "$MODELE" "$EFFORT" \
+    "$([ -n "$BUDGET" ] && printf ' --max-budget-usd %s' "$BUDGET")"
   printf '  3. verdict            MR ouverte ET cycle de vie « En revue » (lu dans GitLab, pas dans la sortie)\n'
   printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis réouverture de la même session Claude\n'
   printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'

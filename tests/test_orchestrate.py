@@ -867,6 +867,114 @@ def test_l_effort_traverse_le_lancement_detache(depot: Depot) -> None:
 
 
 # =====================================================================================
+# Le plafond de dépense, posé seulement s'il est demandé (#286)
+# =====================================================================================
+#
+# Miroir exact de la section précédente, à l'inverse près : ce qu'on protège ici n'est pas la
+# présence d'un réglage mais son ABSENCE. `run.sh` passait `--max-budget-usd 15` à chaque session ;
+# une session qui touche le plafond meurt en plein travail, sans commit ni MR, et la boucle la
+# compte en échec — ce qui saborde les lots suivants du même parent. Les deux runs du 2026-08-06 y
+# ont laissé 2 tickets coupés au même montant (15.07 $) et 13 sautés en cascade. Le bouchon note ses
+# arguments, et c'est sur eux qu'on juge.
+
+
+def test_aucun_plafond_de_budget_sans_qu_on_le_demande(depot: Depot) -> None:
+    """Le défaut du dépôt : une session va au bout de son ticket, pas d'un montant."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / "args-budget-defaut"
+    claude = _claude_note_les_arguments(depot, journal)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "bud", env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    recus = journal.read_text(encoding="utf-8").splitlines()
+    assert "--max-budget-usd" not in recus, "un plafond non demandé coupe la session en plein vol"
+
+
+@pytest.mark.parametrize(
+    "args, env, attendu",
+    [
+        (["--budget", "20"], {}, "20"),
+        ([], {"MAESTRO_ORCHESTRATE_BUDGET": "8"}, "8"),
+        # L'option gagne sur la variable : c'est le geste le plus explicite des deux.
+        (["--budget", "20"], {"MAESTRO_ORCHESTRATE_BUDGET": "8"}, "20"),
+    ],
+)
+def test_le_plafond_se_pose_explicitement(
+    depot: Depot, args: list[str], env: dict[str, str], attendu: str
+) -> None:
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / f"args-budget-{attendu}-{len(env)}"
+    claude = _claude_note_les_arguments(depot, journal)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance(
+        "run.sh", "--plan", plan, "--run-id", f"bud-{attendu}-{len(env)}", *args,
+        env={"MAESTRO_CLAUDE_BIN": claude, **env},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    recus = journal.read_text(encoding="utf-8").splitlines()
+    assert recus[recus.index("--max-budget-usd") + 1] == attendu
+
+
+@pytest.mark.parametrize("zero", ["0", "0.00"])
+def test_un_plafond_a_zero_vaut_pas_de_plafond(depot: Depot, zero: str) -> None:
+    """Seule façon d'annuler une variable déjà posée dans l'environnement — et surtout, un
+    « --max-budget-usd 0 » transmis tel quel tuerait chaque session avant son premier outil."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / f"args-budget-zero-{zero}"
+    claude = _claude_note_les_arguments(depot, journal)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance(
+        "run.sh", "--plan", plan, "--run-id", f"bud-zero-{zero}", "--budget", zero,
+        env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_BUDGET": "15"},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    recus = journal.read_text(encoding="utf-8").splitlines()
+    assert "--max-budget-usd" not in recus
+
+
+def test_un_budget_illisible_est_refuse_avant_le_premier_ticket(depot: Depot) -> None:
+    """Même raison que pour l'effort : le CLI le refuserait à CHAQUE session."""
+    r = depot.lance("run.sh", "--budget", "vingt", "--dry-run")
+    assert r.returncode == 2
+    assert "budget invalide" in r.stderr
+
+
+def test_la_session_reprise_porte_le_meme_regime_de_budget(depot: Depot) -> None:
+    """Deux invocations de `claude` dans la boucle — la reprise est la plus oubliable."""
+    depot.ticket(130, "Ticket interrompu")
+    journal = depot.racine.parent / "args-budget-reprise"
+    claude = _claude_stub(depot, f"""
+        if printf '%s\\n' "$@" | grep -q -- '--resume'; then
+          printf '%s\\n' "$@" > "{journal}"
+          printf '{{"is_error":false,"subtype":"success","total_cost_usd":2}}'; exit 0
+        fi
+        printf '{{"is_error":true,"total_cost_usd":1,"result":"Claude AI usage limit reached"}}'
+        exit 1
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "bud-reprise",
+                env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "1"})
+    recus = journal.read_text(encoding="utf-8").splitlines()
+    assert "--max-budget-usd" not in recus, "la session reprise garde le régime du run"
+
+
+def test_le_regime_de_budget_est_annonce_dans_les_deux_sens(depot: Depot) -> None:
+    """« Illimité » est un choix, pas un oubli : relire un run doit dire lequel s'appliquait —
+    un ticket coupé au plafond ne se distingue d'un échec de session que par cette ligne."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    sans = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "bud-plan")
+    assert "budget illimité" in sans.stdout
+    assert "--max-budget-usd" not in sans.stdout, "l'aperçu de la commande de session reste fidèle"
+    avec = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "bud-plan-20",
+                       "--budget", "20")
+    assert "budget 20 $/ticket" in avec.stdout
+    assert "--max-budget-usd 20" in avec.stdout
+
+
+# =====================================================================================
 # La reprise après limite d'usage (#171)
 # =====================================================================================
 

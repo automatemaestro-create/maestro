@@ -1610,13 +1610,15 @@ Pour chaque ticket : `scripts/git/worktree.sh <iid>` (§9) monte son répertoire
 ports, puis une session dédiée est lancée en mode `-p`, avec un `--session-id` fixe — la clé de la
 reprise.
 
-**Le régime d'une session est épinglé par le dépôt, pas par le poste.** Deux réglages décident de
-ce que vaut le travail autonome, et tous deux sont passés **en toutes lettres** au CLI :
+**Le régime d'une session est épinglé par le dépôt, pas par le poste.** Trois réglages décident de
+ce que vaut le travail autonome — les deux premiers passés **en toutes lettres** au CLI, le
+troisième n'y étant passé que si on le demande :
 
 | réglage | défaut | surcharge |
 | --- | --- | --- |
 | modèle (#206) | `claude-opus-5` | `--modele`, `MAESTRO_ORCHESTRATE_MODELE` |
 | effort (#217) | `xhigh` | `--effort`, `MAESTRO_ORCHESTRATE_EFFORT` |
+| plafond de dépense (#286) | **aucun** | `--budget`, `MAESTRO_ORCHESTRATE_BUDGET` |
 
 Le motif est le même dans les deux cas : **un réglage qu'on ne passe pas est un réglage que la
 machine choisit**, et aucune sortie de run ne le montre. Pour le modèle, c'était l'alias `opus`,
@@ -1634,6 +1636,22 @@ tourné), et un niveau inconnu est **refusé avant le premier ticket**. L'effort
 fermé de cinq valeurs — `low`, `medium`, `high`, `xhigh`, `max` — contrairement à un nom de modèle
 qui est une chaîne ouverte, une faute de frappe se détecte : sans ce contrôle, le CLI refuserait la
 valeur à **chaque** session et le run brûlerait son plan en échecs jumeaux.
+
+**Le plafond de dépense, lui, ne s'applique plus par défaut (#286).** `run.sh` passait
+`--max-budget-usd 15` à chaque session — le garde-fou d'une boucle neuve, quand on craignait
+l'emballement. Il coûte aujourd'hui plus qu'il ne protège : une session qui touche le plafond est
+**tuée en plein travail**, elle sort sans commit et sans MR, et la boucle la compte en **échec** —
+ce qui saborde du même coup les lots suivants de son parent (§11.5). Les deux runs du 2026-08-06
+l'ont payé au même montant exact — #277 et #245 coupés à 15.07 $, 16 et 24 fichiers laissés non
+commités dans leur worktree, 13 lots sautés en cascade derrière eux —, pour zéro livrable. Un run
+reste borné par ce qui le borne vraiment : le `--timeout` par ticket, le fichier `STOP` et la limite
+d'usage ; le montant, lui, ne borne rien d'utile tant qu'on ne le demande pas. `--budget <usd>` et
+`MAESTRO_ORCHESTRATE_BUDGET` restent là pour en **poser** un — `0` (ou vide) valant « aucun », seule
+façon d'annuler une variable déjà posée dans l'environnement, et le repli qui évite surtout qu'un
+`--max-budget-usd 0` parte tuer chaque session avant son premier outil. Le régime effectif est
+**annoncé dans les deux sens**, dans la ligne `plan :` (« budget illimité » ou « budget N $/ticket »)
+comme dans l'aperçu de `--dry-run` : illimité est un choix, pas un oubli, et c'est cette ligne qui
+distingue plus tard un ticket coupé au plafond d'un échec de session.
 
 **La console dit ce que la session fabrique (#176) — et depuis #240, où en est le plan.** En
 `--output-format json`, le CLI n'écrit qu'à la fin : entre la ligne `[n/N] #<iid> — …` et le verdict,
@@ -1749,8 +1767,11 @@ matin ne doit pas geler le reste de la nuit. Un ticket **pris par quelqu'un d'au
 du plan et son tour est sauté, pas volé : son statut est relu juste avant de le prendre.
 
 Garde-fous : `--max <n>` (compte les tickets **tentés**, pour qu'une panne systématique n'épuise pas
-le plan), `--budget <usd>` par ticket, `--timeout <durée>` par ticket, et le fichier
-`.maestro/orchestrate/STOP`, pris en compte entre deux tickets **et pendant une attente**.
+le plan), `--timeout <durée>` par ticket, et le fichier `.maestro/orchestrate/STOP`, pris en compte
+entre deux tickets **et pendant une attente**. `--budget <usd>` en est un aussi, mais **sur demande
+seulement** (#286, §11.3) : un plafond atteint coupe la session en plein travail et se compte en
+échec, donc en cascade sur les lots suivants du même parent — c'est le seul de ces garde-fous qui
+détruit du travail au lieu d'en borner la durée.
 
 Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<iid>.session`
 (l'UUID), `<iid>.jsonl` (le flux d'activité complet), `<iid>.json` (le seul résultat final — coût,
