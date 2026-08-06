@@ -1305,6 +1305,16 @@ aux **points de passage obligés** plutôt qu'un déclencheur qui n'existe pas :
 |---|---|
 | `worktree.sh ensure` | à chaque `/ticket-start`, manuel comme autonome — donc à chaque ticket d'un run `/orchestrate` |
 | `/branch-cleanup` | après un merge, à la place du `git checkout main && git pull origin main` d'avant |
+| `orchestrate/run.sh` | au **démarrage** d'un run, avant son premier ticket (#283, §11.3) |
+
+La troisième ligne n'est pas un doublon de la première. Un run est ce qui fait vieillir `main` le
+plus vite — il ouvre N MR destinées à être mergées —, et la mise à jour par `ensure` a lieu *dans*
+une session : elle ne joue donc pas du tout quand le run part sur un plan vide, saute tous ses
+tickets ou échoue avant le premier. Sur une nuit où le run est la seule chose qui tourne, c'est
+précisément le cas où personne ne repassera derrière. Elle a lieu **avant** le ramassage des
+worktrees (§9.2), qui mesure le travail non sauvegardé contre `origin/main` : c'est le `fetch` de
+`sync-main` qui rend cette mesure juste. Best-effort au même titre que les deux ménages qui la
+suivent — `MAESTRO_SYNC_MAIN=0` l'éteint, un `--dry-run` ne la joue pas.
 
 **Deux façons d'avancer la ref**, selon que `main` est empruntée ou non par un répertoire de
 travail. Si personne ne l'a en HEAD, la ref se pose seule (`update-ref`) — aucun fichier touché, ce
@@ -1533,6 +1543,14 @@ question** avant un run neuf — et ne la pose que si le choix est réel : un se
 sans rien demander.
 
 ### 11.3 Un ticket, une session — `run.sh`
+
+**Avant le premier ticket, trois ménages** — tous best-effort, tous muets quand il n'y a rien à
+faire, aucun fatal, et aucun joué en `--dry-run` : `main` remise à niveau sur `origin/main` (#283,
+§9.3 — `MAESTRO_SYNC_MAIN=0` l'éteint), worktrees soldés ramassés (§9.2), vieux journaux purgés
+(plus bas). Même justification pour les trois : un run tourne la nuit, personne n'est derrière, et
+ce qui n'est pas fait là ne le sera pas. L'ordre compte pour les deux premiers — le ramassage
+mesure le travail non sauvegardé contre `origin/main`, que le `fetch` de `sync-main` vient de
+rafraîchir.
 
 Pour chaque ticket : `scripts/git/worktree.sh <iid>` (§9) monte son répertoire de travail et ses
 ports, puis une session dédiée est lancée en mode `-p`, avec un `--session-id` fixe — la clé de la

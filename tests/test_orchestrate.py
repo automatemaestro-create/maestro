@@ -3179,3 +3179,149 @@ def test_la_console_renvoie_vers_l_agregat_en_fin_de_run(depot: Depot) -> None:
         "sans cette ligne, la boucle de retour de §11.7 ne part que si on y pense — "
         "et onze runs ont montré que non"
     )
+
+
+# =====================================================================================
+# `main` remise à niveau au démarrage d'un run (#283)
+# =====================================================================================
+#
+# Un run est ce qui fait vieillir le plus vite la ref LOCALE `refs/heads/main` du clone principal :
+# il ouvre N MR destinées à être mergées, et plus personne ne repasse par `main` depuis #181. Elle
+# n'avançait jusqu'ici qu'à l'intérieur d'une session (`worktree.sh ensure`, donc /ticket-start) —
+# donc pas du tout quand le run part sur un plan vide, saute tous ses tickets ou échoue avant le
+# premier. Le code produit, lui, n'a jamais été en cause : chaque worktree part d'`origin/main`.
+#
+# Ces tests portent donc sur la ref locale, et jamais sur du réseau : le dépôt jetable n'a aucun
+# distant, `refs/remotes/origin/main` y est une simple référence posée à la main (comme pour
+# status.sh), et le `git fetch` de `sync-main` y échoue en silence — exactement le cas « hors
+# ligne » que le helper sait traiter.
+
+
+def _git(depot: Depot, *args: str) -> str:
+    assert GIT is not None
+    return subprocess.run(  # noqa: S603
+        [GIT, *args], cwd=str(depot.racine), check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _init_git_sur_main(depot: Depot) -> None:
+    """Le dépôt jetable en CLONE PRINCIPAL : posé sur `main`, propre, avec un `origin/main` local.
+
+    C'est la situation réelle d'un run depuis #181 (le clone principal ne change plus de branche),
+    et celle qui met `sync-main` sur son chemin le plus délicat : `main` étant EMPRUNTÉE par un
+    répertoire de travail, la ref ne se pose pas — elle s'avance par un `merge --ff-only` dans ce
+    répertoire-là. D'où le `.gitignore` : le plan et le journal du run salissent l'arbre, et un
+    arbre sale fait (à juste titre) renoncer le helper.
+    """
+    _git(depot, "init", "--quiet", "--initial-branch=main")
+    _git(depot, "config", "user.email", "test@maestro.invalid")
+    _git(depot, "config", "user.name", "Maestro Test")
+    (depot.racine / ".gitignore").write_text(".maestro/\nplan.tsv\n", encoding="utf-8",
+                                             newline="\n")
+    _git(depot, "add", "-A")
+    _git(depot, "-c", "core.hooksPath=", "commit", "--quiet", "-m", "chore: depot jetable")
+    _git(depot, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+
+def _commit(depot: Depot, fichier: str, message: str) -> str:
+    (depot.racine / fichier).write_text(message, encoding="utf-8", newline="\n")
+    _git(depot, "add", fichier)
+    _git(depot, "-c", "core.hooksPath=", "commit", "--quiet", "-m", message)
+    return _git(depot, "rev-parse", "HEAD")
+
+
+def _origin_main_avance(depot: Depot) -> str:
+    """Un commit de plus sur `origin/main`, et rien sur `main` : le retard type d'après un merge."""
+    _git(depot, "checkout", "--quiet", "-b", "amont")
+    sha = _commit(depot, "livre.txt", "feat: un lot merge pendant la nuit")
+    _git(depot, "update-ref", "refs/remotes/origin/main", sha)
+    _git(depot, "checkout", "--quiet", "main")
+    _git(depot, "branch", "--quiet", "-D", "amont")
+    return sha
+
+
+def _run_d_un_ticket(depot: Depot, run_id: str, **env: str) -> subprocess.CompletedProcess:
+    """Un run d'un ticket, livré (MR ouverte + « En revue ») — le décor de ces tests."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    return depot.lance("run.sh", "--plan", plan, "--run-id", run_id,
+                       env={"MAESTRO_CLAUDE_BIN": claude, **env})
+
+
+@besoin_git
+def test_un_run_remet_main_a_niveau_avant_son_premier_ticket(depot: Depot) -> None:
+    _init_git_sur_main(depot)
+    livre = _origin_main_avance(depot)
+
+    r = _run_d_un_ticket(depot, "amont")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _git(depot, "rev-parse", "refs/heads/main") == livre
+    # La ref ne suffit pas : `main` est empruntée par ce répertoire, donc son ARBRE doit avoir suivi
+    # — sans quoi tout le delta apparaîtrait en « supprimé » au prochain git status.
+    assert (depot.racine / "livre.txt").exists(), "le répertoire de travail a suivi la ref"
+    assert "main mis à jour" in r.stdout, "le run le dit, il ne le fait pas en douce"
+
+
+@besoin_git
+def test_main_deja_a_jour_ne_dit_rien(depot: Depot) -> None:
+    """Le cas de loin le plus fréquent : une ligne à chaque run n'apprendrait rien à personne."""
+    _init_git_sur_main(depot)
+    r = _run_d_un_ticket(depot, "ajour")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "sync-main" not in r.stdout and "main mis à jour" not in r.stdout
+
+
+@besoin_git
+def test_le_dry_run_ne_touche_pas_a_main_mais_annonce_l_etape(depot: Depot) -> None:
+    _init_git_sur_main(depot)
+    avant = _git(depot, "rev-parse", "refs/heads/main")
+    _origin_main_avance(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "sec")
+
+    assert r.returncode == 0, r.stderr
+    assert _git(depot, "rev-parse", "refs/heads/main") == avant, (
+        "« rien n'a été lancé » vaut aussi pour main"
+    )
+    assert "sync-main" in r.stdout, "…mais le dry-run dit ce qu'un vrai run ferait"
+
+
+@besoin_git
+def test_une_main_divergente_est_signalee_sans_empecher_le_run(depot: Depot) -> None:
+    """`sync-main` s'abstient plutôt que de forcer (#205) — et son abstention n'annule pas un run.
+
+    Un `main` local divergent porte un commit que personne n'a poussé : l'écraser serait une perte
+    de données. Mais refuser de traiter le backlog pour autant le serait tout autant, à l'échelle
+    d'une nuit entière.
+    """
+    _init_git_sur_main(depot)
+    _origin_main_avance(depot)
+    local = _commit(depot, "local.txt", "chore: commit local jamais pousse")
+
+    r = _run_d_un_ticket(depot, "diverge")
+
+    assert r.returncode == 0, "le run a traité son ticket malgré l'abstention"
+    assert _git(depot, "rev-parse", "refs/heads/main") == local, "rien n'a été écrasé"
+    assert "divergé" in r.stderr, "l'abstention est relayée, pas avalée"
+
+
+@besoin_git
+def test_maestro_sync_main_a_zero_eteint_l_etape(depot: Depot) -> None:
+    """Même interrupteur que /ticket-start : un poste peut vouloir garder la main sur sa `main`."""
+    _init_git_sur_main(depot)
+    avant = _git(depot, "rev-parse", "refs/heads/main")
+    _origin_main_avance(depot)
+
+    r = _run_d_un_ticket(depot, "eteint", MAESTRO_SYNC_MAIN="0")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _git(depot, "rev-parse", "refs/heads/main") == avant
+    assert "main mis à jour" not in r.stdout

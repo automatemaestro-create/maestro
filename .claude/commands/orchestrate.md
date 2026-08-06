@@ -58,6 +58,11 @@ toi-même.
      rien ne pourra être mergé au matin ;
    - `git status --porcelain` sur le clone principal : un arbre sale n'empêche pas le run (chaque
      ticket a son worktree) mais mérite d'être signalé.
+   - **rien à faire pour `main`** : le run la remet lui-même à niveau sur `origin/main` avant son
+     premier ticket (#283 — fetch + fast-forward via `lib.sh sync-main`, docs/10 §9.3). Ne propose
+     donc ici ni `git pull`, ni rebase, ni quoi que ce soit à la main. S'il **s'abstient** (`main`
+     divergent, répertoire porteur sale), il le dit dans la console : c'est alors une décision
+     humaine à prendre à froid, jamais un blocage du run.
 3. **Demande le feu vert, puis lance.** Un run crée des branches, committe, pousse et ouvre N Merge
    Requests : c'est une action visible de l'extérieur, elle se confirme — jamais au fil de l'eau.
 
