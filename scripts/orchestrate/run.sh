@@ -308,12 +308,33 @@ arrondi_cout() {
 # en cours. D'où le tampon `partiel` de `formate_flux`, sans lequel un objet JSON coupé par une
 # expiration serait écrit en DEUX lignes dans `<iid>.jsonl` — le fichier dont dépendent le coût, le
 # verdict et la détection de limite d'usage.
+#
+# --- Un bloc qui tient en place, et rien d'autre à l'écran (#284) -------------------------------------
+# Trois choses faisaient de la console détachée un mur défilant plutôt qu'un tableau de bord, et
+# chacune se corrige ici :
+#
+#  1. LA FRAME NE SE TERMINE PLUS PAR UN SAUT DE LIGNE. Un `\n` écrit sur la DERNIÈRE rangée de la
+#     fenêtre fait défiler le tampon d'une ligne — et le bloc vit précisément en bas de l'écran. À
+#     cinq images par seconde, c'était cinq lignes par seconde poussées dans l'historique : l'écran
+#     paraissait stable, l'ascenseur se remplissait de copies du même bloc. Le curseur reste donc
+#     SUR la dernière ligne du bloc, et le repositionnement vaut « hauteur - 1 ».
+#  2. LE CURSEUR EST CACHÉ tant que la vue tient l'écran. Redessiner, c'est le faire sauter d'un
+#     bout à l'autre du bloc plusieurs fois par seconde : c'est ce mouvement, plus que le texte, qui
+#     donnait à la console son air agité.
+#  3. LE BATTEMENT NE S'IMPRIME PLUS À L'ÉCRAN. Il est fait pour `run.log`, où il est la seule trace
+#     d'une session qui dure — mais à l'écran il ajoutait une ligne par minute SOUS un bloc qui dit
+#     déjà la même chose en plus frais, et forçait un redessin « à neuf » qui laissait le bloc
+#     précédent derrière lui. Il part maintenant vers le journal seul (`trace_journal`).
+#
+# Et le redessin ne se fait plus qu'une fois par seconde : rien de ce que la frame montre ne change
+# plus vite que ça (le chrono compte les secondes), et chaque frame coûte une poignée de forks.
 SPIN='|/-\'                       # ASCII à dessein : la console Windows par défaut (conhost +
                                   # Consolas) n'a pas les glyphes braille des jolis rouets.
 VUE_FD=""                         # descripteur des frames ; vide = pas de vue vivante
+VUE_CURSEUR=0                     # 1 = curseur caché par nous, donc à rendre en sortant
 VUE_LARGEUR=100                   # colonnes, résolues une fois — `tput` est un fork
-VUE_TICK=0.2                      # période de rafraîchissement, en secondes
-VUE_BATTEMENT_S="${MAESTRO_ORCHESTRATE_BATTEMENT:-60}"   # trace permanente pendant une session
+VUE_TICK=0.2                      # période de LECTURE du flux, en secondes
+VUE_BATTEMENT_S="${MAESTRO_ORCHESTRATE_BATTEMENT:-60}"   # trace de journal pendant une session
 VUE_GABARIT=43                    # largeur du gabarit ASCII de `vue_ligne`, titre exclu
 VUE_AVANT=""; VUE_APRES=""; VUE_RANG=""; VUE_IID=""; VUE_TITRE=""
 # Le chrono affiché est celui du TICKET, pas de la tentative en cours. Une limite d'usage rend la
@@ -324,7 +345,41 @@ VUE_DEBUT_TICKET=$SECONDS
 # lui, la vue d'un ticket repris est indiscernable de celle d'un ticket qui démarre.
 VUE_REPRISE=""
 
+# Le journal du run, quand le lanceur nous en a ouvert un descripteur (#284). Sans lui, la trace
+# permanente n'a qu'un chemin — stdout, donc `tee`, donc la CONSOLE. C'est ce détour qu'il évite
+# pour les lignes qui n'ont rien à faire à l'écran, et il donne au passage à celles qui doivent y
+# être un ÉCRIVAIN UNIQUE : `tee` est un autre processus, et rien ne garantit qu'il écrira sa ligne
+# avant la frame qu'on dessine juste après — une frame arrivée trop tôt compte ses lignes depuis le
+# mauvais endroit, et le bloc se dédouble.
+TRACE_FD="${MAESTRO_ORCHESTRATE_TRACE_FD:-}"
+if [ -n "$TRACE_FD" ] && ! { : >&"$TRACE_FD"; } 2>/dev/null; then TRACE_FD=""; fi
+
 vue_active() { [ -n "$VUE_FD" ]; }
+
+# trace_journal <format> [args…] : une ligne pour le JOURNAL SEUL — l'écran l'a déjà, en mieux.
+# Cas d'usage : le battement. Repli sur stdout quand aucun fd dédié n'existe, SAUF si stdout est
+# lui-même l'écran (run.sh lancé à la main dans un terminal), où le bloc vivant la rend redondante.
+trace_journal() {
+  local ligne; printf -v ligne "$@"
+  if [ -n "$TRACE_FD" ]; then
+    printf '%s' "$ligne" >&"$TRACE_FD"
+  elif ! vue_active || [ "$VUE_FD" != 1 ]; then
+    printf '%s' "$ligne"
+  fi
+  return 0
+}
+
+# trace <format> [args…] : une ligne PERMANENTE imprimée alors que le bloc vivant tient l'écran.
+# Le bloc est retiré d'abord, puis la ligne est écrite PAR NOUS sur la console (jamais par `tee`,
+# cf. TRACE_FD) et, séparément, dans le journal. À réserver aux endroits où une frame suit de près :
+# ailleurs, un `printf` ordinaire suffit et garde la ligne dans `run.log` par le chemin habituel.
+trace() {
+  local ligne; printf -v ligne "$@"
+  vue_efface
+  if vue_active && [ "$VUE_FD" != 1 ]; then printf '%s' "$ligne" >&"$VUE_FD"; fi
+  if [ -n "$TRACE_FD" ]; then printf '%s' "$ligne" >&"$TRACE_FD"; else printf '%s' "$ligne"; fi
+  return 0
+}
 
 # vue_ouvre : choisit le descripteur des frames. Le mode verbeux n'en veut aucun — les deux se
 # disputeraient l'écran, et c'est justement quand on lit chaque ligne qu'on ne veut rien qui bouge.
@@ -351,6 +406,23 @@ vue_ouvre() {
   case "$n" in '' | *[!0-9]*) n=100 ;; esac
   [ "$n" -lt 60 ] && n=100
   VUE_LARGEUR="$n"
+
+  # Le curseur n'a rien à montrer sous un bloc qu'on réécrit : il ne fait que sauter. On le cache
+  # tant que la vue tient l'écran — et `vue_ferme`, câblé sur la sortie du script, le rend. Une
+  # console laissée ouverte après le run ne doit pas rester sans curseur.
+  if vue_active; then printf '\033[?25l' >&"$VUE_FD"; VUE_CURSEUR=1; fi
+  return 0
+}
+
+# vue_ferme : rend le curseur. Idempotent, et appelé aussi bien à la fin de la boucle que par le
+# trap de sortie — un Ctrl-C ou un `exit` d'erreur ne doit pas laisser la console amputée.
+# Pas de « 2>/dev/null » ici : la garde ci-dessus suffit — VUE_CURSEUR ne vaut 1 que si `vue_ouvre`
+# a bel et bien écrit sur ce descripteur —, et une seconde redirection se disputerait stderr avec
+# celle du descripteur quand VUE_FD vaut 2 (SC2261).
+vue_ferme() {
+  [ "$VUE_CURSEUR" = 1 ] || return 0
+  VUE_CURSEUR=0
+  printf '\033[?25h' >&"$VUE_FD"
   return 0
 }
 
@@ -367,16 +439,36 @@ vue_ligne() {
 # La hauteur de la dernière frame vit DANS UN FICHIER et non dans une variable : la frame est
 # dessinée depuis le sous-shell du tube de la session, dont les affectations sont perdues au retour —
 # or c'est la boucle principale qui doit effacer le bloc avant d'imprimer un verdict.
-vue_hauteur() { local n; n="$(cat "$RUN_DIR/.vue-hauteur" 2>/dev/null)" || n=0; printf '%s' "${n:-0}"; }
+#
+# Lue par le builtin `read` et non par `cat` : la lecture a lieu à chaque frame, et un fork de moins
+# par frame n'est pas un détail sous MSYS. Le fichier est écrit AVEC un saut de ligne — sans lui,
+# `read` rendrait 1 tout en ayant affecté la variable, et le repli « || n=0 » de l'appelant écraserait
+# la valeur qu'il vient de lire.
+VUE_HAUT=0   # la hauteur relue, rendue par `vue_lit_hauteur` — une variable, donc sans fork
+vue_pose_hauteur() { printf '%s\n' "${1:-0}" >"$RUN_DIR/.vue-hauteur"; }
+vue_lit_hauteur() {
+  VUE_HAUT=0
+  [ -r "$RUN_DIR/.vue-hauteur" ] && read -r VUE_HAUT <"$RUN_DIR/.vue-hauteur"
+  case "${VUE_HAUT:-}" in '' | *[!0-9]*) VUE_HAUT=0 ;; esac
+  return 0
+}
+
+# vue_remonte <hauteur> : la séquence qui ramène le curseur au HAUT du bloc. Le curseur est laissé
+# sur la DERNIÈRE ligne du bloc (la frame ne se termine pas par un saut de ligne, cf. plus haut),
+# donc on remonte de « hauteur - 1 ». Un bloc d'une seule ligne se contente d'un retour chariot :
+# « ESC[0F » vaut « ESC[1F » pour la plupart des terminaux, qui remonteraient d'une ligne de trop.
+vue_remonte() {
+  if [ "${1:-0}" -gt 1 ]; then printf '\033[%sF' "$(($1 - 1))"; else printf '\r'; fi
+}
 
 # vue_efface : retire le bloc de l'écran. À appeler avant toute impression permanente, sans quoi la
 # ligne atterrirait au milieu d'une frame et fausserait le compte de lignes des suivantes.
 vue_efface() {
   vue_active || return 0
-  local n; n="$(vue_hauteur)"
-  [ "${n:-0}" -gt 0 ] || return 0
-  printf '\033[%sF\033[J' "$n" >&"$VUE_FD"
-  printf '0' >"$RUN_DIR/.vue-hauteur"
+  vue_lit_hauteur
+  [ "$VUE_HAUT" -gt 0 ] || return 0
+  printf '%s\033[J' "$(vue_remonte "$VUE_HAUT")" >&"$VUE_FD"
+  vue_pose_hauteur 0
   return 0
 }
 
@@ -418,12 +510,14 @@ vue_prepare() {
 #
 # Chaque ligne se termine par « ESC[K » (efface jusqu'au bout) pour qu'une ligne qui raccourcit ne
 # laisse pas la traîne de la précédente, et le bloc entier part en UN SEUL `printf` : deux écritures
-# laisseraient voir un demi-bloc. `frais` = 1 redessine sans remonter le curseur — ce qu'il faut
-# après une impression permanente, qui a fait défiler l'écran sous le bloc.
+# laisseraient voir un demi-bloc. La DERNIÈRE ligne, elle, n'a pas de saut de ligne : sur la rangée
+# du bas — là où le bloc vit — un `\n` fait défiler le tampon, et c'est ainsi que l'historique de la
+# console se remplissait d'une copie du bloc par frame. `frais` = 1 redessine sans remonter le
+# curseur, ce qu'il faut après une impression permanente qui a fait défiler l'écran sous le bloc.
 vue_dessine() {
   vue_active || return 0
   local marque="$1" ecoule="$2" detail="$3" frais="${4:-0}"
-  local corps="" n=0 ligne haut fin=$'\033[K\n'
+  local corps="" n=0 ligne haut=0 fin=$'\033[K\n'
 
   while IFS= read -r ligne; do
     [ -n "$ligne" ] || continue
@@ -440,19 +534,19 @@ vue_dessine() {
     corps+="$ligne$fin"; n=$((n + 1))
   done <<<"$VUE_APRES"
 
+  # Le pied ferme le bloc : « ESC[K » sans saut de ligne, le curseur reste sur cette ligne-là.
   corps+="$(printf '  run %s · %s✓ %s%s · %s✗ %s%s · %s~ %s%s · reste %s' \
     "$(duree_lisible "$((SECONDS - RUN_DEBUT_S))")" \
     "$C_G" "$NB_OK" "$C_0" "$C_R" "$NB_ECHEC" "$C_0" "$C_Y" "$NB_SAUTE" "$C_0" \
-    "$((nb_plan - POSITION))")$fin"; n=$((n + 1))
+    "$((nb_plan - POSITION))")"$'\033[K'; n=$((n + 1))
 
-  haut="$(vue_hauteur)"
-  [ "$frais" = 1 ] && haut=0
-  if [ "${haut:-0}" -gt 0 ]; then
-    printf '\033[%sF%s' "$haut" "$corps" >&"$VUE_FD"
+  if [ "$frais" != 1 ]; then vue_lit_hauteur; haut="$VUE_HAUT"; fi
+  if [ "$haut" -gt 0 ]; then
+    printf '%s%s' "$(vue_remonte "$haut")" "$corps" >&"$VUE_FD"
   else
     printf '%s' "$corps" >&"$VUE_FD"
   fi
-  printf '%s' "$n" >"$RUN_DIR/.vue-hauteur"
+  vue_pose_hauteur "$n"
   return 0
 }
 
@@ -695,7 +789,9 @@ delai_avant_reprise() {
 patiente() {
   local reste="$1" tranche fin
   fin="$(date -d "+$reste seconds" '+%H:%M' 2>/dev/null || echo '?')"
-  printf '  %slimite d'\''usage atteinte%s — attente de %s avant reprise (fin vers %s).\n' \
+  # `trace` et non `printf` : la frame suit immédiatement, et une ligne passée par `tee` pourrait
+  # arriver après elle — le bloc se dédoublerait pour toute la durée de l'attente.
+  trace '  %slimite d'\''usage atteinte%s — attente de %s avant reprise (fin vers %s).\n' \
     "$C_Y" "$C_0" "$(duree_lisible "$reste")" "$fin"
   # L'attente est un état du ticket comme un autre : le bloc reste à l'écran, marqué d'une pause et
   # décompté — sans quoi la console paraît figée pendant les heures que dure une limite d'usage.
@@ -773,9 +869,10 @@ formate_flux() {
   : >"$RUN_DIR/$iid.json"
 
   local ecoule=0 action="$VUE_REPRISE" dessinee='-' outils o
-  local tour=0 spin=0 dernier_battement=0 frais=1
+  local spin=0 dernier_battement=0 dessinee_a=-1 frais=1
 
   vue_dessine "${SPIN:0:1}" "$((SECONDS - VUE_DEBUT_TICKET))" "$action" 1
+  dessinee_a=$((SECONDS - VUE_DEBUT_TICKET))
   frais=0
 
   while :; do
@@ -822,25 +919,27 @@ formate_flux() {
       esac
     fi
 
-    tour=$((tour + 1))
     ecoule=$((SECONDS - VUE_DEBUT_TICKET))
 
-    # Le battement : une ligne par minute sur stdout, donc dans `run.log`. C'est ce qui reste de
-    # l'activité d'une session quand on relit le journal — les frames, elles, ne s'y écrivent pas.
+    # Le battement : une ligne par minute DANS LE JOURNAL. C'est ce qui reste de l'activité d'une
+    # session quand on relit `run.log` — mais à l'écran il n'apprend rien que le bloc ne dise déjà,
+    # en plus frais, et il coûtait cher : une ligne poussée sous le bloc chaque minute, plus un
+    # redessin « à neuf » qui laissait le bloc précédent derrière lui (#284).
     if [ "$VUE_BATTEMENT_S" -gt 0 ] && [ $((ecoule - dernier_battement)) -ge "$VUE_BATTEMENT_S" ]; then
       dernier_battement="$ecoule"
-      printf '  … %s%s\n' "$(duree_lisible "$ecoule")" "${action:+ · $(tronque "$action")}"
-      # La ligne vient de faire défiler l'écran sous le bloc : la frame suivante se redessine
-      # entière, sans remonter le curseur, sous peine d'écraser ce qu'on vient d'imprimer.
-      frais=1
+      trace_journal '  … %s%s\n' "$(duree_lisible "$ecoule")" "${action:+ · $(tronque "$action")}"
+      # Sans fd dédié, la ligne est bien partie sur stdout et a fait défiler l'écran sous le bloc :
+      # la frame suivante se redessine alors entière, sans remonter le curseur.
+      [ -n "$TRACE_FD" ] || frais=1
     fi
 
-    # On redessine sur un battement d'horloge (ligne vide) ou sur un changement d'action, pas à
-    # chaque événement : un flux dense en émet des dizaines par seconde, et personne ne les lirait.
-    if [ -z "$ligne" ] || [ "$action" != "$dessinee" ]; then
-      dessinee="$action"
-      # Le rouet tourne moitié moins vite que la boucle : à 5 images par seconde il papillote.
-      [ $((tour % 2)) -eq 0 ] && spin=$(((spin + 1) % ${#SPIN}))
+    # On redessine à la SECONDE, ou tout de suite sur un changement d'action. Rien de ce que la
+    # frame montre ne bouge plus vite que ça (le chrono compte les secondes), et chaque frame coûte
+    # une poignée de forks : à cinq images par seconde, la console passait son temps à se réécrire
+    # pour afficher le même texte.
+    if [ "$ecoule" != "$dessinee_a" ] || [ "$action" != "$dessinee" ]; then
+      dessinee="$action"; dessinee_a="$ecoule"
+      spin=$(((spin + 1) % ${#SPIN}))
       vue_dessine "${SPIN:$spin:1}" "$ecoule" "$action" "$frais"
       frais=0
     fi
@@ -1402,12 +1501,24 @@ detacher() {
     # couleur, pas les déplacements de curseur qu'un redessin sur stdout y aurait déversés).
     printf 'exec 4>&1\n'
     printf 'export MAESTRO_ORCHESTRATE_CONSOLE_FD=4\n'
+    # …et un journal joignable SANS passer par `tee` (#284). Deux usages, tous deux impossibles
+    # autrement : y déposer une ligne qui n'a rien à faire à l'écran (le battement d'une session,
+    # que le bloc vivant dit déjà en mieux), et écrire soi-même sur la console une ligne qui doit y
+    # être — `tee` est un autre processus, et rien ne garantit qu'il écrira avant la frame suivante.
+    # Deux écrivains sur le même fichier, mais tous deux en O_APPEND et ligne à ligne : `tee` vide
+    # son tampon à chaque lecture, l'ordre du journal suit donc celui du run.
+    printf 'exec 5>>%q\n' "$journal"
+    printf 'export MAESTRO_ORCHESTRATE_TRACE_FD=5\n'
     printf 'bash %q' "$RACINE/scripts/orchestrate/run.sh"
     for arg in "$@"; do printf ' %q' "$arg"; done
     # `tee` garde la sortie lisible dans la fenêtre ET sur disque : une console qui se referme (ou
     # qu'on ferme) ne doit pas emporter la seule trace de ce qui s'est passé.
     printf ' 2>&1 | tee -a %q\n' "$journal"
     printf 'code=${PIPESTATUS[0]}\n'
+    # Filet de dernier recours pour le curseur (#284) : `run.sh` le rend lui-même par un trap, mais
+    # un trap ne s'exécute pas sur un SIGKILL — et c'est exactement ainsi qu'un run est arrêté par
+    # un autre (§11.9). La fenêtre, elle, survit à son run : elle ne doit pas rester sans curseur.
+    printf 'printf "\\033[?25h" >&4 2>/dev/null\n'
     # Le journal, lui, se relit plus tard et souvent par un outil : on l'y décolore une fois, à la
     # fin. Pendant le run il porte les codes, ce qu'un `tail -f` vers un terminal rend correctement.
     printf 'sed -i '\''s/\\x1b\\[[0-9;]*m//g'\'' %q 2>/dev/null\n' "$journal"
@@ -1499,7 +1610,9 @@ fi
 # `pilote_vivant`, qui est la vraie garantie. Une carte périmée ne fait jamais tuer personne.
 if [ "$DRY" = 0 ]; then
   pilote_ecrit "$RUN_DIR" || printf 'run.sh : carte du pilote non écrite — ce run ne pourra pas être arrêté par un autre.\n' >&2
-  trap 'pilote_retire "$RUN_DIR"' EXIT
+  # `vue_ferme` d'abord : le curseur caché par la vue doit revenir quoi qu'il arrive — sortie
+  # normale, `exit` d'erreur ou Ctrl-C —, sans quoi la console reste amputée après le run.
+  trap 'vue_ferme; pilote_retire "$RUN_DIR"' EXIT
 fi
 
 # --- Le plan, figé une fois --------------------------------------------------------------------------
@@ -1837,6 +1950,10 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
 done 3< <(grep -v '^#' "$PLAN")
 
 # --- Résumé --------------------------------------------------------------------------------------------
+# Plus une frame ne sera dessinée : le bloc part et le curseur revient AVANT le résumé, qui reprend
+# le chemin ordinaire (stdout → `tee` → console et journal). Rien ne se dispute plus l'écran.
+vue_efface
+vue_ferme
 printf '%sRésumé du run %s%s\n' "$C_B" "$RUN_ID" "$C_0"
 printf '  %s✓%s %s réussi(s) · %s✗%s %s en échec · %s~%s %s sauté(s)\n' \
   "$C_G" "$C_0" "$NB_OK" "$C_R" "$C_0" "$NB_ECHEC" "$C_Y" "$C_0" "$NB_SAUTE"

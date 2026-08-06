@@ -1533,6 +1533,117 @@ def test_le_mode_verbeux_eteint_la_vue_vivante(depot: Depot) -> None:
 
 
 # =====================================================================================
+# Un bloc qui tient en place, et rien d'autre à l'écran (#284)
+# =====================================================================================
+#
+# #240 avait donné à la console son tableau de bord ; il restait trois façons pour lui de salir
+# l'écran, dont deux invisibles à la relecture de `run.log` — c'est justement pour ça qu'elles
+# avaient tenu. Ces tests les fixent à l'octet près, sur le fichier qui tient lieu de console.
+
+def test_la_frame_ne_se_termine_pas_par_un_saut_de_ligne(depot: Depot) -> None:
+    """Le défaut coûteux : un « \\n » écrit sur la rangée du bas fait défiler le tampon. Le bloc vit
+    précisément en bas de l'écran, et il se redessinait plusieurs fois par seconde — l'écran
+    paraissait stable pendant que l'historique se remplissait d'une copie du bloc par frame."""
+    depot.ticket(130, "Ticket 130")
+    depot.mr("feat/130-ticket-130", "opened")
+    console = _console(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "sans-defilement",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    # Le pied est la dernière ligne du bloc : il se termine par « efface jusqu'au bout », et rien
+    # d'autre. C'est ce qui laisse le curseur SUR la ligne, d'où le repositionnement en hauteur - 1.
+    assert "reste 0\x1b[K" in vue, "le pied ferme la frame en effaçant la fin de ligne"
+    assert "reste 0\x1b[K\n" not in vue, (
+        "une frame finie par un saut de ligne pousse une ligne dans l'historique à chaque redessin"
+    )
+    # « ESC[F » nu vaut « remonte d'une ligne » : la hauteur est toujours dite explicitement.
+    assert "\x1b[F" not in vue, "un repositionnement sans hauteur remonterait d'une ligne"
+
+
+def test_le_curseur_est_cache_pendant_la_vue_et_rendu_en_sortant(depot: Depot) -> None:
+    """Redessiner, c'est faire sauter le curseur d'un bout à l'autre du bloc — et c'est ce
+    mouvement, plus que le texte, qui donnait à la console son air agité. Il est rendu à la sortie :
+    une fenêtre gardée ouverte après le run ne doit pas rester sans curseur."""
+    depot.ticket(130, "Ticket 130")
+    depot.mr("feat/130-ticket-130", "opened")
+    console = _console(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "curseur",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert "\x1b[?25l" in vue, "le curseur est caché dès que la vue prend l'écran"
+    assert vue.rindex("\x1b[?25h") > vue.rindex("\x1b[?25l"), (
+        "et rendu APRÈS — le dernier geste de la vue, sinon la console reste amputée"
+    )
+    assert "\x1b[?25" not in r.stdout, "rien de tout cela n'a à finir dans run.log"
+
+
+def test_le_battement_va_dans_le_journal_et_non_a_l_ecran(depot: Depot) -> None:
+    """Le battement est fait pour `run.log`, où il est la seule trace d'une session qui dure. À
+    l'écran il n'apprenait rien que le bloc ne dise déjà en plus frais, et il coûtait double : une
+    ligne poussée sous le bloc chaque minute, plus un redessin « à neuf » qui laissait le bloc
+    précédent derrière lui."""
+    depot.ticket(130, "Ticket 130")
+    depot.mr("feat/130-ticket-130", "opened")
+    gabarit = _statut_json("130", "En revue")
+    # Une session qui dure : de quoi laisser passer deux battements d'une seconde.
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{gabarit}' > "$MAESTRO_FIXTURES/owner-130.json"
+        sleep 2.5
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}\\n'
+        exit 0
+    """)
+    console = _console(depot)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "battement",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_BATTEMENT": "1",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    # Sans descripteur dédié (le lanceur détaché en ouvre un), le battement retombe sur stdout —
+    # c'est-à-dire sur le journal, exactement là où il sert.
+    assert "  … " in r.stdout, "le journal garde la trace d'une session qui dure"
+    assert "  … " not in vue, "l'écran, lui, n'en veut pas : le bloc dit déjà la même chose"
+
+
+def test_le_lanceur_detache_ouvre_un_descripteur_sur_le_journal(depot: Depot) -> None:
+    """Ce descripteur est ce qui permet d'écrire au journal SANS passer par `tee` — donc sans
+    passer par l'écran — et d'écrire soi-même sur la console les lignes qui doivent y être : `tee`
+    est un autre processus, et une ligne qui arrive après la frame suivante dédouble le bloc."""
+    claude = _claude_stub(depot, "exit 1\n")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance(
+        "run.sh", "--detach", "--plan", plan, "--run-id", "fd-journal",
+        env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_SPAWN": _spawn_stub(depot)},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    corps = (depot.racine / ".maestro/orchestrate/fd-journal/lancer.sh").read_text(encoding="utf-8")
+    assert "exec 4>&1" in corps and "MAESTRO_ORCHESTRATE_CONSOLE_FD=4" in corps
+    assert "exec 5>>" in corps and "MAESTRO_ORCHESTRATE_TRACE_FD=5" in corps
+    # Filet de dernier recours : `run.sh` rend le curseur par un trap, mais un trap ne s'exécute pas
+    # sur un SIGKILL — et c'est ainsi qu'un run est arrêté par un autre (§11.9). La fenêtre survit à
+    # son run : elle ne doit pas rester sans curseur.
+    assert "\\033[?25h" in corps and ">&4" in corps, (
+        "la fenêtre récupère son curseur quoi qu'il arrive"
+    )
+    # Les deux descripteurs sont ouverts AVANT le tube : le 4 doit désigner la fenêtre et non le
+    # tube vers `tee`, et le 5 le fichier de journal lui-même.
+    lignes = corps.splitlines()
+    commande = next(i for i, ligne in enumerate(lignes) if ligne.startswith("bash "))
+    assert next(i for i, ligne in enumerate(lignes) if ligne.startswith("exec 4>")) < commande
+    assert next(i for i, ligne in enumerate(lignes) if ligne.startswith("exec 5>")) < commande
+
+
+# =====================================================================================
 # status.sh — savoir où en est un run, hors de sa console (#177)
 # =====================================================================================
 
