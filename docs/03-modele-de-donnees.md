@@ -123,17 +123,24 @@ Les humains qui utilisent la plateforme. `role` : `owner`, `admin`, `viewer`.
 ### PROJECT
 Un projet de travail (souvent rattaché à un dépôt de code). Regroupe des tâches et la configuration des agents qui y interviennent.
 
-> **Socle implémenté** (#221, `maestro.projets` — dépôt `core/projets/`, un fichier `<id>.json`
-> par projet) : l'entité porte les champs qui la relient au disque, cadrés par
+> **Implémenté** (#221, `maestro.projets` — dépôt `core/projets/`, un fichier `<id>.json` par
+> projet) : l'entité porte les champs qui la relient au disque, cadrés par
 > [docs/24 §2.3](./24-projets-locaux-et-poste-de-travail.md) — `racine` (chemin absolu — la
 > **frontière unique** de ce que les agents peuvent lire et écrire, **canonicalisée** et refusée
 > avec son motif si elle tombe sur une racine interdite, EF-38), `origine`
 > (`nouveau`/`existant`), `vcs` (`type`, `branche_base`, `distant` — **détecté** à la
 > déclaration, `null` si non versionné : un projet non versionné reste déclarable) et
 > `perimetre` (`inclus`/`exclus`, ce dernier portant par défaut `.git`, `node_modules`, `.env`,
-> `**/secrets/**`). Le **`projet_id` porté par `TASK` et `RUN`** est livré depuis #222 (voir ces
-> deux entités). Restent à venir dans la phase : l'API (#223), l'espace de travail dérivé (#224)
-> et l'application des livrables (#227).
+> `**/secrets/**`). La forme servie par l'API est **celle du fichier stocké**, sans seconde
+> définition du contrat.
+>
+> Le reste de la Phase 7 s'appuie dessus et est livré : le **`projet_id` porté par `TASK` et
+> `RUN`** (#222, voir ces deux entités), l'**API** `/api/projets` et son explorateur de dossiers
+> (#223, [docs/05 §2.7](./05-interface-control-tower.md)), l'**espace de travail dérivé** — worktree
+> Git par tâche si le projet est versionné, copie du périmètre sinon (#224, EF-36), l'**écran
+> Projets** (#225), le **second montage** en mode isolé (#226,
+> [docs/17 §3](./17-isolation-execution.md)) et l'**application des livrables sous validation
+> humaine** (#227, EF-37). Les agents ne travaillent **jamais** directement dans la racine.
 > *(Retenu — décisions D1/D2 de
 > [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md), rendues le 2026-08-04 ; **Phase 7**.)*
 

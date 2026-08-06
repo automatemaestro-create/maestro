@@ -180,18 +180,20 @@ Quand un agent atteint une action sensible, une carte **« Validation requise »
 ### 2.7 📁 Projets et composition d'un objectif *(retenu — [docs/24](./24-projets-locaux-et-poste-de-travail.md), **Phases 7 et 8**)*
 
 > Écrans **retenus** — décisions D1, D2 et D5 de
-> [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md) rendues le 2026-08-04 (#218) — mais
-> **pas encore spécifiés** au niveau de détail des §2.1 à 2.6 : ce travail est celui des Phases 7
-> (Projets) et 8 (sources et brief). Ils comblent le trou constaté au §1 de ce cadrage : la
-> Control Tower pilote des exécutions qui n'appartiennent à aucun projet et dont les livrables
-> atterrissent dans un dossier de sortie, jamais chez l'utilisateur.
+> [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md) rendues le 2026-08-04 (#218). Ils
+> comblent le trou constaté au §1 de ce cadrage : la Control Tower pilotait des exécutions qui
+> n'appartenaient à aucun projet et dont les livrables atterrissaient dans un dossier de sortie,
+> jamais chez l'utilisateur. La **Phase 7 a livré** les deux qui la concernent — l'écran Projets
+> (§2.7.1) et l'application des livrables, qui emprunte l'écran de validation du §2.6. Les deux
+> autres — composer un objectif, valider le brief — relèvent de la **Phase 8** et restent, eux,
+> **pas encore spécifiés** au niveau de détail des §2.1 à 2.6.
 
 - **Projets** — la liste des projets, chacun avec sa **racine sur le disque**, son type
   (nouveau / dépôt existant) et son périmètre. Le choix du dossier se fait par un **explorateur
   servi par l'API** : un navigateur ne livre jamais de chemin absolu, c'est donc le backend —
   qui tourne déjà sur le poste — qui énumère. Une racine hors périmètre autorisé est **refusée
-  avec son motif**, jamais silencieusement ignorée (EF-38). Son **API est livrée** (#223) et
-  spécifiée au §6.7 : l'écran, lui, reste à faire (#225).
+  avec son motif**, jamais silencieusement ignorée (EF-38). **Livré** : l'API au §6.7 (#223),
+  l'écran au §2.7.1 (#225).
 - **Composer un objectif** — le formulaire de lancement gagne, à côté du texte, des **sources**
   (§6.1 étendu) : fichiers déposés, dossier de références en lecture seule, URL. L'extraction
   est visible (ce qui a été lu, ce qui a été ignoré, le coût estimé).
@@ -199,19 +201,25 @@ Quand un agent atteint une action sensible, une carte **« Validation requise »
   structuré** (objectif, périmètre, hors-périmètre, contraintes, critères d'acceptation,
   hypothèses) et **ses questions**. C'est le point de contrôle le plus rentable du produit :
   corriger un plan coûte un message, corriger douze tâches coûte douze exécutions.
-- **Appliquer dans le projet** — la remise des livrables dans le dossier de l'utilisateur est
-  une **action sensible** : elle emprunte l'écran de validation ci-dessus (§2.6), diff à
-  l'appui. Rien de neuf côté mécanisme, un nouveau type d'action côté contenu.
+- **Appliquer dans le projet** *(livré — #227, EF-37)* — la remise des livrables dans le dossier
+  de l'utilisateur est une **action sensible** : elle emprunte l'écran de validation ci-dessus
+  (§2.6), diff à l'appui. Rien de neuf côté mécanisme, un nouveau type d'action côté contenu —
+  la demande de validation porte simplement un champ `diff` de plus (fichiers touchés, lignes
+  ajoutées/supprimées, branche fusionnée), que le panneau des validations affiche avant la
+  décision. Sur refus, **rien n'est écrit** et le travail reste consultable : la branche de tâche
+  n'est jamais supprimée, la copie reste où elle est.
 
 Le sélecteur de projet devient alors un élément permanent de la barre supérieure : le Kanban,
 les coûts et le journal se lisent **par projet**.
 
 #### 2.7.1 L'écran Projets (#225) — **livré**
 
-Le premier des quatre écrans ci-dessus est **spécifié et implémenté** : ce qui suit remplace, pour
-lui seul, la réserve « pas encore spécifié » de l'encadré. Les trois autres restent à la Phase 8.
+Le premier des quatre écrans ci-dessus est **spécifié et implémenté** ; l'application des livrables
+l'est aussi, par l'écran de validation du §2.6. Les deux autres — composer un objectif, valider le
+brief — restent à la Phase 8, et ce sont eux seuls que vise encore la réserve de l'encadré.
 Implémentation : `apps/web/app/projets/page.tsx` et `apps/web/components/projets/`, contre les six
-routes du §6.7 ; couverture `apps/web/tests/projets.test.tsx`.
+routes du §6.7 ; couverture `apps/web/tests/projets.test.tsx` côté UI,
+[`tests/test_projets_api.py`](../tests/test_projets_api.py) côté API.
 
 **Place dans la navigation** — une entrée **« Projets »** juste après le tableau de bord, avant les
 écrans qui s'y rapporteront (agents, coûts, validations). Déclarer *où* Maestro travaille n'est pas

@@ -78,7 +78,7 @@ Tout ce qui entre ou sort est énuméré ici — et nulle part ailleurs
 
 | Accès | Accordé | Refusé |
 |---|---|---|
-| **Système de fichiers** | `/workspace` : le répertoire jetable de la tâche (`maestro.sandbox.workspace`), monté en lecture-écriture — c'est là que l'agent produit ses livrables. Deux tmpfs jetables : `/tmp` (512 Mo) et `/home/agent` (1 Go — état du CLI, caches npm/npx) | tout le reste : racine de l'image en **lecture seule** (`--read-only`), aucun autre chemin de l'hôte monté |
+| **Système de fichiers** | `/workspace` : l'espace de travail de la tâche, monté en lecture-écriture — c'est là que l'agent produit ses livrables. Sans projet, c'est le répertoire **jetable** créé vide (`maestro.sandbox.workspace`) ; rattachée à un projet (#224), la tâche y voit l'espace **dérivé** de ce projet — worktree Git sur la branche `maestro/<tâche>`, ou copie de son périmètre. Deux tmpfs jetables : `/tmp` (512 Mo) et `/home/agent` (1 Go — état du CLI, caches npm/npx) | tout le reste : racine de l'image en **lecture seule** (`--read-only`), aucun autre chemin de l'hôte monté — **la racine du projet en particulier n'est jamais montée** (#226, EF-36 : vérifié deux fois, au câblage du protocole puis au dernier mètre avant `docker run`), et les chemins **exclus** du périmètre (`.env`, `**/secrets/**`…) sont recouverts d'un montage vide en lecture seule |
 | **Réseau** | sortant seul (`bridge`, défaut) : nécessaire pour joindre l'API du fournisseur et les serveurs MCP distants ; `none` le coupe entièrement (diagnostic) | tout entrant (aucun port publié), réseau de l'hôte |
 | **Environnement** | 3 variables d'authentification : `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` (telles que posées par le fournisseur, y compris vides — la neutralisation de #30 est préservée) | tout le reste de l'environnement hôte. Les secrets MCP (#104) ne transitent pas par l'environnement du conteneur : résolus en mémoire côté hôte, ils voyagent dans la config MCP passée en argument au CLI |
 | **Privilèges** | utilisateur non-root `agent` (uid 10001) | toutes les capabilities (`--cap-drop ALL`), l'escalade (`no-new-privileges`) |
@@ -113,14 +113,22 @@ introuvable) casse **au câblage** avec une erreur explicite ; Docker arrêté o
 image absente se constatent au lancement et remontent en **échec de tâche**
 consigné au journal, comme les autres échecs.
 
-> ⚠ **Ce contrat est celui d'un produit qui ne touche à aucun projet de l'utilisateur.** La
-> ligne « aucun autre chemin de l'hôte monté » est précisément ce que lève le cadrage
-> [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md) : ouvrir un projet local ajoute
-> un **second montage** (la racine du projet, ou le répertoire de travail de la tâche) et fait
-> du projet de l'utilisateur un **actif à protéger** au même titre que le poste hôte. Rien du
-> reste du tableau ne bouge. Décision D1 **rendue le 2026-08-04** (#218) : ce changement est le
-> travail de la **Phase 7**, et le contrat ci-dessus reste intégralement en vigueur **jusqu'à ce
-> qu'elle le modifie** — c'est ce document qui devra alors être mis à jour, pas contourné.
+> ⚠ **Le projet de l'utilisateur est le seul endroit du contrat que la Phase 7 a déplacé** (#226,
+> décision D1 rendue le 2026-08-04, #218 — cadrage
+> [docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md)). Jusque-là, `/workspace` était un
+> répertoire jetable créé vide : le conteneur ne touchait **aucun** chemin de l'hôte porteur de
+> données. Le « second montage » annoncé par le cadrage se matérialise **à la place** de ce
+> répertoire, jamais en plus : l'espace dérivé *est* l'espace de travail de la tâche, et monter
+> aussi la racine reviendrait à monter deux fois le même arbre — en plus large. Trois invariants
+> tiennent cette ligne, et ils sont vérifiés plutôt que supposés : la **racine du projet n'est
+> jamais montée** (refus au câblage du protocole et au dernier mètre avant `docker run`, la seule
+> porte que rien ne contourne), les **chemins exclus** du périmètre sont masqués jusque dans le
+> conteneur — le worktree d'un projet versionné, lui, porte bien un `.env` ou un `secrets/`
+> **versionnés**, là où la copie d'un projet non versionné les écarte d'office — et un périmètre
+> qui excède ce que le conteneur sait masquer est un **refus franc**, pas un montage à moitié.
+> Rien du reste du tableau ne bouge. Le projet de l'utilisateur devient au passage un **actif à
+> protéger** au même titre que le poste hôte : voir
+> [docs/19 §2.1](./19-securite-modele-de-menace.md).
 
 ## 5. Limites connues (assumées au POC)
 
