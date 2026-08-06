@@ -1598,7 +1598,7 @@ plan, quel ticket tourne, depuis combien de temps. Elle existait pourtant, mais 
   ✓  1. #237      4 min    1.20 $ MR !312  Compteur [n/N] faux en reprise de run
   /  2. #240     12 min                    Console d'un run : une checklist vivante
        · Edit scripts/orchestrate/run.sh
-     3. #241                               Écran Projets dans la Control Tower
+     3. #284                               Écran Projets dans la Control Tower
   run 16 min · ✓ 1 · ✗ 0 · ~ 0 · reste 1
 ```
 
@@ -1611,21 +1611,47 @@ d'outils de #176 reste disponible pour le diagnostic — **`--verbeux`**, ou
 `MAESTRO_ORCHESTRATE_VERBEUX=1` — et **désactive alors la vue** : les deux se disputeraient l'écran,
 et c'est justement quand on lit chaque ligne qu'on ne veut rien qui bouge.
 
-Trois points à connaître avant d'y toucher :
+**Un bloc qui tient en place, et rien d'autre à l'écran (#284).** La vue de #240 était juste ; ce qui
+ne l'était pas, c'est **ce qui l'entourait**. Trois défauts la noyaient, et deux d'entre eux étaient
+invisibles à la relecture de `run.log` — ce qui explique qu'ils aient tenu :
+
+| ce qu'on voyait | la cause | ce qui a changé |
+| --- | --- | --- |
+| l'historique se remplit de copies du bloc | la frame se terminait par un **saut de ligne**, et un `\n` écrit sur la rangée du bas fait **défiler le tampon** — cinq fois par seconde | la dernière ligne du bloc n'a plus de `\n` : le curseur y reste, et le repositionnement vaut `hauteur - 1` |
+| le curseur saute sans arrêt | il est déplacé d'un bout à l'autre du bloc à chaque frame | il est **caché** tant que la vue tient l'écran, rendu par `vue_ferme` (sortie normale, erreur ou Ctrl-C) |
+| une ligne `… 12min00 · Bash …` s'accumule sous le bloc | le **battement** partait sur stdout, donc par `tee`, donc à l'écran — et forçait un redessin « à neuf » qui laissait le bloc précédent derrière lui | il part vers le **journal seul** ; l'écran a déjà l'information dans le bloc, en plus frais |
+
+Le redessin ne se fait plus qu'**une fois par seconde** (rien de ce que la frame montre ne bouge plus
+vite : le chrono compte les secondes), et chaque frame coûte une poignée de forks — à cinq images par
+seconde, la console passait son temps à se réécrire pour afficher le même texte.
+
+Quatre points à connaître avant d'y toucher :
 
 - **la sortie d'un run n'est pas un terminal.** Le lanceur de `--detach` fait `… 2>&1 | tee -a
   run.log` : stdout est un **tube** — c'est déjà toute la raison d'être de
   `MAESTRO_ORCHESTRATE_COULEUR`. Y redessiner déverserait une frame par rafraîchissement dans
   `run.log`, que le `sed` final ne nettoierait même pas (il ne retire que les séquences de couleur,
   pas les déplacements de curseur). D'où **deux sorties** : stdout garde la trace permanente
-  (en-tête de ticket, **battement** d'une ligne par minute, verdicts), et les frames partent sur un
-  **descripteur dédié**, que le lanceur ouvre avant le tube (`exec 4>&1`, passé par
-  `MAESTRO_ORCHESTRATE_CONSOLE_FD`). Sans console — détachement Unix, CI, tests — aucune frame n'est
-  émise : la vue **retombe en plein texte**, une impression par ticket, sans animation ;
+  (en-tête de ticket, verdicts), et les frames partent sur un **descripteur dédié**, que le lanceur
+  ouvre avant le tube (`exec 4>&1`, passé par `MAESTRO_ORCHESTRATE_CONSOLE_FD`). Sans console —
+  détachement Unix, CI, tests — aucune frame n'est émise : la vue **retombe en plein texte**, une
+  impression par ticket, sans animation ;
+- **le lanceur ouvre aussi le journal (`exec 5>>run.log`, `MAESTRO_ORCHESTRATE_TRACE_FD`, #284).**
+  Deux usages, tous deux impossibles autrement. Y déposer une ligne qui n'a **rien à faire à
+  l'écran** — le battement — sans passer par `tee`. Et écrire **soi-même** sur la console une ligne
+  qui doit y être : `tee` est un **autre processus**, et rien ne garantit qu'il écrira sa ligne avant
+  la frame qu'on dessine juste après ; une frame arrivée trop tôt compte ses lignes depuis le mauvais
+  endroit, et le bloc **se dédouble**. Un écrivain unique par écran, donc — c'est ce que fait la
+  fonction `trace`, à réserver aux endroits où une frame suit de près (l'entrée en attente de limite
+  d'usage) ; ailleurs un `printf` ordinaire suffit. Les deux écrivains du **fichier**, eux,
+  coexistent sans risque : O_APPEND et ligne à ligne, `tee` vidant son tampon à chaque lecture ;
 - **le chrono demande une horloge, pas un événement.** La boucle est bloquée sur la lecture du flux :
   rien n'y ferait avancer un compteur. C'est `read -t` qui bat la mesure — un tour toutes les 0,2 s,
   qu'une ligne soit arrivée ou non —, ce qui évite tout processus d'affichage séparé (§11.9 n'a donc
-  rien de plus à tuer). Corollaire à ne pas défaire : sur expiration, `read` **affecte quand même**
+  rien de plus à tuer). À ne pas confondre avec la cadence de **redessin**, qui est d'une frame par
+  seconde (ou tout de suite sur un changement d'action) : lire le flux vite et réécrire l'écran
+  lentement sont deux besoins distincts. Corollaire à ne pas défaire : sur expiration, `read`
+  **affecte quand même**
   ce qu'il a déjà lu de la ligne en cours, d'où le tampon qui la recolle — sans lui, un objet JSON
   coupé par une expiration s'écrirait en **deux lignes** dans `<iid>.jsonl`, le fichier dont
   dépendent le coût, le verdict et la détection de limite d'usage ;
