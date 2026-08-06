@@ -30,7 +30,9 @@ gantt
 
 > Les durées sont indicatives et à ajuster selon l'équipe. Le diagramme couvre le **plan
 > initial** (Phases 0 à 3, toutes soldées) ; le projet a continué au-delà — Phases 4 à 6 plus
-> bas, puis les **Phases 7 à 9** issues du cadrage #215 et planifiées par #218.
+> bas, puis les **Phases 7 à 9** issues du cadrage #215 et planifiées par #218, et la **vague
+> front « Control Tower v3 »** ouverte par la revue d'usage du 2026-08-05, menée **en parallèle**
+> des Phases 8 et 9.
 
 ---
 
@@ -135,7 +137,9 @@ fenêtres ci-dessus, elles, restent séquentielles tant que ce recouvrement n'es
 **Une quatrième phase reste ouverte, sans milestone** : **10 — Continuité & multi-projet** *(à
 confirmer)* — un projet vit dans la durée : historique et coûts par projet, mémoire long terme,
 itération sur un livrable existant, tests réellement exécutés. Son contenu dépend de ce que la
-Phase 7 aura appris de la vie réelle d'un projet ; elle se confirmera à ce moment-là.
+Phase 7 aura appris de la vie réelle d'un projet ; elle se confirmera à ce moment-là. La **vague
+front** décrite plus bas ne la décale pas et ne prend pas sa place : le numéro 10 lui reste
+réservé.
 
 > **Tickets : la Phase 7 est découpée, les Phases 8 et 9 non.** C'est le patron de #182, qui avait
 > créé les milestones des Phases 5 et 6 **et semé aussitôt leur premier lot de tickets** (#183,
@@ -145,6 +149,59 @@ Phase 7 aura appris de la vie réelle d'un projet ; elle se confirmera à ce mom
 > parallèle**, #227 (application des livrables sous validation) et #220 (tests + doc).
 > Les Phases 8 et 9 restent des contenants vides à dessein : leur détail dépend de ce que la
 > Phase 7 aura produit — un brief vise un projet, et on n'empaquette pas une cible mouvante.
+> **Vides ne veut pas dire seuls à venir** : le découpage différé porte sur *ces deux phases-là*,
+> pas sur le backlog. Trois autres milestones, décrits juste en dessous, sont ouverts **et
+> découpés** — la **vague front « Control Tower v3 »**, qui se mène en parallèle des Phases 8
+> et 9 sans rien changer à leur cadrage.
+
+---
+
+## Vague front « Control Tower v3 » — parallèle aux Phases 8 et 9
+
+**Origine : la revue d'usage du 2026-08-05**, passée sur les écrans livrés par les Phases 4 et 6.
+Elle ne rejuge pas ce qui a été construit ; elle relève ce qui manque une fois qu'on s'en sert
+pour de bon — un rendu jugé « brouillon » qui revient écran après écran, un tableau de bord qui ne
+répond pas à « où en est-on ? » d'un coup d'œil, une fiche agent où l'on ne peut ni créer un agent
+guidé par ce qui existe réellement ni lire ce qu'il a fait, et aucune porte d'entrée
+conversationnelle. Le **bilan de la Phase 7** y a ajouté un constat de même nature : le projet
+n'est pas un écran de plus, c'est le **cadre** de tous les écrans.
+
+**Ce n'est pas une renumérotation.** La vague est une **voie front**, menée en parallèle des
+Phases 8 et 9 — exactement ce que la Phase 6 a été à la Phase 5, sur le patron « deux voies par
+couche » de #182. Les Phases 8 et 9 gardent leur périmètre, leur ordre (décision D6 : 7 → 8 → 9)
+et leurs fenêtres ; la Phase 10 pressentie garde son numéro. Une vague front ne prend pas de
+numéro de phase : elle **recouvre** les phases qu'elle accompagne au lieu de s'y insérer.
+
+| Milestone | Contenu | Fenêtre | Suivi |
+|---|---|---|---|
+| **Control Tower v3 — socle visuel & pilotage** | Un **langage visuel** commun (icônes, cartes, densité) dont tous les autres écrans héritent, puis l'écran de pilotage : détail d'une tâche, tuiles de tête, section Tâches, Journal, carte de Kanban. Et, en amont, le **projet actif comme cadre** de la Control Tower (choix à l'entrée, bascule dans le shell, écrans filtrés) | 2027-04-29 → 2027-05-26 | **#242** — 8 lots (#245–#252) et **#276** — 6 lots (#277–#282) |
+| **Control Tower v3 — agents** | La fiche agent complète : création plein écran guidée par un **catalogue** de fournisseurs, modèles et efforts servi par l'API, compétences cadrées, permissions éditables, playbook publié et versionné, chat en direct, onglet Logs | 2027-05-27 → 2027-07-07 | **#243** — 15 lots (#253–#267) |
+| **Control Tower v3 — conversation & intégrations** | Chat global (le fil avec l'orchestration, puis l'écran), intégrations MCP sorties du fond des Paramètres avec une bibliothèque élargie, et un écran de validations qui se décide vite | 2027-07-08 → 2027-08-04 | **#244** — 6 lots (#268–#273) |
+
+Les fenêtres démarrent avec la Phase 8 et débordent de deux semaines la fin de la Phase 9 : comme
+ailleurs dans ce document, ce sont des repères de planification, pas des engagements. Les trois
+milestones s'enchaînent dans cet ordre parce qu'ils dépendent les uns des autres — le **langage
+visuel** du premier lot (#245) est ce dont les deux autres héritent, et le **streaming** de
+l'onglet Chat (#264) est ce que le chat global réutilise au lieu de le réimplémenter.
+
+Deux points d'articulation avec le reste de la roadmap :
+
+- **#276 précède les autres lots du socle** : chaque écran v3 doit *naître* filtré par le projet
+  actif plutôt qu'être refiltré après coup. C'est le pas d'après de la Phase 7 — l'entité Projet
+  et sa racine validée existent (#221–#225), il leur manquait de devenir le cadre de l'UI.
+- **Le sélecteur de dossier natif (#278) n'anticipe pas la Phase 9** : l'enveloppe de bureau reste
+  tranchée par D3/D4 et planifiée là-bas. Le backend tournant déjà sur le poste, il peut ouvrir
+  lui-même le sélecteur de l'OS ; le mode serveur garde l'explorateur servi par l'API en repli.
+
+> **Tickets : les trois milestones sont découpés**, contrairement aux Phases 8 et 9 — la revue
+> d'usage porte sur des écrans qui **existent**, il n'y a donc rien à attendre pour les découper.
+> Même patron que la Phase 7 : un **parent de suivi** par chantier (le premier milestone en porte
+> deux), qui porte la checklist ordonnée et ne se ferme que toutes cases cochées, et des lots
+> mergeables un à un sur `main`,
+> les lots marqués **« (parallèle) »** étant prenables en même temps. La vague **rhabille et
+> complète** : aucun de ces lots ne touche à la machine à états du moteur ni à la navigation posée
+> par #117/#189, et l'essentiel du travail est front — seuls quelques lots de socle passent par
+> l'API (#246, #253, #268, #277).
 
 ---
 
