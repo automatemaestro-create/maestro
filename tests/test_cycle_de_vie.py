@@ -119,14 +119,49 @@ if args[:2] == ["api", "graphql"]:
     if "labels(searchTerm:" in requete:
         sortie(compact({"data": {"project": {"labels": {"nodes": etat["labels"]}}}}))
 
+    # Backlog fermé : ce que balaie `reconcile-workflow` sans argument (#275). Chaque entrée de
+    # `backlog_closed` est un « {iid, labels} » ; le reste de la forme (titre, assignés) est ce que
+    # la vraie requête ramène et que le filtre traverse sans le lire.
+    if "workItems(state:" in requete:
+        noeuds = [
+            {
+                "iid": entree["iid"],
+                "title": entree.get("titre", f"ticket {entree['iid']}"),
+                "widgets": [
+                    {"labels": {"nodes": [{"title": t} for t in entree.get("labels", [])]}},
+                    {"assignees": {"nodes": []}},
+                ],
+            }
+            for entree in etat.get("backlog_closed", [])
+        ]
+        sortie(compact({"data": {"project": {"workItems": {"nodes": noeuds}}}}))
+
     # Lecture d'un work item (gid seul, ou gid + dates + labels pour `begin`).
     if "workItems(iids:" in requete:
+        iid = ""
+        debut = requete.find('workItems(iids:["')
+        if debut != -1:
+            iid = requete[debut + len('workItems(iids:["'):].split('"', 1)[0]
+        # Labels du ticket visé : `labels_par_iid` permet à un test d'en décrire plusieurs (le
+        # balayage de #275 en traite N d'affilée) ; sinon tous partagent `labels_ticket`.
+        titres = etat.get("labels_par_iid", {}).get(iid, etat.get("labels_ticket", []))
         noeud = {"id": etat["workitem"]}
         if "StartAndDueDate" in requete:
             noeud["widgets"] = [
                 {"startDate": etat.get("start_date")},
-                {"labels": {"nodes": [{"title": t} for t in etat.get("labels_ticket", [])]}},
+                {"labels": {"nodes": [{"title": t} for t in titres]}},
             ]
+        elif "WorkItemWidgetAssignees" in requete:
+            # La requête de `gl_issue_owner`, sur laquelle `reconcile-workflow <iid>` s'appuie pour
+            # ne jamais écraser un « Abandonné »/« Doublon ».
+            if iid in etat.get("iids_illisibles", []):
+                sortie(compact({"data": {"project": {"workItems": {"nodes": []}}}}))
+            noeud = {
+                "widgets": [
+                    {"labels": {"nodes": [{"title": t} for t in titres]}},
+                    {"assignees": {"nodes": []}},
+                ]
+            }
         sortie(compact({"data": {"project": {"workItems": {"nodes": [noeud]}}}}))
 
     sortie(code=1)
@@ -392,3 +427,117 @@ def test_set_workflow_signale_un_refus_de_gitlab(depot: Depot) -> None:
     acheve = depot.lib("set-workflow", "212", "En cours")
     assert acheve.returncode != 0
     assert "Échec" in acheve.stderr
+
+
+# =================================================================================================
+# Réconciliation : « Terminé » posé sur ce que le merge a soldé (#275)
+# =================================================================================================
+# Le merge FERME le ticket mais ne touche à aucun label : depuis #207 seul `/branch-cleanup` — un
+# geste manuel — posait « Terminé », donc un ticket mergé s'affichait « En revue » indéfiniment.
+# `reconcile-workflow` répare ça, et son seul vrai piège est le refus d'écraser un état final :
+# `worktree-done` rend « fini » pour un ticket ABANDONNÉ exactement comme pour un ticket livré, si
+# bien qu'une réconciliation naïve transformerait « Abandonné » en « Terminé » — elle réparerait une
+# dérive en en créant une autre, silencieusement et sans retour possible.
+
+
+def _cible_ajoutee(mutation: str) -> list[str]:
+    return _liste(mutation, "addLabelIds")
+
+
+def test_reconcile_pose_termine_sur_un_ticket_cible_reste_actif(depot: Depot) -> None:
+    """Le cas nominal du ramassage : un ticket « En revue » soldé passe à « Terminé »."""
+    depot.pose_etat(labels_ticket=["type::infra", "workflow::en-revue"])
+    acheve = depot.lib("reconcile-workflow", "212")
+    assert acheve.returncode == 0, acheve.stderr
+    mutation = _mutation_unique(depot)
+    assert _cible_ajoutee(mutation) == [GIDS["termine"]]
+    # L'invariant de tout ce module vaut aussi ici : la pose passe par `set-workflow`, donc les cinq
+    # autres partent dans le même appel. Une réconciliation qui écrirait son propre `addLabelIds`
+    # laisserait le ticket à deux états.
+    assert sorted(_liste(mutation, "removeLabelIds")) == sorted(
+        GIDS[s] for s in SLUGS if s != "termine"
+    )
+
+
+@pytest.mark.parametrize("final", ["abandonne", "doublon"])
+def test_reconcile_n_ecrase_jamais_un_etat_final(depot: Depot, final: str) -> None:
+    """Un ticket « Abandonné »/« Doublon » est fermé lui aussi — et ne devient JAMAIS « Terminé ».
+
+    C'est la seule règle de cette fonction qu'on ne peut pas rattraper après coup : le label
+    d'origine est perdu par la pose, et rien dans le ticket ne dirait qu'il a été abandonné.
+    """
+    depot.pose_etat(labels_ticket=["type::infra", f"workflow::{final}"])
+    acheve = depot.lib("reconcile-workflow", "212")
+    assert acheve.returncode == 0, acheve.stderr
+    assert depot.mutations() == [], f"« {final} » a été écrasé"
+
+
+def test_reconcile_saute_un_ticket_deja_termine(depot: Depot) -> None:
+    """Déjà « Terminé » : rien à écrire. C'est le cas nominal en régime établi, à chaque `gc`."""
+    depot.pose_etat(labels_ticket=["type::infra", "workflow::termine"])
+    acheve = depot.lib("reconcile-workflow", "212")
+    assert acheve.returncode == 0, acheve.stderr
+    assert depot.mutations() == []
+
+
+def test_reconcile_pose_sur_un_ticket_sans_aucun_cycle_de_vie(depot: Depot) -> None:
+    """Zéro label `workflow::` (ticket créé depuis l'UI GitLab) : soldé, donc « Terminé »."""
+    depot.pose_etat(labels_ticket=["type::infra"])
+    acheve = depot.lib("reconcile-workflow", "212")
+    assert acheve.returncode == 0, acheve.stderr
+    assert _cible_ajoutee(_mutation_unique(depot)) == [GIDS["termine"]]
+
+
+def test_reconcile_un_ticket_illisible_n_est_pas_pris_pour_un_ticket_sans_etat(
+    depot: Depot,
+) -> None:
+    """Lecture en échec = on ne touche à rien, et on le dit.
+
+    Le piège est précis : `gl_issue_owner | cut` rendrait le code de `cut`, toujours 0, et le
+    statut vide qui en sort se lit comme « aucun cycle de vie » — donc « à poser ». Un ticket
+    illisible serait déclaré « Terminé ».
+    """
+    depot.pose_etat(iids_illisibles=["212"])
+    acheve = depot.lib("reconcile-workflow", "212")
+    assert acheve.returncode != 0
+    assert depot.mutations() == []
+
+
+def test_reconcile_check_liste_sans_rien_ecrire(depot: Depot) -> None:
+    """`--check` est un diagnostic : il nomme le passage à venir et n'écrit pas."""
+    depot.pose_etat(labels_ticket=["type::infra", "workflow::en-revue"])
+    acheve = depot.lib("reconcile-workflow", "--check", "212")
+    assert acheve.returncode == 0, acheve.stderr
+    assert "#212" in acheve.stdout
+    assert "En revue" in acheve.stdout
+    assert depot.mutations() == []
+
+
+def test_reconcile_balayage_ne_retient_que_les_fermes_restes_actifs(depot: Depot) -> None:
+    """Sans argument : une seule lecture du backlog fermé, et les états finaux sont laissés."""
+    depot.pose_etat(
+        backlog_closed=[
+            {"iid": "101", "labels": ["type::infra", "workflow::en-revue"]},
+            {"iid": "102", "labels": ["type::feature", "workflow::termine"]},
+            {"iid": "103", "labels": ["type::bug", "workflow::abandonne"]},
+            {"iid": "104", "labels": ["type::doc", "workflow::en-cours"]},
+            {"iid": "105", "labels": ["type::infra", "workflow::a-faire"]},
+        ]
+    )
+    acheve = depot.lib("reconcile-workflow")
+    assert acheve.returncode == 0, acheve.stderr
+    mutations = depot.mutations()
+    assert len(mutations) == 3, f"attendu 101/104/105, reçu : {mutations}"
+    for mutation in mutations:
+        assert _cible_ajoutee(mutation) == [GIDS["termine"]]
+
+
+def test_reconcile_balayage_sans_derive_ne_dit_rien_a_faire_et_n_ecrit_rien(depot: Depot) -> None:
+    """Backlog fermé sain : le balayage le dit et s'arrête — aucune lecture par ticket."""
+    depot.pose_etat(
+        backlog_closed=[{"iid": "102", "labels": ["type::feature", "workflow::termine"]}]
+    )
+    acheve = depot.lib("reconcile-workflow")
+    assert acheve.returncode == 0, acheve.stderr
+    assert "rien à réconcilier" in acheve.stdout
+    assert depot.mutations() == []

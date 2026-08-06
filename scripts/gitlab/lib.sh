@@ -261,6 +261,88 @@ gl_set_workflow() {
   esac
 }
 
+# gl_reconcile_workflow [--check] [<iid>…] -> pose « Terminé » sur les tickets dont le travail est
+# SOLDÉ mais dont le cycle de vie est resté ACTIF (#275). C'est la réparation de la dérive que
+# doctor.sh se contentait de diagnostiquer (« ticket fermé mais son état est encore actif ») : le
+# merge FERME le ticket mais ne touche à aucun label, et depuis #207 seul /branch-cleanup — un geste
+# manuel — posait « Terminé ». Entre les deux, un ticket mergé s'affiche « En revue » indéfiniment.
+#
+# Deux modes, même règle :
+#   • avec des <iid>  : ne traite que ceux-là, une lecture par ticket. C'est ainsi que le ramassage
+#                       des worktrees s'y branche (worktree.sh gc), sur un verdict DÉJÀ rendu. Ce
+#                       mode FAIT CONFIANCE à l'appelant sur le fait que le travail est soldé — il
+#                       ne revérifie pas que le ticket est fermé, `gl_worktree_done` rendant « fini »
+#                       aussi sur une MR mergée dont le ticket est resté ouvert (MR sans `Closes`) ;
+#   • sans argument   : balaie le backlog FERMÉ en UNE lecture (les labels y sont déjà) et répare
+#                       tout ce qui traîne — le verbe explicite, utilisable seul. Périmètre : les
+#                       100 derniers fermés (le `first: 100` de gl_backlog), donc exactement celui
+#                       du diagnostic §4b de doctor.sh — ce qu'il signale, ce verbe le répare, ni
+#                       plus ni moins. Un ticket fermé de longue date et resté actif lui échappe
+#                       comme il échappe déjà au diagnostic.
+#
+# LA RÈGLE ET SON SEUL PIÈGE : on ne pose que sur un cycle de vie ACTIF (« À faire »/« En cours »/
+# « En revue ») ou ABSENT. Un ticket déjà « Abandonné » ou « Doublon » n'est JAMAIS écrasé — un
+# ticket fermé sans avoir été réalisé est fermé quand même, et `gl_worktree_done` rend « fini » pour
+# lui exactement comme pour un ticket livré (cf. son en-tête). Sans ce filtre, ramasser le worktree
+# d'un ticket abandonné le déclarerait « Terminé », et la dérive réparée en créerait une autre.
+# « Terminé » déjà posé est également sauté : c'est le cas nominal en régime établi, et le sauter
+# évite une écriture par passage de `gc`.
+#
+# Best-effort par construction : un ticket illisible est signalé et n'arrête pas les suivants. Le
+# code de retour vaut 1 s'il en reste un en échec, mais aucun appelant ne doit en faire un motif de
+# blocage (même statut que gl_sync_main, docs/10 §9.3).
+gl_reconcile_workflow() {
+  local check=0
+  while [ "${1:-}" = "--check" ]; do check=1; shift; done
+  local iids="$*" statut echecs=0 poses=0 sautes=0
+
+  if [ -z "$iids" ]; then
+    # Balayage : les labels sont DANS le backlog fermé, donc aucune lecture par ticket. Même filtre
+    # que doctor.sh §4b — les trois valeurs actives, et elles seules.
+    local ferme
+    ferme="$(gl_backlog closed | sed 's/{"iid":/\n{"iid":/g')" || return 1
+    iids="$(printf '%s\n' "$ferme" \
+      | grep -E '"'"$GL_WORKFLOW_SCOPE"'::(a-faire|en-cours|en-revue)"' \
+      | grep -o '"iid":"[0-9]*"' | grep -o '[0-9]*')"
+    if [ -z "$iids" ]; then
+      printf 'Aucun ticket fermé au cycle de vie resté actif — rien à réconcilier.\n'
+      return 0
+    fi
+    # Le filtre a déjà tranché : ces tickets portent un label actif, la relecture serait redondante.
+    local iid
+    for iid in $iids; do
+      if [ "$check" = 1 ]; then
+        printf '  → #%s passerait à « Terminé »\n' "$iid"; poses=$((poses + 1)); continue
+      fi
+      if gl_set_workflow "$iid" "Terminé"; then poses=$((poses + 1)); else echecs=$((echecs + 1)); fi
+    done
+  else
+    local iid brut
+    for iid in $iids; do
+      # Une lecture par ticket : c'est le prix du filtre ci-dessus, et il est payé sur des tickets
+      # déjà identifiés par l'appelant (0 ou 1 par passage de `gc`), jamais sur une découverte.
+      # Capture PUIS découpe : `gl_issue_owner | cut` rendrait le code de `cut`, toujours 0 —
+      # un ticket illisible passerait alors pour un ticket sans cycle de vie, donc à poser.
+      if ! brut="$(gl_issue_owner "$iid")"; then
+        echecs=$((echecs + 1)); continue
+      fi
+      statut="${brut%%$'\t'*}"
+      case "$statut" in
+        'Abandonné'|'Doublon'|'Terminé') sautes=$((sautes + 1)); continue ;;
+      esac
+      if [ "$check" = 1 ]; then
+        printf '  → #%s passerait de « %s » à « Terminé »\n' "$iid" "${statut:-aucun}"
+        poses=$((poses + 1)); continue
+      fi
+      if gl_set_workflow "$iid" "Terminé"; then poses=$((poses + 1)); else echecs=$((echecs + 1)); fi
+    done
+  fi
+
+  [ "$sautes" -gt 0 ] && printf '%s ticket(s) déjà à un état final — inchangé(s).\n' "$sautes"
+  [ "$echecs" -gt 0 ] && { printf 'Réconciliation : %s ticket(s) en échec.\n' "$echecs" >&2; return 1; }
+  return 0
+}
+
 # --- Lecture / reporting ------------------------------------------------------------------------
 # gl_backlog [state] -> JSON des work items du projet avec leurs labels (dont le cycle de vie,
 # porté par workflow::*) et leurs assignés. state ∈ opened (défaut) | closed | all. Requête
@@ -2106,6 +2188,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     graphql-read)   gl_graphql_read "$@" ;;
     workitem-gid)   gl_workitem_gid "$@" ;;
     set-workflow)   gl_set_workflow "$@" ;;
+    reconcile-workflow) gl_reconcile_workflow "$@" ;;
     workflow-slug)  gl_workflow_slug "$@" ;;
     workflow-label) gl_workflow_label "$@" ;;
     workflow-gids)  gl_workflow_gids ;;
@@ -2172,6 +2255,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                  valeur = « À faire »… ou le slug « a-faire »… ; sortie toujours en libellé" >&2
       echo "    workflow-slug <valeur>        (normalise en slug)   workflow-label <slug> (rend le libellé)" >&2
       echo "    workflow-gids                 (les six labels du scope : slug/GID, dérivés par nom)" >&2
+      echo "    reconcile-workflow [--check] [<iid>…]" >&2
+      echo "                                  (pose « Terminé » sur les tickets soldés restés actifs ;" >&2
+      echo "                                   sans iid : balaie tout le backlog fermé. N'écrase jamais" >&2
+      echo "                                   « Abandonné »/« Doublon ». Best-effort, jamais bloquant)" >&2
       echo "  backlog [opened|closed|all]        (JSON brut du backlog)" >&2
       echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2

@@ -1211,11 +1211,65 @@ empruntée par un worktree (« checked out at … »). Sans ramassage préalable
 worktrees soldés étaient comptées « conservées » et restaient indéfiniment — les deux ménages se
 bloquaient l'un l'autre.
 
-`gc` ne supprime **aucune branche** et n'écrit **rien** dans GitLab. Le retrait passe par la même
-séquence que `remove` — délier, puis retirer (le garde-fou de #152 ci-dessus, écrit une seule fois
-dans le script). `MAESTRO_WORKTREE_GC=0` désactive le passage automatique ; les tests, eux, imposent
-le verdict par `MAESTRO_WORKTREE_VERDICT` et tournent donc sans réseau ni glab
+`gc` ne supprime **aucune branche**. Le retrait passe par la même séquence que `remove` — délier,
+puis retirer (le garde-fou de #152 ci-dessus, écrit une seule fois dans le script).
+`MAESTRO_WORKTREE_GC=0` désactive le passage automatique ; les tests, eux, imposent le verdict par
+`MAESTRO_WORKTREE_VERDICT` et tournent donc sans réseau ni glab
 ([`test_worktree.py`](../tests/test_worktree.py)).
+
+#### Le cycle de vie posé sur le même verdict (#275)
+
+Le merge **ferme** le ticket (`Closes #<iid>`) mais ne touche à **aucun label**. Depuis #207, seul
+`/branch-cleanup` — un geste manuel — posait « Terminé » : entre le merge et cette commande, un
+ticket livré s'affichait « En revue » sur le board et dans `/backlog`, indéfiniment si personne ne
+la lançait. `doctor.sh` **diagnostiquait** déjà la dérive (« ticket fermé mais son état est encore
+actif ») sans jamais la réparer — 22 tickets concernés au moment d'écrire ces lignes.
+
+La réparation se greffe **ici**, et pas ailleurs, pour une raison simple : `fini` — MR mergée ou
+ticket fermé — est **exactement** la question que pose la réconciliation, et `gc` en a déjà la
+réponse en main. Aucune lecture de découverte en plus, aucune étape ajoutée à `ensure` (qui en porte
+déjà quatre : #181, #197, #205, #216), et les **trois points de passage du tableau ci-dessus** en
+héritent d'un coup.
+
+```bash
+bash scripts/gitlab/lib.sh reconcile-workflow           # balaie tout le backlog fermé
+bash scripts/gitlab/lib.sh reconcile-workflow --check   # dit ce qu'il poserait, sans écrire
+bash scripts/gitlab/lib.sh reconcile-workflow 152 153   # cible — ce qu'appelle `gc`
+```
+
+**La règle, et son seul piège** : on ne pose que sur un cycle de vie **actif** (« À faire » / « En
+cours » / « En revue ») ou **absent**. Un ticket « Abandonné » ou « Doublon » n'est **jamais**
+écrasé — il est fermé lui aussi, donc `worktree-done` rend « fini » pour lui exactement comme pour
+un ticket livré. Sans ce filtre, ramasser le worktree d'un ticket abandonné le déclarerait
+« Terminé » : une dérive réparée en en créant une autre, sans retour possible puisque rien dans le
+ticket ne dirait qu'il a été abandonné.
+
+Trois choix à ne pas défaire :
+
+- la pose a lieu **avant** le garde-fou du travail non sauvegardé et **indépendamment du retrait** —
+  le cycle de vie suit le verdict de GitLab, pas la propreté d'un répertoire local ni le succès d'un
+  `rm`. Les lier ferait qu'un fichier oublié dans un worktree laisserait son ticket « En revue »
+  pour toujours ;
+- elle est **best-effort et muette en cas d'échec** (glab absent, hors ligne), au même titre que
+  `sync-main` (§9.3) : elle n'empêche jamais un ticket de démarrer ni un run de continuer ;
+- elle passe par `set-workflow`, donc **les cinq autres labels partent dans le même appel** — une
+  pose qui écrirait son propre `addLabelIds` laisserait le ticket à deux états (§3.1).
+
+`--check` n'écrit rien, et `MAESTRO_WORKFLOW_POSE=0` éteint la pose (toute autre valeur remplace
+l'appel — c'est la couture par laquelle les tests l'observent sans réseau, comme
+`MAESTRO_WORKTREE_VERDICT`). Ce défaut est **éteint dans les tests**, et c'est un garde-fou : sans
+lui, un test qui rallume `gc` appellerait le vrai réconciliateur avec des iid de fixture et poserait
+« Terminé » sur les vrais tickets du projet.
+
+**Limite assumée** : la couverture est celle des **worktrees vus par cette machine**. Un ticket
+mergé depuis le clone de quelqu'un d'autre n'est pas corrigé ici, et le board reste faux **au
+repos** — un ticket mergé vendredi soir s'affiche « En revue » lundi matin si personne n'a démarré
+de ticket entre-temps. Ce n'est pas une régression (c'est déjà la couverture de `/branch-cleanup`),
+c'est le geste manuel en moins ; le balayage sans argument reste là pour rattraper le reste à la
+demande, et `doctor.sh` le nomme quand il détecte la dérive. Si la vérité-au-repos devenait un
+besoin, l'ajout serait un **pipeline planifié** appelant ce même verbe avec un token à portée `api`
+en variable protégée — pas un job post-merge, qui obligerait à rouvrir un pipeline sur `main` (§8)
+pour la couverture la plus étroite.
 
 **Limites assumées.**
 

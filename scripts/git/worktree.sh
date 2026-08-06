@@ -35,7 +35,9 @@
 # installé sur place) et #181 en a fait la voie par défaut de tout ticket : sans ramassage, un run
 # /orchestrate de dix tickets laisse ~5 Go derrière lui. `gc` retire ceux dont GitLab confirme le
 # travail soldé, et il est appelé d'office par `ensure` — le pendant, pour les worktrees, de ce que
-# `lib.sh cleanup-merged` fait aux branches locales depuis #23.
+# `lib.sh cleanup-merged` fait aux branches locales depuis #23. Depuis #275 il pose au passage le
+# cycle de vie « Terminé » du ticket : le verdict « soldé » qu'il vient d'obtenir est exactement la
+# question de la réconciliation, et le poser ici évite d'ajouter une étape de plus à `ensure`.
 
 set -uo pipefail
 
@@ -71,6 +73,12 @@ qui monte le worktree lui-même) ou « WORKTREE <chemin> » (worktree prêt, s'y
 glab. Il tourne d'office au début d'`ensure` (donc de /ticket-start) : le retrait n'est pas un
 geste à se rappeler. `--check` diagnostique sans rien retirer, `--auto` ne parle que s'il a
 quelque chose à dire. MAESTRO_WORKTREE_GC=0 désactive le passage automatique.
+
+Sur ce même verdict « soldé », `gc` pose le CYCLE DE VIE « Terminé » du ticket (#275) via
+`lib.sh reconcile-workflow` — le merge ferme le ticket mais ne touche à aucun label, et sans ça
+un ticket mergé s'affiche « En revue » jusqu'au prochain /branch-cleanup manuel. Best-effort et
+jamais bloquant ; « Abandonné »/« Doublon » ne sont jamais écrasés. MAESTRO_WORKFLOW_POSE=0
+l'éteint (toute autre valeur remplace l'appel — couture des tests).
 
 `ensure` remet aussi les DÉPENDANCES du clone principal à niveau, en appelant `scripts/setup.sh`
 (dérive détectée par `--derive`, réparée par `--only`) : un paquet ajouté au dépôt arrive ainsi
@@ -819,7 +827,7 @@ commande_gc() {
 
   [ "$auto" = 1 ] || printf '\nRamassage des worktrees de %s\n\n' "$principal"
 
-  local branche nom iid brut verdict sha raison reste n_modifs n_commits detail
+  local branche nom iid brut verdict sha raison reste n_modifs n_commits detail cycle pose
   local retires=0 gardes=0 signales=0 echecs=0 rapport=""
   while IFS=$'\t' read -r chemin branche; do
     [ -n "$chemin" ] || continue
@@ -855,6 +863,34 @@ commande_gc() {
       continue
     fi
 
+    # Cycle de vie du ticket (#275, docs/10 §9.2) : « fini » — MR mergée ou ticket fermé — est
+    # EXACTEMENT la question que pose la réconciliation. On la greffe donc ici, sur un verdict déjà
+    # rendu, plutôt que d'ajouter une cinquième étape à `ensure` après #181/#197/#205/#216 : aucune
+    # lecture de découverte en plus, et les trois points de passage de `gc` (ensure — donc tout
+    # /ticket-start —, /branch-cleanup, démarrage d'un run) en héritent d'un coup.
+    # Deux choix à ne pas défaire :
+    #   • AVANT le garde-fou du travail non sauvegardé et indépendamment du retrait — le cycle de vie
+    #     suit le verdict de GitLab, pas la propreté d'un répertoire local ni le succès d'un `rm` ;
+    #   • BEST-EFFORT et muet en cas d'échec (glab absent, hors ligne) : ce ramassage ne doit jamais
+    #     empêcher un ticket de démarrer ni un run de continuer (même statut que `sync-main`).
+    # C'est `reconcile-workflow` qui refuse d'écraser un « Abandonné »/« Doublon » — fermés eux
+    # aussi, donc « fini » eux aussi. MAESTRO_WORKFLOW_POSE remplace l'appel (0 = éteint) : c'est la
+    # couture par laquelle les tests l'observent sans réseau, comme MAESTRO_WORKTREE_VERDICT.
+    cycle=""
+    if [ "$check" = 0 ] && [ "${MAESTRO_WORKFLOW_POSE:-}" != 0 ]; then
+      if [ -n "${MAESTRO_WORKFLOW_POSE:-}" ]; then
+        pose="$("$MAESTRO_WORKFLOW_POSE" "$iid" 2>/dev/null)" || pose=""
+      else
+        pose="$(bash "$ICI/../gitlab/lib.sh" reconcile-workflow "$iid" 2>/dev/null)" || pose=""
+      fi
+      # Une sortie non vide = quelque chose a été posé ; le silence couvre aussi bien « déjà à un
+      # état final » que l'échec, et dans les deux cas il n'y a rien à annoncer.
+      [ -n "$pose" ] && cycle=" — cycle de vie → Terminé"
+    fi
+    # Porté par la raison : elle habille la ligne du retrait comme celle du --check, sans dupliquer
+    # la concaténation à chaque issue. Le cas « conservé » ci-dessous l'ajoute pour son compte.
+    raison="$raison$cycle"
+
     reste="$(travail_non_sauvegarde "$chemin" "$branche" "$sha")"
     n_modifs="${reste%% *}"; n_commits="${reste##* }"
     detail=""
@@ -864,7 +900,7 @@ commande_gc() {
       # Toujours dit, même en --auto : c'est le seul cas où se taire ferait perdre du travail.
       signales=$((signales + 1))
       gardes=$((gardes + 1))
-      rapport="$rapport$(alerte "#$iid conservé — $detail dans $(chemin_natif "$chemin")")"$'\n'
+      rapport="$rapport$(alerte "#$iid conservé — $detail dans $(chemin_natif "$chemin")$cycle")"$'\n'
       continue
     fi
 
