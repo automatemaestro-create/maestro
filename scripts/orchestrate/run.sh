@@ -33,6 +33,11 @@
 # MÊME PARENT sont sautés : ils partiraient d'une base incomplète. Les autres groupes du plan
 # s'enchaînent normalement — une erreur à 2 h du matin ne doit pas geler le reste de la nuit.
 #
+# --- Ce qu'un run fait avant son premier ticket -------------------------------------------------------
+# Trois ménages, tous best-effort, tous muets quand il n'y a rien à faire et aucun fatal : `main`
+# remise à niveau sur `origin/main` (#283, fast-forward seul, MAESTRO_SYNC_MAIN=0 pour l'éteindre),
+# worktrees soldés ramassés (#197), vieux journaux purgés (#198). Aucun ne tourne en `--dry-run`.
+#
 # --- Journal --------------------------------------------------------------------------------------
 # .maestro/orchestrate/<run-id>/
 #   plan.tsv          le plan figé au démarrage (sortie de queue.sh)
@@ -1536,7 +1541,9 @@ done
 printf '\n'
 
 if [ "$DRY" = 1 ]; then
-  printf 'Mode --dry-run : rien n'\''a été lancé. Chaque ticket aurait été traité ainsi —\n'
+  printf 'Mode --dry-run : rien n'\''a été lancé — « main » elle-même reste où elle est (#283 : un\n'
+  printf 'vrai run l'\''avance d'\''abord sur origin/main, fetch + fast-forward, lib.sh sync-main).\n\n'
+  printf 'Chaque ticket aurait été traité ainsi —\n'
   printf '  1. worktree dédié     bash scripts/git/worktree.sh <iid>\n'
   printf '  2. session dédiée     %s -p … --session-id <uuid> --settings scripts/orchestrate/settings.run.json\n' "$CLAUDE_BIN"
   printf '                        --permission-mode acceptEdits --model %s --effort %s --max-budget-usd %s\n' "$MODELE" "$EFFORT" "$BUDGET"
@@ -1549,6 +1556,36 @@ if [ "$DRY" = 1 ]; then
 fi
 
 printf '# iid\tverdict\tmr\tduree_s\tcout_usd\traison\n' >"$RESUME"
+
+# `main` remise à niveau avant de commencer (#283) : fetch + fast-forward, par le helper qui porte
+# déjà ce geste (#205) — jamais un `git pull` réimplémenté ici.
+#
+# Ce n'est pas le code produit qui prenait du retard : chaque worktree part d'`origin/main`, que
+# `worktree.sh` fetch juste avant de créer la branche. C'est la ref LOCALE `refs/heads/main`, que
+# plus personne ne visite depuis #181 — et qu'un run fait vieillir plus vite que tout le reste,
+# puisqu'il ouvre N MR destinées à être mergées. Elle n'avançait jusqu'ici qu'à l'intérieur d'une
+# session (le /ticket-start du ticket, via `worktree.sh ensure`), donc pas du tout quand le run part
+# sur un plan vide, saute tous ses tickets ou échoue avant le premier — le cas d'une nuit où c'est
+# la seule chose qui tourne.
+#
+# AVANT le ramassage des worktrees, et pas après : celui-ci mesure le travail non sauvegardé contre
+# `origin/main` (§9.2), et c'est le fetch de `sync-main` qui rend cette mesure juste.
+#
+# Best-effort comme les deux ménages qui suivent : muet quand `main` est déjà à jour, abstentions
+# (main divergent, répertoire porteur sale) relayées telles quelles sur stderr, et JAMAIS fatales —
+# une `main` locale en retard n'est pas une raison de ne pas traiter le backlog. Même interrupteur
+# que /ticket-start : MAESTRO_SYNC_MAIN=0.
+if [ "${MAESTRO_SYNC_MAIN:-1}" != 0 ]; then
+  sortie_sync="$(bash "$RACINE/scripts/gitlab/lib.sh" sync-main 2>&1 </dev/null)"
+  code_sync=$?
+  if [ -n "$sortie_sync" ]; then
+    if [ "$code_sync" -eq 0 ]; then
+      printf '%s\n\n' "$sortie_sync"
+    else
+      printf '%s\n' "$sortie_sync" | sed 's/^/  /' >&2
+    fi
+  fi
+fi
 
 # Ramassage des worktrees soldés avant de commencer (#197). C'est ici que l'accumulation fait le plus
 # mal : un worktree pèse ~535 Mo et ce run va en monter un par ticket, sans personne devant pour
