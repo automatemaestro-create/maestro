@@ -507,9 +507,9 @@ vue_efface() {
 # des tickets déjà jugés (leur verdict est dans `resume.tsv`) et de ceux qui attendent leur tour.
 # Seules la ligne du ticket courant, son action et le pied changent d'une frame à l'autre.
 vue_prepare() {
-  local courant="$1" vu=0 rang iid parent prio titre bilan verdict mr duree cout marque
+  local courant="$1" vu=0 rang iid parent prio groupe titre bilan verdict mr duree cout marque
   VUE_AVANT=""; VUE_APRES=""; VUE_RANG=""; VUE_IID="$courant"; VUE_TITRE=""
-  while IFS=$'\t' read -r rang iid parent prio titre; do
+  while IFS=$'\t' read -r rang iid parent prio groupe titre; do
     case "$rang" in '#'*) continue ;; esac
     [ -n "${iid:-}" ] || continue
     if [ "$iid" = "$courant" ]; then
@@ -1683,7 +1683,7 @@ if [ "$nb_plan" -eq 0 ]; then
   exit 0
 fi
 
-grep -v '^#' "$PLAN" | while IFS=$'\t' read -r rang iid parent prio titre; do
+grep -v '^#' "$PLAN" | while IFS=$'\t' read -r rang iid parent prio groupe titre; do
   printf '  %2s. #%-4s %-8s %s%s\n' "$rang" "$iid" "$prio" "$titre" \
     "$([ "$parent" != "-" ] && printf ' (lot de #%s)' "$parent")"
 done
@@ -1776,7 +1776,18 @@ consigne() { # <iid> <verdict> <mr> <duree> <cout> <raison>
 # Le plan est lu sur le DESCRIPTEUR 3, pas sur stdin : `claude`, `glab` et `worktree.sh` sont lancés
 # dans cette boucle et hériteraient de son entrée standard — l'un d'eux consommerait le plan, et le
 # run s'arrêterait après un ticket sans rien dire.
-while IFS=$'\t' read -r -u 3 rang iid parent prio titre; do
+#
+# `groupe` (#288) est LU et DÉLIBÉRÉMENT INUTILISÉ : le plan déclare désormais ce qui pourrait partir
+# en même temps, mais la boucle reste séquentielle — c'est le lot suivant (#289) qui s'en sert. Le
+# lire quand même est ce qui rend #288 mergeable seul : sans ce nom, `titre` — champ absorbant du
+# `read` — recevrait « groupe<TAB>titre » et l'écran afficherait un titre préfixé d'un numéro.
+#
+# Un plan d'AVANT #288 (cinq colonnes, rejoué par `--resume`) laisse `titre` vide et le titre dans
+# `groupe` : dégradation d'affichage seulement, jamais de décision — `iid`, `parent` et `prio`, les
+# trois champs sur lesquels la boucle tranche, restent en place. C'est précisément pourquoi la
+# colonne s'insère AVANT `titre` et non après ; aucune compatibilité n'est donc gérée ici.
+# shellcheck disable=SC2034  # `groupe` est lu sans être utilisé — c'est le contrat de #288, ci-dessus
+while IFS=$'\t' read -r -u 3 rang iid parent prio groupe titre; do
   [ -n "${iid:-}" ] || continue
   case "$rang" in '#'*) continue ;; esac
 

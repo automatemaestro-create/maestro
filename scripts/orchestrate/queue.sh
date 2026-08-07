@@ -10,8 +10,10 @@
 # est ainsi calculé UNE FOIS au début et ne bouge plus, même si le backlog évolue pendant le run.
 #
 # Format de sortie (TSV, en-tête préfixée « # » ignorable par les consommateurs machine) :
-#     rang <TAB> iid <TAB> parent <TAB> prio <TAB> titre
+#     rang <TAB> iid <TAB> parent <TAB> prio <TAB> groupe <TAB> titre
 # `parent` vaut « - » pour un ticket qui n'est pas un lot. Le rang est l'ordre de traitement.
+# `groupe` est le GROUPE DE DÉPENDANCE (#288, règle 5 ci-dessous) — il vient AVANT `titre` parce que
+# le titre est le champ absorbant d'un `read` : placé après lui, il s'y ferait avaler.
 #
 # --- Les règles d'ordonnancement, et pourquoi -----------------------------------------------------
 #
@@ -38,6 +40,32 @@
 # 4. Le reste est trié par `prio::` (haute > moyenne > basse) puis par iid croissant, pour que
 #    l'ordre soit REPRODUCTIBLE : deux appels sur le même backlog rendent le même plan.
 #
+# 5. Le plan DIT, en plus, ce qui pourrait partir en même temps — colonne `groupe` (#288, parent
+#    #287). Jusqu'ici le marqueur « (parallèle) » de la checklist servait à ordonner puis était jeté,
+#    si bien que rien dans le plan figé ne portait l'indépendance ; la boucle du lot suivant n'aurait
+#    eu qu'un ordre plat sur quoi décider, ou aurait dû recalculer la règle à chaud alors que le plan,
+#    lui, ne bouge plus une fois écrit.
+#
+#    RÈGLE DE LECTURE — deux tickets peuvent être en vol en même temps si leurs `parent` DIFFÈRENT,
+#    ou si leur `groupe` est IDENTIQUE. C'est la règle du parent (« parents différents, ou même
+#    parent et tous deux marqués (parallèle) »), rendue transitive : le groupe est la VAGUE du lot
+#    dans la chaîne de son parent — une suite maximale de lots consécutifs marqués « (parallèle) »
+#    forme une vague, un lot non marqué forme la sienne et sert de barrière. Valeur : « <parent>.<n> »
+#    pour un lot, « - » pour un ticket qui n'est pas un lot (tous mutuellement indépendants, comme ils
+#    l'étaient déjà).
+#
+#    Pourquoi une vague, et non le marqueur recopié tel quel : la règle du parent, prise littéralement,
+#    n'est PAS une relation d'équivalence — un lot marqué est indépendant d'un autre lot marqué, mais
+#    dépendant d'un lot non marqué du même parent, si bien qu'aucune étiquette ne peut la porter (A∥ et
+#    B∥ indépendants, C non marqué dépendant des deux : A et B devraient être à la fois dans le groupe
+#    de C et hors du groupe l'un de l'autre). La vague tranche dans le sens SÛR, celui de docs/10 §5.1 :
+#    « un lot non marqué reste barré par tout ce qui le précède ». Deux lots marqués séparés par un lot
+#    non marqué tombent donc dans deux vagues — leur indépendance de principe était de toute façon sans
+#    effet, la barrière qui les sépare les ordonnant déjà.
+#
+#    La vague se compte sur TOUTE la checklist du parent, lots déjà livrés compris : c'est une
+#    propriété de la checklist, pas du plan, et deux plans successifs doivent la donner pareille.
+#
 # --- Coût en appels -------------------------------------------------------------------------------
 # Deux lectures GraphQL (les tickets du milestone, les assignés du backlog ouvert) puis UNE lecture
 # par candidat, mise en cache : la même sortie de `glab issue view` sert à répondre aux deux
@@ -63,7 +91,8 @@ L'ordre de traitement des tickets pour la boucle d'orchestration autonome.
 
 Options :
   --check              Affiche aussi, sur stderr, le diagnostic : milestone retenu, tickets
-                       écartés avec leur raison, et les groupes de lots formés.
+                       écartés avec leur raison, les blocs de lots gardés contigus, et les
+                       groupes de dépendance obtenus (ce qui pourrait partir en même temps).
   --milestone <titre>  Milestone à traiter (titre exact). Par défaut : la phase courante
                        (lib.sh current-milestone).
   --milestones         N'imprime pas de plan : liste les milestones ACTIFS sur lesquels un run
@@ -72,7 +101,9 @@ Options :
                        pour proposer le choix du milestone avant un run neuf.
   -h, --help           Cette aide.
 
-Sortie (stdout, TSV) : rang, iid, parent, prio, titre. Lecture seule — n'écrit rien.
+Sortie (stdout, TSV) : rang, iid, parent, prio, groupe, titre. Lecture seule — n'écrit rien.
+`groupe` : deux tickets peuvent partir en même temps si leurs parents diffèrent, ou si leur
+groupe est identique.
 USAGE
 }
 
@@ -98,7 +129,7 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/maestro-queue.XXXXXX")" || {
   echo "queue.sh : impossible de créer un dossier temporaire" >&2; exit 1
 }
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/vue"
+mkdir -p "$TMP/vue" "$TMP/chaine"
 
 # --- 0. Les milestones sur lesquels un run peut porter (#204) --------------------------------------
 # `--milestones` répond à « quel milestone traiter ? », la question que /orchestrate pose avant de
@@ -185,7 +216,7 @@ touch "$TMP/ecartes.tsv"
 
 if [ ! -s "$TMP/candidats.tsv" ]; then
   diag "aucun ticket « À faire » et libre dans ce milestone."
-  printf '# rang\tiid\tparent\tprio\ttitre\n'
+  printf '# rang\tiid\tparent\tprio\tgroupe\ttitre\n'
   exit 0
 fi
 
@@ -220,11 +251,15 @@ est_parent() {
   [ -n "$(gl_subticket_rows <"$f")" ]
 }
 
-# --- 5. Groupes : un par parent, un par ticket isolé -----------------------------------------------
-# Un « groupe » est l'unité que le tri déplace : soit les lots d'un même parent (qui doivent rester
-# contigus et ordonnés), soit un ticket seul. On note pour chaque candidat son groupe et son rang
-# DANS le groupe ; le tri final se fait sur (priorité du groupe, iid minimal du groupe, rang).
-: >"$TMP/membres.tsv"   # groupe <TAB> rang-dans-groupe <TAB> iid <TAB> parent <TAB> prio <TAB> titre
+# --- 5. Blocs contigus : un par parent, un par ticket isolé ----------------------------------------
+# Un « bloc » est l'unité que le tri déplace : soit les lots d'un même parent (qui doivent rester
+# contigus et ordonnés), soit un ticket seul. On note pour chaque candidat son bloc et son rang
+# DANS le bloc ; le tri final se fait sur (priorité du bloc, iid minimal du bloc, rang).
+#
+# À ne pas confondre avec le GROUPE DE DÉPENDANCE de la règle 5, calculé juste après : le bloc dit ce
+# qui reste CÔTE À CÔTE dans le plan, le groupe ce qui pourrait partir EN MÊME TEMPS. Deux questions
+# voisines, deux colonnes — d'où deux mots, le second seul étant publié.
+: >"$TMP/membres.tsv"   # bloc <TAB> rang-dans-bloc <TAB> iid <TAB> parent <TAB> prio <TAB> groupe <TAB> titre
 
 rang_prio() { # <prio> -> clé de tri numérique (haute d'abord)
   case "$1" in
@@ -235,12 +270,28 @@ rang_prio() { # <prio> -> clé de tri numérique (haute d'abord)
   esac
 }
 
-# rang_dans_checklist <parent> <iid> -> position du lot dans la checklist du parent (1, 2, …), ou
-# rien si le lot n'y figure pas (lot lié mais oublié de la checklist : on ne devine pas sa place).
-rang_dans_checklist() {
-  local f
-  f="$(vue "$1")" || return 1
-  gl_subticket_rows <"$f" | awk -F '\t' -v cible="$2" '$1 == cible { print NR; exit }'
+# chaine_du_parent <parent> -> chemin d'un fichier « iid <TAB> rang <TAB> vague », une ligne par lot
+# de la checklist DANS SON ORDRE, mis en cache. Deux réponses en une lecture : la position du lot
+# (l'ordre, règle 2) et sa vague de dépendance (règle 5).
+#
+# La vague s'incrémente à chaque lot, SAUF quand le lot et son prédécesseur immédiat portent tous
+# deux le marqueur — c'est ce qui agrège une suite de lots « (parallèle) » en une seule vague et fait
+# de tout lot non marqué une barrière. Le marqueur est lu dans la colonne que gl_subticket_rows
+# extrait déjà (« ∥ ») : le parsing de la checklist n'existe qu'à un seul endroit, lib.sh.
+chaine_du_parent() {
+  local parent="$1"
+  local f="$TMP/chaine/$parent.tsv"
+  if [ ! -f "$f" ]; then
+    local v
+    v="$(vue "$parent")" || return 1
+    gl_subticket_rows <"$v" | awk -F '\t' -v OFS='\t' '
+      { par = ($3 == "∥")
+        if (!(par && precedent)) vague++
+        precedent = par
+        print $1, NR, vague }
+    ' >"$f"
+  fi
+  printf '%s\n' "$f"
 }
 
 while IFS=$'\t' read -r iid prio titre; do
@@ -250,48 +301,56 @@ while IFS=$'\t' read -r iid prio titre; do
     continue
   fi
   parent="$(parent_de "$iid")"
+  rang=""; vague=""
   if [ -n "$parent" ]; then
-    rang="$(rang_dans_checklist "$parent" "$iid")"
-    # Un lot absent de la checklist de son parent est traité comme isolé plutôt que placé au
-    # hasard : mieux vaut un ordre visiblement plat qu'un ordre faux qui a l'air juste.
-    if [ -z "$rang" ]; then
-      diag "  ⚠ #$iid se déclare lot de #$parent mais n'est pas dans sa checklist — traité isolément"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$iid" 1 "$iid" "-" "$prio" "$titre" >>"$TMP/membres.tsv"
-      continue
-    fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$parent" "$rang" "$iid" "$parent" "$prio" "$titre" >>"$TMP/membres.tsv"
+    chaine="$(chaine_du_parent "$parent")" &&
+      IFS=$'\t' read -r rang vague < <(awk -F '\t' -v OFS='\t' -v cible="$iid" \
+        '$1 == cible { print $2, $3; exit }' "$chaine")
+  fi
+  # Un lot absent de la checklist de son parent est traité comme isolé plutôt que placé au hasard :
+  # mieux vaut un ordre visiblement plat qu'un ordre faux qui a l'air juste. Son groupe suit — un
+  # lot dont on ne sait pas dire la place ne peut pas non plus se voir attribuer une vague.
+  if [ -n "$parent" ] && [ -z "$rang" ]; then
+    diag "  ⚠ #$iid se déclare lot de #$parent mais n'est pas dans sa checklist — traité isolément"
+    parent=""
+  fi
+  if [ -n "$parent" ]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$parent" "$rang" "$iid" "$parent" "$prio" "$parent.$vague" "$titre" >>"$TMP/membres.tsv"
   else
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$iid" 1 "$iid" "-" "$prio" "$titre" >>"$TMP/membres.tsv"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$iid" 1 "$iid" "-" "$prio" "-" "$titre" >>"$TMP/membres.tsv"
   fi
 done <"$TMP/candidats.tsv"
 
 if [ ! -s "$TMP/membres.tsv" ]; then
   diag "tous les candidats ont été écartés."
-  printf '# rang\tiid\tparent\tprio\ttitre\n'
+  printf '# rang\tiid\tparent\tprio\tgroupe\ttitre\n'
   [ "$CHECK" = 1 ] && sort -t$'\t' -k1,1n "$TMP/ecartes.tsv" |
     while IFS=$'\t' read -r i r t; do printf '  écarté #%s — %s (%s)\n' "$i" "$r" "$t" >&2; done
   exit 0
 fi
 
-# --- 6. Priorité et iid minimal de chaque groupe ---------------------------------------------------
-# La priorité d'un groupe est la MEILLEURE de ses membres : un parent dont un seul lot est
+# --- 6. Priorité et iid minimal de chaque bloc -----------------------------------------------------
+# La priorité d'un bloc est la MEILLEURE de ses membres : un parent dont un seul lot est
 # « prio::haute » passe devant, sans quoi ce lot serait retenu par ses voisins moins prioritaires.
-while IFS=$'\t' read -r groupe rang iid parent prio titre; do
-  printf '%s\t%s\t%s\n' "$groupe" "$(rang_prio "$prio")" "$iid"
+# shellcheck disable=SC2034  # les champs non lus sont nommés : c'est la disposition de membres.tsv
+while IFS=$'\t' read -r bloc rang iid parent prio groupe titre; do
+  printf '%s\t%s\t%s\n' "$bloc" "$(rang_prio "$prio")" "$iid"
 done <"$TMP/membres.tsv" | awk -F '\t' -v OFS='\t' '
   { if (!($1 in p) || $2 < p[$1]) p[$1] = $2
     if (!($1 in m) || $3 + 0 < m[$1]) m[$1] = $3 + 0 }
   END { for (g in p) print g, p[g], m[g] }
-' >"$TMP/groupes.tsv"
+' >"$TMP/blocs.tsv"
 
 # --- 7. Le plan ------------------------------------------------------------------------------------
-printf '# rang\tiid\tparent\tprio\ttitre\n'
+printf '# rang\tiid\tparent\tprio\tgroupe\ttitre\n'
 awk -F '\t' -v OFS='\t' '
   FNR == NR { pr[$1] = $2; mi[$1] = $3; next }
-  { print pr[$1], mi[$1], $2, $3, $4, $5, $6 }
-' "$TMP/groupes.tsv" "$TMP/membres.tsv" |
+  { print pr[$1], mi[$1], $2, $3, $4, $5, $6, $7 }
+' "$TMP/blocs.tsv" "$TMP/membres.tsv" |
   sort -t$'\t' -k1,1n -k2,2n -k3,3n |
-  awk -F '\t' -v OFS='\t' '{ print NR, $4, $5, $6, $7 }'
+  awk -F '\t' -v OFS='\t' '{ print NR, $4, $5, $6, $7, $8 }'
 
 # --- 8. Diagnostic ---------------------------------------------------------------------------------
 if [ "$CHECK" = 1 ]; then
@@ -302,8 +361,23 @@ if [ "$CHECK" = 1 ]; then
     sort -t$'\t' -k1,1n "$TMP/ecartes.tsv" |
       while IFS=$'\t' read -r i r t; do printf '  écarté #%-4s %s — %s\n' "$i" "$r" "$t" >&2; done
   fi
-  # Les groupes de plus d'un membre sont ce que le tri a dû garder contigu : les montrer, c'est
+  # Les blocs de plus d'un membre sont ce que le tri a dû garder contigu : les montrer, c'est
   # rendre vérifiable la règle 3 sans relire le plan à la main.
-  awk -F '\t' '{ n[$1]++ } END { for (g in n) if (n[g] > 1) printf "  groupe #%s : %d lot(s) contigus\n", g, n[g] }' \
+  awk -F '\t' '{ n[$1]++ } END { for (g in n) if (n[g] > 1) printf "  bloc #%s : %d lot(s) contigus\n", g, n[g] }' \
     "$TMP/membres.tsv" | sort >&2
+
+  # Et les GROUPES DE DÉPENDANCE (règle 5), pour la même raison : une colonne de plus dans le plan
+  # ne dit pas d'elle-même ce qu'elle a conclu. Un groupe à plusieurs membres est exactement ce que
+  # le run pourra mener de front ; un groupe seul est une barrière.
+  printf '\ngroupes de dépendance — partent ensemble si le groupe est identique, ou si les parents diffèrent :\n' >&2
+  sort -t$'\t' -k6,6 -k2,2n "$TMP/membres.tsv" | awk -F '\t' '
+    function vide() {
+      if (g == "") return
+      printf "  %-10s %s%s\n", g, liste,
+        (g == "-" ? "   (hors lot — indépendants entre eux)" : (nb > 1 ? "   (parallélisables)" : ""))
+    }
+    $6 != g { vide(); g = $6; liste = ""; nb = 0 }
+    { liste = liste (nb ? ", " : "") "#" $3; nb++ }
+    END { vide() }
+  ' >&2
 fi
