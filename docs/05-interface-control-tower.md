@@ -66,7 +66,10 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
 
 1. **Validations en attente** — ce qui demande un arbitrage humain, en tête.
 2. **Indicateurs de tête** — quatre tuiles : run en cours, tâches par statut,
-   agents actifs, dépense.
+   agents occupés et libres, dépense. Chaque tuile met en valeur **le chiffre
+   qu'on vient y chercher** : la tuile Agents répond « combien travaillent,
+   combien sont disponibles ? » et relègue le total et les agents désactivés en
+   ligne de détail (#247).
 3. **Kanban** des tâches.
 4. **Aperçu de l'activité** en direct (quelques lignes, pas le fil entier).
 
@@ -274,7 +277,7 @@ sous-dossier » et « je refuse de regarder là » ne s'affichent **jamais** par
 
 ### Parcours C — Ajuster la capacité
 1. Pic de charge sur le développement.
-2. Depuis le tableau de bord, la tuile **Agents actifs** renvoie à la liste ; la
+2. Depuis le tableau de bord, la tuile **Agents** renvoie à la liste ; la
    capacité se règle dans **Paramètres → Agents & capacité**.
 3. Augmenter le nombre d'instances du Développeur.
 4. Plus de tâches `dev` sont traitées en parallèle.
@@ -285,7 +288,15 @@ sous-dossier » et « je refuse de regarder là » ne s'affichent **jamais** par
 
 - **Temps réel d'abord** : tout changement d'état se reflète immédiatement (WebSocket).
 - **L'humain garde la main** : les validations sont visibles et non contournables.
-- **Lisibilité du coût** : le coût est affiché partout où une action en génère.
+- **Lisibilité du coût** : le coût est affiché partout où une action en génère,
+  **à deux décimales** et par un seul formateur — `apps/web/lib/format.ts`, que
+  tous les écrans appellent au lieu de reformater dans leur coin (#247). Trois
+  rendus qu'on ne confond jamais : « — » (rien n'a été rapporté — inconnu n'est
+  pas nul), « 0,00 $US » (zéro rapporté, une vraie mesure) et « < 0,01 $US »
+  (une dépense réelle mais sous le centime, cas courant sur un fournisseur
+  local, #113). Seules les **graduations d'un axe** échappent aux deux décimales,
+  faute de quoi une série de quelques millièmes de dollar les verrait toutes
+  tomber sur « 0,00 » ; l'exception est déclarée dans ce même module.
 - **Vulgarisation & multilingue** : interface multilingue (français par défaut, autres langues activables via i18n), libellés clairs, jargon technique expliqué au survol.
 - **Traçabilité** : depuis n'importe quelle tâche, on remonte à la trace complète.
 
@@ -304,9 +315,9 @@ renvoi (`→`) vers la page où il vit.
 │ ▸ Tableau…   │  ⚠️ VALIDATIONS EN ATTENTE                                    │
 │   Agents     │  « Déploiement en production » — devops   [Approuver][Refuser]│
 │   Chat       ├──────────────┬──────────────┬──────────────┬─────────────────┤
-│   Coûts…     │ Run en cours │ Tâches       │ Agents actifs│ Dépense         │
-│   Validations│ run-2f9c     │ 20           │ 3 / 4        │ 4,95 $          │
-│   Paramètres │ 5 ouvertes   │ 4 en cours…  │ 2 occupé(s)  │ 3 exécution(s)  │
+│   Coûts…     │ Run en cours │ Tâches       │ Agents       │ Dépense         │
+│   Validations│ run-2f9c     │ 20           │ 2 occ. 2 lib.│ 4,95 $US        │
+│   Paramètres │ 5 ouvertes   │ 4 en cours…  │ 4 au total…  │ 3 exécution(s)  │
 │              │              │              │ Voir les →   │ Détail par →    │
 │              ├──────────────┴──────────────┴──────────────┴─────────────────┤
 │              │  TÂCHES (KANBAN)                                             │

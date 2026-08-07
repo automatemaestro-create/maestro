@@ -14,6 +14,7 @@
  */
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import { formatCout } from "@/lib/format";
 import { entreeParLibelle } from "@/lib/navigation";
@@ -36,7 +37,12 @@ type Renvoi = { href: string; libelle: string };
 
 type Indicateur = {
   libelle: string;
-  valeur: string;
+  /**
+   * Le chiffre de la tuile. Un `ReactNode` et non une chaîne : une valeur peut
+   * porter son unité (« 2 occupé(s) »), et l'unité se rend en petit pour que le
+   * chiffre reste ce qu'on voit en premier.
+   */
+  valeur: ReactNode;
   detail: string;
   /** Rendu en chasse fixe : un identifiant d'exécution, pas un compte. */
   monospace?: boolean;
@@ -44,6 +50,9 @@ type Indicateur = {
   titre?: string;
   renvoi?: Renvoi;
 };
+
+/** L'unité qui accompagne un chiffre : présente, mais pas au même niveau. */
+const STYLE_UNITE = "text-sm font-normal text-neutral-500 dark:text-neutral-400";
 
 export function IndicateursTableauDeBord({
   taches,
@@ -61,8 +70,15 @@ export function IndicateursTableauDeBord({
   const compte = (statut: string) =>
     taches.filter((t) => t.statut === statut).length;
 
+  // Ce qu'on vient chercher sur cette tuile, c'est « combien travaillent,
+  // combien sont disponibles » (#247) — pas un ratio d'agents allumés. Le
+  // décompte porte sur les agents **actifs** : un agent désactivé ne reçoit plus
+  // de tâche, il n'est donc ni occupé ni libre, il est hors capacité. C'est le
+  // détail qui le dit.
   const actifs = agents.filter((a) => a.actif);
   const occupes = actifs.filter((a) => a.statut === AGENT_OCCUPE).length;
+  const libres = actifs.length - occupes;
+  const desactives = agents.length - actifs.length;
 
   // Somme des grands livres (#57) plutôt que des coûts rapportés par agent : le
   // grand livre porte AUSSI la part de planification (l'orchestrateur), qui
@@ -103,9 +119,20 @@ export function IndicateursTableauDeBord({
       detail: `${compte(STATUT_EN_COURS)} en cours · ${compte(STATUT_BLOQUEE)} bloquée(s) · ${compte(STATUT_ECHEC)} échec(s)`,
     },
     {
-      libelle: "Agents actifs",
-      valeur: `${actifs.length} / ${agents.length}`,
-      detail: `${occupes} occupé(s) · ${actifs.length - occupes} libre(s)`,
+      libelle: "Agents",
+      valeur: (
+        <>
+          {occupes}
+          <span className={STYLE_UNITE}> occupé(s) · </span>
+          {libres}
+          <span className={STYLE_UNITE}> libre(s)</span>
+        </>
+      ),
+      titre: `${occupes} occupé(s) · ${libres} libre(s)`,
+      detail:
+        agents.length === 0
+          ? "aucun agent connu"
+          : `${agents.length} au total · ${desactives} désactivé(s)`,
       renvoi: pageAgents && {
         href: pageAgents.href,
         libelle: "Voir les agents",

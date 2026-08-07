@@ -40,7 +40,8 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   action de la page ;
 - **Tableau de bord épuré** (#191, lot 2 de la navigation v2 #189) : l'essentiel
   en **un écran** — ce qui attend un arbitrage, quatre **indicateurs de tête**
-  (run en cours, tâches par statut, agents actifs, dépense), le Kanban, puis un
+  (run en cours, tâches par statut, agents occupés et libres, dépense), le
+  Kanban, puis un
   **aperçu** de l'activité. Les trois panneaux de plein format qui s'y empilaient
   n'ont pas disparu, ils sont **rangés**, et chaque tuile **renvoie** vers la page
   où le détail vit maintenant (fiches d'agent → Agents, grand livre par exécution
