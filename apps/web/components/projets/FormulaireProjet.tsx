@@ -23,6 +23,7 @@
 
 import { useState } from "react";
 
+import { IconePlus } from "@/components/Icones";
 import {
   cheminEnfant,
   motifsDepuisTexte,
@@ -123,7 +124,14 @@ export function FormulaireProjet({
       className="flex flex-col gap-4 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
     >
       <h3 className="text-sm font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
-        {creation ? "➕ Nouveau projet" : `Modifier « ${projet.nom} »`}
+        {creation ? (
+          <span className="inline-flex items-center gap-1.5">
+            <IconePlus className="size-4 shrink-0" />
+            Nouveau projet
+          </span>
+        ) : (
+          `Modifier « ${projet.nom} »`
+        )}
       </h3>
 
       <label className={CLASSE_LIBELLE + " sm:max-w-sm"}>

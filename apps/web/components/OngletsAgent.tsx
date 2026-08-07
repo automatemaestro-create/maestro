@@ -15,6 +15,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { IconeAgent, IconeFlecheGauche } from "@/components/Icones";
+import { EnTeteSection } from "@/components/Primitives";
 import { cheminOnglet, ONGLETS_AGENT, ongletDuChemin } from "@/lib/agents";
 
 export function OngletsAgent({
@@ -28,23 +30,22 @@ export function OngletsAgent({
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Link
           href="/agents"
-          className="text-xs font-medium text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          className="inline-flex items-center gap-1 text-annexe font-medium text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
         >
-          ← Tous les agents
+          <IconeFlecheGauche className="size-3.5 shrink-0" />
+          Tous les agents
         </Link>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          🤖 {nom}
-        </h2>
+        <EnTeteSection titre={nom} icone={IconeAgent} />
       </div>
 
       <nav
         aria-label={`Facettes de ${nom}`}
         className="flex flex-wrap gap-1 border-b border-neutral-200 dark:border-neutral-800"
       >
-        {ONGLETS_AGENT.map(({ cle, libelle, emoji }) => {
+        {ONGLETS_AGENT.map(({ cle, libelle, icone: Icone }) => {
           const courant = cle === actif;
           return (
             <Link
@@ -52,13 +53,13 @@ export function OngletsAgent({
               href={cheminOnglet(nom, cle)}
               aria-current={courant ? "page" : undefined}
               className={
-                "-mb-px rounded-t-md border-b-2 px-3 py-2 text-sm transition-colors " +
+                "-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-2 text-corps transition-colors " +
                 (courant
                   ? "border-emerald-600 font-medium text-neutral-900 dark:border-emerald-500 dark:text-neutral-100"
                   : "border-transparent text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100")
               }
             >
-              <span aria-hidden="true">{emoji} </span>
+              <Icone className="size-4 shrink-0" />
               {libelle}
             </Link>
           );

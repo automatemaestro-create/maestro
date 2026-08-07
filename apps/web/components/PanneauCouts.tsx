@@ -10,7 +10,9 @@
  * le renvoi ici.
  */
 
+import { IconeGrandLivre, IconeMonnaie } from "@/components/Icones";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
+import { Carte, EnTeteSection } from "@/components/Primitives";
 import { formatCout, formatDuree, formatTokens } from "@/lib/format";
 import type { CoutExecution, Usage } from "@/lib/types";
 
@@ -19,9 +21,11 @@ export function PanneauCouts({ couts }: { couts: CoutExecution[] }) {
 
   return (
     <section aria-label="Grand livre par exécution">
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-        Grand livre par exécution
-      </h2>
+      <EnTeteSection
+        titre="Grand livre par exécution"
+        icone={IconeGrandLivre}
+        className="mb-2"
+      />
       <div className="space-y-3">
         {couts.map((cout) => (
           <GrandLivre key={cout.run_id} cout={cout} />
@@ -38,16 +42,18 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
     cout.planification.appels > 0 || cout.planification.cout_usd !== null;
 
   return (
-    <article className="rounded-lg border border-neutral-200 bg-white p-3 text-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+    <Carte className="text-corps">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h3 className="font-medium">
-          🧾 Exécution{" "}
-          <span className="font-mono text-xs text-neutral-600 dark:text-neutral-400">
+        <h3 className="flex items-center gap-1.5 font-medium">
+          <IconeGrandLivre className="size-4 shrink-0 text-neutral-400 dark:text-neutral-500" />
+          Exécution{" "}
+          <span className="font-mono text-annexe text-neutral-600 dark:text-neutral-400">
             {cout.run_id}
           </span>
         </h3>
-        <p className="text-xs text-neutral-600 dark:text-neutral-400">
-          💰 <span className="font-medium">{formatCout(cout.total.cout_usd)}</span>
+        <p className="chiffre flex items-center gap-1.5 text-annexe text-neutral-600 dark:text-neutral-400">
+          <IconeMonnaie className="size-3.5 shrink-0" />
+          <span className="font-medium">{formatCout(cout.total.cout_usd)}</span>
           {" · "}
           {formatTokens(cout.total.tokens_total)} tokens
           {" · "}
@@ -55,7 +61,7 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
         </p>
       </div>
       <div className="mt-2 overflow-x-auto">
-        <table className="w-full text-xs">
+        <table className="w-full text-annexe">
           <thead>
             <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
               <th className="py-1 pr-3 font-medium">Tâche</th>
@@ -107,7 +113,7 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
           </tfoot>
         </table>
       </div>
-    </article>
+    </Carte>
   );
 }
 
@@ -116,15 +122,13 @@ function CellulesUsage({ usage }: { usage: Usage }) {
   return (
     <>
       <td
-        className="py-1 pr-3 text-right tabular-nums"
+        className="chiffre py-1 pr-3 text-right"
         title={`${formatTokens(usage.tokens_entree)} tokens en entrée / ${formatTokens(usage.tokens_sortie)} en sortie`}
       >
         {formatTokens(usage.tokens_total)}
       </td>
-      <td className="py-1 pr-3 text-right tabular-nums">
-        {formatCout(usage.cout_usd)}
-      </td>
-      <td className="py-1 text-right tabular-nums">{formatDuree(usage.duree_ms)}</td>
+      <td className="chiffre py-1 pr-3 text-right">{formatCout(usage.cout_usd)}</td>
+      <td className="chiffre py-1 text-right">{formatDuree(usage.duree_ms)}</td>
     </>
   );
 }

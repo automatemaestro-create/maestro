@@ -18,6 +18,8 @@
 
 import { useState } from "react";
 
+import { IconeAgent, IconeAlerte } from "@/components/Icones";
+import { BadgeEtat, Carte, EnTeteSection } from "@/components/Primitives";
 import { formatHeure } from "@/lib/format";
 import {
   NATURE_AJOUT,
@@ -41,17 +43,25 @@ export function PanneauValidations({
   if (enAttente.length === 0) return null;
 
   return (
-    <section
+    <Carte
+      balise="section"
+      ton="attention"
       data-guide="validations"
       aria-label="Validations en attente"
-      className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/40"
     >
-      <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
-        ⚠️ Validations en attente
-        <span className="rounded-full bg-amber-200 px-2 text-xs text-amber-900 dark:bg-amber-900 dark:text-amber-200">
-          {enAttente.length}
-        </span>
-      </h2>
+      <EnTeteSection
+        titre={
+          <>
+            Validations en attente
+            <BadgeEtat ton="attention" className="chiffre">
+              {enAttente.length}
+            </BadgeEtat>
+          </>
+        }
+        icone={IconeAlerte}
+        ton="attention"
+        className="mb-2"
+      />
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {enAttente.map((validation) => (
           <CarteValidation
@@ -61,7 +71,7 @@ export function PanneauValidations({
           />
         ))}
       </div>
-    </section>
+    </Carte>
   );
 }
 
@@ -88,12 +98,13 @@ function CarteValidation({
   };
 
   return (
-    <article className="rounded-md border border-amber-200 bg-white p-3 text-sm shadow-sm dark:border-amber-900 dark:bg-neutral-900">
+    <Carte ton="attentionClaire" className="text-corps">
       <p className="font-medium" title={validation.tache_id}>
         {validation.titre || validation.tache_id}
       </p>
-      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-        🤖 {validation.agent}
+      <p className="mt-1 flex items-center gap-1 text-annexe text-neutral-500 dark:text-neutral-400">
+        <IconeAgent className="size-3.5 shrink-0" />
+        Agent {validation.agent}
         {validation.role ? ` · ${validation.role}` : ""}
         {validation.horodatage ? ` · ${formatHeure(validation.horodatage)}` : ""}
       </p>
@@ -101,13 +112,13 @@ function CarteValidation({
         <DiffApplication diff={validation.diff} />
       ) : (
         validation.description && (
-          <p className="mt-2 whitespace-pre-wrap text-xs text-neutral-600 dark:text-neutral-300">
+          <p className="mt-2 whitespace-pre-wrap text-annexe text-neutral-600 dark:text-neutral-300">
             {validation.description}
           </p>
         )
       )}
       {validation.raison && (
-        <p className="mt-2 text-xs italic text-amber-700 dark:text-amber-400">
+        <p className="mt-2 text-annexe italic text-amber-700 dark:text-amber-400">
           Motif : {validation.raison}
         </p>
       )}
@@ -116,7 +127,7 @@ function CarteValidation({
           type="button"
           disabled={enCours}
           onClick={() => void surDecision(true)}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          className="rounded-md bg-emerald-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           {enCours ? "Envoi…" : "Approuver"}
         </button>
@@ -124,15 +135,15 @@ function CarteValidation({
           type="button"
           disabled={enCours}
           onClick={() => void surDecision(false)}
-          className="rounded-md border border-rose-300 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950"
+          className="rounded-md border border-rose-300 px-3 py-1.5 text-annexe font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950"
         >
           Refuser
         </button>
       </div>
       {erreur && (
-        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{erreur}</p>
+        <p className="mt-2 text-annexe text-rose-600 dark:text-rose-400">{erreur}</p>
       )}
-    </article>
+    </Carte>
   );
 }
 
@@ -147,7 +158,7 @@ function CarteValidation({
  */
 function DiffApplication({ diff }: { diff: DiffProjet }) {
   return (
-    <div className="mt-2 rounded-md border border-neutral-200 bg-neutral-50 text-xs dark:border-neutral-700 dark:bg-neutral-950/60">
+    <div className="chiffre mt-2 rounded-md border border-neutral-200 bg-neutral-50 text-annexe dark:border-neutral-700 dark:bg-neutral-950/60">
       <p className="border-b border-neutral-200 px-2 py-1.5 text-neutral-700 dark:border-neutral-700 dark:text-neutral-300">
         <span className="font-medium">
           {diff.fichiers} fichier{diff.fichiers > 1 ? "s" : ""}

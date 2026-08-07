@@ -15,27 +15,28 @@
 
 import Link from "next/link";
 
+import { IconeAgents, IconeChat } from "@/components/Icones";
+import { EnTeteSection } from "@/components/Primitives";
 import { AGENT_ASSISTANCE } from "@/lib/assistance";
 
 export default function PageChat() {
   return (
     <section aria-label="Chat global" className="flex flex-col gap-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        💬 Chat global
-      </h2>
-      <p className="max-w-2xl text-sm text-neutral-600 dark:text-neutral-400">
+      <EnTeteSection titre="Chat global" icone={IconeChat} />
+      <p className="max-w-2xl text-corps text-neutral-600 dark:text-neutral-400">
         Un fil unique pour parler à l&apos;orchestration — poser une demande sans
         choisir d&apos;exécutant, suivre ce qui en découle. Il arrive avec le
         chantier « Chat » de la Phase 6.
       </p>
-      <p className="max-w-2xl text-sm text-neutral-600 dark:text-neutral-400">
+      <p className="max-w-2xl text-corps text-neutral-600 dark:text-neutral-400">
         En attendant, converser <strong>avec un agent</strong> se fait depuis sa
         fiche, onglet Chat :{" "}
         <Link
           href="/agents?onglet=chat"
-          className="font-medium text-neutral-900 underline dark:text-neutral-200"
+          className="inline-flex items-center gap-1 font-medium text-neutral-900 underline dark:text-neutral-200"
         >
-          🧩 Agents
+          <IconeAgents className="size-3.5 shrink-0" />
+          Agents
         </Link>
         . Et le panneau d&apos;assistance (le bouton flottant, fil «{" "}
         {AGENT_ASSISTANCE} ») répond dès maintenant aux questions sur la Control

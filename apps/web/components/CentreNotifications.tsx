@@ -19,7 +19,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { IconeNotifications } from "@/components/Icones";
+import { IconeAgent, IconeNotifications } from "@/components/Icones";
+import { BadgeEtat, Carte } from "@/components/Primitives";
 import {
   estNotableNotification,
   iconeEvenement,
@@ -109,11 +110,11 @@ export function CentreNotifications() {
           className="absolute top-full right-0 z-20 mt-2 flex max-h-[min(70vh,32rem)] w-80 max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
         >
           <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-2 dark:border-neutral-800">
-            <span className="text-sm font-semibold">Notifications</span>
+            <span className="text-corps font-semibold">Notifications</span>
             {nb > 0 && (
-              <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+              <BadgeEtat ton="alerte" className="chiffre">
                 {nb} à valider
-              </span>
+              </BadgeEtat>
             )}
           </div>
 
@@ -155,25 +156,26 @@ export function CentreNotifications() {
                 </p>
               ) : (
                 <ol className="space-y-0.5">
-                  {notables.map((evenement, index) => (
-                    <li
-                      key={`${evenement.horodatage}-${index}`}
-                      className="flex items-baseline gap-2 rounded px-1 py-1 text-xs"
-                    >
-                      <span className="shrink-0 font-mono text-[0.625rem] text-neutral-400 dark:text-neutral-500">
-                        {formatHeure(evenement.horodatage)}
-                      </span>
-                      <span className="shrink-0" aria-hidden="true">
-                        {iconeEvenement(evenement)}
-                      </span>
-                      <span
-                        className="min-w-0 flex-1 truncate text-neutral-600 dark:text-neutral-300"
-                        title={evenement.detail || undefined}
+                  {notables.map((evenement, index) => {
+                    const Icone = iconeEvenement(evenement);
+                    return (
+                      <li
+                        key={`${evenement.horodatage}-${index}`}
+                        className="flex items-center gap-2 rounded px-1 py-1 text-annexe"
                       >
-                        {resumeEvenement(evenement)}
-                      </span>
-                    </li>
-                  ))}
+                        <span className="chiffre shrink-0 font-mono text-micro text-neutral-400 dark:text-neutral-500">
+                          {formatHeure(evenement.horodatage)}
+                        </span>
+                        <Icone className="size-3.5 shrink-0 text-neutral-400 dark:text-neutral-500" />
+                        <span
+                          className="min-w-0 flex-1 truncate text-neutral-600 dark:text-neutral-300"
+                          title={evenement.detail || undefined}
+                        >
+                          {resumeEvenement(evenement)}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ol>
               )}
             </section>
@@ -216,21 +218,24 @@ function CarteValidationCompacte({
   };
 
   return (
-    <article className="rounded-md border border-amber-200 bg-amber-50 p-2 dark:border-amber-900 dark:bg-amber-950/40">
-      <p className="text-xs font-medium" title={validation.tache_id}>
+    <Carte densite="compacte" ton="attention">
+      <p className="text-annexe font-medium" title={validation.tache_id}>
         {validation.titre || validation.tache_id}
       </p>
-      <p className="mt-0.5 text-[0.6875rem] text-neutral-500 dark:text-neutral-400">
-        🤖 {validation.agent}
+      {/* L'icône double le mot « Agent » : l'émoji 🤖 le portait seul, et une
+          ligne « 🤖 dev » ne disait rien à qui ne voyait pas le pictogramme. */}
+      <p className="mt-0.5 flex items-center gap-1 text-micro text-neutral-500 dark:text-neutral-400">
+        <IconeAgent className="size-3 shrink-0" />
+        Agent {validation.agent}
         {validation.role ? ` · ${validation.role}` : ""}
       </p>
       {validation.description && (
-        <p className="mt-1 line-clamp-2 text-[0.6875rem] whitespace-pre-wrap text-neutral-600 dark:text-neutral-300">
+        <p className="mt-1 line-clamp-2 text-micro whitespace-pre-wrap text-neutral-600 dark:text-neutral-300">
           {validation.description}
         </p>
       )}
       {validation.raison && (
-        <p className="mt-1 text-[0.6875rem] text-amber-700 italic dark:text-amber-400">
+        <p className="mt-1 text-micro text-amber-700 italic dark:text-amber-400">
           Motif : {validation.raison}
         </p>
       )}
@@ -239,7 +244,7 @@ function CarteValidationCompacte({
           type="button"
           disabled={enCours}
           onClick={() => void surDecision(true)}
-          className="rounded bg-emerald-600 px-2 py-1 text-[0.6875rem] font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          className="rounded bg-emerald-600 px-2 py-1 text-micro font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           {enCours ? "Envoi…" : "Approuver"}
         </button>
@@ -247,16 +252,16 @@ function CarteValidationCompacte({
           type="button"
           disabled={enCours}
           onClick={() => void surDecision(false)}
-          className="rounded border border-rose-300 px-2 py-1 text-[0.6875rem] font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950"
+          className="rounded border border-rose-300 px-2 py-1 text-micro font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950"
         >
           Refuser
         </button>
       </div>
       {erreur && (
-        <p className="mt-1 text-[0.6875rem] text-rose-600 dark:text-rose-400">
+        <p className="mt-1 text-micro text-rose-600 dark:text-rose-400">
           {erreur}
         </p>
       )}
-    </article>
+    </Carte>
   );
 }

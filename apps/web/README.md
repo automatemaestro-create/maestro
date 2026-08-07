@@ -124,6 +124,80 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 
+## Le langage visuel
+
+Posé par #245 (lot 1 de #242), il tient en trois fichiers. Ce qui suit n'est pas
+un inventaire : c'est **où décider**, pour qu'une décision de rendu n'ait plus à
+se reprendre écran par écran.
+
+### Le jeu d'icônes — `components/Icones.tsx`
+
+Toutes les icônes du produit, et **uniquement** des SVG à `currentColor` : le
+menu, les onglets de fiche agent, les types d'événement, les statuts de tâche,
+les actions. Plus aucun émoji décoratif dans `components/` ni `lib/` — l'émoji
+apportait avec lui sa propre graisse, sa propre couleur et un rendu différent
+par plateforme, ce qui rendait toute cohérence hors d'atteinte.
+
+Deux règles s'appliquent à l'ajout d'une icône :
+
+- **elle passe par `Trait`** — même `viewBox`, même épaisseur, mêmes
+  jointures ; une icône qui s'en écarte se voit à côté des autres ;
+- **elle est décorative** (`aria-hidden`, posé par `Trait`) : elle *double* un
+  libellé texte, elle ne le porte jamais seule. C'est ce que l'émoji faisait par
+  endroits — « 🤖 dev » n'apprenait rien à qui ne le voyait pas ; ces lignes
+  disent maintenant « Agent dev ».
+
+### Les primitives — `components/Primitives.tsx`
+
+Cinq briques, et le `className` qu'on n'écrit plus :
+
+| Brique | Ce qu'elle porte |
+| --- | --- |
+| `Carte` | la surface : bord, fond, ombre, arrondi, **densité**, **ton** |
+| `TuileChiffre` | un chiffre de tête, son libellé, son détail, son renvoi |
+| `EnTeteSection` | le titre d'une zone, son icône, ce qui l'accompagne |
+| `BadgeEtat` | la pastille d'état (compte, statut, provenance, temps réel) |
+| `EtatVide` | ce qui manque, et par où l'obtenir |
+
+Chaque brique porte ses variants `dark:` **elle-même** : c'est la seule façon de
+garantir qu'aucun écran n'oublie le thème sombre, et le point sur lequel les
+classes recopiées divergeaient le plus.
+
+Le **ton** d'une `Carte` (`pleine`, `creuse`, `attention`, `attentionClaire`) est
+un choix nommé, pas un `bg-*` passé en `className` : deux règles de fond dans le
+même attribut ne se départagent pas par l'ordre d'écriture mais par celui de la
+feuille générée — une surcharge au cas par cas est silencieusement instable.
+
+### L'échelle typographique et la densité — `app/globals.css`
+
+Cinq pas, nommés par leur **rôle** plutôt que par leur taille : `text-annexe`
+reste juste sous le corps même si sa valeur bouge, là où `text-xs` fige une
+décision de rendu dans chaque appel.
+
+| Pas | Taille | Emploi |
+| --- | --- | --- |
+| `text-micro` | 0,6875 rem | horodatage, exposant — lisible, pas lu |
+| `text-annexe` | 0,75 rem | détail, aide, pastille — le second plan |
+| `text-corps` | 0,875 rem | le texte courant **et** les titres de section |
+| `text-titre` | 1 rem | le titre d'un écran ou d'une carte de plein format |
+| `text-chiffre` | 1,5 rem | la valeur d'une tuile de tête, et elle seule |
+
+Ces pas **s'ajoutent** à l'échelle Tailwind sans la remplacer ; c'est celle-ci
+que le produit emploie. Le symptôme qu'il en manque un, c'est un
+`text-[0.6875rem]` improvisé dans un composant — le lot en a retiré cinq. Un pas
+de plus se discute dans `globals.css`, pas dans un écran.
+
+La **densité** suit la même logique, portée par la prop `densite` de `Carte` :
+`compacte` (0,625 rem) pour ce qui s'empile en nombre, `normale` (0,75 rem) par
+défaut, `aeree` (1 rem) pour une section qu'on lit posément, `aucune` quand le
+contenu gère son propre padding (un tableau).
+
+Enfin, tout chiffre qui **se compare en colonne** (un tableau) ou qui **change
+sous les yeux** (un compteur temps réel) porte la classe `chiffre`
+(`font-variant-numeric: tabular-nums`, posée une fois dans `globals.css`) : sans
+elle, le passage de « 1 » à « 8 » élargit la valeur et fait sauter la ligne
+autour d'elle.
+
 ## Lancer en local
 
 1. **Backend** (API REST + WebSocket, ticket #46) — Redis du docker-compose requis

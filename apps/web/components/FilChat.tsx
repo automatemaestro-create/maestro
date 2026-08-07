@@ -13,6 +13,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { IconeChat } from "@/components/Icones";
+import { BadgeEtat, EnTeteSection } from "@/components/Primitives";
 import { formatDateHeure, formatHeure } from "@/lib/format";
 import { CHAT_AUTEUR_UTILISATEUR, type MessageChat } from "@/lib/types";
 import { useChat } from "@/lib/useChat";
@@ -62,28 +64,21 @@ export function FilChat({
       aria-label={`Chat avec ${agent}`}
       className="flex min-w-0 flex-1 flex-col gap-3"
     >
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        {/* Le nom de l'agent est porté par l'en-tête de la fiche (#190). */}
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          💬 Conversation{role ? ` · ${role}` : ""}
-        </h3>
-        <span
-          className={
-            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium " +
-            (connecte
-              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-              : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300")
-          }
-        >
-          <span
-            className={
-              "size-1.5 rounded-full " +
-              (connecte ? "bg-emerald-500" : "animate-pulse bg-amber-500")
-            }
-          />
-          {connecte ? "Temps réel connecté" : "Reconnexion…"}
-        </span>
-      </div>
+      {/* Le nom de l'agent est porté par l'en-tête de la fiche (#190). */}
+      <EnTeteSection
+        niveau={3}
+        icone={IconeChat}
+        titre={`Conversation${role ? ` · ${role}` : ""}`}
+        aside={
+          <BadgeEtat
+            ton={connecte ? "positif" : "attention"}
+            pastille
+            pulse={!connecte}
+          >
+            {connecte ? "Temps réel connecté" : "Reconnexion…"}
+          </BadgeEtat>
+        }
+      />
       {erreur && (
         <p
           role="alert"
