@@ -63,8 +63,19 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **Kanban** des tâches par statut (machine à états docs/03 §3) ;
+- **Détail d'une tâche ouvert sur place** (#251, lot 7 de la vague #242) : une
+  carte qui porte une description, des étapes ou des liens utiles (#246) les
+  ouvre au clic dans un **panneau** latéral — description, étapes en checklist
+  avec leur avancement, liens rendus selon leur **nature** (maquette, ticket,
+  dépôt) et non d'après leur domaine. La carte, elle, ne bouge pas : elle reste
+  l'objet dense qu'on lit en diagonale sur cinq colonnes. Une tâche sans détail
+  — le cas de **toutes** les tâches tant que #246 n'est pas livré — affiche
+  exactement la carte d'avant : ni bouton, ni curseur qui promet une ouverture,
+  ni cadre vide. Les URL des liens passent par le même filtre que celle du
+  ticket externe (`lib/liens.ts`) ;
 - **Réassignation manuelle** d'une tâche à un autre agent depuis chaque carte
-  (EF-11/EF-20) ;
+  (EF-11/EF-20) — et depuis le panneau de détail (#251), pour ne pas avoir à le
+  refermer quand c'est sa lecture qui fait conclure au changement d'agent ;
 - **Fil d'activité** en direct (statuts, activités d'agents, messages inter-agents) ;
 - **Validations humaines** (#48, docs/05 §2.6) : les actions sensibles mettent la
   tâche en pause et apparaissent en tête de tableau de bord avec leur contexte
@@ -279,6 +290,7 @@ le bout en bout dans un vrai navigateur reste le rôle du skill `/verify`.
 | `tests/agents.test.tsx` | La fiche agent à onglets, la liste, et la survie des chemins v1 par redirection (#190, testé en #193) |
 | `tests/tableau-de-bord.test.tsx` | Le tableau de bord épuré — ce qui reste, ce qui renvoie ailleurs — et le ticket externe dans les tables de coûts (#191/#192, testés en #193) |
 | `tests/ticket-externe.test.tsx` | Le filtrage d'URL et les cartes du Kanban (#192, livré avec le lot : logique critique) |
+| `tests/detail-tache.test.tsx` | Le panneau de détail d'une tâche : description, étapes en checklist, liens filtrés et rendus selon leur nature, et la carte laissée intacte quand il n'y a rien à ouvrir (#251, livré avec le lot : filtrage d'URL et absence totale) |
 | `tests/parametres-mcp.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231) |
 | `tests/projets.test.tsx` | L'écran Projets : racine choisie dans l'explorateur servi par l'API (jamais saisie), refus motivé qui ne casse ni la liste ni la navigation, dossier vide distinct d'un refus (#225) |
 | `tests/projet-actif.test.tsx` | La porte d'entrée : aucun écran n'est atteint sans projet actif, le choix retenu est confronté à l'état réel, et la page demandée revient sans redirection (#279) |
