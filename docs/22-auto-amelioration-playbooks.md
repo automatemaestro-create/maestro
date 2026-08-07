@@ -37,6 +37,8 @@ Cinq étapes, chacune traçable :
 2. **L'analyse est déclenchée à la demande** (§2) : elle confie à la couche
    d'abstraction fournisseur la rédaction d'une version révisée **intégrale** du
    playbook — pas un diff — à partir du playbook courant et de la liste des échecs.
+   « Courant » veut dire : la version publiée s'il y en a une, **sinon le document du
+   rôle** (`PLAYBOOK_DEFAUTS`, [docs/04 §1](./04-specifications-agents.md)) — voir §3.1.
 3. **Le résultat est stocké en brouillon** (§3), à part de l'historique des
    versions, avec une justification qui référence les échecs analysés.
 4. **L'UI affiche le brouillon** dans l'historique du playbook et le fait
@@ -107,6 +109,27 @@ La **justification** stockée avec le brouillon commence par la liste des échec
 analysés (déterministe, écrite par Maestro), suivie du motif rédigé par le modèle.
 Une proposition reste ainsi traçable à sa source même si le modèle a été laconique.
 
+### 3.1 Une proposition est un document du même format que ce qu'elle remplace
+
+Depuis #293/#295, le playbook d'un rôle est un **document Markdown structuré** — mission,
+méthode, latitude, garde-fous, format de sortie ([docs/04 §1](./04-specifications-agents.md)).
+Une proposition n'échappe pas à la règle : appliquée, elle **devient** ce document, celui que
+le runtime outillé prend comme prompt système et que l'éditeur de l'UI rouvrira. Deux
+conséquences pratiques :
+
+- **la base révisée est le document, pas sa condensation** (#294). Un rôle a deux textes :
+  le document livré avec le paquet (`PLAYBOOK_DEFAUTS`, ce que la fiche playbook affiche) et
+  le prompt plus court que l'exécution **texte** du catalogue compose à côté. C'est le premier
+  que l'analyse envoie au modèle. Réviser le second reviendrait à proposer la réécriture d'un
+  texte que personne n'a sous les yeux, puis — au premier clic sur « Appliquer » — à remplacer
+  le document structuré par une révision de sa condensation, structure perdue. Un **agent
+  personnalisé** (#72) n'a pas de document livré : là, sa condensation *est* son playbook, et
+  c'est elle qui sert de base ;
+- **le cadre système le demande explicitement** : la consigne d'analyse impose une version
+  révisée **complète**, « sans dénaturer son rôle ni ses garde-fous ». Rien ne le vérifie
+  automatiquement — c'est la relecture avant application (§4) qui tient ce rôle, et c'est une
+  raison de plus de déplier le contenu candidat avant de trancher.
+
 ## 4. Trancher depuis l'UI : appliquer ou rejeter
 
 Les propositions apparaissent **en tête de l'historique** de l'éditeur de playbook
@@ -141,7 +164,13 @@ boucle **sur fournisseurs factices** — aucun réseau, aucune clé :
 - **rejet** : le brouillon disparaît, la version courante et son historique sont
   intacts, et une proposition rejetée n'est plus applicable (404) ;
 - **sans effet de bord en cas d'échec** : fournisseur en panne ou réponse
-  inexploitable ⇒ aucun brouillon écrit.
+  inexploitable ⇒ aucun brouillon écrit ;
+- **la base révisée** (#294) : le document du rôle quand rien n'a été publié, la version
+  courante dès qu'il y en a une, et le prompt du catalogue pour un agent personnalisé.
+
+Le pendant côté **contenu** des playbooks est
+[tests/test_playbooks_defaut.py](../tests/test_playbooks_defaut.py) : structure, tronc commun
+sénior et garde-fous de chaque rôle — ce qu'une proposition appliquée ne doit pas faire perdre.
 
 ## 6. Limites connues (état du POC)
 

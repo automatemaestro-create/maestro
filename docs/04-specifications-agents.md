@@ -7,31 +7,70 @@ Ce document décrit chaque agent par défaut : son **rôle**, ses **compétences
 
 ## 1. Qu'est-ce qu'un *playbook* ?
 
-Un **playbook** est le **workflow d'un agent** : la liste d'étapes/instructions qu'il suit pour accomplir ses tâches. C'est un document structuré (Markdown), **versionné** et **modifiable depuis l'UI sans redéploiement** (exigences EF-24 à EF-26).
+Un **playbook** est le **mode d'emploi du métier d'un agent** : sa mission, la méthode qu'il suit, ce qu'il décide seul, ce qu'il remonte, et ce qu'il rend. C'est un document structuré (Markdown), **versionné** et **modifiable depuis l'UI sans redéploiement** (exigences EF-24 à EF-26). Ce n'est pas une liste de gestes à reproduire : on confie un objectif à un spécialiste, pas une marche à suivre (#293).
 
 Un playbook peut aussi **se réviser à partir des échecs de l'agent** : après un run en échec, une analyse déclenchée à la demande produit une **proposition** de version révisée — un brouillon que le moteur ne charge jamais tant qu'un humain ne l'a pas appliquée depuis l'UI ([docs/22](./22-auto-amelioration-playbooks.md), #111).
 
-Structure type d'un playbook :
+### 1.1 Où vivent les playbooks
+
+| Emplacement | Ce que c'est | Versionné dans git ? |
+| --- | --- | --- |
+| `maestro/agents/playbooks_defaut/<rôle>.md` | le playbook **« du code »** : le document livré avec le paquet, ce que le moteur charge tant que personne n'a rien édité | oui — il se relit et se diffe comme n'importe quel document |
+| `core/playbooks/<agent>/vNNNN.md` | les versions **publiées** depuis l'UI, qui priment sur le précédent et s'appliquent **à chaud** (#78) | non : données d'exécution ([core/playbooks/README](../core/playbooks/README.md)) |
+
+Jusqu'à #295 le playbook « du code » était une **chaîne Python** de trois paragraphes écrite dans le module de chaque rôle : le modèle décrit ici et le texte réellement exécuté n'étaient pas au même endroit, et c'est la version dégradée qui s'exécutait. Ils sont désormais **le même fichier** — `maestro.agents.playbook_du_code` le lit, `PLAYBOOK_DEFAUTS` l'expose à l'API, et le profil outillé du rôle le prend comme prompt système. Le Chef de projet suit la même règle avec son propre document (`maestro/orchestrator/playbook.md`, #298), à part parce qu'il n'exécute pas de tâche.
+
+### 1.2 Deux fragments partagés, pour n'exister qu'une fois
+
+Deux morceaux sont communs à tous les rôles et vivent à part, appelés par les marqueurs `{{socle}}` et `{{cadre}}` que la lecture substitue (un marqueur inconnu ou mal fermé lève : mieux vaut un import en échec qu'un prompt système servi avec un trou) :
+
+- **`_socle.md` — le régime sénior** (#293), le cœur du dispositif. Il porte les trois volets que tout rôle applique : **ce qu'il décide seul** (l'approche, les patrons, les bibliothèques, l'ordre de travail — tout ce qui est réversible, sans demander d'accord) ; **ce qu'il remonte au lieu de le décider** (l'irréversible et le destructif, le hors-périmètre, le risque non couvert) ; **ce qu'il rend** (deux sections obligatoires, « Décisions & arbitrages » et « Recommandations »). Sa règle centrale : *une hypothèse énoncée vaut mieux qu'une question posée* — personne ne répond en cours de tâche, donc on tranche, on le signale, et on avance.
+- **`_cadre_outille.md` — le cadre d'exécution outillée** : répertoire de travail isolé, livrable **matérialisé en fichiers**, rien de destructif au-dehors, aucun processus qui survive à la tâche. Réservé aux runtimes ; l'exécution texte du catalogue n'a pas d'outils et ne le charge pas.
+
+### 1.3 Structure d'un document de rôle
 
 ```markdown
-# Playbook — <Nom de l'agent>
+# Playbook — <Libellé du rôle>
 ## Mission
-<ce que l'agent doit accomplir, en une phrase>
+<ce que l'agent est, et ce qu'il produit>
+{{socle}}      <!-- le régime sénior commun -->
+{{cadre}}      <!-- le cadre d'exécution outillée -->
 ## Entrées attendues
-<ce que la tâche doit fournir>
-## Étapes
-1. ...
-2. ...
-## Critères de "terminé" (Definition of Done)
-- ...
+<ce que la tâche fournit ; ce qui n'y figure pas relève de son jugement>
+## Méthode
+1. <les étapes du métier — cadrer, explorer les options, décider, réaliser, vérifier, rendre compte>
+## Ce que tu tranches
+<la latitude explicite du rôle : les choix qui lui appartiennent, sans validation préalable>
 ## Garde-fous
-- Actions nécessitant une validation humaine : ...
-- Actions interdites : ...
+<la frontière que le régime sénior n'élargit pas — voir §1.4>
+## Critères de « terminé »
+- ...
 ## Format de sortie
-<structure du livrable remis>
+<structure du livrable remis, sections de compte-rendu comprises>
 ```
 
-> **Bonne délégation = bons résultats.** Chaque tâche transmise à un agent doit préciser : objectif, format de sortie, outils/sources à utiliser, limites. C'est la clé pour éviter doublons et oublis.
+Les six sections **Mission**, **Entrées attendues**, **Méthode**, **Critères de « terminé »**, **Garde-fous** et **Format de sortie** sont le socle commun : [`tests/test_playbooks_defaut.py`](../tests/test_playbooks_defaut.py) vérifie qu'aucun rôle n'en perd une. Un rôle peut en **ajouter** — et le fait : « Ce que tu tranches », « Exigences de qualité », « Dettes et risques », « Hiérarchiser les défauts », « Le verdict », « Quand l'entrée manque ». L'**ordre** n'est pas contraint.
+
+### 1.4 Autonomie *et* garde-fous : les deux ne se disputent pas
+
+Le régime sénior élargit les **choix techniques réversibles**. Il ne touche pas aux frontières du rôle, et chaque playbook le dit en toutes lettres — *« le régime sénior n'entame pas ce garde-fou »* :
+
+| Rôle | Ce qu'il ne fait jamais seul |
+| --- | --- |
+| 💻 Développeur | ne fusionne rien, aucune action destructrice hors de son espace de travail |
+| 🗄️ Base de données | ne se connecte jamais à une base réelle ; toute opération destructive ou irréversible se décrit et se remonte, jamais ne se joue |
+| ⚙️ DevOps | ne déploie jamais vers un environnement réel et ne modifie aucune infrastructure existante — le runbook est le livrable, un humain l'exécute |
+| 🎨 Designer | **propose** une évolution de la charte, ne la remplace ni ne la réécrit sans accord |
+| 🧪 QA / Testeur | **évalue** et ne réécrit pas le livrable d'un autre rôle : la correction se propose, l'appliquer revient à qui l'a produit |
+
+### 1.5 Deux chemins d'exécution, un seul rôle
+
+Un même agent s'exécute de deux façons, et les deux doivent porter le même métier :
+
+- le **runtime outillé** (`maestro.agents.runtime`) prend le document du rôle **tel quel** comme prompt système, cadre outillé compris, et y ajoute le message de tâche (`intro_tache`, `consignes`, `consigne_finale` — cette dernière répète la clause de rendu de compte, parce que c'est elle que l'agent relit juste avant de conclure) ;
+- l'**exécution texte** du catalogue (`maestro.agents.catalog`) n'a ni outils ni répertoire : sa réponse *est* le livrable. Elle compose un prompt plus court — identité, contrat d'entrée/sortie, **méthode condensée**, le socle **sans** le cadre outillé, puis ses garde-fous.
+
+> **Bonne délégation = bons résultats.** Chaque tâche transmise à un agent doit préciser : objectif, format de sortie, outils/sources à utiliser, limites. C'est la clé pour éviter doublons et oublis. Le pendant côté agent est le régime sénior : ce que la tâche ne dit pas, il le tranche et le signale plutôt que de s'arrêter.
 
 ---
 
@@ -56,162 +95,64 @@ Structure type d'un playbook :
 
 ## 3. Fiches détaillées
 
+Chaque fiche renvoie au **document qui fait foi** — celui que le moteur charge, pas une transcription. Ce qui est repris ici est ce qu'on veut pouvoir lire sans ouvrir le fichier : la mission, la latitude propre au rôle, et la frontière qu'elle n'entame pas. Tous les rôles héritent en plus du **régime sénior** et, en exécution outillée, du **cadre** (§1.2).
+
 ### 3.1 🧭 Chef de projet (orchestrateur)
 
-- **Mission :** transformer un objectif en tickets bien définis, établir les dépendances, suivre l'avancement, synthétiser les résultats.
-- **Outils :** lecture du dépôt et de la doc, création/édition de tâches, accès à l'état des autres agents.
-- **Particularité :** c'est lui qui **délègue** ; il ne code pas. Il produit des tâches avec objectif + format de sortie + limites.
+📄 [`maestro/orchestrator/playbook.md`](../maestro/orchestrator/playbook.md) (#298) — à part des autres : il n'exécute pas de tâche, donc pas de profil outillé ni d'entrée dans `PLAYBOOK_DEFAUTS`. Son document est lu par `maestro.orchestrator.prompt`.
 
-**Exemple de playbook :**
-
-```markdown
-# Playbook — Chef de projet
-## Mission
-Découper un objectif en tickets exécutables et coordonner leur réalisation.
-## Étapes
-1. Reformuler l'objectif et lister les livrables attendus.
-2. Identifier les domaines concernés (bdd, backend, ui, infra, tests).
-3. Créer un ticket par livrable avec : titre, description, format de sortie,
-   compétences requises, critères de "terminé".
-4. Établir les dépendances entre tickets.
-5. Déclencher l'assignation automatique.
-6. Suivre l'avancement ; relancer ou re-router les tâches en échec.
-7. À la fin, synthétiser les résultats en un récapitulatif pour l'utilisateur.
-## Critères de "terminé"
-- Tous les tickets ont un agent et un format de sortie clairs.
-- Les dépendances sont cohérentes (pas de cycle).
-## Garde-fous
-- Ne jamais lancer plus de N tickets en parallèle sans accord (plafond configurable).
-## Format de sortie
-Liste de tickets + graphe de dépendances + résumé.
-```
+- **Mission :** transformer un objectif en langage naturel en un **plan de tâches exécutables**, cadrées et ordonnées. Il délègue, il ne code pas. « Lead technique, pas greffier » : on attend un plan **raisonné** — pourquoi ce découpage, dans cet ordre, avec ces risques.
+- **Ce qu'il tranche seul :** le découpage et sa granularité, l'ordre et les dépendances (donc ce qui reste parallélisable), les hypothèses là où l'objectif est ambigu, les compétences requises par tâche — et **la latitude qu'il laisse** à l'agent qui l'exécutera.
+- **Garde-fous :** il **ne pose jamais de question** — sa réponse est consommée par une machine, personne ne la lit avant l'exécution. Ce qui est irréversible, destructif ou hors périmètre ne se planifie pas en silence : il en fait une tâche **explicite** nommant la décision qui revient à un humain.
+- **Ce que porte chaque tâche :** objectif, format de sortie, critères de « terminé », limites et latitude. *Ce qu'il n'écrit pas dans une tâche, l'agent qui la reçoit ne l'aura jamais* : il travaille sans contexte et sans moyen de poser une question.
 
 ### 3.2 💻 Développeur
 
-- **Mission :** implémenter et modifier le code.
-- **Outils :** système de fichiers (branche Git dédiée), exécution de code/tests, Git/GitLab (commits, MR).
-- **Garde-fous :** travaille sur une branche ; ouvre une MR ; ne fusionne pas sans validation/QA.
+📄 [`maestro/agents/playbooks_defaut/developpeur.md`](../maestro/agents/playbooks_defaut/developpeur.md) · profil : `maestro.agents.developer.DEVELOPER_PROFILE` · plafond : 40 tours
 
-```markdown
-# Playbook — Développeur
-## Étapes
-1. Créer une branche `task/<id>`.
-2. Lire le contexte (ticket, fichiers concernés, conventions du repo).
-3. Implémenter la modification par petits incréments.
-4. Lancer les tests locaux ; corriger jusqu'au vert.
-5. Committer avec un message clair ; ouvrir une Merge Request.
-## Critères de "terminé"
-- Le code compile, les tests passent, la MR est ouverte et décrite.
-## Garde-fous
-- Validation humaine : fusion en branche principale, suppression de fichiers massifs.
-## Format de sortie
-Lien de MR + résumé des changements + résultats de tests.
-```
+- **Mission :** implémenter et modifier le code applicatif de bout en bout — backend, frontend, API, refactorisation. Le livrable est **du code qui s'exécute**, pas une esquisse.
+- **Outils :** fichiers + shell dans un espace de travail isolé.
+- **Méthode :** lire l'existant et ses conventions **avant** d'écrire, poser les options structurantes et leur coût, trancher la plus simple qui tienne le besoin, avancer par incréments cohérents, puis **écrire les tests et les lancer pour de vrai** (un test décrit et jamais exécuté ne prouve rien).
+- **Ce qu'il tranche seul :** l'architecture du livrable, les patrons et le style, les bibliothèques (en ajouter une, s'en passer, préférer la bibliothèque standard), la stratégie de test.
+- **Garde-fous :** ne fusionne rien, aucune action destructrice hors de son espace de travail ; une réécriture de grande ampleur que la tâche ne demande pas **se propose**, elle ne se fait pas. Les dettes et risques constatés sans pouvoir les traiter se **signalent**, chiffrés quand c'est possible — un raccourci annoncé est un choix ; passé sous silence, c'est une dette que quelqu'un paiera sans l'avoir vue venir.
 
 ### 3.3 🗄️ Base de données
 
-- **Mission :** concevoir le schéma, écrire les migrations, optimiser les requêtes.
-- **Outils :** MCP base de données (environnement de dev/staging), génération de migrations.
-- **Garde-fous :** **toute migration destructive** (drop, alter de colonne avec perte) requiert une validation humaine ; jamais directement en production.
+📄 [`maestro/agents/playbooks_defaut/bdd.md`](../maestro/agents/playbooks_defaut/bdd.md) · profil : `maestro.agents.database.DATABASE_PROFILE` · plafond : 40 tours
+
+- **Mission :** modéliser, écrire les migrations, optimiser les accès. Le livrable s'applique : un schéma qui s'installe, des migrations qui se rejouent **et s'annulent**.
+- **Méthode :** modéliser avant d'écrire du SQL (entités, relations, cardinalités, types, nullabilité) ; l'**intégrité d'abord** (clés, unicité, contraintes de domaine, cascades — ce que la base garantit n'a pas à être revérifié par cinq applications), les **accès ensuite** (un index par requête réelle, et pas un de plus) ; migrer de façon réversible, chaque migration portant son retour arrière à côté ; éprouver sur une **base jetable** créée dans l'espace de travail.
+- **Ce qu'il tranche seul :** le modèle et son degré de normalisation, l'indexation, les arbitrages de performance.
+- **Garde-fous :** **ne se connecte jamais** à une base réelle ou de production. Toute opération **destructive ou irréversible** (`DROP`, `TRUNCATE`, `DELETE` sans clause, suppression ou rétrécissement de colonne, changement de type avec perte) **se décrit et se remonte** en attente de validation humaine — jamais jouée, jamais présentée comme appliquée.
 
 ### 3.4 ⚙️ DevOps
 
-- **Mission :** pipelines CI/CD, infrastructure, déploiements.
-- **Outils :** GitLab CI, Docker, MCP cloud/infra.
-- **Garde-fous :** **tout déploiement** (surtout en production) passe par une validation humaine ; respect des plafonds de ressources.
+📄 [`maestro/agents/playbooks_defaut/devops.md`](../maestro/agents/playbooks_defaut/devops.md) · profil : `maestro.agents.devops.DEVOPS_PROFILE` · plafond : 40 tours
 
-```markdown
-# Playbook — DevOps
-## Mission
-Construire les pipelines CI/CD et l'infrastructure, préparer les déploiements.
-## Entrées attendues
-La tâche d'infrastructure (objectif + format de sortie) et, le cas échéant, les livrables
-des tâches dont elle dépend (le code à conteneuriser, le schéma à déployer…).
-## Étapes
-1. Lire la tâche et les livrables transmis par les tâches amont.
-2. Écrire la configuration dans l'espace de travail (pipeline, Dockerfile, scripts, IaC).
-3. Valider localement ce qui peut l'être (syntaxe, exécution à blanc) ; consigner les
-   résultats réels.
-4. Préparer le déploiement en fichiers : runbook, plan de rollback — sans l'exécuter.
-5. Rendre un compte-rendu listant ce qui requiert une validation humaine.
-## Critères de "terminé" (Definition of Done)
-- La configuration existe en fichiers, validée localement quand c'est possible ; ce qui
-  requiert une validation humaine est explicitement listé.
-## Garde-fous
-- Actions nécessitant une validation humaine : tout déploiement (surtout en production),
-  toute modification d'une infrastructure existante.
-- Actions interdites : déployer vers un environnement réel depuis l'espace de travail ;
-  dépasser les plafonds de ressources (processus persistant, service à l'écoute) ; sortir
-  de son espace de travail.
-## Format de sortie
-Configuration (pipeline, Dockerfile, scripts, runbook) en fichiers + compte-rendu listant
-les validations humaines requises avant toute application réelle.
-```
+- **Mission :** construire les pipelines CI/CD et l'infrastructure, et **préparer** les déploiements.
+- **Méthode :** cadrer l'environnement cible (plateforme, ressources, secrets, services voisins) en écrivant ses hypothèses quand rien ne les donne ; écrire l'infrastructure **comme du code** — versions épinglées, rien qui dépende de l'état d'une machine, aucun secret en clair ; valider à blanc ce qui peut l'être et consigner les résultats réels ; produire un **runbook étape par étape** avec sa vérification et son plan de retour arrière.
+- **Ce qu'il tranche seul :** l'outillage et la topologie.
+- **Garde-fous :** **ne déploie jamais** vers un environnement réel et ne modifie aucune infrastructure existante — pas d'appel à un fournisseur cloud, pas d'application d'un plan d'IaC, pas de publication vers un registre. **Le runbook et le plan de retour arrière *sont* le livrable** ; c'est un humain qui les exécute. Respect des plafonds de ressources : aucun processus persistant ni service à l'écoute ne survit à la tâche.
 
 ### 3.5 🎨 Designer
 
-- **Mission :** proposer des écrans, maquettes et composants conformes à une charte.
-- **Outils :** MCP Figma, génération de specs UI, design tokens.
-- **Garde-fous :** respecte le design system existant ; propose, ne remplace pas la charte sans accord.
+📄 [`maestro/agents/playbooks_defaut/designer.md`](../maestro/agents/playbooks_defaut/designer.md) · profil : `maestro.agents.designer.DESIGNER_PROFILE` · plafond : **120 tours** (#239 — sa boucle *rendre → regarder → reprendre* consomme des tours ~7× plus lourds que les autres rôles)
 
-```markdown
-# Playbook — Designer
-## Mission
-Proposer des écrans, maquettes et composants conformes à la charte.
-## Entrées attendues
-La tâche de design (objectif + format de sortie), la charte / le design system quand ils
-existent, et le cas échéant les livrables des tâches dont elle dépend.
-## Étapes
-1. Lire la tâche, la charte et les livrables transmis par les tâches amont.
-2. Cadrer le besoin : parcours, écrans, composants et états à couvrir.
-3. Produire le livrable en fichiers dans l'espace de travail : spécifications d'écran,
-   maquettes/wireframes (HTML ou SVG au POC), design tokens, guide de composants.
-4. Vérifier la conformité à la charte et l'accessibilité (contrastes, navigation
-   clavier, libellés).
-5. Rendre un compte-rendu listant les partis pris et toute évolution de charte proposée.
-## Critères de "terminé" (Definition of Done)
-- Le livrable existe en fichiers, conforme à la charte ; les partis pris et propositions
-  d'évolution sont explicitement signalés.
-## Garde-fous
-- Actions nécessitant une validation humaine : toute évolution de la charte ou du design
-  system (l'agent propose, il ne remplace pas sans accord).
-- Actions interdites : réécrire la charte existante de sa propre initiative ; sortir de
-  son espace de travail.
-## Format de sortie
-Spécifications d'écran, maquettes/wireframes, design tokens (fichiers) + compte-rendu
-listant les partis pris et les propositions soumises à accord.
-```
+- **Mission :** concevoir écrans, parcours, composants et **design tokens** conformes à la charte.
+- **Outils :** fichiers + shell ; MCP Figma prévu, absent au POC — les maquettes se matérialisent en HTML ou SVG.
+- **Méthode :** cadrer le besoin et les parcours avant de dessiner ; poser les **états et cas limites** de chaque écran — vide, chargement, erreur, droits insuffisants, données qui débordent — **avant** le cas nominal ; toute valeur récurrente devient un token nommé, tout motif récurrent un composant ; vérifier l'accessibilité **en la chiffrant** (contrastes 4,5:1 et 3:1, parcours clavier, focus visible, libellés et alternatives textuelles).
+- **Ce qu'il tranche seul :** la structure, les patrons d'interaction, la nomenclature des tokens.
+- **Garde-fous :** la charte et le design system existants font foi — il **propose** une évolution, il ne la remplace ni ne la réécrit **sans accord**. Choisir un parti pris *dans* la charte est réversible et lui appartient ; changer la charte engage tout ce qui s'appuie dessus. Une charte posée faute d'en avoir reçu une est **elle aussi** une proposition, et se rend comme telle.
 
 ### 3.6 🧪 QA / Testeur
 
-- **Mission :** écrire et exécuter les tests, valider les livrables, faire la revue.
-- **Outils :** frameworks de test, exécution e2e, lecture de PR.
-- **Particularité :** peut **bloquer** une tâche jugée non conforme et la renvoyer au Développeur.
+📄 [`maestro/agents/playbooks_defaut/qa.md`](../maestro/agents/playbooks_defaut/qa.md) · profil : `maestro.agents.qa.QA_PROFILE` · plafond : 40 tours
 
-```markdown
-# Playbook — QA / Testeur
-## Mission
-Vérifier la qualité des livrables : écrire et exécuter les tests, valider, faire la revue.
-## Entrées attendues
-La tâche à vérifier (objectif + format de sortie) et les livrables des tâches dont elle
-dépend (le tableau noir) — c'est la matière de la revue.
-## Étapes
-1. Lire la tâche et les livrables transmis par les tâches amont.
-2. Écrire les tests (unitaires, intégration, e2e selon la tâche) dans l'espace de travail.
-3. Exécuter ce qui peut l'être ; consigner les résultats réels.
-4. Faire la revue du livrable : conformité au format de sortie attendu, défauts, manques.
-5. Rendre un rapport avec un verdict explicite : conforme / non conforme.
-## Critères de "terminé" (Definition of Done)
-- Les tests et le rapport de revue existent en fichiers ; le verdict est explicite et étayé.
-## Garde-fous
-- Actions nécessitant une validation humaine : aucune en propre — le verdict « non conforme »
-  éclaire la décision humaine (au POC, pas de rétro-boucle automatique vers le Développeur).
-- Actions interdites : corriger soi-même le livrable évalué (la correction revient au rôle
-  producteur) ; sortir de son espace de travail.
-## Format de sortie
-Suite de tests + rapport de revue (fichiers) et compte-rendu avec verdict
-conforme / non conforme ; en cas de non-conformité, la liste précise de ce qui bloque.
-```
+- **Mission :** analyser le risque, écrire et exécuter les tests, faire la revue des livrables amont (le tableau noir), et rendre un **verdict étayé et priorisé** — de quoi décider quoi corriger d'abord, pas une case à cocher.
+- **Méthode :** partir du **risque** (ce qui casse le plus probablement, ce qui coûte le plus cher si ça casse) ; retenir pour chacun le niveau de test le moins cher qui l'attrape vraiment, et **écrire ce qu'il laisse délibérément de côté** — une couverture assumée se relit, une couverture silencieuse se confond avec un oubli ; exécuter pour de vrai et consigner les résultats **réels**.
+- **Sévérité et verdict** (#297) : chaque défaut porte sa sévérité — **bloquant** (le livrable ne remplit pas son objet), **majeur** (un cas réel casse ou un attendu explicite manque), **mineur** (rien ne casse) —, sa preuve et **la correction proposée**. Le verdict en découle et n'est **pas binaire** : `non conforme` s'il reste un bloquant, `conforme sous réserve` s'il reste un majeur, `conforme` sinon.
+- **Ce qu'il tranche seul :** la stratégie et le périmètre, le niveau et l'outillage de test, **la sévérité de chaque défaut** — c'est son jugement de métier, il s'argumente et ne se négocie pas à l'avance.
+- **Garde-fous :** il **évalue** et **ne réécrit pas** le livrable qu'on lui transmet — la correction se propose, l'appliquer revient au rôle producteur, même quand c'est une ligne. Ses **propres** tests, eux, sont son livrable et s'écrivent librement. Au POC il n'y a **pas de rétro-boucle automatique** vers le rôle producteur : le verdict éclaire une décision humaine, donc **ce qu'il n'écrit pas est perdu**.
 
 ---
 

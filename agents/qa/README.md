@@ -1,7 +1,35 @@
 # agent QA / Testeur
 
-Tests, validation, revue. Voir `docs/04-specifications-agents.md` (§3.6 : fiche et
-playbook du rôle, conformes au gabarit du §1).
+Analyse du risque, tests, revue, verdict. Voir
+[`docs/04-specifications-agents.md`](../../docs/04-specifications-agents.md) (§3.6 : fiche du
+rôle ; §1 : structure d'un playbook).
+
+## Playbook
+
+Le playbook du rôle — ce que le moteur charge tant que rien n'a été publié depuis l'UI — est un
+**document Markdown livré avec le paquet** (#295) :
+[`maestro/agents/playbooks_defaut/qa.md`](../../maestro/agents/playbooks_defaut/qa.md). Il sert
+**les deux chemins** : `PLAYBOOK_DEFAUTS` (donc l'API et l'éditeur de la Control Tower) et le
+prompt système de `QA_PROFILE`. Il porte :
+
+- la **méthode** du métier — partir du **risque** (ce qui casse le plus probablement, ce qui
+  coûte le plus cher si ça casse), retenir pour chacun le niveau de test le moins cher qui
+  l'attrape vraiment, **écrire ce qu'il laisse délibérément de côté**, exécuter pour de vrai et
+  consigner les résultats **réels** ;
+- la **hiérarchisation des défauts et le verdict** (#297) : chaque défaut porte sa sévérité —
+  bloquant / majeur / mineur —, sa preuve et **la correction proposée** ; le verdict en découle
+  et n'est **pas binaire** (`non conforme` s'il reste un bloquant, `conforme sous réserve` s'il
+  reste un majeur, `conforme` sinon) ;
+- le **régime sénior** commun à tous les rôles (`_socle.md`, #293) : la stratégie, le niveau de
+  test et **la sévérité de chaque défaut** sont son jugement de métier et se tranchent sans
+  demander d'accord ; le compte-rendu porte toujours « Décisions & arbitrages » et
+  « Recommandations » ;
+- ses **garde-fous** : il **évalue** et **ne réécrit pas** le livrable qu'on lui transmet — la
+  correction se propose, l'appliquer revient au rôle producteur, même quand c'est une ligne.
+  Ses **propres** tests, eux, sont son livrable et s'écrivent librement.
+
+Une version publiée depuis la page `/playbooks` prime dessus et s'applique **à chaud** (#78).
+Invariants testés : [`tests/test_playbooks_defaut.py`](../../tests/test_playbooks_defaut.py).
 
 ## Runtime (ticket #45)
 
@@ -25,10 +53,11 @@ pas d'exécution outillée, le rôle retombe sur son livrable texte.
 
 **Particularité du rôle** (docs/04 §3.6) : le QA **évalue** les livrables des tâches
 dont il dépend (transmis via le tableau noir), il ne les réécrit pas — son
-compte-rendu rend un **verdict explicite** (« conforme » / « non conforme »), étayé
-par ses constats. Au POC, « bloquer et renvoyer au Développeur » se matérialise par ce
+compte-rendu rend un **verdict explicite** (« conforme » / « conforme sous réserve » /
+« non conforme », #297), étayé par ses constats et suivi des défauts par sévérité
+décroissante. Au POC, « bloquer et renvoyer au Développeur » se matérialise par ce
 verdict : la boucle n'a pas encore de rétro-boucle automatique, le verdict éclaire la
-décision humaine.
+décision humaine — donc **ce qu'il n'écrit pas est perdu**.
 
 Démo de bout en bout :
 
