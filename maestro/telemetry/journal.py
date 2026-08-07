@@ -19,10 +19,17 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from maestro.detail_tache import (
+    EtapeTache,
+    LienUtile,
+    etapes_en_liste,
+    liens_en_liste,
+)
 from maestro.references import ReferenceTicket, ticket_en_dict
 from maestro.telemetry.redact import redact_secrets
 from maestro.telemetry.usage import StepUsage
@@ -47,6 +54,12 @@ class StepRecord:
     `projet_id` (#222) est le projet auquel la tâche appartient, quand il y en a
     un — même raison d'être ici que `ticket` : le pont ne lit que ces lignes, et
     sans elles l'appartenance n'atteindrait jamais les vues.
+    `description`, `etapes` et `liens` (#246) portent le **détail** de la tâche —
+    ce qu'elle demande, où elle en est, ce qu'il faut ouvrir pour la traiter.
+    Même raison d'être ici encore : sans ces lignes, le panneau de détail (#251)
+    resterait vide. Absents (chaîne vide, listes vides) tant que rien ne les
+    renseigne, et rendus `null` par `to_dict` pour que le pont sache distinguer
+    « l'étape n'en dit rien » de « plus aucune étape ».
     """
 
     run_id: str
@@ -63,6 +76,9 @@ class StepRecord:
     playbook_version: int | None = None
     ticket: ReferenceTicket | None = None
     projet_id: str | None = None
+    description: str = ""
+    etapes: list[EtapeTache] = field(default_factory=list)
+    liens: list[LienUtile] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trace en dict JSON-sérialisable (la ligne du journal)."""
@@ -81,6 +97,13 @@ class StepRecord:
             "playbook_version": self.playbook_version,
             "ticket": ticket_en_dict(self.ticket),
             "projet_id": self.projet_id,
+            # `null` plutôt que `""`/`[]` quand rien n'est renseigné (#246) : le
+            # pont ne doit pas lire une liste vide là où l'étape ne dit rien, ou
+            # chaque ligne de journal effacerait le détail posé par la
+            # précédente.
+            "description": self.description or None,
+            "etapes": etapes_en_liste(self.etapes) or None,
+            "liens": liens_en_liste(self.liens) or None,
         }
 
 
@@ -130,6 +153,9 @@ class RunJournal:
         playbook_version: int | None = None,
         ticket: ReferenceTicket | None = None,
         projet_id: str | None = None,
+        description: str = "",
+        etapes: Sequence[EtapeTache] = (),
+        liens: Sequence[LienUtile] = (),
     ) -> StepRecord:
         """Consigne une étape (textes expurgés des secrets) et émet sa ligne JSON."""
         record = StepRecord(
@@ -147,6 +173,12 @@ class RunJournal:
             playbook_version=playbook_version,
             ticket=ticket,
             projet_id=projet_id,
+            # La description passe par `redact_secrets` comme entrée et sortie :
+            # c'est un texte de tâche, il a pu être composé avec un secret.
+            # Étapes et liens sont des libellés et des URL déjà normalisés.
+            description=redact_secrets(description),
+            etapes=list(etapes),
+            liens=list(liens),
         )
         self._records.append(record)
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))

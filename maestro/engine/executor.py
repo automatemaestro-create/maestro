@@ -365,6 +365,13 @@ class LocalExecutor(TaskExecutor):
             playbook_version=result.playbook_version,
             ticket=task.ticket,
             projet_id=task.projet_id,
+            # La description que le plan porte déjà (#246) : le moteur ne fait
+            # que la transporter, le journal étant le seul chemin par lequel
+            # elle atteint le panneau de détail de la Control Tower (#251).
+            # Étapes et liens ne viennent pas d'ici — ils se consignent en cours
+            # d'exécution (`detail_tache.consigne_detail`), le plan n'en portant
+            # aucun (`packages/shared/schemas/task.schema.json`).
+            description=task.description,
         )
         return result
 
@@ -660,6 +667,9 @@ class LocalExecutor(TaskExecutor):
             usage=StepUsage(),
             ticket=task.ticket,
             projet_id=task.projet_id,
+            # Dès le démarrage (#246) : la carte s'ouvre pendant que la tâche
+            # tourne, pas seulement une fois qu'elle est finie.
+            description=task.description,
         )
 
     def _consigne_relance(

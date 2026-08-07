@@ -32,6 +32,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from maestro.appartenance import projet_id_valide
+from maestro.detail_tache import EtapeTache as EtapeTache  # ré-export explicite
+from maestro.detail_tache import LienUtile as LienUtile  # ré-export explicite
+from maestro.detail_tache import etapes_depuis, liens_depuis
 from maestro.projets.application import DiffProjet
 from maestro.references import ReferenceTicket as ReferenceTicket  # ré-export explicite
 from maestro.telemetry.usage import StepUsage
@@ -41,6 +44,8 @@ from maestro.telemetry.usage import StepUsage
 # `controltower` important déjà `telemetry`, le garder dans ce module aurait fermé
 # un cycle d'imports. Les appelants historiques — `from
 # maestro.controltower.events import ReferenceTicket` — restent servis tels quels.
+# `EtapeTache` et `LienUtile` (#246) vivent dans `maestro.detail_tache` pour la
+# même raison, et sont ré-exportés de la même façon.
 
 #: Types d'événements diffusés (docs/05 §2.1 : flux d'activité temps réel).
 #: `tache.statut` suit la machine à états de docs/03 §3 ; `tache.reassignation`
@@ -70,6 +75,12 @@ EVENEMENT_TACHE_REASSIGNATION = "tache.reassignation"
 #: agent puisse nommer le ticket dont relève sa tâche en cours d'exécution sans
 #: la faire changer de colonne au Kanban.
 EVENEMENT_TACHE_REFERENCE = "tache.reference"
+#: `tache.detail` (#246) porte ce qu'il faut pour **comprendre** une tâche sans
+#: quitter l'écran : sa `description`, ses `etapes` et ses `liens` utiles. Même
+#: forme que `tache.reference` et pour la même raison — un agent qui découvre en
+#: cours de route une étape ou une maquette à ouvrir doit pouvoir le dire sans
+#: faire changer sa tâche de colonne au Kanban : ni statut, ni agent, ni coût.
+EVENEMENT_TACHE_DETAIL = "tache.detail"
 EVENEMENT_AGENT_ACTIVITE = "agent.activite"
 EVENEMENT_AGENT_CAPACITE = "agent.capacite"
 EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents"
@@ -108,7 +119,14 @@ class Event:
     porte le contexte long d'une demande de validation (#48 : l'action que
     l'agent réaliserait, telle que décrite par la tâche) — vide ailleurs.
     `instances` porte le plafond d'instances résultant d'un réglage de capacité
-    (#86, entité AGENT `instances_max`) — None ailleurs. `ticket` porte la
+    (#86, entité AGENT `instances_max`) — None ailleurs. Sur un événement de
+    **tâche**, `description` porte celle de la tâche (#246) : le même champ que
+    pour une validation, et le même sens — ce que le travail demande, en long.
+    `etapes` et `liens` (#246) l'accompagnent : les lignes de checklist de la
+    tâche et les liens utiles à ouvrir pour la traiter. Tous trois sont **None
+    ou vides** quand l'événement n'en apprend rien, ce qui est le comportement
+    d'avant ce lot — un consommateur qui ignore ces clés n'est pas cassé, et une
+    tâche sans détail rend exactement la carte d'avant. `ticket` porte la
     référence du ticket externe dont relève la tâche (#187, contrat #183) — None
     quand aucune n'est connue ; il voyage avec les événements de tâche pour que
     l'UI l'affiche et qu'il survive au rejeu du journal durable. `projet_id`
@@ -138,6 +156,11 @@ class Event:
     instances: int | None = None
     ticket: ReferenceTicket | None = None
     projet_id: str | None = None
+    # None (et non `[]`) quand l'événement n'apprend rien : c'est ce qui permet à
+    # la projection de distinguer « pas d'information » de « plus aucune étape »
+    # et de ne pas effacer ce qu'un événement précédent a posé (#246).
+    etapes: list[EtapeTache] | None = None
+    liens: list[LienUtile] | None = None
     diff: DiffProjet | None = None
     horodatage: str = field(default_factory=_horodatage)
 
@@ -158,6 +181,10 @@ class Event:
             "instances": self.instances,
             "ticket": self.ticket.to_dict() if self.ticket is not None else None,
             "projet_id": self.projet_id,
+            "etapes": (
+                [etape.to_dict() for etape in self.etapes] if self.etapes is not None else None
+            ),
+            "liens": ([lien.to_dict() for lien in self.liens] if self.liens is not None else None),
             "diff": self.diff.to_dict() if self.diff is not None else None,
             "horodatage": self.horodatage,
         }
@@ -194,6 +221,10 @@ class Event:
             # l'extérieur (#222) : normalisé, et écarté s'il n'est pas un
             # identifiant de projet — il sert de nom de fichier au dépôt (#221).
             projet_id=projet_id_valide(data.get("projet_id")),
+            # Absentes → None (l'événement n'en dit rien) ; présentes → la liste
+            # normalisée, éventuellement vide si rien n'y était lisible (#246).
+            etapes=(etapes_depuis(data["etapes"]) if data.get("etapes") is not None else None),
+            liens=(liens_depuis(data["liens"]) if data.get("liens") is not None else None),
             diff=DiffProjet.from_dict(diff_brut) if isinstance(diff_brut, Mapping) else None,
             horodatage=data.get("horodatage", ""),
         )
