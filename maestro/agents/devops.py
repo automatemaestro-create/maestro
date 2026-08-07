@@ -23,7 +23,11 @@ from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* DevOps : son playbook « du code » (#295), le document
 #: `playbooks_defaut/devops.md` — régime sénior commun compris, et la particularité du
-#: rôle : jamais de déploiement réel, la validation humaine est explicite.
+#: rôle : jamais de déploiement réel, la validation humaine est explicite. Depuis #296
+#: il porte la part métier du spécialiste : méthode (cadrer l'environnement cible →
+#: écrire l'infrastructure comme du code → valider à blanc → préparer l'exécution et son
+#: retour arrière), latitude nommée sur l'outillage et la topologie — le garde-fou
+#: restant entier, runbook et plan de retour arrière *étant* le livrable.
 _SYSTEM_PROMPT = playbook_du_code("devops")
 
 #: Profil du DevOps : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2), outils
@@ -41,10 +45,12 @@ DEVOPS_PROFILE = RoleProfile(
         "Tu travailles dans un répertoire vide et isolé (le répertoire courant). "
         "Écris-y les fichiers du livrable avec tes outils (configuration de pipeline, "
         "Dockerfile, scripts, runbook) — ne te contente pas d'afficher des "
-        "recommandations. Valide localement ce qui peut l'être (syntaxe, exécution à "
-        "blanc) et consigne les résultats réels ; ne déploie rien vers un "
-        "environnement réel. Tranche seul l'outillage et la topologie ; l'exécution "
-        "réelle se prépare (runbook, retour arrière) et se remonte, elle ne se fait pas."
+        "recommandations. Cadre d'abord l'environnement cible, en écrivant tes "
+        "hypothèses quand rien ne les donne. Valide localement ce qui peut l'être "
+        "(syntaxe, construction, exécution à blanc) et consigne les résultats réels ; "
+        "ne déploie rien vers un environnement réel. Tranche seul l'outillage et la "
+        "topologie ; l'exécution réelle se prépare — runbook étape par étape et plan de "
+        "retour arrière sont le livrable — et se remonte, elle ne se fait pas."
     ),
     consigne_finale=(
         "Quand c'est fait, résume ce que tu as produit et liste explicitement ce qui "
@@ -55,5 +61,9 @@ DEVOPS_PROFILE = RoleProfile(
     # Borne conservatrice (#239) : pipelines et runbooks se valident à blanc, sans
     # la boucle rendre/regarder/reprendre du design. Un plafond atteint ici a
     # signalé un emballement réel (run D de la démo v1, docs/13) — pas une borne trop courte.
+    # Revérifié à #296 : la méthode de spécialiste n'ajoute pas d'étape, elle **nomme**
+    # ce qui était déjà attendu (cadrage, validation à blanc, runbook, retour arrière).
+    # Relever le plafond affaiblirait le seul garde-fou anti-emballement qui ait déjà
+    # servi, pour un besoin que rien ne mesure — conservé.
     plafond_tours=PLAFOND_TOURS_DEFAUT,
 )
