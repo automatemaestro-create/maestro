@@ -47,6 +47,16 @@ from maestro.controltower.events import (
     ReferenceTicket,
 )
 from maestro.controltower.fixtures import FixturesControlTower
+from maestro.detail_tache import (
+    ETAPE_A_FAIRE,
+    ETAPE_EN_COURS,
+    ETAPE_FAITE,
+    LIEN_DEPOT,
+    LIEN_MAQUETTE,
+    LIEN_TICKET,
+    EtapeTache,
+    LienUtile,
+)
 from maestro.telemetry.usage import StepUsage
 
 #: Écoute par défaut : locale, même défaut que `maestro-api` — et que l'UI
@@ -82,6 +92,9 @@ async def _avancer_tache(
     usage: StepUsage | None = None,
     ticket: ReferenceTicket | None = None,
     projet_id: str | None = PROJET_ID,
+    description: str = "",
+    checklist: Sequence[EtapeTache] = (),
+    liens: Sequence[LienUtile] = (),
 ) -> None:
     """Fait avancer une tâche à travers `etapes` ; usage/coût posés sur la dernière.
 
@@ -92,7 +105,19 @@ async def _avancer_tache(
     `projet_id` (#222) rattache la tâche à un **projet** et voyage de la même
     façon : c'est ce que filtrent `GET /api/taches?projet=…` et la vue coûts.
     None pour une tâche hors projet — le comportement d'avant ce lot.
+
+    `description`, `checklist` et `liens` (#246) sont le **détail** de la tâche,
+    celui qu'ouvre le panneau du Kanban (#251). Vides par défaut : une tâche de
+    démo sans détail montre exactement la carte d'avant ce lot, ce qui est le
+    seul moyen de voir les deux comportements côte à côte. `checklist` est
+    nommée ainsi pour ne pas se confondre avec `etapes`, qui reste la suite des
+    **statuts** traversés.
     """
+    # `None` (et non `[]`) quand la tâche n'a rien à détailler : le détail voyage
+    # avec chaque statut comme le ticket, et une liste vide effacerait à chaque
+    # événement ce que le précédent a posé (#246).
+    checklist_portee = list(checklist) or None
+    liens_portes = list(liens) or None
     for i, statut in enumerate(etapes):
         dernier = i == len(etapes) - 1
         await bus.publish(
@@ -108,6 +133,9 @@ async def _avancer_tache(
                 usage=usage if dernier else None,
                 ticket=ticket,
                 projet_id=projet_id,
+                description=description,
+                etapes=checklist_portee,
+                liens=liens_portes,
             )
         )
         await asyncio.sleep(PAUSE_ENTRE_STATUTS_S)
@@ -191,6 +219,36 @@ async def _scenario(bus: EventBus) -> None:
         # ticket dont elle relève — servi tel quel par `GET /api/taches`.
         ticket=ReferenceTicket(
             id="#42", url="https://gitlab.example/maestro/-/issues/42"
+        ),
+        # Le détail (#246) : c'est la seule tâche de la démo qui en porte, pour
+        # qu'on voie côte à côte une carte qui s'ouvre et une carte qui non.
+        description=(
+            "Exposer les contacts en REST : `POST /contacts` pour créer, "
+            "`GET /contacts` pour lister (pagination, tri par nom). Validation "
+            "des champs obligatoires côté API, erreurs au format du projet."
+        ),
+        checklist=(
+            EtapeTache(libelle="Définir le contrat OpenAPI", etat=ETAPE_FAITE),
+            EtapeTache(libelle="Implémenter la création", etat=ETAPE_FAITE),
+            EtapeTache(libelle="Implémenter la liste paginée", etat=ETAPE_EN_COURS),
+            EtapeTache(libelle="Tests d'intégration", etat=ETAPE_A_FAIRE),
+        ),
+        liens=(
+            LienUtile(
+                libelle="Maquette de l'écran contacts",
+                url="https://figma.example/file/contacts",
+                nature=LIEN_MAQUETTE,
+            ),
+            LienUtile(
+                libelle="#42 — API REST des contacts",
+                url="https://gitlab.example/maestro/-/issues/42",
+                nature=LIEN_TICKET,
+            ),
+            LienUtile(
+                libelle="mini-crm/api",
+                url="https://gitlab.example/mini-crm/api",
+                nature=LIEN_DEPOT,
+            ),
         ),
     )
 

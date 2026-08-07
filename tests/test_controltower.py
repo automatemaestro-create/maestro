@@ -172,6 +172,13 @@ def test_liste_des_taches_statut_agent_cout(client, state):
         "usage": None,  # aucune mesure détaillée rapportée (#57)
         "ticket": None,  # aucune référence de ticket externe transportée (#183)
         "projet_id": None,  # la tâche ne relève d'aucun projet (#222)
+        # Le détail de la tâche (#246) : absent ici, donc `null` et listes vides
+        # — le panneau de détail (#251) ne s'ouvre pas et la carte est celle
+        # d'avant le lot. Ces trois clés sont *toujours* servies, un client qui
+        # les ignore n'étant pas cassé pour autant.
+        "description": None,
+        "etapes": [],
+        "liens": [],
         "horodatage": t2["horodatage"],
     }
 

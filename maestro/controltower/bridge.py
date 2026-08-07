@@ -31,11 +31,13 @@ from maestro.controltower.events import (
     CANAL_EVENEMENTS,
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
     REDIS_URL_DEFAUT,
     Event,
 )
+from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
 from maestro.telemetry import LOGGER_NAME
 from maestro.telemetry.usage import StepUsage
@@ -74,6 +76,10 @@ _SUFFIXE_MESSAGE = ":message"
 #: `maestro.references.consigne_ticket`).
 _SUFFIXE_REFERENCE = SUFFIXE_ETAPE_TICKET
 
+#: Suffixe des étapes qui posent le détail d'une tâche (#246 — cf.
+#: `maestro.detail_tache.consigne_detail`).
+_SUFFIXE_DETAIL = SUFFIXE_ETAPE_DETAIL
+
 
 def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     """Convertit une ligne de journal (`StepRecord.to_dict`) en événements du bus.
@@ -93,6 +99,10 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     - les étapes `<tache>:reference` (#187) deviennent un `tache.reference` :
       elles ne portent que le **ticket externe** dont relève la tâche, sans rien
       changer d'autre — c'est ainsi qu'un agent la rattache en cours de route ;
+    - les étapes `<tache>:detail` (#246) deviennent un `tache.detail` : elles ne
+      portent que la **description**, les **étapes** et les **liens utiles** de
+      la tâche, sans rien changer d'autre — c'est ainsi qu'un agent la renseigne
+      en cours de route sans la faire changer de colonne ;
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
       portant statut, agent, rôle et coût rapporté (#8).
 
@@ -121,6 +131,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_message = etape.endswith(_SUFFIXE_MESSAGE)
     est_debut = etape.endswith(_SUFFIXE_DEBUT)
     est_reference = etape.endswith(_SUFFIXE_REFERENCE)
+    est_detail = etape.endswith(_SUFFIXE_DETAIL)
     est_activite = etape in _ETAPES_RUN or etape.endswith(
         (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE, _SUFFIXE_REFUS)
     )
@@ -129,6 +140,13 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         tache_id = etape.removesuffix(_SUFFIXE_REFERENCE)
         detail = str(record.get("sortie") or "")
         # Poser une référence ne coûte rien : rien à faire entrer au grand livre.
+        mesure = None
+        cout_brut = None
+    elif est_detail:
+        type_evenement = EVENEMENT_TACHE_DETAIL
+        tache_id = etape.removesuffix(_SUFFIXE_DETAIL)
+        detail = str(record.get("sortie") or "")
+        # Idem : renseigner une tâche ne dépense rien.
         mesure = None
         cout_brut = None
     elif est_message:
@@ -171,6 +189,14 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             usage=mesure,
             ticket=ReferenceTicket.depuis(record.get("ticket")),
             projet_id=projet_id_valide(record.get("projet_id")),
+            # Le détail de la tâche (#246) traverse le journal comme le ticket
+            # externe (#187) : ce qui a été consigné une fois est rejoué à
+            # l'identique, donc le panneau de détail (#251) se remplit aussi
+            # après un redémarrage. Clé absente → None, et la projection ne
+            # touche alors à rien.
+            description=str(record.get("description") or ""),
+            etapes=(etapes_depuis(record["etapes"]) if record.get("etapes") is not None else None),
+            liens=(liens_depuis(record["liens"]) if record.get("liens") is not None else None),
             horodatage=str(record.get("horodatage", "")),
         ),
     )

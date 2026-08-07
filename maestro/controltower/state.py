@@ -35,6 +35,7 @@ from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
@@ -44,6 +45,12 @@ from maestro.controltower.events import (
     ReferenceTicket,
 )
 from maestro.controltower.portee import PorteeProjet
+from maestro.detail_tache import (
+    EtapeTache,
+    LienUtile,
+    etapes_en_liste,
+    liens_en_liste,
+)
 from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
 from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
@@ -104,7 +111,12 @@ class EtatTache:
     posée par un événement de tâche, elle survit au rejeu du journal durable.
     `projet_id` porte le projet auquel la tâche appartient (#222) — None quand
     elle ne relève d'aucun projet, ce qui reste le cas courant : c'est ce champ
-    que le Kanban filtre (`GET /api/taches?projet=…`).
+    que le Kanban filtre (`GET /api/taches?projet=…`). `description`, `etapes` et
+    `liens` (#246, contrat #183) portent de quoi **comprendre** la tâche sans
+    quitter l'écran — ce qu'elle demande, où elle en est, ce qu'il faut ouvrir
+    pour la traiter. Vides tant qu'aucun événement n'en a transporté (inconnu ≠
+    absent), et le panneau de détail (#251) ne s'ouvre alors pas : une tâche sans
+    détail rend exactement la carte d'avant ce lot.
     """
 
     id: str
@@ -117,6 +129,9 @@ class EtatTache:
     usage: StepUsage | None = None
     ticket: ReferenceTicket | None = None
     projet_id: str | None = None
+    description: str = ""
+    etapes: list[EtapeTache] = field(default_factory=list)
+    liens: list[LienUtile] = field(default_factory=list)
     horodatage: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -132,6 +147,12 @@ class EtatTache:
             "usage": self.usage.to_dict() if self.usage is not None else None,
             "ticket": self.ticket.to_dict() if self.ticket is not None else None,
             "projet_id": self.projet_id,
+            # `null` pour une description absente, `[]` pour des listes vides
+            # (#246) : le client distingue ainsi « rien à montrer » d'une clé
+            # qu'il ne connaîtrait pas, et le panneau de détail reste fermé.
+            "description": self.description or None,
+            "etapes": etapes_en_liste(self.etapes),
+            "liens": liens_en_liste(self.liens),
             "horodatage": self.horodatage,
         }
 
@@ -558,6 +579,8 @@ class ControlTowerState:
             self._applique_reassignation(event)
         elif event.type == EVENEMENT_TACHE_REFERENCE:
             self._applique_reference(event)
+        elif event.type == EVENEMENT_TACHE_DETAIL:
+            self._applique_detail(event)
         elif event.type in {EVENEMENT_AGENT_ACTIVITE, EVENEMENT_MESSAGE_INTER_AGENTS}:
             self._applique_activite(event)
         elif event.type == EVENEMENT_AGENT_CAPACITE:
@@ -584,6 +607,7 @@ class ControlTowerState:
             tache.usage = event.usage
         if event.ticket is not None:
             tache.ticket = event.ticket
+        self._pose_detail(tache, event)
         if event.projet_id is not None:
             tache.projet_id = event.projet_id
             # Une validation déjà déposée pour cette tâche (#277) suit son
@@ -667,6 +691,49 @@ class ControlTowerState:
             # par ce seul chemin arrive sans projet dans les vues filtrées.
             tache.projet_id = event.projet_id
         tache.run_id = event.run_id or tache.run_id
+
+    def _applique_detail(self, event: Event) -> None:
+        """Renseigne le détail d'une tâche (#246) — et **rien d'autre**.
+
+        Le pendant de `_applique_reference` pour ce qui se lit dans le panneau
+        de détail (#251) : un agent qui découvre en cours de route une étape à
+        cocher ou une maquette à ouvrir le dit sans faire bouger sa tâche d'une
+        colonne du Kanban. La tâche est **créée** si elle est encore inconnue —
+        l'événement peut précéder la première étape consignée.
+        """
+        if not event.tache_id:
+            return
+        tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
+        self._pose_detail(tache, event)
+        if event.projet_id is not None:
+            # Même raison qu'en `_applique_reference` : l'appartenance au projet
+            # (#222) voyage sur tous les événements de tâche, celui-ci compris.
+            tache.projet_id = event.projet_id
+        tache.run_id = event.run_id or tache.run_id
+
+    @staticmethod
+    def _pose_detail(tache: EtatTache, event: Event) -> None:
+        """Reporte sur la tâche le détail que l'événement **apprend**, et lui seul.
+
+        Trois champs, une seule règle — celle du ticket externe (#187) : ce qui
+        n'est pas renseigné ne **retire** pas ce qui est en place. Une
+        description vide, `etapes`/`liens` à None (l'événement n'en parle pas)
+        laissent la tâche inchangée, si bien que le flot ordinaire des
+        `tache.statut` — qui ne porte aucun détail — ne vide pas un panneau
+        renseigné par un `tache.detail` précédent. Poser deux fois le même
+        détail est donc sans effet, et c'est ce qui rend le rejeu du journal
+        durable (#97) idempotent.
+
+        Une liste **présente mais vide** est, elle, une information : elle dit
+        « plus aucune étape », et efface. C'est tout l'intérêt de distinguer
+        `None` de `[]` sur l'événement.
+        """
+        if event.description:
+            tache.description = event.description
+        if event.etapes is not None:
+            tache.etapes = list(event.etapes)
+        if event.liens is not None:
+            tache.liens = list(event.liens)
 
     def _applique_activite(self, event: Event) -> None:
         """Trace l'activité d'un acteur (planification, validation, message A2A)."""
