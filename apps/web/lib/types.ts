@@ -35,6 +35,13 @@ export type Sante = {
  * `projet_id` (#222) porte le projet auquel la tâche appartient — `null` quand
  * elle ne relève d'aucun projet. Le Kanban se restreint à un projet par
  * `GET /api/taches?projet=<id>` ; sans le paramètre, toutes les tâches sortent.
+ *
+ * `description`, `etapes` et `liens` (#246) portent le **détail** que la carte
+ * ouvre sur place (#251). Ils sont déclarés **optionnels**, et c'est un choix :
+ * le backend ne les sert pas encore, si bien qu'ils arrivent `undefined` sur
+ * chaque tâche d'aujourd'hui — les typer requis mentirait au compilateur et
+ * ferait planter la moindre lecture (`tache.etapes.length`). Le front les lit
+ * donc toujours par `detailDe()` (lib/detailTache), jamais en direct.
  */
 export type Tache = {
   id: string;
@@ -48,6 +55,9 @@ export type Tache = {
   ticket: ReferenceTicket | null;
   projet_id: string | null;
   horodatage: string;
+  description?: string | null;
+  etapes?: EtapeTache[] | null;
+  liens?: LienUtile[] | null;
 };
 
 /**
@@ -546,6 +556,45 @@ export const EVENEMENT_PLAYBOOK_PROPOSITION = "playbook.proposition";
 export type ReferenceTicket = {
   id: string;
   url: string;
+};
+
+/**
+ * L'avancement d'une étape de tâche (#246). Chaîne libre comme tous les statuts
+ * du flux : un état inconnu du front n'efface pas l'étape, il la rend « à faire »
+ * (même règle que la colonne « Autres » du Kanban).
+ */
+export const ETAPE_A_FAIRE = "a_faire";
+export const ETAPE_EN_COURS = "en_cours";
+export const ETAPE_FAITE = "faite";
+
+/**
+ * Une étape de la tâche (`GET /api/taches`, #246) — la ligne de checklist du
+ * panneau de détail (#251) : ce qu'il y a à faire, et où on en est.
+ */
+export type EtapeTache = {
+  libelle: string;
+  etat: string;
+};
+
+/**
+ * La nature d'un lien utile (#246). C'est elle — et non l'URL — qui décide du
+ * rendu côté front (#251) : deviner « Figma » ou « GitLab » d'après le domaine
+ * marcherait jusqu'à la première instance auto-hébergée.
+ */
+export const LIEN_MAQUETTE = "maquette";
+export const LIEN_TICKET = "ticket";
+export const LIEN_DEPOT = "depot";
+
+/**
+ * Un lien utile porté par la tâche (`GET /api/taches`, #246) : maquette Figma,
+ * ticket Azure/GitLab, dépôt de code. `libelle` peut être vide (le front retombe
+ * alors sur le nom de la nature) ; `url` passe par `lienExterneSur` avant tout
+ * `href`, comme celle du ticket externe (#192).
+ */
+export type LienUtile = {
+  libelle: string;
+  url: string;
+  nature: string;
 };
 
 /** Statuts d'une exécution (maestro/controltower/state.py, #185). */

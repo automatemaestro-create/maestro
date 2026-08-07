@@ -13,9 +13,15 @@
  * minimale de colonne** plutôt que par un nombre de colonnes : les colonnes
  * s'élargissent jusqu'à 2 560 px et se replient en lignes en dessous de la
  * largeur où elles tiennent toutes de front.
+ *
+ * Une carte qui porte un **détail** (description, étapes, liens — #246) l'ouvre
+ * au clic dans un panneau (#251). La carte, elle, ne change pas : elle reste
+ * l'objet dense qu'on lit en diagonale sur cinq colonnes, et une tâche sans
+ * détail reste exactement la carte d'avant — pas de bouton, pas de curseur qui
+ * promet une ouverture, pas de cadre vide.
  */
 
-import { useState } from "react";
+import { useRef, useState, type MouseEvent } from "react";
 
 import {
   IconeAgent,
@@ -30,6 +36,12 @@ import {
   IconeTache,
 } from "@/components/Icones";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
+import { PanneauDetailTache } from "@/components/PanneauDetailTache";
+import {
+  SelecteurReassignation,
+  type Reassigner,
+} from "@/components/SelecteurReassignation";
+import { detailDe } from "@/lib/detailTache";
 import {
   BadgeEtat,
   Carte,
@@ -45,8 +57,6 @@ import {
   libelleStatut,
 } from "@/lib/format";
 import type { EtatAgent, Tache } from "@/lib/types";
-
-type Reassigner = (tacheId: string, agent: string) => Promise<void>;
 
 type Props = {
   taches: Tache[];
@@ -93,7 +103,33 @@ const COLONNES: {
   { statut: "echec", titre: "Échecs", ton: "alerte", icone: IconeStatutEchec },
 ];
 
+/** Ouvre le panneau de détail sur une tâche, en retenant d'où on est parti. */
+type Ouvrir = (tache: Tache, declencheur: HTMLElement | null) => void;
+
 export function Kanban({ taches, agents, reassigner }: Props) {
+  // Le panneau est tenu **ici**, pas dans la carte : il est modal (une tâche à
+  // la fois), et une carte est un `<article>` cliquable au fond d'une colonne
+  // qui déroule — y imbriquer le dialogue le ferait hériter du clic de la carte
+  // et de l'espacement de la colonne.
+  const [ouverte, setOuverte] = useState<Tache | null>(null);
+  const declencheur = useRef<HTMLElement | null>(null);
+
+  const ouvrir: Ouvrir = (tache, depuis) => {
+    declencheur.current = depuis;
+    setOuverte(tache);
+  };
+  // Le focus revient à la carte d'où le panneau a été ouvert : sans quoi il
+  // retomberait sur le document, en haut de page.
+  const fermer = () => {
+    setOuverte(null);
+    declencheur.current?.focus();
+  };
+
+  // La tâche affichée suit le flux : le panneau reste ouvert sur la même carte
+  // pendant qu'un run avance, avec des étapes qui se cochent sous les yeux.
+  const affichee =
+    ouverte === null ? null : (taches.find((t) => t.id === ouverte.id) ?? ouverte);
+
   const connus = new Set(COLONNES.map((c) => c.statut));
   const autres = taches.filter((t) => !connus.has(t.statut));
   const colonnes = [
@@ -192,6 +228,7 @@ export function Kanban({ taches, agents, reassigner }: Props) {
                   tache={tache}
                   agents={agents}
                   reassigner={reassigner}
+                  ouvrir={ouvrir}
                 />
               ))}
               {colonne.taches.length === 0 && (
@@ -209,6 +246,14 @@ export function Kanban({ taches, agents, reassigner }: Props) {
           publiera ses événements.
         </p>
       )}
+      {affichee !== null && (
+        <PanneauDetailTache
+          tache={affichee}
+          agents={agents}
+          reassigner={reassigner}
+          fermer={fermer}
+        />
+      )}
     </section>
   );
 }
@@ -217,36 +262,64 @@ function CarteTache({
   tache,
   agents,
   reassigner,
+  ouvrir,
 }: {
   tache: Tache;
   agents: EtatAgent[];
   reassigner: Reassigner;
+  ouvrir: Ouvrir;
 }) {
-  const [enCours, setEnCours] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const declencheur = useRef<HTMLButtonElement>(null);
 
-  const surReassignation = async (agent: string) => {
-    if (!agent) return;
-    setEnCours(true);
-    setErreur(null);
-    try {
-      await reassigner(tache.id, agent);
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
-    } finally {
-      setEnCours(false);
+  // Y a-t-il seulement quelque chose à ouvrir ? C'est le cas courant que non :
+  // le lot modèle (#246) ne sert pas encore ces champs. La carte reste alors
+  // strictement inerte — rien n'annonce un panneau qui serait vide.
+  const ouvrable = !detailDe(tache).vide;
+  const nom = tache.titre || tache.id;
+
+  // Le sélecteur de réassignation et le lien du ticket externe gardent leur
+  // geste : un clic dessus ne doit pas ouvrir le panneau par-dessus l'action
+  // qu'on vient de lancer. Le titre, lui, est un vrai bouton — c'est par lui que
+  // passent le clavier et les lecteurs d'écran.
+  const surClicCarte = (evenement: MouseEvent<HTMLElement>) => {
+    if (!ouvrable) return;
+    if ((evenement.target as HTMLElement).closest("a, select, option, button")) {
+      return;
     }
+    ouvrir(tache, declencheur.current);
   };
 
-  // Un agent désactivé ne reçoit plus de tâches (#86) : il n'est pas proposé
-  // à la réassignation — l'API la refuserait de toute façon (422).
-  const candidats = agents.filter((a) => a.nom !== tache.agent && a.actif);
-
+  // La surface vient de `Carte` (#245, balise `article` par défaut) ; ne reste
+  // ici que ce qui est propre à l'ouverture du panneau (#251) — le curseur et
+  // le survol, posés **seulement** si la carte a un détail.
   return (
-    <Carte densite="compacte" className="text-corps">
-      <p className="font-medium" title={tache.id}>
-        {tache.titre || tache.id}
-      </p>
+    <Carte
+      densite="compacte"
+      onClick={surClicCarte}
+      className={
+        "text-corps" +
+        (ouvrable
+          ? " cursor-pointer transition hover:border-neutral-300 hover:shadow dark:hover:border-neutral-700"
+          : "")
+      }
+    >
+      {ouvrable ? (
+        <button
+          ref={declencheur}
+          type="button"
+          onClick={() => ouvrir(tache, declencheur.current)}
+          aria-haspopup="dialog"
+          aria-label={`Ouvrir le détail de la tâche ${nom}`}
+          title={tache.id}
+          className="w-full rounded text-left font-medium hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-400"
+        >
+          {nom}
+        </button>
+      ) : (
+        <p className="font-medium" title={tache.id}>
+          {nom}
+        </p>
+      )}
       {/* Le ticket qui a motivé la tâche (#192) — absent : la carte est
           exactement celle d'avant, la marge partant avec le composant. */}
       <LienTicketExterne
@@ -283,26 +356,12 @@ function CarteTache({
           </span>
         </p>
       )}
-      <select
-        aria-label={`Réassigner la tâche ${tache.titre || tache.id}`}
-        className="mt-2 w-full rounded border border-neutral-300 bg-transparent px-1.5 py-1 text-annexe text-neutral-600 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:[&>option]:bg-neutral-900"
-        value=""
-        disabled={enCours || candidats.length === 0}
-        onChange={(e) => void surReassignation(e.target.value)}
-      >
-        <option value="" disabled>
-          {enCours ? "Réassignation…" : "Réassigner à…"}
-        </option>
-        {candidats.map((agent) => (
-          <option key={agent.nom} value={agent.nom}>
-            {agent.nom}
-            {agent.role ? ` — ${agent.role}` : ""}
-          </option>
-        ))}
-      </select>
-      {erreur && (
-        <p className="mt-1 text-annexe text-rose-600 dark:text-rose-400">{erreur}</p>
-      )}
+      <SelecteurReassignation
+        tache={tache}
+        agents={agents}
+        reassigner={reassigner}
+        className="mt-2"
+      />
     </Carte>
   );
 }
