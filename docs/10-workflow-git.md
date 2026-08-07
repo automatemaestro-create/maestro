@@ -265,11 +265,16 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
      précédents — §5.1) et branche proposée (préfixe dérivé du label `type::` §1, slug du titre).
      Le helper est **informatif** : les avertissements sont dans sa sortie, la décision — démarrer,
      rediriger, s'arrêter, proposer un découpage — reste à l'agent.
-   - **Bloc git en une commande composée** : `git checkout main && git pull origin main &&
-     lib.sh cleanup-merged && git checkout -b <branche>`. Comme il met `main` à jour au passage,
-     il en profite pour **purger automatiquement les branches locales déjà mergées**
-     (`cleanup-merged`, même garde-fou que `/branch-cleanup` : uniquement celles dont GitLab
-     confirme la MR `merged`, §6 ; s'il n'y a rien à nettoyer, aucun effet).
+   - **`worktree.sh ensure <iid>`** — monte le worktree du ticket et dit où la session doit
+     travailler (§9.1). C'est le **point de passage obligé** du démarrage, et c'est à ce titre
+     qu'il remet le dépôt à niveau au passage, sans qu'aucun geste soit à retenir : `main` avancée
+     sur `origin/main` (§9.3), dépendances ajoutées au dépôt (§9.4), worktrees soldés ramassés
+     (§9.2) et **branches locales déjà mergées purgées** (§9.5 — même garde-fou que
+     `/branch-cleanup` : uniquement celles dont GitLab confirme la MR `merged`, §6). Les quatre
+     sont best-effort et muets quand il n'y a rien à faire ; aucun ne bloque un démarrage.
+   - **`lib.sh start-branch <branche>`** — place le dépôt sur la branche de travail. Après
+     `ensure` c'est en général sans effet (la branche est déjà celle du worktree) ; il reste la
+     source unique du placement et couvre le cas d'une reprise dans le clone principal.
    - **`lib.sh begin <iid>`** — assignation (username auto-résolu via `glab api user`, parsé en
      shell pur — pas de dépendance à `jq`/`python`, et couvert par l'allowlist §7.1 pour ne pas
      déclencher de prompt), cycle de vie « En cours » (label ajouté et les cinq autres retirés,
@@ -307,9 +312,11 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
    (ticket fermé au cycle de vie encore actif).
 6. **`/branch-cleanup`** — GitLab a géré le distant (étape 5), cette commande fait le **ménage
    local** et **pose le cycle de vie `Terminé`** : supprime la branche **locale** mergée et
-   remet `main` à jour. Ce ménage est en grande partie **automatisé** : `/ticket-start` lance
-   `cleanup-merged` à chaque démarrage de ticket (étape 2), donc les branches mergées disparaissent
-   d'elles-mêmes au fil de l'eau. `/branch-cleanup` reste utile pour un nettoyage **à la demande**
+   remet `main` à jour. Ce ménage est en grande partie **automatisé** : `worktree.sh ensure`, qu'
+   appelle tout `/ticket-start` (étape 2), purge les branches mergées et ramasse les worktrees
+   soldés, qui disparaissent donc d'eux-mêmes au fil de l'eau (§9.2, §9.5 — l'automatisme a
+   longtemps été accroché à `start-branch`, où il était devenu injoignable : voir §9.5).
+   `/branch-cleanup` reste utile pour un nettoyage **à la demande**
    (ex. sans démarrer de nouveau ticket) ou pour supprimer aussi la branche distante si la case
    « Delete source branch » avait été décochée au merge.
 
@@ -1168,12 +1175,14 @@ worktree courant ; `glab` fonctionne depuis n'importe quel worktree.
 **Ce que le workflow adapte.** `main` ne peut être emprunté que par **un seul** worktree à la
 fois : tout `git checkout main` échoue ailleurs que dans le clone principal. D'où
 `lib.sh start-branch <branche>`, appelé par `/ticket-start` : dans le clone principal il met
-`main` à jour et purge les branches mergées ; dans un worktree il branche directement sur
-`origin/main`, et ne fait rien si la branche est déjà celle du worktree. De même,
+`main` à jour ; dans un worktree il branche directement sur `origin/main`, et ne fait rien si la
+branche est déjà celle du worktree. (Il a purgé les branches mergées jusqu'à #305, où l'appel a
+été déplacé dans `ensure` : §9.5.) De même,
 [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) ne bascule pas sur `main` depuis un
 worktree. La fin de vie du worktree, elle, ne demande **aucun geste** : elle est ramassée d'office
-(§9.2). La **branche n'est jamais supprimée par ce script** : cela reste le rôle de
-`/branch-cleanup`, après confirmation du merge par GitLab (§6).
+(§9.2). **Retirer un worktree ne supprime jamais sa branche** — `create`, `remove` et `gc` n'y
+touchent pas : la suppression est une décision qui appartient à `cleanup-merged` (§9.5) et à
+`/branch-cleanup`, et n'a lieu que sur confirmation du merge par GitLab (§6).
 
 > ⚠ **Ne jamais retirer un worktree à la main** (`rm -rf`, ou `git worktree remove` lancé
 > directement). Les artefacts partagés sont des **jonctions**, qu'une suppression récursive
@@ -1199,9 +1208,10 @@ bash scripts/git/worktree.sh gc            # ramasse ce qui est soldé
 bash scripts/git/worktree.sh gc --check    # dit ce qu'il retirerait, sans rien toucher
 ```
 
-C'est le **symétrique de `cleanup-merged`** (#23), qui purge les branches locales mergées au
-démarrage d'un ticket. Même principe, même garde-fou : la fin du travail est **confirmée par
-GitLab**, jamais déduite du nom de la branche.
+C'est le **symétrique de `cleanup-merged`** (#23, §9.5), qui purge les branches locales mergées au
+démarrage d'un ticket — et qui, dans `ensure`, tourne **juste après** ce ramassage : `git branch -D`
+refuse une branche empruntée par un worktree. Même principe, même garde-fou : la fin du travail est
+**confirmée par GitLab**, jamais déduite du nom de la branche.
 
 **Ce qui déclenche le retrait** (`lib.sh worktree-done <iid> <branche>`, une lecture dans le cas
 nominal) : la **MR de la branche est mergée**, ou le **ticket est fermé** (réalisé, abandonné,
@@ -1359,9 +1369,10 @@ pour la couverture la plus étroite.
 
 ### 9.3 `main` remis à jour d'office après chaque merge (#205)
 
-Troisième automatisme de la même famille, et le dernier qui manquait : `cleanup-merged` purge les
-**branches** mergées (#23), `gc` ramasse les **worktrees** soldés (§9.2), `sync-main` remet la
-branche **`main` locale** à niveau.
+Troisième automatisme de la même famille : `cleanup-merged` purge les **branches** mergées (#23,
+§9.5), `gc` ramasse les **worktrees** soldés (§9.2), `sync-main` remet la branche **`main` locale**
+à niveau. Le premier des trois s'est d'ailleurs cassé de la façon décrite ici, et pour la même
+raison — voir §9.5.
 
 Le retard est une conséquence directe de §9.1. Avant #181, `/ticket-start` passait par
 `git checkout main && git pull origin main` dans le clone principal — la mise à jour était un effet
@@ -1489,6 +1500,68 @@ Trois règles, dans l'ordre d'importance :
 `--derive` n'écrit rien) et [`test_worktree.py`](../tests/test_worktree.py) (le câblage : qui
 appelle quoi, depuis un worktree comme depuis le clone principal, et l'échec non bloquant) —
 dépôts jetables, sans réseau ni vrai `pip`/`npm`.
+
+### 9.5 Les branches mergées repurgées d'office (#305)
+
+Le cinquième membre de la famille — et le seul qui existait **avant** les autres. `cleanup-merged`
+purge les branches locales mergées depuis #23 ; ce qui a cassé, c'est son **déclencheur**.
+
+Il vivait dans `lib.sh start-branch`, sur la voie « clone principal + branche à créer ». Depuis
+#181, `/ticket-start` appelle `worktree.sh ensure` **avant** `start-branch` et relocalise la
+session : l'appel arrive donc toujours depuis le worktree du ticket, où `start-branch` sort par
+« déjà sur la branche » ou par sa voie worktree — **jamais** par celle qui purgeait. Le clone
+principal, lui, ne change plus jamais de branche. Constat du 2026-08-07 : **35 branches locales
+mergées** accumulées, la plus ancienne remontant à #220.
+
+C'est la panne de §9.3 à l'identique, sur un autre objet, et pour la même raison : **le point de
+passage a bougé et l'automatisme est resté**. La différence tient à ce qu'on en voit — un `main` en
+retard se lit dans l'IDE, une branche morte de plus ne se remarque pas.
+
+| | Avant #305 | Après |
+|---|---|---|
+| Déclencheur automatique | `lib.sh start-branch` (injoignable depuis #181) | `worktree.sh ensure`, comme §9.2/§9.3/§9.4 |
+| À la demande | `/branch-cleanup` | `/branch-cleanup` (inchangé) |
+
+L'ordre dans `ensure` **n'est pas cosmétique** : la purge passe **après** le ramassage des
+worktrees (§9.2), parce que `git branch -D` refuse une branche empruntée par un worktree. La
+branche d'un ticket soldé n'est donc supprimable qu'une fois son worktree parti — c'est le même
+ordre que dans `/branch-cleanup`, et il est épinglé par un test.
+
+**Un refus qui ne se voyait pas.** Quand `git branch -D` échoue, l'échec n'incrémentait **aucun**
+des deux compteurs : la branche sortait du compte rendu sans un mot, et le bilan annonçait moins de
+branches qu'il n'en avait examinées (3 sur 41 lors de la purge de rattrapage). Elle est désormais
+comptée à part et **nommée**, avec le worktree qui la retient :
+
+```
+  ⚠ conservée : feat/251-… (MR merged, empruntée par le worktree E:/…/maestro-worktrees/251-…)
+Nettoyage des branches : 32 supprimée(s), 6 conservée(s), 3 mergée(s) mais empruntée(s) par un worktree.
+```
+
+Deux autres choix à connaître avant d'y toucher :
+
+1. **Un seul point d'appel automatique.** La purge a été **retirée** de `start-branch` plutôt que
+   laissée en double. Un second déclencheur inatteignable est exactement ce qui a rendu la panne
+   invisible : le code était là, la doc le décrivait, et plus rien ne l'exécutait.
+2. **Le helper vise le clone principal**, d'où qu'on l'appelle — comme `sync-main` et `gc`. Les
+   refs sont pourtant partagées par tous les worktrees, donc la liste des branches serait la même
+   de partout ; ce qui change, c'est ce sur quoi portent ses garde-fous. L'arbre regardé est celui
+   du clone principal, normalement propre et sur `main`, et non celui d'un worktree en plein
+   travail — qui ferait sauter la purge en silence à chaque reprise de session.
+
+```bash
+bash scripts/gitlab/lib.sh cleanup-merged           # purge et rend son bilan
+bash scripts/gitlab/lib.sh cleanup-merged --auto    # muet s'il n'y a ni suppression ni refus
+```
+
+Le mode `--auto` est celui que câble `ensure`, au même titre que `gc --auto` : sans lui, chaque
+`/ticket-start` s'ouvrirait sur un inventaire dont personne n'a besoin. Le coût est d'une lecture
+`glab` par branche locale — l'ordre de grandeur du ramassage juste avant, qui en fait une par
+worktree, et c'est justement parce que la purge tourne à nouveau que ce nombre reste petit.
+
+`MAESTRO_PURGE_BRANCHES=0` désactive le passage automatique. Couvert par
+[`test_worktree.py`](../tests/test_worktree.py) (le câblage, l'ordre vis-à-vis du ramassage, le
+compte rendu d'une branche retenue, l'abstention sur arbre sale et le fait que `start-branch` ne
+purge plus) — dépôt jetable, sans réseau ni `glab`.
 
 ---
 

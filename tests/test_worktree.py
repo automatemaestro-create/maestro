@@ -74,6 +74,7 @@ class Depot:
     derive: str | None = None
     code_setup: str = "0"
     pose: bool = False
+    mrs: dict[str, str] | None = None
 
     # --- exécution ---
     def lance(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -109,6 +110,13 @@ class Depot:
         # Mise à niveau des dépendances (#216) : même dispositif. Éteinte par défaut, rallumée par
         # `impose_derive`, qui pose en même temps le `setup.sh` factice qu'elle appellera — le vrai
         # installerait pour de bon.
+        # Purge des branches mergées (#305) : même dispositif encore. Éteinte par défaut — elle
+        # demanderait à GitLab l'état de la MR de chaque branche, et `glab` est celui du poste, donc
+        # authentifié sur le VRAI projet. `impose_mr` la rallume en posant le faux `glab` qui répond
+        # à sa place, seule couture par laquelle ces tests disent ce qui est mergé.
+        environnement["MAESTRO_PURGE_BRANCHES"] = "0"
+        if self.mrs is not None:
+            environnement.pop("MAESTRO_PURGE_BRANCHES")
         environnement["MAESTRO_MAJ_DEPENDANCES"] = "0"
         if self.derive is not None:
             environnement.pop("MAESTRO_MAJ_DEPENDANCES")
@@ -194,6 +202,37 @@ class Depot:
         if not journal.exists():
             return []
         return [ligne for ligne in journal.read_text(encoding="utf-8").splitlines() if ligne]
+
+    # --- couture de la purge des branches mergées (#305) ---
+    def impose_mr(self, etats: dict[str, str]) -> None:
+        """Impose l'état de la MR de chaque branche — et rallume la purge.
+
+        Un faux `glab` sert la seule lecture dont `gl_mr_state` a besoin
+        (`mr view <branche> --output json`) ; une branche absente de la table n'a pas de MR du
+        tout, ce que le vrai `glab` signale par un échec et une sortie vide.
+        """
+        self.mrs = dict(etats)
+        table = self.fauxbin / "etats-mr.tsv"
+        table.write_text(
+            "".join(f"{branche}\t{etat}\n" for branche, etat in self.mrs.items()),
+            encoding="utf-8",
+            newline="\n",
+        )
+        shim = self.fauxbin / "glab"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = mr ] && [ "$2" = view ]; then\n'
+            "  etat=\"$(awk -F'\\t' -v b=\"$3\" 'b == $1 { print $2; exit }'"
+            f' "{table.as_posix()}")"\n'
+            '  [ -n "$etat" ] || exit 1\n'
+            "  printf '{\"iid\":42,\"state\":\"%s\"}\\n' \"$etat\"\n"
+            "  exit 0\n"
+            "fi\n"
+            "exit 1\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        shim.chmod(0o755)
 
     # --- couture de la mise à niveau des dépendances (#216) ---
     @property
@@ -834,6 +873,140 @@ def test_ensure_ramasse_les_worktrees_soldes_avant_de_monter_le_sien(depot: Depo
     verdict = _verdict(acheve)
     assert verdict.startswith("WORKTREE ")
     assert Path(verdict[len("WORKTREE ") :]).resolve() == depot.worktree("153-suite").resolve()
+
+
+# --- Purge des branches mergées (#305) --------------------------------------------------------
+# Le pendant du ramassage ci-dessus, pour les branches. Il existait depuis #23 mais était accroché à
+# `lib.sh start-branch`, devenu injoignable avec #181 : /ticket-start monte le worktree AVANT
+# d'appeler `start-branch`, qui sort alors par « déjà sur la branche » ou par sa voie worktree,
+# jamais par celle qui purgeait. Plus rien ne supprimait de branche sans /branch-cleanup manuel, et
+# 35 s'étaient accumulées sur le clone principal (constat du 2026-08-07, la plus ancienne #220).
+#
+# Ces tests épinglent donc d'abord le CÂBLAGE — la purge part bien d'`ensure`, et APRÈS le
+# ramassage — puis ce que le compte rendu doit dire, une branche silencieusement non supprimée
+# étant exactement ce qui laissait la panne invisible.
+
+
+def test_ensure_purge_les_branches_mergees(depot: Depot) -> None:
+    """Le câblage qui fait le ticket : plus aucun geste dédié à se rappeler.
+
+    Et le garde-fou reste entier — seule part la branche dont GitLab confirme la MR `merged`
+    (docs/10 §6) ; une MR ouverte, comme une branche sans MR, ne prouve rien.
+    """
+    depot.git("branch", "chore/140-livree")
+    depot.git("branch", "chore/141-en-cours")
+    depot.git("branch", "experimentation")
+    depot.impose_mr({"chore/140-livree": "merged", "chore/141-en-cours": "opened"})
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert "supprimée : chore/140-livree" in acheve.stdout
+    assert depot.git("branch", "--list", "chore/140-livree") == ""
+    assert "chore/141-en-cours" in depot.git("branch", "--list", "chore/141-en-cours")
+    assert "experimentation" in depot.git("branch", "--list", "experimentation")
+    # Le verdict reste la DERNIÈRE ligne de stdout : le rapport de purge ne casse pas le contrat
+    # de sortie sur lequel /ticket-start s'appuie (#181).
+    assert _verdict(acheve).startswith("WORKTREE ")
+
+
+def test_ensure_purge_la_branche_du_worktree_qu_il_vient_de_ramasser(depot: Depot) -> None:
+    """L'ordre entre les deux n'est pas cosmétique (#197 puis #305).
+
+    `git branch -D` refuse une branche empruntée par un worktree : sans le ramassage juste avant,
+    la branche d'un ticket soldé resterait là à chaque passage.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_mr({BRANCHE: "merged"})
+
+    acheve = depot.lance("ensure", "153", "--branche", "chore/153-suite")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert "#152 retiré" in acheve.stdout
+    assert f"supprimée : {BRANCHE}" in acheve.stdout
+    assert depot.git("branch", "--list", BRANCHE) == ""
+
+
+def test_purge_compte_et_nomme_une_branche_retenue_par_un_worktree(depot: Depot) -> None:
+    """Le second défaut de #305 : l'échec de `git branch -D` ne se voyait nulle part.
+
+    Il n'incrémentait aucun des deux compteurs, si bien que la branche sortait du compte rendu sans
+    un mot et que le bilan annonçait moins de branches qu'il n'en avait examinées (3 sur 41 lors de
+    la purge de rattrapage). Ici le worktree est encore là — verdict non imposé, donc rien n'est
+    ramassé — et c'est le cas que la ligne doit nommer.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_mr({BRANCHE: "merged"})
+
+    acheve = depot.lib("cleanup-merged")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert "empruntée par le worktree" in acheve.stdout
+    assert "152-essai" in acheve.stdout, "le worktree qui retient la branche doit être nommé"
+    assert "1 mergée(s) mais empruntée(s) par un worktree" in acheve.stdout
+    assert BRANCHE in depot.git("branch", "--list", BRANCHE)
+
+
+def test_purge_auto_est_muette_quand_il_n_y_a_rien_a_faire(depot: Depot) -> None:
+    """Le mode câblé dans `ensure` : il ne s'annonce que s'il agit ou s'il alerte.
+
+    Sans `--auto`, le bilan est rendu — c'est ce qu'attend un appel à la main.
+    """
+    depot.git("branch", "chore/141-en-cours")
+    depot.impose_mr({"chore/141-en-cours": "opened"})
+
+    muet = depot.lib("cleanup-merged", "--auto")
+    assert muet.returncode == 0, muet.stdout + muet.stderr
+    assert muet.stdout.strip() == "", muet.stdout
+
+    bavard = depot.lib("cleanup-merged")
+    assert "0 supprimée(s), 1 conservée(s)" in bavard.stdout
+
+
+def test_purge_s_abstient_quand_le_clone_principal_est_sale(depot: Depot) -> None:
+    depot.git("branch", "chore/140-livree")
+    depot.impose_mr({"chore/140-livree": "merged"})
+    (depot.racine / "README.md").write_text("modifié\n", encoding="utf-8", newline="\n")
+
+    acheve = depot.lib("cleanup-merged")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "changements non commités" in acheve.stderr
+    assert "chore/140-livree" in depot.git("branch", "--list", "chore/140-livree")
+
+
+def test_purge_vise_le_clone_principal_meme_appelee_depuis_un_worktree(depot: Depot) -> None:
+    """L'arbre regardé est celui du clone principal, d'où qu'on appelle (#305).
+
+    C'est ce qui distingue ce helper de sa version d'avant : appelée depuis le worktree du ticket
+    en cours — le cas de tout /ticket-start depuis #181 —, elle regardait un arbre en plein travail
+    et s'abstenait en silence dès le premier fichier modifié.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.git("branch", "chore/140-livree")
+    depot.impose_mr({"chore/140-livree": "merged"})
+    (depot.worktree() / "travail.txt").write_text("en cours\n", encoding="utf-8", newline="\n")
+
+    acheve = depot.lib("cleanup-merged", cwd=depot.worktree())
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "supprimée : chore/140-livree" in acheve.stdout
+    assert depot.git("branch", "--list", "chore/140-livree") == ""
+
+
+def test_start_branch_ne_purge_plus_les_branches_mergees(depot: Depot) -> None:
+    """Un seul déclencheur automatique, `ensure` (#305).
+
+    `start-branch` a porté la purge de #23 à #305. Garder ce second point d'appel, injoignable
+    depuis #181, est exactement ce qui a rendu la panne invisible : le code était là, la doc le
+    décrivait, et plus rien ne l'exécutait.
+    """
+    depot.git("branch", "chore/140-livree")
+    depot.impose_mr({"chore/140-livree": "merged"})
+
+    acheve = depot.lib("start-branch", "chore/153-suite")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Nettoyage des branches" not in acheve.stdout
+    assert "chore/140-livree" in depot.git("branch", "--list", "chore/140-livree")
 
 
 # --- Cycle de vie posé sur le verdict du ramassage (#275) ------------------------------------

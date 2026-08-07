@@ -28,8 +28,10 @@
 # traverse. Elle viderait alors le .venv et le node_modules du CLONE PRINCIPAL. `remove` délie
 # d'abord, puis retire.
 #
-# Ce script ne supprime jamais une branche : c'est le rôle de /branch-cleanup, après confirmation
-# du merge par GitLab (docs/10-workflow-git.md §6).
+# Retirer un worktree ne supprime jamais sa branche : ni `create`, ni `remove`, ni `gc` n'y touchent.
+# La seule suppression de branche du script est la purge que `ensure` délègue à `lib.sh
+# cleanup-merged` (#305, docs/10 §9.5) — et elle ne porte que sur les branches dont GitLab confirme
+# la MR mergée, jamais sur celle du worktree qu'on monte (docs/10-workflow-git.md §6).
 #
 # Le cycle de vie se REFERME tout seul (#197). Un worktree pèse ~535 Mo (dont 93 % de node_modules
 # installé sur place) et #181 en a fait la voie par défaut de tout ticket : sans ramassage, un run
@@ -578,13 +580,36 @@ commande_ensure() {
   maj_dependances
 
   # Ramassage des worktrees soldés (#197), AVANT de monter celui-ci et quel que soit le verdict qui
-  # suivra : c'est le seul moment où quelqu'un passe par ici à coup sûr, et le pendant exact du
-  # `cleanup-merged` que `start-branch` fait aux branches juste après. Best-effort et muet quand il
-  # n'y a rien à dire — un ramassage qui échoue ne doit pas empêcher un ticket de démarrer. En
+  # suivra : c'est le seul moment où quelqu'un passe par ici à coup sûr. Best-effort et muet quand
+  # il n'y a rien à dire — un ramassage qui échoue ne doit pas empêcher un ticket de démarrer. En
   # `--auto` il n'écrit que des lignes de compte rendu, jamais un verdict : le contrat « dernière
   # ligne de stdout » d'`ensure` reste tenu.
   if [ "${MAESTRO_WORKTREE_GC:-1}" != 0 ]; then
     commande_gc --auto || true
+  fi
+
+  # Purge des branches locales mergées (#23), APRÈS le ramassage ci-dessus — l'ordre n'est pas
+  # cosmétique : `git branch -D` refuse une branche empruntée par un worktree, donc la branche d'un
+  # ticket soldé n'est supprimable qu'une fois son worktree parti.
+  #
+  # Le pendant, pour les branches, de ce que les trois blocs précédents font à `main` (#205), aux
+  # dépendances (#216) et aux worktrees (#197) — et le dernier de la famille à être recâblé ici
+  # (#305). Il vivait dans `lib.sh start-branch`, appelé à l'étape suivante de /ticket-start, mais
+  # depuis #181 la session est déjà relocalisée quand cet appel arrive : `start-branch` sort par
+  # « déjà sur la branche » ou par sa voie worktree, jamais par celle qui purgeait. Plus rien ne
+  # supprimait de branche sans un /branch-cleanup manuel, et 35 s'étaient accumulées.
+  #
+  # Best-effort et muet quand il n'y a rien à faire (`--auto`), comme les trois autres. Coûte une
+  # lecture `glab` par branche locale — l'ordre de grandeur du ramassage juste au-dessus, qui en
+  # fait une par worktree, et c'est justement parce que la purge tourne à nouveau que ce nombre
+  # reste petit. `MAESTRO_PURGE_BRANCHES=0` pour l'éteindre.
+  #
+  # Seul stdout est repris, réindenté au niveau du rapport (les lignes du helper sont conçues pour
+  # être lues seules) ; ses abstentions partent sur stderr et y restent, comme celles de sync-main.
+  local sortie_purge
+  if [ "${MAESTRO_PURGE_BRANCHES:-1}" != 0 ]; then
+    sortie_purge="$(bash "$ICI/../gitlab/lib.sh" cleanup-merged --auto)" || true
+    [ -n "$sortie_purge" ] && printf '%s\n' "$sortie_purge" | sed 's/^ *//; s/^/  /'
   fi
 
   # Déjà au bon endroit ? Le test porte sur la BRANCHE du répertoire courant, jamais sur son

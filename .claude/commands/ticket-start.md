@@ -83,10 +83,12 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      arrête-toi et rapporte le message, qui nomme la cause.
 
    Au passage, `ensure` **ramasse les worktrees dont le travail est soldé** (MR mergée ou ticket
-   fermé, confirmé par `glab` — #197, docs/10 §9.2), comme `start-branch` purge les branches
-   mergées à l'étape suivante. Muet quand il n'y a rien à faire ; s'il **signale** un worktree
-   conservé parce qu'il porte du travail non sauvegardé, relaie-le dans ton résumé — c'est du
-   travail que personne n'attend plus là.
+   fermé, confirmé par `glab` — #197, docs/10 §9.2), puis **purge les branches locales déjà
+   mergées** (#305, docs/10 §9.5 — dans cet ordre, `git branch -D` refusant une branche empruntée
+   par un worktree ; même garde-fou que `/branch-cleanup` : uniquement celles dont GitLab confirme
+   la MR `merged`). Muets quand il n'y a rien à faire ; s'il **signale** un worktree conservé parce
+   qu'il porte du travail non sauvegardé, ou une branche mergée retenue par un worktree, relaie-le
+   dans ton résumé — c'est du travail que personne n'attend plus là.
 
    Il **remet aussi les dépendances du clone principal à niveau** quand le dépôt en a ajouté
    (#216, docs/10 §9.4) — en appelant `scripts/setup.sh`, jamais `pip`/`npm` à la main. Muet quand
@@ -100,8 +102,7 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    navigateur, passe-les explicitement, ou ouvre une session neuve sur le worktree (qui, elle,
    chargera son `settings.local.json`).
 
-3. **Branche** — un seul appel, qui met `main` à jour, purge les branches déjà mergées et crée (ou
-   rejoint) la branche proposée :
+3. **Branche** — un seul appel, qui met `main` à jour et crée (ou rejoint) la branche proposée :
    ```
    bash scripts/gitlab/lib.sh start-branch <branche-proposée>
    ```
