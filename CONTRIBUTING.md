@@ -125,7 +125,8 @@ git fetch origin main && git rebase origin/main
   `bash scripts/gitlab/lib.sh set-reviewer <mr|branche> [username]`.
 - **Le merge est toujours une décision humaine** — jamais un agent, jamais automatique. La
   condition technique est un **pipeline vert**.
-- **Pipeline rouge ?** `/pipeline-fix` diagnostique et corrige ce qui l'est en local.
+- **MR bloquée ?** `/mr-fix` la rend mergeable : il résout le conflit avec `origin/main` s'il y en
+  a un, puis remet le pipeline au vert pour ce qui est corrigeable en local.
 - **Après le merge** : `/branch-cleanup` supprime la branche **locale**, revient sur `main` à jour
   et passe le ticket « Terminé ». La branche **distante**, elle, est supprimée par GitLab au merge
   (la MR est créée avec « supprimer la branche source »). Le merge **ferme** le ticket mais ne le

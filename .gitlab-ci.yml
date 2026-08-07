@@ -24,7 +24,7 @@
 #     est ouverte. C'est ce pipeline que regarde `only_allow_merge_if_pipeline_succeeds`, donc le
 #     garde-fou « pipeline vert avant merge » est intact ;
 #   - web / api : déclenchement MANUEL et explicite (bouton « Run pipeline », `glab ci run -b …`
-#     — le repli de /pipeline-fix quand un push n'a pas produit de pipeline). Jamais automatique.
+#     — le repli de /mr-fix quand un push n'a pas produit de pipeline). Jamais automatique.
 # Tout le reste — push sur une branche sans MR, push sur `main` après merge, tags — ne déclenche
 # plus rien. Vérifier son travail AVANT d'ouvrir la MR se fait en local avec `scripts/ci/local.sh`,
 # qui rejoue ces mêmes jobs sur le poste. Détail : docs/10-workflow-git.md §8.

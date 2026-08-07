@@ -1282,7 +1282,7 @@ gl_issue_note() {
 }
 
 # --- Pipelines CI ---------------------------------------------------------------------------------
-# Helpers REST pour le diagnostic de pipeline (/pipeline-fix — voir docs/10-workflow-git.md §8).
+# Helpers REST pour le diagnostic de pipeline (/mr-fix — voir docs/10-workflow-git.md §8.3).
 # Même parti pris que le reste du fichier : parsing shell pur (grep/sed/awk), pas de jq/python.
 
 # gl_project_enc -> chemin du projet URL-encodé pour l'API REST ("groupe%2Fprojet").
@@ -2073,6 +2073,84 @@ gl_behind_main() {
   return 3
 }
 
+# --- Conflit réel avec origin/main --------------------------------------------------------------
+# gl_mr_conflict [branche] -> « cette branche se merge-t-elle proprement dans origin/main ? », le
+# verdict RÉEL, à consulter avant de remédier une MR (/mr-fix, docs/10 §8.3). Purement CONSULTATIF
+# et en lecture seule : ni checkout, ni index touché, ni écriture — d'où l'appel possible depuis le
+# clone principal comme depuis un worktree, sur une branche qu'on ne sort jamais.
+#
+# Le verdict vient de `git merge-tree --write-tree`, qui joue un VRAI merge 3-way en base d'objets.
+# C'est ce qui le sépare des deux sources déjà présentes, et pourquoi aucune des deux ne suffisait :
+#   • gl_behind_main (ci-dessus) est une heuristique de FICHIERS — modifiés des deux côtés —,
+#     pessimiste par construction : elle est vraie presque partout sur les fichiers aimants du dépôt
+#     (CLAUDE.md, docs/10-workflow-git.md, ce fichier-ci), donc sans valeur prédictive. Elle répond
+#     par ailleurs à une autre question, posée AVANT le push, quand le conflit naît des merges qui
+#     suivent ;
+#   • `has_conflicts`/`detailed_merge_status` de GitLab est ASYNCHRONE : à la mesure du 2026-08-07,
+#     5 MR ouvertes sur 6 répondaient `checking` ou `unchecked`. Il se lit en complément, jamais en
+#     source unique, et surtout jamais en l'attendant.
+#
+# Forme de la sortie de git, sur laquelle repose le parsing (mesurée, git 2.50) : ligne 1 = l'OID de
+# l'arbre produit, puis un chemin en conflit par ligne, puis une LIGNE VIDE qui sépare des messages
+# (« CONFLICT (content): … »). D'où la lecture « à partir de la ligne 2, jusqu'à la première ligne
+# vide ».
+#
+# Codes de retour, alignés sur gl_behind_main — un code non nul est un CONSTAT, pas une erreur :
+#   0 = se merge proprement           3 = conflit (fichiers listés)
+#   2 = usage                         1 = état illisible (pas d'origin/main, histoires sans ancêtre
+#                                         commun — que git rend en 128, à ne pas confondre avec le
+#                                         1 d'un conflit)
+# À appeler en `bash … mr-conflict || echo "verdict=$?"` pour lire le verdict sans interrompre une
+# remédiation sous `set -e`.
+gl_mr_conflict() {
+  local branche="${1:-}" sortie rc fichiers nb
+  branche="${branche:-$(git branch --show-current 2>/dev/null)}"
+  if [ -z "$branche" ]; then
+    echo "gl_mr_conflict : branche indéterminée (HEAD détachée ?) — la préciser en argument." >&2
+    return 2
+  fi
+  case "$branche" in
+    main|master)
+      printf 'Branche « %s » : rien à merger dans origin/main.\n' "$branche"
+      return 0 ;;
+  esac
+
+  # Fetch non bloquant (jamais de prompt d'identifiants), même politique que gl_behind_main : sans
+  # réseau on tranche contre le dernier origin/main connu, ce qui reste plus utile que se taire.
+  GIT_TERMINAL_PROMPT=0 git fetch origin main >/dev/null 2>&1
+  if ! git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+    echo "gl_mr_conflict : origin/main introuvable — contrôle de conflit sauté." >&2
+    return 1
+  fi
+  if ! git rev-parse --verify --quiet "$branche" >/dev/null 2>&1; then
+    echo "gl_mr_conflict : branche « $branche » introuvable." >&2
+    return 1
+  fi
+
+  sortie="$(git merge-tree --write-tree --name-only origin/main "$branche" 2>&1)"
+  rc=$?
+  case "$rc" in
+    0)
+      printf 'Branche « %s » : se merge proprement dans origin/main.\n' "$branche"
+      return 0 ;;
+    1) ;;  # conflit — seul cas où l'on poursuit
+    *)
+      # 128 & consorts : histoires sans ancêtre commun, ref illisible… Ce n'est pas un conflit, et
+      # le dire serait un faux positif qui enverrait /mr-fix résoudre un merge impossible.
+      printf 'gl_mr_conflict : merge impossible à évaluer (git a rendu %s) — %s\n' \
+        "$rc" "$(printf '%s\n' "$sortie" | tail -1)" >&2
+      return 1 ;;
+  esac
+
+  fichiers="$(printf '%s\n' "$sortie" | awk 'NR == 1 { next } /^$/ { exit } { print }')"
+  nb="$(printf '%s\n' "$fichiers" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+  printf "⚠ Branche « %s » en conflit avec origin/main — %s fichier(s) :\n" "$branche" "$nb"
+  printf '%s\n' "$fichiers" | sed '/^$/d; s/^/    - /'
+  printf '  résolution proposée (merge, jamais rebase — un rebase appellerait un force-push) :\n'
+  printf '    git merge origin/main\n'
+  return 3
+}
+
 # --- Garde-fou de clôture : la session traite-t-elle bien ce ticket ? ----------------------------
 # gl_branch_iid [branche] -> imprime l'iid porté par le NOM de la branche (motif
 # `<type>/<iid>-<slug>`, docs/10 §2), et rien (code 1) si le nom n'en porte pas — `main`, branche
@@ -2227,6 +2305,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     start-branch)   gl_start_branch "$@" ;;
     sync-main)      gl_sync_main "$@" ;;
     behind-main)    gl_behind_main "$@" ;;
+    mr-conflict)    gl_mr_conflict "$@" ;;
     branch-iid)     gl_branch_iid "$@" ;;
     close-guard)    gl_close_guard "$@" ;;
     get-description)    gl_get_description "$@" ;;
@@ -2301,6 +2380,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
       echo "    worktree-done <iid> [branche] (fini|actif|inconnu + sha de merge + raison — fin de vie d'un worktree)" >&2
       echo "    behind-main [branche]       (retard sur origin/main + conflit probable ; 0=à jour, 3=en retard, 4=+conflit)" >&2
+      echo "    mr-conflict [branche]       (conflit RÉEL avec origin/main via merge-tree ; 0=propre, 3=conflit)" >&2
       echo "  Garde-fou de clôture (session ↔ ticket, avant toute écriture de /ticket-finish|ship) :" >&2
       echo "    branch-iid [branche]        (iid porté par le nom de la branche ; rien si hors convention)" >&2
       echo "    close-guard <iid> [branche] (0=cohérent, 3=autre ticket, 4=ticket d'un tiers, 5=branche sans iid, 1=ticket illisible)" >&2
