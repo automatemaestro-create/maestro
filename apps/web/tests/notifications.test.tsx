@@ -47,15 +47,17 @@ describe("le résumé d'un événement (lib/evenements)", () => {
           agent: "qa",
         }),
       ),
-    ).toBe("Écrire les tests réassignée à qa");
+    ).toBe("« Écrire les tests » est confiée à qa");
   });
 
-  it("traduit le statut d'une tâche en français", () => {
+  it("dit qui a fait quoi plutôt qu'un identifiant suivi d'un statut", () => {
+    // #250 : « tache-42 — Terminée (dev) » est le vocabulaire du bus, pas celui
+    // de quelqu'un qui regarde travailler son équipe.
     expect(
       resumeEvenement(
         evenementFactice({ type: EVENEMENT_TACHE_STATUT, statut: "terminee" }),
       ),
-    ).toBe("Écrire les tests — Terminée (dev)");
+    ).toBe("dev a terminé « Écrire les tests »");
   });
 
   it("dit l'activation d'un agent et son nombre d'instances", () => {
@@ -68,7 +70,7 @@ describe("le résumé d'un événement (lib/evenements)", () => {
           instances: 3,
         }),
       ),
-    ).toBe("dev — activé, 3 instance(s)");
+    ).toBe("dev est activé — jusqu'à 3 tâche(s) en parallèle");
   });
 
   it("dit la désactivation sans inventer d'instances", () => {
@@ -81,7 +83,7 @@ describe("le résumé d'un événement (lib/evenements)", () => {
           instances: null,
         }),
       ),
-    ).toBe("dev — désactivé");
+    ).toBe("dev est désactivé et ne recevra plus de tâches");
   });
 
   it("distingue une validation approuvée d'une refusée", () => {
@@ -92,7 +94,7 @@ describe("le résumé d'un événement (lib/evenements)", () => {
           statut: "approuvee",
         }),
       ),
-    ).toContain("validation approuvée");
+    ).toContain("Vous avez approuvé");
     expect(
       resumeEvenement(
         evenementFactice({
@@ -100,7 +102,7 @@ describe("le résumé d'un événement (lib/evenements)", () => {
           statut: "refusee",
         }),
       ),
-    ).toContain("validation refusée");
+    ).toContain("Vous avez refusé");
   });
 
   it("se rabat sur le tache_id quand l'événement n'a pas de titre", () => {
@@ -113,7 +115,7 @@ describe("le résumé d'un événement (lib/evenements)", () => {
           agent: "qa",
         }),
       ),
-    ).toBe("T-42 réassignée à qa");
+    ).toBe("« T-42 » est confiée à qa");
   });
 
   it("reste lisible sur un type d'événement inconnu", () => {
@@ -311,7 +313,7 @@ describe("la cloche (CentreNotifications)", () => {
     expect(
       within(panneau).getByText("Aucune validation en attente."),
     ).toBeInTheDocument();
-    expect(within(panneau).getByText(/Terminée/)).toBeInTheDocument();
+    expect(within(panneau).getByText(/a terminé/)).toBeInTheDocument();
   });
 
   it("ne liste dans l'activité que les événements notables", async () => {

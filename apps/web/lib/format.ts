@@ -95,6 +95,43 @@ export function formatDateHeure(horodatage: string): string {
   return date.toLocaleString("fr-FR");
 }
 
+const MINUTE_MS = 60_000;
+const HEURE_MS = 60 * MINUTE_MS;
+const JOUR_MS = 24 * HEURE_MS;
+const SEMAINE_MS = 7 * JOUR_MS;
+
+/**
+ * L'âge d'un horodatage, dit **relativement au-delà de la minute** (#250) — « il
+ * y a 3 min », « il y a 2 h ». Sous la minute l'heure exacte reste plus parlante
+ * qu'un « à l'instant » (c'est la ligne qui vient d'arriver, on veut son heure) ;
+ * au-delà de la semaine on repasse à la date complète, « il y a 23 j » ne
+ * situant plus rien.
+ *
+ * `maintenant` est passé par l'appelant plutôt que lu ici : c'est ce qui rend la
+ * fonction pure (donc testable sans horloge truquée) et ce qui permet à une
+ * liste entière de partager le même instant. `null` signifie « pas encore
+ * d'horloge » — rendu serveur ou première image avant l'hydratation, où
+ * `Date.now()` diffère des deux côtés (voir `useHorloge`) : on rend alors
+ * l'heure absolue, qui, elle, est la même partout.
+ */
+export function formatHeureRelative(
+  horodatage: string,
+  maintenant: number | null,
+): string {
+  if (!horodatage) return "";
+  const date = new Date(horodatage);
+  if (Number.isNaN(date.getTime())) return horodatage;
+  if (maintenant === null) return formatHeure(horodatage);
+  // Un âge négatif (horloges désaccordées entre le poste et le backend) tombe
+  // dans le même cas que « à la minute » : on n'écrit pas « il y a -2 min ».
+  const age = maintenant - date.getTime();
+  if (age < MINUTE_MS) return formatHeure(horodatage);
+  if (age < HEURE_MS) return `il y a ${Math.floor(age / MINUTE_MS)} min`;
+  if (age < JOUR_MS) return `il y a ${Math.floor(age / HEURE_MS)} h`;
+  if (age < SEMAINE_MS) return `il y a ${Math.floor(age / JOUR_MS)} j`;
+  return formatDateHeure(horodatage);
+}
+
 /** Libellés français des statuts de tâche (machine à états docs/03 §3). */
 const LIBELLES_STATUT: Record<string, string> = {
   assignee: "Assignée",

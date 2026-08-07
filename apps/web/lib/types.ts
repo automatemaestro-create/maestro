@@ -515,6 +515,13 @@ export const EVENEMENT_VALIDATION_DEMANDE = "validation.demande";
 export const EVENEMENT_VALIDATION_DECISION = "validation.decision";
 export const EVENEMENT_CHAT_MESSAGE = "chat.message";
 /**
+ * Le cycle de vie d'un run piloté par l'API (#185, `EVENEMENT_EXECUTION_STATUT`
+ * côté moteur) : `statut` l'état résultant (`EXECUTION_*`), `titre` l'objectif et
+ * `detail` la raison. Le backend le diffuse depuis #185 ; le front l'ignorait
+ * jusqu'à #250, où il retombait sur la garde des types inconnus.
+ */
+export const EVENEMENT_EXECUTION_STATUT = "execution.statut";
+/**
  * L'apparition d'une proposition d'auto-amélioration de playbook (#183) : un
  * signal **global** (sans `run_id`) que l'UI badge et pousse en notification —
  * `agent` le fil, `role` son rôle, `statut` le numéro de brouillon, `detail` la

@@ -13,9 +13,9 @@
  */
 
 import { IconeActivite } from "@/components/Icones";
+import { LigneActivite } from "@/components/LigneActivite";
 import { EnTeteSection, LienRenvoi } from "@/components/Primitives";
-import { iconeEvenement, resumeEvenement } from "@/lib/evenements";
-import { formatHeure } from "@/lib/format";
+import { grouperEvenements } from "@/lib/evenements";
 import { type Evenement } from "@/lib/types";
 
 export function FilActivite({
@@ -29,9 +29,16 @@ export function FilActivite({
   /** Page où le fil se consulte en entier, si elle existe. */
   renvoi?: { href: string; libelle: string };
 }) {
-  const affiches =
-    limite === undefined ? evenements : evenements.slice(0, limite);
-  const masques = evenements.length - affiches.length;
+  // La limite borne des **lignes**, pas des événements : une rafale repliée
+  // (#250) en occupe une seule. Le compte masqué, lui, reste en événements —
+  // c'est ce qu'on va chercher en ouvrant le fil complet.
+  const groupes = grouperEvenements(evenements);
+  const affiches = limite === undefined ? groupes : groupes.slice(0, limite);
+  const montres = affiches.reduce(
+    (total, groupe) => total + groupe.evenements.length,
+    0,
+  );
+  const masques = evenements.length - montres;
 
   return (
     <section data-guide="activite" aria-label="Activité en direct">
@@ -52,23 +59,9 @@ export function FilActivite({
         }
       />
       <ol className="space-y-1 text-corps">
-        {affiches.map((evenement, index) => {
-          const Icone = iconeEvenement(evenement);
-          return (
-            <li
-              key={`${evenement.horodatage}-${index}`}
-              className="flex items-center gap-2 rounded px-1 py-0.5"
-            >
-              <span className="chiffre shrink-0 font-mono text-annexe text-neutral-400 dark:text-neutral-500">
-                {formatHeure(evenement.horodatage)}
-              </span>
-              <Icone className="size-4 shrink-0 text-neutral-400 dark:text-neutral-500" />
-              <span className="min-w-0 truncate" title={evenement.detail || undefined}>
-                {resumeEvenement(evenement)}
-              </span>
-            </li>
-          );
-        })}
+        {affiches.map((groupe) => (
+          <LigneActivite key={groupe.cle} groupe={groupe} />
+        ))}
         {affiches.length === 0 && (
           <li className="text-corps text-neutral-500">
             Aucun événement reçu pour l&apos;instant.
