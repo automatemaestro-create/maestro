@@ -18,16 +18,21 @@
  *    et rendraient l'ordre d'exécution signifiant. Tout est remis à zéro ici,
  *    plutôt que dans chaque fichier.
  * 4. **Le réseau débranché** — `useControlTower` et `useChat` ouvrent un
- *    WebSocket et appellent l'API REST. C'est la plomberie des tickets #47 et
- *    #85, pas ce que la refonte a changé : les tests la remplacent globalement
- *    par un état immobile que chacun règle (`poserEtatGlobal`,
- *    `poserFilAssistance`), si bien qu'aucun test n'a besoin de backend ni de
- *    faux serveur. Le vrai va-et-vient réseau reste couvert de bout en bout par
- *    le skill `/verify`.
+ *    WebSocket et appellent l'API REST, et la porte d'entrée du shell (#279)
+ *    lit les projets déclarés. C'est la plomberie des tickets #47, #85 et #223,
+ *    pas ce que la refonte a changé : les tests la remplacent globalement par un
+ *    état immobile que chacun règle (`poserEtatGlobal`, `poserFilAssistance`,
+ *    `poserProjets`), si bien qu'aucun test n'a besoin de backend ni de faux
+ *    serveur. Le vrai va-et-vient réseau reste couvert de bout en bout par le
+ *    skill `/verify`.
+ * 5. **De quoi attendre sur un runner chargé** — voir `asyncUtilTimeout`
+ *    ci-dessous : le verdict de la suite ne doit pas dépendre de la charge de la
+ *    machine qui la joue.
  */
 
 import "@testing-library/jest-dom/vitest";
 
+import { configure } from "@testing-library/dom";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 
@@ -40,8 +45,23 @@ import {
   poserChemin,
   poserEtatGlobal,
   poserFilAssistance,
+  poserProjets,
+  projetsDeclares,
   routeurFactice,
 } from "./aides";
+
+// Le budget d'attente des `findBy*`/`waitFor` — 1 s par défaut, ce qui est une
+// mesure du *poste* et non du code. Sur le runner CI partagé, les 14 fichiers
+// tournent en parallèle et une même assertion qui se résout ici en ~50 ms y
+// demande 1 à 3,7 s : le premier test d'un fichier, qui paie en plus le premier
+// rendu de son arbre, franchit la seconde et échoue seul, en laissant une
+// capture DOM figée sur l'état de chargement (`projet-actif.test.tsx`, #279).
+// C'est la règle générale du dépôt (docs/10 §8) : le verdict de la suite ne
+// dépend pas de la machine qui la joue — donc on élargit l'attente au lieu de
+// retoucher l'assertion, qui, elle, disait vrai. Ce n'est pas de la patience
+// gratuite : rien n'attend jamais ce budget quand le rendu arrive, il ne coûte
+// que sur un test déjà rouge.
+configure({ asyncUtilTimeout: 5_000 });
 
 // Déclarés ici plutôt que dans chaque fichier : les hooks réseau ne sont jamais
 // réels en test. Les mocks lisent l'état à CHAQUE rendu (et non une fois pour
@@ -60,6 +80,27 @@ vi.mock("@/lib/useControlTower", async (original) => ({
 vi.mock("@/lib/useChat", () => ({
   useChat: () => filAssistanceCourant(),
 }));
+
+// La porte d'entrée (#279) lit les projets déclarés à chaque montage du shell :
+// sans ce mock, *tous* les tests qui rendent le shell tapent le réseau. Seule
+// cette lecture est remplacée — `importOriginal` garde `ErreurProjet` **la**
+// classe du module (sinon le `instanceof` qui distingue un refus motivé d'une
+// panne réseau ne reconnaîtrait plus rien) et les autres routes intactes. Un
+// fichier de test qui a besoin de plus mocke `@/lib/api` chez lui, ce qui prend
+// alors le pas sur cette déclaration (`tests/projets.test.tsx`,
+// `tests/projet-actif.test.tsx`).
+//
+// ⚠ Ce dernier point ne tient qu'à une condition : `@/lib/api` ne doit pas être
+// **importé** par ce fichier ni par `./aides`, fût-ce en transitif. Un module
+// déjà évalué garde le client réel, et le mock d'un fichier de test, enregistré
+// plus tard, n'a plus rien à remplacer — les mocks locaux redeviennent alors
+// silencieusement inopérants. C'est pour cela que la mémoire du projet actif
+// (`lib/projetActif`) est séparée de sa résolution (`lib/etatProjetActif`) :
+// `./aides` n'a besoin que de la première, qui ne dépend de rien.
+vi.mock("@/lib/api", async (importOriginal) => {
+  const reel = await importOriginal<typeof import("@/lib/api")>();
+  return { ...reel, chargerProjets: () => Promise.resolve(projetsDeclares()) };
+});
 
 // Hors d'un routeur Next, `usePathname` et `useRouter` n'ont pas de contexte :
 // la sidebar et la barre supérieure lisent le premier pour désigner la page
@@ -81,6 +122,7 @@ beforeEach(() => {
   poserEtatGlobal();
   poserFilAssistance();
   poserChemin("/");
+  poserProjets([]);
   navigations.length = 0;
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");

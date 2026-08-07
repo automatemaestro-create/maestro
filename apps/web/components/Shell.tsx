@@ -8,6 +8,10 @@
  *
  * Le repli de la sidebar est tenu ici : la sidebar en dépend pour sa largeur,
  * la barre supérieure porte le bouton qui le bascule.
+ *
+ * Depuis #279 le shell porte aussi la **garde du projet actif** : tant qu'aucun
+ * projet n'est choisi, c'est la porte d'entrée qui occupe l'écran et le cadre
+ * ci-dessous n'est pas monté du tout.
  */
 
 import { useEffect, useState } from "react";
@@ -19,7 +23,9 @@ import { BasculeTheme } from "@/components/BasculeTheme";
 import { CentreNotifications } from "@/components/CentreNotifications";
 import { GuidePriseEnMain } from "@/components/GuidePriseEnMain";
 import { MenuAide } from "@/components/MenuAide";
+import { ChoixProjet, EcranOuverture } from "@/components/projets/ChoixProjet";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
+import { FournisseurProjetActif, useProjetActif } from "@/lib/etatProjetActif";
 import {
   ecouterRepliSidebar,
   ecrireRepliSidebar,
@@ -27,6 +33,34 @@ import {
 } from "@/lib/preferences";
 
 export function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <FournisseurProjetActif>
+      <PorteProjet>{children}</PorteProjet>
+    </FournisseurProjetActif>
+  );
+}
+
+/**
+ * La garde de #279 : pas de projet actif, pas de Control Tower.
+ *
+ * C'est une garde de **shell** et non une redirection, et c'est ce qui rend le
+ * troisième critère gratuit : l'URL demandée ne bouge pas, si bien qu'un lien
+ * profond ou un rechargement retrouve sa page dès le choix fait — rien à
+ * mémoriser, rien vers quoi renvoyer, aucun aller-retour à défaire dans
+ * l'historique du navigateur.
+ *
+ * Le cadre entier est **sous** la garde, `FournisseurEtatGlobal` compris : la
+ * porte d'entrée n'ouvre donc ni WebSocket ni lecture d'API globale, alors que
+ * la portée projet de ces lectures (#277) n'est pas encore connue.
+ */
+function PorteProjet({ children }: { children: React.ReactNode }) {
+  const { projet, pret } = useProjetActif();
+  if (!pret) return <EcranOuverture />;
+  if (projet === null) return <ChoixProjet />;
+  return <CadreControlTower>{children}</CadreControlTower>;
+}
+
+function CadreControlTower({ children }: { children: React.ReactNode }) {
   const [repliee, setRepliee] = useState(false);
 
   // Lu après l'hydratation : le rendu serveur ne connaît pas le localStorage,
