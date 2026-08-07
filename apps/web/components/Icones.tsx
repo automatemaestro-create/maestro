@@ -525,3 +525,18 @@ export function IconeFlecheHaut(props: Props) {
     </Trait>
   );
 }
+
+/**
+ * Chevron d'ouverture d'un menu déroulant — pointe vers le bas (#280).
+ *
+ * Ce qui distingue le sélecteur de projet d'un simple libellé : sans cette
+ * pointe, la barre supérieure affiche le projet actif sans laisser deviner
+ * qu'on peut en changer là.
+ */
+export function IconeChevronBas(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="m6 9.5 6 6 6-6" />
+    </Trait>
+  );
+}

@@ -152,7 +152,23 @@ function CarteProjet({
   );
 }
 
-export function ListeProjets() {
+type Props = {
+  /**
+   * Appelé après **chaque écriture** (déclaration, modification, suppression) —
+   * l'écran ne connaît toujours pas le projet actif, il signale seulement que la
+   * liste réelle a bougé.
+   *
+   * C'est ce qui rend l'écran atteignable depuis le sélecteur (#280) sans
+   * régression : supprimer la racine sur laquelle la Control Tower est ouverte
+   * doit ramener à la porte d'entrée avec son motif (#279), là où sans ce
+   * signal le shell resterait le cadre d'un projet qui n'existe plus. Le rappel
+   * est **optionnel** pour que l'écran continue de se tester seul, hors de tout
+   * fournisseur.
+   */
+  apresEcriture?: () => void;
+};
+
+export function ListeProjets({ apresEcriture }: Props = {}) {
   const [projets, setProjets] = useState<Projet[]>([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
@@ -177,16 +193,23 @@ export function ListeProjets() {
     return () => clearTimeout(tick);
   }, [recharger]);
 
+  // La relecture d'après écriture, distincte de celle du montage : seule
+  // celle-ci porte un changement, et donc seule elle a quelqu'un à prévenir.
+  const rechargerApresEcriture = useCallback(async () => {
+    await recharger();
+    apresEcriture?.();
+  }, [recharger, apresEcriture]);
+
   const declarer = async (declaration: DeclarationProjet) => {
     await creerProjet(declaration);
     setCreationOuverte(false);
-    await recharger();
+    await rechargerApresEcriture();
   };
 
   const modifier = async (id: string, declaration: DeclarationProjet) => {
     await modifierProjet(id, declaration);
     setEditionId(null);
-    await recharger();
+    await rechargerApresEcriture();
   };
 
   return (
@@ -259,7 +282,7 @@ export function ListeProjets() {
                     setEditionId(projet.id);
                     setCreationOuverte(false);
                   }}
-                  onSupprime={recharger}
+                  onSupprime={rechargerApresEcriture}
                 />
               ),
             )}

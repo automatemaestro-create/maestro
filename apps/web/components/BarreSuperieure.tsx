@@ -28,6 +28,17 @@ type Props = {
   /** Sidebar repliée (état tenu par le shell). */
   repliee: boolean;
   basculerRepli: () => void;
+  /**
+   * Sélecteur du projet actif (#280) — à **gauche**, avant le titre : il porte
+   * le cadre dans lequel la page se lit, la page vient après. Optionnel comme
+   * les autres emplacements, mais sans place réservée : contrairement à la
+   * cloche de #119, il n'attend aucun lot suivant.
+   *
+   * Nommé `selecteurProjet` et non `projet` : ce dernier désigne déjà, dans ce
+   * composant, le projet actif lu dans l'état global (#281) — deux `projet` de
+   * natures différentes (un nœud, un objet de domaine) dans la même portée.
+   */
+  selecteurProjet?: ReactNode;
   /** Cloche de notifications — lot #119. */
   notifications?: ReactNode;
   /** Bascule clair / sombre / système (#118). */
@@ -39,6 +50,7 @@ type Props = {
 export function BarreSuperieure({
   repliee,
   basculerRepli,
+  selecteurProjet,
   notifications,
   theme,
   aide,
@@ -65,6 +77,10 @@ export function BarreSuperieure({
           <IconeReplier className="size-5" />
         )}
       </button>
+      {selecteurProjet}
+      {/* Les deux rétrécissent ensemble (`min-w-0 truncate`) : sur une fenêtre
+          étroite, un nom de projet long ne doit pas pousser le titre de page
+          hors de la barre, ni l'inverse. */}
       <h1
         title={titre}
         className="min-w-0 truncate text-base font-semibold tracking-tight"

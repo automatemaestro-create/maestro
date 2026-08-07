@@ -294,6 +294,7 @@ le bout en bout dans un vrai navigateur reste le rôle du skill `/verify`.
 | `tests/parametres-mcp.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231) |
 | `tests/projets.test.tsx` | L'écran Projets : racine choisie dans l'explorateur servi par l'API (jamais saisie), refus motivé qui ne casse ni la liste ni la navigation, dossier vide distinct d'un refus (#225) |
 | `tests/projet-actif.test.tsx` | La porte d'entrée : aucun écran n'est atteint sans projet actif, le choix retenu est confronté à l'état réel, et la page demandée revient sans redirection (#279) |
+| `tests/selecteur-projet.test.tsx` | Le sélecteur du shell : bascule sans quitter la page, gestion atteinte sans chemin en dur, et « Projets » sorti de la sidebar sans que son écran cesse d'être servi ni titré (#280) |
 
 Deux fichiers portent l'outillage plutôt que des tests :
 
@@ -325,6 +326,11 @@ qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
   routeur (#279). La garde du shell et une redirection vers un écran de choix
   donnent le même parcours à l'écran ; seule cette assertion distingue les deux,
   et c'est elle qui garantit qu'un lien profond retrouve sa page ;
+- celui qui exige qu'une page **sortie du menu** garde son titre et sa route
+  (#280). Retirer « Projets » de `MENU` la rendait anonyme (« Control Tower »)
+  sans rien casser d'autre : le chemin répondait encore, le lint et le build
+  aussi. C'est `HORS_MENU` qui sépare « pas dans la sidebar » de « pas dans
+  l'application », et seule cette paire d'assertions le garde ;
 - celui qui exige que les champs secrets de la bibliothèque MCP soient enfermés
   dans un `<form>` et la recherche **dehors** (#231). Un `<input type="password">`
   sans propriétaire de formulaire est apparié par le navigateur aux champs texte
