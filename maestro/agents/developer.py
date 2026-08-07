@@ -20,7 +20,11 @@ from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* Développeur : son playbook « du code » (#295), le
 #: document `playbooks_defaut/developpeur.md` — régime sénior commun compris. C'est
-#: le même texte que `PLAYBOOK_DEFAUTS["developpeur"]`, par construction.
+#: le même texte que `PLAYBOOK_DEFAUTS["developpeur"]`, par construction. Depuis #296
+#: il porte la part métier du spécialiste : méthode (lire l'existant → poser les
+#: options → trancher → incrémenter → tester), latitude nommée sur l'architecture, les
+#: patrons et les bibliothèques, exigences de tests et de gestion d'erreur, remontée
+#: des dettes et des risques constatés.
 _SYSTEM_PROMPT = playbook_du_code("developpeur")
 
 #: Profil du Développeur : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2),
@@ -37,8 +41,11 @@ DEVELOPER_PROFILE = RoleProfile(
         "Tu travailles dans un répertoire vide et isolé (le répertoire courant). "
         "Écris-y les fichiers du livrable avec tes outils — ne te contente pas "
         "d'afficher du code. Vise un résultat minimal mais réellement exploitable. "
-        "Tranche seul les choix d'implémentation ; si une entrée manque, pose "
-        "l'hypothèse la plus raisonnable et signale-la plutôt que de t'arrêter."
+        "Tranche seul l'architecture, les patrons et les bibliothèques ; si une entrée "
+        "manque, pose l'hypothèse la plus raisonnable et signale-la plutôt que de "
+        "t'arrêter. Écris les tests qui protègent ton choix, lance-les pour de vrai et "
+        "consigne leurs résultats ; traite les cas d'erreur au lieu de les supposer "
+        "absents."
     ),
     consigne_finale=(
         "Quand c'est fait, résume en quelques lignes ce que tu as produit et comment "
@@ -48,5 +55,9 @@ DEVELOPER_PROFILE = RoleProfile(
     # Borne conservatrice (#239) : ses tours sont parmi les plus légers (~10 000
     # tokens le tour, mesuré sur `validation-depenses`, 5 tours) — 40 laisse une
     # marge large sans qu'un emballement coûte cher.
+    # Revérifié à #296 : la méthode de spécialiste ajoute un cycle « écrire les tests →
+    # les lancer → corriger », soit une poignée de tours sur une tâche de cette taille
+    # (ordre de grandeur : 5 mesurés → une quinzaine). La marge reste d'un facteur 2 et
+    # plus — plafond conservé, sans relèvement à l'aveugle.
     plafond_tours=PLAFOND_TOURS_DEFAUT,
 )
