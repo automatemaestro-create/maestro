@@ -31,7 +31,15 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: SCRIPT_INIT_THEME }} />
       </head>
-      <body className="flex min-h-full flex-col">
+      {/* `h-full` et non `min-h-full` (#248) : une hauteur **définie**, et non
+          un simple plancher. C'est ce qui permet à une section de « prendre la
+          hauteur disponible » — sans elle, un descendant en `flex-1` se
+          dimensionne sur son contenu, la page s'allonge, et un
+          `overflow-y-auto` plus bas n'a jamais rien à faire défiler (mesuré :
+          le Kanban montait à 5 198 px au lieu de tenir dans la fenêtre).
+          Le cadre ne défile donc plus lui-même — c'est la zone de contenu du
+          shell qui s'en charge. */}
+      <body className="flex h-full flex-col overflow-hidden">
         <Shell>{children}</Shell>
       </body>
     </html>

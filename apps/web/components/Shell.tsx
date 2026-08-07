@@ -50,9 +50,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <FournisseurEtatGlobal>
-      <div className="flex flex-1">
+      {/* `min-h-0` tout le long (#248) : la hauteur définie posée par le
+          `<body>` ne descend jusqu'aux pages que si chaque élément flex
+          accepte de rétrécir sous son contenu — le `min-height:auto` par
+          défaut le lui interdit, et un seul maillon manquant suffit à rendre
+          la chaîne indéfinie. */}
+      <div className="flex min-h-0 flex-1">
         <BarreLaterale repliee={repliee} />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
           <BarreSuperieure
             repliee={repliee}
             basculerRepli={basculerRepli}
@@ -68,10 +73,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
               `pb-24` : la bande que le bouton de l'assistant (#123) occupe en bas
               à droite est réservée — aucun contenu ne se termine sous lui, donc
               aucune action de la page (décider une validation…) ne finit
-              masquée. */}
+              masquée.
+              `min-h-0 flex-1` : la zone occupe la hauteur du cadre, ce qui
+              donne enfin une hauteur à prendre à une page qui le demande (le
+              Kanban, #248). Ce qui déborde fait défiler la colonne parente —
+              la barre supérieure y reste collée (`sticky`) comme quand c'était
+              la fenêtre qui défilait, et l'ascenseur reste au bord de l'écran
+              plutôt qu'au bord de la colonne centrée. */}
           <main
             data-guide="contenu"
-            className="@container mx-auto flex w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 pb-24 sm:p-6 sm:pb-24"
+            className="@container mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 pb-24 sm:p-6 sm:pb-24"
           >
             {children}
           </main>

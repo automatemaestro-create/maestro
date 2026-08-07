@@ -127,8 +127,11 @@ export function IndicateursTableauDeBord({
       data-guide="indicateurs"
       aria-label="Indicateurs de tête"
       /* Colonnes calées sur la largeur de la zone de contenu (#117), pas sur
-         celle de la fenêtre : la sidebar en prend une part variable. */
-      className="grid grid-cols-1 gap-3 @sm:grid-cols-2 @4xl:grid-cols-4"
+         celle de la fenêtre : la sidebar en prend une part variable.
+         Rangée unique dès `@3xl` (48 rem) et non plus `@4xl` (#248) : les
+         tuiles rendent une rangée entière au tableau des tâches, qui prend
+         désormais la hauteur restante. */
+      className="grid grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-4"
     >
       {indicateurs.map((indicateur) => (
         <Tuile key={indicateur.libelle} indicateur={indicateur} />
@@ -137,16 +140,22 @@ export function IndicateursTableauDeBord({
   );
 }
 
+/**
+ * Une tuile, **resserrée** par #248 : le tableau des tâches prend désormais la
+ * hauteur que la page lui laisse, donc tout ce que cette rangée garde en
+ * hauteur, il le perd. Le chiffre reste ce qu'on voit en premier — c'est
+ * l'espace autour de lui qui se réduit, pas lui.
+ */
 function Tuile({ indicateur }: { indicateur: Indicateur }) {
   return (
-    <article className="flex flex-col rounded-lg border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+    <article className="flex flex-col rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
       <p className="text-xs text-neutral-500 dark:text-neutral-400">
         {indicateur.libelle}
       </p>
       <p
         className={
-          "mt-1 truncate font-semibold " +
-          (indicateur.monospace ? "font-mono text-base" : "text-2xl")
+          "mt-0.5 truncate font-semibold " +
+          (indicateur.monospace ? "font-mono text-sm" : "text-xl")
         }
         title={indicateur.titre}
       >
@@ -158,7 +167,7 @@ function Tuile({ indicateur }: { indicateur: Indicateur }) {
       {indicateur.renvoi && (
         <Link
           href={indicateur.renvoi.href}
-          className="mt-2 text-xs font-medium text-sky-700 hover:underline dark:text-sky-400"
+          className="mt-1.5 text-xs font-medium text-sky-700 hover:underline dark:text-sky-400"
         >
           {indicateur.renvoi.libelle} →
         </Link>

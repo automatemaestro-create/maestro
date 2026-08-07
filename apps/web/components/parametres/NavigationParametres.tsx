@@ -53,11 +53,21 @@ export function NavigationParametres() {
     // déclenche aucun setState synchrone. Rattrape au passage l'ancre d'entrée
     // (`/parametres#agents`), où le navigateur a déjà défilé.
     const tick = setTimeout(surDefilement, 0);
-    window.addEventListener("scroll", surDefilement, { passive: true });
+    // En **capture** (#248) : depuis que le cadre du shell a une hauteur
+    // définie, ce n'est plus la fenêtre qui défile mais la zone de contenu, et
+    // l'événement `scroll` d'un élément ne remonte pas — écouté en phase
+    // montante, celui-ci n'aurait plus jamais été reçu et la mise en évidence
+    // serait restée figée sur la première section. La capture, elle, voit les
+    // deux : la mesure ci-dessus est relative à la fenêtre, elle reste juste
+    // quel que soit l'élément qui a défilé.
+    window.addEventListener("scroll", surDefilement, {
+      capture: true,
+      passive: true,
+    });
     window.addEventListener("resize", surDefilement);
     return () => {
       clearTimeout(tick);
-      window.removeEventListener("scroll", surDefilement);
+      window.removeEventListener("scroll", surDefilement, { capture: true });
       window.removeEventListener("resize", surDefilement);
     };
   }, []);
