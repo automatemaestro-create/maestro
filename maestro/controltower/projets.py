@@ -44,6 +44,7 @@ que dans `app.py` pour que motif et code se lisent au même endroit.
 from __future__ import annotations
 
 import os
+import string
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,11 @@ from maestro.projets import (
 #: (`tronque: true`), jamais silencieux : une troncature muette se lit comme un
 #: dossier complet.
 LIMITE_DOSSIERS = 500
+
+#: Nombre de dossiers « récents » proposés sur la page d'entrée (#278) — les
+#: parents des projets les plus récemment déclarés. Cinq : de quoi couvrir les
+#: quelques endroits où l'on range ses dépôts, sans noyer les autres origines.
+LIMITE_RECENTS = 5
 
 #: Le code HTTP de chaque motif de refus. Le défaut est **422** (la saisie est
 #: en cause) ; **403** dit « je refuse de regarder là » (frontière franchie, pas
@@ -301,6 +307,76 @@ class ServiceProjets:
             if _sous_une_racine(racine, tuple(a for a in triees if a != racine)) is None
         )
 
+    def points_entree(self) -> tuple[tuple[Path, str], ...]:
+        """Ce que l'écran montre en arrivant : `(dossier, origine)`, dans l'ordre d'affichage.
+
+        À distinguer de `racines()`, qui est la **frontière** — ce qu'on a le
+        droit d'énumérer. Les deux ont divergé avec #278 : la frontière contient
+        désormais les volumes du poste, et elle dédoublonne par contenance, si
+        bien qu'elle se réduirait à `C:/` (ou `/`) — un point d'entrée unique
+        d'où il faudrait redescendre tout l'arbre à chaque fois.
+
+        Quatre origines, dans cet ordre :
+
+        - `utilisateur` — le dossier utilisateur, là où sont la plupart des
+          projets ;
+        - `recent` — les **parents** des projets déclarés, du plus récemment
+          déclaré au plus ancien. C'est le dossier où l'on range ses dépôts :
+          y avoir déclaré un projet est le meilleur indice qu'on y déclarera le
+          suivant. Ce n'est **pas** un historique de navigation — rien n'est
+          enregistré au clic, et donc rien n'est à purger ;
+        - `projet` — les racines déjà déclarées, pour y revenir directement ;
+        - `volume` — les disques du poste, la porte de sortie quand le projet
+          n'est sous aucun des précédents.
+
+        Chaque point est canonicalisé, existant, **hors zone interdite** et
+        **dans la frontière** — un point d'entrée qui refuserait au clic serait
+        pire que son absence. C'est ce dernier filtre qui fait que
+        `MAESTRO_EXPLORATEUR_RACINES` reste une **restriction** : les volumes ne
+        sont proposés que si la frontière les contient, c'est-à-dire seulement
+        quand elle est celle par défaut.
+        """
+        racines = self.racines()
+        vus: dict[str, tuple[Path, str]] = {}
+
+        def retenir(candidat: Path | str, origine: str) -> None:
+            try:
+                resolu = canonique(candidat)
+            except OSError:  # pragma: no cover - chemin illisible pour l'OS
+                return
+            cle = _cle(resolu)
+            if cle in vus or not resolu.is_dir():
+                return
+            try:
+                verifier_zone_interdite(resolu)
+            except RacineRefusee:
+                return
+            if _sous_une_racine(resolu, racines) is None:
+                return
+            vus[cle] = (resolu, origine)
+
+        if self._racines is not None:
+            for configuree in self._racines:
+                retenir(configuree, "configuree")
+        else:
+            try:
+                retenir(Path.home(), "utilisateur")
+            except (RuntimeError, OSError):  # pragma: no cover - dépend de l'environnement
+                pass
+
+        projets = sorted(
+            self._projets_lisibles(),
+            key=lambda p: (p.cree_le or "", p.id),
+            reverse=True,
+        )
+        for projet in projets[:LIMITE_RECENTS]:
+            retenir(projet.racine_chemin.parent, "recent")
+        for projet in projets:
+            retenir(projet.racine_chemin, "projet")
+        for volume in _volumes():
+            retenir(volume, "volume")
+        return tuple(vus.values())
+
     def explorer(self, chemin: str | None = None) -> dict[str, Any]:
         """Énumère les **dossiers** de `chemin`, ou les racines explorables sans argument.
 
@@ -326,12 +402,17 @@ class ServiceProjets:
         par_racine = self._projets_par_racine()
         brut = (chemin or "").strip()
         if not brut:
-            # Le point d'entrée de l'explorateur : les racines elles-mêmes.
+            # La page d'entrée montre les **points d'entrée**, pas la frontière :
+            # depuis #278 celle-ci contient les volumes, qui avaleraient le
+            # dossier utilisateur et les projets par contenance (voir `racines`).
             return _vue(
                 chemin=None,
                 parent=None,
                 racines=racines,
-                dossiers=[_fiche_dossier(r, par_racine) for r in racines],
+                dossiers=[
+                    _fiche_dossier(point, par_racine, origine=origine)
+                    for point, origine in self.points_entree()
+                ],
                 tronque=False,
             )
 
@@ -458,17 +539,29 @@ def _vue(
     }
 
 
-def _fiche_dossier(dossier: Path, par_racine: dict[str, str]) -> dict[str, Any]:
+def _fiche_dossier(
+    dossier: Path,
+    par_racine: dict[str, str],
+    *,
+    origine: str | None = None,
+) -> dict[str, Any]:
     """Un dossier de la liste : nom, chemin absolu, marqueur Git, projet déjà déclaré.
 
     `nom` retombe sur le chemin complet quand il est vide — le cas d'une racine
     de disque (`D:/`), qui n'a pas de nom mais doit rester cliquable.
+
+    `origine` n'est renseignée que sur la **page d'entrée** (#278) : elle dit
+    *pourquoi* ce dossier est proposé (`utilisateur`, `recent`, `projet`,
+    `volume`, `configuree`), ce que l'écran affiche en pastille. Ailleurs elle
+    est `null` — un sous-dossier énuméré n'a pas d'autre raison d'être là que
+    d'être dans le dossier ouvert.
     """
     return {
         "nom": dossier.name or dossier.as_posix(),
         "chemin": dossier.as_posix(),
         "depot_git": detecter_vcs(dossier) is not None,
         "projet_id": par_racine.get(_cle(dossier)),
+        "origine": origine,
     }
 
 
@@ -523,11 +616,58 @@ def _sous_une_racine(chemin: Path, racines: tuple[Path, ...]) -> Path | None:
 
 
 def _racines_defaut() -> tuple[Path, ...]:
-    """Le défaut des racines explorables : le dossier utilisateur, s'il est connu."""
+    """Le défaut des racines explorables : le dossier utilisateur **et les volumes** (#278).
+
+    Le dossier utilisateur seul était un cul-de-sac : un projet posé sur `D:/`
+    ou sur un disque externe n'était pas atteignable, et la seule sortie était
+    de renseigner `MAESTRO_EXPLORATEUR_RACINES` — un réglage d'environnement
+    pour un geste d'écran. Les volumes du poste élargissent la **frontière** ;
+    ils n'ouvrent rien de nouveau, `verifier_zone_interdite` continuant de
+    refuser `.ssh`, `AppData`, les dossiers système et le dépôt de Maestro, et
+    `valider_racine` de refuser une racine de disque comme racine de projet.
+
+    Le dossier utilisateur reste dans la liste bien qu'un volume le contienne :
+    `racines()` dédoublonne par contenance, mais `points_entree()` — ce que
+    l'écran montre en arrivant — le garde à part.
+    """
+    volumes = _volumes()
     try:
-        return (Path.home(),)
+        return (Path.home(), *volumes)
     except (RuntimeError, OSError):  # pragma: no cover - dépend de l'environnement
-        return ()
+        return volumes
+
+
+def _volumes() -> tuple[Path, ...]:
+    """Les disques et volumes montés du poste, dans l'ordre du système.
+
+    Sous Windows, les lettres de lecteur (`os.listdrives` là où il existe,
+    sinon les 26 lettres testées — 26 `is_dir()` valent mieux qu'une dépendance
+    à Python 3.12). Sous POSIX, la racine `/` **est** le volume : y ajouter les
+    points de montage habituels ferait doublon, tout en étant déjà couvert.
+
+    Un lecteur non prêt (disque optique vide, lettre mappée sur un partage
+    déconnecté) lève ou rend faux : il est simplement absent de la liste, et
+    c'est ce qu'on veut — l'afficher ferait croire à un dossier vide.
+    """
+    if os.name != "nt":
+        return (Path("/"),)
+    lettres: tuple[str, ...]
+    if hasattr(os, "listdrives"):  # Python 3.12+
+        try:
+            lettres = tuple(os.listdrives())
+        except OSError:  # pragma: no cover - dépend du système
+            lettres = ()
+    else:  # pragma: no cover - dépend de la version de Python
+        lettres = tuple(f"{lettre}:\\" for lettre in string.ascii_uppercase)
+    volumes = []
+    for lettre in lettres:
+        chemin = Path(lettre)
+        try:
+            if chemin.is_dir():
+                volumes.append(chemin)
+        except OSError:  # pragma: no cover - lecteur non prêt
+            continue
+    return tuple(volumes)
 
 
 def _racines_configurees(settings: Settings) -> tuple[str, ...] | None:

@@ -563,7 +563,12 @@ comportement réel.
   touche jamais au dossier sur le disque** : oublier un projet n'est pas supprimer le travail de
   l'utilisateur.
 - `GET /api/projets/explorateur?chemin=…` → `PageExplorateur` — énumère les **dossiers** de
-  `chemin` ; **sans `chemin`**, les racines explorables elles-mêmes (le point d'entrée).
+  `chemin` ; **sans `chemin`**, les **points d'entrée** (#278, voir ci-dessous).
+- `GET /api/projets/selecteur` → `DisponibiliteSelecteur` (#278) — le dialogue de dossier **natif
+  du poste** est-il ouvrable ici ? **Toujours 200** : une indisponibilité est une réponse, pas une
+  panne.
+- `POST /api/projets/selecteur` → `ChoixSelecteur` (#278) — ouvre ce dialogue et rend le chemin
+  choisi, confronté à EF-38. Corps facultatif `{ "depart": "D:/projets" }`.
 
 Le `vcs` n'est **jamais** un champ de requête : il est constaté sur le disque à chaque écriture.
 Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron d'écriture de
@@ -593,20 +598,55 @@ Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron 
 
 // PageExplorateur (réponse de GET /api/projets/explorateur)
 {
-  "chemin": "D:/projets",           // null : la page d'entrée (les racines explorables)
+  "chemin": "D:/projets",           // null : la page d'entrée (les points d'entrée)
   "parent": null,                   // null : remonter sortirait des racines — la frontière se voit
-  "racines": ["C:/Users/moi", "D:/projets"],   // les dossiers explorables, contenus dédoublonnés
+  "racines": ["C:/", "D:/"],        // la FRONTIÈRE : ce qu'on a le droit d'énumérer, dédoublonnée
   "dossiers": [
     {
       "nom": "depensio",
       "chemin": "D:/projets/depensio",
       "depot_git": true,            // marqueur « dépôt Git » — décide du patron d'écriture (#224)
-      "projet_id": "prj-7f3a1c2b"   // null : dossier pas encore déclaré comme projet
+      "projet_id": "prj-7f3a1c2b",  // null : dossier pas encore déclaré comme projet
+      "origine": null               // page d'entrée seulement (#278) ; null sur un sous-dossier
     }
   ],
   "tronque": false                  // true : au-delà de 500 entrées, la liste est coupée — et le dit
 }
+
+// DisponibiliteSelecteur (réponse de GET /api/projets/selecteur)
+{
+  "disponible": false,
+  "motif": "selecteur-hors-poste",  // null quand disponible
+  "message": "Backend distant : le dialogue de l'OS s'ouvrirait sur le serveur…",
+  "outil": null                     // "powershell" | "osascript" | "zenity" | "kdialog"
+}
+
+// ChoixSelecteur (réponse de POST /api/projets/selecteur)
+{
+  "annule": false,                  // true : la fenêtre a été fermée — un geste normal, pas une erreur
+  "chemin": "D:/",
+  "racine_valide": false,           // le chemin est lisible, mais pas déclarable tel quel
+  "refus": { "motif": "racine-de-disque", "message": "…" }   // null quand racine_valide
+}
 ```
+
+**La frontière et les points d'entrée sont deux choses** (#278). `racines` dit ce qu'on a le
+**droit** d'énumérer ; la page d'entrée (`GET /api/projets/explorateur` sans `chemin`) dit par où
+**commencer**. Elles ont divergé quand la frontière s'est élargie aux **volumes du poste** : elle
+dédoublonne par contenance, donc elle se réduirait à `C:/` (ou `/`), et il faudrait redescendre
+tout l'arbre à chaque fois. Chaque point d'entrée porte son `origine` — `utilisateur`, `recent`
+(le **parent** d'un projet récemment déclaré : là où l'on range ses dépôts), `projet`, `volume`,
+`configuree` — et reste **dans** la frontière : un point qui refuserait au clic serait pire que
+son absence. C'est aussi ce qui garde `MAESTRO_EXPLORATEUR_RACINES` **restrictif** — les volumes
+ne sont proposés que là où la frontière est celle par défaut.
+
+**Le sélecteur natif est un confort, jamais un passage obligé.** Un navigateur ne livre pas de
+chemin absolu, mais le backend **tourne sur le poste** : il peut ouvrir le dialogue de l'OS. Trois
+garde-fous, parce qu'ouvrir une fenêtre depuis une requête HTTP est un effet de bord sur la
+machine de quelqu'un — la requête doit venir de la **boucle locale** (lue sur le client TCP,
+jamais sur un en-tête, qu'un client pose lui-même), **un dialogue à la fois**, et une **attente
+bornée** (5 min). Toute indisponibilité se **dit** au lieu de laisser un bouton mort, et
+l'explorateur reste dans tous les cas la voie complète — c'est ce que reçoit le **mode serveur**.
 
 **Un refus porte toujours son motif**, jamais une liste vide : « ce dossier n'a pas de
 sous-dossier » et « je refuse de regarder là » sont deux réponses différentes, et les confondre
@@ -620,6 +660,7 @@ une phrase — `{ "motif": "chemin-sensible", "message": "…" }` — pour que l
 | `racine-de-disque`, `dossier-utilisateur-nu`, `au-dessus-du-dossier-utilisateur`, `au-dessus-du-depot-maestro` | 422 | racine techniquement valide, mais trop haute pour un projet |
 | `chemin-sensible`, `chemin-systeme`, `depot-maestro` | 403 | zone interdite : `.ssh`, `AppData`, dossiers système, dépôt de Maestro |
 | `hors-racines-explorables`, `aucune-racine-explorable` | 403 | l'explorateur refuse de sortir de ses racines |
+| `selecteur-hors-poste`, `selecteur-desactive`, `selecteur-sans-outil`, `selecteur-en-cours`, `selecteur-expire` | 403 sur `POST /api/projets/selecteur` | le dialogue natif ne s'ouvre pas — et dit lequel des cinq empêchements (sur le `GET`, les trois premiers sont un **200** motivé) |
 | `acces-refuse` | 403 | l'OS refuse d'énumérer le dossier |
 | `dossier-absent` | 404 sur l'explorateur, 422 sur `POST`/`PUT` | le dossier n'existe pas — « pas là » côté lecture, saisie fautive côté déclaration |
 | `projet-inconnu` | 404 | l'identifiant n'est pas dans le dépôt |

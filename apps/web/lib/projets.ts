@@ -52,6 +52,16 @@ const CONSEILS: Record<string, string> = {
     "Ce dossier contient le dépôt de Maestro : choisir un dossier à côté, pas au-dessus.",
   "hors-racines-explorables":
     "Élargir les dossiers explorables avec MAESTRO_EXPLORATEUR_RACINES (séparateur « ; » sous Windows, « : » sous POSIX), puis relancer le backend.",
+  "selecteur-hors-poste":
+    "Backend distant : le dialogue s'ouvrirait sur le serveur. Parcourir avec l'explorateur, ou coller le chemin — l'API le vérifie.",
+  "selecteur-desactive":
+    "Sélecteur natif éteint sur ce backend (MAESTRO_SELECTEUR_NATIF=0) : l'explorateur et la saisie d'un chemin restent complets.",
+  "selecteur-sans-outil":
+    "Aucun dialogue de dossier sur ce poste : parcourir avec l'explorateur, ou coller le chemin.",
+  "selecteur-en-cours":
+    "Une fenêtre de choix est déjà ouverte : la terminer avant d'en ouvrir une autre.",
+  "selecteur-expire":
+    "La fenêtre est restée ouverte trop longtemps et a été abandonnée : relancer le choix.",
   "aucune-racine-explorable":
     "Aucun dossier explorable n'est configuré : renseigner MAESTRO_EXPLORATEUR_RACINES, puis relancer le backend.",
   "acces-refuse": "Le système d'exploitation refuse d'ouvrir ce dossier.",

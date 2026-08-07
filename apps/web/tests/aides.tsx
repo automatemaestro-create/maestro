@@ -403,6 +403,9 @@ export function dossierFactice(
     chemin: "D:/projets/depensio",
     depot_git: false,
     projet_id: null,
+    // `null` par défaut : le cas courant est un sous-dossier énuméré, qui n'a
+    // pas d'origine — seule la page d'entrée en porte une (#278).
+    origine: null,
     ...partiel,
   };
 }
