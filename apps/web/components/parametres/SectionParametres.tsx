@@ -10,9 +10,9 @@
  * **où** la chose se règle aujourd'hui — jamais un lien mort (critère #121).
  */
 
-import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { Carte } from "@/components/Primitives";
 import {
   DECALAGE_ANCRE_PX,
   SECTIONS_PARAMETRES,
@@ -30,22 +30,24 @@ export function SectionParametres({
     // `scroll-mt-20` : l'ancre dépose la section juste sous la barre supérieure
     // collante, pas dessous — et exactement sur le repère du sous-menu
     // (DECALAGE_ANCRE_PX, à garder égal à ces 5rem).
-    <section
+    <Carte
+      balise="section"
+      densite="aeree"
       id={section.id}
       aria-labelledby={`${section.id}-titre`}
-      className="scroll-mt-20 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+      className="scroll-mt-20"
     >
       <h2
         id={`${section.id}-titre`}
-        className="text-sm font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400"
+        className="text-corps font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400"
       >
         {section.libelle}
       </h2>
-      <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+      <p className="mt-0.5 text-annexe text-neutral-500 dark:text-neutral-400">
         {section.description}
       </p>
       <div className="mt-4">{children}</div>
-    </section>
+    </Carte>
   );
 }
 
@@ -172,37 +174,10 @@ export function Interrupteur({
 }
 
 /**
- * Une section (ou un réglage) que l'API ne porte pas encore : ce qui manque, et
- * le chemin qui existe aujourd'hui — une page de l'interface (`lien`) ou une
- * variable d'environnement / une option de lancement (`releve`).
+ * Une section (ou un réglage) que l'API ne porte pas encore. La brique est
+ * partagée depuis #245 (`components/Primitives`) — la page Projets affichait la
+ * même chose avec ses propres classes ; elle reste ré-exportée ici parce que
+ * c'est de Paramètres que l'idée vient et que les cinq sections l'importent
+ * ainsi.
  */
-export function EtatVide({
-  message,
-  releve,
-  lien,
-}: {
-  message: string;
-  /** Ce qui tient lieu de réglage en attendant (env, option CLI…). */
-  releve?: ReactNode;
-  /** Une page réelle de l'interface, quand il y en a une. */
-  lien?: { href: string; libelle: string };
-}) {
-  return (
-    <div className="rounded-md border border-dashed border-neutral-300 p-4 text-sm dark:border-neutral-700">
-      <p className="text-neutral-600 dark:text-neutral-300">{message}</p>
-      {releve && (
-        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-          {releve}
-        </p>
-      )}
-      {lien && (
-        <Link
-          href={lien.href}
-          className="mt-3 inline-block text-sm font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
-        >
-          {lien.libelle}
-        </Link>
-      )}
-    </div>
-  );
-}
+export { EtatVide } from "@/components/Primitives";

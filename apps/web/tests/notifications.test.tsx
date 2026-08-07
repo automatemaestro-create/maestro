@@ -19,6 +19,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { CentreNotifications } from "@/components/CentreNotifications";
+import { IconePuce, IconeTache } from "@/components/Icones";
 import {
   estNotableNotification,
   iconeEvenement,
@@ -126,10 +127,13 @@ describe("le résumé d'un événement (lib/evenements)", () => {
   });
 
   it("coiffe chaque événement d'une icône, puce neutre par défaut", () => {
+    // #245 : ce sont désormais des composants du jeu SVG, plus des émojis.
     expect(iconeEvenement(evenementFactice({ type: EVENEMENT_TACHE_STATUT }))).toBe(
-      "📋",
+      IconeTache,
     );
-    expect(iconeEvenement(evenementFactice({ type: "trucmuche.inedit" }))).toBe("•");
+    expect(iconeEvenement(evenementFactice({ type: "trucmuche.inedit" }))).toBe(
+      IconePuce,
+    );
   });
 });
 

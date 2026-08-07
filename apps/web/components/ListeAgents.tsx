@@ -18,6 +18,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { CreationAgent } from "@/components/EditeurAgent";
+import { IconeAgent, IconeAgents, IconePlus } from "@/components/Icones";
+import { EnTeteSection } from "@/components/Primitives";
 import { chargerCatalogue } from "@/lib/api";
 import {
   type CleOngletAgent,
@@ -63,19 +65,21 @@ export function ListeAgents({
   return (
     <>
       <BanniereErreurApi erreur={erreur} />
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          🧩 Agents
-        </h2>
-        <span className="text-xs text-neutral-500 dark:text-neutral-400">
-          {ongletCible === ONGLET_AGENT_DEFAUT
-            ? "Un agent, une fiche : profil, playbook, MCP & permissions, chat."
-            : `Ouvre l'onglet « ${libelleCible?.libelle} » de l'agent choisi.`}
-        </span>
-      </div>
+      <EnTeteSection
+        titre="Agents"
+        icone={IconeAgents}
+        className="justify-start"
+        aside={
+          <span className="text-annexe text-neutral-500 dark:text-neutral-400">
+            {ongletCible === ONGLET_AGENT_DEFAUT
+              ? "Un agent, une fiche : profil, playbook, MCP & permissions, chat."
+              : `Ouvre l'onglet « ${libelleCible?.libelle} » de l'agent choisi.`}
+          </span>
+        }
+      />
 
       {chargement ? (
-        <p className="text-sm text-neutral-500">Chargement du catalogue…</p>
+        <p className="text-corps text-neutral-500">Chargement du catalogue…</p>
       ) : (
         <>
           <ul className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3">
@@ -85,7 +89,7 @@ export function ListeAgents({
               </li>
             ))}
             {fiches.length === 0 && (
-              <li className="text-sm text-neutral-500">
+              <li className="text-corps text-neutral-500">
                 Aucun agent au catalogue — en créer un ci-dessous.
               </li>
             )}
@@ -100,9 +104,10 @@ export function ListeAgents({
               <button
                 type="button"
                 onClick={() => setCreation(true)}
-                className="rounded-md border border-dashed border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-600 shadow-sm hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-corps font-medium text-neutral-600 shadow-sm hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
               >
-                ➕ Nouvel agent
+                <IconePlus className="size-4 shrink-0" />
+                Nouvel agent
               </button>
             </div>
           )}
@@ -122,10 +127,13 @@ function CarteAgent({
   return (
     <Link
       href={cheminOnglet(fiche.nom, onglet)}
-      className="block h-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-left text-sm shadow-sm hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+      className="block h-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-left text-corps shadow-sm hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
     >
-      <span className="block font-medium">🤖 {fiche.nom}</span>
-      <span className="mt-0.5 block text-xs text-neutral-500 dark:text-neutral-400">
+      <span className="flex items-center gap-1.5 font-medium">
+        <IconeAgent className="size-4 shrink-0 text-neutral-400 dark:text-neutral-500" />
+        {fiche.nom}
+      </span>
+      <span className="mt-0.5 block text-annexe text-neutral-500 dark:text-neutral-400">
         {fiche.role}
         {" · "}
         {fiche.source === AGENT_SOURCE_DEFAUT ? "du code" : "personnalisé"}

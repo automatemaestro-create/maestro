@@ -5,6 +5,18 @@
  * lit à l'identique aux deux endroits, et le second n'a qu'à filtrer le notable.
  */
 
+import {
+  IconeAgent,
+  IconeAlerte,
+  IconeArbitrage,
+  IconeCapacite,
+  IconeMessage,
+  IconePuce,
+  IconeReassignation,
+  IconeTache,
+  IconeTicket,
+} from "@/components/Icones";
+import type { Icone } from "@/components/Primitives";
 import { libelleStatut } from "@/lib/format";
 import {
   CAPACITE_ACTIVE,
@@ -22,20 +34,30 @@ import {
   type Evenement,
 } from "@/lib/types";
 
-const ICONES: Record<string, string> = {
-  [EVENEMENT_TACHE_STATUT]: "📋",
-  [EVENEMENT_TACHE_REASSIGNATION]: "🔀",
-  [EVENEMENT_TACHE_REFERENCE]: "🎫",
-  [EVENEMENT_AGENT_ACTIVITE]: "🤖",
-  [EVENEMENT_AGENT_CAPACITE]: "🎚️",
-  [EVENEMENT_MESSAGE_INTER_AGENTS]: "✉️",
-  [EVENEMENT_VALIDATION_DEMANDE]: "⚠️",
-  [EVENEMENT_VALIDATION_DECISION]: "⚖️",
+/**
+ * L'icône par type d'événement (#245 — c'étaient des émojis jusque-là). Un
+ * type inconnu du front retombe sur la puce neutre : le flux peut s'enrichir
+ * côté backend sans que la ligne perde sa colonne de gauche.
+ */
+const ICONES: Record<string, Icone> = {
+  [EVENEMENT_TACHE_STATUT]: IconeTache,
+  [EVENEMENT_TACHE_REASSIGNATION]: IconeReassignation,
+  [EVENEMENT_TACHE_REFERENCE]: IconeTicket,
+  [EVENEMENT_AGENT_ACTIVITE]: IconeAgent,
+  [EVENEMENT_AGENT_CAPACITE]: IconeCapacite,
+  [EVENEMENT_MESSAGE_INTER_AGENTS]: IconeMessage,
+  [EVENEMENT_VALIDATION_DEMANDE]: IconeAlerte,
+  [EVENEMENT_VALIDATION_DECISION]: IconeArbitrage,
 };
 
-/** L'émoji qui coiffe un événement dans une liste (puce neutre par défaut). */
-export function iconeEvenement(evenement: Evenement): string {
-  return ICONES[evenement.type] ?? "•";
+/**
+ * L'icône qui coiffe un événement dans une liste (puce neutre par défaut).
+ * Elle est **décorative** : `resumeEvenement` porte déjà le sens en toutes
+ * lettres à côté d'elle — ce que l'émoji, seul devant certaines lignes, ne
+ * faisait pas.
+ */
+export function iconeEvenement(evenement: Evenement): Icone {
+  return ICONES[evenement.type] ?? IconePuce;
 }
 
 /** Une phrase courte décrivant l'événement — le texte de la ligne de liste. */

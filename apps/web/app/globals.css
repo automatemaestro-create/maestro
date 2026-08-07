@@ -24,6 +24,33 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+
+  /* L'échelle typographique de la Control Tower (#245) — cinq pas nommés par
+     leur RÔLE, pas par leur taille : `text-annexe` reste juste sous le corps
+     même si sa valeur bouge un jour, là où `text-xs` fige une décision de
+     rendu dans chaque appel. Ces pas s'ajoutent à l'échelle Tailwind sans la
+     remplacer ; c'est celle-ci que le produit emploie.
+
+     Un pas de plus se discute ici. Le symptôme qu'il en manque un, c'est un
+     `text-[0.6875rem]` improvisé dans un composant — le lot en a retiré cinq. */
+  --text-micro: 0.6875rem; /* horodatage, exposant : lisible, pas lu */
+  --text-micro--line-height: 1rem;
+  --text-annexe: 0.75rem; /* détail, aide, pastille — le second plan */
+  --text-annexe--line-height: 1.05rem;
+  --text-corps: 0.875rem; /* le texte courant et les titres de section */
+  --text-corps--line-height: 1.35rem;
+  --text-titre: 1rem; /* le titre d'un écran ou d'une carte de plein format */
+  --text-titre--line-height: 1.4rem;
+  --text-chiffre: 1.5rem; /* la valeur d'une tuile de tête, et elle seule */
+  --text-chiffre--line-height: 1.85rem;
+}
+
+/* Tout chiffre qui se compare en colonne (un tableau) ou qui change sous les
+   yeux (un compteur temps réel) se rend en chasse tabulaire : sinon le passage
+   de « 1 » à « 8 » élargit la valeur et fait sauter la ligne autour d'elle.
+   Posé ici une fois plutôt que `tabular-nums` recopié cellule par cellule. */
+@utility chiffre {
+  font-variant-numeric: tabular-nums;
 }
 
 body {

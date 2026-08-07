@@ -20,6 +20,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { IconeHistorique, IconePlaybooks } from "@/components/Icones";
+import { BadgeEtat, EnTeteSection } from "@/components/Primitives";
 import {
   appliquerPropositionPlaybook,
   chargerPlaybook,
@@ -136,18 +138,21 @@ export function EditeurPlaybook({
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4">
       <section aria-label={`Playbook de ${agent}`}>
-        <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          {/* Le nom de l'agent est porté par l'en-tête de la fiche (#190). */}
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            📖 Playbook{fiche.role ? ` · ${fiche.role}` : ""}
-          </h3>
-          <span className="text-xs text-neutral-500 dark:text-neutral-400">
-            {jamaisEdite
-              ? "version du code (jamais édité)"
-              : `version ${fiche.version}` +
-                (fiche.cree_le ? ` · ${formatDateHeure(fiche.cree_le)}` : "")}
-          </span>
-        </div>
+        {/* Le nom de l'agent est porté par l'en-tête de la fiche (#190). */}
+        <EnTeteSection
+          niveau={3}
+          icone={IconePlaybooks}
+          titre={`Playbook${fiche.role ? ` · ${fiche.role}` : ""}`}
+          className="mb-2"
+          aside={
+            <span className="chiffre text-annexe text-neutral-500 dark:text-neutral-400">
+              {jamaisEdite
+                ? "version du code (jamais édité)"
+                : `version ${fiche.version}` +
+                  (fiche.cree_le ? ` · ${formatDateHeure(fiche.cree_le)}` : "")}
+            </span>
+          }
+        />
         <textarea
           value={contenu}
           onChange={(e) => setContenu(e.target.value)}
@@ -190,17 +195,22 @@ export function EditeurPlaybook({
       </section>
 
       <section aria-label={`Historique du playbook de ${agent}`}>
-        <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          🕘 Historique
-          <span className="ml-2 rounded-full bg-neutral-200 px-2 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-            {versions.length}
-          </span>
-          {propositions.length > 0 && (
-            <span className="ml-2 rounded-full bg-violet-200 px-2 text-xs normal-case text-violet-900 dark:bg-violet-900 dark:text-violet-200">
-              {propositions.length} en attente
-            </span>
-          )}
-        </h3>
+        <EnTeteSection
+          niveau={3}
+          icone={IconeHistorique}
+          className="mb-2"
+          titre={
+            <>
+              Historique
+              <BadgeEtat className="chiffre">{versions.length}</BadgeEtat>
+              {propositions.length > 0 && (
+                <BadgeEtat ton="accent" className="chiffre normal-case">
+                  {propositions.length} en attente
+                </BadgeEtat>
+              )}
+            </>
+          }
+        />
         {versions.length === 0 && (
           <p className="mb-1 text-sm text-neutral-500">
             Aucune version publiée : l&apos;agent suit encore le playbook du code.

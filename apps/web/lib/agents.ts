@@ -12,22 +12,33 @@
  * les permissions, qui n'avaient jusqu'ici aucune page à eux.
  */
 
+import {
+  IconeAgent,
+  IconeChat,
+  IconeMcp,
+  IconePlaybooks,
+} from "@/components/Icones";
+import type { Icone } from "@/components/Primitives";
+
 export type CleOngletAgent = "profil" | "playbook" | "mcp" | "chat";
 
 export type OngletAgent = {
   cle: CleOngletAgent;
   /** Libellé de l'onglet — aussi ce que lit un lecteur d'écran. */
   libelle: string;
-  /** Le pictogramme que la section portait déjà avant le regroupement. */
-  emoji: string;
+  /**
+   * Le pictogramme de la facette, pris au jeu commun (#245). Décoratif : le
+   * `libelle` l'accompagne toujours, ici comme dans le menu latéral.
+   */
+  icone: Icone;
 };
 
 /** L'ordre d'affichage : de l'identité de l'agent à la conversation avec lui. */
 export const ONGLETS_AGENT: OngletAgent[] = [
-  { cle: "profil", libelle: "Profil", emoji: "🤖" },
-  { cle: "playbook", libelle: "Playbook", emoji: "📖" },
-  { cle: "mcp", libelle: "MCP & permissions", emoji: "🔌" },
-  { cle: "chat", libelle: "Chat", emoji: "💬" },
+  { cle: "profil", libelle: "Profil", icone: IconeAgent },
+  { cle: "playbook", libelle: "Playbook", icone: IconePlaybooks },
+  { cle: "mcp", libelle: "MCP & permissions", icone: IconeMcp },
+  { cle: "chat", libelle: "Chat", icone: IconeChat },
 ];
 
 /** L'onglet servi quand aucun n'est demandé — `/agents/<nom>` y redirige. */

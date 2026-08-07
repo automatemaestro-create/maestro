@@ -19,6 +19,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { IconeDossier, IconeFlecheHaut } from "@/components/Icones";
+import { BadgeEtat } from "@/components/Primitives";
 import {
   chargerDisponibiliteSelecteur,
   chargerExplorateur,
@@ -192,11 +194,12 @@ export function ExplorateurDossiers({
                 ? "Remonter sortirait des dossiers explorables"
                 : undefined
             }
-            className={CLASSE_BOUTON_DOUX}
+            className={`inline-flex items-center gap-1 ${CLASSE_BOUTON_DOUX}`}
           >
+            <IconeFlecheHaut className="size-3.5 shrink-0" />
             {page?.parent === null && courant !== null
-              ? "↑ Dossiers explorables"
-              : "↑ Remonter"}
+              ? "Dossiers explorables"
+              : "Remonter"}
           </button>
           <button
             type="button"
@@ -300,9 +303,9 @@ export function ExplorateurDossiers({
               onClick={() => void ouvrir(dossier.chemin)}
               disabled={chargement}
               aria-label={`Ouvrir ${dossier.nom}`}
-              className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left text-sm disabled:opacity-50"
+              className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left text-corps disabled:opacity-50"
             >
-              <span aria-hidden="true">📁</span>
+              <IconeDossier className="size-4 shrink-0 text-neutral-400 dark:text-neutral-500" />
               <span className="truncate">{dossier.nom}</span>
               {dossier.origine !== null && (
                 <span className="shrink-0 rounded-full border border-neutral-300 px-1.5 text-[10px] font-medium text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
@@ -310,14 +313,14 @@ export function ExplorateurDossiers({
                 </span>
               )}
               {dossier.depot_git && (
-                <span className="shrink-0 rounded-full border border-sky-300 px-1.5 text-[10px] font-medium text-sky-700 dark:border-sky-800 dark:text-sky-400">
+                <BadgeEtat ton="info" contour className="shrink-0 text-micro">
                   dépôt Git
-                </span>
+                </BadgeEtat>
               )}
               {dossier.projet_id !== null && (
-                <span className="shrink-0 rounded-full border border-neutral-300 px-1.5 text-[10px] font-medium text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+                <BadgeEtat contour className="shrink-0 text-micro">
                   déjà déclaré
-                </span>
+                </BadgeEtat>
               )}
             </button>
             <button

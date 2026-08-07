@@ -17,6 +17,13 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import {
+  IconeMcp,
+  IconePermissions,
+  IconePlaybooks,
+  IconePlus,
+} from "@/components/Icones";
+import { EnTeteSection } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
 import {
   chargerAgentCatalogue,
@@ -214,9 +221,7 @@ export function CreationAgent({
       aria-label="Nouvel agent"
       className="flex min-w-0 flex-1 flex-col gap-4"
     >
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        ➕ Nouvel agent personnalisé
-      </h2>
+      <EnTeteSection titre="Nouvel agent personnalisé" icone={IconePlus} />
       <label className={CLASSE_LIBELLE + " sm:max-w-xs"}>
         Nom (identifiant unique : minuscules, chiffres, - ou _)
         <input
@@ -529,9 +534,12 @@ function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
     fiche.permissions_erreur === null && fiche.permissions === null;
   return (
     <section aria-label={`Permissions de ${fiche.nom}`}>
-      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        🛡️ Permissions
-      </h3>
+      <EnTeteSection
+        niveau={3}
+        titre="Permissions"
+        icone={IconePermissions}
+        className="mb-2"
+      />
       {fiche.permissions_erreur !== null ? (
         <p
           role="alert"
@@ -648,9 +656,12 @@ function SectionServeursMcp({ fiche }: { fiche: AgentCatalogueDetail }) {
 
   return (
     <section aria-label={`Serveurs MCP de ${fiche.nom}`}>
-      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        🔌 Serveurs MCP
-      </h3>
+      <EnTeteSection
+        niveau={3}
+        titre="Serveurs MCP"
+        icone={IconeMcp}
+        className="mb-2"
+      />
       {fiche.mcp_pool_erreur !== null && (
         <p
           role="alert"
@@ -862,17 +873,21 @@ function FicheDefaut({ fiche }: { fiche: AgentCatalogueDetail }) {
           l&apos;onglet{" "}
           <Link
             href={cheminOnglet(fiche.nom, "playbook")}
-            className="font-medium text-neutral-900 underline dark:text-neutral-200"
+            className="inline-flex items-center gap-1 font-medium text-neutral-900 underline dark:text-neutral-200"
           >
-            📖 Playbook
+            <IconePlaybooks className="size-3.5 shrink-0" />
+            Playbook
           </Link>
           .
         </p>
       </section>
       <section aria-label={`Playbook du code de ${fiche.nom}`}>
-        <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          📖 Playbook du code
-        </h3>
+        <EnTeteSection
+          niveau={3}
+          titre="Playbook du code"
+          icone={IconePlaybooks}
+          className="mb-2"
+        />
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-neutral-50 p-3 font-mono text-xs text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300">
           {fiche.playbook}
         </pre>

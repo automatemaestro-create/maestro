@@ -17,7 +17,26 @@
 
 import { useState } from "react";
 
+import {
+  IconeAgent,
+  IconeChrono,
+  IconeJetons,
+  IconePuce,
+  IconeStatutAssignee,
+  IconeStatutBloquee,
+  IconeStatutEchec,
+  IconeStatutEnCours,
+  IconeStatutTerminee,
+  IconeTache,
+} from "@/components/Icones";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
+import {
+  BadgeEtat,
+  Carte,
+  EnTeteSection,
+  type Icone,
+  type TonBadge,
+} from "@/components/Primitives";
 import {
   formatCout,
   formatDuree,
@@ -35,13 +54,43 @@ type Props = {
   reassigner: Reassigner;
 };
 
-/** Les colonnes du Kanban, dans l'ordre du flux de travail. */
-const COLONNES: { statut: string; titre: string; accent: string }[] = [
-  { statut: "assignee", titre: "Assignées", accent: "bg-sky-500" },
-  { statut: "en_cours", titre: "En cours", accent: "bg-amber-500" },
-  { statut: "bloquee", titre: "Bloquées", accent: "bg-violet-500" },
-  { statut: "terminee", titre: "Terminées", accent: "bg-emerald-500" },
-  { statut: "echec", titre: "Échecs", accent: "bg-rose-500" },
+/**
+ * Les colonnes du Kanban, dans l'ordre du flux de travail. Chaque statut porte
+ * son **icône** en plus de son ton (#245) : la pastille de couleur seule ne
+ * distinguait pas « bloquée » de « échec » pour qui ne sépare pas le violet du
+ * rouge, et disparaissait à l'impression.
+ */
+const COLONNES: {
+  statut: string;
+  titre: string;
+  ton: TonBadge;
+  icone: Icone;
+}[] = [
+  {
+    statut: "assignee",
+    titre: "Assignées",
+    ton: "info",
+    icone: IconeStatutAssignee,
+  },
+  {
+    statut: "en_cours",
+    titre: "En cours",
+    ton: "attention",
+    icone: IconeStatutEnCours,
+  },
+  {
+    statut: "bloquee",
+    titre: "Bloquées",
+    ton: "accent",
+    icone: IconeStatutBloquee,
+  },
+  {
+    statut: "terminee",
+    titre: "Terminées",
+    ton: "positif",
+    icone: IconeStatutTerminee,
+  },
+  { statut: "echec", titre: "Échecs", ton: "alerte", icone: IconeStatutEchec },
 ];
 
 export function Kanban({ taches, agents, reassigner }: Props) {
@@ -53,7 +102,15 @@ export function Kanban({ taches, agents, reassigner }: Props) {
       taches: taches.filter((t) => t.statut === colonne.statut),
     })),
     ...(autres.length > 0
-      ? [{ statut: "", titre: "Autres", accent: "bg-neutral-400", taches: autres }]
+      ? [
+          {
+            statut: "",
+            titre: "Autres",
+            ton: "neutre" as TonBadge,
+            icone: IconePuce,
+            taches: autres,
+          },
+        ]
       : []),
   ];
 
@@ -86,9 +143,7 @@ export function Kanban({ taches, agents, reassigner }: Props) {
       // défile, plutôt qu'un tableau écrasé à quelques pixels.
       className={`flex flex-col ${etire ? "min-h-96 flex-1" : ""}`}
     >
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-        Tâches
-      </h2>
+      <EnTeteSection titre="Tâches" icone={IconeTache} className="mb-2" />
       {/* Une largeur MINIMALE par colonne, pas un nombre de colonnes (#248) :
           au-delà, les colonnes s'élargissent jusqu'aux 2 560 px d'un grand
           écran ; en dessous, elles se replient en lignes au lieu d'être
@@ -110,16 +165,22 @@ export function Kanban({ taches, agents, reassigner }: Props) {
         className={`grid auto-rows-[minmax(11rem,1fr)] grid-cols-[repeat(auto-fit,minmax(min(11.5rem,100%),1fr))] gap-3 ${maillon}`}
       >
         {colonnes.map((colonne) => (
-          <div
+          <Carte
+            balise="div"
+            ton="creuse"
+            densite="compacte"
             key={colonne.titre}
-            className="flex min-h-0 min-w-0 flex-col rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-950"
+            /* Le fond, le bord, l'arrondi et la densité viennent de `Carte`
+               (#245) ; ne reste ici que le maillon de la chaîne d'étirement
+               (#248), qui est propre à cet écran. */
+            className="flex min-h-0 min-w-0 flex-col"
           >
-            <h3 className="mb-2 flex items-center gap-2 px-1 text-sm font-medium">
-              <span className={`size-2 rounded-full ${colonne.accent}`} />
+            <h3 className="mb-2 flex items-center gap-2 px-1 text-corps font-medium">
+              <colonne.icone className="size-4 shrink-0 text-neutral-500 dark:text-neutral-400" />
               {colonne.titre}
-              <span className="ml-auto rounded-full bg-neutral-200 px-2 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
+              <BadgeEtat ton={colonne.ton} className="chiffre ml-auto">
                 {colonne.taches.length}
-              </span>
+              </BadgeEtat>
             </h3>
             {/* Chaque colonne défile chez elle (#191) plutôt que d'étirer la
                 page — mais dans la hauteur que la fenêtre lui donne (#248) et
@@ -134,16 +195,16 @@ export function Kanban({ taches, agents, reassigner }: Props) {
                 />
               ))}
               {colonne.taches.length === 0 && (
-                <p className="px-1 pb-1 text-xs text-neutral-400 dark:text-neutral-600">
+                <p className="px-1 pb-1 text-annexe text-neutral-400 dark:text-neutral-600">
                   Aucune tâche.
                 </p>
               )}
             </div>
-          </div>
+          </Carte>
         ))}
       </div>
       {taches.length === 0 && (
-        <p className="mt-2 text-sm text-neutral-500">
+        <p className="mt-2 text-corps text-neutral-500">
           Aucune tâche pour l&apos;instant — elles apparaîtront dès qu&apos;un run
           publiera ses événements.
         </p>
@@ -182,7 +243,7 @@ function CarteTache({
   const candidats = agents.filter((a) => a.nom !== tache.agent && a.actif);
 
   return (
-    <article className="rounded-md border border-neutral-200 bg-white p-2.5 text-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+    <Carte densite="compacte" className="text-corps">
       <p className="font-medium" title={tache.id}>
         {tache.titre || tache.id}
       </p>
@@ -193,11 +254,14 @@ function CarteTache({
         tache={tache.titre || tache.id}
         className="mt-1"
       />
-      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-        🤖 {tache.agent || "non assignée"}
+      {/* « Agent » en toutes lettres : l'émoji 🤖 portait seul l'information,
+          et une tâche non assignée ne disait pas de quoi elle manquait. */}
+      <p className="mt-1 flex items-center gap-1 text-annexe text-neutral-500 dark:text-neutral-400">
+        <IconeAgent className="size-3.5 shrink-0" />
+        Agent {tache.agent || "non assigné"}
         {tache.role ? ` · ${tache.role}` : ""}
       </p>
-      <p className="mt-0.5 flex justify-between gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+      <p className="chiffre mt-0.5 flex justify-between gap-2 text-annexe text-neutral-500 dark:text-neutral-400">
         <span>{libelleStatut(tache.statut)}</span>
         <span>
           {formatCout(tache.cout_usd)}
@@ -206,16 +270,22 @@ function CarteTache({
       </p>
       {tache.usage && (
         <p
-          className="mt-0.5 flex justify-between gap-2 text-xs text-neutral-500 dark:text-neutral-400"
+          className="chiffre mt-0.5 flex justify-between gap-2 text-annexe text-neutral-500 dark:text-neutral-400"
           title={`${formatTokens(tache.usage.tokens_entree)} tokens en entrée / ${formatTokens(tache.usage.tokens_sortie)} en sortie`}
         >
-          <span>🪙 {formatTokens(tache.usage.tokens_total)} tokens</span>
-          <span>⏱ {formatDuree(tache.usage.duree_ms)}</span>
+          <span className="inline-flex items-center gap-1">
+            <IconeJetons className="size-3.5 shrink-0" />
+            {formatTokens(tache.usage.tokens_total)} tokens
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <IconeChrono className="size-3.5 shrink-0" />
+            {formatDuree(tache.usage.duree_ms)}
+          </span>
         </p>
       )}
       <select
         aria-label={`Réassigner la tâche ${tache.titre || tache.id}`}
-        className="mt-2 w-full rounded border border-neutral-300 bg-transparent px-1.5 py-1 text-xs text-neutral-600 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:[&>option]:bg-neutral-900"
+        className="mt-2 w-full rounded border border-neutral-300 bg-transparent px-1.5 py-1 text-annexe text-neutral-600 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:[&>option]:bg-neutral-900"
         value=""
         disabled={enCours || candidats.length === 0}
         onChange={(e) => void surReassignation(e.target.value)}
@@ -231,8 +301,8 @@ function CarteTache({
         ))}
       </select>
       {erreur && (
-        <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{erreur}</p>
+        <p className="mt-1 text-annexe text-rose-600 dark:text-rose-400">{erreur}</p>
       )}
-    </article>
+    </Carte>
   );
 }

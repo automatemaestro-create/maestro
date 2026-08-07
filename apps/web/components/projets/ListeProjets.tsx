@@ -21,6 +21,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import { IconeDossier, IconePlus } from "@/components/Icones";
+import { BadgeEtat, Carte, EtatVide } from "@/components/Primitives";
 import { chargerProjets, creerProjet, modifierProjet, supprimerProjet } from "@/lib/api";
 import { formatDateHeure } from "@/lib/format";
 import { libelleOrigine } from "@/lib/projets";
@@ -28,10 +30,6 @@ import type { DeclarationProjet, Projet, RefusProjet } from "@/lib/types";
 
 import { refusDepuis, RefusMotive } from "./ExplorateurDossiers";
 import { FormulaireProjet } from "./FormulaireProjet";
-
-const CLASSE_PASTILLE =
-  "rounded-full border border-neutral-300 px-2 py-0.5 text-[11px] font-medium " +
-  "text-neutral-600 dark:border-neutral-700 dark:text-neutral-400";
 
 const CLASSE_BOUTON_SECONDAIRE =
   "rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 " +
@@ -81,27 +79,29 @@ function CarteProjet({
   };
 
   return (
-    <li
+    <Carte
+      balise="li"
+      densite="aeree"
       aria-label={`Projet ${projet.nom}`}
-      className="flex flex-col gap-2 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+      className="flex flex-col gap-2"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold">{projet.nom}</h3>
-        <span className={CLASSE_PASTILLE}>{libelleOrigine(projet.origine)}</span>
+        <h3 className="text-corps font-semibold">{projet.nom}</h3>
+        <BadgeEtat contour>{libelleOrigine(projet.origine)}</BadgeEtat>
         {projet.vcs === null ? (
-          <span className={CLASSE_PASTILLE}>Non versionné</span>
+          <BadgeEtat contour>Non versionné</BadgeEtat>
         ) : (
-          <span className="rounded-full border border-sky-300 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:border-sky-800 dark:text-sky-400">
+          <BadgeEtat ton="info" contour>
             {projet.vcs.type}
             {projet.vcs.branche_base !== "" && ` · ${projet.vcs.branche_base}`}
-          </span>
+          </BadgeEtat>
         )}
       </div>
-      <code className="font-mono text-xs break-all text-neutral-800 dark:text-neutral-200">
+      <code className="font-mono text-annexe break-all text-neutral-800 dark:text-neutral-200">
         {projet.racine}
       </code>
       <Perimetre projet={projet} />
-      <p className="text-xs text-neutral-400 dark:text-neutral-500">
+      <p className="text-annexe text-neutral-400 dark:text-neutral-500">
         Déclaré le {formatDateHeure(projet.cree_le)} · modifié le{" "}
         {formatDateHeure(projet.modifie_le)}
       </p>
@@ -148,7 +148,7 @@ function CarteProjet({
           </button>
         )}
       </div>
-    </li>
+    </Carte>
   );
 }
 
@@ -209,9 +209,10 @@ export function ListeProjets() {
                 setCreationOuverte(true);
                 setEditionId(null);
               }}
-              className="shrink-0 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-emerald-700"
             >
-              ➕ Nouveau projet
+              <IconePlus className="size-3.5 shrink-0" />
+              Nouveau projet
             </button>
           )}
         </div>
@@ -232,13 +233,10 @@ export function ListeProjets() {
             l'afficher sur une API injoignable ferait passer une panne pour un
             backlog vide, et inviterait à re-déclarer des projets déjà là. */}
         {!chargement && erreur === null && projets.length === 0 && (
-          <div className="rounded-md border border-dashed border-neutral-300 p-4 text-sm dark:border-neutral-700">
-            <p className="text-neutral-600 dark:text-neutral-300">
-              Aucun projet déclaré. Les exécutions travaillent alors dans un
-              espace jetable et leurs livrables restent dans le dossier de
-              sortie — déclarer un projet, c&apos;est leur donner une adresse.
-            </p>
-          </div>
+          <EtatVide
+            icone={IconeDossier}
+            message="Aucun projet déclaré. Les exécutions travaillent alors dans un espace jetable et leurs livrables restent dans le dossier de sortie — déclarer un projet, c'est leur donner une adresse."
+          />
         )}
         {!chargement && projets.length > 0 && (
           <ul className="flex flex-col gap-3">

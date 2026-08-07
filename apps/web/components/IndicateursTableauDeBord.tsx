@@ -13,9 +13,15 @@
  * composant ne charge rien et ne décide de rien — il compte.
  */
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 
+import {
+  IconeAgents,
+  IconeMonnaie,
+  IconeStatutEnCours,
+  IconeTache,
+} from "@/components/Icones";
+import { type Icone, type Renvoi, TuileChiffre } from "@/components/Primitives";
 import { formatCout } from "@/lib/format";
 import { entreeParLibelle } from "@/lib/navigation";
 import { AGENT_OCCUPE, type CoutExecution, type EtatAgent, type Tache } from "@/lib/types";
@@ -33,8 +39,6 @@ const STATUT_ECHEC = "echec";
 /** Une tâche soldée ne compte plus dans ce qui est « en vol ». */
 const STATUTS_SOLDES = new Set([STATUT_TERMINEE, STATUT_ECHEC]);
 
-type Renvoi = { href: string; libelle: string };
-
 type Indicateur = {
   libelle: string;
   /**
@@ -44,6 +48,7 @@ type Indicateur = {
    */
   valeur: ReactNode;
   detail: string;
+  icone: Icone;
   /** Rendu en chasse fixe : un identifiant d'exécution, pas un compte. */
   monospace?: boolean;
   /** Infobulle quand la valeur peut être tronquée. */
@@ -98,6 +103,7 @@ export function IndicateursTableauDeBord({
   const indicateurs: Indicateur[] = [
     {
       libelle: "Run en cours",
+      icone: IconeStatutEnCours,
       valeur:
         runsActifs.length === 0
           ? "Aucun"
@@ -115,11 +121,13 @@ export function IndicateursTableauDeBord({
     },
     {
       libelle: "Tâches",
+      icone: IconeTache,
       valeur: String(taches.length),
       detail: `${compte(STATUT_EN_COURS)} en cours · ${compte(STATUT_BLOQUEE)} bloquée(s) · ${compte(STATUT_ECHEC)} échec(s)`,
     },
     {
       libelle: "Agents",
+      icone: IconeAgents,
       valeur: (
         <>
           {occupes}
@@ -140,6 +148,7 @@ export function IndicateursTableauDeBord({
     },
     {
       libelle: "Dépense",
+      icone: IconeMonnaie,
       valeur: formatCout(depense),
       detail: `${couts.length} exécution(s), planification comprise`,
       renvoi: pageCouts && {
@@ -161,44 +170,8 @@ export function IndicateursTableauDeBord({
       className="grid grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-4"
     >
       {indicateurs.map((indicateur) => (
-        <Tuile key={indicateur.libelle} indicateur={indicateur} />
+        <TuileChiffre key={indicateur.libelle} {...indicateur} />
       ))}
     </section>
-  );
-}
-
-/**
- * Une tuile, **resserrée** par #248 : le tableau des tâches prend désormais la
- * hauteur que la page lui laisse, donc tout ce que cette rangée garde en
- * hauteur, il le perd. Le chiffre reste ce qu'on voit en premier — c'est
- * l'espace autour de lui qui se réduit, pas lui.
- */
-function Tuile({ indicateur }: { indicateur: Indicateur }) {
-  return (
-    <article className="flex flex-col rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <p className="text-xs text-neutral-500 dark:text-neutral-400">
-        {indicateur.libelle}
-      </p>
-      <p
-        className={
-          "mt-0.5 truncate font-semibold " +
-          (indicateur.monospace ? "font-mono text-sm" : "text-xl")
-        }
-        title={indicateur.titre}
-      >
-        {indicateur.valeur}
-      </p>
-      <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
-        {indicateur.detail}
-      </p>
-      {indicateur.renvoi && (
-        <Link
-          href={indicateur.renvoi.href}
-          className="mt-1.5 text-xs font-medium text-sky-700 hover:underline dark:text-sky-400"
-        >
-          {indicateur.renvoi.libelle} →
-        </Link>
-      )}
-    </article>
   );
 }

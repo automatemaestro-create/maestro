@@ -12,8 +12,8 @@
  * au menu, le lien s'allume sans toucher à ce composant.
  */
 
-import Link from "next/link";
-
+import { IconeActivite } from "@/components/Icones";
+import { EnTeteSection, LienRenvoi } from "@/components/Primitives";
 import { iconeEvenement, resumeEvenement } from "@/lib/evenements";
 import { formatHeure } from "@/lib/format";
 import { type Evenement } from "@/lib/types";
@@ -35,42 +35,42 @@ export function FilActivite({
 
   return (
     <section data-guide="activite" aria-label="Activité en direct">
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-          Activité en direct
-        </h2>
-        {renvoi ? (
-          <Link
-            href={renvoi.href}
-            className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-400"
-          >
-            {renvoi.libelle} →
-          </Link>
-        ) : (
-          masques > 0 && (
-            <span className="text-xs text-neutral-500 dark:text-neutral-400">
-              + {masques} événement(s) plus anciens
-            </span>
+      <EnTeteSection
+        titre="Activité en direct"
+        icone={IconeActivite}
+        className="mb-2"
+        aside={
+          renvoi ? (
+            <LienRenvoi renvoi={renvoi} />
+          ) : (
+            masques > 0 && (
+              <span className="chiffre text-annexe text-neutral-500 dark:text-neutral-400">
+                + {masques} événement(s) plus anciens
+              </span>
+            )
           )
-        )}
-      </div>
-      <ol className="space-y-1 text-sm">
-        {affiches.map((evenement, index) => (
-          <li
-            key={`${evenement.horodatage}-${index}`}
-            className="flex items-baseline gap-2 rounded px-1 py-0.5"
-          >
-            <span className="shrink-0 font-mono text-xs text-neutral-400 dark:text-neutral-500">
-              {formatHeure(evenement.horodatage)}
-            </span>
-            <span className="shrink-0">{iconeEvenement(evenement)}</span>
-            <span className="min-w-0 truncate" title={evenement.detail || undefined}>
-              {resumeEvenement(evenement)}
-            </span>
-          </li>
-        ))}
+        }
+      />
+      <ol className="space-y-1 text-corps">
+        {affiches.map((evenement, index) => {
+          const Icone = iconeEvenement(evenement);
+          return (
+            <li
+              key={`${evenement.horodatage}-${index}`}
+              className="flex items-center gap-2 rounded px-1 py-0.5"
+            >
+              <span className="chiffre shrink-0 font-mono text-annexe text-neutral-400 dark:text-neutral-500">
+                {formatHeure(evenement.horodatage)}
+              </span>
+              <Icone className="size-4 shrink-0 text-neutral-400 dark:text-neutral-500" />
+              <span className="min-w-0 truncate" title={evenement.detail || undefined}>
+                {resumeEvenement(evenement)}
+              </span>
+            </li>
+          );
+        })}
         {affiches.length === 0 && (
-          <li className="text-sm text-neutral-500">
+          <li className="text-corps text-neutral-500">
             Aucun événement reçu pour l&apos;instant.
           </li>
         )}

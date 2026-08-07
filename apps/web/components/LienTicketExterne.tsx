@@ -17,6 +17,7 @@
  * par le backend (« #192 », « MAE-42 ») et ouvre l'URL qui l'accompagne.
  */
 
+import { IconeLienExterne, IconeTicket } from "@/components/Icones";
 import { lienExterneSur } from "@/lib/liens";
 import type { ReferenceTicket } from "@/lib/types";
 
@@ -37,7 +38,7 @@ const LIBELLE_PAR_DEFAUT = "Ticket externe";
 
 // Les teintes tiennent les deux thèmes : `sky-700` sur fond clair, `sky-300`
 // sur fond sombre — le même accent que la colonne « Assignées » du Kanban.
-const STYLE_COMMUN = "inline-flex max-w-full items-center gap-1 text-xs";
+const STYLE_COMMUN = "inline-flex max-w-full items-center gap-1 text-annexe";
 const STYLE_LIEN =
   "rounded text-sky-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:text-sky-300 dark:focus-visible:outline-sky-400";
 const STYLE_TEXTE = "text-neutral-500 dark:text-neutral-400";
@@ -60,7 +61,7 @@ export function LienTicketExterne({ reference, tache, className }: Props) {
         className={`${classes} ${STYLE_TEXTE}`}
         title={`Ticket externe${surTache} — aucune URL exploitable`}
       >
-        <span aria-hidden="true">🎫</span>
+        <IconeTicket className="size-3.5 shrink-0" />
         <span className="truncate">{libelle}</span>
       </span>
     );
@@ -75,9 +76,9 @@ export function LienTicketExterne({ reference, tache, className }: Props) {
       title={url}
       className={`${classes} ${STYLE_LIEN}`}
     >
-      <span aria-hidden="true">🎫</span>
+      <IconeTicket className="size-3.5 shrink-0" />
       <span className="truncate">{libelle}</span>
-      <span aria-hidden="true">↗</span>
+      <IconeLienExterne className="size-3 shrink-0" />
     </a>
   );
 }
