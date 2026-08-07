@@ -1656,43 +1656,85 @@ gl_mr_state() {
     | grep -o '"state":"[a-z]*"' | head -1 | sed 's/.*:"//; s/"//'
 }
 
-# gl_cleanup_merged -> supprime les branches LOCALES (hors main et hors branche courante) dont
-# GitLab confirme la MR à l'état « merged ». Conçu pour tourner automatiquement (appelé par
-# /ticket-start après mise à jour de main) — c'est le pendant non-interactif de /branch-cleanup :
+# gl_cleanup_merged [--auto] -> supprime les branches LOCALES (hors main et hors branche courante)
+# dont GitLab confirme la MR à l'état « merged ». Conçu pour tourner automatiquement (appelé par
+# `worktree.sh ensure`, donc tout /ticket-start) — c'est le pendant non-interactif de
+# /branch-cleanup :
 #   • ne supprime QUE ce que GitLab confirme mergé (garde-fou docs/10 §6) — jamais une branche au
 #     statut incertain (opened/closed/aucune MR) ;
 #   • `git branch -D` est sûr ici car le merge est confirmé (le projet merge en squash) ;
 #   • ne change jamais de branche, n'écrit rien sur GitLab, et s'abstient si l'arbre est sale.
 #
-# ⚠ Une branche EMPRUNTÉE PAR UN WORKTREE ne se supprime pas (`git branch -D` refuse : « checked out
-# at … »), et elle est alors comptée « conservée ». C'est pourquoi le ramassage des worktrees passe
-# AVANT cette purge dans /ticket-start comme dans /branch-cleanup (#197, docs/10 §9.2) : sans lui,
-# les branches des worktrees soldés restaient indéfiniment.
+# Opère sur le CLONE PRINCIPAL d'où qu'on l'appelle (#305) — même parti pris que gl_sync_main et
+# que worktree.sh gc, et pour une raison précise. Les refs, elles, sont partagées par tous les
+# worktrees d'un dépôt : la liste des branches et le résultat des suppressions seraient les mêmes
+# de partout. Ce qui change, c'est ce sur quoi portent les deux garde-fous — l'arbre regardé est
+# celui du clone principal, normalement propre et sur `main`, et non celui d'un worktree en plein
+# travail, qui ferait sauter la purge en silence à chaque reprise de session.
+#
+# ⚠ Une branche EMPRUNTÉE PAR UN WORKTREE ne se supprime pas : `git branch -D` la refuse (« checked
+# out at … ») quel que soit le répertoire d'où on l'appelle — c'est une protection de git, pas un
+# effet de bord du chemin choisi. Elle est donc comptée À PART et NOMMÉE (#305) : jusque-là l'échec
+# n'incrémentait AUCUN des deux compteurs, si bien que la branche sortait du compte rendu sans un
+# mot — 3 branches sur 41 lors de la purge de rattrapage du 2026-08-07, et un bilan qui annonçait
+# moins de branches qu'il n'en avait examinées. C'est aussi pourquoi le ramassage des worktrees
+# passe AVANT cette purge dans `ensure` comme dans /branch-cleanup (#197, docs/10 §9.2) : sans lui,
+# les branches des worktrees soldés resteraient indéfiniment.
+#
+# En `--auto` (appel d'office par un point de passage), muet quand il n'y a rien à dire : aucune
+# suppression et aucun refus = aucune ligne. Même parti pris que `worktree.sh gc --auto`.
 gl_cleanup_merged() {
-  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  local auto=0
+  case "${1:-}" in
+    --auto) auto=1 ;;
+    '') ;;
+    *) echo "usage: gl_cleanup_merged [--auto]" >&2; return 2 ;;
+  esac
+
+  local principal
+  principal="$(gl_depot_principal)" || {
+    echo "Nettoyage des branches ignoré : hors d'un dépôt git." >&2
+    return 0
+  }
+  if [ -n "$(git -C "$principal" status --porcelain 2>/dev/null)" ]; then
     echo "Nettoyage des branches ignoré : changements non commités présents." >&2
     return 0
   fi
   # Pruning cosmétique des refs de suivi ; non bloquant (jamais de prompt d'identifiants) et non
   # fatal : la décision de suppression s'appuie sur l'état MR côté GitLab, pas sur ce fetch.
-  GIT_TERMINAL_PROMPT=0 git fetch --prune origin >/dev/null 2>&1
-  local current branch state deleted=0 kept=0
-  current="$(git branch --show-current 2>/dev/null)"
+  GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch --prune origin >/dev/null 2>&1
+  local current branch state porteur deleted=0 kept=0 empruntees=0
+  current="$(git -C "$principal" branch --show-current 2>/dev/null)"
   while IFS= read -r branch; do
     [ -z "$branch" ] && continue
     [ "$branch" = "main" ] && continue
     [ "$branch" = "$current" ] && continue
     state="$(gl_mr_state "$branch")"
-    if [ "$state" = "merged" ]; then
-      if git branch -D "$branch" >/dev/null 2>&1; then
-        printf '  supprimée : %s (MR merged)\n' "$branch"
-        deleted=$((deleted + 1))
-      fi
-    else
+    if [ "$state" != "merged" ]; then
       kept=$((kept + 1))
+      continue
     fi
-  done < <(git branch --format='%(refname:short)')
-  printf 'Nettoyage des branches : %s supprimée(s), %s conservée(s).\n' "$deleted" "$kept"
+    if git -C "$principal" branch -D "$branch" >/dev/null 2>&1; then
+      printf '  supprimée : %s (MR merged)\n' "$branch"
+      deleted=$((deleted + 1))
+      continue
+    fi
+    porteur="$(gl_worktree_de_branche "$principal" "$branch")"
+    if [ -n "$porteur" ]; then
+      printf '  ⚠ conservée : %s (MR merged, empruntée par le worktree %s)\n' "$branch" "$porteur"
+    else
+      printf '  ⚠ conservée : %s (MR merged, suppression refusée par git)\n' "$branch"
+    fi
+    empruntees=$((empruntees + 1))
+  done < <(git -C "$principal" branch --format='%(refname:short)')
+
+  [ "$auto" = 1 ] && [ "$deleted" -eq 0 ] && [ "$empruntees" -eq 0 ] && return 0
+  if [ "$empruntees" -gt 0 ]; then
+    printf 'Nettoyage des branches : %s supprimée(s), %s conservée(s), %s mergée(s) mais empruntée(s) par un worktree.\n' \
+      "$deleted" "$kept" "$empruntees"
+  else
+    printf 'Nettoyage des branches : %s supprimée(s), %s conservée(s).\n' "$deleted" "$kept"
+  fi
 }
 
 # --- Fin de vie d'un worktree -------------------------------------------------------------------
@@ -1842,9 +1884,18 @@ gl_depot_principal() {
 #   - déjà sur la branche (situation normale dans un worktree créé par scripts/git/worktree.sh) ;
 #   - branche locale existante -> bascule ;
 #   - branche absente -> création depuis `origin/main` à jour.
-# Dans le clone principal, `main` est rafraîchi et les branches mergées purgées au passage. Dans un
-# worktree lié on ne passe JAMAIS par `git checkout main` : `main` est déjà emprunté par le clone
-# principal, et git refuse d'emprunter deux fois la même branche.
+# Dans le clone principal, `main` est rafraîchi au passage. Dans un worktree lié on ne passe JAMAIS
+# par `git checkout main` : `main` est déjà emprunté par le clone principal, et git refuse
+# d'emprunter deux fois la même branche.
+#
+# ⚠ Ce helper ne purge PLUS les branches mergées (#305). Il l'a fait de #23 à #305, à l'époque où
+# il était le point de passage qui mettait `main` à jour ; depuis #181 c'est `worktree.sh ensure`
+# qui tient ce rôle, et l'appel n'était plus joignable — /ticket-start appelle `ensure` d'abord, si
+# bien que `start-branch` sort soit par « déjà sur la branche », soit par la voie worktree lié,
+# jamais par celle qui purgeait. Le résultat s'est vu à l'œil nu : 35 branches mergées accumulées
+# sur le clone principal, la plus ancienne remontant à #220. Garder un second point d'appel
+# inatteignable est exactement ce qui a rendu la régression invisible — la purge a donc UN seul
+# déclencheur automatique, `ensure` (plus /branch-cleanup à la demande).
 gl_start_branch() {
   local branche="$1" courante
   if [ -z "$branche" ]; then echo "usage: gl_start_branch <branche>" >&2; return 2; fi
@@ -1878,25 +1929,34 @@ gl_start_branch() {
   else
     git checkout main || return 1
     git pull origin main || return 1
-    gl_cleanup_merged
     git checkout -b "$branche" || return 1
   fi
   printf 'Branche créée : %s (depuis origin/main).\n' "$branche"
 }
 
-# --- Mise à jour de la branche main locale --------------------------------------------------------
-# gl_worktree_de_main <clone-principal> -> chemin du répertoire de travail qui a `main` en HEAD,
-# vide si elle n'est empruntée nulle part. Détermine COMMENT avancer la ref (voir gl_sync_main).
-gl_worktree_de_main() {
-  local principal="$1" courant="" ligne
+# --- Repères des worktrees ------------------------------------------------------------------------
+# gl_worktree_de_branche <clone-principal> <branche> -> chemin du répertoire de travail qui a cette
+# branche en HEAD, vide si elle n'est empruntée nulle part. Deux appelants, deux questions : pour
+# gl_sync_main, COMMENT avancer `main` (poser la ref, ou merge --ff-only dans le répertoire qui
+# l'emprunte) ; pour gl_cleanup_merged, QUI retient une branche mergée que `git branch -D` refuse
+# de supprimer (#305).
+#
+# Le motif du `case` est entre GUILLEMETS : sans eux le nom de branche serait interprété comme un
+# motif, et un slug porteur d'un `?` ou d'un `*` matcherait la mauvaise ligne.
+gl_worktree_de_branche() {
+  local principal="$1" branche="$2" courant="" ligne
   while IFS= read -r ligne; do
     case "$ligne" in
-      worktree\ *)            courant="${ligne#worktree }" ;;
-      'branch refs/heads/main') printf '%s' "$courant"; return 0 ;;
+      worktree\ *)                  courant="${ligne#worktree }" ;;
+      "branch refs/heads/$branche") printf '%s' "$courant"; return 0 ;;
     esac
   done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
   return 1
 }
+
+# --- Mise à jour de la branche main locale --------------------------------------------------------
+# gl_worktree_de_main <clone-principal> -> le cas particulier de `main` (voir gl_sync_main).
+gl_worktree_de_main() { gl_worktree_de_branche "${1:-}" main; }
 
 # gl_sync_main [--check] -> avance `refs/heads/main` du CLONE PRINCIPAL sur `origin/main`, en
 # FAST-FORWARD seulement (#205).
@@ -2375,7 +2435,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    issue-note <iid> <fichier>          (poste le fichier en commentaire sur le ticket)" >&2
       echo "    issue-title <iid>                   (titre du ticket, UTF-8 intact)" >&2
       echo "  Branches :" >&2
-      echo "    cleanup-merged              (supprime les branches locales dont la MR est mergée)" >&2
+      echo "    cleanup-merged [--auto]     (supprime les branches locales dont la MR est mergée ; --auto = muet si rien)" >&2
       echo "    sync-main [--check]         (avance main du clone principal sur origin/main, fast-forward seul ; 0=à jour/fait, 3=divergent, 4=arbre sale)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
       echo "    worktree-done <iid> [branche] (fini|actif|inconnu + sha de merge + raison — fin de vie d'un worktree)" >&2
