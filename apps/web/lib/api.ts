@@ -49,15 +49,23 @@ export function urlApi(): string {
  * des deux mots réservés. Le backend l'exige sur toutes les vues qui agrègent —
  * Kanban, exécutions, coûts, validations, journal, flux temps réel — et refuse
  * une lecture qui n'en porte pas (`projet-requis`) : « rien plutôt qu'un
- * mélange ». Tant que le projet actif n'est pas porté par le shell (#280/#281),
- * les appels ci-dessous demandent explicitement la vue transverse.
+ * mélange ».
+ *
+ * Depuis #281 la portée n'a **pas de défaut** ici : elle est un paramètre exigé
+ * de chaque appel, et c'est le compilateur qui tient la promesse « aucun écran
+ * ne montre autre chose que le projet actif ». Un défaut à `tous` — ce qu'il y
+ * avait tant que le shell ne portait pas le projet — rendrait la vue transverse
+ * à qui aurait simplement oublié de cadrer sa lecture, c'est-à-dire exactement
+ * la fuite que ce lot ferme. Le shell passe l'identifiant du projet actif
+ * (`components/Shell` → `lib/etatGlobal`) ; `tous` et `aucun` restent
+ * disponibles pour une vue qui les demande explicitement.
  */
 export type PorteeProjet = string;
 export const PORTEE_TOUS = "tous";
 export const PORTEE_AUCUN = "aucun";
 
 /** L'URL du flux d'événements temps réel (`WS /ws/evenements`), à la portée demandée. */
-export function urlEvenements(portee: PorteeProjet = PORTEE_TOUS): string {
+export function urlEvenements(portee: PorteeProjet): string {
   return (
     API_URL.replace(/^http/, "ws") +
     `/ws/evenements?projet=${encodeURIComponent(portee)}`
@@ -83,18 +91,28 @@ export function chargerSante(): Promise<Sante> {
 }
 
 /** Les tâches connues du backend, à la portée demandée — la source du Kanban. */
-export function chargerTaches(portee: PorteeProjet = PORTEE_TOUS): Promise<Tache[]> {
+export function chargerTaches(portee: PorteeProjet): Promise<Tache[]> {
   return chargerJson<Tache[]>(`/api/taches?projet=${encodeURIComponent(portee)}`);
 }
 
-/** L'état des agents (libre/occupé, tâche courante, compteurs, coût cumulé). */
+/**
+ * L'état des agents (libre/occupé, tâche courante, compteurs, coût cumulé).
+ *
+ * **Sans portée projet, et c'est une décision** (#281, docs/05 §2.3) : un agent
+ * est une ressource du **poste** — son playbook, sa capacité et ses instances
+ * (#86) valent pour toute la Control Tower —, il n'appartient à aucun projet et
+ * le backend ne le filtre pas (#277 ne porte pas `?projet=` sur cette route).
+ * Ce qui doit être cadré, c'est ce qu'un écran en **dit** : voir
+ * `IndicateursTableauDeBord`, dont la tuile compte les agents au travail **sur
+ * le projet actif** et nomme le parc comme partagé.
+ */
 export function chargerAgents(): Promise<EtatAgent[]> {
   return chargerJson<EtatAgent[]>("/api/agents");
 }
 
 /** Les demandes de validation humaine (#48) : contexte, statut, décision. */
 export function chargerValidations(
-  portee: PorteeProjet = PORTEE_TOUS,
+  portee: PorteeProjet,
 ): Promise<Validation[]> {
   return chargerJson<Validation[]>(
     `/api/validations?projet=${encodeURIComponent(portee)}`,
@@ -117,12 +135,12 @@ export function chargerCoutExecution(runId: string): Promise<CoutExecution> {
 export function chargerAnalyticsCouts(options: {
   depuis?: string;
   pas?: PasSerie;
-  projet?: PorteeProjet;
+  projet: PorteeProjet;
 }): Promise<AnalyticsCouts> {
   const params = new URLSearchParams();
   if (options.depuis !== undefined) params.set("depuis", options.depuis);
   if (options.pas !== undefined) params.set("pas", options.pas);
-  params.set("projet", options.projet ?? PORTEE_TOUS);
+  params.set("projet", options.projet);
   return chargerJson<AnalyticsCouts>(`/api/analytics/couts?${params.toString()}`);
 }
 

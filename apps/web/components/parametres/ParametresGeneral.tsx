@@ -22,7 +22,7 @@ import { LigneReglage } from "./SectionParametres";
 type Verdict = { ok: boolean; message: string };
 
 export function ParametresGeneral() {
-  const { connecte } = useEtatGlobal();
+  const { connecte, portee } = useEtatGlobal();
   const [enCours, setEnCours] = useState(false);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
 
@@ -55,10 +55,12 @@ export function ParametresGeneral() {
 
       <LigneReglage
         libelle="Flux temps réel"
-        aide="Le WebSocket qui pousse les événements — dérivé de l'URL de l'API."
+        aide="Le WebSocket qui pousse les événements — dérivé de l'URL de l'API, et cadré sur le projet actif (#281) : c'est l'URL réellement ouverte, portée comprise, pas un gabarit."
       >
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <code className="font-mono text-sm break-all">{urlEvenements()}</code>
+          <code className="font-mono text-sm break-all">
+            {urlEvenements(portee)}
+          </code>
           <span
             className={
               "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium " +

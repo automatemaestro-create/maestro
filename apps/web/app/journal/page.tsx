@@ -31,6 +31,13 @@
  * plus), l'état de référence restant le REST. L'écran le dit : un journal
  * persisté et requêtable existe côté contrat (`GET /api/journal`, #183) mais
  * n'est pas encore servi par le backend, et cette page ne le promet pas.
+ *
+ * Depuis #281 le fil est celui **du projet actif** : la socket déclare sa portée
+ * à l'ouverture (#277), le tri se fait donc côté backend et il n'y a rien à
+ * refiltrer ici. Les listes de filtres, dérivées du fil, en héritent — elles ne
+ * proposent que des agents et des tâches de ce projet, sans une ligne de plus.
+ * Un changement de projet remonte cette page (`key` du shell) : les filtres
+ * repartent à zéro plutôt que de rester posés sur une tâche qui n'est plus.
  */
 
 import { useMemo, useState } from "react";
@@ -62,7 +69,7 @@ const TOUS = "";
 type Option = { valeur: string; libelle: string };
 
 export default function PageJournal() {
-  const { evenements, connecte, erreur } = useEtatGlobal();
+  const { projet, evenements, connecte, erreur } = useEtatGlobal();
 
   const [recherche, setRecherche] = useState("");
   const [type, setType] = useState(TOUS);
@@ -109,11 +116,13 @@ export default function PageJournal() {
       {/* Ce que la page montre, et ce qu'elle ne montre pas : la promesse est
           faite ici plutôt que devinée d'une liste courte. */}
       <p className="rounded-lg border border-neutral-200 bg-white p-3 text-sm text-neutral-600 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        Le fil de la <strong className="font-medium">session</strong> : les{" "}
+        Le fil de la <strong className="font-medium">session</strong>, sur{" "}
+        <strong className="font-medium">{projet.nom}</strong> : les{" "}
         {MAX_EVENEMENTS} derniers événements reçus en temps réel depuis
         l&apos;ouverture de la Control Tower, du plus récent au plus ancien. Il
-        repart à zéro au rechargement de la page — l&apos;état de référence, lui,
-        reste celui des tâches, des agents et des coûts.
+        repart à zéro au rechargement de la page — et au changement de projet,
+        dont il ne mélange jamais les fils. L&apos;état de référence, lui, reste
+        celui des tâches, des agents et des coûts.
       </p>
 
       {!connecte && (
@@ -198,7 +207,15 @@ export default function PageJournal() {
         </p>
       </section>
 
-      {filtres.length === 0 && evenements.length > 0 ? (
+      {evenements.length === 0 ? (
+        // Le vide du projet, et non celui d'un filtre : le distinguer est ce
+        // qui évite de chercher une panne (le bandeau ci-dessus dit si le flux
+        // est coupé) ou de croire que rien ne tourne nulle part (#281).
+        <p className="text-sm text-neutral-500 dark:text-neutral-400">
+          Rien encore sur {projet.nom} : aucun événement de ce projet n&apos;est
+          arrivé depuis l&apos;ouverture de la Control Tower.
+        </p>
+      ) : filtres.length === 0 ? (
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Aucun événement ne correspond à ces filtres.
         </p>

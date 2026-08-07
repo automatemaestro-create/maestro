@@ -11,7 +11,9 @@
  *
  * Depuis #279 le shell porte aussi la **garde du projet actif** : tant qu'aucun
  * projet n'est choisi, c'est la porte d'entrée qui occupe l'écran et le cadre
- * ci-dessous n'est pas monté du tout.
+ * ci-dessous n'est pas monté du tout. Depuis #281 il en est en plus la **source
+ * de portée** : le projet passé au fournisseur d'état cadre toutes les lectures
+ * et le flux temps réel, écran par écran.
  */
 
 import { useEffect, useState } from "react";
@@ -31,6 +33,7 @@ import {
   ecrireRepliSidebar,
   lireRepliSidebar,
 } from "@/lib/preferences";
+import type { Projet } from "@/lib/types";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -57,10 +60,16 @@ function PorteProjet({ children }: { children: React.ReactNode }) {
   const { projet, pret } = useProjetActif();
   if (!pret) return <EcranOuverture />;
   if (projet === null) return <ChoixProjet />;
-  return <CadreControlTower>{children}</CadreControlTower>;
+  return <CadreControlTower projet={projet}>{children}</CadreControlTower>;
 }
 
-function CadreControlTower({ children }: { children: React.ReactNode }) {
+function CadreControlTower({
+  projet,
+  children,
+}: {
+  projet: Projet;
+  children: React.ReactNode;
+}) {
   const [repliee, setRepliee] = useState(false);
 
   // Lu après l'hydratation : le rendu serveur ne connaît pas le localStorage,
@@ -83,7 +92,15 @@ function CadreControlTower({ children }: { children: React.ReactNode }) {
   const basculerRepli = () => ecrireRepliSidebar(!repliee);
 
   return (
-    <FournisseurEtatGlobal>
+    // `key` : changer de projet **remonte** tout ce qui est dessous (#281).
+    // C'est ce qui tient le critère « aucune donnée de l'ancien projet ne
+    // subsiste » dans son entier — un rechargement des lectures suffirait pour
+    // l'état temps réel, mais pas pour ce que les pages tiennent elles-mêmes :
+    // les filtres du Journal (dont les listes sont dérivées des événements du
+    // projet quitté), la période des Coûts, un panneau déplié. Le repli de la
+    // sidebar, lui, est **au-dessus** de la clé : c'est une préférence
+    // d'affichage, elle ne change pas avec le projet.
+    <FournisseurEtatGlobal key={projet.id} projet={projet}>
       {/* `min-h-0` tout le long (#248) : la hauteur définie posée par le
           `<body>` ne descend jusqu'aux pages que si chaque élément flex
           accepte de rétrécir sous son contenu — le `min-height:auto` par

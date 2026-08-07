@@ -56,12 +56,18 @@ import {
   formatTokens,
   libelleStatut,
 } from "@/lib/format";
-import type { EtatAgent, Tache } from "@/lib/types";
+import type { EtatAgent, Projet, Tache } from "@/lib/types";
 
 type Props = {
   taches: Tache[];
   agents: EtatAgent[];
   reassigner: Reassigner;
+  /**
+   * Le projet dont ces tâches sont les tâches (#281). Sert à **nommer le vide** :
+   * un tableau sans carte doit dire de quel périmètre il est vide, sans quoi il
+   * se lit « rien ne tourne » alors qu'il dit « rien ici ».
+   */
+  projet: Projet;
 };
 
 /**
@@ -106,7 +112,7 @@ const COLONNES: {
 /** Ouvre le panneau de détail sur une tâche, en retenant d'où on est parti. */
 type Ouvrir = (tache: Tache, declencheur: HTMLElement | null) => void;
 
-export function Kanban({ taches, agents, reassigner }: Props) {
+export function Kanban({ taches, agents, reassigner, projet }: Props) {
   // Le panneau est tenu **ici**, pas dans la carte : il est modal (une tâche à
   // la fois), et une carte est un `<article>` cliquable au fond d'une colonne
   // qui déroule — y imbriquer le dialogue le ferait hériter du clic de la carte
@@ -242,8 +248,8 @@ export function Kanban({ taches, agents, reassigner }: Props) {
       </div>
       {taches.length === 0 && (
         <p className="mt-2 text-corps text-neutral-500">
-          Aucune tâche pour l&apos;instant — elles apparaîtront dès qu&apos;un run
-          publiera ses événements.
+          Rien encore sur {projet.nom} — les tâches apparaîtront dès qu&apos;un
+          run de ce projet publiera ses événements.
         </p>
       )}
       {affichee !== null && (

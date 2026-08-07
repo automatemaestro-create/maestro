@@ -44,7 +44,7 @@ export function BarreSuperieure({
   aide,
 }: Props) {
   const chemin = usePathname();
-  const { connecte, coutTotal } = useEtatGlobal();
+  const { connecte, coutTotal, projet } = useEtatGlobal();
   const titre = entreeCourante(chemin)?.libelle ?? "Control Tower";
 
   return (
@@ -93,11 +93,14 @@ export function BarreSuperieure({
         </span>
 
         {/* Masqué sur les écrans les plus étroits : le titre de page y a la
-            priorité, et le coût reste lisible dans la page elle-même. */}
+            priorité, et le coût reste lisible dans la page elle-même.
+            Depuis #281 c'est la dépense **du projet actif** — le titre le dit,
+            un montant qui suit l'utilisateur de page en page ne pouvant pas
+            rester le seul chiffre de l'écran à parler de tous les projets. */}
         <span
           data-guide="cout-cumule"
           className="hidden whitespace-nowrap text-sm text-neutral-600 sm:inline dark:text-neutral-400"
-          title="Coût cumulé rapporté par les agents"
+          title={`Coût cumulé sur ${projet.nom} — somme des grands livres, planification comprise`}
         >
           Coût cumulé :{" "}
           <span className="font-medium tabular-nums">{formatCout(coutTotal)}</span>

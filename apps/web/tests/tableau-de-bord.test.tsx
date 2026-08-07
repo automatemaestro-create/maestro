@@ -137,24 +137,57 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
     );
   });
 
-  it("met les occupés et les libres en valeur, le reste en détail", () => {
+  it("met le travail sur ce projet et les libres en valeur, le reste en détail", () => {
     // #247 : c'est « combien travaillent, combien sont disponibles » qu'on vient
     // chercher — le total et les désactivés passent derrière.
+    // #281 : « combien travaillent » devient « **ici** ». Le parc est celui du
+    // poste (`GET /api/agents` n'a pas de portée, docs/05 §2.3), donc seul un
+    // décompte dérivé des tâches **du projet** appartient à ce tableau de bord.
     monter({
       agents: [
-        agentFactice({ nom: "dev", actif: true, statut: "occupe" }),
+        agentFactice({
+          nom: "dev",
+          actif: true,
+          statut: "occupe",
+          taches_en_cours: ["T-1"],
+        }),
         agentFactice({ nom: "qa", actif: true, statut: "libre" }),
         agentFactice({ nom: "ops", actif: false, statut: "libre" }),
       ],
+      taches: [tacheFactice({ id: "T-1", agent: "dev", statut: "en_cours" })],
     });
-    expect(tuile("Agents")).toHaveTextContent("1 occupé(s) · 1 libre(s)");
-    expect(tuile("Agents")).toHaveTextContent("3 au total · 1 désactivé(s)");
+    expect(tuile("Agents")).toHaveTextContent("1 sur ce projet · 1 libre(s)");
+    expect(tuile("Agents")).toHaveTextContent(
+      "3 agent(s) du poste · 0 occupé(s) ailleurs · 1 désactivé(s)",
+    );
+  });
+
+  it("renvoie au détail l'agent occupé sur un autre projet", () => {
+    // Le cas que le lot rend possible et qu'il faut nommer : un agent au
+    // travail, mais pas ici. Le compter en tête ferait mentir la tuile ; le
+    // taire ferait croire qu'il est disponible.
+    monter({
+      agents: [
+        agentFactice({
+          nom: "dev",
+          actif: true,
+          statut: "occupe",
+          // Une tâche en cours, mais pas une des nôtres : elle n'est pas dans
+          // `taches`, qui est déjà filtré sur le projet actif.
+          taches_en_cours: ["T-ailleurs"],
+        }),
+      ],
+      taches: [],
+    });
+    expect(tuile("Agents")).toHaveTextContent("0 sur ce projet · 0 libre(s)");
+    expect(tuile("Agents")).toHaveTextContent("1 occupé(s) ailleurs");
   });
 
   it("somme les grands livres, planification comprise", () => {
     // Et non les coûts rapportés par agent : la part de l'orchestrateur n'est
-    // attribuée à personne. Le détail de la tuile le dit, pour que l'écart avec
-    // le coût cumulé de la barre supérieure se lise au lieu d'intriguer.
+    // attribuée à personne — et, depuis #281, les coûts par agent valent pour
+    // le poste entier là où les grands livres suivent les tâches du projet.
+    // C'est la même source que la barre supérieure : les deux s'accordent.
     monter({
       couts: [
         coutExecutionFactice({

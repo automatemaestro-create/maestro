@@ -11,11 +11,26 @@
  * l'événement. La connexion se rétablit seule (backoff plafonné) et chaque
  * reconnexion recharge le fil — les messages manqués pendant une coupure
  * sont rattrapés.
+ *
+ * **Le seul flux de l'application qui reste transverse** (#281), et c'est le
+ * contrat de #277 qui l'impose : un `chat.message` ne porte pas de `projet_id`
+ * (maestro/controltower/chat.py), donc une socket cadrée sur un projet ne le
+ * recevrait **jamais** — le fil se figerait sans rien dire, chaque message
+ * n'apparaissant qu'au rechargement suivant. Ce n'est pas une exception de
+ * confort : le chat parle de l'**outil** et non du projet (voir le répondeur
+ * d'assistance, `maestro/controltower/app.py`), il n'a donc pas de périmètre à
+ * respecter. Toute vue qui, elle, montre le **travail** passe par
+ * `useControlTower` et son projet actif.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { chargerFilChat, envoyerMessageChat, urlEvenements } from "./api";
+import {
+  chargerFilChat,
+  envoyerMessageChat,
+  urlEvenements,
+  PORTEE_TOUS,
+} from "./api";
 import {
   EVENEMENT_CHAT_MESSAGE,
   type Evenement,
@@ -84,7 +99,9 @@ export function useChat(agent: string): Chat {
 
     const connecter = () => {
       if (abandonne) return;
-      socket = new WebSocket(urlEvenements());
+      // Transverse à dessein — voir l'en-tête : `chat.message` ne porte pas de
+      // projet, une socket cadrée ne le verrait pas passer.
+      socket = new WebSocket(urlEvenements(PORTEE_TOUS));
       socket.onopen = () => {
         tentatives = 0;
         setConnecte(true);

@@ -1,8 +1,13 @@
 "use client";
 
 /**
- * Section « Coûts & plafonds » des Paramètres (#121) : la dépense cumulée
- * rapportée par les agents, et l'état des garde-fous de budget.
+ * Section « Coûts & plafonds » des Paramètres (#121) : la dépense cumulée du
+ * **projet actif**, et l'état des garde-fous de budget.
+ *
+ * Depuis #281 le chiffre est celui du projet, comme partout ailleurs — même
+ * source que la barre supérieure et que la tuile « Dépense » (`coutCumule`).
+ * Une page de réglages n'échappe pas au cadre : c'est justement là qu'un total
+ * « toutes activités confondues » se lirait comme la vérité de référence.
  *
  * Le plafond de dépense existe bien dans le moteur (#56 : budget de l'exécution
  * entière), mais il se fixe au **lancement du run** (`--plafond-cout`) et l'API
@@ -16,14 +21,14 @@ import { formatCout } from "@/lib/format";
 import { EtatVide, LigneReglage } from "./SectionParametres";
 
 export function ParametresCouts() {
-  const { coutTotal } = useEtatGlobal();
+  const { coutTotal, projet } = useEtatGlobal();
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col">
         <LigneReglage
           libelle="Dépense cumulée"
-          aide="Somme des coûts rapportés par les agents depuis le démarrage du backend. « — » tant qu'aucun ne l'a rapportée (inconnu n'est pas nul)."
+          aide={`Somme des grands livres des exécutions de ${projet.nom}, planification comprise. « — » tant qu'aucun coût n'a été rapporté (inconnu n'est pas nul).`}
         >
           <span className="text-lg font-semibold tabular-nums">
             {formatCout(coutTotal)}

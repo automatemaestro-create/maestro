@@ -126,6 +126,9 @@ describe("la page Journal", () => {
   it("annonce la coupure du flux, dont il dépend entièrement", () => {
     rendreAvecEtat(<PageJournal />, { evenements: [], connecte: false });
     expect(screen.getByText(/Flux temps réel interrompu/)).toBeInTheDocument();
-    expect(screen.getByText(/Aucun événement reçu/)).toBeInTheDocument();
+    // Le vide, lui, nomme le projet (#281) : les deux phrases répondent à deux
+    // questions distinctes — « pourquoi ça ne se remplit plus » et « de quoi
+    // est-ce vide » —, et une coupure ne doit pas les confondre.
+    expect(screen.getByText(/Rien encore sur Dépensio/)).toBeInTheDocument();
   });
 });

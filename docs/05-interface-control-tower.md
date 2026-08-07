@@ -58,6 +58,60 @@ corrigés côté serveur.
 
 ## 2. Les écrans en détail
 
+### 2.0 Le projet actif est le cadre de tous les écrans (#281) — **livré**
+
+On entre dans la Control Tower **par** un projet (#279) et tout ce qu'on y voit se rapporte à ce
+projet-là. Ce n'est pas une option d'affichage : la portée de §6.0 est passée à **chaque** lecture,
+et l'API refuse celle qui n'en porte pas. Côté front, la portée n'a donc **aucun défaut** — un
+`?projet=tous` implicite rendrait la vue transverse à qui aurait simplement oublié de cadrer sa
+lecture, c'est-à-dire exactement la fuite que ce lot ferme.
+
+**Ce qui est filtré par le projet actif** — tâches et Kanban, indicateurs de tête, validations
+(file et historique), coûts (agrégats de période *et* grands livres), journal d'activité, centre de
+notifications, et le **flux temps réel** qui les alimente tous.
+
+**Ce qui reste global, et pourquoi** :
+
+| ce qui reste global | pourquoi | ce qui est cadré malgré tout |
+| --- | --- | --- |
+| `GET /api/agents` — état du parc | un agent est une ressource du **poste** : son playbook, sa capacité et ses instances (#86) valent pour toute la Control Tower. Il n'appartient à aucun projet, et #277 ne lui a pas donné de portée | la tuile « Agents » compte les agents **au travail sur ce projet** (dérivé de ses tâches) et renvoie au détail le parc et les « occupés ailleurs » |
+| le **catalogue** d'agents et les **playbooks** | ce sont des définitions, pas du travail — les partager entre projets est l'intérêt d'en avoir | — |
+| le **chat** et l'assistant | ils parlent de l'**outil**, pas du projet ; et un `chat.message` ne porte pas de `projet_id`, donc une socket cadrée ne le recevrait **jamais** (§6.0) — le fil se figerait sans rien dire | — |
+| les **paramètres** du poste (apparence, notifications, MCP) | réglages de l'installation, pas d'un projet | la dépense cumulée qui y figure, elle, est celle du projet |
+
+**Le coût cumulé change de source** avec ce lot. Il se lisait sur `agents[].cout_usd` — un total de
+**tous** les projets, puisque le parc est celui du poste. Il est désormais la somme des **grands
+livres** (#57) des exécutions du projet, planification comprise : cadré par construction, et
+identique dans les trois endroits qui l'affichent (barre supérieure, tuile « Dépense »,
+Paramètres › Coûts) là où l'écart demandait jusqu'ici d'être expliqué.
+
+**Changer de projet remet tout à zéro.** Le shell **remonte** son fournisseur d'état sur l'identité
+du projet plutôt que de recharger les données : recharger suffirait pour l'état temps réel, pas pour
+ce que les **pages** tiennent elles-mêmes — un filtre du Journal posé sur une tâche de l'ancien
+projet, une période sélectionnée, un panneau déplié. C'est ce que le critère appelle un « compteur
+figé », et c'est le seul de ses trois cas (cache, flux ouvert, compteur) qu'un rechargement ne
+traite pas. Le repli de la sidebar, lui, reste **au-dessus** : c'est une préférence d'affichage.
+
+**Un écran vide le dit, et nomme le projet.** Trois vides se ressemblent et ne se diagnostiquent pas
+pareil : une **panne** (API injoignable — bannière, panneaux conservés, §2.1.1), l'**absence de
+projet** (la porte d'entrée de #279, qui s'intercale avant que la Control Tower ne soit montée) et
+**rien encore sur ce projet**. Le troisième se formule avec le nom du projet — « Rien encore sur
+Dépensio » — sur le tableau de bord, le Kanban, le Journal, les Validations et les Coûts : un
+« aucun événement » anonyme, sur une Control Tower qui n'en montre plus qu'un, se lit « rien ne
+tourne nulle part ».
+
+⚠ **Corollaire à connaître** : un run publié **sans projet** (`maestro-run --publier`, qui n'a pas
+d'option de rattachement) ne relève d'aucun projet et n'apparaît donc sur l'écran d'aucun — seule la
+vue `aucun` le montre (§6.0). `PosteVide` le dit explicitement, faute de quoi on chercherait une
+panne là où il n'y a qu'un périmètre. Rattacher un run se fait aujourd'hui par `POST
+/api/executions` (champ `projet_id`, §6.1) ; le formulaire viendra avec « Composer un objectif »
+(§2.7, Phase 8).
+
+Implémentation : `apps/web/lib/etatGlobal.tsx` (le projet et sa portée diffusés au shell),
+`useControlTower` / `useAnalyticsCouts` (les deux lectures cadrées), `components/Shell.tsx` (la clé
+de remontage). Couverture : `apps/web/tests/projet-cadre.test.tsx`. Tests Python et doc de la vague :
+lot 6 (#282).
+
 ### 2.1 🏠 Tableau de bord (vue d'accueil)
 
 Il répond à « **où en est-on, et qu'est-ce qui m'attend ?** » **en un écran**
@@ -66,10 +120,12 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
 
 1. **Validations en attente** — ce qui demande un arbitrage humain, en tête.
 2. **Indicateurs de tête** — quatre tuiles : run en cours, tâches par statut,
-   agents occupés et libres, dépense. Chaque tuile met en valeur **le chiffre
-   qu'on vient y chercher** : la tuile Agents répond « combien travaillent,
-   combien sont disponibles ? » et relègue le total et les agents désactivés en
-   ligne de détail (#247).
+   agents, dépense. Chaque tuile met en valeur **le chiffre qu'on vient y
+   chercher** : la tuile Agents répond « combien travaillent, combien sont
+   disponibles ? » et relègue le total et les agents désactivés en ligne de
+   détail (#247). Depuis #281 « combien travaillent » veut dire **ici** — le
+   parc étant celui du poste (§2.0), seul un décompte dérivé des tâches du
+   projet a sa place en tête, les « occupés ailleurs » passant au détail.
 3. **Kanban** des tâches.
 4. **Aperçu de l'activité** en direct (quelques lignes, pas le fil entier).
 
@@ -83,8 +139,9 @@ un renvoi vers une page **pas encore créée** — le Journal du chantier
 « Visibilité », qui hébergera le fil complet — **ne s'allume pas** tant qu'elle
 n'est pas au menu : pas de lien mort en attendant.
 
-Le **coût cumulé** et le statut du flux temps réel vivent en permanence dans la
-barre supérieure, sur toutes les pages. Tout se met à jour par WebSocket.
+Le **coût cumulé** — celui du projet actif depuis #281 (§2.0) — et le statut du flux
+temps réel vivent en permanence dans la barre supérieure, sur toutes les pages. Tout
+se met à jour par WebSocket.
 
 #### 2.1.1 Le poste vide — ce que montre un démarrage en mode réel (#186)
 
@@ -95,16 +152,21 @@ tâche, aucun événement, aucune validation. Quatre panneaux à zéro feraient 
 une panne ; l'écran est donc remplacé par **ce qu'il faut faire pour le remplir**
 (`PosteVide`), avec les deux gestes possibles :
 
-- **lancer une orchestration** — `maestro-run --publier "<objectif>"` depuis le
-  dépôt, ou `POST /api/executions` depuis la Control Tower elle-même (§6.1) ;
+- **lancer une orchestration dans ce projet** — `POST /api/executions` avec le
+  `projet_id` de l'écran (§6.1). `maestro-run --publier "<objectif>"` reste le
+  geste en ligne de commande, mais **sans rattachement** : ses tâches n'entrent
+  dans la vue d'aucun projet (§2.0), et l'écran le dit plutôt que de le laisser
+  chercher ;
 - **juste explorer l'interface** — `bash scripts/controltower/start.sh --demo`,
   scénario factice sur bus mémoire, qui **dit** que ses données le sont.
 
 Ce n'est **pas un état d'erreur**, et la distinction est le point de conception :
 une API injoignable garde ses panneaux et sa bannière d'erreur, parce qu'un écran
-vide *et muet* ne se diagnostique pas comme un écran vide *et connecté*. Une fois
-le premier événement publié, le poste se remplit **sans rechargement** (WebSocket),
-et l'historique est rejoué au redémarrage de l'API (journal durable, #97).
+vide *et muet* ne se diagnostique pas comme un écran vide *et connecté*. Depuis
+#281 le titre **nomme le projet** (« Rien encore sur Dépensio ») : c'est ce qui
+distingue ce vide-là des deux autres (§2.0). Une fois le premier événement publié,
+le poste se remplit **sans rechargement** (WebSocket), et l'historique est rejoué au
+redémarrage de l'API (journal durable, #97).
 
 ### 2.2 📋 Tâches — tableau Kanban
 
@@ -137,6 +199,16 @@ il n'y a plus de sélecteur d'agent en tête de trois pages différentes.
 L'**activation/désactivation** et le **contrôle de capacité** (**+ / −**
 instances, EF-21) se règlent dans **Paramètres › Agents & capacité** ; le tableau
 de bord en donne le compte et y renvoie.
+
+**Ces écrans sont les seuls du produit à rester transverses** (#281, §2.0), et c'est une décision
+plutôt qu'un reste : un agent est une ressource du **poste**, pas un objet de projet. Sa définition,
+son playbook, sa capacité et son état libre/occupé valent pour toute la Control Tower — les
+partager entre projets est précisément l'intérêt d'avoir un catalogue —, et `GET /api/agents` ne
+porte donc pas de portée (§6.0). Ce qui est cadré, c'est ce que les **autres** écrans en disent :
+la tuile « Agents » du tableau de bord compte les agents au travail **sur le projet actif** et
+nomme le parc comme partagé. Le jour où un agent deviendrait propre à un projet — un catalogue par
+projet, une capacité par projet — c'est ici et au §6.0 qu'il faudrait revenir, pas dans un
+composant.
 
 Ajouter une facette à un agent se fait dans `apps/web/lib/agents.ts` : la barre
 d'onglets, les cartes de la liste et la route dynamique la lisent toutes.
@@ -172,6 +244,13 @@ listé au même titre : le suivi lit la projection, il ne distingue pas l'origin
 - Débit (tâches/heure), taux de réussite, durée moyenne.
 - **Plafonds de budget** et alertes configurables.
 
+« Coût **par projet** » n'est plus une colonne mais le **cadre** de la page (#281, §2.0) : les deux
+sources — agrégats de période et grands livres — portent la même portée, si bien qu'elles ne
+peuvent pas se contredire. Un total de période inférieur à la somme des grands livres se lirait
+comme un bug là où ce ne serait qu'un mélange de périmètres. Et quand la période ne rend rien, la
+page **le dit avec le nom du projet** : les compteurs à zéro restent (« 0 $ » est une réponse) mais
+les tables s'effacent, et l'écran passerait sinon pour à moitié chargé.
+
 ### 2.6 ✅ Validation humaine (human-in-the-loop)
 
 Quand un agent atteint une action sensible, une carte **« Validation requise »** apparaît :
@@ -179,6 +258,12 @@ Quand un agent atteint une action sensible, une carte **« Validation requise »
 - Contexte et diff proposé.
 - Boutons **Approuver** / **Refuser** / **Modifier la consigne**.
 - Le run reste en pause jusqu'à la décision (EF-08).
+
+File d'attente **et** historique sont cadrés sur le projet actif (#281, §2.0) : on ne tranche pas
+depuis cet écran l'arbitrage d'un projet qu'on n'a pas sous les yeux, et la cloche de la barre
+supérieure ne compte pas ce qu'il ne montre pas. L'écran vide sépare deux cas que « aucune
+validation en attente » confondait : *rien encore sur ce projet* et *rien en attente, mais des
+arbitrages déjà rendus* — l'historique en dessous le prouve.
 
 ### 2.7 📁 Projets et composition d'un objectif *(retenu — [docs/24](./24-projets-locaux-et-poste-de-travail.md), **Phases 7 et 8**)*
 
@@ -213,7 +298,9 @@ Quand un agent atteint une action sensible, une carte **« Validation requise »
   n'est jamais supprimée, la copie reste où elle est.
 
 Le sélecteur de projet devient alors un élément permanent de la barre supérieure : le Kanban,
-les coûts et le journal se lisent **par projet**.
+les coûts et le journal se lisent **par projet**. La seconde moitié est **livrée** (#281, §2.0) —
+tous les écrans sont cadrés sur le projet actif et un changement de projet les remet à zéro ; le
+**sélecteur** lui-même, lui, relève du lot #280.
 
 #### 2.7.1 L'écran Projets (#225) — **livré**
 
@@ -393,6 +480,11 @@ Implémentation : [`maestro/controltower/portee.py`](../maestro/controltower/por
 `PorteeProjet` et son unique prédicat `retient`, partagé par la projection, les analytics, le
 journal et la diffusion, de sorte qu'aucune de ces quatre couches ne réécrive « appartient au
 projet demandé ».
+
+**Côté front, ce contrat est celui du §2.0** (#281) : la portée passée est l'identifiant du projet
+actif, elle n'a **aucun défaut** dans [`apps/web/lib/api.ts`](../apps/web/lib/api.ts) — une lecture
+non cadrée ne compile pas —, et `tous` ne subsiste que là où il est justifié : le flux du **chat**,
+dont les événements ne portent pas de projet et qu'une socket cadrée ne recevrait jamais.
 
 ### 6.1 Exécutions — lancement, suivi, annulation (#185) — **livré**
 

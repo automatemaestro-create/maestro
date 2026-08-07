@@ -24,7 +24,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Kanban } from "@/components/Kanban";
 import { detailDe, etapesDe, liensDe } from "@/lib/detailTache";
 
-import { agentFactice, tacheFactice } from "./aides";
+import { agentFactice, projetFactice, tacheFactice } from "./aides";
 
 /** Une tâche qui porte tout le détail : description, étapes, liens. */
 function tacheDetaillee() {
@@ -54,6 +54,7 @@ function rendreKanban(taches = [tacheDetaillee()], reassigner = vi.fn()) {
       taches={taches}
       agents={[agentFactice({ nom: "qa", role: "Testeur" })]}
       reassigner={reassigner}
+      projet={projetFactice()}
     />,
   );
   return reassigner;

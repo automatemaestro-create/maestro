@@ -28,10 +28,11 @@ import { MENU } from "@/lib/navigation";
 import { ecrireRepliSidebar, lireRepliSidebar } from "@/lib/preferences";
 
 import {
-  agentFactice,
+  coutExecutionFactice,
   poserChemin,
   poserEtatGlobal,
   poserProjetActif,
+  usageFactice,
   validationFactice,
 } from "./aides";
 
@@ -94,7 +95,7 @@ describe("le shell applicatif (Shell)", () => {
     // WebSocket par composant.
     poserEtatGlobal({
       connecte: true,
-      agents: [agentFactice({ cout_usd: 1.25 })],
+      couts: [coutExecutionFactice({ total: usageFactice({ cout_usd: 1.25 }) })],
     });
     await monterShell();
     expect(screen.getByText("Temps réel connecté")).toBeInTheDocument();
