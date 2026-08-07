@@ -375,7 +375,7 @@ def test_ajuster_les_instances_sans_toucher_l_actif(client, capacites):
 
 
 def test_le_reglage_est_diffuse_en_temps_reel_sur_le_websocket(client):
-    with client.websocket_connect("/ws/evenements") as ws:
+    with client.websocket_connect("/ws/evenements?projet=tous") as ws:
         client.post("/api/agents/qa/capacite", json={"actif": False, "instances": 2})
         event = ws.receive_json()
 

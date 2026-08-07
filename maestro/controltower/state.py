@@ -43,6 +43,7 @@ from maestro.controltower.events import (
     Event,
     ReferenceTicket,
 )
+from maestro.controltower.portee import PorteeProjet
 from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
 from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
@@ -216,6 +217,10 @@ class EtatValidation:
     fusionnerait. C'est ce que l'UI affiche sous la question — « appliquer ces
     modifications ? » sans les montrer ne serait pas une validation, mais une
     signature à l'aveugle.
+
+    `projet_id` (#277) est le projet de la **tâche** mise en pause, hérité de
+    l'événement de demande : c'est ce qui rend le panneau des validations
+    filtrable comme le Kanban. `None` quand la tâche ne relève d'aucun projet.
     """
 
     tache_id: str
@@ -227,6 +232,7 @@ class EtatValidation:
     statut: str = VALIDATION_EN_ATTENTE
     decision: str = ""
     diff: DiffProjet | None = None
+    projet_id: str | None = None
     horodatage: str = ""
 
     @property
@@ -246,6 +252,7 @@ class EtatValidation:
             "statut": self.statut,
             "decision": self.decision,
             "diff": self.diff.to_dict() if self.diff is not None else None,
+            "projet_id": self.projet_id,
             "horodatage": self.horodatage,
         }
 
@@ -436,19 +443,26 @@ class ControlTowerState:
 
     # ------------------------------------------------------------------ lecture
 
-    def taches(self, projet: str | None = None) -> list[EtatTache]:
+    def taches(self, portee: PorteeProjet | None = None) -> list[EtatTache]:
         """Les tâches connues, dans l'ordre de première apparition.
 
-        `projet` (#222) restreint la vue aux tâches de ce projet — c'est le
-        filtre du Kanban. Sans lui, **toutes** les tâches sortent, celles sans
-        projet comprises : le champ est optionnel, ne pas filtrer reste le
-        comportement d'avant ce lot. Une tâche sans `projet_id` n'apparaît dans
-        aucune vue filtrée : on ne devine pas à quel projet elle appartiendrait.
+        `portee` (#277) est le périmètre de la lecture — c'est le filtre du
+        Kanban, et c'est **le même objet** que consultent les exécutions, les
+        validations, les analytics et la diffusion temps réel : la règle
+        « appartient au projet demandé » n'est écrite qu'une fois
+        (`PorteeProjet.retient`). Une tâche sans `projet_id` n'apparaît dans
+        aucune vue de projet — on ne devine pas à quel projet elle
+        appartiendrait —, elle n'apparaît que sous `tous` ou `aucun`.
+
+        `None` reste la vue **transverse** : la projection est une structure de
+        données, pas une API, et rien n'y justifie de refuser une question qui
+        n'a pas dit son périmètre. Le refus (« rien plutôt qu'un mélange ») est
+        le rôle des routes, qui ont un client à qui répondre.
         """
         taches = list(self._taches.values())
-        if projet is None:
+        if portee is None:
             return taches
-        return [t for t in taches if t.projet_id == projet]
+        return [t for t in taches if portee.retient(t.projet_id)]
 
     def tache(self, tache_id: str) -> EtatTache | None:
         """La tâche `tache_id`, ou None si inconnue de la projection."""
@@ -466,22 +480,31 @@ class ControlTowerState:
         """Le détail de l'exécution `run_id`, ou None si aucune trace reçue."""
         return self._executions.get(run_id)
 
-    def executions(self, projet: str | None = None) -> list[EtatExecution]:
+    def executions(self, portee: PorteeProjet | None = None) -> list[EtatExecution]:
         """Les exécutions connues, dans l'ordre de première apparition (#87).
 
-        `projet` (#222) restreint aux runs de ce projet — même convention que
-        `taches` : sans filtre, tous les runs sortent ; avec, un run sans projet
-        n'y figure pas. C'est par ce paramètre que la vue coûts & analytics se
-        restreint à un projet, sa matière étant ces mêmes exécutions.
+        Même convention que `taches` (#277) : la portée décide, un run sans
+        projet ne figure dans aucune vue de projet, et `None` rend tout. C'est
+        par ce paramètre que la vue coûts & analytics se restreint, sa matière
+        étant ces mêmes exécutions.
         """
         executions = list(self._executions.values())
-        if projet is None:
+        if portee is None:
             return executions
-        return [e for e in executions if e.projet_id == projet]
+        return [e for e in executions if portee.retient(e.projet_id)]
 
-    def validations(self) -> list[EtatValidation]:
-        """Les demandes de validation humaine, dans l'ordre de première apparition."""
-        return list(self._validations.values())
+    def validations(self, portee: PorteeProjet | None = None) -> list[EtatValidation]:
+        """Les demandes de validation humaine, dans l'ordre de première apparition.
+
+        Filtrables par projet depuis #277, comme les tâches dont elles sont la
+        mise en pause : une validation appartient au projet de sa tâche. Le
+        panneau des validations d'une Control Tower cadrée sur un projet ne doit
+        pas demander d'arbitrer une action qui se déroule ailleurs.
+        """
+        validations = list(self._validations.values())
+        if portee is None:
+            return validations
+        return [v for v in validations if portee.retient(v.projet_id)]
 
     def validation(self, tache_id: str) -> EtatValidation | None:
         """La demande de validation de la tâche `tache_id`, ou None si aucune."""
@@ -563,6 +586,13 @@ class ControlTowerState:
             tache.ticket = event.ticket
         if event.projet_id is not None:
             tache.projet_id = event.projet_id
+            # Une validation déjà déposée pour cette tâche (#277) suit son
+            # appartenance : la demande peut précéder l'événement qui apprend le
+            # projet, et une validation orpheline sortirait alors de la vue de
+            # son propre projet.
+            demande = self._validations.get(event.tache_id)
+            if demande is not None and demande.projet_id is None:
+                demande.projet_id = event.projet_id
 
         if event.agent in _AGENTS_NON_EXECUTANTS:
             return
@@ -700,7 +730,19 @@ class ControlTowerState:
         Une nouvelle demande sur la même tâche (autre run, re-tentative) remplace
         la précédente : le moteur attend toujours la décision de la **dernière**
         demande publiée, l'historique complet reste dans le journal (#8).
+
+        Le **projet** (#277) se lit sur l'événement, ou à défaut sur la tâche
+        déjà projetée : `validation.demande` ne le porte pas (il naît d'une
+        `DemandeValidation` du moteur, qui ignore les projets), et le déduire ici
+        évite d'ajouter un champ à une couche que ce lot n'a pas à retoucher —
+        une validation appartient de toute façon au projet de sa tâche, pas au
+        sien. Si l'ordre des événements l'a précédée, `_applique_statut_tache`
+        recolle l'appartenance quand la tâche l'apprend.
         """
+        connue = self._taches.get(event.tache_id)
+        projet_id = event.projet_id
+        if projet_id is None and connue is not None:
+            projet_id = connue.projet_id
         self._validations[event.tache_id] = EtatValidation(
             tache_id=event.tache_id,
             titre=event.titre,
@@ -709,6 +751,7 @@ class ControlTowerState:
             role=event.role,
             raison=event.detail,
             diff=event.diff,
+            projet_id=projet_id,
             horodatage=event.horodatage,
         )
 

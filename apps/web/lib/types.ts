@@ -173,13 +173,16 @@ export type PointCout = {
  * La vue coûts & analytics, servie par `GET /api/analytics/couts`
  * (`AnalyticsCouts.to_dict`, #87) : agrégats transverses par tâche, par agent
  * et par exécution, total de la fenêtre et série temporelle du coût.
- * `projet` (#222) rappelle le projet demandé (`?projet=<id>`) — `null` quand la
- * vue porte sur tout, projets confondus.
+ * `projet` (#222) rappelle l'identifiant demandé — `null` dès que la vue ne
+ * porte pas sur un projet précis. `portee` (#277) lève l'ambiguïté de ce `null` :
+ * elle dit **laquelle** des trois lectures a été servie (`tous`, `aucun` ou
+ * l'identifiant) — un total ne se lit pas sans savoir de quoi il est le total.
  */
 export type AnalyticsCouts = {
   depuis: string | null;
   pas: string;
   projet: string | null;
+  portee: string;
   total: Usage;
   executions: CoutExecutionResume[];
   agents: CoutAgentAgrege[];
@@ -191,6 +194,8 @@ export type AnalyticsCouts = {
  * Une demande de validation humaine telle que servie par `GET /api/validations`
  * (#48, `EtatValidation.to_dict`) : le contexte pour trancher — tâche, agent,
  * action demandée (description), justification (raison) — puis l'issue.
+ * `projet_id` (#277) est le projet de la tâche mise en pause : c'est par lui que
+ * `?projet=` filtre le panneau, `null` quand elle ne relève d'aucun projet.
  */
 export type Validation = {
   tache_id: string;
@@ -202,6 +207,7 @@ export type Validation = {
   statut: string;
   decision: string;
   diff: DiffProjet | null;
+  projet_id: string | null;
   horodatage: string;
 };
 

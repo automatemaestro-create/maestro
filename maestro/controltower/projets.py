@@ -82,6 +82,11 @@ STATUT_HTTP_PAR_MOTIF: dict[str, int] = {
     "projet-inconnu": 404,
 }
 
+#: Les refus de **portée projet** (#277) passent par la même table : ils sont de
+#: même nature que ceux du CRUD (« ce projet n'existe pas ») et doivent donc
+#: sortir par la même porte — motif, message, code. `projet-inconnu` y est déjà
+#: (404) ; `projet-requis` retombe sur le défaut 422, la saisie étant en cause.
+
 #: Le code rendu par un motif inconnu de la table : la saisie est en cause.
 STATUT_HTTP_DEFAUT = 422
 
@@ -188,6 +193,21 @@ class ServiceProjets:
     def detail(self, id_: str) -> dict[str, Any]:
         """Le projet `id_`. `ProjetInconnu` s'il n'existe pas, `ProjetIllisible` s'il est cassé."""
         return self._fiche(self._lire(id_))
+
+    def existe(self, id_: str) -> bool:
+        """Le projet `id_` est-il déclaré ? La question que pose la **portée** d'une lecture (#277).
+
+        Un booléen là où `detail` lève : la portée projet n'a pas à distinguer
+        « pas de fichier » de « fichier cassé » — dans les deux cas le projet ne
+        peut pas cadrer une lecture, et le refus rendu est le même
+        (`projet-inconnu`). C'est `GET /api/projets/{id}` qui sait faire la
+        différence, et c'est là qu'un fichier à réparer s'explique.
+        """
+        try:
+            self._lire(id_)
+        except (ProjetInconnu, ProjetIllisible):
+            return False
+        return True
 
     def creer(
         self,

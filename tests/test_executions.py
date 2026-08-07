@@ -311,7 +311,7 @@ def test_liste_des_executions_recents_d_abord_quelle_que_soit_leur_origine(state
         lance = client.post("/api/executions", json={"objectif": "Lancé d'ici"}).json()
         attendre_statut(client, lance["run_id"], EXECUTION_TERMINEE)
 
-        liste = client.get("/api/executions").json()
+        liste = client.get("/api/executions?projet=tous").json()
 
     # Le run lancé à l'instant est le plus récent ; les deux autres suivent dans
     # l'ordre décroissant de leur début.
@@ -376,7 +376,7 @@ def test_une_requete_invalide_est_refusee_sans_lancer_de_run(corps, state):
         reponse = client.post("/api/executions", json=corps)
 
         assert reponse.status_code == 422
-        assert client.get("/api/executions").json() == []
+        assert client.get("/api/executions?projet=tous").json() == []
 
     assert moteur.appels == []  # le moteur n'a même pas été construit
 
@@ -448,7 +448,7 @@ def test_la_reference_traverse_projection_et_rest(state):
             )
         )
 
-        (tache,) = client.get("/api/taches").json()
+        (tache,) = client.get("/api/taches?projet=tous").json()
 
     assert state.tache("t1").ticket == ReferenceTicket(
         id="#188", url="https://gitlab.example/issues/188"
@@ -471,7 +471,7 @@ def test_une_tache_sans_reference_la_sert_a_null(state):
             )
         )
 
-        (tache,) = client.get("/api/taches").json()
+        (tache,) = client.get("/api/taches?projet=tous").json()
 
     assert tache["ticket"] is None
 
@@ -498,7 +498,7 @@ def test_la_reference_survit_au_rejeu_du_journal():
 
     app = create_app(bus=InMemoryEventBus(), state=ControlTowerState(), event_log=journal)
     with TestClient(app) as redemarree:
-        (tache,) = redemarree.get("/api/taches").json()
+        (tache,) = redemarree.get("/api/taches?projet=tous").json()
 
     assert tache["ticket"] == {"id": "#188", "url": "https://gitlab.example/issues/188"}
 
@@ -515,7 +515,7 @@ def test_le_ticket_du_lancement_est_rendu_avec_le_run(state):
         ).json()
         attendre_statut(client, lance["run_id"], EXECUTION_TERMINEE)
 
-        (liste,) = client.get("/api/executions").json()
+        (liste,) = client.get("/api/executions?projet=tous").json()
 
     attendu = {"id": "#188", "url": "https://gitlab.example/issues/188"}
     assert lance["ticket"] == attendu

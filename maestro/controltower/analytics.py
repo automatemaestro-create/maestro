@@ -34,6 +34,7 @@ from maestro.controltower.events import (
     EVENEMENT_TACHE_STATUT,
     Event,
 )
+from maestro.controltower.portee import PORTEE_TOUS, PorteeProjet
 from maestro.references import ReferenceTicket, ticket_en_dict
 from maestro.telemetry.usage import StepUsage
 
@@ -163,13 +164,20 @@ class AnalyticsCouts:
 
     `depuis` (ISO, ou None : tout l'historique projeté) et `pas` rappellent la
     fenêtre et la granularité demandées ; `total` retombe sur la somme des
-    grands livres des runs de la fenêtre. `projet` (#222) rappelle le projet
-    demandé — None quand la vue porte sur tout, projets confondus.
+    grands livres des runs de la fenêtre.
+
+    `projet` (#222) rappelle l'identifiant demandé — None dès que la vue ne
+    porte pas sur un projet précis. `portee` (#277) lève l'ambiguïté que ce
+    `None` laissait : elle dit **laquelle** des trois lectures a été servie —
+    `tous`, `aucun`, ou l'identifiant. Un total ne se lit pas sans savoir de quoi
+    il est le total ; c'est le pendant, dans la réponse, du paramètre obligatoire
+    de la requête.
     """
 
     depuis: str | None = None
     pas: str = PAS_HEURE
     projet: str | None = None
+    portee: str = PORTEE_TOUS
     total: StepUsage = StepUsage()
     executions: tuple[CoutExecutionResume, ...] = ()
     agents: tuple[CoutAgent, ...] = ()
@@ -182,6 +190,7 @@ class AnalyticsCouts:
             "depuis": self.depuis,
             "pas": self.pas,
             "projet": self.projet,
+            "portee": self.portee,
             "total": self.total.to_dict(),
             "executions": [e.to_dict() for e in self.executions],
             "agents": [a.to_dict() for a in self.agents],
@@ -257,7 +266,7 @@ def agrege_couts(
     *,
     depuis: datetime | None = None,
     pas: str = PAS_HEURE,
-    projet: str | None = None,
+    portee: PorteeProjet | None = None,
 ) -> AnalyticsCouts:
     """Agrège les coûts des exécutions projetées en vue analytique (#87).
 
@@ -266,15 +275,17 @@ def agrege_couts(
     écarté (fenêtre indémontrable) ; sans borne, il compte dans les agrégats
     mais pas dans la série. `pas` fixe la granularité des seaux temporels.
 
-    `projet` (#222) restreint la dépense à un projet : seuls les événements qui
-    **portent** ce `projet_id` comptent. Le filtre est posé événement par
-    événement plutôt que run par run — ce qui n'a pas d'appartenance n'entre
-    dans aucun total de projet, et une dépense reste comptée là où elle a été
-    engagée même si un run venait à en mélanger. Sans filtre, tout compte : le
-    champ est optionnel, ne pas filtrer reste le comportement d'avant ce lot.
+    `portee` (#277, contrat de `maestro.controltower.portee`) restreint la
+    dépense : seuls les événements que la portée **retient** comptent. Le filtre
+    est posé événement par événement plutôt que run par run — ce qui n'a pas
+    d'appartenance n'entre dans aucun total de projet, et une dépense reste
+    comptée là où elle a été engagée même si un run venait à en mélanger. `None`
+    vaut la vue transverse : comme pour la projection, refuser une question sans
+    périmètre est le rôle des routes, pas celui du calcul.
     """
     if pas not in PAS_VALIDES:
         raise ValueError(f"pas invalide : {pas} (attendus : {', '.join(PAS_VALIDES)})")
+    portee = portee if portee is not None else PorteeProjet.tous()
     if depuis is not None and depuis.tzinfo is None:
         depuis = depuis.replace(tzinfo=UTC)
 
@@ -296,7 +307,7 @@ def agrege_couts(
 
     for execution in executions:
         for event in execution.evenements:
-            if projet is not None and event.projet_id != projet:
+            if not portee.retient(event.projet_id):
                 continue
             date = _parse_horodatage(event.horodatage)
             if depuis is not None and (date is None or date < depuis):
@@ -351,7 +362,8 @@ def agrege_couts(
     return AnalyticsCouts(
         depuis=depuis.isoformat() if depuis is not None else None,
         pas=pas,
-        projet=projet,
+        projet=portee.projet_id,
+        portee=portee.libelle,
         total=total,
         executions=tuple(
             CoutExecutionResume(

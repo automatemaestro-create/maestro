@@ -43,6 +43,7 @@ from maestro.controltower.events import (
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DEMANDE,
 )
+from maestro.controltower.portee import PorteeProjet
 
 #: Clés de tri du journal requêtable (chantier *Journal*, Phase 5) et sens.
 TRI_JOURNAL_HORODATAGE = "horodatage"
@@ -93,7 +94,7 @@ class FixturesControlTower:
         agent: str | None = None,
         type: str | None = None,
         run_id: str | None = None,
-        projet: str | None = None,
+        portee: PorteeProjet | None = None,
         depuis: str | None = None,
         jusqua: str | None = None,
         tri: str = TRI_JOURNAL_HORODATAGE,
@@ -103,12 +104,13 @@ class FixturesControlTower:
     ) -> dict[str, Any]:
         """Une page du journal requêtable (`GET /api/journal`) : filtres, tri, pagination.
 
-        Filtre les entrées par `agent`, `type`, `run_id`, `projet` (#222) et fenêtre temporelle
+        Filtre les entrées par `agent`, `type`, `run_id`, `portee` (#277) et fenêtre temporelle
         (`depuis`/`jusqua`, ISO-8601, bornes incluses, comparaison lexicale des
         horodatages ISO), trie sur `tri`/`ordre`, puis découpe en pages de
         `taille` (1-indexé). `total` est le compte **après filtres, avant
         pagination** ; `pages` le nombre de pages. Les paramètres sont réputés
-        déjà validés par la route (tri/ordre connus, page ≥ 1, taille bornée).
+        déjà validés par la route (tri/ordre connus, page ≥ 1, taille bornée) —
+        `portee` comprise, résolue et refusée en amont.
         """
         entrees = list(_ENTREES_JOURNAL)
         if agent:
@@ -117,10 +119,12 @@ class FixturesControlTower:
             entrees = [e for e in entrees if e["type"] == type]
         if run_id:
             entrees = [e for e in entrees if e["run_id"] == run_id]
-        if projet:
+        if portee is not None:
             # Une entrée sans projet (`None`) ne relève d'aucun : elle sort de
-            # toute vue filtrée plutôt que d'être rattachée au hasard (#222).
-            entrees = [e for e in entrees if e["projet_id"] == projet]
+            # toute vue de projet plutôt que d'être rattachée au hasard (#222),
+            # et c'est la portée du lot #277 qui en décide — la même règle que
+            # le Kanban, les runs, les coûts et le flux temps réel.
+            entrees = [e for e in entrees if portee.retient(e["projet_id"])]
         if depuis:
             entrees = [e for e in entrees if e["horodatage"] >= depuis]
         if jusqua:

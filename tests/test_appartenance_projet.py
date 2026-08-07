@@ -21,18 +21,22 @@ projection → vues ; ces tests le suivent d'un bout à l'autre.
    celle qui en porte déjà un, et l'étape de **planification** le porte elle
    aussi — c'est une dépense du projet, l'omettre creuserait un écart entre le
    total d'un projet et la somme de ses runs ;
-⑤ les **vues filtrées** (`/api/taches`, `/api/executions`, `/api/analytics/couts`) :
-   sans filtre, tout sort — projets confondus, comportement d'avant ce lot ;
-   avec, un travail sans projet n'apparaît nulle part, et un identifiant
-   inconnu rend une vue **vide** plutôt qu'une vue fausse.
+⑤ les **vues filtrées** — reprises par #277, qui remplace le filtre optionnel de
+   #222 par un **contrat unique** (`maestro.controltower.portee`) : `?projet=`
+   est obligatoire, vaut `<id>` | `tous` | `aucun`, et son absence est refusée
+   (« rien plutôt qu'un mélange ») comme l'est un projet non déclaré. Le
+   contrat de #222 que ces tests mesuraient — sans filtre, tout sort ; un
+   identifiant inconnu rend une vue vide — a donc été **remplacé**, pas oublié.
 
-Ni réseau ni Redis : bus mémoire, fournisseurs factices, TestClient de Starlette.
+Ni réseau ni Redis : bus mémoire, fournisseurs factices, TestClient de Starlette,
+dépôt de projets jetable (la portée exige des projets réellement déclarés).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -46,9 +50,12 @@ from maestro.controltower import (
     create_app,
 )
 from maestro.controltower.analytics import agrege_couts
+from maestro.controltower.portee import PorteeProjet
+from maestro.controltower.projets import ServiceProjets
 from maestro.engine import OrchestrationEngine
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
+from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal, StepUsage
 
@@ -207,18 +214,46 @@ def test_le_run_herite_du_projet_de_sa_premiere_etape() -> None:
     assert state.execution("run-1").resume()["projet_id"] == PROJET
 
 
-def test_les_vues_de_la_projection_se_filtrent_par_projet() -> None:
+def test_les_vues_de_la_projection_se_filtrent_par_portee() -> None:
     state = ControlTowerState()
     state.appliquer(_evenement(tache_id="t1", run_id="run-1", projet_id=PROJET))
     state.appliquer(_evenement(tache_id="t2", run_id="run-2", projet_id=AUTRE))
     state.appliquer(_evenement(tache_id="t3", run_id="run-3"))  # aucun projet
 
     assert [t.id for t in state.taches()] == ["t1", "t2", "t3"]
-    assert [t.id for t in state.taches(PROJET)] == ["t1"]
-    assert [e.run_id for e in state.executions(PROJET)] == ["run-1"]
-    # Une tâche sans projet n'apparaît dans aucune vue filtrée : on ne devine pas.
-    assert [t.id for t in state.taches(AUTRE)] == ["t2"]
-    assert state.taches("prj-inconnu") == []
+    assert [t.id for t in state.taches(PorteeProjet.tous())] == ["t1", "t2", "t3"]
+    assert [t.id for t in state.taches(PorteeProjet.projet(PROJET))] == ["t1"]
+    assert [e.run_id for e in state.executions(PorteeProjet.projet(PROJET))] == ["run-1"]
+    # Une tâche sans projet n'apparaît dans aucune vue de projet : on ne devine
+    # pas — et `aucun` (#277) est la seule vue qui la montre pour elle-même.
+    assert [t.id for t in state.taches(PorteeProjet.projet(AUTRE))] == ["t2"]
+    assert [t.id for t in state.taches(PorteeProjet.aucun())] == ["t3"]
+    assert state.taches(PorteeProjet.projet("prj-inconnu")) == []
+
+
+def test_une_validation_herite_du_projet_de_sa_tache() -> None:
+    """`validation.demande` ne porte pas de projet : la projection le recolle (#277)."""
+    state = ControlTowerState()
+    state.appliquer(_evenement(tache_id="t1", run_id="run-1", projet_id=PROJET))
+    state.appliquer(
+        Event(type="validation.demande", tache_id="t1", agent="developpeur", titre="Publier")
+    )
+
+    assert state.validation("t1").projet_id == PROJET
+    assert state.validation("t1").to_dict()["projet_id"] == PROJET
+    assert [v.tache_id for v in state.validations(PorteeProjet.projet(PROJET))] == ["t1"]
+    assert state.validations(PorteeProjet.projet(AUTRE)) == []
+
+
+def test_une_validation_deposee_avant_que_la_tache_ait_son_projet_le_rattrape() -> None:
+    """L'ordre des événements ne doit pas sortir une validation de son propre projet."""
+    state = ControlTowerState()
+    state.appliquer(
+        Event(type="validation.demande", tache_id="t1", agent="developpeur", titre="Publier")
+    )
+    state.appliquer(_evenement(tache_id="t1", run_id="run-1", projet_id=PROJET))
+
+    assert state.validation("t1").projet_id == PROJET
 
 
 def test_le_grand_livre_recolle_le_projet_sur_les_lignes_de_tache() -> None:
@@ -288,64 +323,143 @@ def test_un_run_sans_projet_se_deroule_a_l_identique() -> None:
 
 
 @pytest.fixture()
-def client() -> TestClient:
+def maison(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Un dossier utilisateur factice — même raison qu'en #221/#223.
+
+    Sous Windows le `tmp_path` de pytest vit dans `AppData/Local/Temp`, que la
+    validation de racine refuse à raison : sans cette isolation, déclarer un
+    projet échouerait pour une bonne raison, mais pas celle qu'on mesure ici.
+    """
+    maison = tmp_path / "maison"
+    maison.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
+    return maison
+
+
+@pytest.fixture()
+def projets(maison: Path, tmp_path: Path) -> ServiceProjets:
+    """Deux projets réellement **déclarés** : la portée n'accepte qu'eux (#277)."""
+    service = ServiceProjets(ProjetStore(tmp_path / "depot"))
+    for nom in ("depensio", "autre"):
+        (maison / nom).mkdir()
+        service.creer(nom, str(maison / nom))
+    return service
+
+
+@pytest.fixture()
+def ids(projets: ServiceProjets) -> tuple[str, str]:
+    """Les identifiants **engendrés** des deux projets déclarés (`prj-<empreinte>`)."""
+    declares = projets.lister()
+    return declares[0]["id"], declares[1]["id"]
+
+
+@pytest.fixture()
+def client(projets: ServiceProjets, ids: tuple[str, str]) -> TestClient:
     """TestClient sur bus mémoire, avec deux projets et un travail sans projet."""
+    projet, autre = ids
     state = ControlTowerState()
     state.appliquer(
         _evenement(
-            tache_id="t1", run_id="run-1", projet_id=PROJET, usage=StepUsage(cout_usd=1.0)
+            tache_id="t1", run_id="run-1", projet_id=projet, usage=StepUsage(cout_usd=1.0)
         )
     )
     state.appliquer(
         _evenement(
-            tache_id="t2", run_id="run-2", projet_id=AUTRE, usage=StepUsage(cout_usd=2.0)
+            tache_id="t2", run_id="run-2", projet_id=autre, usage=StepUsage(cout_usd=2.0)
         )
     )
     state.appliquer(_evenement(tache_id="t3", run_id="run-3", usage=StepUsage(cout_usd=4.0)))
-    with TestClient(create_app(bus=InMemoryEventBus(), state=state)) as client:
+    with TestClient(
+        create_app(bus=InMemoryEventBus(), state=state, projets=projets)
+    ) as client:
         yield client
 
 
-def test_le_kanban_sans_filtre_montre_tout_projets_confondus(client: TestClient) -> None:
-    assert [t["id"] for t in client.get("/api/taches").json()] == ["t1", "t2", "t3"]
+@pytest.mark.parametrize(
+    "route",
+    ["/api/taches", "/api/executions", "/api/analytics/couts", "/api/validations"],
+)
+def test_une_lecture_sans_projet_est_refusee_avec_son_motif(
+    client: TestClient, route: str
+) -> None:
+    """« Rien plutôt qu'un mélange » (#277) : l'API ne devine plus le périmètre.
+
+    Un refus se diagnostique ; une liste vide se confondrait avec un projet sans
+    activité, et la vue transverse d'avant se confondait avec un seul projet.
+    """
+    reponse = client.get(route)
+
+    assert reponse.status_code == 422, reponse.text
+    assert reponse.json()["detail"]["motif"] == "projet-requis"
 
 
-def test_le_kanban_filtre_ne_montre_que_les_taches_du_projet(client: TestClient) -> None:
-    taches = client.get("/api/taches", params={"projet": PROJET}).json()
-
-    assert [t["id"] for t in taches] == ["t1"]
-    assert taches[0]["projet_id"] == PROJET
-
-
-def test_un_filtre_vide_ne_filtre_rien(client: TestClient) -> None:
-    """`?projet=` est la vue complète, exactement comme avant ce lot."""
-    assert len(client.get("/api/taches", params={"projet": ""}).json()) == 3
-
-
-def test_un_projet_inconnu_rend_une_vue_vide_et_non_une_erreur(client: TestClient) -> None:
-    """Vide vaut mieux que faux — et une faute de frappe n'est pas une erreur d'API."""
+def test_un_projet_inconnu_est_refuse_comme_le_refuse_le_service_des_projets(
+    client: TestClient,
+) -> None:
+    """404 motivé, par la même porte que `GET /api/projets/{id}` — pas une vue vide."""
     reponse = client.get("/api/taches", params={"projet": "prj-jamais-vu"})
 
-    assert reponse.status_code == 200
-    assert reponse.json() == []
+    assert reponse.status_code == 404
+    assert reponse.json()["detail"]["motif"] == "projet-inconnu"
 
 
-def test_les_executions_se_filtrent_par_projet(client: TestClient) -> None:
-    assert len(client.get("/api/executions").json()) == 3
-    filtrees = client.get("/api/executions", params={"projet": PROJET}).json()
+def test_un_identifiant_mal_forme_est_refuse_comme_un_projet_inconnu(
+    client: TestClient,
+) -> None:
+    """Il ne peut désigner aucun projet du dépôt (#221) : même refus, même code."""
+    reponse = client.get("/api/taches", params={"projet": "../evasion"})
+
+    assert reponse.status_code == 404
+    assert reponse.json()["detail"]["motif"] == "projet-inconnu"
+
+
+def test_le_kanban_transverse_se_demande_explicitement(client: TestClient) -> None:
+    """`?projet=tous` rend ce que rendait l'absence de paramètre — en le disant."""
+    taches = client.get("/api/taches", params={"projet": "tous"}).json()
+
+    assert [t["id"] for t in taches] == ["t1", "t2", "t3"]
+
+
+def test_le_kanban_d_un_projet_ne_montre_que_ses_taches(
+    client: TestClient, ids: tuple[str, str]
+) -> None:
+    projet, _ = ids
+    taches = client.get("/api/taches", params={"projet": projet}).json()
+
+    assert [t["id"] for t in taches] == ["t1"]
+    assert taches[0]["projet_id"] == projet
+
+
+def test_le_kanban_hors_projet_montre_ce_qui_echappe_au_cadre(client: TestClient) -> None:
+    """`?projet=aucun` (#277) : la vue qu'aucun paramètre ne permettait d'atteindre."""
+    taches = client.get("/api/taches", params={"projet": "aucun"}).json()
+
+    assert [t["id"] for t in taches] == ["t3"]
+    assert taches[0]["projet_id"] is None
+
+
+def test_les_executions_se_filtrent_par_projet(
+    client: TestClient, ids: tuple[str, str]
+) -> None:
+    projet, _ = ids
+    assert len(client.get("/api/executions", params={"projet": "tous"}).json()) == 3
+    filtrees = client.get("/api/executions", params={"projet": projet}).json()
     assert [e["run_id"] for e in filtrees] == ["run-1"]
-    assert filtrees[0]["projet_id"] == PROJET
+    assert filtrees[0]["projet_id"] == projet
 
 
 def test_la_depense_d_un_projet_ignore_ce_qui_ne_lui_appartient_pas(
-    client: TestClient,
+    client: TestClient, ids: tuple[str, str]
 ) -> None:
-    tout = client.get("/api/analytics/couts").json()
-    du_projet = client.get("/api/analytics/couts", params={"projet": PROJET}).json()
+    projet, _ = ids
+    tout = client.get("/api/analytics/couts", params={"projet": "tous"}).json()
+    du_projet = client.get("/api/analytics/couts", params={"projet": projet}).json()
 
     assert tout["projet"] is None
+    assert tout["portee"] == "tous"
     assert tout["total"]["cout_usd"] == pytest.approx(7.0)
-    assert du_projet["projet"] == PROJET
+    assert du_projet["projet"] == projet
+    assert du_projet["portee"] == projet
     assert du_projet["total"]["cout_usd"] == pytest.approx(1.0)
 
 
@@ -358,10 +472,36 @@ def test_un_travail_sans_projet_n_entre_dans_le_total_d_aucun() -> None:
     )
     state.appliquer(_evenement(tache_id="t3", run_id="run-1", usage=StepUsage(cout_usd=4.0)))
 
-    agrege = agrege_couts(state.executions(), projet=PROJET)
+    agrege = agrege_couts(state.executions(), portee=PorteeProjet.projet(PROJET))
 
     assert agrege.total.cout_usd == pytest.approx(1.0)
     assert [t.tache_id for t in agrege.taches] == ["t1"]
+
+
+def test_le_flux_temps_reel_ne_livre_pas_l_evenement_d_un_autre_projet(
+    client: TestClient, ids: tuple[str, str]
+) -> None:
+    """Troisième critère #277 : le WebSocket suit exactement la règle du REST."""
+    projet, autre = ids
+    with client.websocket_connect(f"/ws/evenements?projet={projet}") as socket:
+        client.post("/api/taches/t2/reassigner", json={"agent": "developpeur"})
+        client.post("/api/taches/t1/reassigner", json={"agent": "developpeur"})
+
+        # t2 appartient à `autre` : la socket ne doit voir que t1, sans quoi
+        # elle bloquerait ici sur l'événement suivant plutôt que de le sauter.
+        recu = socket.receive_json()
+
+    assert recu["tache_id"] == "t1"
+    assert recu["projet_id"] == projet
+    assert autre != projet
+
+
+def test_le_flux_temps_reel_refuse_une_portee_absente_en_le_disant(
+    client: TestClient,
+) -> None:
+    """Le motif part **sur la socket** : un échec de poignée de main serait muet."""
+    with client.websocket_connect("/ws/evenements") as socket:
+        assert socket.receive_json()["erreur"]["motif"] == "projet-requis"
 
 
 def test_le_lancement_d_un_run_accepte_un_projet_et_ecarte_un_identifiant_douteux(
