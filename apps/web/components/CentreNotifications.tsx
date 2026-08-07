@@ -20,20 +20,19 @@
 import { useEffect, useRef, useState } from "react";
 
 import { IconeAgent, IconeNotifications } from "@/components/Icones";
+import { LigneActivite } from "@/components/LigneActivite";
 import { BadgeEtat, Carte } from "@/components/Primitives";
-import {
-  estNotableNotification,
-  iconeEvenement,
-  resumeEvenement,
-} from "@/lib/evenements";
+import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
-import { formatHeure } from "@/lib/format";
 import { VALIDATION_EN_ATTENTE, type Validation } from "@/lib/types";
 
 /** Décideur d'une validation, tel que fourni par le contexte global (#48). */
 type Decider = (tacheId: string, approuve: boolean) => Promise<void>;
 
-/** Nombre d'événements récents notables rappelés dans le panneau. */
+/**
+ * Nombre de lignes d'activité récente rappelées dans le panneau — des lignes
+ * depuis #250, où une rafale repliée n'en occupe qu'une.
+ */
 const MAX_EVENEMENTS_NOTABLES = 8;
 
 export function CentreNotifications() {
@@ -46,9 +45,9 @@ export function CentreNotifications() {
     (v) => v.statut === VALIDATION_EN_ATTENTE,
   );
   const nb = enAttente.length;
-  const notables = evenements
-    .filter(estNotableNotification)
-    .slice(0, MAX_EVENEMENTS_NOTABLES);
+  const notables = grouperEvenements(
+    evenements.filter(estNotableNotification),
+  ).slice(0, MAX_EVENEMENTS_NOTABLES);
 
   // Fermeture du menu : clic à l'extérieur ou Échap (le focus revient alors au
   // bouton, sans quoi il retomberait sur le document).
@@ -156,26 +155,9 @@ export function CentreNotifications() {
                 </p>
               ) : (
                 <ol className="space-y-0.5">
-                  {notables.map((evenement, index) => {
-                    const Icone = iconeEvenement(evenement);
-                    return (
-                      <li
-                        key={`${evenement.horodatage}-${index}`}
-                        className="flex items-center gap-2 rounded px-1 py-1 text-annexe"
-                      >
-                        <span className="chiffre shrink-0 font-mono text-micro text-neutral-400 dark:text-neutral-500">
-                          {formatHeure(evenement.horodatage)}
-                        </span>
-                        <Icone className="size-3.5 shrink-0 text-neutral-400 dark:text-neutral-500" />
-                        <span
-                          className="min-w-0 flex-1 truncate text-neutral-600 dark:text-neutral-300"
-                          title={evenement.detail || undefined}
-                        >
-                          {resumeEvenement(evenement)}
-                        </span>
-                      </li>
-                    );
-                  })}
+                  {notables.map((groupe) => (
+                    <LigneActivite key={groupe.cle} groupe={groupe} compact />
+                  ))}
                 </ol>
               )}
             </section>
