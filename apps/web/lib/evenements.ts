@@ -10,7 +10,9 @@ import {
   CAPACITE_ACTIVE,
   EVENEMENT_AGENT_ACTIVITE,
   EVENEMENT_AGENT_CAPACITE,
+  EVENEMENT_CHAT_MESSAGE,
   EVENEMENT_MESSAGE_INTER_AGENTS,
+  EVENEMENT_PLAYBOOK_PROPOSITION,
   EVENEMENT_TACHE_REASSIGNATION,
   EVENEMENT_TACHE_REFERENCE,
   EVENEMENT_TACHE_STATUT,
@@ -98,4 +100,32 @@ export function estNotableNotification(evenement: Evenement): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Le nom lisible d'un **type** d'événement — ce que le filtre du Journal (#249)
+ * propose dans sa liste déroulante, là où `resumeEvenement` décrit une ligne en
+ * particulier. Les deux vivent ici pour la même raison : le vocabulaire du flux
+ * temps réel se dit d'un seul endroit.
+ */
+const LIBELLES_TYPE: Record<string, string> = {
+  [EVENEMENT_TACHE_STATUT]: "Statut de tâche",
+  [EVENEMENT_TACHE_REASSIGNATION]: "Réassignation",
+  [EVENEMENT_TACHE_REFERENCE]: "Ticket rattaché",
+  [EVENEMENT_AGENT_ACTIVITE]: "Activité d'agent",
+  [EVENEMENT_AGENT_CAPACITE]: "Capacité d'agent",
+  [EVENEMENT_MESSAGE_INTER_AGENTS]: "Message inter-agents",
+  [EVENEMENT_VALIDATION_DEMANDE]: "Validation demandée",
+  [EVENEMENT_VALIDATION_DECISION]: "Décision de validation",
+  [EVENEMENT_CHAT_MESSAGE]: "Message de chat",
+  [EVENEMENT_PLAYBOOK_PROPOSITION]: "Proposition de playbook",
+};
+
+/**
+ * Le libellé d'un type d'événement, ou le type brut si le flux s'est enrichi
+ * côté backend — même contrat que `libelleStatut` : on n'invente rien, mais on
+ * ne masque pas non plus un type qu'on ne connaît pas encore.
+ */
+export function libelleTypeEvenement(type: string): string {
+  return LIBELLES_TYPE[type] ?? type;
 }

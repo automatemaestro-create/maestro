@@ -11,9 +11,9 @@
  * Ce qui en est parti n'a pas disparu, il est rangé — et chaque tuile renvoie
  * vers sa page : les fiches d'agent (statut, capacité, coût par agent) vers
  * Agents, Paramètres › Agents et Coûts & analytics, le grand livre par exécution
- * (#57, #58) vers Coûts & analytics. Le fil d'activité, lui, n'a pas encore de
- * page : il reste ici en aperçu jusqu'à ce que le Journal du chantier
- * « Visibilité » entre au menu, où son lien s'allumera tout seul.
+ * (#57, #58) vers Coûts & analytics. Le fil d'activité a rejoint la liste
+ * depuis #249 : il tient en plein format au Journal, ne reste ici qu'en aperçu,
+ * et son lien s'est allumé de lui-même le jour où la page est entrée au menu.
  *
  * L'état vient du contexte partagé du shell (#117) : ce lot réorganise
  * l'affichage, la mécanique temps réel (WebSocket, rechargements coalescés) est

@@ -46,9 +46,19 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   où le détail vit maintenant (fiches d'agent → Agents, grand livre par exécution
   → Coûts & analytics). Les renvois sont résolus par le menu
   (`entreeParLibelle`) et non par un chemin en dur : ils suivent une page qui
-  déménage, et **ne s'allument pas** vers une page qui n'existe pas encore — le
-  fil complet attend le Journal du chantier « Visibilité », l'aperçu se suffit
-  jusque-là, sans lien mort ;
+  déménage, et **ne s'allument pas** vers une page qui n'existe pas encore. Le
+  fil d'activité en a fait la démonstration : son renvoi, écrit dès #191, est
+  resté éteint jusqu'à ce que #249 crée le Journal — sans une ligne de plus dans
+  `FilActivite` ;
+- **Journal** (#249, lot 5 de #242) : le fil d'activité en **plein format**, avec
+  filtres par type d'événement, par agent et par tâche, recherche texte et une
+  case « Notable seulement » qui reprend le filtre de la cloche
+  (`estNotableNotification`, #119 — pas de seconde logique de tri). La page rend
+  le même `FilActivite` que l'aperçu, sans `limite` : une seule mise en forme de
+  ligne pour les deux écrans. Le fil y est **éphémère** — les 50 derniers
+  événements reçus depuis l'ouverture de la page, remis à zéro au rechargement —
+  et l'écran le dit : le journal persisté et requêtable (`GET /api/journal`)
+  existe côté contrat (#183) mais n'est pas encore servi par le backend ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **Kanban** des tâches par statut (machine à états docs/03 §3) ;

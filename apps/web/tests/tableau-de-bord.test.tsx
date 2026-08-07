@@ -288,12 +288,15 @@ describe("le tableau de bord épuré (app/page)", () => {
     ).toHaveAttribute("href", "/agents");
   });
 
-  it("n'allume pas le renvoi d'une page qui n'existe pas encore", () => {
-    // Le fil complet ira dans le Journal (chantier « Visibilité ») : tant que
-    // cette page n'est pas au menu, l'aperçu se suffit — pas de lien mort.
-    expect(entreeParLibelle("Journal")).toBeUndefined();
+  it("a rangé le fil complet derrière l'entrée « Journal »", () => {
+    // Le renvoi dormait dans `FilActivite` depuis #191 ; #249 l'a allumé en
+    // ajoutant la page au menu, sans toucher au composant. Le chemin se lit
+    // donc dans le menu, pas dans le test : c'est ce qui le fait suivre une
+    // page qui déménagerait.
     monter({ evenements: [evenementFactice()] });
-    expect(screen.queryByRole("link", { name: /Ouvrir le journal/ })).toBeNull();
+    expect(
+      screen.getByRole("link", { name: /Ouvrir le journal/ }),
+    ).toHaveAttribute("href", entreeParLibelle("Journal")?.href ?? "");
   });
 
   it("ne borne l'activité qu'à un aperçu", () => {

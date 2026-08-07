@@ -94,6 +94,20 @@ export function IconeValidations(props: Props) {
   );
 }
 
+/**
+ * Le Journal (#249) : des lignes horodatées, chacune précédée de sa puce — le
+ * fil d'activité vu comme un registre, là où `IconeTableauDeBord` (des tuiles)
+ * dit l'écran de synthèse et `IconeCouts` (des barres) la mesure.
+ */
+export function IconeJournal(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" />
+      <path d="M9 6h10.5M9 12h10.5M9 18h6.5" />
+    </Trait>
+  );
+}
+
 export function IconeParametres(props: Props) {
   return (
     <Trait {...props}>

@@ -34,8 +34,12 @@ import type {
   Validation,
 } from "./types";
 
-/** Longueur du fil d'activité conservé côté client. */
-const MAX_EVENEMENTS = 50;
+/**
+ * Longueur du fil d'activité conservé côté client. Exporté depuis #249 : le
+ * Journal **dit** ce qu'il montre (« les N derniers événements »), et le chiffre
+ * doit venir de la mécanique qui le borne, pas d'une prose qui vieillirait.
+ */
+export const MAX_EVENEMENTS = 50;
 
 /** Fenêtre de coalescence des rechargements sur rafale d'événements (ms). */
 const DELAI_RECHARGEMENT_MS = 150;
