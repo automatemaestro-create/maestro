@@ -1627,6 +1627,7 @@ bash scripts/orchestrate/run.sh --dry-run   # le plan et ce qui serait fait — 
 bash scripts/orchestrate/run.sh             # le run, dans un terminal laissé ouvert
 bash scripts/orchestrate/run.sh --detach    # idem, dans une console indépendante — rend la main
 bash scripts/orchestrate/run.sh --resume    # reprend un run qui ne s'est pas terminé (§11.8)
+bash scripts/orchestrate/run.sh --concurrence 3  # jusqu'à 3 tickets INDÉPENDANTS en vol (§11.10)
 bash scripts/orchestrate/status.sh --watch  # où en est le run, depuis n'importe quel terminal
 touch .maestro/orchestrate/STOP             # arrêt d'urgence
 ```
@@ -1710,8 +1711,8 @@ précède ») ; deux lots marqués séparés par un lot non marqué tombent donc
 indépendance de principe étant de toute façon sans effet — la barrière qui les sépare les ordonne
 déjà.
 
-Rien ne consomme encore cette colonne : `run.sh` la lit et l'ignore, le run reste **séquentiel**.
-C'est le lot suivant du chantier #287 qui s'en sert.
+C'est la seule source d'indépendance du run : `run.sh --concurrence <n>` la **lit** et ne recalcule
+rien (§11.10). Sans l'option, il la lit et l'ignore — le run reste séquentiel.
 
 **Le milestone, lui, se choisit** (#204). La phase courante reste le défaut — c'est presque toujours
 le bon — mais plusieurs milestones actifs peuvent porter du travail en même temps, et le run partait
@@ -1742,7 +1743,8 @@ rafraîchir.
 
 Pour chaque ticket : `scripts/git/worktree.sh <iid>` (§9) monte son répertoire de travail et ses
 ports, puis une session dédiée est lancée en mode `-p`, avec un `--session-id` fixe — la clé de la
-reprise.
+reprise. Un ticket à la fois par défaut ; `--concurrence <n>` en met plusieurs en vol, à la seule
+condition que le plan les déclare indépendants (§11.10).
 
 **Le régime d'une session est épinglé par le dépôt, pas par le poste.** Trois réglages décident de
 ce que vaut le travail autonome — les deux premiers passés **en toutes lettres** au CLI, le
@@ -2363,3 +2365,79 @@ ticket resté « En cours » côté GitLab — comme après n'importe quelle int
 runs qui écrivent encore ; un run tué juste après aurait donc été ignoré par un `--resume` sans
 argument — celui-là même qu'on vient d'interrompre, et le plus probablement visé. Tué d'abord, il
 redevient candidat immédiatement, la carte l'emportant sur la fraîcheur de ses dernières écritures.
+
+### 11.10 N tickets en vol dans un run — `--concurrence` (#289)
+
+Un run traitait le plan **un ticket à la fois**. `--concurrence <n>` (défaut **1**) en laisse partir
+jusqu'à `n` — même run, même pilote, jamais N runs (§11.9 reste entier). Ce qui borne le parallélisme
+n'est pas décidé ici : le plan le **déclare** (§11.2, colonne `groupe`), et la boucle ne fait que le
+lire.
+
+> Deux tickets peuvent être en vol en même temps si leurs **`parent` diffèrent**, ou si leur
+> **`groupe` est identique**.
+
+Ne pas recalculer la règle ici est le point : elle vit dans `queue.sh`, elle est figée avec le plan,
+et deux formulations finiraient par diverger — c'est exactement ce que #288 s'était donné pour but
+d'éviter en publiant une colonne plutôt qu'un marqueur.
+
+**Défaut 1, et ce n'est pas de la prudence d'ingénieur.** Toutes les sessions tirent sur le **même
+quota d'abonnement** : N en parallèle épuisent la fenêtre de 5 h N fois plus vite. Le gain est en
+**temps de mur**, jamais en quota — et c'est aussi ce qui rend le lot mergeable seul, un run sans
+l'option étant celui d'avant, au bit près.
+
+**Le créneau qui se libère prend le prochain ticket *éligible*, pas le suivant.** L'ordonnanceur
+balaye **tout** le plan à chaque passage : un lot barré par son prédécesseur est enjambé, et c'est le
+ticket d'un autre parent, plus loin dans le plan, qui comble la place. Un plan `#501, #502 (même
+parent), #601` à deux créneaux fait donc partir `#501` **avec `#601`**, pas avec `#502`.
+
+**Ce qui part dans un sous-shell, et ce qui n'y part pas.** La ligne de partage est celle entre l'état
+du run et ce qui dure :
+
+| au pilote (séquentiel) | dans le sous-shell du ticket |
+| --- | --- |
+| plan, éligibilité, sauts, `--max`, cascade, compteurs | la session Claude et ses reprises |
+| montage du worktree, résolution de la branche, uuid | — |
+| verdict GitLab, `resume.tsv`, `<iid>.resultat.txt` | — |
+
+Trois conséquences, toutes voulues :
+
+* **`resume.tsv` n'a qu'un seul écrivain.** La question « une ligne reste-t-elle entière quand N
+  processus écrivent en `>>` ? » ne se pose pas : aucun sous-shell n'écrit le bilan. Le pilote le
+  fait, à l'unique endroit qui incrémente aussi les compteurs et nourrit la cascade.
+* **Le montage des worktrees est sérialisé.** `git worktree add` écrit dans le dépôt partagé et prend
+  ses verrous sur les refs ; N montages simultanés sur le même clone, c'est un « cannot lock ref » au
+  hasard. Le coût est réel — mesuré ~1 s de pré-vol par ticket sous MSYS, quelques minutes avec
+  l'installation d'un vrai worktree — et il se noie dans une session qui dure une heure.
+* **Le sous-shell rend son code par un témoin** (`<iid>.fini`), pas par `wait` : bash ne sait pas dire
+  de façon portable *lequel* de ses enfants vient de finir (`wait -n -p` demande bash 5.1) et un
+  `kill -0` réussit encore sur un zombie. Le fichier répond aux deux questions à la fois. Il est écrit
+  par un trap `EXIT` — une session tuée par un signal doit rendre la main au pilote, pas le laisser
+  attendre un témoin qui ne viendra jamais. Reste le SIGKILL, qui n'exécute aucun trap : passé le
+  temps qu'un ticket peut légitimement prendre, sa place est reprise et il est compté en échec.
+
+**La cascade d'échec se décide maintenant à la fin d'un ticket**, plus à son tour de boucle : avec N
+en vol, le tour d'un lot peut arriver avant le verdict de son prédécesseur. Un lot déjà parti n'est
+jamais rappelé — le plan l'avait déclaré indépendant, donc de la même vague ; un lot pas encore parti
+est sauté au moment de le lancer, comme avant.
+
+**Ce que `--concurrence > 1` dégrade aujourd'hui, et que la console annonce.** Deux lots du chantier
+#287 restent à faire, et le run le dit au démarrage plutôt que de le laisser découvrir :
+
+* la **vue vivante est éteinte** (#290). Tout le bloc est bâti autour d'**un** ticket courant, et sa
+  hauteur vit dans un fichier unique que N sous-shells réécriraient l'un sur l'autre : le résultat ne
+  serait pas une vue dégradée mais un écran corrompu. La console retombe en plein texte, et chaque
+  ligne de ticket porte alors **son numéro** — sans quoi rien ne dirait, dans un journal entrelacé, à
+  qui appartient un « ✓ MR !99 ouverte ».
+* chaque session **attend sa limite d'usage dans son coin** (#291). Elles tapent la même fenêtre au
+  même moment et l'attendent N fois en parallèle : ça fonctionne, ça ne se coordonne pas.
+
+**Un plan d'avant #288 retombe en séquentiel.** Rejoué par `--resume`, il n'a que cinq colonnes et son
+titre se lit là où on attend le groupe : rien n'y dit ce qui est indépendant. Le nombre de colonnes de
+sa première ligne de **données** — l'en-tête peut manquer à un plan écrit à la main — suffit à le
+reconnaître, et la concurrence est ramenée à 1 en le disant. Deviner l'indépendance à partir de titres
+ferait partir ensemble deux lots qui se suivent.
+
+`--concurrence 0` est **refusé**, comme un effort inconnu ou un budget illisible (§11.3) : zéro
+créneau, c'est un run qui ne lance rien. Contrairement au budget, où `0` annule un plafond, il n'y a
+ici rien à annuler — `1` est déjà le régime sans option. `MAESTRO_ORCHESTRATE_CONCURRENCE` pose la
+même valeur par l'environnement.
