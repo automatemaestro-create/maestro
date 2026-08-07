@@ -79,7 +79,7 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
     monter();
     const rangee = screen.getByRole("region", { name: "Indicateurs de tête" });
     expect(rangee.querySelectorAll("article")).toHaveLength(4);
-    for (const libelle of ["Run en cours", "Tâches", "Agents actifs", "Dépense"]) {
+    for (const libelle of ["Run en cours", "Tâches", "Agents", "Dépense"]) {
       expect(within(rangee).getByText(libelle)).toBeInTheDocument();
     }
   });
@@ -137,7 +137,9 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
     );
   });
 
-  it("compte les agents actifs, et les occupés parmi eux", () => {
+  it("met les occupés et les libres en valeur, le reste en détail", () => {
+    // #247 : c'est « combien travaillent, combien sont disponibles » qu'on vient
+    // chercher — le total et les désactivés passent derrière.
     monter({
       agents: [
         agentFactice({ nom: "dev", actif: true, statut: "occupe" }),
@@ -145,8 +147,8 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
         agentFactice({ nom: "ops", actif: false, statut: "libre" }),
       ],
     });
-    expect(tuile("Agents actifs")).toHaveTextContent("2 / 3");
-    expect(tuile("Agents actifs")).toHaveTextContent("1 occupé(s) · 1 libre(s)");
+    expect(tuile("Agents")).toHaveTextContent("1 occupé(s) · 1 libre(s)");
+    expect(tuile("Agents")).toHaveTextContent("3 au total · 1 désactivé(s)");
   });
 
   it("somme les grands livres, planification comprise", () => {
@@ -181,7 +183,7 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
     // vit désormais.
     monter();
     expect(
-      within(tuile("Agents actifs")).getByRole("link", { name: /Voir les agents/ }),
+      within(tuile("Agents")).getByRole("link", { name: /Voir les agents/ }),
     ).toHaveAttribute("href", entreeParLibelle("Agents")?.href);
     expect(
       within(tuile("Dépense")).getByRole("link", { name: /Détail par période/ }),

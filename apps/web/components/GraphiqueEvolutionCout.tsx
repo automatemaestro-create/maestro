@@ -10,7 +10,7 @@
 
 import { useState } from "react";
 
-import { formatCout, formatTokens } from "@/lib/format";
+import { formatCout, formatCoutAxe, formatTokens } from "@/lib/format";
 import type { PasSerie, PointCout, Usage } from "@/lib/types";
 
 /** Géométrie du dessin (unités du viewBox — le SVG s'étire en largeur). */
@@ -82,8 +82,6 @@ function axeY(max: number): { max: number; pas: number } {
     puissance;
   return { max: pas * Math.ceil(max / pas), pas };
 }
-
-const FORMAT_AXE = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 4 });
 
 /** Le libellé d'un seau : heure pour minute/heure, date courte pour jour. */
 function libelleSeau(periode: string, pas: PasSerie): string {
@@ -174,7 +172,7 @@ export function GraphiqueEvolutionCout({
                 textAnchor="end"
                 className="fill-neutral-500 text-[10px] tabular-nums dark:fill-neutral-400"
               >
-                {FORMAT_AXE.format(valeur)}&nbsp;$
+                {formatCoutAxe(valeur)}
               </text>
             </g>
           );

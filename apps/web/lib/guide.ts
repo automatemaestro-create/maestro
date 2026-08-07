@@ -59,7 +59,7 @@ export const ETAPES_GUIDE: EtapeGuide[] = [
     chemin: "/",
     titre: "Le tableau de bord",
     texte:
-      "L'essentiel en un écran : ce qui attend votre arbitrage, quelques indicateurs de tête — run en cours, tâches par statut, agents actifs, dépense —, les tâches réparties par colonnes et un aperçu de l'activité. Le détail vit dans les pages dédiées, vers lesquelles chaque tuile renvoie. Tout se met à jour par WebSocket, sans recharger la page.",
+      "L'essentiel en un écran : ce qui attend votre arbitrage, quelques indicateurs de tête — run en cours, tâches par statut, agents occupés et libres, dépense —, les tâches réparties par colonnes et un aperçu de l'activité. Le détail vit dans les pages dédiées, vers lesquelles chaque tuile renvoie. Tout se met à jour par WebSocket, sans recharger la page.",
     ancres: [
       '[data-guide="indicateurs"]',
       '[data-guide="kanban"]',
