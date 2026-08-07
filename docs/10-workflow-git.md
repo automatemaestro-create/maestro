@@ -1810,14 +1810,62 @@ plan, quel ticket tourne, depuis combien de temps. Elle existait pourtant, mais 
   run 16 min · ✓ 1 · ✗ 0 · ~ 0 · reste 1
 ```
 
-Le ticket courant porte un **rouet** et un **chrono**, plus **une seule** ligne d'action — le dernier
+Un ticket en vol porte un **rouet** et un **chrono**, plus **une seule** ligne d'action — le dernier
 outil appelé, réécrit sur place. Les tickets déjà jugés portent leur marque (`✓` livré, `✗` échec,
 `~` sauté), leur MR, leur durée et leur coût, lus dans `resume.tsv` ; le pied donne le cumul du run.
-L'attente d'une limite d'usage (§11.4) est un état comme un autre : le bloc reste à l'écran, marqué
-`=` et décompté jusqu'à l'heure de reprise, au lieu de paraître figé pendant des heures. Le flot
+L'attente d'une limite d'usage (§11.4) est un état comme un autre : la ligne reste au bloc, marquée
+`=` et décomptée jusqu'à l'heure de reprise, au lieu de paraître figée pendant des heures. Le flot
 d'outils de #176 reste disponible pour le diagnostic — **`--verbeux`**, ou
 `MAESTRO_ORCHESTRATE_VERBEUX=1` — et **désactive alors la vue** : les deux se disputeraient l'écran,
 et c'est justement quand on lit chaque ligne qu'on ne veut rien qui bouge.
+
+**À N tickets en vol, il y a N lignes vivantes (#290).** `--concurrence` (§11.10) fait tourner
+plusieurs sessions à la fois ; chacune a son rouet, son chrono et son action :
+
+```
+  ✓  1. #288      6 min    0.90 $ MR !401  queue.sh : le plan déclare ce qui est parallélisable
+  /  2. #290     12 min                    Console et status.sh : rendre compte de N en vol
+       · Edit scripts/orchestrate/run.sh
+  \  3. #291      4 min                    Limite d'usage avec N sessions en vol
+       · Bash .venv/Scripts/python.exe -m pytest tests/test_orchestrate.py
+     4. #292                               Tests + doc de l'orchestration concurrente
+  run 18 min · 2 en vol · ✓ 1 · ✗ 0 · ~ 0 · reste 1
+```
+
+Ce que ce lot a changé n'est pas le dessin mais **qui dessine**. #289 avait éteint la vue au-delà d'un
+ticket, et son diagnostic était juste : le bloc était dessiné **depuis le sous-shell de la session**,
+et sa hauteur vivait dans un fichier que N sous-shells auraient réécrit l'un sur l'autre — pas une vue
+dégradée, un écran corrompu, chaque frame comptant ses lignes depuis le mauvais endroit. La réponse
+n'est pas de partager l'écran entre N écrivains mais de **le retirer à tous sauf un** :
+
+| | avant #290 | depuis #290 |
+| --- | --- | --- |
+| qui dessine | le sous-shell de la session courante | le **pilote**, seul |
+| ce que fait une session | dessine, efface, réimprime | **publie** son action dans `<iid>.vue` |
+| la hauteur du bloc | un fichier partagé (`.vue-hauteur`) | une **variable** — un seul processus la lit et l'écrit |
+| une ligne permanente d'un ticket | stdout → `tee` → écran, en course avec la frame suivante | une **file** que le pilote vide entre deux frames |
+
+Trois points à connaître avant d'y toucher :
+
+- **le chrono n'est pas publié par la session, il est calculé par le pilote.** Il vaut pour le
+  **ticket**, donc à travers ses reprises (§11.4) : une valeur publiée par une session repartie de
+  zéro le ferait reculer à chaque limite d'usage ;
+- **la hauteur du bloc varie** maintenant d'une frame à l'autre — un ticket qui se solde rend sa
+  ligne d'action. Le bloc se termine donc par `ESC[J`, qui efface ce qu'une frame plus haute avait
+  laissé sous lui, et il **se borne à la fenêtre** : plutôt que de déborder (donc de faire défiler,
+  donc de se dédoubler à la frame suivante), il masque des lignes déjà jouées **et le dit** ;
+- **une frame est dessinée à chaque lancement de ticket**, pas seulement dans la boucle d'attente.
+  Remplir N créneaux prend le temps de N montages de worktree et de N lectures GitLab, et surtout la
+  boucle d'attente **ne tourne pas** quand les sessions se soldent aussi vite qu'on les lance : le
+  bloc restait alors vide tout le run — c'est le défaut qu'a révélé le premier essai à trois
+  tickets, invisible à `--concurrence 1`.
+
+**Le compteur du pied dit ce qu'il reste, pas où on en est.** `reste` valait `nb_plan - POSITION`,
+c'est-à-dire la position du dernier ticket lancé : à N en vol les tickets ne se prennent plus dans
+l'ordre, et cette soustraction désignait un autre ticket que celui qu'on croyait. Il se compte
+désormais sur ce qui n'est **ni soldé ni en vol** — `plan − (✓ + ✗ + ~) − en vol` —, ce qui le rend
+juste quel que soit l'ordre, **sautés compris**. Le `[n/N]` de l'en-tête d'un ticket, lui, ne change
+pas : il dit la **position dans le plan** (#230), la seule chose qu'il ait jamais dite.
 
 **Un bloc qui tient en place, et rien d'autre à l'écran (#284).** La vue de #240 était juste ; ce qui
 ne l'était pas, c'est **ce qui l'entourait**. Trois défauts la noyaient, et deux d'entre eux étaient
@@ -2021,9 +2069,16 @@ bash scripts/orchestrate/status.sh --no-gitlab         # hors ligne : tout sauf 
 bash scripts/orchestrate/status.sh --reprenables       # ce qui peut être repris, en TSV (§11.8)
 ```
 
-En une sortie : l'état du run, le **ticket en cours** et son temps écoulé, les **commits et fichiers
-modifiés de son worktree**, sa **dernière activité**, son **état GitLab** (statut, MR), le **reste du
-plan** et le **bilan des traités** (verdict, MR, durée, coût). Le script est en **lecture seule** —
+En une sortie : l'état du run, **les tickets en cours** — une section chacun — avec leur temps écoulé,
+les **commits et fichiers modifiés de leur worktree**, leur **dernière activité**, leur **état
+GitLab** (statut, MR), puis le **reste du plan** et le **bilan des traités** (verdict, MR, durée,
+coût). Il y en a N depuis `--concurrence` (§11.10), et l'écran les rend **tous** (#290) : n'en montrer
+qu'un serait pire que de n'en montrer aucun — les autres tiennent un worktree et une session sans que
+rien ne le dise. Trois conséquences : le compteur « à venir » retranche **tous** les tickets en vol
+(retrancher 1 en disait N−1 de trop), le **silence** se mesure sur le **plus récent** d'entre eux — un
+run est vivant dès qu'une de ses sessions écrit encore —, et le cache GitLab est indexé **par
+ticket**, faute de quoi le ticket suivant le chasserait à chaque tour de `--watch`. Le script est en
+**lecture seule** —
 il n'écrit ni dans le run, ni dans le dépôt, ni dans GitLab, et ne touche pas à `run.sh` (bash relit
 un script au fil de son exécution : un run en cours doit pouvoir être observé sans risque).
 
@@ -2035,8 +2090,8 @@ Deux partis pris valent d'être connus :
 - **« En cours » se lit quand la carte est là, se déduit sinon.** Depuis #213 (§11.9) un run laisse
   dans son journal la carte d'identité de son pilote (`pid`) : `status.sh` répond alors par oui ou
   par non — « pilote vivant (pid 1234) » —, et un pilote mort requalifie le run en **interrompu**
-  sans attendre qu'un silence s'installe. Le **ticket** en cours, lui, reste déduit : c'est le
-  premier du plan qui a un `<iid>.session` sans ligne dans `resume.tsv`. Sans carte exploitable —
+  sans attendre qu'un silence s'installe. Les **tickets** en cours, eux, restent déduits : ceux du
+  plan qui ont un `<iid>.session` sans ligne dans `resume.tsv`. Sans carte exploitable —
   journal d'avant #213, ou run tué par SIGKILL, dont la carte survit à son processus — on retombe
   sur la ligne **activité**, qui date la dernière écriture (répertoire du run *et* index git du
   worktree) et bascule l'en-tête en « en cours ? » au-delà de 15 min de silence
@@ -2420,16 +2475,15 @@ en vol, le tour d'un lot peut arriver avant le verdict de son prédécesseur. Un
 jamais rappelé — le plan l'avait déclaré indépendant, donc de la même vague ; un lot pas encore parti
 est sauté au moment de le lancer, comme avant.
 
-**Ce que `--concurrence > 1` dégrade aujourd'hui, et que la console annonce.** Deux lots du chantier
-#287 restent à faire, et le run le dit au démarrage plutôt que de le laisser découvrir :
+**Ce que `--concurrence > 1` dégrade aujourd'hui, et que la console annonce.** Un lot du chantier
+#287 reste à faire, et le run le dit au démarrage plutôt que de le laisser découvrir :
 
-* la **vue vivante est éteinte** (#290). Tout le bloc est bâti autour d'**un** ticket courant, et sa
-  hauteur vit dans un fichier unique que N sous-shells réécriraient l'un sur l'autre : le résultat ne
-  serait pas une vue dégradée mais un écran corrompu. La console retombe en plein texte, et chaque
-  ligne de ticket porte alors **son numéro** — sans quoi rien ne dirait, dans un journal entrelacé, à
-  qui appartient un « ✓ MR !99 ouverte ».
 * chaque session **attend sa limite d'usage dans son coin** (#291). Elles tapent la même fenêtre au
   même moment et l'attendent N fois en parallèle : ça fonctionne, ça ne se coordonne pas.
+
+La vue, elle, **n'est plus éteinte** : elle rend les N tickets en vol depuis #290 (§11.3). Chaque
+ligne de ticket porte au passage **son numéro** dans le journal — sans quoi rien ne dirait, dans une
+trace entrelacée, à qui appartient un « ✓ MR !99 ouverte ».
 
 **Un plan d'avant #288 retombe en séquentiel.** Rejoué par `--resume`, il n'a que cinq colonnes et son
 titre se lit là où on attend le groupe : rien n'y dit ce qui est indépendant. Le nombre de colonnes de

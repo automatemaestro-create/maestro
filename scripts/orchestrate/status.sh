@@ -20,8 +20,8 @@
 #
 #   plan.tsv        le plan figé au démarrage : rang, iid, parent, prio, groupe, titre
 #   resume.tsv      une ligne par ticket TERMINÉ : iid, verdict, mr, duree_s, cout_usd, raison
-#   <iid>.session   présent dès que le ticket est pris en main -> c'est le ticket en cours
-#   <iid>.*         tout le reste (jsonl, json, resultat.txt, log, worktree.log) — sert de témoin
+#   <iid>.session   présent dès que le ticket est pris en main -> c'est un ticket en cours
+#   <iid>.*         tout le reste (jsonl, json, vue, resultat.txt, log, worktree.log) — sert de témoin
 #                   d'activité, par sa date de modification. Le glob couvre aussi le `<iid>.jsonl.gz`
 #                   que `run.sh` laisse une fois le ticket compacté (#198) : la date ne bouge pas
 #   run.log         la sortie de la console, pour un run détaché
@@ -29,8 +29,13 @@
 # --- « En cours » se lit quand c'est possible, se déduit sinon -----------------------------------------
 # Depuis #213, un run laisse dans son journal la carte d'identité de son pilote (`pid` : PID, WINPID,
 # naissance, hôte) : `pilote_vivant` répond alors par oui ou par non, sans interprétation — c'est
-# cette certitude qui permet de TUER un run avant d'en démarrer un autre. Le ticket en cours, lui,
-# reste déduit du plan (le premier qui a des fichiers de session SANS ligne de bilan).
+# cette certitude qui permet de TUER un run avant d'en démarrer un autre. Les tickets en cours, eux,
+# restent déduits du plan (ceux qui ont des fichiers de session SANS ligne de bilan).
+#
+# Il y en a N depuis `--concurrence` (#289), et l'écran les rend TOUS (#290) : une section par ticket,
+# le compteur « à venir » qui les retranche tous, et le silence mesuré sur le PLUS RÉCENT d'entre eux
+# — un run est vivant dès qu'une de ses sessions écrit encore. Ne montrer que le premier serait pire
+# que de n'en montrer aucun : les autres tiennent un worktree et une session sans que rien ne le dise.
 #
 # La déduction d'avant reste en place, et il ne faut pas la retirer : les journaux écrits avant #213
 # n'ont pas de carte, et un run tué par SIGKILL laisse la sienne derrière lui (aucun trap ne survit à
@@ -198,19 +203,26 @@ traite() {
     "$1/resume.tsv" 2>/dev/null
 }
 
-# ticket_en_cours <run-dir> : l'iid du ticket pris en main mais sans verdict — au plus un, la boucle
-# étant séquentielle. Le témoin est `<iid>.session`, écrit juste avant le lancement de la session.
-ticket_en_cours() {
-  local dir="$1" iid
+# tickets_en_cours <run-dir> : les iid des tickets pris en main mais sans verdict, séparés par une
+# espace et dans l'ordre du plan. Le témoin est `<iid>.session`, écrit juste avant le lancement de la
+# session ; le critère d'arrêt est le bilan, écrit au verdict.
+#
+# Ils étaient au plus UN tant que la boucle était séquentielle, et la fonction s'arrêtait au premier
+# trouvé. Depuis `--concurrence` (#289) il y en a N, et n'en montrer qu'un serait pire que de n'en
+# montrer aucun : les N-1 autres tiennent un worktree et une session sans que rien ne le dise (#290).
+#
+# Rend 1 si la liste est vide, pour que l'appelant garde son « || R_EN_VOL='' » habituel.
+tickets_en_cours() {
+  local dir="$1" iid liste=""
   [ -f "$dir/plan.tsv" ] || return 1
   while IFS=$'\t' read -r _ iid _ _ _ _; do
     [ -n "${iid:-}" ] || continue
     [ -e "$dir/$iid.session" ] || continue
     traite "$dir" "$iid" && continue
-    printf '%s' "$iid"
-    return 0
+    liste="${liste:+$liste }$iid"
   done < <(grep -v '^#' "$dir/plan.tsv" 2>/dev/null)
-  return 1
+  [ -n "$liste" ] || return 1
+  printf '%s' "$liste"
 }
 
 # --- Le dépôt : branche, worktree, avancement --------------------------------------------------------
@@ -256,13 +268,30 @@ activite_du_ticket() {
   printf '%s' "$a"
 }
 
+# activite_des_tickets <run-dir> <iid…> : la PLUS RÉCENTE des activités de plusieurs tickets (#290).
+# C'est le maximum et non le minimum : un run est vivant dès qu'UNE de ses sessions écrit encore, et
+# prendre la plus ancienne ferait passer un run bien portant pour muet dès qu'un de ses tickets
+# réfléchit longuement — le contraire de ce que le silence est censé détecter.
+activite_des_tickets() {
+  local dir="$1" iid t a=""
+  shift
+  for iid in "$@"; do
+    t="$(activite_du_ticket "$dir" "$iid")" || continue
+    if [ -z "$a" ] || [ "$t" -gt "$a" ]; then a="$t"; fi
+  done
+  [ -n "$a" ] || return 1
+  printf '%s' "$a"
+}
+
 # --- GitLab (facultatif) ------------------------------------------------------------------------------
 # Une lecture par cycle au plus, et jamais plus souvent qu'une minute : en `--watch` à 20 s, on
 # n'inonde pas l'API pour un statut qui bouge deux fois par heure.
 GITLAB_OK=0
-GL_DERNIERE=0
-GL_CACHE=""
-GL_CACHE_IID=""
+# Le cache est indexé PAR TICKET (#290). À un seul en vol, une valeur et son horodatage suffisaient ;
+# à N, un cache d'une seule case serait chassé par le ticket suivant à chaque tour — donc jamais lu,
+# donc N lectures GitLab par cycle de `--watch` au lieu de N par minute.
+declare -A GL_CACHE=()
+declare -A GL_CACHE_T=()
 
 if [ "$SANS_GITLAB" = 0 ] && gl_require_glab 2>/dev/null; then GITLAB_OK=1; fi
 
@@ -277,10 +306,10 @@ etat_gitlab() {
   local iid="$1" branche="$2" maintenant statut etat mr
   [ "$GITLAB_OK" = 1 ] || return 1
   maintenant="$(date +%s)"
-  # Le cache porte l'iid : en `--watch`, la boucle passe au ticket suivant sans prévenir, et un
-  # cache indexé sur le seul temps afficherait pendant une minute l'état du ticket précédent.
-  if [ -n "$GL_CACHE" ] && [ "$GL_CACHE_IID" = "$iid" ] && [ $((maintenant - GL_DERNIERE)) -lt 60 ]; then
-    printf '%s' "$GL_CACHE"
+  # Chaque ticket a sa case et son horodatage : en `--watch`, un ticket relu il y a moins d'une
+  # minute est rendu de mémoire, quel que soit le nombre de tickets affichés entre-temps.
+  if [ -n "${GL_CACHE[$iid]:-}" ] && [ $((maintenant - ${GL_CACHE_T[$iid]:-0})) -lt 60 ]; then
+    printf '%s' "${GL_CACHE[$iid]}"
     return 0
   fi
   statut="$(gl_issue_owner "$iid" 2>/dev/null | cut -f1)"
@@ -290,10 +319,9 @@ etat_gitlab() {
     etat="$(gl_mr_state "$branche" 2>/dev/null)"
     [ "$etat" = "opened" ] && mr="$(gl_mr_iid "$branche" 2>/dev/null)"
   fi
-  GL_CACHE="$(printf '%s\t%s\t%s' "$statut" "$etat" "$mr")"
-  GL_CACHE_IID="$iid"
-  GL_DERNIERE="$maintenant"
-  printf '%s' "$GL_CACHE"
+  GL_CACHE[$iid]="$(printf '%s\t%s\t%s' "$statut" "$etat" "$mr")"
+  GL_CACHE_T[$iid]="$maintenant"
+  printf '%s' "${GL_CACHE[$iid]}"
 }
 
 # --- Affichage -----------------------------------------------------------------------------------------
@@ -378,11 +406,13 @@ affiche_ticket_en_cours() { # <run-dir> <iid>
   fi
 }
 
-affiche_reste() { # <run-dir> <iid-en-cours>
-  local dir="$1" courant="$2" rang iid titre lignes=""
+affiche_reste() { # <run-dir> <iids-en-vol>
+  local dir="$1" en_vol=" $2 " rang iid titre lignes=""
   while IFS=$'\t' read -r rang iid _ _ _ titre; do
     [ -n "${iid:-}" ] || continue
-    [ "$iid" = "$courant" ] && continue
+    # Tous les tickets en vol sont exclus, pas seulement le premier : ils ont leur section au-dessus,
+    # et les relister ici les compterait deux fois (#290).
+    case "$en_vol" in *" $iid "*) continue ;; esac
     traite "$dir" "$iid" && continue
     lignes="$lignes$(printf '   %2s. #%-5s %s' "$rang" "$iid" "$titre")"$'\n'
   done < <(grep -v '^#' "$dir/plan.tsv" 2>/dev/null)
@@ -417,7 +447,9 @@ affiche_bilan() { # <run-dir>
 #
 #   R_ETAT        en-cours | termine | interrompu | vide
 #   R_NB_PLAN     tickets au plan          R_NB_TRAITES  tickets ayant rendu leur verdict
-#   R_COURANT     iid du ticket en vol (vide s'il n'y en a pas)
+#   R_EN_VOL      iid des tickets en vol, séparés par une espace (vide s'il n'y en a pas). Plusieurs
+#                 depuis `--concurrence` (#289) — le nom du champ le dit, et tout ce qui le lit
+#                 boucle dessus plutôt que de le traiter comme une valeur (#290).
 #   R_ACTIVITE    dernière écriture du journal, en secondes Unix
 #   R_CODE        code de sortie laissé par le lanceur, s'il en a laissé un
 #   R_PILOTE      vivant | mort | inconnu — ce que dit la carte `pid` (#213), « inconnu » quand il
@@ -438,7 +470,7 @@ affiche_bilan() { # <run-dir>
 # requalifie « en-cours » en « interrompu », sans attendre que le silence s'installe. Sans carte
 # (`inconnu`), on en reste à la dernière écriture, et c'est à l'appelant d'en tirer les
 # conséquences, pas à cette fonction de trancher à sa place.
-R_ETAT=""; R_NB_PLAN=0; R_NB_TRAITES=0; R_COURANT=""; R_ACTIVITE=""; R_CODE=""; R_PILOTE=inconnu
+R_ETAT=""; R_NB_PLAN=0; R_NB_TRAITES=0; R_EN_VOL=""; R_ACTIVITE=""; R_CODE=""; R_PILOTE=inconnu
 etat_du_run() {
   # `dir` sur sa propre ligne : bash développe TOUS les mots d'un `local` avant de créer les
   # variables, donc « local id="$1" dir="$ORCH_DIR/$id" » lirait l'`id` de l'appelant (inexistant
@@ -450,7 +482,7 @@ etat_du_run() {
   [ -f "$dir/plan.tsv" ] && R_NB_PLAN="$(grep -cv '^#' "$dir/plan.tsv" 2>/dev/null)"
   R_NB_TRAITES=0
   [ -f "$dir/resume.tsv" ] && R_NB_TRAITES="$(grep -cv '^#' "$dir/resume.tsv" 2>/dev/null)"
-  R_COURANT="$(ticket_en_cours "$dir")" || R_COURANT=""
+  R_EN_VOL="$(tickets_en_cours "$dir")" || R_EN_VOL=""
   R_ACTIVITE="$(plus_recent "$dir"/* 2>/dev/null)" || R_ACTIVITE=""
   R_CODE=""
   if [ -f "$dir/run.log" ]; then
@@ -473,7 +505,7 @@ etat_du_run() {
   elif [ "$R_NB_TRAITES" -ge "$R_NB_PLAN" ]; then R_ETAT=termine
   elif [ "$R_PILOTE" = mort ]; then R_ETAT=interrompu
   elif [ "$R_PILOTE" = vivant ]; then R_ETAT=en-cours
-  elif [ -n "$R_COURANT" ]; then R_ETAT=en-cours
+  elif [ -n "$R_EN_VOL" ]; then R_ETAT=en-cours
   elif [ -n "$R_ACTIVITE" ] && [ $(( $(date +%s) - R_ACTIVITE )) -lt 300 ]; then R_ETAT=en-cours
   else R_ETAT=interrompu
   fi
@@ -482,7 +514,11 @@ etat_du_run() {
 # runs_reprenables : les runs qu'on peut RELANCER, du plus ancien au plus récent, une ligne TSV
 # chacun —
 #
-#   run-id <TAB> etat <TAB> nb_restants <TAB> debut-epoch <TAB> silence-s <TAB> iid-en-cours
+#   run-id <TAB> etat <TAB> nb_restants <TAB> debut-epoch <TAB> silence-s <TAB> iids-en-vol
+#
+# La dernière colonne peut porter PLUSIEURS iid séparés par une espace (#290) : un run concurrent en
+# a autant qu'il avait de créneaux occupés à la coupure. `run.sh --resume` n'en lit que la première
+# colonne, et reconstitue les tickets en vol depuis le journal repris (`reprend_en_vol`, #204).
 #
 # « Reprenable » tient en deux conditions : il reste des tickets sans verdict au plan, ET le run ne
 # tourne plus. La seconde se LIT quand le run a laissé sa carte (#213) — pilote mort, le run est
@@ -509,11 +545,13 @@ runs_reprenables() {
     restants=$((R_NB_PLAN - R_NB_TRAITES))
     [ "$restants" -gt 0 ] || continue
 
-    # Le silence se mesure sur le ticket en vol quand il y en a un : son worktree bouge (l'index git
+    # Le silence se mesure sur les tickets en vol quand il y en a : leur worktree bouge (l'index git
     # est touché à chaque `git add`/`status`) là où le répertoire du run peut rester muet plusieurs
     # minutes d'affilée. À défaut, la dernière écriture du journal.
     silence=""
-    [ -n "$R_COURANT" ] && { silence="$(activite_du_ticket "$ORCH_DIR/$id" "$R_COURANT")" || silence=""; }
+    # R_EN_VOL est une liste d'iid : le découpage en arguments est voulu.
+    # shellcheck disable=SC2086
+    [ -n "$R_EN_VOL" ] && { silence="$(activite_des_tickets "$ORCH_DIR/$id" $R_EN_VOL)" || silence=""; }
     [ -n "$silence" ] || silence="$R_ACTIVITE"
     if [ -n "$silence" ]; then silence=$((maintenant - silence)); else silence=-1; fi
 
@@ -530,18 +568,20 @@ runs_reprenables() {
     esac
 
     debut="$(debut_du_run "$id" "$ORCH_DIR/$id")" || debut=""
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$R_ETAT" "$restants" "${debut:-0}" "$silence" "$R_COURANT"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$R_ETAT" "$restants" "${debut:-0}" "$silence" "$R_EN_VOL"
   done <<< "$(runs)"
 }
 
 # affiche_run <run-id> : tout l'écran, et pose ETAT (en-cours / termine / interrompu / vide).
 affiche_run() {
-  local id="$1" nb_plan nb_traites courant debut age activite code libelle silence f
+  local id="$1" nb_plan nb_traites en_vol nb_vol iid debut age activite code libelle silence f
   local dir="$ORCH_DIR/$id"
 
   etat_du_run "$id"
   ETAT="$R_ETAT"; nb_plan="$R_NB_PLAN"; nb_traites="$R_NB_TRAITES"
-  courant="$R_COURANT"; activite="$R_ACTIVITE"; code="$R_CODE"
+  en_vol="$R_EN_VOL"; activite="$R_ACTIVITE"; code="$R_CODE"
+  nb_vol=0
+  for iid in $en_vol; do nb_vol=$((nb_vol + 1)); done
 
   # Un run « en cours » dont plus rien ne bouge est le cas qu'on doit repérer d'un coup d'œil.
   # Quand la carte du pilote est là (#213), la question ne se pose plus — un run vivant est vivant,
@@ -549,8 +589,10 @@ affiche_run() {
   # dire au passage. Sans carte, c'est encore la seule chose qui distingue une session qui travaille
   # d'une session morte, et l'en-tête doit le porter autant que la ligne « activité ».
   silence=""
-  if [ "$ETAT" = "en-cours" ] && [ -n "$courant" ]; then
-    silence="$(activite_du_ticket "$dir" "$courant")" || silence=""
+  if [ "$ETAT" = "en-cours" ] && [ -n "$en_vol" ]; then
+    # Liste d'iid : le découpage en arguments est voulu.
+    # shellcheck disable=SC2086
+    silence="$(activite_des_tickets "$dir" $en_vol)" || silence=""
     if [ -n "$silence" ]; then
       silence=$(( $(date +%s) - silence ))
       [ "$silence" -ge "$SEUIL_SILENCE" ] || silence=""
@@ -584,21 +626,25 @@ affiche_run() {
     age=$(( $(date +%s) - debut ))
     printf '   démarré    %s (il y a %s)\n' "$(horodatage "$debut")" "$(duree_lisible "$age")"
   fi
+  # « à venir » se compte sur ce qui n'est NI traité NI en vol : à N en vol, retrancher 1 en dirait
+  # N-1 de trop, et c'est le seul compteur de cet écran qui pouvait mentir (#290).
   if [ "$nb_plan" -gt 0 ]; then
     printf '   plan       %s ticket(s) · %s traité(s)%s · %s à venir\n' \
-      "$nb_plan" "$nb_traites" "$([ -n "$courant" ] && printf ' · 1 en cours')" \
-      "$((nb_plan - nb_traites - $([ -n "$courant" ] && printf 1 || printf 0)))"
+      "$nb_plan" "$nb_traites" "$([ "$nb_vol" -gt 0 ] && printf ' · %s en cours' "$nb_vol")" \
+      "$((nb_plan - nb_traites - nb_vol))"
   fi
   [ -f "$STOP" ] && printf '   %s⚠ arrêt demandé%s — %s est présent : le run s'\''arrêtera entre deux tickets.\n' \
     "$C_Y" "$C_0" "$(relatif "$STOP")"
 
-  if [ -n "$courant" ]; then
-    affiche_ticket_en_cours "$dir" "$courant"
+  # Une section par ticket en vol, dans l'ordre du plan. Elles sont volontairement identiques à celle
+  # d'avant ce lot : ce qu'on veut savoir d'un ticket ne change pas parce qu'il en tourne trois.
+  if [ -n "$en_vol" ]; then
+    for iid in $en_vol; do affiche_ticket_en_cours "$dir" "$iid"; done
   elif [ "$ETAT" = "en-cours" ]; then
     titre_section "En cours — aucun ticket pris en main (entre deux tickets)"
   fi
 
-  [ "$nb_plan" -gt 0 ] && affiche_reste "$dir" "$courant"
+  [ "$nb_plan" -gt 0 ] && affiche_reste "$dir" "$en_vol"
   affiche_bilan "$dir"
 
   titre_section "Suite"
