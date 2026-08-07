@@ -25,7 +25,12 @@ Les **playbooks** (instructions d'un rôle) sont éditables hors du code via un
 stockage versionné (`maestro.agents.playbooks`, ticket #76) et appliqués **à
 chaud** (#78) : l'exécuteur relit la version courante à chaque tâche, une édition
 publiée vaut pour l'exécution suivante sans redémarrage — un agent jamais édité
-garde exactement ses prompts du code.
+garde exactement son playbook du code. Ce playbook du code est lui-même un
+**document Markdown structuré** livré avec le paquet (#295,
+`maestro.agents.playbook_du_code`, dossier `playbooks_defaut/`), dont un tronc
+commun (`_socle.md`) porte le **régime sénior** de tous les rôles : ce que l'agent
+décide seul, ce qu'il remonte, et ce qu'il rend (décisions & arbitrages,
+recommandations).
 
 La **capacité** d'un agent (#86, EF-21) — activé/désactivé, plafond d'instances —
 se règle de la même façon hors du code (`maestro.agents.capacity`, dépôt
