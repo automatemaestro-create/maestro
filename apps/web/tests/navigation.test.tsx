@@ -16,7 +16,12 @@ import { describe, expect, it } from "vitest";
 
 import { BarreLaterale } from "@/components/BarreLaterale";
 import { BarreSuperieure } from "@/components/BarreSuperieure";
-import { entreeCourante, entreeParLibelle, MENU } from "@/lib/navigation";
+import {
+  entreeCourante,
+  entreeParLibelle,
+  HORS_MENU,
+  MENU,
+} from "@/lib/navigation";
 
 import {
   agentFactice,
@@ -33,7 +38,6 @@ describe("le menu (lib/navigation)", () => {
     // subsiste pour le chat global, qui est une autre intention.
     expect(MENU.map((entree) => entree.libelle)).toEqual([
       "Tableau de bord",
-      "Projets",
       "Agents",
       "Chat",
       "Coûts & analytics",
@@ -41,6 +45,15 @@ describe("le menu (lib/navigation)", () => {
       "Journal",
       "Paramètres",
     ]);
+  });
+
+  it("ne range plus le projet parmi les destinations (#280)", () => {
+    // Le reproche du bilan de la Phase 7 : « Projets » en entrée de sidebar
+    // faisait du projet une destination parmi d'autres, alors qu'il est le
+    // cadre de toutes. Il se change au sélecteur du shell, et son écran de
+    // gestion s'atteint de là — d'où sa sortie du menu, sans sortir des pages.
+    expect(MENU.map((entree) => entree.href)).not.toContain("/projets");
+    expect(HORS_MENU.map((entree) => entree.href)).toContain("/projets");
   });
 
   it("désigne l'entrée qui porte le chemin courant", () => {
@@ -96,13 +109,24 @@ describe("le menu (lib/navigation)", () => {
       "app",
     );
 
-    for (const { href, libelle } of MENU) {
+    // `HORS_MENU` comprise (#280) : quitter la sidebar n'est pas quitter
+    // l'application — une page hors menu dont le fichier disparaîtrait rendrait
+    // un 404 au bout du sélecteur, exactement le lien mort qu'on évite ici.
+    for (const { href, libelle } of [...MENU, ...HORS_MENU]) {
       const segments = href.split("/").filter((segment) => segment !== "");
       expect(
         existsSync(path.join(app, ...segments, "page.tsx")),
         `l'entrée « ${libelle} » mène à « ${href} », qui n'a pas de page`,
       ).toBe(true);
     }
+  });
+
+  it("titre encore une page sortie du menu (#280)", () => {
+    // Sans `HORS_MENU` dans la résolution, `/projets` répondrait toujours mais
+    // la barre supérieure retomberait sur « Control Tower » : un écran anonyme
+    // pour un chemin qui marche. C'est le critère « les anciens chemins restent
+    // servis » pris au niveau où il se casse en silence.
+    expect(entreeCourante("/projets")?.libelle).toBe("Projets");
   });
 });
 
@@ -120,6 +144,12 @@ describe("les renvois par libellé (entreeParLibelle)", () => {
     // dans `FilActivite` dès #191 et resté éteint faute de page, jusqu'à ce
     // que #249 ajoute l'entrée — sans une ligne de plus dans le composant.
     expect(entreeParLibelle("Journal")?.href).toBe("/journal");
+  });
+
+  it("résout encore une page hors menu (#280)", () => {
+    // C'est ce qui permet au sélecteur de viser l'écran de gestion sans écrire
+    // « /projets » en dur : le jour où cet écran déménage, le sélecteur suit.
+    expect(entreeParLibelle("Projets")?.href).toBe("/projets");
   });
 
   it("reste muet sur une page qui n'existe pas", () => {

@@ -13,7 +13,9 @@
  * projet n'est choisi, c'est la porte d'entrée qui occupe l'écran et le cadre
  * ci-dessous n'est pas monté du tout. Depuis #281 il en est en plus la **source
  * de portée** : le projet passé au fournisseur d'état cadre toutes les lectures
- * et le flux temps réel, écran par écran.
+ * et le flux temps réel, écran par écran. Depuis #280, enfin, il le rend
+ * **visible et changeable** en permanence — le sélecteur de la barre supérieure,
+ * qui remplace l'entrée « Projets » de la barre latérale.
  */
 
 import { useEffect, useState } from "react";
@@ -26,6 +28,7 @@ import { CentreNotifications } from "@/components/CentreNotifications";
 import { GuidePriseEnMain } from "@/components/GuidePriseEnMain";
 import { MenuAide } from "@/components/MenuAide";
 import { ChoixProjet, EcranOuverture } from "@/components/projets/ChoixProjet";
+import { SelecteurProjet } from "@/components/projets/SelecteurProjet";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { FournisseurProjetActif, useProjetActif } from "@/lib/etatProjetActif";
 import {
@@ -112,6 +115,7 @@ function CadreControlTower({
           <BarreSuperieure
             repliee={repliee}
             basculerRepli={basculerRepli}
+            selecteurProjet={<SelecteurProjet />}
             notifications={<CentreNotifications />}
             theme={<BasculeTheme />}
             aide={<MenuAide />}
