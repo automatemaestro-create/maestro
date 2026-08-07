@@ -11,8 +11,10 @@ import type {
   AgentCatalogueDetail,
   AnalyticsCouts,
   CoutExecution,
+  ChoixSelecteur,
   DeclarationProjet,
   DefinitionAgent,
+  DisponibiliteSelecteur,
   EntreeRegistreMcp,
   EtatAgent,
   FilChat,
@@ -555,6 +557,37 @@ export function chargerExplorateur(
   return lireProjets<PageExplorateur>(
     `/api/projets/explorateur${requete}`,
     "dossier illisible",
+  );
+}
+
+/**
+ * L'état du sélecteur de dossier natif (`GET /api/projets/selecteur`, #278).
+ * Toujours 200 : une indisponibilité est une **réponse**, pas une panne — c'est
+ * elle que l'écran affiche à la place d'un bouton mort.
+ */
+export function chargerDisponibiliteSelecteur(): Promise<DisponibiliteSelecteur> {
+  return lireProjets<DisponibiliteSelecteur>(
+    "/api/projets/selecteur",
+    "sélecteur natif injoignable",
+  );
+}
+
+/**
+ * Ouvre le dialogue de dossier de l'OS (`POST /api/projets/selecteur`, #278) et
+ * rend le chemin choisi. Le backend tourne sur le poste : c'est lui qui ouvre
+ * la fenêtre, le navigateur ne livrant jamais de chemin absolu.
+ *
+ * L'attente est **longue par nature** — le temps que quelqu'un parcoure son
+ * disque —, et une annulation revient en 200 (`annule: true`). Seuls les vrais
+ * empêchements lèvent, avec leur motif.
+ */
+export function ouvrirSelecteurNatif(
+  depart: string | null = null,
+): Promise<ChoixSelecteur> {
+  return ecrireProjet<ChoixSelecteur>(
+    "/api/projets/selecteur",
+    { depart },
+    "sélecteur natif indisponible",
   );
 }
 

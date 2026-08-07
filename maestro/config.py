@@ -89,6 +89,14 @@ class Settings:
     #: une **frontière de lecture**, pas un confort : hors de ces dossiers,
     #: `GET /api/projets/explorateur` refuse avec son motif.
     explorateur_racines: str | None = None
+    #: Le **sélecteur de dossier natif** de l'API (`MAESTRO_SELECTEUR_NATIF`,
+    #: #278) : `auto` (défaut, y compris None) laisse décider les garde-fous de
+    #: maestro.controltower.selecteur — dialogue ouvert seulement pour une
+    #: requête venue du poste, et seulement si l'OS en a un ; `0` l'éteint
+    #: franchement (le backend le dit, l'explorateur servi par l'API reste la
+    #: voie complète). Un backend joint depuis le réseau n'ouvre jamais de
+    #: fenêtre, quel que soit ce réglage.
+    selecteur_natif: str | None = None
     #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None :
     #: exécution directe sur l'hôte (défaut). Seule valeur reconnue : `conteneur`.
     #: Interprété et validé par la couche sandbox (maestro.sandbox.container, #108).
@@ -141,6 +149,7 @@ class Settings:
             permissions_dir=(os.getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,
             projets_dir=(os.getenv("MAESTRO_PROJETS_DIR") or "").strip() or None,
             explorateur_racines=(os.getenv("MAESTRO_EXPLORATEUR_RACINES") or "").strip() or None,
+            selecteur_natif=(os.getenv("MAESTRO_SELECTEUR_NATIF") or "").strip().lower() or None,
             isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
             isolation_image=(os.getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
             isolation_reseau=(os.getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()

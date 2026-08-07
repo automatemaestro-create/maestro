@@ -740,6 +740,50 @@ export type DossierExplorateur = {
   chemin: string;
   depot_git: boolean;
   projet_id: string | null;
+  /**
+   * Pourquoi ce dossier est proposé — renseigné sur la **page d'entrée**
+   * seulement (#278), `null` pour un sous-dossier énuméré. `utilisateur` : le
+   * dossier utilisateur ; `recent` : le parent d'un projet récemment déclaré ;
+   * `projet` : une racine déjà déclarée ; `volume` : un disque du poste ;
+   * `configuree` : une racine de `MAESTRO_EXPLORATEUR_RACINES`.
+   */
+  origine: OrigineDossier | null;
+};
+
+/** Les origines qu'un point d'entrée de l'explorateur peut porter (#278). */
+export type OrigineDossier =
+  | "utilisateur"
+  | "recent"
+  | "projet"
+  | "volume"
+  | "configuree";
+
+/**
+ * L'état du **sélecteur de dossier natif** (`GET /api/projets/selecteur`, #278).
+ * `disponible` décide entre un bouton et une phrase : l'écran ne montre jamais
+ * un bouton qui échouerait au clic. `motif` porte le code stable
+ * (`selecteur-hors-poste` en mode serveur, `selecteur-desactive`,
+ * `selecteur-sans-outil`), `outil` le programme qui ouvrira le dialogue.
+ */
+export type DisponibiliteSelecteur = {
+  disponible: boolean;
+  motif: string | null;
+  message: string;
+  outil: string | null;
+};
+
+/**
+ * Ce que rend `POST /api/projets/selecteur` (#278). `annule` distingue « la
+ * fenêtre a été fermée » — un geste normal, pas une erreur — d'un chemin
+ * choisi. `racine_valide` dit si ce chemin est **déclarable tel quel** ; sinon
+ * `refus` porte le motif d'EF-38 (racine de disque, dossier utilisateur nu…),
+ * que le formulaire affiche au lieu de le découvrir à la soumission.
+ */
+export type ChoixSelecteur = {
+  annule: boolean;
+  chemin: string | null;
+  racine_valide: boolean;
+  refus: RefusProjet | null;
 };
 
 /**

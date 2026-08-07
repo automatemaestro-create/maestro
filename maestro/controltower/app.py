@@ -71,7 +71,16 @@ Endpoints :
   l'API** (docs/05 §2.7) : énumère les sous-dossiers d'un chemin (marqueur
   « dépôt Git », projet déjà déclaré), borné aux **racines explorables** et aux
   zones non sensibles — un dépassement est un **refus motivé**, jamais une
-  liste vide ;
+  liste vide. Sans `chemin`, il rend les **points d'entrée** (#278) : dossier
+  utilisateur, dossiers récents, projets déclarés, volumes du poste, chacun
+  avec son `origine` ;
+- `GET  /api/projets/selecteur` — le **sélecteur de dossier natif** est-il
+  ouvrable ici (#278) ? Toujours 200 : une indisponibilité (backend distant,
+  réglage à `0`, aucun dialogue sur le poste) est une réponse motivée, que
+  l'écran affiche au lieu d'un bouton mort ;
+- `POST /api/projets/selecteur` — ouvre le dialogue de dossier de l'OS et rend
+  le chemin choisi, confronté à EF-38 (`racine_valide`, `refus`). Annuler rend
+  200 (`annule: true`) — fermer une fenêtre n'est pas une erreur ;
 - `GET  /api/projets/{id}` — un projet déclaré ;
 - `POST /api/projets` — déclare un projet : racine **validée** (EF-38, refus
   motivé en 422) et VCS **constaté** sur le disque ;
@@ -139,7 +148,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -153,6 +162,7 @@ from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
 from maestro.config import load_settings
+from maestro.controltower import selecteur
 from maestro.controltower.analytics import PAS_HEURE, PAS_VALIDES, agrege_couts
 from maestro.controltower.assistance import (
     AGENT_ASSISTANCE,
@@ -211,6 +221,7 @@ from maestro.controltower.state import (
     ControlTowerState,
 )
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
+from maestro.projets import RacineRefusee, canonique, valider_racine
 from maestro.references import ReferenceTicket
 
 
@@ -355,6 +366,17 @@ class ProjetRequete(BaseModel):
     origine: str = "existant"
     inclus: list[str] | None = None
     exclus: list[str] | None = None
+
+
+class SelecteurRequete(BaseModel):
+    """Corps (facultatif) d'une ouverture du sélecteur natif (#278).
+
+    `depart` est le dossier où le dialogue s'ouvre — un confort, jamais une
+    permission : le chemin **rendu** par le dialogue est confronté à EF-38 quel
+    que soit l'endroit d'où l'utilisateur est parti.
+    """
+
+    depart: str | None = None
 
 
 class ChatEnvoiRequete(BaseModel):
@@ -1670,10 +1692,109 @@ def create_app(
         """Les motifs de périmètre d'une requête — None laissant les défauts du modèle."""
         return None if valeur is None else tuple(valeur)
 
-    # Enregistrée **avant** `/api/projets/{id_projet}` : « explorateur » est un
-    # identifiant de projet valide au regard du slug `ID_PROJET`, la capture
-    # l'avalerait donc si elle passait la première (même piège qu'au-dessus avec
-    # `/api/playbooks/propositions`).
+    def _poste(requete: Request) -> bool:
+        """La requête vient-elle du poste ? — le discriminant « poste » vs « serveur ».
+
+        Lu sur le **client TCP**, jamais sur un en-tête : `X-Forwarded-For` et
+        consorts sont posés par le client, donc un `127.0.0.1` déclaré ouvrirait
+        une fenêtre sur la machine du serveur depuis n'importe où.
+        """
+        return selecteur.hote_du_poste(requete.client.host if requete.client else None)
+
+    # Enregistrées **avant** `/api/projets/{id_projet}` : « explorateur » et
+    # « selecteur » sont des identifiants de projet valides au regard du slug
+    # `ID_PROJET`, la capture les avalerait donc si elle passait la première
+    # (même piège qu'au-dessus avec `/api/playbooks/propositions`).
+    @app.get("/api/projets/selecteur")
+    async def selecteur_disponible(requete: Request) -> dict[str, Any]:
+        """Le sélecteur de dossier **natif du poste** est-il ouvrable ici — et sinon, pourquoi ?
+
+        C'est la réponse que l'écran lit **avant** d'afficher quoi que ce soit :
+        un bouton quand `disponible`, la phrase de `message` sinon (#278). Jamais
+        un bouton mort, jamais un silence — l'explorateur servi par l'API reste
+        dans les deux cas la voie complète.
+
+        Toujours **200** : une indisponibilité est une réponse, pas une erreur.
+        Trois motifs — `selecteur-desactive` (`MAESTRO_SELECTEUR_NATIF=0`),
+        `selecteur-hors-poste` (backend joint depuis le réseau : le dialogue
+        s'ouvrirait sur le serveur, devant personne) et `selecteur-sans-outil`
+        (ni PowerShell, ni osascript, ni zenity/kdialog, ou pas de session
+        graphique).
+        """
+        return selecteur.disponibilite(
+            poste=_poste(requete),
+            reglage=load_settings().selecteur_natif,
+        )
+
+    @app.post("/api/projets/selecteur")
+    async def ouvrir_selecteur(
+        requete: Request,
+        corps: SelecteurRequete | None = None,
+    ) -> dict[str, Any]:
+        """Ouvre le dialogue de dossier de l'OS et rend le chemin choisi (#278).
+
+        Le pas d'après l'explorateur : un navigateur ne livre jamais de chemin
+        absolu, mais le backend **tourne sur le poste** et peut ouvrir le
+        dialogue natif. `depart` (facultatif) est le dossier d'ouverture.
+
+        Le chemin rendu est **confronté aux frontières d'EF-38** avant de
+        revenir : `chemin` porte le dossier canonicalisé et `racine_valide` dit
+        s'il est déclarable tel quel — un dossier explorable mais non déclarable
+        (une racine de disque, le dossier utilisateur nu) revient avec son
+        `refus` motivé plutôt qu'en 4xx, l'écran ayant besoin de le montrer dans
+        le formulaire, pas de le traiter en panne.
+
+        **Annuler n'est pas une erreur** : fermer la fenêtre rend
+        `{"annule": true}` en 200. Les vrais empêchements sont des 403 motivés
+        (`selecteur-hors-poste`, `selecteur-desactive`, `selecteur-sans-outil`,
+        `selecteur-en-cours`, `selecteur-expire`).
+        """
+        etat = selecteur.disponibilite(
+            poste=_poste(requete),
+            reglage=load_settings().selecteur_natif,
+        )
+        if not etat["disponible"]:
+            raise HTTPException(
+                status_code=403,
+                detail={"motif": etat["motif"], "message": etat["message"]},
+            )
+        try:
+            chemin = await asyncio.to_thread(
+                selecteur.choisir_dossier,
+                depart=(corps.depart if corps else None),
+            )
+        except selecteur.SelecteurRefuse as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={"motif": exc.motif, "message": str(exc)},
+            ) from exc
+        if chemin is None:
+            return {"annule": True, "chemin": None, "racine_valide": False, "refus": None}
+        return {"annule": False, **_verdict_racine(chemin)}
+
+    def _verdict_racine(chemin: str) -> dict[str, Any]:
+        """Le chemin choisi, canonicalisé, et ce qu'EF-38 en dit — sans jamais lever.
+
+        Deux questions distinctes, et c'est tout l'intérêt de les séparer : le
+        dossier est-il **lisible** (canonicalisable), et est-il **déclarable**
+        comme racine de projet ? Un `D:/` choisi au dialogue répond oui à la
+        première et non à la seconde ; l'écran doit pouvoir le dire au lieu de
+        laisser l'utilisateur découvrir le refus à la soumission.
+        """
+        try:
+            resolu = valider_racine(chemin)
+        except RacineRefusee as exc:
+            try:
+                lisible = canonique(chemin).as_posix()
+            except OSError:  # pragma: no cover - chemin illisible pour l'OS
+                lisible = chemin
+            return {
+                "chemin": lisible,
+                "racine_valide": False,
+                "refus": {"motif": exc.motif, "message": str(exc)},
+            }
+        return {"chemin": resolu.as_posix(), "racine_valide": True, "refus": None}
+
     @app.get("/api/projets/explorateur")
     async def explorer_dossiers(chemin: str | None = None) -> dict[str, Any]:
         """Énumère les **dossiers** de `chemin`, ou les racines explorables sans `chemin`.
