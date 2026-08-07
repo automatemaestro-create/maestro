@@ -13,6 +13,7 @@ import { render, type RenderResult } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
+import { ecrireProjetActifId } from "@/lib/projetActif";
 import type { ControlTower } from "@/lib/useControlTower";
 import { AGENT_SOURCE_DEFAUT } from "@/lib/types";
 import type {
@@ -194,6 +195,35 @@ export function poserEtatGlobal(partiel: Partial<ControlTower> = {}): void {
 
 export function etatGlobalCourant(): ControlTower {
   return etatGlobal;
+}
+
+// --- Projets déclarés et projet actif (porte d'entrée #279) ----------------
+
+let projets: Projet[] = [];
+
+/**
+ * Ce que `chargerProjets` rendra — le mock vit dans `setup.ts`, au même titre
+ * que celui des hooks temps réel : la porte d'entrée du shell lit cette liste à
+ * chaque montage, aucun test n'a donc à monter de faux serveur pour elle.
+ */
+export function poserProjets(liste: Projet[]): void {
+  projets = liste;
+}
+
+export function projetsDeclares(): Projet[] {
+  return projets;
+}
+
+/**
+ * Le projet retenu d'une visite à l'autre : **déclaré** et **mémorisé**, les
+ * deux conditions pour que la garde du shell laisse entrer (#279). Sans lui,
+ * tout rendu du `Shell` s'arrête à la porte — ce qui est le comportement voulu,
+ * mais pas ce que la plupart des tests observent.
+ */
+export function poserProjetActif(projet: Projet = projetFactice()): Projet {
+  poserProjets([projet]);
+  ecrireProjetActifId(projet.id);
+  return projet;
 }
 
 /**

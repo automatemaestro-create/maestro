@@ -33,5 +33,13 @@ export default defineConfig({
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     // Les espions posés par un test ne fuient pas dans le suivant.
     restoreMocks: true,
+    // Le pendant de l'`asyncUtilTimeout` de `tests/setup.ts` : un test doit
+    // pouvoir dépenser l'attente qu'on lui accorde. Laissé à 5 s (le défaut), il
+    // couperait *pendant* le `waitFor` et rendrait « test timed out » à la place
+    // du « Unable to find role… » et de sa capture du DOM — soit le message qui
+    // dit quoi corriger remplacé par celui qui dit seulement que c'est long. Un
+    // test réellement bloqué échoue toujours en premier sur son attente, donc ce
+    // plafond ne rallonge pas une suite rouge.
+    testTimeout: 15_000,
   },
 });

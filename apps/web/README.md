@@ -207,16 +207,19 @@ le bout en bout dans un vrai navigateur reste le rôle du skill `/verify`.
 | `tests/ticket-externe.test.tsx` | Le filtrage d'URL et les cartes du Kanban (#192, livré avec le lot : logique critique) |
 | `tests/parametres-mcp.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231) |
 | `tests/projets.test.tsx` | L'écran Projets : racine choisie dans l'explorateur servi par l'API (jamais saisie), refus motivé qui ne casse ni la liste ni la navigation, dossier vide distinct d'un refus (#225) |
+| `tests/projet-actif.test.tsx` | La porte d'entrée : aucun écran n'est atteint sans projet actif, le choix retenu est confronté à l'état réel, et la page demandée revient sans redirection (#279) |
 
 Deux fichiers portent l'outillage plutôt que des tests :
 
 - `tests/setup.ts` — ce que jsdom ne fournit pas (`matchMedia`, `ResizeObserver`,
   `scrollIntoView`), la remise à zéro entre deux tests (stockage, `data-theme`,
-  DOM), et le **réseau débranché** : `useControlTower` et `useChat` sont mockés
-  globalement, si bien qu'aucun test n'a besoin de backend ni de faux serveur ;
+  DOM), et le **réseau débranché** : `useControlTower`, `useChat` et la lecture
+  des projets déclarés sont mockés globalement, si bien qu'aucun test n'a besoin
+  de backend ni de faux serveur ;
 - `tests/aides.tsx` — les fabriques du domaine (agent, événement, validation,
-  message) et `rendreAvecEtat`, qui monte un composant sous le **vrai**
-  fournisseur d'état du shell avec une source temps réel factice.
+  message, projet), `poserProjetActif` (le projet retenu sans lequel tout rendu
+  du shell s'arrête à la porte) et `rendreAvecEtat`, qui monte un composant sous
+  le **vrai** fournisseur d'état du shell avec une source temps réel factice.
 
 Quelques tests méritent d'être connus parce qu'ils gardent des invariants
 qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
@@ -232,6 +235,10 @@ qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
   (`lib/agents.ts`). Le contrôle de route ne suffit pas ici : `[onglet]` répond à
   *n'importe quel* segment, si bien qu'une faute de frappe rendrait bien une page
   — le profil, silencieusement, au lieu de l'onglet demandé ;
+- celui qui vérifie qu'après le choix du projet **rien n'a été poussé** au
+  routeur (#279). La garde du shell et une redirection vers un écran de choix
+  donnent le même parcours à l'écran ; seule cette assertion distingue les deux,
+  et c'est elle qui garantit qu'un lien profond retrouve sa page ;
 - celui qui exige que les champs secrets de la bibliothèque MCP soient enfermés
   dans un `<form>` et la recherche **dehors** (#231). Un `<input type="password">`
   sans propriétaire de formulaire est apparié par le navigateur aux champs texte

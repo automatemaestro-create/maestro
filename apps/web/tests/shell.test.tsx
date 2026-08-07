@@ -11,6 +11,11 @@
  * La visite guidée est marquée « déjà vue » : sans cela elle s'ouvrirait d'elle-
  * même par-dessus le shell, ce qui est son comportement normal (couvert par
  * `guide.test.tsx`) mais masquerait ce qu'on observe ici.
+ *
+ * Un projet actif est posé de même : depuis #279 le cadre commun vit **sous** la
+ * garde du projet, et sans elle on n'observerait ici que la porte d'entrée (ce
+ * que couvre `projet-actif.test.tsx`). C'est aussi pourquoi le montage est
+ * devenu asynchrone — la garde ne tranche qu'après la lecture des projets.
  */
 
 import { render, screen, waitFor } from "@testing-library/react";
@@ -22,22 +27,32 @@ import { marquerGuideVu } from "@/lib/guide";
 import { MENU } from "@/lib/navigation";
 import { ecrireRepliSidebar, lireRepliSidebar } from "@/lib/preferences";
 
-import { agentFactice, poserChemin, poserEtatGlobal, validationFactice } from "./aides";
+import {
+  agentFactice,
+  poserChemin,
+  poserEtatGlobal,
+  poserProjetActif,
+  validationFactice,
+} from "./aides";
 
-const monterShell = () =>
-  render(
+const monterShell = async () => {
+  const rendu = render(
     <Shell>
       <p>contenu de la page</p>
     </Shell>,
   );
+  await screen.findByText("contenu de la page");
+  return rendu;
+};
 
 describe("le shell applicatif (Shell)", () => {
   beforeEach(() => {
     marquerGuideVu();
+    poserProjetActif();
   });
 
-  it("encadre le contenu de la page sans le remplacer", () => {
-    monterShell();
+  it("encadre le contenu de la page sans le remplacer", async () => {
+    await monterShell();
     expect(screen.getByText("contenu de la page")).toBeInTheDocument();
     expect(
       screen.getByRole("navigation", { name: "Navigation principale" }),
@@ -45,10 +60,10 @@ describe("le shell applicatif (Shell)", () => {
     expect(screen.getByRole("banner")).toBeInTheDocument();
   });
 
-  it("branche les sept lots dans le cadre commun", () => {
+  it("branche les sept lots dans le cadre commun", async () => {
     poserChemin("/couts");
     poserEtatGlobal({ validations: [validationFactice()] });
-    monterShell();
+    await monterShell();
 
     // #117 : la navigation et le titre de page.
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
@@ -73,7 +88,7 @@ describe("le shell applicatif (Shell)", () => {
     expect(marque.querySelector("svg")).not.toBeNull();
   });
 
-  it("n'ouvre le flux temps réel qu'une fois pour tout le shell", () => {
+  it("n'ouvre le flux temps réel qu'une fois pour tout le shell", async () => {
     // La barre supérieure lit le statut de connexion et le coût cumulé dans le
     // contexte, pas dans son propre hook : c'est ce qui évite d'ouvrir une
     // WebSocket par composant.
@@ -81,14 +96,14 @@ describe("le shell applicatif (Shell)", () => {
       connecte: true,
       agents: [agentFactice({ cout_usd: 1.25 })],
     });
-    monterShell();
+    await monterShell();
     expect(screen.getByText("Temps réel connecté")).toBeInTheDocument();
     expect(screen.getByTitle(/Coût cumulé/)).toHaveTextContent("1,25");
   });
 
   it("restitue la sidebar repliée d'une session à l'autre", async () => {
     ecrireRepliSidebar(true);
-    monterShell();
+    await monterShell();
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Déplier la navigation" }),
@@ -100,7 +115,7 @@ describe("le shell applicatif (Shell)", () => {
     // Un seul chemin de bascule : c'est ce qui permet à la section Apparence
     // des Paramètres (#121) de commander la même sidebar sans connaître le shell.
     const utilisateur = userEvent.setup();
-    monterShell();
+    await monterShell();
 
     await utilisateur.click(
       screen.getByRole("button", { name: "Replier la navigation" }),
@@ -114,7 +129,7 @@ describe("le shell applicatif (Shell)", () => {
   });
 
   it("suit un repli commandé depuis ailleurs dans la page", async () => {
-    monterShell();
+    await monterShell();
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Replier la navigation" }),
@@ -129,24 +144,24 @@ describe("le shell applicatif (Shell)", () => {
     );
   });
 
-  it("garde toutes les sections joignables depuis n'importe quelle page", () => {
+  it("garde toutes les sections joignables depuis n'importe quelle page", async () => {
     poserChemin("/parametres");
-    monterShell();
+    await monterShell();
     const navigation = screen.getByRole("navigation", {
       name: "Navigation principale",
     });
     expect(navigation.querySelectorAll("a")).toHaveLength(MENU.length);
   });
 
-  it("réserve la bande du bouton flottant sous le contenu", () => {
+  it("réserve la bande du bouton flottant sous le contenu", async () => {
     // Sans cette réserve (`pb-24`), une action de la page — décider une
     // validation — pourrait finir masquée par l'assistant (#123).
-    const { container } = monterShell();
+    const { container } = await monterShell();
     expect(container.querySelector("main")).toHaveClass("pb-24");
   });
 
-  it("pose les ancres que la visite guidée éclaire", () => {
-    const { container } = monterShell();
+  it("pose les ancres que la visite guidée éclaire", async () => {
+    const { container } = await monterShell();
     for (const ancre of ["marque", "navigation", "notifications", "aide", "contenu"]) {
       expect(
         container.querySelector(`[data-guide="${ancre}"]`),
