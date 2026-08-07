@@ -160,7 +160,7 @@ def test_liste_des_taches_statut_agent_cout(client, state):
     state.appliquer(_statut_tache("t2", "terminee", agent="qa", role="QA / Testeur",
                                   titre="Relire", cout_usd=0.25))
 
-    taches = client.get("/api/taches").json()
+    taches = client.get("/api/taches?projet=tous").json()
 
     assert [t["id"] for t in taches] == ["t1", "t2"]
     t1, t2 = taches
@@ -236,7 +236,7 @@ def test_le_redemarrage_d_une_tache_n_occupe_qu_un_creneau(state):
 def test_tache_bloquee_sans_executant_ne_touche_pas_les_agents(client, state):
     """Une tâche bloquée (#43, agent « — ») apparaît sans créer d'agent fantôme."""
     state.appliquer(_statut_tache("t9", "bloquee", agent="—", role="non exécutée"))
-    assert client.get("/api/taches").json()[0]["statut"] == "bloquee"
+    assert client.get("/api/taches?projet=tous").json()[0]["statut"] == "bloquee"
     assert "—" not in {a["nom"] for a in client.get("/api/agents").json()}
 
 
@@ -273,7 +273,7 @@ def test_la_tache_expose_sa_mesure_detaillee(client, state):
                         cout_usd=0.3, duree_ms=2000),
     ))
 
-    (tache,) = client.get("/api/taches").json()
+    (tache,) = client.get("/api/taches?projet=tous").json()
 
     assert tache["cout_usd"] == pytest.approx(0.3)
     assert tache["usage"]["tokens_total"] == 540
@@ -345,7 +345,7 @@ def test_le_grand_livre_survit_au_redemarrage_de_l_api():
     # Redémarrage : app neuve, projection vide, MÊME journal → rejeu au démarrage.
     app = create_app(bus=InMemoryEventBus(), state=ControlTowerState(), event_log=journal)
     with TestClient(app) as redemarree:
-        taches = {t["id"] for t in redemarree.get("/api/taches").json()}
+        taches = {t["id"] for t in redemarree.get("/api/taches?projet=tous").json()}
         cout = redemarree.get("/api/executions/run-persistant/cout").json()
 
     assert taches == {"t1", "t2"}  # les tâches du run passé ont resurgi
@@ -455,7 +455,7 @@ def state_analytics(state):
 
 def test_analytics_agrege_par_tache_agent_et_execution(client, state_analytics):
     """`/api/analytics/couts` : agrégats transverses par tâche, agent, exécution."""
-    vue = client.get("/api/analytics/couts").json()
+    vue = client.get("/api/analytics/couts?projet=tous").json()
 
     assert vue["total"]["cout_usd"] == pytest.approx(0.75)
     assert vue["total"]["tokens_total"] == 2250
@@ -482,25 +482,27 @@ def test_analytics_agrege_par_tache_agent_et_execution(client, state_analytics):
 
 def test_analytics_serie_temporelle_selon_le_pas(client, state_analytics):
     """La série regroupe l'usage en seaux du `pas` demandé (minute/heure/jour)."""
-    vue = client.get("/api/analytics/couts").json()  # pas par défaut : heure
+    vue = client.get("/api/analytics/couts?projet=tous").json()  # pas par défaut : heure
     assert [p["periode"] for p in vue["serie"]] == [
         "2026-07-14T10:00:00+00:00", "2026-07-14T11:00:00+00:00",
     ]
     assert vue["serie"][0]["usage"]["cout_usd"] == pytest.approx(0.55)
 
-    par_jour = client.get("/api/analytics/couts", params={"pas": "jour"}).json()
+    par_jour = client.get("/api/analytics/couts", params={"projet": "tous", "pas": "jour"}).json()
     (seau,) = par_jour["serie"]
     assert seau["periode"] == "2026-07-14T00:00:00+00:00"
     assert seau["usage"]["cout_usd"] == pytest.approx(0.75)
 
-    par_minute = client.get("/api/analytics/couts", params={"pas": "minute"}).json()
+    par_minute = client.get(
+        "/api/analytics/couts", params={"projet": "tous", "pas": "minute"}
+    ).json()
     assert len(par_minute["serie"]) == 4  # chaque événement daté dans son seau
 
 
 def test_analytics_fenetre_depuis(client, state_analytics):
     """`depuis` restreint toutes les vues à la fenêtre demandée (période sélectionnable)."""
     vue = client.get(
-        "/api/analytics/couts", params={"depuis": "2026-07-14T11:00:00+00:00"}
+        "/api/analytics/couts", params={"projet": "tous", "depuis": "2026-07-14T11:00:00+00:00"}
     ).json()
 
     assert vue["depuis"] == "2026-07-14T11:00:00+00:00"
@@ -514,14 +516,14 @@ def test_analytics_fenetre_depuis(client, state_analytics):
 def test_analytics_depuis_sans_fuseau_repute_utc(client, state_analytics):
     """Un `depuis` naïf est réputé UTC — la convention des horodatages du bus."""
     vue = client.get(
-        "/api/analytics/couts", params={"depuis": "2026-07-14T11:00:00"}
+        "/api/analytics/couts", params={"projet": "tous", "depuis": "2026-07-14T11:00:00"}
     ).json()
     assert vue["total"]["cout_usd"] == pytest.approx(0.20)
 
 
 def test_analytics_sans_execution(client):
     """Aucune trace : vues vides et total inconnu (None, pas 0)."""
-    vue = client.get("/api/analytics/couts").json()
+    vue = client.get("/api/analytics/couts?projet=tous").json()
     assert vue["executions"] == [] and vue["agents"] == []
     assert vue["taches"] == [] and vue["serie"] == []
     assert vue["total"]["cout_usd"] is None
@@ -530,7 +532,7 @@ def test_analytics_sans_execution(client):
 def test_analytics_retombe_sur_les_grands_livres(client, state_analytics):
     """Le total analytics égale la somme des grands livres des runs (#57) :
     même convention d'attribution, aucun double comptage."""
-    vue = client.get("/api/analytics/couts").json()
+    vue = client.get("/api/analytics/couts?projet=tous").json()
     totaux = [
         client.get(f"/api/executions/{r}/cout").json()["total"]["cout_usd"]
         for r in ("run-1", "run-2")
@@ -539,9 +541,11 @@ def test_analytics_retombe_sur_les_grands_livres(client, state_analytics):
 
 
 def test_analytics_pas_ou_depuis_invalides_422(client):
-    assert client.get("/api/analytics/couts", params={"pas": "semaine"}).status_code == 422
     assert client.get(
-        "/api/analytics/couts", params={"depuis": "pas-une-date"}
+        "/api/analytics/couts", params={"projet": "tous", "pas": "semaine"}
+    ).status_code == 422
+    assert client.get(
+        "/api/analytics/couts", params={"projet": "tous", "depuis": "pas-une-date"}
     ).status_code == 422
 
 
@@ -557,7 +561,7 @@ def test_websocket_diffuse_les_trois_familles_d_evenements(client, bus):
         Event(type=EVENEMENT_MESSAGE_INTER_AGENTS, run_id="run-1", agent="developpeur",
               role="Développeur", detail="handoff vers qa"),
     )
-    with client.websocket_connect("/ws/evenements") as ws:
+    with client.websocket_connect("/ws/evenements?projet=tous") as ws:
         publie(client, bus, *evenements)
         recus = [ws.receive_json() for _ in evenements]
 
@@ -566,16 +570,16 @@ def test_websocket_diffuse_les_trois_familles_d_evenements(client, bus):
 
 def test_websocket_puis_rest_l_etat_est_deja_a_jour(client, bus):
     """La pompe projette avant de diffuser : un événement reçu ⇒ un REST à jour."""
-    with client.websocket_connect("/ws/evenements") as ws:
+    with client.websocket_connect("/ws/evenements?projet=tous") as ws:
         publie(client, bus, _statut_tache("t1", "en_cours"))
         ws.receive_json()
-        taches = client.get("/api/taches").json()
+        taches = client.get("/api/taches?projet=tous").json()
     assert taches[0]["id"] == "t1" and taches[0]["statut"] == "en_cours"
 
 
 def test_websocket_plusieurs_clients_recoivent_chacun_tout(client, bus):
-    with client.websocket_connect("/ws/evenements") as ws1, \
-         client.websocket_connect("/ws/evenements") as ws2:
+    with client.websocket_connect("/ws/evenements?projet=tous") as ws1, \
+         client.websocket_connect("/ws/evenements?projet=tous") as ws2:
         publie(client, bus, _statut_tache("t1", "terminee"))
         assert ws1.receive_json()["tache_id"] == "t1"
         assert ws2.receive_json()["tache_id"] == "t1"
@@ -588,7 +592,7 @@ def test_reassignation_manuelle_met_a_jour_et_diffuse(client, bus, state):
     """Le POST du Kanban réassigne la tâche, les fiches agents suivent, les WebSocket le voient."""
     state.appliquer(_statut_tache("t1", "en_cours", agent="qa", role="QA / Testeur"))
 
-    with client.websocket_connect("/ws/evenements") as ws:
+    with client.websocket_connect("/ws/evenements?projet=tous") as ws:
         reponse = client.post("/api/taches/t1/reassigner", json={"agent": "bdd"})
         recu = ws.receive_json()
 
@@ -598,7 +602,7 @@ def test_reassignation_manuelle_met_a_jour_et_diffuse(client, bus, state):
     assert recu["type"] == EVENEMENT_TACHE_REASSIGNATION
     assert recu["tache_id"] == "t1" and recu["agent"] == "bdd"
 
-    tache = client.get("/api/taches").json()[0]
+    tache = client.get("/api/taches?projet=tous").json()[0]
     assert tache["agent"] == "bdd" and tache["role"] == "Base de données"
 
     # Les fiches agents suivent (#52). À ce stade l'événement a été appliqué
@@ -772,7 +776,7 @@ def test_du_debut_a_l_issue_le_kanban_suit_la_tache(client, state):
     for event in evenements_depuis_step(journal.records[-1].to_dict()):
         state.appliquer(event)
 
-    (tache,) = client.get("/api/taches").json()
+    (tache,) = client.get("/api/taches?projet=tous").json()
     assert tache["id"] == "t1" and tache["statut"] == "en_cours"
     assert tache["agent"] == "developpeur"
     assert tache["horodatage"]  # l'heure de début affichée par la carte Kanban
@@ -786,7 +790,7 @@ def test_du_debut_a_l_issue_le_kanban_suit_la_tache(client, state):
     for event in evenements_depuis_step(journal.records[-1].to_dict()):
         state.appliquer(event)
 
-    (tache,) = client.get("/api/taches").json()
+    (tache,) = client.get("/api/taches?projet=tous").json()
     assert tache["statut"] == "terminee" and tache["cout_usd"] == pytest.approx(0.1)
     agent = next(a for a in client.get("/api/agents").json() if a["nom"] == "developpeur")
     assert agent["statut"] == "libre" and agent["tache_courante"] == ""
@@ -840,7 +844,7 @@ def test_demande_de_validation_apparait_avec_son_contexte(client, state):
     """La demande expose tout ce qu'il faut pour trancher (critère #48 n°2)."""
     state.appliquer(_demande_evenement())
 
-    (validation,) = client.get("/api/validations").json()
+    (validation,) = client.get("/api/validations?projet=tous").json()
 
     assert validation["statut"] == VALIDATION_EN_ATTENTE
     assert validation["tache_id"] == "t-sensible"
@@ -854,7 +858,7 @@ def test_decision_met_a_jour_l_etat_et_diffuse(client, bus, state):
     """La décision part vers les clients WebSocket (donc le moteur) et le REST."""
     state.appliquer(_demande_evenement())
 
-    with client.websocket_connect("/ws/evenements") as ws:
+    with client.websocket_connect("/ws/evenements?projet=tous") as ws:
         reponse = client.post(
             "/api/validations/t-sensible/decision", json={"approuve": True}
         )
@@ -865,7 +869,7 @@ def test_decision_met_a_jour_l_etat_et_diffuse(client, bus, state):
     assert recu["tache_id"] == "t-sensible"
     assert recu["statut"] == VALIDATION_APPROUVEE
 
-    (validation,) = client.get("/api/validations").json()
+    (validation,) = client.get("/api/validations?projet=tous").json()
     assert validation["statut"] == VALIDATION_APPROUVEE
     assert validation["decision"] == "approuvée depuis la Control Tower"
 
@@ -873,7 +877,7 @@ def test_decision_met_a_jour_l_etat_et_diffuse(client, bus, state):
 def test_decision_refus(client, state):
     state.appliquer(_demande_evenement())
     client.post("/api/validations/t-sensible/decision", json={"approuve": False})
-    (validation,) = client.get("/api/validations").json()
+    (validation,) = client.get("/api/validations?projet=tous").json()
     assert validation["statut"] == VALIDATION_REFUSEE
     assert validation["decision"] == "refusée depuis la Control Tower"
 
@@ -890,7 +894,7 @@ def test_demande_deja_tranchee_409(client, state):
     second = client.post("/api/validations/t-sensible/decision", json={"approuve": True})
 
     assert premier.status_code == 200 and second.status_code == 409
-    (validation,) = client.get("/api/validations").json()
+    (validation,) = client.get("/api/validations?projet=tous").json()
     assert validation["statut"] == VALIDATION_REFUSEE  # la décision n'a pas bougé
 
 
@@ -955,7 +959,7 @@ def test_bout_en_bout_pause_ui_decision_reprise(client, bus):
     attente = client.portal.start_task_soon(validateur, _demande_moteur())
 
     # La demande publiée par le moteur est projetée puis servie par le REST.
-    validations = _attend_que(lambda: client.get("/api/validations").json())
+    validations = _attend_que(lambda: client.get("/api/validations?projet=tous").json())
     assert validations[0]["statut"] == VALIDATION_EN_ATTENTE
     assert not attente.done()  # la tâche est bien en pause, sans time-out
 
@@ -1456,7 +1460,7 @@ def test_le_fil_survit_a_un_redemarrage_de_l_app(client_chat, depot_chat):
 
 def test_websocket_diffuse_le_fil_en_temps_reel(client_chat):
     """Chaque message part en `chat.message` : l'envoi dès sa publication, puis la réponse."""
-    with client_chat.websocket_connect("/ws/evenements") as ws:
+    with client_chat.websocket_connect("/ws/evenements?projet=tous") as ws:
         corps = client_chat.post(
             "/api/chat/qa/messages", json={"contenu": "Où en est la revue ?"}
         ).json()
@@ -1519,7 +1523,7 @@ def test_reponse_indisponible_502_le_message_reste_acquis(bus, depot_chat):
 
     app = create_app(bus=bus, chat_store=depot_chat, chat_repondeur=RepondeurEnPanne())
     with TestClient(app) as client:
-        with client.websocket_connect("/ws/evenements") as ws:
+        with client.websocket_connect("/ws/evenements?projet=tous") as ws:
             reponse = client.post("/api/chat/qa/messages", json={"contenu": "Bonjour"})
             recu = ws.receive_json()
 

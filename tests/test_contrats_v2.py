@@ -75,7 +75,7 @@ def test_sans_fixtures_les_routes_de_contrat_repondent_501(client_nu, methode, c
 def test_les_routes_existantes_restent_servies_sans_fixtures(client_nu):
     """La gate 501 ne touche que les routes v2 : le reste de l'API répond normalement."""
     assert client_nu.get("/api/sante").status_code == 200
-    assert client_nu.get("/api/taches").status_code == 200
+    assert client_nu.get("/api/taches?projet=tous").status_code == 200
     # /api/playbooks/propositions ne « mange » pas la capture {agent} : le playbook
     # d'un agent reste servi, un agent inconnu reste un 404 (pas un 501).
     assert client_nu.get("/api/playbooks/qa").status_code == 200
@@ -108,7 +108,8 @@ def test_la_demo_branche_les_fixtures_sur_son_app(monkeypatch):
 
 
 def test_journal_filtre_par_agent_et_trie(client):
-    page = client.get("/api/journal", params={"agent": "bdd", "ordre": "asc"}).json()
+    params = {"projet": "tous", "agent": "bdd", "ordre": "asc"}
+    page = client.get("/api/journal", params=params).json()
     assert {e["agent"] for e in page["entrees"]} == {"bdd"}
     horodatages = [e["horodatage"] for e in page["entrees"]]
     assert horodatages == sorted(horodatages)  # ordre ascendant demandé
@@ -116,10 +117,10 @@ def test_journal_filtre_par_agent_et_trie(client):
 
 
 def test_journal_pagine(client):
-    p1 = client.get("/api/journal", params={"taille": 3, "page": 1}).json()
+    p1 = client.get("/api/journal", params={"projet": "tous", "taille": 3, "page": 1}).json()
     assert len(p1["entrees"]) == 3
     assert p1["pages"] == (p1["total"] + 2) // 3
-    p2 = client.get("/api/journal", params={"taille": 3, "page": 2}).json()
+    p2 = client.get("/api/journal", params={"projet": "tous", "taille": 3, "page": 2}).json()
     # Pages disjointes : aucun id commun entre deux pages.
     assert {e["id"] for e in p1["entrees"]}.isdisjoint(e["id"] for e in p2["entrees"])
 
@@ -127,7 +128,11 @@ def test_journal_pagine(client):
 def test_journal_filtre_periode(client):
     page = client.get(
         "/api/journal",
-        params={"depuis": "2026-07-30T09:02:00+00:00", "jusqua": "2026-07-30T09:02:30+00:00"},
+        params={
+            "projet": "tous",
+            "depuis": "2026-07-30T09:02:00+00:00",
+            "jusqua": "2026-07-30T09:02:30+00:00",
+        },
     ).json()
     assert page["total"] >= 1
     assert all(
@@ -147,7 +152,7 @@ def test_journal_filtre_periode(client):
     ],
 )
 def test_journal_parametres_invalides_422(client, params):
-    assert client.get("/api/journal", params=params).status_code == 422
+    assert client.get("/api/journal", params={**params, "projet": "tous"}).status_code == 422
 
 
 # --- ② Configuration & propositions -------------------------------------------------

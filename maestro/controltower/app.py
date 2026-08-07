@@ -196,6 +196,7 @@ from maestro.controltower.persistence import (
     InMemoryEventLog,
     RedisEventLog,
 )
+from maestro.controltower.portee import PorteeProjet, PorteeRefusee, resoudre_portee
 from maestro.controltower.projets import (
     ProjetInconnu,
     ServiceProjets,
@@ -405,50 +406,44 @@ class ActivationsMcpRequete(BaseModel):
     integrations: list[str]
 
 
-def _projet_filtre(projet: str | None) -> str | None:
-    """Le filtre par projet d'une requête (#222) — None quand il n'y en a pas.
-
-    Le paramètre `projet` des vues qui agrègent (Kanban, coûts, exécutions,
-    journal). Absent ou vide (`?projet=`), il ne filtre rien : c'est la vue
-    complète, projets confondus, exactement comme avant ce lot.
-
-    Un identifiant qui n'en est pas un est passé **tel quel** plutôt que refusé
-    en 422 : tous les `projet_id` portés sont normalisés à l'entrée
-    (`projet_id_valide`), donc rien ne peut lui correspondre et la vue ressort
-    **vide**. C'est le comportement attendu d'un filtre — vide vaut mieux que
-    faux —, et cela évite de faire d'une faute de frappe une erreur d'API là où
-    un projet simplement inexistant rendrait, lui, la même liste vide.
-    """
-    if projet is None:
-        return None
-    return projet.strip() or None
-
-
 class Diffusion:
-    """Fan-out des événements vers les WebSockets connectées.
+    """Fan-out des événements vers les WebSockets connectées, **à leur portée**.
 
     Une file par connexion, alimentée par la pompe ; chaque handler WebSocket
     draine la sienne. Files non bornées : le POC diffuse peu d'événements et
     une connexion les consomme au fil de l'eau.
+
+    Chaque connexion déclare sa **portée projet** à l'ouverture (#277) et ne
+    reçoit que les événements que celle-ci retient — le tri se fait donc **à
+    l'entrée de la file**, pas à l'émission : une socket cadrée sur un projet
+    n'est même pas réveillée par le travail d'un autre, et aucun événement
+    étranger ne peut être servi par erreur en aval. C'est la même règle que les
+    vues REST (`PorteeProjet.retient`), appliquée au flux : un client qui
+    recharge son état puis suit les événements voit deux fois le même périmètre.
     """
 
     def __init__(self) -> None:
-        self._connexions: set[asyncio.Queue[Event]] = set()
+        self._connexions: dict[asyncio.Queue[Event], PorteeProjet] = {}
 
-    def connecter(self) -> asyncio.Queue[Event]:
-        """Enregistre une connexion : sa file recevra tous les événements à venir."""
+    def connecter(self, portee: PorteeProjet | None = None) -> asyncio.Queue[Event]:
+        """Enregistre une connexion : sa file recevra les événements de sa portée.
+
+        `None` vaut la vue transverse — le comportement d'avant #277, conservé
+        pour les appels internes ; les routes, elles, exigent une portée.
+        """
         file: asyncio.Queue[Event] = asyncio.Queue()
-        self._connexions.add(file)
+        self._connexions[file] = portee if portee is not None else PorteeProjet.tous()
         return file
 
     def deconnecter(self, file: asyncio.Queue[Event]) -> None:
         """Retire la connexion ; ses événements en attente disparaissent avec elle."""
-        self._connexions.discard(file)
+        self._connexions.pop(file, None)
 
     def diffuser(self, event: Event) -> None:
-        """Pousse `event` à toutes les connexions enregistrées."""
-        for file in self._connexions:
-            file.put_nowait(event)
+        """Pousse `event` aux connexions dont la portée le retient."""
+        for file, portee in self._connexions.items():
+            if portee.retient(event.projet_id):
+                file.put_nowait(event)
 
 
 _LOGGER = logging.getLogger("maestro.controltower")
@@ -721,6 +716,24 @@ def create_app(
             )
         return fixtures
 
+    def _portee(projet: str | None) -> PorteeProjet:
+        """La **portée projet** d'une lecture (#277), ou un refus motivé.
+
+        Le contrat unique des vues qui agrègent — Kanban, exécutions, coûts,
+        validations, journal, flux temps réel : `?projet=<id>` pour un projet,
+        `?projet=tous` pour la vue transverse, `?projet=aucun` pour les travaux
+        hors projet. **Omis, le paramètre est refusé** (422 `projet-requis`) :
+        une lecture sans périmètre n'est plus un mélange silencieux de tous les
+        projets, et un refus motivé se diagnostique là où une liste vide se
+        confondrait avec un projet sans activité. Un identifiant inconnu du
+        dépôt sort en 404 `projet-inconnu`, par la même porte que les refus de
+        `ServiceProjets` (#223) — motif, message, code.
+        """
+        try:
+            return resoudre_portee(projet, projet_connu=projets)
+        except PorteeRefusee as exc:
+            raise _refus_projet(exc) from exc
+
     @app.get("/api/journal")
     async def journal_requetable(
         agent: str | None = None,
@@ -737,11 +750,15 @@ def create_app(
         """Le journal requêtable : filtres (agent / type / run / projet / période), tri, pagination.
 
         `depuis`/`jusqua` sont des horodatages ISO-8601 (bornes incluses).
-        `projet` (#222) restreint aux entrées d'un projet ; sans lui, toutes
-        sortent, celles sans projet comprises. 422 sur un `tri`/`ordre` inconnu,
-        une `page` < 1 ou une `taille` hors [1, {max}].
+        `projet` est **obligatoire** (#277) et suit le contrat commun :
+        `<id>` | `tous` | `aucun` — 422 `projet-requis` s'il manque, 404
+        `projet-inconnu` sur un identifiant non déclaré. 422 aussi sur un
+        `tri`/`ordre` inconnu, une `page` < 1 ou une `taille` hors [1, {max}].
         """
+        # La gate 501 passe **avant** la portée : une route dont le lot n'est pas
+        # livré doit le dire, plutôt que reprocher un paramètre à qui l'appelle.
         fx = _exige_fixtures()
+        portee = _portee(projet)
         if tri not in TRIS_JOURNAL:
             raise HTTPException(
                 status_code=422,
@@ -763,7 +780,7 @@ def create_app(
             agent=agent,
             type=type,
             run_id=run_id,
-            projet=_projet_filtre(projet),
+            portee=portee,
             depuis=depuis,
             jusqua=jusqua,
             tri=tri,
@@ -799,13 +816,13 @@ def create_app(
     async def taches(projet: str | None = None) -> list[dict[str, Any]]:
         """Les tâches connues : statut, agent, coût détaillé (#57) — la source du Kanban.
 
-        `projet` (#222) restreint le Kanban aux tâches d'un projet. Sans lui,
-        **toutes** les tâches sortent, celles sans projet comprises : le champ
-        est optionnel et ne pas filtrer reste le comportement d'avant ce lot.
-        Un identifiant qui n'en est pas un ne rend aucune tâche plutôt que la
-        liste entière — mieux vaut une vue vide qu'une vue fausse.
+        `projet` est **obligatoire** (#277) : `<id>` cadre le Kanban sur un
+        projet, `tous` rend la vue transverse, `aucun` les tâches hors projet.
+        Omis, 422 `projet-requis` ; inconnu, 404 `projet-inconnu`. Une tâche
+        sans projet n'apparaît dans la vue d'aucun projet — on ne devine pas à
+        quel projet elle appartiendrait.
         """
-        return [t.to_dict() for t in state.taches(_projet_filtre(projet))]
+        return [t.to_dict() for t in state.taches(_portee(projet))]
 
     @app.get("/api/agents")
     async def agents() -> list[dict[str, Any]]:
@@ -819,10 +836,10 @@ def create_app(
         En cours comme passés, lancés depuis la Control Tower comme publiés par
         un autre process (`maestro-run --publier`) : le suivi ne distingue pas
         leur origine — la projection est la même. C'est la source de l'écran
-        *Exécutions & traces* (docs/05 §2.4). `projet` (#222) restreint aux runs
-        d'un projet ; sans lui, tous sortent, ceux sans projet compris.
+        *Exécutions & traces* (docs/05 §2.4). `projet` est **obligatoire**
+        (#277), au contrat commun : `<id>` | `tous` | `aucun`.
         """
-        return executions.resumes(_projet_filtre(projet))
+        return executions.resumes(_portee(projet))
 
     @app.post("/api/executions", status_code=202)
     async def lancer_execution(requete: LancementExecutionRequete) -> dict[str, Any]:
@@ -913,11 +930,14 @@ def create_app(
         tâche, par agent (planification comprise) et par exécution, total, et
         série temporelle du coût en seaux de `pas` (minute/heure/jour).
         `depuis` (ISO-8601, réputé UTC sans fuseau) restreint la fenêtre — la
-        période sélectionnable de l'UI. `projet` (#222) restreint la dépense à
-        un projet : seuls les événements qui portent ce `projet_id` comptent,
-        planification comprise — un travail sans projet n'entre dans le total
-        d'aucun. 422 sur un `pas` ou un `depuis` invalide.
+        période sélectionnable de l'UI. `projet` est **obligatoire** (#277) et
+        restreint la dépense : seuls les événements que la portée retient
+        comptent, planification comprise — un travail sans projet n'entre dans
+        le total d'aucun projet. La réponse rappelle la `portee` servie, un
+        total ne se lisant pas sans savoir de quoi il est le total. 422 sur un
+        `pas` ou un `depuis` invalide.
         """
+        portee = _portee(projet)
         if pas not in PAS_VALIDES:
             raise HTTPException(
                 status_code=422,
@@ -934,8 +954,10 @@ def create_app(
                 ) from exc
             if borne.tzinfo is None:
                 borne = borne.replace(tzinfo=UTC)
+        # La portée est appliquée **événement par événement** par l'agrégat (un
+        # run peut en mélanger) : la liste des exécutions lui arrive entière.
         return agrege_couts(
-            state.executions(), depuis=borne, pas=pas, projet=_projet_filtre(projet)
+            state.executions(), depuis=borne, pas=pas, portee=portee
         ).to_dict()
 
     @app.post("/api/taches/{tache_id}/reassigner")
@@ -974,6 +996,11 @@ def create_app(
             role=agent.role,
             statut="assignee",
             detail="réassignation manuelle (Control Tower)",
+            # Le projet de la tâche (#277) voyage avec l'événement : sans lui,
+            # un geste posé **depuis** la Control Tower d'un projet sortirait de
+            # son propre flux temps réel, la portée ne retenant que ce qui porte
+            # l'appartenance. La projection l'a déjà, la relayer suffit.
+            projet_id=tache.projet_id,
         )
         state.appliquer(event)
         await bus.publish(event)
@@ -1017,6 +1044,10 @@ def create_app(
             titre=tache.titre,
             detail=f"ticket externe {reference.id or reference.url}",
             ticket=reference,
+            # Même raison qu'à la réassignation (#277) : l'appartenance de la
+            # tâche accompagne l'événement, faute de quoi il n'atteindrait pas
+            # le flux temps réel du projet dont il parle.
+            projet_id=tache.projet_id,
         )
         state.appliquer(event)
         await bus.publish(event)
@@ -1073,9 +1104,15 @@ def create_app(
         return fiche.to_dict()
 
     @app.get("/api/validations")
-    async def validations() -> list[dict[str, Any]]:
-        """Les demandes de validation humaine (#48) : contexte, statut, décision."""
-        return [v.to_dict() for v in state.validations()]
+    async def validations(projet: str | None = None) -> list[dict[str, Any]]:
+        """Les demandes de validation humaine (#48) : contexte, statut, décision.
+
+        `projet` est **obligatoire** (#277), au contrat commun
+        (`<id>` | `tous` | `aucun`) : une validation appartient au projet de sa
+        tâche, et une Control Tower cadrée sur un projet n'a pas à faire
+        arbitrer une action qui se déroule ailleurs.
+        """
+        return [v.to_dict() for v in state.validations(_portee(projet))]
 
     @app.post("/api/validations/{tache_id}/decision")
     async def decider(tache_id: str, requete: DecisionRequete) -> dict[str, Any]:
@@ -1110,6 +1147,10 @@ def create_app(
                 if approuve
                 else "refusée depuis la Control Tower"
             ),
+            # Le projet de la validation (#277), recollé par la projection depuis
+            # sa tâche : la décision doit atteindre le flux du projet où elle se
+            # joue — c'est ce que le moteur y attend.
+            projet_id=demande.projet_id,
         )
         state.appliquer(event)
         await bus.publish(event)
@@ -1959,14 +2000,33 @@ def create_app(
         return StreamingResponse(flux(), media_type="text/event-stream")
 
     @app.websocket("/ws/evenements")
-    async def evenements(websocket: WebSocket) -> None:
-        """Flux temps réel : chaque événement du bus part en JSON sur la socket.
+    async def evenements(websocket: WebSocket, projet: str | None = None) -> None:
+        """Flux temps réel : les événements de la portée demandée, en JSON sur la socket.
 
         Émission et écoute de la déconnexion courent en parallèle : sans cela,
         un client parti resterait connecté jusqu'à la prochaine émission.
+
+        `?projet=` suit **le même contrat que le REST** (#277) —
+        `<id>` | `tous` | `aucun`, obligatoire : un client qui charge son état
+        filtré puis suit le flux voit deux fois le même périmètre, et un
+        événement d'un autre projet n'arrive jamais dans une vue filtrée. Un
+        événement **sans** projet n'entre pas non plus dans une vue de projet,
+        exactement comme une tâche sans projet n'entre dans aucun Kanban filtré.
+
+        Le refus se dit **sur la socket** avant de la fermer : la connexion est
+        acceptée, le motif part en une trame `{"erreur": {motif, message}}`,
+        puis la fermeture porte le code 1008 (violation de politique). Refuser
+        la poignée de main laisserait le client devant un échec réseau muet,
+        alors que la cause tient en un mot.
         """
         await websocket.accept()
-        file = diffusion.connecter()
+        try:
+            portee = resoudre_portee(projet, projet_connu=projets)
+        except PorteeRefusee as exc:
+            await websocket.send_json({"erreur": detail_refus(exc)})
+            await websocket.close(code=1008, reason=exc.motif)
+            return
+        file = diffusion.connecter(portee)
         emission = asyncio.create_task(_emet(websocket, file))
         deconnexion = asyncio.create_task(_attend_deconnexion(websocket))
         try:

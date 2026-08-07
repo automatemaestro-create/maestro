@@ -56,6 +56,7 @@ from maestro.controltower.events import (
     Event,
     EventBus,
 )
+from maestro.controltower.portee import PorteeProjet
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
@@ -135,15 +136,16 @@ class ServiceExecutions:
 
     # ------------------------------------------------------------------ lecture
 
-    def resumes(self, projet: str | None = None) -> list[dict[str, Any]]:
+    def resumes(self, portee: PorteeProjet | None = None) -> list[dict[str, Any]]:
         """Les runs connus (`GET /api/executions`) : résumés, **récents d'abord**.
 
         Tous ceux dont la projection porte une trace — lancés par l'API comme
         publiés par un autre process (`maestro-run --publier`) : le suivi ne
-        distingue pas leur origine. `projet` (#222) restreint aux runs de ce
-        projet ; sans lui, tous sortent, ceux sans projet compris.
+        distingue pas leur origine. `portee` (#277) est le périmètre de la
+        lecture, celui-là même qu'appliquent le Kanban et les coûts ; `None`
+        rend tout, comme la projection qu'il ne fait que traverser.
         """
-        resumes = [e.resume() for e in self._state.executions(projet)]
+        resumes = [e.resume() for e in self._state.executions(portee)]
         return sorted(resumes, key=lambda r: str(r["debut"]), reverse=True)
 
     def resume(self, run_id: str) -> dict[str, Any] | None:

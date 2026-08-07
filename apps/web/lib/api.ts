@@ -42,9 +42,24 @@ export function urlApi(): string {
   return API_URL;
 }
 
-/** L'URL du flux d'événements temps réel (`WS /ws/evenements`). */
-export function urlEvenements(): string {
-  return API_URL.replace(/^http/, "ws") + "/ws/evenements";
+/**
+ * La **portée projet** d'une lecture (#277) : l'identifiant d'un projet, ou l'un
+ * des deux mots réservés. Le backend l'exige sur toutes les vues qui agrègent —
+ * Kanban, exécutions, coûts, validations, journal, flux temps réel — et refuse
+ * une lecture qui n'en porte pas (`projet-requis`) : « rien plutôt qu'un
+ * mélange ». Tant que le projet actif n'est pas porté par le shell (#280/#281),
+ * les appels ci-dessous demandent explicitement la vue transverse.
+ */
+export type PorteeProjet = string;
+export const PORTEE_TOUS = "tous";
+export const PORTEE_AUCUN = "aucun";
+
+/** L'URL du flux d'événements temps réel (`WS /ws/evenements`), à la portée demandée. */
+export function urlEvenements(portee: PorteeProjet = PORTEE_TOUS): string {
+  return (
+    API_URL.replace(/^http/, "ws") +
+    `/ws/evenements?projet=${encodeURIComponent(portee)}`
+  );
 }
 
 async function chargerJson<T>(chemin: string): Promise<T> {
@@ -65,9 +80,9 @@ export function chargerSante(): Promise<Sante> {
   return chargerJson<Sante>("/api/sante");
 }
 
-/** Les tâches connues du backend — la source du Kanban. */
-export function chargerTaches(): Promise<Tache[]> {
-  return chargerJson<Tache[]>("/api/taches");
+/** Les tâches connues du backend, à la portée demandée — la source du Kanban. */
+export function chargerTaches(portee: PorteeProjet = PORTEE_TOUS): Promise<Tache[]> {
+  return chargerJson<Tache[]>(`/api/taches?projet=${encodeURIComponent(portee)}`);
 }
 
 /** L'état des agents (libre/occupé, tâche courante, compteurs, coût cumulé). */
@@ -76,8 +91,12 @@ export function chargerAgents(): Promise<EtatAgent[]> {
 }
 
 /** Les demandes de validation humaine (#48) : contexte, statut, décision. */
-export function chargerValidations(): Promise<Validation[]> {
-  return chargerJson<Validation[]>("/api/validations");
+export function chargerValidations(
+  portee: PorteeProjet = PORTEE_TOUS,
+): Promise<Validation[]> {
+  return chargerJson<Validation[]>(
+    `/api/validations?projet=${encodeURIComponent(portee)}`,
+  );
 }
 
 /** Le grand livre d'une exécution (#57) : coût par tâche et agrégat du run. */
@@ -96,14 +115,13 @@ export function chargerCoutExecution(runId: string): Promise<CoutExecution> {
 export function chargerAnalyticsCouts(options: {
   depuis?: string;
   pas?: PasSerie;
+  projet?: PorteeProjet;
 }): Promise<AnalyticsCouts> {
   const params = new URLSearchParams();
   if (options.depuis !== undefined) params.set("depuis", options.depuis);
   if (options.pas !== undefined) params.set("pas", options.pas);
-  const requete = params.toString();
-  return chargerJson<AnalyticsCouts>(
-    `/api/analytics/couts${requete ? `?${requete}` : ""}`,
-  );
+  params.set("projet", options.projet ?? PORTEE_TOUS);
+  return chargerJson<AnalyticsCouts>(`/api/analytics/couts?${params.toString()}`);
 }
 
 /**

@@ -343,6 +343,46 @@ mention **livré** quand elle décrit du code réel, et reste une forme figée s
 Convention partagée avec les routes existantes : un champ **`null`** vaut « inconnu » et se
 distingue d'un zéro ou d'une absence ; les horodatages sont en **ISO-8601 UTC**.
 
+### 6.0 Portée projet d'une lecture — `?projet=` (#277) — **livré**
+
+Toutes les lectures qui **agrègent** portent le même paramètre, obligatoire : `GET /api/taches`,
+`/api/executions`, `/api/analytics/couts`, `/api/validations`, `/api/journal` et le flux temps réel
+`WS /ws/evenements`. Un contrat, pas un paramètre réinventé par endpoint.
+
+| `?projet=` | ce qui sort |
+| --- | --- |
+| `<id>` | ce qui appartient à ce projet, et rien d'autre |
+| `tous` | la vue transverse, travaux sans projet compris — **explicitement demandée** |
+| `aucun` | les seuls travaux qui ne relèvent d'aucun projet |
+| *omis / vide* | **refus** `422` `{motif: "projet-requis"}` |
+| identifiant non déclaré | **refus** `404` `{motif: "projet-inconnu"}` |
+
+Deux partis pris, qui sont le sujet du lot. **« Rien plutôt qu'un mélange »** : une lecture sans
+périmètre n'est plus servie « tous projets confondus » en silence — un refus se diagnostique là où
+une liste vide se confondrait avec un projet sans activité. Et **un projet inconnu est refusé**,
+par la même porte que les refus de `ServiceProjets` (§6.7 : `{motif, message}`), au lieu de rendre
+une vue vide : une faute de frappe se lisait « ce projet n'a rien fait ».
+
+Un travail **sans projet** n'entre dans la vue d'aucun projet — on ne devine pas son
+rattachement ; `aucun` est la seule vue qui le montre. `tous` et `aucun` sont des **mots réservés** :
+les identifiants sont engendrés (`prj-<empreinte>`, §6.7), aucun projet ne peut les masquer.
+
+Le **flux temps réel suit la même règle** : la portée est déclarée à l'ouverture de la socket et le
+tri se fait à l'entrée de la file — un événement d'un autre projet n'arrive jamais dans une vue
+filtrée. Un refus part **sur la socket** (`{"erreur": {motif, message}}`) avant une fermeture en
+`1008`, plutôt qu'en échec de poignée de main, qui serait muet. Corollaire assumé : les événements
+transverses par nature (capacité d'un agent, proposition de playbook) ne portent pas de projet et
+n'atteignent donc pas une socket cadrée sur un projet — ils restent visibles sous `tous`.
+
+`GET /api/analytics/couts` rappelle dans sa réponse la `portee` servie (`tous` | `aucun` | `<id>`)
+à côté de `projet` (l'identifiant, ou `null`) : un total ne se lit pas sans savoir de quoi il est le
+total.
+
+Implémentation : [`maestro/controltower/portee.py`](../maestro/controltower/portee.py) — un objet
+`PorteeProjet` et son unique prédicat `retient`, partagé par la projection, les analytics, le
+journal et la diffusion, de sorte qu'aucune de ces quatre couches ne réécrive « appartient au
+projet demandé ».
+
 ### 6.1 Exécutions — lancement, suivi, annulation (#185) — **livré**
 
 Piloter un vrai run depuis la Control Tower, sans passer par la CLI. Seule section de ce
