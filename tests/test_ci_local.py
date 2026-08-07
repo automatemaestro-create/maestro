@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -134,19 +135,40 @@ ARBORESCENCE = {
 
 # shellcheck a son propre shim : il doit pouvoir REFUSER un fichier à retour chariot, comme le
 # vrai (SC1017). C'est ce qui permet de vérifier que le script lui présente un miroir en LF.
+#
+# `MAESTRO_FAUX_SHELLCHECK_CIBLE` restreint la sortie dictée à UN fichier. Depuis #285 le filet
+# appelle shellcheck une fois par fichier : un shim qui répéterait sa sortie à chaque appel
+# compterait N fois la même remarque, et le test ne dirait plus rien du décompte.
 SHIM_SHELLCHECK = """\
 #!/usr/bin/env bash
 printf 'shellcheck %s\\n' "$*" >> "$MAESTRO_FAUX_JOURNAL"
 for fichier in "$@"; do
-  case "$fichier" in --*) continue ;; esac
+  case "$fichier" in -*) continue ;; esac
   [ -f "$fichier" ] || continue
   if grep -q $'\\r' "$fichier"; then
     printf 'In %s line 1:\\nSC1017 (error): Literal carriage return.\\n' "$fichier"
     exit 1
   fi
 done
+cible="${MAESTRO_FAUX_SHELLCHECK_CIBLE:-}"
+if [ -n "$cible" ]; then
+  case " $* " in *" $cible "*) ;; *) exit 0 ;; esac
+fi
 printf '%b' "${MAESTRO_FAUX_SHELLCHECK_SORTIE:-}"
 exit "${MAESTRO_FAUX_SHELLCHECK_CODE:-0}"
+"""
+
+# `docker` qui accepte de jouer : `image inspect` trouve l'image, `run` journalise sa ligne
+# complète. C'est ce qui permet de vérifier que le repli ne démarre QU'UN conteneur (#285) —
+# l'invariant qui rend le découpage par fichier payant plutôt que ruineux (~2 s par conteneur).
+# Les sauts de ligne de la boucle sont aplatis : le journal se relit LIGNE PAR LIGNE, et un appel
+# qui s'y étale sur cinq lignes ne serait plus reconnaissable comme un seul `docker run`.
+SHIM_DOCKER = """\
+#!/usr/bin/env bash
+printf 'docker %s\\n' "${*//$'\\n'/ }" >> "$MAESTRO_FAUX_JOURNAL"
+[ "$1" = run ] || exit 0
+printf '%b' "${MAESTRO_FAUX_DOCKER_SORTIE:-}"
+exit "${MAESTRO_FAUX_DOCKER_CODE:-0}"
 """
 
 
@@ -235,6 +257,36 @@ class Clone:
 def lancements_pytest(appels: list[str]) -> list[str]:
     """Les appels qui ont RÉELLEMENT joué la suite — `python -m pytest`, jamais la sonde."""
     return [appel for appel in appels if "-m pytest" in appel]
+
+
+def workers_pytest(lance: str) -> int | None:
+    """Le nombre de workers passé à pytest-xdist, ou None quand la suite tourne en série.
+
+    Depuis #285 le filet plafonne au lieu de demander `-n auto` : la valeur dépend de la machine
+    (min(cœurs, plafond)), c'est donc le CONTRAT qui se teste, jamais un nombre en dur.
+    """
+    trouve = re.search(r"-n (\S+)", lance)
+    if trouve is None:
+        return None
+    assert trouve.group(1) != "auto", "`-n auto` sur-souscrit la mémoire (#285)"
+    return int(trouve.group(1))
+
+
+def appels_shellcheck(appels: list[str]) -> list[str]:
+    return [appel for appel in appels if appel.startswith("shellcheck ")]
+
+
+def fichiers_de_l_appel(appel: str) -> list[str]:
+    """Les fichiers analysés par un appel — ses arguments qui ne sont pas des options."""
+    return [mot for mot in appel.split()[1:] if not mot.startswith("-")]
+
+
+def scripts_du_clone(clone: Clone) -> list[str]:
+    """Les scripts à analyser — `scripts/ci/local.sh` compris : le clone jetable en a une copie."""
+    return sorted(
+        chemin.relative_to(clone.racine).as_posix()
+        for chemin in (clone.racine / "scripts").rglob("*.sh")
+    )
 
 
 def ligne_du_job(sortie: str, job: str) -> str:
@@ -581,24 +633,24 @@ def test_le_parallelisme_est_reserve_aux_suites_qui_le_rentabilisent(clone: Clon
     clone.equipe_tout()
     clone.modifie("maestro/moteur.py")
     clone.lance("--only", "pytest")
-    assert "-n auto" not in lancements_pytest(clone.appels())[0]
+    assert workers_pytest(lancements_pytest(clone.appels())[0]) is None
 
     clone.journal.unlink()
     clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
     clone.lance("--only", "pytest")
-    assert "-n auto" in lancements_pytest(clone.appels())[0]
+    assert workers_pytest(lancements_pytest(clone.appels())[0]) is not None
 
 
 def test_sans_pytest_xdist_le_filet_joue_en_serie_au_lieu_de_rougir(clone: Clone) -> None:
-    """Le venv d'un clone antérieur à #214 n'a pas xdist : `-n auto` y sortirait en erreur
+    """Le venv d'un clone antérieur à #214 n'a pas xdist : `-n` y sortirait en erreur
     d'arguments, un rouge qui ne parle pas du code. Le filet n'installe rien — il s'en passe."""
     clone.equipe_tout()
-    # Un périmètre d'outillage : c'est là que `-n auto` serait passé si xdist était disponible.
+    # Un périmètre d'outillage : c'est là que `-n` serait passé si xdist était disponible.
     clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
     acheve = clone.lance("--only", "pytest", MAESTRO_FAUX_XDIST_CODE="1")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     lance = lancements_pytest(clone.appels())[0]
-    assert "-n auto" not in lance
+    assert workers_pytest(lance) is None
     assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
     ligne = ligne_du_job(acheve.stdout, "pytest")
     assert "en série" in ligne
@@ -617,8 +669,69 @@ def test_complet_rejoue_toute_la_suite_avec_sa_couverture(clone: Clone) -> None:
     lance = lancements_pytest(clone.appels())[0]
     assert suites_jouees(clone.appels()) == []
     assert f"--cov=maestro --cov-fail-under={SEUIL}" in lance
-    assert "-n auto" in lance
+    assert workers_pytest(lance) is not None
     assert "Périmètre réduit" not in acheve.stdout
+
+
+# --- Le plafond de workers pytest (#285) ----------------------------------------------------------
+# `-n auto` demande un worker par cœur logique — 16 sur le poste de mesure. La contrainte n'est pas
+# le CPU mais la MÉMOIRE : ~130 Mo par worker, soit ~2 Go à seize pour ~1,8 Go de RAM libre. Le
+# poste pagine, et `-n auto` et `-n 8` finissent à égalité (74 s sur tests/test_worktree.py) pour
+# deux fois plus de processus. Ces tests épinglent le CONTRAT — jamais plus que le plafond, jamais
+# plus que les cœurs — et non un nombre, qui dépend de la machine qui les joue.
+
+
+def test_les_workers_pytest_sont_plafonnes(clone: Clone) -> None:
+    """Le plafond s'applique là où le parallélisme est demandé : un périmètre d'outillage."""
+    clone.equipe_tout()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    workers = workers_pytest(lancements_pytest(clone.appels())[0])
+    assert workers is not None and 1 <= workers <= 8, f"workers hors plafond : {workers}"
+
+
+def test_le_plafond_de_workers_ne_depasse_jamais_le_nombre_de_coeurs(clone: Clone) -> None:
+    """Un plafond, pas un forçage : sur une machine à 4 cœurs, `-n 4` — ce que `-n auto` donnait.
+
+    C'est ce qui permet de le poser sans distinguer les plateformes : là où les cœurs manquent, le
+    réglage est un no-op, et un petit runner ne se retrouve jamais avec plus de workers qu'avant.
+    """
+    clone.equipe_tout()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest", MAESTRO_PYTEST_WORKERS="512")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    workers = workers_pytest(lancements_pytest(clone.appels())[0])
+    assert workers is not None and workers <= (os.cpu_count() or 1), \
+        f"{workers} workers demandés pour {os.cpu_count()} cœur(s)"
+
+
+def test_le_plafond_de_workers_se_regle(clone: Clone) -> None:
+    """Un poste au profil mémoire différent doit pouvoir déplacer le plafond sans toucher au script.
+
+    Une valeur absurde retombe sur le défaut plutôt que de faire rougir pytest sur ses arguments —
+    un filet ne rend jamais un rouge qui ne parle pas du code.
+    """
+    clone.equipe_tout()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest", MAESTRO_PYTEST_WORKERS="2")
+    assert workers_pytest(lancements_pytest(clone.appels())[0]) == 2
+
+    clone.journal.unlink()
+    acheve = clone.lance("--only", "pytest", MAESTRO_PYTEST_WORKERS="beaucoup")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    workers = workers_pytest(lancements_pytest(clone.appels())[0])
+    assert workers is not None and 1 <= workers <= 8
+
+
+def test_list_annonce_le_nombre_de_workers_reellement_passe(clone: Clone) -> None:
+    """`--list` dit la commande jouée, pas celle du pipeline (#194) — plafond compris."""
+    acheve = clone.lance("--complet", "--list", MAESTRO_PYTEST_WORKERS="3")
+    assert acheve.returncode == 0, acheve.stderr
+    assert "-n 3" in acheve.stdout
+    assert "-n auto" not in acheve.stdout
 
 
 # --- Périmètre de web-build -----------------------------------------------------------------------
@@ -684,15 +797,18 @@ def test_shellcheck_analyse_un_miroir_en_lf(clone: Clone) -> None:
     assert "SC1017" not in acheve.stdout
     assert "rien à signaler" in ligne_du_job(acheve.stdout, "shellcheck")
     # Les chemins passés restent ceux du dépôt : la sortie désigne les bons fichiers.
-    appel = next(a for a in clone.appels() if a.startswith("shellcheck "))
-    assert "scripts/avec-crlf.sh" in appel
-    assert f"--severity={SEVERITE}" in appel
+    appels = appels_shellcheck(clone.appels())
+    assert any("scripts/avec-crlf.sh" in appel for appel in appels)
+    assert all(f"--severity={SEVERITE}" in appel for appel in appels)
 
 
 def test_shellcheck_compte_les_remarques_de_la_severite_lue(clone: Clone) -> None:
     clone.pose_shim("shellcheck", corps=SHIM_SHELLCHECK)
     acheve = clone.lance(
         "--only", "shellcheck",
+        # La sortie dictée ne vaut que pour CE fichier : le job appelle shellcheck une fois par
+        # fichier, une remarque concerne un fichier.
+        MAESTRO_FAUX_SHELLCHECK_CIBLE="scripts/ci/local.sh",
         MAESTRO_FAUX_SHELLCHECK_CODE="1",
         MAESTRO_FAUX_SHELLCHECK_SORTIE=(
             "In scripts/ci/local.sh line 3:\\nSC2086 (info): Double quote.\\n"
@@ -705,6 +821,107 @@ def test_shellcheck_compte_les_remarques_de_la_severite_lue(clone: Clone) -> Non
     # Deux remarques, pas trois : le pied de page « SCxxxx -- » n'est pas recompté.
     assert "2 remarque(s)" in ligne
     assert f"sévérité {SEVERITE}+" in ligne
+
+
+# --- Un appel par fichier (#285) ------------------------------------------------------------------
+# shellcheck est superlinéaire en taille totale reçue d'un coup : 21 scripts en un appel coûtent
+# 38 s, les mêmes en vingt-et-un appels 12 s (le job passe de ~53 s à ~16 s). Deux invariants font
+# tenir ce découpage — l'AGRÉGATION (un fichier rouge suffit à rougir le job, toutes les sorties
+# vont dans le même journal) et le fait que le PIPELINE soit découpé de la même façon : shellcheck
+# ne suit un `# shellcheck source=` que si le fichier sourcé est lui aussi sur la ligne de commande,
+# donc découper d'un seul côté ferait diverger les deux verdicts.
+
+
+def test_shellcheck_est_appele_une_fois_par_fichier(clone: Clone) -> None:
+    """Un appel par script, et pas un appel portant les 21 — c'est tout le gain (#285)."""
+    clone.pose_shim("shellcheck", corps=SHIM_SHELLCHECK)
+    (clone.racine / "scripts" / "second.sh").write_text(
+        "#!/usr/bin/env bash\necho second\n", encoding="utf-8", newline="\n"
+    )
+    acheve = clone.lance("--only", "shellcheck")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    appels = appels_shellcheck(clone.appels())
+    analyses = [fichiers_de_l_appel(appel) for appel in appels]
+    assert all(len(f) == 1 for f in analyses), f"un appel par fichier attendu, reçu : {appels}"
+    # Tous les scripts du dépôt jetable, chacun une fois — `local.sh` en fait partie (le clone en
+    # porte une copie), d'où la comparaison avec ce que le disque contient plutôt qu'une liste.
+    assert sorted(f[0] for f in analyses) == scripts_du_clone(clone)
+    assert f"{len(analyses)} script(s)" in ligne_du_job(acheve.stdout, "shellcheck")
+
+
+def test_shellcheck_agrege_les_codes_et_les_sorties_de_chaque_fichier(clone: Clone) -> None:
+    """Un seul fichier rouge suffit à rougir le job, et sa raison se lit dans le journal commun.
+
+    C'est ce qui rend le découpage licite : un appel par fichier ne doit pas rendre le code du
+    DERNIER, ni perdre la sortie des précédents.
+    """
+    clone.pose_shim("shellcheck", corps=SHIM_SHELLCHECK)
+    for nom in ("propre-a.sh", "propre-b.sh"):
+        (clone.racine / "scripts" / nom).write_text(
+            "#!/usr/bin/env bash\necho ok\n", encoding="utf-8", newline="\n"
+        )
+    acheve = clone.lance(
+        "--only", "shellcheck",
+        MAESTRO_FAUX_SHELLCHECK_CIBLE="scripts/gitlab/lib.sh",
+        MAESTRO_FAUX_SHELLCHECK_CODE="1",
+        MAESTRO_FAUX_SHELLCHECK_SORTIE=(
+            "In scripts/gitlab/lib.sh line 2:\\nSC2181 (warning): Check exit code.\\n"
+        ),
+    )
+
+    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
+    ligne = ligne_du_job(acheve.stdout, "shellcheck")
+    assert "ÉCHEC" in ligne and "1 remarque(s)" in ligne
+    # Tous les fichiers ont été analysés — le job ne s'arrête pas au premier rouge…
+    assert len(appels_shellcheck(clone.appels())) == len(scripts_du_clone(clone))
+    # …et la sortie du fichier fautif est dans le journal commun, celui que le résumé cite.
+    journal = (clone.racine / ".maestro" / "ci-local" / "shellcheck.log").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    assert "SC2181" in journal and "scripts/gitlab/lib.sh" in journal
+
+
+@pytest.mark.skipif(
+    shutil.which("shellcheck") is not None,
+    reason="un vrai shellcheck est sur le PATH : le repli docker n'est pas atteignable ici",
+)
+def test_le_repli_docker_ne_demarre_qu_un_seul_conteneur(clone: Clone) -> None:
+    """Un `docker run` par fichier rendrait au démarrage ce que la boucle fait gagner.
+
+    Le conteneur coûte ~2 s : vingt-et-un en coûteraient 42, soit plus que les 38 s de l'appel
+    groupé qu'on remplace. La boucle vit donc DANS le conteneur.
+    """
+    clone.pose_shim("docker", corps=SHIM_DOCKER)
+    acheve = clone.lance("--only", "shellcheck")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    runs = [appel for appel in clone.appels() if appel.startswith("docker run")]
+    assert len(runs) == 1, f"un seul conteneur attendu, reçu : {runs}"
+    assert IMAGE in runs[0]                     # l'image vient de .gitlab-ci.yml
+    assert "scripts/gitlab/lib.sh" in runs[0]   # les fichiers sont les arguments de la boucle
+    assert "for fichier in" in runs[0]          # …et la boucle est bien à l'intérieur
+
+
+def test_le_pipeline_decoupe_shellcheck_comme_le_filet() -> None:
+    """L'invariant qui protège du filet menteur — sur les fichiers VERSIONNÉS, pas le dépôt jetable.
+
+    shellcheck ne suit un `# shellcheck source=` que si le fichier sourcé est lui aussi sur la
+    ligne de commande. Un côté découpé et l'autre groupé, c'est donc un filet plus strict que la CI
+    qu'il prédit : rouge en local, vert en pipeline, sur des remarques que rien n'explique.
+    """
+    pipeline = (RACINE / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    filet = (RACINE / "scripts" / "ci" / "local.sh").read_text(encoding="utf-8")
+    # Le pipeline boucle sur ses fichiers au lieu de les passer tous d'un coup.
+    assert re.search(r"for fichier in \$files", pipeline), \
+        "le job shellcheck du pipeline doit boucler fichier par fichier (#285)"
+    assert not re.search(r"shellcheck --severity=\w+ \$files", pipeline), \
+        "l'appel groupé du pipeline ferait diverger son verdict de celui du filet"
+    # Et aucun des deux ne passe `-x` : il rétablirait le lien entre fichiers, mais ferait
+    # ré-analyser lib.sh par chacun des scripts qui la sourcent (34 s au lieu de 12).
+    for source, nom in ((pipeline, ".gitlab-ci.yml"), (filet, "scripts/ci/local.sh")):
+        assert not re.search(r"^\s*-?\s*shellcheck -x ", source, re.MULTILINE), \
+            f"{nom} : `-x` annule le gain du découpage (#285)"
 
 
 @pytest.mark.skipif(
