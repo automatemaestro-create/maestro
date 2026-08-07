@@ -8,7 +8,7 @@
 # ménage n'a jamais lieu et les conteneurs restent `Exited` indéfiniment. Constat qui a motivé ce
 # script : 8 résidus (~1,5 Go) issus de deux pipelines interrompus à une semaine d'intervalle.
 #
-# Câblé à côté de `ensure-runner.sh` dans les skills de clôture (/ticket-finish, /pipeline-fix,
+# Câblé à côté de `ensure-runner.sh` dans les skills de clôture (/ticket-finish, /mr-fix,
 # donc /ticket-ship par ricochet) : le moment où l'on prépare la CI avant la MR est aussi le bon
 # moment pour ramasser les restes du pipeline précédent. Contrairement à `ensure-runner.sh`, il
 # n'est PAS court-circuité quand le runner partagé tient la CI — le ménage est local à la machine,

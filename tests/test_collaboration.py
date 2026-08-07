@@ -1073,6 +1073,118 @@ def test_behind_main_sur_main_n_a_rien_a_comparer(depot: Depot) -> None:
 
 
 # =================================================================================================
+# Conflit RÉEL avec origin/main (#303)
+# =================================================================================================
+#
+# `behind-main` ci-dessus répond « ces fichiers sont modifiés des deux côtés » ; `mr-conflict`
+# répond « git sait-il fusionner ? ». La différence n'est pas cosmétique : c'est elle qui décide
+# si /mr-fix va résoudre un conflit ou n'a rien à faire.
+
+
+def prepare_meme_fichier_regions_disjointes(depot: Depot) -> None:
+    """Le cas des fichiers aimants du dépôt : les deux côtés touchent CLAUDE.md, sans se croiser.
+
+    C'est le contre-exemple qui justifie le helper — `behind-main` crie au conflit probable
+    (le fichier est modifié des deux côtés) là où le merge passe tout seul.
+    """
+    lignes = [f"ligne {n}\n" for n in range(1, 21)]
+    depot.commit("aimant.txt", "".join(lignes), "chore(base): fichier aimant")
+    depot.git("push", "--quiet", "origin", "main")
+
+    depot.git("checkout", "--quiet", "-b", "chore/900-essai")
+    debut = lignes.copy()
+    debut[0] = "ligne 1 — retouchée par le ticket\n"
+    depot.commit("aimant.txt", "".join(debut), "chore(essai): en-tête\n\nRefs #900")
+
+    depot.git("checkout", "--quiet", "main")
+    fin = lignes.copy()
+    fin[19] = "ligne 20 — retouchée par main\n"
+    depot.commit("aimant.txt", "".join(fin), "chore(main): pied de fichier")
+    depot.git("push", "--quiet", "origin", "main")
+    depot.git("checkout", "--quiet", "chore/900-essai")
+
+
+def test_mr_conflict_dit_propre_la_ou_behind_main_croit_au_conflit(depot: Depot) -> None:
+    """La raison d'être du helper : `behind-main` est pessimiste, `merge-tree` tranche."""
+    prepare_meme_fichier_regions_disjointes(depot)
+
+    pessimiste = depot.lib("behind-main")
+    assert pessimiste.returncode == 4, pessimiste.stdout + pessimiste.stderr
+    assert "conflit probable" in pessimiste.stdout
+    assert "- aimant.txt" in pessimiste.stdout
+
+    reel = depot.lib("mr-conflict")
+    assert reel.returncode == 0, reel.stdout + reel.stderr
+    assert "se merge proprement dans origin/main" in reel.stdout
+
+
+def test_mr_conflict_nomme_les_fichiers_reellement_en_conflit(depot: Depot) -> None:
+    prepare_retard(depot, fichier_main="fichier-a.txt")
+    acheve = depot.lib("mr-conflict")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "en conflit avec origin/main — 1 fichier(s)" in acheve.stdout
+    assert "- fichier-a.txt" in acheve.stdout
+    # La résolution proposée est un MERGE : un rebase appellerait un force-push (docs/10 §6).
+    # `behind-main`, lui, propose bien `git rebase origin/main` — ici ce serait un contresens.
+    assert "git merge origin/main" in acheve.stdout
+    assert "git rebase" not in acheve.stdout
+
+
+def test_mr_conflict_ne_touche_ni_a_l_arbre_ni_a_l_index(depot: Depot) -> None:
+    """Lecture seule : ni checkout, ni index — d'où l'appel possible sur une branche non sortie."""
+    prepare_retard(depot, fichier_main="fichier-a.txt")
+    avant_tete = depot.git("rev-parse", "HEAD")
+    avant_branche = depot.git("branch", "--show-current")
+
+    depot.lib("mr-conflict")
+
+    assert depot.git("rev-parse", "HEAD") == avant_tete
+    assert depot.git("branch", "--show-current") == avant_branche
+    assert depot.git("status", "--porcelain") == ""
+    # Aucun appel GitLab : le verdict est purement local, donc disponible sans réseau ni compte.
+    assert depot.appels() == []
+
+
+def test_mr_conflict_juge_une_branche_qu_on_ne_sort_pas(depot: Depot) -> None:
+    """Le cas d'usage réel de /mr-fix : juger la branche d'une MR depuis le clone principal."""
+    prepare_retard(depot, fichier_main="fichier-a.txt")
+    depot.git("checkout", "--quiet", "main")
+
+    acheve = depot.lib("mr-conflict", "chore/900-essai")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "- fichier-a.txt" in acheve.stdout
+    assert depot.git("branch", "--show-current") == "main"
+
+
+def test_mr_conflict_sur_main_n_a_rien_a_merger(depot: Depot) -> None:
+    acheve = depot.lib("mr-conflict", "main")
+    assert acheve.returncode == 0
+    assert "rien à merger" in acheve.stdout
+
+
+def test_mr_conflict_ne_prend_pas_une_erreur_pour_un_conflit(depot: Depot) -> None:
+    """Sans ancêtre commun, git rend 128 — le confondre avec le 1 d'un conflit (docs/10 §8.3)
+    enverrait /mr-fix résoudre un merge impossible."""
+    # `--orphan` seul suffit : le commit qui suit est une RACINE, donc sans ancêtre commun avec
+    # main. Surtout, ne rien effacer de l'arbre — le dépôt jetable y porte le `lib.sh` sous test.
+    depot.git("checkout", "--quiet", "--orphan", "chore/901-orpheline")
+    depot.commit("orpheline.txt", "sans ancêtre\n", "chore(orpheline): première racine")
+
+    acheve = depot.lib("mr-conflict")
+    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
+    assert "merge impossible à évaluer" in acheve.stderr
+    assert "en conflit" not in acheve.stdout
+
+
+def test_mr_conflict_sans_branche_ni_argument_refuse_proprement(depot: Depot) -> None:
+    tete = depot.git("rev-parse", "HEAD")
+    depot.git("checkout", "--quiet", tete)          # HEAD détachée
+    acheve = depot.lib("mr-conflict")
+    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
+    assert "branche indéterminée" in acheve.stderr
+
+
+# =================================================================================================
 # Garde-fou de clôture : la session traite-t-elle bien ce ticket ? (#164)
 # =================================================================================================
 

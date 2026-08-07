@@ -5,7 +5,7 @@
 # (`shared_runners_enabled=false`), donc les runners de PROJET du dépôt sont l'UNIQUE cible des
 # pipelines. Si aucun n'est en ligne, les jobs restent `pending` et le merge (pipeline vert requis)
 # est bloqué silencieusement. Ce helper, câblé dans les skills de clôture (/ticket-finish,
-# /pipeline-fix, donc /ticket-ship par ricochet), remet la CI en ligne d'office.
+# /mr-fix, donc /ticket-ship par ricochet), remet la CI en ligne d'office.
 #
 # PLUSIEURS RUNNERS (#158) : le projet en compte désormais potentiellement plusieurs — un runner
 # PARTAGÉ hébergé sur une machine qui reste allumée, plus le runner LOCAL de chaque poste en

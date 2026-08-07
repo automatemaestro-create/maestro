@@ -404,10 +404,12 @@ la Control Tower (Phase 1) :
   merge, pipeline, threads bloquants, résumé du diff) pour **éclairer la décision de merge humaine**.
   Conforme au garde-fou §6 : elle **ne merge, ne ferme, ni n'approuve jamais**.
 
-**Remédiation CI.** [`/pipeline-fix`](../.claude/commands/pipeline-fix.md) `[mr|branche]` — quand
-le pipeline d'une MR est rouge : diagnostique les jobs en échec (traces synthétisées via les
-helpers `lib.sh pipeline-*`), **corrige en local** quand c'est corrigeable (lint/test/typage),
-committe (`Refs #<iid>`), pousse et suit le nouveau pipeline jusqu'au verdict (2 tentatives max ;
+**Remédiation d'une MR.** [`/mr-fix`](../.claude/commands/mr-fix.md) `[mr|branche]` — quand une MR
+n'est pas mergeable, pour l'une **ou l'autre** des deux raisons possibles. D'abord le **conflit avec
+`origin/main`** (`lib.sh mr-conflict`), résolu par merge et jamais par rebase ; puis le **pipeline
+rouge** : diagnostic des jobs en échec (traces synthétisées via les
+helpers `lib.sh pipeline-*`), **correctif en local** quand c'est corrigeable (lint/test/typage),
+commit (`Refs #<iid>`), push et suivi du nouveau pipeline jusqu'au verdict (2 tentatives max ;
 re-déclenchement `glab ci run` si le push n'a pas déclenché de pipeline). Un échec d'infrastructure
 (runner, secret, flaky) est signalé tel quel — au plus un `glab ci retry`, jamais de correctif
 inventé. Elle écrit des **commits**, mais jamais le cycle de vie : ni statut, ni MR, ni merge (§6),
@@ -728,7 +730,7 @@ pas dans le fichier du poste (non versionné, le prochain clone le reposerait).
 `workflow: rules:` de [`.gitlab-ci.yml`](../.gitlab-ci.yml) ne laisse passer que
 `$CI_PIPELINE_SOURCE == "merge_request_event"` — la **création** d'une MR, puis chaque **push sur
 sa branche source** tant qu'elle est ouverte — et les déclenchements **manuels** (`web`, le bouton
-« Run pipeline » ; `api`, `glab ci run -b <branche>`, le repli de `/pipeline-fix`). Tout le reste
+« Run pipeline » ; `api`, `glab ci run -b <branche>`, le repli de `/mr-fix`). Tout le reste
 tombe en `when: never` : un push sur une branche **sans MR**, le push sur **`main` après le
 merge**, les tags. Avant ces règles, une même branche payait **trois** pipelines — pendant le
 développement, à la clôture du ticket, puis sur `main` une fois mergée — pour un seul verdict
@@ -744,7 +746,7 @@ autant d'attente pour les autres. Trois conséquences pratiques :
 - **Le pipeline d'une MR est « détaché »** : sa ref est `refs/merge-requests/<iid>/head`, pas le
   nom de la branche. `glab ci status` / `glab ci view <branche>` ne le voient donc **pas** ;
   `lib.sh pipeline-latest <branche>` si — il se rabat sur les pipelines de la MR quand la ref n'en
-  porte aucun —, et c'est lui qu'utilisent `/pipeline-fix`, `/ticket-finish` et `/mr-review`. La
+  porte aucun —, et c'est lui qu'utilisent `/mr-fix`, `/ticket-finish` et `/mr-review`. La
   file de revue (`lib.sh review-queue`) lit `headPipeline` en GraphQL : elle n'est pas concernée.
 - **La case « Pipeline CI verte » de la MR est vide au premier passage**, et c'est normal :
   `/ticket-finish` pousse **puis** ouvre la MR, donc le pipeline naît *après* le constat (§6).
@@ -838,12 +840,12 @@ jamais lever d'exception bloquante, et il est **paramétrable par variables d'en
 (`MAESTRO_RUNNER_ID`, `MAESTRO_RUNNER_CONTAINER`, `MAESTRO_DOCKER_DESKTOP`, les fenêtres de
 polling — voir l'en-tête du script). Il est **câblé dans les skills de clôture avant le push /
 avant l'attente du verdict** — [`/ticket-finish`](../.claude/commands/ticket-finish.md) et
-[`/pipeline-fix`](../.claude/commands/pipeline-fix.md), donc `/ticket-ship` par ricochet —, appelé
+[`/mr-fix`](../.claude/commands/mr-fix.md), donc `/ticket-ship` par ricochet —, appelé
 en `bash scripts/gitlab/ensure-runner.sh || …` : **son échec n'interrompt pas la clôture**, il est
 seulement signalé. Un **hook global** (sur tout `git push`) a été écarté : il se déclencherait sur
 des push sans rapport et bloquerait le push le temps du démarrage de Docker. S'assurer que le
 runner est en ligne **en amont de chaque MR** reste donc intégré au flux de clôture
-(`/ticket-finish`, `/ticket-ship`, `/pipeline-fix`), désormais sans geste manuel — et d'autant
+(`/ticket-finish`, `/ticket-ship`, `/mr-fix`), désormais sans geste manuel — et d'autant
 plus au bon endroit depuis #165, la MR étant le **seul** moment où un pipeline démarre.
 
 ### 8.2 Ménage des conteneurs de jobs sur la machine du runner
@@ -860,7 +862,7 @@ un runner.
 
 [`scripts/gitlab/clean-runner-containers.sh`](../scripts/gitlab/clean-runner-containers.sh) s'en
 charge, **câblé à côté de `ensure-runner.sh`** dans [`/ticket-finish`](../.claude/commands/ticket-finish.md)
-et [`/pipeline-fix`](../.claude/commands/pipeline-fix.md) (donc `/ticket-ship` par ricochet) :
+et [`/mr-fix`](../.claude/commands/mr-fix.md) (donc `/ticket-ship` par ricochet) :
 préparer la CI avant la MR est aussi le bon moment pour ramasser les restes du pipeline précédent.
 Appelé en `|| …`, **son échec n'interrompt jamais la clôture**, et il est **silencieux quand il n'y
 a rien à faire**. Contrairement à `ensure-runner.sh`, il n'est **pas** court-circuité quand le
@@ -892,17 +894,50 @@ les deux formes non destructives sont pré-autorisées — l'appel nu (celui des
 [`tests/test_clean_runner_containers.py`](../tests/test_clean_runner_containers.py), sur un faux
 CLI `docker` — ni réseau, ni Docker, ni conteneur réel.
 
-### 8.3 Pipeline rouge — remédiation
+### 8.3 MR non mergeable — remédiation (`/mr-fix`, anciennement `/pipeline-fix`)
 
-**Pipeline rouge ?** La remédiation passe par
-[`/pipeline-fix`](../.claude/commands/pipeline-fix.md) (voir §5) : diagnostic des jobs en échec,
-correctif local quand c'est corrigeable, commit `Refs #<iid>` poussé sur la branche, suivi du
-nouveau pipeline. Les briques réutilisables vivent dans `lib.sh` : `pipeline-latest <ref>`,
-`pipeline-status <id>`, `pipeline-failed-jobs <id>`, `job-trace <job-id> [lignes]`,
-`pipeline-wait <id> [timeout]` (parsing shell pur, comme le reste du fichier). Reproduire les
-contrôles en local avant de pousser : mêmes commandes que les jobs (ruff/pytest/mypy via le venv
-du repo ; shellcheck sur des fins de ligne LF — la CI checkout en LF, une copie Windows CRLF
-produit des faux SC1017).
+**Deux choses empêchent de merger une MR**, et [`/mr-fix`](../.claude/commands/mr-fix.md) (voir §5)
+les traite toutes les deux, une MR à la fois : le **conflit avec `origin/main`** et le **pipeline
+rouge**. La commande s'appelait `/pipeline-fix` jusqu'à #303, où elle n'en traitait qu'une — un
+pipeline remis au vert sur une MR en conflit annonçait un ✅ trompeur.
+
+**L'ordre est le contenu de la décision** : le conflit d'abord. Le merge d'`origin/main` peut
+*lui-même* casser le pipeline — deux changements corrects séparément, faux ensemble —, donc
+diagnostiquer le pipeline avant, c'est diagnostiquer un état qui n'existera plus.
+
+**1. Le conflit** — `lib.sh mr-conflict [branche]` rend le verdict : `0` se merge proprement,
+`3` conflit (fichiers listés), `1` verdict impossible, `2` usage. Lecture seule, sans checkout ni
+index touché, donc jouable sur une branche qu'on ne sort pas — c'est le cas d'usage réel, juger la
+branche d'une MR depuis le clone principal.
+
+Le verdict vient de `git merge-tree --write-tree`, un **merge 3-way réel**, et non des deux sources
+qui existaient déjà — ni l'une ni l'autre ne pouvait porter cette décision :
+
+| Source | Ce qu'elle répond | Pourquoi elle ne suffit pas |
+|---|---|---|
+| `lib.sh behind-main` | ces fichiers sont modifiés **des deux côtés** | Heuristique **pessimiste** : vraie presque partout sur les fichiers aimants du dépôt (`CLAUDE.md`, ce fichier-ci, `lib.sh`), où les deux côtés éditent des régions disjointes. Répond en plus **avant le push**, quand le conflit naît des merges qui suivent. |
+| `has_conflicts` / `detailed_merge_status` (GitLab) | GitLab a-t-il vu un conflit | **Asynchrone** : 5 MR ouvertes sur 6 répondaient `checking`/`unchecked` à la mesure du 2026-08-07. Se lit en complément, jamais en l'attendant. |
+
+La résolution est un **`git merge origin/main`, jamais un rebase** : réécrire une branche déjà
+poussée appellerait un force-push, barré en `deny` (§6). Et une résolution qui n'est pas claire
+**ne se pousse pas** — `git merge --abort`, branche intacte, constat rendu : mieux vaut un conflit
+signalé qu'une résolution fausse sous une MR en Draft que personne ne relira ligne à ligne.
+
+**2. Le pipeline** — diagnostic des jobs en échec, correctif local quand c'est corrigeable, commit
+`Refs #<iid>` poussé sur la branche, suivi du nouveau pipeline. Les briques réutilisables vivent
+dans `lib.sh` : `pipeline-latest <ref>`, `pipeline-status <id>`, `pipeline-failed-jobs <id>`,
+`job-trace <job-id> [lignes]`, `pipeline-wait <id> [timeout]` (parsing shell pur, comme le reste du
+fichier). Reproduire les contrôles en local avant de pousser : mêmes commandes que les jobs
+(ruff/pytest/mypy via le venv du repo ; shellcheck sur des fins de ligne LF — la CI checkout en LF,
+une copie Windows CRLF produit des faux SC1017).
+
+**Le résumé rend les deux blocages séparément**, jamais un verdict global : une MR au pipeline vert
+mais en conflit reste non mergeable.
+
+⚠ **`git merge-tree` rend `128`** — pas `1` — quand le merge est impossible à évaluer (histoires
+sans ancêtre commun). Le confondre avec le `1` d'un conflit enverrait la commande résoudre un merge
+qui ne peut pas avoir lieu ; `mr-conflict` distingue les deux et rend `1`, que la commande traite
+comme « poursuis sur le pipeline », pas comme un conflit.
 
 ### 8.4 Boucle courte en local, suite complète au pipeline (#214)
 
@@ -986,7 +1021,7 @@ risque de rendre un vert qui n'a pas regardé le code fautif.
 **La contrepartie est assumée et dite.** Jouer moins en local, c'est découvrir plus de rouges dans
 le pipeline, sur le runner partagé de l'équipe (§8.1). Elle est bornée : le **lint tourne toujours
 en entier** (quelques secondes, et c'est l'échec le plus bête à faire découvrir à quelqu'un
-d'autre), les tests du code touché aussi, et `/pipeline-fix` traite le reste. Le filet, lui, ne
+d'autre), les tests du code touché aussi, et `/mr-fix` traite le reste. Le filet, lui, ne
 laisse jamais croire à un vert qu'il n'a pas mérité : le job dit ce qu'il a joué et pourquoi, le
 verdict porte la mention **« Périmètre réduit »**, et le seuil de couverture — qu'un
 sous-ensemble ne peut pas tenir — n'est appliqué qu'en `--complet` et en CI. Le sens de dérive est

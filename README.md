@@ -164,7 +164,7 @@ serveurs MCP, sans rien réinstaller.
 
 | Ce que le clone reprend | Où c'est versionné |
 |---|---|
-| Commandes `/ticket-create`, `/ticket-start`, `/ticket-ship`, `/backlog`, `/mr-review`, `/pipeline-fix`, `/branch-cleanup`, `/milestone-presentation` | [`.claude/commands/`](./.claude/commands/) |
+| Commandes `/ticket-create`, `/ticket-start`, `/ticket-ship`, `/backlog`, `/mr-review`, `/mr-fix`, `/branch-cleanup`, `/milestone-presentation` | [`.claude/commands/`](./.claude/commands/) |
 | Skills `control-tower` et `verify` | [`.claude/skills/`](./.claude/skills/) |
 | Permissions (allow / ask / deny) et hook de traçabilité des demandes | [`.claude/settings.json`](./.claude/settings.json), [`.claude/hooks/`](./.claude/hooks/) |
 | Serveurs MCP `chrome-maestro` (navigateur) et `figma-officiel` | [`.mcp.json`](./.mcp.json) |
