@@ -6,6 +6,12 @@
  * et l'historique de celles déjà tranchées. Page provisoire : la refonte du
  * centre de notifications (#119) rebrassera la façon dont ces demandes
  * remontent à l'utilisateur ; l'API et les décisions, elles, sont définitives.
+ *
+ * Les demandes viennent du contexte du shell, cadrées sur le projet actif
+ * (`?projet=`, #277/#281) : ce qui vaut pour la file en attente vaut pour
+ * l'historique, sans quoi on trancherait ici les arbitrages d'un autre projet.
+ * L'écran vide le dit **en nommant le projet** — « aucune validation en
+ * attente » tout court se lit comme un état de l'orchestration entière.
  */
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
@@ -19,7 +25,7 @@ import {
 } from "@/lib/types";
 
 export default function PageValidations() {
-  const { validations, chargement, erreur, decider } = useEtatGlobal();
+  const { projet, validations, chargement, erreur, decider } = useEtatGlobal();
 
   const enAttente = validations.filter(
     (v) => v.statut === VALIDATION_EN_ATTENTE,
@@ -37,8 +43,9 @@ export default function PageValidations() {
         <>
           {enAttente.length === 0 ? (
             <p className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-              Aucune validation en attente — les moteurs tournent sans demander
-              d&apos;arbitrage.
+              {validations.length === 0
+                ? `Rien encore sur ${projet.nom} : aucune demande d'arbitrage n'y a été faite.`
+                : `Aucune validation en attente sur ${projet.nom} — les moteurs y tournent sans demander d'arbitrage.`}
             </p>
           ) : (
             <PanneauValidations validations={validations} decider={decider} />

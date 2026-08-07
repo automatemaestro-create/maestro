@@ -31,6 +31,9 @@
  * Cas particulier depuis #186 : **rien à montrer**. Le lanceur local démarre
  * désormais en mode réel, où un premier écran est légitimement vide — il porte
  * alors `PosteVide`, qui dit quoi faire, plutôt que quatre panneaux à zéro.
+ * Depuis #281 ce vide est celui **d'un projet** : tout ce que la page rend est
+ * cadré sur le projet actif, et `PosteVide` le nomme au lieu de laisser croire
+ * que rien ne tourne nulle part.
  */
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
@@ -51,6 +54,7 @@ const APERCU_ACTIVITE = 6;
 
 export default function TableauDeBord() {
   const {
+    projet,
     taches,
     agents,
     evenements,
@@ -65,11 +69,12 @@ export default function TableauDeBord() {
 
   const journal = entreeParLibelle("Journal");
 
-  // Rien reçu, et l'API répond : le poste n'est pas en panne, il n'a pas encore
-  // de run à montrer (#186 — le mode réel est désormais le défaut du lanceur
-  // local). On explique quoi faire au lieu d'aligner quatre panneaux vides.
-  // Une API injoignable, elle, garde les panneaux : sa bannière dit déjà le
-  // problème, et conseiller « lancez un run » serait alors un contresens.
+  // Rien reçu **sur ce projet**, et l'API répond : le poste n'est pas en panne,
+  // il n'a pas encore de run à montrer ici (#186 — le mode réel est désormais le
+  // défaut du lanceur local ; #281 — la portée est celle du projet actif). On
+  // explique quoi faire au lieu d'aligner quatre panneaux vides. Une API
+  // injoignable, elle, garde les panneaux : sa bannière dit déjà le problème, et
+  // conseiller « lancez un run » serait alors un contresens.
   const rienARegarder =
     erreur === null &&
     taches.length === 0 &&
@@ -82,7 +87,7 @@ export default function TableauDeBord() {
       {chargement ? (
         <p className="text-sm text-neutral-500">Chargement de l&apos;état…</p>
       ) : rienARegarder ? (
-        <PosteVide connecte={connecte} />
+        <PosteVide projet={projet} connecte={connecte} />
       ) : (
         <>
           <PanneauValidations validations={validations} decider={decider} />
@@ -91,7 +96,12 @@ export default function TableauDeBord() {
             agents={agents}
             couts={couts}
           />
-          <Kanban taches={taches} agents={agents} reassigner={reassigner} />
+          <Kanban
+            taches={taches}
+            agents={agents}
+            reassigner={reassigner}
+            projet={projet}
+          />
           <FilActivite
             evenements={evenements}
             limite={APERCU_ACTIVITE}

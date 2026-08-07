@@ -16,7 +16,7 @@ import { Kanban } from "@/components/Kanban";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
 import { lienExterneSur } from "@/lib/liens";
 
-import { tacheFactice } from "./aides";
+import { projetFactice, tacheFactice } from "./aides";
 
 describe("lienExterneSur", () => {
   it("suit http et https, normalise", () => {
@@ -86,6 +86,7 @@ describe("carte du Kanban", () => {
         ]}
         agents={[]}
         reassigner={async () => {}}
+        projet={projetFactice()}
       />,
     );
     expect(
@@ -95,7 +96,12 @@ describe("carte du Kanban", () => {
 
   it("reste inchangée sans référence", () => {
     render(
-      <Kanban taches={[tacheFactice()]} agents={[]} reassigner={async () => {}} />,
+      <Kanban
+        taches={[tacheFactice()]}
+        agents={[]}
+        reassigner={async () => {}}
+        projet={projetFactice()}
+      />,
     );
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByText(/Ticket externe/)).toBeNull();

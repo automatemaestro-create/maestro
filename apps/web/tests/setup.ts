@@ -42,6 +42,8 @@ import {
   filAssistanceCourant,
   installerMatchMedia,
   navigations,
+  noterPortee,
+  porteesDemandees,
   poserChemin,
   poserEtatGlobal,
   poserFilAssistance,
@@ -72,9 +74,16 @@ configure({ asyncUtilTimeout: 5_000 });
 // Journal lit `MAX_EVENEMENTS` pour dire combien d'événements elle garde, et
 // tomberait ici sur « No "MAX_EVENEMENTS" export is defined on the mock » sans
 // que rien, ni au build ni au lint, ne l'ait laissé prévoir.
+// La **portée** reçue est notée au passage (#281) : le hook est factice, mais
+// ce qu'on lui demande est précisément ce que ce lot promet — chaque écran ne
+// lit que le projet actif. Sans cette note, la promesse ne serait observable
+// nulle part, le contenu rendu venant de `poserEtatGlobal` quoi qu'il arrive.
 vi.mock("@/lib/useControlTower", async (original) => ({
   ...(await original<Record<string, unknown>>()),
-  useControlTower: () => etatGlobalCourant(),
+  useControlTower: (portee: string) => {
+    noterPortee(portee);
+    return etatGlobalCourant();
+  },
 }));
 
 vi.mock("@/lib/useChat", () => ({
@@ -124,6 +133,7 @@ beforeEach(() => {
   poserChemin("/");
   poserProjets([]);
   navigations.length = 0;
+  porteesDemandees.length = 0;
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
   window.ResizeObserver = ResizeObserverFactice as unknown as typeof ResizeObserver;

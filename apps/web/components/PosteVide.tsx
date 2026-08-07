@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Le poste de pilotage **vide**, expliqué (ticket #186, lot 2 de #184).
+ * Le poste de pilotage **vide**, expliqué (ticket #186, lot 2 de #184) — et,
+ * depuis #281, vide **pour un projet donné**.
  *
  * Depuis que le lancement local démarre en **mode réel**
  * (`scripts/controltower/start.sh`, sur Redis), un premier démarrage n'a plus
@@ -10,13 +11,29 @@
  * dans les logs ce qui n'y est pas. On remplace donc l'écran par ce qu'il faut
  * faire pour le remplir.
  *
- * Ce n'est pas un état d'erreur : l'API injoignable, elle, a sa bannière
- * (`BanniereErreurApi`), et le tableau de bord garde ses panneaux dans ce
- * cas-là — un écran vide *et* silencieux ne se diagnostique pas de la même
- * façon qu'un écran vide *et* connecté.
+ * Trois vides se ressemblent et ne se diagnostiquent pas pareil, d'où le soin
+ * mis à les séparer (critère #281) :
+ *
+ * - **une panne** — l'API injoignable a sa bannière (`BanniereErreurApi`), et le
+ *   tableau de bord garde ses panneaux dans ce cas-là : un écran vide *et*
+ *   silencieux ne se lit pas comme un écran vide *et* connecté ;
+ * - **l'absence de projet** — elle n'atteint jamais cet écran : la garde du
+ *   shell (#279) montre la porte d'entrée avant que la Control Tower ne soit
+ *   montée. Ici, il y a un projet, et il est nommé ;
+ * - **rien encore sur ce projet** — le cas de ce composant. Il le dit avec le
+ *   nom du projet, parce qu'un « aucun événement » anonyme, sur une Control
+ *   Tower qui n'en montre plus qu'un, laisse croire que rien ne tourne nulle
+ *   part.
+ *
+ * Il dit aussi **pourquoi il peut rester vide alors qu'un run tourne** : un run
+ * publié sans `projet_id` ne relève d'aucun projet et n'entre donc dans la vue
+ * d'aucun (#277). C'est le cas de `maestro-run --publier`, qui n'a pas d'option
+ * de rattachement — le taire ferait chercher une panne là où il n'y a qu'un
+ * périmètre.
  */
 
 import { lancerGuide } from "@/lib/guide";
+import type { Projet } from "@/lib/types";
 
 /** Ce que le poste montre dès qu'un run publie — l'inventaire de ce qui manque. */
 const CE_QUI_ARRIVE = [
@@ -26,25 +43,36 @@ const CE_QUI_ARRIVE = [
   "l'activité en direct, événement par événement",
 ];
 
-export function PosteVide({ connecte }: { connecte: boolean }) {
+export function PosteVide({
+  projet,
+  connecte,
+}: {
+  projet: Projet;
+  connecte: boolean;
+}) {
   return (
     <section
       aria-label="Poste de pilotage vide"
       className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900"
     >
-      <h2 className="text-base font-semibold">Aucun run n&apos;a encore publié d&apos;événement</h2>
+      <h2 className="text-base font-semibold">
+        Rien encore sur {projet.nom}
+      </h2>
       <p className="mt-1 max-w-2xl text-sm text-neutral-600 dark:text-neutral-300">
-        La Control Tower est branchée et vous écoute — elle n&apos;a simplement
-        rien à afficher pour l&apos;instant. Lancez une exécution : cet écran se
-        remplit tout seul, sans le recharger.
+        La Control Tower est branchée et vous écoute — elle est simplement
+        cadrée sur <strong className="font-medium">{projet.nom}</strong>, et
+        aucun run n&apos;y a encore publié d&apos;événement. Ce n&apos;est ni une
+        panne (une API injoignable, elle, affiche sa bannière) ni l&apos;absence
+        de projet : lancez une exécution dans ce projet, cet écran se remplit
+        tout seul, sans le recharger.
       </p>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         <Action
-          titre="Lancer une orchestration"
+          titre="Lancer une orchestration dans ce projet"
           detail="Le moteur découpe l'objectif en tâches, les assigne aux agents et publie chaque étape ici."
-          commande={'maestro-run --publier "<votre objectif>"'}
-          note="--publier est ce qui alimente ce poste de pilotage."
+          commande={`POST /api/executions  {"objectif": "…", "projet_id": "${projet.id}"}`}
+          note="Le formulaire de lancement viendra avec « Composer un objectif » (Phase 8) ; d'ici là, c'est l'API qui rattache un run à un projet."
         />
         <Action
           titre="Juste explorer l'interface"
@@ -53,6 +81,17 @@ export function PosteVide({ connecte }: { connecte: boolean }) {
           note="À relancer depuis le dépôt : le mode remplace la session courante."
         />
       </div>
+
+      {/* Le piège que ce lot rend possible : un run tourne, et cet écran reste
+          vide parce que ce run n'appartient à aucun projet. Le dire ici est ce
+          qui distingue « rien encore sur ce projet » d'une panne. */}
+      <p className="mt-3 max-w-2xl rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+        Un run lancé <strong className="font-medium">sans projet</strong> —
+        c&apos;est le cas de <code>maestro-run --publier</code>, qui n&apos;a pas
+        d&apos;option de rattachement — ne relève d&apos;aucun projet et
+        n&apos;apparaît donc sur l&apos;écran d&apos;aucun. Ses tâches existent,
+        elles ne sont simplement pas ici.
+      </p>
 
       <div className="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <p className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">

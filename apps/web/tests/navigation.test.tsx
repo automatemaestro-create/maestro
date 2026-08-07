@@ -18,7 +18,13 @@ import { BarreLaterale } from "@/components/BarreLaterale";
 import { BarreSuperieure } from "@/components/BarreSuperieure";
 import { entreeCourante, entreeParLibelle, MENU } from "@/lib/navigation";
 
-import { agentFactice, poserChemin, rendreAvecEtat } from "./aides";
+import {
+  agentFactice,
+  coutExecutionFactice,
+  poserChemin,
+  rendreAvecEtat,
+  usageFactice,
+} from "./aides";
 
 describe("le menu (lib/navigation)", () => {
   it("porte une entrée par intention (#190)", () => {
@@ -199,22 +205,42 @@ describe("la barre supérieure (BarreSuperieure)", () => {
     expect(screen.getByText("Reconnexion…")).toBeInTheDocument();
   });
 
-  it("cumule le coût rapporté par les agents", () => {
+  it("cumule les grands livres du projet actif", () => {
+    // #281 : la source a changé — les coûts rapportés **par agent** valent pour
+    // le poste entier (le parc n'appartient à aucun projet), les grands livres
+    // sont dérivés des tâches du projet. Un montant qui suit l'utilisateur de
+    // page en page ne pouvait pas rester le seul chiffre à parler d'ailleurs.
     rendreAvecEtat(barre(), {
-      agents: [
-        agentFactice({ nom: "dev", cout_usd: 0.5 }),
-        agentFactice({ nom: "qa", cout_usd: 0.25 }),
+      couts: [
+        coutExecutionFactice({
+          run_id: "run-1",
+          total: usageFactice({ cout_usd: 0.5 }),
+        }),
+        coutExecutionFactice({
+          run_id: "run-2",
+          total: usageFactice({ cout_usd: 0.25 }),
+        }),
       ],
+      // Les coûts par agent ne comptent plus, même quand ils sont là.
+      agents: [agentFactice({ nom: "dev", cout_usd: 12 })],
     });
     // Espace insécable étroit de `Intl` en fr-FR : on cible le nombre.
     expect(screen.getByText(/0,75/)).toBeInTheDocument();
+    expect(screen.getByTitle(/Coût cumulé/)).not.toHaveTextContent("12");
   });
 
   it("distingue « aucun coût rapporté » de « coût nul »", () => {
-    // Un agent qui n'a rien rapporté (cout_usd null) ne vaut pas 0 $ : la barre
+    // Un grand livre sans montant (cout_usd null) ne vaut pas 0 $ : la barre
     // affiche un tiret, sans quoi on lirait une gratuité qui n'existe pas.
-    rendreAvecEtat(barre(), { agents: [agentFactice({ cout_usd: null })] });
+    rendreAvecEtat(barre(), { couts: [coutExecutionFactice()] });
     expect(screen.getByTitle(/Coût cumulé/)).toHaveTextContent("—");
+  });
+
+  it("dit de quel projet ce coût est le coût", () => {
+    // Le titre porte le nom : sur une Control Tower multi-projets, un total
+    // anonyme se lit comme le total de tout ce qui tourne (#281).
+    rendreAvecEtat(barre(), {});
+    expect(screen.getByTitle(/Coût cumulé sur Dépensio/)).toBeInTheDocument();
   });
 
   it("bascule le repli et décrit l'état de la navigation", async () => {

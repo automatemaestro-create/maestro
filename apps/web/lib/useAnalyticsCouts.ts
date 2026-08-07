@@ -10,11 +10,17 @@
  * La connexion se rétablit seule (backoff plafonné) et chaque reconnexion
  * recharge la vue. Pendant un rechargement, la vue précédente reste servie
  * (`rafraichissement`) : pas de squelette, pas de saut de mise en page.
+ *
+ * La vue est cadrée sur une **portée projet** (#281), comme toutes les lectures
+ * qui agrègent (#277) : agrégats et flux temps réel portent le même périmètre
+ * que le reste des écrans. Le shell remonte la page sur un changement de projet
+ * (voir `useControlTower`), si bien que la vue précédente — qui reste affichée
+ * pendant un rafraîchissement — ne peut pas être celle d'un autre projet.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { chargerAnalyticsCouts, urlEvenements } from "./api";
+import { chargerAnalyticsCouts, urlEvenements, type PorteeProjet } from "./api";
 import type { AnalyticsCouts, PasSerie } from "./types";
 
 /** Fenêtre de coalescence des rechargements sur rafale d'événements (ms). */
@@ -56,7 +62,10 @@ export type VueAnalytics = {
   erreur: string | null;
 };
 
-export function useAnalyticsCouts(periode: Periode): VueAnalytics {
+export function useAnalyticsCouts(
+  periode: Periode,
+  portee: PorteeProjet,
+): VueAnalytics {
   const [vue, setVue] = useState<AnalyticsCouts | null>(null);
   const [connecte, setConnecte] = useState(false);
   const [chargement, setChargement] = useState(true);
@@ -75,6 +84,7 @@ export function useAnalyticsCouts(periode: Periode): VueAnalytics {
           depuis: new Date(Date.now() - periode.dureeMs).toISOString(),
         }),
         pas: periode.pas,
+        projet: portee,
       });
       setVue(nouvelle);
       setErreur(null);
@@ -84,7 +94,7 @@ export function useAnalyticsCouts(periode: Periode): VueAnalytics {
       setChargement(false);
       setRafraichissement(false);
     }
-  }, [periode]);
+  }, [periode, portee]);
 
   const planifierRechargement = useCallback(() => {
     if (rechargementPrevu.current !== null) return;
@@ -106,7 +116,7 @@ export function useAnalyticsCouts(periode: Periode): VueAnalytics {
 
     const connecter = () => {
       if (abandonne) return;
-      socket = new WebSocket(urlEvenements());
+      socket = new WebSocket(urlEvenements(portee));
       socket.onopen = () => {
         tentatives = 0;
         setConnecte(true);
@@ -142,7 +152,7 @@ export function useAnalyticsCouts(periode: Periode): VueAnalytics {
       }
       socket?.close();
     };
-  }, [recharger, planifierRechargement]);
+  }, [recharger, planifierRechargement, portee]);
 
   return { vue, connecte, chargement, rafraichissement, erreur };
 }

@@ -15,6 +15,11 @@
  *
  * Le comportement du menu (clic à l'extérieur, Échap, focus rendu au bouton)
  * reprend celui de la bascule de thème (#118, `BasculeTheme`).
+ *
+ * Validations et événements viennent du contexte, donc **du projet actif**
+ * (#281) : la cloche ne réclame jamais un arbitrage qui appartient à un projet
+ * qu'on n'a pas sous les yeux, et le badge ne compte pas ce qu'on ne peut pas
+ * trancher depuis cet écran.
  */
 
 import { useEffect, useRef, useState } from "react";

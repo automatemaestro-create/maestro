@@ -14,6 +14,12 @@
  * qui le résument. Il vient du contexte partagé du shell et non de
  * `useAnalyticsCouts` — il n'est donc pas borné par le filtre de période, d'où
  * sa place à part, hors de la zone estompée pendant un rafraîchissement.
+ *
+ * Les deux sources sont cadrées sur le **projet actif** (#281) : la vue agrégée
+ * par sa portée (`?projet=`, #277), les grands livres parce qu'ils sont dérivés
+ * des tâches du projet. Elles ne peuvent donc pas se contredire — un total de
+ * période plus petit que la somme des grands livres se lirait comme un bug, là
+ * où ce ne serait qu'un mélange de périmètres.
  */
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
@@ -42,13 +48,17 @@ export default function PageCouts() {
   const [periode, setPeriode] = useState<Periode>(
     PERIODES.find((p) => p.id === "tout") ?? PERIODES[0],
   );
+  // Les grands livres sont déjà chargés par le contexte partagé (#117) : les
+  // relire ici ne coûte ni requête ni connexion supplémentaire. C'est aussi de
+  // là que vient la portée projet (#281), pour que les deux sources de cette
+  // page portent le même périmètre sans qu'on ait à le rappeler deux fois.
+  const { couts, portee, projet } = useEtatGlobal();
   // Le statut du flux temps réel est porté par la barre supérieure du shell
   // (#117) : la page n'a plus qu'à consommer les agrégats.
-  const { vue, chargement, rafraichissement, erreur } =
-    useAnalyticsCouts(periode);
-  // Les grands livres, eux, sont déjà chargés par le contexte partagé (#117) :
-  // les relire ici ne coûte ni requête ni connexion supplémentaire.
-  const { couts } = useEtatGlobal();
+  const { vue, chargement, rafraichissement, erreur } = useAnalyticsCouts(
+    periode,
+    portee,
+  );
 
   return (
     <>
@@ -87,6 +97,16 @@ export default function PageCouts() {
           }
         >
           <Compteurs vue={vue} />
+          {vue.executions.length === 0 && vue.taches.length === 0 && (
+            // Les compteurs restent : « 0 $ sur la période » est une réponse.
+            // Ce qu'ils ne disent pas, c'est de quel périmètre ce zéro est le
+            // zéro — et sans les tables, qui s'effacent quand elles sont vides,
+            // l'écran se lirait comme une page à moitié chargée (#281).
+            <p className="text-sm text-neutral-500 dark:text-neutral-400">
+              Rien encore sur {projet.nom} : aucune exécution de ce projet
+              n&apos;a de dépense à comptabiliser sur cette période.
+            </p>
+          )}
           <div className="grid gap-6 lg:grid-cols-5">
             <section
               aria-label="Évolution du coût"

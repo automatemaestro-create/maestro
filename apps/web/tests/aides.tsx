@@ -197,6 +197,22 @@ export function etatGlobalCourant(): ControlTower {
   return etatGlobal;
 }
 
+/**
+ * Les portées passées à `useControlTower` depuis le début du test (#281).
+ *
+ * Le hook est mocké — son va-et-vient réseau ne peut donc pas être observé —,
+ * mais **ce qu'on lui demande** l'est, et c'est là qu'est la promesse du lot :
+ * « aucun écran ne montre autre chose que le projet actif » se vérifie au
+ * paramètre de la lecture, pas au contenu d'une réponse factice. Une liste et
+ * non la dernière valeur : c'est l'enchaînement qui compte quand on change de
+ * projet.
+ */
+export const porteesDemandees: string[] = [];
+
+export function noterPortee(portee: string): void {
+  porteesDemandees.push(portee);
+}
+
 // --- Projets déclarés et projet actif (porte d'entrée #279) ----------------
 
 let projets: Projet[] = [];
@@ -231,13 +247,20 @@ export function poserProjetActif(projet: Projet = projetFactice()): Projet {
  * en vrai. Le fournisseur est le **vrai** (`lib/etatGlobal`) : seule la source
  * temps réel sous lui est factice, si bien que ce qu'il calcule lui-même (le
  * coût cumulé) reste exercé.
+ *
+ * Le **projet** lui est donné ici comme le shell le donne en vrai (#281) : sans
+ * lui, aucun écran ne saurait nommer le vide qu'il affiche. Un test qui regarde
+ * ce nom passe le sien en troisième argument ; les autres n'ont rien à changer.
  */
 export function rendreAvecEtat(
   ui: ReactNode,
   partiel: Partial<ControlTower> = {},
+  projet: Projet = projetFactice(),
 ): RenderResult {
   poserEtatGlobal(partiel);
-  return render(<FournisseurEtatGlobal>{ui}</FournisseurEtatGlobal>);
+  return render(
+    <FournisseurEtatGlobal projet={projet}>{ui}</FournisseurEtatGlobal>,
+  );
 }
 
 // --- Fabriques du domaine --------------------------------------------------

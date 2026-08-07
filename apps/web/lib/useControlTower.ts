@@ -12,6 +12,19 @@
  * La connexion WebSocket se rétablit seule (backoff plafonné) et chaque
  * reconnexion recharge l'état — les événements manqués pendant la coupure
  * sont ainsi rattrapés.
+ *
+ * **Tout ce qu'il rend est cadré sur une portée projet** (#281) : les lectures
+ * la passent en paramètre et la socket la déclare à l'ouverture, si bien qu'un
+ * événement d'un autre projet n'entre jamais dans la file (#277). Une seule
+ * exception, assumée et documentée : `GET /api/agents`, qui décrit le **parc du
+ * poste** et non le travail d'un projet (voir `lib/api`, docs/05 §2.3).
+ *
+ * La portée ne change **jamais en place** dans l'application : le shell remonte
+ * le fournisseur d'état sur un changement de projet (`key`, `components/Shell`),
+ * ce qui remet à zéro d'un coup l'état d'ici *et* celui que les pages tiennent
+ * elles-mêmes — filtres du Journal, période des Coûts. C'est la garantie
+ * « aucune donnée de l'ancien projet ne subsiste » du critère #281, et elle est
+ * plus large que ce que ce hook pourrait tenir seul.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,6 +38,7 @@ import {
   reassignerTache,
   reglerCapaciteAgent,
   urlEvenements,
+  type PorteeProjet,
 } from "./api";
 import type {
   CoutExecution,
@@ -71,7 +85,7 @@ export type ControlTower = {
   ) => Promise<void>;
 };
 
-export function useControlTower(): ControlTower {
+export function useControlTower(portee: PorteeProjet): ControlTower {
   const [taches, setTaches] = useState<Tache[]>([]);
   const [agents, setAgents] = useState<EtatAgent[]>([]);
   const [evenements, setEvenements] = useState<Evenement[]>([]);
@@ -86,7 +100,12 @@ export function useControlTower(): ControlTower {
   const recharger = useCallback(async () => {
     try {
       const [nouvellesTaches, nouveauxAgents, nouvellesValidations] =
-        await Promise.all([chargerTaches(), chargerAgents(), chargerValidations()]);
+        await Promise.all([
+          chargerTaches(portee),
+          // Sans portée : le parc d'agents est du poste, pas du projet.
+          chargerAgents(),
+          chargerValidations(portee),
+        ]);
       // Les grands livres (#57) se chargent après les tâches : les run_id
       // connus en sont dérivés (le backend a une exécution pour chacun).
       const runIds = [
@@ -103,7 +122,7 @@ export function useControlTower(): ControlTower {
     } finally {
       setChargement(false);
     }
-  }, []);
+  }, [portee]);
 
   const planifierRechargement = useCallback(() => {
     if (rechargementPrevu.current !== null) return;
@@ -125,7 +144,10 @@ export function useControlTower(): ControlTower {
 
     const connecter = () => {
       if (abandonne) return;
-      socket = new WebSocket(urlEvenements());
+      // La portée est déclarée à l'ouverture (#277) : le tri se fait à l'entrée
+      // de la file côté backend, un événement d'un autre projet n'arrive donc
+      // jamais ici — il n'y a rien à refiltrer côté client.
+      socket = new WebSocket(urlEvenements(portee));
       socket.onopen = () => {
         tentatives = 0;
         setConnecte(true);
@@ -168,7 +190,7 @@ export function useControlTower(): ControlTower {
       }
       socket?.close();
     };
-  }, [recharger, planifierRechargement]);
+  }, [recharger, planifierRechargement, portee]);
 
   const reassigner = useCallback(
     async (tacheId: string, agent: string) => {
