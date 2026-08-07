@@ -249,7 +249,7 @@ pilotes_vivants() {
 pilote_ticket_en_vol() {
   local dir="$1" iid
   [ -f "$dir/plan.tsv" ] || return 0
-  while IFS=$'\t' read -r _ iid _ _ _; do
+  while IFS=$'\t' read -r _ iid _ _ _ _; do
     [ -n "${iid:-}" ] || continue
     [ -e "$dir/$iid.session" ] || continue
     awk -F'\t' -v iid="$iid" '$1 !~ /^#/ && $1 == iid { trouve = 1 } END { exit !trouve }' \

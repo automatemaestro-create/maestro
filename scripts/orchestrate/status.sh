@@ -18,7 +18,7 @@
 # non plus à `run.sh` — un run en cours doit pouvoir être observé sans risquer de le perturber (bash
 # relit un script au fil de son exécution). Tout ce qu'il affiche est déduit de fichiers déjà là :
 #
-#   plan.tsv        le plan figé au démarrage : rang, iid, parent, prio, titre
+#   plan.tsv        le plan figé au démarrage : rang, iid, parent, prio, groupe, titre
 #   resume.tsv      une ligne par ticket TERMINÉ : iid, verdict, mr, duree_s, cout_usd, raison
 #   <iid>.session   présent dès que le ticket est pris en main -> c'est le ticket en cours
 #   <iid>.*         tout le reste (jsonl, json, resultat.txt, log, worktree.log) — sert de témoin
@@ -203,7 +203,7 @@ traite() {
 ticket_en_cours() {
   local dir="$1" iid
   [ -f "$dir/plan.tsv" ] || return 1
-  while IFS=$'\t' read -r _ iid _ _ _; do
+  while IFS=$'\t' read -r _ iid _ _ _ _; do
     [ -n "${iid:-}" ] || continue
     [ -e "$dir/$iid.session" ] || continue
     traite "$dir" "$iid" && continue
@@ -304,7 +304,7 @@ ETAT=""
 affiche_ticket_en_cours() { # <run-dir> <iid>
   local dir="$1" iid="$2" titre branche wt debut age activite silence n corps statut etat_mr mr_iid gl
 
-  titre="$(champ_plan "$dir" "$iid" 5)"
+  titre="$(champ_plan "$dir" "$iid" 6)"
   titre_section "En cours — #$iid · ${titre:-?}"
 
   debut="$(plus_recent "$dir/$iid.session" "$dir/$iid.worktree.log" 2>/dev/null)" || debut=""
@@ -380,7 +380,7 @@ affiche_ticket_en_cours() { # <run-dir> <iid>
 
 affiche_reste() { # <run-dir> <iid-en-cours>
   local dir="$1" courant="$2" rang iid titre lignes=""
-  while IFS=$'\t' read -r rang iid _ _ titre; do
+  while IFS=$'\t' read -r rang iid _ _ _ titre; do
     [ -n "${iid:-}" ] || continue
     [ "$iid" = "$courant" ] && continue
     traite "$dir" "$iid" && continue

@@ -1683,9 +1683,35 @@ même plan, et un run reste reproductible même si le backlog évolue pendant qu
 | Les **parents de suivi sont écartés**, remplacés par leurs lots **dans l'ordre de la checklist** | un parent ne porte ni branche ni code (§5.1) ; c'est la checklist qui encode les dépendances |
 | Les lots d'un même parent restent **contigus**, le parent héritant de leur priorité maximale | s'intercaler ferait partir le lot suivant d'un `origin/main` qui a bougé pour rien |
 | Le reste trié par `prio::` puis iid croissant | pour que l'ordre soit reproductible |
+| Chaque ticket porte son **groupe de dépendance** (colonne `groupe`) | l'ordre dit ce qui passe après quoi, jamais ce qui pourrait partir **en même temps** |
 
-`--check` ajoute sur stderr le détail des **écartés avec leur raison** : sans lui, une absence est
-indistinguable d'un bug.
+`--check` ajoute sur stderr le détail des **écartés avec leur raison** — sans lui, une absence est
+indistinguable d'un bug — et, pour la même raison, les **groupes obtenus** : une colonne de plus dans
+le plan ne dit pas d'elle-même ce qu'elle a conclu.
+
+**Le plan déclare ce qui est parallélisable** (#288). Sortie TSV : `rang`, `iid`, `parent`, `prio`,
+`groupe`, `titre` — `groupe` vient **avant `titre`** parce que le titre est le champ absorbant d'un
+`read`, et s'y ferait avaler. La règle de lecture tient en une phrase :
+
+> Deux tickets peuvent être en vol en même temps si leurs **`parent` diffèrent**, ou si leur
+> **`groupe` est identique**.
+
+Le groupe est la **vague** du lot dans la chaîne de son parent — `<parent>.<n>` pour un lot, `-` pour
+un ticket qui n'en est pas un (tous mutuellement indépendants, comme ils l'étaient déjà). Une suite
+maximale de lots **consécutifs** marqués `(parallèle)` (§5.1) forme une vague ; un lot non marqué
+forme la sienne et sert de **barrière**. La vague se compte sur toute la checklist, lots déjà livrés
+compris : c'est une propriété de la checklist, pas du plan.
+
+Pourquoi une vague plutôt que le marqueur recopié tel quel : la règle « même parent et tous deux
+marqués » n'est **pas une relation d'équivalence** — deux lots marqués sont indépendants entre eux
+mais dépendants d'un lot non marqué du même parent, si bien qu'aucune étiquette ne peut la porter. La
+vague tranche dans le sens **sûr**, celui de §5.1 (« un lot non marqué reste barré par tout ce qui le
+précède ») ; deux lots marqués séparés par un lot non marqué tombent donc dans deux vagues, leur
+indépendance de principe étant de toute façon sans effet — la barrière qui les sépare les ordonne
+déjà.
+
+Rien ne consomme encore cette colonne : `run.sh` la lit et l'ignore, le run reste **séquentiel**.
+C'est le lot suivant du chantier #287 qui s'en sert.
 
 **Le milestone, lui, se choisit** (#204). La phase courante reste le défaut — c'est presque toujours
 le bon — mais plusieurs milestones actifs peuvent porter du travail en même temps, et le run partait
