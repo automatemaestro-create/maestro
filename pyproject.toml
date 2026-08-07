@@ -101,6 +101,14 @@ maestro-sandbox-shim = "maestro.sandbox.shim:main"
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).
 include = ["maestro*"]
 
+[tool.setuptools.package-data]
+# Les playbooks « du code » des rôles (#295) sont des documents Markdown, pas des
+# chaînes Python : ils vivent à côté du code et doivent donc voyager avec lui. Sans
+# cette ligne, un paquet construit (roue) s'installerait sans eux et chaque import de
+# `maestro.agents` lèverait `FileNotFoundError` — un mode de panne qui n'existe pas en
+# installation éditable, donc invisible en développement.
+"maestro.agents" = ["playbooks_defaut/*.md"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

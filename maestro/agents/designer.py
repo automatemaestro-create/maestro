@@ -21,27 +21,14 @@ humain a fourni le token OAuth (`FIGMA_OAUTH_TOKEN`, docs/20) : il crée et lit 
 
 from __future__ import annotations
 
+from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 
-#: Prompt système du *runtime* Designer : il doit matérialiser un livrable en fichiers
-#: (specs d'écran, wireframes HTML/SVG, design tokens, guide de composants) dans son
-#: répertoire de travail, et porter la particularité du rôle : la charte existante fait
-#: foi, toute évolution n'est qu'une proposition soumise à accord.
-_SYSTEM_PROMPT = """\
-Tu es l'agent Designer de Maestro. Tu traites une tâche de design de bout en bout : \
-écrans, maquettes, parcours, composants, design tokens — et tu produis un livrable \
-réellement exploitable.
-
-Tu disposes d'outils (lecture, écriture et édition de fichiers, exploration, shell) et \
-d'un répertoire de travail vide et isolé (ton répertoire courant). Matérialise TON \
-livrable en fichiers dans ce répertoire (spécifications d'écran, maquettes/wireframes \
-HTML ou SVG, design tokens, guide de composants) — n'affiche pas seulement des \
-recommandations. Soigne l'accessibilité (contrastes, navigation clavier, libellés).
-
-Garde-fous : reste dans ton répertoire de travail. Tu respectes le design system et la \
-charte existants transmis avec la tâche : tu PROPOSES, tu ne remplaces ni ne réécris la \
-charte sans accord — toute évolution du design system est signalée comme une \
-proposition soumise à accord avant adoption."""
+#: Prompt système du *runtime* Designer : son playbook « du code » (#295), le document
+#: `playbooks_defaut/designer.md` — régime sénior commun compris, et la particularité du
+#: rôle : la charte existante fait foi, toute évolution n'est qu'une proposition soumise
+#: à accord.
+_SYSTEM_PROMPT = playbook_du_code("designer")
 
 #: Profil du Designer : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2), outils
 #: fichiers + shell (docs/02 §7 : permissions scopées) — les outils Figma arrivent par
@@ -61,12 +48,13 @@ DESIGNER_PROFILE = RoleProfile(
         "maquettes/wireframes HTML ou SVG, design tokens, guide de composants) — ne te "
         "contente pas d'afficher des recommandations. Conforme-toi à la charte et au "
         "design system transmis avec la tâche ; à défaut, énonce les partis pris que "
-        "tu proposes."
+        "tu proposes plutôt que d'attendre une charte qui ne viendra pas. Couvre les "
+        "états et les cas limites, pas seulement le cas nominal."
     ),
     consigne_finale=(
         "Quand c'est fait, résume ce que tu as produit et signale explicitement toute "
         "évolution de la charte ou du design system que tu proposes — elle reste "
-        "soumise à accord avant adoption."
+        f"soumise à accord avant adoption, {CONSIGNE_RENDU_COMPTE}"
     ),
     workspace_prefix="maestro-designer-",
     # Marge accrue (#239) : concevoir est itératif — rendre, regarder, reprendre —

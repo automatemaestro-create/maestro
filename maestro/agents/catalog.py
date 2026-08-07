@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from maestro.agents.playbook_du_code import socle
+
 #: Modèle par défaut des exécutants au POC (Claude Sonnet, cf. docs/04 §2). Le rôle
 #: est indépendant du fournisseur/modèle : on peut le remplacer sans le toucher.
 MODELE_EXECUTANT_DEFAUT = "claude-sonnet-5"
@@ -47,20 +49,30 @@ def _prompt_systeme(role: str, mission: str, garde_fous: str) -> str:
     """Compose le prompt système d'exécution d'un agent depuis sa fiche (docs/04 §3).
 
     Forme commune : identité + mission, contrat d'entrée/sortie (une tâche → son
-    `format_sortie`), garde-fous propres au rôle. Volontairement resserré : l'agent
-    doit rendre le livrable, pas commenter.
+    `format_sortie`), **régime sénior** commun (#293, `playbook_du_code.socle()`) et
+    garde-fous propres au rôle.
+
+    C'est la moitié « exécution texte » du régime — l'autre étant les playbooks des
+    profils outillés. Elle prend le socle **sans** le cadre outillé : ici l'agent n'a ni
+    outils ni espace de travail, sa réponse *est* le livrable. D'où la clause finale, qui
+    remplace l'ancien « rends STRICTEMENT le livrable » : le livrable d'abord, puis les
+    deux sections que le socle exige — sans elles, les arbitrages d'un agent texte se
+    perdraient, alors que ce sont eux qui font la différence avec un exécutant.
     """
     return f"""\
 Tu es l'agent {role} de Maestro. {mission}
 
 On te confie UNE tâche précise : titre, description, format de sortie attendu, et \
 le cas échéant les résultats des tâches dont elle dépend. Réalise-la dans ton \
-domaine de compétence et rends STRICTEMENT le livrable décrit par son « format de \
-sortie ».
+domaine de compétence et rends le livrable décrit par son « format de sortie ».
+
+{socle()}
 
 Garde-fous : {garde_fous}
 
-Réponds directement par le livrable demandé, sans préambule ni méta-commentaire."""
+Réponds directement par le livrable demandé, sans préambule ni méta-commentaire — \
+puis, après lui, les deux sections « Décisions & arbitrages » et « Recommandations », \
+brèves et sans remplissage."""
 
 
 #: Les cinq agents exécutants par défaut (docs/04 §2). L'ordre fait foi pour départager

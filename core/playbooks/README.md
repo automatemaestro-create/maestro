@@ -9,9 +9,12 @@ tickets #76 à #78, exigences EF-24 à EF-26.
   une version par fichier : `v0001.md`, `v0002.md`… (append-only).
 - La **version courante** est la plus haute ; le **retour arrière** republie une
   version passée comme nouvelle version — l'historique reste linéaire et complet.
-- Un agent **sans version stockée** retombe sur son playbook « du code » (les
-  prompts système de `maestro/agents/`) : ce dossier vide reproduit exactement le
-  comportement d'origine.
+- Un agent **sans version stockée** retombe sur son playbook « du code » : ce dossier
+  vide reproduit exactement le comportement d'origine. Depuis #295 ce repli n'est plus
+  une chaîne Python mais le **document Markdown structuré** du rôle, livré avec le
+  paquet (`maestro/agents/playbooks_defaut/<agent>.md`, lu par
+  `maestro.agents.playbook_du_code`) — un tronc commun partagé, `_socle.md`, y porte le
+  régime sénior de tous les rôles.
 - Les **propositions** d'auto-amélioration (#111) vivent à part, dans un
   sous-dossier `<agent>/propositions/` : `p0001.md` (contenu candidat) +
   `p0001.json` (justification), numérotation propre. Elles ne sont **jamais**

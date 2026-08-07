@@ -20,31 +20,15 @@ reste ici que ce qui est propre au rôle.
 
 from __future__ import annotations
 
+from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
-#: Prompt système du *runtime* BDD : il doit matérialiser un livrable en fichiers
-#: (schéma, migrations, requêtes) dans son répertoire de travail, et porter le
-#: garde-fou anti-migration-destructive du rôle. Le shell sert à *valider* le livrable
-#: contre une base jetable (ex. SQLite dans l'espace de travail), jamais une base réelle.
-_SYSTEM_PROMPT = """\
-Tu es l'agent Base de données de Maestro. Tu traites une tâche de base de données de \
-bout en bout : tu conçois le schéma, tu écris les migrations et tu optimises les \
-requêtes, et tu produis un livrable réellement exploitable.
-
-Tu disposes d'outils (lecture, écriture et édition de fichiers, exploration, shell) et \
-d'un répertoire de travail vide et isolé (ton répertoire courant). Matérialise TON \
-livrable en fichiers dans ce répertoire (schéma SQL, fichiers de migration, requêtes) — \
-n'affiche pas seulement du SQL. Garde le résultat minimal, cohérent et applicable.
-
-Garde-fous : reste dans ton répertoire de travail. Ne te connecte JAMAIS à une base \
-réelle ou de production ; si tu veux vérifier ton schéma ou tes migrations, fais-le \
-uniquement contre une base jetable que tu crées dans ce répertoire (ex. un fichier \
-SQLite local). Toute opération destructive (DROP, TRUNCATE, suppression de colonne, \
-perte de données) doit être clairement signalée dans ton compte-rendu comme nécessitant \
-une validation humaine — tu la proposes, tu ne la réputes jamais appliquée en \
-production. Termine par un bref compte-rendu de ce que tu as produit, de la manière de \
-l'appliquer et des points qui requièrent une validation."""
+#: Prompt système du *runtime* BDD : son playbook « du code » (#295), le document
+#: `playbooks_defaut/bdd.md` — régime sénior commun compris, et le garde-fou
+#: anti-migration-destructive du rôle. Le shell y sert à *valider* le livrable contre une
+#: base jetable (ex. SQLite dans l'espace de travail), jamais une base réelle.
+_SYSTEM_PROMPT = playbook_du_code("bdd")
 
 #: Profil du BDD : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2), outils
 #: fichiers + shell (docs/02 §7 : permissions scopées), consignes anti-base-réelle.
@@ -61,11 +45,14 @@ DATABASE_PROFILE = RoleProfile(
         "Écris-y les fichiers du livrable avec tes outils (schéma, migrations, "
         "requêtes) — ne te contente pas d'afficher du SQL. Vise un résultat minimal "
         "mais réellement applicable. Ne cible aucune base réelle : toute vérification "
-        "se fait contre une base jetable créée dans ce répertoire."
+        "se fait contre une base jetable créée dans ce répertoire. Tranche seul les "
+        "choix de modélisation, d'indexation et de migration ; ce qui est irréversible "
+        "se décrit et se remonte, jamais ne s'applique."
     ),
     consigne_finale=(
         "Quand c'est fait, résume en quelques lignes ce que tu as produit, comment "
-        "l'appliquer, et signale toute opération destructive à valider par un humain."
+        "l'appliquer et toute opération destructive à valider par un humain, "
+        f"{CONSIGNE_RENDU_COMPTE}"
     ),
     workspace_prefix="maestro-bdd-",
     # Borne conservatrice (#239) : schémas et migrations tiennent en une douzaine

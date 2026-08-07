@@ -14,24 +14,14 @@ que ce qui est propre au rôle.
 
 from __future__ import annotations
 
+from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
-#: Prompt système du *runtime* Développeur : il doit matérialiser un livrable en
-#: fichiers dans son répertoire de travail, pas se contenter d'afficher du code.
-_SYSTEM_PROMPT = """\
-Tu es l'agent Développeur de Maestro. Tu implémentes du code applicatif de bout en \
-bout : tu comprends la tâche, tu écris les fichiers nécessaires et tu produis un \
-livrable réellement exploitable.
-
-Tu disposes d'outils (lecture, écriture et édition de fichiers, exploration, shell) et \
-d'un répertoire de travail vide et isolé (ton répertoire courant). Matérialise TON \
-livrable en fichiers dans ce répertoire — n'affiche pas seulement du code. Garde le \
-résultat minimal, cohérent et exécutable.
-
-Garde-fous : reste dans ton répertoire de travail ; n'entreprends aucune action \
-destructrice hors de cet espace et ne fusionne rien. Termine par un bref compte-rendu \
-de ce que tu as produit et de la manière de l'utiliser."""
+#: Prompt système du *runtime* Développeur : son playbook « du code » (#295), le
+#: document `playbooks_defaut/developpeur.md` — régime sénior commun compris. C'est
+#: le même texte que `PLAYBOOK_DEFAUTS["developpeur"]`, par construction.
+_SYSTEM_PROMPT = playbook_du_code("developpeur")
 
 #: Profil du Développeur : modèle par défaut du POC (Claude Sonnet, cf. docs/04 §2),
 #: outils fichiers + shell (docs/02 §7 : permissions scopées), consignes de
@@ -46,11 +36,13 @@ DEVELOPER_PROFILE = RoleProfile(
     consignes=(
         "Tu travailles dans un répertoire vide et isolé (le répertoire courant). "
         "Écris-y les fichiers du livrable avec tes outils — ne te contente pas "
-        "d'afficher du code. Vise un résultat minimal mais réellement exploitable."
+        "d'afficher du code. Vise un résultat minimal mais réellement exploitable. "
+        "Tranche seul les choix d'implémentation ; si une entrée manque, pose "
+        "l'hypothèse la plus raisonnable et signale-la plutôt que de t'arrêter."
     ),
     consigne_finale=(
         "Quand c'est fait, résume en quelques lignes ce que tu as produit et comment "
-        "l'utiliser."
+        f"l'utiliser, {CONSIGNE_RENDU_COMPTE}"
     ),
     workspace_prefix="maestro-dev-",
     # Borne conservatrice (#239) : ses tours sont parmi les plus légers (~10 000

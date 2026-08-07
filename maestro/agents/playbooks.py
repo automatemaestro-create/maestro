@@ -10,8 +10,11 @@ Le dépôt est **append-only** : chaque écriture publie la version suivante, la
 version **courante** est la plus haute, et le retour arrière **republie** une
 version passée comme nouvelle version — l'historique reste linéaire, rien n'est
 jamais réécrit. Un agent jamais édité retombe sur son playbook « du code »
-(`PLAYBOOK_DEFAUTS`, les prompts système des profils outillés) : un dépôt vide
-reproduit exactement le comportement actuel, ce qui rend ce lot mergeable seul.
+(`PLAYBOOK_DEFAUTS`) : un dépôt vide reproduit exactement le comportement actuel,
+ce qui rend ce lot mergeable seul. Depuis #295 ce repli n'est plus une chaîne
+Python mais le **document Markdown** du rôle, livré avec le paquet et lu par
+`maestro.agents.playbook_du_code` — même source pour le profil outillé et pour ce
+dépôt, donc plus de version dégradée d'un côté et structurée de l'autre.
 
 Le chargement s'applique aux deux chemins d'exécution — appel texte et runtimes
 outillés — **à chaud** (#78) : l'exécuteur (`LocalExecutor(playbooks=...)`) relit
@@ -41,12 +44,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from maestro.agents.catalog import Agent
-from maestro.agents.database import DATABASE_PROFILE
-from maestro.agents.designer import DESIGNER_PROFILE
-from maestro.agents.developer import DEVELOPER_PROFILE
-from maestro.agents.devops import DEVOPS_PROFILE
-from maestro.agents.qa import QA_PROFILE
+from maestro.agents.catalog import DEFAULT_AGENTS, Agent
+from maestro.agents.playbook_du_code import playbook_du_code
 from maestro.config import Settings, load_settings
 
 #: Nom d'agent admissible comme dossier de stockage : slug sûr, sans séparateur ni
@@ -113,18 +112,22 @@ class PlaybookDefaut:
     contenu: str
 
 
-#: Les playbooks par défaut, indexés par nom d'agent du catalogue : le prompt
-#: système du profil outillé de chaque rôle — les instructions effectives
-#: d'exécution du POC. C'est aussi la liste des agents que l'API accepte d'éditer.
+#: Les playbooks par défaut, indexés par nom d'agent du catalogue : le document
+#: Markdown livré avec le paquet pour chaque rôle (#295,
+#: `maestro.agents.playbook_du_code`) — les instructions effectives d'exécution du
+#: POC. C'est aussi la liste des agents que l'API accepte d'éditer.
+#:
+#: Construit sur le **catalogue** et non sur les profils outillés : c'est ce qui
+#: évite la boucle d'import, chaque module de rôle prenant désormais son
+#: `prompt_systeme` à la même source. L'invariant « playbook du code = prompt
+#: système du profil » tient donc par construction, des deux côtés le même fichier.
+#: Un rôle du catalogue sans document lève à l'import — mieux qu'un playbook
+#: silencieusement absent.
 PLAYBOOK_DEFAUTS: dict[str, PlaybookDefaut] = {
-    profil.nom: PlaybookDefaut(agent=profil.nom, role=profil.role, contenu=profil.prompt_systeme)
-    for profil in (
-        DEVELOPER_PROFILE,
-        DATABASE_PROFILE,
-        DEVOPS_PROFILE,
-        DESIGNER_PROFILE,
-        QA_PROFILE,
+    agent.nom: PlaybookDefaut(
+        agent=agent.nom, role=agent.role, contenu=playbook_du_code(agent.nom)
     )
+    for agent in DEFAULT_AGENTS
 }
 
 
