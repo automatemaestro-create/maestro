@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from maestro.agents.catalog import Agent
-from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
+from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore, PlaybookVersion
 from maestro.controltower.events import EVENEMENT_TACHE_STATUT
 from maestro.controltower.state import EtatExecution
 from maestro.engine.executor import STATUT_ECHEC
@@ -108,13 +108,13 @@ class AnalyseurEchecs:
         """Analyse `echecs` et enregistre une proposition de nouveau playbook pour `agent`.
 
         La base révisée est le playbook **courant** de l'agent (version éditée si elle
-        existe, sinon le prompt du code, #76). Lève `ValueError` si `echecs` est vide (rien
-        à analyser) et `RevisionIndisponible` si le fournisseur échoue ou rend une réponse
-        inexploitable — aucun brouillon n'est alors écrit.
+        existe, sinon son playbook du code, #76). Lève `ValueError` si `echecs` est vide
+        (rien à analyser) et `RevisionIndisponible` si le fournisseur échoue ou rend une
+        réponse inexploitable — aucun brouillon n'est alors écrit.
         """
         if not echecs:
             raise ValueError("aucun échec à analyser : rien à proposer.")
-        base = self._playbooks.prompt_systeme(agent.nom, agent.prompt_systeme)
+        base = self._playbooks.prompt_systeme(agent.nom, _playbook_du_code(agent))
         prompt = _prompt_analyse(agent, run_id, echecs, base)
         try:
             texte = await self._generer(prompt, modele=agent.modele)
@@ -133,6 +133,24 @@ class AnalyseurEchecs:
 
             self._provider = provider_from_settings()
         return await self._provider.generate(prompt, model=modele, system_prompt=_CADRE_ANALYSE)
+
+
+def _playbook_du_code(agent: Agent) -> str:
+    """Le repli de `agent` quand rien n'a été publié : son **document** de playbook (#294).
+
+    `PLAYBOOK_DEFAUTS` (le document Markdown structuré livré avec le paquet, #295) et non
+    `agent.prompt_systeme` (la version condensée que l'exécution texte du catalogue
+    compose) : c'est le premier que la fiche playbook affiche, que l'éditeur de l'UI
+    ouvre, et que la version publiée remplacera. Réviser le second reviendrait à proposer
+    la réécriture d'un texte que personne n'a sous les yeux, puis — à l'application — à
+    remplacer le document structuré par une révision de sa condensation. Une proposition
+    reste un document du **même format** que celui qu'elle remplace (#293).
+
+    Repli sur le prompt du catalogue pour un **agent personnalisé** (#72), qui n'a pas de
+    document livré avec le paquet : là, la condensation *est* son playbook.
+    """
+    defaut = PLAYBOOK_DEFAUTS.get(agent.nom)
+    return defaut.contenu if defaut is not None else agent.prompt_systeme
 
 
 def _prompt_analyse(

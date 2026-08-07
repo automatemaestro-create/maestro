@@ -25,7 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
-from maestro.agents.playbooks import PlaybookStore
+from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.controltower.app import create_app
 from maestro.controltower.auto_amelioration import (
     MARQUEUR_PLAYBOOK,
@@ -149,7 +149,10 @@ def test_proposer_revision_enregistre_un_brouillon_reference_les_echecs(tmp_path
     (appel,) = fournisseur.appels
     assert appel["model"] == "claude-sonnet-5"
     assert "expert en conception de playbooks" in appel["system_prompt"]
-    assert "Playbook du code." in appel["prompt"]  # la base révisée = le playbook courant
+    # La base révisée = le playbook courant, ici le **document** du rôle (#294) : rien
+    # n'ayant été publié, c'est le repli de `PLAYBOOK_DEFAUTS` — celui que la fiche
+    # playbook affiche et que l'application de la proposition remplacera.
+    assert PLAYBOOK_DEFAUTS["developpeur"].contenu in appel["prompt"]
     assert "Outil X en timeout." in appel["prompt"]
 
 
@@ -165,7 +168,54 @@ def test_proposer_revision_part_du_playbook_courant_edite(tmp_path):
 
     (appel,) = fournisseur.appels
     assert "Consignes éditées maison." in appel["prompt"]
-    assert "Playbook du code." not in appel["prompt"]
+    assert PLAYBOOK_DEFAUTS["developpeur"].contenu not in appel["prompt"]
+
+
+def test_proposer_revision_revise_le_document_pas_sa_condensation(tmp_path):
+    """Rien de publié : la base est le **document** du rôle, jamais le prompt du catalogue (#294).
+
+    Les deux existent et diffèrent : `PLAYBOOK_DEFAUTS` sert le document Markdown structuré
+    livré avec le paquet (#295), `Agent.prompt_systeme` la version condensée que compose
+    l'exécution texte. C'est le document que l'éditeur de l'UI ouvre et que l'application
+    de la proposition remplacera — réviser la condensation produirait un brouillon d'un
+    autre format que celui qu'il remplace, et perdrait la structure au premier clic.
+    """
+    depot = PlaybookStore(tmp_path / "pb")
+    fournisseur = FournisseurScript()
+    analyseur = AnalyseurEchecs(provider=fournisseur, playbooks=depot)
+    echecs = echecs_du_run(EtatExecution("run-1", [_echec()]), "developpeur")
+    catalogue = next(a for a in DEFAULT_AGENTS if a.nom == "developpeur")
+
+    asyncio.run(analyseur.proposer_revision(catalogue, "run-1", echecs))
+
+    (appel,) = fournisseur.appels
+    assert PLAYBOOK_DEFAUTS["developpeur"].contenu in appel["prompt"]
+    # Le témoin : la structure du document, absente de la condensation texte.
+    assert "## Garde-fous" in appel["prompt"]
+    assert catalogue.prompt_systeme not in appel["prompt"]
+
+
+def test_proposer_revision_d_un_agent_personnalise_part_de_son_prompt(tmp_path):
+    """Un agent hors catalogue (#72) n'a pas de document livré : sa condensation EST son playbook.
+
+    Le repli de `PLAYBOOK_DEFAUTS` ne le couvre pas — il faut donc que la base retombe sur
+    `Agent.prompt_systeme`, sans quoi l'analyse d'un agent personnalisé lèverait.
+    """
+    depot = PlaybookStore(tmp_path / "pb")
+    fournisseur = FournisseurScript()
+    analyseur = AnalyseurEchecs(provider=fournisseur, playbooks=depot)
+    echecs = echecs_du_run(EtatExecution("run-1", [_echec(agent="redacteur")]), "redacteur")
+
+    asyncio.run(
+        analyseur.proposer_revision(
+            _agent(nom="redacteur", role="Rédacteur", prompt="Playbook maison."),
+            "run-1",
+            echecs,
+        )
+    )
+
+    (appel,) = fournisseur.appels
+    assert "Playbook maison." in appel["prompt"]
 
 
 def test_proposer_revision_sans_echec_refuse(tmp_path):
