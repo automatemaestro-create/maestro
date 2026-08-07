@@ -6,6 +6,13 @@
  * appelle `POST /api/taches/{id}/reassigner`. Les colonnes suivent la machine
  * à états du moteur (docs/03 §3) ; un statut inconnu du front tombe dans une
  * colonne « Autres » plutôt que de disparaître.
+ *
+ * Depuis #248, c'est **la section qui prend la place** : elle absorbe la hauteur
+ * que la page lui laisse (le `<main>` du shell est une colonne flex, #117) et
+ * chaque colonne défile chez elle. Sa largeur, elle, se règle par une **largeur
+ * minimale de colonne** plutôt que par un nombre de colonnes : les colonnes
+ * s'élargissent jusqu'à 2 560 px et se replient en lignes en dessous de la
+ * largeur où elles tiennent toutes de front.
  */
 
 import { useState } from "react";
@@ -50,16 +57,62 @@ export function Kanban({ taches, agents, reassigner }: Props) {
       : []),
   ];
 
+  // #248 — les tâches sont l'objet du tableau de bord : elles en prennent la
+  // place. La borne `max-h-96` de #191 protégeait la densité d'un écran qui
+  // portait encore cinq panneaux de plein format ; ceux-ci sont partis avec le
+  // même lot, et la borne est restée — sur un grand écran les tâches tenaient
+  // dans le tiers supérieur pendant que le reste était vide.
+  //
+  // L'étirement est une **chaîne** : chaque maillon doit pouvoir rétrécir sous
+  // son contenu (`min-h-0`, faute de quoi le `min-height:auto` d'un élément
+  // flex l'en empêche) et prendre le reste (`flex-1`). Elle se pose donc en
+  // entier ou pas du tout — un maillon manquant et le débordement remonte à la
+  // zone de contenu au lieu de rester dans la colonne. Elle commence plus haut
+  // que ce fichier : c'est le `<body>` (layout) qui pose la hauteur définie,
+  // sans laquelle il n'y aurait rien à prendre.
+  //
+  // Pas de tâche, pas d'étirement : cinq colonnes « Aucune tâche. » n'ont pas
+  // besoin de tout l'écran, et sans hauteur à partager la chaîne n'aurait rien
+  // à distribuer.
+  const etire = taches.length > 0;
+  const maillon = etire ? "min-h-0 flex-1" : "";
+
   return (
-    <section data-guide="kanban" aria-label="Tâches (Kanban)">
+    <section
+      data-guide="kanban"
+      aria-label="Tâches (Kanban)"
+      // Plancher à `min-h-96` : sur une fenêtre courte, le tableau garde les
+      // 24 rem qu'il avait avant ce lot et c'est la zone de contenu qui
+      // défile, plutôt qu'un tableau écrasé à quelques pixels.
+      className={`flex flex-col ${etire ? "min-h-96 flex-1" : ""}`}
+    >
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
         Tâches
       </h2>
-      <div className="grid auto-cols-fr grid-flow-row gap-3 md:grid-flow-col">
+      {/* Une largeur MINIMALE par colonne, pas un nombre de colonnes (#248) :
+          au-delà, les colonnes s'élargissent jusqu'aux 2 560 px d'un grand
+          écran ; en dessous, elles se replient en lignes au lieu d'être
+          comprimées — l'ancien `md:grid-flow-col` les tassait toutes de front
+          dès 768 px, où une carte n'avait plus que ~120 px.
+          `auto-fit` et non `auto-fill` : les pistes que personne n'occupe se
+          referment, sinon les colonnes réelles rétréciraient au profit de
+          pistes vides. Aucune colonne rendue ne disparaît pour autant — elles
+          portent toutes un élément, même sans tâche.
+          `min(…,100%)` : sous 11,5 rem de large (mobile étroit), la piste suit
+          le conteneur au lieu de le faire déborder.
+          `minmax(11rem,1fr)` en hauteur de ligne : quand ça se replie, les
+          lignes se partagent la hauteur — mais jamais en dessous de 11 rem,
+          sans quoi elles se l'arrachent. Mesuré sur un mobile de 390 px, où
+          les cinq colonnes s'empilent : 20 px de zone utile par colonne avec
+          un simple `1fr`, 132 px avec ce plancher (et c'est la zone de contenu
+          qui défile, ce qui est le bon compromis). */}
+      <div
+        className={`grid auto-rows-[minmax(11rem,1fr)] grid-cols-[repeat(auto-fit,minmax(min(11.5rem,100%),1fr))] gap-3 ${maillon}`}
+      >
         {colonnes.map((colonne) => (
           <div
             key={colonne.titre}
-            className="min-w-0 rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-950"
+            className="flex min-h-0 min-w-0 flex-col rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-950"
           >
             <h3 className="mb-2 flex items-center gap-2 px-1 text-sm font-medium">
               <span className={`size-2 rounded-full ${colonne.accent}`} />
@@ -68,10 +121,10 @@ export function Kanban({ taches, agents, reassigner }: Props) {
                 {colonne.taches.length}
               </span>
             </h3>
-            {/* Hauteur bornée (#191) : une colonne bien remplie déroule
-                chez elle plutôt que d'étirer la page — le tableau de bord
-                garde sa densité quel que soit le volume du run. */}
-            <div className="max-h-96 space-y-2 overflow-y-auto">
+            {/* Chaque colonne défile chez elle (#191) plutôt que d'étirer la
+                page — mais dans la hauteur que la fenêtre lui donne (#248) et
+                non plus dans les 24 rem d'une borne fixe. */}
+            <div className={`space-y-2 overflow-y-auto ${maillon}`}>
               {colonne.taches.map((tache) => (
                 <CarteTache
                   key={tache.id}

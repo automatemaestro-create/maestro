@@ -15,6 +15,15 @@
  * depuis #249 : il tient en plein format au Journal, ne reste ici qu'en aperçu,
  * et son lien s'est allumé de lui-même le jour où la page est entrée au menu.
  *
+ * **La hauteur va aux tâches** (#248). Le `<main>` du shell est une colonne flex
+ * qui occupe au moins la fenêtre (#117) et ces sections en sont les enfants
+ * directs — le fragment ci-dessous ne crée aucun nœud. Trois d'entre elles
+ * prennent la hauteur de leur contenu ; le Kanban, lui, prend tout le reste et
+ * fait défiler chaque colonne chez elle. C'est là toute la mise en page : rien
+ * à répartir ici, le seul contrat est que ce composant reste **le seul** à
+ * s'étirer — deux enfants extensibles se partageraient la place et aucun des
+ * deux n'aurait la sienne.
+ *
  * L'état vient du contexte partagé du shell (#117) : ce lot réorganise
  * l'affichage, la mécanique temps réel (WebSocket, rechargements coalescés) est
  * inchangée.
