@@ -333,11 +333,17 @@ def _spawn_stub(depot: Depot, corps: str = "") -> str:
     return str(chemin)
 
 
+def _groupe(parent: str, rang: int) -> str:
+    """Le groupe de dépendance posé par queue.sh (#288) : « - » hors lot, « <parent>.<n> » sinon."""
+    return "-" if parent == "-" else f"{parent}.{rang}"
+
+
 def _plan(depot: Depot, lignes: list[tuple[int, int, str, str]]) -> str:
     """Écrit un plan figé (le TSV que queue.sh produit) et renvoie son chemin."""
     chemin = depot.racine / "plan.tsv"
-    contenu = "# rang\tiid\tparent\tprio\ttitre\n" + "".join(
-        f"{rang}\t{iid}\t{parent}\t{prio}\tTicket {iid}\n" for rang, iid, parent, prio in lignes
+    contenu = "# rang\tiid\tparent\tprio\tgroupe\ttitre\n" + "".join(
+        f"{rang}\t{iid}\t{parent}\t{prio}\t{_groupe(parent, rang)}\tTicket {iid}\n"
+        for rang, iid, parent, prio in lignes
     )
     chemin.write_text(contenu, encoding="utf-8", newline="\n")
     return str(chemin)
@@ -1775,8 +1781,9 @@ def _run_dir(
     dossier = depot.racine / ".maestro/orchestrate" / run_id
     dossier.mkdir(parents=True, exist_ok=True)
     (dossier / "plan.tsv").write_text(
-        "# rang\tiid\tparent\tprio\ttitre\n"
-        + "".join(f"{r}\t{i}\t{p}\t{prio}\tTicket {i}\n" for r, i, p, prio in plan),
+        "# rang\tiid\tparent\tprio\tgroupe\ttitre\n"
+        + "".join(f"{r}\t{i}\t{p}\t{prio}\t{_groupe(p, r)}\tTicket {i}\n"
+                  for r, i, p, prio in plan),
         encoding="utf-8",
         newline="\n",
     )
