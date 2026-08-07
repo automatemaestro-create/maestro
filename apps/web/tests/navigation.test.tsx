@@ -32,6 +32,7 @@ describe("le menu (lib/navigation)", () => {
       "Chat",
       "Coûts & analytics",
       "Validations",
+      "Journal",
       "Paramètres",
     ]);
   });
@@ -108,10 +109,17 @@ describe("les renvois par libellé (entreeParLibelle)", () => {
     expect(entreeParLibelle("Coûts & analytics")?.href).toBe("/couts");
   });
 
-  it("reste muet sur une page qui n'existe pas encore", () => {
-    // Le Journal (chantier « Visibilité ») : le renvoi ne s'allumera que le
-    // jour où la page entre au menu, sans lien mort en attendant.
-    expect(entreeParLibelle("Journal")).toBeUndefined();
+  it("allume un renvoi dès que sa page entre au menu", () => {
+    // Le Journal est la démonstration du mécanisme : son renvoi était écrit
+    // dans `FilActivite` dès #191 et resté éteint faute de page, jusqu'à ce
+    // que #249 ajoute l'entrée — sans une ligne de plus dans le composant.
+    expect(entreeParLibelle("Journal")?.href).toBe("/journal");
+  });
+
+  it("reste muet sur une page qui n'existe pas", () => {
+    // Le pendant : un renvoi vers une page absente du menu ne s'allume pas,
+    // plutôt que de fabriquer un lien mort.
+    expect(entreeParLibelle("Rapports")).toBeUndefined();
   });
 
   it("exige le libellé exact, sans à-peu-près", () => {

@@ -10,6 +10,7 @@ import {
   IconeAgents,
   IconeChat,
   IconeCouts,
+  IconeJournal,
   IconeParametres,
   IconeProjets,
   IconeTableauDeBord,
@@ -38,6 +39,12 @@ export type EntreeMenu = {
  * projet (Phase 7). Il précède donc les écrans qui s'y rapportent, plutôt que
  * de se ranger parmi les réglages — déclarer où Maestro travaille n'est pas un
  * paramètre du poste.
+ *
+ * « Journal » (#249) ferme le groupe de ce qu'on **observe** (coûts,
+ * validations, journal), juste avant les réglages : le fil d'activité y tient
+ * en plein format, là où le tableau de bord n'en garde qu'un aperçu. Son entrée
+ * ici est ce qui **allume** le renvoi de cet aperçu — `entreeParLibelle`
+ * (ci-dessous) le résout par le menu, `FilActivite` n'a rien à savoir du chemin.
  */
 export const MENU: EntreeMenu[] = [
   { href: "/", libelle: "Tableau de bord", Icone: IconeTableauDeBord },
@@ -46,6 +53,7 @@ export const MENU: EntreeMenu[] = [
   { href: "/chat", libelle: "Chat", Icone: IconeChat },
   { href: "/couts", libelle: "Coûts & analytics", Icone: IconeCouts },
   { href: "/validations", libelle: "Validations", Icone: IconeValidations },
+  { href: "/journal", libelle: "Journal", Icone: IconeJournal },
   { href: "/parametres", libelle: "Paramètres", Icone: IconeParametres },
 ];
 
@@ -69,8 +77,10 @@ export function entreeCourante(chemin: string): EntreeMenu | undefined {
  * la page de chaque panneau qu'il a rangé. Résoudre ces renvois par le menu
  * plutôt que par un chemin en dur donne deux propriétés : ils suivent d'eux-mêmes
  * une réorganisation — « Agents » change de chemin en #190 — et un renvoi vers
- * une page **pas encore créée** (le Journal du chantier « Visibilité ») ne
- * s'allume que le jour où elle entre au menu, sans lien mort en attendant.
+ * une page **pas encore créée** ne s'allume que le jour où elle entre au menu,
+ * sans lien mort en attendant. Le Journal en a fait la démonstration : écrit
+ * dans `FilActivite` dès #191, son renvoi est resté éteint jusqu'à ce que #249
+ * ajoute l'entrée ci-dessus — sans une ligne de plus dans le composant.
  */
 export function entreeParLibelle(libelle: string): EntreeMenu | undefined {
   return MENU.find((entree) => entree.libelle === libelle);

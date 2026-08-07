@@ -46,7 +46,14 @@ import {
 // Déclarés ici plutôt que dans chaque fichier : les hooks réseau ne sont jamais
 // réels en test. Les mocks lisent l'état à CHAQUE rendu (et non une fois pour
 // toutes), pour qu'un `poser…` suivi d'un nouveau rendu soit vu.
-vi.mock("@/lib/useControlTower", () => ({
+//
+// Mock **partiel** (#249) : seul le hook est remplacé, le reste du module passe
+// tel quel. Un module entièrement substitué perd ses autres exports — la page
+// Journal lit `MAX_EVENEMENTS` pour dire combien d'événements elle garde, et
+// tomberait ici sur « No "MAX_EVENEMENTS" export is defined on the mock » sans
+// que rien, ni au build ni au lint, ne l'ait laissé prévoir.
+vi.mock("@/lib/useControlTower", async (original) => ({
+  ...(await original<Record<string, unknown>>()),
   useControlTower: () => etatGlobalCourant(),
 }));
 
