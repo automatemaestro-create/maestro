@@ -30,6 +30,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import re
 import shutil
 import subprocess
 import textwrap
@@ -1603,7 +1604,18 @@ def test_la_checklist_porte_les_verdicts_deja_rendus_et_le_cumul_du_run(depot: D
 def test_l_attente_et_la_reprise_sont_des_etats_de_la_vue(depot: Depot) -> None:
     """Une limite d'usage se compte en heures : l'écran ne doit ni paraître figé, ni laisser croire
     que la session rouverte est un ticket qui démarre. Et le chrono suit le TICKET — sans quoi il
-    repartirait de zéro à chaque tentative, alors que c'est la durée du ticket qu'on consigne."""
+    repartirait de zéro à chaque tentative, alors que c'est la durée du ticket qu'on consigne.
+
+    Le palier est de TROIS secondes et non d'une (#292). Depuis #290 la session ne dessine plus,
+    elle *publie* son état et le pilote l'échantillonne ; depuis #291 le délai annoncé est ce qui
+    reste du rendez-vous, donc `fin - maintenant` — deux horloges lues à quelques forks d'écart,
+    ce qui coûte
+    sous MSYS de quoi franchir une seconde entière. À un palier d'une seconde, l'attente retombait à
+    « 0s » : elle était publiée puis écrasée par la reprise dans le même souffle, et aucune frame ne
+    pouvait tomber dessus. Ce n'était pas la vue qui manquait l'état, c'était le décor qui n'en
+    créait plus. Trois secondes laissent une quinzaine de tours de pilote — l'attente redevient ce
+    qu'elle est en production, un état qui dure.
+    """
     depot.ticket(130, "Ticket interrompu")
     depot.mr("feat/130-ticket-interrompu", "opened")
     gabarit = _statut_json("%s", "En revue")
@@ -1621,11 +1633,12 @@ def test_l_attente_et_la_reprise_sont_des_etats_de_la_vue(depot: Depot) -> None:
     console = _console(depot)
     plan = _plan(depot, [(1, 130, "-", "moyenne")])
     r = depot.lance("run.sh", "--plan", plan, "--run-id", "attente",
-                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "1",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "3",
                          "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
     assert r.returncode == 0, r.stdout + r.stderr
     vue = console.read_text(encoding="utf-8", errors="replace")
     assert "en attente de la fin de la limite d'usage" in vue, "l'attente est un état, pas un gel"
+    assert "=  1. #130" in vue, "et son marqueur est fixe : une session en pause ne tourne pas"
     assert "reprise 1/3" in vue, "et la reprise en est un autre"
 
 
@@ -3815,3 +3828,641 @@ def test_maestro_sync_main_a_zero_eteint_l_etape(depot: Depot) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     assert _git(depot, "rev-parse", "refs/heads/main") == avant
     assert "main mis à jour" not in r.stdout
+
+
+# =====================================================================================
+# L'orchestration concurrente — la couverture des lots 1 à 4 (#292, parent #287)
+# =====================================================================================
+#
+# Lot final du chantier : il ne pouvait s'écrire qu'une fois #288 à #291 livrés. Deux morceaux de la
+# couverture sont restés dans leur lot, pour la seule raison qui vaille — ils ne se simulent pas :
+# l'arrêt de N sessions (#291, de vrais processus qu'on tue) et l'attente partagée d'une limite
+# d'usage (#291, deux sessions qui doivent se ranger derrière le même rendez-vous). Tout le reste
+# est ici.
+#
+# Le décor est celui de tout ce fichier — ni réseau, ni quota, ni écriture GitLab — avec une
+# contrainte de plus, propre à la concurrence : **ce qui doit être simultané l'est par une BARRIÈRE,
+# jamais par un `sleep`**. Chaque session bouchon signale son arrivée puis attend celle des autres.
+# Sans cela, « deux tickets en vol » serait une course que la charge de la machine tranche, et le
+# test dirait tantôt le code, tantôt l'ordonnancement du système.
+
+
+def _plan_groupes(depot: Depot, lignes: list[tuple[int, int, str, str, str]]) -> str:
+    """Un plan figé dont on choisit le GROUPE de chaque ligne — ce que `_plan` ne permet pas.
+
+    `_plan` dérive le groupe du rang (« <parent>.<rang> »), ce qui donne à chaque lot le sien et
+    rend tout parent séquentiel : parfait pour les tests d'avant #288, inutilisable pour éprouver
+    l'indépendance. Ici la colonne est posée à la main, exactement comme `queue.sh` la calcule.
+    """
+    chemin = depot.racine / "plan-groupes.tsv"
+    chemin.write_text(
+        "# rang\tiid\tparent\tprio\tgroupe\ttitre\n"
+        + "".join(f"{rang}\t{iid}\t{parent}\t{prio}\t{groupe}\tTicket {iid}\n"
+                  for rang, iid, parent, prio, groupe in lignes),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return str(chemin)
+
+
+def _stub_barriere(depot: Depot, iids: tuple[int, ...], *, apres: str = "") -> str:
+    """Un bouchon `claude` qui livre son ticket, mais pas avant que TOUS soient arrivés.
+
+    C'est ce qui rend « N en vol en même temps » observable sans dépendre d'un `sleep` : la première
+    session ne peut pas se solder avant que la dernière soit partie, donc le pilote a forcément eu
+    ses N créneaux occupés. Le bouchon note aussi son passage (`vus.txt`) et le nombre maximal
+    d'arrivées simultanées (`pic.txt`), les deux mesures dont les tests d'ordonnancement se servent.
+    """
+    attente = " ".join(f'[ -e "$MAESTRO_FIXTURES/arrivee-{i}" ] &&' for i in iids)
+    gabarit = _statut_json("$iid", "En revue")
+    # « ticket GitLab #N » au premier tour, « le ticket #N » à la reprise : les deux formes
+    # comptent, sans quoi une session rouverte n'écrirait son verdict sous aucun nom (et le test
+    # dirait, à tort, que la reprise n'a rien livré).
+    return _claude_stub(depot, f"""
+        iid="$(printf '%s\\n' "$@" | grep -oE 'ticket (GitLab )?#[0-9]+' | head -1 |
+               grep -oE '[0-9]+$')"
+        printf '%s\\n' "$iid" >> "$MAESTRO_FIXTURES/vus.txt"
+        : > "$MAESTRO_FIXTURES/arrivee-$iid"
+        # Le pic de simultanéité, mesuré par les sessions elles-mêmes : un compteur incrémenté à
+        # l'entrée, décrémenté à la sortie, dont on garde le maximum. C'est la seule façon de
+        # constater qu'on N'A JAMAIS eu deux tickets liés en vol — une lecture d'après coup ne
+        # distingue pas « jamais ensemble » de « ensemble mais vite ».
+        n=$(( $(cat "$MAESTRO_FIXTURES/vol" 2>/dev/null || echo 0) + 1 ))
+        printf '%s' "$n" > "$MAESTRO_FIXTURES/vol"
+        [ "$n" -gt "$(cat "$MAESTRO_FIXTURES/pic.txt" 2>/dev/null || echo 0)" ] &&
+          printf '%s' "$n" > "$MAESTRO_FIXTURES/pic.txt"
+        for _ in $(seq 1 300); do
+          {attente} break
+          sleep 0.05
+        done
+        {apres}
+        printf '%s' '{gabarit}' > "$MAESTRO_FIXTURES/owner-$iid.json"
+        printf '%s' "$(( $(cat "$MAESTRO_FIXTURES/vol") - 1 ))" > "$MAESTRO_FIXTURES/vol"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}\\n'
+        exit 0
+    """)
+
+
+def _livrables(depot: Depot, iids: tuple[int, ...]) -> None:
+    """Déclare des tickets libres dont la MR est déjà ouverte — de quoi rendre un verdict « OK »."""
+    for iid in iids:
+        depot.ticket(iid, f"Ticket {iid}")
+        depot.mr(f"feat/{iid}-ticket-{iid}", "opened")
+
+
+def _resume(run_dir: Path) -> list[list[str]]:
+    return [ligne.split("\t")
+            for ligne in (run_dir / "resume.tsv").read_text(encoding="utf-8").splitlines()
+            if ligne and not ligne.startswith("#")]
+
+
+# --- Lot 1 : le plan déclare ce qui est indépendant (#288) ---------------------------------------
+
+
+def _parent_a_vagues(depot: Depot, marques: list[bool]) -> None:
+    """Un parent dont les lots portent (ou non) le marqueur « (parallèle) », dans cet ordre."""
+    lots = [(501 + i, f"Lot {i + 1}", p) for i, p in enumerate(marques)]
+    depot.milestone("Phase X")
+    depot.ticket(500, "Parent de suivi", lots=lots)
+    for iid, titre, _ in lots:
+        depot.ticket(iid, titre, parent=500)
+    depot.publie()
+
+
+def _groupes_du_plan(sortie: str) -> dict[str, str]:
+    return {ligne[1]: ligne[4] for ligne in _lignes_du_plan(sortie)}
+
+
+def test_une_suite_de_lots_marques_forme_une_seule_vague(depot: Depot) -> None:
+    """Le cœur de #288 : le marqueur de la checklist cesse d'être jeté après le tri.
+
+    Deux lots marqués qui se suivent tombent dans la MÊME vague, donc dans le même groupe — c'est
+    exactement ce que le run pourra mener de front. Le lot non marqué qui les précède et celui qui
+    les suit sont chacun leur propre barrière.
+    """
+    _parent_a_vagues(depot, [False, True, True, False])
+    groupes = _groupes_du_plan(depot.lance("queue.sh").stdout)
+    assert groupes["502"] == groupes["503"], "deux lots marqués consécutifs partent ensemble"
+    assert len({groupes["501"], groupes["502"], groupes["504"]}) == 3, (
+        "un lot non marqué est une barrière : ni avec ce qui précède, ni avec ce qui suit"
+    )
+
+
+def test_un_seul_lot_marque_dans_une_chaine_reste_seul_dans_sa_vague(depot: Depot) -> None:
+    """Le cas que la règle du parent, prise à la lettre, rendrait faux.
+
+    « Deux lots du même parent tous deux marqués » suppose DEUX marqués. Un seul lot marqué au
+    milieu de lots qui ne le sont pas n'est indépendant de personne : il forme sa propre vague, et
+    le run reste séquentiel. Se tromper ici lancerait un lot par-dessus un prédécesseur non terminé.
+    """
+    _parent_a_vagues(depot, [False, True, False])
+    groupes = _groupes_du_plan(depot.lance("queue.sh").stdout)
+    assert len(set(groupes.values())) == 3, f"trois vagues distinctes attendues — {groupes}"
+
+
+def test_les_tickets_hors_lot_partagent_le_groupe_neutre(depot: Depot) -> None:
+    """L'autre moitié de la règle : `parent` ne les départage pas (ils portent tous « - »), c'est
+    leur groupe commun qui les rend indépendants entre eux."""
+    depot.milestone("Phase X")
+    for iid in (601, 602, 603):
+        depot.ticket(iid, f"Isolé {iid}")
+    depot.publie()
+    groupes = _groupes_du_plan(depot.lance("queue.sh").stdout)
+    assert set(groupes.values()) == {"-"}, f"un seul groupe pour tout le hors-lot — {groupes}"
+
+
+def test_la_vague_se_compte_sur_toute_la_checklist_lots_livres_compris(depot: Depot) -> None:
+    """Un lot déjà livré ne disparaît pas de la chaîne : il continue de faire barrière.
+
+    Sans cela le groupe d'un lot dépendrait de ce qui reste à faire au moment du calcul — deux runs
+    successifs sur le même parent ne diraient pas la même chose, et le second pourrait paralléliser
+    ce que le premier tenait pour séquentiel.
+    """
+    lots = [(501, "Lot 1", False), (502, "Lot 2", True), (503, "Lot 3", True)]
+    depot.milestone("Phase X")
+    depot.ticket(500, "Parent de suivi", lots=lots)
+    depot.ticket(501, "Lot 1", parent=500, statut="Terminé")
+    depot.ticket(502, "Lot 2", parent=500)
+    depot.ticket(503, "Lot 3", parent=500)
+    depot.publie()
+    groupes = _groupes_du_plan(depot.lance("queue.sh").stdout)
+    assert "501" not in groupes, "le lot livré n'est plus à traiter"
+    assert groupes["502"] == groupes["503"] == "500.2", (
+        f"la vague reste comptée depuis le premier lot de la checklist — {groupes}"
+    )
+
+
+def test_le_check_rend_les_groupes_lisibles(depot: Depot) -> None:
+    """Une colonne de plus dans le plan ne dit pas d'elle-même ce qu'elle a conclu."""
+    _parent_a_vagues(depot, [False, True, True])
+    r = depot.lance("queue.sh", "--check")
+    assert "groupes de dépendance" in r.stderr
+    assert "(parallélisables)" in r.stderr, "un groupe à plusieurs membres est nommé comme tel"
+    assert "#502, #503" in r.stderr, "et ses membres listés dans l'ordre du plan"
+
+
+# --- Lot 2 : l'ordonnanceur (#289) ----------------------------------------------------------------
+
+
+def test_deux_tickets_independants_partent_vraiment_ensemble(depot: Depot) -> None:
+    """Le critère central de #289, mesuré par les sessions elles-mêmes.
+
+    La barrière ne peut se lever que si les deux sessions sont vivantes en même temps : un run
+    séquentiel s'y bloquerait jusqu'au timeout du bouchon. Le pic mesuré vaut donc 2, et un pic de 1
+    voudrait dire que la concurrence n'a pas eu lieu — pas qu'elle est passée inaperçue.
+    """
+    _livrables(depot, (130, 131))
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "duo", "--concurrence", "2",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, (130, 131))})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "2", (
+        "les deux sessions doivent avoir été en vol au même instant"
+    )
+
+
+def test_jamais_deux_lots_du_meme_parent_hors_vague_en_vol(depot: Depot) -> None:
+    """La garde de l'ordonnanceur : le plan a déclaré ces deux lots dépendants, `--concurrence 2` ne
+    les rend pas indépendants pour autant.
+
+    Le bouchon n'attend personne — il livre tout de suite —, sinon un run correct se bloquerait sur
+    sa propre barrière. Ce qu'on lit est le pic de simultanéité : il doit rester à 1.
+    """
+    _livrables(depot, (130, 131))
+    plan = _plan_groupes(depot, [(1, 130, "500", "haute", "500.1"),
+                                 (2, 131, "500", "haute", "500.2")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "barriere", "--concurrence", "2",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "1", (
+        "deux vagues d'un même parent ne partent jamais ensemble, quelle que soit la concurrence"
+    )
+    assert [ligne[0] for ligne in _resume(depot.racine / ".maestro/orchestrate/barriere")] == \
+        ["130", "131"], "et l'ordre du plan est respecté"
+
+
+def test_un_creneau_libere_va_au_prochain_ELIGIBLE_et_non_au_suivant(depot: Depot) -> None:
+    """Le balayage complet du plan, et non la ligne d'après.
+
+    Le plan est : un lot (500.1), son successeur bloqué (500.2), puis un ticket isolé. Avec deux
+    créneaux, le second doit aller à l'ISOLÉ — la ligne suivante, elle, est barrée. Un ordonnanceur
+    qui se contenterait de « la prochaine ligne » laisserait un créneau vide tout le run.
+    """
+    _livrables(depot, (130, 131, 132))
+    plan = _plan_groupes(depot, [(1, 130, "500", "haute", "500.1"),
+                                 (2, 131, "500", "haute", "500.2"),
+                                 (3, 132, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "eligible", "--concurrence", "2",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, (130, 132))})
+    assert r.returncode == 0, r.stdout + r.stderr
+    vus = (depot.fixtures / "vus.txt").read_text(encoding="utf-8").split()
+    assert vus[:2] == ["130", "132"] or vus[:2] == ["132", "130"], (
+        f"le second créneau saute le lot barré pour prendre l'isolé — vu {vus}"
+    )
+    assert vus[2] == "131", "et le lot barré ne part qu'une fois son créneau libéré"
+
+
+def test_le_bilan_n_a_aucune_ligne_tronquee_sous_n_verdicts(depot: Depot) -> None:
+    """`resume.tsv` est écrit par le PILOTE seul — c'est ce qui règle la question par construction.
+
+    Le test ne vérifie pas l'atomicité d'un `printf >>` (elle dépend de la plateforme, MSYS émulant
+    O_APPEND) : il vérifie l'invariant qui la rend inutile — une ligne par ticket, six colonnes
+    chacune, aucun iid en double, même quand quatre verdicts tombent en même temps.
+    """
+    iids = (130, 131, 132, 133)
+    _livrables(depot, iids)
+    plan = _plan_groupes(depot, [(r, i, "-", "haute", "-") for r, i in enumerate(iids, 1)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "bilan", "--concurrence", "4",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, iids)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    lignes = _resume(depot.racine / ".maestro/orchestrate/bilan")
+    assert [len(ligne) for ligne in lignes] == [6] * 4, f"six colonnes par ligne — {lignes}"
+    assert sorted(ligne[0] for ligne in lignes) == [str(i) for i in iids]
+    assert {ligne[1] for ligne in lignes} == {"OK"}
+
+
+def test_max_borne_les_tickets_tentes_meme_a_plusieurs_creneaux(depot: Depot) -> None:
+    """`--max` compte les tickets TENTÉS, et cela ne change pas parce qu'ils partent par deux.
+
+    Le plafond est vérifié avant CHAQUE lancement, pas une fois par tour de boucle : sans quoi un
+    run à quatre créneaux dépasserait son plafond de trois tickets.
+    """
+    iids = (130, 131, 132, 133)
+    _livrables(depot, iids)
+    plan = _plan_groupes(depot, [(r, i, "-", "haute", "-") for r, i in enumerate(iids, 1)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "max-n", "--concurrence", "4",
+                    "--max", "2", env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, (130, 131))})
+    assert r.returncode == 0, r.stdout + r.stderr
+    lignes = _resume(depot.racine / ".maestro/orchestrate/max-n")
+    assert sorted(ligne[0] for ligne in lignes) == ["130", "131"], (
+        f"deux tickets tentés, pas un de plus — {lignes}"
+    )
+    assert "Plafond --max 2 atteint" in r.stdout
+
+
+def test_la_cascade_d_echec_saute_ce_qui_n_est_pas_parti_et_laisse_finir_ce_qui_l_est(
+    depot: Depot,
+) -> None:
+    """La cascade se décide à la FIN d'un ticket, plus à son tour de boucle (#289).
+
+    Deux lots de la même vague partent ensemble ; le premier échoue. Le second est déjà en vol : le
+    plan l'avait déclaré indépendant, on ne le rappelle pas. Le troisième, d'une vague suivante,
+    n'est pas parti : il est sauté au moment de le lancer.
+    """
+    _livrables(depot, (131, 132))
+    depot.ticket(130, "Ticket 130")  # sans MR : la session ne clôt rien, verdict ECHEC
+    plan = _plan_groupes(depot, [(1, 130, "500", "haute", "500.1"),
+                                 (2, 131, "500", "haute", "500.1"),
+                                 (3, 132, "500", "haute", "500.2")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "cascade", "--concurrence", "2",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, (130, 131))})
+    assert r.returncode in (0, 1), r.stdout + r.stderr
+    verdicts = {ligne[0]: ligne[1]
+                for ligne in _resume(depot.racine / ".maestro/orchestrate/cascade")}
+    assert verdicts["130"] == "ECHEC"
+    assert verdicts["131"] == "OK", "un lot déjà en vol n'est pas rappelé"
+    assert verdicts["132"] == "SAUTE", "un lot pas encore parti l'est"
+    assert "lot précédent de #500 a échoué" in r.stdout
+
+
+def test_sans_l_option_le_run_reste_sequentiel_au_bit_pres(depot: Depot) -> None:
+    """Le défaut est 1, et c'est ce qui rend tout le chantier mergeable : deux tickets hors lot sont
+    indépendants par le plan, et pourtant rien ne part à deux."""
+    _livrables(depot, (130, 131))
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "seq",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "1"
+    assert "tickets en vol" not in r.stdout, "aucun régime particulier à annoncer"
+
+
+def test_une_concurrence_illisible_est_refusee_avant_le_premier_ticket(depot: Depot) -> None:
+    """Même raison que l'effort et le budget : un réglage qu'on ne comprend pas ne doit pas se
+    découvrir au premier ticket. Et `0` n'y vaut pas « pas de limite » — ce serait zéro créneau."""
+    _livrables(depot, (130,))
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-")])
+    for valeur in ("0", "deux", "-1"):
+        r = depot.lance("run.sh", "--plan", plan, "--run-id", "refus", "--concurrence", valeur,
+                        env={"MAESTRO_CLAUDE_BIN": _claude_stub(depot, "exit 1\n")})
+        assert r.returncode == 2, f"« {valeur} » aurait dû être refusé — {r.stdout}{r.stderr}"
+        assert "concurrence invalide" in r.stderr
+    assert not (depot.racine / ".maestro/orchestrate/refus").exists(), "rien n'a été entamé"
+
+
+def test_un_plan_d_avant_la_colonne_groupe_retombe_en_sequentiel_en_le_disant(
+    depot: Depot,
+) -> None:
+    """Un plan à cinq colonnes, rejoué par `--resume` : rien n'y dit ce qui est indépendant.
+
+    Deviner serait pire que se taire — le run retombe à un créneau et l'annonce, plutôt que de
+    paralléliser sur une colonne qu'il aurait lue de travers.
+    """
+    _livrables(depot, (130, 131))
+    chemin = depot.racine / "plan-ancien.tsv"
+    chemin.write_text(
+        "# rang\tiid\tparent\tprio\ttitre\n1\t130\t-\thaute\tTicket 130\n"
+        "2\t131\t-\thaute\tTicket 131\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    r = depot.lance("run.sh", "--plan", str(chemin), "--run-id", "ancien", "--concurrence", "2",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "antérieur à la colonne « groupe »" in r.stdout
+    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "1"
+
+
+# --- Lot 3 : la vue rend N tickets en vol, et c'est le pilote qui dessine (#290) ------------------
+
+REPOSITIONNEMENT = re.compile(r"\x1b\[(\d+)F")
+
+
+def _frames(vue: str) -> list[str]:
+    """Découpe la console aux repositionnements et rend les morceaux écrits entre eux.
+
+    Un « ESC[<n>F » annonce de combien de rangées on remonte pour redessiner — donc la hauteur de la
+    frame PRÉCÉDENTE, moins un (le curseur reste sur sa dernière ligne, #284). C'est cette relation
+    entre l'annonce et ce qui a réellement été écrit que les tests d'ici vérifient : fausse, le bloc
+    se dédouble ou se mange.
+    """
+    return REPOSITIONNEMENT.split(vue)[::2]
+
+
+def _hauteur_de_frame(morceau: str) -> int:
+    """Le nombre de rangées qu'une frame a écrites, compté sur « ESC[K ».
+
+    Chaque ligne du bloc se termine par « efface jusqu'au bout » — et rien d'autre n'en porte : ni
+    l'en-tête d'un ticket, ni un verdict, ni les lignes permanentes qu'un effacement a laissé passer
+    dans le même morceau. Compter les sauts de ligne les compterait avec la frame, et le morceau qui
+    ouvre la console (bannière du run comprise) paraîtrait trois rangées trop haut.
+    """
+    return morceau.count("\x1b[K")
+
+
+def _hauteurs_annoncees_et_reelles(vue: str) -> list[tuple[int, int]]:
+    """(hauteur annoncée par un repositionnement, rangées écrites par la frame d'avant)."""
+    morceaux = REPOSITIONNEMENT.split(vue)
+    return [(int(morceaux[i]), _hauteur_de_frame(morceaux[i - 1]))
+            for i in range(1, len(morceaux) - 1, 2)]
+
+
+def _ecritures_hors_bloc(vue: str) -> list[str]:
+    """Ce qui a été écrit sur l'écran APRÈS un bloc sans l'avoir retiré — la faute qui dédouble.
+
+    Tout ce que la vue écrit se termine par « ESC[J » : le pied d'une frame comme un effacement. Un
+    morceau qui précède un repositionnement et finit autrement porte donc du texte tombé sous un
+    bloc resté affiché — et le repositionnement qui suit, compté sur la hauteur du bloc seul,
+    remontera trop peu. La hauteur annoncée, elle, reste juste : c'est pourquoi elle ne suffit pas à
+    voir ce défaut-là.
+    """
+    morceaux = REPOSITIONNEMENT.split(vue)
+    return [morceaux[i - 1] for i in range(1, len(morceaux) - 1, 2)
+            if not morceaux[i - 1].endswith("\x1b[J")]
+
+
+def _run_a_trois_en_vol(depot: Depot, run_id: str) -> tuple[subprocess.CompletedProcess, Path]:
+    """Un run de quatre tickets dont trois sont en vol au même instant, console dans un fichier."""
+    iids = (130, 131, 132, 133)
+    _livrables(depot, iids)
+    console = _console(depot)
+    plan = _plan_groupes(depot, [(r, i, "-", "haute", "-") for r, i in enumerate(iids, 1)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", run_id, "--concurrence", "3",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, (130, 131, 132)),
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    return r, console
+
+
+def test_le_bloc_ne_se_dedouble_pas_quand_sa_hauteur_varie(depot: Depot) -> None:
+    """L'invariant qui tient tout le reste : ce qu'une frame annonce remonter est ce que la
+    précédente a écrit.
+
+    À un ticket la hauteur était constante et l'erreur impossible. À N elle VARIE d'une frame à
+    l'autre — un ticket qui se solde rend sa ligne d'action —, et une annonce fausse d'une seule
+    rangée laisse une copie du bloc dans l'historique à chaque redessin, cinq fois par seconde.
+    """
+    r, console = _run_a_trois_en_vol(depot, "hauteur")
+    assert r.returncode == 0, r.stdout + r.stderr
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    paires = _hauteurs_annoncees_et_reelles(vue)
+    assert paires, "aucune frame n'a été redessinée — le test ne prouve rien"
+    assert all(annonce == reel - 1 for annonce, reel in paires), (
+        f"une frame remonte d'autant de rangées qu'elle en a écrit, moins une — {paires}"
+    )
+    assert len({reel for _, reel in paires}) > 1, (
+        f"la hauteur doit VARIER pendant ce run, sinon l'invariant n'est pas mis à l'épreuve — "
+        f"{paires}"
+    )
+    # L'autre moitié, que la hauteur seule ne voit pas : rien ne doit s'écrire SOUS un bloc resté
+    # affiché — les verdicts des N sessions passent par la file du pilote, qui retire le bloc
+    # d'abord.
+    assert not _ecritures_hors_bloc(vue), "une ligne a été écrite par-dessus le bloc"
+
+
+def test_une_frame_donne_une_ligne_d_action_a_chaque_ticket_en_vol(depot: Depot) -> None:
+    """Le bloc à N : une ligne par entrée du plan, une de plus par ticket en vol, une pour le pied.
+
+    N'en montrer qu'un serait pire que rien — les autres tiennent un worktree et une session sans
+    que rien ne le dise.
+    """
+    r, console = _run_a_trois_en_vol(depot, "trois-lignes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    corps = [m for m in _frames(vue) if "reste " in m]
+    # 4 lignes de plan + 3 actions + 1 pied : la seule hauteur possible quand les trois sont en vol.
+    assert any(_hauteur_de_frame(m) == 8 for m in corps), (
+        "aucune frame ne rend les trois tickets en vol avec leur ligne d'action"
+    )
+    pleine = next(m for m in corps if _hauteur_de_frame(m) == 8)
+    for iid in (130, 131, 132):
+        assert f"#{iid}" in pleine, f"#{iid} manque au bloc alors qu'il est en vol"
+
+
+def test_le_pied_compte_ce_qui_n_est_ni_solde_ni_en_vol(depot: Depot) -> None:
+    """« reste » se compte sur le plan moins les soldés moins les en-vol.
+
+    `nb_plan - POSITION` désignait la position du DERNIER ticket lancé : juste tant que les tickets
+    partaient dans l'ordre, faux dès qu'ils ne se prennent plus un par un.
+    """
+    r, console = _run_a_trois_en_vol(depot, "pied")
+    assert r.returncode == 0, r.stdout + r.stderr
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert "3 en vol" in vue, "le pied dit combien de tickets sont en vol dès que N > 1"
+    # Quatre au plan, trois en vol, aucun soldé : il en reste exactement un à venir.
+    assert re.search(r"3 en vol.*reste 1", vue), (
+        "le pied doit annoncer « reste 1 » quand trois des quatre sont en vol"
+    )
+    assert "reste 0" in vue, "et retomber à zéro quand tout est soldé"
+
+
+def test_une_session_publie_son_etat_et_ne_dessine_jamais(depot: Depot) -> None:
+    """Le choix de #290 : retirer l'écran à tous sauf un, plutôt que le partager entre N écrivains.
+
+    Le contrat tient dans un fichier PAR TICKET (`<iid>.vue` — marqueur puis action) que le pilote
+    relit à chaque frame. C'est ce qui permet à la hauteur du bloc de redevenir une simple
+    variable : un seul processus la lit et l'écrit.
+    """
+    r, console = _run_a_trois_en_vol(depot, "publication")
+    assert r.returncode == 0, r.stdout + r.stderr
+    run_dir = depot.racine / ".maestro/orchestrate/publication"
+    for iid in (130, 131, 132):
+        publie = (run_dir / f"{iid}.vue").read_text(encoding="utf-8")
+        assert publie.count("\t") == 1 and publie.startswith((".", "=")), (
+            f"« <marqueur><TAB><action> », et un marqueur JAMAIS vide — obtenu {publie!r}"
+        )
+    assert "\x1b[" not in r.stdout, "aucune frame ne doit fuir dans run.log, même à N sessions"
+
+
+def test_une_ligne_permanente_de_session_passe_par_la_file_et_ne_casse_pas_le_bloc(
+    depot: Depot,
+) -> None:
+    """Le défaut que la réunion de #290 et #291 avait fabriqué, et que ce lot corrige.
+
+    #291 annonçait l'attente d'une limite d'usage par `trace` — écrire sur l'écran — pour une raison
+    juste à sa date : la frame suit immédiatement, et une ligne passée par `tee` pouvait arriver
+    après elle. Depuis #290 c'est le contraire qu'il faut : la session n'écrit plus à l'écran, elle
+    met en file. `trace` s'appuyait sur `VUE_HAUT` pour retirer le bloc d'abord, or c'est désormais
+    une variable du PILOTE dont la session n'a qu'une copie figée au fork — rien n'était donc
+    retiré, la ligne s'écrivait sous un bloc toujours affiché, et la frame suivante remontait d'une
+    hauteur qui ne correspondait plus à rien. Ce que la hauteur annoncée, elle, ne montre pas :
+    elle reste juste — c'est ce qui s'est glissé entre deux frames qui ne l'est pas.
+    """
+    depot.ticket(130, "Ticket interrompu")
+    depot.mr("feat/130-ticket-interrompu", "opened")
+    gabarit = _statut_json("%s", "En revue")
+    claude = _claude_stub(depot, f"""
+        if printf '%s\\n' "$@" | grep -q -- '--resume'; then
+          printf '{gabarit}' 130 > "$MAESTRO_FIXTURES/owner-130.json"
+          printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":6}}\\n'
+          exit 0
+        fi
+        printf '{{"type":"result","is_error":true,"total_cost_usd":1,'
+        printf '"result":"Claude AI usage limit reached"}}\\n'
+        exit 1
+    """)
+    console = _console(depot)
+    plan = _plan_groupes(depot, [(1, 130, "-", "moyenne", "-")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "file-attente",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "3",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert "limite d'usage atteinte" in vue, "l'annonce arrive bien à l'écran, par la file"
+    assert _hauteurs_annoncees_et_reelles(vue), "aucune frame redessinée — le test ne prouve rien"
+    egarees = _ecritures_hors_bloc(vue)
+    assert not egarees, (
+        f"une ligne a été écrite sous un bloc resté affiché — {[m[-90:] for m in egarees]}"
+    )
+
+
+def test_chaque_ligne_permanente_porte_le_numero_de_son_ticket(depot: Depot) -> None:
+    """Dans une trace entrelacée, rien d'autre ne dit à qui appartient un « ✓ MR !99 ouverte »."""
+    r, _ = _run_a_trois_en_vol(depot, "prefixes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    verdicts = [ligne for ligne in r.stdout.splitlines() if "MR !99 ouverte" in ligne]
+    assert len(verdicts) == 4, f"un verdict par ticket — {verdicts}"
+    assert all(re.search(r"#\d+", ligne) for ligne in verdicts), (
+        f"chaque verdict doit nommer son ticket — {verdicts}"
+    )
+
+
+# --- Lot 4 : la reprise d'un run qui avait N tickets en main (#291) -------------------------------
+
+
+def test_une_reprise_rejoue_tous_les_tickets_que_le_run_avait_en_vol(depot: Depot) -> None:
+    """La question est posée PAR TICKET, jamais une fois pour le run.
+
+    Un run concurrent coupé en avait N en main, chacun avec son témoin de session : les laisser
+    derrière soi, c'est abandonner N worktrees porteurs de travail non commité. Leur cycle de vie
+    est « En cours » — posé par leur propre `/ticket-start` —, donc c'est bien le filtre ordinaire
+    qui les écarterait sans cette exception.
+    """
+    # #130 est allé au bout avant la coupure : son cycle de vie a suivi, et c'est par là qu'il se
+    # saute tout seul. #131 et #132 étaient EN VOL — « En cours » posé par leur propre
+    # `/ticket-start`, donc écartés par le filtre ordinaire sans l'exception de #204/#291.
+    depot.ticket(130, "Ticket 130", statut="Terminé")
+    for iid in (131, 132):
+        depot.ticket(iid, f"Ticket {iid}", statut="En cours")
+        depot.mr(f"feat/{iid}-ticket-{iid}", "opened")
+    _run_dir(depot, "20260803-100000",
+             [(1, 130, "-", "haute"), (2, 131, "-", "haute"), (3, 132, "-", "haute")],
+             resume=[(130, "OK", 99, 600, "3.50", "-")], sessions=(131, 132), age=7200)
+    r = depot.lance("run.sh", "--resume", "20260803-100000", "--run-id", "suite",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    verdicts = {ligne[0]: ligne[1]
+                for ligne in _resume(depot.racine / ".maestro/orchestrate/suite")}
+    assert verdicts == {"130": "SAUTE", "131": "OK", "132": "OK"}, (
+        f"les deux tickets en vol à la coupure sont repris, le livré est sauté — {verdicts}"
+    )
+    assert r.stdout.count("repris en vol") == 2, (
+        "la question est posée par ticket : deux tickets en main, deux reprises"
+    )
+
+
+def test_un_en_cours_que_le_run_repris_n_avait_pas_en_main_reste_saute(depot: Depot) -> None:
+    """L'exception est étroite à dessein : sans témoin de session dans le journal repris, ce « En
+    cours » est le ticket de quelqu'un d'autre — le reprendre lui retirerait son travail."""
+    depot.ticket(130, "Ticket 130", statut="En cours")
+    depot.ticket(131, "Ticket 131", statut="En cours")
+    depot.mr("feat/130-ticket-130", "opened")
+    _run_dir(depot, "20260803-110000", [(1, 130, "-", "haute"), (2, 131, "-", "haute")],
+             resume=[], sessions=(130,), age=7200)
+    r = depot.lance("run.sh", "--resume", "20260803-110000", "--run-id", "etroit",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    verdicts = {ligne[0]: ligne[1]
+                for ligne in _resume(depot.racine / ".maestro/orchestrate/etroit")}
+    assert verdicts["130"] == "OK", "celui dont le run repris avait le témoin est repris"
+    assert verdicts["131"] == "SAUTE", "l'autre appartient à une session voisine"
+
+
+def test_une_reprise_rejoue_la_concurrence_du_run_coupe(depot: Depot) -> None:
+    """La concurrence est un trait DU RUN, pas de la ligne de commande qui le rejoue.
+
+    `/orchestrate --resume` ne passe aucune option : sans le fichier `concurrence`, un run qui
+    tournait à trois se reprendrait en séquentiel, et le gain en temps de mur disparaîtrait
+    exactement au moment où on en a le plus besoin.
+    """
+    iids = (130, 131, 132)
+    _livrables(depot, iids)
+    dossier = _run_dir(depot, "20260803-120000",
+                       [(r, i, "-", "haute") for r, i in enumerate(iids, 1)],
+                       resume=[], age=7200)
+    (dossier / "concurrence").write_text("3\n", encoding="utf-8", newline="\n")
+    os.utime(dossier / "concurrence", (time.time() - 7200,) * 2)
+    r = depot.lance("run.sh", "--resume", "20260803-120000", "--run-id", "meme-regime",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, iids)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "3", (
+        "la reprise doit repartir au régime du run coupé, pas au défaut de la ligne de commande"
+    )
+
+
+def test_une_concurrence_explicite_l_emporte_sur_celle_du_run_repris(depot: Depot) -> None:
+    """`--resume --concurrence 1` reste la façon de dérouler en séquentiel un run qu'on veut suivre
+    de près : ce qui est relu est un DÉFAUT, jamais un verrou."""
+    iids = (130, 131)
+    _livrables(depot, iids)
+    dossier = _run_dir(depot, "20260803-130000",
+                       [(r, i, "-", "haute") for r, i in enumerate(iids, 1)],
+                       resume=[], age=7200)
+    (dossier / "concurrence").write_text("2\n", encoding="utf-8", newline="\n")
+    os.utime(dossier / "concurrence", (time.time() - 7200,) * 2)
+    r = depot.lance("run.sh", "--resume", "20260803-130000", "--run-id", "explicite",
+                    "--concurrence", "1",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "1"
+
+
+def test_un_run_ecrit_sa_concurrence_pour_celui_qui_le_reprendra(depot: Depot) -> None:
+    """Le fichier est posé au démarrage, avant le premier ticket : un run coupé à sa première
+    minute doit être reprenable au même régime que celui qui serait allé au bout."""
+    _livrables(depot, (130,))
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "trace-regime", "--concurrence", "2",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
+    assert r.returncode == 0, r.stdout + r.stderr
+    trace = depot.racine / ".maestro/orchestrate/trace-regime/concurrence"
+    assert trace.read_text(encoding="utf-8").strip() == "2"

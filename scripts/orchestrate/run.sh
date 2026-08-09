@@ -51,9 +51,10 @@
 # les refs du dépôt partagé, et quelques minutes d'installation en série se noient dans une session
 # qui dure une heure.
 #
-# Ce que ce lot ne fait pas, et qui se voit à `--concurrence > 1` : la VUE VIVANTE est éteinte, elle
-# suppose un seul ticket courant (#290). Le réglage est explicite, et la console dit dans quel mode
-# elle est.
+# Ce que #289 avait laissé en plan et qui ne l'est plus : la VUE VIVANTE, qu'il éteignait au-delà d'un
+# ticket faute de pouvoir la partager, est rendue à N par #290 — le pilote dessine, une session publie.
+# Ce qui reste, à `--concurrence > 1`, est le QUOTA : N sessions tirent sur la même fenêtre de 5 h, et
+# la console le dit au démarrage. Le gain est en temps de mur, jamais en quota.
 #
 # --- Ce que N en vol change à la limite d'usage, à l'arrêt et à la reprise (#291) ----------------------
 # Trois mécanismes supposaient une seule session en vol et devenaient faux à N :
@@ -434,10 +435,11 @@ SPIN='|/-\'                       # ASCII à dessein : la console Windows par d�
 VUE_FD=""                         # descripteur des frames ; vide = pas de vue vivante
 VUE_CURSEUR=0                     # 1 = curseur caché par nous, donc à rendre en sortant
 VUE_LARGEUR=100                   # colonnes, résolues une fois — `tput` est un fork
+VUE_HAUTEUR=40                    # rangées, idem : un bloc plus haut qu'elles ferait défiler (#290)
 VUE_TICK=0.2                      # période de LECTURE du flux, en secondes
 VUE_BATTEMENT_S="${MAESTRO_ORCHESTRATE_BATTEMENT:-60}"   # trace de journal pendant une session
 VUE_GABARIT=43                    # largeur du gabarit ASCII de `vue_ligne`, titre exclu
-VUE_AVANT=""; VUE_APRES=""; VUE_RANG=""; VUE_IID=""; VUE_TITRE=""
+VUE_SPIN=0                        # position dans SPIN — avancée par le pilote, à chaque frame
 # Le chrono affiché est celui du TICKET, pas de la tentative en cours. Une limite d'usage rend la
 # main puis relance une session : son processus repart à zéro, alors que le ticket, lui, dure depuis
 # le début — c'est la durée qu'on suit d'un bout à l'autre, et celle que le verdict consignera.
@@ -490,25 +492,75 @@ trace() {
 }
 
 # dit <format> [args…] : la ligne permanente ordinaire d'un ticket — un `printf` qui sait de quel
-# ticket il parle. À réserver à ce qui appartient à UN ticket ; ce qui appartient au run (en-tête,
-# résumé, ménages) reste un `printf` nu, aucun numéro n'ayant de sens devant.
+# ticket il parle. À réserver à ce qui appartient à UN ticket ; ce qui appartient au run (résumé,
+# ménages) reste un `printf` nu, aucun numéro n'ayant de sens devant.
+#
+# Tant qu'une vue tient l'écran, la ligne n'y va PAS directement : elle est mise en FILE (#290). Le
+# chemin d'avant — stdout, donc `tee`, donc la console — est celui qui dédouble le bloc, et il le
+# ferait désormais depuis N sous-shells à la fois. Le pilote la reprend dans `vue_purge` et l'écrit
+# lui-même, ce qui lui rend l'écrivain unique de #284. Sans vue, rien à protéger : on imprime.
 dit() {
-  local ligne; printf -v ligne "$@"
-  printf '%s%s' "$PREFIXE_TICKET" "$ligne"
+  local ligne; printf -v ligne "$@"; ligne="$PREFIXE_TICKET$ligne"
+  if vue_active; then
+    printf '%s' "$ligne" >>"$RUN_DIR/.console"
+  else
+    printf '%s' "$ligne"
+  fi
+  return 0
+}
+
+# vue_purge : vide la file dans l'écran et dans le journal, une ligne à la fois. Appelée par le
+# PILOTE seul, entre deux frames.
+#
+# Le descripteur de lecture reste OUVERT d'un appel à l'autre (`VUE_FILE_FD`) : le rouvrir ferait
+# relire depuis le début, et le suivre par `tail` demanderait un processus de plus à surveiller. Sur
+# un fichier ordinaire, une lecture arrivée au bout rend 1 sans consommer ; les lignes ajoutées
+# depuis sont lues au passage suivant. Le tampon `partiel` couvre le seul cas où une ligne serait
+# lue à moitié — même piège que `formate_flux`, et `read` affecte ce qu'il a lu avant d'échouer.
+VUE_FILE_FD=""
+VUE_FILE_PARTIEL=""
+vue_purge() {
+  vue_active || return 0
+  if [ -z "$VUE_FILE_FD" ]; then
+    : >>"$RUN_DIR/.console" || return 0
+    exec 8<"$RUN_DIR/.console" || return 0
+    VUE_FILE_FD=8
+  fi
+  # Le préfixe est déjà DANS la ligne — `dit` l'y a mis avant de la mettre en file. Le neutraliser
+  # ici est ce qui évite un « #290 #290 … » que rien d'autre ne rattraperait.
+  local ligne PREFIXE_TICKET=""
+  while IFS= read -r ligne <&8; do
+    trace '%s\n' "$VUE_FILE_PARTIEL$ligne"
+    VUE_FILE_PARTIEL=""
+  done
+  # Ce que `read` a lu sans trouver de fin de ligne : gardé pour le prochain passage.
+  VUE_FILE_PARTIEL="$VUE_FILE_PARTIEL$ligne"
   return 0
 }
 
 # vue_ouvre : choisit le descripteur des frames. Le mode verbeux n'en veut aucun — les deux se
 # disputeraient l'écran, et c'est justement quand on lit chaque ligne qu'on ne veut rien qui bouge.
 #
-# `--concurrence > 1` non plus (#289) : tout le bloc est bâti autour d'UN ticket courant — une ligne
-# en gras, un chrono, une action —, et sa hauteur vit dans un fichier unique (`.vue-hauteur`) que N
-# sous-shells réécriraient l'un sur l'autre. Le résultat ne serait pas une vue dégradée mais un écran
-# corrompu, chaque frame comptant ses lignes depuis le mauvais endroit. On l'éteint donc franchement,
-# et la console retombe en plein texte le temps que #290 lui donne une vue à N tickets.
+# --- Un seul dessinateur, N tickets dessinés (#290) ---------------------------------------------------
+# #289 avait éteint la vue au-delà d'un ticket en vol, et son diagnostic était juste : le bloc était
+# dessiné DEPUIS LE SOUS-SHELL de la session, et sa hauteur vivait dans un fichier que N sous-shells
+# auraient réécrit l'un sur l'autre — pas une vue dégradée, un écran corrompu, chaque frame comptant
+# ses lignes depuis le mauvais endroit.
+#
+# Ce lot ne partage donc pas l'écran entre N écrivains : il le retire à tous sauf un. Le PILOTE
+# dessine — c'est le seul processus qui sache combien de tickets sont en vol et où ils en sont —, et
+# une session ne fait plus que PUBLIER son état dans `<iid>.vue`. Trois conséquences, toutes des
+# simplifications :
+#   · la hauteur redevient une VARIABLE : un seul processus l'écrit et la lit, le fichier disparaît ;
+#   · les lignes permanentes d'une session ne passent plus par `tee` (qui les faisait arriver au
+#     milieu d'une frame) mais par la file de `dit`, que le pilote vide entre deux frames ;
+#   · le paramètre `frais` de `vue_dessine` disparaît — plus personne n'écrit sous le bloc.
+#
+# Ce qui reste vrai à un ticket en vol l'est à N : à `--concurrence 1`, le bloc a exactement la même
+# forme qu'avant ce lot, à ceci près que c'est le pilote qui le dessine.
 vue_ouvre() {
   VUE_FD=""
-  if [ "$VERBEUX" != 1 ] && [ "$CONCURRENCE" -le 1 ]; then
+  if [ "$VERBEUX" != 1 ]; then
     local fd="${MAESTRO_ORCHESTRATE_CONSOLE_FD:-}"
     # Couture de test : MAESTRO_ORCHESTRATE_CONSOLE désigne un FICHIER qui tient lieu de console.
     # C'est ce qui rend les frames vérifiables sans pseudo-terminal — on les relit, tout simplement.
@@ -529,6 +581,16 @@ vue_ouvre() {
   case "$n" in '' | *[!0-9]*) n=100 ;; esac
   [ "$n" -lt 60 ] && n=100
   VUE_LARGEUR="$n"
+
+  # La HAUTEUR compte désormais autant que la largeur (#290) : à N tickets en vol, le bloc gagne une
+  # ligne d'action par ticket, et un bloc plus haut que la fenêtre fait défiler l'écran — c'est-à-dire
+  # exactement le défaut que #284 avait supprimé, par l'autre bout. On la résout une fois, comme les
+  # colonnes, et `vue_dessine` s'y tient en masquant des lignes plutôt qu'en débordant.
+  n="${MAESTRO_ORCHESTRATE_HAUTEUR:-}"
+  case "$n" in '' | *[!0-9]*) n="$(tput lines 2>/dev/null)" || n='' ;; esac
+  case "$n" in '' | *[!0-9]*) n=40 ;; esac
+  [ "$n" -lt 10 ] && n=40
+  VUE_HAUTEUR="$n"
 
   # Le curseur n'a rien à montrer sous un bloc qu'on réécrit : il ne fait que sauter. On le cache
   # tant que la vue tient l'écran — et `vue_ferme`, câblé sur la sortie du script, le rend. Une
@@ -559,22 +621,12 @@ vue_ligne() {
     "$1" "$2" "$3" "$4" "$5" "$6" "$(tronque "$7" $((VUE_LARGEUR - VUE_GABARIT - 3)))"
 }
 
-# La hauteur de la dernière frame vit DANS UN FICHIER et non dans une variable : la frame est
-# dessinée depuis le sous-shell du tube de la session, dont les affectations sont perdues au retour —
-# or c'est la boucle principale qui doit effacer le bloc avant d'imprimer un verdict.
-#
-# Lue par le builtin `read` et non par `cat` : la lecture a lieu à chaque frame, et un fork de moins
-# par frame n'est pas un détail sous MSYS. Le fichier est écrit AVEC un saut de ligne — sans lui,
-# `read` rendrait 1 tout en ayant affecté la variable, et le repli « || n=0 » de l'appelant écraserait
-# la valeur qu'il vient de lire.
-VUE_HAUT=0   # la hauteur relue, rendue par `vue_lit_hauteur` — une variable, donc sans fork
-vue_pose_hauteur() { printf '%s\n' "${1:-0}" >"$RUN_DIR/.vue-hauteur"; }
-vue_lit_hauteur() {
-  VUE_HAUT=0
-  [ -r "$RUN_DIR/.vue-hauteur" ] && read -r VUE_HAUT <"$RUN_DIR/.vue-hauteur"
-  case "${VUE_HAUT:-}" in '' | *[!0-9]*) VUE_HAUT=0 ;; esac
-  return 0
-}
+# La hauteur de la dernière frame est une simple VARIABLE (#290). Elle a vécu dans un fichier tant
+# que la frame était dessinée depuis le sous-shell de la session, dont les affectations sont perdues
+# au retour — or c'est le pilote qui doit effacer le bloc avant d'imprimer un verdict. Depuis que le
+# pilote est le seul à dessiner, l'écrivain et le lecteur sont le même processus : le fichier n'a
+# plus d'objet, et avec lui partent deux accès disque par frame.
+VUE_HAUT=0
 
 # vue_remonte <hauteur> : la séquence qui ramène le curseur au HAUT du bloc. Le curseur est laissé
 # sur la DERNIÈRE ligne du bloc (la frame ne se termine pas par un saut de ligne, cf. plus haut),
@@ -588,29 +640,63 @@ vue_remonte() {
 # ligne atterrirait au milieu d'une frame et fausserait le compte de lignes des suivantes.
 vue_efface() {
   vue_active || return 0
-  vue_lit_hauteur
   [ "$VUE_HAUT" -gt 0 ] || return 0
   printf '%s\033[J' "$(vue_remonte "$VUE_HAUT")" >&"$VUE_FD"
-  vue_pose_hauteur 0
+  VUE_HAUT=0
   return 0
 }
 
-# vue_prepare <iid-courant> : la partie STATIQUE du bloc, calculée une fois par ticket — les lignes
-# des tickets déjà jugés (leur verdict est dans `resume.tsv`) et de ceux qui attendent leur tour.
-# Seules la ligne du ticket courant, son action et le pied changent d'une frame à l'autre.
-vue_prepare() {
-  local courant="$1" vu=0 rang iid parent prio groupe titre bilan verdict mr duree cout marque
-  VUE_AVANT=""; VUE_APRES=""; VUE_RANG=""; VUE_IID="$courant"; VUE_TITRE=""
-  while IFS=$'\t' read -r rang iid parent prio groupe titre; do
-    case "$rang" in '#'*) continue ;; esac
-    [ -n "${iid:-}" ] || continue
-    if [ "$iid" = "$courant" ]; then
-      VUE_RANG="$rang"; VUE_TITRE="$titre"; vu=1
-      continue
-    fi
-    bilan="$(awk -F'\t' -v i="$iid" '$1 == i { print; exit }' "$RESUME" 2>/dev/null)"
+# --- L'état vivant d'un ticket, publié par sa session (#290) ------------------------------------------
+# Une session ne dessine plus : elle écrit UNE LIGNE dans `<iid>.vue` — « <marqueur><TAB><action> » —
+# et le pilote la relit à chaque frame. C'est tout le contrat, et il tient dans un fichier PAR TICKET
+# précisément pour qu'aucun sous-shell n'ait à s'accorder avec un autre.
+#
+# Le marqueur n'est jamais vide (« . » = ordinaire, le pilote y met son rouet ; « = » = en pause).
+# Un champ vide en tête serait FUSIONNÉ par `read` avec le suivant — le tab est un blanc IFS —, et
+# l'action se lirait alors comme un marqueur. Même piège que celui documenté dans `status.sh`.
+#
+# Le CHRONO n'y est délibérément pas : le pilote le connaît mieux que la session (`P_DEBUT`), et il
+# vaut pour le TICKET, donc à travers ses reprises — une valeur publiée par une session repartie de
+# zéro le ferait reculer à chaque limite d'usage, ce que #240 s'était donné pour but d'éviter.
+vue_publie() { # <iid> <marqueur> <action>
+  printf '%s\t%s\n' "$2" "$3" >"$RUN_DIR/$1.vue" 2>/dev/null || true
+  return 0
+}
+
+VUE_ETAT_MARQUE=""; VUE_ETAT_ACTION=""
+vue_lit_etat() { # <iid> : pose VUE_ETAT_MARQUE / VUE_ETAT_ACTION. Par `read`, donc sans fork —
+                 # la lecture a lieu une fois par ticket en vol et par frame.
+  VUE_ETAT_MARQUE=""; VUE_ETAT_ACTION=""
+  [ -r "$RUN_DIR/$1.vue" ] || return 0
+  IFS=$'\t' read -r VUE_ETAT_MARQUE VUE_ETAT_ACTION <"$RUN_DIR/$1.vue" || true
+  return 0
+}
+
+# vue_recompose : la partie STATIQUE du bloc — une ligne toute faite par entrée du plan. Les tickets
+# EN VOL n'en ont pas : leur ligne se réécrit à chaque frame, c'est tout leur objet.
+#
+# Recalculée aux seuls moments où elle change — un ticket qui part, un ticket qui est soldé —, et non
+# à chaque frame : c'est ce qui permet au redessin de ne forker que pour les lignes vivantes. Et
+# `resume.tsv` est lu UNE FOIS par recomposition, là où #240 l'`awk`-ait une fois par ligne de plan :
+# à N tickets en vol la recomposition arrive N fois plus souvent, et le compte de forks aussi.
+declare -A VUE_BILAN=()
+VUE_STATIQUE=()
+vue_recompose() {
+  local i iid verdict mr duree cout marque
+  VUE_BILAN=()
+  if [ -f "$RESUME" ]; then
+    while IFS=$'\t' read -r iid verdict mr duree cout _; do
+      case "$iid" in '#'* | '') continue ;; esac
+      VUE_BILAN["$iid"]="$verdict|$mr|$duree|$cout"
+    done <"$RESUME"
+  fi
+
+  VUE_STATIQUE=()
+  for ((i = 0; i < NB_ENTREES; i++)); do
+    iid="${P_IID[$i]}"
     verdict=''; mr=''; duree=''; cout=''
-    [ -n "$bilan" ] && IFS=$'\t' read -r _ verdict mr duree cout _ <<<"$bilan"
+    # « | » et non un tab : `read` préserve les champs vides d'un séparateur qui n'est pas un blanc.
+    [ -n "${VUE_BILAN[$iid]:-}" ] && IFS='|' read -r verdict mr duree cout <<<"${VUE_BILAN[$iid]}"
     case "${verdict:-}" in
       OK)    marque="$C_G✓$C_0" ;;
       ECHEC) marque="$C_R✗$C_0" ;;
@@ -620,66 +706,108 @@ vue_prepare() {
     case "${duree:-}" in '' | *[!0-9]*) duree='' ;; *) duree="$(duree_lisible "$duree")" ;; esac
     case "${cout:-}" in '' | 0 | 0.00) cout='' ;; *) cout="$(arrondi_cout "$cout") \$" ;; esac
     case "${mr:-}" in '' | '-') mr='' ;; *) mr="MR !$mr" ;; esac
-    if [ "$vu" = 0 ]; then
-      VUE_AVANT+="$(vue_ligne "$marque" "$rang" "$iid" "$duree" "$cout" "$mr" "$titre")"$'\n'
-    else
-      VUE_APRES+="$(vue_ligne "$marque" "$rang" "$iid" "$duree" "$cout" "$mr" "$titre")"$'\n'
-    fi
-  done < <(grep -v '^#' "$PLAN" 2>/dev/null)
+    VUE_STATIQUE[$i]="$(vue_ligne "$marque" "${P_RANG[$i]}" "$iid" "$duree" "$cout" "$mr" "${P_TITRE[$i]}")"
+  done
   return 0
 }
 
-# vue_dessine <marqueur> <secondes écoulées> <détail> [<frais>] : une frame.
+# vue_dessine : une frame — le plan dans son ordre, les tickets en vol en gras avec leur chrono et
+# leur ligne d'action, le pied du run.
 #
-# Chaque ligne se termine par « ESC[K » (efface jusqu'au bout) pour qu'une ligne qui raccourcit ne
-# laisse pas la traîne de la précédente, et le bloc entier part en UN SEUL `printf` : deux écritures
-# laisseraient voir un demi-bloc. La DERNIÈRE ligne, elle, n'a pas de saut de ligne : sur la rangée
-# du bas — là où le bloc vit — un `\n` fait défiler le tampon, et c'est ainsi que l'historique de la
-# console se remplissait d'une copie du bloc par frame. `frais` = 1 redessine sans remonter le
-# curseur, ce qu'il faut après une impression permanente qui a fait défiler l'écran sous le bloc.
+# Le bloc entier part en UN SEUL `printf` : deux écritures laisseraient voir un demi-bloc. Chaque
+# ligne se termine par « ESC[K » (efface jusqu'au bout) pour qu'une ligne qui raccourcit ne laisse
+# pas la traîne de la précédente ; la DERNIÈRE n'a pas de saut de ligne, un « \n » sur la rangée du
+# bas faisant défiler le tampon (#284).
+#
+# Deux choses que #240 n'avait pas à traiter et que N tickets en vol imposent :
+#   · la hauteur VARIE d'une frame à l'autre (un ticket qui se solde rend sa ligne d'action). Le bloc
+#     se termine donc par « ESC[J », qui efface ce qu'un bloc plus haut avait laissé sous lui ;
+#   · le bloc peut ne plus TENIR dans la fenêtre. Plutôt que de déborder — donc de faire défiler, donc
+#     de se dédoubler à la frame suivante —, on masque des lignes déjà jouées et on le DIT.
 vue_dessine() {
   vue_active || return 0
-  local marque="$1" ecoule="$2" detail="$3" frais="${4:-0}"
-  local corps="" n=0 ligne haut=0 fin=$'\033[K\n'
+  local corps="" n=0 i iid marque ecoule fin=$'\033[K\n'
+  local n_vol=0 a_masquer=0 reste_a_masquer=0 note=0
 
-  while IFS= read -r ligne; do
-    [ -n "$ligne" ] || continue
-    corps+="$ligne$fin"; n=$((n + 1))
-  done <<<"$VUE_AVANT"
+  for ((i = 0; i < NB_ENTREES; i++)); do
+    [ "${P_ETAT[$i]}" = vol ] && n_vol=$((n_vol + 1))
+  done
 
-  corps+="$C_B$(vue_ligne "$marque" "$VUE_RANG" "$VUE_IID" "$(duree_lisible "$ecoule")" '' '' \
-    "$VUE_TITRE")$C_0$fin"; n=$((n + 1))
-  corps+="$C_D$(printf '       %s' "${detail:+· $(tronque "$detail" $((VUE_LARGEUR - 11)))}")$C_0$fin"
-  n=$((n + 1))
+  # Le budget : une ligne par entrée du plan, une de plus par ticket en vol (son action), une pour le
+  # pied. La ligne de note remplace celles qu'elle masque, d'où le « + 1 ».
+  local besoin=$((NB_ENTREES + n_vol + 1)) budget=$((VUE_HAUTEUR - 1))
+  if [ "$besoin" -gt "$budget" ]; then
+    a_masquer=$((besoin - budget + 1))
+    reste_a_masquer="$a_masquer"
+  fi
 
-  while IFS= read -r ligne; do
-    [ -n "$ligne" ] || continue
-    corps+="$ligne$fin"; n=$((n + 1))
-  done <<<"$VUE_APRES"
+  VUE_SPIN=$(((VUE_SPIN + 1) % ${#SPIN}))
+  for ((i = 0; i < NB_ENTREES; i++)); do
+    iid="${P_IID[$i]}"
+    if [ "${P_ETAT[$i]}" != vol ] && [ "$reste_a_masquer" -gt 0 ]; then
+      reste_a_masquer=$((reste_a_masquer - 1))
+      if [ "$note" = 0 ]; then
+        note=1
+        corps+="$C_D$(printf '  … %s ligne(s) masquée(s) — la fenêtre est trop courte pour tout le plan' \
+          "$a_masquer")$C_0$fin"
+        n=$((n + 1))
+      fi
+      continue
+    fi
 
-  # Le pied ferme le bloc : « ESC[K » sans saut de ligne, le curseur reste sur cette ligne-là.
-  corps+="$(printf '  run %s · %s✓ %s%s · %s✗ %s%s · %s~ %s%s · reste %s' \
+    if [ "${P_ETAT[$i]}" = vol ]; then
+      vue_lit_etat "$iid"
+      # Une session en pause ne tourne pas : son marqueur est fixe, et c'est ce qui distingue à
+      # l'œil une attente de limite d'usage d'une session qui travaille.
+      marque="${SPIN:$VUE_SPIN:1}"
+      [ "$VUE_ETAT_MARQUE" = '=' ] && marque='='
+      ecoule=$((SECONDS - P_DEBUT[i]))
+      corps+="$C_B$(vue_ligne "$marque" "${P_RANG[$i]}" "$iid" "$(duree_lisible "$ecoule")" '' '' \
+        "${P_TITRE[$i]}")$C_0$fin"; n=$((n + 1))
+      corps+="$C_D$(printf '       %s' \
+        "${VUE_ETAT_ACTION:+· $(tronque "$VUE_ETAT_ACTION" $((VUE_LARGEUR - 11)))}")$C_0$fin"
+      n=$((n + 1))
+      continue
+    fi
+
+    corps+="${VUE_STATIQUE[$i]:-}$fin"; n=$((n + 1))
+  done
+
+  # Le pied ferme le bloc : « ESC[K » sans saut de ligne, le curseur reste sur cette ligne-là, puis
+  # « ESC[J » nettoie ce qu'une frame plus haute aurait laissé.
+  #
+  # « reste » se compte sur ce qui n'est NI soldé NI en vol, et non sur la position du dernier ticket
+  # lancé : à N en vol, les tickets ne se prennent plus dans l'ordre, et `nb_plan - POSITION` disait
+  # la position d'un autre. Les sautés sont dans les compteurs, donc comptés — c'était déjà le cas,
+  # et ça reste vrai maintenant que la soustraction porte sur eux.
+  corps+="$(printf '  run %s%s · %s✓ %s%s · %s✗ %s%s · %s~ %s%s · reste %s' \
     "$(duree_lisible "$((SECONDS - RUN_DEBUT_S))")" \
+    "$([ "$CONCURRENCE" -gt 1 ] && printf ' · %s en vol' "$n_vol")" \
     "$C_G" "$NB_OK" "$C_0" "$C_R" "$NB_ECHEC" "$C_0" "$C_Y" "$NB_SAUTE" "$C_0" \
-    "$((nb_plan - POSITION))")"$'\033[K'; n=$((n + 1))
+    "$((nb_plan - NB_OK - NB_ECHEC - NB_SAUTE - n_vol))")"$'\033[K\033[J'; n=$((n + 1))
 
-  if [ "$frais" != 1 ]; then vue_lit_hauteur; haut="$VUE_HAUT"; fi
-  if [ "$haut" -gt 0 ]; then
-    printf '%s%s' "$(vue_remonte "$haut")" "$corps" >&"$VUE_FD"
+  if [ "$VUE_HAUT" -gt 0 ]; then
+    printf '%s%s' "$(vue_remonte "$VUE_HAUT")" "$corps" >&"$VUE_FD"
   else
     printf '%s' "$corps" >&"$VUE_FD"
   fi
-  vue_pose_hauteur "$n"
+  VUE_HAUT="$n"
   return 0
 }
 
 # vue_texte : la même checklist, en PLEIN TEXTE et sans animation — sur stdout, donc dans `run.log`
 # et partout où rien ne peut être redessiné (détachement Unix, CI, tests). Imprimée une fois par
-# ticket : c'est elle qui porte l'avancement quand il n'y a pas de console.
+# ticket : c'est elle qui porte l'avancement quand il n'y a pas de console. Les tickets en vol y
+# portent le même « > » qu'avant ce lot ; il y en a simplement N.
 vue_texte() {
-  printf '%s' "$VUE_AVANT"
-  vue_ligne '>' "$VUE_RANG" "$VUE_IID" '' '' '' "$VUE_TITRE"; printf '\n'
-  printf '%s' "$VUE_APRES"
+  local i
+  for ((i = 0; i < NB_ENTREES; i++)); do
+    if [ "${P_ETAT[$i]}" = vol ]; then
+      vue_ligne '>' "${P_RANG[$i]}" "${P_IID[$i]}" '' '' '' "${P_TITRE[$i]}"; printf '\n'
+    else
+      printf '%s\n' "${VUE_STATIQUE[$i]:-}"
+    fi
+  done
   return 0
 }
 
@@ -1029,9 +1157,10 @@ source_de_limite() {
 # d'une fenêtre de 5 h c'est du bruit, et raccourcir la tranche coûterait des réveils pour rien.
 patiente() {
   local iid="$1" fin="$2" origine="${3:-palier}" reste tranche affichee=-1 libelle='?'
-  # L'attente est un état du ticket comme un autre : le bloc reste à l'écran, marqué d'une pause et
-  # décompté — sans quoi la console paraît figée pendant les heures que dure une limite d'usage.
-  local frais=1
+  # L'attente est un état du ticket comme un autre : sa ligne reste au bloc, marquée d'une pause et
+  # décomptée — sans quoi la console paraît figée pendant les heures que dure une limite d'usage. Le
+  # marqueur « = » est ce qui la distingue à l'œil d'une session qui travaille : le pilote n'y met
+  # pas son rouet.
   while :; do
     [ -f "$STOP" ] && return 1
     [ -f "$RUN_DIR/.plafond" ] && return 2
@@ -1048,23 +1177,22 @@ patiente() {
     fi
     reste=$(( fin - $(date +%s) ))
     [ "$reste" -lt 0 ] && reste=0
-    # La frame est dessinée AVANT de décider s'il reste à dormir, donc au moins une fois par attente.
-    # Testé après, une attente déjà échue — un rendez-vous à quelques secondes, le temps que la
-    # session y arrive — n'en produirait aucune, et l'écran passerait de la session à sa reprise sans
+    # L'état est publié AVANT de décider s'il reste à dormir, donc au moins une fois par attente.
+    # Publié après, une attente déjà échue — un rendez-vous à quelques secondes, le temps que la
+    # session y arrive — n'en produirait aucun, et l'écran passerait de la session à sa reprise sans
     # jamais dire pourquoi il s'est arrêté entre les deux.
     #
-    # La colonne « durée » reste celle du TICKET : c'est elle qu'on suit d'un bout à l'autre. Le
-    # temps d'attente, lui, est dit en clair dans le détail.
-    vue_dessine '=' "$((SECONDS - VUE_DEBUT_TICKET))" \
-      "en attente de la fin de la limite d'usage — reprise vers $libelle (dans $(duree_lisible "$reste"))" \
-      "$frais"
-    frais=0
+    # `vue_publie` et non `vue_dessine` (#290) : depuis N tickets en vol, une session ne dessine
+    # plus — elle publie sa ligne, le pilote la reprend à la frame suivante. La colonne « durée »
+    # reste celle du TICKET, c'est elle qu'on suit d'un bout à l'autre ; le temps d'attente, lui, est
+    # dit en clair dans le détail.
+    vue_publie "$iid" '=' \
+      "en attente de la fin de la limite d'usage — reprise vers $libelle (dans $(duree_lisible "$reste"))"
     [ "$reste" -gt 0 ] || break
     tranche=60
     [ "$reste" -lt 60 ] && tranche="$reste"
     sleep "$tranche"
   done
-  vue_efface
   return 0
 }
 
@@ -1105,15 +1233,18 @@ outils_de() {
   done
 }
 
-# formate_flux <iid> : lit le flux sur stdin, l'archive, et anime la vue du ticket (#240).
+# formate_flux <iid> : lit le flux sur stdin, l'archive, et PUBLIE l'état du ticket (#240, #290).
 #
 # La boucle bat au rythme de `read -t` (voir la section « vue vivante ») : un tour toutes les
-# VUE_TICK secondes, qu'une ligne soit arrivée ou non — c'est ce qui fait avancer le chrono et le
-# rouet quand la session réfléchit en silence. Trois sorties, bien distinctes :
+# VUE_TICK secondes, qu'une ligne soit arrivée ou non — c'est ce qui garde le battement régulier
+# quand la session réfléchit en silence. Trois sorties, bien distinctes :
 #   · `<iid>.jsonl`  le flux brut, intégral et inchangé — la matière de tout diagnostic ;
-#   · $VUE_FD        la frame redessinée, si une console existe ;
+#   · `<iid>.vue`    l'action en cours, que le pilote reprend dans sa frame (#290) ;
 #   · stdout         le battement (une ligne par minute) et, en `--verbeux` seulement, le flot
 #                    d'une ligne par appel d'outil d'avant #240.
+#
+# Le chrono et le rouet ne sont plus ici : ils appartiennent au dessin, donc au pilote. Ce qui reste
+# à cette boucle, c'est de dire CE QUE LA SESSION FAIT — la seule chose qu'elle soit seule à savoir.
 formate_flux() {
   local iid="$1" ligne resultat="" derniere="" partiel="" code
   local jsonl="$RUN_DIR/$iid.jsonl"
@@ -1123,12 +1254,12 @@ formate_flux() {
   rm -f "$jsonl.gz" 2>/dev/null
   : >"$RUN_DIR/$iid.json"
 
-  local ecoule=0 action="$VUE_REPRISE" dessinee='-' outils o
-  local spin=0 dernier_battement=0 dessinee_a=-1 frais=1
+  local ecoule=0 action="$VUE_REPRISE" publiee='-' outils o
+  local dernier_battement=0
 
-  vue_dessine "${SPIN:0:1}" "$((SECONDS - VUE_DEBUT_TICKET))" "$action" 1
-  dessinee_a=$((SECONDS - VUE_DEBUT_TICKET))
-  frais=0
+  # Publié d'entrée : sans quoi la première frame d'un ticket repris serait indiscernable de celle
+  # d'un ticket qui démarre — c'est tout l'objet de `VUE_REPRISE`.
+  vue_publie "$iid" '.' "$action"
 
   while :; do
     ligne=""
@@ -1185,20 +1316,14 @@ formate_flux() {
     if [ "$VUE_BATTEMENT_S" -gt 0 ] && [ $((ecoule - dernier_battement)) -ge "$VUE_BATTEMENT_S" ]; then
       dernier_battement="$ecoule"
       trace_journal '  … %s%s\n' "$(duree_lisible "$ecoule")" "${action:+ · $(tronque "$action")}"
-      # Sans fd dédié, la ligne est bien partie sur stdout et a fait défiler l'écran sous le bloc :
-      # la frame suivante se redessine alors entière, sans remonter le curseur.
-      [ -n "$TRACE_FD" ] || frais=1
     fi
 
-    # On redessine à la SECONDE, ou tout de suite sur un changement d'action. Rien de ce que la
-    # frame montre ne bouge plus vite que ça (le chrono compte les secondes), et chaque frame coûte
-    # une poignée de forks : à cinq images par seconde, la console passait son temps à se réécrire
-    # pour afficher le même texte.
-    if [ "$ecoule" != "$dessinee_a" ] || [ "$action" != "$dessinee" ]; then
-      dessinee="$action"; dessinee_a="$ecoule"
-      spin=$(((spin + 1) % ${#SPIN}))
-      vue_dessine "${SPIN:$spin:1}" "$ecoule" "$action" "$frais"
-      frais=0
+    # On ne publie que sur CHANGEMENT d'action : le chrono, lui, avance chez le pilote, qui redessine
+    # à la seconde sans que rien n'ait à le lui dire. Republier à l'identique cinq fois par seconde
+    # ne ferait que réécrire un fichier pour y remettre le même texte.
+    if [ "$action" != "$publiee" ]; then
+      publiee="$action"
+      vue_publie "$iid" '.' "$action"
     fi
   done
 
@@ -1478,9 +1603,7 @@ lance_session() {
     code=${PIPESTATUS[0]}
     [ "$code" -eq 0 ] && return 0
     if limite_atteinte "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log"; then return "$code"; fi
-    # Le bloc de la vue est encore à l'écran : la ligne qui suit doit s'imprimer SOUS lui, pas dedans.
-    vue_efface
-    printf '  reprise de session impossible — redémarrage à froid (le travail déjà commité est sur la branche).\n'
+    dit '  reprise de session impossible — redémarrage à froid (le travail déjà commité est sur la branche).\n'
     uuid="$(genere_uuid)"
     printf '%s' "$uuid" >"$RUN_DIR/$iid.session"
   fi
@@ -1744,9 +1867,9 @@ renonce_au_run() {
     # `reprise-de` est posé avec le répertoire, avant qu'on sache s'il y aura quelque chose à
     # traiter : le compter comme une trace de travail retiendrait le vestige d'une reprise à vide.
     # La carte `pid` (#213) est dans le même cas — elle décrit le processus, pas son travail, tout
-    # comme la hauteur du bloc de la vue vivante (#240), qui décrit l'écran, et `concurrence` (#291),
-    # qui décrit le régime du pilote.
-    case "${f##*/}" in plan.tsv | reprise-de | pid | concurrence | .vue-hauteur) ;; *) return 1 ;; esac
+    # comme la file de la vue vivante (#290), qui décrit l'écran, et `concurrence` (#291), qui décrit
+    # le régime du pilote.
+    case "${f##*/}" in plan.tsv | reprise-de | pid | concurrence | .console) ;; *) return 1 ;; esac
   done
   rm -rf "$RUN_DIR" 2>/dev/null || return 1
   return 0
@@ -1890,7 +2013,10 @@ if [ "$DRY" = 0 ]; then
   pilote_ecrit "$RUN_DIR" || printf 'run.sh : carte du pilote non écrite — ce run ne pourra pas être arrêté par un autre.\n' >&2
   # `vue_ferme` d'abord : le curseur caché par la vue doit revenir quoi qu'il arrive — sortie
   # normale, `exit` d'erreur ou Ctrl-C —, sans quoi la console reste amputée après le run.
-  trap 'vue_ferme; pilote_retire "$RUN_DIR"' EXIT
+  # `vue_purge` d'abord : ce que les sessions ont mis en file n'existe QUE là tant que le pilote ne
+  # l'a pas repris (#290) — ni à l'écran, ni dans `run.log`. Une sortie d'erreur ou un Ctrl-C ne doit
+  # pas emporter la dernière ligne d'un ticket avec lui.
+  trap 'vue_purge; vue_ferme; pilote_retire "$RUN_DIR"' EXIT
 fi
 
 # --- Le plan, figé une fois --------------------------------------------------------------------------
@@ -2047,12 +2173,16 @@ consigne() { # <iid> <verdict> <mr> <duree> <cout> <raison>
 # créneau se libère, il doit reprendre le prochain ticket ÉLIGIBLE, donc revenir sur des lignes qu'il a
 # déjà vues et laissées de côté. Le plan tient en quelques dizaines de lignes : on le charge, et le
 # descripteur 3 disparaît avec son piège (les enfants en héritaient, et l'un d'eux aurait pu le lire).
-P_IID=(); P_PARENT=(); P_GROUPE=(); P_TITRE=(); P_ETAT=(); P_ECHEANCE=()
+P_IID=(); P_PARENT=(); P_GROUPE=(); P_TITRE=(); P_ETAT=(); P_ECHEANCE=(); P_RANG=()
 P_BRANCHE=(); P_DEST=(); P_DEBUT=(); P_REPRIS=()
 while IFS=$'\t' read -r rang iid parent _ groupe titre; do
   case "$rang" in '#'*) continue ;; esac
   [ -n "${iid:-}" ] || continue
   P_IID+=("$iid"); P_PARENT+=("$parent"); P_GROUPE+=("$groupe"); P_TITRE+=("$titre")
+  # Le `rang` du plan est gardé (#290) : la vue en a besoin pour toutes ses lignes à chaque frame,
+  # et le relire du fichier — ce que faisait `vue_prepare` — n'est plus tenable quand la
+  # recomposition suit les départs et les verdicts de N tickets au lieu d'un.
+  P_RANG+=("$rang")
   P_ETAT+=(attente); P_ECHEANCE+=(0); P_REPRIS+=(0)
   P_BRANCHE+=(""); P_DEST+=(""); P_DEBUT+=(0)
 done < <(grep -v '^#' "$PLAN")
@@ -2077,10 +2207,11 @@ fi
 if [ "$CONCURRENCE" -gt 1 ]; then
   printf '%s%s tickets en vol%s — deux ne partent ensemble que si le plan les dit indépendants.\n' \
     "$C_B" "$CONCURRENCE" "$C_0"
-  # La limite qui reste de ce lot, dite une fois plutôt que découverte à l'écran (#290).
-  printf '  · la vue vivante est éteinte : elle suppose un seul ticket courant (#290 la rendra à N).\n'
-  # Ce que le quota partagé coûte, et ce que #291 en rattrape : le mur est divisé, jamais la fenêtre.
-  printf '  · toutes les sessions tirent sur le MÊME quota : la fenêtre de 5 h part %s fois plus vite.\n' \
+  # La limite qui reste du chantier, dite une fois plutôt que découverte à l'écran. Celle de la vue
+  # est levée (#290 rend les N tickets en vol) et celle de l'attente aussi (#291 la partage) : ce que
+  # le quota partagé coûte est le seul point qu'aucun lot ne rattrape — le mur est divisé, jamais la
+  # fenêtre.
+  printf '  · toutes les sessions tirent sur le MÊME quota : la fenêtre de 5 h part %s fois plus vite,\n' \
     "$CONCURRENCE"
   printf '    Une limite d'\''usage ne se paie qu'\''une fois — attente partagée, puis chaque session\n'
   printf '    coupée est rouverte par son uuid (#291).\n\n'
@@ -2133,9 +2264,9 @@ joue_session() { # <iid> <dest> <uuid> <mode>
   while :; do
     lance_session "$iid" "$dest" "$uuid" "$mode"
     code=$?
-    # Le bloc de la vue est retiré AVANT toute impression permanente : sans quoi la ligne suivante
-    # atterrirait au milieu d'une frame, et le compte de lignes des frames d'après serait faux.
-    vue_efface
+    # Plus rien à effacer ici : une session n'écrit plus à l'écran (#290). Ses lignes permanentes
+    # passent par la file de `dit`, que le pilote vide entre deux frames — c'est lui qui retire le
+    # bloc avant de les imprimer, et lui seul.
 
     if [ "$code" -eq 124 ]; then
       dit '  %s✗%s session interrompue au bout de %s (timeout)\n' \
@@ -2176,14 +2307,20 @@ joue_session() { # <iid> <dest> <uuid> <mode>
     fin="${rendez_vous%% *}"; annonceur="${rendez_vous##* }"
     delai=$(( fin - $(date +%s) ))
     [ "$delai" -lt 0 ] && delai=0
-    # `trace` et non `dit` : la frame suit immédiatement, et une ligne passée par `tee` pourrait
-    # arriver après elle — le bloc se dédoublerait pour toute la durée de l'attente.
+    # `dit` et non `trace` (#292) : #291 avait choisi `trace` pour la raison juste d'alors — la frame
+    # suit immédiatement, et une ligne passée par `tee` pouvait arriver après elle et dédoubler le
+    # bloc pour toute la durée de l'attente. Depuis #290 la prémisse a changé deux fois : `dit` ne
+    # passe plus par `tee` (il met en FILE, que le pilote vide entre deux frames), et `trace` — qui
+    # écrit sur l'écran — est devenu le geste qu'un sous-shell ne doit plus faire. Il le faisait sans
+    # protection : `vue_efface` s'appuie sur `VUE_HAUT`, désormais une variable du PILOTE, dont la
+    # session n'a qu'une copie figée au fork ; la ligne s'écrivait donc SOUS un bloc qu'on n'avait pas
+    # retiré, et la frame suivante comptait ses rangées depuis le mauvais endroit.
     if [ "$ouvreur" = 0 ]; then
-      trace '  %slimite d'\''usage atteinte%s — attente de %s avant reprise (fin vers %s).\n' \
+      dit '  %slimite d'\''usage atteinte%s — attente de %s avant reprise (fin vers %s).\n' \
         "$C_Y" "$C_0" "$(duree_lisible "$delai")" \
         "$(date -d "@$fin" '+%H:%M' 2>/dev/null || echo '?')"
     else
-      trace '  %slimite d'\''usage atteinte%s — rejoint l'\''attente du run ouverte par #%s (reprise vers %s).\n' \
+      dit '  %slimite d'\''usage atteinte%s — rejoint l'\''attente du run ouverte par #%s (reprise vers %s).\n' \
         "$C_Y" "$C_0" "$annonceur" "$(date -d "@$fin" '+%H:%M' 2>/dev/null || echo '?')"
     fi
 
@@ -2251,12 +2388,15 @@ lance_ticket() { # <index>
 
   branche="$(gl_branch_for "$iid" 2>/dev/null)"
   if [ -z "$branche" ]; then
-    printf '  %s✗%s #%-4s branche introuvable (label type:: absent ?)\n' "$C_R" "$C_0" "$iid"
+    dit '  %s✗%s #%-4s branche introuvable (label type:: absent ?)\n' "$C_R" "$C_0" "$iid"
     solde_ticket "$i" ECHEC - 0 0 "nom de branche non résolu"
     return 1
   fi
 
-  printf '%s[%s/%s] #%s — %s%s\n' "$C_B" "$POSITION" "$nb_plan" "$iid" "$titre" "$C_0"
+  # `[position/total]` : la POSITION DANS LE PLAN (#230), et non un compteur qui avance — à N en vol
+  # les tickets ne se prennent plus dans l'ordre, et un compteur dirait la position d'un autre. Le
+  # cumul du run, lui, est au pied du bloc, où il vaut pour tous les tickets à la fois.
+  dit '%s[%s/%s] #%s — %s%s\n' "$C_B" "$POSITION" "$nb_plan" "$iid" "$titre" "$C_0"
 
   # 1. Le worktree : un répertoire de travail et des ports par ticket (docs/10 §9), pour que le
   #    clone principal reste utilisable pendant que le run tourne.
@@ -2285,27 +2425,27 @@ lance_ticket() { # <index>
   P_BRANCHE[$i]="$branche"
   P_DEST[$i]="$dest"
   P_DEBUT[$i]=$SECONDS
-  # Le chrono de la vue suit le TICKET : posé ici, il traverse les reprises de session.
+  # Le chrono du BATTEMENT suit le ticket : posé ici, il est capté par le sous-shell au fork et
+  # traverse les reprises de session. Celui de la vue, lui, est `P_DEBUT` — le pilote le lit dans le
+  # tableau, donc sans dépendre d'une variable que le ticket suivant écraserait (#290).
   VUE_DEBUT_TICKET=$SECONDS
   VUE_REPRISE=""
+  # En vol AVANT la recomposition : c'est `P_ETAT` qui dit à la vue quelles lignes sont vivantes.
+  P_ETAT[$i]=vol
 
-  # La checklist du plan, recalculée à chaque ticket (#240) : les verdicts déjà rendus viennent de
-  # `resume.tsv`, le reste du plan de `plan.tsv`. En plein texte sur stdout SEULEMENT quand rien ne
-  # peut être redessiné : avec une console, le bloc vivant la porte déjà, et l'imprimer en double
-  # ferait défiler deux fois la même chose. Ce que `run.log` garde alors, ce sont l'en-tête du
-  # ticket, les battements et le verdict — la trace permanente, qui suffit à relire un run.
-  #
-  # À plusieurs en vol, ni l'une ni l'autre : la vue est éteinte (cf. `vue_ouvre`) et N checklists
-  # empilées dans le journal diraient N fois la même chose, chacune fausse dès la ligne suivante.
-  if [ "$CONCURRENCE" -le 1 ]; then
-    vue_prepare "$iid"
-    vue_active || vue_texte
-  fi
+  # La checklist du plan, recalculée à chaque départ et à chaque verdict (#240) : les verdicts déjà
+  # rendus viennent de `resume.tsv`, le reste du plan des tableaux chargés plus haut. En plein texte
+  # sur stdout SEULEMENT quand rien ne peut être redessiné : avec une console, le bloc vivant la
+  # porte déjà, et l'imprimer en double ferait défiler deux fois la même chose. Ce que `run.log`
+  # garde alors, ce sont l'en-tête du ticket, les battements et le verdict — la trace permanente,
+  # qui suffit à relire un run.
+  vue_recompose
+  vue_active || vue_texte
 
   # Le sous-shell rend son code par un TÉMOIN, pas par `wait` : bash ne sait pas dire « lequel de mes
   # enfants vient de finir » de façon portable (`wait -n -p` demande bash 5.1), et un `kill -0`
   # réussit encore sur un zombie. Le fichier, lui, répond aux deux questions à la fois — qui, et avec
-  # quel code — et c'est déjà le canal de tout le reste du script entre sous-shells (`.vue-hauteur`,
+  # quel code — et c'est déjà le canal de tout le reste du script entre sous-shells (`<iid>.vue`,
   # `.session`, `.json`). Écrit par un trap EXIT : une session tuée par un signal doit rendre la main
   # au pilote, pas le laisser attendre un témoin qui ne viendra jamais.
   temoin="$RUN_DIR/$iid.fini"
@@ -2322,7 +2462,6 @@ lance_ticket() { # <index>
   # Le PID n'est délibérément pas gardé : rien ne le lirait. `wait <pid>` bloquerait sur un enfant
   # encore vivant, et `kill -0` réussit sur un zombie — le témoin répond aux deux questions que le
   # PID ne sait pas trancher, et le `wait` final récolte tout le monde d'un coup.
-  P_ETAT[$i]=vol
   # Le garde-fou anti-blocage : un sous-shell emporté par un SIGKILL n'exécute aucun trap, ne laisse
   # donc aucun témoin, et le pilote l'attendrait indéfiniment. Passé le temps qu'un ticket peut
   # légitimement prendre — ses sessions successives, plus tout ce qu'une limite d'usage l'autorise à
@@ -2353,6 +2492,10 @@ solde_ticket() { # <index> <verdict> <mr> <duree> <cout> <raison>
       [ "${P_PARENT[$i]}" != "-" ] && PARENTS_ECHOUES="$PARENTS_ECHOUES ${P_PARENT[$i]}"
       ;;
   esac
+  # La ligne de ce ticket vient de changer de nature — d'un chrono vivant à un verdict figé. La
+  # recomposer ICI, à l'unique endroit qui écrit le bilan, est ce qui garde le bloc juste sans que
+  # chaque appelant ait à y penser (#290).
+  vue_recompose
   return 0
 }
 
@@ -2434,6 +2577,38 @@ juge_ticket() { # <index> <code rendu par le sous-shell>
 EN_VOL=""
 ORDO_TICK=0.2   # la même horloge que la vue vivante : rien ici ne change plus vite
 
+# vue_tick : ce que le pilote fait entre deux moissons — vider la file des lignes permanentes, puis
+# redessiner s'il y a lieu (#290). Aucun appel réseau, aucune lecture de découverte : c'est ce qui la
+# distingue de `status.sh` et ce qui permet de l'appeler cinq fois par seconde.
+#
+# On redessine à la SECONDE, ou tout de suite quand l'action d'un ticket change. Rien de ce que la
+# frame montre ne bouge plus vite que ça (le chrono compte les secondes), et chaque frame coûte une
+# poignée de forks : à cinq images par seconde, la console passait son temps à se réécrire pour y
+# remettre le même texte. La signature comparée porte sur TOUS les tickets en vol : un seul d'entre
+# eux qui change d'outil suffit à redessiner, et c'est ce qui rattrape un état bref — une attente de
+# limite d'usage qui commence, une session qui rouvre.
+VUE_DESSINEE_A=-1
+VUE_DESSINEE_ETAT=""
+vue_tick() {
+  vue_active || return 0
+  vue_purge
+  # Une ligne permanente vient d'être imprimée : le bloc a été retiré pour la laisser passer, il faut
+  # le remettre sans attendre la seconde suivante.
+  [ "$VUE_HAUT" -eq 0 ] && VUE_DESSINEE_A=-1
+
+  local i etat=""
+  for i in $EN_VOL; do
+    vue_lit_etat "${P_IID[$i]}"
+    etat+="${P_IID[$i]}|$VUE_ETAT_MARQUE|$VUE_ETAT_ACTION"$'\n'
+  done
+  if [ "$SECONDS" != "$VUE_DESSINEE_A" ] || [ "$etat" != "$VUE_DESSINEE_ETAT" ]; then
+    VUE_DESSINEE_A="$SECONDS"
+    VUE_DESSINEE_ETAT="$etat"
+    vue_dessine
+  fi
+  return 0
+}
+
 # remplit_les_creneaux : lance ce qui peut l'être, dans l'ordre du plan. Balaye TOUT le plan à chaque
 # passage et non la seule ligne suivante — c'est là qu'un créneau qui se libère va chercher le prochain
 # ticket éligible plutôt que le prochain tout court.
@@ -2457,7 +2632,7 @@ remplit_les_creneaux() {
     # Le fichier STOP est relu avant chaque lancement, comme il l'était avant chaque tour de boucle.
     if arret_demande; then ARRET_LANCEMENT="arrêt demandé"; return 0; fi
     if [ "$MAX" -gt 0 ] && [ "$TRAITES" -ge "$MAX" ]; then
-      printf '%sPlafond --max %s atteint%s — le reste du plan est laissé pour un prochain run.\n' \
+      dit '%sPlafond --max %s atteint%s — le reste du plan est laissé pour un prochain run.\n' \
         "$C_Y" "$MAX" "$C_0"
       ARRET_LANCEMENT="plafond --max"
       return 0
@@ -2481,7 +2656,7 @@ remplit_les_creneaux() {
       # Un lot dont un prédécesseur du même parent a échoué partirait d'une base incomplète.
       case " $PARENTS_ECHOUES " in
         *" $parent "*)
-          printf '  ~ #%-4s sauté — un lot précédent de #%s a échoué\n' "$iid" "$parent"
+          dit '  ~ #%-4s sauté — un lot précédent de #%s a échoué\n' "$iid" "$parent"
           solde_ticket "$i" SAUTE - 0 0 "lot précédent de #$parent en échec"
           continue 2
           ;;
@@ -2495,10 +2670,10 @@ remplit_les_creneaux() {
       statut="$(gl_issue_owner "$iid" 2>/dev/null | cut -f1)"
       if [ "$statut" = "En cours" ] && reprend_en_vol "$iid"; then
         P_REPRIS[$i]=1
-        printf '  %s↻%s #%-4s repris en vol — le run %s l'\''avait en main à la coupure\n' \
+        dit '  %s↻%s #%-4s repris en vol — le run %s l'\''avait en main à la coupure\n' \
           "$C_Y" "$C_0" "$iid" "$REPRISE_ID"
       elif [ "$statut" != "À faire" ]; then
-        printf '  ~ #%-4s sauté — cycle de vie « %s » (le plan datait)\n' "$iid" "${statut:-?}"
+        dit '  ~ #%-4s sauté — cycle de vie « %s » (le plan datait)\n' "$iid" "${statut:-?}"
         solde_ticket "$i" SAUTE - 0 0 "cycle de vie « ${statut:-?} » au moment de le prendre"
         continue 2
       fi
@@ -2509,6 +2684,11 @@ remplit_les_creneaux() {
       # ne coûte rien et ne compte pas.
       TRAITES=$((TRAITES + 1))
       lance_ticket "$i"
+      # Une frame TOUT DE SUITE (#290) : remplir N créneaux prend le temps de N montages de worktree
+      # et de N lectures GitLab, pendant lesquelles l'écran resterait sur l'image d'avant — celle où
+      # ce ticket n'était pas encore parti. C'est aussi le seul endroit qui redessine quand les
+      # sessions se soldent aussi vite qu'on les lance : la boucle d'attente, elle, ne tourne pas.
+      vue_tick
       continue 2
     done
     # Le plan a été balayé sans qu'un ticket parte : soit tout est fini, soit ce qui reste attend
@@ -2527,15 +2707,17 @@ moissonne() {
       case "${code:-}" in '' | *[!0-9]*) code=1 ;; esac
       rm -f "$RUN_DIR/${P_IID[$i]}.fini" 2>/dev/null
     elif [ "$SECONDS" -gt "${P_ECHEANCE[$i]}" ]; then
-      printf '  %s✗%s #%-4s session disparue sans rendre de code — créneau repris.\n' \
+      dit '  %s✗%s #%-4s session disparue sans rendre de code — créneau repris.\n' \
         "$C_R" "$C_0" "${P_IID[$i]}"
       code=1
     else
       reste="$reste $i"
       continue
     fi
+    # Rien à retirer d'`EN_VOL` ici : c'est `P_ETAT` que la vue lit, et `solde_ticket` le passe à
+    # `fini` avant qu'aucune frame ne soit redessinée. `EN_VOL` suit à la fin de la boucle.
     juge_ticket "$i" "$code"
-    printf '\n'
+    dit '\n'
     pris=1
   done
   EN_VOL="$reste"
@@ -2545,10 +2727,15 @@ moissonne() {
 while :; do
   remplit_les_creneaux
   [ -n "$EN_VOL" ] || break
+  # Une frame par tour, AVANT d'attendre quoi que ce soit : `moissonne` peut réussir à chaque appel
+  # (des sessions qui se soldent aussi vite qu'on les lance), auquel cas la boucle d'attente ci-dessous
+  # ne tourne jamais — et c'était elle, seule, qui dessinait. Le bloc restait alors vide tout le run.
+  vue_tick
   # On attend qu'un créneau se libère. `sleep` et non `wait` : `wait` rendrait la main sur n'importe
   # lequel des enfants sans dire lequel, et il faudrait de toute façon relire les témoins. Un tour
-  # toutes les 0,2 s ne coûte rien à côté d'une session qui dure des dizaines de minutes.
-  until moissonne; do sleep "$ORDO_TICK"; done
+  # toutes les 0,2 s ne coûte rien à côté d'une session qui dure des dizaines de minutes — et c'est
+  # dans ce tour que le pilote tient l'écran (#290), la seule chose qu'il ait à faire en attendant.
+  until moissonne; do vue_tick; sleep "$ORDO_TICK"; done
 done
 
 # Les sous-shells sont tous sortis — leur témoin l'a dit. Ce `wait` ne fait que les récolter, pour
@@ -2558,6 +2745,11 @@ wait 2>/dev/null || true
 # --- Résumé --------------------------------------------------------------------------------------------
 # Plus une frame ne sera dessinée : le bloc part et le curseur revient AVANT le résumé, qui reprend
 # le chemin ordinaire (stdout → `tee` → console et journal). Rien ne se dispute plus l'écran.
+#
+# La file est vidée d'abord (#290) : le verdict du dernier ticket y a été mis pendant que la boucle
+# tournait encore, et la boucle vient de sortir sans repasser par `vue_tick`. Sans cet appel, la
+# dernière ligne du run n'existerait nulle part — ni à l'écran, ni dans `run.log`.
+vue_purge
 vue_efface
 vue_ferme
 printf '%sRésumé du run %s%s\n' "$C_B" "$RUN_ID" "$C_0"
