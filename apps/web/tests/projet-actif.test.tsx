@@ -17,7 +17,12 @@
  *    supprimé entre deux visites ramène au choix avec son motif ;
  * 3. **une API muette n'est pas une absence de projet** — même règle que la
  *    liste de #225 : on ne prétend pas que le backlog est vide quand on n'a rien
- *    pu lire, et on n'oublie pas le choix retenu pour autant.
+ *    pu lire, et on n'oublie pas le choix retenu pour autant ;
+ * 4. **la porte défile** (#306) — être rendue *au-dessus* du cadre applicatif
+ *    la prive du conteneur défilant du shell, et le `<body>` en `overflow-hidden`
+ *    de #248 rognait alors le bas du formulaire de création. jsdom ne calcule
+ *    aucune mise en page : ce qui se teste est la **chaîne de classes** qui rend
+ *    le défilement possible, comme pour le Kanban (`kanban.test.tsx`).
  *
  * Les tests Python et la doc de la vague sont différés au lot 6 (#282).
  */
@@ -26,6 +31,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EcranOuverture } from "@/components/projets/ChoixProjet";
 import { Shell } from "@/components/Shell";
 import { marquerGuideVu } from "@/lib/guide";
 import { ecrireProjetActifId, lireProjetActifId } from "@/lib/projetActif";
@@ -214,6 +220,57 @@ describe("la mémoire du projet actif", () => {
     // par là que passeront le sélecteur du lot 4 (#280) et un autre onglet.
     act(() => ecrireProjetActifId(null));
     expect(await porte()).toBeInTheDocument();
+  });
+});
+
+describe("le défilement de la porte (#306)", () => {
+  /**
+   * Le conteneur qui **doit** défiler autour d'un écran de la porte. On le prend
+   * par le parent du `<main>` et non par une recherche de classe : ce que le
+   * test protège, c'est justement qu'il y en ait un *sur ce chemin-là*.
+   */
+  const conteneur = (ecran: HTMLElement) => {
+    expect(ecran.parentElement).not.toBeNull();
+    return ecran.parentElement as HTMLElement;
+  };
+
+  it("donne un ascenseur au choix du projet, formulaire de création compris", async () => {
+    monter();
+    const ecran = await porte();
+    // Le formulaire est bien là, ouvert d'office : c'est lui qui déborde.
+    expect(
+      await screen.findByRole("button", { name: "Déclarer le projet" }),
+    ).toBeInTheDocument();
+
+    const defilant = conteneur(ecran);
+    expect(defilant.className).toContain("overflow-y-auto");
+    // `min-h-0` + `flex-1` : sans eux le conteneur se dimensionne sur le
+    // formulaire au lieu de rétrécir sous lui, et l'`overflow-y-auto` n'a
+    // jamais rien à faire défiler (même chaîne qu'au #248).
+    expect(defilant.className).toContain("min-h-0");
+    expect(defilant.className).toContain("flex-1");
+  });
+
+  it("met l'ascenseur au bord de l'écran, pas au bord de la colonne", async () => {
+    monter();
+    const ecran = await porte();
+    // La colonne reste centrée et bornée…
+    expect(ecran.className).toContain("max-w-2xl");
+    expect(ecran.className).toContain("mx-auto");
+    // …donc c'est bien le conteneur pleine largeur qui défile, et pas elle :
+    // un `overflow-y-auto` posé ici collerait l'ascenseur au texte.
+    expect(ecran.className).not.toContain("overflow");
+    expect(conteneur(ecran).className).not.toContain("max-w-");
+  });
+
+  it("couvre aussi l'écran d'ouverture, qui partage le même cadre", () => {
+    // Les deux écrans de la porte se ressemblent parce qu'ils sont le même
+    // cadre : les séparer ferait revenir le défaut sur celui qu'on oublierait.
+    render(<EcranOuverture />);
+    const ecran = screen.getByRole("main", {
+      name: "Ouverture de la Control Tower",
+    });
+    expect(conteneur(ecran).className).toContain("overflow-y-auto");
   });
 });
 
