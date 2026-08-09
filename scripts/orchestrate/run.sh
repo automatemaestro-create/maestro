@@ -4,6 +4,7 @@
 #   bash scripts/orchestrate/run.sh --dry-run     # le plan et ce qui serait fait, sans rien lancer
 #   bash scripts/orchestrate/run.sh               # traite le plan, ticket par ticket
 #   bash scripts/orchestrate/run.sh --max 1       # un seul ticket (le premier du plan)
+#   bash scripts/orchestrate/run.sh --concurrence 3   # jusqu'à 3 tickets INDÉPENDANTS en vol
 #
 # Chaque ticket est traité DANS SON PROPRE WORKTREE et DANS SA PROPRE SESSION : `/ticket-start` →
 # implémentation → `/ticket-ship`, sans interruption. Le run produit N Merge Requests en Draft à
@@ -32,6 +33,27 @@
 # Le ticket est laissé en l'état (branche et cycle de vie « En cours »), et LES LOTS SUIVANTS DU
 # MÊME PARENT sont sautés : ils partiraient d'une base incomplète. Les autres groupes du plan
 # s'enchaînent normalement — une erreur à 2 h du matin ne doit pas geler le reste de la nuit.
+#
+# --- N tickets en vol dans un run (#289, parent #287) -------------------------------------------------
+# `--concurrence <n>` (défaut 1) laisse partir jusqu'à `n` tickets à la fois. L'indépendance n'est pas
+# devinée ici : elle est LUE dans le plan, colonne `groupe` (#288) — « deux tickets peuvent être en vol
+# en même temps si leurs `parent` diffèrent, ou si leur `groupe` est identique ». Défaut 1 = le run
+# d'hier, au bit près : c'est ce qui rend ce lot mergeable seul.
+#
+# Le découpage suit la seule ligne qui compte, celle entre ce qui est ÉTAT DU RUN et ce qui est LONG :
+#   · le PILOTE (ce processus) garde tout l'état — plan, éligibilité, sauts, compteurs, `--max`,
+#     cascade d'échec, montage des worktrees, verdicts GitLab, `resume.tsv`. Il est SEUL À ÉCRIRE le
+#     bilan, ce qui règle par construction la question « une ligne de resume.tsv reste-t-elle
+#     entière ? » : il n'y a jamais deux écrivains ;
+#   · le SOUS-SHELL d'un ticket ne porte que la session Claude et ses reprises — la seule partie qui
+#     dure des dizaines de minutes. Il rend un code, rien d'autre à recoller.
+# Le montage du worktree reste donc côté pilote, SÉRIALISÉ : `git worktree add` prend des verrous sur
+# les refs du dépôt partagé, et quelques minutes d'installation en série se noient dans une session
+# qui dure une heure.
+#
+# Ce que ce lot ne fait pas, et qui se voit à `--concurrence > 1` : la VUE VIVANTE est éteinte (elle
+# suppose un seul ticket courant — #290) et chaque session attend sa limite d'usage dans son coin
+# (#291). Le réglage est explicite, et la console dit dans quel mode elle est.
 #
 # --- Ce qu'un run fait avant son premier ticket -------------------------------------------------------
 # Trois ménages, tous best-effort, tous muets quand il n'y a rien à faire et aucun fatal : `main`
@@ -87,6 +109,11 @@ CLAUDE_BIN="${MAESTRO_CLAUDE_BIN:-claude}"   # surchargeable : stub dans les tes
 DRY=0
 DETACH=0
 MAX=0
+# Le nombre de tickets en vol (#289). Défaut 1 : sans l'option, le run est celui d'hier, strictement
+# séquentiel. C'est la valeur qui rend ce lot mergeable seul, et elle reste le bon défaut — toutes les
+# sessions tirent sur le MÊME quota d'abonnement, donc N en parallèle épuisent la fenêtre de 5 h N fois
+# plus vite : le gain est en temps de mur, jamais en quota (parent #287).
+CONCURRENCE="${MAESTRO_ORCHESTRATE_CONCURRENCE:-1}"
 # Le budget n'a plus de défaut (#286) : sans `--budget`, AUCUN `--max-budget-usd` n'est passé au
 # CLI, et une session s'arrête sur son ticket, son timeout ou la limite d'usage — jamais sur un
 # montant. Les 15 $/ticket d'origine étaient le garde-fou d'une boucle neuve, quand on craignait
@@ -149,6 +176,10 @@ Options :
                        C'est ce qui permet de démarrer un run depuis une session Claude Code : le
                        pilote reste un script shell, dans son propre processus.
   --max <n>            Nombre maximal de tickets traités (0 = tout le plan).
+  --concurrence <n>    Nombre de tickets en vol en même temps. Défaut 1 (run séquentiel). Deux
+                       tickets ne partent ensemble que si le plan les dit indépendants : parents
+                       différents, ou même groupe de dépendance (colonne « groupe » de queue.sh).
+                       Au-delà de 1, la vue vivante s'éteint et les sessions partagent le quota.
   --budget <usd>       Plafond de dépense par ticket (--max-budget-usd). Par défaut AUCUN : une
                        session va au bout de son ticket, de son timeout ou de la limite d'usage.
                        0 (ou vide) vaut « pas de plafond ».
@@ -193,6 +224,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1 ;;
     --detach | --detache | --détaché) DETACH=1 ;;
     --max) MAX="${2:-0}"; shift ;;
+    --concurrence | --concurrency) CONCURRENCE="${2:-1}"; shift ;;
     --budget) BUDGET="${2:-}"; shift ;;
     --timeout) TIMEOUT_BRUT="${2:-45m}"; shift ;;
     --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
@@ -254,6 +286,18 @@ case "$BUDGET" in
 esac
 OPT_BUDGET=()
 [ -n "$BUDGET" ] && OPT_BUDGET=(--max-budget-usd "$BUDGET")
+
+# La concurrence est refusée ici pour la même raison que l'effort et le budget : un réglage illisible
+# ne doit pas se découvrir au premier ticket. `0` n'y vaut PAS « pas de limite » — contrairement au
+# budget, dont il annule un plafond, il désignerait ici zéro créneau, donc un run qui ne lance rien.
+case "$CONCURRENCE" in
+  '') CONCURRENCE=1 ;;
+  *[!0-9]* | 0)
+    printf 'run.sh : concurrence invalide « %s » — attendu un entier ≥ 1 (1 = run séquentiel).\n' \
+      "$CONCURRENCE" >&2
+    exit 2
+    ;;
+esac
 
 # `--detach` avec `--dry-run` n'aurait rien à détacher : le plan s'affiche en une seconde, et une
 # console qui se refermerait aussitôt ne le montrerait à personne. On reste en direct, en lecture
@@ -387,11 +431,18 @@ if [ -n "$TRACE_FD" ] && ! { : >&"$TRACE_FD"; } 2>/dev/null; then TRACE_FD=""; f
 
 vue_active() { [ -n "$VUE_FD" ]; }
 
+# De qui parle une ligne (#289). À plusieurs tickets en vol, les sous-shells écrivent tous dans le
+# même journal et rien ne dirait à qui appartient un « ✓ MR !99 ouverte » : chaque ligne de ticket
+# porte donc son numéro. À un seul en vol — le défaut — le préfixe est VIDE, et la sortie est celle
+# d'avant ce lot à l'octet près. Posé par le pilote autour de chaque ticket, et hérité par son
+# sous-shell ; les trois fonctions ci-dessous sont les seules à l'appliquer.
+PREFIXE_TICKET=""
+
 # trace_journal <format> [args…] : une ligne pour le JOURNAL SEUL — l'écran l'a déjà, en mieux.
 # Cas d'usage : le battement. Repli sur stdout quand aucun fd dédié n'existe, SAUF si stdout est
 # lui-même l'écran (run.sh lancé à la main dans un terminal), où le bloc vivant la rend redondante.
 trace_journal() {
-  local ligne; printf -v ligne "$@"
+  local ligne; printf -v ligne "$@"; ligne="$PREFIXE_TICKET$ligne"
   if [ -n "$TRACE_FD" ]; then
     printf '%s' "$ligne" >&"$TRACE_FD"
   elif ! vue_active || [ "$VUE_FD" != 1 ]; then
@@ -403,20 +454,35 @@ trace_journal() {
 # trace <format> [args…] : une ligne PERMANENTE imprimée alors que le bloc vivant tient l'écran.
 # Le bloc est retiré d'abord, puis la ligne est écrite PAR NOUS sur la console (jamais par `tee`,
 # cf. TRACE_FD) et, séparément, dans le journal. À réserver aux endroits où une frame suit de près :
-# ailleurs, un `printf` ordinaire suffit et garde la ligne dans `run.log` par le chemin habituel.
+# ailleurs, `dit` suffit et garde la ligne dans `run.log` par le chemin habituel.
 trace() {
-  local ligne; printf -v ligne "$@"
+  local ligne; printf -v ligne "$@"; ligne="$PREFIXE_TICKET$ligne"
   vue_efface
   if vue_active && [ "$VUE_FD" != 1 ]; then printf '%s' "$ligne" >&"$VUE_FD"; fi
   if [ -n "$TRACE_FD" ]; then printf '%s' "$ligne" >&"$TRACE_FD"; else printf '%s' "$ligne"; fi
   return 0
 }
 
+# dit <format> [args…] : la ligne permanente ordinaire d'un ticket — un `printf` qui sait de quel
+# ticket il parle. À réserver à ce qui appartient à UN ticket ; ce qui appartient au run (en-tête,
+# résumé, ménages) reste un `printf` nu, aucun numéro n'ayant de sens devant.
+dit() {
+  local ligne; printf -v ligne "$@"
+  printf '%s%s' "$PREFIXE_TICKET" "$ligne"
+  return 0
+}
+
 # vue_ouvre : choisit le descripteur des frames. Le mode verbeux n'en veut aucun — les deux se
 # disputeraient l'écran, et c'est justement quand on lit chaque ligne qu'on ne veut rien qui bouge.
+#
+# `--concurrence > 1` non plus (#289) : tout le bloc est bâti autour d'UN ticket courant — une ligne
+# en gras, un chrono, une action —, et sa hauteur vit dans un fichier unique (`.vue-hauteur`) que N
+# sous-shells réécriraient l'un sur l'autre. Le résultat ne serait pas une vue dégradée mais un écran
+# corrompu, chaque frame comptant ses lignes depuis le mauvais endroit. On l'éteint donc franchement,
+# et la console retombe en plein texte le temps que #290 lui donne une vue à N tickets.
 vue_ouvre() {
   VUE_FD=""
-  if [ "$VERBEUX" != 1 ]; then
+  if [ "$VERBEUX" != 1 ] && [ "$CONCURRENCE" -le 1 ]; then
     local fd="${MAESTRO_ORCHESTRATE_CONSOLE_FD:-}"
     # Couture de test : MAESTRO_ORCHESTRATE_CONSOLE désigne un FICHIER qui tient lieu de console.
     # C'est ce qui rend les frames vérifiables sans pseudo-terminal — on les relit, tout simplement.
@@ -943,7 +1009,9 @@ formate_flux() {
             # a fait il y a trois événements.
             action="${outils##*$'\n'}"
             if [ "$VERBEUX" = 1 ]; then
-              while IFS= read -r o; do [ -n "$o" ] && printf '  · %s\n' "$o"; done <<<"$outils"
+              # `dit` et non `printf` : à N sessions en vol, le flot des trois tickets s'entrelace
+              # dans le même journal, et un nom d'outil sans son ticket n'apprend rien du tout.
+              while IFS= read -r o; do [ -n "$o" ] && dit '  · %s\n' "$o"; done <<<"$outils"
             fi
           fi
           ;;
@@ -1671,10 +1739,11 @@ printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
 # Le régime de budget est ANNONCÉ dans les deux sens (#286) : « illimité » est un choix, pas un
 # oubli, et relire un run doit dire lequel des deux s'appliquait — un ticket coupé au plafond ne se
 # distingue d'un échec de session que par cette ligne.
-printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · timeout %s/ticket\n' \
+printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · timeout %s/ticket · %s\n' \
   "$nb_plan" "$MODELE" "$EFFORT" \
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
-  "$(duree_lisible "$TIMEOUT_S")"
+  "$(duree_lisible "$TIMEOUT_S")" \
+  "$([ "$CONCURRENCE" -gt 1 ] && printf '%s en vol' "$CONCURRENCE" || printf 'séquentiel')"
 printf 'journal : %s\n\n' "$RUN_DIR"
 
 if [ "$nb_plan" -eq 0 ]; then
@@ -1702,6 +1771,15 @@ if [ "$DRY" = 1 ]; then
   printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis réouverture de la même session Claude\n'
   printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'
   printf '  6. run coupé          « run.sh --resume » rejoue CE plan, le ticket en vol compris\n'
+  # Le régime de concurrence est annoncé dans les deux sens, comme le budget juste au-dessus :
+  # « séquentiel » est un choix, pas un oubli, et c'est le réglage qui change le plus ce qu'on
+  # verra à l'écran.
+  if [ "$CONCURRENCE" -gt 1 ]; then
+    printf '  7. concurrence        jusqu'\''à %s tickets en vol — deux ne partent ensemble que si le plan\n' "$CONCURRENCE"
+    printf '                        les dit indépendants (parents différents, ou même « groupe »)\n'
+  else
+    printf '  7. concurrence        1 — run séquentiel (--concurrence <n> pour en mener plusieurs)\n'
+  fi
   rm -rf "$RUN_DIR"
   exit 0
 fi
@@ -1761,6 +1839,12 @@ TRAITES=0
 POSITION=0
 PARENTS_ECHOUES=""
 WORKTREES=""
+# Non vide = plus aucun ticket ne part (#289). Quatre causes, toutes déjà là avant ce lot : le fichier
+# STOP, le plafond `--max`, et les deux sorties d'urgence d'une session (limite hebdomadaire, arrêt
+# demandé pendant l'attente) qui faisaient un `break 2`. Un `break` ne suffit plus : les tickets encore
+# en vol tiennent un worktree et une session, il faut les laisser finir — on cesse de lancer, on vide,
+# puis on rend le résumé.
+ARRET_LANCEMENT=""
 # L'origine du chrono du run, lue par le pied de la vue vivante (#240). `SECONDS` plutôt que `date` :
 # la frame se redessine plusieurs fois par seconde, et sous MSYS un fork y coûterait plus cher que
 # tout le reste du dessin.
@@ -1769,82 +1853,191 @@ vue_ouvre
 
 # Le coût est arrondi ICI, à l'unique endroit qui écrit le bilan : `status.sh` le relit tel quel, et
 # une colonne à quinze décimales (« 10.686978499999995 ») ne dit rien de plus qu'à deux.
+#
+# Le PILOTE est le seul à l'appeler (#289), et c'est ce qui rend la ligne entière sans le moindre
+# verrou : à N tickets en vol, un `printf >>` partagé par N sous-shells poserait la question de son
+# atomicité — et la réponse dépendrait de la plateforme, MSYS émulant O_APPEND. Aucun sous-shell
+# n'écrit ici : ils ne portent que la session, dont le pilote lit le résultat au retour.
 consigne() { # <iid> <verdict> <mr> <duree> <cout> <raison>
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$(arrondi_cout "${5:-0}")" "$6" >>"$RESUME"
 }
 
-# Le plan est lu sur le DESCRIPTEUR 3, pas sur stdin : `claude`, `glab` et `worktree.sh` sont lancés
-# dans cette boucle et hériteraient de son entrée standard — l'un d'eux consommerait le plan, et le
-# run s'arrêterait après un ticket sans rien dire.
-#
-# `groupe` (#288) est LU et DÉLIBÉRÉMENT INUTILISÉ : le plan déclare désormais ce qui pourrait partir
-# en même temps, mais la boucle reste séquentielle — c'est le lot suivant (#289) qui s'en sert. Le
-# lire quand même est ce qui rend #288 mergeable seul : sans ce nom, `titre` — champ absorbant du
-# `read` — recevrait « groupe<TAB>titre » et l'écran afficherait un titre préfixé d'un numéro.
-#
-# Un plan d'AVANT #288 (cinq colonnes, rejoué par `--resume`) laisse `titre` vide et le titre dans
-# `groupe` : dégradation d'affichage seulement, jamais de décision — `iid`, `parent` et `prio`, les
-# trois champs sur lesquels la boucle tranche, restent en place. C'est précisément pourquoi la
-# colonne s'insère AVANT `titre` et non après ; aucune compatibilité n'est donc gérée ici.
-# shellcheck disable=SC2034  # `groupe` est lu sans être utilisé — c'est le contrat de #288, ci-dessus
-while IFS=$'\t' read -r -u 3 rang iid parent prio groupe titre; do
-  [ -n "${iid:-}" ] || continue
+# --- Le plan, en mémoire (#289) -----------------------------------------------------------------------
+# La boucle lisait le plan ligne à ligne sur le descripteur 3. Un ordonnanceur ne peut pas : quand un
+# créneau se libère, il doit reprendre le prochain ticket ÉLIGIBLE, donc revenir sur des lignes qu'il a
+# déjà vues et laissées de côté. Le plan tient en quelques dizaines de lignes : on le charge, et le
+# descripteur 3 disparaît avec son piège (les enfants en héritaient, et l'un d'eux aurait pu le lire).
+P_IID=(); P_PARENT=(); P_GROUPE=(); P_TITRE=(); P_ETAT=(); P_ECHEANCE=()
+P_BRANCHE=(); P_DEST=(); P_DEBUT=(); P_REPRIS=()
+while IFS=$'\t' read -r rang iid parent _ groupe titre; do
   case "$rang" in '#'*) continue ;; esac
+  [ -n "${iid:-}" ] || continue
+  P_IID+=("$iid"); P_PARENT+=("$parent"); P_GROUPE+=("$groupe"); P_TITRE+=("$titre")
+  P_ETAT+=(attente); P_ECHEANCE+=(0); P_REPRIS+=(0)
+  P_BRANCHE+=(""); P_DEST+=(""); P_DEBUT+=(0)
+done < <(grep -v '^#' "$PLAN")
+NB_ENTREES=${#P_IID[@]}
 
-  # La POSITION dans le plan, comptée sur toutes les lignes lues — sautées comprises. C'est elle et
-  # non `TRAITES` qui s'affiche : `TRAITES` compte les tickets TENTÉS (il borne `--max`, plus bas),
-  # or une reprise saute tout ce qui a été livré depuis, si bien que le premier ticket réellement
-  # traité s'annonçait « [1/6] » alors que le plan en était à son quatrième (#230). On ne se sert
-  # pas non plus du champ `rang` du plan : un `--plan` réduit à un sous-ensemble le donnerait
-  # décalé de son propre total (« [4/3] »), `nb_plan` étant compté sur ce fichier-là.
-  POSITION=$((POSITION + 1))
-
-  if arret_demande; then break; fi
-  if [ "$MAX" -gt 0 ] && [ "$TRAITES" -ge "$MAX" ]; then
-    printf '%sPlafond --max %s atteint%s — le reste du plan est laissé pour un prochain run.\n' "$C_Y" "$MAX" "$C_0"
-    break
+# La colonne `groupe` (#288) n'existe que dans les plans écrits depuis ce lot-là. Un plan ANTÉRIEUR,
+# rejoué par `--resume`, en a cinq : son titre se lit alors dans `groupe`, et l'indépendance ne s'y
+# lit nulle part. On compte donc les colonnes de sa première ligne de DONNÉES — l'en-tête peut manquer
+# à un plan écrit à la main — et on retombe sur le run séquentiel, seul régime sûr : deviner
+# l'indépendance à partir de titres ferait partir ensemble deux lots qui se suivent.
+if [ "$CONCURRENCE" -gt 1 ]; then
+  colonnes_plan="$(grep -v '^#' "$PLAN" | head -1 | awk -F'\t' '{ print NF }')"
+  case "${colonnes_plan:-}" in '' | *[!0-9]*) colonnes_plan=0 ;; esac
+  if [ "$colonnes_plan" -lt 6 ]; then
+    printf '%s⚠%s ce plan est antérieur à la colonne « groupe » (#288) : rien n'\''y dit ce qui est\n' \
+      "$C_Y" "$C_0"
+    printf '  indépendant. Concurrence ramenée à 1 — le run reste séquentiel.\n\n'
+    CONCURRENCE=1
   fi
+fi
 
-  # Un lot dont un prédécesseur du même parent a échoué partirait d'une base incomplète.
-  case " $PARENTS_ECHOUES " in
-    *" $parent "*)
-      printf '  ~ #%-4s sauté — un lot précédent de #%s a échoué\n' "$iid" "$parent"
-      consigne "$iid" SAUTE - 0 0 "lot précédent de #$parent en échec"
-      NB_SAUTE=$((NB_SAUTE + 1))
-      continue
-      ;;
-  esac
+if [ "$CONCURRENCE" -gt 1 ]; then
+  printf '%s%s tickets en vol%s — deux ne partent ensemble que si le plan les dit indépendants.\n' \
+    "$C_B" "$CONCURRENCE" "$C_0"
+  # Les deux limites de ce lot, dites une fois, plutôt que découvertes à l'écran (#290, #291).
+  printf '  · la vue vivante est éteinte : elle suppose un seul ticket courant (#290 la rendra à N).\n'
+  printf '  · toutes les sessions tirent sur le MÊME quota : la fenêtre de 5 h part %s fois plus vite,\n' \
+    "$CONCURRENCE"
+  printf '    et chacune attend son reset dans son coin (#291 leur donnera une attente partagée).\n\n'
+fi
 
-  # Le plan est figé, l'état du backlog non : quelqu'un a pu prendre le ticket entre-temps. Le
-  # relire coûte un appel et évite de retirer son travail à une autre session (docs/10 §5).
-  # L'exception — le ticket que le run repris avait en main — est justement celui dont le « En
-  # cours » vient de nous : le reprendre ne prend le travail de personne.
-  en_vol=0
-  statut_actuel="$(gl_issue_owner "$iid" 2>/dev/null | cut -f1)"
-  if [ "$statut_actuel" = "En cours" ] && reprend_en_vol "$iid"; then
-    en_vol=1
-    printf '  %s↻%s #%-4s repris en vol — le run %s l'\''avait en main à la coupure\n' \
-      "$C_Y" "$C_0" "$iid" "$REPRISE_ID"
-  elif [ "$statut_actuel" != "À faire" ]; then
-    printf '  ~ #%-4s sauté — cycle de vie « %s » (le plan datait)\n' "$iid" "${statut_actuel:-?}"
-    consigne "$iid" SAUTE - 0 0 "cycle de vie « ${statut_actuel:-?} » au moment de le prendre"
-    NB_SAUTE=$((NB_SAUTE + 1))
-    continue
-  fi
+# --- L'indépendance, lue dans le plan (#289) ----------------------------------------------------------
+# Rien n'est recalculé ici : la règle est celle que `queue.sh` a figée dans la colonne `groupe` (#288,
+# docs/10 §11.2), et la reformuler à chaud exposerait les deux à diverger — c'est précisément ce que
+# #288 s'était donné pour but d'éviter en la figeant dans le plan.
+#
+#   deux tickets sont indépendants si leurs `parent` DIFFÈRENT, ou si leur `groupe` est IDENTIQUE.
+#
+# Les deux moitiés comptent. Un ticket hors lot porte `parent = -` comme tous les autres tickets hors
+# lot : la première moitié ne les départage pas, c'est leur `groupe` commun (« - ») qui les rend
+# indépendants entre eux. Et deux lots d'un même parent ne partent ensemble que dans la même vague.
+independants() { # <index a> <index b>
+  [ "${P_PARENT[$1]}" != "${P_PARENT[$2]}" ] && return 0
+  [ "${P_GROUPE[$1]}" = "${P_GROUPE[$2]}" ] && return 0
+  return 1
+}
 
-  # À partir d'ici le ticket est TENTÉ : il compte pour --max, même si l'échec survient avant la
-  # session. Sans quoi une panne systématique (worktree, branche) épuiserait tout le plan alors que
-  # l'utilisateur avait justement borné le run pour limiter la casse. Un ticket sauté, lui, ne coûte
-  # rien et ne compte pas.
-  TRAITES=$((TRAITES + 1))
+# eligible <index> : 0 si ce ticket peut partir MAINTENANT, c'est-à-dire s'il est indépendant de tout
+# ce qui est déjà en vol. À un seul créneau la question ne se pose pas — rien n'est en vol quand elle
+# se pose —, la fonction rend 0 sans rien parcourir et le run séquentiel ne paie pas l'ordonnanceur.
+eligible() { # <index>
+  local j
+  for j in $EN_VOL; do
+    independants "$1" "$j" || return 1
+  done
+  return 0
+}
+
+# --- La partie longue d'un ticket : sa session (#289) -------------------------------------------------
+# C'est LA SEULE chose qui part dans un sous-shell — parce que c'est la seule qui dure. Tout ce qui
+# touche à l'état du run (compteurs, cascade, bilan) reste au pilote, qui n'a donc rien à recoller au
+# retour : un code suffit.
+#
+#   0  la session a rendu la main — le verdict est à lire dans GitLab
+#   1  idem, mais interrompue par le timeout — le pilote le dira dans la raison
+#   2  arrêt demandé (fichier STOP) pendant l'attente d'une limite d'usage
+#   3  plafond d'attente dépassé : c'est la limite hebdomadaire, le run s'arrête
+#
+# 2 et 3 remplacent les `break 2` d'avant ce lot : un `break` depuis un sous-shell ne sortirait que de
+# lui, et il n'y a plus une boucle à quitter mais N tickets à laisser finir.
+joue_session() { # <iid> <dest> <uuid> <mode>
+  local iid="$1" dest="$2" uuid="$3" mode="$4"
+  local reprises=0 attente_cumulee=0 code delai
+
+  while :; do
+    lance_session "$iid" "$dest" "$uuid" "$mode"
+    code=$?
+    # Le bloc de la vue est retiré AVANT toute impression permanente : sans quoi la ligne suivante
+    # atterrirait au milieu d'une frame, et le compte de lignes des frames d'après serait faux.
+    vue_efface
+
+    if [ "$code" -eq 124 ]; then
+      dit '  %s✗%s session interrompue au bout de %s (timeout)\n' \
+        "$C_R" "$C_0" "$(duree_lisible "$TIMEOUT_S")"
+      bilan_des_reprises "$reprises" "$attente_cumulee"
+      return 1
+    fi
+
+    # Une session sortie en 0 est allée au bout de son tour : rien ne l'a coupée, et il n'y a rien à
+    # reprendre. On passe droit au verdict GitLab. Sans ce garde-fou, tout faux positif de la
+    # détection renvoyait en attente un ticket DÉJÀ LIVRÉ, sans jamais lire ce verdict (#203).
+    if [ "$code" -eq 0 ]; then
+      bilan_des_reprises "$reprises" "$attente_cumulee"
+      return 0
+    fi
+
+    # Une limite d'usage n'est pas un échec du ticket : c'est une pause. On attend, puis on reprend
+    # LA MÊME session — le travail déjà fait reste dans son contexte.
+    if ! delai="$(delai_avant_reprise "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log")"; then
+      bilan_des_reprises "$reprises" "$attente_cumulee"
+      return 0
+    fi
+
+    if [ "$reprises" -ge "$MAX_REPRISES" ]; then
+      dit '  %s✗%s limite d'\''usage encore atteinte après %s reprise(s) — on passe au ticket suivant.\n' \
+        "$C_R" "$C_0" "$reprises"
+      bilan_des_reprises "$reprises" "$attente_cumulee"
+      return 0
+    fi
+
+    attente_cumulee=$((attente_cumulee + delai))
+    if [ "$attente_cumulee" -gt "$PLAFOND_ATTENTE_S" ]; then
+      dit '\n%sLimite hebdomadaire%s — %s d'\''attente cumulée sur #%s dépassent le plafond de %s.\n' \
+        "$C_Y" "$C_0" "$(duree_lisible "$attente_cumulee")" "$iid" "$(duree_lisible "$PLAFOND_ATTENTE_S")"
+      dit 'Ce n'\''est plus une fenêtre de 5 h : le run s'\''arrête proprement, à relancer plus tard.\n'
+      bilan_des_reprises "$reprises" "$attente_cumulee"
+      return 3
+    fi
+
+    if ! patiente "$delai"; then
+      dit '  arrêt demandé pendant l'\''attente — run interrompu.\n'
+      bilan_des_reprises "$reprises" "$attente_cumulee"
+      return 2
+    fi
+
+    reprises=$((reprises + 1))
+    mode=reprise
+    # La ligne va dans `run.log` ; la vue, elle, garde l'état sous les yeux tant que la session
+    # rouverte n'a pas appelé son premier outil — l'écran ne doit pas laisser croire à un départ.
+    VUE_REPRISE="reprise $reprises/$MAX_REPRISES après limite d'usage"
+    dit '  reprise %s/%s de la session #%s…\n' "$reprises" "$MAX_REPRISES" "$iid"
+  done
+}
+
+# Le décompte des reprises est dit par le ticket lui-même : le pilote ne le connaît pas, et c'est une
+# information sur la session, pas sur le run.
+bilan_des_reprises() { # <reprises> <attente cumulée>
+  [ "${1:-0}" -eq 0 ] && return 0
+  dit '  (%s reprise(s) après limite d'\''usage, %s d'\''attente)\n' "$1" "$(duree_lisible "$2")"
+  return 0
+}
+
+# --- Lancer un ticket ---------------------------------------------------------------------------------
+# Tout le pré-vol est ICI, dans le pilote, et volontairement SÉRIALISÉ : résolution de la branche,
+# montage du worktree, uuid de session. Deux raisons, pas une —
+#   · `git worktree add` écrit dans le dépôt partagé (refs, `.git/worktrees`) et prend ses verrous.
+#     N montages simultanés sur le même clone, c'est un « cannot lock ref » au hasard ; et les
+#     quelques minutes d'installation se noient de toute façon dans une session qui en dure soixante ;
+#   · les échecs de pré-vol (branche introuvable, worktree non monté) comptent pour `--max` et
+#     nourrissent la cascade : les garder là où vivent les compteurs évite tout aller-retour.
+#
+# Rend 0 si un ticket est parti (un créneau est pris), 1 sinon — il a alors DÉJÀ son verdict.
+lance_ticket() { # <index>
+  local i="$1"
+  # Deux `local` et non un : dans un seul, `$i` désignerait encore la variable de l'appelant — ici
+  # elle vaut la même chose, ce qui rendrait le jour où elle ne la vaudrait plus très difficile à voir.
+  local iid="${P_IID[$i]}" titre="${P_TITRE[$i]}"
+  local branche dest mode uuid temoin PREFIXE_TICKET=""
+  [ "$CONCURRENCE" -gt 1 ] && PREFIXE_TICKET="#$iid "
 
   branche="$(gl_branch_for "$iid" 2>/dev/null)"
   if [ -z "$branche" ]; then
     printf '  %s✗%s #%-4s branche introuvable (label type:: absent ?)\n' "$C_R" "$C_0" "$iid"
-    consigne "$iid" ECHEC - 0 0 "nom de branche non résolu"
-    NB_ECHEC=$((NB_ECHEC + 1))
-    [ "$parent" != "-" ] && PARENTS_ECHOUES="$PARENTS_ECHOUES $parent"
-    continue
+    solde_ticket "$i" ECHEC - 0 0 "nom de branche non résolu"
+    return 1
   fi
 
   printf '%s[%s/%s] #%s — %s%s\n' "$C_B" "$POSITION" "$nb_plan" "$iid" "$titre" "$C_0"
@@ -1853,14 +2046,13 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio groupe titre; do
   #    clone principal reste utilisable pendant que le run tourne.
   dest="$(prepare_worktree "$iid" "$branche" "$RUN_DIR/$iid.worktree.log")"
   if [ -z "$dest" ] || [ ! -d "$dest" ]; then
-    printf '  %s✗%s worktree de « %s » non monté — voir %s\n' "$C_R" "$C_0" "$branche" "$RUN_DIR/$iid.worktree.log"
-    consigne "$iid" ECHEC - 0 0 "worktree non monté"
-    NB_ECHEC=$((NB_ECHEC + 1))
-    [ "$parent" != "-" ] && PARENTS_ECHOUES="$PARENTS_ECHOUES $parent"
-    continue
+    dit '  %s✗%s worktree de « %s » non monté — voir %s\n' \
+      "$C_R" "$C_0" "$branche" "$RUN_DIR/$iid.worktree.log"
+    solde_ticket "$i" ECHEC - 0 0 "worktree non monté"
+    return 1
   fi
   WORKTREES="$WORKTREES $iid"
-  printf '  worktree : %s\n' "$dest"
+  dit '  worktree : %s\n' "$dest"
 
   # 2. La session dédiée, avec reprise automatique si la limite d'usage tombe au milieu (#171).
   #    Un ticket repris en vol rouvre LA SESSION de la coupure : son uuid est recopié du journal
@@ -1868,18 +2060,17 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio groupe titre; do
   #    repayer un contexte déjà constitué. Si elle n'est plus reprenable, `lance_session` redémarre
   #    tout seul à froid : le prompt est idempotent et le travail commité est sur la branche.
   mode=neuf
-  if [ "$en_vol" = 1 ] && cp "$REPRISE_DIR/$iid.session" "$RUN_DIR/$iid.session" 2>/dev/null; then
+  if [ "${P_REPRIS[$i]}" = 1 ] && cp "$REPRISE_DIR/$iid.session" "$RUN_DIR/$iid.session" 2>/dev/null; then
     mode=reprise
-    printf '  session de la coupure rouverte (%s)\n' "$(cat "$RUN_DIR/$iid.session")"
+    dit '  session de la coupure rouverte (%s)\n' "$(cat "$RUN_DIR/$iid.session")"
   fi
   uuid="$(uuid_du_ticket "$iid")"
-  debut=$SECONDS
-  attente_cumulee=0
-  tentative=0
-  reprises=0
-  cout=0
+
+  P_BRANCHE[$i]="$branche"
+  P_DEST[$i]="$dest"
+  P_DEBUT[$i]=$SECONDS
   # Le chrono de la vue suit le TICKET : posé ici, il traverse les reprises de session.
-  VUE_DEBUT_TICKET=$debut
+  VUE_DEBUT_TICKET=$SECONDS
   VUE_REPRISE=""
 
   # La checklist du plan, recalculée à chaque ticket (#240) : les verdicts déjà rendus viennent de
@@ -1887,86 +2078,108 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio groupe titre; do
   # peut être redessiné : avec une console, le bloc vivant la porte déjà, et l'imprimer en double
   # ferait défiler deux fois la même chose. Ce que `run.log` garde alors, ce sont l'en-tête du
   # ticket, les battements et le verdict — la trace permanente, qui suffit à relire un run.
-  vue_prepare "$iid"
-  vue_active || vue_texte
+  #
+  # À plusieurs en vol, ni l'une ni l'autre : la vue est éteinte (cf. `vue_ouvre`) et N checklists
+  # empilées dans le journal diraient N fois la même chose, chacune fausse dès la ligne suivante.
+  if [ "$CONCURRENCE" -le 1 ]; then
+    vue_prepare "$iid"
+    vue_active || vue_texte
+  fi
 
-  while :; do
-    tentative=$((tentative + 1))
-    lance_session "$iid" "$dest" "$uuid" "$mode"
+  # Le sous-shell rend son code par un TÉMOIN, pas par `wait` : bash ne sait pas dire « lequel de mes
+  # enfants vient de finir » de façon portable (`wait -n -p` demande bash 5.1), et un `kill -0`
+  # réussit encore sur un zombie. Le fichier, lui, répond aux deux questions à la fois — qui, et avec
+  # quel code — et c'est déjà le canal de tout le reste du script entre sous-shells (`.vue-hauteur`,
+  # `.session`, `.json`). Écrit par un trap EXIT : une session tuée par un signal doit rendre la main
+  # au pilote, pas le laisser attendre un témoin qui ne viendra jamais.
+  temoin="$RUN_DIR/$iid.fini"
+  rm -f "$temoin" 2>/dev/null
+  (
+    code=1
+    # Guillemets SIMPLES : `$code` doit s'évaluer AU MOMENT du trap, pas à sa pose. `$temoin` est un
+    # local de cette fonction, donc visible ici — le nommer plutôt que l'interpoler évite de recoller
+    # un chemin dans une chaîne entre guillemets, où une apostrophe le couperait en deux.
+    trap 'printf "%s\n" "$code" >"$temoin"' EXIT
+    joue_session "$iid" "$dest" "$uuid" "$mode"
     code=$?
-    # Le bloc de la vue est retiré AVANT toute impression permanente : sans quoi la ligne suivante
-    # atterrirait au milieu d'une frame, et le compte de lignes des frames d'après serait faux.
-    vue_efface
-    cout="$(champ_json "$RUN_DIR/$iid.json" total_cost_usd)"
+  ) &
+  # Le PID n'est délibérément pas gardé : rien ne le lirait. `wait <pid>` bloquerait sur un enfant
+  # encore vivant, et `kill -0` réussit sur un zombie — le témoin répond aux deux questions que le
+  # PID ne sait pas trancher, et le `wait` final récolte tout le monde d'un coup.
+  P_ETAT[$i]=vol
+  # Le garde-fou anti-blocage : un sous-shell emporté par un SIGKILL n'exécute aucun trap, ne laisse
+  # donc aucun témoin, et le pilote l'attendrait indéfiniment. Passé le temps qu'un ticket peut
+  # légitimement prendre — ses sessions successives, plus tout ce qu'une limite d'usage l'autorise à
+  # attendre, plus une marge — sa place est reprise et il est compté en échec. Jamais atteint en
+  # régime normal : le `timeout` de chaque session en est très loin.
+  P_ECHEANCE[$i]=$((SECONDS + TIMEOUT_S * (MAX_REPRISES + 1) + PLAFOND_ATTENTE_S + 600))
+  EN_VOL="$EN_VOL $i"
+  return 0
+}
 
-    if [ "$code" -eq 124 ]; then
-      printf '  %s✗%s session interrompue au bout de %s (timeout)\n' "$C_R" "$C_0" "$(duree_lisible "$TIMEOUT_S")"
-      break
-    fi
-
-    # Une session sortie en 0 est allée au bout de son tour : rien ne l'a coupée, et il n'y a rien à
-    # reprendre. On passe droit au verdict GitLab. Sans ce garde-fou, tout faux positif de la
-    # détection renvoyait en attente un ticket DÉJÀ LIVRÉ, sans jamais lire ce verdict (#203).
-    if [ "$code" -eq 0 ]; then
-      break
-    fi
-
-    # Une limite d'usage n'est pas un échec du ticket : c'est une pause. On attend, puis on reprend
-    # LA MÊME session — le travail déjà fait reste dans son contexte.
-    if ! delai="$(delai_avant_reprise "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log")"; then
-      break
-    fi
-
-    if [ "$reprises" -ge "$MAX_REPRISES" ]; then
-      printf '  %s✗%s limite d'\''usage encore atteinte après %s reprise(s) — on passe au ticket suivant.\n' \
-        "$C_R" "$C_0" "$reprises"
-      break
-    fi
-
-    attente_cumulee=$((attente_cumulee + delai))
-    if [ "$attente_cumulee" -gt "$PLAFOND_ATTENTE_S" ]; then
-      printf '\n%sLimite hebdomadaire%s — %s d'\''attente cumulée sur #%s dépassent le plafond de %s.\n' \
-        "$C_Y" "$C_0" "$(duree_lisible "$attente_cumulee")" "$iid" "$(duree_lisible "$PLAFOND_ATTENTE_S")"
-      printf 'Ce n'\''est plus une fenêtre de 5 h : le run s'\''arrête proprement, à relancer plus tard.\n'
-      consigne "$iid" ECHEC - "$((SECONDS - debut))" "${cout:-0}" "limite hebdomadaire (attente > $(duree_lisible "$PLAFOND_ATTENTE_S"))"
-      # Ces deux sorties quittent la boucle entière : sans cet appel, les seuls tickets à ne pas
-      # avoir de vue lisible seraient ceux qu'on ira justement relire (§11.7).
-      ecrit_resultat "$iid" "$titre" ECHEC - "$((SECONDS - debut))" "limite hebdomadaire"
+# --- Solder un ticket ---------------------------------------------------------------------------------
+# L'unique endroit qui écrit une ligne de bilan, incrémente un compteur et nourrit la cascade. Qu'il
+# ait échoué au pré-vol, rendu son verdict ou été sauté, un ticket passe par ici — c'est ce qui garde
+# `resume.tsv`, `--max` et la cascade justes quel que soit le nombre de tickets en vol.
+solde_ticket() { # <index> <verdict> <mr> <duree> <cout> <raison>
+  local i="$1" verdict="$2"
+  consigne "${P_IID[$i]}" "$verdict" "$3" "$4" "$5" "$6"
+  P_ETAT[$i]=fini
+  case "$verdict" in
+    OK) NB_OK=$((NB_OK + 1)) ;;
+    SAUTE) NB_SAUTE=$((NB_SAUTE + 1)) ;;
+    *)
       NB_ECHEC=$((NB_ECHEC + 1))
-      PLAFOND_ATTEINT=1
-      break 2
-    fi
+      # La cascade se décide DÉSORMAIS À LA FIN d'un ticket, et non à son tour de boucle (#289) :
+      # avec N en vol, le tour de boucle d'un lot peut arriver avant le verdict de son prédécesseur.
+      # Ce qui est déjà parti n'est pas rappelé — le plan l'avait déclaré indépendant, donc de la même
+      # vague ; ce qui n'est pas parti sera sauté au moment de le lancer.
+      [ "${P_PARENT[$i]}" != "-" ] && PARENTS_ECHOUES="$PARENTS_ECHOUES ${P_PARENT[$i]}"
+      ;;
+  esac
+  return 0
+}
 
-    if ! patiente "$delai"; then
-      printf '  arrêt demandé pendant l'\''attente — run interrompu.\n'
-      consigne "$iid" ECHEC - "$((SECONDS - debut))" "${cout:-0}" "arrêt demandé pendant l'attente de reprise"
-      ecrit_resultat "$iid" "$titre" ECHEC - "$((SECONDS - debut))" "arrêt demandé pendant l'attente de reprise"
-      NB_ECHEC=$((NB_ECHEC + 1))
-      break 2
-    fi
+# --- Le verdict d'un ticket qui vient de finir --------------------------------------------------------
+# Lu dans GitLab (MR ouverte ET cycle de vie « En revue »), jamais dans la prose de la session.
+juge_ticket() { # <index> <code rendu par le sous-shell>
+  local i="$1" code="$2"
+  local iid="${P_IID[$i]}" dest="${P_DEST[$i]}" branche="${P_BRANCHE[$i]}"
+  local duree=$((SECONDS - P_DEBUT[i]))
+  local cout etat_mr statut mr raison reste n_modifs n_commits detail PREFIXE_TICKET=""
+  [ "$CONCURRENCE" -gt 1 ] && PREFIXE_TICKET="#$iid "
 
-    reprises=$((reprises + 1))
-    mode=reprise
-    # La ligne va dans `run.log` ; la vue, elle, garde l'état sous les yeux tant que la session
-    # rouverte n'a pas appelé son premier outil — l'écran ne doit pas laisser croire à un départ.
-    VUE_REPRISE="reprise $reprises/$MAX_REPRISES après limite d'usage"
-    printf '  reprise %s/%s de la session #%s…\n' "$reprises" "$MAX_REPRISES" "$iid"
-  done
-  duree=$((SECONDS - debut))
-  [ "$reprises" -eq 0 ] || printf '  (%s reprise(s) après limite d'\''usage, %s d'\''attente)\n' \
-    "$reprises" "$(duree_lisible "$attente_cumulee")"
+  cout="$(champ_json "$RUN_DIR/$iid.json" total_cost_usd)"
 
-  # 3. Le verdict, lu dans GitLab.
+  # Les deux sorties d'urgence d'une session arrêtent le RUN et pas seulement ce ticket : elles ne
+  # passent donc pas par le verdict GitLab, qu'aucune session n'a eu le loisir de poser.
+  if [ "$code" -eq 3 ]; then
+    raison="limite hebdomadaire (attente > $(duree_lisible "$PLAFOND_ATTENTE_S"))"
+    solde_ticket "$i" ECHEC - "$duree" "${cout:-0}" "$raison"
+    # Sans cet appel, les seuls tickets à ne pas avoir de vue lisible seraient ceux qu'on ira
+    # justement relire (§11.7).
+    ecrit_resultat "$iid" "${P_TITRE[$i]}" ECHEC - "$duree" "limite hebdomadaire"
+    PLAFOND_ATTEINT=1
+    ARRET_LANCEMENT="limite hebdomadaire"
+    return 0
+  fi
+  if [ "$code" -eq 2 ]; then
+    raison="arrêt demandé pendant l'attente de reprise"
+    solde_ticket "$i" ECHEC - "$duree" "${cout:-0}" "$raison"
+    ecrit_resultat "$iid" "${P_TITRE[$i]}" ECHEC - "$duree" "$raison"
+    ARRET_LANCEMENT="arrêt demandé"
+    return 0
+  fi
+
   etat_mr="$(gl_mr_state "$branche" 2>/dev/null)"
   statut="$(gl_issue_owner "$iid" 2>/dev/null | cut -f1)"
   mr="$(gl_mr_iid "$branche" 2>/dev/null)"
   if [ "$etat_mr" = "opened" ] && [ "$statut" = "En revue" ]; then
-    printf '  %s✓%s MR !%s ouverte, ticket « En revue » — %s, %s $\n' \
+    dit '  %s✓%s MR !%s ouverte, ticket « En revue » — %s, %s $\n' \
       "$C_G" "$C_0" "${mr:-?}" "$(duree_lisible "$duree")" "$(arrondi_cout "${cout:-?}")"
-    consigne "$iid" OK "${mr:--}" "$duree" "${cout:-0}" -
+    solde_ticket "$i" OK "${mr:--}" "$duree" "${cout:-0}" -
     # La raison dit sur quoi repose le verdict : la MR est déjà nommée juste avant, l'état non.
-    ecrit_resultat "$iid" "$titre" OK "${mr:--}" "$duree" "ticket « En revue »"
-    NB_OK=$((NB_OK + 1))
+    ecrit_resultat "$iid" "${P_TITRE[$i]}" OK "${mr:--}" "$duree" "ticket « En revue »"
   else
     raison="MR « ${etat_mr:-aucune} », cycle de vie « ${statut:-?} »"
     # Ce que la session a laissé derrière elle : c'est cela qui dit si l'échec est rattrapable.
@@ -1983,20 +2196,138 @@ while IFS=$'\t' read -r -u 3 rang iid parent prio groupe titre; do
     else
       raison="session terminée sans rien produire (worktree propre) — $raison"
     fi
-    [ "$code" -eq 124 ] && raison="timeout — $raison"
-    printf '  %s✗%s %s — journal : %s\n' "$C_R" "$C_0" "$raison" "$RUN_DIR/$iid.resultat.txt"
+    # Le sous-shell rend 1 pour le seul cas où le CLI est sorti en 124 : le timeout, qui explique
+    # tout le reste de la ligne et se dit donc en tête.
+    [ "$code" -eq 1 ] && raison="timeout — $raison"
+    dit '  %s✗%s %s — journal : %s\n' "$C_R" "$C_0" "$raison" "$RUN_DIR/$iid.resultat.txt"
     [ -n "$detail" ] &&
-      printf '    le travail est conservé dans %s — à reprendre, pas à refaire.\n' "$dest"
-    consigne "$iid" ECHEC "${mr:--}" "$duree" "${cout:-0}" "$raison"
-    ecrit_resultat "$iid" "$titre" ECHEC "${mr:--}" "$duree" "$raison"
-    NB_ECHEC=$((NB_ECHEC + 1))
-    [ "$parent" != "-" ] && PARENTS_ECHOUES="$PARENTS_ECHOUES $parent"
+      dit '    le travail est conservé dans %s — à reprendre, pas à refaire.\n' "$dest"
+    solde_ticket "$i" ECHEC "${mr:--}" "$duree" "${cout:-0}" "$raison"
+    ecrit_resultat "$iid" "${P_TITRE[$i]}" ECHEC "${mr:--}" "$duree" "$raison"
   fi
   # Le verdict est rendu : plus personne ne relira le flux brut de ce ticket (#198). Après le
   # `consigne`, et dans les deux branches — un échec est justement ce qu'on ira relire, en `.gz`.
   compacte_flux "$iid"
-  printf '\n'
-done 3< <(grep -v '^#' "$PLAN")
+  return 0
+}
+
+# --- L'ordonnanceur (#289) ----------------------------------------------------------------------------
+# Deux gestes en alternance, jusqu'à ce qu'il ne reste ni ticket à lancer ni ticket en vol : remplir
+# les créneaux libres avec le prochain ticket ÉLIGIBLE du plan, puis attendre qu'un s'en libère. À
+# `--concurrence 1` cela se réduit exactement au run d'avant — un ticket, son verdict, le suivant.
+EN_VOL=""
+ORDO_TICK=0.2   # la même horloge que la vue vivante : rien ici ne change plus vite
+
+# remplit_les_creneaux : lance ce qui peut l'être, dans l'ordre du plan. Balaye TOUT le plan à chaque
+# passage et non la seule ligne suivante — c'est là qu'un créneau qui se libère va chercher le prochain
+# ticket éligible plutôt que le prochain tout court.
+remplit_les_creneaux() {
+  local i j n_vol iid parent statut
+  while :; do
+    [ -n "$ARRET_LANCEMENT" ] && return 0
+    n_vol=0; for j in $EN_VOL; do n_vol=$((n_vol + 1)); done
+    [ "$n_vol" -ge "$CONCURRENCE" ] && return 0
+
+    # Le fichier STOP est relu avant chaque lancement, comme il l'était avant chaque tour de boucle.
+    if arret_demande; then ARRET_LANCEMENT="arrêt demandé"; return 0; fi
+    if [ "$MAX" -gt 0 ] && [ "$TRAITES" -ge "$MAX" ]; then
+      printf '%sPlafond --max %s atteint%s — le reste du plan est laissé pour un prochain run.\n' \
+        "$C_Y" "$MAX" "$C_0"
+      ARRET_LANCEMENT="plafond --max"
+      return 0
+    fi
+
+    for ((i = 0; i < NB_ENTREES; i++)); do
+      [ "${P_ETAT[$i]}" = attente ] || continue
+      eligible "$i" || continue
+      iid="${P_IID[$i]}"; parent="${P_PARENT[$i]}"
+
+      # La POSITION dans le plan, sautés compris. C'est elle et non `TRAITES` qui s'affiche :
+      # `TRAITES` compte les tickets TENTÉS (il borne `--max`), or une reprise saute tout ce qui a
+      # été livré depuis, si bien que le premier ticket réellement traité s'annonçait « [1/6] » alors
+      # que le plan en était à son quatrième (#230). C'est l'INDICE dans le plan, et non un compteur
+      # qui avance : à N en vol les tickets ne se prennent plus dans l'ordre, et un compteur dirait
+      # la position d'un autre. On ne se sert pas non plus du champ `rang` du plan : un `--plan`
+      # réduit à un sous-ensemble le donnerait décalé de son propre total (« [4/3] »), `nb_plan`
+      # étant compté sur ce fichier-là.
+      POSITION=$((i + 1))
+
+      # Un lot dont un prédécesseur du même parent a échoué partirait d'une base incomplète.
+      case " $PARENTS_ECHOUES " in
+        *" $parent "*)
+          printf '  ~ #%-4s sauté — un lot précédent de #%s a échoué\n' "$iid" "$parent"
+          solde_ticket "$i" SAUTE - 0 0 "lot précédent de #$parent en échec"
+          continue 2
+          ;;
+      esac
+
+      # Le plan est figé, l'état du backlog non : quelqu'un a pu prendre le ticket entre-temps. Le
+      # relire coûte un appel et évite de retirer son travail à une autre session (docs/10 §5).
+      # L'exception — le ticket que le run repris avait en main — est justement celui dont le « En
+      # cours » vient de nous : le reprendre ne prend le travail de personne.
+      P_REPRIS[$i]=0
+      statut="$(gl_issue_owner "$iid" 2>/dev/null | cut -f1)"
+      if [ "$statut" = "En cours" ] && reprend_en_vol "$iid"; then
+        P_REPRIS[$i]=1
+        printf '  %s↻%s #%-4s repris en vol — le run %s l'\''avait en main à la coupure\n' \
+          "$C_Y" "$C_0" "$iid" "$REPRISE_ID"
+      elif [ "$statut" != "À faire" ]; then
+        printf '  ~ #%-4s sauté — cycle de vie « %s » (le plan datait)\n' "$iid" "${statut:-?}"
+        solde_ticket "$i" SAUTE - 0 0 "cycle de vie « ${statut:-?} » au moment de le prendre"
+        continue 2
+      fi
+
+      # À partir d'ici le ticket est TENTÉ : il compte pour --max, même si l'échec survient avant la
+      # session. Sans quoi une panne systématique (worktree, branche) épuiserait tout le plan alors
+      # que l'utilisateur avait justement borné le run pour limiter la casse. Un ticket sauté, lui,
+      # ne coûte rien et ne compte pas.
+      TRAITES=$((TRAITES + 1))
+      lance_ticket "$i"
+      continue 2
+    done
+    # Le plan a été balayé sans qu'un ticket parte : soit tout est fini, soit ce qui reste attend
+    # qu'un créneau se libère pour cause de dépendance.
+    return 0
+  done
+}
+
+# moissonne : ramasse les tickets dont le témoin est là, rend leur verdict et libère leur créneau.
+# Rend 0 dès qu'au moins un a été ramassé — c'est ce qui redonne la main au remplissage.
+moissonne() {
+  local i reste="" pris=0 code
+  for i in $EN_VOL; do
+    if [ -s "$RUN_DIR/${P_IID[$i]}.fini" ]; then
+      read -r code <"$RUN_DIR/${P_IID[$i]}.fini" || code=1
+      case "${code:-}" in '' | *[!0-9]*) code=1 ;; esac
+      rm -f "$RUN_DIR/${P_IID[$i]}.fini" 2>/dev/null
+    elif [ "$SECONDS" -gt "${P_ECHEANCE[$i]}" ]; then
+      printf '  %s✗%s #%-4s session disparue sans rendre de code — créneau repris.\n' \
+        "$C_R" "$C_0" "${P_IID[$i]}"
+      code=1
+    else
+      reste="$reste $i"
+      continue
+    fi
+    juge_ticket "$i" "$code"
+    printf '\n'
+    pris=1
+  done
+  EN_VOL="$reste"
+  [ "$pris" = 1 ]
+}
+
+while :; do
+  remplit_les_creneaux
+  [ -n "$EN_VOL" ] || break
+  # On attend qu'un créneau se libère. `sleep` et non `wait` : `wait` rendrait la main sur n'importe
+  # lequel des enfants sans dire lequel, et il faudrait de toute façon relire les témoins. Un tour
+  # toutes les 0,2 s ne coûte rien à côté d'une session qui dure des dizaines de minutes.
+  until moissonne; do sleep "$ORDO_TICK"; done
+done
+
+# Les sous-shells sont tous sortis — leur témoin l'a dit. Ce `wait` ne fait que les récolter, pour
+# qu'aucun zombie ne survive au pilote.
+wait 2>/dev/null || true
 
 # --- Résumé --------------------------------------------------------------------------------------------
 # Plus une frame ne sera dessinée : le bloc part et le curseur revient AVANT le résumé, qui reprend
