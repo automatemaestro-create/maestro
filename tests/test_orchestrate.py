@@ -3170,6 +3170,270 @@ def test_un_dry_run_ne_tue_rien(depot: Depot) -> None:
 
 
 # =====================================================================================
+# L'arrêt quand N sessions sont en vol (#291)
+# =====================================================================================
+#
+# Ces tests-là sont dans CE lot et non dans le lot « tests + doc » (#292), pour la raison de #213 :
+# vérifier qu'un arrêt arrête ne se simule pas. Ils lancent donc de vrais processus — un pilote, ses
+# N sous-shells et, sous chacun, un petit-fils — et les tuent pour de bon.
+#
+# Ce qu'on observe est un BATTEMENT et non un `kill -0` : un processus tué mais pas encore ramassé
+# par son parent reste un zombie, et `kill -0` lui répond « vivant » (c'est tout l'objet de
+# `pilote_zombie`). Un fichier qui cesse de grossir, lui, ne ment pas — plus rien ne tourne.
+#
+# Ce que ces tests NE couvrent pas, faute de pouvoir le faire ailleurs que sous Windows : le
+# `taskkill //T //F` par WINPID, seul chemin jusqu'aux `claude.exe` natifs. Ailleurs, `pilote_tue`
+# atteint toute la descendance par `kill`, et c'est cette récursion-là — jamais éprouvée au-delà du
+# pilote lui-même avant ce lot — que les tests d'ici vérifient.
+
+
+def _pilote_factice_a_n_sessions(
+    depot: Depot, dossier: Path, n: int, duree: int = 120
+) -> subprocess.Popen:
+    """Un pilote vivant, ses `n` sous-shells, et sous chacun un petit-fils qui bat.
+
+    La forme reproduit celle de `lance_ticket` : le pilote garde l'état, seule la session part dans
+    un sous-shell, et c'est SOUS elle que vit le processus long (le `claude.exe` d'un vrai run).
+    Trois étages, donc, pour que l'arrêt ait quelque chose de récursif à descendre.
+    """
+    battements = dossier.parent / "battements"
+    battements.mkdir(exist_ok=True)
+    script = depot.racine.parent / "bin" / "faux-pilote-n"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        f'. "{depot.racine}/scripts/orchestrate/pilote.sh"\n'
+        'pilote_ecrit "$1"\n'
+        'for ((i = 1; i <= $2; i++)); do\n'
+        '  (\n'
+        '    ( while :; do printf . >>"$4/session-$i"; sleep 0.2; done ) &\n'
+        '    wait\n'
+        '  ) &\n'
+        'done\n'
+        'sleep "$3"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    script.chmod(0o755)
+    proc = subprocess.Popen(  # noqa: S603
+        [BASH, str(script), str(dossier), str(n), str(duree), str(battements)],
+        env=depot.env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    # On attend que les N battements aient VRAIMENT commencé : tuer avant qu'ils existent ferait
+    # passer le test pour de mauvaises raisons.
+    carte = dossier / "pid"
+    for _ in range(300):
+        if (
+            carte.exists()
+            and "hote=" in carte.read_text(encoding="utf-8", errors="replace")
+            and all((battements / f"session-{i}").exists() for i in range(1, n + 1))
+        ):
+            return proc
+        time.sleep(0.05)
+    proc.kill()
+    raise AssertionError("le pilote factice n'a pas démarré ses N sessions")
+
+
+def _bat_encore(battements: Path, n: int) -> bool:
+    """Vrai si l'un des N battements grossit encore — donc si quelque chose tourne toujours."""
+    avant = [(battements / f"session-{i}").stat().st_size for i in range(1, n + 1)]
+    time.sleep(1.5)
+    apres = [(battements / f"session-{i}").stat().st_size for i in range(1, n + 1)]
+    return avant != apres
+
+
+def test_l_arret_atteint_les_n_sessions_en_vol_et_leurs_enfants(depot: Depot) -> None:
+    """Le cœur de #291 côté arrêt : ce n'est pas le pilote qu'on tue, c'est tout son arbre.
+
+    Avant ce lot, l'arrêt n'avait jamais été éprouvé sur plus d'un descendant — un run séquentiel
+    n'en a qu'un. À N, une session laissée derrière soi continue de brûler du quota sans que rien ne
+    la rattache plus à un run.
+    """
+    dossier = _run_dir(depot, "20260803-171434",
+                       [(1, 130, "-", "haute"), (2, 131, "-", "haute"), (3, 132, "-", "haute")],
+                       resume=[], sessions=(130, 131, 132))
+    battements = dossier.parent / "battements"
+    proc = _pilote_factice_a_n_sessions(depot, dossier, 3)
+    try:
+        assert _bat_encore(battements, 3), "les trois sessions doivent battre AVANT l'arrêt"
+        r = depot.lance("run.sh", "--tuer-les-runs")
+        assert r.returncode == 0, r.stderr
+        assert proc.wait(timeout=30) is not None, "le pilote tourne toujours après son arrêt"
+        assert not _bat_encore(battements, 3), \
+            "une session survivante après l'arrêt, c'est du quota brûlé pour personne"
+    finally:
+        proc.kill()
+
+
+def test_l_arret_nomme_tous_les_tickets_qu_il_interrompt(depot: Depot) -> None:
+    """N'en nommer qu'un ferait croire qu'un seul worktree garde du travail non commité."""
+    dossier = _run_dir(depot, "20260803-171434",
+                       [(1, 130, "-", "haute"), (2, 131, "-", "haute"), (3, 132, "-", "haute")],
+                       resume=[(130, "OK", 99, 600, "3.50", "-")], sessions=(130, 131, 132))
+    proc = _pilote_factice(depot, dossier)
+    try:
+        r = depot.lance("run.sh", "--tuer-les-runs")
+        assert r.returncode == 0, r.stderr
+        proc.wait(timeout=30)
+        assert "#131" in r.stdout and "#132" in r.stdout, \
+            "les deux tickets encore en vol sont nommés, pas seulement le premier"
+        assert "#130" not in r.stdout, \
+            "un ticket déjà soldé n'est pas en vol : on ne l'interrompt pas"
+    finally:
+        proc.kill()
+
+
+def test_un_run_a_n_sessions_reste_reprenable_apres_l_arret(depot: Depot) -> None:
+    """L'arrêt est sans sommation mais BORNÉ : le journal reste entier, et tout est rejouable.
+
+    C'est ce qui rend acceptable de tuer N sessions d'un coup — le travail non commité dort dans les
+    worktrees, et les témoins de session (les uuid) sont ce qui permettra de les rouvrir.
+    """
+    dossier = _run_dir(depot, "20260803-171434",
+                       [(1, 130, "-", "haute"), (2, 131, "-", "haute"), (3, 132, "-", "haute")],
+                       resume=[(130, "OK", 99, 600, "3.50", "-")], sessions=(130, 131, 132))
+    proc = _pilote_factice_a_n_sessions(depot, dossier, 2)
+    try:
+        depot.lance("run.sh", "--tuer-les-runs")
+        proc.wait(timeout=30)
+        lignes = _reprenables(depot)
+        assert [ligne[0] for ligne in lignes] == ["20260803-171434"]
+        assert lignes[0][2] == "2", "les deux tickets en vol restent à faire"
+        for iid in (131, 132):
+            assert (dossier / f"{iid}.session").exists(), \
+                f"l'uuid de #{iid} survit : c'est par lui que sa session se rouvrira"
+        assert (dossier / "resume.tsv").exists(), "tuer un run ne touche pas à son bilan"
+    finally:
+        proc.kill()
+
+
+def test_le_fichier_stop_arrete_un_run_concurrent_sans_couper_ce_qui_est_en_vol(
+    depot: Depot,
+) -> None:
+    """STOP garde à N le sens qu'il avait à 1 : il arrête de LANCER, il ne tue personne.
+
+    Les deux tickets partis ensemble vont donc au bout — c'est ce qui distingue le fichier STOP de
+    `--tuer-les-runs`, et ce qui fait qu'il ne coûte aucun travail non commité. Le reste du plan est
+    laissé intact pour un prochain run.
+    """
+    for iid in (130, 131, 132, 133):
+        depot.ticket(iid, f"Ticket {iid}")
+    run_dir = depot.racine / ".maestro/orchestrate/stop-n"
+    stop = depot.racine / ".maestro/orchestrate/STOP"
+    # La session n'attend pas une durée mais un ÉVÉNEMENT : le témoin de session du second ticket,
+    # posé par le pilote juste avant de le lancer. Sans cela, la première session pourrait poser
+    # STOP pendant que le pilote remplit encore son deuxième créneau, et le test dirait « un seul
+    # en vol » là où c'est la course qui aurait tranché, pas le code.
+    claude = _claude_stub(depot, f"""
+        for _ in $(seq 1 200); do
+          [ -e "{run_dir}/131.session" ] && break
+          sleep 0.05
+        done
+        touch "{stop}"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute"),
+                         (3, 132, "-", "haute"), (4, 133, "-", "haute")])
+    r = depot.lance(
+        "run.sh", "--plan", plan, "--run-id", "stop-n", "--concurrence", "2",
+        env={"MAESTRO_CLAUDE_BIN": claude},
+    )
+    # 1 : les deux sessions n'ont rien clos côté GitLab, donc deux ECHEC — ce n'est pas ce qu'on
+    # regarde ici, seule compte la LISTE des tickets que le run a pris en main.
+    assert r.returncode in (0, 1), r.stdout + r.stderr
+    assert "Arrêt demandé" in r.stdout
+    traites = [x.split("\t")[0]
+               for x in (run_dir / "resume.tsv").read_text(encoding="utf-8").splitlines()
+               if not x.startswith("#")]
+    assert traites == ["130", "131"], (
+        f"les deux en vol vont au bout, et rien de plus n'est lancé — obtenu {traites}"
+    )
+    assert not (run_dir / "132.session").exists(), "le reste du plan n'a pas été touché"
+
+
+# =====================================================================================
+# La limite d'usage quand N sessions sont en vol (#291)
+# =====================================================================================
+#
+# Le reste de la couverture de ce chantier est au lot « tests + doc » (#292). Celui-ci est ici parce
+# qu'il garde la mécanique la plus facile à casser sans que rien ne le montre : deux sessions qui
+# attendent chacune dans leur coin ont exactement la même allure à l'écran qu'une attente partagée,
+# et la différence ne se voit qu'au moment où la moins bien informée se réveille trop tôt.
+
+
+def test_une_limite_d_usage_ne_declenche_qu_une_attente_pour_les_n_sessions(
+    depot: Depot,
+) -> None:
+    """Une attente pour le run, chaque session rouverte PAR SON UUID : les deux moitiés du critère.
+
+    Le palier est ramené à quelques secondes : ce qu'on vérifie n'est pas sa durée mais le fait que
+    les deux sessions se rangent derrière LE MÊME rendez-vous, puis repartent chacune sur sa propre
+    conversation. Sans le rendez-vous, la seconde ouvrirait la sienne et la sortie ne dirait rien de
+    différent — d'où l'assertion sur le fichier, et pas seulement sur la prose.
+    """
+    for iid in (130, 131):
+        depot.ticket(iid, f"Ticket {iid}")
+        depot.mr(f"feat/{iid}-ticket-{iid}", "opened")
+    run_dir = depot.racine / ".maestro/orchestrate/limite-n"
+    # Les deux sessions annoncent leur limite EN MÊME TEMPS — chacune attend que l'autre soit
+    # arrivée. C'est le cas réel (la fenêtre se referme sur toutes à la fois) et c'est ce qui rend
+    # le test insensible à la charge : laquelle des deux ouvre le rendez-vous est une course, mais
+    # qu'il n'y en ait qu'UN ne l'est pas — et c'est cela, le critère.
+    claude = _claude_stub(depot, f"""
+        iid="$(printf '%s\\n' "$@" | grep -oE 'ticket (GitLab )?#[0-9]+' | head -1 |
+               grep -oE '[0-9]+$')"
+        printf '%s\\n' "$@" >> "$MAESTRO_FIXTURES/args-$iid.txt"
+        n=$(( $(cat "$MAESTRO_FIXTURES/n-$iid" 2>/dev/null || echo 0) + 1 ))
+        printf '%s' "$n" > "$MAESTRO_FIXTURES/n-$iid"
+        if [ "$n" = 1 ]; then
+          : > "$MAESTRO_FIXTURES/arrivee-$iid"
+          for _ in $(seq 1 300); do
+            [ -e "$MAESTRO_FIXTURES/arrivee-130" ] &&
+              [ -e "$MAESTRO_FIXTURES/arrivee-131" ] && break
+            sleep 0.05
+          done
+          printf '{{"type":"result","subtype":"error","is_error":true,"result":"rate limited"}}'
+          exit 1
+        fi
+        printf '%s' '{_statut_json("$iid", "En revue")}' > "$MAESTRO_FIXTURES/owner-$iid.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute")])
+    r = depot.lance(
+        "run.sh", "--plan", plan, "--run-id", "limite-n", "--concurrence", "2",
+        env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_PALIER": "8"},
+    )
+    assert r.returncode in (0, 1), r.stdout + r.stderr
+
+    rendez_vous = (run_dir / ".limite").read_text(encoding="utf-8").splitlines()
+    assert len(rendez_vous) == 1, f"une seule attente pour le run, pas N — {rendez_vous}"
+    ouvreur = rendez_vous[0].split("\t")[2]
+    assert ouvreur in ("130", "131"), f"le rendez-vous nomme son ouvreur — {rendez_vous}"
+    # Une qui ouvre, une qui rejoint : c'est ce couple, et non son ordre, qui dit que l'attente est
+    # partagée. Deux annonces, ce serait deux attentes.
+    assert r.stdout.count("avant reprise (fin vers") == 1, \
+        f"une seule attente doit être annoncée — {r.stdout}"
+    assert r.stdout.count(f"rejoint l'attente du run ouverte par #{ouvreur}") == 1, \
+        f"l'autre session doit s'y ranger, pas ouvrir la sienne — {r.stdout}"
+
+    # Chaque session est REPRISE, et sur SA conversation : même uuid au deuxième appel, et deux
+    # uuid différents d'un ticket à l'autre.
+    uuids = {}
+    for iid in (130, 131):
+        args = (depot.fixtures / f"args-{iid}.txt").read_text(encoding="utf-8").split("\n")
+        assert (depot.fixtures / f"n-{iid}").read_text(encoding="utf-8") == "2", \
+            f"#{iid} doit avoir été rejouée une fois après l'attente"
+        neuf = args[args.index("--session-id") + 1]
+        repris = args[args.index("--resume") + 1]
+        assert neuf == repris, f"#{iid} doit rouvrir SA session, pas en ouvrir une neuve"
+        uuids[iid] = neuf
+    assert uuids[130] != uuids[131], "deux sessions, deux conversations"
+
+
+# =====================================================================================
 # Choisir le milestone d'un run neuf — queue.sh --milestones (#204)
 # =====================================================================================
 

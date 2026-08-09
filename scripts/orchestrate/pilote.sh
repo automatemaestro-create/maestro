@@ -204,17 +204,34 @@ pilote_descendants() {
 #
 # N'imprime rien : c'est l'appelant qui raconte, lui seul sachant dans quel contexte il le fait.
 pilote_tue() {
-  local dir="$1" pid winpid cibles c
+  local dir="$1" pid winpid cibles c w
   pilote_vivant "$dir" || return 1
   pid="$(pilote_champ "$dir" pid)" || return 1
   winpid="$(pilote_champ "$dir" winpid)" || winpid=""
+  # La liste est prise MAINTENANT, tant que tout le monde est encore là, et elle va du plus profond
+  # au plus superficiel : c'est dans cet ordre qu'on tue, tuer un parent avant ses enfants étant
+  # exactement ce qui fabrique l'orphelin qu'on cherche à éviter.
   cibles="$(pilote_descendants "$pid") $pid"
 
   # Côté Windows d'abord : `//T` descend l'arbre natif (le `claude.exe` de la session, invisible
   # de /proc), `//F` ne demande pas la permission à un processus qui n'a pas de fenêtre pour
   # répondre. Les doubles barres ne sont pas une coquette : MSYS convertirait « /T » en chemin.
-  if pilote_windows && [ -n "$winpid" ]; then
-    taskkill //T //F //PID "$winpid" >/dev/null 2>&1
+  #
+  # Un `//T` sur le SEUL pilote ne suffit plus à N (#291). Il construit l'arbre à partir des liens
+  # parent→enfant que Windows connaît à cet instant, or les N sessions d'un run concurrent pendent
+  # chacune d'un sous-shell : il suffit qu'un maillon intermédiaire soit déjà sorti — une session qui
+  # rend la main pendant qu'on tue — pour que son `claude.exe` ne soit plus rattaché à rien
+  # d'atteignable depuis le pilote, et il survivrait à l'arrêt en continuant de brûler du quota. On
+  # vise donc CHAQUE cible par son propre WINPID plutôt que de faire confiance à un seul arbre : le
+  # coût est un `taskkill` par sous-shell, et il est payé une fois, au moment d'arrêter un run.
+  if pilote_windows; then
+    for c in $cibles; do
+      w="$(pilote_winpid "$c" 2>/dev/null)" || continue
+      [ -n "$w" ] && taskkill //T //F //PID "$w" >/dev/null 2>&1
+    done
+    # Le WINPID de la CARTE en dernier : enregistré au démarrage, il reste lisible quand le /proc du
+    # pilote a déjà disparu — le seul cas où la boucle ci-dessus n'aurait rien trouvé à viser.
+    [ -n "$winpid" ] && taskkill //T //F //PID "$winpid" >/dev/null 2>&1
   fi
 
   for c in $cibles; do kill -TERM "$c" 2>/dev/null; done
@@ -229,7 +246,7 @@ pilote_tue() {
 }
 
 # pilotes_vivants <orch-dir> [<run-id à ignorer>] : une ligne TSV par run encore en vol —
-# « run-id <TAB> pid <TAB> ticket-en-vol ». Sortie vide = personne ne tourne, et c'est le cas
+# « run-id <TAB> pid <TAB> tickets-en-vol ». Sortie vide = personne ne tourne, et c'est le cas
 # courant : le silence est donc la réponse normale, pas une anomalie à signaler.
 pilotes_vivants() {
   local orch="$1" exclu="${2:-}" d id
@@ -239,23 +256,28 @@ pilotes_vivants() {
     id="$(basename "$d")"
     [ "$id" != "$exclu" ] || continue
     pilote_vivant "${d%/}" || continue
-    printf '%s\t%s\t%s\n' "$id" "$(pilote_champ "${d%/}" pid)" "$(pilote_ticket_en_vol "${d%/}")"
+    printf '%s\t%s\t%s\n' "$id" "$(pilote_champ "${d%/}" pid)" "$(pilote_tickets_en_vol "${d%/}")"
   done
 }
 
-# pilote_ticket_en_vol <run-dir> : l'iid du ticket pris en main mais sans verdict — le même témoin
-# que `status.sh` (`<iid>.session` sans ligne de bilan), redit ici pour que la liste des runs à
-# tuer puisse nommer ce qu'elle interrompt sans dépendre de `status.sh`.
-pilote_ticket_en_vol() {
-  local dir="$1" iid
+# pilote_tickets_en_vol <run-dir> : les iid des tickets pris en main mais sans verdict, séparés par
+# des virgules. Même témoin que `status.sh` (`<iid>.session` sans ligne de bilan), redit ici pour que
+# la liste des runs à tuer puisse nommer ce qu'elle interrompt sans dépendre de `status.sh`.
+#
+# TOUS, et non le premier (#291) : un run concurrent en a N en main, et n'en nommer qu'un ferait
+# annoncer l'interruption d'un seul ticket là où N worktrees vont garder du travail non commité —
+# précisément ce que le rapport d'arrêt existe pour dire. Une seule colonne TSV quand même : la
+# virgule évite d'inventer un format à N champs pour une phrase qui se lit à l'œil.
+pilote_tickets_en_vol() {
+  local dir="$1" iid liste=""
   [ -f "$dir/plan.tsv" ] || return 0
   while IFS=$'\t' read -r _ iid _ _ _ _; do
     [ -n "${iid:-}" ] || continue
     [ -e "$dir/$iid.session" ] || continue
     awk -F'\t' -v iid="$iid" '$1 !~ /^#/ && $1 == iid { trouve = 1 } END { exit !trouve }' \
       "$dir/resume.tsv" 2>/dev/null && continue
-    printf '%s' "$iid"
-    return 0
+    liste="${liste:+$liste,}$iid"
   done < <(grep -v '^#' "$dir/plan.tsv" 2>/dev/null)
+  printf '%s' "$liste"
   return 0
 }

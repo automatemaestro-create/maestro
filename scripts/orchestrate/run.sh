@@ -51,9 +51,22 @@
 # les refs du dépôt partagé, et quelques minutes d'installation en série se noient dans une session
 # qui dure une heure.
 #
-# Ce que ce lot ne fait pas, et qui se voit à `--concurrence > 1` : la VUE VIVANTE est éteinte (elle
-# suppose un seul ticket courant — #290) et chaque session attend sa limite d'usage dans son coin
-# (#291). Le réglage est explicite, et la console dit dans quel mode elle est.
+# Ce que ce lot ne fait pas, et qui se voit à `--concurrence > 1` : la VUE VIVANTE est éteinte, elle
+# suppose un seul ticket courant (#290). Le réglage est explicite, et la console dit dans quel mode
+# elle est.
+#
+# --- Ce que N en vol change à la limite d'usage, à l'arrêt et à la reprise (#291) ----------------------
+# Trois mécanismes supposaient une seule session en vol et devenaient faux à N :
+#   · la LIMITE D'USAGE tombe sur toutes les sessions à quelques secondes d'intervalle. L'attente est
+#     donc une ATTENTE DU RUN — un rendez-vous unique dans `<run-dir>/.limite`, où la meilleure
+#     information l'emporte (une heure de reset explicite écrase un palier aveugle) — et chaque
+#     session coupée est ensuite rouverte PAR SON UUID, comme avant. Voir « L'attente partagée » ;
+#   · l'ARRÊT doit atteindre les N sous-shells et leurs `claude.exe` : `pilote_tue` vise désormais le
+#     WINPID de CHAQUE cible, du plus profond au plus superficiel, au lieu de faire confiance au seul
+#     arbre du pilote (#291, pilote.sh) ;
+#   · la REPRISE d'un run coupé rejoue tous les tickets qu'il avait en main — la question est posée
+#     par ticket (`reprend_en_vol`) — et à SA concurrence, relue dans le fichier `concurrence` du run
+#     repris, faute de quoi un run à quatre en vol se reprendrait en séquentiel.
 #
 # --- Ce qu'un run fait avant son premier ticket -------------------------------------------------------
 # Trois ménages, tous best-effort, tous muets quand il n'y a rien à faire et aucun fatal : `main`
@@ -72,6 +85,13 @@
 #   resume.tsv        une ligne par ticket : iid, verdict, MR, durée, coût, raison
 #   pid               la carte d'identité du pilote (#213) : PID, WINPID, naissance, hôte — posée au
 #                     démarrage, retirée à la sortie, et seule chose qui permette de TUER un run
+#   concurrence       le nombre de tickets en vol de ce run (#291), relu par `--resume` pour rejouer
+#                     le même run et non sa version séquentielle
+#   .limite           le rendez-vous d'attente de la limite d'usage (#291) : « <fin epoch> <TAB>
+#                     reset|palier <TAB> <iid> ». Une seule attente pour les N sessions en vol
+#   .plafond          l'iid de la session qui a franchi le plafond des 5 h 30 (#291) — sa présence
+#                     sort de l'attente les N-1 autres, qui dormiraient sinon sur une limite
+#                     hebdomadaire dont le run a déjà tiré les conséquences
 #
 # Le journal ne s'accumule plus sans fin (#198) : au démarrage d'un run, `journal.sh gc --auto` ne
 # garde que les N derniers runs et ramasse les répertoires vides — jamais le run courant, jamais un
@@ -114,6 +134,11 @@ MAX=0
 # sessions tirent sur le MÊME quota d'abonnement, donc N en parallèle épuisent la fenêtre de 5 h N fois
 # plus vite : le gain est en temps de mur, jamais en quota (parent #287).
 CONCURRENCE="${MAESTRO_ORCHESTRATE_CONCURRENCE:-1}"
+# Posé dès que quelqu'un a dit lequel il voulait — option ou variable d'environnement. C'est ce qui
+# permet à `--resume` de rejouer la concurrence du run repris sans jamais écraser un choix explicite
+# (#291) : « non demandé » et « demandé à 1 » ne sont pas la même chose.
+CONCURRENCE_EXPLICITE=0
+[ -n "${MAESTRO_ORCHESTRATE_CONCURRENCE:-}" ] && CONCURRENCE_EXPLICITE=1
 # Le budget n'a plus de défaut (#286) : sans `--budget`, AUCUN `--max-budget-usd` n'est passé au
 # CLI, et une session s'arrête sur son ticket, son timeout ou la limite d'usage — jamais sur un
 # montant. Les 15 $/ticket d'origine étaient le garde-fou d'une boucle neuve, quand on craignait
@@ -168,10 +193,11 @@ La boucle d'orchestration autonome — un ticket, une session Claude Code.
 
 Options :
   --dry-run            N'exécute rien : affiche le plan et ce qui serait fait.
-  --resume [<run-id>]  Reprend un run qui ne s'est pas terminé : rejoue SON plan, sans le
-                       recalculer. Sans argument, le run reprenable le plus récent. Les tickets
-                       déjà livrés se sautent d'eux-mêmes ; celui qui était en vol au moment de la
-                       coupure est repris. Se combine avec --detach.
+  --resume [<run-id>]  Reprend un run qui ne s'est pas terminé : rejoue SON plan et SA concurrence,
+                       sans les recalculer. Sans argument, le run reprenable le plus récent. Les
+                       tickets déjà livrés se sautent d'eux-mêmes ; TOUS ceux qui étaient en vol au
+                       moment de la coupure sont repris, chacun dans sa session. Se combine avec
+                       --detach ; --concurrence explicite l'emporte sur celle du run repris.
   --detach             Relance le run dans une console indépendante et rend la main tout de suite.
                        C'est ce qui permet de démarrer un run depuis une session Claude Code : le
                        pilote reste un script shell, dans son propre processus.
@@ -224,7 +250,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1 ;;
     --detach | --detache | --détaché) DETACH=1 ;;
     --max) MAX="${2:-0}"; shift ;;
-    --concurrence | --concurrency) CONCURRENCE="${2:-1}"; shift ;;
+    --concurrence | --concurrency) CONCURRENCE="${2:-1}"; CONCURRENCE_EXPLICITE=1; shift ;;
     --budget) BUDGET="${2:-}"; shift ;;
     --timeout) TIMEOUT_BRUT="${2:-45m}"; shift ;;
     --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
@@ -688,6 +714,12 @@ uuid_du_ticket() {
 # posé « En cours » sur ce ticket, donc la relecture du cycle de vie l'écarte comme s'il appartenait
 # à quelqu'un d'autre — alors que son worktree et son travail non commité nous attendent. Les autres
 # états (« En revue », « Terminé », pris par une session voisine) restent sautés comme avant.
+#
+# La question est posée POUR CHAQUE TICKET du plan, jamais une seule fois pour le run (#291) : un run
+# concurrent coupé en avait N en main, chacun avec son témoin de session et son uuid, et ils sont donc
+# TOUS repris — c'est la concurrence relue du run repris (fichier `concurrence`) qui décide ensuite
+# combien repartent ensemble. Le seul « En cours » qui reste sauté est celui que le run repris n'avait
+# pas en main : celui-là est le ticket de quelqu'un d'autre.
 reprend_en_vol() {
   [ "$REPRISE" = 1 ] || return 1
   [ -s "$REPRISE_DIR/$1.session" ] || return 1
@@ -742,8 +774,11 @@ tue_les_runs_en_vol() {
     n=$((n + 1))
     pilote_tue "$ORCH_DIR/$id"; code=$?
     case "$code" in
+      # Les tickets en vol sont nommés TOUS (#291) : un run concurrent en interrompt N, et chacun
+      # laisse son worktree derrière lui. La liste vient en virgules de `pilote_tickets_en_vol` ;
+      # la substitution en remet le « # » devant chaque numéro.
       0) printf '  %s✗%s run %s (pid %s)%s — arrêté\n' "$C_Y" "$C_0" "$id" "$pid" \
-           "$([ -n "${iid:-}" ] && printf ', ticket #%s en vol' "$iid")" ;;
+           "$([ -n "${iid:-}" ] && printf ', ticket(s) #%s en vol' "${iid//,/, #}")" ;;
       1) printf '  = run %s (pid %s) — terminé de lui-même entre-temps\n' "$id" "$pid" ;;
       # Ni SIGKILL ni taskkill n'en sont venus à bout : le dire vaut mieux que laisser croire que la
       # place est nette. On démarre quand même — refuser bloquerait sur une cause que l'utilisateur
@@ -881,30 +916,153 @@ delai_avant_reprise() {
   return 0
 }
 
-# patiente <secondes> : attend, en tranches, pour que le fichier STOP reste entendu pendant une
-# attente qui peut durer des heures. Renvoie 1 si l'arrêt a été demandé.
+# --- L'attente partagée : une limite d'usage, un seul sommeil (#291) ----------------------------
+# À un ticket en vol la question ne se posait pas. À N, la limite tombe sur TOUTES les sessions à
+# quelques secondes d'intervalle et chacune décidait de son attente dans son coin — ce qui n'est pas
+# seulement redondant, c'est faux :
+#
+#   · le flux d'une session porte l'heure de reset, celui d'une autre ne la porte pas (la forme du
+#     signal n'est pas contractuelle, cf. les trois filets ci-dessus). La seconde retombait sur le
+#     palier de 15 min, se réveillait AVANT le reset, brûlait une reprise pour rien, recommençait, et
+#     sortait en échec au bout de MAX_REPRISES pendant que la première, mieux informée, repartait
+#     tranquillement. Deux tickets du même run, deux sorts opposés, sur une information que l'une
+#     avait et que rien ne transmettait à l'autre ;
+#   · le plafond de 5 h 30 ne bornait que la session qui l'atteignait : les N-1 autres continuaient de
+#     dormir sur une limite hebdomadaire dont le run avait déjà tiré les conséquences.
+#
+# D'où un point de rendez-vous unique dans le journal du run, `<run-dir>/.limite` :
+#
+#   <fin d'attente, en epoch><TAB><source : reset|palier><TAB><iid qui l'a posée>
+#
+# La MEILLEURE information l'emporte, jamais la plus récente : une heure de reset explicite écrase un
+# palier aveugle, un palier n'écrase jamais un reset. C'est ce qui fait profiter tout le run de ce
+# qu'une seule session a vu — et c'est l'inverse d'une simple synchronisation, qui aurait aligné les
+# réveils sans corriger celui qui était trop tôt.
+#
+# Pas de verrou : `flock` n'existe pas sous MSYS, et la création exclusive (`set -C`) est le seul
+# atome portable disponible ici. Elle suffit à désigner UN annonceur ; la mise à jour d'une attente
+# déjà ouverte, elle, est un lire-comparer-écrire qui peut théoriquement perdre une écriture. La
+# conséquence est bornée et se répare d'elle-même — au pire une session se réveille sur un palier au
+# lieu d'un reset, retrouve la limite et se remet en attente —, là où un verrou coûterait un fichier à
+# nettoyer et un cas « verrou périmé » à trancher.
+LIM_FIN=0; LIM_SOURCE=""; LIM_IID=""
+
+# limite_lit <fichier> : pose LIM_FIN / LIM_SOURCE / LIM_IID. Rend 1 si aucune attente n'y est en
+# cours — fichier absent, illisible, ou fin déjà passée : le vestige d'une attente finie n'est pas
+# une attente, et une deuxième limite dans le même run doit pouvoir rouvrir la sienne.
+limite_lit() {
+  local fin source iid
+  IFS=$'\t' read -r fin source iid <"$1" 2>/dev/null || return 1
+  case "${fin:-}" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$fin" -gt "$(date +%s)" ] || return 1
+  LIM_FIN="$fin"; LIM_SOURCE="${source:-palier}"; LIM_IID="${iid:-?}"
+  return 0
+}
+
+# limite_ecrit <fichier> <fin> <source> <iid> : pose le rendez-vous. Par un temporaire puis un `mv`,
+# pour qu'un lecteur ne tombe jamais sur une ligne à moitié écrite.
+limite_ecrit() {
+  local tmp="$1.$$"
+  printf '%s\t%s\t%s\n' "$2" "$3" "$4" >"$tmp" 2>/dev/null || return 1
+  mv -f "$tmp" "$1" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  return 0
+}
+
+# limite_partagee <iid> <délai> <source> : inscrit ce ticket dans l'attente du run et imprime
+# « <fin retenue, en epoch> <iid de l'annonceur> ». Rend 0 si c'est LUI qui vient d'ouvrir l'attente
+# — à lui, alors, de l'annoncer —, 1 s'il rejoint celle d'un autre.
+limite_partagee() {
+  local iid="$1" origine="$3" fin f
+  fin=$(( $(date +%s) + $2 ))
+  f="$RUN_DIR/.limite"
+
+  # Création exclusive : si elle réussit, personne n'attendait, et ce ticket est l'annonceur.
+  if (set -C; printf '%s\t%s\t%s\n' "$fin" "$origine" "$iid" >"$f") 2>/dev/null; then
+    printf '%s %s' "$fin" "$iid"; return 0
+  fi
+
+  # Le fichier existe mais aucune attente n'y est en cours : c'est le vestige d'une limite déjà
+  # purgée. On le remplace et on redevient l'annonceur — la deuxième limite d'un run mérite sa ligne.
+  if ! limite_lit "$f"; then
+    limite_ecrit "$f" "$fin" "$origine" "$iid"
+    printf '%s %s' "$fin" "$iid"; return 0
+  fi
+
+  # Une attente est en cours : on l'améliore si on en sait plus, on l'adopte sinon. L'iid conservé
+  # est celui de l'OUVREUR et non le nôtre — ce champ dit qui a annoncé l'attente, pas qui l'a
+  # ajustée en dernier, et c'est ce nom que les suivants reprennent en s'y rangeant. Sans cela, une
+  # session qui ne fait qu'allonger le rendez-vous de trois secondes s'annoncerait comme l'ayant
+  # ouvert — en se nommant elle-même dans « rejoint l'attente ouverte par… ».
+  if [ "$origine" = reset ] && [ "$LIM_SOURCE" != reset ]; then
+    limite_ecrit "$f" "$fin" "$origine" "$LIM_IID" && LIM_FIN="$fin"
+  elif [ "$origine" = "$LIM_SOURCE" ] && [ "$fin" -gt "$LIM_FIN" ]; then
+    limite_ecrit "$f" "$fin" "$origine" "$LIM_IID" && LIM_FIN="$fin"
+  fi
+  printf '%s %s' "$LIM_FIN" "$LIM_IID"
+  return 1
+}
+
+# limite_en_cours : 0 si le run est présentement en attente d'une limite d'usage. Lu par le PILOTE,
+# qui s'en sert pour ne pas jeter un ticket neuf dans une fenêtre déjà fermée.
+limite_en_cours() { limite_lit "$RUN_DIR/.limite"; }
+
+# source_de_limite <fichier…> : « reset » si le flux expose une heure de reset, « palier » sinon.
+# C'est la qualité de l'information, et c'est elle qui départage deux sessions au rendez-vous.
+source_de_limite() {
+  if reset_epoch "$@" >/dev/null 2>&1; then printf 'reset'; else printf 'palier'; fi
+}
+
+# patiente <iid> <fin d'attente, en epoch> <origine : reset|palier> : attend le rendez-vous, en
+# tranches, pour que le fichier STOP reste entendu pendant une attente qui peut durer des heures.
+#   0  l'attente est finie   1  arrêt demandé (STOP)   2  limite hebdomadaire déclarée par une autre
+#
+# La fin est RELUE à chaque tranche, et c'est la MEILLEURE information qui l'emporte — la même règle
+# qu'à la publication, sans quoi le rendez-vous porterait une vérité que personne ne suivrait :
+#   · une heure de reset publiée par une autre session remplace un palier aveugle, MÊME PLUS TÔT :
+#     un palier de 15 min n'est pas une promesse, c'est un aveu d'ignorance, et attendre au-delà du
+#     reset ne coûte rien d'autre que du temps de mur — mais en coûte pour rien ;
+#   · à source égale, on ne fait que RALLONGER : se réveiller avant le reset brûlerait une reprise
+#     sur une limite toujours en cours, et c'est exactement le cas qui faisait échouer, à N, la
+#     session la moins bien informée pendant que sa voisine repartait.
+#
+# La relecture a lieu une fois par tranche, donc jusqu'à une minute après la publication. À l'échelle
+# d'une fenêtre de 5 h c'est du bruit, et raccourcir la tranche coûterait des réveils pour rien.
 patiente() {
-  local reste="$1" tranche fin
-  fin="$(date -d "+$reste seconds" '+%H:%M' 2>/dev/null || echo '?')"
-  # `trace` et non `printf` : la frame suit immédiatement, et une ligne passée par `tee` pourrait
-  # arriver après elle — le bloc se dédoublerait pour toute la durée de l'attente.
-  trace '  %slimite d'\''usage atteinte%s — attente de %s avant reprise (fin vers %s).\n' \
-    "$C_Y" "$C_0" "$(duree_lisible "$reste")" "$fin"
+  local iid="$1" fin="$2" origine="${3:-palier}" reste tranche affichee=-1 libelle='?'
   # L'attente est un état du ticket comme un autre : le bloc reste à l'écran, marqué d'une pause et
   # décompté — sans quoi la console paraît figée pendant les heures que dure une limite d'usage.
   local frais=1
-  while [ "$reste" -gt 0 ]; do
+  while :; do
     [ -f "$STOP" ] && return 1
+    [ -f "$RUN_DIR/.plafond" ] && return 2
+    if limite_lit "$RUN_DIR/.limite"; then
+      if [ "$LIM_SOURCE" = reset ] && [ "$origine" != reset ]; then
+        fin="$LIM_FIN"; origine=reset
+      elif [ "$LIM_FIN" -gt "$fin" ]; then
+        fin="$LIM_FIN"
+      fi
+    fi
+    if [ "$fin" != "$affichee" ]; then
+      affichee="$fin"
+      libelle="$(date -d "@$fin" '+%H:%M' 2>/dev/null || echo '?')"
+    fi
+    reste=$(( fin - $(date +%s) ))
+    [ "$reste" -lt 0 ] && reste=0
+    # La frame est dessinée AVANT de décider s'il reste à dormir, donc au moins une fois par attente.
+    # Testé après, une attente déjà échue — un rendez-vous à quelques secondes, le temps que la
+    # session y arrive — n'en produirait aucune, et l'écran passerait de la session à sa reprise sans
+    # jamais dire pourquoi il s'est arrêté entre les deux.
+    #
     # La colonne « durée » reste celle du TICKET : c'est elle qu'on suit d'un bout à l'autre. Le
     # temps d'attente, lui, est dit en clair dans le détail.
     vue_dessine '=' "$((SECONDS - VUE_DEBUT_TICKET))" \
-      "en attente de la fin de la limite d'usage — reprise vers $fin (dans $(duree_lisible "$reste"))" \
+      "en attente de la fin de la limite d'usage — reprise vers $libelle (dans $(duree_lisible "$reste"))" \
       "$frais"
     frais=0
+    [ "$reste" -gt 0 ] || break
     tranche=60
     [ "$reste" -lt 60 ] && tranche="$reste"
     sleep "$tranche"
-    reste=$((reste - tranche))
   done
   vue_efface
   return 0
@@ -1539,6 +1697,22 @@ if [ "$REPRISE" = 1 ]; then
     printf '  une reprise écrit dans un journal NEUF : laisser --run-id de côté, ou en choisir un autre.\n' >&2
     exit 2
   fi
+
+  # La concurrence est un trait DU RUN, pas de la ligne de commande qui le rejoue (#291). Un run coupé
+  # alors qu'il avait quatre tickets en main se reprend à quatre : sans cela, `/orchestrate --resume`,
+  # qui ne passe aucune option, le rejouerait en séquentiel — les tickets repris seraient bien tous
+  # traités, mais un par un, et la reprise ne serait plus le même run. Même raison que le plan figé :
+  # reprendre, c'est rejouer ce qui a été interrompu, pas en recalculer une version d'aujourd'hui.
+  #
+  # Un choix explicite l'emporte, lui : `--resume --concurrence 1` reste la façon de dérouler en
+  # séquentiel un run qui tournait à N (pour l'observer, ou parce que le quota est serré).
+  if [ "$CONCURRENCE_EXPLICITE" = 0 ] && [ -r "$REPRISE_DIR/concurrence" ]; then
+    read -r conc_reprise <"$REPRISE_DIR/concurrence" 2>/dev/null || conc_reprise=""
+    case "${conc_reprise:-}" in
+      '' | *[!0-9]* | 0) ;;
+      *) CONCURRENCE="$conc_reprise" ;;
+    esac
+  fi
 fi
 
 [ -n "$RUN_ID" ] || RUN_ID="$(date +%Y%m%d-%H%M%S)"
@@ -1549,6 +1723,10 @@ RESUME="$RUN_DIR/resume.tsv"
 # Deux journaux partiels qui racontent la même liste de tickets doivent se répondre : sans ce
 # fichier, rien ne dirait que celui-ci continue l'autre. `status.sh` l'affiche en en-tête.
 [ "$REPRISE" = 1 ] && printf '%s\n' "$REPRISE_ID" >"$RUN_DIR/reprise-de"
+# La concurrence du run, laissée en clair : c'est ce qu'une reprise relit pour rejouer LE MÊME run et
+# non sa version séquentielle (#291). Un fichier d'une ligne plutôt qu'une colonne de plus au plan —
+# le plan décrit les tickets, jamais le régime du pilote, et une reprise joue le plan d'un autre run.
+printf '%s\n' "$CONCURRENCE" >"$RUN_DIR/concurrence"
 
 # renonce_au_run : retire le répertoire du run quand il ne s'y est RIEN passé (#180). Le `mkdir -p`
 # ci-dessus a lieu avant de savoir s'il y aura seulement quelque chose à traiter : un backlog vide,
@@ -1566,8 +1744,9 @@ renonce_au_run() {
     # `reprise-de` est posé avec le répertoire, avant qu'on sache s'il y aura quelque chose à
     # traiter : le compter comme une trace de travail retiendrait le vestige d'une reprise à vide.
     # La carte `pid` (#213) est dans le même cas — elle décrit le processus, pas son travail, tout
-    # comme la hauteur du bloc de la vue vivante (#240), qui décrit l'écran.
-    case "${f##*/}" in plan.tsv | reprise-de | pid | .vue-hauteur) ;; *) return 1 ;; esac
+    # comme la hauteur du bloc de la vue vivante (#240), qui décrit l'écran, et `concurrence` (#291),
+    # qui décrit le régime du pilote.
+    case "${f##*/}" in plan.tsv | reprise-de | pid | concurrence | .vue-hauteur) ;; *) return 1 ;; esac
   done
   rm -rf "$RUN_DIR" 2>/dev/null || return 1
   return 0
@@ -1770,7 +1949,8 @@ if [ "$DRY" = 1 ]; then
   printf '  3. verdict            MR ouverte ET cycle de vie « En revue » (lu dans GitLab, pas dans la sortie)\n'
   printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis réouverture de la même session Claude\n'
   printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'
-  printf '  6. run coupé          « run.sh --resume » rejoue CE plan, le ticket en vol compris\n'
+  printf '  6. run coupé          « run.sh --resume » rejoue CE plan et CETTE concurrence, tous les\n'
+  printf '                        tickets en vol compris\n'
   # Le régime de concurrence est annoncé dans les deux sens, comme le budget juste au-dessus :
   # « séquentiel » est un choix, pas un oubli, et c'est le réglage qui change le plus ce qu'on
   # verra à l'écran.
@@ -1897,11 +2077,13 @@ fi
 if [ "$CONCURRENCE" -gt 1 ]; then
   printf '%s%s tickets en vol%s — deux ne partent ensemble que si le plan les dit indépendants.\n' \
     "$C_B" "$CONCURRENCE" "$C_0"
-  # Les deux limites de ce lot, dites une fois, plutôt que découvertes à l'écran (#290, #291).
+  # La limite qui reste de ce lot, dite une fois plutôt que découverte à l'écran (#290).
   printf '  · la vue vivante est éteinte : elle suppose un seul ticket courant (#290 la rendra à N).\n'
-  printf '  · toutes les sessions tirent sur le MÊME quota : la fenêtre de 5 h part %s fois plus vite,\n' \
+  # Ce que le quota partagé coûte, et ce que #291 en rattrape : le mur est divisé, jamais la fenêtre.
+  printf '  · toutes les sessions tirent sur le MÊME quota : la fenêtre de 5 h part %s fois plus vite.\n' \
     "$CONCURRENCE"
-  printf '    et chacune attend son reset dans son coin (#291 leur donnera une attente partagée).\n\n'
+  printf '    Une limite d'\''usage ne se paie qu'\''une fois — attente partagée, puis chaque session\n'
+  printf '    coupée est rouverte par son uuid (#291).\n\n'
 fi
 
 # --- L'indépendance, lue dans le plan (#289) ----------------------------------------------------------
@@ -1946,6 +2128,7 @@ eligible() { # <index>
 joue_session() { # <iid> <dest> <uuid> <mode>
   local iid="$1" dest="$2" uuid="$3" mode="$4"
   local reprises=0 attente_cumulee=0 code delai
+  local origine rendez_vous fin annonceur ouvreur attendu
 
   while :; do
     lance_session "$iid" "$dest" "$uuid" "$mode"
@@ -1983,8 +2166,33 @@ joue_session() { # <iid> <dest> <uuid> <mode>
       return 0
     fi
 
+    # L'attente est celle DU RUN et non de ce ticket (#291) : la limite tombe sur toutes les sessions
+    # en vol, et c'est la meilleure information disponible — celle qui porte une heure de reset — qui
+    # doit valoir pour toutes. Le délai retenu est donc celui du rendez-vous, pas celui qu'on vient de
+    # calculer : rejoindre une attente déjà entamée, c'est n'en payer que ce qu'il en reste.
+    origine="$(source_de_limite "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log")"
+    ouvreur=0
+    rendez_vous="$(limite_partagee "$iid" "$delai" "$origine")" || ouvreur=$?
+    fin="${rendez_vous%% *}"; annonceur="${rendez_vous##* }"
+    delai=$(( fin - $(date +%s) ))
+    [ "$delai" -lt 0 ] && delai=0
+    # `trace` et non `dit` : la frame suit immédiatement, et une ligne passée par `tee` pourrait
+    # arriver après elle — le bloc se dédoublerait pour toute la durée de l'attente.
+    if [ "$ouvreur" = 0 ]; then
+      trace '  %slimite d'\''usage atteinte%s — attente de %s avant reprise (fin vers %s).\n' \
+        "$C_Y" "$C_0" "$(duree_lisible "$delai")" \
+        "$(date -d "@$fin" '+%H:%M' 2>/dev/null || echo '?')"
+    else
+      trace '  %slimite d'\''usage atteinte%s — rejoint l'\''attente du run ouverte par #%s (reprise vers %s).\n' \
+        "$C_Y" "$C_0" "$annonceur" "$(date -d "@$fin" '+%H:%M' 2>/dev/null || echo '?')"
+    fi
+
     attente_cumulee=$((attente_cumulee + delai))
     if [ "$attente_cumulee" -gt "$PLAFOND_ATTENTE_S" ]; then
+      # Le plafond est celui du RUN : la session qui l'atteint la première le déclare pour tout le
+      # monde. Sans ce témoin, les N-1 autres continueraient de dormir des heures sur une limite
+      # hebdomadaire dont le run a déjà tiré les conséquences — et le pilote les attendrait.
+      printf '%s\n' "$iid" >"$RUN_DIR/.plafond" 2>/dev/null || true
       dit '\n%sLimite hebdomadaire%s — %s d'\''attente cumulée sur #%s dépassent le plafond de %s.\n' \
         "$C_Y" "$C_0" "$(duree_lisible "$attente_cumulee")" "$iid" "$(duree_lisible "$PLAFOND_ATTENTE_S")"
       dit 'Ce n'\''est plus une fenêtre de 5 h : le run s'\''arrête proprement, à relancer plus tard.\n'
@@ -1992,10 +2200,18 @@ joue_session() { # <iid> <dest> <uuid> <mode>
       return 3
     fi
 
-    if ! patiente "$delai"; then
+    attendu=0
+    patiente "$iid" "$fin" "$origine" || attendu=$?
+    if [ "$attendu" = 1 ]; then
       dit '  arrêt demandé pendant l'\''attente — run interrompu.\n'
       bilan_des_reprises "$reprises" "$attente_cumulee"
       return 2
+    fi
+    if [ "$attendu" = 2 ]; then
+      dit '  limite hebdomadaire déclarée sur #%s — cette session s'\''arrête aussi.\n' \
+        "$(cat "$RUN_DIR/.plafond" 2>/dev/null || printf '?')"
+      bilan_des_reprises "$reprises" "$attente_cumulee"
+      return 3
     fi
 
     reprises=$((reprises + 1))
@@ -2227,6 +2443,16 @@ remplit_les_creneaux() {
     [ -n "$ARRET_LANCEMENT" ] && return 0
     n_vol=0; for j in $EN_VOL; do n_vol=$((n_vol + 1)); done
     [ "$n_vol" -ge "$CONCURRENCE" ] && return 0
+
+    # Une limite d'usage est en cours et des sessions l'attendent (#291) : jeter un ticket neuf dans
+    # cette fenêtre, c'est ouvrir une session qui échouera à sa première requête, brûlera une reprise
+    # et rejoindra la même attente — après avoir consommé un montage de worktree et une lecture
+    # GitLab pour rien. On attend, comme les autres.
+    #
+    # Seulement si quelque chose est EN VOL, et la condition n'est pas décorative : sans elle, un
+    # rendez-vous encore ouvert alors que plus personne ne l'attend ferait sortir le pilote de sa
+    # boucle sur un `EN_VOL` vide, et le reste du plan finirait le run sans une ligne de bilan.
+    if [ -n "$EN_VOL" ] && limite_en_cours; then return 0; fi
 
     # Le fichier STOP est relu avant chaque lancement, comme il l'était avant chaque tour de boucle.
     if arret_demande; then ARRET_LANCEMENT="arrêt demandé"; return 0; fi
