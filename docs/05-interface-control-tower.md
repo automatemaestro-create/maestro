@@ -847,6 +847,16 @@ jamais sur un en-tête, qu'un client pose lui-même), **un dialogue à la fois**
 bornée** (5 min). Toute indisponibilité se **dit** au lieu de laisser un bouton mort, et
 l'explorateur reste dans tous les cas la voie complète — c'est ce que reçoit le **mode serveur**.
 
+**Et la fenêtre doit se voir** (#311). Le dialogue est un sous-process du backend, donc **pas
+l'application au premier plan** : Windows lui interdit de s'y mettre, et une boîte de dialogue n'a
+pas de bouton dans la barre des tâches. Ouverte sans précaution, elle passait derrière tout — donc
+introuvable, donc jamais fermée, donc le garde-fou « un dialogue à la fois » gardait le bouton mort
+pendant les cinq minutes de l'attente bornée. Chaque script remonte donc sa fenêtre à la manière de
+son OS : **propriétaire `TopMost`** sous Windows (posé *après* `Show()`, faute de quoi il n'atteint
+jamais l'`ExStyle`), **`activate`** sous macOS ; `zenity`/`kdialog` n'ont pas de règle équivalente
+et sortent devant d'eux-mêmes. Un confort qu'on ne voit pas n'est pas un confort — et l'invisible
+coûtait ici plus cher que l'absence, puisqu'il bloquait aussi le geste suivant.
+
 **Un refus porte toujours son motif**, jamais une liste vide : « ce dossier n'a pas de
 sous-dossier » et « je refuse de regarder là » sont deux réponses différentes, et les confondre
 rend un explorateur inutilisable. Le corps d'erreur de ces six routes est donc un **objet** et non

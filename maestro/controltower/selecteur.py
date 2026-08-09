@@ -31,6 +31,13 @@ du serveur : `tkinter` exige le thread principal (indisponible sous un worker
 ASGI) et sa présence dépend de l'installation Python. PowerShell, `osascript` et
 `zenity`/`kdialog` sont là où leur OS est là, et leur absence est une réponse
 (`selecteur-sans-outil`) plutôt qu'une exception.
+
+Ce sous-process a une conséquence qu'on paie à l'ouverture : **il n'est pas
+l'application au premier plan**, et une fenêtre ouverte par un process
+d'arrière-plan passe derrière (#311). Chaque script se charge donc de remonter
+la sienne, à la manière de son OS — propriétaire `TopMost` sous Windows,
+`activate` sous macOS. Sous X11/Wayland, `zenity` et `kdialog` n'ont pas de règle
+équivalente et sortent devant d'eux-mêmes : rien à faire de ce côté.
 """
 
 from __future__ import annotations
@@ -242,25 +249,76 @@ def _script_powershell(depart: str | None, titre: str) -> str:
     sortie est forcé en UTF-8 : sans lui, un chemin accentué revient en mojibake
     sur une console cp1252, et c'est un chemin de dossier — il doit être exact à
     l'octet.
+
+    **Le dialogue reçoit un propriétaire `TopMost`** (#311), et c'est tout le
+    sujet : `ShowDialog()` sans propriétaire ouvrait la boîte *derrière* toutes
+    les fenêtres. Windows interdit à un process d'arrière-plan — ce sous-process
+    est un enfant d'uvicorn, le premier plan appartient au navigateur — de
+    s'emparer du premier plan (restrictions `SetForegroundWindow`), et une boîte
+    de dialogue n'a **pas de bouton dans la barre des tâches** : invisible, elle
+    devenait aussi injoignable, tenait le verrou d'`choisir_dossier` et rendait
+    le bouton mort pendant `DUREE_MAX_S`.
+
+    On ne cherche donc pas à voler le premier plan, on passe à côté de la règle :
+    une fenêtre `TopMost` reste au-dessus des autres sans être au premier plan,
+    et **les fenêtres qu'elle possède sont topmost avec elle**. Le propriétaire
+    est réduit à 1 px, transparent et hors barre des tâches — il n'existe que
+    pour porter cette propriété, et `DoEvents` le matérialise avant que la boîte
+    modale ne parte (sans quoi elle s'ouvrirait contre une fenêtre pas encore
+    créée). Le clavier, lui, peut rester au navigateur : le premier clic sur la
+    boîte le lui rend, ce qui est le comportement normal d'une fenêtre au-dessus.
+
+    ⚠ **`TopMost` se pose après `Show()`, jamais avant** — c'est le piège de ce
+    correctif, et il est silencieux. Mesuré sur le poste : posée avant, la
+    propriété vaut bien `$true` côté objet mais n'atteint pas la fenêtre, dont
+    l'`ExStyle` sort à `0x00090000` (`LAYERED|CONTROLPARENT`, **sans** le
+    `WS_EX_TOPMOST` `0x8`) ; posée après, `0x00090008`. Une première version de
+    ce script la posait avant : elle passait tous les tests d'écriture du script
+    et rouvrait la boîte exactement là où elle était, derrière tout. Corollaire à
+    ne pas défaire non plus : la poser **aussi** avant serait pire que de ne pas
+    la poser, le setter court-circuitant sur une valeur inchangée — l'appel
+    d'après `Show()` ne ferait alors plus rien.
+
+    `Width`/`Height` sont des entiers : les poser évite d'avoir à charger
+    `System.Drawing` pour un `Size`, une dépendance de plus pour un carré d'un
+    pixel.
     """
     depart_ps = _litteral_powershell(str(Path(depart)) if depart else "")
     return (
         "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
         "Add-Type -AssemblyName System.Windows.Forms;"
+        "$p=New-Object System.Windows.Forms.Form;"
+        "$p.ShowInTaskbar=$false;$p.Opacity=0;"
+        "$p.FormBorderStyle=[System.Windows.Forms.FormBorderStyle]::None;"
+        "$p.Width=1;$p.Height=1;"
+        "$p.Show();"
+        "$p.TopMost=$true;"
+        "$p.Activate();[System.Windows.Forms.Application]::DoEvents();"
         "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
         f"$d.Description={_litteral_powershell(titre)};"
         "$d.ShowNewFolderButton=$true;"
         f"$s={depart_ps};"
         "if($s -and (Test-Path -LiteralPath $s)){$d.SelectedPath=$s};"
-        "if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK)"
+        "$r=$d.ShowDialog($p);"
+        "$p.Close();"
+        "if($r -eq [System.Windows.Forms.DialogResult]::OK)"
         "{[Console]::Out.Write($d.SelectedPath)}"
     )
 
 
 def _script_osascript(depart: str | None, titre: str) -> str:
-    """Le `choose folder` d'AppleScript, chemin rendu en POSIX."""
+    """Le `choose folder` d'AppleScript, chemin rendu en POSIX.
+
+    L'`activate` de tête est le pendant macOS du propriétaire `TopMost` de
+    Windows (#311) : sans lui, `choose folder` s'ouvre derrière l'application
+    active, pour la même raison — le process est lancé par le backend, pas par
+    l'utilisateur. macOS, lui, laisse une application se mettre au premier plan
+    sur sa propre demande, donc l'`activate` suffit et il n'y a pas de fenêtre
+    porteuse à fabriquer.
+    """
     defaut = f' default location POSIX file "{_echappe_applescript(depart)}"' if depart else ""
     return (
+        "activate\n"
         f'POSIX path of (choose folder with prompt "{_echappe_applescript(titre)}"{defaut})'
     )
 
