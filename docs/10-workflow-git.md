@@ -967,14 +967,15 @@ qui montent un dépôt git jetable et lancent un script shell ou un worker celer
 10 minutes. Ils portent sur `scripts/`, pas sur `maestro/` : les rejouer pendant qu'on écrit du
 code applicatif n'apprend rien. Deux leviers en découlent.
 
-**1. `pytest-xdist` partout.** `-n auto` dans le job CI comme dans le filet local : ces tests
-attendent des processus, pas du CPU, et se parallélisent donc presque idéalement. Aucun test n'est
-sauté, aucun risque de faux vert — c'est le levier gratuit, et il profite d'abord au pipeline
-(1 min 53 s au lieu de ~10). Il ne paye pas en dessous d'une certaine taille : démarrer les
-workers coûte ~5,5 s, quand une suite applicative ciblée tourne en 1,5 s. Le filet ne le passe
-donc que lorsqu'une suite d'outillage est dans le périmètre — et **jamais sur un venv qui n'a pas
-`pytest-xdist`** (clone antérieur à #214) : il sonde, joue en série et le dit, plutôt que de
-rendre un rouge qui ne parle pas du code. Le rattrapage est `bash scripts/setup.sh --only venv`.
+**1. `pytest-xdist` partout.** `-n auto` dans le job CI, `-n min(cœurs, 8)` dans le filet local
+(#285, levier 3 ci-dessous) : ces tests attendent des processus, pas du CPU, et se parallélisent
+donc presque idéalement. Aucun test n'est sauté, aucun risque de faux vert — c'est le levier
+gratuit, et il profite d'abord au pipeline (1 min 53 s au lieu de ~10). Il ne paye pas en dessous
+d'une certaine taille : démarrer les workers coûte ~5,5 s, quand une suite applicative ciblée
+tourne en 1,5 s. Le filet ne le passe donc que lorsqu'une suite d'outillage est dans le périmètre —
+et **jamais sur un venv qui n'a pas `pytest-xdist`** (clone antérieur à #214) : il sonde, joue en
+série et le dit, plutôt que de rendre un rouge qui ne parle pas du code. Le rattrapage est
+`bash scripts/setup.sh --only venv`.
 
 Ce cas-là n'en est plus qu'un parmi d'autres : depuis #216, le filet demande à
 `setup.sh --derive` **tout ce que ce clone n'a pas pris** du dépôt (dépendances Python, paquets
@@ -1034,6 +1035,78 @@ verdict porte la mention **« Périmètre réduit »**, et le seuil de couvertur
 sous-ensemble ne peut pas tenir — n'est appliqué qu'en `--complet` et en CI. Le sens de dérive est
 toujours le même : **ce que le script ne sait pas classer élargit le périmètre**, il ne le
 rétrécit pas.
+
+**3. Un lancement qui coûtait 7 min 24 s (#285).** Le mode rapide était bien actif — périmètre
+réduit à 3 suites — et c'est justement là que le bât blessait : le travail récent du dépôt est
+massivement dans `scripts/**`, donc le diff sélectionnait exactement les suites d'**outillage** que
+le levier 2 voulait éviter. Décomposition mesurée, poste Windows 16 cœurs, arbre propre :
+
+| job | avant | après | |
+|---|---|---|---|
+| shellcheck | 53 s | **16 s** | 21 scripts, via le repli Docker |
+| python-lint | 0 s | 0 s | ruff |
+| pytest | 6 min 28 s | inchangé | 268 tests, 3 suites — moitié moins de processus pour le même temps (voir plus bas) |
+| mypy | 1 s | 1 s | |
+
+**shellcheck est superlinéaire en taille totale reçue d'un coup** : dans le même conteneur,
+1 fichier 1 s · 6 fichiers 3 s · 11 fichiers 16 s · 21 fichiers **38 s**, contre **12 s** pour
+vingt-et-un appels d'un fichier. Le démarrage du conteneur ne pèse que 2 s, et le montage bind
+n'est pas en cause (36 s avec ou sans copie interne). D'où **un appel par fichier**, la boucle
+restant **dans** le conteneur — un `docker run` par fichier rendrait au démarrage (21 × 2 s) plus
+que la boucle ne fait gagner.
+
+Le découpage **n'est pas neutre**, et c'est le point à comprendre avant d'y toucher : shellcheck ne
+suit un `# shellcheck source=…` que si le fichier sourcé est **lui aussi sur la ligne de commande**
+(ou si `-x` est passé). L'appel groupé liait donc les scripts entre eux **sans le dire**, et le
+découpage a fait apparaître un SC2034 sur `MAESTRO_RUNNER_ID` — une variable que `setup-runner.sh`
+pose pour une fonction de `ensure-runner.sh`, qu'il source. Trois conséquences :
+
+- **Le pipeline est découpé de la même façon** ([`.gitlab-ci.yml`](../.gitlab-ci.yml)). Découper
+  d'un seul côté ferait du filet un contrôle **plus strict que la CI qu'il prédit** : rouge en
+  local, vert en pipeline, sur des remarques que rien n'explique. Le sens de l'écart est toujours
+  le même — moins de contexte, donc **plus** de remarques, jamais moins : un faux rouge est
+  possible, un faux vert ne l'est pas. Il reste que les deux verdicts doivent coïncider, et
+  `tests/test_ci_local.py` l'épingle sur les fichiers versionnés. Le pipeline y gagne au passage
+  les mêmes 35 s → 12 s, sur le runner que toute l'équipe partage (§8.1).
+- **`-x` a été écarté par la mesure**, alors qu'il rétablirait le lien depuis le disque : il fait
+  ré-analyser `lib.sh` par chacun des huit scripts qui la sourcent, et le job repasse à **34 s** —
+  le découpage ne sert plus à rien.
+- **Un couplage entre scripts se déclare désormais sur place**, par un `# shellcheck disable=`
+  commenté. C'est un gain propre : la dépendance se lit là où elle vit, au lieu de tenir à la
+  forme de l'invocation.
+
+**Côté pytest, la contrainte est la mémoire, pas les cœurs.** `-n auto` demande un worker par cœur
+logique — 16 ici. Un worker de cette suite pèse ~130 Mo, soit ~2 Go pour ~1,8 Go de RAM libre : le
+poste pagine, et les deux réglages finissent **à égalité** (74 s chacun sur `tests/test_worktree.py`
+à la mesure du ticket ; 48 s contre 52 s à la vérification, l'écart change de signe avec la charge
+du poste). Le filet **plafonne** donc à `min(cœurs, 8)`. C'est un plafond et non un forçage : une
+machine à 4 cœurs garde `-n 4`, ce que `-n auto` lui donnait déjà — d'où un réglage posé sans
+distinguer les plateformes, et un petit runner qui ne se retrouve jamais avec plus de workers
+qu'avant. `MAESTRO_PYTEST_WORKERS` déplace le plafond ; le **job CI garde `-n auto`**, il tourne
+dans un conteneur dédié où la mémoire n'est pas le facteur limitant.
+
+Ce plafond ne rend pas les 6 min 28 s de pytest : il en supprime la moitié des processus pour le
+même temps. Ce qui les explique reste le coût unitaire d'un test d'outillage — **créer un processus
+sous Windows coûte ~50 ms** (contre 2-3 ms sous Linux), et chaque test lance un script shell qui
+forke des centaines de fois. Le profil des durées est plat : du 1er test le plus lent (59,6 s) au
+25e (33,8 s). La vraie réponse reste celle du levier 2 — **viser directement la suite** pendant
+l'itération (`tests/test_engine.py`, 1,5 s), le filet complet avant le push.
+
+**Le levier qui n'est pas dans le dépôt : shellcheck natif.** `winget install koalaman.shellcheck`
+supprime le repli Docker — donc les ~2 s de conteneur, mais surtout **le besoin de Docker Desktop
+pendant le filet**, et avec lui les ~500 Mo de `vmmemWSL`, au bénéfice des workers pytest. Rien
+dans le dépôt ne peut le faire à la place de qui installe ; le filet, lui, le rappelle déjà quand
+shellcheck manque (« `winget install koalaman.shellcheck` (ou `docker pull …`) »).
+
+**Ce que la mesure a écarté** — consigné pour que personne ne le réessaie :
+
+| Piste | Verdict |
+|---|---|
+| Exclusions Defender sur le dépôt | **Aucun effet.** Le coût est celui de `CreateProcess` lui-même (~60 ms, y compris pour `cmd.exe`), qu'aucune exclusion de chemin ne couvre. |
+| EDR (FortiClient) | **Hors de cause** : installé mais à l'arrêt. |
+| Disque | **Hors de cause** : NVMe local. |
+| Montage bind du conteneur shellcheck | **Hors de cause** : 36 s avec ou sans copie interne. |
+| `-x` pour garder le lien entre fichiers | **Écarté** : 34 s, le découpage ne rapporte plus rien (ci-dessus). |
 
 ### 8.5 Un journal se lit là où on travaille (#234)
 

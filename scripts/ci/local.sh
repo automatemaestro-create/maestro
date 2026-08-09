@@ -100,6 +100,47 @@ SHELLCHECK_IMAGE="${MAESTRO_SHELLCHECK_IMAGE:-$(lit_ci 'koalaman/shellcheck-alpi
 COUVERTURE_MIN="$(lit_ci 'pytest[^#]*--cov-fail-under=[0-9]+' 'pytest --cov-fail-under=90')"
 COUVERTURE_MIN="${COUVERTURE_MIN##*=}"
 
+# --- Combien de workers pytest (#285) -------------------------------------------------------------
+# `-n auto` demande UN WORKER PAR CŒUR LOGIQUE : 16 sur le poste de mesure. La contrainte n'est pas
+# le CPU, c'est la MÉMOIRE — un worker de cette suite pèse ~130 Mo (il monte des dépôts git jetables
+# et attend des processus), soit ~2 Go à seize pour ~1,8 Go de RAM libre. Le poste pagine, et le
+# parallélisme se mange lui-même : mesuré sur tests/test_worktree.py, `-n auto` et `-n 8` sont à
+# ÉGALITÉ (74 s), pour deux fois moins de workers, de mémoire et de processus.
+#
+# Le plafond est un MINIMUM avec le nombre de cœurs, jamais un forçage : sur une machine qui en a
+# moins, rien ne change (4 cœurs ⇒ `-n 4`, ce que `-n auto` aurait donné). C'est ce qui permet de le
+# poser sans distinguer les plateformes — le gain est mesuré sous Windows, où créer un processus
+# coûte ~50 ms, mais le raisonnement mémoire, lui, n'a rien de propre à Windows. Le job CI garde
+# `-n auto` : il tourne dans un conteneur dédié où la mémoire n'est pas le facteur limitant
+# (1 min 53 s au lieu de ~10 min, docs/10 §8.4).
+#
+# MAESTRO_PYTEST_WORKERS relève ou abaisse le plafond, pour un poste qui n'a pas ce profil-là.
+PYTEST_WORKERS_PLAFOND="${MAESTRO_PYTEST_WORKERS:-8}"
+case "$PYTEST_WORKERS_PLAFOND" in
+  '' | 0 | *[!0-9]*) PYTEST_WORKERS_PLAFOND=8 ;;
+esac
+
+# Le nombre de cœurs, ou le plafond lui-même si personne ne sait le dire — se tromper vers le haut
+# retombe sur le plafond, qui est précisément la valeur sûre.
+coeurs_logiques() {
+  local n
+  n="$(nproc 2>/dev/null)" || n="${NUMBER_OF_PROCESSORS:-}"
+  case "$n" in
+    '' | 0 | *[!0-9]*) printf '%s\n' "$PYTEST_WORKERS_PLAFOND" ;;
+    *) printf '%s\n' "$n" ;;
+  esac
+}
+
+workers_pytest() {
+  local coeurs
+  coeurs="$(coeurs_logiques)"
+  if [ "$coeurs" -lt "$PYTEST_WORKERS_PLAFOND" ]; then
+    printf '%s\n' "$coeurs"
+  else
+    printf '%s\n' "$PYTEST_WORKERS_PLAFOND"
+  fi
+}
+
 # --- Jobs, par étage (mêmes noms que .gitlab-ci.yml) ----------------------------------------------
 ETAGE_LINT="shellcheck python-lint"
 ETAGE_TEST="pytest mypy web-build"
@@ -143,16 +184,19 @@ travail non commité compris :
 
 web-build ne tourne que si apps/web (ou .gitlab-ci.yml) change par rapport à origin/main —
 même règle que le pipeline. « --only web-build » le force.
+
+pytest tourne sur min(cœurs, $PYTEST_WORKERS_PLAFOND) workers : au-delà, c'est la mémoire qui
+borne, pas les cœurs (#285). MAESTRO_PYTEST_WORKERS déplace ce plafond.
 USAGE
 }
 
 liste_jobs() {
   printf 'Jobs rejoués par le filet local (source : %s)\n\n' ".gitlab-ci.yml"
   printf '  %-12s %-6s %s\n' JOB ÉTAGE COMMANDE
-  printf '  %-12s %-6s %s\n' shellcheck   lint "shellcheck --severity=$SHELLCHECK_SEVERITE \$(find scripts -name '*.sh')"
+  printf '  %-12s %-6s %s\n' shellcheck   lint "shellcheck --severity=$SHELLCHECK_SEVERITE <script>, un appel par fichier de scripts/"
   printf '  %-12s %-6s %s\n' python-lint  lint "ruff check ."
   if [ "$MODE_PYTEST" = complet ]; then
-    printf '  %-12s %-6s %s\n' pytest     test "python -m pytest -n auto --cov=maestro --cov-fail-under=$COUVERTURE_MIN"
+    printf '  %-12s %-6s %s\n' pytest     test "python -m pytest -n $(workers_pytest) --cov=maestro --cov-fail-under=$COUVERTURE_MIN"
   else
     printf '  %-12s %-6s %s\n' pytest     test "python -m pytest <suites déduites du diff>  (--complet : toute la suite + couverture)"
   fi
@@ -271,7 +315,33 @@ compte_lignes() {
 }
 
 # --- Job shellcheck --------------------------------------------------------------------------------
+# UN APPEL PAR FICHIER, et non un appel unique portant les 21 scripts (#285). shellcheck est
+# SUPERLINÉAIRE en nombre de fichiers reçus d'un coup — mesuré sur ce dépôt, dans le même
+# conteneur : 1 fichier 1 s · 6 fichiers 3 s · 11 fichiers 16 s · 21 fichiers 38 s, contre 14 s
+# pour vingt-et-un appels d'un fichier. Le job passe de ~53 s à ~16 s.
+#
+# On agrège les deux choses qui font le verdict : les SORTIES, concaténées dans le même journal, et
+# les CODES DE RETOUR — non nul dès qu'un fichier en rend un, jamais celui du dernier.
+#
+# ⚠ CE DÉCOUPAGE N'EST PAS NEUTRE, et c'est pourquoi le PIPELINE A ÉTÉ DÉCOUPÉ AVEC LUI
+# (.gitlab-ci.yml, même boucle). Un `# shellcheck source=…` n'est suivi que si le fichier sourcé est
+# LUI AUSSI sur la ligne de commande — ou si `-x` est passé. L'appel groupé les portait tous, donc
+# il liait `setup-runner.sh` à `ensure-runner.sh` sans le dire ; un appel par fichier ne le fait
+# plus, et les vérifications qui raisonnent sur la portée des variables changent d'avis (mesuré :
+# SC2034 sur `MAESTRO_RUNNER_ID`, qui n'est lu que par une fonction du fichier sourcé — le couplage
+# est désormais déclaré sur place). Le sens de l'écart est toujours le même : moins de contexte,
+# donc PLUS de remarques, jamais moins — un faux rouge possible, jamais un faux vert.
+#
+# `-x` rétablirait le lien depuis le disque, mais rend le découpage inutile : il fait ré-analyser
+# `lib.sh` par chacun des huit scripts qui la sourcent, et le job repasse à 34 s (mesuré). Les deux
+# côtés découpés à l'identique valent mieux qu'un filet plus strict que la CI qu'il prédit.
 image_docker_disponible() { docker image inspect "$1" >/dev/null 2>&1; }
+
+# La boucle telle que le `sh` du conteneur la déroulera : « <sévérité> <fichier>… » en arguments.
+# Écrite en POSIX (pas de `local`, pas de tableau) — l'image n'a pas forcément bash.
+BOUCLE_SHELLCHECK='severite="$1"; shift; code=0
+for fichier in "$@"; do shellcheck "--severity=$severite" "$fichier" || code=1; done
+exit "$code"'
 
 conseil_shellcheck() {
   case "$WINDOWS" in
@@ -315,14 +385,29 @@ EOF
   # Les chemins restent relatifs (cd dans le miroir) : la sortie désigne les fichiers du dépôt.
   # $fichiers est volontairement non quoté — une liste d'arguments, comme dans .gitlab-ci.yml.
   if command -v shellcheck >/dev/null 2>&1; then
-    ( cd "$tmp" && shellcheck "--severity=$SHELLCHECK_SEVERITE" $fichiers ) >"$JOURNAL" 2>&1
+    # Un sous-shell pour TOUTE la boucle, pas un par fichier : sous Windows chaque `fork` coûte
+    # ~50 ms, et le job en fait déjà un par appel à shellcheck.
+    (
+      cd "$tmp" || exit 2
+      code=0
+      for fichier in $fichiers; do
+        shellcheck "--severity=$SHELLCHECK_SEVERITE" "$fichier" || code=1
+      done
+      exit "$code"
+    ) >"$JOURNAL" 2>&1
     code=$?
   elif image_docker_disponible "$SHELLCHECK_IMAGE"; then
     # Repli sans réseau : l'image de la CI, mais seulement si elle est DÉJÀ sur la machine — le
     # filet ne télécharge rien. MSYS_NO_PATHCONV empêche Git Bash de réécrire « /mnt » en chemin
     # Windows avant que docker ne le voie.
+    #
+    # UN SEUL CONTENEUR, la boucle est à l'intérieur (#285). Démarrer le conteneur coûte ~2 s :
+    # un `docker run` par fichier rendrait au ménage ce que la boucle fait gagner (21 × 2 s = 42 s,
+    # soit plus que les 38 s de l'appel unique qu'on remplace). C'est le `sh -c` de l'image qui
+    # déroule la boucle — d'où un script POSIX, sans `local` ni tableau.
     MSYS_NO_PATHCONV=1 docker run --rm -v "$(chemin_natif "$tmp"):/mnt" -w /mnt \
-      "$SHELLCHECK_IMAGE" shellcheck "--severity=$SHELLCHECK_SEVERITE" $fichiers >"$JOURNAL" 2>&1
+      "$SHELLCHECK_IMAGE" sh -c "$BOUCLE_SHELLCHECK" shellcheck \
+      "$SHELLCHECK_SEVERITE" $fichiers >"$JOURNAL" 2>&1
     code=$?
   else
     rm -rf "$tmp"
@@ -578,7 +663,7 @@ EOF
   fi
 }
 
-# `-n auto` sur un venv sans pytest-xdist sort en erreur d'arguments : un ROUGE qui ne parle
+# `-n <n>` sur un venv sans pytest-xdist sort en erreur d'arguments : un ROUGE qui ne parle
 # pas du code. Le venv d'un clone antérieur à #214 est dans ce cas tant que
 # `setup.sh --only venv` n'a pas rejoué `pip install -e ".[dev]"`. Comme pour tout ce qui
 # manque ici : on ne l'installe pas dans le dos, on s'en passe et on le dit — le remède est
@@ -607,7 +692,7 @@ derive_dependances() {
 }
 
 job_pytest() {
-  local exe couverture tests sonde args=() suite nb=0
+  local exe couverture tests sonde args=() suite nb=0 workers
   # pytest est lancé par `python -m`, mais c'est bien la présence du SCRIPT CONSOLE qui dit s'il est
   # installé dans le venv du dépôt : `python -m pytest` sur un venv sans pytest sortirait en 1, donc
   # en ÉCHEC, là où « outil absent » doit rendre IGNORÉ (même traitement que ruff et mypy).
@@ -638,16 +723,19 @@ job_pytest() {
       return 2
       ;;
   esac
+  # Un seul calcul pour les trois branches qui suivent — il fork (`nproc`), autant ne le faire
+  # qu'une fois.
+  workers="$(workers_pytest)"
   if [ "$MODE_PYTEST" = complet ]; then
     # Ce que joue la CI, au drapeau de parallélisme près : suite entière, couverture, seuil.
     args=(--cov=maestro "--cov-fail-under=$COUVERTURE_MIN")
-    xdist_disponible "$exe" && args=(-n auto "${args[@]}")
+    xdist_disponible "$exe" && args=(-n "$workers" "${args[@]}")
     PERIMETRE_MOTIF="--complet"
   else
     calcule_perimetre
     if [ "$PERIMETRE_TOUT" = 1 ]; then
       # Le périmètre couvre tout : autant le dire ainsi et laisser pytest collecter lui-même.
-      xdist_disponible "$exe" && args=(-n auto)
+      xdist_disponible "$exe" && args=(-n "$workers")
     elif [ -z "$PERIMETRE_SUITES" ]; then
       # Rien de testable n'a bougé (prose, front). Ni vert ni rouge : hors périmètre, comme
       # web-build quand apps/web n'a pas changé.
@@ -656,7 +744,7 @@ job_pytest() {
       PYTEST_JOUE=1
       return 3
     else
-      if [ "$PERIMETRE_OUTILLAGE" = 1 ] && xdist_disponible "$exe"; then args=(-n auto); fi
+      if [ "$PERIMETRE_OUTILLAGE" = 1 ] && xdist_disponible "$exe"; then args=(-n "$workers"); fi
       while IFS= read -r suite; do
         [ -n "$suite" ] || continue
         args+=("$suite")

@@ -508,6 +508,11 @@ volet_runner() {
   fi
 
   info "attente du passage en ligne…"
+  # Lue par `runner_is_online`, qui vit dans ensure-runner.sh (sourcé en tête). shellcheck ne voit
+  # ce couplage que lorsque les deux fichiers lui arrivent dans le MÊME appel — ce qui n'est plus le
+  # cas depuis que le lint analyse fichier par fichier (#285, docs/10 §8.4). La dépendance se
+  # déclare donc ici, où elle se lit, plutôt que de dépendre de la forme de l'invocation.
+  # shellcheck disable=SC2034
   MAESTRO_RUNNER_ID="$id"
   if wait_until "$MAESTRO_RUNNER_TIMEOUT" "$MAESTRO_RUNNER_POLL" runner_is_online; then
     resultat runner OK "$role #$id créé, enregistré et en ligne"

@@ -67,10 +67,25 @@ shellcheck:
       fi
       echo "Scripts analysés :"
       printf '  %s\n' $files
+      # UN APPEL PAR FICHIER (#285) : shellcheck est superlinéaire en TAILLE TOTALE reçue d'un
+      # coup — 1 fichier 1 s · 6 fichiers 3 s · 11 fichiers 16 s · 21 fichiers 38 s, contre 12 s
+      # pour vingt-et-un appels d'un fichier. Le job passe de ~53 s à ~16 s, sur le runner que
+      # toute l'équipe partage (docs/10 §8.1).
+      #
+      # Le filet local joue la MÊME boucle (scripts/ci/local.sh), et c'est indispensable : un
+      # `# shellcheck source=…` n'est suivi que si le fichier sourcé est lui aussi sur la ligne de
+      # commande. L'appel groupé liait donc les scripts entre eux sans le dire ; découper d'un
+      # seul côté ferait diverger les deux verdicts (docs/10 §8.4). Un couplage entre scripts se
+      # déclare désormais sur place, par un `# shellcheck disable=` commenté.
+      #
       # Sévérité 'warning' : bloque sur les vrais problèmes (variables non définies, tests
       # douteux, redirections cassées…) sans pinailler sur le style (SC2086/SC1091 = niveau
       # 'info', tolérés). À durcir en '--severity=style' quand les scripts seront stabilisés.
-      shellcheck --severity=warning $files
+      code=0
+      for fichier in $files; do
+        shellcheck --severity=warning "$fichier" || code=1
+      done
+      exit $code
 
 # Lint du code Python (maestro/, tests/). La config des règles vit dans pyproject.toml
 # ([tool.ruff]). N'installe que ruff : pas besoin du SDK ni d'une clé API pour le lint.
