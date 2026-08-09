@@ -10,17 +10,23 @@ La **Control Tower** est l'unique poste de pilotage : superviser, configurer, in
 **Une entrée de menu par intention** (navigation v2, #189). Trois entrées de la
 v1 — Agents, Playbooks, Chat — regardaient **le même objet** par trois chemins :
 on y choisissait un agent, puis on en consultait une facette. Elles ont fusionné
-en **une** fiche agent à onglets. Le menu compte donc six entrées, et un agent se
-consulte d'un seul endroit :
+en **une** fiche agent à onglets, et un agent se consulte d'un seul endroit.
+
+Deux entrées se sont ajoutées depuis : **Projets** (#225) et **Journal** (#249),
+où le fil d'activité s'est installé en plein format. Le menu est déclaré une
+seule fois (`apps/web/lib/navigation.ts`) et fait aujourd'hui **huit entrées** —
+le Kanban des tâches n'en est pas une : il **est** le tableau de bord (#248).
 
 ```mermaid
 flowchart LR
-    Home[🏠 Tableau de bord] --> Agents[🤖 Agents]
-    Home --> Chat[💬 Chat global]
-    Home --> Costs[💰 Coûts & analytics]
-    Home --> Approve[✅ Validations]
-    Home --> Settings[⚙️ Paramètres]
-    Home --> Tasks[📋 Kanban des tâches]
+    Home[Tableau de bord] --> Projets[Projets]
+    Home --> Agents[Agents]
+    Home --> Chat[Chat global]
+    Home --> Costs[Coûts & analytics]
+    Home --> Approve[Validations]
+    Home --> Journal[Journal]
+    Home --> Settings[Paramètres]
+    Home --> Tasks[Kanban des tâches]
     Agents --> AgentDetail[Fiche agent]
     AgentDetail --> Profil[Onglet Profil]
     AgentDetail --> Playbook[Onglet Playbook]
@@ -30,9 +36,9 @@ flowchart LR
     TaskDetail --> Approve
 ```
 
-Le menu est déclaré **une seule fois** (`apps/web/lib/navigation.ts`) : la
-sidebar, le titre de page et les renvois du tableau de bord le lisent tous. Les
-onglets d'un agent le sont de même (`apps/web/lib/agents.ts`).
+La sidebar, le titre de page et les renvois du tableau de bord lisent tous cette
+même déclaration. Les onglets d'un agent le sont de même
+(`apps/web/lib/agents.ts`).
 
 ### 1.1 Les chemins de la v1 restent servis
 
@@ -120,13 +126,14 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
 
 1. **Validations en attente** — ce qui demande un arbitrage humain, en tête.
 2. **Indicateurs de tête** — quatre tuiles : run en cours, tâches par statut,
-   agents, dépense. Chaque tuile met en valeur **le chiffre qu'on vient y
-   chercher** : la tuile Agents répond « combien travaillent, combien sont
-   disponibles ? » et relègue le total et les agents désactivés en ligne de
-   détail (#247). Depuis #281 « combien travaillent » veut dire **ici** — le
-   parc étant celui du poste (§2.0), seul un décompte dérivé des tâches du
-   projet a sa place en tête, les « occupés ailleurs » passant au détail.
-3. **Kanban** des tâches.
+   agents occupés et libres, dépense. Chaque tuile met en valeur **le chiffre
+   qu'on vient y chercher** : la tuile Agents répond « combien travaillent,
+   combien sont disponibles ? » et relègue le total et les agents désactivés en
+   ligne de détail (#247). Depuis #281 « combien travaillent » veut dire
+   **ici** — le parc étant celui du poste (§2.0), seul un décompte dérivé des
+   tâches du projet a sa place en tête, les « occupés ailleurs » passant au
+   détail.
+3. **Kanban** des tâches — qui prend **toute la hauteur restante** (#248, §2.2).
 4. **Aperçu de l'activité** en direct (quelques lignes, pas le fil entier).
 
 Le reste n'a pas été supprimé, il est **rangé**, et **chaque tuile renvoie vers
@@ -135,9 +142,10 @@ capacité vers **Paramètres › Agents & capacité**, le grand livre par exécu
 vers **Coûts & analytics**. Ces renvois sont résolus **par le menu** et non par un
 chemin écrit en dur : une page qui déménage emmène son renvoi avec elle (c'est ce
 qui a fait suivre « Agents » quand il est passé de `/catalogue` à `/agents`), et
-un renvoi vers une page **pas encore créée** — le Journal du chantier
-« Visibilité », qui hébergera le fil complet — **ne s'allume pas** tant qu'elle
-n'est pas au menu : pas de lien mort en attendant.
+un renvoi vers une page **pas encore créée ne s'allume pas** — pas de lien mort
+en attendant. C'est ainsi que l'aperçu d'activité a gagné son « voir le
+Journal » : la page créée (#249), le lien s'est allumé seul, sans une ligne de
+plus dans le composant.
 
 Le **coût cumulé** — celui du projet actif depuis #281 (§2.0) — et le statut du flux
 temps réel vivent en permanence dans la barre supérieure, sur toutes les pages. Tout
@@ -170,11 +178,48 @@ redémarrage de l'API (journal durable, #97).
 
 ### 2.2 📋 Tâches — tableau Kanban
 
-- Colonnes : *Backlog → Prête → En cours → En validation → Terminée / Échec*.
-- **Glisser-déposer** pour réassigner ou repositionner.
-- Chaque carte : titre, agent assigné (avatar), priorité, dépendances, coût.
+Le Kanban n'a **pas d'entrée de menu à lui** : il *est* l'objet du tableau de
+bord, et depuis #248 il en prend la place — les tuiles rendent une rangée, le
+tableau prend **toute la hauteur restante** et chaque colonne défile chez elle.
+La borne `max-h-96` de #191 protégeait la densité d'un écran qui portait encore
+cinq panneaux de plein format ; ceux-ci sont partis, elle est restée, et les
+tâches tenaient dans le tiers supérieur d'un grand écran. En largeur, ce sont
+les colonnes qui commandent : une **largeur minimale par colonne** plutôt qu'un
+nombre de colonnes, si bien qu'elles s'élargissent jusqu'à 2 560 px et se
+replient en lignes en dessous, au lieu d'être toutes tassées de front.
+
+- Colonnes : *Assignées → En cours → Bloquées → Terminées / Échecs* — celles de
+  la machine à états du moteur ([docs/03 §3](./03-architecture-technique.md)).
+  Un statut que le front ne connaît pas tombe dans une colonne **Autres** plutôt
+  que de disparaître de l'écran.
+- Chaque carte : titre, ticket externe s'il y en a un (#192), agent assigné,
+  statut, coût, tokens et durée.
+- **Réassignation manuelle** d'un agent à une tâche (EF-11/EF-20), depuis la
+  carte comme depuis le panneau de détail.
+- **Le détail s'ouvre sur place** (#251) : un clic sur la carte ouvre un panneau
+  modal à droite — description, **étapes** en checklist, **liens utiles**
+  (maquette, ticket, dépôt) — et Échap le referme en rendant le focus à la
+  carte. Aucune navigation : la vue du run reste où elle était. Une tâche **sans
+  détail reste exactement la carte d'avant** : pas de bouton, pas de curseur qui
+  promet une ouverture, pas de panneau vide.
 - Création d'une tâche : soit en langage naturel (l'orchestrateur la découpe), soit manuellement.
-- **Réassignation manuelle** d'un agent à une tâche (EF-11/EF-20).
+
+> **D'où viennent ces champs.** `description`, `etapes` et `liens` sont portés
+> par le lot modèle **#246**, livré : la projection
+> (`maestro/controltower/state.py`) les sert, et le contrat les garde optionnels
+> côté front (`apps/web/lib/types.ts`) parce qu'une tâche peut parfaitement n'en
+> avoir aucun. Ils atteignent la Control Tower par le **journal** et par lui
+> seul (`maestro.detail_tache.consigne_detail` → ligne `<tache>:detail` → pont
+> #46 → événement `tache.detail`) : un agent qui découvre en cours de route une
+> étape à cocher ou une maquette à ouvrir les consigne, sans faire bouger sa
+> tâche d'une colonne. Une tâche que rien n'a renseignée reste donc exactement
+> la carte d'avant. Couverture :
+> [`tests/test_detail_tache.py`](../tests/test_detail_tache.py) — le modèle, le
+> journal, le pont et la projection, **idempotence du rejeu comprise**.
+
+Le **glisser-déposer** entre colonnes reste une **cible non livrée** : le statut
+d'une tâche est aujourd'hui posé par la machine à états du moteur, et seule la
+réassignation d'agent s'obtient depuis l'écran.
 
 ### 2.3 🤖 Agents
 
@@ -345,6 +390,39 @@ saisie en cours** et **laisse la page précédente** de l'explorateur à l'écra
 la navigation ni le reste de l'écran. Corollaire tenu par les tests : « ce dossier n'a pas de
 sous-dossier » et « je refuse de regarder là » ne s'affichent **jamais** pareil.
 
+### 2.8 🗒️ Journal — l'activité en direct, en plein format *(#249, #250 — **livré**)*
+
+Le fil d'activité a **quitté le tableau de bord pour sa propre entrée de menu**.
+Le tableau de bord n'en garde qu'un **aperçu** de quelques lignes, avec le
+renvoi « voir le Journal » ; la page, elle, rend le fil entier avec de quoi s'y
+retrouver : filtres par **type d'événement** (nommé en français), par **agent**
+et par **tâche**, **recherche texte** — qui cherche jusque dans le détail que la
+ligne n'affiche pas — et une case **« notable seulement »** qui reprend
+exactement le filtre de la cloche, pour que les deux ne puissent pas diverger
+sur ce qui mérite l'attention. Les options des listes sont **tirées du fil
+lui-même** : aucune liste à maintenir quand le backend enrichit le flux, aucune
+option morte.
+
+Ce qu'on lit sur une ligne, ce n'est plus un identifiant suivi d'un statut mais
+**qui fait quoi, sur quoi, avec quel résultat** (#250) — « dev a terminé
+« Écrire les tests » » plutôt que « tache-42 — Terminée (dev) ». Trois règles
+tiennent l'écran :
+
+- **Une rafale se replie en une ligne.** Les N transitions d'une même tâche
+  rapprochées dans le temps se comptent (« 4 étapes ») et se déplient dans
+  l'ordre où elles se sont jouées — alors que le fil, lui, va du plus récent au
+  plus ancien.
+- **Rien n'est perdu.** L'identifiant, le statut du bus et le texte libre du
+  moteur sont **à un clic**, au même endroit sur toutes les lignes.
+- **L'horodatage est relatif** près du présent (« il y a 3 min ») et redevient
+  absolu au-delà de la semaine ; l'heure exacte reste en infobulle.
+
+Ce fil est **éphémère** par construction : il ne contient que ce qui est passé
+par le WebSocket depuis l'ouverture de la page, l'état de référence restant le
+REST — et l'écran le dit. Un journal **persisté et requêtable** existe côté
+contrat (`GET /api/journal`, §6.2) mais n'est pas encore servi : cette page ne
+le promet pas.
+
 ---
 
 ## 3. Parcours utilisateur clés
@@ -384,6 +462,17 @@ sous-dossier » et « je refuse de regarder là » ne s'affichent **jamais** par
   local, #113). Seules les **graduations d'un axe** échappent aux deux décimales,
   faute de quoi une série de quelques millièmes de dollar les verrait toutes
   tomber sur « 0,00 » ; l'exception est déclarée dans ce même module.
+- **Un seul langage visuel** (#245) : icônes, cartes, badges, états vides et
+  échelle typographique sont **posés une fois** pour tout le produit
+  (`apps/web/components/Icones.tsx`, `Primitives.tsx`, `app/globals.css` — détail
+  dans [`apps/web/README.md`](../apps/web/README.md#le-langage-visuel)). Deux
+  règles s'y appliquent partout : **plus aucun émoji décoratif** — un
+  pictogramme apporte sa propre graisse, sa propre couleur et un rendu différent
+  par plateforme, hors d'atteinte de toute cohérence — et **l'icône double le
+  libellé, elle ne le porte jamais seule** : elle est décorative (`aria-hidden`),
+  parce que « 🤖 dev » n'apprenait rien à qui ne le voyait pas. Cette décision
+  est prise **une fois**, en lot socle : traitée écran par écran, la même
+  demande de revue aurait produit quatre styles différents.
 - **Vulgarisation & multilingue** : interface multilingue (français par défaut, autres langues activables via i18n), libellés clairs, jargon technique expliqué au survol.
 - **Traçabilité** : depuis n'importe quelle tâche, on remonte à la trace complète.
 
@@ -391,27 +480,34 @@ sous-dossier » et « je refuse de regarder là » ne s'affichent **jamais** par
 
 ## 5. Maquette textuelle du tableau de bord
 
-Tel qu'épuré par #191 : l'arbitrage d'abord, quatre tuiles de tête, le Kanban,
-puis un aperçu de l'activité. Chaque tuile qui résume un panneau rangé porte le
-renvoi (`→`) vers la page où il vit.
+Tel qu'épuré par #191, puis rééquilibré par la vague v3 : l'arbitrage d'abord,
+quatre tuiles de tête **resserrées**, le Kanban qui prend **toute la hauteur
+restante** (#248), puis un aperçu de l'activité qui renvoie au Journal. Chaque
+tuile qui résume un panneau rangé porte le renvoi (`→`) vers la page où il vit.
+Les pictogrammes ci-dessous sont ceux de cette maquette, pas ceux de l'écran :
+l'interface, elle, n'a plus d'émoji (#245, §4).
 
 ```
 ┌──────────────┬──────────────────────────────────────────────────────────────┐
-│ M Maestro    │  Tableau de bord      🟢 Temps réel   💰 4,80 $   🔔 ☀ ?     │
+│ M Maestro    │  Tableau de bord       ● Temps réel    4,80 $     🔔 ☀ ?     │
 │              ├──────────────────────────────────────────────────────────────┤
-│ ▸ Tableau…   │  ⚠️ VALIDATIONS EN ATTENTE                                    │
-│   Agents     │  « Déploiement en production » — devops   [Approuver][Refuser]│
-│   Chat       ├──────────────┬──────────────┬──────────────┬─────────────────┤
-│   Coûts…     │ Run en cours │ Tâches       │ Agents       │ Dépense         │
-│   Validations│ run-2f9c     │ 20           │ 2 occ. 2 lib.│ 4,95 $US        │
-│   Paramètres │ 5 ouvertes   │ 4 en cours…  │ 4 au total…  │ 3 exécution(s)  │
-│              │              │              │ Voir les →   │ Détail par →    │
-│              ├──────────────┴──────────────┴──────────────┴─────────────────┤
-│              │  TÂCHES (KANBAN)                                             │
-│              │  Backlog 3 │ En cours 4 │ Validation 1 │ Terminées 12        │
+│ ▸ Tableau…   │  VALIDATIONS EN ATTENTE                                      │
+│   Projets    │  « Déploiement en production » — devops  [Approuver][Refuser]│
+│   Agents     ├──────────────┬──────────────┬──────────────┬─────────────────┤
+│   Chat       │ Run en cours │ Tâches       │ Agents       │ Dépense         │
+│   Coûts…     │ run-2f9c     │ 20           │ 2 occ. 2 lib.│ 4,95 $US        │
+│   Validations│ 5 ouvertes   │ 4 en cours…  │ 4 au total…  │ 3 exécution(s)  │
+│   Journal    │              │              │ Voir les →   │ Détail par →    │
+│   Paramètres ├──────────────┴──────────────┴──────────────┴─────────────────┤
+│              │  TÂCHES                                                      │
+│              │ Assignées 3│ En cours 4 │Bloquées 1│Terminées 12│ Échecs 0   │
+│              │ ┌─────────┐│ ┌─────────┐│          │            │            │
+│              │ │ carte…  ││ │ carte…  ││          │            │            │
+│              │ └─────────┘│ └─────────┘│          │            │            │
+│              │      ⇕ chaque colonne défile chez elle, jusqu'en bas         │
 │              ├──────────────────────────────────────────────────────────────┤
-│              │  ACTIVITÉ EN DIRECT                    + 14 plus anciens     │
-│              │  10:12 ✅ Dev → PR #12   10:11 🔧 BDD → migration   …         │
+│              │  ACTIVITÉ EN DIRECT                        voir le Journal → │
+│              │  il y a 2 min  dev a terminé « Écrire les tests »  4 étapes  │
 └──────────────┴──────────────────────────────────────────────────────────────┘
 ```
 

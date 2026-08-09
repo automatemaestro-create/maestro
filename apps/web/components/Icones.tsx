@@ -279,6 +279,30 @@ export function IconeTicket(props: Props) {
   );
 }
 
+/**
+ * Une maquette — la nature « maquette » d'un lien utile (#246/#251), qui
+ * s'ouvrait sur un 🎨 tant que le panneau de détail précédait le jeu d'icônes.
+ */
+export function IconeMaquette(props: Props) {
+  return (
+    <Trait {...props}>
+      <rect x="3" y="3.5" width="18" height="14" rx="1.5" />
+      <path d="M3 13l4.5-4 3.5 3 3.5-3.5L21 14" />
+      <path d="M8 20.5h8" />
+    </Trait>
+  );
+}
+
+/** Un dépôt de code — la nature « depot » d'un lien utile (l'ancien 📦). */
+export function IconeDepot(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5Z" />
+      <path d="M3 7.5 12 12l9-4.5M12 12v9" />
+    </Trait>
+  );
+}
+
 /** Un dossier du disque — l'ancien 📁 de l'explorateur. */
 export function IconeDossier(props: Props) {
   return (

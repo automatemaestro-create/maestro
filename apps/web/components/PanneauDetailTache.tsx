@@ -23,7 +23,16 @@
 
 import { useEffect, useRef } from "react";
 
-import { IconeCoche, IconeFermer } from "@/components/Icones";
+import {
+  IconeAgent,
+  IconeCoche,
+  IconeDepot,
+  IconeFermer,
+  IconeLienExterne,
+  IconeMaquette,
+  IconeTicket,
+} from "@/components/Icones";
+import type { Icone } from "@/components/Primitives";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
 import {
   SelecteurReassignation,
@@ -45,15 +54,19 @@ import {
 } from "@/lib/types";
 
 /**
- * Le glyphe d'un lien, choisi sur sa **nature** — jamais deviné d'après l'URL,
- * qui ne dit rien d'une instance Figma/GitLab auto-hébergée. Le vocabulaire
- * reprend celui des cartes (`🎫` y désigne déjà le ticket externe, #192).
+ * L'icône d'un lien, choisie sur sa **nature** — jamais devinée d'après l'URL,
+ * qui ne dit rien d'une instance Figma/GitLab auto-hébergée.
+ *
+ * Des composants du jeu (#245) et non des émojis : ce panneau a été écrit avant
+ * que le socle visuel ne soit posé, et il était le dernier écran à signer ses
+ * lignes d'un 🎨 / 🎫 / 📦 / 🔗. Le vocabulaire reste celui des cartes —
+ * `IconeTicket` y désigne déjà le ticket externe (#192).
  */
-const GLYPHE_PAR_NATURE: Record<NatureAffichee, string> = {
-  maquette: "🎨",
-  ticket: "🎫",
-  depot: "📦",
-  lien: "🔗",
+const ICONE_PAR_NATURE: Record<NatureAffichee, Icone> = {
+  maquette: IconeMaquette,
+  ticket: IconeTicket,
+  depot: IconeDepot,
+  lien: IconeLienExterne,
 };
 
 /** Ce que l'état d'une étape dit à voix haute (lecteurs d'écran, `title`). */
@@ -116,9 +129,17 @@ export function PanneauDetailTache({
             <h2 className="text-corps font-semibold text-neutral-900 dark:text-neutral-100">
               {nom}
             </h2>
-            <p className="mt-0.5 text-annexe text-neutral-500 dark:text-neutral-400">
-              {libelleStatut(tache.statut)} · 🤖 {tache.agent || "non assignée"}
-              {tache.role ? ` · ${tache.role}` : ""} · {formatCout(tache.cout_usd)}
+            {/* « Agent » en toutes lettres derrière l'icône du jeu (#245) :
+                l'émoji 🤖 portait seul l'information, et une tâche non assignée
+                ne disait pas de quoi elle manquait. */}
+            <p className="mt-0.5 flex flex-wrap items-center gap-1 text-annexe text-neutral-500 dark:text-neutral-400">
+              <span>{libelleStatut(tache.statut)} ·</span>
+              <IconeAgent className="size-3.5 shrink-0" />
+              <span>
+                Agent {tache.agent || "non assigné"}
+                {tache.role ? ` · ${tache.role}` : ""} ·{" "}
+                {formatCout(tache.cout_usd)}
+              </span>
             </p>
             <LienTicketExterne
               reference={tache.ticket}
@@ -271,7 +292,7 @@ function LigneEtape({ etape }: { etape: EtapeAffichee }) {
 
 /** Un lien utile, rendu selon sa nature. Sans URL suivable : du texte. */
 function LigneLien({ lien }: { lien: LienAffiche }) {
-  const glyphe = GLYPHE_PAR_NATURE[lien.nature];
+  const Glyphe = ICONE_PAR_NATURE[lien.nature];
   const nature = libelleDeNature(lien.nature).toLowerCase();
   const commun = "inline-flex max-w-full items-center gap-1.5 text-corps";
 
@@ -281,7 +302,7 @@ function LigneLien({ lien }: { lien: LienAffiche }) {
         className={`${commun} text-neutral-500 dark:text-neutral-400`}
         title={`${libelleDeNature(lien.nature)} — aucune URL exploitable`}
       >
-        <span aria-hidden="true">{glyphe}</span>
+        <Glyphe className="size-4 shrink-0" />
         <span className="truncate">{lien.libelle}</span>
       </span>
     );
@@ -296,9 +317,11 @@ function LigneLien({ lien }: { lien: LienAffiche }) {
       title={lien.url}
       className={`${commun} rounded text-sky-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:text-sky-300 dark:focus-visible:outline-sky-400`}
     >
-      <span aria-hidden="true">{glyphe}</span>
+      <Glyphe className="size-4 shrink-0" />
       <span className="truncate">{lien.libelle}</span>
-      <span aria-hidden="true">↗</span>
+      {/* Le « part vers l'extérieur », icône du jeu comme sur le ticket externe
+          (#192) plutôt qu'une flèche de texte, dont le rendu varie par police. */}
+      <IconeLienExterne className="size-3.5 shrink-0" />
     </a>
   );
 }
