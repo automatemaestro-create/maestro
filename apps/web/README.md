@@ -41,8 +41,10 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 - **Tableau de bord épuré** (#191, lot 2 de la navigation v2 #189) : l'essentiel
   en **un écran** — ce qui attend un arbitrage, quatre **indicateurs de tête**
   (run en cours, tâches par statut, agents occupés et libres, dépense), le
-  Kanban, puis un
-  **aperçu** de l'activité. Les trois panneaux de plein format qui s'y empilaient
+  Kanban, puis un **aperçu** de l'activité. Chaque tuile met en valeur **le
+  chiffre qu'on vient y chercher** (#247) : la tuile Agents répond « combien
+  travaillent, combien sont disponibles ? » et relègue le total et les agents
+  désactivés en ligne de détail. Les trois panneaux de plein format qui s'y empilaient
   n'ont pas disparu, ils sont **rangés**, et chaque tuile **renvoie** vers la page
   où le détail vit maintenant (fiches d'agent → Agents, grand livre par exécution
   → Coûts & analytics). Les renvois sont résolus par le menu
@@ -62,7 +64,16 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   existe côté contrat (#183) mais n'est pas encore servi par le backend ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
-- **Kanban** des tâches par statut (machine à états docs/03 §3) ;
+- **Kanban** des tâches par statut (machine à états docs/03 §3), qui **prend la
+  place** du tableau de bord depuis #248 (lot 4 de #242) : les tuiles se
+  resserrent à une rangée, le tableau absorbe la hauteur restante et chaque
+  colonne défile chez elle. En largeur, c'est une **largeur minimale par
+  colonne** qui commande et non un nombre de colonnes : au-delà les colonnes
+  s'élargissent, en dessous elles se replient en lignes au lieu d'être tassées
+  de front. L'étirement est une **chaîne** — hauteur définie sur le `<body>`,
+  puis `min-h-0` sur chaque maillon flex jusqu'à la liste qui défile ; elle se
+  pose en entier ou pas du tout, un maillon manquant et le débordement remonte à
+  la zone de contenu (`tests/kanban.test.tsx` la parcourt) ;
 - **Détail d'une tâche ouvert sur place** (#251, lot 7 de la vague #242) : une
   carte qui porte une description, des étapes ou des liens utiles (#246) les
   ouvre au clic dans un **panneau** latéral — description, étapes en checklist
@@ -76,7 +87,17 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 - **Réassignation manuelle** d'une tâche à un autre agent depuis chaque carte
   (EF-11/EF-20) — et depuis le panneau de détail (#251), pour ne pas avoir à le
   refermer quand c'est sa lecture qui fait conclure au changement d'agent ;
-- **Fil d'activité** en direct (statuts, activités d'agents, messages inter-agents) ;
+- **Fil d'activité** en direct (statuts, activités d'agents, messages
+  inter-agents), dont les lignes **disent ce qui se passe** depuis #250 (lot 6 de
+  #242) : « dev a terminé « Écrire les tests » » plutôt que « tache-42 —
+  Terminée (dev) ». Une **rafale** — N transitions d'une même tâche rapprochées
+  dans le temps — se replie en une seule ligne comptée (« 4 étapes ») qui se
+  déplie dans l'ordre où elle s'est jouée, l'**horodatage** est relatif près du
+  présent puis redevient absolu au-delà de la semaine, et le **détail brut**
+  (identifiant, statut du bus, texte du moteur) reste à un clic sur toutes les
+  lignes. Le tout vit dans une brique unique (`components/LigneActivite.tsx`,
+  vocabulaire dans `lib/evenements.ts`) partagée par l'aperçu du tableau de
+  bord, le Journal et la cloche : les trois ne peuvent pas diverger ;
 - **Validations humaines** (#48, docs/05 §2.6) : les actions sensibles mettent la
   tâche en pause et apparaissent en tête de tableau de bord avec leur contexte
   (agent, tâche, action demandée, justification) — **Approuver** fait reprendre la
@@ -209,6 +230,28 @@ sous les yeux** (un compteur temps réel) porte la classe `chiffre`
 elle, le passage de « 1 » à « 8 » élargit la valeur et fait sauter la ligne
 autour d'elle.
 
+### Le rendu des montants — `lib/format.ts`
+
+Même principe, pour ce qui se lit plutôt que pour ce qui s'habille : les
+montants sont rendus **à deux décimales** (#247) par un formateur unique, que
+tous les écrans appellent au lieu de reformater dans leur coin — quatre
+décimales rendaient « 1,2345 $US » partout, un chiffre qu'on déchiffre au lieu
+de le lire. Trois verdicts qu'on ne confond jamais :
+
+| Rendu | Ce qu'il dit |
+| --- | --- |
+| `—` | rien n'a été rapporté — **inconnu n'est pas nul** |
+| `0,00 $US` | zéro rapporté, une vraie mesure |
+| `< 0,01 $US` | une dépense réelle, mais sous le centime |
+
+Le troisième existe parce que le cas est **courant** sur un fournisseur local
+(#113), où un appel coûte quelques dix-millièmes de dollar : arrondi à
+« 0,00 $US », il ferait passer un fournisseur bon marché pour un fournisseur
+gratuit. Seules les **graduations d'un axe** échappent à la règle — sur une
+série de quelques millièmes, elles tomberaient toutes sur « 0,00 » et l'axe ne
+dirait plus rien ; l'exception est déclarée dans ce même module, pas dans le
+composant qui dessine.
+
 ## Lancer en local
 
 1. **Backend** (API REST + WebSocket, ticket #46) — Redis du docker-compose requis
@@ -293,6 +336,11 @@ le bout en bout dans un vrai navigateur reste le rôle du skill `/verify`.
 | `tests/detail-tache.test.tsx` | Le panneau de détail d'une tâche : description, étapes en checklist, liens filtrés et rendus selon leur nature, et la carte laissée intacte quand il n'y a rien à ouvrir (#251, livré avec le lot : filtrage d'URL et absence totale) |
 | `tests/parametres-mcp.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231) |
 | `tests/projets.test.tsx` | L'écran Projets : racine choisie dans l'explorateur servi par l'API (jamais saisie), refus motivé qui ne casse ni la liste ni la navigation, dossier vide distinct d'un refus (#225) |
+| `tests/journal.test.tsx` | La page Journal : fil sans limite, filtres par type/agent/tâche, recherche jusque dans le détail, « notable seulement » aligné sur la cloche (#249) |
+| `tests/activite.test.tsx` | Les lignes d'activité : repli des rafales, horodatage relatif, détail brut à un clic, garde des types inconnus (#250) |
+| `tests/socle-visuel.test.tsx` | Le langage visuel (#245) : le jeu d'icônes (SVG à `currentColor`, toutes décoratives), les primitives et leurs deux thèmes, et **aucun émoji rendu** sur les écrans de la vague |
+| `tests/kanban.test.tsx` | La section Tâches qui prend la place (#248) : colonnes de la machine à états, colonne « Autres », **chaîne d'étirement entière** et défilement rendu à chaque colonne |
+| `tests/format.test.ts` | Les montants à deux décimales et leurs trois verdicts — « — », « 0,00 $US », « < 0,01 $US » —, l'exception des graduations d'axe, durées et tokens (#247) |
 | `tests/projet-actif.test.tsx` | La porte d'entrée : aucun écran n'est atteint sans projet actif, le choix retenu est confronté à l'état réel, et la page demandée revient sans redirection (#279) |
 | `tests/selecteur-projet.test.tsx` | Le sélecteur du shell : bascule sans quitter la page, gestion atteinte sans chemin en dur, et « Projets » sorti de la sidebar sans que son écran cesse d'être servi ni titré (#280) |
 
@@ -337,4 +385,18 @@ qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
   du document : c'est ce qui remplissait la recherche d'un identifiant
   enregistré. Rien dans un rendu ne distingue ce `<form>` d'une `<div>` — seule
   cette frontière, testée pour elle-même, empêche un futur remaniement de
-  ramener le bug.
+  ramener le bug ;
+- celui qui **parcourt** la chaîne d'étirement du Kanban (#248), de la zone
+  défilante d'une colonne jusqu'à la section. jsdom ne calcule aucune mise en
+  page : ce qui se teste n'est pas une hauteur en pixels mais la présence de
+  `min-h-0` sur **chaque** maillon flex — sans lui, le `min-height:auto` par
+  défaut empêche l'élément de rétrécir sous son contenu, le débordement remonte
+  à la page entière et l'ascenseur de colonne ne sert plus à rien. Un maillon
+  oublié ne se voit ni au lint, ni au build, ni dans un test qui ne regarderait
+  que le texte ;
+- ceux qui vérifient qu'**aucun émoji n'est rendu** par les écrans de la vague
+  v3 (#245). Le contrôle porte sur le **rendu**, pas sur les sources : le dépôt
+  cite des émojis dans ses commentaires (« l'ancien 📁 »), et c'est ce que
+  l'utilisateur voit qui est en cause. C'est ce garde-fou qui a rattrapé le
+  panneau de détail (#251), écrit avant que le socle ne soit posé et qui signait
+  encore ses lignes d'un 🤖 et d'un glyphe par nature de lien.
