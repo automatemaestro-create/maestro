@@ -2077,6 +2077,56 @@ l'**hebdomadaire** : le run s'arrête proprement plutôt que de dormir des jours
 session capturée — c'est ce qui rend la reprise vérifiable **sans attendre de vraiment taper la
 limite**.
 
+#### À N sessions en vol, l'attente est celle du **run** (#291)
+
+À un ticket la question ne se posait pas. À N (§11.10), la limite tombe sur **toutes** les sessions à
+quelques secondes d'intervalle, et les laisser décider chacune dans son coin n'est pas seulement
+redondant — c'est **faux** :
+
+* le flux d'une session porte l'heure de reset, celui d'une autre ne la porte pas (la forme du signal
+  n'est pas contractuelle, cf. les trois filets ci-dessus). La seconde retombait sur le palier de
+  15 min, se réveillait **avant** le reset, brûlait une reprise pour rien, recommençait, et sortait en
+  échec au bout de `--max-reprises` — pendant que sa voisine, mieux informée, repartait tranquillement.
+  Deux tickets du même run, deux sorts opposés, sur une information que l'une avait et que **rien ne
+  transmettait** à l'autre ;
+* le plafond de 5 h 30 ne bornait que la session qui l'atteignait : les N-1 autres continuaient de
+  dormir sur une limite hebdomadaire dont le run avait déjà tiré les conséquences.
+
+D'où un **point de rendez-vous unique** dans le journal du run, `<run-dir>/.limite` — la fin d'attente
+en epoch, sa **source** (`reset` explicite ou `palier` aveugle), et l'iid de la session qui l'a
+**ouvert**. La règle tient en une phrase, et elle vaut à la publication comme à la relecture :
+
+> La **meilleure** information l'emporte, jamais la plus récente : une heure de reset explicite
+> remplace un palier aveugle **même si elle est plus tôt** ; à source égale, on ne fait que
+> **rallonger**.
+
+Les deux moitiés comptent. Un palier n'est pas une promesse mais un aveu d'ignorance : lui préférer un
+reset connu, quitte à raccourcir, c'est cesser d'attendre pour rien. Et à source égale, se réveiller
+plus tôt que le voisin, c'est brûler une reprise sur une limite toujours en cours — précisément le cas
+qui faisait échouer la session la moins bien informée. La fin est **relue à chaque tranche** (une par
+minute) : c'est ainsi qu'une session partie sur un palier profite du reset qu'une autre a publié
+depuis.
+
+Ce que le rendez-vous ne change pas : **chaque session coupée est rouverte par son propre uuid**. Une
+attente partagée, N reprises distinctes — le contexte déjà payé de chaque ticket reste le sien.
+
+Deux conséquences côté pilote :
+
+* **on ne lance rien pendant une attente en cours.** Un créneau qui se libère jetterait une session
+  neuve dans une fenêtre déjà fermée : elle échouerait à sa première requête, brûlerait une reprise et
+  rejoindrait la même attente, après avoir consommé un montage de worktree et une lecture GitLab pour
+  rien. Le garde-fou ne vaut que si **quelque chose est en vol** — sinon le pilote sortirait de sa
+  boucle sur une liste vide et le reste du plan finirait le run sans une ligne de bilan ;
+* **le plafond des 5 h 30 est déclaré une fois pour tout le monde** (`<run-dir>/.plafond`, qui porte
+  l'iid du déclarant). Les autres sessions le voient à leur tranche suivante et s'arrêtent aussi.
+
+Pas de verrou : `flock` n'existe pas sous MSYS, et la **création exclusive** (`set -C`) est le seul
+atome portable disponible — elle suffit à désigner **un** annonceur. La mise à jour d'une attente déjà
+ouverte reste un lire-comparer-écrire qui peut théoriquement perdre une écriture ; la conséquence est
+bornée et se répare d'elle-même (au pire une session se réveille sur un palier, retrouve la limite et
+se remet en attente), là où un verrou coûterait un fichier à nettoyer et un cas « verrou périmé » à
+trancher.
+
 ### 11.5 Savoir où en est un run — `status.sh`
 
 La console d'un run répond très bien à « où ça en est ? » — depuis #240 elle y répond même très
@@ -2361,14 +2411,22 @@ Trois choses à savoir sur ce que la reprise fait du plan :
 - **Les tickets déjà livrés se sautent d'eux-mêmes.** La boucle relit le statut GitLab de chaque
   ticket avant de le prendre et n'en prend aucun qui ne soit plus « À faire » — le même contrôle
   anti-collision qu'un run ordinaire (§5).
-- **Le ticket qui était en vol est repris**, et c'est la seule exception à la règle ci-dessus.
-  `/ticket-start` lui a posé « En cours » : sans exception, une reprise laisserait derrière elle la
-  victime même de l'interruption, avec son worktree et son travail non commité. L'exception est
-  étroite — il faut que le run repris ait laissé **son** témoin de session **sans ligne de bilan** —
-  et sa session Claude est **rouverte** avec son uuid, comme après une limite d'usage (§11.4) : le
-  contexte déjà payé est conservé, et si la session est perdue la boucle repart à froid. Un ticket
-  « En cours » que le run repris n'avait **pas** en main appartient à quelqu'un d'autre : il reste
-  sauté.
+- **Les tickets qui étaient en vol sont repris** — tous, pas le premier (#291) : la question est posée
+  **par ticket**, et un run concurrent coupé en avait N en main. C'est la seule exception à la règle
+  ci-dessus. `/ticket-start` leur a posé « En cours » : sans exception, une reprise laisserait derrière
+  elle les victimes mêmes de l'interruption, avec leurs worktrees et leur travail non commité.
+  L'exception est étroite — il faut que le run repris ait laissé **leur** témoin de session **sans
+  ligne de bilan** — et chaque session Claude est **rouverte** avec **son** uuid, comme après une
+  limite d'usage (§11.4) : le contexte déjà payé est conservé, et si une session est perdue la boucle
+  repart à froid sur celle-là seulement. Un ticket « En cours » que le run repris n'avait **pas** en
+  main appartient à quelqu'un d'autre : il reste sauté.
+- **La concurrence est rejouée, elle aussi.** Un run coupé alors qu'il avait quatre tickets en main se
+  reprend à quatre : le régime est lu dans le fichier `concurrence` du run repris, écrit à son
+  démarrage. Sans cela, [`/orchestrate --resume`](../.claude/commands/orchestrate.md) — qui ne passe
+  aucune option — le rejouerait en **séquentiel** : les tickets repris seraient bien tous traités, mais
+  un par un, et la reprise ne serait plus le même run. Même raison que le plan figé. Un
+  `--concurrence` explicite l'emporte, ce qui reste la façon de dérouler à la main, en séquentiel, un
+  run qui tournait à N.
 - **Le journal est neuf.** `resume.tsv` s'écrit en tête de run, donc rejouer dans le répertoire du
   run repris effacerait son bilan. Le nouveau run porte un fichier `reprise-de` avec l'id de son
   prédécesseur, et `status.sh` l'affiche en en-tête : deux journaux partiels qui racontent la même
@@ -2391,8 +2449,13 @@ Trois choses à savoir sur ce que la reprise fait du plan :
 > décrit. `status.sh` se teste sur des répertoires de run **écrits à la main** (c'est le seul moyen
 > de poser un run interrompu ou muet) dont les dates de modification sont vieillies, et sur un vrai
 > petit dépôt git local pour le volet worktree. Seule exception à la règle « rien de réel » : les
-> tests de §11.9 lancent de **vrais processus** (un `sleep` qui pose sa carte comme un run le
-> ferait) et les tuent pour de bon — vérifier qu'un arrêt arrête ne se simule pas.
+> tests de §11.9 lancent de **vrais processus** et les tuent pour de bon — vérifier qu'un arrêt
+> arrête ne se simule pas. Depuis #291 ce n'est plus un `sleep` seul mais un **pilote, ses N
+> sous-shells et, sous chacun, un petit-fils qui bat** : c'est ce battement qu'on observe, un
+> `kill -0` répondant encore « vivant » à un processus tué mais pas encore ramassé. Le volet Windows
+> — le `taskkill` par WINPID, seul chemin jusqu'aux `claude.exe` natifs — ne s'y teste pas ; ce que
+> ces tests couvrent est la **récursion** de l'arrêt, jamais éprouvée au-delà du pilote lui-même
+> avant qu'un run puisse avoir N enfants.
 
 ### 11.9 Un seul run à la fois — la carte du pilote et l'arrêt des runs en vol (#213)
 
@@ -2425,6 +2488,23 @@ quelqu'un d'autre.
 `claude.exe` natif que `/proc` ne liste pas et que `kill` n'atteint pas. D'où le WINPID enregistré
 à côté et le `taskkill //T //F`, qui descend l'arbre côté Windows — sans lui, la session survivrait
 à son pilote, rattachée à personne et toujours en train de consommer du quota.
+
+**À N sessions en vol, un seul `//T` sur le pilote ne suffit plus** (#291). `taskkill` construit
+l'arbre à partir des liens parent→enfant que Windows connaît **à cet instant**, or les N sessions d'un
+run concurrent pendent chacune d'un sous-shell : il suffit qu'un maillon intermédiaire soit déjà sorti
+— une session qui rend la main pendant qu'on tue — pour que son `claude.exe` ne soit plus rattaché à
+rien d'atteignable depuis le pilote. `pilote_tue` vise donc **chaque cible par son propre WINPID**,
+**du plus profond au plus superficiel** : tuer un parent avant ses enfants est exactement ce qui
+fabrique l'orphelin qu'on cherche à éviter. Le coût est un `taskkill` par sous-shell, payé une fois,
+au moment d'arrêter un run.
+
+**Le rapport nomme *tous* les tickets interrompus**, pas le premier : chacun laisse son worktree
+derrière lui, et c'est précisément ce que ce rapport existe pour dire.
+
+**`STOP` garde à N le sens qu'il avait à 1** : il arrête de **lancer**, il ne tue personne. Les N
+sessions déjà parties vont au bout — c'est ce qui fait qu'il ne coûte aucun travail non commité, et ce
+qui le distingue de `--tuer-les-runs`. Une session qui **attend** une limite d'usage, elle, le voit à
+sa tranche suivante (§11.4) et rend la main.
 
 **L'arrêt est sans sommation, et c'est voulu.** La sortie propre existe — le fichier `STOP` — mais
 elle n'est lue qu'entre deux tickets : l'attendre, c'est attendre la fin de la session en cours,
@@ -2493,16 +2573,20 @@ en vol, le tour d'un lot peut arriver avant le verdict de son prédécesseur. Un
 jamais rappelé — le plan l'avait déclaré indépendant, donc de la même vague ; un lot pas encore parti
 est sauté au moment de le lancer, comme avant.
 
-**Ce que `--concurrence > 1` dégrade aujourd'hui, et que la console annonce.** Deux lots du chantier
-#287 restent à faire, et le run le dit au démarrage plutôt que de le laisser découvrir :
+**Ce que `--concurrence > 1` dégrade encore, et que la console annonce.** Un lot du chantier #287
+reste à faire, et le run le dit au démarrage plutôt que de le laisser découvrir :
 
 * la **vue vivante est éteinte** (#290). Tout le bloc est bâti autour d'**un** ticket courant, et sa
   hauteur vit dans un fichier unique que N sous-shells réécriraient l'un sur l'autre : le résultat ne
   serait pas une vue dégradée mais un écran corrompu. La console retombe en plein texte, et chaque
   ligne de ticket porte alors **son numéro** — sans quoi rien ne dirait, dans un journal entrelacé, à
   qui appartient un « ✓ MR !99 ouverte ».
-* chaque session **attend sa limite d'usage dans son coin** (#291). Elles tapent la même fenêtre au
-  même moment et l'attendent N fois en parallèle : ça fonctionne, ça ne se coordonne pas.
+
+**Ce qui a suivi le passage à N** (#291), documenté là où chaque mécanisme vit : la **limite d'usage**
+est devenue une attente **du run** et non de chaque session (§11.4), l'**arrêt** descend l'arbre
+complet et nomme les N tickets qu'il interrompt (§11.9), et la **reprise** rejoue tous les tickets en
+vol *et* la concurrence du run coupé (§11.8). Le fil commun est le même : ce qui était vrai d'un seul
+ticket devient, à N, une propriété du run.
 
 **Un plan d'avant #288 retombe en séquentiel.** Rejoué par `--resume`, il n'a que cinq colonnes et son
 titre se lit là où on attend le groupe : rien n'y dit ce qui est indépendant. Le nombre de colonnes de
