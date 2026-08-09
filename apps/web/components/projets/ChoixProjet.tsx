@@ -41,6 +41,51 @@ import { FormulaireProjet } from "./FormulaireProjet";
 const CLASSE_CADRE =
   "mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10 sm:py-16";
 
+/**
+ * Le cadre des deux écrans de la porte — et, depuis #306, **son ascenseur**.
+ *
+ * La porte est rendue par la garde du shell, donc **au-dessus** du cadre
+ * applicatif : son `<main>` est fils direct d'un `<body>` que #248 a mis en
+ * `h-full … overflow-hidden` — une hauteur *définie*, pour que le Kanban ait
+ * quelque chose à prendre. Le défilement a alors été confié à la colonne de
+ * contenu du shell, que la porte ne traverse jamais : ce qui dépassait était
+ * simplement rogné, et le bas du formulaire de création — ses boutons compris —
+ * devenait inatteignable sur une fenêtre courte ou l'explorateur déplié.
+ *
+ * ⚠ Le symptôme ne se reproduit **pas** en JavaScript : `overflow: hidden` sur
+ * le `<body>` remonte au **viewport** (le `<html>` étant en `visible`, c'est le
+ * body qui le lui donne), et un viewport en `hidden` reste défilable *par
+ * programme*. Mesuré avant/après sur la même page : `window.scrollTo(0, 99999)`
+ * amenait bien le bouton à l'écran, la touche `End` ne bougeait rien. Vérifier
+ * ce genre de correction par un `scrollTo` conclurait donc à tort que tout va
+ * bien — c'est la molette, l'ascenseur et le clavier qui n'avaient rien.
+ *
+ * Deux détails portent la correction :
+ *
+ * - le conteneur défilant **n'est pas le `<main>`** : celui-ci reste centré en
+ *   `max-w-2xl`, si bien qu'un `overflow-y-auto` posé dessus mettrait
+ *   l'ascenseur au bord de la colonne. Il est ici au bord de l'écran — même
+ *   choix que la colonne de contenu du shell, pour la même raison ;
+ * - `min-h-0` avec `flex-1` (#248) : sans lui, le `min-height:auto` par défaut
+ *   interdit au conteneur de rétrécir sous son contenu, il se dimensionne sur
+ *   le formulaire, et l'`overflow-y-auto` n'a jamais rien à faire défiler.
+ */
+function CadrePorte({
+  etiquette,
+  children,
+}: {
+  etiquette: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <main aria-label={etiquette} className={CLASSE_CADRE}>
+        {children}
+      </main>
+    </div>
+  );
+}
+
 /** L'en-tête commun à la porte et à l'écran d'ouverture — la marque, seule. */
 function EnTetePorte({ children }: { children?: React.ReactNode }) {
   return (
@@ -63,13 +108,13 @@ function EnTetePorte({ children }: { children?: React.ReactNode }) {
  */
 export function EcranOuverture() {
   return (
-    <main aria-label="Ouverture de la Control Tower" className={CLASSE_CADRE}>
+    <CadrePorte etiquette="Ouverture de la Control Tower">
       <EnTetePorte>
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Lecture des projets déclarés…
         </p>
       </EnTetePorte>
-    </main>
+    </CadrePorte>
   );
 }
 
@@ -135,7 +180,7 @@ export function ChoixProjet() {
   const destination = entreeCourante(chemin);
 
   return (
-    <main aria-label="Choix du projet" className={CLASSE_CADRE}>
+    <CadrePorte etiquette="Choix du projet">
       <EnTetePorte>
         <h1 className="text-xl font-semibold tracking-tight">
           Choisir le projet
@@ -212,6 +257,6 @@ export function ChoixProjet() {
           </button>
         </div>
       )}
-    </main>
+    </CadrePorte>
   );
 }
