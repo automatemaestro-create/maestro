@@ -312,13 +312,35 @@ existe pour le **vérifier seul**, en quelques secondes au lieu d'un build
 complet, et sous une forme qu'une session Claude Code peut lancer — la couche
 permissions autorise `npm run …`, jamais un `./node_modules/.bin/tsc` (#236).
 
+### Trois outils, trois questions — sans recouvrement (#308)
+
+| Outil | Répond à | Ne voit pas |
+| --- | --- | --- |
+| `npm test` (Vitest + jsdom) | logique, rendu, interactions, chaînes de classes | **aucune mise en page** : jsdom ne calcule ni hauteur, ni `overflow`, ni défilement |
+| skill `/verify` | le câblage API↔UI réel : WebSocket, absence de rechargement, reprise après coupure | la géométrie de la page |
+| skill `/banc-mise-en-page` | **est-ce que ça tient à l'écran ?** hauteurs, défilement, débordements, points de rupture — mesurés dans un vrai navigateur | ni logique, ni temps réel, ni données |
+
+Aucun des trois ne redouble les autres, et c'est voulu. Un test Vitest peut
+exiger qu'un `min-h-0` soit présent sur **chaque** maillon de la chaîne flex
+(`tests/kanban.test.tsx`, #248) ; il ne peut pas dire que la section monte à
+5 198 px, jsdom ne calculant aucune mise en page. Le banc dit le pixel, et rien
+d'autre : il ne remplace pas un test de non-régression, il dit **où regarder**
+pour l'écrire.
+
+Le déclencheur du banc : dès qu'un ticket porte sur des **hauteurs, du
+défilement, de l'`overflow`, des éléments collants ou du responsive**. #306 — le
+bas du formulaire de la porte d'entrée inatteignable — est passé au travers des
+tests, du lint, du typage et de `next build` : la suite verte ne prouve rien sur
+la mise en page.
+
 ### La suite de tests
 
 Posée par le ticket #124 (lot final de la refonte #116, où les tests des lots 1
 à 7 étaient différés — convention docs/10 §5.1), étendue par #193 à la
 navigation v2 (#189, même convention). **Vitest + Testing Library** sur un DOM
 `jsdom` : ces tests portent sur le comportement et le rendu, pas sur le pixel —
-le bout en bout dans un vrai navigateur reste le rôle du skill `/verify`.
+le bout en bout dans un vrai navigateur reste le rôle du skill `/verify`, et la
+géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 
 | Fichier | Ce qu'il couvre |
 | --- | --- |

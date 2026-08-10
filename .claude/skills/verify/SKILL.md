@@ -18,6 +18,11 @@ navigateur et un vrai backend : la **WebSocket**, l'**absence de rechargement**,
 la **reprise après coupure**, et le fait que l'ensemble se tienne une fois
 branché sur l'API.
 
+Ce qui ne lui appartient **pas** non plus : la **géométrie** de la page —
+hauteurs, défilement, `overflow`, points de rupture. Un vrai navigateur ne suffit
+pas à la voir, il faut la mesurer : c'est le skill `banc-mise-en-page` (#308), à
+passer dès qu'un ticket porte sur ces sujets-là.
+
 ## Lancer l'ensemble (API + UI)
 
 Ne pas réécrire de lanceur ad hoc : le script du ticket #65 fait tout
