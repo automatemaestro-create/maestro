@@ -52,10 +52,21 @@ pas clair.
    que pour la description de MR (#233).
    Ne commite jamais silencieusement sans montrer ce qui va être committé.
 
-5. Best-effort : si un outil de lint/test est détecté dans le dossier concerné (ex.
-   `package.json` avec un script `lint`/`test`, `pyproject.toml`...), propose de l'exécuter et
-   rapporte le résultat. S'il n'y en a pas (probable tant que le monorepo est un squelette
-   sans code), dis-le simplement et continue.
+5. **Filet CI local** — avant de pousser, rejoue en local ce que le pipeline de la MR jouera. Ne
+   cherche pas toi-même quel outil s'applique : `scripts/ci/local.sh` est la **source unique** des
+   contrôles locaux (#214, `docs/10-workflow-git.md` §8.4), il lit les jobs dans `.gitlab-ci.yml`
+   et déduit du diff ce qui les concerne.
+   ```
+   bash scripts/ci/local.sh
+   ```
+   Par défaut `pytest` ne joue que les **suites concernées par le diff**, sans seuil de couverture
+   (verdict annoncé PARTIEL) : ~40 s au lieu de ~10 min. **Ne le passe pas en `--complet`** et
+   n'invente aucune autre recette — le verdict complet est celui du pipeline de la MR (#165), pas
+   le tien.
+   **Best-effort, jamais bloquant** : un outil absent rend son job `IGNORÉ`, et un job rouge écrit
+   son journal sous `.maestro/ci-local/<job>.log` (chemin relatif, cité par le script). Si l'échec
+   vient de ton diff et se corrige en une passe, corrige-le et reprends à l'étape 4 ; sinon
+   **signale-le dans le résumé final** et poursuis la clôture — c'est la MR qui portera le verdict.
 
 6. **Avant de pousser, regarde si la branche a pris du retard sur `origin/main`** — à plusieurs,
    `CLAUDE.md`, `docs/10-workflow-git.md` et `scripts/gitlab/lib.sh` sont touchés par presque tous
@@ -205,8 +216,9 @@ pas clair.
      ```
    - Indique dans le résumé final la durée estimée et loggée (transparence a posteriori).
 
-13. Termine par un résumé : lien de la MR, état (Draft/Ready), le **retard éventuel sur
-   `origin/main`** relevé à l'étape 6 (et le rebase proposé si un conflit est probable), les cases
+13. Termine par un résumé : lien de la MR, état (Draft/Ready), le **verdict du filet CI local**
+   s'il n'était pas vert (étape 5 — quel job, et pourquoi tu as poussé quand même), le **retard
+   éventuel sur `origin/main`** relevé à l'étape 6 (et le rebase proposé si un conflit est probable), les cases
    de la checklist cochées et celles restées vides
    (avec un mot sur pourquoi), le temps loggé le cas échéant, et rappelle que le merge reste une
    action humaine (personne — pas même toi — ne doit merger automatiquement). Si un refus du

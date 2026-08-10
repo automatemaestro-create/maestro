@@ -121,15 +121,23 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
 9. **Correctif local** (au plus **2 tentatives** — au-delà, arrête-toi et rends la main avec ton
    diagnostic) :
    - applique le correctif **minimal** qui répond à l'erreur de la trace ;
-   - **vérifie en local avec le même contrôle que le job rouge** (miroir de `.gitlab-ci.yml` ;
-     Python passe par le venv du repo — `.venv/Scripts/python.exe` sous Windows, `.venv/bin/python`
-     sous Unix) :
-     | Job CI | Contrôle local |
-     |---|---|
-     | `shellcheck` | `shellcheck --severity=warning scripts/**/*.sh` (normaliser les fins de ligne CRLF avant, comme la CI qui checkout en LF) |
-     | `python-lint` | `<venv-python> -m ruff check .` |
-     | `pytest` | `<venv-python> -m pytest -n auto` (ou `… -m pytest tests/test_<suite>.py` pour reproduire le seul test rouge de la trace) |
-     | `mypy` | `<venv-python> -m mypy maestro` |
+   - **rejoue le job rouge en local avec le filet CI**, `scripts/ci/local.sh` — **source unique**
+     des contrôles locaux depuis #214 (`docs/10-workflow-git.md` §8.4). Ne réinvente pas ses
+     commandes : il lit les jobs dans `.gitlab-ci.yml` (donc il suit le pipeline quand celui-ci
+     change), passe par le venv du repo, analyse un miroir **LF** pour `shellcheck` (une copie
+     Windows CRLF inventerait des SC1017 que la CI ne verra jamais) et écrit le journal de chaque
+     job sous `.maestro/ci-local/<job>.log`, en chemin **relatif** — lisible depuis le worktree, y
+     compris en session autonome (#234, §8.5) :
+     ```
+     bash scripts/ci/local.sh --only <job>
+     ```
+     `<job>` est le nom rendu par l'étape 6 (`shellcheck`, `python-lint`, `pytest`, `mypy`,
+     `web-build` ; `lint` et `test` désignent l'étage entier). **Ne rejoue pas la suite entière**
+     — ni `--complet`, ni un `pytest -n auto` à la main : le filet cadre `pytest` sur le périmètre
+     du diff (~40 s au lieu de ~10 min), et c'est ici, en plein diagnostic d'un pipeline rouge, que
+     la différence se paye. Pour reboucler sur le seul test rouge de la trace, vise-le directement :
+     `<venv-python> -m pytest tests/test_<suite>.py` (`.venv/Scripts/python.exe` sous Windows,
+     `.venv/bin/python` sous Unix). Le verdict complet, lui, reste celui du pipeline de la MR.
    - committe en **commit intermédiaire** — pied **`Refs #<iid>`**, pas `Closes` (la MR porte déjà
      le `Closes`), hook `commit-msg` respecté, **jamais `--no-verify`**. Le message passe par un
      **fichier** : écris-le avec l'outil `Write` dans ton scratchpad de session — jamais un

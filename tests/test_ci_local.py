@@ -1133,3 +1133,95 @@ def test_le_script_typecheck_existe_et_la_ci_le_joue() -> None:
         "sans ce script, une session n'a que `node …/tsc` — que rien n'autorise (#236)"
     pipeline = (RACINE / ".gitlab-ci.yml").read_text(encoding="utf-8")
     assert "npm run typecheck" in pipeline, "un script jamais joué en CI finit par ne plus passer"
+
+
+# --- Le filet est la source UNIQUE des contrôles locaux (#310) ------------------------------------
+# Une commande de `.claude/` qui recopie la recette d'un job la fige : `/mr-fix` a prescrit jusqu'à
+# #310 une table de miroirs avec `pytest -n auto` sur la suite entière — l'inverse exact de ce que
+# CLAUDE.md impose depuis #214, et payé au pire moment, en plein diagnostic d'un pipeline rouge
+# (~10 min contre ~40 s). Le texte que la session lit en dernier est celui qui l'emporte sur la
+# règle générale : c'est donc ici, dans les prompts, que la contradiction se garde.
+
+OUTILS_CI = ("pytest", "ruff", "mypy", "shellcheck")
+
+
+def prescriptions_des_prompts() -> list[tuple[str, int, str]]:
+    """Les endroits d'un prompt qui font JOUER quelque chose : blocs de code et cellules de tableau.
+
+    Même parti pris que les tests de prompts de `test_collaboration.py` (#196, #233) : la prose a le
+    droit — le devoir, même — de nommer une forme pour dire de ne pas l'employer (`/mr-fix` proscrit
+    désormais `pytest -n auto` en toutes lettres). Ce qui prescrit, c'est le bloc qu'on recopie et
+    la table qu'on suit.
+    """
+    prescriptions: list[tuple[str, int, str]] = []
+    for prompt in sorted((RACINE / ".claude").rglob("*.md")):
+        dans_bloc = False
+        for numero, ligne in enumerate(prompt.read_text(encoding="utf-8").splitlines(), 1):
+            nue = ligne.strip()
+            if nue.startswith("```"):
+                dans_bloc = not dans_bloc
+                continue
+            if dans_bloc or nue.startswith("|"):
+                prescriptions.append((prompt.relative_to(RACINE).as_posix(), numero, nue))
+    return prescriptions
+
+
+def prescrit_sa_propre_recette(nue: str) -> bool:
+    """Une seule échappatoire hors du filet : viser LA suite rouge (docs/10 §8.4, 1,5 s).
+
+    Elle se vérifie sur la ligne entière, et non à la première mention d'un chemin de suite : la
+    table supprimée par #310 nommait les deux — `pytest -n auto`, « ou `… tests/test_<suite>.py`
+    pour reproduire le seul test rouge » —, si bien qu'un simple `"tests/test_" in nue` aurait
+    laissé passer la régression que ce test existe pour attraper. Parler de parallélisme ou de
+    couverture, c'est reparler de la suite entière.
+    """
+    if "ci/local.sh" in nue or not any(outil in nue for outil in OUTILS_CI):
+        return False
+    return not ("tests/test_" in nue and "-n " not in nue and "--cov" not in nue)
+
+
+def test_aucun_prompt_ne_recopie_la_recette_d_un_job_ci() -> None:
+    fautives = [
+        f"{chemin}:{numero}: {nue}"
+        for chemin, numero, nue in prescriptions_des_prompts()
+        if prescrit_sa_propre_recette(nue)
+    ]
+    assert fautives == [], (
+        "un prompt réinvente la recette d'un job CI (#310) — renvoyer à scripts/ci/local.sh :\n"
+        + "\n".join(fautives)
+    )
+
+
+def test_le_garde_fou_attrape_la_table_que_310_a_supprimee() -> None:
+    """Un garde-fou qui ne mord pas est pire qu'absent : on épingle les lignes RÉELLEMENT retirées,
+    et ce qui doit leur survivre."""
+    assert prescrit_sa_propre_recette(
+        "| `pytest` | `<venv-python> -m pytest -n auto` (ou `… -m pytest tests/test_<suite>.py` "
+        "pour reproduire le seul test rouge de la trace) |"
+    )
+    assert prescrit_sa_propre_recette("| `mypy` | `<venv-python> -m mypy maestro` |")
+    assert not prescrit_sa_propre_recette("bash scripts/ci/local.sh --only pytest")
+    assert not prescrit_sa_propre_recette("<venv-python> -m pytest tests/test_engine.py")
+
+
+def test_les_commandes_qui_verifient_en_local_renvoient_au_filet() -> None:
+    """Le pendant POSITIF, et la leçon de !198 : retirer une recette ne sert à rien si rien ne
+    renvoie au script qui la porte — le prompt dirait alors de vérifier, sans dire avec quoi."""
+    for nom in ("mr-fix.md", "ticket-finish.md"):
+        texte = (RACINE / ".claude" / "commands" / nom).read_text(encoding="utf-8")
+        assert "scripts/ci/local.sh" in texte, \
+            f"/{nom[:-3]} ne renvoie plus au filet CI local (#310)"
+
+
+def test_le_filet_est_autorise_dans_les_DEUX_regimes() -> None:
+    """Une commande prescrite mais non autorisée, c'est un refus de permission par ticket (§11.7).
+
+    Les deux fichiers, parce qu'ils servent deux régimes : `.claude/settings.json` la session
+    interactive, `settings.run.json` la session autonome — dont l'`allow` est l'UNION des deux, mais
+    qui ne peut compter sur personne pour accorder ce qui manque.
+    """
+    for chemin in (RACINE / ".claude" / "settings.json",
+                   RACINE / "scripts" / "orchestrate" / "settings.run.json"):
+        allow = json.loads(chemin.read_text(encoding="utf-8"))["permissions"]["allow"]
+        assert "Bash(bash scripts/ci/local.sh:*)" in allow, \
+            f"{chemin.name} n'autorise pas le filet, que deux commandes prescrivent (#310)"
