@@ -82,6 +82,12 @@ class Settings:
     #: un fichier <id>.json par projet : racine sur le disque, origine, vcs,
     #: périmètre). Ce sont les projets de l'utilisateur, jamais versionnés.
     projets_dir: str | None = None
+    #: Racine du stockage d'**ingestion** des sources téléversées
+    #: (`MAESTRO_INGESTION_DIR`), ou None : le dossier `core/ingestion/` du dépôt
+    #: (cf. maestro.sources.resolution, #315 — un sous-dossier par run). Jamais
+    #: la racine d'un projet : une matière téléversée est une entrée non fiable,
+    #: elle ne se mêle pas aux fichiers de l'utilisateur (docs/24 §3.4).
+    ingestion_dir: str | None = None
     #: Dossiers que l'**explorateur** de l'API accepte d'énumérer
     #: (`MAESTRO_EXPLORATEUR_RACINES`, séparés par `os.pathsep` — `;` sous
     #: Windows, `:` sous POSIX), ou None : le dossier utilisateur et les racines
@@ -148,6 +154,7 @@ class Settings:
             secrets_key=(os.getenv("MAESTRO_SECRETS_KEY") or "").strip() or None,
             permissions_dir=(os.getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,
             projets_dir=(os.getenv("MAESTRO_PROJETS_DIR") or "").strip() or None,
+            ingestion_dir=(os.getenv("MAESTRO_INGESTION_DIR") or "").strip() or None,
             explorateur_racines=(os.getenv("MAESTRO_EXPLORATEUR_RACINES") or "").strip() or None,
             selecteur_natif=(os.getenv("MAESTRO_SELECTEUR_NATIF") or "").strip().lower() or None,
             isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,

@@ -54,6 +54,7 @@ from maestro.detail_tache import (
 from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
 from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
+from maestro.sources.modele import Source, sources_en_liste
 from maestro.telemetry.costs import RunCost, TaskCost
 from maestro.telemetry.usage import StepUsage
 
@@ -309,6 +310,10 @@ class EtatExecution:
     # de lancement et hérité par ses tâches — None quand le run ne relève
     # d'aucun projet (le comportement d'avant ce lot).
     projet_id: str | None = None
+    # La matière d'entrée de l'objectif (#315, EF-39), résolue et plafonnée au
+    # lancement puis portée par son événement : c'est ce qui la fait survivre au
+    # rejeu du journal durable. Vide pour un objectif purement textuel.
+    sources: tuple[Source, ...] = ()
 
     @property
     def debut(self) -> str:
@@ -341,6 +346,9 @@ class EtatExecution:
         reste du résumé, là où le service de pilotage la tenait en mémoire.
         `projet_id` (#222) vient du même événement et suit le même chemin : il
         dit dans quel projet le run travaille, `null` s'il n'en relève d'aucun.
+        `sources` (#315) aussi : ce que l'objectif embarquait, déjà résolu — une
+        **liste vide** pour un objectif purement textuel, donc la vue d'avant ce
+        lot pour tout ce qui n'en déclare pas.
         """
         return {
             "run_id": self.run_id,
@@ -350,6 +358,7 @@ class EtatExecution:
             "cout_usd": self.cout_usd,
             "ticket": ticket_en_dict(self.ticket),
             "projet_id": self.projet_id,
+            "sources": sources_en_liste(self.sources),
             "debut": self.debut,
             "fin": self.fin,
         }
@@ -787,6 +796,11 @@ class ControlTowerState:
             # Le projet du run (#222) : même règle, posé au lancement et jamais
             # retiré par un événement qui ne le porte pas.
             execution.projet_id = event.projet_id
+        if event.sources is not None:
+            # Les sources de l'objectif (#315) : même règle encore. L'issue d'un
+            # run n'en porte aucune, et n'a aucune raison d'effacer ce que son
+            # lancement a déclaré.
+            execution.sources = tuple(event.sources)
         execution.fin = (
             event.horodatage if execution.statut in STATUTS_EXECUTION_TERMINAUX else None
         )

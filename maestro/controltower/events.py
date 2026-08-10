@@ -37,6 +37,8 @@ from maestro.detail_tache import LienUtile as LienUtile  # ré-export explicite
 from maestro.detail_tache import etapes_depuis, liens_depuis
 from maestro.projets.application import DiffProjet
 from maestro.references import ReferenceTicket as ReferenceTicket  # ré-export explicite
+from maestro.sources.modele import Source as Source  # ré-export explicite
+from maestro.sources.modele import sources_depuis
 from maestro.telemetry.usage import StepUsage
 
 # `ReferenceTicket` (#187, contrat #183) est **défini** dans `maestro.references`,
@@ -45,7 +47,9 @@ from maestro.telemetry.usage import StepUsage
 # un cycle d'imports. Les appelants historiques — `from
 # maestro.controltower.events import ReferenceTicket` — restent servis tels quels.
 # `EtapeTache` et `LienUtile` (#246) vivent dans `maestro.detail_tache` pour la
-# même raison, et sont ré-exportés de la même façon.
+# même raison, et sont ré-exportés de la même façon. `Source` (#315) suit les
+# trois : définie dans `maestro.sources.modele`, feuille, elle voyage du
+# lancement à la projection en traversant les mêmes couches.
 
 #: Types d'événements diffusés (docs/05 §2.1 : flux d'activité temps réel).
 #: `tache.statut` suit la machine à états de docs/03 §3 ; `tache.reassignation`
@@ -139,7 +143,12 @@ class Event:
     **modifications qu'une application dans le projet écrirait** (#227, EF-37) —
     fichiers touchés, lignes ajoutées/supprimées, branche à fusionner : la pièce
     jointe d'une demande de validation dont la question est « applique-t-on
-    ceci ? », et None partout ailleurs.
+    ceci ? », et None partout ailleurs. `sources` porte la **matière d'entrée**
+    d'un objectif (#315, EF-39) — fichiers, dossier de références, URL, déjà
+    résolus et plafonnés au lancement : c'est par lui qu'elles rejoignent la
+    projection, donc qu'elles survivent au rejeu du journal durable. None
+    partout ailleurs, y compris sur le lancement d'un objectif **sans** source :
+    l'événement est alors identique, au bit près, à celui d'avant ce lot.
     """
 
     type: str
@@ -162,6 +171,10 @@ class Event:
     etapes: list[EtapeTache] | None = None
     liens: list[LienUtile] | None = None
     diff: DiffProjet | None = None
+    # None (et non `[]`) pour la même raison qu'`etapes`/`liens` : seul le
+    # lancement en porte, et un événement de fin ne doit pas effacer les sources
+    # posées au départ (#315).
+    sources: list[Source] | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -186,6 +199,11 @@ class Event:
             ),
             "liens": ([lien.to_dict() for lien in self.liens] if self.liens is not None else None),
             "diff": self.diff.to_dict() if self.diff is not None else None,
+            "sources": (
+                [source.to_dict() for source in self.sources]
+                if self.sources is not None
+                else None
+            ),
             "horodatage": self.horodatage,
         }
 
@@ -226,6 +244,12 @@ class Event:
             etapes=(etapes_depuis(data["etapes"]) if data.get("etapes") is not None else None),
             liens=(liens_depuis(data["liens"]) if data.get("liens") is not None else None),
             diff=DiffProjet.from_dict(diff_brut) if isinstance(diff_brut, Mapping) else None,
+            # Relecture, jamais nouvelle saisie (#315) : les sources ont été
+            # résolues et plafonnées au lancement ; les rejuger ici rendrait
+            # illisible un run passé dès qu'un plafond serait resserré.
+            sources=(
+                sources_depuis(data["sources"]) if data.get("sources") is not None else None
+            ),
             horodatage=data.get("horodatage", ""),
         )
 
