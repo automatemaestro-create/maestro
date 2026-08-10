@@ -15,6 +15,13 @@
  * Un refus garde donc la page précédente à l'écran, s'affiche avec son motif et
  * laisse toujours une porte de sortie (remonter, revenir aux racines) — l'erreur
  * ne casse pas la navigation (critère #225).
+ *
+ * Un composant **partagé**, enfin, et rendu aussi bien seul (écran Projets,
+ * #225) qu'à l'intérieur du formulaire de projet (porte d'entrée, #279) : il ne
+ * contient donc **aucun `<form>`** (#312). HTML interdit de les imbriquer —
+ * l'analyseur jette le formulaire interne du HTML rendu côté serveur là où
+ * React le crée côté client, d'où une erreur d'hydratation et une soumission
+ * qui n'appartient à personne.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -172,6 +179,12 @@ export function ExplorateurDossiers({
     }
   }, [courant, onChoisir, ouvrir]);
 
+  /** Le chemin saisi, ouvert — par le bouton « Aller » comme par `Entrée`. */
+  const allerAuChemin = useCallback(() => {
+    const chemin = saisie.trim();
+    if (chemin) void ouvrir(chemin);
+  }, [saisie, ouvrir]);
+
   return (
     <section
       aria-label="Explorateur de dossiers"
@@ -236,14 +249,10 @@ export function ExplorateurDossiers({
               : "Parcourir sur mon poste…"}
           </button>
         )}
-        <form
-          onSubmit={(evenement) => {
-            evenement.preventDefault();
-            const chemin = saisie.trim();
-            if (chemin) void ouvrir(chemin);
-          }}
-          className="flex min-w-0 flex-1 items-center gap-2"
-        >
+        {/* Un `<div>`, et la soumission tenue à la main : voir l'en-tête du
+            fichier — un `<form>` ici serait imbriqué dans celui du formulaire
+            de projet (#312). */}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <label className="sr-only" htmlFor="explorateur-chemin">
             Aller à un chemin absolu
           </label>
@@ -252,17 +261,26 @@ export function ExplorateurDossiers({
             type="text"
             value={saisie}
             onChange={(evenement) => setSaisie(evenement.target.value)}
+            onKeyDown={(evenement) => {
+              if (evenement.key !== "Enter") return;
+              // Coupé **même sur une saisie vide** : sans ce `preventDefault`,
+              // la soumission implicite du navigateur remonterait au
+              // formulaire porteur et déclarerait le projet.
+              evenement.preventDefault();
+              allerAuChemin();
+            }}
             placeholder="Aller à un chemin absolu (ex. D:/depots)"
             className="min-w-0 flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 font-mono text-xs text-neutral-800 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
           />
           <button
-            type="submit"
+            type="button"
+            onClick={allerAuChemin}
             disabled={chargement || saisie.trim() === ""}
             className={CLASSE_BOUTON_DOUX + " shrink-0"}
           >
             Aller
           </button>
-        </form>
+        </div>
       </div>
 
       {/* Le mode serveur (et tout autre empêchement) se **dit**, à la place du
