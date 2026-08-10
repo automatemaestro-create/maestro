@@ -4,85 +4,96 @@ allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
 ---
 
 Nettoie les branches **locales** de tickets déjà mergés, **ramasse les worktrees devenus inutiles**
-et remet `main` à jour. Ne supprime
-**jamais** une branche dont le statut de merge n'est pas confirmé par GitLab (garde-fou détaillé
-dans `docs/10-workflow-git.md` §6, non chargé automatiquement — à n'ouvrir qu'en cas de doute ;
-cette commande est autosuffisante).
+et remet `main` à jour. Ne supprime **jamais** une branche dont le statut de merge n'est pas
+confirmé par GitLab (garde-fou détaillé dans `docs/10-workflow-git.md` §6, non chargé
+automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuffisante).
+
+> **La boucle est déjà écrite en shell** — `lib.sh cleanup-merged` (étape 4), dont l'en-tête dit
+> qu'il est « le pendant non-interactif de `/branch-cleanup` », même garde-fou compris. Ne la
+> réimplémente pas ici : un `glab mr view <branche> --output json` par branche réinjecte ~3 500
+> octets pour en tirer un mot, soit **~43 000 tokens** sur ce dépôt à chaque invocation (#309,
+> audit #304 §4.1). Les autres étapes ne font que ce que le helper ne fait **pas** : basculer sur
+> `main`, supprimer la branche **distante** et poser le cycle de vie.
 
 > Au merge, GitLab supprime déjà la branche **distante** (case « Delete source branch »,
 > pré-cochée) et **ferme** le ticket via `Closes #`. Mais il ne pose plus son état : depuis que le
 > cycle de vie est porté par les **labels `workflow::*`** (docs/10 §3), plus rien ne bascule un
-> ticket sur « Terminé » à sa fermeture — c'est cette commande qui le fait (étape 5). Elle couvre
-> donc ta copie **locale**, plus l'état que GitLab ne pose plus.
+> ticket sur « Terminé » à sa fermeture. Cette commande couvre donc ta copie **locale**, plus ce
+> que GitLab ne fait pas.
 
 1. `bash scripts/gitlab/lib.sh require` — arrête-toi si glab absent ou non authentifié.
 
-2. `git fetch --prune origin` pour rafraîchir l'état des branches distantes.
-
-3. Liste les branches locales autres que `main` (`git branch --format='%(refname:short)'`).
-   Pour chacune (le nom suit `<type>/<iid>-<slug>`, donc `<iid>` s'extrait du nom) :
-   - trouve sa MR avec `glab mr view <branche> --output json` (échec de la commande = aucune
-     MR trouvée) ;
-   - si aucune MR n'est trouvée, laisse la branche telle quelle (pas de suppression sans MR
-     identifiée) ;
-   - inspecte le champ `state` du JSON retourné ; s'il n'est pas exactement `merged`, laisse
-     la branche telle quelle ;
-   - si `state` vaut `merged`, ajoute la branche (et l'`iid` extrait de son nom) à la liste des
-     candidates au nettoyage.
-
-> **Dans un worktree** (`git worktree`, docs/10 §9) : ne bascule pas sur `main` — il est emprunté
-> par le clone principal et `git checkout main` y échoue. La mise à jour de `main`, elle, reste
-> possible : `lib.sh sync-main` (étape 5) travaille sur le clone principal quel que soit l'endroit
-> d'où on l'appelle. Repère : à la racine d'un worktree, `.git` est un fichier, pas un dossier.
-
-4. **Avant de supprimer quoi que ce soit**, ramasse les worktrees dont le travail est soldé :
+2. **Ramasse les worktrees soldés, avant toute suppression de branche** :
    ```
    bash scripts/git/worktree.sh gc
    ```
-   Cet ordre n'est pas cosmétique : `git branch -D` **refuse** une branche empruntée par un
-   worktree (« checked out at … »), donc sans ce passage les candidates de l'étape 3 resteraient
-   là sans que rien ne le dise. `gc` retire uniquement les worktrees dont `glab` confirme la MR
-   mergée ou le ticket fermé, **jamais** celui de la session courante ni un worktree porteur de
-   travail non sauvegardé — qu'il signale au lieu de le supprimer (docs/10 §9.2). Il ne supprime
-   aucune branche : c'est l'étape suivante qui s'en charge. Relaie ses éventuelles alertes dans
-   ton résumé final, et `--check` d'abord si tu veux voir avant d'agir.
+   L'ordre n'est pas cosmétique : `git branch -D` **refuse** une branche empruntée par un worktree,
+   donc sans ce passage les branches des worktrees soldés resteraient là indéfiniment. `gc` ne
+   retire que les worktrees dont `glab` confirme la MR mergée ou le ticket fermé, **jamais** celui
+   de la session courante ni un worktree porteur de travail non sauvegardé — qu'il **signale** au
+   lieu de le supprimer (docs/10 §9.2) : relaie ses alertes dans ton résumé, et `--check` d'abord
+   si tu veux voir avant d'agir. Il ne supprime **aucune** branche : c'est l'étape 4. Il pose en
+   revanche le cycle de vie « Terminé » des tickets qu'il solde (#275) — l'étape 6 en devient
+   idempotente sans devenir inutile : le worktree du ticket qu'on vient de merger peut ne pas
+   exister ici, ou être celui de la session courante, que `gc` ne touche jamais.
 
-   Sur ce même verdict, `gc` pose au passage le **cycle de vie « Terminé »** des tickets soldés
-   (#275, docs/10 §9.2) — la pose de l'étape 6 en devient idempotente, et reste due pour le ticket
-   de la MR qu'on vient de merger si son worktree n'existait pas ici.
+3. **Branche courante mergée ?** `cleanup-merged` ne touche jamais à la branche sur laquelle est
+   posé le clone principal — on ne supprime pas une branche sous ses propres pieds. Si la branche
+   courante (`git branch --show-current`) n'est pas `main`, demande son état en **un mot** :
+   ```
+   bash scripts/gitlab/lib.sh mr-state <branche-courante>
+   ```
+   S'il vaut `merged` **et que tu es dans le clone principal** (repère : à la racine d'un worktree,
+   `.git` est un **fichier**, pas un dossier), bascule : `git checkout main`. Dans un worktree, ne
+   bascule **pas** — `main` y est emprunté par le clone principal et le `checkout` échouerait ; la
+   branche sera signalée « empruntée par un worktree » à l'étape 4 et partira depuis ailleurs.
 
-5. S'il y a des candidates :
-   - si l'une d'elles est la branche courante **et que tu es dans le clone principal**, bascule
-     d'abord sur `main` (`git checkout main`) — on ne supprime pas une branche sous ses propres
-     pieds ;
-   - remets `main` à jour : `bash scripts/gitlab/lib.sh sync-main`. Le helper (#205) avance
-     `refs/heads/main` du **clone principal** sur `origin/main`, en **fast-forward seulement**,
-     d'où qu'on l'appelle — depuis un worktree il pose la ref sans toucher au moindre fichier, là
-     où un `git checkout main` échouerait. Il **s'abstient en le disant** si le répertoire porteur
-     de `main` a des changements non commités ou si `main` a divergé : relaie son message, ce
-     n'est jamais bloquant ;
-   - pour chaque candidate : `git branch -D <branche>`. Le `-D` (forcé) est **sûr ici** parce que
-     GitLab a déjà confirmé la MR comme `merged` (étape 3) — garantie plus forte que l'ancêtre
-     git, et **nécessaire** car le projet merge en **squash** : la pointe de la branche n'est pas
-     un ancêtre du commit squashé sur `main`, donc `git branch -d` la refuserait à tort. N'utilise
-     `-D` **que** sur une branche dont le merge est confirmé par GitLab — jamais autrement ;
-   - normalement GitLab a déjà supprimé la branche **distante** au merge ; si elle existe encore
-     (case décochée au merge) : `git push origin --delete <branche>` (si un `git pull`/`push`
-     reste bloqué sur une demande d'identifiants — Windows + Git Credential Manager — relance-le
-     en forçant `glab` : `git -c credential.helper='!glab auth git-credential' <commande>`) ;
-   - pose l'**état** `Terminé` sur le ticket — la fermeture par le merge **ne le fait plus** (le
-     cycle de vie est porté par les labels `workflow::*`, et GitLab n'en pose aucun tout seul) :
+4. **La purge**, garde-fou compris :
+   ```
+   bash scripts/gitlab/lib.sh cleanup-merged
+   ```
+   Le helper ne retient que les branches dont GitLab confirme la MR `merged` et les supprime par
+   `git branch -D` — forcé, mais **sûr et nécessaire** ici : le merge est confirmé (garantie plus
+   forte que l'ancêtre git) et le projet merge en **squash**, donc `-d` les refuserait à tort. Il
+   vise le **clone principal** d'où qu'on l'appelle et **s'abstient en le disant** si l'arbre y est
+   sale. Son bilan tient en quelques lignes :
+   - `supprimée : <branche> (MR merged)` — partie ;
+   - `⚠ conservée : <branche> (MR merged, …)` — mergée mais retenue par un worktree ou par git ;
+   - le décompte final, dont les branches laissées de côté (aucune MR, ou MR pas encore mergée).
+
+   Ces deux premières lignes sont les branches **mergées** : ce sont elles, et elles seules, que
+   l'étape 6 traite. Leur iid est le nombre de leur nom (`<type>/<iid>-<slug>` ;
+   `bash scripts/gitlab/lib.sh branch-iid <branche>` en cas de doute).
+
+5. **`main` à jour** :
+   ```
+   bash scripts/gitlab/lib.sh sync-main
+   ```
+   Le helper (#205) avance `refs/heads/main` du **clone principal** sur `origin/main`, en
+   **fast-forward seulement**, d'où qu'on l'appelle — depuis un worktree il pose la ref sans
+   toucher au moindre fichier, là où un `git checkout main` échouerait. Il **s'abstient en le
+   disant** (arbre porteur sale, `main` divergent) : relaie son message, ce n'est jamais bloquant.
+
+6. **Ce que le helper ne fait pas**, sur les seules branches mergées de l'étape 4 (s'il n'y en a
+   aucune, passe au résumé) :
+   - **branche distante** — GitLab l'a normalement supprimée au merge ; celles qui restent (case
+     décochée) se voient d'un coup, `cleanup-merged` venant de rafraîchir les refs de suivi :
      ```
-     bash scripts/gitlab/lib.sh set-workflow <iid> "Terminé"
+     git branch -r --list origin/<branche-1> origin/<branche-2>
      ```
-     Le helper retire les cinq autres `workflow::*` dans le **même** appel — l'exclusion mutuelle
-     des labels scopés étant Premium, rien ne l'assurerait à notre place (docs/10 §3). Idempotent :
-     le reposer sur un ticket déjà « Terminé » ne change rien.
+     Supprime **celles qui s'affichent**, une par une : `git push origin --delete <branche>`. Si un
+     `git push` reste bloqué sur une demande d'identifiants (Windows + Git Credential Manager),
+     relance-le en forçant `glab` :
+     `git -c credential.helper='!glab auth git-credential' push origin --delete <branche>`.
+   - **cycle de vie** — un seul appel, tous les iid à la suite :
+     ```
+     bash scripts/gitlab/lib.sh reconcile-workflow <iid-1> <iid-2>
+     ```
+     Il pose `workflow::termine` en retirant les cinq autres dans le **même** appel — l'exclusion
+     mutuelle des labels scopés étant Premium, rien ne l'assurerait à notre place (docs/10 §3) —,
+     **saute** ce qui est déjà « Terminé » et n'écrase **jamais** un « Abandonné »/« Doublon ».
+     Idempotent : sans effet sur ce que l'étape 2 a déjà posé.
 
-6. Si aucune candidate n'est trouvée, contente-toi de remettre `main` à jour
-   (`bash scripts/gitlab/lib.sh sync-main`) et dis-le — le helper est muet quand elle l'est déjà.
-
-7. Termine par un résumé des branches supprimées (locale/distante) et de celles laissées de
-   côté avec la raison (pas de MR, MR pas encore mergée), des **tickets passés à « Terminé »**,
-   suivi des **worktrees retirés** à l'étape 4 et de ceux que `gc` a conservés en signalant du
-   travail non sauvegardé.
+7. **Résumé** : branches supprimées (locale / distante) et celles laissées de côté avec la raison,
+   tickets passés à « Terminé », worktrees retirés à l'étape 2 et ceux que `gc` a conservés en
+   signalant du travail non sauvegardé.
