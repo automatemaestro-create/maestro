@@ -965,6 +965,66 @@ def test_le_cycle_de_cloture_appelle_les_helpers_de_creation() -> None:
     ], "un `glab mr create` direct est réapparu : sa description est multi-ligne, donc refusée"
 
 
+def test_branch_cleanup_delegue_sa_boucle_au_helper() -> None:
+    """#309 : la boucle « quel est l'état de la MR de cette branche ? » vit dans `lib.sh`.
+
+    `/branch-cleanup` la décrivait en prose — un `glab mr view <branche> --output json` par
+    branche locale, soit ~3 500 octets réinjectés pour en tirer un mot, **~43 000 tokens** sur ce
+    dépôt à chaque invocation (audit #304 §4.1, le plus gros gisement du lot). `cleanup-merged`
+    fait la même chose en shell, avec le **même** garde-fou, et n'imprime qu'un bilan.
+
+    Deux implémentations du même garde-fou, dont une en prose, c'est aussi la divergence que
+    supprime la délégation : le jour où le garde-fou change, la prose ne suit pas. D'où la seconde
+    assertion — plus aucun `glab mr` **prescrit** dans cette commande.
+
+    Le discriminant entre prescription et citation est ici le bloc `>` d'en-tête : la commande a le
+    droit — le devoir, même — de **nommer** la forme qu'elle remplace pour dire de ne pas y
+    revenir, et c'est là qu'elle le fait. Ailleurs, une ligne qui nomme `glab mr` est une consigne.
+    Même parti pris que les deux tests ci-dessus, dont l'heuristique est le début de ligne.
+    """
+    lignes = [
+        (numero, nue)
+        for nom, numero, nue in invocations_des_commandes()
+        if nom == "branch-cleanup.md"
+    ]
+    assert any("lib.sh cleanup-merged" in nue for _, nue in lignes), (
+        "/branch-cleanup doit appeler `lib.sh cleanup-merged` — trouvé : "
+        f"{[nue for _, nue in lignes]}"
+    )
+
+    commande = RACINE / ".claude" / "commands" / "branch-cleanup.md"
+    fautives = [
+        f"branch-cleanup.md:{numero}: {nue}"
+        for numero, ligne in enumerate(commande.read_text(encoding="utf-8").splitlines(), 1)
+        if "glab mr" in (nue := ligne.strip()) and not nue.startswith(">")
+    ]
+    assert fautives == [], (
+        "lecture `glab mr` réintroduite dans /branch-cleanup (#309) — passer par lib.sh "
+        "(`mr-state` rend un mot, `cleanup-merged` fait toute la boucle) :\n" + "\n".join(fautives)
+    )
+
+
+def test_branch_cleanup_garde_les_trois_fonctions_hors_du_helper() -> None:
+    """Le revers de la délégation : `cleanup-merged` ne fait pas TOUT (#309).
+
+    Trois fonctions restent à la commande — basculer sur `main` quand la branche courante est
+    mergée (le helper ne touche jamais à celle du clone principal), supprimer la branche
+    **distante** restée là (case « Delete source branch » décochée au merge), et poser le cycle de
+    vie « Terminé » (le merge ferme le ticket sans toucher à aucun label, docs/10 §3). Déléguer en
+    les perdant au passage transformerait une économie de tokens en régression silencieuse.
+    """
+    texte = (RACINE / ".claude" / "commands" / "branch-cleanup.md").read_text(encoding="utf-8")
+    manquantes = [
+        forme
+        for forme in ("git checkout main", "git push origin --delete", "reconcile-workflow")
+        if forme not in texte
+    ]
+    assert manquantes == [], (
+        "/branch-cleanup a perdu une fonction que `cleanup-merged` ne couvre pas (#309) : "
+        f"{manquantes}"
+    )
+
+
 def test_review_queue_rend_la_plus_ancienne_d_abord_avec_son_anciennete(depot: Depot) -> None:
     aujourdhui = date.today()
     depot.pose_etat(

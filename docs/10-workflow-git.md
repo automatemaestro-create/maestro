@@ -311,7 +311,8 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
    l'étape 6. Cet écart transitoire est normal ; c'est sa persistance que `doctor.sh` signale
    (ticket fermé au cycle de vie encore actif).
 6. **`/branch-cleanup`** — GitLab a géré le distant (étape 5), cette commande fait le **ménage
-   local** et **pose le cycle de vie `Terminé`** : supprime la branche **locale** mergée et
+   local** et **pose le cycle de vie `Terminé`** : supprime la branche **locale** mergée (par
+   `lib.sh cleanup-merged`, le même helper que l'automatisme — §9.5) et
    remet `main` à jour. Ce ménage est en grande partie **automatisé** : `worktree.sh ensure`, qu'
    appelle tout `/ticket-start` (étape 2), purge les branches mergées et ramasse les worktrees
    soldés, qui disparaissent donc d'eux-mêmes au fil de l'eau (§9.2, §9.5 — l'automatisme a
@@ -1643,6 +1644,29 @@ worktree, et c'est justement parce que la purge tourne à nouveau que ce nombre 
 [`test_worktree.py`](../tests/test_worktree.py) (le câblage, l'ordre vis-à-vis du ramassage, le
 compte rendu d'une branche retenue, l'abstention sur arbre sale et le fait que `start-branch` ne
 purge plus) — dépôt jetable, sans réseau ni `glab`.
+
+#### `/branch-cleanup` appelle ce même helper (#309)
+
+Jusque-là la commande **réimplémentait la boucle en prose** — un
+`glab mr view <branche> --output json` par branche locale, dont la charge utile réinjectée pèse
+~3 500 octets pour en tirer **un mot** (`merged`/`opened`/`closed`) : ~43 000 tokens par invocation
+sur ce dépôt, soit 25 fois le texte de la commande elle-même (audit
+[#304](25-audit-commandes-claude.md) §4.1, recommandation M1 — le plus gros gisement du lot). Elle
+s'appuie désormais sur `cleanup-merged`, et ne garde autour de lui que les **trois fonctions qu'il
+ne couvre pas** :
+
+| Fonction | Pourquoi le helper ne la fait pas |
+|---|---|
+| Basculer sur `main` | il ne change **jamais** de branche : il **saute** celle du clone principal au lieu de la supprimer sous ses propres pieds. La commande demande donc son état à `mr-state` — un mot, facteur 500 sur le JSON — et bascule si elle est mergée (jamais depuis un worktree, §9.1) |
+| Supprimer la branche **distante** | il n'écrit rien côté serveur. Le cas ne se présente que si la case « Delete source branch » a été décochée au merge (§6) ; les branches restantes se lisent d'un coup dans les refs de suivi, que le helper vient de rafraîchir |
+| Poser « Terminé » | il n'écrit rien côté GitLab non plus. La commande le fait par `reconcile-workflow`, qui saute les tickets déjà finaux et n'écrase jamais « Abandonné »/« Doublon » (§9.2) |
+
+Le gain n'est pas que du contexte : le garde-fou « suppression **seulement** si GitLab confirme
+`merged` » n'a plus qu'**une** implémentation. Deux, dont une en prose, c'est une divergence en
+attente — le jour où la règle change, le prompt ne suit pas. Le raccordement est épinglé par
+[`test_collaboration.py`](../tests/test_collaboration.py), qui relit le prompt (délégation présente,
+plus aucun `glab mr` prescrit, trois fonctions toujours nommées) — même parti pris que les tests
+#196 et #233 : une règle qui vit dans un prompt ne se garde que par une lecture de ce prompt.
 
 ---
 

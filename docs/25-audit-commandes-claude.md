@@ -265,6 +265,11 @@ tranche (#199).
 | M4 | Supprimer la phrase « monorepo est un squelette sans code » | correction factuelle | `ticket-finish.md` §5 |
 | M5 | Corriger ou retirer les `allowed-tools:` | ~500 tk au total | 12 commandes |
 
+> **M1 est traité** par **#309** :
+> `/branch-cleanup` délègue sa boucle à `lib.sh cleanup-merged` et ne garde que les trois fonctions
+> qu'il ne couvre pas ([docs/10 §9.5](./10-workflow-git.md)). Les mesures ci-dessus restent celles
+> de l'instantané du 2026-08-07.
+
 **Décision humaine** — il y a un arbitrage réel, la prose a une valeur que le token ne mesure pas :
 
 | # | Question posée | Enjeu |
