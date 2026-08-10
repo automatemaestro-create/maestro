@@ -1136,6 +1136,12 @@ Le partage se fait sur *qui lit*, pas sur *qui écrit* :
 | `controltower/<api>-<ui>/{api,ui,navigateur}.log` | jeton de session, PID du chien de garde, profil jetable du navigateur |
 | `presentation/{api,build,ui}.log` | cache npm des captures : des centaines de Mo, partagés entre clones |
 | `orchestrate/<run-id>/` — déjà le cas depuis #167 | brouillon de calcul de `queue.sh` |
+| `session/` — l'atelier d'une session dans son worktree (#307, §11.7) | règles d'allowlist relues par `journal.sh refus` : un calcul, jamais ouvert |
+
+La règle vaut aussi pour ce qu'une **session** écrit, et pas seulement pour ce qu'un script écrit à
+son intention (#307) : son répertoire temporaire et `/tmp` sont hors du répertoire de travail, donc
+un fichier qu'elle y dépose lui devient illisible au tour suivant. D'où `.maestro/session/`, monté
+par `worktree.sh` dans chaque worktree — §11.7.
 
 Deux points à ne pas défaire :
 
@@ -1167,7 +1173,9 @@ Le script fait plus qu'un `git worktree add` : il résout la branche comme
 [`/ticket-start`](../.claude/commands/ticket-start.md) (`lib.sh branch-for`) et la crée depuis
 `origin/main`, recopie le `.env` (gitignoré, donc absent du worktree), **partage par lien**
 `.venv/` et `.tools/` (jonction sous Windows : aucun droit administrateur), **installe** les
-dépendances de `apps/web` et écrit un `.claude/settings.local.json` dédié.
+dépendances de `apps/web`, écrit un `.claude/settings.local.json` dédié et monte
+**`.maestro/session/`**, l'atelier où la session écrit ses fichiers de travail — le seul endroit
+qu'elle puisse atteindre en chemin relatif (#307, §11.7).
 
 ### 9.1 Monté d'office par `/ticket-start` (#181)
 
@@ -2281,6 +2289,53 @@ sessions ne se voient pas un par un), le **maillon** réellement fautif d'une co
 les refus que **rien dans le dépôt ne lèvera**, comptés à part pour qu'on n'aille pas leur écrire
 une règle inutile.
 
+**Combien et de quoi ne dit pas pourquoi** (#307). Des compteurs seuls ont laissé lire chaque refus
+comme un trou d'allowlist — le gisement que #232 avait pourtant fini d'exploiter, si bien que le
+sujet passait pour clos pendant que le compte, lui, ne baissait pas. La sortie s'ouvre donc
+désormais sur un **classement**, et il range chaque refus dans **une seule** famille, choisie sur le
+**geste** qu'elle appelle :
+
+| Famille | Ce qui la caractérise | Le geste |
+| --- | --- | --- |
+| **Trou d'allowlist** | un maillon qu'aucune règle ne couvre | `settings.run.json` |
+| **Échappée de chemin** | tous les maillons couverts, mais la cible sort du répertoire de travail | `prompt_ticket`, jamais la liste — une règle de **préfixe** ne borne pas une cible |
+| **Blocage dur `.claude/`** | refus du CLI, en amont de la liste (#229, mesuré par #238) | rien : le ticket se traite en session interactive |
+| **Refus voulu (`ask`/`deny`)** | une règle du dépôt le demande, personne ne peut approuver | rien : c'est le contrat de la règle |
+| **Forme immatchable** | saut de ligne, `$(…)`, heredoc — quoi qu'elle habille | l'outil `Write`, puis le **chemin** (tableau ci-dessous) |
+
+Trois choix de méthode, sans lesquels le chiffre ne voudrait rien dire :
+
+- **Les règles sont lues là où elles vivent** — `settings.run.json` **∪** `.claude/settings.json`,
+  puisque c'est le régime réel d'une session (l'union, plus bas). Le classement ne peut donc pas se
+  périmer en silence, ce qui était le défaut de la lecture manuelle qu'il remplace. Corollaire à
+  connaître : ce sont les règles **d'aujourd'hui**, donc sur un vieux run un refus « inclassé » dit
+  le plus souvent « déjà instruit depuis ». **C'est le dernier run qui se lit pour agir.**
+- **L'ordre de décision est le contenu du classement** : `.claude/`, refus voulu, trou d'allowlist,
+  échappée de chemin, forme. On ne conclut à l'échappée que si **rien d'autre** n'explique le refus
+  — ce qui rend la thèse de #307 plus difficile à établir, pas plus facile.
+- **Un maillon découvert qui porte un chemin absolu n'est pas un trou.** Sa forme relative, elle,
+  serait couverte (`.venv/Scripts/python.exe …`, `bash scripts/…`), et aucune règle de préfixe ne
+  pourra jamais borner un absolu. Le compter comme un trou enverrait élargir la liste pour rien.
+
+Ce que la mesure du 2026-08-09 a rendu, sur le dernier run complet (`20260807-105815`, 12 refus sur
+7 sessions) : **9 échappées de chemin (75 %)**, 2 trous d'allowlist, 1 forme. Sur les onze runs du
+journal (58 refus sur 24 sessions) : 29 échappées, 14 trous, 7 inclassés, 4 blocages `.claude/`,
+3 formes, 1 refus voulu. Autrement dit : les sept commandes les plus refusées (`echo`, `cd`, `tail`,
+`cat`, `head`, `grep`, `sed`) sont **toutes dans l'`allow`** — la liste n'est plus le bon endroit où
+chercher.
+
+**L'atelier de session** (#307) est la réponse à la moitié évitable de ces échappées. Une session
+écrit forcément des fichiers de travail quelque part — description de MR, corps de commentaire,
+sortie intermédiaire à relire —, et les deux endroits qu'elle connaît spontanément sont son
+répertoire temporaire et `/tmp`, tous deux **hors du répertoire de travail**. Le prompt ne pouvait
+donc pas s'en tenir à « reste en relatif » : interdire sans désigner ne fait que déplacer le refus.
+`worktree.sh` monte donc **`.maestro/session/`** dans chaque worktree (gitignoré, convention de
+§8.5), `prompt_ticket` le nomme, et rien ne l'efface — contrairement au filet CI, une note de
+travail vaut d'être relue au tour suivant, et le worktree part en entier quand le ticket est soldé
+(§9.2). Même raison pour `journal.sh` lui-même, qui résout désormais le journal vers le **clone
+principal** d'où qu'on le lise : sans ça, lire ses propres refus depuis un worktree demandait un
+chemin absolu, et l'outil de mesure produisait le refus qu'il mesure.
+
 Un refus **ne bloque pas le run** : sans humain pour approuver, l'appel est simplement refusé et la
 session se débrouille. C'est précisément le problème — **il se paie deux fois** : en tours et en
 dollars quand la session contourne, en run perdu quand elle ne peut pas. Sur le premier run réel
@@ -2319,9 +2374,9 @@ Une règle ne prend pas non plus toujours de spécificateur : **`Skill` s'autori
 déclarant pas de `ruleContentField` (`Skill(ticket-start)` ne matcherait rien), là où `Bash` expose
 `command` et `Write` `file_path`.
 
-**Quatre formes qu'aucune règle ne peut reconnaître** (#235). Elles ne dépendent pas de la commande
-qu'elles habillent : celle-ci a beau être allowlistée, l'appel tombe. C'est la deuxième ligne du
-tableau ci-dessus, et de loin la plus fréquente — le geste est dans la **forme**, donc dans
+**Cinq formes qu'aucune règle ne peut reconnaître** (#235, #307). Elles ne dépendent pas de la
+commande qu'elles habillent : celle-ci a beau être allowlistée, l'appel tombe. C'est la deuxième
+ligne du tableau ci-dessus, et de loin la plus fréquente — le geste est dans la **forme**, donc dans
 `prompt_ticket` ou dans ce que le dépôt dicte à la session, jamais dans l'`allow`.
 
 | Forme | Pourquoi rien ne la matche | Le geste |
@@ -2329,7 +2384,17 @@ tableau ci-dessus, et de loin la plus fréquente — le geste est dans la **form
 | **Saut de ligne** dans la commande | le CLI découpe dessus et exige chaque morceau ; une `--description` de MR en porte par nature | écrire le texte avec l'outil `Write`, passer son **chemin** |
 | **Substitution** `$(…)` ou `` `…` `` | la règle matche du texte, pas le résultat d'une exécution — `--description "$(cat f)"` n'est jamais reconnu | idem : le chemin, pas le contenu |
 | **Heredoc** `<<'EOF'` | même cause que le saut de ligne, plus le corps qui suit | l'outil `Write`, jamais `cat > … <<'EOF'` |
-| **Chemin absolu hors du worktree** | les règles bornent des chemins **relatifs** ; l'absolu sort de la borne et demande une approbation | rester en relatif depuis le worktree — et n'y envoyer personne (§8.5) |
+| **Chemin absolu hors du worktree** | les règles bornent des chemins **relatifs** ; l'absolu sort de la borne et demande une approbation | rester en relatif depuis le worktree, et y écrire ses fichiers de travail (`.maestro/session/`) — et n'y envoyer personne (§8.5) |
+| **Préfixe de variable** `VAR=… <commande>` | une règle est un préfixe de **commande**, or la commande commence par la variable | `env VAR=… <commande>`, que `Bash(env:*)` couvre déjà |
+
+Cette dernière ligne est le seul **vrai** trou d'allowlist qu'aient laissé les onze runs suivant
+#232 (2 refus, #188 et #290, dont 1 encore sur le dernier run complet), et #307 l'a **écarté** de la
+liste plutôt qu'ajouté : la seule règle qui le matcherait devrait porter la **valeur** en dur
+(`Bash(REDIS_URL=redis://127.0.0.1:6399/0 .venv/…:*)`), ne couvrirait que celle-là, se périmerait au
+premier port changé et ne se généraliserait pas — la variable suivante sera une autre. Le geste
+existe déjà et ne coûte rien : `env` est allowlisté depuis #235, avec la réserve qui l'accompagne
+(`env VAR=x <commande>` porte une commande arbitraire ; ce qui la retient est `guard.sh`, qui juge
+le **texte entier** de l'appel).
 
 Les trois premières sont la cause n°1 de #232 : **huit sessions sur seize** ont buté sur un
 `glab mr create --description` multi-ligne, puis sur le `"$(cat …)"` par lequel elles essayaient de

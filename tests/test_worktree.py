@@ -356,6 +356,35 @@ def test_creation_monte_un_worktree_equipe(depot: Depot) -> None:
         assert (wt / lourd / "marqueur.txt").read_text(encoding="utf-8") == lourd
 
 
+def test_creation_monte_l_atelier_de_session(depot: Depot) -> None:
+    """`.maestro/session/` est le seul endroit qu'une session atteigne en chemin RELATIF (#307).
+
+    Son répertoire temporaire et `/tmp` sont hors du répertoire de travail : un fichier qu'elle y
+    dépose lui devient illisible au tour suivant, et c'est la cause n°1 des refus de permission des
+    sessions autonomes. Le désigner sans le créer ne vaudrait pas mieux qu'une consigne.
+    """
+    acheve = depot.lance("create", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert (depot.worktree() / ".maestro" / "session").is_dir()
+    assert ".maestro/session/" in acheve.stdout, "l'étape est rapportée, pas silencieuse"
+
+
+def test_ensure_complete_l_atelier_d_un_worktree_deja_monte(depot: Depot) -> None:
+    """La voie `ICI` ne rejoue pas `create` : sans ça, un worktree monté avant #307 n'en aurait
+    jamais, et le prompt renverrait vers un répertoire absent — pire qu'une consigne absente."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    wt = depot.worktree()
+    shutil.rmtree(wt / ".maestro")
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE, cwd=wt)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert (wt / ".maestro" / "session").is_dir()
+    # Le contrat de sortie d'`ensure` reste tenu : le verdict est toujours la dernière ligne.
+    assert _verdict(acheve).startswith("ICI ")
+
+
 def test_node_modules_n_est_jamais_un_lien(depot: Depot) -> None:
     """Turbopack rejette un `node_modules` lié — « it points out of the filesystem root ».
 

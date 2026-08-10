@@ -624,6 +624,49 @@ def test_le_prompt_nomme_les_trois_formes_qu_aucune_regle_ne_matche(depot: Depot
     assert "CHEMIN de ce fichier" in prompt
 
 
+def test_le_prefixe_de_variable_est_ecarte_avec_sa_raison_et_son_remplacement() -> None:
+    """Le seul VRAI trou d'allowlist des onze runs suivant #232 — et il n'est PAS comblé (#307).
+
+    Une règle est un préfixe de COMMANDE, or la commande commence par la variable : la seule règle
+    qui matcherait devrait figer la valeur en dur, ne couvrirait que celle-là et se périmerait au
+    premier port changé. Le geste est donc dans la forme — et il existe déjà.
+    """
+    reglages = json.loads(
+        (RACINE / "scripts/orchestrate/settings.run.json").read_text(encoding="utf-8")
+    )
+    allow = reglages["permissions"]["allow"]
+    assert not [r for r in allow if re.match(r"Bash\([A-Z_]+=", r)], (
+        "une règle à préfixe de variable figerait la VALEUR : elle ne couvrirait que ce cas-là"
+    )
+    assert "Bash(env:*)" in allow, "`env VAR=… <commande>` est le remplacement — il doit passer"
+    commentaire = " ".join(reglages["$comment"])
+    assert "env VAR=" in commentaire, "l'écart n'est un choix que s'il dit par quoi remplacer"
+    assert "#307" in commentaire
+
+
+def test_le_prompt_designe_un_atelier_dans_le_worktree(depot: Depot) -> None:
+    """Interdire `/tmp` sans DÉSIGNER un remplaçant ne fait que déplacer le refus (#307).
+
+    Une session écrit forcément ses fichiers de travail quelque part, et les deux endroits qu'elle
+    connaît spontanément sont hors du répertoire de travail. C'est la cause n°1 des refus : 9 sur
+    12 du dernier run complet.
+    """
+    depot.ticket(130, "Ticket a traiter")
+    claude = _claude_stub(depot, """
+        printf '%s' "$2" > "$MAESTRO_FIXTURES/prompt-atelier.txt"
+        printf '{"type":"result","subtype":"success","is_error":false}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "atelier",
+                env={"MAESTRO_CLAUDE_BIN": claude})
+
+    prompt = (depot.fixtures / "prompt-atelier.txt").read_text(encoding="utf-8")
+    assert ".maestro/session/" in prompt, "l'endroit désigné doit être nommé, pas sous-entendu"
+    assert "/tmp" in prompt, "et celui qu'on remplace aussi, sinon la session y retourne"
+    assert "env VAR=" in prompt, "le remplacement du préfixe de variable (#307) se dit ici aussi"
+
+
 # =====================================================================================
 # run.sh — la boucle (#170)
 # =====================================================================================
@@ -3642,6 +3685,161 @@ def test_refus_sans_argument_prend_le_dernier_run_qui_en_porte(depot: Depot) -> 
     assert r.returncode == 0, r.stderr
     assert "20260801-100000" in r.stdout
     assert "awk" in r.stdout
+
+
+# --- Le classement en familles (#307) ------------------------------------------------------------
+# L'agrégat disait COMBIEN et DE QUOI, jamais POURQUOI — d'où un sujet qui passait pour clos pendant
+# que le compte, lui, ne baissait pas : le gisement des trous d'allowlist, #232 l'avait fini. Les
+# sept commandes les plus refusées du journal sont TOUTES dans l'`allow` — c'est la CIBLE qui tombe.
+
+
+def _familles(sortie: str) -> dict[str, int]:
+    """Le classement, lu comme une TABLE et jamais par recherche de texte : le rappel de l'ordre de
+    décision, juste en dessous, nomme les mêmes familles — un `in sortie` y matcherait toujours."""
+    familles = {}
+    for ligne in sortie.splitlines():
+        trouve = re.match(r"\s+(\d+)\s+(\S.*?)\s+(\d+) %", ligne)
+        if trouve:
+            familles[trouve.group(2)] = int(trouve.group(1))
+    return familles
+
+
+def _maillons(sortie: str) -> list[str]:
+    """La liste « ce qui s'instruit », vide quand aucun maillon n'est vraiment découvert."""
+    if "s'instruit" not in sortie:
+        return []
+    bloc = sortie.split("s'instruit", 1)[1].split("── Par outil", 1)[0]
+    return [
+        ligne.split(maxsplit=1)[1]
+        for ligne in bloc.splitlines()
+        if ligne.strip() and ligne.split()[0].isdigit()
+    ]
+
+
+def test_refus_distingue_l_echappee_de_chemin_du_trou_d_allowlist(depot: Depot) -> None:
+    """La distinction est tout l'objet du ticket : le geste n'est pas le même des deux côtés.
+
+    `cat`/`head` sont autorisés — une chaîne qui n'échoue que par sa cible ne s'instruit pas dans
+    `settings.run.json`, et l'y chercher est ce qui a fait passer le sujet pour clos.
+    """
+    _journal_refus(depot, "familles", {130: _refus(
+        'cat "E:/ailleurs/notes.md" | head -20',      # tout est autorisé : c'est le chemin
+        "bash scripts/orchestrate/queue.sh > /tmp/plan.txt",
+        "for f in a b; do node $f; done",             # `for` n'est couvert par aucune règle
+    )})
+    r = depot.lance("journal.sh", "refus", "familles")
+
+    assert r.returncode == 0, r.stderr
+    familles = _familles(r.stdout)
+    assert familles.get("échappée de chemin") == 2, f"les deux cibles hors worktree : {r.stdout}"
+    assert familles.get("trou d'allowlist") == 1, f"le seul maillon découvert : {r.stdout}"
+    # Et la liste qui s'instruit ne porte QUE ce maillon-là : y voir « cat » enverrait ajouter une
+    # règle qui est déjà là.
+    assert _maillons(r.stdout) == ["for"]
+
+
+def test_refus_ne_prend_pas_un_chemin_absolu_pour_une_regle_manquante(depot: Depot) -> None:
+    """Sa forme RELATIVE serait couverte, et aucune règle de préfixe ne bornera jamais un absolu :
+    le compter comme un trou enverrait élargir la liste pour rien."""
+    _journal_refus(depot, "absolu", {130: _refus(
+        '"E:/depot/.venv/Scripts/python.exe" -m pytest',
+    )})
+    r = depot.lance("journal.sh", "refus", "absolu")
+
+    assert r.returncode == 0, r.stderr
+    assert _familles(r.stdout) == {"échappée de chemin": 1}
+    assert _maillons(r.stdout) == [], "aucun maillon à instruire — le geste est la forme"
+
+
+def test_refus_ne_confond_pas_une_url_ni_un_sed_avec_un_chemin(depot: Depot) -> None:
+    """Trois faux positifs qui rangeraient des refus ordinaires en échappées : `https://`, `sed
+    s/a/b/` et `2>/dev/null`. Le premier ferait basculer toute commande portant une URL."""
+    _journal_refus(depot, "faux-positifs", {130: _refus(
+        "sed -i 's/avant/apres/' fichier.md",
+        "ls apps/web 2>/dev/null; cat .node-version",
+    )})
+    r = depot.lance("journal.sh", "refus", "faux-positifs")
+
+    assert r.returncode == 0, r.stderr
+    assert "échappée de chemin" not in _familles(r.stdout), (
+        f"aucune de ces commandes ne sort du répertoire de travail : {r.stdout}"
+    )
+
+
+def test_refus_reconnait_un_refus_voulu_par_une_regle_ask_du_depot(depot: Depot) -> None:
+    """`git commit --no-verify` est demandé en confirmation par le dépôt : en autonome, personne ne
+    peut l'accorder. Le ranger ailleurs enverrait chercher une règle qui existe déjà et dit non.
+
+    Le matching y est plus large qu'ailleurs, et à dessein : le CLI comprend les OPTIONS, un
+    préfixe non — `git commit --no-edit --no-verify` doit tomber sous la même règle.
+    """
+    _journal_refus(depot, "voulu", {130: _refus(
+        "git add x.py; git commit --no-edit --no-verify",
+    )})
+    r = depot.lance("journal.sh", "refus", "voulu")
+
+    assert r.returncode == 0, r.stderr
+    assert _familles(r.stdout) == {"refus voulu (ask/deny)": 1}
+
+
+def test_refus_ne_prend_pas_une_tete_de_regle_pour_une_option(depot: Depot) -> None:
+    """La contrepartie du matching large : seules les OPTIONS flottent, jamais la tête de la règle.
+
+    Sans ça, `git commit -m "clean up"` tomberait sous `Bash(git clean:*)` et un refus ordinaire
+    passerait pour voulu.
+    """
+    _journal_refus(depot, "tete", {130: _refus('git commit -m "clean up"')})
+    r = depot.lance("journal.sh", "refus", "tete")
+
+    assert r.returncode == 0, r.stderr
+    assert "refus voulu (ask/deny)" not in _familles(r.stdout), r.stdout
+
+
+def test_refus_lit_les_regles_la_ou_elles_vivent(depot: Depot) -> None:
+    """Une copie figée du `allow` se périmerait en silence — le défaut même que #307 corrige.
+
+    Le test le prouve par l'absurde : on retire une règle du fichier du dépôt jetable, et le
+    classement doit changer d'avis sur la même commande.
+    """
+    _journal_refus(depot, "vivantes", {130: _refus("awk '{print}' fichier.txt")})
+    avant = _familles(depot.lance("journal.sh", "refus", "vivantes").stdout)
+    assert "trou d'allowlist" not in avant, "`awk` est autorisé — rien à instruire"
+
+    chemin = depot.racine / "scripts/orchestrate/settings.run.json"
+    reglages = json.loads(chemin.read_text(encoding="utf-8"))
+    reglages["permissions"]["allow"].remove("Bash(awk:*)")
+    chemin.write_text(json.dumps(reglages, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    r = depot.lance("journal.sh", "refus", "vivantes")
+    assert _familles(r.stdout) == {"trou d'allowlist": 1}, (
+        f"le classement doit suivre le fichier, pas une copie : {r.stdout}"
+    )
+    assert _maillons(r.stdout) == ["awk"]
+
+
+def test_refus_range_chaque_refus_dans_une_seule_famille(depot: Depot) -> None:
+    """La somme des familles EST le total : sans ça le classement serait un comptage de plus.
+
+    Le premier cas porte les deux causes à la fois — un maillon découvert ET une cible hors du
+    worktree —, et l'ordre de décision tranche en faveur du trou d'allowlist.
+    """
+    _journal_refus(depot, "partition", {130: _refus(
+        "for f in a b; do cat /tmp/$f; done",
+        'cd "E:/ailleurs" && git status',
+        'glab mr create --description "un\ndeux"',
+    ) + _refus(".claude/settings.json", outil="Write")})
+    r = depot.lance("journal.sh", "refus", "partition")
+
+    assert r.returncode == 0, r.stderr
+    assert "1 session(s) · 4 refus" in r.stdout
+    familles = _familles(r.stdout)
+    assert sum(familles.values()) == 4, f"un refus, une famille — {r.stdout}"
+    assert familles == {
+        "trou d'allowlist": 1,
+        "échappée de chemin": 1,
+        "forme immatchable": 1,
+        "blocage dur .claude/": 1,
+    }, r.stdout
 
 
 def test_refus_ne_touche_a_rien_et_dit_franchement_qu_il_n_a_rien_trouve(depot: Depot) -> None:

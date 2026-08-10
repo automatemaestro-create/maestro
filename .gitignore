@@ -48,8 +48,11 @@ Thumbs.db
 
 # --- Claude Code (surcharges personnelles ; .claude/settings.json et .mcp.json restent versionnés) ---
 .claude/settings.local.json
-# Profil du navigateur piloté par le MCP chrome-maestro, quand MAESTRO_CHROME_PROFILE
-# n'est pas posé (défaut de .mcp.json) : session de navigation locale, jamais versionnée.
+# Tout ce qu'un script du dépôt écrit pour être relu SUR PLACE, sous la racine du worktree
+# (docs/10 §8.5) : journaux du filet CI (`ci-local/`) et de `setup.sh`, journal d'orchestration
+# (`orchestrate/`), atelier de session (`session/`, #307), et le profil du navigateur piloté par
+# le MCP chrome-maestro quand MAESTRO_CHROME_PROFILE n'est pas posé. Local à un clone, jamais
+# versionné — mais atteignable en chemin relatif, ce qui est toute la raison de le mettre là.
 .maestro/
 
 # --- Divers ---

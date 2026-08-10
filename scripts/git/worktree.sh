@@ -18,7 +18,9 @@
 #   - les dépendances de apps/web, INSTALLÉES sur place (Turbopack rejette un node_modules lié) ;
 #   - un `.claude/settings.local.json` dédié : profil de navigateur et ports Control Tower
 #     PROPRES à ce worktree, sans quoi les deux sessions se disputent le verrou du profil Chrome
-#     et s'arrêtent mutuellement la Control Tower.
+#     et s'arrêtent mutuellement la Control Tower ;
+#   - `.maestro/session/`, l'ATELIER de la session — le seul endroit où elle puisse écrire ses
+#     fichiers de travail en chemin relatif, donc les relire ensuite (#307, docs/10 §11.7).
 #
 # Ports dérivés du numéro de ticket (déterministes, donc stables d'une session à l'autre) :
 # API 8000+<iid mod 100>, UI 3000+<iid mod 100> — le clone principal gardant 8000/3000.
@@ -224,6 +226,25 @@ installe_web() {
   fi
 }
 
+# --- L'atelier d'une session (#307) ------------------------------------------------------------------
+# atelier_session <worktree> : l'endroit DÉSIGNÉ où une session écrit ses fichiers de travail —
+# description de MR, corps de commentaire, sortie intermédiaire qu'elle veut relire (#307).
+#
+# Il est DANS le worktree parce que c'est la seule façon de l'atteindre EN CHEMIN RELATIF : les deux
+# endroits qu'une session connaît spontanément — son répertoire temporaire et `/tmp` — sont hors du
+# répertoire de travail, et tout appel qui les vise est refusé sans que personne soit là pour
+# approuver. C'est la cause n°1 des refus des sessions autonomes (9 sur 12 du dernier run complet,
+# docs/10 §11.7), et elle ne se réglait pas par l'allowlist : une règle de préfixe ne borne pas une
+# cible. Créé plutôt que laissé au `mkdir` de chaque session : un endroit désigné qui n'existe pas
+# ne se distingue pas d'une consigne.
+#
+# `.maestro/` est gitignoré, et le sous-dossier suit la convention de §8.5 (`.maestro/<domaine>/`).
+# Rien ne l'efface : contrairement au filet CI, une note de travail vaut d'être relue au tour
+# suivant, et le worktree part en entier quand le ticket est soldé (§9.2).
+atelier_session() {
+  mkdir -p "$1/.maestro/session" 2>/dev/null
+}
+
 # --- Réglages Claude Code du worktree --------------------------------------------------------------
 # Au premier passage : copie du settings.local.json du clone principal (on hérite ainsi de
 # l'approbation des serveurs MCP et des permissions locales). Ensuite, c'est le fichier DU WORKTREE
@@ -423,7 +444,14 @@ commande_create() {
   profil="$(chemin_natif "${HOME}/.maestro/chrome-profile-$iid")"
   reglages_claude "$principal" "$dest" "$profil" "$port_api" "$port_ui"
 
-  # 7) Les hooks git n'ont rien à installer : core.hooksPath est une configuration du dépôt (donc
+  # 7) L'atelier de la session (#307), cf. `atelier_session`.
+  if atelier_session "$dest"; then
+    ok "atelier de session : .maestro/session/ (fichiers de travail, en chemin relatif)"
+  else
+    ignore ".maestro/session/ non créé — la session le fera au besoin (mkdir -p .maestro/session)"
+  fi
+
+  # 8) Les hooks git n'ont rien à installer : core.hooksPath est une configuration du dépôt (donc
   #    partagée par tous les worktrees) et son chemin est relatif — il se résout depuis la racine
   #    du worktree courant.
   local hooks
@@ -619,6 +647,10 @@ commande_ensure() {
   courante="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
   if [ -n "$courante" ] && [ "$courante" = "$branche" ]; then
     racine="$(git rev-parse --path-format=absolute --show-toplevel 2>/dev/null)" || racine="$(pwd)"
+    # `commande_create` ne sera pas rejoué sur cette voie : l'atelier est complété ici, sans un mot.
+    # Sans ça, un worktree monté avant #307 n'en aurait jamais, et la consigne du prompt renverrait
+    # vers un répertoire absent — ce qui est pire qu'une consigne absente.
+    atelier_session "$racine" || true
     # Chemin NATIF : ce verdict est consommé par l'outil de relocalisation de session côté
     # Windows, pas par Git Bash. Un « /tmp/… » de MSYS y serait résolu en « E:\tmp\… ».
     printf 'ICI %s\n' "$(chemin_natif "$racine")"
