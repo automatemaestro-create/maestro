@@ -45,7 +45,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -65,8 +65,9 @@ from maestro.controltower.state import (
     ControlTowerState,
 )
 from maestro.controltower.validation import ValidateurControlTower
-from maestro.engine.guardrails import Guardrails
+from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.references import ReferenceTicket
+from maestro.sources import Source, resoudre_sources
 from maestro.telemetry import LOGGER_NAME, RunJournal, redact_secrets
 
 if TYPE_CHECKING:
@@ -109,7 +110,9 @@ class ServiceExecutions:
     bus (donc au WebSocket et au journal durable) et les résumés se lisent dans
     la projection — une seule source de vérité, celle qui survit déjà au
     redémarrage. `fabrique_moteur` construit le moteur de chaque run (par défaut
-    `OrchestrationEngine.default`).
+    `OrchestrationEngine.default`). `garde_fous_ingestion` (#315) plafonne la
+    matière d'entrée des objectifs — actif par défaut, réglable par injection :
+    c'est un réglage de déploiement, pas un choix du client qui lance un run.
     """
 
     def __init__(
@@ -118,10 +121,14 @@ class ServiceExecutions:
         state: ControlTowerState,
         *,
         fabrique_moteur: FabriqueMoteur | None = None,
+        garde_fous_ingestion: GardeFousIngestion | None = None,
     ) -> None:
         self._bus = bus
         self._state = state
         self._fabrique = fabrique_moteur if fabrique_moteur is not None else moteur_par_defaut
+        self._ingestion = (
+            garde_fous_ingestion if garde_fous_ingestion is not None else GardeFousIngestion()
+        )
         self._runs: dict[str, asyncio.Task[None]] = {}
         # Logger **propre à ce service** : le pont télémétrie s'y pose sans
         # toucher au logger global du journal (cf. docstring du module). Les
@@ -170,6 +177,7 @@ class ServiceExecutions:
         parallelisme: int | None = None,
         ticket: Mapping[str, str] | ReferenceTicket | None = None,
         projet_id: str | None = None,
+        sources: Sequence[Mapping[str, Any] | Source] | None = None,
     ) -> dict[str, Any]:
         """Lance une exécution en tâche de fond et rend son résumé **immédiatement**.
 
@@ -194,8 +202,19 @@ class ServiceExecutions:
         travail dérivé (#224) n'est pas là, le champ **rattache sans isoler** :
         il ne change rien à ce que le run peut lire ou écrire.
 
-        Lève `ValueError` sur un objectif vide ou un garde-fou hors bornes (les
-        plafonds sont des maximums : ils doivent être > 0) — la route en fait un
+        `sources` (#315, EF-39) porte la **matière** de l'objectif — fichiers
+        téléversés, dossier de références, URL. Elles sont **résolues ici**,
+        c'est-à-dire canonicalisées, confrontées aux racines interdites (EF-38)
+        et plafonnées (`GardeFousIngestion`, ENF-07) **avant** que le run ne
+        parte : refuser après coup reviendrait à annuler un run déjà lancé.
+        Elles rejoignent ensuite la projection par l'événement de lancement,
+        comme le ticket et le projet. Ce lot n'en **lit** aucune : le moteur ne
+        les reçoit pas encore, l'extraction étant le lot suivant (#316) —
+        `sources=None` laisse donc le lancement identique à celui d'avant.
+
+        Lève `ValueError` sur un objectif vide, un garde-fou hors bornes (les
+        plafonds sont des maximums : ils doivent être > 0) ou une source refusée
+        (`SourceRefusee`, qui en hérite et porte son motif) — la route en fait un
         422. Le run, lui, ne peut plus échouer de façon synchrone : ce qui lui
         arrive ensuite se lit dans son statut.
         """
@@ -224,7 +243,17 @@ class ServiceExecutions:
         )
         projet = projet_id_valide(projet_id)
 
+        # Le `run_id` est tiré **avant** la résolution des sources, et non plus
+        # juste avant le lancement : l'emplacement d'ingestion d'un fichier
+        # téléversé est propre au run (#315), donc il faut le connaître pour
+        # savoir où la matière atterrira. Tirer un identifiant n'a aucun effet de
+        # bord — un lancement refusé plus bas le laisse simplement inutilisé.
         run_id = uuid.uuid4().hex[:12]
+        # Refus **avant** toute écriture : une source hors bornes ou hors
+        # périmètre ne doit pas laisser derrière elle un run inscrit dans la
+        # projection, ni un événement sur le bus.
+        matiere = resoudre_sources(sources, run_id=run_id, garde_fous=self._ingestion)
+
         self._demarrer()
         # L'événement de lancement **avant** la tâche de fond : la projection
         # connaît le run (donc le résumé rendu est complet) avant qu'une seule
@@ -238,6 +267,7 @@ class ServiceExecutions:
             "lancée depuis la Control Tower",
             ticket=reference,
             projet_id=projet,
+            sources=matiere,
         )
         tache = asyncio.get_running_loop().create_task(
             self._derouler(run_id, objectif, garde_fous, parallelisme, reference, projet)
@@ -361,6 +391,7 @@ class ServiceExecutions:
         *,
         ticket: ReferenceTicket | None = None,
         projet_id: str | None = None,
+        sources: Sequence[Source] = (),
     ) -> None:
         """Émet le cycle de vie du run : projection d'abord, bus ensuite.
 
@@ -369,8 +400,17 @@ class ServiceExecutions:
         réapplique l'événement sans effet (idempotence). L'objectif comme le
         détail sont expurgés des secrets avant de partir — ce qui va sur le bus
         est montrable, même filet que le journal (#8). Seul le **lancement**
-        porte une référence externe (#187) et un projet (#222) : la projection ne
-        les retire pas aux événements suivants, qui n'en savent rien.
+        porte une référence externe (#187), un projet (#222) et des sources
+        (#315) : la projection ne les retire pas aux événements suivants, qui
+        n'en savent rien. Un lancement **sans** source émet `sources=None` et non
+        une liste vide — l'événement reste alors celui d'avant ce lot.
+
+        Les sources, elles, ne passent **pas** par `redact_secrets`, et c'est un
+        choix : l'objectif et le détail sont du texte libre écrit par un humain,
+        où un secret collé est plausible ; une source est un localisateur
+        structuré et déjà validé, dont le `chemin` doit rester **exact** — c'est
+        la destination où le téléversement (#317) écrira. Un masquage y
+        corromprait la donnée pour un gain hypothétique.
         """
         self._emettre(
             Event(
@@ -383,6 +423,7 @@ class ServiceExecutions:
                 detail=redact_secrets(detail),
                 ticket=ticket,
                 projet_id=projet_id,
+                sources=list(sources) or None,
             )
         )
 

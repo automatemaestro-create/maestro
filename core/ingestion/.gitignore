@@ -1,0 +1,6 @@
+# La matière téléversée avec un objectif (#315) est une donnée d'exécution — et
+# le document de quelqu'un, souvent le plus confidentiel du run : on ne la
+# commite pas. Un sous-dossier par run, ramassé avec lui.
+*
+!.gitignore
+!README.md

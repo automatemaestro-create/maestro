@@ -24,6 +24,13 @@ d'orchestration, en trois protections appliquées à chaque tâche :
 détection d'actions sensibles (refus par défaut). La classification par mots-clés
 est assumée comme heuristique de POC : la V1 la remplacera par une liste d'actions
 outillées classées côté serveur (docs/03, entité APPROVAL) sans changer ce contrat.
+
+À côté d'eux, et pour la même raison — ce sont les **limites du run**, elles
+n'ont pas à vivre dans un troisième endroit —, `GardeFousIngestion` (#315,
+ENF-07) plafonne la **matière d'entrée** d'un objectif : taille par source,
+taille totale, nombre de sources. Ils sont appliqués **avant** la boucle, au
+lancement (`maestro.sources.resolution`), là où l'utilisateur peut encore
+retirer une pièce jointe.
 """
 
 from __future__ import annotations
@@ -56,6 +63,58 @@ MOTS_SENSIBLES: tuple[str, ...] = (
     "mot de passe",
     "credential",
 )
+
+#: Taille maximale d'**une** source, en octets (10 Mio). Le plafond porte sur ce
+#: qui entre, en octets, parce que c'est tout ce que ce niveau connaît : le
+#: rapport octets → tokens dépend du format (un PDF de 10 Mio rend quelques
+#: dizaines de kilo-octets de texte, un `.txt` de 10 Mio en rend dix mégas, soit
+#: ~2,6 M tokens — treize fois une fenêtre de contexte). C'est donc une barrière
+#: **grossière**, celle qui arrête l'absurde ; le plafond fin, en tokens, revient
+#: à l'extraction (#316), seule à connaître le texte.
+TAILLE_MAX_SOURCE_OCTETS = 10 * 1024 * 1024
+
+#: Taille maximale de **l'ensemble** des sources d'un objectif (50 Mio) : sans
+#: elle, cinquante fichiers sous le plafond unitaire passeraient tous.
+TAILLE_MAX_INGESTION_OCTETS = 50 * 1024 * 1024
+
+#: Nombre maximal de sources d'un objectif. Une borne de bon sens plus qu'un
+#: coût : au-delà, ce n'est plus un objectif composé, c'est un dossier — et un
+#: dossier a son propre type de source.
+NB_MAX_SOURCES = 20
+
+
+@dataclass(frozen=True)
+class GardeFousIngestion:
+    """Plafonds de la matière d'entrée d'un objectif (#315, EF-39, ENF-07). Immuable.
+
+    Trois seuils, tous **réglables** et tous **actifs par défaut** — c'est la
+    différence assumée avec `Guardrails`, dont les plafonds sont inactifs à None.
+    Un plafond de dépense absent laisse un run coûter ce qu'il coûte, ce qui se
+    voit sur la barre ; un plafond d'ingestion absent laisse un document entrer
+    **intégralement** dans le contexte, et alors « la barre de dépense ment »
+    ([docs/24 §3.4](../../docs/24-projets-locaux-et-poste-de-travail.md)). Le
+    défaut sûr est donc de plafonner, quitte à ce qu'on desserre.
+
+    `None` reste possible sur chaque champ et vaut « aucun plafond » : c'est le
+    réglage qu'on pose sciemment, jamais celui qu'on obtient en oubliant.
+
+    Un dépassement n'est jamais accepté en silence : la résolution lève une
+    `SourceRefusee` **motivée** (`source-trop-volumineuse`,
+    `ingestion-trop-volumineuse`, `trop-de-sources`), que la route rend en 422.
+    """
+
+    taille_max_source_octets: int | None = TAILLE_MAX_SOURCE_OCTETS
+    taille_max_totale_octets: int | None = TAILLE_MAX_INGESTION_OCTETS
+    nb_max_sources: int | None = NB_MAX_SOURCES
+
+    def __post_init__(self) -> None:
+        for nom, valeur in (
+            ("taille_max_source_octets", self.taille_max_source_octets),
+            ("taille_max_totale_octets", self.taille_max_totale_octets),
+            ("nb_max_sources", self.nb_max_sources),
+        ):
+            if valeur is not None and valeur <= 0:
+                raise ValueError(f"{nom} doit être > 0 (reçu : {valeur}).")
 
 
 @dataclass(frozen=True)
