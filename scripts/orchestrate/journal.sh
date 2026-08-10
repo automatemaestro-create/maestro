@@ -46,6 +46,32 @@
 #     évite d'aller ajouter une règle qui ne servira pas.
 # Lecture seule, en `awk`, sans `jq` ni Python — le pilote est un script shell, il le reste (#180).
 #
+# --- Pourquoi un CLASSEMENT et pas seulement un comptage (#307) ----------------------------------------
+# L'agrégat disait COMBIEN et DE QUOI, jamais POURQUOI — si bien qu'on a continué de lire chaque refus
+# comme un trou d'allowlist, gisement que #232 avait pourtant fini d'exploiter. Mesure du 2026-08-09
+# sur les onze runs du journal : les sept commandes les plus refusées (`echo`, `cd`, `tail`, `cat`,
+# `head`, `grep`, `sed`) sont TOUTES dans l'`allow`. Ce qui les faisait tomber était ailleurs — la
+# CIBLE, hors du répertoire de travail de la session (règle #234, §8.5).
+#
+# D'où trois familles, choisies sur le GESTE qu'elles appellent, pas sur la forme du refus :
+#   - TROU D'ALLOWLIST     un maillon qu'aucune règle ne couvre  → `settings.run.json` ;
+#   - ÉCHAPPÉE DE CHEMIN   tous les maillons couverts, mais la cible sort du worktree
+#                          → le prompt de `run.sh` et ce que le dépôt dicte, jamais la liste :
+#                            une règle de PRÉFIXE ne borne pas une cible ;
+#   - BLOCAGE DUR .claude/ refus du CLI, en amont de la liste (#229, mesuré par #238) → rien.
+# S'y ajoutent deux issues qui ne touchent pas davantage à la liste : la FORME immatchable (saut de
+# ligne, `$(…)`, heredoc — déjà nommée plus bas) et le REFUS VOULU, qu'une règle `ask`/`deny` du
+# dépôt réclame et que personne ne peut approuver en autonome. Les compter à part évite de les voir
+# grossir « inclassé », d'où l'on repart chercher une règle manquante qui n'existe pas.
+#
+# Un refus ne compte que pour UNE famille, et L'ORDRE DE DÉCISION est le contenu du classement :
+# `.claude/`, refus voulu, trou d'allowlist, échappée de chemin, forme. On ne conclut à l'échappée
+# que si rien d'autre n'explique le refus — ce qui rend la thèse de #307 plus difficile à établir,
+# pas plus facile. Le classement est REJOUABLE parce qu'il lit les règles là où elles vivent
+# (`settings.run.json` ∪ `.claude/settings.json`) au lieu d'en figer une copie ici — avec ce
+# corollaire : ce sont les règles D'AUJOURD'HUI, donc sur un vieux run « inclassé » dit souvent
+# « déjà instruit depuis ». C'est le dernier run qui se lit pour agir.
+#
 # --- Réglages -----------------------------------------------------------------------------------------
 # MAESTRO_ORCHESTRATE_JOURNAL_RUNS   nombre de runs conservés (défaut 10)
 # MAESTRO_ORCHESTRATE_JOURNAL_GC=0   désactive le passage automatique appelé par `run.sh`
@@ -55,7 +81,26 @@ set -uo pipefail
 
 ICI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RACINE="$(cd "$ICI/../.." && pwd)"
-ORCH_DIR="$RACINE/.maestro/orchestrate"
+SETTINGS_RUN="$RACINE/scripts/orchestrate/settings.run.json"
+SETTINGS_DEPOT="$RACINE/.claude/settings.json"
+
+# Le journal est celui du CLONE PRINCIPAL, d'où qu'on le lise (#307). C'est là que `run.sh` est
+# lancé et donc là qu'il écrit ; depuis un worktree, `$RACINE/.maestro/orchestrate` désigne un
+# répertoire vide, et la seule façon d'atteindre le vrai journal serait un CHEMIN ABSOLU — que la
+# couche permissions refuse justement à une session (§11.7). L'outil de mesure produirait le refus
+# qu'il est censé mesurer. `--git-common-dir` rend `.git` dans le clone principal et un chemin
+# ABSOLU depuis un worktree ; hors dépôt git (le dépôt jetable des tests) on garde la racine du
+# script, qui EST alors le clone principal.
+racine_principale() {
+  local commun
+  commun="$(git -C "$RACINE" rev-parse --git-common-dir 2>/dev/null)" || commun=""
+  case "$commun" in
+    "" | .git) printf '%s' "$RACINE" ;;
+    /* | [A-Za-z]:[/\\]*) (cd "$commun/.." 2>/dev/null && pwd) || printf '%s' "$RACINE" ;;
+    *) (cd "$RACINE/$commun/.." 2>/dev/null && pwd) || printf '%s' "$RACINE" ;;
+  esac
+}
+ORCH_DIR="$(racine_principale)/.maestro/orchestrate"
 
 GARDES="${MAESTRO_ORCHESTRATE_JOURNAL_RUNS:-10}"
 # Un seuil illisible ou nul ferait tout retirer : on retombe sur le défaut plutôt que sur le pire.
@@ -84,9 +129,13 @@ cours : il n'est jamais touché, pas plus que celui désigné par `--courant`.
 
 MAESTRO_ORCHESTRATE_JOURNAL_GC=0 désactive le passage automatique.
 
-`refus` agrège les `permission_denials` des sessions — par outil, puis par commande, chaque
+`refus` classe les refus par FAMILLE — trou d'allowlist, échappée de chemin, blocage dur
+`.claude/`, refus voulu, forme immatchable — puis les agrège par outil et par commande, chaque
 maillon d'une chaîne comptant pour lui-même. Sans argument : le dernier run qui en porte.
 Lecture seule ; les instruire au cas par cas se fait en docs/10-workflow-git.md §11.7.
+
+Le journal lu est TOUJOURS celui du clone principal, y compris appelé depuis un worktree : c'est
+là que le pilote écrit, et y renvoyer par un chemin absolu ferait refuser la lecture (§11.7).
 
   <run-id>     un run précis, plutôt que le dernier
   --tous       tout le journal, tous runs confondus
@@ -250,6 +299,17 @@ commande_gc() {
   return 0
 }
 
+# bloc_de <fichier json> <allow|ask|deny> : les règles d'un bloc, une par ligne, préfixées du nom du
+# bloc. Même lecture que le `deny_de` de `guard.sh` — et volontairement pas une copie figée ici : le
+# classement doit suivre les règles réellement en vigueur, sinon il se périme sans que rien ne le
+# dise, ce qui est exactement le défaut que #307 est venu corriger.
+bloc_de() {
+  [ -f "$1" ] || return 0
+  awk -v bloc="$2" '$0 ~ "\"" bloc "\"[[:space:]]*:" { dans = 1 } dans { print; if (/\]/) exit }' \
+    "$1" 2>/dev/null |
+    grep -o '"[^"]*"' | tr -d '"' | grep -v "^$2\$" | sed "s/^/$2	/"
+}
+
 # --- refus : l'agrégat des permission_denials ---------------------------------------------------------
 # Deux passes, parce qu'elles ne lisent pas la même chose. La PREMIÈRE ouvre un `<iid>.json` — un
 # objet JSON minifié sur une ligne — et en tire une ligne TSV par refus ; la SECONDE agrège ce TSV,
@@ -394,6 +454,75 @@ function verbe(seg,   n, t, v, i) {
   return v
 }
 
+# --- Le classement (#307) -----------------------------------------------------------------------
+# nettoie(seg) : le maillon débarrassé de ce qui l'habille. Mêmes mots de liaison que verbe() — le
+# découpage sur `;` coupe aussi les boucles shell, et « do sleep 3 » est un maillon « sleep ».
+function nettoie(seg) {
+  sub(/^[ \t]+/, "", seg); sub(/[ \t]+$/, "", seg)
+  while (seg ~ /^(do|then|else|elif|\{|\()[ \t]+/) sub(/^(do|then|else|elif|\{|\()[ \t]+/, "", seg)
+  if (seg ~ /^(done|fi|esac|\}|\))$/) return ""
+  return seg
+}
+
+# matche(seg, regles, n, large) : une de ces règles couvre-t-elle ce maillon ? On rejoue le matching
+# du CLI, qui est un matching de PRÉFIXE DE COMMANDE : `Bash(git status:*)` couvre « git status » et
+# tout ce qui commence par « git status » ; sans `:*` la règle est exacte. Le maillon est jugé sur
+# son TEXTE et non sur son premier mot — une règle borne « command -v » ou « bash scripts/… »,
+# qu'un verbe seul ne rendrait pas.
+#
+# `large` sert les règles `ask`/`deny`, et l'écart est délibéré : leurs OPTIONS peuvent être
+# n'importe où dans la commande. Le CLI comprend les options, un préfixe non — sans cela
+# `git commit --no-edit --no-verify` échapperait à `Bash(git commit --no-verify:*)`, et le refus
+# VOULU qu'il déclenche irait grossir « inclassé ». La tête de la règle, elle, reste un préfixe :
+# la relâcher aussi ferait tomber `git commit -m "clean up"` sous `Bash(git clean:*)`.
+function matche(seg, regles, n, large,   i, r, p, k, mots, j, tete, ok) {
+  for (i = 1; i <= n; i++) {
+    r = regles[i]
+    if (r !~ /^Bash\(.*\)$/) continue
+    p = substr(r, 6, length(r) - 6)
+    if (p !~ /:\*$/) { if (seg == p) return 1; continue }
+    p = substr(p, 1, length(p) - 2)
+    if (!large) {
+      if (seg == p || index(seg, p " ") == 1) return 1
+      continue
+    }
+    k = split(p, mots, /[ \t]+/)
+    tete = ""
+    for (j = 1; j <= k && substr(mots[j], 1, 1) != "-"; j++)
+      tete = tete (tete == "" ? "" : " ") mots[j]
+    if (tete != "" && seg != tete && index(seg, tete " ") != 1) continue
+    ok = 1
+    for (; j <= k; j++) if (seg !~ ("(^|[ \t])" mots[j] "([ \t]|$)")) { ok = 0; break }
+    if (ok) return 1
+  }
+  return 0
+}
+
+# outil_couvert(nom) : l'outil lui-même est-il autorisé, nu (« Write ») ou paramétré (« Write(…) ») ?
+function outil_couvert(nom,   i) {
+  for (i = 1; i <= n_allow; i++)
+    if (allow[i] == nom || index(allow[i], nom "(") == 1) return 1
+  return 0
+}
+
+# chemin_hors(cmd) : l'appel vise-t-il un chemin hors du répertoire de travail ? C'est le TEXTE qui
+# le dit, et il suffit : le journal ne sait pas où était le worktree, et n'en a pas besoin — une
+# session travaille en RELATIF, donc tout chemin absolu sort de la borne, y compris celui de son
+# propre worktree (la forme même que #307 a mesurée). `/dev/null` est retiré d'abord : c'est du
+# silence, pas une cible, et il habille des commandes par ailleurs innocentes.
+function chemin_hors(cmd,   c) {
+  c = cmd
+  gsub(/\/dev\/null/, " ", c)
+  if (c ~ /(^|[^A-Za-z0-9_])[A-Za-z]:[\/\\]/) return 1                 # E:/…, C:\…
+  # Le `/` d'un chemin absolu suit un espace, un `>` ou un guillemet — jamais une lettre (« sed
+  # s/a/b/ »), un point (« ./x ») ni un autre `/` (« https://… »), qui sont les trois formes qui
+  # feraient prendre une commande ordinaire pour une échappée.
+  if (c ~ /(^|[^A-Za-z0-9_.\/])\/[A-Za-z]/) return 1                   # /tmp/…, /c/Users/…
+  if (c ~ /(^|[^A-Za-z0-9_])~\//) return 1                             # ~/…
+  if (c ~ /\$\{?(TMPDIR|TEMP|TMP)\}?/) return 1
+  return 0
+}
+
 # tri(compte, cles) : les clés de `compte`, du plus fréquent au moins fréquent (alphabétique à
 # égalité). Tri par insertion : une poignée d'entrées, et `asorti` n'existe pas partout.
 function tri(compte, cles,   n, i, j, k, tmp) {
@@ -422,7 +551,21 @@ function provenance(cle, par_ticket, ordre,   n, t, i, s, iid) {
   return s
 }
 
-BEGIN { FS = "\t" }
+BEGIN {
+  FS = "\t"
+  # Les règles arrivent par un fichier plutôt que par `-v` : awk applique ses séquences d'échappement
+  # aux valeurs de `-v`, et un antislash ajouté un jour à une règle y serait mangé en silence.
+  # Deux jeux, parce que le geste diffère : `allow` dit ce qui passe, `ask`/`deny` disent ce qu'aucun
+  # élargissement ne doit lever — une règle `ask` est un refus VOULU dès qu'il n'y a personne pour
+  # répondre, c'est-à-dire à chaque session autonome.
+  while ((getline ligne < regles) > 0) {
+    if (ligne == "") continue
+    p = index(ligne, "\t")
+    if (p == 0) continue
+    if (substr(ligne, 1, p - 1) == "allow") allow[++n_allow] = substr(ligne, p + 1)
+    else voulu[++n_voulu] = substr(ligne, p + 1)
+  }
+}
 
 NF >= 3 {
   run = $1; iid = $2; outil = $3; cible = $4; formes = $5
@@ -439,6 +582,7 @@ NF >= 3 {
 
   if (outil == "Bash") {
     nb = segments(cible, seg)
+    decouvert = 0; par_regle = 0
     for (i = 1; i <= nb; i++) {
       v = verbe(seg[i])
       if (v == "") continue
@@ -452,7 +596,24 @@ NF >= 3 {
       if (!(v in cmd_ex)) cmd_ex[v] = cible
       if (!((v SUBSEP iid) in cmd_par)) cmd_ordre[v] = cmd_ordre[v] " " iid
       cmd_par[v, iid]++
+      # Le maillon nu, lui, se compte pour instruire : c'est LA liste des règles qui manquent.
+      # Deux exclusions, sans lesquelles cette liste enverrait élargir l'`allow` pour rien :
+      #  - un maillon visé par une règle `ask`/`deny` est un refus VOULU (personne pour approuver) ;
+      #  - un maillon qui porte un CHEMIN ABSOLU n'est pas un trou : sa forme relative, elle, serait
+      #    couverte (`.venv/Scripts/python.exe …`, `bash scripts/…`), et aucune règle de PRÉFIXE ne
+      #    pourra jamais borner un absolu. C'est une échappée — le geste est le prompt (§11.7,
+      #    quatrième forme), pas `settings.run.json`.
+      maillon = nettoie(seg[i])
+      if (maillon == "") continue
+      if (matche(maillon, voulu, n_voulu, 1)) { par_regle = 1; continue }
+      if (!matche(maillon, allow, n_allow, 0) && !chemin_hors(maillon)) {
+        decouvert = 1
+        if (!(v in nu_n)) nb_nu++
+        nu_n[v]++
+      }
     }
+    famille = par_regle ? "voulu" \
+      : (decouvert ? "trou" : (chemin_hors(cible) ? "chemin" : (formes != "" ? "forme" : "reste")))
   } else {
     k = outil (cible != "" ? " — " tronque(cible, 58) : "")
     if (!(k in autre_n)) nb_autre++
@@ -461,8 +622,18 @@ NF >= 3 {
     autre_par[k, iid]++
     # Le refus qui ne s'instruit pas (#229) : il vient du CLI, pas de la liste, et se reconnaît au
     # seul chemin visé. Le compter à part évite d'aller ajouter une règle qui ne servirait à rien.
-    if (outil ~ /^(Write|Edit|NotebookEdit|MultiEdit)$/ && cible ~ /(^|[\/\\])\.claude[\/\\]/) claude_n++
+    if (outil ~ /^(Write|Edit|NotebookEdit|MultiEdit)$/ && cible ~ /(^|[\/\\])\.claude[\/\\]/) {
+      claude_n++
+      famille = "claude"
+    } else if (!outil_couvert(outil)) {
+      famille = "trou"
+      if (!(outil in nu_n)) nb_nu++
+      nu_n[outil]++
+    } else {
+      famille = (chemin_hors(cible) ? "chemin" : (formes != "" ? "forme" : "reste"))
+    }
   }
+  fam_n[famille]++
 }
 
 END {
@@ -475,6 +646,45 @@ END {
     exit
   }
   printf "  %s session(s) · %s refus\n", sessions, total
+
+  # Le classement passe EN PREMIER : la question qu'on se pose en ouvrant cette sortie est « qu'est-ce
+  # qu'il faut en faire ? ». Les sections suivantes en sont le détail, pas la réponse.
+  if (n_allow == 0) {
+    print ""
+    print "  ⚠ Classement indisponible — aucune règle « allow » lue (scripts/orchestrate/settings.run.json,"
+    print "    .claude/settings.json). Le détail ci-dessous reste valable."
+  } else {
+    lib["chemin"] = "échappée de chemin"
+    lib["trou"]   = "trou d'allowlist"
+    lib["claude"] = "blocage dur .claude/"
+    lib["voulu"]  = "refus voulu (ask/deny)"
+    lib["forme"]  = "forme immatchable"
+    lib["reste"]  = "inclassé"
+    geste["chemin"] = "la cible sort du répertoire de travail → le prompt, jamais la liste"
+    geste["trou"]   = "un maillon qu'aucune règle ne couvre → settings.run.json"
+    geste["claude"] = "refus du CLI, en amont de la liste — rien ne le lèvera (#229)"
+    geste["voulu"]  = "une règle du dépôt le demande, personne ne peut approuver → rien"
+    geste["forme"]  = "saut de ligne, $(…), heredoc → l'outil Write (détail plus bas)"
+    geste["reste"]  = "aucune cause connue — à regarder à la main"
+    print ""
+    printf "── Ce qui les explique — un refus, une famille, un geste (%s règle(s) allow lues)\n", n_allow
+    n = tri(fam_n, cles)
+    for (i = 1; i <= n; i++) {
+      f = cles[i]
+      printf "  %3d  %s%3d %%  %s\n",
+        fam_n[f], pad(lib[f], 24), int(fam_n[f] * 100 / total + 0.5), geste[f]
+    }
+    print "       Ordre de décision : .claude/, refus voulu, trou d'allowlist, échappée de chemin,"
+    print "       forme — on ne conclut à l'échappée que si rien d'autre n'explique le refus."
+    print "       Les règles lues sont celles d'AUJOURD'HUI : sur un vieux run, « inclassé » dit"
+    print "       souvent « déjà instruit depuis ». C'est le dernier run qui se lit pour agir."
+    if (nb_nu > 0) {
+      print ""
+      print "  Maillons qu'aucune règle ne couvre — c'est CETTE liste-là qui s'instruit :"
+      n = tri(nu_n, cles)
+      for (i = 1; i <= n; i++) printf "    %3d  %s\n", nu_n[cles[i]], cles[i]
+    }
+  }
 
   print ""
   print "── Par outil"
@@ -589,8 +799,22 @@ commande_refus() {
 $dirs
 EOF
 
+  # Les règles de l'`allow` que le classement rejoue — UNION des deux fichiers, parce que c'est le
+  # régime réel d'une session autonome (§11.7) : `settings.run.json` n'a jamais redupliqué les verbes
+  # git/glab du dépôt, et les ignorer rangerait chaque `git status` refusé en trou d'allowlist.
+  # Le fichier va dans le temporaire du système et non sous `.maestro/` : c'est un brouillon de
+  # calcul que personne n'ouvre, et la règle de §8.5 ne vise que ce qu'un script invite à lire.
+  local regles f bloc
+  regles="$(mktemp "${TMPDIR:-/tmp}/maestro-allow.XXXXXX" 2>/dev/null)" || regles=""
+  if [ -n "$regles" ]; then
+    trap 'rm -f "$regles" 2>/dev/null' RETURN
+    for f in "$SETTINGS_RUN" "$SETTINGS_DEPOT"; do
+      for bloc in allow ask deny; do bloc_de "$f" "$bloc"; done
+    done | sort -u > "$regles"
+  fi
+
   # LC_ALL=C : le tri et les comptes se font sur des octets, comme partout ailleurs dans ce dépôt.
-  printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" "$AWK_AGREGE"
+  printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" -v regles="$regles" "$AWK_AGREGE"
   return 0
 }
 

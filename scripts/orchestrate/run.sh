@@ -1643,6 +1643,16 @@ lance_session() {
 # buté sur un `glab mr create --description` multi-ligne, puis sur le `--description "$(cat …)"` par
 # lequel elles essayaient de s'en sortir. D'où le renvoi vers l'outil `Write` : un fichier s'écrit
 # avec lui, et c'est son CHEMIN qui entre dans la commande.
+#
+# Onze runs de plus encore (#307), et la NATURE du refus a changé sans que le compte baisse : les
+# sept commandes les plus refusées sont désormais toutes dans l'`allow`, et ce qui les fait tomber
+# est la CIBLE — 9 refus sur 12 du dernier run complet sont des échappées de chemin. Le prompt ne
+# pouvait pas s'en tenir à « reste en relatif » : une session écrit forcément des fichiers de travail
+# quelque part, et les deux endroits qu'elle connaît (son répertoire temporaire, `/tmp`) sont hors du
+# répertoire de travail. Il lui en DÉSIGNE donc un dans son worktree — `.maestro/session/`, monté par
+# `worktree.sh` —, sans quoi la consigne n'aurait fait qu'interdire. Il donne au passage la seule
+# forme qui pose une variable sans tomber : `env VAR=… <commande>`, un préfixe nu n'étant matchable
+# par aucune règle (§11.7).
 prompt_ticket() {
   cat <<PROMPT
 Tu traites intégralement le ticket GitLab #$1 de ce dépôt, seul et sans supervision humaine.
@@ -1667,7 +1677,13 @@ Règles de ce run autonome :
   commencer par « cd », et appelle les scripts du dépôt en chemin RELATIF (« bash
   scripts/gitlab/lib.sh … ») sans préfixe de variable d'environnement devant l'interpréteur —
   sous ces deux formes-là, la règle qui autorise la commande ne la reconnaît plus et l'appel est
-  refusé sans que personne soit là pour l'approuver.
+  refusé sans que personne soit là pour l'approuver. Pour poser quand même une variable, écris
+  « env VAR=valeur <commande> » : cette forme-là est autorisée, « VAR=valeur <commande> » non.
+- TOUT CHEMIN ABSOLU est refusé, même vers ton propre worktree : c'est la cause n°1 des refus
+  (9 sur 12 du dernier run). Tes fichiers de travail — description de MR, corps de commentaire,
+  sortie intermédiaire que tu veux relire — s'écrivent dans « .maestro/session/ », qui existe déjà
+  dans ton worktree et est gitignoré. N'écris ni dans « /tmp », ni dans le répertoire temporaire
+  de la session : ils sont hors du répertoire de travail, donc illisibles pour toi ensuite.
 - Trois formes qu'AUCUNE règle ne peut reconnaître, quelle que soit la commande qu'elles habillent
   et même si elle est autorisée : un SAUT DE LIGNE dans la commande, une SUBSTITUTION \$(…), un
   HEREDOC (« <<'EOF' »). Tiens donc chaque appel sur UNE SEULE LIGNE, et n'y fais entrer aucun
