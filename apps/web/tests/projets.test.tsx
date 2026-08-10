@@ -15,6 +15,15 @@
  *
  * Les tests Python de la phase sont différés au lot 8 (#220) ; ceux-ci suivent
  * la convention de la Phase 6 — le composant arrive avec les siens.
+ *
+ * Les deux derniers `describe` sont le lot 6 de #276 (#282) et couvrent #278,
+ * livré sans tests côté écran : le **sélecteur natif** et les **points
+ * d'entrée**. Ce qui s'y mesure est moins l'ouverture d'une fenêtre que
+ * l'absence de cul-de-sac dans les cinq façons dont elle peut ne pas s'ouvrir —
+ * indisponible, annulée, refusée, non déclarable, injoignable. C'est en
+ * l'écrivant qu'est apparu le défaut corrigé au passage dans
+ * `ExplorateurDossiers.ouvrir` : le motif d'un dossier non déclarable était
+ * posé, puis **effacé par le succès de l'ouverture** qui suivait.
  */
 
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -23,6 +32,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ListeProjets } from "@/components/projets/ListeProjets";
 import { ErreurProjet } from "@/lib/api";
+import type { ChoixSelecteur, DisponibiliteSelecteur } from "@/lib/types";
 import {
   cheminEnfant,
   motifsDepuisTexte,
@@ -37,6 +47,8 @@ const chargerExplorateur = vi.fn();
 const creerProjet = vi.fn();
 const modifierProjet = vi.fn();
 const supprimerProjet = vi.fn();
+const chargerDisponibiliteSelecteur = vi.fn();
+const ouvrirSelecteurNatif = vi.fn();
 
 // `importOriginal` plutôt qu'un objet nu : `ErreurProjet` doit rester **la**
 // classe du module, sinon le `instanceof` qui distingue un refus motivé d'une
@@ -52,6 +64,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     modifierProjet: (id: string, declaration: unknown) =>
       modifierProjet(id, declaration),
     supprimerProjet: (id: string) => supprimerProjet(id),
+    chargerDisponibiliteSelecteur: () => chargerDisponibiliteSelecteur(),
+    ouvrirSelecteurNatif: (depart: string | null) => ouvrirSelecteurNatif(depart),
   };
 });
 
@@ -70,6 +84,18 @@ function pageProjets() {
   });
 }
 
+/**
+ * Le sélecteur natif **indisponible** par défaut : c'est l'état de la plupart
+ * des tests de ce fichier, qui n'en parlent pas, et celui d'un backend distant.
+ * Chaque test du sélecteur pose le sien.
+ */
+function selecteurIndisponible(
+  motif = "selecteur-hors-poste",
+  message = "Backend distant : le dialogue de l'OS s'ouvrirait sur le serveur.",
+): DisponibiliteSelecteur {
+  return { disponible: false, motif, message, outil: null };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   chargerProjets.mockResolvedValue([]);
@@ -77,6 +103,13 @@ beforeEach(() => {
   creerProjet.mockResolvedValue(projetFactice());
   modifierProjet.mockResolvedValue(projetFactice());
   supprimerProjet.mockResolvedValue(undefined);
+  chargerDisponibiliteSelecteur.mockResolvedValue(selecteurIndisponible());
+  ouvrirSelecteurNatif.mockResolvedValue({
+    annule: true,
+    chemin: null,
+    racine_valide: false,
+    refus: null,
+  });
 });
 
 /** La page rendue, une fois le premier chargement passé. */
@@ -343,6 +376,191 @@ describe("l'explorateur rendu dans le formulaire de projet (#312)", () => {
 
     expect(chargerExplorateur).toHaveBeenLastCalledWith("D:/depots");
     expect(creerProjet).not.toHaveBeenCalled();
+  });
+});
+
+describe("le sélecteur de dossier natif (#278)", () => {
+  /** Le sélecteur ouvrable, et le dialogue qui rendra `choix`. */
+  function selecteurOuvrable(choix: Partial<ChoixSelecteur> = {}) {
+    chargerDisponibiliteSelecteur.mockResolvedValue({
+      disponible: true,
+      motif: null,
+      message: "Le dialogue de dossier de votre poste peut être ouvert.",
+      outil: "powershell",
+    });
+    ouvrirSelecteurNatif.mockResolvedValue({
+      annule: false,
+      chemin: "D:/projets/depensio",
+      racine_valide: true,
+      refus: null,
+      ...choix,
+    });
+  }
+
+  const bouton = () =>
+    screen.queryByRole("button", { name: /Parcourir sur mon poste/ });
+
+  it("propose le dialogue du poste quand le backend peut l'ouvrir", async () => {
+    selecteurOuvrable();
+    const utilisateur = userEvent.setup();
+    await formulaireAvecExplorateur(utilisateur);
+
+    await waitFor(() => expect(bouton()).toBeInTheDocument());
+  });
+
+  it("dit pourquoi, plutôt que d'offrir un bouton mort, en mode serveur", async () => {
+    // Le troisième critère de #278 : un backend distant ouvrirait sa fenêtre
+    // sur le serveur, devant personne. Un bouton ferait croire à une panne, un
+    // silence ferait croire que la fonction n'existe pas.
+    const utilisateur = userEvent.setup();
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+
+    expect(
+      await within(explorateur).findByText(/le dialogue de l'OS s'ouvrirait/i),
+    ).toBeInTheDocument();
+    expect(bouton()).not.toBeInTheDocument();
+  });
+
+  it("garde la saisie d'un chemin comme repli, disponible ou non", async () => {
+    // Le repli qui marche partout, y compris en mode serveur : c'est l'API qui
+    // vérifie le chemin, jamais le navigateur. Sans lui, un poste sans dialogue
+    // natif serait revenu au cul-de-sac que ce lot ferme.
+    const utilisateur = userEvent.setup();
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+
+    expect(
+      within(explorateur).getByLabelText("Aller à un chemin absolu"),
+    ).toBeInTheDocument();
+  });
+
+  it("choisit directement un dossier déclarable", async () => {
+    selecteurOuvrable();
+    const utilisateur = userEvent.setup();
+    await formulaireAvecExplorateur(utilisateur);
+    await waitFor(() => expect(bouton()).toBeInTheDocument());
+
+    await utilisateur.click(bouton()!);
+
+    expect(await screen.findByText(/Racine déclarée/)).toHaveTextContent(
+      "D:/projets/depensio",
+    );
+  });
+
+  it("ouvre l'explorateur sur un dossier lisible mais non déclarable, motif affiché", async () => {
+    // La troisième issue, et la seule qui demandait une décision : un `D:/`
+    // choisi au dialogue est lisible et non déclarable. Le traiter en erreur
+    // renverrait à zéro ; on affiche le motif et on ouvre l'explorateur
+    // **dessus**, de quoi descendre d'un cran.
+    selecteurOuvrable({
+      chemin: "D:/",
+      racine_valide: false,
+      refus: {
+        motif: "racine-de-disque",
+        message: "Une racine de disque ne peut pas être un projet.",
+      },
+    });
+    const utilisateur = userEvent.setup();
+    await formulaireAvecExplorateur(utilisateur);
+    await waitFor(() => expect(bouton()).toBeInTheDocument());
+
+    await utilisateur.click(bouton()!);
+
+    expect(await screen.findByText(/racine de disque/i)).toBeInTheDocument();
+    await waitFor(() => expect(chargerExplorateur).toHaveBeenLastCalledWith("D:/"));
+  });
+
+  it("ne touche à rien quand la fenêtre est fermée", async () => {
+    // Annuler est un geste normal : ni racine posée, ni refus affiché, ni
+    // explorateur déplacé — sans quoi fermer la fenêtre par réflexe punirait.
+    selecteurOuvrable({ annule: true, chemin: null, racine_valide: false });
+    const utilisateur = userEvent.setup();
+    await formulaireAvecExplorateur(utilisateur);
+    await waitFor(() => expect(bouton()).toBeInTheDocument());
+    const lectures = chargerExplorateur.mock.calls.length;
+
+    await utilisateur.click(bouton()!);
+
+    expect(screen.queryByText(/Racine déclarée/)).toBeNull();
+    expect(screen.getByText("aucun dossier choisi")).toBeInTheDocument();
+    expect(chargerExplorateur).toHaveBeenCalledTimes(lectures);
+  });
+
+  it("montre le motif d'un empêchement au lieu de laisser le clic sans effet", async () => {
+    selecteurOuvrable();
+    ouvrirSelecteurNatif.mockRejectedValue(
+      new ErreurProjet(
+        "selecteur-en-cours",
+        "Un dialogue de dossier est déjà ouvert.",
+      ),
+    );
+    const utilisateur = userEvent.setup();
+    await formulaireAvecExplorateur(utilisateur);
+    await waitFor(() => expect(bouton()).toBeInTheDocument());
+
+    await utilisateur.click(bouton()!);
+
+    // Le bandeau porte les trois choses d'un refus (EF-38) : la phrase du
+    // backend, le geste qui en sort, et le motif brut affiché tel quel.
+    const bandeau = await screen.findByRole("alert");
+    expect(bandeau).toHaveTextContent("Un dialogue de dossier est déjà ouvert.");
+    expect(bandeau).toHaveTextContent("selecteur-en-cours");
+  });
+
+  it("reste un explorateur utilisable quand la disponibilité est injoignable", async () => {
+    // L'état du sélecteur n'est pas une dépendance de l'explorateur : son échec
+    // retombe sur « pas de bouton », pas sur une panne d'écran.
+    chargerDisponibiliteSelecteur.mockRejectedValue(new Error("réseau"));
+    const utilisateur = userEvent.setup();
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+
+    expect(await within(explorateur).findByText("depensio")).toBeInTheDocument();
+    expect(bouton()).not.toBeInTheDocument();
+  });
+});
+
+describe("les points d'entrée de l'explorateur (#278)", () => {
+  it("dit d'où vient chaque dossier proposé à l'arrivée", async () => {
+    // La frontière s'est élargie aux volumes du poste : sans son origine, la
+    // page d'entrée serait une liste de chemins sans hiérarchie de sens, où
+    // « D:/ » et « le dossier où je range mes dépôts » se ressembleraient.
+    chargerExplorateur.mockResolvedValue(
+      pageExplorateurFactice({
+        chemin: null,
+        parent: null,
+        racines: ["C:/"],
+        dossiers: [
+          dossierFactice({
+            nom: "moi",
+            chemin: "C:/Users/moi",
+            origine: "utilisateur",
+          }),
+          dossierFactice({
+            nom: "depots",
+            chemin: "D:/depots",
+            origine: "recent",
+          }),
+          dossierFactice({ nom: "D:/", chemin: "D:/", origine: "volume" }),
+        ],
+      }),
+    );
+    const utilisateur = userEvent.setup();
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+
+    expect(await within(explorateur).findByText("dossier utilisateur")).toBeInTheDocument();
+    expect(within(explorateur).getByText("récent")).toBeInTheDocument();
+    expect(within(explorateur).getByText("disque")).toBeInTheDocument();
+  });
+
+  it("n'étiquette pas les sous-dossiers d'un dossier ouvert", async () => {
+    // `origine` est propre à la page d'entrée (elle est `null` ailleurs) :
+    // l'afficher partout ferait passer une raison d'être proposé pour une
+    // propriété du dossier.
+    const utilisateur = userEvent.setup();
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+    await within(explorateur).findByText("depensio");
+
+    expect(within(explorateur).queryByText("dossier utilisateur")).toBeNull();
+    expect(within(explorateur).queryByText("disque")).toBeNull();
   });
 });
 

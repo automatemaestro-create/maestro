@@ -1,9 +1,12 @@
 # Projets, ressources locales et poste de travail — cadrage (ticket #215)
 
-**Version :** 1.0
-**Date :** 4 août 2026
+**Version :** 1.1
+**Date :** 4 août 2026 *(dette du §2.3 soldée le 10 août 2026, #282)*
 **Statut :** cadrage **tranché** — les sept décisions D1 à D7 ont été rendues le 2026-08-04 (§8),
 conformes aux recommandations ci-dessous ; les **milestones des Phases 7 à 9 sont créés** (#218).
+La **dette du §2.3** (« les coûts, le Kanban et le journal se filtrent par projet — ce qu'ils ne
+savent pas faire ») est **soldée** par le chantier #276, et une ligne du §4.4 — le **sélecteur de
+dossier natif** — a été prise en avance sur la Phase 9 (#278).
 
 Ce document répond à quatre questions posées le 2026-08-04, **posées comme questions et
 traitées comme telles** : pour chacune, l'état réel du code, les options, une
@@ -97,12 +100,29 @@ lui manque ce qui la relie au disque :
 }
 ```
 
-Conséquences en chaîne, toutes petites prises une à une :
+Conséquences en chaîne, toutes petites prises une à une — **les trois sont livrées** :
 
-- **RUN et TASK portent un `projet_id`** — la Control Tower devient multi-projets (§6) ;
+- **RUN et TASK portent un `projet_id`** — la Control Tower devient multi-projets (§6). *Livré
+  #222.*
 - **le workspace d'une tâche cesse d'être anonyme** : il est dérivé de la racine du projet au
-  lieu d'être un `mkdtemp()` sans lien ;
-- **les coûts, le Kanban et le journal se filtrent par projet** — ce qu'ils ne savent pas faire.
+  lieu d'être un `mkdtemp()` sans lien. *Livré #224.*
+- **les coûts, le Kanban et le journal se filtrent par projet** — ce qu'ils ne savaient pas faire.
+  *Livré par le chantier #276 (Control Tower v3)*, et plus largement que cette ligne ne le
+  demandait : le projet n'est pas devenu un **filtre** de plus, il est devenu le **cadre** de tous
+  les écrans. L'API refuse une lecture qui ne dit pas sur quel projet elle porte (#277), on entre
+  dans la Control Tower **par** un projet (#279), on en change au shell plutôt que par une entrée
+  de menu (#280), et chaque écran — tâches, coûts, validations, journal, flux temps réel — ne
+  montre que le projet actif (#281). Ce qui reste **global** est nommé et justifié dans
+  [docs/05 §2.0](./05-interface-control-tower.md) : le parc d'agents, le catalogue, les playbooks,
+  le chat et les paramètres du poste.
+
+> **La dette de cette section est donc soldée.** Ce qu'elle annonçait sans le livrer — « la
+> Control Tower devient multi-projets », « les coûts, le Kanban et le journal se filtrent par
+> projet » — est en place, spécifié dans [docs/05 §2.0, §2.0.1 et §6.0](./05-interface-control-tower.md)
+> et couvert par [`tests/test_appartenance_projet.py`](../tests/test_appartenance_projet.py). Un
+> corollaire à connaître : un run publié **sans projet** (`maestro-run --publier`, qui n'a pas
+> d'option de rattachement) n'apparaît sur l'écran d'aucun projet — seule la vue transverse le
+> montre. Le rattacher à la déclaration d'un objectif viendra avec la **Phase 8** (§3.2).
 
 ### 2.4 Le patron d'écriture : jamais dans le répertoire de l'utilisateur en direct
 
@@ -268,12 +288,26 @@ le persona principal — le fondateur qui ne code pas ([docs/00 §3.1](./00-cahi
 |---|---|
 | **Installation en un double-clic** pour un profil non technique | clone Git + Python + Node + `.env` — le persona principal est exclu |
 | **Cycle de vie du backend** : démarrage, arrêt, ports, redémarrage après plantage | un script shell et deux terminaux à ne pas fermer |
-| **Sélecteur de dossier natif**, glisser-déposer de documents | explorateur servi par l'API à écrire (faisable, §4.3) |
+| Glisser-déposer de documents, et le **dialogue natif en mode serveur** | le **sélecteur natif est livré** (#278) quand le backend tourne sur le poste — voir ci-dessous |
 | **Mises à jour** applicatives | `git pull` |
 | Notifications système, ouverture dans l'éditeur/l'explorateur | absent |
 
 Concrètement, une application Tauri est **une fenêtre native qui affiche le site web local** et
 démarre le backend en arrière-plan : la même interface, dans une fenêtre au lieu d'un onglet.
+
+> **Une ligne de ce tableau a été prise en avance** (#278, lot 2 de #276). Le sélecteur de dossier
+> natif y figurait comme un apport du bureau ; il n'avait en fait pas besoin de l'enveloppe, parce
+> que le raisonnement portait sur le **navigateur** (qui ne livre jamais de chemin absolu) alors
+> que la contrainte est celle du **backend** — et lui tourne déjà sur le poste. Il ouvre donc le
+> dialogue de l'OS et rend un vrai chemin, sans rien attendre de la Phase 9
+> ([docs/05 §2.7.2](./05-interface-control-tower.md)).
+>
+> Ce qui **reste** au bureau, et pourquoi ce n'est pas la même chose : le **glisser-déposer** de
+> documents (une capacité de la fenêtre, pas du backend — un navigateur ne donne pas le chemin de
+> ce qu'on lui dépose), et le cas du **backend distant**, où aucun dialogue local n'a de sens et
+> où l'explorateur servi par l'API reste la seule voie. La leçon est à garder pour les autres
+> lignes : la question n'est pas « le bureau apporterait-il ceci ? » mais « qu'est-ce qui, ici,
+> dépend vraiment de la fenêtre ? ».
 
 ### 4.5 Les options
 
@@ -336,7 +370,7 @@ après.
 | [01 — Architecture](./01-architecture-technique.md) | L'espace de travail d'une tâche est dérivé d'un **projet**, pas d'un `mkdtemp()` |
 | [02 — Stack](./02-stack-technique.md) | Extraction de documents, empaquetage de bureau (Tauri/Electron/lanceur), SQLite *vs* PostgreSQL selon le mode |
 | [03 — Modèle de données](./03-modele-de-donnees.md) | PROJECT enrichie (racine, périmètre, vcs), SOURCE ajoutée, `projet_id` sur TASK/RUN |
-| [05 — Control Tower](./05-interface-control-tower.md) | Écran **Projets**, composition d'un objectif avec sources, validation du **brief**, application d'un diff |
+| [05 — Control Tower](./05-interface-control-tower.md) | Écran **Projets**, composition d'un objectif avec sources, validation du **brief**, application d'un diff. *Depuis #276, le projet y est devenu le **cadre** de tous les écrans (§2.0, §2.0.1) et non un écran de plus, et le choix du dossier ne se limite plus au dossier utilisateur (§2.7.2)* |
 | [06 — Roadmap](./06-roadmap.md) | **Phases 7 à 9** planifiées avec leurs fenêtres (§7 ci-dessous), milestones créés par #218 ; Phase 10 à confirmer |
 | [17 — Isolation](./17-isolation-execution.md) | Le contrat du conteneur gagnera un **second montage** (le projet) |
 | [19 — Sécurité](./19-securite-modele-de-menace.md) | Le **projet de l'utilisateur** devient un actif ; menaces de §2.5 |

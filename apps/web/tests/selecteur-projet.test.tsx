@@ -17,6 +17,13 @@
  *   `shell.test.tsx` ; l'assertion est ici pour que le lot porte la sienne, sur
  *   le même principe : rien ne remarquerait qu'un emplacement de la barre
  *   supérieure a cessé d'être rempli.
+ *
+ * Le lot 6 (#282) y a ajouté les trois cas que le lot 4 avait laissés : la
+ * fermeture par **clic à l'extérieur** (le geste le plus courant, et le seul
+ * qui passe par un écouteur du document), le sélecteur **sans projet actif**
+ * (il ne rend rien, plutôt que d'ouvrir une seconde porte d'entrée à côté de
+ * celle de #279) et le poste **à un seul projet**, où il n'y a rien vers quoi
+ * basculer mais où la gestion doit rester atteignable.
  */
 
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -164,6 +171,62 @@ describe("le sélecteur de projet (SelecteurProjet)", () => {
     expect(bouton).toHaveAttribute("aria-expanded", "false");
     await utilisateur.click(bouton);
     expect(bouton).toHaveAttribute("aria-expanded", "true");
+  });
+
+  // --- Trous du lot 4, comblés par le lot 6 (#282) -------------------------
+
+  it("se ferme sur un clic à l'extérieur", async () => {
+    // Le second des deux gestes de fermeture. Échap était couvert, pas
+    // celui-ci — pourtant le plus courant, et le seul qui passe par un
+    // écouteur posé sur le document (donc le seul qui puisse fuir au
+    // démontage).
+    const utilisateur = userEvent.setup();
+    await monterSelecteur();
+    await ouvrirMenu(utilisateur);
+
+    await utilisateur.click(document.body);
+
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  });
+
+  it("ne montre rien tant qu'aucun projet n'est actif", async () => {
+    // Le parti pris du composant : `null` plutôt qu'un état « aucun projet ».
+    // Un sélecteur qui proposerait de choisir serait une **seconde porte
+    // d'entrée** à côté de celle de #279, avec deux façons de rater la garde.
+    poserProjets([DEPENSIO, MAESTRO]);
+    window.localStorage.removeItem("maestro.projet.actif");
+    render(
+      <FournisseurProjetActif>
+        <SelecteurProjet />
+      </FournisseurProjetActif>,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /Projet actif/ })).toBeNull(),
+    );
+  });
+
+  it("reste utile avec un seul projet déclaré", async () => {
+    // Le cas d'un poste qui débute — il n'y a rien vers quoi basculer, et
+    // pourtant tout le reste doit tenir : le projet actif se lit, et la
+    // gestion (déclarer le suivant) s'atteint. Un menu qui se réduirait à sa
+    // seule ligne cochée serait un cul-de-sac au moment précis où l'on veut en
+    // ajouter un.
+    const utilisateur = userEvent.setup();
+    poserProjets([DEPENSIO]);
+    window.localStorage.setItem("maestro.projet.actif", DEPENSIO.id);
+    render(
+      <FournisseurProjetActif>
+        <SelecteurProjet />
+      </FournisseurProjetActif>,
+    );
+    await screen.findByRole("button", { name: /Projet actif : Dépensio/ });
+    const menu = await ouvrirMenu(utilisateur);
+
+    expect(within(menu).getAllByRole("menuitemradio")).toHaveLength(1);
+    expect(
+      within(menu).getByRole("menuitem", { name: /Gérer les projets/ }),
+    ).toBeInTheDocument();
   });
 });
 
