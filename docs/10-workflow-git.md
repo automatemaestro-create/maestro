@@ -2784,6 +2784,33 @@ prouve que deux tickets ont bien été en vol **au même instant** (un run séqu
 la barrière), et un pic de 1 prouve que deux tickets liés ne l'ont **jamais** été — là où une lecture
 d'après coup ne distingue pas « jamais ensemble » de « ensemble mais trop vite pour être vu ».
 
+**Et la mesure obéit à la même règle que ce qu'elle mesure** (#313). Le pic était d'abord tenu par un
+compteur **partagé** — un fichier lu, incrémenté, réécrit à l'entrée de chaque session, décrémenté à
+sa sortie. Deux commandes pour un lire-modifier-écrire : deux sessions qui arrivent ensemble lisent la
+même valeur, écrivent la même, et une incrémentation disparaît. Ce que la barrière rend **probable**,
+puisque c'est précisément son rôle de les faire arriver ensemble — d'où un pic plafonnant sous le
+nombre réel de sessions en vol, un `assert '2' == '3'` sous `-n auto`, vert dès que la machine est au
+repos. Le coût n'était pas dans ce test : le filet CI local et le pipeline jouant en parallèle, il
+rougissait **n'importe quelle MR** touchant `scripts/orchestrate/**`, sans rapport avec son contenu.
+Le compteur partagé a donc disparu : chaque session pose **son** marqueur d'entrée, compte les
+marqueurs présents et écrit **son** relevé dans **son** fichier, le maximum étant pris après coup côté
+Python (`_pic`). Aucun fichier n'a deux écrivains, donc aucune course ne peut fausser la mesure, et le
+relevé reste un **pic** et non un compte final : il est pris juste après une arrivée, l'instant où le
+maximum d'un ensemble d'intervalles est toujours atteint — et **avant** de signaler la sienne, pour
+qu'aucune des sessions déjà là n'ait pu repartir. (Le passage dans `vus.txt` reste, lui, un `>>`
+partagé : une ligne courte ouverte en `O_APPEND` est indivisible, là où un lire-modifier-écrire
+réparti sur deux commandes ne peut jamais l'être.)
+
+La même correction ferme la **seconde** voie vers le même symptôme, qu'un compteur juste n'aurait pas
+suffi à écarter : la barrière renonçait au bout de 15 s, quand le montage des worktrees est sérialisé
+et qu'une machine chargée peut lancer la dernière session après que les premières ont abandonné — pic
+légitimement bas, test rouge, produit correct. Le garde-fou passe à 45 s (il ne coûte rien tant que la
+barrière se lève) et une session qui renonce le **dit** : `_pic` refuse alors de rendre un chiffre et
+nomme les sessions concernées, plutôt que de laisser une mesure non concluante passer pour un verdict
+sur le code. Ce délai reste borné par le `timeout` du sous-processus, qui doit couvrir N sessions y
+renonçant l'une après l'autre — sans quoi une vraie régression de l'ordonnanceur sortirait en
+`TimeoutExpired`, le seul échec de ce fichier qui ne dise pas ce qu'il a constaté.
+
 Deux morceaux sont restés **dans leur lot** plutôt que de rejoindre celui-ci, pour la seule raison qui
 vaille — ils ne se simulent pas : l'**arrêt** de N sessions (#291, de vrais processus qu'on tue, dont
 on observe le *battement* et non un `kill -0` qui répond encore « vivant » à un zombie) et l'**attente

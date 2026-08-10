@@ -266,7 +266,11 @@ class Depot:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=120,
+            # Filet contre un script bloqué, pas une mesure : il doit couvrir le pire cas légitime,
+            # soit les quatre sessions d'un test de concurrence renonçant l'une après l'autre à leur
+            # barrière de 45 s (#313). En deçà, une vraie régression de l'ordonnanceur sortirait en
+            # `TimeoutExpired` — le seul échec de ce fichier qui ne dise pas ce qu'il a constaté.
+            timeout=240,
         )
 
 
@@ -4042,7 +4046,10 @@ def test_maestro_sync_main_a_zero_eteint_l_etape(depot: Depot) -> None:
 # contrainte de plus, propre à la concurrence : **ce qui doit être simultané l'est par une BARRIÈRE,
 # jamais par un `sleep`**. Chaque session bouchon signale son arrivée puis attend celle des autres.
 # Sans cela, « deux tickets en vol » serait une course que la charge de la machine tranche, et le
-# test dirait tantôt le code, tantôt l'ordonnancement du système.
+# test dirait tantôt le code, tantôt l'ordonnancement du système. Et la **mesure** obéit à la même
+# règle que ce qu'elle mesure (#313) : aucun état partagé, chaque session n'écrivant que ses propres
+# fichiers — un compteur commun, lu puis réécrit, perdait une incrémentation dès que deux sessions
+# arrivaient ensemble, soit précisément ce que la barrière provoque.
 
 
 def _plan_groupes(depot: Depot, lignes: list[tuple[int, int, str, str, str]]) -> str:
@@ -4068,8 +4075,9 @@ def _stub_barriere(depot: Depot, iids: tuple[int, ...], *, apres: str = "") -> s
 
     C'est ce qui rend « N en vol en même temps » observable sans dépendre d'un `sleep` : la première
     session ne peut pas se solder avant que la dernière soit partie, donc le pilote a forcément eu
-    ses N créneaux occupés. Le bouchon note aussi son passage (`vus.txt`) et le nombre maximal
-    d'arrivées simultanées (`pic.txt`), les deux mesures dont les tests d'ordonnancement se servent.
+    ses N créneaux occupés. Le bouchon note aussi son passage (`vus.txt`) et son relevé de
+    simultanéité (`pic-<iid>`, agrégé par `_pic`), les deux mesures dont les tests d'ordonnancement
+    se servent.
     """
     attente = " ".join(f'[ -e "$MAESTRO_FIXTURES/arrivee-{i}" ] &&' for i in iids)
     gabarit = _statut_json("$iid", "En revue")
@@ -4080,25 +4088,65 @@ def _stub_barriere(depot: Depot, iids: tuple[int, ...], *, apres: str = "") -> s
         iid="$(printf '%s\\n' "$@" | grep -oE 'ticket (GitLab )?#[0-9]+' | head -1 |
                grep -oE '[0-9]+$')"
         printf '%s\\n' "$iid" >> "$MAESTRO_FIXTURES/vus.txt"
+        # Le pic de simultanéité, mesuré par les sessions elles-mêmes — c'est la seule façon de
+        # constater qu'on N'A JAMAIS eu deux tickets liés en vol : une lecture d'après coup ne
+        # distingue pas « jamais ensemble » de « ensemble mais vite ». Chaque session pose SON
+        # marqueur d'entrée, compte les marqueurs présents et écrit ce relevé dans SON fichier ;
+        # aucun fichier n'a deux écrivains, et `_pic` prend le maximum après coup (#313). Le
+        # compteur partagé d'avant — lu puis réécrit en deux commandes — perdait une incrémentation
+        # dès que deux sessions arrivaient ensemble, c'est-à-dire exactement ce que la barrière rend
+        # probable : le pic plafonnait sous le nombre réel de sessions en vol, et le test disait
+        # l'ordonnancement de la machine plutôt que le code.
+        : > "$MAESTRO_FIXTURES/en-vol-$iid"
+        printf '%s' "$(set -- "$MAESTRO_FIXTURES"/en-vol-*; printf '%s' "$#")" \\
+          > "$MAESTRO_FIXTURES/pic-$iid"
+        # Relevé pris AVANT de signaler son arrivée : les sessions déjà là attendent encore la
+        # nôtre, donc aucune n'a pu retirer son marqueur. La dernière arrivée voit ainsi tout le
+        # monde — et le pic d'un ensemble d'intervalles est toujours atteint juste après une
+        # arrivée, donc ces N relevés suffisent à le tenir.
         : > "$MAESTRO_FIXTURES/arrivee-$iid"
-        # Le pic de simultanéité, mesuré par les sessions elles-mêmes : un compteur incrémenté à
-        # l'entrée, décrémenté à la sortie, dont on garde le maximum. C'est la seule façon de
-        # constater qu'on N'A JAMAIS eu deux tickets liés en vol — une lecture d'après coup ne
-        # distingue pas « jamais ensemble » de « ensemble mais vite ».
-        n=$(( $(cat "$MAESTRO_FIXTURES/vol" 2>/dev/null || echo 0) + 1 ))
-        printf '%s' "$n" > "$MAESTRO_FIXTURES/vol"
-        [ "$n" -gt "$(cat "$MAESTRO_FIXTURES/pic.txt" 2>/dev/null || echo 0)" ] &&
-          printf '%s' "$n" > "$MAESTRO_FIXTURES/pic.txt"
-        for _ in $(seq 1 300); do
-          {attente} break
+        # 45 s (900 × 0,05) : la barrière est un garde-fou contre un blocage réel, pas une fenêtre
+        # de tir. Trop courte — 15 s avant #313 —, elle fait sortir la première session avant que la
+        # dernière soit lancée sur une machine chargée, le montage des worktrees étant sérialisé :
+        # pic légitimement bas, test rouge, produit correct. Elle reste bornée par le `timeout` de
+        # `Depot.lance`, qui doit couvrir N sessions y renonçant l'une après l'autre — c'est ce qui
+        # arrive si le run redevient séquentiel pour de bon, et le test doit alors le DIRE. Une
+        # session qui renonce le signale (`abandon-<iid>`), sans quoi une mesure non concluante
+        # passerait pour un verdict.
+        attendu=1
+        for _ in $(seq 1 900); do
+          {attente} {{ attendu=0; break; }}
           sleep 0.05
         done
+        [ "$attendu" = 0 ] || : > "$MAESTRO_FIXTURES/abandon-$iid"
         {apres}
         printf '%s' '{gabarit}' > "$MAESTRO_FIXTURES/owner-$iid.json"
-        printf '%s' "$(( $(cat "$MAESTRO_FIXTURES/vol") - 1 ))" > "$MAESTRO_FIXTURES/vol"
+        rm -f "$MAESTRO_FIXTURES/en-vol-$iid"
         printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}\\n'
         exit 0
     """)
+
+
+def _pic(depot: Depot) -> int:
+    """Le pic de simultanéité du run : le plus grand relevé qu'une session ait pris (#313).
+
+    Le maximum est pris ICI, une fois toutes les sessions sorties, et non tenu en vol par un
+    compteur partagé : côté bouchon il ne reste que des écritures à un seul auteur, seule forme
+    qu'aucune course ne peut fausser. (Le passage dans `vus.txt`, lui, reste un `>>` partagé —
+    une ligne courte ouverte en `O_APPEND`, indivisible, là où un lire-modifier-écrire réparti sur
+    deux commandes ne peut jamais l'être.)
+
+    Une barrière abandonnée invalide la mesure sans la rendre absurde : on le dit plutôt que de
+    laisser un pic trop bas passer pour un verdict sur le code.
+    """
+    abandons = sorted(p.name.removeprefix("abandon-") for p in depot.fixtures.glob("abandon-*"))
+    assert not abandons, (
+        f"barrière abandonnée par {abandons} : les sessions n'ont jamais été lancées ensemble "
+        "(machine surchargée ?) — la mesure du pic n'est pas concluante, et ce n'est pas un "
+        "verdict sur le code"
+    )
+    return max((int(p.read_text(encoding="utf-8")) for p in depot.fixtures.glob("pic-*")),
+               default=0)
 
 
 def _livrables(depot: Depot, iids: tuple[int, ...]) -> None:
@@ -4214,9 +4262,7 @@ def test_deux_tickets_independants_partent_vraiment_ensemble(depot: Depot) -> No
     r = depot.lance("run.sh", "--plan", plan, "--run-id", "duo", "--concurrence", "2",
                     env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, (130, 131))})
     assert r.returncode == 0, r.stdout + r.stderr
-    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "2", (
-        "les deux sessions doivent avoir été en vol au même instant"
-    )
+    assert _pic(depot) == 2, "les deux sessions doivent avoir été en vol au même instant"
 
 
 def test_jamais_deux_lots_du_meme_parent_hors_vague_en_vol(depot: Depot) -> None:
@@ -4232,7 +4278,7 @@ def test_jamais_deux_lots_du_meme_parent_hors_vague_en_vol(depot: Depot) -> None
     r = depot.lance("run.sh", "--plan", plan, "--run-id", "barriere", "--concurrence", "2",
                     env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
     assert r.returncode == 0, r.stdout + r.stderr
-    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "1", (
+    assert _pic(depot) == 1, (
         "deux vagues d'un même parent ne partent jamais ensemble, quelle que soit la concurrence"
     )
     assert [ligne[0] for ligne in _resume(depot.racine / ".maestro/orchestrate/barriere")] == \
@@ -4331,7 +4377,7 @@ def test_sans_l_option_le_run_reste_sequentiel_au_bit_pres(depot: Depot) -> None
     r = depot.lance("run.sh", "--plan", plan, "--run-id", "seq",
                     env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
     assert r.returncode == 0, r.stdout + r.stderr
-    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "1"
+    assert _pic(depot) == 1
     assert "tickets en vol" not in r.stdout, "aucun régime particulier à annoncer"
 
 
@@ -4368,7 +4414,7 @@ def test_un_plan_d_avant_la_colonne_groupe_retombe_en_sequentiel_en_le_disant(
                     env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
     assert r.returncode == 0, r.stdout + r.stderr
     assert "antérieur à la colonne « groupe »" in r.stdout
-    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "1"
+    assert _pic(depot) == 1
 
 
 # --- Lot 3 : la vue rend N tickets en vol, et c'est le pilote qui dessine (#290) ------------------
@@ -4632,7 +4678,7 @@ def test_une_reprise_rejoue_la_concurrence_du_run_coupe(depot: Depot) -> None:
     r = depot.lance("run.sh", "--resume", "20260803-120000", "--run-id", "meme-regime",
                     env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, iids)})
     assert r.returncode == 0, r.stdout + r.stderr
-    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "3", (
+    assert _pic(depot) == 3, (
         "la reprise doit repartir au régime du run coupé, pas au défaut de la ligne de commande"
     )
 
@@ -4651,7 +4697,7 @@ def test_une_concurrence_explicite_l_emporte_sur_celle_du_run_repris(depot: Depo
                     "--concurrence", "1",
                     env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
     assert r.returncode == 0, r.stdout + r.stderr
-    assert (depot.fixtures / "pic.txt").read_text(encoding="utf-8") == "1"
+    assert _pic(depot) == 1
 
 
 def test_un_run_ecrit_sa_concurrence_pour_celui_qui_le_reprendra(depot: Depot) -> None:
