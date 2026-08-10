@@ -53,6 +53,11 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 
 ## 3. Personas et cas d'usage
 
+> **Vue schématisée** : [docs/26](./26-schemas-cas-usage.md) rend en diagrammes ce que cette section
+> et le §4 décrivent en prose — acteurs et frontière du système, relations `«include»`/`«extend»`
+> entre cas d'usage, carte fonctionnelle adossée aux codes `EF-*`. Vue **dérivée** : aucune règle
+> n'y est décidée, c'est ce document-ci qui fait foi.
+
 ### 3.1 Personas
 
 - **Samyen — Fondateur / chef de projet (utilisateur principal).** Pilote le produit, n'a pas besoin d'écrire le code lui-même, veut superviser et arbitrer.

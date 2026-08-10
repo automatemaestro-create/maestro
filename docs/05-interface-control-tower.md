@@ -507,6 +507,11 @@ le promet pas.
 
 ## 3. Parcours utilisateur clés
 
+> Ces trois parcours sont **schématisés** dans [docs/26 §4 et §7](./26-schemas-cas-usage.md) — le
+> parcours A en diagramme de séquence (qui parle à qui, et où le run est en pause), B et C en
+> enchaînements d'écrans. Le cycle de vie d'une tâche, qui commande les colonnes du Kanban du §2.2,
+> y est au §6.
+
 ### Parcours A — De l'idée au livrable
 1. L'utilisateur saisit un objectif sur le tableau de bord.
 2. Le Chef de projet crée les tickets ; ils apparaissent dans le Kanban.
