@@ -271,6 +271,81 @@ describe("le choix de la racine (explorateur servi par l'API)", () => {
   });
 });
 
+describe("l'explorateur rendu dans le formulaire de projet (#312)", () => {
+  /**
+   * Le formulaire **prêt à partir** (nom + racine), explorateur rouvert.
+   *
+   * C'est la seule mise en scène où une soumission fautive se voit : tant que
+   * la racine manque, « Déclarer le projet » est désactivé et une `Entrée`
+   * égarée ne prouverait rien — le bug de #312 passerait au vert.
+   */
+  async function formulairePretExplorateurOuvert(
+    utilisateur: ReturnType<typeof userEvent.setup>,
+  ) {
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+    await utilisateur.click(
+      await within(explorateur).findByRole("button", {
+        name: "Choisir depensio",
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Déclarer le projet" }),
+    ).toBeEnabled();
+    await utilisateur.click(
+      screen.getByRole("button", { name: /Changer de dossier/ }),
+    );
+    return await screen.findByLabelText("Aller à un chemin absolu");
+  }
+
+  it("n'imbrique aucun <form> dans celui du formulaire", async () => {
+    // HTML interdit les `<form>` imbriqués : l'analyseur jette le formulaire
+    // interne du HTML rendu côté serveur alors que React le crée côté client,
+    // d'où l'erreur d'hydratation. Le composant est partagé — il doit rester
+    // rendable dans un formulaire comme hors d'un formulaire.
+    const utilisateur = userEvent.setup();
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+    await within(explorateur).findByText("depensio");
+
+    expect(explorateur.querySelector("form")).toBeNull();
+    expect(document.querySelectorAll("form")).toHaveLength(1);
+  });
+
+  it("ouvre le chemin saisi sur Entrée, sans déclarer le projet", async () => {
+    const utilisateur = userEvent.setup();
+    const barre = await formulairePretExplorateurOuvert(utilisateur);
+
+    await utilisateur.type(barre, "D:/depots{Enter}");
+
+    expect(chargerExplorateur).toHaveBeenLastCalledWith("D:/depots");
+    expect(creerProjet).not.toHaveBeenCalled();
+  });
+
+  it("ne déclare rien non plus sur une Entrée à vide", async () => {
+    // La soumission implicite du navigateur est coupée *avant* de regarder la
+    // saisie : sinon un champ vide laisserait passer `Entrée` jusqu'au
+    // formulaire porteur — le geste le plus banal des deux.
+    const utilisateur = userEvent.setup();
+    const barre = await formulairePretExplorateurOuvert(utilisateur);
+    const lectures = chargerExplorateur.mock.calls.length;
+
+    await utilisateur.type(barre, "{Enter}");
+
+    expect(creerProjet).not.toHaveBeenCalled();
+    expect(chargerExplorateur).toHaveBeenCalledTimes(lectures);
+  });
+
+  it("ouvre le chemin par le bouton « Aller », qui ne soumet rien non plus", async () => {
+    const utilisateur = userEvent.setup();
+    const barre = await formulairePretExplorateurOuvert(utilisateur);
+
+    await utilisateur.type(barre, "D:/depots");
+    await utilisateur.click(screen.getByRole("button", { name: "Aller" }));
+
+    expect(chargerExplorateur).toHaveBeenLastCalledWith("D:/depots");
+    expect(creerProjet).not.toHaveBeenCalled();
+  });
+});
+
 describe("un refus motivé (EF-38)", () => {
   it("montre le motif d'une racine refusée sans perdre la saisie ni la liste", async () => {
     chargerProjets.mockResolvedValue([projetFactice()]);
