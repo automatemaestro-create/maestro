@@ -21,7 +21,15 @@ second critère du ticket : les routes, leurs formes JSON et surtout leurs
    `../..` qui remonte trop haut, chemin relatif, racine déjà prise).
    **Jamais une liste vide, jamais un 500** : confondre « ce dossier n'a pas de
    sous-dossier » et « je refuse de regarder là » rend un explorateur
-   inutilisable.
+   inutilisable ;
+⑤ les **racines élargies et les points d'entrée** (#278), ajoutés par le lot 6
+   de #276 (#282) — le lot 2 avait lui aussi livré sans tests. Ce que #278
+   change n'est pas l'explorateur mais **jusqu'où** il a le droit de regarder
+   (la frontière, élargie aux volumes du poste) et **par où** il propose de
+   commencer (les points d'entrée, avec leur origine) : deux notions qui se
+   confondaient avant lui, et dont la séparation est tout le lot. L'invariant
+   qui les tient : élargir l'explorable n'ouvre **aucune** brèche dans EF-38, et
+   `MAESTRO_EXPLORATEUR_RACINES` reste une **restriction**.
 
 Ni réseau, ni Redis, ni Docker : l'app FastAPI tourne sur le bus mémoire via le
 TestClient de Starlette, sur un dépôt de projets jetable et des racines
@@ -57,6 +65,16 @@ def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     maison.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
     return maison
+
+
+@pytest.fixture()
+def maison(_maison_isolee: Path) -> Path:
+    """Le dossier utilisateur factice, sous un nom lisible en argument de test.
+
+    L'isolation est `autouse` (tout ce fichier en dépend) ; les tests des points
+    d'entrée (#278) ont en plus besoin de **savoir où elle est**.
+    """
+    return _maison_isolee
 
 
 @pytest.fixture()
@@ -611,3 +629,221 @@ def test_le_fichier_stocke_et_la_reponse_http_ont_la_meme_forme(
     )
 
     assert sur_disque == fiche
+
+
+# --- ⑤ Les racines élargies et les points d'entrée (#278) --------------------
+#
+# Le lot 2 de #276 a livré sans tests (tests différés → ce lot, #282). Ce qu'il
+# a changé n'est pas l'explorateur mais **jusqu'où** il a le droit de regarder,
+# et **par où** il propose de commencer — deux notions qui ne se recouvraient
+# pas avant lui et qu'il faut donc mesurer séparément.
+
+
+@pytest.fixture()
+def service_defaut(store: ProjetStore) -> ServiceProjets:
+    """Le service **sans** racines configurées : le cas par défaut, celui de #278.
+
+    Le `client` ci-dessus borne l'exploration à l'atelier — indispensable pour
+    ne pas dépendre du poste, mais c'est justement la branche que #278 ne
+    change pas. Les points d'entrée et les volumes ne s'observent que sur le
+    défaut, avec le dossier utilisateur factice posé par `_maison_isolee`.
+    """
+    return ServiceProjets(store)
+
+
+def _origines(service: ServiceProjets) -> dict[str, str]:
+    """Les points d'entrée indexés par chemin POSIX → origine."""
+    return {point.as_posix(): origine for point, origine in service.points_entree()}
+
+
+def test_la_frontiere_par_defaut_contient_les_volumes_du_poste(
+    service_defaut: ServiceProjets,
+) -> None:
+    """Le cul-de-sac que #278 ouvre : un projet sur `D:/` était inatteignable.
+
+    Le dossier utilisateur seul était la frontière, et la seule sortie était de
+    renseigner `MAESTRO_EXPLORATEUR_RACINES` — un réglage d'environnement pour
+    un geste d'écran. La frontière contient désormais les volumes ; sous POSIX
+    il n'y en a qu'un (`/`), qui **est** le volume.
+    """
+    racines = service_defaut.racines()
+
+    assert racines, "la frontière par défaut ne peut pas être vide"
+    assert any(
+        racine == Path(racine.anchor) for racine in racines
+    ), f"aucun volume dans {racines}"
+
+
+def test_la_frontiere_dedoublonne_par_contenance(service_defaut: ServiceProjets) -> None:
+    """Un volume avale le dossier utilisateur : le garder ferait lister deux fois le même arbre.
+
+    C'est la raison d'être de `points_entree` — sans ce dédoublonnage la
+    frontière serait redondante, avec lui elle se réduit au volume et ne peut
+    plus servir de page d'accueil.
+    """
+    racines = service_defaut.racines()
+
+    for racine in racines:
+        autres = tuple(a for a in racines if a != racine)
+        assert not any(
+            racine.is_relative_to(autre) for autre in autres
+        ), f"{racine} est contenue dans une autre racine"
+
+
+def test_les_points_d_entree_gardent_le_dossier_utilisateur_a_part(
+    service_defaut: ServiceProjets, maison: Path
+) -> None:
+    """La frontière se réduit au volume ; la page d'entrée, elle, garde l'utile.
+
+    Le test qui donne son sens au précédent : `racines()` et `points_entree()`
+    ont divergé avec #278, et confondre les deux rendrait l'écran inutilisable
+    (un seul point d'entrée `C:/` d'où redescendre tout l'arbre à chaque fois).
+    """
+    origines = _origines(service_defaut)
+
+    assert origines.get(maison.resolve().as_posix()) == "utilisateur"
+    assert "volume" in origines.values()
+
+
+def test_un_projet_declare_propose_son_dossier_et_son_parent(
+    service_defaut: ServiceProjets, maison: Path
+) -> None:
+    """Les origines `projet` et `recent`, et ce que « récent » veut dire ici.
+
+    `recent` est le **parent** du projet — le dossier où l'on range ses dépôts,
+    donc là où l'on déclarera le suivant. Ce n'est pas un historique de
+    navigation : rien n'est enregistré au clic, donc rien n'est à purger.
+    """
+    depots = _dossier(maison, "depots")
+    racine = _dossier(depots, "depensio")
+    service_defaut.creer(nom="Dépensio", racine=str(racine))
+
+    origines = _origines(service_defaut)
+
+    assert origines[racine.resolve().as_posix()] == "projet"
+    assert origines[depots.resolve().as_posix()] == "recent"
+
+
+def test_les_points_d_entree_sont_dans_l_ordre_d_affichage(
+    service_defaut: ServiceProjets, maison: Path
+) -> None:
+    """Utilisateur, récents, projets, volumes — du plus probable au dernier recours."""
+    service_defaut.creer(nom="Dépensio", racine=str(_dossier(maison / "depots", "depensio")))
+
+    origines = [origine for _, origine in service_defaut.points_entree()]
+
+    assert origines[0] == "utilisateur"
+    assert origines.index("recent") < origines.index("projet")
+    assert origines.index("projet") < origines.index("volume")
+
+
+def test_un_point_d_entree_n_est_jamais_propose_deux_fois(
+    service_defaut: ServiceProjets, maison: Path
+) -> None:
+    """Deux projets rangés au même endroit : un seul « récent », pas deux lignes identiques."""
+    depots = _dossier(maison, "depots")
+    service_defaut.creer(nom="Dépensio", racine=str(_dossier(depots, "depensio")))
+    service_defaut.creer(nom="Autre", racine=str(_dossier(depots, "autre")))
+
+    points = [point for point, _ in service_defaut.points_entree()]
+
+    assert len(points) == len(set(points))
+
+
+def test_les_racines_configurees_restent_une_restriction(
+    store: ProjetStore, atelier: Path
+) -> None:
+    """`MAESTRO_EXPLORATEUR_RACINES` **restreint**, il n'élargit pas — l'invariant de #278.
+
+    Les volumes ne sont proposés que là où la frontière est celle par défaut :
+    un point d'entrée est filtré sur la frontière, et une frontière configurée
+    ne contient pas les volumes. Sans ce filtre, élargir le défaut aurait
+    élargi *tout le monde*, y compris les postes qui s'étaient explicitement
+    bornés.
+    """
+    service = ServiceProjets(store, racines_exploration=(atelier,))
+
+    origines = _origines(service)
+
+    assert origines == {atelier.resolve().as_posix(): "configuree"}
+
+
+def test_une_zone_interdite_n_est_jamais_un_point_d_entree(
+    service_defaut: ServiceProjets, maison: Path
+) -> None:
+    """Élargir la frontière n'ouvre pas EF-38 : un point qui refuserait au clic est retiré.
+
+    Le `.ssh` du dossier utilisateur est **dans** la frontière élargie (le
+    volume la contient) : seule la vérification de zone interdite l'écarte.
+    """
+    zone_sensible = _dossier(maison, ".ssh")
+
+    assert zone_sensible.resolve().as_posix() not in _origines(service_defaut)
+
+
+def test_la_page_d_entree_rend_les_points_avec_leur_origine(
+    store: ProjetStore, maison: Path
+) -> None:
+    """La forme JSON de la page d'entrée (docs/05 §6.7) : `origine` sur chaque dossier."""
+    app = create_app(
+        bus=InMemoryEventBus(), state=ControlTowerState(), projets=ServiceProjets(store)
+    )
+    with TestClient(app) as client:
+        page = client.get("/api/projets/explorateur").json()
+
+    assert page["chemin"] is None
+    assert page["parent"] is None
+    origines = {dossier["chemin"]: dossier["origine"] for dossier in page["dossiers"]}
+    assert origines[maison.resolve().as_posix()] == "utilisateur"
+
+
+def test_un_sous_dossier_enumere_n_a_pas_d_origine(client: TestClient, atelier: Path) -> None:
+    """`origine` est propre à la page d'entrée : ailleurs elle est `null`, jamais devinée."""
+    _dossier(atelier, "depensio")
+
+    page = client.get("/api/projets/explorateur", params={"chemin": str(atelier)}).json()
+
+    assert [dossier["origine"] for dossier in page["dossiers"]] == [None]
+
+
+def test_la_frontiere_elargie_refuse_toujours_les_zones_interdites(
+    store: ProjetStore, maison: Path
+) -> None:
+    """Le critère du lot, énoncé à l'envers : élargir l'explorable n'ouvre **aucune** brèche.
+
+    `.ssh` est sous le dossier utilisateur, donc sous le volume, donc dans la
+    frontière depuis #278 — et pourtant refusé, avec le motif d'EF-38 et son
+    403. C'est `verifier_zone_interdite` qui tient, pas la frontière.
+    """
+    zone_sensible = _dossier(maison, ".ssh")
+    app = create_app(
+        bus=InMemoryEventBus(), state=ControlTowerState(), projets=ServiceProjets(store)
+    )
+    with TestClient(app) as client:
+        reponse = client.get(
+            "/api/projets/explorateur", params={"chemin": str(zone_sensible)}
+        )
+
+    assert reponse.status_code == 403
+    assert reponse.json()["detail"]["motif"] == "chemin-sensible"
+
+
+def test_un_chemin_saisi_hors_atelier_reste_explorable_par_defaut(
+    store: ProjetStore, tmp_path: Path
+) -> None:
+    """Le geste que #278 rend possible : taper un chemin lointain et que l'API l'accepte.
+
+    Le même chemin est refusé par le `client` de ce fichier, borné à l'atelier
+    (`test_hors_des_racines_explorables_l_explorateur_refuse_en_403`) : ce qui
+    change n'est pas la saisie mais la frontière, et c'est bien elle que ce lot
+    déplace.
+    """
+    lointain = _dossier(tmp_path, "depots-lointains")
+    app = create_app(
+        bus=InMemoryEventBus(), state=ControlTowerState(), projets=ServiceProjets(store)
+    )
+    with TestClient(app) as client:
+        reponse = client.get("/api/projets/explorateur", params={"chemin": str(lointain)})
+
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["chemin"] == lointain.resolve().as_posix()

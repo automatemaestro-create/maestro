@@ -12,15 +12,17 @@ v1 — Agents, Playbooks, Chat — regardaient **le même objet** par trois chem
 on y choisissait un agent, puis on en consultait une facette. Elles ont fusionné
 en **une** fiche agent à onglets, et un agent se consulte d'un seul endroit.
 
-Deux entrées se sont ajoutées depuis : **Projets** (#225) et **Journal** (#249),
-où le fil d'activité s'est installé en plein format. Le menu est déclaré une
-seule fois (`apps/web/lib/navigation.ts`) et fait aujourd'hui **huit entrées** —
-le Kanban des tâches n'en est pas une : il **est** le tableau de bord (#248).
+Deux entrées se sont ajoutées depuis — **Projets** (#225) et **Journal** (#249),
+où le fil d'activité s'est installé en plein format —, puis **Projets en est
+ressortie** (#280, §2.0.1). Le menu est déclaré une seule fois
+(`apps/web/lib/navigation.ts`) et fait aujourd'hui **sept entrées** ; le Kanban
+des tâches n'en est pas une (il **est** le tableau de bord, #248) et l'écran
+Projets non plus (il est servi, mais atteint depuis le sélecteur du shell).
 
 ```mermaid
 flowchart LR
-    Home[Tableau de bord] --> Projets[Projets]
-    Home --> Agents[Agents]
+    Selecteur[Sélecteur de projet · shell] -. gérer .-> Projets[Projets]
+    Home[Tableau de bord] --> Agents[Agents]
     Home --> Chat[Chat global]
     Home --> Costs[Coûts & analytics]
     Home --> Approve[Validations]
@@ -38,7 +40,9 @@ flowchart LR
 
 La sidebar, le titre de page et les renvois du tableau de bord lisent tous cette
 même déclaration. Les onglets d'un agent le sont de même
-(`apps/web/lib/agents.ts`).
+(`apps/web/lib/agents.ts`). Une page **servie hors menu** y figure aussi
+(`HORS_MENU`) : elle n'a pas d'entrée de navigation mais garde son titre de
+barre supérieure, sans quoi un chemin qui marche donnerait un écran anonyme.
 
 ### 1.1 Les chemins de la v1 restent servis
 
@@ -115,8 +119,43 @@ panne là où il n'y a qu'un périmètre. Rattacher un run se fait aujourd'hui p
 
 Implémentation : `apps/web/lib/etatGlobal.tsx` (le projet et sa portée diffusés au shell),
 `useControlTower` / `useAnalyticsCouts` (les deux lectures cadrées), `components/Shell.tsx` (la clé
-de remontage). Couverture : `apps/web/tests/projet-cadre.test.tsx`. Tests Python et doc de la vague :
-lot 6 (#282).
+de remontage). Couverture : `apps/web/tests/projet-cadre.test.tsx`, et côté API
+[`tests/test_appartenance_projet.py`](../tests/test_appartenance_projet.py) (#282).
+
+#### 2.0.1 On entre par un projet, et on en change au shell (#279, #280) — **livré**
+
+Le cadre du §2.0 a deux gestes : y **entrer**, et en **changer**. Ils forment la réponse au
+reproche du bilan de la Phase 7 — « le projet devrait être choisi avant d'entrer », « surtout pas
+un menu pour les projets ».
+
+**La porte d'entrée** (#279) est une **garde de shell**, pas une redirection de page. La nuance
+est tout le mécanisme : une page atteinte directement — lien, signet, rechargement — passe par le
+choix du projet **puis rend la page demandée**, sans que l'URL ait bougé entre-temps. Une
+redirection l'aurait perdue, et aurait ajouté deux entrées à l'historique du navigateur pour un
+geste qui n'est pas une navigation. Ce que l'écran présente : la liste des projets déclarés et la
+**création sur place** — aucun projet déclaré n'ouvre pas un vide mais propose d'en créer un. Le
+projet actif est **retenu d'une visite à l'autre**, relu au démarrage, et un projet devenu
+introuvable ramène à la porte **avec son motif** au lieu d'échouer. Trois vides à ne pas
+confondre, ici encore : une API muette n'est pas une absence de projet (on laisse réessayer, et le
+choix retenu reprend dès que l'API répond).
+
+**Le sélecteur** (#280) tient dans la barre supérieure, contre le titre de page — on lit « ce
+projet-ci, cette page-là ». Il affiche le projet actif **et sa racine** (deux clones d'un même
+dépôt portent volontiers le même nom ; c'est le chemin qui dit sur lequel on travaille), et
+basculer **ne navigue pas** : le choix est écrit, les écrans se relisent à l'endroit où l'on
+était. Sans projet actif il ne rend **rien** — proposer de choisir ici serait une seconde porte
+d'entrée à côté de celle ci-dessus, avec deux façons de rater la garde.
+
+**Et l'entrée « Projets » a quitté la barre latérale.** C'est le fond du lot, pas un effet de
+bord : une entrée de menu range le projet **parmi** les destinations alors qu'il est le cadre de
+toutes. L'écran de #225 n'a pas déménagé pour autant — il reste servi à `/projets`, garde son
+titre (`HORS_MENU`, §1) et s'atteint depuis le sélecteur (« Gérer les projets »). Rien à rediriger
+dans `next.config.ts`, contrairement aux pages fusionnées du §1.1 : celle-ci n'a pas changé
+d'adresse, elle a seulement quitté le menu.
+
+Implémentation : `apps/web/lib/etatProjetActif.tsx`, `components/projets/ChoixProjet.tsx` et
+`SelecteurProjet.tsx`, `lib/navigation.ts` (`MENU` / `HORS_MENU`). Couverture :
+`apps/web/tests/projet-actif.test.tsx` et `selecteur-projet.test.tsx`.
 
 ### 2.1 🏠 Tableau de bord (vue d'accueil)
 
@@ -326,7 +365,7 @@ arbitrages déjà rendus* — l'historique en dessous le prouve.
   servi par l'API** : un navigateur ne livre jamais de chemin absolu, c'est donc le backend —
   qui tourne déjà sur le poste — qui énumère. Une racine hors périmètre autorisé est **refusée
   avec son motif**, jamais silencieusement ignorée (EF-38). **Livré** : l'API au §6.7 (#223),
-  l'écran au §2.7.1 (#225).
+  l'écran au §2.7.1 (#225), le choix du dossier élargi au §2.7.2 (#278).
 - **Composer un objectif** — le formulaire de lancement gagne, à côté du texte, des **sources**
   (§6.1 étendu) : fichiers déposés, dossier de références en lecture seule, URL. L'extraction
   est visible (ce qui a été lu, ce qui a été ignoré, le coût estimé).
@@ -343,9 +382,9 @@ arbitrages déjà rendus* — l'historique en dessous le prouve.
   n'est jamais supprimée, la copie reste où elle est.
 
 Le sélecteur de projet devient alors un élément permanent de la barre supérieure : le Kanban,
-les coûts et le journal se lisent **par projet**. La seconde moitié est **livrée** (#281, §2.0) —
-tous les écrans sont cadrés sur le projet actif et un changement de projet les remet à zéro ; le
-**sélecteur** lui-même, lui, relève du lot #280.
+les coûts et le journal se lisent **par projet**. C'est **fait** — les écrans sont cadrés sur le
+projet actif et un changement de projet les remet à zéro (#281, §2.0) ; le sélecteur lui-même, la
+porte d'entrée et la sortie de « Projets » du menu sont au §2.0.1 (#279, #280).
 
 #### 2.7.1 L'écran Projets (#225) — **livré**
 
@@ -356,9 +395,11 @@ Implémentation : `apps/web/app/projets/page.tsx` et `apps/web/components/projet
 routes du §6.7 ; couverture `apps/web/tests/projets.test.tsx` côté UI,
 [`tests/test_projets_api.py`](../tests/test_projets_api.py) côté API.
 
-**Place dans la navigation** — une entrée **« Projets »** juste après le tableau de bord, avant les
-écrans qui s'y rapporteront (agents, coûts, validations). Déclarer *où* Maestro travaille n'est pas
-un réglage du poste : ce n'est pas une section des Paramètres.
+**Place dans la navigation** — l'écran a d'abord eu une entrée **« Projets »** juste après le
+tableau de bord ; elle a été **retirée** par #280 (§2.0.1), le projet étant le cadre des écrans et
+non l'un d'eux. L'écran reste servi à `/projets` et s'atteint depuis le sélecteur du shell. Ce qui
+n'a pas changé : déclarer *où* Maestro travaille n'est pas un réglage du poste — ce n'est toujours
+pas une section des Paramètres.
 
 **Ce que la liste montre**, une carte par projet : le **nom**, la **racine** canonicalisée telle que
 le backend l'a enregistrée, l'**origine** (« Dossier existant » / « Nouveau dossier »), le **VCS
@@ -373,13 +414,13 @@ constaté côté serveur, donc afficher ce qu'on a envoyé ferait diverger l'éc
 L'**origine ne s'édite pas** après coup : elle raconte comment le projet est né, la réécrire ne
 changerait rien sur le disque.
 
-**Choisir la racine** — le point dur, et la raison d'être de l'explorateur du §6.7. La racine ne se
-tape pas : elle est toujours l'un des chemins **énumérés par l'API**. L'écran navigue dossier par
-dossier (entrer, remonter, revenir aux dossiers explorables), affiche le marqueur **dépôt Git** et
-grise les dossiers **déjà déclarés** par un autre projet. Le seul cas où le dossier visé n'existe pas
-encore — origine « nouveau » — se résout **sans exception à la règle** : le **parent** vient de
-l'explorateur et l'utilisateur ne saisit qu'un **nom de dossier**, refusé s'il contient un
-séparateur.
+**Choisir la racine** — le point dur, et la raison d'être de l'explorateur du §6.7. L'écran navigue
+dossier par dossier (entrer, remonter, revenir aux dossiers explorables), affiche le marqueur
+**dépôt Git** et grise les dossiers **déjà déclarés** par un autre projet. Le seul cas où le dossier
+visé n'existe pas encore — origine « nouveau » — se résout **sans exception à la règle** : le
+**parent** vient de l'explorateur et l'utilisateur ne saisit qu'un **nom de dossier**, refusé s'il
+contient un séparateur. Le §2.7.2 ajoute deux raccourcis vers un dossier lointain, sans changer
+qui valide quoi.
 
 **Un refus est une réponse** (EF-38), et il en porte trois choses : la **phrase** du backend, le
 **geste** qui en sort quand l'écran le connaît (élargir `MAESTRO_EXPLORATEUR_RACINES`, descendre
@@ -389,6 +430,45 @@ l'endroit du geste refusé** (dans le formulaire, sur la carte, dans l'explorate
 saisie en cours** et **laisse la page précédente** de l'explorateur à l'écran : l'erreur ne casse ni
 la navigation ni le reste de l'écran. Corollaire tenu par les tests : « ce dossier n'a pas de
 sous-dossier » et « je refuse de regarder là » ne s'affichent **jamais** pareil.
+
+#### 2.7.2 Choisir un dossier n'importe où sur son poste (#278) — **livré**
+
+Le second reproche du bilan de la Phase 7 : **le choix du répertoire était trop limité**.
+L'explorateur de #223 n'ouvrait que le dossier utilisateur, si bien qu'un projet posé sur `D:/` ou
+sur un disque externe n'était pas atteignable — la seule sortie étant `MAESTRO_EXPLORATEUR_RACINES`,
+un réglage d'environnement pour un geste d'écran.
+
+Trois voies, désormais, et **aucune n'est un passage obligé** :
+
+| Voie | Quand | Ce qu'elle suppose |
+| --- | --- | --- |
+| **Explorateur élargi** | toujours | la frontière contient les **volumes du poste**, et la page d'entrée propose des **points d'entrée** étiquetés (dossier utilisateur, récents, projets déclarés, disques) — voir §6.7 |
+| **Sélecteur natif du poste** | backend sur la machine de l'utilisateur | le backend ouvre le dialogue de dossier de l'OS ; indisponible, il **le dit** à la place du bouton |
+| **Chemin saisi** | toujours, mode serveur compris | l'API vérifie le chemin — le navigateur ne valide rien |
+
+**Ce qui n'a pas bougé d'un pouce : la frontière de sécurité.** Élargir les *racines explorables*
+n'est pas élargir les *racines déclarables* ([docs/24 §2.5](./24-projets-locaux-et-poste-de-travail.md)).
+`.ssh`, `AppData`, les dossiers système et le dépôt de Maestro continuent de refuser avec leur
+motif, y compris là où la frontière les contient désormais ; une racine de disque reste
+indéclarable comme racine de projet ; et `MAESTRO_EXPLORATEUR_RACINES` reste une **restriction** —
+les volumes ne sont proposés que là où la frontière est celle par défaut, sans quoi élargir le
+défaut aurait élargi les postes qui s'étaient explicitement bornés.
+
+**Le verdict du sélecteur natif sépare deux questions** : le dossier choisi est-il **lisible**, et
+est-il **déclarable** ? Un `D:/` répond oui à la première et non à la seconde. Il ne revient donc
+pas en erreur mais **avec son motif**, et l'écran ouvre l'explorateur **dessus** — de quoi
+descendre d'un cran plutôt que de tout recommencer. Fermer la fenêtre, enfin, n'est pas une erreur :
+c'est un geste normal, qui ne touche à rien.
+
+Le sélecteur natif de l'**enveloppe de bureau** reste prévu en Phase 9
+([docs/24 §4.4](./24-projets-locaux-et-poste-de-travail.md)) ; ce lot ne l'a pas attendu pour lever
+le blocage, et ce qu'il livre ne le rend pas caduc — un backend distant n'aura jamais de dialogue
+natif, et c'est l'enveloppe qui apportera le glisser-déposer.
+
+Implémentation : `maestro/controltower/selecteur.py` et `projets.py` (`points_entree`),
+`apps/web/components/projets/ExplorateurDossiers.tsx`. Couverture :
+[`tests/test_selecteur.py`](../tests/test_selecteur.py),
+[`tests/test_projets_api.py`](../tests/test_projets_api.py) et `apps/web/tests/projets.test.tsx`.
 
 ### 2.8 🗒️ Journal — l'activité en direct, en plein format *(#249, #250 — **livré**)*
 

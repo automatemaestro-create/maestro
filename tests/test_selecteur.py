@@ -1,5 +1,14 @@
 """Tests du sélecteur de dossier natif (#278), et de son ouverture au-dessus (#311).
 
+Deux couches, et deux tickets. La seconde moitié du fichier — **la disponibilité
+et les deux routes** — est le lot 6 de #276 (#282) : #278 avait livré le
+sélecteur sans tests (tests différés, [docs/10 §5.1](../docs/10-workflow-git.md))
+et #311 n'en avait écrit que pour son correctif. Ce qui s'y mesure est le
+critère du lot — « repli quand le sélecteur natif n'est pas disponible » — plus
+que l'ouverture elle-même : une fenêtre qui s'ouvre ne se teste pas sans écran,
+mais **tout ce qui décide de ne pas l'ouvrir** se teste, et c'est là que vivent
+les garde-fous (boucle locale, réglage, absence d'outil, verrou, attente).
+
 Le sujet du ticket #311 est **où** la fenêtre s'ouvre, pas ce qu'elle rend :
 `ShowDialog()` sans propriétaire ouvrait la boîte derrière toutes les fenêtres,
 sans bouton de barre des tâches pour aller la chercher — invisible, donc
@@ -20,9 +29,14 @@ perdre.
 
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
-from maestro.controltower import selecteur
+import pytest
+from fastapi.testclient import TestClient
+
+from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app, selecteur
+from maestro.controltower.projets import ServiceProjets
+from maestro.projets import ProjetStore
 
 WINDOWS = selecteur.Outil("powershell", "C:/Windows/powershell.exe")
 MACOS = selecteur.Outil("osascript", "/usr/bin/osascript")
@@ -178,3 +192,314 @@ def test_les_litteraux_powershell_doublent_les_quotes(valeur: str, attendu: str)
 def test_le_titre_avec_apostrophe_reste_une_commande_valide() -> None:
     """Le cas réel : un titre passé tel quel dans le script, sans échappement perdu."""
     assert "$d.Description='L''atelier';" in script_windows(titre="L'atelier")
+
+
+# --- #282 : la disponibilité, et le repli quand elle manque ---------------
+#
+# « Un confort, jamais un passage obligé » : ce que ces tests mesurent n'est pas
+# l'ouverture d'une fenêtre mais **les quatre façons de ne pas en ouvrir**, et
+# le fait qu'aucune ne laisse un cul-de-sac — un motif, une phrase, et
+# l'explorateur servi par l'API qui reste la voie complète.
+
+
+@pytest.mark.parametrize(
+    "hote",
+    ["127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1", "LOCALHOST", " 127.0.0.1 "],
+)
+def test_la_boucle_locale_vaut_le_poste(hote: str) -> None:
+    """Les quatre écritures de « cette machine », à la casse et aux espaces près."""
+    assert selecteur.hote_du_poste(hote) is True
+
+
+@pytest.mark.parametrize("hote", ["192.168.1.20", "10.0.0.1", "exemple.test", "", None])
+def test_tout_le_reste_est_distant_y_compris_l_inconnu(hote: str | None) -> None:
+    """Un hôte inconnu est traité comme **distant** : dans le doute, aucune fenêtre.
+
+    Le cas `None` n'est pas théorique — un transport ASGI peut ne pas donner de
+    client. Le traiter comme local ouvrirait une fenêtre sur le serveur au
+    premier appel venu.
+    """
+    assert selecteur.hote_du_poste(hote) is False
+
+
+def test_le_reglage_a_zero_eteint_le_selecteur_avant_tout_le_reste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`MAESTRO_SELECTEUR_NATIF=0` : franc, et prioritaire sur le poste comme sur l'outil."""
+    monkeypatch.setattr(selecteur, "outil_disponible", lambda: WINDOWS)
+
+    etat = selecteur.disponibilite(poste=True, reglage="0")
+
+    assert etat["disponible"] is False
+    assert etat["motif"] == "selecteur-desactive"
+    assert etat["outil"] is None
+    assert "l'explorateur ci-dessous reste disponible" in str(etat["message"])
+
+
+def test_un_backend_distant_le_dit_plutot_que_d_ouvrir_chez_lui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le mode serveur, troisième critère de #278 : pas de bouton mort, une phrase."""
+    monkeypatch.setattr(selecteur, "outil_disponible", lambda: WINDOWS)
+
+    etat = selecteur.disponibilite(poste=False)
+
+    assert etat["motif"] == "selecteur-hors-poste"
+    assert "explorateur" in str(etat["message"])
+
+
+def test_sans_outil_sur_le_poste_l_indisponibilite_est_une_reponse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ni PowerShell, ni osascript, ni zenity — ou pas de session graphique."""
+    monkeypatch.setattr(selecteur, "outil_disponible", lambda: None)
+
+    etat = selecteur.disponibilite(poste=True)
+
+    assert etat["motif"] == "selecteur-sans-outil"
+
+
+def test_disponible_nomme_l_outil_qui_ouvrira_la_fenetre(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le cas nominal — et `auto` est bien le défaut, sans réglage à poser."""
+    monkeypatch.setattr(selecteur, "outil_disponible", lambda: MACOS)
+
+    etat = selecteur.disponibilite(poste=True)
+
+    assert etat["disponible"] is True
+    assert etat["motif"] is None
+    assert etat["outil"] == "osascript"
+
+
+def test_sans_session_graphique_linux_n_a_pas_d_outil(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`zenity` installé sur un serveur sans écran n'ouvrirait rien — et bloquerait 5 min.
+
+    L'absence de `DISPLAY`/`WAYLAND_DISPLAY` vaut donc absence d'outil, ce qui
+    transforme une attente de `DUREE_MAX_S` en une réponse immédiate.
+    """
+    monkeypatch.setattr(selecteur.sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(selecteur.shutil, "which", lambda nom: f"/usr/bin/{nom}")
+
+    assert selecteur.outil_disponible() is None
+
+
+# --- #282 : les deux routes (docs/05 §6.7) --------------------------------
+
+
+@pytest.fixture()
+def maison(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Un dossier utilisateur factice — même raison qu'en #221 : `tmp_path` est sous `AppData`."""
+    maison = tmp_path / "maison"
+    maison.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
+    return maison
+
+
+@pytest.fixture()
+def service(tmp_path: Path, maison: Path) -> ServiceProjets:
+    """Service des projets sur un dépôt jetable, borné au dossier utilisateur factice."""
+    return ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(maison,))
+
+
+@pytest.fixture()
+def dialogue_disponible(monkeypatch: pytest.MonkeyPatch) -> selecteur.Outil:
+    """Un outil de dialogue présent, quoi qu'en dise la machine qui joue le test.
+
+    Les tests du `POST` mesurent le **contrat de la route**, pas l'inventaire du
+    poste : la route interroge `disponibilite()` avant d'appeler
+    `choisir_dossier`, donc monkeypatcher le seul dialogue laisse le verdict à
+    `outil_disponible()`. Sur un poste Windows il trouve PowerShell et les tests
+    passent ; dans le conteneur Linux de la CI — ni `DISPLAY`, ni `zenity` — il
+    rend `None` et tout sort en 403 `selecteur-sans-outil`. C'est le même piège
+    que `git` absent du job `pytest` : vert en local, rouge en CI, pour une
+    raison qui n'est pas celle qu'on teste.
+    """
+    monkeypatch.setattr(selecteur, "outil_disponible", lambda: WINDOWS)
+    return WINDOWS
+
+
+def _client(service: ServiceProjets, *, hote: str) -> TestClient:
+    """Un TestClient dont l'adresse cliente est choisie — le discriminant poste/serveur.
+
+    C'est le seul moyen de jouer le mode serveur sans réseau : `_poste` lit
+    l'hôte sur le **client TCP** (jamais sur un en-tête, qu'un client pose
+    lui-même), donc c'est le client TCP qu'il faut déplacer.
+    """
+    app = create_app(bus=InMemoryEventBus(), state=ControlTowerState(), projets=service)
+    return TestClient(app, client=(hote, 51000))
+
+
+def test_la_route_selecteur_n_est_pas_avalee_par_la_capture_d_identifiant(
+    service: ServiceProjets,
+) -> None:
+    """« selecteur » est un identifiant de projet valide au regard du slug — l'ordre compte.
+
+    Même piège que `/api/projets/explorateur` : enregistrée après la capture
+    `/api/projets/{id_projet}`, la route rendrait un 404 « projet inconnu ».
+    """
+    with _client(service, hote="127.0.0.1") as client:
+        reponse = client.get("/api/projets/selecteur")
+
+    assert reponse.status_code == 200
+    assert "disponible" in reponse.json()
+
+
+def test_l_indisponibilite_est_un_200_jamais_une_erreur(service: ServiceProjets) -> None:
+    """Le contrat du `GET` : une indisponibilité est une **réponse**, pas une panne.
+
+    La rendre en 4xx obligerait l'écran à traiter en erreur le cas le plus
+    banal — un backend joint depuis une autre machine.
+    """
+    with _client(service, hote="192.168.1.20") as client:
+        reponse = client.get("/api/projets/selecteur")
+
+    assert reponse.status_code == 200
+    assert reponse.json() == {
+        "disponible": False,
+        "motif": "selecteur-hors-poste",
+        "message": reponse.json()["message"],
+        "outil": None,
+    }
+
+
+def test_un_appel_distant_n_ouvre_aucune_fenetre_sur_le_serveur(
+    service: ServiceProjets, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le garde-fou n° 1, mesuré par ce qu'il **empêche** : le dialogue n'est pas appelé.
+
+    Sans lui, un client distant piloterait l'écran d'une autre machine — une
+    fenêtre modale devant personne, et le verrou pris pour cinq minutes.
+    """
+    ouvertures: list[object] = []
+    monkeypatch.setattr(
+        selecteur, "choisir_dossier", lambda **kw: ouvertures.append(kw) or "/tmp"
+    )
+
+    with _client(service, hote="10.0.0.1") as client:
+        reponse = client.post("/api/projets/selecteur")
+
+    assert reponse.status_code == 403
+    assert reponse.json()["detail"]["motif"] == "selecteur-hors-poste"
+    assert ouvertures == []
+
+
+def test_annuler_n_est_pas_une_erreur(
+    service: ServiceProjets, dialogue_disponible: selecteur.Outil, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fermer la fenêtre est un geste normal : 200 et `annule`, pas un 4xx."""
+    monkeypatch.setattr(selecteur, "choisir_dossier", lambda **kw: None)
+
+    with _client(service, hote="127.0.0.1") as client:
+        reponse = client.post("/api/projets/selecteur")
+
+    assert reponse.status_code == 200
+    assert reponse.json() == {
+        "annule": True,
+        "chemin": None,
+        "racine_valide": False,
+        "refus": None,
+    }
+
+
+def test_un_dossier_declarable_revient_canonicalise_et_valide(
+    service: ServiceProjets,
+    maison: Path,
+    dialogue_disponible: selecteur.Outil,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le cas nominal : le chemin de l'OS confronté à EF-38, et accepté."""
+    choisi = maison / "depots" / "depensio"
+    choisi.mkdir(parents=True)
+    monkeypatch.setattr(selecteur, "choisir_dossier", lambda **kw: str(choisi))
+
+    with _client(service, hote="127.0.0.1") as client:
+        corps = client.post("/api/projets/selecteur").json()
+
+    assert corps == {
+        "annule": False,
+        "chemin": choisi.resolve().as_posix(),
+        "racine_valide": True,
+        "refus": None,
+    }
+
+
+def test_un_dossier_lisible_mais_non_declarable_revient_avec_son_motif(
+    service: ServiceProjets,
+    maison: Path,
+    dialogue_disponible: selecteur.Outil,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deux questions distinctes, et c'est tout l'intérêt de les séparer.
+
+    Le dossier utilisateur nu est **lisible** (l'explorateur y descend) et
+    **non déclarable** comme racine de projet. Le rendre en 4xx ferait traiter
+    en panne un choix parfaitement compréhensible ; l'écran a besoin de
+    l'afficher dans le formulaire et d'ouvrir l'explorateur dessus.
+    """
+    monkeypatch.setattr(selecteur, "choisir_dossier", lambda **kw: str(maison))
+
+    with _client(service, hote="127.0.0.1") as client:
+        reponse = client.post("/api/projets/selecteur")
+
+    assert reponse.status_code == 200
+    corps = reponse.json()
+    assert corps["annule"] is False
+    assert corps["racine_valide"] is False
+    assert corps["chemin"] == maison.resolve().as_posix()
+    assert corps["refus"]["motif"] == "dossier-utilisateur-nu"
+
+
+def test_un_empechement_franc_sort_en_403_motive(
+    service: ServiceProjets, dialogue_disponible: selecteur.Outil, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le verrou « un dialogue à la fois », vu de la route : un motif que l'UI sait traduire."""
+
+    def refuse(**_: object) -> str:
+        raise selecteur.SelecteurRefuse("selecteur-en-cours", "Un dialogue est déjà ouvert.")
+
+    monkeypatch.setattr(selecteur, "choisir_dossier", refuse)
+
+    with _client(service, hote="127.0.0.1") as client:
+        reponse = client.post("/api/projets/selecteur")
+
+    assert reponse.status_code == 403
+    assert reponse.json()["detail"]["motif"] == "selecteur-en-cours"
+
+
+def test_le_dossier_de_depart_du_corps_atteint_le_dialogue(
+    service: ServiceProjets,
+    maison: Path,
+    dialogue_disponible: selecteur.Outil,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`{"depart": …}` sert à rouvrir là où on en était — sinon l'option ne sert à rien."""
+    recu: dict[str, object] = {}
+    monkeypatch.setattr(
+        selecteur,
+        "choisir_dossier",
+        lambda **kw: recu.update(kw) or str(maison),
+    )
+
+    with _client(service, hote="127.0.0.1") as client:
+        client.post("/api/projets/selecteur", json={"depart": "D:/projets"})
+
+    assert recu == {"depart": "D:/projets"}
+
+
+def test_le_reglage_du_backend_est_relu_a_chaque_appel(
+    service: ServiceProjets, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`MAESTRO_SELECTEUR_NATIF=0` barre aussi le `POST`, sans redémarrer le backend."""
+    monkeypatch.setenv("MAESTRO_SELECTEUR_NATIF", "0")
+    monkeypatch.setattr(selecteur, "choisir_dossier", lambda **kw: "/nulle/part")
+
+    with _client(service, hote="127.0.0.1") as client:
+        disponibilite = client.get("/api/projets/selecteur").json()
+        ouverture = client.post("/api/projets/selecteur")
+
+    assert disponibilite["motif"] == "selecteur-desactive"
+    assert ouverture.status_code == 403
+    assert ouverture.json()["detail"]["motif"] == "selecteur-desactive"

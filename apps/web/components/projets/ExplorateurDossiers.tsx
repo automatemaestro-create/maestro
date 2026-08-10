@@ -114,19 +114,37 @@ export function ExplorateurDossiers({
   const [ouvertureNative, setOuvertureNative] = useState(false);
   const [saisie, setSaisie] = useState("");
 
-  const ouvrir = useCallback(async (chemin: string | null) => {
-    setChargement(true);
-    try {
-      setPage(await chargerExplorateur(chemin));
-      setRefus(null);
-    } catch (erreur) {
-      // La page précédente reste affichée : un refus ne doit pas laisser
-      // l'utilisateur devant un panneau vide dont il ne peut plus sortir.
-      setRefus(refusDepuis(erreur));
-    } finally {
-      setChargement(false);
-    }
-  }, []);
+  /**
+   * Ouvre `chemin`, et décide de ce qu'il advient du bandeau de refus.
+   *
+   * `refusConserve` est ce qui reste affiché **quand l'ouverture réussit** :
+   * `null` dans le cas courant (une navigation efface le refus précédent, qui
+   * ne parle plus du dossier affiché), le refus du sélecteur natif quand on
+   * ouvre l'explorateur *sur* un dossier lisible mais non déclarable. Sans ce
+   * paramètre, le motif posé juste avant l'appel était **effacé par le succès
+   * de l'ouverture** : le seul cas où le refus et la page qu'on regarde parlent
+   * du même dossier était aussi le seul où le refus disparaissait.
+   *
+   * Une ouverture qui **échoue** garde son propre refus : il explique pourquoi
+   * on ne peut même pas regarder, ce qui prime sur « ce dossier n'est pas
+   * déclarable ».
+   */
+  const ouvrir = useCallback(
+    async (chemin: string | null, refusConserve: RefusProjet | null = null) => {
+      setChargement(true);
+      try {
+        setPage(await chargerExplorateur(chemin));
+        setRefus(refusConserve);
+      } catch (erreur) {
+        // La page précédente reste affichée : un refus ne doit pas laisser
+        // l'utilisateur devant un panneau vide dont il ne peut plus sortir.
+        setRefus(refusDepuis(erreur));
+      } finally {
+        setChargement(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     // Chargement différé d'un tick, comme partout dans le shell : l'effet
@@ -170,8 +188,7 @@ export function ExplorateurDossiers({
         onChoisir(choix.chemin);
         return;
       }
-      setRefus(choix.refus);
-      await ouvrir(choix.chemin);
+      await ouvrir(choix.chemin, choix.refus);
     } catch (erreur) {
       setRefus(refusDepuis(erreur));
     } finally {

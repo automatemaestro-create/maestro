@@ -26,7 +26,16 @@ projection → vues ; ces tests le suivent d'un bout à l'autre.
    est obligatoire, vaut `<id>` | `tous` | `aucun`, et son absence est refusée
    (« rien plutôt qu'un mélange ») comme l'est un projet non déclaré. Le
    contrat de #222 que ces tests mesuraient — sans filtre, tout sort ; un
-   identifiant inconnu rend une vue vide — a donc été **remplacé**, pas oublié.
+   identifiant inconnu rend une vue vide — a donc été **remplacé**, pas oublié ;
+⑥ le **journal requêtable**, ajouté par le lot 6 de #276 (#282) : servi par les
+   fixtures et par elles seules, il échappait aux tests d'au-dessus, qui
+   tournent sur une projection réelle. C'est pourtant la vue où un mélange se
+   voit le moins — un fil d'activité ne dit pas de quel projet il est le fil ;
+⑦ le **contrat de portée pris pour lui-même** (#282) : jusqu'ici mesuré
+   uniquement à travers l'API, donc jamais sur ses branches sans HTTP — le
+   libellé rappelé dans les réponses, les mots réservés résolus sans dépôt, et
+   le **dépôt injoignable**, qui accorde la portée plutôt que de ressortir un
+   « projet inconnu » faux.
 
 Ni réseau ni Redis : bus mémoire, fournisseurs factices, TestClient de Starlette,
 dépôt de projets jetable (la portée exige des projets réellement déclarés).
@@ -50,7 +59,8 @@ from maestro.controltower import (
     create_app,
 )
 from maestro.controltower.analytics import agrege_couts
-from maestro.controltower.portee import PorteeProjet
+from maestro.controltower.fixtures import FixturesControlTower
+from maestro.controltower.portee import PorteeProjet, PorteeRefusee, resoudre_portee
 from maestro.controltower.projets import ServiceProjets
 from maestro.engine import OrchestrationEngine
 from maestro.orchestrator import Orchestrator
@@ -514,3 +524,164 @@ def test_le_lancement_d_un_run_accepte_un_projet_et_ecarte_un_identifiant_douteu
 
     # Le lancement est accepté (202) : l'appartenance n'est pas une condition d'exécution.
     assert reponse.status_code == 202, reponse.text
+
+
+def test_les_validations_d_un_projet_ne_montrent_que_les_siennes(
+    projets: ServiceProjets, ids: tuple[str, str]
+) -> None:
+    """La file de validation est cadrée comme le reste — pas seulement son refus.
+
+    Les tests d'au-dessus vérifient qu'une lecture **sans** projet est refusée
+    sur cette route ; celui-ci vérifie ce qu'elle rend **avec**. La distinction
+    compte : une validation est une demande d'action sur le projet de quelqu'un,
+    et la voir depuis un autre projet serait la faute la plus coûteuse de la
+    vague — on décide sur ce qu'on voit.
+    """
+    projet, autre = ids
+    state = ControlTowerState()
+    state.appliquer(_evenement(tache_id="t1", run_id="run-1", projet_id=projet))
+    state.appliquer(_evenement(tache_id="t2", run_id="run-2", projet_id=autre))
+    for tache in ("t1", "t2"):
+        state.appliquer(
+            Event(type="validation.demande", tache_id=tache, agent="devops", titre="Publier")
+        )
+
+    with TestClient(
+        create_app(bus=InMemoryEventBus(), state=state, projets=projets)
+    ) as client:
+        vues = client.get("/api/validations", params={"projet": projet}).json()
+
+    assert [v["tache_id"] for v in vues] == ["t1"]
+    assert vues[0]["projet_id"] == projet
+
+
+# --- ⑥ Le journal requêtable, cadré comme les autres vues (#277) --------------
+#
+# Servi par les **fixtures** et par elles seules (`maestro.controltower.fixtures`),
+# le journal échappe aux tests d'au-dessus, qui tournent sur une projection
+# réelle : sans fixtures il répond 501 avant même de regarder la portée. C'est
+# pourtant la vue la plus exposée au mélange — un fil d'activité qui montre le
+# travail d'un autre projet se lit « il se passe quelque chose ici ».
+
+
+@pytest.fixture()
+def client_journal(projets: ServiceProjets) -> TestClient:
+    """App branchée sur les fixtures : la seule où `/api/journal` est servi."""
+    app = create_app(
+        bus=InMemoryEventBus(),
+        state=ControlTowerState(),
+        projets=projets,
+        fixtures=FixturesControlTower(),
+    )
+    with TestClient(app) as client:
+        yield client
+
+
+def test_le_journal_refuse_lui_aussi_une_lecture_sans_projet(
+    client_journal: TestClient,
+) -> None:
+    """Même contrat, même motif — la gate 501 passe avant, mais elle est franchie ici."""
+    reponse = client_journal.get("/api/journal")
+
+    assert reponse.status_code == 422
+    assert reponse.json()["detail"]["motif"] == "projet-requis"
+
+
+def test_le_journal_hors_projet_est_vide_la_ou_le_transverse_est_plein(
+    client_journal: TestClient,
+) -> None:
+    """`tous` et `aucun` sur le même jeu : la portée est bien appliquée aux entrées.
+
+    Toutes les entrées du scénario de démo appartiennent à un projet, donc
+    `aucun` doit rendre une page **vide mais valide** — pas un refus, pas la
+    liste entière. C'est la différence que #277 a rendue observable.
+    """
+    transverse = client_journal.get("/api/journal", params={"projet": "tous"}).json()
+    hors_projet = client_journal.get("/api/journal", params={"projet": "aucun"}).json()
+
+    assert transverse["total"] > 0
+    assert hors_projet["total"] == 0
+    assert hors_projet["entrees"] == []
+
+
+def test_le_journal_filtre_ses_entrees_sur_la_portee_demandee() -> None:
+    """La règle elle-même, mesurée sans HTTP : `portee.retient` décide, entrée par entrée.
+
+    Le passer par l'API demanderait de **déclarer** le projet de la démo dans le
+    dépôt (la portée n'accepte qu'un projet existant), c'est-à-dire de faire
+    dépendre le test d'un identifiant engendré — alors que ce qu'on mesure est
+    le filtre, pas la résolution.
+    """
+    fixtures = FixturesControlTower()
+    demo = fixtures.journal(portee=PorteeProjet.tous())["entrees"][0]["projet_id"]
+
+    du_projet = fixtures.journal(portee=PorteeProjet.projet(demo))
+    d_un_autre = fixtures.journal(portee=PorteeProjet.projet(AUTRE))
+
+    assert demo is not None
+    assert du_projet["total"] == fixtures.journal(portee=PorteeProjet.tous())["total"]
+    assert d_un_autre["total"] == 0
+
+
+# --- ⑦ Le contrat de portée pris pour lui-même (#277) -------------------------
+
+
+def test_la_portee_rappelle_ce_qui_a_ete_demande() -> None:
+    """`libelle` est ce que les réponses renvoient : la portée servie, jamais déduite.
+
+    Sans lui, un client devrait deviner le périmètre d'une réponse à partir de
+    son contenu — et une liste vide ne dit rien du périmètre qui l'a produite.
+    """
+    assert PorteeProjet.tous().libelle == "tous"
+    assert PorteeProjet.aucun().libelle == "aucun"
+    assert PorteeProjet.projet(PROJET).libelle == PROJET
+
+
+def test_les_mots_reserves_ne_consultent_pas_le_depot() -> None:
+    """`tous` et `aucun` sont résolus sans dépôt : aucun projet ne peut les masquer."""
+
+    class _DepotQuiDitNon:
+        def existe(self, _identifiant: str) -> bool:
+            return False
+
+    depot = _DepotQuiDitNon()
+
+    assert resoudre_portee("tous", projet_connu=depot).transverse is True
+    assert resoudre_portee("aucun", projet_connu=depot).projet_id is None
+
+
+@pytest.mark.parametrize("brut", [None, "", "   "])
+def test_une_portee_vide_est_refusee_et_le_message_donne_les_trois_formes(
+    brut: str | None,
+) -> None:
+    """Le refus doit être **actionnable** : il nomme les trois valeurs acceptées."""
+    with pytest.raises(PorteeRefusee) as capture:
+        resoudre_portee(brut)
+
+    assert capture.value.motif == "projet-requis"
+    assert "tous" in str(capture.value) and "aucun" in str(capture.value)
+
+
+def test_un_depot_injoignable_n_invente_pas_un_projet_inconnu() -> None:
+    """Un incident de stockage ne doit pas ressortir en diagnostic faux.
+
+    Refuser ici dirait « ce projet n'existe pas » d'un projet qui existe
+    peut-être : la vue est accordée sur la seule forme de l'identifiant et
+    ressortira vide si rien ne lui correspond, ce qui est vrai et vérifiable.
+    """
+
+    class _DepotEnPanne:
+        def existe(self, _identifiant: str) -> bool:
+            raise OSError("dépôt illisible")
+
+    portee = resoudre_portee(PROJET, projet_connu=_DepotEnPanne())
+
+    assert portee.projet_id == PROJET
+
+
+def test_un_identifiant_mal_forme_est_refuse_meme_sans_depot_pour_le_dire() -> None:
+    """Il ne peut désigner aucun projet (#221) : le refus ne dépend d'aucune lecture."""
+    with pytest.raises(PorteeRefusee) as capture:
+        resoudre_portee("../evasion")
+
+    assert capture.value.motif == "projet-inconnu"
