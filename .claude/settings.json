@@ -41,6 +41,7 @@
       "Bash(bash scripts/git/worktree.sh ensure:*)",
       "Bash(bash scripts/git/worktree.sh list:*)",
       "Bash(bash scripts/git/worktree.sh gc:*)",
+      "Bash(bash scripts/ci/local.sh:*)",
       "EnterWorktree",
       "mcp__chrome-maestro",
       "mcp__figma-officiel"

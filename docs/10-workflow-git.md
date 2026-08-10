@@ -935,9 +935,11 @@ signalé qu'une résolution fausse sous une MR en Draft que personne ne relira l
 `Refs #<iid>` poussé sur la branche, suivi du nouveau pipeline. Les briques réutilisables vivent
 dans `lib.sh` : `pipeline-latest <ref>`, `pipeline-status <id>`, `pipeline-failed-jobs <id>`,
 `job-trace <job-id> [lignes]`, `pipeline-wait <id> [timeout]` (parsing shell pur, comme le reste du
-fichier). Reproduire les contrôles en local avant de pousser : mêmes commandes que les jobs
-(ruff/pytest/mypy via le venv du repo ; shellcheck sur des fins de ligne LF — la CI checkout en LF,
-une copie Windows CRLF produit des faux SC1017).
+fichier). Le job rouge se rejoue en local par le **filet CI** — `bash scripts/ci/local.sh --only
+<job>` —, jamais par une recette recopiée à côté : le filet lit les jobs dans `.gitlab-ci.yml`,
+passe par le venv du repo, analyse un miroir LF pour shellcheck (la CI checkout en LF, une copie
+Windows CRLF produit des faux SC1017) et cadre `pytest` sur le périmètre du diff (§8.4) — la suite
+entière, ~10 min, se payerait ici en plein diagnostic.
 
 **Le résumé rend les deux blocages séparément**, jamais un verdict global : une MR au pipeline vert
 mais en conflit reste non mergeable.
@@ -1036,6 +1038,31 @@ verdict porte la mention **« Périmètre réduit »**, et le seuil de couvertur
 sous-ensemble ne peut pas tenir — n'est appliqué qu'en `--complet` et en CI. Le sens de dérive est
 toujours le même : **ce que le script ne sait pas classer élargit le périmètre**, il ne le
 rétrécit pas.
+
+**Le filet est la source unique, et les prompts y renvoient (#310).** Deux commandes vérifiaient en
+local sans jamais le citer : [`/mr-fix`](../.claude/commands/mr-fix.md) portait sa propre **table de
+miroirs** (`shellcheck`, `ruff`, `pytest -n auto`, `mypy`) et
+[`/ticket-finish`](../.claude/commands/ticket-finish.md) une **heuristique de détection** (« si un
+outil de lint/test est détecté dans le dossier concerné… »). Elles renvoient désormais l'une à
+`bash scripts/ci/local.sh --only <job>`, l'autre à `bash scripts/ci/local.sh` avant le push. Ce
+n'est pas qu'une économie de mots :
+
+- la table prescrivait `pytest -n auto` **sur la suite entière**, c'est-à-dire l'inverse de cette
+  section — et un prompt est ce que la session lit **en dernier**, donc c'est lui qui l'emporte sur
+  la règle générale. Le coût, ~10 min au lieu de ~40 s, se payait en plein diagnostic d'un pipeline
+  rouge ;
+- une recette recopiée **fige** les jobs de `.gitlab-ci.yml` au jour où elle a été écrite, quand le
+  filet, lui, les y **lit** (§8.4, levier 2) — la table ignorait déjà le découpage par fichier de
+  shellcheck (levier 3) et le miroir LF.
+
+Le garde-fou est dans [`tests/test_ci_local.py`](../tests/test_ci_local.py) : aucun **bloc de code**
+ni **cellule de tableau** de `.claude/**` ne joue `pytest`/`ruff`/`mypy`/`shellcheck` hors du filet —
+la prose, elle, garde le droit de nommer une forme pour la proscrire (même parti pris que les tests
+de prompts de #196 et #233, §11.7). Seule échappatoire : viser **la** suite rouge
+(`tests/test_<suite>.py`), la boucle courte de cette section. `Bash(bash scripts/ci/local.sh:*)` est
+autorisé **des deux côtés** — [`.claude/settings.json`](../.claude/settings.json) pour la session
+interactive, [`settings.run.json`](../scripts/orchestrate/settings.run.json) pour l'autonome :
+prescrire une commande sans l'autoriser, c'est fabriquer un refus par ticket (§11.7).
 
 **3. Un lancement qui coûtait 7 min 24 s (#285).** Le mode rapide était bien actif — périmètre
 réduit à 3 suites — et c'est justement là que le bât blessait : le travail récent du dépôt est
