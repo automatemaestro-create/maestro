@@ -132,10 +132,12 @@ fi
 # --- 4. Dérive cycle de vie ↔ réalité -----------------------------------------------------------
 section "4. Dérive cycle de vie ↔ réalité"
 
-# Les deux backlogs, lus UNE fois chacun : les trois contrôles ci-dessous s'en servent et
+# Les deux backlogs, lus UNE fois chacun : les contrôles 4a à 4c ci-dessous s'en servent et
 # gl_backlog n'a pas de cache — une lecture par contrôle multiplierait les allers-retours d'un
 # bilan qui en fait déjà beaucoup. Découpés en un nœud par ligne dès ici, forme sur laquelle
-# travaillent aussi bien grep (4a, 4b) que awk (4c).
+# travaillent aussi bien grep (4a, 4b) que awk (4c). 4d, lui, délègue tout à `reconcile-en-cours`,
+# qui refait sa propre lecture : le verbe existe pour être appelé seul, et le rendre dépendant d'un
+# backlog déjà en main l'aurait rendu inutilisable partout ailleurs.
 backlog_opened="$(gl_backlog opened | sed 's/{"iid":/\n{"iid":/g')"
 backlog_closed="$(gl_backlog closed | sed 's/{"iid":/\n{"iid":/g')"
 
@@ -216,6 +218,33 @@ else
   done <<EOF
 $wf_derives
 EOF
+fi
+
+# 4d. Tickets « En cours » dont plus personne ne s'occupe (#328).
+# La quatrième dérive du cycle de vie, et la seule qui ne se voie nulle part : un ticket entre en
+# « En cours » à /ticket-start et n'en sort que par une clôture ou un abandon — une session morte
+# (délai, pilote tué, console fermée, session interactive laissée en plan) l'y laisse pour toujours.
+# « En cours » ET assigné étant exactement ce que `queue.sh` écarte, plus rien ne le ramène jamais
+# dans le champ de vision : la règle d'anti-collision qui protège le travail vivant cache le travail
+# mort. Le diagnostic est DÉLÉGUÉ au verbe (`lib.sh reconcile-en-cours`), déjà en lecture seule de
+# bout en bout et seul à savoir départager un vivant d'un orphelin ; ce fichier ne fait que le nommer
+# comme dérive, sans le réparer — c'est sa promesse.
+# ⚠ Portée : les worktrees de CETTE machine, comme le ramassage et la purge — même borne qu'en 4b.
+# Le verbe est appelé en SOUS-PROCESSUS (et non par sa fonction, pourtant sourcée avec lib.sh) pour
+# la même raison que la boucle ci-dessous n'est pas un pipeline : ce qu'il imprime doit revenir dans
+# une variable, et `warn` doit incrémenter le compteur du shell principal, sans quoi `--strict`
+# rendrait 0 sur une dérive qu'il vient d'afficher.
+en_cours_orphelins="$(bash "$here/lib.sh" reconcile-en-cours --auto 2>/dev/null | grep -F ' orphelin — ')"
+if [ -z "$en_cours_orphelins" ]; then
+  ok "aucun ticket « En cours » abandonné par sa session (worktrees de cette machine)"
+else
+  while IFS= read -r ligne; do
+    [ -z "$ligne" ] && continue
+    warn "${ligne#*⚠ } — plus personne dessus (voir #329 pour la reprise)"
+  done <<EOF
+$en_cours_orphelins
+EOF
+  printf '    → le détail, verdict par verdict : bash scripts/gitlab/lib.sh reconcile-en-cours\n'
 fi
 
 # --- 5. Ménage des branches locales -------------------------------------------------------------

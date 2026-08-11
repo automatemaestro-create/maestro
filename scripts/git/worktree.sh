@@ -67,7 +67,7 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
   bash scripts/git/worktree.sh ensure <iid> [--branche <nom>]
   bash scripts/git/worktree.sh list
   bash scripts/git/worktree.sh remove <iid|chemin> [--force]
-  bash scripts/git/worktree.sh gc [--check] [--auto]
+  bash scripts/git/worktree.sh gc [--check] [--auto] [--sauf <iid>]
 
 `ensure` est l'aiguillage de /ticket-start : il dit où la session doit travailler, en rendant
 en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà — cas d'orchestrate,
@@ -83,6 +83,12 @@ Sur ce même verdict « soldé », `gc` pose le CYCLE DE VIE « Terminé » du t
 un ticket mergé s'affiche « En revue » jusqu'au prochain /branch-cleanup manuel. Best-effort et
 jamais bloquant ; « Abandonné »/« Doublon » ne sont jamais écrasés. MAESTRO_WORKFLOW_POSE=0
 l'éteint (toute autre valeur remplace l'appel — couture des tests).
+
+Au même endroit et pour la même raison, `gc` SIGNALE les tickets « En cours » ORPHELINS (#328) via
+`lib.sh reconcile-en-cours --auto` : une session morte laisse son ticket « En cours » et assigné,
+donc invisible de `queue.sh` pour toujours. Purement consultatif — rien n'est repris ni reposé, la
+reprise est le geste explicite de #329. `--sauf <iid>` écarte le ticket qu'on démarre (`ensure` le
+passe). MAESTRO_EN_COURS_SIGNAL=0 l'éteint (toute autre valeur remplace l'appel — couture des tests).
 
 `ensure` remet aussi les DÉPENDANCES du clone principal à niveau, en appelant `scripts/setup.sh`
 (dérive détectée par `--derive`, réparée par `--only`) : un paquet ajouté au dépôt arrive ainsi
@@ -612,8 +618,11 @@ commande_ensure() {
   # il n'y a rien à dire — un ramassage qui échoue ne doit pas empêcher un ticket de démarrer. En
   # `--auto` il n'écrit que des lignes de compte rendu, jamais un verdict : le contrat « dernière
   # ligne de stdout » d'`ensure` reste tenu.
+  # `--sauf "$iid"` : le ticket qu'on est en train de démarrer est repris à l'instant même, et son
+  # worktree peut très bien dormir depuis la veille — le signaler orphelin serait vrai une seconde
+  # et faux la suivante (#328).
   if [ "${MAESTRO_WORKTREE_GC:-1}" != 0 ]; then
-    commande_gc --auto || true
+    commande_gc --auto --sauf "$iid" || true
   fi
 
   # Purge des branches locales mergées (#23), APRÈS le ramassage ci-dessus — l'ordre n'est pas
@@ -832,7 +841,41 @@ retire_worktree() {
   return 1
 }
 
-# commande_gc [--check] [--auto] : retire les worktrees dont GitLab confirme le travail soldé.
+# orphelins_en_cours [<iid à écarter>] : les tickets « En cours » dont plus personne ne s'occupe,
+# tels que `lib.sh reconcile-en-cours --auto` les rend (rien du tout quand il n'y a rien à dire).
+#
+# Greffé sur `gc` et non sur `ensure` (#328), pour la raison exacte qui a fait greffer la pose du
+# cycle de vie au même endroit (#275) : les TROIS points de passage de `gc` — `ensure`, donc tout
+# /ticket-start ; /branch-cleanup ; le démarrage d'un run — en héritent d'un coup, là où un câblage
+# par point de passage en ferait trois à garder d'accord. La question n'est pas celle de `gc` (« ce
+# worktree a-t-il encore une raison d'exister ? ») mais elle se pose aux mêmes moments, et c'est le
+# moment qui compte : un ticket « En cours » et assigné est invisible de `queue.sh`, donc rien ne le
+# ramènerait jamais dans le champ de vision.
+#
+# Purement CONSULTATIF, comme tout ce que rend ce verbe : aucun label posé, aucune assignation
+# touchée, aucun worktree retiré — la reprise est le geste explicite de #329. Best-effort : un échec
+# (glab absent, hors ligne, dépôt jetable sans journal d'orchestration) rend le silence et n'empêche
+# ni un ticket de démarrer ni un run de continuer.
+#
+# `<iid à écarter>` est celui que l'appelant est en train de démarrer : le signaler orphelin serait
+# vrai une seconde et faux la suivante. MAESTRO_EN_COURS_SIGNAL remplace l'appel (0 = éteint) —
+# couture des tests, comme MAESTRO_WORKTREE_VERDICT et MAESTRO_WORKFLOW_POSE. MAESTRO_WORKTREE_GC=0
+# l'éteint aussi, par voie de conséquence : `gc` est son porteur, et ne pas passer par `gc` c'est ne
+# pas passer par lui.
+orphelins_en_cours() {
+  local sauf="${1:-}"
+  local -a args=(--auto)
+  [ -n "$sauf" ] && args+=(--sauf "$sauf")
+  [ "${MAESTRO_EN_COURS_SIGNAL:-}" != 0 ] || return 0
+  if [ -n "${MAESTRO_EN_COURS_SIGNAL:-}" ]; then
+    "$MAESTRO_EN_COURS_SIGNAL" "${args[@]}" 2>/dev/null || true
+  else
+    bash "$ICI/../gitlab/lib.sh" reconcile-en-cours "${args[@]}" 2>/dev/null || true
+  fi
+}
+
+# commande_gc [--check] [--auto] [--sauf <iid>] : retire les worktrees dont GitLab confirme le
+# travail soldé, et signale les tickets « En cours » que plus personne ne mène (#328).
 #
 # Trois refus, dans cet ordre, parce qu'ils ne coûtent pas la même chose :
 #   - le worktree de la SESSION COURANTE, jamais candidat (on ne se retire pas le sol sous les pieds) ;
@@ -848,11 +891,12 @@ retire_worktree() {
 # « <iid> <branche> » et imprime la ligne de verdict : c'est la couture par laquelle les tests font
 # tourner le ramassage sans réseau ni glab (même dispositif que MAESTRO_ORCHESTRATE_WORKTREE, #172).
 commande_gc() {
-  local check=0 auto=0
+  local check=0 auto=0 sauf=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --check) check=1 ;;
       --auto)  auto=1 ;;
+      --sauf)  sauf="${2:-}"; shift ;;
       -h|--help) usage; return 0 ;;
       *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
     esac
@@ -878,6 +922,16 @@ commande_gc() {
   done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
 
   if [ -z "$paires" ]; then
+    # Aucun worktree ici : le signalement des orphelins n'aurait rien à déduire non plus (sa portée
+    # EST celle des worktrees de cette machine), mais on l'appelle quand même — c'est lui qui décide
+    # de sa portée, pas cette branche-ci, et un jour où il saura conclure sans worktree il n'aura
+    # pas à se souvenir qu'un `return 0` l'avait court-circuité.
+    local seuls_orphelins
+    seuls_orphelins="$(orphelins_en_cours "$sauf")"
+    if [ -n "$seuls_orphelins" ]; then
+      printf '\nTickets « En cours » dont plus personne ne s'\''occupe :\n%s\n' "$seuls_orphelins"
+      return 0
+    fi
     [ "$auto" = 1 ] || printf '\nAucun worktree en place — rien à ramasser.\n\n'
     return 0
   fi
@@ -978,17 +1032,31 @@ commande_gc() {
     fi
   done <<< "$paires"
 
+  # Le signalement des orphelins (#328) est indépendant de ce qui précède : il a sa propre question,
+  # sa propre portée et son propre silence. Il est demandé ICI, une fois le ramassage joué, pour que
+  # le compte rendu garde l'ordre « ce que j'ai fait, puis ce que je constate ».
+  local orphelins
+  orphelins="$(orphelins_en_cours "$sauf")"
+
   # En --auto (appelé par `ensure`, donc par /ticket-start) on ne parle que s'il y a quelque chose à
-  # dire : un retrait, un travail en danger, un échec. Le silence est le cas normal.
+  # dire : un retrait, un travail en danger, un échec. Le silence est le cas normal — et un orphelin
+  # signalé suffit à rompre ce silence, même quand le ramassage n'a rien à raconter.
+  local muet_ramassage=0
   if [ "$auto" = 1 ] && [ "$retires" -eq 0 ] && [ "$signales" -eq 0 ] && [ "$echecs" -eq 0 ]; then
-    return 0
+    muet_ramassage=1
+    [ -z "$orphelins" ] && return 0
   fi
   [ "$auto" = 1 ] && printf '\n'
-  printf '%s' "$rapport"
-  if [ "$check" = 1 ]; then
-    printf 'Ramassage (--check) : %s à retirer, %s conservé(s) — rien n'\''a été touché.\n' "$retires" "$gardes"
-  else
-    printf 'Ramassage des worktrees : %s retiré(s), %s conservé(s).\n' "$retires" "$gardes"
+  if [ "$muet_ramassage" = 0 ]; then
+    printf '%s' "$rapport"
+    if [ "$check" = 1 ]; then
+      printf 'Ramassage (--check) : %s à retirer, %s conservé(s) — rien n'\''a été touché.\n' "$retires" "$gardes"
+    else
+      printf 'Ramassage des worktrees : %s retiré(s), %s conservé(s).\n' "$retires" "$gardes"
+    fi
+  fi
+  if [ -n "$orphelins" ]; then
+    printf '\nTickets « En cours » dont plus personne ne s'\''occupe :\n%s\n' "$orphelins"
   fi
   [ "$auto" = 1 ] && printf '\n'
   return 0

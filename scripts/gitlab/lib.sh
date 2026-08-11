@@ -52,6 +52,12 @@
 # d'erreur au script appelant. Chaque fonction renvoie un code non nul en cas d'échec.
 
 # --- Configuration (surchageable par variables d'environnement) --------------------------------
+# Le répertoire de CE fichier, pour atteindre ses voisins (scripts/orchestrate/pilote.sh) sans
+# dépendre du répertoire courant. Préfixé `GL_` parce que lib.sh est SOURCÉ par une dizaine de
+# scripts qui ont déjà leur `ICI`/`RACINE` : écraser le leur les enverrait chercher leurs propres
+# fichiers dans scripts/gitlab/.
+GL_ICI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 GL_PROJECT="${GL_PROJECT:-maestro-group4345327/maestro}"
 GL_GROUP="${GL_GROUP:-${GL_PROJECT%%/*}}"   # groupe = tout ce qui précède le premier "/"
 GL_WORKFLOW_SCOPE="${GL_WORKFLOW_SCOPE:-workflow}"  # scope des labels portant le cycle de vie
@@ -72,6 +78,18 @@ GL_BOT_USERS="${GL_BOT_USERS:-MaestroAgents}"
 # Niveau d'accès minimal d'un relecteur (30 = Developer) : en dessous, le membre ne peut ni pousser
 # ni merger, donc le désigner n'aurait pas de sens.
 GL_REVIEWER_MIN_ACCESS="${GL_REVIEWER_MIN_ACCESS:-30}"
+
+# Seuil de SILENCE au-delà duquel un ticket « En cours » est tenu pour ORPHELIN (#328, docs/10 §9.6),
+# en secondes. Volontairement GÉNÉREUX, et calé sur ce qui fait taire une session vivante : une
+# session Claude Code qui épuise la limite d'usage de 5 h dort jusqu'à son reset sans rien écrire, et
+# `run.sh` l'attend jusqu'à 5 h 30 (son PLAFOND_ATTENTE_S). Sous ce seuil, on désignerait comme
+# abandonné un ticket dont la session attend légitimement — et c'est le sens dans lequel se tromper
+# coûte cher, puisque #329 rendra l'orphelin prenable.
+GL_ORPHELIN_SEUIL="${MAESTRO_ORPHELIN_SEUIL:-21600}"   # 6 h — juste au-dessus du plafond d'attente
+# Une valeur d'environnement fantaisiste ne doit pas faire planter un verbe de diagnostic : on
+# retombe sur le défaut plutôt que d'échouer au premier test arithmétique (même parti pris que
+# scripts/orchestrate/status.sh).
+[ "$GL_ORPHELIN_SEUIL" -ge 0 ] 2>/dev/null || GL_ORPHELIN_SEUIL=21600
 
 # Retry des LECTURES GraphQL (voir gl_graphql_read) : l'endpoint GraphQL de GitLab renvoie
 # parfois une réponse vide (hoquet réseau / rate-limit). On ré-essaie jusqu'à GL_GQL_RETRIES
@@ -2063,6 +2081,285 @@ gl_sync_main() {
   printf 'main mis à jour : %s commit(s) repris depuis origin/main.\n' "$retard"
 }
 
+# --- « Quelqu'un s'occupe-t-il encore de ce ticket ? » (#328) --------------------------------------
+# Sixième membre de la famille des réconciliations — `worktree.sh gc` (§9.2), `reconcile-workflow`
+# (#275), `sync-main` (§9.3), `setup --derive` (§9.4), `cleanup-merged` (§9.5) — et celui qui
+# manquait le plus. Un ticket entre en « En cours » (et s'assigne) à /ticket-start ; il n'en sort que
+# par /ticket-ship, /ticket-finish ou /ticket-abandon. LA TROISIÈME SORTIE EST L'ABSENCE DE SORTIE :
+# session coupée par un délai, pilote arrêté au `taskkill` (aucun trap ne s'exécute), console fermée,
+# limite d'usage épuisée, session interactive laissée en plan. Le ticket reste « En cours » ET
+# assigné — c'est-à-dire exactement le filtre par lequel `queue.sh` l'écarte : la règle
+# d'anti-collision qui protège le travail vivant cache définitivement le travail mort. Deux tickets
+# dans cet état au constat du 2026-08-11 : #316 (2047 lignes commitées, jamais poussées, plus sept
+# lots sautés en cascade) et #325 (396 lignes non commitées dans son worktree).
+#
+# LE RENVERSEMENT DE QUESTION FAIT TOUT LE TRAVAIL. On ne demande pas « ce run a-t-il échoué ? » — un
+# pilote tué ne pose aucun verdict, or c'est précisément lui qui fabrique l'orphelin — mais
+# « quelqu'un s'occupe-t-il encore de ce ticket ? ». Posée ainsi, la question couvre tous les modes de
+# mort, run ou pas, session interactive comprise.
+#
+# DEUX SOURCES, DANS CET ORDRE :
+#   1. la CARTE DU PILOTE (#213) — un run vivant qui nomme le ticket parmi ceux en vol. Elle est
+#      VÉRIFIABLE (PID, naissance du processus, hôte), donc c'est une preuve et non un indice ;
+#   2. sinon la FRAÎCHEUR DU WORKTREE, annoncée comme une DÉDUCTION — précédent de `status.sh`, dont
+#      l'état « en cours » se lit dans la carte quand elle est là et se déduit sinon.
+#
+# ⚠ La carte ne prouve JAMAIS la mort, seulement la vie : un pilote mort ne dit rien du ticket, qu'une
+# session interactive a très bien pu reprendre depuis. Même asymétrie que dans `pilote.sh`, et elle va
+# toujours dans le même sens — désigner à tort le ticket d'une session vivante coûte infiniment plus
+# cher que de rater un orphelin d'un tour, puisque #329 rendra l'orphelin prenable.
+#
+# TROIS VERDICTS et non deux, parce que « je ne sais pas » est une réponse :
+#   vivant       quelqu'un est dessus (carte du pilote, ou worktree écrit récemment) ;
+#   orphelin     worktree présent ICI, silencieux depuis plus de GL_ORPHELIN_SEUIL, et aucun pilote
+#                vivant ne le nomme ;
+#   hors-portee  aucun worktree sur cette machine — rien à en dire, et surtout pas que c'est un
+#                orphelin : le ticket peut être en plein travail sur le clone de quelqu'un d'autre.
+#                La couverture est celle des worktrees de CETTE machine, comme `gc` et
+#                `cleanup-merged` ; elle se dit dans la sortie plutôt que de laisser croire à un
+#                balayage global.
+#
+# EN LECTURE SEULE, entièrement : ce verbe SIGNALE. Il ne pose aucun label, ne touche à aucune
+# assignation, ne retire aucun worktree et n'écrit rien côté GitLab. Le geste de reprise est celui de
+# #329, et il est explicite — toute la famille signale sans décider. `--check` est accepté par
+# cohérence de famille et n'a donc aucun effet : le refuser serait un piège pour la main qui vient de
+# taper `reconcile-workflow --check`.
+#
+# Modes :
+#   --auto        ne parle que s'il y a un orphelin. C'est ainsi que `worktree.sh gc` l'appelle, donc
+#                 /ticket-start, /branch-cleanup et le démarrage d'un run — mêmes points de passage
+#                 que #275 et pour la même raison : greffer sur `gc` les sert tous les trois d'un
+#                 coup, sans ajouter d'étape à `ensure` ;
+#   --tsv         la surface machine « iid <TAB> verdict <TAB> source <TAB> détail <TAB> titre »,
+#                 que #329 consommera plutôt que de relire une phrase en français ;
+#   --sauf <iid>  écarte un ticket. `ensure` s'en sert pour celui qu'il est en train de démarrer :
+#                 le signaler orphelin serait vrai une seconde et faux la suivante.
+#
+# Codes de retour : 0 = rien à signaler · 3 = au moins un orphelin (même convention que
+# `setup.sh --derive`) · 1 = backlog illisible · 2 = usage. AUCUN n'est un motif de blocage pour un
+# appelant : ce verbe ne doit jamais empêcher un ticket de démarrer ni un run de continuer.
+
+# gl_mtime <chemin> -> date de dernière modification, en secondes Unix. GNU (`stat -c`) puis BSD
+# (`stat -f`) puis `date -r` : le dépôt tourne sous Git Bash comme sur un runner Linux. Jumeau de
+# `mtime` dans scripts/orchestrate/status.sh, qui ne source pas ce fichier.
+gl_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || date -r "$1" +%s 2>/dev/null
+}
+
+# gl_duree_lisible <secondes> -> « 42s », « 12min30 », « 3h05 ». Même formule que status.sh, pour
+# que deux sorties qui parlent du même silence l'écrivent pareil.
+gl_duree_lisible() {
+  local s="${1:-0}"
+  [ "$s" -ge 0 ] 2>/dev/null || s=0
+  if [ "$s" -lt 60 ]; then printf '%ds' "$s"
+  elif [ "$s" -lt 3600 ]; then printf '%dmin%02d' $((s / 60)) $((s % 60))
+  else printf '%dh%02d' $((s / 3600)) $(((s % 3600) / 60)); fi
+}
+
+# gl_orch_dir -> le journal d'orchestration du CLONE PRINCIPAL (`.maestro/orchestrate`), d'où qu'on
+# appelle. Même résolution que `journal.sh` (#307) et pour la même raison : depuis un worktree, le
+# `.maestro/orchestrate` local est un répertoire vide, et la carte des pilotes serait invisible.
+gl_orch_dir() {
+  local principal
+  principal="$(gl_depot_principal)" || return 1
+  printf '%s/.maestro/orchestrate' "$principal"
+}
+
+# gl_pilotes_en_vol -> une ligne « run-id <TAB> pid <TAB> iids-en-vol » par run VIVANT. Sortie vide =
+# personne ne tourne, et c'est le cas courant : le silence est la réponse normale.
+#
+# La lecture est DÉLÉGUÉE à scripts/orchestrate/pilote.sh, seul endroit qui sache relire une carte et
+# la vérifier (PID recyclé, zombie, autre machine) — deux formules qui divergeraient se remarqueraient
+# trop tard. Le fichier peut manquer (dépôt jetable des tests, clone partiel) : on rend alors le
+# silence, et la déduction tranche seule.
+gl_pilotes_en_vol() {
+  local orch
+  orch="$(gl_orch_dir)" || return 1
+  [ -d "$orch" ] || return 1
+  [ -r "$GL_ICI/../orchestrate/pilote.sh" ] || return 1
+  # shellcheck source=scripts/orchestrate/pilote.sh
+  . "$GL_ICI/../orchestrate/pilote.sh" || return 1
+  pilotes_vivants "$orch"
+}
+
+# gl_branche_du_iid <clone-principal> <iid> -> la branche LOCALE du ticket, d'après la convention
+# `<type>/<iid>-<slug>`. Lue dans git plutôt que demandée à GitLab : c'est gratuit, hors ligne, et ça
+# marche encore quand le label `type::` a changé depuis (même formule que status.sh).
+gl_branche_du_iid() {
+  git -C "$1" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null |
+    awk -v iid="$2" 'index($0, "/" iid "-") || $0 ~ ("/" iid "$") { print; exit }'
+}
+
+# gl_worktree_activite <chemin> -> l'instant de la dernière écriture attribuable à une session qui
+# travaille là, en secondes Unix. Rien (code 1) si le répertoire a disparu ou n'apprend rien.
+#
+# TROIS TÉMOINS, le plus récent l'emporte — aucun ne suffit seul :
+#   • l'INDEX git, touché par tout `git add`/`commit`/`status` de la session (même témoin que
+#     status.sh, pour qui c'est « le signal de progression le plus fiable ») ;
+#   • les FICHIERS que `git status` rend modifiés ou non suivis : une session qui édite du code
+#     pendant quarante minutes sans lancer une seule commande git laisse l'index froid et les
+#     fichiers brûlants ;
+#   • l'ATELIER DE SESSION `.maestro/session/` (#307), gitignoré donc invisible du deuxième témoin,
+#     et par construction l'endroit où une session pose ses fichiers de travail.
+#
+# ⚠ L'index est lu AVANT le `git status`, et celui-ci passe par `--no-optional-locks` : un
+# `git status` ordinaire RÉÉCRIT l'index (rafraîchissement du cache de stat), donc le mesurer le
+# rendrait frais — l'outil de mesure produirait la fraîcheur qu'il mesure, et plus aucun worktree ne
+# serait jamais silencieux.
+gl_worktree_activite() {
+  local wt="$1" index="" f t max="" n=0 atelier
+  [ -d "$wt" ] || return 1
+
+  index="$(git -C "$wt" rev-parse --git-path index 2>/dev/null)"
+  # `--git-path` rend un chemin ABSOLU pour un worktree lié, mais RELATIF (« .git/index ») pour un
+  # répertoire de travail principal : sans cette reprise il serait résolu depuis le répertoire
+  # courant, et l'activité passerait pour nulle (même piège que status.sh).
+  case "$index" in /* | ?:[/\\]*) ;; *) [ -n "$index" ] && index="$wt/$index" ;; esac
+  if [ -n "$index" ] && t="$(gl_mtime "$index")" && [ -n "$t" ]; then max="$t"; fi
+
+  # Sortie en `-z` : un chemin porteur d'espaces ou d'accents y voyage tel quel, là où le format
+  # ordinaire le met entre guillemets et l'échappe. Bornée à cent entrées — dater une session au
+  # travail n'en demande pas plus, et un worktree qui en porte mille ne doit pas coûter mille `stat`.
+  # Les lignes de renommage rendent l'ancien chemin dans un enregistrement à part, qui ne se `stat`
+  # pas : il est sauté comme tout chemin illisible, sans conséquence sur le maximum.
+  while IFS= read -r -d '' f; do
+    n=$((n + 1)); [ "$n" -gt 100 ] && break
+    f="${f:3}"
+    [ -n "$f" ] || continue
+    t="$(gl_mtime "$wt/$f")" || continue
+    [ -n "$t" ] || continue
+    if [ -z "$max" ] || [ "$t" -gt "$max" ]; then max="$t"; fi
+  done < <(git --no-optional-locks -C "$wt" status --porcelain -z 2>/dev/null)
+
+  atelier="$wt/.maestro/session"
+  if [ -d "$atelier" ]; then
+    for f in "$atelier" "$atelier"/*; do
+      [ -e "$f" ] || continue
+      t="$(gl_mtime "$f")" || continue
+      [ -n "$t" ] || continue
+      if [ -z "$max" ] || [ "$t" -gt "$max" ]; then max="$t"; fi
+    done
+  fi
+
+  [ -n "$max" ] || return 1
+  printf '%s' "$max"
+}
+
+gl_reconcile_en_cours() {
+  local auto=0 tsv=0 sauf=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      # Accepté et sans effet : ce verbe est en lecture seule par nature (cf. en-tête).
+      --check) ;;
+      --auto)  auto=1 ;;
+      --tsv)   tsv=1 ;;
+      --sauf)  sauf="${2:-}"; shift ;;
+      *) echo "usage: gl_reconcile_en_cours [--check] [--auto] [--tsv] [--sauf <iid>]" >&2; return 2 ;;
+    esac
+    shift
+  done
+
+  local principal
+  principal="$(gl_depot_principal)" || {
+    echo "reconcile-en-cours : hors d'un dépôt git — contrôle sauté." >&2
+    return 1
+  }
+  # UNE lecture pour tout le monde : le cycle de vie est dans le backlog ouvert, déjà projeté en TSV.
+  local table
+  table="$(gl_backlog_table opened)" || {
+    echo "reconcile-en-cours : backlog illisible — contrôle sauté." >&2
+    return 1
+  }
+  # Une lecture des cartes pour tout le monde aussi : `pilotes_vivants` balaie tous les runs.
+  local pilotes
+  pilotes="$(gl_pilotes_en_vol 2>/dev/null)" || pilotes=""
+
+  local maintenant iid statut titre run branche wt activite silence
+  local verdict origine detail lignes="" orphelins=0 vivants=0 hors=0
+  maintenant="$(date +%s)"
+
+  while IFS=$'\t' read -r iid statut _ _ _ titre; do
+    case "$iid" in ''|'#'*|*[!0-9]*) continue ;; esac
+    [ "$statut" = "En cours" ] || continue
+    [ -n "$sauf" ] && [ "$iid" = "$sauf" ] && continue
+
+    # 1. La carte du pilote, qui fait foi quand elle est là.
+    run="$(printf '%s\n' "$pilotes" | awk -F'\t' -v iid="$iid" '
+      { n = split($3, v, ","); for (i = 1; i <= n; i++) if (v[i] == iid) { print $1 "\t" $2; exit } }')"
+    if [ -n "$run" ]; then
+      verdict="vivant"; origine="carte du pilote"
+      detail="run ${run%%$'\t'*}, pilote pid ${run##*$'\t'}"
+      vivants=$((vivants + 1))
+    else
+      # 2. Sinon la déduction, annoncée comme telle.
+      branche="$(gl_branche_du_iid "$principal" "$iid")"
+      wt=""
+      [ -n "$branche" ] && wt="$(gl_worktree_de_branche "$principal" "$branche")"
+      if [ -z "$wt" ] || [ ! -d "$wt" ]; then
+        verdict="hors-portee"; origine="hors de portée"
+        detail="aucun worktree sur cette machine"
+        hors=$((hors + 1))
+      elif ! activite="$(gl_worktree_activite "$wt")" || [ -z "$activite" ]; then
+        verdict="hors-portee"; origine="hors de portée"
+        detail="worktree illisible : $wt"
+        hors=$((hors + 1))
+      else
+        silence=$((maintenant - activite))
+        [ "$silence" -ge 0 ] || silence=0
+        if [ "$silence" -lt "$GL_ORPHELIN_SEUIL" ]; then
+          verdict="vivant"; origine="déduction"
+          detail="worktree écrit il y a $(gl_duree_lisible "$silence")"
+          vivants=$((vivants + 1))
+        else
+          verdict="orphelin"; origine="déduction"
+          detail="worktree silencieux depuis $(gl_duree_lisible "$silence") — $wt"
+          orphelins=$((orphelins + 1))
+        fi
+      fi
+    fi
+
+    if [ "$tsv" = 1 ]; then
+      # Le TITRE est la cinquième colonne : #329 aura à dire QUOI il propose de reprendre, et une
+      # relecture du backlog rien que pour ça serait une lecture de plus sur un verbe qui n'en fait
+      # qu'une. Il ne va pas dans le rendu humain, où c'est le chemin du worktree qui est actionnable.
+      lignes="$lignes$iid"$'\t'"$verdict"$'\t'"$origine"$'\t'"$detail"$'\t'"$titre"$'\n'
+      continue
+    fi
+    case "$verdict" in
+      orphelin)    lignes="$lignes$(printf '  ⚠ #%s orphelin — %s : %s' "$iid" "$origine" "$detail")"$'\n' ;;
+      vivant)      lignes="$lignes$(printf '  ✓ #%s vivant — %s : %s' "$iid" "$origine" "$detail")"$'\n' ;;
+      *)           lignes="$lignes$(printf '  ~ #%s — %s' "$iid" "$detail")"$'\n' ;;
+    esac
+  done <<< "$table"
+
+  # En `--auto` (appel d'office par un point de passage), on ne parle que des orphelins : un ticket
+  # bien vivant n'est pas une nouvelle, et le silence est le cas normal. Même parti pris que
+  # `worktree.sh gc --auto` et `cleanup-merged --auto`.
+  if [ "$auto" = 1 ]; then
+    [ "$orphelins" -eq 0 ] && return 0
+    printf '%s' "$lignes" | grep -F ' orphelin — '
+    printf '  → détail : bash scripts/gitlab/lib.sh reconcile-en-cours\n'
+    return 3
+  fi
+
+  if [ "$tsv" = 1 ]; then
+    printf '# iid\tverdict\tsource\tdetail\ttitre\n'
+    printf '%s' "$lignes"
+  else
+    printf '\nTickets « En cours » — quelqu'\''un s'\''en occupe-t-il encore ?\n\n'
+    if [ -z "$lignes" ]; then
+      printf '  aucun ticket « En cours » dans le backlog ouvert.\n'
+    else
+      printf '%s' "$lignes"
+    fi
+    printf '\n%s vivant(s), %s orphelin(s), %s hors de portée.\n' "$vivants" "$orphelins" "$hors"
+    printf 'Portée : les worktrees de CETTE machine (comme le ramassage et la purge) — un ticket\n'
+    printf 'travaillé sur un autre clone est « hors de portée », jamais orphelin.\n\n'
+  fi
+  [ "$orphelins" -gt 0 ] && return 3
+  return 0
+}
+
 # --- Retard sur origin/main ----------------------------------------------------------------------
 # gl_behind_main [branche] -> « ma branche a-t-elle pris du retard sur origin/main ? », à consulter
 # AVANT le push (/ticket-finish). Purement CONSULTATIF : cette fonction ne rebase pas, ne pousse
@@ -2361,6 +2658,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     review-queue)   gl_review_queue "$@" ;;
     cleanup-merged) gl_cleanup_merged "$@" ;;
     worktree-done)  gl_worktree_done "$@" ;;
+    reconcile-en-cours) gl_reconcile_en_cours "$@" ;;
     branch-for)     gl_branch_for "$@" ;;
     start-branch)   gl_start_branch "$@" ;;
     sync-main)      gl_sync_main "$@" ;;
@@ -2440,6 +2738,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
       echo "    worktree-done <iid> [branche] (fini|actif|inconnu + sha de merge + raison — fin de vie d'un worktree)" >&2
       echo "    behind-main [branche]       (retard sur origin/main + conflit probable ; 0=à jour, 3=en retard, 4=+conflit)" >&2
+      echo "  Tickets « En cours » orphelins (lecture seule — signale, ne répare rien) :" >&2
+      echo "    reconcile-en-cours [--check] [--auto] [--tsv] [--sauf <iid>]" >&2
+      echo "                                (« quelqu'un s'occupe-t-il encore de ce ticket ? » : vivant / orphelin /" >&2
+      echo "                                 hors de portée, avec sa source — carte du pilote, ou déduction annoncée." >&2
+      echo "                                 Portée : les worktrees de CETTE machine. 0=rien à signaler, 3=orphelin(s))" >&2
       echo "    mr-conflict [branche]       (conflit RÉEL avec origin/main via merge-tree ; 0=propre, 3=conflit)" >&2
       echo "  Garde-fou de clôture (session ↔ ticket, avant toute écriture de /ticket-finish|ship) :" >&2
       echo "    branch-iid [branche]        (iid porté par le nom de la branche ; rien si hors convention)" >&2

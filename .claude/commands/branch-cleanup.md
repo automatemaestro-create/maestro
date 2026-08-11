@@ -37,6 +37,16 @@ automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuff
    idempotente sans devenir inutile : le worktree du ticket qu'on vient de merger peut ne pas
    exister ici, ou être celui de la session courante, que `gc` ne touche jamais.
 
+   Au même passage, `gc` **signale les tickets « En cours » dont plus personne ne s'occupe** (#328) :
+   une session morte — délai, pilote tué, console fermée, session interactive laissée en plan — laisse
+   son ticket « En cours » **et** assigné, c'est-à-dire exactement ce que `queue.sh` écarte, donc
+   invisible pour toujours. Le bloc « Tickets « En cours » dont plus personne ne s'occupe » est
+   **consultatif** : rien n'est repris ni reposé ici (la reprise est le geste explicite de #329).
+   Relaie-le dans ton résumé tel quel, sans rien décider — et n'y touche pas au motif que le ticket
+   te paraît fini : un « orphelin » est une **déduction** de fraîcheur, bornée aux worktrees de cette
+   machine. `bash scripts/gitlab/lib.sh reconcile-en-cours` en donne le détail, verdict par verdict
+   (vivant / orphelin / hors de portée, avec sa source).
+
 3. **Branche courante mergée ?** `cleanup-merged` ne touche jamais à la branche sur laquelle est
    posé le clone principal — on ne supprime pas une branche sous ses propres pieds. Si la branche
    courante (`git branch --show-current`) n'est pas `main`, demande son état en **un mot** :
@@ -96,4 +106,5 @@ automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuff
 
 7. **Résumé** : branches supprimées (locale / distante) et celles laissées de côté avec la raison,
    tickets passés à « Terminé », worktrees retirés à l'étape 2 et ceux que `gc` a conservés en
-   signalant du travail non sauvegardé.
+   signalant du travail non sauvegardé, et — s'il y en a — les **tickets « En cours » orphelins**
+   qu'il a signalés, à rendre tels quels : c'est un constat, pas une liste de choses à faire.
