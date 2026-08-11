@@ -114,13 +114,13 @@ toi-même.
    `--milestone` — son plan est déjà figé.
    Il ouvre une console indépendante, imprime le run-id, le journal et la commande de reprise, et
    rend la main immédiatement. Rappelle les options utiles, qui se combinent avec `--detach` :
-   `--max <n>` pour borner le run, `--timeout <durée>` par ticket, `--modele <modèle>`,
-   `--effort <niveau>` (`low`…`max`). Ces deux derniers ont un **défaut épinglé par le dépôt** —
-   `claude-opus-5` et `xhigh` (#206, #217) — et la ligne `plan :` les annonce : ne les passe que si
-   l'utilisateur demande explicitement un autre régime, et dis lequel s'il le fait. `--budget <usd>`
-   existe aussi, mais **ne le propose pas** : il n'y a plus de plafond par défaut (#286) et un
-   plafond atteint coupe la session en plein travail — sans commit ni MR, compté en échec, lots
-   suivants du parent sabordés. Ne le passe que si l'utilisateur le demande, et dis-le alors.
+   `--max <n>` pour borner le run, `--modele <modèle>`, `--effort <niveau>` (`low`…`max`). Ces deux
+   derniers ont un **défaut épinglé par le dépôt** — `claude-opus-5` et `xhigh` (#206, #217) — et la
+   ligne `plan :` les annonce : ne les passe que si l'utilisateur demande explicitement un autre
+   régime, et dis lequel s'il le fait. `--budget <usd>` (#286) et `--timeout <durée>` (#326)
+   existent aussi, mais **ne les propose pas** : aucun des deux ne s'applique par défaut, et
+   atteints ils coupent la session en plein travail — sans commit ni MR, comptée en échec, lots
+   suivants du parent sabordés. Ne les passe que si l'utilisateur le demande, et dis-le alors.
    Puis le **suivi** — `bash scripts/orchestrate/status.sh --watch` (où en est le run, depuis
    n'importe quel terminal) ou `tail -f .maestro/orchestrate/<run-id>/run.log` (la
    sortie brute de la console) — et l'**arrêt d'urgence** : `touch .maestro/orchestrate/STOP` — pris

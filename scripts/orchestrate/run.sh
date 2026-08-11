@@ -148,13 +148,26 @@ CONCURRENCE_EXPLICITE=0
 # `/ticket-ship`, son travail reste non commité dans le worktree, et l'échec fait sauter les lots
 # suivants du même parent (§11.5). Deux runs du 2026-08-06 l'ont payé au même montant exact
 # (#277 et #245, 15.07 $ chacun) : 2 tickets perdus, 13 sautés en cascade, pour zéro livrable.
-# Un run reste borné par ce qui borne vraiment — `--timeout` par ticket, le fichier STOP, la limite
-# d'usage. Le montant, lui, ne borne rien d'utile tant qu'on ne le demande pas : `--budget <usd>` et
+# Un run reste borné par ce qui borne vraiment — le fichier STOP, la limite d'usage, le plafond
+# d'attente de 5 h 30 (le `--timeout` cité ici à l'origine a suivi le même sort en #326, pour la
+# même raison). Le montant, lui, ne borne rien d'utile tant qu'on ne le demande pas : `--budget <usd>` et
 # MAESTRO_ORCHESTRATE_BUDGET restent là pour le poser explicitement, vide ou 0 valant « pas de
 # plafond » (0 est aussi la seule façon d'annuler une variable déjà posée dans l'environnement, et
 # `--max-budget-usd 0` tuerait chaque session au premier jeton).
 BUDGET="${MAESTRO_ORCHESTRATE_BUDGET:-}"
-TIMEOUT_BRUT="${MAESTRO_ORCHESTRATE_TIMEOUT:-45m}"
+# Le timeout n'a plus de défaut non plus (#326) : sans `--timeout`, la session n'est enveloppée
+# d'AUCUN `timeout`. C'est le raisonnement de #286 sur l'autre plafond, et il s'y transpose mot pour
+# mot — 45 min étaient le garde-fou d'une boucle neuve, quand une session durait 20 min ; au régime
+# épinglé par le dépôt (`claude-opus-5` + effort `xhigh`, #206/#217) elles sont devenues le premier
+# tueur de sessions du run. Mesuré le 2026-08-10, run 20260810-141208 : #315 livré en 42min50 (2 min
+# de marge) et #316 coupé à 45min02 — son travail était FINI et commité, le couperet est tombé
+# pendant le push et l'ouverture de la MR. Le plafond n'a donc rien protégé : il a transformé un
+# ticket livrable en échec, puis l'échec en sept lots sautés en cascade (§11.5), pour un seul
+# livrable à 14,75 $. Un run reste borné par ce qui le borne vraiment — le fichier STOP, la limite
+# d'usage, le plafond d'attente de 5 h 30, et l'humain devant la console. `--timeout <durée>` et
+# MAESTRO_ORCHESTRATE_TIMEOUT restent là pour en poser un ; vide ou `0` valent « aucun », seule
+# façon d'annuler une variable déjà posée dans l'environnement.
+TIMEOUT_BRUT="${MAESTRO_ORCHESTRATE_TIMEOUT:-}"
 # Le modèle s'épingle **en toutes lettres**, jamais par alias (#206). `--model opus` est résolu par
 # le CLI, et sa cible bouge d'une version à l'autre : sur 2.1.215 elle valait encore
 # `claude-opus-4-8`. Un alias fait donc décider la version installée sur le poste à la place du
@@ -208,9 +221,11 @@ Options :
                        différents, ou même groupe de dépendance (colonne « groupe » de queue.sh).
                        Au-delà de 1, la vue vivante s'éteint et les sessions partagent le quota.
   --budget <usd>       Plafond de dépense par ticket (--max-budget-usd). Par défaut AUCUN : une
-                       session va au bout de son ticket, de son timeout ou de la limite d'usage.
-                       0 (ou vide) vaut « pas de plafond ».
-  --timeout <durée>    Délai maximal par ticket : 45m, 90m, 2700… Défaut : 45m.
+                       session va au bout de son ticket, de son délai s'il en a un, ou de la
+                       limite d'usage. 0 (ou vide) vaut « pas de plafond ».
+  --timeout <durée>    Délai maximal par ticket : 45m, 90m, 2700… Par défaut AUCUN : un délai
+                       tue la session EN PLEIN TRAVAIL, sans commit ni MR, et fait sauter les
+                       lots suivants du même parent. 0 (ou vide) vaut « pas de délai ».
   --modele <modèle>    Modèle des sessions. Défaut : claude-opus-5.
   --effort <niveau>    Effort de raisonnement des sessions : low, medium, high, xhigh, max.
                        Défaut : xhigh.
@@ -253,7 +268,7 @@ while [ $# -gt 0 ]; do
     --max) MAX="${2:-0}"; shift ;;
     --concurrence | --concurrency) CONCURRENCE="${2:-1}"; CONCURRENCE_EXPLICITE=1; shift ;;
     --budget) BUDGET="${2:-}"; shift ;;
-    --timeout) TIMEOUT_BRUT="${2:-45m}"; shift ;;
+    --timeout) TIMEOUT_BRUT="${2:-}"; shift ;;
     --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
     --effort) EFFORT="${2:-xhigh}"; shift ;;
     --plan) PLAN_IMPOSE="${2:-}"; shift ;;
@@ -1591,7 +1606,7 @@ ecrit_resultat() {
 lance_session() {
   local iid="$1" dest="$2" uuid="$3" mode="$4" code
   if [ "$mode" = "reprise" ]; then
-    ( cd "$dest" && timeout "$TIMEOUT_S" "$CLAUDE_BIN" -p "$(prompt_reprise "$iid")" \
+    ( cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_reprise "$iid")" \
         --resume "$uuid" \
         --output-format stream-json --verbose \
         --permission-mode acceptEdits \
@@ -1607,7 +1622,7 @@ lance_session() {
     uuid="$(genere_uuid)"
     printf '%s' "$uuid" >"$RUN_DIR/$iid.session"
   fi
-  ( cd "$dest" && timeout "$TIMEOUT_S" "$CLAUDE_BIN" -p "$(prompt_ticket "$iid")" \
+  ( cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_ticket "$iid")" \
       --session-id "$uuid" \
       --output-format stream-json --verbose \
       --permission-mode acceptEdits \
@@ -1766,10 +1781,22 @@ fi
 # --- Préflight ---------------------------------------------------------------------------------------
 gl_require_glab || exit 1
 
-TIMEOUT_S="$(secondes "$TIMEOUT_BRUT")" || {
-  printf 'run.sh : durée invalide pour --timeout : %s (attendu 45m, 2h, 2700…)\n' "$TIMEOUT_BRUT" >&2
-  exit 2
-}
+# Le délai ne devient une enveloppe de session que s'il a été DEMANDÉ (#326), sur la mécanique exacte
+# du budget : c'est `OPT_TIMEOUT` — vide par défaut — qui préfixe le CLI, jamais `timeout 0`, qui
+# tuerait chaque session à l'instant même (le pendant du `--max-budget-usd 0` évité en #286).
+# `TIMEOUT_S` à 0 est la sentinelle « aucun délai », et elle vaut aussi pour l'échéance que le pilote
+# se donne sur un sous-shell (cf. `lance_ticket`).
+case "$TIMEOUT_BRUT" in
+  '' | 0 | 0s | 0m | 0h) TIMEOUT_S=0 ;;
+  *)
+    TIMEOUT_S="$(secondes "$TIMEOUT_BRUT")" || {
+      printf 'run.sh : durée invalide pour --timeout : %s (attendu 45m, 2h, 2700…, ou 0 pour aucun délai)\n' "$TIMEOUT_BRUT" >&2
+      exit 2
+    }
+    ;;
+esac
+OPT_TIMEOUT=()
+[ "$TIMEOUT_S" -gt 0 ] && OPT_TIMEOUT=(timeout "$TIMEOUT_S")
 
 if [ "$DRY" = 0 ] && ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
   printf 'run.sh : « %s » introuvable — le CLI Claude Code est nécessaire pour lancer les sessions.\n' "$CLAUDE_BIN" >&2
@@ -2057,13 +2084,14 @@ fi
 nb_plan="$(grep -cv '^#' "$PLAN")"
 printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
 [ "$REPRISE" = 1 ] && printf 'reprise du run %s — son plan, rejoué tel quel\n' "$REPRISE_ID"
-# Le régime de budget est ANNONCÉ dans les deux sens (#286) : « illimité » est un choix, pas un
-# oubli, et relire un run doit dire lequel des deux s'appliquait — un ticket coupé au plafond ne se
-# distingue d'un échec de session que par cette ligne.
-printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · timeout %s/ticket · %s\n' \
+# Les deux plafonds de session sont ANNONCÉS dans les deux sens (#286 pour le budget, #326 pour le
+# délai) : « illimité » et « sans délai » sont des choix, pas des oublis, et relire un run doit dire
+# lequel des deux régimes s'appliquait — un ticket coupé au plafond ne se distingue d'un échec de
+# session que par cette ligne.
+printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · %s · %s\n' \
   "$nb_plan" "$MODELE" "$EFFORT" \
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
-  "$(duree_lisible "$TIMEOUT_S")" \
+  "$([ "$TIMEOUT_S" -gt 0 ] && printf 'timeout %s/ticket' "$(duree_lisible "$TIMEOUT_S")" || printf 'sans délai')" \
   "$([ "$CONCURRENCE" -gt 1 ] && printf '%s en vol' "$CONCURRENCE" || printf 'séquentiel')"
 printf 'journal : %s\n\n' "$RUN_DIR"
 
@@ -2284,7 +2312,10 @@ joue_session() { # <iid> <dest> <uuid> <mode>
     # passent par la file de `dit`, que le pilote vide entre deux frames — c'est lui qui retire le
     # bloc avant de les imprimer, et lui seul.
 
-    if [ "$code" -eq 124 ]; then
+    # 124 n'est un timeout que si l'on en a posé un (#326) : sans `OPT_TIMEOUT`, ce code vient du CLI
+    # lui-même et n'a pas à être traduit en « session interrompue au bout de 0s » — il suit alors la
+    # voie ordinaire d'un échec de session.
+    if [ "$code" -eq 124 ] && [ "$TIMEOUT_S" -gt 0 ]; then
       dit '  %s✗%s session interrompue au bout de %s (timeout)\n' \
         "$C_R" "$C_0" "$(duree_lisible "$TIMEOUT_S")"
       bilan_des_reprises "$reprises" "$attente_cumulee"
@@ -2483,7 +2514,16 @@ lance_ticket() { # <index>
   # légitimement prendre — ses sessions successives, plus tout ce qu'une limite d'usage l'autorise à
   # attendre, plus une marge — sa place est reprise et il est compté en échec. Jamais atteint en
   # régime normal : le `timeout` de chaque session en est très loin.
-  P_ECHEANCE[$i]=$((SECONDS + TIMEOUT_S * (MAX_REPRISES + 1) + PLAFOND_ATTENTE_S + 600))
+  # Sans délai de session (#326), cette échéance n'a plus de quoi se calculer — et AUCUN plafond de
+  # remplacement n'est inventé ici : en poser un « raisonnable » recréerait exactement le défaut
+  # qu'on vient de supprimer, un ticket tué en plein travail, mais côté pilote et sans même une
+  # raison lisible. 0 vaut donc « pas d'échéance » (cf. `moissonne`), et le blocage qu'elle couvrait
+  # redevient ce qu'il était avant d'être outillé : un run qu'on arrête par STOP ou par Ctrl-C.
+  if [ "$TIMEOUT_S" -gt 0 ]; then
+    P_ECHEANCE[$i]=$((SECONDS + TIMEOUT_S * (MAX_REPRISES + 1) + PLAFOND_ATTENTE_S + 600))
+  else
+    P_ECHEANCE[$i]=0
+  fi
   EN_VOL="$EN_VOL $i"
   return 0
 }
@@ -2722,7 +2762,7 @@ moissonne() {
       read -r code <"$RUN_DIR/${P_IID[$i]}.fini" || code=1
       case "${code:-}" in '' | *[!0-9]*) code=1 ;; esac
       rm -f "$RUN_DIR/${P_IID[$i]}.fini" 2>/dev/null
-    elif [ "$SECONDS" -gt "${P_ECHEANCE[$i]}" ]; then
+    elif [ "${P_ECHEANCE[$i]}" -gt 0 ] && [ "$SECONDS" -gt "${P_ECHEANCE[$i]}" ]; then
       dit '  %s✗%s #%-4s session disparue sans rendre de code — créneau repris.\n' \
         "$C_R" "$C_0" "${P_IID[$i]}"
       code=1
