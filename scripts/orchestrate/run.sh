@@ -2170,6 +2170,11 @@ fi
 # mal : un worktree pèse ~535 Mo et ce run va en monter un par ticket, sans personne devant pour
 # faire le ménage. Best-effort et muet quand il n'y a rien à retirer ; un ramassage impossible (glab
 # hors ligne) ne doit pas empêcher un run de partir.
+#
+# Le même appel SIGNALE au passage les tickets « En cours » que plus personne ne mène (#328) : c'est
+# précisément ici qu'un run en fabrique — une session coupée laisse son ticket « En cours » et
+# assigné, donc écarté par `queue.sh` du plan de tous les runs suivants. Consultatif : le run ne
+# reprend rien de lui-même (ce sera #329), il le dit dans sa console et dans son journal.
 bash "$RACINE/scripts/git/worktree.sh" gc --auto </dev/null || true
 
 # Ménage du journal, même esprit et même moment (#198) : sans lui, `.maestro/orchestrate/` ne fait
