@@ -1912,14 +1912,41 @@ l'emballement. Il coûte aujourd'hui plus qu'il ne protège : une session qui to
 ce qui saborde du même coup les lots suivants de son parent (§11.5). Les deux runs du 2026-08-06
 l'ont payé au même montant exact — #277 et #245 coupés à 15.07 $, 16 et 24 fichiers laissés non
 commités dans leur worktree, 13 lots sautés en cascade derrière eux —, pour zéro livrable. Un run
-reste borné par ce qui le borne vraiment : le `--timeout` par ticket, le fichier `STOP` et la limite
-d'usage ; le montant, lui, ne borne rien d'utile tant qu'on ne le demande pas. `--budget <usd>` et
+reste borné par ce qui le borne vraiment : le fichier `STOP`, la limite d'usage et le plafond
+d'attente de 5 h 30 (le `--timeout` par ticket figurait ici jusqu'à #326, qui l'a retiré du défaut
+pour la raison exacte décrite juste en dessous) ; le montant, lui, ne borne rien d'utile tant qu'on
+ne le demande pas. `--budget <usd>` et
 `MAESTRO_ORCHESTRATE_BUDGET` restent là pour en **poser** un — `0` (ou vide) valant « aucun », seule
 façon d'annuler une variable déjà posée dans l'environnement, et le repli qui évite surtout qu'un
 `--max-budget-usd 0` parte tuer chaque session avant son premier outil. Le régime effectif est
 **annoncé dans les deux sens**, dans la ligne `plan :` (« budget illimité » ou « budget N $/ticket »)
 comme dans l'aperçu de `--dry-run` : illimité est un choix, pas un oubli, et c'est cette ligne qui
 distingue plus tard un ticket coupé au plafond d'un échec de session.
+
+**Le délai par ticket a suivi le même chemin (#326)** — et ce n'est pas une coïncidence de forme :
+c'est le second plafond de session, et il tuait de la même façon. `run.sh` enveloppait chaque
+session d'un `timeout 45m`. Quarante-cinq minutes étaient larges quand une session durait vingt
+minutes ; au régime épinglé par le dépôt (`claude-opus-5` + effort `xhigh`, #206/#217), elles sont
+devenues le premier tueur de sessions du run. Le run `20260810-141208` du 2026-08-10 en donne la
+mesure : **#315 livré en 42 min 50** — deux minutes de marge — et **#316 coupé à 45 min 02**, alors
+que son travail était **fini et commité** (2 047 lignes, dont 695 de tests) et que le couperet est
+tombé pendant le `git push` et l'ouverture de la MR. Le plafond n'a donc rien protégé : il a
+transformé un ticket livrable en échec, et l'échec en **sept lots sautés** en cascade (§11.5), pour
+un seul livrable à 14,75 $.
+
+Le mécanisme est celui du budget, mot pour mot : sans `--timeout`, aucune enveloppe `timeout` n'est
+posée ; `--timeout <durée>` et `MAESTRO_ORCHESTRATE_TIMEOUT` restent là pour en poser une, `0` (ou
+vide) valant « aucun délai » — seule façon d'annuler une variable déjà posée, et le repli qui évite
+qu'un `timeout 0` parte tuer chaque session à l'instant même. Le régime est **annoncé dans les deux
+sens** dans la ligne `plan :` (« sans délai » ou « timeout 1h30/ticket »).
+
+Une conséquence à connaître avant d'y toucher : le pilote se donnait une **échéance** par ticket en
+vol (`P_ECHEANCE`), calculée à partir du délai de session, pour reprendre le créneau d'un sous-shell
+emporté par un SIGKILL — qui n'exécute aucun trap et ne laisse donc aucun témoin. Sans délai, elle
+n'a plus de quoi se calculer, et **aucun plafond de remplacement n'a été inventé** : en poser un
+« raisonnable » recréerait exactement le défaut qu'on vient de supprimer, un ticket tué en plein
+travail, mais côté pilote et sans même une raison lisible. Ce blocage-là redevient donc ce qu'il
+était avant d'être outillé : un run qu'on arrête par `STOP` ou par Ctrl-C.
 
 **La console dit ce que la session fabrique (#176) — et depuis #240, où en est le plan.** En
 `--output-format json`, le CLI n'écrit qu'à la fin : entre la ligne `[n/N] #<iid> — …` et le verdict,
@@ -2083,11 +2110,11 @@ matin ne doit pas geler le reste de la nuit. Un ticket **pris par quelqu'un d'au
 du plan et son tour est sauté, pas volé : son statut est relu juste avant de le prendre.
 
 Garde-fous : `--max <n>` (compte les tickets **tentés**, pour qu'une panne systématique n'épuise pas
-le plan), `--timeout <durée>` par ticket, et le fichier `.maestro/orchestrate/STOP`, pris en compte
-entre deux tickets **et pendant une attente**. `--budget <usd>` en est un aussi, mais **sur demande
-seulement** (#286, §11.3) : un plafond atteint coupe la session en plein travail et se compte en
-échec, donc en cascade sur les lots suivants du même parent — c'est le seul de ces garde-fous qui
-détruit du travail au lieu d'en borner la durée.
+le plan) et le fichier `.maestro/orchestrate/STOP`, pris en compte entre deux tickets **et pendant
+une attente**. `--budget <usd>` (#286) et `--timeout <durée>` (#326) en sont aussi, mais **sur
+demande seulement** et pour la même raison : atteints, ils coupent la session en plein travail, se
+comptent en échec, et cascadent sur les lots suivants du même parent — ce sont les deux seuls de
+ces garde-fous qui détruisent du travail au lieu d'en borner l'ampleur. Voir §11.3.
 
 Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<iid>.session`
 (l'UUID), `<iid>.jsonl` (le flux d'activité complet), `<iid>.json` (le seul résultat final — coût,
@@ -2678,8 +2705,9 @@ qui le distingue de `--tuer-les-runs`. Une session qui **attend** une limite d'u
 sa tranche suivante (§11.4) et rend la main.
 
 **L'arrêt est sans sommation, et c'est voulu.** La sortie propre existe — le fichier `STOP` — mais
-elle n'est lue qu'entre deux tickets : l'attendre, c'est attendre la fin de la session en cours,
-jusqu'à 45 min. Or on est là parce que quelqu'un veut lancer maintenant. Ce que ça coûte est borné
+elle n'est lue qu'entre deux tickets : l'attendre, c'est attendre la fin de la session en cours —
+une heure, parfois plus, et depuis #326 sans borne posée d'avance. Or on est là parce que
+quelqu'un veut lancer maintenant. Ce que ça coûte est borné
 et dit à chaque fois : le journal du run tué reste **intact**, donc **reprenable**
 (`run.sh --resume <id>`), et ce qu'une session avait commencé sans le committer dort dans le
 worktree de son ticket (`status.sh --run-id <id>`). Ce qui reste à la charge de l'humain, c'est le

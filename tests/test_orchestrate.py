@@ -1029,6 +1029,102 @@ def test_le_regime_de_budget_est_annonce_dans_les_deux_sens(depot: Depot) -> Non
 
 
 # =====================================================================================
+# Le délai par ticket, posé seulement s'il est demandé (#326)
+# =====================================================================================
+#
+# Même leçon que la section précédente, sur l'autre plafond de session — au point que le commentaire
+# de `run.sh` citait `--timeout` parmi les bornages qui « bornent vraiment ». Il en était un tant
+# qu'une session durait 20 min ; à `claude-opus-5` + effort `xhigh`, les 45 min par défaut sont
+# devenues le premier tueur de sessions du run (2026-08-10 : #315 livré en 42min50, #316 coupé à
+# 45min02 alors que son travail était commité — sept lots sautés en cascade derrière).
+#
+# Ce qui s'observe n'est pas un argument passé au CLI : `timeout` est un PRÉFIXE de commande, pas
+# une option de `claude`, donc le bouchon qui note ses arguments ne le verrait pas. On juge sur le
+# comportement — un bouchon qui traîne plus longtemps que le délai posé —, ce qui est de toute façon
+# la vraie question : la session a-t-elle été tuée, oui ou non.
+
+#: Un bouchon qui met deux secondes avant de rendre la main, puis réussit comme /ticket-ship.
+#: Deux secondes suffisent : les délais testés en face valent 1 s.
+_CLAUDE_LENT = """
+    sleep 2
+    printf '%s' '{statut}' > "$MAESTRO_FIXTURES/owner-130.json"
+    printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+    exit 0
+"""
+
+
+def _claude_lent(depot: Depot) -> str:
+    return _claude_stub(depot, _CLAUDE_LENT.format(statut=_statut_json("130", "En revue")))
+
+
+def test_aucun_delai_sans_qu_on_le_demande(depot: Depot) -> None:
+    """Le défaut du dépôt : une session va au bout de son ticket, pas d'un chronomètre."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "delai-defaut",
+                    env={"MAESTRO_CLAUDE_BIN": _claude_lent(depot)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    resume = (depot.racine / ".maestro/orchestrate/delai-defaut/resume.tsv").read_text(
+        encoding="utf-8"
+    )
+    assert "130\tOK" in resume, "un délai non demandé coupe la session en plein vol"
+    assert "timeout" not in r.stdout
+
+
+def test_le_delai_se_pose_explicitement(depot: Depot) -> None:
+    """Il reste disponible pour qui le veut — et il tue alors la session, c'est tout son objet."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "delai-1s", "--timeout", "1s",
+                    env={"MAESTRO_CLAUDE_BIN": _claude_lent(depot)})
+    assert "timeout" in r.stdout
+    resume = (depot.racine / ".maestro/orchestrate/delai-1s/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tECHEC" in resume
+
+
+def test_le_delai_se_pose_aussi_par_l_environnement(depot: Depot) -> None:
+    """MAESTRO_ORCHESTRATE_TIMEOUT, pendant de la variable du modèle et de l'effort."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "delai-env",
+                    env={"MAESTRO_CLAUDE_BIN": _claude_lent(depot),
+                         "MAESTRO_ORCHESTRATE_TIMEOUT": "1s"})
+    assert "timeout" in r.stdout
+
+
+@pytest.mark.parametrize("zero", ["0", "0s"])
+def test_un_delai_a_zero_vaut_pas_de_delai(depot: Depot, zero: str) -> None:
+    """Seule façon d'annuler une variable déjà posée dans l'environnement — et surtout, un
+    « timeout 0 » transmis tel quel tuerait chaque session à l'instant même."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", f"delai-zero-{zero}",
+                    "--timeout", zero,
+                    env={"MAESTRO_CLAUDE_BIN": _claude_lent(depot),
+                         "MAESTRO_ORCHESTRATE_TIMEOUT": "1s"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    resume = (depot.racine / f".maestro/orchestrate/delai-zero-{zero}/resume.tsv").read_text(
+        encoding="utf-8"
+    )
+    assert "130\tOK" in resume
+
+
+def test_le_regime_de_delai_est_annonce_dans_les_deux_sens(depot: Depot) -> None:
+    """« Sans délai » est un choix, pas un oubli : relire un run doit dire lequel s'appliquait —
+    un ticket coupé au chronomètre ne se distingue d'un échec de session que par cette ligne."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    sans = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "delai-plan")
+    assert "sans délai" in sans.stdout
+    avec = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "delai-plan-90",
+                       "--timeout", "90m")
+    assert "timeout 1h30/ticket" in avec.stdout
+
+
+# =====================================================================================
 # La reprise après limite d'usage (#171)
 # =====================================================================================
 
