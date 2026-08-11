@@ -33,6 +33,16 @@ dependencies = [
     # Chiffrement au repos des secrets du coffre (ticket #132, parent #102) :
     # Fernet (AES-128-CBC + HMAC-SHA256). Import : `cryptography.fernet`.
     "cryptography>=42",
+    # Extraction des sources vers le Markdown (ticket #316, docs/24 §3.2) : les
+    # deux convertisseurs **nommés par le cadrage**, pris de préférence à un
+    # convertisseur unifié type *markitdown* — celui-ci tire une arborescence
+    # sans rapport avec le besoin (OCR, transcription audio) pour les deux seuls
+    # formats qui nous manquent. Imports : `docx`, `pypdf`.
+    # Chargés **paresseusement** (`maestro.sources.extraction`) : une absence
+    # devient une ligne « ignoré : convertisseur-absent » du rapport de lecture,
+    # jamais un `ImportError` au démarrage du moteur.
+    "python-docx>=1.1",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -132,6 +142,13 @@ ignore_missing_imports = true
 # Celery/kombu n'expose pas de stubs typés : on tolère l'import (mypy strict).
 [[tool.mypy.overrides]]
 module = ["celery.*", "kombu.*"]
+ignore_missing_imports = true
+
+# Convertisseurs de l'extraction (#316) : `python-docx` n'expose pas de stubs, et
+# ils sont importés paresseusement — un poste sans eux doit rendre « ignoré :
+# convertisseur-absent », pas une erreur de typage.
+[[tool.mypy.overrides]]
+module = ["docx.*", "pypdf.*"]
 ignore_missing_imports = true
 
 # `@shared_task` (celery, non typé) rendrait la tâche « untyped » aux yeux du
