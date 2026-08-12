@@ -27,12 +27,13 @@ toi-même.
 
 ### Aucun argument, ou `--max <n>` — préparer et faire lancer un run
 
-0. **Sur quoi va porter le run ?** *Avant tout le reste*, deux lectures — instantanées, hors ligne
-   pour la première, en lecture seule pour les deux — qui préparent les **seules** questions que
-   cette commande pose (au point 3) :
+0. **Sur quoi va porter le run ?** *Avant tout le reste*, trois lectures — hors ligne pour la
+   première, en lecture seule pour les trois — qui préparent les **seules** questions que cette
+   commande pose (au point 3) :
    ```
    bash scripts/orchestrate/status.sh --reprenables    # un run inachevé traîne-t-il ?
    bash scripts/orchestrate/queue.sh  --milestones     # quels milestones ont du travail ?
+   bash scripts/orchestrate/queue.sh  --orphelins      # des tickets qu'une session morte a laissés ?
    ```
    - **`--reprenables`** — sortie vide (le cas courant) : rien à reprendre, n'en parle pas. Une ou
      plusieurs lignes : un run précédent n'a pas fini son plan. TSV — `run-id`, `état`
@@ -43,6 +44,15 @@ toi-même.
      libres`, `ouverts`, `échéance`. Les candidats sont les lignes dont `à faire` **> 0** ; celle
      à `courant = 1` est le défaut historique. Le compte est **indicatif** sur un point : un parent
      de suivi y compte pour un, alors que le run traitera ses lots.
+   - **`--orphelins`** — sortie vide (le cas courant) : n'en parle pas. Une ou plusieurs lignes :
+     ce sont des tickets **« En cours » dont plus personne ne s'occupe** (#329) — une session morte
+     (délai, pilote tué, console fermée, session interactive laissée en plan) les y a laissés, et
+     « En cours » **et** assigné est exactement ce que `queue.sh` écarte : ils n'entreront dans
+     **aucun** plan tant que personne ne les reprend, alors que leur worktree porte parfois des
+     milliers de lignes commitées et jamais poussées. TSV — `iid`, `reprises` (combien de fois ce
+     ticket a déjà été rendu prenable), `plafond` (`atteint` = **ne le propose pas**), `run`
+     d'origine et son `verdict` (`-` s'il n'y a jamais eu de run : session interactive), `détail`
+     (depuis quand son worktree est muet, et où il est), `titre`.
 
 1. **Montre le plan** de ce qui partirait par défaut : `bash scripts/orchestrate/run.sh --dry-run`
    (lecture seule, aucun quota). Il imprime l'ordre de traitement figé, ce qui serait fait pour
@@ -68,7 +78,7 @@ toi-même.
 
    **Un seul moment de question**, en un seul appel à `AskUserQuestion` : le feu vert **est** le
    choix, n'y ajoute pas de confirmation par-dessus. Selon ce que le point 0 a trouvé, cet appel
-   porte une ou deux questions :
+   porte une à trois questions :
 
    **(a) Reprendre ou repartir de zéro ?** — seulement s'il y a un candidat à la reprise :
    - **Reprendre le run `<id>`** (à recommander en premier) — son plan est rejoué tel quel, les
@@ -87,6 +97,23 @@ toi-même.
    description. Si la question (a) est posée en même temps, précise dans l'intitulé que ce choix ne
    vaut **que** pour un run neuf — une reprise rejoue le plan de son run, milestone compris.
 
+   **(c) Reprendre des tickets orphelins ?** — seulement si le point 0 en a listé dont le `plafond`
+   n'est **pas** `atteint`, et seulement pour un run **neuf** : le plan d'une reprise est figé, un
+   ticket rendu prenable maintenant n'y entrerait pas (dis-le si le cas se présente, et propose
+   alors un run neuf). Question à **choix multiple**, une option par orphelin (au-delà de trois,
+   prends les **plus anciennement muets** et annonce le reste d'une ligne) — et **ne coche rien par
+   défaut** : le filtre d'anti-collision de `queue.sh` est ce qui protège le travail des autres, il
+   reste le défaut et ne se contourne que sur un « oui » explicite. Mets dans la description ce que
+   la ligne TSV t'a appris : depuis quand le worktree est muet, le run et le verdict qui l'ont
+   laissé là (ou « aucun run » — session interactive), et les reprises déjà faites. Dis aussi ce que
+   la reprise **ne fait pas** : elle n'écrit que dans GitLab (cycle de vie « À faire », assignation
+   retirée) — worktree, branche, commits non poussés et travail non commité restent **intacts**, et
+   la session qui prendra le ticket les y retrouvera.
+   Un orphelin à `plafond = atteint` ne se propose **pas** : nomme-le en une ligne (« déjà repris N
+   fois, il retombe à chaque run — `bash scripts/gitlab/lib.sh reprises <iid>` pour sa trace, et
+   `reprendre-en-cours --force <iid>` pour insister ») et passe. C'est ce qui empêche un ticket
+   cassé de brûler une session à chaque run.
+
    **Dis ce qui va être arrêté.** Lancer ou reprendre commence par **tuer les runs encore en vol**
    (#213, docs/10 §11.9) : `bash scripts/orchestrate/status.sh --list` marque d'un `● en cours`
    ceux qui tournent. S'il y en a, nomme-les dans la question — c'est une conséquence du feu vert,
@@ -101,8 +128,19 @@ toi-même.
    --run-id <id>`. Et reprendre ne **fusionne** rien : le journal du run repris reste intact, le
    nouveau porte un fichier `reprise-de` qui dit de qui il est la suite.
 
-   Une fois le go donné — et si le milestone retenu n'est pas celui dont le plan a été montré au
-   point 1, **montre d'abord le sien** (`--dry-run --milestone "<titre>"`, gratuit) :
+   Une fois le go donné, **les orphelins retenus se reprennent AVANT le lancement** — dans cet
+   ordre, sans quoi le run figerait son plan sur un backlog où le ticket est encore « En cours » et
+   assigné, donc écarté :
+   ```
+   bash scripts/gitlab/lib.sh reprendre-en-cours <iid> [<iid>…]
+   ```
+   Un seul appel pour tous. Il refuse tout seul ce qui ne doit pas être repris (ticket redevenu
+   vivant entre-temps, plafond atteint) et sort en **3** : ce n'est pas une panne, relaie ce qu'il
+   dit et lance le run quand même. Chaque reprise laisse sa trace — un commentaire sur le ticket et
+   une ligne dans `.maestro/orchestrate/reprises.tsv` — et rappelle où dort le travail conservé.
+
+   Vient ensuite le lancement — et si le milestone retenu n'est pas celui dont le plan a été montré
+   au point 1, **montre d'abord le sien** (`--dry-run --milestone "<titre>"`, gratuit) :
    ```
    bash scripts/orchestrate/run.sh --detach                                   # run neuf
    bash scripts/orchestrate/run.sh --detach --milestone "<titre>"             # ... sur ce milestone
@@ -250,5 +288,9 @@ la boucle attendrait — ou qu'il s'agit d'un échec ordinaire, sans reprise.
   le mode de permission de la session.
 - Un run **ne retire aucun worktree** : la branche y vit jusqu'au merge.
 - Un ticket **pris par quelqu'un d'autre** entre le calcul du plan et son tour est sauté, pas volé.
+- Un ticket « En cours » **abandonné par sa session** n'est jamais repris d'office : le run ne prend
+  que des tickets « À faire » et libres, et ce filtre ne bouge pas. Le run les **signale** au
+  démarrage (`worktree.sh gc`, #328) et cette commande les **propose** (question (c)) ; les rendre
+  prenables est un geste, `lib.sh reprendre-en-cours`, borné à **2 reprises** par ticket (#329).
 - Au-delà de **5 h 30** d'attente cumulée sur un ticket, la boucle conclut à la limite
   **hebdomadaire** et s'arrête proprement : seules les fenêtres de moins de 5 h sont attendues.

@@ -87,7 +87,8 @@ l'éteint (toute autre valeur remplace l'appel — couture des tests).
 Au même endroit et pour la même raison, `gc` SIGNALE les tickets « En cours » ORPHELINS (#328) via
 `lib.sh reconcile-en-cours --auto` : une session morte laisse son ticket « En cours » et assigné,
 donc invisible de `queue.sh` pour toujours. Purement consultatif — rien n'est repris ni reposé, la
-reprise est le geste explicite de #329. `--sauf <iid>` écarte le ticket qu'on démarre (`ensure` le
+reprise est un geste explicite qui se demande (`lib.sh reprendre-en-cours <iid>`, #329, et le
+signalement le rappelle). `--sauf <iid>` écarte le ticket qu'on démarre (`ensure` le
 passe). MAESTRO_EN_COURS_SIGNAL=0 l'éteint (toute autre valeur remplace l'appel — couture des tests).
 
 `ensure` remet aussi les DÉPENDANCES du clone principal à niveau, en appelant `scripts/setup.sh`
@@ -853,7 +854,8 @@ retire_worktree() {
 # ramènerait jamais dans le champ de vision.
 #
 # Purement CONSULTATIF, comme tout ce que rend ce verbe : aucun label posé, aucune assignation
-# touchée, aucun worktree retiré — la reprise est le geste explicite de #329. Best-effort : un échec
+# touchée, aucun worktree retiré — la reprise est le geste explicite de `lib.sh reprendre-en-cours`
+# (#329), que le signalement nomme lui-même. Best-effort : un échec
 # (glab absent, hors ligne, dépôt jetable sans journal d'orchestration) rend le silence et n'empêche
 # ni un ticket de démarrer ni un run de continuer.
 #

@@ -82,6 +82,7 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHECK=0
 MILESTONE=""
 LISTE_MILESTONES=0
+LISTE_ORPHELINS=0
 
 usage() {
   cat <<'USAGE'
@@ -99,6 +100,11 @@ Options :
                        peut porter, avec ce qu'ils ont de traitable — titre, courant (0/1),
                        « À faire » et libres, ouverts, échéance. C'est ce que /orchestrate lit
                        pour proposer le choix du milestone avant un run neuf.
+  --orphelins          N'imprime pas de plan : liste les tickets « En cours » du milestone dont
+                       plus personne ne s'occupe — ce que le plan N'INCLUT PAS et qu'un geste
+                       explicite peut rendre prenable (`lib.sh reprendre-en-cours <iid>`). TSV :
+                       iid, reprises, plafond, run d'origine, verdict, détail, titre. C'est ce que
+                       /orchestrate lit pour PROPOSER la reprise avant un run neuf.
   -h, --help           Cette aide.
 
 Sortie (stdout, TSV) : rang, iid, parent, prio, groupe, titre. Lecture seule — n'écrit rien.
@@ -112,6 +118,7 @@ while [ $# -gt 0 ]; do
     --check) CHECK=1 ;;
     --milestone) MILESTONE="${2:-}"; shift ;;
     --milestones | --jalons) LISTE_MILESTONES=1 ;;
+    --orphelins) LISTE_ORPHELINS=1 ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -180,6 +187,57 @@ if [ -z "$MILESTONE" ]; then
   }
 fi
 diag "milestone : $MILESTONE — seuls ses tickets sont lus ; un ticket d'un autre milestone n'est pas candidat."
+
+# --- 1 bis. Les orphelins : ce que le plan n'inclut pas, et qu'on pourrait reprendre (#329) --------
+# La règle 1 écarte les tickets « En cours » et assignés, et c'est ce qui protège le travail des
+# autres : ce filtre ne bouge pas. Mais il écarte aussi, du même geste, les tickets qu'une session
+# MORTE a laissés dans cet état — invisibles pour toujours, alors que leur worktree porte parfois des
+# milliers de lignes (#316). D'où cette sortie SÉPARÉE : le plan reste ce qu'il était, et ce qui
+# pourrait le rejoindre se LIT à côté, sans jamais s'y glisser tout seul.
+#
+# Le renversement de #327 tenu jusqu'au bout : on ne DÉCIDE pas de reprendre, on le PROPOSE. C'est
+# exactement la forme de la reprise d'un run inachevé (#204) — le plan liste, /orchestrate demande,
+# et le choix remplace le feu vert. Rien ici n'écrit quoi que ce soit.
+#
+# Le verdict (« quelqu'un s'en occupe-t-il encore ? ») n'est PAS recalculé ici : il est demandé au
+# verbe du lot 1, seul à savoir départager un vivant d'un orphelin (carte du pilote, fraîcheur du
+# worktree, seuil généreux). MAESTRO_ORPHELINS_SOURCE remplace l'appel — couture des tests, comme
+# MAESTRO_EN_COURS_SIGNAL côté worktree.sh : elle permet d'éprouver la COMPOSITION (filtre du
+# milestone, comptage des reprises, plafond) sans monter de worktree ni de carte de pilote.
+#
+# Le filtre du MILESTONE est la seule chose que ce fichier ajoute au verdict, et il n'est pas
+# cosmétique : un run porte sur un milestone, donc un orphelin d'ailleurs ne rejoindrait pas ce
+# plan-ci même repris. Le signalement global, lui, existe déjà (`reconcile-en-cours`, `doctor.sh`).
+if [ "$LISTE_ORPHELINS" = 1 ]; then
+  gl_milestone_issues "$MILESTONE" >"$TMP/milestone.tsv" || exit 1
+  if [ -n "${MAESTRO_ORPHELINS_SOURCE:-}" ]; then
+    # shellcheck disable=SC2086  # la couture EST une ligne de commande : son découpage est voulu
+    $MAESTRO_ORPHELINS_SOURCE >"$TMP/en-cours.tsv" 2>/dev/null
+  else
+    gl_reconcile_en_cours --tsv >"$TMP/en-cours.tsv" 2>/dev/null
+  fi
+  printf '# iid\treprises\tplafond\trun\tverdict\tdetail\ttitre\n'
+  # `read` sur cinq champs : le TSV du lot 1 est « iid, verdict, source, détail, titre ». La `source`
+  # n'est pas reprise — elle dit d'où vient le VERDICT (carte ou déduction), question déjà tranchée
+  # ici, puisque seuls les orphelins passent et qu'un orphelin est toujours une déduction.
+  while IFS=$'\t' read -r iid verdict _ detail titre; do
+    case "$iid" in ''|'#'*|*[!0-9]*) continue ;; esac
+    [ "$verdict" = "orphelin" ] || continue
+    awk -F '\t' -v iid="$iid" '$1 == iid { trouve = 1 } END { exit !trouve }' "$TMP/milestone.tsv" || continue
+
+    deja="$(gl_reprises_de "$iid")" && lisible=1 || lisible=0
+    if [ "$lisible" = 0 ]; then plafond="?"
+    elif [ "$deja" -ge "$GL_REPRISES_MAX" ]; then plafond="atteint"
+    else plafond="-"; fi
+
+    origine="$(bash "$RACINE/scripts/orchestrate/journal.sh" origine "$iid" 2>/dev/null)"
+    run="$(printf '%s' "$origine" | cut -f1)"
+    verdict_run="$(printf '%s' "$origine" | cut -f2)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$iid" "$deja" "$plafond" "${run:--}" "${verdict_run:--}" "$detail" "$titre"
+  done <"$TMP/en-cours.tsv"
+  exit 0
+fi
 
 # --- 2. Les tickets du milestone, et qui les a pris -----------------------------------------------
 gl_milestone_issues "$MILESTONE" >"$TMP/milestone.tsv" || exit 1
@@ -360,6 +418,13 @@ if [ "$CHECK" = 1 ]; then
   if [ "$nb_ecartes" -gt 0 ]; then
     sort -t$'\t' -k1,1n "$TMP/ecartes.tsv" |
       while IFS=$'\t' read -r i r t; do printf '  écarté #%-4s %s — %s\n' "$i" "$r" "$t" >&2; done
+    # Un écarté « En cours » est peut-être un ORPHELIN (#329) : une session morte y laisse son
+    # ticket, que ce filtre écarte alors sans distinguer le travail vivant du travail mort. On ne
+    # tranche pas ici — ce serait une lecture de plus sur un diagnostic — on renvoie au verbe qui
+    # sait, et qui est en lecture seule lui aussi.
+    if grep -q 'cycle de vie « En cours »' "$TMP/ecartes.tsv"; then
+      printf '  → un « En cours » écarté peut être un orphelin (session morte) : bash scripts/orchestrate/queue.sh --orphelins\n' >&2
+    fi
   fi
   # Les blocs de plus d'un membre sont ce que le tri a dû garder contigu : les montrer, c'est
   # rendre vérifiable la règle 3 sans relire le plan à la main.

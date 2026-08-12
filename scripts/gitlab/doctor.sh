@@ -240,11 +240,16 @@ if [ -z "$en_cours_orphelins" ]; then
 else
   while IFS= read -r ligne; do
     [ -z "$ligne" ] && continue
-    warn "${ligne#*⚠ } — plus personne dessus (voir #329 pour la reprise)"
+    warn "${ligne#*⚠ } — plus personne dessus"
   done <<EOF
 $en_cours_orphelins
 EOF
   printf '    → le détail, verdict par verdict : bash scripts/gitlab/lib.sh reconcile-en-cours\n'
+  # La réparation existe (#329) mais reste un GESTE : ce bilan la NOMME, il ne la déclenche pas —
+  # même partage que la dérive 4b, où `reconcile-workflow` est proposé et jamais joué d'office. Ici
+  # la raison est plus forte encore : « orphelin » est une déduction, et reprendre le ticket d'une
+  # session vivante coûterait bien plus cher que de laisser un orphelin un jour de plus.
+  printf '    → le reprendre (« À faire » + libéré, worktree intact) : bash scripts/gitlab/lib.sh reprendre-en-cours <iid>\n'
 fi
 
 # --- 5. Ménage des branches locales -------------------------------------------------------------
