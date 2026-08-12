@@ -5028,3 +5028,254 @@ def test_un_run_ecrit_sa_concurrence_pour_celui_qui_le_reprendra(depot: Depot) -
     assert r.returncode == 0, r.stdout + r.stderr
     trace = depot.racine / ".maestro/orchestrate/trace-regime/concurrence"
     assert trace.read_text(encoding="utf-8").strip() == "2"
+
+
+# =====================================================================================
+# Le bloc se ré-ancre au lieu de se recopier (#325)
+# =====================================================================================
+#
+# Les tests de #290 mesurent le FLUX : « ce qu'une frame annonce remonter est ce que la précédente a
+# écrit », en comptant les « ESC[K », c'est-à-dire des lignes LOGIQUES. C'est exactement ce que le
+# défaut de #325 traverse sans les faire rougir : une ligne plus large que la console occupe DEUX
+# rangées, le flux reste cohérent avec lui-même, et l'écran dérive quand même — d'une copie de la
+# première ligne du bloc par redessin. On rejoue donc les frames dans un terminal simulé, où c'est
+# la RANGÉE qui est l'unité, et on regarde l'écran qui en sort.
+
+SEQUENCE = re.compile(r"\x1b\[([0-9;?]*)([A-Za-z])")
+
+
+def _ecrans(flux: str, largeur: int, hauteur: int) -> list[list[str]]:
+    """Rejoue un flux de frames dans un terminal de <largeur>×<hauteur>, écran par écran.
+
+    Un instantané est pris à chaque « ESC[J » — la séquence qui ferme une frame comme un
+    effacement, donc à chaque fois que l'écran est dans un état que quelqu'un aurait pu voir. C'est
+    ce qui permet de mesurer le PIC de copies : le dernier écran d'un run ne montre rien, la boucle
+    retirant son bloc avant d'imprimer le résumé.
+
+    Le sous-ensemble suffit à ce que la vue émet : texte (avec repli en fin de rangée), « \\n »
+    (traité en CR+LF, comme une console Windows), « \\r », « ESC[K », « ESC[J », « ESC[<n>F »,
+    « ESC[<n>B ». Le repli est modélisé au plus TÔT — la rangée est consommée dès le caractère qui
+    remplit la dernière colonne : c'est l'hypothèse pessimiste, celle de conhost, et un correctif
+    qui tient sous elle tient aussi sous le repli différé des terminaux Unix.
+    """
+    ecran = [""] * hauteur
+    vus: list[list[str]] = []
+    ligne = col = 0
+
+    def defile() -> None:
+        nonlocal ligne
+        if ligne + 1 < hauteur:
+            ligne += 1
+        else:
+            ecran.pop(0)
+            ecran.append("")
+
+    def pose(c: str) -> None:
+        nonlocal col
+        if col >= largeur:
+            defile()
+            col = 0
+        rang = ecran[ligne].ljust(col + 1)
+        ecran[ligne] = rang[:col] + c + rang[col + 1:]
+        col += 1
+
+    i = 0
+    while i < len(flux):
+        m = SEQUENCE.match(flux, i)
+        if m:
+            arg, verbe = m.group(1), m.group(2)
+            n = int(arg) if arg.isdigit() else (0 if verbe in "JK" else 1)
+            if verbe == "F":
+                ligne, col = max(ligne - n, 0), 0
+            elif verbe == "A":
+                ligne = max(ligne - n, 0)
+            elif verbe == "B":
+                # Le déplacement vers le bas est BORNÉ par la fenêtre et ne fait jamais défiler :
+                # c'est cette propriété du terminal que `vue_ancre` emprunte comme repère.
+                ligne = min(ligne + n, hauteur - 1)
+            elif verbe == "K":
+                ecran[ligne] = ecran[ligne][:col]
+            elif verbe == "J":
+                ecran[ligne] = ecran[ligne][:col]
+                for r in range(ligne + 1, hauteur):
+                    ecran[r] = ""
+                vus.append(list(ecran))
+            i = m.end()
+            continue
+        c = flux[i]
+        if c == "\n":
+            defile()
+            col = 0
+        elif c == "\r":
+            col = 0
+        elif c != "\x1b":
+            pose(c)
+        i += 1
+    vus.append(list(ecran))
+    return vus
+
+
+def _plan_titres(depot: Depot, lignes: list[tuple[int, int, str]]) -> str:
+    """Un plan figé dont on choisit le TITRE de chaque ligne — c'est lui qui fait la largeur."""
+    chemin = depot.racine / "plan-titres.tsv"
+    chemin.write_text(
+        "# rang\tiid\tparent\tprio\tgroupe\ttitre\n"
+        + "".join(f"{rang}\t{iid}\t-\thaute\t-\t{titre}\n" for rang, iid, titre in lignes),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return str(chemin)
+
+
+def _tput_stub(depot: Depot, cols: tuple[int, ...], lines: int) -> Path:
+    """Un `tput` qui rend une largeur DIFFÉRENTE d'un appel à l'autre — une fenêtre redimensionnée.
+
+    Le compteur vit dans un fichier : `tput` est un processus par appel, il ne peut pas se souvenir
+    autrement. La dernière valeur de `cols` est celle qui reste une fois la liste épuisée.
+    """
+    compteur = depot.racine.parent / "tput-appels.txt"
+    valeurs = " ".join(str(c) for c in cols)
+    chemin = depot.racine.parent / "bin" / "tput"
+    chemin.write_text(
+        "#!/usr/bin/env bash\n"
+        f'compteur="{compteur.as_posix()}"\n'
+        f'[ "$1" = lines ] && {{ printf "{lines}\\n"; exit 0; }}\n'
+        '[ "$1" = cols ] || exit 1\n'
+        'n=$(cat "$compteur" 2>/dev/null || printf 0); n=$((n + 1))\n'
+        'printf "%s\\n" "$n" > "$compteur"\n'
+        f'set -- {valeurs}\n'
+        '[ "$n" -gt "$#" ] && n=$#\n'
+        'eval "printf \'%s\\n\' \\"\\${$n}\\""\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    chemin.chmod(0o755)
+    return compteur
+
+
+def _lignes_de_frame(vue: str) -> list[str]:
+    """Toutes les lignes écrites par des frames, couleurs retirées — une par « ESC[K »."""
+    COULEURS = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+    lignes = []
+    for morceau in vue.split("\x1b[K"):
+        # Ce qui précède un « ESC[K » est la ligne, moins ce que le repositionnement a laissé
+        # devant elle.
+        lignes.append(COULEURS.sub("", morceau.rsplit("\n", 1)[-1]))
+    return lignes[:-1]
+
+
+def _pic_de_copies(ecrans: list[list[str]], marque: str) -> tuple[int, list[str]]:
+    """Le plus grand nombre de rangées portant <marque> vu à un même instant, et cet écran-là."""
+    pire = max(ecrans, key=lambda e: sum(1 for rang in e if marque in rang))
+    return sum(1 for rang in pire if marque in rang), pire
+
+
+def _dessine(ecran: list[str]) -> str:
+    return "\n".join(f"|{rang}" for rang in ecran)
+
+
+TITRE_LONG = ("Extraction des sources : tout ramené au Markdown avec son rapport de lecture "
+              "et la trace de ce qui a été écarté")
+
+
+def test_une_largeur_perimee_ne_recopie_plus_le_bloc(depot: Depot) -> None:
+    """Le défaut observé, de bout en bout : la console a rétréci, le bloc ne doit pas se recopier.
+
+    `tput` annonce 200 colonnes au démarrage puis 100 — une fenêtre redimensionnée pendant un run
+    qui dure des heures. Avant #325 la largeur était lue UNE FOIS : les lignes du bloc continuaient
+    d'être calculées pour 200 colonnes, se repliaient sur 100, et chaque redessin abandonnait une
+    copie de sa première ligne. Le run du 2026-08-10 en affichait trois.
+    """
+    _livrables(depot, (130, 131))
+    appels = _tput_stub(depot, (200, 100), 20)
+    console = _console(depot)
+    plan = _plan_titres(depot, [(1, 130, TITRE_LONG), (2, 131, TITRE_LONG)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "perimee",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MESURE": "0",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    assert int(appels.read_text(encoding="utf-8")) > 1, (
+        "la largeur doit être RELUE en cours de run, pas figée à l'ouverture"
+    )
+    ecrans = _ecrans(console.read_text(encoding="utf-8", errors="replace"), 100, 20)
+    for marque in ("1. #130", "2. #131"):
+        copies, pire = _pic_de_copies(ecrans, marque)
+        assert copies == 1, (
+            f"« {marque} » apparaît {copies} fois à l'écran, une seule est attendue —\n"
+            + _dessine(pire)
+        )
+
+
+def test_le_bloc_se_repositionne_depuis_le_bas_des_qu_il_y_touche(depot: Depot) -> None:
+    """Le repère de #325 : « ESC[999B » descend jusqu'à la dernière rangée, et le terminal borne le
+    déplacement — la position se recalcule donc à neuf au lieu de se cumuler depuis le curseur.
+
+    La fenêtre est basse EN RANGÉES à dessein : le régime ancré ne commence que lorsque le bloc
+    touche vraiment le bas, et `VUE_ROW` est une borne inférieure qui n'y arrive qu'après quelques
+    lignes permanentes. Deux tickets et dix rangées suffisent à l'atteindre ; à douze, le run se
+    terminait avant, et le test ne prouvait rien de plus que le régime relatif. Dix est aussi le
+    PLANCHER de `vue_mesure` — en dessous, une hauteur est tenue pour aberrante et remplacée par 40,
+    ce qui rendait le test muet sans le faire échouer autrement que sur cette assertion-ci.
+    """
+    _livrables(depot, (130, 131))
+    console = _console(depot)
+    plan = _plan_titres(depot, [(1, 130, "Ticket 130"), (2, 131, "Ticket 131")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "ancre",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_LARGEUR": "100",
+                         "MAESTRO_ORCHESTRATE_HAUTEUR": "10",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert "\x1b[999B" in vue, "le bloc doit s'ancrer sur le bas dès qu'il y touche"
+    # Et le bloc reste bien collé au bas : son pied est sur la dernière rangée de l'écran.
+    ecrans = _ecrans(vue, 100, 10)
+    pieds = [e for e in ecrans if e[-1].startswith("  run ")]
+    assert pieds, "le pied du bloc doit fermer l'écran —\n" + _dessine(ecrans[-1])
+
+
+def test_aucune_ligne_du_bloc_n_atteint_la_largeur_de_la_console(depot: Depot) -> None:
+    """L'invariant qui rend le compte de rangées juste : une ligne qui atteint la largeur se replie,
+    et une rangée de plus est une rangée que le repositionnement ignore."""
+    _livrables(depot, (130,))
+    console = _console(depot)
+    plan = _plan_titres(depot, [(1, 130, TITRE_LONG), (2, 131, TITRE_LONG)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "largeur", "--max", "1",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_LARGEUR": "80",
+                         "MAESTRO_ORCHESTRATE_HAUTEUR": "20",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    lignes = _lignes_de_frame(console.read_text(encoding="utf-8", errors="replace"))
+    assert lignes, "aucune frame n'a été écrite — le test ne prouve rien"
+    trop = [ligne for ligne in lignes if len(ligne) >= 80]
+    assert not trop, f"une ligne du bloc atteint la largeur de la console : {trop}"
+
+
+def test_la_largeur_du_bloc_ne_depend_pas_de_la_locale(depot: Depot) -> None:
+    """« modèle » pèse 6 caractères et 7 octets : mesurer en `${#s}` donnait au bloc une largeur
+    différente d'un poste à l'autre, et la machine qui comptait des octets repliait ses lignes.
+
+    La console est dimensionnée pour que le gabarit autorise EXACTEMENT la largeur du titre : compté
+    en octets il serait tronqué, compté en colonnes il passe entier. La largeur se DÉDUIT du titre
+    (et non l'inverse) — un compte à la main s'était déjà décalé d'une colonne, et un titre d'un
+    caractère de trop transforme l'invariant en tautologie sans que rien ne le dise.
+    """
+    titre = "Extraction des sources : tout ramené au Markdown, résumé, référencé et daté"
+    assert len(titre.encode("utf-8")) > len(titre), "il faut des accents pour que le test prouve"
+    _livrables(depot, (130,))
+    console = _console(depot)
+    plan = _plan_titres(depot, [(1, 130, titre)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "locale",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "LC_ALL": "C", "LANG": "C",
+                         # 46 = VUE_GABARIT (43) + les 3 colonnes que `vue_ligne` réserve au titre.
+                         "MAESTRO_ORCHESTRATE_LARGEUR": str(len(titre) + 46),
+                         "MAESTRO_ORCHESTRATE_HAUTEUR": "20",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert titre in vue, "un titre qui tient en colonnes ne doit pas être tronqué"
+    assert "daté…" not in vue and "dat…" not in vue

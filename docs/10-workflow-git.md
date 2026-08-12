@@ -2074,6 +2074,40 @@ Quatre points à connaître avant d'y toucher :
   déjà écrits — c'est ce qui la distingue de `status.sh`, qui interroge GitLab et reste la vue
   « depuis un autre terminal » (§11.5).
 
+**Un repère qui se recalcule, au lieu de se cumuler (#325).** Ce qui précède laissait un défaut de
+conception : le bloc était repositionné **à partir du curseur**, de `hauteur - 1` rangées vers le
+haut. Le repère était donc **cumulatif** — juste tant que rien n'ajoute une rangée qu'on n'a pas
+comptée, et faux **pour toujours** dès qu'une l'ajoute. Une seule ligne repliée suffit : la frame
+suivante remonte trop peu, abandonne la première ligne du bloc derrière elle, et **recommence à
+chaque redessin**. Constaté en production sur le run du 2026-08-10, où le ticket courant s'affichait
+**trois fois** — deux décalages, jamais rattrapés, et chaque copie définitive.
+
+Trois changements, du plus profond au plus superficiel :
+
+- **le repère est ancré sur le bas de la fenêtre** dès qu'on sait que le bloc y touche (`vue_ancre` :
+  `ESC[999B` puis la remontée). Le déplacement vers le bas est **borné par le terminal**, donc la
+  position obtenue ne dépend plus d'aucun compte à nous et **se recalcule à neuf à chaque frame** :
+  une désynchronisation coûte au plus **une frame fausse**, là où elle coûtait une copie par seconde.
+  Passé le premier écran, c'est le régime de tout le reste du run ;
+- **la taille de la console est relue en cours de run** (`vue_mesure`, toutes les deux secondes) et
+  non figée à l'ouverture. La figer, c'était parier qu'une fenêtre ne change pas de taille en cinq
+  heures — et une largeur périmée fabrique précisément le repli du point précédent. Un changement
+  déclenche un **redessin complet** ;
+- **la largeur se mesure en colonnes affichées** (`colonnes`) et non en `${#s}`, qui compte des
+  **octets** sous une locale C et des **caractères** sous UTF-8. Le bloc n'avait donc pas la même
+  largeur d'un poste à l'autre, et la machine qui comptait des octets repliait ses lignes — encore
+  le même défaut, par une troisième porte. L'ellipse de `tronque` est comprise dans la borne.
+
+Deux points à connaître avant d'y toucher. `VUE_ROW`, qui répond à la seule question « le bloc
+touche-t-il le bas ? », est une **borne inférieure** assumée : on ne sait pas ce que la console
+portait avant nous, donc on part de la rangée 1 et on ne compte que **ses propres déplacements**,
+sans jamais compter une rangée qu'on n'est pas sûr d'avoir consommée. **Sous-estimer** ne coûte que
+de rester un peu plus longtemps dans le régime relatif ; **sur-estimer** collerait le bloc au bas de
+l'écran en laissant un trou sous le journal — c'est le sens qu'il faut lui garder. Et
+`vue_mesure` tient une hauteur inférieure à **10** pour aberrante et lui substitue 40 : un test qui
+veut voir le régime ancré doit rester **au-dessus de ce plancher**, sinon il mesure la fenêtre par
+défaut sans que rien ne le dise.
+
 **Deux fichiers, et c'est ce partage qui rend le mode sûr** : le flux brut va dans `<iid>.jsonl`, et
 `<iid>.json` ne reçoit **que l'objet `result` final**. Le coût, le verdict et la détection de limite
 d'usage lisent ce dernier, or ils prennent la **première** occurrence d'une clé — y déverser tout le
