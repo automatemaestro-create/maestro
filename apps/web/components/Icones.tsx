@@ -61,6 +61,16 @@ export function IconeAgents(props: Props) {
   );
 }
 
+export function IconeObjectif(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="12" cy="12" r="0.75" fill="currentColor" />
+    </Trait>
+  );
+}
+
 export function IconeProjets(props: Props) {
   return (
     <Trait {...props}>

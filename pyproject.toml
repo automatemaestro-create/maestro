@@ -22,6 +22,11 @@ dependencies = [
     # Backend Control Tower (ticket #46) : API REST + WebSocket temps réel
     # (cf. docs/02-stack-technique.md §4 : FastAPI + Redis Pub/Sub).
     "fastapi>=0.110",
+    # Lecture des corps `multipart/form-data` (ticket #319) : FastAPI ne la fait
+    # pas seule — `UploadFile`/`Form` lèvent au démarrage sans elle. C'est ce par
+    # quoi passent les octets d'un fichier déposé, un navigateur ne livrant
+    # jamais de chemin. Import indirect : `fastapi` la charge au besoin.
+    "python-multipart>=0.0.9",
     # Serveur ASGI de l'API (`maestro-api`) ; [standard] apporte le support WebSocket.
     "uvicorn[standard]>=0.30",
     # Client HTTP asynchrone du fournisseur compatible OpenAI (ticket #69) ; sert

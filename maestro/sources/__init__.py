@@ -13,7 +13,10 @@ Trois modules, trois responsabilités qui ne se mélangent pas :
   réseau et aux plafonds du run, et ce qui la fait refuser **avec son motif** ;
 - `extraction` (#316) — ce qu'une source **dit** : tout ramené au Markdown, avec
   son rapport de lecture et son coût en tokens, et encadré comme **donnée** avant
-  d'entrer dans un contexte.
+  d'entrer dans un contexte ;
+- `apercu` (#319) — ce que des sources **donneraient**, joué à vide : la même
+  lecture, rendue avant le lancement et sans rien conserver, pour que composer un
+  objectif reste réversible tant que c'est gratuit.
 
 Les deux régimes sont opposés à dessein : la résolution **refuse** (une saisie se
 corrige), l'extraction **ignore ou tronque en le disant** (un contenu n'est pas
@@ -22,6 +25,7 @@ encore connu de qui l'a joint).
 Le téléversement par l'API est le lot #317.
 """
 
+from maestro.sources.apercu import RUN_APERCU, apercu_sources
 from maestro.sources.extraction import (
     ETAT_IGNORE,
     ETAT_LU,
@@ -65,6 +69,7 @@ __all__ = [
     "ID_RUN",
     "LONGUEUR_MAX_NOM",
     "LONGUEUR_MAX_URL",
+    "RUN_APERCU",
     "TYPES_SOURCE",
     "TYPE_DOSSIER",
     "TYPE_FICHIER",
@@ -74,6 +79,7 @@ __all__ = [
     "RapportLecture",
     "Source",
     "SourceRefusee",
+    "apercu_sources",
     "contexte_markdown",
     "emplacement_ingestion",
     "estimer_tokens",
