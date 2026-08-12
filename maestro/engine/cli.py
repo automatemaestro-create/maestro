@@ -55,6 +55,18 @@ passe d'objectif (il est déjà dans le run repris). Si c'est le **worker** qui 
 tombé, aucune commande n'est nécessaire : le run repart dès qu'un worker revient
 sur la file (`python -m maestro.durable.worker`).
 
+`--brief <sans|auto|humain>` (#320) choisit le **régime du brief** — l'étape de
+cadrage qui précède la décomposition (#318, décision D5). Le défaut est `sans` :
+un `maestro-run` décompose l'objectif brut, comme avant ce lot. `auto` rédige le
+brief et décompose **ce brief**, sans attendre d'approbation — c'est le mode d'un
+lancement sans humain devant, et le seul qu'une orchestration autonome doive
+employer : un run headless qui attend une approbation est un run mort. `humain`
+arrête le run sur son brief et attend la décision depuis la Control Tower ; il
+exige donc `--validation-ui` (même Redis, même canal — sans quoi personne ne
+recevrait la demande) et n'est pas combinable avec `--durable`. Le mode retenu est
+**annoncé dans la synthèse**, y compris `sans` : savoir qu'un run n'a attendu
+personne est une information, pas une section manquante.
+
 `--publier` (#46) publie chaque étape du journal en **événement temps réel**
 sur Redis Pub/Sub (canal `maestro.evenements`, via le pont
 `maestro.controltower.bridge`) : le backend Control Tower (`maestro-api`) les
@@ -103,6 +115,13 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 from maestro.config import ConfigError
+from maestro.engine.brief import (
+    MODE_BRIEF_HUMAIN,
+    MODE_BRIEF_SANS,
+    MODES_BRIEF,
+    ArbitreBrief,
+    BriefRefuse,
+)
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
 from maestro.engine.loop import OrchestrationEngine
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
@@ -123,7 +142,7 @@ _USAGE = (
     "Usage : maestro-run [--json] [--trace] [--queue] [--durable] "
     "[--reprendre <run_id>] [--publier] "
     "[--messagerie] [--validation-ui] [--notifier <agent>] [--plafond-cout <usd>] "
-    "[--plafond-tokens <n>] [--timeout <s>] "
+    "[--plafond-tokens <n>] [--timeout <s>] [--brief sans|auto|humain] "
     '[--relances <n>] [--parallele <n>] "<objectif en langage naturel>"'
 )
 
@@ -147,10 +166,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     timeout: float | None = None
     relances: int | None = None
     parallele: int | None = None
+    mode_brief = MODE_BRIEF_SANS
     flags_connus = {
         "--json", "--trace", "--queue", "--durable", "--reprendre", "--publier",
         "--messagerie", "--validation-ui", "--notifier", "--plafond-cout",
-        "--plafond-tokens", "--timeout", "--relances", "--parallele",
+        "--plafond-tokens", "--timeout", "--relances", "--parallele", "--brief",
     }
     while args and args[0] in flags_connus:
         flag = args.pop(0)
@@ -188,6 +208,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 return 2
             notifier_agent = args.pop(0)
+        elif flag == "--brief":
+            if not args or args[0].startswith("--"):
+                print(
+                    f"--brief attend un mode : {' | '.join(MODES_BRIEF)}.",
+                    file=sys.stderr,
+                )
+                return 2
+            mode_brief = args.pop(0).strip().lower()
+            if mode_brief not in MODES_BRIEF:
+                print(
+                    f"--brief : mode inconnu {mode_brief!r} "
+                    f"(attendu : {' | '.join(MODES_BRIEF)}).",
+                    file=sys.stderr,
+                )
+                return 2
         else:
             valeur = _valeur_numerique(flag, args)
             if valeur is None:
@@ -285,6 +320,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if via_durable and mode_brief != MODE_BRIEF_SANS:
+        print(
+            "--brief n'est pas géré en mode --durable : l'étape de cadrage (#318) "
+            "n'est pas encore une étape du workflow Temporal — elle serait rejouée "
+            "à chaque reprise, et payée à chaque fois.",
+            file=sys.stderr,
+        )
+        return 2
+    if mode_brief == MODE_BRIEF_HUMAIN and not validation_ui:
+        print(
+            "--brief humain exige --validation-ui : sans lui, la demande ne part "
+            "sur aucun canal, personne ne peut trancher et le run reste suspendu "
+            "pour toujours. Utilisez --brief auto pour un lancement sans humain.",
+            file=sys.stderr,
+        )
+        return 2
 
     # Reprise (#96) : le journal du process qui reprend porte le `run_id` du run
     # repris — c'est lui qui rattache ses étapes à celles d'avant l'interruption,
@@ -328,6 +379,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             messagerie=messagerie,
             relance=_politique_relance(relances),
             max_parallele=parallele,
+            arbitre_brief=(
+                _arbitre_brief_ui() if mode_brief == MODE_BRIEF_HUMAIN else None
+            ),
         )
         # Arrêt borné (#64) : une réalisation détachée par le time-out ne peut pas
         # suspendre la fermeture de la boucle — le rapport est toujours rendu.
@@ -335,10 +389,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             # `--reprendre` a imposé le mode durable : le moteur est le durable.
             durable = cast("DurableEngine", engine)
             report = run_borne(durable.reprendre(reprendre, journal=journal))
+        elif via_durable:
+            # Le moteur durable ne connaît pas le régime du brief (#320) — et il n'a
+            # pas à le connaître : `--brief` y est refusé plus haut, l'étape de
+            # cadrage n'étant pas une étape du workflow Temporal. La branche est
+            # séparée pour que ce fait soit **vérifié par le typage** plutôt que
+            # tenu par la seule validation d'arguments, qu'un ajout d'option
+            # pourrait défaire sans bruit.
+            report = run_borne(cast("DurableEngine", engine).run(objective, journal=journal))
         else:
-            report = run_borne(engine.run(objective, journal=journal))
+            locale = cast(OrchestrationEngine, engine)
+            report = run_borne(
+                locale.run(objective, journal=journal, mode_brief=mode_brief)
+            )
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
+        return 1
+    except BriefRefuse as refus:
+        # Un refus n'est pas un plantage : quelqu'un a lu le brief et dit non. Le
+        # dire comme tel, et sortir en 1 comme pour un run qui n'a rien produit —
+        # rien n'a été décomposé, donc il n'y a pas de synthèse à imprimer.
+        print(f"Brief refusé : {refus}", file=sys.stderr)
         return 1
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
@@ -385,6 +456,7 @@ def _build_engine(
     messagerie: bool = False,
     relance: PolitiqueRelance | None = None,
     max_parallele: int | None = None,
+    arbitre_brief: ArbitreBrief | None = None,
 ) -> OrchestrationEngine | DurableEngine:
     """Construit la boucle : locale par défaut, distribuée (#41) ou durable (#95).
 
@@ -398,7 +470,10 @@ def _build_engine(
     échec est abandonnée sans gêner l'exécution (relais résilient). `relance`
     (#91) ne s'applique qu'en local et en durable — côté file, chaque worker câble
     la sienne. `max_parallele` (#100) pose le plafond global du run en local et en
-    file (non géré en durable, cf. validation d'arguments).
+    file (non géré en durable, cf. validation d'arguments). `arbitre_brief` (#320)
+    n'est posé que sur la boucle locale : `--brief humain` exige `--validation-ui`,
+    lui-même incompatible avec `--queue` et `--durable`, donc les deux autres
+    branches ne peuvent pas l'atteindre.
     """
     if via_durable:
         from maestro.durable import DurableEngine
@@ -415,7 +490,11 @@ def _build_engine(
 
         return create_distributed_engine(mailbox=mailbox, max_parallele=max_parallele)
     return OrchestrationEngine.default(
-        guardrails=guardrails, mailbox=mailbox, relance=relance, max_parallele=max_parallele
+        guardrails=guardrails,
+        mailbox=mailbox,
+        relance=relance,
+        max_parallele=max_parallele,
+        arbitre_brief=arbitre_brief,
     )
 
 
@@ -479,6 +558,20 @@ def _validateur_ui() -> Validateur:
     from maestro.controltower.validation import validateur_redis
 
     return validateur_redis(load_settings().redis_url)
+
+
+def _arbitre_brief_ui() -> ArbitreBrief:
+    """Construit l'arbitre du brief (#320) sur le Redis de la config.
+
+    Pendant exact de `_validateur_ui` : la demande part sur le canal
+    `maestro.evenements` (l'UI l'affiche via `maestro-api`) et la décision en
+    revient par le même canal. Import local, pour la même raison qu'là-bas — seul
+    ce chemin dépend de la Control Tower.
+    """
+    from maestro.config import load_settings
+    from maestro.controltower.brief import arbitre_brief_redis
+
+    return arbitre_brief_redis(load_settings().redis_url)
 
 
 def activer_publication_evenements() -> None:

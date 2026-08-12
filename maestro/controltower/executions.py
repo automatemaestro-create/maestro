@@ -11,6 +11,14 @@ manquante — le service que les routes `/api/executions` appellent :
   ne tient pas de second registre des runs, il lit celui qui existe déjà ;
 - `annuler` interrompt un run en vol et consigne l'issue.
 
+Depuis #320 un run lancé d'ici **s'arrête sur son brief** par défaut (décision D5,
+mode `humain`) : `en_attente_brief` dans la projection, aucune tâche créée, et la
+décision rendue par `POST /api/executions/{run_id}/brief/decision`. C'est le seul
+point d'entrée du dépôt où ce défaut s'applique, et pour une raison qui ne se
+généralise pas : la Control Tower est la voie de lancement qui a quelqu'un devant.
+Un run suspendu reste **annulable** — attendre une approbation n'est pas un état
+terminal —, et un refus le solde en « annulée », pas en « échec ».
+
 **Frontière d'exécution retenue : la tâche de fond du process de l'API.** Le
 ticket laissait le choix avec la soumission à la file (`--queue`,
 `maestro.queue`). La tâche de fond est retenue pour le POC : elle garde
@@ -51,6 +59,7 @@ from typing import TYPE_CHECKING, Any
 
 from maestro.appartenance import projet_id_valide
 from maestro.controltower.bridge import JournalEventHandler
+from maestro.controltower.brief import ArbitreBriefControlTower
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     Event,
@@ -65,6 +74,7 @@ from maestro.controltower.state import (
     ControlTowerState,
 )
 from maestro.controltower.validation import ValidateurControlTower
+from maestro.engine.brief import MODE_BRIEF_HUMAIN, BriefRefuse, mode_brief_valide
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.references import ReferenceTicket
 from maestro.sources import Source, resoudre_sources
@@ -178,6 +188,7 @@ class ServiceExecutions:
         ticket: Mapping[str, str] | ReferenceTicket | None = None,
         projet_id: str | None = None,
         sources: Sequence[Mapping[str, Any] | Source] | None = None,
+        mode_brief: str | None = MODE_BRIEF_HUMAIN,
     ) -> dict[str, Any]:
         """Lance une exécution en tâche de fond et rend son résumé **immédiatement**.
 
@@ -212,11 +223,21 @@ class ServiceExecutions:
         les reçoit pas encore, l'extraction étant le lot suivant (#316) —
         `sources=None` laisse donc le lancement identique à celui d'avant.
 
+        `mode_brief` (#320, décision D5) est le **régime du brief** de ce run.
+        Son défaut est `humain` — et c'est le seul endroit du dépôt où il l'est :
+        la Control Tower est la voie de lancement qui a, par construction,
+        quelqu'un devant. Le run s'arrête alors sur son brief
+        (`en_attente_brief`), **aucune tâche n'est créée** et la décision se rend
+        par `POST /api/executions/{run_id}/brief/decision`. `auto` rédige le brief
+        et décompose sans attendre ; `sans` décompose l'objectif brut, comme avant
+        ce lot. L'arbitre est câblé sur le bus de l'app, donc la demande atteint
+        l'UI par le même canal que tout le reste.
+
         Lève `ValueError` sur un objectif vide, un garde-fou hors bornes (les
-        plafonds sont des maximums : ils doivent être > 0) ou une source refusée
-        (`SourceRefusee`, qui en hérite et porte son motif) — la route en fait un
-        422. Le run, lui, ne peut plus échouer de façon synchrone : ce qui lui
-        arrive ensuite se lit dans son statut.
+        plafonds sont des maximums : ils doivent être > 0), un mode de brief
+        inconnu ou une source refusée (`SourceRefusee`, qui en hérite et porte son
+        motif) — la route en fait un 422. Le run, lui, ne peut plus échouer de
+        façon synchrone : ce qui lui arrive ensuite se lit dans son statut.
         """
         objectif = objectif.strip()
         if not objectif:
@@ -229,6 +250,17 @@ class ServiceExecutions:
         ):
             if valeur is not None and valeur <= 0:
                 raise ValueError(f"{nom} doit être > 0 (reçu : {valeur}).")
+        # Refusé **avant** toute écriture, comme les garde-fous : un mode mal
+        # orthographié ne doit pas laisser derrière lui un run inscrit dans la
+        # projection — et surtout pas un run qui attendrait une décision que
+        # personne ne sait qu'il attend.
+        #
+        # `None` retombe ici sur le défaut de **cette** voie d'entrée (`humain`) et
+        # non sur celui de `mode_brief_valide` (`sans`, le défaut du moteur) : un
+        # client qui envoie `"brief": null` demande la même chose que celui qui omet
+        # la clé, et deux façons d'écrire « je ne précise pas » ne peuvent pas
+        # donner deux régimes différents.
+        regime_brief = mode_brief_valide(mode_brief or MODE_BRIEF_HUMAIN)
         garde_fous = Guardrails(
             plafond_cout_usd=plafond_cout_usd,
             plafond_tokens=plafond_tokens,
@@ -268,9 +300,18 @@ class ServiceExecutions:
             ticket=reference,
             projet_id=projet,
             sources=matiere,
+            mode_brief=regime_brief,
         )
         tache = asyncio.get_running_loop().create_task(
-            self._derouler(run_id, objectif, garde_fous, parallelisme, reference, projet)
+            self._derouler(
+                run_id,
+                objectif,
+                garde_fous,
+                parallelisme,
+                reference,
+                projet,
+                regime_brief,
+            )
         )
         self._runs[run_id] = tache
         tache.add_done_callback(lambda _: self._runs.pop(run_id, None))
@@ -346,6 +387,7 @@ class ServiceExecutions:
         parallelisme: int | None,
         ticket: ReferenceTicket | None = None,
         projet_id: str | None = None,
+        mode_brief: str = MODE_BRIEF_HUMAIN,
     ) -> None:
         """Déroule le run en tâche de fond et consigne son issue.
 
@@ -360,15 +402,38 @@ class ServiceExecutions:
         le seul chemin du journal — le moteur n'a rien à savoir de son origine.
         `projet_id` (#222) descend par le même chemin et pour la même raison :
         chaque tâche du plan en hérite, et l'appartenance remonte aux vues.
+
+        `mode_brief` (#320) descend, lui, en deux morceaux, et la séparation est le
+        sujet : l'**arbitre** est un câblage de déploiement (*où* la question est
+        posée — ici le bus de l'app), donc il part à la construction du moteur avec
+        les garde-fous ; le **mode** est un choix du lancement (*y a-t-il quelqu'un
+        devant ?*), donc il part avec l'objectif. Un refus humain remonte en
+        `BriefRefuse` et devient un run **annulé**, jamais un échec : rien n'a raté,
+        quelqu'un a dit non — et rien de payant n'a été engagé au-delà du brief.
         """
         journal = RunJournal(run_id=run_id, logger=self._logger)
         try:
-            moteur = self._fabrique(guardrails=garde_fous, max_parallele=parallelisme)
+            moteur = self._fabrique(
+                guardrails=garde_fous,
+                max_parallele=parallelisme,
+                arbitre_brief=ArbitreBriefControlTower(self._bus),
+            )
             rapport = await moteur.run(
-                objectif, journal=journal, ticket=ticket, projet_id=projet_id
+                objectif,
+                journal=journal,
+                ticket=ticket,
+                projet_id=projet_id,
+                mode_brief=mode_brief,
             )
         except asyncio.CancelledError:
             raise
+        except BriefRefuse as refus:
+            # L'issue est peut-être déjà consignée : la projection passe le run à
+            # « annulée » dès la décision (`_applique_brief_decision`), pour qu'un
+            # run publié hors de l'API le montre aussi. La reconsigner ici est sans
+            # effet sur l'état (idempotent) et pose la `fin` du run.
+            self._consigne(run_id, EXECUTION_ANNULEE, "", str(refus))
+            return
         except Exception as exc:
             _LOGGER.exception("Exécution %s interrompue par une erreur.", run_id)
             self._consigne(run_id, EXECUTION_ECHEC, "", f"{type(exc).__name__} : {exc}")
@@ -392,6 +457,7 @@ class ServiceExecutions:
         ticket: ReferenceTicket | None = None,
         projet_id: str | None = None,
         sources: Sequence[Source] = (),
+        mode_brief: str = "",
     ) -> None:
         """Émet le cycle de vie du run : projection d'abord, bus ensuite.
 
@@ -400,10 +466,11 @@ class ServiceExecutions:
         réapplique l'événement sans effet (idempotence). L'objectif comme le
         détail sont expurgés des secrets avant de partir — ce qui va sur le bus
         est montrable, même filet que le journal (#8). Seul le **lancement**
-        porte une référence externe (#187), un projet (#222) et des sources
-        (#315) : la projection ne les retire pas aux événements suivants, qui
-        n'en savent rien. Un lancement **sans** source émet `sources=None` et non
-        une liste vide — l'événement reste alors celui d'avant ce lot.
+        porte une référence externe (#187), un projet (#222), des sources
+        (#315) et le régime du brief (#320) : la projection ne les retire pas aux
+        événements suivants, qui n'en savent rien. Un lancement **sans** source
+        émet `sources=None` et non une liste vide — l'événement reste alors celui
+        d'avant ce lot.
 
         Les sources, elles, ne passent **pas** par `redact_secrets`, et c'est un
         choix : l'objectif et le détail sont du texte libre écrit par un humain,
@@ -424,6 +491,7 @@ class ServiceExecutions:
                 ticket=ticket,
                 projet_id=projet_id,
                 sources=list(sources) or None,
+                mode_brief=mode_brief,
             )
         )
 

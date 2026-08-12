@@ -58,6 +58,7 @@ from maestro.controltower.state import (
     EXECUTION_TERMINEE,
 )
 from maestro.engine import (
+    MODE_BRIEF_SANS,
     STATUT_ECHEC,
     STATUT_TERMINEE,
     OrchestrationEngine,
@@ -118,6 +119,7 @@ class MoteurDouble:
         self.objectifs: list[str] = []
         self.tickets: list[ReferenceTicket | None] = []
         self.projets: list[str | None] = []
+        self.modes_brief: list[str] = []
         self.annule = False
 
     def __call__(self, **reglages: object) -> MoteurDouble:
@@ -132,14 +134,19 @@ class MoteurDouble:
         journal: object = None,
         ticket: ReferenceTicket | None = None,
         projet_id: str | None = None,
+        mode_brief: str = MODE_BRIEF_SANS,
     ) -> RunReport:
-        # `ticket` (#187) et `projet_id` (#222) font partie de la signature du vrai
-        # moteur : le service les lui passe pour qu'il en dote chaque tâche du plan.
+        # `ticket` (#187), `projet_id` (#222) et `mode_brief` (#320) font partie de
+        # la signature du vrai moteur : le service les lui passe pour qu'il en dote
+        # chaque tâche du plan, et pour lui dire sous quel régime de brief tourner.
         # Le double la reproduit — sans quoi il ne testerait plus l'appel réellement
-        # effectué.
+        # effectué. Le double, lui, ne *joue* pas le régime : il n'appelle aucun
+        # modèle, donc aucun brief n'est rédigé — l'arrêt sur brief s'exerce sur le
+        # vrai moteur (lot 9, #323).
         self.objectifs.append(objectif)
         self.tickets.append(ticket)
         self.projets.append(projet_id)
+        self.modes_brief.append(mode_brief)
         if self.erreur is not None:
             raise self.erreur
         if self.bloquant:

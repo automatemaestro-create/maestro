@@ -608,6 +608,23 @@ export const EXECUTION_EN_COURS = "en_cours";
 export const EXECUTION_TERMINEE = "terminee";
 export const EXECUTION_ANNULEE = "annulee";
 export const EXECUTION_ECHEC = "echec";
+/**
+ * Le run s'est arrêté sur son **brief** et attend une décision humaine (#320,
+ * décision D5) : aucune tâche n'est créée d'ici là. État **non terminal** — le run
+ * reste annulable comme n'importe quel run en vol.
+ */
+export const EXECUTION_EN_ATTENTE_BRIEF = "en_attente_brief";
+
+/**
+ * Le **régime du brief** d'un run (#320) : `sans` décompose l'objectif brut (le
+ * comportement d'avant ce lot), `auto` rédige le brief et le décompose sans
+ * attendre personne (lancement headless), `humain` arrête le run dessus jusqu'à
+ * décision. La Control Tower lance en `humain` par défaut : c'est la voie qui a,
+ * par construction, quelqu'un devant.
+ */
+export const MODE_BRIEF_SANS = "sans";
+export const MODE_BRIEF_AUTO = "auto";
+export const MODE_BRIEF_HUMAIN = "humain";
 
 /** Les trois types de source d'un objectif (#315, EF-39) — et rien d'autre. */
 export const SOURCE_FICHIER = "fichier";
@@ -693,6 +710,38 @@ export type LancementExecution = {
    * exactement celui d'avant la Phase 8.
    */
   sources?: SourceDeclaree[];
+  /**
+   * Le régime du brief (#320, `MODE_BRIEF_*`) — omis ou `null` : `humain`, le
+   * défaut de la Control Tower.
+   */
+  brief?: string | null;
+};
+
+/**
+ * Le corps de `POST /api/executions/{run_id}/brief/decision` (#320) : approuver
+ * — avec un brief **corrigé** qui devient l'entrée de la décomposition, ou sans
+ * (`brief: null`) pour approuver tel quel — ou refuser, ce qui solde le run en
+ * « annulée » sans qu'aucune tâche ait été créée.
+ */
+export type DecisionBrief = {
+  approuve: boolean;
+  brief: Brief | null;
+};
+
+/**
+ * Le brief structuré (#318) — miroir de `packages/shared/schemas/brief.schema.json`
+ * et de `maestro.orchestrator.schema.Brief`. Aucune clé n'est omise : les quatre
+ * listes facultatives sont valides vides, ce qui permet à l'écran de validation
+ * (#322) de présenter les sept sections sans distinguer « absent » de « vide ».
+ */
+export type Brief = {
+  objectif: string;
+  perimetre: string[];
+  hors_perimetre: string[];
+  contraintes: string[];
+  criteres_acceptation: string[];
+  hypotheses: string[];
+  questions: string[];
 };
 
 /**
@@ -711,6 +760,13 @@ export type ResumeExecution = {
   ticket: ReferenceTicket | null;
   /** Le projet dans lequel le run travaille (#222), `null` hors de tout projet. */
   projet_id: string | null;
+  /**
+   * Le régime du brief de ce run (#320, `MODE_BRIEF_*`) — chaîne vide pour un run
+   * publié hors de l'API, qui n'annonce aucun mode. Le **brief lui-même** n'est pas
+   * dans le résumé mais dans le détail (`GET /api/executions/{run_id}`) : la liste
+   * des runs n'a pas à porter sept sections de texte par ligne.
+   */
+  mode_brief?: string;
   debut: string;
   fin: string | null;
   /**

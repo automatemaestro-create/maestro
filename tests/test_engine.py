@@ -505,7 +505,9 @@ def test_le_cout_par_tache_est_visible_dans_le_rapport():
 
     # …comme dans la synthèse Markdown (par tâche et en total).
     synthese = report.synthese()
-    assert "Usage total (planification incluse)" in synthese
+    # Le libellé nomme les deux étapes de run comptées dans le total depuis #320 :
+    # le cadrage (brief) autant que la planification.
+    assert "Usage total (cadrage et planification inclus)" in synthese
     assert synthese.count("coût 0.0100 $") == 3
 
 
