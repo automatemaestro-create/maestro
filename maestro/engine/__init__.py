@@ -30,10 +30,26 @@ Les dépendances du plan forment un **DAG** validé en amont (#43, cycles rejet�
 `validate_plan`) : une tâche n'atteint l'exécuteur que lorsque toutes ses
 dépendances sont terminées, et l'échec d'une dépendance **bloque** son aval
 (statut `STATUT_BLOQUEE`, aucune exécution orpheline).
+
+Avant de décomposer, la boucle sait **s'arrêter sur le brief** (#320, décision D5,
+`maestro.engine.brief`) : `run(..., mode_brief=...)` décompose l'objectif brut
+(`sans`, le défaut), le brief rédigé sans attendre personne (`auto`) ou le brief
+**approuvé par un humain** (`humain`, via un `ArbitreBrief` injecté au moteur) —
+et dans ce dernier cas aucune tâche n'est créée tant que rien n'est tranché.
 """
 
 from __future__ import annotations
 
+from maestro.engine.brief import (
+    MODE_BRIEF_AUTO,
+    MODE_BRIEF_HUMAIN,
+    MODE_BRIEF_SANS,
+    MODES_BRIEF,
+    ArbitreBrief,
+    BriefRefuse,
+    DecisionBrief,
+    DemandeBrief,
+)
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
     STATUT_ECHEC,
@@ -55,9 +71,17 @@ from maestro.engine.loop import (
 from maestro.engine.retry import PolitiqueRelance
 
 __all__ = [
+    "ArbitreBrief",
+    "BriefRefuse",
+    "DecisionBrief",
+    "DemandeBrief",
     "DemandeValidation",
     "Guardrails",
     "LocalExecutor",
+    "MODES_BRIEF",
+    "MODE_BRIEF_AUTO",
+    "MODE_BRIEF_HUMAIN",
+    "MODE_BRIEF_SANS",
     "MOTS_SENSIBLES",
     "OrchestrationEngine",
     "PolitiqueRelance",

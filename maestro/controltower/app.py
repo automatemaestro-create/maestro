@@ -19,7 +19,12 @@ Endpoints :
 - `POST /api/executions` — **lance** une exécution (objectif + garde-fous) en
   tâche de fond et rend son `run_id` immédiatement (#185) ;
 - `POST /api/executions/{run_id}/annuler` — interrompt un run en cours (#185) ;
-- `GET  /api/executions/{run_id}` — le détail d'une exécution (état, trace, coût) ;
+- `POST /api/executions/{run_id}/brief/decision` — tranche le **brief** d'un run
+  suspendu (#320, décision D5) : approuver (avec un brief éventuellement corrigé,
+  qui devient l'entrée de la décomposition) ou refuser (run « annulée », aucune
+  tâche créée) ;
+- `GET  /api/executions/{run_id}` — le détail d'une exécution (état, trace, coût)
+  et, depuis #320, le **brief** soumis ou retenu ;
 - `GET  /api/executions/{run_id}/cout` — le grand livre du run (#57) : coût
   par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat ;
 - `GET  /api/analytics/couts` — la vue coûts & analytics (#87) : agrégats par
@@ -174,6 +179,7 @@ from maestro.controltower.auto_amelioration import (
     RevisionIndisponible,
     echecs_du_run,
 )
+from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
     ChatStore,
     RepondeurChat,
@@ -183,6 +189,7 @@ from maestro.controltower.chat import (
 )
 from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
+    EVENEMENT_BRIEF_DECISION,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_VALIDATION_DECISION,
@@ -190,6 +197,7 @@ from maestro.controltower.events import (
     EventBus,
     InMemoryEventBus,
     RedisEventBus,
+    brief_depuis,
 )
 from maestro.controltower.executions import FabriqueMoteur, ServiceExecutions
 from maestro.controltower.fixtures import (
@@ -214,14 +222,20 @@ from maestro.controltower.projets import (
     statut_http,
 )
 from maestro.controltower.state import (
+    BRIEF_APPROUVE,
+    BRIEF_REFUSE,
     CAPACITE_ACTIVE,
     CAPACITE_DESACTIVE,
+    EXECUTION_EN_ATTENTE_BRIEF,
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
     ControlTowerState,
 )
+from maestro.engine.brief import MODE_BRIEF_HUMAIN
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
+from maestro.orchestrator.errors import BriefValidationError
+from maestro.orchestrator.schema import validate_brief
 from maestro.projets import RacineRefusee, canonique, valider_racine
 from maestro.references import ReferenceTicket
 
@@ -270,6 +284,12 @@ class LancementExecutionRequete(BaseModel):
     parallelisme: int | None = None
     ticket: ReferenceTicketRequete | None = None
     projet_id: str | None = None
+    # Le régime du brief (#320) — `humain` par défaut : la Control Tower est la
+    # voie de lancement qui a quelqu'un devant, et la décision D5 veut le brief
+    # validé avant décomposition. `auto` rédige le brief sans attendre, `sans`
+    # décompose l'objectif brut (le comportement d'avant ce lot). Un mode inconnu
+    # est refusé en 422, jamais traité comme un `sans` silencieux.
+    brief: str | None = MODE_BRIEF_HUMAIN
 
 
 class ReassignationRequete(BaseModel):
@@ -282,6 +302,25 @@ class DecisionRequete(BaseModel):
     """Corps de la décision humaine (#48) : approuver ou refuser l'action sensible."""
 
     approuve: bool
+
+
+class DecisionBriefRequete(BaseModel):
+    """Corps de la décision sur un brief (#320) : approuver — corrigé ou non — ou refuser.
+
+    `brief` porte la **version corrigée** que l'humain veut voir décomposée ; absent
+    (`null`), le brief proposé est approuvé tel quel. C'est ce qui distingue ce
+    canal de la validation d'action sensible (#48), dont le corps se résume à un
+    booléen : ici la personne ne fait pas que dire oui, elle réécrit avant de le
+    dire — et c'est son texte qui part en décomposition.
+
+    Le brief corrigé est validé contre la **JSON Schema partagée** (#318) avant de
+    partir : une correction qui casse la forme doit coûter un 422 à celui qui la
+    soumet, pas un échec de run une seconde plus tard, quand plus personne ne
+    regarde. Sur un **refus**, il est ignoré — il n'y a rien à décomposer.
+    """
+
+    approuve: bool
+    brief: dict[str, Any] | None = None
 
 
 class CapaciteRequete(BaseModel):
@@ -883,6 +922,7 @@ def create_app(
                 parallelisme=requete.parallelisme,
                 ticket=None if requete.ticket is None else requete.ticket.en_reference(),
                 projet_id=requete.projet_id,
+                mode_brief=requete.brief,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -912,6 +952,71 @@ def create_app(
         if annulee is None:  # pragma: no cover - le résumé vient d'être lu
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return annulee
+
+    @app.post("/api/executions/{run_id}/brief/decision")
+    async def decider_brief(
+        run_id: str, requete: DecisionBriefRequete
+    ) -> dict[str, Any]:
+        """Tranche le brief d'un run suspendu (#320, décision D5) : il repart, ou il s'arrête.
+
+        **Approuver** relance la décomposition, et ce qui sera décomposé est le
+        brief tel qu'il vient d'être approuvé — la version corrigée si le corps en
+        porte une. **Refuser** solde le run en « annulée » : rien de payant n'aura
+        été engagé au-delà du brief lui-même.
+
+        Même mécanique que la décision de validation (#48) et pour les mêmes
+        raisons : l'état est appliqué **d'abord** (le REST répond déjà à jour) puis
+        l'événement est publié — le moteur, en attente sur ce même bus, reprend ou
+        s'arrête, et la pompe réapplique l'événement sans effet (idempotence).
+
+        404 si le run est inconnu, **409 s'il n'attend pas de décision** (jamais
+        tranché deux fois, et surtout pas un run soldé ramené en vol), 422 si le
+        brief corrigé n'est pas conforme au schéma partagé — un refus qui coûte un
+        aller-retour à celui qui le soumet, plutôt qu'un run qui échoue plus tard.
+        """
+        resume = executions.resume(run_id)
+        if resume is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if resume["statut"] != EXECUTION_EN_ATTENTE_BRIEF:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"cette exécution n'attend pas de décision sur son brief "
+                    f"({resume['statut']}) : {run_id}."
+                ),
+            )
+        corrige = None
+        if requete.approuve and requete.brief is not None:
+            try:
+                validate_brief(requete.brief, where="brief corrigé")
+            except BriefValidationError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            corrige = brief_depuis(requete.brief)
+        event = Event(
+            type=EVENEMENT_BRIEF_DECISION,
+            run_id=run_id,
+            titre=resume["objectif"],
+            agent=ACTEUR_BRIEF,
+            role=ROLE_BRIEF,
+            statut=BRIEF_APPROUVE if requete.approuve else BRIEF_REFUSE,
+            detail=(
+                "brief approuvé depuis la Control Tower"
+                if requete.approuve
+                else "brief refusé depuis la Control Tower : rien n'a été décomposé"
+            ),
+            # La **correction**, ou None quand il n'y en a pas — jamais une recopie
+            # du brief proposé. « Absent » veut dire « celui d'avant tient », et
+            # cette lecture-là est faite au même endroit par la projection et par le
+            # moteur (`DecisionBrief.retenu`), donc énoncée une seule fois.
+            brief=corrige,
+            projet_id=resume["projet_id"],
+        )
+        state.appliquer(event)
+        await bus.publish(event)
+        return executions.resume(run_id) or resume
 
     @app.get("/api/executions/{run_id}")
     async def execution(run_id: str) -> dict[str, Any]:

@@ -35,6 +35,7 @@ from maestro.appartenance import projet_id_valide
 from maestro.detail_tache import EtapeTache as EtapeTache  # ré-export explicite
 from maestro.detail_tache import LienUtile as LienUtile  # ré-export explicite
 from maestro.detail_tache import etapes_depuis, liens_depuis
+from maestro.orchestrator.schema import Brief as Brief  # ré-export explicite
 from maestro.projets.application import DiffProjet
 from maestro.references import ReferenceTicket as ReferenceTicket  # ré-export explicite
 from maestro.sources.modele import Source as Source  # ré-export explicite
@@ -49,7 +50,10 @@ from maestro.telemetry.usage import StepUsage
 # `EtapeTache` et `LienUtile` (#246) vivent dans `maestro.detail_tache` pour la
 # même raison, et sont ré-exportés de la même façon. `Source` (#315) suit les
 # trois : définie dans `maestro.sources.modele`, feuille, elle voyage du
-# lancement à la projection en traversant les mêmes couches.
+# lancement à la projection en traversant les mêmes couches. `Brief` (#318) est le
+# cinquième, à ceci près qu'il vient de `maestro.orchestrator.schema` : c'est
+# l'orchestrateur qui le produit, et il n'y a aucune raison d'en tenir un second
+# modèle ici — il voyage du moteur (#320) à l'écran de validation (#322) tel quel.
 
 #: Types d'événements diffusés (docs/05 §2.1 : flux d'activité temps réel).
 #: `tache.statut` suit la machine à états de docs/03 §3 ; `tache.reassignation`
@@ -93,6 +97,17 @@ EVENEMENT_VALIDATION_DECISION = "validation.decision"
 EVENEMENT_CHAT_MESSAGE = "chat.message"
 EVENEMENT_PLAYBOOK_PROPOSITION = "playbook.proposition"
 EVENEMENT_EXECUTION_STATUT = "execution.statut"
+#: `brief.demande` et `brief.decision` (#320) portent la **validation humaine du
+#: brief** avant décomposition (décision D5) : le moteur soumet, la Control Tower
+#: rend la décision. Canal **distinct** de `validation.*` à dessein — celui-là
+#: transporte un booléen sur une action sensible (#48), celui-ci un **brief
+#: corrigé** sur un run entier —, mais même bus et même patron d'attente. Le run
+#: qu'ils visent est dans `run_id` (jamais `tache_id` : aucune tâche n'existe
+#: encore, c'est tout le sujet), `brief` porte le brief proposé puis celui qui a
+#: été retenu, et `statut` l'issue (« approuvee »/« refusee », le vocabulaire des
+#: validations, cf. `maestro.controltower.state`).
+EVENEMENT_BRIEF_DEMANDE = "brief.demande"
+EVENEMENT_BRIEF_DECISION = "brief.decision"
 
 #: Canal Redis Pub/Sub des événements — sur l'instance mutualisée avec la file
 #: de tâches (#41), d'où un canal nommé plutôt que le canal par défaut.
@@ -107,6 +122,29 @@ REDIS_URL_DEFAUT = "redis://localhost:6379/0"
 def _horodatage() -> str:
     """Horodatage UTC ISO-8601, même précision que le journal (#8)."""
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def brief_depuis(donnees: Any) -> Brief | None:
+    """Relit un brief venu du flux (#320) — None si rien d'exploitable.
+
+    **Relecture, jamais nouvelle saisie** : même règle que pour les sources (#315).
+    Un brief qui circule sur le bus a déjà été validé contre le schéma partagé, à sa
+    production (#318) comme à sa correction humaine (`POST …/brief/decision`) ; le
+    revalider ici rendrait illisible un run passé dès que le schéma bougerait, et
+    ferait échouer le **rejeu du journal durable** (#97) sur un run ancien plutôt
+    que de l'afficher tel qu'il était.
+
+    D'où la seule exigence retenue : que les quatre champs requis soient là. Un
+    payload amputé retombe sur None — l'événement dit alors qu'il n'apprend rien du
+    brief, ce que la projection sait déjà traiter (elle n'efface pas ce qu'un
+    événement précédent a posé).
+    """
+    if not isinstance(donnees, Mapping):
+        return None
+    requis = ("objectif", "perimetre", "hors_perimetre", "criteres_acceptation")
+    if any(cle not in donnees for cle in requis):
+        return None
+    return Brief.from_dict(donnees)
 
 
 @dataclass(frozen=True)
@@ -175,6 +213,15 @@ class Event:
     # lancement en porte, et un événement de fin ne doit pas effacer les sources
     # posées au départ (#315).
     sources: list[Source] | None = None
+    # Le brief soumis puis retenu (#320) — None (et non un brief vide) partout
+    # ailleurs, pour la même raison qu'`etapes`/`liens`/`sources` : la projection
+    # distingue « cet événement n'apprend rien du brief » de « le brief est vide »,
+    # et l'issue d'un run n'a pas à effacer ce que sa demande a posé.
+    brief: Brief | None = None
+    # Le régime du brief du run (#320 : « sans »/« auto »/« humain »), porté par
+    # l'événement de **lancement** — c'est par lui qu'il rejoint la projection, donc
+    # `ResumeExecution`, donc l'annonce du mode dans le résumé du run. Vide ailleurs.
+    mode_brief: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -204,6 +251,8 @@ class Event:
                 if self.sources is not None
                 else None
             ),
+            "brief": self.brief.to_dict() if self.brief is not None else None,
+            "mode_brief": self.mode_brief,
             "horodatage": self.horodatage,
         }
 
@@ -250,6 +299,10 @@ class Event:
             sources=(
                 sources_depuis(data["sources"]) if data.get("sources") is not None else None
             ),
+            # Même régime que les sources (#320) : relecture tolérante, jamais
+            # revalidation — cf. `brief_depuis`.
+            brief=brief_depuis(data.get("brief")),
+            mode_brief=data.get("mode_brief", ""),
             horodatage=data.get("horodatage", ""),
         )
 
