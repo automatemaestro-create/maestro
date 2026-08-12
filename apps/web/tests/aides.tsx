@@ -343,6 +343,7 @@ export function coutExecutionFactice(
   return {
     run_id: "run-1",
     planification: usageFactice(),
+    brief: usageFactice(),
     total: usageFactice(),
     taches: [],
     ...partiel,

@@ -49,9 +49,16 @@ _ETAPE_PLANIFICATION = "planification"
 #: (#96 — cf. `maestro.telemetry.costs.ETAPE_REPRISE`).
 _ETAPE_REPRISE = "reprise"
 
+#: Étape du journal qui n'est pas une tâche : le brief structuré rédigé avant
+#: décomposition (#318 — cf. `maestro.telemetry.costs.ETAPE_BRIEF`). Même raison
+#: d'être déclarée ici que là-bas : sans elle, la règle par défaut (« toute autre
+#: étape est l'issue d'une tâche ») ferait apparaître une carte de tâche fantôme
+#: nommée « brief » sur le Kanban, alors que l'étape porte sur le run entier.
+_ETAPE_BRIEF = "brief"
+
 #: Étapes rattachées au **run**, pas à une tâche : elles deviennent des activités
-#: d'agent sans `tache_id` (l'orchestrateur planifie, le moteur reprend).
-_ETAPES_RUN = (_ETAPE_PLANIFICATION, _ETAPE_REPRISE)
+#: d'agent sans `tache_id` (l'orchestrateur cadre puis planifie, le moteur reprend).
+_ETAPES_RUN = (_ETAPE_PLANIFICATION, _ETAPE_BRIEF, _ETAPE_REPRISE)
 
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).
 _SUFFIXE_VALIDATION = ":validation"
@@ -86,13 +93,13 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
 
     - les étapes `<tache>:message` (#44) deviennent des **messages
       inter-agents** (entité AGENT_MESSAGE — handoff, notification…) ;
-    - les étapes `planification` et `reprise` (#96) et les étapes
+    - les étapes `planification`, `brief` (#318) et `reprise` (#96) et les étapes
       `<tache>:validation`, `<tache>:relance` (#91) et `<tache>:refus-outil`
-      (#110) deviennent des **activités d'agent** (l'orchestrateur planifie, le
-      moteur reprend un run interrompu, un humain tranche, le moteur relance, la
-      politique de permissions refuse un outil — la raison voyage dans
-      `detail`) ; `planification` et `reprise` portent sur le run entier, donc
-      sans `tache_id` ;
+      (#110) deviennent des **activités d'agent** (l'orchestrateur cadre puis
+      planifie, le moteur reprend un run interrompu, un humain tranche, le moteur
+      relance, la politique de permissions refuse un outil — la raison voyage dans
+      `detail`) ; `planification`, `brief` et `reprise` portent sur le run entier,
+      donc sans `tache_id` ;
     - les étapes `<tache>:debut` (#98) deviennent le **début** de leur tâche :
       événement `tache.statut` au statut `en_cours` (agent, heure de début),
       sans usage ni coût — rien n'entre au grand livre avant l'issue ;
