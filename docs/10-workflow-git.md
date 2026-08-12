@@ -270,8 +270,10 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
      qu'il remet le dépôt à niveau au passage, sans qu'aucun geste soit à retenir : `main` avancée
      sur `origin/main` (§9.3), dépendances ajoutées au dépôt (§9.4), worktrees soldés ramassés
      (§9.2) et **branches locales déjà mergées purgées** (§9.5 — même garde-fou que
-     `/branch-cleanup` : uniquement celles dont GitLab confirme la MR `merged`, §6). Les quatre
-     sont best-effort et muets quand il n'y a rien à faire ; aucun ne bloque un démarrage.
+     `/branch-cleanup` : uniquement celles dont GitLab confirme la MR `merged`, §6). Il **signale**
+     au même passage les tickets « En cours » que plus personne ne mène (§9.6) — consultatif : la
+     reprise est un geste explicite, et le ticket qu'on est en train de démarrer en est écarté. Les
+     cinq sont best-effort et muets quand il n'y a rien à faire ; aucun ne bloque un démarrage.
    - **`lib.sh start-branch <branche>`** — place le dépôt sur la branche de travail. Après
      `ensure` c'est en général sans effet (la branche est déjà celle du worktree) ; il reste la
      source unique du placement et couvre le cas d'une reprise dans le clone principal.
@@ -1695,6 +1697,104 @@ attente — le jour où la règle change, le prompt ne suit pas. Le raccordement
 plus aucun `glab mr` prescrit, trois fonctions toujours nommées) — même parti pris que les tests
 #196 et #233 : une règle qui vit dans un prompt ne se garde que par une lecture de ce prompt.
 
+### 9.6 Un ticket abandonné par sa session redevient prenable (#327)
+
+Le sixième membre de la famille, et celui qui réconcilie non pas un **répertoire** mais un
+**ticket**. Les cinq précédents remettent à niveau ce qu'une machine a laissé traîner ; celui-ci
+ramène dans le champ de vision un ticket que plus rien ne pouvait y ramener.
+
+**Le mécanisme de la perte.** Un ticket entre en « En cours » — et s'assigne — à `/ticket-start`.
+Il n'en sort que par `/ticket-ship`/`/ticket-finish` (« En revue ») ou `/ticket-abandon`. La
+**troisième sortie est l'absence de sortie** : une session qui meurt y laisse son ticket pour
+toujours. Or « En cours » **et assigné** est exactement le filtre d'anti-collision de `queue.sh`
+(§11.2) — **la règle qui protège le travail vivant cache définitivement le travail mort**. Constat
+du 2026-08-11 : **#316**, un commit de 2047 lignes jamais poussé, dont la chute avait en plus sauté
+les 7 lots suivants de son parent ; **#325**, 396 lignes non commitées dans son worktree.
+
+**Le renversement.** Ne pas demander « ce run a-t-il échoué ? » mais **« quelqu'un s'occupe-t-il
+encore de ce ticket ? »**. Toute la valeur du dispositif tient là : la première question n'a de
+réponse que pour les tickets morts *dans un run*, et laisse passer les deux modes de mort les plus
+fréquents. La seconde se pose au **worktree**, qui existe dans les trois cas :
+
+| Mode de mort | Ce qu'il laisse dans le journal | Ce que `--resume` en fait |
+|---|---|---|
+| Run soldé en échec (#316) | une ligne de bilan `✗ ECHEC` | **rien** : `reprend_en_vol` exige l'absence de bilan, et le run est « terminé » donc pas même reprenable |
+| Pilote tué (`taskkill //F`) | un témoin de session, **aucun verdict** (aucun trap ne s'exécute) | le rattrape — mais seulement si l'on reprend **ce run-là** |
+| Session interactive laissée en plan (#325) | **rien du tout** | rien : ni journal ni témoin |
+
+**Deux verbes, et l'asymétrie entre eux est le sujet.**
+
+```bash
+bash scripts/gitlab/lib.sh reconcile-en-cours              # le détail, verdict par verdict
+bash scripts/gitlab/lib.sh reprendre-en-cours <iid>…       # le geste : « À faire » + libéré
+bash scripts/gitlab/lib.sh reprises [<iid>]                # la trace, avant d'insister
+```
+
+`reconcile-en-cours` **signale** — lecture seule intégrale, aucun label, aucune assignation, aucun
+worktree touché. Il rend trois verdicts :
+
+| Verdict | Source | Quand |
+|---|---|---|
+| **vivant** | la **carte du pilote** (#213) quand elle est là, sinon la fraîcheur du worktree | un processus vérifiable tient le ticket, ou le worktree a été écrit il y a moins de 6 h |
+| **orphelin** | déduction, **annoncée comme telle** | worktree présent ici, muet depuis plus de 6 h, aucun pilote |
+| **hors de portée** | — | aucun worktree sur cette machine : ne rien savoir n'autorise rien |
+
+Le seuil de 6 h (`MAESTRO_ORPHELIN_SEUIL`) est **généreux à dessein**, et c'est ce qu'il protège
+qui le fixe : une session qui épuise la limite d'usage dort jusqu'à son reset sans rien écrire, et
+`run.sh` l'attend jusqu'à 5 h 30 (§11.4). Plus court, il déclarerait abandonné un ticket dont la
+session attend légitimement. **La carte du pilote ne prouve jamais que la vie** : elle survit à un
+`taskkill //F`, donc une carte dont le processus est mort ne sauve pas le ticket — c'est la
+déduction qui reprend la main.
+
+`reprendre-en-cours` **rend prenable**, et « prenable » est une **conjonction**, parce que le filtre
+de `queue.sh` en est une : « À faire » **ET** libre. D'où une **seule mutation** qui pose le cycle
+de vie et vide la liste des assignés — deux appels laisseraient un intervalle où le ticket est dans
+un état que personne n'a voulu. Le verdict n'est jamais redéduit ici : il est **demandé** au verbe
+ci-dessus, seul à savoir départager. « vivant » et « hors de portée » ferment la porte ; `--force`
+la rouvre, **jamais en silence**, pour qui sait quelque chose que la machine ignore.
+
+**Ce que la reprise ne touche pas — et c'est tout son intérêt.** Elle n'écrit **que** dans GitLab.
+Worktree, branche, commits non poussés, fichiers non commités : intacts, et `worktree.sh ensure`
+les retrouve au démarrage suivant. C'est exactement ce qu'on veut des 2047 lignes de #316 — un
+verbe qui « nettoierait » au passage détruirait ce qu'il est censé sauver.
+
+**Le bornage.** Un ticket qui retombe à chaque run brûlerait une session entière à chaque fois.
+La reprise est donc plafonnée à **2 par ticket** (`MAESTRO_REPRISES_MAX`), au-delà desquelles elle
+se demande par `--force`. Le compteur vit dans `.maestro/orchestrate/reprises.tsv` — **à côté** des
+répertoires de run et non dedans, parce qu'une reprise est une propriété du **ticket** (celle de
+#325 n'a jamais eu de run du tout) et que le ménage du journal (§11) ne balaie que les
+`<run-id>/`. Un plafond qu'un ménage remet à zéro tous les dix runs est un plafond qui n'existe pas.
+
+**Où ça se voit**, sans avoir à taper quoi que ce soit :
+
+| Point de passage | Ce qu'il montre |
+|---|---|
+| `worktree.sh gc`, donc `/ticket-start`, `/branch-cleanup` et le démarrage d'un run | le bloc « Tickets « En cours » dont plus personne ne s'occupe » — **muet quand il n'y a rien**, comme `gc --auto` et `cleanup-merged --auto` |
+| `doctor.sh`, section 4d | la quatrième dérive du cycle de vie, et la seule qui demande de regarder un disque plutôt que GitLab |
+| `queue.sh --orphelins` | ceux du **milestone visé**, avec leur run d'origine et leur plafond — lus **à côté** du plan, jamais dedans |
+| `/orchestrate` | les propose au feu vert, un par un ; le « oui » explicite remplace le contournement du filtre |
+
+Le signalement est greffé sur **`gc`** et non sur `ensure`, pour la raison exacte qui y a fait
+greffer la pose du cycle de vie (§9.2) : les **trois** points de passage en héritent d'un coup, là
+où un câblage par point de passage en ferait trois à garder d'accord — et un déclencheur qui cesse
+d'être atteint ne se remarque pas (§9.5). Il est **consultatif de bout en bout** : rien ne se
+reprend d'office. Ce n'est pas de la prudence de façade — « orphelin » est une **déduction**, et
+reprendre le ticket d'une session vivante le lui retire (le run suivant l'assigne à quelqu'un
+d'autre), là où rater un orphelin ne coûte qu'un tour de boucle.
+
+**Portée**, comme `gc` et `reconcile-workflow` : les worktrees de **cette machine**. Un ticket
+travaillé sur le clone de quelqu'un d'autre est « hors de portée », jamais orphelin. Le board reste
+donc faux **au repos** — ce n'est pas une régression, mais ça se dit.
+
+`MAESTRO_EN_COURS_SIGNAL=0` éteint le signalement (`MAESTRO_WORKTREE_GC=0` l'éteint par voie de
+conséquence, `gc` en étant le porteur). Couvert par
+[`test_collaboration.py`](../tests/test_collaboration.py) — les trois modes de mort joués l'un
+après l'autre jusqu'à la reprise, l'empreinte du worktree identique avant/après, le plafond qui
+survit au ménage du journal et ne se contourne pas depuis un worktree, la dérive `doctor.sh` —,
+[`test_worktree.py`](../tests/test_worktree.py) (le câblage sur `gc`, son mutisme, `--sauf`) et
+[`test_orchestrate.py`](../tests/test_orchestrate.py) (`queue.sh --orphelins`, `journal.sh
+origine`). Dépôt jetable, sans réseau ni `glab`.
+
 ---
 
 ## 10. Travail à plusieurs — plusieurs personnes, plusieurs clones
@@ -1712,6 +1812,7 @@ est traité et pourquoi il existe.
 | Les lots d'un parent s'attendent en file alors qu'ils sont indépendants | marqueur **`(parallèle)`** dans la checklist ; `startables` liste **tous** les lots prenables | §5.1 |
 | Une branche vieillit pendant qu'`origin/main` avance ; le conflit se découvre au merge | **alerte de retard** avant le push : `behind-main` (commits de retard + fichiers modifiés des deux côtés) | §6 |
 | Une MR ouverte n'est relue par personne, faute de savoir qu'elle attend | **revue best-effort outillée** : **file de revue** en tête de `/backlog`, la plus ancienne d'abord (aucun relecteur posé d'office, #196 ; `set-reviewer` reste là pour une pose manuelle) | §6 |
+| Une session meurt sur un ticket : il reste « En cours » et assigné, donc **invisible de tous** — travail compris | **détection + reprise** : `reconcile-en-cours` signale d'office, `reprendre-en-cours` le rend prenable sans toucher au worktree | §9.6 |
 | La CI dépend du poste d'**une** personne : elle éteint sa machine, l'équipe ne merge plus | **runner partagé permanent** (`--partage`, machine toujours allumée), les runners locaux en secours | §8.1 |
 | Un échec de lint occupe le runner de quelqu'un d'autre pour une faute de frappe | **filet CI local** : `bash scripts/ci/local.sh` rejoue les jobs du pipeline avant le push | §8 |
 | La moitié du `.env` circule à la main, de canal en canal | marqueurs **`[perso]` / `[partagé]`** + `env-pull.sh`, qui complète sans jamais écraser | §7.3 |
