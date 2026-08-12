@@ -926,6 +926,37 @@ def test_gc_ignore_une_branche_hors_convention(depot: Depot) -> None:
     assert depot.worktree("experimentation").exists()
 
 
+def test_ensure_retrouve_le_travail_d_un_ticket_repris(depot: Depot) -> None:
+    """La dernière boucle du critère de #329 : « sans rien perdre » se vérifie ICI, pas ailleurs.
+
+    Rendre un orphelin prenable n'écrit que dans GitLab — le worktree, la branche, les commits non
+    poussés et le travail non commité ne sont pas touchés. Ce qui reste à prouver est l'autre bout :
+    que le démarrage suivant les RETROUVE. Deux choses pourraient le défaire à ce moment précis, et
+    ce sont justement les deux ménages câblés dans `ensure` — le ramassage des worktrees et la purge
+    des branches. Ni l'un ni l'autre ne doit y toucher : le ticket est ouvert, sa MR n'existe pas,
+    donc il est « actif » et sa branche n'est pas mergée.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    wt = depot.worktree()
+    sha = _commit_local(depot, wt, "2047 lignes jamais poussées\n")
+    (wt / "en-chantier.txt").write_text("pas encore commité\n", encoding="utf-8", newline="\n")
+    # Un ticket repris est OUVERT et sans MR mergée : c'est ce que `worktree-done` en dit.
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket ouvert, aucune MR mergée")})
+    depot.impose_mr({BRANCHE: "opened"})
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    verdict = _verdict(acheve)
+    assert verdict.startswith("WORKTREE "), f"verdict inattendu : {verdict!r}"
+    assert Path(verdict[len("WORKTREE ") :]).resolve() == wt.resolve(), (
+        "c'est le worktree du ticket qui doit être rendu, pas un neuf"
+    )
+    assert depot.git("rev-parse", "HEAD", cwd=wt) == sha, "le commit non poussé est retrouvé"
+    assert (wt / "en-chantier.txt").exists(), "le travail non commité aussi"
+    assert BRANCHE in depot.git("branch", "--list", BRANCHE), "la branche n'a pas été purgée"
+
+
 def test_ensure_ramasse_les_worktrees_soldes_avant_de_monter_le_sien(depot: Depot) -> None:
     """Le câblage qui fait tout le ticket : plus aucun geste dédié à se rappeler (#197).
 

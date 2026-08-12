@@ -3656,6 +3656,228 @@ def test_le_listing_des_milestones_n_imprime_aucun_plan(depot: Depot) -> None:
 
 
 # =====================================================================================
+# Proposer les orphelins sans les prendre — queue.sh --orphelins (#329, parent #327)
+# =====================================================================================
+# La règle 1 écarte les tickets « En cours » et assignés : c'est ce qui protège le travail des
+# autres, et ce filtre ne bouge pas. Mais il écarte du même geste ceux qu'une session MORTE a
+# laissés là — invisibles pour toujours, worktree plein (#316 : 2047 lignes jamais poussées). D'où
+# une sortie SÉPARÉE : le plan reste ce qu'il était, ce qui pourrait le rejoindre se lit à côté.
+#
+# Le verdict n'est pas recalculé ici — il vient du verbe du lot 1, seul à savoir départager un
+# vivant d'un orphelin. Ces tests posent donc ce verdict à la main (couture
+# MAESTRO_ORPHELINS_SOURCE)
+# pour éprouver ce que ce fichier-ci ajoute : le filtre du milestone, le run d'origine, le compte
+# des reprises et le plafond.
+
+
+def _source_orphelins(depot: Depot, lignes: str) -> str:
+    """Couture `MAESTRO_ORPHELINS_SOURCE` : le TSV du lot 1, posé à la main.
+
+    Le passer par un fichier plutôt que par un `printf` en ligne évite d'échapper des TAB dans un
+    script dans un test — et laisse voir la fixture telle qu'elle sera lue.
+    """
+    fichier = depot.fixtures / "en-cours.tsv"
+    fichier.write_text(
+        "# iid\tverdict\tsource\tdetail\ttitre\n" + lignes, encoding="utf-8", newline="\n"
+    )
+    stub = depot.racine.parent / "bin" / "orphelins-stub"
+    stub.write_text(
+        f'#!/usr/bin/env bash\ncat "{fichier.as_posix()}"\n', encoding="utf-8", newline="\n"
+    )
+    stub.chmod(0o755)
+    return str(stub)
+
+
+def _orphelins(depot: Depot, source: str) -> list[list[str]]:
+    r = depot.lance("queue.sh", "--orphelins", env={"MAESTRO_ORPHELINS_SOURCE": source})
+    assert r.returncode == 0, r.stderr
+    return [ligne.split("\t") for ligne in r.stdout.splitlines()
+            if ligne and not ligne.startswith("#")]
+
+
+def test_un_orphelin_est_liste_sans_jamais_entrer_dans_le_plan(depot: Depot) -> None:
+    """LE critère du lot : proposé, jamais pris. Les deux sorties sont lues du même backlog."""
+    depot.milestone("Phase X")
+    depot.ticket(501, "A faire")
+    depot.ticket(316, "Extraction des sources", statut="En cours", assigne="MaestroAgents")
+    depot.publie()
+    source = _source_orphelins(
+        depot, "316\torphelin\tdéduction\tworktree silencieux depuis 19h02 — /wt/316\tExtraction\n"
+    )
+
+    plan = _lignes_du_plan(depot.lance("queue.sh").stdout)
+    assert [ligne[1] for ligne in plan] == ["501"], "le filtre d'anti-collision reste le défaut"
+
+    lignes = _orphelins(depot, source)
+    assert [ligne[0] for ligne in lignes] == ["316"]
+    assert "silencieux depuis 19h02" in lignes[0][5], "le détail voyage tel quel"
+
+
+def test_seuls_les_orphelins_du_milestone_visé_sont_listes(depot: Depot) -> None:
+    """Un run porte sur un milestone : un orphelin d'ailleurs ne rejoindrait pas CE plan.
+
+    Le signalement global existe déjà (`reconcile-en-cours`, `doctor.sh`) — cette sortie-ci répond à
+    « qu'est-ce qui manque au plan que je m'apprête à lancer ? ».
+    """
+    depot.milestones([("Phase X", "active", 0, 2), ("Phase Y", "active", 0, 1)])
+    depot.ticket(316, "Du milestone courant", statut="En cours")
+    depot.ticket(299, "D'une autre phase", statut="En cours")
+    depot.publie()
+    depot.milestone_tickets("Phase X", [316])
+    depot.milestone_tickets("Phase Y", [299])
+    source = _source_orphelins(
+        depot,
+        "316\torphelin\tdéduction\tmuet depuis 19h02 — /wt/316\tDu milestone courant\n"
+        "299\torphelin\tdéduction\tmuet depuis 3j — /wt/299\tD'une autre phase\n",
+    )
+
+    assert [ligne[0] for ligne in _orphelins(depot, source)] == ["316"]
+
+
+def test_un_ticket_vivant_n_est_jamais_propose(depot: Depot) -> None:
+    """Le verdict du lot 1 fait foi, et « vivant » ferme la porte : c'est le ticket de quelqu'un."""
+    depot.milestone("Phase X")
+    depot.ticket(316, "Orphelin", statut="En cours")
+    depot.ticket(317, "Bien vivant", statut="En cours")
+    depot.publie()
+    source = _source_orphelins(
+        depot,
+        "316\torphelin\tdéduction\tmuet depuis 19h02 — /wt/316\tOrphelin\n"
+        "317\tvivant\tcarte du pilote\trun 20260810-141208, pilote pid 4242\tBien vivant\n",
+    )
+
+    assert [ligne[0] for ligne in _orphelins(depot, source)] == ["316"]
+
+
+@besoin_git
+def test_l_orphelin_porte_le_run_qui_l_a_laisse_la(depot: Depot) -> None:
+    """« D'où sort ce ticket ? » — la seule information qu'un humain ne peut pas retrouver seul."""
+    _init_git(depot, "chore/316-essai")
+    depot.milestone("Phase X")
+    depot.ticket(316, "Extraction des sources", statut="En cours")
+    depot.publie()
+    _run_dir(depot, "20260810-141208", [(1, 316, "-", "haute")],
+             resume=[(316, "ECHEC", "-", 2702, 14.75, "timeout — session terminée sans clôture")])
+    source = _source_orphelins(
+        depot, "316\torphelin\tdéduction\tmuet depuis 19h02 — /wt/316\tExtraction\n"
+    )
+
+    ligne = _orphelins(depot, source)[0]
+    assert ligne[3] == "20260810-141208" and ligne[4] == "ECHEC"
+
+
+@besoin_git
+def test_le_plafond_est_marque_pour_que_la_proposition_s_arrete(depot: Depot) -> None:
+    """Un ticket déjà repris deux fois ne se propose plus : il est listé, marqué, et c'est tout.
+
+    Lister sans proposer n'est pas une demi-mesure — c'est la forme que prend le bornage ici :
+    /orchestrate saute les lignes `atteint`, et l'humain qui veut insister voit toujours de quoi
+    il retourne (la trace, puis `--force`).
+    """
+    _init_git(depot, "chore/316-essai")
+    depot.milestone("Phase X")
+    depot.ticket(316, "Retombe à chaque run", statut="En cours")
+    depot.ticket(317, "Jamais repris", statut="En cours")
+    depot.publie()
+    registre = depot.racine / ".maestro/orchestrate/reprises.tsv"
+    registre.parent.mkdir(parents=True, exist_ok=True)
+    registre.write_text(
+        "# date\tiid\trun_origine\tverdict_origine\trang\tpar\n"
+        "2026-08-10T09:00:00\t316\t20260809-100000\tECHEC\t1\tMaestroAgents\n"
+        "2026-08-11T09:00:00\t316\t20260810-141208\tECHEC\t2\tMaestroAgents\n",
+        encoding="utf-8", newline="\n",
+    )
+    source = _source_orphelins(
+        depot,
+        "316\torphelin\tdéduction\tmuet depuis 19h02 — /wt/316\tRetombe\n"
+        "317\torphelin\tdéduction\tmuet depuis 8h — /wt/317\tJamais repris\n",
+    )
+
+    par_iid = {ligne[0]: ligne for ligne in _orphelins(depot, source)}
+    assert par_iid["316"][1:3] == ["2", "atteint"], "deux reprises : on ne le propose plus"
+    assert par_iid["317"][1:3] == ["0", "-"]
+
+
+def test_lister_les_orphelins_n_imprime_aucun_plan_et_n_ecrit_rien(depot: Depot) -> None:
+    """C'est une sortie de données pour une question, pas un run préparé — comme `--milestones`."""
+    depot.milestone("Phase X")
+    depot.ticket(501, "A faire")
+    depot.ticket(316, "Orphelin", statut="En cours")
+    depot.publie()
+    source = _source_orphelins(depot, "316\torphelin\tdéduction\tmuet — /wt/316\tOrphelin\n")
+
+    r = depot.lance("queue.sh", "--orphelins", env={"MAESTRO_ORPHELINS_SOURCE": source})
+    assert r.returncode == 0, r.stderr
+    assert "501" not in r.stdout, "le plan n'est pas calculé ici"
+    assert not (depot.racine / ".maestro").exists(), "aucune trace laissée par une simple lecture"
+
+
+# =====================================================================================
+# journal.sh origine — quel run a laissé ce ticket là ? (#329)
+# =====================================================================================
+
+
+@besoin_git
+def test_origine_rend_le_run_le_plus_recent_qui_a_juge_le_ticket(depot: Depot) -> None:
+    _init_git(depot, "chore/316-essai")
+    _run_dir(depot, "20260809-100000", [(1, 316, "-", "haute")],
+             resume=[(316, "ECHEC", "-", 100, 1.0, "vieux verdict")])
+    _run_dir(depot, "20260810-141208", [(1, 316, "-", "haute")],
+             resume=[(316, "ECHEC", "-", 2702, 14.75, "timeout — session terminée sans clôture")])
+
+    r = depot.lance("journal.sh", "origine", "316")
+    assert r.returncode == 0, r.stderr
+    run, verdict, raison = r.stdout.strip().split("\t")
+    assert (run, verdict) == ("20260810-141208", "ECHEC")
+    assert "timeout" in raison
+
+
+@besoin_git
+def test_un_ticket_saute_par_un_run_ne_lui_est_pas_attribue(depot: Depot) -> None:
+    """`SAUTE` n'est pas une prise en main : le run a passé son tour sans ouvrir de session.
+
+    Le compter masquerait le run PRÉCÉDENT — celui qui a réellement laissé le ticket là — au profit
+    d'un run qui n'y a pas touché.
+    """
+    _init_git(depot, "chore/316-essai")
+    _run_dir(depot, "20260809-100000", [(1, 316, "-", "haute")],
+             resume=[(316, "ECHEC", "-", 2702, 14.75, "timeout")])
+    _run_dir(depot, "20260811-080000", [(1, 316, "-", "haute")],
+             resume=[(316, "SAUTE", "-", 0, 0, "cycle de vie « En cours » à son tour")])
+
+    r = depot.lance("journal.sh", "origine", "316")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split("\t")[0] == "20260809-100000"
+
+
+@besoin_git
+def test_un_ticket_en_vol_a_la_coupure_a_bien_une_origine(depot: Depot) -> None:
+    """Le mode de mort qui FABRIQUE les orphelins : pilote arrêté au `taskkill`, aucun trap, donc
+    aucun verdict. S'arrêter au bilan laisserait sans origine ceux qu'on reprend le plus souvent.
+    """
+    _init_git(depot, "chore/316-essai")
+    _run_dir(depot, "20260810-141208", [(1, 316, "-", "haute")], resume=[], sessions=(316,))
+
+    r = depot.lance("journal.sh", "origine", "316")
+    assert r.returncode == 0, r.stderr
+    run, verdict, raison = r.stdout.strip().split("\t")
+    assert run == "20260810-141208" and verdict == "sans verdict"
+    assert "en vol" in raison
+
+
+@besoin_git
+def test_origine_ne_dit_rien_plutot_que_d_inventer(depot: Depot) -> None:
+    """Une session interactive (#325) n'écrit aucun journal : ne rien trouver est une réponse."""
+    _init_git(depot, "chore/316-essai")
+    _run_dir(depot, "20260810-141208", [(1, 316, "-", "haute")],
+             resume=[(316, "OK", "!259", 100, 1.0, "-")])
+
+    r = depot.lance("journal.sh", "origine", "325")
+    assert r.returncode == 1
+    assert r.stdout.strip() == ""
+
+
+# =====================================================================================
 # journal.sh refus — l'agrégat des permission_denials (#235, parent #232)
 # =====================================================================================
 # §11.7 pose le principe : l'`allow` se complète À PARTIR DES REFUS OBSERVÉS. Il n'était outillé

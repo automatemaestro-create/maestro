@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -283,8 +284,13 @@ class Depot:
         return [ligne for ligne in lignes if ligne]
 
     # --- exécution ---
-    def lib(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        return self._bash("scripts/gitlab/lib.sh", *args, cwd=cwd)
+    def lib(
+        self,
+        *args: str,
+        cwd: Path | None = None,
+        reglages: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return self._bash("scripts/gitlab/lib.sh", *args, cwd=cwd, reglages=reglages)
 
     def doctor(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self._bash("scripts/gitlab/doctor.sh", *args, cwd=None)
@@ -382,6 +388,9 @@ def depot(tmp_path: Path) -> Depot:
         # `reconcile-en-cours` (#328) délègue la relecture des cartes de pilote à ce fichier — il
         # ne la refait pas, deux formules qui divergeraient se remarqueraient trop tard.
         "scripts/orchestrate/pilote.sh",
+        # `reprendre-en-cours` (#329) lui demande d'où sort le ticket qu'on reprend : le journal
+        # d'un run est le seul endroit qui sache dire quel run l'a laissé là, et avec quel verdict.
+        "scripts/orchestrate/journal.sh",
     ):
         cible = racine / relatif
         cible.parent.mkdir(parents=True, exist_ok=True)
@@ -2065,3 +2074,333 @@ def test_le_verbe_est_annonce_par_l_usage(depot: Depot) -> None:
     usage = depot.lib().stderr
     assert "reconcile-en-cours" in usage
     assert "orphelin" in usage
+
+
+# =================================================================================================
+# La reprise : rendre un orphelin prenable, sur un geste explicite (#329, parent #327)
+# =================================================================================================
+#
+# Le lot précédent DÉSIGNE, celui-ci REND PRENABLE — et « prenable » est une CONJONCTION, parce que
+# le filtre de `queue.sh` en est une : « À faire » ET libre. Trois choses sont épinglées ici, et
+# elles ne se valent pas :
+#
+#   1. LE GARDE-FOU — ne jamais reprendre un ticket vivant. C'est le seul défaut de ce lot qui
+#      coûterait cher : reprendre le ticket d'une session en cours le lui retire (le prochain run
+#      l'assigne à quelqu'un d'autre), là où rater un orphelin ne coûte qu'un tour.
+#   2. LE TRAVAIL PRÉSERVÉ — la reprise n'écrit QUE dans GitLab. #316, c'est 2047 lignes commitées
+#      et jamais poussées : un verbe qui « nettoierait » au passage détruirait exactement ce qu'il
+#      est censé sauver.
+#   3. LE BORNAGE — ses tests ne sont PAS différés au lot final (contrairement au reste), et c'est
+#      dit dans le ticket : sans plafond, un ticket qui retombe à chaque run transforme la reprise
+#      en boucle, sur un quota partagé. C'est la seule ligne qui sépare un geste d'un emballement.
+
+
+def _labels_workflow_gids() -> dict:
+    """Règle de réponse à la liste des labels du scope — la brique qui permet de retirer les
+    cinq autres. GID volontairement non contigus : rien ne doit pouvoir en deviner un à partir
+    d'un autre.
+    """
+    return {
+        "contient": ["labels(searchTerm:"],
+        "reponse": {
+            "data": {
+                "project": {
+                    "labels": {
+                        "nodes": [
+                            {"id": f"gid://gitlab/ProjectLabel/{gid}", "title": f"workflow::{slug}"}
+                            for slug, gid in (
+                                ("a-faire", 9007), ("en-cours", 31), ("en-revue", 4512),
+                                ("termine", 88), ("abandonne", 1203), ("doublon", 677),
+                            )
+                        ]
+                    }
+                }
+            }
+        },
+    }
+
+
+WORKITEM_GID = "gid://gitlab/WorkItem/55501"
+
+
+def _regles_reprise(statuts: dict[str, str]) -> list[dict]:
+    """Tout ce qu'il faut pour qu'une reprise aboutisse : backlog, labels, work item, mutation."""
+    return [
+        {
+            "contient": ["workItemUpdate"],
+            "reponse": {"data": {"workItemUpdate": {"errors": []}}},
+        },
+        _labels_workflow_gids(),
+        {
+            # La résolution du GID du work item. Le fragment `nodes { id }` la distingue de la
+            # requête cycle de vie + assignés, qui porte `WorkItemWidgetAssignees`.
+            "contient": ["workItems(iids:", "nodes { id }"],
+            "reponse": {"data": {"project": {"workItems": {"nodes": [{"id": WORKITEM_GID}]}}}},
+        },
+        *_regle_backlog(statuts),
+    ]
+
+
+def _mutations(depot: Depot) -> list[str]:
+    """Les mutations GraphQL reçues — ce qui distingue « repris » de « refusé »."""
+    return [ligne for ligne in depot.appels() if "workItemUpdate" in ligne]
+
+
+def _gids(mutation: str, champ: str) -> list[str]:
+    trouve = re.search(rf"{champ}:\[(.*?)\]", mutation)
+    return re.findall(r'"([^"]+)"', trouve.group(1)) if trouve else []
+
+
+def _registre(depot: Depot) -> Path:
+    return depot.racine / ".maestro" / "orchestrate" / "reprises.tsv"
+
+
+def _run_juge(
+    depot: Depot, iid: str, verdict: str, raison: str, run_id: str = "20260810-141208"
+) -> None:
+    """Un run passé qui a jugé ce ticket — la moitié « d'où il sort » de la trace."""
+    dossier = depot.racine / ".maestro" / "orchestrate" / run_id
+    dossier.mkdir(parents=True, exist_ok=True)
+    (dossier / "resume.tsv").write_text(
+        "# iid\tverdict\tmr\tduree_s\tcout_usd\traison\n"
+        f"{iid}\t{verdict}\t-\t2702\t14.75\t{raison}\n",
+        encoding="utf-8", newline="\n",
+    )
+
+
+def _orphelin(depot: Depot, iid: str, statuts: dict[str, str] | None = None) -> Path:
+    """Un ticket « En cours » dont le worktree est muet depuis deux jours."""
+    depot.pose_etat(graphql=_regles_reprise(statuts or {iid: "En cours"}))
+    chemin = _worktree(depot, iid)
+    _silence(chemin, 48 * 3600)
+    return chemin
+
+
+# --- Le garde-fou : la reprise ne prend rien à personne -------------------------------------------
+
+
+def test_reprendre_refuse_un_ticket_dont_quelqu_un_s_occupe(depot: Depot) -> None:
+    """LE test du lot. Un worktree écrit à l'instant : quelqu'un travaille, on ne touche à rien.
+
+    Le coût de l'erreur est asymétrique et c'est ce qui fixe le sens du refus — reprendre un ticket
+    vivant le retire à sa session (le prochain run le prend et l'assigne), rater un orphelin ne
+    coûte qu'un tour de boucle.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"325": "En cours"}))
+    _worktree(depot, "325")
+
+    acheve = depot.lib("reprendre-en-cours", "325")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "quelqu'un s'en occupe" in acheve.stdout
+    assert _mutations(depot) == [], "un refus n'écrit RIEN côté GitLab"
+
+
+def test_reprendre_refuse_un_ticket_hors_de_portee(depot: Depot) -> None:
+    """Aucun worktree ici : ne rien savoir n'autorise rien — le ticket vit peut-être ailleurs.
+
+    C'est la borne annoncée du dispositif (les worktrees de CETTE machine) tenue jusque dans le
+    geste : elle ne se relâche pas au moment d'écrire.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours"}))
+
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 3
+    assert "hors de portée" in acheve.stdout
+    assert "--force" in acheve.stdout, "un refus doit dire par où passer quand on sait, soi"
+    assert _mutations(depot) == []
+
+
+def test_reprendre_refuse_un_ticket_qui_n_est_pas_en_cours(depot: Depot) -> None:
+    """« En revue » a livré, « À faire » n'a jamais commencé : il n'y a rien à reprendre."""
+    depot.pose_etat(graphql=_regles_reprise({"325": "En revue"}))
+    _silence(_worktree(depot, "325"), 48 * 3600)
+
+    acheve = depot.lib("reprendre-en-cours", "325")
+    assert acheve.returncode == 3
+    assert "n'est pas « En cours »" in acheve.stdout
+    assert _mutations(depot) == []
+
+
+def test_force_passe_outre_le_verdict_et_le_dit(depot: Depot) -> None:
+    """Le geste de qui sait quelque chose que la machine ignore — jamais en silence."""
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours"}))
+
+    acheve = depot.lib("reprendre-en-cours", "--force", "316")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert len(_mutations(depot)) == 1
+    assert "--force" in acheve.stdout, "lever le garde-fou se dit, sinon la sortie ment"
+
+
+# --- Le geste lui-même : « À faire » ET libre, en une seule mutation ----------------------------
+
+
+def test_reprendre_remet_a_faire_et_libere_dans_la_meme_mutation(depot: Depot) -> None:
+    """La conjonction. Poser le cycle de vie sans libérer laisserait le ticket écarté par l'autre
+    moitié du filtre de `queue.sh`, et l'inverse par la première — il resterait invisible.
+
+    « En une seule mutation » n'est pas un raffinement : deux appels, c'est un intervalle pendant
+    lequel le ticket est « À faire » et encore assigné (ou l'inverse), et un run qui passe là
+    tombe sur un état que personne n'a voulu.
+    """
+    _orphelin(depot, "316")
+
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    mutations = _mutations(depot)
+    assert len(mutations) == 1, f"une seule mutation attendue : {mutations}"
+    mutation = mutations[0]
+    assert f'id:"{WORKITEM_GID}"' in mutation
+    assert "assigneeIds:[]" in mutation, "libérer, c'est VIDER la liste des assignés"
+    a_faire = ["gid://gitlab/ProjectLabel/9007"]
+    assert _gids(mutation, "addLabelIds") == a_faire, "le cycle de vie repasse à workflow::a-faire"
+    assert len(_gids(mutation, "removeLabelIds")) == 5, "les cinq autres partent dans le même appel"
+
+
+def test_la_reprise_ne_touche_ni_au_worktree_ni_aux_commits(depot: Depot) -> None:
+    """#316, c'est 2047 lignes commitées et jamais poussées : elles doivent être là après.
+
+    Le ticket est explicite — « sans rien perdre » — et c'est ce qui distingue cette reprise d'un
+    `gc` : le verbe n'écrit QUE dans GitLab, il ne connaît même pas de chemin à supprimer.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours"}))
+    chemin = _worktree(depot, "316")
+    (chemin / "travail-non-commite.txt").write_text("2047 lignes\n", encoding="utf-8", newline="\n")
+    depot.git("-C", str(chemin), "add", "-A")
+    depot.git("-C", str(chemin), "commit", "--quiet", "-m", "feat: travail jamais poussé")
+    (chemin / "encore-en-chantier.txt").write_text("en cours\n", encoding="utf-8", newline="\n")
+    sha = depot.git("-C", str(chemin), "rev-parse", "HEAD")
+    # Le silence vient APRÈS le travail : un `git commit` touche l'index, donc rend le worktree
+    # frais — le faire dans l'autre ordre ferait conclure « vivant » et le test mesurerait le
+    # refus au lieu de la préservation.
+    _silence(chemin, 48 * 3600)
+
+    assert depot.lib("reprendre-en-cours", "316").returncode == 0
+
+    assert chemin.exists(), "le worktree n'est jamais retiré"
+    assert (chemin / "encore-en-chantier.txt").exists(), "le non-commité reste où il est"
+    apres = depot.git("-C", str(chemin), "rev-parse", "HEAD")
+    assert apres == sha, "le commit non poussé est intact"
+    assert depot.git("-C", str(chemin), "branch", "--show-current") == "chore/316-essai"
+
+
+def test_check_dit_ce_qu_il_ferait_sans_rien_ecrire(depot: Depot) -> None:
+    """Cohérence de famille (`reconcile-workflow --check`, `setup --derive`) : voir avant d'agir."""
+    _orphelin(depot, "316")
+
+    acheve = depot.lib("reprendre-en-cours", "--check", "316")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "passerait à « À faire »" in acheve.stdout
+    assert _mutations(depot) == []
+    assert not ecritures(depot)
+    assert not _registre(depot).exists(), "un --check ne consigne rien non plus"
+
+
+# --- La trace : d'où sortait le ticket, et combien de fois il est déjà revenu -------------------
+
+
+def test_la_reprise_consigne_le_run_et_le_verdict_d_origine(depot: Depot) -> None:
+    """« D'où sort ce ticket revenu à “À faire” ? » ne se répond nulle part ailleurs.
+
+    Le ticket, lui, ne porte aucune trace de la session morte dessus : c'est le journal du run qui
+    la porte, et il sera ramassé au bout de dix runs (#198) — d'où une trace qui lui survit.
+    """
+    _orphelin(depot, "316")
+    _run_juge(depot, "316", "ECHEC", "timeout — session terminée sans clôture, 1 commit(s)")
+
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "20260810-141208" in acheve.stdout and "ECHEC" in acheve.stdout
+
+    ligne = _registre(depot).read_text(encoding="utf-8").splitlines()[-1].split("\t")
+    assert ligne[1:5] == ["316", "20260810-141208", "ECHEC", "1"]
+
+    lecture = depot.lib("reprises", "316")
+    assert lecture.returncode == 0, lecture.stderr
+    assert "#316" in lecture.stdout and "20260810-141208" in lecture.stdout
+
+    # Le commentaire sur le ticket : l'autre moitié de la trace, celle qu'on lit dans GitLab des
+    # semaines plus tard, sans la machine sous la main.
+    assert [ligne for ligne in depot.appels() if ligne.startswith("issue\tnote")], (
+        "la reprise laisse un commentaire sur le ticket"
+    )
+
+
+def test_une_reprise_sans_run_d_origine_le_dit_au_lieu_d_inventer(depot: Depot) -> None:
+    """#325 : session interactive laissée en plan, aucun journal — ne rien trouver est une
+    réponse."""
+    _orphelin(depot, "325")
+
+    acheve = depot.lib("reprendre-en-cours", "325")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "aucun run" in acheve.stdout
+    assert _registre(depot).read_text(encoding="utf-8").splitlines()[-1].split("\t")[2] == "-"
+
+
+# --- Le bornage : une reprise est un geste, pas une boucle --------------------------------------
+
+
+def test_le_plafond_arrete_un_ticket_qui_retombe_a_chaque_run(depot: Depot) -> None:
+    """Le garde-fou dont les tests ne sont PAS différés (le ticket le dit, et voici pourquoi).
+
+    Un ticket que chaque session fait tomber au même endroit repartirait à chaque run, brûlerait
+    une session entière à chaque fois et redeviendrait orphelin : la reprise serait une boucle, sur
+    un quota partagé. Le plafond ne l'interdit pas — il exige qu'on le demande.
+    """
+    _orphelin(depot, "316")
+    for essai in (1, 2):
+        assert depot.lib("reprendre-en-cours", "316").returncode == 0, f"reprise {essai}"
+
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "plafond" in acheve.stdout
+    assert len(_mutations(depot)) == 2, "la troisième reprise n'a rien écrit"
+
+    forcee = depot.lib("reprendre-en-cours", "--force", "316")
+    assert forcee.returncode == 0, forcee.stdout + forcee.stderr
+    assert len(_mutations(depot)) == 3, "--force reste la porte de sortie, jamais silencieuse"
+
+
+def test_le_plafond_se_compte_par_ticket(depot: Depot) -> None:
+    """Deux tickets, deux compteurs — sans quoi un ticket bloquerait la reprise de son voisin."""
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours", "325": "En cours"}))
+    for iid in ("316", "325"):
+        _silence(_worktree(depot, iid), 48 * 3600)
+    for _ in (1, 2):
+        assert depot.lib("reprendre-en-cours", "316").returncode == 0
+
+    assert depot.lib("reprendre-en-cours", "316").returncode == 3
+    assert depot.lib("reprendre-en-cours", "325").returncode == 0
+
+
+def test_le_plafond_est_reglable(depot: Depot) -> None:
+    """Deux essais est un choix, pas une constante de la nature : il se déplace sans code."""
+    _orphelin(depot, "316")
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 0, acheve.stderr
+
+    borne = depot.lib("reprendre-en-cours", "316", reglages={"MAESTRO_REPRISES_MAX": "1"})
+    assert borne.returncode == 3
+    assert "plafond 1" in borne.stdout
+
+
+def test_plusieurs_tickets_en_un_appel_et_un_refus_n_arrete_pas_les_autres(depot: Depot) -> None:
+    """/orchestrate reprend en UN appel ce que l'utilisateur a coché : un refus au milieu de la
+    liste ne doit pas laisser la moitié du travail non fait.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours", "325": "En cours"}))
+    _silence(_worktree(depot, "316"), 48 * 3600)
+    _worktree(depot, "325")   # celui-là est vivant : il sera refusé
+
+    acheve = depot.lib("reprendre-en-cours", "316", "325")
+    assert acheve.returncode == 3, "un refus se dit par le code de retour, même partiel"
+    assert "#316 repris" in acheve.stdout
+    assert "quelqu'un s'en occupe" in acheve.stdout
+    assert len(_mutations(depot)) == 1
+
+
+def test_le_verbe_de_reprise_est_annonce_par_l_usage(depot: Depot) -> None:
+    usage = depot.lib().stderr
+    assert "reprendre-en-cours" in usage
+    assert "reprises" in usage
+    assert "--force" in usage

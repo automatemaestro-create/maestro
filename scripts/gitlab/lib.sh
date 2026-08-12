@@ -91,6 +91,16 @@ GL_ORPHELIN_SEUIL="${MAESTRO_ORPHELIN_SEUIL:-21600}"   # 6 h — juste au-dessus
 # scripts/orchestrate/status.sh).
 [ "$GL_ORPHELIN_SEUIL" -ge 0 ] 2>/dev/null || GL_ORPHELIN_SEUIL=21600
 
+# Nombre de fois qu'un même ticket peut être RENDU PRENABLE avant que la reprise ne demande
+# `--force` (#329, docs/10 §9.6). Ce n'est pas un réglage de confort : sans plafond, un ticket que
+# chaque session fait tomber au même endroit repart à chaque run, brûle une session entière et
+# redevient orphelin — la reprise deviendrait une boucle, et une boucle sur un quota partagé. Deux
+# essais, parce que le premier échec est souvent conjoncturel (limite d'usage, pilote tué) là où le
+# second désigne le ticket lui-même. Au-delà, on ne refuse pas la reprise : on exige qu'elle soit
+# demandée, ce qui est exactement la différence entre un geste et une boucle.
+GL_REPRISES_MAX="${MAESTRO_REPRISES_MAX:-2}"
+[ "$GL_REPRISES_MAX" -ge 0 ] 2>/dev/null || GL_REPRISES_MAX=2
+
 # Retry des LECTURES GraphQL (voir gl_graphql_read) : l'endpoint GraphQL de GitLab renvoie
 # parfois une réponse vide (hoquet réseau / rate-limit). On ré-essaie jusqu'à GL_GQL_RETRIES
 # tentatives, avec GL_GQL_RETRY_DELAY seconde(s) de pause entre deux. Surchargeable.
@@ -2339,6 +2349,11 @@ gl_reconcile_en_cours() {
     [ "$orphelins" -eq 0 ] && return 0
     printf '%s' "$lignes" | grep -F ' orphelin — '
     printf '  → détail : bash scripts/gitlab/lib.sh reconcile-en-cours\n'
+    # Le geste de reprise est NOMMÉ ici, à l'unique endroit dont héritent les trois points de
+    # passage de `gc` (/ticket-start, /branch-cleanup, démarrage d'un run) — un constat qui ne dit
+    # pas quoi en faire se relit trois fois et ne se traite jamais. Nommer n'est pas décider : rien
+    # ne se reprend d'office, ce serait défaire l'asymétrie qui fonde tout ce dispositif (#329).
+    printf '  → le reprendre (« À faire » + libéré, worktree intact) : bash scripts/gitlab/lib.sh reprendre-en-cours <iid>\n'
     return 3
   fi
 
@@ -2358,6 +2373,281 @@ gl_reconcile_en_cours() {
   fi
   [ "$orphelins" -gt 0 ] && return 3
   return 0
+}
+
+# --- Rendre un orphelin prenable (#329) -----------------------------------------------------------
+# Le lot précédent DÉSIGNE (`reconcile-en-cours`, #328) ; celui-ci REND PRENABLE. Sans lui, la
+# détection ne fait que nommer une perte : #316 serait resté exactement où il était, avec ses
+# 2047 lignes commitées et jamais poussées.
+#
+# « Prenable » est une CONJONCTION, parce que le filtre de `queue.sh` en est une : un ticket entre
+# dans un plan s'il est « À faire » ET libre. Poser le cycle de vie sans retirer l'assignation
+# laisserait le ticket écarté par la seconde moitié du filtre, et l'inverse par la première — d'où
+# une seule mutation qui fait les deux, comme `gl_begin` fait l'aller.
+#
+# CE QUE LA REPRISE NE TOUCHE PAS, et c'est tout son intérêt : le worktree, la branche, les commits
+# non poussés, les fichiers non commités. Elle n'écrit QUE dans GitLab. Le travail attend là où la
+# session l'a laissé, et `worktree.sh ensure` l'y retrouve au démarrage suivant — c'est exactement ce
+# qu'on veut de #316 et de ses 2047 lignes. Aucun `gc`, aucun `git`, aucune suppression.
+#
+# TROIS GARDE-FOUS, et le premier est le seul qui compte vraiment :
+#   1. NE JAMAIS REPRENDRE UN VIVANT. Le verdict est demandé à `reconcile-en-cours`, jamais
+#      redéduit ici — deux formules qui divergeraient se remarqueraient trop tard, et celle du lot 1
+#      sait ce que cette fonction ignore (carte du pilote, fraîcheur du worktree, seuil généreux).
+#      Seul « orphelin » ouvre la porte ; « vivant » et « hors de portée » la ferment, le second
+#      parce que ne rien savoir n'autorise rien (le ticket peut être en plein travail ailleurs).
+#   2. LE PLAFOND (GL_REPRISES_MAX) : au-delà, la reprise se demande explicitement. Voir plus haut
+#      pourquoi ce n'est pas un détail de confort.
+#   3. « Abandonné »/« Doublon » ne sont jamais concernés — ils ne sont pas « En cours », donc
+#      `reconcile-en-cours` ne les rend même pas. Même filtre que `reconcile-workflow`, obtenu ici
+#      gratuitement.
+# `--force` lève les deux premiers, JAMAIS en silence : c'est le geste de qui sait quelque chose que
+# la machine ignore (le worktree a été retiré, la session d'en face est morte pour de bon).
+#
+# LA TRACE EST DOUBLE, parce qu'elle répond à deux questions qui n'ont pas le même lecteur :
+#   • un COMMENTAIRE sur le ticket — « d'où sort ce ticket revenu à “À faire” ? » se pose devant
+#     GitLab, des semaines plus tard, par quelqu'un qui n'a pas la machine sous la main ;
+#   • une ligne dans `.maestro/orchestrate/reprises.tsv` — c'est elle qui PORTE LE PLAFOND, et un
+#     compteur qui vit dans un fil de commentaires se relit en parsant du texte libre.
+# Les deux sont BEST-EFFORT et postérieures à la mutation : une trace qui échoue ne doit pas laisser
+# croire que la reprise n'a pas eu lieu — elle a eu lieu, GitLab fait foi. Le compteur, lui, le dit
+# franchement quand il n'a pas pu compter : un plafond qu'on croit tenu et qui ne l'est pas serait
+# pire que pas de plafond du tout.
+#
+# Codes de retour : 0 = tout repris · 1 = au moins un échec · 2 = usage · 3 = au moins un REFUS
+# (vivant, hors de portée, plafond atteint). Le 3 est un refus, pas une panne : rien n'a été écrit.
+
+# gl_reprises_fichier -> le registre des reprises, dans le journal d'orchestration du CLONE
+# PRINCIPAL (même résolution que `gl_orch_dir`, donc juste depuis un worktree).
+#
+# Il vit à CÔTÉ des répertoires de run et non dedans : une reprise est une propriété du TICKET, pas
+# d'un run — celle de #325 n'a jamais eu de run du tout (session interactive laissée en plan). Le
+# ménage du journal (#198) ne balaie que les répertoires `<run-id>/`, ce fichier lui est donc
+# invisible, et c'est voulu : le plafond doit survivre à la rétention des dix derniers runs.
+gl_reprises_fichier() {
+  local orch
+  orch="$(gl_orch_dir)" || return 1
+  printf '%s/reprises.tsv' "$orch"
+}
+
+# gl_reprises_de <iid> -> le nombre de reprises DÉJÀ consignées pour ce ticket. Imprime toujours un
+# nombre (0 quand il n'y a rien à lire) mais rend 1 si le registre est INATTEIGNABLE : l'appelant
+# doit pouvoir distinguer « jamais repris » de « je ne sais pas compter », le plafond n'ayant aucun
+# sens dans le second cas.
+gl_reprises_de() {
+  local iid="$1" f
+  if ! f="$(gl_reprises_fichier)"; then printf '0'; return 1; fi
+  if [ ! -f "$f" ]; then printf '0'; return 0; fi
+  awk -F '\t' -v iid="$iid" '$1 !~ /^#/ && $2 == iid { n++ } END { printf "%d", n + 0 }' "$f"
+}
+
+# gl_consigne_reprise <iid> <run> <verdict> <rang> -> ajoute une ligne au registre. Best-effort :
+# rend 1 sans rien dire de plus si le journal est hors d'atteinte, l'appelant portant le message.
+gl_consigne_reprise() {
+  local iid="$1" run="$2" verdict="$3" rang="$4" f
+  f="$(gl_reprises_fichier)" || return 1
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 1
+  if [ ! -f "$f" ]; then
+    printf '# date\tiid\trun_origine\tverdict_origine\trang\tpar\n' >"$f" 2>/dev/null || return 1
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(date +%FT%T)" "$iid" "${run:--}" "${verdict:--}" "$rang" "$(gl_current_user 2>/dev/null || printf '?')" \
+    >>"$f" 2>/dev/null || return 1
+}
+
+# gl_origine_du_ticket <iid> -> « run <TAB> verdict <TAB> raison » du dernier run qui a eu ce ticket
+# en main, vide s'il n'y en a jamais eu (une session interactive n'écrit aucun journal). DÉLÉGUÉ à
+# `journal.sh`, qui est le fichier dont c'est le métier de lire `.maestro/orchestrate/` — et qui le
+# résout déjà vers le clone principal d'où qu'on l'appelle.
+gl_origine_du_ticket() {
+  local j="$GL_ICI/../orchestrate/journal.sh"
+  [ -r "$j" ] || return 1
+  bash "$j" origine "$1" 2>/dev/null
+}
+
+# gl_worktree_du_ticket <iid> -> le répertoire de travail où dort le travail de ce ticket, vide s'il
+# n'y en a pas sur cette machine. Recomposé à partir des deux helpers du lot 1 plutôt que découpé
+# dans la colonne `detail` de son TSV : cette colonne est une phrase écrite pour un humain, et la
+# lire comme une donnée reviendrait à figer sa formulation.
+gl_worktree_du_ticket() {
+  local principal branche
+  principal="$(gl_depot_principal)" || return 1
+  branche="$(gl_branche_du_iid "$principal" "$1")"
+  [ -n "$branche" ] || return 1
+  gl_worktree_de_branche "$principal" "$branche"
+}
+
+gl_reprendre_en_cours() {
+  local check=0 force=0 iids=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check) check=1 ;;
+      --force) force=1 ;;
+      -h|--help|--*) echo "usage: gl_reprendre_en_cours [--check] [--force] <iid>…" >&2; return 2 ;;
+      *) iids="$iids $1" ;;
+    esac
+    shift
+  done
+  if [ -z "$iids" ]; then
+    echo "usage: gl_reprendre_en_cours [--check] [--force] <iid>… (le ticket se NOMME : c'est le geste)" >&2
+    return 2
+  fi
+
+  # UNE lecture des verdicts pour tous les iid demandés. En `--force` on ne la fait pas du tout :
+  # elle ne servirait qu'à être ignorée, et elle coûte deux appels GitLab plus un balayage des
+  # worktrees — or `--force` existe justement pour les cas où elle conclut mal (worktree retiré).
+  local table="" code_table=0
+  if [ "$force" = 0 ]; then
+    table="$(gl_reconcile_en_cours --tsv)" || code_table=$?
+    # 3 = « il y a des orphelins », qui est le cas nominal ici. Seul 1 (backlog illisible) est une
+    # panne : ne rien savoir n'autorise rien.
+    if [ "$code_table" != 0 ] && [ "$code_table" != 3 ]; then
+      echo "reprendre-en-cours : état des tickets « En cours » illisible — aucune reprise tentée." >&2
+      return 1
+    fi
+  fi
+
+  local iid verdict detail titre run verdict_run raison deja code_deja wt rang
+  local echecs=0 refus=0 repris=0
+  for iid in $iids; do
+    case "$iid" in ''|*[!0-9]*) printf '  ✗ « %s » n'\''est pas un iid.\n' "$iid" >&2; echecs=$((echecs + 1)); continue ;; esac
+
+    verdict=""; detail=""; titre=""
+    if [ "$force" = 1 ]; then
+      # `--force` ne se joue JAMAIS en silence : il lève le garde-fou qui protège le travail des
+      # autres, et une sortie qui n'en dirait rien laisserait croire que la machine a conclu à
+      # l'abandon — alors que c'est l'appelant qui en répond.
+      printf '  ! #%s : --force — ni le verdict ni le plafond ne sont vérifiés (vous en répondez).\n' "$iid"
+    else
+      IFS=$'\t' read -r verdict detail titre <<< "$(printf '%s\n' "$table" |
+        awk -F '\t' -v i="$iid" '$1 == i { print $2 "\t" $4 "\t" $5; exit }')"
+      case "$verdict" in
+        orphelin) ;;
+        vivant)
+          printf '  ⚠ #%s : quelqu'\''un s'\''en occupe (%s) — pas repris.\n' "$iid" "$detail"
+          refus=$((refus + 1)); continue ;;
+        hors-portee)
+          printf '  ⚠ #%s : %s — hors de portée d'\''ici, donc rien ne dit qu'\''il est abandonné.\n' "$iid" "$detail"
+          printf '      (--force si vous savez que plus personne n'\''est dessus)\n'
+          refus=$((refus + 1)); continue ;;
+        *)
+          printf '  ⚠ #%s n'\''est pas « En cours » — il n'\''y a rien à reprendre.\n' "$iid"
+          refus=$((refus + 1)); continue ;;
+      esac
+    fi
+
+    # Le plafond, et l'aveu quand il n'a pas pu être vérifié.
+    deja="$(gl_reprises_de "$iid")"; code_deja=$?
+    if [ "$code_deja" != 0 ]; then
+      printf '  ~ #%s : registre des reprises hors d'\''atteinte — cette reprise ne sera pas comptée.\n' "$iid"
+    elif [ "$deja" -ge "$GL_REPRISES_MAX" ] && [ "$force" = 0 ]; then
+      printf '  ⚠ #%s déjà repris %s fois (plafond %s) — pas repris.\n' "$iid" "$deja" "$GL_REPRISES_MAX"
+      printf '      Un ticket qui retombe à chaque run brûle une session entière à chaque fois :\n'
+      printf '      lisez sa trace (bash scripts/gitlab/lib.sh reprises %s) avant d'\''insister par --force.\n' "$iid"
+      refus=$((refus + 1)); continue
+    fi
+
+    # D'où il sort — la moitié « lisible » de la trace, et la seule information qu'un humain n'a
+    # aucun moyen de retrouver seul.
+    run=""; verdict_run=""; raison=""
+    IFS=$'\t' read -r run verdict_run raison <<< "$(gl_origine_du_ticket "$iid")"
+    wt="$(gl_worktree_du_ticket "$iid" 2>/dev/null)" || wt=""
+    rang=$((deja + 1))
+
+    if [ "$check" = 1 ]; then
+      printf '  → #%s passerait à « À faire » et serait libéré (reprise %s/%s)\n' "$iid" "$rang" "$GL_REPRISES_MAX"
+      [ -n "$run" ] && printf '      origine : run %s — %s%s\n' "$run" "$verdict_run" \
+        "$([ -n "$raison" ] && printf ' (%s)' "$raison")"
+      [ -n "$wt" ] && printf '      worktree : %s (intact)\n' "$wt"
+      repris=$((repris + 1)); continue
+    fi
+
+    # LA mutation : « À faire » (et les cinq autres retirés, l'exclusion mutuelle étant à notre
+    # charge sur le plan Free) ET la liste des assignés VIDÉE, en un seul appel. `assigneeIds`
+    # REMPLACE la liste — c'est la sémantique que `gl_begin` utilise pour prendre le ticket, et la
+    # liste vide est donc exactement le geste inverse.
+    local wiid gids cible retraits out
+    wiid="$(gl_workitem_gid "$iid")" || { echecs=$((echecs + 1)); continue; }
+    gids="$(gl_workflow_gids)"       || { echecs=$((echecs + 1)); continue; }
+    cible="$(printf '%s\n' "$gids" | awk -F '\t' '$1 == "a-faire" { print $2; exit }')"
+    if [ -z "$cible" ]; then
+      echo "reprendre-en-cours : label « $GL_WORKFLOW_SCOPE::a-faire » absent — provisionner : bash scripts/gitlab/bootstrap.sh" >&2
+      echecs=$((echecs + 1)); continue
+    fi
+    retraits="$(printf '%s\n' "$gids" | awk -F '\t' '$1 != "a-faire" { printf "%s\"%s\"", (n++ ? "," : ""), $2 }')"
+    out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", assigneesWidget:{ assigneeIds:[] }, labelsWidget:{ addLabelIds:["'"$cible"'"], removeLabelIds:['"$retraits"'] } }){ errors } }' 2>&1)"
+    case "$out" in
+      *'"errors":[]'*) ;;
+      *) printf 'Échec de la reprise de #%s : %s\n' "$iid" "$out" >&2; echecs=$((echecs + 1)); continue ;;
+    esac
+    repris=$((repris + 1))
+
+    printf '  ✓ #%s repris — « À faire » et libre%s\n' "$iid" \
+      "$([ -n "$titre" ] && printf ' : %s' "$titre")"
+    if [ -n "$run" ]; then
+      printf '      origine  : run %s — %s%s\n' "$run" "$verdict_run" \
+        "$([ -n "$raison" ] && printf ' (%s)' "$raison")"
+    else
+      printf '      origine  : aucun run ne l'\''a jugé (session interactive laissée en plan ?)\n'
+    fi
+    if [ -n "$wt" ]; then
+      printf '      worktree : %s — INTACT (commits et fichiers non commités conservés)\n' "$wt"
+    fi
+    printf '      reprise  : %s/%s\n' "$rang" "$GL_REPRISES_MAX"
+
+    # Les deux traces, après coup et sans jamais faire échouer la reprise elle-même.
+    gl_consigne_reprise "$iid" "$run" "$verdict_run" "$rang" ||
+      printf '      ~ trace locale non écrite (journal hors d'\''atteinte) — le plafond ne comptera pas celle-ci.\n'
+    # Le commentaire voyage par FICHIER, jamais sur la ligne de commande (#233) : un `-m "$(cat …)"`
+    # multi-ligne n'est matchable par aucune règle de permission. Le brouillon reste dans le
+    # répertoire temporaire du système — personne ne le relit, rien n'y renvoie (règle #234).
+    local note
+    note="$(mktemp "${TMPDIR:-/tmp}/maestro-reprise.XXXXXX")" 2>/dev/null && {
+      {
+        printf '🔁 **Ticket repris** — il était « En cours » sans que personne ne s'\''en occupe encore.\n\n'
+        if [ -n "$run" ]; then
+          printf -- '- origine : run `%s`, verdict `%s`%s\n' "$run" "$verdict_run" \
+            "$([ -n "$raison" ] && printf ' (%s)' "$raison")"
+        else
+          printf -- '- origine : aucun run ne l'\''a jugé (session interactive laissée en plan).\n'
+        fi
+        [ -n "$wt" ] && printf -- '- worktree conservé : `%s` — commits et travail non commité intacts.\n' "$wt"
+        printf -- '- cycle de vie remis à « À faire », assignation retirée : le ticket est de nouveau prenable.\n'
+        printf -- '- reprise %s/%s (au-delà du plafond, une reprise se demande par `--force`).\n' "$rang" "$GL_REPRISES_MAX"
+      } >"$note"
+      gl_issue_note "$iid" "$note" >/dev/null 2>&1 ||
+        printf '      ~ commentaire non posté sur #%s (la reprise, elle, a bien eu lieu).\n' "$iid"
+      rm -f "$note"
+    }
+  done
+
+  [ "$check" = 1 ] && printf '\n(--check : rien n'\''a été écrit.)\n'
+  [ "$echecs" -gt 0 ] && return 1
+  [ "$refus" -gt 0 ] && return 3
+  [ "$repris" -gt 0 ] || return 3
+  return 0
+}
+
+# gl_reprises [<iid>] -> le registre, en clair. La trace n'a de valeur que si elle se lit : c'est ce
+# qu'on consulte avant d'insister par `--force` sur un ticket qui a déjà rechuté deux fois.
+gl_reprises() {
+  local iid="${1:-}" f
+  if ! f="$(gl_reprises_fichier)"; then
+    echo "reprises : journal d'orchestration hors d'atteinte (hors dépôt git ?)." >&2
+    return 1
+  fi
+  if [ ! -f "$f" ]; then
+    printf 'Aucune reprise consignée%s.\n' "$([ -n "$iid" ] && printf ' pour #%s' "$iid")"
+    return 0
+  fi
+  printf '\nReprises consignées%s — %s\n\n' "$([ -n "$iid" ] && printf ' pour #%s' "$iid")" "$f"
+  awk -F '\t' -v iid="$iid" '
+    $1 ~ /^#/ { next }
+    iid != "" && $2 != iid { next }
+    { n++; printf "  %s  #%-5s reprise %s — origine : run %s, verdict %s (par %s)\n", $1, $2, $5, $3, $4, $6 }
+    END { if (!n) printf "  aucune ligne.\n" }
+  ' "$f"
+  printf '\n'
 }
 
 # --- Retard sur origin/main ----------------------------------------------------------------------
@@ -2659,6 +2949,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     cleanup-merged) gl_cleanup_merged "$@" ;;
     worktree-done)  gl_worktree_done "$@" ;;
     reconcile-en-cours) gl_reconcile_en_cours "$@" ;;
+    reprendre-en-cours) gl_reprendre_en_cours "$@" ;;
+    reprises)       gl_reprises "$@" ;;
     branch-for)     gl_branch_for "$@" ;;
     start-branch)   gl_start_branch "$@" ;;
     sync-main)      gl_sync_main "$@" ;;
@@ -2743,6 +3035,12 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                (« quelqu'un s'occupe-t-il encore de ce ticket ? » : vivant / orphelin /" >&2
       echo "                                 hors de portée, avec sa source — carte du pilote, ou déduction annoncée." >&2
       echo "                                 Portée : les worktrees de CETTE machine. 0=rien à signaler, 3=orphelin(s))" >&2
+      echo "    reprendre-en-cours [--check] [--force] <iid>…" >&2
+      echo "                                (LE GESTE : remet l'orphelin « À faire » ET le libère, en une mutation." >&2
+      echo "                                 N'écrit que dans GitLab — worktree, branche et commits intacts." >&2
+      echo "                                 Refuse un ticket vivant, hors de portée, ou déjà repris $GL_REPRISES_MAX fois" >&2
+      echo "                                 (--force lève les deux derniers). 0=repris, 3=refusé, 1=échec)" >&2
+      echo "    reprises [<iid>]            (la trace : d'où venait chaque ticket repris, et combien de fois)" >&2
       echo "    mr-conflict [branche]       (conflit RÉEL avec origin/main via merge-tree ; 0=propre, 3=conflit)" >&2
       echo "  Garde-fou de clôture (session ↔ ticket, avant toute écriture de /ticket-finish|ship) :" >&2
       echo "    branch-iid [branche]        (iid porté par le nom de la branche ; rien si hors convention)" >&2
