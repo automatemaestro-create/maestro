@@ -445,16 +445,49 @@ arrondi_cout() {
 #
 # Et le redessin ne se fait plus qu'une fois par seconde : rien de ce que la frame montre ne change
 # plus vite que ça (le chrono compte les secondes), et chaque frame coûte une poignée de forks.
+#
+# --- Un repère qui se recalcule, au lieu de se cumuler (#325) ------------------------------------------
+# Ce qui précède laissait un défaut de conception : le bloc était repositionné À PARTIR DU CURSEUR,
+# de « hauteur - 1 » rangées vers le haut. Le repère était donc CUMULATIF — juste tant que rien
+# n'ajoute une rangée qu'on n'a pas comptée, et faux pour toujours dès qu'une l'ajoute. Une seule
+# ligne repliée suffit : la frame suivante remonte trop peu, laisse la première ligne du bloc
+# derrière elle, et recommence à chaque redessin. Constaté en production sur le run du 2026-08-10,
+# où le ticket courant s'affichait TROIS fois — deux décalages, jamais rattrapés.
+#
+# Trois changements, du plus profond au plus superficiel :
+#
+#  1. LE REPÈRE EST ANCRÉ SUR LE BAS DE LA FENÊTRE dès qu'on sait que le bloc y touche (`vue_ancre` :
+#     « ESC[999B » puis la remontée). Le déplacement vers le bas est BORNÉ PAR LE TERMINAL, donc la
+#     position ne dépend plus d'aucun compte à nous et se recalcule à neuf à chaque frame. Une
+#     désynchronisation coûte au plus une frame, là où elle coûtait une copie par seconde. Passé le
+#     premier écran, c'est le régime de tout le reste du run.
+#  2. LA TAILLE DE LA CONSOLE EST RELUE en cours de run (`vue_mesure`, toutes les VUE_MESURE_S
+#     secondes) et non figée à l'ouverture. La figer, c'était parier qu'une fenêtre ne change pas de
+#     taille en cinq heures — et une largeur périmée fabrique précisément le repli du point 1.
+#  3. LA LARGEUR SE MESURE EN COLONNES AFFICHÉES (`colonnes`), et non en `${#s}`, qui compte des
+#     octets sous une locale C et des caractères sous UTF-8 : le bloc n'a pas la même largeur d'un
+#     poste à l'autre, et c'est encore le même repli qui en sort.
 SPIN='|/-\'                       # ASCII à dessein : la console Windows par défaut (conhost +
                                   # Consolas) n'a pas les glyphes braille des jolis rouets.
 VUE_FD=""                         # descripteur des frames ; vide = pas de vue vivante
 VUE_CURSEUR=0                     # 1 = curseur caché par nous, donc à rendre en sortant
-VUE_LARGEUR=100                   # colonnes, résolues une fois — `tput` est un fork
+VUE_LARGEUR=100                   # colonnes de la console, relues en cours de run (#325)
 VUE_HAUTEUR=40                    # rangées, idem : un bloc plus haut qu'elles ferait défiler (#290)
+VUE_MESURE_S="${MAESTRO_ORCHESTRATE_MESURE:-2}"   # période de RELECTURE de la taille, en secondes
+case "$VUE_MESURE_S" in '' | *[!0-9]*) VUE_MESURE_S=2 ;; esac
+VUE_MESURE_A=-1                   # `SECONDS` de la dernière mesure
 VUE_TICK=0.2                      # période de LECTURE du flux, en secondes
 VUE_BATTEMENT_S="${MAESTRO_ORCHESTRATE_BATTEMENT:-60}"   # trace de journal pendant une session
 VUE_GABARIT=43                    # largeur du gabarit ASCII de `vue_ligne`, titre exclu
 VUE_SPIN=0                        # position dans SPIN — avancée par le pilote, à chaque frame
+# Où est le curseur dans la fenêtre, en BORNE INFÉRIEURE (#325) : on ne sait pas ce que la console
+# portait avant nous, ni ce que `tee` y a écrit avant la première frame, donc on part de la rangée 1
+# et on ne compte que nos propres déplacements. Sous-estimer est sans conséquence — on reste
+# simplement un peu plus longtemps dans le régime relatif ; sur-estimer, non, d'où le choix de ne
+# jamais compter une rangée qu'on n'est pas sûr d'avoir consommée. Dès que la borne atteint la
+# hauteur de la fenêtre, le curseur y est vraiment : le bloc touche le bas, et c'est là que
+# `vue_ancre` prend le relais.
+VUE_ROW=1
 # Le chrono affiché est celui du TICKET, pas de la tentative en cours. Une limite d'usage rend la
 # main puis relance une session : son processus repart à zéro, alors que le ticket, lui, dure depuis
 # le début — c'est la durée qu'on suit d'un bout à l'autre, et celle que le verdict consignera.
@@ -473,6 +506,32 @@ TRACE_FD="${MAESTRO_ORCHESTRATE_TRACE_FD:-}"
 if [ -n "$TRACE_FD" ] && ! { : >&"$TRACE_FD"; } 2>/dev/null; then TRACE_FD=""; fi
 
 vue_active() { [ -n "$VUE_FD" ]; }
+
+# `VUE_ROW` suit nos déplacements et RIEN d'autre. Il sature à la hauteur de la fenêtre : une fois
+# le bas atteint, tout ce qu'on écrit fait défiler et le curseur y reste — c'est le seul état dont
+# on ait besoin d'être certain.
+vue_avance() { VUE_ROW=$((VUE_ROW + ${1:-0})); [ "$VUE_ROW" -gt "$VUE_HAUTEUR" ] && VUE_ROW="$VUE_HAUTEUR"; return 0; }
+vue_recule() { VUE_ROW=$((VUE_ROW - ${1:-0})); [ "$VUE_ROW" -lt 1 ] && VUE_ROW=1; return 0; }
+vue_colle_au_bas() { [ "$VUE_ROW" -ge "$VUE_HAUTEUR" ]; }
+
+# vue_ancre <hauteur> : pose le curseur sur la PREMIÈRE rangée d'un bloc de <hauteur> rangées collé
+# au bas de la fenêtre — et c'est le cœur du correctif de #325.
+#
+# « ESC[999B » descend jusqu'à la dernière rangée : le déplacement est BORNÉ PAR LE TERMINAL, donc
+# la position obtenue ne dépend d'aucune mesure de notre part. C'est ce qui distingue ce repère de
+# `vue_remonte`, qui compte à partir de là où le curseur a été laissé : une seule rangée gagnée en
+# route — une ligne repliée parce que la fenêtre a rétréci, une écriture qu'on n'a pas vue — et
+# toutes les frames suivantes remontent trop peu, abandonnant une copie de la première ligne du bloc
+# à CHAQUE redessin. Ancré sur le bas, le repère se recalcule à neuf : une désynchronisation coûte
+# au plus une frame, jamais une copie de plus par seconde.
+#
+# Le prix est de savoir que le bloc touche VRAIMENT le bas (`vue_colle_au_bas`) : sinon on le
+# collerait à la fenêtre en laissant un trou sous le journal. C'est le seul rôle de `VUE_ROW`, et
+# une hauteur mal lue par `tput` n'y fait courir qu'un trou passager — jamais un bloc posé au milieu
+# de l'écran, ce qu'une position calculée à partir de `VUE_HAUTEUR` aurait produit.
+vue_ancre() {
+  if [ "${1:-0}" -gt 1 ]; then printf '\033[999B\033[%sF' "$(($1 - 1))"; else printf '\033[999B\r'; fi
+}
 
 # De qui parle une ligne (#289). À plusieurs tickets en vol, les sous-shells écrivent tous dans le
 # même journal et rien ne dirait à qui appartient un « ✓ MR !99 ouverte » : chaque ligne de ticket
@@ -503,6 +562,11 @@ trace() {
   vue_efface
   if vue_active && [ "$VUE_FD" != 1 ]; then printf '%s' "$ligne" >&"$VUE_FD"; fi
   if [ -n "$TRACE_FD" ]; then printf '%s' "$ligne" >&"$TRACE_FD"; else printf '%s' "$ligne"; fi
+  # Ce que la ligne a fait descendre le curseur, compté sur ses seuls sauts de ligne (#325) : une
+  # ligne plus large que la console en consomme une de plus, mais l'ignorer SOUS-estime, et c'est le
+  # sens que `VUE_ROW` doit garder. Fork-free — `trace` est sur le chemin de chaque ligne permanente.
+  local sauts="${ligne//[!$'\n']/}"
+  vue_avance "${#sauts}"
   return 0
 }
 
@@ -591,26 +655,48 @@ vue_ouvre() {
   # fork de moins par seconde n'est pas un détail.
   vue_active || VUE_TICK=2
 
-  local n="${MAESTRO_ORCHESTRATE_LARGEUR:-}"
+  vue_mesure || true
+  VUE_MESURE_A="$SECONDS"
+
+  # Le curseur n'a rien à montrer sous un bloc qu'on réécrit : il ne fait que sauter. On le cache
+  # tant que la vue tient l'écran — et `vue_ferme`, câblé sur la sortie du script, le rend. Une
+  # console laissée ouverte après le run ne doit pas rester sans curseur.
+  if vue_active; then printf '\033[?25l' >&"$VUE_FD"; VUE_CURSEUR=1; fi
+  return 0
+}
+
+# vue_mesure : (re)lit la taille de la console. Rend 0 quand elle a CHANGÉ depuis la mesure d'avant.
+#
+# La HAUTEUR compte autant que la largeur (#290) : à N tickets en vol, le bloc gagne une ligne
+# d'action par ticket, et un bloc plus haut que la fenêtre ferait défiler l'écran — le défaut que
+# #284 avait supprimé par l'autre bout ; `vue_dessine` s'y tient en masquant des lignes.
+#
+# Elle est appelée à l'ouverture PUIS toutes les VUE_MESURE_S secondes (#325). La mesurer une fois
+# pour toutes, c'était parier qu'une fenêtre ne change pas de taille en cinq heures : une largeur
+# périmée fait replier des lignes que le calcul des colonnes croit sûres, et un repli est exactement
+# ce qui décale le bloc d'une rangée. Deux forks toutes les deux secondes, à comparer aux dizaines
+# que coûte déjà une frame.
+vue_mesure() {
+  local n avant_l="$VUE_LARGEUR" avant_h="$VUE_HAUTEUR"
+
+  n="${MAESTRO_ORCHESTRATE_LARGEUR:-}"
   case "$n" in '' | *[!0-9]*) n="$(tput cols 2>/dev/null)" || n='' ;; esac
   case "$n" in '' | *[!0-9]*) n=100 ;; esac
   [ "$n" -lt 60 ] && n=100
   VUE_LARGEUR="$n"
 
-  # La HAUTEUR compte désormais autant que la largeur (#290) : à N tickets en vol, le bloc gagne une
-  # ligne d'action par ticket, et un bloc plus haut que la fenêtre fait défiler l'écran — c'est-à-dire
-  # exactement le défaut que #284 avait supprimé, par l'autre bout. On la résout une fois, comme les
-  # colonnes, et `vue_dessine` s'y tient en masquant des lignes plutôt qu'en débordant.
   n="${MAESTRO_ORCHESTRATE_HAUTEUR:-}"
   case "$n" in '' | *[!0-9]*) n="$(tput lines 2>/dev/null)" || n='' ;; esac
   case "$n" in '' | *[!0-9]*) n=40 ;; esac
   [ "$n" -lt 10 ] && n=40
   VUE_HAUTEUR="$n"
 
-  # Le curseur n'a rien à montrer sous un bloc qu'on réécrit : il ne fait que sauter. On le cache
-  # tant que la vue tient l'écran — et `vue_ferme`, câblé sur la sortie du script, le rend. Une
-  # console laissée ouverte après le run ne doit pas rester sans curseur.
-  if vue_active; then printf '\033[?25l' >&"$VUE_FD"; VUE_CURSEUR=1; fi
+  # Le curseur ne peut pas être plus bas que la fenêtre. Rétrécie, elle a fait défiler son contenu et
+  # le curseur est sur sa dernière rangée ; agrandie, elle a ajouté des rangées SOUS lui. Ramener la
+  # borne à la nouvelle hauteur reste juste dans les deux cas.
+  [ "$VUE_ROW" -gt "$VUE_HAUTEUR" ] && VUE_ROW="$VUE_HAUTEUR"
+
+  [ "$VUE_LARGEUR" = "$avant_l" ] && [ "$VUE_HAUTEUR" = "$avant_h" ] && return 1
   return 0
 }
 
@@ -647,16 +733,26 @@ VUE_HAUT=0
 # sur la DERNIÈRE ligne du bloc (la frame ne se termine pas par un saut de ligne, cf. plus haut),
 # donc on remonte de « hauteur - 1 ». Un bloc d'une seule ligne se contente d'un retour chariot :
 # « ESC[0F » vaut « ESC[1F » pour la plupart des terminaux, qui remonteraient d'une ligne de trop.
+#
+# Repère RELATIF, donc cumulatif : il compte à partir de là où le curseur a été laissé, et une
+# rangée gagnée en route ne se rattrape jamais (#325). Il ne sert plus que tant qu'on ignore où l'on
+# est dans la fenêtre ; passé le premier écran, c'est `vue_ancre` qui pose le repère.
 vue_remonte() {
   if [ "${1:-0}" -gt 1 ]; then printf '\033[%sF' "$(($1 - 1))"; else printf '\r'; fi
 }
 
 # vue_efface : retire le bloc de l'écran. À appeler avant toute impression permanente, sans quoi la
 # ligne atterrirait au milieu d'une frame et fausserait le compte de lignes des suivantes.
+# Le repère est celui de `vue_dessine` — ancré sur le bas quand le bloc y est, relatif sinon : les
+# deux doivent viser la même rangée, sans quoi l'effacement mordrait sur le journal ou laisserait
+# une tranche du bloc derrière lui.
 vue_efface() {
   vue_active || return 0
   [ "$VUE_HAUT" -gt 0 ] || return 0
-  printf '%s\033[J' "$(vue_remonte "$VUE_HAUT")" >&"$VUE_FD"
+  local tete
+  if vue_colle_au_bas; then tete="$(vue_ancre "$VUE_HAUT")"; else tete="$(vue_remonte "$VUE_HAUT")"; fi
+  printf '%s\033[J' "$tete" >&"$VUE_FD"
+  vue_recule $((VUE_HAUT - 1))
   VUE_HAUT=0
   return 0
 }
@@ -763,8 +859,10 @@ vue_dessine() {
       reste_a_masquer=$((reste_a_masquer - 1))
       if [ "$note" = 0 ]; then
         note=1
-        corps+="$C_D$(printf '  … %s ligne(s) masquée(s) — la fenêtre est trop courte pour tout le plan' \
-          "$a_masquer")$C_0$fin"
+        # Bornée comme les autres (#325) : c'est la seule ligne du bloc dont le texte est fixe et
+        # plus long que la console la plus étroite qu'on accepte (60 colonnes).
+        corps+="$C_D$(tronque "$(printf '  … %s ligne(s) masquée(s) — la fenêtre est trop courte pour tout le plan' \
+          "$a_masquer")" $((VUE_LARGEUR - 1)))$C_0$fin"
         n=$((n + 1))
       fi
       continue
@@ -789,7 +887,10 @@ vue_dessine() {
   done
 
   # Le pied ferme le bloc : « ESC[K » sans saut de ligne, le curseur reste sur cette ligne-là, puis
-  # « ESC[J » nettoie ce qu'une frame plus haute aurait laissé.
+  # « ESC[J » nettoie ce qu'une frame plus haute aurait laissé. Il n'est pas borné par un `tronque` :
+  # ses champs sont tous des compteurs, il plafonne à une soixantaine de colonnes — sous la console
+  # la plus étroite qu'on accepte — et une coupe tomberait au milieu d'un code de couleur. C'est
+  # l'invariant de largeur du bloc, vérifié sur TOUTES les lignes de TOUTES les frames, qui le tient.
   #
   # « reste » se compte sur ce qui n'est NI soldé NI en vol, et non sur la position du dernier ticket
   # lancé : à N en vol, les tickets ne se prennent plus dans l'ordre, et `nb_plan - POSITION` disait
@@ -801,10 +902,19 @@ vue_dessine() {
     "$C_G" "$NB_OK" "$C_0" "$C_R" "$NB_ECHEC" "$C_0" "$C_Y" "$NB_SAUTE" "$C_0" \
     "$((nb_plan - NB_OK - NB_ECHEC - NB_SAUTE - n_vol))")"$'\033[K\033[J'; n=$((n + 1))
 
-  if [ "$VUE_HAUT" -gt 0 ]; then
+  # Où poser la première rangée (#325). Deux régimes, et c'est le premier qui porte le correctif :
+  # dès que le bloc touche le bas de la fenêtre — l'état de tout un run passé le premier écran — on
+  # s'y ancre par `vue_ancre`, dont le repère est fourni par le terminal et se recalcule à neuf à
+  # chaque frame. Tant qu'on n'en est pas sûr, on remonte depuis le curseur comme avant.
+  if vue_colle_au_bas; then
+    printf '%s%s' "$(vue_ancre "$n")" "$corps" >&"$VUE_FD"
+    VUE_ROW="$VUE_HAUTEUR"
+  elif [ "$VUE_HAUT" -gt 0 ]; then
     printf '%s%s' "$(vue_remonte "$VUE_HAUT")" "$corps" >&"$VUE_FD"
+    vue_recule $((VUE_HAUT - 1)); vue_avance $((n - 1))
   else
     printf '%s' "$corps" >&"$VUE_FD"
+    vue_avance $((n - 1))
   fi
   VUE_HAUT="$n"
   return 0
@@ -1221,9 +1331,31 @@ patiente() {
 # occurrence d'une clé : y déverser tout le flux ferait rapporter le coût d'un événement
 # intermédiaire, une régression silencieuse. Repli sur la dernière ligne si aucun `result` n'est
 # passé — un CLI plus ancien, ou un bouchon de test qui n'émet qu'un objet.
-tronque() { # <texte> [largeur] : une ligne de progression ne doit jamais noyer la sortie.
+# colonnes <texte> : la largeur AFFICHÉE d'une chaîne, en colonnes de terminal.
+#
+# `${#s}` ne peut pas y répondre seul : il compte des CARACTÈRES sous une locale UTF-8 et des OCTETS
+# sous C — « modèle » y pèse 6 ou 7 selon le poste (#325). Un bloc dont la largeur dépend de la
+# locale, c'est une ligne qui tient sur une machine et se replie sur la voisine, et un repli est
+# précisément ce qui décale le bloc d'une rangée. On mesure donc en octets, couleurs retirées, moins
+# les octets de continuation UTF-8 : ce qui reste est le nombre de caractères, partout, sans fork.
+#
+# `local LC_ALL=C` suffit à basculer bash en mode octet le temps de la fonction (l'affectation
+# déclenche un `setlocale`, et la locale d'origine revient au retour) — c'est ce qui rend la
+# soustraction des continuations possible même sous une locale UTF-8.
+colonnes() {
+  local LC_ALL=C s="$1"
+  s="${s//"$C_0"/}"; s="${s//"$C_B"/}"; s="${s//"$C_D"/}"
+  s="${s//"$C_G"/}"; s="${s//"$C_R"/}"; s="${s//"$C_Y"/}"
+  s="${s//[$'\200'-$'\277']/}"
+  printf '%s' "${#s}"
+}
+
+tronque() { # <texte> [colonnes] : une ligne de progression ne doit jamais noyer la sortie.
   local s="$1" n="${2:-64}"
-  if [ "${#s}" -gt "$n" ]; then printf '%s…' "${s:0:$n}"; else printf '%s' "$s"; fi
+  # Mesure en colonnes, coupe en `${s:0:n}` : sous une locale octet la coupe rend MOINS que `n`
+  # colonnes, jamais plus — le sens qui compte ici, une ligne trop courte n'ayant aucun effet là où
+  # une ligne trop longue se replie.
+  if [ "$(colonnes "$s")" -gt "$n" ]; then printf '%s…' "${s:0:$n}"; else printf '%s' "$s"; fi
 }
 
 # outils_de <ligne> : les appels d'outils d'un événement « assistant », un « <nom> <cible> » par
@@ -2656,6 +2788,14 @@ vue_tick() {
   # Une ligne permanente vient d'être imprimée : le bloc a été retiré pour la laisser passer, il faut
   # le remettre sans attendre la seconde suivante.
   [ "$VUE_HAUT" -eq 0 ] && VUE_DESSINEE_A=-1
+
+  # La taille de la console est relue en cours de run, pas figée au démarrage (#325). Un changement
+  # invalide d'un coup les largeurs de colonnes ET la checklist déjà composée : on recompose et on
+  # redessine sans attendre la seconde suivante.
+  if [ $((SECONDS - VUE_MESURE_A)) -ge "$VUE_MESURE_S" ]; then
+    VUE_MESURE_A="$SECONDS"
+    if vue_mesure; then vue_recompose; VUE_DESSINEE_A=-1; fi
+  fi
 
   local i etat=""
   for i in $EN_VOL; do
