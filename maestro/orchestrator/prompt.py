@@ -1,9 +1,17 @@
-"""Prompt système de l'orchestrateur — playbook « Chef de projet » (tickets #3, #298).
+"""Prompts système de l'orchestrateur — playbooks « Chef de projet » (#3, #298, #318).
+
+Deux documents, un seul agent : `playbook.md` le fait **décomposer** (#3), et
+`playbook_brief.md` le fait **cadrer** avant de décomposer (#318). Le brief est un
+geste du Chef de projet et non un septième agent — d'où son prompt ici, avec les
+playbooks, plutôt que dans une famille de plus. Ils restent **deux fichiers** parce
+que leurs contrats de sortie s'excluent — un tableau de tâches, un objet de brief — et
+qu'un prompt système décrivant les deux laisserait le modèle choisir lequel rendre.
 
 Matérialise la fiche `docs/04-specifications-agents.md §3.1` en instructions exécutables,
 et fixe le **contrat de sortie** : un tableau JSON de tâches conformes à
-`packages/shared/schemas/task.schema.json`. Le prompt est volontairement strict sur la
-forme (JSON pur, champs exacts) parce que la sortie est ensuite parsée et validée par
+`packages/shared/schemas/task.schema.json` (et, pour le brief, un objet conforme à
+`brief.schema.json`). Le prompt est volontairement strict sur la forme (JSON pur, champs
+exacts) parce que la sortie est ensuite parsée et validée par
 `maestro.orchestrator.schema`.
 
 Le playbook lui-même est un **document Markdown** (`playbook.md`, à côté de ce module)
@@ -47,6 +55,12 @@ MAX_TASKS = 5
 #: dans `pyproject.toml` — sans quoi une roue s'installerait sans lui).
 CHEMIN_PLAYBOOK = Path(__file__).resolve().parent / "playbook.md"
 
+#: Le playbook du **brief** (#318) : le même Chef de projet, l'étape d'avant. Un
+#: document à part et non une section de plus dans `playbook.md`, parce que les deux
+#: contrats de sortie s'excluent — l'un impose un tableau de tâches, l'autre un objet
+#: de brief, et un prompt système qui décrirait les deux laisserait le modèle choisir.
+CHEMIN_PLAYBOOK_BRIEF = Path(__file__).resolve().parent / "playbook_brief.md"
+
 #: Les substitutions admises dans le document. Volontairement fermée : un marqueur hors
 #: de cette table lève, plutôt que de partir tel quel dans le prompt système.
 _VALEURS = {"min_taches": str(MIN_TASKS), "max_taches": str(MAX_TASKS)}
@@ -66,17 +80,31 @@ def _substitue(m: re.Match[str]) -> str:
     return _VALEURS[cle]
 
 
-def _lire_playbook() -> str:
-    """Le playbook du Chef de projet, marqueurs substitués — le prompt système effectif."""
-    if not CHEMIN_PLAYBOOK.is_file():
-        raise FileNotFoundError(f"playbook du Chef de projet introuvable : {CHEMIN_PLAYBOOK}")
-    texte = _MARQUEUR.sub(_substitue, CHEMIN_PLAYBOOK.read_text(encoding="utf-8").strip())
+def _lire_playbook(chemin: Path) -> str:
+    """Le playbook de `chemin`, marqueurs substitués — un prompt système effectif."""
+    if not chemin.is_file():
+        raise FileNotFoundError(f"playbook du Chef de projet introuvable : {chemin}")
+    texte = _MARQUEUR.sub(_substitue, chemin.read_text(encoding="utf-8").strip())
     if "{{" in texte:
-        raise ValueError("marqueur mal formé dans le playbook du Chef de projet.")
+        raise ValueError(f"marqueur mal formé dans le playbook {chemin.name}.")
     return texte
 
 
-ORCHESTRATOR_SYSTEM_PROMPT = _lire_playbook()
+ORCHESTRATOR_SYSTEM_PROMPT = _lire_playbook(CHEMIN_PLAYBOOK)
+
+#: Prompt système de l'étape **brief** (#318). Le playbook du brief ne porte aucun
+#: marqueur aujourd'hui — il passe par le même chargeur pour hériter du même échec
+#: franc si l'un y était ajouté sans être déclaré dans `_VALEURS`.
+BRIEF_SYSTEM_PROMPT = _lire_playbook(CHEMIN_PLAYBOOK_BRIEF)
+
+#: Ce qu'on dit au modèle quand aucune source n'accompagne l'objectif. Le dire
+#: explicitement plutôt que se taire : un silence laisse le modèle supposer qu'un
+#: document lui a été fourni et qu'il l'a mal lu, et inventer ce qu'il croit y
+#: manquer — le brief doit travailler sur le texte seul **en le sachant**.
+_SANS_SOURCE = (
+    "Aucune source n'a été fournie : travaille sur le texte de l'objectif seul, "
+    "et n'invente aucun document."
+)
 
 
 def build_user_prompt(objective: str) -> str:
@@ -89,3 +117,27 @@ def build_user_prompt(objective: str) -> str:
         "décision, critères de réussite.\n\n"
         f"Objectif :\n{cleaned}"
     )
+
+
+def build_brief_user_prompt(objectif: str, contexte_sources: str = "") -> str:
+    """Compose le message utilisateur de l'étape **brief** (#318).
+
+    `contexte_sources` est le contenu extrait **déjà encadré** par
+    `maestro.sources.extraction.contexte_markdown` — jamais du Markdown brut : c'est
+    cet encadrement (préambule, noms assainis, clôture calculée) qui tient la
+    frontière donnée / consigne (ENF-13). Vide quand aucune source n'a été fournie.
+
+    Les sources viennent **après** la consigne et après l'objectif, à dessein : ce
+    qui est en dernier est ce qui pèse le plus, et on ne veut pas que ce soit le
+    contenu non fiable qui donne le ton de la réponse.
+    """
+    cleaned = objectif.strip()
+    morceaux = [
+        "Rédige le brief structuré de l'objectif suivant, en respectant strictement "
+        "le format JSON imposé par tes instructions.",
+        "",
+        f"Objectif :\n{cleaned}",
+        "",
+        contexte_sources.strip() if contexte_sources.strip() else _SANS_SOURCE,
+    ]
+    return "\n".join(morceaux)

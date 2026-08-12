@@ -8,12 +8,17 @@ n°6 (parent #49), que l'API Control Tower exposera (#57) et sur laquelle le
 plafond de dépense s'adosse (`PlafondDepense`, #56) : le garde-fou (#9) relit ce
 grand livre à chaque mesure d'usage, sans compteur parallèle.
 
-L'attribution suit la convention d'étape du journal : `planification` pour
-l'orchestrateur, `<tache>` pour l'étape de la tâche elle-même, et
+L'attribution suit la convention d'étape du journal : `planification` et `brief`
+(#318) pour l'orchestrateur, `<tache>` pour l'étape de la tâche elle-même, et
 `<tache>:<annexe>` pour ses étapes annexes (validation humaine #48, message
 inter-agents #44) — chaque annexe est rattachée à sa tâche. Chaque ligne du
 journal est ainsi comptée exactement une fois : le total de la comptabilité
 retombe sur `RunJournal.usage_totale`.
+
+Cette liste d'étapes hors tâche est **fermée par le code, pas par convention** :
+la règle par défaut est « toute autre étape est une tâche », donc une étape de run
+qu'on oublierait d'y déclarer n'échouerait pas — elle ouvrirait une ligne de tâche
+fantôme dans le grand livre, ce qui est bien pire qu'une erreur.
 
 La comptabilité n'évalue **aucun prix** : le coût estimé est celui rapporté par
 le fournisseur via la couche `ModelProvider` (#32) — la tarification par modèle
@@ -39,6 +44,13 @@ from maestro.telemetry.usage import StepUsage
 
 #: Étape du journal qui n'appartient à aucune tâche : la planification (#8).
 ETAPE_PLANIFICATION = "planification"
+
+#: Étape du journal qui n'appartient à aucune tâche : le **brief** structuré (#318).
+#: À déclarer ici et pas seulement à consigner : sans cette ligne, `depuis_journal`
+#: retomberait sur sa règle par défaut — « toute autre étape est une tâche » — et
+#: ouvrirait une entrée de tâche fantôme nommée « brief » dans le grand livre. Son
+#: usage serait bien compté, mais attribué à un travail qui n'existe pas.
+ETAPE_BRIEF = "brief"
 
 #: Étape du journal qui n'appartient à aucune tâche : la reprise d'un run
 #: interrompu (#96) — un marqueur de run, pas un travail d'agent. Usage nul par
@@ -97,16 +109,25 @@ class RunCost:
     `taches` suit l'ordre de première apparition au journal — l'ordre
     d'achèvement des tâches (#7), chaque entrée restant reliée au plan par
     `tache_id` ; `planification` porte l'usage de l'orchestrateur.
+
+    `brief` (#318) porte l'usage de l'étape de **brief**, à part de la
+    planification et à part des tâches. À part de la planification parce que ce
+    sont deux appels modèle distincts, et que le brief peut être **régénéré**
+    plusieurs fois par les allers-retours de clarification (#321) : les confondre
+    masquerait ce que coûte réellement la mise au point de l'intention. Nul tant
+    qu'aucun run n'est passé par cette étape — c'est le lot 6 (#320) qui la
+    branche sur la boucle.
     """
 
     run_id: str
     planification: StepUsage = StepUsage()
+    brief: StepUsage = StepUsage()
     taches: tuple[TaskCost, ...] = ()
 
     @property
     def total(self) -> StepUsage:
         """Usage agrégé de l'exécution — retombe sur `RunJournal.usage_totale`."""
-        total = self.planification
+        total = self.planification.fusion(self.brief)
         for tache in self.taches:
             total = total.fusion(tache.usage)
         return total
@@ -121,10 +142,17 @@ class RunCost:
         statut, son usage déjà compté).
         """
         planification = StepUsage()
+        brief = StepUsage()
         entrees: dict[str, TaskCost] = {}
         for record in journal.records:
             if record.etape == ETAPE_PLANIFICATION:
                 planification = planification.fusion(record.usage)
+                continue
+            if record.etape == ETAPE_BRIEF:
+                # Une étape du run, pas une tâche (#318) — et fusionnée plutôt
+                # qu'affectée : un brief régénéré (#321) consigne une ligne par
+                # tour, et le grand livre doit en porter le cumul.
+                brief = brief.fusion(record.usage)
                 continue
             if record.etape == ETAPE_REPRISE:
                 # Marqueur de run (#96), rattaché à aucune tâche : rien à
@@ -159,6 +187,7 @@ class RunCost:
         return cls(
             run_id=journal.run_id,
             planification=planification,
+            brief=brief,
             taches=tuple(entrees.values()),
         )
 
@@ -167,6 +196,7 @@ class RunCost:
         return {
             "run_id": self.run_id,
             "planification": self.planification.to_dict(),
+            "brief": self.brief.to_dict(),
             "total": self.total.to_dict(),
             "taches": [tache.to_dict() for tache in self.taches],
         }

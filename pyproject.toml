@@ -118,10 +118,13 @@ include = ["maestro*"]
 # `maestro.agents` lèverait `FileNotFoundError` — un mode de panne qui n'existe pas en
 # installation éditable, donc invisible en développement.
 "maestro.agents" = ["playbooks_defaut/*.md"]
-# Même raison pour le playbook du Chef de projet (#298), Markdown lui aussi mais rangé
-# avec l'orchestrateur : il n'est ni dans le catalogue ni versionné dans `core/playbooks/`
-# (voir l'en-tête de `maestro/orchestrator/prompt.py`).
-"maestro.orchestrator" = ["playbook.md"]
+# Même raison pour les playbooks du Chef de projet (#298 pour le plan, #318 pour le
+# brief), Markdown eux aussi mais rangés avec l'orchestrateur : ils ne sont ni dans le
+# catalogue ni versionnés dans `core/playbooks/` (voir l'en-tête de
+# `maestro/orchestrator/prompt.py`). Le glob plutôt que la liste nominative : les deux
+# sont chargés à l'**import** du module, donc un playbook oublié ici ne casse pas un
+# appel isolé — il casse `import maestro.orchestrator`, et seulement en roue installée.
+"maestro.orchestrator" = ["playbook*.md"]
 
 [tool.ruff]
 line-length = 100

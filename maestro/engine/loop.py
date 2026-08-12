@@ -45,6 +45,11 @@ horloge chronométrée, tokens/coût/outils récoltés auprès du fournisseur vi
 JSON par étape) et porté par les `TaskResult` — le coût par tâche est visible dans
 la synthèse comme dans le rapport structuré, et traçable par le `run_id`.
 
+Le **brief structuré** (#318) est disponible au même régime — `etape_brief`, pendant
+exact de `_plan` — mais **`run` ne l'appelle pas** : la boucle décompose toujours
+l'objectif brut. Ce lot rend l'étape possible, mesurable et traçable ; c'est le lot 6
+de la Phase 8 (#320) qui arrête le run dessus et en fait l'entrée de la décomposition.
+
 Avec une **messagerie inter-agents** injectée (#44, `mailbox=`), le relais entre
 tâches dépendantes devient un **handoff observable** (critère MVP n°7) : l'agent
 qui termine une tâche à dépendants **annonce** l'issue par message (diffusion,
@@ -86,17 +91,18 @@ from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
-from maestro.orchestrator.schema import Task, topological_order
+from maestro.orchestrator.schema import Brief, Task, topological_order
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
+from maestro.sources.extraction import RapportLecture
 from maestro.telemetry import (
     RunJournal,
     StepUsage,
     collect_usage,
     resume_controle_depense,
 )
-from maestro.telemetry.costs import RunCost, TaskCost
+from maestro.telemetry.costs import ETAPE_BRIEF, RunCost, TaskCost
 
 __all__ = [
     "STATUT_BLOQUEE",
@@ -583,6 +589,68 @@ class OrchestrationEngine:
             projet_id=projet_id,
         )
         return usage, tasks
+
+    async def etape_brief(
+        self,
+        objectif: str,
+        journal: RunJournal,
+        *,
+        sources_extraites: RapportLecture | None = None,
+        projet_id: str | None = None,
+    ) -> tuple[StepUsage, Brief]:
+        """Rédige le brief de `objectif` en consignant l'étape au journal (#318).
+
+        Le pendant exact de `_plan` pour l'étape qui la précède : un `collect_usage`
+        autour de l'appel modèle, une ligne de journal à l'issue — succès **comme**
+        échec —, et l'usage rendu à l'appelant. C'est ce qui fait que le brief
+        « ne disparaît pas du coût » : sa ligne entre dans `RunJournal.usage_totale`
+        comme n'importe quelle autre, et `RunCost` la comptabilise à part des tâches
+        (`ETAPE_BRIEF`) au lieu d'en faire une tâche fantôme.
+
+        **Publique et non appelée par `run`**, à dessein : ce lot rend l'étape
+        possible, mesurable et traçable, mais ne la branche pas sur la boucle —
+        `run` continue de décomposer l'objectif brut. C'est le lot 6 (#320) qui
+        arrête le run sur le brief et en fait l'entrée de la décomposition ; il n'a
+        alors plus qu'à appeler ceci.
+
+        `projet_id` (#222) est porté par l'étape pour la même raison qu'en
+        planification : le cadrage est une **dépense du projet**, et l'omettre
+        creuserait un écart entre le total d'un projet et la somme de ses runs.
+        """
+        debut = perf_counter()
+        with collect_usage() as recolte:
+            try:
+                brief = await self._orchestrator.brief(objectif, sources_extraites)
+            except Exception as exc:
+                journal.consigne(
+                    etape=ETAPE_BRIEF,
+                    nom="Brief de l'objectif",
+                    agent="orchestrateur",
+                    role="Orchestrateur",
+                    statut=STATUT_ECHEC,
+                    entree=objectif,
+                    sortie="",
+                    erreur=str(exc),
+                    usage=recolte.total.avec_duree(_ecoule_ms(debut)),
+                    projet_id=projet_id,
+                )
+                raise
+        usage = recolte.total.avec_duree(_ecoule_ms(debut))
+        journal.consigne(
+            etape=ETAPE_BRIEF,
+            nom="Brief de l'objectif",
+            agent="orchestrateur",
+            role="Orchestrateur",
+            statut=STATUT_TERMINEE,
+            entree=objectif,
+            sortie=(
+                f"{len(brief.criteres_acceptation)} critère(s) d'acceptation, "
+                f"{len(brief.questions)} question(s)"
+            ),
+            usage=usage,
+            projet_id=projet_id,
+        )
+        return usage, brief
 
 
 def _dependants_directs(tasks: Sequence[Task]) -> dict[str, list[str]]:
