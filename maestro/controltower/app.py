@@ -151,9 +151,18 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -238,6 +247,7 @@ from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
 from maestro.projets import RacineRefusee, canonique, valider_racine
 from maestro.references import ReferenceTicket
+from maestro.sources import apercu_sources
 
 
 class ReferenceTicketRequete(BaseModel):
@@ -508,6 +518,23 @@ class Diffusion:
 
 
 _LOGGER = logging.getLogger("maestro.controltower")
+
+
+def _detail_refus(exc: Exception) -> dict[str, Any]:
+    """Le corps d'un refus de source ou de lancement : `{motif, message[, index]}`.
+
+    `detail_refus` (#223) donne les deux premiers champs — même convention que
+    les routes projets, un code stable plutôt qu'une phrase à analyser, et
+    `requete-invalide` en repli pour ce qui n'a pas de motif propre (objectif
+    vide, garde-fou hors bornes). L'`index` s'y ajoute quand le refus **vise une
+    source** (#315) : « une source est trop grosse » sans dire laquelle
+    obligerait à tout relire pour savoir quoi retirer.
+    """
+    detail: dict[str, Any] = dict(detail_refus(exc))
+    index = getattr(exc, "index", None)
+    if isinstance(index, int) and not isinstance(index, bool):
+        detail["index"] = index
+    return detail
 
 
 async def _pompe(
@@ -1045,6 +1072,54 @@ def create_app(
         if detail is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return detail.cout.to_dict()
+
+    @app.post("/api/sources/apercu")
+    async def apercu_ingestion(
+        sources: Annotated[str, Form()] = "[]",
+        fichier: Annotated[list[UploadFile] | None, File()] = None,
+    ) -> dict[str, Any]:
+        """Ce que des sources **donneraient**, sans lancer et sans rien conserver (#319).
+
+        Le pendant gratuit du rapport rendu par le lancement (docs/05 §6.1) :
+        même résolution (#315), même extraction (#316), mêmes plafonds — et rien
+        au bout. C'est ce qui rend le geste de composer un objectif **réversible
+        tant qu'il est gratuit** : on voit ce qui sera lu, ignoré ou tronqué, et
+        ce que ça coûtera, avant de dépenser la première tâche.
+
+        Le corps est un **multipart** parce qu'un aperçu porte des octets et non
+        des identifiants : il ne dépose rien dans le dépôt de téléversement
+        (§6.8), qui n'existe que pour faire **survivre** une matière jusqu'au run
+        qui la consomme. `sources` est le JSON des sources déclarées, **dans
+        l'ordre de l'écran** — celui qui décide de ce qui entre quand le budget de
+        tokens s'épuise — et `fichier` est répétable : le n-ième correspond à la
+        n-ième source de type `fichier`.
+
+        Toujours du texte, jamais une panne : une source illisible est une
+        **ligne** du rapport (« ignoré », avec son motif). Le 422 motivé
+        (`{motif, message, index}`) est réservé à ce que la résolution **refuse**
+        — un type inconnu, une racine interdite, un plafond dépassé —, c'est-à-dire
+        à ce qu'une correction de saisie répare.
+        """
+        try:
+            declarations = json.loads(sources or "[]")
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "motif": "sources-illisibles",
+                    "message": f"Sources illisibles : {exc.msg}.",
+                },
+            ) from exc
+        envois = [(envoi.filename or "", envoi.file) for envoi in fichier or []]
+        try:
+            # Dans un fil : l'extraction ouvre des fichiers et peut récupérer une
+            # page (#316), ce que la boucle de l'API ne doit pas porter.
+            rapport = await asyncio.to_thread(
+                apercu_sources, declarations, fichiers=envois
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
+        return rapport.to_dict()
 
     @app.get("/api/analytics/couts")
     async def analytics_couts(

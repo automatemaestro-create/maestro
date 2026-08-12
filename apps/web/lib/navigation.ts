@@ -11,6 +11,7 @@ import {
   IconeChat,
   IconeCouts,
   IconeJournal,
+  IconeObjectif,
   IconeParametres,
   IconeProjets,
   IconeTableauDeBord,
@@ -42,9 +43,17 @@ export type EntreeMenu = {
  * en plein format, là où le tableau de bord n'en garde qu'un aperçu. Son entrée
  * ici est ce qui **allume** le renvoi de cet aperçu — `entreeParLibelle`
  * (ci-dessous) le résout par le menu, `FilActivite` n'a rien à savoir du chemin.
+ *
+ * « Composer un objectif » (#319) ouvre la liste, juste après l'accueil, et **au
+ * menu** plutôt que dans `HORS_MENU` : c'est le geste par lequel on entre dans
+ * un run, pas une destination où l'on passe. L'y ranger n'est pas revenir sur
+ * #280 — « Projets » en est sorti parce qu'un projet est le **cadre** des
+ * écrans ; composer, c'est une action, et une action qu'on ne trouve pas est une
+ * action qui n'existe pas (le tableau de bord vide renvoyait à `curl`).
  */
 export const MENU: EntreeMenu[] = [
   { href: "/", libelle: "Tableau de bord", Icone: IconeTableauDeBord },
+  { href: "/composer", libelle: "Composer un objectif", Icone: IconeObjectif },
   { href: "/agents", libelle: "Agents", Icone: IconeAgents },
   { href: "/chat", libelle: "Chat", Icone: IconeChat },
   { href: "/couts", libelle: "Coûts & analytics", Icone: IconeCouts },

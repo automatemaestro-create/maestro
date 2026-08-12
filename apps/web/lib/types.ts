@@ -626,6 +626,71 @@ export const MODE_BRIEF_SANS = "sans";
 export const MODE_BRIEF_AUTO = "auto";
 export const MODE_BRIEF_HUMAIN = "humain";
 
+/** Les trois types de source d'un objectif (#315, EF-39) — et rien d'autre. */
+export const SOURCE_FICHIER = "fichier";
+export const SOURCE_DOSSIER = "dossier";
+export const SOURCE_URL = "url";
+
+/**
+ * Une source **déclarée** au lancement (#315/#317, docs/05 §6.1) : un fichier
+ * téléversé (désigné par l'`id` rendu par `POST /api/sources`, à défaut par son
+ * `nom` et sa `taille`), un dossier de références (`chemin`) ou une page
+ * (`valeur`). Les champs inutiles au type sont simplement absents — c'est la
+ * résolution côté backend qui juge, l'écran ne fait que déclarer.
+ */
+export type SourceDeclaree = {
+  type: string;
+  id?: string;
+  nom?: string;
+  chemin?: string;
+  valeur?: string;
+  taille?: number;
+};
+
+/**
+ * La réponse de `POST /api/sources` (#317, docs/05 §6.8) : les fichiers reçus,
+ * chacun avec l'`id` à reporter dans `sources[]` au lancement. `nom` est celui
+ * que le serveur a assaini et `taille` compte les octets **reçus**, jamais ceux
+ * qu'un client annonce.
+ */
+export type TeleversementSources = {
+  sources: { id: string; type: string; nom: string; taille: number }[];
+  total_octets: number;
+};
+
+/** Les trois états d'une lecture (#316) — « échoué » n'en est pas un. */
+export const LECTURE_LUE = "lu";
+export const LECTURE_TRONQUEE = "tronque";
+export const LECTURE_IGNOREE = "ignore";
+
+/**
+ * Ce qu'une source est devenue à la lecture (#316, docs/05 §6.8) : son `etat`,
+ * son coût estimé en `tokens`, et selon l'état le `motif`/`message` d'un rejet
+ * ou la `limite` atteinte par une troncature. `entrees` porte les lectures
+ * **filles** d'un dossier — une par fichier parcouru, avec son propre état.
+ */
+export type LectureSource = {
+  nom: string;
+  type: string;
+  etat: string;
+  tokens: number;
+  motif: string;
+  message: string;
+  limite: string;
+  entrees: LectureSource[];
+};
+
+/**
+ * Le rapport de lecture d'un ensemble de sources : une ligne par source déclarée
+ * — y compris celles qui n'ont pas été lues — et le coût estimé de l'ensemble.
+ * Rendu par l'aperçu (`POST /api/sources/apercu`, #319) avant de lancer, et par
+ * le lancement lui-même (#317).
+ */
+export type RapportLecture = {
+  tokens: number;
+  lectures: LectureSource[];
+};
+
 /**
  * Le corps de `POST /api/executions` (#185) : l'objectif à décomposer, les
  * garde-fous (chacun `null` laisse le défaut du moteur) et le ticket externe
@@ -640,6 +705,11 @@ export type LancementExecution = {
   ticket: ReferenceTicket | null;
   /** Le projet dans lequel le run travaille (#222) — `null` : aucun projet. */
   projet_id: string | null;
+  /**
+   * La matière de l'objectif (#317, EF-39) — absente ou vide, le lancement est
+   * exactement celui d'avant la Phase 8.
+   */
+  sources?: SourceDeclaree[];
   /**
    * Le régime du brief (#320, `MODE_BRIEF_*`) — omis ou `null` : `humain`, le
    * défaut de la Control Tower.
@@ -699,6 +769,12 @@ export type ResumeExecution = {
   mode_brief?: string;
   debut: string;
   fin: string | null;
+  /**
+   * Le rapport de lecture des sources (#317) — **seulement** dans la réponse du
+   * lancement, jamais dans une relecture : il décrit une lecture, pas un fait du
+   * run. Absent quand le run n'a pas de matière.
+   */
+  rapport?: RapportLecture;
 };
 
 /** Clés de tri et sens du journal requêtable (maestro/controltower/fixtures.py). */

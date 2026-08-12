@@ -36,8 +36,14 @@ describe("le menu (lib/navigation)", () => {
     // « Playbooks » et le chat par agent regardaient le même objet que
     // « Agents » : ce sont désormais des onglets de la fiche agent. « Chat »
     // subsiste pour le chat global, qui est une autre intention.
+    //
+    // « Composer un objectif » (#319) ouvre la liste, juste après l'accueil :
+    // c'est le geste par lequel on entre dans un run, et une action qu'on ne
+    // trouve pas est une action qui n'existe pas — le poste vide renvoyait
+    // jusque-là à `curl`.
     expect(MENU.map((entree) => entree.libelle)).toEqual([
       "Tableau de bord",
+      "Composer un objectif",
       "Agents",
       "Chat",
       "Coûts & analytics",
