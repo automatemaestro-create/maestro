@@ -126,10 +126,16 @@ export type CoutTache = {
  * Le grand livre d'une exécution, servi par `GET /api/executions/{run_id}/cout`
  * (`RunCost.to_dict`, #57) : la part de planification (l'orchestrateur), le
  * coût par tâche et l'agrégat du run — la matière du panneau Coûts (#58).
+ *
+ * `brief` (#318) est la part de l'étape de **brief structuré**, comptée à part de
+ * la planification : ce sont deux appels modèle distincts, et le brief peut être
+ * régénéré par les allers-retours de clarification (#321). Nulle tant qu'aucun run
+ * ne passe par cette étape — c'est le lot 6 (#320) qui la branche sur la boucle.
  */
 export type CoutExecution = {
   run_id: string;
   planification: Usage;
+  brief: Usage;
   total: Usage;
   taches: CoutTache[];
 };
