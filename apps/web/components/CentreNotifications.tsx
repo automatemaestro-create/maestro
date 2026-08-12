@@ -20,16 +20,40 @@
  * (#281) : la cloche ne réclame jamais un arbitrage qui appartient à un projet
  * qu'on n'a pas sous les yeux, et le badge ne compte pas ce qu'on ne peut pas
  * trancher depuis cet écran.
+ *
+ * Depuis #322 le badge compte **deux** familles d'attente : les validations
+ * humaines (#48) et les **briefs** sur lesquels un run s'est arrêté (#320, #321).
+ * Une seule pastille pour les deux, et c'est le point : ce qu'elle répond n'est
+ * pas « combien de validations » mais « combien de choses m'attendent » — deux
+ * compteurs côte à côte obligeraient à faire la somme soi-même, et un brief
+ * suspendu resterait invisible tant que la file de validations n'est pas vide.
+ * Les briefs y sont **acheminés, pas tranchés** : la carte compacte mène à
+ * l'écran, là où une validation se décide sur place — sept sections, des
+ * questions et un coût ne tiennent pas dans un panneau de 20 rem, et approuver
+ * sans lire est exactement ce que le point de contrôle empêche.
  */
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { IconeAgent, IconeNotifications } from "@/components/Icones";
+import {
+  IconeAgent,
+  IconeBrief,
+  IconeFlecheDroite,
+  IconeNotifications,
+} from "@/components/Icones";
 import { LigneActivite } from "@/components/LigneActivite";
 import { BadgeEtat, Carte } from "@/components/Primitives";
+import { runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
-import { VALIDATION_EN_ATTENTE, type Validation } from "@/lib/types";
+import { entreeParLibelle } from "@/lib/navigation";
+import {
+  EXECUTION_EN_ATTENTE_REPONSES,
+  VALIDATION_EN_ATTENTE,
+  type ResumeExecution,
+  type Validation,
+} from "@/lib/types";
 
 /** Décideur d'une validation, tel que fourni par le contexte global (#48). */
 type Decider = (tacheId: string, approuve: boolean) => Promise<void>;
@@ -40,8 +64,28 @@ type Decider = (tacheId: string, approuve: boolean) => Promise<void>;
  */
 const MAX_EVENEMENTS_NOTABLES = 8;
 
+/**
+ * Ce que la cloche annonce — le seul endroit où le compte est **nommé**, la
+ * pastille n'étant qu'un chiffre décoratif (`aria-hidden`).
+ *
+ * Les deux familles sont dites séparément quand les deux sont là, et chacune
+ * seule quand elle est seule : « 2 en attente » obligerait à ouvrir le panneau
+ * pour savoir de quoi il retourne, alors que répondre à des questions et
+ * approuver une action sensible ne demandent ni la même disponibilité ni la
+ * même personne.
+ */
+function etiquetteCloche(validations: number, briefs: number): string {
+  const morceaux: string[] = [];
+  if (validations > 0) {
+    morceaux.push(`${validations} validation${validations > 1 ? "s" : ""}`);
+  }
+  if (briefs > 0) morceaux.push(`${briefs} brief${briefs > 1 ? "s" : ""}`);
+  if (morceaux.length === 0) return "Notifications";
+  return `Notifications — ${morceaux.join(" et ")} en attente`;
+}
+
 export function CentreNotifications() {
-  const { validations, evenements, decider } = useEtatGlobal();
+  const { validations, executions, evenements, decider } = useEtatGlobal();
   const [ouvert, setOuvert] = useState(false);
   const conteneur = useRef<HTMLDivElement>(null);
   const declencheur = useRef<HTMLButtonElement>(null);
@@ -49,7 +93,8 @@ export function CentreNotifications() {
   const enAttente = validations.filter(
     (v) => v.statut === VALIDATION_EN_ATTENTE,
   );
-  const nb = enAttente.length;
+  const briefs = runsEnAttente(executions);
+  const nb = enAttente.length + briefs.length;
   const notables = grouperEvenements(
     evenements.filter(estNotableNotification),
   ).slice(0, MAX_EVENEMENTS_NOTABLES);
@@ -76,10 +121,7 @@ export function CentreNotifications() {
     };
   }, [ouvert]);
 
-  const etiquette =
-    nb > 0
-      ? `Notifications — ${nb} validation${nb > 1 ? "s" : ""} en attente`
-      : "Notifications";
+  const etiquette = etiquetteCloche(enAttente.length, briefs.length);
 
   return (
     // `data-guide` : la visite guidée (#122) éclaire la cloche — et s'y replie
@@ -123,6 +165,26 @@ export function CentreNotifications() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
+            {/* Les briefs d'abord : un run suspendu bloque **tout** le run,
+                là où une validation ne retient qu'une tâche. */}
+            {briefs.length > 0 && (
+              <section aria-label="Briefs en attente" className="p-2">
+                <h3 className="px-1 pb-1 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                  Briefs à trancher
+                </h3>
+                <ul className="space-y-2">
+                  {briefs.map((run) => (
+                    <li key={run.run_id}>
+                      <CarteBriefCompacte
+                        run={run}
+                        surOuverture={() => setOuvert(false)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             <section aria-label="Validations en attente" className="p-2">
               <h3 className="px-1 pb-1 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
                 À valider
@@ -170,6 +232,50 @@ export function CentreNotifications() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Un brief en attente, en version compacte : ce qu'il attend, depuis quand, et
+ * le chemin vers l'écran qui le tranche.
+ *
+ * **Aucun bouton de décision ici**, contrairement à la carte de validation
+ * ci-dessous, et c'est la seule différence qui compte : on n'approuve pas sept
+ * sections, des questions et un coût depuis une pastille de 20 rem. Le panneau
+ * se referme au clic — laisser une cloche ouverte par-dessus l'écran qu'elle
+ * vient d'ouvrir masque justement ce qu'on est venu lire.
+ */
+function CarteBriefCompacte({
+  run,
+  surOuverture,
+}: {
+  run: ResumeExecution;
+  surOuverture: () => void;
+}) {
+  const page = entreeParLibelle("Valider le brief");
+  const reponses = run.statut === EXECUTION_EN_ATTENTE_REPONSES;
+  if (page === undefined) return null;
+
+  return (
+    <Carte densite="compacte" ton="attention">
+      <p className="line-clamp-2 text-annexe font-medium" title={run.objectif}>
+        {run.objectif || run.run_id}
+      </p>
+      <p className="mt-0.5 flex items-center gap-1 text-micro text-neutral-500 dark:text-neutral-400">
+        <IconeBrief className="size-3 shrink-0" />
+        {reponses
+          ? "Des questions attendent vos réponses"
+          : "Le brief attend votre décision"}
+      </p>
+      <Link
+        href={page.href}
+        onClick={surOuverture}
+        className="mt-2 inline-flex items-center gap-1 text-micro font-medium text-amber-800 hover:underline dark:text-amber-300"
+      >
+        {reponses ? "Répondre" : "Relire le brief"}
+        <IconeFlecheDroite className="size-3 shrink-0" />
+      </Link>
+    </Carte>
   );
 }
 
