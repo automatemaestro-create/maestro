@@ -1506,3 +1506,35 @@ def test_gc_ne_bloque_pas_sur_un_signalement_en_echec(depot: Depot) -> None:
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "#152 retiré" in acheve.stdout, "le ramassage fait son travail malgré le signal en échec"
+
+
+def test_les_trois_points_de_passage_passent_bien_par_le_ramassage(depot: Depot) -> None:  # noqa: ARG001
+    """Le mutisme épinglé plus haut ne vaut que si les TROIS points de passage en héritent (#330).
+
+    Les tests précédents montrent que `gc --auto` se tait quand il n'y a rien à dire ; encore
+    faut-il que ce soit bien par là que chacun passe. C'est la leçon de #305, qui a coûté 35
+    branches mergées : un déclencheur qui a cessé d'être atteint ne se remarque pas, le code étant
+    toujours là et la doc le décrivant toujours. Un second câblage — un appel direct à
+    `reconcile-en-cours` quelque part — serait la même panne en préparation, avec en prime deux
+    formulations du signal à garder d'accord.
+
+    /branch-cleanup appelle `gc` SANS `--auto`, et c'est voulu : c'est un geste explicite, dont on
+    attend le compte rendu. Les deux autres sont des passages obligés dont personne n'a rien
+    demandé, d'où le mode muet.
+    """
+    passages = {
+        "scripts/git/worktree.sh": "gc --auto",              # `ensure`, donc tout /ticket-start
+        "scripts/orchestrate/run.sh": "gc --auto",           # le démarrage d'un run
+        ".claude/commands/branch-cleanup.md": "worktree.sh gc",
+    }
+    for relatif, attendu in passages.items():
+        texte = (RACINE / relatif).read_text(encoding="utf-8")
+        assert attendu in texte, f"{relatif} ne passe plus par le ramassage ({attendu!r})"
+
+    # Le signalement n'a qu'un seul câblage automatique : `gc`. Ailleurs, `reconcile-en-cours` ne
+    # peut être que NOMMÉ (une commande proposée à un humain), jamais appelé — sans quoi le mutisme
+    # vérifié ci-dessus ne dirait plus rien de ce que voit réellement un /ticket-start.
+    for relatif in ("scripts/orchestrate/run.sh", ".claude/commands/branch-cleanup.md"):
+        for ligne in (RACINE / relatif).read_text(encoding="utf-8").splitlines():
+            if "reconcile-en-cours" in ligne and "--auto" in ligne:
+                raise AssertionError(f"{relatif} : second câblage du signalement — {ligne.strip()}")
