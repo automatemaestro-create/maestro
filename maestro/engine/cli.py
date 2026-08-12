@@ -120,6 +120,7 @@ from maestro.engine.brief import (
     MODE_BRIEF_SANS,
     MODES_BRIEF,
     ArbitreBrief,
+    ArbitreClarification,
     BriefRefuse,
 )
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
@@ -382,6 +383,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             arbitre_brief=(
                 _arbitre_brief_ui() if mode_brief == MODE_BRIEF_HUMAIN else None
             ),
+            # Les questions de clarification (#321) suivent le régime du brief : même
+            # condition, même canal, même Redis. Poser l'un sans l'autre ferait d'un
+            # `--brief humain` un run qui fait valider un brief dont les zones
+            # d'ombre n'ont jamais été posées à personne.
+            arbitre_clarification=(
+                _arbitre_clarification_ui() if mode_brief == MODE_BRIEF_HUMAIN else None
+            ),
         )
         # Arrêt borné (#64) : une réalisation détachée par le time-out ne peut pas
         # suspendre la fermeture de la boucle — le rapport est toujours rendu.
@@ -457,6 +465,7 @@ def _build_engine(
     relance: PolitiqueRelance | None = None,
     max_parallele: int | None = None,
     arbitre_brief: ArbitreBrief | None = None,
+    arbitre_clarification: ArbitreClarification | None = None,
 ) -> OrchestrationEngine | DurableEngine:
     """Construit la boucle : locale par défaut, distribuée (#41) ou durable (#95).
 
@@ -473,7 +482,8 @@ def _build_engine(
     file (non géré en durable, cf. validation d'arguments). `arbitre_brief` (#320)
     n'est posé que sur la boucle locale : `--brief humain` exige `--validation-ui`,
     lui-même incompatible avec `--queue` et `--durable`, donc les deux autres
-    branches ne peuvent pas l'atteindre.
+    branches ne peuvent pas l'atteindre. `arbitre_clarification` (#321) suit
+    exactement le même chemin, et pour la même raison.
     """
     if via_durable:
         from maestro.durable import DurableEngine
@@ -495,6 +505,7 @@ def _build_engine(
         relance=relance,
         max_parallele=max_parallele,
         arbitre_brief=arbitre_brief,
+        arbitre_clarification=arbitre_clarification,
     )
 
 
@@ -572,6 +583,19 @@ def _arbitre_brief_ui() -> ArbitreBrief:
     from maestro.controltower.brief import arbitre_brief_redis
 
     return arbitre_brief_redis(load_settings().redis_url)
+
+
+def _arbitre_clarification_ui() -> ArbitreClarification:
+    """Construit l'arbitre de clarification (#321) sur le Redis de la config.
+
+    Pendant exact de `_arbitre_brief_ui`, sur l'autre canal : les questions partent
+    sur `maestro.evenements` et les réponses en reviennent par le même. Même import
+    local, même raison.
+    """
+    from maestro.config import load_settings
+    from maestro.controltower.brief import arbitre_clarification_redis
+
+    return arbitre_clarification_redis(load_settings().redis_url)
 
 
 def activer_publication_evenements() -> None:

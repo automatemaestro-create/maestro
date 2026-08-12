@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -292,6 +292,37 @@ class Brief:
         """Le brief laisse-t-il des zones d'ombre à lever avant de décomposer (#321) ?"""
         return bool(self.questions)
 
+    def questions_en_hypotheses(self, motif: str) -> Brief:
+        """Inscrit les questions restées sans réponse en **hypothèses explicites** (#321).
+
+        Ce qu'on fait des zones d'ombre quand le plafond d'allers-retours est
+        atteint : plutôt que de reposer indéfiniment les mêmes questions, le brief
+        part en validation en **assumant par écrit** ce qu'il n'a pas pu lever.
+        `motif` préfixe chaque entrée et dit d'où elle vient (« Sans réponse après
+        2 tour(s) de clarification ») — sans lui, une question muée en hypothèse
+        serait indiscernable d'une hypothèse que le Chef de projet a vraiment
+        tranchée, et l'humain qui valide perdrait la seule information qui compte
+        ici : personne n'a répondu.
+
+        Transformation **déterministe et faite en Python**, à dessein : c'est la
+        garantie du plafond. La demander au modèle (« au dernier tour, convertis
+        tes questions ») ferait dépendre la borne de sa docilité — un tour où il
+        repose ses questions relancerait la boucle, ce que ce lot existe justement
+        pour empêcher. Le prompt le lui demande quand même (il écrit de meilleures
+        hypothèses que ce préfixe mécanique) ; ceci est le filet qui rattrape le
+        cas où il ne l'a pas fait.
+
+        Rend `self` inchangé quand il n'y a rien à convertir — un brief sans
+        question a déjà la forme voulue.
+        """
+        if not self.questions:
+            return self
+        return replace(
+            self,
+            hypotheses=self.hypotheses + tuple(f"{motif} : {q}" for q in self.questions),
+            questions=(),
+        )
+
     def synthese(self) -> str:
         """Rend le brief en Markdown — les sept sections, dans l'ordre du schéma.
 
@@ -316,6 +347,38 @@ class Brief:
             lignes.extend(f"- {entree}" for entree in entrees or ("—",))
             lignes.append("")
         return "\n".join(lignes).rstrip() + "\n"
+
+
+@dataclass(frozen=True)
+class Clarification:
+    """Une question du brief et la réponse humaine qui lui a été donnée (#321).
+
+    La matière d'un tour d'aller-retour : ce que le Chef de projet a refusé de
+    trancher seul, et ce que l'humain lui a répondu. Elle vit **ici**, à côté de
+    `Brief`, et non dans le contrat moteur qui l'orchestre : c'est une valeur du
+    domaine du brief, que le prompt de régénération lit et que la boucle ne fait
+    que transporter — l'inverse obligerait `maestro.orchestrator` à importer
+    `maestro.engine`, à contresens des dépendances du paquet.
+
+    Pas d'identifiant de question, et c'est une **décision** (#318, note du
+    schéma) : le brief est régénéré **en entier** à chaque tour, donc une question
+    n'a pas d'identité stable d'une version à l'autre. L'appariement se fait par
+    **position** contre le brief stocké du run, dont la liste de questions est
+    figée entre sa publication et sa réponse — un identifiant laisserait croire à
+    une permanence qui n'existe pas.
+
+    `reponse` vide est un cas nominal, pas une entrée manquante : « je ne sais
+    pas » est une réponse, et le brief doit pouvoir en tirer une hypothèse plutôt
+    que de reposer la question au tour suivant.
+    """
+
+    question: str
+    reponse: str
+
+    @property
+    def sans_reponse(self) -> bool:
+        """La question est-elle restée sans réponse (vide ou blanche) ?"""
+        return not self.reponse.strip()
 
 
 def validate_brief(data: Mapping[str, Any], *, where: str = "brief") -> None:

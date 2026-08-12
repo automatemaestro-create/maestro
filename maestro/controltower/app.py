@@ -199,6 +199,7 @@ from maestro.controltower.chat import (
 from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
+    EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_VALIDATION_DECISION,
@@ -236,6 +237,7 @@ from maestro.controltower.state import (
     CAPACITE_ACTIVE,
     CAPACITE_DESACTIVE,
     EXECUTION_EN_ATTENTE_BRIEF,
+    EXECUTION_EN_ATTENTE_REPONSES,
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
@@ -331,6 +333,30 @@ class DecisionBriefRequete(BaseModel):
 
     approuve: bool
     brief: dict[str, Any] | None = None
+
+
+class ReponsesBriefRequete(BaseModel):
+    """Corps des réponses aux questions de clarification d'un brief (#321).
+
+    `reponses` est une liste de chaînes **appariée par position** aux questions du
+    brief stocké du run. Pas de clé, pas d'identifiant de question : le brief est
+    régénéré en entier à chaque tour, donc une question n'a pas d'identité stable
+    d'une version à l'autre (#318, note du schéma) — un identifiant laisserait croire
+    le contraire. Ce qui rend la position sûre est que les réponses s'adressent au
+    brief **stocké**, dont la liste de questions est figée entre sa publication
+    (`brief.questions`) et sa réponse.
+
+    D'où le contrôle de longueur exigé par la route : une liste qui ne fait pas le
+    compte est refusée en 422. C'est le seul moment où quelqu'un est là pour corriger
+    sa requête — plus loin, en plein run, l'appariement est volontairement tolérant
+    (une réponse manquante vaut « sans réponse »), parce que lever y coûterait le run.
+
+    Une chaîne **vide est licite** et veut dire « je ne sais pas » : la question sera
+    inscrite en hypothèse explicite plutôt que reposée au tour suivant. C'est ce qui
+    permet de répondre à trois questions sur cinq sans bloquer le run.
+    """
+
+    reponses: list[str]
 
 
 class CapaciteRequete(BaseModel):
@@ -1039,6 +1065,81 @@ def create_app(
             # cette lecture-là est faite au même endroit par la projection et par le
             # moteur (`DecisionBrief.retenu`), donc énoncée une seule fois.
             brief=corrige,
+            projet_id=resume["projet_id"],
+        )
+        state.appliquer(event)
+        await bus.publish(event)
+        return executions.resume(run_id) or resume
+
+    @app.post("/api/executions/{run_id}/brief/reponses")
+    async def repondre_brief(
+        run_id: str, requete: ReponsesBriefRequete
+    ) -> dict[str, Any]:
+        """Répond aux questions de clarification d'un brief (#321) : le run repart.
+
+        Le run avait publié ses questions et s'était suspendu (`en_attente_reponses`,
+        état non terminal — il est resté annulable tout du long). Les réponses le
+        relancent : il **régénère son brief entier** en les intégrant, puis repose
+        des questions s'il en reste et que le plafond le permet, sinon passe en
+        validation.
+
+        Même mécanique que la décision de brief (#320) et pour les mêmes raisons :
+        l'état est appliqué **d'abord** (le REST répond déjà à jour) puis l'événement
+        est publié — le moteur, en attente sur ce même bus, reprend, et la pompe
+        réapplique l'événement sans effet (idempotence).
+
+        404 si le run est inconnu, **409 s'il n'attend pas de réponses** (jamais
+        répondu deux fois, jamais un run soldé ramené en vol), 422 si le nombre de
+        réponses ne correspond pas aux questions du brief stocké — l'appariement est
+        positionnel, donc une liste décalée affecterait des réponses aux mauvaises
+        questions sans que rien ne le signale.
+        """
+        resume = executions.resume(run_id)
+        if resume is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if resume["statut"] != EXECUTION_EN_ATTENTE_REPONSES:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"cette exécution n'attend pas de réponses sur son brief "
+                    f"({resume['statut']}) : {run_id}."
+                ),
+            )
+        detail = state.execution(run_id)
+        attendues = len(detail.brief.questions) if detail and detail.brief else 0
+        if len(requete.reponses) != attendues:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{len(requete.reponses)} réponse(s) pour {attendues} question(s) : "
+                    "les réponses s'apparient par position aux questions du brief en "
+                    "attente. Répondre « » (chaîne vide) laisse une question sans "
+                    "réponse ; elle partira en hypothèse."
+                ),
+            )
+        event = Event(
+            type=EVENEMENT_BRIEF_REPONSES,
+            run_id=run_id,
+            titre=resume["objectif"],
+            agent=ACTEUR_BRIEF,
+            role=ROLE_BRIEF,
+            detail=(
+                f"{sum(1 for r in requete.reponses if r.strip())}/{attendues} "
+                "question(s) répondue(s) depuis la Control Tower"
+            ),
+            # **Pas** expurgées, et c'est le même choix assumé que pour le brief
+            # (cf. `evenement_demande_brief`, #320) : ces réponses ne voyagent pas
+            # pour être affichées, elles voyagent pour **atteindre le moteur**, qui
+            # les intègre au brief régénéré. Les masquer ici ne protégerait rien —
+            # le brief qui en sort circule déjà en clair sur le même bus — mais
+            # corromprait l'entrée de la régénération, et un `[REDACTED]` au milieu
+            # d'une réponse produirait un brief faux sans que personne le voie.
+            reponses=list(requete.reponses),
+            tour=resume.get("tour_clarification", 0),
+            tours_max=resume.get("tours_clarification_max", 0),
             projet_id=resume["projet_id"],
         )
         state.appliquer(event)

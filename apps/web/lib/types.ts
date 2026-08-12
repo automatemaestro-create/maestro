@@ -614,6 +614,16 @@ export const EXECUTION_ECHEC = "echec";
  * reste annulable comme n'importe quel run en vol.
  */
 export const EXECUTION_EN_ATTENTE_BRIEF = "en_attente_brief";
+/**
+ * Le run a **posé les questions** de son brief et attend les réponses (#321), en
+ * amont de la validation ci-dessus. Non terminal pour la même raison, et c'est ici
+ * la troisième exigence du ticket : une attente de réponses peut durer, un run
+ * qu'on ne pourrait plus arrêter pendant ce temps serait indiscernable d'un run
+ * planté. Distinct d'`en_attente_brief` parce que ce n'est pas la même question —
+ * on répond, on n'approuve pas : proposer « approuver/refuser » à quelqu'un à qui
+ * on pose des questions serait une impasse.
+ */
+export const EXECUTION_EN_ATTENTE_REPONSES = "en_attente_reponses";
 
 /**
  * Le **régime du brief** d'un run (#320) : `sans` décompose l'objectif brut (le
@@ -729,6 +739,23 @@ export type DecisionBrief = {
 };
 
 /**
+ * Le corps de `POST /api/executions/{run_id}/brief/reponses` (#321) : les réponses
+ * aux questions de clarification, **appariées par position** aux `questions` du
+ * brief que le run attend (`GET /api/executions/{run_id}` → `brief.questions`).
+ *
+ * Pas de clé ni d'identifiant de question, et c'est une décision (#318) : le brief
+ * est régénéré **en entier** à chaque tour, donc une question n'a pas d'identité
+ * stable d'une version à l'autre. Le tableau doit faire **exactement** la longueur
+ * de `brief.questions`, sans quoi l'API répond 422 — une liste décalée affecterait
+ * des réponses aux mauvaises questions en silence. Une chaîne **vide** est licite
+ * et vaut « je ne sais pas » : la question partira en hypothèse explicite plutôt
+ * que d'être reposée.
+ */
+export type ReponsesBrief = {
+  reponses: string[];
+};
+
+/**
  * Le brief structuré (#318) — miroir de `packages/shared/schemas/brief.schema.json`
  * et de `maestro.orchestrator.schema.Brief`. Aucune clé n'est omise : les quatre
  * listes facultatives sont valides vides, ce qui permet à l'écran de validation
@@ -767,6 +794,23 @@ export type ResumeExecution = {
    * des runs n'a pas à porter sept sections de texte par ligne.
    */
   mode_brief?: string;
+  /**
+   * Depuis quand ce run attend un geste humain (#321) — horodatage ISO-8601 de
+   * l'événement qui l'a suspendu, `null` dès qu'il repart ou qu'il est soldé.
+   * C'est l'**ancienneté** de l'attente : sans elle, un run suspendu est
+   * indiscernable d'un run planté, et c'est *depuis quand* qui permet d'en juger.
+   * Renseignée pour les deux attentes (`en_attente_brief` et
+   * `en_attente_reponses`) — une seule question, une seule réponse.
+   */
+  attente_depuis?: string | null;
+  /**
+   * Le tour de clarification en cours et le plafond annoncé (#321) — `0` tant que
+   * le run n'en a joué aucun. C'est l'annonce de la borne, telle que l'écran la
+   * rend : « tour 1 sur 2 ». Les **questions** elles-mêmes ne sont pas ici mais
+   * dans le détail (`brief.questions`) : on ne peut pas y répondre depuis une liste.
+   */
+  tour_clarification?: number;
+  tours_clarification_max?: number;
   debut: string;
   fin: string | null;
   /**

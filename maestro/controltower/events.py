@@ -108,6 +108,20 @@ EVENEMENT_EXECUTION_STATUT = "execution.statut"
 #: validations, cf. `maestro.controltower.state`).
 EVENEMENT_BRIEF_DEMANDE = "brief.demande"
 EVENEMENT_BRIEF_DECISION = "brief.decision"
+#: `brief.questions` et `brief.reponses` (#321) portent les **allers-retours de
+#: clarification**, en amont de la validation ci-dessus : le run publie les questions
+#: que le brief a laissées ouvertes et attend, l'humain répond, le brief est régénéré.
+#: Troisième canal `brief.*` et non un détournement du deuxième, pour une raison de
+#: nature : `brief.decision` clôt le cadrage (une fois, par oui ou non), ceux-ci le
+#: **poursuivent** (jusqu'au plafond, avec du texte libre). Les confondre ferait d'un
+#: run en cours de clarification un run tranché, donc repartirait en décomposition
+#: avec un brief encore troué. `brief` porte le brief **dont** on pose les questions
+#: (jamais une copie de la liste : le brief est régénéré en entier à chaque tour, deux
+#: sources se périmeraient), `reponses` les réponses appariées **par position**, et
+#: `tour`/`tours_max` l'annonce du plafond — ce qui permet à celui qui répond de
+#: savoir s'il lui reste un tour.
+EVENEMENT_BRIEF_QUESTIONS = "brief.questions"
+EVENEMENT_BRIEF_REPONSES = "brief.reponses"
 
 #: Canal Redis Pub/Sub des événements — sur l'instance mutualisée avec la file
 #: de tâches (#41), d'où un canal nommé plutôt que le canal par défaut.
@@ -145,6 +159,31 @@ def brief_depuis(donnees: Any) -> Brief | None:
     if any(cle not in donnees for cle in requis):
         return None
     return Brief.from_dict(donnees)
+
+
+def reponses_depuis(donnees: Any) -> list[str]:
+    """Relit des réponses de clarification venues du flux (#321) — jamais None.
+
+    Même régime que `brief_depuis` : **relecture, pas nouvelle saisie**. Ce qui n'est
+    pas une chaîne est écarté plutôt que de faire échouer la relecture d'un run
+    passé ; une liste absente ou illisible retombe sur `[]`, que l'appariement par
+    position traite comme « aucune réponse » — donc en hypothèses, jamais en
+    questions reposées.
+    """
+    if not isinstance(donnees, list):
+        return []
+    return [entree for entree in donnees if isinstance(entree, str)]
+
+
+def _entier_positif(valeur: Any) -> int:
+    """Relit un compteur venu du flux — 0 pour tout ce qui n'est pas un entier ≥ 0.
+
+    `bool` est exclu à dessein : c'est un `int` en Python, et un `True` relu en `1`
+    ferait passer un booléen égaré pour un premier tour de clarification.
+    """
+    if isinstance(valeur, bool) or not isinstance(valeur, int) or valeur < 0:
+        return 0
+    return valeur
 
 
 @dataclass(frozen=True)
@@ -222,6 +261,16 @@ class Event:
     # l'événement de **lancement** — c'est par lui qu'il rejoint la projection, donc
     # `ResumeExecution`, donc l'annonce du mode dans le résumé du run. Vide ailleurs.
     mode_brief: str = ""
+    # Les réponses humaines aux questions du brief (#321), appariées **par position**
+    # aux questions du brief soumis. None (et non `[]`) partout ailleurs, pour la même
+    # raison que les champs ci-dessus : la projection distingue « cet événement
+    # n'apprend rien des réponses » de « aucune réponse n'a été donnée ».
+    reponses: list[str] | None = None
+    # Le rang de l'aller-retour et le plafond annoncé (#321) — 0 partout ailleurs.
+    # Portés par `brief.questions`, c'est par eux que l'annonce du plafond atteint
+    # l'UI : « tour 1 sur 2 » dit à celui qui répond ce qui lui reste.
+    tour: int = 0
+    tours_max: int = 0
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -253,6 +302,9 @@ class Event:
             ),
             "brief": self.brief.to_dict() if self.brief is not None else None,
             "mode_brief": self.mode_brief,
+            "reponses": list(self.reponses) if self.reponses is not None else None,
+            "tour": self.tour,
+            "tours_max": self.tours_max,
             "horodatage": self.horodatage,
         }
 
@@ -303,6 +355,14 @@ class Event:
             # revalidation — cf. `brief_depuis`.
             brief=brief_depuis(data.get("brief")),
             mode_brief=data.get("mode_brief", ""),
+            # Même régime que les autres listes (#321) : absente → None (l'événement
+            # n'en dit rien) ; présente → les seules entrées textuelles, les autres
+            # écartées. Relecture tolérante, comme le brief lui-même.
+            reponses=(
+                reponses_depuis(data["reponses"]) if data.get("reponses") is not None else None
+            ),
+            tour=_entier_positif(data.get("tour")),
+            tours_max=_entier_positif(data.get("tours_max")),
             horodatage=data.get("horodatage", ""),
         )
 

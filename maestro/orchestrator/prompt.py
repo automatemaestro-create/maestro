@@ -42,7 +42,10 @@ texte — mieux vaut un import qui échoue qu'un prompt système servi avec un t
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from pathlib import Path
+
+from maestro.orchestrator.schema import Clarification
 
 #: Fourchette visée. Guidage, pas une règle de schéma, et depuis #298 le playbook la
 #: présente comme une **conséquence** du découpage plutôt que comme un quota à remplir.
@@ -119,8 +122,14 @@ def build_user_prompt(objective: str) -> str:
     )
 
 
-def build_brief_user_prompt(objectif: str, contexte_sources: str = "") -> str:
-    """Compose le message utilisateur de l'étape **brief** (#318).
+def build_brief_user_prompt(
+    objectif: str,
+    contexte_sources: str = "",
+    clarifications: Sequence[Clarification] = (),
+    *,
+    dernier_tour: bool = False,
+) -> str:
+    """Compose le message utilisateur de l'étape **brief** (#318, régénéré en #321).
 
     `contexte_sources` est le contenu extrait **déjà encadré** par
     `maestro.sources.extraction.contexte_markdown` — jamais du Markdown brut : c'est
@@ -130,6 +139,20 @@ def build_brief_user_prompt(objectif: str, contexte_sources: str = "") -> str:
     Les sources viennent **après** la consigne et après l'objectif, à dessein : ce
     qui est en dernier est ce qui pèse le plus, et on ne veut pas que ce soit le
     contenu non fiable qui donne le ton de la réponse.
+
+    `clarifications` (#321) porte les allers-retours **déjà joués**, cumulés depuis
+    le premier tour : le brief est régénéré **en entier** à chaque fois, jamais
+    rapiécé, donc le modèle a besoin de tout l'historique pour ne pas reperdre ce
+    qu'un tour précédent avait levé. Elles passent **après** les sources — donc en
+    dernier, au rang le plus fort : ce sont des réponses de l'utilisateur, la seule
+    entrée de ce prompt qui fasse autorité sur l'objectif lui-même.
+
+    `dernier_tour` annonce que le plafond est atteint et qu'il n'y aura plus de
+    question posée. Le modèle est alors invité à **trancher en hypothèses** ce qu'il
+    reste. C'est une invitation et non la garantie : celle-ci est tenue en Python
+    par `Brief.questions_en_hypotheses`, qui rattrape le cas où il repose ses
+    questions quand même — un plafond qui dépendrait de la docilité du modèle n'est
+    pas un plafond.
     """
     cleaned = objectif.strip()
     morceaux = [
@@ -140,4 +163,46 @@ def build_brief_user_prompt(objectif: str, contexte_sources: str = "") -> str:
         "",
         contexte_sources.strip() if contexte_sources.strip() else _SANS_SOURCE,
     ]
+    if clarifications:
+        morceaux.extend(["", _bloc_clarifications(clarifications, dernier_tour)])
     return "\n".join(morceaux)
+
+
+def _bloc_clarifications(
+    clarifications: Sequence[Clarification], dernier_tour: bool
+) -> str:
+    """Rend les allers-retours déjà joués, et ce qu'on attend du tour qui vient (#321).
+
+    Les questions restées **sans réponse** sont annoncées comme telles plutôt
+    qu'omises : les taire ferait croire au modèle qu'il ne les a jamais posées, et
+    il les reposerait à l'identique — un tour d'aller-retour dépensé pour rien. Les
+    dire, c'est lui demander d'en faire une hypothèse et d'avancer.
+    """
+    lignes = [
+        "Réponses de l'utilisateur à tes questions précédentes. Elles font autorité : "
+        "intègre-les au brief que tu réécris — dans le périmètre, les contraintes, les "
+        "critères ou les hypothèses, selon ce qu'elles tranchent — et ne repose aucune "
+        "question qu'elles ont déjà levée.",
+        "",
+    ]
+    for clarification in clarifications:
+        lignes.append(f"- Question : {clarification.question}")
+        if clarification.sans_reponse:
+            lignes.append(
+                "  Réponse : aucune. Ne la repose pas : tranche-la en hypothèse explicite."
+            )
+        else:
+            lignes.append(f"  Réponse : {clarification.reponse}")
+    lignes.append("")
+    if dernier_tour:
+        lignes.append(
+            "C'est le DERNIER tour : plus aucune question ne sera posée. Rends "
+            "`questions` vide et inscris en hypothèses explicites tout ce que tu n'as "
+            "pas pu lever, en disant ce que tu retiens faute de réponse."
+        )
+    else:
+        lignes.append(
+            "Ne conserve dans `questions` que ce qui reste réellement indécidable et "
+            "qui change le plan selon la réponse. Le reste devient une hypothèse."
+        )
+    return "\n".join(lignes)
