@@ -357,8 +357,9 @@ arbitrages déjà rendus* — l'historique en dessous le prouve.
 > n'appartenaient à aucun projet et dont les livrables atterrissaient dans un dossier de sortie,
 > jamais chez l'utilisateur. La **Phase 7 a livré** les deux qui la concernent — l'écran Projets
 > (§2.7.1) et l'application des livrables, qui emprunte l'écran de validation du §2.6. Les deux
-> autres relèvent de la **Phase 8** : **composer un objectif est livré** (§2.7.3, #319), **valider
-> le brief** reste seul non spécifié au niveau de détail des §2.1 à 2.6.
+> autres relèvent de la **Phase 8**, et sont livrés tous les deux : **composer un objectif**
+> (§2.7.3, #319) et **valider le brief** (§2.7.4, #322). Les quatre écrans sont donc désormais
+> spécifiés au niveau de détail des §2.1 à 2.6 — la réserve de cet encadré est levée.
 
 - **Projets** — la liste des projets, chacun avec sa **racine sur le disque**, son type
   (nouveau / dépôt existant) et son périmètre. Le choix du dossier se fait par un **explorateur
@@ -370,10 +371,12 @@ arbitrages déjà rendus* — l'historique en dessous le prouve.
   des **sources** (§6.1 étendu) : fichiers déposés, dossier de références en lecture seule, URL.
   L'extraction est visible (ce qui a été lu, ce qui a été ignoré, le coût estimé). L'écran est au
   §2.7.3, l'aperçu qu'il consomme au §6.9.
-- **Valider le brief** — avant toute décomposition, le Chef de projet présente un **brief
-  structuré** (objectif, périmètre, hors-périmètre, contraintes, critères d'acceptation,
+- **Valider le brief** *(livré — #322)* — avant toute décomposition, le Chef de projet présente un
+  **brief structuré** (objectif, périmètre, hors-périmètre, contraintes, critères d'acceptation,
   hypothèses) et **ses questions**. C'est le point de contrôle le plus rentable du produit :
-  corriger un plan coûte un message, corriger douze tâches coûte douze exécutions.
+  corriger un plan coûte un message, corriger douze tâches coûte douze exécutions. L'écran est au
+  §2.7.4 ; il sert les deux attentes du run — répondre aux questions (#321) puis approuver, corriger
+  ou refuser (#320) — et met le **coût déjà engagé** en face de la décision.
 - **Appliquer dans le projet** *(livré — #227, EF-37)* — la remise des livrables dans le dossier
   de l'utilisateur est une **action sensible** : elle emprunte l'écran de validation ci-dessus
   (§2.6), diff à l'appui. Rien de neuf côté mécanisme, un nouveau type d'action côté contenu —
@@ -390,9 +393,8 @@ porte d'entrée et la sortie de « Projets » du menu sont au §2.0.1 (#279, #28
 #### 2.7.1 L'écran Projets (#225) — **livré**
 
 Le premier des quatre écrans ci-dessus est **spécifié et implémenté** ; l'application des livrables
-l'est aussi, par l'écran de validation du §2.6, et composer un objectif l'est depuis #319 (§2.7.3).
-**Valider le brief** reste seul à la Phase 8, et c'est lui seul que vise encore la réserve de
-l'encadré.
+l'est aussi, par l'écran de validation du §2.6, composer un objectif depuis #319 (§2.7.3) et valider
+le brief depuis #322 (§2.7.4). Les quatre y sont donc, et la réserve de l'encadré est levée.
 Implémentation : `apps/web/app/projets/page.tsx` et `apps/web/components/projets/`, contre les six
 routes du §6.7 ; couverture `apps/web/tests/projets.test.tsx` côté UI,
 [`tests/test_projets_api.py`](../tests/test_projets_api.py) côté API.
@@ -527,6 +529,82 @@ Implémentation : `apps/web/app/composer/page.tsx` et `apps/web/components/compo
 trois routes des §6.1, §6.8 et §6.9 ; `maestro/sources/apercu.py` côté backend. Couverture :
 `apps/web/tests/composer.test.tsx` côté UI, [`tests/test_apercu_sources.py`](../tests/test_apercu_sources.py)
 côté API — le reste de la Phase 8 est différé au lot final #323.
+
+#### 2.7.4 Valider le brief (#322) — **livré**
+
+Le dernier des quatre écrans, et le **point de contrôle le plus rentable du produit** : corriger un
+brief coûte un message, corriger douze tâches coûte douze exécutions (décision D5, #218). Le run est
+arrêté ici — en vol, mais immobile — et rien ne repartira sans un geste.
+
+**Place dans la navigation** — au **menu**, juste après « Composer un objectif », dont il est
+l'autre moitié : on compose, le Chef de projet rédige, on tranche. Au menu bien qu'on y arrive le
+plus souvent par la cloche ou par le tableau de bord, et pour une raison qui n'est pas de confort :
+un run suspendu sur son brief **ne crée aucune tâche**, donc ni le Kanban, ni les grands livres, ni
+le fil d'activité ne le montrent. Une destination qui n'apparaît que le jour où quelque chose
+l'appelle est une destination qu'on ne pense pas à ouvrir. La file y est vide la plupart du temps,
+et le dit en nommant le projet (#281).
+
+**Deux attentes, deux écrans, et jamais le même geste proposé.** Le statut du run tranche :
+
+- `en_attente_reponses` (#321) — le Chef de projet a **posé des questions**. On y répond, le brief
+  est régénéré en entier. Aucun bouton « approuver » n'est offert : demander d'approuver ce sur quoi
+  on vient d'interroger quelqu'un est une impasse. Le brief est là, mais **en lecture** — il va être
+  réécrit, le corriger maintenant serait un travail jeté. Le **plafond est annoncé** (« tour 1 sur
+  2 ») parce que savoir s'il reste un tour change la façon de répondre. Une réponse **vide** est
+  licite et vaut « je ne sais pas » : la question part en **hypothèse explicite** plutôt que d'être
+  reposée, ce qui permet de répondre à trois questions sur cinq sans bloquer le run ;
+- `en_attente_brief` (#320) — le brief est complet. Les **sept sections** sont lisibles et
+  **éditables** (objectif, périmètre, hors-périmètre, contraintes, critères d'acceptation,
+  hypothèses, questions), puis **Approuver** / **Refuser**.
+
+**La correction précède l'accord, elle ne le suit pas.** Chaque liste est un champ libre, **une
+entrée par ligne** : corriger un brief, c'est réécrire des phrases — un champ par puce
+transformerait « retire ces deux critères » en quatre gestes de gestion de liste, et c'est cette
+friction-là qui fait approuver sans lire. Ce qui repart est ce qu'on a sous les yeux : un brief
+**touché** part corrigé (`brief`, et le bouton le dit — « Approuver la version corrigée »), un brief
+**intact** part en `null`, ce qui fait retenir au moteur sa propre proposition sans la faire
+retraverser la validation de schéma. Un **refus n'emporte jamais de brief**, même après correction.
+
+**Une section vide se dit « — », elle ne disparaît pas.** « Aucune contrainte » est une affirmation
+du Chef de projet, un blanc serait un oubli de l'écran — c'est ce que le schéma partagé garantit en
+n'omettant jamais une clé (`packages/shared/schemas/brief.schema.json`, #318). Les **tours de
+clarification déjà joués** se relisent au-dessus
+du brief, question par question, et une question restée **sans réponse** est nommée telle : une
+hypothèse qui sort d'un « je ne sais pas » assumé ne se conteste pas comme une hypothèse que
+personne n'a vue passer.
+
+**Le coût est en face de la décision**, dans le même bloc que les deux boutons — pas en tête
+d'écran. Deux montants de **nature différente**, et l'écran ne les confond pas : ce qui est **déjà
+engagé** est *mesuré* (le grand livre du run, #57 — à ce stade, lire les sources et rédiger le
+brief, rien d'autre n'ayant tourné) ; ce que l'accord engage est *estimé*, en **fourchette**, à
+partir des critères d'acceptation du brief **tel qu'il serait approuvé** — retirer trois critères
+fait baisser l'estimation sous les yeux de qui les retire. Les chiffres viennent de
+[docs/09 §4.3](./09-exemple-chiffre.md) et d'aucune mesure de ce run-ci, d'où le « ≈ » et la phrase
+qui le dit : un chiffre dont on ignore la provenance ne se conteste pas, donc ne se décide pas. Et
+il est rappelé que **refuser n'engage rien de plus** — aucune tâche n'a été créée. C'est la moitié
+de l'information qu'on oublie, et celle qui fait la différence entre un refus **rationnel** et un
+refus **timide** : sans elle on n'ose pas jeter ce qu'on a déjà payé.
+
+**Ce qui attend est signalé là où on regarde** (#48 pour le patron) : la **cloche** de la barre
+supérieure compte les briefs à côté des validations — une seule pastille, parce que la question est
+« combien de choses m'attendent ? », mais une étiquette qui **nomme** les deux familles —, et le
+**tableau de bord** porte un panneau « Briefs en attente » au-dessus des validations : un brief
+suspendu bloque le run entier là où une validation ne retient qu'une tâche. Les deux **acheminent
+sans décider**, contrairement aux cartes de validation : sept sections, des questions et un coût ne
+tiennent pas dans un panneau, et proposer d'approuver là inviterait à trancher sans lire —
+c'est-à-dire à défaire le point de contrôle. L'**ancienneté** de l'attente est dite partout (#321) :
+sans elle, un run suspendu est indiscernable d'un run planté.
+
+Implémentation : `apps/web/app/brief/page.tsx` et `apps/web/components/brief/`, contre quatre
+routes — `GET /api/executions` (quels runs attendent), `GET /api/executions/{run_id}` (le brief, le
+grand livre et la trace, d'un seul appel), `POST /api/executions/{run_id}/brief/decision` (#320) et
+`POST /api/executions/{run_id}/brief/reponses` (#321). Elles ne figurent pas encore au §6.1, qui
+s'arrête au lancement et à l'annulation : les y consigner revient au lot final #323, avec le reste
+de la doc de la phase. `apps/web/lib/brief.ts` porte les règles hors JSX (qui attend, comment un
+brief se donne à corriger, comment se relit un aller-retour) et `apps/web/lib/estimation.ts` l'ordre
+de grandeur avec sa source. Couverture : `apps/web/tests/brief.test.tsx`, restreinte à la
+**logique critique** du lot (approuvé corrigé vs tel quel, refus sans brief, appariement positionnel
+des réponses) — le reste de la Phase 8 est différé au lot final #323.
 
 ### 2.8 🗒️ Journal — l'activité en direct, en plein format *(#249, #250 — **livré**)*
 

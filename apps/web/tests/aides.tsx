@@ -176,12 +176,15 @@ function etatParDefaut(): ControlTower {
     agents: [],
     evenements: [],
     validations: [],
+    executions: [],
     couts: [],
     connecte: true,
     chargement: false,
     erreur: null,
     reassigner: async () => {},
     decider: async () => {},
+    trancherBrief: async () => {},
+    repondreAuBrief: async () => {},
     reglerCapacite: async () => {},
   };
 }
