@@ -12,13 +12,16 @@ import type {
   AnalyticsCouts,
   CoutExecution,
   ChoixSelecteur,
+  DecisionBrief,
   DeclarationProjet,
   DefinitionAgent,
+  DetailExecution,
   DisponibiliteSelecteur,
   EntreeRegistreMcp,
   EtatAgent,
   FilChat,
   IntegrationPoolMcp,
+  LancementExecution,
   PageExplorateur,
   PasSerie,
   PlaybookDetail,
@@ -27,9 +30,14 @@ import type {
   Projet,
   PropositionPlaybook,
   PropositionPlaybookDetail,
+  RapportLecture,
   RefusProjet,
+  ReponsesBrief,
+  ResumeExecution,
   Sante,
+  SourceDeclaree,
   Tache,
+  TeleversementSources,
   Validation,
   VersionPlaybook,
   VersionPlaybookDetail,
@@ -663,4 +671,200 @@ export function supprimerProjet(id: string): Promise<void> {
     "suppression refusée",
     "DELETE",
   ).then(() => undefined);
+}
+
+// --- Composer un objectif (#319, API #315/#316/#317) -----------------------
+//
+// Trois routes, un même régime de refus : leur `detail` est l'objet
+// `{motif, message}` des routes projets (docs/05 §6.7), augmenté d'un `index`
+// quand le refus **vise une source** (docs/05 §6.1). C'est ce qui permet à
+// l'écran d'afficher un refus **à l'endroit du geste refusé** — sur la source
+// fautive et non en tête de formulaire — et de distinguer « rien à lire ici »
+// d'un « je refuse de lire ça ». L'aplatir en `string` perdrait les deux.
+
+/**
+ * Un refus motivé d'une route de sources. Même contrat qu'`ErreurProjet` (#225),
+ * plus l'`index` de la source visée quand il y en a une : « une source est trop
+ * grosse » sans dire laquelle obligerait à tout relire pour savoir quoi retirer.
+ */
+export class ErreurSource extends Error {
+  readonly motif: string;
+  readonly index: number | null;
+
+  constructor(motif: string, message: string, index: number | null = null) {
+    super(message);
+    this.name = "ErreurSource";
+    this.motif = motif;
+    this.index = index;
+  }
+}
+
+/** Le refus porté par une réponse en échec — motif et index compris. */
+async function refusSource(
+  reponse: Response,
+  refusParDefaut: string,
+): Promise<ErreurSource> {
+  let motif = "requete-invalide";
+  let message = `${refusParDefaut} (${reponse.status})`;
+  let index: number | null = null;
+  try {
+    const contenu = (await reponse.json()) as { detail?: unknown };
+    const detail = contenu.detail;
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (detail !== null && typeof detail === "object") {
+      const refus = detail as {
+        motif?: unknown;
+        message?: unknown;
+        index?: unknown;
+      };
+      if (typeof refus.motif === "string") motif = refus.motif;
+      if (typeof refus.message === "string") message = refus.message;
+      if (typeof refus.index === "number") index = refus.index;
+    }
+  } catch {
+    // corps non JSON : on garde le motif et le message génériques
+  }
+  return new ErreurSource(motif, message, index);
+}
+
+/**
+ * L'aperçu d'ingestion (`POST /api/sources/apercu`, #319) : ce que les sources
+ * **donneraient**, sans lancer et sans rien conserver. C'est le geste gratuit du
+ * critère 2 — voir avant de dépenser —, et il porte les octets plutôt que des
+ * identifiants : un aperçu ne dépose rien.
+ *
+ * Le n-ième `fichier` correspond à la n-ième source de type `fichier` de
+ * `sources` : un multipart ne transporte pas de correspondance, il transporte
+ * deux listes ordonnées.
+ */
+export async function apercuSources(
+  sources: SourceDeclaree[],
+  fichiers: File[],
+): Promise<RapportLecture> {
+  const corps = new FormData();
+  corps.set("sources", JSON.stringify(sources));
+  for (const fichier of fichiers) corps.append("fichier", fichier);
+  const reponse = await fetch(`${API_URL}/api/sources/apercu`, {
+    method: "POST",
+    body: corps,
+  });
+  if (!reponse.ok) throw await refusSource(reponse, "aperçu refusé");
+  return (await reponse.json()) as RapportLecture;
+}
+
+/**
+ * Téléverse les fichiers déposés (`POST /api/sources`, #317) et rend leurs
+ * **identifiants de source**, à reporter dans `sources[]` au lancement. Un seul
+ * appel pour tout le dépôt : le champ `fichier` est répétable.
+ *
+ * Les octets vont dans le dépôt de téléversement — hors de tout projet et hors
+ * de tout run —, et c'est le lancement qui les rattache au run qui les consomme
+ * (docs/05 §6.8).
+ */
+export async function televerserSources(
+  fichiers: File[],
+): Promise<TeleversementSources> {
+  const corps = new FormData();
+  for (const fichier of fichiers) corps.append("fichier", fichier);
+  const reponse = await fetch(`${API_URL}/api/sources`, {
+    method: "POST",
+    body: corps,
+  });
+  if (!reponse.ok) throw await refusSource(reponse, "téléversement refusé");
+  return (await reponse.json()) as TeleversementSources;
+}
+
+/**
+ * Lance une exécution (`POST /api/executions`, #185/#317) et rend son résumé,
+ * `run_id` compris. Le run se déroule **hors** de la requête : la réponse dit
+ * qu'il est parti, la suite arrive par le flux d'événements.
+ *
+ * Le refus emprunte le chemin motivé des sources : un objectif vide sort en
+ * `requete-invalide`, une source fautive avec son motif **et son index**.
+ */
+export async function lancerExecution(
+  corps: LancementExecution,
+): Promise<ResumeExecution> {
+  const reponse = await fetch(`${API_URL}/api/executions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(corps),
+  });
+  if (!reponse.ok) throw await refusSource(reponse, "lancement refusé");
+  return (await reponse.json()) as ResumeExecution;
+}
+
+/**
+ * Les exécutions connues du backend, à la portée demandée (`GET /api/executions`,
+ * #185) — un **résumé** par run, sans son brief ni sa trace.
+ *
+ * C'est ce qui rend un run suspendu **visible** (#322) : `statut` vaut alors
+ * `en_attente_brief` (ou `en_attente_reponses`, #321) et rien d'autre ne le dirait
+ * — un run arrêté sur son brief n'a créé aucune tâche, donc il n'apparaît ni au
+ * Kanban ni dans les grands livres, qui se dérivent des tâches.
+ */
+export function chargerExecutions(
+  portee: PorteeProjet,
+): Promise<ResumeExecution[]> {
+  return chargerJson<ResumeExecution[]>(
+    `/api/executions?projet=${encodeURIComponent(portee)}`,
+  );
+}
+
+/**
+ * Le détail d'une exécution (`GET /api/executions/{run_id}`, #185) : le résumé,
+ * le **brief** (#320), le grand livre (#57) et la trace. Un seul appel pour tout
+ * ce que l'écran de validation (#322) met sous les yeux de qui décide — le brief
+ * à relire d'un côté, le coût déjà engagé de l'autre.
+ */
+export function chargerExecution(runId: string): Promise<DetailExecution> {
+  return chargerJson<DetailExecution>(
+    `/api/executions/${encodeURIComponent(runId)}`,
+  );
+}
+
+/**
+ * Tranche le brief d'un run (`POST /api/executions/{run_id}/brief/decision`,
+ * #320) : approuver — tel quel (`brief: null`) ou **corrigé**, le brief envoyé
+ * devenant alors l'entrée de la décomposition — ou refuser, ce qui solde le run
+ * sans qu'aucune tâche ait été créée.
+ *
+ * Les refus du backend sont relayés tels quels : 409 si le run n'attend plus de
+ * décision (déjà tranchée ailleurs, run annulé entre-temps), 422 si le brief
+ * corrigé ne respecte pas le schéma partagé — un périmètre vidé, un critère
+ * d'acceptation en double. C'est le message de l'API qui s'affiche, pas une
+ * reformulation d'ici : lui seul sait ce qu'il a refusé.
+ */
+export function deciderBrief(
+  runId: string,
+  decision: DecisionBrief,
+): Promise<void> {
+  return envoyerJson(
+    `/api/executions/${encodeURIComponent(runId)}/brief/decision`,
+    decision,
+    "décision refusée",
+  );
+}
+
+/**
+ * Répond aux questions de clarification d'un brief
+ * (`POST /api/executions/{run_id}/brief/reponses`, #321) : le run repart rédiger
+ * son brief en les intégrant.
+ *
+ * Les réponses s'apparient **par position** aux `questions` du brief en attente,
+ * et la liste doit en faire exactement le compte (422 sinon) : une liste décalée
+ * affecterait des réponses aux mauvaises questions sans que rien ne le signale.
+ * Une réponse **vide** est licite et vaut « je ne sais pas » — la question part
+ * en hypothèse explicite plutôt que d'être reposée.
+ */
+export function repondreBrief(
+  runId: string,
+  reponses: string[],
+): Promise<void> {
+  return envoyerJson(
+    `/api/executions/${encodeURIComponent(runId)}/brief/reponses`,
+    { reponses } satisfies ReponsesBrief,
+    "réponses refusées",
+  );
 }

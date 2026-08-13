@@ -5,7 +5,7 @@ parent #314) : un lancement ne portait qu'un objectif texte, il porte désormais
 ce que cet objectif embarque — fichiers téléversés, dossier de références, URL
 (EF-39, entité SOURCE de [docs/03](../../docs/03-modele-de-donnees.md)).
 
-Trois modules, trois responsabilités qui ne se mélangent pas :
+Cinq modules, cinq responsabilités qui ne se mélangent pas :
 
 - `modele` — la **forme** (`Source`, `SourceRefusee`), module feuille, relue
   sans jamais être rejugée : un journal durable rejoué ne se refuse pas ;
@@ -16,7 +16,10 @@ Trois modules, trois responsabilités qui ne se mélangent pas :
   d'entrer dans un contexte ;
 - `televersement` (#317) — où des octets reçus **attendent** leur run, et comment
   ils lui sont rattachés. Un navigateur ne livre pas de chemin, il livre des
-  octets : c'est le seul moyen qu'une source `fichier` en désigne de vrais.
+  octets : c'est le seul moyen qu'une source `fichier` en désigne de vrais ;
+- `apercu` (#319) — ce que des sources **donneraient**, joué à vide : la même
+  lecture, rendue avant le lancement et sans rien conserver, pour que composer un
+  objectif reste réversible tant que c'est gratuit.
 
 Les deux régimes sont opposés à dessein : la résolution **refuse** (une saisie se
 corrige), l'extraction **ignore ou tronque en le disant** (un contenu n'est pas
@@ -27,6 +30,7 @@ Les routes qui les servent — `POST /api/sources` et `POST /api/executions` —
 au [§6.8 et au §6.1 de docs/05](../../docs/05-interface-control-tower.md).
 """
 
+from maestro.sources.apercu import RUN_APERCU, apercu_sources
 from maestro.sources.extraction import (
     ETAT_IGNORE,
     ETAT_LU,
@@ -80,6 +84,7 @@ __all__ = [
     "ID_TELEVERSEMENT",
     "LONGUEUR_MAX_NOM",
     "LONGUEUR_MAX_URL",
+    "RUN_APERCU",
     "TYPES_SOURCE",
     "TYPE_DOSSIER",
     "TYPE_FICHIER",
@@ -91,6 +96,7 @@ __all__ = [
     "Source",
     "SourceRefusee",
     "Televersement",
+    "apercu_sources",
     "contexte_markdown",
     "declarer_televersements",
     "emplacement_ingestion",

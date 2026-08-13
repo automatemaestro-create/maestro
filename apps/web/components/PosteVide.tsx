@@ -32,6 +32,8 @@
  * périmètre.
  */
 
+import Link from "next/link";
+
 import { lancerGuide } from "@/lib/guide";
 import type { Projet } from "@/lib/types";
 
@@ -71,8 +73,8 @@ export function PosteVide({
         <Action
           titre="Lancer une orchestration dans ce projet"
           detail="Le moteur découpe l'objectif en tâches, les assigne aux agents et publie chaque étape ici."
-          commande={`POST /api/executions  {"objectif": "…", "projet_id": "${projet.id}"}`}
-          note="Le formulaire de lancement viendra avec « Composer un objectif » (Phase 8) ; d'ici là, c'est l'API qui rattache un run à un projet."
+          lien={{ href: "/composer", libelle: "Composer un objectif" }}
+          note="L'écran compose l'objectif — texte, fichiers déposés, dossier de références, adresses — et montre ce qui sera lu avant de lancer (#319). L'API reste servie pour les scripts."
         />
         <Action
           titre="Juste explorer l'interface"
@@ -126,24 +128,42 @@ export function PosteVide({
   );
 }
 
+/**
+ * Une porte de sortie du poste vide : une commande à copier, ou — depuis #319 —
+ * un **écran** de l'interface quand il en existe un. Les deux et pas l'un ou
+ * l'autre : le formulaire de lancement existe désormais, la ligne de commande
+ * reste ce dont un script a besoin.
+ */
 function Action({
   titre,
   detail,
   commande,
+  lien,
   note,
 }: {
   titre: string;
   detail: string;
-  commande: string;
+  commande?: string;
+  lien?: { href: string; libelle: string };
   note: string;
 }) {
   return (
     <article className="rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-950">
       <h3 className="text-sm font-medium">{titre}</h3>
       <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-300">{detail}</p>
-      <pre className="mt-2 overflow-x-auto rounded bg-neutral-900 px-2 py-1.5 text-xs text-neutral-100 dark:bg-black">
-        <code>{commande}</code>
-      </pre>
+      {commande && (
+        <pre className="mt-2 overflow-x-auto rounded bg-neutral-900 px-2 py-1.5 text-xs text-neutral-100 dark:bg-black">
+          <code>{commande}</code>
+        </pre>
+      )}
+      {lien && (
+        <Link
+          href={lien.href}
+          className="mt-2 inline-block rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+        >
+          {lien.libelle}
+        </Link>
+      )}
       <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{note}</p>
     </article>
   );

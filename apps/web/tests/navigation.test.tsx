@@ -36,8 +36,21 @@ describe("le menu (lib/navigation)", () => {
     // « Playbooks » et le chat par agent regardaient le même objet que
     // « Agents » : ce sont désormais des onglets de la fiche agent. « Chat »
     // subsiste pour le chat global, qui est une autre intention.
+    //
+    // « Composer un objectif » (#319) ouvre la liste, juste après l'accueil :
+    // c'est le geste par lequel on entre dans un run, et une action qu'on ne
+    // trouve pas est une action qui n'existe pas — le poste vide renvoyait
+    // jusque-là à `curl`.
+    //
+    // « Valider le brief » (#322) la suit, dont elle est l'autre moitié : on
+    // compose, le Chef de projet rédige, on tranche. Elle est **au menu** bien
+    // qu'on y arrive surtout par la cloche ou le tableau de bord — un run
+    // suspendu sur son brief ne crée aucune tâche, donc rien d'autre ne le
+    // montre.
     expect(MENU.map((entree) => entree.libelle)).toEqual([
       "Tableau de bord",
+      "Composer un objectif",
+      "Valider le brief",
       "Agents",
       "Chat",
       "Coûts & analytics",

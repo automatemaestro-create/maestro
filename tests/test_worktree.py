@@ -75,6 +75,8 @@ class Depot:
     code_setup: str = "0"
     pose: bool = False
     mrs: dict[str, str] | None = None
+    orphelins: str | None = None
+    code_orphelins: str = "0"
 
     # --- exécution ---
     def lance(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -117,6 +119,12 @@ class Depot:
         environnement["MAESTRO_PURGE_BRANCHES"] = "0"
         if self.mrs is not None:
             environnement.pop("MAESTRO_PURGE_BRANCHES")
+        # Signalement des tickets « En cours » orphelins (#328) : ÉTEINT par défaut, même
+        # garde-fou que la pose ci-dessus. Sans lui, un test qui rallume `gc` appellerait le VRAI
+        # `lib.sh reconcile-en-cours`, qui lirait le backlog du VRAI projet depuis le poste.
+        environnement["MAESTRO_EN_COURS_SIGNAL"] = "0"
+        if self.orphelins is not None:
+            environnement["MAESTRO_EN_COURS_SIGNAL"] = str(self.fauxbin / "orphelins")
         environnement["MAESTRO_MAJ_DEPENDANCES"] = "0"
         if self.derive is not None:
             environnement.pop("MAESTRO_MAJ_DEPENDANCES")
@@ -234,6 +242,40 @@ class Depot:
         )
         shim.chmod(0o755)
 
+    # --- couture du signalement des orphelins (#328) ---
+    def impose_orphelins(self, lignes: str, *, code: str = "0") -> None:
+        """Remplace `lib.sh reconcile-en-cours` par un mouchard — et rallume le signalement.
+
+        Le shim journalise les arguments reçus (c'est ainsi qu'on vérifie que `ensure` passe bien
+        `--sauf <iid>`) puis imprime `lignes`, exactement comme le mode `--auto` du vrai verbe :
+        rien quand il n'y a rien à dire. `code` permet d'éprouver un verbe en échec — le
+        signalement est best-effort et ne doit jamais faire échouer un ramassage.
+
+        Ce qui est vérifié ici, c'est le CÂBLAGE (qui appelle quoi, avec quoi, et sans jamais
+        bloquer) ; la règle qui départage un vivant d'un orphelin est du ressort du verbe, et vit
+        dans tests/test_collaboration.py.
+        """
+        self.orphelins = lignes
+        self.code_orphelins = code
+        shim = self.fauxbin / "orphelins"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            f'printf \'%s\\n\' "$*" >> "{(self.fauxbin / "appels-orphelins.txt").as_posix()}"\n'
+            f'cat "{(self.fauxbin / "orphelins.txt").as_posix()}"\n'
+            f"exit {code}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        shim.chmod(0o755)
+        (self.fauxbin / "orphelins.txt").write_text(lignes, encoding="utf-8", newline="\n")
+
+    def appels_orphelins(self) -> list[str]:
+        """Les arguments passés au signalement, un appel par ligne."""
+        journal = self.fauxbin / "appels-orphelins.txt"
+        if not journal.exists():
+            return []
+        return [ligne for ligne in journal.read_text(encoding="utf-8").splitlines() if ligne]
+
     # --- couture de la mise à niveau des dépendances (#216) ---
     @property
     def journal(self) -> Path:
@@ -309,8 +351,12 @@ def depot(tmp_path: Path) -> Depot:
         dossier.mkdir(parents=True)
         (dossier / "marqueur.txt").write_text(lourd, encoding="utf-8", newline="\n")
 
+    # Copie conforme des motifs du dépôt, y compris l'ABSENCE de barre oblique finale sur `.venv`
+    # et `.tools` (#333) : ils sont partagés par un LIEN, que git ne voit comme un répertoire que
+    # sous Windows. Un `/` ici les rendrait à nouveau non ignorés sous Linux, et le worktree
+    # fraîchement monté repasserait pour « porteur de travail non sauvegardé ».
     (racine / ".gitignore").write_text(
-        ".env\n.venv/\n.tools/\nnode_modules/\n.claude/settings.local.json\n",
+        ".env\n.venv\n.tools\nnode_modules/\n.claude/settings.local.json\n",
         encoding="utf-8",
         newline="\n",
     )
@@ -354,6 +400,31 @@ def test_creation_monte_un_worktree_equipe(depot: Depot) -> None:
     # Artefacts partagés : le lien traverse jusqu'au contenu du clone principal.
     for lourd in (".venv", ".tools"):
         assert (wt / lourd / "marqueur.txt").read_text(encoding="utf-8") == lourd
+
+
+def test_un_worktree_fraichement_monte_est_propre(depot: Depot) -> None:
+    """Rien de ce que `create` dépose ne doit apparaître dans `git status` (#333).
+
+    L'invariant a l'air décoratif ; il porte en fait tout le cycle de vie. « Travail non
+    sauvegardé » se mesure par `git status --porcelain` (`travail_non_sauvegarde`), et c'est le
+    garde-fou qui fait REFUSER un retrait — à juste titre, mieux vaut 535 Mo de trop qu'un commit
+    perdu. Un worktree sale dès sa création rend donc `remove` et `gc` définitivement inopérants :
+    onze tests tombaient en cascade, tous en aval, aucun ne nommant la cause.
+
+    Il n'était vérifié nulle part directement, et les onze tests qui l'auraient trahi sont gardés
+    par `skipif(git absent)` — donc sautés dans l'image `python:3.11-slim` du pipeline, et joués
+    seulement sur des postes Windows, où les artefacts partagés sont des JONCTIONS (des
+    répertoires) et non des liens symboliques (des fichiers). D'où un motif `.venv/` qui ignorait
+    sous Windows et laissait passer sous Linux.
+    """
+    acheve = depot.lance("create", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    salissures = depot.git("status", "--porcelain", cwd=depot.worktree())
+    assert salissures == "", (
+        "un worktree fraîchement monté doit être propre — sinon le garde-fou « travail non "
+        f"sauvegardé » refuse à jamais de le retirer. Laissé derrière :\n{salissures}"
+    )
 
 
 def test_creation_monte_l_atelier_de_session(depot: Depot) -> None:
@@ -884,6 +955,37 @@ def test_gc_ignore_une_branche_hors_convention(depot: Depot) -> None:
     assert depot.worktree("experimentation").exists()
 
 
+def test_ensure_retrouve_le_travail_d_un_ticket_repris(depot: Depot) -> None:
+    """La dernière boucle du critère de #329 : « sans rien perdre » se vérifie ICI, pas ailleurs.
+
+    Rendre un orphelin prenable n'écrit que dans GitLab — le worktree, la branche, les commits non
+    poussés et le travail non commité ne sont pas touchés. Ce qui reste à prouver est l'autre bout :
+    que le démarrage suivant les RETROUVE. Deux choses pourraient le défaire à ce moment précis, et
+    ce sont justement les deux ménages câblés dans `ensure` — le ramassage des worktrees et la purge
+    des branches. Ni l'un ni l'autre ne doit y toucher : le ticket est ouvert, sa MR n'existe pas,
+    donc il est « actif » et sa branche n'est pas mergée.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    wt = depot.worktree()
+    sha = _commit_local(depot, wt, "2047 lignes jamais poussées\n")
+    (wt / "en-chantier.txt").write_text("pas encore commité\n", encoding="utf-8", newline="\n")
+    # Un ticket repris est OUVERT et sans MR mergée : c'est ce que `worktree-done` en dit.
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket ouvert, aucune MR mergée")})
+    depot.impose_mr({BRANCHE: "opened"})
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    verdict = _verdict(acheve)
+    assert verdict.startswith("WORKTREE "), f"verdict inattendu : {verdict!r}"
+    assert Path(verdict[len("WORKTREE ") :]).resolve() == wt.resolve(), (
+        "c'est le worktree du ticket qui doit être rendu, pas un neuf"
+    )
+    assert depot.git("rev-parse", "HEAD", cwd=wt) == sha, "le commit non poussé est retrouvé"
+    assert (wt / "en-chantier.txt").exists(), "le travail non commité aussi"
+    assert BRANCHE in depot.git("branch", "--list", BRANCHE), "la branche n'a pas été purgée"
+
+
 def test_ensure_ramasse_les_worktrees_soldes_avant_de_monter_le_sien(depot: Depot) -> None:
     """Le câblage qui fait tout le ticket : plus aucun geste dédié à se rappeler (#197).
 
@@ -1351,3 +1453,117 @@ def test_ensure_ignore_une_sonde_indisponible(depot: Depot) -> None:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert _verdict(acheve).startswith("WORKTREE ")
     assert "dépendances en retard" not in acheve.stdout
+
+
+# --- Signalement des tickets « En cours » orphelins (#328) ------------------------------------
+# Greffé sur `gc` et non sur `ensure`, pour la raison exacte qui a fait greffer la pose du cycle de
+# vie au même endroit (#275) : les TROIS points de passage de `gc` — `ensure` donc tout
+# /ticket-start, /branch-cleanup, le démarrage d'un run — en héritent d'un coup.
+#
+# Ce qui se vérifie ici est le CÂBLAGE et lui seul : que `gc` demande, qu'il relaie, qu'il écarte le
+# ticket qu'on démarre, et qu'il ne bloque jamais. La règle qui départage un vivant d'un orphelin —
+# carte du pilote, fraîcheur du worktree, portée annoncée — est celle du verbe, et vit dans
+# tests/test_collaboration.py.
+
+ORPHELIN = "  ⚠ #325 orphelin — déduction : worktree silencieux depuis 7h12 — /ailleurs/325\n"
+
+
+def test_gc_signale_les_tickets_en_cours_orphelins(depot: Depot) -> None:
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({})          # aucun verdict : rien à ramasser, tout est conservé
+    depot.impose_orphelins(ORPHELIN)
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#325 orphelin" in acheve.stdout
+    assert "dont plus personne ne s'occupe" in acheve.stdout
+    # Consultatif : le worktree présent n'est pas touché, et rien n'est retiré.
+    assert depot.worktree().exists()
+    assert "0 retiré(s)" in acheve.stdout
+
+
+def test_gc_auto_reste_muet_quand_personne_n_est_orphelin(depot: Depot) -> None:
+    """Le silence est le cas normal — c'est ce qui rend le signal lisible quand il tombe."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({})
+    depot.impose_orphelins("")
+
+    acheve = depot.lance("gc", "--auto")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert acheve.stdout.strip() == ""
+
+
+def test_gc_auto_parle_pour_un_orphelin_meme_sans_rien_a_ramasser(depot: Depot) -> None:
+    """Le cas qui compte : sans ça, /ticket-start ne verrait JAMAIS le signal.
+
+    Le ramassage n'a presque jamais rien à dire — c'est tout l'intérêt de son `--auto` —, donc un
+    orphelin doit rompre ce silence à lui seul, sans quoi il serait avalé par le mutisme du bloc
+    qui le porte.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({})
+    depot.impose_orphelins(ORPHELIN)
+
+    acheve = depot.lance("gc", "--auto")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#325 orphelin" in acheve.stdout
+    # …sans réveiller le compte rendu du ramassage, qui, lui, n'a rien à raconter.
+    assert "retiré(s)" not in acheve.stdout
+
+
+def test_ensure_ecarte_du_signalement_le_ticket_qu_il_demarre(depot: Depot) -> None:
+    """`--sauf <iid>` : le ticket qu'on démarre est repris à l'instant même.
+
+    Son worktree peut très bien dormir depuis la veille — l'annoncer orphelin au moment précis où
+    on le reprend serait vrai une seconde et faux la suivante.
+    """
+    depot.impose_verdicts({})
+    depot.impose_orphelins(ORPHELIN)
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert _verdict(acheve).startswith("WORKTREE ")
+    assert depot.appels_orphelins() == ["--auto --sauf 152"]
+
+
+def test_gc_ne_bloque_pas_sur_un_signalement_en_echec(depot: Depot) -> None:
+    """Best-effort comme le reste de la famille : un verbe muet ou en erreur n'arrête rien."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_orphelins("", code="1")
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout, "le ramassage fait son travail malgré le signal en échec"
+
+
+def test_les_trois_points_de_passage_passent_bien_par_le_ramassage(depot: Depot) -> None:  # noqa: ARG001
+    """Le mutisme épinglé plus haut ne vaut que si les TROIS points de passage en héritent (#330).
+
+    Les tests précédents montrent que `gc --auto` se tait quand il n'y a rien à dire ; encore
+    faut-il que ce soit bien par là que chacun passe. C'est la leçon de #305, qui a coûté 35
+    branches mergées : un déclencheur qui a cessé d'être atteint ne se remarque pas, le code étant
+    toujours là et la doc le décrivant toujours. Un second câblage — un appel direct à
+    `reconcile-en-cours` quelque part — serait la même panne en préparation, avec en prime deux
+    formulations du signal à garder d'accord.
+
+    /branch-cleanup appelle `gc` SANS `--auto`, et c'est voulu : c'est un geste explicite, dont on
+    attend le compte rendu. Les deux autres sont des passages obligés dont personne n'a rien
+    demandé, d'où le mode muet.
+    """
+    passages = {
+        "scripts/git/worktree.sh": "gc --auto",              # `ensure`, donc tout /ticket-start
+        "scripts/orchestrate/run.sh": "gc --auto",           # le démarrage d'un run
+        ".claude/commands/branch-cleanup.md": "worktree.sh gc",
+    }
+    for relatif, attendu in passages.items():
+        texte = (RACINE / relatif).read_text(encoding="utf-8")
+        assert attendu in texte, f"{relatif} ne passe plus par le ramassage ({attendu!r})"
+
+    # Le signalement n'a qu'un seul câblage automatique : `gc`. Ailleurs, `reconcile-en-cours` ne
+    # peut être que NOMMÉ (une commande proposée à un humain), jamais appelé — sans quoi le mutisme
+    # vérifié ci-dessus ne dirait plus rien de ce que voit réellement un /ticket-start.
+    for relatif in ("scripts/orchestrate/run.sh", ".claude/commands/branch-cleanup.md"):
+        for ligne in (RACINE / relatif).read_text(encoding="utf-8").splitlines():
+            if "reconcile-en-cours" in ligne and "--auto" in ligne:
+                raise AssertionError(f"{relatif} : second câblage du signalement — {ligne.strip()}")

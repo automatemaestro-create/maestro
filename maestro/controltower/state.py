@@ -33,6 +33,10 @@ from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_AGENT_CAPACITE,
+    EVENEMENT_BRIEF_DECISION,
+    EVENEMENT_BRIEF_DEMANDE,
+    EVENEMENT_BRIEF_QUESTIONS,
+    EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_DETAIL,
@@ -41,6 +45,7 @@ from maestro.controltower.events import (
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DECISION,
     EVENEMENT_VALIDATION_DEMANDE,
+    Brief,
     Event,
     ReferenceTicket,
 )
@@ -82,11 +87,46 @@ EXECUTION_TERMINEE = "terminee"
 EXECUTION_ANNULEE = "annulee"
 EXECUTION_ECHEC = "echec"
 
+#: Le run **s'est arrêté sur son brief** et attend une décision humaine (#320,
+#: décision D5) : aucune tâche n'est créée tant que rien n'est tranché. État
+#: **non terminal** — le run est en vol, simplement suspendu —, ce qui le laisse
+#: annulable comme n'importe quel run en cours : quelqu'un qui ne veut plus de ce
+#: run n'a pas à l'approuver d'abord pour pouvoir l'arrêter.
+EXECUTION_EN_ATTENTE_BRIEF = "en_attente_brief"
+
+#: Le run **a posé les questions** de son brief et attend les réponses (#321), en
+#: amont de la validation ci-dessus. État non terminal pour la même raison, et elle
+#: est ici la troisième exigence du ticket : une attente de réponses peut durer, et
+#: un run qu'on ne pourrait plus arrêter pendant ce temps serait indiscernable d'un
+#: run planté. Distinct d'`en_attente_brief` parce que ce n'est pas la même attente —
+#: on n'y attend pas une décision mais des réponses, et l'UI n'y présente pas le même
+#: écran ; les confondre ferait proposer « approuver/refuser » à quelqu'un à qui on
+#: pose des questions.
+EXECUTION_EN_ATTENTE_REPONSES = "en_attente_reponses"
+
+#: Les deux états où le run est **suspendu sur un humain** (#320, #321) : en vol,
+#: mais rien ne bougera sans un geste. Rassemblés parce que plusieurs endroits ont
+#: besoin de la question « ce run attend-il quelqu'un ? » — l'ancienneté de l'attente
+#: se pose et se lève sur cet ensemble, et une vue qui veut lister ce qui bloque n'a
+#: pas à connaître les deux noms.
+STATUTS_EXECUTION_EN_ATTENTE = frozenset(
+    {EXECUTION_EN_ATTENTE_BRIEF, EXECUTION_EN_ATTENTE_REPONSES}
+)
+
 #: Statuts d'exécution **terminaux** : le run ne bouge plus, il n'est plus
 #: interruptible (`POST /api/executions/{run_id}/annuler` répond alors 409).
 STATUTS_EXECUTION_TERMINAUX = frozenset(
     {EXECUTION_TERMINEE, EXECUTION_ANNULEE, EXECUTION_ECHEC}
 )
+
+#: Issues d'une décision sur un brief (#320). Volontairement **le vocabulaire des
+#: validations** ci-dessus — approuver ou refuser se dit pareil : ce qui distingue
+#: les deux mécanismes est le canal (`brief.*` vs `validation.*`) et ce qui y
+#: voyage (un brief corrigé vs un booléen), pas le nom de l'issue. En inventer un
+#: second obligerait chaque lecteur du flux à connaître deux tables pour un même
+#: fait.
+BRIEF_APPROUVE = VALIDATION_APPROUVEE
+BRIEF_REFUSE = VALIDATION_REFUSEE
 
 #: Statuts de tâche *terminaux* (machine à états docs/03 §3) : l'agent redevient
 #: libre et les compteurs de la fiche agent s'incrémentent.
@@ -314,6 +354,26 @@ class EtatExecution:
     # lancement puis portée par son événement : c'est ce qui la fait survivre au
     # rejeu du journal durable. Vide pour un objectif purement textuel.
     sources: tuple[Source, ...] = ()
+    # Le régime du brief de ce run (#320), posé par l'événement de lancement —
+    # vide pour un run publié hors de l'API, qui n'en émet aucun.
+    mode_brief: str = ""
+    # Le brief soumis à validation, puis celui qui a été **retenu** (corrections
+    # humaines comprises) : posé par `brief.demande` puis remplacé par
+    # `brief.decision`. None tant que le run n'est pas passé par l'étape — c'est ce
+    # que lit l'écran de validation (#322) pour savoir quoi présenter.
+    brief: Brief | None = None
+    # Depuis quand ce run attend un geste humain (#321) — l'horodatage de
+    # l'événement qui l'a suspendu, None dès qu'il repart ou qu'il est soldé. C'est
+    # l'**ancienneté** de la troisième exigence : sans elle, une attente est
+    # indiscernable d'un run planté, et savoir *depuis quand* est ce qui permet d'en
+    # juger. Posée pour les **deux** attentes (questions et validation) : c'est une
+    # seule question, elle mérite une seule réponse.
+    attente_depuis: str | None = None
+    # Le rang de l'aller-retour de clarification en cours et le plafond annoncé
+    # (#321) — 0 tant que le run n'en a joué aucun. C'est l'annonce du plafond, telle
+    # que l'UI la rend : « tour 1 sur 2 ».
+    tour_clarification: int = 0
+    tours_clarification_max: int = 0
 
     @property
     def debut(self) -> str:
@@ -349,6 +409,13 @@ class EtatExecution:
         `sources` (#315) aussi : ce que l'objectif embarquait, déjà résolu — une
         **liste vide** pour un objectif purement textuel, donc la vue d'avant ce
         lot pour tout ce qui n'en déclare pas.
+
+        `mode_brief` (#320) est le **régime du brief** annoncé au lancement, et
+        `statut` peut valoir `en_attente_brief` : le run s'est arrêté sur son brief
+        et attend une décision. Le **brief lui-même** n'est pas ici mais dans le
+        détail (`to_dict`), à dessein : `GET /api/executions` rend N résumés, et y
+        embarquer sept sections de texte par run alourdirait la liste pour un
+        contenu que seul l'écran d'un run donné regarde.
         """
         return {
             "run_id": self.run_id,
@@ -359,6 +426,16 @@ class EtatExecution:
             "ticket": ticket_en_dict(self.ticket),
             "projet_id": self.projet_id,
             "sources": sources_en_liste(self.sources),
+            "mode_brief": self.mode_brief,
+            # L'attente rendue **visible** (#321) : depuis quand, quel tour, sur
+            # combien. Dans le **résumé** et non dans le seul détail, contrairement au
+            # brief lui-même : c'est la liste des runs qui doit montrer lequel est
+            # bloqué sur un humain, et trois scalaires n'ont pas le poids des sept
+            # sections d'un brief. Les questions, elles, restent dans le détail — on
+            # ne peut pas y répondre depuis une liste.
+            "attente_depuis": self.attente_depuis,
+            "tour_clarification": self.tour_clarification,
+            "tours_clarification_max": self.tours_clarification_max,
             "debut": self.debut,
             "fin": self.fin,
         }
@@ -432,12 +509,15 @@ class EtatExecution:
         """Réémet l'exécution en dict JSON-sérialisable (la forme du REST).
 
         Le **résumé** du run (#185 : objectif, statut, volume, bornes) plus ce
-        que le résumé n'a pas : le grand livre (#57) et la trace événement par
-        événement — `GET /api/executions/{run_id}` sert donc l'état du run et sa
-        trace d'un seul appel.
+        que le résumé n'a pas : le **brief** soumis ou retenu (#320, `null` si le
+        run n'est pas passé par l'étape), le grand livre (#57) et la trace
+        événement par événement — `GET /api/executions/{run_id}` sert donc l'état
+        du run et sa trace d'un seul appel, et c'est là que l'écran de validation
+        (#322) lit ce qu'il donne à relire.
         """
         return {
             **self.resume(),
+            "brief": self.brief.to_dict() if self.brief is not None else None,
             "cout": self.cout.to_dict(),
             "evenements": [e.to_dict() for e in self.evenements],
         }
@@ -600,6 +680,14 @@ class ControlTowerState:
             self._applique_validation_decision(event)
         elif event.type == EVENEMENT_EXECUTION_STATUT:
             self._applique_execution_statut(event)
+        elif event.type == EVENEMENT_BRIEF_DEMANDE:
+            self._applique_brief_demande(event)
+        elif event.type == EVENEMENT_BRIEF_DECISION:
+            self._applique_brief_decision(event)
+        elif event.type == EVENEMENT_BRIEF_QUESTIONS:
+            self._applique_brief_questions(event)
+        elif event.type == EVENEMENT_BRIEF_REPONSES:
+            self._applique_brief_reponses(event)
 
     def _applique_statut_tache(self, event: Event) -> None:
         """Met à jour la tâche visée et la fiche de l'agent qui l'a portée."""
@@ -801,9 +889,121 @@ class ControlTowerState:
             # run n'en porte aucune, et n'a aucune raison d'effacer ce que son
             # lancement a déclaré.
             execution.sources = tuple(event.sources)
+        if event.mode_brief:
+            # Le régime du brief (#320) : même règle une fois de plus — annoncé par
+            # le lancement, jamais retiré par l'issue, qui ne le porte pas.
+            execution.mode_brief = event.mode_brief
         execution.fin = (
             event.horodatage if execution.statut in STATUTS_EXECUTION_TERMINAUX else None
         )
+        # Le run n'attend plus dès qu'il n'est plus dans un état d'attente (#321) —
+        # au premier chef l'**annulation en pleine attente**, qui est le cas que la
+        # troisième exigence du ticket protège. Laisser l'ancienneté derrière soi
+        # ferait afficher « en attente depuis 3 h » sur un run arrêté depuis.
+        if execution.statut not in STATUTS_EXECUTION_EN_ATTENTE:
+            execution.attente_depuis = None
+
+    def _applique_brief_demande(self, event: Event) -> None:
+        """Le run s'arrête sur son brief (#320) : statut suspendu, brief consultable.
+
+        C'est **ici** que `en_attente_brief` est posé, et non par un
+        `execution.statut` que le service émettrait en parallèle : la demande est
+        déjà l'événement qui dit tout (quel run, quel brief), et la suspension est
+        un fait du moteur, pas une décision du pilotage. Un run publié hors de l'API
+        (`maestro-run --publier --brief humain`) obtient ainsi le même état que s'il
+        avait été lancé depuis la Control Tower, sans rien émettre de plus.
+
+        Un événement sans `run_id` est ignoré : il n'y a rien à suspendre.
+        """
+        execution = self._executions.get(event.run_id)
+        if execution is None:
+            return
+        execution.statut = EXECUTION_EN_ATTENTE_BRIEF
+        execution.fin = None
+        execution.attente_depuis = event.horodatage
+        if event.brief is not None:
+            execution.brief = event.brief
+        if event.mode_brief:
+            execution.mode_brief = event.mode_brief
+
+    def _applique_brief_decision(self, event: Event) -> None:
+        """Tranche le brief d'un run (#320) : il repart, ou il s'arrête là.
+
+        Sur **approbation** le run reprend (`en_cours`) et le brief projeté devient
+        celui qui a été retenu — corrections humaines comprises : c'est lui qui part
+        en décomposition, et l'état doit montrer ce qui a réellement été décomposé.
+        Sur **refus** le run est `annulee` et sa fin est posée : le pilotage par
+        l'API consignera la même issue en récupérant `BriefRefuse` (idempotent), et
+        un run publié par un autre process n'a que cet événement-là pour le dire.
+
+        Une décision sur un run qui n'attend pas (déjà tranché, déjà soldé) est
+        **ignorée** plutôt qu'appliquée : jamais deux décisions, et surtout jamais
+        de run terminé ramené en vol par une décision arrivée en retard. L'API le
+        refuse déjà en 409 ; la projection ne s'en remet pas à elle, le même
+        événement pouvant venir du bus (`maestro-run --publier`).
+        """
+        execution = self._executions.get(event.run_id)
+        if execution is None or execution.statut != EXECUTION_EN_ATTENTE_BRIEF:
+            return
+        if event.brief is not None:
+            execution.brief = event.brief
+        execution.attente_depuis = None
+        if event.statut == BRIEF_REFUSE:
+            execution.statut = EXECUTION_ANNULEE
+            execution.fin = event.horodatage
+        else:
+            execution.statut = EXECUTION_EN_COURS
+            execution.fin = None
+
+    def _applique_brief_questions(self, event: Event) -> None:
+        """Le run pose les questions de son brief (#321) et attend les réponses.
+
+        Pendant exact de `_applique_brief_demande`, sur l'autre attente : statut
+        suspendu, brief consultable — ce sont **ses** questions qu'on affiche, jamais
+        une copie —, ancienneté posée, et le tour annoncé avec son plafond.
+
+        Le brief projeté est **remplacé** à chaque tour, à dessein : il a été
+        régénéré entre-temps, donc les questions du tour précédent n'existent plus.
+        C'est ce qui rend sûr l'appariement par position des réponses (`Clarification`)
+        — l'UI répond toujours au brief que la projection montre.
+
+        Un événement sans `run_id` connu est ignoré : il n'y a rien à suspendre.
+        """
+        execution = self._executions.get(event.run_id)
+        if execution is None:
+            return
+        execution.statut = EXECUTION_EN_ATTENTE_REPONSES
+        execution.fin = None
+        execution.attente_depuis = event.horodatage
+        execution.tour_clarification = event.tour
+        execution.tours_clarification_max = event.tours_max
+        if event.brief is not None:
+            execution.brief = event.brief
+
+    def _applique_brief_reponses(self, event: Event) -> None:
+        """Les réponses sont arrivées (#321) : le run repart rédiger son brief.
+
+        Il retourne en `en_cours` — et non vers une décision : ce qui suit est une
+        **régénération du brief**, pas une décomposition. C'est la différence de
+        nature qui a valu à ce canal d'exister à côté de `brief.decision`, et elle se
+        lit ici : le run peut très bien revenir poser d'autres questions au tour
+        suivant.
+
+        `tour_clarification` est **gardé**, pas remis à zéro : c'est le compteur
+        d'allers-retours joués par ce run, et il continue de dire ce qu'il a coûté
+        une fois l'attente finie.
+
+        Des réponses adressées à un run qui n'attend pas sont **ignorées** — jamais
+        deux fois répondu, jamais un run soldé ramené en vol. L'API le refuse déjà en
+        409 ; la projection ne s'en remet pas à elle, le même événement pouvant venir
+        du bus (`maestro-run --publier`).
+        """
+        execution = self._executions.get(event.run_id)
+        if execution is None or execution.statut != EXECUTION_EN_ATTENTE_REPONSES:
+            return
+        execution.statut = EXECUTION_EN_COURS
+        execution.fin = None
+        execution.attente_depuis = None
 
     def _applique_validation_demande(self, event: Event) -> None:
         """Enregistre une demande de validation humaine (#48) — en attente de décision.

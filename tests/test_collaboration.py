@@ -37,9 +37,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -282,8 +284,13 @@ class Depot:
         return [ligne for ligne in lignes if ligne]
 
     # --- exécution ---
-    def lib(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        return self._bash("scripts/gitlab/lib.sh", *args, cwd=cwd)
+    def lib(
+        self,
+        *args: str,
+        cwd: Path | None = None,
+        reglages: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return self._bash("scripts/gitlab/lib.sh", *args, cwd=cwd, reglages=reglages)
 
     def doctor(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self._bash("scripts/gitlab/doctor.sh", *args, cwd=None)
@@ -378,6 +385,12 @@ def depot(tmp_path: Path) -> Depot:
         "scripts/gitlab/lib.sh",
         "scripts/gitlab/doctor.sh",
         "scripts/gitlab/ensure-runner.sh",
+        # `reconcile-en-cours` (#328) délègue la relecture des cartes de pilote à ce fichier — il
+        # ne la refait pas, deux formules qui divergeraient se remarqueraient trop tard.
+        "scripts/orchestrate/pilote.sh",
+        # `reprendre-en-cours` (#329) lui demande d'où sort le ticket qu'on reprend : le journal
+        # d'un run est le seul endroit qui sache dire quel run l'a laissé là, et avec quel verdict.
+        "scripts/orchestrate/journal.sh",
     ):
         cible = racine / relatif
         cible.parent.mkdir(parents=True, exist_ok=True)
@@ -1771,3 +1784,916 @@ def test_les_helpers_de_creation_sont_annonces_par_l_usage(depot: Depot) -> None
     for verbe in ("create-mr", "issue-note", "issue-title"):
         assert verbe in usage, f"{verbe} absent de l'usage de lib.sh"
     assert "fichier" in usage.lower()
+
+
+# =================================================================================================
+# « Quelqu'un s'occupe-t-il encore de ce ticket ? » — la détection des orphelins (#328, parent #327)
+# =================================================================================================
+#
+# Ce que ces tests épinglent est le GARDE-FOU, et lui seul (les critères du lot le disent : le reste
+# des tests part au lot final #330). L'asymétrie est le cœur du sujet — désigner à tort le ticket
+# d'une session vivante coûte infiniment plus cher que de rater un orphelin d'un tour, puisque #329
+# rendra l'orphelin prenable —, donc c'est le faux positif qui est traqué ici, pas le faux négatif.
+#
+# Deux sources à éprouver, et elles ne se valent pas : la CARTE DU PILOTE fait foi (elle nomme un
+# processus vérifiable) là où la fraîcheur du worktree n'est qu'une DÉDUCTION. La carte ne prouve
+# jamais la mort, seulement la vie.
+
+
+def _regle_backlog(statuts: dict[str, str]) -> list[dict]:
+    """Règle de réponse au backlog OUVERT — « iid : cycle de vie » pour chaque ticket."""
+    return [
+        {
+            "contient": ["workItems(state: opened"],
+            "reponse": reponse_backlog(
+                [
+                    noeud_ticket(iid, f"Ticket {iid}", statut, ["type::infra"], [MOI])
+                    for iid, statut in statuts.items()
+                ]
+            ),
+        }
+    ]
+
+
+def _worktree(depot: Depot, iid: str) -> Path:
+    """Monte un worktree du dépôt jetable sur la branche du ticket, et rend son chemin."""
+    chemin = depot.racine.parent / "worktrees" / f"{iid}-essai"
+    depot.git("worktree", "add", "--quiet", "-b", f"chore/{iid}-essai", str(chemin), "main")
+    return chemin
+
+
+def _index_de(chemin: Path) -> Path:
+    """L'index git du worktree — le témoin que touche tout `git add`/`commit`/`status`."""
+    assert GIT is not None
+    brut = subprocess.run(  # noqa: S603
+        [GIT, "-C", str(chemin), "rev-parse", "--git-path", "index"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    return Path(brut) if Path(brut).is_absolute() else chemin / brut
+
+
+def _silence(chemin: Path, secondes: int) -> None:
+    """Recule TOUTES les dates d'écriture du worktree : c'est ça, « plus personne dessus ».
+
+    Toutes, et pas seulement l'index : la mesure prend le maximum de trois témoins (index, fichiers
+    rendus par `git status`, atelier de session). En reculer un seul laisserait les autres frais, et
+    le verdict « vivant » tomberait pour une raison étrangère à ce que le test prétend éprouver.
+    """
+    quand = time.time() - secondes
+    cibles = [_index_de(chemin), chemin]
+    cibles += [f for f in chemin.rglob("*") if ".git" not in f.parts]
+    for cible in cibles:
+        try:
+            os.utime(cible, (quand, quand))
+        except OSError:      # un chemin disparu entre-temps ne doit pas casser le harnais
+            pass
+
+
+def _run_vivant(depot: Depot, iid: str, run_id: str = "20260811-090000") -> subprocess.Popen:
+    """Un run tenant `iid` en vol : plan, témoin de session, et un vrai processus posant sa carte.
+
+    La carte est écrite par `pilote.sh` lui-même, jamais fabriquée à la main — la naissance du
+    processus est en ticks et ne se devine pas depuis Python, si bien qu'un test qui inventerait le
+    format ne vérifierait plus que sa propre invention. Même recette que les tests de l'arrêt dans
+    `test_orchestrate.py`, et pour la même raison : la vivacité d'un processus ne se simule pas.
+    """
+    assert BASH is not None
+    dossier = depot.racine / ".maestro" / "orchestrate" / run_id
+    dossier.mkdir(parents=True, exist_ok=True)
+    (dossier / "plan.tsv").write_text(
+        "# rang\tiid\tparent\tprio\tgroupe\ttitre\n"
+        f"1\t{iid}\t-\thaute\t-\tTicket en vol\n",
+        encoding="utf-8", newline="\n",
+    )
+    # Témoin de session SANS ligne de bilan dans resume.tsv : c'est ce couple-là qui veut dire
+    # « pris en main, pas encore jugé », donc « en vol » (même définition que status.sh).
+    (dossier / f"{iid}.session").write_text("uuid-de-session\n", encoding="utf-8", newline="\n")
+
+    script = depot.racine.parent / "faux-pilote.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        f'. "{(depot.racine / "scripts" / "orchestrate" / "pilote.sh").as_posix()}"\n'
+        'pilote_ecrit "$1"\n'
+        'sleep "$2"\n',
+        encoding="utf-8", newline="\n",
+    )
+    script.chmod(0o755)
+    proc = subprocess.Popen(  # noqa: S603
+        [BASH, str(script), str(dossier), "120"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    # On attend une carte COMPLÈTE et non seulement présente : le fichier apparaît dès l'ouverture
+    # de la redirection, et `hote` est le dernier champ posé.
+    carte = dossier / "pid"
+    for _ in range(200):
+        if carte.exists() and "hote=" in carte.read_text(encoding="utf-8", errors="replace"):
+            return proc
+        time.sleep(0.05)
+    proc.kill()
+    raise AssertionError("le pilote factice n'a jamais posé sa carte")
+
+
+def _verdicts(acheve: subprocess.CompletedProcess[str]) -> dict[str, str]:
+    """La sortie `--tsv` en « iid -> verdict »."""
+    return {ligne[0]: ligne[1] for ligne in colonnes(acheve.stdout)}
+
+
+# --- Le garde-fou : ne jamais désigner le ticket d'une session vivante ----------------------------
+
+
+def test_un_worktree_qui_vient_d_etre_ecrit_n_est_jamais_orphelin(depot: Depot) -> None:
+    depot.pose_etat(graphql=_regle_backlog({"328": "En cours"}))
+    _worktree(depot, "328")
+
+    acheve = depot.lib("reconcile-en-cours", "--tsv")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert _verdicts(acheve) == {"328": "vivant"}
+    assert "déduction" in acheve.stdout, "la source d'un verdict déduit doit être annoncée"
+
+
+def test_un_silence_de_cinq_heures_reste_vivant(depot: Depot) -> None:
+    """Le seuil est GÉNÉREUX à dessein, et c'est ce qu'il protège qui le fixe.
+
+    Une session qui épuise la limite d'usage dort jusqu'à son reset sans rien écrire, et `run.sh`
+    l'attend jusqu'à 5 h 30. Un seuil plus court déclarerait abandonné un ticket dont la session
+    attend légitimement — exactement le faux positif que #329 transformerait en reprise à tort.
+    """
+    depot.pose_etat(graphql=_regle_backlog({"328": "En cours"}))
+    _silence(_worktree(depot, "328"), 5 * 3600)
+
+    assert _verdicts(depot.lib("reconcile-en-cours", "--tsv")) == {"328": "vivant"}
+
+
+def test_la_carte_du_pilote_protege_un_ticket_silencieux(depot: Depot) -> None:
+    """LE test du lot : la carte fait foi, et elle l'emporte sur un worktree muet depuis longtemps.
+
+    Une session peut très bien réfléchir des heures sans rien écrire — c'est précisément ce que la
+    déduction ne sait pas distinguer d'une mort, et ce que la carte, elle, tranche.
+    """
+    depot.pose_etat(graphql=_regle_backlog({"328": "En cours"}))
+    _silence(_worktree(depot, "328"), 48 * 3600)
+    proc = _run_vivant(depot, "328")
+    try:
+        acheve = depot.lib("reconcile-en-cours", "--tsv")
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert _verdicts(acheve) == {"328": "vivant"}
+        assert "carte du pilote" in acheve.stdout
+    finally:
+        proc.kill()
+        proc.wait(timeout=30)
+
+
+def test_une_carte_de_pilote_morte_ne_prouve_rien(depot: Depot) -> None:
+    """L'asymétrie, dans l'autre sens : la carte prouve la VIE, jamais la mort.
+
+    Un pilote arrêté au `taskkill` laisse sa carte derrière lui (aucun trap ne s'exécute). Elle ne
+    doit ni sauver le ticket — c'est justement le mode de mort qui fabrique l'orphelin — ni le
+    condamner : c'est la déduction qui reprend la main, et elle seule.
+    """
+    depot.pose_etat(graphql=_regle_backlog({"328": "En cours"}))
+    _silence(_worktree(depot, "328"), 48 * 3600)
+    dossier = depot.racine / ".maestro" / "orchestrate" / "20260810-141208"
+    dossier.mkdir(parents=True)
+    (dossier / "plan.tsv").write_text(
+        "# rang\tiid\tparent\tprio\tgroupe\ttitre\n1\t328\t-\thaute\t-\tTicket\n",
+        encoding="utf-8", newline="\n",
+    )
+    (dossier / "328.session").write_text("uuid\n", encoding="utf-8", newline="\n")
+    # Une carte qui ne désigne personne : PID hors de portée, naissance impossible à confirmer.
+    (dossier / "pid").write_text(
+        "pid=4294967294\nwinpid=\nnaissance=1\nepoch=1\nhote=inconnu\n",
+        encoding="utf-8", newline="\n",
+    )
+
+    acheve = depot.lib("reconcile-en-cours", "--tsv")
+    assert _verdicts(acheve) == {"328": "orphelin"}
+    assert "carte du pilote" not in acheve.stdout
+
+
+def test_un_ticket_sans_worktree_ici_est_hors_de_portee_jamais_orphelin(depot: Depot) -> None:
+    """La couverture est celle des worktrees de CETTE machine, et elle se dit.
+
+    Un ticket travaillé sur le clone de quelqu'un d'autre n'apprend rien d'ici : le déclarer
+    orphelin reviendrait à proposer de reprendre le travail d'un vivant.
+    """
+    depot.pose_etat(graphql=_regle_backlog({"316": "En cours"}))
+
+    acheve = depot.lib("reconcile-en-cours", "--tsv")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert _verdicts(acheve) == {"316": "hors-portee"}
+
+
+def test_seuls_les_tickets_en_cours_sont_examines(depot: Depot) -> None:
+    """« En revue » a livré, « À faire » n'a jamais commencé : ni l'un ni l'autre n'est orphelin."""
+    depot.pose_etat(
+        graphql=_regle_backlog({"325": "En revue", "326": "À faire", "328": "En cours"})
+    )
+    for iid in ("325", "326", "328"):
+        _silence(_worktree(depot, iid), 48 * 3600)
+
+    acheve = depot.lib("reconcile-en-cours", "--tsv")
+    assert _verdicts(acheve) == {"328": "orphelin"}
+
+
+# --- La détection elle-même, et ce qu'elle ne fait pas --------------------------------------------
+
+
+def test_un_worktree_silencieux_sans_pilote_est_un_orphelin(depot: Depot) -> None:
+    depot.pose_etat(graphql=_regle_backlog({"325": "En cours"}))
+    chemin = _worktree(depot, "325")
+    _silence(chemin, 48 * 3600)
+
+    acheve = depot.lib("reconcile-en-cours")
+    assert acheve.returncode == 3, "un orphelin se dit aussi par le code de retour"
+    assert "#325 orphelin" in acheve.stdout
+    assert "déduction" in acheve.stdout, "une déduction s'annonce comme telle"
+    assert chemin.exists(), "la détection ne retire jamais un worktree"
+
+
+def test_la_detection_n_ecrit_rien_du_tout(depot: Depot) -> None:
+    """Elle SIGNALE : ni label, ni assignation, ni worktree touchés. La reprise est #329."""
+    depot.pose_etat(graphql=_regle_backlog({"325": "En cours"}))
+    _silence(_worktree(depot, "325"), 48 * 3600)
+
+    depot.lib("reconcile-en-cours")
+    assert not ecritures(depot)
+
+
+def test_check_est_accepte_et_ne_change_rien(depot: Depot) -> None:
+    """Le verbe est en lecture seule par nature ; refuser `--check` serait un piège de famille."""
+    depot.pose_etat(graphql=_regle_backlog({"325": "En cours"}))
+    _silence(_worktree(depot, "325"), 48 * 3600)
+
+    sans = depot.lib("reconcile-en-cours", "--tsv")
+    avec = depot.lib("reconcile-en-cours", "--check", "--tsv")
+    assert avec.returncode == sans.returncode
+    assert _verdicts(avec) == _verdicts(sans) == {"325": "orphelin"}
+
+
+def test_sauf_ecarte_le_ticket_qu_on_est_en_train_de_demarrer(depot: Depot) -> None:
+    """`ensure` le passe : le ticket qu'on démarre est repris à l'instant même.
+
+    Sans ça, /ticket-start sur un ticket laissé en plan la veille annoncerait comme orphelin celui
+    qu'il est justement en train de reprendre — vrai une seconde, faux la suivante.
+    """
+    depot.pose_etat(graphql=_regle_backlog({"325": "En cours", "328": "En cours"}))
+    for iid in ("325", "328"):
+        _silence(_worktree(depot, iid), 48 * 3600)
+
+    acheve = depot.lib("reconcile-en-cours", "--tsv", "--sauf", "328")
+    assert _verdicts(acheve) == {"325": "orphelin"}
+
+
+def test_auto_se_tait_sans_orphelin_et_parle_avec(depot: Depot) -> None:
+    """Le mode des points de passage : le silence est le cas normal (comme `gc --auto`)."""
+    depot.pose_etat(graphql=_regle_backlog({"328": "En cours"}))
+    chemin = _worktree(depot, "328")
+
+    muet = depot.lib("reconcile-en-cours", "--auto")
+    assert muet.returncode == 0
+    assert muet.stdout == ""
+
+    _silence(chemin, 48 * 3600)
+    bavard = depot.lib("reconcile-en-cours", "--auto")
+    assert bavard.returncode == 3
+    assert "#328 orphelin" in bavard.stdout
+    assert "vivant" not in bavard.stdout, "en --auto, seuls les orphelins sont une nouvelle"
+
+
+def test_le_backlog_illisible_ne_fait_pas_conclure_a_l_orphelin(depot: Depot) -> None:
+    """Ne rien savoir n'autorise rien — même règle que le ramassage devant un `glab` muet."""
+    depot.pose_etat(graphql=[])
+
+    acheve = depot.lib("reconcile-en-cours")
+    assert acheve.returncode == 1
+    assert "orphelin" not in acheve.stdout
+
+
+def test_le_verbe_est_annonce_par_l_usage(depot: Depot) -> None:
+    """Un helper qu'on ne trouve pas n'existe pas — et #329 partira de celui-ci."""
+    usage = depot.lib().stderr
+    assert "reconcile-en-cours" in usage
+    assert "orphelin" in usage
+
+
+# =================================================================================================
+# La reprise : rendre un orphelin prenable, sur un geste explicite (#329, parent #327)
+# =================================================================================================
+#
+# Le lot précédent DÉSIGNE, celui-ci REND PRENABLE — et « prenable » est une CONJONCTION, parce que
+# le filtre de `queue.sh` en est une : « À faire » ET libre. Trois choses sont épinglées ici, et
+# elles ne se valent pas :
+#
+#   1. LE GARDE-FOU — ne jamais reprendre un ticket vivant. C'est le seul défaut de ce lot qui
+#      coûterait cher : reprendre le ticket d'une session en cours le lui retire (le prochain run
+#      l'assigne à quelqu'un d'autre), là où rater un orphelin ne coûte qu'un tour.
+#   2. LE TRAVAIL PRÉSERVÉ — la reprise n'écrit QUE dans GitLab. #316, c'est 2047 lignes commitées
+#      et jamais poussées : un verbe qui « nettoierait » au passage détruirait exactement ce qu'il
+#      est censé sauver.
+#   3. LE BORNAGE — ses tests ne sont PAS différés au lot final (contrairement au reste), et c'est
+#      dit dans le ticket : sans plafond, un ticket qui retombe à chaque run transforme la reprise
+#      en boucle, sur un quota partagé. C'est la seule ligne qui sépare un geste d'un emballement.
+
+
+def _labels_workflow_gids() -> dict:
+    """Règle de réponse à la liste des labels du scope — la brique qui permet de retirer les
+    cinq autres. GID volontairement non contigus : rien ne doit pouvoir en deviner un à partir
+    d'un autre.
+    """
+    return {
+        "contient": ["labels(searchTerm:"],
+        "reponse": {
+            "data": {
+                "project": {
+                    "labels": {
+                        "nodes": [
+                            {"id": f"gid://gitlab/ProjectLabel/{gid}", "title": f"workflow::{slug}"}
+                            for slug, gid in (
+                                ("a-faire", 9007), ("en-cours", 31), ("en-revue", 4512),
+                                ("termine", 88), ("abandonne", 1203), ("doublon", 677),
+                            )
+                        ]
+                    }
+                }
+            }
+        },
+    }
+
+
+WORKITEM_GID = "gid://gitlab/WorkItem/55501"
+
+
+def _regles_reprise(statuts: dict[str, str]) -> list[dict]:
+    """Tout ce qu'il faut pour qu'une reprise aboutisse : backlog, labels, work item, mutation."""
+    return [
+        {
+            "contient": ["workItemUpdate"],
+            "reponse": {"data": {"workItemUpdate": {"errors": []}}},
+        },
+        _labels_workflow_gids(),
+        {
+            # La résolution du GID du work item. Le fragment `nodes { id }` la distingue de la
+            # requête cycle de vie + assignés, qui porte `WorkItemWidgetAssignees`.
+            "contient": ["workItems(iids:", "nodes { id }"],
+            "reponse": {"data": {"project": {"workItems": {"nodes": [{"id": WORKITEM_GID}]}}}},
+        },
+        *_regle_backlog(statuts),
+    ]
+
+
+def _mutations(depot: Depot) -> list[str]:
+    """Les mutations GraphQL reçues — ce qui distingue « repris » de « refusé »."""
+    return [ligne for ligne in depot.appels() if "workItemUpdate" in ligne]
+
+
+def _gids(mutation: str, champ: str) -> list[str]:
+    trouve = re.search(rf"{champ}:\[(.*?)\]", mutation)
+    return re.findall(r'"([^"]+)"', trouve.group(1)) if trouve else []
+
+
+def _registre(depot: Depot) -> Path:
+    return depot.racine / ".maestro" / "orchestrate" / "reprises.tsv"
+
+
+def _run_juge(
+    depot: Depot, iid: str, verdict: str, raison: str, run_id: str = "20260810-141208"
+) -> None:
+    """Un run passé qui a jugé ce ticket — la moitié « d'où il sort » de la trace."""
+    dossier = depot.racine / ".maestro" / "orchestrate" / run_id
+    dossier.mkdir(parents=True, exist_ok=True)
+    (dossier / "resume.tsv").write_text(
+        "# iid\tverdict\tmr\tduree_s\tcout_usd\traison\n"
+        f"{iid}\t{verdict}\t-\t2702\t14.75\t{raison}\n",
+        encoding="utf-8", newline="\n",
+    )
+
+
+def _orphelin(depot: Depot, iid: str, statuts: dict[str, str] | None = None) -> Path:
+    """Un ticket « En cours » dont le worktree est muet depuis deux jours."""
+    depot.pose_etat(graphql=_regles_reprise(statuts or {iid: "En cours"}))
+    chemin = _worktree(depot, iid)
+    _silence(chemin, 48 * 3600)
+    return chemin
+
+
+# --- Le garde-fou : la reprise ne prend rien à personne -------------------------------------------
+
+
+def test_reprendre_refuse_un_ticket_dont_quelqu_un_s_occupe(depot: Depot) -> None:
+    """LE test du lot. Un worktree écrit à l'instant : quelqu'un travaille, on ne touche à rien.
+
+    Le coût de l'erreur est asymétrique et c'est ce qui fixe le sens du refus — reprendre un ticket
+    vivant le retire à sa session (le prochain run le prend et l'assigne), rater un orphelin ne
+    coûte qu'un tour de boucle.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"325": "En cours"}))
+    _worktree(depot, "325")
+
+    acheve = depot.lib("reprendre-en-cours", "325")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "quelqu'un s'en occupe" in acheve.stdout
+    assert _mutations(depot) == [], "un refus n'écrit RIEN côté GitLab"
+
+
+def test_reprendre_refuse_un_ticket_hors_de_portee(depot: Depot) -> None:
+    """Aucun worktree ici : ne rien savoir n'autorise rien — le ticket vit peut-être ailleurs.
+
+    C'est la borne annoncée du dispositif (les worktrees de CETTE machine) tenue jusque dans le
+    geste : elle ne se relâche pas au moment d'écrire.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours"}))
+
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 3
+    assert "hors de portée" in acheve.stdout
+    assert "--force" in acheve.stdout, "un refus doit dire par où passer quand on sait, soi"
+    assert _mutations(depot) == []
+
+
+def test_reprendre_refuse_un_ticket_qui_n_est_pas_en_cours(depot: Depot) -> None:
+    """« En revue » a livré, « À faire » n'a jamais commencé : il n'y a rien à reprendre."""
+    depot.pose_etat(graphql=_regles_reprise({"325": "En revue"}))
+    _silence(_worktree(depot, "325"), 48 * 3600)
+
+    acheve = depot.lib("reprendre-en-cours", "325")
+    assert acheve.returncode == 3
+    assert "n'est pas « En cours »" in acheve.stdout
+    assert _mutations(depot) == []
+
+
+def test_force_passe_outre_le_verdict_et_le_dit(depot: Depot) -> None:
+    """Le geste de qui sait quelque chose que la machine ignore — jamais en silence."""
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours"}))
+
+    acheve = depot.lib("reprendre-en-cours", "--force", "316")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert len(_mutations(depot)) == 1
+    assert "--force" in acheve.stdout, "lever le garde-fou se dit, sinon la sortie ment"
+
+
+# --- Le geste lui-même : « À faire » ET libre, en une seule mutation ----------------------------
+
+
+def test_reprendre_remet_a_faire_et_libere_dans_la_meme_mutation(depot: Depot) -> None:
+    """La conjonction. Poser le cycle de vie sans libérer laisserait le ticket écarté par l'autre
+    moitié du filtre de `queue.sh`, et l'inverse par la première — il resterait invisible.
+
+    « En une seule mutation » n'est pas un raffinement : deux appels, c'est un intervalle pendant
+    lequel le ticket est « À faire » et encore assigné (ou l'inverse), et un run qui passe là
+    tombe sur un état que personne n'a voulu.
+    """
+    _orphelin(depot, "316")
+
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    mutations = _mutations(depot)
+    assert len(mutations) == 1, f"une seule mutation attendue : {mutations}"
+    mutation = mutations[0]
+    assert f'id:"{WORKITEM_GID}"' in mutation
+    assert "assigneeIds:[]" in mutation, "libérer, c'est VIDER la liste des assignés"
+    a_faire = ["gid://gitlab/ProjectLabel/9007"]
+    assert _gids(mutation, "addLabelIds") == a_faire, "le cycle de vie repasse à workflow::a-faire"
+    assert len(_gids(mutation, "removeLabelIds")) == 5, "les cinq autres partent dans le même appel"
+
+
+def test_la_reprise_ne_touche_ni_au_worktree_ni_aux_commits(depot: Depot) -> None:
+    """#316, c'est 2047 lignes commitées et jamais poussées : elles doivent être là après.
+
+    Le ticket est explicite — « sans rien perdre » — et c'est ce qui distingue cette reprise d'un
+    `gc` : le verbe n'écrit QUE dans GitLab, il ne connaît même pas de chemin à supprimer.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours"}))
+    chemin = _worktree(depot, "316")
+    (chemin / "travail-non-commite.txt").write_text("2047 lignes\n", encoding="utf-8", newline="\n")
+    depot.git("-C", str(chemin), "add", "-A")
+    depot.git("-C", str(chemin), "commit", "--quiet", "-m", "feat: travail jamais poussé")
+    (chemin / "encore-en-chantier.txt").write_text("en cours\n", encoding="utf-8", newline="\n")
+    sha = depot.git("-C", str(chemin), "rev-parse", "HEAD")
+    # Le silence vient APRÈS le travail : un `git commit` touche l'index, donc rend le worktree
+    # frais — le faire dans l'autre ordre ferait conclure « vivant » et le test mesurerait le
+    # refus au lieu de la préservation.
+    _silence(chemin, 48 * 3600)
+
+    assert depot.lib("reprendre-en-cours", "316").returncode == 0
+
+    assert chemin.exists(), "le worktree n'est jamais retiré"
+    assert (chemin / "encore-en-chantier.txt").exists(), "le non-commité reste où il est"
+    apres = depot.git("-C", str(chemin), "rev-parse", "HEAD")
+    assert apres == sha, "le commit non poussé est intact"
+    assert depot.git("-C", str(chemin), "branch", "--show-current") == "chore/316-essai"
+
+
+def test_check_dit_ce_qu_il_ferait_sans_rien_ecrire(depot: Depot) -> None:
+    """Cohérence de famille (`reconcile-workflow --check`, `setup --derive`) : voir avant d'agir."""
+    _orphelin(depot, "316")
+
+    acheve = depot.lib("reprendre-en-cours", "--check", "316")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "passerait à « À faire »" in acheve.stdout
+    assert _mutations(depot) == []
+    assert not ecritures(depot)
+    assert not _registre(depot).exists(), "un --check ne consigne rien non plus"
+
+
+# --- La trace : d'où sortait le ticket, et combien de fois il est déjà revenu -------------------
+
+
+def test_la_reprise_consigne_le_run_et_le_verdict_d_origine(depot: Depot) -> None:
+    """« D'où sort ce ticket revenu à “À faire” ? » ne se répond nulle part ailleurs.
+
+    Le ticket, lui, ne porte aucune trace de la session morte dessus : c'est le journal du run qui
+    la porte, et il sera ramassé au bout de dix runs (#198) — d'où une trace qui lui survit.
+    """
+    _orphelin(depot, "316")
+    _run_juge(depot, "316", "ECHEC", "timeout — session terminée sans clôture, 1 commit(s)")
+
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "20260810-141208" in acheve.stdout and "ECHEC" in acheve.stdout
+
+    ligne = _registre(depot).read_text(encoding="utf-8").splitlines()[-1].split("\t")
+    assert ligne[1:5] == ["316", "20260810-141208", "ECHEC", "1"]
+
+    lecture = depot.lib("reprises", "316")
+    assert lecture.returncode == 0, lecture.stderr
+    assert "#316" in lecture.stdout and "20260810-141208" in lecture.stdout
+
+    # Le commentaire sur le ticket : l'autre moitié de la trace, celle qu'on lit dans GitLab des
+    # semaines plus tard, sans la machine sous la main.
+    assert [ligne for ligne in depot.appels() if ligne.startswith("issue\tnote")], (
+        "la reprise laisse un commentaire sur le ticket"
+    )
+
+
+def test_une_reprise_sans_run_d_origine_le_dit_au_lieu_d_inventer(depot: Depot) -> None:
+    """#325 : session interactive laissée en plan, aucun journal — ne rien trouver est une
+    réponse."""
+    _orphelin(depot, "325")
+
+    acheve = depot.lib("reprendre-en-cours", "325")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "aucun run" in acheve.stdout
+    assert _registre(depot).read_text(encoding="utf-8").splitlines()[-1].split("\t")[2] == "-"
+
+
+# --- Le bornage : une reprise est un geste, pas une boucle --------------------------------------
+
+
+def test_le_plafond_arrete_un_ticket_qui_retombe_a_chaque_run(depot: Depot) -> None:
+    """Le garde-fou dont les tests ne sont PAS différés (le ticket le dit, et voici pourquoi).
+
+    Un ticket que chaque session fait tomber au même endroit repartirait à chaque run, brûlerait
+    une session entière à chaque fois et redeviendrait orphelin : la reprise serait une boucle, sur
+    un quota partagé. Le plafond ne l'interdit pas — il exige qu'on le demande.
+    """
+    _orphelin(depot, "316")
+    for essai in (1, 2):
+        assert depot.lib("reprendre-en-cours", "316").returncode == 0, f"reprise {essai}"
+
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "plafond" in acheve.stdout
+    assert len(_mutations(depot)) == 2, "la troisième reprise n'a rien écrit"
+
+    forcee = depot.lib("reprendre-en-cours", "--force", "316")
+    assert forcee.returncode == 0, forcee.stdout + forcee.stderr
+    assert len(_mutations(depot)) == 3, "--force reste la porte de sortie, jamais silencieuse"
+
+
+def test_le_plafond_se_compte_par_ticket(depot: Depot) -> None:
+    """Deux tickets, deux compteurs — sans quoi un ticket bloquerait la reprise de son voisin."""
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours", "325": "En cours"}))
+    for iid in ("316", "325"):
+        _silence(_worktree(depot, iid), 48 * 3600)
+    for _ in (1, 2):
+        assert depot.lib("reprendre-en-cours", "316").returncode == 0
+
+    assert depot.lib("reprendre-en-cours", "316").returncode == 3
+    assert depot.lib("reprendre-en-cours", "325").returncode == 0
+
+
+def test_le_plafond_est_reglable(depot: Depot) -> None:
+    """Deux essais est un choix, pas une constante de la nature : il se déplace sans code."""
+    _orphelin(depot, "316")
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 0, acheve.stderr
+
+    borne = depot.lib("reprendre-en-cours", "316", reglages={"MAESTRO_REPRISES_MAX": "1"})
+    assert borne.returncode == 3
+    assert "plafond 1" in borne.stdout
+
+
+def test_plusieurs_tickets_en_un_appel_et_un_refus_n_arrete_pas_les_autres(depot: Depot) -> None:
+    """/orchestrate reprend en UN appel ce que l'utilisateur a coché : un refus au milieu de la
+    liste ne doit pas laisser la moitié du travail non fait.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours", "325": "En cours"}))
+    _silence(_worktree(depot, "316"), 48 * 3600)
+    _worktree(depot, "325")   # celui-là est vivant : il sera refusé
+
+    acheve = depot.lib("reprendre-en-cours", "316", "325")
+    assert acheve.returncode == 3, "un refus se dit par le code de retour, même partiel"
+    assert "#316 repris" in acheve.stdout
+    assert "quelqu'un s'en occupe" in acheve.stdout
+    assert len(_mutations(depot)) == 1
+
+
+def test_le_verbe_de_reprise_est_annonce_par_l_usage(depot: Depot) -> None:
+    usage = depot.lib().stderr
+    assert "reprendre-en-cours" in usage
+    assert "reprises" in usage
+    assert "--force" in usage
+
+
+# =================================================================================================
+# Lot final : les trois modes de mort, le travail préservé, le bornage qui dure (#330, parent #327)
+# =================================================================================================
+#
+# Les deux lots précédents n'ont épinglé que leur logique critique — le garde-fou du ticket vivant
+# (#328), la conjonction « À faire » ET libre et le plafond (#329). Le reste était différé ici, et
+# ce reste a une forme : ce sont les trois questions auxquelles le chantier répond et qu'aucun test
+# ne pose encore telles quelles.
+#
+#   1. LES TROIS MODES DE MORT. Le renversement de #327 — ne pas demander « ce run a-t-il échoué ? »
+#      mais « quelqu'un s'en occupe-t-il encore ? » — vaut précisément parce qu'il ne dépend PAS du
+#      journal. Il faut donc le jouer sur les trois états de journal que produisent les trois
+#      façons de mourir, et vérifier qu'ils rendent le même verdict et trois origines différentes.
+#   2. LE TRAVAIL PRÉSERVÉ. #329 vérifie que le worktree est encore là et que HEAD n'a pas bougé.
+#      Ce qui restait à prouver est plus fort : que RIEN n'y a bougé — c'est le seul défaut de ce
+#      dispositif qui serait irréparable, les 2047 lignes de #316 n'existant nulle part ailleurs.
+#   3. LE BORNAGE QUI DURE. Le plafond ne vaut que s'il survit à ce qui balaie le journal (#198) et
+#      qu'il ne se contourne pas en changeant de répertoire. Un compteur qu'un ménage remet à zéro
+#      est un compteur qui n'existe pas, et il ne se remarquerait qu'au dixième run.
+#
+# S'y ajoute la DÉRIVE DOCTOR (#328, section 4d), qui n'avait aucun test : c'est la moitié
+# « visibilité » du chantier, celle qui parle à quelqu'un qui ne démarre pas de ticket ce jour-là.
+
+
+# --- Les trois modes de mort ----------------------------------------------------------------------
+# Un mode de mort ne se distingue que par ce qu'il laisse dans le journal. Ces trois recettes sont
+# donc trois états de `.maestro/orchestrate/`, et rien d'autre : le worktree, lui, est muet dans les
+# trois cas — c'est bien le point, la détection n'a pas à savoir de quoi la session est morte.
+
+
+def _mort_run_solde(depot: Depot, iid: str) -> None:
+    """#316 : le run a jugé, et son verdict est un échec.
+
+    C'est le mode que `--resume` ne rattrapera JAMAIS : `reprend_en_vol` exige un témoin de session
+    ET aucune ligne de bilan, or il y en a une. Le run est en plus « terminé », donc même pas
+    reprenable. Sans ce dispositif, le ticket et son travail sortent du champ de vision pour de bon.
+    """
+    dossier = depot.racine / ".maestro" / "orchestrate" / "20260810-141208"
+    dossier.mkdir(parents=True, exist_ok=True)
+    (dossier / f"{iid}.session").write_text("uuid\n", encoding="utf-8", newline="\n")
+    (dossier / "resume.tsv").write_text(
+        "# iid\tverdict\tmr\tduree_s\tcout_usd\traison\n"
+        f"{iid}\tECHEC\t-\t2702\t14.75\ttimeout — session terminée sans clôture, 1 commit(s)\n",
+        encoding="utf-8", newline="\n",
+    )
+
+
+def _mort_pilote_tue(depot: Depot, iid: str) -> None:
+    """Le pilote arrêté au `taskkill //F` : aucun trap, donc aucun verdict — et sa carte reste là.
+
+    C'est LE mode qui fabrique les orphelins, et le seul où la carte du pilote pourrait faire
+    conclure à tort : elle survit à son processus. Elle ne prouve que la vie, jamais la mort.
+    """
+    dossier = depot.racine / ".maestro" / "orchestrate" / "20260811-093000"
+    dossier.mkdir(parents=True, exist_ok=True)
+    (dossier / f"{iid}.session").write_text("uuid\n", encoding="utf-8", newline="\n")
+    (dossier / "pid").write_text(
+        "pid=4294967294\nwinpid=\nnaissance=1\nepoch=1\nhote=inconnu\n",
+        encoding="utf-8", newline="\n",
+    )
+
+
+def _mort_session_interactive(depot: Depot, iid: str) -> None:  # noqa: ARG001
+    """#325 : une session interactive laissée en plan — ni journal, ni témoin, ni verdict.
+
+    Rien à écrire, et c'est tout le propos : ce mode-là échappe par construction à tout ce qui lit
+    `.maestro/orchestrate/`. Seule la question posée au WORKTREE peut l'attraper.
+    """
+
+
+MODES_DE_MORT = [
+    pytest.param(_mort_run_solde, "20260810-141208", "ECHEC", id="run-solde-en-echec"),
+    pytest.param(_mort_pilote_tue, "20260811-093000", "sans verdict", id="pilote-tue-sans-verdict"),
+    pytest.param(_mort_session_interactive, None, None, id="session-interactive-abandonnee"),
+]
+
+
+@pytest.mark.parametrize(("poser_le_journal", "run", "verdict_run"), MODES_DE_MORT)
+def test_les_trois_modes_de_mort_produisent_un_orphelin_reprenable(
+    depot: Depot,
+    poser_le_journal,  # noqa: ANN001
+    run: str | None,
+    verdict_run: str | None,
+) -> None:
+    """LE critère du lot, et la thèse de #327 en un test : le mode de mort n'entre pas en compte.
+
+    Trois journaux radicalement différents — un verdict d'échec, une carte de pilote sans verdict,
+    rien du tout — pour un seul et même verdict, parce que la question n'est plus posée au run mais
+    au worktree. Ce que le journal change, c'est seulement ce qu'on saura DIRE de l'origine : et
+    « aucun run ne l'a jugé » est une réponse, pas un trou.
+    """
+    chemin = _orphelin(depot, "316")
+    poser_le_journal(depot, "316")
+
+    detection = depot.lib("reconcile-en-cours", "--tsv")
+    assert _verdicts(detection) == {"316": "orphelin"}, detection.stdout + detection.stderr
+
+    reprise = depot.lib("reprendre-en-cours", "316")
+    assert reprise.returncode == 0, reprise.stdout + reprise.stderr
+    assert len(_mutations(depot)) == 1
+    assert chemin.exists(), "aucun mode de mort ne justifie de retirer le worktree"
+
+    if run is None:
+        assert "aucun run" in reprise.stdout
+        assert _registre(depot).read_text(encoding="utf-8").splitlines()[-1].split("\t")[2] == "-"
+    else:
+        assert run in reprise.stdout and verdict_run in reprise.stdout
+        assert _registre(depot).read_text(encoding="utf-8").splitlines()[-1].split("\t")[2] == run
+
+
+# --- Le travail préservé --------------------------------------------------------------------------
+
+
+def _empreinte(depot: Depot, chemin: Path) -> dict[str, object]:
+    """Tout ce qu'une reprise pourrait abîmer, en un objet comparable.
+
+    Le contenu des fichiers ET l'état de git : un verbe qui « nettoierait » au passage se verrait
+    aussi bien par un fichier disparu que par un `git checkout` qui ne laisse aucune trace dans
+    l'arborescence — d'où HEAD, la branche courante, la liste des branches et le `status`.
+    """
+    return {
+        "fichiers": {
+            f.relative_to(chemin).as_posix(): f.read_bytes()
+            for f in sorted(chemin.rglob("*"))
+            if f.is_file() and ".git" not in f.relative_to(chemin).parts
+        },
+        "head": depot.git("-C", str(chemin), "rev-parse", "HEAD"),
+        "branche": depot.git("-C", str(chemin), "branch", "--show-current"),
+        "branches": depot.git("-C", str(chemin), "branch", "--format=%(refname:short)"),
+        "status": depot.git("-C", str(chemin), "status", "--porcelain"),
+    }
+
+
+def test_la_reprise_ne_change_rien_du_tout_dans_le_worktree(depot: Depot) -> None:
+    """La promesse « sans rien perdre », prise au mot : l'empreinte est IDENTIQUE après.
+
+    #329 vérifiait que le worktree était encore là et HEAD au même endroit ; c'est le minimum. Ce
+    qui est en jeu ici n'a pas de sauvegarde : un commit jamais poussé n'existe que sur ce disque,
+    et un fichier non commité n'existe même pas dans git. Le verbe n'écrit QUE dans GitLab — il ne
+    connaît aucun chemin à supprimer —, et c'est cette phrase-là qu'on épingle.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours"}))
+    chemin = _worktree(depot, "316")
+    (chemin / "extraction.py").write_text("2047 lignes\n", encoding="utf-8", newline="\n")
+    depot.git("-C", str(chemin), "add", "-A")
+    depot.git("-C", str(chemin), "commit", "--quiet", "-m", "feat: jamais poussé")
+    (chemin / "en-chantier.py").write_text("pas encore commité\n", encoding="utf-8", newline="\n")
+    # L'atelier de session (#307) : gitignoré, invisible d'un `git status`, et pourtant c'est là
+    # qu'une session pose ses fichiers de travail — donc là qu'une reprise pourrait faire le ménage.
+    (chemin / ".maestro" / "session").mkdir(parents=True)
+    (chemin / ".maestro" / "session" / "brouillon.md").write_text(
+        "notes de la session morte\n", encoding="utf-8", newline="\n"
+    )
+    avant = _empreinte(depot, chemin)
+    _silence(chemin, 48 * 3600)   # après le travail : un commit rafraîchit l'index (cf. #329)
+
+    assert depot.lib("reprendre-en-cours", "316").returncode == 0
+
+    assert _empreinte(depot, chemin) == avant, "la reprise n'écrit que dans GitLab"
+
+
+def test_le_travail_est_preserve_meme_quand_le_garde_fou_est_leve(depot: Depot) -> None:
+    """`--force` lève le VERDICT, jamais la préservation — les deux n'ont rien à voir.
+
+    Le cas est réel : on force quand on sait que la session d'en face est morte pour de bon. Ce
+    serait le pire moment pour que le verbe se permette un ménage, puisque c'est aussi celui où
+    personne ne surveille plus le worktree.
+    """
+    depot.pose_etat(graphql=_regles_reprise({"316": "En cours"}))
+    chemin = _worktree(depot, "316")
+    (chemin / "en-chantier.py").write_text("396 lignes\n", encoding="utf-8", newline="\n")
+    avant = _empreinte(depot, chemin)
+
+    acheve = depot.lib("reprendre-en-cours", "--force", "316")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert _empreinte(depot, chemin) == avant
+
+
+# --- Le bornage, mais celui qui dure --------------------------------------------------------------
+
+
+def test_le_plafond_survit_au_menage_du_journal(depot: Depot) -> None:
+    """Le registre vit à CÔTÉ des répertoires de run, et c'est ce qui lui donne sa valeur.
+
+    `journal.sh gc` ne garde que les dix derniers runs (#198). Un compteur rangé dans le
+    répertoire d'un run disparaîtrait donc avec lui — et un ticket qui retombe à chaque run
+    repartirait indéfiniment, le plafond se remettant à zéro tous les dix runs. Le défaut ne se
+    verrait qu'au dixième, et sur un quota partagé.
+    """
+    _orphelin(depot, "316")
+    for essai in (1, 2):
+        assert depot.lib("reprendre-en-cours", "316").returncode == 0, f"reprise {essai}"
+    assert _registre(depot).exists()
+
+    # Douze runs, tous plus vieux que le seuil de silence : le ménage en emportera deux.
+    orch = depot.racine / ".maestro" / "orchestrate"
+    vieux = time.time() - 30 * 24 * 3600
+    for n in range(12):
+        dossier = orch / f"2026070{n // 10}-1200{n % 10:02d}"
+        dossier.mkdir(parents=True, exist_ok=True)
+        (dossier / "resume.tsv").write_text("# iid\n", encoding="utf-8", newline="\n")
+        os.utime(dossier / "resume.tsv", (vieux, vieux))
+        os.utime(dossier, (vieux, vieux))
+
+    menage = subprocess.run(  # noqa: S603
+        [BASH, str(depot.racine / "scripts/orchestrate/journal.sh"), "gc", "--auto"],
+        cwd=str(depot.racine), capture_output=True, text=True, encoding="utf-8", timeout=120,
+    )
+    assert menage.returncode == 0, menage.stdout + menage.stderr
+    # Le ménage a bien tourné : sans cette ligne, le test passerait aussi bien si `gc` n'avait rien
+    # trouvé à faire — et il ne prouverait plus rien du tout.
+    assert "retiré" in menage.stdout, f"le ménage n'a rien ramassé : {menage.stdout!r}"
+
+    assert _registre(depot).exists(), "le ménage ne balaie que les répertoires de run"
+    acheve = depot.lib("reprendre-en-cours", "316")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "plafond" in acheve.stdout
+
+
+def test_le_plafond_ne_se_contourne_pas_en_changeant_de_repertoire(depot: Depot) -> None:
+    """Le registre est celui du CLONE PRINCIPAL, d'où qu'on appelle — comme le journal lui-même.
+
+    Une reprise se demande aussi bien depuis un worktree que depuis le clone principal
+    (`/orchestrate` tourne dans l'un, une session dans l'autre). Un compteur par répertoire de
+    travail rendrait le plafond décoratif : il suffirait de changer de fenêtre pour repartir à zéro.
+    """
+    chemin = _orphelin(depot, "316")
+    for essai in (1, 2):
+        assert depot.lib("reprendre-en-cours", "316").returncode == 0, f"reprise {essai}"
+
+    depuis_le_worktree = depot.lib("reprendre-en-cours", "316", cwd=chemin)
+    assert depuis_le_worktree.returncode == 3, depuis_le_worktree.stdout
+    assert "plafond" in depuis_le_worktree.stdout
+    assert len(_mutations(depot)) == 2, "la troisième reprise n'a rien écrit, d'où qu'elle vienne"
+
+
+# --- La dérive doctor : le voir sans démarrer de ticket -------------------------------------------
+# Les trois points de passage du signalement sont ceux de `gc` — /ticket-start, /branch-cleanup, le
+# démarrage d'un run —, donc tous trois sont des GESTES. `doctor.sh` est l'autre voie : celle de
+# quelqu'un qui demande l'état du dispositif sans rien démarrer du tout.
+
+
+def section_en_cours(sortie: str) -> str:
+    """Isole la dérive 4d (jusqu'au titre de la section 5)."""
+    debut = sortie.index("4. Dérive cycle de vie ↔ réalité")
+    reste = sortie[debut:]
+    suivant = reste.find("\n5. ")
+    return reste if suivant < 0 else reste[:suivant]
+
+
+def test_doctor_nomme_le_ticket_en_cours_dont_plus_personne_ne_s_occupe(depot: Depot) -> None:
+    """La quatrième dérive, et la seule qui ne se voie nulle part ailleurs.
+
+    Les trois autres se lisent dans GitLab (une MR manquante, un ticket fermé, deux labels) ;
+    celle-ci demande de regarder un disque. Sans elle, la seule façon d'apprendre qu'un ticket est
+    abandonné est de démarrer un autre ticket.
+    """
+    depot.pose_etat(graphql=_regle_backlog({"317": "En cours"}))
+    _silence(_worktree(depot, "317"), 48 * 3600)
+
+    section = section_en_cours(depot.doctor().stdout)
+    assert "#317 orphelin" in section
+    assert "plus personne dessus" in section
+    # Nommer la réparation sans la jouer : même partage que la dérive « cycle de vie ↔ MR ».
+    assert "reprendre-en-cours" in section
+
+
+def test_doctor_ne_signale_rien_quand_tout_le_monde_est_vivant(depot: Depot) -> None:
+    """Un bilan de santé qui alerte à vide n'est plus lu — et la portée s'annonce dans le ✓."""
+    depot.pose_etat(graphql=_regle_backlog({"317": "En cours"}))
+    _worktree(depot, "317")
+
+    section = section_en_cours(depot.doctor().stdout)
+    assert "aucun ticket « En cours » abandonné" in section
+    assert "orphelin" not in section
+    assert "cette machine" in section, "la borne de couverture se dit, même quand tout va bien"
+
+
+def test_doctor_devant_un_orphelin_ne_repare_rien(depot: Depot) -> None:
+    """« Ce fichier ne fait que le nommer comme dérive » — c'est sa promesse, elle se garde ici.
+
+    La raison est plus forte que pour les autres dérives : « orphelin » est une déduction, et
+    reprendre le ticket d'une session vivante coûterait bien plus cher que de laisser un orphelin
+    un jour de plus.
+    """
+    depot.pose_etat(graphql=_regle_backlog({"317": "En cours"}))
+    _silence(_worktree(depot, "317"), 48 * 3600)
+
+    depot.doctor()
+    assert not ecritures(depot)
+    assert "mutation" not in "\n".join(depot.appels())

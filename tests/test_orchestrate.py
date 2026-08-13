@@ -3656,6 +3656,228 @@ def test_le_listing_des_milestones_n_imprime_aucun_plan(depot: Depot) -> None:
 
 
 # =====================================================================================
+# Proposer les orphelins sans les prendre — queue.sh --orphelins (#329, parent #327)
+# =====================================================================================
+# La règle 1 écarte les tickets « En cours » et assignés : c'est ce qui protège le travail des
+# autres, et ce filtre ne bouge pas. Mais il écarte du même geste ceux qu'une session MORTE a
+# laissés là — invisibles pour toujours, worktree plein (#316 : 2047 lignes jamais poussées). D'où
+# une sortie SÉPARÉE : le plan reste ce qu'il était, ce qui pourrait le rejoindre se lit à côté.
+#
+# Le verdict n'est pas recalculé ici — il vient du verbe du lot 1, seul à savoir départager un
+# vivant d'un orphelin. Ces tests posent donc ce verdict à la main (couture
+# MAESTRO_ORPHELINS_SOURCE)
+# pour éprouver ce que ce fichier-ci ajoute : le filtre du milestone, le run d'origine, le compte
+# des reprises et le plafond.
+
+
+def _source_orphelins(depot: Depot, lignes: str) -> str:
+    """Couture `MAESTRO_ORPHELINS_SOURCE` : le TSV du lot 1, posé à la main.
+
+    Le passer par un fichier plutôt que par un `printf` en ligne évite d'échapper des TAB dans un
+    script dans un test — et laisse voir la fixture telle qu'elle sera lue.
+    """
+    fichier = depot.fixtures / "en-cours.tsv"
+    fichier.write_text(
+        "# iid\tverdict\tsource\tdetail\ttitre\n" + lignes, encoding="utf-8", newline="\n"
+    )
+    stub = depot.racine.parent / "bin" / "orphelins-stub"
+    stub.write_text(
+        f'#!/usr/bin/env bash\ncat "{fichier.as_posix()}"\n', encoding="utf-8", newline="\n"
+    )
+    stub.chmod(0o755)
+    return str(stub)
+
+
+def _orphelins(depot: Depot, source: str) -> list[list[str]]:
+    r = depot.lance("queue.sh", "--orphelins", env={"MAESTRO_ORPHELINS_SOURCE": source})
+    assert r.returncode == 0, r.stderr
+    return [ligne.split("\t") for ligne in r.stdout.splitlines()
+            if ligne and not ligne.startswith("#")]
+
+
+def test_un_orphelin_est_liste_sans_jamais_entrer_dans_le_plan(depot: Depot) -> None:
+    """LE critère du lot : proposé, jamais pris. Les deux sorties sont lues du même backlog."""
+    depot.milestone("Phase X")
+    depot.ticket(501, "A faire")
+    depot.ticket(316, "Extraction des sources", statut="En cours", assigne="MaestroAgents")
+    depot.publie()
+    source = _source_orphelins(
+        depot, "316\torphelin\tdéduction\tworktree silencieux depuis 19h02 — /wt/316\tExtraction\n"
+    )
+
+    plan = _lignes_du_plan(depot.lance("queue.sh").stdout)
+    assert [ligne[1] for ligne in plan] == ["501"], "le filtre d'anti-collision reste le défaut"
+
+    lignes = _orphelins(depot, source)
+    assert [ligne[0] for ligne in lignes] == ["316"]
+    assert "silencieux depuis 19h02" in lignes[0][5], "le détail voyage tel quel"
+
+
+def test_seuls_les_orphelins_du_milestone_visé_sont_listes(depot: Depot) -> None:
+    """Un run porte sur un milestone : un orphelin d'ailleurs ne rejoindrait pas CE plan.
+
+    Le signalement global existe déjà (`reconcile-en-cours`, `doctor.sh`) — cette sortie-ci répond à
+    « qu'est-ce qui manque au plan que je m'apprête à lancer ? ».
+    """
+    depot.milestones([("Phase X", "active", 0, 2), ("Phase Y", "active", 0, 1)])
+    depot.ticket(316, "Du milestone courant", statut="En cours")
+    depot.ticket(299, "D'une autre phase", statut="En cours")
+    depot.publie()
+    depot.milestone_tickets("Phase X", [316])
+    depot.milestone_tickets("Phase Y", [299])
+    source = _source_orphelins(
+        depot,
+        "316\torphelin\tdéduction\tmuet depuis 19h02 — /wt/316\tDu milestone courant\n"
+        "299\torphelin\tdéduction\tmuet depuis 3j — /wt/299\tD'une autre phase\n",
+    )
+
+    assert [ligne[0] for ligne in _orphelins(depot, source)] == ["316"]
+
+
+def test_un_ticket_vivant_n_est_jamais_propose(depot: Depot) -> None:
+    """Le verdict du lot 1 fait foi, et « vivant » ferme la porte : c'est le ticket de quelqu'un."""
+    depot.milestone("Phase X")
+    depot.ticket(316, "Orphelin", statut="En cours")
+    depot.ticket(317, "Bien vivant", statut="En cours")
+    depot.publie()
+    source = _source_orphelins(
+        depot,
+        "316\torphelin\tdéduction\tmuet depuis 19h02 — /wt/316\tOrphelin\n"
+        "317\tvivant\tcarte du pilote\trun 20260810-141208, pilote pid 4242\tBien vivant\n",
+    )
+
+    assert [ligne[0] for ligne in _orphelins(depot, source)] == ["316"]
+
+
+@besoin_git
+def test_l_orphelin_porte_le_run_qui_l_a_laisse_la(depot: Depot) -> None:
+    """« D'où sort ce ticket ? » — la seule information qu'un humain ne peut pas retrouver seul."""
+    _init_git(depot, "chore/316-essai")
+    depot.milestone("Phase X")
+    depot.ticket(316, "Extraction des sources", statut="En cours")
+    depot.publie()
+    _run_dir(depot, "20260810-141208", [(1, 316, "-", "haute")],
+             resume=[(316, "ECHEC", "-", 2702, 14.75, "timeout — session terminée sans clôture")])
+    source = _source_orphelins(
+        depot, "316\torphelin\tdéduction\tmuet depuis 19h02 — /wt/316\tExtraction\n"
+    )
+
+    ligne = _orphelins(depot, source)[0]
+    assert ligne[3] == "20260810-141208" and ligne[4] == "ECHEC"
+
+
+@besoin_git
+def test_le_plafond_est_marque_pour_que_la_proposition_s_arrete(depot: Depot) -> None:
+    """Un ticket déjà repris deux fois ne se propose plus : il est listé, marqué, et c'est tout.
+
+    Lister sans proposer n'est pas une demi-mesure — c'est la forme que prend le bornage ici :
+    /orchestrate saute les lignes `atteint`, et l'humain qui veut insister voit toujours de quoi
+    il retourne (la trace, puis `--force`).
+    """
+    _init_git(depot, "chore/316-essai")
+    depot.milestone("Phase X")
+    depot.ticket(316, "Retombe à chaque run", statut="En cours")
+    depot.ticket(317, "Jamais repris", statut="En cours")
+    depot.publie()
+    registre = depot.racine / ".maestro/orchestrate/reprises.tsv"
+    registre.parent.mkdir(parents=True, exist_ok=True)
+    registre.write_text(
+        "# date\tiid\trun_origine\tverdict_origine\trang\tpar\n"
+        "2026-08-10T09:00:00\t316\t20260809-100000\tECHEC\t1\tMaestroAgents\n"
+        "2026-08-11T09:00:00\t316\t20260810-141208\tECHEC\t2\tMaestroAgents\n",
+        encoding="utf-8", newline="\n",
+    )
+    source = _source_orphelins(
+        depot,
+        "316\torphelin\tdéduction\tmuet depuis 19h02 — /wt/316\tRetombe\n"
+        "317\torphelin\tdéduction\tmuet depuis 8h — /wt/317\tJamais repris\n",
+    )
+
+    par_iid = {ligne[0]: ligne for ligne in _orphelins(depot, source)}
+    assert par_iid["316"][1:3] == ["2", "atteint"], "deux reprises : on ne le propose plus"
+    assert par_iid["317"][1:3] == ["0", "-"]
+
+
+def test_lister_les_orphelins_n_imprime_aucun_plan_et_n_ecrit_rien(depot: Depot) -> None:
+    """C'est une sortie de données pour une question, pas un run préparé — comme `--milestones`."""
+    depot.milestone("Phase X")
+    depot.ticket(501, "A faire")
+    depot.ticket(316, "Orphelin", statut="En cours")
+    depot.publie()
+    source = _source_orphelins(depot, "316\torphelin\tdéduction\tmuet — /wt/316\tOrphelin\n")
+
+    r = depot.lance("queue.sh", "--orphelins", env={"MAESTRO_ORPHELINS_SOURCE": source})
+    assert r.returncode == 0, r.stderr
+    assert "501" not in r.stdout, "le plan n'est pas calculé ici"
+    assert not (depot.racine / ".maestro").exists(), "aucune trace laissée par une simple lecture"
+
+
+# =====================================================================================
+# journal.sh origine — quel run a laissé ce ticket là ? (#329)
+# =====================================================================================
+
+
+@besoin_git
+def test_origine_rend_le_run_le_plus_recent_qui_a_juge_le_ticket(depot: Depot) -> None:
+    _init_git(depot, "chore/316-essai")
+    _run_dir(depot, "20260809-100000", [(1, 316, "-", "haute")],
+             resume=[(316, "ECHEC", "-", 100, 1.0, "vieux verdict")])
+    _run_dir(depot, "20260810-141208", [(1, 316, "-", "haute")],
+             resume=[(316, "ECHEC", "-", 2702, 14.75, "timeout — session terminée sans clôture")])
+
+    r = depot.lance("journal.sh", "origine", "316")
+    assert r.returncode == 0, r.stderr
+    run, verdict, raison = r.stdout.strip().split("\t")
+    assert (run, verdict) == ("20260810-141208", "ECHEC")
+    assert "timeout" in raison
+
+
+@besoin_git
+def test_un_ticket_saute_par_un_run_ne_lui_est_pas_attribue(depot: Depot) -> None:
+    """`SAUTE` n'est pas une prise en main : le run a passé son tour sans ouvrir de session.
+
+    Le compter masquerait le run PRÉCÉDENT — celui qui a réellement laissé le ticket là — au profit
+    d'un run qui n'y a pas touché.
+    """
+    _init_git(depot, "chore/316-essai")
+    _run_dir(depot, "20260809-100000", [(1, 316, "-", "haute")],
+             resume=[(316, "ECHEC", "-", 2702, 14.75, "timeout")])
+    _run_dir(depot, "20260811-080000", [(1, 316, "-", "haute")],
+             resume=[(316, "SAUTE", "-", 0, 0, "cycle de vie « En cours » à son tour")])
+
+    r = depot.lance("journal.sh", "origine", "316")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split("\t")[0] == "20260809-100000"
+
+
+@besoin_git
+def test_un_ticket_en_vol_a_la_coupure_a_bien_une_origine(depot: Depot) -> None:
+    """Le mode de mort qui FABRIQUE les orphelins : pilote arrêté au `taskkill`, aucun trap, donc
+    aucun verdict. S'arrêter au bilan laisserait sans origine ceux qu'on reprend le plus souvent.
+    """
+    _init_git(depot, "chore/316-essai")
+    _run_dir(depot, "20260810-141208", [(1, 316, "-", "haute")], resume=[], sessions=(316,))
+
+    r = depot.lance("journal.sh", "origine", "316")
+    assert r.returncode == 0, r.stderr
+    run, verdict, raison = r.stdout.strip().split("\t")
+    assert run == "20260810-141208" and verdict == "sans verdict"
+    assert "en vol" in raison
+
+
+@besoin_git
+def test_origine_ne_dit_rien_plutot_que_d_inventer(depot: Depot) -> None:
+    """Une session interactive (#325) n'écrit aucun journal : ne rien trouver est une réponse."""
+    _init_git(depot, "chore/316-essai")
+    _run_dir(depot, "20260810-141208", [(1, 316, "-", "haute")],
+             resume=[(316, "OK", "!259", 100, 1.0, "-")])
+
+    r = depot.lance("journal.sh", "origine", "325")
+    assert r.returncode == 1
+    assert r.stdout.strip() == ""
+
+
+# =====================================================================================
 # journal.sh refus — l'agrégat des permission_denials (#235, parent #232)
 # =====================================================================================
 # §11.7 pose le principe : l'`allow` se complète À PARTIR DES REFUS OBSERVÉS. Il n'était outillé
@@ -4806,3 +5028,254 @@ def test_un_run_ecrit_sa_concurrence_pour_celui_qui_le_reprendra(depot: Depot) -
     assert r.returncode == 0, r.stdout + r.stderr
     trace = depot.racine / ".maestro/orchestrate/trace-regime/concurrence"
     assert trace.read_text(encoding="utf-8").strip() == "2"
+
+
+# =====================================================================================
+# Le bloc se ré-ancre au lieu de se recopier (#325)
+# =====================================================================================
+#
+# Les tests de #290 mesurent le FLUX : « ce qu'une frame annonce remonter est ce que la précédente a
+# écrit », en comptant les « ESC[K », c'est-à-dire des lignes LOGIQUES. C'est exactement ce que le
+# défaut de #325 traverse sans les faire rougir : une ligne plus large que la console occupe DEUX
+# rangées, le flux reste cohérent avec lui-même, et l'écran dérive quand même — d'une copie de la
+# première ligne du bloc par redessin. On rejoue donc les frames dans un terminal simulé, où c'est
+# la RANGÉE qui est l'unité, et on regarde l'écran qui en sort.
+
+SEQUENCE = re.compile(r"\x1b\[([0-9;?]*)([A-Za-z])")
+
+
+def _ecrans(flux: str, largeur: int, hauteur: int) -> list[list[str]]:
+    """Rejoue un flux de frames dans un terminal de <largeur>×<hauteur>, écran par écran.
+
+    Un instantané est pris à chaque « ESC[J » — la séquence qui ferme une frame comme un
+    effacement, donc à chaque fois que l'écran est dans un état que quelqu'un aurait pu voir. C'est
+    ce qui permet de mesurer le PIC de copies : le dernier écran d'un run ne montre rien, la boucle
+    retirant son bloc avant d'imprimer le résumé.
+
+    Le sous-ensemble suffit à ce que la vue émet : texte (avec repli en fin de rangée), « \\n »
+    (traité en CR+LF, comme une console Windows), « \\r », « ESC[K », « ESC[J », « ESC[<n>F »,
+    « ESC[<n>B ». Le repli est modélisé au plus TÔT — la rangée est consommée dès le caractère qui
+    remplit la dernière colonne : c'est l'hypothèse pessimiste, celle de conhost, et un correctif
+    qui tient sous elle tient aussi sous le repli différé des terminaux Unix.
+    """
+    ecran = [""] * hauteur
+    vus: list[list[str]] = []
+    ligne = col = 0
+
+    def defile() -> None:
+        nonlocal ligne
+        if ligne + 1 < hauteur:
+            ligne += 1
+        else:
+            ecran.pop(0)
+            ecran.append("")
+
+    def pose(c: str) -> None:
+        nonlocal col
+        if col >= largeur:
+            defile()
+            col = 0
+        rang = ecran[ligne].ljust(col + 1)
+        ecran[ligne] = rang[:col] + c + rang[col + 1:]
+        col += 1
+
+    i = 0
+    while i < len(flux):
+        m = SEQUENCE.match(flux, i)
+        if m:
+            arg, verbe = m.group(1), m.group(2)
+            n = int(arg) if arg.isdigit() else (0 if verbe in "JK" else 1)
+            if verbe == "F":
+                ligne, col = max(ligne - n, 0), 0
+            elif verbe == "A":
+                ligne = max(ligne - n, 0)
+            elif verbe == "B":
+                # Le déplacement vers le bas est BORNÉ par la fenêtre et ne fait jamais défiler :
+                # c'est cette propriété du terminal que `vue_ancre` emprunte comme repère.
+                ligne = min(ligne + n, hauteur - 1)
+            elif verbe == "K":
+                ecran[ligne] = ecran[ligne][:col]
+            elif verbe == "J":
+                ecran[ligne] = ecran[ligne][:col]
+                for r in range(ligne + 1, hauteur):
+                    ecran[r] = ""
+                vus.append(list(ecran))
+            i = m.end()
+            continue
+        c = flux[i]
+        if c == "\n":
+            defile()
+            col = 0
+        elif c == "\r":
+            col = 0
+        elif c != "\x1b":
+            pose(c)
+        i += 1
+    vus.append(list(ecran))
+    return vus
+
+
+def _plan_titres(depot: Depot, lignes: list[tuple[int, int, str]]) -> str:
+    """Un plan figé dont on choisit le TITRE de chaque ligne — c'est lui qui fait la largeur."""
+    chemin = depot.racine / "plan-titres.tsv"
+    chemin.write_text(
+        "# rang\tiid\tparent\tprio\tgroupe\ttitre\n"
+        + "".join(f"{rang}\t{iid}\t-\thaute\t-\t{titre}\n" for rang, iid, titre in lignes),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return str(chemin)
+
+
+def _tput_stub(depot: Depot, cols: tuple[int, ...], lines: int) -> Path:
+    """Un `tput` qui rend une largeur DIFFÉRENTE d'un appel à l'autre — une fenêtre redimensionnée.
+
+    Le compteur vit dans un fichier : `tput` est un processus par appel, il ne peut pas se souvenir
+    autrement. La dernière valeur de `cols` est celle qui reste une fois la liste épuisée.
+    """
+    compteur = depot.racine.parent / "tput-appels.txt"
+    valeurs = " ".join(str(c) for c in cols)
+    chemin = depot.racine.parent / "bin" / "tput"
+    chemin.write_text(
+        "#!/usr/bin/env bash\n"
+        f'compteur="{compteur.as_posix()}"\n'
+        f'[ "$1" = lines ] && {{ printf "{lines}\\n"; exit 0; }}\n'
+        '[ "$1" = cols ] || exit 1\n'
+        'n=$(cat "$compteur" 2>/dev/null || printf 0); n=$((n + 1))\n'
+        'printf "%s\\n" "$n" > "$compteur"\n'
+        f'set -- {valeurs}\n'
+        '[ "$n" -gt "$#" ] && n=$#\n'
+        'eval "printf \'%s\\n\' \\"\\${$n}\\""\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    chemin.chmod(0o755)
+    return compteur
+
+
+def _lignes_de_frame(vue: str) -> list[str]:
+    """Toutes les lignes écrites par des frames, couleurs retirées — une par « ESC[K »."""
+    COULEURS = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+    lignes = []
+    for morceau in vue.split("\x1b[K"):
+        # Ce qui précède un « ESC[K » est la ligne, moins ce que le repositionnement a laissé
+        # devant elle.
+        lignes.append(COULEURS.sub("", morceau.rsplit("\n", 1)[-1]))
+    return lignes[:-1]
+
+
+def _pic_de_copies(ecrans: list[list[str]], marque: str) -> tuple[int, list[str]]:
+    """Le plus grand nombre de rangées portant <marque> vu à un même instant, et cet écran-là."""
+    pire = max(ecrans, key=lambda e: sum(1 for rang in e if marque in rang))
+    return sum(1 for rang in pire if marque in rang), pire
+
+
+def _dessine(ecran: list[str]) -> str:
+    return "\n".join(f"|{rang}" for rang in ecran)
+
+
+TITRE_LONG = ("Extraction des sources : tout ramené au Markdown avec son rapport de lecture "
+              "et la trace de ce qui a été écarté")
+
+
+def test_une_largeur_perimee_ne_recopie_plus_le_bloc(depot: Depot) -> None:
+    """Le défaut observé, de bout en bout : la console a rétréci, le bloc ne doit pas se recopier.
+
+    `tput` annonce 200 colonnes au démarrage puis 100 — une fenêtre redimensionnée pendant un run
+    qui dure des heures. Avant #325 la largeur était lue UNE FOIS : les lignes du bloc continuaient
+    d'être calculées pour 200 colonnes, se repliaient sur 100, et chaque redessin abandonnait une
+    copie de sa première ligne. Le run du 2026-08-10 en affichait trois.
+    """
+    _livrables(depot, (130, 131))
+    appels = _tput_stub(depot, (200, 100), 20)
+    console = _console(depot)
+    plan = _plan_titres(depot, [(1, 130, TITRE_LONG), (2, 131, TITRE_LONG)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "perimee",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MESURE": "0",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    assert int(appels.read_text(encoding="utf-8")) > 1, (
+        "la largeur doit être RELUE en cours de run, pas figée à l'ouverture"
+    )
+    ecrans = _ecrans(console.read_text(encoding="utf-8", errors="replace"), 100, 20)
+    for marque in ("1. #130", "2. #131"):
+        copies, pire = _pic_de_copies(ecrans, marque)
+        assert copies == 1, (
+            f"« {marque} » apparaît {copies} fois à l'écran, une seule est attendue —\n"
+            + _dessine(pire)
+        )
+
+
+def test_le_bloc_se_repositionne_depuis_le_bas_des_qu_il_y_touche(depot: Depot) -> None:
+    """Le repère de #325 : « ESC[999B » descend jusqu'à la dernière rangée, et le terminal borne le
+    déplacement — la position se recalcule donc à neuf au lieu de se cumuler depuis le curseur.
+
+    La fenêtre est basse EN RANGÉES à dessein : le régime ancré ne commence que lorsque le bloc
+    touche vraiment le bas, et `VUE_ROW` est une borne inférieure qui n'y arrive qu'après quelques
+    lignes permanentes. Deux tickets et dix rangées suffisent à l'atteindre ; à douze, le run se
+    terminait avant, et le test ne prouvait rien de plus que le régime relatif. Dix est aussi le
+    PLANCHER de `vue_mesure` — en dessous, une hauteur est tenue pour aberrante et remplacée par 40,
+    ce qui rendait le test muet sans le faire échouer autrement que sur cette assertion-ci.
+    """
+    _livrables(depot, (130, 131))
+    console = _console(depot)
+    plan = _plan_titres(depot, [(1, 130, "Ticket 130"), (2, 131, "Ticket 131")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "ancre",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_LARGEUR": "100",
+                         "MAESTRO_ORCHESTRATE_HAUTEUR": "10",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert "\x1b[999B" in vue, "le bloc doit s'ancrer sur le bas dès qu'il y touche"
+    # Et le bloc reste bien collé au bas : son pied est sur la dernière rangée de l'écran.
+    ecrans = _ecrans(vue, 100, 10)
+    pieds = [e for e in ecrans if e[-1].startswith("  run ")]
+    assert pieds, "le pied du bloc doit fermer l'écran —\n" + _dessine(ecrans[-1])
+
+
+def test_aucune_ligne_du_bloc_n_atteint_la_largeur_de_la_console(depot: Depot) -> None:
+    """L'invariant qui rend le compte de rangées juste : une ligne qui atteint la largeur se replie,
+    et une rangée de plus est une rangée que le repositionnement ignore."""
+    _livrables(depot, (130,))
+    console = _console(depot)
+    plan = _plan_titres(depot, [(1, 130, TITRE_LONG), (2, 131, TITRE_LONG)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "largeur", "--max", "1",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_LARGEUR": "80",
+                         "MAESTRO_ORCHESTRATE_HAUTEUR": "20",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    lignes = _lignes_de_frame(console.read_text(encoding="utf-8", errors="replace"))
+    assert lignes, "aucune frame n'a été écrite — le test ne prouve rien"
+    trop = [ligne for ligne in lignes if len(ligne) >= 80]
+    assert not trop, f"une ligne du bloc atteint la largeur de la console : {trop}"
+
+
+def test_la_largeur_du_bloc_ne_depend_pas_de_la_locale(depot: Depot) -> None:
+    """« modèle » pèse 6 caractères et 7 octets : mesurer en `${#s}` donnait au bloc une largeur
+    différente d'un poste à l'autre, et la machine qui comptait des octets repliait ses lignes.
+
+    La console est dimensionnée pour que le gabarit autorise EXACTEMENT la largeur du titre : compté
+    en octets il serait tronqué, compté en colonnes il passe entier. La largeur se DÉDUIT du titre
+    (et non l'inverse) — un compte à la main s'était déjà décalé d'une colonne, et un titre d'un
+    caractère de trop transforme l'invariant en tautologie sans que rien ne le dise.
+    """
+    titre = "Extraction des sources : tout ramené au Markdown, résumé, référencé et daté"
+    assert len(titre.encode("utf-8")) > len(titre), "il faut des accents pour que le test prouve"
+    _livrables(depot, (130,))
+    console = _console(depot)
+    plan = _plan_titres(depot, [(1, 130, titre)])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "locale",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "LC_ALL": "C", "LANG": "C",
+                         # 46 = VUE_GABARIT (43) + les 3 colonnes que `vue_ligne` réserve au titre.
+                         "MAESTRO_ORCHESTRATE_LARGEUR": str(len(titre) + 46),
+                         "MAESTRO_ORCHESTRATE_HAUTEUR": "20",
+                         "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    vue = console.read_text(encoding="utf-8", errors="replace")
+    assert titre in vue, "un titre qui tient en colonnes ne doit pas être tronqué"
+    assert "daté…" not in vue and "dat…" not in vue

@@ -25,7 +25,12 @@ Endpoints :
   rattachera à son run. Refus motivé au-delà des plafonds d'ingestion (ENF-07),
   jamais de troncature silencieuse ;
 - `POST /api/executions/{run_id}/annuler` — interrompt un run en cours (#185) ;
-- `GET  /api/executions/{run_id}` — le détail d'une exécution (état, trace, coût) ;
+- `POST /api/executions/{run_id}/brief/decision` — tranche le **brief** d'un run
+  suspendu (#320, décision D5) : approuver (avec un brief éventuellement corrigé,
+  qui devient l'entrée de la décomposition) ou refuser (run « annulée », aucune
+  tâche créée) ;
+- `GET  /api/executions/{run_id}` — le détail d'une exécution (état, trace, coût)
+  et, depuis #320, le **brief** soumis ou retenu ;
 - `GET  /api/executions/{run_id}/cout` — le grand livre du run (#57) : coût
   par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat ;
 - `GET  /api/analytics/couts` — la vue coûts & analytics (#87) : agrégats par
@@ -157,6 +162,7 @@ from typing import Annotated, Any
 from fastapi import (
     FastAPI,
     File,
+    Form,
     HTTPException,
     Request,
     UploadFile,
@@ -188,6 +194,7 @@ from maestro.controltower.auto_amelioration import (
     RevisionIndisponible,
     echecs_du_run,
 )
+from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
     ChatStore,
     RepondeurChat,
@@ -197,6 +204,8 @@ from maestro.controltower.chat import (
 )
 from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
+    EVENEMENT_BRIEF_DECISION,
+    EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_VALIDATION_DECISION,
@@ -204,6 +213,7 @@ from maestro.controltower.events import (
     EventBus,
     InMemoryEventBus,
     RedisEventBus,
+    brief_depuis,
 )
 from maestro.controltower.executions import (
     FabriqueMoteur,
@@ -232,17 +242,24 @@ from maestro.controltower.projets import (
     statut_http,
 )
 from maestro.controltower.state import (
+    BRIEF_APPROUVE,
+    BRIEF_REFUSE,
     CAPACITE_ACTIVE,
     CAPACITE_DESACTIVE,
+    EXECUTION_EN_ATTENTE_BRIEF,
+    EXECUTION_EN_ATTENTE_REPONSES,
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
     ControlTowerState,
 )
+from maestro.engine.brief import MODE_BRIEF_HUMAIN
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
+from maestro.orchestrator.errors import BriefValidationError
+from maestro.orchestrator.schema import validate_brief
 from maestro.projets import RacineRefusee, canonique, valider_racine
 from maestro.references import ReferenceTicket
-from maestro.sources import DepotTeleversements, SourceRefusee
+from maestro.sources import DepotTeleversements, SourceRefusee, apercu_sources
 
 
 class ReferenceTicketRequete(BaseModel):
@@ -320,6 +337,12 @@ class LancementExecutionRequete(BaseModel):
     ticket: ReferenceTicketRequete | None = None
     projet_id: str | None = None
     sources: list[SourceRequete] | None = None
+    # Le régime du brief (#320) — `humain` par défaut : la Control Tower est la
+    # voie de lancement qui a quelqu'un devant, et la décision D5 veut le brief
+    # validé avant décomposition. `auto` rédige le brief sans attendre, `sans`
+    # décompose l'objectif brut (le comportement d'avant ce lot). Un mode inconnu
+    # est refusé en 422, jamais traité comme un `sans` silencieux.
+    brief: str | None = MODE_BRIEF_HUMAIN
 
     def sources_declarees(self) -> list[dict[str, Any]] | None:
         """Les sources en dicts pour la résolution — `None` quand il n'y en a pas.
@@ -343,6 +366,49 @@ class DecisionRequete(BaseModel):
     """Corps de la décision humaine (#48) : approuver ou refuser l'action sensible."""
 
     approuve: bool
+
+
+class DecisionBriefRequete(BaseModel):
+    """Corps de la décision sur un brief (#320) : approuver — corrigé ou non — ou refuser.
+
+    `brief` porte la **version corrigée** que l'humain veut voir décomposée ; absent
+    (`null`), le brief proposé est approuvé tel quel. C'est ce qui distingue ce
+    canal de la validation d'action sensible (#48), dont le corps se résume à un
+    booléen : ici la personne ne fait pas que dire oui, elle réécrit avant de le
+    dire — et c'est son texte qui part en décomposition.
+
+    Le brief corrigé est validé contre la **JSON Schema partagée** (#318) avant de
+    partir : une correction qui casse la forme doit coûter un 422 à celui qui la
+    soumet, pas un échec de run une seconde plus tard, quand plus personne ne
+    regarde. Sur un **refus**, il est ignoré — il n'y a rien à décomposer.
+    """
+
+    approuve: bool
+    brief: dict[str, Any] | None = None
+
+
+class ReponsesBriefRequete(BaseModel):
+    """Corps des réponses aux questions de clarification d'un brief (#321).
+
+    `reponses` est une liste de chaînes **appariée par position** aux questions du
+    brief stocké du run. Pas de clé, pas d'identifiant de question : le brief est
+    régénéré en entier à chaque tour, donc une question n'a pas d'identité stable
+    d'une version à l'autre (#318, note du schéma) — un identifiant laisserait croire
+    le contraire. Ce qui rend la position sûre est que les réponses s'adressent au
+    brief **stocké**, dont la liste de questions est figée entre sa publication
+    (`brief.questions`) et sa réponse.
+
+    D'où le contrôle de longueur exigé par la route : une liste qui ne fait pas le
+    compte est refusée en 422. C'est le seul moment où quelqu'un est là pour corriger
+    sa requête — plus loin, en plein run, l'appariement est volontairement tolérant
+    (une réponse manquante vaut « sans réponse »), parce que lever y coûterait le run.
+
+    Une chaîne **vide est licite** et veut dire « je ne sais pas » : la question sera
+    inscrite en hypothèse explicite plutôt que reposée au tour suivant. C'est ce qui
+    permet de répondre à trois questions sur cinq sans bloquer le run.
+    """
+
+    reponses: list[str]
 
 
 class CapaciteRequete(BaseModel):
@@ -993,6 +1059,7 @@ def create_app(
                 ticket=None if requete.ticket is None else requete.ticket.en_reference(),
                 projet_id=requete.projet_id,
                 sources=requete.sources_declarees(),
+                mode_brief=requete.brief,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
@@ -1074,6 +1141,146 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return annulee
 
+    @app.post("/api/executions/{run_id}/brief/decision")
+    async def decider_brief(
+        run_id: str, requete: DecisionBriefRequete
+    ) -> dict[str, Any]:
+        """Tranche le brief d'un run suspendu (#320, décision D5) : il repart, ou il s'arrête.
+
+        **Approuver** relance la décomposition, et ce qui sera décomposé est le
+        brief tel qu'il vient d'être approuvé — la version corrigée si le corps en
+        porte une. **Refuser** solde le run en « annulée » : rien de payant n'aura
+        été engagé au-delà du brief lui-même.
+
+        Même mécanique que la décision de validation (#48) et pour les mêmes
+        raisons : l'état est appliqué **d'abord** (le REST répond déjà à jour) puis
+        l'événement est publié — le moteur, en attente sur ce même bus, reprend ou
+        s'arrête, et la pompe réapplique l'événement sans effet (idempotence).
+
+        404 si le run est inconnu, **409 s'il n'attend pas de décision** (jamais
+        tranché deux fois, et surtout pas un run soldé ramené en vol), 422 si le
+        brief corrigé n'est pas conforme au schéma partagé — un refus qui coûte un
+        aller-retour à celui qui le soumet, plutôt qu'un run qui échoue plus tard.
+        """
+        resume = executions.resume(run_id)
+        if resume is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if resume["statut"] != EXECUTION_EN_ATTENTE_BRIEF:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"cette exécution n'attend pas de décision sur son brief "
+                    f"({resume['statut']}) : {run_id}."
+                ),
+            )
+        corrige = None
+        if requete.approuve and requete.brief is not None:
+            try:
+                validate_brief(requete.brief, where="brief corrigé")
+            except BriefValidationError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            corrige = brief_depuis(requete.brief)
+        event = Event(
+            type=EVENEMENT_BRIEF_DECISION,
+            run_id=run_id,
+            titre=resume["objectif"],
+            agent=ACTEUR_BRIEF,
+            role=ROLE_BRIEF,
+            statut=BRIEF_APPROUVE if requete.approuve else BRIEF_REFUSE,
+            detail=(
+                "brief approuvé depuis la Control Tower"
+                if requete.approuve
+                else "brief refusé depuis la Control Tower : rien n'a été décomposé"
+            ),
+            # La **correction**, ou None quand il n'y en a pas — jamais une recopie
+            # du brief proposé. « Absent » veut dire « celui d'avant tient », et
+            # cette lecture-là est faite au même endroit par la projection et par le
+            # moteur (`DecisionBrief.retenu`), donc énoncée une seule fois.
+            brief=corrige,
+            projet_id=resume["projet_id"],
+        )
+        state.appliquer(event)
+        await bus.publish(event)
+        return executions.resume(run_id) or resume
+
+    @app.post("/api/executions/{run_id}/brief/reponses")
+    async def repondre_brief(
+        run_id: str, requete: ReponsesBriefRequete
+    ) -> dict[str, Any]:
+        """Répond aux questions de clarification d'un brief (#321) : le run repart.
+
+        Le run avait publié ses questions et s'était suspendu (`en_attente_reponses`,
+        état non terminal — il est resté annulable tout du long). Les réponses le
+        relancent : il **régénère son brief entier** en les intégrant, puis repose
+        des questions s'il en reste et que le plafond le permet, sinon passe en
+        validation.
+
+        Même mécanique que la décision de brief (#320) et pour les mêmes raisons :
+        l'état est appliqué **d'abord** (le REST répond déjà à jour) puis l'événement
+        est publié — le moteur, en attente sur ce même bus, reprend, et la pompe
+        réapplique l'événement sans effet (idempotence).
+
+        404 si le run est inconnu, **409 s'il n'attend pas de réponses** (jamais
+        répondu deux fois, jamais un run soldé ramené en vol), 422 si le nombre de
+        réponses ne correspond pas aux questions du brief stocké — l'appariement est
+        positionnel, donc une liste décalée affecterait des réponses aux mauvaises
+        questions sans que rien ne le signale.
+        """
+        resume = executions.resume(run_id)
+        if resume is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if resume["statut"] != EXECUTION_EN_ATTENTE_REPONSES:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"cette exécution n'attend pas de réponses sur son brief "
+                    f"({resume['statut']}) : {run_id}."
+                ),
+            )
+        detail = state.execution(run_id)
+        attendues = len(detail.brief.questions) if detail and detail.brief else 0
+        if len(requete.reponses) != attendues:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{len(requete.reponses)} réponse(s) pour {attendues} question(s) : "
+                    "les réponses s'apparient par position aux questions du brief en "
+                    "attente. Répondre « » (chaîne vide) laisse une question sans "
+                    "réponse ; elle partira en hypothèse."
+                ),
+            )
+        event = Event(
+            type=EVENEMENT_BRIEF_REPONSES,
+            run_id=run_id,
+            titre=resume["objectif"],
+            agent=ACTEUR_BRIEF,
+            role=ROLE_BRIEF,
+            detail=(
+                f"{sum(1 for r in requete.reponses if r.strip())}/{attendues} "
+                "question(s) répondue(s) depuis la Control Tower"
+            ),
+            # **Pas** expurgées, et c'est le même choix assumé que pour le brief
+            # (cf. `evenement_demande_brief`, #320) : ces réponses ne voyagent pas
+            # pour être affichées, elles voyagent pour **atteindre le moteur**, qui
+            # les intègre au brief régénéré. Les masquer ici ne protégerait rien —
+            # le brief qui en sort circule déjà en clair sur le même bus — mais
+            # corromprait l'entrée de la régénération, et un `[REDACTED]` au milieu
+            # d'une réponse produirait un brief faux sans que personne le voie.
+            reponses=list(requete.reponses),
+            tour=resume.get("tour_clarification", 0),
+            tours_max=resume.get("tours_clarification_max", 0),
+            projet_id=resume["projet_id"],
+        )
+        state.appliquer(event)
+        await bus.publish(event)
+        return executions.resume(run_id) or resume
+
     @app.get("/api/executions/{run_id}")
     async def execution(run_id: str) -> dict[str, Any]:
         """L'état d'une exécution (#185) : son résumé, sa trace et son coût.
@@ -1101,6 +1308,54 @@ def create_app(
         if detail is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return detail.cout.to_dict()
+
+    @app.post("/api/sources/apercu")
+    async def apercu_ingestion(
+        sources: Annotated[str, Form()] = "[]",
+        fichier: Annotated[list[UploadFile] | None, File()] = None,
+    ) -> dict[str, Any]:
+        """Ce que des sources **donneraient**, sans lancer et sans rien conserver (#319).
+
+        Le pendant gratuit du rapport rendu par le lancement (docs/05 §6.1) :
+        même résolution (#315), même extraction (#316), mêmes plafonds — et rien
+        au bout. C'est ce qui rend le geste de composer un objectif **réversible
+        tant qu'il est gratuit** : on voit ce qui sera lu, ignoré ou tronqué, et
+        ce que ça coûtera, avant de dépenser la première tâche.
+
+        Le corps est un **multipart** parce qu'un aperçu porte des octets et non
+        des identifiants : il ne dépose rien dans le dépôt de téléversement
+        (§6.8), qui n'existe que pour faire **survivre** une matière jusqu'au run
+        qui la consomme. `sources` est le JSON des sources déclarées, **dans
+        l'ordre de l'écran** — celui qui décide de ce qui entre quand le budget de
+        tokens s'épuise — et `fichier` est répétable : le n-ième correspond à la
+        n-ième source de type `fichier`.
+
+        Toujours du texte, jamais une panne : une source illisible est une
+        **ligne** du rapport (« ignoré », avec son motif). Le 422 motivé
+        (`{motif, message, index}`) est réservé à ce que la résolution **refuse**
+        — un type inconnu, une racine interdite, un plafond dépassé —, c'est-à-dire
+        à ce qu'une correction de saisie répare.
+        """
+        try:
+            declarations = json.loads(sources or "[]")
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "motif": "sources-illisibles",
+                    "message": f"Sources illisibles : {exc.msg}.",
+                },
+            ) from exc
+        envois = [(envoi.filename or "", envoi.file) for envoi in fichier or []]
+        try:
+            # Dans un fil : l'extraction ouvre des fichiers et peut récupérer une
+            # page (#316), ce que la boucle de l'API ne doit pas porter.
+            rapport = await asyncio.to_thread(
+                apercu_sources, declarations, fichiers=envois
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
+        return rapport.to_dict()
 
     @app.get("/api/analytics/couts")
     async def analytics_couts(

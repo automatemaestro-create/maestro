@@ -20,7 +20,13 @@ from maestro.agents import runtime_cli
 from maestro.config import Settings
 from maestro.controltower import cli as controltower_cli
 from maestro.controltower import demo as controltower_demo
-from maestro.engine import STATUT_TERMINEE, OrchestrationEngine, RunReport, TaskResult
+from maestro.engine import (
+    MODE_BRIEF_SANS,
+    STATUT_TERMINEE,
+    OrchestrationEngine,
+    RunReport,
+    TaskResult,
+)
 from maestro.engine import cli as engine_cli
 from maestro.orchestrator import cli as orchestrator_cli
 from maestro.orchestrator.orchestrator import Orchestrator
@@ -92,8 +98,14 @@ def test_orchestrate_nominal_imprime_le_plan_json(monkeypatch, capsys):
 class _MoteurFactice:
     def __init__(self, report):
         self._report = report
+        self.modes_brief: list[str] = []
 
-    async def run(self, objectif, *, journal=None):
+    async def run(self, objectif, *, journal=None, mode_brief=MODE_BRIEF_SANS):
+        # `mode_brief` (#320) fait partie de la signature du vrai moteur : la CLI le
+        # lui passe pour dire sous quel régime de brief tourner. Le factice la
+        # reproduit et retient ce qu'il a reçu, sans jouer le régime — il n'appelle
+        # aucun modèle, donc aucun brief n'est rédigé.
+        self.modes_brief.append(mode_brief)
         return self._report
 
 

@@ -117,6 +117,7 @@ Le journal d'orchestration — .maestro/orchestrate/
 
   bash scripts/orchestrate/journal.sh gc [--check] [--auto] [--courant <run-id>]
   bash scripts/orchestrate/journal.sh refus [<run-id> | --tous]
+  bash scripts/orchestrate/journal.sh origine <iid>
 
 `gc` ne garde que les N runs les plus récents (MAESTRO_ORCHESTRATE_JOURNAL_RUNS, défaut 10),
 ramasse les répertoires de run vides et compacte le flux `<iid>.jsonl` des runs conservés.
@@ -139,6 +140,11 @@ là que le pilote écrit, et y renvoyer par un chemin absolu ferait refuser la l
 
   <run-id>     un run précis, plutôt que le dernier
   --tous       tout le journal, tous runs confondus
+
+`origine` dit d'où sort un ticket : « run-id <TAB> verdict <TAB> raison » du dernier run qui
+l'a eu en main — son bilan s'il a été jugé, « sans verdict » s'il était en vol à la coupure.
+Rien (code 1) si aucun run ne l'a jamais pris : c'est le cas d'une session interactive. C'est ce
+que `lib.sh reprendre-en-cours` consigne en reprenant un orphelin (#329).
 USAGE
 }
 
@@ -818,11 +824,66 @@ EOF
   return 0
 }
 
+# --- origine : d'où sort ce ticket ? (#329, parent #327) ----------------------------------------------
+# `reprendre-en-cours` remet un orphelin « À faire » et libre. La question qu'un humain se pose alors
+# — et à laquelle rien ne répondait — est « qu'est-ce qui l'a laissé là ? ». Elle se lit ICI et nulle
+# part ailleurs : le ticket, lui, ne porte aucune trace de la session qui est morte dessus.
+#
+# Sortie : « run-id <TAB> verdict <TAB> raison », rien (code 1) si aucun run n'a jamais eu ce ticket
+# en main — le cas d'une session INTERACTIVE laissée en plan (#325), qui n'écrit aucun journal. Ne
+# rien trouver est donc une réponse, pas une panne.
+#
+# DEUX SOURCES, dans cet ordre, et la seconde est celle qui compte le plus :
+#   1. une ligne de bilan dans `resume.tsv` — le run a jugé le ticket (#316 : « ✗ ECHEC — timeout ») ;
+#   2. à défaut, une TRACE DE SESSION (le témoin `<iid>.session`, ou son flux `<iid>.jsonl`) : le
+#      ticket était EN VOL à la coupure. C'est le mode de mort qui fabrique les orphelins — un
+#      pilote arrêté au `taskkill` n'exécute aucun trap, donc ne pose aucun verdict —, et s'arrêter à
+#      la première source laisserait sans origine ceux qu'on reprend le plus souvent.
+#
+# Le run le PLUS RÉCENT gagne : les répertoires sont horodatés (`AAAAMMJJ-HHMMSS`), un tri décroissant
+# sur leur nom suffit et ne coûte aucun `stat`. Lecture seule, sans `jq` ni réseau.
+commande_origine() {
+  local iid="${1:-}"
+  case "$iid" in
+    '' | *[!0-9]*) printf 'usage: journal.sh origine <iid>\n' >&2; return 2 ;;
+  esac
+  [ -d "$ORCH_DIR" ] || return 1
+
+  local dir id ligne verdict raison
+  # Les run-id sortent du GLOB (jamais d'un `ls`, qu'un nom exotique ferait mentir) puis passent par
+  # `sort -r` : l'horodatage étant le nom, l'ordre alphabétique inverse EST l'ordre du plus récent
+  # au plus ancien, sans un seul `stat`.
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    dir="$ORCH_DIR/$id"
+    if [ -f "$dir/resume.tsv" ]; then
+      ligne="$(awk -F '\t' -v iid="$iid" '$1 == iid { print; exit }' "$dir/resume.tsv")"
+      verdict="$(printf '%s' "$ligne" | cut -f2)"
+      # `SAUTE` n'est PAS une prise en main : le run a passé son tour (lot précédent en échec, ticket
+      # pris entre-temps) sans jamais ouvrir de session dessus. Le compter ici ferait dire au verbe
+      # « ce run l'a eu en main » d'un run qui n'y a pas touché — et masquerait le run PRÉCÉDENT,
+      # celui qui l'a réellement laissé là. On continue donc de remonter le temps.
+      if [ -n "$ligne" ] && [ "$verdict" != "SAUTE" ]; then
+        raison="$(printf '%s' "$ligne" | cut -f6)"
+        printf '%s\t%s\t%s\n' "$id" "${verdict:--}" "${raison:--}"
+        return 0
+      fi
+    fi
+    # Pas de bilan : le ticket a-t-il seulement été pris en main par ce run-là ?
+    if [ -f "$dir/$iid.session" ] || [ -s "$dir/$iid.jsonl" ] || [ -s "$dir/$iid.jsonl.gz" ]; then
+      printf '%s\tsans verdict\tsession en vol à la coupure\n' "$id"
+      return 0
+    fi
+  done <<< "$(for dir in "$ORCH_DIR"/*/; do [ -d "$dir" ] && basename "$dir"; done | sort -r)"
+  return 1
+}
+
 cmd="${1:-}"
 [ "$#" -gt 0 ] && shift
 case "$cmd" in
   gc)           commande_gc "$@" ;;
   refus)        commande_refus "$@" ;;
+  origine)      commande_origine "$@" ;;
   -h | --help | '') usage ;;
   *) printf 'Sous-commande inconnue : %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
 esac

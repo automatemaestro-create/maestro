@@ -176,12 +176,15 @@ function etatParDefaut(): ControlTower {
     agents: [],
     evenements: [],
     validations: [],
+    executions: [],
     couts: [],
     connecte: true,
     chargement: false,
     erreur: null,
     reassigner: async () => {},
     decider: async () => {},
+    trancherBrief: async () => {},
+    repondreAuBrief: async () => {},
     reglerCapacite: async () => {},
   };
 }
@@ -343,6 +346,7 @@ export function coutExecutionFactice(
   return {
     run_id: "run-1",
     planification: usageFactice(),
+    brief: usageFactice(),
     total: usageFactice(),
     taches: [],
     ...partiel,

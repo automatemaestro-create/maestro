@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.dev/schemas/brief.schema.json",
+  "title": "Brief Maestro",
+  "description": "Le brief structure que le Chef de projet redige a partir d'un objectif et de ses sources extraites, AVANT toute decomposition en taches (EF-40, docs/24 §3.3). C'est le point de controle le plus rentable du produit : corriger un brief coute un message, corriger douze taches coute douze executions. Contrat partage entre l'orchestrateur, l'API Control Tower et l'ecran de validation humaine, sur le patron de task.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "objectif",
+    "perimetre",
+    "hors_perimetre",
+    "criteres_acceptation"
+  ],
+  "properties": {
+    "objectif": {
+      "type": "string",
+      "description": "L'intention reformulee par le Chef de projet, en une a trois phrases : ce qu'il a compris qu'il fallait obtenir. C'est la reformulation qui rend l'erreur visible avant d'etre payee — la recopie de l'enonce n'apprend rien a personne.",
+      "minLength": 1
+    },
+    "perimetre": {
+      "type": "array",
+      "description": "Ce qui est dans le sujet : les livrables et les sujets que le travail couvre, un par entree.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "hors_perimetre": {
+      "type": "array",
+      "description": "Ce qui est explicitement DEHORS. Requis mais admis vide : une liste vide dit « j'ai regarde, il n'y a rien a exclure », une cle absente dit « je n'y ai pas pense » — et ce sont deux briefs differents. C'est la section qui empeche la derive de perimetre, d'ou son regime a part.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "contraintes": {
+      "type": "array",
+      "description": "Les contraintes imposees par l'objectif ou ses sources : technique, delai, budget, conformite, existant a ne pas casser. Vide quand l'objectif n'en pose aucune.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "criteres_acceptation": {
+      "type": "array",
+      "description": "A quoi on saura que c'est fait — observables et verifiables (un fichier qui existe et s'execute, un cas qui passe, un contrat respecte, une valeur mesuree). C'est ce que l'humain relit en priorite a la validation, d'ou le plancher d'un critere.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "hypotheses": {
+      "type": "array",
+      "description": "Ce que le Chef de projet a tranche seul la ou l'objectif etait muet ou ambigu, et sur quoi il s'est appuye pour le faire. Une hypothese ecrite est une hypothese qu'un humain peut corriger d'un message ; une hypothese tue se decouvre dans les taches.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "questions": {
+      "type": "array",
+      "description": "Les zones d'ombre que le Chef de projet ne veut PAS trancher seul, formulees comme des questions fermees ou a choix. Vide quand l'objectif se suffit. Chaque question est une chaine : le brief est regenere en entier a chaque tour d'aller-retour (#321), donc une question n'a pas d'identite stable d'une version a l'autre — lui donner un identifiant laisserait croire le contraire.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": []
+    }
+  }
+}

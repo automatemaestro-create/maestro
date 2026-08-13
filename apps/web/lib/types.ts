@@ -105,6 +105,23 @@ export type Evenement = {
   instances: number | null;
   ticket: ReferenceTicket | null;
   projet_id: string | null;
+  /**
+   * Ce que portent les événements `brief.*` (#320, #321) — et rien d'autre :
+   * `brief` le brief soumis, questionné ou retenu, `reponses` les réponses de
+   * clarification appariées par position à **ses** questions, `tour`/`tours_max`
+   * l'aller-retour et son plafond.
+   *
+   * Déclarés **optionnels** parce qu'ils le sont dans les faits : le backend les
+   * sérialise sur tous les événements, mais les canaux de clarification n'existent
+   * que depuis #321 — une trace relue d'un run antérieur n'en porte pas. C'est
+   * `toursDeClarification` (lib/brief) qui les lit, jamais un composant en direct :
+   * reconstituer un aller-retour demande d'apparier deux événements, et cette
+   * règle-là n'a pas à vivre dans du JSX.
+   */
+  brief?: Brief | null;
+  reponses?: string[] | null;
+  tour?: number;
+  tours_max?: number;
   horodatage: string;
 };
 
@@ -126,10 +143,16 @@ export type CoutTache = {
  * Le grand livre d'une exécution, servi par `GET /api/executions/{run_id}/cout`
  * (`RunCost.to_dict`, #57) : la part de planification (l'orchestrateur), le
  * coût par tâche et l'agrégat du run — la matière du panneau Coûts (#58).
+ *
+ * `brief` (#318) est la part de l'étape de **brief structuré**, comptée à part de
+ * la planification : ce sont deux appels modèle distincts, et le brief peut être
+ * régénéré par les allers-retours de clarification (#321). Nulle tant qu'aucun run
+ * ne passe par cette étape — c'est le lot 6 (#320) qui la branche sur la boucle.
  */
 export type CoutExecution = {
   run_id: string;
   planification: Usage;
+  brief: Usage;
   total: Usage;
   taches: CoutTache[];
 };
@@ -538,6 +561,21 @@ export const EVENEMENT_EXECUTION_STATUT = "execution.statut";
  * justification (cadrage #182, item 9).
  */
 export const EVENEMENT_PLAYBOOK_PROPOSITION = "playbook.proposition";
+/**
+ * Les quatre canaux du **cadrage** d'un run (#320, #321) — le run s'y arrête sur
+ * un humain, ce qu'aucun autre événement ne dit.
+ *
+ * `brief.demande` suspend le run sur sa validation et porte le brief à relire ;
+ * `brief.decision` le tranche (approuvé, corrigé ou refusé). `brief.questions` et
+ * `brief.reponses` sont l'aller-retour de clarification qui les précède : le
+ * premier porte le brief **dont** on pose les questions et le rang du tour, le
+ * second les réponses appariées par position. Deux paires distinctes et non une :
+ * décider clôt le cadrage, répondre le poursuit.
+ */
+export const EVENEMENT_BRIEF_DEMANDE = "brief.demande";
+export const EVENEMENT_BRIEF_DECISION = "brief.decision";
+export const EVENEMENT_BRIEF_QUESTIONS = "brief.questions";
+export const EVENEMENT_BRIEF_REPONSES = "brief.reponses";
 
 // ---------------------------------------------------------------------------
 // Contrats d'API v2 (#183) — formes JSON figées des routes des Phases 5/6,
@@ -602,6 +640,98 @@ export const EXECUTION_EN_COURS = "en_cours";
 export const EXECUTION_TERMINEE = "terminee";
 export const EXECUTION_ANNULEE = "annulee";
 export const EXECUTION_ECHEC = "echec";
+/**
+ * Le run s'est arrêté sur son **brief** et attend une décision humaine (#320,
+ * décision D5) : aucune tâche n'est créée d'ici là. État **non terminal** — le run
+ * reste annulable comme n'importe quel run en vol.
+ */
+export const EXECUTION_EN_ATTENTE_BRIEF = "en_attente_brief";
+/**
+ * Le run a **posé les questions** de son brief et attend les réponses (#321), en
+ * amont de la validation ci-dessus. Non terminal pour la même raison, et c'est ici
+ * la troisième exigence du ticket : une attente de réponses peut durer, un run
+ * qu'on ne pourrait plus arrêter pendant ce temps serait indiscernable d'un run
+ * planté. Distinct d'`en_attente_brief` parce que ce n'est pas la même question —
+ * on répond, on n'approuve pas : proposer « approuver/refuser » à quelqu'un à qui
+ * on pose des questions serait une impasse.
+ */
+export const EXECUTION_EN_ATTENTE_REPONSES = "en_attente_reponses";
+
+/**
+ * Le **régime du brief** d'un run (#320) : `sans` décompose l'objectif brut (le
+ * comportement d'avant ce lot), `auto` rédige le brief et le décompose sans
+ * attendre personne (lancement headless), `humain` arrête le run dessus jusqu'à
+ * décision. La Control Tower lance en `humain` par défaut : c'est la voie qui a,
+ * par construction, quelqu'un devant.
+ */
+export const MODE_BRIEF_SANS = "sans";
+export const MODE_BRIEF_AUTO = "auto";
+export const MODE_BRIEF_HUMAIN = "humain";
+
+/** Les trois types de source d'un objectif (#315, EF-39) — et rien d'autre. */
+export const SOURCE_FICHIER = "fichier";
+export const SOURCE_DOSSIER = "dossier";
+export const SOURCE_URL = "url";
+
+/**
+ * Une source **déclarée** au lancement (#315/#317, docs/05 §6.1) : un fichier
+ * téléversé (désigné par l'`id` rendu par `POST /api/sources`, à défaut par son
+ * `nom` et sa `taille`), un dossier de références (`chemin`) ou une page
+ * (`valeur`). Les champs inutiles au type sont simplement absents — c'est la
+ * résolution côté backend qui juge, l'écran ne fait que déclarer.
+ */
+export type SourceDeclaree = {
+  type: string;
+  id?: string;
+  nom?: string;
+  chemin?: string;
+  valeur?: string;
+  taille?: number;
+};
+
+/**
+ * La réponse de `POST /api/sources` (#317, docs/05 §6.8) : les fichiers reçus,
+ * chacun avec l'`id` à reporter dans `sources[]` au lancement. `nom` est celui
+ * que le serveur a assaini et `taille` compte les octets **reçus**, jamais ceux
+ * qu'un client annonce.
+ */
+export type TeleversementSources = {
+  sources: { id: string; type: string; nom: string; taille: number }[];
+  total_octets: number;
+};
+
+/** Les trois états d'une lecture (#316) — « échoué » n'en est pas un. */
+export const LECTURE_LUE = "lu";
+export const LECTURE_TRONQUEE = "tronque";
+export const LECTURE_IGNOREE = "ignore";
+
+/**
+ * Ce qu'une source est devenue à la lecture (#316, docs/05 §6.8) : son `etat`,
+ * son coût estimé en `tokens`, et selon l'état le `motif`/`message` d'un rejet
+ * ou la `limite` atteinte par une troncature. `entrees` porte les lectures
+ * **filles** d'un dossier — une par fichier parcouru, avec son propre état.
+ */
+export type LectureSource = {
+  nom: string;
+  type: string;
+  etat: string;
+  tokens: number;
+  motif: string;
+  message: string;
+  limite: string;
+  entrees: LectureSource[];
+};
+
+/**
+ * Le rapport de lecture d'un ensemble de sources : une ligne par source déclarée
+ * — y compris celles qui n'ont pas été lues — et le coût estimé de l'ensemble.
+ * Rendu par l'aperçu (`POST /api/sources/apercu`, #319) avant de lancer, et par
+ * le lancement lui-même (#317).
+ */
+export type RapportLecture = {
+  tokens: number;
+  lectures: LectureSource[];
+};
 
 /**
  * Le corps de `POST /api/executions` (#185) : l'objectif à décomposer, les
@@ -617,6 +747,60 @@ export type LancementExecution = {
   ticket: ReferenceTicket | null;
   /** Le projet dans lequel le run travaille (#222) — `null` : aucun projet. */
   projet_id: string | null;
+  /**
+   * La matière de l'objectif (#317, EF-39) — absente ou vide, le lancement est
+   * exactement celui d'avant la Phase 8.
+   */
+  sources?: SourceDeclaree[];
+  /**
+   * Le régime du brief (#320, `MODE_BRIEF_*`) — omis ou `null` : `humain`, le
+   * défaut de la Control Tower.
+   */
+  brief?: string | null;
+};
+
+/**
+ * Le corps de `POST /api/executions/{run_id}/brief/decision` (#320) : approuver
+ * — avec un brief **corrigé** qui devient l'entrée de la décomposition, ou sans
+ * (`brief: null`) pour approuver tel quel — ou refuser, ce qui solde le run en
+ * « annulée » sans qu'aucune tâche ait été créée.
+ */
+export type DecisionBrief = {
+  approuve: boolean;
+  brief: Brief | null;
+};
+
+/**
+ * Le corps de `POST /api/executions/{run_id}/brief/reponses` (#321) : les réponses
+ * aux questions de clarification, **appariées par position** aux `questions` du
+ * brief que le run attend (`GET /api/executions/{run_id}` → `brief.questions`).
+ *
+ * Pas de clé ni d'identifiant de question, et c'est une décision (#318) : le brief
+ * est régénéré **en entier** à chaque tour, donc une question n'a pas d'identité
+ * stable d'une version à l'autre. Le tableau doit faire **exactement** la longueur
+ * de `brief.questions`, sans quoi l'API répond 422 — une liste décalée affecterait
+ * des réponses aux mauvaises questions en silence. Une chaîne **vide** est licite
+ * et vaut « je ne sais pas » : la question partira en hypothèse explicite plutôt
+ * que d'être reposée.
+ */
+export type ReponsesBrief = {
+  reponses: string[];
+};
+
+/**
+ * Le brief structuré (#318) — miroir de `packages/shared/schemas/brief.schema.json`
+ * et de `maestro.orchestrator.schema.Brief`. Aucune clé n'est omise : les quatre
+ * listes facultatives sont valides vides, ce qui permet à l'écran de validation
+ * (#322) de présenter les sept sections sans distinguer « absent » de « vide ».
+ */
+export type Brief = {
+  objectif: string;
+  perimetre: string[];
+  hors_perimetre: string[];
+  contraintes: string[];
+  criteres_acceptation: string[];
+  hypotheses: string[];
+  questions: string[];
 };
 
 /**
@@ -635,8 +819,55 @@ export type ResumeExecution = {
   ticket: ReferenceTicket | null;
   /** Le projet dans lequel le run travaille (#222), `null` hors de tout projet. */
   projet_id: string | null;
+  /**
+   * Le régime du brief de ce run (#320, `MODE_BRIEF_*`) — chaîne vide pour un run
+   * publié hors de l'API, qui n'annonce aucun mode. Le **brief lui-même** n'est pas
+   * dans le résumé mais dans le détail (`GET /api/executions/{run_id}`) : la liste
+   * des runs n'a pas à porter sept sections de texte par ligne.
+   */
+  mode_brief?: string;
+  /**
+   * Depuis quand ce run attend un geste humain (#321) — horodatage ISO-8601 de
+   * l'événement qui l'a suspendu, `null` dès qu'il repart ou qu'il est soldé.
+   * C'est l'**ancienneté** de l'attente : sans elle, un run suspendu est
+   * indiscernable d'un run planté, et c'est *depuis quand* qui permet d'en juger.
+   * Renseignée pour les deux attentes (`en_attente_brief` et
+   * `en_attente_reponses`) — une seule question, une seule réponse.
+   */
+  attente_depuis?: string | null;
+  /**
+   * Le tour de clarification en cours et le plafond annoncé (#321) — `0` tant que
+   * le run n'en a joué aucun. C'est l'annonce de la borne, telle que l'écran la
+   * rend : « tour 1 sur 2 ». Les **questions** elles-mêmes ne sont pas ici mais
+   * dans le détail (`brief.questions`) : on ne peut pas y répondre depuis une liste.
+   */
+  tour_clarification?: number;
+  tours_clarification_max?: number;
   debut: string;
   fin: string | null;
+  /**
+   * Le rapport de lecture des sources (#317) — **seulement** dans la réponse du
+   * lancement, jamais dans une relecture : il décrit une lecture, pas un fait du
+   * run. Absent quand le run n'a pas de matière.
+   */
+  rapport?: RapportLecture;
+};
+
+/**
+ * Le **détail** d'une exécution (`GET /api/executions/{run_id}`, #185) : son
+ * résumé, plus ce que le résumé n'a pas — le `brief` soumis ou retenu (#320,
+ * `null` si le run n'est pas passé par l'étape), le grand livre (#57) et la trace
+ * événement par événement.
+ *
+ * C'est **la** lecture de l'écran de validation (#322) : le brief à relire et le
+ * coût déjà engagé arrivent d'un seul appel, sur le run qu'on est en train de
+ * trancher. La liste (`GET /api/executions`) dit lesquels attendent ; celle-ci dit
+ * quoi montrer.
+ */
+export type DetailExecution = ResumeExecution & {
+  brief: Brief | null;
+  cout: CoutExecution;
+  evenements: Evenement[];
 };
 
 /** Clés de tri et sens du journal requêtable (maestro/controltower/fixtures.py). */
