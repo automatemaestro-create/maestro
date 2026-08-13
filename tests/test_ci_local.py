@@ -193,13 +193,25 @@ class Clone:
         self.pose_shim(f"{nom}.exe", self.racine / ".venv" / "Scripts", corps)
         self.pose_shim(nom, self.racine / ".venv" / "bin", corps)
 
+    def pose_npm(self, corps: str | None = None) -> None:
+        """Le npm vendoré, dans les DEUX dispositions — comme `pose_outil_venv` pour le venv.
+
+        `node_bindir` (scripts/ci/local.sh) résout `.tools/node/v<pin>` sous Windows et
+        `.tools/node/v<pin>/bin` ailleurs. N'écraser qu'une des deux laisse l'autre en place, donc
+        laisse le script trouver le shim d'origine : un test qui croit avoir posé un npm ROUGE
+        obtient un vert, et son assertion tombe sur la seule plateforme qui n'est pas celle du
+        poste (#333).
+        """
+        base = self.racine / ".tools" / "node" / f"v{NODE_PIN}"
+        self.pose_shim("npm", base, corps)
+        self.pose_shim("npm", base / "bin", corps)
+
     def pose_node(self) -> None:
         """Le Node vendoré et son npm, dans les deux dispositions."""
         base = self.racine / ".tools" / "node" / f"v{NODE_PIN}"
         self.pose_shim("node.exe", base)
-        self.pose_shim("npm", base)
         self.pose_shim("node", base / "bin")
-        self.pose_shim("npm", base / "bin")
+        self.pose_npm()
         (self.racine / "apps" / "web" / "node_modules").mkdir(parents=True, exist_ok=True)
 
     def equipe_tout(self) -> None:
@@ -727,11 +739,30 @@ def test_le_plafond_de_workers_se_regle(clone: Clone) -> None:
 
 
 def test_list_annonce_le_nombre_de_workers_reellement_passe(clone: Clone) -> None:
-    """`--list` dit la commande jouée, pas celle du pipeline (#194) — plafond compris."""
-    acheve = clone.lance("--complet", "--list", MAESTRO_PYTEST_WORKERS="3")
-    assert acheve.returncode == 0, acheve.stderr
-    assert "-n 3" in acheve.stdout
-    assert "-n auto" not in acheve.stdout
+    """`--list` dit la commande jouée, pas celle du pipeline (#194) — plafond compris.
+
+    Le nombre annoncé est confronté à celui que le script PASSE vraiment, jamais à une constante :
+    c'est le contrat que ce bloc épingle (« jamais plus que le plafond, jamais plus que les
+    cœurs »), et un `-n 3` en dur le contredisait — vert sur un poste à 16 cœurs, rouge sur un
+    runner à 2, où `min(cœurs, 8)` ramène 3 à 2 (#333). Le rejouer ici reviendrait en plus à
+    recopier la formule hors du script, seul endroit où elle doit vivre.
+    """
+    clone.equipe_tout()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+
+    annonce = clone.lance("--complet", "--list", MAESTRO_PYTEST_WORKERS="3")
+    assert annonce.returncode == 0, annonce.stderr
+    assert "-n auto" not in annonce.stdout, "`--list` doit annoncer le plafond, pas le pipeline"
+
+    joue = clone.lance("--complet", "--only", "pytest", MAESTRO_PYTEST_WORKERS="3")
+    assert joue.returncode == 0, joue.stdout + joue.stderr
+    workers = workers_pytest(lancements_pytest(clone.appels())[0])
+
+    assert workers is not None
+    assert f"-n {workers}" in annonce.stdout, (
+        f"`--list` annonce autre chose que les {workers} workers réellement passés :\n"
+        f"{annonce.stdout}"
+    )
 
 
 # --- Périmètre de web-build -----------------------------------------------------------------------
@@ -1013,8 +1044,25 @@ def journal_ci(clone: Clone) -> Path:
     return clone.racine / ".maestro" / "ci-local"
 
 
+#: Un chemin de journal CITÉ dans la sortie, sous la forme où le filet l'imprime. `[^\s)]` borne le
+#: jeton sans avaler la parenthèse de « (suite dans …) ».
+CITATION_JOURNAL = re.compile(r"[^\s)]*ci-local[^\s)]*\.log")
+
+
 def test_le_journal_d_un_job_rouge_est_sous_la_racine_et_cite_en_relatif(clone: Clone) -> None:
-    """Le cœur de #234 : le chemin imprimé se lit tel quel depuis le répertoire de travail."""
+    """Le cœur de #234 : le chemin imprimé se lit tel quel depuis le répertoire de travail.
+
+    Ce qui est exigé porte sur les chemins **cités pour lecture**, et sur eux seuls. La bannière
+    « Filet CI local — <racine> » nomme légitimement le dépôt vérifié : c'est un titre, pas une
+    invitation à ouvrir un fichier, et une session est déjà DANS ce répertoire.
+
+    L'assertion d'origine (« la racine n'apparaît nulle part ») confondait les deux, et ne s'en est
+    jamais aperçue : elle comparait le `E:\\…\\clone` de Python au `/e/…/clone` du script bash, deux
+    écritures du même dossier qui ne peuvent pas se contenir. Elle passait donc quoi qu'il arrive
+    sous Windows — le seul poste qui la jouait — et tombait dès qu'un vrai Linux la rendait
+    comparable (#333). On vérifie donc la FORME de chaque citation, ce qu'aucune plateforme ne
+    rend vacuellement vrai.
+    """
     clone.equipe_tout()
     acheve = clone.lance("--only", "mypy", MAESTRO_FAUX_MYPY_CODE="1",
                          MAESTRO_FAUX_MYPY_SORTIE=SORTIE_LONGUE)
@@ -1023,9 +1071,13 @@ def test_le_journal_d_un_job_rouge_est_sous_la_racine_et_cite_en_relatif(clone: 
     assert (journal_ci(clone) / "mypy.log").is_file(), "le journal doit vivre sous la racine"
     assert "journal : .maestro/ci-local/mypy.log" in acheve.stdout
     assert "(suite dans .maestro/ci-local/mypy.log)" in acheve.stdout
-    # Le point qui compte vraiment : AUCUNE forme absolue ne doit sortir, ni celle de la racine du
-    # clone, ni celle de l'ancien emplacement. C'est l'absolu qui déclenchait le refus, pas /tmp.
-    assert str(clone.racine) not in acheve.stdout
+
+    citations = CITATION_JOURNAL.findall(acheve.stdout)
+    assert citations, "un job rouge doit citer son journal — sinon la raison de l'échec est perdue"
+    assert set(citations) == {".maestro/ci-local/mypy.log"}, (
+        "tout chemin cité pour lecture doit être relatif au répertoire de travail — un absolu "
+        f"demande une approbation que personne n'est là pour donner : {sorted(set(citations))}"
+    )
     assert "maestro-ci-local" not in acheve.stdout
     assert not (clone.tmp / "maestro-ci-local").exists(), \
         "plus rien du filet ne s'écrit dans le temporaire du système"
@@ -1103,9 +1155,7 @@ def test_web_build_verifie_le_typage_avant_les_tests_et_le_build(clone: Clone) -
 def test_un_typage_rouge_arrete_le_job_avant_vitest(clone: Clone) -> None:
     """Le gain du `typecheck` séparé : l'erreur est nommée, pas un `next build` rouge tardif."""
     clone.equipe_tout()
-    clone.pose_shim(
-        "npm",
-        clone.racine / ".tools" / "node" / f"v{NODE_PIN}",
+    clone.pose_npm(
         corps=(
             "#!/usr/bin/env bash\n"
             "printf 'npm %s\\n' \"$*\" >> \"$MAESTRO_FAUX_JOURNAL\"\n"
@@ -1133,6 +1183,49 @@ def test_le_script_typecheck_existe_et_la_ci_le_joue() -> None:
         "sans ce script, une session n'a que `node …/tsc` — que rien n'autorise (#236)"
     pipeline = (RACINE / ".gitlab-ci.yml").read_text(encoding="utf-8")
     assert "npm run typecheck" in pipeline, "un script jamais joué en CI finit par ne plus passer"
+
+
+# --- Git est une dépendance de la suite, pas un confort (#333) ------------------------------------
+# Le pipeline joue pytest dans `python:3.11-slim`, qui n'a pas git. Sept modules d'outillage montent
+# un vrai dépôt jetable et sont gardés par `skipif(shutil.which("git") is None)` : ~285 tests y
+# étaient donc SAUTÉS en silence, pipeline verte, depuis toujours. Ils n'ont ainsi jamais tourné que
+# sur des postes de développement — tous sous Windows — et le premier runner Linux muni de git en a
+# trouvé 16 rouges d'un coup (#332). Les deux moitiés du remède se gardent ici : git installé, et
+# son absence rendue bruyante.
+
+
+def test_la_ci_installe_git_pour_la_suite() -> None:
+    """Sans cette ligne, ~285 tests redeviennent invisibles — et la pipeline reste verte.
+
+    Le fichier VERSIONNÉ : c'est le pipeline réel qui décide de ce qui est vérifié, et l'angle mort
+    ne se voit dans aucun compte rendu — un job qui saute 285 tests et un job qui les joue tous
+    rendent le même « vert ».
+    """
+    pipeline = (RACINE / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    job = pipeline.split("\npytest:", 1)
+    assert len(job) == 2, "le job `pytest` a été renommé — ce test doit suivre"
+    corps = job[1].split("\nmypy:", 1)[0]
+    assert "install -y --no-install-recommends git" in corps, (
+        "le job `pytest` doit installer git : `python:3.11-slim` n'en a pas, et la suite en dépend "
+        "pour ~285 tests d'outillage (#333)"
+    )
+
+
+def test_git_absent_en_ci_est_une_erreur_et_non_un_saut() -> None:
+    """La règle est une CONJONCTION : c'est « en CI **et** sans git » qui est fautif.
+
+    Un poste sans git a le droit de sauter — il dit alors « cette machine ne peut pas répondre ».
+    En CI le même saut dit « rien n'a été vérifié » avec les mots de « tout va bien », et c'est
+    cette confusion que #333 supprime.
+    """
+    from conftest import git_manquant_en_ci  # le conftest du dossier, sur le sys.path de pytest
+
+    assert git_manquant_en_ci({"CI": "true"}, None)
+    assert git_manquant_en_ci({"GITHUB_ACTIONS": "true"}, None)
+    # Les trois situations acceptables, dont aucune ne doit arrêter la suite.
+    assert not git_manquant_en_ci({"CI": "true"}, "/usr/bin/git")
+    assert not git_manquant_en_ci({}, None)
+    assert not git_manquant_en_ci({"CI": ""}, None), "une variable vide n'est pas une CI"
 
 
 # --- Le filet est la source UNIQUE des contrôles locaux (#310) ------------------------------------

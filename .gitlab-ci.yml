@@ -126,6 +126,20 @@ python-lint:
 pytest:
   extends: .python-test
   script:
+    # GIT EST UNE DÉPENDANCE DE LA SUITE, pas un confort (#333). `python:3.11-slim` n'en a pas, et
+    # ~285 tests d'outillage sont gardés par `skipif(shutil.which("git") is None)` : ils étaient
+    # donc SAUTÉS ici depuis toujours — pipeline vert, 285 tests non joués, personne pour le voir.
+    # Ils ne tournaient que sur les postes de développement, c'est-à-dire sous Windows, et
+    # l'expérience #332 (miroir GitHub, runner muni de git) en a trouvé 16 rouges d'un coup.
+    # Sans cette ligne, l'angle mort se réinstalle dès que ce miroir s'arrête. `tests/conftest.py`
+    # transforme désormais l'absence de git EN CI en échec franc, pour qu'un retrait se voie.
+    #
+    # Aucune identité git n'est posée globalement, et c'est délibéré : le code qui écrit dans le
+    # dépôt de l'utilisateur porte la sienne par `-c` (maestro/projets/application.py). Lui en
+    # fournir une ici masquerait à nouveau exactement le défaut que #333 a corrigé — une fusion qui
+    # n'échouait que sur les machines sans `~/.gitconfig`.
+    - apt-get update && apt-get install -y --no-install-recommends git
+    - git --version
     - pytest -n auto --cov=maestro --cov-fail-under=90
   coverage: '/TOTAL.*? (100(?:\.\d+)?\%|[1-9]?\d(?:\.\d+)?\%)/'
 
