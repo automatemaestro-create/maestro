@@ -1184,7 +1184,68 @@ Deux points à ne pas défaire :
   théorique — `/ticket-start` l'appelle pour rattraper une dérive de dépendances (§9.4), et c'est
   une session sans humain qui en lit l'échec.
 
-### 8.6 Git est une dépendance de la suite, pas un confort (#333)
+### 8.6 Une seconde CI, en miroir sur GitHub — l'expérience de #332
+
+Le cadrage #331 instruit une migration vers GitHub, poussée par trois moteurs : la CI, l'intégration
+Claude Code et, plus tard, la visibilité. Deux de ses inconnues ne se répondent pas sur le papier —
+**ce que coûte réellement un pipeline en minutes-job**, et **si la traduction des cinq jobs rend le
+même verdict**. D'où #332 : un dépôt GitHub **privé** alimenté par un **miroir push** depuis GitLab,
+sur lequel `.github/workflows/ci.yml` rejoue les mêmes jobs, **en double et sans autorité**.
+
+> ⚠ **Le verdict qui conditionne un merge reste celui de `.gitlab-ci.yml`.** La CI miroir ne bloque
+> rien, n'est requise nulle part, et se supprime avec le dépôt qui la porte si #331 conclut « non ».
+
+Quatre choix structurent le fichier, et chacun répond à une contrainte qui n'existe pas côté GitLab :
+
+- **`on: push`, jamais `on: pull_request`.** Un miroir push ne réplique que des branches et des
+  tags : il ne crée aucune pull request, donc `pull_request` ne se déclencherait littéralement
+  jamais. Conséquence à connaître avant de lire les chiffres — côté GitLab un pipeline ne part que
+  sur `merge_request_event` (§8, #165), donc **les deux cadences ne sont pas comparables**. C'est
+  sans importance : la mesure cherche le **coût d'un pipeline**, à multiplier ensuite par le nombre
+  de pipelines que GitLab joue réellement. Compter les runs GitHub répondrait à une question que
+  personne ne pose.
+- **Un job `perimetre` sans équivalent GitLab.** GitLab attache `rules: changes:` à un job ;
+  GitHub n'offre `paths:` qu'au niveau du **workflow entier**, ce qui sauterait aussi les jobs
+  Python. Le portier calcule le périmètre en `git diff` nu — pas d'action tierce pour trois lignes —
+  et `web-build` porte un `if:`. Un job sauté par `if:` est **rapporté** (« skipped »), donc
+  compatible avec une branch protection ; c'est le piège inverse qu'on évite — un check requis dont
+  le **workflow** ne se déclenche pas n'est jamais rapporté, et la PR reste bloquée pour toujours.
+  Sans objet pendant l'expérience, mais c'est la cible de #331.
+- **Le shellcheck préinstallé du runner, pas l'image de GitLab.** `koalaman/shellcheck-alpine` en
+  `container:` ferait échouer `actions/checkout` : une action JavaScript exige un Node dans le
+  conteneur, que l'image alpine n'a pas. La version est imprimée des deux côtés — une dérive de
+  verdict se lira dans les logs, et c'est une des choses que l'expérience doit relever.
+- **La clé `coverage:` n'a pas d'équivalent** et n'en avait pas besoin : le garde-fou est
+  `--cov-fail-under=90`, qui fait déjà échouer le job. Seul l'**affichage** du taux est relogé, dans
+  le résumé du run.
+
+Le PAT GitHub vit **côté GitLab**, dans Settings › Repository › Mirroring repositories : c'est
+GitLab qui pousse, donc GitLab qui s'authentifie — un identifiant vit chez le **client**, jamais
+chez le serveur qui l'a émis. Fine-grained, limité au dépôt miroir, `Contents` **et `Workflows`** en
+écriture : sans le second, GitHub refuse tout push touchant `.github/workflows/`, c'est-à-dire
+exactement le fichier que l'expérience installe. Il **expire** obligatoirement, et le miroir
+s'arrêtera alors en silence — l'erreur n'apparaît que dans cette même page GitLab.
+
+**Un second token, en lecture seule, pour que la session lise les runs.** Le premier ne sert qu'au
+miroir et ne quitte jamais GitLab ; il ne donne à la session aucun accès à GitHub. Or la mesure
+attendue par #331 — minutes-job par pipeline, durée de `pytest`, écarts de verdict — ne vit que
+côté GitHub, et les **minutes facturées** se lisent à
+`/repos/{owner}/{repo}/actions/runs/{id}/timing` (champ `billable`), la durée de mur d'un run
+n'étant pas ce qui est décompté. D'où un token fine-grained limité au dépôt miroir,
+`Actions: Read` seul, posé par `gh auth login` — geste de la personne, au même titre que
+`glab auth login`, la session ne manipulant jamais le secret en clair.
+
+Les deux tokens sont **opposés par construction** et ne peuvent pas se substituer : celui du miroir
+**écrit** et vit **chez GitLab** ; celui-ci **lit** et vit **sur le poste**. Ce n'est pas un cumul
+de droits, c'est une séparation.
+
+Côté permissions, `gh` était **absent de l'allowlist** — les règles de `.claude/settings.json`
+visaient toutes `glab`, si bien que chaque `gh run list` aurait demandé une approbation (§11.7 : la
+classe de trou que #307 a mesurée). Six règles en lecture s'y ajoutent, dont un `gh api` **borné au
+chemin `actions/` du seul dépôt miroir** plutôt qu'ouvert : une règle est un préfixe de commande, et
+la borner au chemin est ici la façon la moins large de couvrir `/timing`. La vraie limite reste le
+token lui-même, qui ne sait pas écrire.
+### 8.7 Git est une dépendance de la suite, pas un confort (#333)
 
 Le job `pytest` tourne dans `python:3.11-slim`, **qui n'a pas git**. Or sept modules d'outillage
 montent chacun un vrai dépôt jetable et sont gardés par
@@ -1192,11 +1253,13 @@ montent chacun un vrai dépôt jetable et sont gardés par
 toujours. Le compte rendu ne le disait nulle part — un job qui saute 285 tests et un job qui les
 joue tous rendent le même « vert ».
 
-La conséquence n'est pas restée théorique. Ces tests n'ont jamais tourné **que sur des postes de
-développement**, c'est-à-dire **sous Windows** ; le premier runner Linux muni de git à les jouer
-(le miroir GitHub de #332) en a trouvé **16 rouges d'un coup**, dont un bug de production. Un
-garde-fou qui saute est plus dangereux qu'un garde-fou absent : il rend le même vert que la
-vérification qu'il remplace.
+La conséquence n'est pas restée théorique, et c'est **l'expérience de §8.6 qui l'a révélée** : ces
+tests n'ont jamais tourné **que sur des postes de développement**, c'est-à-dire **sous Windows** ;
+le premier runner Linux muni de git à les jouer — le miroir GitHub de #332 — en a trouvé **16
+rouges d'un coup**, dont un bug de production. Un garde-fou qui saute est plus dangereux qu'un
+garde-fou absent : il rend le même vert que la vérification qu'il remplace. À noter pour la
+décision de #331 : la CI miroir n'a **aucune autorité**, donc ce qu'elle a trouvé serait reperdu
+le jour où elle s'arrête — c'est bien côté GitLab que le trou devait se boucher.
 
 Deux moitiés, et il faut les deux :
 
@@ -1210,7 +1273,9 @@ Deux moitiés, et il faut les deux :
   Sur un poste sans git, le `skipif` de chaque module reste la bonne réponse — il dit « cette
   machine ne peut pas répondre » ; en CI le même saut dit « rien n'a été vérifié » avec les mots de
   « tout va bien ». Ce contrôle ne remet rien au vert : il fait qu'un futur retrait de git se voie
-  **tout de suite**, au lieu de rendre 285 tests invisibles pendant des mois.
+  **tout de suite**, au lieu de rendre 285 tests invisibles pendant des mois. La liste de variables
+  couvre les deux CI de §8.6, sans quoi le miroir GitHub aurait gardé l'angle mort qu'il a servi à
+  découvrir.
 
 Ce qu'il reste à savoir, et qui borne la portée : ces tests-là ne tournent toujours **que sur
 Linux en CI et sur Windows en local**. Les écarts entre plateformes ne se voient donc qu'au

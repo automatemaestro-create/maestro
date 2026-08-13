@@ -1,0 +1,238 @@
+# Pipeline CI Maestro sur GitHub Actions — MIROIR EXPÉRIMENTAL (ticket #332, cadrage #331).
+#
+# ⚠ Ce fichier ne conditionne AUCUN merge. Le verdict qui compte reste celui de `.gitlab-ci.yml`,
+# sur GitLab, où vivent les tickets et les MR. Ce workflow est la moitié « CI » de l'expérience
+# réversible de #332 : rejouer les mêmes 5 jobs sur un dépôt GitHub alimenté par un miroir push,
+# pour MESURER ce que #331 ne peut qu'estimer — le coût réel en minutes-job et la fidélité de la
+# traduction. Si #331 conclut « non », il suffit de supprimer le dépôt miroir : rien ici n'aura
+# modifié le workflow de l'équipe.
+#
+# Les cinq jobs traduits, dans l'ordre de `.gitlab-ci.yml` : shellcheck, python-lint, pytest,
+# mypy, web-build. Le sixième (`perimetre`) n'a pas d'équivalent GitLab — voir plus bas.
+
+name: CI (miroir)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DÉCLENCHEMENT — pourquoi `push` et non `pull_request` (critère 3 de #332)
+#
+# Un miroir push ne réplique QUE les branches et les tags. Il ne crée jamais de pull request :
+# `on: pull_request` ne se déclencherait donc littéralement jamais, et le workflow ne tournerait
+# pas une seule fois. Le déclencheur doit être `push`.
+#
+# Conséquence à connaître avant de lire les chiffres : côté GitLab, un pipeline ne part que sur
+# `merge_request_event` (#165) — donc uniquement quand une MR est ouverte sur la branche. Ici il
+# part à CHAQUE push mirroré, MR ouverte ou non. Les deux cadences ne sont pas comparables, et
+# c'est sans importance pour la mesure : ce qu'on veut est le **coût d'un pipeline**, à multiplier
+# ensuite par le nombre de pipelines que GitLab joue réellement par mois. Compter les runs GitHub
+# répondrait à une question que personne ne pose.
+#
+# Les branches sont filtrées sur la convention de nommage du dépôt (docs/10 §2) plutôt que laissées
+# ouvertes : le miroir pousse tout ce qui existe, y compris de vieilles branches, et chacune
+# déclencherait un run au premier sync.
+on:
+  push:
+    branches:
+      - main
+      - 'feat/**'
+      - 'fix/**'
+      - 'chore/**'
+      - 'docs/**'
+  workflow_dispatch:
+
+# Annule le run précédent d'une même branche quand un nouveau push arrive. Sans équivalent dans
+# `.gitlab-ci.yml` (GitLab a `interruptible`, non activé) : c'est un ajout délibéré, l'expérience
+# se jugeant sur des minutes consommées et un run périmé n'apprenant rien.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # PÉRIMÈTRE — l'équivalent du `rules: changes:` de web-build (critère 3 de #332)
+  #
+  # GitLab attache un filtre de chemins à UN job (`web-build` ne tourne que si `apps/web/**` ou le
+  # fichier CI change). GitHub n'offre `paths:` qu'au niveau du WORKFLOW ENTIER : l'y mettre
+  # sauterait aussi les jobs Python, c'est-à-dire l'inverse de l'effet voulu.
+  #
+  # D'où ce job-portier, qui calcule le périmètre et l'expose en sortie. Le job `web-build` porte
+  # alors un `if:` — et un job sauté par `if:` est bien RAPPORTÉ (conclusion « skipped »), ce qui
+  # satisfait une éventuelle branch protection. C'est le piège classique de GitHub qu'on évite
+  # ici : un check requis dont le WORKFLOW ne se déclenche pas n'est jamais rapporté du tout, et
+  # la PR reste bloquée pour toujours. Sans objet tant que le miroir n'a pas de branch protection
+  # (il n'en aura pas pendant l'expérience), mais c'est la cible de #331 — autant que la structure
+  # soit juste dès maintenant plutôt qu'à réparer sous la pression d'une PR bloquée.
+  #
+  # Le calcul se fait en git nu, sans action tierce : une dépendance de plus dans la chaîne
+  # d'approvisionnement se justifie mal pour trois lignes de `git diff`.
+  perimetre:
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.filtre.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # nécessaire pour diffé contre origin/main
+
+      - id: filtre
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            # Sur main, on ne cherche pas de base de comparaison : le coût d'un web-build de trop
+            # est négligeable devant le risque de le sauter à tort sur la branche de référence.
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "main → web-build joué systématiquement."
+            exit 0
+          fi
+          base="origin/main"
+          if ! git rev-parse --verify --quiet "$base" >/dev/null; then
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "$base introuvable → web-build joué par précaution."
+            exit 0
+          fi
+          fichiers="$(git diff --name-only "$base...HEAD")"
+          echo "Fichiers modifiés depuis $base :"
+          printf '  %s\n' $fichiers
+          if printf '%s\n' "$fichiers" | grep -qE '^(apps/web/|\.github/workflows/|\.gitlab-ci\.yml$)'; then
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "web=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Miroir de `shellcheck` (.gitlab-ci.yml). Même boucle UN APPEL PAR FICHIER que GitLab et que le
+  # filet local (#285) : shellcheck est superlinéaire en taille totale reçue d'un coup, et il ne
+  # suit un `# shellcheck source=` que si le fichier sourcé est lui aussi sur la ligne de commande
+  # — découper d'un seul côté ferait diverger les trois verdicts.
+  #
+  # GitLab utilise l'image `koalaman/shellcheck-alpine:stable`. Ici on prend le shellcheck
+  # PRÉINSTALLÉ sur le runner, et non la même image en `container:` : une action JavaScript comme
+  # `actions/checkout` exige un Node dans le conteneur, que l'image alpine de shellcheck n'a pas —
+  # le job échouerait au checkout, avant d'avoir analysé une seule ligne. La version est imprimée
+  # des deux côtés : une dérive de verdict entre les deux CI se lira dans les logs, ce qui est
+  # précisément une des choses que l'expérience doit relever.
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - shell: bash
+        run: |
+          shellcheck --version
+          files=$(find scripts -type f -name '*.sh' | sort)
+          if [ -z "$files" ]; then
+            echo "Aucun script *.sh à analyser."
+            exit 0
+          fi
+          echo "Scripts analysés :"
+          printf '  %s\n' $files
+          code=0
+          for fichier in $files; do
+            shellcheck --severity=warning "$fichier" || code=1
+          done
+          exit $code
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Miroir de `python-lint`. Le cache pip de GitLab (clé sur pyproject.toml) devient le cache natif
+  # de `setup-python`, qui utilise la même clé de fichier.
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install "ruff>=0.6,<1.0"
+      - run: ruff check .
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Miroir de `pytest`. Les quatre lignes d'installation sont DUPLIQUÉES avec le job `mypy` : le
+  # `extends: .python-test` de GitLab n'a pas d'équivalent, et les deux réponses possibles — une
+  # composite action maison, ou une matrice qui ferait tenir les deux commandes dans un seul job —
+  # coûtent plus en lisibilité qu'elles ne rapportent sur quatre lignes. Une matrice ferait en
+  # outre disparaître les noms `pytest` et `mypy` de la liste des checks, alors que l'expérience
+  # compare précisément job à job.
+  #
+  # `-n auto` (pytest-xdist) est conservé tel quel. C'est LE job dont la traduction risque le plus
+  # de décevoir : un runner GitHub hébergé offre 2 vCPU sur un dépôt privé, là où la machine qui
+  # porte le runner de l'équipe en a davantage. Sa durée est un des chiffres attendus par #331.
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - name: pytest
+        shell: bash
+        run: |
+          set -o pipefail
+          pytest -n auto --cov=maestro --cov-fail-under=90 --cov-report=term | tee pytest.log
+      # La clé `coverage:` de GitLab (regex qui remonte le taux dans le badge et l'affichage MR)
+      # n'a pas d'équivalent natif. Le GARDE-FOU, lui, ne dépend pas d'elle : `--cov-fail-under=90`
+      # fait déjà échouer le job. Seul l'affichage est à reloger — ici dans le résumé du run.
+      - name: Couverture dans le résumé
+        if: always()
+        shell: bash
+        run: |
+          if [ -f pytest.log ]; then
+            {
+              echo '### Couverture'
+              echo '```'
+              grep -E '^TOTAL' pytest.log || echo '(ligne TOTAL absente)'
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Miroir de `mypy` (strict sur maestro/, config dans pyproject.toml).
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: mypy maestro
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Miroir de `web-build` : lint → typage → tests → build, dans UN job, pour la raison qui vaut
+  # aussi ici — `npm ci` pèse bien plus que les contrôles eux-mêmes, et le refaire deux fois de
+  # plus n'apprendrait rien. Ordre du plus rapide au plus lent, verdict tôt quand il est rouge.
+  #
+  # Une différence assumée avec GitLab, qui utilise `node:22-alpine` : la version vient ici de
+  # `.node-version` (22.23.1), c'est-à-dire de la même source unique que `setup.sh` et le serveur
+  # MCP côté poste. Le dépôt épingle sa version de Node ; s'aligner dessus est plus fidèle à
+  # l'invariant du projet que de recopier un `22` flottant.
+  web-build:
+    needs: perimetre
+    if: needs.perimetre.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      # Le typage avant les tests et le build : quelques secondes, et l'erreur en clair plutôt
+      # qu'un `next build` rouge en fin de course (#236).
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

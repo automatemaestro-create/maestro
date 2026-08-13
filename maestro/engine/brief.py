@@ -36,15 +36,27 @@ L'attente est **indéfinie et fail-safe dans le bon sens** : sans arbitre config
 ou si l'arbitre lève, on ne décompose pas (`BriefRefuse` / l'exception remonte) —
 jamais l'inverse. C'est la moitié du produit qui est gratuite (le brief) qui
 protège l'autre (les tâches).
+
+**Un second arrêt s'intercale depuis #321**, avant celui-ci : les **questions de
+clarification**. Le brief que rend le Chef de projet porte ce qu'il refuse de
+trancher seul (`Brief.questions`) ; plutôt que de décomposer à l'aveugle ou de
+faire porter ces zones d'ombre à l'écran de validation, le run les **pose** et
+attend les réponses (`ArbitreClarification`), puis **régénère le brief entier** en
+les intégrant. Deux différences avec l'arrêt de validation, qui expliquent le canal
+distinct : il peut se produire **plusieurs fois** (jusqu'à `tours_clarification`),
+et ce qui revient n'est pas une décision mais du **texte libre**. Le plafond est ce
+qui empêche la boucle sans fin — atteint, les questions restantes deviennent des
+**hypothèses explicites** (`Brief.questions_en_hypotheses`) et le brief part en
+validation, où un humain les verra et pourra encore les corriger.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from maestro.orchestrator.schema import Brief
+from maestro.orchestrator.schema import Brief, Clarification
 
 #: Régimes du brief dans la boucle (cf. docstring du module). Ensemble **fermé** :
 #: un mode inconnu est refusé avant le premier appel modèle plutôt que traité comme
@@ -140,3 +152,132 @@ class ArbitreBrief(Protocol):
 #: Forme appelable acceptée partout où un `ArbitreBrief` est attendu : une simple
 #: coroutine convient (les tests en passent une, sans classe intermédiaire).
 ArbitreBriefAppelable = Callable[[DemandeBrief], Awaitable[DecisionBrief]]
+
+
+#: Plafond d'allers-retours de clarification par run (#321). **Deux**, et le chiffre
+#: est un arbitrage, pas un réglage neutre : un tour lève l'essentiel (le playbook
+#: borne déjà à cinq questions, et les réponses en referment la plupart), un second
+#: rattrape ce qu'une réponse a ouvert, un troisième signifie presque toujours que le
+#: modèle tourne en rond — et chaque tour coûte un appel modèle **et** une attente
+#: humaine, la plus chère des deux. Au-delà, les zones d'ombre restantes deviennent
+#: des hypothèses écrites et le brief part en validation : c'est un humain qui
+#: tranchera, sur un écran fait pour ça (#322), plutôt qu'un questionnaire sans fin.
+TOURS_CLARIFICATION_DEFAUT = 2
+
+
+def tours_clarification_valide(tours: int | None) -> int:
+    """Normalise le plafond d'allers-retours — lève `ValueError` s'il est négatif.
+
+    None retombe sur `TOURS_CLARIFICATION_DEFAUT`. **Zéro est licite et veut dire
+    « aucun aller-retour »** : le brief part en validation avec ses questions
+    telles quelles, ce qui est exactement le comportement de #320. C'est ce qui
+    permet de désarmer la clarification sans retirer l'arbitre, et donc de la
+    couper sur un déploiement où personne ne répondrait.
+    """
+    if tours is None:
+        return TOURS_CLARIFICATION_DEFAUT
+    if tours < 0:
+        raise ValueError(
+            f"plafond d'allers-retours de clarification négatif : {tours} "
+            "(attendu : 0 pour aucun, ou un entier positif)."
+        )
+    return tours
+
+
+def motif_sans_reponse(tours: int) -> str:
+    """Le préfixe des questions muées en hypothèses au plafond (#321).
+
+    Énoncé **ici** et pas au point d'appel : c'est le texte que lira l'humain qui
+    valide, et deux formulations — une par chemin de conversion — rendraient
+    illisible la seule chose qu'il doit comprendre, à savoir que personne n'a
+    répondu à ce point-là.
+    """
+    return f"Sans réponse après {tours} tour(s) de clarification"
+
+
+@dataclass(frozen=True)
+class DemandeClarification:
+    """Ce qu'un humain reçoit pour lever les zones d'ombre d'un brief (#321).
+
+    Le pendant de `DemandeBrief` pour l'**autre** question posée à l'humain : là-bas
+    « décompose-t-on ce brief ? », ici « que répondez-vous à ce que le Chef de projet
+    refuse de trancher seul ? ». Les questions sont celles du `brief` — jamais
+    recopiées à côté : le brief est régénéré en entier à chaque tour, donc dupliquer
+    sa liste de questions créerait deux vérités dont l'une se périmerait.
+
+    `tour` (à partir de 1) et `tours_max` portent l'**annonce du plafond**, deuxième
+    exigence du ticket : celui qui répond doit savoir s'il lui reste un tour ou si
+    c'est le dernier — sans quoi il garderait pour plus tard une précision qui ne
+    sera plus jamais demandée.
+    """
+
+    run_id: str
+    objectif: str
+    brief: Brief
+    tour: int
+    tours_max: int
+
+    @property
+    def dernier_tour(self) -> bool:
+        """Est-ce le dernier aller-retour avant la conversion en hypothèses ?"""
+        return self.tour >= self.tours_max
+
+
+class ArbitreClarification(Protocol):
+    """Pose les questions du brief à un humain et rend ses réponses (#321).
+
+    Même patron que `ArbitreBrief`, même bus, canal distinct — et pour la même
+    raison qu'entre `brief.*` et `validation.*` : ce qui voyage n'est pas de même
+    nature (des réponses de texte libre, pas une décision), et le moment non plus
+    (avant la validation, et possiblement plusieurs fois).
+
+    L'attente est **indéfinie** : un run suspendu sur ses questions ne se résout que
+    par des réponses ou par l'arrêt du run. C'est ce que la troisième exigence du
+    ticket rend supportable — l'attente est un état visible (`en_attente_reponses`,
+    son ancienneté, ses questions), et le run reste annulable pendant tout ce temps.
+
+    Les réponses sont rendues **dans l'ordre des questions du brief soumis** : elles
+    s'apparient par position, faute d'identité stable d'une régénération à l'autre
+    (cf. `Clarification`). Une implémentation qui n'en rendrait pas autant que de
+    questions n'est pas une erreur : les manquantes sont traitées comme sans
+    réponse, donc muées en hypothèses plutôt que reposées.
+    """
+
+    async def __call__(
+        self, demande: DemandeClarification
+    ) -> tuple[Clarification, ...]:
+        """Rend les réponses humaines aux questions de `demande` (attente indéfinie)."""
+        ...  # pragma: no cover - protocole
+
+
+#: Forme appelable acceptée partout où un `ArbitreClarification` est attendu — même
+#: commodité que `ArbitreBriefAppelable`.
+ArbitreClarificationAppelable = Callable[
+    [DemandeClarification], Awaitable[tuple[Clarification, ...]]
+]
+
+
+def apparie_reponses(
+    brief: Brief, reponses: Sequence[str]
+) -> tuple[Clarification, ...]:
+    """Apparie les questions de `brief` aux `reponses`, **par position** (#321).
+
+    Le seul appariement possible, et il est assumé : une question n'a pas
+    d'identifiant parce qu'elle n'a pas d'identité stable d'une régénération à
+    l'autre (#318, note du schéma). Ce qui le rend sûr est ailleurs — les réponses
+    s'adressent au brief **stocké** du run, dont la liste de questions est figée
+    entre sa publication et sa réponse.
+
+    Tolérant dans les deux sens plutôt que levant : une réponse **manquante** vaut
+    « sans réponse » (la question sera muée en hypothèse, jamais reposée), une
+    réponse **en trop** est ignorée (elle ne vise aucune question de ce brief). Le
+    contrôle strict de longueur a lieu à l'entrée de l'API, où il y a encore
+    quelqu'un pour corriger sa requête ; ici, en plein run, lever coûterait le run.
+    """
+    return tuple(
+        Clarification(
+            question=question,
+            reponse=reponses[rang] if rang < len(reponses) else "",
+        )
+        for rang, question in enumerate(brief.questions)
+    )

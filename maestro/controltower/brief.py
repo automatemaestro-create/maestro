@@ -37,12 +37,25 @@ from contextlib import suppress
 from maestro.controltower.events import (
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_BRIEF_DEMANDE,
+    EVENEMENT_BRIEF_QUESTIONS,
+    EVENEMENT_BRIEF_REPONSES,
     Event,
     EventBus,
     RedisEventBus,
 )
-from maestro.controltower.state import BRIEF_APPROUVE, EXECUTION_EN_ATTENTE_BRIEF
-from maestro.engine.brief import MODE_BRIEF_HUMAIN, DecisionBrief, DemandeBrief
+from maestro.controltower.state import (
+    BRIEF_APPROUVE,
+    EXECUTION_EN_ATTENTE_BRIEF,
+    EXECUTION_EN_ATTENTE_REPONSES,
+)
+from maestro.engine.brief import (
+    MODE_BRIEF_HUMAIN,
+    DecisionBrief,
+    DemandeBrief,
+    DemandeClarification,
+    apparie_reponses,
+)
+from maestro.orchestrator.schema import Clarification
 from maestro.telemetry import redact_secrets
 
 #: L'acteur au nom duquel le cadrage est consigné — celui de l'étape de brief du
@@ -144,6 +157,126 @@ async def _premiere_decision(flux: AsyncIterator[Event], run_id: str) -> Decisio
     raise RuntimeError(
         f"le bus d'événements s'est refermé sans décision sur le brief du run {run_id}"
     )
+
+
+def evenement_questions_brief(demande: DemandeClarification) -> Event:
+    """Mue une `DemandeClarification` du moteur en événement `brief.questions` (#321).
+
+    Porte le run visé, l'objectif d'origine (expurgé, comme partout ailleurs sur le
+    bus), le **brief dont on pose les questions** — jamais une copie de sa liste : le
+    brief est régénéré en entier à chaque tour, dupliquer ses questions créerait deux
+    vérités dont l'une se périmerait — et le **rang du tour avec son plafond**.
+
+    Le détail annonce le plafond en clair. C'est la deuxième exigence du ticket, et
+    elle vaut pour ce texte-là autant que pour les compteurs : un opérateur qui lit
+    la trace doit voir qu'un aller-retour a une fin, sans avoir à connaître le
+    réglage du moteur.
+    """
+    return Event(
+        type=EVENEMENT_BRIEF_QUESTIONS,
+        run_id=demande.run_id,
+        titre=redact_secrets(demande.objectif),
+        agent=ACTEUR_BRIEF,
+        role=ROLE_BRIEF,
+        statut=EXECUTION_EN_ATTENTE_REPONSES,
+        detail=(
+            f"{len(demande.brief.questions)} question(s) de clarification "
+            f"— tour {demande.tour} sur {demande.tours_max}"
+            + (
+                " (dernier : ce qui restera partira en hypothèses)"
+                if demande.dernier_tour
+                else ""
+            )
+        ),
+        brief=demande.brief,
+        tour=demande.tour,
+        tours_max=demande.tours_max,
+    )
+
+
+class ArbitreClarificationControlTower:
+    """Arbitre (#321) qui pose les questions du brief à l'UI et attend les réponses.
+
+    Pendant exact d'`ArbitreBriefControlTower`, sur l'autre canal : même abonnement
+    **avant** publication (une réponse immédiate ne peut pas être manquée), même
+    attente indéfinie, même fail-safe. Ce qui change est ce qu'on attend — des
+    réponses de texte libre plutôt qu'une décision — et le fait que ça puisse se
+    reproduire : le moteur rappelle cet arbitre à chaque tour, tant que le brief
+    régénéré porte des questions et que le plafond n'est pas atteint.
+
+    Pendant l'attente, le run est en `en_attente_reponses` : un état **non
+    terminal**, donc `POST /api/executions/{run_id}/annuler` continue d'y répondre.
+    C'est ce qui rend l'attente indéfinie acceptable — elle est visible et elle est
+    interruptible.
+    """
+
+    def __init__(self, bus: EventBus) -> None:
+        self._bus = bus
+
+    async def __call__(
+        self, demande: DemandeClarification
+    ) -> tuple[Clarification, ...]:
+        """Publie les questions puis rend les réponses humaines sur ce run."""
+        flux = self._bus.subscribe()
+        ecoute = asyncio.create_task(_premieres_reponses(flux, demande))
+        # Même précaution qu'en #48 et #320 : laisser l'abonnement se poser avant de
+        # publier, pour qu'une réponse instantanée ne tombe pas dans le vide.
+        await asyncio.sleep(0)
+        try:
+            await self._bus.publish(evenement_questions_brief(demande))
+            return await ecoute
+        finally:
+            if not ecoute.done():
+                ecoute.cancel()
+                with suppress(asyncio.CancelledError):
+                    await ecoute
+
+
+async def _premieres_reponses(
+    flux: AsyncIterator[Event], demande: DemandeClarification
+) -> tuple[Clarification, ...]:
+    """Attend sur `flux` les réponses visant ce run et les apparie à ses questions.
+
+    Ignore tout le reste du bus (statuts de tâches, validations, décisions de brief,
+    réponses visant un autre run). L'appariement est fait **ici**, contre le brief de
+    la demande : c'est le seul endroit qui tient à la fois les questions posées et
+    les réponses reçues, et le faire ailleurs obligerait à refaire voyager les
+    questions à côté des réponses — donc à retomber sur les deux vérités que le
+    canal évite (cf. `evenement_questions_brief`).
+
+    Si le flux se tarit sans réponse (bus refermé), **lève** : le moteur remonte
+    l'erreur en échec de run. Jamais un tour silencieusement sauté — le brief
+    partirait alors en validation avec ses questions intactes, en laissant croire
+    qu'on les a posées.
+    """
+    try:
+        async for event in flux:
+            if event.type != EVENEMENT_BRIEF_REPONSES:
+                continue
+            if event.run_id != demande.run_id:
+                continue
+            return apparie_reponses(demande.brief, event.reponses or ())
+    finally:
+        aclose = getattr(flux, "aclose", None)
+        if aclose is not None:
+            await aclose()
+    raise RuntimeError(
+        "le bus d'événements s'est refermé sans réponse aux questions du brief "
+        f"du run {demande.run_id}"
+    )
+
+
+def arbitre_clarification_redis(
+    url: str | None = None,
+) -> ArbitreClarificationControlTower:
+    """L'arbitre de clarification de production : questions et réponses via Redis.
+
+    Pendant exact d'`arbitre_brief_redis` (#320), sur l'autre canal et pour la même
+    raison : c'est ce qui permet à un run lancé **hors** de l'API
+    (`maestro-run --publier --brief humain`) d'être questionné depuis la Control
+    Tower comme un run qu'elle a lancé.
+    """
+    return ArbitreClarificationControlTower(RedisEventBus(url))
 
 
 def arbitre_brief_redis(url: str | None = None) -> ArbitreBriefControlTower:

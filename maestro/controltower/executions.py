@@ -59,7 +59,10 @@ from typing import TYPE_CHECKING, Any
 
 from maestro.appartenance import projet_id_valide
 from maestro.controltower.bridge import JournalEventHandler
-from maestro.controltower.brief import ArbitreBriefControlTower
+from maestro.controltower.brief import (
+    ArbitreBriefControlTower,
+    ArbitreClarificationControlTower,
+)
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     Event,
@@ -417,6 +420,12 @@ class ServiceExecutions:
                 guardrails=garde_fous,
                 max_parallele=parallelisme,
                 arbitre_brief=ArbitreBriefControlTower(self._bus),
+                # Les questions de clarification (#321) passent par le même bus et
+                # se câblent au même endroit, pour la même raison : *où* la question
+                # est posée est un choix de déploiement. Le **plafond**, lui, n'est
+                # pas passé ici — c'est un réglage du moteur, dont le défaut
+                # (`TOURS_CLARIFICATION_DEFAUT`) vaut pour tout run lancé par l'API.
+                arbitre_clarification=ArbitreClarificationControlTower(self._bus),
             )
             rapport = await moteur.run(
                 objectif,
