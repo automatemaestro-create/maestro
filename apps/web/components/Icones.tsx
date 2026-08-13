@@ -71,6 +71,23 @@ export function IconeObjectif(props: Props) {
   );
 }
 
+/**
+ * Valider le brief (#322) : un document et sa coche. Il emprunte la coche de
+ * `IconeValidations` — c'est le même geste, sur un autre objet — et la feuille
+ * plutôt que la cible d'`IconeObjectif`, qui dit l'intention brute d'où part le
+ * run là où celle-ci dit le texte structuré qu'on relit avant de payer.
+ */
+export function IconeBrief(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M19 10.5V6.5L14.5 2H6.5A1.5 1.5 0 0 0 5 3.5v17A1.5 1.5 0 0 0 6.5 22h5" />
+      <path d="M14 2v4.5A1.5 1.5 0 0 0 15.5 8H19" />
+      <path d="M8.5 12h5M8.5 16h3" />
+      <path d="m14.5 18.5 2 2 4-4.5" />
+    </Trait>
+  );
+}
+
 export function IconeProjets(props: Props) {
   return (
     <Trait {...props}>

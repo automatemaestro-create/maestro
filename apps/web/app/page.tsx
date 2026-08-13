@@ -40,6 +40,7 @@ import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
 import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord";
 import { Kanban } from "@/components/Kanban";
+import { PanneauBriefs } from "@/components/PanneauBriefs";
 import { PanneauValidations } from "@/components/PanneauValidations";
 import { PosteVide } from "@/components/PosteVide";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -59,6 +60,7 @@ export default function TableauDeBord() {
     agents,
     evenements,
     validations,
+    executions,
     couts,
     connecte,
     chargement,
@@ -75,11 +77,20 @@ export default function TableauDeBord() {
   // explique quoi faire au lieu d'aligner quatre panneaux vides. Une API
   // injoignable, elle, garde les panneaux : sa bannière dit déjà le problème, et
   // conseiller « lancez un run » serait alors un contresens.
+  //
+  // Les **exécutions** entrent dans le compte depuis #322, et ce n'était pas un
+  // oubli anodin : un run arrêté sur son brief ne crée aucune tâche, n'ouvre
+  // aucune validation, et l'événement qui l'a suspendu n'atteint pas une Control
+  // Tower cadrée sur un projet. Un premier run mené depuis « Composer un
+  // objectif » atterrissait donc sur « rien à regarder » — l'écran qui conseille
+  // de lancer un run, affiché à quelqu'un dont le run attend justement qu'on le
+  // regarde.
   const rienARegarder =
     erreur === null &&
     taches.length === 0 &&
     evenements.length === 0 &&
-    validations.length === 0;
+    validations.length === 0 &&
+    executions.length === 0;
 
   return (
     <>
@@ -90,6 +101,9 @@ export default function TableauDeBord() {
         <PosteVide projet={projet} connecte={connecte} />
       ) : (
         <>
+          {/* Avant les validations : un brief suspendu bloque le run entier,
+              une validation ne retient qu'une tâche. */}
+          <PanneauBriefs executions={executions} />
           <PanneauValidations validations={validations} decider={decider} />
           <IndicateursTableauDeBord
             taches={taches}

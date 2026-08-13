@@ -12,8 +12,10 @@ import type {
   AnalyticsCouts,
   CoutExecution,
   ChoixSelecteur,
+  DecisionBrief,
   DeclarationProjet,
   DefinitionAgent,
+  DetailExecution,
   DisponibiliteSelecteur,
   EntreeRegistreMcp,
   EtatAgent,
@@ -30,6 +32,7 @@ import type {
   PropositionPlaybookDetail,
   RapportLecture,
   RefusProjet,
+  ReponsesBrief,
   ResumeExecution,
   Sante,
   SourceDeclaree,
@@ -790,4 +793,78 @@ export async function lancerExecution(
   });
   if (!reponse.ok) throw await refusSource(reponse, "lancement refusé");
   return (await reponse.json()) as ResumeExecution;
+}
+
+/**
+ * Les exécutions connues du backend, à la portée demandée (`GET /api/executions`,
+ * #185) — un **résumé** par run, sans son brief ni sa trace.
+ *
+ * C'est ce qui rend un run suspendu **visible** (#322) : `statut` vaut alors
+ * `en_attente_brief` (ou `en_attente_reponses`, #321) et rien d'autre ne le dirait
+ * — un run arrêté sur son brief n'a créé aucune tâche, donc il n'apparaît ni au
+ * Kanban ni dans les grands livres, qui se dérivent des tâches.
+ */
+export function chargerExecutions(
+  portee: PorteeProjet,
+): Promise<ResumeExecution[]> {
+  return chargerJson<ResumeExecution[]>(
+    `/api/executions?projet=${encodeURIComponent(portee)}`,
+  );
+}
+
+/**
+ * Le détail d'une exécution (`GET /api/executions/{run_id}`, #185) : le résumé,
+ * le **brief** (#320), le grand livre (#57) et la trace. Un seul appel pour tout
+ * ce que l'écran de validation (#322) met sous les yeux de qui décide — le brief
+ * à relire d'un côté, le coût déjà engagé de l'autre.
+ */
+export function chargerExecution(runId: string): Promise<DetailExecution> {
+  return chargerJson<DetailExecution>(
+    `/api/executions/${encodeURIComponent(runId)}`,
+  );
+}
+
+/**
+ * Tranche le brief d'un run (`POST /api/executions/{run_id}/brief/decision`,
+ * #320) : approuver — tel quel (`brief: null`) ou **corrigé**, le brief envoyé
+ * devenant alors l'entrée de la décomposition — ou refuser, ce qui solde le run
+ * sans qu'aucune tâche ait été créée.
+ *
+ * Les refus du backend sont relayés tels quels : 409 si le run n'attend plus de
+ * décision (déjà tranchée ailleurs, run annulé entre-temps), 422 si le brief
+ * corrigé ne respecte pas le schéma partagé — un périmètre vidé, un critère
+ * d'acceptation en double. C'est le message de l'API qui s'affiche, pas une
+ * reformulation d'ici : lui seul sait ce qu'il a refusé.
+ */
+export function deciderBrief(
+  runId: string,
+  decision: DecisionBrief,
+): Promise<void> {
+  return envoyerJson(
+    `/api/executions/${encodeURIComponent(runId)}/brief/decision`,
+    decision,
+    "décision refusée",
+  );
+}
+
+/**
+ * Répond aux questions de clarification d'un brief
+ * (`POST /api/executions/{run_id}/brief/reponses`, #321) : le run repart rédiger
+ * son brief en les intégrant.
+ *
+ * Les réponses s'apparient **par position** aux `questions` du brief en attente,
+ * et la liste doit en faire exactement le compte (422 sinon) : une liste décalée
+ * affecterait des réponses aux mauvaises questions sans que rien ne le signale.
+ * Une réponse **vide** est licite et vaut « je ne sais pas » — la question part
+ * en hypothèse explicite plutôt que d'être reposée.
+ */
+export function repondreBrief(
+  runId: string,
+  reponses: string[],
+): Promise<void> {
+  return envoyerJson(
+    `/api/executions/${encodeURIComponent(runId)}/brief/reponses`,
+    { reponses } satisfies ReponsesBrief,
+    "réponses refusées",
+  );
 }

@@ -8,6 +8,7 @@ import type { ComponentType, SVGProps } from "react";
 
 import {
   IconeAgents,
+  IconeBrief,
   IconeChat,
   IconeCouts,
   IconeJournal,
@@ -50,10 +51,20 @@ export type EntreeMenu = {
  * #280 — « Projets » en est sorti parce qu'un projet est le **cadre** des
  * écrans ; composer, c'est une action, et une action qu'on ne trouve pas est une
  * action qui n'existe pas (le tableau de bord vide renvoyait à `curl`).
+ *
+ * « Valider le brief » (#322) suit « Composer un objectif », dont elle est
+ * l'autre moitié : on compose, le Chef de projet rédige, on tranche. **Au menu**
+ * et non dans `HORS_MENU` bien qu'on y arrive le plus souvent par la cloche ou
+ * par le tableau de bord — un run suspendu sur son brief ne crée aucune tâche,
+ * donc rien d'autre ne le montre, et une destination qui n'apparaît que le jour
+ * où quelque chose l'appelle est une destination qu'on ne pense pas à ouvrir. La
+ * file y est vide la plupart du temps, et le dit : c'est le prix de savoir qu'on
+ * n'a rien laissé en plan.
  */
 export const MENU: EntreeMenu[] = [
   { href: "/", libelle: "Tableau de bord", Icone: IconeTableauDeBord },
   { href: "/composer", libelle: "Composer un objectif", Icone: IconeObjectif },
+  { href: "/brief", libelle: "Valider le brief", Icone: IconeBrief },
   { href: "/agents", libelle: "Agents", Icone: IconeAgents },
   { href: "/chat", libelle: "Chat", Icone: IconeChat },
   { href: "/couts", libelle: "Coûts & analytics", Icone: IconeCouts },

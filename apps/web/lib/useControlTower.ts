@@ -32,18 +32,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   chargerAgents,
   chargerCoutExecution,
+  chargerExecutions,
   chargerTaches,
   chargerValidations,
+  deciderBrief,
   deciderValidation,
   reassignerTache,
   reglerCapaciteAgent,
+  repondreBrief,
   urlEvenements,
   type PorteeProjet,
 } from "./api";
 import type {
   CoutExecution,
+  DecisionBrief,
   EtatAgent,
   Evenement,
+  ResumeExecution,
   Tache,
   Validation,
 } from "./types";
@@ -67,6 +72,14 @@ export type ControlTower = {
   evenements: Evenement[];
   /** Demandes de validation humaine (#48), en attente comme tranchées. */
   validations: Validation[];
+  /**
+   * Les exécutions du projet actif (#185), résumé seul. Chargées ici depuis #322
+   * pour une raison précise : un run **suspendu sur son brief** n'a créé aucune
+   * tâche, donc rien de ce que ce hook tenait jusqu'ici ne le montrait — ni le
+   * Kanban, ni les grands livres, tous dérivés des tâches. Un run qu'on ne voit
+   * pas est un run perdu, et c'est cette liste qui allume le badge d'attente.
+   */
+  executions: ResumeExecution[];
   /** Grands livres des exécutions connues (#57) : coût par tâche et agrégat. */
   couts: CoutExecution[];
   /** WebSocket ouverte : les mises à jour arrivent en temps réel. */
@@ -78,6 +91,17 @@ export type ControlTower = {
   reassigner: (tacheId: string, agent: string) => Promise<void>;
   /** Tranche une demande de validation : le moteur reprend ou annule la tâche. */
   decider: (tacheId: string, approuve: boolean) => Promise<void>;
+  /**
+   * Tranche le brief d'un run (#320) : approuver tel quel ou corrigé, ou refuser.
+   * Le run reprend sur la décomposition, ou se solde sans qu'aucune tâche n'ait
+   * été créée.
+   */
+  trancherBrief: (runId: string, decision: DecisionBrief) => Promise<void>;
+  /**
+   * Répond aux questions de clarification d'un brief (#321) : le run repart le
+   * rédiger en les intégrant. Appariées **par position** aux questions du brief.
+   */
+  repondreAuBrief: (runId: string, reponses: string[]) => Promise<void>;
   /** Règle la capacité d'un agent (#86) : activer/désactiver, instances. */
   reglerCapacite: (
     nom: string,
@@ -90,6 +114,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
   const [agents, setAgents] = useState<EtatAgent[]>([]);
   const [evenements, setEvenements] = useState<Evenement[]>([]);
   const [validations, setValidations] = useState<Validation[]>([]);
+  const [executions, setExecutions] = useState<ResumeExecution[]>([]);
   const [couts, setCouts] = useState<CoutExecution[]>([]);
   const [connecte, setConnecte] = useState(false);
   const [chargement, setChargement] = useState(true);
@@ -99,22 +124,38 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
 
   const recharger = useCallback(async () => {
     try {
-      const [nouvellesTaches, nouveauxAgents, nouvellesValidations] =
-        await Promise.all([
-          chargerTaches(portee),
-          // Sans portée : le parc d'agents est du poste, pas du projet.
-          chargerAgents(),
-          chargerValidations(portee),
-        ]);
-      // Les grands livres (#57) se chargent après les tâches : les run_id
-      // connus en sont dérivés (le backend a une exécution pour chacun).
+      const [
+        nouvellesTaches,
+        nouveauxAgents,
+        nouvellesValidations,
+        nouvellesExecutions,
+      ] = await Promise.all([
+        chargerTaches(portee),
+        // Sans portée : le parc d'agents est du poste, pas du projet.
+        chargerAgents(),
+        chargerValidations(portee),
+        chargerExecutions(portee),
+      ]);
+      // Les grands livres (#57) se chargent après : les run_id connus en sont
+      // dérivés. Des **deux** listes depuis #322, et pas des seules tâches — un
+      // run arrêté sur son brief n'en a aucune, si bien que sa dépense (la
+      // rédaction du brief, déjà payée) restait hors du cumul affiché par la
+      // barre supérieure et par la tuile « Dépense ». Un coût engagé qui ne se
+      // voit nulle part est précisément ce que le point de contrôle du brief
+      // demande de voir.
       const runIds = [
-        ...new Set(nouvellesTaches.map((t) => t.run_id).filter(Boolean)),
+        ...new Set(
+          [
+            ...nouvellesTaches.map((t) => t.run_id),
+            ...nouvellesExecutions.map((e) => e.run_id),
+          ].filter(Boolean),
+        ),
       ];
       const nouveauxCouts = await Promise.all(runIds.map(chargerCoutExecution));
       setTaches(nouvellesTaches);
       setAgents(nouveauxAgents);
       setValidations(nouvellesValidations);
+      setExecutions(nouvellesExecutions);
       setCouts(nouveauxCouts);
       setErreur(null);
     } catch (e) {
@@ -212,6 +253,25 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     [recharger],
   );
 
+  const trancherBrief = useCallback(
+    async (runId: string, decision: DecisionBrief) => {
+      await deciderBrief(runId, decision);
+      // Même mécanique que les autres décisions : l'événement `brief.decision`
+      // arrivera par le WebSocket, le rechargement direct fait sortir le run de
+      // l'attente sans dépendre de la socket.
+      await recharger();
+    },
+    [recharger],
+  );
+
+  const repondreAuBrief = useCallback(
+    async (runId: string, reponses: string[]) => {
+      await repondreBrief(runId, reponses);
+      await recharger();
+    },
+    [recharger],
+  );
+
   const reglerCapacite = useCallback(
     async (nom: string, reglage: { actif?: boolean; instances?: number }) => {
       await reglerCapaciteAgent(nom, reglage);
@@ -227,12 +287,15 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     agents,
     evenements,
     validations,
+    executions,
     couts,
     connecte,
     chargement,
     erreur,
     reassigner,
     decider,
+    trancherBrief,
+    repondreAuBrief,
     reglerCapacite,
   };
 }
