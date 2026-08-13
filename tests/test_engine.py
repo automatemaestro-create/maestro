@@ -33,7 +33,6 @@ Plus la résilience : un échec de routage est consigné sans interrompre la bou
 import asyncio
 import json
 import logging
-import os
 from pathlib import Path
 
 import pytest
