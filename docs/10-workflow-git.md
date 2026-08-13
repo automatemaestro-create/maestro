@@ -1226,6 +1226,26 @@ chez le serveur qui l'a émis. Fine-grained, limité au dépôt miroir, `Content
 exactement le fichier que l'expérience installe. Il **expire** obligatoirement, et le miroir
 s'arrêtera alors en silence — l'erreur n'apparaît que dans cette même page GitLab.
 
+**Un second token, en lecture seule, pour que la session lise les runs.** Le premier ne sert qu'au
+miroir et ne quitte jamais GitLab ; il ne donne à la session aucun accès à GitHub. Or la mesure
+attendue par #331 — minutes-job par pipeline, durée de `pytest`, écarts de verdict — ne vit que
+côté GitHub, et les **minutes facturées** se lisent à
+`/repos/{owner}/{repo}/actions/runs/{id}/timing` (champ `billable`), la durée de mur d'un run
+n'étant pas ce qui est décompté. D'où un token fine-grained limité au dépôt miroir,
+`Actions: Read` seul, posé par `gh auth login` — geste de la personne, au même titre que
+`glab auth login`, la session ne manipulant jamais le secret en clair.
+
+Les deux tokens sont **opposés par construction** et ne peuvent pas se substituer : celui du miroir
+**écrit** et vit **chez GitLab** ; celui-ci **lit** et vit **sur le poste**. Ce n'est pas un cumul
+de droits, c'est une séparation.
+
+Côté permissions, `gh` était **absent de l'allowlist** — les règles de `.claude/settings.json`
+visaient toutes `glab`, si bien que chaque `gh run list` aurait demandé une approbation (§11.7 : la
+classe de trou que #307 a mesurée). Six règles en lecture s'y ajoutent, dont un `gh api` **borné au
+chemin `actions/` du seul dépôt miroir** plutôt qu'ouvert : une règle est un préfixe de commande, et
+la borner au chemin est ici la façon la moins large de couvrir `/timing`. La vraie limite reste le
+token lui-même, qui ne sait pas écrire.
+
 ## 9. Deux tickets en parallèle — un worktree par session
 
 Un clone n'a qu'**un seul répertoire de travail** : deux sessions Claude Code ouvertes dessus
