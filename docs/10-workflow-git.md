@@ -1184,6 +1184,48 @@ Deux points à ne pas défaire :
   théorique — `/ticket-start` l'appelle pour rattraper une dérive de dépendances (§9.4), et c'est
   une session sans humain qui en lit l'échec.
 
+### 8.6 Une seconde CI, en miroir sur GitHub — l'expérience de #332
+
+Le cadrage #331 instruit une migration vers GitHub, poussée par trois moteurs : la CI, l'intégration
+Claude Code et, plus tard, la visibilité. Deux de ses inconnues ne se répondent pas sur le papier —
+**ce que coûte réellement un pipeline en minutes-job**, et **si la traduction des cinq jobs rend le
+même verdict**. D'où #332 : un dépôt GitHub **privé** alimenté par un **miroir push** depuis GitLab,
+sur lequel `.github/workflows/ci.yml` rejoue les mêmes jobs, **en double et sans autorité**.
+
+> ⚠ **Le verdict qui conditionne un merge reste celui de `.gitlab-ci.yml`.** La CI miroir ne bloque
+> rien, n'est requise nulle part, et se supprime avec le dépôt qui la porte si #331 conclut « non ».
+
+Quatre choix structurent le fichier, et chacun répond à une contrainte qui n'existe pas côté GitLab :
+
+- **`on: push`, jamais `on: pull_request`.** Un miroir push ne réplique que des branches et des
+  tags : il ne crée aucune pull request, donc `pull_request` ne se déclencherait littéralement
+  jamais. Conséquence à connaître avant de lire les chiffres — côté GitLab un pipeline ne part que
+  sur `merge_request_event` (§8, #165), donc **les deux cadences ne sont pas comparables**. C'est
+  sans importance : la mesure cherche le **coût d'un pipeline**, à multiplier ensuite par le nombre
+  de pipelines que GitLab joue réellement. Compter les runs GitHub répondrait à une question que
+  personne ne pose.
+- **Un job `perimetre` sans équivalent GitLab.** GitLab attache `rules: changes:` à un job ;
+  GitHub n'offre `paths:` qu'au niveau du **workflow entier**, ce qui sauterait aussi les jobs
+  Python. Le portier calcule le périmètre en `git diff` nu — pas d'action tierce pour trois lignes —
+  et `web-build` porte un `if:`. Un job sauté par `if:` est **rapporté** (« skipped »), donc
+  compatible avec une branch protection ; c'est le piège inverse qu'on évite — un check requis dont
+  le **workflow** ne se déclenche pas n'est jamais rapporté, et la PR reste bloquée pour toujours.
+  Sans objet pendant l'expérience, mais c'est la cible de #331.
+- **Le shellcheck préinstallé du runner, pas l'image de GitLab.** `koalaman/shellcheck-alpine` en
+  `container:` ferait échouer `actions/checkout` : une action JavaScript exige un Node dans le
+  conteneur, que l'image alpine n'a pas. La version est imprimée des deux côtés — une dérive de
+  verdict se lira dans les logs, et c'est une des choses que l'expérience doit relever.
+- **La clé `coverage:` n'a pas d'équivalent** et n'en avait pas besoin : le garde-fou est
+  `--cov-fail-under=90`, qui fait déjà échouer le job. Seul l'**affichage** du taux est relogé, dans
+  le résumé du run.
+
+Le PAT GitHub vit **côté GitLab**, dans Settings › Repository › Mirroring repositories : c'est
+GitLab qui pousse, donc GitLab qui s'authentifie — un identifiant vit chez le **client**, jamais
+chez le serveur qui l'a émis. Fine-grained, limité au dépôt miroir, `Contents` **et `Workflows`** en
+écriture : sans le second, GitHub refuse tout push touchant `.github/workflows/`, c'est-à-dire
+exactement le fichier que l'expérience installe. Il **expire** obligatoirement, et le miroir
+s'arrêtera alors en silence — l'erreur n'apparaît que dans cette même page GitLab.
+
 ## 9. Deux tickets en parallèle — un worktree par session
 
 Un clone n'a qu'**un seul répertoire de travail** : deux sessions Claude Code ouvertes dessus
