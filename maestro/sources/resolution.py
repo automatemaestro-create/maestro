@@ -303,7 +303,7 @@ def _resoudre_fichier(
     settings: Settings | None,
 ) -> Source:
     """Une source `fichier` : nom sûr, taille connue et bornée, destination hors projet."""
-    nom_fichier = _nom_de_fichier(nom or str(data.get("chemin") or ""), index=index)
+    nom_fichier = nom_de_fichier(nom or str(data.get("chemin") or ""), index=index)
     taille = _taille(data.get("taille"), index=index, garde_fous=garde_fous)
     emplacement = emplacement_ingestion(
         run_id, settings=settings, racine_projet=racine_projet
@@ -320,12 +320,17 @@ def _resoudre_fichier(
     )
 
 
-def _nom_de_fichier(brut: str, *, index: int) -> str:
+def nom_de_fichier(brut: str, *, index: int = 0) -> str:
     """Le nom de fichier assaini d'une source téléversée, ou `SourceRefusee`.
 
     Un nom, pas un chemin : ni séparateur, ni `..`, ni caractère interdit. Le
     nom d'un fichier téléversé vient du navigateur de l'utilisateur, c'est-à-dire
     de l'extérieur — c'est le vecteur classique de la traversée de répertoire.
+
+    Public depuis #317 : le téléversement (`maestro.sources.televersement`)
+    assainit le nom **à la réception**, là où la résolution l'assainit à la
+    déclaration. Deux assainisseurs écrits séparément divergeraient, et c'est
+    celui des deux qui oublie une classe de caractères qui ferait la faille.
     """
     nom = " ".join(str(brut or "").split())
     if not nom:
