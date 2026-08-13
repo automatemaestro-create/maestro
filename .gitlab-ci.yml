@@ -125,7 +125,29 @@ python-lint:
 # du diff. pytest-cov agrège nativement la couverture des workers : le seuil est inchangé.
 pytest:
   extends: .python-test
+  # GIT EST UNE DÉPENDANCE DE LA SUITE, pas un confort (#333) — d'où l'image PLEINE et non `-slim`,
+  # qui est la seule différence avec les autres jobs Python. ~285 tests d'outillage montent un vrai
+  # dépôt jetable et sont gardés par `skipif(shutil.which("git") is None)` : sous `python:3.11-slim`,
+  # qui n'a pas git, ils étaient SAUTÉS ici depuis toujours — pipeline vert, 285 tests non joués,
+  # personne pour le voir. Ils ne tournaient que sur les postes de développement, c'est-à-dire sous
+  # Windows, et l'expérience #332 (miroir GitHub, runner muni de git) en a trouvé 16 rouges d'un
+  # coup. `tests/conftest.py` transforme désormais l'absence de git EN CI en échec franc, pour
+  # qu'un retrait se voie au lieu de rendre 285 tests invisibles.
+  #
+  # POURQUOI L'IMAGE ET NON `apt-get install git` : la première version de ce job installait git au
+  # lancement, et le pipeline de la MR !269 est mort dessus — « Unable to connect to
+  # deb.debian.org », exit 100, avant même que pytest démarre. Un `apt-get` par pipeline ajoute une
+  # dépendance réseau PERMANENTE sur les miroirs Debian, sur le chemin critique du merge (un
+  # pipeline vert est exigé). L'image, elle, est tirée une fois puis mise en cache par le runner :
+  # git 2.47 y est déjà. Le remède ne doit pas coûter une panne récurrente à ceux qui merge.
+  #
+  # Aucune identité git n'est posée globalement, et c'est délibéré : le code qui écrit dans le dépôt
+  # de l'utilisateur porte la sienne par `-c` (maestro/projets/application.py). En fournir une ici
+  # masquerait à nouveau exactement le défaut que #333 a corrigé — une fusion qui n'échouait que sur
+  # les machines sans `~/.gitconfig`.
+  image: python:3.11
   script:
+    - git --version
     - pytest -n auto --cov=maestro --cov-fail-under=90
   coverage: '/TOTAL.*? (100(?:\.\d+)?\%|[1-9]?\d(?:\.\d+)?\%)/'
 

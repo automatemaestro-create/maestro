@@ -84,10 +84,11 @@ _MAX_COMPTAGE_OCTETS = 1_000_000
 #: c'est la phrase du journal et de la notification qu'on borne.
 _MAX_LIGNES_RESUME = 40
 
-#: Identité portée par le commit de rattrapage (cf. `_commiter_en_attente`). Le
-#: dépôt de l'utilisateur n'a aucune raison d'avoir une identité Git valable pour
-#: un agent, et un `user.email` absent ferait échouer la fusion au tout dernier
-#: geste. Posée par `-c`, donc jamais écrite dans sa configuration.
+#: Identité portée par les DEUX commits que Maestro écrit dans le projet : le commit de rattrapage
+#: (`_commiter_en_attente`) et le commit de fusion (`_fusionner`, `--no-ff`). Le dépôt de
+#: l'utilisateur n'a aucune raison d'avoir une identité Git valable pour un agent, et un
+#: `user.email` absent ferait échouer la fusion au tout dernier geste. Posée par `-c`, donc jamais
+#: écrite dans sa configuration.
 _AUTEUR_NOM = "Maestro"
 _AUTEUR_COURRIEL = "maestro@localhost"
 
@@ -703,8 +704,24 @@ def _fusionner(racine: Path, diff: DiffProjet, espace: Path | None) -> tuple[str
     if espace is not None and espace.is_dir():
         _commiter_en_attente(espace, diff.branche)
     _exige_racine_disponible(racine, diff.base)
+    # `--no-ff` écrit un COMMIT de fusion : il lui faut une identité, exactement comme au commit de
+    # rattrapage ci-dessus. Elle manquait ici (#333) — la moitié non couverte de ce que le
+    # commentaire de `_AUTEUR_NOM` annonce pourtant : « un user.email absent ferait échouer la
+    # fusion au tout dernier geste ». C'est le geste en question, et il échouait pour de bon sur
+    # tout dépôt sans identité (dépôt neuf, conteneur, runner CI) — en `fusion-refusee`, motif qui
+    # désigne un conflit et envoyait donc chercher le problème là où il n'était pas.
     resultat = _git(
-        racine, "merge", "--no-ff", "--no-edit", "-m", _message_fusion(diff), diff.branche
+        racine,
+        "-c",
+        f"user.name={_AUTEUR_NOM}",
+        "-c",
+        f"user.email={_AUTEUR_COURRIEL}",
+        "merge",
+        "--no-ff",
+        "--no-edit",
+        "-m",
+        _message_fusion(diff),
+        diff.branche,
     )
     if resultat.returncode != 0:
         _git(racine, "merge", "--abort")

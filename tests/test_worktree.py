@@ -351,8 +351,12 @@ def depot(tmp_path: Path) -> Depot:
         dossier.mkdir(parents=True)
         (dossier / "marqueur.txt").write_text(lourd, encoding="utf-8", newline="\n")
 
+    # Copie conforme des motifs du dépôt, y compris l'ABSENCE de barre oblique finale sur `.venv`
+    # et `.tools` (#333) : ils sont partagés par un LIEN, que git ne voit comme un répertoire que
+    # sous Windows. Un `/` ici les rendrait à nouveau non ignorés sous Linux, et le worktree
+    # fraîchement monté repasserait pour « porteur de travail non sauvegardé ».
     (racine / ".gitignore").write_text(
-        ".env\n.venv/\n.tools/\nnode_modules/\n.claude/settings.local.json\n",
+        ".env\n.venv\n.tools\nnode_modules/\n.claude/settings.local.json\n",
         encoding="utf-8",
         newline="\n",
     )
@@ -396,6 +400,31 @@ def test_creation_monte_un_worktree_equipe(depot: Depot) -> None:
     # Artefacts partagés : le lien traverse jusqu'au contenu du clone principal.
     for lourd in (".venv", ".tools"):
         assert (wt / lourd / "marqueur.txt").read_text(encoding="utf-8") == lourd
+
+
+def test_un_worktree_fraichement_monte_est_propre(depot: Depot) -> None:
+    """Rien de ce que `create` dépose ne doit apparaître dans `git status` (#333).
+
+    L'invariant a l'air décoratif ; il porte en fait tout le cycle de vie. « Travail non
+    sauvegardé » se mesure par `git status --porcelain` (`travail_non_sauvegarde`), et c'est le
+    garde-fou qui fait REFUSER un retrait — à juste titre, mieux vaut 535 Mo de trop qu'un commit
+    perdu. Un worktree sale dès sa création rend donc `remove` et `gc` définitivement inopérants :
+    onze tests tombaient en cascade, tous en aval, aucun ne nommant la cause.
+
+    Il n'était vérifié nulle part directement, et les onze tests qui l'auraient trahi sont gardés
+    par `skipif(git absent)` — donc sautés dans l'image `python:3.11-slim` du pipeline, et joués
+    seulement sur des postes Windows, où les artefacts partagés sont des JONCTIONS (des
+    répertoires) et non des liens symboliques (des fichiers). D'où un motif `.venv/` qui ignorait
+    sous Windows et laissait passer sous Linux.
+    """
+    acheve = depot.lance("create", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    salissures = depot.git("status", "--porcelain", cwd=depot.worktree())
+    assert salissures == "", (
+        "un worktree fraîchement monté doit être propre — sinon le garde-fou « travail non "
+        f"sauvegardé » refuse à jamais de le retirer. Laissé derrière :\n{salissures}"
+    )
 
 
 def test_creation_monte_l_atelier_de_session(depot: Depot) -> None:

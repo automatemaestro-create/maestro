@@ -66,6 +66,25 @@ def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return maison
 
 
+@pytest.fixture(autouse=True)
+def _sans_identite_git_ambiante(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Coupe l'identité Git du poste, pour que ces tests répondent la même chose partout (#333).
+
+    Le dépôt jetable n'a jamais posé d'identité — à dessein : c'est la situation que
+    `maestro.projets.application` dit prendre en charge, un projet d'utilisateur qui n'a aucune
+    raison d'en avoir une valable pour un agent. Mais le `~/.gitconfig` du poste en fournissait une
+    en douce, si bien que la fusion réussissait sur toute machine de développement **sans jamais
+    passer par le `-c` du code**. Le trou ne s'est vu que sur un runner nu, où git répond
+    « Committer identity unknown » — et il ne s'est vu qu'une fois, l'image du pipeline GitLab
+    n'ayant pas git du tout.
+
+    `GIT_CONFIG_GLOBAL` sur un fichier inexistant (git ≥ 2.32) vaut un `~/.gitconfig` vide. La
+    configuration SYSTÈME est laissée en place : sous Windows elle porte `core.autocrlf`, dont ces
+    tests dépendent bien plus que d'une identité, et l'identité ne s'y trouve pas.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig-absent"))
+
+
 # --------------------------------------------------------------------------- #
 # Fabriques
 # --------------------------------------------------------------------------- #

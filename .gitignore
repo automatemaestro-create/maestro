@@ -1,7 +1,15 @@
 # --- Python ---
 __pycache__/
 *.py[cod]
-.venv/
+# SANS barre oblique finale, et c'est le sujet de #333 : un motif terminé par `/` ne matche QUE
+# des répertoires. Or `scripts/git/worktree.sh` partage `.venv` et `.tools` avec le clone principal
+# par un LIEN, et un lien n'est un répertoire que sous Windows (jonction `mklink /J`) — sous Linux
+# c'est un `ln -s`, que git voit comme un fichier. `.venv/` laissait donc « ?? .venv » et
+# « ?? .tools » dans tout worktree monté sous Linux, ce qui suffisait à faire refuser son retrait
+# par le garde-fou « travail non sauvegardé » de `gc`/`remove` (#197) et à en faire tomber 11 tests.
+# Invisible sous Windows, et invisible en CI : l'image `python:3.11-slim` du pipeline n'a pas git,
+# donc ces tests y étaient sautés.
+.venv
 venv/
 env/
 *.egg-info/
@@ -20,7 +28,8 @@ out/
 # Outils provisionnés localement par scripts/setup.sh (#153) : le Node épinglé par
 # .node-version et les paquets MCP installés avec lui. Jamais versionnés — ce sont des
 # binaires propres à la plateforme, reconstruits par `bash scripts/setup.sh --only node`.
-.tools/
+# Sans barre oblique finale, comme `.venv` et pour la même raison (#333) : partagé par lien.
+.tools
 *.log
 npm-debug.log*
 pnpm-debug.log*

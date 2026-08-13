@@ -39,10 +39,22 @@ un test arrive alors truffée de codes ANSI et
 `test_sans_le_marqueur_la_sortie_reste_sans_couleur` échoue **en local
 seulement**. Quatre sessions ont rouvert la même enquête pour cette fausse
 alerte ; c'est le dépôt, pas chaque run, qui doit la tarir.
+
+Quatrième garde-fou (#333), et le seul qui REFUSE de jouer au lieu de
+neutraliser : **git absent EN CI est une erreur, pas un saut**. Les trois
+premiers protègent le verdict de ce que le poste apporte en trop ; celui-ci le
+protège de ce que l'image du job n'apporte pas. `python:3.11-slim` n'a pas git,
+et ~285 tests d'outillage sont gardés par `skipif(shutil.which("git") is
+None)` : le pipeline les sautait tous en silence, vert, depuis toujours — si
+bien qu'ils n'ont jamais tourné que sur des postes de développement, tous sous
+Windows. Un runner Linux muni de git en a trouvé 16 rouges du premier coup
+(#332). Le contrôle ne remet rien au vert : il fait qu'un futur retrait de git
+de `.gitlab-ci.yml` se voie tout de suite.
 """
 
 import logging
 import os
+import shutil
 
 import pytest
 
@@ -56,6 +68,47 @@ HOTE_LANGFUSE_NEUTRE = "http://127.0.0.1:9"
 
 #: La variable qui force les couleurs de `scripts/orchestrate/run.sh` hors console (#236).
 CLE_COULEUR_ORCHESTRATE = "MAESTRO_ORCHESTRATE_COULEUR"
+
+#: Variables posées d'office par les intégrations continues (GitLab CI comme GitHub Actions).
+#: Leur présence distingue « personne n'est là pour lire un `s` dans le compte rendu » d'un
+#: lancement sur un poste, où un saut reste une réponse acceptable.
+_CLES_CI = ("CI", "GITLAB_CI", "GITHUB_ACTIONS")
+
+
+def git_manquant_en_ci(environnement: dict[str, str], git: str | None) -> bool:
+    """Faut-il refuser de jouer la suite ? — la décision seule, sans rien lire du monde.
+
+    Séparée du hook pour être jouable dans les deux sens sans sous-processus ni git à cacher :
+    c'est une règle à deux entrées, et c'est la combinaison « en CI **et** sans git » qui est
+    fautive, pas chacune prise à part.
+    """
+    return git is None and any(environnement.get(cle) for cle in _CLES_CI)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse de jouer la suite EN CI sans git — un saut n'y est pas une réponse (#333).
+
+    Sept modules d'outillage montent un vrai dépôt jetable, et sont gardés par
+    `skipif(shutil.which("git") is None)`. Le garde-fou est juste sur un poste : il dit « cette
+    machine ne peut pas répondre ». En CI il **transforme une dépendance non satisfaite en silence
+    vert** — l'image `python:3.11-slim` du pipeline n'ayant pas git, 285 tests y étaient sautés
+    depuis toujours, sans que rien ne distingue ce pipeline d'un pipeline complet. Ils n'ont donc
+    tourné que sur des postes de développement, tous sous Windows, jusqu'à ce qu'un runner Linux
+    muni de git en trouve 16 rouges d'un coup (#332).
+
+    Ce que ce contrôle achète n'est pas la remise au vert — c'est qu'un futur retrait de git de
+    `.gitlab-ci.yml` se voie **immédiatement**, au lieu de rendre 285 tests invisibles en gardant
+    la pipeline verte. L'échec est levé à la configuration, avant la collecte : il nomme la cause
+    plutôt que de laisser lire un compte rendu criblé de `s`.
+    """
+    # Poste sans git : le `skipif` de chaque module reste la bonne réponse.
+    if not git_manquant_en_ci(dict(os.environ), shutil.which("git")):
+        return
+    raise pytest.UsageError(
+        "git est introuvable alors que la suite tourne en intégration continue : ~285 tests "
+        "d'outillage seraient SAUTÉS en silence et la pipeline resterait verte (#333). "
+        "Installer git dans l'image du job (cf. le job `pytest` de .gitlab-ci.yml)."
+    )
 
 
 def _neutralise_langfuse() -> None:

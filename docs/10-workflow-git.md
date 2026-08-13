@@ -1245,6 +1245,51 @@ classe de trou que #307 a mesurée). Six règles en lecture s'y ajoutent, dont u
 chemin `actions/` du seul dépôt miroir** plutôt qu'ouvert : une règle est un préfixe de commande, et
 la borner au chemin est ici la façon la moins large de couvrir `/timing`. La vraie limite reste le
 token lui-même, qui ne sait pas écrire.
+### 8.7 Git est une dépendance de la suite, pas un confort (#333)
+
+Le job `pytest` tourne dans `python:3.11-slim`, **qui n'a pas git**. Or sept modules d'outillage
+montent chacun un vrai dépôt jetable et sont gardés par
+`skipif(shutil.which("git") is None)` : **285 tests y étaient sautés à chaque pipeline**, depuis
+toujours. Le compte rendu ne le disait nulle part — un job qui saute 285 tests et un job qui les
+joue tous rendent le même « vert ».
+
+La conséquence n'est pas restée théorique, et c'est **l'expérience de §8.6 qui l'a révélée** : ces
+tests n'ont jamais tourné **que sur des postes de développement**, c'est-à-dire **sous Windows** ;
+le premier runner Linux muni de git à les jouer — le miroir GitHub de #332 — en a trouvé **16
+rouges d'un coup**, dont un bug de production. Un garde-fou qui saute est plus dangereux qu'un
+garde-fou absent : il rend le même vert que la vérification qu'il remplace. À noter pour la
+décision de #331 : la CI miroir n'a **aucune autorité**, donc ce qu'elle a trouvé serait reperdu
+le jour où elle s'arrête — c'est bien côté GitLab que le trou devait se boucher.
+
+Deux moitiés, et il faut les deux :
+
+- **git est présent** dans le job `pytest` de [`.gitlab-ci.yml`](../.gitlab-ci.yml), par l'**image
+  pleine** `python:3.11` au lieu de `-slim` — seule différence avec les autres jobs Python.
+  L'obtenir par un `apt-get install git` au lancement a été essayé et **retiré** : ça met une
+  dépendance réseau sur les miroirs Debian dans **chaque** pipeline, donc sur le chemin critique du
+  merge (un pipeline vert est exigé), et le pipeline de !269 est mort dessus — « Unable to connect
+  to deb.debian.org », exit 100, avant même que pytest démarre. L'image est tirée une fois puis
+  mise en cache par le runner. **Un remède qui coûte une panne récurrente à ceux qui mergent n'est
+  pas un remède.**
+  Aucune **identité** git n'y est posée globalement, et c'est délibéré : le code qui écrit dans le
+  dépôt de l'utilisateur porte la sienne par `-c` (`maestro/projets/application.py`). En fournir
+  une au runner masquerait à nouveau le défaut que #333 a corrigé — une fusion qui n'échouait que
+  sur les machines sans `~/.gitconfig`, c'est-à-dire nulle part où quelqu'un regardait.
+- **son absence en CI est une erreur**, pas un saut : `tests/conftest.py` refuse de jouer la suite
+  quand git manque **et** qu'une variable de CI est posée (`CI`, `GITLAB_CI`, `GITHUB_ACTIONS`).
+  Sur un poste sans git, le `skipif` de chaque module reste la bonne réponse — il dit « cette
+  machine ne peut pas répondre » ; en CI le même saut dit « rien n'a été vérifié » avec les mots de
+  « tout va bien ». Ce contrôle ne remet rien au vert : il fait qu'un futur retrait de git se voie
+  **tout de suite**, au lieu de rendre 285 tests invisibles pendant des mois. La liste de variables
+  couvre les deux CI de §8.6, sans quoi le miroir GitHub aurait gardé l'angle mort qu'il a servi à
+  découvrir.
+
+Ce qu'il reste à savoir, et qui borne la portée : ces tests-là ne tournent toujours **que sur
+Linux en CI et sur Windows en local**. Les écarts entre plateformes ne se voient donc qu'au
+croisement des deux, et une différence de comportement d'un outil (`ln -s` contre `mklink /J`,
+§9) ne se manifeste que du côté qui la joue. Un banc jetable rejouant la suite dans l'image du
+pipeline, avec git, est ce qui a permis de trancher les cinq causes de #333 — c'est reproductible
+en quelques lignes de Docker et ça n'a pas besoin d'être versionné.
 
 ## 9. Deux tickets en parallèle — un worktree par session
 
@@ -1268,6 +1313,19 @@ Le script fait plus qu'un `git worktree add` : il résout la branche comme
 dépendances de `apps/web`, écrit un `.claude/settings.local.json` dédié et monte
 **`.maestro/session/`**, l'atelier où la session écrit ses fichiers de travail — le seul endroit
 qu'elle puisse atteindre en chemin relatif (#307, §11.7).
+
+⚠ **Ce partage par lien impose une contrainte au `.gitignore`, et elle n'est pas décorative**
+(#333) : un motif terminé par `/` ne matche **que des répertoires**. Or le lien vers `.venv` n'est
+un répertoire que sous **Windows** (jonction `mklink /J`) ; sous Linux c'est un `ln -s`, que git
+voit comme un **fichier**. `.venv/` et `.tools/` laissaient donc `?? .venv` et `?? .tools` dans
+tout worktree monté sous Linux — un worktree **sale dès sa création**. Ça n'a l'air de rien, et
+ça désarmait tout le cycle de vie : « travail non sauvegardé » se mesure par
+`git status --porcelain`, et c'est ce qui fait **refuser** un retrait (§9.2) — à juste titre, mieux
+vaut 535 Mo de trop qu'un commit perdu. `remove` comme `gc` devenaient donc inopérants pour
+toujours, et onze tests tombaient en aval sans qu'aucun ne nomme la cause. Les deux motifs
+s'écrivent **sans barre oblique finale**, et
+[`tests/test_worktree.py`](../tests/test_worktree.py) épingle désormais l'invariant directement :
+*un worktree fraîchement monté est propre*.
 
 ### 9.1 Monté d'office par `/ticket-start` (#181)
 
