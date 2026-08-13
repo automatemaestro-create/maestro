@@ -84,9 +84,13 @@ from maestro.engine.brief import (
     MODE_BRIEF_HUMAIN,
     MODE_BRIEF_SANS,
     ArbitreBrief,
+    ArbitreClarification,
     BriefRefuse,
     DemandeBrief,
+    DemandeClarification,
     mode_brief_valide,
+    motif_sans_reponse,
+    tours_clarification_valide,
 )
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
@@ -102,7 +106,7 @@ from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
-from maestro.orchestrator.schema import Brief, Task, topological_order
+from maestro.orchestrator.schema import Brief, Clarification, Task, topological_order
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
@@ -166,6 +170,7 @@ class RunReport:
     mode_brief: str = MODE_BRIEF_SANS
     brief: Brief | None = None
     cadrage: StepUsage = StepUsage()
+    tours_clarification: int = 0
 
     @property
     def reussies(self) -> tuple[TaskResult, ...]:
@@ -293,12 +298,24 @@ class RunReport:
         qu'aucune approbation n'a été attendue (le point de la troisième exigence
         du lot — un run headless qui attend est un run mort), `humain` qu'une
         décision a été rendue, et `sans` que l'objectif brut a été décomposé.
+
+        Les **allers-retours de clarification** (#321) s'y ajoutent quand il y en a
+        eu : c'est là que le nombre est « annoncé » pour qui relit un run terminé —
+        l'annonce en cours de run, elle, voyage sur l'événement des questions. Zéro
+        tour ne se dit pas, faute d'être une information : c'est le cas courant d'un
+        objectif que le Chef de projet a trouvé limpide.
         """
         if self.mode_brief == MODE_BRIEF_AUTO:
-            return "rédigé et décomposé sans attendre d'approbation (mode « auto »)"
-        if self.mode_brief == MODE_BRIEF_HUMAIN:
-            return "approuvé par un humain avant décomposition (mode « humain »)"
-        return "aucun — l'objectif brut a été décomposé (mode « sans »)"
+            regime = "rédigé et décomposé sans attendre d'approbation (mode « auto »)"
+        elif self.mode_brief == MODE_BRIEF_HUMAIN:
+            regime = "approuvé par un humain avant décomposition (mode « humain »)"
+        else:
+            return "aucun — l'objectif brut a été décomposé (mode « sans »)"
+        if self.tours_clarification:
+            regime += (
+                f" — {self.tours_clarification} tour(s) de clarification"
+            )
+        return regime
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le rapport en dict JSON-sérialisable."""
@@ -315,6 +332,7 @@ class RunReport:
             "plafond_tokens": self.plafond_tokens,
             "controle_depense": self.controle_depense,
             "mode_brief": self.mode_brief,
+            "tours_clarification": self.tours_clarification,
             # `null` quand le run n'est pas passé par l'étape (mode « sans ») : le
             # consommateur distingue ainsi « pas de brief » de « brief vide ».
             "brief": self.brief.to_dict() if self.brief is not None else None,
@@ -344,10 +362,19 @@ class OrchestrationEngine:
         relance: PolitiqueRelance | None = None,
         projets: ProjetStore | None = None,
         arbitre_brief: ArbitreBrief | None = None,
+        arbitre_clarification: ArbitreClarification | None = None,
+        tours_clarification: int | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
         self._orchestrator = orchestrator
+        # À qui poser les questions du brief (#321) — None : personne, et les
+        # questions partent alors telles quelles en validation (le comportement de
+        # #320). Même nature que `arbitre_brief` : du câblage de déploiement.
+        self._arbitre_clarification = arbitre_clarification
+        # Le plafond d'allers-retours, refusé **ici** s'il est absurde plutôt qu'au
+        # milieu d'un run : un plafond négatif ne se découvre pas après un brief payé.
+        self._tours_clarification = tours_clarification_valide(tours_clarification)
         # À qui soumettre le brief quand un run tourne en mode « humain » (#320) —
         # None : personne, et un run qui demanderait ce mode sera refusé **avant**
         # son premier appel modèle. Injecté à la construction comme le `Validateur`
@@ -400,6 +427,8 @@ class OrchestrationEngine:
         relance: PolitiqueRelance | None = RELANCE_DEFAUT,
         max_parallele: int | None = None,
         arbitre_brief: ArbitreBrief | None = None,
+        arbitre_clarification: ArbitreClarification | None = None,
+        tours_clarification: int | None = None,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -484,6 +513,8 @@ class OrchestrationEngine:
             relance=relance,
             max_parallele=max_parallele,
             arbitre_brief=arbitre_brief,
+            arbitre_clarification=arbitre_clarification,
+            tours_clarification=tours_clarification,
         )
 
     async def run(
@@ -542,10 +573,19 @@ class OrchestrationEngine:
         première planification — rien de payant n'a alors été engagé au-delà du
         brief lui-même. Ce qui part en décomposition est le brief **tel qu'il a été
         approuvé**, corrections humaines comprises.
+
+        En amont de cette validation, le run **pose les questions** que le brief a
+        laissées ouvertes et attend les réponses (#321), puis régénère le brief en
+        les intégrant — jusqu'à `tours_clarification` fois. Ce qui n'a pas été levé
+        au plafond part en validation **inscrit en hypothèses explicites** plutôt que
+        de faire boucler le run. Sans arbitre de clarification, cette étape n'a pas
+        lieu et les questions partent telles quelles en validation.
         """
         journal = journal if journal is not None else RunJournal()
         mode_brief = mode_brief_valide(mode_brief)
-        cadrage, brief = await self._cadrage(objective, journal, mode_brief, projet_id)
+        cadrage, brief, tours_clarification = await self._cadrage(
+            objective, journal, mode_brief, projet_id
+        )
         # L'entrée de la décomposition : le brief retenu, ou l'objectif brut en mode
         # « sans ». `Brief.synthese()` plutôt que le seul `brief.objectif` — c'est le
         # texte que l'humain a relu pour approuver, périmètre et critères compris, et
@@ -630,6 +670,7 @@ class OrchestrationEngine:
             mode_brief=mode_brief,
             brief=brief,
             cadrage=cadrage,
+            tours_clarification=tours_clarification,
         )
 
     async def _cadrage(
@@ -638,21 +679,29 @@ class OrchestrationEngine:
         journal: RunJournal,
         mode_brief: str,
         projet_id: str | None,
-    ) -> tuple[StepUsage, Brief | None]:
-        """Rédige le brief et, en mode humain, le fait trancher — avant tout plan (#320).
+    ) -> tuple[StepUsage, Brief | None, int]:
+        """Rédige le brief, lève ses zones d'ombre, le fait trancher — avant tout plan.
 
-        Rend l'usage de l'étape et le brief **retenu** (None en mode « sans » : la
-        boucle décompose alors l'objectif brut, exactement comme avant ce lot). Le
-        contrôle du mode humain a lieu **avant** l'appel modèle : un run qui demande
-        une approbation sans que personne puisse la donner échoue tout de suite,
-        gratuitement, plutôt que de payer un brief pour se suspendre ensuite.
+        L'étape de cadrage complète (#320 puis #321), dans l'ordre où elle se joue :
+        rédaction, **allers-retours de clarification** bornés (`_clarifications`),
+        puis validation humaine. Cet ordre est le sujet : questionner après avoir
+        fait valider reviendrait à faire approuver un brief qu'on s'apprête à
+        réécrire, et l'approbation ne porterait plus sur ce qui est décomposé.
+
+        Rend l'usage **cumulé** de l'étape (rédaction initiale et régénérations), le
+        brief **retenu** (None en mode « sans » : la boucle décompose alors
+        l'objectif brut, exactement comme avant ces lots) et le nombre de tours de
+        clarification joués. Le contrôle du mode humain a lieu **avant** l'appel
+        modèle : un run qui demande une approbation sans que personne puisse la
+        donner échoue tout de suite, gratuitement, plutôt que de payer un brief pour
+        se suspendre ensuite.
 
         Lève `BriefRefuse` sur un refus. C'est ce qui garantit qu'**aucune tâche
         n'est créée** : la levée précède `_plan`, donc le premier appel payant du
         run après le brief lui-même.
         """
         if mode_brief == MODE_BRIEF_SANS:
-            return StepUsage(), None
+            return StepUsage(), None, 0
         arbitre = self._arbitre_brief
         if mode_brief == MODE_BRIEF_HUMAIN and arbitre is None:
             raise ValueError(
@@ -661,7 +710,10 @@ class OrchestrationEngine:
             )
         cadrage, brief = await self.etape_brief(objective, journal, projet_id=projet_id)
         if arbitre is None or mode_brief == MODE_BRIEF_AUTO:
-            return cadrage, brief
+            return cadrage, brief, 0
+        cadrage, brief, tours = await self._clarifications(
+            objective, brief, cadrage, journal, projet_id
+        )
         # Mode humain : l'attente est indéfinie et n'est bornée par aucun time-out —
         # même parti pris que la validation d'action sensible (#48). Le time-out par
         # tâche du moteur ne court pas ici : il est armé par l'exécuteur, autour de la
@@ -673,7 +725,74 @@ class OrchestrationEngine:
             raise BriefRefuse(
                 decision.detail or "brief refusé : la décomposition n'a pas eu lieu."
             )
-        return cadrage, decision.retenu(brief)
+        return cadrage, decision.retenu(brief), tours
+
+    async def _clarifications(
+        self,
+        objective: str,
+        brief: Brief,
+        cadrage: StepUsage,
+        journal: RunJournal,
+        projet_id: str | None,
+    ) -> tuple[StepUsage, Brief, int]:
+        """Lève les zones d'ombre du brief par allers-retours **bornés** (#321).
+
+        Tant que le brief porte des questions et que le plafond n'est pas atteint :
+        les poser, attendre les réponses, **régénérer le brief entier** en les
+        intégrant. Régénérer plutôt que rapiécer est le choix structurant — une
+        réponse ne se range pas dans une case connue d'avance (elle peut élargir le
+        périmètre, poser une contrainte, réécrire un critère), et le brief reste
+        ainsi à tout instant un objet validé contre son schéma, jamais un assemblage
+        de morceaux d'âges différents.
+
+        La sortie de boucle est **le plafond, pas l'absence de questions** : un
+        modèle qui repose une question à chaque tour ferait boucler indéfiniment une
+        condition qui n'attendrait que `questions` vide. Au plafond, ce qui reste est
+        inscrit en **hypothèses explicites** — en Python, donc quoi qu'ait répondu le
+        modèle au dernier tour — et le brief part en validation : c'est un humain qui
+        tranchera, sur l'écran fait pour ça (#322).
+
+        Rend l'usage **cumulé** (chaque régénération est un appel modèle de plus, et
+        le grand livre les fusionne déjà sous `ETAPE_BRIEF`, #318), le brief retenu,
+        et le **nombre de tours réellement joués** — celui qu'annonce la synthèse.
+
+        Sans arbitre de clarification, ou avec un plafond à zéro, ne fait rien et
+        rend le brief tel quel : le comportement exact d'avant ce lot (#320), où les
+        questions partent en validation sans avoir été posées.
+        """
+        arbitre = self._arbitre_clarification
+        tours_max = self._tours_clarification
+        if arbitre is None or tours_max <= 0:
+            return cadrage, brief, 0
+        clarifications: tuple[Clarification, ...] = ()
+        tour = 0
+        while brief.a_des_questions and tour < tours_max:
+            tour += 1
+            reponses = await arbitre(
+                DemandeClarification(
+                    run_id=journal.run_id,
+                    objectif=objective,
+                    brief=brief,
+                    tour=tour,
+                    tours_max=tours_max,
+                )
+            )
+            # Cumulées, jamais remplacées : le brief est réécrit en entier à chaque
+            # tour, donc le modèle a besoin de tout l'historique pour ne pas reperdre
+            # ce qu'un tour précédent avait levé.
+            clarifications += tuple(reponses)
+            usage, brief = await self.etape_brief(
+                objective,
+                journal,
+                projet_id=projet_id,
+                clarifications=clarifications,
+                dernier_tour=tour >= tours_max,
+                tour=tour,
+            )
+            cadrage = cadrage.fusion(usage)
+        if brief.a_des_questions:
+            brief = brief.questions_en_hypotheses(motif_sans_reponse(tour))
+        return cadrage, brief, tour
 
     async def _plan(
         self, objective: str, journal: RunJournal, projet_id: str | None = None
@@ -728,6 +847,9 @@ class OrchestrationEngine:
         *,
         sources_extraites: RapportLecture | None = None,
         projet_id: str | None = None,
+        clarifications: Sequence[Clarification] = (),
+        dernier_tour: bool = False,
+        tour: int = 0,
     ) -> tuple[StepUsage, Brief]:
         """Rédige le brief de `objectif` en consignant l'étape au journal (#318).
 
@@ -738,24 +860,32 @@ class OrchestrationEngine:
         comme n'importe quelle autre, et `RunCost` la comptabilise à part des tâches
         (`ETAPE_BRIEF`) au lieu d'en faire une tâche fantôme.
 
-        **Publique et non appelée par `run`**, à dessein : ce lot rend l'étape
-        possible, mesurable et traçable, mais ne la branche pas sur la boucle —
-        `run` continue de décomposer l'objectif brut. C'est le lot 6 (#320) qui
-        arrête le run sur le brief et en fait l'entrée de la décomposition ; il n'a
-        alors plus qu'à appeler ceci.
-
         `projet_id` (#222) est porté par l'étape pour la même raison qu'en
         planification : le cadrage est une **dépense du projet**, et l'omettre
         creuserait un écart entre le total d'un projet et la somme de ses runs.
+
+        `clarifications`, `dernier_tour` et `tour` (#321) sont les allers-retours
+        déjà joués et le rang de celui-ci : l'étape devient **ré-appelable**, chaque
+        appel régénérant le brief entier avec une entrée plus riche. Chaque tour
+        consigne **sa propre ligne** de journal, avec son numéro — le grand livre les
+        fusionne ensuite sous `ETAPE_BRIEF` (#318), si bien que le coût du cadrage
+        reste un seul poste tout en gardant, dans la trace, le détail de ce qui a été
+        payé pour lever les zones d'ombre.
         """
         debut = perf_counter()
+        rang = f" (clarification {tour})" if tour else ""
         with collect_usage() as recolte:
             try:
-                brief = await self._orchestrator.brief(objectif, sources_extraites)
+                brief = await self._orchestrator.brief(
+                    objectif,
+                    sources_extraites,
+                    clarifications,
+                    dernier_tour=dernier_tour,
+                )
             except Exception as exc:
                 journal.consigne(
                     etape=ETAPE_BRIEF,
-                    nom="Brief de l'objectif",
+                    nom=f"Brief de l'objectif{rang}",
                     agent="orchestrateur",
                     role="Orchestrateur",
                     statut=STATUT_ECHEC,
@@ -769,7 +899,7 @@ class OrchestrationEngine:
         usage = recolte.total.avec_duree(_ecoule_ms(debut))
         journal.consigne(
             etape=ETAPE_BRIEF,
-            nom="Brief de l'objectif",
+            nom=f"Brief de l'objectif{rang}",
             agent="orchestrateur",
             role="Orchestrateur",
             statut=STATUT_TERMINEE,

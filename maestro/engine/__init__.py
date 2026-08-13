@@ -36,6 +36,12 @@ Avant de décomposer, la boucle sait **s'arrêter sur le brief** (#320, décisio
 (`sans`, le défaut), le brief rédigé sans attendre personne (`auto`) ou le brief
 **approuvé par un humain** (`humain`, via un `ArbitreBrief` injecté au moteur) —
 et dans ce dernier cas aucune tâche n'est créée tant que rien n'est tranché.
+
+En amont de cette approbation, le run **pose les questions** que le brief laisse
+ouvertes et attend les réponses (#321, `ArbitreClarification`), puis régénère le
+brief en les intégrant — jusqu'à `tours_clarification` fois. Au plafond, ce qui n'a
+pas été levé part en validation **inscrit en hypothèses explicites** plutôt que de
+faire boucler le run.
 """
 
 from __future__ import annotations
@@ -45,10 +51,13 @@ from maestro.engine.brief import (
     MODE_BRIEF_HUMAIN,
     MODE_BRIEF_SANS,
     MODES_BRIEF,
+    TOURS_CLARIFICATION_DEFAUT,
     ArbitreBrief,
+    ArbitreClarification,
     BriefRefuse,
     DecisionBrief,
     DemandeBrief,
+    DemandeClarification,
 )
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
@@ -72,9 +81,11 @@ from maestro.engine.retry import PolitiqueRelance
 
 __all__ = [
     "ArbitreBrief",
+    "ArbitreClarification",
     "BriefRefuse",
     "DecisionBrief",
     "DemandeBrief",
+    "DemandeClarification",
     "DemandeValidation",
     "Guardrails",
     "LocalExecutor",
@@ -90,6 +101,7 @@ __all__ = [
     "STATUT_ECHEC",
     "STATUT_EN_COURS",
     "STATUT_TERMINEE",
+    "TOURS_CLARIFICATION_DEFAUT",
     "TaskExecutor",
     "TaskResult",
 ]

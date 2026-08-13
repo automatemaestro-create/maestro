@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from maestro.config import Settings, load_settings
@@ -37,7 +38,13 @@ from maestro.orchestrator.prompt import (
     build_brief_user_prompt,
     build_user_prompt,
 )
-from maestro.orchestrator.schema import Brief, Task, validate_brief, validate_plan
+from maestro.orchestrator.schema import (
+    Brief,
+    Clarification,
+    Task,
+    validate_brief,
+    validate_plan,
+)
 from maestro.providers.base import ModelProvider
 
 if TYPE_CHECKING:  # pragma: no cover - typage seul, cf. `brief`
@@ -86,14 +93,18 @@ class Orchestrator:
         return validate_plan(raw_tasks)
 
     async def brief(
-        self, objectif: str, sources_extraites: RapportLecture | None = None
+        self,
+        objectif: str,
+        sources_extraites: RapportLecture | None = None,
+        clarifications: Sequence[Clarification] = (),
+        *,
+        dernier_tour: bool = False,
     ) -> Brief:
         """Rédige le **brief structuré** de `objectif`, validé contre son schéma (#318).
 
         L'étape qui précède la décomposition : l'intention est reformulée, cadrée et
         rendue **relisable par un humain** avant qu'une seule tâche soit payée
-        (EF-40, docs/24 §3.3). Rien ne la branche encore sur la boucle — c'est le
-        lot 6 (#320) qui arrête le run dessus.
+        (EF-40, docs/24 §3.3). C'est le lot 6 (#320) qui arrête le run dessus.
 
         `sources_extraites` est le rapport de lecture produit par
         `maestro.sources.extraction.extraire_sources` (#316). Il est facultatif : sans
@@ -101,6 +112,14 @@ class Orchestrator:
         ce qui est un cas nominal et non une entrée manquante. Le contenu n'entre dans
         le prompt que par `contexte_markdown`, seul chemin qui l'encadre comme donnée
         et non comme consigne (ENF-13).
+
+        `clarifications` (#321) sont les allers-retours **déjà joués**, cumulés depuis
+        le premier tour. Les passer **régénère** le brief au lieu de le rapiécer : la
+        méthode reste sans état, un tour de clarification est un appel de plus avec
+        une entrée plus riche, et le brief rendu est toujours un brief entier, validé
+        contre le même schéma. `dernier_tour` annonce au modèle que le plafond est
+        atteint (cf. `build_brief_user_prompt`) ; la borne, elle, est tenue par
+        l'appelant.
 
         Lève `ValueError` si l'objectif est vide, `BriefParsingError` si la réponse du
         modèle n'est pas un objet JSON exploitable, `BriefValidationError` si le brief
@@ -119,7 +138,9 @@ class Orchestrator:
 
         contexte = "" if sources_extraites is None else contexte_markdown(sources_extraites)
         response = await self._provider.generate(
-            build_brief_user_prompt(objectif, contexte),
+            build_brief_user_prompt(
+                objectif, contexte, clarifications, dernier_tour=dernier_tour
+            ),
             model=self._model,
             system_prompt=BRIEF_SYSTEM_PROMPT,
         )
