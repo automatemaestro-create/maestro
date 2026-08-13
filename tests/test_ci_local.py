@@ -1194,21 +1194,38 @@ def test_le_script_typecheck_existe_et_la_ci_le_joue() -> None:
 # son absence rendue bruyante.
 
 
-def test_la_ci_installe_git_pour_la_suite() -> None:
-    """Sans cette ligne, ~285 tests redeviennent invisibles — et la pipeline reste verte.
+def test_le_job_pytest_dispose_de_git() -> None:
+    """Sans git dans ce job, ~285 tests redeviennent invisibles — et la pipeline reste verte.
 
     Le fichier VERSIONNÉ : c'est le pipeline réel qui décide de ce qui est vérifié, et l'angle mort
     ne se voit dans aucun compte rendu — un job qui saute 285 tests et un job qui les joue tous
     rendent le même « vert ».
+
+    Ce qui est épinglé est la **disponibilité** de git, pas la façon de l'obtenir — mais les deux
+    façons ne se valent pas, et la nuance a coûté un pipeline rouge. Un `apt-get install git` au
+    lancement met une dépendance réseau sur les miroirs Debian dans CHAQUE pipeline, donc sur le
+    chemin critique du merge : celui de !269 est mort dessus (« Unable to connect to
+    deb.debian.org ») avant même que pytest démarre. L'image pleine porte git nativement et le
+    runner la met en cache. D'où l'assertion sur l'absence de `-slim`, la variante qui n'a pas git.
     """
     pipeline = (RACINE / ".gitlab-ci.yml").read_text(encoding="utf-8")
     job = pipeline.split("\npytest:", 1)
     assert len(job) == 2, "le job `pytest` a été renommé — ce test doit suivre"
     corps = job[1].split("\nmypy:", 1)[0]
-    assert "install -y --no-install-recommends git" in corps, (
-        "le job `pytest` doit installer git : `python:3.11-slim` n'en a pas, et la suite en dépend "
-        "pour ~285 tests d'outillage (#333)"
+
+    lignes = [ligne.strip() for ligne in corps.splitlines()]
+    image = next((ligne for ligne in lignes if ligne.startswith("image:")), None)
+    installe = any("install" in ligne and " git" in ligne for ligne in lignes)
+
+    assert image is not None or installe, (
+        "le job `pytest` hérite de `python:3.11-slim`, qui n'a PAS git : la suite en dépend pour "
+        "~285 tests d'outillage, qui seraient sautés en silence (#333)"
     )
+    if not installe:
+        assert image is not None and "slim" not in image, (
+            f"« {image} » est une variante slim, qui n'embarque pas git — le job doit soit tourner "
+            "sur l'image pleine, soit installer git explicitement (#333)"
+        )
 
 
 def test_git_absent_en_ci_est_une_erreur_et_non_un_saut() -> None:

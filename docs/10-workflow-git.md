@@ -1263,11 +1263,18 @@ le jour où elle s'arrête — c'est bien côté GitLab que le trou devait se bo
 
 Deux moitiés, et il faut les deux :
 
-- **git est installé** dans le job `pytest` de [`.gitlab-ci.yml`](../.gitlab-ci.yml). Aucune
-  **identité** git n'y est posée globalement, et c'est délibéré : le code qui écrit dans le dépôt
-  de l'utilisateur porte la sienne par `-c` (`maestro/projets/application.py`). En fournir une au
-  runner masquerait à nouveau le défaut que #333 a corrigé — une fusion qui n'échouait que sur les
-  machines sans `~/.gitconfig`, c'est-à-dire nulle part où quelqu'un regardait.
+- **git est présent** dans le job `pytest` de [`.gitlab-ci.yml`](../.gitlab-ci.yml), par l'**image
+  pleine** `python:3.11` au lieu de `-slim` — seule différence avec les autres jobs Python.
+  L'obtenir par un `apt-get install git` au lancement a été essayé et **retiré** : ça met une
+  dépendance réseau sur les miroirs Debian dans **chaque** pipeline, donc sur le chemin critique du
+  merge (un pipeline vert est exigé), et le pipeline de !269 est mort dessus — « Unable to connect
+  to deb.debian.org », exit 100, avant même que pytest démarre. L'image est tirée une fois puis
+  mise en cache par le runner. **Un remède qui coûte une panne récurrente à ceux qui mergent n'est
+  pas un remède.**
+  Aucune **identité** git n'y est posée globalement, et c'est délibéré : le code qui écrit dans le
+  dépôt de l'utilisateur porte la sienne par `-c` (`maestro/projets/application.py`). En fournir
+  une au runner masquerait à nouveau le défaut que #333 a corrigé — une fusion qui n'échouait que
+  sur les machines sans `~/.gitconfig`, c'est-à-dire nulle part où quelqu'un regardait.
 - **son absence en CI est une erreur**, pas un saut : `tests/conftest.py` refuse de jouer la suite
   quand git manque **et** qu'une variable de CI est posée (`CI`, `GITLAB_CI`, `GITHUB_ACTIONS`).
   Sur un poste sans git, le `skipif` de chaque module reste la bonne réponse — il dit « cette
