@@ -13,13 +13,18 @@ Trois modules, trois responsabilités qui ne se mélangent pas :
   réseau et aux plafonds du run, et ce qui la fait refuser **avec son motif** ;
 - `extraction` (#316) — ce qu'une source **dit** : tout ramené au Markdown, avec
   son rapport de lecture et son coût en tokens, et encadré comme **donnée** avant
-  d'entrer dans un contexte.
+  d'entrer dans un contexte ;
+- `televersement` (#317) — où des octets reçus **attendent** leur run, et comment
+  ils lui sont rattachés. Un navigateur ne livre pas de chemin, il livre des
+  octets : c'est le seul moyen qu'une source `fichier` en désigne de vrais.
 
 Les deux régimes sont opposés à dessein : la résolution **refuse** (une saisie se
 corrige), l'extraction **ignore ou tronque en le disant** (un contenu n'est pas
-encore connu de qui l'a joint).
+encore connu de qui l'a joint). Le téléversement suit celui de la résolution : ce
+qui dépasse un plafond est refusé **pendant** la réception, jamais tronqué.
 
-Le téléversement par l'API est le lot #317.
+Les routes qui les servent — `POST /api/sources` et `POST /api/executions` — sont
+au [§6.8 et au §6.1 de docs/05](../../docs/05-interface-control-tower.md).
 """
 
 from maestro.sources.extraction import (
@@ -51,11 +56,20 @@ from maestro.sources.resolution import (
     ID_RUN,
     LONGUEUR_MAX_URL,
     emplacement_ingestion,
+    nom_de_fichier,
     racine_ingestion,
     resoudre_sources,
 )
+from maestro.sources.televersement import (
+    DOSSIER_TELEVERSEMENTS,
+    ID_TELEVERSEMENT,
+    DepotTeleversements,
+    Televersement,
+    declarer_televersements,
+)
 
 __all__ = [
+    "DOSSIER_TELEVERSEMENTS",
     "ETATS",
     "ETAT_IGNORE",
     "ETAT_LU",
@@ -63,21 +77,26 @@ __all__ = [
     "EXTENSIONS_CONVERTIES",
     "EXTENSIONS_TEXTE",
     "ID_RUN",
+    "ID_TELEVERSEMENT",
     "LONGUEUR_MAX_NOM",
     "LONGUEUR_MAX_URL",
     "TYPES_SOURCE",
     "TYPE_DOSSIER",
     "TYPE_FICHIER",
     "TYPE_URL",
+    "DepotTeleversements",
     "GardeFousExtraction",
     "Lecture",
     "RapportLecture",
     "Source",
     "SourceRefusee",
+    "Televersement",
     "contexte_markdown",
+    "declarer_televersements",
     "emplacement_ingestion",
     "estimer_tokens",
     "extraire_sources",
+    "nom_de_fichier",
     "racine_ingestion",
     "resoudre_sources",
     "sources_depuis",

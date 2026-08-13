@@ -16,8 +16,14 @@ Endpoints :
   (`maestro.agents.capacity`) et relu à chaud par moteur et workers ;
 - `GET  /api/executions` — les runs connus (en cours et passés), récents d'abord :
   objectif, statut, volume, coût et bornes temporelles (#185) ;
-- `POST /api/executions` — **lance** une exécution (objectif + garde-fous) en
-  tâche de fond et rend son `run_id` immédiatement (#185) ;
+- `POST /api/executions` — **lance** une exécution (objectif + garde-fous + les
+  **sources** de l'objectif, #317) en tâche de fond et rend son `run_id`
+  immédiatement (#185), avec le **rapport de lecture** de sa matière ;
+- `POST /api/sources` — **téléverse** un ou plusieurs fichiers (multipart) et
+  rend leurs identifiants de source (#317, EF-39) : les octets attendent dans le
+  dépôt de téléversement, hors de tout projet, jusqu'au lancement qui les
+  rattachera à son run. Refus motivé au-delà des plafonds d'ingestion (ENF-07),
+  jamais de troncature silencieuse ;
 - `POST /api/executions/{run_id}/annuler` — interrompt un run en cours (#185) ;
 - `GET  /api/executions/{run_id}` — le détail d'une exécution (état, trace, coût) ;
 - `GET  /api/executions/{run_id}/cout` — le grand livre du run (#57) : coût
@@ -146,9 +152,17 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -191,7 +205,11 @@ from maestro.controltower.events import (
     InMemoryEventBus,
     RedisEventBus,
 )
-from maestro.controltower.executions import FabriqueMoteur, ServiceExecutions
+from maestro.controltower.executions import (
+    FabriqueMoteur,
+    LecteurSources,
+    ServiceExecutions,
+)
 from maestro.controltower.fixtures import (
     ORDRE_DESC,
     ORDRES_JOURNAL,
@@ -224,6 +242,7 @@ from maestro.controltower.state import (
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.projets import RacineRefusee, canonique, valider_racine
 from maestro.references import ReferenceTicket
+from maestro.sources import DepotTeleversements, SourceRefusee
 
 
 class ReferenceTicketRequete(BaseModel):
@@ -249,6 +268,30 @@ class ReferenceTicketRequete(BaseModel):
         return ReferenceTicket.depuis({"id": self.id, "url": self.url})
 
 
+class SourceRequete(BaseModel):
+    """Une source déclarée au lancement (#317, EF-39) — docs/05 §6.1.
+
+    Deux formes pour un `fichier`, et une seule est complète : le **renvoi** à un
+    téléversement (`id`, rendu par `POST /api/sources`), qui seul désigne de
+    vrais octets, et la déclaration nue de docs/24 §3.2 (`nom` + `taille`), qui
+    résout mais ressortira `source-absente` au rapport de lecture. Un `dossier`
+    porte son `chemin`, une `url` sa `valeur`.
+
+    **Aucun champ n'est requis**, `type` compris : un corps mal formé doit
+    ressortir en refus **motivé** de la résolution (`type-inconnu` à l'index
+    fautif) et non en erreur de schéma Pydantic, dont la forme n'a ni motif ni
+    index. Le reste des contrôles appartient à `maestro.sources.resolution` :
+    ce qui arrive ici est une saisie, jamais une vérité.
+    """
+
+    type: str = ""
+    id: str = ""
+    nom: str = ""
+    chemin: str = ""
+    valeur: str = ""
+    taille: int | None = None
+
+
 class LancementExecutionRequete(BaseModel):
     """Corps de lancement d'une exécution (#185) : objectif, garde-fous, ticket.
 
@@ -261,6 +304,12 @@ class LancementExecutionRequete(BaseModel):
     (objectif vide, garde-fou hors bornes) est refusée en 422 ; un `projet_id`
     mal formé, lui, est **écarté** (le run part sans projet) plutôt que de faire
     échouer le lancement — cf. `maestro.appartenance`.
+
+    `sources` (#317, EF-39) porte la **matière** de l'objectif : fichiers
+    téléversés au préalable (§6.8), dossier de références, URL. Absente ou vide,
+    le lancement est exactement celui d'avant la Phase 8 ; une source refusée
+    (racine interdite, plafond dépassé, téléversement inconnu) sort en 422
+    **motivé**, index de la source fautive compris.
     """
 
     objectif: str
@@ -270,6 +319,18 @@ class LancementExecutionRequete(BaseModel):
     parallelisme: int | None = None
     ticket: ReferenceTicketRequete | None = None
     projet_id: str | None = None
+    sources: list[SourceRequete] | None = None
+
+    def sources_declarees(self) -> list[dict[str, Any]] | None:
+        """Les sources en dicts pour la résolution — `None` quand il n'y en a pas.
+
+        `None` et non `[]` : c'est ce qui fait qu'un lancement sans matière émet
+        un événement sans le champ `sources` (#315), donc strictement celui
+        d'avant la Phase 8.
+        """
+        if self.sources is None:
+            return None
+        return [source.model_dump() for source in self.sources]
 
 
 class ReassignationRequete(BaseModel):
@@ -471,6 +532,23 @@ class Diffusion:
 _LOGGER = logging.getLogger("maestro.controltower")
 
 
+def _detail_refus(exc: Exception) -> dict[str, Any]:
+    """Le corps d'un refus de source ou de lancement : `{motif, message[, index]}`.
+
+    `detail_refus` (#223) donne les deux premiers champs — même convention que
+    les routes projets, un code stable plutôt qu'une phrase à analyser, et
+    `requete-invalide` en repli pour ce qui n'a pas de motif propre (objectif
+    vide, garde-fou hors bornes). L'`index` s'y ajoute quand le refus **vise une
+    source** (#315) : « une source est trop grosse » sans dire laquelle
+    obligerait à tout relire pour savoir quoi retirer.
+    """
+    detail: dict[str, Any] = dict(detail_refus(exc))
+    index = getattr(exc, "index", None)
+    if isinstance(index, int) and not isinstance(index, bool):
+        detail["index"] = index
+    return detail
+
+
 async def _pompe(
     bus: EventBus,
     state: ControlTowerState,
@@ -529,6 +607,8 @@ def create_app(
     event_log: EventLog | None = None,
     fixtures: FixturesControlTower | None = None,
     fabrique_moteur: FabriqueMoteur | None = None,
+    televersements: DepotTeleversements | None = None,
+    lecteur_sources: LecteurSources | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -627,6 +707,18 @@ def create_app(
     **premier lancement** et non à la construction de l'app : une API qui ne
     lance aucun run ne résout aucun fournisseur. Les tests en injectent une
     fabrique factice pour exercer le pilotage sans appeler de modèle.
+
+    `televersements` (#317) est le dépôt où `POST /api/sources` pose les octets
+    reçus, et où le lancement retrouve par identifiant ce qu'il doit rattacher au
+    run — par défaut celui de la config
+    (`<MAESTRO_INGESTION_DIR|core/ingestion>/_televersements/`). Les tests en
+    injectent un dépôt temporaire : c'est la seule façon de plafonner sans
+    écrire dix mégaoctets sur le disque de qui joue la suite.
+
+    `lecteur_sources` (#316) lit la matière d'un objectif et rend son rapport de
+    lecture — par défaut `extraire_sources`. Injectable parce qu'une source `url`
+    part sur le réseau : `tests/conftest.py` (#195) exige qu'aucun test n'en ait
+    besoin.
     """
     bus = bus if bus is not None else InMemoryEventBus()
     event_log = event_log if event_log is not None else InMemoryEventLog()
@@ -666,10 +758,22 @@ def create_app(
         bus=bus,
     )
     diffusion = Diffusion()
+    # Un seul dépôt de téléversement (#317) pour la route qui reçoit les octets
+    # et pour le service qui les rattache au run : deux instances pointeraient le
+    # même disque, mais l'injection des tests n'en tiendrait qu'une.
+    televersements = (
+        televersements if televersements is not None else DepotTeleversements.default()
+    )
     # Pilotage des exécutions (#185) : lance sur le bus et la projection de
     # cette app — le run est donc suivi par les mêmes rouages que n'importe
     # quelle orchestration observée.
-    executions = ServiceExecutions(bus, state, fabrique_moteur=fabrique_moteur)
+    executions = ServiceExecutions(
+        bus,
+        state,
+        fabrique_moteur=fabrique_moteur,
+        televersements=televersements,
+        lecteur_sources=lecteur_sources,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -871,11 +975,16 @@ def create_app(
         la réponse ne dit pas ce qu'il a produit, elle dit qu'il est parti. La
         suite arrive par le flux d'événements existant — chaque étape devient un
         `tache.statut` du WebSocket et une ligne du Kanban — et se relit sur
-        `GET /api/executions/{run_id}`. 422 sur un objectif vide ou un garde-fou
-        hors bornes (les plafonds sont des maximums : ils doivent être > 0).
+        `GET /api/executions/{run_id}`. 422 sur un objectif vide, un garde-fou
+        hors bornes (les plafonds sont des maximums : ils doivent être > 0) ou
+        une **source** refusée (#317).
+
+        Avec des `sources`, la réponse porte en plus le **rapport de lecture**
+        (#316) et n'est plus instantanée : la matière est lue avant qu'elle ne
+        parte, sans quoi le rapport n'aurait rien à dire (docs/05 §6.1).
         """
         try:
-            return executions.lancer(
+            return await executions.lancer(
                 requete.objectif,
                 plafond_cout_usd=requete.plafond_cout_usd,
                 plafond_tokens=requete.plafond_tokens,
@@ -883,9 +992,61 @@ def create_app(
                 parallelisme=requete.parallelisme,
                 ticket=None if requete.ticket is None else requete.ticket.en_reference(),
                 projet_id=requete.projet_id,
+                sources=requete.sources_declarees(),
             )
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
+
+    @app.post("/api/sources", status_code=201)
+    async def televerser_sources(
+        fichier: Annotated[list[UploadFile], File()],
+    ) -> dict[str, Any]:
+        """Téléverse un ou plusieurs fichiers (#317) et rend leurs **identifiants de source**.
+
+        Le champ `fichier` est répétable : un formulaire qui dépose trois
+        documents fait un appel, pas trois. Les octets vont dans le dépôt de
+        téléversement — hors de tout projet et hors de tout run —, et c'est le
+        lancement qui les rattachera au run qui les consomme (docs/05 §6.8).
+
+        Les plafonds d'ingestion (ENF-07) s'appliquent **pendant** la réception :
+        le nombre de fichiers d'abord, sans toucher au disque, puis la taille de
+        chacun et le cumul de l'appel, tranche par tranche. Un refus est motivé
+        (422, `{motif, message, index}`) et **ne laisse rien** : les fichiers
+        déjà acceptés dans le même appel sont retirés du dépôt, faute de quoi ils
+        y resteraient sous des identifiants que personne n'a reçus.
+        """
+        plafond = televersements.garde_fous.nb_max_sources
+        if plafond is not None and len(fichier) > plafond:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "motif": "trop-de-sources",
+                    "message": (
+                        f"Trop de fichiers dans un même téléversement : {len(fichier)} "
+                        f"reçus, {plafond} au maximum."
+                    ),
+                },
+            )
+        recus: list[dict[str, Any]] = []
+        total = 0
+        try:
+            for index, envoi in enumerate(fichier):
+                # Dans un fil : la copie des octets est du disque, pas de
+                # l'attente réseau — la boucle de l'API ne doit pas la porter.
+                televerse = await asyncio.to_thread(
+                    televersements.accueillir,
+                    envoi.filename or "",
+                    envoi.file,
+                    index=index,
+                    deja_recu=total,
+                )
+                total += televerse.taille
+                recus.append(televerse.to_dict())
+        except SourceRefusee as exc:
+            for accepte in recus:
+                televersements.oublier(str(accepte["id"]))
+            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
+        return {"sources": recus, "total_octets": total}
 
     @app.post("/api/executions/{run_id}/annuler")
     async def annuler_execution(run_id: str) -> dict[str, Any]:

@@ -7,6 +7,9 @@ manquante — le service que les routes `/api/executions` appellent :
 
 - `lancer` construit les garde-fous (#9) du run, l'ouvre en **tâche de fond** du
   process de l'API et rend son résumé (donc son `run_id`) immédiatement ;
+  depuis #317 il **compose** aussi la matière de l'objectif : sources résolues
+  (#315), octets téléversés rattachés au run, rapport de lecture (#316) rendu
+  avec le résumé ;
 - `resumes`/`resume` lisent la **projection** (`ControlTowerState`) : le service
   ne tient pas de second registre des runs, il lit celui qui existe déjà ;
 - `annuler` interrompt un run en vol et consigne l'issue.
@@ -47,6 +50,7 @@ import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from maestro.appartenance import projet_id_valide
@@ -67,7 +71,14 @@ from maestro.controltower.state import (
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.references import ReferenceTicket
-from maestro.sources import Source, resoudre_sources
+from maestro.sources import (
+    DepotTeleversements,
+    RapportLecture,
+    Source,
+    declarer_televersements,
+    extraire_sources,
+    resoudre_sources,
+)
 from maestro.telemetry import LOGGER_NAME, RunJournal, redact_secrets
 
 if TYPE_CHECKING:
@@ -77,6 +88,14 @@ if TYPE_CHECKING:
 #: plafond de parallélisme. Injectable (`create_app`) — les tests y passent un
 #: moteur factice, aucun fournisseur n'étant résolu tant qu'aucun run ne part.
 FabriqueMoteur = Callable[..., "OrchestrationEngine"]
+
+#: Lecture de la matière d'un objectif : des sources **résolues** au rapport de
+#: lecture (#316). Injectable pour la même raison que la fabrique du moteur — une
+#: source `url` part sur le réseau, et `tests/conftest.py` (#195) exige qu'aucun
+#: test n'en ait besoin. Un seul point d'injection plutôt que trois réglages :
+#: desserrer les plafonds d'extraction se fait par un
+#: `partial(extraire_sources, garde_fous=…)`.
+LecteurSources = Callable[[Sequence[Source]], RapportLecture]
 
 #: Délai laissé à un run annulé pour s'éteindre avant que la requête d'annulation
 #: rende la main. Au-delà, l'issue est déjà consignée et la tâche est abandonnée
@@ -113,6 +132,11 @@ class ServiceExecutions:
     `OrchestrationEngine.default`). `garde_fous_ingestion` (#315) plafonne la
     matière d'entrée des objectifs — actif par défaut, réglable par injection :
     c'est un réglage de déploiement, pas un choix du client qui lance un run.
+
+    `televersements` (#317) est le dépôt où `POST /api/sources` a posé les octets
+    d'un fichier : le service y retrouve par identifiant ce qu'un lancement
+    déclare, et **rattache** la matière au run une fois son emplacement connu.
+    `lecteur_sources` (#316) produit le rapport de lecture rendu avec le résumé.
     """
 
     def __init__(
@@ -122,6 +146,8 @@ class ServiceExecutions:
         *,
         fabrique_moteur: FabriqueMoteur | None = None,
         garde_fous_ingestion: GardeFousIngestion | None = None,
+        televersements: DepotTeleversements | None = None,
+        lecteur_sources: LecteurSources | None = None,
     ) -> None:
         self._bus = bus
         self._state = state
@@ -129,6 +155,12 @@ class ServiceExecutions:
         self._ingestion = (
             garde_fous_ingestion if garde_fous_ingestion is not None else GardeFousIngestion()
         )
+        self._televersements = (
+            televersements
+            if televersements is not None
+            else DepotTeleversements.default(garde_fous=self._ingestion)
+        )
+        self._lecteur = lecteur_sources if lecteur_sources is not None else extraire_sources
         self._runs: dict[str, asyncio.Task[None]] = {}
         # Logger **propre à ce service** : le pont télémétrie s'y pose sans
         # toucher au logger global du journal (cf. docstring du module). Les
@@ -167,7 +199,7 @@ class ServiceExecutions:
 
     # ----------------------------------------------------------------- écriture
 
-    def lancer(
+    async def lancer(
         self,
         objectif: str,
         *,
@@ -208,9 +240,25 @@ class ServiceExecutions:
         et plafonnées (`GardeFousIngestion`, ENF-07) **avant** que le run ne
         parte : refuser après coup reviendrait à annuler un run déjà lancé.
         Elles rejoignent ensuite la projection par l'événement de lancement,
-        comme le ticket et le projet. Ce lot n'en **lit** aucune : le moteur ne
-        les reçoit pas encore, l'extraction étant le lot suivant (#316) —
-        `sources=None` laisse donc le lancement identique à celui d'avant.
+        comme le ticket et le projet. `sources=None` laisse le lancement
+        identique à celui d'avant la Phase 8.
+
+        Depuis #317, deux gestes s'y ajoutent et c'est ce qui rend la méthode
+        **asynchrone**. Les fichiers désignés par un identifiant de téléversement
+        (`{"type": "fichier", "id": …}`, docs/05 §6.8) sont **rattachés** au run :
+        leurs octets sont copiés du dépôt vers l'emplacement d'ingestion propre à
+        ce run, seul endroit où l'extraction ira les chercher. Puis la matière est
+        **lue** (#316), et le rapport de lecture — lu / ignoré / tronqué, coût
+        estimé — est rendu sous la clé `rapport`, **à côté** du résumé.
+
+        Deux conséquences à connaître. La lecture a lieu dans un **fil**
+        (`asyncio.to_thread`) : elle ouvre des fichiers et peut récupérer une
+        page, ce qui bloquerait la boucle de l'API. Et un lancement **avec**
+        sources n'est plus instantané — il attend sa matière, faute de quoi le
+        rapport n'aurait rien à dire ; sans source, rien ne change. Le rapport ne
+        va **pas** dans l'événement de lancement : il décrit une lecture, pas un
+        fait du run, et le rendre durable est le travail de la validation du
+        brief (#320).
 
         Lève `ValueError` sur un objectif vide, un garde-fou hors bornes (les
         plafonds sont des maximums : ils doivent être > 0) ou une source refusée
@@ -252,7 +300,13 @@ class ServiceExecutions:
         # Refus **avant** toute écriture : une source hors bornes ou hors
         # périmètre ne doit pas laisser derrière elle un run inscrit dans la
         # projection, ni un événement sur le bus.
-        matiere = resoudre_sources(sources, run_id=run_id, garde_fous=self._ingestion)
+        matiere = self._composer(sources, run_id=run_id)
+        # La lecture dans un fil : elle ouvre des fichiers et peut récupérer une
+        # page (#316), ce que la boucle de l'API ne doit pas porter. Aucune
+        # source, aucun fil — un lancement sans matière garde son coût d'avant.
+        rapport = (
+            await asyncio.to_thread(self._lecteur, matiere) if matiere else RapportLecture()
+        )
 
         self._demarrer()
         # L'événement de lancement **avant** la tâche de fond : la projection
@@ -277,7 +331,7 @@ class ServiceExecutions:
         resume = self.resume(run_id)
         if resume is None:  # pragma: no cover - le lancement vient d'inscrire le run
             raise RuntimeError(f"run {run_id} absent de la projection après son lancement")
-        return resume
+        return {**resume, "rapport": rapport.to_dict()}
 
     async def annuler(self, run_id: str) -> dict[str, Any] | None:
         """Interrompt le run `run_id` et rend son résumé passé à « annulée ».
@@ -323,6 +377,40 @@ class ServiceExecutions:
         self._boucle = None
 
     # ------------------------------------------------------------------ interne
+
+    def _composer(
+        self,
+        sources: Sequence[Mapping[str, Any] | Source] | None,
+        *,
+        run_id: str,
+    ) -> tuple[Source, ...]:
+        """La matière du run : sources résolues, octets téléversés rattachés (#317).
+
+        Trois temps, et leur ordre est le contenu de la méthode.
+
+        1. **Compléter** — un `{"type": "fichier", "id": …}` ne dit ni nom ni
+           taille ; le dépôt les lui donne, et ce sont ceux des octets reçus, pas
+           ceux qu'un client annonce. Sans quoi le plafond par source se
+           contournerait en déclarant douze octets.
+        2. **Résoudre** (#315) — canonicalisation, racines interdites, plafonds.
+           C'est le seul endroit qui refuse, et il refuse **avant** toute
+           écriture : rien de ce qui suit ne doit laisser un run à moitié inscrit.
+        3. **Rattacher** — la résolution vient de calculer *où* la matière doit
+           être ; les octets y sont copiés. Cet ordre est obligé : l'emplacement
+           d'ingestion dépend du `run_id`, qui n'existe pas au téléversement.
+
+        Une source déclarée sans `id` traverse les trois temps sans octets : elle
+        ressortira `ignore` / `source-absente` au rapport de lecture, ce qui est
+        exactement ce qu'on veut qu'elle dise.
+        """
+        declarees, identifiants = declarer_televersements(
+            sources, depot=self._televersements
+        )
+        matiere = resoudre_sources(declarees, run_id=run_id, garde_fous=self._ingestion)
+        for source, identifiant in zip(matiere, identifiants, strict=False):
+            if identifiant:
+                self._televersements.rattacher(identifiant, Path(source.chemin))
+        return matiere
 
     def _demarrer(self) -> None:
         """Arme le câblage du service — idempotent, au premier lancement seulement.
