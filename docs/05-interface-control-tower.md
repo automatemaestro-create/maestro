@@ -367,10 +367,11 @@ arbitrages déjà rendus* — l'historique en dessous le prouve.
   qui tourne déjà sur le poste — qui énumère. Une racine hors périmètre autorisé est **refusée
   avec son motif**, jamais silencieusement ignorée (EF-38). **Livré** : l'API au §6.7 (#223),
   l'écran au §2.7.1 (#225), le choix du dossier élargi au §2.7.2 (#278).
-- **Composer un objectif** *(livré — #319)* — le formulaire de lancement gagne, à côté du texte,
-  des **sources** (§6.1 étendu) : fichiers déposés, dossier de références en lecture seule, URL.
-  L'extraction est visible (ce qui a été lu, ce qui a été ignoré, le coût estimé). L'écran est au
-  §2.7.3, l'aperçu qu'il consomme au §6.9.
+- **Composer un objectif** *(livré — #319, #317)* — le formulaire de lancement gagne, à côté du
+  texte, des **sources** (§6.1 étendu) : fichiers déposés, dossier de références en lecture seule,
+  URL. L'extraction est visible (ce qui a été lu, ce qui a été ignoré, le coût estimé). L'écran est
+  au §2.7.3, l'aperçu qu'il consomme au §6.9 et le téléversement qui lui donne de vrais octets au
+  §6.8.
 - **Valider le brief** *(livré — #322)* — avant toute décomposition, le Chef de projet présente un
   **brief structuré** (objectif, périmètre, hors-périmètre, contraintes, critères d'acceptation,
   hypothèses) et **ses questions**. C'est le point de contrôle le plus rentable du produit :
@@ -813,8 +814,8 @@ décrit le comportement réel, pas une fixture.
   d'abord.
 - `POST /api/executions` → `202` + `ResumeExecution` — lance un run **en arrière-plan** (les
   événements arrivent par le flux existant) et rend son `run_id` immédiatement. Corps
-  `LancementExecution`. `422` si l'objectif est vide ou un garde-fou est hors bornes — les
-  plafonds sont des maximums, ils doivent être **> 0**.
+  `LancementExecution`. `422` si l'objectif est vide, un garde-fou est hors bornes — les
+  plafonds sont des maximums, ils doivent être **> 0** — ou une **source** est refusée (#317).
 - `POST /api/executions/{run_id}/annuler` → `ResumeExecution` — interrompt un run en cours (statut
   `annulee`, `fin` posée). `404` si le run est inconnu, `409` s'il est déjà soldé — un run terminé
   n'est plus interruptible, et le dire vaut mieux que faire croire à une annulation.
@@ -827,7 +828,13 @@ décrit le comportement réel, pas une fixture.
   "plafond_tokens": 200000,                // null : défaut du moteur
   "timeout_tache_s": 600,                  // null : défaut du moteur
   "parallelisme": 3,                       // null : défaut du moteur
-  "ticket": { "id": "#42", "url": "https://…/issues/42" }  // null : run sans ticket
+  "ticket": { "id": "#42", "url": "https://…/issues/42" },  // null : run sans ticket
+  "projet_id": "prj-7f3a",                 // null : run hors de tout projet (#222)
+  "sources": [                             // [] ou absent : run sans matière (#317, EF-39)
+    { "type": "fichier", "id": "9f2c1ab34de5" },           // téléversé au préalable — §6.8
+    { "type": "dossier", "chemin": "D:/refs/maquettes" },  // références, en lecture seule
+    { "type": "url",     "valeur": "https://…/spec" }
+  ]
 }
 
 // ResumeExecution (réponse)
@@ -838,10 +845,53 @@ décrit le comportement réel, pas une fixture.
   "nb_taches": 5,
   "cout_usd": 0.1665,                      // null : aucun coût rapporté
   "ticket": { "id": "#42", "url": "https://…/issues/42" },  // null : sans ticket
+  "projet_id": "prj-7f3a",                 // null : hors de tout projet
+  "sources": [                             // [] : aucune — les sources **résolues** (#315)
+    { "type": "fichier", "nom": "CDC-v2.docx",
+      "chemin": "…/core/ingestion/demo-live/CDC-v2.docx",   // où la matière a atterri
+      "valeur": "", "taille": 184320, "lecture_seule": true }
+  ],
   "debut": "2026-07-30T09:00:00+00:00",
-  "fin": null                              // null tant que le run est en cours
+  "fin": null,                             // null tant que le run est en cours
+  "rapport": { … }                         // RapportLecture (§6.8) — **seulement** au lancement
 }
 ```
+
+**Les sources se déclarent, elles ne se devinent pas** (#315). Trois types, et rien d'autre :
+`fichier` (téléversé — §6.8), `dossier` (des **références**, jamais un projet : `lecture_seule`
+est forcé à `true`) et `url` (`http(s)` uniquement). Un type inconnu est **refusé** et non ignoré :
+ignorer laisserait croire à une matière jointe qui n'arriverait jamais.
+
+Un `fichier` se désigne par l'**identifiant rendu par `POST /api/sources`** (§6.8) : le nom et la
+taille sont alors ceux des octets reçus, jamais ceux qu'un client déclare. La forme
+« déclarative » de [docs/24 §3.2](./24-projets-locaux-et-poste-de-travail.md)
+(`{ "type": "fichier", "nom": …, "taille": … }`, sans `id`) reste acceptée — elle résout, mais
+aucun octet n'ayant été téléversé, la source ressort **`ignore` / `source-absente`** au rapport de
+lecture. Rien de silencieux : c'est précisément ce que le rapport existe pour dire.
+
+**La réponse du lancement porte le `rapport`** — et elle seule : `GET /api/executions/{run_id}` rend
+le `ResumeExecution` sans lui. Le rapport décrit une **lecture**, pas un fait du run ; le rendre
+durable est le travail de la validation du brief (#320), qui en fera un objet qu'on relit et qu'on
+approuve. Corollaire assumé : quand des sources sont déclarées, le `202` **n'est plus instantané**
+— la matière est lue avant que la réponse ne parte, faute de quoi le rapport n'aurait rien à dire.
+L'attente est bornée par les plafonds d'ingestion (§6.8) et par le délai de récupération d'une URL
+(10 s) ; sans source, le lancement est exactement celui d'avant.
+
+**Un refus est motivé** (même convention qu'au §6.7) : le `detail` d'un `422` est l'objet
+`{ "motif", "message" }`, augmenté d'un `"index"` — la **position** de la source fautive dans le
+tableau envoyé — quand le refus en vise une. « Une source est trop grosse » sans dire *laquelle*
+obligerait à tout relire pour savoir quoi retirer.
+
+| `motif` | ce qu'il dit |
+| --- | --- |
+| `requete-invalide` | objectif vide, garde-fou hors bornes — le refus d'avant ce lot |
+| `type-inconnu` | un type de source hors `fichier`/`dossier`/`url` |
+| `televersement-inconnu` | l'`id` ne désigne aucun téléversement (expiré, jamais reçu, faute de frappe) |
+| `url-non-suivable`, `url-absente`, `url-trop-longue` | l'URL n'est pas une adresse `http(s)` exploitable |
+| `chemin-sensible`, `racine-de-disque`, `dossier-absent`… | motifs de `valider_racine` (EF-38), **conservés tels quels** |
+| `nom-invalide`, `nom-absent`, `nom-trop-long` | le nom d'un fichier est un nom, pas un chemin |
+| `taille-absente`, `taille-invalide` | une source non mesurée ne peut pas être plafonnée |
+| `source-trop-volumineuse`, `ingestion-trop-volumineuse`, `trop-de-sources` | plafonds d'ingestion (§6.8) |
 
 ### 6.2 Journal requêtable — filtres, tri, pagination
 
@@ -1115,6 +1165,107 @@ Le défaut mérite d'être connu **avant** le premier essai : sous Windows, les 
 souvent hors du dossier utilisateur (`D:/projets`). L'explorateur les refuse alors — avec un motif
 qui **nomme la variable à renseigner**, plutôt qu'un mur muet. Élargir est un geste explicite,
 c'était le but.
+
+### 6.8 Sources d'un objectif — téléversement et rapport de lecture (#317) — **livré**
+
+La brique sans laquelle l'écran *composer un objectif* (§2.7) ne peut pas exister : **une route qui
+accepte un fichier**. Un navigateur ne livre jamais de chemin absolu — il livre des octets ; le
+`chemin` d'une source `fichier` est donc quelque chose que le backend **calcule**, jamais quelque
+chose qu'un client déclare. Implémenté, pas en fixture
+(`maestro/sources/televersement.py`) — comme §6.1 et §6.7, le contrat ci-dessous décrit le
+comportement réel.
+
+- `POST /api/sources` → `201` + `TeleversementSources`. Corps **`multipart/form-data`**, champ
+  `fichier` — **répétable** : un formulaire qui dépose trois documents fait un appel, pas trois.
+  `422` motivé au moindre dépassement.
+
+```jsonc
+// TeleversementSources (réponse)
+{
+  "sources": [
+    {
+      "id": "9f2c1ab34de5",       // l'identifiant de source, à reporter dans `sources[]` (§6.1)
+      "type": "fichier",
+      "nom": "CDC-v2.docx",       // assaini côté serveur : un nom, jamais un chemin
+      "taille": 184320            // octets **reçus**, pas octets annoncés
+    }
+  ],
+  "total_octets": 184320
+}
+```
+
+**Deux temps, et c'est le sujet.** Téléverser (`POST /api/sources`) dépose les octets dans un
+**dépôt de téléversement** hors de tout projet ; lancer (`POST /api/executions`) les **rattache au
+run**, dans son emplacement d'ingestion propre (`core/ingestion/<run_id>/`, ou
+`MAESTRO_INGESTION_DIR`). La séparation n'est pas de la plomberie : elle permet à l'écran de
+composer un objectif — déposer, voir, retirer un document — **avant** de dépenser quoi que ce soit,
+et elle garantit qu'une matière téléversée n'atterrit **jamais** dans le dossier de l'utilisateur.
+C'est la même raison qui interdit aux agents d'écrire dans la racine (EF-36) : une entrée non
+fiable ([docs/19 §2](./19-securite-modele-de-menace.md)) ne se mêle pas aux fichiers que
+l'utilisateur a écrits lui-même. Le rattachement **copie** : relancer le même objectif après un
+échec ne demande pas de re-téléverser.
+
+**Rien n'est tronqué à l'entrée.** Les octets sont lus par tranches et confrontés aux plafonds
+d'ingestion **pendant** la lecture (ENF-07, `GardeFousIngestion`) ; au premier dépassement, la
+lecture s'arrête, ce qui avait été écrit est effacé et la route refuse avec son motif. Un fichier à
+moitié reçu n'est pas une source, c'est un piège — le rapport de lecture le dirait « lu » et le
+brief conclurait sur un document amputé.
+
+| plafond | défaut | `motif` du refus |
+| --- | --- | --- |
+| taille d'**une** source | 10 Mio | `source-trop-volumineuse` |
+| taille **cumulée** de l'appel | 50 Mio | `ingestion-trop-volumineuse` |
+| **nombre** de fichiers de l'appel | 20 | `trop-de-sources` |
+
+Ce sont les plafonds du lot #315, appliqués ici une première fois **par appel** ; ils le sont une
+seconde fois **au lancement**, sur l'ensemble des sources déclarées — trois appels de sept fichiers
+passent chacun le plafond de nombre, leur somme non. Un refus est l'objet `{motif, message}` du
+§6.7, augmenté de l'`index` du fichier fautif dans l'appel.
+
+#### Le rapport de lecture (`RapportLecture`)
+
+Ce que les sources **disent**, et ce qu'elles **coûtent** — produit par l'extraction (#316) et rendu
+dans la réponse de `POST /api/executions` (§6.1). Une ligne par source déclarée, y compris celles
+qui n'ont pas été lues : une extraction silencieuse produirait un brief qui parle d'un document que
+personne n'a lu.
+
+```jsonc
+// RapportLecture
+{
+  "tokens": 4830,                    // le coût estimé de l'ensemble, jamais optimiste
+  "lectures": [
+    {
+      "nom": "CDC-v2.docx",
+      "type": "fichier",             // fichier | dossier | url
+      "etat": "lu",                  // lu | tronque | ignore
+      "tokens": 4200,
+      "motif": "",                   // `ignore` : code stable (format-non-gere, source-absente…)
+      "message": "",                 // `ignore` : la phrase lisible
+      "limite": "",                  // `tronque` : la limite atteinte (« 20000 tokens (plafond par source) »)
+      "entrees": []                  // `dossier` : une lecture **par fichier** parcouru
+    }
+  ]
+}
+```
+
+Trois états et pas un de plus : **`lu`**, **`tronque`** (avec la limite atteinte) et **`ignore`**
+(avec son motif). « Échoué » n'en est pas un — une source qu'on n'a pas su lire est une source
+ignorée qui se montre, là où un échec se lirait dans une trace que personne n'ouvre. Le contenu
+extrait, lui, **ne voyage pas** dans le rapport : il a son propre chemin, encadré comme donnée et
+jamais comme consigne (`contexte_markdown`, ENF-13), et c'est le brief (#318) qui l'empruntera.
+
+Le régime des deux étapes est **opposé, à dessein** : la résolution **refuse** (une saisie se
+corrige avant de dépenser), l'extraction **ignore ou tronque en le disant** (un contenu n'est pas
+encore connu de qui l'a joint). C'est pourquoi un `.png` déposé au milieu d'un dossier de maquettes
+ne fait échouer aucun lancement et apparaît quand même, ligne à ligne, dans `entrees`.
+
+Implémentation : [`maestro/sources/`](../maestro/sources/) — `modele` (la forme), `resolution`
+(#315 : ce qu'une déclaration devient, et ce qui la fait refuser), `extraction` (#316 : tout ramené
+au Markdown) et `televersement` (#317 : le dépôt des octets reçus). Couverture :
+[`tests/test_sources.py`](../tests/test_sources.py) et
+[`tests/test_extraction_sources.py`](../tests/test_extraction_sources.py) pour le socle ; les tests
+propres aux **routes** de ce §6.8 sont différés au lot final de la phase (#323), comme ceux des
+autres lots.
 
 ### 6.9 Aperçu d'ingestion — ce que des sources donneraient (#319) — **livré**
 
