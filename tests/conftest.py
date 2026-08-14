@@ -40,7 +40,19 @@ un test arrive alors truffée de codes ANSI et
 seulement**. Quatre sessions ont rouvert la même enquête pour cette fausse
 alerte ; c'est le dépôt, pas chaque run, qui doit la tarir.
 
-Quatrième garde-fou (#333), et le seul qui REFUSE de jouer au lieu de
+Quatrième garde-fou, même famille que le troisième (#339) : **`MAESTRO_FORGE`
+est neutralisée**. Elle choisit le backend de `scripts/gitlab/lib.sh` — `glab`
+et GitLab par défaut, `gh` et GitHub quand elle vaut `github` — et se pose
+exactement au même endroit que la précédente, le bloc `env` d'un
+`.claude/settings.local.json`, d'où elle fuit dans les sous-processus de tous
+les tests d'outillage. Un poste ayant basculé sa forge ferait alors partir vers
+`gh` des suites écrites autour d'un `glab` factice : elles échoueraient **sur ce
+poste seulement**, avec des erreurs d'authentification GitHub sans rapport
+visible avec la variable. Comme pour la couleur, c'est le dépôt qui doit tarir
+la fuite, pas chaque enquête. `MAESTRO_GITHUB_REPO` la suit pour la même raison :
+un dépôt cible hérité du poste n'a rien à faire dans un test.
+
+Cinquième garde-fou (#333), et le seul qui REFUSE de jouer au lieu de
 neutraliser : **git absent EN CI est une erreur, pas un saut**. Les trois
 premiers protègent le verdict de ce que le poste apporte en trop ; celui-ci le
 protège de ce que l'image du job n'apporte pas. `python:3.11-slim` n'a pas git,
@@ -68,6 +80,11 @@ HOTE_LANGFUSE_NEUTRE = "http://127.0.0.1:9"
 
 #: La variable qui force les couleurs de `scripts/orchestrate/run.sh` hors console (#236).
 CLE_COULEUR_ORCHESTRATE = "MAESTRO_ORCHESTRATE_COULEUR"
+
+#: Les variables qui choisissent la forge de `scripts/gitlab/lib.sh` et son dépôt cible (#339).
+#: Neutralisées ensemble : la seconde n'a de sens que sous la première, et un dépôt hérité du poste
+#: n'aurait pas plus sa place dans un test qu'un backend hérité du poste.
+CLES_FORGE = ("MAESTRO_FORGE", "MAESTRO_GITHUB_REPO")
 
 #: Variables posées d'office par les intégrations continues (GitLab CI comme GitHub Actions).
 #: Leur présence distingue « personne n'est là pour lire un `s` dans le compte rendu » d'un
@@ -143,11 +160,36 @@ def _neutralise_couleur_orchestrate() -> None:
     os.environ[CLE_COULEUR_ORCHESTRATE] = ""
 
 
+def _neutralise_forge() -> None:
+    """Vide `MAESTRO_FORGE` et `MAESTRO_GITHUB_REPO` de l'environnement du test (#339).
+
+    `scripts/gitlab/lib.sh` porte deux backends depuis la migration vers GitHub :
+    `glab` par défaut, `gh` quand `MAESTRO_FORGE=github`. Les suites d'outillage
+    (`test_cycle_de_vie.py`, `test_collaboration.py`, `test_worktree.py`…) montent
+    un `glab` factice en tête du `PATH` et vérifient les mutations qu'il reçoit :
+    sur un poste ayant basculé sa forge, ces suites partiraient vers `gh` et
+    échoueraient là et nulle part ailleurs — le pire mode d'échec, puisque rien
+    dans le message ne désignerait la variable.
+
+    Mise à **vide** plutôt que supprimée, comme les précédentes : `lib.sh` lit
+    `${MAESTRO_FORGE:-gitlab}`, pour qui vide et absente valent « gitlab », et une
+    valeur vide traverse sans surprise les `env={**os.environ, …}` des tests.
+
+    Ce n'est PAS un obstacle à couvrir le backend `gh` : un test qui le vise pose
+    la variable explicitement dans l'environnement du sous-processus qu'il lance,
+    ce que cette neutralisation n'empêche en rien. Elle interdit seulement à la
+    forge d'être **héritée** du poste.
+    """
+    for cle in CLES_FORGE:
+        os.environ[cle] = ""
+
+
 # Posés à l'import du conftest, donc avant l'import du premier module de test :
 # un test qui appelle `load_settings()` dès son import voit déjà l'environnement
 # neutralisé (la config relit `os.environ` à chaque appel, rien n'est mis en cache).
 _neutralise_langfuse()
 _neutralise_couleur_orchestrate()
+_neutralise_forge()
 
 
 @pytest.fixture(autouse=True)
