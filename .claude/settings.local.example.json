@@ -1,7 +1,8 @@
 {
   "env": {
     "MAESTRO_CHROME_PROFILE": "C:\\Users\\<vous>\\.maestro\\chrome-profile",
-    "MAESTRO_RUNNER_ID": "00000000"
+    "MAESTRO_RUNNER_ID": "00000000",
+    "GH_CONFIG_DIR": "C:\\Users\\<vous>\\.config\\gh-maestro"
   },
   "enabledMcpjsonServers": [
     "chrome-maestro",
