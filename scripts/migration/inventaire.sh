@@ -246,8 +246,12 @@ inventaire_cible() {
   if [ "$indetermine" -eq 1 ]; then
     printf '  %s⚠%s numérotation INDÉTERMINÉE — le jeton ne peut pas lire les issues du dépôt.\n' "$C_Y" "$C_0"
     note "réponse : $(printf '%s' "$sortie_i$sortie_p" | grep -o '"message":"[^"]*"' | head -1 | cut -d'"' -f4)"
-    note "il faut un jeton fine-grained sur $GH_REPO avec Issues + Pull requests en"
-    note "lecture/écriture et Metadata en lecture, rangé dans le GH_CONFIG_DIR du projet (#334)."
+    note "ce n'est PAS un jeton de plus à créer : le jeton du poste (#332, Actions: Read seul,"
+    note "rangé dans le GH_CONFIG_DIR du projet — #334) est déjà le bon acteur. Lui ajouter"
+    note "Issues et Pull requests en lecture/écriture SUFFIT, et un PAT fine-grained s'édite en"
+    note "place : la chaîne ne change pas, donc aucun « gh auth login » à refaire."
+    note "Ne pas toucher au second jeton de #332, celui du miroir : il vit côté GitLab, il écrit"
+    note "du code et non des tickets, et il meurt avec le miroir à la bascule."
     if [ "${ouverts:-1}" = "0" ]; then
       note ""
       note "présomption seulement : 0 objet OUVERT, et un miroir push ne crée ni issue ni PR."
