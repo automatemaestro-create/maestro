@@ -107,7 +107,7 @@ Le plan ci-dessus s'arrêtait à la V2 ; le projet a continué. Ces trois phases
 
 ---
 
-## Phases 7 à 9 — planifiées (cadrage #215, milestones créés par #218)
+## Phases 7 à 9 — cadrage #215, milestones créés par #218 *(7 et 8 livrées)*
 
 Trois phases issues de [docs/24](./24-projets-locaux-et-poste-de-travail.md), qui traite
 une question restée ouverte depuis le POC : **Maestro produit des livrables, il ne travaille pas
@@ -120,19 +120,22 @@ d'exécution ; l'utilisateur reçoit une copie de fichiers à recopier lui-même
 > bureau est une **enveloppe** et non la finalité (D3), lanceur puis Tauri (D4), brief validé
 > avant décomposition (D5), ordre 7 → 8 → 9 (D6), Phases 5 et 6 **inchangées** (D7).
 
-| Phase | But | Dépend de | Fenêtre |
-|---|---|---|---|
-| **7 — Projets & espace de travail réel** | Un projet a une **racine sur le disque** ; les agents y travaillent par branche/worktree ou copie, et l'application des modifications passe par la validation humaine. Le contrat d'isolation et le modèle de menace s'étendent au projet de l'utilisateur | Phase 5 (lancement de run par l'API — livré) | 2027-03-18 → 2027-04-28 |
-| **8 — De l'intention au brief** | Un objectif se **compose** (prompt + documents téléversés + dossier de références), se **discute** (questions de clarification) et se **valide** (brief structuré) avant toute décomposition payante | Phase 7 | 2027-04-29 → 2027-06-09 |
-| **9 — Poste de travail : distribution** | Le produit s'**installe** : mode local durci (jeton, SQLite), lanceur/installeur et parcours de premier lancement, puis **enveloppe de bureau** embarquant la Control Tower existante | Phases 7 et 8 — ne pas empaqueter une cible mouvante | 2027-06-10 → 2027-07-21 |
+| Phase | But | Dépend de | Fenêtre | État |
+|---|---|---|---|---|
+| **7 — Projets & espace de travail réel** | Un projet a une **racine sur le disque** ; les agents y travaillent par branche/worktree ou copie, et l'application des modifications passe par la validation humaine. Le contrat d'isolation et le modèle de menace s'étendent au projet de l'utilisateur | Phase 5 (lancement de run par l'API — livré) | 2027-03-18 → 2027-04-28 | **livrée** (#219, 8 lots) |
+| **8 — De l'intention au brief** | Un objectif se **compose** (prompt + documents téléversés + dossier de références), se **discute** (questions de clarification) et se **valide** (brief structuré) avant toute décomposition payante | Phase 7 | 2027-04-29 → 2027-06-09 | **livrée** (#314, 9 lots) |
+| **9 — Poste de travail : distribution** | Le produit s'**installe** : mode local durci (jeton, SQLite), lanceur/installeur et parcours de premier lancement, puis **enveloppe de bureau** embarquant la Control Tower existante | Phases 7 et 8 — ne pas empaqueter une cible mouvante | 2027-06-10 → 2027-07-21 | à venir |
 
 Les fenêtres reprennent la cadence des phases précédentes (~6 semaines) et s'enchaînent après
 l'échéance de la Phase 6. Ce sont des repères de planification : une échéance de milestone se
-déplace sans rien renier du cadrage.
+déplace sans rien renier du cadrage. **Les faits l'ont montré dans le sens agréable** : les
+Phases 7 et 8 ont été livrées en août 2026, très en avance sur des fenêtres calées sur 2027. Les
+dates ci-dessus sont conservées telles quelles — les réécrire après coup ferait passer une
+estimation pour une prévision réussie, et c'est l'écart qui est instructif.
 
-**Ordre et parallélisation** : 7 → 8 → 9. Les Phases 8 et 9 peuvent se recouvrir partiellement
-une fois la 7 livrée (le patron « deux voies par couche » de #182 s'applique à nouveau) — les
-fenêtres ci-dessus, elles, restent séquentielles tant que ce recouvrement n'est pas décidé.
+**Ordre et parallélisation** : 7 → 8 → 9, respecté. Les Phases 8 et 9 pouvaient se recouvrir
+partiellement une fois la 7 livrée (le patron « deux voies par couche » de #182) ; ça n'a pas été
+nécessaire, la 8 étant allée plus vite que son cadrage ne le prévoyait.
 
 **Une quatrième phase reste ouverte, sans milestone** : **10 — Continuité & multi-projet** *(à
 confirmer)* — un projet vit dans la durée : historique et coûts par projet, mémoire long terme,
@@ -141,15 +144,20 @@ Phase 7 aura appris de la vie réelle d'un projet ; elle se confirmera à ce mom
 front** décrite plus bas ne la décale pas et ne prend pas sa place : le numéro 10 lui reste
 réservé.
 
-> **Tickets : la Phase 7 est découpée, les Phases 8 et 9 non.** C'est le patron de #182, qui avait
+> **Tickets : les Phases 7 et 8 sont découpées, la Phase 9 non.** C'est le patron de #182, qui avait
 > créé les milestones des Phases 5 et 6 **et semé aussitôt leur premier lot de tickets** (#183,
 > #184 avec #185–#188, #189 avec #190–#193), en ne différant que les chantiers suivants « au
-> moment de les démarrer ». Ici : parent de suivi **#219** et huit lots — #221 (socle : entité
+> moment de les démarrer ». Phase 7 : parent de suivi **#219** et huit lots — #221 (socle : entité
 > Projet et validation de la racine), puis #222, #223, #224, #225 et #226 **prenables en
 > parallèle**, #227 (application des livrables sous validation) et #220 (tests + doc).
-> Les Phases 8 et 9 restent des contenants vides à dessein : leur détail dépend de ce que la
-> Phase 7 aura produit — un brief vise un projet, et on n'empaquette pas une cible mouvante.
-> **Vides ne veut pas dire seuls à venir** : le découpage différé porte sur *ces deux phases-là*,
+> **Phase 8 : découpée et livrée** — parent **#314** et neuf lots, #315 (modèle et résolution des
+> sources), #316 (extraction et rapport de lecture), #317 (API : un lancement porte ses sources),
+> #318 (brief structuré), #319 (composer un objectif), #320 (validation humaine du brief), #321
+> (questions de clarification), #322 (valider le brief dans la Control Tower) et #323 (tests + doc).
+> Le pari du découpage différé a tenu : la Phase 8 a été découpée **une fois la Phase 7 livrée**,
+> et le brief a pu viser un projet qui existait.
+> La **Phase 9 reste un contenant vide à dessein** : on n'empaquette pas une cible mouvante.
+> **Vide ne veut pas dire seule à venir** : le découpage différé porte sur *cette phase-là*,
 > pas sur le backlog. Trois autres milestones, décrits juste en dessous, sont ouverts **et
 > découpés** — la **vague front « Control Tower v3 »**, qui se mène en parallèle des Phases 8
 > et 9 sans rien changer à leur cadrage.

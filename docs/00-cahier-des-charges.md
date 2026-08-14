@@ -153,10 +153,10 @@ L'utilisateur passe ainsi du rôle d'« opérateur » (qui exécute) à celui de
 - **EF-37 (DOIT)** — L'**application des modifications** dans le projet de l'utilisateur est une **action sensible** : elle passe par la validation humaine (EF-08), diff à l'appui.
 - **EF-38 (DOIT)** — Le système **refuse** une racine hors périmètre autorisé (racine de disque, dossier utilisateur nu, chemins sensibles) et empêche toute écriture au-dessus de la racine déclarée.
 
-### 4.10 Composition de l'objectif : sources et brief *(retenu — [docs/24 §3](./24-projets-locaux-et-poste-de-travail.md), **Phase 8**)*
+### 4.10 Composition de l'objectif : sources et brief *(**livré** — [docs/24 §3](./24-projets-locaux-et-poste-de-travail.md), **Phase 8**)*
 
-- **EF-39 (DEVRAIT)** — Un objectif peut porter des **sources** : fichiers téléversés (`.md`, `.txt`, `.docx`, `.pdf`), dossier de références en lecture seule, URL. Elles sont ramenées à un format texte unique avant d'entrer dans le contexte.
-- **EF-40 (DEVRAIT)** — Avant toute décomposition, l'orchestrateur produit un **brief structuré** (objectif, périmètre, hors-périmètre, contraintes, critères d'acceptation, hypothèses), **peut poser des questions de clarification**, et le soumet à validation humaine.
+- **EF-39 (DEVRAIT)** — Un objectif peut porter des **sources** : fichiers téléversés (`.md`, `.txt`, `.docx`, `.pdf`), dossier de références en lecture seule, URL. Elles sont ramenées à un format texte unique avant d'entrer dans le contexte. **Livré** (#315 à #317, #319) : contrat au [docs/05 §6.1](./05-interface-control-tower.md), téléversement au [§6.8](./05-interface-control-tower.md), aperçu avant dépense au [§6.9](./05-interface-control-tower.md), écran au [§2.7.3](./05-interface-control-tower.md). Ce qui est lu, ignoré et ce que ça coûte est dit par un **rapport de lecture** — une source refusée l'est **avec son motif**, jamais en silence.
+- **EF-40 (DEVRAIT)** — Avant toute décomposition, l'orchestrateur produit un **brief structuré** (objectif, périmètre, hors-périmètre, contraintes, critères d'acceptation, hypothèses), **peut poser des questions de clarification**, et le soumet à validation humaine. **Livré** (#318 à #322) : schéma partagé `packages/shared/schemas/brief.schema.json`, routes au [docs/05 §6.10](./05-interface-control-tower.md), écran au [§2.7.4](./05-interface-control-tower.md). Les tours de clarification sont **bornés** et le régime est réglable au lancement — `humain` (défaut à la Control Tower), `auto` ou `sans` : le point de contrôle ne s'impose pas aux voies de lancement qui n'ont personne devant.
 
 ### 4.11 Distribution et installation *(retenu — [docs/24 §4](./24-projets-locaux-et-poste-de-travail.md), **Phase 9**)*
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from contextlib import suppress
 
 import pytest
 from fastapi.testclient import TestClient
@@ -37,6 +38,7 @@ from maestro.controltower import (
 )
 from maestro.controltower.brief import (
     ArbitreClarificationControlTower,
+    arbitre_clarification_redis,
     evenement_questions_brief,
 )
 from maestro.controltower.events import EVENEMENT_BRIEF_QUESTIONS, EVENEMENT_BRIEF_REPONSES
@@ -55,6 +57,7 @@ from maestro.engine.brief import (
     tours_clarification_valide,
 )
 from maestro.orchestrator import Orchestrator
+from maestro.orchestrator.prompt import build_brief_user_prompt
 from maestro.orchestrator.schema import Brief, Clarification
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal
@@ -604,3 +607,192 @@ def test_les_reponses_survivent_a_l_aller_retour_json():
     assert relu.reponses == ["a", ""]
     # Absentes → None (« cet événement n'en dit rien »), jamais [] par défaut.
     assert Event.from_dict({"type": EVENEMENT_BRIEF_REPONSES}).reponses is None
+
+
+# ------------------------------------- ④ l'arbitre seul : ce qui lève l'attente
+#
+# Différé au lot final (#323). La section ③ observe l'attente **par l'API** ;
+# celle-ci prend l'arbitre isolément, pour les fins d'attente qu'aucun écran ne
+# produit — un run annulé, un bus tombé, des réponses qui visent quelqu'un
+# d'autre. Chacune peut laisser une écoute derrière elle, et une écoute
+# abandonnée ne se voit de nulle part.
+
+
+async def _laisse_l_arbitre_s_abonner() -> None:
+    """Rend la main assez de tours pour que l'abonnement soit posé (cf. test_brief)."""
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+def _demande(brief: Brief) -> DemandeClarification:
+    return DemandeClarification(
+        run_id="r-11", objectif="Un CRM", brief=brief, tour=1, tours_max=2
+    )
+
+
+def test_l_arbitre_ignore_les_reponses_visant_un_autre_run(brief_a_questions):
+    """Deux runs peuvent attendre en même temps : chacun ne prend que les siennes."""
+    bus = InMemoryEventBus()
+
+    async def _scenario() -> tuple[Clarification, ...]:
+        arbitre = ArbitreClarificationControlTower(bus)
+        attente = asyncio.create_task(arbitre(_demande(brief_a_questions)))
+        await _laisse_l_arbitre_s_abonner()
+        await bus.publish(
+            Event(type=EVENEMENT_BRIEF_REPONSES, run_id="un-autre", reponses=["x", "y"])
+        )
+        await _laisse_l_arbitre_s_abonner()
+        assert not attente.done()
+        await bus.publish(
+            Event(type=EVENEMENT_BRIEF_REPONSES, run_id="r-11", reponses=["interne", "50"])
+        )
+        return await asyncio.wait_for(attente, timeout=5)
+
+    reponses = asyncio.run(_scenario())
+    assert [clarification.reponse for clarification in reponses] == ["interne", "50"]
+
+
+def test_une_question_sans_reponse_est_annoncee_au_lieu_d_etre_tue():
+    """Taire une question sans réponse la ferait reposer à l'identique.
+
+    Le tour suivant serait dépensé pour rien : le modèle ne peut pas savoir qu'il
+    l'a déjà posée si le prompt ne la lui rappelle pas. La dire, c'est lui
+    demander d'en faire une hypothèse et d'avancer — le pendant côté prompt de ce
+    que `questions_en_hypotheses` garantit côté Python.
+    """
+    prompt = build_brief_user_prompt(
+        "Un CRM minimal",
+        clarifications=[
+            Clarification(question="Interne ou public ?", reponse="Interne"),
+            Clarification(question="Quel volume ?", reponse=""),
+        ],
+    )
+    assert "Question : Interne ou public ?" in prompt
+    assert "Réponse : Interne" in prompt
+    assert "Question : Quel volume ?" in prompt
+    assert "Ne la repose pas" in prompt
+
+
+def test_le_dernier_tour_se_dit_dans_le_prompt_et_ferme_les_questions():
+    """Une invitation, pas la garantie — celle-ci est tenue en Python, jamais par docilité."""
+    clarifications = [Clarification(question="Quel volume ?", reponse="50")]
+    ni_dernier = build_brief_user_prompt("Un CRM", clarifications=clarifications)
+    dernier = build_brief_user_prompt(
+        "Un CRM", clarifications=clarifications, dernier_tour=True
+    )
+    assert "DERNIER tour" in dernier
+    assert "DERNIER tour" not in ni_dernier
+
+
+def test_les_reponses_passent_apres_les_sources_donc_au_rang_le_plus_fort():
+    """Ce qui est en dernier pèse le plus : les réponses de l'utilisateur font autorité.
+
+    Une source est une **donnée** non fiable (ENF-13, docs/19 §2) ; une réponse
+    est une **consigne** de la personne qui lance le run. L'ordre du prompt est
+    ce qui porte cette différence — l'inverser laisserait un document téléversé
+    donner le ton par-dessus l'utilisateur.
+    """
+    prompt = build_brief_user_prompt(
+        "Un CRM",
+        "## Source lue\n\ncontenu du document",
+        [Clarification(question="Quel volume ?", reponse="50")],
+    )
+    assert prompt.index("contenu du document") < prompt.index("Réponse : 50")
+
+
+class BusQuiSeReferme(InMemoryEventBus):
+    """Un bus dont le flux se tarit : personne ne répondra jamais."""
+
+    async def subscribe(self):
+        return
+        yield  # pragma: no cover - fait de `subscribe` un générateur asynchrone
+
+
+def test_un_bus_referme_sans_reponses_leve_au_lieu_de_poursuivre(brief_a_questions):
+    """Jamais un tour silencieusement sauté.
+
+    Le brief partirait sinon en validation **avec ses questions intactes**, en
+    laissant croire qu'on les a posées — le pire des deux mondes : le coût d'un
+    tour de clarification, et l'ignorance d'avant.
+    """
+
+    async def _scenario():
+        arbitre = ArbitreClarificationControlTower(BusQuiSeReferme())
+        return await arbitre(_demande(brief_a_questions))
+
+    with pytest.raises(RuntimeError) as capture:
+        asyncio.run(_scenario())
+    assert "r-11" in str(capture.value)
+
+
+class BusQuiCompteSesAbonnes(InMemoryEventBus):
+    """Un bus qui sait combien d'abonnements sont encore ouverts (cf. test_brief)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.abonnements_ouverts = 0
+
+    async def subscribe(self):
+        self.abonnements_ouverts += 1
+        try:
+            async for event in super().subscribe():
+                yield event
+        finally:
+            self.abonnements_ouverts -= 1
+
+
+def test_un_run_annule_pendant_l_attente_des_reponses_referme_son_abonnement(
+    brief_a_questions,
+):
+    """L'annulation est déjà exercée par l'API (§③) ; ici, ce qu'elle laisse derrière."""
+    bus = BusQuiCompteSesAbonnes()
+
+    async def _scenario() -> int:
+        arbitre = ArbitreClarificationControlTower(bus)
+        attente = asyncio.create_task(arbitre(_demande(brief_a_questions)))
+        await _laisse_l_arbitre_s_abonner()
+        assert bus.abonnements_ouverts == 1
+        attente.cancel()
+        with suppress(asyncio.CancelledError):
+            await attente
+        return bus.abonnements_ouverts
+
+    assert asyncio.run(_scenario()) == 0
+
+
+class BusQuiRefusePublier(BusQuiCompteSesAbonnes):
+    """Un bus indisponible au moment de publier les questions."""
+
+    async def publish(self, event: Event) -> None:
+        raise RuntimeError("bus indisponible")
+
+
+def test_un_bus_indisponible_ne_laisse_pas_l_ecoute_derriere_lui(brief_a_questions):
+    """Les questions ne sont jamais parties : l'écoute qui les attendait n'a plus d'objet.
+
+    C'est le seul chemin par lequel l'écoute survit à la sortie du `try` — une
+    annulation du run, elle, l'a déjà emportée avec elle. Sans ce filet, un bus
+    qui retombe laisse une tâche à l'écoute pour toujours, et rien ne la nomme.
+    """
+    bus = BusQuiRefusePublier()
+
+    async def _scenario() -> int:
+        arbitre = ArbitreClarificationControlTower(bus)
+        with pytest.raises(RuntimeError):
+            await arbitre(_demande(brief_a_questions))
+        return bus.abonnements_ouverts
+
+    assert asyncio.run(_scenario()) == 0
+
+
+def test_l_arbitre_de_production_ne_se_connecte_pas_en_le_construisant():
+    """Pendant exact d'`arbitre_brief_redis` : la connexion Redis est paresseuse.
+
+    C'est ce qui permet à `maestro-run --publier` de se doter d'un arbitre sans
+    exiger un Redis joignable — et ce que le réseau débranché de
+    `tests/conftest.py` (#195) permet de vérifier ici.
+    """
+    assert isinstance(
+        arbitre_clarification_redis("redis://localhost:6379/0"),
+        ArbitreClarificationControlTower,
+    )
