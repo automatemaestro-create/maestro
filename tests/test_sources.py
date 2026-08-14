@@ -34,6 +34,7 @@ from maestro.sources import (
     sources_depuis,
     sources_en_liste,
 )
+from maestro.sources.resolution import LONGUEUR_MAX_ID_RUN, racine_ingestion
 
 RUN = "a1b2c3d4e5f6"
 
@@ -414,3 +415,71 @@ def test_un_run_sans_source_rend_la_vue_d_avant_ce_lot() -> None:
     execution = etat.execution(RUN)
     assert execution is not None
     assert execution.resume()["sources"] == []
+
+
+# --- ⑧ Le reste, différé au lot final (#323) ---------------------------------
+#
+# Ce que #315 avait laissé de côté à raison — ce ne sont pas des refus, donc
+# rien qui doive se tester avec son code. Mais ce sont les points par lesquels
+# l'ingestion se déplace d'un poste à l'autre (où les fichiers atterrissent) ou
+# accepte une entrée qu'aucun écran ne produit (un `Source` déjà résolu).
+
+
+def test_la_racine_d_ingestion_est_dans_le_depot_sauf_si_l_environnement_la_deplace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Un dossier du dépôt par défaut, déplaçable pour qui range ses données ailleurs."""
+    monkeypatch.delenv("MAESTRO_INGESTION_DIR", raising=False)
+    defaut = racine_ingestion()
+    assert defaut.parts[-2:] == ("core", "ingestion")
+
+    ailleurs = tmp_path / "hors-depot"
+    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(ailleurs))
+    assert racine_ingestion() == ailleurs
+
+
+def test_la_racine_n_est_jamais_creee_par_sa_seule_lecture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Rien n'est créé tant qu'aucun fichier n'a été téléversé."""
+    ailleurs = tmp_path / "jamais-creee"
+    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(ailleurs))
+    assert racine_ingestion() == ailleurs
+    assert not ailleurs.exists()
+
+
+@pytest.mark.parametrize(
+    "identifiant",
+    ["", "a" * (LONGUEUR_MAX_ID_RUN + 1), "run 42", "run/42"],
+)
+def test_un_identifiant_de_run_hors_forme_est_refuse(identifiant: str) -> None:
+    """L'identifiant devient un **nom de dossier** : tout ce qui n'est pas un mot est refusé."""
+    with pytest.raises(SourceRefusee) as capture:
+        emplacement_ingestion(identifiant)
+    assert capture.value.motif == "run-invalide"
+
+
+def test_une_source_deja_resolue_se_re_resout_a_l_identique(dossier_refs: Path) -> None:
+    """Rejouer une résolution ne doit pas être un cas particulier — le journal en dépend."""
+    (resolue,) = resoudre_sources(
+        [{"type": TYPE_DOSSIER, "chemin": str(dossier_refs)}], run_id=RUN
+    )
+    assert resoudre_sources([resolue], run_id=RUN) == (resolue,)
+
+
+@pytest.mark.parametrize("brut", [{"type": TYPE_URL}, 42, object()])
+def test_une_liste_de_sources_qui_n_en_est_pas_une_est_refusee(brut: object) -> None:
+    """Un mapping ou un entier ne sont pas des *listes* : le refus nomme le tout."""
+    assert _refus(brut).motif == "sources-illisibles"
+
+
+def test_une_source_vide_se_reconnait_comme_telle() -> None:
+    """« Vide » = sans type, ou sans le moindre repère — un nom seul suffit à situer.
+
+    Nuance à connaître avant de s'en servir comme d'un contrôle de saisie : ce
+    n'en est pas un (`resoudre_sources` l'est), c'est le filtre de **relecture**
+    qui écarte une ligne de journal qui n'apprend rien.
+    """
+    assert Source(type="", nom="Spec", valeur="https://a.test").vide is True
+    assert Source(type=TYPE_URL).vide is True
+    assert Source(type=TYPE_URL, nom="Rien").vide is False

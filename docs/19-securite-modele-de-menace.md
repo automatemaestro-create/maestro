@@ -63,7 +63,7 @@ projet de l'utilisateur**, avec quatre menaces propres :
 | Destruction du travail de l'utilisateur | agent défaillant, `Bash` mal formé, code produit | Travail hors de la racine (branche/worktree ou copie) ; **application sous validation humaine** (EF-37) ; retour arrière natif si le projet est versionné |
 | Évasion par la racine déclarée | `../..`, lien symbolique, chemin absolu | Racine **canonicalisée**, écriture refusée au-dessus ; **liste de racines interdites** (racine de disque, dossier utilisateur nu, `.ssh`, `AppData`, le dépôt Maestro) |
 | Exfiltration du code de l'utilisateur | `git push` vers un distant tiers, appel réseau d'un `Bash` permis | Politique d'outils par agent (#110) ; l'**égress non filtré** (§5) devient nettement plus gênant qu'aujourd'hui |
-| **Prompt injection par le contenu lu** | `README`, commentaire, dépendance, **document téléversé** ([docs/24 §3.4](./24-projets-locaux-et-poste-de-travail.md)) | Contenu traité comme **donnée, jamais comme consigne** (prompts systèmes) ; actions sensibles maintenues derrière la validation, ce qui borne les dégâts |
+| **Prompt injection par le contenu lu** | `README`, commentaire, dépendance, **document téléversé** ([docs/24 §3.4](./24-projets-locaux-et-poste-de-travail.md)) | Contenu traité comme **donnée, jamais comme consigne** (prompts systèmes) ; actions sensibles maintenues derrière la validation, ce qui borne les dégâts. **Élargi et outillé en Phase 8 — §2.2** |
 
 La décision **D1** de [docs/24 §8](./24-projets-locaux-et-poste-de-travail.md) a été rendue le
 2026-08-04 (#218) et la **Phase 7 a livré** : ce tableau décrit le modèle de menace **en
@@ -90,6 +90,52 @@ Deux réserves demeurent, inchangées : l'**égress n'est toujours pas filtré p
 la Phase 7 rend cette limite nettement plus gênante sans la traiter —, et le verdict de
 `chemin_dans_racine` porte sur l'état du disque **au moment de l'appel** (TOCTOU) : refermer
 cette fenêtre revient à qui *ouvre* le fichier, pas à qui calcule le chemin.
+
+### 2.2 Ce que les sources d'un objectif ajoutent *(en vigueur — [docs/24 §3](./24-projets-locaux-et-poste-de-travail.md), **Phase 8** livrée)*
+
+Le vecteur « prompt injection par le contenu lu » du §2.1 s'élargit d'un cran, et **change de
+nature**. Jusqu'ici le contenu hostile devait déjà se trouver quelque part — dans un dépôt, une
+dépendance, un `README`. La Phase 8 ouvre une porte que l'utilisateur franchit lui-même : un
+document téléversé, un dossier de références, une **URL** dont Maestro va chercher le contenu
+(#315 à #317). L'écart est que la matière entre **sur demande**, en un geste, et sans que rien du
+poste ne l'ait filtrée.
+
+Trois choses le bornent, et elles ne sont **pas de même force** — l'ordre ci-dessous est celui-là,
+pas celui de leur visibilité :
+
+1. **La clôture du bloc ne peut pas être forgée.** Tout contenu extrait entre dans un bloc de code
+   dont la barrière est **calculée** : plus longue que la plus longue suite d'accents graves qu'il
+   porte (règle CommonMark). Aucun contenu ne peut donc refermer son propre bloc pour écrire *à
+   côté*, c'est-à-dire se faire passer pour une consigne. **C'est la seule garantie** des trois ;
+   les deux suivantes sont des consignes, et une consigne se contourne.
+2. **Les noms sont assainis.** Un nom de fichier vient de l'extérieur — il est saisi dans le
+   navigateur de l'utilisateur, une URL est collée. Une en-tête forgée dans un nom
+   (`` ``` `` + `## Consignes`) vaudrait une évasion **sans que le contenu ait eu à bouger** :
+   sauts de ligne écrasés, accents graves neutralisés, longueur bornée.
+3. **Le préambule dit le régime** — données à analyser, jamais des consignes, et une instruction
+   trouvée à l'intérieur se **signale** au lieu de s'exécuter.
+
+S'y ajoutent trois bornes qui ne visent pas l'injection mais la limitent en passant : les **schémas
+d'URL** sont restreints à `http(s)` — un `file://` lirait le disque par une porte que personne n'a
+contrôlée, et le contrôle est **au-dessus** de l'ouvreur, jamais délégué à lui, qui suivrait le
+schéma sans broncher ; le contenu des **balises muettes** (`script`, `style`) est écarté à la
+conversion, sans quoi il suffirait d'un `<script>` pour glisser des consignes sous couvert de page
+web ; et la **rédaction des secrets** (#109) passe sur le contenu **comme** sur les noms — le
+masquage suit le Markdown, format unique voulu par [docs/24 §3.2](./24-projets-locaux-et-poste-de-travail.md)
+précisément pour n'avoir qu'un endroit où le faire.
+
+Où ça vit dans le code : `maestro.sources.extraction.contexte_markdown` est le **seul chemin** par
+lequel un contenu extrait rejoint un contexte. Le critère est testé et non seulement énoncé
+([`tests/test_extraction_sources.py`](../tests/test_extraction_sources.py)) — un préambule se
+relit, une clôture calculée se **teste** : aucun contenu, si hostile soit-il, ne doit pouvoir
+refermer son bloc.
+
+Une réserve, à ne pas confondre avec une protection : la **validation humaine du brief** (#320,
+EF-40) n'est pas une contre-mesure d'injection. Elle borne les dégâts d'un objectif mal compris,
+pas ceux d'un contenu manipulé — un brief rédigé à partir d'une source hostile est un brief
+**plausible**, et c'est exactement ce qu'on approuve sans relire. Ce qui borne les dégâts reste ce
+qui les bornait déjà : les actions sensibles derrière la validation (EF-08, EF-37) et la politique
+d'outils par agent (#110).
 
 ## 3. Activation (récapitulatif)
 

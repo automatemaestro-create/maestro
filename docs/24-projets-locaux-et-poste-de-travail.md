@@ -169,13 +169,24 @@ contrat de [docs/17 §3](./17-isolation-execution.md) tient inchangé.
 
 ## 3. Question 3 — De l'intention au brief : prompt, documents, sources
 
-### 3.1 Ce qui manque
+> **Livré — Phase 8** (parent #314, lots #315 à #323). Ce chapitre a été écrit comme une
+> proposition ; il décrit maintenant du code qui tourne, et les renvois ci-dessous pointent le
+> contrat réel plutôt que la forme envisagée. Les écarts entre ce qui a été proposé et ce qui a
+> été construit sont **signalés sur place** — un cadrage qu'on relit plus tard doit dire lequel
+> des deux on est en train de lire.
 
-`POST /api/executions` ne prend qu'un `objectif` **texte** ; aucune route n'accepte de fichier,
-aucun extracteur n'existe, et l'orchestrateur décompose **en un seul coup**, sans jamais poser
-de question. Un cahier des charges de 15 pages n'a donc qu'un chemin : le copier-coller.
+### 3.1 Ce qui manque *(comblé)*
 
-### 3.2 La forme proposée : des **sources** attachées à l'exécution
+`POST /api/executions` ne prenait qu'un `objectif` **texte** ; aucune route n'acceptait de fichier,
+aucun extracteur n'existait, et l'orchestrateur décomposait **en un seul coup**, sans jamais poser
+de question. Un cahier des charges de 15 pages n'avait donc qu'un chemin : le copier-coller.
+
+Les trois manques sont comblés : les sources au lancement
+([docs/05 §6.1](./05-interface-control-tower.md), #317), l'extraction vers le Markdown avec son
+rapport de lecture ([§6.8](./05-interface-control-tower.md), #316) et le brief soumis à validation,
+questions comprises ([§6.10](./05-interface-control-tower.md), #320/#321).
+
+### 3.2 La forme proposée : des **sources** attachées à l'exécution *(livrée — #315, #317)*
 
 Plutôt qu'un champ « fichier » ajouté au forceps, un objectif se compose de **sources**
 typées — extension naturelle du contrat déjà figé ([docs/05 §6.1](./05-interface-control-tower.md)) :
@@ -197,7 +208,20 @@ convertisseur (python-docx / pypdf, ou un convertisseur unifié type *markitdown
 laissées au modèle quand il est multimodal. **Tout est ramené à du Markdown** avant d'entrer
 dans le contexte : un seul format à tracer, à masquer et à chiffrer en tokens.
 
-### 3.3 L'étape *brief* : le vrai gain
+> **Ce qui a été construit** (#316) suit cette forme à deux écarts près, tous deux volontaires.
+> **Un `fichier` se désigne par l'identifiant rendu par `POST /api/sources`** et non par le couple
+> `nom`/`taille` ci-dessus : un navigateur ne livre jamais de chemin absolu, il livre des octets,
+> donc le `chemin` d'une source est quelque chose que le backend **calcule**. La forme déclarative
+> reste acceptée, mais aucun octet n'ayant été téléversé, la source ressort `ignore` /
+> `source-absente` au rapport de lecture — visible, jamais silencieuse
+> ([docs/05 §6.1](./05-interface-control-tower.md)). Et le choix du convertisseur est tranché :
+> **python-docx et pypdf**, chargés à l'usage, dont l'absence est un motif distinct d'une lecture
+> ratée — « ce `.pdf` est corrompu » et « ce poste n'a pas `pypdf` » appellent des gestes opposés.
+> S'y ajoute ce que la proposition n'avait pas : un **rapport de lecture**
+> ([§6.8](./05-interface-control-tower.md)), sans lequel « ce qui est entré dans le contexte »
+> resterait invisible.
+
+### 3.3 L'étape *brief* : le vrai gain *(livrée — #318, #320, #321, #322)*
 
 Le point important n'est pas l'upload — c'est ce qu'on en fait. Aujourd'hui, un objectif flou
 produit un plan flou, et l'erreur ne se voit qu'après N exécutions payées. La proposition :
@@ -224,16 +248,34 @@ bénéfices :
   d'orchestre », promesse du [cahier des charges §1.2](./00-cahier-des-charges.md).
 
 C'est aussi le point où l'orchestrateur gagne le droit de **poser des questions**, ce que le
-moteur ne sait pas faire aujourd'hui (il décompose ou il échoue).
+moteur ne savait pas faire (il décomposait ou il échouait).
 
-### 3.4 Deux précautions
+> **Ce qui a été construit** ajoute au schéma une chose qu'il ne montre pas : la boucle
+> `Questions → brief` est **bornée** (#321). Sans plafond, un modèle qui trouve toujours une zone
+> d'ombre suspend le run indéfiniment ; le nombre de tours est donc annoncé à qui répond
+> (« tour 1 sur 2 »), parce que savoir s'il en reste un change la façon de répondre, et une
+> question laissée sans réponse part en **hypothèse explicite** au lieu d'être reposée. Le régime
+> est réglable au lancement — `humain` (défaut à la Control Tower), `auto` (le brief est rédigé
+> sans attendre) ou `sans` — de sorte que le point de contrôle n'est pas imposé aux voies de
+> lancement qui n'ont personne devant. Détail au
+> [§6.10 de docs/05](./05-interface-control-tower.md), écran au
+> [§2.7.4](./05-interface-control-tower.md).
 
-- **Coût** : un document volumineux entre intégralement dans le contexte. Il faut un plafond
+### 3.4 Deux précautions *(prises)*
+
+- **Coût** : un document volumineux entre intégralement dans le contexte. Il fallait un plafond
   d'ingestion, un résumé en amont pour les gros documents, et le comptage de ces tokens dans le
-  budget du run (ENF-07) — sinon la barre de dépense ment.
+  budget du run (ENF-07) — sinon la barre de dépense ment. **Fait** (#315, #316) : plafonds par
+  source, par ingestion et en nombre de sources, un budget de tokens qui **tronque dans l'ordre
+  déclaré** plutôt que d'écarter au hasard, et le tout visible **avant** de dépenser par l'aperçu
+  d'ingestion ([docs/05 §6.9](./05-interface-control-tower.md), #319) — la précaution est devenue
+  un écran, pas seulement une borne.
 - **Sécurité** : un document téléversé est une **entrée non fiable**. Le vecteur de prompt
   injection de [docs/19 §2](./19-securite-modele-de-menace.md) s'élargit d'un cran ; même
   parade que §2.5 — contenu traité comme donnée, actions sensibles derrière validation.
+  **Fait** (#316) : le contenu extrait entre **encadré comme donnée, jamais comme consigne**, et la
+  clôture du bloc est **calculée** d'après le contenu — un préambule se relit, une clôture calculée
+  se teste. Voir [docs/19 §2.2](./19-securite-modele-de-menace.md).
 
 ---
 
