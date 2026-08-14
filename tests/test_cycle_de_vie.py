@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from conftest import CLES_FORGE  # le conftest du dossier, sur le sys.path de pytest
 
 RACINE = Path(__file__).resolve().parent.parent
 BASH = shutil.which("bash")
@@ -530,6 +531,29 @@ def test_reconcile_balayage_ne_retient_que_les_fermes_restes_actifs(depot: Depot
     assert len(mutations) == 3, f"attendu 101/104/105, reçu : {mutations}"
     for mutation in mutations:
         assert _cible_ajoutee(mutation) == [GIDS["termine"]]
+
+
+def test_le_conftest_neutralise_la_forge_heritee_du_poste() -> None:
+    """Tout ce module ne tient que si le poste ne pose pas `MAESTRO_FORGE` (#339).
+
+    `lib.sh` porte deux backends depuis la migration vers GitHub, et c'est cette variable qui
+    tranche. Elle se pose au MÊME endroit que la couleur de `run.sh` (#236) — le bloc `env` d'un
+    `.claude/settings.local.json` — d'où elle fuit dans l'environnement de toute session du poste,
+    donc dans les sous-processus lancés ici.
+
+    Ce qui se passerait alors est le pire mode d'échec disponible : le `glab` factice monté en tête
+    du `PATH` ne serait plus jamais appelé, `lib.sh` partirait vers `gh`, et les assertions
+    tomberaient **sur ce poste seulement** avec des erreurs d'authentification GitHub dont rien ne
+    désignerait la cause. C'est le dépôt qui doit tarir la fuite, pas l'enquête suivante.
+
+    Vide plutôt que supprimée, comme les garde-fous précédents : `lib.sh` lit
+    `${MAESTRO_FORGE:-gitlab}`, pour qui vide et absente valent « gitlab ».
+    """
+    for cle in CLES_FORGE:
+        assert os.environ.get(cle) == "", (
+            f"le conftest doit vider {cle} à l'import, avant le premier module de test "
+            "(tests/conftest.py, #339)"
+        )
 
 
 def test_reconcile_balayage_sans_derive_ne_dit_rien_a_faire_et_n_ecrit_rien(depot: Depot) -> None:
