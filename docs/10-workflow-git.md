@@ -602,7 +602,8 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
   dans un fichier suivi ; `CLAUDE_CODE_OAUTH_TOKEN` est recopié depuis le `.env` par `setup.sh`, il
   ne s'écrit jamais à la main ici). Clés couvertes : `env.MAESTRO_CHROME_PROFILE` (profil du
   navigateur piloté par `chrome-maestro`), `env.MAESTRO_RUNNER_ID` (runner CI de cette machine,
-  §8.1), `enabledMcpjsonServers` (approbation des serveurs de `.mcp.json`) et `permissions.allow`
+  §8.1), `env.GH_CONFIG_DIR` (compte GitHub propre à ce projet, §7.4),
+  `enabledMcpjsonServers` (approbation des serveurs de `.mcp.json`) et `permissions.allow`
   (surcharges personnelles). C'est une **référence à lire, pas un fichier à recopier** : le vrai
   `settings.local.json` est écrit et fusionné clé par clé par l'étape `mcp` de `setup.sh`, qui
   renvoie vers le gabarit en `--check`. Les worktrees y ajoutent `MAESTRO_PORT_API`/
@@ -674,6 +675,74 @@ Quatre promesses, que [`tests/test_env_pull.py`](../tests/test_env_pull.py) épi
 ```bash
 glab variable set LANGFUSE_SECRET_KEY --masked < valeur.txt
 ```
+
+### 7.4 Un compte GitHub par projet — `GH_CONFIG_DIR`
+
+**Le problème.** `gh` sait stocker **plusieurs comptes** sur `github.com` — le poste de référence
+en porte trois — mais n'en garde **qu'un actif**, et cet actif vit dans un fichier unique
+(`$XDG_CONFIG_HOME/gh/hosts.yml`, `%AppData%\GitHub CLI\hosts.yml` sous Windows). `gh auth switch`
+est donc une **variable globale** : elle bascule tous les terminaux et tous les dépôts de la machine
+d'un coup. Deux projets ouverts en parallèle se la disputent, et le perdant est celui qui ne regarde
+pas — typiquement un run `/orchestrate --detach` (§11) qui hérite du compte posé par la dernière
+commande tapée ailleurs, et travaille sous une identité que personne n'a choisie pour lui.
+
+**La réponse : un config dir par projet.** `GH_CONFIG_DIR` désigne le dossier où `gh` range sa
+configuration — donc **son propre `hosts.yml`, donc son propre compte actif**, et `gh auth switch`
+redevient une opération locale à un projet. Les **jetons** restent dans le trousseau du système et
+sont partagés entre les dossiers ; c'est le `hosts.yml` de chacun qui décide qui est actif — d'où un
+`gh auth login` à rejouer **une fois par dossier**, un config dir neuf ne connaissant encore
+personne (`gh auth status` y répond « You are not logged into any GitHub hosts »).
+
+```bash
+mkdir -p ~/.config/gh-<projet>                            # le dossier, vide au départ
+env GH_CONFIG_DIR=~/.config/gh-<projet> gh auth login     # une fois, interactif
+env GH_CONFIG_DIR=~/.config/gh-<projet> gh auth status    # vérification
+```
+
+**Où la poser côté Maestro** : le bloc `env` de `.claude/settings.local.json` — non versionné, comme
+tout chemin de machine —, dont le gabarit
+[`.claude/settings.local.example.json`](../.claude/settings.local.example.json) documente la clé avec
+une **valeur neutre** (§7.1) :
+
+```json
+{ "env": { "GH_CONFIG_DIR": "C:\\Users\\<vous>\\.config\\gh-maestro" } }
+```
+
+Détail qui tombe juste : **les worktrees héritent du bon compte sans rien faire**, et par les deux
+chemins possibles. Une session **relocalisée** (§9.1) change de répertoire de travail **mais pas de
+bloc `env`** — elle garde donc celui du clone principal. Une session **ouverte directement** sur un
+worktree lit, elle, le `settings.local.json` *du worktree* — que `worktree.sh` recopie du clone
+principal au premier passage, en n'imposant que les trois valeurs qui **doivent** différer d'une
+session à l'autre (profil de navigateur, ports Control Tower, §9). `GH_CONFIG_DIR` n'en fait pas
+partie : deux worktrees du même projet parlent bien au même compte, ce qui est l'intention.
+
+Rien à provisionner dans `setup.sh` : le chemin est machine et le choix du compte est un geste
+humain (`gh auth login` interactif) — même traitement que `MAESTRO_CHROME_PROFILE`, à ceci près que
+l'étape `mcp` ne lit **jamais** le gabarit (elle fusionne depuis `.mcp.json` et le `.env`), donc
+documenter la clé n'écrit rien nulle part.
+
+**Deux variantes écartées :**
+
+| Variante | Pourquoi non |
+|---|---|
+| `gh auth switch` seul | État **global**, cf. ci-dessus. Reste l'outil normal *à l'intérieur* d'un config dir. |
+| `GH_TOKEN` | Court-circuite tout le reste, mais met le **secret en clair** dans un fichier de configuration et rend `gh auth status`/`gh auth switch` inopérants (gh ne rapporte plus qu'un jeton d'environnement). À réserver à la **CI**. |
+
+**Deux limites, à connaître sous peine de fausse sécurité** — le config dir ne décide que de ce que
+`gh` fait en son nom propre :
+
+- **L'auteur des commits n'en vient pas.** Il vient de `git config user.name`/`user.email`, dont le
+  global du poste porte le compte principal. Un projet qui doit commiter sous une autre identité la
+  pose **en local**, dans le dépôt : `git config --local user.name …` et `… user.email …`.
+- **L'authentification de `git push` en HTTPS non plus.** `gh auth setup-git` installe un credential
+  helper **global** (`credential.https://github.com.helper` dans le `.gitconfig` du poste), qui
+  résout vers le compte actif du config dir **ambiant** : correct depuis une session Claude Code qui
+  exporte `GH_CONFIG_DIR`, **faux depuis un terminal nu**, où c'est le config dir par défaut qui
+  répond. Dans le doute, forcer le helper le temps de la commande — même geste que pour `glab`
+  (§7) : `git -c credential.helper='!gh auth git-credential' push …`.
+
+`glab` répond à la même mécanique (`GLAB_CONFIG_DIR`) si le besoin se pose côté GitLab. Il ne se
+pose pas aujourd'hui : l'équipe y partage un même compte (§6).
 
 ---
 
