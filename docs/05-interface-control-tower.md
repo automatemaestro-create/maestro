@@ -599,13 +599,13 @@ sans elle, un run suspendu est indiscernable d'un run planté.
 Implémentation : `apps/web/app/brief/page.tsx` et `apps/web/components/brief/`, contre quatre
 routes — `GET /api/executions` (quels runs attendent), `GET /api/executions/{run_id}` (le brief, le
 grand livre et la trace, d'un seul appel), `POST /api/executions/{run_id}/brief/decision` (#320) et
-`POST /api/executions/{run_id}/brief/reponses` (#321). Elles ne figurent pas encore au §6.1, qui
-s'arrête au lancement et à l'annulation : les y consigner revient au lot final #323, avec le reste
-de la doc de la phase. `apps/web/lib/brief.ts` porte les règles hors JSX (qui attend, comment un
+`POST /api/executions/{run_id}/brief/reponses` (#321). Les deux dernières sont consignées au
+**§6.10** (#323) ; le §6.1 porte le régime du brief au lancement et les deux statuts d'attente.
+`apps/web/lib/brief.ts` porte les règles hors JSX (qui attend, comment un
 brief se donne à corriger, comment se relit un aller-retour) et `apps/web/lib/estimation.ts` l'ordre
-de grandeur avec sa source. Couverture : `apps/web/tests/brief.test.tsx`, restreinte à la
-**logique critique** du lot (approuvé corrigé vs tel quel, refus sans brief, appariement positionnel
-des réponses) — le reste de la Phase 8 est différé au lot final #323.
+de grandeur avec sa source. Couverture : `apps/web/tests/brief.test.tsx` et
+`apps/web/tests/composer-sources.test.tsx` côté UI, [`tests/test_brief.py`](../tests/test_brief.py)
+et [`tests/test_clarifications.py`](../tests/test_clarifications.py) côté API (#323).
 
 ### 2.8 🗒️ Journal — l'activité en direct, en plein format *(#249, #250 — **livré**)*
 
@@ -834,14 +834,20 @@ décrit le comportement réel, pas une fixture.
     { "type": "fichier", "id": "9f2c1ab34de5" },           // téléversé au préalable — §6.8
     { "type": "dossier", "chemin": "D:/refs/maquettes" },  // références, en lecture seule
     { "type": "url",     "valeur": "https://…/spec" }
-  ]
+  ],
+  "brief": "humain"                        // humain (défaut) | auto | sans — §6.10, #320
 }
 
 // ResumeExecution (réponse)
 {
   "run_id": "demo-live",
   "objectif": "Prototyper un mini-CRM",
-  "statut": "en_cours",                    // en_cours | terminee | annulee | echec
+  // en_cours | terminee | annulee | echec
+  // | en_attente_brief | en_attente_reponses  ← suspendu sur son brief (§6.10)
+  "statut": "en_cours",
+  "mode_brief": "humain",                  // le régime posé au lancement (#320)
+  "tour_clarification": 0,                 // tour de questions en cours (#321)
+  "tours_clarification_max": 2,            // 0 : aucun tour prévu
   "nb_taches": 5,
   "cout_usd": 0.1665,                      // null : aucun coût rapporté
   "ticket": { "id": "#42", "url": "https://…/issues/42" },  // null : sans ticket
@@ -1315,3 +1321,72 @@ un dossier de maquettes.
 
 Implémentation : [`maestro/sources/apercu.py`](../maestro/sources/apercu.py). Couverture :
 [`tests/test_apercu_sources.py`](../tests/test_apercu_sources.py).
+
+### 6.10 Brief — questions de clarification et décision (#320, #321) — **livré**
+
+Les deux routes qui **débloquent un run suspendu**, et rien d'autre : le brief lui-même ne se lit
+pas ici, il arrive avec le détail du run (`GET /api/executions/{run_id}`, §6.1). C'est ce qui permet
+à l'écran du §2.7.4 de tout charger d'un appel — brief, grand livre, trace — au lieu d'en composer
+trois.
+
+- `POST /api/executions/{run_id}/brief/reponses` → `200` + `ResumeExecution` — répond aux questions
+  du tour en cours. Le run **régénère son brief entier**, puis repose des questions s'il en reste et
+  que le plafond le permet, sinon passe en validation.
+- `POST /api/executions/{run_id}/brief/decision` → `200` + `ResumeExecution` — approuve (le run
+  décompose) ou refuse (le run est soldé `annulee`).
+
+```jsonc
+// ReponsesBrief (corps de …/brief/reponses)
+{
+  "reponses": ["PostgreSQL", "", "Deux semaines"]   // appariées **par position**
+}                                                   // "" = « je ne sais pas » → hypothèse
+
+// DecisionBrief (corps de …/brief/decision)
+{
+  "approuve": true,
+  "brief": { … }        // la version **corrigée** ; null : le brief proposé part tel quel
+}                       // ignoré sur un refus — il n'y a rien à décomposer
+```
+
+**Une attente, une route, et jamais l'autre.** Les deux statuts ne sont pas deux noms du même état :
+`en_attente_reponses` (#321) veut des réponses, `en_attente_brief` (#320) veut une décision, et
+chaque route **409** sur l'autre. Le `409` couvre aussi le double geste — un brief tranché deux
+fois, ou pire, un run soldé ramené en vol par une décision tardive. `404` si le run est inconnu.
+
+**Les deux `422` sont de nature différente**, et c'est le sujet :
+
+| route | `422` quand | pourquoi lever plutôt que tolérer |
+| --- | --- | --- |
+| `…/reponses` | le **nombre** de réponses ≠ le nombre de questions | l'appariement est **positionnel** : une liste décalée affecterait des réponses aux mauvaises questions sans que rien ne le signale |
+| `…/decision` | le `brief` corrigé viole la **JSON Schema partagée** (#318) | une correction qui casse la forme doit coûter un aller-retour à qui la soumet, pas un échec de run une seconde plus tard, quand plus personne ne regarde |
+
+Le contrôle de longueur est **le seul moment où quelqu'un est là pour corriger sa requête**. Plus
+loin, en plein run, l'appariement est volontairement tolérant (une réponse manquante vaut « sans
+réponse ») : y lever coûterait le run.
+
+**Pourquoi pas d'identifiant de question.** Le brief est régénéré **en entier** à chaque tour, donc
+une question n'a pas d'identité stable d'une version à l'autre — un identifiant laisserait croire le
+contraire. Ce qui rend la position sûre est que les réponses s'adressent au brief **stocké**, dont
+la liste de questions est figée entre sa publication et sa réponse.
+
+**`brief: null` n'est pas une omission**, c'est une affirmation : « le brief proposé tient ». Le
+corps ne recopie jamais un brief non touché — ce qui ferait retraverser la validation de schéma à un
+objet que le moteur vient de produire — et cette lecture est faite **au même endroit** par la
+projection et par le moteur (`DecisionBrief.retenu`), donc énoncée une seule fois.
+
+**L'état est appliqué d'abord, l'événement publié ensuite** — même mécanique que la décision de
+validation (#48) et pour les mêmes raisons : le REST répond déjà à jour, le moteur (en attente sur
+ce même bus) reprend ou s'arrête, et la pompe réapplique l'événement sans effet (idempotence).
+
+Un point à connaître avant d'y toucher : les réponses **ne sont pas expurgées** sur le bus, au même
+titre que le brief (#320). Elles n'y voyagent pas pour être affichées mais pour **atteindre le
+moteur**, qui les intègre au brief régénéré ; les masquer ne protégerait rien — le brief qui en sort
+circule déjà en clair sur le même canal — mais corromprait l'entrée de la régénération, et un
+`[REDACTED]` au milieu d'une réponse produirait un brief faux sans que personne le voie.
+
+Implémentation : [`maestro/controltower/app.py`](../maestro/controltower/app.py) pour les routes,
+[`maestro/controltower/brief.py`](../maestro/controltower/brief.py) pour les arbitres et
+[`maestro/engine/brief.py`](../maestro/engine/brief.py) pour les régimes et l'appariement.
+Couverture : [`tests/test_brief.py`](../tests/test_brief.py) et
+[`tests/test_clarifications.py`](../tests/test_clarifications.py) côté API,
+`apps/web/tests/brief.test.tsx` côté UI.

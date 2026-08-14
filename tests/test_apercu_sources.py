@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -227,3 +228,141 @@ def test_la_route_refuse_un_json_illisible(client: TestClient) -> None:
     reponse = client.post("/api/sources/apercu", data={"sources": "{pas du json"})
     assert reponse.status_code == 422
     assert reponse.json()["detail"]["motif"] == "sources-illisibles"
+
+
+# --- Le reste, différé au lot final (#323) ----------------------------------
+
+
+def test_une_url_s_apercoit_sans_jamais_sortir_sur_le_reseau() -> None:
+    """Le troisième type de source n'était exercé nulle part côté aperçu.
+
+    L'injection `recuperer_url=` est le seul chemin par lequel une URL entre
+    dans un aperçu : sans test, rien ne garantissait que le paramètre soit
+    transmis jusqu'à l'extraction.
+    """
+    appelees: list[str] = []
+
+    def _recuperer(url: str) -> str:
+        appelees.append(url)
+        return "# Spécification\n\nLe contenu de la page."
+
+    rapport = apercu_sources(
+        [{"type": "url", "valeur": "https://exemple.test/spec"}],
+        recuperer_url=_recuperer,
+    )
+    (lecture,) = rapport.lectures
+    assert appelees == ["https://exemple.test/spec"]
+    assert lecture.etat == "lu"
+    assert "Spécification" in lecture.markdown
+
+
+def test_le_cumul_des_octets_recus_est_plafonne_lui_aussi() -> None:
+    """Deux fichiers licites l'un après l'autre peuvent être illicites ensemble.
+
+    Le plafond **par source** était couvert, le plafond **total** ne l'était pas
+    — c'est pourtant celui qui borne le coût d'un aperçu.
+    """
+    moitie = b"z" * 700
+    with pytest.raises(SourceRefusee) as refus:
+        apercu_sources(
+            [_declarer("a.txt", moitie), _declarer("b.txt", moitie)],
+            fichiers=[("a.txt", io.BytesIO(moitie)), ("b.txt", io.BytesIO(moitie))],
+            garde_fous=GardeFousIngestion(
+                taille_max_source_octets=1024, taille_max_totale_octets=1024
+            ),
+        )
+    assert refus.value.motif == "ingestion-trop-volumineuse"
+    assert refus.value.index == 1
+
+
+def test_le_cumul_se_compte_sur_les_octets_recus_et_non_sur_ceux_annonces() -> None:
+    """Le pendant du test précédent, sur le seul chemin qui compte vraiment.
+
+    Là, les tailles **déclarées** dépassaient déjà : le refus tombait avant que
+    le moindre octet ne soit lu. Ici elles sont minuscules et les octets, eux,
+    débordent — c'est le cas d'un client qui annonce douze octets pour douze
+    mégaoctets, et le seul où le plafond cumulé doit se défendre **pendant**
+    l'écriture. La taille annoncée vient du navigateur : elle ne peut pas être
+    ce sur quoi le budget d'ingestion s'appuie.
+    """
+    moitie = b"z" * 700
+    with pytest.raises(SourceRefusee) as refus:
+        apercu_sources(
+            [
+                {"type": "fichier", "nom": "a.txt", "taille": 10},
+                {"type": "fichier", "nom": "b.txt", "taille": 10},
+            ],
+            fichiers=[("a.txt", io.BytesIO(moitie)), ("b.txt", io.BytesIO(moitie))],
+            garde_fous=GardeFousIngestion(
+                taille_max_source_octets=1024, taille_max_totale_octets=1024
+            ),
+        )
+    assert refus.value.motif == "ingestion-trop-volumineuse"
+    assert refus.value.index == 1
+
+
+def test_un_apercu_refuse_ne_laisse_pas_ses_octets_derriere_lui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le ménage est dans un `finally` : il doit valoir aussi sur le chemin d'échec.
+
+    C'est le cas qui compte le plus — un refus écrit un fichier **partiel**, et
+    c'est précisément ce qu'il ne faut pas conserver.
+    """
+    jetables = tmp_path / "jetables"
+    jetables.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(jetables))
+
+    trop = b"x" * 4096
+    with pytest.raises(SourceRefusee):
+        apercu_sources(
+            [_declarer("gros.txt", trop)],
+            fichiers=[("gros.txt", io.BytesIO(trop))],
+            garde_fous=GardeFousIngestion(taille_max_source_octets=1024),
+        )
+
+    assert list(jetables.iterdir()) == []
+
+
+def test_la_route_apercoit_plusieurs_fichiers_dans_l_ordre_declare(
+    client: TestClient,
+) -> None:
+    """Un multipart transporte deux listes ordonnées, pas une correspondance.
+
+    L'ordre est ce qui décide de ce qui entre quand le budget s'épuise : un
+    aperçu qui l'inverserait annoncerait un lancement qui n'aura pas lieu.
+    """
+    premier = b"# Premier\n\nUn contenu."
+    second = b"# Second\n\nUn autre contenu."
+    reponse = client.post(
+        "/api/sources/apercu",
+        data={
+            "sources": json.dumps(
+                [_declarer("un.md", premier), _declarer("deux.md", second)]
+            )
+        },
+        files=[
+            ("fichier", ("un.md", premier, "text/markdown")),
+            ("fichier", ("deux.md", second, "text/markdown")),
+        ],
+    )
+    assert reponse.status_code == 200
+    corps = reponse.json()
+    assert [lecture["nom"] for lecture in corps["lectures"]] == ["un.md", "deux.md"]
+    assert corps["tokens"] == sum(lecture["tokens"] for lecture in corps["lectures"])
+
+
+def test_la_route_refuse_un_decompte_de_fichiers_faux(client: TestClient) -> None:
+    """Deux déclarations pour un seul flux : rapprocher au hasard serait crédible et faux."""
+    contenu = b"# Un\n"
+    reponse = client.post(
+        "/api/sources/apercu",
+        data={
+            "sources": json.dumps(
+                [_declarer("un.md", contenu), _declarer("deux.md", contenu)]
+            )
+        },
+        files=[("fichier", ("un.md", contenu, "text/markdown"))],
+    )
+    assert reponse.status_code == 422
+    assert reponse.json()["detail"]["motif"] == "apercu-sans-octets"
