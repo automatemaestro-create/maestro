@@ -2,6 +2,6 @@
   "suppressOutput": true,
   "hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",
-    "additionalContext": "Rappel Maestro — traçabilité des demandes : consigne la demande utilisateur ci-dessus dans GitLab, sans demander confirmation. Si elle relève du ticket en cours ou d'un ticket existant du backlog, mets ce ticket à jour (commentaire via `glab issue note -m`, et description si le périmètre change) ; sinon, crée un nouveau ticket via le skill ticket-create (labels type::/agent::/prio::, milestone courant). Exceptions : les commandes /ticket-* elles-mêmes (déjà tracées) et les échanges purement conversationnels sans travail demandé."
+    "additionalContext": "Rappel Maestro — traçabilité des demandes : consigne la demande utilisateur ci-dessus dans le backlog, sans demander confirmation. Si elle relève du ticket en cours ou d'un ticket existant, mets ce ticket à jour (commentaire via `bash scripts/gitlab/lib.sh issue-note <iid> <fichier>`, description via `set-description` si le périmètre change — les helpers valent sur les deux forges et font voyager le texte par un fichier) ; sinon, crée un nouveau ticket via le skill ticket-create (labels type::/agent::/prio::, milestone courant). Exceptions : les commandes /ticket-* elles-mêmes (déjà tracées) et les échanges purement conversationnels sans travail demandé."
   }
 }

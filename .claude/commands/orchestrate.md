@@ -1,7 +1,7 @@
 ---
 description: Traite le backlog en autonomie — un ticket, un worktree, une session Claude Code, de /ticket-start à /ticket-ship
 argument-hint: "[--dry-run | --status | --resume [<run-id>] | --milestone <titre> | --max <n>] (aucun argument = lance un run)"
-allowed-tools: Bash(bash:*), Bash(git:*), Bash(glab:*), Bash(cat:*), Bash(ls:*), AskUserQuestion
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(cat:*), Bash(ls:*), AskUserQuestion
 ---
 
 Tu vas piloter la **boucle d'orchestration autonome** (`docs/10-workflow-git.md` §10) : elle traite
@@ -60,12 +60,15 @@ toi-même.
    `--resume <id> --dry-run` — et pas celui d'un run neuf : c'est sur celui-là que portera la
    décision.
 2. **Contrôle l'état de départ**, et dis ce qui cloche plutôt que de lancer quand même :
-   - `bash scripts/gitlab/lib.sh require` — sinon `glab auth login` ;
+   - `bash scripts/gitlab/lib.sh require` — sinon l'authentification que son message nomme
+     (`gh auth login`, ou `glab auth login` tant que le dépôt est sur GitLab) ;
    - `bash scripts/orchestrate/guard.sh --check` — le garde-fou ne doit pas avoir dérivé des
      règles `deny` du dépôt ; s'il sort en 1, **arrête-toi**, c'est la seule couche qui protège une
      boucle sans surveillance ;
-   - `bash scripts/gitlab/ensure-runner.sh` — sans runner, chaque MR produite restera `pending` et
-     rien ne pourra être mergé au matin ;
+   - `bash scripts/gitlab/ensure-runner.sh` — **sur GitLab seulement** : sans runner, chaque PR
+     produite resterait `pending` et rien ne pourrait être mergé au matin. Sur GitHub, les
+     exécutants viennent de la forge et ce contrôle est sans objet (l'outillage runner part avec
+     #344) ;
    - `git status --porcelain` sur le clone principal : un arbre sale n'empêche pas le run (chaque
      ticket a son worktree) mais mérite d'être signalé.
    - **rien à faire pour `main`** : le run la remet lui-même à niveau sur `origin/main` avant son
@@ -106,7 +109,7 @@ toi-même.
    reste le défaut et ne se contourne que sur un « oui » explicite. Mets dans la description ce que
    la ligne TSV t'a appris : depuis quand le worktree est muet, le run et le verdict qui l'ont
    laissé là (ou « aucun run » — session interactive), et les reprises déjà faites. Dis aussi ce que
-   la reprise **ne fait pas** : elle n'écrit que dans GitLab (cycle de vie « À faire », assignation
+   la reprise **ne fait pas** : elle n'écrit que dans la forge (cycle de vie « À faire », assignation
    retirée) — worktree, branche, commits non poussés et travail non commité restent **intacts**, et
    la session qui prendra le ticket les y retrouvera.
    Un orphelin à `plafond = atteint` ne se propose **pas** : nomme-le en une ligne (« déjà repris N
@@ -157,7 +160,7 @@ toi-même.
    ligne `plan :` les annonce : ne les passe que si l'utilisateur demande explicitement un autre
    régime, et dis lequel s'il le fait. `--budget <usd>` (#286) et `--timeout <durée>` (#326)
    existent aussi, mais **ne les propose pas** : aucun des deux ne s'applique par défaut, et
-   atteints ils coupent la session en plein travail — sans commit ni MR, comptée en échec, lots
+   atteints ils coupent la session en plein travail — sans commit ni PR, comptée en échec, lots
    suivants du parent sabordés. Ne les passe que si l'utilisateur le demande, et dis-le alors.
    Puis le **suivi** — `bash scripts/orchestrate/status.sh --watch` (où en est le run, depuis
    n'importe quel terminal) ou `tail -f .maestro/orchestrate/<run-id>/run.log` (la
@@ -178,7 +181,7 @@ toi-même.
    le ticket qui était en vol. Si l'utilisateur veut la certitude plutôt que le filet, donne-lui
    la commande **sans** `--detach` à lancer dans son propre terminal Git Bash laissé ouvert : c'est
    le seul montage qui ne dépende d'aucun processus tiers.
-4. **Dis ce que le run produira** : N Merge Requests **en Draft** à relire, une par ticket. Le run
+4. **Dis ce que le run produira** : N Pull Requests **en Draft** à relire, une par ticket. Le run
    ne merge, ne ferme et ne force-push **jamais** — le merge reste une décision humaine.
 
 ### `--dry-run` — juste voir le plan
@@ -195,7 +198,7 @@ travail (titre, courant, à faire et libres, ouverts, échéance).
 ### `--status` — où en est le dernier run
 
 **Une seule commande porte toute la lecture** (`status.sh`, #177) — ne recompose jamais à la main
-ce qu'elle dit déjà (choix du run, plan restant, bilan, worktree, état GitLab) :
+ce qu'elle dit déjà (choix du run, plan restant, bilan, worktree, état côté forge) :
 
 ```
 bash scripts/orchestrate/status.sh
@@ -203,10 +206,11 @@ bash scripts/orchestrate/status.sh
 
 Elle prend le run le plus récent et imprime en une passe : l'état du run et son heure de départ, le
 **ticket en cours** avec son temps écoulé, les **commits et fichiers modifiés de son worktree**, sa
-**dernière activité**, son **état GitLab** (statut du ticket, MR ouverte), le **reste du plan** et le
-**bilan des traités** (verdict, MR, durée, coût). Options utiles : `--run-id <id>` pour un run
+**dernière activité**, son **état côté forge** (statut du ticket, PR ouverte), le **reste du plan** et
+le **bilan des traités** (verdict, PR, durée, coût). Options utiles : `--run-id <id>` pour un run
 précis, `--list` pour les runs connus, `--watch [sec]` pour rafraîchir tant que le run tourne,
-`--no-gitlab` hors ligne. **Aucun run n'est pas une erreur** : le script le dit et sort en 0.
+`--no-forge` hors ligne (`--no-gitlab` reste accepté en alias historique). **Aucun run n'est pas une
+erreur** : le script le dit et sort en 0.
 
 Ensuite seulement, apporte ce que la sortie ne dit pas :
 
@@ -230,8 +234,8 @@ Ensuite seulement, apporte ce que la sortie ne dit pas :
    détail brut de la session en cours.
 3. Si des tickets ont réussi, enchaîne sur la **file de revue** :
    `bash scripts/gitlab/lib.sh review-queue` — c'est là que le travail du run attend un humain.
-4. **Ne rappelle aucun ménage de worktrees** : ils sont ramassés d'office dès que GitLab confirme
-   leur MR mergée (`worktree.sh gc`, câblé dans `/ticket-start`, `/branch-cleanup` et au début de
+4. **Ne rappelle aucun ménage de worktrees** : ils sont ramassés d'office dès que la forge confirme
+   leur PR mergée (`worktree.sh gc`, câblé dans `/ticket-start`, `/branch-cleanup` et au début de
    chaque run — docs/10 §9.2). La seule chose à relayer, c'est une **alerte** de `gc` : un worktree
    conservé parce qu'il porte du travail non sauvegardé.
 
@@ -251,7 +255,7 @@ runs reprenables (`status.sh --reprenables`, la même source qu'au point 0). S'i
 passe-le tel quel — un chemin de journal collé au lieu de l'id est accepté aussi.
 
 Ce que la reprise fait, et qu'il faut savoir dire :
-- **Les tickets déjà livrés se sautent d'eux-mêmes** : la boucle relit leur statut GitLab avant de
+- **Les tickets déjà livrés se sautent d'eux-mêmes** : la boucle relit leur statut côté forge avant de
   les prendre, et n'en prend aucun qui ne soit plus « À faire ».
 - **Le ticket qui était en vol est repris**, pas sauté — c'est la seule exception à la règle
   ci-dessus, et elle est étroite : il faut que le run repris ait laissé sa session sans verdict.

@@ -1,17 +1,18 @@
 ---
-description: Démarre le travail sur un ticket GitLab (branche + assignation + état « En cours »)
+description: Démarre le travail sur un ticket (branche + assignation + état « En cours »)
 argument-hint: <issue-iid>
-allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*), EnterWorktree
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), EnterWorktree
 ---
 
-Tu vas démarrer le travail sur le ticket GitLab d'IID `$ARGUMENTS` selon les règles de Maestro
+Tu vas démarrer le travail sur le ticket d'IID `$ARGUMENTS` selon les règles de Maestro
 (réf. complète `docs/10-workflow-git.md` §5, à n'ouvrir qu'en cas de doute). Suis ces étapes dans
 l'ordre et arrête-toi (en expliquant pourquoi) dès qu'une vérification échoue au lieu de forcer la
 suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur avant de continuer.
 
 1. **Préflight en un appel** : `bash scripts/gitlab/lib.sh start-brief $ARGUMENTS`. Le helper
-   vérifie les pré-requis (`glab` authentifié — sinon arrête-toi et demande un `glab auth login`)
-   et l'arbre propre, puis imprime le brief du
+   vérifie les pré-requis (CLI de la forge authentifié — sinon arrête-toi et relaie son message,
+   qui nomme la commande à lancer : `gh auth login`, ou `glab auth login` tant que le dépôt est sur
+   GitLab) et l'arbre propre, puis imprime le brief du
    ticket (titre, labels, critères d'acceptation), la ligne `statut : … — libre / pris par …`, le
    cas parent/sous-ticket et la branche proposée. Il est informatif : la décision (démarrer,
    rediriger, s'arrêter) reste la tienne :
@@ -31,7 +32,7 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      décochés dans sa description. **Relis et réécris la description uniquement via les helpers**
      (`bash scripts/gitlab/lib.sh get-description <iid> > <fichier>`, tu édites le fichier, puis
      `bash scripts/gitlab/lib.sh set-description <iid> <fichier>`) : n'improvise **jamais** une
-     lecture du type `glab issue view --output json | python`, qui corrompt l'UTF-8 en mojibake
+     lecture du type `gh issue view --json body | python`, qui corrompt l'UTF-8 en mojibake
      (« â€” » au lieu de « — ») et l'a déjà repoussé dans un parent — voir #141. Mise à jour
      idempotente : ne jamais décocher une case cochée. Puis appuie-toi sur la section **« lots
      démarrables maintenant »** de la sortie : elle liste **tous** les lots « À faire » que rien ne
@@ -45,13 +46,13 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    - **Sous-ticket** : la sortie donne le parent, le rang (« lot n/total »), le marqueur
      « parallèle » éventuel, les tests différés et le contrôle des lots précédents. Si elle
      signale des lots précédents non livrés (⚠ — encore « À faire » ou « En cours »), arrête-toi :
-     les terminer d'abord. Ne bloquent **pas** : un lot précédent « En revue » (MR ouverte pas
+     les terminer d'abord. Ne bloquent **pas** : un lot précédent « En revue » (PR ouverte pas
      encore mergée — les lots sont additifs et la branche part de `main`), ni un lot précédent
      marqué « (parallèle) » quand le lot visé l'est aussi (ils sont indépendants par déclaration).
      Sinon, il se démarre comme un ticket ordinaire.
    - **Ticket trop gros ?** (ni parent ni sous-ticket) : évalue la **charge estimée** sur la
-     **description intégrale** (`glab issue view $ARGUMENTS`, notes techniques et références
-     croisées comprises). Les **couches/composants distincts** touchés (moteur, backend, UI,
+     **description intégrale** (`bash scripts/gitlab/lib.sh issue-raw $ARGUMENTS`, notes techniques
+     et références croisées comprises). Les **couches/composants distincts** touchés (moteur, backend, UI,
      script, commande, doc…) sont un **signal** qui oblige à estimer finement, pas un déclencheur
      automatique : ne propose le découpage que si le travail **dépasse ~1 session** — plusieurs
      couches substantielles (étalon : #48, moteur + backend + UI), plus de 3-4 critères
@@ -82,11 +83,11 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    - **échec** (branche déjà empruntée par un autre worktree, ticket sans label `type::`) →
      arrête-toi et rapporte le message, qui nomme la cause.
 
-   Au passage, `ensure` **ramasse les worktrees dont le travail est soldé** (MR mergée ou ticket
-   fermé, confirmé par `glab` — #197, docs/10 §9.2), puis **purge les branches locales déjà
+   Au passage, `ensure` **ramasse les worktrees dont le travail est soldé** (PR mergée ou ticket
+   fermé, confirmé par la forge — #197, docs/10 §9.2), puis **purge les branches locales déjà
    mergées** (#305, docs/10 §9.5 — dans cet ordre, `git branch -D` refusant une branche empruntée
-   par un worktree ; même garde-fou que `/branch-cleanup` : uniquement celles dont GitLab confirme
-   la MR `merged`). Muets quand il n'y a rien à faire ; s'il **signale** un worktree conservé parce
+   par un worktree ; même garde-fou que `/branch-cleanup` : uniquement celles dont la forge confirme
+   la PR `merged`). Muets quand il n'y a rien à faire ; s'il **signale** un worktree conservé parce
    qu'il porte du travail non sauvegardé, ou une branche mergée retenue par un worktree, relaie-le
    dans ton résumé — c'est du travail que personne n'attend plus là.
 
@@ -128,6 +129,6 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    aucun « go » et commence tout de suite (les critères d'acceptation font foi). Ne t'arrête pour
    demander que si le ticket est réellement ambigu au point de ne pas pouvoir commencer.
 
-Pas de Merge Request à ce stade (aucun commit à proposer). La clôture passe par les commandes
-dédiées — `/ticket-ship` (commit auto + push + MR + état) ou `/ticket-finish` (commit déjà
+Pas de Pull Request à ce stade (aucun commit à proposer). La clôture passe par les commandes
+dédiées — `/ticket-ship` (commit auto + push + PR + état) ou `/ticket-finish` (commit déjà
 fait) — jamais ré-implémentée à la main : les skills en sont la source unique.

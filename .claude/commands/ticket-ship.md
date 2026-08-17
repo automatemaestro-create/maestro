@@ -1,11 +1,11 @@
 ---
 description: Commit automatique + /ticket-finish enchaînés — clôture le ticket courant sans blocage manuel
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
-allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 ---
 
 Tu vas clôturer le ticket courant **en une seule action** : committer les changements en attente
-(message généré, sans confirmation) puis enchaîner **`/ticket-finish`** (push + MR + état
+(message généré, sans confirmation) puis enchaîner **`/ticket-finish`** (push + PR + état
 « En revue » + log du temps). C'est le pendant « zéro friction » de `/ticket-finish`, pensé pour
 la boucle d'orchestration : là où `/ticket-finish` suppose un commit déjà fait et demande
 confirmation avant d'en créer un, `/ticket-ship` **commite d'office** ce qui est en attente puis
@@ -20,7 +20,8 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    peut être déterminé, demande-le à l'utilisateur avant de continuer.
 
 2. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Si ça échoue, arrête-toi et
-   demande à l'utilisateur de lancer `glab auth login`.
+   relaie son message : il nomme la commande d'authentification de la forge active (`gh auth login`,
+   ou `glab auth login` tant que le dépôt est sur GitLab).
 
 3. **Garde-fou « jamais sur `main` ».** Vérifie la branche courante (`git branch --show-current`).
    Si c'est `main` (ou `master`), **arrête-toi immédiatement** : on ne committe jamais sur `main`.
@@ -80,7 +81,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
 7. **Enchaîne `/ticket-finish`.** Une fois le commit créé, l'arbre est propre : invoque la commande
    **`/ticket-finish`** (sans argument — elle relira l'IID depuis la branche — ou passe `<iid>`).
    Elle prend le relais pour : push de la branche (jamais de `--force`), création/mise à jour de la
-   MR en Draft avec `Closes #<iid>` et sa **checklist cochée sur ce qui est vérifié** (conventions,
+   PR en Draft avec `Closes #<iid>` et sa **checklist cochée sur ce qui est vérifié** (conventions,
    tests/doc d'après le diff, pipeline verte), passage de l'**état** à « En revue », et **log
    automatique du temps** (estimé d'après la portée du travail). **Ne ré-implémente pas ces étapes ici** :
    `/ticket-finish` en est la source unique, et son étape de commit sera sans objet (arbre déjà
@@ -94,7 +95,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
      **Relis et réécris la description uniquement via les helpers** :
      `bash scripts/gitlab/lib.sh get-description <iid-parent> > <fichier>`, tu édites le fichier,
      puis `bash scripts/gitlab/lib.sh set-description <iid-parent> <fichier>`. N'improvise
-     **jamais** une lecture du type `glab issue view --output json | python` : elle corrompt
+     **jamais** une lecture du type `gh issue view --json body | python` : elle corrompt
      l'UTF-8 en mojibake (« â€” » au lieu de « — ») et l'a déjà repoussé dans un parent (#141).
      Mise à jour idempotente : ne **décoche jamais** une case déjà cochée.
    - Demande les lots ouverts que rien ne bloque :
@@ -107,7 +108,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
      après le merge** (toutes les cases cochées, y compris le lot tests) — sa fermeture reste une
      décision humaine/orchestrateur : `/ticket-ship` ne ferme rien, pas même le parent.
 
-9. Résumé final : reprends le résumé produit par `/ticket-finish` (lien de la MR, état Draft/Ready,
+9. Résumé final : reprends le résumé produit par `/ticket-finish` (lien de la PR, état Draft/Ready,
    temps loggé) et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
    ajoute l'annonce de l'étape 8 (prochain lot démarrable dès maintenant, ou parent fermable).
    Rappelle que le **merge reste une décision humaine** — `/ticket-ship` ne merge, ni ne ferme,

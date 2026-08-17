@@ -5,8 +5,9 @@
     "avec `--permission-mode acceptEdits`.",
     "",
     "Pourquoi ce fichier plutôt que `--dangerously-skip-permissions` : ce dernier neutralise AUSSI",
-    "les règles `deny` du dépôt (force-push, glab mr merge/close), c'est-à-dire exactement les",
-    "garde-fous qu'une boucle sans surveillance rend indispensables. Ici les `deny` restent actifs,",
+    "les règles `deny` du dépôt (force-push, glab mr merge/close, gh pr merge/close), c'est-à-dire",
+    "exactement les garde-fous qu'une boucle sans surveillance rend indispensables. Ici les `deny`",
+    "restent actifs,",
     "et `allow` ne fait qu'ajouter ce dont une session de dev a besoin quand personne n'est devant",
     "l'écran : les tests, le build, le filet CI local, le montage d'un worktree.",
     "",
@@ -14,6 +15,13 @@
     "doit porter ses interdits, pas les emprunter. `bash scripts/orchestrate/guard.sh --check`",
     "vérifie qu'il ne dérive pas du dépôt, et guard.sh les réapplique en dur — la couche permissions",
     "est le premier filet, le hook est celui qui tient quel que soit le mode.",
+    "",
+    "LES DEUX FORGES, EN MÊME TEMPS (#342, chantier #335). Les interdits `gh pr merge|close` et",
+    "`gh run delete` sont AJOUTÉS à côté de leurs jumeaux `glab`, jamais substitués — même raison",
+    "que dans guard.sh : jusqu'à la bascule d'`origin` (lot 8, #343) les deux outils sont installés",
+    "sur les mêmes postes, et un garde-fou qui suivrait MAESTRO_FORGE se laisserait contourner par",
+    "la variable qu'il est justement chargé de ne pas croire. Le prix est nul : refuser `gh pr merge`",
+    "sur un poste encore sur GitLab n'empêche aucun geste légitime.",
     "",
     "Une commande hors `allow` n'est pas un blocage du run : sans humain pour répondre, elle est",
     "refusée et tracée dans `permission_denials` du JSON de résultat. C'est ce journal qui sert à",
@@ -162,7 +170,10 @@
       "Bash(git push --force-with-lease:*)",
       "Bash(glab mr merge:*)",
       "Bash(glab mr close:*)",
-      "Bash(glab ci delete:*)"
+      "Bash(glab ci delete:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr close:*)",
+      "Bash(gh run delete:*)"
     ]
   },
   "hooks": {

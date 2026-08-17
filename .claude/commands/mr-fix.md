@@ -1,18 +1,20 @@
 ---
-description: Rend une MR mergeable — résout son conflit avec origin/main, puis remet son pipeline au vert ; ne merge jamais
-argument-hint: "[mr-iid | branche]  (défaut : la branche courante)"
-allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
+description: Rend une PR mergeable — résout son conflit avec origin/main, puis remet son pipeline au vert ; ne merge jamais
+argument-hint: "[pr-numéro | branche]  (défaut : la branche courante)"
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 ---
 
-Tu vas **rendre une MR mergeable**, une MR à la fois. Deux choses l'en empêchent, et cette commande
+Tu vas **rendre une PR mergeable**, une PR à la fois. Deux choses l'en empêchent, et cette commande
 les traite **toutes les deux, dans cet ordre** :
 
-1. un **conflit avec `origin/main`** — la MR a vieilli pendant que `main` avançait ;
-2. un **pipeline rouge** — le projet exige un pipeline vert pour merger
-   (`only_allow_merge_if_pipeline_succeeds`).
+1. un **conflit avec `origin/main`** — la PR a vieilli pendant que `main` avançait ;
+2. un **pipeline rouge** — le projet exige un pipeline vert pour merger (réglage de merge
+   `only_allow_merge_if_pipeline_succeeds` sur GitLab, **protection de branche** avec
+   `required_status_checks` sur GitHub ; `bash scripts/gitlab/lib.sh merge-settings` rend le même
+   `pipeline_requis` des deux côtés).
 
 C'est une commande de **remédiation** : elle produit des commits intermédiaires (`Refs #<iid>`)
-mais ne touche **jamais** au cycle de vie (statut, MR, merge) — la MR reste telle quelle, le merge
+mais ne touche **jamais** au cycle de vie (statut, PR, merge) — la PR reste telle quelle, le merge
 reste humain.
 
 **L'ordre n'est pas arbitraire** : le merge d'`origin/main` peut *lui-même* casser le pipeline (deux
@@ -24,11 +26,13 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
 **arrête-toi (en expliquant pourquoi)** dès qu'un contrôle échoue, plutôt que de forcer la suite.
 
 1. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Si ça échoue, arrête-toi et
-   demande à l'utilisateur de lancer `glab auth login`.
+   relaie son message : il nomme la commande d'authentification de la forge active (`gh auth login`,
+   ou `glab auth login` tant que le dépôt est sur GitLab).
 
 2. Détermine la **branche cible** :
-   - si `$ARGUMENTS` est un IID de MR (`31`), lis sa branche source :
-     `glab mr view <iid> --output json` → champ `source_branch` ;
+   - si `$ARGUMENTS` est un numéro de PR (`31`), lis sa branche source :
+     `gh pr view <numéro> --json headRefName` (sur GitLab : `glab mr view <iid> --output json` →
+     champ `source_branch`) ;
    - si `$ARGUMENTS` est un nom de branche, prends-le tel quel ;
    - sinon, la branche courante : `git branch --show-current`.
    Extrais l'**IID du ticket** du nom de branche (motif `<type>/<iid>-<slug>`) — il servira au
@@ -52,9 +56,11 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
    ```
    Le verdict vient de `git merge-tree --write-tree` : un **merge 3-way réel**, en lecture seule.
    Ne le remplace ni par `behind-main` — heuristique de fichiers, pessimiste, vraie presque partout
-   sur `CLAUDE.md` ou `docs/10-workflow-git.md` — ni par le `has_conflicts`/`detailed_merge_status`
-   de GitLab, **asynchrone** (`checking`/`unchecked` sur 5 des 6 MR ouvertes mesurées le
-   2026-08-07) : lis-le en complément s'il est là, ne l'attends jamais.
+   sur `CLAUDE.md` ou `docs/10-workflow-git.md` — ni par le verdict de la forge, **asynchrone des
+   deux côtés** : `has_conflicts`/`detailed_merge_status` sur GitLab (`checking`/`unchecked` sur
+   5 des 6 MR ouvertes mesurées le 2026-08-07), `mergeable`/`mergeStateStatus` sur GitHub, calculés
+   à la demande et rendus `UNKNOWN` tant que le calcul n'a pas abouti. Lis-le en complément s'il est
+   là, ne l'attends jamais.
 
    - **`0`** → la branche se merge proprement : passe à l'étape 5.
    - **`1`** → verdict impossible (pas d'`origin/main`, histoires sans ancêtre commun). Signale-le
@@ -68,7 +74,7 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
        disparaître les marqueurs, et relis le résultat.
      - **Si le bon contenu n'est pas clair : `git merge --abort`**, branche laissée **intacte**,
        dis pourquoi et arrête-toi. Mieux vaut un conflit signalé qu'une résolution fausse poussée
-       sous une MR en Draft que personne ne relira ligne à ligne.
+       sous une PR en Draft que personne ne relira ligne à ligne.
      - Résolu : `git add -A`, puis commit et push comme à l'étape 9 (message par **fichier**, pied
        `Refs #<iid>`, jamais `--no-verify`, jamais `--force`).
    - Vérifie que le verdict est retombé à `0`, puis continue — sans t'arrêter là : le merge que tu
@@ -76,17 +82,28 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      voir.
 
 5. **Diagnostic du pipeline** : `bash scripts/gitlab/lib.sh pipeline-latest <branche>` →
-   `id / status / sha / url` (TSV). Depuis #165 la CI ne tourne **que sur les MR** : le pipeline
-   d'une branche est celui de sa MR, et c'est le helper qui va le chercher là — ne le remplace pas
-   par un `glab ci status`/`glab ci view <branche>`, qui ne voit que les pipelines de branche.
+   `id / status / sha / url` (TSV). Depuis #165 la CI ne tourne **que sur les PR** (`on:
+   pull_request` côté GitHub) : le pipeline d'une branche est celui de sa PR, et c'est le helper qui
+   va le chercher là. Ne le remplace par aucun appel direct, mais pas pour la même raison des deux
+   côtés — et la nuance compte, parce que c'est elle qui dit ce qu'un appel direct te coûterait.
+   Sur **GitLab**, `glab ci status`/`glab ci view <branche>` ne voient **que** les pipelines de
+   branche, et le pipeline d'une MR est un autre objet : la substitution rend « aucun pipeline »
+   pour une MR qui en a un. Sur **GitHub**, un run `pull_request` porte bien la branche source,
+   donc `gh run list --branch` le **verrait** — ce qu'il ne rend pas, c'est un verdict comparable :
+   Actions sépare `status` (en cours) de `conclusion` (issue), là où GitLab n'a qu'un `status`, et
+   c'est le helper qui recompose le vocabulaire unique dont toutes les étapes suivantes dépendent
+   (`success`/`failed`/`pending`…).
    Si l'étape 4 a poussé un commit de résolution, c'est le pipeline **de ce commit** qui fait foi :
    son `sha` doit être celui de `git rev-parse HEAD` (même contrôle qu'à l'étape 10).
    - `success` → plus rien à corriger côté pipeline : va au résumé (étape 12).
-   - `created` / `pending` / `running` → le verdict n'est pas tombé. Un pipeline **`pending`
-     durable** est le symptôme classique d'un **runner local hors ligne** (runners partagés coupés,
-     #135) : ce n'est **pas** un problème de code (ne diagnostique pas les jobs). Assure d'abord le
-     runner en ligne — **l'échec du helper n'interrompt pas la remédiation**, il est signalé (voir
-     `docs/10-workflow-git.md` §8) :
+   - `created` / `pending` / `running` → le verdict n'est pas tombé. Sur **GitLab**, un pipeline
+     **`pending` durable** est le symptôme classique d'un **runner local hors ligne** (runners
+     partagés coupés, #135) : ce n'est **pas** un problème de code (ne diagnostique pas les jobs).
+     Sur **GitHub**, ce cas n'existe pas — les exécutants sont fournis par la forge, et les deux
+     helpers ci-dessous sont alors sans objet (leur outillage part avec #344) : vérifie la forge
+     (`bash scripts/gitlab/lib.sh forge-cli`) et passe directement au `pipeline-wait`. Sur GitLab,
+     assure d'abord le runner en ligne — **l'échec du helper n'interrompt pas la remédiation**, il
+     est signalé (voir `docs/10-workflow-git.md` §8) :
      ```
      bash scripts/gitlab/ensure-runner.sh || echo "⚠ runner local non démarré — remédiation poursuivie"
      bash scripts/gitlab/clean-runner-containers.sh || echo "⚠ ménage des conteneurs CI incomplet — remédiation poursuivie"
@@ -95,12 +112,18 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      best-effort et silencieux quand il n'y a rien à faire. Puis suis le verdict avec
      `bash scripts/gitlab/lib.sh pipeline-wait <id>` et reprends selon le statut final.
    - `failed` → continue.
-   - Aucun pipeline alors qu'un commit vient d'être poussé ? **Vérifie d'abord qu'une MR est
-     ouverte** sur la branche : sans MR, il est normal qu'il n'y ait rien (la CI ne se déclenche
-     plus au push — #165) et la suite est `/ticket-ship`, pas un déclenchement forcé. MR ouverte et
-     toujours rien ? Déclenche manuellement : `glab ci run -b <branche>` (autorisé par les règles
-     `workflow` ; cas observé sur la MR 31 : un push interrompu peut ne pas déclencher de
-     pipeline), puis `pipeline-wait`.
+   - Aucun pipeline alors qu'un commit vient d'être poussé ? **Vérifie d'abord qu'une PR est
+     ouverte** sur la branche : sans PR, il est normal qu'il n'y ait rien (la CI ne se déclenche
+     plus au push — #165) et la suite est `/ticket-ship`, pas un déclenchement forcé. PR ouverte et
+     toujours rien ? Déclenche manuellement (cas observé sur la MR 31 : un push interrompu peut ne
+     pas déclencher de pipeline), puis `pipeline-wait` :
+     - **GitHub** — `gh run rerun <run-id>` s'il existe une exécution à rejouer, sinon
+       `gh workflow run ci.yml --ref <branche>` : le `workflow_dispatch` de
+       [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) est conservé exactement pour ça.
+       ⚠ Une exécution lancée par `workflow_dispatch` n'est **pas** rattachée à la PR : elle
+       diagnostique, elle ne satisfait pas le contrôle requis par la protection de branche — c'est
+       un nouveau push qui le fera.
+     - **GitLab** — `glab ci run -b <branche>`.
 
 6. **Jobs rouges** : `bash scripts/gitlab/lib.sh pipeline-failed-jobs <pipeline-id>` →
    `id / name / stage / failure_reason` par job en échec.
@@ -114,9 +137,9 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      test, de typage ou de script dans la trace) → étape 9.
    - **Non corrigeable en local** (`runner_system_failure`, `stuck_or_timeout_failure`, secret ou
      dépendance d'infrastructure manquante, échec manifestement flaky) → **dis-le explicitement**,
-     propose un simple retry si l'échec semble transitoire (`glab ci retry <pipeline-id>` puis
-     `pipeline-wait`), et **arrête-toi** — n'invente jamais un correctif de code pour un problème
-     d'infrastructure.
+     propose un simple retry si l'échec semble transitoire (`gh run rerun --failed <run-id>`, ou
+     `glab ci retry <pipeline-id>` sur GitLab, puis `pipeline-wait`), et **arrête-toi** — n'invente
+     jamais un correctif de code pour un problème d'infrastructure.
 
 9. **Correctif local** (au plus **2 tentatives** — au-delà, arrête-toi et rends la main avec ton
    diagnostic) :
@@ -137,8 +160,8 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      du diff (~40 s au lieu de ~10 min), et c'est ici, en plein diagnostic d'un pipeline rouge, que
      la différence se paye. Pour reboucler sur le seul test rouge de la trace, vise-le directement :
      `<venv-python> -m pytest tests/test_<suite>.py` (`.venv/Scripts/python.exe` sous Windows,
-     `.venv/bin/python` sous Unix). Le verdict complet, lui, reste celui du pipeline de la MR.
-   - committe en **commit intermédiaire** — pied **`Refs #<iid>`**, pas `Closes` (la MR porte déjà
+     `.venv/bin/python` sous Unix). Le verdict complet, lui, reste celui du pipeline de la PR.
+   - committe en **commit intermédiaire** — pied **`Refs #<iid>`**, pas `Closes` (la PR porte déjà
      le `Closes`), hook `commit-msg` respecté, **jamais `--no-verify`**. Le message passe par un
      **fichier** : écris-le avec l'outil `Write` dans ton scratchpad de session — jamais un
      heredoc, jamais `-m "$(…)"`, la couche permissions découpant une commande sur ses sauts de
@@ -147,13 +170,14 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      git commit -F <fichier>
      ```
    - pousse (jamais de `--force`) : `git push origin <branche>`. Si le push reste bloqué sur une
-     demande d'identifiants, relance avec
-     `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!glab auth git-credential' push origin <branche>`.
+     demande d'identifiants, relance avec le CLI de la forge en credential helper
+     (`!gh auth git-credential`, ou `!glab auth git-credential` sur GitLab) :
+     `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!gh auth git-credential' push origin <branche>`.
 
 10. **Vérifie qu'un nouveau pipeline démarre** : `bash scripts/gitlab/lib.sh pipeline-latest
     <branche>` — son `sha` doit être celui de `git rev-parse HEAD`. Un push sur la branche source
-    d'une MR **ouverte** relance bien la CI (#165) ; s'il ne démarre pas (~30 s), déclenche-le :
-    `glab ci run -b <branche>`.
+    d'une PR **ouverte** relance bien la CI (#165 ; `synchronize` côté GitHub) ; s'il ne démarre pas
+    (~30 s), déclenche-le comme à l'étape 5.
 
 11. **Suis le verdict** : `bash scripts/gitlab/lib.sh pipeline-wait <nouveau-pipeline-id>`
     (statut final imprimé ; code 0 = success).
@@ -162,15 +186,17 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
     - sinon → arrête-toi : rends ton diagnostic et laisse la main à l'utilisateur.
 
 12. **Résumé final — les deux blocages, séparément.** N'annonce **jamais** un ✅ global sur la foi
-    du seul pipeline : une MR au pipeline vert mais en conflit reste non mergeable, et c'est
+    du seul pipeline : une PR au pipeline vert mais en conflit reste non mergeable, et c'est
     exactement le faux verdict que cette commande existe pour supprimer.
     | Blocage | À rapporter |
     |---|---|
     | **Conflit** | ✅ aucun / ✅ résolu (fichiers + hash du commit de merge) / ❌ conflit laissé en place (fichiers + pourquoi la résolution n'était pas claire) |
     | **Pipeline** | ✅ vert / ❌ rouge (lien, jobs concernés, correctif appliqué le cas échéant, nombre de tentatives) |
     Conclus par l'**aptitude au merge** qui en découle — mergeable, ou ce qu'il reste à faire et par
-    qui. Rappelle que la MR n'a pas été modifiée et que **le merge reste une décision humaine**.
+    qui. Rappelle que la PR n'a pas été modifiée et que **le merge reste une décision humaine**.
 
-N'exécute **aucune** action de cycle de vie : ni `glab mr merge`/`close`/`approve`/`update`, ni
-`set-workflow`, ni création de MR (c'est le rôle de `/ticket-finish`). Jamais de force-push, jamais
-de `--no-verify`, jamais de commit sur `main`. En cas de doute, abstiens-toi et demande.
+N'exécute **aucune** action de cycle de vie : ni `gh pr merge`/`close`/`review`/`edit` (ni leurs
+équivalents `glab mr …`), ni `set-workflow`, ni création de PR (c'est le rôle de `/ticket-finish`).
+`merge` et `close` sont d'ailleurs en **`deny`** des deux côtés — la règle n'est pas une politesse.
+Jamais de force-push, jamais de `--no-verify`, jamais de commit sur `main`. En cas de doute,
+abstiens-toi et demande.

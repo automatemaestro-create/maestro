@@ -1,15 +1,15 @@
 ---
 description: Génère une présentation HTML autonome des travaux d'un milestone (fonctionnalités, corrections, captures de la Control Tower)
 argument-hint: "[milestone]  (titre ou fragment, ex. « Phase 3 » — défaut : la phase courante)"
-allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*), Bash(node:*), Bash(npm:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*)
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Bash(node:*), Bash(npm:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*)
 ---
 
 Tu vas produire une **présentation HTML** de ce qui a été construit pendant un milestone :
 à montrer à un sponsor, à l'équipe, en fin de phase. Le fichier est **autonome** (CSS en ligne,
 captures en base64) — il s'ouvre et se partage tel quel.
 
-Commande **de supervision côté GitLab** : tu **lis** le backlog et tu **écris un fichier** dans le
-dépôt. Tu ne touches **jamais** au cycle de vie — ni statut, ni MR, ni merge, ni commit.
+Commande **de supervision côté forge** : tu **lis** le backlog et tu **écris un fichier** dans le
+dépôt. Tu ne touches **jamais** au cycle de vie — ni statut, ni PR, ni merge, ni commit.
 
 Trois scripts font le travail ; ton rôle est de choisir le milestone, d'**écrire la matière
 rédactionnelle** (le résumé du milestone, une phrase par ticket) et de **rattacher les captures
@@ -73,9 +73,11 @@ aux tickets qu'elles illustrent**. Ne réécris pas le HTML à la main : le gaba
      "notes": []
    }
    ```
-   `projet.url` se déduit du dépôt (`glab repo view --web` n'est pas nécessaire : la base est
-   `https://gitlab.com/<GL_PROJECT>`, et les liens vers les tickets sont construits par le
-   script). Ne reprends dans `captures` que les entrées du manifeste **sans erreur**.
+   `projet.url` se déduit du dépôt : la base est `https://<hôte>/<dépôt>`, où l'hôte vient de
+   `bash scripts/gitlab/lib.sh host` — il **suit la forge active** et non le remote, précisément
+   pour rester juste tant qu'`origin` pointe encore ailleurs (#343). Les liens vers les tickets sont
+   construits par le script. Ne reprends dans `captures` que les entrées du manifeste **sans
+   erreur**.
 
 7. **Génère la présentation** avec le python du venv (jamais le python système) :
    ```
@@ -95,5 +97,5 @@ aux tickets qu'elles illustrent**. Ne réécris pas le HTML à la main : le gaba
    est écrit dans le dépôt mais **non commité** — dis-le, et laisse la décision de le versionner
    à l'utilisateur.
 
-Ne lance aucune commande d'écriture GitLab (`glab issue update`, `mr create`, `set-workflow`,
+Ne lance aucune commande d'écriture côté forge (`gh issue edit`, `gh pr create`, `set-workflow`,
 `log-time`…) ni aucun `git commit`/`git push` : cette commande observe et produit un fichier.
