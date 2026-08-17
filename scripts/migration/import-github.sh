@@ -550,14 +550,41 @@ gh_lire() {
 # L'échec définitif reste franc : rendre « 0 » sur une lecture ratée ferait croire le dépôt vierge
 # et relancerait la séquence depuis le début. Vide veut dire « je ne sais pas », et l'appelant
 # s'arrête — jamais « il n'y a rien ».
+# gh_existe <n> -> 0 si l'objet #<n> existe sur le dépôt. Lecture FORTEMENT COHÉRENTE : un GET sur un
+# numéro précis répond dès l'instant de la création, là où la liste peut encore l'ignorer. Un 404
+# rend un corps JSON — donc non vide, donc `gh_lire` le rend sans retenter : c'est la marque de
+# l'objet DEMANDÉ qu'on exige, et non le simple fait d'avoir reçu quelque chose.
+gh_existe() {
+  local out
+  out="$(gh_lire "repos/$DEPOT/issues/$1")" || return 1
+  case "$out" in
+    *'"number":'"$1"','*) return 0 ;;
+  esac
+  return 1
+}
+
 gh_dernier_numero() {
   local out n
   out="$(gh_lire "repos/$DEPOT/issues?state=all&sort=created&direction=desc&per_page=1")" || return 1
   case "$out" in
-    '[]'*) printf '0'; return 0 ;;
+    '[]'*) n=0 ;;
+    *) n="$(printf '%s' "$out" | grep -o '"number":[0-9]\+' | head -1 | grep -o '[0-9]\+')" ;;
   esac
-  n="$(printf '%s' "$out" | grep -o '"number":[0-9]\+' | head -1 | grep -o '[0-9]\+')"
   [ -n "$n" ] || return 1
+  # LA LISTE EST EN RETARD SUR LA CRÉATION, et l'invariant compare au rang près : les deux ensemble
+  # transforment une réplication d'index en fausse rupture. Mesuré pendant l'import de #340 — la
+  # liste rendait #252 alors que #253 existait déjà (GET direct : 200, titre conforme), et la
+  # création suivante s'est arrêtée sur « le dépôt est à #252, on allait créer #254 » alors que la
+  # séquence était intacte : 253 objets, numéros #1 à #253, aucun trou.
+  #
+  # Le coût de l'erreur n'est pas symétrique. Un appel de plus par création ne coûte qu'un appel ;
+  # un arrêt en code 4 réclame un arbitrage humain au milieu d'une action à sens unique, et il
+  # accuse la DONNÉE d'un défaut de la MESURE — le pire endroit où se tromper ici.
+  # On avance donc tant que le suivant RÉPOND, ce qui ne dépend d'aucun index répliqué.
+  local avance=0
+  while [ "$avance" -lt 25 ] && gh_existe "$((n + 1))"; do
+    n=$((n + 1)); avance=$((avance + 1))
+  done
   printf '%s' "$n"
 }
 
@@ -857,6 +884,18 @@ creer_objet() {
   if [ -z "$avant" ]; then
     echec "#$attendu : dernier numéro illisible — arrêt avant écriture."
     return 1
+  fi
+  # Deux causes mènent ici, et les confondre coûte cher : l'objet est DÉJÀ LÀ (arrêt tombé entre le
+  # POST et sa ligne de journal — rien n'est décalé, une ligne suffit à reprendre), ou la séquence a
+  # réellement dérivé. Le message unique envoyait chercher un décalage inexistant et faisait passer
+  # une reprise d'une ligne pour une avarie irréparable. C'est exactement ce qui est arrivé sur #183.
+  if [ "$avant" -eq "$attendu" ]; then
+    echec "#$attendu existe déjà côté GitHub alors que le journal l'ignore."
+    note "l'arrêt précédent est tombé ENTRE le POST et sa ligne de journal : rien n'est décalé."
+    note "vérifier les octets : bash scripts/migration/import-github.sh --payload $attendu"
+    note "puis reprendre en ajoutant sa ligne au journal :"
+    note "  printf 'issue\\t%s\\t%s\\t%s\\n' $attendu $attendu https://github.com/$DEPOT/issues/$attendu >> ${JOURNAL#"$racine/"}"
+    return 4
   fi
   if [ "$avant" -ne $((attendu - 1)) ]; then
     echec "SÉQUENCE : le dépôt est à #$avant, on allait créer #$attendu."
