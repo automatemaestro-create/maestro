@@ -1,47 +1,47 @@
-# Pipeline CI Maestro sur GitHub Actions — MIROIR EXPÉRIMENTAL (ticket #332, cadrage #331).
+# Pipeline CI Maestro sur GitHub Actions (tickets #332 puis #338, chantier de migration #335).
 #
-# ⚠ Ce fichier ne conditionne AUCUN merge. Le verdict qui compte reste celui de `.gitlab-ci.yml`,
-# sur GitLab, où vivent les tickets et les MR. Ce workflow est la moitié « CI » de l'expérience
-# réversible de #332 : rejouer les mêmes 5 jobs sur un dépôt GitHub alimenté par un miroir push,
-# pour MESURER ce que #331 ne peut qu'estimer — le coût réel en minutes-job et la fidélité de la
-# traduction. Si #331 conclut « non », il suffit de supprimer le dépôt miroir : rien ici n'aura
-# modifié le workflow de l'équipe.
+# Ce workflow a commencé sa vie en MIROIR SANS AUTORITÉ (#332) : rejouer les jobs de
+# `.gitlab-ci.yml` sur un dépôt GitHub alimenté par un miroir push, pour MESURER ce que #331 ne
+# pouvait qu'estimer. La mesure est faite, la migration est décidée (#335), et #338 lui donne son
+# déclencheur définitif — celui d'une CI qui conditionne un merge.
 #
-# Les cinq jobs traduits, dans l'ordre de `.gitlab-ci.yml` : shellcheck, python-lint, pytest,
-# mypy, web-build. Le sixième (`perimetre`) n'a pas d'équivalent GitLab — voir plus bas.
+# ⚠ Pendant la migration, `.gitlab-ci.yml` RESTE en place et fait toujours foi pour les MR GitLab.
+# Les deux CI coexistent jusqu'à la bascule d'`origin` (lot 8, #343) ; le retrait de la CI GitLab
+# et des 1 146 lignes d'outillage runner est le lot 9 (#344). Ce fichier n'est donc pas encore le
+# seul verdict, mais il est désormais écrit pour l'être.
+#
+# Les six jobs, dans l'ordre de `.gitlab-ci.yml` : shellcheck, python-lint, pytest, mypy,
+# web-build — plus `perimetre`, qui n'a pas d'équivalent GitLab (voir plus bas).
 
-name: CI (miroir)
+name: CI
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DÉCLENCHEMENT — pourquoi `push` et non `pull_request` (critère 3 de #332)
+# DÉCLENCHEMENT — `pull_request`, l'équivalent du `merge_request_event` de GitLab (#338)
 #
-# Un miroir push ne réplique QUE les branches et les tags. Il ne crée jamais de pull request :
-# `on: pull_request` ne se déclencherait donc littéralement jamais, et le workflow ne tournerait
-# pas une seule fois. Le déclencheur doit être `push`.
+# Le `on: push` d'origine n'était pas un choix mais une contrainte du miroir : un miroir push ne
+# réplique que des branches et des tags, il ne crée aucune pull request, donc `pull_request` ne se
+# serait littéralement jamais déclenché. Cette contrainte tombe le jour où la CI fait autorité : ce
+# qu'on veut vérifier est ce qu'on s'apprête à merger.
 #
-# Conséquence à connaître avant de lire les chiffres : côté GitLab, un pipeline ne part que sur
-# `merge_request_event` (#165) — donc uniquement quand une MR est ouverte sur la branche. Ici il
-# part à CHAQUE push mirroré, MR ouverte ou non. Les deux cadences ne sont pas comparables, et
-# c'est sans importance pour la mesure : ce qu'on veut est le **coût d'un pipeline**, à multiplier
-# ensuite par le nombre de pipelines que GitLab joue réellement par mois. Compter les runs GitHub
-# répondrait à une question que personne ne pose.
+# `pull_request` est l'équivalent exact du `merge_request_event` de `.gitlab-ci.yml` (#165, docs/10
+# §8) : le pipeline ne part ni au push d'une branche sans PR, ni sur `main` après le merge. C'est
+# aussi ce qui RÉDUIT la consommation du dépôt — le miroir déclenchait un run à chaque push de
+# branche, pour un verdict que personne ne lisait (docs/27 §10).
 #
-# Les branches sont filtrées sur la convention de nommage du dépôt (docs/10 §2) plutôt que laissées
-# ouvertes : le miroir pousse tout ce qui existe, y compris de vieilles branches, et chacune
-# déclencherait un run au premier sync.
+# Aucun filtre `branches:` : une PR est par définition un candidat au merge, quelle que soit sa
+# cible. Les `types:` par défaut (`opened`, `synchronize`, `reopened`) couvrent le cycle de vie
+# d'une MR Maestro, y compris ouverte en Draft — une PR en brouillon déclenche bien le workflow,
+# et c'est voulu : /ticket-finish ouvre toujours en Draft (docs/10 §6).
+#
+# `workflow_dispatch` est conservé : c'est le seul moyen de rejouer la CI hors PR (diagnostic,
+# vérification d'un runner, réglage d'un cache).
 on:
-  push:
-    branches:
-      - main
-      - 'feat/**'
-      - 'fix/**'
-      - 'chore/**'
-      - 'docs/**'
+  pull_request:
   workflow_dispatch:
 
-# Annule le run précédent d'une même branche quand un nouveau push arrive. Sans équivalent dans
-# `.gitlab-ci.yml` (GitLab a `interruptible`, non activé) : c'est un ajout délibéré, l'expérience
-# se jugeant sur des minutes consommées et un run périmé n'apprenant rien.
+# Annule le run précédent d'une même PR quand un nouveau push arrive. Sans équivalent dans
+# `.gitlab-ci.yml` (GitLab a `interruptible`, non activé) : c'est un ajout délibéré — un run sur un
+# état périmé n'apprend rien et se facture comme les autres.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -59,11 +59,16 @@ jobs:
   #
   # D'où ce job-portier, qui calcule le périmètre et l'expose en sortie. Le job `web-build` porte
   # alors un `if:` — et un job sauté par `if:` est bien RAPPORTÉ (conclusion « skipped »), ce qui
-  # satisfait une éventuelle branch protection. C'est le piège classique de GitHub qu'on évite
-  # ici : un check requis dont le WORKFLOW ne se déclenche pas n'est jamais rapporté du tout, et
-  # la PR reste bloquée pour toujours. Sans objet tant que le miroir n'a pas de branch protection
-  # (il n'en aura pas pendant l'expérience), mais c'est la cible de #331 — autant que la structure
-  # soit juste dès maintenant plutôt qu'à réparer sous la pression d'une PR bloquée.
+  # satisfait une branch protection. C'est le piège classique de GitHub qu'on évite ici : un check
+  # requis dont le WORKFLOW ne se déclenche pas n'est jamais rapporté du tout, et la PR reste
+  # bloquée pour toujours, sans rien à cliquer pour la débloquer.
+  #
+  # ⚠ La branch protection est ÉCARTÉE aujourd'hui (#338, docs/10 §8.8 : indisponible sur un dépôt
+  # privé d'un compte Free, et ni Pro ni le passage en public n'ont été retenus) — mais la
+  # structure reste écrite pour elle, parce que c'est la seule qui la rende posable plus tard sans
+  # rien casser. Ne jamais remplacer ce portier par un `paths:` de workflow, et ne jamais ajouter
+  # de `paths:`/`paths-ignore:` au bloc `on:` : le jour où la protection est posée, ce serait une
+  # PR indéfiniment non mergeable, découverte sous la pression plutôt qu'ici.
   #
   # Le calcul se fait en git nu, sans action tierce : une dépendance de plus dans la chaîne
   # d'approvisionnement se justifie mal pour trois lignes de `git diff`.
@@ -74,27 +79,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # nécessaire pour diffé contre origin/main
+          fetch-depth: 0  # nécessaire pour diffé contre la base de la PR
 
       - id: filtre
         shell: bash
+        env:
+          # La base vient de l'ÉVÉNEMENT, pas d'un nom de branche : sur `pull_request`, le dépôt est
+          # checkouté sur le merge commit (`refs/pull/N/merge`) et `github.ref_name` vaut « N/merge »
+          # — comparer à « main » par son nom ne matcherait donc jamais rien. `base.sha` est le sha
+          # exact sur lequel GitHub a calculé ce merge, donc la seule base juste.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            # Sur main, on ne cherche pas de base de comparaison : le coût d'un web-build de trop
-            # est négligeable devant le risque de le sauter à tort sur la branche de référence.
+          if [ -z "$BASE_SHA" ]; then
+            # Hors PR (workflow_dispatch) : aucune base de comparaison n'a de sens. On ne saute
+            # rien — le coût d'un web-build de trop est négligeable devant celui d'un verdict
+            # manquant sur un déclenchement manuel, qui sert précisément à vérifier quelque chose.
             echo "web=true" >> "$GITHUB_OUTPUT"
-            echo "main → web-build joué systématiquement."
+            echo "hors pull request → web-build joué systématiquement."
             exit 0
           fi
-          base="origin/main"
-          if ! git rev-parse --verify --quiet "$base" >/dev/null; then
+          if ! git rev-parse --verify --quiet "${BASE_SHA}^{commit}" >/dev/null; then
             echo "web=true" >> "$GITHUB_OUTPUT"
-            echo "$base introuvable → web-build joué par précaution."
+            echo "base $BASE_SHA introuvable → web-build joué par précaution."
             exit 0
           fi
-          fichiers="$(git diff --name-only "$base...HEAD")"
-          echo "Fichiers modifiés depuis $base :"
+          # Deux points et non trois : HEAD est déjà le merge de la PR dans $BASE_SHA, donc
+          # `$BASE_SHA HEAD` rend exactement le changement net de la PR. Un `...` recalculerait un
+          # merge-base pour retomber au même endroit, au risque près qu'il n'y retombe pas.
+          fichiers="$(git diff --name-only "$BASE_SHA" HEAD)"
+          echo "Fichiers modifiés depuis $BASE_SHA :"
           printf '  %s\n' $fichiers
           if printf '%s\n' "$fichiers" | grep -qE '^(apps/web/|\.github/workflows/|\.gitlab-ci\.yml$)'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
@@ -112,8 +126,8 @@ jobs:
   # PRÉINSTALLÉ sur le runner, et non la même image en `container:` : une action JavaScript comme
   # `actions/checkout` exige un Node dans le conteneur, que l'image alpine de shellcheck n'a pas —
   # le job échouerait au checkout, avant d'avoir analysé une seule ligne. La version est imprimée
-  # des deux côtés : une dérive de verdict entre les deux CI se lira dans les logs, ce qui est
-  # précisément une des choses que l'expérience doit relever.
+  # des deux côtés : tant que les deux CI coexistent, une dérive de verdict se lira dans les logs
+  # plutôt que de se découvrir sur une PR bloquée.
   shellcheck:
     runs-on: ubuntu-latest
     steps:
@@ -155,12 +169,13 @@ jobs:
   # `extends: .python-test` de GitLab n'a pas d'équivalent, et les deux réponses possibles — une
   # composite action maison, ou une matrice qui ferait tenir les deux commandes dans un seul job —
   # coûtent plus en lisibilité qu'elles ne rapportent sur quatre lignes. Une matrice ferait en
-  # outre disparaître les noms `pytest` et `mypy` de la liste des checks, alors que l'expérience
-  # compare précisément job à job.
+  # outre disparaître les noms `pytest` et `mypy` de la liste des checks — ce sont eux qu'une PR
+  # affiche, et eux que `scripts/github/protect-main.sh` nomme le jour où la protection est posée
+  # (docs/10 §8.8) : les renommer, les fusionner ou en supprimer un se répercute là-bas.
   #
-  # `-n auto` (pytest-xdist) est conservé tel quel. C'est LE job dont la traduction risque le plus
-  # de décevoir : un runner GitHub hébergé offre 2 vCPU sur un dépôt privé, là où la machine qui
-  # porte le runner de l'équipe en a davantage. Sa durée est un des chiffres attendus par #331.
+  # `-n auto` (pytest-xdist) est conservé tel quel. C'est le job le plus sensible au runner : un
+  # runner GitHub hébergé offre 2 vCPU sur un dépôt privé, là où la machine qui porte le runner de
+  # l'équipe en a davantage — mesuré par #331, et assumé (docs/27 §2.4).
   pytest:
     runs-on: ubuntu-latest
     steps:

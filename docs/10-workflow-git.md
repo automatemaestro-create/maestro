@@ -1255,20 +1255,27 @@ Deux points à ne pas défaire :
 
 ### 8.6 Une seconde CI, en miroir sur GitHub — l'expérience de #332
 
+> **Expérience close.** Elle a rendu ses mesures (`docs/27`), la migration totale est décidée
+> (#335), et #338 a donné à `.github/workflows/ci.yml` son déclencheur définitif : lire **§8.8**
+> pour l'état actuel. Cette section reste pour ce qu'elle explique — la traduction job à job, les
+> deux jetons opposés — mais **son premier point n'est plus vrai** : le déclencheur n'est plus
+> `push`.
+
 Le cadrage #331 instruit une migration vers GitHub, poussée par trois moteurs : la CI, l'intégration
 Claude Code et, plus tard, la visibilité. Deux de ses inconnues ne se répondent pas sur le papier —
 **ce que coûte réellement un pipeline en minutes-job**, et **si la traduction des cinq jobs rend le
 même verdict**. D'où #332 : un dépôt GitHub **privé** alimenté par un **miroir push** depuis GitLab,
 sur lequel `.github/workflows/ci.yml` rejoue les mêmes jobs, **en double et sans autorité**.
 
-> ⚠ **Le verdict qui conditionne un merge reste celui de `.gitlab-ci.yml`.** La CI miroir ne bloque
-> rien, n'est requise nulle part, et se supprime avec le dépôt qui la porte si #331 conclut « non ».
+> ⚠ **Pendant l'expérience**, le verdict qui conditionnait un merge restait celui de
+> `.gitlab-ci.yml` : la CI miroir ne bloquait rien, n'était requise nulle part, et se supprimait
+> avec le dépôt qui la porte si #331 concluait « non ». C'est ce point que #338 renverse (§8.8).
 
 Quatre choix structurent le fichier, et chacun répond à une contrainte qui n'existe pas côté GitLab :
 
-- **`on: push`, jamais `on: pull_request`.** Un miroir push ne réplique que des branches et des
-  tags : il ne crée aucune pull request, donc `pull_request` ne se déclencherait littéralement
-  jamais. Conséquence à connaître avant de lire les chiffres — côté GitLab un pipeline ne part que
+- **`on: push`, jamais `on: pull_request`** *(remplacé par #338 — voir §8.8)*. Un miroir push ne
+  réplique que des branches et des tags : il ne crée aucune pull request, donc `pull_request` ne se
+  déclencherait littéralement jamais. Conséquence à connaître avant de lire les chiffres — côté GitLab un pipeline ne part que
   sur `merge_request_event` (§8, #165), donc **les deux cadences ne sont pas comparables**. C'est
   sans importance : la mesure cherche le **coût d'un pipeline**, à multiplier ensuite par le nombre
   de pipelines que GitLab joue réellement. Compter les runs GitHub répondrait à une question que
@@ -1279,7 +1286,7 @@ Quatre choix structurent le fichier, et chacun répond à une contrainte qui n'e
   et `web-build` porte un `if:`. Un job sauté par `if:` est **rapporté** (« skipped »), donc
   compatible avec une branch protection ; c'est le piège inverse qu'on évite — un check requis dont
   le **workflow** ne se déclenche pas n'est jamais rapporté, et la PR reste bloquée pour toujours.
-  Sans objet pendant l'expérience, mais c'est la cible de #331.
+  Sans objet pendant l'expérience — mais c'était la cible, et c'est devenu effectif avec #338 (§8.8).
 - **Le shellcheck préinstallé du runner, pas l'image de GitLab.** `koalaman/shellcheck-alpine` en
   `container:` ferait échouer `actions/checkout` : une action JavaScript exige un Node dans le
   conteneur, que l'image alpine n'a pas. La version est imprimée des deux côtés — une dérive de
@@ -1359,6 +1366,114 @@ croisement des deux, et une différence de comportement d'un outil (`ln -s` cont
 §9) ne se manifeste que du côté qui la joue. Un banc jetable rejouant la suite dans l'image du
 pipeline, avec git, est ce qui a permis de trancher les cinq causes de #333 — c'est reproductible
 en quelques lignes de Docker et ça n'a pas besoin d'être versionné.
+
+### 8.8 La CI GitHub en autorité — déclencheur et protection de `main` (#338)
+
+L'expérience de §8.6 a rendu son verdict, la migration est décidée (#335), et
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) cesse d'être un miroir dont personne ne
+lit le verdict. Le ticket visait deux choses — le **déclencheur** et la **protection de `main`** — et
+n'en a obtenu qu'une : le déclencheur est en place, la protection est **écartée faute d'exister sur
+ce plan**. Le reste de la section explique les deux, plus un piège dans lequel il ne faut tomber
+qu'une fois, de préférence en le lisant plutôt qu'en le vivant.
+
+> ⚠ Pendant la migration, `.gitlab-ci.yml` **reste en place et fait toujours foi** pour les MR
+> GitLab. Les deux CI coexistent jusqu'à la bascule d'`origin` (#343) ; le retrait de la CI GitLab
+> et des 1 146 lignes d'outillage runner est #344.
+
+**Le déclencheur : `pull_request`.** Le `on: push` de #332 n'était pas un choix mais une contrainte
+du miroir — un miroir push ne réplique que des branches et des tags, il ne crée aucune pull request,
+donc `pull_request` ne se serait littéralement jamais déclenché. La contrainte tombe le jour où la
+CI fait autorité : ce qu'on veut vérifier est ce qu'on s'apprête à merger. `pull_request` est
+l'équivalent exact du `merge_request_event` de GitLab (§8, #165) — ni au push d'une branche sans PR,
+ni sur `main` après le merge — et c'est aussi ce qui **réduit** la consommation du dépôt, le miroir
+déclenchant jusque-là un run à chaque push pour un verdict que personne ne lisait (`docs/27` §10).
+`workflow_dispatch` est conservé : c'est le seul moyen de rejouer la CI hors PR. Aucun filtre
+`branches:` — une PR est par définition un candidat au merge —, et les `types:` par défaut couvrent
+le cycle de vie d'une MR Maestro, **Draft compris** : une PR en brouillon déclenche bien le
+workflow, ce qui tombe bien puisque `/ticket-finish` ouvre toujours en Draft (§6).
+
+**La protection de `main` : écartée, et c'est une décision.** Le pendant de
+`only_allow_merge_if_pipeline_succeeds` (§8.1) **n'est pas en place**, parce qu'il n'est pas
+disponible : mesuré le 2026-08-14 sur `/rulesets` et `/rules/branches/main`, deux endpoints en
+**lecture seule** qui répondent « *Upgrade to GitHub Pro or make this repository public to enable
+this feature* ». La protection de branche, rulesets compris, **n'existe pas sur un dépôt privé d'un
+compte GitHub Free** — et le compte propriétaire `automatemaestro-create` est un compte personnel au
+plan Free, tandis que #335 a arbitré le dépôt **privé**. Les deux issues possibles ont été
+présentées et **toutes deux refusées** (utilisateur, 2026-08-14) : GitHub Pro (~4 $/mois) et le
+passage en public (qui aurait renversé l'arbitrage de visibilité de #335).
+
+> ⚠ **Aucun garde-fou technique n'empêche donc de merger une PR au rouge sur le dépôt GitHub.** Ce
+> n'est pas un oubli ni un blocage à lever : c'est le régime choisi.
+
+Ce que cela laisse, et qui n'est pas rien : les six verdicts sont **rapportés sur la PR** et se
+lisent avant de cliquer. La CI rejoint ainsi le régime que ce dépôt applique déjà à la **revue**
+(§6) — aucune approbation obligatoire, aucun relecteur posé d'office, c'est la **visibilité** qui
+déclenche le geste et la décision reste humaine. La règle « on ne merge pas au rouge » ne change
+pas ; ce qui change est qu'elle n'est plus tenue par la forge. À reconsidérer si un merge au rouge
+se produit réellement : ce serait la mesure qui manque aujourd'hui pour arbitrer les 4 $/mois.
+
+**Le réglage reste écrit et rejouable**, dans
+[`scripts/github/protect-main.sh`](../scripts/github/protect-main.sh) — **source unique**, au même
+titre que `bootstrap.sh` côté GitLab, et pour la même raison : un réglage cliqué dans une interface
+n'est ni relisible, ni rejouable, ni attribuable six mois plus tard. L'écrire sans le jouer est
+délibéré — c'est ce qui rend la décision ci-dessus **réversible en une commande** le jour où le plan
+change, au lieu d'une enquête à refaire. Idempotent, `--check` pour un diagnostic sans écriture,
+code `3` quand le dépôt a répondu mais que le réglage manque (par opposition à `1`, qui dit que
+l'outil manque).
+
+```bash
+bash scripts/github/protect-main.sh --check    # ce qui est requis aujourd'hui — répond 3
+bash scripts/github/protect-main.sh            # poserait les six checks (bloqué par le plan)
+```
+
+Un **second** obstacle attend derrière le premier, et le script les nomme séparément parce qu'ils
+n'ont pas le même remède — GitHub rend le même `403` dans les deux cas : le PAT fine-grained du
+projet n'a pas la permission `Administration` sur le dépôt (GitHub la nomme dans son en-tête,
+`administration=read` pour lire et `write` pour poser), à régler dans les réglages du jeton, qui vit
+dans le `GH_CONFIG_DIR` du projet (§7.4). Lever le plan sans lever le jeton ne suffirait donc pas.
+
+**Le piège : un check requis qui n'est jamais rapporté bloque la PR pour toujours.** GitLab attache
+un filtre de chemins à **un job** (`web-build` ne tourne que si `apps/web/**` change) ; GitHub
+n'offre `paths:` qu'au niveau du **workflow entier**. Mettre le filtre là sauterait aussi les jobs
+Python — et surtout, un check requis dont le *workflow* ne se déclenche pas n'est pas « sauté » : il
+est **absent**, en attente d'un verdict qui n'arrivera jamais, et aucun clic ne débloque la PR. D'où
+le job-portier `perimetre`, qui calcule le périmètre en `git diff` nu et expose une sortie, et le
+`if:` que porte `web-build` : un job sauté par `if:` est **rapporté** (conclusion `skipped`), ce qui
+satisfait une protection là où un workflow non déclenché ne la satisfait jamais. La règle qui en
+découle vaut pour toute évolution du fichier : **jamais de `paths:`/`paths-ignore:` sur le bloc
+`on:`**, et jamais de renommage d'un job sans le répercuter dans la liste `CHECKS` du script — les
+deux produisent la même PR indéfiniment non mergeable.
+
+Sans protection posée, rien de tout cela ne bloque aujourd'hui — et c'est précisément pourquoi la
+structure est gardée telle quelle : elle est ce qui permet de poser la protection plus tard **sans
+rien réécrire**, et le prix à payer pour l'oublier serait une PR bloquée découverte le jour où on
+l'active, sous la pression, plutôt qu'ici.
+
+La base du diff vient de l'**événement** (`github.event.pull_request.base.sha`) et non d'un nom de
+branche : sur `pull_request`, le dépôt est checkouté sur le merge commit (`refs/pull/N/merge`) et
+`github.ref_name` vaut « N/merge », si bien qu'une comparaison à « main » par son nom ne matcherait
+plus jamais rien.
+
+**Deux réglages du script qui ne sont pas des facilités**, à connaître avant de le jouer un jour :
+
+| Réglage | Valeur | Pourquoi |
+|---|---|---|
+| `strict` (branche à jour avant merge) | `false` | Fidélité à GitLab, qui n'active que `only_allow_merge_if_pipeline_succeeds`. À `true`, il faudrait ramener `main` dans **chaque** PR avant de merger, alors que le rattrapage d'une branche en retard est ici jugé au cas par cas (§8.3). |
+| `enforce_admins` | `false` | **C'est ce qui laisserait vivre le miroir.** Jusqu'à #343, `main` du dépôt cible est alimentée par le miroir push depuis GitLab, qui pousse **directement** sur la branche ; une branche protégée refuse les pushes directs, sauf aux administrateurs quand ce champ est faux — et le compte du miroir est le propriétaire. Poser la protection avec `enforce_admins: true` **casserait le miroir**, silencieusement et du côté GitLab, où l'erreur ne s'affiche que dans la page de configuration du miroir (§8.6). Le passer à `true` est un geste délibéré, le jour où plus rien ne pousse sur `main` en dehors des merges de PR. |
+
+**Enfin, une contrainte de calendrier, pas d'outillage** : le déclencheur `pull_request` n'a **pas
+été vérifié sur une vraie PR**, et ne pouvait pas l'être. Une PR de test consommerait un numéro de
+la séquence issues/PR du dépôt cible — or l'import des 330 tickets (#340) exige que la plage
+`#2`→`#333` soit intacte, et #336 l'écrit noir sur blanc : aucune issue ni PR avant l'import, **y
+compris à titre d'essai**. Une seule PR brûlerait `#1` ; en tester les deux cas (`web-build` joué
+**et** sauté) en demande deux, donc décalerait toute la plage — irréversiblement, GitHub ne
+rendant jamais un numéro consommé. La recette attend donc #340 (décision utilisateur,
+2026-08-14) : ce n'est pas un test négligé, c'est un test dont le coût est à sens unique.
+
+**Ce qu'il restera à vérifier ce jour-là**, et qui n'est vérifiable que là : que les six jobs
+partent bien sur `pull_request`, que `perimetre` calcule le bon périmètre depuis
+`base.sha` (c'est le seul point du fichier qui n'a jamais tourné sous cet événement), et que
+`web-build` ressort `skipped` — et non absent — sur une PR hors périmètre.
 
 ## 9. Deux tickets en parallèle — un worktree par session
 
