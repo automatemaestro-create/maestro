@@ -1,6 +1,6 @@
 ---
 description: Met en route un clone du dépôt — venv, .env, hooks git, dépendances web, serveurs MCP, Docker et runner CI — et prend en charge les authentifications interactives
-allowed-tools: Bash(bash:*), Bash(git:*), Bash(glab:*), Bash(npm:*), Bash(node:*), Bash(python:*), Bash(claude:*), Read, Edit
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(npm:*), Bash(node:*), Bash(python:*), Bash(claude:*), Read, Edit
 ---
 
 Amène ce clone à l'état « il ne reste qu'à renseigner le `.env` et lancer ». Le travail est fait
@@ -70,6 +70,12 @@ Le script est **idempotent** et **non destructif** (il n'écrase ni le `.env` ni
      cas, dis à l'utilisateur de le lancer lui-même, ou de poser un PAT (scope `api`) dans le
      `.env`, ce qui est plus durable.
 
+     ⚠ **`setup.sh` ne connaît que `glab`** : l'authentification GitHub reste un geste humain, et
+     elle est **isolée par projet** via `GH_CONFIG_DIR` (#334, `docs/10-workflow-git.md` §7.4) — un
+     `gh auth login` lancé dans ce dossier de configuration, jamais un `gh auth switch`, qui
+     basculerait la machine entière (y compris un run `/orchestrate` qui n'a rien demandé). Si le
+     travail se fait déjà sur GitHub, vérifie-le à part : `gh auth status`.
+
    - **Serveurs MCP** — rien à approuver : `enabledMcpjsonServers`, que le script écrit dans
      `.claude/settings.local.json`, **est** le registre d'approbation de Claude Code. Ne réclame
      pas une approbation manuelle, elle est déjà faite.
@@ -109,6 +115,6 @@ qu'aux exécutions durables. Le rapport le rappelle ; ne les démarre que si l'u
 `bash scripts/setup.sh --with-infra` (ou `--only infra --with-infra`).
 
 **Garde-fous.** Cette commande ne touche ni à Git (pas de commit, pas de branche, pas de push) ni à
-GitLab (ni statut, ni MR) : elle prépare une machine, rien d'autre. Elle n'écrit aucun secret dans
+la forge (ni cycle de vie, ni PR) : elle prépare une machine, rien d'autre. Elle n'écrit aucun secret dans
 un fichier versionné. Elle **installe en revanche des logiciels** sur la machine (c'est son objet) :
 si l'utilisateur veut s'en tenir au diagnostic, c'est `bash scripts/setup.sh --no-install`.

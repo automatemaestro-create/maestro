@@ -1,7 +1,7 @@
 ---
 description: Clôt un ticket sans le réaliser — pose l'état « Abandonné » (won't-do) ou « Doublon » et ferme le ticket
 argument-hint: "<iid> [doublon [<iid-original>]]  — sans « doublon », c'est un abandon (won't-do)"
-allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 ---
 
 Tu vas **clôturer un ticket sans qu'il soit réalisé** (cette commande est autosuffisante ; réf.
@@ -26,14 +26,17 @@ une raison et confirmation.
    présent → état « **Doublon** » ; sinon → « **Abandonné** ». Pour un doublon, note aussi
    l'`iid` du ticket **original** s'il est fourni (sinon demande-le, c'est utile dans la trace).
 
-4. Affiche le ticket concerné (`glab issue view <iid>`) et **demande confirmation** à
-   l'utilisateur, avec une **raison** (pourquoi on l'abandonne, ou de quel ticket c'est le
-   doublon). N'enchaîne pas sans cette confirmation explicite.
+4. Affiche le ticket concerné (`bash scripts/gitlab/lib.sh issue-brief <iid>`) et **demande
+   confirmation** à l'utilisateur, avec une **raison** (pourquoi on l'abandonne, ou de quel ticket
+   c'est le doublon). N'enchaîne pas sans cette confirmation explicite.
 
-5. Consigne la raison en commentaire sur le ticket avant de le fermer :
+5. Consigne la raison en commentaire sur le ticket avant de le fermer. Le texte passe **par un
+   fichier** (écris-le avec `Write`), et le commentaire par le helper — il vaut des deux côtés de la
+   bascule et garde l'UTF-8 intact :
    ```
-   glab issue note <iid> --message "Clôturé (<Abandonné|Doublon>) : <raison>[ — doublon de #<iid-original>]"
+   bash scripts/gitlab/lib.sh issue-note <iid> <fichier>
    ```
+   Contenu du fichier : `Clôturé (<Abandonné|Doublon>) : <raison>[ — doublon de #<iid-original>]`.
 
 6. Pose l'**état** correspondant via le helper (il dérive les GID des labels par nom, pas de GID en
    dur) :
@@ -46,16 +49,21 @@ une raison et confirmation.
 
 7. **Ferme le ticket** — c'est l'étape qui le clôt, plus aucun état ne le fait à sa place :
    ```
-   glab issue close <iid>
+   gh issue close <iid>
    ```
-   Puis vérifie l'état final : `glab issue view <iid> --output json` doit rendre `state: closed` et
-   le label `workflow::abandonne` (ou `workflow::doublon`). Une fermeture ne rebascule aucun label :
-   si le `workflow::*` attendu n'y est pas, c'est que l'étape 6 a échoué — repose-le et signale-le.
+   (`glab issue close <iid>` tant que la forge active est GitLab — `bash scripts/gitlab/lib.sh
+   forge-cli` tranche.) La fermeture est sous règle **`ask`** des deux côtés : la confirmation
+   demandée est voulue, ne cherche pas à la contourner.
+
+   Puis vérifie l'état final : `bash scripts/gitlab/lib.sh issue-raw <iid>` doit rendre
+   `state:` `closed` et le label `workflow::abandonne` (ou `workflow::doublon`). Une fermeture ne
+   rebascule aucun label : si le `workflow::*` attendu n'y est pas, c'est que l'étape 6 a échoué —
+   repose-le et signale-le.
 
 8. Si une **branche** locale existe pour ce ticket et qu'aucun travail n'y est à sauvegarder, tu
    peux proposer de la supprimer — mais **uniquement en local** et seulement après accord de
    l'utilisateur (`git branch -D <branche>`). Ne touche pas à une éventuelle branche distante ni à
-   une MR ici : si une MR ouverte existe, signale-la et laisse l'utilisateur décider de la fermer.
+   une PR ici : si une PR ouverte existe, signale-la et laisse l'utilisateur décider de la fermer.
 
 9. Termine par un résumé : IID, état posé (Abandonné/Doublon), raison consignée, ticket fermé, et
    le sort de la branche locale le cas échéant.
