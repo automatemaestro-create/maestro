@@ -2068,6 +2068,12 @@ detacher() {
     printf '#!/usr/bin/env bash\n'
     printf '# Lanceur du run %s, écrit par « run.sh --detach ». Rejouable tel quel.\n' "$RUN_ID"
     printf 'cd %q || exit 1\n' "$RACINE"
+    # La FORGE est figée dans le lanceur (#341), pas laissée à l'héritage d'environnement. Elle
+    # transiterait bien par `cmd /c start`, mais ce fichier promet d'être « rejouable tel quel à la
+    # main » : relancé depuis un autre shell, il repartirait sur la forge par défaut et le run
+    # ouvrirait ses MR sur l'autre dépôt sans qu'une ligne ne le signale. Ce qu'un run décide au
+    # départ doit se lire dans ce qu'il a laissé derrière lui.
+    printf 'export MAESTRO_FORGE=%q\n' "$(gl_forge)"
     # La fenêtre est bien un écran : le run doit y garder ses couleurs, que `tee` lui ferait perdre.
     printf 'export MAESTRO_ORCHESTRATE_COULEUR=1\n'
     # …et un écran où l'on peut redessiner (#240). Le descripteur 4 est ouvert ICI, AVANT le tube :
@@ -2220,6 +2226,11 @@ printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
 # délai) : « illimité » et « sans délai » sont des choix, pas des oublis, et relire un run doit dire
 # lequel des deux régimes s'appliquait — un ticket coupé au plafond ne se distingue d'un échec de
 # session que par cette ligne.
+#
+# La FORGE y figure pour la même raison (#341), et c'est le réglage le plus lourd de conséquence de
+# la ligne : il dit sur quel dépôt les N MR vont s'ouvrir. Tant que la bascule (lot 8) n'a pas eu
+# lieu, les deux sont joignables depuis le même poste, et rien d'autre dans le journal ne le dirait.
+printf 'forge : %s (%s)\n' "$(gl_forge)" "$(gl_depot_courant)"
 printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · %s · %s\n' \
   "$nb_plan" "$MODELE" "$EFFORT" \
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
@@ -2248,7 +2259,7 @@ if [ "$DRY" = 1 ]; then
   printf '                        --permission-mode acceptEdits --model %s --effort %s%s\n' \
     "$MODELE" "$EFFORT" \
     "$([ -n "$BUDGET" ] && printf ' --max-budget-usd %s' "$BUDGET")"
-  printf '  3. verdict            MR ouverte ET cycle de vie « En revue » (lu dans GitLab, pas dans la sortie)\n'
+  printf '  3. verdict            MR ouverte ET cycle de vie « En revue » (lu dans %s, pas dans la sortie)\n' "$(gl_forge_nom)"
   printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis réouverture de la même session Claude\n'
   printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'
   printf '  6. run coupé          « run.sh --resume » rejoue CE plan et CETTE concurrence, tous les\n'

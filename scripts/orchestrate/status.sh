@@ -11,7 +11,8 @@
 # sous les yeux. Fenêtre fermée, autre poste, run lancé la veille : il ne reste que le répertoire du
 # run sur le disque, et la seule façon de savoir si une session travaille ou est plantée était
 # d'aller regarder à la main les mtimes de son worktree. Ce script fait cette lecture, une fois pour
-# toutes, et la complète par ce que GitLab sait.
+# toutes, et la complète par ce que la forge sait (GitLab ou GitHub selon MAESTRO_FORGE — c'est
+# lib.sh qui tranche, ce fichier n'appelle aucun outil de forge par son nom).
 #
 # --- Lecture seule, et sans prise sur le run ---------------------------------------------------------
 # Il n'écrit RIEN : ni dans le répertoire du run, ni dans le dépôt, ni dans GitLab. Il ne touche pas
@@ -82,11 +83,11 @@ Options :
   --reprenables     Les runs qu'on peut relancer, en TSV lisible par un script (une ligne par
                     run : id, état, restant, début, silence, ticket en vol). Sortie vide = rien
                     à reprendre. C'est ce que lisent « run.sh --resume » et /orchestrate.
-  --no-gitlab       N'interroge pas GitLab (hors ligne, ou pour aller vite) : tout le reste,
-                    plan et worktree compris, est lu en local.
+  --no-forge        N'interroge pas la forge (hors ligne, ou pour aller vite) : tout le reste,
+                    plan et worktree compris, est lu en local. Alias historique : --no-gitlab.
   -h, --help        Cette aide.
 
-Lecture seule : n'écrit ni dans le run, ni dans le dépôt, ni dans GitLab. Aucun run en cours est
+Lecture seule : n'écrit ni dans le run, ni dans le dépôt, ni dans la forge. Aucun run en cours est
 un cas NORMAL, pas une erreur — le script le dit et sort en 0.
 USAGE
 }
@@ -98,17 +99,19 @@ while [ $# -gt 0 ]; do
       WATCH=1
       # La valeur est facultative : « --watch » seul garde l'intervalle par défaut, « --watch 5 »
       # le règle. On ne consomme l'argument suivant que s'il est bien un nombre — sans quoi
-      # « --watch --no-gitlab » avalerait l'option d'après.
+      # « --watch --no-forge » avalerait l'option d'après.
       case "${2:-}" in
         '' | *[!0-9]*) ;;
         *) INTERVALLE="$2"; shift ;;
       esac
       ;;
     --list | --liste) LISTE=1 ;;
-    # Une sortie destinée à un script n'a que faire d'un aller-retour réseau : on coupe GitLab ici
-    # plutôt que d'attendre de l'appelant qu'il pense à ajouter --no-gitlab.
+    # Une sortie destinée à un script n'a que faire d'un aller-retour réseau : on coupe la forge ici
+    # plutôt que d'attendre de l'appelant qu'il pense à ajouter --no-forge.
     --reprenables | --resumable) REPRENABLES=1; SANS_GITLAB=1 ;;
-    --no-gitlab | --sans-gitlab) SANS_GITLAB=1 ;;
+    # `--no-gitlab` reste accepté : l'option a un an, elle est tapée à la main et documentée
+    # ailleurs. Renommer sans garder l'alias casserait des habitudes pour un mot.
+    --no-forge | --sans-forge | --no-gitlab | --sans-gitlab) SANS_GITLAB=1 ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -283,13 +286,18 @@ activite_des_tickets() {
   printf '%s' "$a"
 }
 
-# --- GitLab (facultatif) ------------------------------------------------------------------------------
+# --- La forge (facultatif) ----------------------------------------------------------------------------
 # Une lecture par cycle au plus, et jamais plus souvent qu'une minute : en `--watch` à 20 s, on
 # n'inonde pas l'API pour un statut qui bouge deux fois par heure.
 GITLAB_OK=0
+# Le nom de la forge active et de son outil, pour les MESSAGES seulement (#341) : le reste passe par
+# les verbes de lib.sh, qui savent où aller. Dire « glab absent » à quelqu'un dont le run parle à
+# GitHub l'enverrait lancer un `glab auth login` qui ne réparerait rien.
+FORGE_NOM="$(gl_forge_nom)"
+FORGE_CLI="$(gl_forge_cli)"
 # Le cache est indexé PAR TICKET (#290). À un seul en vol, une valeur et son horodatage suffisaient ;
 # à N, un cache d'une seule case serait chassé par le ticket suivant à chaque tour — donc jamais lu,
-# donc N lectures GitLab par cycle de `--watch` au lieu de N par minute.
+# donc N lectures de la forge par cycle de `--watch` au lieu de N par minute.
 declare -A GL_CACHE=()
 declare -A GL_CACHE_T=()
 
@@ -389,20 +397,22 @@ affiche_ticket_en_cours() { # <run-dir> <iid>
     fi
   fi
 
-  # GitLab en dernier : c'est ce que la boucle regardera pour rendre son verdict (MR ouverte ET
+  # La forge en dernier : c'est ce que la boucle regardera pour rendre son verdict (MR ouverte ET
   # cycle de vie « En revue »), donc le voir bouger, c'est voir le ticket toucher au but.
+  # Le libellé de colonne suit la forge active — « GitLab » et « GitHub » font six caractères, la
+  # colonne ne bouge donc pas d'un cran d'une forge à l'autre.
   if gl="$(etat_gitlab "$iid" "$branche")"; then
     IFS=$'\t' read -r statut etat_mr mr_iid <<< "$gl"
     if [ "$etat_mr" = "opened" ]; then
-      printf '   GitLab     ticket « %s » · MR !%s ouverte\n' "${statut:-?}" "${mr_iid:-?}"
+      printf '   %s     ticket « %s » · MR !%s ouverte\n' "$FORGE_NOM" "${statut:-?}" "${mr_iid:-?}"
     else
-      printf '   GitLab     ticket « %s » · %s\n' "${statut:-?}" \
+      printf '   %s     ticket « %s » · %s\n' "$FORGE_NOM" "${statut:-?}" \
         "$([ -n "$etat_mr" ] && printf 'MR « %s »' "$etat_mr" || printf 'aucune MR')"
     fi
   elif [ "$SANS_GITLAB" = 1 ]; then
-    printf '   GitLab     %snon interrogé (--no-gitlab)%s\n' "$C_D" "$C_0"
+    printf '   %s     %snon interrogé (--no-forge)%s\n' "$FORGE_NOM" "$C_D" "$C_0"
   else
-    printf '   GitLab     %sinjoignable — glab absent ou non authentifié%s\n' "$C_D" "$C_0"
+    printf '   %s     %sinjoignable — %s absent ou non authentifié%s\n' "$FORGE_NOM" "$C_D" "$FORGE_CLI" "$C_0"
   fi
 }
 
@@ -531,8 +541,8 @@ etat_du_run() {
 # MAESTRO_ORCHESTRATE_SILENCE, ni dans le journal ni dans le worktree du ticket. La colonne dit ce
 # qu'il en est, pour que l'appelant PRÉVIENNE au lieu d'affirmer.
 #
-# Sortie vide = rien à reprendre, et c'est un cas NORMAL : le code de sortie reste 0. GitLab n'est
-# jamais interrogé (`--reprenables` force `--no-gitlab`) — la question « que reste-t-il à faire ? »
+# Sortie vide = rien à reprendre, et c'est un cas NORMAL : le code de sortie reste 0. La forge n'est
+# jamais interrogée (`--reprenables` force `--no-forge`) — la question « que reste-t-il à faire ? »
 # se répond avec le plan et le bilan, et cette liste s'affiche avant qu'on ait choisi quoi que ce
 # soit : elle doit être instantanée et marcher hors ligne.
 runs_reprenables() {

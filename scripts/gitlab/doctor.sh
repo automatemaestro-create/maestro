@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bilan de santé (LECTURE SEULE) du setup GitLab Maestro + détection de dérive.
+# Bilan de santé (LECTURE SEULE) du setup de forge Maestro + détection de dérive.
 # N'écrit jamais rien (ni état, ni label, ni MR) — voir docs/10-workflow-git.md.
 # Réutilise scripts/gitlab/lib.sh (cycle de vie par nom de label, pas de GID en dur).
 #
@@ -8,6 +8,24 @@
 # Code de sortie : 1 si un contrôle DUR échoue (auth, labels de catégorisation, labels de cycle
 #   de vie) ; sinon 0
 #   (ou 1 avec --strict s'il reste des avertissements de dérive).
+#
+# --- Les deux forges (#341, chantier #335) --------------------------------------------------------
+# Ce fichier ne parle plus à `glab` : TOUTES ses lectures passent par les verbes de lib.sh, qui
+# répondent contre GitLab ou contre GitHub selon MAESTRO_FORGE. Deux raisons, et la seconde est la
+# vraie.
+#
+# La première est mécanique : sans ça, un bilan lancé sous MAESTRO_FORGE=github interrogeait GitLab.
+# La seconde est qu'il le faisait EN SILENCE. Les contrôles 4a/4b/4c cherchaient « "iid":" » dans le
+# JSON brut du backlog — une clé que le backend GitHub n'écrit pas (il rend « "number": ») —, si bien
+# qu'ils n'échouaient pas : ils rendaient « aucune dérive ». Un ✓ sur une question jamais posée, dans
+# le seul fichier du dépôt dont le métier est de détecter les dérives. C'est pour ça que la
+# projection TSV (`backlog-table`, `workflow-derives`) remplace ici le grep sur le JSON : le contrat
+# de lib.sh porte sur des COLONNES, pas sur la forme d'une réponse d'API.
+#
+# Trois sections restent structurellement propres à une forge et le DISENT au lieu de se taire :
+# le board Kanban (§3, GitLab), les runners de projet (§7, GitLab — hébergés par la forge côté
+# GitHub) et la façon dont « pipeline vert avant merge » est tenu (§6). Le code 3 des verbes
+# concernés signifie « sans objet pour cette forge », à ne pas confondre avec « illisible ».
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +34,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 strict=0
 [ "${1:-}" = "--strict" ] && strict=1
+
+# La forge est résolue UNE fois, avant tout contrôle : une valeur inconnue est un refus franc, pas un
+# repli silencieux sur GitLab (cf. gl_vers_github). Un bilan de santé qui diagnostique le mauvais
+# dépôt est pire qu'un bilan qui refuse de démarrer.
+FORGE="$(gl_forge)" || exit 1
+FORGE_NOM="$(gl_forge_nom)"
+FORGE_CLI="$(gl_forge_cli)"
+DEPOT="$(gl_depot_courant)"
 
 if [ -t 1 ]; then
   C_G=$'\033[32m'; C_Y=$'\033[33m'; C_R=$'\033[31m'; C_B=$'\033[1m'; C_0=$'\033[0m'
@@ -28,15 +54,19 @@ warns=0
 ok()      { printf '  %s✓%s %s\n' "$C_G" "$C_0" "$1"; }
 warn()    { printf '  %s⚠%s %s\n' "$C_Y" "$C_0" "$1"; warns=$((warns + 1)); }
 err()     { printf '  %s✗%s %s\n' "$C_R" "$C_0" "$1"; errors=$((errors + 1)); }
+# Ni ✓ ni ⚠ : « ce contrôle ne s'applique pas ici ». N'incrémente aucun compteur, donc n'entre pas
+# dans le verdict de --strict — un contrôle sans objet n'est pas une dérive à corriger, et le
+# compter comme telle rendrait le bilan durablement jaune sur GitHub, ce qui apprend à ne plus le lire.
+info()    { printf '  %s·%s %s\n' "$C_B" "$C_0" "$1"; }
 section() { printf '\n%s%s%s\n' "$C_B" "$1" "$C_0"; }
 
 # --- 1. Prérequis -------------------------------------------------------------------------------
 section "1. Prérequis"
 if gl_require_glab 2>/dev/null; then
-  user="$(glab api user 2>/dev/null | grep -o '"username":"[^"]*"' | head -1 | cut -d'"' -f4)"
-  ok "glab installé et authentifié (${user:-?})"
+  user="$(gl_current_user 2>/dev/null)"
+  ok "$FORGE_CLI installé et authentifié (${user:-?}) — forge « $FORGE », dépôt $DEPOT"
 else
-  err "glab absent ou non authentifié — lancer : glab auth login"
+  err "$FORGE_CLI absent ou non authentifié — lancer : $FORGE_CLI auth login"
   section "Résumé"
   printf '  Bilan interrompu : authentification requise.\n'
   exit 1
@@ -44,7 +74,10 @@ fi
 
 # --- 2. Labels de catégorisation ----------------------------------------------------------------
 section "2. Labels de catégorisation (§3.2)"
-existing_labels="$(glab label list --output json 2>/dev/null | grep -o '"name":"[^"]*"' | cut -d'"' -f4)"
+# Le geste de réparation dépend de la forge : `bootstrap.sh` provisionne les deux depuis #341, mais
+# le nommer sans dire sur quel dépôt il agira serait une invitation à provisionner le mauvais.
+PROVISIONNER="MAESTRO_FORGE=$FORGE bash scripts/gitlab/bootstrap.sh"
+existing_labels="$(gl_labels 2>/dev/null)"
 expected_labels="type::feature type::bug type::doc type::infra \
 agent::orchestrateur agent::dev agent::bdd agent::devops agent::design agent::qa \
 prio::haute prio::moyenne prio::basse"
@@ -55,7 +88,7 @@ done
 if [ -z "$missing" ]; then
   ok "familles type::/agent::/prio:: complètes (13 labels)"
 else
-  err "labels manquants :$missing → relancer scripts/gitlab/bootstrap.sh"
+  err "labels manquants :$missing → relancer : $PROVISIONNER"
 fi
 
 # --- 3. Labels de cycle de vie « workflow:: » ----------------------------------------------------
@@ -67,7 +100,7 @@ fi
 section "3. Cycle de vie (labels $GL_WORKFLOW_SCOPE::* et colonnes du Kanban)"
 workflow_gids="$(gl_workflow_gids 2>/dev/null)"
 if [ -z "$workflow_gids" ]; then
-  err "aucun label « $GL_WORKFLOW_SCOPE::* » lisible dans $GL_PROJECT → relancer scripts/gitlab/bootstrap.sh"
+  err "aucun label « $GL_WORKFLOW_SCOPE::* » lisible dans $DEPOT → relancer : $PROVISIONNER"
 else
   missing_workflow=""
   for s in a-faire en-cours en-revue termine abandonne doublon; do
@@ -77,33 +110,31 @@ else
   if [ -z "$missing_workflow" ]; then
     ok "6 labels de cycle de vie résolus par nom (1 appel) — set-workflow opérationnel (aucun GID en dur)"
   else
-    err "label(s) de cycle de vie manquant(s) : $missing_workflow → relancer scripts/gitlab/bootstrap.sh"
+    err "label(s) de cycle de vie manquant(s) : $missing_workflow → relancer : $PROVISIONNER"
   fi
 fi
 
 # Les colonnes du Kanban, posées par bootstrap-board.sh sur ces mêmes labels : sans elles les
 # tickets existent mais le board ne montre rien, ce qui était le symptôme visible de #207. Le board
-# est UNIQUE sur le plan Free, on le découvre donc plutôt que de figer un id. Deux dérives à
-# attraper — une colonne du flux manquante, et une liste qui n'en fait pas partie (dont les listes
-# ORPHELINES `"label":null` héritées des colonnes par statut, qui n'affichent plus rien et ne
-# partent pas toutes seules). L'ORDRE, lui, n'est pas contrôlé ici : il est cosmétique, et
-# bootstrap-board.sh le rétablit — le signaler ferait du bruit sans enjeu.
+# est UNIQUE sur le plan Free, on le découvre donc plutôt que de figer un id (c'est `gl_board_lists`
+# qui s'en charge, et qui rend le numéro trouvé en première ligne). Deux dérives à attraper — une
+# colonne du flux manquante, et une liste qui n'en fait pas partie (dont les listes ORPHELINES
+# `"label":null` héritées des colonnes par statut, qui n'affichent plus rien et ne partent pas toutes
+# seules). L'ORDRE, lui, n'est pas contrôlé ici : il est cosmétique, et bootstrap-board.sh le
+# rétablit — le signaler ferait du bruit sans enjeu.
+#
+# Le board est une notion GITLAB : sur GitHub le verbe rend 3 (« sans objet »), et la section le dit
+# au lieu d'inventer une colonne manquante. Le projet n'utilise pas Projects v2 — le suivi maison du
+# lot 4 (dates et temps passé en commentaire structuré) a remplacé le seul usage qu'on en aurait eu.
 board_flux="$GL_WORKFLOW_SCOPE::a-faire $GL_WORKFLOW_SCOPE::en-cours $GL_WORKFLOW_SCOPE::en-revue $GL_WORKFLOW_SCOPE::termine"
-board_id="$(glab api "projects/$(gl_project_enc)/boards" --output ndjson 2>/dev/null | grep -o '^{"id":[0-9]\+' | head -1 | grep -o '[0-9]\+')"
-if [ -z "$board_id" ]; then
-  warn "aucun board Kanban sur $GL_PROJECT — le créer une fois dans l'UI (Plan > Boards), puis : bash scripts/gitlab/bootstrap-board.sh"
+board_raw="$(gl_board_lists 2>/dev/null)"; board_rc=$?
+board_id="$(printf '%s\n' "$board_raw" | awk -F'\t' '$1 == "# board" { print $2; exit }')"
+board_listes="$(printf '%s\n' "$board_raw" | grep -v '^# board')"
+if [ "$board_rc" = 3 ]; then
+  info "board Kanban : sans objet sur $FORGE_NOM (pas de board ; Projects v2 non utilisé)"
+elif [ -z "$board_id" ]; then
+  warn "aucun board Kanban sur $DEPOT — le créer une fois dans l'UI (Plan > Boards), puis : bash scripts/gitlab/bootstrap-board.sh"
 else
-  # Une liste par ligne (ndjson) ; « - » pour une liste orpheline, dont l'objet `label` est null.
-  board_listes="$(glab api "projects/$(gl_project_enc)/boards/$board_id/lists" --output ndjson 2>/dev/null | awk '
-    /^\{/ {
-      nom = "-"
-      if (match($0, /"label":\{/)) {
-        reste = substr($0, RSTART)
-        if (match(reste, /"name":"[^"]*"/)) nom = substr(reste, RSTART + 8, RLENGTH - 9)
-      }
-      print nom
-    }
-  ')"
   if [ -z "$board_listes" ]; then
     warn "colonnes du board #$board_id illisibles (API muette) — contrôle ignoré"
   else
@@ -132,30 +163,29 @@ fi
 # --- 4. Dérive cycle de vie ↔ réalité -----------------------------------------------------------
 section "4. Dérive cycle de vie ↔ réalité"
 
-# Les deux backlogs, lus UNE fois chacun : les contrôles 4a à 4c ci-dessous s'en servent et
-# gl_backlog n'a pas de cache — une lecture par contrôle multiplierait les allers-retours d'un
-# bilan qui en fait déjà beaucoup. Découpés en un nœud par ligne dès ici, forme sur laquelle
-# travaillent aussi bien grep (4a, 4b) que awk (4c). 4d, lui, délègue tout à `reconcile-en-cours`,
-# qui refait sa propre lecture : le verbe existe pour être appelé seul, et le rendre dépendant d'un
-# backlog déjà en main l'aurait rendu inutilisable partout ailleurs.
-backlog_opened="$(gl_backlog opened | sed 's/{"iid":/\n{"iid":/g')"
-backlog_closed="$(gl_backlog closed | sed 's/{"iid":/\n{"iid":/g')"
+# Les deux backlogs, lus UNE fois chacun : les contrôles 4a et 4b ci-dessous s'en servent et
+# gl_backlog_table n'a pas de cache — une lecture par contrôle multiplierait les allers-retours d'un
+# bilan qui en fait déjà beaucoup. 4d, lui, délègue tout à `reconcile-en-cours`, qui refait sa propre
+# lecture : le verbe existe pour être appelé seul, et le rendre dépendant d'un backlog déjà en main
+# l'aurait rendu inutilisable partout ailleurs.
+#
+# ⚠ LA TABLE TSV, PAS LE JSON BRUT (#341). Ces deux lectures étaient des `gl_backlog` grepés sur
+# « "iid":" » — la forme de la réponse GitLab, pas le contrat de lib.sh. Sous MAESTRO_FORGE=github le
+# grep ne matchait plus rien (le backend rend « "number": ») et les trois contrôles répondaient
+# « aucune dérive » : le bilan restait vert, sur des questions qu'il ne posait plus. La colonne
+# `statut` de `backlog-table` porte le LIBELLÉ du cycle de vie des deux côtés — c'est ce que le
+# contrat garantit, et c'est donc sur lui qu'on branche.
+backlog_opened="$(gl_backlog_table opened)" || backlog_opened=""
+backlog_closed="$(gl_backlog_table closed)" || backlog_closed=""
 
-# helper local : iid des work items d'un backlog déjà lu portant un cycle de vie donné.
-# Le cycle de vie est un LABEL depuis #209 : on filtre sur `workflow::<slug>` et non plus sur le
-# widget de statut. L'argument reste le LIBELLÉ (« En revue »), converti ici par gl_workflow_slug —
-# c'est le contrat de surface de lib.sh, le slug ne circule pas dans les appelants.
-iids_with_workflow() { # $1=backlog découpé  $2=libellé de cycle de vie
-  local slug
-  slug="$(gl_workflow_slug "$2")" || return 1
-  printf '%s\n' "$1" \
-    | grep -F '"'"$GL_WORKFLOW_SCOPE"'::'"$slug"'"' \
-    | grep -o '"iid":"[0-9]*"' | grep -o '[0-9]*'
+# helper local : iid des tickets d'une table déjà lue portant un cycle de vie donné (colonne 2).
+iids_with_workflow() { # $1=table TSV  $2=libellé de cycle de vie
+  printf '%s\n' "$1" | awk -F'\t' -v cible="$2" '$1 !~ /^#/ && $2 == cible { print $1 }'
 }
 
 # 4a. Tickets « En revue » ouverts : une MR ouverte est-elle rattachée ?
 revue_iids="$(iids_with_workflow "$backlog_opened" "En revue")"
-open_mr_branches="$(glab mr list --output json 2>/dev/null | grep -o '"source_branch":"[^"]*"' | cut -d'"' -f4)"
+open_mr_branches="$(gl_open_mr_branches 2>/dev/null)"
 if [ -z "$revue_iids" ]; then
   ok "aucun ticket « En revue » en attente"
 else
@@ -170,8 +200,7 @@ fi
 
 # 4b. Tickets fermés dont le cycle de vie est resté « actif »
 stuck_iids="$(printf '%s\n' "$backlog_closed" \
-  | grep -E '"'"$GL_WORKFLOW_SCOPE"'::(a-faire|en-cours|en-revue)"' \
-  | grep -o '"iid":"[0-9]*"' | grep -o '[0-9]*')"
+  | awk -F'\t' '$1 !~ /^#/ && ($2 == "À faire" || $2 == "En cours" || $2 == "En revue") { print $1 }')"
 if [ -z "$stuck_iids" ]; then
   ok "aucun ticket fermé à l'état encore actif"
 else
@@ -189,22 +218,19 @@ fi
 # mutuelle des labels scopés est une fonctionnalité Premium, donc sur Free le « :: » n'est que
 # cosmétique et rien n'empêche un ticket de porter deux valeurs à la fois (docs/10 §3, #207). Deux
 # cas, de causes opposées :
-#   • 0 label  → ticket échappé à la migration, ou créé depuis l'UI GitLab (qui ne connaît pas
+#   • 0 label  → ticket échappé à la migration, ou créé depuis l'UI de la forge (qui ne connaît pas
 #                notre convention) : il n'est sur AUCUNE colonne du Kanban et sort de tous les
 #                comptes (`queue.sh` ne le verra pas, `/backlog` le rendra « - ») ;
 #   • ≥ 2      → pose partielle : un ajout sans le retrait des autres. Les lectures rendent alors
 #                le PREMIER label rencontré (cf. gl_awk_workflow), donc un état plausible mais
 #                arbitraire — le plus pernicieux des deux, puisque rien ne dépasse à l'affichage.
-# Aucune lecture supplémentaire (le backlog ouvert est déjà en main) ; comptage des labels du scope
-# nœud par nœud, en awk pur comme le reste du fichier.
-wf_derives="$(printf '%s\n' "$backlog_opened" | awk -v WF_SCOPE="$GL_WORKFLOW_SCOPE" '
-  /^\{"iid":"/ {
-    match($0, /"iid":"[0-9]+/); iid = substr($0, RSTART + 7, RLENGTH - 7)
-    n = 0; reste = $0; motif = "\"" WF_SCOPE "::[a-z-]+\""
-    while (match(reste, motif)) { n++; reste = substr(reste, RSTART + RLENGTH) }
-    if (n != 1) printf "%s\t%d\n", iid, n
-  }
-')"
+#
+# Le COMPTAGE est le seul contrôle de cette section que la table plate ne peut pas porter : elle
+# rend un statut, pas un nombre de labels — projeter la dérive l'effacerait. Il est donc délégué à
+# `gl_workflow_derives`, qui refait une lecture du backlog et compte à la source, des deux côtés.
+# C'est un aller-retour de plus, assumé : le contrôle qui coûte le moins cher est celui qui répond
+# encore quand la forge change.
+wf_derives="$(gl_workflow_derives opened 2>/dev/null)"
 if [ -z "$wf_derives" ]; then
   ok "tous les tickets ouverts portent exactement un label $GL_WORKFLOW_SCOPE::*"
 else
@@ -258,7 +284,10 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   cleanup_found=0
   while IFS= read -r b; do
     [ -z "$b" ] && continue
-    st="$(glab mr view "$b" --output json 2>/dev/null | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4)"
+    # `gl_mr_state`, et non une lecture directe : c'est le MÊME verbe que celui sur lequel s'appuie
+    # la suppression (`cleanup-merged`, docs/10 §6). Diagnostiquer avec une autre source que celle
+    # qui décide, c'est signaler des branches que la purge refusera — ou taire celles qu'elle prendra.
+    st="$(gl_mr_state "$b" 2>/dev/null)"
     if [ "$st" = merged ]; then
       warn "branche locale « $b » : MR mergée → à nettoyer avec /branch-cleanup"
       cleanup_found=1
@@ -271,30 +300,59 @@ else
   warn "hors dépôt git — contrôle des branches locales ignoré"
 fi
 
-# --- 6. Réglages de merge du projet ---------------------------------------------------------------
-# Dérive si le projet n'exige plus un pipeline vert pour merger, ou ne supprime plus la branche
-# source au merge (tous posés par bootstrap.sh, voir docs/10-workflow-git.md §6). Lecture REST
-# directe — l'encodage du chemin projet est inline pour rester autosuffisant. Ces champs peuvent
-# revenir `null` selon le tier : seule la valeur explicite attendue vaut ✓.
-section "6. Réglages de merge du projet"
-proj_raw="$(glab api "projects/$(printf '%s' "$GL_PROJECT" | sed 's,/,%2F,g')" 2>/dev/null)"
-if [ -z "$proj_raw" ]; then
-  warn "réglages du projet illisibles (API muette) — contrôle ignoré"
+# --- 6. Garde-fous de merge du dépôt ---------------------------------------------------------------
+# Dérive si le dépôt n'exige plus un pipeline vert pour merger, ou ne supprime plus la branche source
+# au merge (docs/10-workflow-git.md §6). Les trois promesses sont lues par `gl_merge_settings`, qui
+# les rend NORMALISÉES (true|false|-) : côté GitLab elles vivent dans les réglages du projet, côté
+# GitHub dans la protection de branche de `main` et `delete_branch_on_merge`.
+#
+# Le RENDU, lui, se sépare — et c'est le seul endroit du fichier où deux forges méritent deux textes.
+# Côté GitLab, un « pipeline vert requis » retombé est une DÉRIVE : le réglage a existé, bootstrap.sh
+# le repose. Côté GitHub, son absence est une DÉCISION documentée (docs/10 §8.8, 2026-08-14) — la
+# protection de branche n'existe pas sur un dépôt privé d'un compte Free, ni GitHub Pro ni le passage
+# en public n'ont été retenus, et `scripts/github/protect-main.sh` attend écrit-mais-non-joué le jour
+# où le plan change. Le rendre en ⚠ ferait de ce bilan un fichier durablement jaune, sur un point que
+# personne ne compte corriger — et `--strict` échouerait en CI pour dire une chose qu'on sait déjà.
+section "6. Garde-fous de merge du dépôt"
+declare -A REGLAGE=()
+while IFS=$'\t' read -r cle valeur; do
+  [ -n "$cle" ] && REGLAGE["$cle"]="$valeur"
+done <<EOF
+$(gl_merge_settings 2>/dev/null)
+EOF
+
+if [ "${#REGLAGE[@]}" = 0 ]; then
+  warn "réglages du dépôt illisibles (API muette) — contrôle ignoré"
+elif [ "$FORGE" = github ]; then
+  case "${REGLAGE[pipeline_requis]:--}" in
+    true)  ok "protection de branche sur main : les checks CI sont requis — aucun merge au rouge" ;;
+    false) info "aucune protection de branche sur main — décision assumée (dépôt privé, compte Free : docs/10 §8.8)"
+           printf '    → les six verdicts se lisent sur la PR ; le merge reste une décision humaine (docs/10 §6)\n'
+           printf '    → le jour où le plan change : bash scripts/github/protect-main.sh\n' ;;
+    *)     warn "protection de branche de main illisible — contrôle ignoré" ;;
+  esac
+  case "${REGLAGE[suppression_branche]:--}" in
+    true)  ok "delete_branch_on_merge=true — la branche source est supprimée au merge" ;;
+    false) warn "delete_branch_on_merge ≠ true : les branches distantes s'accumuleraient après merge → relancer : $PROVISIONNER" ;;
+    # « - » n'est PAS « false » : le champ n'est présent que si le jeton a le droit d'administration
+    # du dépôt (mesuré le 2026-08-17 sur le PAT du projet). L'absence parle du jeton, pas du dépôt.
+    *)     info "delete_branch_on_merge illisible (jeton sans droit d'administration du dépôt) — contrôle ignoré" ;;
+  esac
 else
-  if printf '%s' "$proj_raw" | grep -q '"only_allow_merge_if_pipeline_succeeds":true'; then
+  if [ "${REGLAGE[pipeline_requis]:--}" = true ]; then
     ok "only_allow_merge_if_pipeline_succeeds=true — pipeline vert requis pour merger"
   else
-    warn "only_allow_merge_if_pipeline_succeeds ≠ true : une MR au pipeline rouge est mergeable → relancer scripts/gitlab/bootstrap.sh"
+    warn "only_allow_merge_if_pipeline_succeeds ≠ true : une MR au pipeline rouge est mergeable → relancer : $PROVISIONNER"
   fi
-  if printf '%s' "$proj_raw" | grep -q '"allow_merge_on_skipped_pipeline":false'; then
+  if [ "${REGLAGE[merge_si_pipeline_saute]:--}" = false ]; then
     ok "allow_merge_on_skipped_pipeline=false — un pipeline sauté ne permet pas de merger"
   else
-    warn "allow_merge_on_skipped_pipeline ≠ false : un pipeline sauté permettrait de merger → relancer scripts/gitlab/bootstrap.sh"
+    warn "allow_merge_on_skipped_pipeline ≠ false : un pipeline sauté permettrait de merger → relancer : $PROVISIONNER"
   fi
-  if printf '%s' "$proj_raw" | grep -q '"remove_source_branch_after_merge":true'; then
+  if [ "${REGLAGE[suppression_branche]:--}" = true ]; then
     ok "remove_source_branch_after_merge=true — la branche source est supprimée au merge"
   else
-    warn "remove_source_branch_after_merge ≠ true : les branches distantes s'accumuleraient après merge → relancer scripts/gitlab/bootstrap.sh"
+    warn "remove_source_branch_after_merge ≠ true : les branches distantes s'accumuleraient après merge → relancer : $PROVISIONNER"
   fi
 fi
 
@@ -304,36 +362,33 @@ fi
 # PROJET n'est en ligne, les jobs restent `pending` et personne ne merge, sans qu'aucun message ne
 # le dise. Contrôle SOUPLE (avertissement) : le runner de la machine peut être légitimement éteint
 # pendant qu'on code ; ce qui compte est de savoir qu'il faudra le rallumer avant la MR.
-# Une seule lecture REST : /projects/:id/runners porte déjà `status` pour chaque runner.
+# Une seule lecture : `gl_project_runners` rend « description <TAB> statut » par runner de projet.
+# Section propre à GITLAB : sur GitHub les runners sont hébergés par la forge, il n'y a rien à
+# allumer ni à surveiller — c'est même le gain chiffré du chantier (−1 146 lignes d'outillage runner,
+# retirées au lot 9). Le verbe rend 3 (« sans objet »), et la section le dit au lieu de conclure
+# « aucun runner déclaré », qui serait vrai et trompeur à la fois.
 section "7. Runner CI de projet (§8)"
-runners_raw="$(glab api "projects/$(gl_project_enc)/runners?type=project_type&per_page=100" 2>/dev/null)"
-if [ -z "$runners_raw" ]; then
+runners_lignes="$(gl_project_runners 2>/dev/null)"; runners_rc=$?
+if [ "$runners_rc" = 3 ]; then
+  info "runners : sans objet sur $FORGE_NOM (hébergés par la forge — aucun runner à tenir allumé)"
+elif [ "$runners_rc" != 0 ]; then
   warn "runners de projet illisibles (API muette) — contrôle ignoré"
-elif [ "$runners_raw" = "[]" ]; then
+elif [ -z "$runners_lignes" ]; then
   warn "aucun runner de projet déclaré : les pipelines resteront « pending » (runners partagés désactivés)"
   warn "  → en créer un sur cette machine : bash scripts/gitlab/setup-runner.sh"
 else
-  # Un runner par ligne. `"id":<n>,"description":"…"` n'apparaît que sur les runners : l'objet
-  # imbriqué `created_by` a bien un `id`, mais suivi de `"username"` (même repère que
-  # ensure-runner.sh). `status` se lit ensuite dans la ligne, sans confusion possible avec
-  # `job_execution_status`, dont le nom ne contient pas la séquence `"status":`.
-  runners_lignes="$(printf '%s' "$runners_raw" | sed 's/},{"id":/}\n{"id":/g')"
-  runners_en_ligne="$(printf '%s\n' "$runners_lignes" | grep -F '"status":"online"')"
+  runners_en_ligne="$(printf '%s\n' "$runners_lignes" | awk -F'\t' '$3 == "online"')"
   if [ -n "$runners_en_ligne" ]; then
-    while IFS= read -r ligne; do
-      [ -z "$ligne" ] && continue
-      rid="$(printf '%s' "$ligne" | grep -o '"id":[0-9]\+' | head -1 | grep -o '[0-9]\+')"
-      rdesc="$(printf '%s' "$ligne" | grep -o '"description":"[^"]*"' | head -1 | cut -d'"' -f4)"
+    while IFS=$'\t' read -r rid rdesc _; do
+      [ -z "$rid" ] && continue
       ok "runner de projet en ligne : ${rdesc:-sans description} (#${rid:-?})"
     done <<EOF
 $runners_en_ligne
 EOF
   else
     hors_ligne=""
-    while IFS= read -r ligne; do
-      [ -z "$ligne" ] && continue
-      rdesc="$(printf '%s' "$ligne" | grep -o '"description":"[^"]*"' | head -1 | cut -d'"' -f4)"
-      rstat="$(printf '%s' "$ligne" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)"
+    while IFS=$'\t' read -r _ rdesc rstat; do
+      [ -z "$rdesc" ] && continue
       hors_ligne="${hors_ligne:+$hors_ligne, }${rdesc:-?} (${rstat:-?})"
     done <<EOF
 $runners_lignes
@@ -349,23 +404,15 @@ fi
 # milestone actif ENTIÈREMENT SOLDÉ (la phase est finie : sa fermeture — décision humaine, jamais
 # faite ici — est à faire pour que la phase suivante devienne la courante).
 section "8. Milestones de phase"
-ms_raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { milestones(state: active, sort: DUE_DATE_ASC, first: 20) { nodes { title stats { totalIssuesCount closedIssuesCount } } } } }')"
+# `gl_milestones` plutôt qu'une requête GraphQL écrite ici : ses colonnes (titre, etat, debut,
+# echeance, fermes, total) sont le contrat commun aux deux forges, et « soldé » s'y lit en une
+# comparaison — total > 0 et fermés == total. La requête inline, elle, ne pouvait pas passer la
+# bascule : elle nommait `project(fullPath:…)`, un champ qui n'existe pas dans le schéma GitHub.
+ms_raw="$(gl_milestones 2>/dev/null)"
 if [ -z "$ms_raw" ]; then
   warn "milestones illisibles (API muette) — contrôle ignoré"
 else
-  soldes="$(printf '%s' "$ms_raw" | awk '
-    {
-      n = split($0, parts, /\{"title":"/)
-      for (i = 2; i <= n; i++) {
-        node = parts[i]
-        t = node; sub(/".*$/, "", t)
-        total = 0; closed = -1
-        if (match(node, /"totalIssuesCount":[0-9]+/))  { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); total = m + 0 }
-        if (match(node, /"closedIssuesCount":[0-9]+/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); closed = m + 0 }
-        if (total > 0 && closed == total) print t
-      }
-    }
-  ')"
+  soldes="$(printf '%s\n' "$ms_raw" | awk -F'\t' '$1 !~ /^#/ && $2 == "active" && $6 > 0 && $5 == $6 { print $1 }')"
   if [ -z "$soldes" ]; then
     ok "aucun milestone actif entièrement soldé"
   else
@@ -384,19 +431,22 @@ EOF
   fi
 fi
 
-wi_raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: opened, first: 100) { nodes { iid widgets { ... on WorkItemWidgetMilestone { milestone { title } } } } } } }' 2>/dev/null)"
-if [ -z "$wi_raw" ]; then
+if ! nomiles="$(gl_issues_sans_milestone 2>/dev/null)"; then
   warn "tickets ouverts illisibles (API muette) — contrôle des milestones manquants ignoré"
+elif [ -z "$nomiles" ]; then
+  ok "tous les tickets ouverts portent un milestone"
 else
-  nomiles="$(printf '%s' "$wi_raw" | sed 's/{"iid":/\n{"iid":/g' \
-    | awk '/^\{"iid":"/ && !/"milestone":\{"title":"/ { match($0, /"iid":"[0-9]+/); print substr($0, RSTART + 7, RLENGTH - 7) }')"
-  if [ -z "$nomiles" ]; then
-    ok "tous les tickets ouverts portent un milestone"
+  # Le geste de réparation n'a pas le même nom d'un côté et de l'autre, et le donner faux est pire
+  # que ne rien donner : `glab issue update -m` n'existe pas côté GitHub, où c'est `gh issue edit`.
+  if [ "$FORGE" = github ]; then
+    poser_milestone='gh issue edit %s --repo '"$DEPOT"' --milestone "<titre>"'
   else
-    for iid in $nomiles; do
-      warn "#$iid ouvert sans milestone → poser celui de sa phase : glab issue update $iid -m \"<titre>\""
-    done
+    poser_milestone='glab issue update %s -m "<titre>"'
   fi
+  for iid in $nomiles; do
+    # shellcheck disable=SC2059  # le gabarit est choisi juste au-dessus, jamais une donnée lue
+    warn "#$iid ouvert sans milestone → poser celui de sa phase : $(printf "$poser_milestone" "$iid")"
+  done
 fi
 
 # --- Résumé -------------------------------------------------------------------------------------
