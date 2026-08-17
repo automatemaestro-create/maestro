@@ -1126,6 +1126,23 @@ importer_ticket() {
 # L'échantillon n'est pas aléatoire : les deux BORNES (un décalage global s'y voit), les TROUS (les
 # seuls objets que l'import invente), les tickets CITÉS PAR DES COMMITS de l'historique — c'est pour
 # eux que tout ce mécanisme existe — puis un ticket tous les ~25 pour couvrir la plage.
+# desechappe <texte> -> le même texte, « & » rendu tel quel.
+#
+# GitLab échappe « & » en « & » jusque dans le manifeste ; GitHub le rend nu. Comparer les deux
+# demande donc cette normalisation — et elle passe par `sed`, PAS par `${v//motif/remplacement}`, où
+# DEUX pièges se cumulaient pour rendre l'opération SILENCIEUSEMENT NULLE (mesuré sur bash 5.2.37) :
+#
+#   1. le motif est un GLOB : « \u » y est un échappement qui vaut « u », donc « & » matchait
+#      « u0026 » et laissait la barre oblique inverse en place ;
+#   2. depuis bash 5.2, « & » dans le REMPLACEMENT désigne LE TEXTE MATCHÉ. Le motif était donc
+#      remplacé par lui-même — zéro modification, zéro message.
+#
+# Le second annulait le premier, ce qui est le pire des deux mondes : la recette comparait un attendu
+# encore échappé à un obtenu décodé et annonçait un écart sur les trois milestones qui contiennent
+# « & ». Un verdict ROUGE sur un import CORRECT, prononcé par l'outil dont c'est le seul rôle — et
+# une fois qu'on sait que « ces trois-là sortent toujours en écart », on ne lit plus le verdict.
+desechappe() { printf '%s' "$1" | LC_ALL=C sed 's/\\u0026/\&/g'; }
+
 recette() {
   section "Recette — #n sur GitHub = #n sur GitLab ?"
   local ok=0 ko=0 n att_titre att_etat att_ms att_lbl obt
@@ -1188,7 +1205,7 @@ recette() {
 
     # Le titre attendu vient du manifeste, déjà déséchappé sauf « & » que GitLab rend « & » et
     # GitHub non : la même normalisation que pour les milestones, et pour la même raison.
-    att_titre="${att_titre//\\u0026/&}"; att_ms="${att_ms//\\u0026/&}"
+    att_titre="$(desechappe "$att_titre")"; att_ms="$(desechappe "$att_ms")"
     [ "$g_titre" = "$att_titre" ] || souci="$souci titre"
     [ "$g_etat" = "$att_etat" ] || souci="$souci état"
     [ "$g_ms" = "$att_ms" ] || souci="$souci milestone"
