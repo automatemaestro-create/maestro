@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deux runs perdus</title>
+<style>
+  :root {
+    --ground: #F4F6F8;
+    --surface: #FFFFFF;
+    --surface-sunk: #ECEFF3;
+    --ink: #171B21;
+    --ink-soft: #414A56;
+    --muted: #6B7480;
+    --rule: #D9DEE5;
+    --rule-strong: #B9C1CB;
+    --accent: #2B4470;
+    --accent-soft: #E4E9F3;
+    --perdu: #9E3722;
+    --perdu-soft: #F7E6E1;
+    --acquis: #37624A;
+    --acquis-soft: #E2EDE6;
+    --attente: #8A6314;
+    --attente-soft: #F6EDDA;
+
+    --sans: ui-sans-serif, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #121519;
+      --surface: #191D23;
+      --surface-sunk: #101317;
+      --ink: #E7EAEE;
+      --ink-soft: #B8C0CA;
+      --muted: #8B95A1;
+      --rule: #2A3038;
+      --rule-strong: #3B434D;
+      --accent: #8FADE0;
+      --accent-soft: #1E2836;
+      --perdu: #E28E77;
+      --perdu-soft: #2E1D18;
+      --acquis: #86B698;
+      --acquis-soft: #17251C;
+      --attente: #D6B172;
+      --attente-soft: #2A2115;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #121519;
+    --surface: #191D23;
+    --surface-sunk: #101317;
+    --ink: #E7EAEE;
+    --ink-soft: #B8C0CA;
+    --muted: #8B95A1;
+    --rule: #2A3038;
+    --rule-strong: #3B434D;
+    --accent: #8FADE0;
+    --accent-soft: #1E2836;
+    --perdu: #E28E77;
+    --perdu-soft: #2E1D18;
+    --acquis: #86B698;
+    --acquis-soft: #17251C;
+    --attente: #D6B172;
+    --attente-soft: #2A2115;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  img { max-width: 100%; }
+
+  .page {
+    max-width: 54rem;
+    margin: 0 auto;
+    padding: clamp(2rem, 5vw, 4.5rem) clamp(1.1rem, 4vw, 2.5rem) 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.25rem;
+  }
+
+  /* ---------- en-tête ---------- */
+
+  header { display: flex; flex-direction: column; gap: 1.1rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.1rem;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(2rem, 5.5vw, 3rem);
+    line-height: 1.06;
+    letter-spacing: -0.028em;
+    font-weight: 640;
+    text-wrap: balance;
+  }
+
+  .chapeau {
+    margin: 0;
+    max-width: 40ch;
+    font-size: clamp(1.05rem, 2.2vw, 1.2rem);
+    line-height: 1.5;
+    color: var(--ink-soft);
+    text-wrap: pretty;
+  }
+
+  .chapeau strong { color: var(--ink); font-weight: 620; }
+
+  /* ---------- sections ---------- */
+
+  section { display: flex; flex-direction: column; gap: 1.15rem; }
+
+  h2 {
+    margin: 0;
+    font-size: 1.32rem;
+    line-height: 1.25;
+    letter-spacing: -0.015em;
+    font-weight: 640;
+    text-wrap: balance;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  h3 {
+    margin: 0;
+    font-size: 1.02rem;
+    font-weight: 640;
+    letter-spacing: -0.005em;
+  }
+
+  p { margin: 0; max-width: 68ch; text-wrap: pretty; }
+
+  a { color: var(--accent); text-underline-offset: 0.18em; text-decoration-thickness: 1px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  code, .mono { font-family: var(--mono); font-size: 0.875em; }
+
+  code {
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.08em 0.34em;
+  }
+
+  ul { margin: 0; padding-left: 1.15rem; display: flex; flex-direction: column; gap: 0.55rem; max-width: 68ch; }
+  li { text-wrap: pretty; }
+  li::marker { color: var(--rule-strong); }
+
+  /* ---------- bandeau de verdict ---------- */
+
+  .verdicts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+
+  .verdict { background: var(--surface); padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+  .verdict dt { font-size: 0.74rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+  .verdict dd { margin: 0; font-size: 1.5rem; font-weight: 640; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .verdict small { color: var(--muted); font-size: 0.82rem; line-height: 1.4; }
+  .v-perdu dd { color: var(--perdu); }
+  .v-acquis dd { color: var(--acquis); }
+
+  /* ---------- chronologie ---------- */
+
+  .run {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 1.3rem clamp(1rem, 3vw, 1.6rem) 1.45rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .run-tete { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 0.9rem; }
+  .run-id { font-family: var(--mono); font-size: 0.95rem; font-weight: 600; }
+  .run-note { color: var(--muted); font-size: 0.86rem; }
+
+  .etiquette {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.16rem 0.5rem;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .e-perdu { background: var(--perdu-soft); color: var(--perdu); }
+  .e-acquis { background: var(--acquis-soft); color: var(--acquis); }
+  .e-attente { background: var(--attente-soft); color: var(--attente); }
+
+  ol.fil { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+
+  ol.fil li {
+    display: grid;
+    grid-template-columns: 4.4rem 1.15rem 1fr;
+    gap: 0 0.7rem;
+    align-items: start;
+    padding-bottom: 0.72rem;
+  }
+
+  .h { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 0.16rem; }
+
+  /* le rail : un trait continu que la coupure interrompt */
+  .rail { position: relative; justify-self: center; width: 1px; background: var(--rule-strong); }
+  .rail::before {
+    content: "";
+    position: absolute;
+    top: 0.42rem;
+    left: 50%;
+    width: 7px;
+    height: 7px;
+    margin-left: -3.5px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1.5px solid var(--rule-strong);
+  }
+  li.jalon .rail::before { background: var(--accent); border-color: var(--accent); }
+  li.attente .rail { background: repeating-linear-gradient(to bottom, var(--attente) 0 3px, transparent 3px 7px); }
+  li.attente .rail::before { background: var(--attente); border-color: var(--attente); }
+  li.echec .rail::before { background: var(--perdu); border-color: var(--perdu); }
+  li.coupure .rail { background: none; }
+  li.coupure .rail::before {
+    background: var(--perdu);
+    border-color: var(--perdu);
+    width: 11px; height: 11px; margin-left: -5.5px; top: 0.3rem;
+  }
+  li:last-child { padding-bottom: 0; }
+  li:last-child .rail { background: none; }
+
+  .quoi { font-size: 0.93rem; line-height: 1.5; }
+  .quoi em { font-style: normal; color: var(--muted); }
+  li.coupure .quoi { color: var(--perdu); font-weight: 560; }
+  li.attente .quoi { color: var(--attente); }
+
+  /* ---------- tableau ---------- */
+
+  .cadre-table { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 34rem; }
+  th, td { text-align: left; padding: 0.68rem 0.95rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-size: 0.71rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    background: var(--surface-sunk);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.id { font-family: var(--mono); font-size: 0.84rem; white-space: nowrap; }
+
+  /* ---------- défauts ---------- */
+
+  .defaut {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--perdu);
+    border-radius: 5px;
+    padding: 1.15rem clamp(1rem, 3vw, 1.4rem);
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  .defaut .ou { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); }
+
+  pre {
+    margin: 0;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.8rem 0.95rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+  }
+
+  .aveu {
+    background: var(--attente-soft);
+    border: 1px solid color-mix(in srgb, var(--attente) 28%, transparent);
+    border-radius: 5px;
+    padding: 1.15rem clamp(1rem, 3vw, 1.4rem);
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+
+  /* ---------- plan ---------- */
+
+  .lots { display: flex; flex-direction: column; gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+  .lot { background: var(--surface); padding: 0.95rem 1.1rem; display: grid; grid-template-columns: 3.6rem 1fr; gap: 0.2rem 0.9rem; align-items: baseline; }
+  .lot .num-lot { font-family: var(--mono); font-size: 0.84rem; color: var(--accent); font-weight: 600; }
+  .lot .titre-lot { font-weight: 580; font-size: 0.97rem; }
+  .lot .desc-lot { grid-column: 2; color: var(--ink-soft); font-size: 0.88rem; line-height: 1.5; }
+  .lot .titre-lot .par { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); font-weight: 400; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.3rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <header>
+    <div class="eyebrow">
+      <span>Rapport d'incident</span>
+      <span>Projet p1 · Control Tower</span>
+      <span>14 → 17 août 2026</span>
+    </div>
+    <h1>Deux runs perdus</h1>
+    <p class="chapeau">Deux exécutions lancées depuis la Control Tower sont mortes en trois jours, chacune sur un geste ordinaire — <strong>fermer une fenêtre</strong>, <strong>laisser la machine s'endormir</strong>. Rien ne l'a signalé : elles sont encore affichées « en cours ».</p>
+  </header>
+
+  <section>
+    <h2>Le compte</h2>
+    <dl class="verdicts">
+      <div class="verdict v-perdu">
+        <dt>Perdu</dt>
+        <dd>3,33 $</dd>
+        <small>Cadrage et planification de deux runs, plus ~42 min d'agent jamais comptabilisées.</small>
+      </div>
+      <div class="verdict v-perdu">
+        <dt>Livré</dt>
+        <dd>0</dd>
+        <small>Aucune tâche menée à terme. Le dossier du projet est vide.</small>
+      </div>
+      <div class="verdict v-acquis">
+        <dt>Sauvé</dt>
+        <dd>Le brief</dd>
+        <small>Objectif, périmètre, 6 critères d'acceptation et hypothèses — approuvés, conservés, réutilisables.</small>
+      </div>
+      <div class="verdict">
+        <dt>Fantômes</dt>
+        <dd>4</dd>
+        <small>Runs figés « en cours » dans le poste, dont deux datant du 22 juillet.</small>
+      </div>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Ce qui s'est passé</h2>
+    <p>Les deux runs portaient le même objectif — « p1 », une application d'agenda Windows. Le second était ma relance du premier, sur le brief que le premier avait fait valider. Heures en UTC.</p>
+
+    <article class="run">
+      <div class="run-tete">
+        <span class="run-id">3ff0bcb065f9</span>
+        <span class="etiquette e-perdu">mort à la fermeture de la fenêtre</span>
+        <span class="run-note">2,52 $ · 14 août</span>
+      </div>
+      <ol class="fil">
+        <li><span class="h">15:30</span><span class="rail"></span><span class="quoi">Lancé depuis la Control Tower, mode brief <em>humain</em>.</span></li>
+        <li><span class="h">15:32</span><span class="rail"></span><span class="quoi">2 questions de clarification — tour 1 sur 2.</span></li>
+        <li><span class="h">15:43</span><span class="rail"></span><span class="quoi">Vos 2 réponses.</span></li>
+        <li><span class="h">15:44</span><span class="rail"></span><span class="quoi">1 question — tour 2 sur 2, <em>le dernier : ce qui reste partira en hypothèses.</em></span></li>
+        <li><span class="h">15:45</span><span class="rail"></span><span class="quoi">Votre réponse. Brief soumis à validation.</span></li>
+        <li class="jalon"><span class="h">15:53</span><span class="rail"></span><span class="quoi"><strong>Brief approuvé</strong> — 6 critères d'acceptation, 0 question restante.</span></li>
+        <li class="jalon"><span class="h">15:55</span><span class="rail"></span><span class="quoi"><strong>5 tâches planifiées.</strong></span></li>
+        <li class="coupure"><span class="h">~16:05</span><span class="rail"></span><span class="quoi">Coupure. L'API n'écoute plus. Le run meurt entre la planification et le lancement de sa première tâche — le contenu des 5 tâches n'a jamais été publié.</span></li>
+      </ol>
+    </article>
+
+    <article class="run">
+      <div class="run-tete">
+        <span class="run-id">4b33ea332e60</span>
+        <span class="etiquette e-perdu">mort avec la machine</span>
+        <span class="run-note">0,81 $ · 14 août</span>
+      </div>
+      <ol class="fil">
+        <li><span class="h">16:12</span><span class="rail"></span><span class="quoi">Relancé sur le brief validé du run précédent, mode <em>sans</em> — ni clarification ni validation à repayer.</span></li>
+        <li class="jalon"><span class="h">16:15</span><span class="rail"></span><span class="quoi"><strong>5 tâches planifiées</strong> (0,77 $).</span></li>
+        <li class="attente"><span class="h">16:15<br>→ 17:08</span><span class="rail"></span><span class="quoi"><strong>53 minutes d'attente</strong> — une validation humaine bloquait la première tâche. Je ne l'ai pas vue et je vous ai dit « rien à faire de ton côté ».</span></li>
+        <li><span class="h">17:08</span><span class="rail"></span><span class="quoi">Validation approuvée depuis l'UI. La tâche <em>Cœur métier, persistance SQLite et moteur de récurrence</em> démarre.</span></li>
+        <li class="echec"><span class="h">17:34</span><span class="rail"></span><span class="quoi">Échec après 26 min — <code>exit code 1</code>, sans raison lisible. Relance 1/3.</span></li>
+        <li class="echec"><span class="h">17:50</span><span class="rail"></span><span class="quoi">Échec après 16 min, identique. Relance 2/3.</span></li>
+        <li class="coupure"><span class="h">~18:00</span><span class="rail"></span><span class="quoi">Coupure. La machine s'endort ~10 min après le début de la 3ᵉ tentative, emportant Docker, Redis et l'API. Aucun redémarrage de Windows : une veille ordinaire.</span></li>
+      </ol>
+    </article>
+
+    <p>Trois jours plus tard, au redémarrage : le journal durable avait tout gardé, et le run était toujours affiché <code>en_cours</code>, 1 tâche, 0,81 $ — indiscernable d'un run qui travaille.</p>
+  </section>
+
+  <section>
+    <h2>Les deux défauts</h2>
+
+    <div class="defaut">
+      <h3>1 — Un run ne survit pas à son hôte, et personne ne le dit</h3>
+      <p class="ou">maestro/controltower/executions.py, en-tête</p>
+      <p>Un run lancé depuis la Control Tower s'exécute en tâche de fond du process <code>maestro-api</code>. C'est un choix assumé et écrit noir sur blanc : « <em>un run ne survit pas au redémarrage de l'API — sa trace, elle, survit</em> ». Retenu pour le POC parce qu'il garde l'annulation à portée sans ajouter de dépendance d'infrastructure.</p>
+      <p>Ce n'est donc pas un bug. Ce qui en est un, c'est le <strong>silence</strong> : la trace survit, l'exécution non, et rien ne distingue les deux. Le run reste « en cours » pour toujours. C'est exactement la panne traitée pour les <em>tickets</em> orphelins par #327 — jamais traitée pour les <em>runs</em>.</p>
+    </div>
+
+    <div class="defaut">
+      <h3>2 — Le stderr du CLI n'est capturé nulle part</h3>
+      <p class="ou">maestro/providers/claude.py, lignes ~192 et ~271</p>
+      <p>Les deux échecs de la tâche <code>bdd</code> n'ont laissé que ceci, dans l'événement comme dans le journal :</p>
+      <pre>Fatal error in message reader: Command failed with exit code 1 (exit code: 1)
+Error output: Check stderr output for details</pre>
+      <p>« Check stderr output for details » désigne un flux <strong>qui n'existe nulle part</strong>. Vérifié : le SDK installé (<code>claude-agent-sdk</code> 0.2.128) expose bien les champs <code>stderr</code> et <code>debug_stderr</code> — et les deux constructions de <code>ClaudeAgentOptions</code> du dépôt <strong>ne les passent pas</strong>. Sans rappel, le SDK n'a rien à joindre à son exception.</p>
+      <p>Conséquence : 42 minutes de travail d'agent brûlées sur deux tentatives, aucune information sur la cause — et pas même le coût, la tâche affichant 0,00 $ faute de message final.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Ce que j'ai raté</h2>
+    <div class="aveu">
+      <p>Deux erreurs de ma part, distinctes des défauts ci-dessus.</p>
+      <ul>
+        <li><strong>Les 53 minutes d'attente.</strong> Mon premier guetteur ne regardait que le compteur de tâches et le statut du run. Une validation humaine était en attente, visible dans l'UI ; je vous ai dit « rien à faire de ton côté » alors qu'une décision vous attendait. Vous l'avez trouvée seul.</li>
+        <li><strong>Un « run terminé » annoncé à tort.</strong> Mon extraction du statut attrapait le dernier champ <code>statut</code> de la charge JSON — celui du dernier <em>événement</em>, pas celui du <em>run</em>. J'ai signalé un run fini alors qu'il tournait.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Le plan</h2>
+    <p>Cinq tickets, dans le milestone <em>Control Tower v3 — agents</em>. Le premier est indépendant et prioritaire : sans lui, tout échec d'agent reste un échec aveugle.</p>
+
+    <div class="cadre-table">
+      <table>
+        <thead>
+          <tr><th>Ticket</th><th>Objet</th><th>Type</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="id"><a href="https://gitlab.com/maestro-group4345327/maestro/-/work_items/346">#346</a></td>
+            <td>Capturer le stderr du CLI Claude, aujourd'hui perdu</td>
+            <td class="num">bug · haute</td>
+          </tr>
+          <tr>
+            <td class="id"><a href="https://gitlab.com/maestro-group4345327/maestro/-/work_items/347">#347</a></td>
+            <td>Un run interrompu se voit et se rattrape — <em>parent de suivi</em></td>
+            <td class="num">infra · haute</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="lots">
+      <div class="lot">
+        <span class="num-lot"><a href="https://gitlab.com/maestro-group4345327/maestro/-/work_items/348">#348</a></span>
+        <span class="titre-lot">Battement de cœur d'un run</span>
+        <span class="desc-lot">Ce qui ne bat plus est signalé orphelin. Pas de déduction naïve : un run lancé hors API publie sur le même Redis et serait déclaré mort à tort.</span>
+      </div>
+      <div class="lot">
+        <span class="num-lot"><a href="https://gitlab.com/maestro-group4345327/maestro/-/work_items/349">#349</a></span>
+        <span class="titre-lot">Relance sur le brief déjà validé</span>
+        <span class="desc-lot">Le geste que j'ai fait à la main le 14 août, outillé : rejouer un run mort sur son brief approuvé, sans repasser par la clarification. Refusé sur un run vivant.</span>
+      </div>
+      <div class="lot">
+        <span class="num-lot"><a href="https://gitlab.com/maestro-group4345327/maestro/-/work_items/350">#350</a></span>
+        <span class="titre-lot">Cadrage de la frontière d'exécution <span class="par">(parallèle)</span></span>
+        <span class="desc-lot">La durabilité existe (Temporal, #94/#96) mais est hors d'atteinte : <code>--durable</code> refuse le mode brief <em>humain</em>, qui est le défaut de la Control Tower — et <code>maestro-run</code> ignore la notion de projet. Décision à prendre, pas à improviser.</span>
+      </div>
+      <div class="lot">
+        <span class="num-lot"><a href="https://gitlab.com/maestro-group4345327/maestro/-/work_items/351">#351</a></span>
+        <span class="titre-lot">Tests + doc</span>
+        <span class="desc-lot">Lot final : les trois verdicts du battement, la relance de bout en bout, et la doc de ce qui survit à la mort d'un hôte.</span>
+      </div>
+    </div>
+
+    <p>#348 et #349 rendent la perte <strong>visible</strong> et <strong>rattrapable</strong> ; ils ne l'empêchent pas. C'est #350 qui décide si on l'empêche, et à quel prix.</p>
+  </section>
+
+  <section>
+    <h2>État actuel</h2>
+    <ul>
+      <li>Docker, Redis et la Control Tower sont remontés. Le poste répond sur <code>http://localhost:3000</code>, sans fenêtre pilotée — donc sans chien de garde qui l'arrête.</li>
+      <li><strong>Aucun run ne tourne.</strong> Rien n'a été relancé : vous avez demandé le rapport d'abord.</li>
+      <li>Les 4 runs fantômes sont toujours affichés « en cours ». Les solder est un geste d'une minute, à votre signal.</li>
+      <li>Le brief validé de p1 est intact et réutilisable tel quel — c'est la matière de la prochaine relance, quelle qu'elle soit.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>Rapport établi le 17 août 2026 · sources : journal durable Redis, <code>.maestro/controltower/8000-3000/api.log</code>, code du dépôt.</span>
+    <span>Les heures sont en UTC ; la machine tourne en UTC+2/+3 selon la période.</span>
+  </footer>
+
+</div>
+
+</body>
+</html>
