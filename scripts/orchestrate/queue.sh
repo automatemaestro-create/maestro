@@ -68,7 +68,7 @@
 #
 # --- Coût en appels -------------------------------------------------------------------------------
 # Deux lectures GraphQL (les tickets du milestone, les assignés du backlog ouvert) puis UNE lecture
-# par candidat, mise en cache : la même sortie de `glab issue view` sert à répondre aux deux
+# par candidat, mise en cache : la même sortie de `lib.sh issue-raw` sert à répondre aux deux
 # questions « ce ticket est-il un lot ? » (marqueur « Sous-ticket de #N ») et « ce ticket est-il un
 # parent ? » (section « ## Sous-tickets »). C'est l'approche de gl_start_brief — une lecture,
 # plusieurs projections — plutôt qu'un appel de helper par question.
@@ -279,8 +279,14 @@ if [ ! -s "$TMP/candidats.tsv" ]; then
 fi
 
 # --- 4. Une lecture par ticket, deux projections --------------------------------------------------
-# vue <iid> -> chemin d'un fichier contenant la sortie de `glab issue view`, mise en cache. Le cache
-# est ce qui rend gratuite la relecture d'un parent déjà lu comme candidat.
+# vue <iid> -> chemin d'un fichier contenant LA VUE TEXTE CANONIQUE du ticket, mise en cache. Le
+# cache est ce qui rend gratuite la relecture d'un parent déjà lu comme candidat.
+#
+# `gl_issue_raw` et non `glab issue view` (#341) : c'est l'une des trois primitives du commutateur de
+# forge (en-tête de lib.sh), et son format est le MÊME des deux côtés — d'où les deux projections
+# ci-dessous, inchangées. L'appel direct, lui, aurait interrogé GitLab sous MAESTRO_FORGE=github, et
+# le plan d'un run se serait construit sur les descriptions du mauvais dépôt : les marqueurs
+# « Sous-ticket de #N » et « ## Sous-tickets » auraient été lus ailleurs que là où le run travaille.
 vue() {
   # Deux instructions, et non `local iid="$1" f="…$iid…"` : `local` est une commande, dont bash
   # développe TOUS les mots avant d'exécuter la moindre affectation — `$iid` y vaudrait donc encore
@@ -288,7 +294,7 @@ vue() {
   local iid="$1"
   local f="$TMP/vue/$iid.txt"
   if [ ! -f "$f" ]; then
-    glab issue view "$iid" >"$f" 2>/dev/null || { rm -f "$f"; return 1; }
+    gl_issue_raw "$iid" >"$f" 2>/dev/null || { rm -f "$f"; return 1; }
   fi
   printf '%s\n' "$f"
 }

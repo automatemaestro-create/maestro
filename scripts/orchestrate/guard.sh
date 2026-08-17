@@ -7,6 +7,14 @@
 # `--dangerously-skip-permissions`, le hook non. Une boucle qui tourne la nuit n'a personne pour
 # rattraper un `glab mr merge` parti tout seul.
 #
+# LES DEUX FORGES, EN MÊME TEMPS (#341, chantier #335). Les motifs `gh …` sont AJOUTÉS à côté des
+# motifs `glab …`, jamais substitués : entre le lot 4 (qui pose MAESTRO_FORGE) et la bascule (lot 8),
+# les deux outils sont installés sur les mêmes postes et une session peut appeler l'un ou l'autre.
+# Un garde-fou qui suivrait la forge active se laisserait contourner par la variable qu'il est censé
+# ne pas croire — et ce fichier n'est justement PAS censé faire confiance à l'environnement de la
+# session qu'il surveille. Le prix est nul : refuser `gh pr merge` sur un poste encore sur GitLab
+# n'empêche aucun geste légitime, personne n'ayant de raison de merger une PR à la main ici.
+#
 #   bash scripts/orchestrate/guard.sh                  # mode hook : JSON PreToolUse sur stdin
 #   bash scripts/orchestrate/guard.sh --test "<cmd>"   # verdict sur une commande, sans hook
 #   bash scripts/orchestrate/guard.sh --check          # settings.run.json ne dérive pas du dépôt
@@ -18,8 +26,9 @@
 #
 # Ce qui est refusé, et pourquoi (docs/10-workflow-git.md §6, CLAUDE.md « Garde-fous ») :
 #   - force-push : réécrit un historique déjà poussé, que d'autres ont pu reprendre ;
-#   - `glab mr merge` / `glab mr close` : le merge est TOUJOURS une décision humaine ;
-#   - `glab ci delete` : détruit des pipelines dont d'autres lisent le verdict ;
+#   - `glab mr merge`/`mr close`, `gh pr merge`/`pr close` : le merge est TOUJOURS une décision
+#     humaine ;
+#   - `glab ci delete`, `gh run delete` : détruit des pipelines dont d'autres lisent le verdict ;
 #   - `git reset --hard` : jette du travail non commité, sans rattrapage ;
 #   - `git commit --no-verify` : contourne le hook `commit-msg`, donc la convention de commit ;
 #   - tout commit sur `main` : la règle Git n°1 du dépôt (un ticket = une branche).
@@ -73,8 +82,20 @@ refus() {
     return 0
   fi
 
+  if printf '%s' "$cmd" | grep -qE 'gh[[:space:]]+pr[[:space:]]+(merge|close)'; then
+    printf 'le merge et la fermeture d'\''une PR sont des décisions humaines — une session autonome ne merge ni ne ferme jamais (CLAUDE.md, Garde-fous).'
+    return 0
+  fi
+
   if printf '%s' "$cmd" | grep -qE 'glab[[:space:]]+ci[[:space:]]+delete'; then
     printf 'suppression de pipeline interdite : d'\''autres lisent son verdict. Au plus « glab ci retry ».'
+    return 0
+  fi
+
+  # `gh run delete` est le pendant exact de `glab ci delete` ; `gh run cancel`, lui, ne détruit rien
+  # et reste autorisé — comme `glab ci retry` de l'autre côté.
+  if printf '%s' "$cmd" | grep -qE 'gh[[:space:]]+run[[:space:]]+delete'; then
+    printf 'suppression de run Actions interdite : d'\''autres lisent son verdict. Au plus « gh run rerun ».'
     return 0
   fi
 

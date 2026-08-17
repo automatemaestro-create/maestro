@@ -344,7 +344,10 @@ commande_create() {
   # 1) Branche — même règle que /ticket-start (préfixe du label type:: + slug du titre).
   if [ -z "$branche" ]; then
     branche="$(bash "$ICI/../gitlab/lib.sh" branch-for "$iid")" || {
-      erreur "branche introuvable pour #$iid (glab authentifié ?) — sinon : --branche <nom>"
+      # L'outil est demandé à lib.sh, pas écrit en dur (#341) : sous MAESTRO_FORGE=github, envoyer
+      # vérifier `glab` fait chercher la panne du mauvais côté. L'appel supplémentaire ne coûte que
+      # sur le chemin d'échec, où l'on a déjà perdu bien plus qu'un sous-processus.
+      erreur "branche introuvable pour #$iid ($(bash "$ICI/../gitlab/lib.sh" forge-cli) authentifié ?) — sinon : --branche <nom>"
       return 1
     }
   fi
@@ -581,7 +584,10 @@ commande_ensure() {
 
   if [ -z "$branche" ]; then
     branche="$(bash "$ICI/../gitlab/lib.sh" branch-for "$iid")" || {
-      erreur "branche introuvable pour #$iid (glab authentifié ?) — sinon : --branche <nom>"
+      # L'outil est demandé à lib.sh, pas écrit en dur (#341) : sous MAESTRO_FORGE=github, envoyer
+      # vérifier `glab` fait chercher la panne du mauvais côté. L'appel supplémentaire ne coûte que
+      # sur le chemin d'échec, où l'on a déjà perdu bien plus qu'un sous-processus.
+      erreur "branche introuvable pour #$iid ($(bash "$ICI/../gitlab/lib.sh" forge-cli) authentifié ?) — sinon : --branche <nom>"
       return 1
     }
   fi
