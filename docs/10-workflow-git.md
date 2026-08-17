@@ -1,7 +1,27 @@
 # Workflow Git & tickets — Maestro
 
-**Version :** 0.5
-Objectif : que chaque ticket GitLab soit traité de façon prévisible — même branche, même convention de commit, même cycle de vie — que ce soit un humain ou un agent Claude Code qui l'exécute.
+**Version :** 0.6
+Objectif : que chaque ticket soit traité de façon prévisible — même branche, même convention de commit, même cycle de vie — que ce soit un humain ou un agent Claude Code qui l'exécute.
+
+> ## La forge est **GitHub** depuis le 2026-08-17
+>
+> Tickets, Pull Requests et CI vivent sur
+> [`automatemaestro-create/maestro`](https://github.com/automatemaestro-create/maestro) — bascule
+> #343, lot 8 du chantier #335. `MAESTRO_FORGE` vaut **`github`** sans qu'on la pose.
+>
+> Le projet **GitLab est archivé en lecture seule**. Il reste l'**archive** des 281 Merge Requests
+> d'avant la bascule et du time tracking natif (629 h) : ce qu'on y trouve encore, ce qu'on n'y
+> trouve plus et **comment le relire** sont écrits en
+> [docs/27 §11](./27-decision-gitlab-vers-github.md) — par l'UI web, ou
+> `glab <verbe> --repo maestro-group4345327/maestro`, le `--repo` étant obligatoire une fois
+> `origin` passé sur GitHub.
+>
+> ⚠ **Ce document dit encore « GitLab », « MR » et « pipeline » à beaucoup d'endroits.** Le
+> vocabulaire est en cours d'alignement (#345) ; l'outillage, lui, est déjà bilingue et le contrat
+> de sortie de `scripts/gitlab/lib.sh` est identique des deux côtés (un « iid » désigne le `number`
+> GitHub, un état de MR `opened|closed|merged` désigne celui de la PR). Lire « MR » comme « PR »
+> partout où il s'agit du travail d'aujourd'hui. Le retrait de l'outillage GitLab lui-même
+> (`.gitlab-ci.yml`, 1 146 lignes de runner) est le ticket #344.
 
 > Le **cycle de vie** d'un ticket est porté par les labels scopés **`workflow::*`** (voir §3.1).
 > Les autres labels (`type::`, `agent::`, `prio::`) servent à la **catégorisation** (nature, rôle,

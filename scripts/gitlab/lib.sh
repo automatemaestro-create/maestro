@@ -6,15 +6,29 @@
 #   2. Exécuté en sous-commandes :        bash scripts/gitlab/lib.sh set-workflow 16 "En cours"
 #
 # ================================================================================================
-# COMMUTATEUR DE FORGE — MAESTRO_FORGE=gitlab|github, défaut « gitlab » (ticket #339, parent #335)
+# COMMUTATEUR DE FORGE — MAESTRO_FORGE=github|gitlab, défaut « github » (#339 posé, #343 basculé)
 # ================================================================================================
-# Ce fichier porte DEUX backends. Sans la variable, rien ne change : `glab`, GitLab, le workflow de
-# l'équipe au bit près. Avec `MAESTRO_FORGE=github`, les mêmes verbes répondent contre le dépôt
-# GitHub (MAESTRO_GITHUB_REPO) — MÊME sortie : mêmes colonnes TSV, mêmes libellés de cycle de vie,
-# mêmes codes de retour. C'est ce contrat de sortie que lisent les appelants (queue.sh, run.sh,
-# status.sh, doctor.sh, worktree.sh et les commandes /ticket-*), et c'est lui qui rend ce lot
-# mergeable seul : réécrire d'un bloc casserait /ticket-start pour tout le monde tant que les
-# tickets vivent encore sur GitLab.
+# LA BASCULE EST FAITE (ticket #343, lot 8 de #335, le 2026-08-17) : le défaut est « github ».
+# Sans la variable, les verbes répondent contre le dépôt GitHub (MAESTRO_GITHUB_REPO), qui porte
+# les tickets et la CI.
+#
+# ⚠ `MAESTRO_FORGE=gitlab` reste accepté, mais le backend `glab` NE RÉPOND PLUS contre le vrai
+# projet GitLab, et ce n'est pas réparable ici : ses verbes appellent des sous-commandes
+# (`glab issue view`, `glab mr view`…) qui déduisent le projet des REMOTES, et `origin` pointe
+# désormais sur github.com — d'où « None of the git remotes configured point to a known GitLab
+# host ». Les faire marcher demanderait un `--repo` sur une douzaine de verbes dont la moitié sont
+# des ÉCRITURES, refusées de toute façon par un projet archivé, et que #344 supprime.
+#
+# Ce que le backend `gitlab` sert encore, donc : les SUITES D'OUTILLAGE, qui montent un `glab`
+# factice dans un dépôt jetable — aucun remote réel n'y entre en jeu, et le conftest y épingle
+# cette valeur (voir tests/conftest.py). Pour relire l'ARCHIVE pour de vrai, c'est l'UI web de
+# GitLab, ou `glab <verbe> --repo maestro-group4345327/maestro` en direct (docs/27 §11).
+#
+# Le contrat de sortie est le même des deux côtés — mêmes colonnes TSV, mêmes libellés de cycle de
+# vie, mêmes codes de retour — et c'est lui que lisent les appelants (queue.sh, run.sh, status.sh,
+# doctor.sh, worktree.sh et les commandes /ticket-*). C'est ce qui a rendu chaque lot mergeable
+# seul : réécrire d'un bloc aurait cassé /ticket-start pour tout le monde tant que les tickets
+# vivaient encore sur GitLab.
 #
 # CE QUI REND LA DOUBLURE TENABLE — trois primitives, et non cinquante embranchements. La plupart
 # des verbes ne parlent pas à la forge : ils parlent à un format. On ne double donc QUE ce qui
@@ -198,13 +212,13 @@ GL_GQL_RETRY_DELAY="${GL_GQL_RETRY_DELAY:-1}"
 # --- Commutateur de forge -------------------------------------------------------------------------
 # Voir l'en-tête du fichier. Deux fonctions, et une seule est appelée dans les corps de verbe.
 
-# gl_forge -> imprime la forge active (« gitlab » | « github »), code 1 sur une valeur inconnue.
+# gl_forge -> imprime la forge active (« github » | « gitlab »), code 1 sur une valeur inconnue.
 gl_forge() {
-  local f="${MAESTRO_FORGE:-gitlab}"
+  local f="${MAESTRO_FORGE:-github}"
   case "$f" in
     gitlab|github) printf '%s\n' "$f" ;;
     *)
-      echo "MAESTRO_FORGE=« $f » inconnu — attendu : gitlab | github (défaut gitlab)." >&2
+      echo "MAESTRO_FORGE=« $f » inconnu — attendu : gitlab | github (défaut github)." >&2
       return 1 ;;
   esac
 }
@@ -1607,14 +1621,16 @@ gl_project_id() {
   printf '%s\n' "$id"
 }
 
-# gl_host -> hôte GitLab du dépôt, déduit du remote `origin` (défaut gitlab.com). Rien n'est codé
-# en dur : le workflow doit tenir sur une instance auto-hébergée. Gère les deux formes d'URL
-# (https://hote/groupe/projet et git@hote:groupe/projet).
+# gl_host -> hôte de la forge, déduit du remote `origin` (défaut : celui de la forge active). Rien
+# n'est codé en dur : le workflow doit tenir sur une instance auto-hébergée. Gère les deux formes
+# d'URL (https://hote/groupe/projet et git@hote:groupe/projet).
 gl_host() {
   local url racine defaut="gitlab.com"
-  # Le repli suit la FORGE ACTIVE et non le remote : tant que `origin` pointe encore sur GitLab
-  # (bascule = lot 8 de #335), un run en MAESTRO_FORGE=github doit quand même fabriquer des URL
-  # github.com. Le remote reste prioritaire quand il est lisible et cohérent.
+  # Le repli suit la FORGE ACTIVE et non le remote. Depuis la bascule (#343) les deux concordent —
+  # `origin` pointe sur GitHub, la forge par défaut est GitHub — mais la dissociation reste utile
+  # en sens inverse : relire l'archive GitLab (MAESTRO_FORGE=gitlab) depuis un clone dont `origin`
+  # pointe sur GitHub doit fabriquer des URL gitlab.com. Le remote reste prioritaire quand il est
+  # lisible et cohérent avec la forge active.
   gl_vers_github 2>/dev/null && defaut="github.com"
   racine="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   url="$(git -C "$racine" remote get-url origin 2>/dev/null)" || { printf '%s\n' "$defaut"; return 0; }
@@ -4578,7 +4594,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     branch-prefix)  gl_branch_prefix "$@" ;;
     *)
       echo "usage: bash scripts/gitlab/lib.sh <sous-commande> [args]" >&2
-      echo "  Forge active : MAESTRO_FORGE=gitlab|github (défaut gitlab ; dépôt GitHub = MAESTRO_GITHUB_REPO)" >&2
+      echo "  Forge active : MAESTRO_FORGE=github|gitlab (défaut github ; dépôt GitHub = MAESTRO_GITHUB_REPO)" >&2
       echo "    forge                          (la forge active — refuse une valeur inconnue au lieu de la deviner)" >&2
       echo "    forge-nom | forge-cli          (« GitLab »/« GitHub » et « glab »/« gh », pour les MESSAGES des appelants)" >&2
       echo "  require | current-user | workitem-gid <iid>" >&2

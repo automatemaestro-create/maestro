@@ -86,14 +86,18 @@ bash scripts/setup.sh
 ```
 
 [`scripts/setup.sh`](./scripts/setup.sh) est la **source unique** du parcours de mise en route. Il
-installe les **prérequis** manquants (Python 3.11+, Node.js 20+, git, [`glab`](https://gitlab.com/gitlab-org/cli) —
-via winget / brew / apt), crée le **`.venv`** et y installe le paquet en éditable (`pip install -e ".[dev]"`),
-copie **`.env.example` vers `.env`**, active le **hook git** `commit-msg`, installe les dépendances
-**npm de `apps/web`**, complète **`.claude/settings.local.json`** (profil navigateur + serveurs MCP du
-dépôt) et monte le **runner CI de cette machine** (Docker + [`setup-runner.sh`](./scripts/gitlab/setup-runner.sh)).
-Ce runner-là est le **secours** : la CI de l'équipe est servie par un **runner partagé** monté une
-fois sur une machine qui reste allumée (`setup-runner.sh --partage`) — sans aucun runner en ligne,
-les pipelines de MR restent `pending` ([docs/10 §8.1](./docs/10-workflow-git.md)).
+installe les **prérequis** manquants (Python 3.11+, Node.js 20+, git, [`gh`](https://github.com/cli/cli)
+et [`glab`](https://gitlab.com/gitlab-org/cli) — via winget / brew / apt), crée le **`.venv`** et y
+installe le paquet en éditable (`pip install -e ".[dev]"`), copie **`.env.example` vers `.env`**,
+active le **hook git** `commit-msg`, installe les dépendances **npm de `apps/web`**, complète
+**`.claude/settings.local.json`** (profil navigateur + serveurs MCP du dépôt) et monte le **runner CI
+de cette machine** (Docker + [`setup-runner.sh`](./scripts/gitlab/setup-runner.sh)).
+
+`gh` est celui dont dépend le workflow de tickets : depuis la bascule du **2026-08-17** (#343), les
+tickets, les Pull Requests et la CI vivent sur
+[GitHub](https://github.com/automatemaestro-create/maestro). `glab` n'est plus là que pour relire
+l'**archive GitLab**, gelée en lecture seule ([docs/27 §11](./docs/27-decision-gitlab-vers-github.md)) —
+et l'outillage de runner GitLab part avec #344.
 
 Il est **idempotent** (relancé sur une machine prête, tout ressort en `DÉJÀ FAIT`) et **non
 destructif** : un `.env` existant n'est **jamais** écrasé, et `settings.local.json` est **fusionné

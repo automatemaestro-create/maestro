@@ -1,11 +1,25 @@
 # 27 — Migration GitLab → GitHub : note de décision
 
+> ## ⚠ Verdict renversé — la migration a eu lieu
+>
+> **Cette note recommandait de NE PAS migrer les tickets (§7). L'utilisateur a tranché dans
+> l'autre sens le 2026-08-14**, et le chantier #335 l'a exécutée : les tickets vivent sur
+> **GitHub** ([`automatemaestro-create/maestro`](https://github.com/automatemaestro-create/maestro)),
+> et le projet GitLab est **archivé en lecture seule** depuis le **2026-08-17** (#343).
+>
+> **Ce qui reste valable ici, ce sont les MESURES** — coût CI, volume de time tracking, nombre
+> d'invocations `glab`, contrainte de numérotation : elles ont borné le chantier et sont
+> reprises telles quelles par #335. **Ce qui est périmé, ce sont les conclusions** : §7
+> (« non à la migration ») et la « prochaine étape recommandée » qui en découle.
+>
+> Ne pas relire §7 comme une consigne. Pour l'état d'aujourd'hui : **§11, le rôle d'archive**.
+
 > Ticket #331. Décision datée du **2026-08-14**, sur `origin/main` à `1b30bb1`.
 > Suite de #332 (miroir + CI Actions en double), qui a mesuré la traduction des jobs et laissé
 > **trois questions ouvertes** — toutes tranchées ici, §2 et §3.
 >
-> **Verdict : non à la migration des tickets. Oui à instruire le basculement de la CI seule**,
-> qui est une autre question, plus petite, et qui penche nettement (§7).
+> **Verdict d'alors : non à la migration des tickets. Oui à instruire le basculement de la CI
+> seule**, qui est une autre question, plus petite, et qui penche nettement (§7).
 
 ## 1. La question, et pourquoi elle se découpe
 
@@ -303,3 +317,68 @@ Elle a produit ce qu'on lui demandait (les mesures de #332 et de cette note) et 
 inattendu qui valait le détour : les 16 tests d'outillage que la CI GitLab n'a jamais joués, traités
 depuis par #333. **Restreindre ses déclencheurs ou l'éteindre est à décider maintenant**, que la
 migration se fasse ou non — et c'est un geste réversible dans les deux sens.
+
+---
+
+## 11. L'archive GitLab — ce qu'on y trouve encore, ce qu'on n'y trouve plus
+
+> Écrit à la bascule (#343, lot 8 de #335), le **2026-08-17**. C'est la section à lire pour savoir
+> où chercher quelque chose d'avant la migration.
+
+Le projet [`maestro-group4345327/maestro`](https://gitlab.com/maestro-group4345327/maestro) est
+**archivé** : lecture seule, au sens de GitLab — on peut tout consulter, rien écrire. Ni ticket, ni
+commentaire, ni MR, ni pipeline. Ce n'est pas un réglage de permissions qu'on pourrait contourner
+avec les bons droits : le projet entier refuse les écritures.
+
+### Ce qu'on y trouve encore — et nulle part ailleurs
+
+| Ce qui reste sur GitLab | Volume | Pourquoi ça n'a pas suivi |
+|---|---|---|
+| **Les Merge Requests**, avec leurs diffs, fils de discussion, approbations et verdicts de pipeline | **281** (280 mergées) | Rejouer une MR demande sa branche d'origine, supprimée au merge (squash). Sans elle, une PR GitHub n'aurait ni diff ni contexte — on aurait recréé des coquilles vides (§3 du parent #335) |
+| **Le time tracking natif** — `/spend`, relevés horodatés, totaux par ticket | **629 h** sur **273** tickets | GitHub n'a **aucun** équivalent natif (§5). L'historique a été **importé** sous forme maison (commentaire `maestro:suivi:v1`), mais les relevés natifs, eux, restent ici |
+| **Les dates de début et d'échéance** natives | **273** tickets | Même raison : importées en commentaire, l'objet natif reste ici |
+| **L'historique des pipelines GitLab CI** et leurs traces de jobs | ~3 ans de runs | Non transférable : les logs appartiennent à l'instance |
+| **Les notes système** — « added ~label », « mentioned in issue #328 », changements d'assigné | ~7 300 | Journal d'activité de l'outil qu'on quitte, délibérément non repris (§ « ce qui n'est pas rejoué » de `scripts/migration/import-github.sh`). Les **156 commentaires humains**, eux, ont tous suivi |
+
+### Ce qu'on n'y trouve plus
+
+- **Le backlog vivant.** Les tickets sont sur GitHub, plage **`#1` → `#356`** préservée au numéro
+  près — un `Refs #123` de l'historique git y pointe vers le bon objet. Les 4 iid supprimés côté
+  GitLab (19, 20, 201, 241) y sont des **bouche-trous** fermés, étiquetés `import::bouche-trou`.
+  Les tickets GitLab correspondants existent toujours, mais **ils ne bougeront plus** : c'est la
+  copie GitHub qui est à jour.
+- **La CI.** GitHub Actions est en autorité depuis #338 et conditionne le merge. `.gitlab-ci.yml`
+  et les 1 146 lignes d'outillage de runner partent avec #344.
+- **Le miroir.** Il poussait GitLab → GitHub ; il a été arrêté **avant** la bascule d'`origin`,
+  sans quoi il aurait continué d'écraser des branches sur le dépôt devenu source de vérité.
+- **Le workflow.** `MAESTRO_FORGE` vaut **`github`** sans qu'on la pose.
+
+### Comment on relit l'archive — et pourquoi pas avec `lib.sh`
+
+Par l'**UI web** de GitLab, ou en ligne de commande avec un `--repo` **explicite** :
+
+```bash
+glab mr list   --repo maestro-group4345327/maestro
+glab issue view 218 --repo maestro-group4345327/maestro
+```
+
+Le `--repo` est **obligatoire** : `glab` déduit normalement le projet des remotes du dépôt, et
+`origin` pointe désormais sur github.com — sans lui, il répond « None of the git remotes configured
+for this repository point to a known GitLab host ».
+
+C'est aussi pourquoi `MAESTRO_FORGE=gitlab bash scripts/gitlab/lib.sh <verbe>` **ne relit pas
+l'archive**, contrairement à ce qu'on pourrait attendre du commutateur : ses verbes passent par ces
+mêmes sous-commandes, sans `--repo`. Le rendre capable de lire l'archive demanderait de propager ce
+drapeau dans une douzaine de verbes dont la moitié sont des **écritures** — refusées de toute façon
+par un projet archivé — et que **#344 supprime**. On ne l'a donc pas fait : le commutateur `gitlab`
+ne sert plus qu'aux **suites de tests**, qui montent un `glab` factice dans un dépôt jetable où
+aucun remote réel n'intervient.
+
+### Où regarde-t-on, en pratique
+
+| Question | Où |
+|---|---|
+| « Comment cette fonctionnalité a-t-elle été revue ? » (avant le 2026-08-17) | GitLab, la MR |
+| « Combien de temps a coûté #218 ? » | GitHub — commentaire `maestro:suivi:v1` du ticket. GitLab pour le relevé natif d'origine |
+| « De quoi parle #123 ? » | GitHub, `#123` |
+| N'importe quoi après le 2026-08-17 | GitHub, toujours |
