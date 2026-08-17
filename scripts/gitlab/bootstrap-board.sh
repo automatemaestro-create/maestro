@@ -38,6 +38,16 @@ case "${1:-}" in
   *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
 esac
 
+# Script propre à GITLAB, et qui le dit (#341). `bootstrap.sh` ne l'appelle que sur le chemin GitLab,
+# mais il est aussi rejouable seul : sans ce refus, un appel direct sous MAESTRO_FORGE=github irait
+# reconfigurer le board du dépôt GITLAB en croyant provisionner GitHub. Refuser coûte trois lignes ;
+# le contraire coûte un board remanié sur le mauvais projet, sans qu'aucun message ne le dise.
+if [ "$(gl_forge)" = github ]; then
+  echo "bootstrap-board.sh : sans objet sur GitHub (pas de board GitLab ; Projects v2 non utilisé)." >&2
+  echo "  Le provisionnement GitHub se limite aux labels : MAESTRO_FORGE=github bash scripts/gitlab/bootstrap.sh" >&2
+  exit 3
+fi
+
 gl_require_glab || exit 1
 
 # Les colonnes, dans l'ordre du flux. La position d'une liste = son rang ici.

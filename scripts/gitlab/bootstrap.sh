@@ -1,21 +1,35 @@
 #!/usr/bin/env bash
-# Prépare le projet GitLab pour le workflow décrit dans docs/10-workflow-git.md.
+# Prépare le dépôt du projet pour le workflow décrit dans docs/10-workflow-git.md.
 # Idempotent : recrée le schéma de labels réel du projet (agent::/prio::/workflow::/type::)
-# s'il manque, sans toucher à ce qui existe déjà. À exécuter après `glab auth login`,
-# depuis la racine du dépôt (ou sur un nouveau projet qui doit reproduire ce schéma).
+# s'il manque, sans toucher à ce qui existe déjà. À exécuter après `glab auth login` (ou
+# `gh auth login`), depuis la racine du dépôt (ou sur un nouveau projet qui doit reproduire ce
+# schéma).
+#
+# LES DEUX FORGES (#341, chantier #335) — `MAESTRO_FORGE=github bash scripts/gitlab/bootstrap.sh`
+# provisionne le dépôt GitHub. Ce que le commutateur couvre, et ce qu'il ne couvre pas :
+#
+#   • LES LABELS, oui : ce sont les 19 mêmes noms des deux côtés, et c'est la seule partie dont
+#     l'outillage dépend vraiment — sans `workflow::*`, `lib.sh set-workflow` refuse de poser quoi
+#     que ce soit, donc /ticket-start ne démarre plus rien.
+#   • LE BOARD KANBAN, non : c'est une notion GitLab, et le projet n'utilise pas Projects v2 (le
+#     suivi maison du lot 4 a remplacé le seul usage qu'on en aurait eu).
+#   • LES GARDE-FOUS DE MERGE, non : leur pendant GitHub est la protection de branche, qui a son
+#     propre script (`scripts/github/protect-main.sh`, #338) parce qu'elle n'est PAS posée
+#     aujourd'hui — la protection de branche n'existe pas sur un dépôt privé d'un compte Free
+#     (docs/10 §8.8, décision du 2026-08-14). Reproduire ici un PUT qui échouerait à chaque fois
+#     n'apprendrait rien à personne ; nommer le script qui explique pourquoi, si.
 set -euo pipefail
 
-if ! command -v glab >/dev/null 2>&1; then
-  echo "glab n'est pas installé. Voir https://gitlab.com/gitlab-org/cli" >&2
-  exit 1
-fi
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gitlab/lib.sh
+. "$here/lib.sh"
 
-if ! glab auth status >/dev/null 2>&1; then
-  echo "Non authentifié. Lancer d'abord: glab auth login" >&2
-  exit 1
-fi
+FORGE="$(gl_forge)" || exit 1
+gl_require_glab || exit 1
+echo "Forge « $FORGE » — dépôt $(gl_depot_courant)"
+echo
 
-existing_labels="$(glab label list --output json 2>/dev/null | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || true)"
+existing_labels="$(gl_labels 2>/dev/null || true)"
 
 create_label() {
   local name="$1" color="$2" description="$3"
@@ -23,7 +37,14 @@ create_label() {
     echo "label déjà présent, on saute: $name"
     return
   fi
-  glab label create --name "$name" --color "$color" --description "$description"
+  if [ "$FORGE" = github ]; then
+    # `gh label create` attend la couleur SANS dièse — le passer tel quel fait échouer l'appel avec
+    # un « invalid color ». Les couleurs ci-dessous gardent leur `#` : c'est la forme qu'attend glab,
+    # et une seule table de couleurs vaut mieux que deux qui divergeront.
+    gh label create "$name" --repo "$GL_GH_REPO" --color "${color#\#}" --description "$description"
+  else
+    glab label create --name "$name" --color "$color" --description "$description"
+  fi
 }
 
 # type:: — nature du ticket, détermine le préfixe de branche (docs/10-workflow-git.md §1)
@@ -76,7 +97,11 @@ echo "Labels prêts."
 # unique du provisionnement. Il est à part parce qu'il parle à une autre API que les labels (boards
 # REST) et qu'on veut pouvoir le rejouer seul après un remaniement du board.
 echo
-bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bootstrap-board.sh"
+if [ "$FORGE" = github ]; then
+  echo "Board Kanban : sans objet sur GitHub (pas de board GitLab ; Projects v2 non utilisé) — étape sautée."
+else
+  bash "$here/bootstrap-board.sh"
+fi
 echo
 
 # Réglages projet recommandés (best-effort : selon le tier GitLab, certains champs
@@ -93,16 +118,32 @@ echo
 #     `ci_quota_exceeded`. Contrepartie : le runner local doit être en ligne, sinon les jobs
 #     restent `pending` (et le merge, qui exige un pipeline vert, est bloqué).
 # PUT idempotent : ré-exécution sans effet ni erreur.
-project_path="$(glab repo view --output json 2>/dev/null | grep -o '"path_with_namespace":"[^"]*"' | cut -d'"' -f4 || true)"
-if [ -n "$project_path" ]; then
-  glab api "projects/$(printf '%s' "$project_path" | sed 's/\//%2F/g')" \
-    -X PUT \
-    -F remove_source_branch_after_merge=true \
-    -F squash_option=default_on \
-    -F only_allow_merge_if_pipeline_succeeds=true \
-    -F allow_merge_on_skipped_pipeline=false \
-    -F shared_runners_enabled=false \
-    >/dev/null 2>&1 || echo "Réglages projet non appliqués (droits insuffisants ou champ non supporté) — à faire manuellement dans Settings > Merge requests / CI-CD > Runners."
+#
+# Côté GITHUB ces cinq champs n'ont pas de pendant qu'on puisse poser ici : la protection de branche
+# a son script (et sa décision, docs/10 §8.8), et `delete_branch_on_merge` demande un droit
+# d'administration du dépôt que le jeton du projet n'a pas (#336). On NOMME donc le reste à faire au
+# lieu de l'appliquer à moitié — un provisionnement qui échoue en silence est ce qui a fait croire
+# pendant des mois que le board était configuré (#207).
+if [ "$FORGE" = github ]; then
+  cat <<'GITHUB'
+Réglages du dépôt (GitHub) — hors de portée de ce script, et c'est délibéré :
+  · protection de branche sur main  → bash scripts/github/protect-main.sh   (écrit, non joué :
+    la protection n'existe pas sur un dépôt privé d'un compte Free — docs/10 §8.8)
+  · delete_branch_on_merge          → réglage du dépôt, demande un jeton à droit d'administration
+Le diagnostic de ces deux points est dans : MAESTRO_FORGE=github bash scripts/gitlab/doctor.sh
+GITHUB
+else
+  project_path="$(glab repo view --output json 2>/dev/null | grep -o '"path_with_namespace":"[^"]*"' | cut -d'"' -f4 || true)"
+  if [ -n "$project_path" ]; then
+    glab api "projects/$(printf '%s' "$project_path" | sed 's/\//%2F/g')" \
+      -X PUT \
+      -F remove_source_branch_after_merge=true \
+      -F squash_option=default_on \
+      -F only_allow_merge_if_pipeline_succeeds=true \
+      -F allow_merge_on_skipped_pipeline=false \
+      -F shared_runners_enabled=false \
+      >/dev/null 2>&1 || echo "Réglages projet non appliqués (droits insuffisants ou champ non supporté) — à faire manuellement dans Settings > Merge requests / CI-CD > Runners."
+  fi
 fi
 
 echo "Bootstrap terminé."

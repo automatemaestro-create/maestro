@@ -2144,13 +2144,22 @@ def test_le_suivi_ne_boucle_pas_sur_un_run_qui_ne_tourne_plus(depot: Depot) -> N
     assert "rafraîchi toutes les 30 s" in r.stdout
 
 
-def test_sans_gitlab_rien_n_est_interroge(depot: Depot) -> None:
-    """La promesse « hors ligne » se vérifie sur les appels réellement émis, pas sur le message."""
+@pytest.mark.parametrize("option", ["--no-forge", "--no-gitlab"])
+def test_sans_forge_rien_n_est_interroge(depot: Depot, option: str) -> None:
+    """La promesse « hors ligne » se vérifie sur les appels réellement émis, pas sur le message.
+
+    Les DEUX orthographes sont jouées (#341). `--no-forge` est le nom depuis que la forge peut être
+    GitHub ; `--no-gitlab` est l'alias historique, gardé parce que l'option a un an, qu'elle se tape
+    à la main et qu'elle est documentée dans `docs/10` comme dans `/orchestrate`. Un alias que rien
+    n'exerce est un alias qu'un remaniement supprime sans s'en apercevoir — et la panne serait
+    silencieuse dans le pire sens : l'option inconnue fait sortir `status.sh` en 2, donc `--watch`
+    d'un run en cours s'arrêterait net.
+    """
     depot.ticket(131, "Ticket en cours", statut="En cours")
     _run_dir(depot, "20260729-170000", [(1, 131, "-", "moyenne")], resume=[], sessions=(131,))
-    r = depot.lance("status.sh", "--no-gitlab")
+    r = depot.lance("status.sh", option)
     assert r.returncode == 0, r.stderr
-    assert "non interrogé (--no-gitlab)" in r.stdout
+    assert "non interrogé (--no-forge)" in r.stdout
     assert "En cours — #131" in r.stdout, "tout le reste est lu en local"
     assert not (depot.fixtures / "glab.log").exists(), "pas même un « glab auth status »"
 
