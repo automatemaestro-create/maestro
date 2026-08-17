@@ -1,10 +1,10 @@
 ---
-description: Crée un ticket GitLab bien formé (labels type::/agent::/prio:: + corps de template, état « À faire »)
+description: Crée un ticket bien formé (labels type::/agent::/prio:: + corps de template, état « À faire »)
 argument-hint: "<type: feature|bug|doc|infra> <titre>  (le reste peut être précisé en dialogue)"
-allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*), Read
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Read
 ---
 
-Tu vas créer un **nouveau ticket** GitLab bien formé selon les règles de Maestro (résumées
+Tu vas créer un **nouveau ticket** bien formé selon les règles de Maestro (résumées
 ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`, non
 chargée automatiquement, à n'ouvrir qu'en cas de doute). C'est le pendant amont de `/ticket-start` :
 cette commande **crée** le ticket (état « À faire », posé par le label `workflow::a-faire`) mais
@@ -13,7 +13,9 @@ cette commande **crée** le ticket (état « À faire », posé par le label `wo
 lieu d'inventer.
 
 1. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Si ça échoue, arrête-toi et
-   demande à l'utilisateur de lancer `glab auth login`.
+   relaie son message : il nomme déjà la commande d'authentification de la **forge active**
+   (`gh auth login` sur GitHub, `glab auth login` tant que le dépôt est sur GitLab). Ne devine pas
+   l'outil — `bash scripts/gitlab/lib.sh forge-cli` le dit en un mot.
 
 2. Détermine le **type** du ticket depuis `$ARGUMENTS` (`feature`, `bug`, `doc` ou `infra`). S'il
    n'est pas explicite, déduis-le du titre/de l'intention et **confirme-le** avec l'utilisateur.
@@ -55,7 +57,9 @@ lieu d'inventer.
      parent — `bash scripts/gitlab/lib.sh issue-link <iid-parent> <iid-sous-ticket>` — et termine
      en remplissant la checklist du parent (`- [ ] #<iid> — <titre>`, ou
      `- [ ] #<iid> — <titre> (parallèle)`, dans l'**ordre de réalisation**, lot tests en dernier)
-     via `glab issue update <iid-parent> --description "$(cat <fichier>)"`.
+     via `bash scripts/gitlab/lib.sh set-description <iid-parent> <fichier>` — jamais un
+     `--description "$(cat …)"`, que la couche permissions refuse (substitution `$(…)`) et qui
+     n'existe pas des deux côtés.
 
    Si le besoin tient en une session, continue simplement : **ticket unique**, même s'il est
    multi-facettes — matérialise alors les facettes par une **checklist interne** dans la
@@ -63,8 +67,10 @@ lieu d'inventer.
 
 5. Charge le squelette de description depuis le template correspondant et lis-le :
    `feature`→`.gitlab/issue_templates/Feature.md`, `bug`→`Bug.md`, `doc`→`Doc.md`,
-   `infra`→`Infra.md`. **Retire la dernière ligne `/label ~"type::…"`** du template (le label sera
-   posé via `--label` à la création ; la quick action n'est pas exécutée par l'API). Remplis les
+   `infra`→`Infra.md`. Ces gabarits se lisent comme des **fichiers** — leur chemin ne dépend
+   d'aucune forge, et leur éventuel déménagement vers `.github/` appartient au retrait de
+   l'outillage GitLab (#344). **Retire la dernière ligne `/label ~"type::…"`** du template (le label
+   sera posé via `--label` à la création ; la quick action n'est pas exécutée par l'API). Remplis les
    sections que tu peux à partir de ce que l'utilisateur a donné (contexte, objectif, critères
    d'acceptation). Ne fabrique pas de critères d'acceptation : si l'utilisateur ne les a pas
    fournis, laisse les cases `- [ ]` vides ou demande-les.
@@ -91,16 +97,22 @@ lieu d'inventer.
    choix. Si le helper ne retourne rien (aucun milestone actif non soldé), **omets** simplement
    l'option — ne bloque pas la création pour ça.
 
-9. Crée le ticket (le corps multi-lignes passe par un fichier temporaire pour éviter les soucis de
-   quoting) :
+9. Crée le ticket. Le corps multi-lignes passe **par un fichier**, jamais sur la ligne de commande :
+   la couche permissions découpe un appel sur ses sauts de ligne et ne matche aucune substitution
+   `$(…)`, si bien qu'un `--body "$(cat …)"` serait refusé alors même que `gh issue create` est
+   autorisé (docs/10 §11.7). C'est `--body-file` qui porte le corps :
    ```
-   glab issue create \
+   gh issue create \
      --title "<titre>" \
      --label "type::<type>,agent::<rôle>,prio::<niveau>,workflow::a-faire" \
      --milestone "<milestone-de-phase>" \
-     --description "$(cat <fichier-de-corps>)" \
-     --yes
+     --body-file <fichier-de-corps>
    ```
+   ⚠ Tant que le dépôt n'est pas basculé (#343), c'est le CLI de la **forge active** qui crée le
+   ticket : vérifie-la (`bash scripts/gitlab/lib.sh forge-cli`) et, si elle rend `glab`, le geste
+   équivalent est `glab issue create --title … --label … --milestone … --description "$(cat …)" --yes`.
+   Créer le ticket sur la mauvaise forge est le seul geste de cette commande qui échoue **en
+   silence** — il réussit, ailleurs.
    Le `workflow::a-faire` n'est pas décoratif et **ne s'ajoute pas après coup** : le cycle de vie
    étant porté par des labels (docs/10 §3), plus aucun défaut ne le pose à la création — un ticket
    créé sans lui n'a **aucun** état, ce que `doctor.sh` signale comme une dérive. Le poser dans le

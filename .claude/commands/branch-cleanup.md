@@ -1,27 +1,30 @@
 ---
 description: Nettoie les branches de tickets déjà mergées et revient sur main à jour
-allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 ---
 
 Nettoie les branches **locales** de tickets déjà mergés, **ramasse les worktrees devenus inutiles**
 et remet `main` à jour. Ne supprime **jamais** une branche dont le statut de merge n'est pas
-confirmé par GitLab (garde-fou détaillé dans `docs/10-workflow-git.md` §6, non chargé
+confirmé par la forge (garde-fou détaillé dans `docs/10-workflow-git.md` §6, non chargé
 automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuffisante).
 
 > **La boucle est déjà écrite en shell** — `lib.sh cleanup-merged` (étape 4), dont l'en-tête dit
 > qu'il est « le pendant non-interactif de `/branch-cleanup` », même garde-fou compris. Ne la
-> réimplémente pas ici : un `glab mr view <branche> --output json` par branche réinjecte ~3 500
-> octets pour en tirer un mot, soit **~43 000 tokens** sur ce dépôt à chaque invocation (#309,
-> audit #304 §4.1). Les autres étapes ne font que ce que le helper ne fait **pas** : basculer sur
-> `main`, supprimer la branche **distante** et poser le cycle de vie.
+> réimplémente pas ici : un `gh pr view <branche> --json …` par branche réinjecte des milliers
+> d'octets pour en tirer un mot — la version GitLab de cette boucle coûtait **~43 000 tokens** sur
+> ce dépôt à chaque invocation (#309, audit #304 §4.1). Les autres étapes ne font que ce que le
+> helper ne fait **pas** : basculer sur `main`, supprimer la branche **distante** et poser le cycle
+> de vie.
 
-> Au merge, GitLab supprime déjà la branche **distante** (case « Delete source branch »,
-> pré-cochée) et **ferme** le ticket via `Closes #`. Mais il ne pose plus son état : depuis que le
-> cycle de vie est porté par les **labels `workflow::*`** (docs/10 §3), plus rien ne bascule un
-> ticket sur « Terminé » à sa fermeture. Cette commande couvre donc ta copie **locale**, plus ce
-> que GitLab ne fait pas.
+> Au merge, la forge supprime déjà la branche **distante** (« Delete source branch » pré-cochée sur
+> GitLab, `delete_branch_on_merge` sur GitHub — `lib.sh merge-settings` rend le réglage des deux
+> côtés) et **ferme** le ticket via `Closes #`. Mais elle ne pose pas son état : le cycle de vie
+> étant porté par les **labels `workflow::*`** (docs/10 §3), plus rien ne bascule un ticket sur
+> « Terminé » à sa fermeture. Cette commande couvre donc ta copie **locale**, plus ce que la forge
+> ne fait pas.
 
-1. `bash scripts/gitlab/lib.sh require` — arrête-toi si glab absent ou non authentifié.
+1. `bash scripts/gitlab/lib.sh require` — arrête-toi si le CLI de la forge est absent ou non
+   authentifié (son message nomme lequel).
 
 2. **Ramasse les worktrees soldés, avant toute suppression de branche** :
    ```
@@ -29,7 +32,7 @@ automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuff
    ```
    L'ordre n'est pas cosmétique : `git branch -D` **refuse** une branche empruntée par un worktree,
    donc sans ce passage les branches des worktrees soldés resteraient là indéfiniment. `gc` ne
-   retire que les worktrees dont `glab` confirme la MR mergée ou le ticket fermé, **jamais** celui
+   retire que les worktrees dont la forge confirme la PR mergée ou le ticket fermé, **jamais** celui
    de la session courante ni un worktree porteur de travail non sauvegardé — qu'il **signale** au
    lieu de le supprimer (docs/10 §9.2) : relaie ses alertes dans ton résumé, et `--check` d'abord
    si tu veux voir avant d'agir. Il ne supprime **aucune** branche : c'est l'étape 4. Il pose en
@@ -62,14 +65,17 @@ automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuff
    ```
    bash scripts/gitlab/lib.sh cleanup-merged
    ```
-   Le helper ne retient que les branches dont GitLab confirme la MR `merged` et les supprime par
+   Le helper ne retient que les branches dont la forge confirme la PR `merged` et les supprime par
    `git branch -D` — forcé, mais **sûr et nécessaire** ici : le merge est confirmé (garantie plus
    forte que l'ancêtre git) et le projet merge en **squash**, donc `-d` les refuserait à tort. Il
    vise le **clone principal** d'où qu'on l'appelle et **s'abstient en le disant** si l'arbre y est
    sale. Son bilan tient en quelques lignes :
    - `supprimée : <branche> (MR merged)` — partie ;
    - `⚠ conservée : <branche> (MR merged, …)` — mergée mais retenue par un worktree ou par git ;
-   - le décompte final, dont les branches laissées de côté (aucune MR, ou MR pas encore mergée).
+   - le décompte final, dont les branches laissées de côté (aucune PR, ou PR pas encore mergée).
+
+   (Le helper écrit « MR » dans ses lignes de bilan des deux côtés — c'est son vocabulaire normalisé,
+   pas un signe qu'il interroge GitLab.)
 
    Ces deux premières lignes sont les branches **mergées** : ce sont elles, et elles seules, que
    l'étape 6 traite. Leur iid est le nombre de leur nom (`<type>/<iid>-<slug>` ;
@@ -86,15 +92,17 @@ automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuff
 
 6. **Ce que le helper ne fait pas**, sur les seules branches mergées de l'étape 4 (s'il n'y en a
    aucune, passe au résumé) :
-   - **branche distante** — GitLab l'a normalement supprimée au merge ; celles qui restent (case
-     décochée) se voient d'un coup, `cleanup-merged` venant de rafraîchir les refs de suivi :
+   - **branche distante** — la forge l'a normalement supprimée au merge ; celles qui restent
+     (réglage décoché) se voient d'un coup, `cleanup-merged` venant de rafraîchir les refs de
+     suivi :
      ```
      git branch -r --list origin/<branche-1> origin/<branche-2>
      ```
      Supprime **celles qui s'affichent**, une par une : `git push origin --delete <branche>`. Si un
      `git push` reste bloqué sur une demande d'identifiants (Windows + Git Credential Manager),
-     relance-le en forçant `glab` :
-     `git -c credential.helper='!glab auth git-credential' push origin --delete <branche>`.
+     relance-le en forçant le CLI de la forge (`!gh auth git-credential`, ou
+     `!glab auth git-credential` sur GitLab) :
+     `git -c credential.helper='!gh auth git-credential' push origin --delete <branche>`.
    - **cycle de vie** — un seul appel, tous les iid à la suite :
      ```
      bash scripts/gitlab/lib.sh reconcile-workflow <iid-1> <iid-2>

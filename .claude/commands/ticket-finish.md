@@ -1,13 +1,13 @@
 ---
-description: Termine le travail sur le ticket courant (push + MR + état « En revue »)
+description: Termine le travail sur le ticket courant (push + PR + état « En revue »)
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
-allowed-tools: Bash(git:*), Bash(glab:*), Bash(bash:*)
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 ---
 
 Tu vas clôturer le cycle de développement de la branche courante selon les règles de Maestro
 (résumées ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`,
 non chargée automatiquement, à n'ouvrir qu'en cas de doute). Arrête-toi et demande confirmation
-avant toute action qui modifie l'état partagé (push, création/mise à jour de MR) si un point n'est
+avant toute action qui modifie l'état partagé (push, création/mise à jour de PR) si un point n'est
 pas clair.
 
 1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom
@@ -18,8 +18,8 @@ pas clair.
 
 3. **Garde-fou de clôture : cette session traite-t-elle bien ce ticket ?** À plusieurs, rien
    n'empêchait jusqu'ici un `/ticket-finish <iid>` lancé depuis la branche d'un *autre* ticket de
-   basculer ce ticket-là « En revue », d'y poser une MR et le temps d'un travail qui n'est pas le
-   sien. Ce contrôle vient **avant toute écriture** (commit, push, MR, état, temps) :
+   basculer ce ticket-là « En revue », d'y poser une PR et le temps d'un travail qui n'est pas le
+   sien. Ce contrôle vient **avant toute écriture** (commit, push, PR, état, temps) :
    ```
    bash scripts/gitlab/lib.sh close-guard <iid> || verdict=$?
    ```
@@ -30,10 +30,10 @@ pas clair.
      soit de clôturer *ce* ticket-là, soit de revenir sur la branche du ticket visé
      (`bash scripts/gitlab/lib.sh branch-for <iid>`).
    - `4` → **arrête-toi** : le ticket est assigné à **quelqu'un d'autre**. Nomme la personne : le
-     clôturer à sa place lui poserait une MR et un temps qu'elle n'a pas demandés.
+     clôturer à sa place lui poserait une PR et un temps qu'elle n'a pas demandés.
    - `5` → **arrête-toi** : la branche ne porte aucun iid (`main`, nom hors convention), donc la
      cohérence est invérifiable — et sur `main` il n'y a de toute façon rien à clôturer.
-   - `1` → verdict **partiel** (ticket illisible, GitLab injoignable) : le contrôle local est
+   - `1` → verdict **partiel** (ticket illisible, forge injoignable) : le contrôle local est
      passé, **signale-le** et poursuis.
    Un refus (`3`/`4`/`5`) n'est **franchissable que sur demande explicite** de l'utilisateur — par
    exemple la reprise assumée d'un ticket laissé en plan par quelqu'un qui a lâché le sujet. Dans
@@ -49,10 +49,10 @@ pas clair.
    - demande confirmation à l'utilisateur avant de committer.
    Le message passe par un **fichier** (écrit avec l'outil `Write`, dans ton scratchpad de session)
    puis `git commit -F <fichier>` — jamais `-m` sur plusieurs lignes ni `-m "$(…)"` : même refus
-   que pour la description de MR (#233).
+   que pour la description de PR (#233).
    Ne commite jamais silencieusement sans montrer ce qui va être committé.
 
-5. **Filet CI local** — avant de pousser, rejoue en local ce que le pipeline de la MR jouera. Ne
+5. **Filet CI local** — avant de pousser, rejoue en local ce que le pipeline de la PR jouera. Ne
    cherche pas toi-même quel outil s'applique : `scripts/ci/local.sh` est la **source unique** des
    contrôles locaux (#214, `docs/10-workflow-git.md` §8.4), il lit les jobs dans `.gitlab-ci.yml`
    et déduit du diff ce qui les concerne.
@@ -61,16 +61,16 @@ pas clair.
    ```
    Par défaut `pytest` ne joue que les **suites concernées par le diff**, sans seuil de couverture
    (verdict annoncé PARTIEL) : ~40 s au lieu de ~10 min. **Ne le passe pas en `--complet`** et
-   n'invente aucune autre recette — le verdict complet est celui du pipeline de la MR (#165), pas
+   n'invente aucune autre recette — le verdict complet est celui du pipeline de la PR (#165), pas
    le tien.
    **Best-effort, jamais bloquant** : un outil absent rend son job `IGNORÉ`, et un job rouge écrit
    son journal sous `.maestro/ci-local/<job>.log` (chemin relatif, cité par le script). Si l'échec
    vient de ton diff et se corrige en une passe, corrige-le et reprends à l'étape 4 ; sinon
-   **signale-le dans le résumé final** et poursuis la clôture — c'est la MR qui portera le verdict.
+   **signale-le dans le résumé final** et poursuis la clôture — c'est la PR qui portera le verdict.
 
 6. **Avant de pousser, regarde si la branche a pris du retard sur `origin/main`** — à plusieurs,
    `CLAUDE.md`, `docs/10-workflow-git.md` et `scripts/gitlab/lib.sh` sont touchés par presque tous
-   les tickets, et sans ce contrôle le conflit n'apparaît que dans l'UI GitLab, après coup :
+   les tickets, et sans ce contrôle le conflit n'apparaît que dans l'UI de la forge, après coup :
    ```
    bash scripts/gitlab/lib.sh behind-main || echo "verdict=$? (3=en retard, 4=+conflit probable)"
    ```
@@ -82,19 +82,23 @@ pas clair.
    garde-fous (`docs/10-workflow-git.md` §6). Selon le constat :
    - `0` → rien à dire, poursuis.
    - `3` → **signale-le** dans le résumé final (« n commits de retard, rebase serein possible »)
-     et poursuis la clôture : GitLab mergera sans difficulté.
+     et poursuis la clôture : la forge mergera sans difficulté.
    - `4` → **signale-le et propose le rebase à l'utilisateur** (`git fetch origin main && git
      rebase origin/main`), en nommant les fichiers concernés. La clôture **n'est pas bloquée** :
      s'il ne se prononce pas, pousse quand même et laisse la mention dans le résumé — c'est le
-     relecteur ou l'auteur qui tranchera, la MR affichant le conflit.
+     relecteur ou l'auteur qui tranchera, la PR affichant le conflit.
 
-7. **Assure le runner CI local en ligne** : les runners partagés étant
+7. **Assure le runner CI local en ligne — sur GitLab seulement.** Cette étape n'a d'objet que tant
+   que la CI GitLab fait foi : GitHub Actions fournit ses propres exécutants, il n'y a **rien à
+   allumer** de ce côté (l'outillage de runner part avec #344). Vérifie la forge active en cas de
+   doute (`bash scripts/gitlab/lib.sh forge-cli`) et **saute cette étape** si c'est `gh`.
+   Sur GitLab, les runners partagés étant
    désactivés (#135), le runner de projet local est l'unique cible ; s'il est hors ligne, le
    pipeline déclenché par le push resterait `pending` et bloquerait le merge (pipeline vert
    requis). Lance le helper idempotent — **son échec n'interrompt jamais la clôture**, il est
    seulement signalé (voir `docs/10-workflow-git.md` §8) :
    ```
-   bash scripts/gitlab/ensure-runner.sh || echo "⚠ runner local non démarré — clôture poursuivie, à surveiller sur la MR"
+   bash scripts/gitlab/ensure-runner.sh || echo "⚠ runner local non démarré — clôture poursuivie, à surveiller sur la PR"
    ```
    **Ramasse au passage les restes du pipeline précédent** (#166) : un runner tué en cours de job
    laisse ses conteneurs éphémères derrière lui, et personne ne les enlève. Même statut que
@@ -110,13 +114,15 @@ pas clair.
    Ne fais jamais de `--force` ici — si le push est rejeté, arrête-toi et explique pourquoi plutôt
    que de forcer.
    Si le push **reste bloqué** sur une demande d'identifiants (typique sous Windows avec Git
-   Credential Manager), relance-le en forçant `glab` comme credential helper :
-   `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!glab auth git-credential' push -u origin <nom-de-la-branche>`
+   Credential Manager), relance-le en forçant le CLI de la forge comme credential helper —
+   `gh` sur GitHub, `glab` tant que le dépôt est sur GitLab :
+   `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!gh auth git-credential' push -u origin <nom-de-la-branche>`
    (ce repli garde un **préfixe de variable d'environnement**, immatchable lui aussi — c'est le
    domaine de #235, pas de ce lot : s'il est refusé, signale-le au lieu d'inventer une variante).
 
-8. Évalue la **checklist de definition of done** de la MR (les quatre cases du template
-   `.gitlab/merge_request_templates/Default.md`) : pour chacune, détermine si tu peux la cocher
+8. Évalue la **checklist de definition of done** de la PR (les quatre cases du gabarit
+   `.gitlab/merge_request_templates/Default.md` — son pendant GitHub arrivera avec #344 ; les
+   quatre lignes sont de toute façon reproduites au point 9.2) : pour chacune, détermine si tu peux la cocher
    (`- [x]`) parce que tu l'as **effectivement vérifiée**, ou si elle reste vide (`- [ ]`). La
    checklist est un constat, pas un formulaire — et le merge reste une décision humaine.
    - **Conventions de branche/commit** : nom de branche au motif `<type>/<iid>-<slug>` et messages
@@ -128,29 +134,33 @@ pas clair.
    - **Documentation mise à jour si applicable** : même logique, d'après le diff.
    - **Pipeline CI verte (si configurée)** : ne coche que si le dernier pipeline est **réellement
      réussi** au moment de la vérification (`bash scripts/gitlab/lib.sh pipeline-latest <branche>`,
-     qui retrouve aussi le pipeline porté par la MR). En cours, échoué ou absent → laisse vide.
-     **Une case vide est le cas NORMAL ici** : la CI ne se déclenche qu'à partir de la MR (#165,
-     docs/10 §8), donc à la première clôture d'un ticket **aucun pipeline n'existe encore** à ce
-     stade — il naîtra de l'étape 8. Le relecteur verra le verdict sur la MR ; n'attends pas.
+     qui retrouve aussi le pipeline porté par la PR). En cours, échoué ou absent → laisse vide.
+     **Une case vide est le cas NORMAL ici** : la CI ne se déclenche qu'à partir de la PR (#165 sur
+     GitLab, `on: pull_request` sur GitHub — docs/10 §8), donc à la première clôture d'un ticket
+     **aucun pipeline n'existe encore** à ce stade — il naîtra de l'étape 9. Le relecteur verra le
+     verdict sur la PR ; n'attends pas.
 
-9. **Crée (ou mets à jour) la MR — la description passe toujours par un FICHIER.** Jamais de
+9. **Crée (ou mets à jour) la PR — la description passe toujours par un FICHIER.** Jamais de
    description sur la ligne de commande : elle fait par nature plusieurs lignes, la couche
    permissions découpe une commande sur ses sauts de ligne et la refuse, puis refuse aussi les deux
-   replis naturels (`--description "$(cat …)"`, `D="$(cat …)"; … "$D"`) — aucune règle ne peut
+   replis naturels (`--body "$(cat …)"`, `D="$(cat …)"; … "$D"`) — aucune règle ne peut
    matcher une **substitution de commande**. C'est ce qui a fait tomber 8 sessions autonomes sur 16
    (#233), et toujours ici, sur la **dernière action du ticket** : tout est commité, rien ne le
    déclare. Le fichier n'est pas un contournement, c'est la forme normale (#232).
 
-   1. **Une MR ouverte existe-t-elle déjà pour cette branche ?**
+   1. **Une PR ouverte existe-t-elle déjà pour cette branche ?**
       ```
       bash scripts/gitlab/lib.sh mr-iid
       ```
-      (sans argument : la branche courante ; code 1 + message si aucune MR ouverte).
+      (sans argument : la branche courante ; code 1 + message si aucune PR ouverte). Le verbe garde
+      son nom `mr-iid` des deux côtés — c'est le **contrat de `lib.sh`**, normalisé vers le
+      vocabulaire GitLab pour que ses appelants ne bougent pas (cf. son en-tête) : seul le mot
+      change dans les prompts, jamais le nom d'un verbe.
    2. **Prépare le fichier de description**, dans ton répertoire de scratchpad de session (ce n'est
       pas un livrable, il n'a rien à faire dans le worktree). **Écris-le avec l'outil `Write`** —
       pas avec `cat`/`echo`/un heredoc, qui rejoueraient exactement le problème que cette étape
       évite.
-      - **Aucune MR** : contenu neuf — `Closes #<iid>`, une ligne vide, puis la section
+      - **Aucune PR** : contenu neuf — `Closes #<iid>`, une ligne vide, puis la section
         `## Checklist` **telle qu'évaluée à l'étape 8** (chaque case en `[x]` ou `[ ]` selon le
         constat réel) :
         ```
@@ -162,34 +172,36 @@ pas clair.
         - [x] Documentation mise à jour si applicable
         - [ ] Pipeline CI verte (si configurée)
         ```
-      - **MR déjà ouverte** : pars de l'**existant**, la mise à jour remplaçant la description
+      - **PR déjà ouverte** : pars de l'**existant**, la mise à jour remplaçant la description
         entière. Relis-la **via le helper** — `bash scripts/gitlab/lib.sh get-mr-description <mr> >
         <fichier>` — puis édite le fichier de façon **idempotente** : modifie **uniquement** l'état
         des cases de la section `## Checklist` (jamais le reste, notamment le `Closes #<iid>`),
         coche celles vérifiées à l'étape 8, et **ne décoche jamais** une case déjà cochée (un
         humain a pu la cocher). Si la section `## Checklist` manque, ajoute-la en fin de
         description. Si rien ne change, passe directement au point 4. N'improvise **jamais** une
-        lecture du type `glab mr view --output json | python` : elle corrompt l'UTF-8 en mojibake
+        lecture du type `gh pr view --json body | python` : elle corrompt l'UTF-8 en mojibake
         (« â€” » au lieu de « — ») — voir #141.
    3. **Un seul appel, plat et court**, dans les deux cas :
       ```
       bash scripts/gitlab/lib.sh create-mr <iid> <fichier>
       ```
-      Le helper ouvre la MR en **Draft** vers `main` (`--remove-source-branch`), **titre lu depuis
-      le ticket**, description lue depuis le fichier, et imprime son URL. Il est **idempotent** :
-      si une MR ouverte existe déjà pour la branche, il met sa description à jour au lieu
-      d'échouer.
-   4. **Si la MR existait déjà et qu'elle est en Draft** : demande à l'utilisateur si le travail
-      est réellement terminé et prêt pour revue ; si oui, `glab mr update <mr> --ready`. Si elle
-      n'est **plus en Draft**, ne fais rien de plus sur la MR. Une MR **fraîchement créée** reste
-      en Draft : c'est voulu, le passage en « prête » est un geste explicite.
+      Le helper ouvre la PR en **Draft** vers `main`, **titre lu depuis le ticket**, description
+      lue depuis le fichier, et imprime son URL. Il est **idempotent** : si une PR ouverte existe
+      déjà pour la branche, il met sa description à jour au lieu d'échouer. La suppression de la
+      branche source au merge est un **réglage du dépôt** des deux côtés (`doctor.sh` le vérifie),
+      pas une option de cet appel.
+   4. **Si la PR existait déjà et qu'elle est en Draft** : demande à l'utilisateur si le travail
+      est réellement terminé et prêt pour revue ; si oui, `gh pr ready <numéro>` (sur GitLab :
+      `glab mr update <mr> --ready`). Si elle n'est **plus en Draft**, ne fais rien de plus sur la
+      PR. Une PR **fraîchement créée** reste en Draft : c'est voulu, le passage en « prête » est un
+      geste explicite.
 
-10. **Ne pose aucun relecteur sur la MR** (#196) — la désignation d'un relecteur est un **geste
+10. **Ne pose aucun relecteur sur la PR** (#196) — la désignation d'un relecteur est un **geste
    humain**, jamais automatique : n'appelle pas `lib.sh set-reviewer` et n'utilise pas
-   `glab mr update --reviewer`. Le helper reste disponible pour une pose explicite, sur demande.
-   La revue reste **best-effort** — l'approbation n'est pas obligatoire
-   (`approvals_before_merge=0`) et le merge reste une décision humaine ; la visibilité des MR en
-   attente est portée par la **file de revue** en tête de `/backlog` (la plus ancienne d'abord).
+   `gh pr edit --add-reviewer`. Le helper reste disponible pour une pose explicite, sur demande.
+   La revue reste **best-effort** — aucune approbation n'est exigée pour merger, et le merge reste
+   une décision humaine ; la visibilité des PR en attente est portée par la **file de revue** en
+   tête de `/backlog` (la plus ancienne d'abord).
 
 11. Fais passer l'**état** du ticket à « En revue » (le cycle de vie est porté par les labels
    `workflow::*` — voir `docs/10-workflow-git.md` §3) :
@@ -209,14 +221,16 @@ pas clair.
    - Sinon, **estime toi-même l'effort** d'après la **portée réelle du travail** de la branche
      (ampleur du diff, nombre et nature des commits, ce que tu as fait durant la session) — pas le
      temps calendaire écoulé, qui n'est qu'un plafond peu fidèle. Traduis-la en une durée au format
-     GitLab (`30m`, `1h`, `2h 30m`, `1d`…).
+     attendu par le helper (`30m`, `1h`, `2h 30m`, `1d`…), identique des deux côtés — sur GitHub
+     c'est le **suivi maison** de `lib.sh` qui l'enregistre, la forge n'ayant pas de temps passé
+     natif (docs/27 §5).
    - Logge-la directement, sans question :
      ```
      bash scripts/gitlab/lib.sh log-time <iid> "<durée estimée>" "Cycle de dev (start->finish)"
      ```
    - Indique dans le résumé final la durée estimée et loggée (transparence a posteriori).
 
-13. Termine par un résumé : lien de la MR, état (Draft/Ready), le **verdict du filet CI local**
+13. Termine par un résumé : lien de la PR, état (Draft/Ready), le **verdict du filet CI local**
    s'il n'était pas vert (étape 5 — quel job, et pourquoi tu as poussé quand même), le **retard
    éventuel sur `origin/main`** relevé à l'étape 6 (et le rebase proposé si un conflit est probable), les cases
    de la checklist cochées et celles restées vides
