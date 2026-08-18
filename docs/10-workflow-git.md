@@ -236,6 +236,38 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
   commande ne ferme un milestone. `doctor.sh` (§7) signale les milestones actifs entièrement
   soldés à fermer, ainsi que les tickets ouverts sans milestone.
 
+### 3.5 Socle Projects v2 — le champ Status qui remplacera les labels
+
+Le cycle de vie décrit en §3.1 est porté par six labels **parce que GitLab Free ne proposait rien
+d'autre** (#207). GitHub Projects v2 offre un champ **Status** natif, gratuit y compris en dépôt
+privé : le chantier **#358** en fait l'autorité unique et supprime les six labels. Ce paragraphe ne
+décrit que le **socle** (#359) ; le dispositif complet est documenté par le lot final #366.
+
+**Le projet et son champ.** `bash scripts/github/bootstrap-project.sh` monte le projet et pose son
+champ Status aux six valeurs du cycle de vie, dans l'ordre du flux, avec les couleurs et les
+descriptions des six labels d'aujourd'hui — le vocabulaire ne change pas en changeant de support.
+Idempotent, aucune écriture en `--check`, codes de retour alignés sur `protect-main.sh` (0 conforme
+ou posé, 3 non conforme, 1 pré-requis manquant). Le titre du projet (`Maestro`) est une **clé** : le
+script s'en sert pour se rejouer sans rien créer en double, et `lib.sh` s'en servira pour résoudre
+le projet — **aucun ID de projet, de champ ni d'option n'est figé dans le dépôt**, exactement comme
+aucun GID de label ne l'est aujourd'hui.
+
+**Le pré-requis, qui est un geste humain.** Le compte du projet s'authentifie par un jeton
+**fine-grained**, dont les permissions s'accordent une par une. Créer un projet exige
+« **Account permissions → Projects : Read and write** », que ni `repo` ni aucune permission de dépôt
+n'implique. Deux pièges valent d'être connus :
+
+- **« Repository permissions » porte aussi une entrée « Projects »**, qui ne gouverne que les
+  projets rattachés à un dépôt. Un projet Projects v2 appartient au **compte** — accorder la
+  mauvaise des deux laisse l'erreur strictement identique.
+- **La lecture passe déjà.** Lister les projets du compte répond normalement (liste vide) avec le
+  jeton actuel ; seule une **écriture** révèle le refus (`FORBIDDEN — Resource not accessible by
+  personal access token`). Un diagnostic qui se contenterait de lire conclurait donc à tort que tout
+  va bien, et c'est pourquoi le script tente une écriture réelle plutôt que de sonder.
+
+`gh auth status` n'imprime **aucun scope** pour un jeton fine-grained : la permission manquante est
+invisible en dehors de l'erreur ci-dessus. Le script l'explique en clair et nomme le geste.
+
 ---
 
 ## 4. Templates GitLab
