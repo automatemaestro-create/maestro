@@ -281,6 +281,17 @@ Deux pièges à connaître :
   invisible en dehors de l'erreur ci-dessus — là où un jeton classique ou OAuth affiche ses scopes
   et laisse voir `project` manquant d'un coup d'œil.
 
+**Le commutateur `MAESTRO_CYCLE` (#360).** `lib.sh` sait désormais lire et écrire ce champ, derrière
+`MAESTRO_CYCLE=labels|status`, **défaut `labels`** — sans la variable, tout ce que décrit le §3.1
+reste vrai au bit près. Avec `status`, les quatre verbes **unitaires** (`set-workflow`,
+`issue-owner`, `begin`, `liberer-ticket`) répondent contre le champ Status ; les lectures
+**d'ensemble** (`/backlog`, plan d'un run, `doctor.sh`) restent sur les labels jusqu'à #362 et
+**retardent** donc tant qu'on écrit ailleurs qu'elles ne lisent. C'est pourquoi le défaut ne bouge
+pas ici : la bascule est un ticket à part (#364). Deux détails à connaître avant de poser la
+variable — le Status vit sur l'**item de projet**, si bien qu'un ticket absent du projet n'a
+**aucun état** (l'écriture le refuse en le disant ; le peuplement est #361) ; et aucun label n'est
+touché en `status`, leur retrait étant #365. Détail complet et tests : #366.
+
 ---
 
 ## 4. Gabarits de tickets et de Pull Request

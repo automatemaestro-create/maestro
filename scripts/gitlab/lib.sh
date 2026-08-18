@@ -60,6 +60,58 @@
 #     branche GitLab, et leurs appelants avec eux.
 #
 # ================================================================================================
+# COMMUTATEUR DE CYCLE DE VIE — MAESTRO_CYCLE=labels|status, défaut « labels » (#360, chantier #358)
+# ================================================================================================
+# Ce fichier porte un TROISIÈME backend de cycle de vie, derrière un commutateur. Sans la variable,
+# rien ne change : les six labels `workflow::*`, l'exclusion mutuelle à notre charge, le workflow de
+# l'équipe au bit près. Avec `MAESTRO_CYCLE=status`, l'état d'un ticket se lit et s'écrit dans le
+# champ **Status** du projet GitHub Projects v2 monté par `scripts/github/bootstrap-project.sh`.
+# C'est le patron que #339 vient de valider sur la migration de forge, et c'est lui qui rend ce lot
+# purement additif — donc mergeable seul, là où réécrire d'un bloc casserait /ticket-start pour tout
+# le monde entre deux merges.
+#
+# POURQUOI UN CHAMP PLUTÔT QUE DES LABELS. Le retour aux labels de #207 n'était pas un choix : GitLab
+# Free ayant perdu le champ Status natif à la fin de l'essai Ultimate, ils étaient le seul mécanisme
+# disponible, et l'EXCLUSION MUTUELLE des six est donc restée à notre charge (cf. contrat ci-dessous).
+# Un champ à valeur unique rend cette classe de bug impossible par construction. Ce chantier ne défait
+# pas #207 : il le remplace par ce qui manquait alors.
+#
+# CE QU'IL DÉPLACE, ET QU'IL FAUT SAVOIR AVANT DE POSER LA VARIABLE. Le Status vit sur l'ITEM DE
+# PROJET, pas sur l'issue. Un ticket absent du projet n'a donc AUCUN état — l'équivalent exact du
+# « 0 label workflow:: » d'aujourd'hui, en plus silencieux. Les deux verbes de ce lot en tirent des
+# conclusions OPPOSÉES, et c'est délibéré :
+#   • en ÉCRITURE, `st_set_workflow` REFUSE en nommant la cause (rien à mettre à jour : la mutation
+#     `updateProjectV2ItemFieldValue` a besoin d'un item). Ajouter le ticket au passage serait faire
+#     le travail de #361 en silence, sur une écriture que personne n'a demandée ;
+#   • en LECTURE, `st_issue_owner` rend un statut VIDE, qui est déjà le contrat de « non posé » et
+#     ce que `gl_close_guard`/`gl_start_brief` savent lire. Une lecture qui échouerait ferait
+#     s'arrêter des appelants dont ce n'est pas le sujet.
+# Le peuplement est #361, sa détection #363.
+#
+# LE PÉRIMÈTRE EST L'UNITÉ — lire et écrire l'état d'UN ticket. Quatre verbes le font et quatre
+# seulement passent par le commutateur : `set-workflow`, `issue-owner`, `begin` et `liberer-ticket`
+# (les deux derniers écrivent l'état d'un ticket, l'un pour le prendre, l'autre pour le rendre).
+# Les lectures d'ENSEMBLE — `backlog-table`, `milestone-issues`, `reconcile-workflow`,
+# `reconcile-en-cours`, `doctor.sh`, `queue.sh` — restent sur les labels quelle que soit la valeur de
+# `MAESTRO_CYCLE` : elles sont le lot #362, et leur coût (pagination des items du projet contre un
+# filtre par label en un appel REST) est le vrai risque technique du chantier, à mesurer là-bas.
+# CONSÉQUENCE À CONNAÎTRE : avec `MAESTRO_CYCLE=status`, `/backlog` et le plan d'un run lisent des
+# labels que plus personne ne met à jour, donc ils RETARDENT. Ce n'est pas un oubli, c'est la raison
+# pour laquelle le défaut reste `labels` et pour laquelle la bascule (#364) vient APRÈS #362.
+#
+# AUCUN ID EN DUR, JAMAIS — c'est déjà la règle du dépôt pour les labels (`gl_workflow_gids` dérive
+# les six GID par nom à chaque appel) et elle vaut à l'identique ici : l'ID du projet, celui du champ
+# Status et ceux de ses six options se dérivent PAR NOM, en une lecture (`st_contexte`). Le projet se
+# désigne par son TITRE (`MAESTRO_PROJECT_TITRE`, défaut « Maestro » — la même clé que
+# bootstrap-project.sh), les options par leur LIBELLÉ. Un ID de projet figé dans un script est un
+# clone qui ne démarre pas ; un `grep` du dépôt ne doit en trouver aucun.
+#
+# LE VOCABULAIRE NE BOUGE PAS. Les six options du champ portent EXACTEMENT les libellés que rend
+# `gl_workflow_label` (« À faire », « En cours », …), si bien que `gl_workflow_slug`/`gl_workflow_label`
+# continuent de faire toute la normalisation et que les 8 commandes `.claude/` qui appellent
+# `set-workflow` n'ont rien à changer. Le contrat de surface ci-dessous vaut pour les trois backends.
+#
+# ================================================================================================
 # CONTRAT DE SURFACE DU CYCLE DE VIE — à lire avant d'y toucher (ticket #209, chantier #207)
 # ================================================================================================
 # Le cycle de vie d'un ticket (À faire / En cours / En revue / Terminé / Abandonné / Doublon) est
@@ -171,6 +223,47 @@ GL_REPRISES_MAX="${MAESTRO_REPRISES_MAX:-2}"
 # GL_GQL_RETRY_DELAY seconde(s) de pause entre deux. Surchargeable.
 GL_GQL_RETRIES="${GL_GQL_RETRIES:-3}"
 GL_GQL_RETRY_DELAY="${GL_GQL_RETRY_DELAY:-1}"
+
+# Titre du projet GitHub Projects v2 qui porte le champ Status, quand MAESTRO_CYCLE=status. C'est
+# une CLÉ, pas un libellé d'affichage : c'est par elle que le projet se résout, ici comme dans
+# scripts/github/bootstrap-project.sh, et c'est ce qui évite d'avoir un numéro de projet mémorisé
+# quelque part. Même variable d'environnement des deux côtés — un seul nom pour un seul projet.
+GL_PROJET_TITRE="${MAESTRO_PROJECT_TITRE:-Maestro}"
+
+# --- Commutateur de cycle de vie ------------------------------------------------------------------
+# Voir l'en-tête du fichier. Deux fonctions, et une seule est appelée dans les corps de verbe.
+
+# gl_cycle -> imprime le backend de cycle de vie actif (« labels » | « status »), code 1 sur une
+# valeur inconnue.
+gl_cycle() {
+  local c="${MAESTRO_CYCLE:-labels}"
+  case "$c" in
+    labels|status) printf '%s\n' "$c" ;;
+    *)
+      echo "MAESTRO_CYCLE=« $c » inconnu — attendu : labels | status (défaut labels)." >&2
+      return 1 ;;
+  esac
+}
+
+# gl_vers_status -> « ce verbe doit-il déléguer au backend Projects v2 ? »
+#   0 = oui (déléguer)   1 = non (corps « labels »)   2 = REFUS : valeur inconnue.
+#
+# Le 2 n'est pas un détail, et c'est la leçon de gl_vers_github (#339) reprise telle quelle : une
+# valeur mal orthographiée (« statut ») ne doit pas retomber en silence sur les labels. L'appelant
+# croirait écrire le champ Status, verrait son écriture réussir, et c'est un label que plus personne
+# ne lira qui aurait bougé. On ne devine pas le backend — on refuse. D'où la forme imposée en tête
+# de chaque verbe qui délègue, qui propage le refus au lieu de l'avaler :
+#
+#     gl_vers_status; case $? in 0) st_<verbe> "$@"; return $? ;; 2) return 1 ;; esac
+#
+# Seuls les quatre verbes UNITAIRES l'appellent (cf. en-tête) : les lectures d'ensemble sont #362, et
+# les verbes qui ne touchent pas au cycle de vie n'ont aucune raison d'être bloqués par une variable
+# fautive qui ne les concerne pas.
+gl_vers_status() {
+  local c
+  c="$(gl_cycle)" || return 2
+  [ "$c" = status ]
+}
 
 # --- Identité de la forge ---------------------------------------------------------------------
 # gl_depot_courant -> le dépôt visé par la forge active, pour les MESSAGES du code partagé
@@ -297,6 +390,7 @@ gl_workflow_gids() {
 # l'exclusion des labels scopés étant Premium, rien côté GitLab ne l'assurerait à notre place
 # (cf. contrat en tête de fichier). Idempotent : reposer la valeur déjà présente ne change rien.
 gl_set_workflow() {
+  gl_vers_status; case $? in 0) st_set_workflow "$@"; return $? ;; 2) return 1 ;; esac
   gh_set_workflow "$@"
 }
 
@@ -475,6 +569,7 @@ gl_issues_sans_milestone() {
 # ticket est déjà pris — et /ticket-start pour refuser de le démarrer (gl_begin REMPLACE la liste
 # des assignés : démarrer un ticket pris le retirerait en silence à son propriétaire).
 gl_issue_owner() {
+  gl_vers_status; case $? in 0) st_issue_owner "$@"; return $? ;; 2) return 1 ;; esac
   gh_issue_owner "$@"
 }
 
@@ -861,16 +956,20 @@ gl_start_brief() {
 
 # gl_begin <iid> [username] -> démarrage groupé du ticket : assignation (username auto-résolu si
 # absent) + cycle de vie « En cours » + dates début/échéance (mêmes règles que gl_start_dates :
-# début = aujourd'hui conservé si déjà posé — idempotent —, échéance = début + délai selon prio::)
-# en UNE SEULE mutation workItemUpdate multi-widgets (assigneesWidget + labelsWidget +
-# startAndDueDateWidget). Le GID du work item, la date de début existante et la priorité sont
-# résolus en une lecture combinée. NB : assigneeIds REMPLACE la liste des assignés (sémantique
-# voulue au démarrage : le ticket passe à celui qui le démarre) ; labelsWidget, lui, est ADDITIF
-# (addLabelIds/removeLabelIds), ce qui préserve type::/agent::/prio:: — d'où le retrait explicite
-# des cinq autres workflow::, comme dans gl_set_workflow.
+# début = aujourd'hui conservé si déjà posé — idempotent —, échéance = début + délai selon prio::).
+# La liste des assignés est REMPLACÉE, sémantique voulue au démarrage : le ticket passe à celui qui
+# le démarre — c'est aussi ce qui oblige /ticket-start à refuser un ticket déjà pris (gl_issue_taken).
+#
+# COMMENT les trois écritures se groupent dépend du backend, et l'écart est réel : côté labels,
+# `PATCH /issues/:n` porte l'assignation ET l'état ensemble (gh_begin), la paire que regarde le filtre
+# de queue.sh étant alors indivisible ; côté Status, l'état vit sur l'item de projet et ne peut pas
+# voyager avec (st_begin, qui écrit l'état D'ABORD — voir son en-tête). Les dates, elles, sont un
+# appel à part des deux côtés : elles n'ont pas de domicile natif sur GitHub et vivent dans le
+# commentaire de suivi maison.
 gl_begin() {
   local iid="$1" user="${2:-}"
   if [ -z "$iid" ]; then echo "usage: gl_begin <iid> [username]" >&2; return 2; fi
+  gl_vers_status; case $? in 0) st_begin "$@"; return $? ;; 2) return 1 ;; esac
   gh_begin "$@"
 }
 
@@ -2224,6 +2323,7 @@ gl_worktree_du_ticket() {
 gl_liberer_ticket() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_liberer_ticket <iid>" >&2; return 2; fi
+  gl_vers_status; case $? in 0) st_liberer_ticket "$iid"; return $? ;; 2) return 1 ;; esac
   gh_liberer_ticket "$iid"
 }
 
@@ -2685,15 +2785,22 @@ gh_require() {
   fi
 }
 
-# gh_graphql_read <query> -> lecture GraphQL avec retry sur réponse VIDE. Même contrat et mêmes
-# réglages (GL_GQL_RETRIES/GL_GQL_RETRY_DELAY) que gl_graphql_read, y compris l'interdiction d'y
-# envelopper une mutation : un retry pourrait la ré-appliquer.
+# gh_graphql_read <query> [args gh api…] -> lecture GraphQL avec retry sur réponse VIDE. Même
+# contrat et mêmes réglages (GL_GQL_RETRIES/GL_GQL_RETRY_DELAY) que gl_graphql_read, y compris
+# l'interdiction d'y envelopper une mutation : un retry pourrait la ré-appliquer.
+#
+# Les arguments SUPPLÉMENTAIRES sont passés tels quels à `gh api` — en pratique `--jq`, dont
+# st_contexte se sert pour aplatir une réponse à trois niveaux d'imbrication. ⚠ La garde « réponse
+# vide » porte alors sur la réponse RENDUE et non sur celle reçue : un filtre qui peut légitimement
+# ne rien rendre y déclencherait trois tentatives puis une erreur, et ne doit donc pas passer par
+# ici (celui de st_contexte rend toujours au moins une ligne, `ticket` ou `erreur`).
 gh_graphql_read() {
   local query="$1"
   if [ -z "$query" ]; then echo "gh_graphql_read : requête manquante" >&2; return 2; fi
+  shift
   local attempt=1 out
   while :; do
-    out="$(gh api graphql -f query="$query" 2>/dev/null)"
+    out="$(gh api graphql -f query="$query" "$@" 2>/dev/null)"
     if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
     if [ "$attempt" -ge "$GL_GQL_RETRIES" ]; then
       echo "gh_graphql_read : réponse vide de l'API GraphQL GitHub après $attempt tentative(s)" >&2
@@ -2836,6 +2943,252 @@ gh_liberer_ticket() {
     printf 'Échec de la libération de #%s\n' "$iid" >&2
     return 1
   fi
+}
+
+# ================================================================================================
+# BACKEND STATUS — GitHub Projects v2, derrière MAESTRO_CYCLE=status (ticket #360, chantier #358)
+# ================================================================================================
+# Troisième implémentation du cycle de vie, et la première qui ne le range pas sur l'issue : l'état
+# vit dans le champ « Status » d'un ITEM de projet. Le préfixe `st_` la distingue des `gh_`, qui
+# parlent à GitHub elles aussi mais à un autre objet — et confondre les deux est exactement la
+# dérive que #363 aura à diagnostiquer. `grep -n '^st_'` en donne l'inventaire exact.
+#
+# La sortie est celle du backend labels, AU CARACTÈRE PRÈS : mêmes libellés, mêmes colonnes, mêmes
+# messages de succès, mêmes codes de retour. C'est ce contrat qui permet à `/ticket-start`,
+# `close-guard`, `run.sh` et `status.sh` de ne rien changer — cf. l'en-tête du fichier pour le
+# périmètre (l'unité) et pour ce qui reste sur les labels jusqu'à #362.
+#
+# UNE SEULE LECTURE porte tout le backend : `st_contexte`. Elle rend des lignes CLÉ<TAB>… plutôt
+# qu'un JSON à re-parser à chaque usage, et c'est ce qui évite d'avoir une requête par verbe.
+
+# st_gql_contexte <iid> -> la requête, en une ligne. Deux racines dans le même appel : le TICKET
+# (ses assignés, et l'item qui le représente dans chaque projet, avec la valeur courante du champ) et
+# le PROPRIÉTAIRE (ses projets, chacun avec l'id de son champ Status et ceux de ses options). Les
+# projets ne sont pas filtrés côté GitHub : `projectsV2(query:)` est une recherche FLOUE, comme le
+# `query:` des labels, et le titre du projet est une CLÉ — il se compare en égalité, dans le shell.
+st_gql_contexte() {
+  local iid="$1"
+  printf '{ %s { issue(number:%s) { number assignees(first:10){nodes{login}} projectItems(first:20){nodes{ id project{ id title } fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } } }} } } repositoryOwner(login:"%s") { ... on ProjectV2Owner { projectsV2(first:100){nodes{ id title field(name:"Status"){ ... on ProjectV2SingleSelectField { id options { id name } } } }} } } }' \
+    "$(gh_depot_gql)" "$iid" "${GL_GH_REPO%%/*}"
+}
+
+# st_jq_contexte -> le programme jq qui aplatit la réponse en lignes. C'est le SEUL endroit du
+# cycle de vie qui ne parse pas en grep/sed/awk, et la raison est dans la forme des données : trois
+# niveaux d'imbrication (projet → champ → options[]) et des valeurs qui portent espaces et accents
+# (« À faire »). Un `grep -o` y serait un parseur déguisé, pas une projection. Le jq utilisé est
+# celui EMBARQUÉ dans `gh` (`--jq`), donc aucune dépendance de plus — c'est déjà le choix de
+# scripts/env-pull.sh et de scripts/github/bootstrap-project.sh, qui monte ce même projet.
+#
+# Cinq clés, toutes en première colonne, et le TITRE DU PROJET en deuxième partout où la ligne
+# appartient à un projet — c'est lui que le shell compare :
+#     erreur  <depot|ticket>
+#     ticket  <numéro>
+#     assigne <login>
+#     item    <titre projet>  <id projet>  <id item>  <libellé du Status, vide si non posé>
+#     projet  <titre projet>  <id projet>  <id du champ Status, vide si absent>
+#     option  <titre projet>  <id option>  <libellé>
+st_jq_contexte() {
+  cat <<'JQ'
+[
+  (if .data.repository == null then "erreur\tdepot"
+   elif .data.repository.issue == null then "erreur\tticket"
+   else "ticket\t" + (.data.repository.issue.number|tostring) end),
+  (.data.repository.issue.assignees.nodes[]? | "assigne\t" + .login),
+  (.data.repository.issue.projectItems.nodes[]? | "item\t" + .project.title + "\t" + .project.id + "\t" + .id + "\t" + (.fieldValueByName.name // "")),
+  (.data.repositoryOwner.projectsV2.nodes[]? | "projet\t" + .title + "\t" + .id + "\t" + (.field.id // "")),
+  (.data.repositoryOwner.projectsV2.nodes[]? as $p | $p.field.options[]? | "option\t" + $p.title + "\t" + .id + "\t" + .name)
+] | .[]
+JQ
+}
+
+# st_contexte <iid> -> les lignes ci-dessus, ou une erreur franche. Mêmes garde-fous que
+# gh_issue_owner, et pour la même raison : sans eux, un dépôt illisible rendrait zéro ligne, que
+# l'appelant lirait comme « ticket sans état », c'est-à-dire un feu vert.
+st_contexte() {
+  local iid="$1" lignes
+  if [ -z "$iid" ]; then echo "usage: st_contexte <iid>" >&2; return 2; fi
+  lignes="$(gh_graphql_read "$(st_gql_contexte "$iid")" --jq "$(st_jq_contexte)")" || return 1
+  case "$lignes" in
+    "erreur	depot"*)  echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
+    "erreur	ticket"*) echo "Ticket #$iid introuvable dans $GL_GH_REPO" >&2; return 1 ;;
+  esac
+  printf '%s\n' "$lignes"
+}
+
+# st_lignes <clé> [titre-de-projet] (stdin = sortie de st_contexte) -> les lignes de cette clé, et
+# de ce projet si un titre est donné. La comparaison est une ÉGALITÉ DE CHAMP et non un `grep` : le
+# titre d'un projet est une donnée, pas un motif, et « Maestro » ne doit pas ramener les lignes de
+# « Maestro v2 ». Les valeurs voyagent par ENVIRON et jamais par `awk -v`, qui INTERPRÈTE les
+# échappements de son argument — un titre porteur d'un antislash y changerait de valeur en silence.
+st_lignes() {
+  ST_CLE="$1" ST_TITRE="${2-}" ST_AVEC_TITRE="${2+oui}" awk -F'\t' '
+    $1 != ENVIRON["ST_CLE"] { next }
+    ENVIRON["ST_AVEC_TITRE"] != "" && $2 != ENVIRON["ST_TITRE"] { next }
+    { print }
+  '
+}
+
+# st_cible <iid> <libellé> -> « <id projet><TAB><id champ><TAB><id item><TAB><id option> », tout
+# résolu PAR NOM en une lecture (cf. contrat en tête de fichier : aucun ID n'est figé dans le dépôt,
+# ni ici ni ailleurs). Chacun des quatre a son message d'échec, parce que les quatre causes appellent
+# quatre gestes différents — et que « la mutation a échoué » n'en désigne aucun.
+st_cible() {
+  local iid="$1" libelle="$2" ctx ligne projet_id champ_id item_id option_id
+  ctx="$(st_contexte "$iid")" || return 1
+
+  ligne="$(printf '%s\n' "$ctx" | st_lignes projet "$GL_PROJET_TITRE" | head -1)"
+  if [ -z "$ligne" ]; then
+    echo "Projet « $GL_PROJET_TITRE » introuvable chez ${GL_GH_REPO%%/*} — le monter : bash scripts/github/bootstrap-project.sh" >&2
+    return 1
+  fi
+  projet_id="$(printf '%s' "$ligne" | cut -f3)"
+  champ_id="$(printf '%s' "$ligne" | cut -f4)"
+  if [ -z "$champ_id" ]; then
+    echo "Le projet « $GL_PROJET_TITRE » n'a pas de champ « Status » — bash scripts/github/bootstrap-project.sh --check" >&2
+    return 1
+  fi
+
+  option_id="$(printf '%s\n' "$ctx" | st_lignes option "$GL_PROJET_TITRE" \
+               | ST_LIBELLE="$libelle" awk -F'\t' '$4 == ENVIRON["ST_LIBELLE"] { print $3; exit }')"
+  if [ -z "$option_id" ]; then
+    echo "Le champ « Status » du projet « $GL_PROJET_TITRE » n'a pas d'option « $libelle » — bash scripts/github/bootstrap-project.sh --check" >&2
+    return 1
+  fi
+
+  ligne="$(printf '%s\n' "$ctx" | st_lignes item "$GL_PROJET_TITRE" | head -1)"
+  if [ -z "$ligne" ]; then
+    echo "#$iid n'est pas un item du projet « $GL_PROJET_TITRE » : aucun état à poser." >&2
+    echo "  Le Status vit sur l'item de projet, et non sur l'issue — un ticket hors projet n'a donc" >&2
+    echo "  aucun état. Le peuplement (ajout à la création, backfill des existants) est #361." >&2
+    return 1
+  fi
+  item_id="$(printf '%s' "$ligne" | cut -f4)"
+
+  printf '%s\t%s\t%s\t%s\n' "$projet_id" "$champ_id" "$item_id" "$option_id"
+}
+
+# st_set_workflow <iid> <valeur> -> pose le cycle de vie dans le champ Status. Même signature, même
+# entrée (libellé OU slug) et même ligne de sortie que gh_set_workflow.
+#
+# L'EXCLUSION MUTUELLE N'EST PLUS À NOTRE CHARGE, et c'est tout l'intérêt du chantier : un champ
+# single-select n'a qu'une valeur, donc « poser la cible » ne s'accompagne d'aucun « retirer les cinq
+# autres ». La classe de bug que doctor.sh traque sur les labels (0 ou ≥ 2) devient impossible par
+# construction — restera celle que #363 aura à traquer : un ticket hors projet, donc sans état.
+st_set_workflow() {
+  local iid="$1" valeur="$2" slug libelle cible mutation out
+  if [ -z "$iid" ] || [ -z "$valeur" ]; then echo "usage: st_set_workflow <iid> <valeur>" >&2; return 2; fi
+  slug="$(gl_workflow_slug "$valeur")" || return 1
+  libelle="$(gl_workflow_label "$slug")"
+
+  cible="$(st_cible "$iid" "$libelle")" || return 1
+
+  # Les quatre identifiants sont interpolés DIRECTEMENT dans la mutation, sans passer par des
+  # variables GraphQL : ce sont des identifiants opaques que l'API vient de rendre à la ligne
+  # précédente, aucun ne peut porter de guillemet, et c'est la forme de toutes les requêtes de ce
+  # fichier. Aucun n'est écrit nulle part — les recopier, fût-ce en exemple dans un commentaire,
+  # ferait mentir le `grep` par lequel se vérifie « aucun ID en dur ». `gh_graphql_read` n'est PAS
+  # utilisé ici : son retry sur réponse vide ré-appliquerait la mutation (règle posée avec lui, et
+  # valable pour les trois backends).
+  mutation="mutation { updateProjectV2ItemFieldValue(input: {projectId: \"$(printf '%s' "$cible" | cut -f1)\", itemId: \"$(printf '%s' "$cible" | cut -f3)\", fieldId: \"$(printf '%s' "$cible" | cut -f2)\", value: {singleSelectOptionId: \"$(printf '%s' "$cible" | cut -f4)\"}}) { projectV2Item { id } } }"
+  out="$(gh api graphql -f query="$mutation" 2>&1)"
+  case "$out" in
+    *'"projectV2Item"'*) ;;
+    *)
+      printf '%s\n' "$out" >&2
+      echo "Échec de la pose du cycle de vie sur #$iid" >&2
+      return 1 ;;
+  esac
+  printf 'Cycle de vie de #%s → « %s »\n' "$iid" "$libelle"
+}
+
+# st_issue_owner <iid> -> « <statut><TAB><assignés> », mêmes conventions que gh_issue_owner.
+#
+# Là où l'écriture REFUSE un ticket hors projet, la lecture rend un statut VIDE — la même valeur que
+# « non posé », que gl_close_guard et gl_start_brief savent déjà lire. Ce n'est pas une inconséquence
+# : écrire sur un ticket hors projet ne peut RIEN produire de juste, tandis que le lire produit une
+# information vraie (« ce ticket n'a pas d'état »). Échouer ici arrêterait des appelants dont ce
+# n'est pas le sujet, pour dire ce que le champ vide dit déjà.
+st_issue_owner() {
+  local iid="$1" ctx statut assignes slug
+  if [ -z "$iid" ]; then echo "usage: st_issue_owner <iid>" >&2; return 2; fi
+  ctx="$(st_contexte "$iid")" || return 1
+
+  statut="$(printf '%s\n' "$ctx" | st_lignes item "$GL_PROJET_TITRE" | head -1 | cut -f5)"
+  # Renormalisation : les six options portent déjà les libellés du contrat (bootstrap-project.sh les
+  # y écrit), mais une option renommée à la main dans l'UI sortirait sinon telle quelle. Une valeur
+  # inconnue est rendue TELLE QUELLE, exactement comme le fait gl_workflow_label — une lecture ne
+  # doit pas échouer sur un état exotique ; le signaler est le rôle de doctor.sh (#363).
+  if [ -n "$statut" ] && slug="$(gl_workflow_slug "$statut" 2>/dev/null)"; then
+    statut="$(gl_workflow_label "$slug")"
+  fi
+
+  assignes="$(printf '%s\n' "$ctx" | st_lignes assigne | cut -f2 \
+              | awk '{ out = (NR == 1 ? $0 : out "," $0) } END { if (NR) print out }')"
+  printf '%s\t%s\n' "$statut" "$assignes"
+}
+
+# st_begin <iid> [username] -> assignation + « En cours » + dates, comme gh_begin et avec la MÊME
+# sortie.
+#
+# CE QUI CHANGE, ET POURQUOI CE N'EST PAS UNE RÉGRESSION. Côté labels, l'assignation et l'état
+# voyagent dans UN SEUL `PATCH /issues/:n` — le geste est indivisible, ce qui compte parce que le
+# filtre de queue.sh est une CONJONCTION (« À faire » ET libre). Côté Status, l'argument tombe de
+# lui-même : l'état ne vit plus sur l'issue, donc les deux écritures touchent deux objets et rien ne
+# peut les grouper. L'ORDRE porte alors ce que l'atomicité portait, et c'est l'ÉTAT D'ABORD :
+# st_set_workflow est le seul des deux qui puisse refuser (ticket hors projet), et un refus après
+# l'assignation laisserait le ticket pris par quelqu'un sans que rien ne l'ait décidé. Refuser avant
+# d'écrire quoi que ce soit laisse le ticket exactement dans l'état où on l'a trouvé.
+#
+# Aucun label n'est touché ici — pas même pour retirer le `workflow::a-faire` que le ticket porte
+# encore. Le retrait des six est #365, et le faire à la volée ferait de ce lot autre chose qu'un lot
+# additif : sans MAESTRO_CYCLE, rien ne doit bouger ; avec, on n'écrit QUE le champ.
+st_begin() {
+  local iid="$1" user="${2:-}" prio start today delay due out
+  if [ -z "$iid" ]; then echo "usage: st_begin <iid> [username]" >&2; return 2; fi
+
+  [ -n "$user" ] || user="$(gh_current_user)" || return 1
+
+  prio="$(gh_prio "$iid")"
+  today="$(date +%F)"
+  start="$(gh_get_start_date "$iid")"
+  [ -z "$start" ] && start="$today"
+  delay="$(gl_prio_delay "$prio")"
+  due="$(date -d "$start +$delay days" +%F 2>/dev/null)"
+  if [ -z "$due" ]; then echo "st_begin : calcul de l'échéance impossible (commande date indisponible ?)" >&2; return 1; fi
+
+  st_set_workflow "$iid" "en-cours" >/dev/null || return 1
+
+  out="$(gh api -X PATCH "repos/$GL_GH_REPO/issues/$iid" -f "assignees[]=$user" 2>&1)"
+  case "$out" in
+    *'"number"'*) ;;
+    *) echo "Échec du démarrage groupé de #$iid : $out" >&2; return 1 ;;
+  esac
+
+  # Les dates ensuite : leur échec ne défait pas le démarrage (le ticket est pris, c'est ce qui
+  # compte pour l'anti-collision), mais il se dit — un début non posé fausserait /ticket-finish.
+  gh_set_dates "$iid" "$start" "$due" >/dev/null ||
+    printf '  ~ dates non posées sur #%s (suivi maison hors d'\''atteinte) — à reposer à la main.\n' "$iid" >&2
+
+  printf '#%s démarré : assigné=%s, cycle de vie « En cours », début=%s, échéance=%s\n' "$iid" "$user" "$start" "$due"
+  printf '  (priorité %s → échéance à +%s j)\n' "${prio:-prio::moyenne (défaut)}" "$delay"
+}
+
+# st_liberer_ticket <iid> -> le geste inverse : « À faire » ET liste des assignés vidée. Muet en cas
+# de succès, comme gh_liberer_ticket.
+#
+# Deux appels au lieu d'un, pour la raison exposée dans st_begin, et le même ordre — l'état d'abord :
+# il peut refuser, et il vaut mieux refuser sans avoir rien touché. L'intervalle entre les deux ne
+# rend le ticket prenable ni dans un sens ni dans l'autre : le filtre est une conjonction, et ici
+# comme là, chacune de ses deux moitiés reste fausse tant que les deux écritures ne sont pas passées.
+st_liberer_ticket() {
+  local iid="$1" out
+  if [ -z "$iid" ]; then echo "usage: st_liberer_ticket <iid>" >&2; return 2; fi
+  st_set_workflow "$iid" "a-faire" >/dev/null || return 1
+  out="$(gh api -X PATCH "repos/$GL_GH_REPO/issues/$iid" -F 'assignees[]' 2>&1)"
+  case "$out" in
+    *'"number"'*) return 0 ;;
+    *) printf '%s\n' "$out" >&2; return 1 ;;
+  esac
 }
 
 # --- Lecture : backlog, ticket, propriétaire --------------------------------------------------------
@@ -3787,6 +4140,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issue-raw)      gl_issue_raw "$@" ;;
     mr-brief)       gl_mr_brief "$@" ;;
     workitem-gid)   gl_workitem_gid "$@" ;;
+    cycle)          gl_cycle ;;
     set-workflow)   gl_set_workflow "$@" ;;
     reconcile-workflow) gl_reconcile_workflow "$@" ;;
     workflow-slug)  gl_workflow_slug "$@" ;;
@@ -3862,7 +4216,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  require | current-user | workitem-gid <iid>" >&2
       echo "  issue-raw <iid>                  (vue TEXTE canonique du ticket — la primitive dont six verbes descendent)" >&2
       echo "  mr-brief <branche>               (etat/numéro/sha de la MR ou PR de la branche)" >&2
-      echo "  Cycle de vie (labels workflow::*, cf. contrat en tête de lib.sh) :" >&2
+      echo "  Cycle de vie — backend MAESTRO_CYCLE=labels|status (défaut labels ; cf. contrat en tête de lib.sh) :" >&2
+      echo "    cycle                         (le backend actif : « labels » = les six workflow::*," >&2
+      echo "                                   « status » = le champ Status de Projects v2, projet \$MAESTRO_PROJECT_TITRE" >&2
+      echo "                                   — défaut « $GL_PROJET_TITRE ». Unitaire seulement : les lectures" >&2
+      echo "                                   d'ensemble restent sur les labels jusqu'à #362)" >&2
       echo "    set-workflow <iid> <valeur>   (pose la valeur ET retire les cinq autres, en un appel)" >&2
       echo "                                  valeur = « À faire »… ou le slug « a-faire »… ; sortie toujours en libellé" >&2
       echo "    workflow-slug <valeur>        (normalise en slug)   workflow-label <slug> (rend le libellé)" >&2
