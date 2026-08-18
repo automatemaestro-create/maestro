@@ -135,20 +135,24 @@ expliquer_refus() {
     *"not accessible by personal access token"*|*FORBIDDEN*|*"Resource not accessible"*)
       err "GitHub refuse l'écriture Projects v2 avec ce jeton."
       echo "" >&2
-      echo "  Le compte du projet s'authentifie par un jeton FINE-GRAINED, dont les permissions" >&2
-      echo "  ne s'accordent qu'une par une — et « Projects » n'est pas donnée par « repo »." >&2
+      echo "  Ce n'est PAS une permission à cocher : c'est le TYPE de jeton qui ne convient pas." >&2
+      echo "  Un jeton FINE-GRAINED (« github_pat_… ») n'a aucune permission « Projects » au niveau" >&2
+      echo "  du COMPTE — la liste des « Account permissions » n'en contient pas, et chercher à l'y" >&2
+      echo "  ajouter est une impasse. Elle n'existe qu'au niveau ORGANISATION." >&2
       echo "" >&2
-      echo "  Geste à faire, une fois, par une personne :" >&2
-      echo "    1. https://github.com/settings/personal-access-tokens — ouvrir le jeton du compte" >&2
-      echo "       « $(gh api user -q .login 2>/dev/null || echo '<compte du projet>') »" >&2
-      echo "    2. section « Account permissions » (PAS « Repository permissions ») :" >&2
-      echo "       → « Projects » : Read-only  ⟶  Read and write" >&2
-      echo "    3. enregistrer, puis rejouer ce script." >&2
+      echo "  Un projet Projects v2 appartenant à un COMPTE, il faut un jeton porteur du scope" >&2
+      echo "  « project » (read/write sur les projets d'utilisateur et d'organisation). Deux voies :" >&2
       echo "" >&2
-      echo "  ⚠ Le piège : « Repository permissions » porte AUSSI une entrée « Projects », qui ne" >&2
-      echo "    gouverne que les projets rattachés à un dépôt. Un projet Projects v2 appartient au" >&2
-      echo "    COMPTE, donc c'est la permission de compte qui décide. Accorder la mauvaise des" >&2
-      echo "    deux laisse l'erreur strictement identique." >&2
+      echo "  A. OAuth par gh — recommandé, rien à stocker ni à faire expirer :" >&2
+      echo "       gh auth login --hostname github.com --scopes project" >&2
+      echo "     (à lancer avec le GH_CONFIG_DIR du projet, pour ne pas toucher les autres comptes" >&2
+      echo "      de la machine — docs/10 §7.4)" >&2
+      echo "" >&2
+      echo "  B. Jeton CLASSIQUE : https://github.com/settings/tokens — cocher « project » (et" >&2
+      echo "     « repo » pour le dépôt privé), puis  gh auth login --with-token" >&2
+      echo "" >&2
+      echo "  (Troisième voie, plus lourde : transférer dépôt et projet à une ORGANISATION, dont" >&2
+      echo "   les projets sont, eux, couverts par un jeton fine-grained.)" >&2
       echo "" >&2
       echo "  ⚠ La LECTURE, elle, passe déjà : un diagnostic qui ne lit que le projet ne verra" >&2
       echo "    jamais ce blocage. C'est une écriture réelle qui le révèle, et c'est pourquoi ce" >&2

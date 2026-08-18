@@ -252,21 +252,33 @@ script s'en sert pour se rejouer sans rien créer en double, et `lib.sh` s'en se
 le projet — **aucun ID de projet, de champ ni d'option n'est figé dans le dépôt**, exactement comme
 aucun GID de label ne l'est aujourd'hui.
 
-**Le pré-requis, qui est un geste humain.** Le compte du projet s'authentifie par un jeton
-**fine-grained**, dont les permissions s'accordent une par une. Créer un projet exige
-« **Account permissions → Projects : Read and write** », que ni `repo` ni aucune permission de dépôt
-n'implique. Deux pièges valent d'être connus :
+**Le pré-requis, et pourquoi ce n'est pas une case à cocher.** Le compte du projet s'authentifie par
+un jeton **fine-grained** (`github_pat_…`), et un tel jeton **ne peut pas** écrire dans un projet
+appartenant à un compte : la liste des « Account permissions » d'un jeton fine-grained **ne contient
+aucune entrée « Projects »** — GitHub n'en propose qu'au niveau **organisation**. Chercher à
+l'accorder est une impasse, pas un oubli de manipulation.
 
-- **« Repository permissions » porte aussi une entrée « Projects »**, qui ne gouverne que les
-  projets rattachés à un dépôt. Un projet Projects v2 appartient au **compte** — accorder la
-  mauvaise des deux laisse l'erreur strictement identique.
+Il faut donc un jeton porteur du **scope `project`** (« read/write access to user and organization
+projects »), qui n'existe que sur les jetons **classiques** et les jetons **OAuth**. Deux voies :
+
+| Voie | Geste | Remarque |
+|---|---|---|
+| **OAuth par `gh`** (recommandé) | `gh auth login --hostname github.com --scopes project` | rien à stocker ni à faire expirer ; à lancer avec le `GH_CONFIG_DIR` du projet (§7.4) pour ne pas toucher les autres comptes de la machine |
+| **Jeton classique** | cocher `project` (+ `repo` pour le dépôt privé) sur https://github.com/settings/tokens, puis `gh auth login --with-token` | secret long à gérer et à renouveler |
+
+Une troisième voie existe et n'a pas été retenue : transférer dépôt et projet à une **organisation**,
+dont les projets sont couverts par un jeton fine-grained. Elle règle le sujet du jeton en en ouvrant
+un autre (migration du dépôt, comptes, facturation).
+
+Deux pièges à connaître :
+
 - **La lecture passe déjà.** Lister les projets du compte répond normalement (liste vide) avec le
-  jeton actuel ; seule une **écriture** révèle le refus (`FORBIDDEN — Resource not accessible by
-  personal access token`). Un diagnostic qui se contenterait de lire conclurait donc à tort que tout
-  va bien, et c'est pourquoi le script tente une écriture réelle plutôt que de sonder.
-
-`gh auth status` n'imprime **aucun scope** pour un jeton fine-grained : la permission manquante est
-invisible en dehors de l'erreur ci-dessus. Le script l'explique en clair et nomme le geste.
+  jeton fine-grained ; seule une **écriture** révèle le refus (`FORBIDDEN — Resource not accessible
+  by personal access token`). Un diagnostic qui se contenterait de lire conclurait donc à tort que
+  tout va bien, et c'est pourquoi le script tente une écriture réelle plutôt que de sonder.
+- **`gh auth status` n'imprime aucun scope pour un jeton fine-grained.** Le blocage est donc
+  invisible en dehors de l'erreur ci-dessus — là où un jeton classique ou OAuth affiche ses scopes
+  et laisse voir `project` manquant d'un coup d'œil.
 
 ---
 
