@@ -172,6 +172,12 @@ GL_REPRISES_MAX="${MAESTRO_REPRISES_MAX:-2}"
 GL_GQL_RETRIES="${GL_GQL_RETRIES:-3}"
 GL_GQL_RETRY_DELAY="${GL_GQL_RETRY_DELAY:-1}"
 
+# Titre du projet GitHub Projects v2 qui porte le champ Status, quand MAESTRO_CYCLE=status. C'est
+# une CLÉ, pas un libellé d'affichage : c'est par elle que le projet se résout, ici comme dans
+# scripts/github/bootstrap-project.sh, et c'est ce qui évite d'avoir un numéro de projet mémorisé
+# quelque part. Même variable d'environnement des deux côtés — un seul nom pour un seul projet.
+GL_PROJET_TITRE="${MAESTRO_PROJECT_TITRE:-Maestro}"
+
 # --- Identité de la forge ---------------------------------------------------------------------
 # gl_depot_courant -> le dépôt visé par la forge active, pour les MESSAGES du code partagé
 # (« ticket #12 introuvable dans … »). Ne sert jamais à construire un appel : chaque backend
@@ -3775,6 +3781,531 @@ gh_job_trace() {
   printf '%s\n' "$raw" | tail -n "$lines"
 }
 
+# ==================================================================================================
+# PEUPLEMENT DU PROJET — tout ticket est un item du projet (ticket #361, chantier #358)
+# ==================================================================================================
+# LA PANNE PROPRE AU DISPOSITIF, TRAITÉE AVANT QU'ELLE EXISTE. Le Status vit sur l'ITEM DE PROJET et
+# non sur l'issue : un ticket qui n'est pas dans le projet n'a AUCUN état, et aucune requête de cycle
+# de vie ne le voit. C'est l'équivalent exact du « 0 label workflow:: » d'aujourd'hui — en plus
+# silencieux, puisque rien à l'écran ne distingue un ticket sans état d'un ticket absent du filtre.
+# Deux verbes s'en occupent, un par population : `gl_project_add` pour les NOUVEAUX (appelé par
+# /ticket-create, dans la foulée de la création) et `gl_project_backfill` pour les ANCIENS.
+#
+# ⚠ CE BLOC N'EST PAS DERRIÈRE `MAESTRO_CYCLE`, ET C'EST LE POINT LE PLUS FACILE À DÉFAIRE. Peupler
+# le projet n'est pas décider du cycle de vie : c'est poser une DONNÉE DE PLUS, que rien ne lit tant
+# que le commutateur vaut « labels ». L'y mettre inverserait l'ordre du chantier — le projet doit
+# être peuplé AVANT la bascule (#364), sans quoi celle-ci trouverait un projet vide et autant de
+# tickets sans état. Un `gl_vers_status` en tête de l'un de ces deux verbes serait donc une
+# régression, pas un oubli.
+#
+# ⚠ L'AUTORITÉ, À CE STADE, EST LE LABEL — ET ELLE S'INVERSERA. Le backfill dérive le Status du label
+# `workflow::*` courant et de rien d'autre. Après la bascule (#364) c'est le Status qui fera foi, et
+# un backfill « réalignant » rejoué ce jour-là écraserait un état vivant avec un label périmé. D'où
+# un défaut qui ne REMPLIT que ce qui est vide et ne réécrit JAMAIS un état déjà posé : l'alignement
+# d'un état divergent est un geste explicite (`--realigner`), jamais un effet de bord du peuplement.
+#
+# AUCUN ID EN DUR, JAMAIS — même règle que pour les labels (`gl_workflow_gids` dérive les six GID par
+# nom) : l'ID du projet, celui du champ et ceux de ses six options se dérivent PAR NOM en une lecture
+# (`pj_resoudre`). Le projet se désigne par son TITRE (`MAESTRO_PROJECT_TITRE`, la même clé que
+# scripts/github/bootstrap-project.sh), les options par leur LIBELLÉ — ceux que rend
+# `gl_workflow_label`, si bien que le vocabulaire du cycle de vie ne change pas en changeant de
+# support.
+#
+# LE PRÉFIXE `pj_` DÉSIGNE LES INTERNES de ce bloc : `grep -n '^pj_'` en donne l'inventaire exact.
+# ⚠ Ne pas les confondre avec `gl_project_humans`, qui est du vocabulaire GitLab hérité — là-bas
+# « project » nomme le DÉPÔT, ici il nomme le projet Projects v2.
+#
+# CE BLOC EST EN FIN DE BACKEND et non dans la section « Cycle de vie », parce qu'il n'en écrit
+# aucun : il rend un ticket CAPABLE d'en porter un.
+
+# pj_gql_pages <requête> <programme jq> -> lecture GraphQL PAGINÉE, une ligne par nœud retenu.
+#
+# Ne passe pas par `gh_graphql_read`, et c'est délibéré : son retry « réponse vide » porterait ici
+# sur la sortie du FILTRE et non sur la réponse reçue, si bien qu'une page dont aucun nœud n'est
+# retenu déclencherait trois tentatives puis une erreur. La requête doit déclarer `$endCursor: String`
+# et rendre un `pageInfo{hasNextPage endCursor}` : c'est `gh --paginate` qui déroule les pages, pas
+# nous — une boucle de curseurs écrite à la main serait le même code, en moins relu.
+pj_gql_pages() {
+  local requete="$1" filtre="$2" out
+  if [ -z "$requete" ] || [ -z "$filtre" ]; then echo "usage: pj_gql_pages <requête> <jq>" >&2; return 2; fi
+  if ! out="$(gh api graphql --paginate -f query="$requete" --jq "$filtre" 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    echo "Lecture GraphQL paginée en échec (dépôt $GL_GH_REPO)" >&2
+    return 1
+  fi
+  # Une sortie vide est un résultat LÉGITIME (projet neuf, aucun item) : elle sort sans la ligne
+  # blanche qu'un `printf '%s\n' ""` ajouterait, et que les décomptes compteraient pour un nœud.
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
+}
+
+# --- Résolution du projet, par nom ----------------------------------------------------------------
+# Trois variables de PROCESSUS, remplies une fois par `pj_resoudre` : le backfill boucle sur des
+# centaines de tickets, et re-résoudre le projet à chaque tour serait autant de lectures pour une
+# réponse constante. ⚠ Le cache ne remonte pas d'une substitution de commande — d'où l'appel explicite
+# à `pj_resoudre` en tête des deux verbes publics, avant tout `$( … )`.
+PJ_PROJET_ID=""
+PJ_CHAMP_ID=""
+PJ_OPTIONS=""   # « <id option><TAB><libellé> », une par ligne
+
+# pj_resoudre -> remplit les trois ci-dessus en UNE lecture. Idempotent : ne relit rien si c'est déjà
+# fait. Chacune des causes d'échec a son message, parce qu'elles appellent des gestes différents —
+# et que « le projet est introuvable » n'en désigne aucun.
+pj_resoudre() {
+  local lignes ligne
+  [ -n "$PJ_CHAMP_ID" ] && return 0
+
+  # Les projets ne sont pas filtrés côté GitHub : `projectsV2(query:)` est une recherche FLOUE, alors
+  # que le titre du projet est une CLÉ — il se compare en ÉGALITÉ, dans le shell, et « Maestro » ne
+  # doit pas ramener « Maestro v2 ». Les valeurs voyagent par ENVIRON et jamais par `awk -v`, qui
+  # INTERPRÈTE les échappements de son argument : un titre porteur d'un antislash y changerait de
+  # valeur en silence.
+  lignes="$(gh api graphql -f query='{ repositoryOwner(login:"'"${GL_GH_REPO%%/*}"'") { ... on ProjectV2Owner { projectsV2(first:100){nodes{ id title field(name:"Status"){ ... on ProjectV2SingleSelectField { id options{id name} } } }} } } }' \
+            --jq '[ (.data.repositoryOwner.projectsV2.nodes[]? | "projet\t" + .title + "\t" + .id + "\t" + (.field.id // "")), (.data.repositoryOwner.projectsV2.nodes[]? as $p | $p.field.options[]? | "option\t" + $p.title + "\t" + .id + "\t" + .name) ] | .[]' 2>&1)" || {
+    printf '%s\n' "$lignes" >&2
+    echo "Projets de ${GL_GH_REPO%%/*} illisibles — le jeton porte-t-il le scope « project » ? (gh auth status)" >&2
+    return 1
+  }
+
+  ligne="$(printf '%s\n' "$lignes" | PJ_TITRE="$GL_PROJET_TITRE" awk -F'\t' '$1 == "projet" && $2 == ENVIRON["PJ_TITRE"] { print; exit }')"
+  if [ -z "$ligne" ]; then
+    echo "Projet « $GL_PROJET_TITRE » introuvable chez ${GL_GH_REPO%%/*} — le monter : bash scripts/github/bootstrap-project.sh" >&2
+    return 1
+  fi
+  PJ_PROJET_ID="$(printf '%s' "$ligne" | cut -f3)"
+  PJ_CHAMP_ID="$(printf '%s' "$ligne" | cut -f4)"
+  if [ -z "$PJ_CHAMP_ID" ]; then
+    PJ_PROJET_ID=""
+    echo "Le projet « $GL_PROJET_TITRE » n'a pas de champ « Status » — bash scripts/github/bootstrap-project.sh --check" >&2
+    return 1
+  fi
+
+  PJ_OPTIONS="$(printf '%s\n' "$lignes" | PJ_TITRE="$GL_PROJET_TITRE" awk -F'\t' '$1 == "option" && $2 == ENVIRON["PJ_TITRE"] { print $3 "\t" $4 }')"
+  if [ -z "$PJ_OPTIONS" ]; then
+    PJ_PROJET_ID=""; PJ_CHAMP_ID=""
+    echo "Le champ « Status » du projet « $GL_PROJET_TITRE » ne porte aucune option — bash scripts/github/bootstrap-project.sh --check" >&2
+    return 1
+  fi
+}
+
+# pj_option_id <libellé> -> l'identifiant de l'option du champ Status portant ce libellé.
+pj_option_id() {
+  local libelle="$1" id
+  pj_resoudre || return 1
+  id="$(printf '%s\n' "$PJ_OPTIONS" | PJ_LIB="$libelle" awk -F'\t' '$2 == ENVIRON["PJ_LIB"] { print $1; exit }')"
+  if [ -z "$id" ]; then
+    echo "Le champ « Status » du projet « $GL_PROJET_TITRE » n'a pas d'option « $libelle » — bash scripts/github/bootstrap-project.sh --check" >&2
+    return 1
+  fi
+  printf '%s\n' "$id"
+}
+
+# --- Lectures d'ensemble --------------------------------------------------------------------------
+
+# pj_items -> « <numéro d'issue><TAB><id item><TAB><libellé du Status, vide si non posé> » pour chaque
+# item du projet qui représente une ISSUE. Les PULL REQUESTS et les brouillons sont écartés par le
+# `select(.type == "ISSUE")` et non après coup : une PR porte elle aussi un `.content.number`, dans
+# la même séquence de numéros que les issues, et la confondre avec un ticket ferait mentir le plan
+# autant que le décompte final.
+pj_items() {
+  pj_resoudre || return 1
+  # shellcheck disable=SC2016
+  # `$endCursor` est une variable GRAPHQL, substituée par `gh --paginate` et jamais par le shell :
+  # les guillemets simples sont ici le comportement recherché, pas un oubli.
+  pj_gql_pages 'query($endCursor: String) { node(id:"'"$PJ_PROJET_ID"'") { ... on ProjectV2 { items(first:100, after:$endCursor) { pageInfo{hasNextPage endCursor} nodes { id type content{ ... on Issue { number } } fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }' \
+    '.data.node.items.nodes[]? | select(.type == "ISSUE") | [(.content.number|tostring), .id, (.fieldValueByName.name // "")] | @tsv'
+}
+
+# pj_tickets -> « <numéro><TAB><node id><TAB><labels du scope portés, séparés par une virgule> » pour
+# TOUTES les issues du dépôt, ouvertes et fermées.
+#
+# Les tickets SANS label, et ceux qui en portent PLUSIEURS, sortent d'ici comme les autres — colonne
+# vide ou à virgules. C'est le plan qui les classe et le bilan qui les NOMME : les écarter au plus
+# près de la requête les ferait disparaître d'un décompte dont ils sont justement l'écart.
+#
+# La connexion `repository.issues` de GraphQL exclut les PR PAR CONSTRUCTION, là où le `GET /issues`
+# de REST les rendrait mêlées aux tickets — même argument que `gh_backlog`.
+pj_tickets() {
+  # shellcheck disable=SC2016
+  # Idem : `$endCursor` appartient à GraphQL.
+  pj_gql_pages 'query($endCursor: String) { repository(owner:"'"${GL_GH_REPO%%/*}"'", name:"'"${GL_GH_REPO##*/}"'") { issues(first:100, states:[OPEN, CLOSED], after:$endCursor) { pageInfo{hasNextPage endCursor} nodes { number id labels(first:30){nodes{name}} } } } }' \
+    '.data.repository.issues.nodes[]? | [(.number|tostring), .id, ([.labels.nodes[].name | select(startswith("'"$GL_WORKFLOW_SCOPE"'::"))] | join(","))] | @tsv'
+}
+
+# --- Écritures unitaires --------------------------------------------------------------------------
+# Aucune des deux ne passe par `gh_graphql_read` : son retry sur réponse vide RÉ-APPLIQUERAIT la
+# mutation (règle posée avec lui, et valable pour tous les backends).
+
+# pj_ajouter_item <node id du ticket> -> l'id de l'item, créé ou DÉJÀ LÀ.
+#
+# `addProjectV2ItemById` est idempotent côté GitHub : un contenu déjà dans le projet rend l'item
+# existant au lieu d'échouer. C'est ce qui dispense de vérifier avant d'ajouter — donc la moitié du
+# « rejouable sans doublon » du contrat, et la raison pour laquelle `gl_project_add` n'a besoin
+# d'aucune lecture d'ensemble.
+pj_ajouter_item() {
+  local content="$1" out id
+  if [ -z "$content" ]; then echo "usage: pj_ajouter_item <node-id>" >&2; return 2; fi
+  pj_resoudre || return 1
+  out="$(gh api graphql -f query="mutation { addProjectV2ItemById(input: {projectId: \"$PJ_PROJET_ID\", contentId: \"$content\"}) { item { id } } }" 2>&1)"
+  id="$(printf '%s' "$out" | grep -o '"id":"[^"]*"' | head -1 | sed 's/.*:"//; s/"$//')"
+  if [ -z "$id" ]; then
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+  printf '%s\n' "$id"
+}
+
+# pj_poser_status <id item> <id option> -> pose la valeur du champ Status sur l'item. Muet si ça
+# passe. Idempotent par nature : reposer la valeur déjà présente ne change rien.
+pj_poser_status() {
+  local item="$1" option="$2" out
+  if [ -z "$item" ] || [ -z "$option" ]; then echo "usage: pj_poser_status <item> <option>" >&2; return 2; fi
+  pj_resoudre || return 1
+  out="$(gh api graphql -f query="mutation { updateProjectV2ItemFieldValue(input: {projectId: \"$PJ_PROJET_ID\", itemId: \"$item\", fieldId: \"$PJ_CHAMP_ID\", value: {singleSelectOptionId: \"$option\"}}) { projectV2Item { id } } }" 2>&1)"
+  case "$out" in
+    *'"projectV2Item"'*) return 0 ;;
+    *) printf '%s\n' "$out" >&2; return 1 ;;
+  esac
+}
+
+# --- Le plan ---------------------------------------------------------------------------------------
+
+# pj_plan <fichier tickets> <fichier items> [iid…] -> une ligne par ticket, par numéro croissant :
+#     <action><TAB><iid><TAB><node id><TAB><id item><TAB><libellé cible><TAB><état courant>
+#
+# Six actions, et c'est tout ce que le shell a ensuite à savoir :
+#     ajouter    le ticket n'est pas un item     -> addProjectV2ItemById puis updateProjectV2ItemFieldValue
+#     poser      item présent, Status vide       -> updateProjectV2ItemFieldValue seul
+#     diverge    item présent, Status ≠ label    -> NOMMÉ ; réécrit seulement si --realigner
+#     conforme   rien à faire
+#     sans-etat  le ticket ne porte aucun label du scope (dérive doctor.sh, hors périmètre)
+#     ambigu     il en porte plusieurs — on ne devine pas lequel fait foi
+#
+# AWK DÉCIDE, LE SHELL EXÉCUTE : `--check` et la vraie passe lisent le MÊME plan, l'un pour
+# l'imprimer, l'autre pour l'exécuter. Ce qui est partagé est la DÉCISION — pas la lecture des
+# lignes, qui reste à faire des deux côtés (voir le piège ci-dessous, qui n'a frappé que l'un des
+# deux et se voyait donc mal).
+#
+# ⚠ UN CHAMP VIDE S'ÉCRIT « - » ET NON RIEN, et ce n'est pas cosmétique. Le consommateur du plan lit
+# ses lignes en `IFS=$'\t' read -r …`, et la TABULATION est un séparateur « blanc » au sens POSIX :
+# deux tabulations consécutives y valent UNE seule, si bien qu'un champ vide au milieu de la ligne ne
+# décale pas la colonne suivante — il la SUPPRIME. Le symptôme est exemplaire : sur une action
+# « ajouter » (id d'item vide), le libellé cible venait se ranger dans la variable de l'id d'item et
+# l'exécution partait chercher une option de Status nommée « ». `--check`, qui projette les mêmes
+# lignes en awk, restait juste — d'où deux modes qui se contredisaient sur un plan pourtant unique.
+#
+# La correspondance slug→libellé est empruntée à `gl_awk_workflow` — la MÊME fonction que les autres
+# projections du fichier, à qui l'on rend le label entre guillemets parce que c'est un fragment JSON
+# qu'elle sait lire. Elle n'existe ainsi toujours qu'à deux endroits (là-bas et `gl_workflow_label`),
+# et une septième valeur du cycle de vie ne s'ajoutera pas ici sans s'ajouter là-bas.
+#
+# ⚠ LES DEUX FICHIERS SE DISTINGUENT PAR `FILENAME` ET NON PAR `NR == FNR`, qui est le tour de main
+# habituel — et qui serait FAUX ici : le fichier des items est légitimement VIDE sur un projet neuf,
+# et `NR == FNR` reste alors vrai pour tout le second fichier, si bien que les tickets se liraient
+# comme des items. Le premier peuplement, c'est-à-dire le seul cas qui compte, est exactement celui
+# qui déclenche le bug.
+#
+# ⚠ Le plan ne voit que le sens « ticket → item ». L'inverse — un item porteur d'un Status dont le
+# ticket n'a aucun label — est rendu par `pj_orphelins` ; les deux ensemble font l'écart nommé du
+# troisième critère du ticket.
+pj_plan() {
+  local f_tickets="$1" f_items="$2"; shift 2
+  local filtre="" iid
+  # Le filtre est encadré de virgules aux DEUX bouts, et chaque iid y est cherché avec les siennes :
+  # sans elles, `index` ferait matcher « 6 » dans « 36, » et le verbe traiterait un ticket que
+  # personne ne lui a demandé.
+  for iid in "$@"; do filtre="$filtre$iid,"; done
+  [ -n "$filtre" ] && filtre=",$filtre"
+
+  PJ_FILTRE="$filtre" awk -F'\t' -v OFS='\t' -v WF_SCOPE="$GL_WORKFLOW_SCOPE" -v ITEMS="$f_items" "$(gl_awk_workflow)"'
+    # v(x) -> la valeur, ou « - » si elle est vide. Voir l en-tête : un champ réellement vide
+    # disparaîtrait à la lecture, tabulations consécutives fusionnant en une seule.
+    function v(x) { return (x == "" ? "-" : x) }
+    BEGIN { f = ENVIRON["PJ_FILTRE"] }
+    FILENAME == ITEMS { item[$1] = $2; statut[$1] = $3; next }
+    f != "" && index(f, "," $1 ",") == 0 { next }
+    {
+      iid = $1; node = $2; labels = $3
+      if (labels == "") { print "sans-etat", iid, node, "-", "-", "-"; next }
+      if (labels ~ /,/) { print "ambigu",    iid, node, "-", "-", labels; next }
+
+      cible = wf_libelle("\"" labels "\"")
+
+      if (!(iid in item))       { print "ajouter",  iid, node, "-",             v(cible), "-" ; next }
+      if (statut[iid] == "")    { print "poser",    iid, node, v(item[iid]), v(cible), "-" ; next }
+      if (statut[iid] != cible) { print "diverge",  iid, node, v(item[iid]), v(cible), v(statut[iid]); next }
+      print "conforme", iid, node, v(item[iid]), v(cible), v(statut[iid])
+    }
+  ' "$f_items" "$f_tickets" | sort -t"$(printf '\t')" -k2,2n
+}
+
+# pj_orphelins <fichier tickets> <fichier items> [filtre] -> le numéro des items qui portent un
+# Status alors que leur ticket ne porte AUCUN label du scope, un par ligne. Le <filtre> est celui de
+# `gl_project_backfill` (iid encadrés de virgules) ; vide, il porte sur tout le dépôt.
+#
+# C'est le sens que le plan ne voit pas, et il compte : le troisième critère compare deux décomptes,
+# donc l'écart peut pencher des deux côtés. Un item de trop est une dérive autant qu'un item
+# manquant — en moins visible, puisqu'il gonfle le compte au lieu de le creuser.
+pj_orphelins() {
+  local f_tickets="$1" f_items="$2" filtre="${3-}"
+  PJ_FILTRE="$filtre" awk -F'\t' -v TICKETS="$f_tickets" '
+    BEGIN { f = ENVIRON["PJ_FILTRE"] }
+    FILENAME == TICKETS { labels[$1] = $3; vu[$1] = 1; next }
+    $3 == "" { next }
+    f != "" && index(f, "," $1 ",") == 0 { next }
+    !($1 in vu) || labels[$1] == "" { print $1 }
+  ' "$f_tickets" "$f_items" | sort -n
+}
+
+# pj_compte <fichier> [colonne] [valeur] -> le nombre de lignes, ou de celles dont la <colonne> vaut
+# <valeur>. Un `grep -c` rendrait « 0 » AVEC un code de retour 1, que le `|| echo 0` du réflexe
+# transformerait en deux lignes « 0 » — awk compte sans cette chausse-trappe.
+pj_compte() {
+  local fichier="$1" col="${2:-0}" val="${3-}"
+  PJ_VAL="$val" awk -F'\t' -v C="$col" '
+    C == 0 { n++; next }
+    $C == ENVIRON["PJ_VAL"] { n++ }
+    END { print n + 0 }
+  ' "$fichier"
+}
+
+# --- Les deux verbes ------------------------------------------------------------------------------
+
+# gl_project_add <iid> [valeur] -> fait du ticket un ITEM du projet et pose son Status. Défaut
+# « À faire », c'est-à-dire l'état d'un ticket qui vient de naître.
+#
+# C'est le pendant exact du `workflow::a-faire` que /ticket-create pose aujourd'hui dans le même
+# `--label` que les autres : rien côté forge ne pose d'état par défaut, et un ticket créé sans état
+# est une dérive. Appelé DANS LA FOULÉE de la création — pas plus tard, pas « quand on y pensera ».
+#
+# Contrairement au backfill, ce verbe ÉCRASE un Status déjà posé, et l'asymétrie est voulue : ici
+# l'appelant NOMME la valeur qu'il veut, là-bas le verbe la dérive d'une autorité qui se périmera.
+# Idempotent : rejoué à l'identique il ne change rien, l'ajout comme la pose l'étant chacun.
+gl_project_add() {
+  local iid="$1" valeur="${2:-a-faire}" slug libelle option node item
+  if [ -z "$iid" ]; then echo "usage: gl_project_add <iid> [valeur]" >&2; return 2; fi
+  slug="$(gl_workflow_slug "$valeur")" || return 1
+  libelle="$(gl_workflow_label "$slug")"
+
+  pj_resoudre || return 1
+  option="$(pj_option_id "$libelle")" || return 1
+  node="$(gh_workitem_gid "$iid")" || return 1
+  item="$(pj_ajouter_item "$node")" || {
+    echo "Ajout de #$iid au projet « $GL_PROJET_TITRE » en échec." >&2
+    return 1
+  }
+  pj_poser_status "$item" "$option" || {
+    echo "#$iid est bien un item du projet « $GL_PROJET_TITRE », mais son Status n'a pas pu être posé." >&2
+    echo "  Rejouer la commande : l'ajout ne sera pas dupliqué." >&2
+    return 1
+  }
+  printf '#%s → item du projet « %s », Status « %s »\n' "$iid" "$GL_PROJET_TITRE" "$libelle"
+}
+
+# gl_project_backfill [--check] [--realigner] [<iid>…] -> peuple le projet avec les tickets EXISTANTS
+# et pose leur Status d'après leur label courant.
+#
+# TROIS PROMESSES, ET UNE SEULE MÉCANIQUE POUR LES TENIR :
+#   • REJOUABLE SANS DOUBLON — l'état de départ est RELU à chaque passe (le projet EST l'état ; il n'y
+#     a aucun fichier de reprise à garder cohérent, donc aucun moyen qu'il mente), et
+#     `addProjectV2ItemById` est idempotent côté GitHub.
+#   • `--check` SANS ÉCRITURE — même plan, exécuté de rien.
+#   • REPREND APRÈS INTERRUPTION — conséquence des deux premières et non d'un mécanisme de plus : une
+#     passe coupée au 200e ticket laisse 200 items posés, que la relecture de la passe suivante
+#     classe « conforme » et saute. Un échec isolé est signalé, compté, et n'arrête pas les suivants —
+#     c'est ce qui permet de relancer sans se demander où l'on en était.
+#
+# Le bilan final RELIT le projet après écriture — et non le plan qu'on croit avoir exécuté — pour
+# rendre les deux décomptes du troisième critère : items porteurs d'un Status contre tickets porteurs
+# d'un label. L'écart, dans un sens comme dans l'autre, est nommé ticket par ticket, et le PÉRIMÈTRE
+# du bilan est celui des <iid> demandés (tout le dépôt s'il n'y en a pas).
+#
+# ⚠ C'EST UN VERBE LENT ET C'EST NORMAL : deux mutations par ticket à ajouter, séquentielles, soit
+# une bonne heure pour un dépôt de 360 tickets au premier peuplement. Les passes suivantes ne
+# coûtent que les lectures (une poignée de secondes), puisqu'elles n'écrivent que ce qui manque.
+# Grouper les mutations par alias GraphQL diviserait ce temps par vingt et n'a pas été fait : le
+# premier peuplement n'a lieu qu'une fois, et une passe qui échoue ticket par ticket dit LEQUEL,
+# là où un lot qui échoue en dit vingt d'un coup.
+#
+# Codes de retour : 0 = plus aucun écart, 3 = il en reste un (en `--check` : il y a du travail),
+# 1 = échec franc (projet illisible, jeton sans scope « project »).
+gl_project_backfill() {
+  local check=0 realigner=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check)     check=1; shift ;;
+      --realigner) realigner=1; shift ;;
+      -*) echo "gl_project_backfill : option inconnue « $1 »" >&2; return 2 ;;
+      *) break ;;
+    esac
+  done
+
+  pj_resoudre || return 1
+
+  # LE PÉRIMÈTRE VAUT POUR LE BILAN AUTANT QUE POUR LE PLAN. Sans ça, `project-backfill 1 2`
+  # réussirait ce qu'on lui demande et rendrait quand même 3, la réconciliation lui opposant les 360
+  # tickets qu'on ne lui a pas demandés — un code de retour qu'aucun appelant ne pourrait lire.
+  # Même encodage que le filtre de pj_plan, virgules aux deux bouts comprises, et pour la même raison.
+  local filtre="" un_iid
+  for un_iid in "$@"; do filtre="$filtre$un_iid,"; done
+  [ -n "$filtre" ] && filtre=",$filtre"
+
+  # Trois brouillons d'appel, que personne ne lit : ils restent dans le répertoire temporaire, là où
+  # la règle du dépôt les envoie (ce qu'un script INVITE à lire va sous .maestro/, le reste non).
+  local f_tickets f_items f_plan
+  f_tickets="$(mktemp)" || return 1
+  f_items="$(mktemp)"   || { rm -f "$f_tickets"; return 1; }
+  f_plan="$(mktemp)"    || { rm -f "$f_tickets" "$f_items"; return 1; }
+
+  echo "Peuplement du projet « $GL_PROJET_TITRE » — dépôt $GL_GH_REPO"
+  if ! pj_tickets > "$f_tickets" || ! pj_items > "$f_items"; then
+    rm -f "$f_tickets" "$f_items" "$f_plan"
+    return 1
+  fi
+  pj_plan "$f_tickets" "$f_items" "$@" > "$f_plan"
+
+  printf '  %s ticket(s) lus, %s item(s) déjà dans le projet\n' \
+    "$(pj_compte "$f_tickets")" "$(pj_compte "$f_items")"
+
+  local action nb
+  for action in ajouter poser diverge conforme sans-etat ambigu; do
+    nb="$(pj_compte "$f_plan" 1 "$action")"
+    [ "$nb" -gt 0 ] && printf '  %-10s %s\n' "$action" "$nb"
+  done
+  echo ""
+
+  if [ "$check" -eq 1 ]; then
+    awk -F'\t' '$1 == "ajouter" || $1 == "poser" { printf "  %-8s #%s → « %s »\n", $1, $2, $5 }' "$f_plan"
+    awk -F'\t' '$1 == "diverge" { printf "  diverge  #%s : Status « %s » ≠ label « %s »  (--realigner pour aligner)\n", $2, $6, $5 }' "$f_plan"
+  fi
+
+  # `ecrits` est la liste des tickets que CETTE passe a posés, encadrée de virgules aux deux bouts
+  # comme le filtre d'iid, et pour la même raison : c'est ce qui distingue, dans le bilan, un trou
+  # réel d'une relecture en retard sur sa propre écriture.
+  local faits=0 echecs=0 ecrits="," retard="" iid node item cible etat option
+  if [ "$check" -eq 0 ]; then
+    while IFS=$'\t' read -r action iid node item cible etat; do
+      case "$action" in
+        ajouter|poser) ;;
+        diverge) [ "$realigner" -eq 1 ] || continue ;;
+        *) continue ;;
+      esac
+      # « - » est le marqueur de champ vide du plan (cf. l'en-tête de pj_plan) : on le rend à sa
+      # valeur ici, au seul endroit qui s'en sert.
+      [ "$item" = "-" ] && item=""
+      [ "$etat" = "-" ] && etat=""
+
+      if ! option="$(pj_option_id "$cible")"; then
+        echo "  ✗ #$iid : « $cible » n'est pas une option du champ Status" >&2
+        echecs=$((echecs + 1)); continue
+      fi
+      if [ -z "$item" ] && ! item="$(pj_ajouter_item "$node")"; then
+        echo "  ✗ #$iid : ajout au projet en échec" >&2
+        echecs=$((echecs + 1)); continue
+      fi
+      if pj_poser_status "$item" "$option"; then
+        faits=$((faits + 1)); ecrits="$ecrits$iid,"
+        if [ "$action" = diverge ]; then
+          printf '  ✓ #%s réaligné : « %s » → « %s »\n' "$iid" "$etat" "$cible"
+        else
+          printf '  ✓ #%s → « %s »\n' "$iid" "$cible"
+        fi
+      else
+        echo "  ✗ #$iid : Status non posé" >&2
+        echecs=$((echecs + 1))
+      fi
+    done < "$f_plan"
+    if [ "$faits" -gt 0 ] || [ "$echecs" -gt 0 ]; then echo ""; fi
+
+    # RELECTURE, ET NON RÉCAPITULATIF DE CE QU'ON CROIT AVOIR ÉCRIT : le bilan doit rendre ce que le
+    # projet PORTE. Mais la connexion `items` de Projects v2 est ÉVENTUELLEMENT COHÉRENTE — relue
+    # dans la seconde qui suit la dernière mutation, elle peut ne pas encore la montrer, et le bilan
+    # accuserait alors un écart sur un ticket qu'il vient lui-même d'écrire (mesuré : 2 tickets
+    # posés, le second absent de la relecture immédiate, présent à la passe suivante).
+    #
+    # D'où une relecture à RÉESSAI BORNÉ, sur une condition PRÉCISE — « les tickets que cette passe
+    # a écrits sont-ils tous revenus ? » — et non sur un `sleep` choisi au jugé. C'est un des rares
+    # endroits où réessayer est légitime : c'est une LECTURE, donc rejouable sans effet de bord, et
+    # on attend une chose qu'on sait avoir écrite. Ce qui manque encore au bout des essais est
+    # signalé pour ce qu'il est — non vérifié — et jamais confondu avec un vrai trou.
+    local essai=1
+    while :; do
+      if ! pj_items > "$f_items"; then
+        rm -f "$f_tickets" "$f_items" "$f_plan"
+        return 1
+      fi
+      retard="$(PJ_ECRITS="$ecrits" awk -F'\t' -v ITEMS="$f_items" '
+        FILENAME == ITEMS { if ($3 != "") avec_status[$1] = 1; next }
+        index(ENVIRON["PJ_ECRITS"], "," $1 ",") > 0 && !($1 in avec_status) { print $1 }
+      ' "$f_items" "$f_tickets" | sort -n)"
+      [ -z "$retard" ] && break
+      [ "$essai" -ge 3 ] && break
+      sleep 2
+      essai=$((essai + 1))
+    done
+  fi
+
+  # --- Réconciliation : le troisième critère du ticket, rendu à chaque passe ---
+  local manquants orphelins ecart=0
+  echo "Réconciliation"
+  [ -n "$filtre" ] && echo "  (restreinte aux tickets demandés — sans argument, elle porte sur tout le dépôt)"
+  printf '  tickets portant un label %s:: : %s\n' "$GL_WORKFLOW_SCOPE" \
+    "$(PJ_FILTRE="$filtre" awk -F'\t' 'BEGIN { f = ENVIRON["PJ_FILTRE"] } f != "" && index(f, "," $1 ",") == 0 { next } $3 != "" { n++ } END { print n + 0 }' "$f_tickets")"
+  printf '  items du projet portant un Status : %s\n' \
+    "$(PJ_FILTRE="$filtre" awk -F'\t' 'BEGIN { f = ENVIRON["PJ_FILTRE"] } f != "" && index(f, "," $1 ",") == 0 { next } $3 != "" { n++ } END { print n + 0 }' "$f_items")"
+
+  # Les tickets encore « en retard » (écrits à l'instant, pas encore rendus par la relecture) sont
+  # SORTIS de la liste des manquants : les y laisser ferait accuser d'un trou le ticket qu'on vient
+  # de combler. Ils sont dits à part, juste après.
+  manquants="$(PJ_RETARD="$(printf '%s' "$retard" | tr '\n' ',')" PJ_FILTRE="$filtre" awk -F'\t' -v ITEMS="$f_items" '
+    BEGIN { r = "," ENVIRON["PJ_RETARD"] ","; f = ENVIRON["PJ_FILTRE"] }
+    FILENAME == ITEMS { if ($3 != "") avec_status[$1] = 1; next }
+    f != "" && index(f, "," $1 ",") == 0 { next }
+    $3 != "" && !($1 in avec_status) && index(r, "," $1 ",") == 0 { print $1 }
+  ' "$f_items" "$f_tickets" | sort -n)"
+  orphelins="$(pj_orphelins "$f_tickets" "$f_items" "$filtre")"
+
+  if [ -n "$manquants" ]; then
+    ecart=1
+    echo "  ✗ label posé mais aucun Status dans le projet :"
+    printf '%s\n' "$manquants" | awk '{ printf "      #%s\n", $1 }'
+  fi
+  if [ -n "$retard" ]; then
+    ecart=1
+    echo "  ~ posé à l'instant mais pas encore rendu par la relecture (cohérence différée) :"
+    printf '%s\n' "$retard" | awk '{ printf "      #%s\n", $1 }'
+    echo "    Rejouer --check pour trancher — ce n'est pas un échec d'écriture."
+  fi
+  if [ -n "$orphelins" ]; then
+    ecart=1
+    echo "  ✗ Status posé mais le ticket ne porte aucun label :"
+    printf '%s\n' "$orphelins" | awk '{ printf "      #%s\n", $1 }'
+  fi
+  # Les deux dérives que doctor.sh traque déjà côté labels sont NOMMÉES ici sans être réparées : ce
+  # verbe peuple un projet, il n'arbitre pas le cycle de vie d'un ticket qui n'en a pas, ou en a deux.
+  awk -F'\t' '$1 == "sans-etat" { printf "  ~ #%s ne porte aucun label du cycle de vie (dérive à traiter côté labels)\n", $2 }' "$f_plan"
+  awk -F'\t' '$1 == "ambigu"    { printf "  ~ #%s porte plusieurs labels du cycle de vie (« %s ») — état non déduit\n", $2, $6 }' "$f_plan"
+
+  if [ "$echecs" -gt 0 ]; then
+    ecart=1
+    printf '  ✗ %s écriture(s) en échec — relancer la commande, rien ne sera dupliqué\n' "$echecs"
+  fi
+
+  rm -f "$f_tickets" "$f_items" "$f_plan"
+
+  echo ""
+  if [ "$ecart" -eq 0 ]; then
+    echo "  conforme — tout ticket porteur d'un label du cycle de vie est un item du projet, avec son Status."
+    return 0
+  fi
+  if [ "$check" -eq 1 ]; then
+    echo "  écart constaté — rejouer sans --check pour le combler."
+  else
+    echo "  écart subsistant — voir le détail ci-dessus."
+  fi
+  return 3
+}
+
 # --- Dispatcher (uniquement quand exécuté directement, pas quand sourcé) -------------------------
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   cmd="${1:-}"; [ "$#" -gt 0 ] && shift
@@ -3846,6 +4377,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issue-title)    gl_issue_title "$@" ;;
     create-mr)      gl_create_mr "$@" ;;
     issue-note)     gl_issue_note "$@" ;;
+    project-add)      gl_project_add "$@" ;;
+    project-backfill) gl_project_backfill "$@" ;;
     pipeline-latest)      gl_pipeline_latest "$@" ;;
     pipeline-status)      gl_pipeline_status "$@" ;;
     pipeline-failed-jobs) gl_pipeline_failed_jobs "$@" ;;
@@ -3909,6 +4442,17 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                         idempotent : met à jour la MR ouverte existante au lieu d'échouer)" >&2
       echo "    issue-note <iid> <fichier>          (poste le fichier en commentaire sur le ticket)" >&2
       echo "    issue-title <iid>                   (titre du ticket, UTF-8 intact)" >&2
+      echo "  Peuplement du projet Projects v2 (le Status vit sur l'ITEM, pas sur l'issue — #361) :" >&2
+      echo "    project-add <iid> [valeur]  (fait du ticket un item du projet \$MAESTRO_PROJECT_TITRE —" >&2
+      echo "                                 défaut « $GL_PROJET_TITRE » — et pose son Status. Défaut « À faire » ;" >&2
+      echo "                                 appelé par /ticket-create dans la foulée de la création)" >&2
+      echo "    project-backfill [--check] [--realigner] [<iid>…]" >&2
+      echo "                                (peuple le projet avec les tickets EXISTANTS, Status dérivé du" >&2
+      echo "                                 label workflow:: courant. Rejouable sans doublon, reprend après" >&2
+      echo "                                 interruption ; ne réécrit JAMAIS un Status déjà posé sans" >&2
+      echo "                                 --realigner. Finit par la réconciliation des deux décomptes," >&2
+      echo "                                 l'écart nommé ticket par ticket. 0=conforme, 3=écart)" >&2
+      echo "                                 NB : hors commutateur MAESTRO_CYCLE — peupler n'est pas décider" >&2
       echo "  Branches :" >&2
       echo "    cleanup-merged [--auto]     (supprime les branches locales dont la MR est mergée ; --auto = muet si rien)" >&2
       echo "    sync-main [--check]         (avance main du clone principal sur origin/main, fast-forward seul ; 0=à jour/fait, 3=divergent, 4=arbre sale)" >&2
