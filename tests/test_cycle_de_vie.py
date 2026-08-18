@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from conftest import CLES_FORGE  # le conftest du dossier, sur le sys.path de pytest
+from conftest import FORGE_DES_TESTS  # le conftest du dossier, sur le sys.path de pytest
 
 RACINE = Path(__file__).resolve().parent.parent
 BASH = shutil.which("bash")
@@ -533,8 +533,8 @@ def test_reconcile_balayage_ne_retient_que_les_fermes_restes_actifs(depot: Depot
         assert _cible_ajoutee(mutation) == [GIDS["termine"]]
 
 
-def test_le_conftest_neutralise_la_forge_heritee_du_poste() -> None:
-    """Tout ce module ne tient que si le poste ne pose pas `MAESTRO_FORGE` (#339).
+def test_le_conftest_epingle_la_forge_des_suites_d_outillage() -> None:
+    """Tout ce module ne tient que si `MAESTRO_FORGE` vaut « gitlab » (#339, révisé par #343).
 
     `lib.sh` porte deux backends depuis la migration vers GitHub, et c'est cette variable qui
     tranche. Elle se pose au MÊME endroit que la couleur de `run.sh` (#236) — le bloc `env` d'un
@@ -543,17 +543,24 @@ def test_le_conftest_neutralise_la_forge_heritee_du_poste() -> None:
 
     Ce qui se passerait alors est le pire mode d'échec disponible : le `glab` factice monté en tête
     du `PATH` ne serait plus jamais appelé, `lib.sh` partirait vers `gh`, et les assertions
-    tomberaient **sur ce poste seulement** avec des erreurs d'authentification GitHub dont rien ne
-    désignerait la cause. C'est le dépôt qui doit tarir la fuite, pas l'enquête suivante.
+    tomberaient avec des erreurs d'authentification GitHub dont rien ne désignerait la cause.
 
-    Vide plutôt que supprimée, comme les garde-fous précédents : `lib.sh` lit
-    `${MAESTRO_FORGE:-gitlab}`, pour qui vide et absente valent « gitlab ».
+    ⚠ Posée EN DUR, et non plus vidée. Jusqu'à la bascule (#343), `lib.sh` lisait
+    `${MAESTRO_FORGE:-gitlab}` : vider suffisait, puisque vide et absente valaient « gitlab ». Le
+    défaut est maintenant « github », donc une variable vidée enverrait ce module entier vers `gh`
+    — l'échec même que ce garde-fou existe pour empêcher. Épingler la valeur attendue la rend
+    indifférente au défaut du jour ; c'est la forme à garder si le défaut rebouge.
+
+    `MAESTRO_GITHUB_REPO` reste vidée : elle ne choisit pas un backend mais une cible.
     """
-    for cle in CLES_FORGE:
-        assert os.environ.get(cle) == "", (
-            f"le conftest doit vider {cle} à l'import, avant le premier module de test "
-            "(tests/conftest.py, #339)"
-        )
+    assert os.environ.get("MAESTRO_FORGE") == FORGE_DES_TESTS, (
+        "le conftest doit poser MAESTRO_FORGE=gitlab à l'import, avant le premier module de test "
+        "(tests/conftest.py, #339 révisé par #343) — la vider ne suffit plus depuis que le défaut "
+        "de lib.sh est « github »"
+    )
+    assert os.environ.get("MAESTRO_GITHUB_REPO") == "", (
+        "le conftest doit vider MAESTRO_GITHUB_REPO à l'import (tests/conftest.py, #339)"
+    )
 
 
 def test_reconcile_balayage_sans_derive_ne_dit_rien_a_faire_et_n_ecrit_rien(depot: Depot) -> None:

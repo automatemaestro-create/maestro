@@ -93,8 +93,9 @@ Options :
   node       Node ${NODE_PIN:-(.node-version)} provisionné sous .tools/node/ (téléchargement vérifié
              par SHA-256) + @playwright/mcp ${PLAYWRIGHT_MCP_VERSION} — sans droits admin, et
              prioritaire sur le Node du système pour les étapes suivantes
-  prerequis  python >= ${PYTHON_MIN}, node >= ${NODE_MIN}, npm, git, glab — installés d'office
-             s'ils manquent (winget / brew / apt)
+  prerequis  python >= ${PYTHON_MIN}, node >= ${NODE_MIN}, npm, git, gh, glab — installés
+             d'office s'ils manquent (winget / brew / apt). gh porte le workflow ; glab ne
+             sert plus qu'à relire l'archive GitLab (#343)
   venv       .venv/ + pip install -e ".[dev]"
   env        .env créé depuis .env.example (jamais écrasé) ; les clés partagées encore
              vides sont signalées, avec le script qui les récupère (scripts/env-pull.sh)
@@ -104,7 +105,7 @@ Options :
              clés machine attendues : .claude/settings.local.example.json
   runner     Docker + runner CI de projet de cette machine (scripts/gitlab/setup-runner.sh)
   infra      bases locales PostgreSQL/Redis/Temporal — uniquement avec --with-infra
-  verif      glab auth status + maestro-check-env
+  verif      gh auth status (+ glab pour l'archive) + maestro-check-env
 
 Le script ne pose aucune question : ce qui exige un humain est listé en fin de rapport.
 USAGE
@@ -242,6 +243,12 @@ commande_install() {
         windows) echo "winget install GLab.GLab" ;;
         macos)   echo "brew install glab" ;;
         *)       echo "voir https://gitlab.com/gitlab-org/cli#installation" ;;
+      esac ;;
+    gh)
+      case "$OS" in
+        windows) echo "winget install GitHub.cli" ;;
+        macos)   echo "brew install gh" ;;
+        *)       echo "voir https://github.com/cli/cli#installation" ;;
       esac ;;
     *) echo "voir la documentation de $1" ;;
   esac
@@ -385,13 +392,16 @@ paquet_id() {
     windows/node|windows/npm) echo "OpenJS.NodeJS.LTS" ;;
     windows/git)    echo "Git.Git" ;;
     windows/glab)   echo "GLab.GLab" ;;
+    windows/gh)     echo "GitHub.cli" ;;
     macos/python)   echo "python@3.12" ;;
     macos/node|macos/npm) echo "node" ;;
     macos/git)      echo "git" ;;
     macos/glab)     echo "glab" ;;
+    macos/gh)       echo "gh" ;;
     linux/python)   echo "python3 python3-venv python3-pip" ;;
     linux/node|linux/npm) echo "nodejs npm" ;;
     linux/git)      echo "git" ;;
+    linux/gh)       echo "gh" ;;   # présent dans les dépôts récents ; sinon commande_install prend le relais
     *)              echo "" ;;   # glab n'est pas dans les dépôts apt standard
   esac
 }
@@ -528,6 +538,7 @@ assure_detection() {
   [ "${#PY_BOOT[@]}" -gt 0 ] || detecte_python_amorce >/dev/null 2>&1 || true
   if detecte_outil node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then NODE_PRESENT=1; fi
   if command -v glab >/dev/null 2>&1; then GLAB_PRESENT=1; fi
+  if command -v gh >/dev/null 2>&1; then GH_PRESENT=1; fi
   return 0
 }
 
@@ -714,12 +725,21 @@ etape_node() {
 
 # --- 2. Prérequis : détecter, installer ce qui manque, re-détecter --------------------------------
 # `python` et `git` sont DURS (sans eux les étapes suivantes n'ont rien à faire) ; `node`/`npm` ne
-# bloquent que apps/web, et `glab` que le workflow de tickets.
-OUTILS_REQUIS="python node npm git glab"
+# bloquent que apps/web, et `gh` que le workflow de tickets.
+#
+# `gh` ET `glab`, dans cet ordre, depuis la bascule (#343, chantier #335). `gh` est celui dont le
+# workflow dépend : les tickets, les PR et la CI vivent sur GitHub, et `MAESTRO_FORGE` vaut
+# « github » sans qu'on la pose. `glab` reste installé parce que le projet GitLab est l'ARCHIVE
+# (271 MR, historique du time tracking natif) et que la relire demande son CLI — mais plus rien du
+# quotidien n'en dépend. Un clone neuf sans `gh` ne peut pas travailler ; sans `glab` il ne peut
+# pas consulter l'archive, ce qui n'est pas la même urgence. Le retrait de `glab` des prérequis
+# appartient à #344, avec le reste de l'outillage GitLab.
+OUTILS_REQUIS="python node npm git gh glab"
 PREREQUIS_DURS_OK=1
 NB_OUTILS_MANQUANTS=0
 NODE_PRESENT=0
 GLAB_PRESENT=0
+GH_PRESENT=0
 
 outil_est_dur() { case "$1" in python|git) return 0 ;; *) return 1 ;; esac; }
 
@@ -756,6 +776,9 @@ detecte_outil() {
     glab)
       command -v glab >/dev/null 2>&1 || return 1
       glab --version 2>/dev/null | head -1 | cut -d' ' -f2 ;;
+    gh)
+      command -v gh >/dev/null 2>&1 || return 1
+      gh --version 2>/dev/null | head -1 | cut -d' ' -f3 ;;
     *) return 1 ;;
   esac
 }
@@ -815,7 +838,7 @@ etape_prerequis() {
       case " ${installes[*]-} " in
         *" $outil "*) printf '  ✓ %s %s (installé à l'\''instant)\n' "$outil" "$version" ;;
       esac
-      case "$outil" in node) NODE_PRESENT=1 ;; glab) GLAB_PRESENT=1 ;; esac
+      case "$outil" in node) NODE_PRESENT=1 ;; glab) GLAB_PRESENT=1 ;; gh) GH_PRESENT=1 ;; esac
       continue
     fi
     manquants+=("$outil")
@@ -1307,20 +1330,38 @@ etape_infra() {
 etape_verif() {
   local pv; pv="$(python_venv)"
 
+  # `gh` D'ABORD : depuis la bascule (#343) c'est lui qui porte le workflow de tickets. Son
+  # authentification est INTERACTIVE et le reste — il n'y a pas d'équivalent du `GITLAB_TOKEN` du
+  # `.env` côté GitHub, et il ne faut surtout pas en inventer un : la configuration de `gh` est
+  # isolée par projet via GH_CONFIG_DIR (#334, docs/10 §7.4), donc un jeton posé dans le `.env`
+  # atterrirait dans le config dir ambiant, c'est-à-dire pas forcément celui du projet. Le script
+  # dit ce qui manque et laisse le geste à `/setup`, qui prend en charge les authentifications.
+  if [ "$GH_PRESENT" = 1 ]; then
+    if gh auth status >/dev/null 2>&1; then
+      rapport OK verif "gh authentifié"
+    else
+      rapport IGNORE verif "gh installé mais non authentifié — workflow de tickets indisponible"
+      reste "S'authentifier auprès de GitHub : gh auth login (config isolée par GH_CONFIG_DIR, docs/10 §7.4)"
+    fi
+  else
+    rapport IGNORE verif "gh absent — workflow de tickets indisponible"
+  fi
+
+  # `glab` ENSUITE, et son absence n'est plus qu'un renseignement : le projet GitLab est archivé en
+  # lecture seule (#343), il ne sert qu'à relire les 271 MR et l'historique du time tracking natif.
   if [ "$GLAB_PRESENT" = 1 ]; then
     if glab auth status >/dev/null 2>&1; then
-      rapport OK verif "glab authentifié"
+      rapport OK verif "glab authentifié (archive GitLab, lecture seule)"
     elif [ "$MODE_CHECK" = 1 ] && valeur_env GITLAB_TOKEN >/dev/null 2>&1; then
       # --check n'écrit rien, pas même une configuration glab.
       rapport IGNORE verif "glab : s'authentifierait depuis GITLAB_TOKEN du .env (--check : rien fait)"
     elif authentifie_glab; then
-      rapport OK verif "glab authentifié depuis GITLAB_TOKEN du .env"
+      rapport OK verif "glab authentifié depuis GITLAB_TOKEN du .env (archive GitLab, lecture seule)"
     else
-      rapport IGNORE verif "glab installé mais non authentifié"
-      reste "S'authentifier auprès de GitLab : glab auth login (ou renseigner GITLAB_TOKEN dans le .env)"
+      rapport IGNORE verif "glab installé mais non authentifié — archive GitLab non consultable"
     fi
   else
-    rapport IGNORE verif "glab absent — workflow de tickets indisponible"
+    rapport IGNORE verif "glab absent — archive GitLab non consultable (sans effet sur le workflow)"
   fi
 
   if [ ! -x "$pv" ]; then

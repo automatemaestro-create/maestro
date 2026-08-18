@@ -40,17 +40,24 @@ un test arrive alors truffée de codes ANSI et
 seulement**. Quatre sessions ont rouvert la même enquête pour cette fausse
 alerte ; c'est le dépôt, pas chaque run, qui doit la tarir.
 
-Quatrième garde-fou, même famille que le troisième (#339) : **`MAESTRO_FORGE`
-est neutralisée**. Elle choisit le backend de `scripts/gitlab/lib.sh` — `glab`
-et GitLab par défaut, `gh` et GitHub quand elle vaut `github` — et se pose
-exactement au même endroit que la précédente, le bloc `env` d'un
-`.claude/settings.local.json`, d'où elle fuit dans les sous-processus de tous
-les tests d'outillage. Un poste ayant basculé sa forge ferait alors partir vers
-`gh` des suites écrites autour d'un `glab` factice : elles échoueraient **sur ce
-poste seulement**, avec des erreurs d'authentification GitHub sans rapport
-visible avec la variable. Comme pour la couleur, c'est le dépôt qui doit tarir
-la fuite, pas chaque enquête. `MAESTRO_GITHUB_REPO` la suit pour la même raison :
-un dépôt cible hérité du poste n'a rien à faire dans un test.
+Quatrième garde-fou, même famille que le troisième (#339, révisé par #343) :
+**`MAESTRO_FORGE` est épinglée à `gitlab`**. Elle choisit le backend de
+`scripts/gitlab/lib.sh` — `gh` et GitHub par défaut depuis la bascule, `glab` et
+GitLab quand elle vaut `gitlab` — et se pose exactement au même endroit que la
+précédente, le bloc `env` d'un `.claude/settings.local.json`, d'où elle fuit dans
+les sous-processus de tous les tests d'outillage. Les suites concernées sont
+écrites autour d'un `glab` factice monté en tête du `PATH` : partir vers `gh` les
+ferait échouer avec des erreurs d'authentification GitHub sans rapport visible
+avec la variable. Comme pour la couleur, c'est le dépôt qui doit tarir la fuite,
+pas chaque enquête.
+
+La nuance que la bascule a introduite vaut d'être lue : les garde-fous
+précédents **vident** leur variable, ce qui suffit tant qu'« absente » vaut la
+valeur voulue. Celui-ci ne le peut plus — vide et absente valent désormais
+« github » — et **pose donc la valeur en dur**. Une neutralisation par effacement
+ne protège que tant que le défaut ne bouge pas. `MAESTRO_GITHUB_REPO`, elle,
+reste vidée : elle ne choisit pas un backend mais une cible, et un dépôt cible
+hérité du poste n'a rien à faire dans un test.
 
 Cinquième garde-fou (#333), et le seul qui REFUSE de jouer au lieu de
 neutraliser : **git absent EN CI est une erreur, pas un saut**. Les trois
@@ -85,6 +92,11 @@ CLE_COULEUR_ORCHESTRATE = "MAESTRO_ORCHESTRATE_COULEUR"
 #: Neutralisées ensemble : la seconde n'a de sens que sous la première, et un dépôt hérité du poste
 #: n'aurait pas plus sa place dans un test qu'un backend hérité du poste.
 CLES_FORGE = ("MAESTRO_FORGE", "MAESTRO_GITHUB_REPO")
+
+#: Le backend contre lequel les suites d'outillage sont écrites — elles montent un `glab` factice
+#: en tête du `PATH`. Posé EN DUR par le conftest depuis la bascule (#343) : le défaut de `lib.sh`
+#: est passé à « github », donc une variable simplement vidée enverrait ces suites vers `gh`.
+FORGE_DES_TESTS = "gitlab"
 
 #: Variables posées d'office par les intégrations continues (GitLab CI comme GitHub Actions).
 #: Leur présence distingue « personne n'est là pour lire un `s` dans le compte rendu » d'un
@@ -161,27 +173,34 @@ def _neutralise_couleur_orchestrate() -> None:
 
 
 def _neutralise_forge() -> None:
-    """Vide `MAESTRO_FORGE` et `MAESTRO_GITHUB_REPO` de l'environnement du test (#339).
+    """Épingle `MAESTRO_FORGE=gitlab` et vide `MAESTRO_GITHUB_REPO` (#339, révisé par #343).
 
-    `scripts/gitlab/lib.sh` porte deux backends depuis la migration vers GitHub :
-    `glab` par défaut, `gh` quand `MAESTRO_FORGE=github`. Les suites d'outillage
-    (`test_cycle_de_vie.py`, `test_collaboration.py`, `test_worktree.py`…) montent
-    un `glab` factice en tête du `PATH` et vérifient les mutations qu'il reçoit :
-    sur un poste ayant basculé sa forge, ces suites partiraient vers `gh` et
-    échoueraient là et nulle part ailleurs — le pire mode d'échec, puisque rien
-    dans le message ne désignerait la variable.
+    `scripts/gitlab/lib.sh` porte deux backends : `gh` et GitHub **par défaut**
+    depuis la bascule (#343), `glab` et GitLab quand `MAESTRO_FORGE=gitlab`. Les
+    suites d'outillage (`test_cycle_de_vie.py`, `test_collaboration.py`,
+    `test_worktree.py`…) montent un `glab` factice en tête du `PATH` et vérifient
+    les mutations qu'il reçoit : partir vers `gh` les ferait échouer avec des
+    erreurs d'authentification GitHub dont rien ne désignerait la cause.
 
-    Mise à **vide** plutôt que supprimée, comme les précédentes : `lib.sh` lit
-    `${MAESTRO_FORGE:-gitlab}`, pour qui vide et absente valent « gitlab », et une
-    valeur vide traverse sans surprise les `env={**os.environ, …}` des tests.
+    ⚠ La valeur est désormais **posée en dur**, et non plus vidée. C'est le point
+    que la bascule a changé : `lib.sh` lisait `${MAESTRO_FORGE:-gitlab}`, pour qui
+    vide et absente valaient « gitlab » — vider suffisait donc à obtenir le
+    backend visé par ces suites. Il lit maintenant `${MAESTRO_FORGE:-github}` :
+    vider les enverrait vers `gh`, c'est-à-dire exactement l'échec que ce
+    garde-fou existe pour empêcher. Une neutralisation qui se contente d'effacer
+    ne protège que tant que le défaut ne bouge pas ; épingler la valeur attendue
+    la rend indifférente au défaut, aujourd'hui comme au prochain changement.
+
+    `MAESTRO_GITHUB_REPO`, elle, reste **vidée** : elle ne choisit pas un backend
+    mais une cible, et un dépôt hérité du poste n'a pas sa place dans un test.
 
     Ce n'est PAS un obstacle à couvrir le backend `gh` : un test qui le vise pose
     la variable explicitement dans l'environnement du sous-processus qu'il lance,
-    ce que cette neutralisation n'empêche en rien. Elle interdit seulement à la
-    forge d'être **héritée** du poste.
+    ce que cet épinglage n'empêche en rien. Il interdit seulement à la forge
+    d'être **héritée** du poste ou **déduite** du défaut du jour.
     """
-    for cle in CLES_FORGE:
-        os.environ[cle] = ""
+    os.environ["MAESTRO_FORGE"] = FORGE_DES_TESTS
+    os.environ["MAESTRO_GITHUB_REPO"] = ""
 
 
 # Posés à l'import du conftest, donc avant l'import du premier module de test :

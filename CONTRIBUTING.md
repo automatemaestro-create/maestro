@@ -1,20 +1,27 @@
 # Contribuer à Maestro
 
-Ce fichier est le **mode d'emploi humain** : du clone à la première Merge Request, en une page.
+Ce fichier est le **mode d'emploi humain** : du clone à la première Pull Request, en une page.
 Il ne remplace pas [`docs/10-workflow-git.md`](./docs/10-workflow-git.md) (la règle complète, avec
 les cas particuliers) ni [`CLAUDE.md`](./CLAUDE.md) (les mêmes règles, écrites pour l'agent) — il
 dit **par où commencer** et renvoie vers eux pour le détail.
+
+> **Le projet vit sur GitHub** — [`automatemaestro-create/maestro`](https://github.com/automatemaestro-create/maestro).
+> Tickets, Pull Requests et CI y sont depuis la bascule du **2026-08-17** (#343). Le projet GitLab
+> est **archivé en lecture seule** : il reste l'archive des 271 Merge Requests d'avant la bascule,
+> plus rien ne s'y écrit. Voir [§8](#8-larchive-gitlab).
 
 ---
 
 ## 1. Mettre en route le clone — une commande
 
 ```bash
+git clone https://github.com/automatemaestro-create/maestro.git
+cd maestro
 bash scripts/setup.sh
 ```
 
-C'est la **source unique** du parcours : prérequis (Python 3.11+, Node 20+, git, `glab`), `.venv`,
-`.env`, hook git `commit-msg`, dépendances de `apps/web`, réglages Claude Code, Docker + runner CI.
+C'est la **source unique** du parcours : prérequis (Python 3.11+, Node 20+, git, `gh`, `glab`),
+`.venv`, `.env`, hook git `commit-msg`, dépendances de `apps/web`, réglages Claude Code, Docker.
 Idempotent et non destructif — le relancer ne casse rien, un `.env` existant n'est jamais écrasé.
 `--check` diagnostique sans rien écrire ; `--only <étape>` en rejoue une seule.
 
@@ -39,7 +46,7 @@ Unix), les dépendances n'étant installées que là.
 
 ## 2. Prendre un ticket
 
-Le backlog vit dans **GitLab**. Un ticket = une branche = une Merge Request.
+Le backlog vit dans **GitHub**. Un ticket = une branche = une Pull Request.
 
 ```
 /backlog
@@ -96,13 +103,13 @@ lire du code ou relire une MR pendant que le ticket avance à côté ([docs/10 �
 /ticket-ship
 ```
 
-commite ce qui est en attente, pousse, ouvre la Merge Request (`Closes #<iid>`, checklist
+commite ce qui est en attente, pousse, ouvre la Pull Request (`Closes #<iid>`, checklist
 renseignée), passe le ticket « En revue » et loggue le temps. Aucun relecteur n'est désigné au
 passage — voir §5. Si le commit est déjà fait, `/ticket-finish` fait la même chose sans l'étape de
 commit.
 
 Ces commandes sont la **source unique** de la clôture : ne rejouez pas `git push` +
-`glab mr create` à la main.
+`gh pr create` à la main.
 
 Au passage, `/ticket-finish` vérifie si votre branche a pris du **retard sur `origin/main`** et
 signale les fichiers modifiés des deux côtés (`CLAUDE.md`, `docs/10`, `lib.sh` sont des aimants à
@@ -119,23 +126,22 @@ git fetch origin main && git rebase origin/main
 ## 5. Qui relit, qui merge
 
 - **La revue est best-effort** : personne n'est désigné d'office relecteur — c'est la **file de
-  revue** de `/backlog` (les MR ouvertes, la plus ancienne d'abord) qui appelle une relecture, et
+  revue** de `/backlog` (les PR ouvertes, la plus ancienne d'abord) qui appelle une relecture, et
   l'approbation **n'est pas bloquante**. Personne n'attend l'autre pour avancer. Pour vous attribuer
-  une MR — ou en confier une à quelqu'un — la pose se fait à la main :
-  `bash scripts/gitlab/lib.sh set-reviewer <mr|branche> [username]`.
+  une PR — ou en confier une à quelqu'un — la pose se fait à la main :
+  `bash scripts/gitlab/lib.sh set-reviewer <pr|branche> [username]`.
 - **Le merge est toujours une décision humaine** — jamais un agent, jamais automatique. La
-  condition technique est un **pipeline vert**.
-- **MR bloquée ?** `/mr-fix` la rend mergeable : il résout le conflit avec `origin/main` s'il y en
-  a un, puis remet le pipeline au vert pour ce qui est corrigeable en local.
+  condition technique est une **CI verte** (GitHub Actions, en autorité depuis #338).
+- **PR bloquée ?** `/mr-fix` la rend mergeable : il résout le conflit avec `origin/main` s'il y en
+  a un, puis remet la CI au vert pour ce qui est corrigeable en local.
 - **Après le merge** : `/branch-cleanup` supprime la branche **locale**, revient sur `main` à jour
-  et passe le ticket « Terminé ». La branche **distante**, elle, est supprimée par GitLab au merge
-  (la MR est créée avec « supprimer la branche source »). Le merge **ferme** le ticket mais ne le
-  passe pas « Terminé » tout seul — le cycle de vie est porté par un label `workflow::`
-  ([docs/10 §3.1](./docs/10-workflow-git.md)), et GitLab n'en pose aucun : un ticket fraîchement
-  mergé reste affiché « En revue » jusqu'à cette commande. C'est normal quelques minutes, pas
-  quelques jours.
+  et passe le ticket « Terminé ». La branche **distante**, elle, est supprimée au merge. Le merge
+  **ferme** le ticket mais ne le passe pas « Terminé » tout seul — le cycle de vie est porté par un
+  label `workflow::` ([docs/10 §3.1](./docs/10-workflow-git.md)), et la forge n'en pose aucun : un
+  ticket fraîchement mergé reste affiché « En revue » jusqu'à cette commande. C'est normal quelques
+  minutes, pas quelques jours.
 
-Pour éclairer une décision de merge : `/mr-review <mr>` (synthèse état + pipeline + threads + diff).
+Pour éclairer une décision de merge : `/mr-review <pr>` (synthèse état + CI + threads + diff).
 
 ---
 
@@ -167,17 +173,42 @@ Pour éclairer une décision de merge : `/mr-review <mr>` (synthèse état + pip
 
 Ce qu'aucune commande — et personne — ne fait automatiquement :
 
-- **merger ou fermer une MR** ;
+- **merger ou fermer une PR** ;
 - **force-push** une branche déjà poussée (`--force`, `--force-with-lease`) ;
-- **supprimer une branche** dont GitLab ne confirme pas la MR comme `merged` ;
+- **supprimer une branche** dont la forge ne confirme pas la PR comme `merged` ;
 - **committer sur `main`** ;
 - **clôturer un ticket qui n'est pas celui de la session** : `/ticket-finish` et `/ticket-ship`
   s'arrêtent avant toute écriture si l'iid visé ne correspond pas à la branche courante, ou si le
-  ticket est assigné à quelqu'un d'autre — de sorte qu'on ne pose jamais une MR, un statut ni un
+  ticket est assigné à quelqu'un d'autre — de sorte qu'on ne pose jamais une PR, un statut ni un
   temps sur le travail d'un collègue.
 
 Ces règles sont doublées par la couche permissions de [`.claude/settings.json`](./.claude/settings.json)
-(`deny` sur les force-push et `glab mr merge`/`close`) — un filet, pas un remplacement du jugement.
+(`deny` sur les force-push et `gh pr merge`/`close`) — un filet, pas un remplacement du jugement.
+
+---
+
+## 8. L'archive GitLab
+
+Le projet GitLab est **archivé en lecture seule** depuis le **2026-08-17** (#343). On peut tout y
+consulter, rien y écrire.
+
+**Ce qu'on y trouve encore, et nulle part ailleurs** : les **281 Merge Requests** d'avant la bascule
+(diffs, fils de discussion, verdicts de pipeline) — elles n'ont pas été rejouées en PR, faute de
+leurs branches d'origine, supprimées au merge ; et le **time tracking natif**, 629 h sur 273
+tickets, dont GitHub n'a aucun équivalent.
+
+**Ce qui n'y est plus** : le backlog vivant, passé sur GitHub avec la plage `#1`→`#356` préservée au
+numéro près — un `Refs #123` d'un vieux commit y pointe toujours vers le bon ticket. Le temps passé,
+lui, **continue** d'être suivi côté GitHub sous forme maison (commentaire `maestro:suivi:v1`), et
+l'historique GitLab y a été importé sous cette forme.
+
+En pratique : tout ce qui date d'**avant** le 2026-08-17 et concerne une **revue** se cherche sur
+GitLab ; tout le reste, sur GitHub. Le détail — tableau de ce qui a suivi et de ce qui est resté —
+est en [docs/27 §11](./docs/27-decision-gitlab-vers-github.md).
+
+Pour relire l'archive : l'**UI web de GitLab**, ou en ligne de commande
+`glab <verbe> --repo maestro-group4345327/maestro`. Le `--repo` n'est pas optionnel — `glab` déduit
+sinon le projet des remotes, qui pointent maintenant sur GitHub.
 
 ---
 
@@ -189,5 +220,6 @@ Ces règles sont doublées par la couche permissions de [`.claude/settings.json`
 | Ce qui change quand on travaille **à plusieurs** (synthèse) | [docs/10 §10](./docs/10-workflow-git.md) |
 | Laisser la machine **dérouler le backlog** sans supervision | [docs/10 §11](./docs/10-workflow-git.md), commande `/orchestrate` |
 | Ce que le projet est et où il en est | [README.md](./README.md), [docs/06-roadmap.md](./docs/06-roadmap.md) |
+| Ce qui reste sur l'**archive GitLab**, et pourquoi | [docs/27 §11](./docs/27-decision-gitlab-vers-github.md) |
 | Les règles telles que l'agent les applique | [CLAUDE.md](./CLAUDE.md) |
 | Démarrer la Control Tower en local | skill `control-tower` |
