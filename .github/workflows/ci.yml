@@ -49,6 +49,42 @@ concurrency:
 permissions:
   contents: read
 
+# ─────────────────────────────────────────────────────────────────────────────
+# VERSIONS DES ACTIONS — les majeures qui déclarent `node24` (#368)
+#
+# Les trois actions utilisées ici sont épinglées à leur DERNIÈRE majeure, et pas à la plus ancienne
+# qui suffirait. Ce n'est pas de la mise à jour de confort : une action déclare dans son
+# `action.yml` le runtime qu'elle exige (`runs.using`), et Node 20 est en fin de vie côté runners.
+#
+# Calendrier annoncé par GitHub (changelog du 2025-09-19) : le 16 juin 2026 les runners sont passés
+# à Node 24 par défaut — une action `node20` continue de tourner, mais chaque run porte une
+# annotation « Node.js 20 is deprecated […] being forced to run on Node.js 24 » —, puis Node 20 est
+# RETIRÉ à l'automne 2026. À cette date une action `node20` ne démarre plus, et l'échappatoire
+# `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true` disparaît avec elle. Le coût de l'attendre n'est
+# pas linéaire : ce sont toutes les PR d'un coup, sur la CI qui conditionne le merge depuis #338.
+#
+#   actions/checkout      v4 → v7   (node24 depuis v5)
+#   actions/setup-python  v5 → v7   (node24 depuis v6)
+#   actions/setup-node    v4 → v7   (node24 depuis v5)
+#
+# ALLER À LA DERNIÈRE MAJEURE plutôt qu'au saut minimal (v5/v6/v5) est le choix du ticket : les
+# ruptures des majeures intermédiaires ont été relues une par une, aucune ne touche l'usage qu'on
+# en a ici, et s'arrêter au minimum reviendrait à refaire ce ticket au prochain changelog.
+#
+#   · checkout v6 range les credentials dans un fichier séparé — sans effet, aucun job ne réutilise
+#     le token git après le checkout (le `git diff` de `perimetre` est purement local) ;
+#   · checkout v7 bloque le checkout d'une PR de fork sur `pull_request_target`/`workflow_run` —
+#     ce workflow ne déclenche que sur `pull_request` et `workflow_dispatch`, et le dépôt est privé
+#     (donc pas de fork). Une PR de fork changerait cette conclusion, pas la version ;
+#   · setup-node v5 met en cache automatiquement dès que `package.json` porte un champ
+#     `packageManager` — absent de `apps/web/package.json`, et le cache est de toute façon demandé
+#     explicitement ci-dessous (`cache: npm`) ; v6 restreint ce cache automatique à npm ;
+#   · setup-python v7 retire l'entrée `pip-install`, que ce workflow n'utilise pas.
+#
+# Ces majeures exigent un runner ≥ v2.327.1 : sans objet tant que les six jobs tournent sur
+# `ubuntu-latest` (runner hébergé, tenu à jour par GitHub). Un runner auto-hébergé — la piste
+# qu'a écartée #331 — remettrait cette contrainte sur la table.
+
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
   # PÉRIMÈTRE — l'équivalent du `rules: changes:` de web-build (critère 3 de #332)
@@ -77,7 +113,7 @@ jobs:
     outputs:
       web: ${{ steps.filtre.outputs.web }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # nécessaire pour diffé contre la base de la PR
 
@@ -131,7 +167,7 @@ jobs:
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - shell: bash
         run: |
@@ -155,8 +191,8 @@ jobs:
   python-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
@@ -179,8 +215,8 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
@@ -212,8 +248,8 @@ jobs:
   mypy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
@@ -238,8 +274,8 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
