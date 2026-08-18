@@ -21,7 +21,7 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
 
 2. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Si ça échoue, arrête-toi et
    relaie son message : il nomme la commande d'authentification de la forge active (`gh auth login`,
-   ou `glab auth login` tant que le dépôt est sur GitLab).
+).
 
 3. **Garde-fou « jamais sur `main` ».** Vérifie la branche courante (`git branch --show-current`).
    Si c'est `main` (ou `master`), **arrête-toi immédiatement** : on ne committe jamais sur `main`.

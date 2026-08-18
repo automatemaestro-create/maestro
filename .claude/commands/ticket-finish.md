@@ -88,41 +88,23 @@ pas clair.
      s'il ne se prononce pas, pousse quand même et laisse la mention dans le résumé — c'est le
      relecteur ou l'auteur qui tranchera, la PR affichant le conflit.
 
-7. **Assure le runner CI local en ligne — sur GitLab seulement.** Cette étape n'a d'objet que tant
-   que la CI GitLab fait foi : GitHub Actions fournit ses propres exécutants, il n'y a **rien à
-   allumer** de ce côté (l'outillage de runner part avec #344). Vérifie la forge active en cas de
-   doute (`bash scripts/gitlab/lib.sh forge-cli`) et **saute cette étape** si c'est `gh`.
-   Sur GitLab, les runners partagés étant
-   désactivés (#135), le runner de projet local est l'unique cible ; s'il est hors ligne, le
-   pipeline déclenché par le push resterait `pending` et bloquerait le merge (pipeline vert
-   requis). Lance le helper idempotent — **son échec n'interrompt jamais la clôture**, il est
-   seulement signalé (voir `docs/10-workflow-git.md` §8) :
-   ```
-   bash scripts/gitlab/ensure-runner.sh || echo "⚠ runner local non démarré — clôture poursuivie, à surveiller sur la PR"
-   ```
-   **Ramasse au passage les restes du pipeline précédent** (#166) : un runner tué en cours de job
-   laisse ses conteneurs éphémères derrière lui, et personne ne les enlève. Même statut que
-   ci-dessus — **best-effort, jamais bloquant**, et silencieux quand il n'y a rien à faire. Il
-   n'est **pas** conditionné à ce qui précède : le ménage est local à la machine, il vaut aussi
-   quand c'est le runner partagé qui sert la CI.
-   ```
-   bash scripts/gitlab/clean-runner-containers.sh || echo "⚠ ménage des conteneurs CI incomplet — clôture poursuivie"
-   ```
-   Puis pousse la branche : `git push -u origin <nom-de-la-branche>` — **écris le nom lu à
+7. **Pousse la branche.** Il n'y a plus rien à allumer avant : la CI tourne sur les exécutants
+   hébergés de GitHub, et l'outillage de runner de projet — trois scripts, 1 146 lignes, et la
+   machine qu'il fallait laisser allumée — est parti avec la CI GitLab (#344, docs/10 §8).
+   `git push -u origin <nom-de-la-branche>` : `git push -u origin <nom-de-la-branche>` — **écris le nom lu à
    l'étape 1**, jamais `$(git branch --show-current)` : la couche permissions ne sait matcher
    aucune **substitution de commande**, et refuserait un `git push` par ailleurs autorisé (#233).
    Ne fais jamais de `--force` ici — si le push est rejeté, arrête-toi et explique pourquoi plutôt
    que de forcer.
    Si le push **reste bloqué** sur une demande d'identifiants (typique sous Windows avec Git
-   Credential Manager), relance-le en forçant le CLI de la forge comme credential helper —
-   `gh` sur GitHub, `glab` tant que le dépôt est sur GitLab :
+   Credential Manager), relance-le en forçant `gh` comme credential helper :
    `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c credential.helper='!gh auth git-credential' push -u origin <nom-de-la-branche>`
    (ce repli garde un **préfixe de variable d'environnement**, immatchable lui aussi — c'est le
    domaine de #235, pas de ce lot : s'il est refusé, signale-le au lieu d'inventer une variante).
 
 8. Évalue la **checklist de definition of done** de la PR (les quatre cases du gabarit
-   `.gitlab/merge_request_templates/Default.md` — son pendant GitHub arrivera avec #344 ; les
-   quatre lignes sont de toute façon reproduites au point 9.2) : pour chacune, détermine si tu peux la cocher
+   `.github/pull_request_template.md` ; les quatre lignes sont de toute façon reproduites au
+   point 9.2) : pour chacune, détermine si tu peux la cocher
    (`- [x]`) parce que tu l'as **effectivement vérifiée**, ou si elle reste vide (`- [ ]`). La
    checklist est un constat, pas un formulaire — et le merge reste une décision humaine.
    - **Conventions de branche/commit** : nom de branche au motif `<type>/<iid>-<slug>` et messages
@@ -192,7 +174,7 @@ pas clair.
       pas une option de cet appel.
    4. **Si la PR existait déjà et qu'elle est en Draft** : demande à l'utilisateur si le travail
       est réellement terminé et prêt pour revue ; si oui, `gh pr ready <numéro>` (sur GitLab :
-      `glab mr update <mr> --ready`). Si elle n'est **plus en Draft**, ne fais rien de plus sur la
+      `gh pr ready <numéro>`). Si elle n'est **plus en Draft**, ne fais rien de plus sur la
       PR. Une PR **fraîchement créée** reste en Draft : c'est voulu, le passage en « prête » est un
       geste explicite.
 

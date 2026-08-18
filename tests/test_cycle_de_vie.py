@@ -1,32 +1,39 @@
 """Tests du cycle de vie porté par les labels `workflow::*` (ticket #212, chantier #207).
 
-**L'invariant couvert ici est celui que GitLab n'assure plus.** Le cycle de vie était porté par le
-champ Status natif, où « un seul statut à la fois » était une garantie du produit. Depuis #207 il
-est porté par une famille de labels scopés, et sur le plan **Free** le `::` d'un label scopé n'est
-que **cosmétique** : rien n'empêche un ticket de porter `workflow::a-faire` **et**
+**L'invariant couvert ici est celui qu'aucune forge n'assure à notre place.** Le cycle de vie était
+porté par le champ Status natif de GitLab, où « un seul statut à la fois » était une garantie du
+produit. Depuis #207 il est porté par une famille de labels scopés — et un label, ici comme
+ailleurs, ne s'exclut pas tout seul : rien n'empêche un ticket de porter `workflow::a-faire` **et**
 `workflow::en-revue`. L'exclusion mutuelle est donc à la charge de l'outillage —
 
-    toute pose AJOUTE la cible et RETIRE les cinq autres dans la MÊME mutation
+    toute pose AJOUTE la cible et RETIRE les cinq autres dans le MÊME appel
 
-— et c'est la régression la plus probable du dispositif : un `addLabelIds` sans `removeLabelIds`
-passerait tous les tests de bout en bout (le ticket *porte* bien son nouvel état), ne se verrait
-pas à l'œil nu sur une ligne de backlog (les lectures rendent le premier label rencontré) et ne se
-manifesterait que plus tard, en tickets à deux états et en colonnes de board dédoublées.
+— et c'est la régression la plus probable du dispositif : une pose additive passerait tous les
+tests de bout en bout (le ticket *porte* bien son nouvel état), ne se verrait pas à l'œil nu sur une
+ligne de backlog (les lectures rendent le premier label rencontré) et ne se manifesterait que plus
+tard, en tickets à deux états.
+
+**Ce que le passage à GitHub a changé, et ce qu'il n'a pas changé** (#344). Côté GitLab la pose
+était une mutation GraphQL portant deux listes de GID (`addLabelIds` / `removeLabelIds`), et
+l'invariant se lisait dans leur contenu. Côté GitHub, `PATCH /issues/:n` **remplace** l'ensemble des
+labels : « poser la cible » et « retirer les cinq autres » ne sont plus deux gestes qu'on prend soin
+de grouper, mais un seul geste indivisible — et c'est l'ensemble final qui est vérifié ici. La
+régression a changé de forme, pas de nature : elle serait maintenant un ensemble final qui garde un
+`workflow::` de trop, ou qui perd un `type::`/`agent::`/`prio::` au passage.
 
 Deux helpers posent le cycle de vie, et les deux sont vérifiés ici : `set-workflow` (toutes les
 commandes) et `begin` (le démarrage groupé de `/ticket-start`, où la pose voyage avec l'assignation
-et les dates dans une mutation multi-widgets — un endroit facile à oublier).
+— un endroit facile à oublier).
 
 Même parti pris que [`test_collaboration.py`](test_collaboration.py) : un **dépôt jetable** dans
-`tmp_path`, le VRAI `lib.sh`, et un `glab` factice en tête du `PATH` qui journalise les mutations
-reçues. **Ni réseau, ni compte GitLab, ni écriture** dans le dépôt de travail.
+`tmp_path`, le VRAI `lib.sh`, et un `gh` factice en tête du `PATH` qui journalise les écritures
+reçues. **Ni réseau, ni compte de forge, ni écriture** dans le dépôt de travail.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -34,14 +41,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from conftest import FORGE_DES_TESTS  # le conftest du dossier, sur le sys.path de pytest
 
 RACINE = Path(__file__).resolve().parent.parent
 BASH = shutil.which("bash")
 
 pytestmark = pytest.mark.skipif(BASH is None, reason="bash introuvable")
 
-PROJET = "equipe-test/maestro"
+DEPOT = "equipe-test/maestro"
 
 #: Les six états, dans l'ordre du flux. Le test ne connaît QUE cette table : si un état était
 #: ajouté ou renommé sans que `lib.sh` suive, l'assertion « les cinq autres sont retirés » tombe.
@@ -57,30 +63,16 @@ LIBELLES = {
     "Doublon": "doublon",
 }
 
-#: Les GID que le faux GitLab attribue aux labels. Volontairement **non contigus et non ordonnés** :
-#: rien dans `lib.sh` ne doit pouvoir deviner un GID à partir d'un autre (aucun ID en dur, cf. le
-#: contrat) — un helper qui calculerait `base + rang` passerait sur des GID contigus.
-GIDS = {
-    "a-faire": "gid://gitlab/ProjectLabel/9007",
-    "en-cours": "gid://gitlab/ProjectLabel/31",
-    "en-revue": "gid://gitlab/ProjectLabel/4512",
-    "termine": "gid://gitlab/ProjectLabel/88",
-    "abandonne": "gid://gitlab/ProjectLabel/1203",
-    "doublon": "gid://gitlab/ProjectLabel/677",
-}
-
-WORKITEM = "gid://gitlab/WorkItem/55501"
-
-# --- Le glab factice -----------------------------------------------------------------------------
-# Piloté par $MAESTRO_FAUX_GLAB (état JSON) et $MAESTRO_FAUX_GLAB_MUTATIONS (une requête par ligne).
-# Il ne connaît que ce dont ce module a besoin : lire un work item, lister les labels du scope, et
-# accuser réception d'une mutation.
-FAUX_GLAB = r'''
+# --- Le gh factice --------------------------------------------------------------------------------
+# Piloté par $MAESTRO_FAUX_GH (état JSON) et $MAESTRO_FAUX_GH_ECRITURES (une écriture par ligne).
+# Il ne connaît que ce dont ce module a besoin : lire les labels du dépôt et d'un ticket, lister un
+# backlog, et accuser réception d'un `PATCH /issues/:n`.
+FAUX_GH = r'''
 import json
 import os
 import sys
 
-with open(os.environ["MAESTRO_FAUX_GLAB"], encoding="utf-8") as f:
+with open(os.environ["MAESTRO_FAUX_GH"], encoding="utf-8") as f:
     etat = json.load(f)
 
 args = sys.argv[1:]
@@ -88,7 +80,7 @@ args = sys.argv[1:]
 
 def sortie(texte="", code=0):
     # Écriture en octets : sous Windows, sys.stdout encoderait en cp1252 et rendrait du mojibake
-    # là où l'API GitLab renvoie de l'UTF-8 (« À faire », « Terminé »…). Piège de #141.
+    # là où l'API renvoie de l'UTF-8 (« À faire », « Terminé »…). Piège de #141.
     sys.stdout.buffer.write(texte.encode("utf-8"))
     sys.stdout.buffer.flush()
     raise SystemExit(code)
@@ -100,70 +92,70 @@ def compact(obj):
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n"
 
 
+def noms(liste):
+    return {"nodes": [{"name": n} for n in liste]}
+
+
 if args[:2] == ["auth", "status"]:
     sortie(code=0)
 
 if args[:2] == ["api", "user"]:
-    sortie(compact({"username": etat["moi"], "id": 4242}))
+    sortie(compact({"login": etat["moi"], "id": 4242}))
+
+# --- Écriture : PATCH /repos/<dépôt>/issues/<n> ---------------------------------------------------
+if args[:1] == ["api"] and "-X" in args and args[args.index("-X") + 1] == "PATCH":
+    with open(os.environ["MAESTRO_FAUX_GH_ECRITURES"], "a", encoding="utf-8") as f:
+        f.write(json.dumps(args, ensure_ascii=False) + "\n")
+    if etat.get("ecriture_en_echec"):
+        sortie(compact({"message": "refus simulé"}), code=1)
+    sortie(compact({"number": 212}))
 
 if args[:2] == ["api", "graphql"]:
     requete = "".join(a[len("query="):] for a in args[2:] if a.startswith("query="))
 
-    if requete.lstrip().startswith("mutation"):
-        with open(os.environ["MAESTRO_FAUX_GLAB_MUTATIONS"], "a", encoding="utf-8") as f:
-            f.write(requete.replace("\n", " ") + "\n")
-        if etat.get("mutation_en_echec"):
-            sortie(compact({"data": {"workItemUpdate": {"errors": ["refus simulé"]}}}))
-        sortie(compact({"data": {"workItemUpdate": {"errors": []}}}))
-
-    # Liste des labels du scope — la brique qui permet de retirer les cinq autres.
-    if "labels(searchTerm:" in requete:
-        sortie(compact({"data": {"project": {"labels": {"nodes": etat["labels"]}}}}))
-
-    # Backlog fermé : ce que balaie `reconcile-workflow` sans argument (#275). Chaque entrée de
-    # `backlog_closed` est un « {iid, labels} » ; le reste de la forme (titre, assignés) est ce que
-    # la vraie requête ramène et que le filtre traverse sans le lire.
-    if "workItems(state:" in requete:
-        noeuds = [
+    # Backlog (gh_backlog) : ce que balaie `reconcile-workflow` sans argument.
+    if "issues(first:" in requete:
+        etats = "CLOSED" if "CLOSED" in requete and "OPEN" not in requete else "OPEN"
+        entrees = etat.get("backlog_closed", []) if etats == "CLOSED" else []
+        sortie(compact({"data": {"repository": {"issues": {"nodes": [
             {
-                "iid": entree["iid"],
-                "title": entree.get("titre", f"ticket {entree['iid']}"),
-                "widgets": [
-                    {"labels": {"nodes": [{"title": t} for t in entree.get("labels", [])]}},
-                    {"assignees": {"nodes": []}},
-                ],
+                "number": int(e["iid"]),
+                "title": e.get("titre", "ticket %s" % e["iid"]),
+                "labels": noms(e.get("labels", [])),
+                "assignees": {"nodes": []},
             }
-            for entree in etat.get("backlog_closed", [])
-        ]
-        sortie(compact({"data": {"project": {"workItems": {"nodes": noeuds}}}}))
+            for e in entrees
+        ]}}}}))
 
-    # Lecture d'un work item (gid seul, ou gid + dates + labels pour `begin`).
-    if "workItems(iids:" in requete:
-        iid = ""
-        debut = requete.find('workItems(iids:["')
-        if debut != -1:
-            iid = requete[debut + len('workItems(iids:["'):].split('"', 1)[0]
-        # Labels du ticket visé : `labels_par_iid` permet à un test d'en décrire plusieurs (le
-        # balayage de #275 en traite N d'affilée) ; sinon tous partagent `labels_ticket`.
-        titres = etat.get("labels_par_iid", {}).get(iid, etat.get("labels_ticket", []))
-        noeud = {"id": etat["workitem"]}
-        if "StartAndDueDate" in requete:
-            noeud["widgets"] = [
-                {"startDate": etat.get("start_date")},
-                {"labels": {"nodes": [{"title": t} for t in titres]}},
-            ]
-        elif "WorkItemWidgetAssignees" in requete:
-            # La requête de `gl_issue_owner`, sur laquelle `reconcile-workflow <iid>` s'appuie pour
-            # ne jamais écraser un « Abandonné »/« Doublon ».
-            if iid in etat.get("iids_illisibles", []):
-                sortie(compact({"data": {"project": {"workItems": {"nodes": []}}}}))
-            noeud = {
-                "widgets": [
-                    {"labels": {"nodes": [{"title": t} for t in titres]}},
-                    {"assignees": {"nodes": []}},
-                ]
-            }
-        sortie(compact({"data": {"project": {"workItems": {"nodes": [noeud]}}}}))
+    # Labels du dépôt + labels du ticket, en UNE lecture (gh_labels_du_scope_et_du_ticket).
+    if "labels(first:100" in requete and "issue(number:" in requete:
+        iid = requete.split("issue(number:", 1)[1].split(")", 1)[0]
+        if iid in etat.get("iids_illisibles", []):
+            sortie(compact({"data": {"repository": {
+                "labels": noms(etat["labels"]), "issue": None}}}))
+        portes = etat.get("labels_par_iid", {}).get(iid, etat.get("labels_ticket", []))
+        sortie(compact({"data": {"repository": {
+            "labels": noms(etat["labels"]),
+            "issue": {"number": int(iid), "labels": noms(portes)},
+        }}}))
+
+    # Labels du dépôt seuls (gh_workflow_gids).
+    if "labels(first:100" in requete:
+        sortie(compact({"data": {"repository": {"labels": noms(etat["labels"])}}}))
+
+    # Labels + assignés d'un ticket (gh_issue_owner), sur quoi s'appuie `reconcile-workflow <iid>`.
+    if "issue(number:" in requete and "assignees(first:" in requete:
+        iid = requete.split("issue(number:", 1)[1].split(")", 1)[0]
+        if iid in etat.get("iids_illisibles", []):
+            sortie(compact({"data": {"repository": {"issue": None}}}))
+        portes = etat.get("labels_par_iid", {}).get(iid, etat.get("labels_ticket", []))
+        sortie(compact({"data": {"repository": {"issue": {
+            "labels": noms(portes), "assignees": {"nodes": []}}}}}))
+
+    # Commentaires du ticket : le suivi maison (dates, temps passé) que `begin` pose après coup.
+    if "comments(" in requete:
+        sortie(compact({"data": {"repository": {"issue": {
+            "comments": {"nodes": []}}}}}))
 
     sortie(code=1)
 
@@ -173,12 +165,12 @@ sortie(code=1)
 
 @dataclass
 class Depot:
-    """Dépôt jetable équipé du vrai `lib.sh` et d'un `glab` factice."""
+    """Dépôt jetable équipé du vrai `lib.sh` et d'un `gh` factice."""
 
     racine: Path
     fauxbin: Path
     etat_json: Path
-    mutations_log: Path
+    ecritures_log: Path
     etat: dict
 
     def pose_etat(self, **entrees: object) -> None:
@@ -187,12 +179,12 @@ class Depot:
             json.dumps(self.etat, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n"
         )
 
-    def mutations(self) -> list[str]:
-        """Les mutations GraphQL reçues, une par ligne (vide si aucune)."""
-        if not self.mutations_log.exists():
+    def ecritures(self) -> list[list[str]]:
+        """Les appels d'écriture reçus (argv de chaque `gh api -X PATCH`), vide si aucun."""
+        if not self.ecritures_log.exists():
             return []
-        lignes = self.mutations_log.read_text(encoding="utf-8").splitlines()
-        return [ligne for ligne in lignes if ligne]
+        lignes = self.ecritures_log.read_text(encoding="utf-8").splitlines()
+        return [json.loads(ligne) for ligne in lignes if ligne]
 
     def lib(self, *args: str) -> subprocess.CompletedProcess[str]:
         environnement = os.environ.copy()
@@ -200,13 +192,13 @@ class Depot:
             {
                 "HOME": str(self.racine.parent / "home"),
                 "PATH": os.pathsep.join([str(self.fauxbin), environnement.get("PATH", "")]),
-                "GL_PROJECT": PROJET,
+                "MAESTRO_GITHUB_REPO": DEPOT,
                 # Le retry ne sert qu'aux hoquets réseau : une réponse volontairement muette ne
                 # doit pas coûter trois secondes au test.
                 "GL_GQL_RETRIES": "1",
                 "GL_GQL_RETRY_DELAY": "0",
-                "MAESTRO_FAUX_GLAB": str(self.etat_json),
-                "MAESTRO_FAUX_GLAB_MUTATIONS": str(self.mutations_log),
+                "MAESTRO_FAUX_GH": str(self.etat_json),
+                "MAESTRO_FAUX_GH_ECRITURES": str(self.ecritures_log),
             }
         )
         assert BASH is not None
@@ -233,14 +225,14 @@ def depot(tmp_path: Path) -> Depot:
     cible.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(RACINE / "scripts/gitlab/lib.sh", cible)
 
-    # Le glab factice : un script Python derrière un lanceur nommé `glab` (sans extension), pour que
-    # le `command -v glab` de lib.sh le trouve comme le vrai.
-    (fauxbin / "faux_glab.py").write_text(FAUX_GLAB, encoding="utf-8", newline="\n")
-    lanceur = fauxbin / "glab"
+    # Le gh factice : un script Python derrière un lanceur nommé `gh` (sans extension), pour que
+    # le `command -v gh` de lib.sh le trouve comme le vrai.
+    (fauxbin / "faux_gh.py").write_text(FAUX_GH, encoding="utf-8", newline="\n")
+    lanceur = fauxbin / "gh"
     interpreteur = sys.executable.replace(chr(92), "/")
     lanceur.write_text(
         "#!/usr/bin/env bash\n"
-        f'exec "{interpreteur}" "{(fauxbin / "faux_glab.py").as_posix()}" "$@"\n',
+        f'exec "{interpreteur}" "{(fauxbin / "faux_gh.py").as_posix()}" "$@"\n',
         encoding="utf-8",
         newline="\n",
     )
@@ -249,36 +241,35 @@ def depot(tmp_path: Path) -> Depot:
     depot = Depot(
         racine=racine,
         fauxbin=fauxbin,
-        etat_json=tmp_path / "faux-glab.json",
-        mutations_log=tmp_path / "mutations.log",
+        etat_json=tmp_path / "faux-gh.json",
+        ecritures_log=tmp_path / "ecritures.log",
         etat={},
     )
     depot.pose_etat(
         moi="MaestroAgents",
-        workitem=WORKITEM,
-        labels=[{"id": GIDS[s], "title": f"workflow::{s}"} for s in SLUGS],
+        labels=[f"workflow::{s}" for s in SLUGS] + ["type::infra", "prio::moyenne"],
         labels_ticket=["type::infra", "prio::moyenne", "workflow::a-faire"],
-        start_date=None,
     )
     return depot
 
 
-# --- Lecture d'une mutation ----------------------------------------------------------------------
+# --- Lecture d'une écriture -----------------------------------------------------------------------
 
 
-def _liste(mutation: str, champ: str) -> list[str]:
-    """Les GID passés à `addLabelIds`/`removeLabelIds` dans une mutation, dans l'ordre reçu."""
-    trouve = re.search(rf"{champ}:\[(.*?)\]", mutation)
-    if trouve is None:
-        return []
-    return re.findall(r'"([^"]+)"', trouve.group(1))
+def _labels_poses(argv: list[str]) -> list[str]:
+    """Les labels de l'ensemble final envoyé par `PATCH /issues/:n`, dans l'ordre reçu."""
+    return [a[len("labels[]="):] for a in argv if a.startswith("labels[]=")]
 
 
-def _mutation_unique(depot: Depot) -> str:
-    """La seule mutation attendue — le « dans le MÊME appel » de l'invariant est ici."""
-    mutations = depot.mutations()
-    assert len(mutations) == 1, f"une seule mutation attendue, reçu {len(mutations)} : {mutations}"
-    return mutations[0]
+def _assignes_poses(argv: list[str]) -> list[str]:
+    return [a[len("assignees[]="):] for a in argv if a.startswith("assignees[]=")]
+
+
+def _ecriture_unique(depot: Depot) -> list[str]:
+    """La seule écriture attendue — le « dans le MÊME appel » de l'invariant est ici."""
+    ecritures = depot.ecritures()
+    assert len(ecritures) == 1, f"une seule écriture attendue, reçu {len(ecritures)} : {ecritures}"
+    return ecritures[0]
 
 
 # =================================================================================================
@@ -290,36 +281,37 @@ def _mutation_unique(depot: Depot) -> str:
 def test_set_workflow_ajoute_la_cible_et_retire_les_cinq_autres(
     depot: Depot, libelle: str, slug: str
 ) -> None:
-    """Pour CHACUN des six états : un `addLabelIds`, et les cinq autres en `removeLabelIds`.
+    """Pour CHACUN des six états : l'ensemble final porte la cible, et aucun autre `workflow::`.
 
     Paramétré sur les six plutôt que sur un cas représentatif : une table de correspondance se
     complète à la main (six `case` dans `gl_workflow_slug`), et c'est exactement le genre d'endroit
     où un état s'oublie — il faut que le test tombe sur celui-là, pas sur « un état ».
     """
+    depot.pose_etat(
+        labels_ticket=["type::infra", "prio::moyenne"] + [f"workflow::{s}" for s in SLUGS]
+    )
     acheve = depot.lib("set-workflow", "212", libelle)
     assert acheve.returncode == 0, acheve.stderr
 
-    mutation = _mutation_unique(depot)
-    assert _liste(mutation, "addLabelIds") == [GIDS[slug]]
-    assert sorted(_liste(mutation, "removeLabelIds")) == sorted(
-        GIDS[autre] for autre in SLUGS if autre != slug
-    )
+    poses = _labels_poses(_ecriture_unique(depot))
+    workflow = [nom for nom in poses if nom.startswith("workflow::")]
+    assert workflow == [f"workflow::{slug}"]
 
 
-def test_set_workflow_pose_le_cycle_de_vie_sur_le_bon_work_item(depot: Depot) -> None:
-    """La cible de la mutation est le work item résolu depuis l'iid, pas l'iid lui-même."""
+def test_set_workflow_vise_le_bon_ticket(depot: Depot) -> None:
+    """La cible de l'écriture est le chemin du ticket, jamais un identifiant deviné."""
     assert depot.lib("set-workflow", "212", "En revue").returncode == 0
-    assert f'id:"{WORKITEM}"' in _mutation_unique(depot)
+    assert f"repos/{DEPOT}/issues/212" in _ecriture_unique(depot)
 
 
 def test_set_workflow_accepte_le_slug_comme_le_libelle(depot: Depot) -> None:
-    """Contrat d'entrée : « en-cours » ≡ « En cours ». Les deux produisent la MÊME mutation."""
+    """Contrat d'entrée : « en-cours » ≡ « En cours ». Les deux produisent la MÊME écriture."""
     assert depot.lib("set-workflow", "212", "En cours").returncode == 0
-    par_libelle = _mutation_unique(depot)
+    par_libelle = _ecriture_unique(depot)
 
-    depot.mutations_log.unlink()
+    depot.ecritures_log.unlink()
     assert depot.lib("set-workflow", "212", "en-cours").returncode == 0
-    assert _mutation_unique(depot) == par_libelle
+    assert _ecriture_unique(depot) == par_libelle
 
 
 def test_set_workflow_rend_le_libelle_jamais_le_slug(depot: Depot) -> None:
@@ -330,38 +322,36 @@ def test_set_workflow_rend_le_libelle_jamais_le_slug(depot: Depot) -> None:
     assert "termine" not in acheve.stdout
 
 
-def test_set_workflow_ne_devine_aucun_gid(depot: Depot) -> None:
-    """Les labels sont re-dérivés par NOM : des GID tout autres passent sans rien changer.
+def test_set_workflow_retire_aussi_un_workflow_exotique(depot: Depot) -> None:
+    """Le filtre porte sur le SCOPE, pas sur les six slugs connus.
 
-    C'est ce qui rend le dispositif robuste à une recréation des labels (un
-    `bootstrap.sh` rejoué sur un projet neuf) — l'équivalent, côté labels, de l'absence de GID de
-    statut en dur qu'on avait déjà du temps du lifecycle.
+    Un `workflow::` posé à la main depuis l'UI doit partir lui aussi : sinon la dérive que
+    `doctor.sh` signale (0 ou ≥ 2 labels du scope) survivrait à la pose censée la réparer.
     """
-    autres = {slug: f"gid://gitlab/GroupLabel/{700000 + i}" for i, slug in enumerate(SLUGS)}
-    depot.pose_etat(labels=[{"id": autres[s], "title": f"workflow::{s}"} for s in SLUGS])
-
-    assert depot.lib("set-workflow", "212", "En revue").returncode == 0
-    mutation = _mutation_unique(depot)
-    assert _liste(mutation, "addLabelIds") == [autres["en-revue"]]
-    assert sorted(_liste(mutation, "removeLabelIds")) == sorted(
-        autres[a] for a in SLUGS if a != "en-revue"
-    )
+    depot.pose_etat(labels_ticket=["type::infra", "workflow::a-trier", "workflow::a-faire"])
+    assert depot.lib("set-workflow", "212", "En cours").returncode == 0
+    poses = _labels_poses(_ecriture_unique(depot))
+    assert [nom for nom in poses if nom.startswith("workflow::")] == ["workflow::en-cours"]
 
 
 def test_set_workflow_ne_touche_pas_aux_labels_de_categorisation(depot: Depot) -> None:
-    """`type::`/`agent::`/`prio::` ne sont ni ajoutés ni retirés : seul le scope du cycle de vie.
+    """`type::`/`agent::`/`prio::` sont RÉÉCRITS à l'identique : l'ensemble final les préserve.
 
-    `labelsWidget` est additif, donc l'omission suffit à les préserver — encore faut-il qu'aucun
-    d'eux ne se glisse dans `removeLabelIds`, ce qu'un « on retire tout et on repose » ferait.
+    C'est le prix du `PATCH` qui remplace tout — et le risque qui va avec : une lecture préalable
+    ratée ne se verrait pas comme une erreur, mais comme un ticket qui perd sa catégorisation.
     """
+    depot.pose_etat(
+        labels_ticket=["type::infra", "agent::devops", "prio::haute", "workflow::a-faire"]
+    )
     assert depot.lib("set-workflow", "212", "En cours").returncode == 0
-    mutation = _mutation_unique(depot)
-    touches = _liste(mutation, "addLabelIds") + _liste(mutation, "removeLabelIds")
-    assert set(touches) == set(GIDS.values())
+    poses = _labels_poses(_ecriture_unique(depot))
+    assert sorted(poses) == sorted(
+        ["type::infra", "agent::devops", "prio::haute", "workflow::en-cours"]
+    )
 
 
 # =================================================================================================
-# `begin` — la même exclusion, dans la mutation groupée de /ticket-start
+# `begin` — la même exclusion, dans le démarrage groupé de /ticket-start
 # =================================================================================================
 
 
@@ -369,25 +359,30 @@ def test_begin_retire_aussi_les_cinq_autres(depot: Depot) -> None:
     """Le démarrage groupé pose « En cours » : l'exclusion doit y être, pas seulement dans
     `set-workflow`.
 
-    C'est le point d'oubli naturel du dispositif : la pose y est noyée dans une mutation
-    multi-widgets (assignation + labels + dates) écrite à part de `gl_set_workflow`.
+    C'est le point d'oubli naturel du dispositif : la pose y est noyée dans un appel qui porte
+    aussi l'assignation, écrit à part de `gl_set_workflow`.
     """
+    depot.pose_etat(
+        labels_ticket=["type::infra", "prio::moyenne"] + [f"workflow::{s}" for s in SLUGS]
+    )
     acheve = depot.lib("begin", "212")
     assert acheve.returncode == 0, acheve.stderr
 
-    mutation = _mutation_unique(depot)
-    assert _liste(mutation, "addLabelIds") == [GIDS["en-cours"]]
-    assert sorted(_liste(mutation, "removeLabelIds")) == sorted(
-        GIDS[autre] for autre in SLUGS if autre != "en-cours"
-    )
+    poses = _labels_poses(depot.ecritures()[0])
+    assert [nom for nom in poses if nom.startswith("workflow::")] == ["workflow::en-cours"]
 
 
-def test_begin_groupe_tout_dans_une_seule_mutation(depot: Depot) -> None:
-    """Assignation, cycle de vie et dates voyagent ensemble — un seul aller-retour réseau."""
+def test_begin_groupe_labels_et_assignation_dans_un_seul_appel(depot: Depot) -> None:
+    """Cycle de vie et assignation voyagent ensemble — un seul aller-retour réseau.
+
+    Les DATES, elles, partent ensuite : le suivi maison vit dans un commentaire (docs/27 §5), donc
+    dans un autre objet. Leur échec ne défait pas le démarrage, et c'est voulu — le ticket est
+    pris, ce qui est l'enjeu de l'anti-collision.
+    """
     assert depot.lib("begin", "212").returncode == 0
-    mutation = _mutation_unique(depot)
-    for widget in ("assigneesWidget:", "labelsWidget:", "startAndDueDateWidget:"):
-        assert widget in mutation, f"{widget} absent de la mutation groupée"
+    premiere = depot.ecritures()[0]
+    assert "workflow::en-cours" in _labels_poses(premiere)
+    assert _assignes_poses(premiere) == ["MaestroAgents"]
 
 
 # =================================================================================================
@@ -396,7 +391,7 @@ def test_begin_groupe_tout_dans_une_seule_mutation(depot: Depot) -> None:
 
 
 def test_set_workflow_refuse_une_valeur_inconnue_sans_rien_ecrire(depot: Depot) -> None:
-    """Une valeur hors vocabulaire s'arrête avant la mutation, en listant les six attendues.
+    """Une valeur hors vocabulaire s'arrête avant l'écriture, en listant les six attendues.
 
     Sans ce refus, une faute de frappe (« en revu ») poserait un septième label hors scope — ou,
     pire, retirerait les six sans rien remettre.
@@ -406,25 +401,25 @@ def test_set_workflow_refuse_une_valeur_inconnue_sans_rien_ecrire(depot: Depot) 
     assert "inconnue" in acheve.stderr
     for libelle in LIBELLES:
         assert libelle in acheve.stderr
-    assert depot.mutations() == [], "aucune écriture ne doit partir sur une valeur inconnue"
+    assert depot.ecritures() == [], "aucune écriture ne doit partir sur une valeur inconnue"
 
 
 def test_set_workflow_refuse_si_les_labels_ne_sont_pas_provisionnes(depot: Depot) -> None:
-    """Projet sans `workflow::*` : on s'arrête en renvoyant vers `bootstrap.sh`.
+    """Dépôt sans `workflow::*` : on s'arrête en renvoyant vers `bootstrap.sh`.
 
     Poser la cible sans pouvoir retirer les autres serait précisément la pose partielle que tout
     ce module cherche à empêcher — mieux vaut ne rien écrire.
     """
-    depot.pose_etat(labels=[])
+    depot.pose_etat(labels=["type::infra"])
     acheve = depot.lib("set-workflow", "212", "En cours")
     assert acheve.returncode != 0
-    assert "bootstrap.sh" in acheve.stderr
-    assert depot.mutations() == []
+    assert "provisionner" in acheve.stderr.lower()
+    assert depot.ecritures() == []
 
 
-def test_set_workflow_signale_un_refus_de_gitlab(depot: Depot) -> None:
-    """Une mutation qui revient avec des `errors` est un échec — pas un succès silencieux."""
-    depot.pose_etat(mutation_en_echec=True)
+def test_set_workflow_signale_un_refus_de_la_forge(depot: Depot) -> None:
+    """Une écriture refusée par l'API est un échec — pas un succès silencieux."""
+    depot.pose_etat(ecriture_en_echec=True)
     acheve = depot.lib("set-workflow", "212", "En cours")
     assert acheve.returncode != 0
     assert "Échec" in acheve.stderr
@@ -441,23 +436,16 @@ def test_set_workflow_signale_un_refus_de_gitlab(depot: Depot) -> None:
 # dérive en en créant une autre, silencieusement et sans retour possible.
 
 
-def _cible_ajoutee(mutation: str) -> list[str]:
-    return _liste(mutation, "addLabelIds")
-
-
 def test_reconcile_pose_termine_sur_un_ticket_cible_reste_actif(depot: Depot) -> None:
     """Le cas nominal du ramassage : un ticket « En revue » soldé passe à « Terminé »."""
     depot.pose_etat(labels_ticket=["type::infra", "workflow::en-revue"])
     acheve = depot.lib("reconcile-workflow", "212")
     assert acheve.returncode == 0, acheve.stderr
-    mutation = _mutation_unique(depot)
-    assert _cible_ajoutee(mutation) == [GIDS["termine"]]
+    poses = _labels_poses(_ecriture_unique(depot))
     # L'invariant de tout ce module vaut aussi ici : la pose passe par `set-workflow`, donc les cinq
-    # autres partent dans le même appel. Une réconciliation qui écrirait son propre `addLabelIds`
+    # autres partent dans le même appel. Une réconciliation qui écrirait son propre ensemble
     # laisserait le ticket à deux états.
-    assert sorted(_liste(mutation, "removeLabelIds")) == sorted(
-        GIDS[s] for s in SLUGS if s != "termine"
-    )
+    assert [nom for nom in poses if nom.startswith("workflow::")] == ["workflow::termine"]
 
 
 @pytest.mark.parametrize("final", ["abandonne", "doublon"])
@@ -470,7 +458,7 @@ def test_reconcile_n_ecrase_jamais_un_etat_final(depot: Depot, final: str) -> No
     depot.pose_etat(labels_ticket=["type::infra", f"workflow::{final}"])
     acheve = depot.lib("reconcile-workflow", "212")
     assert acheve.returncode == 0, acheve.stderr
-    assert depot.mutations() == [], f"« {final} » a été écrasé"
+    assert depot.ecritures() == [], f"« {final} » a été écrasé"
 
 
 def test_reconcile_saute_un_ticket_deja_termine(depot: Depot) -> None:
@@ -478,15 +466,16 @@ def test_reconcile_saute_un_ticket_deja_termine(depot: Depot) -> None:
     depot.pose_etat(labels_ticket=["type::infra", "workflow::termine"])
     acheve = depot.lib("reconcile-workflow", "212")
     assert acheve.returncode == 0, acheve.stderr
-    assert depot.mutations() == []
+    assert depot.ecritures() == []
 
 
 def test_reconcile_pose_sur_un_ticket_sans_aucun_cycle_de_vie(depot: Depot) -> None:
-    """Zéro label `workflow::` (ticket créé depuis l'UI GitLab) : soldé, donc « Terminé »."""
+    """Zéro label `workflow::` (ticket créé depuis l'UI web) : soldé, donc « Terminé »."""
     depot.pose_etat(labels_ticket=["type::infra"])
     acheve = depot.lib("reconcile-workflow", "212")
     assert acheve.returncode == 0, acheve.stderr
-    assert _cible_ajoutee(_mutation_unique(depot)) == [GIDS["termine"]]
+    poses = _labels_poses(_ecriture_unique(depot))
+    assert [nom for nom in poses if nom.startswith("workflow::")] == ["workflow::termine"]
 
 
 def test_reconcile_un_ticket_illisible_n_est_pas_pris_pour_un_ticket_sans_etat(
@@ -501,7 +490,7 @@ def test_reconcile_un_ticket_illisible_n_est_pas_pris_pour_un_ticket_sans_etat(
     depot.pose_etat(iids_illisibles=["212"])
     acheve = depot.lib("reconcile-workflow", "212")
     assert acheve.returncode != 0
-    assert depot.mutations() == []
+    assert depot.ecritures() == []
 
 
 def test_reconcile_check_liste_sans_rien_ecrire(depot: Depot) -> None:
@@ -511,7 +500,7 @@ def test_reconcile_check_liste_sans_rien_ecrire(depot: Depot) -> None:
     assert acheve.returncode == 0, acheve.stderr
     assert "#212" in acheve.stdout
     assert "En revue" in acheve.stdout
-    assert depot.mutations() == []
+    assert depot.ecritures() == []
 
 
 def test_reconcile_balayage_ne_retient_que_les_fermes_restes_actifs(depot: Depot) -> None:
@@ -523,44 +512,20 @@ def test_reconcile_balayage_ne_retient_que_les_fermes_restes_actifs(depot: Depot
             {"iid": "103", "labels": ["type::bug", "workflow::abandonne"]},
             {"iid": "104", "labels": ["type::doc", "workflow::en-cours"]},
             {"iid": "105", "labels": ["type::infra", "workflow::a-faire"]},
-        ]
+        ],
+        labels_par_iid={
+            "101": ["type::infra", "workflow::en-revue"],
+            "104": ["type::doc", "workflow::en-cours"],
+            "105": ["type::infra", "workflow::a-faire"],
+        },
     )
     acheve = depot.lib("reconcile-workflow")
     assert acheve.returncode == 0, acheve.stderr
-    mutations = depot.mutations()
-    assert len(mutations) == 3, f"attendu 101/104/105, reçu : {mutations}"
-    for mutation in mutations:
-        assert _cible_ajoutee(mutation) == [GIDS["termine"]]
-
-
-def test_le_conftest_epingle_la_forge_des_suites_d_outillage() -> None:
-    """Tout ce module ne tient que si `MAESTRO_FORGE` vaut « gitlab » (#339, révisé par #343).
-
-    `lib.sh` porte deux backends depuis la migration vers GitHub, et c'est cette variable qui
-    tranche. Elle se pose au MÊME endroit que la couleur de `run.sh` (#236) — le bloc `env` d'un
-    `.claude/settings.local.json` — d'où elle fuit dans l'environnement de toute session du poste,
-    donc dans les sous-processus lancés ici.
-
-    Ce qui se passerait alors est le pire mode d'échec disponible : le `glab` factice monté en tête
-    du `PATH` ne serait plus jamais appelé, `lib.sh` partirait vers `gh`, et les assertions
-    tomberaient avec des erreurs d'authentification GitHub dont rien ne désignerait la cause.
-
-    ⚠ Posée EN DUR, et non plus vidée. Jusqu'à la bascule (#343), `lib.sh` lisait
-    `${MAESTRO_FORGE:-gitlab}` : vider suffisait, puisque vide et absente valaient « gitlab ». Le
-    défaut est maintenant « github », donc une variable vidée enverrait ce module entier vers `gh`
-    — l'échec même que ce garde-fou existe pour empêcher. Épingler la valeur attendue la rend
-    indifférente au défaut du jour ; c'est la forme à garder si le défaut rebouge.
-
-    `MAESTRO_GITHUB_REPO` reste vidée : elle ne choisit pas un backend mais une cible.
-    """
-    assert os.environ.get("MAESTRO_FORGE") == FORGE_DES_TESTS, (
-        "le conftest doit poser MAESTRO_FORGE=gitlab à l'import, avant le premier module de test "
-        "(tests/conftest.py, #339 révisé par #343) — la vider ne suffit plus depuis que le défaut "
-        "de lib.sh est « github »"
-    )
-    assert os.environ.get("MAESTRO_GITHUB_REPO") == "", (
-        "le conftest doit vider MAESTRO_GITHUB_REPO à l'import (tests/conftest.py, #339)"
-    )
+    ecritures = depot.ecritures()
+    assert len(ecritures) == 3, f"attendu 101/104/105, reçu : {ecritures}"
+    for argv in ecritures:
+        poses = _labels_poses(argv)
+        assert [nom for nom in poses if nom.startswith("workflow::")] == ["workflow::termine"]
 
 
 def test_reconcile_balayage_sans_derive_ne_dit_rien_a_faire_et_n_ecrit_rien(depot: Depot) -> None:
@@ -571,4 +536,38 @@ def test_reconcile_balayage_sans_derive_ne_dit_rien_a_faire_et_n_ecrit_rien(depo
     acheve = depot.lib("reconcile-workflow")
     assert acheve.returncode == 0, acheve.stderr
     assert "rien à réconcilier" in acheve.stdout
-    assert depot.mutations() == []
+    assert depot.ecritures() == []
+
+
+def test_le_conftest_ne_laisse_plus_fuir_de_forge(depot: Depot) -> None:
+    """`MAESTRO_FORGE` est retirée du dépôt (#344) : plus rien ne doit la lire ni la poser.
+
+    Le garde-fou qu'il y avait ici épinglait `MAESTRO_FORGE=gitlab`, sans quoi ce module partait
+    vers le mauvais backend et tombait sur des erreurs d'authentification dont rien ne désignait la
+    cause. Le commutateur n'existe plus ; ce qui reste à garder est qu'il ne revienne pas par la
+    bande — un bloc `env` de `.claude/settings.local.json` la pose encore sur les postes qui l'ont
+    connue, et une variable ressuscitée en silence est précisément ce que le conftest neutralise
+    (même famille que MAESTRO_ORCHESTRATE_COULEUR, #236).
+    """
+    lib = (RACINE / "scripts/gitlab/lib.sh").read_text(encoding="utf-8")
+    assert "${MAESTRO_FORGE" not in lib, "lib.sh ne doit plus lire MAESTRO_FORGE (#344)"
+
+    # Et le verdict ne dépend pas du poste : posée dans l'environnement, elle reste sans effet.
+    environnement = dict(os.environ, MAESTRO_FORGE="gitlab")
+    assert BASH is not None
+    acheve = subprocess.run(  # noqa: S603
+        [BASH, str(depot.racine / "scripts/gitlab/lib.sh"), "forge-cli"],
+        cwd=str(depot.racine),
+        env={
+            **environnement,
+            "PATH": os.pathsep.join([str(depot.fauxbin), environnement.get("PATH", "")]),
+            "MAESTRO_FAUX_GH": str(depot.etat_json),
+            "MAESTRO_FAUX_GH_ECRITURES": str(depot.ecritures_log),
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    assert acheve.stdout.strip() == "gh"

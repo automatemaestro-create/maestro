@@ -86,18 +86,18 @@ bash scripts/setup.sh
 ```
 
 [`scripts/setup.sh`](./scripts/setup.sh) est la **source unique** du parcours de mise en route. Il
-installe les **prérequis** manquants (Python 3.11+, Node.js 20+, git, [`gh`](https://github.com/cli/cli)
-et [`glab`](https://gitlab.com/gitlab-org/cli) — via winget / brew / apt), crée le **`.venv`** et y
-installe le paquet en éditable (`pip install -e ".[dev]"`), copie **`.env.example` vers `.env`**,
-active le **hook git** `commit-msg`, installe les dépendances **npm de `apps/web`**, complète
-**`.claude/settings.local.json`** (profil navigateur + serveurs MCP du dépôt) et monte le **runner CI
-de cette machine** (Docker + [`setup-runner.sh`](./scripts/gitlab/setup-runner.sh)).
+installe les **prérequis** manquants (Python 3.11+, Node.js 20+, git,
+[`gh`](https://github.com/cli/cli) — via winget / brew / apt), crée le **`.venv`** et y installe le
+paquet en éditable (`pip install -e ".[dev]"`), copie **`.env.example` vers `.env`**, active le
+**hook git** `commit-msg`, installe les dépendances **npm de `apps/web`** et complète
+**`.claude/settings.local.json`** (profil navigateur + serveurs MCP du dépôt).
 
-`gh` est celui dont dépend le workflow de tickets : depuis la bascule du **2026-08-17** (#343), les
-tickets, les Pull Requests et la CI vivent sur
-[GitHub](https://github.com/automatemaestro-create/maestro). `glab` n'est plus là que pour relire
-l'**archive GitLab**, gelée en lecture seule ([docs/27 §11](./docs/27-decision-gitlab-vers-github.md)) —
-et l'outillage de runner GitLab part avec #344.
+`gh` porte le workflow de tickets : depuis la bascule du **2026-08-17** (#343), les tickets, les
+Pull Requests et la CI vivent sur [GitHub](https://github.com/automatemaestro-create/maestro).
+**Docker n'est plus requis** pour une mise en route (#344) : la CI tourne sur les exécutants
+hébergés de la forge, il n'y a plus de runner de projet à monter ni de machine à laisser allumée.
+L'**archive GitLab**, gelée en lecture seule, se relit avec un `glab` installé à la main quand le
+besoin s'en présente ([docs/27 §11](./docs/27-decision-gitlab-vers-github.md)).
 
 Il est **idempotent** (relancé sur une machine prête, tout ressort en `DÉJÀ FAIT`) et **non
 destructif** : un `.env` existant n'est **jamais** écrasé, et `settings.local.json` est **fusionné
@@ -108,7 +108,7 @@ renseigner) sort dans la section « Reste à faire » de son rapport final.
 |---|---|
 | `bash scripts/setup.sh --check` | Diagnostic seul : dit ce qui manque, **n'écrit rien** |
 | `bash scripts/setup.sh --no-install` | N'installe aucun outil, se contente de le signaler |
-| `bash scripts/setup.sh --only <étapes>` · `--skip <étapes>` | Rejoue / saute des étapes : `prerequis`, `venv`, `env`, `hooks`, `web`, `mcp`, `runner`, `infra`, `verif` |
+| `bash scripts/setup.sh --only <étapes>` · `--skip <étapes>` | Rejoue / saute des étapes : `node`, `prerequis`, `venv`, `env`, `hooks`, `web`, `mcp`, `infra`, `verif` |
 | `bash scripts/setup.sh --with-infra` | Démarre en plus les bases locales PostgreSQL / Redis / Temporal (`infra/`) |
 
 Dans une session Claude Code, la commande [`/setup`](./.claude/commands/setup.md) lance ce même
@@ -149,14 +149,7 @@ bash scripts/git/install-hooks.sh
 # 5. Dépendances de l'UI Control Tower
 cd apps/web && npm ci && cd ../..
 
-# 6. Runner CI de cette machine (Docker requis) — secours quand le runner partagé est éteint
-bash scripts/gitlab/setup-runner.sh
-
-# 6 bis. À FAIRE UNE FOIS POUR L'ÉQUIPE, sur une machine qui reste allumée : le runner partagé,
-#        celui qui permet de merger quand tous les postes sont éteints (docs/10 §8.1)
-bash scripts/gitlab/setup-runner.sh --partage
-
-# 7. (optionnel) Bases locales PostgreSQL + Redis + Temporal — voir infra/README.md
+# 6. (optionnel) Bases locales PostgreSQL + Redis + Temporal — voir infra/README.md
 docker compose -f infra/docker-compose.yml up -d
 ```
 

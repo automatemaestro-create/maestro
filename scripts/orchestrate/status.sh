@@ -11,8 +11,8 @@
 # sous les yeux. Fenêtre fermée, autre poste, run lancé la veille : il ne reste que le répertoire du
 # run sur le disque, et la seule façon de savoir si une session travaille ou est plantée était
 # d'aller regarder à la main les mtimes de son worktree. Ce script fait cette lecture, une fois pour
-# toutes, et la complète par ce que la forge sait (GitLab ou GitHub selon MAESTRO_FORGE — c'est
-# lib.sh qui tranche, ce fichier n'appelle aucun outil de forge par son nom).
+# toutes, et la complète par ce que la forge sait (ce fichier n'appelle aucun outil de forge par
+# son nom : c'est lib.sh qui sait où aller).
 #
 # --- Lecture seule, et sans prise sur le run ---------------------------------------------------------
 # Il n'écrit RIEN : ni dans le répertoire du run, ni dans le dépôt, ni dans GitLab. Il ne touche pas
@@ -291,8 +291,8 @@ activite_des_tickets() {
 # n'inonde pas l'API pour un statut qui bouge deux fois par heure.
 GITLAB_OK=0
 # Le nom de la forge active et de son outil, pour les MESSAGES seulement (#341) : le reste passe par
-# les verbes de lib.sh, qui savent où aller. Dire « glab absent » à quelqu'un dont le run parle à
-# GitHub l'enverrait lancer un `glab auth login` qui ne réparerait rien.
+# les verbes de lib.sh, qui savent où aller. Nommer le mauvais CLI enverrait lancer une
+# authentification qui ne réparerait rien.
 FORGE_NOM="$(gl_forge_nom)"
 FORGE_CLI="$(gl_forge_cli)"
 # Le cache est indexé PAR TICKET (#290). À un seul en vol, une valeur et son horodatage suffisaient ;
@@ -301,7 +301,7 @@ FORGE_CLI="$(gl_forge_cli)"
 declare -A GL_CACHE=()
 declare -A GL_CACHE_T=()
 
-if [ "$SANS_GITLAB" = 0 ] && gl_require_glab 2>/dev/null; then GITLAB_OK=1; fi
+if [ "$SANS_GITLAB" = 0 ] && gl_require 2>/dev/null; then GITLAB_OK=1; fi
 
 # etat_gitlab <iid> <branche> : « cycle-de-vie <TAB> etat-mr <TAB> iid-mr », depuis le cache si la
 # dernière lecture est récente. Rend une chaîne vide si GitLab n'est pas interrogeable — l'appelant

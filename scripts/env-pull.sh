@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
-# Secrets partagés : compléter le .env depuis les variables CI/CD du projet (ticket #162, parent #155).
+# Clés partagées : compléter le .env depuis les variables du dépôt (ticket #162, parent #155).
 #
 # À plusieurs, la moitié d'un .env n'est pas à vous : les clés Langfuse, le bot Slack et les
 # endpoints sont les mêmes pour toute l'équipe. Les faire circuler à la demande (« tu peux me
 # renvoyer le token ? ») coûte un aller-retour à chaque arrivant et laisse des secrets traîner dans
-# les canaux de discussion. Arbitrage retenu (#155) : ces valeurs vivent dans les **variables CI/CD
-# du projet GitLab** (masquées, réservées aux membres), et ce script les recopie en local.
+# les canaux de discussion. Arbitrage retenu (#155) : ces valeurs vivent dans le magasin de
+# variables du dépôt, réservé aux membres, et ce script les recopie en local.
+#
+# ⚠ CE QUE LA BASCULE SUR GITHUB A CHANGÉ (#344, docs/27 §5) — ce script lit les **variables**
+# Actions (`GET /repos/:dépôt/actions/variables`), et il ne peut pas lire autre chose : les
+# **secrets** Actions sont WRITE-ONLY, GitHub n'offre aucune API pour les relire, pas même à un
+# administrateur. Un vrai secret partagé n'a donc plus de véhicule automatique, et il faut le dire
+# plutôt que de laisser croire à une distribution qui n'a pas lieu.
+#
+# La perte est POTENTIELLE et non actuelle, et c'est ce qui a permis de basculer sans rien casser :
+# le magasin de variables CI/CD du projet GitLab était **vide** au moment de la mesure
+# (`GET /projects/:id/variables` → HTTP 200, `[]`), les sept clés partagées des `.env` y étant
+# arrivées autrement. Le mécanisme est écrit, testé et documenté ; il ne distribuait déjà rien.
 #
 #   bash scripts/env-pull.sh            # complète le .env avec les clés partagées qui manquent
 #   bash scripts/env-pull.sh --check    # diagnostic seul — n'écrit RIEN, ne lit aucune valeur
@@ -15,18 +26,21 @@
 #   - LE GABARIT FAIT FOI : la liste des clés partagées est LUE dans .env.example (marqueurs
 #     « # [partagé] » / « # [perso] »), jamais recopiée ici. Annoter une nouvelle clé là-bas suffit.
 #   - NON DESTRUCTIF : une clé déjà renseignée dans le .env n'est JAMAIS écrasée — même si la
-#     variable CI/CD dit autre chose. Le script ne remplit que le vide.
+#     variable du dépôt dit autre chose. Le script ne remplit que le vide.
 #   - AUCUNE CLÉ [perso] TOUCHÉE : jetons nominatifs, chemins de machine et services locaux ne
 #     transitent pas par les variables du projet, et le script ne les regarde même pas.
 #   - AUCUNE VALEUR IMPRIMÉE : la sortie ne porte que des NOMS de clés et des comptes. Les valeurs
 #     ne traversent ni l'affichage, ni un argument de commande (lisible par tout processus de la
 #     machine) — seulement des fichiers temporaires en 0600, effacés en sortie.
-#   - FRANC SUR CE QU'IL NE PEUT PAS : une clé partagée absente des variables du projet est dite
+#   - FRANC SUR CE QU'IL NE PEUT PAS : une clé partagée absente des variables du dépôt est dite
 #     comme telle, avec la commande qui la publie. Rien n'est deviné.
 #
 # Publier une valeur partagée (geste de MAINTENEUR, une fois par clé) :
 #
-#     glab variable set LANGFUSE_SECRET_KEY --masked < valeur.txt
+#     gh variable set LANGFUSE_HOST --body "https://cloud.langfuse.com"
+#
+# Un secret vrai se pose par `gh secret set`, mais ce script ne pourra JAMAIS le relire : à publier
+# en variable seulement ce qui peut l'être, et à transmettre à la main le reste.
 #
 # Pas de `set -e` : chaque étape rend son propre verdict.
 
@@ -36,9 +50,9 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GABARIT="$RACINE/.env.example"
 CIBLE="$RACINE/.env"
 
-# Source de la liste des variables. Par défaut : l'API du projet via `glab`. Un fichier JSON peut
-# la remplacer (MAESTRO_ENV_PULL_SOURCE) — c'est la couture qui rend le script testable hors ligne,
-# sans compte GitLab ni secret réel (tests différés → #156).
+# Source de la liste des variables. Par défaut : l'API du dépôt via `gh`. Un fichier JSON peut la
+# remplacer (MAESTRO_ENV_PULL_SOURCE) — c'est la couture qui rend le script testable hors ligne,
+# sans compte de forge ni secret réel.
 SOURCE_JSON="${MAESTRO_ENV_PULL_SOURCE:-}"
 
 # Séparateur des tables internes (clé/état/valeur). Nommé plutôt que tapé : une tabulation
@@ -50,7 +64,7 @@ MODE_LISTE=0
 
 usage() {
   cat <<'USAGE'
-Complète le .env avec les clés PARTAGÉES publiées dans les variables CI/CD du projet.
+Complète le .env avec les clés PARTAGÉES publiées dans les variables du dépôt.
 
   bash scripts/env-pull.sh [options]
 
@@ -64,7 +78,10 @@ Ce qui est partagé, ce qui ne l'est pas, est marqué clé par clé dans .env.ex
 (« # [partagé] » / « # [perso] »). Une clé déjà renseignée n'est jamais écrasée ; aucune valeur
 n'est affichée. Publier une valeur partagée (mainteneur, une fois) :
 
-  glab variable set LANGFUSE_SECRET_KEY --masked < valeur.txt
+  gh variable set LANGFUSE_HOST --body "https://cloud.langfuse.com"
+
+Les SECRETS Actions (`gh secret set`) sont write-only : ce script ne peut pas les relire, et ce
+qui doit rester secret se transmet donc à la main.
 USAGE
 }
 
@@ -142,11 +159,16 @@ etat_cle() {
   printf 'absente\n'
 }
 
-# --- Variables CI/CD du projet ------------------------------------------------------------------
-# Écrit le JSON brut de l'API dans le fichier passé en argument. `glab` n'est exigé que là : un
+# --- Variables du dépôt --------------------------------------------------------------------------
+# Écrit un objet JSON PAR LIGNE dans le fichier passé en argument. `gh` n'est exigé que là : un
 # --check sur un dépôt sans clé partagée manquante n'ouvre aucune connexion.
+#
+# `--jq '.variables[]'` (le jq embarqué dans `gh`, pas une dépendance de plus) sert à APLATIR :
+# l'API rend « {"total_count":N,"variables":[…]} », donc des objets à la profondeur 2, quand
+# l'analyseur ci-dessous compte les accolades et n'émet qu'à la profondeur 1. Aplatir ici coûte un
+# drapeau ; l'apprendre à l'analyseur lui coûterait un mode.
 recupere_variables() {
-  local dest="$1" enc
+  local dest="$1" depot
 
   if [ -n "$SOURCE_JSON" ]; then
     if [ ! -f "$SOURCE_JSON" ]; then
@@ -157,34 +179,32 @@ recupere_variables() {
     return 0
   fi
 
-  if ! command -v glab >/dev/null 2>&1; then
-    printf "glab n'est pas installé — impossible de lire les variables du projet.\n" >&2
-    printf 'Voir https://gitlab.com/gitlab-org/cli, ou : bash scripts/setup.sh --only prerequis\n' >&2
+  if ! command -v gh >/dev/null 2>&1; then
+    printf "gh n'est pas installé — impossible de lire les variables du dépôt.\n" >&2
+    printf 'Voir https://github.com/cli/cli, ou : bash scripts/setup.sh --only prerequis\n' >&2
     return 1
   fi
-  if ! glab auth status >/dev/null 2>&1; then
-    printf 'glab non authentifié. Lancer d abord : glab auth login\n' >&2
+  if ! gh auth status >/dev/null 2>&1; then
+    printf 'gh non authentifié. Lancer d abord : gh auth login\n' >&2
     return 1
   fi
 
-  enc="$(bash "$RACINE/scripts/gitlab/lib.sh" project-enc)" || return 1
-  if ! glab api "projects/$enc/variables?per_page=100" > "$dest" 2>/dev/null; then
-    printf 'Lecture des variables CI/CD refusée — rôle Mainteneur requis sur le projet.\n' >&2
-    return 1
-  fi
-  if ! grep -q '\[' "$dest"; then
-    printf 'Réponse inattendue de l API des variables CI/CD.\n' >&2
+  depot="$(bash "$RACINE/scripts/gitlab/lib.sh" depot-courant)" || return 1
+  # Un magasin VIDE est une réponse valide (« 0 variable publiée ») et non une panne : on ne juge
+  # donc que le code de retour, jamais la forme de la sortie.
+  if ! gh api --paginate "repos/$depot/actions/variables" --jq '.variables[]' > "$dest" 2>/dev/null; then
+    printf 'Lecture des variables du dépôt refusée — droit de collaborateur requis.\n' >&2
     return 1
   fi
 }
 
-# Analyse le JSON des variables et imprime une ligne « clé<TAB>état<TAB>valeur » par variable.
-# États : ok (valeur utilisable), vide (variable « cachée » ou sans valeur), multiligne (valeur à
-# retours chariot — inexploitable dans un .env), fichier (variable de type `file`).
+# Analyse le JSON des variables (un objet par ligne) et imprime une ligne « clé<TAB>état<TAB>valeur »
+# par variable. États : ok (valeur utilisable), vide (variable sans valeur), multiligne (valeur à
+# retours chariot — inexploitable dans un .env).
 # La valeur n'est présente que sur les lignes « ok », et jamais quand sansval=1 (mode --check).
-# Analyseur JSON en awk pur, comme le reste de l'outillage GitLab du dépôt (pas de jq ni de
-# python) : lecture de chaînes échappement par échappement, y compris \uXXXX ré-encodé en UTF-8 —
-# le mojibake de #141 est venu d'un décodage approximatif, on ne recommence pas.
+# Analyseur JSON en awk pur, comme le reste de l'outillage du dépôt (pas de jq ni de python) :
+# lecture de chaînes échappement par échappement, y compris \uXXXX ré-encodé en UTF-8 — le mojibake
+# de #141 est venu d'un décodage approximatif, on ne recommence pas.
 analyse_variables() {
   local source="$1" sansval="${2:-0}"
   LC_ALL=C awk -v sansval="$sansval" '
@@ -235,28 +255,27 @@ analyse_variables() {
       S_STR = out
       return p
     }
-    function emet(k, v, t, ok,   etat) {
+    function emet(k, v, ok,   etat) {
       if (k == "") return
-      if (t != "" && t != "env_var")   etat = "fichier"
-      else if (!ok || v == "")         etat = "vide"
-      else if (v ~ /[\n\r\t]/)         etat = "multiligne"
-      else                             etat = "ok"
+      if (!ok || v == "")      etat = "vide"
+      else if (v ~ /[\n\r\t]/) etat = "multiligne"
+      else                     etat = "ok"
       if (etat == "ok" && !sansval) printf "%s\t%s\t%s\n", k, etat, v
       else                          printf "%s\t%s\t\n", k, etat
     }
     { buf = buf $0 "\n" }
     END {
       n = length(buf); p = 1; profondeur = 0
-      champ = ""; cle = ""; val = ""; type = ""; ok = 0
+      champ = ""; cle = ""; val = ""; ok = 0
       while (p <= n) {
         c = substr(buf, p, 1)
         if (c == "{") {
           profondeur++
-          if (profondeur == 1) { cle = ""; val = ""; type = ""; ok = 0; champ = "" }
+          if (profondeur == 1) { cle = ""; val = ""; ok = 0; champ = "" }
           p++; continue
         }
         if (c == "}") {
-          if (profondeur == 1) emet(cle, val, type, ok)
+          if (profondeur == 1) emet(cle, val, ok)
           profondeur--; p++; continue
         }
         if (c == "\"") {
@@ -265,9 +284,8 @@ analyse_variables() {
           q = p
           while (q <= n && substr(buf, q, 1) ~ /[ \t\r\n]/) q++
           if (substr(buf, q, 1) == ":") { champ = texte; p = q + 1; continue }
-          if      (champ == "key")           cle = texte
-          else if (champ == "value")       { val = texte; ok = 1 }
-          else if (champ == "variable_type") type = texte
+          if      (champ == "name")  cle = texte
+          else if (champ == "value") { val = texte; ok = 1 }
           champ = ""
           continue
         }
@@ -315,7 +333,7 @@ applique() {
       cle="${ligne%%"$TAB"*}"
       [[ "$a_poser" == *"|$cle|"* ]] || continue
       if [ "$entete" = 0 ]; then
-        printf '%s\n# --- Clés partagées récupérées des variables CI/CD (bash scripts/env-pull.sh) ---%s\n' \
+        printf '%s\n# --- Clés partagées récupérées des variables du dépôt (bash scripts/env-pull.sh) ---%s\n' \
           "$fin_fichier" "$fin_fichier"
         entete=1
       fi
@@ -429,7 +447,7 @@ while IFS= read -r cle; do
   esac
 done <<< "$A_COMPLETER"
 
-# Variables publiées sans clé correspondante dans le gabarit : souvent une coquille côté GitLab.
+# Variables publiées sans clé correspondante dans le gabarit : souvent une coquille côté dépôt.
 HORS_GABARIT=""
 CONNUES="$(cles_marquees 'partagé'; cles_marquees 'perso')"
 while IFS= read -r ligne; do
@@ -438,13 +456,14 @@ while IFS= read -r ligne; do
   printf '%s\n' "$CONNUES" | grep -qx "$cle" || HORS_GABARIT="$HORS_GABARIT$cle"$'\n'
 done < "$VARS"
 
-liste 'disponibles dans les variables CI/CD' "$POSABLES"
-liste 'absentes des variables CI/CD' "$INDISPONIBLES"
+liste 'disponibles dans les variables du dépôt' "$POSABLES"
+liste 'absentes des variables du dépôt' "$INDISPONIBLES"
 liste 'publiées mais inexploitables' "$ILLISIBLES"
-liste 'variables du projet hors gabarit (ignorées)' "$HORS_GABARIT"
+liste 'variables du dépôt hors gabarit (ignorées)' "$HORS_GABARIT"
 
 if [ -n "$INDISPONIBLES" ]; then
-  printf "  → à publier une fois, par un mainteneur : glab variable set <CLÉ> --masked < valeur.txt\n"
+  printf "  → à publier une fois, par un mainteneur : gh variable set <CLÉ> --body <valeur>\n"
+  printf "    (un SECRET vrai se pose par « gh secret set » et ne sera pas relisible ici — docs/27 §5)\n"
 fi
 
 if [ "$MODE_CHECK" = 1 ]; then

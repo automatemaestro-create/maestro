@@ -3,12 +3,12 @@
 Tests différés des lots #168 à #171 (parent #167) puis #176-#177 (parent #174), réunis ici selon
 la convention de découpage (`docs/10-workflow-git.md` §5.1).
 
-**Ni réseau, ni quota, ni écriture GitLab.** Trois bouchons posés en tête de `PATH` ou par
+**Ni réseau, ni quota, ni écriture côté forge.** Trois bouchons posés en tête de `PATH` ou par
 variable d'environnement remplacent tout ce qui sortirait de la machine :
 
-* `glab` — un script qui répond aux quelques appels que `scripts/gitlab/lib.sh` émet
-  (GraphQL des milestones, du backlog, du statut d'un ticket ; `issue view` ; `mr view`), à
-  partir d'un **état écrit par le test** dans un dossier de fixtures. Aucune requête ne part.
+* `gh` — un script qui répond aux quelques requêtes GraphQL que `scripts/gitlab/lib.sh` émet
+  (milestones, backlog, vue d'un ticket, PR d'une branche), à partir d'un **état écrit par le
+  test** dans un dossier de fixtures. Aucune requête ne part.
 * `claude` — via `MAESTRO_CLAUDE_BIN` : un script qui joue le scénario voulu (succès, limite
   d'usage, reprise) et **ne consomme aucun quota**.
 * le montage de worktree — via `MAESTRO_ORCHESTRATE_WORKTREE` : une commande qui imprime un
@@ -33,6 +33,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import textwrap
 import time
 from dataclasses import dataclass, field
@@ -60,54 +61,100 @@ SCRIPTS = (
     "scripts/orchestrate/settings.run.json",
 )
 
-# Le bouchon `glab`. Il ne cherche pas à imiter GitLab : il répond au strict nécessaire, en lisant
+# Le bouchon `gh`. Il ne cherche pas à imiter GitHub : il répond au strict nécessaire, en lisant
 # des fichiers que le test a écrits. Le dispatch se fait sur des fragments de la requête GraphQL
 # telle que lib.sh la compose — si lib.sh change de requête, ces tests le diront.
-STUB_GLAB = r"""#!/usr/bin/env bash
+STUB_GH = r"""#!/usr/bin/env bash
 FIX="$MAESTRO_FIXTURES"
-# Tout appel est journalisé : c'est ce qui permet de vérifier qu'une option comme `--no-gitlab`
+# Tout appel est journalisé : c'est ce qui permet de vérifier qu'une option comme `--no-forge`
 # n'interroge VRAIMENT rien, plutôt que de se contenter du message qu'elle imprime.
-printf '%s\n' "$*" >> "$FIX/glab.log"
+printf '%s\n' "$*" >> "$FIX/gh.log"
 case "$1 $2" in
   "auth status") exit 0 ;;
 esac
 if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
   requete="$*"
   case "$requete" in
-    *"milestones("*)      cat "$FIX/milestones.json" 2>/dev/null; exit 0 ;;
-    *"milestoneTitle:"*)
-      # Le titre demandé sert de clé : sans ça, deux milestones rendraient forcément la même table
-      # de tickets, et `queue.sh --milestones` ne pourrait pas être testé sur des comptes distincts.
-      # Espaces → « _ » (les titres des tests sont en ASCII, cf. milestone_tickets côté Python).
-      titre="${requete#*milestoneTitle:[\"}"; titre="${titre%%\"*}"
-      par_titre="$FIX/milestone-issues-${titre// /_}.json"
-      if [ -f "$par_titre" ]; then cat "$par_titre"; else
+    # Les tickets d'un jalon, désigné par son NUMÉRO : la seconde lecture de `milestone-issues`,
+    # qui résout d'abord le titre (GitHub ne filtre pas un jalon par son titre).
+    *"milestone(number:"*)
+      numero="${requete#*milestone(number: }"; numero="${numero%%)*}"
+      if [ -f "$FIX/milestone-issues-$numero.json" ]; then
+        cat "$FIX/milestone-issues-$numero.json"
+      else
         cat "$FIX/milestone-issues.json" 2>/dev/null
       fi
       exit 0 ;;
-    *"workItems(state:"*) cat "$FIX/backlog.json" 2>/dev/null; exit 0 ;;
-    *"mergeRequests("*)   cat "$FIX/mr-iid.json" 2>/dev/null; exit 0 ;;
-    *'workItems(iids:["'*)
-      iid="${requete#*workItems(iids:[\"}"; iid="${iid%%\"*}"
+    # DEUX lectures de jalons, deux formes de réponse — GraphQL rend les clés dans l'ordre où la
+    # requête les demande, et les parsers de lib.sh découpent dessus. Celle qui résout un titre en
+    # NUMÉRO (première moitié de `milestone-issues`) demande « number title » ; les autres
+    # (`milestones`, `current-milestone`) demandent « title » d'abord.
+    *"nodes { number title }"*) cat "$FIX/milestones-numeros.json" 2>/dev/null; exit 0 ;;
+    *"milestones("*)            cat "$FIX/milestones.json" 2>/dev/null; exit 0 ;;
+    *"issues(first:"*) cat "$FIX/backlog.json" 2>/dev/null; exit 0 ;;
+    *"pullRequests("*)
+      # La PR d'UNE branche : le nom du fichier de fixture aplatit ses « / » (comme côté Python).
+      # Une branche sans fixture n'a pas de PR du tout — c'est ce qui distingue un ticket livré
+      # d'un ticket dont la session n'a rien clos.
+      case "$requete" in
+        *"headRefName:"*)
+          branche="${requete#*headRefName: \"}"; branche="${branche%%\"*}"
+          if [ -f "$FIX/mr-${branche//\//__}.json" ]; then
+            cat "$FIX/mr-${branche//\//__}.json"
+          else
+            printf '{"data":{"repository":{"pullRequests":{"nodes":[]}}}}'
+          fi
+          exit 0 ;;
+      esac
+      cat "$FIX/mr-iid.json" 2>/dev/null; exit 0 ;;
+    *"issue(number:"*)
+      iid="${requete#*issue(number:}"; iid="${iid%%)*}"
+      # La VUE CANONIQUE d'un ticket est décrite par le test dans son format de SORTIE (en-têtes
+      # « clé:<TAB>valeur », « -- », corps) : un helper Python la retraduit en JSON, parce qu'un
+      # bouchon shell n'a pas à porter un encodeur — les titres et les corps portent des accents.
+      case "$requete" in
+        *"body }"*)
+          [ -f "$FIX/issue-$iid.txt" ] || exit 1
+          exec "$MAESTRO_STUB_PYTHON" "$FIX/vue_en_json.py" "$FIX/issue-$iid.txt" ;;
+      esac
       if [ -f "$FIX/owner-$iid.json" ]; then cat "$FIX/owner-$iid.json"; else
-        printf '{"data":{"project":{"workItems":{"nodes":[]}}}}'
+        printf '{"data":{"repository":{"issue":null}}}'
       fi
       exit 0 ;;
   esac
   exit 1
 fi
-if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
-  [ -f "$FIX/issue-$3.txt" ] || exit 1
-  cat "$FIX/issue-$3.txt"; exit 0
-fi
-if [ "$1" = "mr" ] && [ "$2" = "view" ]; then
-  # Une branche porte des « / » : le nom du fichier de fixture les remplace (comme côté Python).
-  ref="${3//\//__}"
-  [ -f "$FIX/mr-$ref.json" ] || exit 1
-  cat "$FIX/mr-$ref.json"; exit 0
-fi
 exit 1
 """
+
+VUE_EN_JSON = "\n".join([
+    "# Rend, au format que lit `gh_issue_raw`, la vue canonique d'un ticket écrite par un test.",
+    "import json",
+    "import sys",
+    "",
+    'texte = open(sys.argv[1], encoding="utf-8").read()',
+    'entete, _, corps = texte.partition("\\n--\\n")',
+    "champs = {}",
+    "for ligne in entete.splitlines():",
+    '    cle, _, valeur = ligne.partition(":\\t")',
+    "    champs[cle] = valeur",
+    "",
+    "",
+    "def nodes(cle, brut):",
+    '    return {"nodes": [{cle: v.strip()} for v in brut.split(",") if v.strip()]}',
+    "",
+    "",
+    'sys.stdout.buffer.write(json.dumps({"data": {"repository": {"issue": {',
+    '    "title": champs.get("title", ""),',
+    '    "state": "CLOSED" if champs.get("state") == "closed" else "OPEN",',
+    '    "author": {"login": champs.get("author", "MaestroAgents")},',
+    '    "labels": nodes("name", champs.get("labels", "")),',
+    '    "assignees": nodes("login", champs.get("assignees", "")),',
+    '    "milestone": {"jalon": champs.get("milestone", "")},',
+    '    "body": corps.rstrip("\\n"),',
+    '}}}}, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))',
+    "",
+])
 
 # Le bouchon de montage de worktree : il imprime un dossier qui existe déjà, sans rien créer.
 STUB_WORKTREE = """#!/usr/bin/env bash
@@ -133,16 +180,16 @@ def _label_workflow(statut: str) -> str:
     """Le nœud de label portant le cycle de vie, ou une chaîne vide si `statut` est vide."""
     if not statut:
         return ""
-    return f'{{"title":"workflow::{_SLUG_WORKFLOW.get(statut, statut)}"}}'
+    return f'{{"name":"workflow::{_SLUG_WORKFLOW.get(statut, statut)}"}}'
 
 
 def _statut_json(iid: str, statut: str, assigne: str = "") -> str:
     """La réponse GraphQL que `gl_issue_owner` sait lire."""
-    assignes = f'{{"username":"{assigne}"}}' if assigne else ""
+    assignes = f'{{"login":"{assigne}"}}' if assigne else ""
     return (
-        f'{{"data":{{"project":{{"workItems":{{"nodes":[{{"iid":"{iid}","widgets":['
-        f'{{"labels":{{"nodes":[{_label_workflow(statut)}]}}}},'
-        f'{{"assignees":{{"nodes":[{assignes}]}}}}]}}]}}}}}}}}'
+        f'{{"data":{{"repository":{{"issue":{{'
+        f'"labels":{{"nodes":[{_label_workflow(statut)}]}},'
+        f'"assignees":{{"nodes":[{assignes}]}}}}}}}}}}'
     )
 
 
@@ -154,6 +201,7 @@ class Depot:
     fixtures: Path
     env: dict[str, str]
     tickets: dict[str, dict] = field(default_factory=dict)
+    numeros_jalons: dict[str, int] = field(default_factory=dict)
 
     # --- Mise en place de l'état GitLab simulé ---------------------------------------------------
     def milestone(self, titre: str) -> None:
@@ -167,24 +215,39 @@ class Depot:
         foi dans les tests, pas les dates.
         """
         noeuds = ",".join(
-            f'{{"title":"{t}","state":"{etat}","startDate":"2026-01-01","dueDate":"2026-12-31",'
-            f'"stats":{{"totalIssuesCount":{total},"closedIssuesCount":{fermes}}}}}'
+            f'{{"title":"{t}","state":"{"OPEN" if etat == "active" else "CLOSED"}",'
+            f'"dueOn":"2026-12-31T00:00:00Z",'
+            f'"total":{{"totalCount":{total}}},"fermes":{{"totalCount":{fermes}}}}}'
             for t, etat, fermes, total in jalons
         )
         (self.fixtures / "milestones.json").write_text(
-            f'{{"data":{{"project":{{"milestones":{{"nodes":[{noeuds}]}}}}}}}}',
+            f'{{"data":{{"repository":{{"milestones":{{"nodes":[{noeuds}]}}}}}}}}',
             encoding="utf-8",
         )
+        # La SECONDE forme : « number title », celle que lit la résolution d'un titre en numéro.
+        # GraphQL rend les clés dans l'ordre demandé et les parsers de lib.sh découpent dessus —
+        # une seule fixture pour les deux requêtes ne pourrait donc pas convenir aux deux.
+        numeros = ",".join(
+            f'{{"number":{numero},"title":"{t}"}}'
+            for numero, (t, _, _, _) in enumerate(jalons, 1)
+        )
+        (self.fixtures / "milestones-numeros.json").write_text(
+            f'{{"data":{{"repository":{{"milestones":{{"nodes":[{numeros}]}}}}}}}}',
+            encoding="utf-8",
+        )
+        self.numeros_jalons = {t: n for n, (t, _, _, _) in enumerate(jalons, 1)}
 
     def milestone_tickets(self, titre: str, iids: list[int]) -> None:
         """Les tickets d'UN milestone donné (les autres gardent la table de `publie`).
 
-        Le bouchon `glab` retrouve ce fichier par le titre demandé — d'où des titres ASCII dans les
-        tests qui s'en servent, la clé n'étant qu'un remplacement des espaces par « _ ».
+        Le bouchon `gh` retrouve ce fichier par le NUMÉRO du jalon, parce que c'est ce que porte la
+        seconde lecture de `milestone-issues` : GitHub ne filtre pas un jalon par son titre, il faut
+        d'abord le résoudre. La correspondance titre → numéro vient de `milestones()`.
         """
-        noeuds = ",".join(self._noeud(str(iid)) for iid in iids)
-        (self.fixtures / f"milestone-issues-{titre.replace(' ', '_')}.json").write_text(
-            f'{{"data":{{"project":{{"workItems":{{"nodes":[{noeuds}]}}}}}}}}',
+        numero = self.numeros_jalons[titre]
+        noeuds = ",".join(self._noeud_jalon(str(iid)) for iid in iids)
+        (self.fixtures / f"milestone-issues-{numero}.json").write_text(
+            f'{{"data":{{"repository":{{"milestone":{{"issues":{{"nodes":[{noeuds}]}}}}}}}}}}',
             encoding="utf-8",
         )
 
@@ -218,35 +281,67 @@ class Depot:
             "titre": titre, "statut": statut, "prio": prio, "type": type_, "assigne": assigne
         }
 
-    def _noeud(self, iid: str) -> str:
-        """Un ticket déclaré, au format de nœud que les deux tables partagent."""
+    def _labels(self, iid: str) -> str:
+        """Les labels d'un ticket déclaré : catégorisation, plus le cycle de vie s'il en a un."""
         t = self.tickets[iid]
-        assignes = f'{{"username":"{t["assigne"]}"}}' if t["assigne"] else ""
         workflow = _label_workflow(t["statut"])
         return (
-            f'{{"iid":"{iid}","title":"{t["titre"]}","state":"opened","widgets":['
-            f'{{"labels":{{"nodes":[{{"title":"type::{t["type"]}"}},'
-            f'{{"title":"prio::{t["prio"]}"}},{{"title":"agent::dev"}}'
-            f'{"," + workflow if workflow else ""}]}}}},'
-            f'{{"assignees":{{"nodes":[{assignes}]}}}}]}}'
+            f'{{"name":"type::{t["type"]}"}},{{"name":"prio::{t["prio"]}"}},'
+            f'{{"name":"agent::dev"}}{"," + workflow if workflow else ""}'
+        )
+
+    def _noeud(self, iid: str) -> str:
+        """Un ticket déclaré, au format de nœud du BACKLOG (labels + assignés)."""
+        t = self.tickets[iid]
+        assignes = f'{{"login":"{t["assigne"]}"}}' if t["assigne"] else ""
+        return (
+            f'{{"number":{iid},"title":"{t["titre"]}",'
+            f'"labels":{{"nodes":[{self._labels(iid)}]}},'
+            f'"assignees":{{"nodes":[{assignes}]}}}}'
+        )
+
+    def _noeud_jalon(self, iid: str) -> str:
+        """Le même ticket vu depuis un JALON : la requête n'y demande pas les assignés."""
+        t = self.tickets[iid]
+        return (
+            f'{{"number":{iid},"title":"{t["titre"]}",'
+            f'"labels":{{"nodes":[{self._labels(iid)}]}}}}'
         )
 
     def publie(self) -> None:
         """Compose les deux tables que `queue.sh` lit (milestone et backlog) depuis les tickets."""
-        jointure = ",".join(self._noeud(iid) for iid in self.tickets)
-        charge = f'{{"data":{{"project":{{"workItems":{{"nodes":[{jointure}]}}}}}}}}'
-        (self.fixtures / "milestone-issues.json").write_text(charge, encoding="utf-8")
-        (self.fixtures / "backlog.json").write_text(charge, encoding="utf-8")
-
-    def mr(self, branche: str, etat: str = "opened", iid: int = 99) -> None:
-        # Le nom du fichier aplatit les « / » de la branche — le bouchon fait la même chose.
-        (self.fixtures / f"mr-{branche.replace('/', '__')}.json").write_text(
-            f'{{"iid":{iid},"state":"{etat}","draft":true}}', encoding="utf-8"
-        )
-        (self.fixtures / "mr-iid.json").write_text(
-            f'{{"data":{{"project":{{"mergeRequests":{{"nodes":[{{"iid":"{iid}"}}]}}}}}}}}',
+        (self.fixtures / "milestone-issues.json").write_text(
+            '{{"data":{{"repository":{{"milestone":{{"issues":{{"nodes":[{}]}}}}}}}}}}'.format(
+                ",".join(self._noeud_jalon(iid) for iid in self.tickets)
+            ),
             encoding="utf-8",
         )
+        (self.fixtures / "backlog.json").write_text(
+            '{{"data":{{"repository":{{"issues":{{"nodes":[{}]}}}}}}}}'.format(
+                ",".join(self._noeud(iid) for iid in self.tickets)
+            ),
+            encoding="utf-8",
+        )
+
+    def mr(self, branche: str, etat: str = "opened", iid: int = 99) -> None:
+        """La PR d'UNE branche. Le nom du fichier aplatit les « / » — le bouchon fait de même.
+
+        Une branche sans fixture n'a pas de PR : c'est ce qui fait la différence entre un ticket
+        livré et un ticket dont la session n'a rien clos, donc entre un verdict « OK » et un
+        « ECHEC ». Une fixture unique pour toutes les branches les confondrait.
+        """
+        etats = {"opened": "OPEN", "merged": "MERGED", "closed": "CLOSED"}
+        charge = (
+            f'{{"data":{{"repository":{{"pullRequests":{{"nodes":[{{"number":{iid},'
+            f'"state":"{etats.get(etat, etat.upper())}","headRefOid":"deadbeef",'
+            f'"isDraft":true}}]}}}}}}}}'
+        )
+        (self.fixtures / f"mr-{branche.replace('/', '__')}.json").write_text(
+            charge, encoding="utf-8"
+        )
+        # Le repli des requêtes qui ne visent pas une branche (file de revue, branches des PR
+        # ouvertes) : la dernière PR déclarée fait l'affaire, aucun test n'en distingue deux.
+        (self.fixtures / "mr-iid.json").write_text(charge, encoding="utf-8")
 
     # --- Lancement -------------------------------------------------------------------------------
     def lance(
@@ -296,8 +391,9 @@ def depot(tmp_path: Path) -> Depot:
         encoding="utf-8",
     )
 
-    (binaires / "glab").write_text(STUB_GLAB, encoding="utf-8", newline="\n")
-    (binaires / "glab").chmod(0o755)
+    (binaires / "gh").write_text(STUB_GH, encoding="utf-8", newline="\n")
+    (binaires / "gh").chmod(0o755)
+    (fixtures / "vue_en_json.py").write_text(VUE_EN_JSON, encoding="utf-8", newline="\n")
     (binaires / "worktree-stub").write_text(STUB_WORKTREE, encoding="utf-8", newline="\n")
     (binaires / "worktree-stub").chmod(0o755)
 
@@ -307,6 +403,9 @@ def depot(tmp_path: Path) -> Depot:
         "HOME": str(tmp_path / "home"),
         "TMPDIR": str(tmp_path / "tmp"),
         "MAESTRO_FIXTURES": str(fixtures),
+        # L'interpréteur qui a lancé pytest : le bouchon `gh` s'en sert pour la seule chose qu'un
+        # script shell ne doit pas porter — l'encodage JSON d'un titre accentué.
+        "MAESTRO_STUB_PYTHON": sys.executable,
         "MAESTRO_STUB_WORKTREE_DIR": str(racine),
         "MAESTRO_ORCHESTRATE_WORKTREE": str(binaires / "worktree-stub"),
         "GL_GQL_RETRIES": "1",
@@ -434,9 +533,9 @@ INTERDITS = [
     "git push --force origin main",
     "git push -f",
     "git push --force-with-lease origin x",
-    "glab mr merge 143",
-    "glab mr close 143",
-    "glab ci delete 1",
+    "gh pr merge 143",
+    "gh pr close 143",
+    "gh run delete 1",
     "git reset --hard HEAD~1",
     "git commit --no-verify -m x",
     "npm test && git push --force",
@@ -446,8 +545,8 @@ AUTORISES = [
     "git push -u origin chore/1-x",
     "git commit -m 'feat: x'",
     "npm test",
-    "glab mr create --draft",
-    "glab ci retry 1",
+    "gh pr create --draft",
+    "gh run rerun 1",
     "git reset --soft HEAD~1",
     "cat -n fichier.txt",
 ]
@@ -474,7 +573,7 @@ def test_le_garde_fou_ne_juge_que_les_appels_bash(depot: Depot) -> None:
             "tool_name": "Write",
             "tool_input": {
                 "file_path": "docs/10.md",
-                "content": "Ne jamais lancer glab mr merge ni git push --force.",
+                "content": "Ne jamais lancer gh pr merge ni git push --force.",
             },
         }
     )
@@ -508,11 +607,11 @@ def test_check_detecte_une_regle_deny_oubliee(depot: Depot) -> None:
     """Un interdit ajouté au dépôt et oublié dans settings.run.json ne protégerait plus les runs."""
     chemin = depot.racine / ".claude/settings.json"
     reglages = json.loads(chemin.read_text(encoding="utf-8"))
-    reglages["permissions"]["deny"].append("Bash(glab mr merge --yes:*)")
+    reglages["permissions"]["deny"].append("Bash(gh pr merge --admin:*)")
     chemin.write_text(json.dumps(reglages, ensure_ascii=False, indent=2), encoding="utf-8")
     r = depot.lance("guard.sh", "--check")
     assert r.returncode == 1
-    assert "Bash(glab mr merge --yes:*)" in r.stderr, "la règle manquante est nommée en entier"
+    assert "Bash(gh pr merge --admin:*)" in r.stderr, "la règle manquante est nommée en entier"
 
 
 # =====================================================================================
@@ -605,7 +704,7 @@ def test_le_prompt_nomme_les_trois_formes_qu_aucune_regle_ne_matche(depot: Depot
     """Elles ne se devinent PAS depuis un refus, qui ne dit jamais ce qui a manqué.
 
     Et la plus coûteuse tombe sur la dernière action du ticket : huit sessions sur seize ont buté
-    sur un `glab mr create --description` multi-ligne, puis sur le `$(cat …)` par lequel elles
+    sur une création de MR à description multi-ligne, puis sur le `$(cat …)` par lequel elles
     essayaient de s'en sortir. Le prompt doit donc les nommer, et dire le geste de remplacement.
     """
     depot.ticket(130, "Ticket a traiter")
@@ -2011,7 +2110,7 @@ def test_un_run_en_cours_montre_le_ticket_courant_le_reste_et_le_bilan(depot: De
     assert "En cours — #131" in r.stdout
     assert "Reste au plan (1)" in r.stdout and "#132" in r.stdout
     assert "Traités (1)" in r.stdout and "#130" in r.stdout
-    assert "GitLab     ticket « En cours »" in r.stdout, "le statut du ticket courant est relu"
+    assert "GitHub     ticket « En cours »" in r.stdout, "le statut du ticket courant est relu"
     assert "status.sh --watch" in r.stdout and "touch" in r.stdout, "suivre / arrêter sont donnés"
 
 
@@ -2161,7 +2260,7 @@ def test_sans_forge_rien_n_est_interroge(depot: Depot, option: str) -> None:
     assert r.returncode == 0, r.stderr
     assert "non interrogé (--no-forge)" in r.stdout
     assert "En cours — #131" in r.stdout, "tout le reste est lu en local"
-    assert not (depot.fixtures / "glab.log").exists(), "pas même un « glab auth status »"
+    assert not (depot.fixtures / "gh.log").exists(), "pas même un « gh auth status »"
 
 
 def test_status_n_ecrit_rien(depot: Depot) -> None:
@@ -2718,7 +2817,7 @@ def test_la_vue_lisible_se_rejoue_sur_un_journal_deja_ecrit(depot: Depot) -> Non
     assert "10.69 $" in r.stdout
     # Diagnostic = lecture seule : ni run, ni journal, ni appel à GitLab.
     assert not (depot.racine / ".maestro").exists()
-    assert not (depot.fixtures / "glab.log").exists()
+    assert not (depot.fixtures / "gh.log").exists()
 
 
 def test_un_resultat_illisible_est_refuse_sans_rien_inventer(depot: Depot) -> None:
@@ -2837,7 +2936,7 @@ def test_les_runs_reprenables_ne_touchent_ni_a_gitlab_ni_au_disque(depot: Depot)
     _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")], resume=[], age=4000)
     avant = sorted(p.name for p in (depot.racine / ".maestro/orchestrate").rglob("*"))
     assert _reprenables(depot)[0][0] == "20260730-100000"
-    assert not (depot.fixtures / "glab.log").exists(), "une liste qui doit marcher hors ligne"
+    assert not (depot.fixtures / "gh.log").exists(), "une liste qui doit marcher hors ligne"
     apres = sorted(p.name for p in (depot.racine / ".maestro/orchestrate").rglob("*"))
     assert avant == apres
 
@@ -3962,8 +4061,8 @@ def test_refus_releve_les_formes_qu_aucune_regle_ne_matchera(depot: Depot) -> No
     n'y survivrait pas, et c'est justement la forme la plus coûteuse (huit sessions sur seize).
     """
     _journal_refus(depot, "formes", {130: _refus(
-        'glab mr create --description "ligne un\nligne deux"',
-        'glab mr create --description "$(cat brouillon.md)"',
+        'gh pr create --body "ligne un\nligne deux"',
+        'gh pr create --body "$(cat brouillon.md)"',
         "cat > note.md <<'EOF'\ntexte\nEOF",
     )})
     r = depot.lance("journal.sh", "refus", "formes")
@@ -4157,7 +4256,7 @@ def test_refus_range_chaque_refus_dans_une_seule_famille(depot: Depot) -> None:
     _journal_refus(depot, "partition", {130: _refus(
         "for f in a b; do cat /tmp/$f; done",
         'cd "E:/ailleurs" && git status',
-        'glab mr create --description "un\ndeux"',
+        'gh pr create --body "un\ndeux"',
     ) + _refus(".claude/settings.json", outil="Write")})
     r = depot.lance("journal.sh", "refus", "partition")
 

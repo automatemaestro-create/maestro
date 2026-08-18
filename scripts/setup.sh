@@ -13,7 +13,7 @@
 #   - IDEMPOTENT : relancé sur une machine déjà prête, tout ressort en « DÉJÀ FAIT ».
 #   - NON DESTRUCTIF : n'écrase jamais un .env existant ; .claude/settings.local.json est
 #     FUSIONNÉ clé par clé, sans toucher à ce qui y est déjà posé.
-#   - INSTALLE CE QUI MANQUE : un prérequis absent (python, node, npm, git, glab) est installé
+#   - INSTALLE CE QUI MANQUE : un prérequis absent (python, node, npm, git, gh) est installé
 #     D'OFFICE via le gestionnaire de paquets de la plateforme (winget / brew / apt), sans rien
 #     demander — puis le PATH de la session est rafraîchi et l'outil re-détecté. `--no-install`
 #     (ou MAESTRO_AUTO_INSTALL=0) pour s'en tenir au signalement.
@@ -26,11 +26,10 @@
 #     rapport final et sort en code non nul si une étape DURE a échoué.
 #   - AUCUN SECRET : ni lu, ni affiché, ni écrit dans un fichier versionné.
 #
-# Le volet « conteneurs + CI » (Docker + runner de projet, #146) est délégué à
-# scripts/gitlab/setup-runner.sh, appelé par l'étape `runner` : il crée le runner de CETTE machine
-# s'il n'existe pas encore, sans quoi les pipelines de MR restent `pending`
-# (docs/10-workflow-git.md §8). Les bases locales (PostgreSQL/Redis/Temporal) restent optionnelles,
-# derrière `--with-infra`.
+# PLUS AUCUN VOLET « conteneurs + CI » depuis #344 : la CI tourne sur les runners hébergés de
+# GitHub, il n'y a plus de runner de projet à monter sur le poste. Une mise en route n'exige donc
+# plus Docker du tout — les bases locales (PostgreSQL/Redis/Temporal) restent optionnelles, derrière
+# `--with-infra`, et sont le seul usage de Docker qui subsiste.
 #
 # Pas de `set -e` : les étapes doivent toutes se dérouler, chacune gère son erreur.
 
@@ -62,7 +61,7 @@ OUTILS_DIR="$RACINE/.tools"
 # d'un clone à l'autre, et c'est du code exécuté à chaque démarrage de Claude Code.
 PLAYWRIGHT_MCP_VERSION="${MAESTRO_PLAYWRIGHT_MCP_VERSION:-0.0.78}"
 
-ETAPES_CONNUES="node prerequis venv env hooks web mcp runner infra verif"
+ETAPES_CONNUES="node prerequis venv env hooks web mcp infra verif"
 
 # --- Drapeaux -----------------------------------------------------------------------------------
 MODE_CHECK=0                                     # --check : diagnostic seul, aucune écriture
@@ -93,9 +92,8 @@ Options :
   node       Node ${NODE_PIN:-(.node-version)} provisionné sous .tools/node/ (téléchargement vérifié
              par SHA-256) + @playwright/mcp ${PLAYWRIGHT_MCP_VERSION} — sans droits admin, et
              prioritaire sur le Node du système pour les étapes suivantes
-  prerequis  python >= ${PYTHON_MIN}, node >= ${NODE_MIN}, npm, git, gh, glab — installés
-             d'office s'ils manquent (winget / brew / apt). gh porte le workflow ; glab ne
-             sert plus qu'à relire l'archive GitLab (#343)
+  prerequis  python >= ${PYTHON_MIN}, node >= ${NODE_MIN}, npm, git, gh — installés
+             d'office s'ils manquent (winget / brew / apt)
   venv       .venv/ + pip install -e ".[dev]"
   env        .env créé depuis .env.example (jamais écrasé) ; les clés partagées encore
              vides sont signalées, avec le script qui les récupère (scripts/env-pull.sh)
@@ -103,9 +101,8 @@ Options :
   web        dépendances npm de apps/web
   mcp        .claude/settings.local.json (profil navigateur + serveurs MCP du dépôt) —
              clés machine attendues : .claude/settings.local.example.json
-  runner     Docker + runner CI de projet de cette machine (scripts/gitlab/setup-runner.sh)
   infra      bases locales PostgreSQL/Redis/Temporal — uniquement avec --with-infra
-  verif      gh auth status (+ glab pour l'archive) + maestro-check-env
+  verif      gh auth status + maestro-check-env
 
 Le script ne pose aucune question : ce qui exige un humain est listé en fin de rapport.
 USAGE
@@ -125,6 +122,30 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# --- Validation des noms d'étapes ---------------------------------------------------------------
+# Un nom inconnu dans --only/--skip est un REFUS FRANC, jamais un silence : sans lui, `--only
+# runner` (étape retirée par #344) saute tout et sort en 0 — un « rien à faire » qui se lit comme
+# un succès. Même parti pris que scripts/ci/local.sh sur ses noms de jobs.
+valide_etapes() {
+  local liste="$1" origine="$2" etape inconnues=""
+  [ -n "$liste" ] || return 0
+  for etape in ${liste//,/ }; do
+    [ -n "$etape" ] || continue
+    case " $ETAPES_CONNUES " in
+      *" $etape "*) ;;
+      *) inconnues="${inconnues:+$inconnues, }$etape" ;;
+    esac
+  done
+  if [ -n "$inconnues" ]; then
+    printf 'Étape inconnue dans %s : %s\n' "$origine" "$inconnues" >&2
+    printf 'Étapes disponibles : %s\n' "${ETAPES_CONNUES// /, }" >&2
+    return 1
+  fi
+}
+
+valide_etapes "$ETAPES_ONLY" --only || exit 2
+valide_etapes "$ETAPES_SKIP" --skip || exit 2
+
 # --- Rapport ------------------------------------------------------------------------------------
 # Les étapes appellent `rapport <statut> <étape> <détail>` pour chaque constat. Statuts :
 #   OK     : l'étape a fait quelque chose et ça a marché
@@ -134,7 +155,7 @@ done
 RAPPORT=()
 RESTE=()
 NB_ECHECS_DURS=0
-# Échecs SOUPLES : l'étape a raté sans compromettre le socle local (Docker/runner/bases locales).
+# Échecs SOUPLES : l'étape a raté sans compromettre le socle local (bases locales optionnelles).
 # Ils ne font pas sortir en erreur, mais interdisent d'annoncer une machine entièrement prête.
 NB_ECHECS_SOUPLES=0
 
@@ -237,12 +258,6 @@ commande_install() {
         windows) echo "winget install Git.Git" ;;
         macos)   echo "brew install git" ;;
         *)       echo "sudo apt install git" ;;
-      esac ;;
-    glab)
-      case "$OS" in
-        windows) echo "winget install GLab.GLab" ;;
-        macos)   echo "brew install glab" ;;
-        *)       echo "voir https://gitlab.com/gitlab-org/cli#installation" ;;
       esac ;;
     gh)
       case "$OS" in
@@ -391,18 +406,16 @@ paquet_id() {
     windows/python) echo "Python.Python.3.12" ;;
     windows/node|windows/npm) echo "OpenJS.NodeJS.LTS" ;;
     windows/git)    echo "Git.Git" ;;
-    windows/glab)   echo "GLab.GLab" ;;
     windows/gh)     echo "GitHub.cli" ;;
     macos/python)   echo "python@3.12" ;;
     macos/node|macos/npm) echo "node" ;;
     macos/git)      echo "git" ;;
-    macos/glab)     echo "glab" ;;
     macos/gh)       echo "gh" ;;
     linux/python)   echo "python3 python3-venv python3-pip" ;;
     linux/node|linux/npm) echo "nodejs npm" ;;
     linux/git)      echo "git" ;;
     linux/gh)       echo "gh" ;;   # présent dans les dépôts récents ; sinon commande_install prend le relais
-    *)              echo "" ;;   # glab n'est pas dans les dépôts apt standard
+    *)              echo "" ;;   # pas de paquet connu : commande_install prend le relais
   esac
 }
 
@@ -537,7 +550,6 @@ detecte_python_utilisable() {
 assure_detection() {
   [ "${#PY_BOOT[@]}" -gt 0 ] || detecte_python_amorce >/dev/null 2>&1 || true
   if detecte_outil node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then NODE_PRESENT=1; fi
-  if command -v glab >/dev/null 2>&1; then GLAB_PRESENT=1; fi
   if command -v gh >/dev/null 2>&1; then GH_PRESENT=1; fi
   return 0
 }
@@ -727,18 +739,16 @@ etape_node() {
 # `python` et `git` sont DURS (sans eux les étapes suivantes n'ont rien à faire) ; `node`/`npm` ne
 # bloquent que apps/web, et `gh` que le workflow de tickets.
 #
-# `gh` ET `glab`, dans cet ordre, depuis la bascule (#343, chantier #335). `gh` est celui dont le
-# workflow dépend : les tickets, les PR et la CI vivent sur GitHub, et `MAESTRO_FORGE` vaut
-# « github » sans qu'on la pose. `glab` reste installé parce que le projet GitLab est l'ARCHIVE
-# (271 MR, historique du time tracking natif) et que la relire demande son CLI — mais plus rien du
-# quotidien n'en dépend. Un clone neuf sans `gh` ne peut pas travailler ; sans `glab` il ne peut
-# pas consulter l'archive, ce qui n'est pas la même urgence. Le retrait de `glab` des prérequis
-# appartient à #344, avec le reste de l'outillage GitLab.
-OUTILS_REQUIS="python node npm git gh glab"
+# `gh` PORTE LE WORKFLOW — tickets, PR et CI vivent sur GitHub depuis la bascule (#343). `glab` a
+# quitté cette liste avec le reste de l'outillage GitLab (#344) : le projet GitLab reste l'archive
+# (271 MR, historique du time tracking natif), mais la relire est un geste ponctuel de mainteneur,
+# pas un prérequis de mise en route — l'installer d'office sur chaque clone pour une consultation
+# qui n'arrive jamais est exactement ce que ce ticket supprime. Qui en a besoin l'installe et
+# l'authentifie à la main (docs/27 §11).
+OUTILS_REQUIS="python node npm git gh"
 PREREQUIS_DURS_OK=1
 NB_OUTILS_MANQUANTS=0
 NODE_PRESENT=0
-GLAB_PRESENT=0
 GH_PRESENT=0
 
 outil_est_dur() { case "$1" in python|git) return 0 ;; *) return 1 ;; esac; }
@@ -773,9 +783,6 @@ detecte_outil() {
     git)
       command -v git >/dev/null 2>&1 || return 1
       git --version 2>/dev/null | cut -d' ' -f3 ;;
-    glab)
-      command -v glab >/dev/null 2>&1 || return 1
-      glab --version 2>/dev/null | head -1 | cut -d' ' -f2 ;;
     gh)
       command -v gh >/dev/null 2>&1 || return 1
       gh --version 2>/dev/null | head -1 | cut -d' ' -f3 ;;
@@ -838,7 +845,7 @@ etape_prerequis() {
       case " ${installes[*]-} " in
         *" $outil "*) printf '  ✓ %s %s (installé à l'\''instant)\n' "$outil" "$version" ;;
       esac
-      case "$outil" in node) NODE_PRESENT=1 ;; glab) GLAB_PRESENT=1 ;; gh) GH_PRESENT=1 ;; esac
+      case "$outil" in node) NODE_PRESENT=1 ;; gh) GH_PRESENT=1 ;; esac
       continue
     fi
     manquants+=("$outil")
@@ -938,7 +945,7 @@ etape_venv() {
 
 # Clés PARTAGÉES encore à compléter (#162) : celles que le gabarit marque « # [partagé] » et que le
 # .env laisse vides. Elles ne se devinent pas et ne se demandent plus une par une — elles vivent
-# dans les variables CI/CD du projet, d'où scripts/env-pull.sh les recopie. La convention de
+# dans les variables du dépôt, d'où scripts/env-pull.sh les recopie. La convention de
 # marquage n'est PAS redupliquée ici : c'est env-pull.sh qui la porte (--manquantes, sans réseau).
 env_cles_partagees_manquantes() {
   local script="$RACINE/scripts/env-pull.sh"
@@ -951,7 +958,7 @@ env_reste_partagees() {
   local manquantes
   manquantes="$(env_cles_partagees_manquantes)"
   [ -n "$manquantes" ] || return 0
-  reste "Clés partagées encore vides — bash scripts/env-pull.sh les récupère des variables CI/CD du projet (rien à demander à personne, rien à écraser) : $manquantes"
+  reste "Clés partagées encore vides — bash scripts/env-pull.sh les récupère des variables du dépôt (rien à demander à personne, rien à écraser) : $manquantes"
 }
 
 etape_env() {
@@ -1074,7 +1081,7 @@ etape_mcp() {
   # La fusion est en Python (c'est du JSON) mais lit/écrit explicitement en UTF-8 : elle ne dépend
   # pas de l'encodage du terminal — le piège Windows cp1252 rappelé dans CLAUDE.md ne s'applique
   # qu'aux pipes vers stdin, ici tout passe par des fichiers et argv.
-  # PYTHONIOENCODING est posé sur PYTHON lui-même (pas devant un `glab | python` : le shell ne le
+  # PYTHONIOENCODING est posé sur PYTHON lui-même (pas devant un `gh | python` : le shell ne le
   # propagerait pas au bout du pipeline) — sans lui, Windows encode stdout en cp1252 et le rapport
   # ressort en mojibake (« d?j? align? »). Cf. CLAUDE.md § Outillage requis.
   sortie="$(PYTHONIOENCODING=utf-8 "${PY_CMD[@]}" - \
@@ -1203,95 +1210,7 @@ PY
   reste "Figma : s'authentifier via /mcp dans une session Claude Code interactive (OAuth, un clic, par personne)"
 }
 
-# --- Authentification GitLab sans geste manuel ----------------------------------------------------
-# valeur_env <clé> : lit une valeur du .env SANS le sourcer (un `source` exécuterait le fichier).
-# La valeur n'est jamais imprimée par l'appelant — elle ne sert qu'à alimenter un stdin.
-valeur_env() {
-  local cle="$1" ligne
-  [ -f "$RACINE/.env" ] || return 1
-  ligne="$(grep -m1 -E "^[[:space:]]*${cle}=" "$RACINE/.env" 2>/dev/null)" || return 1
-  ligne="${ligne#*=}"
-  ligne="${ligne%\"}"; ligne="${ligne#\"}"
-  ligne="${ligne%\'}"; ligne="${ligne#\'}"
-  [ -n "$ligne" ] || return 1
-  printf '%s' "$ligne"
-}
-
-# Hôte GitLab déduit du remote `origin` (défaut gitlab.com) — pas de valeur codée en dur, le dépôt
-# peut vivre sur une instance auto-hébergée.
-hote_gitlab() {
-  local url
-  url="$(git -C "$RACINE" remote get-url origin 2>/dev/null)" || { echo "gitlab.com"; return 0; }
-  case "$url" in
-    *://*) url="${url#*://}"; url="${url#*@}"; printf '%s\n' "${url%%/*}" ;;
-    *@*:*) url="${url#*@}"; printf '%s\n' "${url%%:*}" ;;
-    *)     echo "gitlab.com" ;;
-  esac
-}
-
-# Authentifie glab à partir de GITLAB_TOKEN du .env. Le token passe par STDIN, jamais par argv :
-# une ligne de commande est lisible par tout processus de la machine (ps/Gestionnaire des tâches).
-# Renvoie 0 si glab est authentifié à la sortie.
-authentifie_glab() {
-  local token hote
-  token="$(valeur_env GITLAB_TOKEN)" || return 1
-  hote="$(hote_gitlab)"
-  printf '  … authentification glab depuis GITLAB_TOKEN (%s)\n' "$hote"
-  # La sortie est jetée : glab y réaffiche parfois des éléments de configuration.
-  printf '%s' "$token" | glab auth login --hostname "$hote" --stdin >/dev/null 2>&1 || return 1
-  glab auth status >/dev/null 2>&1
-}
-
-# assure_glab_auth : glab utilisable pour les étapes qui en dépendent (runner, verif). Idempotent —
-# ne tente l'authentification depuis le .env que si la session ne l'est pas déjà, et jamais en
-# --check, qui n'écrit rien, pas même une configuration glab.
-assure_glab_auth() {
-  command -v glab >/dev/null 2>&1 || return 1
-  if glab auth status >/dev/null 2>&1; then return 0; fi
-  [ "$MODE_CHECK" = 1 ] && return 1
-  authentifie_glab
-}
-
-# --- 8. Docker + runner CI de projet : délégation à scripts/gitlab/setup-runner.sh ----------------
-# Le détail (installation de Docker, création du runner côté GitLab, conteneur, enregistrement)
-# vit dans setup-runner.sh, utilisable seul. Ici : transmission des drapeaux, progression laissée
-# à l'écran, et reprise de ses lignes `RESULTAT|<volet>|<statut>|<détail>` dans le rapport commun.
-# Un échec est SOUPLE : sans runner on ne peut pas merger, mais le socle local reste utilisable.
-etape_runner() {
-  local script="$RACINE/scripts/gitlab/setup-runner.sh" log="$LOG_DIR/runner.log"
-  local args=() tag volet statut detail
-
-  if [ ! -f "$script" ]; then
-    rapport IGNORE runner "runner : $script introuvable, étape sautée"
-    return 0
-  fi
-  [ "$MODE_CHECK" = 1 ] && args+=(--check)
-  [ "$AUTO_INSTALL" = 1 ] || args+=(--no-install)
-
-  # setup-runner.sh a besoin d'un glab authentifié (création/lecture du runner) et l'étape `verif`
-  # ne tourne qu'après lui : on avance l'authentification, qui sera « déjà faite » au bilan.
-  assure_glab_auth || true
-
-  mkdir -p "$LOG_DIR"
-  # La progression s'affiche en direct ; les lignes RESULTAT| sont retirées de l'écran (le rapport
-  # les reformate juste après) mais conservées dans le log, d'où on les relit.
-  bash "$script" ${args[@]+"${args[@]}"} 2>&1 | tee "$log" | grep -v '^RESULTAT|'
-
-  # Lecture du log (et non du pipeline) : `rapport` doit s'exécuter dans CE shell pour alimenter le
-  # tableau final — au bout d'un pipe, il le remplirait dans un sous-shell qui meurt aussitôt.
-  while IFS='|' read -r tag volet statut detail; do
-    [ "$tag" = RESULTAT ] || continue
-    case "$statut" in
-      OK|DEJA|IGNORE) rapport "$statut" "$volet" "$detail" ;;
-      ECHEC)
-        rapport ECHEC "$volet" "$detail"
-        NB_ECHECS_SOUPLES=$((NB_ECHECS_SOUPLES + 1))
-        reste "$volet — $detail (relancer : bash scripts/gitlab/setup-runner.sh)" ;;
-    esac
-  done < "$log"
-}
-
-# --- 9. Bases locales (optionnelles) : PostgreSQL / Redis / Temporal ------------------------------
+# --- 8. Bases locales (optionnelles) : PostgreSQL / Redis / Temporal ------------------------------
 # Proposées, pas imposées : elles ne servent qu'aux exécutions durables (Phase 3) et pèsent
 # plusieurs gigaoctets d'images. Sans --with-infra, l'étape se contente de rappeler la commande.
 etape_infra() {
@@ -1330,7 +1249,8 @@ etape_infra() {
 etape_verif() {
   local pv; pv="$(python_venv)"
 
-  # `gh` D'ABORD : depuis la bascule (#343) c'est lui qui porte le workflow de tickets. Son
+  # `gh` EST LE SEUL CLI DE FORGE VÉRIFIÉ ICI depuis #344 : c'est lui qui porte le workflow de
+  # tickets. Son
   # authentification est INTERACTIVE et le reste — il n'y a pas d'équivalent du `GITLAB_TOKEN` du
   # `.env` côté GitHub, et il ne faut surtout pas en inventer un : la configuration de `gh` est
   # isolée par projet via GH_CONFIG_DIR (#334, docs/10 §7.4), donc un jeton posé dans le `.env`
@@ -1345,23 +1265,6 @@ etape_verif() {
     fi
   else
     rapport IGNORE verif "gh absent — workflow de tickets indisponible"
-  fi
-
-  # `glab` ENSUITE, et son absence n'est plus qu'un renseignement : le projet GitLab est archivé en
-  # lecture seule (#343), il ne sert qu'à relire les 271 MR et l'historique du time tracking natif.
-  if [ "$GLAB_PRESENT" = 1 ]; then
-    if glab auth status >/dev/null 2>&1; then
-      rapport OK verif "glab authentifié (archive GitLab, lecture seule)"
-    elif [ "$MODE_CHECK" = 1 ] && valeur_env GITLAB_TOKEN >/dev/null 2>&1; then
-      # --check n'écrit rien, pas même une configuration glab.
-      rapport IGNORE verif "glab : s'authentifierait depuis GITLAB_TOKEN du .env (--check : rien fait)"
-    elif authentifie_glab; then
-      rapport OK verif "glab authentifié depuis GITLAB_TOKEN du .env (archive GitLab, lecture seule)"
-    else
-      rapport IGNORE verif "glab installé mais non authentifié — archive GitLab non consultable"
-    fi
-  else
-    rapport IGNORE verif "glab absent — archive GitLab non consultable (sans effet sur le workflow)"
   fi
 
   if [ ! -x "$pv" ]; then
@@ -1441,13 +1344,11 @@ elif [ "$NB_OUTILS_MANQUANTS" -gt 0 ]; then
     "$NB_OUTILS_MANQUANTS"
   printf 'ci-dessus. Les étapes qui en dépendent ont été sautées.\n'
 elif [ "$NB_ECHECS_SOUPLES" -gt 0 ]; then
-  # Socle local en place, mais Docker/runner (ou les bases locales) n'ont pas abouti : le dire,
-  # plutôt que d'annoncer une machine prête. Sans runner en ligne, les pipelines de MR restent
-  # « pending » et le merge est bloqué (docs/10-workflow-git.md §8).
+  # Socle local en place, mais une étape non bloquante (les bases locales) n'a pas abouti : le
+  # dire, plutôt que d'annoncer une machine prête.
   printf '\nEnvironnement local monté, mais %d étape(s) non bloquante(s) n'\''ont pas abouti —\n' \
     "$NB_ECHECS_SOUPLES"
-  printf 'voir « Reste à faire » ci-dessus. Sans runner en ligne, les pipelines de MR restent\n'
-  printf '« pending » et le merge est bloqué.\n'
+  printf 'voir « Reste à faire » ci-dessus.\n'
 else
   # Le lanceur démarre en MODE RÉEL depuis #186 : il exige Redis, et le dit lui-même quand il
   # manque. On annonce donc les deux modes ici plutôt que de laisser découvrir l'exigence.

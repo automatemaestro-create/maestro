@@ -111,7 +111,7 @@
 # --- Coutures de test -------------------------------------------------------------------------------
 # Pour que la boucle soit vérifiable sans consommer de quota, sans réseau et sans créer de vraie
 # branche (#172) : MAESTRO_CLAUDE_BIN remplace le CLI, MAESTRO_ORCHESTRATE_WORKTREE remplace le
-# montage du worktree, et `glab` se substitue par le PATH (lib.sh l'appelle par son nom).
+# montage du worktree, et le CLI de forge se substitue par le PATH (lib.sh l'appelle par son nom).
 # MAESTRO_ORCHESTRATE_CONSOLE (#240) fait de même pour l'écran : un fichier y tient lieu de console,
 # et les frames de la vue vivante s'y relisent sans pseudo-terminal.
 
@@ -1787,7 +1787,7 @@ lance_session() {
 # qu'AUCUNE règle ne peut matcher, quelle que soit la commande qu'elles habillent — saut de ligne,
 # substitution `$(…)`, heredoc. Elles ne se devinent pas depuis un refus, qui ne dit pas ce qui a
 # manqué, et la plus coûteuse tombe sur la DERNIÈRE action du ticket : huit sessions sur seize ont
-# buté sur un `glab mr create --description` multi-ligne, puis sur le `--description "$(cat …)"` par
+# buté sur une création de PR à description multi-ligne, puis sur le `--body "$(cat …)"` par
 # lequel elles essayaient de s'en sortir. D'où le renvoi vers l'outil `Write` : un fichier s'écrit
 # avec lui, et c'est son CHEMIN qui entre dans la commande.
 #
@@ -1864,7 +1864,7 @@ PROMPT
 }
 
 # --- Diagnostic de la détection de limite d'usage -----------------------------------------------------
-# Placé avant tout le reste : il ne demande ni glab, ni plan, ni répertoire de run — il ne fait que
+# Placé avant tout le reste : il ne demande ni forge, ni plan, ni répertoire de run — il ne fait que
 # rejouer le jugement de la boucle sur une sortie de session déjà capturée.
 if [ -n "$TEST_REPRISE" ]; then
   [ -r "$TEST_REPRISE" ] || { printf 'run.sh : fichier illisible — %s\n' "$TEST_REPRISE" >&2; exit 2; }
@@ -1887,7 +1887,7 @@ if [ -n "$TEST_REPRISE" ]; then
 fi
 
 # Relire un résultat de session déjà capturé (#180). Même place et même esprit que ci-dessus : ni
-# glab, ni plan, ni répertoire de run — juste la vue lisible d'un `<iid>.json`, sur stdout. C'est ce
+# forge, ni plan, ni répertoire de run — juste la vue lisible d'un `<iid>.json`, sur stdout. C'est ce
 # qui rattrape les runs écrits AVANT ce lot, dont le journal ne porte pas de `.resultat.txt`.
 if [ -n "$LIRE_RESULTAT" ]; then
   [ -r "$LIRE_RESULTAT" ] || { printf 'run.sh : fichier illisible — %s\n' "$LIRE_RESULTAT" >&2; exit 2; }
@@ -1898,7 +1898,7 @@ if [ -n "$LIRE_RESULTAT" ]; then
   exit 0
 fi
 
-# Ne faire QUE tuer (#213) : ni glab, ni plan, ni répertoire de run. C'est le geste de quelqu'un qui
+# Ne faire QUE tuer (#213) : ni forge, ni plan, ni répertoire de run. C'est le geste de quelqu'un qui
 # veut la place nette sans lancer quoi que ce soit — et la couture par laquelle les tests vérifient
 # l'arrêt sans dérouler un run entier.
 if [ "$TUER_SEUL" = 1 ]; then
@@ -1911,7 +1911,7 @@ if [ "$TUER_SEUL" = 1 ]; then
 fi
 
 # --- Préflight ---------------------------------------------------------------------------------------
-gl_require_glab || exit 1
+gl_require || exit 1
 
 # Le délai ne devient une enveloppe de session que s'il a été DEMANDÉ (#326), sur la mécanique exacte
 # du budget : c'est `OPT_TIMEOUT` — vide par défaut — qui préfixe le CLI, jamais `timeout 0`, qui
@@ -2068,12 +2068,6 @@ detacher() {
     printf '#!/usr/bin/env bash\n'
     printf '# Lanceur du run %s, écrit par « run.sh --detach ». Rejouable tel quel.\n' "$RUN_ID"
     printf 'cd %q || exit 1\n' "$RACINE"
-    # La FORGE est figée dans le lanceur (#341), pas laissée à l'héritage d'environnement. Elle
-    # transiterait bien par `cmd /c start`, mais ce fichier promet d'être « rejouable tel quel à la
-    # main » : relancé depuis un autre shell, il repartirait sur la forge par défaut et le run
-    # ouvrirait ses MR sur l'autre dépôt sans qu'une ligne ne le signale. Ce qu'un run décide au
-    # départ doit se lire dans ce qu'il a laissé derrière lui.
-    printf 'export MAESTRO_FORGE=%q\n' "$(gl_forge)"
     # La fenêtre est bien un écran : le run doit y garder ses couleurs, que `tee` lui ferait perdre.
     printf 'export MAESTRO_ORCHESTRATE_COULEUR=1\n'
     # …et un écran où l'on peut redessiner (#240). Le descripteur 4 est ouvert ICI, AVANT le tube :
@@ -2227,10 +2221,9 @@ printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
 # lequel des deux régimes s'appliquait — un ticket coupé au plafond ne se distingue d'un échec de
 # session que par cette ligne.
 #
-# La FORGE y figure pour la même raison (#341), et c'est le réglage le plus lourd de conséquence de
-# la ligne : il dit sur quel dépôt les N MR vont s'ouvrir. Tant que la bascule (lot 8) n'a pas eu
-# lieu, les deux sont joignables depuis le même poste, et rien d'autre dans le journal ne le dirait.
-printf 'forge : %s (%s)\n' "$(gl_forge)" "$(gl_depot_courant)"
+# Le DÉPÔT y figure pour la même raison (#341) : c'est là que les N PR vont s'ouvrir, et rien
+# d'autre dans le journal ne le dirait.
+printf 'dépôt : %s (%s)\n' "$(gl_forge_nom)" "$(gl_depot_courant)"
 printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · %s · %s\n' \
   "$nb_plan" "$MODELE" "$EFFORT" \
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
@@ -2311,7 +2304,7 @@ fi
 
 # Ramassage des worktrees soldés avant de commencer (#197). C'est ici que l'accumulation fait le plus
 # mal : un worktree pèse ~535 Mo et ce run va en monter un par ticket, sans personne devant pour
-# faire le ménage. Best-effort et muet quand il n'y a rien à retirer ; un ramassage impossible (glab
+# faire le ménage. Best-effort et muet quand il n'y a rien à retirer ; un ramassage impossible (gh
 # hors ligne) ne doit pas empêcher un run de partir.
 #
 # Le même appel SIGNALE au passage les tickets « En cours » que plus personne ne mène (#328) : c'est

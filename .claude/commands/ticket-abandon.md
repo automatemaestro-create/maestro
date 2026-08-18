@@ -51,7 +51,7 @@ une raison et confirmation.
    ```
    gh issue close <iid>
    ```
-   (`glab issue close <iid>` tant que la forge active est GitLab — `bash scripts/gitlab/lib.sh
+   (`bash scripts/gitlab/lib.sh
    forge-cli` tranche.) La fermeture est sous règle **`ask`** des deux côtés : la confirmation
    demandée est voulue, ne cherche pas à la contourner.
 

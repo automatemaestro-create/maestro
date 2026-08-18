@@ -11,8 +11,7 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
 
 1. **Préflight en un appel** : `bash scripts/gitlab/lib.sh start-brief $ARGUMENTS`. Le helper
    vérifie les pré-requis (CLI de la forge authentifié — sinon arrête-toi et relaie son message,
-   qui nomme la commande à lancer : `gh auth login`, ou `glab auth login` tant que le dépôt est sur
-   GitLab) et l'arbre propre, puis imprime le brief du
+   qui nomme la commande à lancer : `gh auth login`) et l'arbre propre, puis imprime le brief du
    ticket (titre, labels, critères d'acceptation), la ligne `statut : … — libre / pris par …`, le
    cas parent/sous-ticket et la branche proposée. Il est informatif : la décision (démarrer,
    rediriger, s'arrêter) reste la tienne :

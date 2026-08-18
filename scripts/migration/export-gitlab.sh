@@ -52,6 +52,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 racine="$(cd "$here/../.." && pwd)"
 # shellcheck source=scripts/gitlab/lib.sh
 . "$racine/scripts/gitlab/lib.sh"
+# Les primitives de LECTURE de l'archive GitLab — les seules de tout le dépôt (#344). lib.sh, elle,
+# ne fournit plus que les helpers de texte (gl_json_string_field…), qui ne parlent à aucune forge.
+# shellcheck source=scripts/migration/gitlab-lecture.sh
+. "$here/gitlab-lecture.sh"
 
 SORTIE="${MAESTRO_MIGRATION_DIR:-$racine/.maestro/migration}"
 PAGE=50
@@ -128,7 +132,7 @@ note()    { [ "$format" = "tsv" ] || printf '  %s\n' "$1"; }
 requete_page() {
   local apres="$1" taille="$2" frag=""
   [ -n "$apres" ] && frag=', after: "'"$apres"'"'
-  printf '%s' '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: all, first: '"$taille$frag"') {
+  printf '%s' '{ project(fullPath:"'"$MIG_GL_PROJECT"'") { workItems(state: all, first: '"$taille$frag"') {
     pageInfo { endCursor hasNextPage }
     nodes {
       iid title state createdAt updatedAt closedAt webUrl
@@ -152,7 +156,7 @@ requete_page() {
 
 # --- Étape 1 : le fetch --------------------------------------------------------------------------
 # Écrit pages/page-NN.json. Rien d'autre ne parle à GitLab, et rien ici ne parle d'autre chose que
-# de LIRE : gl_graphql_read est réservé aux lectures (cf. son en-tête dans lib.sh), et aucune
+# de LIRE : mig_graphql_read est réservé aux lectures (cf. son en-tête), et aucune
 # mutation n'est construite nulle part dans ce fichier. C'est le contrat « sans aucune écriture ».
 # page_en_erreur <réponse> -> vrai si la réponse GraphQL porte des erreurs. Fonction plutôt que
 # `case` en ligne : elle sert dans une condition composée, où un `case` ne se compose pas.
@@ -161,7 +165,7 @@ page_en_erreur() {
 }
 
 fetch_pages() {
-  section "1. Lecture de GitLab ($GL_PROJECT)"
+  section "1. Lecture de GitLab ($MIG_GL_PROJECT)"
   rm -rf "$PAGES_DIR"
   mkdir -p "$PAGES_DIR" || return 1
 
@@ -185,7 +189,7 @@ fetch_pages() {
     # numéro de page — prendre 25 éléments après lui au lieu de 50 ne saute rien.
     out=""
     for essai in 1 2 3 4 5; do
-      out="$(gl_graphql_read "$(requete_page "$curseur" "$taille")")" || return 1
+      out="$(mig_graphql_read "$(requete_page "$curseur" "$taille")")" || return 1
       # Une erreur GraphQL revient en HTTP 200, et une réponse PARTIELLE porte quand même un
       # « data ». Sans ce contrôle, une page tronquée s'écrirait sur disque et l'export serait
       # incomplet SANS que rien ne le dise — le pire des trois cas possibles.
@@ -240,9 +244,9 @@ fetch_pages() {
 # prérequis de l'ordre d'import.
 fetch_referentiels() {
   local enc n_m n_l
-  enc="$(gl_project_enc)"
-  glab api "projects/$enc/milestones?per_page=100&state=all" > "$SORTIE/milestones.json" 2>/dev/null
-  glab api "projects/$enc/labels?per_page=100&with_counts=false" > "$SORTIE/labels.json" 2>/dev/null
+  enc="$(mig_project_enc)"
+  mig_glab_api "projects/$enc/milestones?per_page=100&state=all" > "$SORTIE/milestones.json"
+  mig_glab_api "projects/$enc/labels?per_page=100&with_counts=false" > "$SORTIE/labels.json"
   n_m="$(grep -o '"iid":[0-9]\+' "$SORTIE/milestones.json" 2>/dev/null | wc -l | tr -d ' ')"
   n_l="$(grep -o '"name":"[^"]*"' "$SORTIE/labels.json" 2>/dev/null | wc -l | tr -d ' ')"
   kv "milestones exportés" "${n_m:-0}"
@@ -524,7 +528,7 @@ manifester() {
 #      signature ne montrerait.
 #   c) PREUVE PAR UNE SECONDE VOIE : sur les tickets les plus accentués de l'export, la description
 #      est ré-extraite du jsonl (chemin GraphQL + découpage awk) et comparée OCTET POUR OCTET, par
-#      cmp, à ce que rend gl_get_description (chemin REST + gl_json_string_field). Deux chaînes
+#      cmp, à ce que rend mig_description (chemin REST + gl_json_string_field). Deux chaînes
 #      indépendantes de bout en bout : si elles tombent d'accord sur des milliers d'octets d'accents,
 #      d'em-dashes et de blocs de code, l'export est fidèle. C'est le contrôle qui coûte du réseau,
 #      d'où l'échantillon — et il est SAUTÉ en --hors-ligne, ce qui se dit au lieu de se supposer.
@@ -630,7 +634,7 @@ AWK
       LC_ALL=C awk -v id="$cible" '
         index($0, "{\"iid\":\"" id "\",") == 1 { print; exit }' "$JSONL" > "$node"
       gl_json_string_field description < "$node" > "$apres"
-      gl_get_description "$cible" > "$avant" 2>/dev/null
+      mig_description "$cible" > "$avant" 2>/dev/null
       taille="$(wc -c < "$apres" | tr -d ' ')"
       # Un suspect : la question n'est pas « est-ce propre ? » mais « est-ce NOUS ? ».
       local est_suspect="non"
@@ -667,7 +671,7 @@ AWK
 # --- Déroulé -------------------------------------------------------------------------------------
 
 if [ "$mode" != "hors-ligne" ]; then
-  gl_require_glab || exit 1
+  mig_require_glab || exit 1
 fi
 mkdir -p "$SORTIE" || exit 1
 
@@ -715,7 +719,7 @@ fi
 # chemin absolu hors du répertoire de travail demanderait une approbation qu'une session autonome
 # n'a personne pour donner.
 {
-  printf 'Export du backlog GitLab — %s\n' "$GL_PROJECT"
+  printf 'Export du backlog GitLab — %s\n' "$MIG_GL_PROJECT"
   printf 'produit le %s\n\n' "$(date '+%F %T')"
   printf 'tickets      : %s\n' "$(wc -l < "$JSONL" | tr -d ' ')"
   printf 'trous        : %s (voir trous.txt)\n' "$(wc -l < "$TROUS" | tr -d ' ')"

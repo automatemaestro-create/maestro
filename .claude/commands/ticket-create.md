@@ -14,7 +14,7 @@ lieu d'inventer.
 
 1. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Si ça échoue, arrête-toi et
    relaie son message : il nomme déjà la commande d'authentification de la **forge active**
-   (`gh auth login` sur GitHub, `glab auth login` tant que le dépôt est sur GitLab). Ne devine pas
+   (`gh auth login`). Ne devine pas
    l'outil — `bash scripts/gitlab/lib.sh forge-cli` le dit en un mot.
 
 2. Détermine le **type** du ticket depuis `$ARGUMENTS` (`feature`, `bug`, `doc` ou `infra`). S'il
@@ -66,11 +66,11 @@ lieu d'inventer.
    description (pas de parent ni de sous-tickets). Étapes suivantes.
 
 5. Charge le squelette de description depuis le template correspondant et lis-le :
-   `feature`→`.gitlab/issue_templates/Feature.md`, `bug`→`Bug.md`, `doc`→`Doc.md`,
-   `infra`→`Infra.md`. Ces gabarits se lisent comme des **fichiers** — leur chemin ne dépend
-   d'aucune forge, et leur éventuel déménagement vers `.github/` appartient au retrait de
-   l'outillage GitLab (#344). **Retire la dernière ligne `/label ~"type::…"`** du template (le label
-   sera posé via `--label` à la création ; la quick action n'est pas exécutée par l'API). Remplis les
+   `feature`→`.github/ISSUE_TEMPLATE/feature.md`, `bug`→`bug.md`, `doc`→`doc.md`,
+   `infra`→`infra.md`. Ces gabarits se lisent comme des **fichiers**. **Retire l'en-tête YAML**
+   (le bloc entre les deux `---`) : il sert l'UI web de GitHub, où il nomme le gabarit et pose ses
+   labels par défaut, et n'a rien à faire dans le corps d'un ticket créé en ligne de commande — les
+   labels y sont posés par `--label`. Remplis les
    sections que tu peux à partir de ce que l'utilisateur a donné (contexte, objectif, critères
    d'acceptation). Ne fabrique pas de critères d'acceptation : si l'utilisateur ne les a pas
    fournis, laisse les cases `- [ ]` vides ou demande-les.
@@ -108,11 +108,6 @@ lieu d'inventer.
      --milestone "<milestone-de-phase>" \
      --body-file <fichier-de-corps>
    ```
-   ⚠ Tant que le dépôt n'est pas basculé (#343), c'est le CLI de la **forge active** qui crée le
-   ticket : vérifie-la (`bash scripts/gitlab/lib.sh forge-cli`) et, si elle rend `glab`, le geste
-   équivalent est `glab issue create --title … --label … --milestone … --description "$(cat …)" --yes`.
-   Créer le ticket sur la mauvaise forge est le seul geste de cette commande qui échoue **en
-   silence** — il réussit, ailleurs.
    Le `workflow::a-faire` n'est pas décoratif et **ne s'ajoute pas après coup** : le cycle de vie
    étant porté par des labels (docs/10 §3), plus aucun défaut ne le pose à la création — un ticket
    créé sans lui n'a **aucun** état, ce que `doctor.sh` signale comme une dérive. Le poser dans le

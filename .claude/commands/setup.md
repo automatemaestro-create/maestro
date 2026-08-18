@@ -1,6 +1,6 @@
 ---
-description: Met en route un clone du dépôt — venv, .env, hooks git, dépendances web, serveurs MCP, Docker et runner CI — et prend en charge les authentifications interactives
-allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(npm:*), Bash(node:*), Bash(python:*), Bash(claude:*), Read, Edit
+description: Met en route un clone du dépôt — venv, .env, hooks git, dépendances web, serveurs MCP — et prend en charge les authentifications interactives
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(gh:*), Bash(npm:*), Bash(node:*), Bash(python:*), Bash(claude:*), Read, Edit
 ---
 
 Amène ce clone à l'état « il ne reste qu'à renseigner le `.env` et lancer ». Le travail est fait
@@ -64,17 +64,12 @@ Le script est **idempotent** et **non destructif** (il n'écrase ni le `.env` ni
      modifier à la main ne sert à rien, la prochaine exécution du script les réalignera sur le
      `.env`. C'est voulu — c'est ce qui fait qu'une rotation de token se propage.
 
-   - **`glab`** — plus rien à faire si `GITLAB_TOKEN` est renseigné dans le `.env` : le script
-     s'authentifie tout seul (`glab auth login --stdin`, token jamais passé en ligne de commande).
-     Ce n'est que **sans** token que le rapport renvoie vers `glab auth login` interactif — dans ce
-     cas, dis à l'utilisateur de le lancer lui-même, ou de poser un PAT (scope `api`) dans le
-     `.env`, ce qui est plus durable.
-
-     ⚠ **`setup.sh` ne connaît que `glab`** : l'authentification GitHub reste un geste humain, et
-     elle est **isolée par projet** via `GH_CONFIG_DIR` (#334, `docs/10-workflow-git.md` §7.4) — un
-     `gh auth login` lancé dans ce dossier de configuration, jamais un `gh auth switch`, qui
-     basculerait la machine entière (y compris un run `/orchestrate` qui n'a rien demandé). Si le
-     travail se fait déjà sur GitHub, vérifie-le à part : `gh auth status`.
+   - **`gh`** — l'authentification reste un **geste humain** : `setup.sh` ne la fait pas, et il ne
+     faut surtout pas inventer un jeton dans le `.env` pour la contourner. Elle est **isolée par
+     projet** via `GH_CONFIG_DIR` (#334, `docs/10-workflow-git.md` §7.4) — un `gh auth login` lancé
+     dans ce dossier de configuration, jamais un `gh auth switch`, qui basculerait la machine
+     entière (y compris un run `/orchestrate` qui n'a rien demandé). Vérifie l'état : `gh auth
+     status`, et lance la connexion avec l'utilisateur si elle manque.
 
    - **Serveurs MCP** — rien à approuver : `enabledMcpjsonServers`, que le script écrit dans
      `.claude/settings.local.json`, **est** le registre d'approbation de Claude Code. Ne réclame
@@ -87,18 +82,10 @@ Le script est **idempotent** et **non destructif** (il n'écrase ni le `.env` ni
      Code alourdirait la mise en route (ce token s'obtient via un client OAuth approuvé par Figma)
      et casserait le serveur pour qui n'en a pas. Rien à committer.
 
-   - **Docker / runner CI** — l'étape `runner` délègue à `scripts/gitlab/setup-runner.sh` : Docker
-     est installé et démarré comme les autres prérequis, puis le **runner de projet de cette
-     machine** est créé côté GitLab, monté en conteneur et enregistré (son id est persisté dans le
-     bloc `env` de `.claude/settings.local.json`, jamais dans un fichier versionné). Un échec ici
-     est **non bloquant pour le socle local**, mais il faut le dire tel quel : sans runner en ligne,
-     les pipelines de MR restent `pending` et le merge est bloqué (`docs/10-workflow-git.md` §8).
-     Deux cas que le script signale sans pouvoir les résoudre — relaie-les :
-     - *« le démon ne répond pas »* après une installation de Docker Desktop : il faut souvent
-       **fermer la session** (voire redémarrer) puis relancer `bash scripts/setup.sh --only runner` ;
-     - *« la portée create_runner manque »* : le jeton GitLab utilisé n'a pas le droit de créer un
-       runner. C'est une décision humaine — un PAT avec la portée `create_runner`, ou la création du
-       runner depuis l'interface GitLab.
+   - **Docker** — plus rien à monter pour la CI depuis #344 : elle tourne sur les exécutants
+     hébergés de GitHub, et l'étape `runner` a disparu avec l'outillage GitLab. Si quelqu'un
+     cherche encore « le runner à rallumer », la réponse est qu'il n'y en a plus. Docker ne sert
+     plus qu'aux **bases locales**, optionnelles (voir la fin de ce document).
 
 6. **Vérifie** : relance `bash scripts/setup.sh --check`. Tout doit ressortir en `OK` ou
    `DÉJÀ FAIT`, sauf ce qui dépend encore d'un geste humain non fait. Si l'utilisateur a renseigné

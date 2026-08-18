@@ -11,8 +11,8 @@ Objectif : lancer un **premier prototype** concret (Phase 0). Pensé pour être 
 |---------|-----------|------|
 | Un **accès modèle Claude** | Faire fonctionner les agents Claude | **Deux modes au choix** (voir §2.1) : abonnement Claude Code (défaut du POC, sans clé) **ou** clé API Anthropic |
 | **Python 3.11+** *ou* **Node.js 20+** | Selon l'option de langage choisie | Voir [doc 02 §1](./02-stack-technique.md) |
-| **Docker** | Bac à sable d'exécution + bases locales + runner CI de la machine | Docker Desktop suffit pour démarrer |
-| **Git + un compte GitLab** | Versionnement, intégration code | Le dépôt du projet et sa CI sont hébergés sur GitLab |
+| **Docker** | Bac à sable d'exécution + bases locales | **Optionnel** : la CI n'en a plus besoin (#344) |
+| **Git + un compte GitHub** | Versionnement, intégration code | Le dépôt du projet et sa CI sont hébergés sur GitHub |
 | Le **Claude Agent SDK** | Moteur d'agents | Paquet Python ou TypeScript |
 
 > **Rien de tout cela n'est à installer à la main** sur un clone du dépôt :
@@ -37,10 +37,10 @@ bash scripts/setup.sh            # monte ce qui manque
 bash scripts/setup.sh --check    # diagnostic seul — n'écrit rien
 ```
 
-Elle couvre les prérequis absents (Python, Node, git, `glab`), le `.venv` et ses dépendances, la
+Elle couvre les prérequis absents (Python, Node, git, `gh`), le `.venv` et ses dépendances, la
 copie de `.env.example` vers `.env`, le hook git de convention de commit, les dépendances de
-`apps/web`, les réglages locaux de Claude Code (profil navigateur + serveurs MCP) et le **runner
-CI de la machine** ([docs/10 §8](./10-workflow-git.md)). Détail des étapes et des drapeaux
+`apps/web` et les réglages locaux de Claude Code (profil navigateur + serveurs MCP). Il n'y a
+**rien à monter côté CI** ([docs/10 §8.1](./10-workflow-git.md)). Détail des étapes et des drapeaux
 (`--only`, `--skip`, `--with-infra`, `--no-install`) : [README § Développement](../README.md).
 
 Il reste ensuite **deux gestes humains**, listés par le script sous « Reste à faire » :
