@@ -19,11 +19,26 @@
 # contrat de lib.sh porte sur des COLONNES, pas sur la forme d'une réponse d'API.
 #
 # Deux sections ont disparu avec l'outillage GitLab (#344) — le board Kanban (§3) et les runners de
-# projet (§7) : la première n'a pas d'équivalent (le projet n'utilise pas Projects v2, le suivi
-# maison du lot 4 ayant remplacé le seul usage qu'on en aurait eu), la seconde n'a plus d'objet, les
-# runners étant hébergés par la forge. La numérotation des sections restantes n'a pas été resserrée :
-# elle est citée dans docs/10 et dans les tests, et la faire glisser pour combler deux trous coûterait
+# projet (§7) : la première n'avait alors pas d'équivalent, la seconde n'a plus d'objet, les runners
+# étant hébergés par la forge. La numérotation des sections restantes n'a pas été resserrée : elle
+# est citée dans docs/10 et dans les tests, et la faire glisser pour combler deux trous coûterait
 # plus qu'elle ne rapporte.
+#
+# --- Deux backends de cycle de vie, deux jeux de dérives (#363, chantier #358) ---------------------
+# Le cycle de vie se lit dans les six labels `workflow::*` ou dans le champ Status d'un projet
+# Projects v2, selon `MAESTRO_CYCLE` (défaut `labels`, #360). Les DÉRIVES à traquer ne sont pas les
+# mêmes des deux côtés, et ce n'est pas une variante d'affichage :
+#   • en `labels`, l'exclusion mutuelle est à notre charge, d'où « 0 ou ≥ 2 labels » (§4c) ;
+#   • en `status`, un champ à valeur unique rend le « ≥ 2 » IMPOSSIBLE par construction — c'est le
+#     gain du chantier —, mais l'état vit sur l'ITEM DE PROJET et non sur l'issue : un ticket hors
+#     projet n'a aucun état, et rien à l'écran ne le distingue d'un ticket filtré. Deux dérives
+#     nouvelles (§4c), plus une sur le champ lui-même (§3), pendant exact du contrôle des six labels.
+# Les sections 3 et 4c branchent donc sur le backend, lu UNE fois (`gl_cycle`) ; le reste du bilan
+# est commun. En mode `labels`, la sortie de ce fichier est inchangée — sections, ordre et verdicts.
+#
+# ⚠ Ce qui NE branche pas encore : §4a et §4b passent par `gl_backlog_table`, dont le backend Status
+# est le lot #362. En `status`, ces deux contrôles lisent donc des labels que plus personne ne met à
+# jour, et RETARDENT — c'est la conséquence annoncée du découpage (docs/10 §3.5), pas un oubli d'ici.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,26 +98,97 @@ else
   err "labels manquants :$missing → relancer : $PROVISIONNER"
 fi
 
-# --- 3. Labels de cycle de vie « workflow:: » ----------------------------------------------------
-# Depuis #209 le cycle de vie n'est plus le champ Status natif (lifecycle custom « Maestro »,
-# Premium, disparu avec l'essai Ultimate) mais des labels scopés `workflow::*` — voir le contrat de
-# surface en tête de lib.sh. Une SEULE lecture (gl_workflow_gids, avec retry) pour les six, comme
-# la section le faisait pour les six statuts : on évite le faux « incohérent » que six appels
-# indépendants déclenchaient dès qu'un seul retombait vide.
-section "3. Cycle de vie (labels $GL_WORKFLOW_SCOPE::*)"
-workflow_gids="$(gl_workflow_gids 2>/dev/null)"
-if [ -z "$workflow_gids" ]; then
-  err "aucun label « $GL_WORKFLOW_SCOPE::* » lisible dans $DEPOT → relancer : $PROVISIONNER"
-else
-  missing_workflow=""
-  for s in a-faire en-cours en-revue termine abandonne doublon; do
-    printf '%s\n' "$workflow_gids" | cut -f1 | grep -qx "$s" \
-      || missing_workflow="${missing_workflow:+$missing_workflow, }$GL_WORKFLOW_SCOPE::$s"
-  done
-  if [ -z "$missing_workflow" ]; then
-    ok "6 labels de cycle de vie résolus par nom (1 appel) — set-workflow opérationnel (aucun GID en dur)"
+# --- 3. Cycle de vie : les six valeurs sont-elles là ? --------------------------------------------
+# Le backend, lu UNE FOIS pour les deux sections qui en dépendent (3 et 4c) : les relire séparément
+# laisserait la porte à un bilan qui contrôle les labels dans l'une et le champ dans l'autre.
+# Sur une valeur inconnue on ne DEVINE pas — c'est la règle de `gl_vers_status` (#360, leçon de
+# #339) : la section le dit et s'arrête, plutôt que de rendre un verdict sur un backend au hasard.
+CYCLE="$(gl_cycle 2>/dev/null)" || CYCLE=""
+PROJET_LISIBLE=0
+
+# Les six valeurs attendues, DANS L'ORDRE DU FLUX, dérivées des slugs par `gl_workflow_label` et
+# jamais recopiées : le vocabulaire du cycle de vie ne change pas en changeant de support (c'est
+# aussi ce que pose bootstrap-project.sh), donc les deux backends se contrôlent contre la MÊME
+# source. Une liste écrite ici serait une septième copie à tenir d'accord avec les six autres.
+SLUGS="a-faire en-cours en-revue termine abandonne doublon"
+# Pendant de PROVISIONNER pour l'autre support : le champ Status et ses options se posent par
+# bootstrap-project.sh, jamais par bootstrap.sh (qui ne connaît que les labels).
+PROVISIONNER_PROJET="bash scripts/github/bootstrap-project.sh"
+
+if [ -z "$CYCLE" ]; then
+  section "3. Cycle de vie (backend indéterminé)"
+  err "MAESTRO_CYCLE=« ${MAESTRO_CYCLE-} » inconnu — attendu : labels | status (défaut labels)"
+
+elif [ "$CYCLE" = status ]; then
+  # Pendant exact du contrôle des six labels, sur un autre objet : les six options du champ
+  # Status. Trois dérives distinctes, parce qu'elles appellent trois lectures différentes du
+  # même écran — une valeur qu'on ne pourra jamais poser, un septième état que rien ne gouverne,
+  # des colonnes dans le désordre. La lecture est déléguée à `lib.sh` (st_options), qui nomme
+  # lui-même les trois causes d'échec : compte illisible, projet absent, champ absent.
+  section "3. Cycle de vie (champ Status du projet « $GL_PROJET_TITRE »)"
+  if ! options="$(st_options 2>&1)"; then
+    err "$options"
   else
-    err "label(s) de cycle de vie manquant(s) : $missing_workflow → relancer : $PROVISIONNER"
+    PROJET_LISIBLE=1
+    attendu=""
+    for s in $SLUGS; do attendu="${attendu}$(gl_workflow_label "$s")"$'\n'; done
+    attendu="${attendu%$'\n'}"
+
+    manquantes=""
+    for s in $SLUGS; do
+      libelle="$(gl_workflow_label "$s")"
+      printf '%s\n' "$options" | grep -qxF "$libelle" \
+        || manquantes="${manquantes:+$manquantes, }« $libelle »"
+    done
+    en_trop=""
+    while IFS= read -r o; do
+      [ -z "$o" ] && continue
+      printf '%s\n' "$attendu" | grep -qxF "$o" || en_trop="${en_trop:+$en_trop, }« $o »"
+    done <<EOF
+$options
+EOF
+
+    if [ -n "$manquantes" ]; then
+      err "option(s) manquante(s) du champ Status : $manquantes — set-workflow ne pourra jamais les poser → relancer : $PROVISIONNER_PROJET"
+    fi
+    if [ -n "$en_trop" ]; then
+      # Le cas nominal est l'option par défaut d'un projet neuf (Todo / In Progress / Done) qu'une
+      # mise en conformité n'a pas remplacée : un septième état que `set-workflow` ne sait ni poser
+      # ni retirer, et qu'aucune lecture de cycle de vie ne reconnaîtra.
+      warn "option(s) en trop dans le champ Status : $en_trop — état(s) que rien ne gouverne → $PROVISIONNER_PROJET --check"
+      printf '    → la réécriture des options d'\''un projet DÉJÀ PEUPLÉ efface l'\''état des items qui les portent : elle demande --force\n'
+    fi
+    if [ -z "$manquantes" ] && [ -z "$en_trop" ] && [ "$options" != "$attendu" ]; then
+      # Les six y sont et rien d'autre, mais pas dans cet ordre : l'ordre du champ EST celui des
+      # colonnes du projet, donc il se lit de gauche à droite comme le travail avance.
+      warn "les six options du champ Status ne sont pas dans l'ordre du flux (c'est l'ordre des colonnes du projet) → relancer : $PROVISIONNER_PROJET"
+    fi
+    if [ -z "$manquantes" ] && [ -z "$en_trop" ] && [ "$options" = "$attendu" ]; then
+      ok "6 options du champ Status résolues par nom (1 appel), dans l'ordre du flux — set-workflow opérationnel (aucun ID en dur)"
+    fi
+  fi
+
+else
+  # Depuis #209 le cycle de vie n'est plus le champ Status natif (lifecycle custom « Maestro »,
+  # Premium, disparu avec l'essai Ultimate) mais des labels scopés `workflow::*` — voir le contrat de
+  # surface en tête de lib.sh. Une SEULE lecture (gl_workflow_gids, avec retry) pour les six, comme
+  # la section le faisait pour les six statuts : on évite le faux « incohérent » que six appels
+  # indépendants déclenchaient dès qu'un seul retombait vide.
+  section "3. Cycle de vie (labels $GL_WORKFLOW_SCOPE::*)"
+  workflow_gids="$(gl_workflow_gids 2>/dev/null)"
+  if [ -z "$workflow_gids" ]; then
+    err "aucun label « $GL_WORKFLOW_SCOPE::* » lisible dans $DEPOT → relancer : $PROVISIONNER"
+  else
+    missing_workflow=""
+    for s in $SLUGS; do
+      printf '%s\n' "$workflow_gids" | cut -f1 | grep -qx "$s" \
+        || missing_workflow="${missing_workflow:+$missing_workflow, }$GL_WORKFLOW_SCOPE::$s"
+    done
+    if [ -z "$missing_workflow" ]; then
+      ok "6 labels de cycle de vie résolus par nom (1 appel) — set-workflow opérationnel (aucun GID en dur)"
+    else
+      err "label(s) de cycle de vie manquant(s) : $missing_workflow → relancer : $PROVISIONNER"
+    fi
   fi
 fi
 
@@ -176,20 +262,76 @@ fi
 # `gl_workflow_derives`, qui refait une lecture du backlog et compte à la source, des deux côtés.
 # C'est un aller-retour de plus, assumé : le contrôle qui coûte le moins cher est celui qui répond
 # encore quand la forge change.
-wf_derives="$(gl_workflow_derives opened 2>/dev/null)"
-if [ -z "$wf_derives" ]; then
-  ok "tous les tickets ouverts portent exactement un label $GL_WORKFLOW_SCOPE::*"
-else
-  while IFS=$'\t' read -r iid n; do
-    [ -z "$iid" ] && continue
-    if [ "$n" = 0 ]; then
-      warn "#$iid ouvert sans label $GL_WORKFLOW_SCOPE::* — hors du Kanban et de tous les comptes → poser : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\""
-    else
-      warn "#$iid ouvert porte $n labels $GL_WORKFLOW_SCOPE::* (un seul attendu) — les lectures en rendent un au hasard → reposer le bon : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\""
+#
+# EN MODE `status`, CE CONTRÔLE CHANGE DE QUESTION et pas seulement de source. Le « ≥ 2 » devient
+# impossible par construction — c'est le gain du chantier #358 — mais l'état vit sur l'ITEM DE
+# PROJET : il reste le « 0 », qui se scinde en deux causes appelant deux gestes différents (ajouter
+# le ticket au projet, ou lui poser un état). D'où un verbe à part, `st_derives`, dont la seconde
+# colonne est une CAUSE là où celle de `gl_workflow_derives` est un nombre : les fondre sous un
+# « 0 » commun rendrait le diagnostic vrai et inutilisable.
+if [ -z "$CYCLE" ]; then
+  # Le backend n'a pas été deviné en §3 : il ne l'est pas davantage ici. Rendre le verdict des
+  # labels sous un `MAESTRO_CYCLE` fautif serait pire que se taire — c'est un ✓ sur un dispositif
+  # dont on vient de dire qu'on ne sait pas lequel il est.
+  info "backend de cycle de vie indéterminé (§3) — contrôle des dérives sans objet"
+elif [ "$CYCLE" = status ]; then
+  if [ "$PROJET_LISIBLE" = 0 ]; then
+    # Sans projet lisible, TOUS les tickets ressortiraient « hors projet » : ce serait une seule
+    # cause rendue N fois, et elle est déjà dite en §3. Un contrôle sans objet n'est pas une dérive.
+    info "projet « $GL_PROJET_TITRE » illisible (§3) — contrôle des tickets sans état sans objet"
+  elif ! st_brut="$(st_derives 2>&1)"; then
+    warn "dérives du champ Status illisibles : $st_brut"
+  else
+    # La borne d'abord : `st_derives` rend en tête « #examines <examinés> <ouverts> ». Une borne
+    # atteinte laisse des tickets NON CONTRÔLÉS, donc un ✓ y serait un ✓ sur une question posée à
+    # moitié — exactement le défaut qu'a corrigé #341, et dans le fichier qui l'a payé.
+    st_examines="$(printf '%s\n' "$st_brut" | awk -F'\t' '$1 == "#examines" { print $2; exit }')"
+    st_total="$(printf '%s\n' "$st_brut" | awk -F'\t' '$1 == "#examines" { print $3; exit }')"
+    if [ -n "$st_total" ] && [ "$st_examines" != "$st_total" ]; then
+      warn "seuls $st_examines des $st_total tickets ouverts ont été examinés (borne first:100) — le reste n'est pas contrôlé"
     fi
-  done <<EOF
+
+    st_sans_etat="$(printf '%s\n' "$st_brut" | awk -F'\t' '$1 !~ /^#/ && $1 != "" { print }')"
+    if [ -z "$st_sans_etat" ]; then
+      ok "tous les tickets ouverts sont dans le projet « $GL_PROJET_TITRE » et portent un Status"
+    else
+      while IFS=$'\t' read -r iid cause; do
+        [ -z "$iid" ] && continue
+        case "$cause" in
+          hors-projet)
+            warn "#$iid ouvert hors du projet « $GL_PROJET_TITRE » — aucun état, et rien ne l'en distingue d'un ticket filtré" ;;
+          sans-etat)
+            warn "#$iid est dans le projet mais son Status est vide — un état que personne n'a voulu → poser : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\"" ;;
+          *)
+            warn "#$iid : cause de dérive inconnue « $cause »" ;;
+        esac
+      done <<EOF
+$st_sans_etat
+EOF
+      # Nommée une seule fois, pas par ticket : le peuplement est un geste d'ensemble. ⚠ Le verbe
+      # est celui du lot #361 — s'il répond « commande inconnue », c'est qu'il n'est pas encore
+      # mergé, et non que la dérive est mal diagnostiquée.
+      if printf '%s\n' "$st_sans_etat" | grep -q 'hors-projet$'; then
+        printf '    → les ajouter au projet d'\''un coup : bash scripts/gitlab/lib.sh project-backfill  (--check pour la liste, verbe du lot #361)\n'
+      fi
+    fi
+  fi
+else
+  wf_derives="$(gl_workflow_derives opened 2>/dev/null)"
+  if [ -z "$wf_derives" ]; then
+    ok "tous les tickets ouverts portent exactement un label $GL_WORKFLOW_SCOPE::*"
+  else
+    while IFS=$'\t' read -r iid n; do
+      [ -z "$iid" ] && continue
+      if [ "$n" = 0 ]; then
+        warn "#$iid ouvert sans label $GL_WORKFLOW_SCOPE::* — hors du Kanban et de tous les comptes → poser : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\""
+      else
+        warn "#$iid ouvert porte $n labels $GL_WORKFLOW_SCOPE::* (un seul attendu) — les lectures en rendent un au hasard → reposer le bon : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\""
+      fi
+    done <<EOF
 $wf_derives
 EOF
+  fi
 fi
 
 # 4d. Tickets « En cours » dont plus personne ne s'occupe (#328).

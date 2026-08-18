@@ -172,6 +172,47 @@ GL_REPRISES_MAX="${MAESTRO_REPRISES_MAX:-2}"
 GL_GQL_RETRIES="${GL_GQL_RETRIES:-3}"
 GL_GQL_RETRY_DELAY="${GL_GQL_RETRY_DELAY:-1}"
 
+# Titre du projet GitHub Projects v2 qui porte le champ Status, quand MAESTRO_CYCLE=status. C'est
+# une CLÉ, pas un libellé d'affichage : c'est par elle que le projet se résout, ici comme dans
+# scripts/github/bootstrap-project.sh, et c'est ce qui évite d'avoir un numéro de projet mémorisé
+# quelque part. Même variable d'environnement des deux côtés — un seul nom pour un seul projet.
+GL_PROJET_TITRE="${MAESTRO_PROJECT_TITRE:-Maestro}"
+
+# --- Commutateur de cycle de vie ------------------------------------------------------------------
+# Voir l'en-tête du fichier. Deux fonctions, et une seule est appelée dans les corps de verbe.
+
+# gl_cycle -> imprime le backend de cycle de vie actif (« labels » | « status »), code 1 sur une
+# valeur inconnue.
+gl_cycle() {
+  local c="${MAESTRO_CYCLE:-labels}"
+  case "$c" in
+    labels|status) printf '%s\n' "$c" ;;
+    *)
+      echo "MAESTRO_CYCLE=« $c » inconnu — attendu : labels | status (défaut labels)." >&2
+      return 1 ;;
+  esac
+}
+
+# gl_vers_status -> « ce verbe doit-il déléguer au backend Projects v2 ? »
+#   0 = oui (déléguer)   1 = non (corps « labels »)   2 = REFUS : valeur inconnue.
+#
+# Le 2 n'est pas un détail, et c'est la leçon de gl_vers_github (#339) reprise telle quelle : une
+# valeur mal orthographiée (« statut ») ne doit pas retomber en silence sur les labels. L'appelant
+# croirait écrire le champ Status, verrait son écriture réussir, et c'est un label que plus personne
+# ne lira qui aurait bougé. On ne devine pas le backend — on refuse. D'où la forme imposée en tête
+# de chaque verbe qui délègue, qui propage le refus au lieu de l'avaler :
+#
+#     gl_vers_status; case $? in 0) st_<verbe> "$@"; return $? ;; 2) return 1 ;; esac
+#
+# Seuls les quatre verbes UNITAIRES l'appellent (cf. en-tête) : les lectures d'ensemble sont #362, et
+# les verbes qui ne touchent pas au cycle de vie n'ont aucune raison d'être bloqués par une variable
+# fautive qui ne les concerne pas.
+gl_vers_status() {
+  local c
+  c="$(gl_cycle)" || return 2
+  [ "$c" = status ]
+}
+
 # --- Identité de la forge ---------------------------------------------------------------------
 # gl_depot_courant -> le dépôt visé par la forge active, pour les MESSAGES du code partagé
 # (« ticket #12 introuvable dans … »). Ne sert jamais à construire un appel : chaque backend
@@ -2685,15 +2726,22 @@ gh_require() {
   fi
 }
 
-# gh_graphql_read <query> -> lecture GraphQL avec retry sur réponse VIDE. Même contrat et mêmes
-# réglages (GL_GQL_RETRIES/GL_GQL_RETRY_DELAY) que gl_graphql_read, y compris l'interdiction d'y
-# envelopper une mutation : un retry pourrait la ré-appliquer.
+# gh_graphql_read <query> [args gh api…] -> lecture GraphQL avec retry sur réponse VIDE. Même
+# contrat et mêmes réglages (GL_GQL_RETRIES/GL_GQL_RETRY_DELAY) que gl_graphql_read, y compris
+# l'interdiction d'y envelopper une mutation : un retry pourrait la ré-appliquer.
+#
+# Les arguments SUPPLÉMENTAIRES sont passés tels quels à `gh api` — en pratique `--jq`, dont
+# st_contexte se sert pour aplatir une réponse à trois niveaux d'imbrication. ⚠ La garde « réponse
+# vide » porte alors sur la réponse RENDUE et non sur celle reçue : un filtre qui peut légitimement
+# ne rien rendre y déclencherait trois tentatives puis une erreur, et ne doit donc pas passer par
+# ici (celui de st_contexte rend toujours au moins une ligne, `ticket` ou `erreur`).
 gh_graphql_read() {
   local query="$1"
   if [ -z "$query" ]; then echo "gh_graphql_read : requête manquante" >&2; return 2; fi
+  shift
   local attempt=1 out
   while :; do
-    out="$(gh api graphql -f query="$query" 2>/dev/null)"
+    out="$(gh api graphql -f query="$query" "$@" 2>/dev/null)"
     if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
     if [ "$attempt" -ge "$GL_GQL_RETRIES" ]; then
       echo "gh_graphql_read : réponse vide de l'API GraphQL GitHub après $attempt tentative(s)" >&2
@@ -3775,6 +3823,189 @@ gh_job_trace() {
   printf '%s\n' "$raw" | tail -n "$lines"
 }
 
+# ================================================================================================
+# DÉRIVES PROPRES AU BACKEND STATUS — lectures d'ENSEMBLE pour doctor.sh (#363, chantier #358)
+# ================================================================================================
+# Le backend `st_` (#360) répond sur UN ticket ; ces deux verbes répondent sur l'ENSEMBLE, et
+# uniquement pour le diagnostic. Ils existent parce que le changement d'autorité ne supprime pas la
+# panne, il la DÉPLACE : l'exclusion mutuelle des six labels devient impossible par construction
+# (un champ single-select n'a qu'une valeur — la dérive « 0 ou ≥ 2 » de `gl_workflow_derives` perd
+# donc sa moitié « ≥ 2 »), mais le Status vit sur l'ITEM DE PROJET et non sur l'issue. D'où deux
+# pannes nouvelles, toutes deux plus silencieuses que celle qu'elles remplacent :
+#   • TICKET HORS PROJET — il n'a aucun état, et rien à l'écran ne le distingue d'un ticket filtré ;
+#   • ITEM SANS STATUS  — présent dans le projet, colonne vide : un état que personne n'a voulu.
+# La troisième porte sur le champ lui-même (`st_options`) : c'est le pendant exact du contrôle des
+# six labels, sur un autre objet.
+#
+# CES VERBES NE PASSENT PAS PAR `gl_vers_status`, et ce n'est pas un oubli. Le commutateur sert à
+# choisir un backend pour un verbe qui existe des DEUX côtés ; ici il n'y a rien à choisir — ces
+# questions n'ont aucun sens en mode `labels`, où il n'y a ni projet, ni champ, ni item. C'est
+# l'appelant (`doctor.sh`) qui lit `gl_cycle` une fois et branche ses sections. Un verbe appelé hors
+# de son mode répond quand même : il dit ce qu'il voit du projet, ce qui est exactement ce qu'on
+# attend d'un diagnostic lancé à la main pendant une bascule.
+#
+# ⚠ AUCUN ID EN DUR, ici comme ailleurs : le projet se résout par son TITRE (`GL_PROJET_TITRE`) et
+# le champ par son NOM, à chaque appel.
+
+# st_erreur_graphql <réponse> -> 0 et le message de l'API si la réponse est un JSON d'erreur au lieu
+# du TSV attendu ; 1 sinon (réponse exploitable).
+#
+# ⚠ CE GARDE-FOU N'EST PAS UNE CEINTURE DE PLUS, il est LE garde-fou — mesuré le 2026-08-18 sur un
+# dépôt inexistant. Quand GraphQL rend un bloc `errors`, `gh api` IGNORE le `--jq` et recrache le
+# JSON brut sur la sortie standard (le message partant, lui, sur stderr, que `gh_graphql_read`
+# jette). La branche « erreur » du programme jq ne s'exécute donc JAMAIS dans le seul cas qu'elle
+# était censée couvrir : la réponse arrive non filtrée, l'awk qui suit n'y reconnaît aucune de ses
+# clés, et le verbe rend « 0 ticket examiné, aucune dérive » avec un code 0. Soit, dans le fichier
+# dont le métier est de détecter les dérives, un ✓ sur une question jamais posée — exactement le
+# défaut qu'a corrigé #341, retrouvé par un autre chemin.
+#
+# Le test porte sur la FORME et non sur le contenu : le TSV rendu par nos programmes jq ne commence
+# jamais par « { », une réponse JSON toujours. Les branches « erreur » des deux jq restent en place
+# comme seconde ligne — elles couvrent le cas, permis par le schéma, d'un `data` nul SANS bloc
+# `errors` — mais c'est celle-ci qui attrape ce qui arrive réellement.
+st_erreur_graphql() {
+  case "$1" in
+    '{'*) printf '%s' "$1" | gl_json_string_field message || printf 'réponse GraphQL inattendue' ;;
+    *) return 1 ;;
+  esac
+}
+
+# st_gql_options -> la requête du champ : les projets du compte, chacun avec son champ Status et les
+# LIBELLÉS de ses options, dans l'ordre du champ. Les projets ne sont pas filtrés côté GitHub
+# (`projectsV2(query:)` est une recherche FLOUE) : le titre est une clé, il se compare en égalité
+# dans le shell — « Maestro » ne doit pas ramener « Maestro v2 ».
+st_gql_options() {
+  printf '{ repositoryOwner(login:"%s") { ... on ProjectV2Owner { projectsV2(first:100){nodes{ title field(name:"Status"){ ... on ProjectV2SingleSelectField { id options { name } } } }} } } }' \
+    "${GL_GH_REPO%%/*}"
+}
+
+# st_jq_options -> l'aplatissement en lignes CLÉ<TAB>…, même forme que st_contexte et pour la même
+# raison : trois niveaux d'imbrication et des valeurs à espaces et accents (« À faire »), où un
+# `grep -o` serait un parseur déguisé. Le jq est celui EMBARQUÉ dans `gh`, aucune dépendance de plus.
+#     erreur  proprietaire
+#     projet  <titre>  <id du champ Status, vide si absent>
+#     option  <titre>  <libellé>
+st_jq_options() {
+  cat <<'JQ'
+[
+  (if .data.repositoryOwner == null then "erreur\tproprietaire" else empty end),
+  (.data.repositoryOwner.projectsV2.nodes[]? | "projet\t" + .title + "\t" + (.field.id // "")),
+  (.data.repositoryOwner.projectsV2.nodes[]? as $p | $p.field.options[]? | "option\t" + $p.title + "\t" + .name)
+] | .[]
+JQ
+}
+
+# st_options -> les LIBELLÉS des options du champ Status du projet, un par ligne, DANS L'ORDRE DU
+# CHAMP (c'est lui qui fait les colonnes du projet : l'ordre est une donnée, pas un détail
+# d'affichage). Échec franc et à cause NOMMÉE dans les trois cas où la question n'a pas de réponse —
+# propriétaire illisible, projet absent, champ absent — parce que les trois appellent trois gestes
+# différents, et qu'une liste vide se lirait « les six options manquent ».
+st_options() {
+  local reponse ligne champ_id message
+  reponse="$(gh_graphql_read "$(st_gql_options)" --jq "$(st_jq_options)")" || return 1
+  if message="$(st_erreur_graphql "$reponse")"; then
+    echo "Compte « ${GL_GH_REPO%%/*} » illisible (inconnu, ou jeton sans portée Projects — docs/10 §3.5) : $message" >&2
+    return 1
+  fi
+  case "$reponse" in
+    "erreur	proprietaire"*)
+      echo "Compte « ${GL_GH_REPO%%/*} » illisible (inconnu, ou jeton sans portée Projects — docs/10 §3.5)" >&2
+      return 1 ;;
+  esac
+
+  ligne="$(printf '%s\n' "$reponse" | ST_TITRE="$GL_PROJET_TITRE" awk -F'\t' \
+           '$1 == "projet" && $2 == ENVIRON["ST_TITRE"] { print; exit }')"
+  if [ -z "$ligne" ]; then
+    echo "Projet « $GL_PROJET_TITRE » introuvable chez ${GL_GH_REPO%%/*} — le monter : bash scripts/github/bootstrap-project.sh" >&2
+    return 1
+  fi
+  champ_id="$(printf '%s' "$ligne" | cut -f3)"
+  if [ -z "$champ_id" ]; then
+    echo "Le projet « $GL_PROJET_TITRE » n'a pas de champ « Status » — bash scripts/github/bootstrap-project.sh --check" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$reponse" | ST_TITRE="$GL_PROJET_TITRE" awk -F'\t' \
+    '$1 == "option" && $2 == ENVIRON["ST_TITRE"] { print $3 }'
+}
+
+# st_gql_derives -> la requête des tickets : les issues OUVERTES et, pour chacune, les items de
+# projet qui la représentent, avec la valeur courante du champ Status.
+#
+# ⚠ LA BORNE EST ASSUMÉE, ET ELLE SE DIT. `first: 100` est la borne de tout ce fichier (`gh_backlog`,
+# `gh_issues_sans_milestone`…) et non un choix propre à ce verbe ; mais ici l'appelant est le fichier
+# dont le métier est de détecter les dérives, et une borne franchie en silence y produirait
+# exactement le défaut qu'a corrigé #341 — un ✓ sur une question posée à moitié. D'où `totalCount`
+# dans la MÊME requête et la ligne d'en-tête « #examines » ci-dessous : la borne voyage avec le
+# résultat, à charge pour `doctor.sh` de la nommer quand elle est atteinte.
+st_gql_derives() {
+  printf '{ %s { issues(states: OPEN, first: 100) { totalCount nodes { number projectItems(first: 20) { nodes { project { title } fieldValueByName(name:"Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } } }' \
+    "$(gh_depot_gql)"
+}
+
+# st_jq_derives -> l'aplatissement en lignes CLÉ<TAB>… :
+#     erreur  depot
+#     total   <nombre de tickets ouverts dans le dépôt>
+#     ticket  <numéro>
+#     item    <numéro>  <titre du projet>  <libellé du Status, vide si non posé>
+st_jq_derives() {
+  cat <<'JQ'
+[
+  (if .data.repository == null then "erreur\tdepot"
+   else "total\t" + (.data.repository.issues.totalCount|tostring) end),
+  (.data.repository.issues.nodes[]? | "ticket\t" + (.number|tostring)),
+  (.data.repository.issues.nodes[]? as $i | $i.projectItems.nodes[]?
+   | "item\t" + ($i.number|tostring) + "\t" + .project.title + "\t" + (.fieldValueByName.name // ""))
+] | .[]
+JQ
+}
+
+# st_derives -> les deux dérives propres au Status, une par ligne, dans l'ordre où la forge rend les
+# tickets :
+#     #examines <TAB> <tickets examinés> <TAB> <tickets ouverts du dépôt>   ← toujours, en tête
+#     <iid> <TAB> hors-projet     le ticket n'est item d'AUCUN projet de ce titre : il n'a aucun état
+#     <iid> <TAB> sans-etat       il est bien dans le projet, mais son Status est vide
+#
+# La ligne d'en-tête est préfixée « # » comme celle de `backlog-table` : les consommateurs machine
+# l'ignorent par le même filtre (`$1 !~ /^#/`), et celui qui veut la borne la lit.
+#
+# LA SECONDE COLONNE EST UNE CAUSE, et non le nombre de `gl_workflow_derives`. Le nombre n'aurait
+# plus rien à compter (un champ single-select vaut 0 ou 1) et les deux causes appellent deux gestes
+# différents — ajouter le ticket au projet, ou lui poser un état. Les confondre sous un « 0 » commun
+# rendrait le diagnostic vrai et inutilisable.
+st_derives() {
+  local reponse message
+  reponse="$(gh_graphql_read "$(st_gql_derives)" --jq "$(st_jq_derives)")" || return 1
+  if message="$(st_erreur_graphql "$reponse")"; then
+    echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants) : $message" >&2
+    return 1
+  fi
+  case "$reponse" in
+    "erreur	depot"*) echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
+  esac
+
+  # Le titre du projet voyage par ENVIRON et jamais par `awk -v`, qui INTERPRÈTE les échappements de
+  # son argument (#340) ; la comparaison est une ÉGALITÉ DE CHAMP et non un `grep`, pour la même
+  # raison qu'ailleurs — un titre est une donnée, pas un motif.
+  printf '%s\n' "$reponse" | ST_TITRE="$GL_PROJET_TITRE" awk -F'\t' '
+    $1 == "total"  { total = $2; next }
+    $1 == "ticket" { ordre[++n] = $2; next }
+    $1 == "item" && $3 == ENVIRON["ST_TITRE"] {
+      dans[$2] = 1
+      if ($4 != "") etat[$2] = $4
+      next
+    }
+    END {
+      printf "#examines\t%d\t%s\n", n, total
+      for (i = 1; i <= n; i++) {
+        iid = ordre[i]
+        if (!(iid in dans))       printf "%s\thors-projet\n", iid
+        else if (etat[iid] == "") printf "%s\tsans-etat\n", iid
+      }
+    }
+  '
+}
+
 # --- Dispatcher (uniquement quand exécuté directement, pas quand sourcé) -------------------------
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   cmd="${1:-}"; [ "$#" -gt 0 ] && shift
@@ -3796,6 +4027,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     backlog-table)  gl_backlog_table "$@" ;;
     labels)         gl_labels ;;
     workflow-derives)      gl_workflow_derives "$@" ;;
+    status-options)        st_options ;;
+    status-derives)        st_derives ;;
     issues-sans-milestone) gl_issues_sans_milestone ;;
     open-mr-branches)      gl_open_mr_branches ;;
     merge-settings) gl_merge_settings ;;
@@ -3875,6 +4108,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
       echo "  labels                             (tous les labels du dépôt, un nom par ligne)" >&2
       echo "  workflow-derives [opened|closed|all]  (tickets portant 0 ou ≥ 2 labels workflow:: — iid/nombre)" >&2
+      echo "  status-options                     (libellés des options du champ Status du projet « $GL_PROJET_TITRE »," >&2
+      echo "                                      dans l'ordre du champ — dérive propre au backend status)" >&2
+      echo "  status-derives                     (tickets ouverts hors projet ou sans Status — iid/cause," >&2
+      echo "                                      précédés de « #examines <examinés> <ouverts> »)" >&2
       echo "  issues-sans-milestone              (iid des tickets ouverts sans jalon)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
       echo "  issue-owner <iid>                  (cycle de vie + assignés du ticket, TSV — vide = libre)" >&2
