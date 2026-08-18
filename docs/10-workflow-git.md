@@ -281,6 +281,101 @@ Deux pièges à connaître :
   invisible en dehors de l'erreur ci-dessus — là où un jeton classique ou OAuth affiche ses scopes
   et laisse voir `project` manquant d'un coup d'œil.
 
+**Le commutateur `MAESTRO_CYCLE` (#360).** `lib.sh` sait désormais lire et écrire ce champ, derrière
+`MAESTRO_CYCLE=labels|status`, **défaut `labels`** — sans la variable, tout ce que décrit le §3.1
+reste vrai au bit près. Avec `status`, les quatre verbes **unitaires** (`set-workflow`,
+`issue-owner`, `begin`, `liberer-ticket`) répondent contre le champ Status — et les lectures
+**d'ensemble** avec eux depuis #362 (§3.6). C'est pourquoi le défaut ne bouge
+pas ici : la bascule est un ticket à part (#364). Deux détails à connaître avant de poser la
+variable — le Status vit sur l'**item de projet**, si bien qu'un ticket absent du projet n'a
+**aucun état** (l'écriture le refuse en le disant ; le peuplement est #361) ; et aucun label n'est
+touché en `status`, leur retrait étant #365. Détail complet et tests : #366.
+
+---
+
+### 3.6 Les lectures d'ensemble sur le Status, et ce qu'elles coûtent
+
+Le §3.5 a porté l'**unité** — lire et écrire l'état d'**un** ticket. Celui-ci porte l'**ensemble**,
+où était la charge du chantier : sous `MAESTRO_CYCLE=status`, quatre consommateurs changent de
+source.
+
+| Consommateur | Ce qu'il demande |
+|---|---|
+| `/backlog` | tous les tickets ouverts, groupés par état |
+| `queue.sh` → `/orchestrate` | les « À faire » **et libres** d'un jalon, dans l'ordre |
+| `doctor.sh` | les tickets sans état (dérive 4c) |
+| `reconcile-workflow` → `worktree.sh gc`, `/branch-cleanup` | les fermés dont l'état est resté actif |
+
+**Aucun des quatre n'a changé d'une ligne**, et c'est un résultat, pas une chance : aucun ne parle au
+réseau. Tous lisent la colonne `statut` de **deux tables plates** — `backlog-table` et
+`milestone-issues`, les primitives inventoriées en tête de `scripts/gitlab/lib.sh`. Basculer ces deux
+producteurs (plus `workflow-derives`, qui compte au lieu de projeter) bascule **sept** appelants d'un
+coup, `subtickets`, `startables` et `reconcile-en-cours` compris.
+
+**La méthode est un recouvrement, pas une réécriture.** Le JSON des tickets reste la source de *qui
+existe* ; une carte `iid → Status`, paginée sur les items du projet, dit *quel état*. Le contraire —
+lister les tickets **depuis** les items — ferait disparaître de `/backlog` tout ticket hors projet,
+c'est-à-dire exactement ceux qu'on veut voir signalés. Un ticket hors projet sort donc « - », ce que
+rend déjà, au caractère près, un ticket à 0 label `workflow::`.
+
+**Un verbe n'est délibérément pas basculé** : `backlog` (le JSON brut), dont le contrat est de rendre
+la réponse de la forge *telle quelle*. Conséquence à connaître : les labels `workflow::` qu'on y lit
+ne sont pas le cycle de vie en mode `status` — ils existent encore (leur retrait est #365) mais plus
+personne ne les met à jour. Qui veut l'état lit la table.
+
+#### Le coût, mesuré — et pourquoi il y a un cache
+
+C'était le seul risque technique identifié du chantier. Mesuré le 2026-08-18 contre un projet de
+mesure jetable peuplé des 367 tickets du dépôt (le peuplement du vrai projet est #361), médianes sur
+3 exécutions **alternées** entre les deux modes :
+
+| | `labels` | `status` |
+|---|---|---|
+| `queue.sh --milestone` (plan complet) | 23,6 s | 35,8 s — **+12,2 s (1,51×)** |
+| appels à l'API sur ce plan | 11 | 16 — **+5** |
+| la carte seule (366 items, pages de 100) | — | 12,7 s |
+
+**Le coût n'est pas dans le nombre d'appels mais dans leur prix unitaire.** Une page de 100 items de
+Projects v2 coûte **2,06 s**, contre **1,52 s** pour une page de tickets — et le champ n'y est pour
+rien : la même page *sans* `fieldValueByName` coûte 2,18 s. Cinq appels (une résolution du projet par
+son titre, puis quatre pages) font donc 12,7 s à eux seuls.
+
+**D'où le cache**, que ce paragraphe justifie plutôt qu'il ne l'annonce : `queue.sh` demandait
+**deux** cartes identiques, une par table. La carte est donc mémorisée pour la durée du **processus**
+(13 appels et 26,6 s pour deux tables sans elle ; 8 appels et 15,1 s avec). Trois choses à en savoir
+avant d'y toucher :
+
+- **Elle se remplit dans le shell appelant, jamais par substitution.** `carte="$(…)"` s'exécute dans
+  un sous-shell où l'affectation meurt avec lui — écrit ainsi, le cache mesurait exactement zéro
+  gain. Les verbes appellent `st_carte_charge` puis lisent la variable ; `queue.sh` demande ses deux
+  tables par **redirection**, donc dans un seul et même shell.
+- **Elle est oubliée à l'écriture** (`st_set_workflow`), ce qui règle la péremption par construction
+  au lieu de la confier à un raisonnement appelant par appelant.
+- **Elle ne s'étend pas aux verbes unitaires.** `gl_issue_owner` est appelé par `run.sh` pendant des
+  heures, sur des tickets dont l'état change entre deux appels : c'est le contraire de ce cas-ci.
+  `MAESTRO_CYCLE_MEMO=0` éteint le cache.
+
+Reste **+12 s au démarrage d'un run**, qui les absorbe (le plan se calcule une fois, la boucle dure
+des heures), et une croissance d'environ **2,6 s par tranche de 100 tickets** — à re-mesurer au
+moment de la bascule, le dépôt en comptant 367 aujourd'hui.
+
+#### Ce que ça laisse aux lots suivants
+
+- **#363** — la dérive change de *nature* : un champ à valeur unique rend « ≥ 2 états » impossible
+  **par construction** (c'est le gain du chantier, et une dérive de moins à traquer). Il ne reste que
+  « 0 », qui recouvre désormais **deux** causes à distinguer, « hors projet » et « Status vide ».
+  `workflow-derives` porte le portage ; le diagnostic est là-bas.
+- **#364** — la bascule du défaut, et elle a un prérequis que ce lot a mis au jour. Rejouée contre le
+  **vrai** projet une fois #361 passé, la comparaison rend 7 consommateurs sur 9 en écart nul et
+  **2 tickets divergents sur 100** — « En revue » côté labels, « En cours » côté Status. Aucun
+  rapport avec les lectures : tant que le défaut vaut `labels`, `/ticket-finish` appelle
+  `set-workflow`, qui n'écrit **que le label**, si bien que le champ Status vieillit à chaque
+  changement d'état. La dérive est donc **structurelle et repart d'elle-même**, ce qu'un simple
+  rattrapage ne règle pas : #361 a peuplé l'**appartenance** au projet, la bascule demande en plus
+  une **resynchronisation des valeurs** juste avant de basculer. Le contrôle tient en deux lectures
+  (`backlog-table all` de chaque côté, jointes sur la colonne 2) et se vérifie en corrigeant — poser
+  le Status de #360 a ramené le compte de 2 à 1.
+
 ---
 
 ## 4. Gabarits de tickets et de Pull Request
