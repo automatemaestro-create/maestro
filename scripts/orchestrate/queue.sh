@@ -127,7 +127,7 @@ done
 
 diag() { [ "$CHECK" = 1 ] && printf '%s\n' "$*" >&2; return 0; }
 
-gl_require_glab || exit 1
+gl_require || exit 1
 
 # Brouillon de calcul, hors du dépôt et effacé au trap : son chemin n'est jamais imprimé, rien n'y
 # renvoie personne, et le plan — la seule sortie qui compte — part sur stdout puis dans le journal
@@ -282,9 +282,9 @@ fi
 # vue <iid> -> chemin d'un fichier contenant LA VUE TEXTE CANONIQUE du ticket, mise en cache. Le
 # cache est ce qui rend gratuite la relecture d'un parent déjà lu comme candidat.
 #
-# `gl_issue_raw` et non `glab issue view` (#341) : c'est l'une des trois primitives du commutateur de
+# `gl_issue_raw` et non un appel direct au CLI de la forge (#341) : c'est l'une des trois primitives
 # forge (en-tête de lib.sh), et son format est le MÊME des deux côtés — d'où les deux projections
-# ci-dessous, inchangées. L'appel direct, lui, aurait interrogé GitLab sous MAESTRO_FORGE=github, et
+# ci-dessous, inchangées. L'appel direct, lui, aurait interrogé la mauvaise forge à la bascule, et
 # le plan d'un run se serait construit sur les descriptions du mauvais dépôt : les marqueurs
 # « Sous-ticket de #N » et « ## Sous-tickets » auraient été lus ailleurs que là où le run travaille.
 vue() {

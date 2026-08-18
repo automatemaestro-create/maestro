@@ -20,8 +20,9 @@ Objectif : que chaque ticket soit traité de façon prévisible — même branch
 > vocabulaire est en cours d'alignement (#345) ; l'outillage, lui, est déjà bilingue et le contrat
 > de sortie de `scripts/gitlab/lib.sh` est identique des deux côtés (un « iid » désigne le `number`
 > GitHub, un état de MR `opened|closed|merged` désigne celui de la PR). Lire « MR » comme « PR »
-> partout où il s'agit du travail d'aujourd'hui. Le retrait de l'outillage GitLab lui-même
-> (`.gitlab-ci.yml`, 1 146 lignes de runner) est le ticket #344.
+> partout où il s'agit du travail d'aujourd'hui. L'outillage GitLab lui-même — `.gitlab-ci.yml`
+> et les 1 146 lignes de runner — a été **retiré** par #344 : ce qui en reste ici est de
+> l'histoire, jamais un geste à faire.
 
 > Le **cycle de vie** d'un ticket est porté par les labels scopés **`workflow::*`** (voir §3.1).
 > Les autres labels (`type::`, `agent::`, `prio::`) servent à la **catégorisation** (nature, rôle,
@@ -282,16 +283,17 @@ Deux pièges à connaître :
 
 ---
 
-## 4. Templates GitLab
+## 4. Gabarits de tickets et de Pull Request
 
-- **Issues** (`.gitlab/issue_templates/`) : `Feature.md`, `Bug.md`, `Doc.md`, `Infra.md` — un
-  par valeur de `type::*`. Posent la structure attendue (contexte, critères d'acceptation) et
-  appliquent le bon `type::*` via une quick action `/label`. Le cycle de vie **« À faire »**
-  (`workflow::a-faire`) n'a **pas** de défaut côté GitLab : c'est `/ticket-create` qui le pose, dans
-  le même `--label` que la catégorisation (§3.1) — un ticket ouvert à la main depuis l'interface web
-  n'en porte donc aucun, dérive que `doctor.sh` signale. Le label `agent::*` est à ajouter
-  manuellement au triage (aucun template ne peut deviner quel agent est concerné).
-- **Merge Request** (`.gitlab/merge_request_templates/Default.md`) : checklist de definition
+- **Tickets** (`.github/ISSUE_TEMPLATE/`) : `feature.md`, `bug.md`, `doc.md`, `infra.md` — un par
+  valeur de `type::*`. Posent la structure attendue (contexte, critères d'acceptation) et, par leur
+  **en-tête YAML**, les labels par défaut du gabarit — dont **`workflow::a-faire`**. C'est la
+  nouveauté du déménagement (#344) : un ticket ouvert à la main depuis l'interface web portait
+  jusqu'ici **zéro** label de cycle de vie, dérive que `doctor.sh` signale ; l'en-tête la supprime
+  à la source. `/ticket-create`, lui, retire cet en-tête et pose les labels par `--label` — une
+  création en ligne de commande n'a que faire d'un bloc qui sert l'UI web. Le label `agent::*`
+  reste à ajouter manuellement au triage (aucun gabarit ne peut deviner quel agent est concerné).
+- **Pull Request** (`.github/pull_request_template.md`) : checklist de definition
   of done + rappel `Closes #`. La checklist est un **constat, pas un formulaire** :
   `/ticket-finish` coche lui-même les cases qu'il a **effectivement vérifiées** (conventions de
   branche/commit, tests et doc jugés d'après le diff, pipeline verte constatée via `lib.sh
@@ -665,8 +667,8 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
   — les clés attendues avec des **valeurs neutres**, et **aucun secret** (un jeton n'a pas sa place
   dans un fichier suivi ; `CLAUDE_CODE_OAUTH_TOKEN` est recopié depuis le `.env` par `setup.sh`, il
   ne s'écrit jamais à la main ici). Clés couvertes : `env.MAESTRO_CHROME_PROFILE` (profil du
-  navigateur piloté par `chrome-maestro`), `env.MAESTRO_RUNNER_ID` (runner CI de cette machine,
-  §8.1), `env.GH_CONFIG_DIR` (compte GitHub propre à ce projet, §7.4),
+  navigateur piloté par `chrome-maestro`), `env.GH_CONFIG_DIR` (compte GitHub propre à ce projet,
+  §7.4),
   `enabledMcpjsonServers` (approbation des serveurs de `.mcp.json`) et `permissions.allow`
   (surcharges personnelles). C'est une **référence à lire, pas un fichier à recopier** : le vrai
   `settings.local.json` est écrit et fusionné clé par clé par l'étape `mcp` de `setup.sh`, qui
@@ -812,14 +814,14 @@ pose pas aujourd'hui : l'équipe y partage un même compte (§6).
 
 ## 8. Intégration continue (CI)
 
-Le pipeline [`.gitlab-ci.yml`](../.gitlab-ci.yml) a deux étages : `lint` — `shellcheck`
-(sévérité `warning`, scripts `scripts/**/*.sh`) et `python-lint` (ruff) — puis `test` — `pytest`
-(suite du dépôt **en parallèle** (`-n auto`, #214 — 1 min 53 s au lieu de ~10, §8.4), avec
-**couverture** pytest-cov : taux remonté dans GitLab via la clé `coverage:`
-du job, échec sous `--cov-fail-under=90`), `mypy` (typage strict de `maestro/`) et `web-build`
-(l'UI Control Tower). Les jobs Python partagent un **cache pip** (clé sur `pyproject.toml`) qui
-accélère le `before_script` d'un run à l'autre. Un **pipeline vert est la condition de passage
-`En revue` → merge**.
+Le pipeline [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) porte six jobs :
+`shellcheck` (sévérité `warning`, scripts `scripts/**/*.sh`, **un appel par fichier** — §8.4),
+`python-lint` (ruff), `pytest` (suite du dépôt **en parallèle**, `-n auto`, #214 — 1 min 53 s au
+lieu de ~10, §8.4, avec **couverture** pytest-cov : taux remonté dans le résumé du run, échec sous
+`--cov-fail-under=90`), `mypy` (typage strict de `maestro/`), `web-build` (l'UI Control Tower) et
+`perimetre`, un job-portier sans équivalent GitLab (§8.8). Les jobs Python partagent le **cache
+pip** natif de `setup-python` (clé sur `pyproject.toml`). Un **pipeline vert est la condition de
+passage `En revue` → merge**.
 
 Le **front** (`apps/web`) a son propre job, `web-build`, qui enchaîne `npm run lint` (ESLint),
 `npm run typecheck` (`tsc --noEmit`, #236), `npm test` (la suite **Vitest** de l'interface, #124)
@@ -829,10 +831,10 @@ secondes, et sous une forme qu'une session Claude Code peut lancer — la couche
 autorise `npm run …`, jamais un `./node_modules/.bin/tsc` (#236) ; le jouer en CI et dans le filet
 local est ce qui l'empêche de pourrir. Les quatre tiennent dans **un seul** job parce que
 l'installation des dépendances (`npm ci`) pèse bien plus que les contrôles eux-mêmes : la refaire
-trois fois de plus n'apprendrait rien et occuperait d'autant le runner de l'équipe (§8.1) ; l'ordre
-va du plus rapide au plus lent, pour que le verdict tombe tôt quand il est rouge. Le job ne se
-déclenche que si `apps/web/**` (ou `.gitlab-ci.yml`) change — un pipeline purement Python reste
-rapide — et son cache npm porte sur le lockfile versionné.
+trois fois de plus n'apprendrait rien et se facturerait d'autant (§8.1) ; l'ordre va du plus
+rapide au plus lent, pour que le verdict tombe tôt quand il est rouge. Le job ne se déclenche que
+si `apps/web/**` (ou `.github/workflows/**`) change — un pipeline purement Python reste rapide — et
+son cache npm porte sur le lockfile versionné.
 
 Les **scripts shell** ne sont pas seulement lintés : le parcours de mise en route
 ([`scripts/setup.sh`](../scripts/setup.sh), §7) a sa propre suite pytest
@@ -840,7 +842,7 @@ Les **scripts shell** ne sont pas seulement lintés : le parcours de mise en rou
 répertoire temporaire et y lance le script pour vérifier ses invariants — `--check` n'écrit rien,
 deuxième passage entièrement en `DÉJÀ FAIT`, `.env` et `settings.local.json` jamais écrasés (le
 second est fusionné clé par clé), rapport complet et code de sortie non nul sur échec dur. Les
-étapes réseau / Docker (`venv`, `web`, `runner`, `infra`, `verif`) y sont **neutralisées** par
+étapes réseau / Docker (`venv`, `web`, `infra`, `verif`) y sont **neutralisées** par
 `--skip` : c'est la décision du script qui est testée, jamais l'installation elle-même — la suite
 tourne donc en CI sans démon Docker ni accès réseau.
 
@@ -869,16 +871,14 @@ couleur ne sont que deux cas : **le verdict de la suite ne dépend pas du poste 
 qu'un `.env` ou un `settings.local.json` pose dans l'environnement se neutralise dans le conftest,
 pas dans le fichier du poste (non versionné, le prochain clone le reposerait).
 
-**Quand un pipeline se déclenche ?** **Uniquement sur les Merge Requests** (#165). Le bloc
-`workflow: rules:` de [`.gitlab-ci.yml`](../.gitlab-ci.yml) ne laisse passer que
-`$CI_PIPELINE_SOURCE == "merge_request_event"` — la **création** d'une MR, puis chaque **push sur
-sa branche source** tant qu'elle est ouverte — et les déclenchements **manuels** (`web`, le bouton
-« Run pipeline » ; `api`, `glab ci run -b <branche>`, le repli de `/mr-fix`). Tout le reste
-tombe en `when: never` : un push sur une branche **sans MR**, le push sur **`main` après le
-merge**, les tags. Avant ces règles, une même branche payait **trois** pipelines — pendant le
-développement, à la clôture du ticket, puis sur `main` une fois mergée — pour un seul verdict
-réellement lu, celui qui conditionne le merge ; sur le runner unique de l'équipe (§8.1), c'est
-autant d'attente pour les autres. Trois conséquences pratiques :
+**Quand un pipeline se déclenche ?** **Uniquement sur les Pull Requests** (#165, puis #338). Le
+bloc `on:` du workflow ne porte que `pull_request` — l'**ouverture** d'une PR, puis chaque **push
+sur sa branche source** tant qu'elle est ouverte — et `workflow_dispatch`, le déclenchement
+**manuel** (bouton « Run workflow », ou `gh workflow run ci.yml --ref <branche>`, le repli de
+`/mr-fix`). Tout le reste ne déclenche rien : un push sur une branche **sans PR**, le push sur
+**`main` après le merge**, les tags. Avant cette règle, une même branche payait **trois** pipelines
+— pendant le développement, à la clôture du ticket, puis sur `main` une fois mergée — pour un seul
+verdict réellement lu, celui qui conditionne le merge. Trois conséquences pratiques :
 
 - **Vérifier son travail avant la MR est un geste local** :
   [`scripts/ci/local.sh`](../scripts/ci/local.sh) rejoue les mêmes jobs sur le poste (#157) — c'est
@@ -886,156 +886,44 @@ autant d'attente pour les autres. Trois conséquences pratiques :
   il teste bien le code d'ici : voir §9 pour le piège d'import que cela suppose d'éviter (#194).
   Depuis #214 il ne joue par défaut que les **suites concernées par le diff** (§8.4) : la suite
   complète, c'est `--complet`, ou le pipeline de cette MR.
-- **Le pipeline d'une MR est « détaché »** : sa ref est `refs/merge-requests/<iid>/head`, pas le
-  nom de la branche. `glab ci status` / `glab ci view <branche>` ne le voient donc **pas** ;
-  `lib.sh pipeline-latest <branche>` si — il se rabat sur les pipelines de la MR quand la ref n'en
-  porte aucun —, et c'est lui qu'utilisent `/mr-fix`, `/ticket-finish` et `/mr-review`. La
-  file de revue (`lib.sh review-queue`) lit `headPipeline` en GraphQL : elle n'est pas concernée.
+- **Le verdict d'un run se lit en DEUX champs** : Actions sépare `status` (en cours) de
+  `conclusion` (issue), là où l'outillage raisonne sur une seule valeur
+  (`success`/`failed`/`pending`…). `lib.sh pipeline-latest <branche>` les recompose, et c'est lui
+  qu'utilisent `/mr-fix`, `/ticket-finish` et `/mr-review` — jamais un `gh run list` direct, qui
+  verrait bien le run mais pas un verdict comparable. La file de revue (`lib.sh review-queue`) lit
+  le `statusCheckRollup` du dernier commit en GraphQL : elle n'est pas concernée.
 - **La case « Pipeline CI verte » de la MR est vide au premier passage**, et c'est normal :
   `/ticket-finish` pousse **puis** ouvre la MR, donc le pipeline naît *après* le constat (§6).
 
-Le garde-fou de merge est inchangé : `only_allow_merge_if_pipeline_succeeds` regarde le pipeline
-de **tête de la MR**, qui existe toujours — une MR sans pipeline vert reste non mergeable.
+Le garde-fou de merge, lui, n'est **pas posé** aujourd'hui, et c'est une décision documentée :
+la protection de branche n'existe pas sur un dépôt privé d'un compte Free (§8.8). Les six verdicts
+se lisent sur la PR, et le merge reste une décision humaine (§6).
 
-**Où tournent les pipelines ?** Sur les **runners de projet** du dépôt (exécuteur Docker), quel que
-soit le pipeline. Les **runners partagés**
-GitLab sont **désactivés** au niveau projet (`shared_runners_enabled=false`, posé par
-[`bootstrap.sh`](../scripts/gitlab/bootstrap.sh)) : leur quota de minutes CI étant durablement
-épuisé, un job non-taggé qui y atterrissait retombait en `ci_quota_exceeded` (jobs « not
-started »). Aucun `tags:` n'est nécessaire dans [`.gitlab-ci.yml`](../.gitlab-ci.yml) — les runners
-de projet acceptent les jobs non-taggés (`run_untagged`) et sont l'unique cible. **Contrepartie
-opérationnelle** : au moins un runner doit être **en ligne** (Docker démarré + conteneur du runner
-actif) ; sinon les jobs restent **`pending`** (et non plus `ci_quota_exceeded`), et le merge — qui
-exige un pipeline vert — reste bloqué.
+### 8.1 Aucun runner à tenir allumé (#344)
 
-### 8.1 Deux types de runner — partagé (permanent) et locaux (secours)
+Les pipelines tournent sur les **exécutants hébergés** de GitHub (`ubuntu-latest`). Il n'y a rien à
+installer, rien à démarrer, personne à attendre — et c'est le gain que la note de décision chiffrait
+sans pouvoir le facturer ([docs/27 §4](./27-decision-gitlab-vers-github.md)).
 
-À plusieurs sur des clones distincts (#155), un unique runner sur le poste d'une personne fait
-d'elle un **point de blocage** : personne ne peut merger quand sa machine est éteinte. Le projet
-distingue donc deux rôles, avec la **même** mécanique et le même script (#158) :
+Ce qui a disparu avec la CI GitLab, et qu'il faut avoir vu une fois pour comprendre le prix payé :
+les runners partagés GitLab étaient **coupés** (quota de minutes durablement épuisé, #135), donc les
+jobs tournaient sur des **runners de projet** montés à la main sur des postes ; un pipeline vert
+conditionnant le merge, **une machine de l'équipe devait rester allumée en permanence**, et son
+extinction bloquait tout le monde — les jobs restant `pending` sans qu'aucun message ne le dise.
+Trois scripts servaient uniquement à tenir cette contrainte, **1 146 lignes** au total
+(`setup-runner.sh` pour monter le runner, `ensure-runner.sh` pour le rallumer avant chaque MR,
+`clean-runner-containers.sh` pour ramasser les conteneurs qu'un runner tué en cours de job laissait
+derrière lui, ~1,5 Go constatés). Tous trois sont supprimés, avec l'étape `runner` de `setup.sh`,
+les appels dans `/ticket-finish` et `/mr-fix`, et les deux sections de `doctor.sh` qui les
+surveillaient.
 
-| | **Partagé** — `runner-partage-<machine>` | **Local** — `maestro-<machine>` |
-|---|---|---|
-| Où | une machine qui **reste allumée** (serveur, poste dédié) | le poste de chacun |
-| Rôle | sert la CI de l'équipe en permanence | **secours** quand le partagé est indisponible |
-| Montage | `bash scripts/gitlab/setup-runner.sh --partage` | `bash scripts/gitlab/setup-runner.sh` (via `/setup`) |
-| Jobs simultanés | `concurrent ≥ 2` — deux personnes ne font pas la queue | valeur par défaut du runner |
+**Conséquence pratique** : un pipeline qui n'avance pas n'est plus un runner à réveiller. Docker ne
+sert plus qu'aux **bases locales** optionnelles (`infra/`, derrière `--with-infra`), et une mise en
+route n'en a plus besoin du tout.
 
-Les deux acceptent les jobs **non-taggés** : n'importe lequel prend n'importe quel job, rien à
-déclarer dans [`.gitlab-ci.yml`](../.gitlab-ci.yml). C'est ce qui rend le secours automatique — si
-le runner permanent tombe, le runner local d'un poste allumé prend le relais sans changer une
-ligne de configuration.
-
-**Monter le runner partagé** (une fois, sur la machine qui reste en ligne) :
-
-```bash
-bash scripts/gitlab/setup-runner.sh --partage
-```
-
-Prérequis : **Docker**, un jeton `glab` portant la portée **`create_runner`**, et — le seul qui ne
-se vérifie pas par script — une **machine qui ne s'éteint pas** (veille comprise : un runner
-endormi est un runner hors ligne). Le conteneur est monté en `--restart always`, il revient donc
-seul après un redémarrage.
-
-Le script **refuse de détourner** un runner local existant : si la machine héberge déjà un
-conteneur `gitlab-runner` enregistré sous `maestro-<machine>`, il s'arrête en indiquant comment
-monter le partagé **à côté**, dans un conteneur et un volume distincts :
-
-```bash
-MAESTRO_RUNNER_CONTAINER=gitlab-runner-partage \
-MAESTRO_RUNNER_VOLUME=gitlab-runner-partage-config \
-bash scripts/gitlab/setup-runner.sh --partage
-```
-
-`concurrent` est un réglage **global** du démon `gitlab-runner`, absent des options de
-`gitlab-runner register` : le script l'écrit dans `config.toml` puis redémarre le conteneur. C'est
-idempotent — une valeur déjà suffisante n'est pas touchée (surcharge : `MAESTRO_RUNNER_CONCURRENT`).
-
-**Créer le runner d'une nouvelle machine** est le rôle de
-[`scripts/gitlab/setup-runner.sh`](../scripts/gitlab/setup-runner.sh) (#146), appelé par l'étape
-`runner` de [`scripts/setup.sh`](../scripts/setup.sh) — donc par la commande
-[`/setup`](../.claude/commands/setup.md). Il installe et démarre Docker si besoin, puis, si aucun
-conteneur `gitlab-runner` n'existe sur la machine : crée le runner côté GitLab
-(`POST /user/runners`, type projet, jobs non-taggés), monte le conteneur, l'enregistre, et attend
-son passage `online`. Il est **idempotent** (un runner déjà monté ⇒ simple remise en ligne) et
-n'expose jamais le **jeton** d'enregistrement : il transite par l'environnement du conteneur, pas
-par une ligne de commande. Le **jeton `glab` doit porter la portée `create_runner`** pour que la
-création aboutisse.
-
-L'**id du runner** est propre à chaque machine : il est persisté dans le bloc `env` de
-`.claude/settings.local.json` (non versionné). `ensure-runner.sh` le résout dans cet ordre —
-variable d'environnement `MAESTRO_RUNNER_ID`, puis ce fichier, puis **découverte par l'API** (les
-runners de projet du dépôt ; s'il y en a plusieurs, celui dont la description porte le nom de la
-machine — le motif `maestro-<machine>` du runner local prime, les deux descriptions portant le nom
-de la machine sur l'hôte du runner partagé). Plus aucun id n'est codé en dur : l'ancien défaut
-`54385112`, propre au poste d'origine, était faux sur tout autre clone.
-
-La mise en ligne est **automatisée** par le helper idempotent
-[`scripts/gitlab/ensure-runner.sh`](../scripts/gitlab/ensure-runner.sh). Comme n'importe quel
-runner de projet prend n'importe quel job, il est **no-op dès qu'au moins un est `online`** — le
-runner partagé qui tient la CI dispense de réveiller Docker sur un portable. Ce n'est que si
-**aucun** n'est en ligne qu'il monte celui de **cette** machine : démarrage de Docker Desktop (si
-le démon est éteint), puis du conteneur `gitlab-runner`, et polling jusqu'à `online`.
-`--strict` (ou `MAESTRO_RUNNER_STRICT=1`) restreint au runner de la machine courante en ignorant
-les autres — c'est ce qu'utilise la mise en route, qui rend compte du poste et non de l'état global
-de la CI. Il **échoue proprement** (code non nul + message) sans
-jamais lever d'exception bloquante, et il est **paramétrable par variables d'environnement**
-(`MAESTRO_RUNNER_ID`, `MAESTRO_RUNNER_CONTAINER`, `MAESTRO_DOCKER_DESKTOP`, les fenêtres de
-polling — voir l'en-tête du script). Il est **câblé dans les skills de clôture avant le push /
-avant l'attente du verdict** — [`/ticket-finish`](../.claude/commands/ticket-finish.md) et
-[`/mr-fix`](../.claude/commands/mr-fix.md), donc `/ticket-ship` par ricochet —, appelé
-en `bash scripts/gitlab/ensure-runner.sh || …` : **son échec n'interrompt pas la clôture**, il est
-seulement signalé. Un **hook global** (sur tout `git push`) a été écarté : il se déclencherait sur
-des push sans rapport et bloquerait le push le temps du démarrage de Docker. S'assurer que le
-runner est en ligne **en amont de chaque MR** reste donc intégré au flux de clôture
-(`/ticket-finish`, `/ticket-ship`, `/mr-fix`), désormais sans geste manuel — et d'autant
-plus au bon endroit depuis #165, la MR étant le **seul** moment où un pipeline démarre.
-
-### 8.2 Ménage des conteneurs de jobs sur la machine du runner
-
-L'exécuteur `docker` du runner crée **deux conteneurs éphémères par job** —
-`runner-<jeton>-project-<id>-concurrent-<n>-<hash>-predefined` (clone, cache, artefacts) et
-`…-build` (le script du job), plus un `…-svc-<n>` par service — et les supprime en fin de job.
-**Sauf quand il est tué en cours de route** (Docker Desktop arrêté, poste éteint, job annulé) : le
-ménage n'a alors jamais lieu et les conteneurs restent `Exited` indéfiniment. Le constat qui a
-motivé #166 : 8 résidus pour ~1,5 Go sur un poste, issus de deux pipelines interrompus à une
-semaine d'intervalle, plus 16 volumes de cache répartis sur 4 enregistrements successifs du
-runner. Rien ne le signale, et ça grossit en silence sur la machine de chaque personne qui héberge
-un runner.
-
-[`scripts/gitlab/clean-runner-containers.sh`](../scripts/gitlab/clean-runner-containers.sh) s'en
-charge, **câblé à côté de `ensure-runner.sh`** dans [`/ticket-finish`](../.claude/commands/ticket-finish.md)
-et [`/mr-fix`](../.claude/commands/mr-fix.md) (donc `/ticket-ship` par ricochet) :
-préparer la CI avant la MR est aussi le bon moment pour ramasser les restes du pipeline précédent.
-Appelé en `|| …`, **son échec n'interrompt jamais la clôture**, et il est **silencieux quand il n'y
-a rien à faire**. Contrairement à `ensure-runner.sh`, il n'est **pas** court-circuité quand le
-runner partagé tient la CI : le ménage est local à la machine.
-
-**Jamais `docker container prune` ni `docker system prune`.** Sur un poste de développement, ils
-détruiraient les conteneurs arrêtés des **autres** projets (bases de données, n8n, stacks compose
-au repos). La suppression se fait exclusivement par `docker rm`, conteneur par conteneur, sur une
-liste filtrée par nom — et **trois garde-fous** valident chaque candidat, parce qu'un conteneur
-`Exited` n'est pas forcément un déchet :
-
-1. **État `exited`** — un job en cours d'exécution est `running`, écarté d'office.
-2. **Job encore vivant** — le conteneur `-predefined` **sort (code 0) pendant que le job continue**
-   dans `-build` ; le supprimer casserait l'envoi des artefacts. Les conteneurs sont donc regroupés
-   par job (le préfixe jusqu'au hash) et **tout le groupe est épargné** dès qu'un de ses conteneurs
-   tourne encore. C'est le garde-fou qui compte vraiment.
-3. **Ancienneté** — au cas où le second conteneur du job ne serait pas encore créé (quelques
-   secondes entre les étapes), rien n'est effacé avant `MAESTRO_CLEAN_AGE_MIN` minutes (10 par
-   défaut). Une date de fin illisible vaut « trop récent » : on s'abstient.
-
-Les **volumes de cache** (`runner-<hash>-cache-…`, un jeu par enregistrement du runner) ne sont
-**jamais supprimés automatiquement** — ceux de l'enregistrement courant accélèrent les jobs. Le
-script se contente de les **signaler** quand il en trouve plusieurs jeux ; leur purge est un geste
-explicite, `--volumes`, qui conserve le jeu le plus récent (l'enregistrement courant) et s'appuie
-sur le refus natif de `docker volume rm` pour un volume monté. `--check` donne le diagnostic sans
-rien supprimer. Côté **permissions** ([`.claude/settings.json`](../.claude/settings.json)), seules
-les deux formes non destructives sont pré-autorisées — l'appel nu (celui des skills) et `--check` ;
-`--volumes` demande une confirmation, comme il se doit pour un geste explicite. Invariants testés par
-[`tests/test_clean_runner_containers.py`](../tests/test_clean_runner_containers.py), sur un faux
-CLI `docker` — ni réseau, ni Docker, ni conteneur réel.
+> Les sous-sections **8.2** (ménage des conteneurs de jobs) a disparu avec eux. La numérotation des
+> suivantes n'a **pas** été resserrée : elle est citée dans `CLAUDE.md`, dans les prompts et dans
+> les tests, et la faire glisser pour combler un trou coûterait plus qu'elle ne rapporte.
 
 ### 8.3 MR non mergeable — remédiation (`/mr-fix`, anciennement `/pipeline-fix`)
 
@@ -1071,7 +959,7 @@ signalé qu'une résolution fausse sous une MR en Draft que personne ne relira l
 dans `lib.sh` : `pipeline-latest <ref>`, `pipeline-status <id>`, `pipeline-failed-jobs <id>`,
 `job-trace <job-id> [lignes]`, `pipeline-wait <id> [timeout]` (parsing shell pur, comme le reste du
 fichier). Le job rouge se rejoue en local par le **filet CI** — `bash scripts/ci/local.sh --only
-<job>` —, jamais par une recette recopiée à côté : le filet lit les jobs dans `.gitlab-ci.yml`,
+<job>` —, jamais par une recette recopiée à côté : le filet lit les jobs dans le workflow,
 passe par le venv du repo, analyse un miroir LF pour shellcheck (la CI checkout en LF, une copie
 Windows CRLF produit des faux SC1017) et cadre `pytest` sur le périmètre du diff (§8.4) — la suite
 entière, ~10 min, se payerait ici en plein diagnostic.
@@ -1186,7 +1074,7 @@ n'est pas qu'une économie de mots :
   section — et un prompt est ce que la session lit **en dernier**, donc c'est lui qui l'emporte sur
   la règle générale. Le coût, ~10 min au lieu de ~40 s, se payait en plein diagnostic d'un pipeline
   rouge ;
-- une recette recopiée **fige** les jobs de `.gitlab-ci.yml` au jour où elle a été écrite, quand le
+- une recette recopiée **fige** les jobs du workflow au jour où elle a été écrite, quand le
   filet, lui, les y **lit** (§8.4, levier 2) — la table ignorait déjà le découpage par fichier de
   shellcheck (levier 3) et le miroir LF.
 
@@ -1221,16 +1109,18 @@ que la boucle ne fait gagner.
 Le découpage **n'est pas neutre**, et c'est le point à comprendre avant d'y toucher : shellcheck ne
 suit un `# shellcheck source=…` que si le fichier sourcé est **lui aussi sur la ligne de commande**
 (ou si `-x` est passé). L'appel groupé liait donc les scripts entre eux **sans le dire**, et le
-découpage a fait apparaître un SC2034 sur `MAESTRO_RUNNER_ID` — une variable que `setup-runner.sh`
-pose pour une fonction de `ensure-runner.sh`, qu'il source. Trois conséquences :
+découpage a fait apparaître un SC2034 sur une variable qu'un script posait pour une fonction du
+fichier qu'il sourçait (les deux ont depuis été supprimés avec l'outillage runner, §8.1). Trois
+conséquences :
 
-- **Le pipeline est découpé de la même façon** ([`.gitlab-ci.yml`](../.gitlab-ci.yml)). Découper
+- **Le pipeline est découpé de la même façon**
+  ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Découper
   d'un seul côté ferait du filet un contrôle **plus strict que la CI qu'il prédit** : rouge en
   local, vert en pipeline, sur des remarques que rien n'explique. Le sens de l'écart est toujours
   le même — moins de contexte, donc **plus** de remarques, jamais moins : un faux rouge est
   possible, un faux vert ne l'est pas. Il reste que les deux verdicts doivent coïncider, et
   `tests/test_ci_local.py` l'épingle sur les fichiers versionnés. Le pipeline y gagne au passage
-  les mêmes 35 s → 12 s, sur le runner que toute l'équipe partage (§8.1).
+  les mêmes 35 s → 12 s.
 - **`-x` a été écarté par la mesure**, alors qu'il rétablirait le lien depuis le disque : il fait
   ré-analyser `lib.sh` par chacun des huit scripts qui la sourcent, et le job repasse à **34 s** —
   le découpage ne sert plus à rien.
@@ -1295,7 +1185,7 @@ Le partage se fait sur *qui lit*, pas sur *qui écrit* :
 | Écrit sous la racine (`.maestro/…`) | Reste dans `${TMPDIR:-/tmp}` |
 | --- | --- |
 | `ci-local/<job>.log` — filet CI (§8.4) | miroir LF de shellcheck : effacé avant le verdict, jamais montré |
-| `setup/<étape>.log` — `setup.sh` et `setup-runner.sh`, cités en cas d'échec | fichiers de `env-pull.sh` : ils portent des **valeurs de secrets** |
+| `setup/<étape>.log` — `setup.sh`, cité en cas d'échec | fichiers de `env-pull.sh` : ils portent des **valeurs de secrets** |
 | `controltower/<api>-<ui>/{api,ui,navigateur}.log` | jeton de session, PID du chien de garde, profil jetable du navigateur |
 | `presentation/{api,build,ui}.log` | cache npm des captures : des centaines de Mo, partagés entre clones |
 | `orchestrate/<run-id>/` — déjà le cas depuis #167 | brouillon de calcul de `queue.sh` |
@@ -1403,13 +1293,15 @@ le jour où elle s'arrête — c'est bien côté GitLab que le trou devait se bo
 
 Deux moitiés, et il faut les deux :
 
-- **git est présent** dans le job `pytest` de [`.gitlab-ci.yml`](../.gitlab-ci.yml), par l'**image
-  pleine** `python:3.11` au lieu de `-slim` — seule différence avec les autres jobs Python.
-  L'obtenir par un `apt-get install git` au lancement a été essayé et **retiré** : ça met une
-  dépendance réseau sur les miroirs Debian dans **chaque** pipeline, donc sur le chemin critique du
-  merge (un pipeline vert est exigé), et le pipeline de !269 est mort dessus — « Unable to connect
-  to deb.debian.org », exit 100, avant même que pytest démarre. L'image est tirée une fois puis
-  mise en cache par le runner. **Un remède qui coûte une panne récurrente à ceux qui mergent n'est
+- **git est présent** dans le job `pytest`. Il l'est aujourd'hui **par le runner hébergé**, qui
+  s'en sert pour le checkout : sur GitHub Actions il n'y a rien à faire, et le seul geste qui le
+  reperdrait serait de renvoyer le job dans un `container:` — c'est-à-dire de refaire exactement
+  l'image slim d'où venait le défaut. Le remède du temps de la CI GitLab, lui, valait d'être
+  raconté : l'**image pleine** `python:3.11` au lieu de `-slim`. L'obtenir par un `apt-get install
+  git` au lancement a été essayé et **retiré** : ça met une dépendance réseau sur les miroirs Debian
+  dans **chaque** pipeline, donc sur le chemin critique du merge (un pipeline vert est exigé), et le
+  pipeline de !269 est mort dessus — « Unable to connect to deb.debian.org », exit 100, avant même
+  que pytest démarre. **Un remède qui coûte une panne récurrente à ceux qui mergent n'est
   pas un remède.**
   Aucune **identité** git n'y est posée globalement, et c'est délibéré : le code qui écrit dans le
   dépôt de l'utilisateur porte la sienne par `-c` (`maestro/projets/application.py`). En fournir
@@ -1440,9 +1332,9 @@ n'en a obtenu qu'une : le déclencheur est en place, la protection est **écart�
 ce plan**. Le reste de la section explique les deux, plus un piège dans lequel il ne faut tomber
 qu'une fois, de préférence en le lisant plutôt qu'en le vivant.
 
-> ⚠ Pendant la migration, `.gitlab-ci.yml` **reste en place et fait toujours foi** pour les MR
-> GitLab. Les deux CI coexistent jusqu'à la bascule d'`origin` (#343) ; le retrait de la CI GitLab
-> et des 1 146 lignes d'outillage runner est #344.
+> Pendant la migration, `.gitlab-ci.yml` est resté en place et a fait foi pour les MR GitLab ; les
+> deux CI ont coexisté jusqu'à la bascule d'`origin` (#343). La CI GitLab et les 1 146 lignes
+> d'outillage runner ont été **retirées** par #344 : ce workflow est désormais le seul verdict.
 
 **Le déclencheur : `pull_request`.** Le `on: push` de #332 n'était pas un choix mais une contrainte
 du miroir — un miroir push ne réplique que des branches et des tags, il ne crée aucune pull request,

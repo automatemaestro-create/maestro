@@ -455,7 +455,7 @@ function verbe(seg,   n, t, v, i) {
   if (i > 1) { for (v = 1; v + i - 1 <= n; v++) t[v] = t[v + i - 1]; n = n - i + 1 }
   v = t[1]
   if (v ~ /^[A-Za-z_][A-Za-z0-9_]*=/) return "VAR=… " (n >= 2 ? t[2] : "")
-  if (v ~ /^(git|glab|npm|npx|bash|sh|command|docker|pip|python|python3|node|sudo)$/ && n >= 2)
+  if (v ~ /^(git|gh|npm|npx|bash|sh|command|docker|pip|python|python3|node|sudo)$/ && n >= 2)
     return v " " t[2]
   return v
 }
@@ -807,7 +807,7 @@ EOF
 
   # Les règles de l'`allow` que le classement rejoue — UNION des deux fichiers, parce que c'est le
   # régime réel d'une session autonome (§11.7) : `settings.run.json` n'a jamais redupliqué les verbes
-  # git/glab du dépôt, et les ignorer rangerait chaque `git status` refusé en trou d'allowlist.
+  # git/gh du dépôt, et les ignorer rangerait chaque `git status` refusé en trou d'allowlist.
   # Le fichier va dans le temporaire du système et non sous `.maestro/` : c'est un brouillon de
   # calcul que personne n'ouvre, et la règle de §8.5 ne vise que ce qu'un script invite à lire.
   local regles f bloc

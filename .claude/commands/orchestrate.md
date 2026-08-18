@@ -61,14 +61,10 @@ toi-même.
    décision.
 2. **Contrôle l'état de départ**, et dis ce qui cloche plutôt que de lancer quand même :
    - `bash scripts/gitlab/lib.sh require` — sinon l'authentification que son message nomme
-     (`gh auth login`, ou `glab auth login` tant que le dépôt est sur GitLab) ;
+     (`gh auth login`) ;
    - `bash scripts/orchestrate/guard.sh --check` — le garde-fou ne doit pas avoir dérivé des
      règles `deny` du dépôt ; s'il sort en 1, **arrête-toi**, c'est la seule couche qui protège une
      boucle sans surveillance ;
-   - `bash scripts/gitlab/ensure-runner.sh` — **sur GitLab seulement** : sans runner, chaque PR
-     produite resterait `pending` et rien ne pourrait être mergé au matin. Sur GitHub, les
-     exécutants viennent de la forge et ce contrôle est sans objet (l'outillage runner part avec
-     #344) ;
    - `git status --porcelain` sur le clone principal : un arbre sale n'empêche pas le run (chaque
      ticket a son worktree) mais mérite d'être signalé.
    - **rien à faire pour `main`** : le run la remet lui-même à niveau sur `origin/main` avant son

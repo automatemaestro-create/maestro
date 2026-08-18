@@ -154,9 +154,9 @@ Pour éclairer une décision de merge : `/mr-review <pr>` (synthèse état + CI 
   Et rien à ranger derrière : les worktrees dont la MR est mergée sont **ramassés d'office**
   (`worktree.sh gc`, [§9.2](./docs/10-workflow-git.md)) — sauf s'ils portent du travail non
   sauvegardé, qu'ils signalent alors au lieu de disparaître avec.
-- **La CI est partagée** : un runner monté sur une machine toujours allumée sert toute l'équipe ;
-  celui de votre poste est un secours. Sans aucun runner en ligne, les pipelines restent `pending`
-  et personne ne peut merger ([docs/10 §8.1](./docs/10-workflow-git.md)).
+- **La CI ne demande rien** : elle tourne sur les exécutants hébergés de GitHub, il n'y a aucun
+  runner à monter ni à laisser allumé ([docs/10 §8.1](./docs/10-workflow-git.md)). Docker n'est
+  utile que pour les bases locales, optionnelles.
 - **Bilan de santé** (lecture seule) : `bash scripts/gitlab/doctor.sh` détecte les dérives
   (ticket « En revue » sans MR, branche mergée à nettoyer, réglages de merge retombés).
 - **Laisser la machine dérouler le backlog** : `bash scripts/orchestrate/run.sh` traite les tickets

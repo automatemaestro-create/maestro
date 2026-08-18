@@ -4,7 +4,7 @@ Même principe que [`test_setup.py`](test_setup.py) : un **dépôt jetable** mon
 sur lequel le vrai script est lancé. Rien n'est jamais écrit dans le dépôt de travail — `HOME` et
 l'emplacement des worktrees (`MAESTRO_WORKTREE_DIR`) sont eux aussi redirigés vers `tmp_path`.
 
-**Ni réseau ni glab.** Le dépôt jetable a son propre `origin` (un dépôt *bare* local), et la
+**Ni réseau ni CLI de forge.** Le dépôt jetable a son propre `origin` (un dépôt *bare* local), et la
 branche est toujours imposée par `--branche` : la seule étape qui interroge GitLab
 (`lib.sh branch-for`, qui résout le nom depuis le ticket) est ainsi contournée. Ce qui est testé
 ici, c'est la mécanique git + l'équipement du worktree, pas la résolution du nom de branche.
@@ -104,7 +104,7 @@ class Depot:
             environnement["MAESTRO_WORKTREE_VERDICT"] = str(self.fauxbin / "verdict")
         # Pose du cycle de vie par le ramassage (#275) : ÉTEINTE par défaut, et ce défaut est un
         # garde-fou, pas un confort. Sans lui, un test qui rallume `gc` appellerait le VRAI
-        # `lib.sh reconcile-workflow` avec des iid de fixture (« 152 »…) — sur un poste où `glab`
+        # `lib.sh reconcile-workflow` avec des iid de fixture (« 152 »…) — sur un poste où `gh`
         # est authentifié, ça poserait « Terminé » sur les vrais tickets du projet.
         environnement["MAESTRO_WORKFLOW_POSE"] = "0"
         if self.pose:
@@ -113,8 +113,8 @@ class Depot:
         # `impose_derive`, qui pose en même temps le `setup.sh` factice qu'elle appellera — le vrai
         # installerait pour de bon.
         # Purge des branches mergées (#305) : même dispositif encore. Éteinte par défaut — elle
-        # demanderait à GitLab l'état de la MR de chaque branche, et `glab` est celui du poste, donc
-        # authentifié sur le VRAI projet. `impose_mr` la rallume en posant le faux `glab` qui répond
+        # demanderait à la forge l'état de la PR de chaque branche, et `gh` est celui du poste, donc
+        # authentifié sur le VRAI dépôt. `impose_mr` la rallume en posant le faux `gh` qui répond
         # à sa place, seule couture par laquelle ces tests disent ce qui est mergé.
         environnement["MAESTRO_PURGE_BRANCHES"] = "0"
         if self.mrs is not None:
@@ -191,7 +191,7 @@ class Depot:
         """Remplace `lib.sh reconcile-workflow` par un mouchard — et rallume la pose.
 
         Le shim journalise l'iid reçu et imprime une ligne, ce que `gc` lit comme « quelque chose a
-        été posé ». Aucun appel à `glab`, donc ni réseau ni écriture GitLab.
+        été posé ». Aucun appel au CLI de la forge, donc ni réseau ni écriture.
         """
         self.pose = True
         shim = self.fauxbin / "pose"
@@ -213,33 +213,42 @@ class Depot:
 
     # --- couture de la purge des branches mergées (#305) ---
     def impose_mr(self, etats: dict[str, str]) -> None:
-        """Impose l'état de la MR de chaque branche — et rallume la purge.
+        """Impose l'état de la PR de chaque branche — et rallume la purge.
 
-        Un faux `glab` sert la seule lecture dont `gl_mr_state` a besoin
-        (`mr view <branche> --output json`) ; une branche absente de la table n'a pas de MR du
-        tout, ce que le vrai `glab` signale par un échec et une sortie vide.
+        Un faux `gh` sert la seule lecture dont `gl_mr_state` a besoin : la requête GraphQL de
+        `gh_mr_brief`, dont on ne retient que le `headRefName`. Une branche absente de la table
+        n'a pas de PR du tout, ce que le vrai `gh` rend par une liste de nœuds vide.
+
+        Le vocabulaire de sortie est celui de GitHub (`OPEN`/`MERGED`/`CLOSED`) : c'est `lib.sh`
+        qui le retraduit en `opened`/`merged`/`closed`, et le shim n'a pas à connaître ce
+        contrat — sans quoi le test passerait quoi que fasse la traduction.
         """
         self.mrs = dict(etats)
         table = self.fauxbin / "etats-mr.tsv"
         table.write_text(
-            "".join(f"{branche}\t{etat}\n" for branche, etat in self.mrs.items()),
+            "".join(f"{branche}\t{etat.upper()}\n" for branche, etat in self.mrs.items()),
             encoding="utf-8",
             newline="\n",
         )
-        shim = self.fauxbin / "glab"
-        shim.write_text(
-            "#!/usr/bin/env bash\n"
-            'if [ "$1" = mr ] && [ "$2" = view ]; then\n'
-            "  etat=\"$(awk -F'\\t' -v b=\"$3\" 'b == $1 { print $2; exit }'"
-            f' "{table.as_posix()}")"\n'
-            '  [ -n "$etat" ] || exit 1\n'
-            "  printf '{\"iid\":42,\"state\":\"%s\"}\\n' \"$etat\"\n"
-            "  exit 0\n"
-            "fi\n"
-            "exit 1\n",
-            encoding="utf-8",
-            newline="\n",
-        )
+        shim = self.fauxbin / "gh"
+        corps = f"""#!/usr/bin/env bash
+# Faux `gh` : sert la requête GraphQL de `gh_mr_brief`, et rien d'autre.
+[ "$1" = auth ] && exit 0
+if [ "$1" = api ] && [ "$2" = graphql ]; then
+  # La requête arrive en « -f query=… » : on en extrait le headRefName visé.
+  branche="$(printf '%s' "$*" | sed -n 's/.*headRefName: "\\([^"]*\\)".*/\\1/p')"
+  etat="$(awk -F'\\t' -v b="$branche" 'b == $1 {{ print $2; exit }}' "{table.as_posix()}")"
+  if [ -z "$etat" ]; then
+    printf '{{"data":{{"repository":{{"pullRequests":{{"nodes":[]}}}}}}}}\\n'
+    exit 0
+  fi
+  noeud='{{"number":42,"state":"'"$etat"'","headRefOid":"deadbeef"}}'
+  printf '{{"data":{{"repository":{{"pullRequests":{{"nodes":[%s]}}}}}}}}\\n' "$noeud"
+  exit 0
+fi
+exit 1
+"""
+        shim.write_text(corps, encoding="utf-8", newline="\n")
         shim.chmod(0o755)
 
     # --- couture du signalement des orphelins (#328) ---
@@ -740,7 +749,7 @@ def test_ensure_refuse_un_iid_non_numerique(depot: Depot) -> None:
 # cher qu'un ramassage trop zélé : les tests ci-dessous portent d'abord sur ses REFUS.
 #
 # La question « ce travail est-il soldé ? » est posée à GitLab via `lib.sh worktree-done`, remplacé
-# ici par `Depot.impose_verdicts` : ni réseau, ni glab, ni écriture GitLab.
+# ici par `Depot.impose_verdicts` : ni réseau, ni CLI de forge, ni écriture côté forge.
 
 
 def _verdict_ligne(verdict: str, raison: str, sha: str = "-") -> str:
@@ -789,13 +798,13 @@ def test_gc_ne_touche_pas_un_worktree_actif(depot: Depot) -> None:
 
 
 def test_gc_ne_deduit_jamais_le_merge_du_nom_de_la_branche(depot: Depot) -> None:
-    """Verdict « inconnu » (glab absent, hors ligne, ticket illisible) : on ne touche à rien.
+    """Verdict « inconnu » (gh absent, hors ligne, ticket illisible) : on ne touche à rien.
 
     Ne rien savoir n'autorise rien — même garde-fou que `cleanup-merged` sur les branches
     (docs/10 §6) : `chore/152-…` a tout l'air d'un ticket clos, ce n'est pas une preuve.
     """
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("inconnu", "glab indisponible")})
+    depot.impose_verdicts({"152": _verdict_ligne("inconnu", "gh indisponible")})
 
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -1222,7 +1231,7 @@ def test_ensure_pose_le_cycle_de_vie_des_tickets_soldes_au_passage(depot: Depot)
 
 
 def test_gc_survit_a_une_pose_en_echec(depot: Depot) -> None:
-    """Pose impossible (glab absent, hors ligne) : le ramassage continue, muet sur ce point.
+    """Pose impossible (gh absent, hors ligne) : le ramassage continue, muet sur ce point.
 
     Même statut que `sync-main` : ça signale ou ça se tait, ça n'empêche jamais un ticket de
     démarrer ni un run de continuer.

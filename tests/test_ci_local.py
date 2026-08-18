@@ -1,14 +1,14 @@
 """Tests du filet CI local — `scripts/ci/local.sh` (ticket #156, lot final du parent #155).
 
-Le script rejoue en local les jobs de `.gitlab-ci.yml` avant le push : à plusieurs, découvrir un
-échec de lint par le pipeline, c'est le découvrir sur la machine de quelqu'un d'autre et occuper
-son runner pour une faute de frappe (docs/10 §8). Un filet qui MENT — vert alors que la CI serait
-rouge, ou l'inverse — est pire que pas de filet : ces tests épinglent donc ses verdicts.
+Le script rejoue en local les jobs de `.github/workflows/ci.yml` avant le push : découvrir un
+échec de lint par le pipeline, c'est l'apprendre après plusieurs minutes facturées, pour une faute
+de frappe (docs/10 §8). Un filet qui MENT — vert alors que la CI serait rouge, ou l'inverse — est
+pire que pas de filet : ces tests épinglent donc ses verdicts.
 
 Ce qui est vérifié :
 
-* les réglages sont **lus dans `.gitlab-ci.yml`** (sévérité shellcheck, seuil de couverture, image)
-  plutôt que recopiés — le filet suit le pipeline quand celui-ci change ;
+* les réglages sont **lus dans `.github/workflows/ci.yml`** (sévérité shellcheck, seuil de
+  couverture) plutôt que recopiés — le filet suit le pipeline quand celui-ci change ;
 * **un job non jouable n'est pas un échec** : outil absent ⇒ `IGNORÉ` et verdict annoncé PARTIEL
   (bloquant seulement avec `--strict`) ;
 * **un étage lint rouge arrête le pipeline**, comme GitLab ;
@@ -53,24 +53,41 @@ pytestmark = [
 NODE_PIN = "20.19.0"
 SEVERITE = "style"
 SEUIL = "77"
+# L'image du conteneur shellcheck n'est PLUS lue dans la CI (#344) : le job `shellcheck` de
+# GitHub Actions se sert du binaire préinstallé sur le runner. Elle n'est qu'un repli local, et
+# c'est MAESTRO_SHELLCHECK_IMAGE qui la fixe ici — poser la valeur d'essai par l'environnement
+# épingle précisément ce changement : si le filet se remettait à la lire dans le pipeline, il n'y
+# trouverait plus rien.
 IMAGE = "koalaman/shellcheck-alpine:v0.0.0-essai"
 
 # Pipeline synthétique. La ligne de commentaire porte volontairement une AUTRE sévérité : le motif
 # de lecture inclut le nom de la commande, c'est ce qui l'empêche d'attraper la mauvaise valeur.
-GITLAB_CI = f"""\
-stages: [lint, test]
+WORKFLOW_CI = f"""\
+name: CI
+on:
+  pull_request:
+  workflow_dispatch:
 
-shellcheck:
-  stage: lint
-  image: {IMAGE}
-  script:
-    # à durcir en --severity=error quand le dépôt sera propre
-    - shellcheck --severity={SEVERITE} $(find scripts -name '*.sh')
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        run: |
+          # à durcir en --severity=error quand le dépôt sera propre
+          for fichier in $files; do
+            shellcheck --severity={SEVERITE} "$fichier" || code=1
+          done
 
-pytest:
-  stage: test
-  script:
-    - pytest --cov=maestro --cov-fail-under={SEUIL}
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest --cov=maestro --cov-fail-under={SEUIL}
+
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run typecheck
 """
 
 # Shim générique : journalise son appel, imprime ce qu'on lui a demandé d'imprimer, rend le code
@@ -229,6 +246,8 @@ class Clone:
                 "PATH": os.pathsep.join([str(self.fauxbin), environnement.get("PATH", "")]),
                 "TMPDIR": str(self.tmp),
                 "MAESTRO_FAUX_JOURNAL": str(self.journal),
+                # L'image de repli n'est plus lue dans la CI (#344) : on la pose ici.
+                "MAESTRO_SHELLCHECK_IMAGE": IMAGE,
             }
         )
         environnement.update(reglages)
@@ -330,7 +349,10 @@ def clone(tmp_path: Path) -> Clone:
 
     (racine / "scripts" / "ci").mkdir(parents=True)
     shutil.copy2(RACINE / "scripts" / "ci" / "local.sh", racine / "scripts" / "ci" / "local.sh")
-    (racine / ".gitlab-ci.yml").write_text(GITLAB_CI, encoding="utf-8", newline="\n")
+    (racine / ".github" / "workflows").mkdir(parents=True)
+    (racine / ".github" / "workflows" / "ci.yml").write_text(
+        WORKFLOW_CI, encoding="utf-8", newline="\n"
+    )
     (racine / ".node-version").write_text(f"v{NODE_PIN}\n", encoding="utf-8", newline="\n")
     (racine / "apps" / "web").mkdir(parents=True)
     (racine / "apps" / "web" / "package.json").write_text("{}\n", encoding="utf-8", newline="\n")
@@ -356,8 +378,8 @@ def clone(tmp_path: Path) -> Clone:
 # --- Les réglages viennent du pipeline ------------------------------------------------------------
 
 
-def test_list_reprend_les_reglages_de_gitlab_ci(clone: Clone) -> None:
-    """Seuil et sévérité sont LUS dans `.gitlab-ci.yml` : le filet suit le pipeline.
+def test_list_reprend_les_reglages_du_workflow(clone: Clone) -> None:
+    """Seuil et sévérité sont LUS dans `.github/workflows/ci.yml` : le filet suit le pipeline.
 
     Le seuil se lit en « --complet » : c'est le seul mode qui l'applique (#214), le mode rapide
     jouant un sous-ensemble qui ne peut pas le tenir.
@@ -929,7 +951,7 @@ def test_le_repli_docker_ne_demarre_qu_un_seul_conteneur(clone: Clone) -> None:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     runs = [appel for appel in clone.appels() if appel.startswith("docker run")]
     assert len(runs) == 1, f"un seul conteneur attendu, reçu : {runs}"
-    assert IMAGE in runs[0]                     # l'image vient de .gitlab-ci.yml
+    assert IMAGE in runs[0]                     # l'image vient de MAESTRO_SHELLCHECK_IMAGE
     assert "scripts/gitlab/lib.sh" in runs[0]   # les fichiers sont les arguments de la boucle
     assert "for fichier in" in runs[0]          # …et la boucle est bien à l'intérieur
 
@@ -941,7 +963,7 @@ def test_le_pipeline_decoupe_shellcheck_comme_le_filet() -> None:
     ligne de commande. Un côté découpé et l'autre groupé, c'est donc un filet plus strict que la CI
     qu'il prédit : rouge en local, vert en pipeline, sur des remarques que rien n'explique.
     """
-    pipeline = (RACINE / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    pipeline = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     filet = (RACINE / "scripts" / "ci" / "local.sh").read_text(encoding="utf-8")
     # Le pipeline boucle sur ses fichiers au lieu de les passer tous d'un coup.
     assert re.search(r"for fichier in \$files", pipeline), \
@@ -950,7 +972,7 @@ def test_le_pipeline_decoupe_shellcheck_comme_le_filet() -> None:
         "l'appel groupé du pipeline ferait diverger son verdict de celui du filet"
     # Et aucun des deux ne passe `-x` : il rétablirait le lien entre fichiers, mais ferait
     # ré-analyser lib.sh par chacun des scripts qui la sourcent (34 s au lieu de 12).
-    for source, nom in ((pipeline, ".gitlab-ci.yml"), (filet, "scripts/ci/local.sh")):
+    for source, nom in ((pipeline, ".github/workflows/ci.yml"), (filet, "scripts/ci/local.sh")):
         assert not re.search(r"^\s*-?\s*shellcheck -x ", source, re.MULTILINE), \
             f"{nom} : `-x` annule le gain du découpage (#285)"
 
@@ -964,7 +986,7 @@ def test_shellcheck_absent_renvoie_a_l_image_du_pipeline(clone: Clone) -> None:
     acheve = clone.lance("--only", "shellcheck")
     ligne = ligne_du_job(acheve.stdout, "shellcheck")
     assert "IGNORÉ" in ligne
-    assert IMAGE in ligne          # l'image vient bien de .gitlab-ci.yml
+    assert IMAGE in ligne          # …et le conseil nomme bien l'image de repli
 
 
 # --- Dérive des dépendances (#216) ----------------------------------------------------------------
@@ -1181,17 +1203,18 @@ def test_le_script_typecheck_existe_et_la_ci_le_joue() -> None:
     paquet = json.loads((RACINE / "apps" / "web" / "package.json").read_text(encoding="utf-8"))
     assert paquet["scripts"].get("typecheck") == "tsc --noEmit", \
         "sans ce script, une session n'a que `node …/tsc` — que rien n'autorise (#236)"
-    pipeline = (RACINE / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    pipeline = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "npm run typecheck" in pipeline, "un script jamais joué en CI finit par ne plus passer"
 
 
 # --- Git est une dépendance de la suite, pas un confort (#333) ------------------------------------
-# Le pipeline joue pytest dans `python:3.11-slim`, qui n'a pas git. Sept modules d'outillage montent
-# un vrai dépôt jetable et sont gardés par `skipif(shutil.which("git") is None)` : ~285 tests y
-# étaient donc SAUTÉS en silence, pipeline verte, depuis toujours. Ils n'ont ainsi jamais tourné que
-# sur des postes de développement — tous sous Windows — et le premier runner Linux muni de git en a
-# trouvé 16 rouges d'un coup (#332). Les deux moitiés du remède se gardent ici : git installé, et
-# son absence rendue bruyante.
+# Sept modules d'outillage montent un vrai dépôt jetable et sont gardés par
+# `skipif(shutil.which("git") is None)` : ~285 tests SAUTÉS en silence, pipeline verte, partout où
+# git manque. C'est arrivé pendant toute la vie de la CI GitLab, dont le job `pytest` tournait dans
+# `python:3.11-slim` — si bien que ces tests n'ont jamais tourné que sur des postes de développement
+# (tous sous Windows), et que le premier runner Linux muni de git en a trouvé 16 rouges d'un coup
+# (#332). Les deux moitiés du remède se gardent ici : git disponible dans le job, et son absence en
+# CI rendue bruyante (le garde-fou de `tests/conftest.py`).
 
 
 def test_le_job_pytest_dispose_de_git() -> None:
@@ -1201,31 +1224,29 @@ def test_le_job_pytest_dispose_de_git() -> None:
     ne se voit dans aucun compte rendu — un job qui saute 285 tests et un job qui les joue tous
     rendent le même « vert ».
 
-    Ce qui est épinglé est la **disponibilité** de git, pas la façon de l'obtenir — mais les deux
-    façons ne se valent pas, et la nuance a coûté un pipeline rouge. Un `apt-get install git` au
-    lancement met une dépendance réseau sur les miroirs Debian dans CHAQUE pipeline, donc sur le
-    chemin critique du merge : celui de !269 est mort dessus (« Unable to connect to
-    deb.debian.org ») avant même que pytest démarre. L'image pleine porte git nativement et le
-    runner la met en cache. D'où l'assertion sur l'absence de `-slim`, la variante qui n'a pas git.
+    Sur GitHub Actions, git vient AVEC le runner hébergé : c'est même lui qui fait le checkout. Le
+    seul moyen de le reperdre est de renvoyer le job dans un conteneur (`container:`), ce qui
+    ramènerait exactement l'image slim de la CI GitLab. C'est donc cela qui est épinglé, plutôt
+    qu'une recette d'installation qui n'a plus lieu d'être — et rappelons pourquoi elle n'en était
+    pas une : un `apt-get install git` au lancement met une dépendance réseau sur les miroirs
+    Debian dans CHAQUE pipeline, donc sur le chemin critique du merge (le pipeline de !269 est mort
+    dessus, « Unable to connect to deb.debian.org », avant même que pytest démarre).
     """
-    pipeline = (RACINE / ".gitlab-ci.yml").read_text(encoding="utf-8")
-    job = pipeline.split("\npytest:", 1)
+    pipeline = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = pipeline.split("\n  pytest:", 1)
     assert len(job) == 2, "le job `pytest` a été renommé — ce test doit suivre"
-    corps = job[1].split("\nmypy:", 1)[0]
+    corps = job[1].split("\n  mypy:", 1)[0]
 
     lignes = [ligne.strip() for ligne in corps.splitlines()]
-    image = next((ligne for ligne in lignes if ligne.startswith("image:")), None)
+    assert any(ligne.startswith("runs-on:") for ligne in lignes), \
+        "le job `pytest` doit nommer son runner"
+    conteneur = next((ligne for ligne in lignes if ligne.startswith("container:")), None)
     installe = any("install" in ligne and " git" in ligne for ligne in lignes)
 
-    assert image is not None or installe, (
-        "le job `pytest` hérite de `python:3.11-slim`, qui n'a PAS git : la suite en dépend pour "
-        "~285 tests d'outillage, qui seraient sautés en silence (#333)"
+    assert conteneur is None or installe, (
+        f"« {conteneur} » renvoie le job dans un conteneur, qui n'a pas forcément git : la "
+        "suite en dépend pour ~285 tests d'outillage, sautés en silence sans lui (#333)"
     )
-    if not installe:
-        assert image is not None and "slim" not in image, (
-            f"« {image} » est une variante slim, qui n'embarque pas git — le job doit soit tourner "
-            "sur l'image pleine, soit installer git explicitement (#333)"
-        )
 
 
 def test_git_absent_en_ci_est_une_erreur_et_non_un_saut() -> None:

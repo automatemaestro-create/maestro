@@ -85,5 +85,5 @@ n'ouvre le doc qu'en cas de doute).
    `gh pr merge` **de sa propre main** — la commande t'est refusée en `deny`, à lui non.
 
 N'exécute **aucune** commande d'écriture : ni `gh pr merge`/`close`/`review`/`edit` (ni leurs
-équivalents `glab mr …`), ni `gh issue edit`/`set-workflow`, ni `git push`. En cas de doute,
+), ni `gh issue edit`/`set-workflow`, ni `git push`. En cas de doute,
 abstiens-toi et demande.

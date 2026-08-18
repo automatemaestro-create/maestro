@@ -38,6 +38,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 racine="$(cd "$here/../.." && pwd)"
 # shellcheck source=scripts/gitlab/lib.sh
 . "$racine/scripts/gitlab/lib.sh"
+# Les primitives de LECTURE de l'archive GitLab — les seules de tout le dépôt (#344). lib.sh, elle,
+# ne fournit plus que les helpers de texte (gl_json_string_field…), qui ne parlent à aucune forge.
+# shellcheck source=scripts/migration/gitlab-lecture.sh
+. "$here/gitlab-lecture.sh"
 
 GH_REPO="${MAESTRO_GITHUB_REPO:-automatemaestro-create/maestro}"
 
@@ -91,7 +95,7 @@ note()    { [ "$format" = "tsv" ] || printf '  %s\n' "$1"; }
 # inv_iids -> tous les iid de tickets, un par ligne, triés numériquement.
 #
 # Pagination GraphQL explicite, pour deux raisons distinctes :
-#   - gl_backlog plafonne à `first: 100` (il sert /backlog, pas un inventaire), et un inventaire
+#   - le backlog courant plafonne à `first: 100` (il sert /backlog, pas un inventaire), et un inventaire
 #     qui s'arrête à 100 tickets est un inventaire faux ;
 #   - le JSON REST d'un ticket porte PLUSIEURS `"iid"` — le sien, mais aussi celui du milestone
 #     imbriqué — donc un `grep '"iid"'` sur /issues compte presque le double (677 pour 341
@@ -101,7 +105,7 @@ inv_iids() {
   local curseur="" apres out lot tours=0
   while :; do
     [ -n "$curseur" ] && apres=', after: "'"$curseur"'"' || apres=""
-    out="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: all, first: 100'"$apres"') { pageInfo { endCursor hasNextPage } nodes { iid } } } }')" || return 1
+    out="$(mig_graphql_read '{ project(fullPath:"'"$MIG_GL_PROJECT"'") { workItems(state: all, first: 100'"$apres"') { pageInfo { endCursor hasNextPage } nodes { iid } } } }')" || return 1
     lot="$(printf '%s' "$out" | grep -o '"iid":"[0-9]\+"' | grep -o '[0-9]\+')"
     [ -z "$lot" ] && break
     printf '%s\n' "$lot"
@@ -114,20 +118,20 @@ inv_iids() {
 }
 
 inventaire_source() {
-  section "1. Source — GitLab ($GL_PROJECT)"
+  section "1. Source — GitLab ($MIG_GL_PROJECT)"
 
   local counts issues_n mr_n
-  counts="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { issues { count } mergeRequests { count } } }')" || {
+  counts="$(mig_graphql_read '{ project(fullPath:"'"$MIG_GL_PROJECT"'") { issues { count } mergeRequests { count } } }')" || {
     echo "lecture GraphQL impossible — glab est-il authentifié ?" >&2; return 1; }
   issues_n="$(printf '%s' "$counts" | grep -o '"issues":{"count":[0-9]\+' | grep -o '[0-9]\+$')"
   mr_n="$(printf '%s' "$counts" | grep -o '"mergeRequests":{"count":[0-9]\+' | grep -o '[0-9]\+$')"
 
   local enc milestones_n labels_n
-  enc="$(gl_project_enc)"
+  enc="$(mig_project_enc)"
   # `grep -c` compte les LIGNES porteuses d'une correspondance, pas les correspondances : sur une
   # réponse REST tenant sur une seule ligne il rend 1, quoi qu'elle contienne. D'où `grep -o | wc -l`.
-  milestones_n="$(glab api "projects/$enc/milestones?per_page=100" 2>/dev/null | grep -o '"iid":[0-9]\+' | wc -l | tr -d ' ')"
-  labels_n="$(glab api "projects/$enc/labels?per_page=100" 2>/dev/null | grep -o '"name":"[^"]*"' | wc -l | tr -d ' ')"
+  milestones_n="$(mig_glab_api "projects/$enc/milestones?per_page=100" | grep -o '"iid":[0-9]\+' | wc -l | tr -d ' ')"
+  labels_n="$(mig_glab_api "projects/$enc/labels?per_page=100" | grep -o '"name":"[^"]*"' | wc -l | tr -d ' ')"
 
   kv "tickets" "${issues_n:-?}"
   kv "merge requests" "${mr_n:-?}"
@@ -275,7 +279,7 @@ inventaire_cible() {
 # --- Déroulé -------------------------------------------------------------------------------------
 
 if [ "$portee" != "cible" ]; then
-  gl_require_glab || exit 1
+  mig_require_glab || exit 1
   inventaire_source || exit 1
 fi
 

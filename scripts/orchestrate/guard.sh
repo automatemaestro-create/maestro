@@ -5,10 +5,13 @@
 # irréversibles ou réservés à un humain — QUEL QUE SOIT LE MODE DE PERMISSION de la session. C'est
 # ce qui distingue ce filet de la couche `permissions` : celle-ci tombe avec
 # `--dangerously-skip-permissions`, le hook non. Une boucle qui tourne la nuit n'a personne pour
-# rattraper un `glab mr merge` parti tout seul.
+# rattraper un `gh pr merge` parti tout seul.
 #
-# LES DEUX FORGES, EN MÊME TEMPS (#341, chantier #335). Les motifs `gh …` sont AJOUTÉS à côté des
-# motifs `glab …`, jamais substitués : entre le lot 4 (qui pose MAESTRO_FORGE) et la bascule (lot 8),
+# LES MOTIFS `glab …` SONT PARTIS AVEC LA BRANCHE GITLAB (#344). Ils avaient été gardés à côté des
+# motifs `gh …` tant que les deux forges étaient joignables depuis le même poste ; ce n'est plus le
+# cas, et un garde-fou qui protège une cible qui n'existe plus n'est qu'un motif de plus à relire.
+# Ancien contexte (#341, chantier #335) : entre le lot 4 (qui posait MAESTRO_FORGE) et la bascule
+# (lot 8),
 # les deux outils sont installés sur les mêmes postes et une session peut appeler l'un ou l'autre.
 # Un garde-fou qui suivrait la forge active se laisserait contourner par la variable qu'il est censé
 # ne pas croire — et ce fichier n'est justement PAS censé faire confiance à l'environnement de la
@@ -26,9 +29,9 @@
 #
 # Ce qui est refusé, et pourquoi (docs/10-workflow-git.md §6, CLAUDE.md « Garde-fous ») :
 #   - force-push : réécrit un historique déjà poussé, que d'autres ont pu reprendre ;
-#   - `glab mr merge`/`mr close`, `gh pr merge`/`pr close` : le merge est TOUJOURS une décision
+#   - `gh pr merge`/`pr close` : le merge est TOUJOURS une décision
 #     humaine ;
-#   - `glab ci delete`, `gh run delete` : détruit des pipelines dont d'autres lisent le verdict ;
+#   - `gh run delete` : détruit des runs dont d'autres lisent le verdict ;
 #   - `git reset --hard` : jette du travail non commité, sans rattrapage ;
 #   - `git commit --no-verify` : contourne le hook `commit-msg`, donc la convention de commit ;
 #   - tout commit sur `main` : la règle Git n°1 du dépôt (un ticket = une branche).
@@ -77,23 +80,13 @@ refus() {
     fi
   fi
 
-  if printf '%s' "$cmd" | grep -qE 'glab[[:space:]]+mr[[:space:]]+(merge|close)'; then
-    printf 'le merge et la fermeture d'\''une MR sont des décisions humaines — une session autonome ne merge ni ne ferme jamais (CLAUDE.md, Garde-fous).'
-    return 0
-  fi
-
   if printf '%s' "$cmd" | grep -qE 'gh[[:space:]]+pr[[:space:]]+(merge|close)'; then
     printf 'le merge et la fermeture d'\''une PR sont des décisions humaines — une session autonome ne merge ni ne ferme jamais (CLAUDE.md, Garde-fous).'
     return 0
   fi
 
-  if printf '%s' "$cmd" | grep -qE 'glab[[:space:]]+ci[[:space:]]+delete'; then
-    printf 'suppression de pipeline interdite : d'\''autres lisent son verdict. Au plus « glab ci retry ».'
-    return 0
-  fi
-
-  # `gh run delete` est le pendant exact de `glab ci delete` ; `gh run cancel`, lui, ne détruit rien
-  # et reste autorisé — comme `glab ci retry` de l'autre côté.
+  # `gh run cancel`, lui, ne détruit rien et reste autorisé : il n'efface aucun verdict, il en
+  # abrège un qui n'a plus d'objet.
   if printf '%s' "$cmd" | grep -qE 'gh[[:space:]]+run[[:space:]]+delete'; then
     printf 'suppression de run Actions interdite : d'\''autres lisent son verdict. Au plus « gh run rerun ».'
     return 0
@@ -140,7 +133,7 @@ mode_check() {
   if [ -n "$manquants" ]; then
     printf 'guard.sh --check : ✗ règles « deny » du dépôt absentes de settings.run.json :\n' >&2
     # Une règle par ligne, jamais `printf … $manquants` : une règle porte des espaces
-    # (« Bash(glab mr merge:*) ») et le découpage de mots la rendrait en trois morceaux.
+    # (« Bash(gh pr merge:*) ») et le découpage de mots la rendrait en trois morceaux.
     while IFS= read -r regle_manquante; do
       printf '  %s\n' "$regle_manquante" >&2
     done <<EOF
@@ -200,7 +193,7 @@ esac
 charge="$(tr '\n' ' ')"
 
 # Seuls les appels Bash sont jugés. Les autres outils passent sans examen — et surtout, la recherche
-# de motifs ne DOIT PAS courir sur un Edit/Write : ce dépôt documente « glab mr merge » et
+# de motifs ne DOIT PAS courir sur un Edit/Write : ce dépôt documente « gh pr merge » et
 # « git push --force » dans docs/10 et CLAUDE.md, et écrire ces pages se ferait refuser.
 outil="$(printf '%s' "$charge" | grep -o '"tool_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
 [ "$outil" = "Bash" ] || exit 0

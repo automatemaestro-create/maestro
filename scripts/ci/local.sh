@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Filet CI local — rejoue les jobs de .gitlab-ci.yml sur son propre poste, AVANT le push
+# Filet CI local — rejoue les jobs de .github/workflows/ci.yml sur son propre poste, AVANT le push
 # (ticket #157, parent #155).
 #
-# Pourquoi (docs/10-workflow-git.md §8) : les runners partagés sont coupés, la CI tourne sur le
-# runner de projet d'UNE machine, et le merge exige un pipeline vert. Découvrir un échec de lint
-# par le pipeline, à plusieurs, c'est donc le découvrir sur la machine de quelqu'un d'autre — et
-# occuper son runner pour une faute de frappe. Ce script rejoue les mêmes contrôles en local :
+# Pourquoi (docs/10-workflow-git.md §8) : la CI tourne sur les runners hébergés de GitHub et son
+# verdict conditionne le merge. Découvrir un échec de lint par le pipeline, c'est l'apprendre après
+# un aller-retour de plusieurs minutes — facturées — pour une faute de frappe. Ce script rejoue les
+# mêmes contrôles en local :
 #
 #   bash scripts/ci/local.sh                    # tous les jobs applicables
 #   bash scripts/ci/local.sh --complet          # + la suite pytest ENTIÈRE et sa couverture
@@ -26,7 +26,7 @@
 #   --complet         : la suite entière avec sa couverture et son seuil — ce que joue la CI.
 #
 # Le lint, lui, tourne toujours en entier : il coûte quelques secondes et c'est l'échec le plus
-# bête à découvrir sur le runner de quelqu'un d'autre.
+# bête à découvrir sur un runner facturé à la minute.
 #
 # Principes :
 #   - LES INTERPRÉTEURS DU DÉPÔT, jamais ceux du système : le venv (.venv/) et le Node vendoré
@@ -39,7 +39,7 @@
 #   - AUCUN RÉSEAU, aucune installation : le script se sert de ce que scripts/setup.sh a posé.
 #     Ce qui manque est dit, avec la commande qui l'obtient — jamais installé dans le dos.
 #   - MÊMES ÉTAGES QUE LA CI : lint puis test ; un étage en échec ARRÊTE le pipeline, comme
-#     GitLab. Le code de sortie est non nul dès le premier échec dur.
+#     la CI. Le code de sortie est non nul dès le premier échec dur.
 #   - UN PÉRIMÈTRE RÉDUIT SE DIT : sélectionner des tests, c'est accepter de ne pas tout savoir.
 #     Le job annonce ce qu'il a joué et pourquoi, le verdict final porte la mention PARTIEL, et
 #     tout ce que le script ne sait pas classer élargit à la suite entière — jamais l'inverse.
@@ -51,12 +51,12 @@
 #     (et bloquant avec --strict). Mieux vaut un verdict honnêtement incomplet qu'un faux vert.
 #
 # Les paramètres qui pourraient dériver de la CI (seuil de couverture, sévérité shellcheck, image
-# du linter) sont LUS dans .gitlab-ci.yml plutôt que recopiés ici : le filet suit le pipeline.
+# du linter) sont LUS dans .github/workflows/ci.yml plutôt que recopiés ici : le filet suit le pipeline.
 
 set -uo pipefail
 
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CI_YML="$RACINE/.gitlab-ci.yml"
+CI_YML="$RACINE/.github/workflows/ci.yml"
 # JOURNAUX SOUS LA RACINE DU WORKTREE (#234), pas dans ${TMPDIR:-/tmp}. Quand un job échoue, le
 # renvoi vers son journal est la seule information qui dise POURQUOI — et c'est justement celle
 # qu'une session autonome (docs/10 §11) n'a pas le droit d'aller chercher : un chemin absolu hors du
@@ -79,7 +79,7 @@ else
   C_G=''; C_Y=''; C_R=''; C_B=''; C_0=''
 fi
 
-# --- Réglages repris de .gitlab-ci.yml ------------------------------------------------------------
+# --- Réglages repris de .github/workflows/ci.yml ------------------------------------------------------------
 # Lecture tolérante : si le motif disparaît du pipeline, on retombe sur la valeur du jour plutôt
 # que de refuser de tourner.
 lit_ci() { # <motif-grep-E> <défaut>
@@ -91,7 +91,13 @@ lit_ci() { # <motif-grep-E> <défaut>
 # du pipeline (« à durcir en… »), et un motif nu y aurait attrapé la mauvaise valeur.
 SHELLCHECK_SEVERITE="$(lit_ci 'shellcheck --severity=[a-z]+' 'shellcheck --severity=warning')"
 SHELLCHECK_SEVERITE="${SHELLCHECK_SEVERITE##*=}"
-SHELLCHECK_IMAGE="${MAESTRO_SHELLCHECK_IMAGE:-$(lit_ci 'koalaman/shellcheck-alpine:[A-Za-z0-9._-]+' 'koalaman/shellcheck-alpine:stable')}"
+# L'IMAGE, elle, N'EST PLUS LUE DANS LA CI et c'est volontaire (#344) : le job `shellcheck` de
+# GitHub Actions se sert du shellcheck PRÉINSTALLÉ sur le runner — une image `container:` alpine y
+# ferait échouer `actions/checkout`, qui exige un Node absent de cette image. Il n'y a donc plus
+# rien à suivre, et le conteneur n'est qu'un REPLI local pour un poste sans shellcheck installé.
+# `lit_ci` aurait rendu son défaut en silence ; le dire ici évite de croire à un miroir qui
+# n'existe plus. MAESTRO_SHELLCHECK_IMAGE reste le point de réglage.
+SHELLCHECK_IMAGE="${MAESTRO_SHELLCHECK_IMAGE:-koalaman/shellcheck-alpine:stable}"
 # `[^#]*` entre la commande et le drapeau : la CI a gagné un `-n auto` (#214) et pourrait gagner
 # autre chose. Un motif qui collait les deux mots (« pytest --cov-fail-under=… ») cessait de
 # matcher ce jour-là, et le filet retombait en silence sur le seuil par défaut — un écart avec le
@@ -141,7 +147,7 @@ workers_pytest() {
   fi
 }
 
-# --- Jobs, par étage (mêmes noms que .gitlab-ci.yml) ----------------------------------------------
+# --- Jobs, par étage (mêmes noms que .github/workflows/ci.yml) ----------------------------------------------
 ETAGE_LINT="shellcheck python-lint"
 ETAGE_TEST="pytest mypy web-build"
 JOBS_CONNUS="$ETAGE_LINT $ETAGE_TEST"
@@ -154,7 +160,7 @@ MODE_PYTEST=rapide
 
 usage() {
   cat <<USAGE
-Filet CI local — rejoue les jobs de .gitlab-ci.yml avant de pousser.
+Filet CI local — rejoue les jobs de .github/workflows/ci.yml avant de pousser.
 
   bash scripts/ci/local.sh [options]
 
@@ -177,12 +183,12 @@ Jobs : ${JOBS_CONNUS// /, }
 Le lint tourne toujours en entier. Le périmètre de pytest se déduit du diff avec origin/main,
 travail non commité compris :
   maestro/**          les suites applicatives (celles qui ne pilotent aucun script du dépôt)
-  scripts/**, .claude/**, .gitlab*  les suites qui NOMMENT le fichier modifié
+  scripts/**, .claude/**, .github/**  les suites qui NOMMENT le fichier modifié
   tests/test_*.py     elles-mêmes
   conftest.py, pyproject.toml, ou tout chemin non classé   la suite entière
   apps/web/**, docs/**, *.md   aucune suite pytest (web-build couvre le front)
 
-web-build ne tourne que si apps/web (ou .gitlab-ci.yml) change par rapport à origin/main —
+web-build ne tourne que si apps/web (ou .github/workflows/ci.yml) change par rapport à origin/main —
 même règle que le pipeline. « --only web-build » le force.
 
 pytest tourne sur min(cœurs, $PYTEST_WORKERS_PLAFOND) workers : au-delà, c'est la mémoire qui
@@ -191,7 +197,7 @@ USAGE
 }
 
 liste_jobs() {
-  printf 'Jobs rejoués par le filet local (source : %s)\n\n' ".gitlab-ci.yml"
+  printf 'Jobs rejoués par le filet local (source : %s)\n\n' ".github/workflows/ci.yml"
   printf '  %-12s %-6s %s\n' JOB ÉTAGE COMMANDE
   printf '  %-12s %-6s %s\n' shellcheck   lint "shellcheck --severity=$SHELLCHECK_SEVERITE <script>, un appel par fichier de scripts/"
   printf '  %-12s %-6s %s\n' python-lint  lint "ruff check ."
@@ -324,13 +330,13 @@ compte_lignes() {
 # les CODES DE RETOUR — non nul dès qu'un fichier en rend un, jamais celui du dernier.
 #
 # ⚠ CE DÉCOUPAGE N'EST PAS NEUTRE, et c'est pourquoi le PIPELINE A ÉTÉ DÉCOUPÉ AVEC LUI
-# (.gitlab-ci.yml, même boucle). Un `# shellcheck source=…` n'est suivi que si le fichier sourcé est
+# (.github/workflows/ci.yml, même boucle). Un `# shellcheck source=…` n'est suivi que si le fichier sourcé est
 # LUI AUSSI sur la ligne de commande — ou si `-x` est passé. L'appel groupé les portait tous, donc
-# il liait `setup-runner.sh` à `ensure-runner.sh` sans le dire ; un appel par fichier ne le fait
-# plus, et les vérifications qui raisonnent sur la portée des variables changent d'avis (mesuré :
-# SC2034 sur `MAESTRO_RUNNER_ID`, qui n'est lu que par une fonction du fichier sourcé — le couplage
-# est désormais déclaré sur place). Le sens de l'écart est toujours le même : moins de contexte,
-# donc PLUS de remarques, jamais moins — un faux rouge possible, jamais un faux vert.
+# plus, et les vérifications qui raisonnent sur la portée des variables changent d'avis : une
+# variable posée par un script et lue seulement par une fonction du fichier qu'il source ressort en
+# SC2034, le couplage étant désormais déclaré sur place par un `# shellcheck disable=` commenté. Le
+# sens de l'écart est toujours le même : moins de contexte, donc PLUS de remarques, jamais moins —
+# un faux rouge possible, jamais un faux vert.
 #
 # `-x` rétablirait le lien depuis le disque, mais rend le découpage inutile : il fait ré-analyser
 # `lib.sh` par chacun des huit scripts qui la sourcent, et le job repasse à 34 s (mesuré). Les deux
@@ -360,7 +366,7 @@ job_shellcheck() {
   nb="$(printf '%s\n' "$fichiers" | wc -l | tr -d ' ')"
 
   # Miroir des scripts en fins de ligne LF. La CI checkout en LF ; une copie de travail Windows en
-  # CRLF déclenche des SC1017 qui n'existent pas côté GitLab (docs/10 §8) — le filet mentirait dans
+  # CRLF déclenche des SC1017 qui n'existent pas côté CI (docs/10 §8) — le filet mentirait dans
   # les deux sens. On analyse donc ce que la CI verra, pas ce que le disque contient.
   #
   # Ce miroir-ci RESTE dans le temporaire du système, contrairement aux journaux (#234) : il n'est
@@ -383,7 +389,7 @@ $fichiers
 EOF
 
   # Les chemins restent relatifs (cd dans le miroir) : la sortie désigne les fichiers du dépôt.
-  # $fichiers est volontairement non quoté — une liste d'arguments, comme dans .gitlab-ci.yml.
+  # $fichiers est volontairement non quoté — une liste d'arguments, comme dans .github/workflows/ci.yml.
   if command -v shellcheck >/dev/null 2>&1; then
     # Un sous-shell pour TOUTE la boucle, pas un par fichier : sous Windows chaque `fork` coûte
     # ~50 ms, et le job en fait déjà un par appel à shellcheck.
@@ -801,12 +807,12 @@ resume_vitest() { # <failed|passed>
   grep -E '^[[:space:]]*Tests[[:space:]]' "$JOURNAL" 2>/dev/null | grep -oE "[0-9]+ $1"
 }
 
-# Le pipeline ne joue ce job que si apps/web (ou .gitlab-ci.yml) change : même règle ici, évaluée
+# Le pipeline ne joue ce job que si apps/web (ou .github/workflows/ci.yml) change : même règle ici, évaluée
 # sur ce que la branche apporte à origin/main, travail non commité compris — c'est ce qui partira
 # au push. « --only web-build » passe outre (on l'a demandé explicitement).
 web_concerne() {
   case " $JOBS_ONLY " in *" web-build "*) return 0 ;; esac
-  fichiers_modifies | grep -qE '^(apps/web/|\.gitlab-ci\.yml$)'
+  fichiers_modifies | grep -qE '^(apps/web/|\.github/workflows/)'
 }
 
 job_web() {
@@ -958,7 +964,7 @@ rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 branche="$(git -C "$RACINE" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 printf '\n%sFilet CI local%s — %s\n' "$C_B" "$C_0" "$RACINE"
-printf 'branche : %s · les mêmes contrôles que .gitlab-ci.yml, avec le venv et le Node du dépôt\n' "${branche:-?}"
+printf 'branche : %s · les mêmes contrôles que .github/workflows/ci.yml, avec le venv et le Node du dépôt\n' "${branche:-?}"
 if [ "$MODE_PYTEST" = complet ]; then
   printf 'pytest  : suite entière + couverture (--complet)\n\n'
 else
@@ -968,7 +974,7 @@ fi
 joue_etage lint "$ETAGE_LINT"
 
 if [ "$NB_ECHECS" -gt 0 ]; then
-  # Comme GitLab : l'étage test ne démarre pas si le lint est rouge. Pour le forcer malgré tout,
+  # Comme la CI : l'étage test ne démarre pas si le lint est rouge. Pour le forcer malgré tout,
   # --only test.
   for job in $ETAGE_TEST; do
     if job_demande "$job"; then

@@ -6,50 +6,48 @@
 #   2. Exécuté en sous-commandes :        bash scripts/gitlab/lib.sh set-workflow 16 "En cours"
 #
 # ================================================================================================
-# COMMUTATEUR DE FORGE — MAESTRO_FORGE=github|gitlab, défaut « github » (#339 posé, #343 basculé)
+# LA FORGE EST GITHUB, ET ELLE EST SEULE (#344, lot 9 de #335)
 # ================================================================================================
-# LA BASCULE EST FAITE (ticket #343, lot 8 de #335, le 2026-08-17) : le défaut est « github ».
-# Sans la variable, les verbes répondent contre le dépôt GitHub (MAESTRO_GITHUB_REPO), qui porte
-# les tickets et la CI.
+# Il n'y a plus de commutateur : `MAESTRO_FORGE` et sa branche `glab` ont été retirés avec le reste
+# de l'outillage GitLab. Les verbes de ce fichier répondent contre le dépôt GitHub
+# (MAESTRO_GITHUB_REPO), qui porte les tickets, les PR et la CI.
 #
-# ⚠ `MAESTRO_FORGE=gitlab` reste accepté, mais le backend `glab` NE RÉPOND PLUS contre le vrai
-# projet GitLab, et ce n'est pas réparable ici : ses verbes appellent des sous-commandes
-# (`glab issue view`, `glab mr view`…) qui déduisent le projet des REMOTES, et `origin` pointe
-# désormais sur github.com — d'où « None of the git remotes configured point to a known GitLab
-# host ». Les faire marcher demanderait un `--repo` sur une douzaine de verbes dont la moitié sont
-# des ÉCRITURES, refusées de toute façon par un projet archivé, et que #344 supprime.
+# Le projet GitLab reste l'ARCHIVE en lecture seule (271 MR, historique du time tracking natif),
+# mais RIEN ici n'y accède : la relire est un geste ponctuel de mainteneur — l'UI web, ou
+# `glab <verbe> --repo maestro-group4345327/maestro` avec un `glab` installé à la main (docs/27 §11).
+# Le seul code du dépôt qui parle encore à GitLab est `scripts/migration/` (export et inventaire),
+# qui ne dépend pas de ce fichier.
 #
-# Ce que le backend `gitlab` sert encore, donc : les SUITES D'OUTILLAGE, qui montent un `glab`
-# factice dans un dépôt jetable — aucun remote réel n'y entre en jeu, et le conftest y épingle
-# cette valeur (voir tests/conftest.py). Pour relire l'ARCHIVE pour de vrai, c'est l'UI web de
-# GitLab, ou `glab <verbe> --repo maestro-group4345327/maestro` en direct (docs/27 §11).
+# CE QUI RESTE DE LA MIGRATION, ET POURQUOI CE N'EST PAS UN OUBLI — deux couches de fonctions :
 #
-# Le contrat de sortie est le même des deux côtés — mêmes colonnes TSV, mêmes libellés de cycle de
-# vie, mêmes codes de retour — et c'est lui que lisent les appelants (queue.sh, run.sh, status.sh,
-# doctor.sh, worktree.sh et les commandes /ticket-*). C'est ce qui a rendu chaque lot mergeable
-# seul : réécrire d'un bloc aurait cassé /ticket-start pour tout le monde tant que les tickets
-# vivaient encore sur GitLab.
+#   • `gl_<verbe>` — le VERBE du workflow Maestro : validation des arguments, idempotence, mise en
+#     forme, et tout ce qui ne touche pas le réseau. C'est l'API publique, celle qu'appellent
+#     queue.sh, run.sh, status.sh, doctor.sh, worktree.sh et les commandes /ticket-*, et celle que
+#     le dispatcher en fin de fichier expose en sous-commandes.
+#   • `gh_<verbe>` — la couche qui PARLE À GITHUB, et elle seule.
 #
-# CE QUI REND LA DOUBLURE TENABLE — trois primitives, et non cinquante embranchements. La plupart
-# des verbes ne parlent pas à la forge : ils parlent à un format. On ne double donc QUE ce qui
-# touche le réseau, et le reste est partagé :
+# La frontière n'est plus « forge A contre forge B » mais « verbe contre réseau », ce qui reste une
+# séparation utile : elle donne un inventaire exact de la surface réseau (`grep -n '^gh_'`), et
+# c'est elle qui a permis d'écrire le backend GitHub sans toucher aux appelants (#339). Fusionner
+# les deux couches serait un renommage massif pour un gain de forme — pas ce que ce ticket fait.
 #
-#   • gl_issue_raw <iid>     — la vue TEXTE canonique d'un ticket (format `glab issue view` :
-#                              en-tête « clé:<TAB>valeur », puis « -- », puis le corps). Tout ce qui
-#                              lit un ticket passe par elle — issue-brief, parent-of, subtickets,
-#                              start-brief, branch-for, worktree-done — et n'a donc PAS de variante.
+# TROIS PRIMITIVES portent l'essentiel des lectures ; la plupart des verbes ne parlent pas au
+# réseau, ils parlent à un FORMAT, et se branchent donc sur l'une d'elles plutôt que sur l'API :
+#
+#   • gl_issue_raw <iid>     — la vue TEXTE canonique d'un ticket (en-tête « clé:<TAB>valeur », puis
+#                              « -- », puis le corps). Tout ce qui lit un ticket passe par elle —
+#                              issue-brief, parent-of, subtickets, start-brief, branch-for,
+#                              worktree-done.
 #   • gl_backlog_table       — la table plate TSV du backlog. Idem : subtickets, startables,
-#                              reconcile-workflow et reconcile-en-cours s'y branchent, pas à l'API.
-#   • gl_mr_brief <branche>  — « etat<TAB>numéro<TAB>sha » de la MR/PR d'une branche, d'où
-#                              mr-state, cleanup-merged et worktree-done sortent inchangés.
+#                              reconcile-workflow et reconcile-en-cours s'y branchent.
+#   • gl_mr_brief <branche>  — « etat<TAB>numéro<TAB>sha » de la PR d'une branche, d'où mr-state,
+#                              cleanup-merged et worktree-done sortent inchangés.
 #
-# Les verbes qui délèguent le font en UNE ligne, en tête de corps, repérable d'un `grep -n
-# gl_vers_github scripts/gitlab/lib.sh` : c'est l'inventaire exact de la surface réseau.
-#
-# LE VOCABULAIRE EST NORMALISÉ VERS GITLAB, jamais l'inverse : `iid` (= le `number` GitHub, la plage
-# #2→#333 étant préservée par l'import ordonné du lot 5), état de MR « opened|closed|merged » (GitHub
-# dit OPEN/MERGED), assigné « username » (GitHub dit `login`). Traduire dans ce sens-là garde les
-# comparaisons en dur des appelants — et elles sont nombreuses — hors du chantier.
+# LE VOCABULAIRE EST CELUI DE GITLAB, et il le reste : `iid` (= le `number` GitHub, la plage
+# #2→#333 étant préservée par l'import ordonné du lot 5), état de PR « opened|closed|merged »
+# (GitHub dit OPEN/MERGED), assigné « username » (GitHub dit `login`). Ce n'est pas de la nostalgie
+# : les appelants comparent ces valeurs en dur, et les renommer propagerait une rupture de contrat
+# dans quatre scripts pour ne rien gagner.
 #
 # CE QUE GITHUB N'A PAS, et comment on le remplace :
 #   • Pas de lien « relates to » — mais un `#<n>` mentionné dans un corps y CRÉE une référence
@@ -57,42 +55,9 @@
 #   • Pas de date de début ni d'échéance, PAS DE TEMPS PASSÉ (263/330 tickets, 603 h — docs/27 §5) :
 #     c'est la seule vraie perte, et elle est comblée par le SUIVI MAISON ci-dessous.
 #   • Pas de date de début sur un jalon : la colonne `debut` de `milestones` vaut « - ».
-#
-# ------------------------------------------------------------------------------------------------
-# LE SUIVI MAISON — dates et temps passé, format v1
-# ------------------------------------------------------------------------------------------------
-# Support : UN commentaire par ticket, réécrit en place (jamais un commentaire par entrée — le total
-# se lirait alors en paginant tout le fil). PAS le corps du ticket : get-description/set-description
-# doivent rester un aller-retour fidèle aux octets (#141), et une écriture depuis un fichier
-# effacerait des métadonnées qui s'y cacheraient.
-#
-# Le commentaire porte DEUX couches écrites par le même code, donc incapables de diverger : un bloc
-# MACHINE (commentaire HTML, invisible au rendu, qui fait foi) et un rendu HUMAIN dérivé.
-#
-#     <!-- maestro:suivi:v1
-#     debut=2026-08-14
-#     echeance=2026-08-16
-#     temps=12600
-#     log=2026-08-14|7200|mise en place du backend
-#     log=2026-08-14|5400|tests
-#     -->
-#     **⏱ Suivi Maestro** — début 2026-08-14 · échéance 2026-08-16 · temps passé **3 h 30**
-#
-#     - 2026-08-14 — 2 h — mise en place du backend
-#     - 2026-08-14 — 1 h 30 — tests
-#
-# Règles du bloc machine, dans l'ordre où elles comptent :
-#   1. `temps` est en SECONDES, comme le `totalTimeSpent` de GitLab — c'est ce que rend
-#      get-time-spent, et le contrat de sortie ne bouge pas d'un caractère.
-#   2. `log=` est ADDITIF et se relit : « date|secondes|résumé ». Le résumé est aplati (retours à la
-#      ligne et « | » remplacés par un espace) — un séparateur qui peut apparaître dans la valeur
-#      n'est pas un séparateur. `temps` est la SOMME des `log=`, recalculée à chaque écriture :
-#      deux sources qui pourraient diverger n'en font qu'une.
-#   3. `debut`/`echeance` sont en YYYY-MM-DD, absentes quand non posées (jamais une ligne vide).
-#   4. Toute clé inconnue est CONSERVÉE à la réécriture : une version ultérieure du format peut
-#      ajouter un champ sans qu'un client plus ancien ne le détruise en passant.
-#   5. Le marqueur `maestro:suivi:v1` est l'ancre — c'est lui qu'on cherche dans le fil, jamais une
-#      position ni un identifiant mémorisé ailleurs.
+#   • Ni board Kanban, ni runner de projet, ni id numérique de projet : les verbes qui les
+#     servaient (`board-lists`, `project-runners`, `project-id`, `project-enc`) sont partis avec la
+#     branche GitLab, et leurs appelants avec eux.
 #
 # ================================================================================================
 # CONTRAT DE SURFACE DU CYCLE DE VIE — à lire avant d'y toucher (ticket #209, chantier #207)
@@ -147,11 +112,9 @@
 # fichiers dans scripts/gitlab/.
 GL_ICI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-GL_PROJECT="${GL_PROJECT:-maestro-group4345327/maestro}"
-GL_GROUP="${GL_GROUP:-${GL_PROJECT%%/*}}"   # groupe = tout ce qui précède le premier "/"
 GL_WORKFLOW_SCOPE="${GL_WORKFLOW_SCOPE:-workflow}"  # scope des labels portant le cycle de vie
 
-# Dépôt GitHub visé quand MAESTRO_FORGE=github. Même variable d'environnement que
+# Le dépôt GitHub, seule cible des verbes de ce fichier. Même variable d'environnement que
 # scripts/migration/inventaire.sh (#336) : un seul nom pour un seul dépôt cible.
 GL_GH_REPO="${MAESTRO_GITHUB_REPO:-automatemaestro-create/maestro}"
 
@@ -203,134 +166,51 @@ GL_ORPHELIN_SEUIL="${MAESTRO_ORPHELIN_SEUIL:-21600}"   # 6 h — juste au-dessus
 GL_REPRISES_MAX="${MAESTRO_REPRISES_MAX:-2}"
 [ "$GL_REPRISES_MAX" -ge 0 ] 2>/dev/null || GL_REPRISES_MAX=2
 
-# Retry des LECTURES GraphQL (voir gl_graphql_read) : l'endpoint GraphQL de GitLab renvoie
-# parfois une réponse vide (hoquet réseau / rate-limit). On ré-essaie jusqu'à GL_GQL_RETRIES
-# tentatives, avec GL_GQL_RETRY_DELAY seconde(s) de pause entre deux. Surchargeable.
+# Retry des LECTURES GraphQL (voir gh_graphql_read) : l'endpoint GraphQL renvoie parfois une
+# réponse vide (hoquet réseau / rate-limit). On ré-essaie jusqu'à GL_GQL_RETRIES tentatives, avec
+# GL_GQL_RETRY_DELAY seconde(s) de pause entre deux. Surchargeable.
 GL_GQL_RETRIES="${GL_GQL_RETRIES:-3}"
 GL_GQL_RETRY_DELAY="${GL_GQL_RETRY_DELAY:-1}"
 
-# --- Commutateur de forge -------------------------------------------------------------------------
-# Voir l'en-tête du fichier. Deux fonctions, et une seule est appelée dans les corps de verbe.
-
-# gl_forge -> imprime la forge active (« github » | « gitlab »), code 1 sur une valeur inconnue.
-gl_forge() {
-  local f="${MAESTRO_FORGE:-github}"
-  case "$f" in
-    gitlab|github) printf '%s\n' "$f" ;;
-    *)
-      echo "MAESTRO_FORGE=« $f » inconnu — attendu : gitlab | github (défaut github)." >&2
-      return 1 ;;
-  esac
-}
-
-# gl_vers_github -> « ce verbe doit-il déléguer au backend GitHub ? »
-#   0 = oui (déléguer)   1 = non (corps GitLab)   2 = REFUS : forge inconnue.
-#
-# Le 2 n'est pas un détail. Une valeur mal orthographiée (« guthub ») ne doit pas retomber en
-# silence sur GitLab : l'appelant croirait écrire sur GitHub, verrait ses écritures réussir, et
-# c'est le ticket GitLab qui bougerait. On ne devine pas la forge — on refuse. D'où la forme
-# imposée en tête de chaque verbe qui délègue, qui propage le refus au lieu de l'avaler :
-#
-#     gl_vers_github; case $? in 0) gh_<verbe> "$@"; return $? ;; 2) return 1 ;; esac
-#
-# Les verbes purement locaux (git, slug, formats, dates calculées) ne l'appellent PAS : ils
-# fonctionnent quelle que soit la forge, et une variable fautive n'a aucune raison de les bloquer.
-gl_vers_github() {
-  local f
-  f="$(gl_forge)" || return 2
-  [ "$f" = github ]
-}
-
+# --- Identité de la forge ---------------------------------------------------------------------
 # gl_depot_courant -> le dépôt visé par la forge active, pour les MESSAGES du code partagé
 # (« ticket #12 introuvable dans … »). Ne sert jamais à construire un appel : chaque backend
 # connaît le sien.
 gl_depot_courant() {
-  if gl_vers_github 2>/dev/null; then printf '%s\n' "$GL_GH_REPO"; else printf '%s\n' "$GL_PROJECT"; fi
+  printf '%s\n' "$GL_GH_REPO"
 }
 
-# gl_forge_nom / gl_forge_cli -> « GitLab »/« GitHub » et « glab »/« gh », pour les MESSAGES des
-# appelants (#341). Deux fonctions et non une : un message parle tantôt de la forge (« GitHub
-# injoignable »), tantôt de l'outil qui y accède (« gh absent ou non authentifié »), et les
-# confondre produit des phrases fausses dans les deux sens.
-#
-# Elles existent parce qu'un diagnostic MENTEUR est pire qu'un diagnostic absent : `status.sh` et
-# `worktree.sh` disaient « glab absent » à une session qui parle à GitHub depuis le lot 4, envoyant
-# lancer un `glab auth login` qui n'aurait rien réparé. Une forge inconnue retombe ici sur le
-# vocabulaire par défaut au lieu d'échouer : ces deux verbes ne servent qu'à écrire une phrase, et
-# le refus de deviner appartient à gl_vers_github, qui a déjà tranché en amont.
+# gl_forge_nom / gl_forge_cli -> « GitHub » et « gh », pour les MESSAGES des appelants (#341).
+# Deux fonctions et non une : un message parle tantôt de la forge (« GitHub injoignable »), tantôt
+# de l'outil qui y accède (« gh absent ou non authentifié »), et les confondre produit des phrases
+# fausses dans les deux sens. Elles rendent désormais une constante — mais restent le seul endroit
+# à changer si le dépôt déménage encore, et évitent d'avoir à toucher chacun de leurs appelants.
 gl_forge_nom() {
-  if gl_vers_github 2>/dev/null; then printf 'GitHub\n'; else printf 'GitLab\n'; fi
+  printf 'GitHub\n'
 }
 
 gl_forge_cli() {
-  if gl_vers_github 2>/dev/null; then printf 'gh\n'; else printf 'glab\n'; fi
+  printf 'gh\n'
 }
 
 # --- Pré-requis ---------------------------------------------------------------------------------
-# Vérifie que glab est installé ET authentifié. À appeler en tête des commandes.
-gl_require_glab() {
-  gl_vers_github; case $? in 0) gh_require; return $? ;; 2) return 1 ;; esac
-  if ! command -v glab >/dev/null 2>&1; then
-    echo "glab n'est pas installé. Voir https://gitlab.com/gitlab-org/cli" >&2
-    return 1
-  fi
-  if ! glab auth status >/dev/null 2>&1; then
-    echo "glab non authentifié. Lancer d'abord : glab auth login" >&2
-    return 1
-  fi
+# Vérifie que le CLI de la forge est installé ET authentifié. À appeler en tête des commandes.
+gl_require() {
+  gh_require
 }
 
-# gl_current_user -> imprime le username de l'utilisateur glab authentifié (pour l'auto-assignation
-# du ticket par /ticket-start). Parse `glab api user` en shell pur (grep/sed) — pas de dépendance à
-# jq/python, et entièrement couvert par l'allowlist `bash scripts/gitlab/lib.sh:*` (docs/10 §7.1),
-# pour que /ticket-start ne déclenche aucun prompt de permission sur cette étape.
+# gl_current_user -> imprime le username de l'utilisateur authentifié (pour l'auto-assignation du
+# ticket par /ticket-start). Parsing en shell pur (grep/sed) — pas de dépendance à jq/python, et
+# entièrement couvert par l'allowlist `bash scripts/gitlab/lib.sh:*` (docs/10 §7.1), pour que
+# /ticket-start ne déclenche aucun prompt de permission sur cette étape.
 gl_current_user() {
-  gl_vers_github; case $? in 0) gh_current_user; return $? ;; 2) return 1 ;; esac
-  local u
-  u="$(glab api user 2>/dev/null | grep -o '"username":"[^"]*"' | head -1 | sed 's/.*"username":"//; s/"$//')"
-  if [ -z "$u" ]; then
-    echo "gl_current_user : username introuvable (glab authentifié ? cf. require)" >&2
-    return 1
-  fi
-  printf '%s\n' "$u"
-}
-
-# --- Lecture GraphQL (avec retry) ---------------------------------------------------------------
-# gl_graphql_read <query> -> exécute une LECTURE GraphQL et imprime la réponse JSON brute.
-# Réessaie tant que la réponse revient VIDE (l'endpoint GraphQL de GitLab hoquette par
-# intermittence : réponse vide/tronquée sur rate-limit ou aléa réseau), jusqu'à GL_GQL_RETRIES
-# tentatives avec GL_GQL_RETRY_DELAY s de pause. Ne réessaie QUE sur réponse vide : une réponse
-# non vide — même porteuse d'erreurs applicatives GraphQL — est rendue telle quelle, l'appelant
-# reste responsable de son parsing.
-# ⚠ Réservé aux LECTURES. Ne jamais envelopper une mutation : un retry pourrait la ré-appliquer
-# (ex. gl_log_time est additif → double comptage). Les mutations gardent leur appel direct à glab.
-gl_graphql_read() {
-  local query="$1"
-  if [ -z "$query" ]; then echo "gl_graphql_read : requête manquante" >&2; return 2; fi
-  local attempt=1 out
-  while :; do
-    out="$(glab api graphql -f query="$query" 2>/dev/null)"
-    if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
-    if [ "$attempt" -ge "$GL_GQL_RETRIES" ]; then
-      echo "gl_graphql_read : réponse vide de l'API GraphQL après $attempt tentative(s)" >&2
-      return 1
-    fi
-    sleep "$GL_GQL_RETRY_DELAY"
-    attempt=$((attempt + 1))
-  done
+  gh_current_user
 }
 
 # --- Résolution d'identifiants ------------------------------------------------------------------
 # gl_workitem_gid <iid> -> imprime le GID global du work item (gid://gitlab/WorkItem/<n>).
 gl_workitem_gid() {
-  gl_vers_github; case $? in 0) gh_workitem_gid "$@"; return $? ;; 2) return 1 ;; esac
-  local iid="$1"
-  if [ -z "$iid" ]; then echo "gl_workitem_gid : iid manquant" >&2; return 2; fi
-  local gid
-  gid="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { id } } } }' \
-        | grep -o 'gid://gitlab/WorkItem/[0-9]\+' | head -1)"
-  if [ -z "$gid" ]; then echo "Work item #$iid introuvable dans $GL_PROJECT" >&2; return 1; fi
-  printf '%s\n' "$gid"
+  gh_workitem_gid "$@"
 }
 
 # --- Cycle de vie : slugs, libellés, GID de labels ----------------------------------------------
@@ -407,18 +287,7 @@ AWK
 # une pose d'ajouter la cible ET de retirer les cinq autres dans le même appel : sans la liste
 # complète, on ne saurait pas quoi retirer.
 gl_workflow_gids() {
-  gl_vers_github; case $? in 0) gh_workflow_gids; return $? ;; 2) return 1 ;; esac
-  local raw rows
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { labels(searchTerm:"'"$GL_WORKFLOW_SCOPE"'::") { nodes { id title } } } }')" || return 1
-  # Ordre garanti par la requête : id puis title. On ne retient que les labels du scope exact —
-  # `searchTerm` est une recherche floue, elle pourrait ramener « anti-workflow::x ».
-  rows="$(printf '%s' "$raw" | grep -o '"id":"gid://gitlab/[A-Za-z]*Label/[0-9]\+","title":"'"$GL_WORKFLOW_SCOPE"'::[a-z-]*"' \
-         | sed 's|.*"id":"\(gid://gitlab/[A-Za-z]*Label/[0-9]*\)","title":"'"$GL_WORKFLOW_SCOPE"'::\([a-z-]*\)"|\2\t\1|')"
-  if [ -z "$rows" ]; then
-    echo "Aucun label « $GL_WORKFLOW_SCOPE::* » dans $GL_PROJECT — provisionner d'abord : bash scripts/gitlab/bootstrap.sh" >&2
-    return 1
-  fi
-  printf '%s\n' "$rows"
+  gh_workflow_gids
 }
 
 # --- Actions ------------------------------------------------------------------------------------
@@ -428,29 +297,7 @@ gl_workflow_gids() {
 # l'exclusion des labels scopés étant Premium, rien côté GitLab ne l'assurerait à notre place
 # (cf. contrat en tête de fichier). Idempotent : reposer la valeur déjà présente ne change rien.
 gl_set_workflow() {
-  gl_vers_github; case $? in 0) gh_set_workflow "$@"; return $? ;; 2) return 1 ;; esac
-  local iid="$1" valeur="$2"
-  if [ -z "$iid" ] || [ -z "$valeur" ]; then echo "usage: gl_set_workflow <iid> <valeur>" >&2; return 2; fi
-  local slug wiid gids cible retraits out
-  slug="$(gl_workflow_slug "$valeur")" || return 1
-  wiid="$(gl_workitem_gid "$iid")"     || return 1
-  gids="$(gl_workflow_gids)"           || return 1
-
-  cible="$(printf '%s\n' "$gids" | awk -F '\t' -v s="$slug" '$1 == s { print $2; exit }')"
-  if [ -z "$cible" ]; then
-    echo "Label « $GL_WORKFLOW_SCOPE::$slug » absent de $GL_PROJECT — provisionner : bash scripts/gitlab/bootstrap.sh" >&2
-    return 1
-  fi
-  # Les cinq autres, en liste GraphQL. removeLabelIds sur un label non porté est sans effet côté
-  # GitLab : on peut donc toujours les retirer tous, sans lire l'état courant du ticket.
-  retraits="$(printf '%s\n' "$gids" | awk -F '\t' -v s="$slug" '
-    $1 != s { printf "%s\"%s\"", (n++ ? "," : ""), $2 }')"
-
-  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", labelsWidget:{ addLabelIds:["'"$cible"'"], removeLabelIds:['"$retraits"'] } }){ errors } }' 2>&1)"
-  case "$out" in
-    *'"errors":[]'*) printf 'Cycle de vie de #%s → « %s »\n' "$iid" "$(gl_workflow_label "$slug")" ;;
-    *) echo "Échec de la pose du cycle de vie sur #$iid : $out" >&2; return 1 ;;
-  esac
+  gh_set_workflow "$@"
 }
 
 # gl_reconcile_workflow [--check] [<iid>…] -> pose « Terminé » sur les tickets dont le travail est
@@ -545,10 +392,7 @@ gl_reconcile_workflow() {
 # Depuis #209 le cycle de vie est DANS le widget Labels, déjà demandé : la bascule a RETIRÉ le
 # widget de statut de cette requête plutôt que d'en ajouter un.
 gl_backlog() {
-  gl_vers_github; case $? in 0) gh_backlog "$@"; return $? ;; 2) return 1 ;; esac
-  local state="${1:-opened}"
-  case "$state" in opened|closed|all) ;; *) echo "state invalide : $state (opened|closed|all)" >&2; return 2 ;; esac
-  gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: '"$state"', first: 100) { nodes { iid title widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }'
+  gh_backlog "$@"
 }
 
 # gl_backlog_table [state] -> projette le JSON de gl_backlog en une TABLE PLATE COMPACTE (une ligne
@@ -567,49 +411,16 @@ gl_backlog() {
 # Projection en awk pur (pas de jq requis) : le parsing suit la même approche grep/sed/awk que le
 # reste de ce fichier, donc la commande fonctionne à l'identique que jq soit installé ou non.
 gl_backlog_table() {
-  gl_vers_github; case $? in 0) gh_backlog_table "$@"; return $? ;; 2) return 1 ;; esac
-  local state="${1:-opened}" json
-  json="$(gl_backlog "$state")" || return 1
-  printf '# iid\tstatut\tprio\tagent\tassigne\ttitre\n'
-  printf '%s\n' "$json" | awk -v WF_SCOPE="$GL_WORKFLOW_SCOPE" "$(gl_awk_workflow)"'
-    {
-      n = split($0, parts, /\{"iid":"/)
-      for (i = 2; i <= n; i++) {
-        node = parts[i]
-        match(node, /^[0-9]+/); iid = substr(node, RSTART, RLENGTH)
-
-        title = "-"
-        if (match(node, /","title":"/)) {
-          rest = substr(node, RSTART + RLENGTH)
-          if (match(rest, /","widgets":/)) title = substr(rest, 1, RSTART - 1)
-        }
-        gsub(/\\u0026/, "\\&", title); gsub(/\\u003e/, ">", title); gsub(/\\u003c/, "<", title)
-
-        status = wf_libelle(node)
-
-        prio = "-"; agent = "-"
-        if (match(node, /prio::[a-z]+/))  prio  = substr(node, RSTART + 6, RLENGTH - 6)
-        if (match(node, /agent::[a-z]+/)) agent = substr(node, RSTART + 7, RLENGTH - 7)
-
-        assignee = "-"
-        if (match(node, /"username":"[^"]*"/)) {
-          m = substr(node, RSTART, RLENGTH); sub(/.*"username":"/, "", m); sub(/"$/, "", m); assignee = m
-        }
-
-        printf "%s\t%s\t%s\t%s\t%s\t%s\n", iid, status, prio, agent, assignee, title
-      }
-    }
-  '
+  gh_backlog_table "$@"
 }
 
 # gl_labels -> tous les labels du projet/dépôt, un NOM par ligne, non triés (l'ordre est celui de la
 # forge). Sert au contrôle de complétude des familles type::/agent::/prio:: (doctor.sh §2) et au
-# provisionnement idempotent (bootstrap.sh) : deux appelants qui lisaient `glab label list` en
-# direct, donc deux appelants qui rendaient une liste VIDE sous MAESTRO_FORGE=github — et une liste
-# vide se lit ici « tous les labels manquent », pas « je n'ai pas su lire ».
+# provisionnement idempotent (bootstrap.sh) : deux appelants qui lisaient les labels en direct par
+# le CLI de la forge, donc deux appelants qui rendaient une liste VIDE dès qu'elle changeait — et
+# une liste vide se lit ici « tous les labels manquent », pas « je n'ai pas su lire ».
 gl_labels() {
-  gl_vers_github; case $? in 0) gh_labels; return $? ;; 2) return 1 ;; esac
-  glab label list --output json 2>/dev/null | grep -o '"name":"[^"]*"' | sed 's/.*:"//; s/"$//'
+  gh_labels
 }
 
 # gl_workflow_derives [state] -> « <iid><TAB><n> » pour les tickets portant un nombre de labels
@@ -619,21 +430,17 @@ gl_labels() {
 # lectures rendent alors le PREMIER label rencontré, donc un état plausible mais arbitraire.
 #
 # Le verbe existe parce que doctor.sh le calculait sur le JSON BRUT de gl_backlog, en cherchant
-# « "iid":" » — une clé que le backend GitHub n'écrit pas (il rend « "number": »). Le contrôle ne
-# tombait donc pas en erreur sous MAESTRO_FORGE=github : il rendait « aucune dérive », c'est-à-dire
-# un ✓ sur une question jamais posée. Un contrôle de dérive qui se tait est pire qu'absent.
+# « "iid":" » — une clé que GitHub n'écrit pas (il rend « "number": »). Le contrôle ne tombait donc
+# pas en erreur après la bascule : il rendait « aucune dérive », c'est-à-dire un ✓ sur une question
+# jamais posée. Un contrôle de dérive qui se tait est pire qu'absent.
 #
-# UNE seule projection awk pour les deux forges : seul le NOM DE LA CLÉ du nœud change, et il voyage
-# par -v en tant que MOT NU (jamais un motif tout fait — `awk -v` interprète les échappements, ce qui
-# a déjà coûté un import silencieusement faux, #340). La valeur, elle, est citée côté GitLab
-# (« "iid":"12" ») et nue côté GitHub (« "number":12 ») : le guillemet optionnel du motif absorbe la
-# différence, ce qui évite un second paramètre pour une variation d'un caractère.
+# La clé du nœud voyage par -v en tant que MOT NU (jamais un motif tout fait — `awk -v` interprète
+# les échappements, ce qui a déjà coûté un import silencieusement faux, #340) ; le guillemet
+# optionnel du motif absorbe la forme citée que rendait GitLab (« "iid":"12" ») aussi bien que la
+# forme nue de GitHub (« "number":12 »).
 gl_workflow_derives() {
-  local state="${1:-opened}" json cle=iid
+  local state="${1:-opened}" json cle=number
   case "$state" in opened|closed|all) ;; *) echo "state invalide : $state (opened|closed|all)" >&2; return 2 ;; esac
-  # Pas une délégation : le corps est COMMUN, seule la clé du nœud change. D'où la forme imposée du
-  # commutateur (cf. gl_vers_github) avec un `0)` qui règle une variable au lieu d'appeler un jumeau.
-  gl_vers_github; case $? in 0) cle=number ;; 2) return 1 ;; esac
   json="$(gl_backlog "$state")" || return 1
   printf '%s\n' "$json" | awk -v WF_SCOPE="$GL_WORKFLOW_SCOPE" -v CLE="$cle" '
     {
@@ -655,11 +462,7 @@ gl_workflow_derives() {
 # sans jalon vient de l'UI de la forge, et il échappe alors à tout plan de run comme à toute
 # présentation de milestone.
 gl_issues_sans_milestone() {
-  gl_vers_github; case $? in 0) gh_issues_sans_milestone; return $? ;; 2) return 1 ;; esac
-  local raw
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(state: opened, first: 100) { nodes { iid widgets { ... on WorkItemWidgetMilestone { milestone { title } } } } } } }')" || return 1
-  printf '%s' "$raw" | sed 's/{"iid":/\n{"iid":/g' \
-    | awk '/^\{"iid":"/ && !/"milestone":\{"title":"/ { match($0, /"iid":"[0-9]+/); print substr($0, RSTART + 7, RLENGTH - 7) }'
+  gh_issues_sans_milestone
 }
 
 # gl_issue_owner <iid> -> imprime « <statut><TAB><assignés> » : le LIBELLÉ du cycle de vie (lu dans
@@ -667,40 +470,16 @@ gl_issues_sans_milestone() {
 # séparés par des virgules. Un champ vide signifie « non posé » pour le cycle de vie, « personne »
 # (ticket LIBRE) pour les assignés. Une seule lecture GraphQL, parsing shell pur (pas de jq) —
 # même approche que gl_backlog_table, en ciblant un seul ticket.
-# Sert l'ANTI-COLLISION du travail à plusieurs (#159) : `glab issue view` expose bien les labels,
+# Sert l'ANTI-COLLISION du travail à plusieurs (#159) : la vue texte expose bien les labels,
 # mais pas de quoi décider d'un coup d'œil, donc gl_start_brief s'appuie là-dessus pour dire si un
 # ticket est déjà pris — et /ticket-start pour refuser de le démarrer (gl_begin REMPLACE la liste
 # des assignés : démarrer un ticket pris le retirerait en silence à son propriétaire).
 gl_issue_owner() {
-  gl_vers_github; case $? in 0) gh_issue_owner "$@"; return $? ;; 2) return 1 ;; esac
-  local iid="$1"
-  if [ -z "$iid" ]; then echo "usage: gl_issue_owner <iid>" >&2; return 2; fi
-  local raw statut assignes
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } ... on WorkItemWidgetAssignees { assignees { nodes { username } } } } } } } }')" || return 1
-  if [ -z "$raw" ]; then echo "gl_issue_owner : lecture du ticket #$iid impossible" >&2; return 1; fi
-  # Ticket inexistant : la requête réussit mais rend « "workItems":{"nodes":[]} ». Sans ce
-  # garde-fou, la fonction imprimerait deux champs vides — que l'appelant lirait comme « statut non
-  # posé, ticket libre ». On cible bien le nœud workItems : « "nodes":[] » tout court se produit
-  # aussi, légitimement, sur un ticket sans assigné.
-  case "$raw" in
-    *'"workItems":{"nodes":[]}'*) echo "gl_issue_owner : ticket #$iid introuvable dans $GL_PROJECT" >&2; return 1 ;;
-    # Projet inconnu (ou droits insuffisants) : GraphQL répond « "project":null » avec un code 0.
-    # Sans ce cas, la fonction imprimerait deux champs vides — lus par l'appelant comme « ticket
-    # libre », c'est-à-dire un feu vert (gl_close_guard, gl_start_brief). Mieux vaut l'erreur.
-    *'"project":null'*) echo "gl_issue_owner : projet $GL_PROJECT illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
-  esac
-  # Cycle de vie : slug du label workflow:: → libellé. Vide si le ticket n'en porte aucun (dérive
-  # possible sur Free, où l'exclusion n'est pas garantie : c'est doctor.sh qui la traque).
-  statut="$(printf '%s' "$raw" | grep -o '"'"$GL_WORKFLOW_SCOPE"'::[a-z-]*"' | head -1 \
-            | sed 's/^"'"$GL_WORKFLOW_SCOPE"':://; s/"$//')"
-  [ -n "$statut" ] && statut="$(gl_workflow_label "$statut")"
-  assignes="$(printf '%s' "$raw" | grep -o '"username":"[^"]*"' | sed 's/.*"username":"//; s/"$//' \
-              | awk '{ out = (NR == 1 ? $0 : out "," $0) } END { if (NR) print out }')"
-  printf '%s\t%s\n' "$statut" "$assignes"
+  gh_issue_owner "$@"
 }
 
 # gl_issue_taken <iid> [moi] -> code 0 (et message sur stdout) si le ticket est DÉJÀ PRIS PAR
-# QUELQU'UN D'AUTRE : statut « En cours » et assigné à un username différent de l'utilisateur glab
+# QUELQU'UN D'AUTRE : statut « En cours » et assigné à un username différent de l'utilisateur
 # courant (résolu par gl_current_user si l'argument est absent). Code 1 sinon (libre, à moi, ou
 # statut différent). Prédicat volontairement étroit — c'est la seule situation où deux personnes se
 # marchent dessus ; un ticket « En revue »/« Terminé » assigné à un tiers relève d'un autre sujet.
@@ -719,8 +498,9 @@ gl_issue_taken() {
   printf '%s\n' "$assignes"
 }
 
-# gl_issue_raw <iid> -> LA VUE TEXTE CANONIQUE d'un ticket, et l'une des trois primitives sur
-# lesquelles repose le commutateur de forge (voir l'en-tête du fichier). Format `glab issue view` :
+# gl_issue_raw <iid> -> LA VUE TEXTE CANONIQUE d'un ticket, et l'une des trois primitives dont
+# descend tout ce qui lit un ticket (voir l'en-tête du fichier). Le format est celui qu'imprimait
+# `glab issue view`, gardé tel quel parce que six verbes le parsent :
 #
 #     title:<TAB><titre>
 #     state:<TAB>open|closed
@@ -738,8 +518,7 @@ gl_issue_taken() {
 gl_issue_raw() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_issue_raw <iid>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_issue_raw "$iid"; return $? ;; 2) return 1 ;; esac
-  glab issue view "$iid" 2>/dev/null || { echo "Issue #$iid introuvable dans $GL_PROJECT" >&2; return 1; }
+  gh_issue_raw "$iid"
 }
 
 # gl_issue_brief <iid> -> projection compacte de la vue ticket : uniquement le titre, les labels et
@@ -755,7 +534,7 @@ gl_issue_brief() {
 }
 
 # gl_issue_brief_render <iid> — cœur de gl_issue_brief, séparé pour être rejoué sur un ticket DÉJÀ
-# LU (stdin = sortie brute de `glab issue view`) : gl_start_brief s'en sert pour ne lire le ticket
+# LU (stdin = sortie brute de gl_issue_raw) : gl_start_brief s'en sert pour ne lire le ticket
 # qu'une seule fois et enchaîner toutes les projections sur le même texte.
 # Deux formats de « critères d'acceptation » coexistent dans le backlog : les tickets récents
 # (issue templates) posent un titre de section « ## Critères d'acceptation » suivi d'une liste
@@ -796,28 +575,7 @@ gl_issue_brief_render() {
 # avance sur elles. Sortie vide + code 1 si aucun candidat (aucun milestone actif, ou tous
 # soldés) ; /ticket-create omet alors simplement --milestone à la création.
 gl_current_milestone() {
-  gl_vers_github; case $? in 0) gh_current_milestone; return $? ;; 2) return 1 ;; esac
-  local raw title
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { milestones(state: active, sort: DUE_DATE_ASC, first: 20) { nodes { title stats { totalIssuesCount closedIssuesCount } } } } }')" || return 1
-  title="$(printf '%s' "$raw" | awk '
-    {
-      n = split($0, parts, /\{"title":"/)
-      for (i = 2; i <= n; i++) {
-        node = parts[i]
-        t = node; sub(/".*$/, "", t)
-        gsub(/\\u0026/, "\\&", t); gsub(/\\u003e/, ">", t); gsub(/\\u003c/, "<", t)
-        total = 0; closed = 0
-        if (match(node, /"totalIssuesCount":[0-9]+/))  { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); total = m + 0 }
-        if (match(node, /"closedIssuesCount":[0-9]+/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); closed = m + 0 }
-        if (total == 0 || closed < total) { print t; exit }
-      }
-    }
-  ')"
-  if [ -z "$title" ]; then
-    echo "gl_current_milestone : aucun milestone actif non soldé (rien à poser)" >&2
-    return 1
-  fi
-  printf '%s\n' "$title"
+  gh_current_milestone
 }
 
 # gl_milestones -> table plate des milestones du projet, du plus ancien au plus récent (tri par
@@ -830,35 +588,7 @@ gl_current_milestone() {
 # qu'il est la clé (c'est lui qu'on repasse à gl_milestone_issues), et en dernier viennent les
 # compteurs, de largeur fixe.
 gl_milestones() {
-  gl_vers_github; case $? in 0) gh_milestones; return $? ;; 2) return 1 ;; esac
-  local raw
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { milestones(sort: DUE_DATE_ASC, first: 50) { nodes { title state startDate dueDate stats { totalIssuesCount closedIssuesCount } } } } }')" || return 1
-  printf '# titre\tetat\tdebut\techeance\tfermes\ttotal\n'
-  printf '%s\n' "$raw" | awk '
-    {
-      n = split($0, parts, /\{"title":"/)
-      for (i = 2; i <= n; i++) {
-        node = parts[i]
-        title = node; sub(/".*$/, "", title)
-        gsub(/\\u0026/, "\\&", title); gsub(/\\u003e/, ">", title); gsub(/\\u003c/, "<", title)
-
-        etat = "-"
-        if (match(node, /"state":"[^"]*"/)) {
-          m = substr(node, RSTART, RLENGTH); sub(/.*:"/, "", m); sub(/"$/, "", m); etat = m
-        }
-
-        debut = "-"; echeance = "-"
-        if (match(node, /"startDate":"[0-9-]+"/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:"/, "", m); sub(/"$/, "", m); debut = m }
-        if (match(node, /"dueDate":"[0-9-]+"/))   { m = substr(node, RSTART, RLENGTH); sub(/.*:"/, "", m); sub(/"$/, "", m); echeance = m }
-
-        total = 0; fermes = 0
-        if (match(node, /"totalIssuesCount":[0-9]+/))  { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); total = m + 0 }
-        if (match(node, /"closedIssuesCount":[0-9]+/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); fermes = m + 0 }
-
-        printf "%s\t%s\t%s\t%s\t%d\t%d\n", title, etat, debut, echeance, fermes, total
-      }
-    }
-  '
+  gh_milestones
 }
 
 # gl_milestone_issues <titre-exact> -> table plate des tickets d'un milestone, même modèle compact
@@ -878,50 +608,7 @@ gl_milestones() {
 gl_milestone_issues() {
   local title="$1"
   if [ -z "$title" ]; then echo "usage: gl_milestone_issues <titre-exact-du-milestone>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_milestone_issues "$@"; return $? ;; 2) return 1 ;; esac
-  # Le titre voyage dans la requête GraphQL : on échappe guillemets et antislashs, sans quoi un
-  # titre exotique casserait la requête (les titres de phase n'en ont pas, mais le helper est
-  # générique — il sera rappelé sur des projets provisionnés par bootstrap.sh).
-  local escaped
-  escaped="$(printf '%s' "$title" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-  local raw
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(milestoneTitle:["'"$escaped"'"], first: 100) { nodes { iid title state widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } } } } } }')" || return 1
-
-  local rows
-  rows="$(printf '%s\n' "$raw" | awk -v WF_SCOPE="$GL_WORKFLOW_SCOPE" "$(gl_awk_workflow)"'
-    {
-      n = split($0, parts, /\{"iid":"/)
-      for (i = 2; i <= n; i++) {
-        node = parts[i]
-        match(node, /^[0-9]+/); iid = substr(node, RSTART, RLENGTH)
-
-        # Le titre du TICKET est celui qui suit immédiatement son iid : on borne sur le champ
-        # suivant (`state`) pour ne pas ramasser un `"title"` de label plus loin dans le nœud.
-        titre = "-"
-        if (match(node, /","title":"/)) {
-          rest = substr(node, RSTART + RLENGTH)
-          if (match(rest, /","state":"/)) titre = substr(rest, 1, RSTART - 1)
-        }
-        gsub(/\\u0026/, "\\&", titre); gsub(/\\u003e/, ">", titre); gsub(/\\u003c/, "<", titre)
-
-        statut = wf_libelle(node)
-
-        type = "-"; agent = "-"; prio = "-"
-        if (match(node, /type::[a-z]+/))  type  = substr(node, RSTART + 6, RLENGTH - 6)
-        if (match(node, /agent::[a-z]+/)) agent = substr(node, RSTART + 7, RLENGTH - 7)
-        if (match(node, /prio::[a-z]+/))  prio  = substr(node, RSTART + 6, RLENGTH - 6)
-
-        printf "%s\t%s\t%s\t%s\t%s\t%s\n", iid, statut, type, agent, prio, titre
-      }
-    }
-  ')"
-
-  if [ -z "$rows" ]; then
-    echo "gl_milestone_issues : aucun ticket pour le milestone « $title » (titre exact attendu — cf. lib.sh milestones)" >&2
-    return 1
-  fi
-  printf '# iid\tstatut\ttype\tagent\tprio\ttitre\n'
-  printf '%s\n' "$rows"
+  gh_milestone_issues "$@"
 }
 
 # --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
@@ -946,17 +633,7 @@ gl_milestone_issues() {
 gl_issue_link() {
   local iid="$1" target="$2"
   if [ -z "$iid" ] || [ -z "$target" ]; then echo "usage: gl_issue_link <iid> <iid-cible>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_issue_link "$@"; return $? ;; 2) return 1 ;; esac
-  local out
-  # target_project_id voyage dans le CORPS de la requête : chemin BRUT ("groupe/projet"), pas
-  # l'encodage %2F (réservé au chemin d'URL) — encodé, l'API répond « 404 Project Not Found ».
-  out="$(glab api "projects/$(gl_project_enc)/issues/$iid/links" \
-        -f target_project_id="$GL_PROJECT" -f target_issue_iid="$target" 2>&1)"
-  case "$out" in
-    *'"source_issue"'*)   printf 'Lien posé : #%s ↔ #%s\n' "$iid" "$target" ;;
-    *'already assigned'*) printf 'Lien déjà présent : #%s ↔ #%s\n' "$iid" "$target" ;;
-    *) echo "Échec du lien #$iid ↔ #$target : $out" >&2; return 1 ;;
-  esac
+  gh_issue_link "$@"
 }
 
 # gl_parent_of <iid> -> imprime l'iid du ticket PARENT si <iid> est un sous-ticket (marqueur
@@ -990,7 +667,7 @@ gl_subtickets() {
 }
 
 # gl_subticket_rows — cœur du parsing de gl_subtickets, séparé pour être rejoué sur un ticket DÉJÀ
-# LU (stdin = sortie brute de `glab issue view`) : imprime les lignes de la checklist
+# LU (stdin = sortie brute de gl_issue_raw) : imprime les lignes de la checklist
 # « ## Sous-tickets » en TSV brut (iid <TAB> coche(x|-) <TAB> par(∥|-) <TAB> titre), rien si la
 # section est absente. gl_start_brief s'en sert pour détecter un parent de suivi sans relire le
 # ticket. Le marqueur « (parallèle) » de fin de titre est extrait dans sa propre colonne : détection
@@ -1062,9 +739,9 @@ gl_subtickets_startables() {
 # statut et dates en UNE mutation. Les sous-commandes unitaires restent disponibles à côté.
 
 # gl_start_brief <iid> -> préflight complet de /ticket-start en un appel et UNE SEULE lecture du
-# ticket (un unique `glab issue view`, rejoué pour toutes les projections ; autres lectures : le
+# ticket (un unique gl_issue_raw, rejoué pour toutes les projections ; autres lectures : le
 # statut/assigné du ticket, et la checklist du parent si <iid> est un sous-ticket). Vérifie les
-# pré-requis (gl_require_glab), signale un arbre sale, puis imprime un bloc compact : titre/labels/
+# pré-requis (gl_require), signale un arbre sale, puis imprime un bloc compact : titre/labels/
 # critères (gl_issue_brief_render), la ligne « statut : … — libre / pris par … » (gl_issue_owner,
 # avec ⚠ si le ticket est « En cours » chez quelqu'un d'autre), selon le cas marqueur sous-ticket
 # (parent, rang « lot n/total », tests différés, contrôle du statut des lots précédents) ou
@@ -1078,7 +755,7 @@ gl_subtickets_startables() {
 gl_start_brief() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_start_brief <iid>" >&2; return 2; fi
-  gl_require_glab || return 1
+  gl_require || return 1
   # Arbre sale : AVERTISSEMENT, plus un refus (#181). Depuis que /ticket-start monte un worktree
   # par ticket, le travail ne se fait plus forcément ici : des changements non commités dans le
   # répertoire courant restent alors derrière nous, intacts et hors du chemin — les refuser
@@ -1106,7 +783,7 @@ gl_start_brief() {
   IFS=$'\t' read -r statut assignes <<< "$owner"
   printf '\n'
   if [ -z "$owner" ]; then
-    printf 'statut : ? — appartenance illisible (lecture GitLab en échec) : à vérifier à la main\n'
+    printf 'statut : ? — appartenance illisible (lecture de la forge en échec) : à vérifier à la main\n'
   elif [ -z "$assignes" ]; then
     printf 'statut : %s — libre (aucun assigné)\n' "${statut:-?}"
   else
@@ -1194,59 +871,7 @@ gl_start_brief() {
 gl_begin() {
   local iid="$1" user="${2:-}"
   if [ -z "$iid" ]; then echo "usage: gl_begin <iid> [username]" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_begin "$@"; return $? ;; 2) return 1 ;; esac
-
-  # Assigné : sans argument, `glab api user` donne username + id en un appel ; avec argument,
-  # résolution GraphQL du username fourni.
-  local ugid uraw
-  if [ -z "$user" ]; then
-    uraw="$(glab api user 2>/dev/null)"
-    user="$(printf '%s' "$uraw" | grep -o '"username":"[^"]*"' | head -1 | sed 's/.*"username":"//; s/"$//')"
-    ugid="$(printf '%s' "$uraw" | grep -o '"id":[0-9]*' | head -1 | sed 's/.*://')"
-    ugid="${ugid:+gid://gitlab/User/$ugid}"
-  else
-    ugid="$(gl_graphql_read '{ user(username:"'"$user"'") { id } }' | grep -o 'gid://gitlab/User/[0-9]\+' | head -1)"
-  fi
-  if [ -z "$user" ] || [ -z "$ugid" ]; then
-    echo "gl_begin : assigné irrésoluble (username « ${user:-?} ») — glab authentifié ? (cf. require)" >&2
-    return 1
-  fi
-
-  # Lecture combinée du work item : GID + date de début déjà posée + label prio, en une requête.
-  local wraw wiid start prio
-  wraw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { id widgets { ... on WorkItemWidgetStartAndDueDate { startDate } ... on WorkItemWidgetLabels { labels { nodes { title } } } } } } } }')"
-  wiid="$(printf '%s' "$wraw" | grep -o 'gid://gitlab/WorkItem/[0-9]\+' | head -1)"
-  if [ -z "$wiid" ]; then echo "Work item #$iid introuvable dans $GL_PROJECT" >&2; return 1; fi
-  start="$(printf '%s' "$wraw" | grep -o '"startDate":"[0-9-]*"' | head -1 | sed 's/.*"startDate":"//; s/"$//')"
-  prio="$(printf '%s' "$wraw" | grep -o 'prio::[a-z]*' | head -1)"
-
-  # Labels workflow:: par nom (même robustesse que gl_set_workflow : aucun GID en dur, et les cinq
-  # autres retirés dans la même mutation) et calcul des dates (règles gl_start_dates).
-  local gids cible retraits today delay due
-  gids="$(gl_workflow_gids)" || return 1
-  cible="$(printf '%s\n' "$gids" | awk -F '\t' '$1 == "en-cours" { print $2; exit }')"
-  if [ -z "$cible" ]; then
-    echo "gl_begin : label « $GL_WORKFLOW_SCOPE::en-cours » absent — provisionner : bash scripts/gitlab/bootstrap.sh" >&2
-    return 1
-  fi
-  retraits="$(printf '%s\n' "$gids" | awk -F '\t' '
-    $1 != "en-cours" { printf "%s\"%s\"", (n++ ? "," : ""), $2 }')"
-  today="$(date +%F)"
-  [ -z "$start" ] && start="$today"
-  delay="$(gl_prio_delay "$prio")"
-  due="$(date -d "$start +$delay days" +%F 2>/dev/null)"
-  if [ -z "$due" ]; then echo "gl_begin : calcul de l'échéance impossible (commande date indisponible ?)" >&2; return 1; fi
-
-  # La mutation groupée — appel direct à glab, jamais enveloppé de retry (cf. gl_graphql_read).
-  local out
-  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", assigneesWidget:{ assigneeIds:["'"$ugid"'"] }, labelsWidget:{ addLabelIds:["'"$cible"'"], removeLabelIds:['"$retraits"'] }, startAndDueDateWidget:{ startDate:"'"$start"'", dueDate:"'"$due"'" } }){ errors } }' 2>&1)"
-  case "$out" in
-    *'"errors":[]'*)
-      printf '#%s démarré : assigné=%s, cycle de vie « En cours », début=%s, échéance=%s\n' "$iid" "$user" "$start" "$due"
-      printf '  (priorité %s → échéance à +%s j)\n' "${prio:-prio::moyenne (défaut)}" "$delay"
-      ;;
-    *) echo "Échec du démarrage groupé de #$iid : $out" >&2; return 1 ;;
-  esac
+  gh_begin "$@"
 }
 
 # --- Dates & time tracking ----------------------------------------------------------------------
@@ -1260,9 +885,7 @@ gl_begin() {
 gl_prio() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "gl_prio : iid manquant" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_prio "$@"; return $? ;; 2) return 1 ;; esac
-  gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetLabels { labels { nodes { title } } } } } } } }' \
-    | grep -o 'prio::[a-z]*' | head -1
+  gh_prio "$@"
 }
 
 # gl_prio_delay <prio> -> imprime le délai (jours) pour l'échéance. Accepte « haute » ou
@@ -1280,9 +903,7 @@ gl_prio_delay() {
 gl_get_start_date() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "gl_get_start_date : iid manquant" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_get_start_date "$@"; return $? ;; 2) return 1 ;; esac
-  gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetStartAndDueDate { startDate } } } } } }' \
-    | grep -o '"startDate":"[0-9-]*"' | head -1 | sed 's/.*"startDate":"//; s/"$//'
+  gh_get_start_date "$@"
 }
 
 # gl_get_time_spent <iid> -> imprime le temps total déjà loggé, en secondes (0 si aucun).
@@ -1290,11 +911,7 @@ gl_get_start_date() {
 gl_get_time_spent() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "gl_get_time_spent : iid manquant" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_get_time_spent "$@"; return $? ;; 2) return 1 ;; esac
-  local v
-  v="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { workItems(iids:["'"$iid"'"]) { nodes { widgets { ... on WorkItemWidgetTimeTracking { totalTimeSpent } } } } } }' \
-    | grep -o '"totalTimeSpent":[0-9]*' | head -1 | sed 's/.*://')"
-  printf '%s\n' "${v:-0}"
+  gh_get_time_spent "$@"
 }
 
 # gl_elapsed_days <date-début YYYY-MM-DD> -> imprime le nombre de jours calendaires écoulés
@@ -1316,17 +933,7 @@ gl_set_dates() {
   local iid="$1" start="$2" due="$3"
   if [ -z "$iid" ]; then echo "usage: gl_set_dates <iid> [début YYYY-MM-DD] [échéance YYYY-MM-DD]" >&2; return 2; fi
   if [ -z "$start" ] && [ -z "$due" ]; then echo "gl_set_dates : au moins une date (début ou échéance) requise" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_set_dates "$@"; return $? ;; 2) return 1 ;; esac
-  local wiid frag out
-  wiid="$(gl_workitem_gid "$iid")" || return 1
-  frag=""
-  [ -n "$start" ] && frag="startDate:\"$start\""
-  [ -n "$due" ]   && frag="${frag:+$frag, }dueDate:\"$due\""
-  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", startAndDueDateWidget:{ '"$frag"' } }){ errors } }' 2>&1)"
-  case "$out" in
-    *'"errors":[]'*) printf 'Dates de #%s → début=%s, échéance=%s\n' "$iid" "${start:-inchangé}" "${due:-inchangé}" ;;
-    *) echo "Échec de la pose des dates sur #$iid : $out" >&2; return 1 ;;
-  esac
+  gh_set_dates "$@"
 }
 
 # gl_start_dates <iid> -> pose les dates au démarrage : début = aujourd'hui (conservé si déjà
@@ -1347,21 +954,14 @@ gl_start_dates() {
   printf '  (priorité %s → échéance à +%s j)\n' "${prio:-prio::moyenne (défaut)}" "$delay"
 }
 
-# gl_log_time <iid> <durée> [résumé] -> ajoute une entrée de temps passé (timelog) au ticket.
-# <durée> au format GitLab (« 2h », « 1h 30m », « 1d »…). Additif côté GitLab (n'écrase pas l'existant).
+# gl_log_time <iid> <durée> [résumé] -> ajoute une entrée de temps passé au ticket.
+# <durée> au format des unités GitLab (« 2h », « 1h 30m », « 1d »…), gardé tel quel pour que les
+# 603 h d'historique importées et les entrées écrites après la bascule se comptent avec la même
+# règle. ADDITIF : n'écrase jamais l'existant (cf. le suivi maison, en tête de fichier).
 gl_log_time() {
-  local iid="$1" dur="$2" summary="${3:-}"
+  local iid="$1" dur="$2"
   if [ -z "$iid" ] || [ -z "$dur" ]; then echo "usage: gl_log_time <iid> <durée> [résumé]" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_log_time "$@"; return $? ;; 2) return 1 ;; esac
-  local wiid out sumfrag
-  wiid="$(gl_workitem_gid "$iid")" || return 1
-  sumfrag=""
-  [ -n "$summary" ] && sumfrag=", summary:\"$summary\""
-  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", timeTrackingWidget:{ timelog:{ timeSpent:"'"$dur"'"'"$sumfrag"' } } }){ errors } }' 2>&1)"
-  case "$out" in
-    *'"errors":[]'*) printf 'Temps loggé sur #%s : %s\n' "$iid" "$dur" ;;
-    *) echo "Échec du log de temps sur #$iid : $out" >&2; return 1 ;;
-  esac
+  gh_log_time "$@"
 }
 
 # --- Descriptions : lecture/écriture fidèles aux octets (ticket #141) ------------------------------
@@ -1428,8 +1028,7 @@ gl_json_string_field() {
 gl_get_description() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_get_description <iid>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_get_description "$@"; return $? ;; 2) return 1 ;; esac
-  glab api "projects/$(gl_project_enc)/issues/$iid" 2>/dev/null | gl_json_string_field description
+  gh_get_description "$@"
 }
 
 # gl_set_description <iid> <fichier> -> remplace la description du ticket <iid> par le contenu du
@@ -1438,19 +1037,14 @@ gl_set_description() {
   local iid="$1" fichier="$2"
   if [ -z "$iid" ] || [ -z "$fichier" ]; then echo "usage: gl_set_description <iid> <fichier>" >&2; return 2; fi
   if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
-  gl_vers_github; case $? in 0) gh_set_description "$@"; return $? ;; 2) return 1 ;; esac
-  if ! glab issue update "$iid" --description "$(cat "$fichier")" >/dev/null 2>&1; then
-    echo "Échec de la mise à jour de la description de #$iid" >&2; return 1
-  fi
-  printf 'Description de #%s mise à jour.\n' "$iid"
+  gh_set_description "$@"
 }
 
 # gl_get_mr_description <mr> -> la description de la MR <mr>, en UTF-8 intact, sur stdout.
 gl_get_mr_description() {
   local mr="$1"
   if [ -z "$mr" ]; then echo "usage: gl_get_mr_description <mr>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_get_mr_description "$@"; return $? ;; 2) return 1 ;; esac
-  glab api "projects/$(gl_project_enc)/merge_requests/$mr" 2>/dev/null | gl_json_string_field description
+  gh_get_mr_description "$@"
 }
 
 # gl_set_mr_description <mr> <fichier> -> remplace la description de la MR <mr> par le fichier.
@@ -1458,11 +1052,7 @@ gl_set_mr_description() {
   local mr="$1" fichier="$2"
   if [ -z "$mr" ] || [ -z "$fichier" ]; then echo "usage: gl_set_mr_description <mr> <fichier>" >&2; return 2; fi
   if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
-  gl_vers_github; case $? in 0) gh_set_mr_description "$@"; return $? ;; 2) return 1 ;; esac
-  if ! glab mr update "$mr" --description "$(cat "$fichier")" >/dev/null 2>&1; then
-    echo "Échec de la mise à jour de la description de !$mr" >&2; return 1
-  fi
-  printf 'Description de !%s mise à jour.\n' "$mr"
+  gh_set_mr_description "$@"
 }
 
 # gl_roundtrip_description <iid> -> validation REPRODUCTIBLE de la fidélité (ticket #141) : lit la
@@ -1496,12 +1086,12 @@ gl_roundtrip_description() {
 }
 
 # --- Création : MR et notes, depuis un FICHIER (#233) ---------------------------------------------
-# Pourquoi ces helpers existent alors que `glab mr create` et `glab issue note` sont DÉJÀ autorisés
+# Pourquoi ces helpers existent alors que la création de PR et de commentaire est DÉJÀ autorisée
 # (docs/10-workflow-git.md §7.1) : la couche permissions de Claude Code découpe une commande sur ses
 # SAUTS DE LIGNE et ne sait matcher aucune SUBSTITUTION `$(…)`. Or une description de MR fait par
 # nature plusieurs lignes. La commande prescrite jusqu'ici par /ticket-finish était donc refusée
 # telle quelle, et ses deux replis naturels l'étaient tout autant — `--description "$(cat f)"`, puis
-# `D="$(cat f)"; glab mr create … "$D"`. 10 refus sur 8 sessions autonomes (#232, cause n°1), et
+# `D="$(cat f)"; gh pr create … "$D"`. 10 refus sur 8 sessions autonomes (#232, cause n°1), et
 # toujours sur la DERNIÈRE action du ticket : tout est commité, rien ne le déclare.
 #
 # Le remède ne demande AUCUN droit nouveau — il rend matchable une commande déjà autorisée. Le texte
@@ -1516,10 +1106,7 @@ gl_roundtrip_description() {
 gl_issue_title() {
   local iid="$1" titre
   if [ -z "$iid" ]; then echo "usage: gl_issue_title <iid>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_issue_title "$@"; return $? ;; 2) return 1 ;; esac
-  titre="$(glab api "projects/$(gl_project_enc)/issues/$iid" 2>/dev/null | gl_json_string_field title)"
-  if [ -z "$titre" ]; then echo "gl_issue_title : titre de #$iid illisible" >&2; return 1; fi
-  printf '%s\n' "$titre"
+  gh_issue_title "$@"
 }
 
 # gl_create_mr <iid> <fichier> [branche] -> ouvre la MR de <branche> (défaut : la branche courante)
@@ -1554,16 +1141,7 @@ gl_create_mr() {
 
   titre="$(gl_issue_title "$iid")" || return 1
 
-  gl_vers_github; case $? in 0) gh_create_pr "$iid" "$branche" "$titre" "$fichier"; return $? ;; 2) return 1 ;; esac
-
-  # --yes : pas de confirmation interactive (une session autonome n'a personne pour répondre).
-  if ! sortie="$(glab mr create --yes --draft --target-branch main --remove-source-branch \
-      --source-branch "$branche" --title "$titre" --description "$(cat "$fichier")" 2>&1)"; then
-    printf '%s\n' "$sortie" >&2
-    echo "Échec de la création de la MR pour #$iid (branche « $branche »)" >&2
-    return 1
-  fi
-  printf '%s\n' "$sortie"
+  gh_create_pr "$iid" "$branche" "$titre" "$fichier"
 }
 
 # gl_mr_url <mr> -> l'URL web de la MR/PR. Les deux forges ne l'écrivent pas pareil
@@ -1571,67 +1149,28 @@ gl_create_mr() {
 gl_mr_url() {
   local mr="$1"
   if [ -z "$mr" ]; then echo "usage: gl_mr_url <mr>" >&2; return 2; fi
-  if gl_vers_github 2>/dev/null; then
-    printf 'https://%s/%s/pull/%s\n' "$(gl_host)" "$GL_GH_REPO" "$mr"
-  else
-    printf 'https://%s/%s/-/merge_requests/%s\n' "$(gl_host)" "$GL_PROJECT" "$mr"
-  fi
+  printf 'https://%s/%s/pull/%s\n' "$(gl_host)" "$GL_GH_REPO" "$mr"
 }
 
 # gl_issue_note <iid> <fichier> -> poste le contenu du fichier en COMMENTAIRE sur le ticket <iid>.
-# Même raison d'être que gl_create_mr : `glab issue note -m "$(cat …)"` n'est pas matchable (#186).
+# Même raison d'être que gl_create_mr : un `-m "$(cat …)"` n'est pas matchable (#186).
 gl_issue_note() {
   local iid="$1" fichier="$2"
   if [ -z "$iid" ] || [ -z "$fichier" ]; then echo "usage: gl_issue_note <iid> <fichier>" >&2; return 2; fi
   if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
   if [ ! -s "$fichier" ]; then echo "gl_issue_note : $fichier est vide — rien à poster" >&2; return 1; fi
-  gl_vers_github; case $? in 0) gh_issue_note "$@"; return $? ;; 2) return 1 ;; esac
-  if ! glab issue note "$iid" -m "$(cat "$fichier")" >/dev/null 2>&1; then
-    echo "Échec de la publication du commentaire sur #$iid" >&2; return 1
-  fi
-  printf 'Commentaire posté sur #%s.\n' "$iid"
+  gh_issue_note "$@"
 }
 
 # --- Pipelines CI ---------------------------------------------------------------------------------
 # Helpers REST pour le diagnostic de pipeline (/mr-fix — voir docs/10-workflow-git.md §8.3).
 # Même parti pris que le reste du fichier : parsing shell pur (grep/sed/awk), pas de jq/python.
 
-# gl_project_enc -> chemin du projet URL-encodé pour l'API REST ("groupe%2Fprojet").
-# (Les helpers GraphQL utilisent GL_PROJECT tel quel ; REST exige l'encodage du "/".)
-gl_project_enc() {
-  printf '%s\n' "$GL_PROJECT" | sed 's,/,%2F,g'
-}
-
-# gl_project_id -> id NUMÉRIQUE du projet. Certains endpoints ne prennent pas le chemin encodé
-# (POST /user/runners veut un `project_id` entier — cf. setup-runner.sh, #146).
-gl_project_id() {
-  # Pas d'équivalent GitHub, et il ne s'agit pas d'un oubli : ce verbe n'existe que pour
-  # `POST /user/runners` (setup-runner.sh, #146), c'est-à-dire pour l'outillage de runner GitLab que
-  # le lot 9 de #335 supprime. Le dire vaut mieux que rendre un identifiant qui n'ouvrirait rien.
-  gl_vers_github; case $? in
-    0) echo "gl_project_id : notion propre à GitLab (id numérique de projet) — sans objet sur GitHub." >&2; return 1 ;;
-    2) return 1 ;;
-  esac
-  local id
-  id="$(glab api "projects/$(gl_project_enc)" 2>/dev/null | grep -o '"id":[0-9]\+' | head -1 | grep -o '[0-9]\+')"
-  if [ -z "$id" ]; then
-    echo "gl_project_id : projet $GL_PROJECT introuvable (glab authentifié ? cf. require)" >&2
-    return 1
-  fi
-  printf '%s\n' "$id"
-}
-
 # gl_host -> hôte de la forge, déduit du remote `origin` (défaut : celui de la forge active). Rien
 # n'est codé en dur : le workflow doit tenir sur une instance auto-hébergée. Gère les deux formes
 # d'URL (https://hote/groupe/projet et git@hote:groupe/projet).
 gl_host() {
-  local url racine defaut="gitlab.com"
-  # Le repli suit la FORGE ACTIVE et non le remote. Depuis la bascule (#343) les deux concordent —
-  # `origin` pointe sur GitHub, la forge par défaut est GitHub — mais la dissociation reste utile
-  # en sens inverse : relire l'archive GitLab (MAESTRO_FORGE=gitlab) depuis un clone dont `origin`
-  # pointe sur GitHub doit fabriquer des URL gitlab.com. Le remote reste prioritaire quand il est
-  # lisible et cohérent avec la forge active.
-  gl_vers_github 2>/dev/null && defaut="github.com"
+  local url racine defaut="github.com"
   racine="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   url="$(git -C "$racine" remote get-url origin 2>/dev/null)" || { printf '%s\n' "$defaut"; return 0; }
   case "$url" in
@@ -1639,54 +1178,20 @@ gl_host() {
     *@*:*) url="${url#*@}"; url="${url%%:*}" ;;
     *)     url="" ;;
   esac
-  # Un remote GitLab pendant qu'on travaille sur GitHub (et l'inverse) : c'est l'état NORMAL avant
-  # la bascule, on ne le laisse donc pas décider de l'hôte.
-  case "$url" in
-    '') printf '%s\n' "$defaut" ;;
-    *github*) if [ "$defaut" = "github.com" ]; then printf '%s\n' "$url"; else printf '%s\n' "$defaut"; fi ;;
-    *)        if [ "$defaut" = "github.com" ]; then printf '%s\n' "$defaut"; else printf '%s\n' "$url"; fi ;;
-  esac
-}
-
-# gl_mr_pipelines <branche> -> JSON brut du dernier pipeline RATTACHÉ À LA MR ouverte de cette
-# branche source (liste d'un élément), vide + code 1 si aucune MR ouverte n'en porte la branche.
-# Raison d'être (#165) : la CI ne se déclenche plus que sur les Merge Requests, et un pipeline de
-# MR est « détaché » — sa ref est refs/merge-requests/<iid>/head, pas le nom de la branche. Le
-# filtre `pipelines?ref=<branche>` ne le voit donc pas ; l'endpoint des pipelines de la MR, si.
-gl_mr_pipelines() {
-  local branch="$1" iid
-  if [ -z "$branch" ]; then echo "usage: gl_mr_pipelines <branche>" >&2; return 2; fi
-  iid="$(glab api "projects/$(gl_project_enc)/merge_requests?source_branch=$branch&state=opened&per_page=1" 2>/dev/null \
-    | grep -o '"iid":[0-9]*' | head -1 | sed 's/.*://')"
-  [ -n "$iid" ] || return 1
-  glab api "projects/$(gl_project_enc)/merge_requests/$iid/pipelines?per_page=1" 2>/dev/null
+  printf '%s\n' "${url:-$defaut}"
 }
 
 # gl_pipeline_latest <ref> -> dernier pipeline de la branche, en une ligne TSV :
 #   id <TAB> status <TAB> sha <TAB> web_url
 # Cherche d'abord du côté de la MR ouverte de la branche — le cas NORMAL depuis #165, et cet
 # endpoint remonte AUSSI les pipelines de branche ou manuels du même sha, donc la même vue que le
-# garde-fou de merge ; puis, à défaut de MR, les pipelines portant la ref (`main`, branche sans MR,
-# déclenchement manuel `glab ci run -b`).
+# garde-fou de merge ; puis, à défaut de PR, les runs portant la ref (`main`, branche sans PR,
+# déclenchement manuel `workflow_dispatch`).
 # Code 1 (et message) si aucun pipeline n'existe ni pour la MR, ni pour la ref.
 gl_pipeline_latest() {
   local ref="$1"
   if [ -z "$ref" ]; then echo "usage: gl_pipeline_latest <ref>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_pipeline_latest "$@"; return $? ;; 2) return 1 ;; esac
-  local raw id status sha url
-  raw="$(gl_mr_pipelines "$ref")" || raw=""
-  if [ -z "$raw" ] || [ "$raw" = "[]" ]; then
-    raw="$(glab api "projects/$(gl_project_enc)/pipelines?ref=$ref&per_page=1" 2>/dev/null)"
-  fi
-  if [ -z "$raw" ] || [ "$raw" = "[]" ]; then
-    echo "Aucun pipeline pour « $ref » dans $GL_PROJECT (ni sur la ref, ni sur sa MR ouverte — la CI ne tourne que sur les MR, cf. docs/10 §8)" >&2
-    return 1
-  fi
-  id="$(printf '%s' "$raw" | grep -o '"id":[0-9]*' | head -1 | sed 's/.*://')"
-  status="$(printf '%s' "$raw" | grep -o '"status":"[a-z_]*"' | head -1 | sed 's/.*:"//; s/"//')"
-  sha="$(printf '%s' "$raw" | grep -o '"sha":"[0-9a-f]*"' | head -1 | sed 's/.*:"//; s/"//')"
-  url="$(printf '%s' "$raw" | grep -o '"web_url":"[^"]*/pipelines/[0-9]*"' | head -1 | sed 's/.*:"//; s/"//')"
-  printf '%s\t%s\t%s\t%s\n' "$id" "$status" "$sha" "$url"
+  gh_pipeline_latest "$@"
 }
 
 # gl_pipeline_status <pipeline-id> -> imprime le statut courant du pipeline (created|pending|
@@ -1695,12 +1200,7 @@ gl_pipeline_latest() {
 gl_pipeline_status() {
   local pid="$1"
   if [ -z "$pid" ]; then echo "usage: gl_pipeline_status <pipeline-id>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_pipeline_status "$@"; return $? ;; 2) return 1 ;; esac
-  local status
-  status="$(glab api "projects/$(gl_project_enc)/pipelines/$pid" 2>/dev/null \
-    | grep -o '"status":"[a-z_]*"' | head -1 | sed 's/.*:"//; s/"//')"
-  if [ -z "$status" ]; then echo "Pipeline $pid introuvable dans $GL_PROJECT" >&2; return 1; fi
-  printf '%s\n' "$status"
+  gh_pipeline_status "$@"
 }
 
 # gl_pipeline_failed_jobs <pipeline-id> -> jobs en échec du pipeline, une ligne TSV par job :
@@ -1712,33 +1212,7 @@ gl_pipeline_status() {
 gl_pipeline_failed_jobs() {
   local pid="$1"
   if [ -z "$pid" ]; then echo "usage: gl_pipeline_failed_jobs <pipeline-id>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_pipeline_failed_jobs "$@"; return $? ;; 2) return 1 ;; esac
-  local raw
-  raw="$(glab api "projects/$(gl_project_enc)/pipelines/$pid/jobs?scope[]=failed&per_page=50" 2>/dev/null)"
-  if [ -z "$raw" ]; then echo "Jobs du pipeline $pid illisibles dans $GL_PROJECT" >&2; return 1; fi
-  if [ "$raw" = "[]" ]; then echo "Aucun job en échec dans le pipeline $pid." >&2; return 0; fi
-  printf '# id\tname\tstage\tfailure_reason\n'
-  printf '%s' "$raw" | awk '
-    {
-      s = $0
-      hdr = "\"id\":[0-9]+,\"status\":\"failed\",\"stage\":\"[^\"]*\",\"name\":\"[^\"]*\""
-      while (match(s, hdr)) {
-        seg = substr(s, RSTART, RLENGTH)
-        s = substr(s, RSTART + RLENGTH)
-        id = seg;    sub(/^"id":/, "", id);          sub(/,.*$/, "", id)
-        stage = seg; sub(/^.*"stage":"/, "", stage); sub(/",.*$/, "", stage)
-        name = seg;  sub(/^.*"name":"/, "", name);   sub(/"$/, "", name)
-        body = s
-        if (match(s, hdr)) body = substr(s, 1, RSTART - 1)
-        reason = "-"
-        if (match(body, /"failure_reason":"[^"]*"/)) {
-          reason = substr(body, RSTART, RLENGTH)
-          sub(/^"failure_reason":"/, "", reason); sub(/"$/, "", reason)
-        }
-        printf "%s\t%s\t%s\t%s\n", id, name, stage, reason
-      }
-    }
-  '
+  gh_pipeline_failed_jobs "$@"
 }
 
 # gl_job_trace <job-id> [lignes] -> queue de la trace du job (défaut : 100 dernières lignes).
@@ -1747,11 +1221,7 @@ gl_pipeline_failed_jobs() {
 gl_job_trace() {
   local jid="$1" lines="${2:-100}"
   if [ -z "$jid" ]; then echo "usage: gl_job_trace <job-id> [lignes]" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_job_trace "$@"; return $? ;; 2) return 1 ;; esac
-  local raw
-  raw="$(glab api "projects/$(gl_project_enc)/jobs/$jid/trace" 2>/dev/null)"
-  if [ -z "$raw" ]; then echo "Trace du job $jid vide ou illisible dans $GL_PROJECT" >&2; return 1; fi
-  printf '%s\n' "$raw" | tail -n "$lines"
+  gh_job_trace "$@"
 }
 
 # gl_pipeline_wait <pipeline-id> [timeout-s] -> suit le pipeline jusqu'à un état terminal et
@@ -1790,29 +1260,11 @@ gl_pipeline_wait() {
 # comptes d'automatisation listés dans GL_BOT_USERS, et les niveaux d'accès < access-min
 # (défaut GL_REVIEWER_MIN_ACCESS). Membres directs ET hérités du groupe.
 gl_project_humans() {
-  gl_vers_github; case $? in 0) gh_project_humans "$@"; return $? ;; 2) return 1 ;; esac
-  local min="${1:-$GL_REVIEWER_MIN_ACCESS}" raw
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { projectMembers(relations:[DIRECT,INHERITED], first:100) { nodes { accessLevel { integerValue } user { username bot state } } } } }')" || return 1
-  printf '%s\n' "$raw" | awk -v min="$min" -v bots=",$GL_BOT_USERS," '
-    {
-      n = split($0, parts, /\{"accessLevel":\{"integerValue":/)
-      for (i = 2; i <= n; i++) {
-        node = parts[i]
-        match(node, /^[0-9]+/); lvl = substr(node, RSTART, RLENGTH) + 0
-        if (lvl < min) continue
-        if (node ~ /"bot":true/) continue
-        if (node !~ /"state":"active"/) continue
-        if (!match(node, /"username":"[^"]*"/)) continue
-        u = substr(node, RSTART, RLENGTH); sub(/^"username":"/, "", u); sub(/"$/, "", u)
-        if (index(bots, "," u ",")) continue
-        printf "%s\t%s\n", u, lvl
-      }
-    }
-  ' | sort -u
+  gh_project_humans "$@"
 }
 
 # gl_pick_reviewer [auteur] [graine] -> imprime le username d'un relecteur humain DIFFÉRENT de
-# l'auteur (défaut : l'utilisateur glab courant). Aucun nom n'est codé en dur : les candidats
+# l'auteur (défaut : l'utilisateur authentifié). Aucun nom n'est codé en dur : les candidats
 # viennent de l'API des membres (gl_project_humans).
 # La graine (l'iid de la MR en pratique) sert de ROTATION : même MR -> même relecteur (la pose est
 # donc reproductible et idempotente), MR différentes -> relecteurs répartis plutôt que toujours le
@@ -1844,12 +1296,7 @@ gl_mr_iid() {
     *[!0-9]*) ;;
     *) printf '%s\n' "$ref"; return 0 ;;
   esac
-  gl_vers_github; case $? in 0) gh_mr_iid "$ref"; return $? ;; 2) return 1 ;; esac
-  local iid
-  iid="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { mergeRequests(state: opened, sourceBranches:["'"$ref"'"], first:1) { nodes { iid } } } }' \
-        | grep -o '"iid":"[0-9]*"' | head -1 | sed 's/.*:"//; s/"//')"
-  if [ -z "$iid" ]; then echo "Aucune MR ouverte pour la branche « $ref » dans $GL_PROJECT" >&2; return 1; fi
-  printf '%s\n' "$iid"
+  gh_mr_iid "$ref"
 }
 
 # gl_mr_review_info <mr|branche> -> « auteur <TAB> relecteurs » (relecteurs séparés par des virgules,
@@ -1857,17 +1304,7 @@ gl_mr_iid() {
 gl_mr_review_info() {
   local ref="${1:-}" mr raw auteur rev
   mr="$(gl_mr_iid "$ref")" || return 1
-  gl_vers_github; case $? in 0) gh_mr_review_info "$mr"; return $? ;; 2) return 1 ;; esac
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { mergeRequest(iid:"'"$mr"'") { author { username } reviewers { nodes { username } } } } }')" || return 1
-  case "$raw" in
-    *'"reviewers"'*) ;;
-    *) echo "gl_mr_review_info : MR !$mr illisible dans $GL_PROJECT" >&2; return 1 ;;
-  esac
-  auteur="$(printf '%s' "$raw" | grep -o '"author":{"username":"[^"]*"' | head -1 | sed 's/.*"username":"//; s/"$//')"
-  # Les relecteurs se lisent APRÈS la clé "reviewers" : l'auteur, lu plus haut, ne doit pas y entrer.
-  rev="$(printf '%s' "$raw" | sed 's/.*"reviewers"//' | grep -o '"username":"[^"]*"' \
-         | sed 's/.*"username":"//; s/"$//' | awk '{ out = (NR == 1 ? $0 : out "," $0) } END { if (NR) print out }')"
-  printf '%s\t%s\n' "$auteur" "$rev"
+  gh_mr_review_info "$mr"
 }
 
 # gl_mr_reviewers <mr|branche> -> relecteurs actuellement posés sur la MR (CSV, vide si aucun).
@@ -1901,12 +1338,7 @@ gl_set_reviewer() {
     echo "gl_set_reviewer : @$who est l'auteur de la MR !$mr — le relecteur doit en être distinct." >&2
     return 1
   fi
-  gl_vers_github; case $? in 0) gh_set_reviewer "$mr" "$who" "$auteur"; return $? ;; 2) return 1 ;; esac
-  out="$(glab mr update "$mr" --reviewer "$who" 2>&1)" || {
-    echo "gl_set_reviewer : échec de la pose du relecteur @$who sur !$mr : $out" >&2
-    return 1
-  }
-  printf 'MR !%s : relecteur → @%s (auteur @%s).\n' "$mr" "$who" "$auteur"
+  gh_set_reviewer "$mr" "$who" "$auteur"
 }
 
 # gl_review_queue -> file des MR OUVERTES en attente de revue, la plus ANCIENNE d'abord, une ligne
@@ -1917,73 +1349,7 @@ gl_set_reviewer() {
 # running/…, « - » si aucun), `relecteur` = CSV des relecteurs posés (« - » si personne).
 # Le préfixe « Draft: » du titre est retiré : l'information est déjà dans la colonne `etat`.
 gl_review_queue() {
-  gl_vers_github; case $? in 0) gh_review_queue "$@"; return $? ;; 2) return 1 ;; esac
-  local raw lignes
-  raw="$(gl_graphql_read '{ project(fullPath:"'"$GL_PROJECT"'") { mergeRequests(state: opened, sort: CREATED_ASC, first: 50) { nodes { iid title createdAt draft sourceBranch author { username } reviewers { nodes { username } } headPipeline { status } } } } }')" || return 1
-  printf '# mr\tage_j\tetat\tpipeline\tauteur\trelecteur\tbranche\ttitre\n'
-  # 1re passe (awk) : projection des champs. 2e passe (shell) : l'ancienneté, calculée par `date`
-  # via gl_elapsed_days — mktime() n'existe pas dans tous les awk (mawk), on ne s'y appuie pas.
-  lignes="$(printf '%s\n' "$raw" | awk '
-    {
-      n = split($0, parts, /\{"iid":"/)
-      for (i = 2; i <= n; i++) {
-        node = parts[i]
-        match(node, /^[0-9]+/); iid = substr(node, RSTART, RLENGTH)
-
-        titre = "-"
-        if (match(node, /","title":"/)) {
-          rest = substr(node, RSTART + RLENGTH)
-          if (match(rest, /","createdAt":"/)) titre = substr(rest, 1, RSTART - 1)
-        }
-        gsub(/\\u0026/, "\\&", titre); gsub(/\\u003e/, ">", titre); gsub(/\\u003c/, "<", titre)
-        sub(/^Draft: /, "", titre)
-
-        cree = "-"
-        if (match(node, /"createdAt":"[0-9-]+/)) {
-          cree = substr(node, RSTART, RLENGTH); sub(/^"createdAt":"/, "", cree)
-        }
-
-        etat = (node ~ /"draft":true/) ? "draft" : "ready"
-
-        branche = "-"
-        if (match(node, /"sourceBranch":"[^"]*"/)) {
-          branche = substr(node, RSTART, RLENGTH); sub(/^"sourceBranch":"/, "", branche); sub(/"$/, "", branche)
-        }
-
-        auteur = "-"
-        if (match(node, /"author":\{"username":"[^"]*"/)) {
-          auteur = substr(node, RSTART, RLENGTH); sub(/^.*"username":"/, "", auteur); sub(/"$/, "", auteur)
-        }
-
-        # Relecteurs : uniquement ceux du bloc "reviewers" de CE nœud (l auteur est déjà consommé).
-        rel = "-"
-        if (match(node, /"reviewers":\{"nodes":\[[^]]*\]/)) {
-          bloc = substr(node, RSTART, RLENGTH); liste = ""
-          while (match(bloc, /"username":"[^"]*"/)) {
-            u = substr(bloc, RSTART, RLENGTH); sub(/^"username":"/, "", u); sub(/"$/, "", u)
-            liste = (liste == "" ? u : liste "," u)
-            bloc = substr(bloc, RSTART + RLENGTH)
-          }
-          if (liste != "") rel = liste
-        }
-
-        pipe = "-"
-        if (match(node, /"headPipeline":\{"status":"[A-Z_]*"/)) {
-          pipe = substr(node, RSTART, RLENGTH); sub(/^.*"status":"/, "", pipe); sub(/"$/, "", pipe)
-          pipe = tolower(pipe)
-        }
-
-        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", iid, cree, etat, pipe, auteur, rel, branche, titre
-      }
-    }
-  ')"
-  [ -n "$lignes" ] || return 0
-  local mr cree etat pipe auteur rel branche titre age
-  while IFS=$'\t' read -r mr cree etat pipe auteur rel branche titre; do
-    [ -n "$mr" ] || continue
-    age="$(gl_elapsed_days "$cree" 2>/dev/null)" || age="-"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$mr" "$age" "$etat" "$pipe" "$auteur" "$rel" "$branche" "$titre"
-  done <<< "$lignes"
+  gh_review_queue "$@"
 }
 
 # --- Nettoyage des branches locales -------------------------------------------------------------
@@ -2004,19 +1370,7 @@ gl_review_queue() {
 gl_mr_brief() {
   local branche="$1"
   if [ -z "$branche" ]; then echo "usage: gl_mr_brief <branche>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_mr_brief "$branche"; return $? ;; 2) return 1 ;; esac
-  local json etat mr sha
-  json="$(glab mr view "$branche" --output json 2>/dev/null)"
-  [ -n "$json" ] || return 1
-  # `head -1` sur la première clé de premier niveau : l'état de la MR précède les objets imbriqués
-  # (auteur, jalon, pipeline) qui portent eux aussi une clé « state ».
-  etat="$(printf '%s' "$json" | grep -o '"state":"[a-z]*"' | head -1 | sed 's/.*:"//; s/"//')"
-  [ -n "$etat" ] || return 1
-  mr="$(printf '%s' "$json" | grep -o '"iid":[0-9]*' | head -1 | sed 's/.*://')"
-  # « "sha": » et non « _sha": » : diff_refs porte base_sha/head_sha/start_sha, que ce motif laisse
-  # de côté.
-  sha="$(printf '%s' "$json" | grep -o '"sha":"[0-9a-f]\{7,40\}"' | head -1 | sed 's/.*:"//; s/"//')"
-  printf '%s\t%s\t%s\n' "$etat" "${mr:-?}" "${sha:--}"
+  gh_mr_brief "$branche"
 }
 
 # gl_open_mr_branches -> la branche SOURCE de chaque MR/PR ouverte, une par ligne (non triées).
@@ -2027,8 +1381,7 @@ gl_mr_brief() {
 # ticket par ticket — pour une question qui n'en demande qu'une : la file de revue est une VUE, pas
 # une primitive, et s'en servir ici coûterait la lecture des relecteurs et du rollup de checks.
 gl_open_mr_branches() {
-  gl_vers_github; case $? in 0) gh_open_mr_branches; return $? ;; 2) return 1 ;; esac
-  glab mr list --output json 2>/dev/null | grep -o '"source_branch":"[^"]*"' | sed 's/.*:"//; s/"$//'
+  gh_open_mr_branches
 }
 
 # gl_mr_state <branche> -> imprime l'état de la MR associée à la branche (opened|closed|merged),
@@ -2128,7 +1481,7 @@ gl_cleanup_merged() {
 #
 #   fini     MR de la branche MERGÉE, ou ticket FERMÉ (réalisé, abandonné, doublon) ;
 #   actif    travail en cours (ticket ouvert, MR absente ou ouverte) — on n'y touche pas ;
-#   inconnu  GitLab illisible (glab absent, hors ligne, ticket introuvable) — on n'y touche pas
+#   inconnu  forge illisible (gh absent, hors ligne, ticket introuvable) — on n'y touche pas
 #            non plus, et le code de retour 1 le dit : ne rien savoir n'autorise rien.
 #
 # Le <sha> n'est renseigné que sur un « fini » par merge, et vaut « - » sinon. C'est la tête de la
@@ -2145,7 +1498,7 @@ gl_cleanup_merged() {
 gl_worktree_done() {
   local iid="$1" branche="${2:-}" brief etat="" mr sha raw etat_ticket
   if [ -z "$iid" ]; then echo "usage: gl_worktree_done <iid> [branche]" >&2; return 2; fi
-  gl_require_glab >/dev/null 2>&1 || { printf 'inconnu\t-\tCLI de forge indisponible ou non authentifiée\n'; return 1; }
+  gl_require >/dev/null 2>&1 || { printf 'inconnu\t-\tCLI de forge indisponible ou non authentifiée\n'; return 1; }
 
   if [ -n "$branche" ] && brief="$(gl_mr_brief "$branche")"; then
     IFS=$'\t' read -r etat mr sha <<< "$brief"
@@ -2170,15 +1523,15 @@ gl_worktree_done() {
   esac
 }
 
-# --- Réglages du dépôt : garde-fous de merge, board, runners (#341) --------------------------------
-# Les trois lectures de doctor.sh qui portent sur le DÉPÔT et non sur ses tickets. Elles sont ici
-# plutôt que dans doctor.sh pour une raison de forme et une de fond : la forme, c'est que `glab`
-# n'est appelé QUE dans ce fichier, ce qui rend le grep du contrat vérifiable d'un coup d'œil ; le
-# fond, c'est que deux des trois n'ont PAS d'équivalent GitHub, et qu'un diagnostic doit savoir dire
-# « sans objet » plutôt que « rien trouvé ».
+# --- Réglages du dépôt : garde-fous de merge (#341) -----------------------------------------------
+# La lecture de doctor.sh qui porte sur le DÉPÔT et non sur ses tickets. Elle est ici plutôt que
+# dans doctor.sh pour que le CLI de la forge ne soit appelé QUE dans ce fichier, ce qui rend le grep
+# du contrat vérifiable d'un coup d'œil.
 #
-# D'où un CODE DE RETOUR 3 réservé à « ce contrôle ne s'applique pas à cette forge », distinct du 1
-# (« la forge n'a pas répondu »). Sans cette distinction, le bilan afficherait « board illisible »
+# Ses deux voisines — colonnes du Kanban, runners de projet — sont parties avec la branche GitLab
+# (#344) : elles n'avaient pas d'équivalent GitHub et rendaient un CODE DE RETOUR 3, réservé à « ce
+# contrôle ne s'applique pas à cette forge ». Le 3 n'a plus d'objet ici, et cette distinction
+# comptait : sans elle, le bilan afficherait « board illisible »
 # sur un dépôt GitHub qui n'a tout simplement pas de board GitLab — un avertissement inventé, que
 # `--strict` ferait remonter en échec de CI.
 
@@ -2203,78 +1556,7 @@ gl_champ_booleen() {
 }
 
 gl_merge_settings() {
-  gl_vers_github; case $? in 0) gh_merge_settings; return $? ;; 2) return 1 ;; esac
-  local raw
-  raw="$(glab api "projects/$(gl_project_enc)" 2>/dev/null)"
-  if [ -z "$raw" ]; then
-    printf 'pipeline_requis\t-\nmerge_si_pipeline_saute\t-\nsuppression_branche\t-\n'
-    return 1
-  fi
-  printf 'pipeline_requis\t%s\n'         "$(gl_champ_booleen "$raw" only_allow_merge_if_pipeline_succeeds)"
-  printf 'merge_si_pipeline_saute\t%s\n' "$(gl_champ_booleen "$raw" allow_merge_on_skipped_pipeline)"
-  printf 'suppression_branche\t%s\n'     "$(gl_champ_booleen "$raw" remove_source_branch_after_merge)"
-}
-
-# gl_board_lists -> le NOM du label de chaque colonne du Kanban, une par ligne ; « - » pour une liste
-# ORPHELINE (objet `label` null — héritage des colonnes par statut, qui n'affichent plus rien et ne
-# partent pas toutes seules). Code 3 sur GitHub : le board Kanban est une notion GitLab, et le projet
-# n'utilise pas Projects v2 (le suivi maison du lot 4 a remplacé le seul usage qu'on en aurait eu).
-gl_board_lists() {
-  gl_vers_github
-  case $? in
-    0) echo "gl_board_lists : sans objet sur GitHub (pas de board GitLab ; Projects v2 non utilisé)" >&2; return 3 ;;
-    2) return 1 ;;
-  esac
-  local board_id
-  # Le board est UNIQUE sur le plan Free : on le DÉCOUVRE plutôt que de figer un id.
-  board_id="$(glab api "projects/$(gl_project_enc)/boards" --output ndjson 2>/dev/null \
-              | grep -o '^{"id":[0-9]\+' | head -1 | grep -o '[0-9]\+')"
-  if [ -z "$board_id" ]; then
-    echo "gl_board_lists : aucun board Kanban sur $GL_PROJECT" >&2
-    return 1
-  fi
-  printf '# board\t%s\n' "$board_id"
-  glab api "projects/$(gl_project_enc)/boards/$board_id/lists" --output ndjson 2>/dev/null | awk '
-    /^\{/ {
-      nom = "-"
-      if (match($0, /"label":\{/)) {
-        reste = substr($0, RSTART)
-        if (match(reste, /"name":"[^"]*"/)) nom = substr(reste, RSTART + 8, RLENGTH - 9)
-      }
-      print nom
-    }
-  '
-}
-
-# gl_project_runners -> « <id><TAB><description><TAB><statut> » par runner de PROJET, un par ligne.
-# L'`id` est rendu parce que c'est LUI qui désigne un runner sans ambiguïté : deux machines peuvent
-# porter la même description, et c'est le numéro qu'attendent les commandes de l'interface GitLab.
-# Code 3 sur GitHub : les runners y sont hébergés par la forge, il n'y a rien à allumer ni à
-# surveiller — c'est d'ailleurs le gain chiffré du chantier (−1 146 lignes d'outillage runner,
-# retirées au lot 9).
-gl_project_runners() {
-  gl_vers_github
-  case $? in
-    0) echo "gl_project_runners : sans objet sur GitHub (runners hébergés par la forge)" >&2; return 3 ;;
-    2) return 1 ;;
-  esac
-  local raw
-  raw="$(glab api "projects/$(gl_project_enc)/runners?type=project_type&per_page=100" 2>/dev/null)"
-  if [ -z "$raw" ]; then echo "gl_project_runners : runners de projet illisibles" >&2; return 1; fi
-  [ "$raw" = "[]" ] && return 0
-  # Un runner par ligne. `"id":<n>,"description":"…"` n'apparaît que sur les runners : l'objet
-  # imbriqué `created_by` a bien un `id`, mais suivi de `"username"` (même repère qu'ensure-runner.sh).
-  # `status` se lit ensuite dans la ligne, sans confusion possible avec `job_execution_status`, dont
-  # le nom ne contient pas la séquence `"status":`.
-  printf '%s' "$raw" | sed 's/},{"id":/}\n{"id":/g' | awk '
-    {
-      id = "?"; desc = "-"; statut = "-"
-      if (match($0, /"id":[0-9]+/))           { id = substr($0, RSTART, RLENGTH); sub(/^"id":/, "", id) }
-      if (match($0, /"description":"[^"]*"/)) { desc = substr($0, RSTART, RLENGTH); sub(/^"description":"/, "", desc); sub(/"$/, "", desc) }
-      if (match($0, /"status":"[^"]*"/))      { statut = substr($0, RSTART, RLENGTH); sub(/^"status":"/, "", statut); sub(/"$/, "", statut) }
-      printf "%s\t%s\t%s\n", id, desc, statut
-    }
-  '
+  gh_merge_settings
 }
 
 # --- Utilitaires de nommage ---------------------------------------------------------------------
@@ -2307,7 +1589,7 @@ gl_branch_prefix() {
 }
 
 # --- Branche de travail & worktrees --------------------------------------------------------------
-# gl_branch_from_raw <iid> (stdin = sortie brute de `glab issue view`) -> nom de la branche de
+# gl_branch_from_raw <iid> (stdin = sortie brute de gl_issue_raw) -> nom de la branche de
 # travail : <préfixe du label type::>/<iid>-<slug du titre>. Fonction PURE : elle ne lit pas le
 # ticket, ce qui permet à gl_start_brief de la nourrir avec la lecture qu'il a déjà faite.
 # Sans label type::, imprime le préfixe littéral « <type> » et renvoie 3 — à l'appelant de le
@@ -2332,7 +1614,7 @@ gl_branch_from_raw() {
 gl_branch_for() {
   local iid="$1" raw
   if [ -z "$iid" ]; then echo "usage: gl_branch_for <iid>" >&2; return 2; fi
-  gl_require_glab || return 1
+  gl_require || return 1
   raw="$(gl_issue_raw "$iid")" || return 1
   printf '%s\n' "$raw" | gl_branch_from_raw "$iid"
 }
@@ -2942,22 +2224,7 @@ gl_worktree_du_ticket() {
 gl_liberer_ticket() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_liberer_ticket <iid>" >&2; return 2; fi
-  gl_vers_github; case $? in 0) gh_liberer_ticket "$iid"; return $? ;; 2) return 1 ;; esac
-
-  local wiid gids cible retraits out
-  wiid="$(gl_workitem_gid "$iid")" || return 1
-  gids="$(gl_workflow_gids)"       || return 1
-  cible="$(printf '%s\n' "$gids" | awk -F '\t' '$1 == "a-faire" { print $2; exit }')"
-  if [ -z "$cible" ]; then
-    echo "gl_liberer_ticket : label « $GL_WORKFLOW_SCOPE::a-faire » absent — provisionner : bash scripts/gitlab/bootstrap.sh" >&2
-    return 1
-  fi
-  retraits="$(printf '%s\n' "$gids" | awk -F '\t' '$1 != "a-faire" { printf "%s\"%s\"", (n++ ? "," : ""), $2 }')"
-  out="$(glab api graphql -f query='mutation { workItemUpdate(input:{ id:"'"$wiid"'", assigneesWidget:{ assigneeIds:[] }, labelsWidget:{ addLabelIds:["'"$cible"'"], removeLabelIds:['"$retraits"'] } }){ errors } }' 2>&1)"
-  case "$out" in
-    *'"errors":[]'*) return 0 ;;
-    *) printf 'Échec de la libération de #%s : %s\n' "$iid" "$out" >&2; return 1 ;;
-  esac
+  gh_liberer_ticket "$iid"
 }
 
 gl_reprendre_en_cours() {
@@ -3293,7 +2560,7 @@ gl_branch_iid() {
 #   1. cohérence iid ↔ branche courante — LOCAL, toujours disponible, c'est le contrôle FORT :
 #      la branche est le seul témoin fiable de ce que la session travaille réellement ;
 #   2. propriété du ticket (assignés, via gl_issue_owner) — une lecture GitLab, contrôle FAIBLE
-#      tant que l'équipe partage un même compte glab (le bot, cf. GL_BOT_USERS) : il n'attrape que
+#      tant que l'équipe partage un même compte de forge (le bot, cf. GL_BOT_USERS) : il n'attrape que
 #      les tickets assignés à une personne nommée. Il reste utile — c'est exactement le cas d'un
 #      ticket pris à la main par un humain — mais ne doit jamais être le seul filet.
 #
@@ -3374,10 +2641,10 @@ gl_close_guard() {
 }
 
 # ==================================================================================================
-# BACKEND GITHUB (MAESTRO_FORGE=github) — ticket #339, parent #335
+# BACKEND GITHUB — ticket #339, parent #335
 # ==================================================================================================
-# Tout ce qui suit n'est atteint que par les délégations `gl_vers_github` posées plus haut. Rien ici
-# n'est appelé quand la forge est GitLab, et rien ici ne touche à `glab`.
+# Tout ce qui suit est la couche qui PARLE AU RÉSEAU, appelée par les verbes `gl_*` posés plus
+# haut ; rien ici n'est appelé directement par un script du dépôt (cf. l'en-tête du fichier).
 #
 # TROIS RÈGLES QUI VALENT POUR TOUTES LES FONCTIONS DE CETTE SECTION :
 #
@@ -3406,7 +2673,7 @@ gh_depot_gql() {
   printf 'repository(owner:"%s", name:"%s")' "${GL_GH_REPO%%/*}" "${GL_GH_REPO##*/}"
 }
 
-# gh_require -> gh installé ET authentifié. Pendant exact de gl_require_glab.
+# gh_require -> gh installé ET authentifié. C'est le corps de gl_require.
 gh_require() {
   if ! command -v gh >/dev/null 2>&1; then
     echo "gh n'est pas installé. Voir https://cli.github.com" >&2
@@ -4244,7 +3511,7 @@ gh_mr_iid() {
 # gl_create_mr APRÈS ses validations et son test d'idempotence, qui sont communs aux deux forges.
 #
 # Passe par l'API REST et non par `gh pr create` : cette dernière déduit le dépôt et la branche
-# distante du remote git, qui pointe encore sur GitLab jusqu'à la bascule (lot 8). L'appel explicite
+# distante du remote git, qui a pointé sur GitLab jusqu'à la bascule (#343). L'appel explicite
 # marche des deux côtés de la bascule.
 #
 # Pas d'équivalent de `--remove-source-branch` : sur GitHub la suppression de la branche au merge est
@@ -4512,14 +3779,13 @@ gh_job_trace() {
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   cmd="${1:-}"; [ "$#" -gt 0 ] && shift
   case "$cmd" in
-    require)        gl_require_glab ;;
-    forge)          gl_forge ;;
+    require)        gl_require ;;
     forge-nom)      gl_forge_nom ;;
+    depot-courant)  gl_depot_courant ;;
     forge-cli)      gl_forge_cli ;;
     current-user)   gl_current_user ;;
     issue-raw)      gl_issue_raw "$@" ;;
     mr-brief)       gl_mr_brief "$@" ;;
-    graphql-read)   gl_graphql_read "$@" ;;
     workitem-gid)   gl_workitem_gid "$@" ;;
     set-workflow)   gl_set_workflow "$@" ;;
     reconcile-workflow) gl_reconcile_workflow "$@" ;;
@@ -4533,8 +3799,6 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issues-sans-milestone) gl_issues_sans_milestone ;;
     open-mr-branches)      gl_open_mr_branches ;;
     merge-settings) gl_merge_settings ;;
-    board-lists)    gl_board_lists ;;
-    project-runners) gl_project_runners ;;
     issue-brief)    gl_issue_brief "$@" ;;
     issue-owner)    gl_issue_owner "$@" ;;
     issue-taken)    gl_issue_taken "$@" ;;
@@ -4587,16 +3851,14 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     pipeline-failed-jobs) gl_pipeline_failed_jobs "$@" ;;
     job-trace)            gl_job_trace "$@" ;;
     pipeline-wait)        gl_pipeline_wait "$@" ;;
-    project-enc)    gl_project_enc ;;
-    project-id)     gl_project_id ;;
     host)           gl_host ;;
     slug)           gl_slug "$@" ;;
     branch-prefix)  gl_branch_prefix "$@" ;;
     *)
       echo "usage: bash scripts/gitlab/lib.sh <sous-commande> [args]" >&2
-      echo "  Forge active : MAESTRO_FORGE=github|gitlab (défaut github ; dépôt GitHub = MAESTRO_GITHUB_REPO)" >&2
-      echo "    forge                          (la forge active — refuse une valeur inconnue au lieu de la deviner)" >&2
-      echo "    forge-nom | forge-cli          (« GitLab »/« GitHub » et « glab »/« gh », pour les MESSAGES des appelants)" >&2
+      echo "  Forge : GitHub, dépôt \$MAESTRO_GITHUB_REPO (défaut $GL_GH_REPO)" >&2
+      echo "    forge-nom | forge-cli          (« GitHub » et « gh », pour les MESSAGES des appelants)" >&2
+      echo "    depot-courant                  (le dépôt visé, « propriétaire/nom »)" >&2
       echo "  require | current-user | workitem-gid <iid>" >&2
       echo "  issue-raw <iid>                  (vue TEXTE canonique du ticket — la primitive dont six verbes descendent)" >&2
       echo "  mr-brief <branche>               (etat/numéro/sha de la MR ou PR de la branche)" >&2
@@ -4620,8 +3882,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  current-milestone                  (titre du milestone de la phase courante — actif le plus ancien non soldé)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
       echo "  milestone-issues <titre-exact>     (tickets d'un milestone : iid/statut/type/agent/prio/titre, TSV)" >&2
-      echo "  slug <titre> | branch-prefix <type>" >&2
-      echo "  project-enc | project-id | host   (chemin encodé, id numérique, hôte GitLab du remote)" >&2
+      echo "  slug <titre> | branch-prefix <type> | host   (hôte de la forge, déduit du remote)" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid> <iid-cible>    (lie deux tickets — relates to, idempotent)" >&2
       echo "    parent-of <iid>                 (iid du parent si <iid> est un sous-ticket)" >&2
@@ -4677,10 +3938,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    pick-reviewer [auteur] [graine]  (choisit un relecteur humain, rotation par graine)" >&2
       echo "    project-humans [access-min]      (membres humains éligibles : username/niveau, TSV)" >&2
       echo "    mr-iid [mr|branche]              (iid de la MR ouverte — défaut : branche courante)" >&2
-      echo "  Réglages du dépôt (doctor.sh, bootstrap.sh — code 3 = sans objet pour cette forge) :" >&2
+      echo "  Réglages du dépôt (doctor.sh, bootstrap.sh) :" >&2
       echo "    merge-settings              (garde-fous de merge normalisés : pipeline_requis, merge_si_pipeline_saute, suppression_branche)" >&2
-      echo "    board-lists                 (colonnes du Kanban — GitLab seulement)" >&2
-      echo "    project-runners             (runners de projet : description/statut — GitLab seulement)" >&2
       echo "  Pipelines CI :" >&2
       echo "    pipeline-latest <ref>            (id/status/sha/url du dernier pipeline de la branche)" >&2
       echo "    pipeline-status <pipeline-id>    (statut courant)" >&2

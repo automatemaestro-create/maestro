@@ -1,3 +1,9 @@
+---
+name: Bug
+about: Un comportement qui ne correspond pas à ce qui est attendu
+labels: "type::bug,prio::moyenne,workflow::a-faire"
+---
+
 ## Comportement observé
 
 ## Comportement attendu
@@ -8,5 +14,3 @@
 
 ## Contexte
 <!-- Environnement, version, logs pertinents -->
-
-/label ~"type::bug"

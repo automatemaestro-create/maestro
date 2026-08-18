@@ -17,7 +17,7 @@ module couvre ce qu'ils ont ajouté à [`scripts/gitlab/lib.sh`](../scripts/gitl
   ce ticket ;
 * **contrôle doctor du runner** (#157) — section 7 de `doctor.sh`.
 
-S'y ajoute, parce que c'est le module qui outille `lib.sh` face à un `glab` factice, la **création
+S'y ajoute, parce que c'est le module qui outille `lib.sh` face à un `gh` factice, la **création
 depuis un fichier** (#233, parent #232) — `create-mr` / `issue-note` / `issue-title` : le texte
 long voyage par FICHIER pour qu'aucune commande d'une session autonome ne porte de saut de ligne
 ni de `$(…)`, formes qu'aucune règle de permission ne peut reconnaître (docs/10 §11.7).
@@ -26,7 +26,7 @@ Même parti pris que [`test_setup.py`](test_setup.py) et [`test_worktree.py`](te
 un **dépôt jetable** monté dans `tmp_path`, sur lequel les VRAIS scripts sont lancés. Rien n'est
 jamais écrit dans le dépôt de travail (`HOME` est lui aussi redirigé).
 
-**Ni réseau ni compte GitLab.** Un `glab` factice est placé en tête du `PATH` : il répond depuis
+**Ni réseau ni compte de forge.** Un `gh` factice est placé en tête du `PATH` : il répond depuis
 un fichier JSON que chaque test compose, et **journalise** les commandes reçues (c'est ainsi qu'on
 vérifie qu'aucune écriture n'a lieu). Il écrit ses réponses en **octets UTF-8** — le mojibake de
 #141 est venu d'un décodage approximatif sous Windows, on ne le réintroduit pas dans le harnais.
@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -57,53 +56,66 @@ pytestmark = [
     pytest.mark.skipif(GIT is None, reason="git introuvable"),
 ]
 
-PROJET = "equipe-test/maestro"
+DEPOT = "equipe-test/maestro"
 MOI = "MaestroAgents"          # le compte d'automatisation partagé (cf. GL_BOT_USERS)
 
-# Verbes d'ÉCRITURE de `glab` : leur absence du journal est ce qui atteste qu'un helper annoncé
-# « consultatif » l'est resté. `list`/`view` en sont volontairement absents — lire est le travail
+# Verbes d'ÉCRITURE de `gh` : leur absence du journal est ce qui atteste qu'un helper annoncé
+# « consultatif » l'est resté. Les lectures en sont volontairement absentes — lire est le travail
 # normal d'un bilan de santé ou d'un garde-fou.
+#
+# Le premier motif couvre TOUTES les écritures de l'API REST d'un coup : `gh api -X <MÉTHODE>` est
+# la forme unique qu'elles prennent (PATCH d'un ticket, POST d'un commentaire…), et une liste de
+# chemins se serait périmée au premier verbe ajouté.
 ECRITURES = (
-    "mr\tupdate", "mr\tcreate", "mr\tmerge", "mr\tclose",
-    "issue\tupdate", "issue\tcreate", "issue\tclose", "issue\tnote",
-    "label\tcreate", "variable\tset",
+    "api\t-X", "pr\tcreate", "pr\tedit", "pr\tmerge", "pr\tclose", "pr\tready",
+    "issue\tcreate", "issue\tedit", "issue\tclose", "issue\tcomment", "label\tcreate",
 )
 
-# --- Le glab factice -----------------------------------------------------------------------------
-# Piloté par $MAESTRO_FAUX_GLAB (état JSON) et $MAESTRO_FAUX_GLAB_JOURNAL (trace des appels).
+# --- Le gh factice --------------------------------------------------------------------------------
+# Piloté par $MAESTRO_FAUX_GH (état JSON) et $MAESTRO_FAUX_GH_JOURNAL (trace des appels).
 # Les réponses GraphQL/REST sont choisies par la PREMIÈRE règle dont tous les fragments `contient`
 # apparaissent dans la requête — les règles les plus spécifiques se placent donc en tête.
-FAUX_GLAB = r'''
+FAUX_GH = r'''
 import json
 import os
 import sys
 
-with open(os.environ["MAESTRO_FAUX_GLAB"], encoding="utf-8") as f:
+with open(os.environ["MAESTRO_FAUX_GH"], encoding="utf-8") as f:
     etat = json.load(f)
 
 args = sys.argv[1:]
 
-journal = os.environ.get("MAESTRO_FAUX_GLAB_JOURNAL")
+journal = os.environ.get("MAESTRO_FAUX_GH_JOURNAL")
 if journal:
-    # Une ligne PAR APPEL, quoi qu'on reçoive : les sauts de ligne d'une description sont
-    # échappés en « \n » littéral (#233). Sans ça, un `--description` multi-ligne — la matière
-    # même de ce que les helpers de création font voyager — casserait le découpage du journal
-    # et un test lirait un demi-appel.
+    # Une ligne PAR APPEL, quoi qu'on reçoive : les sauts de ligne d'un corps sont échappés en
+    # « \n » littéral (#233). Sans ça, un `--body` multi-ligne — la matière même de ce que les
+    # helpers de création font voyager — casserait le découpage du journal et un test lirait un
+    # demi-appel.
+    def journalisable(a):
+        # « champ=@chemin » est la forme par laquelle `gh` téléverse un FICHIER : c'est lui qui le
+        # lit, donc le double doit le résoudre pour que le journal porte ce qui part réellement.
+        # Sans ça, un test sur les octets transmis ne verrait qu'un chemin temporaire.
+        cle, sep, valeur = a.partition("=@")
+        if sep and os.path.isfile(valeur):
+            with open(valeur, encoding="utf-8") as source:
+                a = cle + "=" + source.read()
+        return a.replace("\\", "\\\\").replace("\n", "\\n")
+
     with open(journal, "a", encoding="utf-8") as f:
-        f.write("\t".join(a.replace("\\", "\\\\").replace("\n", "\\n") for a in args) + "\n")
+        f.write("\t".join(journalisable(a) for a in args) + "\n")
 
 
 def sortie(texte="", code=0):
     # Écriture en octets : sous Windows, sys.stdout encoderait en cp1252 et rendrait du mojibake
-    # là où l'API GitLab renvoie de l'UTF-8 (statuts « À faire », « Terminé »…).
+    # là où l'API renvoie de l'UTF-8 (statuts « À faire », « Terminé »…).
     sys.stdout.buffer.write(texte.encode("utf-8"))
     sys.stdout.buffer.flush()
     raise SystemExit(code)
 
 
 def compact(obj):
-    # L'outillage parse en grep/awk sur le JSON BRUT de glab : pas d'espaces, pas d'échappement
-    # des non-ASCII, sinon les motifs (« "workItems":{"nodes":[]} ») ne matchent plus.
+    # L'outillage parse en grep/awk sur le JSON BRUT : pas d'espaces, pas d'échappement des
+    # non-ASCII, sinon les motifs (« "issues":{"nodes":[]} ») ne matchent plus.
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n"
 
 
@@ -116,33 +128,94 @@ def repond(regles, sujet):
     return None
 
 
+def vue_texte_en_json(texte):
+    """La vue canonique d'un ticket, re-rendue sous la forme que lit `gh_issue_raw`.
+
+    Les tests décrivent leurs tickets dans le FORMAT DE SORTIE (« title:<TAB>… », « -- », corps) :
+    c'est le contrat que six verbes parsent, et il n'a pas bougé avec la migration. Le double se
+    charge donc de la traduction, plutôt que d'imposer à chaque test d'écrire du JSON GraphQL.
+    """
+    entete, _, corps = texte.partition("\n--\n")
+    champs = {}
+    for ligne in entete.splitlines():
+        cle, _, valeur = ligne.partition(":\t")
+        champs[cle] = valeur
+    def nodes(cle, brut):
+        valeurs = [v.strip() for v in brut.split(",") if v.strip()]
+        return {"nodes": [{cle: v} for v in valeurs]}
+    return {"data": {"repository": {"issue": {
+        "title": champs.get("title", ""),
+        "state": "CLOSED" if champs.get("state") == "closed" else "OPEN",
+        "author": {"login": champs.get("author", "")},
+        "labels": nodes("name", champs.get("labels", "")),
+        "assignees": nodes("login", champs.get("assignees", "")),
+        "milestone": {"jalon": champs.get("milestone", "")},
+        "body": corps.rstrip("\n"),
+    }}}}
+
+
 if args[:2] == ["auth", "status"]:
     sortie(code=0 if etat.get("authentifie", True) else 1)
 
 if args[:2] == ["api", "user"]:
-    sortie(compact({"username": etat.get("moi", "inconnu"), "id": 4242}))
+    sortie(compact({"login": etat.get("moi", "inconnu"), "id": 4242}))
 
 if args[:2] == ["api", "graphql"]:
     requete = "".join(a[len("query="):] for a in args[2:] if a.startswith("query="))
+    # La vue canonique d'un ticket est servie d'office quand le test l'a décrite : c'est la
+    # requête la plus spécifique du lot, elle passe donc avant les règles.
+    if "issue(number:" in requete and '"body"' not in requete and "body }" in requete:
+        iid = requete.split("issue(number:", 1)[1].split(")", 1)[0]
+        texte = etat.get("issues", {}).get(iid)
+        if texte is not None:
+            sortie(compact(vue_texte_en_json(texte)))
     reponse = repond(etat.get("graphql", []), requete)
     sortie(reponse) if reponse is not None else sortie(code=1)
 
+def chemin_api(args):
+    """Le chemin REST d'un `gh api`, isolé de ses drapeaux ET de leurs valeurs.
+
+    `-f labels[]=x` ne commence pas par un tiret côté VALEUR : filtrer sur le tiret seul ferait
+    prendre la première donnée pour un chemin.
+    """
+    porte_valeur = {"-X", "-f", "-F", "-H", "--jq", "--method", "--field", "--raw-field"}
+    reste = list(args[1:])
+    while reste:
+        a = reste.pop(0)
+        if a in porte_valeur:
+            if reste:
+                reste.pop(0)
+            continue
+        if a.startswith("-"):
+            continue
+        return a
+    return ""
+
+
 if args[:1] == ["api"]:
-    reponse = repond(etat.get("rest", []), args[1] if len(args) > 1 else "")
+    chemin = chemin_api(args)
+    # ÉCRITURE : `gh api -X <MÉTHODE>`. Le double rend le minimum que lib.sh lit — un « number » —,
+    # sauf si une règle `ecritures` décrit autre chose (un refus, une URL précise).
+    if "-X" in args and args[args.index("-X") + 1] in ("POST", "PATCH", "PUT", "DELETE"):
+        reponse = repond(etat.get("ecritures", []), chemin)
+        if reponse is not None:
+            sortie(reponse, code=etat.get("ecriture_code", 0))
+        if etat.get("ecriture_en_echec"):
+            sortie(compact({"message": "refus simulé"}), code=1)
+        numero = etat.get("pr_numero", 42) if chemin.endswith("/pulls") else 1
+        sortie(compact({
+            "number": numero,
+            "html_url": "https://github.com/" + etat.get("depot", "equipe-test/maestro")
+                        + "/pull/" + str(numero),
+        }))
+    reponse = repond(etat.get("rest", []), chemin)
     sortie(reponse) if reponse is not None else sortie(code=1)
 
-if args[:2] == ["issue", "view"]:
-    corps = etat.get("issues", {}).get(args[2] if len(args) > 2 else "")
-    sortie(corps) if corps is not None else sortie(code=1)
+if args[:2] == ["pr", "create"]:
+    sortie(etat.get("pr_create_sortie", "PR ouverte : " + etat.get("mr_url", "") + "\n"),
+           code=etat.get("pr_create_code", 0))
 
-if args[:2] == ["mr", "update"]:
-    sortie("Merge request mise à jour.\n")
-
-if args[:2] == ["mr", "create"]:
-    sortie(etat.get("mr_create_sortie", "MR ouverte : " + etat.get("mr_url", "") + "\n"),
-           code=etat.get("mr_create_code", 0))
-
-if args[:2] == ["issue", "note"]:
+if args[:2] == ["issue", "comment"]:
     sortie("Commentaire ajouté.\n", code=etat.get("issue_note_code", 0))
 
 sortie(code=1)
@@ -156,27 +229,21 @@ sortie(code=1)
 
 
 def noeud_ticket(iid: str, titre: str, statut: str, labels: list[str], assignes: list[str]) -> dict:
-    """Un work item tel que le rend la requête backlog (ordre des clés : iid, title, widgets).
+    """Un ticket tel que le rend la requête backlog (ordre des clés : number, title, labels…).
 
-    `statut` reste un LIBELLÉ côté test (« En revue ») : depuis #209 il voyage dans le widget
-    Labels, sous la forme `workflow::<slug>`, aux côtés des `type::`/`agent::`/`prio::`.
+    `statut` reste un LIBELLÉ côté test (« En revue ») : depuis #209 il voyage dans les labels,
+    sous la forme `workflow::<slug>`, aux côtés des `type::`/`agent::`/`prio::`.
     """
     return {
-        "iid": iid,
+        "number": int(iid),
         "title": titre,
-        "widgets": [
-            {
-                "labels": {
-                    "nodes": labels_workflow(statut) + [{"title": label} for label in labels]
-                }
-            },
-            {"assignees": {"nodes": [{"username": u} for u in assignes]}},
-        ],
+        "labels": {"nodes": labels_workflow(statut) + [{"name": label} for label in labels]},
+        "assignees": {"nodes": [{"login": u} for u in assignes]},
     }
 
 
 def reponse_backlog(tickets: list[dict]) -> dict:
-    return {"data": {"project": {"workItems": {"nodes": tickets}}}}
+    return {"data": {"repository": {"issues": {"nodes": tickets}}}}
 
 
 def colonnes(sortie: str) -> list[list[str]]:
@@ -206,23 +273,17 @@ def labels_workflow(statut: str) -> list[dict]:
     """Nœuds de labels d'un ticket portant le cycle de vie `statut` (vide si `statut` est vide)."""
     if not statut:
         return []
-    return [{"title": f"workflow::{SLUG_WORKFLOW.get(statut, statut)}"}]
+    return [{"name": f"workflow::{SLUG_WORKFLOW.get(statut, statut)}"}]
 
 
 def reponse_owner(statut: str, assignes: list[str]) -> dict:
     """Réponse de la requête cycle de vie + assignés d'un seul ticket (gl_issue_owner)."""
     return {
         "data": {
-            "project": {
-                "workItems": {
-                    "nodes": [
-                        {
-                            "widgets": [
-                                {"labels": {"nodes": labels_workflow(statut)}},
-                                {"assignees": {"nodes": [{"username": u} for u in assignes]}},
-                            ]
-                        }
-                    ]
+            "repository": {
+                "issue": {
+                    "labels": {"nodes": labels_workflow(statut)},
+                    "assignees": {"nodes": [{"login": u} for u in assignes]},
                 }
             }
         }
@@ -232,17 +293,21 @@ def reponse_owner(statut: str, assignes: list[str]) -> dict:
 def regle_owner(statut: str, assignes: list[str]) -> dict:
     """Règle de réponse à la requête cycle de vie + assignés d'UN ticket.
 
-    Le fragment `workItems(iids:` est indispensable : la requête backlog porte elle aussi
-    `WorkItemWidgetAssignees` et capterait la règle si elle était moins spécifique.
+    Le fragment `issue(number:` est indispensable : la requête backlog porte elle aussi
+    `assignees(first:` et capterait la règle si elle était moins spécifique.
     """
     return {
-        "contient": ["workItems(iids:", "WorkItemWidgetAssignees"],
+        "contient": ["issue(number:", "assignees(first:"],
         "reponse": reponse_owner(statut, assignes),
     }
 
 
 def corps_ticket(titre: str, labels: str, description: str) -> str:
-    """Sortie de `glab issue view` : en-têtes `clé:<TAB>valeur`, séparateur `--`, puis le corps."""
+    """La VUE CANONIQUE d'un ticket : en-têtes `clé:<TAB>valeur`, séparateur `--`, puis le corps.
+
+    C'est le format de sortie de `lib.sh issue-raw`, dont six verbes descendent — et c'est lui que
+    les tests décrivent, le double se chargeant de le re-rendre en JSON (cf. `vue_texte_en_json`).
+    """
     return (
         f"title:\t{titre}\n"
         "state:\topen\n"
@@ -258,7 +323,7 @@ def corps_ticket(titre: str, labels: str, description: str) -> str:
 
 @dataclass
 class Depot:
-    """Dépôt jetable équipé du vrai `lib.sh`, d'un `origin` local et d'un `glab` factice."""
+    """Dépôt jetable équipé du vrai `lib.sh`, d'un `origin` local et d'un `gh` factice."""
 
     racine: Path
     origin: Path
@@ -268,16 +333,16 @@ class Depot:
     journal: Path
     etat: dict = field(default_factory=dict)
 
-    # --- pilotage du glab factice ---
+    # --- pilotage du gh factice ---
     def pose_etat(self, **entrees: object) -> None:
-        """Remplace tout ou partie de l'état du glab factice (`graphql`, `rest`, `issues`…)."""
+        """Remplace tout ou partie de l'état du gh factice (`graphql`, `rest`, `issues`…)."""
         self.etat.update(entrees)
         self.etat_json.write_text(
             json.dumps(self.etat, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n"
         )
 
     def appels(self) -> list[str]:
-        """Commandes `glab` reçues depuis le début du test (une par ligne, arguments en TAB)."""
+        """Commandes `gh` reçues depuis le début du test (une par ligne, arguments en TAB)."""
         if not self.journal.exists():
             return []
         lignes = self.journal.read_text(encoding="utf-8").splitlines()
@@ -295,9 +360,6 @@ class Depot:
     def doctor(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self._bash("scripts/gitlab/doctor.sh", *args, cwd=None)
 
-    def ensure_runner(self, *args: str, **reglages: str) -> subprocess.CompletedProcess[str]:
-        return self._bash("scripts/gitlab/ensure-runner.sh", *args, cwd=None, reglages=reglages)
-
     def _bash(
         self,
         script: str,
@@ -310,19 +372,13 @@ class Depot:
             {
                 "HOME": str(self.home),
                 "PATH": os.pathsep.join([str(self.fauxbin), environnement.get("PATH", "")]),
-                "GL_PROJECT": PROJET,
+                "MAESTRO_GITHUB_REPO": DEPOT,
                 # Aucune attente : le retry de gl_graphql_read ne sert qu'aux hoquets réseau,
                 # et une réponse volontairement muette ne doit pas coûter trois secondes au test.
                 "GL_GQL_RETRIES": "1",
                 "GL_GQL_RETRY_DELAY": "0",
-                "MAESTRO_FAUX_GLAB": str(self.etat_json),
-                "MAESTRO_FAUX_GLAB_JOURNAL": str(self.journal),
-                # Rien ne doit toucher au Docker ni au runner du poste : le démon est déclaré
-                # injoignable et l'attente est nulle (voir les shims `docker`/`powershell.exe`).
-                "MAESTRO_RUNNER_ID": "",
-                "MAESTRO_DOCKER_TIMEOUT": "0",
-                "MAESTRO_RUNNER_TIMEOUT": "0",
-                "MAESTRO_RUNNER_POLL": "1",
+                "MAESTRO_FAUX_GH": str(self.etat_json),
+                "MAESTRO_FAUX_GH_JOURNAL": str(self.journal),
             }
         )
         environnement.update(reglages or {})
@@ -384,7 +440,6 @@ def depot(tmp_path: Path) -> Depot:
     for relatif in (
         "scripts/gitlab/lib.sh",
         "scripts/gitlab/doctor.sh",
-        "scripts/gitlab/ensure-runner.sh",
         # `reconcile-en-cours` (#328) délègue la relecture des cartes de pilote à ce fichier — il
         # ne la refait pas, deux formules qui divergeraient se remarqueraient trop tard.
         "scripts/orchestrate/pilote.sh",
@@ -403,36 +458,33 @@ def depot(tmp_path: Path) -> Depot:
     git("remote", "add", "origin", str(origin), cwd=racine)
     git("push", "--quiet", "-u", "origin", "main", cwd=racine)
 
-    # Le glab factice : un script Python, appelé par un lanceur nommé `glab` (sans extension) pour
-    # que `command -v glab` de lib.sh le trouve comme le vrai.
-    (fauxbin / "faux_glab.py").write_text(FAUX_GLAB, encoding="utf-8", newline="\n")
-    lanceur = fauxbin / "glab"
+    # Le gh factice : un script Python, appelé par un lanceur nommé `gh` (sans extension) pour
+    # que `command -v gh` de lib.sh le trouve comme le vrai.
+    (fauxbin / "faux_gh.py").write_text(FAUX_GH, encoding="utf-8", newline="\n")
+    lanceur = fauxbin / "gh"
     interpreteur = sys.executable.replace(chr(92), "/")
     lanceur.write_text(
         "#!/usr/bin/env bash\n"
-        f'exec "{interpreteur}" "{(fauxbin / "faux_glab.py").as_posix()}" "$@"\n',
+        f'exec "{interpreteur}" "{(fauxbin / "faux_gh.py").as_posix()}" "$@"\n',
         encoding="utf-8",
         newline="\n",
     )
     lanceur.chmod(0o755)
 
-    # Neutralisation du poste : `docker` répond toujours en échec (démon injoignable) et
-    # `powershell.exe` ne fait rien — aucun test ne doit démarrer Docker Desktop pour de vrai.
-    for nom, corps in (
-        ("docker", "#!/usr/bin/env bash\nexit 1\n"),
-        ("powershell.exe", "#!/usr/bin/env bash\nexit 0\n"),
-    ):
-        shim = fauxbin / nom
-        shim.write_text(corps, encoding="utf-8", newline="\n")
-        shim.chmod(0o755)
+    # Neutralisation du poste : `docker` répond toujours en échec. Plus aucun helper testé ici ne
+    # l'appelle depuis le retrait de l'outillage runner (#344) — le shim reste parce qu'un `docker`
+    # atteignable depuis un test est une porte qu'on n'a aucune raison de rouvrir.
+    shim = fauxbin / "docker"
+    shim.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8", newline="\n")
+    shim.chmod(0o755)
 
     depot = Depot(
         racine=racine,
         origin=origin,
         home=home,
         fauxbin=fauxbin,
-        etat_json=tmp_path / "faux-glab.json",
-        journal=tmp_path / "faux-glab.log",
+        etat_json=tmp_path / "faux-gh.json",
+        journal=tmp_path / "faux-gh.log",
     )
     depot.pose_etat(moi=MOI, authentifie=True, graphql=[], rest=[], issues={})
     return depot
@@ -466,8 +518,8 @@ def test_issue_owner_refuse_un_ticket_introuvable(depot: Depot) -> None:
     depot.pose_etat(
         graphql=[
             {
-                "contient": ["WorkItemWidgetAssignees"],
-                "reponse": {"data": {"project": {"workItems": {"nodes": []}}}},
+                "contient": ["assignees(first:"],
+                "reponse": {"data": {"repository": {"issue": None}}},
             }
         ]
     )
@@ -478,10 +530,10 @@ def test_issue_owner_refuse_un_ticket_introuvable(depot: Depot) -> None:
 
 
 def test_issue_owner_refuse_un_projet_illisible(depot: Depot) -> None:
-    """« project:null » (projet inconnu ou droits insuffisants) sort en code 0 côté GraphQL."""
+    """« repository:null » (dépôt inconnu ou droits insuffisants) sort en code 0 côté GraphQL."""
     depot.pose_etat(
         graphql=[
-            {"contient": ["WorkItemWidgetAssignees"], "reponse": {"data": {"project": None}}}
+            {"contient": ["assignees(first:"], "reponse": {"data": {"repository": None}}}
         ]
     )
     acheve = depot.lib("issue-owner", "159")
@@ -647,7 +699,7 @@ Rien à voir avec la checklist.
 def backlog_des_lots(statuts: dict[str, str]) -> list[dict]:
     return [
         {
-            "contient": ["workItems(state: all"],
+            "contient": ["states: [OPEN, CLOSED]"],
             "reponse": reponse_backlog(
                 [
                     noeud_ticket(iid, f"Lot {iid}", statut, ["type::infra"], [])
@@ -779,13 +831,14 @@ def reponse_membres(membres: list[tuple[str, int, bool, str]]) -> dict:
     return {
         "data": {
             "project": {
-                "projectMembers": {
-                    "nodes": [
+                "collaborators": {
+                    "edges": [
                         {
-                            "accessLevel": {"integerValue": niveau},
-                            "user": {"username": nom, "bot": bot, "state": etat},
+                            "permission": PERMISSION[niveau],
+                            "node": {"login": nom, "__typename": "Bot" if bot else "User"},
                         }
                         for nom, niveau, bot, etat in membres
+                        if etat == "active"
                     ]
                 }
             }
@@ -793,13 +846,22 @@ def reponse_membres(membres: list[tuple[str, int, bool, str]]) -> dict:
     }
 
 
+#: L'échelle d'accès reste celle de GitLab (10/20/30/40/50) — c'est elle que porte
+#: GL_REVIEWER_MIN_ACCESS et que compare `gl_pick_reviewer`, et `gh_project_humans` y traduit les
+#: permissions GitHub. Le double fait donc la traduction inverse, pour que les tests continuent de
+#: décrire un niveau plutôt qu'un mot de vocabulaire d'API.
+PERMISSION = {10: "READ", 20: "TRIAGE", 30: "WRITE", 40: "MAINTAIN", 50: "ADMIN"}
+
+#: Le dernier champ était l'état du compte (« blocked » côté GitLab). GitHub ne rend pas de compte
+#: bloqué dans ses collaborateurs — un compte suspendu en sort tout court —, donc le double
+#: l'écarte à la source plutôt que de simuler un champ qui n'existe pas.
 MEMBRES = [
     ("bea", 40, False, "active"),
     ("cam", 30, False, "active"),
     ("dan", 30, False, "active"),
     (MOI, 40, False, "active"),        # compte d'automatisation : jamais relecteur
     ("invite", 20, False, "active"),   # sous le niveau Developer : ne peut ni pousser ni merger
-    ("robot", 40, True, "active"),     # vrai bot au sens de GitLab
+    ("robot", 40, True, "active"),     # vrai bot, écarté par son __typename
     ("parti", 40, False, "blocked"),
 ]
 
@@ -807,11 +869,11 @@ MEMBRES = [
 def test_project_humans_ecarte_bots_niveaux_faibles_et_comptes_inactifs(depot: Depot) -> None:
     """Quatre exclusions, dont une que l'API seule ne saurait faire.
 
-    Le compte de l'agent Maestro n'est pas un « bot » au sens de GitLab (`User.bot` y vaut
-    false) : seule la configuration `GL_BOT_USERS` l'écarte. Sans elle, l'outillage se
+    Le compte de l'agent Maestro n'est pas un bot au sens de la forge (son `__typename` est
+    `User`) : seule la configuration `GL_BOT_USERS` l'écarte. Sans elle, l'outillage se
     désignerait lui-même relecteur.
     """
-    depot.pose_etat(graphql=[{"contient": ["projectMembers"], "reponse": reponse_membres(MEMBRES)}])
+    depot.pose_etat(graphql=[{"contient": ["collaborators("], "reponse": reponse_membres(MEMBRES)}])
     acheve = depot.lib("project-humans")
     assert acheve.returncode == 0, acheve.stderr
     retenus = {ligne[0] for ligne in colonnes(acheve.stdout)}
@@ -819,7 +881,7 @@ def test_project_humans_ecarte_bots_niveaux_faibles_et_comptes_inactifs(depot: D
 
 
 def test_pick_reviewer_ecarte_l_auteur_et_le_compte_d_automatisation(depot: Depot) -> None:
-    depot.pose_etat(graphql=[{"contient": ["projectMembers"], "reponse": reponse_membres(MEMBRES)}])
+    depot.pose_etat(graphql=[{"contient": ["collaborators("], "reponse": reponse_membres(MEMBRES)}])
     for graine in range(6):
         acheve = depot.lib("pick-reviewer", "bea", str(graine))
         assert acheve.returncode == 0, acheve.stderr
@@ -828,7 +890,7 @@ def test_pick_reviewer_ecarte_l_auteur_et_le_compte_d_automatisation(depot: Depo
 
 def test_pick_reviewer_est_reproductible_mais_tourne(depot: Depot) -> None:
     """Même MR → même relecteur (pose idempotente) ; MR différentes → charge répartie."""
-    depot.pose_etat(graphql=[{"contient": ["projectMembers"], "reponse": reponse_membres(MEMBRES)}])
+    depot.pose_etat(graphql=[{"contient": ["collaborators("], "reponse": reponse_membres(MEMBRES)}])
     choisis = [depot.lib("pick-reviewer", "bea", str(g)).stdout.strip() for g in range(4)]
     assert choisis[0] == depot.lib("pick-reviewer", "bea", "0").stdout.strip()
     assert len(set(choisis)) > 1, f"aucune rotation : {choisis}"
@@ -838,7 +900,7 @@ def test_pick_reviewer_echoue_proprement_sur_un_projet_d_une_personne(depot: Dep
     """La revue est best-effort : l'appelant poursuit sans relecteur, sans planter."""
     depot.pose_etat(
         graphql=[
-            {"contient": ["projectMembers"],
+            {"contient": ["collaborators("],
              "reponse": reponse_membres([("bea", 40, False, "active")])}
         ]
     )
@@ -851,19 +913,23 @@ def etat_revue(depot: Depot, auteur: str, relecteurs: list[str]) -> None:
     depot.pose_etat(
         graphql=[
             {
-                "contient": ["mergeRequest(iid:"],
+                "contient": ["pullRequest(number:"],
                 "reponse": {
                     "data": {
-                        "project": {
-                            "mergeRequest": {
-                                "author": {"username": auteur},
-                                "reviewers": {"nodes": [{"username": r} for r in relecteurs]},
+                        "repository": {
+                            "pullRequest": {
+                                "author": {"login": auteur},
+                                "reviewRequests": {
+                                    "nodes": [
+                                        {"requestedReviewer": {"login": r}} for r in relecteurs
+                                    ]
+                                },
                             }
                         }
                     }
                 },
             },
-            {"contient": ["projectMembers"], "reponse": reponse_membres(MEMBRES)},
+            {"contient": ["collaborators("], "reponse": reponse_membres(MEMBRES)},
         ]
     )
 
@@ -873,9 +939,9 @@ def test_set_reviewer_pose_un_humain_distinct_de_l_auteur(depot: Depot) -> None:
     acheve = depot.lib("set-reviewer", "12")
     assert acheve.returncode == 0, acheve.stderr
     assert "relecteur → @" in acheve.stdout
-    poses = [a for a in depot.appels() if a.startswith("mr\tupdate")]
-    assert len(poses) == 1
-    assert poses[0].split("\t")[-1] in {"cam", "dan"}
+    pose = appel(depot, "api", "-X", "POST")
+    assert pose.split("\t")[3].endswith("/pulls/12/requested_reviewers")
+    assert champs_api(pose)["reviewers[]"] in {"cam", "dan"}
 
 
 def test_set_reviewer_ne_remplace_jamais_un_relecteur_deja_pose(depot: Depot) -> None:
@@ -911,8 +977,8 @@ def test_aucune_commande_ne_pose_de_relecteur_automatiquement() -> None:
         for numero, ligne in enumerate(lignes, 1):
             nue = ligne.strip()
             appel_helper = nue.startswith("bash ") and "set-reviewer" in nue
-            appel_glab = nue.startswith("glab ") and "--reviewer" in nue
-            if appel_helper or appel_glab:
+            appel_direct = nue.startswith("gh ") and "reviewer" in nue
+            if appel_helper or appel_direct:
                 invocations.append(f"{commande.name}:{numero}: {nue}")
     assert invocations == [], (
         "pose automatique de relecteur réintroduite (#196) :\n" + "\n".join(invocations)
@@ -930,7 +996,7 @@ def invocations_des_commandes() -> list[tuple[str, int, str]]:
     for commande in sorted((RACINE / ".claude" / "commands").glob("*.md")):
         for numero, ligne in enumerate(commande.read_text(encoding="utf-8").splitlines(), 1):
             nue = ligne.strip()
-            if nue.startswith(("bash ", "git ", "glab ", "npm ")):
+            if nue.startswith(("bash ", "git ", "gh ", "npm ")):
                 lignes.append((commande.name, numero, nue))
     return lignes
 
@@ -961,8 +1027,8 @@ def test_le_cycle_de_cloture_appelle_les_helpers_de_creation() -> None:
     rien tant que rien ne l'appelle.
 
     Cette MR-là avait ajouté les trois helpers à `lib.sh` — testés, fonctionnels — sans toucher aux
-    prompts, restés sur le `glab mr create` multi-ligne. Tout était vert : aucun test ne regardait
-    le **raccordement**. C'est ce trou-ci que ce test bouche.
+    prompts, restés sur la création de MR à description multi-ligne. Tout était vert : aucun test
+    ne regardait le **raccordement**. C'est ce trou-ci que ce test bouche.
     """
     appels = [
         (nom, nue) for nom, _, nue in invocations_des_commandes() if "lib.sh create-mr" in nue
@@ -974,25 +1040,25 @@ def test_le_cycle_de_cloture_appelle_les_helpers_de_creation() -> None:
     assert not [
         f"{nom}:{numero}: {nue}"
         for nom, numero, nue in invocations_des_commandes()
-        if "mr create" in nue
-    ], "un `glab mr create` direct est réapparu : sa description est multi-ligne, donc refusée"
+        if "pr create" in nue
+    ], "un `gh pr create` direct est réapparu : son corps est multi-ligne, donc refusé"
 
 
 def test_branch_cleanup_delegue_sa_boucle_au_helper() -> None:
     """#309 : la boucle « quel est l'état de la MR de cette branche ? » vit dans `lib.sh`.
 
-    `/branch-cleanup` la décrivait en prose — un `glab mr view <branche> --output json` par
-    branche locale, soit ~3 500 octets réinjectés pour en tirer un mot, **~43 000 tokens** sur ce
-    dépôt à chaque invocation (audit #304 §4.1, le plus gros gisement du lot). `cleanup-merged`
-    fait la même chose en shell, avec le **même** garde-fou, et n'imprime qu'un bilan.
+    `/branch-cleanup` la décrivait en prose — une lecture de l'état de la MR par branche locale,
+    soit ~3 500 octets réinjectés pour en tirer un mot, **~43 000 tokens** sur ce dépôt à chaque
+    invocation (audit #304 §4.1, le plus gros gisement du lot). `cleanup-merged` fait la même chose
+    en shell, avec le **même** garde-fou, et n'imprime qu'un bilan.
 
     Deux implémentations du même garde-fou, dont une en prose, c'est aussi la divergence que
     supprime la délégation : le jour où le garde-fou change, la prose ne suit pas. D'où la seconde
-    assertion — plus aucun `glab mr` **prescrit** dans cette commande.
+    assertion — plus aucune lecture de PR **prescrite** dans cette commande.
 
     Le discriminant entre prescription et citation est ici le bloc `>` d'en-tête : la commande a le
     droit — le devoir, même — de **nommer** la forme qu'elle remplace pour dire de ne pas y
-    revenir, et c'est là qu'elle le fait. Ailleurs, une ligne qui nomme `glab mr` est une consigne.
+    revenir, et c'est là qu'elle le fait. Ailleurs, une ligne qui nomme `gh pr` est une consigne.
     Même parti pris que les deux tests ci-dessus, dont l'heuristique est le début de ligne.
     """
     lignes = [
@@ -1009,10 +1075,10 @@ def test_branch_cleanup_delegue_sa_boucle_au_helper() -> None:
     fautives = [
         f"branch-cleanup.md:{numero}: {nue}"
         for numero, ligne in enumerate(commande.read_text(encoding="utf-8").splitlines(), 1)
-        if "glab mr" in (nue := ligne.strip()) and not nue.startswith(">")
+        if "gh pr " in (nue := ligne.strip()) and not nue.startswith(">")
     ]
     assert fautives == [], (
-        "lecture `glab mr` réintroduite dans /branch-cleanup (#309) — passer par lib.sh "
+        "lecture `gh pr` réintroduite dans /branch-cleanup (#309) — passer par lib.sh "
         "(`mr-state` rend un mot, `cleanup-merged` fait toute la boucle) :\n" + "\n".join(fautives)
     )
 
@@ -1043,31 +1109,37 @@ def test_review_queue_rend_la_plus_ancienne_d_abord_avec_son_anciennete(depot: D
     depot.pose_etat(
         graphql=[
             {
-                "contient": ["mergeRequests(state: opened, sort: CREATED_ASC"],
+                "contient": ["pullRequests(states: OPEN, orderBy"],
                 "reponse": {
                     "data": {
-                        "project": {
-                            "mergeRequests": {
+                        "repository": {
+                            "pullRequests": {
                                 "nodes": [
                                     {
-                                        "iid": "10",
+                                        "number": 10,
                                         "title": "Draft: Socle du chantier",
                                         "createdAt": f"{aujourdhui - timedelta(days=6)}T09:00:00Z",
-                                        "draft": True,
-                                        "sourceBranch": "chore/201-socle",
-                                        "author": {"username": "bea"},
-                                        "reviewers": {"nodes": []},
-                                        "headPipeline": {"status": "FAILED"},
+                                        "isDraft": True,
+                                        "headRefName": "chore/201-socle",
+                                        "author": {"login": "bea"},
+                                        "reviewRequests": {"nodes": []},
+                                        "commits": {"nodes": [
+                                            {"commit": {"statusCheckRollup": {"state": "FAILURE"}}}
+                                        ]},
                                     },
                                     {
-                                        "iid": "11",
+                                        "number": 11,
                                         "title": "Écran de suivi",
                                         "createdAt": f"{aujourdhui - timedelta(days=1)}T09:00:00Z",
-                                        "draft": False,
-                                        "sourceBranch": "feat/202-ecran",
-                                        "author": {"username": "cam"},
-                                        "reviewers": {"nodes": [{"username": "dan"}]},
-                                        "headPipeline": {"status": "SUCCESS"},
+                                        "isDraft": False,
+                                        "headRefName": "feat/202-ecran",
+                                        "author": {"login": "cam"},
+                                        "reviewRequests": {"nodes": [
+                                            {"requestedReviewer": {"login": "dan"}}
+                                        ]},
+                                        "commits": {"nodes": [
+                                            {"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}
+                                        ]},
                                     },
                                 ]
                             }
@@ -1345,199 +1417,6 @@ def test_close_guard_n_ecrit_jamais_rien(depot: Depot) -> None:
 
 
 # =================================================================================================
-# Contrôle doctor : un runner de projet est-il en ligne ? (#157)
-# =================================================================================================
-
-
-def section_runner(sortie: str) -> str:
-    """Isole la section 7 du bilan (jusqu'au titre suivant)."""
-    debut = sortie.index("7. Runner CI de projet")
-    reste = sortie[debut:]
-    suivant = reste.find("\n8. ")
-    return reste if suivant < 0 else reste[:suivant]
-
-
-def runners(*definitions: tuple[int, str, str]) -> list[dict]:
-    """Règle REST pour l'inventaire des runners de PROJET (`?type=project_type`)."""
-    return [
-        {
-            "contient": ["runners?type=project_type"],
-            "brut": json.dumps(
-                [
-                    {"id": rid, "description": desc, "status": statut}
-                    for rid, desc, statut in definitions
-                ],
-                separators=(",", ":"),
-                ensure_ascii=False,
-            ),
-        }
-    ]
-
-
-def test_doctor_valide_un_runner_de_projet_en_ligne(depot: Depot) -> None:
-    depot.pose_etat(rest=runners((7, "runner-partage-atelier", "online")))
-    acheve = depot.doctor()
-    section = section_runner(acheve.stdout)
-    assert "✓ runner de projet en ligne : runner-partage-atelier (#7)" in section
-    assert "⚠" not in section
-
-
-def test_doctor_avertit_quand_aucun_runner_n_est_en_ligne(depot: Depot) -> None:
-    """Première cause de MR bloquée : les jobs restent « pending » sans que rien ne le dise."""
-    depot.pose_etat(
-        rest=runners((7, "runner-partage-atelier", "offline"), (9, "maestro-portable", "offline"))
-    )
-    section = section_runner(depot.doctor().stdout)
-    assert "aucun runner de projet en ligne" in section
-    assert "runner-partage-atelier (offline)" in section
-    assert "maestro-portable (offline)" in section
-    assert "scripts/gitlab/ensure-runner.sh" in section
-
-
-def test_doctor_avertit_quand_aucun_runner_n_est_declare(depot: Depot) -> None:
-    depot.pose_etat(rest=[{"contient": ["runners"], "brut": "[]"}])
-    section = section_runner(depot.doctor().stdout)
-    assert "aucun runner de projet déclaré" in section
-    assert "scripts/gitlab/setup-runner.sh" in section
-
-
-def test_doctor_reste_en_lecture_seule(depot: Depot) -> None:
-    """Le bilan de santé n'écrit jamais rien : ni statut, ni label, ni MR (docs/10)."""
-    depot.pose_etat(rest=runners((7, "runner-partage-atelier", "online")))
-    depot.doctor()
-    appels = depot.appels()
-    assert "mutation" not in "\n".join(appels)          # aucune mutation GraphQL
-    assert [a for a in appels if a.startswith(ECRITURES)] == []
-
-
-# =================================================================================================
-# Runner partagé toujours en ligne : `ensure-runner.sh` (#158)
-# =================================================================================================
-
-
-def statut_runner(rid: int, statut: str) -> dict:
-    """Règle REST pour `GET runners/<id>` — plus spécifique que l'inventaire de projet."""
-    return {
-        "contient": [f"runners/{rid}"],
-        "brut": json.dumps({"id": rid, "status": statut}, separators=(",", ":")),
-    }
-
-
-def nom_machine() -> str:
-    """Le nom que `machine_nom()` lira — résolu ici pour ne pas coupler le test à un poste."""
-    acheve = subprocess.run(  # noqa: S603
-        [BASH or "bash", "-c", "hostname"], capture_output=True, text=True, check=False
-    )
-    return acheve.stdout.strip() or "machine"
-
-
-def test_ensure_runner_est_no_op_quand_le_partage_tient_deja_la_ci(depot: Depot) -> None:
-    """Le cœur de #158 : inutile de réveiller Docker sur un portable si la CI est servie."""
-    depot.pose_etat(rest=runners((7, "runner-partage-atelier", "online")))
-    acheve = depot.ensure_runner()
-    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    assert "déjà en ligne (runner-partage-atelier)" in acheve.stderr
-    assert "rien à démarrer" in acheve.stderr
-    # Aucun runner INDIVIDUEL n'a même été résolu : on n'a pas touché au poste.
-    assert not any("runners/" in a for a in depot.appels())
-
-
-def test_ensure_runner_accepte_n_importe_quel_runner_de_projet_en_ligne(depot: Depot) -> None:
-    """Tous les runners sont non-taggés : le premier en ligne suffit, quel que soit son hôte."""
-    depot.pose_etat(
-        rest=runners(
-            (7, "runner-partage-atelier", "offline"),
-            (9, f"maestro-{nom_machine()}", "offline"),
-            (11, "maestro-poste-de-quelquun-dautre", "online"),
-        )
-    )
-    acheve = depot.ensure_runner()
-    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    assert "#11" in acheve.stderr
-
-
-def test_ensure_runner_strict_ne_regarde_que_le_runner_de_cette_machine(depot: Depot) -> None:
-    """`--strict` rend compte du POSTE courant, pas de l'état global de la CI (setup-runner)."""
-    depot.pose_etat(
-        rest=[
-            statut_runner(9, "online"),
-            *runners((7, "runner-partage-atelier", "online"), (9, "maestro-ici", "online")),
-        ]
-    )
-    acheve = depot.ensure_runner("--strict", MAESTRO_RUNNER_ID="9")
-    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    assert "#9 déjà en ligne" in acheve.stderr
-    # Le statut a bien été demandé au runner nommé, pas déduit de l'inventaire.
-    assert any("runners/9" in a for a in depot.appels())
-
-
-def test_ensure_runner_distingue_le_runner_local_du_partage_sur_le_meme_hote(depot: Depot) -> None:
-    """Sur l'hôte du partagé, les DEUX descriptions portent le nom de la machine.
-
-    D'où la préférence pour le motif du runner local (`maestro-<machine>`) : sans elle,
-    `--strict` sur cette machine viserait le runner de l'équipe.
-    """
-    machine = nom_machine()
-    depot.pose_etat(
-        rest=[
-            statut_runner(9, "online"),
-            *runners(
-                (7, f"runner-partage-{machine}", "offline"),
-                (9, f"maestro-{machine}", "online"),
-            ),
-        ]
-    )
-    acheve = depot.ensure_runner("--strict")
-    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    assert "#9" in acheve.stderr
-
-
-def test_ensure_runner_le_dit_quand_aucun_runner_n_est_declare(depot: Depot) -> None:
-    depot.pose_etat(rest=[{"contient": ["runners?type=project_type"], "brut": "[]"}])
-    acheve = depot.ensure_runner()
-    assert acheve.returncode == 1
-    assert "aucun runner de projet trouvé" in acheve.stderr
-    assert "setup-runner.sh" in acheve.stderr
-
-
-def test_ensure_runner_dit_si_aucun_runner_ne_porte_le_nom_de_la_machine(depot: Depot) -> None:
-    depot.pose_etat(
-        rest=runners(
-            (7, "runner-partage-ailleurs", "offline"),
-            (9, "maestro-un-autre-poste", "offline"),
-        )
-    )
-    acheve = depot.ensure_runner()
-    assert acheve.returncode == 1
-    assert "aucun au nom de cette machine" in acheve.stderr
-    assert "MAESTRO_RUNNER_ID" in acheve.stderr
-
-
-def test_ensure_runner_echoue_proprement_sans_docker(depot: Depot) -> None:
-    """Best-effort : câblé en `ensure-runner.sh || …`, son échec n'interrompt pas la clôture."""
-    depot.pose_etat(
-        rest=[statut_runner(9, "offline"), *runners((9, "maestro-ici", "offline"))]
-    )
-    acheve = depot.ensure_runner(MAESTRO_RUNNER_ID="9")
-    assert acheve.returncode == 1
-    assert "hors ligne — tentative de démarrage" in acheve.stderr
-    assert "démon Docker toujours injoignable" in acheve.stderr
-
-
-def test_ensure_runner_refuse_une_option_inconnue(depot: Depot) -> None:
-    acheve = depot.ensure_runner("--force")
-    assert acheve.returncode == 2
-    assert "option inconnue" in acheve.stderr
-
-
-def test_ensure_runner_s_arrete_si_glab_n_est_pas_authentifie(depot: Depot) -> None:
-    depot.pose_etat(authentifie=False, rest=runners((7, "runner-partage-atelier", "online")))
-    acheve = depot.ensure_runner()
-    assert acheve.returncode == 1
-    assert "glab non authentifié" in acheve.stderr
-
-
-# =================================================================================================
 # Création depuis un fichier : MR et notes (#233, parent #232)
 # =================================================================================================
 # Le texte long d'une MR ou d'un commentaire est la SEULE chose qu'une session autonome ne peut pas
@@ -1569,29 +1448,30 @@ DESCRIPTION = (
 
 
 def regle_titre(iid: int, titre: str) -> dict:
-    """Réponse REST d'un ticket : `title` D'ABORD, celui du milestone ensuite.
+    """Réponse à la lecture du titre d'un ticket (`gl_issue_title`).
 
-    L'ordre n'est pas décoratif — `gl_issue_title` prend la PREMIÈRE occurrence de `"title":"` dans
-    la charge, exactement comme `gl_get_description` pour la description. Le jour où GitLab
-    renverrait le milestone avant, ce test tomberait, et c'est ce qu'on veut.
+    UN champ demandé, un champ rendu : c'est ce que la lecture GraphQL achète sur le JSON REST
+    d'un ticket, qui porte plusieurs `title` — celui du ticket et celui de son jalon — et où
+    l'extraction prenait la PREMIÈRE occurrence, donc l'ordre des clés de l'API.
     """
     return {
-        "contient": [f"issues/{iid}"],
-        "reponse": {
-            "iid": iid,
-            "title": titre,
-            "description": "peu importe",
-            "milestone": {"title": "Phase 7 — Projets & espace de travail réel"},
-        },
+        "contient": [f"issue(number:{iid}"],
+        "reponse": {"data": {"repository": {"issue": {"title": titre}}}},
     }
 
 
 def regle_mr_de_branche(iid: str | None) -> dict:
     """Réponse à la résolution « quelle MR ouverte porte cette branche ? » (`gl_mr_iid`)."""
     return {
-        "contient": ["mergeRequests(state: opened"],
+        "contient": ["pullRequests(headRefName"],
         "reponse": {
-            "data": {"project": {"mergeRequests": {"nodes": [] if iid is None else [{"iid": iid}]}}}
+            "data": {
+                "repository": {
+                    "pullRequests": {
+                        "nodes": [] if iid is None else [{"number": int(iid)}],
+                    }
+                }
+            }
         },
     }
 
@@ -1601,11 +1481,40 @@ def sur_une_branche(depot: Depot, branche: str = BRANCHE) -> None:
 
 
 def appel(depot: Depot, *debut: str) -> str:
-    """L'unique appel `glab` commençant par ces arguments — échoue s'il y en a zéro ou deux."""
+    """L'unique appel `gh` commençant par ces arguments — échoue s'il y en a zéro ou deux."""
     prefixe = "\t".join(debut)
     trouves = [ligne for ligne in depot.appels() if ligne.startswith(prefixe)]
     assert len(trouves) == 1, f"un seul {prefixe!r} attendu, reçu {len(trouves)} : {depot.appels()}"
     return trouves[0]
+
+
+def chemins_appeles(depot: Depot, suffixe: str) -> list[str]:
+    """Les appels `gh api` dont le CHEMIN se termine par ce suffixe (« /pulls », « /comments »).
+
+    Le chemin est le 4e champ d'un `gh api -X <MÉTHODE> <chemin> …` journalisé : le lire par sa
+    position vaut mieux qu'un `in` sur toute la ligne, qui matcherait aussi bien un corps de PR
+    citant l'URL.
+    """
+    return [
+        ligne
+        for ligne in depot.appels()
+        if (champs := ligne.split("\t"))[3:4] and champs[3].endswith(suffixe)
+    ]
+
+
+def champs_api(ligne: str) -> dict[str, str]:
+    """Les champs « clé=valeur » d'un `gh api` journalisé (posés par `-f`/`-F`).
+
+    Une seule fabrique plutôt qu'un `valeur_option` par appel : côté GitHub, tout ce qu'une
+    écriture porte voyage sous cette forme, y compris le corps téléversé (que le double a résolu
+    depuis son fichier).
+    """
+    champs: dict[str, str] = {}
+    for champ in ligne.split("\t"):
+        cle, sep, valeur = champ.partition("=")
+        if sep and not cle.startswith("-"):
+            champs[cle] = valeur
+    return champs
 
 
 def valeur_option(ligne: str, option: str) -> str:
@@ -1616,12 +1525,14 @@ def valeur_option(ligne: str, option: str) -> str:
 
 
 def journalise(texte: str) -> str:
-    """Le texte tel que le journal du glab factice le rend — sauts de ligne échappés.
+    """Le texte tel que le journal du gh factice le rend — sauts de ligne échappés.
 
-    `rstrip` parce qu'une substitution de commande mange les sauts de ligne FINAUX, et seulement
-    ceux-là : c'est la seule altération que le détour par un fichier laisse passer.
+    Aucun `rstrip` : `-F body=@fichier` téléverse le fichier tel quel, saut de ligne final compris.
+    C'est un gain, et il vaut d'être épinglé — le détour par une substitution de commande, lui,
+    mangeait les sauts de ligne FINAUX (et seulement ceux-là), soit la dernière altération que le
+    passage par un fichier laissait encore passer.
     """
-    return texte.rstrip("\n").replace("\n", "\\n")
+    return texte.replace("\n", "\\n")
 
 
 def fichier_description(depot: Depot, contenu: str = DESCRIPTION) -> Path:
@@ -1631,19 +1542,23 @@ def fichier_description(depot: Depot, contenu: str = DESCRIPTION) -> Path:
 
 
 def ecritures(depot: Depot) -> list[str]:
-    """Les appels `glab` qui ÉCRIVENT côté GitLab — vides tant qu'un helper s'abstient."""
+    """Les appels `gh` qui ÉCRIVENT côté forge — vides tant qu'un helper s'abstient."""
     return [ligne for ligne in depot.appels() if any(verbe in ligne for verbe in ECRITURES)]
 
 
 def test_create_mr_ouvre_une_draft_avec_le_titre_du_ticket_et_le_fichier(depot: Depot) -> None:
-    """Le cas nominal : titre lu dans GitLab, description lue dans le fichier, MR en Draft.
+    """Le cas nominal : titre lu dans la forge, description lue dans le fichier, PR en Draft.
 
-    Draft et `--remove-source-branch` sont dans le contrat : un run produit N MR **à relire**, il
-    ne dé-drafte ni ne merge jamais (docs/10 §11), et la branche part au merge comme partout.
+    Draft est dans le contrat : un run produit N PR **à relire**, il ne dé-drafte ni ne merge
+    jamais (docs/10 §11). La suppression de la branche au merge, elle, n'est plus un drapeau de
+    l'appel : c'est un réglage du DÉPÔT (`delete_branch_on_merge`), dont `doctor.sh` surveille la
+    dérive — un champ de moins à poser à chaque PR, et un endroit de moins où l'oublier.
     """
     depot.pose_etat(
-        graphql=[regle_mr_de_branche(None)],
-        rest=[regle_titre(237, "Tests + doc : appels d'une session autonome — allowlist")],
+        graphql=[
+            regle_mr_de_branche(None),
+            regle_titre(237, "Tests + doc : appels d'une session autonome — allowlist"),
+        ],
     )
     sur_une_branche(depot)
     fichier = fichier_description(depot)
@@ -1651,31 +1566,32 @@ def test_create_mr_ouvre_une_draft_avec_le_titre_du_ticket_et_le_fichier(depot: 
     acheve = depot.lib("create-mr", "237", str(fichier))
     assert acheve.returncode == 0, acheve.stderr
 
-    ligne = appel(depot, "mr", "create")
-    for drapeau in ("--draft", "--remove-source-branch", "--yes"):
-        assert f"\t{drapeau}" in ligne, f"{drapeau} attendu dans {ligne}"
-    assert valeur_option(ligne, "--target-branch") == "main"
-    assert valeur_option(ligne, "--source-branch") == BRANCHE
-    assert valeur_option(ligne, "--title").startswith("Tests + doc")
-    # L'em-dash du titre survit : il traverse REST puis un argument shell sans repasser par un
-    # décodage approximatif (#141).
-    assert "—" in valeur_option(ligne, "--title")
+    ligne = appel(depot, "api", "-X", "POST")
+    champs = champs_api(ligne)
+    assert ligne.split("\t")[3].endswith("/pulls")
+    assert champs["draft"] == "true"
+    assert champs["base"] == "main"
+    assert champs["head"] == BRANCHE
+    assert champs["title"].startswith("Tests + doc")
+    # L'em-dash du titre survit : il traverse la lecture puis un argument shell sans repasser par
+    # un décodage approximatif (#141).
+    assert "—" in champs["title"]
 
 
 def test_create_mr_transmet_le_fichier_octet_pour_octet(depot: Depot) -> None:
     """Le cœur du détour par un fichier : ce qui casserait une ligne de commande passe intact.
 
-    Sauts de ligne, `$(…)`, backquotes et heredoc arrivent LITTÉRAUX côté `glab` — non réévalués,
+    Sauts de ligne, `$(…)`, backquotes et heredoc arrivent LITTÉRAUX côté forge — non réévalués,
     non tronqués. Si quelqu'un « simplifiait » un jour le helper en passant le texte autrement,
     c'est ici que ça se verrait.
     """
-    depot.pose_etat(graphql=[regle_mr_de_branche(None)], rest=[regle_titre(237, "Titre")])
+    depot.pose_etat(graphql=[regle_mr_de_branche(None), regle_titre(237, "Titre")])
     sur_une_branche(depot)
     fichier = fichier_description(depot)
 
     assert depot.lib("create-mr", "237", str(fichier)).returncode == 0
 
-    recue = valeur_option(appel(depot, "mr", "create"), "--description")
+    recue = champs_api(appel(depot, "api", "-X", "POST"))["body"]
     assert recue == journalise(DESCRIPTION)
     assert "$(cat fichier)" in recue, "la substitution n'a pas été réévaluée : c'est du texte"
 
@@ -1686,23 +1602,25 @@ def test_create_mr_met_a_jour_la_mr_deja_ouverte_au_lieu_d_echouer(depot: Depot)
     Reprise de session, second passage après un commit de plus : `/ticket-finish` repasse ici et
     ne doit ni échouer ni ouvrir une seconde MR sur la même branche.
     """
-    depot.pose_etat(graphql=[regle_mr_de_branche("77")], rest=[regle_titre(237, "Titre")])
+    depot.pose_etat(graphql=[regle_mr_de_branche("77"), regle_titre(237, "Titre")])
     sur_une_branche(depot)
     fichier = fichier_description(depot)
 
     acheve = depot.lib("create-mr", "237", str(fichier))
     assert acheve.returncode == 0, acheve.stderr
     assert "!77" in acheve.stdout, "la MR retrouvée est nommée"
-    assert "merge_requests/77" in acheve.stdout, "l'URL reste rendue, comme à la création"
+    assert "pull/77" in acheve.stdout, "l'URL reste rendue, comme à la création"
 
-    assert not [ligne for ligne in depot.appels() if ligne.startswith("mr\tcreate")], \
-        "une seconde MR aurait été ouverte sur la même branche"
-    assert valeur_option(appel(depot, "mr", "update"), "--description") == journalise(DESCRIPTION)
+    assert not chemins_appeles(depot, "/pulls"), \
+        "une seconde PR aurait été ouverte sur la même branche"
+    maj = appel(depot, "api", "-X", "PATCH")
+    assert maj.split("\t")[3].endswith("/pulls/77")
+    assert champs_api(maj)["body"] == journalise(DESCRIPTION)
 
 
 def test_create_mr_refuse_depuis_main_sans_rien_ecrire(depot: Depot) -> None:
     """`main` n'a pas de MR à ouvrir : le dire vaut mieux qu'un appel qui échouera plus loin."""
-    depot.pose_etat(graphql=[regle_mr_de_branche(None)], rest=[regle_titre(237, "Titre")])
+    depot.pose_etat(graphql=[regle_mr_de_branche(None), regle_titre(237, "Titre")])
     fichier = fichier_description(depot)
 
     acheve = depot.lib("create-mr", "237", str(fichier))
@@ -1723,7 +1641,7 @@ def test_create_mr_refuse_un_fichier_inutilisable(
     Le fichier vide est le cas réel — un `Write` qui n'a rien écrit, ou le chemin de scratchpad
     d'une session précédente.
     """
-    depot.pose_etat(graphql=[regle_mr_de_branche(None)], rest=[regle_titre(237, "Titre")])
+    depot.pose_etat(graphql=[regle_mr_de_branche(None), regle_titre(237, "Titre")])
     sur_une_branche(depot)
     chemin = depot.racine / nom
     if contenu is not None:
@@ -1744,7 +1662,7 @@ def test_create_mr_signale_un_titre_illisible_plutot_que_d_en_inventer_un(depot:
     acheve = depot.lib("create-mr", "237", str(fichier))
     assert acheve.returncode == 1
     assert "#237" in acheve.stderr
-    assert not [ligne for ligne in depot.appels() if ligne.startswith("mr\tcreate")]
+    assert not chemins_appeles(depot, "/pulls")
 
 
 def test_issue_note_poste_le_fichier_tel_quel(depot: Depot) -> None:
@@ -1754,7 +1672,9 @@ def test_issue_note_poste_le_fichier_tel_quel(depot: Depot) -> None:
 
     acheve = depot.lib("issue-note", "237", str(fichier))
     assert acheve.returncode == 0, acheve.stderr
-    assert valeur_option(appel(depot, "issue", "note", "237"), "-m") == journalise(note)
+    poste = appel(depot, "api", "-X", "POST")
+    assert poste.split("\t")[3].endswith("/issues/237/comments")
+    assert champs_api(poste)["body"] == journalise(note)
 
 
 def test_issue_note_refuse_un_fichier_vide_sans_rien_poster(depot: Depot) -> None:
@@ -1767,7 +1687,7 @@ def test_issue_note_refuse_un_fichier_vide_sans_rien_poster(depot: Depot) -> Non
 
 def test_issue_title_rend_le_titre_en_utf8_intact(depot: Depot) -> None:
     """Lecture seule, et fidèle : c'est ce titre qui devient celui de la MR."""
-    depot.pose_etat(rest=[regle_titre(237, "Tests + doc — appels « autonomes » d'une session")])
+    depot.pose_etat(graphql=[regle_titre(237, "Tests + doc — appels « autonomes » d'une session")])
     acheve = depot.lib("issue-title", "237")
     assert acheve.returncode == 0, acheve.stderr
     assert acheve.stdout.strip() == "Tests + doc — appels « autonomes » d'une session"
@@ -1777,7 +1697,7 @@ def test_issue_title_rend_le_titre_en_utf8_intact(depot: Depot) -> None:
 def test_les_helpers_de_creation_sont_annonces_par_l_usage(depot: Depot) -> None:
     """Un helper qu'on ne trouve pas n'existe pas : c'est l'usage qui l'apprend à une session.
 
-    Le refus d'un `glab mr create` multi-ligne tombe **sans humain pour l'expliquer** ; la seule
+    Le refus d'une création de PR multi-ligne tombe **sans humain pour l'expliquer** ; la seule
     chose que la session puisse lire pour s'en sortir est la sortie d'usage de `lib.sh`.
     """
     usage = depot.lib().stderr
@@ -1804,7 +1724,7 @@ def _regle_backlog(statuts: dict[str, str]) -> list[dict]:
     """Règle de réponse au backlog OUVERT — « iid : cycle de vie » pour chaque ticket."""
     return [
         {
-            "contient": ["workItems(state: opened"],
+            "contient": ["states: [OPEN]"],
             "reponse": reponse_backlog(
                 [
                     noeud_ticket(iid, f"Ticket {iid}", statut, ["type::infra"], [MOI])
@@ -2061,7 +1981,7 @@ def test_auto_se_tait_sans_orphelin_et_parle_avec(depot: Depot) -> None:
 
 
 def test_le_backlog_illisible_ne_fait_pas_conclure_a_l_orphelin(depot: Depot) -> None:
-    """Ne rien savoir n'autorise rien — même règle que le ramassage devant un `glab` muet."""
+    """Ne rien savoir n'autorise rien — même règle que le ramassage devant une forge muette."""
     depot.pose_etat(graphql=[])
 
     acheve = depot.lib("reconcile-en-cours")
@@ -2096,23 +2016,30 @@ def test_le_verbe_est_annonce_par_l_usage(depot: Depot) -> None:
 
 
 def _labels_workflow_gids() -> dict:
-    """Règle de réponse à la liste des labels du scope — la brique qui permet de retirer les
-    cinq autres. GID volontairement non contigus : rien ne doit pouvoir en deviner un à partir
-    d'un autre.
+    """Règle de réponse à « labels du dépôt + labels du ticket », en UNE lecture.
+
+    C'est la brique qui permet de retirer les cinq autres : `PATCH /issues/:n` remplace l'ensemble
+    des labels, donc il faut savoir ce que le ticket porte pour le réécrire sans rien perdre.
     """
     return {
-        "contient": ["labels(searchTerm:"],
+        "contient": ["labels(first:100"],
         "reponse": {
             "data": {
-                "project": {
+                "repository": {
                     "labels": {
                         "nodes": [
-                            {"id": f"gid://gitlab/ProjectLabel/{gid}", "title": f"workflow::{slug}"}
-                            for slug, gid in (
-                                ("a-faire", 9007), ("en-cours", 31), ("en-revue", 4512),
-                                ("termine", 88), ("abandonne", 1203), ("doublon", 677),
+                            {"name": f"workflow::{slug}"}
+                            for slug in (
+                                "a-faire", "en-cours", "en-revue",
+                                "termine", "abandonne", "doublon",
                             )
                         ]
+                    },
+                    "issue": {
+                        "number": 325,
+                        "labels": {
+                            "nodes": [{"name": "type::infra"}, {"name": "workflow::en-cours"}]
+                        },
                     }
                 }
             }
@@ -2120,35 +2047,31 @@ def _labels_workflow_gids() -> dict:
     }
 
 
-WORKITEM_GID = "gid://gitlab/WorkItem/55501"
-
-
 def _regles_reprise(statuts: dict[str, str]) -> list[dict]:
-    """Tout ce qu'il faut pour qu'une reprise aboutisse : backlog, labels, work item, mutation."""
+    """Tout ce qu'il faut pour qu'une reprise aboutisse : le backlog et les labels à réécrire."""
     return [
-        {
-            "contient": ["workItemUpdate"],
-            "reponse": {"data": {"workItemUpdate": {"errors": []}}},
-        },
         _labels_workflow_gids(),
-        {
-            # La résolution du GID du work item. Le fragment `nodes { id }` la distingue de la
-            # requête cycle de vie + assignés, qui porte `WorkItemWidgetAssignees`.
-            "contient": ["workItems(iids:", "nodes { id }"],
-            "reponse": {"data": {"project": {"workItems": {"nodes": [{"id": WORKITEM_GID}]}}}},
-        },
         *_regle_backlog(statuts),
     ]
 
 
 def _mutations(depot: Depot) -> list[str]:
-    """Les mutations GraphQL reçues — ce qui distingue « repris » de « refusé »."""
-    return [ligne for ligne in depot.appels() if "workItemUpdate" in ligne]
+    """Les écritures reçues — ce qui distingue « repris » de « refusé ».
+
+    Un `PATCH /issues/:n` et non plus une mutation GraphQL : côté GitHub, poser les labels et
+    vider les assignés est LE MÊME appel, ce qui rend la conjonction structurelle au lieu d'être
+    une précaution (cf. l'en-tête de gh_poser_labels).
+    """
+    return [ligne for ligne in depot.appels() if "\t-X\tPATCH\t" in ligne]
 
 
-def _gids(mutation: str, champ: str) -> list[str]:
-    trouve = re.search(rf"{champ}:\[(.*?)\]", mutation)
-    return re.findall(r'"([^"]+)"', trouve.group(1)) if trouve else []
+def _valeurs(ecriture: str, prefixe: str) -> list[str]:
+    """Les valeurs d'un champ répété de l'écriture (« labels[]=… », « assignees[]=… »)."""
+    return [
+        champ[len(prefixe):]
+        for champ in ecriture.split("\t")
+        if champ.startswith(prefixe)
+    ]
 
 
 def _registre(depot: Depot) -> Path:
@@ -2248,13 +2171,15 @@ def test_reprendre_remet_a_faire_et_libere_dans_la_meme_mutation(depot: Depot) -
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
 
     mutations = _mutations(depot)
-    assert len(mutations) == 1, f"une seule mutation attendue : {mutations}"
-    mutation = mutations[0]
-    assert f'id:"{WORKITEM_GID}"' in mutation
-    assert "assigneeIds:[]" in mutation, "libérer, c'est VIDER la liste des assignés"
-    a_faire = ["gid://gitlab/ProjectLabel/9007"]
-    assert _gids(mutation, "addLabelIds") == a_faire, "le cycle de vie repasse à workflow::a-faire"
-    assert len(_gids(mutation, "removeLabelIds")) == 5, "les cinq autres partent dans le même appel"
+    assert len(mutations) == 1, f"une seule écriture attendue : {mutations}"
+    ecriture = mutations[0]
+    assert "issues/316" in ecriture
+    assert "assignees[]" in ecriture, "libérer, c'est VIDER la liste des assignés"
+    assert _valeurs(ecriture, "assignees[]=") == [], "aucun assigné ne doit être réécrit"
+    labels = _valeurs(ecriture, "labels[]=")
+    assert [nom for nom in labels if nom.startswith("workflow::")] == ["workflow::a-faire"], (
+        "le cycle de vie repasse à workflow::a-faire, et les cinq autres partent avec"
+    )
 
 
 def test_la_reprise_ne_touche_ni_au_worktree_ni_aux_commits(depot: Depot) -> None:
@@ -2321,7 +2246,7 @@ def test_la_reprise_consigne_le_run_et_le_verdict_d_origine(depot: Depot) -> Non
 
     # Le commentaire sur le ticket : l'autre moitié de la trace, celle qu'on lit dans GitLab des
     # semaines plus tard, sans la machine sous la main.
-    assert [ligne for ligne in depot.appels() if ligne.startswith("issue\tnote")], (
+    assert chemins_appeles(depot, "/comments"), (
         "la reprise laisse un commentaire sur le ticket"
     )
 

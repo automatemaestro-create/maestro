@@ -10,8 +10,8 @@ contient que ce dont l'étape visée a besoin (le vrai `scripts/setup.sh`, un `.
 et un `.mcp.json` synthétiques), puis lance le script dessus. Rien n'est jamais écrit dans
 le vrai dépôt : `HOME` et `TMPDIR` sont eux aussi redirigés vers le `tmp_path`.
 
-**Ni réseau ni Docker.** Les étapes qui installent (`venv` → pip, `web` → npm, `runner` →
-Docker + GitLab, `infra` → docker compose) et l'étape `verif` (qui interroge `glab`) sont
+**Ni réseau ni Docker.** Les étapes qui installent (`venv` → pip, `web` → npm, `infra` →
+docker compose) et l'étape `verif` (qui interroge `gh`) sont
 neutralisées par `--skip` : on vérifie la DÉCISION du script, jamais l'installation
 elle-même. `MAESTRO_AUTO_INSTALL=0` est posé par défaut dans l'environnement de test —
 filet de sécurité pour qu'un oubli de `--no-install` ne déclenche jamais un vrai
@@ -47,10 +47,10 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="bash introuvable")
 besoin_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
 
 # Ordre de ETAPES_CONNUES dans scripts/setup.sh — le rapport final le suit.
-ETAPES = ("node", "prerequis", "venv", "env", "hooks", "web", "mcp", "runner", "infra", "verif")
+ETAPES = ("node", "prerequis", "venv", "env", "hooks", "web", "mcp", "infra", "verif")
 
 # Étapes à neutraliser pour rester hors ligne (voir le docstring du module).
-HORS_LIGNE = ("--skip", "venv,web,runner,infra,verif")
+HORS_LIGNE = ("--skip", "venv,web,infra,verif")
 
 GABARIT_ENV = """\
 # Gabarit de test — aucune valeur réelle.
@@ -608,19 +608,22 @@ def test_prerequis_en_check_n_installe_rien(
     assert "--check : rien fait" in resultat.stdout
 
 
-# --- Volet Docker / CI : délégué, et sauté quand il n'est pas là ---------------------------------
+# --- Plus d'étape runner (#344) ------------------------------------------------------------------
 
 
-def test_etape_runner_sautee_si_le_script_dedie_est_absent(depot: Depot) -> None:
-    # Le mini-clone ne porte pas scripts/gitlab/setup-runner.sh : l'étape doit se sauter
-    # proprement, sans jamais toucher à Docker ni à GitLab.
-    assert not (depot.racine / "scripts" / "gitlab" / "setup-runner.sh").exists()
+def test_l_etape_runner_n_existe_plus(depot: Depot) -> None:
+    """La CI tourne sur les exécutants hébergés de GitHub : il n'y a plus de runner à monter.
 
+    Épinglé plutôt que simplement retiré : une étape qui reviendrait remettrait Docker sur le
+    chemin d'une mise en route, et avec lui la machine qu'il fallait laisser allumée (docs/10 §8).
+    Le refus d'une option inconnue est ce qui rend le retrait franc — un `--only runner` silencieux
+    laisserait croire que l'étape a tourné.
+    """
     resultat = depot.lance("--only", "runner", "--no-install")
 
-    assert resultat.returncode == 0
-    assert statut(resultat.stdout, "runner") == "IGNORÉ"
-    assert "introuvable" in detail(resultat.stdout, "runner")
+    assert resultat.returncode != 0
+    assert "runner" in resultat.stderr
+    assert "runner" not in resultat.stdout
 
 
 # --- Dérive des dépendances : `--derive` (#216) ------------------------------------------------

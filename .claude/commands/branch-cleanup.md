@@ -101,7 +101,7 @@ automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuff
      Supprime **celles qui s'affichent**, une par une : `git push origin --delete <branche>`. Si un
      `git push` reste bloqué sur une demande d'identifiants (Windows + Git Credential Manager),
      relance-le en forçant le CLI de la forge (`!gh auth git-credential`, ou
-     `!glab auth git-credential` sur GitLab) :
+) :
      `git -c credential.helper='!gh auth git-credential' push origin --delete <branche>`.
    - **cycle de vie** — un seul appel, tous les iid à la suite :
      ```

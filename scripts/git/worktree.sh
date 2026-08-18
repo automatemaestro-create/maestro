@@ -74,7 +74,7 @@ en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà �
 qui monte le worktree lui-même) ou « WORKTREE <chemin> » (worktree prêt, s'y relocaliser).
 
 `gc` ramasse les worktrees dont le travail est SOLDÉ — MR mergée ou ticket fermé, confirmé par
-glab. Il tourne d'office au début d'`ensure` (donc de /ticket-start) : le retrait n'est pas un
+la forge. Il tourne d'office au début d'`ensure` (donc de /ticket-start) : le retrait n'est pas un
 geste à se rappeler. `--check` diagnostique sans rien retirer, `--auto` ne parle que s'il a
 quelque chose à dire. MAESTRO_WORKTREE_GC=0 désactive le passage automatique.
 
@@ -97,7 +97,7 @@ sans geste à se rappeler. Il signale et n'interrompt jamais un démarrage de ti
 MAESTRO_MAJ_DEPENDANCES=0 le désactive.
 
 Options de création :
-  --branche <nom>   Nom de branche imposé (par défaut : résolu depuis le ticket via glab).
+  --branche <nom>   Nom de branche imposé (par défaut : résolu depuis le ticket via lib.sh).
   --ports <api:ui>  Ports Control Tower imposés (par défaut : dérivés de l'iid).
   --sans-liens      N'installe aucun lien vers .venv/.tools/node_modules — le worktree est
                     autonome, à équiper avec `bash scripts/setup.sh`.
@@ -344,8 +344,8 @@ commande_create() {
   # 1) Branche — même règle que /ticket-start (préfixe du label type:: + slug du titre).
   if [ -z "$branche" ]; then
     branche="$(bash "$ICI/../gitlab/lib.sh" branch-for "$iid")" || {
-      # L'outil est demandé à lib.sh, pas écrit en dur (#341) : sous MAESTRO_FORGE=github, envoyer
-      # vérifier `glab` fait chercher la panne du mauvais côté. L'appel supplémentaire ne coûte que
+      # L'outil est demandé à lib.sh, pas écrit en dur (#341) : un message qui nomme le mauvais CLI
+      # fait chercher la panne du mauvais côté. L'appel supplémentaire ne coûte que
       # sur le chemin d'échec, où l'on a déjà perdu bien plus qu'un sous-processus.
       erreur "branche introuvable pour #$iid ($(bash "$ICI/../gitlab/lib.sh" forge-cli) authentifié ?) — sinon : --branche <nom>"
       return 1
@@ -584,8 +584,8 @@ commande_ensure() {
 
   if [ -z "$branche" ]; then
     branche="$(bash "$ICI/../gitlab/lib.sh" branch-for "$iid")" || {
-      # L'outil est demandé à lib.sh, pas écrit en dur (#341) : sous MAESTRO_FORGE=github, envoyer
-      # vérifier `glab` fait chercher la panne du mauvais côté. L'appel supplémentaire ne coûte que
+      # L'outil est demandé à lib.sh, pas écrit en dur (#341) : un message qui nomme le mauvais CLI
+      # fait chercher la panne du mauvais côté. L'appel supplémentaire ne coûte que
       # sur le chemin d'échec, où l'on a déjà perdu bien plus qu'un sous-processus.
       erreur "branche introuvable pour #$iid ($(bash "$ICI/../gitlab/lib.sh" forge-cli) authentifié ?) — sinon : --branche <nom>"
       return 1
@@ -644,7 +644,7 @@ commande_ensure() {
   # supprimait de branche sans un /branch-cleanup manuel, et 35 s'étaient accumulées.
   #
   # Best-effort et muet quand il n'y a rien à faire (`--auto`), comme les trois autres. Coûte une
-  # lecture `glab` par branche locale — l'ordre de grandeur du ramassage juste au-dessus, qui en
+  # lecture de forge par branche locale — l'ordre de grandeur du ramassage juste au-dessus, qui en
   # fait une par worktree, et c'est justement parce que la purge tourne à nouveau que ce nombre
   # reste petit. `MAESTRO_PURGE_BRANCHES=0` pour l'éteindre.
   #
@@ -862,7 +862,7 @@ retire_worktree() {
 # Purement CONSULTATIF, comme tout ce que rend ce verbe : aucun label posé, aucune assignation
 # touchée, aucun worktree retiré — la reprise est le geste explicite de `lib.sh reprendre-en-cours`
 # (#329), que le signalement nomme lui-même. Best-effort : un échec
-# (glab absent, hors ligne, dépôt jetable sans journal d'orchestration) rend le silence et n'empêche
+# (gh absent, hors ligne, dépôt jetable sans journal d'orchestration) rend le silence et n'empêche
 # ni un ticket de démarrer ni un run de continuer.
 #
 # `<iid à écarter>` est celui que l'appelant est en train de démarrer : le signaler orphelin serait
@@ -889,7 +889,7 @@ orphelins_en_cours() {
 #   - le worktree de la SESSION COURANTE, jamais candidat (on ne se retire pas le sol sous les pieds) ;
 #   - un worktree porteur de TRAVAIL NON SAUVEGARDÉ : signalé, jamais supprimé en silence. C'est
 #     l'inverse du confort : mieux vaut 535 Mo de trop qu'un commit perdu ;
-#   - un verdict autre que « fini » — y compris « inconnu » (glab muet, hors ligne). Ne rien savoir
+#   - un verdict autre que « fini » — y compris « inconnu » (forge muette, hors ligne). Ne rien savoir
 #     n'autorise rien : le nom de la branche ne sert jamais de preuve de merge (docs/10 §6).
 #
 # Deux temps volontaires : on INVENTORIE d'abord, on décide ensuite. `git worktree remove` réécrit la
@@ -897,7 +897,7 @@ orphelins_en_cours() {
 #
 # MAESTRO_WORKTREE_VERDICT remplace l'interrogation de GitLab par une commande qui reçoit
 # « <iid> <branche> » et imprime la ligne de verdict : c'est la couture par laquelle les tests font
-# tourner le ramassage sans réseau ni glab (même dispositif que MAESTRO_ORCHESTRATE_WORKTREE, #172).
+# tourner le ramassage sans réseau ni CLI de forge (même dispositif que MAESTRO_ORCHESTRATE_WORKTREE, #172).
 commande_gc() {
   local check=0 auto=0 sauf=""
   while [ $# -gt 0 ]; do
@@ -990,7 +990,7 @@ commande_gc() {
     # Deux choix à ne pas défaire :
     #   • AVANT le garde-fou du travail non sauvegardé et indépendamment du retrait — le cycle de vie
     #     suit le verdict de GitLab, pas la propreté d'un répertoire local ni le succès d'un `rm` ;
-    #   • BEST-EFFORT et muet en cas d'échec (glab absent, hors ligne) : ce ramassage ne doit jamais
+    #   • BEST-EFFORT et muet en cas d'échec (gh absent, hors ligne) : ce ramassage ne doit jamais
     #     empêcher un ticket de démarrer ni un run de continuer (même statut que `sync-main`).
     # C'est `reconcile-workflow` qui refuse d'écraser un « Abandonné »/« Doublon » — fermés eux
     # aussi, donc « fini » eux aussi. MAESTRO_WORKFLOW_POSE remplace l'appel (0 = éteint) : c'est la

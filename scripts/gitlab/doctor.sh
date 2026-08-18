@@ -9,23 +9,21 @@
 #   de vie) ; sinon 0
 #   (ou 1 avec --strict s'il reste des avertissements de dérive).
 #
-# --- Les deux forges (#341, chantier #335) --------------------------------------------------------
-# Ce fichier ne parle plus à `glab` : TOUTES ses lectures passent par les verbes de lib.sh, qui
-# répondent contre GitLab ou contre GitHub selon MAESTRO_FORGE. Deux raisons, et la seconde est la
-# vraie.
+# --- Aucune lecture en direct (#341) --------------------------------------------------------------
+# Ce fichier n'appelle jamais le CLI de la forge : TOUTES ses lectures passent par les verbes de
+# lib.sh. La raison n'est pas l'élégance, c'est le SILENCE. Les contrôles 4a/4b/4c cherchaient
+# « "iid":" » dans le JSON brut du backlog — une clé que GitHub n'écrit pas (il rend « "number": »)
+# —, si bien qu'ils n'échouaient pas après la bascule : ils rendaient « aucune dérive ». Un ✓ sur une
+# question jamais posée, dans le seul fichier du dépôt dont le métier est de détecter les dérives.
+# D'où la projection TSV (`backlog-table`, `workflow-derives`) plutôt qu'un grep sur le JSON : le
+# contrat de lib.sh porte sur des COLONNES, pas sur la forme d'une réponse d'API.
 #
-# La première est mécanique : sans ça, un bilan lancé sous MAESTRO_FORGE=github interrogeait GitLab.
-# La seconde est qu'il le faisait EN SILENCE. Les contrôles 4a/4b/4c cherchaient « "iid":" » dans le
-# JSON brut du backlog — une clé que le backend GitHub n'écrit pas (il rend « "number": ») —, si bien
-# qu'ils n'échouaient pas : ils rendaient « aucune dérive ». Un ✓ sur une question jamais posée, dans
-# le seul fichier du dépôt dont le métier est de détecter les dérives. C'est pour ça que la
-# projection TSV (`backlog-table`, `workflow-derives`) remplace ici le grep sur le JSON : le contrat
-# de lib.sh porte sur des COLONNES, pas sur la forme d'une réponse d'API.
-#
-# Trois sections restent structurellement propres à une forge et le DISENT au lieu de se taire :
-# le board Kanban (§3, GitLab), les runners de projet (§7, GitLab — hébergés par la forge côté
-# GitHub) et la façon dont « pipeline vert avant merge » est tenu (§6). Le code 3 des verbes
-# concernés signifie « sans objet pour cette forge », à ne pas confondre avec « illisible ».
+# Deux sections ont disparu avec l'outillage GitLab (#344) — le board Kanban (§3) et les runners de
+# projet (§7) : la première n'a pas d'équivalent (le projet n'utilise pas Projects v2, le suivi
+# maison du lot 4 ayant remplacé le seul usage qu'on en aurait eu), la seconde n'a plus d'objet, les
+# runners étant hébergés par la forge. La numérotation des sections restantes n'a pas été resserrée :
+# elle est citée dans docs/10 et dans les tests, et la faire glisser pour combler deux trous coûterait
+# plus qu'elle ne rapporte.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,10 +33,6 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 strict=0
 [ "${1:-}" = "--strict" ] && strict=1
 
-# La forge est résolue UNE fois, avant tout contrôle : une valeur inconnue est un refus franc, pas un
-# repli silencieux sur GitLab (cf. gl_vers_github). Un bilan de santé qui diagnostique le mauvais
-# dépôt est pire qu'un bilan qui refuse de démarrer.
-FORGE="$(gl_forge)" || exit 1
 FORGE_NOM="$(gl_forge_nom)"
 FORGE_CLI="$(gl_forge_cli)"
 DEPOT="$(gl_depot_courant)"
@@ -62,9 +56,9 @@ section() { printf '\n%s%s%s\n' "$C_B" "$1" "$C_0"; }
 
 # --- 1. Prérequis -------------------------------------------------------------------------------
 section "1. Prérequis"
-if gl_require_glab 2>/dev/null; then
+if gl_require 2>/dev/null; then
   user="$(gl_current_user 2>/dev/null)"
-  ok "$FORGE_CLI installé et authentifié (${user:-?}) — forge « $FORGE », dépôt $DEPOT"
+  ok "$FORGE_CLI installé et authentifié (${user:-?}) — $FORGE_NOM, dépôt $DEPOT"
 else
   err "$FORGE_CLI absent ou non authentifié — lancer : $FORGE_CLI auth login"
   section "Résumé"
@@ -74,9 +68,7 @@ fi
 
 # --- 2. Labels de catégorisation ----------------------------------------------------------------
 section "2. Labels de catégorisation (§3.2)"
-# Le geste de réparation dépend de la forge : `bootstrap.sh` provisionne les deux depuis #341, mais
-# le nommer sans dire sur quel dépôt il agira serait une invitation à provisionner le mauvais.
-PROVISIONNER="MAESTRO_FORGE=$FORGE bash scripts/gitlab/bootstrap.sh"
+PROVISIONNER="bash scripts/gitlab/bootstrap.sh"
 existing_labels="$(gl_labels 2>/dev/null)"
 expected_labels="type::feature type::bug type::doc type::infra \
 agent::orchestrateur agent::dev agent::bdd agent::devops agent::design agent::qa \
@@ -97,7 +89,7 @@ fi
 # surface en tête de lib.sh. Une SEULE lecture (gl_workflow_gids, avec retry) pour les six, comme
 # la section le faisait pour les six statuts : on évite le faux « incohérent » que six appels
 # indépendants déclenchaient dès qu'un seul retombait vide.
-section "3. Cycle de vie (labels $GL_WORKFLOW_SCOPE::* et colonnes du Kanban)"
+section "3. Cycle de vie (labels $GL_WORKFLOW_SCOPE::*)"
 workflow_gids="$(gl_workflow_gids 2>/dev/null)"
 if [ -z "$workflow_gids" ]; then
   err "aucun label « $GL_WORKFLOW_SCOPE::* » lisible dans $DEPOT → relancer : $PROVISIONNER"
@@ -114,52 +106,6 @@ else
   fi
 fi
 
-# Les colonnes du Kanban, posées par bootstrap-board.sh sur ces mêmes labels : sans elles les
-# tickets existent mais le board ne montre rien, ce qui était le symptôme visible de #207. Le board
-# est UNIQUE sur le plan Free, on le découvre donc plutôt que de figer un id (c'est `gl_board_lists`
-# qui s'en charge, et qui rend le numéro trouvé en première ligne). Deux dérives à attraper — une
-# colonne du flux manquante, et une liste qui n'en fait pas partie (dont les listes ORPHELINES
-# `"label":null` héritées des colonnes par statut, qui n'affichent plus rien et ne partent pas toutes
-# seules). L'ORDRE, lui, n'est pas contrôlé ici : il est cosmétique, et bootstrap-board.sh le
-# rétablit — le signaler ferait du bruit sans enjeu.
-#
-# Le board est une notion GITLAB : sur GitHub le verbe rend 3 (« sans objet »), et la section le dit
-# au lieu d'inventer une colonne manquante. Le projet n'utilise pas Projects v2 — le suivi maison du
-# lot 4 (dates et temps passé en commentaire structuré) a remplacé le seul usage qu'on en aurait eu.
-board_flux="$GL_WORKFLOW_SCOPE::a-faire $GL_WORKFLOW_SCOPE::en-cours $GL_WORKFLOW_SCOPE::en-revue $GL_WORKFLOW_SCOPE::termine"
-board_raw="$(gl_board_lists 2>/dev/null)"; board_rc=$?
-board_id="$(printf '%s\n' "$board_raw" | awk -F'\t' '$1 == "# board" { print $2; exit }')"
-board_listes="$(printf '%s\n' "$board_raw" | grep -v '^# board')"
-if [ "$board_rc" = 3 ]; then
-  info "board Kanban : sans objet sur $FORGE_NOM (pas de board ; Projects v2 non utilisé)"
-elif [ -z "$board_id" ]; then
-  warn "aucun board Kanban sur $DEPOT — le créer une fois dans l'UI (Plan > Boards), puis : bash scripts/gitlab/bootstrap-board.sh"
-else
-  if [ -z "$board_listes" ]; then
-    warn "colonnes du board #$board_id illisibles (API muette) — contrôle ignoré"
-  else
-    manquantes=""
-    for nom in $board_flux; do
-      printf '%s\n' "$board_listes" | grep -qx -- "$nom" || manquantes="${manquantes:+$manquantes, }$nom"
-    done
-    intruses=""
-    while IFS= read -r nom; do
-      [ -z "$nom" ] && continue
-      case " $board_flux " in *" $nom "*) continue ;; esac
-      [ "$nom" = "-" ] && nom="liste orpheline (label supprimé)"
-      intruses="${intruses:+$intruses, }$nom"
-    done <<EOF
-$board_listes
-EOF
-    if [ -z "$manquantes" ] && [ -z "$intruses" ]; then
-      ok "board #$board_id : 4 colonnes du flux (à-faire → en-cours → en-revue → terminé)"
-    else
-      [ -n "$manquantes" ] && warn "board #$board_id : colonne(s) manquante(s) : $manquantes → bash scripts/gitlab/bootstrap-board.sh"
-      [ -n "$intruses" ]   && warn "board #$board_id : liste(s) hors flux : $intruses → bash scripts/gitlab/bootstrap-board.sh"
-    fi
-  fi
-fi
-
 # --- 4. Dérive cycle de vie ↔ réalité -----------------------------------------------------------
 section "4. Dérive cycle de vie ↔ réalité"
 
@@ -170,8 +116,8 @@ section "4. Dérive cycle de vie ↔ réalité"
 # l'aurait rendu inutilisable partout ailleurs.
 #
 # ⚠ LA TABLE TSV, PAS LE JSON BRUT (#341). Ces deux lectures étaient des `gl_backlog` grepés sur
-# « "iid":" » — la forme de la réponse GitLab, pas le contrat de lib.sh. Sous MAESTRO_FORGE=github le
-# grep ne matchait plus rien (le backend rend « "number": ») et les trois contrôles répondaient
+# « "iid":" » — la forme de la réponse GitLab, pas le contrat de lib.sh. Après la bascule, le grep
+# ne matchait plus rien (GitHub rend « "number": ») et les trois contrôles répondaient
 # « aucune dérive » : le bilan restait vert, sur des questions qu'il ne posait plus. La colonne
 # `statut` de `backlog-table` porte le LIBELLÉ du cycle de vie des deux côtés — c'est ce que le
 # contrat garantit, et c'est donc sur lui qu'on branche.
@@ -303,12 +249,10 @@ fi
 # --- 6. Garde-fous de merge du dépôt ---------------------------------------------------------------
 # Dérive si le dépôt n'exige plus un pipeline vert pour merger, ou ne supprime plus la branche source
 # au merge (docs/10-workflow-git.md §6). Les trois promesses sont lues par `gl_merge_settings`, qui
-# les rend NORMALISÉES (true|false|-) : côté GitLab elles vivent dans les réglages du projet, côté
-# GitHub dans la protection de branche de `main` et `delete_branch_on_merge`.
+# les rend NORMALISÉES (true|false|-) : elles vivent dans la protection de branche de `main` et
+# dans `delete_branch_on_merge`.
 #
-# Le RENDU, lui, se sépare — et c'est le seul endroit du fichier où deux forges méritent deux textes.
-# Côté GitLab, un « pipeline vert requis » retombé est une DÉRIVE : le réglage a existé, bootstrap.sh
-# le repose. Côté GitHub, son absence est une DÉCISION documentée (docs/10 §8.8, 2026-08-14) — la
+# L'absence de protection de branche est une DÉCISION documentée (docs/10 §8.8, 2026-08-14) — la
 # protection de branche n'existe pas sur un dépôt privé d'un compte Free, ni GitHub Pro ni le passage
 # en public n'ont été retenus, et `scripts/github/protect-main.sh` attend écrit-mais-non-joué le jour
 # où le plan change. Le rendre en ⚠ ferait de ce bilan un fichier durablement jaune, sur un point que
@@ -323,7 +267,7 @@ EOF
 
 if [ "${#REGLAGE[@]}" = 0 ]; then
   warn "réglages du dépôt illisibles (API muette) — contrôle ignoré"
-elif [ "$FORGE" = github ]; then
+else
   case "${REGLAGE[pipeline_requis]:--}" in
     true)  ok "protection de branche sur main : les checks CI sont requis — aucun merge au rouge" ;;
     false) info "aucune protection de branche sur main — décision assumée (dépôt privé, compte Free : docs/10 §8.8)"
@@ -338,64 +282,6 @@ elif [ "$FORGE" = github ]; then
     # du dépôt (mesuré le 2026-08-17 sur le PAT du projet). L'absence parle du jeton, pas du dépôt.
     *)     info "delete_branch_on_merge illisible (jeton sans droit d'administration du dépôt) — contrôle ignoré" ;;
   esac
-else
-  if [ "${REGLAGE[pipeline_requis]:--}" = true ]; then
-    ok "only_allow_merge_if_pipeline_succeeds=true — pipeline vert requis pour merger"
-  else
-    warn "only_allow_merge_if_pipeline_succeeds ≠ true : une MR au pipeline rouge est mergeable → relancer : $PROVISIONNER"
-  fi
-  if [ "${REGLAGE[merge_si_pipeline_saute]:--}" = false ]; then
-    ok "allow_merge_on_skipped_pipeline=false — un pipeline sauté ne permet pas de merger"
-  else
-    warn "allow_merge_on_skipped_pipeline ≠ false : un pipeline sauté permettrait de merger → relancer : $PROVISIONNER"
-  fi
-  if [ "${REGLAGE[suppression_branche]:--}" = true ]; then
-    ok "remove_source_branch_after_merge=true — la branche source est supprimée au merge"
-  else
-    warn "remove_source_branch_after_merge ≠ true : les branches distantes s'accumuleraient après merge → relancer : $PROVISIONNER"
-  fi
-fi
-
-# --- 7. Runner CI de projet -----------------------------------------------------------------------
-# Première cause de MR bloquée (#157) : les runners partagés sont désactivés
-# (`shared_runners_enabled=false`, #135) et le merge exige un pipeline vert — si aucun runner de
-# PROJET n'est en ligne, les jobs restent `pending` et personne ne merge, sans qu'aucun message ne
-# le dise. Contrôle SOUPLE (avertissement) : le runner de la machine peut être légitimement éteint
-# pendant qu'on code ; ce qui compte est de savoir qu'il faudra le rallumer avant la MR.
-# Une seule lecture : `gl_project_runners` rend « description <TAB> statut » par runner de projet.
-# Section propre à GITLAB : sur GitHub les runners sont hébergés par la forge, il n'y a rien à
-# allumer ni à surveiller — c'est même le gain chiffré du chantier (−1 146 lignes d'outillage runner,
-# retirées au lot 9). Le verbe rend 3 (« sans objet »), et la section le dit au lieu de conclure
-# « aucun runner déclaré », qui serait vrai et trompeur à la fois.
-section "7. Runner CI de projet (§8)"
-runners_lignes="$(gl_project_runners 2>/dev/null)"; runners_rc=$?
-if [ "$runners_rc" = 3 ]; then
-  info "runners : sans objet sur $FORGE_NOM (hébergés par la forge — aucun runner à tenir allumé)"
-elif [ "$runners_rc" != 0 ]; then
-  warn "runners de projet illisibles (API muette) — contrôle ignoré"
-elif [ -z "$runners_lignes" ]; then
-  warn "aucun runner de projet déclaré : les pipelines resteront « pending » (runners partagés désactivés)"
-  warn "  → en créer un sur cette machine : bash scripts/gitlab/setup-runner.sh"
-else
-  runners_en_ligne="$(printf '%s\n' "$runners_lignes" | awk -F'\t' '$3 == "online"')"
-  if [ -n "$runners_en_ligne" ]; then
-    while IFS=$'\t' read -r rid rdesc _; do
-      [ -z "$rid" ] && continue
-      ok "runner de projet en ligne : ${rdesc:-sans description} (#${rid:-?})"
-    done <<EOF
-$runners_en_ligne
-EOF
-  else
-    hors_ligne=""
-    while IFS=$'\t' read -r _ rdesc rstat; do
-      [ -z "$rdesc" ] && continue
-      hors_ligne="${hors_ligne:+$hors_ligne, }${rdesc:-?} (${rstat:-?})"
-    done <<EOF
-$runners_lignes
-EOF
-    warn "aucun runner de projet en ligne — les jobs resteront « pending » et le merge sera bloqué [$hors_ligne]"
-    warn "  → rallumer celui de cette machine : bash scripts/gitlab/ensure-runner.sh"
-  fi
 fi
 
 # --- 8. Milestones de phase -----------------------------------------------------------------------
@@ -436,13 +322,7 @@ if ! nomiles="$(gl_issues_sans_milestone 2>/dev/null)"; then
 elif [ -z "$nomiles" ]; then
   ok "tous les tickets ouverts portent un milestone"
 else
-  # Le geste de réparation n'a pas le même nom d'un côté et de l'autre, et le donner faux est pire
-  # que ne rien donner : `glab issue update -m` n'existe pas côté GitHub, où c'est `gh issue edit`.
-  if [ "$FORGE" = github ]; then
-    poser_milestone='gh issue edit %s --repo '"$DEPOT"' --milestone "<titre>"'
-  else
-    poser_milestone='glab issue update %s -m "<titre>"'
-  fi
+  poser_milestone='gh issue edit %s --repo '"$DEPOT"' --milestone "<titre>"'
   for iid in $nomiles; do
     # shellcheck disable=SC2059  # le gabarit est choisi juste au-dessus, jamais une donnée lue
     warn "#$iid ouvert sans milestone → poser celui de sa phase : $(printf "$poser_milestone" "$iid")"

@@ -1,6 +1,6 @@
 """Tests des secrets partagés — `scripts/env-pull.sh` (ticket #156, lot final du parent #155).
 
-Le script complète un `.env` local avec les clés **partagées** publiées dans les variables CI/CD
+Le script complète un `.env` local avec les clés **partagées** publiées dans les variables
 du projet. Quatre promesses le rendent utilisable sans relire son code à chaque fois, et ce sont
 elles que ces tests épinglent :
 
@@ -9,10 +9,10 @@ elles que ces tests épinglent :
 2. **non destructif** — une clé déjà renseignée n'est jamais écrasée, même si la variable CI/CD
    dit autre chose ; les clés `[perso]` ne sont pas même regardées ;
 3. **aucune valeur imprimée** — la sortie ne porte que des NOMS de clés et des comptes ;
-4. **franc sur ce qu'il ne peut pas** — une clé partagée absente des variables du projet est dite
+4. **franc sur ce qu'il ne peut pas** — une clé partagée absente des variables du dépôt est dite
    comme telle, avec la commande qui la publie.
 
-**Ni réseau ni compte GitLab** : le script expose la couture `MAESTRO_ENV_PULL_SOURCE`, un fichier
+**Ni réseau ni compte de forge** : le script expose la couture `MAESTRO_ENV_PULL_SOURCE`, un fichier
 JSON qui remplace l'appel à l'API des variables. Tout se joue donc dans `tmp_path`, sur un
 `.env.example` et un `.env` synthétiques — jamais sur ceux du dépôt.
 """
@@ -46,7 +46,7 @@ GITLAB_TOKEN=
 # [perso] Chemin de machine.
 MAESTRO_CHROME_PROFILE=
 
-# [partagé] Observabilité — publiées dans les variables CI/CD du projet.
+# [partagé] Observabilité — publiées dans les variables du dépôt.
 LANGFUSE_SECRET_KEY=
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_HOST=
@@ -70,16 +70,19 @@ SECRET = "sk-valeur-partagee-secrete"
 HOTE = "https://langfuse.exemple.invalid"
 AUTRE = "pk-valeur-du-projet-differente"
 
+# Forme de « GET /repos/:dépôt/actions/variables », aplatie par `--jq '.variables[]'` : un objet
+# « name / value » par variable. Les notions de type et de masquage n'existent pas côté GitHub — un
+# vrai secret n'est de toute façon pas relisible par API (docs/27 §5).
 VARIABLES_CI = [
-    {"key": "LANGFUSE_SECRET_KEY", "value": SECRET, "variable_type": "env_var", "masked": True},
-    {"key": "LANGFUSE_PUBLIC_KEY", "value": AUTRE, "variable_type": "env_var", "masked": False},
-    {"key": "LANGFUSE_HOST", "value": HOTE, "variable_type": "env_var", "masked": False},
+    {"name": "LANGFUSE_SECRET_KEY", "value": SECRET},
+    {"name": "LANGFUSE_PUBLIC_KEY", "value": AUTRE},
+    {"name": "LANGFUSE_HOST", "value": HOTE},
     # Publiée alors qu'elle est [perso] : le script ne doit pas la poser pour autant.
-    {"key": "GITLAB_TOKEN", "value": "jeton-du-projet", "variable_type": "env_var"},
-    # Type `file` : inexploitable dans un .env — dit, pas posé.
-    {"key": "MAESTRO_CERTIF", "value": "-----BEGIN----", "variable_type": "file"},
-    # Publiée sans clé correspondante au gabarit : souvent une coquille côté GitLab.
-    {"key": "VARIABLE_INCONNUE", "value": "peu importe", "variable_type": "env_var"},
+    {"name": "GITLAB_TOKEN", "value": "jeton-du-projet"},
+    # Publiée SANS VALEUR : inexploitable dans un .env — dit, pas posé.
+    {"name": "MAESTRO_CERTIF", "value": ""},
+    # Publiée sans clé correspondante au gabarit : souvent une coquille côté dépôt.
+    {"name": "VARIABLE_INCONNUE", "value": "peu importe"},
     # SLACK_BOT_TOKEN, elle, n'est PAS publiée : le script doit le dire franchement.
 ]
 
@@ -211,7 +214,7 @@ def test_preserve_commentaires_ordre_et_cles_inconnues(clone: Clone) -> None:
     assert contenu.startswith("# Mon .env — commentaire à préserver.\n")
     assert "CLE_ORPHELINE=\n" in contenu
     # Les clés ajoutées le sont en fin de fichier, sous un en-tête qui dit d'où elles viennent.
-    entete = "# --- Clés partagées récupérées des variables CI/CD (bash scripts/env-pull.sh) ---"
+    entete = "# --- Clés partagées récupérées des variables du dépôt (bash scripts/env-pull.sh) ---"
     assert entete in contenu
     assert contenu.index(entete) > contenu.index("LANGFUSE_PUBLIC_KEY")
 
@@ -263,9 +266,9 @@ def test_check_n_ecrit_rien(clone: Clone) -> None:
 
 def test_dit_ce_qui_manque_cote_variables_ci(clone: Clone) -> None:
     acheve = clone.lance()
-    assert "absentes des variables CI/CD" in acheve.stdout
+    assert "absentes des variables du dépôt" in acheve.stdout
     assert "SLACK_BOT_TOKEN" in acheve.stdout
-    assert "glab variable set <CLÉ> --masked < valeur.txt" in acheve.stdout
+    assert "gh variable set <CLÉ> --body <valeur>" in acheve.stdout
     assert "SLACK_BOT_TOKEN" not in clone.valeurs()      # rien deviné, rien posé
 
 
@@ -273,7 +276,7 @@ def test_dit_ce_qui_est_publie_mais_inexploitable(clone: Clone) -> None:
     """Une variable de type `file` n'a pas sa place dans un `.env` : dite, jamais posée."""
     acheve = clone.lance()
     assert "publiées mais inexploitables" in acheve.stdout
-    assert "MAESTRO_CERTIF (fichier)" in acheve.stdout
+    assert "MAESTRO_CERTIF (vide)" in acheve.stdout
     assert "MAESTRO_CERTIF" not in clone.valeurs()
 
 
@@ -287,7 +290,7 @@ def test_dit_les_variables_du_projet_hors_gabarit(clone: Clone) -> None:
 def test_une_valeur_multiligne_est_refusee(clone: Clone) -> None:
     """Un `\\n` dans une valeur casserait le `.env` en silence : elle est écartée, et dite."""
     variables = [
-        {"key": "LANGFUSE_SECRET_KEY", "value": "debut\nfin", "variable_type": "env_var"},
+        {"name": "LANGFUSE_SECRET_KEY", "value": "debut\nfin"},
     ]
     acheve = clone.lance(variables=variables)
     assert "LANGFUSE_SECRET_KEY (multiligne)" in acheve.stdout
@@ -298,9 +301,8 @@ def test_valeur_accentuee_posee_sans_mojibake(clone: Clone) -> None:
     """Le décodage JSON passe par `\\uXXXX` : c'est exactement le piège de #141."""
     variables = [
         {
-            "key": "LANGFUSE_HOST",
+            "name": "LANGFUSE_HOST",
             "value": "https://héberg.exemple.invalid/é",
-            "variable_type": "env_var",
         },
     ]
     clone.lance(variables=variables)
