@@ -79,8 +79,13 @@ Reste à monter, hors de portée de ce script et c'est délibéré :
     Sans lui, aucun ticket ne peut porter d'état : /ticket-start ne démarre plus rien.
   · protection de branche sur main  → bash scripts/github/protect-main.sh   (écrit, non joué :
     la protection n'existe pas sur un dépôt privé d'un compte Free — docs/10 §8.8)
-  · delete_branch_on_merge          → réglage du dépôt, demande un jeton à droit d'administration
+  · delete_branch_on_merge          → réglage du dépôt, qu'aucun script ne pose. GitHub n'a pas
+    d'équivalent par PR du --remove-source-branch de GitLab : rien dans le cycle d'un ticket ne le
+    remplace, et sans lui AUCUNE branche distante n'est supprimée au merge (22 accumulées sur ce
+    dépôt-ci avant le 2026-08-19, #384). C'est un appel, et un seul :
+      gh api -X PATCH repos/<owner>/<dépôt> -F delete_branch_on_merge=true
 Le diagnostic de ces trois points est dans : bash scripts/gitlab/doctor.sh
+(qui, pour le dernier, imprime la commande déjà substituée sur le dépôt courant)
 GITHUB
 echo
 

@@ -883,17 +883,48 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   **franchissable sur demande explicite** de l'utilisateur (reprise assumée d'un ticket laissé en
   plan par quelqu'un qui a lâché le sujet), **jamais en silence** : il est alors rappelé dans le
   résumé de clôture.
-- Une branche (locale ou distante) n'est supprimée que si **GitLab confirme que sa MR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
-- Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par GitLab.
-- **La suppression de la branche source est portée par la MR elle-même.** `/ticket-finish` crée la
-  MR avec `--remove-source-branch` : la case « Supprimer la branche source » est cochée d'office,
-  et c'est **GitLab** qui supprime la branche **distante** au merge. Le drapeau est posé sur la MR
-  plutôt que hérité du seul défaut projet `remove_source_branch_after_merge=true` — lui aussi
-  provisionné par [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh), mais en *best-effort* (l'échec
-  du PUT est avalé), donc insuffisant comme unique garantie ; sa dérive est désormais signalée par
-  [`doctor.sh`](../scripts/gitlab/doctor.sh) (§6). Côté local, rien ne change pour
-  `/branch-cleanup` : il supprime la branche **locale** et tolère une branche distante déjà
-  supprimée.
+- Une branche (locale ou distante) n'est supprimée que si **la forge confirme que sa PR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
+- Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par la forge.
+- **La suppression de la branche distante est un réglage du DÉPÔT, pas une option de la PR.** C'est
+  le point où GitHub ne ressemble pas à GitLab, et l'écart s'est payé : côté GitLab le drapeau
+  `--remove-source-branch` était posé **sur chaque MR** par `/ticket-finish`, donc la garantie
+  voyageait avec la MR ; côté GitHub il n'y a aucun équivalent par PR — un seul réglage de dépôt,
+  `delete_branch_on_merge`, vaut pour toutes. Il est **posé à `true` depuis le 2026-08-19** (#384) ;
+  il ne l'était pas depuis la bascule (#343), et comme rien dans le cycle d'un ticket ne le
+  remplaçait, **22 branches distantes s'y sont accumulées** pour zéro PR ouverte. Ni
+  [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh) ni `/ticket-finish` ne le posent — c'est un
+  réglage de dépôt, il se (re)pose d'un appel et d'un seul :
+  ```
+  gh api -X PATCH repos/<owner>/<dépôt> -F delete_branch_on_merge=true
+  ```
+  Sa dérive est signalée par [`doctor.sh`](../scripts/gitlab/doctor.sh) (§6), qui nomme cette
+  commande. Côté local, rien ne change pour `/branch-cleanup` : il supprime la branche **locale** et
+  tolère une branche distante déjà supprimée.
+- **Les branches d'avant la bascule sont hors de portée de cette garantie, et se traitent
+  autrement.** Une branche mergée sur GitLab n'a pas de PR côté GitHub : la forge interrogée ne peut
+  ni confirmer ni infirmer, et l'archive de migration
+  ([`export-gitlab.sh`](../scripts/migration/export-gitlab.sh)) ne rattrape rien — elle a exporté
+  les **tickets**, jamais les MR. Le contenu ne tranche pas davantage : un `git merge-tree` de la
+  branche contre `main` rend un conflit sur presque toutes, ce qui ne dit **rien** de leur merge
+  (conflit fantôme d'après squash, §9.5) mais seulement que `main` a bougé depuis. La règle
+  appliquée au stock de #384, à rejouer telle quelle si le cas se représente : la branche est
+  **archivée en tag** `archive/pre-github/<branche>` poussé sur `origin` **avant** toute
+  suppression, ce qui garde ses commits joignables pour toujours, puis supprimée. L'archivage n'est
+  pas une précaution de forme — c'est ce qui remplace la confirmation manquante : on ne prouve plus
+  que la branche est mergée, on rend sa suppression sans conséquence.
+- **Le stock de 22 s'est réparti en trois classes, et c'est la classe qui décide** (#384,
+  2026-08-19 — au terme du rattrapage, `origin` ne porte plus que `main`). **Cinq** avaient une PR
+  GitHub `merged` : supprimées sous la règle ordinaire, sans archive. **Seize** dataient d'avant la
+  bascule (#290, #317, #321→#323, #331→#342, #333) : archivées puis supprimées, comme ci-dessus —
+  le ticket en annonçait 14 sur une première mesure, son propre inventaire en nommait bien seize.
+  La **vingt-deuxième**, `docs/353`, est la seule où le **contenu** tranche, et dans le bon sens :
+  son unique commit porte un fichier au **blob identique** à celui de `main` (même sha), donc la
+  branche n'apporte rien — l'exact inverse d'un `merge-tree` en conflit, qui lui ne prouve jamais
+  rien. Elle est archivée quand même, sous un préfixe qui **nomme sa raison**
+  (`archive/absorbee/<branche>`) plutôt que d'emprunter celle des seize : l'invariant à tenir n'est
+  pas « d'où vient la branche » mais « aucune ne part sans que la forge la confirme **ou** qu'un tag
+  la garde joignable ». Reste une dérive qui n'est pas d'hygiène de branches, laissée hors
+  périmètre : l'issue **#353 est encore ouverte** alors que son livrable est sur `main`.
 - **La revue est *best-effort*, pas bloquante.** À plusieurs, personne ne sait spontanément ce qui
   attend qui : le projet garde donc `approvals_before_merge=0` (une approbation obligatoire
   recréerait une dépendance entre personnes, et le merge resterait de toute façon humain) et joue
