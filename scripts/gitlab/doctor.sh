@@ -90,26 +90,62 @@ fi
 # (c'est aussi ce que pose bootstrap-project.sh), donc une liste écrite ici serait une copie de plus
 # à tenir d'accord avec les autres.
 #
-# ⚠ VERSION MINIMALE, ET DÉLIBÉRÉMENT : elle répond à « les six valeurs sont-elles posables ? », qui
-# est la seule question que le retrait des labels laisse sans réponse. Les trois dérives fines du
-# champ — option manquante, septième état que rien ne gouverne, colonnes hors de l'ordre du flux —
-# sont le lot #363, écrit et en revue au moment où #365 est parti. En cas de conflit de merge entre
-# les deux, c'est la version de #363 qui gagne : elle couvre celle-ci.
+# Les TROIS dérives du champ, parce qu'elles appellent trois gestes différents : une valeur qu'on ne
+# pourra jamais poser, un septième état que rien ne gouverne, des colonnes hors de l'ordre du flux.
+# La version minimale de #365 ne couvrait que la première ; celle-ci la remplace, comme son en-tête
+# l'avait prévu.
+#
+# LA LECTURE EST CELLE DE `pj_resoudre` (#361), PAS UNE SECONDE. Ce lot avait écrit son propre verbe
+# (`st_options`) — même requête, même comparaison du titre en égalité — les deux ayant été menés en
+# parallèle ; le doublon est tombé à la fusion. `PJ_OPTIONS` rend « <id><TAB><libellé> » DANS L'ORDRE
+# DU CHAMP, et c'est cet ordre qui fait les colonnes du projet : il se lit de gauche à droite comme
+# le travail avance, donc il est une donnée et non un détail d'affichage.
 section "3. Cycle de vie (champ Status du projet « $GL_PROJET_TITRE »)"
 PROVISIONNER_PROJET="bash scripts/github/bootstrap-project.sh"
+# Lu ici pour §4c, qui ne peut rien contrôler d'un projet illisible — et le dirait à tort « sans
+# dérive ». Un contrôle sans objet n'est pas un contrôle vert.
+PROJET_LISIBLE=0
+# Les six valeurs attendues, DANS L'ORDRE DU FLUX, dérivées des slugs par `gl_workflow_label` et
+# jamais recopiées : le vocabulaire du cycle de vie ne change pas en changeant de support (c'est
+# aussi ce que pose bootstrap-project.sh). Une liste écrite ici serait une copie de plus à tenir
+# d'accord avec les autres.
+SLUGS="a-faire en-cours en-revue termine abandonne doublon"
 if ! pj_resoudre 2>/dev/null; then
   err "champ « Status » du projet « $GL_PROJET_TITRE » illisible → relancer : $PROVISIONNER_PROJET"
 else
-  missing_workflow=""
-  for s in a-faire en-cours en-revue termine abandonne doublon; do
+  PROJET_LISIBLE=1
+  attendu="$(for s in $SLUGS; do gl_workflow_label "$s"; done)"
+  options="$(printf '%s\n' "$PJ_OPTIONS" | cut -f2)"
+
+  manquantes=""
+  for s in $SLUGS; do
     libelle="$(gl_workflow_label "$s")"
-    printf '%s\n' "$PJ_OPTIONS" | cut -f2 | grep -qxF "$libelle" \
-      || missing_workflow="${missing_workflow:+$missing_workflow, }« $libelle »"
+    printf '%s\n' "$options" | grep -qxF "$libelle" \
+      || manquantes="${manquantes:+$manquantes, }« $libelle »"
   done
-  if [ -z "$missing_workflow" ]; then
-    ok "6 options du champ Status résolues par nom (1 appel) — set-workflow opérationnel (aucun ID en dur)"
-  else
-    err "option(s) manquante(s) du champ Status : $missing_workflow → relancer : $PROVISIONNER_PROJET"
+  en_trop=""
+  while IFS= read -r o; do
+    [ -z "$o" ] && continue
+    printf '%s\n' "$attendu" | grep -qxF "$o" || en_trop="${en_trop:+$en_trop, }« $o »"
+  done <<EOF2
+$options
+EOF2
+
+  if [ -n "$manquantes" ]; then
+    err "option(s) manquante(s) du champ Status : $manquantes — set-workflow ne pourra jamais les poser → relancer : $PROVISIONNER_PROJET"
+  fi
+  if [ -n "$en_trop" ]; then
+    # Le cas nominal est l'option par défaut d'un projet neuf (Todo / In Progress / Done) qu'une mise
+    # en conformité n'a pas remplacée : un septième état que `set-workflow` ne sait ni poser ni
+    # retirer, et qu'aucune lecture de cycle de vie ne reconnaîtra.
+    warn "option(s) en trop dans le champ Status : $en_trop — état(s) que rien ne gouverne → $PROVISIONNER_PROJET --check"
+    printf '    → la réécriture des options d'\''un projet DÉJÀ PEUPLÉ efface l'\''état des items qui les portent : elle demande --force\n'
+  fi
+  if [ -z "$manquantes" ] && [ -z "$en_trop" ] && [ "$options" != "$attendu" ]; then
+    warn "les six options du champ Status ne sont pas dans l'ordre du flux (c'est l'ordre des colonnes du projet) → relancer : $PROVISIONNER_PROJET"
+  fi
+  if [ -z "$manquantes" ] && [ -z "$en_trop" ] && [ "$options" = "$attendu" ]; then
+    ok "6 options du champ Status résolues par nom (1 appel), dans l'ordre du flux — set-workflow opérationnel (aucun ID en dur)"
   fi
 fi
 
@@ -178,22 +214,55 @@ fi
 # les deux cas il sort de tous les comptes — `queue.sh` ne le verra pas, `/backlog` le rendra « - ».
 # DISTINGUER les deux causes, qui appellent deux gestes différents, est le lot #363.
 #
-# Le comptage est le seul contrôle de cette section que la table plate ne peut pas porter : elle
-# rend un statut, pas un nombre — projeter la dérive l'effacerait. Il est donc délégué à
-# `gl_workflow_derives`, qui refait une lecture et compte à la source.
-wf_derives="$(gl_workflow_derives opened 2>/dev/null)"
-if [ -z "$wf_derives" ]; then
-  ok "tous les tickets ouverts portent exactement un état"
+# Le COMPTAGE est le seul contrôle de cette section que la table plate ne peut pas porter : elle rend
+# un statut, pas une cause — projeter la dérive l'effacerait. Il est donc délégué à `st_derives`, qui
+# refait une lecture et répond à la source.
+#
+# ET LA QUESTION A CHANGÉ AVEC LE SUPPORT, pas seulement la source. Le « ≥ 2 » est devenu impossible
+# par construction — c'est le gain du chantier #358 — mais l'état vit sur l'ITEM DE PROJET : il reste
+# le « 0 », qui se scinde en DEUX causes appelant deux gestes différents (ajouter le ticket au
+# projet, ou lui poser un état). D'où un verbe à part, dont la seconde colonne est une CAUSE là où
+# celle de `gl_workflow_derives` était un nombre : les fondre sous un « 0 » commun rendrait le
+# diagnostic vrai et inutilisable.
+if [ "$PROJET_LISIBLE" = 0 ]; then
+  # Sans projet lisible, TOUS les tickets ressortiraient « hors projet » : ce serait une seule cause
+  # rendue N fois, et elle est déjà dite en §3. Un contrôle sans objet n'est pas une dérive.
+  info "projet « $GL_PROJET_TITRE » illisible (§3) — contrôle des tickets sans état sans objet"
+elif ! st_brut="$(st_derives 2>&1)"; then
+  warn "dérives du champ Status illisibles : $st_brut"
 else
-  # La seconde colonne est le NOMBRE d'états, et elle ne peut plus valoir que 0 : le « ≥ 2 » est
-  # impossible sur un champ à valeur unique. On ne la lit donc plus — la lire pour la taire ferait
-  # croire qu'elle porte encore une distinction.
-  while IFS=$'\t' read -r iid _; do
-    [ -z "$iid" ] && continue
-    warn "#$iid ouvert sans état — hors du projet « $GL_PROJET_TITRE », ou Status vide ; sort de tous les comptes → poser : bash scripts/gitlab/lib.sh project-add $iid \"<état>\""
-  done <<EOF
-$wf_derives
-EOF
+  # La borne d'abord : `st_derives` rend en tête « #examines <examinés> <ouverts> ». Une borne
+  # atteinte laisse des tickets NON CONTRÔLÉS, donc un ✓ y serait un ✓ sur une question posée à
+  # moitié — exactement le défaut qu'a corrigé #341, et dans le fichier qui l'a payé.
+  st_examines="$(printf '%s\n' "$st_brut" | awk -F'\t' '$1 == "#examines" { print $2; exit }')"
+  st_total="$(printf '%s\n' "$st_brut" | awk -F'\t' '$1 == "#examines" { print $3; exit }')"
+  if [ -n "$st_total" ] && [ "$st_examines" != "$st_total" ]; then
+    warn "seuls $st_examines des $st_total tickets ouverts ont été examinés (borne first:100) — le reste n'est pas contrôlé"
+  fi
+
+  st_sans_etat="$(printf '%s\n' "$st_brut" | awk -F'\t' '$1 !~ /^#/ && $1 != "" { print }')"
+  if [ -z "$st_sans_etat" ]; then
+    ok "tous les tickets ouverts sont dans le projet « $GL_PROJET_TITRE » et portent un Status"
+  else
+    # ⚠ LA RÉPARATION EST NOMMÉE PAR TICKET, ET C'EST VOULU. Le backfill en masse est parti avec les
+    # labels (#365) : il dérivait le Status du label courant et de rien d'autre, si bien qu'un verbe
+    # d'ensemble poserait aujourd'hui un état PAR DÉFAUT sur des tickets anciens — il inventerait la
+    # donnée qu'on cherche justement. `project-add` prend l'état en argument : c'est un geste, pas un
+    # balayage, et ce fichier ne fait de toute façon que le nommer.
+    while IFS=$'\t' read -r iid cause; do
+      [ -z "$iid" ] && continue
+      case "$cause" in
+        hors-projet)
+          warn "#$iid ouvert hors du projet « $GL_PROJET_TITRE » — aucun état, et rien ne l'en distingue d'un ticket filtré → l'y ajouter : bash scripts/gitlab/lib.sh project-add $iid \"<état>\"" ;;
+        sans-etat)
+          warn "#$iid est dans le projet mais son Status est vide — un état que personne n'a voulu → poser : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\"" ;;
+        *)
+          warn "#$iid : cause de dérive inconnue « $cause »" ;;
+      esac
+    done <<EOF2
+$st_sans_etat
+EOF2
+  fi
 fi
 
 # 4d. Tickets « En cours » dont plus personne ne s'occupe (#328).

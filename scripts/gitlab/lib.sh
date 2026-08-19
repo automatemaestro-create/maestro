@@ -4067,6 +4067,140 @@ gh_job_trace() {
   printf '%s\n' "$raw" | tail -n "$lines"
 }
 
+# ================================================================================================
+# DÉRIVES PROPRES AU BACKEND STATUS — lecture d'ENSEMBLE pour doctor.sh (#363, chantier #358)
+# ================================================================================================
+# Le backend `st_` (#360) répond sur UN ticket ; ce verbe-ci répond sur l'ENSEMBLE, et uniquement
+# pour le diagnostic. Il existe parce que la bascule vers le champ Status (#364) n'a pas supprimé la
+# panne du cycle de vie, elle l'a DÉPLACÉE : l'exclusion mutuelle des six labels devient impossible
+# par construction (un champ single-select n'a qu'une valeur — la dérive « ≥ 2 » de
+# `gl_workflow_derives` disparaît avec les labels, #365), mais le Status vit sur l'ITEM DE PROJET et
+# non sur l'issue. Le « 0 » qui reste, lui, a DEUX causes — qui appellent deux gestes différents, et
+# que rien ne distinguait :
+#   • TICKET HORS PROJET — il n'a aucun état, et rien à l'écran ne le sépare d'un ticket filtré ;
+#   • ITEM SANS STATUS  — présent dans le projet, colonne vide : un état que personne n'a voulu.
+#
+# LE CONTRÔLE DU CHAMP LUI-MÊME N'EST PAS ICI, et c'est un retrait délibéré. `pj_resoudre` (#361)
+# lit déjà les options du champ Status — même requête GraphQL, même comparaison du titre en ÉGALITÉ,
+# mêmes causes d'échec nommées — et les MÉMORISE pour l'appel suivant. Ce lot en avait écrit un
+# second exemplaire (`st_options`), les deux ayant été menés en parallèle et chacun ignorant
+# l'autre ; le doublon est tombé à la fusion, et §3 de `doctor.sh` s'appuie sur `PJ_OPTIONS`, dont
+# l'ordre est celui du champ. Deux lectures de la même donnée, ce sont deux formulations à tenir
+# d'accord — et une seule des deux qu'on penserait à corriger.
+#
+# ⚠ AUCUN ID EN DUR, ici comme ailleurs : le projet se résout par son TITRE (`GL_PROJET_TITRE`) et
+# le champ par son NOM, à chaque appel.
+
+# st_erreur_graphql <réponse> -> 0 et le message de l'API si la réponse est un JSON d'erreur au lieu
+# du TSV attendu ; 1 sinon (réponse exploitable).
+#
+# ⚠ CE GARDE-FOU N'EST PAS UNE CEINTURE DE PLUS, il est LE garde-fou — mesuré le 2026-08-18 sur un
+# dépôt inexistant. Quand GraphQL rend un bloc `errors`, `gh api` IGNORE le `--jq` et recrache le
+# JSON brut sur la sortie standard (le message partant, lui, sur stderr, que `gh_graphql_read`
+# jette). La branche « erreur » du programme jq ne s'exécute donc JAMAIS dans le seul cas qu'elle
+# était censée couvrir : la réponse arrive non filtrée, l'awk qui suit n'y reconnaît aucune de ses
+# clés, et le verbe rend « 0 ticket examiné, aucune dérive » avec un code 0. Soit, dans le fichier
+# dont le métier est de détecter les dérives, un ✓ sur une question jamais posée — exactement le
+# défaut qu'a corrigé #341, retrouvé par un autre chemin.
+#
+# Le test porte sur la FORME et non sur le contenu : le TSV rendu par nos programmes jq ne commence
+# jamais par « { », une réponse JSON toujours. Les branches « erreur » des deux jq restent en place
+# comme seconde ligne — elles couvrent le cas, permis par le schéma, d'un `data` nul SANS bloc
+# `errors` — mais c'est celle-ci qui attrape ce qui arrive réellement.
+st_erreur_graphql() {
+  case "$1" in
+    '{'*) printf '%s' "$1" | gl_json_string_field message || printf 'réponse GraphQL inattendue' ;;
+    *) return 1 ;;
+  esac
+}
+
+# st_gql_derives -> la requête des tickets : les issues OUVERTES et, pour chacune, les items de
+# projet qui la représentent, avec la valeur courante du champ Status.
+#
+# POURQUOI PAS `st_carte_statuts` (#362), QUI CARTOGRAPHIE DÉJÀ LE PROJET. Parce que les deux
+# questions n'ont pas la même forme. La carte est CENTRÉE PROJET — elle pagine tous les items pour
+# rendre l'état de chacun (~5 appels, ~13 s sur 366 items) et ne peut pas, par construction, nommer
+# un ticket qui n'y est pas ; or « hors projet » est précisément la moitié qu'on cherche. Cette
+# requête-ci est CENTRÉE TICKET, part des issues ouvertes et regarde ce qui les représente : un seul
+# appel, et l'absence devient une réponse au lieu d'un silence. C'est aussi la forme qu'a
+# `st_cible`, donc celle par laquelle l'ÉCRITURE juge un ticket hors projet — diagnostiquer avec la
+# source qui décide plutôt qu'avec une autre. Enfin la mémoire de la carte ne franchit pas les
+# sous-shells (cf. son en-tête) : la capturer ici la re-remplirait sans rien réutiliser.
+#
+# ⚠ LA BORNE EST ASSUMÉE, ET ELLE SE DIT. `first: 100` est la borne de tout ce fichier (`gh_backlog`,
+# `gh_issues_sans_milestone`…) et non un choix propre à ce verbe ; mais ici l'appelant est le fichier
+# dont le métier est de détecter les dérives, et une borne franchie en silence y produirait
+# exactement le défaut qu'a corrigé #341 — un ✓ sur une question posée à moitié. D'où `totalCount`
+# dans la MÊME requête et la ligne d'en-tête « #examines » ci-dessous : la borne voyage avec le
+# résultat, à charge pour `doctor.sh` de la nommer quand elle est atteinte.
+st_gql_derives() {
+  printf '{ %s { issues(states: OPEN, first: 100) { totalCount nodes { number projectItems(first: 20) { nodes { project { title } fieldValueByName(name:"Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } } }' \
+    "$(gh_depot_gql)"
+}
+
+# st_jq_derives -> l'aplatissement en lignes CLÉ<TAB>… :
+#     erreur  depot
+#     total   <nombre de tickets ouverts dans le dépôt>
+#     ticket  <numéro>
+#     item    <numéro>  <titre du projet>  <libellé du Status, vide si non posé>
+st_jq_derives() {
+  cat <<'JQ'
+[
+  (if .data.repository == null then "erreur\tdepot"
+   else "total\t" + (.data.repository.issues.totalCount|tostring) end),
+  (.data.repository.issues.nodes[]? | "ticket\t" + (.number|tostring)),
+  (.data.repository.issues.nodes[]? as $i | $i.projectItems.nodes[]?
+   | "item\t" + ($i.number|tostring) + "\t" + .project.title + "\t" + (.fieldValueByName.name // ""))
+] | .[]
+JQ
+}
+
+# st_derives -> les deux dérives propres au Status, une par ligne, dans l'ordre où la forge rend les
+# tickets :
+#     #examines <TAB> <tickets examinés> <TAB> <tickets ouverts du dépôt>   ← toujours, en tête
+#     <iid> <TAB> hors-projet     le ticket n'est item d'AUCUN projet de ce titre : il n'a aucun état
+#     <iid> <TAB> sans-etat       il est bien dans le projet, mais son Status est vide
+#
+# La ligne d'en-tête est préfixée « # » comme celle de `backlog-table` : les consommateurs machine
+# l'ignorent par le même filtre (`$1 !~ /^#/`), et celui qui veut la borne la lit.
+#
+# LA SECONDE COLONNE EST UNE CAUSE, et non le nombre de `gl_workflow_derives`. Le nombre n'aurait
+# plus rien à compter (un champ single-select vaut 0 ou 1) et les deux causes appellent deux gestes
+# différents — ajouter le ticket au projet, ou lui poser un état. Les confondre sous un « 0 » commun
+# rendrait le diagnostic vrai et inutilisable.
+st_derives() {
+  local reponse message
+  reponse="$(gh_graphql_read "$(st_gql_derives)" --jq "$(st_jq_derives)")" || return 1
+  if message="$(st_erreur_graphql "$reponse")"; then
+    echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants) : $message" >&2
+    return 1
+  fi
+  case "$reponse" in
+    "erreur	depot"*) echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
+  esac
+
+  # Le titre du projet voyage par ENVIRON et jamais par `awk -v`, qui INTERPRÈTE les échappements de
+  # son argument (#340) ; la comparaison est une ÉGALITÉ DE CHAMP et non un `grep`, pour la même
+  # raison qu'ailleurs — un titre est une donnée, pas un motif.
+  printf '%s\n' "$reponse" | ST_TITRE="$GL_PROJET_TITRE" awk -F'\t' '
+    $1 == "total"  { total = $2; next }
+    $1 == "ticket" { ordre[++n] = $2; next }
+    $1 == "item" && $3 == ENVIRON["ST_TITRE"] {
+      dans[$2] = 1
+      if ($4 != "") etat[$2] = $4
+      next
+    }
+    END {
+      printf "#examines\t%d\t%s\n", n, total
+      for (i = 1; i <= n; i++) {
+        iid = ordre[i]
+        if (!(iid in dans))       printf "%s\thors-projet\n", iid
+        else if (etat[iid] == "") printf "%s\tsans-etat\n", iid
+      }
+    }
+  '
+}
+
 # ==================================================================================================
 # PEUPLEMENT DU PROJET — tout ticket est un item du projet (ticket #361, chantier #358)
 # ==================================================================================================
@@ -4252,6 +4386,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     backlog-table)  gl_backlog_table "$@" ;;
     labels)         gl_labels ;;
     workflow-derives)      gl_workflow_derives "$@" ;;
+    status-derives)        st_derives ;;
     issues-sans-milestone) gl_issues_sans_milestone ;;
     open-mr-branches)      gl_open_mr_branches ;;
     merge-settings) gl_merge_settings ;;
@@ -4332,6 +4467,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  backlog-table [opened|closed|all]  (table plate compacte TSV — voir en-tête gl_backlog_table)" >&2
       echo "  labels                             (tous les labels du dépôt, un nom par ligne)" >&2
       echo "  workflow-derives [opened|closed|all]  (tickets sans état — hors projet ou Status vide ; iid/nombre)" >&2
+      echo "  status-derives                     (tickets ouverts hors projet ou sans Status — iid/cause," >&2
+      echo "                                      précédés de « #examines <examinés> <ouverts> »)" >&2
       echo "  issues-sans-milestone              (iid des tickets ouverts sans jalon)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
       echo "  issue-owner <iid>                  (cycle de vie + assignés du ticket, TSV — vide = libre)" >&2

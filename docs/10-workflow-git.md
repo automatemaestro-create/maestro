@@ -255,6 +255,47 @@ script s'en sert pour se rejouer sans rien créer en double, et `lib.sh` s'en se
 le projet — **aucun ID de projet, de champ ni d'option n'est figé dans le dépôt**, exactement comme
 aucun GID de label ne l'est aujourd'hui.
 
+**Ce que `doctor.sh` en contrôle (#363).** Le changement d'autorité ne supprime pas la panne, il la
+**déplace**, et le bilan de santé change donc de questions en même temps que de support. Deux
+disparaissent : « ticket portant 0 ou ≥ 2 labels `workflow::` » — un champ à valeur unique rend le
+« ≥ 2 » impossible **par construction**, ce qui est précisément le gain du chantier — et « le projet
+n'utilise pas Projects v2 », qui n'est plus vrai. Trois naissent, et elles sont plus silencieuses
+que celle qu'elles remplacent :
+
+| Dérive | Où | Ce qu'elle coûte | Ce qui la répare |
+|---|---|---|---|
+| **Ticket ouvert hors projet** | §4c | aucun état, et **rien à l'écran ne le distingue d'un ticket filtré** | `lib.sh project-add <iid> "<état>"`, **ticket par ticket** |
+| **Item sans Status** | §4c | présent dans le projet, colonne vide : un état que personne n'a voulu | `lib.sh set-workflow <iid> "<état>"` |
+| **Option du champ manquante, en trop, ou dans le désordre** | §3 | une valeur que `set-workflow` ne pourra jamais poser ; un septième état que rien ne gouverne ; des colonnes qui ne suivent plus le flux | `bootstrap-project.sh` (`--check` d'abord) |
+
+Trois choix à connaître avant d'y toucher. La **réparation d'un ticket hors projet se nomme ticket
+par ticket**, et c'est un choix et non une lacune : le backfill en masse est parti avec les labels
+(#365) parce qu'il dérivait le Status du label courant et de rien d'autre — sans eux, un verbe
+d'ensemble poserait un état **par défaut** sur des tickets anciens, c'est-à-dire inventerait la
+donnée qu'on cherche. La **seconde colonne** de `lib.sh
+status-derives` est une **cause** et non le nombre de `workflow-derives` : le nombre n'aurait plus
+rien à compter, et les deux causes appellent deux gestes différents — les fondre sous un « 0 »
+commun rendrait le diagnostic vrai et inutilisable. Enfin la **borne `first: 100`**, qui est celle de
+tout `lib.sh`, **se dit ici** (ligne d'en-tête `#examines <examinés> <ouverts>`, rendue en ⚠ quand
+elle est atteinte) : dans le fichier dont le métier est de détecter les dérives, une borne franchie
+en silence produit exactement le défaut qu'a corrigé #341 — un ✓ sur une question posée à moitié.
+
+⚠ **Un piège à connaître avant d'écrire la moindre lecture en `--jq`**, mesuré le 2026-08-18 sur un
+dépôt inexistant : quand GraphQL rend un bloc `errors`, **`gh api` ignore le `--jq`** et recrache le
+JSON brut sur la sortie standard (son message partant sur stderr, que `gh_graphql_read` jette). La
+branche « erreur » d'un programme jq **ne s'exécute donc jamais dans le cas qu'elle est censée
+couvrir** : la réponse arrive non filtrée, l'`awk` qui la projette n'y reconnaît aucune de ses clés,
+et le verbe rend « aucune dérive » avec un code 0. D'où `st_erreur_graphql`, qui teste la **forme**
+(un TSV ne commence jamais par `{`, une réponse JSON toujours) et non le contenu ; les branches
+« erreur » des programmes jq restent en seconde ligne, pour le cas — permis par le schéma — d'un
+`data` nul **sans** bloc `errors`, qui est celui d'un `repositoryOwner` inconnu.
+
+Une limite assumée, à ne pas lire comme un oubli : **§3 ne relit pas le champ pour son compte**. Les
+options viennent de `pj_resoudre` (#361), qui les a déjà lues et mémorisées pour le reste du bilan.
+Ce lot en avait écrit une seconde lecture (`st_options`), les deux ayant été menés **en parallèle**
+et chacun ignorant l'autre ; le doublon est tombé à la fusion. Deux lectures de la même donnée, ce
+sont deux formulations à tenir d'accord — et une seule des deux qu'on penserait à corriger.
+
 **Le pré-requis, et pourquoi ce n'est pas une case à cocher.** Le compte du projet s'authentifie par
 un jeton **fine-grained** (`github_pat_…`), et un tel jeton **ne peut pas** écrire dans un projet
 appartenant à un compte : la liste des « Account permissions » d'un jeton fine-grained **ne contient
