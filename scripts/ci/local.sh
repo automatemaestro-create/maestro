@@ -559,21 +559,34 @@ classe_par_nom() { # <chemin>
     return 0
   fi
   # Second essai, par le DOSSIER : une suite qui relit tout un répertoire le désigne par son
-  # nom, jamais par celui de ses fichiers — `test_collaboration` parcourt
+  # CHEMIN, jamais par celui de ses fichiers — `test_collaboration` parcourt
   # `.claude/commands/*.md` (#196) sans citer aucun prompt en particulier. Repli seulement :
-  # quand le nom du fichier a répondu, il est plus précis. Un dossier au nom banal
-  # sélectionnera trop de suites, ce qui reste le bon sens de l'erreur.
+  # quand le nom du fichier a répondu, il est plus précis.
+  #
+  # Le chemin AVEC son séparateur, et jamais le nom nu du dossier (#375) : cherché en sous-chaîne,
+  # un nom court et courant en français matche la prose de n'importe quelle suite. Mesuré sur main
+  # au 2026-08-18 — `migration` → 10 suites dont aucune ne teste `scripts/migration/`, `github` →
+  # `test_cycle_de_vie`, et `ci` → 59 suites sur 61, « ci » étant une sous-chaîne d'« ici », de
+  # « précis », de « spécifique »… Le repli REMPLAÇANT l'élargissement, ces suites tirées au sort
+  # ne coûtaient pas du temps (elles sont rapides) mais un FAUX VERT annoncé avec un motif
+  # crédible : « périmètre : 10 suite(s) (migration/) » sur un script que rien ne teste.
+  #
+  # Un dossier de PREMIER niveau est écarté pour la même raison : `scripts/` est une sous-chaîne
+  # de tout `scripts/gitlab/lib.sh` cité quelque part (10 suites mesurées), il ne désigne aucun
+  # répertoire en particulier. Rien de crédible ⇒ on s'abstient, donc on élargit — le sens de
+  # dérive du filet, jamais l'inverse.
   dossier="$(dirname "$1")"
-  if [ "$dossier" != "." ]; then
-    nommant="$(suites_nommant "$(basename "$dossier")")"
-  fi
+  nommant=""
+  case "$dossier" in
+    */*) nommant="$(suites_nommant "$dossier/")" ;;
+  esac
   if [ -z "$nommant" ]; then
     PERIMETRE_TOUT=1
     ajoute_raison RAISONS_TOUT "aucune suite ne nomme $base"
   else
     CHOISIES="$CHOISIES$nommant"$'
 '
-    ajoute_raison RAISONS_CHOIX "$(basename "$dossier")/"
+    ajoute_raison RAISONS_CHOIX "$dossier/"
   fi
 }
 
