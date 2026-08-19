@@ -68,6 +68,7 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
   bash scripts/git/worktree.sh list
   bash scripts/git/worktree.sh remove <iid|chemin> [--force]
   bash scripts/git/worktree.sh gc [--check] [--auto] [--sauf <iid>]
+  bash scripts/git/worktree.sh sessions [<iid>]
 
 `ensure` est l'aiguillage de /ticket-start : il dit où la session doit travailler, en rendant
 en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà — cas d'orchestrate,
@@ -95,6 +96,14 @@ passe). MAESTRO_EN_COURS_SIGNAL=0 l'éteint (toute autre valeur remplace l'appel
 (dérive détectée par `--derive`, réparée par `--only`) : un paquet ajouté au dépôt arrive ainsi
 sans geste à se rappeler. Il signale et n'interrompt jamais un démarrage de ticket.
 MAESTRO_MAJ_DEPENDANCES=0 le désactive.
+
+`sessions` retrouve les SESSIONS Claude Code d'un ticket (#385, docs/10 §9.7). Claude Code range
+un transcript sous le RÉPERTOIRE COURANT de la session, et son sélecteur `/resume` ne montre que
+celui d'où on l'appelle : comme /ticket-start relocalise la session dans le worktree, l'historique
+d'un ticket est invisible depuis le clone principal — et `gc` retire ensuite le worktree. Le verbe
+rend date, titre, identifiant et la commande de reprise, worktree encore là ou non ; sans iid, tous
+les tickets qui en ont. La reprise passe par l'IDENTIFIANT (`claude --resume <id>`), qui
+court-circuite le sélecteur. Portée : les worktrees de CETTE MACHINE, comme `gc`.
 
 Options de création :
   --branche <nom>   Nom de branche imposé (par défaut : résolu depuis le ticket via lib.sh).
@@ -787,6 +796,182 @@ commande_remove() {
   fi
 }
 
+# --- sessions : retrouver les transcripts d'un ticket (#385) ----------------------------------------
+# Claude Code range le transcript d'une session dans un répertoire de projet INDEXÉ SUR LE RÉPERTOIRE
+# COURANT (`<config>/projects/<chemin encodé>/<session-id>.jsonl`), et son sélecteur `/resume` ne
+# montre que le répertoire d'où on l'appelle. Or /ticket-start relocalise la session dans le worktree
+# du ticket (#181) : l'historique d'un ticket est rangé sous le chemin du WORKTREE, donc invisible
+# depuis le clone principal — puis `gc` retire le worktree et l'on ne peut même plus y revenir en
+# `cd`. Au constat du 2026-08-19 : 157 transcripts (183 Mo) dans 134 répertoires de projet, pour 13
+# worktrees encore sur le disque.
+#
+# Rien n'est perdu : c'est l'ADRESSAGE qui manque, et il se DÉRIVE. L'encodage de Claude Code
+# remplace `:`, `\`, `/` et l'espace par `-`, sans rien tronquer, donc le répertoire de projet d'un
+# ticket est `<base des worktrees encodée>-<iid>-<slug>` — un motif sur l'iid suffit, le slug n'est
+# jamais nécessaire. C'est ce qui rend AUSSI les tickets dont le worktree est parti depuis
+# longtemps ; un index qu'on aurait posé au moment du ramassage ne couvrirait, lui, que les
+# ramassages postérieurs à sa mise en place, et laisserait dehors les 121 déjà partis.
+#
+# La reprise se fait par IDENTIFIANT — `claude --resume <id>` court-circuite le sélecteur, donc son
+# cloisonnement par répertoire. C'est tout ce que ce verbe a besoin de rendre.
+#
+# PORTÉE : les worktrees de CETTE MACHINE, comme `gc` et `reconcile-workflow`. Un transcript vit sur
+# le poste qui l'a produit ; ce verbe ne va rien chercher ailleurs, et l'annonce.
+
+# Le répertoire de projets de Claude Code, où qu'il soit configuré — CLAUDE_CONFIG_DIR est aussi la
+# couture par laquelle les tests le font pointer sur un dossier jetable.
+sessions_racine() {
+  printf '%s/projects' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+}
+
+# La base des worktrees — la même que celle de `create`, jamais une seconde formule à tenir d'accord.
+sessions_base() {
+  local principal
+  principal="$(depot_principal)" || return 1
+  printf '%s' "${MAESTRO_WORKTREE_DIR:-$(dirname "$principal")/maestro-worktrees}"
+}
+
+# Cette base, encodée comme Claude Code encode un répertoire courant. Le chemin doit être NATIF
+# (« E:\… ») : c'est sous cette forme que la session le reçoit, donc sous cette forme qu'il a été
+# encodé — l'encoder depuis le « /e/… » de Git Bash donnerait un préfixe qui ne matche rien.
+sessions_prefixe() {
+  local base
+  base="$(sessions_base)" || return 1
+  printf '%s' "$(chemin_natif "$base")" | tr ':\\/ ' '----'
+}
+
+# sessions_titre <transcript> : son titre lisible — la DERNIÈRE entrée `ai-title`, le titre étant
+# réévalué en cours de session. Beaucoup de sessions n'en portent aucune (trop courte, ou coupée
+# avant que le titre soit posé) : on rend alors le vide, à l'appelant de replier. Un guillemet
+# échappé dans le titre le tronquerait — un titre court vaut mieux qu'un `jq` en dépendance.
+sessions_titre() {
+  grep -o '"aiTitle":[[:space:]]*"[^"]*"' "$1" 2>/dev/null | tail -1 \
+    | sed 's/^"aiTitle":[[:space:]]*"//; s/"$//'
+}
+
+# sessions_du_bucket <répertoire> : « <epoch><TAB><date><TAB><id><TAB><titre> » par transcript, du
+# plus récent au plus ancien. La date de modification est le seul repère fiable : un transcript
+# n'embarque pas sa propre fin, et la première ligne n'est pas toujours horodatée.
+sessions_du_bucket() {
+  local dossier="$1" f id titre epoch date lignes=""
+  for f in "$dossier"/*.jsonl; do
+    [ -e "$f" ] || continue
+    id="$(basename "$f" .jsonl)"
+    titre="$(sessions_titre "$f")"
+    epoch="$(stat -c '%Y' "$f" 2>/dev/null)" || epoch=""
+    date="$(stat -c '%y' "$f" 2>/dev/null | cut -c1-16)"
+    # Un champ VIDE au milieu décalerait tous les suivants : `IFS=$'\t' read` traite la tabulation
+    # comme un séparateur BLANC, donc deux d'affilée ne comptent que pour une (même piège que le
+    # « - » du sha dans `worktree-done`). Seul le titre, dernier champ, peut rester vide.
+    lignes="$lignes${epoch:-0}"$'\t'"${date:--}"$'\t'"$id"$'\t'"$titre"$'\n'
+  done
+  [ -n "$lignes" ] || return 0
+  printf '%s' "$lignes" | sort -rn
+}
+
+# sessions_buckets [<iid>] : les répertoires de projet des worktrees, un par ligne.
+#
+# Le motif est joué par `find -iname` et non par le glob du shell, parce que la casse de la LETTRE
+# DE LECTEUR n'est pas garantie : Claude Code encode le chemin TEL QU'IL LUI A ÉTÉ DONNÉ, sans le
+# normaliser, si bien que le clone principal est rangé sous « e-- » et ses worktrees sous « E-- »
+# sur cette machine. Un motif sensible à la casse en manquerait la moitié, silencieusement.
+sessions_buckets() {
+  local iid="${1:-}" racine prefixe motif
+  racine="$(sessions_racine)"
+  [ -d "$racine" ] || return 0
+  prefixe="$(sessions_prefixe)" || return 1
+  if [ -n "$iid" ]; then motif="$prefixe-$iid-*"; else motif="$prefixe-*"; fi
+  find "$racine" -maxdepth 1 -type d -iname "$motif" 2>/dev/null | sort
+}
+
+# sessions_compte <iid> : combien de transcripts ce ticket a laissés (0 si aucun). Utilisé par `gc`,
+# qui n'a besoin que du nombre — pas de la liste, qu'il n'a pas la place d'afficher.
+sessions_compte() {
+  local iid="$1" dossier n total=0
+  while IFS= read -r dossier; do
+    [ -n "$dossier" ] || continue
+    n="$(find "$dossier" -maxdepth 1 -name '*.jsonl' 2>/dev/null | grep -c .)" || n=0
+    total=$((total + n))
+  done < <(sessions_buckets "$iid")
+  printf '%s' "$total"
+}
+
+# commande_sessions [<iid>] : les sessions Claude Code d'un ticket, worktree présent ou ramassé.
+commande_sessions() {
+  local iid=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage; return 0 ;;
+      -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
+      *)
+        case "$1" in
+          ''|*[!0-9]*) erreur "iid attendu (un nombre), reçu « $1 »"; return 2 ;;
+        esac
+        iid="$1" ;;
+    esac
+    shift
+  done
+
+  local racine base prefixe
+  racine="$(sessions_racine)"
+  base="$(sessions_base)" || { erreur "hors d'un dépôt git"; return 1; }
+  prefixe="$(sessions_prefixe)" || { erreur "hors d'un dépôt git"; return 1; }
+
+  if [ ! -d "$racine" ]; then
+    printf '\nAucun historique de session sur cette machine (%s est absent).\n\n' "$racine"
+    return 0
+  fi
+
+  local -a buckets=()
+  local d
+  while IFS= read -r d; do
+    [ -n "$d" ] && buckets+=("$d")
+  done < <(sessions_buckets "$iid")
+
+  if [ "${#buckets[@]}" -eq 0 ]; then
+    if [ -n "$iid" ]; then
+      printf '\nAucune session pour le ticket #%s sur cette machine.\n' "$iid"
+      printf '  (les transcripts d'\''un ticket vivent sur le poste qui l'\''a traité)\n\n'
+    else
+      printf '\nAucune session de worktree sur cette machine.\n\n'
+    fi
+    return 0
+  fi
+
+  printf '\nSessions Claude Code — %s\n' "$(chemin_natif "$base")"
+  printf '  (worktrees de cette machine ; le sélecteur /resume ne les voit pas d'\''ailleurs)\n'
+
+  local nom suffixe t_iid date id titre total=0
+  for d in "${buckets[@]}"; do
+    nom="$(basename "$d")"
+    # Le suffixe se prend à la LONGUEUR du préfixe, pas par retrait de motif : la casse du préfixe
+    # peut différer de celle du répertoire (voir sessions_buckets), et « ${nom#$prefixe-} » ne
+    # retirerait alors rien du tout — on afficherait le chemin encodé entier en guise d'iid.
+    suffixe="${nom:$(( ${#prefixe} + 1 ))}"
+    t_iid="${suffixe%%-*}"
+    case "$t_iid" in ''|*[!0-9]*) continue ;; esac
+
+    if [ -d "$base/$suffixe" ]; then
+      printf '\n#%s — worktree en place\n' "$t_iid"
+    else
+      printf '\n#%s — worktree ramassé, transcripts conservés\n' "$t_iid"
+    fi
+
+    # L'epoch n'est là que pour trier : lu dans `_`, il n'a pas à porter de nom.
+    while IFS=$'\t' read -r _ date id titre; do
+      [ -n "$id" ] || continue
+      total=$((total + 1))
+      # La commande de reprise sur SA propre ligne, alignée sous le titre : elle est faite pour être
+      # sélectionnée d'un coup, ce qu'une ligne mêlant date, titre et commande interdirait.
+      printf '  %-16s  %s\n' "$date" "${titre:-(sans titre)}"
+      printf '  %-16s  claude --resume %s\n' '' "$id"
+    done < <(sessions_du_bucket "$d")
+  done
+
+  printf '\n%s session(s).\n\n' "$total"
+  return 0
+}
+
 # --- gc : ramasser les worktrees soldés (#197) ------------------------------------------------------
 # travail_non_sauvegarde <chemin> <branche> [sha] -> « <fichiers non commités> <commits non poussés> ».
 #
@@ -947,6 +1132,7 @@ commande_gc() {
   [ "$auto" = 1 ] || printf '\nRamassage des worktrees de %s\n\n' "$principal"
 
   local branche nom iid brut verdict sha raison reste n_modifs n_commits detail cycle pose
+  local n_sessions note
   local retires=0 gardes=0 signales=0 echecs=0 rapport=""
   while IFS=$'\t' read -r chemin branche; do
     [ -n "$chemin" ] || continue
@@ -1023,15 +1209,23 @@ commande_gc() {
       continue
     fi
 
+    # Les sessions du ticket (#385, docs/10 §9.7). Le retrait ne les efface PAS — un transcript vit
+    # sous `<config>/projects/`, jamais dans le worktree — mais il coupe le seul chemin par lequel le
+    # sélecteur `/resume` les montrait, et c'est ICI qu'il faut le dire : une fois le worktree parti,
+    # plus rien à l'écran ne rappellera qu'il y avait un historique, ni par quoi le rouvrir.
+    n_sessions="$(sessions_compte "$iid")"
+    note=""
+    [ "${n_sessions:-0}" -gt 0 ] && note=" — $n_sessions session(s) conservée(s) : worktree.sh sessions $iid"
+
     if [ "$check" = 1 ]; then
       retires=$((retires + 1))
-      rapport="$rapport$(printf '  → #%s à retirer — %s' "$iid" "$raison")"$'\n'
+      rapport="$rapport$(printf '  → #%s à retirer — %s%s' "$iid" "$raison" "$note")"$'\n'
       continue
     fi
 
     if retire_worktree "$chemin" 0 0; then
       retires=$((retires + 1))
-      rapport="$rapport$(ok "#$iid retiré — $raison")"$'\n'
+      rapport="$rapport$(ok "#$iid retiré — $raison$note")"$'\n'
     else
       # Construit à la main : `erreur` écrit sur stderr, la ligne sortirait donc du rapport (et hors
       # de son ordre). Ici tout le compte rendu part sur stdout, en un bloc.
@@ -1079,6 +1273,7 @@ case "$cmd" in
   list)        commande_list "$@" ;;
   remove)      commande_remove "$@" ;;
   gc)          commande_gc "$@" ;;
+  sessions)    commande_sessions "$@" ;;
   -h|--help|'') usage ;;
   # Raccourci : un iid nu vaut `create <iid>`.
   *[!0-9]*)    printf 'Sous-commande inconnue : %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;

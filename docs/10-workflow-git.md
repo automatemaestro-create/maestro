@@ -1825,6 +1825,7 @@ bash scripts/git/worktree.sh 152          # crée (ou complète) le worktree du 
 bash scripts/git/worktree.sh list         # les worktrees en place, avec leurs ports
 bash scripts/git/worktree.sh remove 152   # retire le worktree — jamais la branche
 bash scripts/git/worktree.sh gc           # ramasse ceux dont le travail est soldé (§9.2)
+bash scripts/git/worktree.sh sessions 152 # retrouve les sessions Claude Code du ticket (§9.7)
 ```
 
 Le script fait plus qu'un `git worktree add` : il résout la branche comme
@@ -2435,6 +2436,77 @@ survit au ménage du journal et ne se contourne pas depuis un worktree, la déri
 [`test_worktree.py`](../tests/test_worktree.py) (le câblage sur `gc`, son mutisme, `--sauf`) et
 [`test_orchestrate.py`](../tests/test_orchestrate.py) (`queue.sh --orphelins`, `journal.sh
 origine`). Dépôt jetable, sans réseau ni `glab`.
+
+### 9.7 L'historique d'un ticket survit à son worktree (#385)
+
+Claude Code range le transcript d'une session dans un répertoire de projet **indexé sur le
+répertoire courant** — `<config>/projects/<chemin encodé>/<session-id>.jsonl` — et son sélecteur
+`/resume` ne montre **que** celui d'où on l'appelle. Or `/ticket-start` relocalise la session dans
+le worktree du ticket (§9.1) : l'historique d'un ticket est donc rangé sous le chemin du
+**worktree**, invisible depuis le clone principal. Puis `gc` retire le worktree (§9.2), et l'on ne
+peut même plus y revenir en `cd`.
+
+Constat du 2026-08-19 sur le clone de référence : **157 transcripts** (183 Mo) répartis dans **134
+répertoires de projet**, pour **13 worktrees** encore sur le disque. Autrement dit, l'essentiel du
+travail de ticket était devenu inatteignable — sans que rien, nulle part, ne le signale.
+
+**Rien n'est perdu : c'est l'adressage qui manquait, et il se dérive.** L'encodage de Claude Code
+remplace `:`, `\`, `/` et l'espace par `-`, sans rien tronquer ; le répertoire de projet d'un
+ticket est donc `<base des worktrees encodée>-<iid>-<slug>`, qu'un motif sur le seul **iid**
+retrouve — le slug n'est jamais nécessaire.
+
+```bash
+bash scripts/git/worktree.sh sessions 340   # les sessions du ticket #340
+bash scripts/git/worktree.sh sessions       # l'inventaire, tous tickets confondus
+```
+
+```
+#340 — worktree ramassé, transcripts conservés
+  2026-08-17 13:58  Import des 330 tickets sur GitHub
+                    claude --resume fe63adac-7f25-479c-81b8-b256a9b1d813
+```
+
+La reprise passe par l'**identifiant** : `claude --resume <id>` court-circuite le sélecteur, donc
+son cloisonnement par répertoire. C'est tout ce que le verbe a besoin de rendre.
+
+Trois choix à ne pas défaire :
+
+- **Dériver, jamais indexer.** Poser un index au moment du ramassage était le réflexe, et c'était
+  le mauvais : il n'aurait couvert que les ramassages postérieurs à sa mise en place, laissant
+  dehors les **121 worktrees déjà partis** — et il aurait ajouté un état de plus à tenir d'accord
+  avec la réalité.
+- **La base des worktrees vient de `create`**, jamais d'un `maestro-worktrees` figé dans le verbe :
+  `MAESTRO_WORKTREE_DIR` déplace les worktrees, donc l'encodage, donc ce qu'il faut chercher. Une
+  formule recopiée répondrait juste sur une machine et **vide** sur les autres, silence
+  indiscernable de « ce ticket n'a pas de session ».
+- **Le motif ignore la casse.** Claude Code encode le chemin **tel qu'il lui a été donné**, sans le
+  normaliser : sur la machine de référence le clone principal est rangé sous `e--` et ses worktrees
+  sous `E--`. Un motif sensible à la casse en manquerait la moitié, sans un mot.
+
+`gc` **nomme les sessions avant de retirer** un worktree — c'est l'instant exact où l'information
+quitte l'écran ; après coup, plus rien ne rappelle qu'il y avait un historique ni par quoi le
+rouvrir. Le retrait ne les efface pas (un transcript vit sous `<config>/projects/`, jamais dans le
+worktree), il coupe seulement le chemin qui les montrait :
+
+```
+✓ #340 retiré — MR !268 mergée — 2 session(s) conservée(s) : worktree.sh sessions 340
+```
+
+**Portée**, comme `gc` et `reconcile-workflow` : les worktrees de **cette machine**. Un transcript
+vit sur le poste qui l'a produit ; le verbe ne va rien chercher ailleurs, et l'annonce plutôt que
+de laisser confondre « pas ici » avec « nulle part ».
+
+⚠ **Ce qui n'est pas de notre ressort** : l'onglet Claude Code qui revient **sans nom** après un
+redémarrage de VS Code. L'extension ne persiste aucune identité de session — rien sous
+`globalStorage`, seule la coquille du webview dans l'état du workspace, et le registre des sessions
+vivantes (`~/.claude/sessions/<PID>.json`) est indexé **par PID**, donc périmé dès que les
+processus meurent. Nommer une session au lancement (`claude -n "<nom>"`) aide à s'y retrouver ; le
+reste est en amont de ce dépôt.
+
+Couvert par [`test_worktree.py`](../tests/test_worktree.py) : la dérivation avec et sans worktree
+sur le disque, le repli d'un transcript sans titre, le dernier titre qui l'emporte, l'ordre
+antichronologique, `MAESTRO_WORKTREE_DIR` respecté, la casse ignorée, et la mention portée par `gc`
+— y compris son silence quand il n'y a aucune session à nommer.
 
 ---
 
