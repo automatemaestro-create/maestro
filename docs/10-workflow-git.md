@@ -1376,13 +1376,42 @@ partira au push), fichier par fichier :
 | Ce qui change | Ce qui se joue |
 |---|---|
 | `maestro/**` | toutes les suites **applicatives** |
-| `scripts/**`, `.claude/**`, `.gitlab*`, `.env.example`… | les suites qui **nomment** le fichier |
+| `scripts/**`, `.claude/**`, `.gitlab*`, `.env.example`… | les suites qui **nomment** le fichier — à défaut, celles qui nomment le **chemin de son dossier** (ci-dessous) |
 | `tests/test_*.py` | elles-mêmes |
 | `tests/conftest.py`, `pyproject.toml`, `.node-version` | la suite entière |
 | `docs/**`, `apps/web/**`, prose de la racine | aucune suite pytest (`web-build` couvre le front) |
 | **tout le reste** | la suite entière |
 
-Deux points de conception valent d'être compris avant d'y toucher.
+Ces points de conception valent d'être compris avant d'y toucher.
+
+**Le repli par le dossier cherche un chemin, jamais un nom nu (#375).** La règle du nom a un repli :
+un fichier que personne ne cite hérite des suites qui nomment son **dossier** — une suite qui relit
+tout un répertoire le désigne ainsi, jamais par le nom de ses fichiers (`test_collaboration`
+parcourt `.claude/commands/*.md` sans citer un seul prompt, #196). Ce repli cherchait le **nom nu**
+du dossier, en sous-chaîne ; sur des noms courts et courants en français, il matche la prose de
+n'importe quelle suite. Mesuré sur `main` au 2026-08-18 : `migration` → **10 suites**, dont aucune
+ne teste `scripts/migration/` ; `github` → `test_cycle_de_vie` ; `workflows` → `test_durable` ; et
+`ci` aurait ramené **59 suites sur 61**, « ci » étant une sous-chaîne d'« ici », de « précis », de
+« spécifique »…
+
+Le coût n'était pas le **temps** — ces suites-là sont applicatives et rapides — mais la
+**couverture** : le repli **remplace** l'élargissement, donc un fichier que personne ne nomme
+repartait avec dix suites tirées au sort au lieu de la suite entière, sous un motif crédible
+(« périmètre : 10 suite(s) (migration/) »). Un faux vert **motivé**, exactement ce que le filet
+s'interdit en tête de fichier. Le défaut existait depuis #196 mais restait rare ; les cinq scripts
+arrivés avec la migration GitHub — que **rien ne nomme** — en ont fait le cas courant.
+
+Deux conséquences de la correction, dans le même sens de dérive. Le repli compare désormais le
+**chemin avec son séparateur** (`scripts/migration/`, `.claude/commands/`), ce qui laisse le cas
+#196 intact — mêmes suites — et ramène chacun des cas ci-dessus à **une** suite, celle qui nomme
+vraiment le répertoire. Et un dossier de **premier niveau** est écarté pour la raison qui a motivé
+tout le reste : `scripts/` est une sous-chaîne de tout `scripts/gitlab/lib.sh` cité quelque part
+(10 suites mesurées), il ne désigne aucun répertoire en particulier. Quand rien de crédible ne
+répond, le repli **s'abstient** — donc on élargit.
+
+Reste une question que la correction ne traite pas et qui n'est pas la sienne : les cinq scripts de
+la migration n'ont **aucun test**. Aucun périmètre, si large soit-il, n'invente une couverture qui
+n'existe pas.
 
 **Les suites d'outillage sont déduites, jamais listées.** Une suite est « outillage » si elle
 **nomme un script du dépôt** (`tests/test_orchestrate.py` cite `run.sh`, `test_collaboration.py`
