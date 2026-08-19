@@ -56,6 +56,16 @@ La vue est groupée par **statut** (À faire / En cours / En revue / Terminé) e
 **libres** — ceux sans assigné. Prenez-en un dans « Libres » : un ticket « En cours » assigné à
 quelqu'un d'autre est **déjà pris**, le démarrer le lui retirerait.
 
+> **Où vit ce statut, et pourquoi ça se sait.** Dans le champ **Status** du projet GitHub Projects v2
+> — six valeurs, seul support depuis #365 ([docs/10 §3.1](./docs/10-workflow-git.md)). Il ne vit donc
+> **pas sur l'issue mais sur son item de projet** : un ticket ouvert depuis l'interface web de GitHub
+> n'est dans aucun projet, n'a **aucun état**, et sort de tous les comptes — `/backlog` le rend « - »
+> et `/ticket-start` refusera de lui en poser un. La réparation est un geste :
+> `bash scripts/gitlab/lib.sh project-add <iid> "À faire"`. Créez plutôt vos tickets avec
+> `/ticket-create`, qui s'en charge. (Le cycle de vie a été porté un temps par des labels
+> `workflow::*` — c'était le seul mécanisme que GitLab Free laissait, pas un choix ; le champ
+> **remplace** ce repli, il ne le défait pas.)
+
 ```
 /ticket-start <iid>
 ```

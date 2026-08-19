@@ -48,6 +48,20 @@ le seul mécanisme que GitLab Free laissait. La migration vers GitHub (#335/#343
 ce qui manquait alors : Projects v2 offre le champ **gratuitement**, dépôt privé compris. #358
 remplace donc #207 par ce dont il avait été privé — ne pas le relire comme une hésitation.
 
+Le dispositif est **gardé par [`tests/test_cycle_de_vie.py`](./tests/test_cycle_de_vie.py)** (#366,
+[docs/10 §3.9](./docs/10-workflow-git.md)) : les six options dans l'ordre du flux et l'idempotence du
+monteur, l'aller-retour libellé → option → libellé sur les six états, l'asymétrie écriture/lecture
+d'un ticket hors projet, le recouvrement des tables par la carte et sa péremption à l'écriture, les
+dérives de `doctor.sh`. Trois de ses contrôles sont des **`grep` sur le dépôt** — aucun identifiant
+Projects v2 figé, aucun label `workflow::` survivant, aucun commutateur `MAESTRO_CYCLE` — et chacun
+**prouve son motif** sur un échantillon fautif avant de balayer : c'est ce qui les distingue d'un ✓
+sur une question jamais posée. Deux exclusions qui n'en sont pas : `scripts/migration/` nomme les six
+labels parce qu'il lit l'**archive** GitLab, et les fichiers qui racontent le retrait le mentionnent
+au passé — le motif cherche un **usage**, jamais une mention. Le harnais (dépôt jetable + `gh`
+factice) est partagé avec `tests/test_collaboration.py` dans
+[`tests/harnais_forge.py`](./tests/harnais_forge.py) : deux doubles à tenir d'accord seraient le
+premier moyen de rendre une suite verte sur une forme de réponse que l'autre a corrigée depuis.
+
 Les **autres labels** ne servent qu'à catégoriser : **`type::`** (`feature`/`bug`/`doc`/`infra`),
 **`agent::`** (`dev`/`bdd`/`devops`/`design`/`qa`/`orchestrateur`) et **`prio::`**
 (`haute`/`moyenne`/`basse`) — tous en français. Ne pas recréer de
