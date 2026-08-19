@@ -1,0 +1,1172 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Analyse de l'architecture d'AionUi — noyau Rust, teams par MCP, skills, choix du bureau — et comparaison point par point avec Maestro.">
+<title>AionUi vu de Maestro</title>
+<style>
+  :root {
+    --paper: #f2f4f8;
+    --surface: #ffffff;
+    --surface-2: #fafbfd;
+    --ink: #151a23;
+    --ink-2: #4e5769;
+    --ink-3: #7b8496;
+    --rule: #d7dbe4;
+    --rule-soft: #e6e9f0;
+    --aion: #47589a;
+    --aion-line: #6b7bb0;
+    --aion-wash: #e9ebf5;
+    --mst: #8a5512;
+    --mst-line: #b07c33;
+    --mst-wash: #f4ece0;
+    --code-bg: #eaedf3;
+    --shadow: 0 1px 2px rgba(21, 26, 35, .05), 0 8px 24px -18px rgba(21, 26, 35, .35);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0f1218;
+      --surface: #161a22;
+      --surface-2: #1b202a;
+      --ink: #e3e7ef;
+      --ink-2: #a0a9bb;
+      --ink-3: #78818f;
+      --rule: #2b3241;
+      --rule-soft: #232936;
+      --aion: #9dabe2;
+      --aion-line: #7d8cc4;
+      --aion-wash: #1c2233;
+      --mst: #d7a25c;
+      --mst-line: #b1813f;
+      --mst-wash: #27200f;
+      --code-bg: #1d222c;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px -18px rgba(0, 0, 0, .8);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #0f1218;
+    --surface: #161a22;
+    --surface-2: #1b202a;
+    --ink: #e3e7ef;
+    --ink-2: #a0a9bb;
+    --ink-3: #78818f;
+    --rule: #2b3241;
+    --rule-soft: #232936;
+    --aion: #9dabe2;
+    --aion-line: #7d8cc4;
+    --aion-wash: #1c2233;
+    --mst: #d7a25c;
+    --mst-line: #b1813f;
+    --mst-wash: #27200f;
+    --code-bg: #1d222c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px -18px rgba(0, 0, 0, .8);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    font-size: 17px;
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  code, .k {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+    font-size: .82em;
+    background: var(--code-bg);
+    padding: .12em .38em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+
+  .page {
+    max-width: 78rem;
+    margin-inline: auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  .col {
+    max-width: 40rem;
+    margin-inline: auto;
+  }
+
+  .col > * + * { margin-top: 1.1rem; }
+
+  p { margin: 0; }
+
+  a { color: var(--aion); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible { outline: 2px solid var(--aion); outline-offset: 3px; border-radius: 2px; }
+
+  /* ---------- masthead ---------- */
+
+  header.masthead {
+    border-bottom: 1px solid var(--rule);
+    padding: 4.5rem 0 2.75rem;
+    margin-bottom: 3rem;
+  }
+
+  .eyebrow {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: .7rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  h1 {
+    font-size: clamp(2.4rem, 6vw, 3.6rem);
+    line-height: 1.04;
+    letter-spacing: -.02em;
+    font-weight: 600;
+    margin: .8rem 0 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: 1.18rem;
+    color: var(--ink-2);
+    margin-top: 1.1rem;
+    text-wrap: pretty;
+  }
+
+  .byline {
+    margin-top: 1.6rem;
+    font-size: .82rem;
+    color: var(--ink-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem 1.2rem;
+  }
+
+  /* ---------- figures / stats ---------- */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 2.5rem 0 0;
+  }
+
+  .stat { background: var(--surface); padding: 1rem 1.1rem; }
+  .stat b {
+    display: block;
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: 1.45rem;
+    font-weight: 600;
+    letter-spacing: -.03em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .stat span { display: block; font-size: .78rem; color: var(--ink-3); margin-top: .3rem; line-height: 1.35; }
+
+  /* ---------- sections ---------- */
+
+  section { margin-top: 4.5rem; }
+
+  h2 {
+    font-size: clamp(1.7rem, 3.4vw, 2.2rem);
+    line-height: 1.15;
+    letter-spacing: -.018em;
+    font-weight: 600;
+    margin: .5rem 0 0;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-size: 1.16rem;
+    font-weight: 600;
+    letter-spacing: -.005em;
+    margin: 2.2rem 0 0;
+  }
+
+  .lede { color: var(--ink-2); font-size: 1.06rem; }
+
+  ul, ol { margin: 0; padding-left: 1.15rem; }
+  li + li { margin-top: .5rem; }
+  li::marker { color: var(--ink-3); }
+
+  /* ---------- wide blocks ---------- */
+
+  .wide { max-width: 62rem; margin: 2.2rem auto 0; }
+
+  figure { margin: 2.4rem auto 0; max-width: 62rem; }
+  figure svg { display: block; width: 100%; height: auto; }
+  figcaption {
+    font-size: .85rem;
+    color: var(--ink-3);
+    margin-top: .9rem;
+    line-height: 1.5;
+    max-width: 46rem;
+  }
+
+  .scroller { overflow-x: auto; border-radius: 6px; border: 1px solid var(--rule); background: var(--surface); }
+
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; min-width: 34rem; }
+  th, td { text-align: left; padding: .62rem .85rem; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  thead th {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: .68rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .a-cell { color: var(--aion); }
+  .m-cell { color: var(--mst); }
+
+  /* ---------- facing panels ---------- */
+
+  .facing {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+    gap: 1.1rem;
+    margin: 2.2rem auto 0;
+    max-width: 62rem;
+    align-items: start;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--rule);
+    border-radius: 5px;
+    padding: 1.15rem 1.25rem 1.35rem;
+    box-shadow: var(--shadow);
+  }
+  .panel.a { border-top-color: var(--aion-line); }
+  .panel.m { border-top-color: var(--mst-line); }
+
+  .panel h4 {
+    margin: 0 0 .1rem;
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: .72rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .panel.a h4 { color: var(--aion); }
+  .panel.m h4 { color: var(--mst); }
+  .panel p, .panel ul { font-size: .95rem; }
+  .panel > * + * { margin-top: .75rem; }
+
+  /* ---------- verdict ---------- */
+
+  .verdict {
+    max-width: 40rem;
+    margin: 2.4rem auto 0;
+    border-left: 3px solid var(--mst-line);
+    background: var(--mst-wash);
+    padding: 1rem 1.3rem 1.15rem;
+    border-radius: 0 5px 5px 0;
+  }
+  .verdict .eyebrow { color: var(--mst); }
+  .verdict p { margin-top: .5rem; font-size: 1rem; }
+  .verdict p + p { margin-top: .7rem; }
+
+  /* ---------- misc ---------- */
+
+  .note {
+    max-width: 40rem;
+    margin: 1.8rem auto 0;
+    font-size: .92rem;
+    color: var(--ink-2);
+    border-left: 2px solid var(--rule);
+    padding-left: 1rem;
+  }
+
+  details {
+    max-width: 40rem;
+    margin: 1.6rem auto 0;
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    background: var(--surface);
+    padding: .7rem 1rem;
+    font-size: .95rem;
+  }
+  summary { cursor: pointer; font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+  details[open] summary { margin-bottom: .8rem; }
+
+  footer {
+    margin-top: 6rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--rule);
+    font-size: .85rem;
+    color: var(--ink-3);
+    max-width: 62rem;
+    margin-inline: auto;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    a { transition: color .15s ease; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="col">
+      <div class="eyebrow">Veille — 17 août 2026 — ticket #352</div>
+      <h1>AionUi vu de Maestro</h1>
+      <p class="standfirst">
+        Sur le papier, AionUi est une application Electron qui met une interface sur Claude Code.
+        Dans le code, c'est un démon Rust de 24 crates que la fenêtre se contente de superviser — et
+        son mode « équipe » est un serveur MCP par équipe. Ce que ça éclaire de nos propres choix.
+      </p>
+      <div class="byline">
+        <span class="mono">github.com/iOfficeAI/AionUi</span>
+        <span class="mono">v2.1.57 · Apache-2.0</span>
+        <span class="mono">analyse sur clone local + AionCore</span>
+      </div>
+    </div>
+
+    <div class="stats wide">
+      <div class="stat"><b>32 060</b><span>étoiles, 3 286 forks, 822 tickets ouverts</span></div>
+      <div class="stat"><b>4</b><span>dépôts dans l'écosystème, 3 langages</span></div>
+      <div class="stat"><b>24</b><span>crates Rust dans AionCore</span></div>
+      <div class="stat"><b>10</b><span>outils MCP <span class="mono">team_*</span> exposés aux agents</span></div>
+      <div class="stat"><b>20+</b><span>agents CLI branchés via ACP</span></div>
+      <div class="stat"><b>13 700</b><span>lignes de process Electron, pour 114 000 d'UI</span></div>
+    </div>
+  </header>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Le paysage</div>
+      <h2>Quatre dépôts, et la date de création raconte l'histoire</h2>
+      <p class="lede">
+        Analyser « le repo AionUi » seul mène droit à un contresens : le dépôt qu'on clone ne contient
+        plus la boucle d'agent. Elle a été extraite dans un binaire séparé en avril 2026, huit mois
+        après le lancement du produit.
+      </p>
+    </div>
+
+    <div class="wide scroller">
+      <table>
+        <thead>
+          <tr><th>Dépôt</th><th>Créé</th><th>Langage</th><th>Rôle</th><th class="num">★</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">iOfficeAI/AionUi</td><td class="num">2025-08-07</td><td>TypeScript</td>
+            <td>Coquille Electron + React 19 : fenêtre, distribution, intégration OS, et toute l'UI</td>
+            <td class="num">32 060</td>
+          </tr>
+          <tr>
+            <td class="mono">iOfficeAI/AionCore</td><td class="num">2026-04-09</td><td>Rust</td>
+            <td><strong>Le serveur.</strong> Axum + Tokio + SQLite. Agents, teams, MCP, cron, canaux, auth</td>
+            <td class="num">91</td>
+          </tr>
+          <tr>
+            <td class="mono">iOfficeAI/aionrs</td><td class="num">2026-04-01</td><td>Rust</td>
+            <td>L'agent CLI intégré (« Aion CLI ») : multi-fournisseurs, outils locaux, sous-agents</td>
+            <td class="num">118</td>
+          </tr>
+          <tr>
+            <td class="mono">iOfficeAI/OfficeCLI</td><td class="num">2026-03-15</td><td>C#</td>
+            <td>Word / Excel / PowerPoint pour agents, binaire unique, sans Office installé</td>
+            <td class="num">28 605</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col" style="margin-top:1.8rem">
+      <p>
+        Le produit a un an. Le noyau Rust en a quatre mois, et le <span class="mono">CHANGELOG</span>
+        d'AionUi ne remonte pas plus loin que <span class="mono">2.1.4</span> (27 mai 2026) : la
+        réécriture a réinitialisé l'historique visible. Chaque version d'AionUi épingle une version
+        de noyau (<code>"aioncoreVersion": "v0.1.68"</code> dans le <span class="mono">package.json</span>),
+        et le binaire est téléchargé depuis les <em>releases</em> d'AionCore au moment du packaging, par
+        plateforme et par architecture.
+      </p>
+      <p>
+        Autrement dit : ils ont d'abord construit le produit en TypeScript dans Electron, puis ont
+        sorti le moteur de la coquille. C'est exactement le mouvement inverse de celui qu'on fait
+        quand on part d'une bibliothèque et qu'on lui ajoute une interface.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Axe 1 — Frontière d'exécution</div>
+      <h2>La fenêtre n'exécute rien</h2>
+      <p class="lede">
+        C'est la découverte structurante, et celle qui parle le plus fort à notre ticket #350.
+      </p>
+      <p>
+        Le processus principal Electron résout un binaire nommé <code>aioncore</code> — via la variable
+        <code>AIONUI_BACKEND_BIN</code>, sinon dans <code>resources/bundled-aioncore/{plateforme}-{arch}/</code>,
+        sinon dans le <span class="mono">PATH</span> —, le lance, surveille sa santé, et rend son port.
+        Tout le reste de l'application, y compris le processus principal lui-même, parle à ce démon
+        en <strong>HTTP REST + WebSocket sur <span class="mono">127.0.0.1</span></strong> (repli
+        <span class="mono">:13400</span>). Le fichier qui porte ça,
+        <span class="mono">common/adapter/httpBridge.ts</span>, se décrit comme un
+        « <em>drop-in replacement</em> » du pont IPC local : les mêmes appels, routés ailleurs.
+      </p>
+      <p>
+        Conséquence directe, et assumée : la même interface React tourne <strong>dans un navigateur</strong>,
+        servie sur le réseau local par le paquet <span class="mono">web-host</span>, qui fait
+        reverse-proxy de <code>/api/*</code> et upgrade <code>/ws</code> vers le même démon. Le mode
+        bureau et le mode WebUI ne sont pas deux produits : ce sont deux clients du même serveur.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 860 400" role="img" aria-label="Comparaison des deux frontières d'exécution : chez AionUi la boucle d'agent vit dans un démon Rust séparé que l'interface joint en HTTP, chez Maestro elle vit dans une bibliothèque Python que l'API importe et peut pousser vers des workers.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--aion-line)"/>
+          </marker>
+          <marker id="ar-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--mst-line)"/>
+          </marker>
+        </defs>
+
+        <g font-family="ui-monospace, Consolas, monospace" font-size="12" fill="currentColor">
+
+          <!-- ===== AionUi ===== -->
+          <text x="16" y="18" font-size="11" letter-spacing="1.6" fill="var(--aion)">AIONUI</text>
+          <line x1="16" y1="26" x2="404" y2="26" stroke="var(--aion-line)" stroke-width="1"/>
+
+          <rect x="16" y="44" width="176" height="44" rx="4" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text x="104" y="63" text-anchor="middle">Renderer Electron</text>
+          <text x="104" y="79" text-anchor="middle" font-size="10.5" opacity=".65">114 000 lignes</text>
+
+          <rect x="228" y="44" width="176" height="44" rx="4" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="316" y="63" text-anchor="middle">Navigateur LAN</text>
+          <text x="316" y="79" text-anchor="middle" font-size="10.5" opacity=".65">web-host, même UI</text>
+
+          <line x1="104" y1="88" x2="104" y2="152" stroke="var(--aion-line)" stroke-width="1.4" marker-end="url(#ar-a)"/>
+          <line x1="316" y1="88" x2="316" y2="152" stroke="var(--aion-line)" stroke-width="1.4" marker-end="url(#ar-a)"/>
+          <text x="210" y="118" text-anchor="middle" font-size="10.5" fill="var(--aion)">HTTP + WS · 127.0.0.1:13400</text>
+
+          <rect x="16" y="154" width="388" height="60" rx="4" fill="var(--aion-wash)" stroke="var(--aion-line)" stroke-width="1.5"/>
+          <text x="210" y="178" text-anchor="middle" font-size="13" fill="var(--aion)">aioncore — binaire Rust, 24 crates</text>
+          <text x="210" y="196" text-anchor="middle" font-size="10.5" opacity=".8">boucle d'agent · teams · MCP · cron · SQLite</text>
+
+          <rect x="16" y="252" width="176" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text x="104" y="270" text-anchor="middle" font-size="11.5">Electron main</text>
+          <text x="104" y="285" text-anchor="middle" font-size="10.5" opacity=".65">13 700 lignes</text>
+          <path d="M 104 252 L 104 236 L 60 236 L 60 214" fill="none" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)"/>
+          <text x="120" y="232" font-size="10.5" opacity=".8">spawn · kill · santé</text>
+
+          <rect x="228" y="252" width="176" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text x="316" y="270" text-anchor="middle" font-size="11.5">Agents CLI</text>
+          <text x="316" y="285" text-anchor="middle" font-size="10.5" opacity=".65">claude · codex · gemini…</text>
+          <line x1="316" y1="214" x2="316" y2="250" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)"/>
+          <text x="326" y="236" font-size="10.5" opacity=".8">ACP</text>
+
+          <text x="16" y="335" font-size="11" fill="var(--aion)">Le moteur survit à la fenêtre.</text>
+          <text x="16" y="353" font-size="11" opacity=".75">Fermer l'app arrête un superviseur,</text>
+          <text x="16" y="369" font-size="11" opacity=".75">pas une architecture.</text>
+
+          <!-- séparateur -->
+          <line x1="430" y1="10" x2="430" y2="390" stroke="currentColor" stroke-width="1" opacity=".18"/>
+
+          <!-- ===== Maestro ===== -->
+          <text x="456" y="18" font-size="11" letter-spacing="1.6" fill="var(--mst)">MAESTRO</text>
+          <line x1="456" y1="26" x2="844" y2="26" stroke="var(--mst-line)" stroke-width="1"/>
+
+          <rect x="456" y="44" width="176" height="44" rx="4" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text x="544" y="63" text-anchor="middle">Control Tower</text>
+          <text x="544" y="79" text-anchor="middle" font-size="10.5" opacity=".65">Next.js, 25 500 lignes</text>
+
+          <rect x="668" y="44" width="176" height="44" rx="4" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="756" y="63" text-anchor="middle">engine_cli</text>
+          <text x="756" y="79" text-anchor="middle" font-size="10.5" opacity=".65">même moteur, en ligne</text>
+
+          <line x1="544" y1="88" x2="544" y2="152" stroke="var(--mst-line)" stroke-width="1.4" marker-end="url(#ar-m)"/>
+          <text x="554" y="118" font-size="10.5" fill="var(--mst)">HTTP · FastAPI</text>
+          <path d="M 756 88 L 756 130 L 650 130 L 650 152" fill="none" stroke="var(--mst-line)" stroke-width="1.4" marker-end="url(#ar-m)"/>
+
+          <rect x="456" y="154" width="388" height="60" rx="4" fill="var(--mst-wash)" stroke="var(--mst-line)" stroke-width="1.5"/>
+          <text x="650" y="178" text-anchor="middle" font-size="13" fill="var(--mst)">maestro.engine — bibliothèque Python</text>
+          <text x="650" y="196" text-anchor="middle" font-size="10.5" opacity=".8">plan validé · DAG · routage · garde-fous</text>
+
+          <rect x="456" y="252" width="176" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text x="544" y="270" text-anchor="middle" font-size="11.5">LocalExecutor</text>
+          <text x="544" y="285" text-anchor="middle" font-size="10.5" opacity=".65">en process</text>
+
+          <rect x="668" y="252" width="176" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text x="756" y="270" text-anchor="middle" font-size="11.5">CeleryExecutor</text>
+          <text x="756" y="285" text-anchor="middle" font-size="10.5" opacity=".65">workers + Redis</text>
+
+          <line x1="544" y1="214" x2="544" y2="250" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)"/>
+          <line x1="756" y1="214" x2="756" y2="250" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)"/>
+          <text x="650" y="236" text-anchor="middle" font-size="10.5" opacity=".8">injectable, au choix</text>
+
+          <text x="456" y="335" font-size="11" fill="var(--mst)">Le moteur est une bibliothèque.</text>
+          <text x="456" y="353" font-size="11" opacity=".75">Sa durée de vie est celle du processus</text>
+          <text x="456" y="369" font-size="11" opacity=".75">qui l'importe — API, CLI ou worker.</text>
+        </g>
+      </svg>
+      <figcaption>
+        Les deux mettent la boucle derrière une frontière HTTP, mais pas la même frontière. Chez
+        AionUi c'est un <em>processus</em> compilé, indépendant, que l'interface supervise sans le
+        contenir. Chez Maestro c'est un <em>module</em> que l'appelant importe : la frontière HTTP
+        existe côté Control Tower, pas côté moteur. Le point de bascule est le même que celui posé
+        par le ticket #350.
+      </figcaption>
+    </figure>
+
+    <div class="col" style="margin-top:2rem">
+      <h3>Une nuance qu'il faut poser</h3>
+      <p>
+        Maestro a <strong>deux</strong> systèmes d'agents, et les confondre fausse toute comparaison.
+        Le premier est le produit (<span class="mono">maestro/engine</span>,
+        <span class="mono">orchestrator</span>, <span class="mono">queue</span>,
+        <span class="mono">durable</span>) — c'est lui qui se compare à AionCore. Le second est
+        l'outillage de développement (<span class="mono">scripts/orchestrate</span>, les commandes
+        <span class="mono">/ticket-*</span>) : un pilote shell qui lance des sessions Claude Code sur
+        notre propre backlog. AionUi n'a pas d'équivalent du second — leur workflow de développement
+        est du Claude Code ordinaire, cadré par des <em>skills</em> (on y revient plus bas).
+      </p>
+      <p>
+        Cela dit, sur la question de la survie d'un run, c'est bien le pilote qui est notre pendant.
+        Et il a fait le même choix qu'AionUi, pour la même raison : le pilote est un
+        <strong>script shell dans une console indépendante</strong> (<code>run.sh --detach</code>),
+        jamais une session Claude Code — parce qu'une boucle hébergée par une session consomme le
+        quota qu'elle pilote et meurt avec elle. AionUi formule la même contrainte autrement : leur
+        superviseur est le processus Electron, mais ce qu'il supervise est un binaire qui ne dépend
+        d'aucun runtime installé.
+      </p>
+    </div>
+
+    <div class="verdict">
+      <div class="eyebrow">Ce que ça dit pour Maestro</div>
+      <p>
+        La question du #350 — « quelle frontière d'exécution pour qu'un run survive à son hôte ? » —
+        a chez eux une réponse nette : <strong>un binaire, un port, un protocole</strong>. Le prix
+        payé est visible dans le dépôt et il n'est pas anodin : résolution du binaire par
+        plateforme × architecture, diagnostics de démarrage, détection d'incompatibilité de
+        <span class="mono">runtimeKey</span>, réparation de base corrompue, dialogue dédié quand la
+        base a été écrite par une version plus récente. Ce sont trois fichiers de
+        <span class="mono">process/startup/</span> qui n'existent que parce que le moteur est un
+        processus séparé qu'on peut rater.
+      </p>
+      <p>
+        Ce qui est transposable n'est pas Rust, c'est la <em>discipline du contrat</em> : leur crate
+        d'API (<span class="mono">aionui-api-types</span>) a interdiction de dépendre d'Axum ou de
+        quoi que ce soit de HTTP. Le contrat est une source unique, indépendante du transport — ce
+        qui leur permet précisément d'avoir le même client en Electron, en navigateur et en CLI.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Axe 2 — Le système d'agents</div>
+      <h2>Ils abstraient les agents ; nous abstrayons les modèles</h2>
+      <p class="lede">
+        C'est la différence conceptuelle la plus profonde entre les deux projets, et elle explique
+        presque tout le reste.
+      </p>
+      <p>
+        AionUi détecte les CLI installés sur la machine (<code>which</code> sur une liste
+        <span class="mono">POTENTIAL_ACP_CLIS</span>) et les pilote tous par le même protocole :
+        <strong>ACP</strong> (<a href="https://agentclientprotocol.com">Agent Client Protocol</a>),
+        avec ses méthodes <code>session/new</code>, <code>session/load</code>,
+        <code>session/resume</code>, <code>session/prompt</code>. Claude Code, Codex, Gemini CLI,
+        Qwen, Goose, OpenCode, Cursor Agent, Copilot, Droid, Kimi… et, détail qui compte,
+        <strong>leur propre agent intégré</strong> : <span class="mono">aionrs</span> est lui aussi
+        un CLI, joint par le même chemin. Ils n'ont pas gardé de voie privilégiée pour leur moteur
+        maison.
+      </p>
+      <p>
+        Maestro abstrait un cran plus bas. <span class="mono">ModelProvider</span>
+        (<span class="mono">providers/claude.py</span>, <span class="mono">openai_compat.py</span>)
+        rend l'exécution outillée agnostique du <em>fournisseur de modèle</em> ; l'agent, lui, est
+        décrit chez nous par un <code>RoleProfile</code> — identité, modèle, outils, prompts — et
+        c'est notre runtime qui tient la boucle. Nous fabriquons nos agents ; eux les branchent.
+      </p>
+    </div>
+
+    <div class="facing">
+      <div class="panel a">
+        <h4>AionUi — brancher</h4>
+        <p>L'unité est le <strong>processus agent</strong>. Ce qui varie d'un agent à l'autre est décrit en base (table <span class="mono">agent_metadata</span>) : commande, capacités MCP, répertoire de skills natif.</p>
+        <ul>
+          <li>Ajouter un agent = une ligne de métadonnées + un adaptateur ACP</li>
+          <li>Le prompt système, les outils, la boucle : chez l'agent, pas chez eux</li>
+          <li>Rançon : ils héritent des différences de chacun — modes de permission, <em>hot reload</em> des skills, sandbox Codex… documentées agent par agent</li>
+        </ul>
+      </div>
+      <div class="panel m">
+        <h4>Maestro — fabriquer</h4>
+        <p>L'unité est le <strong>rôle</strong>. Un <code>RoleProfile</code> déclare l'identité, le modèle, les outils, les trois fragments de prompt et le plafond de tours ; le runtime générique fait le reste.</p>
+        <ul>
+          <li>Ajouter un agent = déclarer un profil, sans copier de code</li>
+          <li>Le comportement est le nôtre de bout en bout — garde-fous, sandbox jetable, mesure d'usage</li>
+          <li>Rançon : rien n'arrive gratuitement de l'écosystème ; chaque capacité se code</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="col" style="margin-top:1.8rem">
+      <p>
+        Aucune des deux positions n'est meilleure dans l'absolu — elles répondent à des promesses
+        différentes. AionUi vend « vos agents, dans une seule fenêtre » : l'hétérogénéité est le
+        produit. Maestro vend une équipe d'agents cohérente sur un objectif : l'homogénéité est le
+        produit. Mais il y a un point où leur choix est instructif pour nous : ils ont fait passer
+        leur propre moteur par le protocole public. C'est la version exécutable de notre principe
+        d'agnosticisme — on ne peut pas prétendre qu'un connecteur est de première classe si le
+        moteur maison prend un raccourci que personne d'autre n'a.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Axe 3 — Teams et « team members »</div>
+      <h2>Une équipe est un serveur MCP</h2>
+      <p class="lede">
+        C'est la pièce la plus intéressante du système, et la plus proche de ce que nous construisons.
+      </p>
+      <p>
+        Le vocabulaire d'abord, parce qu'il est précis. Une équipe est composée de <strong>slots</strong> :
+        un slot (<span class="mono">slot_id</span>) est une <em>instance</em> de membre, pas un
+        assistant. Le même assistant peut être recruté deux fois dans une équipe — deux slots, deux
+        conversations, deux sessions indépendantes. Le premier slot est le <strong>Leader</strong>
+        (<code>role: 'leader'</code>) : il ne peut être ni retiré, ni déplacé, ni éteint, et le backend
+        refuse en dur un <code>team_shutdown_agent</code> qui le viserait. Les autres sont des
+        <strong>teammates</strong>, dont le statut est un cycle de vie explicite —
+        <span class="mono">pending · idle · active · completed · failed · dormant</span>.
+      </p>
+      <p>
+        Le mécanisme, ensuite. Au démarrage d'une session d'équipe, le backend ouvre un
+        <strong>serveur MCP dédié à cette équipe</strong> sur un port local aléatoire, et injecte à
+        chaque membre sa configuration de connexion. L'agent s'authentifie par une poignée de main
+        JSON-RPC <code>initialize(auth_token, slot_id)</code> — et c'est ce <span class="mono">slot_id</span>
+        mémorisé qui sert ensuite à décider si l'appelant a le droit d'appeler un outil réservé au
+        Leader. La collaboration entre agents ne passe par <em>aucun</em> canal privé : elle passe
+        entièrement par ces outils.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 860 420" role="img" aria-label="Mécanisme d'une équipe AionUi : le Leader et les teammates sont des processus CLI distincts qui se connectent au serveur MCP de l'équipe sur un port local, lequel écrit dans une boîte aux lettres et un tableau de tâches en SQLite, le planificateur réveillant ensuite les agents.">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="ar2-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--aion-line)"/>
+          </marker>
+        </defs>
+
+        <g font-family="ui-monospace, Consolas, monospace" font-size="12" fill="currentColor">
+
+          <!-- agents -->
+          <rect x="40" y="24" width="150" height="52" rx="4" fill="var(--aion-wash)" stroke="var(--aion-line)" stroke-width="1.6"/>
+          <text x="115" y="45" text-anchor="middle" font-size="12.5" fill="var(--aion)">Leader</text>
+          <text x="115" y="62" text-anchor="middle" font-size="10.5" opacity=".8">slot-01 · claude code</text>
+
+          <rect x="230" y="24" width="150" height="52" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="305" y="45" text-anchor="middle" font-size="12.5">Teammate</text>
+          <text x="305" y="62" text-anchor="middle" font-size="10.5" opacity=".7">slot-02 · codex</text>
+
+          <rect x="420" y="24" width="150" height="52" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="495" y="45" text-anchor="middle" font-size="12.5">Teammate</text>
+          <text x="495" y="62" text-anchor="middle" font-size="10.5" opacity=".7">slot-03 · aionrs</text>
+
+          <text x="620" y="42" font-size="10.5" opacity=".75">chacun : son processus,</text>
+          <text x="620" y="58" font-size="10.5" opacity=".75">sa conversation, son modèle,</text>
+          <text x="620" y="74" font-size="10.5" opacity=".75">sa fenêtre de permissions</text>
+
+          <!-- flèches vers MCP -->
+          <line x1="115" y1="76" x2="115" y2="128" stroke="var(--aion-line)" stroke-width="1.4" marker-end="url(#ar2-a)"/>
+          <line x1="305" y1="76" x2="305" y2="128" stroke="var(--aion-line)" stroke-width="1.4" marker-end="url(#ar2-a)"/>
+          <line x1="495" y1="76" x2="495" y2="128" stroke="var(--aion-line)" stroke-width="1.4" marker-end="url(#ar2-a)"/>
+          <text x="128" y="106" font-size="10.5" fill="var(--aion)">initialize(auth_token, slot_id)</text>
+
+          <!-- serveur MCP -->
+          <rect x="40" y="130" width="530" height="62" rx="4" fill="none" stroke="var(--aion-line)" stroke-width="1.8"/>
+          <text x="305" y="154" text-anchor="middle" font-size="13" fill="var(--aion)">Serveur MCP de l'équipe — 127.0.0.1:port aléatoire</text>
+          <text x="305" y="176" text-anchor="middle" font-size="10.5" opacity=".85">team_send_message · team_task_* · team_members · team_spawn_agent · team_rename_agent · team_shutdown_agent</text>
+
+          <!-- stockage -->
+          <line x1="180" y1="192" x2="180" y2="244" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2)"/>
+          <line x1="430" y1="192" x2="430" y2="244" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2)"/>
+          <text x="190" y="222" font-size="10.5" opacity=".8">écrit</text>
+          <text x="440" y="222" font-size="10.5" opacity=".8">écrit</text>
+
+          <rect x="80" y="246" width="200" height="52" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="180" y="267" text-anchor="middle" font-size="12">Boîte aux lettres</text>
+          <text x="180" y="284" text-anchor="middle" font-size="10.5" opacity=".7">SQLite · lu-une-fois, atomique</text>
+
+          <rect x="330" y="246" width="200" height="52" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="430" y="267" text-anchor="middle" font-size="12">Tableau de tâches</text>
+          <text x="430" y="284" text-anchor="middle" font-size="10.5" opacity=".7">SQLite · owner, blocked_by</text>
+
+          <!-- scheduler -->
+          <rect x="620" y="130" width="200" height="62" rx="4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 3"/>
+          <text x="720" y="154" text-anchor="middle" font-size="12.5">Planificateur</text>
+          <text x="720" y="174" text-anchor="middle" font-size="10.5" opacity=".75">idle ⇄ working, chien de garde</text>
+
+          <line x1="570" y1="161" x2="616" y2="161" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2)"/>
+
+          <path d="M 720 192 L 720 330 L 115 330 L 115 78" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#ar2)"/>
+          <text x="400" y="324" text-anchor="middle" font-size="10.5" opacity=".85">try_wake — un message non lu réveille son destinataire, jamais deux fois</text>
+
+          <text x="40" y="376" font-size="11" opacity=".8">Invariants tenus par le planificateur : le Leader ne se réveille jamais lui-même · un message est délivré au plus une fois ·</text>
+          <text x="40" y="394" font-size="11" opacity=".8">un agent déjà occupé n'est pas re-réveillé · toutes les actions d'un tour sont exécutées avant le réveil suivant.</text>
+        </g>
+      </svg>
+      <figcaption>
+        Le serveur MCP est le seul point d'entrée des agents sur l'état de l'équipe : il écrit,
+        il ne planifie pas. C'est le planificateur qui décide qui se réveille. Le découplage est
+        volontaire, et il a coûté un bug connu — un message écrit par MCP ne réveillait pas son
+        destinataire tant qu'un événement extérieur ne relançait pas la boucle.
+      </figcaption>
+    </figure>
+
+    <div class="col" style="margin-top:2rem">
+      <h3>Les dix outils, et qui a le droit de les appeler</h3>
+    </div>
+
+    <div class="wide scroller">
+      <table>
+        <thead>
+          <tr><th>Outil</th><th>Permission</th><th>Effet</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">team_send_message</td><td>tout agent</td><td>Écrit dans la boîte d'un slot ; <code>to="*"</code> diffuse à tous sauf soi. Peut joindre des fichiers par chemin absolu</td></tr>
+          <tr><td class="mono">team_task_create</td><td>tout agent</td><td>Crée une tâche : sujet, description, <span class="mono">owner</span>, <span class="mono">blocked_by</span></td></tr>
+          <tr><td class="mono">team_task_update</td><td>tout agent</td><td>Change statut, propriétaire ou dépendances</td></tr>
+          <tr><td class="mono">team_task_list</td><td>tout agent</td><td>Lit le tableau, filtrable par propriétaire et statut</td></tr>
+          <tr><td class="mono">team_members</td><td>tout agent</td><td>Liste les membres et leur statut courant</td></tr>
+          <tr><td class="mono">team_list_assistants</td><td>tout agent</td><td>Catalogue réel des assistants recrutables, avec leurs <span class="mono">assistant_id</span></td></tr>
+          <tr><td class="mono">team_describe_assistant</td><td>tout agent</td><td>Fiche détaillée d'un assistant : description, skills activées, exemples de tâches</td></tr>
+          <tr><td class="mono">team_spawn_agent</td><td><strong>Leader seul</strong></td><td>Recrute un nouveau membre — <em>après approbation humaine explicite</em></td></tr>
+          <tr><td class="mono">team_rename_agent</td><td><strong>Leader seul</strong></td><td>Renomme un membre</td></tr>
+          <tr><td class="mono">team_shutdown_agent</td><td><strong>Leader seul</strong></td><td>Demande le départ d'un membre ; viser le Leader est refusé</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col" style="margin-top:2rem">
+      <h3>Le détail que je n'attendais pas : le protocole social est dans la description de l'outil</h3>
+      <p>
+        La description de <code>team_spawn_agent</code> ne décrit pas ce que fait l'outil. Elle décrit
+        une <strong>procédure d'approbation</strong>, écrite à l'impératif dans le texte que le modèle
+        lit :
+      </p>
+    </div>
+
+    <div class="note">
+      <p style="font-size:.9rem">
+        « Commence par une phrase courte expliquant pourquoi des coéquipiers supplémentaires
+        aideraient. Dis à l'utilisateur lesquels tu recommandes. Présente la proposition sous forme
+        de tableau : nom, responsabilité, assistant recommandé. […] Demande s'il faut les créer tels
+        quels. Rappelle-lui dans cette question qu'il pourra plus tard te demander de remplacer
+        n'importe quel coéquipier si l'équipe ne fonctionne pas bien. <strong>N'appelle PAS cet outil
+        dans le même tour</strong> ; attends une approbation explicite dans un message ultérieur. »
+      </p>
+    </div>
+
+    <div class="col" style="margin-top:1.6rem">
+      <p>
+        C'est un choix de conception assumé : le garde-fou « l'humain valide le recrutement » n'est
+        pas un verrou dans le code, c'est une consigne dans le prompt d'un outil. Il tient tant que le
+        modèle obéit. Nous avons fait l'inverse — nos garde-fous équivalents (jamais de merge
+        automatique, jamais de force-push, <code>close-guard</code> avant toute écriture) sont
+        adossés à la couche permissions et à des codes de retour, précisément parce qu'un prompt est
+        une prière et pas une barrière. Leur approche a l'avantage de la souplesse et l'inconvénient
+        exact qu'on imagine.
+      </p>
+
+      <h3>Face à Maestro : le plan avant, ou le plan pendant</h3>
+      <p>
+        Sur la mécanique, la convergence est frappante et me semble non fortuite : nous avons nous
+        aussi une <strong>boîte aux lettres inter-agents</strong>
+        (<span class="mono">maestro.messaging.mailbox</span>, ticket #44 — Redis Pub/Sub ou en
+        mémoire, avec journalisation dans la télémétrie), un <strong>handoff observable</strong> qui
+        ne débloque l'aval qu'à réception, et un <strong>tableau noir léger</strong> où chaque tâche
+        reçoit les résultats de ses dépendances. Deux équipes qui n'ont pas discuté ont abouti aux
+        mêmes trois primitives.
+      </p>
+      <p>
+        La divergence est ailleurs, et elle est de fond. Chez AionUi, <strong>le plan est produit à
+        l'exécution par un modèle</strong> : le Leader reçoit l'objectif, décide du découpage, crée
+        les tâches par appel d'outil, recrute au besoin. Chez Maestro, <strong>le plan est produit
+        avant, et validé</strong> : l'orchestrateur rend un JSON contrôlé contre
+        <span class="mono">task.schema.json</span>, le routeur assigne, le moteur exécute le DAG en
+        parallélisant ce qui est indépendant, et un échec <em>bloque</em> explicitement l'aval au
+        lieu de laisser des exécutions orphelines. Le brief (#318) va plus loin encore : il rend
+        approuvable par un humain le cadrage <em>avant</em> toute exécution payante.
+      </p>
+    </div>
+
+    <div class="facing">
+      <div class="panel a">
+        <h4>Délégation à l'exécution</h4>
+        <ul>
+          <li>S'adapte à l'imprévu — le Leader recrute un profil qu'on n'avait pas anticipé</li>
+          <li>Aucune structure à maintenir : le plan est du texte dans une conversation</li>
+          <li>Mais rien n'est vérifiable avant de payer : pas de schéma, pas de coût estimé, pas de point d'approbation naturel</li>
+          <li>Et les cycles sont possibles — <span class="mono">A blocked_by B</span> et <span class="mono">B blocked_by A</span> sont acceptés par le tableau</li>
+        </ul>
+      </div>
+      <div class="panel m">
+        <h4>Plan validé en amont</h4>
+        <ul>
+          <li>Un plan invalide est rejeté avant le premier appel outillé</li>
+          <li>L'ordre topologique rend le rapport déterministe, indépendant de l'ordre d'achèvement</li>
+          <li>Un point d'approbation humain existe naturellement : le brief</li>
+          <li>Mais on paie la rigidité : ce que le plan n'a pas prévu, la boucle ne l'invente pas en cours de route</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <div class="eyebrow">Ce que ça dit pour Maestro</div>
+      <p>
+        Deux idées m'ont paru directement transposables, sans toucher au modèle « plan validé ».
+      </p>
+      <p>
+        <strong>Le slot.</strong> Séparer « quel assistant » de « quelle instance » est une
+        distinction que nous n'avons pas, et qui règle proprement le cas « deux développeurs sur ce
+        run ». Chez eux c'est ce qui porte la couleur d'identité, la conversation, le statut, les
+        permissions en attente.
+      </p>
+      <p>
+        <strong>Le tableau de tâches comme surface partagée <em>écrivable</em> par les agents.</strong>
+        Notre tableau noir est en lecture pour l'aval ; le leur est un objet de première classe que
+        chaque agent lit et modifie, et qui est aussi ce que l'humain regarde. C'est ce qui leur
+        permet de rendre une vue d'activité unifiée — messages et tâches sur la même frise, rangés
+        par couloir de membre — là où nous n'avons de visibilité qu'en fin de run.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Axe 4 — MCP</div>
+      <h2>Deux mécanismes d'injection, et un redémarrage de processus assumé</h2>
+      <p>
+        AionUi distingue nettement les serveurs MCP <strong>de l'utilisateur</strong> — configurés
+        dans les réglages, persistés en base, avec test de connexion et OAuth — et les serveurs
+        <strong>de session</strong>, générés dynamiquement, dont le serveur d'équipe est le cas
+        d'usage. Les deux sont fusionnés au moment du <code>session/new</code> de l'agent.
+      </p>
+      <p>
+        Le point technique qui mérite d'être connu : <strong>la liste des outils MCP est figée à la
+        création de session</strong>, elle n'est pas rechargeable à chaud. Comme le serveur d'équipe
+        n'existe qu'au démarrage de l'équipe (port et jeton inconnus avant), ils <em>tuent et
+        recréent le processus agent</em> — en gardant la conversation identique et en s'appuyant sur
+        le <code>resume</code> de chaque backend pour retrouver le contexte. Le principe est écrit
+        noir sur blanc dans leur doc : « conversation inchangée + processus agent redémarré + session
+        reprise ». C'est une contrainte du protocole, pas un contournement, et elle vaut pour
+        n'importe qui voudrait injecter un MCP après coup.
+      </p>
+      <p>
+        Chez nous, le modèle est plus statique mais plus déclaratif : le pool projet
+        (<span class="mono">core/mcp/pool.json</span>) déclare une intégration une fois, les
+        activations par agent la branchent, et le montage se fait à chaud à chaque tâche — l'exécuteur
+        relit le dépôt à chaque exécution. Deux différences notables en notre faveur : les secrets
+        voyagent en références <code>${VARIABLE}</code> résolues au montage, jamais en clair dans un
+        fichier versionné ; et un serveur déclaré <code>"optionnel": true</code> s'omet du montage au
+        lieu de faire échouer la tâche. Une différence en leur faveur : ils ont l'OAuth interactif et
+        le test de connexion depuis l'UI, nous pas encore.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Axe 5 — Skills</div>
+      <h2>Le format de Claude, généralisé à vingt agents</h2>
+      <p>
+        Les skills d'AionUi sont des dossiers avec un <span class="mono">SKILL.md</span> à
+        <em>front-matter</em> — le format de Claude Code, repris tel quel — importables depuis un
+        dossier ou un zip. Trois étages : intégrées (livrées avec l'app), utilisateur, et
+        contribuées par des extensions. Le contrôle est par conversation : un indicateur dans
+        l'en-tête du chat montre les skills actives, avec recherche et exclusion.
+      </p>
+      <p>
+        L'intéressant est la stratégie de livraison, parce qu'elle affronte un problème réel :
+        <strong>chaque agent range ses skills ailleurs, et ACP ne dit rien du sujet</strong>. Leur
+        réponse est une colonne en base, <span class="mono">native_skills_dirs</span>, remplie agent
+        par agent. Quand elle est renseignée, ils <em>lient</em> les skills dans le workspace au bon
+        endroit et laissent l'agent les découvrir nativement. Quand elle est vide, ils basculent sur
+        une injection de prompt au premier message — un index des skills, ou leur contenu complet en
+        mode avancé.
+      </p>
+    </div>
+
+    <div class="wide scroller">
+      <table>
+        <thead>
+          <tr><th>Backend</th><th>Répertoire natif</th><th>Ajout d'une skill en cours de session</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Claude Code</td><td class="mono">.claude/skills</td><td>Oui — mais le répertoire racine doit exister au démarrage</td></tr>
+          <tr><td>Gemini CLI</td><td class="mono">.gemini/skills</td><td>Oui, via <code>/skills reload</code></td></tr>
+          <tr><td>Codex</td><td class="mono">.codex/skills</td><td>Chemin à revérifier — la doc OpenAI dit <span class="mono">.agents/skills</span></td></tr>
+          <tr><td>Qwen</td><td class="mono">.qwen/skills</td><td>Non — redémarrage requis d'après la doc</td></tr>
+          <tr><td>OpenCode, Vibe, Droid, CodeBuddy…</td><td class="mono">.opencode/, .vibe/, .factory/…</td><td>Découverte confirmée, rechargement à chaud non confirmé</td></tr>
+          <tr><td>Hermes, Snow, Copilot, Qoder, OpenClaw…</td><td>—</td><td>Injection de prompt uniquement</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col" style="margin-top:1.8rem">
+      <p>
+        Ils documentent aussi leur propre limite avec une honnêteté qui mérite d'être notée : la liste
+        des skills d'une session est un <strong>instantané figé à la création</strong>
+        (<span class="mono">extra.skills</span>, que le backend refuse de modifier ensuite), si bien
+        que « ajouter une skill en cours de conversation » n'est pas réellement supporté au niveau
+        produit, même quand l'agent sous-jacent saurait le faire.
+      </p>
+
+      <h3>Le renversement, côté Maestro</h3>
+      <p>
+        Chez nous, les skills sont un outil de <em>développement</em> : <span class="mono">.claude/skills</span>
+        porte <span class="mono">/ticket-start</span>, <span class="mono">/orchestrate</span>,
+        <span class="mono">/verify</span>, <span class="mono">/banc-mise-en-page</span> — la façon
+        dont nous travaillons sur Maestro. L'équivalent produit chez nous s'appelle
+        <strong>playbook</strong> (<span class="mono">maestro/agents/playbooks.py</span>, relu à chaud
+        à chaque tâche). Chez AionUi, les skills sont un <em>produit</em>, avec un catalogue de 21
+        assistants et des skills intégrées (<span class="mono">pptx</span>, <span class="mono">docx</span>,
+        <span class="mono">pdf</span>, <span class="mono">xlsx</span>, <span class="mono">mermaid</span>)
+        — et leur propre workflow de développement, lui, tient dans quatre skills très sobres.
+      </p>
+    </div>
+
+    <details>
+      <summary>Leurs quatre skills de développement, pour comparaison</summary>
+      <p>
+        <strong>architecture</strong> — un arbre de décision « où va ce code ? », les règles dures de
+        frontière entre processus (le renderer n'importe pas <span class="mono">fs</span>, le main
+        n'importe pas le DOM), les conventions de nommage, et deux règles structurelles inhabituelles :
+        <em>maximum 10 enfants directs par répertoire</em> et <em>pas de répertoire à fichier unique</em>.
+        <strong>i18n</strong> — obligation de clé pour tout texte visible.
+        <strong>testing</strong> — Vitest, seuil de couverture 80 %.
+        <strong>bump-version</strong> — la procédure de release.
+      </p>
+      <p style="margin-top:.7rem">
+        Leur <span class="mono">AGENTS.md</span> encode surtout de la <em>structure</em> (où, comment
+        nommer, quelles frontières) ; notre <span class="mono">CLAUDE.md</span> encode surtout du
+        <em>processus</em> (cycle de vie d'un ticket, règles git, qui merge). Ce sont deux réponses au
+        même problème — apprendre le dépôt à l'agent — sur deux axes différents. Détail amusant : ils
+        interdisent explicitement les signatures d'IA dans les commits (« NEVER add
+        <span class="mono">Co-Authored-By</span> »), là où nous les imposons.
+      </p>
+    </details>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Axe 6 — La question du bureau</div>
+      <h2>Pourquoi une application de bureau ?</h2>
+      <p class="lede">
+        La réponse courte : parce que l'agent travaille sur <em>vos</em> fichiers, avec <em>vos</em>
+        CLI, sur <em>votre</em> machine. La réponse longue est plus intéressante, parce que le code
+        montre qu'ils ont commencé à en sortir presque aussitôt.
+      </p>
+      <p>
+        Cinq raisons se lisent directement dans le dépôt, et aucune n'est esthétique :
+      </p>
+      <ol>
+        <li>
+          <strong>L'accès aux fichiers locaux est le produit.</strong> La promesse est « Cowork » —
+          l'agent lit, écrit, range, génère des <span class="mono">.pptx</span> et des
+          <span class="mono">.xlsx</span> dans vos dossiers. Un service distant ne peut pas le faire
+          sans que vous téléversiez tout.
+        </li>
+        <li>
+          <strong>Lancer des processus locaux demande un hôte local.</strong> Claude Code, Codex,
+          Gemini CLI sont des binaires sur la machine. Le noyau y consacre une infrastructure
+          entière : un Node <em>managé</em> qu'ils embarquent, une reconstruction du
+          <span class="mono">PATH</span> à partir du shell de connexion (parce qu'une app lancée
+          depuis le Dock n'hérite pas du <span class="mono">PATH</span> du terminal), un constructeur
+          de sous-processus qui pose <code>kill_on_drop</code> et nettoie
+          <span class="mono">NODE_OPTIONS</span>.
+        </li>
+        <li>
+          <strong>La distribution.</strong> Une app installable est ce que le public visé sait
+          installer. Le dépôt en porte tout le poids : <span class="mono">electron-builder</span>,
+          notarisation macOS, Squirrel Windows, Homebrew, mise à jour automatique avec refus des
+          rétrogradations, et des tests de fumée pour les <em>messages d'erreur de l'installeur</em>.
+        </li>
+        <li>
+          <strong>L'intégration système.</strong> Liens profonds <span class="mono">aionui://</span>,
+          instance unique, identité d'application Windows, récupération après crash GPU, mascotte de
+          bureau, notifications, menu natif.
+        </li>
+        <li>
+          <strong>La confidentialité comme argument.</strong> « Tout est stocké localement dans une
+          base SQLite. Rien n'est téléversé. » C'est une ligne de leur FAQ, et c'est vérifiable dans
+          l'architecture.
+        </li>
+      </ol>
+      <p>
+        Et pourtant. Le même dépôt contient un mode WebUI complet, un accès distant par le réseau
+        local ou par Internet, une connexion par QR code, et des passerelles Telegram, Lark, DingTalk
+        et WeChat. Leur propre FAQ répond « oui » à « peut-on le faire tourner sur un serveur
+        sans écran ? ».
+      </p>
+    </div>
+
+    <div class="verdict">
+      <div class="eyebrow">La conclusion que j'en tire</div>
+      <p>
+        Le bureau, chez eux, est un <strong>choix de distribution</strong>, pas un choix
+        d'architecture. Ils ont commencé par livrer une app Electron parce que c'est ce qu'on peut
+        demander à quelqu'un d'installer, puis ils ont extrait le moteur pour pouvoir le faire tourner
+        n'importe où — et c'est cette extraction, pas la fenêtre, qui est la décision d'architecture.
+      </p>
+      <p>
+        Ce que ça vaut pour nous : la question « faut-il une app de bureau pour Maestro ? » est mal
+        posée tant que le moteur n'a pas de frontière propre. Une fois qu'il en a une — le sujet du
+        #350 — l'emballage bureau devient une option de distribution qu'on prend ou pas, et le coût
+        est mesurable : chez eux, une bonne moitié de <span class="mono">process/startup/</span>
+        et une famille entière de tests de fumée n'existent que pour ça.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Axe 7 — Choix techniques</div>
+      <h2>Un fil rouge : Rust partout, y compris dans l'outillage</h2>
+      <p>
+        La pile mérite d'être lue comme un tout, parce qu'elle est cohérente au-delà du noyau.
+      </p>
+    </div>
+
+    <div class="wide scroller">
+      <table>
+        <thead>
+          <tr><th>Poste</th><th class="a-cell">AionUi</th><th class="m-cell">Maestro</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Moteur</td><td>Rust — Axum, Tokio, SQLite via sqlx, 24 crates en 4 couches</td><td>Python 3.11 — bibliothèque, exécuteur injectable (local / Celery / Temporal)</td></tr>
+          <tr><td>UI</td><td>React 19, Arco Design, UnoCSS, Electron 37</td><td>Next.js, React (Control Tower)</td></tr>
+          <tr><td>Gestionnaire de paquets</td><td><span class="mono">bun</span></td><td><span class="mono">pip</span> + <span class="mono">npm</span></td></tr>
+          <tr><td>Lint / format</td><td><span class="mono">oxlint</span> + <span class="mono">oxfmt</span> — outils Rust, pas ESLint/Prettier</td><td><span class="mono">shellcheck</span>, lint JS côté web</td></tr>
+          <tr><td>Tests</td><td>Vitest 4 (unitaire, seuil 80 %), Playwright (E2E, dont des scénarios d'équipe dédiés)</td><td>pytest + xdist, Vitest côté web, skill <span class="mono">/verify</span> pour le bout en bout</td></tr>
+          <tr><td>Miroir local de la CI</td><td><span class="mono">prek</span> — réexécute exactement le pipeline ; <span class="mono">just push</span> refuse de pousser si un contrôle échoue</td><td><span class="mono">scripts/ci/local.sh</span> — périmètre réduit au diff par défaut</td></tr>
+          <tr><td>Base</td><td>SQLite (migrations embarquées, exécutées au démarrage)</td><td>Redis, PostgreSQL selon les modules</td></tr>
+          <tr><td>Observabilité</td><td>Sentry (Electron + Rust)</td><td>Langfuse, télémétrie maison</td></tr>
+          <tr><td>i18n</td><td>10+ langues, clé obligatoire pour tout texte visible, vérifiée en CI</td><td>Français uniquement, assumé</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col" style="margin-top:1.8rem">
+      <p>
+        Trois choses m'ont retenu l'attention, au-delà du choix de Rust.
+      </p>
+      <p>
+        <strong>Le miroir de CI est une contrainte, pas une invitation.</strong> Chez eux,
+        <code>just push</code> enchaîne lint → format → typage → tests → <span class="mono">git push</span>,
+        et tout échec annule le push. Nous avons le filet équivalent
+        (<span class="mono">scripts/ci/local.sh</span>) mais nous l'invoquons ; eux l'ont mis sur le
+        chemin. Détail qui compte pour un agent : leur <span class="mono">AGENTS.md</span> prend soin
+        de préciser que le dépôt a beaucoup d'<em>avertissements</em> de lint préexistants et qu'il
+        faut juger sur le code de retour, pas sur le volume de sortie — exactement le genre de piège
+        qui envoie une session autonome réparer ce qui n'est pas cassé.
+      </p>
+      <p>
+        <strong>La revue de PR est faite par un modèle, en CI.</strong> Deux workflows GitHub Actions
+        (<span class="mono">gpt-review</span> et <span class="mono">gpt-pr-assessment</span>), plus du
+        tri automatique des tickets et des discussions. Ils font tourner un agent sur leur propre
+        flux de contributions — ce qui, avec 3 286 forks et 822 tickets ouverts, ressemble moins à un
+        gadget qu'à une nécessité.
+      </p>
+      <p>
+        <strong>Les PRD sont dans le dépôt, en chinois, avec l'état d'implémentation par
+        fonctionnalité.</strong> Le fichier ACP liste 51 points numérotés avec, pour chacun, « implémenté
+        / partiellement / non » et la raison des tests E2E marqués <em>skip</em>. C'est le même
+        instinct que nos docs <span class="mono">docs/10</span> — écrire le pourquoi à côté du code —
+        appliqué au produit plutôt qu'au processus.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Bilan</div>
+      <h2>Ce que je retiendrais, et ce que je laisserais</h2>
+    </div>
+
+    <div class="facing">
+      <div class="panel a">
+        <h4>À creuser</h4>
+        <ul>
+          <li><strong>Le contrat d'API sans dépendance transport.</strong> Leur crate de types ne connaît pas HTTP ; c'est ce qui rend possible d'avoir le même client en fenêtre, en navigateur et en ligne de commande.</li>
+          <li><strong>La notion de slot</strong> — instance de membre distincte de l'assistant, porteuse de la conversation, du statut et des permissions en attente.</li>
+          <li><strong>Le tableau de tâches écrivable par les agents</strong>, doublé d'une vue d'activité unifiée messages + tâches par couloir de membre. C'est notre angle mort en cours de run.</li>
+          <li><strong>Le filet local sur le chemin du push</strong>, plutôt qu'à côté.</li>
+          <li><strong>ACP</strong> comme protocole d'intégration d'agents tiers — à connaître, même si nous ne l'adoptons pas : c'est en train de devenir la prise standard.</li>
+        </ul>
+      </div>
+      <div class="panel m">
+        <h4>À ne pas importer</h4>
+        <ul>
+          <li><strong>Le garde-fou par consigne de prompt.</strong> Leur approbation humaine avant recrutement tient parce que le modèle est docile. Nos règles équivalentes sont adossées à la couche permissions ; c'est plus rigide et c'est le but.</li>
+          <li><strong>La délégation intégrale du plan au Leader.</strong> Elle coûte la vérifiabilité — pas de schéma, pas de point d'approbation avant dépense, et un tableau de tâches qui accepte des dépendances circulaires.</li>
+          <li><strong>L'emballage bureau tant que la frontière d'exécution n'est pas tranchée.</strong> C'est la conséquence, pas la cause.</li>
+          <li><strong>L'hétérogénéité comme produit.</strong> Brancher vingt agents veut dire hériter de vingt comportements de permissions, de vingt conventions de skills et de vingt façons de reprendre une session. Leur documentation en porte la trace, agent par agent.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="col" style="margin-top:2.4rem">
+      <h3>La phrase à retenir</h3>
+      <p>
+        AionUi et Maestro ne sont pas concurrents : ils répondent à deux questions différentes.
+        « Comment donner à une personne une fenêtre sur tous les agents installés sur sa machine ? »
+        contre « comment faire produire à une équipe d'agents un résultat vérifiable sur un objectif
+        donné ? ». Mais ils se rejoignent sur trois primitives — boîte aux lettres, tableau partagé,
+        machine à états de réveil — et sur une même décision d'architecture, prise à des moments
+        différents : <strong>sortir le moteur du processus qui l'affiche</strong>. Eux l'ont faite en
+        avril. C'est notre #350.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      Sources : clone local d'<span class="mono">iOfficeAI/AionUi</span> à
+      <span class="mono">06e7e2b</span> (v2.1.57) ; <span class="mono">ARCHITECTURE.md</span>,
+      <span class="mono">crates/aionui-team/docs/</span> et
+      <span class="mono">crates/aionui-api-types/src/team_tools.rs</span> d'AionCore ; métadonnées
+      GitHub relevées le 17 août 2026. Certains documents d'AionCore datent de la migration
+      TypeScript → Rust et décrivent des manques depuis comblés — la liste des dix outils
+      <span class="mono">team_*</span> ci-dessus est relue dans le code courant, pas dans ces
+      documents.
+    </p>
+    <p style="margin-top:.9rem">Ticket Maestro #352 · analyse pour discussion, aucune décision d'architecture engagée.</p>
+  </footer>
+
+</div>
+</body>
+</html>
