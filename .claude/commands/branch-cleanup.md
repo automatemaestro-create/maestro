@@ -19,9 +19,9 @@ automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuff
 > Au merge, la forge supprime déjà la branche **distante** (« Delete source branch » pré-cochée sur
 > GitLab, `delete_branch_on_merge` sur GitHub — `lib.sh merge-settings` rend le réglage des deux
 > côtés) et **ferme** le ticket via `Closes #`. Mais elle ne pose pas son état : le cycle de vie
-> étant porté par les **labels `workflow::*`** (docs/10 §3), plus rien ne bascule un ticket sur
-> « Terminé » à sa fermeture. Cette commande couvre donc ta copie **locale**, plus ce que la forge
-> ne fait pas.
+> vivant dans le **champ Status** d'un projet Projects v2 (docs/10 §3), rien côté forge ne bascule
+> un ticket sur « Terminé » à sa fermeture. Cette commande couvre donc ta copie **locale**, plus ce
+> que la forge ne fait pas.
 
 1. `bash scripts/gitlab/lib.sh require` — arrête-toi si le CLI de la forge est absent ou non
    authentifié (son message nomme lequel).
@@ -107,8 +107,7 @@ automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuff
      ```
      bash scripts/gitlab/lib.sh reconcile-workflow <iid-1> <iid-2>
      ```
-     Il pose `workflow::termine` en retirant les cinq autres dans le **même** appel — l'exclusion
-     mutuelle des labels scopés étant Premium, rien ne l'assurerait à notre place (docs/10 §3) —,
+     Il pose « Terminé » dans le champ Status — à valeur unique, donc rien à retirer (docs/10 §3) —,
      **saute** ce qui est déjà « Terminé » et n'écrase **jamais** un « Abandonné »/« Doublon ».
      Idempotent : sans effet sur ce que l'étape 2 a déjà posé.
 

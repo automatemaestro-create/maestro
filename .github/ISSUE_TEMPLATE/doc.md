@@ -1,7 +1,7 @@
 ---
 name: Documentation
 about: Un document ou une section à écrire, corriger ou clarifier
-labels: "type::doc,prio::moyenne,workflow::a-faire"
+labels: "type::doc,prio::moyenne"
 ---
 
 ## Contexte

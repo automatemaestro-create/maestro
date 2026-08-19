@@ -113,11 +113,11 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
    `origin/main` (`main` y est déjà emprunté par le clone principal, un `git checkout main`
    échouerait) et ne fait rien si la branche est déjà celle du worktree.
 
-4. **Démarrage groupé** : `bash scripts/gitlab/lib.sh begin $ARGUMENTS` — assignation, état
-   « En cours » (label `workflow::en-cours`, les cinq autres retirés dans le même appel) et dates
-   (début = aujourd'hui, échéance selon `prio::`) en une seule mutation. Vérifie que la commande
-   réussit ; en cas d'échec, signale-le sans bloquer la branche déjà créée. Ne touche pas aux
-   labels `type::`/`agent::`/`prio::` (triage, pas ce workflow).
+4. **Démarrage groupé** : `bash scripts/gitlab/lib.sh begin $ARGUMENTS` — état « En cours » (posé
+   dans le champ Status du projet), assignation et dates (début = aujourd'hui, échéance selon
+   `prio::`) en un seul appel. Vérifie que la commande réussit ; en cas d'échec, signale-le sans
+   bloquer la branche déjà créée. Ne touche pas aux labels `type::`/`agent::`/`prio::` (triage, pas
+   ce workflow).
 
 5. **Résumé court, puis enchaîne immédiatement sur l'implémentation** : nom de la branche, titre
    du ticket, dates posées, critères d'acceptation ; pour un sous-ticket, le parent, le rang du

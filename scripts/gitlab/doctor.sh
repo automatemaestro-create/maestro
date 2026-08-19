@@ -83,26 +83,33 @@ else
   err "labels manquants :$missing → relancer : $PROVISIONNER"
 fi
 
-# --- 3. Labels de cycle de vie « workflow:: » ----------------------------------------------------
-# Depuis #209 le cycle de vie n'est plus le champ Status natif (lifecycle custom « Maestro »,
-# Premium, disparu avec l'essai Ultimate) mais des labels scopés `workflow::*` — voir le contrat de
-# surface en tête de lib.sh. Une SEULE lecture (gl_workflow_gids, avec retry) pour les six, comme
-# la section le faisait pour les six statuts : on évite le faux « incohérent » que six appels
-# indépendants déclenchaient dès qu'un seul retombait vide.
-section "3. Cycle de vie (labels $GL_WORKFLOW_SCOPE::*)"
-workflow_gids="$(gl_workflow_gids 2>/dev/null)"
-if [ -z "$workflow_gids" ]; then
-  err "aucun label « $GL_WORKFLOW_SCOPE::* » lisible dans $DEPOT → relancer : $PROVISIONNER"
+# --- 3. Cycle de vie : les six valeurs sont-elles là ? --------------------------------------------
+# Pendant exact du contrôle des six labels `workflow::*` que #365 vient de retirer, sur l'objet qui
+# les remplace : les six OPTIONS du champ Status. Les valeurs attendues sont dérivées des slugs par
+# `gl_workflow_label` et jamais recopiées — le vocabulaire ne change pas en changeant de support
+# (c'est aussi ce que pose bootstrap-project.sh), donc une liste écrite ici serait une copie de plus
+# à tenir d'accord avec les autres.
+#
+# ⚠ VERSION MINIMALE, ET DÉLIBÉRÉMENT : elle répond à « les six valeurs sont-elles posables ? », qui
+# est la seule question que le retrait des labels laisse sans réponse. Les trois dérives fines du
+# champ — option manquante, septième état que rien ne gouverne, colonnes hors de l'ordre du flux —
+# sont le lot #363, écrit et en revue au moment où #365 est parti. En cas de conflit de merge entre
+# les deux, c'est la version de #363 qui gagne : elle couvre celle-ci.
+section "3. Cycle de vie (champ Status du projet « $GL_PROJET_TITRE »)"
+PROVISIONNER_PROJET="bash scripts/github/bootstrap-project.sh"
+if ! pj_resoudre 2>/dev/null; then
+  err "champ « Status » du projet « $GL_PROJET_TITRE » illisible → relancer : $PROVISIONNER_PROJET"
 else
   missing_workflow=""
   for s in a-faire en-cours en-revue termine abandonne doublon; do
-    printf '%s\n' "$workflow_gids" | cut -f1 | grep -qx "$s" \
-      || missing_workflow="${missing_workflow:+$missing_workflow, }$GL_WORKFLOW_SCOPE::$s"
+    libelle="$(gl_workflow_label "$s")"
+    printf '%s\n' "$PJ_OPTIONS" | cut -f2 | grep -qxF "$libelle" \
+      || missing_workflow="${missing_workflow:+$missing_workflow, }« $libelle »"
   done
   if [ -z "$missing_workflow" ]; then
-    ok "6 labels de cycle de vie résolus par nom (1 appel) — set-workflow opérationnel (aucun GID en dur)"
+    ok "6 options du champ Status résolues par nom (1 appel) — set-workflow opérationnel (aucun ID en dur)"
   else
-    err "label(s) de cycle de vie manquant(s) : $missing_workflow → relancer : $PROVISIONNER"
+    err "option(s) manquante(s) du champ Status : $missing_workflow → relancer : $PROVISIONNER_PROJET"
   fi
 fi
 
@@ -159,34 +166,31 @@ else
   printf '    → tous réparables d'\''un coup : bash scripts/gitlab/lib.sh reconcile-workflow  (--check pour la liste)\n'
 fi
 
-# 4c. L'invariant « exactement un workflow:: par ticket ouvert ».
-# C'est LA dérive propre au dispositif par labels, et rien d'autre ne l'attrape : l'exclusion
-# mutuelle des labels scopés est une fonctionnalité Premium, donc sur Free le « :: » n'est que
-# cosmétique et rien n'empêche un ticket de porter deux valeurs à la fois (docs/10 §3, #207). Deux
-# cas, de causes opposées :
-#   • 0 label  → ticket échappé à la migration, ou créé depuis l'UI de la forge (qui ne connaît pas
-#                notre convention) : il n'est sur AUCUNE colonne du Kanban et sort de tous les
-#                comptes (`queue.sh` ne le verra pas, `/backlog` le rendra « - ») ;
-#   • ≥ 2      → pose partielle : un ajout sans le retrait des autres. Les lectures rendent alors
-#                le PREMIER label rencontré (cf. gl_awk_workflow), donc un état plausible mais
-#                arbitraire — le plus pernicieux des deux, puisque rien ne dépasse à l'affichage.
+# 4c. L'invariant « exactement un état par ticket ouvert ».
+# LA DÉRIVE A PERDU UNE MOITIÉ AVEC LES LABELS (#365), ET C'EST LE GAIN DU CHANTIER #358. Tant que
+# le cycle de vie était porté par six labels scopés, l'exclusion mutuelle était à notre charge — le
+# « :: » n'est que cosmétique — et un ticket pouvait en porter DEUX, les lectures en rendant alors
+# un au hasard : le plus pernicieux des cas, puisque rien ne dépassait à l'affichage. Un champ à
+# valeur unique rend ce « ≥ 2 » impossible par construction.
 #
-# Le COMPTAGE est le seul contrôle de cette section que la table plate ne peut pas porter : elle
-# rend un statut, pas un nombre de labels — projeter la dérive l'effacerait. Il est donc délégué à
-# `gl_workflow_derives`, qui refait une lecture du backlog et compte à la source, des deux côtés.
-# C'est un aller-retour de plus, assumé : le contrôle qui coûte le moins cher est celui qui répond
-# encore quand la forge change.
+# Reste le « 0 », qui n'a pas disparu mais CHANGÉ DE FORME : l'état vit sur l'ITEM DE PROJET et non
+# sur l'issue, donc un ticket sans état est soit hors du projet, soit un item à colonne vide. Dans
+# les deux cas il sort de tous les comptes — `queue.sh` ne le verra pas, `/backlog` le rendra « - ».
+# DISTINGUER les deux causes, qui appellent deux gestes différents, est le lot #363.
+#
+# Le comptage est le seul contrôle de cette section que la table plate ne peut pas porter : elle
+# rend un statut, pas un nombre — projeter la dérive l'effacerait. Il est donc délégué à
+# `gl_workflow_derives`, qui refait une lecture et compte à la source.
 wf_derives="$(gl_workflow_derives opened 2>/dev/null)"
 if [ -z "$wf_derives" ]; then
-  ok "tous les tickets ouverts portent exactement un label $GL_WORKFLOW_SCOPE::*"
+  ok "tous les tickets ouverts portent exactement un état"
 else
-  while IFS=$'\t' read -r iid n; do
+  # La seconde colonne est le NOMBRE d'états, et elle ne peut plus valoir que 0 : le « ≥ 2 » est
+  # impossible sur un champ à valeur unique. On ne la lit donc plus — la lire pour la taire ferait
+  # croire qu'elle porte encore une distinction.
+  while IFS=$'\t' read -r iid _; do
     [ -z "$iid" ] && continue
-    if [ "$n" = 0 ]; then
-      warn "#$iid ouvert sans label $GL_WORKFLOW_SCOPE::* — hors du Kanban et de tous les comptes → poser : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\""
-    else
-      warn "#$iid ouvert porte $n labels $GL_WORKFLOW_SCOPE::* (un seul attendu) — les lectures en rendent un au hasard → reposer le bon : bash scripts/gitlab/lib.sh set-workflow $iid \"<état>\""
-    fi
+    warn "#$iid ouvert sans état — hors du projet « $GL_PROJET_TITRE », ou Status vide ; sort de tous les comptes → poser : bash scripts/gitlab/lib.sh project-add $iid \"<état>\""
   done <<EOF
 $wf_derives
 EOF
