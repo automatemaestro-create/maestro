@@ -376,6 +376,62 @@ moment de la bascule, le dépôt en comptant 367 aujourd'hui.
   (`backlog-table all` de chaque côté, jointes sur la colonne 2) et se vérifie en corrigeant — poser
   le Status de #360 a ramené le compte de 2 à 1.
 
+### 3.7 Peuplement du projet — tout ticket est un item, à la création et par backfill
+
+Le socle de §3.5 monte un projet **vide**. Or le Status vit sur l'**item de projet** et non sur
+l'issue : un ticket qui n'est pas dans le projet n'a **aucun état**, et aucune requête de cycle de
+vie ne le voit. C'est l'équivalent exact du « 0 label `workflow::` » que `doctor.sh` traque
+aujourd'hui (§3.1) — **en plus silencieux**, puisque rien à l'écran ne distingue un ticket sans état
+d'un ticket absent du filtre. #361 traite cette panne **avant qu'elle existe**, par deux verbes, un
+par population.
+
+**Les nouveaux — `lib.sh project-add <iid> [valeur]`.** `/ticket-create` l'appelle dans la foulée de
+la création. C'est le pendant exact du `workflow::a-faire` posé dans le même `--label` que les
+autres : rien côté forge ne pose d'état par défaut, et un ticket créé sans état est une dérive.
+Défaut « À faire », idempotent (`addProjectV2ItemById` rend l'item existant au lieu d'échouer), et
+son échec ne défait pas la création — le ticket existe, on le signale et on rejoue.
+
+**Les anciens — `lib.sh project-backfill [--check] [--realigner] [<iid>…]`.** Il ajoute au projet les
+tickets existants et pose leur Status **d'après leur label `workflow::` courant**, qui reste
+l'autorité à ce stade. Trois promesses, tenues par **une seule** mécanique : l'état de départ est
+**relu à chaque passe** — le projet *est* l'état, il n'y a aucun fichier de reprise à garder
+cohérent, donc aucun moyen qu'il mente. D'où « rejouable sans doublon », « `--check` sans écriture »
+et « reprend après interruption », cette dernière n'étant pas un mécanisme de plus mais la
+conséquence des deux autres : une passe coupée au 200ᵉ ticket laisse 200 items posés, que la passe
+suivante classe « conforme » et saute.
+
+Cinq décisions à ne pas défaire :
+
+- **Le projet se résout par ÉGALITÉ de titre, jamais par recherche.** `projectsV2(query:)` est une
+  recherche **floue** côté GitHub, alors que le titre du projet est une **clé** (§3.5) : la
+  comparaison se fait donc dans le shell, en égalité stricte. Ce n'est pas une précaution
+  théorique — le compte porte déjà un second projet nommé `Maestro-mesure-362`, et un préfixe aurait
+  suffi à peupler le mauvais.
+- **Ni l'un ni l'autre n'est derrière `MAESTRO_CYCLE`.** Peupler le projet n'est pas décider du
+  cycle de vie : c'est poser une **donnée de plus**, que rien ne lit tant que le commutateur vaut
+  `labels`. L'y mettre inverserait l'ordre du chantier — le projet doit être peuplé **avant** la
+  bascule (#364), sans quoi celle-ci trouverait un projet vide et autant de tickets sans état.
+- **L'autorité est le label, et elle s'inversera.** Après la bascule, c'est le Status qui fera foi ;
+  un backfill « réalignant » rejoué ce jour-là écraserait un état vivant avec un label périmé. Le
+  défaut ne **remplit** donc que ce qui est vide et ne réécrit **jamais** un état déjà posé : les
+  divergences sont **nommées**, et les aligner est un geste explicite (`--realigner`).
+- **L'écart est nommé ticket par ticket, dans les deux sens.** Chaque passe finit par la
+  réconciliation des deux décomptes — tickets portant un label contre items portant un Status. Un
+  item **de trop** (Status posé sur un ticket sans label) est une dérive autant qu'un item
+  manquant, en moins visible puisqu'il gonfle le compte au lieu de le creuser. Les tickets portant
+  **0 ou ≥ 2** labels sont signalés sans être arbitrés : ce verbe peuple un projet, il ne tranche
+  pas un cycle de vie que personne n'a posé. Codes de retour : 0 = plus aucun écart, 3 = il en
+  reste un, 1 = échec franc.
+- **La relecture finale peut retarder sur sa propre écriture.** La connexion `items` de Projects v2
+  est *éventuellement cohérente* : relue dans la seconde qui suit la dernière mutation, elle peut ne
+  pas encore la rendre — mesuré, sur deux tickets posés, le second absent de la relecture immédiate
+  et présent à la passe suivante. Le bilan la rejoue donc jusqu'à trois fois, sur la condition
+  précise « les tickets que cette passe a écrits sont-ils tous revenus ? », et ce qui manque encore
+  est dit **pour ce qu'il est** — non vérifié — jamais confondu avec un trou réel. Réessayer est ici
+  légitime parce que c'est une **lecture** : rejouable sans effet de bord, et sur une chose qu'on
+  sait avoir écrite. (Une mutation, elle, ne se réessaie jamais ainsi — c'est la règle posée avec
+  `gh_graphql_read`.)
+
 ---
 
 ## 4. Gabarits de tickets et de Pull Request

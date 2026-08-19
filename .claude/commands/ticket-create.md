@@ -1,5 +1,5 @@
 ---
-description: Crée un ticket bien formé (labels type::/agent::/prio:: + corps de template, état « À faire »)
+description: Crée un ticket bien formé (labels type::/agent::/prio:: + corps de template, état « À faire », item du projet)
 argument-hint: "<type: feature|bug|doc|infra> <titre>  (le reste peut être précisé en dialogue)"
 allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Read
 ---
@@ -114,9 +114,28 @@ lieu d'inventer.
    même `--label` évite un second appel, et c'est le seul cas du workflow où l'état ne passe pas par
    `set-workflow` : il n'y a encore rien à retirer. N'assigne pas et ne crée pas de branche.
 
+   Puis, **dans la foulée et sans attendre**, fais du ticket un **item du projet** :
+   ```
+   bash scripts/gitlab/lib.sh project-add <iid>
+   ```
+   C'est le **pendant exact** du `workflow::a-faire` ci-dessus, pour le support qui prendra sa
+   suite (chantier #358, docs/10 §3.5). Le champ **Status** de GitHub Projects v2 vit sur l'**item
+   de projet** et non sur l'issue : un ticket absent du projet n'a donc **aucun** état — l'exact
+   équivalent du « 0 label `workflow::` », en plus silencieux, puisque rien à l'écran ne distingue
+   un ticket sans état d'un ticket hors du filtre. La commande pose « À faire » par défaut ; elle
+   est idempotente, donc la rejouer après un échec ne duplique rien.
+
+   Deux points à ne pas confondre. Cet appel **ne dépend pas** de `MAESTRO_CYCLE` : peupler le
+   projet n'est pas décider du cycle de vie, c'est poser une donnée de plus, que rien ne lit tant
+   que le commutateur vaut `labels` — et le projet doit être peuplé **avant** la bascule, pas
+   après. Et son échec **ne défait pas la création** : le ticket existe, avec ses labels ; signale
+   l'échec dans le résumé de l'étape 10 et propose de rejouer `project-add <iid>`, plutôt que de
+   t'arrêter là.
+
 10. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels et son milestone —
-   pour un découpage : le parent et chaque sous-ticket avec son rang dans la checklist. Puis la
-   suite :
+   pour un découpage : le parent et chaque sous-ticket avec son rang dans la checklist. Mentionne
+   `project-add` **seulement s'il a échoué** : c'est le cas nominal qui n'a pas à occuper le
+   résumé, et l'anomalie qui doit s'y voir. Puis la suite :
    - si l'utilisateur a demandé (explicitement ou par le contexte de la conversation) de
      **réaliser** le travail, enchaîne directement sur `/ticket-start <iid>` sans attendre de
      « go » (pour un découpage : sur le **premier sous-ticket** de la checklist, jamais sur le
