@@ -136,9 +136,9 @@ git fetch origin main && git rebase origin/main
   a un, puis remet la CI au vert pour ce qui est corrigeable en local.
 - **Après le merge** : `/branch-cleanup` supprime la branche **locale**, revient sur `main` à jour
   et passe le ticket « Terminé ». La branche **distante**, elle, est supprimée au merge. Le merge
-  **ferme** le ticket mais ne le passe pas « Terminé » tout seul — le cycle de vie est porté par un
-  label `workflow::` ([docs/10 §3.1](./docs/10-workflow-git.md)), et la forge n'en pose aucun : un
-  ticket fraîchement mergé reste affiché « En revue » jusqu'à cette commande. C'est normal quelques
+  **ferme** le ticket mais ne le passe pas « Terminé » tout seul — le cycle de vie est porté par le
+  champ **Status** du projet ([docs/10 §3.8](./docs/10-workflow-git.md)), que rien côté forge ne
+  met à jour : un ticket fraîchement mergé reste affiché « En revue » jusqu'à cette commande. C'est normal quelques
   minutes, pas quelques jours.
 
 Pour éclairer une décision de merge : `/mr-review <pr>` (synthèse état + CI + threads + diff).

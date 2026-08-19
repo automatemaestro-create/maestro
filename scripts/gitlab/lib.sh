@@ -60,15 +60,24 @@
 #     branche GitLab, et leurs appelants avec eux.
 #
 # ================================================================================================
-# COMMUTATEUR DE CYCLE DE VIE — MAESTRO_CYCLE=labels|status, défaut « labels » (#360, chantier #358)
+# CYCLE DE VIE — MAESTRO_CYCLE=status|labels, défaut « status » (#364, chantier #358)
 # ================================================================================================
-# Ce fichier porte un TROISIÈME backend de cycle de vie, derrière un commutateur. Sans la variable,
-# rien ne change : les six labels `workflow::*`, l'exclusion mutuelle à notre charge, le workflow de
-# l'équipe au bit près. Avec `MAESTRO_CYCLE=status`, l'état d'un ticket se lit et s'écrit dans le
-# champ **Status** du projet GitHub Projects v2 monté par `scripts/github/bootstrap-project.sh`.
-# C'est le patron que #339 vient de valider sur la migration de forge, et c'est lui qui rend ce lot
-# purement additif — donc mergeable seul, là où réécrire d'un bloc casserait /ticket-start pour tout
-# le monde entre deux merges.
+# L'état d'un ticket (À faire / En cours / En revue / Terminé / Abandonné / Doublon) se lit et
+# s'écrit par DÉFAUT dans le champ **Status** du projet GitHub Projects v2 monté par
+# `scripts/github/bootstrap-project.sh`. `MAESTRO_CYCLE=labels` restaure les six labels
+# `workflow::*` décrits par le CONTRAT DE SURFACE ci-dessous — c'est le retour arrière, et il tient
+# tant que les labels sont là (leur retrait est #365 ; après lui, `labels` n'aura plus de données à
+# lire et la variable partira avec le code qui la sert).
+#
+# LA BASCULE (#364) EST UN CHANGEMENT DE DÉFAUT, PAS DE CODE. Les deux backends étaient déjà
+# complets — unité (#360) et lectures d'ensemble (#362) — et la parité a été REJOUÉE contre le vrai
+# projet le jour même : `backlog-table opened`, `milestone-issues` du jalon courant, le plan de
+# `queue.sh` et `workflow-derives` rendent le MÊME résultat des deux côtés, au caractère près.
+# Prérequis qui n'était pas une formalité : le champ Status VIEILLIT tant qu'il ne fait pas
+# autorité (`set-workflow` en mode `labels` n'écrit que le label), d'où une resynchronisation
+# `project-backfill --realigner` juste avant — 5 tickets divergents et 2 absents au constat, écart
+# nul après. Rebasculer un jour sur `labels` demanderait la même resynchronisation EN SENS INVERSE,
+# pour la même raison : le backend qui ne fait pas autorité est celui qui dérive.
 #
 # POURQUOI UN CHAMP PLUTÔT QUE DES LABELS. Le retour aux labels de #207 n'était pas un choix : GitLab
 # Free ayant perdu le champ Status natif à la fin de l'essai Ultimate, ils étaient le seul mécanisme
@@ -76,10 +85,10 @@
 # Un champ à valeur unique rend cette classe de bug impossible par construction. Ce chantier ne défait
 # pas #207 : il le remplace par ce qui manquait alors.
 #
-# CE QU'IL DÉPLACE, ET QU'IL FAUT SAVOIR AVANT DE POSER LA VARIABLE. Le Status vit sur l'ITEM DE
+# CE QUE LE CHAMP DÉPLACE, ET QU'IL FAUT SAVOIR AVANT D'Y TOUCHER. Le Status vit sur l'ITEM DE
 # PROJET, pas sur l'issue. Un ticket absent du projet n'a donc AUCUN état — l'équivalent exact du
-# « 0 label workflow:: » d'aujourd'hui, en plus silencieux. Les deux verbes de ce lot en tirent des
-# conclusions OPPOSÉES, et c'est délibéré :
+# « 0 label workflow:: » de l'ère des labels, en plus silencieux. Les deux verbes de l'unité en
+# tirent des conclusions OPPOSÉES, et c'est délibéré :
 #   • en ÉCRITURE, `st_set_workflow` REFUSE en nommant la cause (rien à mettre à jour : la mutation
 #     `updateProjectV2ItemFieldValue` a besoin d'un item). Ajouter le ticket au passage serait faire
 #     le travail de #361 en silence, sur une écriture que personne n'a demandée ;
@@ -114,14 +123,18 @@
 # ================================================================================================
 # CONTRAT DE SURFACE DU CYCLE DE VIE — à lire avant d'y toucher (ticket #209, chantier #207)
 # ================================================================================================
-# Le cycle de vie d'un ticket (À faire / En cours / En revue / Terminé / Abandonné / Doublon) est
-# porté par des LABELS SCOPÉS « workflow::* », et non plus par le champ Status natif de GitLab :
-# les lifecycles custom sont une fonctionnalité Premium et l'essai Ultimate du groupe s'est terminé
-# le 2026-08-02 (voir docs/10-workflow-git.md §3). Deux vocabulaires coexistent donc, et la règle
-# est simple :
+# CE CONTRAT VAUT POUR LES DEUX BACKENDS : il décrit le VOCABULAIRE, que la bascule de #364 n'a pas
+# touché — c'est même ce qui a permis de basculer sans qu'aucune des 8 commandes `.claude/` change
+# d'une ligne. Ce qu'il décrit de spécifique aux LABELS (le suffixe stocké, l'exclusion mutuelle)
+# ne concerne plus que `MAESTRO_CYCLE=labels`, et c'est signalé sur place.
+#
+# Le cycle de vie d'un ticket (À faire / En cours / En revue / Terminé / Abandonné / Doublon) a été
+# porté de #207 à #364 par des LABELS SCOPÉS « workflow::* », faute de mieux : GitLab Free avait
+# perdu le champ Status natif à la fin de l'essai Ultimate, le 2026-08-02 (voir
+# docs/10-workflow-git.md §3). Deux vocabulaires coexistent donc, et la règle est simple :
 #
 #   • SLUG      — « a-faire », « en-cours », « en-revue », « termine », « abandonne », « doublon ».
-#                 C'est le STOCKAGE : le suffixe du label côté GitLab, ASCII par nécessité (un nom
+#                 C'est le STOCKAGE EN MODE `labels` : le suffixe du label, ASCII par nécessité (un nom
 #                 accentué devrait être ré-encodé dans chaque chemin `glab api` et à la création
 #                 des listes de board — piège d'encodage connu sous Git Bash/Windows).
 #   • LIBELLÉ   — « À faire », « En cours », « En revue », « Terminé », « Abandonné », « Doublon ».
@@ -144,11 +157,12 @@
 # quatre scripts pour ne gagner qu'un `sed` de moins ici. Vérifié à la bascule : queue.sh a
 # recommencé à compter des `a_faire` non nuls sans qu'une ligne y soit touchée.
 #
-# ⚠ L'EXCLUSION MUTUELLE EST À NOTRE CHARGE. Elle est Premium elle aussi : sur le plan Free, le
-# « :: » n'est que cosmétique et rien n'empêche un ticket de porter deux labels workflow::. Toute
-# pose doit donc AJOUTER la cible et RETIRER les cinq autres dans le MÊME appel (gl_set_workflow,
-# gl_begin) — jamais un ajout seul. La détection de dérive (0 ou ≥ 2 labels) est le rôle de
-# doctor.sh (lot 3 de #207).
+# ⚠ L'EXCLUSION MUTUELLE EST À NOTRE CHARGE — EN MODE `labels` SEULEMENT, et c'est tout le gain de
+# la bascule. Le « :: » n'est que cosmétique et rien n'empêche un ticket de porter deux labels
+# workflow:: ; toute pose doit donc AJOUTER la cible et RETIRER les cinq autres dans le MÊME appel
+# (gl_set_workflow, gl_begin) — jamais un ajout seul. Un CHAMP À VALEUR UNIQUE rend cette classe de
+# bug impossible par construction : sous le défaut `status`, la dérive « 0 ou ≥ 2 » que traquait
+# doctor.sh (lot 3 de #207) se réduit à « 0 », c'est-à-dire « hors projet ou Status vide » (#363).
 #
 # Comme pour les anciens GID de statut, aucun ID de label n'est codé en dur : gl_workflow_gids
 # les re-dérive par NOM à chaque appel, donc le workflow survit à une recréation des labels.
@@ -233,14 +247,14 @@ GL_PROJET_TITRE="${MAESTRO_PROJECT_TITRE:-Maestro}"
 # --- Commutateur de cycle de vie ------------------------------------------------------------------
 # Voir l'en-tête du fichier. Deux fonctions, et une seule est appelée dans les corps de verbe.
 
-# gl_cycle -> imprime le backend de cycle de vie actif (« labels » | « status »), code 1 sur une
-# valeur inconnue.
+# gl_cycle -> imprime le backend de cycle de vie actif (« status » | « labels »), code 1 sur une
+# valeur inconnue. DÉFAUT « status » depuis la bascule (#364) — voir l'en-tête du fichier.
 gl_cycle() {
-  local c="${MAESTRO_CYCLE:-labels}"
+  local c="${MAESTRO_CYCLE:-status}"
   case "$c" in
     labels|status) printf '%s\n' "$c" ;;
     *)
-      echo "MAESTRO_CYCLE=« $c » inconnu — attendu : labels | status (défaut labels)." >&2
+      echo "MAESTRO_CYCLE=« $c » inconnu — attendu : status | labels (défaut status)." >&2
       return 1 ;;
   esac
 }
@@ -2958,8 +2972,8 @@ gh_liberer_ticket() {
 #
 # La sortie est celle du backend labels, AU CARACTÈRE PRÈS : mêmes libellés, mêmes colonnes, mêmes
 # messages de succès, mêmes codes de retour. C'est ce contrat qui permet à `/ticket-start`,
-# `close-guard`, `run.sh` et `status.sh` de ne rien changer — cf. l'en-tête du fichier pour le
-# périmètre (l'unité) et pour ce qui reste sur les labels jusqu'à #362.
+# `close-guard`, `run.sh` et `status.sh` de ne rien changer — c'est aussi ce qui a rendu la bascule
+# du défaut (#364) invisible à leurs appelants. Périmètre exact des sept verbes : en-tête du fichier.
 #
 # UNE SEULE LECTURE porte tout le backend : `st_contexte`. Elle rend des lignes CLÉ<TAB>… plutôt
 # qu'un JSON à re-parser à chaque usage, et c'est ce qui évite d'avoir une requête par verbe.
@@ -3147,8 +3161,11 @@ st_issue_owner() {
 # d'écrire quoi que ce soit laisse le ticket exactement dans l'état où on l'a trouvé.
 #
 # Aucun label n'est touché ici — pas même pour retirer le `workflow::a-faire` que le ticket porte
-# encore. Le retrait des six est #365, et le faire à la volée ferait de ce lot autre chose qu'un lot
-# additif : sans MAESTRO_CYCLE, rien ne doit bouger ; avec, on n'écrit QUE le champ.
+# encore. Le retrait des six est #365 ; en attendant, ON N'ÉCRIT QUE LE CHAMP. Depuis la bascule
+# (#364) cela a une conséquence à connaître : les labels `workflow::` du dépôt sont FIGÉS à l'état
+# où la bascule les a laissés et personne ne les met plus à jour. Les lire, c'est lire une photo
+# périmée — et c'est précisément pourquoi rebasculer sur `labels` demanderait une resynchronisation
+# en sens inverse, jamais un simple `export`.
 st_begin() {
   local iid="$1" user="${2:-}" prio start today delay due out
   if [ -z "$iid" ]; then echo "usage: st_begin <iid> [username]" >&2; return 2; fi
@@ -4359,17 +4376,20 @@ gh_job_trace() {
 # /ticket-create, dans la foulée de la création) et `gl_project_backfill` pour les ANCIENS.
 #
 # ⚠ CE BLOC N'EST PAS DERRIÈRE `MAESTRO_CYCLE`, ET C'EST LE POINT LE PLUS FACILE À DÉFAIRE. Peupler
-# le projet n'est pas décider du cycle de vie : c'est poser une DONNÉE DE PLUS, que rien ne lit tant
-# que le commutateur vaut « labels ». L'y mettre inverserait l'ordre du chantier — le projet doit
-# être peuplé AVANT la bascule (#364), sans quoi celle-ci trouverait un projet vide et autant de
-# tickets sans état. Un `gl_vers_status` en tête de l'un de ces deux verbes serait donc une
-# régression, pas un oubli.
+# le projet n'est pas décider du cycle de vie : c'est poser une DONNÉE DE PLUS. L'y mettre aurait
+# inversé l'ordre du chantier — le projet devait être peuplé AVANT la bascule (#364), sans quoi
+# celle-ci aurait trouvé un projet vide et autant de tickets sans état. Un `gl_vers_status` en tête
+# de l'un de ces deux verbes serait donc une régression, pas un oubli. `gl_project_add` reste
+# nécessaire APRÈS la bascule, et pour une raison plus forte qu'avant : un ticket créé hors du
+# projet n'a désormais aucun état du tout.
 #
-# ⚠ L'AUTORITÉ, À CE STADE, EST LE LABEL — ET ELLE S'INVERSERA. Le backfill dérive le Status du label
-# `workflow::*` courant et de rien d'autre. Après la bascule (#364) c'est le Status qui fera foi, et
-# un backfill « réalignant » rejoué ce jour-là écraserait un état vivant avec un label périmé. D'où
-# un défaut qui ne REMPLIT que ce qui est vide et ne réécrit JAMAIS un état déjà posé : l'alignement
-# d'un état divergent est un geste explicite (`--realigner`), jamais un effet de bord du peuplement.
+# ⚠ L'AUTORITÉ S'EST INVERSÉE À LA BASCULE (#364), ET `--realigner` A CHANGÉ DE SENS AVEC ELLE. Le
+# backfill dérive le Status du label `workflow::*` courant et de rien d'autre. C'était la bonne
+# source tant que le label faisait foi ; depuis la bascule, les labels sont FIGÉS à l'état où elle
+# les a laissés, si bien que `--realigner` écraserait un Status vivant avec une photo périmée. Il
+# n'a plus qu'un seul usage légitime — préparer un RETOUR sur `labels`, et dans l'autre sens (voir
+# l'en-tête du fichier). Le défaut, lui, n'a pas bougé et reste sans danger : il ne REMPLIT que ce
+# qui est vide et ne réécrit JAMAIS un état déjà posé.
 #
 # AUCUN ID EN DUR, JAMAIS — même règle que pour les labels (`gl_workflow_gids` dérive les six GID par
 # nom) : l'ID du projet, celui du champ et ceux de ses six options se dérivent PAR NOM en une lecture
@@ -4963,12 +4983,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  require | current-user | workitem-gid <iid>" >&2
       echo "  issue-raw <iid>                  (vue TEXTE canonique du ticket — la primitive dont six verbes descendent)" >&2
       echo "  mr-brief <branche>               (etat/numéro/sha de la MR ou PR de la branche)" >&2
-      echo "  Cycle de vie — backend MAESTRO_CYCLE=labels|status (défaut labels ; cf. contrat en tête de lib.sh) :" >&2
-      echo "    cycle                         (le backend actif : « labels » = les six workflow::*," >&2
-      echo "                                   « status » = le champ Status de Projects v2, projet \$MAESTRO_PROJECT_TITRE" >&2
-      echo "                                   — défaut « $GL_PROJET_TITRE ». Unitaire seulement : les lectures" >&2
-      echo "                                   d'ensemble restent sur les labels jusqu'à #362)" >&2
-      echo "    set-workflow <iid> <valeur>   (pose la valeur ET retire les cinq autres, en un appel)" >&2
+      echo "  Cycle de vie — backend MAESTRO_CYCLE=status|labels (défaut status ; cf. contrat en tête de lib.sh) :" >&2
+      echo "    cycle                         (le backend actif : « status » = le champ Status de Projects v2," >&2
+      echo "                                   projet \$MAESTRO_PROJECT_TITRE — défaut « $GL_PROJET_TITRE » ;" >&2
+      echo "                                   « labels » = les six workflow::*, le retour arrière d'avant #364)" >&2
+      echo "    set-workflow <iid> <valeur>   (pose la valeur ; en mode labels, retire les cinq autres dans le même appel)" >&2
       echo "                                  valeur = « À faire »… ou le slug « a-faire »… ; sortie toujours en libellé" >&2
       echo "    workflow-slug <valeur>        (normalise en slug)   workflow-label <slug> (rend le libellé)" >&2
       echo "    workflow-gids                 (les six labels du scope : slug/GID, dérivés par nom)" >&2
