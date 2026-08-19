@@ -231,13 +231,17 @@ sortie(code=1)
 def noeud_ticket(iid: str, titre: str, statut: str, labels: list[str], assignes: list[str]) -> dict:
     """Un ticket tel que le rend la requête backlog (ordre des clés : number, title, labels…).
 
-    `statut` reste un LIBELLÉ côté test (« En revue ») : depuis #209 il voyage dans les labels,
-    sous la forme `workflow::<slug>`, aux côtés des `type::`/`agent::`/`prio::`.
+    ⚠ `statut` n'est PAS porté ici, et c'est le sujet du chantier #358 : depuis #365 l'état vit
+    dans le champ Status d'un ITEM DE PROJET, pas sur l'issue. Le paramètre est conservé — les
+    tests décrivent leurs tickets avec leur état, c'est lisible — mais il part alimenter la CARTE
+    (`regles_carte`), que `st_backlog_table` recouvre sur cette réponse-ci. Le laisser fabriquer un
+    label rendrait des tests verts sur une donnée que plus personne ne lit.
     """
+    del statut  # → regles_carte : l'état ne vit pas sur l'issue
     return {
         "number": int(iid),
         "title": titre,
-        "labels": {"nodes": labels_workflow(statut) + [{"name": label} for label in labels]},
+        "labels": {"nodes": [{"name": label} for label in labels]},
         "assignees": {"nodes": [{"login": u} for u in assignes]},
     }
 
@@ -255,51 +259,116 @@ def colonnes(sortie: str) -> list[list[str]]:
     ]
 
 
-# Cycle de vie : libellé (surface) -> slug (stockage). Depuis #209 le cycle de vie est porté par un
-# LABEL `workflow::<slug>` et non plus par le champ Status natif — les doubles de test doivent donc
-# répondre un widget Labels. Les tests, eux, continuent d'écrire et d'attendre le LIBELLÉ : c'est
-# exactement le contrat de surface documenté en tête de scripts/gitlab/lib.sh.
-SLUG_WORKFLOW = {
-    "À faire": "a-faire",
-    "En cours": "en-cours",
-    "En revue": "en-revue",
-    "Terminé": "termine",
-    "Abandonné": "abandonne",
-    "Doublon": "doublon",
-}
+# ================================================================================================
+# LE CYCLE DE VIE VIT DANS LE CHAMP STATUS D'UN PROJET (#365, chantier #358)
+# ================================================================================================
+# Les doubles ci-dessous ont porté trois supports successifs : le champ Status natif de GitLab, les
+# six labels `workflow::*` (#209), puis, depuis #365, le champ **Status** d'un projet Projects v2.
+# Les tests, eux, n'ont jamais bougé : ils écrivent et attendent le LIBELLÉ (« En revue »), qui est
+# le contrat de surface documenté en tête de scripts/gitlab/lib.sh — c'est précisément ce que ce
+# contrat sert à démontrer.
+#
+# ⚠ CE QUI CHANGE POUR UN DOUBLE, ET QU'IL FAUT SAVOIR AVANT D'EN AJOUTER UN. Le backend Status
+# passe ses lectures par `gh api graphql --jq`, où le PROGRAMME JQ fait tout l'aplatissement — et le
+# `gh` factice ne l'exécute pas. Les règles rendent donc le résultat DÉJÀ APLATI, par leur clé
+# `brut` : des lignes `clé<TAB>…` copiées des en-têtes de `st_jq_contexte` et `st_jq_items`. Un
+# double qui rendrait du JSON ici passerait le filtre en silence et le verbe lirait zéro ligne,
+# c'est-à-dire « ticket sans état » — un feu vert sur une question jamais posée.
+#
+# Deux formes de lecture, deux jeux de règles :
+#   • L'UNITÉ (`issue-owner`, `set-workflow`, `begin`, `liberer-ticket`) passe par `st_contexte` :
+#     le ticket, ses assignés, ses items de projet, et les projets du compte avec leurs options.
+#   • L'ENSEMBLE (`backlog-table`, `milestone-issues`, `workflow-derives`) passe par la CARTE :
+#     un appel pour résoudre le projet par son titre, puis une page d'items.
+#
+# Les identifiants sont inventés ici et n'ont aucune importance : lib.sh les résout PAR NOM à chaque
+# appel et n'en code aucun en dur (contrat en tête du fichier). C'est même ce qu'ils vérifient.
+
+#: Titre du projet que lib.sh cherche (défaut de `GL_PROJET_TITRE`, cf. `MAESTRO_PROJECT_TITRE`).
+PROJET = "Maestro"
+ID_PROJET = "PVT_projet"
+ID_CHAMP = "PVTSSF_status"
+
+#: Les six états, dans l'ordre du flux. `st_cible` cherche l'option par son LIBELLÉ.
+LIBELLES_WORKFLOW = ("À faire", "En cours", "En revue", "Terminé", "Abandonné", "Doublon")
 
 
-def labels_workflow(statut: str) -> list[dict]:
-    """Nœuds de labels d'un ticket portant le cycle de vie `statut` (vide si `statut` est vide)."""
-    if not statut:
-        return []
-    return [{"name": f"workflow::{SLUG_WORKFLOW.get(statut, statut)}"}]
+def lignes_projet() -> list[str]:
+    """Le projet et ses six options, tels que `st_jq_contexte` les aplatit."""
+    return [f"projet\t{PROJET}\t{ID_PROJET}\t{ID_CHAMP}"] + [
+        f"option\t{PROJET}\t{ID_PROJET}_opt{i}\t{libelle}"
+        for i, libelle in enumerate(LIBELLES_WORKFLOW)
+    ]
 
 
-def reponse_owner(statut: str, assignes: list[str]) -> dict:
-    """Réponse de la requête cycle de vie + assignés d'un seul ticket (gl_issue_owner)."""
-    return {
-        "data": {
-            "repository": {
-                "issue": {
-                    "labels": {"nodes": labels_workflow(statut)},
-                    "assignees": {"nodes": [{"login": u} for u in assignes]},
-                }
-            }
-        }
-    }
+def reponse_owner(
+    statut: str, assignes: list[str], iid: str = "1", dans_projet: bool = True
+) -> str:
+    """Le contexte d'UN ticket, aplati (`st_contexte`) : état, assignés, projet et options.
+
+    `dans_projet=False` rend un ticket ABSENT du projet — donc sans ligne `item`. C'est l'état d'un
+    ticket créé depuis l'interface web : une lecture le rend « sans état », une écriture le refuse.
+    """
+    lignes = [f"ticket\t{iid}"]
+    lignes += [f"assigne\t{u}" for u in assignes]
+    if dans_projet:
+        lignes.append(f"item\t{PROJET}\t{ID_PROJET}\tPVTI_{iid}\t{statut}")
+    lignes += lignes_projet()
+    return "\n".join(lignes) + "\n"
 
 
-def regle_owner(statut: str, assignes: list[str]) -> dict:
-    """Règle de réponse à la requête cycle de vie + assignés d'UN ticket.
+def regle_owner(
+    statut: str, assignes: list[str], iid: str = "1", dans_projet: bool = True
+) -> dict:
+    """Règle de réponse au contexte d'UN ticket (st_contexte).
 
-    Le fragment `issue(number:` est indispensable : la requête backlog porte elle aussi
-    `assignees(first:` et capterait la règle si elle était moins spécifique.
+    Le fragment `projectItems(first:` est ce qui distingue cette requête de toutes les autres : la
+    requête backlog porte elle aussi `issue(number:` et `assignees(first:`, et capterait la règle
+    si elle était moins spécifique.
     """
     return {
-        "contient": ["issue(number:", "assignees(first:"],
-        "reponse": reponse_owner(statut, assignes),
+        "contient": ["issue(number:", "projectItems(first:"],
+        "brut": reponse_owner(statut, assignes, iid, dans_projet),
     }
+
+
+def regle_pose_status() -> dict:
+    """Règle de réponse à la mutation qui pose le champ Status (`st_set_workflow`).
+
+    Sans elle, toute écriture d'état échoue dans le double : le `gh` factice ne répond qu'aux règles
+    qu'on lui donne, et une mutation sans règle sort en code 1. `st_set_workflow` ne lit qu'une
+    chose dans la réponse — la présence de `projectV2Item` — et c'est tout ce qu'on rend.
+    """
+    return {
+        "contient": ["updateProjectV2ItemFieldValue"],
+        "reponse": {
+            "data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "PVTI_pose"}}}
+        },
+    }
+
+
+def regles_carte(statuts: dict[str, str]) -> list[dict]:
+    """Les DEUX règles de la carte d'ensemble : résolution du projet, puis sa page d'items.
+
+    `statuts` est « iid -> libellé ». Un ticket ABSENT de ce dictionnaire est hors du projet : les
+    tables le rendent alors avec un statut « - », ce qui est exactement le contrat (cf. l'en-tête de
+    `st_backlog_table`). Un libellé VIDE est un item présent au Status non posé — même « - » en
+    sortie, autre cause, et c'est #363 qui les distingue.
+
+    La ligne `page` est toujours émise, y compris sur un projet vide : sans elle, la garde « réponse
+    vide » de `gh_graphql_read` déclencherait trois tentatives puis une erreur.
+    """
+    items = "".join(f"item\t{iid}\t{statut}\n" for iid, statut in statuts.items())
+    return [
+        {
+            "contient": ["projectsV2(first:100){nodes{ id title }}"],
+            "brut": f"projets\nprojet\t{PROJET}\t{ID_PROJET}\n",
+        },
+        {
+            "contient": ["items(first:100"],
+            "brut": f"page\tfalse\t\n{items}",
+        },
+    ]
 
 
 def corps_ticket(titre: str, labels: str, description: str) -> str:
@@ -514,14 +583,14 @@ def test_issue_owner_rend_un_champ_vide_pour_un_ticket_libre(depot: Depot) -> No
 
 
 def test_issue_owner_refuse_un_ticket_introuvable(depot: Depot) -> None:
-    """Sans ce garde-fou, deux champs vides passeraient pour « statut non posé, ticket libre »."""
+    """Sans ce garde-fou, deux champs vides passeraient pour « statut non posé, ticket libre ».
+
+    Les deux causes sont NOMMÉES par le programme jq de `st_contexte` (« erreur<TAB>ticket » /
+    « erreur<TAB>depot ») et non déduites d'une réponse vide — c'est ce qui les distingue d'un
+    ticket réellement sans état, qui est un résultat légitime.
+    """
     depot.pose_etat(
-        graphql=[
-            {
-                "contient": ["assignees(first:"],
-                "reponse": {"data": {"repository": {"issue": None}}},
-            }
-        ]
+        graphql=[{"contient": ["projectItems(first:"], "brut": "erreur\tticket\n"}]
     )
     acheve = depot.lib("issue-owner", "999")
     assert acheve.returncode == 1
@@ -530,11 +599,9 @@ def test_issue_owner_refuse_un_ticket_introuvable(depot: Depot) -> None:
 
 
 def test_issue_owner_refuse_un_projet_illisible(depot: Depot) -> None:
-    """« repository:null » (dépôt inconnu ou droits insuffisants) sort en code 0 côté GraphQL."""
+    """Dépôt inconnu ou droits insuffisants : GraphQL sort en code 0 avec un `repository` nul."""
     depot.pose_etat(
-        graphql=[
-            {"contient": ["assignees(first:"], "reponse": {"data": {"repository": None}}}
-        ]
+        graphql=[{"contient": ["projectItems(first:"], "brut": "erreur\tdepot\n"}]
     )
     acheve = depot.lib("issue-owner", "159")
     assert acheve.returncode == 1
@@ -697,7 +764,13 @@ Rien à voir avec la checklist.
 
 
 def backlog_des_lots(statuts: dict[str, str]) -> list[dict]:
-    return [
+    """Le backlog des lots d'un parent : QUI EXISTE côté issues, QUEL ÉTAT côté carte.
+
+    Les deux sources sont fabriquées à partir du même dictionnaire, ce qui garde les tests lisibles
+    (« ce lot est Terminé ») tout en respectant la séparation que le backend impose : l'issue porte
+    ses labels de catégorisation, l'item de projet porte l'état.
+    """
+    return regles_carte(statuts) + [
         {
             "contient": ["states: [OPEN, CLOSED]"],
             "reponse": reponse_backlog(
@@ -1721,8 +1794,12 @@ def test_les_helpers_de_creation_sont_annonces_par_l_usage(depot: Depot) -> None
 
 
 def _regle_backlog(statuts: dict[str, str]) -> list[dict]:
-    """Règle de réponse au backlog OUVERT — « iid : cycle de vie » pour chaque ticket."""
-    return [
+    """Règles de réponse au backlog OUVERT — « iid : cycle de vie » pour chaque ticket.
+
+    Deux sources depuis #365, comme `backlog_des_lots` : les issues disent QUI EXISTE, la carte du
+    projet dit QUEL ÉTAT.
+    """
+    return regles_carte(statuts) + [
         {
             "contient": ["states: [OPEN]"],
             "reponse": reponse_backlog(
@@ -2015,42 +2092,11 @@ def test_le_verbe_est_annonce_par_l_usage(depot: Depot) -> None:
 #      en boucle, sur un quota partagé. C'est la seule ligne qui sépare un geste d'un emballement.
 
 
-def _labels_workflow_gids() -> dict:
-    """Règle de réponse à « labels du dépôt + labels du ticket », en UNE lecture.
-
-    C'est la brique qui permet de retirer les cinq autres : `PATCH /issues/:n` remplace l'ensemble
-    des labels, donc il faut savoir ce que le ticket porte pour le réécrire sans rien perdre.
-    """
-    return {
-        "contient": ["labels(first:100"],
-        "reponse": {
-            "data": {
-                "repository": {
-                    "labels": {
-                        "nodes": [
-                            {"name": f"workflow::{slug}"}
-                            for slug in (
-                                "a-faire", "en-cours", "en-revue",
-                                "termine", "abandonne", "doublon",
-                            )
-                        ]
-                    },
-                    "issue": {
-                        "number": 325,
-                        "labels": {
-                            "nodes": [{"name": "type::infra"}, {"name": "workflow::en-cours"}]
-                        },
-                    }
-                }
-            }
-        },
-    }
-
-
 def _regles_reprise(statuts: dict[str, str]) -> list[dict]:
-    """Tout ce qu'il faut pour qu'une reprise aboutisse : le backlog et les labels à réécrire."""
+    """Tout ce qu'il faut pour qu'une reprise aboutisse : le backlog, le contexte et la mutation."""
     return [
-        _labels_workflow_gids(),
+        regle_pose_status(),
+        regle_owner("En cours", [MOI]),
         *_regle_backlog(statuts),
     ]
 
@@ -2058,11 +2104,26 @@ def _regles_reprise(statuts: dict[str, str]) -> list[dict]:
 def _mutations(depot: Depot) -> list[str]:
     """Les écritures reçues — ce qui distingue « repris » de « refusé ».
 
-    Un `PATCH /issues/:n` et non plus une mutation GraphQL : côté GitHub, poser les labels et
-    vider les assignés est LE MÊME appel, ce qui rend la conjonction structurelle au lieu d'être
-    une précaution (cf. l'en-tête de gh_poser_labels).
+    DEUX appels depuis #365, et c'est la contrepartie du champ : l'état vit sur l'ITEM DE PROJET
+    (mutation GraphQL) et l'assignation sur l'ISSUE (`PATCH /issues/:n`). Du temps des labels les
+    deux tenaient dans le même PATCH — la conjonction était structurelle ; elle est désormais tenue
+    par l'ORDRE d'écriture (cf. l'en-tête de st_liberer_ticket). On collecte donc les deux formes.
     """
-    return [ligne for ligne in depot.appels() if "\t-X\tPATCH\t" in ligne]
+    return [
+        ligne for ligne in depot.appels()
+        if "\t-X\tPATCH\t" in ligne or "updateProjectV2ItemFieldValue" in ligne
+    ]
+
+
+def _reprises(depot: Depot) -> list[str]:
+    """Le NOMBRE de reprises abouties, là où `_mutations` rend le nombre d'écritures.
+
+    Les deux ont divergé à #365 : une reprise coûte désormais deux appels (l'état, puis
+    l'assignation). Compter les écritures pour compter les reprises ferait échouer un test sur un
+    détail de plomberie — et, pire, le ferait passer si l'une des deux disparaissait. On compte donc
+    la LIBÉRATION, qui est le geste terminal : une par reprise, aucune sur un refus.
+    """
+    return [ligne for ligne in depot.appels() if "\t-X\tPATCH\t" in ligne and "/issues/" in ligne]
 
 
 def _valeurs(ecriture: str, prefixe: str) -> list[str]:
@@ -2150,20 +2211,22 @@ def test_force_passe_outre_le_verdict_et_le_dit(depot: Depot) -> None:
 
     acheve = depot.lib("reprendre-en-cours", "--force", "316")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    assert len(_mutations(depot)) == 1
+    assert len(_reprises(depot)) == 1
     assert "--force" in acheve.stdout, "lever le garde-fou se dit, sinon la sortie ment"
 
 
 # --- Le geste lui-même : « À faire » ET libre, en une seule mutation ----------------------------
 
 
-def test_reprendre_remet_a_faire_et_libere_dans_la_meme_mutation(depot: Depot) -> None:
+def test_reprendre_remet_a_faire_et_libere_ensemble(depot: Depot) -> None:
     """La conjonction. Poser le cycle de vie sans libérer laisserait le ticket écarté par l'autre
     moitié du filtre de `queue.sh`, et l'inverse par la première — il resterait invisible.
 
-    « En une seule mutation » n'est pas un raffinement : deux appels, c'est un intervalle pendant
-    lequel le ticket est « À faire » et encore assigné (ou l'inverse), et un run qui passe là
-    tombe sur un état que personne n'a voulu.
+    ⚠ CE N'EST PLUS « UNE SEULE MUTATION » DEPUIS #365, et le test le dit au lieu de le taire :
+    l'état vit sur l'ITEM DE PROJET, l'assignation sur l'ISSUE, donc les deux ne peuvent plus
+    voyager dans le même appel comme au temps des labels. Ce qui est épinglé ici est ce qui a pris
+    sa place : les DEUX écritures partent, et l'ÉTAT D'ABORD — il peut refuser (ticket hors projet),
+    et il vaut mieux refuser sans avoir touché à l'assignation.
     """
     _orphelin(depot, "316")
 
@@ -2171,14 +2234,14 @@ def test_reprendre_remet_a_faire_et_libere_dans_la_meme_mutation(depot: Depot) -
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
 
     mutations = _mutations(depot)
-    assert len(mutations) == 1, f"une seule écriture attendue : {mutations}"
-    ecriture = mutations[0]
-    assert "issues/316" in ecriture
-    assert "assignees[]" in ecriture, "libérer, c'est VIDER la liste des assignés"
-    assert _valeurs(ecriture, "assignees[]=") == [], "aucun assigné ne doit être réécrit"
-    labels = _valeurs(ecriture, "labels[]=")
-    assert [nom for nom in labels if nom.startswith("workflow::")] == ["workflow::a-faire"], (
-        "le cycle de vie repasse à workflow::a-faire, et les cinq autres partent avec"
+    assert len(mutations) == 2, f"deux écritures attendues (état puis assignation) : {mutations}"
+    etat, assignation = mutations
+    assert "updateProjectV2ItemFieldValue" in etat, "l'état s'écrit EN PREMIER"
+    assert "issues/316" in assignation
+    assert "assignees[]" in assignation, "libérer, c'est VIDER la liste des assignés"
+    assert _valeurs(assignation, "assignees[]=") == [], "aucun assigné ne doit être réécrit"
+    assert _valeurs(assignation, "labels[]=") == [], (
+        "l'assignation ne touche plus aux labels : le cycle de vie n'y vit plus (#365)"
     )
 
 
@@ -2279,11 +2342,11 @@ def test_le_plafond_arrete_un_ticket_qui_retombe_a_chaque_run(depot: Depot) -> N
     acheve = depot.lib("reprendre-en-cours", "316")
     assert acheve.returncode == 3, acheve.stdout + acheve.stderr
     assert "plafond" in acheve.stdout
-    assert len(_mutations(depot)) == 2, "la troisième reprise n'a rien écrit"
+    assert len(_reprises(depot)) == 2, "la troisième reprise n'a rien écrit"
 
     forcee = depot.lib("reprendre-en-cours", "--force", "316")
     assert forcee.returncode == 0, forcee.stdout + forcee.stderr
-    assert len(_mutations(depot)) == 3, "--force reste la porte de sortie, jamais silencieuse"
+    assert len(_reprises(depot)) == 3, "--force reste la porte de sortie, jamais silencieuse"
 
 
 def test_le_plafond_se_compte_par_ticket(depot: Depot) -> None:
@@ -2321,7 +2384,7 @@ def test_plusieurs_tickets_en_un_appel_et_un_refus_n_arrete_pas_les_autres(depot
     assert acheve.returncode == 3, "un refus se dit par le code de retour, même partiel"
     assert "#316 repris" in acheve.stdout
     assert "quelqu'un s'en occupe" in acheve.stdout
-    assert len(_mutations(depot)) == 1
+    assert len(_reprises(depot)) == 1
 
 
 def test_le_verbe_de_reprise_est_annonce_par_l_usage(depot: Depot) -> None:
@@ -2430,7 +2493,7 @@ def test_les_trois_modes_de_mort_produisent_un_orphelin_reprenable(
 
     reprise = depot.lib("reprendre-en-cours", "316")
     assert reprise.returncode == 0, reprise.stdout + reprise.stderr
-    assert len(_mutations(depot)) == 1
+    assert len(_reprises(depot)) == 1
     assert chemin.exists(), "aucun mode de mort ne justifie de retirer le worktree"
 
     if run is None:
@@ -2564,7 +2627,7 @@ def test_le_plafond_ne_se_contourne_pas_en_changeant_de_repertoire(depot: Depot)
     depuis_le_worktree = depot.lib("reprendre-en-cours", "316", cwd=chemin)
     assert depuis_le_worktree.returncode == 3, depuis_le_worktree.stdout
     assert "plafond" in depuis_le_worktree.stdout
-    assert len(_mutations(depot)) == 2, "la troisième reprise n'a rien écrit, d'où qu'elle vienne"
+    assert len(_reprises(depot)) == 2, "la troisième reprise n'a rien écrit, d'où qu'elle vienne"
 
 
 # --- La dérive doctor : le voir sans démarrer de ticket -------------------------------------------

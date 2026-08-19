@@ -104,32 +104,30 @@ lieu d'inventer.
    ```
    gh issue create \
      --title "<titre>" \
-     --label "type::<type>,agent::<rôle>,prio::<niveau>,workflow::a-faire" \
+     --label "type::<type>,agent::<rôle>,prio::<niveau>" \
      --milestone "<milestone-de-phase>" \
      --body-file <fichier-de-corps>
    ```
-   Le `workflow::a-faire` **n'est plus l'état du ticket** depuis la bascule de #364 (docs/10 §3.8) :
-   le cycle de vie vit dans le champ Status, que l'étape suivante pose. On continue de le poser tant
-   que les labels existent (leur retrait est #365), pour que `MAESTRO_CYCLE=labels` reste un retour
-   arrière praticable — mais c'est désormais la **donnée de secours**, pas l'état. N'assigne pas et
-   ne crée pas de branche.
+   **Aucun label d'état ici** : les six `workflow::*` ont été retirés par #365 (docs/10 §3), le
+   cycle de vie vivant désormais dans le champ Status que l'étape suivante pose. Le ticket sort donc
+   de cet appel **sans état** — c'est normal, et c'est pourquoi l'étape suivante n'est pas
+   optionnelle. N'assigne pas et ne crée pas de branche.
 
    Puis, **dans la foulée et sans attendre**, fais du ticket un **item du projet** :
    ```
    bash scripts/gitlab/lib.sh project-add <iid>
    ```
-   **C'est cet appel qui donne son état au ticket** (chantier #358, docs/10 §3.8). Le champ
-   **Status** de GitHub Projects v2 vit sur l'**item de projet** et non sur l'issue : un ticket
-   absent du projet n'a donc **aucun** état — invisible de `queue.sh`, rendu « - » par `/backlog`,
-   et rien à l'écran ne le distingue d'un ticket hors du filtre. La commande pose « À faire » par
-   défaut ; elle est idempotente, donc la rejouer après un échec ne duplique rien.
+   **C'est cet appel qui donne son état au ticket, et c'est le seul** (chantier #358, docs/10 §3).
+   Le champ **Status** de GitHub Projects v2 vit sur l'**item de projet** et non sur l'issue : un
+   ticket absent du projet n'a donc **aucun** état — invisible de `queue.sh`, rendu « - » par
+   `/backlog`, et rien à l'écran ne le distingue d'un ticket hors du filtre. La commande pose
+   « À faire » par défaut ; elle est idempotente, donc la rejouer après un échec ne duplique rien.
 
-   Deux points à ne pas confondre. Cet appel **ne dépend pas** de `MAESTRO_CYCLE` : il peuple le
-   projet, il ne choisit pas le backend — c'est ce qui lui a permis de tourner avant la bascule
-   comme après. Et son échec **ne défait pas la création**, mais il ne se range plus au rang des
-   détails : le ticket existe avec ses labels et **sans état**. Rejoue `project-add <iid>` tout de
-   suite ; s'il échoue encore, dis-le franchement dans le résumé de l'étape 10 — un ticket sans
-   état ne remonte dans aucune vue et personne ne le retrouvera.
+   Son échec **ne défait pas la création**, mais il ne se range pas au rang des détails : le ticket
+   existe avec ses labels et **sans état**, et depuis le retrait des labels (#365) plus rien ne
+   rattrape ça — il n'y a pas de donnée de secours. Rejoue `project-add <iid>` tout de suite ; s'il
+   échoue encore, dis-le franchement dans le résumé de l'étape 10 — un ticket sans état ne remonte
+   dans aucune vue et personne ne le retrouvera.
 
 10. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels et son milestone —
    pour un découpage : le parent et chaque sous-ticket avec son rang dans la checklist. Mentionne

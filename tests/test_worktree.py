@@ -1157,7 +1157,9 @@ def test_start_branch_ne_purge_plus_les_branches_mergees(depot: Depot) -> None:
 #
 # `Depot.impose_pose` remplace `lib.sh reconcile-workflow` par un mouchard : ce qui est vérifié ici,
 # c'est QUAND `gc` demande la pose (et pour quel iid) — la règle « ne jamais écraser Abandonné /
-# Doublon », elle, est du ressort de `reconcile-workflow` et vit dans tests/test_cycle_de_vie.py.
+# Doublon », elle, est du ressort de `reconcile-workflow`. Ses tests vivaient dans
+# tests/test_cycle_de_vie.py, retiré par #365 avec l'invariant d'exclusion mutuelle des labels qui
+# en était le sujet ; leur pendant sur le champ Status est le lot #366.
 
 
 def test_gc_pose_le_cycle_de_vie_du_ticket_solde(depot: Depot) -> None:

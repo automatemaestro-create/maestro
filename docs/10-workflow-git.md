@@ -24,13 +24,13 @@ Objectif : que chaque ticket soit traité de façon prévisible — même branch
 > et les 1 146 lignes de runner — a été **retiré** par #344 : ce qui en reste ici est de
 > l'histoire, jamais un geste à faire.
 
-> ## Le cycle de vie est porté par le **champ Status** depuis le 2026-08-19
+> ## Le cycle de vie est porté par le **champ Status**, et par lui seul
 >
 > L'avancement d'un ticket (À faire / En cours / En revue / Terminé / Abandonné / Doublon) vit dans
-> le champ **Status** du projet GitHub Projects v2 — bascule #364, lot 6 du chantier #358, détail en
-> **§3.8**. `MAESTRO_CYCLE` vaut **`status`** sans qu'on la pose ; `labels` est le retour arrière
-> (§3.8), et les six labels **`workflow::*`** décrits au §3.1 ne sont plus mis à jour par personne
-> en attendant leur retrait (#365). Un état lu dans un label est une photo périmée.
+> le champ **Status** du projet GitHub Projects v2 — bascule #364 le 2026-08-19, détail en **§3.8**.
+> Les six labels **`workflow::*`** qui l'ont porté de #207 à #364, et le commutateur
+> `MAESTRO_CYCLE` qui choisissait entre les deux, ont été **retirés par #365** : il n'y a plus rien
+> à poser, ni de retour arrière à une variable près.
 >
 > Ce que ça change au quotidien : rien dans le vocabulaire (mêmes libellés, mêmes commandes), et une
 > panne nouvelle à connaître — le Status vit sur l'**item de projet**, donc **un ticket hors du
@@ -116,90 +116,74 @@ merge / revert / `fixup!` / `squash!`. Bypass ponctuel : `git commit --no-verify
 
 ## 3. Cycle de vie (champ Status) & labels de catégorisation
 
-### 3.1 Les labels `workflow::` — le cycle de vie d'avant la bascule
+### 3.1 Le vocabulaire du cycle de vie — six valeurs, deux formes
 
-> ⚠ **Ce paragraphe décrit le backend `labels`, qui n'est plus le défaut depuis le 2026-08-19**
-> (#364, §3.8). Le cycle de vie est désormais porté par le **champ Status** de Projects v2 ; les six
-> labels existent encore et **plus personne ne les met à jour** — leur retrait est #365. Ce qui suit
-> reste vrai de `MAESTRO_CYCLE=labels`, et le vocabulaire (les deux tableaux ci-dessous, slug ↔
-> libellé) vaut pour les **deux** backends : c'est ce qui a permis de basculer sans toucher une
-> ligne des commandes `/ticket-*`. Le fond de cette section sera refondu par #366.
+Six valeurs, dans l'ordre du flux, et c'est **le seul vocabulaire** du cycle de vie : il n'a pas
+bougé en changeant trois fois de support (champ natif GitLab → labels `workflow::*` → champ Status
+de Projects v2), et c'est ce qui a permis à chaque bascule de ne toucher **aucune** commande
+`/ticket-*`.
 
-L'avancement d'un ticket est porté par une famille de **labels scopés `workflow::*`**. Six valeurs,
-dans l'ordre du flux :
-
-| Libellé | Label GitLab | Rôle |
+| Libellé | Slug | Posé par |
 |---|---|---|
-| **À faire** | `workflow::a-faire` | posé à la création par [`/ticket-create`](../.claude/commands/ticket-create.md) |
-| **En cours** | `workflow::en-cours` | posé par [`/ticket-start`](../.claude/commands/ticket-start.md) |
-| **En revue** | `workflow::en-revue` | posé par [`/ticket-finish`](../.claude/commands/ticket-finish.md) (MR ouverte) |
-| **Terminé** | `workflow::termine` | posé par [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) après le merge |
-| **Abandonné** | `workflow::abandonne` | posé par [`/ticket-abandon`](../.claude/commands/ticket-abandon.md) (won't-do) |
-| **Doublon** | `workflow::doublon` | posé par [`/ticket-abandon <iid> doublon`](../.claude/commands/ticket-abandon.md) |
+| **À faire** | `a-faire` | [`/ticket-create`](../.claude/commands/ticket-create.md), via `project-add` (§3.7) |
+| **En cours** | `en-cours` | [`/ticket-start`](../.claude/commands/ticket-start.md) |
+| **En revue** | `en-revue` | [`/ticket-finish`](../.claude/commands/ticket-finish.md) (PR ouverte) |
+| **Terminé** | `termine` | [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) et le ramassage des worktrees (§9.2) |
+| **Abandonné** | `abandonne` | [`/ticket-abandon`](../.claude/commands/ticket-abandon.md) (won't-do) |
+| **Doublon** | `doublon` | [`/ticket-abandon <iid> doublon`](../.claude/commands/ticket-abandon.md) |
 
-**Deux vocabulaires, une règle.** Le **slug** (`en-cours`) est le *stockage* — le suffixe du label
-côté GitLab, sans accent par nécessité : un nom accentué devrait être ré-encodé dans chaque chemin
-`glab api` et à la création des listes de board (piège d'encodage connu sous Git Bash/Windows). Le
-**libellé** (« En cours ») est la *surface* — le vocabulaire de la doc et des commandes. En
-**sortie**, `lib.sh` rend toujours le libellé (le slug ne sort jamais du helper) ; en **entrée**,
+**Deux formes, une règle.** Le **libellé** (« En cours ») est la *surface* : le vocabulaire de la
+doc, des commandes, et **exactement** le nom des six options du champ Status. Le **slug**
+(`en-cours`) est une forme ASCII d'entrée, héritée du temps où il était le suffixe d'un label. En
+**sortie**, `lib.sh` rend toujours le libellé — le slug ne sort jamais du helper ; en **entrée**,
 les deux sont acceptés. Écrire en libellé reste la forme canonique.
 
 - Les commandes `/ticket-*` posent le cycle de vie via le helper partagé
   [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (`set-workflow <iid> <valeur>`), qui résout
-  l'ID du work item depuis l'iid **et dérive les ID des six labels par leur nom** — d'où l'absence
-  d'ID en dur dans les commandes, et la robustesse à une recréation des labels. Sous le capot :
-  mutation `workItemUpdate` → `labelsWidget`. `/ticket-start` passe par `begin <iid>`, qui groupe
-  cette pose avec l'assignation et les dates en une seule mutation multi-widgets (§5).
-- Un ticket **fermé** (`Closes #`) garde son label : la fermeture ne pose rien toute seule, c'est
-  `/branch-cleanup` qui passe le ticket à « Terminé » après le merge. `doctor.sh` signale la dérive
-  (ticket fermé encore « En cours », ticket « En revue » sans MR).
-- **Inspecter les labels manuellement** :
-  `glab api graphql -f query='{ project(fullPath:"maestro-group4345327/maestro") { labels(searchTerm:"workflow::") { nodes { id title } } } }'`.
+  par leur **nom** le projet, son champ Status et l'option visée — d'où l'absence d'identifiant en
+  dur, ici comme ailleurs (§3.5). `/ticket-start` passe par `begin <iid>`, qui groupe cette pose
+  avec l'assignation et les dates (§5).
+- Un ticket **fermé** garde son état : la fermeture ne pose rien toute seule. C'est
+  `/branch-cleanup` — et, depuis #275, le ramassage des worktrees (§9.2) — qui passe le ticket à
+  « Terminé » après le merge. `doctor.sh` signale la dérive (ticket fermé encore « En cours »,
+  ticket « En revue » sans PR, ticket sans état).
 
-#### ⚠ L'exclusion mutuelle est à notre charge
+#### ⚠ Il n'y a plus qu'un seul support, et c'est le sujet du chantier #358
 
-Sur le plan **Free**, le `::` d'un label scopé n'est que **cosmétique** : rien côté GitLab
-n'empêche un ticket de porter `workflow::a-faire` **et** `workflow::en-revue` en même temps.
-L'invariant « exactement un `workflow::` par ticket » est donc tenu par l'**outillage** :
+De #207 à #364, le cycle de vie a été porté par six **labels scopés `workflow::*`**, et ce n'était
+pas un choix : le **champ Status natif** de GitLab (lifecycle custom « Maestro », #12/#13) est une
+fonctionnalité **Premium**, perdue avec la fin de l'essai Ultimate du groupe le **2026-08-02** — et
+la donnée de statut avec elle. Sur GitLab Free, les labels étaient le seul mécanisme disponible.
 
-> **Toute pose ajoute la cible et retire les cinq autres dans la même mutation** — jamais un ajout
-> seul. C'est le contrat de `gl_set_workflow` et de `gl_begin`, et la raison d'être de
-> `gl_workflow_gids`, qui dérive les six ID d'un coup : sans la liste complète, on ne saurait pas
-> quoi retirer.
+Le prix de ce détour tenait en une phrase : **l'exclusion mutuelle était à notre charge**. Le `::`
+d'un label scopé n'est cosmétique que sur Free, donc rien n'empêchait un ticket de porter
+`workflow::a-faire` **et** `workflow::en-revue` ; toute pose devait ajouter la cible **et retirer
+les cinq autres dans le même appel**. C'était la régression la plus probable du dispositif, et la
+seule invisible à l'œil nu sur une ligne de backlog — les lectures rendaient alors le premier label
+rencontré, donc un état plausible et arbitraire.
 
-C'est la régression la plus probable du dispositif, et la seule qui ne se voit pas à l'œil nu sur
-une ligne de backlog — d'où un test dédié
-([`tests/test_cycle_de_vie.py`](../tests/test_cycle_de_vie.py)) et la détection de dérive (0 ou ≥ 2
-labels du scope) dans [`doctor.sh`](../scripts/gitlab/doctor.sh).
+**Un champ à valeur unique rend cette classe de bug impossible par construction**, et c'est tout le
+gain du chantier #358. La migration vers GitHub (#335/#343) a changé la réponse et pas la question —
+Projects v2 offre le champ gratuitement, dépôt privé compris. Le renversement de #207 n'était donc
+pas une hésitation : il tenait à ce qui était disponible, et c'est cela qui a bougé.
 
-#### Le board
+**#365 a retiré les six labels et le code qui les portait** : le backend labels de `lib.sh`, le
+commutateur `MAESTRO_CYCLE`, la pose du `workflow::a-faire` à la création, les six labels du dépôt
+et leur provisionnement par `bootstrap.sh`. Deux conséquences à connaître :
 
-Les colonnes du Kanban suivent le flux : `a-faire` → `en-cours` → `en-revue` → `termine`.
-`abandonne` et `doublon` n'ont pas de colonne — ces tickets sont fermés, ils sortent du board. La
-configuration est dans [`bootstrap-board.sh`](../scripts/gitlab/bootstrap-board.sh), appelé par
-`bootstrap.sh` ; sur le plan Free un projet n'a qu'**un seul** board, qui est donc reconfiguré et
-jamais dupliqué.
-
-#### Pourquoi ce détour par les labels — et pourquoi il s'arrête ici
-
-Le cycle de vie a été porté un temps par le **champ Status natif** de GitLab (lifecycle custom
-« Maestro », tickets #12/#13). **Ce n'est pas un oubli si ce mécanisme a disparu, c'est une
-décision** (#207) : les lifecycles custom sont une fonctionnalité **Premium**, et le groupe était
-sur un **essai Ultimate terminé le 2026-08-02**. Le champ a été perdu à cette date, et la donnée de
-statut avec lui — d'où la migration des tickets existants par déduction
-([`migrate-workflow-labels.sh`](../scripts/gitlab/migrate-workflow-labels.sh), `--check` pour
-relire les déductions sans écrire).
-
-Sur GitLab Free, les labels étaient le **seul** mécanisme disponible : revenir au champ y était une
-question d'**abonnement**, pas d'outillage. La migration vers GitHub (#335/#343) a changé la
-réponse et pas la question — **Projects v2 offre le champ gratuitement**, dépôt privé compris —, et
-c'est ce qu'a fait le chantier #358, achevé côté défaut par #364 (§3.8). Le renversement de #207
-n'était donc pas une hésitation : il tenait à ce qui était disponible, et c'est cela qui a bougé.
+- **Il n'y a plus de retour arrière à une variable près.** Tant que les labels étaient là,
+  rebasculer coûtait un `MAESTRO_CYCLE=labels` ; il coûterait désormais une migration. Ne pas
+  réintroduire un second backend « au cas où » — le premier symptôme de deux supports est un ticket
+  qui porte deux états.
+- **La panne a changé de forme, elle n'a pas disparu.** Le Status vit sur l'**item de projet** :
+  un ticket hors du projet n'a aucun état (§3.7), ce qui est l'équivalent exact du « 0 label » de
+  l'ère précédente, en plus silencieux. C'est ce que `doctor.sh` traque (§3.5) et ce que
+  `project-add` répare.
 
 ### 3.2 Les labels de catégorisation — `type::`, `agent::`, `prio::`
 
 Trois autres familles de labels **scoped**, pour trier le backlog — **pas** pour suivre
-l'avancement (c'est le rôle de `workflow::`, §3.1) :
+l'avancement (c'est le rôle du champ Status, §3.1) :
 
 | Famille | Valeurs | Usage |
 |---|---|---|
@@ -207,9 +191,10 @@ l'avancement (c'est le rôle de `workflow::`, §3.1) :
 | `agent::` | `dev`, `bdd`, `devops`, `design`, `qa`, `orchestrateur` | Rôle/agent Maestro qui traite le ticket (voir [README](../README.md)) |
 | `prio::` | `haute`, `moyenne`, `basse` | Urgence, pour le tri du backlog |
 
-Ces labels sont créés (idempotent) via [`scripts/gitlab/bootstrap.sh`](../scripts/gitlab/bootstrap.sh),
-comme les `workflow::`, et **ne sont pas touchés** par les commandes `/ticket-*` : ils relèvent du
-triage (à la création), pas du cycle Git.
+Ces labels sont créés (idempotent) via [`scripts/gitlab/bootstrap.sh`](../scripts/gitlab/bootstrap.sh)
+— qui ne provisionne plus qu'eux depuis #365, le cycle de vie ayant son propre script
+([`bootstrap-project.sh`](../scripts/github/bootstrap-project.sh), §3.5) — et **ne sont pas touchés**
+par les commandes `/ticket-*` : ils relèvent du triage (à la création), pas du cycle Git.
 
 ### 3.3 Dates & time tracking — renseignés automatiquement
 
@@ -298,23 +283,23 @@ Deux pièges à connaître :
   invisible en dehors de l'erreur ci-dessus — là où un jeton classique ou OAuth affiche ses scopes
   et laisse voir `project` manquant d'un coup d'œil.
 
-**Le commutateur `MAESTRO_CYCLE` (#360, basculé par #364).** `lib.sh` lit et écrit ce champ derrière
-`MAESTRO_CYCLE=status|labels`, **défaut `status` depuis le 2026-08-19** (§3.8). Sept verbes passent
-par lui : les quatre **unitaires** (`set-workflow`, `issue-owner`, `begin`, `liberer-ticket`) et les
-trois lectures **d'ensemble** (`backlog-table`, `milestone-issues`, `workflow-derives`, #362 — §3.6).
-`MAESTRO_CYCLE=labels` restaure tout ce que décrit le §3.1, et c'est le retour arrière : il tient
-tant que les labels existent (leur retrait est #365) mais **coûte une resynchronisation**, pas un
-`export` — voir §3.8. Deux détails structurants : le Status vit sur l'**item de projet**, si bien
-qu'un ticket absent du projet n'a **aucun état** (l'écriture le refuse en le disant ; le peuplement
-est #361, sa détection #363) ; et aucun label n'est touché en `status`. Détail complet et tests : #366.
+**Les sept verbes du cycle de vie (#360, bascule #364, commutateur retiré par #365).** `lib.sh` lit
+et écrit ce champ, et rien d'autre : les quatre **unitaires** (`set-workflow`, `issue-owner`,
+`begin`, `liberer-ticket`) et les trois lectures **d'ensemble** (`backlog-table`,
+`milestone-issues`, `workflow-derives`, #362 — §3.6). Ils ont porté un temps le commutateur
+`MAESTRO_CYCLE=status|labels` qui choisissait leur backend ; il n'en reste qu'une délégation d'une
+ligne vers `st_*`, la couture restant là où les trois backends successifs se sont greffés. Deux
+détails structurants : le Status vit sur l'**item de projet**, si bien qu'un ticket absent du projet
+n'a **aucun état** (l'écriture le refuse en le disant ; le peuplement est §3.7, sa détection #363) ;
+et **plus aucun label n'est touché** — les six `workflow::*` ont disparu du dépôt avec #365. Détail
+complet et tests : #366.
 
 ---
 
 ### 3.6 Les lectures d'ensemble sur le Status, et ce qu'elles coûtent
 
 Le §3.5 a porté l'**unité** — lire et écrire l'état d'**un** ticket. Celui-ci porte l'**ensemble**,
-où était la charge du chantier : sous `MAESTRO_CYCLE=status`, quatre consommateurs changent de
-source.
+où était la charge du chantier : quatre consommateurs ont changé de source.
 
 | Consommateur | Ce qu'il demande |
 |---|---|
@@ -333,12 +318,11 @@ coup, `subtickets`, `startables` et `reconcile-en-cours` compris.
 existe* ; une carte `iid → Status`, paginée sur les items du projet, dit *quel état*. Le contraire —
 lister les tickets **depuis** les items — ferait disparaître de `/backlog` tout ticket hors projet,
 c'est-à-dire exactement ceux qu'on veut voir signalés. Un ticket hors projet sort donc « - », ce que
-rend déjà, au caractère près, un ticket à 0 label `workflow::`.
+rendait déjà, au caractère près, un ticket à 0 label du cycle de vie.
 
-**Un verbe n'est délibérément pas basculé** : `backlog` (le JSON brut), dont le contrat est de rendre
-la réponse de la forge *telle quelle*. Conséquence à connaître : les labels `workflow::` qu'on y lit
-ne sont pas le cycle de vie en mode `status` — ils existent encore (leur retrait est #365) mais plus
-personne ne les met à jour. Qui veut l'état lit la table.
+**Un verbe n'est délibérément pas recouvert** : `backlog` (le JSON brut), dont le contrat est de
+rendre la réponse de la forge *telle quelle*. Conséquence à connaître : on n'y lit **aucun état**,
+l'état ne vivant pas sur l'issue. Qui veut l'état lit la table.
 
 #### Le coût, mesuré — et pourquoi il y a un cache
 
@@ -393,71 +377,45 @@ moment de la bascule, le dépôt en comptant 367 aujourd'hui.
   (`project-backfill --realigner`, §3.8), et le sens de la dérive s'est inversé avec l'autorité :
   ce sont les **labels** qui vieillissent désormais.
 
-### 3.7 Peuplement du projet — tout ticket est un item, à la création et par backfill
+### 3.7 Peuplement du projet — tout ticket est un item
 
 Le socle de §3.5 monte un projet **vide**. Or le Status vit sur l'**item de projet** et non sur
 l'issue : un ticket qui n'est pas dans le projet n'a **aucun état**, et aucune requête de cycle de
-vie ne le voit. C'est l'équivalent exact du « 0 label `workflow::` » que `doctor.sh` traque
-aujourd'hui (§3.1) — **en plus silencieux**, puisque rien à l'écran ne distingue un ticket sans état
-d'un ticket absent du filtre. #361 traite cette panne **avant qu'elle existe**, par deux verbes, un
-par population.
+vie ne le voit — **en plus silencieux** qu'un ticket sans état, puisque rien à l'écran ne le
+distingue d'un ticket absent du filtre. #361 a traité cette panne **avant qu'elle existe**.
 
-**Les nouveaux — `lib.sh project-add <iid> [valeur]`.** `/ticket-create` l'appelle dans la foulée de
-la création. C'est le pendant exact du `workflow::a-faire` posé dans le même `--label` que les
-autres : rien côté forge ne pose d'état par défaut, et un ticket créé sans état est une dérive.
+**`lib.sh project-add <iid> [valeur]`** — le seul verbe de peuplement. `/ticket-create` l'appelle
+dans la foulée de la création, et c'est **cet appel qui donne son état au ticket** : rien côté forge
+n'en pose par défaut, et depuis le retrait des labels (#365) il n'y a plus de donnée de secours.
 Défaut « À faire », idempotent (`addProjectV2ItemById` rend l'item existant au lieu d'échouer), et
-son échec ne défait pas la création — le ticket existe, on le signale et on rejoue.
+son échec ne défait pas la création — le ticket existe, on le signale et on rejoue. C'est aussi la
+**réparation** d'un ticket que `doctor.sh` signale hors projet ou sans état.
 
-**Les anciens — `lib.sh project-backfill [--check] [--realigner] [<iid>…]`.** Il ajoute au projet les
-tickets existants et pose leur Status **d'après leur label `workflow::` courant**, qui reste
-l'autorité à ce stade. Trois promesses, tenues par **une seule** mécanique : l'état de départ est
-**relu à chaque passe** — le projet *est* l'état, il n'y a aucun fichier de reprise à garder
-cohérent, donc aucun moyen qu'il mente. D'où « rejouable sans doublon », « `--check` sans écriture »
-et « reprend après interruption », cette dernière n'étant pas un mécanisme de plus mais la
-conséquence des deux autres : une passe coupée au 200ᵉ ticket laisse 200 items posés, que la passe
-suivante classe « conforme » et saute.
-
-Cinq décisions à ne pas défaire :
+Trois décisions à ne pas défaire :
 
 - **Le projet se résout par ÉGALITÉ de titre, jamais par recherche.** `projectsV2(query:)` est une
   recherche **floue** côté GitHub, alors que le titre du projet est une **clé** (§3.5) : la
   comparaison se fait donc dans le shell, en égalité stricte. Ce n'est pas une précaution
   théorique — le compte porte déjà un second projet nommé `Maestro-mesure-362`, et un préfixe aurait
   suffi à peupler le mauvais.
-- **Ni l'un ni l'autre n'est derrière `MAESTRO_CYCLE`.** Peupler le projet n'est pas décider du
-  cycle de vie : c'est poser une **donnée de plus**. L'y mettre aurait inversé l'ordre du chantier —
-  le projet devait être peuplé **avant** la bascule (#364), sans quoi celle-ci aurait trouvé un
-  projet vide et autant de tickets sans état. `project-add` reste nécessaire **après** la bascule, et
-  pour une raison plus forte qu'avant : un ticket créé hors du projet n'a désormais aucun état du tout.
-- **L'autorité s'est inversée à la bascule, et `--realigner` avec elle.** Le backfill dérive le
-  Status du label courant : c'était la bonne source tant que le label faisait foi, ça ne l'est plus
-  depuis #364 — les labels sont figés à l'état où la bascule les a laissés, si bien que `--realigner`
-  écraserait un Status vivant avec une photo périmée. Il ne lui reste qu'un usage légitime : préparer
-  un **retour** sur `labels`, et dans l'autre sens. Le défaut, lui, n'a pas bougé et reste sans
-  danger — il ne **remplit** que ce qui est vide, ne réécrit **jamais** un état déjà posé, et les
-  divergences sont **nommées** sans être arbitrées.
-- **L'écart est nommé ticket par ticket, dans les deux sens.** Chaque passe finit par la
-  réconciliation des deux décomptes — tickets portant un label contre items portant un Status. Un
-  item **de trop** (Status posé sur un ticket sans label) est une dérive autant qu'un item
-  manquant, en moins visible puisqu'il gonfle le compte au lieu de le creuser. Les tickets portant
-  **0 ou ≥ 2** labels sont signalés sans être arbitrés : ce verbe peuple un projet, il ne tranche
-  pas un cycle de vie que personne n'a posé. Codes de retour : 0 = plus aucun écart, 3 = il en
-  reste un, 1 = échec franc.
-- **La relecture finale peut retarder sur sa propre écriture.** La connexion `items` de Projects v2
-  est *éventuellement cohérente* : relue dans la seconde qui suit la dernière mutation, elle peut ne
-  pas encore la rendre — mesuré, sur deux tickets posés, le second absent de la relecture immédiate
-  et présent à la passe suivante. Le bilan la rejoue donc jusqu'à trois fois, sur la condition
-  précise « les tickets que cette passe a écrits sont-ils tous revenus ? », et ce qui manque encore
-  est dit **pour ce qu'il est** — non vérifié — jamais confondu avec un trou réel. Réessayer est ici
-  légitime parce que c'est une **lecture** : rejouable sans effet de bord, et sur une chose qu'on
-  sait avoir écrite. (Une mutation, elle, ne se réessaie jamais ainsi — c'est la règle posée avec
-  `gh_graphql_read`.)
+- **Peupler le projet n'est pas décider du cycle de vie.** C'est poser la **donnée de plus** sans
+  laquelle il n'y aurait rien où l'écrire, et c'est ce qui a permis à ce lot de précéder la bascule
+  de #364 — sans quoi celle-ci aurait trouvé un projet vide et autant de tickets sans état. C'est
+  aussi pourquoi ce verbe n'a jamais été derrière le commutateur, du temps où il en existait un.
+- **Le backfill est parti avec les labels (#365), et ce n'est pas un oubli.**
+  `lib.sh project-backfill` ajoutait au projet les tickets existants et posait leur Status
+  **d'après leur label `workflow::` courant**, et de rien d'autre : la bonne source tant que le
+  label faisait foi, une photo périmée après la bascule, et plus aucune source après leur retrait.
+  Son dernier usage légitime — `--realigner`, pour préparer un retour sur les labels — a disparu
+  avec le retour lui-même. Ce qui restait de lui sans les labels (« ce ticket est-il un item ? »)
+  est une question de **détection**, que #363 a donnée à `doctor.sh` ; la réparation est
+  `project-add`, ticket par ticket. Ne pas le réécrire « en masse » : un verbe qui poserait un état
+  par défaut sur des tickets anciens **inventerait** la donnée qu'on vient de perdre.
 
----
 
 ### 3.8 La bascule — le champ Status fait autorité (#364)
 
-Depuis le **2026-08-19**, `MAESTRO_CYCLE` vaut **`status`** par défaut : sans aucune variable
+Le **2026-08-19**, `MAESTRO_CYCLE` est passée à **`status`** par défaut : sans aucune variable
 d'environnement, tout le workflow — `/ticket-create`, `/ticket-start`, `/ticket-ship`, `/backlog`,
 `/orchestrate`, `doctor.sh` — lit et écrit le champ **Status** du projet Projects v2. C'est le lot 6
 du chantier #358, minuscule en diff (`${MAESTRO_CYCLE:-labels}` → `:-status}`) et le seul qui change
@@ -507,48 +465,57 @@ dans les deux modes contre le vrai backlog, **au caractère près** (`diff` sur 
 **52,7 s** en `status`, soit **+16,4 s (1,45×)** sur 369 tickets — l'écart prédit par la mesure de
 #362 (1,51× sur 367 tickets), absorbé par un démarrage de run qui dure ensuite des heures.
 
-#### Le retour arrière, et ce qu'il coûte vraiment
+#### Le retour arrière a existé un lot, puis il a été retiré (#365)
 
-`MAESTRO_CYCLE=labels` restaure le comportement d'avant, **intégralement** — c'est ce qui rend la
-bascule réversible et pourquoi les labels ne sont retirés qu'au lot suivant (#365) : tant qu'ils
-sont là, revenir coûte un `export` ; une fois retirés, une migration.
+`MAESTRO_CYCLE=labels` restaurait le comportement d'avant, **intégralement** — c'est ce qui rendait
+la bascule réversible, et c'est pourquoi les labels n'ont été retirés qu'au lot suivant. **#365 les
+a retirés**, avec le commutateur et le backend qui les servait : revenir coûterait désormais une
+migration, pas un `export`.
 
-Une précision qui n'est pas un détail : **l'`export` restaure le code, pas les données.** Depuis la
-bascule, plus personne ne met les labels à jour — ils sont figés à l'état où elle les a laissés.
-Rebasculer durablement demanderait donc la **même resynchronisation, en sens inverse** (Status →
-labels), qu'aucun verbe ne fait aujourd'hui : `--realigner` va dans le sens labels → Status, celui
-qui avait un sens quand les labels faisaient foi. Pour un dépannage court (une heure, une commande),
-la variable suffit ; pour un retour assumé, il faut réaligner d'abord.
+Le raisonnement qui l'a permis, et qu'il faut garder en tête avant d'imaginer un jour un second
+support : **l'`export` restaurait le code, pas les données.** Dès la bascule, plus personne ne
+mettait les labels à jour — ils étaient figés à l'état où elle les avait laissés. Un retour durable
+aurait donc demandé une resynchronisation **en sens inverse** (Status → labels) qu'aucun verbe ne
+faisait. Le retour arrière était réel pour un dépannage d'une heure, théorique au-delà ; c'est ce
+qui a permis de le retirer un lot plus tard sans rien perdre.
 
-Corollaire à connaître avant de lire un label : `lib.sh backlog` (le JSON brut) rend la réponse de
-la forge telle quelle, labels compris. **Les `workflow::` qu'on y lit ne sont plus le cycle de vie.**
-Qui veut l'état lit la table (`backlog-table`) ou `issue-owner`.
+Corollaire qui n'a pas changé : `lib.sh backlog` (le JSON brut) rend la réponse de la forge telle
+quelle. **On n'y lit aucun état** — il ne vit pas sur l'issue. Qui veut l'état lit la table
+(`backlog-table`) ou `issue-owner`.
 
 #### Ce que les tests en ont retenu
 
-Les suites d'outillage montent un dépôt jetable avec un `gh` factice, qui ne sait pas répondre aux
-requêtes GraphQL de Projects v2 : sous le nouveau défaut, `tests/test_cycle_de_vie.py` tombait dès
-son premier cas sur « Projet "Maestro" introuvable chez equipe-test ». `tests/conftest.py` **épingle**
-donc `MAESTRO_CYCLE=labels` — cinquième garde-fou, et le seul qui pose une valeur au lieu de vider.
-C'est la leçon de #343 sur l'autre commutateur, à l'identique : vider suffisait tant qu'« absente »
-valait `labels` ; « absente » valant `status`, vider ne neutralise plus rien, ça **choisit**. Les
-tests du backend Status (#366) feront l'inverse et poseront `status` explicitement dans le
-sous-processus qu'ils lancent.
+Les suites d'outillage montent un dépôt jetable avec un `gh` factice. Le temps de la bascule,
+`tests/conftest.py` **épinglait** `MAESTRO_CYCLE=labels` — cinquième garde-fou, et le seul qui
+posait une valeur au lieu de vider — parce que le double ne savait pas répondre aux requêtes
+GraphQL de Projects v2. #365 a retiré l'épinglage avec le commutateur, et **porté les doubles** :
+les lectures du backend Status passant par `gh api graphql --jq`, où le programme jq fait tout
+l'aplatissement, les fixtures rendent désormais le résultat **déjà aplati** (des lignes `clé<TAB>…`
+copiées des en-têtes de `st_jq_contexte` et `st_jq_items`). Un double qui rendrait du JSON là
+traverserait le filtre en silence et le verbe lirait zéro ligne — « ticket sans état », c'est-à-dire
+un feu vert sur une question jamais posée.
+
+Ce qui est parti avec les labels : `tests/test_cycle_de_vie.py`, dont le sujet **était** l'exclusion
+mutuelle des six labels — la classe de bug que le champ à valeur unique rend impossible par
+construction. Son pendant sur le champ Status (l'écriture refusée hors projet, `reconcile-workflow`)
+est le lot #366.
 
 #### Ce que la bascule laisse ouvert
 
 **Un ticket ouvert depuis l'interface web n'a plus d'état.** Les gabarits `.github/ISSUE_TEMPLATE/`
-posent `workflow::a-faire` par leur en-tête YAML (§4) — c'était la réponse de #344 à la dérive « zéro
-label », et elle ne vaut plus rien depuis la bascule : un en-tête de gabarit sait poser un label, pas
-ajouter l'issue à un projet. Le ticket naît donc **hors projet**, sans Status, invisible de
-`queue.sh` et rendu « - » par `/backlog`. Trois choses à en savoir :
+posaient `workflow::a-faire` par leur en-tête YAML (§4) — c'était la réponse de #344 à la dérive
+« zéro label », et elle ne valait déjà plus rien depuis la bascule : un en-tête de gabarit sait
+poser un label, pas ajouter l'issue à un projet. #365 a retiré ce label des quatre gabarits, où il
+ne faisait plus que **masquer** la dérive qu'il ne réglait pas. Le ticket naît donc **hors projet**,
+sans Status, invisible de `queue.sh` et rendu « - » par `/backlog`. Trois choses à en savoir :
 
 - `/ticket-create` n'est **pas** concerné : il appelle `project-add` dans la foulée de la création
   (#361), et c'est la voie normale. Son prompt a toutefois été retouché — l'échec de `project-add`
   y était traité comme bénin *parce que* rien ne le lisait ; il laisse désormais un ticket sans
-  état, donc il se rejoue tout de suite au lieu de finir en note de bas de résumé.
-- La dérive est **rattrapable en un geste** (`lib.sh project-backfill`, qui ajoute et pose l'état)
-  et **détectée** — c'est le sujet de #363.
+  état, et depuis #365 plus rien ne le rattrape, donc il se rejoue tout de suite au lieu de finir
+  en note de bas de résumé.
+- La dérive est **rattrapable en un geste** (`lib.sh project-add <iid> "<état>"`, qui ajoute et
+  pose l'état) et **détectée** — c'est le sujet de #363.
 - La supprimer à la source demanderait un mécanisme côté projet (workflow d'auto-ajout de Projects
   v2, ou une GitHub Action sur `issues: opened`), du même ordre que #377. Rien n'a été improvisé ici :
   la bascule constate, elle n'invente pas un dispositif que personne n'a arbitré.
@@ -559,12 +526,13 @@ ajouter l'issue à un projet. Le ticket naît donc **hors projet**, sans Status,
 
 - **Tickets** (`.github/ISSUE_TEMPLATE/`) : `feature.md`, `bug.md`, `doc.md`, `infra.md` — un par
   valeur de `type::*`. Posent la structure attendue (contexte, critères d'acceptation) et, par leur
-  **en-tête YAML**, les labels par défaut du gabarit — dont **`workflow::a-faire`**. C'est la
-  nouveauté du déménagement (#344) : un ticket ouvert à la main depuis l'interface web portait
-  jusqu'ici **zéro** label de cycle de vie, dérive que `doctor.sh` signale ; l'en-tête la supprime
-  à la source. `/ticket-create`, lui, retire cet en-tête et pose les labels par `--label` — une
-  création en ligne de commande n'a que faire d'un bloc qui sert l'UI web. Le label `agent::*`
-  reste à ajouter manuellement au triage (aucun gabarit ne peut deviner quel agent est concerné).
+  **en-tête YAML**, les labels par défaut du gabarit : `type::*` et `prio::moyenne`. Ils y ont porté
+  un temps `workflow::a-faire` — la réponse de #344 à la dérive « zéro label » —, retiré par #365
+  avec les six labels : un en-tête de gabarit sait poser un label, pas ajouter l'issue à un projet,
+  si bien qu'il ne faisait plus que **masquer** la dérive qu'il ne réglait pas (§3.8).
+  `/ticket-create`, lui, retire cet en-tête et pose les labels par `--label` — une création en ligne
+  de commande n'a que faire d'un bloc qui sert l'UI web. Le label `agent::*` reste à ajouter
+  manuellement au triage (aucun gabarit ne peut deviner quel agent est concerné).
 - **Pull Request** (`.github/pull_request_template.md`) : checklist de definition
   of done + rappel `Closes #`. La checklist est un **constat, pas un formulaire** :
   `/ticket-finish` coche lui-même les cases qu'il a **effectivement vérifiées** (conventions de
@@ -586,12 +554,12 @@ ajouter l'issue à un projet. Le ticket naît donc **hors projet**, sans Status,
                                    (Abandonné / Doublon)
 ```
 
-(les noms ci-dessus sont les **libellés** du cycle de vie, portés par les labels `workflow::*`, §3.1)
+(les noms ci-dessus sont les **libellés** du cycle de vie, portés par le champ Status, §3.1)
 
 0. **`/ticket-create <type> <titre>`** — crée un ticket bien formé (corps de template, labels
    `type::`/`agent::`/`prio::`), cycle de vie `À faire` posé dans le même appel. Ne crée pas de
    branche.
-1. **À faire** — le ticket existe (`workflow::a-faire`), personne ne travaille dessus.
+1. **À faire** — le ticket existe et porte cet état, personne ne travaille dessus.
 2. **`/ticket-start <iid>`** — crée/checkout la branche, assigne le ticket à l'exécutant, passe
    le **cycle de vie** à `En cours`. Le chemin nominal tient en deux helpers et un bloc git (refonte
    ticket #60, pour réduire la cérémonie et le contexte réinjecté à chaque démarrage) :
@@ -899,7 +867,7 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
     de vie, dates, temps) gardent un appel direct — pas de retry, pour ne pas risquer une double application
     (ex. un timelog additif).
 - **Bilan de santé** : [`bash scripts/gitlab/doctor.sh`](../scripts/gitlab/doctor.sh) (lecture seule)
-  vérifie auth, labels (dont les six `workflow::*`), colonnes du board, et **détecte les dérives**
+  vérifie auth, labels de catégorisation, options du champ Status, et **détecte les dérives**
   (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à
   nettoyer, réglages de merge « pipeline vert » ou « suppression de la branche source » retombés — §6). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
   dérives — utile en CI).

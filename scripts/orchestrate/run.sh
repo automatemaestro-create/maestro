@@ -23,11 +23,11 @@
 # OUVERTE et son cycle de vie est « En revue » — exactement ce que `/ticket-ship` laisse derrière
 # lui. C'est vérifiable, et ça ne dépend pas de la formulation du modèle.
 #
-# Ce cycle de vie est porté par un LABEL SCOPÉ `workflow::*` (#207/#209), le champ Status natif de
-# GitLab ayant disparu avec l'essai Ultimate du groupe. Rien à en savoir de plus ici : lib.sh rend
-# toujours le LIBELLÉ (« En revue »), jamais le slug du label (« en-revue ») — c'est son contrat de
-# surface, documenté en tête de scripts/gitlab/lib.sh. Les comparaisons de ce fichier portent donc
-# sur les mêmes chaînes qu'avant la bascule, et le changement de stockage ne se voit pas d'ici.
+# Ce cycle de vie est porté par le champ Status d'un projet GitHub Projects v2 (#365, chantier
+# #358) — troisième support après le champ natif de GitLab et les six labels `workflow::*`. Rien à
+# en savoir de plus ici : lib.sh rend toujours le LIBELLÉ (« En revue »), jamais un slug
+# (« en-revue ») — c'est son contrat de surface, documenté en tête de scripts/gitlab/lib.sh. Les
+# comparaisons de ce fichier n'ont bougé à aucun des trois changements de stockage.
 #
 # --- Ce qu'un échec entraîne ------------------------------------------------------------------------
 # Le ticket est laissé en l'état (branche et cycle de vie « En cours »), et LES LOTS SUIVANTS DU

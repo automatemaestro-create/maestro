@@ -307,9 +307,9 @@ if [ "$SANS_GITLAB" = 0 ] && gl_require 2>/dev/null; then GITLAB_OK=1; fi
 # dernière lecture est récente. Rend une chaîne vide si GitLab n'est pas interrogeable — l'appelant
 # le dit.
 #
-# Le cycle de vie vient de gl_issue_owner, qui le lit depuis le label `workflow::*` du ticket
-# (#207/#209) et le rend en LIBELLÉ (« En revue »), jamais en slug (« en-revue ») : seule la source
-# a changé à la bascule, pas la valeur affichée ici. Lecture seule, cache de 60 s inchangé.
+# Le cycle de vie vient de gl_issue_owner, qui le lit dans le champ Status du projet Projects v2
+# (#365) et le rend en LIBELLÉ (« En revue »), jamais en slug (« en-revue ») : la source a changé
+# trois fois, la valeur affichée ici jamais. Lecture seule, cache de 60 s inchangé.
 etat_gitlab() {
   local iid="$1" branche="$2" maintenant statut etat mr
   [ "$GITLAB_OK" = 1 ] || return 1

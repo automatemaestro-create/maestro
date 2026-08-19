@@ -6,7 +6,7 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 
 Commande **de supervision, en lecture seule** : tu produis un tableau de bord du backlog pour aider
 au pilotage (avant que la Control Tower n'existe). Tu **ne modifies rien** — ni état, ni label,
-ni assignation, ni PR. Le cycle de vie (labels `workflow::*`) est résumé ci-dessous — cette commande est
+ni assignation, ni PR. Le cycle de vie (champ Status du projet) est résumé ci-dessous — cette commande est
 autosuffisante ; réf. complète `docs/10-workflow-git.md` §3/§5, non chargée automatiquement, à
 n'ouvrir qu'en cas de doute.
 
@@ -16,8 +16,8 @@ n'ouvrir qu'en cas de doute.
    `bash scripts/gitlab/lib.sh backlog-table <state>` où `<state>` vaut `opened` (défaut, si
    `$ARGUMENTS` est vide) ou `all` (si l'utilisateur passe `all`). Sortie **TSV** : une ligne
    d'en-tête préfixée `#` (à ignorer) puis une ligne par ticket, colonnes séparées par TABULATION :
-   `iid`, `statut` (le **libellé** du cycle de vie — « À faire », « En revue »… — lu dans le label
-   `workflow::*`, jamais son slug ; `-` si le ticket n'en porte aucun, cf. étape 4), `prio`,
+   `iid`, `statut` (le **libellé** du cycle de vie — « À faire », « En revue »… — lu dans le champ
+   Status du projet, jamais un slug ; `-` si le ticket n'a pas d'état, cf. étape 4), `prio`,
    `agent`, `assigne`, `titre`. Les valeurs
    `prio`/`agent` sont le suffixe nu du label (`moyenne`, `devops`, familles `prio::`/`agent::`) ;
    un champ `prio`/`agent`/`assigne` absent vaut `-`. Cette projection réinjecte beaucoup moins que
@@ -65,13 +65,12 @@ n'ouvrir qu'en cas de doute.
       **🔒 Réservés** (`pris par @<assigne>` — déjà attribués, ne pas les prendre sans en parler).
    4. Les autres états éventuels (`Terminé`/`Abandonné`/`Doublon`) **uniquement** si `all` a été
       demandé.
-   5. **⚠ Sans état** — les tickets dont la colonne `statut` vaut `-` : ils ne portent **aucun**
-      label `workflow::*`, et n'apparaissent donc sur **aucune** colonne du Kanban. **Aucune des
-      deux forges** ne tient l'invariant « un et un seul `workflow::*` » à notre place — l'exclusion
-      mutuelle des labels scopés est Premium sur GitLab, et GitHub n'a pas de labels scopés du tout
-      (docs/10 §3) : signale-les au lieu de les taire, et renvoie vers
-      `bash scripts/gitlab/doctor.sh`, qui détecte aussi le cas inverse (≥ 2 labels, invisible
-      ici — la table n'en rend qu'un).
+   5. **⚠ Sans état** — les tickets dont la colonne `statut` vaut `-`. L'état vit sur l'**item de
+      projet** et non sur l'issue (docs/10 §3), donc deux causes se cachent derrière ce `-` : le
+      ticket est **hors du projet**, ou son Status est **vide**. Dans les deux cas il n'est sur
+      aucune colonne et sort de tous les comptes — `queue.sh` ne le verra jamais. Signale-les au
+      lieu de les taire, et renvoie vers `bash scripts/gitlab/doctor.sh`, qui distingue les deux
+      causes ; la réparation est `bash scripts/gitlab/lib.sh project-add <iid> "<état>"`.
    Pour chaque ticket d'une section, montre sur une ligne : `#<iid>`, le titre, le label `agent::`,
    le `prio::`, et l'**appartenance** — `pris par @<assigne>` ou `libre`. Trie chaque section par
    `prio::` (haute → moyenne → basse) puis par iid.

@@ -91,6 +91,15 @@ if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
     # (`milestones`, `current-milestone`) demandent « title » d'abord.
     *"nodes { number title }"*) cat "$FIX/milestones-numeros.json" 2>/dev/null; exit 0 ;;
     *"milestones("*)            cat "$FIX/milestones.json" 2>/dev/null; exit 0 ;;
+    # LA CARTE DES ÉTATS (#365) : deux lectures, le projet résolu par son TITRE puis sa page
+    # d'items. Elles passent AVANT `issues(first:` — la requête du backlog ne les capterait pas,
+    # mais l'ordre dit lequel des deux jeux de fixtures porte l'état.
+    *"projectsV2(first:100){nodes{ id title }}"*) cat "$FIX/projets.json" 2>/dev/null; exit 0 ;;
+    *"items(first:100"*)                          cat "$FIX/carte.json" 2>/dev/null; exit 0 ;;
+    # La pose d'un état : le verbe ne lit que la présence de `projectV2Item` dans la réponse.
+    *"updateProjectV2ItemFieldValue"*)
+      printf '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_pose"}}}}'
+      exit 0 ;;
     *"issues(first:"*) cat "$FIX/backlog.json" 2>/dev/null; exit 0 ;;
     *"pullRequests("*)
       # La PR d'UNE branche : le nom du fichier de fixture aplatit ses « / » (comme côté Python).
@@ -117,8 +126,11 @@ if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
           [ -f "$FIX/issue-$iid.txt" ] || exit 1
           exec "$MAESTRO_STUB_PYTHON" "$FIX/vue_en_json.py" "$FIX/issue-$iid.txt" ;;
       esac
+      # Le contexte du ticket, DÉJÀ APLATI (cf. `_statut_json`). Un ticket sans fixture est
+      # introuvable : `st_contexte` reconnaît cette ligne-là et refuse franchement, au lieu de
+      # rendre zéro ligne — que l'appelant lirait « ticket sans état », c'est-à-dire un feu vert.
       if [ -f "$FIX/owner-$iid.json" ]; then cat "$FIX/owner-$iid.json"; else
-        printf '{"data":{"repository":{"issue":null}}}'
+        printf 'erreur\tticket\n'
       fi
       exit 0 ;;
   esac
@@ -162,35 +174,44 @@ printf '%s\\n' "$MAESTRO_STUB_WORKTREE_DIR"
 """
 
 
-# Cycle de vie : libellé (surface) -> slug (stockage du label). Depuis #209 le cycle de vie est
-# porté par un label `workflow::<slug>` et non plus par le champ Status natif — les bouchons GraphQL
-# doivent donc répondre un widget Labels. Les tests continuent d'écrire et d'attendre le LIBELLÉ
-# (« À faire »), conformément au contrat de surface documenté en tête de scripts/gitlab/lib.sh.
-_SLUG_WORKFLOW = {
-    "À faire": "a-faire",
-    "En cours": "en-cours",
-    "En revue": "en-revue",
-    "Terminé": "termine",
-    "Abandonné": "abandonne",
-    "Doublon": "doublon",
-}
-
-
-def _label_workflow(statut: str) -> str:
-    """Le nœud de label portant le cycle de vie, ou une chaîne vide si `statut` est vide."""
-    if not statut:
-        return ""
-    return f'{{"name":"workflow::{_SLUG_WORKFLOW.get(statut, statut)}"}}'
+# ================================================================================================
+# LE CYCLE DE VIE VIT DANS LE CHAMP STATUS D'UN PROJET (#365, chantier #358)
+# ================================================================================================
+# Ces bouchons ont porté trois supports : le champ Status natif de GitLab, six labels `workflow::*`
+# (#209), et depuis #365 le champ **Status** d'un projet GitHub Projects v2. Les tests, eux, n'ont
+# jamais bougé : ils écrivent et attendent le LIBELLÉ (« En revue »), qui est le contrat de surface
+# documenté en tête de scripts/gitlab/lib.sh.
+#
+# ⚠ LES LECTURES DU BACKEND STATUS PASSENT PAR `gh api graphql --jq`, où le programme jq fait tout
+# l'aplatissement — et le bouchon `gh` ne l'exécute pas. Les fixtures portent donc le résultat DÉJÀ
+# APLATI : des lignes `clé<TAB>…` copiées des en-têtes de `st_jq_contexte` et `st_jq_items`. Une
+# fixture qui rendrait du JSON ici traverserait le filtre en silence et le verbe lirait zéro
+# ligne — c'est-à-dire « ticket sans état », un feu vert sur une question jamais posée.
+#
+# Les identifiants sont inventés : lib.sh les résout PAR NOM à chaque appel et n'en code aucun en
+# dur (contrat en tête du fichier).
+_PROJET = "Maestro"
+_ID_PROJET = "PVT_projet"
+_ID_CHAMP = "PVTSSF_status"
+_LIBELLES_WORKFLOW = ("À faire", "En cours", "En revue", "Terminé", "Abandonné", "Doublon")
 
 
 def _statut_json(iid: str, statut: str, assigne: str = "") -> str:
-    """La réponse GraphQL que `gl_issue_owner` sait lire."""
-    assignes = f'{{"login":"{assigne}"}}' if assigne else ""
-    return (
-        f'{{"data":{{"repository":{{"issue":{{'
-        f'"labels":{{"nodes":[{_label_workflow(statut)}]}},'
-        f'"assignees":{{"nodes":[{assignes}]}}}}}}}}}}'
-    )
+    """Le contexte d'UN ticket, aplati — ce que `st_contexte` lit pour `gl_issue_owner`.
+
+    Le nom est resté celui du temps où c'était du JSON : les ~30 appels qui l'écrivent dans une
+    fixture n'ont pas eu à changer, ce qui est exactement ce que le contrat de surface promet.
+    """
+    lignes = [f"ticket\t{iid}"]
+    if assigne:
+        lignes.append(f"assigne\t{assigne}")
+    lignes.append(f"item\t{_PROJET}\t{_ID_PROJET}\tPVTI_{iid}\t{statut}")
+    lignes.append(f"projet\t{_PROJET}\t{_ID_PROJET}\t{_ID_CHAMP}")
+    lignes += [
+        f"option\t{_PROJET}\t{_ID_PROJET}_opt{i}\t{libelle}"
+        for i, libelle in enumerate(_LIBELLES_WORKFLOW)
+    ]
+    return "\n".join(lignes) + "\n"
 
 
 @dataclass
@@ -282,12 +303,15 @@ class Depot:
         }
 
     def _labels(self, iid: str) -> str:
-        """Les labels d'un ticket déclaré : catégorisation, plus le cycle de vie s'il en a un."""
+        """Les labels d'un ticket déclaré — CATÉGORISATION SEULE.
+
+        L'état n'y est plus depuis #365 : il vit sur l'item de projet, et c'est la carte
+        (`carte.json`) qui le porte. Les tables plates le recouvrent sur cette réponse-ci.
+        """
         t = self.tickets[iid]
-        workflow = _label_workflow(t["statut"])
         return (
             f'{{"name":"type::{t["type"]}"}},{{"name":"prio::{t["prio"]}"}},'
-            f'{{"name":"agent::dev"}}{"," + workflow if workflow else ""}'
+            f'{{"name":"agent::dev"}}'
         )
 
     def _noeud(self, iid: str) -> str:
@@ -309,7 +333,22 @@ class Depot:
         )
 
     def publie(self) -> None:
-        """Compose les deux tables que `queue.sh` lit (milestone et backlog) depuis les tickets."""
+        """Compose ce que `queue.sh` lit : les deux tables, plus la CARTE qui porte les états.
+
+        Trois fixtures et non deux depuis #365 : les issues disent QUI EXISTE, la carte du projet
+        dit QUEL ÉTAT. Un ticket absent de la carte sort des tables avec un statut « - » — c'est le
+        contrat, et c'est ce qui rend visible un ticket hors projet au lieu de le faire disparaître.
+        """
+        (self.fixtures / "projets.json").write_text(
+            f"projets\nprojet\t{_PROJET}\t{_ID_PROJET}\n", encoding="utf-8"
+        )
+        # La ligne `page` est toujours émise, même sur un projet vide : sans elle, la garde
+        # « réponse vide » de gh_graphql_read déclencherait trois tentatives puis une erreur.
+        (self.fixtures / "carte.json").write_text(
+            "page\tfalse\t\n"
+            + "".join(f"item\t{iid}\t{t['statut']}\n" for iid, t in self.tickets.items()),
+            encoding="utf-8",
+        )
         (self.fixtures / "milestone-issues.json").write_text(
             '{{"data":{{"repository":{{"milestone":{{"issues":{{"nodes":[{}]}}}}}}}}}}'.format(
                 ",".join(self._noeud_jalon(iid) for iid in self.tickets)

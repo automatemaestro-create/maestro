@@ -21,11 +21,11 @@
 #    assigné est le travail de quelqu'un (anti-collision, docs/10 §5) ; un ticket d'un autre
 #    milestone n'est pas la phase en cours.
 #
-#    « À faire » est le LIBELLÉ du cycle de vie, porté depuis #207/#209 par un label `workflow::*`
-#    et non plus par le champ Status natif de GitLab. Ce fichier n'a pas à le savoir : lib.sh rend
-#    toujours le libellé dans la colonne `statut` de ses TSV, jamais le slug du label
-#    (« a-faire ») — contrat de surface documenté en tête de scripts/gitlab/lib.sh. Les
-#    comparaisons ci-dessous sont donc restées identiques à travers la bascule.
+#    « À faire » est le LIBELLÉ du cycle de vie, porté depuis #365 par le champ Status d'un projet
+#    GitHub Projects v2 — après le champ natif de GitLab, puis six labels `workflow::*`. Ce fichier
+#    n'a pas à le savoir : lib.sh rend toujours le libellé dans la colonne `statut` de ses TSV,
+#    jamais un slug (« a-faire ») — contrat de surface documenté en tête de scripts/gitlab/lib.sh.
+#    Les comparaisons ci-dessous n'ont bougé à aucun des trois changements de support.
 #
 # 2. Les PARENTS DE SUIVI sont écartés : ils ne portent ni branche ni code (docs/10 §5.1). À leur
 #    place viennent leurs lots, DANS L'ORDRE DE LEUR CHECKLIST — c'est cet ordre qui encode les
