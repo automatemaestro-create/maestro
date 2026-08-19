@@ -56,11 +56,30 @@ posent encore — neutraliser une variable morte ne coûte rien, et c'est ce qui
 évite qu'elle ne ressuscite en silence si quelqu'un rebranchait un jour une
 lecture dessus.
 
-Cinquième garde-fou (#333), et le seul qui REFUSE de jouer au lieu de
-neutraliser : **git absent EN CI est une erreur, pas un saut**. Les trois
-premiers protègent le verdict de ce que le poste apporte en trop ; celui-ci le
-protège de ce que l'image du job n'apporte pas. Le `python:3.11-slim` dans lequel
-tournait le job `pytest` de la CI GitLab n'avait pas git,
+Cinquième garde-fou (#364), et le seul **épinglé** plutôt que vidé :
+**`MAESTRO_CYCLE` vaut `labels`**. Le raisonnement est celui que #343 a tenu
+pour `MAESTRO_FORGE`, sur l'autre commutateur. Vider aurait suffi tant que
+« absente » valait `labels` ; depuis la bascule, « absente » vaut `status`, si
+bien que vider enverrait toutes les suites d'outillage interroger un projet
+GitHub Projects v2 — sur un dépôt jetable qui n'en a pas, avec un `gh` factice
+qui ne sait pas répondre à ces requêtes GraphQL. Mesuré avant d'épingler :
+`test_cycle_de_vie.py` tombe dès son premier cas sur « Projet "Maestro"
+introuvable chez equipe-test ».
+
+Épingler plutôt que vider rend ces suites **indifférentes au défaut du jour**,
+ce qui est le vrai invariant : elles couvrent le backend `labels`, et c'est lui
+qu'elles doivent voir, aujourd'hui comme après le retrait des labels (#365) si
+elles lui survivent. Les tests du backend Status (#366) font l'inverse et
+posent `status` **explicitement** dans l'environnement du sous-processus qu'ils
+lancent — la même règle que pour le dépôt cible : ce qu'un test veut, il le
+pose ; ce qu'il hérite du poste est une fuite.
+
+Sixième garde-fou (#333), et le seul qui REFUSE de jouer au lieu de
+neutraliser : **git absent EN CI est une erreur, pas un saut**. Tous les
+précédents protègent le verdict de ce que le poste apporte en trop — ou choisit
+à sa place ; celui-ci le protège de ce que l'image du job n'apporte pas. Le
+`python:3.11-slim` dans lequel tournait le job `pytest` de la CI GitLab n'avait
+pas git,
 et ~285 tests d'outillage sont gardés par `skipif(shutil.which("git") is
 None)` : le pipeline les sautait tous en silence, vert, depuis toujours — si
 bien qu'ils n'ont jamais tourné que sur des postes de développement, tous sous
@@ -90,6 +109,12 @@ CLE_COULEUR_ORCHESTRATE = "MAESTRO_ORCHESTRATE_COULEUR"
 #: Le dépôt que vise `scripts/gitlab/lib.sh`, et le commutateur de forge que #344 a retiré.
 #: Neutralisés ensemble : ni l'un ni l'autre ne doit être hérité du poste.
 CLES_FORGE = ("MAESTRO_FORGE", "MAESTRO_GITHUB_REPO")
+
+#: Le backend de cycle de vie, ÉPINGLÉ et non vidé — voir `_epingle_cycle_de_vie` (#364).
+CLE_CYCLE = "MAESTRO_CYCLE"
+
+#: La valeur épinglée : le backend que les suites d'outillage savent servir avec leur `gh` factice.
+VALEUR_CYCLE = "labels"
 
 #: Variables posées d'office par les intégrations continues. `GITLAB_CI` reste de la liste bien
 #: après le retrait de la CI GitLab (#344) : ce qui est testé est « quelqu'un lira-t-il ce compte
@@ -189,12 +214,31 @@ def _neutralise_forge() -> None:
         os.environ[cle] = ""
 
 
+def _epingle_cycle_de_vie() -> None:
+    """Épingle `MAESTRO_CYCLE=labels` dans l'environnement du processus de test (#364).
+
+    Le seul des cinq garde-fous qui pose une valeur au lieu de vider, et la
+    différence est tout le sujet. `scripts/gitlab/lib.sh` lit
+    `${MAESTRO_CYCLE:-status}` depuis la bascule : vider la variable ne
+    neutralise donc plus rien, ça **choisit** le backend Projects v2 — celui que
+    les dépôts jetables des suites d'outillage n'ont pas et que leur `gh` factice
+    ne sait pas servir.
+
+    `labels` est la valeur qui rend ces suites indifférentes au défaut du dépôt,
+    exactement comme `MAESTRO_FORGE=gitlab` l'avait été pour les suites de forge
+    à la bascule de #343. Une suite qui veut l'autre backend le pose elle-même
+    dans le sous-processus qu'elle lance (#366).
+    """
+    os.environ[CLE_CYCLE] = VALEUR_CYCLE
+
+
 # Posés à l'import du conftest, donc avant l'import du premier module de test :
 # un test qui appelle `load_settings()` dès son import voit déjà l'environnement
 # neutralisé (la config relit `os.environ` à chaque appel, rien n'est mis en cache).
 _neutralise_langfuse()
 _neutralise_couleur_orchestrate()
 _neutralise_forge()
+_epingle_cycle_de_vie()
 
 
 @pytest.fixture(autouse=True)

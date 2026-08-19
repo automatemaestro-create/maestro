@@ -7,7 +7,7 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Read
 Tu vas créer un **nouveau ticket** bien formé selon les règles de Maestro (résumées
 ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`, non
 chargée automatiquement, à n'ouvrir qu'en cas de doute). C'est le pendant amont de `/ticket-start` :
-cette commande **crée** le ticket (état « À faire », posé par le label `workflow::a-faire`) mais
+cette commande **crée** le ticket (état « À faire », posé dans le champ Status par `project-add`) mais
 **ne crée pas de branche** et **n'assigne pas** — c'est le rôle de
 `/ticket-start <iid>` ensuite. Arrête-toi et demande dès qu'une information nécessaire manque au
 lieu d'inventer.
@@ -108,34 +108,34 @@ lieu d'inventer.
      --milestone "<milestone-de-phase>" \
      --body-file <fichier-de-corps>
    ```
-   Le `workflow::a-faire` n'est pas décoratif et **ne s'ajoute pas après coup** : le cycle de vie
-   étant porté par des labels (docs/10 §3), plus aucun défaut ne le pose à la création — un ticket
-   créé sans lui n'a **aucun** état, ce que `doctor.sh` signale comme une dérive. Le poser dans le
-   même `--label` évite un second appel, et c'est le seul cas du workflow où l'état ne passe pas par
-   `set-workflow` : il n'y a encore rien à retirer. N'assigne pas et ne crée pas de branche.
+   Le `workflow::a-faire` **n'est plus l'état du ticket** depuis la bascule de #364 (docs/10 §3.8) :
+   le cycle de vie vit dans le champ Status, que l'étape suivante pose. On continue de le poser tant
+   que les labels existent (leur retrait est #365), pour que `MAESTRO_CYCLE=labels` reste un retour
+   arrière praticable — mais c'est désormais la **donnée de secours**, pas l'état. N'assigne pas et
+   ne crée pas de branche.
 
    Puis, **dans la foulée et sans attendre**, fais du ticket un **item du projet** :
    ```
    bash scripts/gitlab/lib.sh project-add <iid>
    ```
-   C'est le **pendant exact** du `workflow::a-faire` ci-dessus, pour le support qui prendra sa
-   suite (chantier #358, docs/10 §3.5). Le champ **Status** de GitHub Projects v2 vit sur l'**item
-   de projet** et non sur l'issue : un ticket absent du projet n'a donc **aucun** état — l'exact
-   équivalent du « 0 label `workflow::` », en plus silencieux, puisque rien à l'écran ne distingue
-   un ticket sans état d'un ticket hors du filtre. La commande pose « À faire » par défaut ; elle
-   est idempotente, donc la rejouer après un échec ne duplique rien.
+   **C'est cet appel qui donne son état au ticket** (chantier #358, docs/10 §3.8). Le champ
+   **Status** de GitHub Projects v2 vit sur l'**item de projet** et non sur l'issue : un ticket
+   absent du projet n'a donc **aucun** état — invisible de `queue.sh`, rendu « - » par `/backlog`,
+   et rien à l'écran ne le distingue d'un ticket hors du filtre. La commande pose « À faire » par
+   défaut ; elle est idempotente, donc la rejouer après un échec ne duplique rien.
 
-   Deux points à ne pas confondre. Cet appel **ne dépend pas** de `MAESTRO_CYCLE` : peupler le
-   projet n'est pas décider du cycle de vie, c'est poser une donnée de plus, que rien ne lit tant
-   que le commutateur vaut `labels` — et le projet doit être peuplé **avant** la bascule, pas
-   après. Et son échec **ne défait pas la création** : le ticket existe, avec ses labels ; signale
-   l'échec dans le résumé de l'étape 10 et propose de rejouer `project-add <iid>`, plutôt que de
-   t'arrêter là.
+   Deux points à ne pas confondre. Cet appel **ne dépend pas** de `MAESTRO_CYCLE` : il peuple le
+   projet, il ne choisit pas le backend — c'est ce qui lui a permis de tourner avant la bascule
+   comme après. Et son échec **ne défait pas la création**, mais il ne se range plus au rang des
+   détails : le ticket existe avec ses labels et **sans état**. Rejoue `project-add <iid>` tout de
+   suite ; s'il échoue encore, dis-le franchement dans le résumé de l'étape 10 — un ticket sans
+   état ne remonte dans aucune vue et personne ne le retrouvera.
 
 10. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels et son milestone —
    pour un découpage : le parent et chaque sous-ticket avec son rang dans la checklist. Mentionne
    `project-add` **seulement s'il a échoué** : c'est le cas nominal qui n'a pas à occuper le
-   résumé, et l'anomalie qui doit s'y voir. Puis la suite :
+   résumé, et l'anomalie qui doit s'y voir — un ticket sans état est à traiter, pas à consigner.
+   Puis la suite :
    - si l'utilisateur a demandé (explicitement ou par le contexte de la conversation) de
      **réaliser** le travail, enchaîne directement sur `/ticket-start <iid>` sans attendre de
      « go » (pour un découpage : sur le **premier sous-ticket** de la checklist, jamais sur le
