@@ -34,7 +34,9 @@ Objectif : que chaque ticket soit traité de façon prévisible — même branch
 >
 > Ce que ça change au quotidien : rien dans le vocabulaire (mêmes libellés, mêmes commandes), et une
 > panne nouvelle à connaître — le Status vit sur l'**item de projet**, donc **un ticket hors du
-> projet n'a aucun état** (§3.7, §3.8).
+> projet n'a aucun état** (§3.7, §3.8). Ce que le dispositif promet est **gardé** par
+> [`tests/test_cycle_de_vie.py`](../tests/test_cycle_de_vie.py) (**§3.9**), y compris les trois
+> promesses de la forme « le dépôt ne contient plus … », qui sont des `grep`.
 >
 > Les autres labels (`type::`, `agent::`, `prio::`) servent à la **catégorisation** (nature, rôle,
 > priorité), pas au suivi d'avancement. Ne pas réinventer de famille `status::`.
@@ -538,8 +540,8 @@ un feu vert sur une question jamais posée.
 
 Ce qui est parti avec les labels : `tests/test_cycle_de_vie.py`, dont le sujet **était** l'exclusion
 mutuelle des six labels — la classe de bug que le champ à valeur unique rend impossible par
-construction. Son pendant sur le champ Status (l'écriture refusée hors projet, `reconcile-workflow`)
-est le lot #366.
+construction. Son pendant sur le champ Status a été écrit au lot #366, sous le même nom et sur un
+autre sujet : **§3.9**.
 
 #### Ce que la bascule laisse ouvert
 
@@ -560,6 +562,68 @@ sans Status, invisible de `queue.sh` et rendu « - » par `/backlog`. Trois chos
 - La supprimer à la source demanderait un mécanisme côté projet (workflow d'auto-ajout de Projects
   v2, ou une GitHub Action sur `issues: opened`), du même ordre que #377. Rien n'a été improvisé ici :
   la bascule constate, elle n'invente pas un dispositif que personne n'a arbitré.
+
+### 3.9 Ce qui garde le dispositif — [`tests/test_cycle_de_vie.py`](../tests/test_cycle_de_vie.py) (#366)
+
+Lot final du chantier #358 : les sept lots précédents ont différé leurs tests ici (§5.1), et ce
+module est l'endroit où le dispositif rend des comptes. Il monte un **dépôt jetable** avec un `gh`
+factice — **ni réseau, ni compte de forge, ni projet réel** (§8), les mutations Projects v2 se
+testant sur un double.
+
+| Lot | Ce que le module garde |
+|---|---|
+| #359 | les six options du champ **dans l'ordre du flux** ; l'idempotence du monteur ; son garde-fou sur un projet peuplé ; le projet retrouvé par **égalité de titre** |
+| #360 | l'aller-retour libellé → option → libellé sur les **six** états ; l'asymétrie écriture/lecture ; l'ordre de `begin` ; **aucun identifiant figé** |
+| #361 | `project-add` rejouable, la valeur **nommée** et jamais devinée, l'appel dans la foulée de la création, le demi-échec qui se dit |
+| #362 | le recouvrement des tables par la carte, un ticket hors projet rendu « - » **sans disparaître**, la mémoire et sa péremption, le tube qui ne masque pas d'échec |
+| #363 | les six options validées, l'option manquante nommée, le ticket sans état nommé — et **aucune dérive** sur un dépôt sain |
+| #364 | le support est le champ Status sans qu'aucun réglage soit à poser |
+| #365 | plus aucun label `workflow::` ni commutateur `MAESTRO_CYCLE` — prouvé par `grep` sur le dépôt |
+
+**Trois contrôles sont des `grep` sur le dépôt**, et c'est délibéré : « aucun identifiant en dur »,
+« plus aucun label du cycle de vie » et « plus aucun commutateur » sont des promesses sur ce que le
+dépôt **ne contient pas**, qu'aucun cas de test ne peut attester. Chacun **prouve son motif** sur un
+échantillon fautif écrit à côté, avant de balayer : un `grep` qui ne trouve rien parce qu'il ne
+cherche rien est le pire des ✓ — c'est la panne de #341, dans un autre fichier.
+
+Deux **exclusions** en découlent, et aucune n'est un trou. `scripts/migration/` nomme les six labels
+parce qu'il lit l'**archive GitLab**, où ils ont réellement porté l'état : leur interdire ce nom
+reviendrait à leur interdire de lire ce qu'ils exportent. Et les fichiers qui **racontent** le
+retrait — l'en-tête de `lib.sh`, `tests/conftest.py`, la présente section — mentionnent
+`MAESTRO_CYCLE` au passé ; les compter pour des résurrections rendrait le contrôle insatisfaisable
+autrement qu'en effaçant la mémoire du chantier. Le motif cherche donc un **usage** (`${MAESTRO_CYCLE…}`,
+`MAESTRO_CYCLE=…`), jamais une mention.
+
+**Deux lignes du cadrage de #366 étaient caduques à son ouverture**, et le module le dit plutôt que
+de les jouer : « le retour arrière `MAESTRO_CYCLE=labels` prouvé » et « le backfill rejouable,
+reprenable » ont été écrits avant #364/#365, qui ont retiré l'un et l'autre (§3.8). Prouver un
+retour arrière qui n'existe plus reviendrait à le réintroduire ; ce qui est gardé à la place est que
+le support est **unique**, et que le peuplement se fait **à l'unité**.
+
+**Le module est écrit pour survivre au merge de #363**, qui ne l'était pas quand il a été écrit.
+Ce lot refait §4c sur une lecture **centrée ticket** — une requête qui sait dire d'un ticket qu'il
+n'est dans **aucun** projet, là où `main` interroge la carte du projet — et sépare en deux causes
+(« hors projet » / « Status vide ») ce que `main` fond en un message. Les assertions portent donc
+sur ce que les deux versions garantissent **également** : le ticket est nommé, le geste de
+réparation est nommé, un ticket qui a un état ne l'est pas. Épingler la formulation ferait échouer
+le contrôle sur un merge qui ne change rien à ce qu'il garde.
+
+**Et l'intersection est mesurée, pas supposée** : le module a été joué des deux côtés — `main` tel
+quel, puis `main` + la branche de #363 restaurée (`git restore --source=<branche> --worktree
+scripts/gitlab/lib.sh scripts/gitlab/doctor.sh`) —, **67/67 dans les deux cas**. C'est la méthode à
+reprendre pour tout lot final dont un frère est encore « En revue » : le double sert alors les
+**deux** lectures, chacune prenant la règle qui lui répond. Ce que #363 ajoute en propre — les deux
+causes distinguées par leur message, l'option en trop, les options dans le désordre, ses deux gardes
+`st_erreur_graphql` — se couvre **avec lui**, dans ce même module.
+
+**Le harnais est partagé, et il en a été sorti** : dépôt jetable, `gh` factice et fabriques de
+réponses vivent dans [`tests/harnais_forge.py`](../tests/harnais_forge.py), d'où
+`test_collaboration.py` les importe aussi. Le recopier aurait fait deux `gh` factices à tenir
+d'accord, et le premier symptôme de deux doubles est une suite verte sur une forme de réponse que
+l'autre a corrigée depuis. Un point à connaître avant d'y toucher : la fixture `depot` est une
+**fabrique** (`monte_depot`) que chaque suite enrobe en deux lignes — importer une fixture la met en
+collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811` sur la seule
+`test_collaboration.py`).
 
 ---
 
@@ -1322,10 +1386,17 @@ Deux points de conception valent d'être compris avant d'y toucher.
 
 **Les suites d'outillage sont déduites, jamais listées.** Une suite est « outillage » si elle
 **nomme un script du dépôt** (`tests/test_orchestrate.py` cite `run.sh`, `test_collaboration.py`
-cite `lib.sh`…). La dérivation donne exactement les neuf attendues, et elle a deux propriétés
-qu'une liste écrite à la main n'aurait pas : une suite d'outillage nouvelle se classe toute seule,
-et une suite qui ne nomme aucun script est **applicative par défaut** — donc jouée dès que
-`maestro/` bouge, jamais sautée en silence.
+cite `lib.sh`…). La dérivation donne exactement celles qu'on attend, et elle a deux propriétés
+qu'une liste écrite à la main n'aurait pas : une suite d'outillage nouvelle se classe toute seule
+— `tests/test_cycle_de_vie.py` (#366, §3.9) l'a vérifié le jour où elle est née —, et une suite qui
+ne nomme aucun script est **applicative par défaut**, donc jouée dès que `maestro/` bouge, jamais
+sautée en silence.
+
+**Un fichier de `tests/` qui n'est pas une suite retombe sur « la suite entière ».** Le premier est
+[`tests/harnais_forge.py`](../tests/harnais_forge.py) (#366) : un harnais partagé, sans un seul test.
+Il ne matche pas `tests/test_*.py`, donc le classement le range dans « tout le reste » — et c'est le
+bon verdict par accident heureux plutôt que par règle : deux suites en dépendent, un tri plus fin
+devrait les retrouver, et se tromper ici rendrait vert un filet qui n'a pas regardé le code changé.
 
 **On n'affine pas à l'intérieur de `maestro/`.** Sélectionner par module supposerait de lire le
 graphe d'imports : le couplage y est réel et invisible d'une recherche textuelle (un module de
