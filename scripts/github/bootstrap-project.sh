@@ -7,18 +7,19 @@
 # personne ne se souviendra six mois plus tard. Idempotent et non destructif ; aucune écriture en
 # `--check`.
 #
-# ⚠ POURQUOI UN CHAMP PLUTÔT QUE DES LABELS. Le cycle de vie est porté depuis #207 par six labels
-# scopés `workflow::*`, et ce n'était pas un choix : GitLab Free ayant perdu le champ Status natif
-# à la fin de l'essai Ultimate, les labels étaient le seul mécanisme disponible. L'exclusion
-# mutuelle des six est donc restée À NOTRE CHARGE — `set-workflow` ajoute la cible et retire les
-# cinq autres dans le même appel, faute de quoi un ticket porte deux états. Un champ à valeur
-# unique rend cette classe de bug impossible par construction. Ce chantier ne DÉFAIT pas #207 : il
-# le remplace par ce qui manquait alors.
+# ⚠ CE SCRIPT EST DEVENU UN PRÉREQUIS DE DÉMARRAGE (#365). Le cycle de vie fut porté de #207 à #364
+# par six labels scopés `workflow::*`, et ce n'était pas un choix : GitLab Free ayant perdu le champ
+# Status natif à la fin de l'essai Ultimate, les labels étaient le seul mécanisme disponible.
+# L'exclusion mutuelle des six restait À NOTRE CHARGE — toute pose devait ajouter la cible et
+# retirer les cinq autres dans le même appel, faute de quoi un ticket portait deux états. Un champ à
+# valeur unique rend cette classe de bug impossible par construction. Les six labels ont été retirés
+# avec le code qui les servait : sur un dépôt neuf, tant que ce script n'a pas tourné, aucun ticket
+# ne peut porter d'état et /ticket-start ne démarre rien.
 #
 # ⚠ CE QUE CE SCRIPT DÉPLACE, ET QU'IL FAUT SAVOIR AVANT DE S'EN SERVIR. Le Status vit sur l'ITEM
 # DE PROJET, pas sur l'issue. Un ticket absent du projet n'a donc AUCUN état, et aucune requête de
-# cycle de vie ne le voit — l'équivalent exact du « 0 label workflow:: » d'aujourd'hui, en plus
-# silencieux. Ce script ne touche à aucun ticket : le peuplement est #361, sa détection #363.
+# cycle de vie ne le voit. Ce script ne touche à aucun ticket : les y ajouter est `lib.sh
+# project-add` (#361), les repérer est doctor.sh (#363).
 #
 # Usage :
 #   bash scripts/github/bootstrap-project.sh            # crée / met en conformité

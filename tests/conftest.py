@@ -56,11 +56,21 @@ posent encore — neutraliser une variable morte ne coûte rien, et c'est ce qui
 évite qu'elle ne ressuscite en silence si quelqu'un rebranchait un jour une
 lecture dessus.
 
-Cinquième garde-fou (#333), et le seul qui REFUSE de jouer au lieu de
-neutraliser : **git absent EN CI est une erreur, pas un saut**. Les trois
-premiers protègent le verdict de ce que le poste apporte en trop ; celui-ci le
-protège de ce que l'image du job n'apporte pas. Le `python:3.11-slim` dans lequel
-tournait le job `pytest` de la CI GitLab n'avait pas git,
+Cinquième garde-fou (#364), **retiré par #365** : `MAESTRO_CYCLE` était épinglée
+ici à `labels` le temps que la bascule vive à côté de son retour arrière. Le
+commutateur est parti avec les six labels `workflow::*`, donc il n'y a plus de
+valeur à épingler ni de backend à choisir — et les suites d'outillage ont vu
+leurs doubles portés sur le champ Status (des lignes déjà aplaties, cf. l'en-tête
+de `tests/test_collaboration.py`). Ne pas la réintroduire « au cas où » : une
+variable épinglée qui ne commande plus rien est ce qui fait croire à un backend
+qu'on aurait encore le choix de servir.
+
+Sixième garde-fou (#333), et le seul qui REFUSE de jouer au lieu de
+neutraliser : **git absent EN CI est une erreur, pas un saut**. Tous les
+précédents protègent le verdict de ce que le poste apporte en trop — ou choisit
+à sa place ; celui-ci le protège de ce que l'image du job n'apporte pas. Le
+`python:3.11-slim` dans lequel tournait le job `pytest` de la CI GitLab n'avait
+pas git,
 et ~285 tests d'outillage sont gardés par `skipif(shutil.which("git") is
 None)` : le pipeline les sautait tous en silence, vert, depuis toujours — si
 bien qu'ils n'ont jamais tourné que sur des postes de développement, tous sous

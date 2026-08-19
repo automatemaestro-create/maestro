@@ -1,5 +1,5 @@
 ---
-description: Crée un ticket bien formé (labels type::/agent::/prio:: + corps de template, état « À faire »)
+description: Crée un ticket bien formé (labels type::/agent::/prio:: + corps de template, état « À faire », item du projet)
 argument-hint: "<type: feature|bug|doc|infra> <titre>  (le reste peut être précisé en dialogue)"
 allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Read
 ---
@@ -7,7 +7,7 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Read
 Tu vas créer un **nouveau ticket** bien formé selon les règles de Maestro (résumées
 ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`, non
 chargée automatiquement, à n'ouvrir qu'en cas de doute). C'est le pendant amont de `/ticket-start` :
-cette commande **crée** le ticket (état « À faire », posé par le label `workflow::a-faire`) mais
+cette commande **crée** le ticket (état « À faire », posé dans le champ Status par `project-add`) mais
 **ne crée pas de branche** et **n'assigne pas** — c'est le rôle de
 `/ticket-start <iid>` ensuite. Arrête-toi et demande dès qu'une information nécessaire manque au
 lieu d'inventer.
@@ -104,19 +104,36 @@ lieu d'inventer.
    ```
    gh issue create \
      --title "<titre>" \
-     --label "type::<type>,agent::<rôle>,prio::<niveau>,workflow::a-faire" \
+     --label "type::<type>,agent::<rôle>,prio::<niveau>" \
      --milestone "<milestone-de-phase>" \
      --body-file <fichier-de-corps>
    ```
-   Le `workflow::a-faire` n'est pas décoratif et **ne s'ajoute pas après coup** : le cycle de vie
-   étant porté par des labels (docs/10 §3), plus aucun défaut ne le pose à la création — un ticket
-   créé sans lui n'a **aucun** état, ce que `doctor.sh` signale comme une dérive. Le poser dans le
-   même `--label` évite un second appel, et c'est le seul cas du workflow où l'état ne passe pas par
-   `set-workflow` : il n'y a encore rien à retirer. N'assigne pas et ne crée pas de branche.
+   **Aucun label d'état ici** : les six `workflow::*` ont été retirés par #365 (docs/10 §3), le
+   cycle de vie vivant désormais dans le champ Status que l'étape suivante pose. Le ticket sort donc
+   de cet appel **sans état** — c'est normal, et c'est pourquoi l'étape suivante n'est pas
+   optionnelle. N'assigne pas et ne crée pas de branche.
+
+   Puis, **dans la foulée et sans attendre**, fais du ticket un **item du projet** :
+   ```
+   bash scripts/gitlab/lib.sh project-add <iid>
+   ```
+   **C'est cet appel qui donne son état au ticket, et c'est le seul** (chantier #358, docs/10 §3).
+   Le champ **Status** de GitHub Projects v2 vit sur l'**item de projet** et non sur l'issue : un
+   ticket absent du projet n'a donc **aucun** état — invisible de `queue.sh`, rendu « - » par
+   `/backlog`, et rien à l'écran ne le distingue d'un ticket hors du filtre. La commande pose
+   « À faire » par défaut ; elle est idempotente, donc la rejouer après un échec ne duplique rien.
+
+   Son échec **ne défait pas la création**, mais il ne se range pas au rang des détails : le ticket
+   existe avec ses labels et **sans état**, et depuis le retrait des labels (#365) plus rien ne
+   rattrape ça — il n'y a pas de donnée de secours. Rejoue `project-add <iid>` tout de suite ; s'il
+   échoue encore, dis-le franchement dans le résumé de l'étape 10 — un ticket sans état ne remonte
+   dans aucune vue et personne ne le retrouvera.
 
 10. Termine par un résumé court : l'IID et l'URL du ticket créé, ses labels et son milestone —
-   pour un découpage : le parent et chaque sous-ticket avec son rang dans la checklist. Puis la
-   suite :
+   pour un découpage : le parent et chaque sous-ticket avec son rang dans la checklist. Mentionne
+   `project-add` **seulement s'il a échoué** : c'est le cas nominal qui n'a pas à occuper le
+   résumé, et l'anomalie qui doit s'y voir — un ticket sans état est à traiter, pas à consigner.
+   Puis la suite :
    - si l'utilisateur a demandé (explicitement ou par le contexte de la conversation) de
      **réaliser** le travail, enchaîne directement sur `/ticket-start <iid>` sans attendre de
      « go » (pour un découpage : sur le **premier sous-ticket** de la checklist, jamais sur le

@@ -1,7 +1,7 @@
 ---
 name: Infrastructure
 about: Configuration, dépendances, environnement, outillage, nettoyage
-labels: "type::infra,prio::moyenne,workflow::a-faire"
+labels: "type::infra,prio::moyenne"
 ---
 
 ## Description

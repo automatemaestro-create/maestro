@@ -1,7 +1,7 @@
 ---
 name: Fonctionnalité
 about: Un besoin utilisateur ou technique à réaliser
-labels: "type::feature,prio::moyenne,workflow::a-faire"
+labels: "type::feature,prio::moyenne"
 ---
 
 ## Contexte

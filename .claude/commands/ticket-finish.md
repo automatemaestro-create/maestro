@@ -185,8 +185,8 @@ pas clair.
    une décision humaine ; la visibilité des PR en attente est portée par la **file de revue** en
    tête de `/backlog` (la plus ancienne d'abord).
 
-11. Fais passer l'**état** du ticket à « En revue » (le cycle de vie est porté par les labels
-   `workflow::*` — voir `docs/10-workflow-git.md` §3) :
+11. Fais passer l'**état** du ticket à « En revue » (le cycle de vie est porté par le champ Status
+   du projet — voir `docs/10-workflow-git.md` §3) :
    ```
    bash scripts/gitlab/lib.sh set-workflow <iid> "En revue"
    ```

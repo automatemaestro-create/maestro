@@ -6,7 +6,7 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 
 Tu vas **clôturer un ticket sans qu'il soit réalisé** (cette commande est autosuffisante ; réf.
 complète `docs/10-workflow-git.md` §3, non chargée automatiquement, à n'ouvrir qu'en cas de doute).
-Deux variantes, portées par les **labels `workflow::*`** qui tiennent le cycle de vie (docs/10 §3) :
+Deux variantes, portées par le **champ Status** qui tient le cycle de vie (docs/10 §3) :
 - **Abandonné** (won't-do) — décision de ne pas faire ce ticket.
 - **Doublon** — ce ticket fait double emploi avec un autre.
 
@@ -43,9 +43,8 @@ une raison et confirmation.
    ```
    bash scripts/gitlab/lib.sh set-workflow <iid> "Abandonné"   # ou "Doublon"
    ```
-   Le helper ajoute la cible et **retire les cinq autres `workflow::*` dans le même appel** —
-   l'exclusion mutuelle des labels scopés étant Premium, rien ne l'assurerait à notre place
-   (docs/10 §3). Le ticket reste **ouvert** : le poser ne le ferme pas.
+   Le champ Status est à **valeur unique** : poser la cible remplace l'état précédent, il n'y a rien
+   à retirer (docs/10 §3). Le ticket reste **ouvert** : le poser ne le ferme pas.
 
 7. **Ferme le ticket** — c'est l'étape qui le clôt, plus aucun état ne le fait à sa place :
    ```
@@ -56,9 +55,9 @@ une raison et confirmation.
    demandée est voulue, ne cherche pas à la contourner.
 
    Puis vérifie l'état final : `bash scripts/gitlab/lib.sh issue-raw <iid>` doit rendre
-   `state:` `closed` et le label `workflow::abandonne` (ou `workflow::doublon`). Une fermeture ne
-   rebascule aucun label : si le `workflow::*` attendu n'y est pas, c'est que l'étape 6 a échoué —
-   repose-le et signale-le.
+   `state:` `closed`, et `bash scripts/gitlab/lib.sh issue-owner <iid>` doit rendre « Abandonné »
+   (ou « Doublon ») en première colonne. Une fermeture ne touche pas au champ Status : si l'état
+   attendu n'y est pas, c'est que l'étape 6 a échoué — repose-le et signale-le.
 
 8. Si une **branche** locale existe pour ce ticket et qu'aucun travail n'y est à sauvegarder, tu
    peux proposer de la supprimer — mais **uniquement en local** et seulement après accord de
