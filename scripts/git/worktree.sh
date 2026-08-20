@@ -68,7 +68,7 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
   bash scripts/git/worktree.sh list
   bash scripts/git/worktree.sh remove <iid|chemin> [--force]
   bash scripts/git/worktree.sh gc [--check] [--auto] [--sauf <iid>]
-  bash scripts/git/worktree.sh sessions [<iid>]
+  bash scripts/git/worktree.sh sessions [<iid>|--tous]
 
 `ensure` est l'aiguillage de /ticket-start : il dit où la session doit travailler, en rendant
 en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà — cas d'orchestrate,
@@ -97,13 +97,21 @@ passe). MAESTRO_EN_COURS_SIGNAL=0 l'éteint (toute autre valeur remplace l'appel
 sans geste à se rappeler. Il signale et n'interrompt jamais un démarrage de ticket.
 MAESTRO_MAJ_DEPENDANCES=0 le désactive.
 
-`sessions` retrouve les SESSIONS Claude Code d'un ticket (#385, docs/10 §9.7). Claude Code range
-un transcript sous le RÉPERTOIRE COURANT de la session, et son sélecteur `/resume` ne montre que
-celui d'où on l'appelle : comme /ticket-start relocalise la session dans le worktree, l'historique
-d'un ticket est invisible depuis le clone principal — et `gc` retire ensuite le worktree. Le verbe
-rend date, titre, identifiant et la commande de reprise, worktree encore là ou non ; sans iid, tous
-les tickets qui en ont. La reprise passe par l'IDENTIFIANT (`claude --resume <id>`), qui
-court-circuite le sélecteur. Portée : les worktrees de CETTE MACHINE, comme `gc`.
+`sessions` retrouve les SESSIONS Claude Code (#385 et #397, docs/10 §9.7). Claude Code range un
+transcript sous le RÉPERTOIRE COURANT de la session, et son sélecteur `/resume` ne montre que celui
+d'où on l'appelle : comme /ticket-start relocalise la session dans le worktree, l'historique d'un
+ticket est invisible depuis le clone principal — et `gc` retire ensuite le worktree. Le verbe rend
+date, nom d'onglet, titre, identifiant et la commande de reprise :
+
+  sessions            les 10 dernières de CE dossier — ce qu'on cherche en rouvrant VS Code (#397)
+  sessions --limite 0 les mêmes, sans troncature (MAESTRO_SESSIONS_LIMITE déplace le défaut)
+  sessions <iid>      celles d'un ticket, worktree encore là ou non (#385)
+  sessions --tous     l'inventaire : tous les tickets qui en ont
+
+La reprise passe par l'IDENTIFIANT (`claude --resume <id>`), qui court-circuite le sélecteur. Le NOM
+d'onglet vient du registre `<config>/sessions/<PID>.json`, qu'aucun redémarrage n'efface — il est
+indexé par PID, donc muet sur ce qui tourne encore, mais c'est la seule source du nom. Portée : ce
+que CETTE MACHINE a produit, comme `gc`.
 
 Options de création :
   --branche <nom>   Nom de branche imposé (par défaut : résolu depuis le ticket via lib.sh).
@@ -818,10 +826,17 @@ commande_remove() {
 # PORTÉE : les worktrees de CETTE MACHINE, comme `gc` et `reconcile-workflow`. Un transcript vit sur
 # le poste qui l'a produit ; ce verbe ne va rien chercher ailleurs, et l'annonce.
 
-# Le répertoire de projets de Claude Code, où qu'il soit configuré — CLAUDE_CONFIG_DIR est aussi la
-# couture par laquelle les tests le font pointer sur un dossier jetable.
+# La configuration de Claude Code, où qu'elle soit — CLAUDE_CONFIG_DIR est aussi la couture par
+# laquelle les tests la font pointer sur un dossier jetable. Les DEUX sources lues ici en dépendent,
+# transcripts et registre : deux formules à tenir d'accord finiraient par lire des noms appartenant
+# à une autre installation que les transcripts affichés.
+sessions_config() {
+  printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+}
+
+# Le répertoire de projets, où vivent les transcripts.
 sessions_racine() {
-  printf '%s/projects' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  printf '%s/projects' "$(sessions_config)"
 }
 
 # La base des worktrees — la même que celle de `create`, jamais une seconde formule à tenir d'accord.
@@ -831,13 +846,31 @@ sessions_base() {
   printf '%s' "${MAESTRO_WORKTREE_DIR:-$(dirname "$principal")/maestro-worktrees}"
 }
 
-# Cette base, encodée comme Claude Code encode un répertoire courant. Le chemin doit être NATIF
-# (« E:\… ») : c'est sous cette forme que la session le reçoit, donc sous cette forme qu'il a été
-# encodé — l'encoder depuis le « /e/… » de Git Bash donnerait un préfixe qui ne matche rien.
+# L'encodage d'un chemin par Claude Code : « : », « \ », « / » et l'espace deviennent « - », sans
+# rien tronquer. Le chemin doit être NATIF (« E:\… ») : c'est sous cette forme que la session le
+# reçoit, donc sous cette forme qu'il a été encodé — l'encoder depuis le « /e/… » de Git Bash
+# donnerait un nom qui ne matche rien.
+sessions_encode() {
+  printf '%s' "$(chemin_natif "$1")" | tr ':\\/ ' '----'
+}
+
+# La base des worktrees ainsi encodée : le préfixe commun aux répertoires de projet des tickets.
 sessions_prefixe() {
   local base
   base="$(sessions_base)" || return 1
-  printf '%s' "$(chemin_natif "$base")" | tr ':\\/ ' '----'
+  sessions_encode "$base"
+}
+
+# sessions_bucket_ici : le répertoire de projet du RÉPERTOIRE COURANT (#397) — le seul que le
+# sélecteur `/resume` montrerait ici. C'est ce qu'interroge `sessions` sans argument : « je rouvre
+# VS Code dans ce dossier, qu'est-ce que je reprends ? » se pose de partout, clone principal
+# compris, là où la dérivation par iid ne couvre que les worktrees.
+sessions_bucket_ici() {
+  local racine motif
+  racine="$(sessions_racine)"
+  [ -d "$racine" ] || return 0
+  motif="$(sessions_encode "$PWD")"
+  find "$racine" -maxdepth 1 -type d -iname "$motif" 2>/dev/null | head -1
 }
 
 # sessions_titre <transcript> : son titre lisible — la DERNIÈRE entrée `ai-title`, le titre étant
@@ -847,6 +880,50 @@ sessions_prefixe() {
 sessions_titre() {
   grep -o '"aiTitle":[[:space:]]*"[^"]*"' "$1" 2>/dev/null | tail -1 \
     | sed 's/^"aiTitle":[[:space:]]*"//; s/"$//'
+}
+
+# --- Le registre des sessions : « quel onglet était-ce ? » (#397) -----------------------------------
+# Claude Code laisse une fiche par session sous `<config>/sessions/<PID>.json` — identifiant, dossier,
+# heure de démarrage, et le NOM que l'onglet VS Code affichait. Elle est indexée par PID, donc elle ne
+# dit plus rien de ce qui TOURNE une fois les processus morts ; mais ce n'est pas la question posée
+# ici, et le reste ne périme pas. C'est la seule source du nom, qu'aucun transcript ne porte — et
+# c'est le repère par lequel on reconnaît son onglet d'hier.
+#
+# sessions_texte <fichier> <clé> : la valeur texte d'une clé, dans un JSON à plat écrit sans espaces
+# — la forme du registre. « name » ne matche pas « nameSource » : le motif exige le guillemet qui
+# ferme la clé.
+sessions_texte() {
+  grep -o "\"$2\":\"[^\"]*\"" "$1" 2>/dev/null | head -1 | sed "s/^\"$2\":\"//; s/\"\$//"
+}
+
+# sessions_registre : la table « identifiant <TAB> nom », chaque identifiant une seule fois. Une
+# session REPRISE garde son identifiant sous un nouveau PID (jusqu'à trois fiches pour un même id sur
+# la machine de référence) : le nom retenu est celui de la fiche la plus récente, jamais le premier
+# venu — c'est le dernier nom vu à l'écran qu'on cherche à reconnaître.
+sessions_registre() {
+  local racine f id nom debut lignes=""
+  racine="$(sessions_config)/sessions"
+  [ -d "$racine" ] || return 0
+  for f in "$racine"/*.json; do
+    [ -e "$f" ] || continue
+    id="$(sessions_texte "$f" sessionId)"
+    nom="$(sessions_texte "$f" name)"
+    [ -n "$id" ] && [ -n "$nom" ] || continue
+    debut="$(grep -o '"startedAt":[0-9]*' "$f" 2>/dev/null | head -1 | cut -d: -f2)"
+    lignes="$lignes${debut:-0}"$'\t'"$id"$'\t'"$nom"$'\n'
+  done
+  [ -n "$lignes" ] || return 0
+  printf '%s' "$lignes" | sort -rn | awk -F'\t' '!vu[$2]++ { print $2 "\t" $3 }'
+}
+
+# La table du registre, chargée une fois par invocation : un `grep` par session rendue coûterait un
+# parcours du registre entier à chaque ligne affichée.
+declare -A SESSIONS_NOMS=()
+sessions_charge_noms() {
+  local id nom
+  while IFS=$'\t' read -r id nom; do
+    [ -n "$id" ] && SESSIONS_NOMS["$id"]="$nom"
+  done < <(sessions_registre)
 }
 
 # sessions_du_bucket <répertoire> : « <epoch><TAB><date><TAB><id><TAB><titre> » par transcript, du
@@ -896,31 +973,83 @@ sessions_compte() {
   printf '%s' "$total"
 }
 
-# commande_sessions [<iid>] : les sessions Claude Code d'un ticket, worktree présent ou ramassé.
-commande_sessions() {
-  local iid=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      -h|--help) usage; return 0 ;;
-      -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
-      *)
-        case "$1" in
-          ''|*[!0-9]*) erreur "iid attendu (un nombre), reçu « $1 »"; return 2 ;;
-        esac
-        iid="$1" ;;
-    esac
-    shift
-  done
+# Combien de sessions le mode par défaut imprime. Dix, parce que la question qu'il sert — « qu'est-ce
+# que je reprends ici ? » — porte sur les dernières : le clone principal de référence compte 192
+# transcripts, soit 390 lignes de sortie, où la conversation d'hier est aussi perdue qu'avant.
+# `--limite 0` rend tout ; MAESTRO_SESSIONS_LIMITE déplace le défaut.
+SESSIONS_LIMITE="${MAESTRO_SESSIONS_LIMITE:-10}"
+SESSIONS_RENDUES=0
+SESSIONS_TOTAL=0
+declare -A SESSIONS_VUES=()
 
-  local racine base prefixe
-  racine="$(sessions_racine)"
+# sessions_rend_bucket <répertoire> [limite] : les sessions d'un répertoire de projet, la plus
+# récente d'abord, au plus `limite` (0 = toutes). Les comptes partent dans SESSIONS_TOTAL et
+# SESSIONS_RENDUES et non par la sortie standard, que l'affichage occupe déjà — et ils sont DEUX,
+# parce qu'une liste tronquée qui ne dit pas ce qu'elle tait se lit comme une liste complète.
+# Au-delà de la limite on compte sans imprimer : le parcours a lieu de toute façon.
+#
+# Un identifiant n'apparaît qu'une fois par répertoire — un transcript est un fichier, nommé par cet
+# identifiant — mais peut se retrouver dans deux répertoires quand une session a été reprise
+# ailleurs : SESSIONS_VUES le dédoublonne à l'échelle de l'invocation.
+sessions_rend_bucket() {
+  local dossier="$1" limite="${2:-0}" date id titre nom
+  # L'epoch n'est là que pour trier : lu dans `_`, il n'a pas à porter de nom.
+  while IFS=$'\t' read -r _ date id titre; do
+    [ -n "$id" ] || continue
+    [ -n "${SESSIONS_VUES[$id]:-}" ] && continue
+    SESSIONS_VUES["$id"]=1
+    SESSIONS_TOTAL=$((SESSIONS_TOTAL + 1))
+    if [ "$limite" -gt 0 ] && [ "$SESSIONS_RENDUES" -ge "$limite" ]; then continue; fi
+    SESSIONS_RENDUES=$((SESSIONS_RENDUES + 1))
+    # Le nom de l'onglet, quand le registre le connaît : c'est par lui qu'on reconnaît la session
+    # qu'on cherche, un titre pouvant être absent ou trompeur (il est posé en cours de route).
+    nom="${SESSIONS_NOMS[$id]:-}"
+    # La commande de reprise sur SA propre ligne, alignée sous le titre : elle est faite pour être
+    # sélectionnée d'un coup, ce qu'une ligne mêlant date, titre et commande interdirait.
+    printf '  %-16s  %s%s\n' "$date" "${nom:+[$nom] }" "${titre:-(sans titre)}"
+    printf '  %-16s  claude --resume %s\n' '' "$id"
+  done < <(sessions_du_bucket "$dossier")
+}
+
+# sessions_ici : le mode par défaut (#397) — les sessions du RÉPERTOIRE COURANT, celles que `/resume`
+# montrerait ici et qu'un redémarrage de VS Code laisse sans adresse (l'extension ne persiste aucune
+# identité de session : sa clé `sessionGroups:<hash>` est absente du `state.vscdb`, et son « Reopen
+# Closed Session » travaille sur une pile en mémoire).
+sessions_ici() {
+  local limite="${1:-0}" bucket ailleurs
+  bucket="$(sessions_bucket_ici)"
+
+  printf '\nSessions Claude Code — %s\n' "$(chemin_natif "$PWD")"
+  printf '  (ce dossier ; c'\''est tout ce que le sélecteur /resume y montre)\n\n'
+
+  [ -n "$bucket" ] && sessions_rend_bucket "$bucket" "$limite"
+
+  if [ "$SESSIONS_TOTAL" -eq 0 ]; then
+    printf '  aucune session enregistrée pour ce dossier.\n'
+  fi
+  printf '\n%s session(s) ici.\n' "$SESSIONS_TOTAL"
+  # Une liste bornée le DIT : sans ça, « 8 sessions » se lirait comme un inventaire complet alors
+  # que le clone principal en compte 192, et la conversation cherchée serait tenue pour perdue.
+  if [ "$SESSIONS_TOTAL" -gt "$SESSIONS_RENDUES" ]; then
+    printf '  %s plus anciennes non listées : worktree.sh sessions --limite 0\n' \
+      "$((SESSIONS_TOTAL - SESSIONS_RENDUES))"
+  fi
+
+  # Le renvoi vers les sessions de tickets : depuis le clone principal, c'est là qu'est le gros du
+  # travail, et rien d'autre ne le dirait — le mode par défaut ne regarde qu'un seul répertoire.
+  ailleurs="$(sessions_buckets | grep -c .)" || ailleurs=0
+  if [ "${ailleurs:-0}" -gt 0 ]; then
+    printf '  %s ticket(s) en ont aussi, dans leur worktree : worktree.sh sessions --tous\n' "$ailleurs"
+  fi
+  printf '\n'
+  return 0
+}
+
+# sessions_par_ticket [<iid>] : les sessions d'un ticket (#385), ou de tous les tickets sans iid.
+sessions_par_ticket() {
+  local iid="${1:-}" base prefixe
   base="$(sessions_base)" || { erreur "hors d'un dépôt git"; return 1; }
   prefixe="$(sessions_prefixe)" || { erreur "hors d'un dépôt git"; return 1; }
-
-  if [ ! -d "$racine" ]; then
-    printf '\nAucun historique de session sur cette machine (%s est absent).\n\n' "$racine"
-    return 0
-  fi
 
   local -a buckets=()
   local d
@@ -941,7 +1070,7 @@ commande_sessions() {
   printf '\nSessions Claude Code — %s\n' "$(chemin_natif "$base")"
   printf '  (worktrees de cette machine ; le sélecteur /resume ne les voit pas d'\''ailleurs)\n'
 
-  local nom suffixe t_iid date id titre total=0
+  local nom suffixe t_iid
   for d in "${buckets[@]}"; do
     nom="$(basename "$d")"
     # Le suffixe se prend à la LONGUEUR du préfixe, pas par retrait de motif : la casse du préfixe
@@ -956,20 +1085,58 @@ commande_sessions() {
     else
       printf '\n#%s — worktree ramassé, transcripts conservés\n' "$t_iid"
     fi
-
-    # L'epoch n'est là que pour trier : lu dans `_`, il n'a pas à porter de nom.
-    while IFS=$'\t' read -r _ date id titre; do
-      [ -n "$id" ] || continue
-      total=$((total + 1))
-      # La commande de reprise sur SA propre ligne, alignée sous le titre : elle est faite pour être
-      # sélectionnée d'un coup, ce qu'une ligne mêlant date, titre et commande interdirait.
-      printf '  %-16s  %s\n' "$date" "${titre:-(sans titre)}"
-      printf '  %-16s  claude --resume %s\n' '' "$id"
-    done < <(sessions_du_bucket "$d")
+    sessions_rend_bucket "$d"
   done
 
-  printf '\n%s session(s).\n\n' "$total"
+  printf '\n%s session(s).\n\n' "$SESSIONS_TOTAL"
   return 0
+}
+
+# commande_sessions [<iid>|--tous] : sans argument, les sessions de CE dossier (#397) ; avec un iid,
+# celles d'un ticket (#385) ; `--tous` pour l'inventaire de tous les tickets.
+#
+# Le défaut a changé à #397, et le geste le plus court répond désormais à la question la plus
+# fréquente : celle qu'on se pose en rouvrant VS Code, là où on est. L'inventaire, lui, se demande —
+# il répond à « où sont passées mes sessions de tickets ? », qui vient plus rarement et plus tard.
+commande_sessions() {
+  local iid="" tous=0 limite="$SESSIONS_LIMITE"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage; return 0 ;;
+      --tous) tous=1 ;;
+      --limite)
+        shift
+        case "${1:-}" in
+          ''|*[!0-9]*) erreur "--limite attend un nombre (0 = toutes), reçu « ${1:-} »"; return 2 ;;
+        esac
+        limite="$1" ;;
+      -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
+      *)
+        case "$1" in
+          ''|*[!0-9]*) erreur "iid attendu (un nombre), reçu « $1 »"; return 2 ;;
+        esac
+        iid="$1" ;;
+    esac
+    shift
+  done
+  if [ -n "$iid" ] && [ "$tous" -eq 1 ]; then
+    erreur "--tous porte sur tous les tickets : il ne se combine pas avec un iid"
+    return 2
+  fi
+
+  local racine
+  racine="$(sessions_racine)"
+  if [ ! -d "$racine" ]; then
+    printf '\nAucun historique de session sur cette machine (%s est absent).\n\n' "$racine"
+    return 0
+  fi
+
+  sessions_charge_noms
+  if [ -z "$iid" ] && [ "$tous" -eq 0 ]; then
+    sessions_ici "$limite"
+  else
+    sessions_par_ticket "$iid"
+  fi
 }
 
 # --- gc : ramasser les worktrees soldés (#197) ------------------------------------------------------
