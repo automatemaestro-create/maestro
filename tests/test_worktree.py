@@ -93,6 +93,10 @@ class Depot:
         # Code de ce dépôt-ci) : on repart d'une base neutre.
         for cle in ("MAESTRO_CHROME_PROFILE", "MAESTRO_PORT_API", "MAESTRO_PORT_UI"):
             environnement.pop(cle, None)
+        # Historique des sessions (#385) : `sessions` lit `CLAUDE_CONFIG_DIR` avant `HOME`. Sur un
+        # poste qui la pose, la rediriger dans `HOME` seul ne suffirait pas — les tests liraient le
+        # VRAI historique de la machine, et le verdict de la suite dépendrait du poste.
+        environnement.pop("CLAUDE_CONFIG_DIR", None)
         environnement["HOME"] = str(self.home)
         environnement["MAESTRO_WORKTREE_DIR"] = str(self.worktrees)
         # Ramassage des worktrees (#197) : désactivé par défaut dans les tests de création — il
@@ -131,9 +135,7 @@ class Depot:
             environnement["MAESTRO_FAUX_JOURNAL"] = str(self.journal)
             environnement["MAESTRO_FAUX_DERIVE"] = str(self.fauxbin / "derive.tsv")
             environnement["MAESTRO_FAUX_SETUP_CODE"] = self.code_setup
-        environnement["PATH"] = os.pathsep.join(
-            [str(self.fauxbin), environnement.get("PATH", "")]
-        )
+        environnement["PATH"] = os.pathsep.join([str(self.fauxbin), environnement.get("PATH", "")])
         assert BASH is not None
         # Le script est appelé par son chemin DANS le clone principal : c'est lui qui porte les
         # artefacts à partager, quel que soit le répertoire depuis lequel on lance.
@@ -179,7 +181,7 @@ class Depot:
         shim = self.fauxbin / "verdict"
         shim.write_text(
             "#!/usr/bin/env bash\n"
-            f"awk -F'\\t' -v iid=\"$1\" 'iid == $1 {{ print $2 \"\\t\" $3 \"\\t\" $4; exit }}'"
+            f'awk -F\'\\t\' -v iid="$1" \'iid == $1 {{ print $2 "\\t" $3 "\\t" $4; exit }}\''
             f' "{str(table).replace(chr(92), "/")}"\n',
             encoding="utf-8",
             newline="\n",
@@ -385,9 +387,7 @@ def depot(tmp_path: Path) -> Depot:
     )
     shim.chmod(0o755)
 
-    return Depot(
-        racine=racine, origin=origin, worktrees=worktrees, home=home, fauxbin=fauxbin
-    )
+    return Depot(racine=racine, origin=origin, worktrees=worktrees, home=home, fauxbin=fauxbin)
 
 
 # --- Création ------------------------------------------------------------------------------
@@ -476,7 +476,7 @@ def test_node_modules_n_est_jamais_un_lien(depot: Depot) -> None:
 
     node_modules = depot.worktree() / "apps" / "web" / "node_modules"
     assert not node_modules.is_symlink()
-    assert "apps/web" in acheve.stdout      # l'étape est rapportée, pas passée sous silence
+    assert "apps/web" in acheve.stdout  # l'étape est rapportée, pas passée sous silence
 
 
 def test_ports_et_profil_sont_propres_au_worktree(depot: Depot) -> None:
@@ -488,8 +488,9 @@ def test_ports_et_profil_sont_propres_au_worktree(depot: Depot) -> None:
     assert reglages["env"]["MAESTRO_PORT_API"] == "8052"
     assert reglages["env"]["MAESTRO_PORT_UI"] == "3052"
     assert "chrome-profile-152" in reglages["env"]["MAESTRO_CHROME_PROFILE"]
-    assert reglages["env"]["MAESTRO_CHROME_PROFILE"] != (
-        REGLAGES_PRINCIPAL["env"]["MAESTRO_CHROME_PROFILE"]
+    assert (
+        reglages["env"]["MAESTRO_CHROME_PROFILE"]
+        != (REGLAGES_PRINCIPAL["env"]["MAESTRO_CHROME_PROFILE"])
     )
     # …mais l'approbation des serveurs MCP, elle, est héritée du clone principal.
     assert reglages["enabledMcpjsonServers"] == REGLAGES_PRINCIPAL["enabledMcpjsonServers"]
@@ -555,7 +556,7 @@ def test_list_montre_le_principal_et_les_worktrees(depot: Depot) -> None:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert BRANCHE in acheve.stdout
     assert "8052/3052" in acheve.stdout
-    assert "8000/3000" in acheve.stdout      # le clone principal garde les ports par défaut
+    assert "8000/3000" in acheve.stdout  # le clone principal garde les ports par défaut
 
 
 def test_remove_retire_le_worktree_mais_garde_la_branche(depot: Depot) -> None:
@@ -1456,7 +1457,7 @@ def test_ensure_remet_a_niveau_le_clone_principal_meme_appele_depuis_un_worktree
 
 def test_ensure_ignore_une_sonde_indisponible(depot: Depot) -> None:
     """Pas de `setup.sh` (dépôt partiel, clone en cours de montage) : ni bruit, ni blocage."""
-    depot.derive = ""      # rallume la mise à niveau sans poser le script factice
+    depot.derive = ""  # rallume la mise à niveau sans poser le script factice
     assert not (depot.racine / "scripts" / "setup.sh").exists()
 
     acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
@@ -1481,7 +1482,7 @@ ORPHELIN = "  ⚠ #325 orphelin — déduction : worktree silencieux depuis 7h12
 
 def test_gc_signale_les_tickets_en_cours_orphelins(depot: Depot) -> None:
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({})          # aucun verdict : rien à ramasser, tout est conservé
+    depot.impose_verdicts({})  # aucun verdict : rien à ramasser, tout est conservé
     depot.impose_orphelins(ORPHELIN)
 
     acheve = depot.lance("gc")
@@ -1563,8 +1564,8 @@ def test_les_trois_points_de_passage_passent_bien_par_le_ramassage(depot: Depot)
     demandé, d'où le mode muet.
     """
     passages = {
-        "scripts/git/worktree.sh": "gc --auto",              # `ensure`, donc tout /ticket-start
-        "scripts/orchestrate/run.sh": "gc --auto",           # le démarrage d'un run
+        "scripts/git/worktree.sh": "gc --auto",  # `ensure`, donc tout /ticket-start
+        "scripts/orchestrate/run.sh": "gc --auto",  # le démarrage d'un run
         ".claude/commands/branch-cleanup.md": "worktree.sh gc",
     }
     for relatif, attendu in passages.items():
@@ -1578,3 +1579,241 @@ def test_les_trois_points_de_passage_passent_bien_par_le_ramassage(depot: Depot)
         for ligne in (RACINE / relatif).read_text(encoding="utf-8").splitlines():
             if "reconcile-en-cours" in ligne and "--auto" in ligne:
                 raise AssertionError(f"{relatif} : second câblage du signalement — {ligne.strip()}")
+
+
+# --- Sessions d'un ticket (#385) ----------------------------------------------------------------
+# Claude Code range un transcript sous le RÉPERTOIRE COURANT de la session, et son sélecteur
+# `/resume` ne montre que celui d'où on l'appelle : l'historique d'un ticket, produit dans son
+# worktree, est donc invisible depuis le clone principal — puis `gc` retire le worktree. Ce que ces
+# tests épinglent, c'est que l'adressage se DÉRIVE : rien n'est indexé au moment du ramassage, donc
+# un ticket dont le worktree est parti depuis des semaines se retrouve exactement comme un autre.
+
+
+def _encode_chemin(chemin: Path) -> str:
+    """Le chemin, encodé comme Claude Code encode un répertoire courant : `:`, `\\`, `/`, ` ` → `-`.
+
+    Écrit ici en clair plutôt que demandé au script : un test qui interroge l'implémentation pour
+    savoir ce qu'il doit attendre ne prouve que la cohérence de celle-ci avec elle-même.
+    """
+    texte = str(chemin)
+    for caractere in (":", "\\", "/", " "):
+        texte = texte.replace(caractere, "-")
+    return texte
+
+
+def _bucket(depot: Depot, iid: str, slug: str = "essai") -> Path:
+    """Le répertoire de projet que Claude Code aurait créé pour le worktree de `<iid>`."""
+    nom = _encode_chemin(depot.worktrees / f"{iid}-{slug}")
+    return depot.home / ".claude" / "projects" / nom
+
+
+def _pose_transcript(
+    dossier: Path,
+    session_id: str,
+    titre: str | None = None,
+    quand: float | None = None,
+    titres_successifs: tuple[str, ...] = (),
+) -> Path:
+    """Écrit un transcript plausible : quelques lignes JSONL, dont les entrées `ai-title`.
+
+    Sérialisé COMPACT, comme Claude Code l'écrit (`{"type":"ai-title","aiTitle":"…"}`) : le
+    `json.dumps` par défaut espace ses séparateurs, ce qu'aucun transcript réel ne fait — un fixture
+    plus permissif que la réalité ferait passer une extraction qui ne lit pas le vrai format.
+    """
+    dossier.mkdir(parents=True, exist_ok=True)
+    fichier = dossier / f"{session_id}.jsonl"
+
+    def compact(objet: dict[str, object]) -> str:
+        return json.dumps(objet, separators=(",", ":"), ensure_ascii=False)
+
+    lignes = [compact({"type": "user", "message": {"role": "user", "content": "bonjour"}})]
+    for intitule in (*titres_successifs, *(() if titre is None else (titre,))):
+        lignes.append(compact({"type": "ai-title", "aiTitle": intitule, "sessionId": session_id}))
+    lignes.append(compact({"type": "assistant", "message": {"role": "assistant"}}))
+    fichier.write_text("\n".join(lignes) + "\n", encoding="utf-8", newline="\n")
+    if quand is not None:
+        os.utime(fichier, (quand, quand))
+    return fichier
+
+
+def test_sessions_retrouve_un_ticket_dont_le_worktree_est_ramasse(depot: Depot) -> None:
+    """Le cas qui motive le verbe : le worktree est parti, l'historique doit rester adressable.
+
+    C'est ici que se joue le choix de DÉRIVER plutôt que d'indexer au ramassage : aucun `gc` n'a
+    tourné dans ce test, aucun index n'existe, et le ticket se retrouve quand même.
+    """
+    _pose_transcript(_bucket(depot, "152"), "aaaa1111-2222-3333-4444-555566667777", "Boucle")
+    assert not (depot.worktrees / "152-essai").exists()
+
+    acheve = depot.lance("sessions", "152")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152" in acheve.stdout
+    assert "worktree ramassé" in acheve.stdout
+    assert "Boucle" in acheve.stdout
+    assert "claude --resume aaaa1111-2222-3333-4444-555566667777" in acheve.stdout
+
+
+def test_sessions_distingue_un_worktree_encore_en_place(depot: Depot) -> None:
+    """Même dérivation, verdict opposé — le répertoire est là, on le dit."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _pose_transcript(_bucket(depot, "152"), "bbbb1111-2222-3333-4444-5555", "En cours")
+
+    acheve = depot.lance("sessions", "152")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "worktree en place" in acheve.stdout
+    assert "worktree ramassé" not in acheve.stdout
+
+
+def test_sessions_replie_quand_le_transcript_n_a_pas_de_titre(depot: Depot) -> None:
+    """Beaucoup de sessions n'ont jamais reçu de titre — ce n'est pas une anomalie à taire.
+
+    Sans repli, la ligne sortirait amputée et la commande de reprise, elle, resterait juste : on
+    perdrait la session la plus difficile à identifier autrement.
+    """
+    _pose_transcript(_bucket(depot, "152"), "cccc1111-2222-3333-4444-5555", titre=None)
+
+    acheve = depot.lance("sessions", "152")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "(sans titre)" in acheve.stdout
+    assert "claude --resume cccc1111-2222-3333-4444-5555" in acheve.stdout
+
+
+def test_sessions_retient_le_dernier_titre_pose(depot: Depot) -> None:
+    """Le titre est réévalué en cours de session : c'est le DERNIER qui décrit le travail fait."""
+    _pose_transcript(
+        _bucket(depot, "152"),
+        "dddd1111-2222-3333-4444-5555",
+        titre="Retrait des labels workflow",
+        titres_successifs=("Premier jet",),
+    )
+
+    acheve = depot.lance("sessions", "152")
+    assert "Retrait des labels workflow" in acheve.stdout
+    assert "Premier jet" not in acheve.stdout
+
+
+def test_sessions_rend_le_plus_recent_d_abord(depot: Depot) -> None:
+    """Une reprise vise presque toujours la dernière session : elle doit être en tête."""
+    dossier = _bucket(depot, "152")
+    _pose_transcript(
+        dossier, "aaaa0000-0000-0000-0000-000000000000", "Ancienne", quand=1_600_000_000
+    )
+    _pose_transcript(
+        dossier, "zzzz9999-9999-9999-9999-999999999999", "Récente", quand=1_700_000_000
+    )
+
+    acheve = depot.lance("sessions", "152")
+    assert acheve.stdout.index("Récente") < acheve.stdout.index("Ancienne")
+
+
+def test_sessions_suit_le_dossier_de_worktrees_impose(depot: Depot) -> None:
+    """`MAESTRO_WORKTREE_DIR` déplace les worktrees, donc l'encodage, donc ce qui est à trouver.
+
+    Figer « maestro-worktrees » dans le verbe le ferait répondre juste sur cette machine et vide
+    partout ailleurs — un silence indiscernable de « ce ticket n'a pas de session ».
+    """
+    ailleurs = (
+        depot.home
+        / ".claude"
+        / "projects"
+        / _encode_chemin(depot.racine.parent / "autre-dossier" / "152-essai")
+    )
+    _pose_transcript(ailleurs, "eeee1111-2222-3333-4444-5555", "Hors du dossier imposé")
+    _pose_transcript(
+        _bucket(depot, "152"), "ffff1111-2222-3333-4444-5555", "Dans le dossier imposé"
+    )
+
+    acheve = depot.lance("sessions", "152")
+    assert "Dans le dossier imposé" in acheve.stdout
+    assert "Hors du dossier imposé" not in acheve.stdout, (
+        "le verbe a cherché ailleurs que dans MAESTRO_WORKTREE_DIR"
+    )
+
+
+def test_sessions_sans_iid_liste_tous_les_tickets(depot: Depot) -> None:
+    """Sans argument : l'inventaire — c'est par là qu'on entre quand on ne sait plus quel ticket."""
+    _pose_transcript(_bucket(depot, "152"), "aaaa1111-1111-1111-1111-111111111111", "Un")
+    _pose_transcript(_bucket(depot, "207"), "bbbb2222-2222-2222-2222-222222222222", "Deux")
+
+    acheve = depot.lance("sessions")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152" in acheve.stdout
+    assert "#207" in acheve.stdout
+    assert "2 session(s)." in acheve.stdout
+
+
+def test_sessions_ignore_la_casse_de_la_lettre_de_lecteur(depot: Depot) -> None:
+    """Claude Code encode le chemin TEL QU'IL LUI A ÉTÉ DONNÉ, sans le normaliser.
+
+    Sur la machine de référence, le clone principal est rangé sous « e-- » et ses worktrees sous
+    « E-- » : un motif sensible à la casse en manquerait la moitié, silencieusement. Ce test ne
+    prouve quelque chose que sur un système de fichiers sensible à la casse (le job CI) ; sous
+    Windows il passe par construction, ce qui est sans danger — l'invariant y est vrai aussi.
+    """
+    attendu = _bucket(depot, "152")
+    variante = attendu.with_name(attendu.name.upper())
+    _pose_transcript(variante, "aaaa3333-3333-3333-3333-333333333333", "Casse inversée")
+
+    acheve = depot.lance("sessions", "152")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Casse inversée" in acheve.stdout
+
+
+def test_sessions_refuse_un_iid_qui_n_en_est_pas_un(depot: Depot) -> None:
+    """Un argument mal formé se dit, il ne se traduit pas en « aucune session » (verdict faux)."""
+    acheve = depot.lance("sessions", "chore/152")
+    assert acheve.returncode == 2
+    assert "iid attendu" in acheve.stdout + acheve.stderr
+
+
+def test_sessions_est_franc_quand_il_n_y_a_rien(depot: Depot) -> None:
+    """Aucun historique sur la machine : le dire, plutôt que rendre une liste vide sans explication.
+
+    La portée du verbe est celle de CE poste (comme `gc` et `reconcile-workflow`) : un transcript
+    vit là où il a été produit, et confondre « pas ici » avec « nulle part » ferait conclure à tort
+    qu'une session est perdue.
+    """
+    acheve = depot.lance("sessions", "152")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Aucun historique de session" in acheve.stdout
+    assert "cette machine" in acheve.stdout
+
+
+def test_gc_nomme_les_sessions_du_worktree_qu_il_retire(depot: Depot) -> None:
+    """Le retrait n'efface pas les transcripts, mais il coupe le seul chemin qui les montrait.
+
+    C'est l'instant où l'information disparaît de l'écran : après coup, plus rien ne rappellera
+    qu'il y avait un historique ni par quoi le rouvrir.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _pose_transcript(_bucket(depot, "152"), "aaaa4444-4444-4444-4444-4444", "Travail")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout
+    assert "1 session(s) conservée(s)" in acheve.stdout
+    assert "worktree.sh sessions 152" in acheve.stdout
+    assert not depot.worktree().exists()
+
+
+def test_gc_ne_parle_pas_de_sessions_quand_il_n_y_en_a_pas(depot: Depot) -> None:
+    """La mention est portée par un fait, pas par le passage : sans transcript, rien à dire."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert "#152 retiré" in acheve.stdout
+    assert "session(s) conservée(s)" not in acheve.stdout
+
+
+def test_gc_check_annonce_les_sessions_sans_rien_retirer(depot: Depot) -> None:
+    """`--check` sert à décider : il doit montrer ce que le retrait rendrait moins accessible."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _pose_transcript(_bucket(depot, "152"), "aaaa5555-5555-5555-5555-5555", "Travail")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+
+    acheve = depot.lance("gc", "--check")
+    assert "#152 à retirer" in acheve.stdout
+    assert "1 session(s) conservée(s)" in acheve.stdout
+    assert depot.worktree().exists(), "--check ne retire rien"
