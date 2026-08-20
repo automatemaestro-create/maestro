@@ -474,6 +474,24 @@ class Depot:
             "scripts/github/bootstrap-project.sh", *args, cwd=None, reglages=reglages
         )
 
+    def ticket_ferme(
+        self, *args: str, reglages: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """`scripts/github/ticket-ferme.sh` — la décision du workflow `issues: closed` (#377).
+
+        ⚠ `GH_TOKEN` est posé D'OFFICE, et c'est un garde-fou de poste et non un confort : le
+        script s'abstient quand il est vide, si bien qu'une machine qui n'en porte pas rendrait
+        « abstention » là où le test attend une pose (et une machine qui en porte un ferait passer
+        le test qui vérifie l'abstention). Le vider explicitement reste possible — c'est ce que
+        fait le test de l'abstention, en le passant à "" dans `reglages`.
+        """
+        return self._bash(
+            "scripts/github/ticket-ferme.sh",
+            *args,
+            cwd=None,
+            reglages={"GH_TOKEN": "jeton-de-test", **(reglages or {})},
+        )
+
     def bash_inline(
         self, script: str, reglages: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess[str]:
@@ -596,6 +614,10 @@ def monte_depot(tmp_path: Path) -> Depot:
         # Status, donc le seul endroit du dépôt où le VOCABULAIRE du cycle de vie est écrit deux
         # fois (ici et dans `gl_workflow_label`). Voir tests/test_cycle_de_vie.py.
         "scripts/github/bootstrap-project.sh",
+        # La décision du workflow `issues: closed` (#377) : elle délègue la pose à
+        # `lib.sh reconcile-workflow`, donc les deux fichiers doivent être là ENSEMBLE — c'est le
+        # chaînage des deux filtres (raison de fermeture, puis état courant) qui se teste.
+        "scripts/github/ticket-ferme.sh",
     ):
         cible = racine / relatif
         cible.parent.mkdir(parents=True, exist_ok=True)

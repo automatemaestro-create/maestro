@@ -18,6 +18,12 @@ CE QUI EST GARDÉ ICI, LOT PAR LOT :
 | #364 | le support est le champ Status, sans réglage à poser |
 | #365 | plus aucun label `workflow::` ni commutateur — un seul support, prouvé par `grep` |
 
+Un huitième lot s'y est greffé après coup, et il n'est pas du chantier #358 : **#377** donne au
+cycle de vie un **déclencheur** — un workflow GitHub Actions sur `issues: closed` — là où les sept
+lots ci-dessus lui donnaient un support. Ses tests sont en fin de module, sur le même harnais : ce
+qui s'y joue est la **décision** (`scripts/github/ticket-ferme.sh`), le YAML n'étant qu'un
+déclencheur qu'on garde par `grep`.
+
 ⚠ **LE VOCABULAIRE NE BOUGE PAS, ET C'EST LE SUJET.** Les six libellés — « À faire », « En cours »,
 « En revue », « Terminé », « Abandonné », « Doublon » — sont le CONTRAT DE SURFACE documenté en tête
 de `lib.sh`, et ils ont survécu à trois supports : le champ Status natif de GitLab, les six labels
@@ -207,6 +213,25 @@ def mutations(depot: Depot) -> list[str]:
         for ligne in depot.appels()
         if "mutation" in ligne or any(v in ligne for v in ("createProjectV2", "updateProjectV2"))
     ]
+
+
+def est_bytecode(fichier: Path) -> bool:
+    """Un `__pycache__` n'est ni un script ni un prompt : rien de ce qu'il porte n'est un USAGE.
+
+    ⚠ ET L'EXCLUSION NE PEUT PAS SE FAIRE SUR LE SUFFIXE, c'est tout l'intérêt de ce helper.
+    Sous Windows, un run `-n 8` laisse derrière lui des ORPHELINS `….pyc.<pid>` : CPython écrit le
+    bytecode sous un nom temporaire puis le renomme, et le renommage échoue quand un autre worker
+    tient déjà le fichier cible. Leur suffixe est alors `.17648`, que `fichier.suffix == ".pyc"`
+    laisse passer — et leur contenu est le bytecode d'un MODULE DE TEST, donc les chaînes mêmes que
+    ces `grep` cherchent (`MAESTRO_CYCLE`, `workflow::en-cours`), y compris celles du module que le
+    test s'exclut à lui-même.
+
+    Symptôme, mesuré le 2026-08-20 (#377) : rouge en local sur tout poste ayant déjà joué la suite
+    en parallèle, vert en CI où le checkout est neuf — et rouge de façon REPRODUCTIBLE, pas
+    transitoire, l'orphelin restant sur le disque. C'est le défaut que `tests/conftest.py` nomme
+    en tête : le verdict de la suite ne doit pas dépendre du poste, ni de ce qu'il a joué avant.
+    """
+    return "__pycache__" in fichier.parts
 
 
 # =================================================================================================
@@ -1007,6 +1032,8 @@ def test_aucun_label_de_cycle_de_vie_ne_subsiste_dans_le_depot() -> None:
         for fichier in dossier.rglob("*"):
             if not fichier.is_file() or fichier.parent.name == "migration":
                 continue
+            if est_bytecode(fichier):
+                continue
             texte = fichier.read_text(encoding="utf-8", errors="replace")
             for numero, ligne in enumerate(texte.splitlines(), start=1):
                 # Le nom du label, pas le mot « workflow » : `.github/workflows`, `labelsWidget` et
@@ -1046,13 +1073,32 @@ def test_aucun_commutateur_ne_choisit_plus_de_support() -> None:
     fautifs = []
     for dossier in (RACINE / "scripts", RACINE / ".claude", RACINE / "tests"):
         for fichier in dossier.rglob("*"):
-            if not fichier.is_file() or fichier.suffix == ".pyc" or fichier == Path(__file__):
+            # `est_bytecode` remplace le filtre par suffixe, qui laissait passer les orphelins
+            # `….pyc.<pid>` d'un run parallèle sous Windows — dont le contenu est le bytecode de
+            # CE module, c'est-à-dire les trois formes que les assertions ci-dessus écrivent.
+            if not fichier.is_file() or est_bytecode(fichier) or fichier == Path(__file__):
                 continue
             texte = fichier.read_text(encoding="utf-8", errors="replace")
             for numero, ligne in enumerate(texte.splitlines(), start=1):
                 if usage.search(ligne):
                     fautifs.append(f"{fichier.relative_to(RACINE)}:{numero} : {ligne.strip()[:90]}")
     assert not fautifs, "commutateur de backend ressuscité :\n" + "\n".join(fautifs)
+
+
+def test_les_deux_balayages_ecartent_le_bytecode_y_compris_ses_orphelins() -> None:
+    """L'exclusion des `__pycache__` est GARDÉE, sans quoi elle retomberait sur le suffixe.
+
+    C'est une correction qui a l'air d'un détail de propreté et n'en est pas une : le filtre
+    d'origine (`fichier.suffix == ".pyc"`) est *presque* juste, et sa forme évidente est
+    exactement celle qui laisse passer l'orphelin. Sans ce test, le premier qui « simplifie »
+    `est_bytecode` en un test de suffixe rendrait les deux `grep` du module rouges sur tout poste
+    Windows ayant déjà joué la suite en `-n 8` — et verts en CI, donc invisibles en revue.
+    """
+    cache = RACINE / "tests" / "__pycache__"
+    assert est_bytecode(cache / "test_cycle_de_vie.cpython-313-pytest-9.1.1.pyc")
+    assert est_bytecode(cache / "test_cycle_de_vie.cpython-313-pytest-9.1.1.pyc.15196")
+    assert not est_bytecode(RACINE / "tests" / "test_cycle_de_vie.py")
+    assert not est_bytecode(RACINE / "scripts" / "gitlab" / "lib.sh")
 
 
 def test_poser_un_etat_ne_touche_a_aucun_label(depot: Depot) -> None:
@@ -1139,3 +1185,211 @@ def test_le_plan_d_orchestration_ne_retient_que_les_tickets_a_faire_et_libres(de
     table = depot.lib("backlog-table").stdout
     a_faire = {ligne[0] for ligne in colonnes(table) if ligne[1] == "À faire"}
     assert a_faire == {"11", "13"}
+
+
+# =================================================================================================
+# #377 — La pose à l'ÉVÉNEMENT : `on: issues: [closed]`
+# =================================================================================================
+# Les sept lots ci-dessus donnent au cycle de vie un support ; celui-ci lui donne un DÉCLENCHEUR
+# qui ne dépend d'aucune machine. Jusque-là « Terminé » n'était posé que par `worktree.sh gc`
+# (#275) — donc au prochain `/ticket-start`, `/branch-cleanup` ou démarrage de run, et sur la seule
+# machine qui les lance : le board était faux AU REPOS (§9.2). Trois tickets mergés le 2026-08-18
+# affichaient encore « En revue » le lendemain, faute qu'un `/ticket-start` soit passé.
+#
+# CE QUI SE TESTE ICI EST LA DÉCISION, PAS LE DÉCLENCHEUR. Le workflow ne fait qu'appeler
+# `scripts/github/ticket-ferme.sh` ; c'est ce script qui filtre, délègue et s'abstient — et lui
+# seul se rejoue sur le dépôt jetable. Les deux derniers tests gardent cette répartition : un
+# `if:` qui recopierait la condition dans le YAML la rendrait invérifiable ici.
+
+#: Ce que GitHub met dans `state_reason` quand la fermeture ne vaut PAS livraison. « duplicate » a
+#: été ajouté à l'énumération après coup, et c'est la raison d'être de la liste blanche : une liste
+#: noire aurait laissé passer chaque valeur suivante.
+RAISONS_SANS_LIVRAISON = ("not_planned", "duplicate", "")
+
+
+def test_un_ticket_ferme_comme_realise_passe_a_termine(depot: Depot) -> None:
+    """Le cas nominal : la PR est mergée, `Closes #<iid>` a fermé le ticket, l'état suit.
+
+    C'est ce que personne ne faisait au repos — et la pose n'est pas réécrite par le script : elle
+    est déléguée à `reconcile-workflow`, donc c'est bien l'option « Terminé » résolue par son nom
+    qui part dans la mutation.
+    """
+    depot.pose_etat(graphql=[regle_owner("En revue", ["bea"]), regle_pose_status()])
+
+    acheve = depot.ticket_ferme("377", "completed")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert option_posee(depot) == "Terminé"
+
+
+@pytest.mark.parametrize("raison", RAISONS_SANS_LIVRAISON)
+def test_une_fermeture_qui_ne_vaut_pas_livraison_n_ecrit_rien(depot: Depot, raison: str) -> None:
+    """Barrière n°1 — la liste blanche, qui n'ouvre que sur « completed ».
+
+    L'abstention est totale : pas même une LECTURE. Un ticket fermé « as not planned » depuis
+    l'interface web n'a rien à faire déclencher, et le journal du workflow reste lisible s'il ne
+    parle que de ce qui le concerne.
+    """
+    depot.pose_etat(graphql=[regle_owner("En revue", []), regle_pose_status()])
+
+    acheve = depot.ticket_ferme("377", raison)
+    assert acheve.returncode == 0, acheve.stderr
+    assert not depot.appels(), "une fermeture sans livraison ne pose même pas la question"
+    assert "rien à poser" in acheve.stdout
+
+
+@pytest.mark.parametrize("final", ["Abandonné", "Doublon"])
+def test_un_ticket_abandonne_garde_son_etat_meme_ferme_comme_realise(
+    depot: Depot, final: str
+) -> None:
+    """Barrière n°2 — l'ÉTAT COURANT, et c'est elle qui protège réellement `/ticket-abandon`.
+
+    ⚠ LE PIÈGE DU TICKET, ET LA RAISON D'ÊTRE DE CE TEST. #377 décrit ce cas comme « un ticket
+    fermé en `not_planned` (donc par `/ticket-abandon`) » — or la commande ferme par un
+    `gh issue close <iid>` NU (son étape 7), et GitHub met alors `state_reason: completed`, comme
+    sur n'importe quel merge. La barrière n°1 le laisse donc passer : si la protection s'arrêtait
+    au `state_reason`, tout abandon repasserait « Terminé », c'est-à-dire exactement la dérive
+    « sans retour possible » que §9.2 nomme.
+
+    Ce qui l'arrête est le filtre d'état de `reconcile-workflow` (#275), et ce qui le rend possible
+    est l'ORDRE de `/ticket-abandon` : l'état est posé (étape 6) AVANT la fermeture (étape 7), donc
+    il est déjà là quand ce script lit. Le test joue donc la raison `completed` — la vraie — et non
+    celle que le ticket supposait.
+
+    L'écart est ticketé (**#388**), et ce test **restera vert inchangé** quand il sera corrigé : un
+    abandon fait à la main depuis l'interface web, ou par une commande qui oublierait le `--reason`,
+    reste exactement ce cas-ci.
+    """
+    depot.pose_etat(graphql=[regle_owner(final, []), regle_pose_status()])
+
+    acheve = depot.ticket_ferme("377", "completed")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not mutations(depot), f"« {final} » a été écrasé par « Terminé »"
+    assert "déjà à un état final" in acheve.stdout
+
+
+def test_rejouer_sur_un_ticket_deja_termine_n_ecrit_rien(depot: Depot) -> None:
+    """L'IDEMPOTENCE dans le seul sens qui compte : un second événement ne réécrit pas.
+
+    Un ticket peut être fermé, rouvert, refermé ; le workflow rejoue alors sur un ticket qui porte
+    déjà « Terminé ». Sauter l'écriture est le cas nominal en régime établi.
+    """
+    depot.pose_etat(graphql=[regle_owner("Terminé", []), regle_pose_status()])
+
+    acheve = depot.ticket_ferme("377", "completed")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not mutations(depot)
+
+
+def test_sans_le_secret_rien_n_est_ecrit_et_le_journal_nomme_le_geste(depot: Depot) -> None:
+    """Le secret est LE geste manuel du dispositif : son absence s'annonce, elle n'échoue pas.
+
+    Tant que personne ne l'a posé, chaque fermeture de ticket passerait ici : un run rouge par
+    ticket fermé ne dirait rien de plus que le premier, et ce que le journal doit porter est le
+    geste qui manque — pas une pile d'échecs. Le filet de rattrapage (`worktree.sh gc`) est nommé
+    au même endroit, parce que c'est ce qui tient en attendant.
+    """
+    depot.pose_etat(graphql=[regle_owner("En revue", []), regle_pose_status()])
+
+    acheve = depot.ticket_ferme("377", "completed", reglages={"GH_TOKEN": ""})
+    assert acheve.returncode == 0, acheve.stderr
+    assert not depot.appels(), "sans jeton, on ne tente même pas la lecture"
+    assert "MAESTRO_PROJECT_TOKEN" in acheve.stdout
+    assert "worktree.sh gc" in acheve.stdout
+
+
+def test_une_pose_en_echec_laisse_le_run_rouge_et_nomme_le_rattrapage(depot: Depot) -> None:
+    """« Best-effort » ne veut pas dire « vert quoi qu'il arrive ».
+
+    Un projet injoignable, un jeton périmé : la pose échoue et le script PROPAGE l'échec, ce qui
+    laisse le run rouge dans l'onglet Actions — la seule visibilité qu'on puisse lui donner. Rien
+    n'en dépend : ce workflow ne se déclenche que sur `issues: closed`, il ne conditionne aucun
+    merge et n'entre dans aucune protection de branche.
+    """
+    depot.pose_etat(graphql=[regle_owner("En revue", [])])  # aucune règle pour la mutation
+
+    acheve = depot.ticket_ferme("377", "completed")
+    assert acheve.returncode == 1
+    assert "reconcile-workflow 377" in acheve.stderr, "le rattrapage manuel est nommé"
+
+
+@pytest.mark.parametrize("mauvais", ["", "377; rm -rf .", "trois-cent-soixante-dix-sept"])
+def test_un_iid_qui_n_en_est_pas_un_est_refuse_avant_toute_lecture(
+    depot: Depot, mauvais: str
+) -> None:
+    """L'iid vient de l'événement : il est validé plutôt que cru sur parole.
+
+    Il ne traverse qu'un `bash "$lib" reconcile-workflow "$iid"`, jamais un `eval` — le contrôle
+    est donc une ceinture. Mais c'est la donnée d'un événement, et la borner coûte une ligne.
+    """
+    depot.pose_etat(graphql=[regle_owner("En revue", []), regle_pose_status()])
+
+    acheve = depot.ticket_ferme(mauvais, "completed")
+    assert acheve.returncode == 2
+    assert not depot.appels()
+
+
+def test_le_workflow_declenche_sur_la_fermeture_et_delegue_toute_sa_decision() -> None:
+    """Le YAML déclenche et transmet ; il ne décide pas — sinon rien de tout ce qui précède ne vaut.
+
+    Un `if:` sur le `state_reason` recopierait la barrière n°1 dans un fichier qu'aucun test ne
+    joue et qu'aucune commande locale ne rejoue : deux formulations du même filtre, dont une seule
+    serait corrigée le jour où GitHub ajoutera une troisième raison de fermeture (il en a déjà
+    ajouté une).
+    """
+    workflow = (RACINE / ".github" / "workflows" / "cycle-de-vie.yml").read_text(encoding="utf-8")
+
+    assert re.search(r"^on:\s*$", workflow, re.MULTILINE)
+    assert re.search(r"^\s+issues:\s*$", workflow, re.MULTILINE)
+    assert re.search(r"types:\s*\[closed\]", workflow)
+    assert "bash scripts/github/ticket-ferme.sh" in workflow
+
+    # Le motif est prouvé sur la forme fautive AVANT d'être cru sur parole — et sur celle qu'il
+    # doit laisser passer, la ligne d'environnement qui TRANSMET la raison sans en juger.
+    decision = re.compile(r"^\s*if:.*state_reason", re.MULTILINE)
+    assert decision.search("    if: github.event.issue.state_reason == 'completed'")
+    assert not decision.search("          RAISON: ${{ github.event.issue.state_reason }}")
+    assert not decision.search(workflow), "la décision est dans le script, pas dans le YAML"
+
+
+def test_le_nom_du_secret_est_le_meme_partout_ou_il_est_nomme() -> None:
+    """Trois endroits nomment le secret ; un quatrième nom serait une panne muette.
+
+    Le workflow le LIT, le script dit ce qui manque quand il est vide, la doc dit comment le poser.
+    Un renommage qui n'irait pas au bout laisserait un workflow silencieux (secret vide, abstention
+    annoncée) que personne ne saurait relier au geste qui le réparerait.
+    """
+    secret = "MAESTRO_PROJECT_TOKEN"
+    for relatif in (
+        ".github/workflows/cycle-de-vie.yml",
+        "scripts/github/ticket-ferme.sh",
+        "docs/10-workflow-git.md",
+    ):
+        assert secret in (RACINE / relatif).read_text(encoding="utf-8"), relatif
+
+
+def test_aucune_expression_du_workflow_n_atterrit_dans_un_run() -> None:
+    """Une expression `${{ }}` est substituée AVANT que bash ne voie la ligne.
+
+    C'est l'injection classique des Actions : un titre de ticket interpolé dans un `run:` s'exécute.
+    Les deux données de la décision (numéro, raison) sont ici un entier et une énumération, mais la
+    règle ne se relâche pas au cas par cas — toutes les expressions passent par le bloc `env:`.
+    """
+    workflow = (RACINE / ".github" / "workflows" / "cycle-de-vie.yml").read_text(encoding="utf-8")
+
+    affectation = re.compile(r"^\s+[A-Z_]+: \$\{\{ [^{}]+ \}\}$")
+    assert affectation.match("          GH_TOKEN: ${{ secrets.MAESTRO_PROJECT_TOKEN }}")
+    assert not affectation.match("        run: bash ticket-ferme.sh ${{ github.event.issue.id }}")
+
+    # Les COMMENTAIRES sont écartés : ce fichier explique la règle, donc il écrit la forme qu'elle
+    # proscrit — et une ligne que YAML ne lit pas n'est exécutée par personne. Le contrôle ne vaut
+    # que sur ce qui part au runner.
+    commentaire = re.compile(r"^\s*#")
+    assert commentaire.match("          # une expression `${{ }}` y est substituée AVANT bash")
+    assert not commentaire.match("          TICKET: ${{ github.event.issue.number }}")
+
+    fautives = [
+        ligne
+        for ligne in workflow.splitlines()
+        if "${{" in ligne and not commentaire.match(ligne) and not affectation.match(ligne)
+    ]
+    assert not fautives, "expression hors du bloc env: :\n" + "\n".join(fautives)

@@ -1,0 +1,83 @@
+# Pose « Terminé » à la fermeture d'un ticket (ticket #377, docs/10 §9.2).
+#
+# Le merge d'une PR ferme le ticket (`Closes #<iid>`) mais ne touche à AUCUN état. « Terminé »
+# n'était posé qu'ensuite, par `worktree.sh gc` (#275) — donc au prochain `/ticket-start`, au
+# prochain `/branch-cleanup` ou au démarrage d'un run, et sur la seule machine qui les lance : le
+# board restait faux AU REPOS. Constat du 2026-08-19 : trois tickets mergés la veille (#360, #361,
+# #362) affichaient encore « En revue », faute qu'un `/ticket-start` soit passé entre-temps.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POURQUOI CE WORKFLOW EXISTE, ALORS QUE docs/10 §9.2 ÉCARTAIT LA VOIE
+#
+# L'objection était propre à GitLab : « pas un job post-merge, qui obligerait à rouvrir un pipeline
+# sur `main` » (§8 — la CI GitLab ne se déclenchait que sur les MR). `on: issues:` est un workflow
+# ÉVÉNEMENTIEL et non un pipeline de push : il ne rouvre rien sur `main`, ne relance aucun test et
+# ne coûte que les quelques secondes d'un checkout. La raison du refus n'existe plus.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# ET POURQUOI PAS LE WORKFLOW NATIF DE PROJECTS V2 — mesuré le 2026-08-19
+#
+# Le projet en porte six, dont `Item closed`, tous désactivés. Deux faits les écartent :
+#
+#   · ILS ÉCRASERAIENT « Abandonné »/« Doublon », par construction : `/ticket-abandon` pose l'état
+#     PUIS ferme le ticket, donc l'automatisation se déclencherait APRÈS notre écriture et la
+#     remplacerait par « Terminé ». Le natif n'offre aucune condition sur le `state_reason`, ni sur
+#     la valeur déjà présente ;
+#   · ILS NE SONT NI PROVISIONNABLES NI VÉRIFIABLES : la seule mutation exposée par l'API GraphQL
+#     est `deleteProjectV2Workflow` — ni création ni activation, donc rien que
+#     `bootstrap-project.sh` puisse poser —, et le type `ProjectV2Workflow` expose `enabled` mais
+#     PAS la valeur cible : `doctor.sh` pourrait dire « c'est allumé », jamais « ça pointe sur
+#     Terminé ».
+#
+# Ce fichier-ci est versionné : un diff, une relecture, un test — pas un état invisible dans une
+# interface que personne ne relit.
+name: Cycle de vie
+
+# `closed` seulement. `reopened` n'est pas son symétrique et n'a rien à faire ici : rendre son état
+# à un ticket rouvert demanderait de savoir lequel il portait avant, ce que ce workflow ne sait pas
+# — et « À faire » serait une valeur inventée. C'est un geste humain (`lib.sh set-workflow`).
+#
+# `issues:` ne se déclenche PAS sur les pull requests, et c'est exactement ce qu'on veut : le
+# chemin nominal est le merge d'une PR portant `Closes #<iid>`, qui fait FERMER L'ISSUE par GitHub
+# — donc l'événement arrive de l'issue, avec `state_reason: completed`. Une PR fermée sans merge
+# ne déclenche rien, ce qui est juste : elle ne solde aucun ticket.
+on:
+  issues:
+    types: [closed]
+
+# Aucun droit sur le dépôt n'est nécessaire : le checkout d'un dépôt privé se fait avec le
+# `GITHUB_TOKEN` du run (lecture), et l'écriture du champ Status passe par le PAT ci-dessous — que
+# ce bloc ne gouverne pas. Rien n'est écrit dans le dépôt.
+permissions:
+  contents: read
+
+jobs:
+  termine:
+    runs-on: ubuntu-latest
+    # Un job qui dépasse la minute est un job pendu : la pose est une lecture et une mutation.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - shell: bash
+        env:
+          # LE SEUL GESTE MANUEL DU DISPOSITIF. `GITHUB_TOKEN` ne peut PAS écrire dans un
+          # Projects v2 appartenant à un compte utilisateur : le blocage est le TYPE de jeton et
+          # non une permission (#359, docs/10 §3.5). Il faut la portée « project », qui n'existe
+          # que sur un jeton classique ou OAuth. Secret absent → le script s'abstient en le
+          # nommant, sans échouer : c'est l'état du dépôt tant que personne ne l'a posé.
+          GH_TOKEN: ${{ secrets.MAESTRO_PROJECT_TOKEN }}
+          # Le dépôt vient de l'ÉVÉNEMENT plutôt que du défaut en dur de `lib.sh` : un fork ou un
+          # renommage écrirait sinon dans le projet du dépôt d'origine.
+          MAESTRO_GITHUB_REPO: ${{ github.repository }}
+          # Les deux données de la décision passent par l'ENVIRONNEMENT et jamais par une
+          # interpolation dans le `run:` : une expression `${{ }}` y est substituée AVANT que bash
+          # ne voie la ligne, donc une valeur porteuse de shell y serait exécutée. Ces deux-là sont
+          # un entier et une énumération, mais la règle ne se relâche pas au cas par cas.
+          TICKET: ${{ github.event.issue.number }}
+          RAISON: ${{ github.event.issue.state_reason }}
+        # LA DÉCISION N'EST PAS ICI. Ni le filtre sur la raison de fermeture, ni celui sur l'état
+        # courant : ce workflow ne fait que déclencher. Un `if:` qui recopierait la condition en
+        # ferait un second exemplaire, invérifiable en local et qu'aucun test ne joue — alors que
+        # le script, lui, se rejoue sur le dépôt jetable de tests/test_cycle_de_vie.py.
+        run: bash scripts/github/ticket-ferme.sh "$TICKET" "$RAISON"
