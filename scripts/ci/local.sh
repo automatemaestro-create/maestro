@@ -485,26 +485,58 @@ PY
 # la suite, parce qu'elles attendent des processus.
 suites_toutes() { (cd "$RACINE" && find tests -maxdepth 1 -name 'test_*.py' 2>/dev/null | sort); }
 
+# Même ancrage que `suites_nommant` ci-dessous, et pour une raison plus forte (#372) : ici le sens
+# de l'erreur est le DANGEREUX. L'applicatif est le complément de cet ensemble, donc une suite
+# classée « outillage » à tort en sort — et n'est plus jouée quand `maestro/**` bouge, sans que
+# rien ne le dise. C'est exactement le « jamais sautée en silence » de §8.4 pris à revers.
+# Aujourd'hui aucune suite n'est dans ce cas (9 avant, 9 après, vérifié sur les 62 suites) : le
+# changement est un no-op, et c'est la latence qu'il retire, pas un bug qu'il corrige.
 suites_outillage() {
-  local motifs=() script suites=()
+  local motifs=() script suites=() base
   mapfile -t suites < <(suites_toutes)
   [ "${#suites[@]}" -gt 0 ] || return 0
   while IFS= read -r script; do
     [ -n "$script" ] || continue
-    motifs+=(-e "$(basename "$script")")
+    base="$(basename "$script")"
+    motifs+=(-e "(^|[^A-Za-z0-9_])$(printf '%s' "$base" | sed 's,[][^$.*+?(){}|\\],\\&,g')")
   done < <(cd "$RACINE" && find scripts -type f -name '*.sh' 2>/dev/null)
   [ "${#motifs[@]}" -gt 0 ] || return 0
-  (cd "$RACINE" && grep -lF "${motifs[@]}" "${suites[@]}" 2>/dev/null | sort)
+  (cd "$RACINE" && grep -lE "${motifs[@]}" "${suites[@]}" 2>/dev/null | sort)
 }
 
 # Les suites qui citent <chaîne> — le nom du fichier modifié. Ces tests-là invoquent le script ou
 # lisent le fichier par son chemin : le nommer est le lien le plus direct qu'on puisse observer
 # sans exécuter quoi que ce soit.
+#: `suites_nommant <nom> [ancre]` — les suites qui citent ce nom.
+#:
+#: Le second argument choisit la RIGUEUR, et les deux essais de `classe_par_nom` n'en veulent pas
+#: la même (#372) :
+#:
+#:   - un NOM DE FICHIER se cherche ancré à gauche sur un non-mot. Sans ancrage, `lib.sh` matche
+#:     le `hashlib.sha256` de tests/test_setup.py — et tirait donc cette suite entière dans le
+#:     périmètre de TOUT diff touchant scripts/gitlab/lib.sh, c'est-à-dire le diff le plus courant
+#:     du dépôt. Vérifié exhaustivement avant d'ancrer, sur les 462 noms du dépôt croisés avec les
+#:     mots des 62 suites : `hashlib.sh` est le seul faux positif, et l'ancrage ne fait perdre
+#:     AUCUNE correspondance réelle (les tests citent leurs scripts en « scripts/gitlab/lib.sh »
+#:     ou « lib.sh », toujours précédés d'un `/`, d'un guillemet ou d'un blanc).
+#:
+#:   - un NOM DE DOSSIER se cherche SANS ancrage, et c'est délibéré. Ce repli existe pour les
+#:     fichiers que personne ne nomme (`.claude/commands/*.md`, cités par répertoire) ; sa
+#:     souplesse EST sa fonction, la sur-sélection étant « le bon sens de l'erreur ». L'ancrer
+#:     ferait perdre des suites sur des noms courts et fréquents — mesuré : `api`, `app`, `brief`,
+#:     `gitlab` en perdent chacun une à quatre. Ce serait un faux négatif, la seule dérive que
+#:     cette section s'interdit.
 suites_nommant() {
-  local suites=()
+  local suites=() motif
   mapfile -t suites < <(suites_toutes)
   [ "${#suites[@]}" -gt 0 ] || return 0
-  (cd "$RACINE" && grep -lF -- "$1" "${suites[@]}" 2>/dev/null | sort)
+  if [ "${2:-}" = ancre ]; then
+    # Le nom est une donnée, pas un motif : ses métacaractères ERE sont échappés avant usage.
+    motif="$(printf '%s' "$1" | sed 's,[][^$.*+?(){}|\\],\\&,g')"
+    (cd "$RACINE" && grep -lE -- "(^|[^A-Za-z0-9_])$motif" "${suites[@]}" 2>/dev/null | sort)
+  else
+    (cd "$RACINE" && grep -lF -- "$1" "${suites[@]}" 2>/dev/null | sort)
+  fi
 }
 
 #: Résultat de `calcule_perimetre` : les suites à jouer (vide = aucune), pourquoi, et deux drapeaux.
@@ -551,7 +583,7 @@ rend_raisons() { printf '%s' "${1#|}" | tr '|' '
 classe_par_nom() { # <chemin>
   local base dossier nommant
   base="$(basename "$1")"
-  nommant="$(suites_nommant "$base")"
+  nommant="$(suites_nommant "$base" ancre)"
   if [ -n "$nommant" ]; then
     CHOISIES="$CHOISIES$nommant"$'
 '

@@ -2173,3 +2173,94 @@ def test_doctor_devant_un_orphelin_ne_repare_rien(depot: Depot) -> None:
     depot.doctor()
     assert not ecritures(depot)
     assert "mutation" not in "\n".join(depot.appels())
+
+
+# =================================================================================================
+# Le chargement de lib.sh ne paie aucun processus (#372)
+# =================================================================================================
+#
+# `GL_ICI` désigne le répertoire de lib.sh pour atteindre ses voisins, et ne sert qu'aux TROIS
+# lignes des verbes de reprise ci-dessus. Il se calculait par
+# `$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)` — trois processus sous MSYS, payés à CHAQUE
+# chargement du fichier, donc par worktree.sh, run.sh, queue.sh, doctor.sh, et par les milliers
+# d'invocations qu'en font les suites d'outillage. Mesuré le 2026-08-19 : 47,0 ms sur les 57,9 ms
+# de marginal d'un chargement, soit 81 % — pour trois lignes.
+#
+# Deux tests, parce qu'il y a deux façons de le casser, et que seule la première se voit.
+
+
+def test_le_chargement_de_lib_sh_ne_paie_aucun_fork() -> None:
+    """La forme EST le fond : une substitution de commande ici, et le coût revient en silence.
+
+    Un contrôle sur le texte plutôt que sur le temps, à dessein — un seuil en millisecondes rendrait
+    rouge une machine chargée et vert un défaut sur une machine oisive.
+    """
+    lignes = [
+        ligne
+        for ligne in (RACINE / "scripts" / "gitlab" / "lib.sh")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if ligne.startswith("GL_ICI=")
+    ]
+    assert lignes, "GL_ICI n'est plus défini : ce test ne garde plus rien"
+    for ligne in lignes:
+        assert "$(" not in ligne and "`" not in ligne, (
+            f"le chargement de lib.sh refork : {ligne!r} — c'est le défaut que #372 a retiré"
+        )
+
+
+@pytest.mark.parametrize(
+    ("cwd", "chemin"),
+    [
+        (".", "scripts/gitlab/lib.sh"),          # la forme la plus courante
+        (".", "./scripts/gitlab/lib.sh"),        # la même, préfixée
+        ("scripts", "../scripts/gitlab/lib.sh"),  # relative et remontante
+        ("scripts/gitlab", "lib.sh"),            # sans le moindre `/`
+        ("tests", "ABSOLU"),                     # absolu POSIX, depuis ailleurs
+        ("tests", "ABSOLU-WINDOWS"),             # absolu TOUT EN ANTISLASHS — voir plus bas
+    ],
+)
+def test_gl_ici_atteint_ses_voisins_quelle_que_soit_la_facon_de_charger(
+    cwd: str, chemin: str
+) -> None:
+    """L'autre façon de casser : aller plus vite en désignant le mauvais répertoire.
+
+    Ce que `GL_ICI` doit garantir n'est pas une FORME de chemin (il peut porter un `./` ou un `..`,
+    sans importance) mais que ses voisins s'y trouvent. C'est aussi pourquoi il est ancré au
+    chargement et non résolu à l'usage : `${BASH_SOURCE[0]}` peut être relatif, et un appelant qui
+    change de répertoire entre le `source` et l'appel résoudrait alors depuis le mauvais endroit.
+
+    Le cas `ABSOLU-WINDOWS` est celui qui manquait, et il a coûté quatre tests rouges (#372) : le
+    harnais de ce fichier lance `bash <racine>/scripts/gitlab/lib.sh` en passant une `WindowsPath`,
+    donc un chemin sans un seul `/`. Un découpage sur le dernier `/` n'y coupe rien et `GL_ICI`
+    retombe sur le répertoire courant ; `pilote.sh` et `journal.sh` deviennent introuvables, si bien
+    qu'un ticket vivant est déclaré « orphelin » et qu'une reprise répond « aucun run ne l'a jugé ».
+    Les cinq premiers cas étaient tous en slashs : aucun ne pouvait le voir.
+
+    La cible passe par ARGV et non par interpolation dans le `-c` : un antislash y serait relu par
+    bash comme une échappée.
+    """
+    assert BASH is not None
+    lib = RACINE / "scripts" / "gitlab" / "lib.sh"
+    if chemin == "ABSOLU":
+        cible = lib.as_posix()
+    elif chemin == "ABSOLU-WINDOWS":
+        cible = str(lib)  # WindowsPath → antislashs, exactement ce que passe le harnais
+    else:
+        cible = chemin
+    acheve = subprocess.run(  # noqa: S603
+        [
+            BASH,
+            "-c",
+            '. "$1" && [ -r "$GL_ICI/../orchestrate/pilote.sh" ] && echo ATTEINT',
+            "_",
+            cible,
+        ],
+        cwd=str(RACINE / cwd),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    assert "ATTEINT" in acheve.stdout, acheve.stdout + acheve.stderr

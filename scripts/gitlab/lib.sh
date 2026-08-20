@@ -156,7 +156,41 @@
 # dépendre du répertoire courant. Préfixé `GL_` parce que lib.sh est SOURCÉ par une dizaine de
 # scripts qui ont déjà leur `ICI`/`RACINE` : écraser le leur les enverrait chercher leurs propres
 # fichiers dans scripts/gitlab/.
-GL_ICI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#
+# Résolu SANS AUCUN FORK (#372) — expansions de paramètre et `case`, rien d'autre. La forme
+# évidente, `$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)`, coûte TROIS processus sous MSYS et
+# elle les coûte à CHAQUE chargement du fichier : lib.sh est sourcée par une dizaine de scripts
+# (worktree.sh, run.sh, queue.sh, doctor.sh…) que les suites d'outillage appellent des milliers de
+# fois. Mesuré ici le 2026-08-19 : 47,0 ms sur les 57,9 ms de marginal d'un chargement, soit 81 %
+# — pour une variable qui ne sert qu'à TROIS lignes du fichier (gl_reconcile_en_cours,
+# gl_reprendre_en_cours). C'est la cause n°3 des 15 min du filet CI local.
+#
+# Pourquoi ancré au chargement et non résolu paresseusement à l'usage : `${BASH_SOURCE[0]}` peut
+# être relatif (`. scripts/gitlab/lib.sh`), et un appelant qui change de répertoire entre le
+# `source` et l'appel ferait alors résoudre le chemin depuis le mauvais endroit. On paie donc
+# l'ancrage tout de suite — mais en expansions, pas en processus.
+#
+# ⚠ LES DEUX SÉPARATEURS, et ce n'est pas de la prudence décorative : le harnais de tests lance
+# `bash <racine>/scripts/gitlab/lib.sh` avec une `WindowsPath`, donc un chemin TOUT EN ANTISLASHS,
+# sans un seul `/`. `${BASH_SOURCE[0]%/*}` n'y coupe alors rien, et un `GL_ICI` retombé sur le
+# répertoire courant rend `pilote.sh` et `journal.sh` introuvables — soit, en pratique, un ticket
+# vivant déclaré « orphelin » et une reprise qui répond « aucun run ne l'a jugé ». Le fork qu'on
+# retire ici savait le faire (`dirname` est conscient des antislashs sous MSYS, et `cd`+`pwd`
+# reconvertissait) : le remplacer, c'est reprendre CE travail-là, pas seulement couper au dernier
+# `/`.
+#
+# Le résultat est absolu mais pas forcément normalisé (il peut porter un `./`, et il garde la
+# lettre de lecteur quand on l'a reçue) : sans importance, il ne sert qu'à préfixer un chemin que
+# le système résout lui-même, et MSYS accepte les deux formes.
+GL_ICI="${BASH_SOURCE[0]//\\//}"                    # antislashs → slashs, AVANT tout decoupage
+case "$GL_ICI" in
+  */*) GL_ICI="${GL_ICI%/*}" ;;
+  *) GL_ICI="." ;;                                  # chargée sans séparateur : le répertoire courant
+esac
+case "$GL_ICI" in
+  /* | ?:/*) ;;                                     # déjà absolu (POSIX, ou lettre de lecteur)
+  *) GL_ICI="$PWD/$GL_ICI" ;;
+esac
 
 # Le dépôt GitHub, seule cible des verbes de ce fichier. Même variable d'environnement que
 # scripts/migration/inventaire.sh (#336) : un seul nom pour un seul dépôt cible.

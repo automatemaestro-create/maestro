@@ -137,6 +137,33 @@ ARBORESCENCE = {
     "tests/test_horloge.py": "# une suite applicative qui ne cite aucun script\n",
     "tests/test_outillage.py": '"""Pilote scripts/gitlab/lib.sh dans un dépôt jetable."""\n',
     "scripts/gitlab/lib.sh": "#!/usr/bin/env bash\necho lib\n",
+    # Le piège de #372, reproduit à l'identique. Cette suite-ci pilote `worktree.sh` — c'est donc
+    # une suite d'outillage, et elle DOIT être jouée quand `worktree.sh` bouge. Mais elle contient
+    # aussi `hashlib.sha256`, dont `lib.sh` est un SUFFIXE : un matcher par sous-chaîne la tirait
+    # dans le périmètre de tout diff touchant `scripts/gitlab/lib.sh`, c'est-à-dire le diff le plus
+    # courant du dépôt. Dans le vrai dépôt, c'était `tests/test_setup.py` — 2 min 08 s payées pour
+    # un mot.
+    #
+    # L'appât ne peut PAS être `scripts/setup.sh`, si tentant que soit le rappel du vrai cas :
+    # `test_le_filet_tourne_sans_sonde_de_derive` vérifie plus bas que ce fichier-là est ABSENT du
+    # dépôt jetable — c'est ainsi qu'il éteint la sonde de dérive de #216. Un appât qui le pose
+    # rend ce test-là rouge, pour une raison sans aucun rapport avec ce qu'il garde.
+    "tests/test_empreinte.py": (
+        '"""Pilote scripts/git/worktree.sh dans un dépôt jetable."""\n'
+        "import hashlib\n\n\n"
+        "def empreinte(chemin) -> str:\n"
+        "    return hashlib.sha256(chemin.read_bytes()).hexdigest()\n"
+    ),
+    "scripts/git/worktree.sh": "#!/usr/bin/env bash\necho worktree\n",
+    # Le pendant du piège précédent, côté REPLI PAR DOSSIER. Cette suite ne porte `gitlab` qu'au
+    # milieu d'un mot — comme `tests/test_secrets.py` dans le vrai dépôt. Elle doit rester
+    # sélectionnée quand un fichier de `scripts/gitlab/` que personne ne nomme change : c'est ce
+    # qui interdit d'ancrer le second essai comme on a ancré le premier.
+    "tests/test_secrets.py": (
+        '"""Les secrets ne fuient pas."""\n\n\n'
+        "def test_un_etage_lint_rouge_arrete_le_pipeline_comme_gitlab() -> None:\n"
+        "    pass\n"
+    ),
     # Une suite qui relit tout un répertoire le désigne par son NOM, jamais par celui de ses
     # fichiers — comme test_collaboration avec `.claude/commands/*.md` (#196).
     "tests/test_prompts.py": '"""Relit les prompts de .claude/commands/."""\n',
@@ -598,6 +625,57 @@ def test_une_modification_de_script_ne_joue_que_les_suites_qui_le_nomment(clone:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
     assert "lib.sh" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_un_nom_de_fichier_ne_matche_pas_au_milieu_d_un_mot(clone: Clone) -> None:
+    """`lib.sh` ne doit pas matcher le `hashlib.sha256` d'une suite qui parle d'autre chose (#372).
+
+    Ce n'était pas une curiosité : dans le vrai dépôt, `tests/test_setup.py` rejoignait ainsi le
+    périmètre de TOUT diff touchant `scripts/gitlab/lib.sh` — le plus courant du dépôt — pour
+    2 min 08 s à chaque lancement du filet, sur un mot qui ne nomme aucun script.
+    """
+    clone.equipe_tout()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
+
+
+def test_l_ancrage_ne_fait_perdre_aucune_suite_qui_nomme_vraiment_le_script(clone: Clone) -> None:
+    """L'autre moitié du test précédent, et la seule qui puisse rendre un faux vert.
+
+    Ancrer le nom, c'est risquer de ne plus voir une suite qui cite bel et bien le script. La même
+    suite-appât sert donc de témoin : elle pilote `worktree.sh`, et un diff sur `worktree.sh` doit
+    la jouer.
+    """
+    clone.equipe_tout()
+    clone.modifie("scripts/git/worktree.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_empreinte.py"]
+    assert "worktree.sh" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_le_repli_par_dossier_reste_sans_ancrage(clone: Clone) -> None:
+    """Les deux essais de `classe_par_nom` n'ont pas la même rigueur, et c'est délibéré (#372).
+
+    Le repli par nom de DOSSIER existe pour les fichiers que personne ne nomme : sa souplesse est
+    sa fonction, et sur-sélectionner y est « le bon sens de l'erreur ». L'ancrer ferait perdre des
+    suites sur des noms courts et fréquents — mesuré dans le vrai dépôt : `api`, `app`, `brief` et
+    `gitlab` en perdent chacun une à quatre.
+
+    Le cas reproduit ici est celui de `gitlab` : `tests/test_secrets.py` ne contient ce mot que
+    dans un nom de test, `…_comme_gitlab`. Un fichier de `scripts/gitlab/` que personne ne nomme
+    doit quand même la jouer — c'est tout l'objet du repli.
+    """
+    clone.equipe_tout()
+    clone.modifie("scripts/gitlab/inconnu.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    # Les deux : celle qui cite `scripts/gitlab/lib.sh`, et celle qui ne porte `gitlab` qu'au
+    # milieu d'un mot. Ancrer le repli perdrait la seconde.
+    assert suites_jouees(clone.appels()) == ["tests/test_outillage.py", "tests/test_secrets.py"]
+    assert "gitlab/" in ligne_du_job(acheve.stdout, "pytest")
 
 
 def test_un_fichier_transverse_ramene_la_suite_entiere(clone: Clone) -> None:
