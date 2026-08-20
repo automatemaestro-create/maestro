@@ -1142,8 +1142,11 @@ gl_issue_title() {
 }
 
 # gl_create_mr <iid> <fichier> [branche] -> ouvre la MR de <branche> (défaut : la branche courante)
-# en DRAFT vers main, avec --remove-source-branch, le TITRE lu depuis le ticket et la DESCRIPTION
-# lue depuis le fichier. Imprime l'URL de la MR en dernière ligne.
+# en DRAFT vers main, le TITRE lu depuis le ticket et la DESCRIPTION lue depuis le fichier. Imprime
+# l'URL de la MR en dernière ligne.
+# NE POSE AUCUN drapeau de suppression de branche : le `--remove-source-branch` de GitLab n'a pas
+# d'équivalent par PR côté GitHub, où c'est le réglage de dépôt `delete_branch_on_merge` qui s'en
+# charge pour toutes les PR à la fois (docs/10 §6, voir gh_create_pr).
 # IDEMPOTENT : si une MR ouverte existe déjà pour la branche, sa description est mise à jour au lieu
 # d'échouer — /ticket-finish peut donc être rejoué (reprise de session, second passage après un
 # commit de plus) sans que la deuxième passe casse.
@@ -3841,7 +3844,10 @@ gh_mr_iid() {
 # marche des deux côtés de la bascule.
 #
 # Pas d'équivalent de `--remove-source-branch` : sur GitHub la suppression de la branche au merge est
-# un réglage du DÉPÔT (`delete_branch_on_merge`), pas une option de la PR — il relève du lot 8.
+# un réglage du DÉPÔT (`delete_branch_on_merge`), pas une option de la PR. Il est POSÉ depuis le
+# 2026-08-19 (#384) ; il ne l'était pas depuis la bascule, et comme rien ici ne pouvait le
+# remplacer, 22 branches distantes s'étaient accumulées. Ne pas chercher à le rattraper d'ici : une
+# PR n'a pas de prise dessus, c'est doctor.sh §6 qui en surveille la dérive.
 gh_create_pr() {
   local iid="$1" branche="$2" titre="$3" fichier="$4" out mr url
   out="$(gh api -X POST "repos/$GL_GH_REPO/pulls" \

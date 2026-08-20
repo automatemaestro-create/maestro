@@ -134,7 +134,14 @@ ARBORESCENCE = {
     "maestro/moteur.py": "def tourne() -> None: ...\n",
     "tests/conftest.py": "# garde-fous communs\n",
     "tests/test_moteur.py": "from maestro.moteur import tourne\n",
-    "tests/test_horloge.py": "# une suite applicative qui ne cite aucun script\n",
+    # Le PIÈGE de #375, posé dans le dépôt jetable comme il l'est dans le vrai : le mot
+    # « migration » traîne dans la prose d'une suite qui n'a rien à voir avec
+    # `scripts/migration/`. Un repli qui cherche le nom NU du dossier la sélectionne ; un repli
+    # qui cherche le chemin ne la voit pas. `MOT_PIEGE` en fait un invariant vérifié, pas un
+    # décor : les tests s'assurent que le piège existe avant de conclure qu'il n'a pas fonctionné.
+    "tests/test_horloge.py": (
+        "# une suite applicative qui ne cite aucun script — même en parlant de migration\n"
+    ),
     "tests/test_outillage.py": '"""Pilote scripts/gitlab/lib.sh dans un dépôt jetable."""\n',
     "scripts/gitlab/lib.sh": "#!/usr/bin/env bash\necho lib\n",
     # Le piège de #372, reproduit à l'identique. Cette suite-ci pilote `worktree.sh` — c'est donc
@@ -156,15 +163,22 @@ ARBORESCENCE = {
     ),
     "scripts/git/worktree.sh": "#!/usr/bin/env bash\necho worktree\n",
     # Le pendant du piège précédent, côté REPLI PAR DOSSIER. Cette suite ne porte `gitlab` qu'au
-    # milieu d'un mot — comme `tests/test_secrets.py` dans le vrai dépôt. Elle doit rester
-    # sélectionnée quand un fichier de `scripts/gitlab/` que personne ne nomme change : c'est ce
-    # qui interdit d'ancrer le second essai comme on a ancré le premier.
+    # milieu d'un mot — comme `tests/test_secrets.py` dans le vrai dépôt. Elle NE doit PAS être
+    # sélectionnée quand un fichier de `scripts/gitlab/` que personne ne nomme change : depuis
+    # #375 le repli cherche le chemin `scripts/gitlab/`, pas le nom nu `gitlab`. L'appât a été
+    # posé par #372 pour l'invariant inverse, du temps du nom nu — voir le test qui s'en sert.
     "tests/test_secrets.py": (
         '"""Les secrets ne fuient pas."""\n\n\n'
         "def test_un_etage_lint_rouge_arrete_le_pipeline_comme_gitlab() -> None:\n"
         "    pass\n"
     ),
-    # Une suite qui relit tout un répertoire le désigne par son NOM, jamais par celui de ses
+    # Les deux scripts que PERSONNE ne nomme — l'un dans un dossier imbriqué dont le nom nu est un
+    # mot courant, l'autre à la racine de `scripts/`, dont le chemin est une sous-chaîne de tout
+    # `scripts/gitlab/lib.sh` cité quelque part. Les cinq scripts arrivés avec la migration GitHub
+    # sont dans ce cas, et c'est ce qui a rendu le défaut visible (#375).
+    "scripts/migration/inventaire.sh": "#!/usr/bin/env bash\necho inventaire\n",
+    "scripts/orphelin.sh": "#!/usr/bin/env bash\necho orphelin\n",
+    # Une suite qui relit tout un répertoire le désigne par son CHEMIN, jamais par le nom de ses
     # fichiers — comme test_collaboration avec `.claude/commands/*.md` (#196).
     "tests/test_prompts.py": '"""Relit les prompts de .claude/commands/."""\n',
     ".claude/commands/ticket-start.md": "# /ticket-start\n",
@@ -176,6 +190,11 @@ ARBORESCENCE = {
     # raisons, et ces tests ne prouveraient plus rien.
     ".gitignore": ".venv/\n.tools/\nnode_modules/\n",
 }
+
+#: Le nom nu du dossier de `scripts/migration/inventaire.sh`, et le mot semé dans la prose de
+#: `tests/test_horloge.py`. Les deux emplois se lisent d'ici : le jour où l'un des deux change,
+#: le piège de #375 se désamorce en silence et les tests qui s'en servent ne prouvent plus rien.
+MOT_PIEGE = "migration"
 
 # shellcheck a son propre shim : il doit pouvoir REFUSER un fichier à retour chariot, comme le
 # vrai (SC1017). C'est ce qui permet de vérifier que le script lui présente un miroir en LF.
@@ -656,25 +675,34 @@ def test_l_ancrage_ne_fait_perdre_aucune_suite_qui_nomme_vraiment_le_script(clon
     assert "worktree.sh" in ligne_du_job(acheve.stdout, "pytest")
 
 
-def test_le_repli_par_dossier_reste_sans_ancrage(clone: Clone) -> None:
-    """Les deux essais de `classe_par_nom` n'ont pas la même rigueur, et c'est délibéré (#372).
+def test_le_repli_par_dossier_ignore_le_nom_au_milieu_d_un_mot(clone: Clone) -> None:
+    """Le repli par dossier est exact MÊME QUAND il trouve quelque chose (#372 réconcilié à #375).
 
-    Le repli par nom de DOSSIER existe pour les fichiers que personne ne nomme : sa souplesse est
-    sa fonction, et sur-sélectionner y est « le bon sens de l'erreur ». L'ancrer ferait perdre des
-    suites sur des noms courts et fréquents — mesuré dans le vrai dépôt : `api`, `app`, `brief` et
-    `gitlab` en perdent chacun une à quatre.
+    Ce test-ci a changé de sens en cours de route, et c'est le fait notable. #372 le tenait pour
+    le témoin de la souplesse du repli : celui-ci cherchait alors le nom NU du dossier, donc
+    `gitlab`, donc `tests/test_secrets.py` qui ne le porte qu'au milieu de `…_comme_gitlab`, et
+    l'ancrer aurait perdu cette suite. #375 a depuis remplacé le nom nu par le CHEMIN avec son
+    séparateur (`scripts/gitlab/`), ce qui rend cette sélection-là non seulement perdue mais
+    INDÉSIRABLE : la suite ne teste rien de `scripts/gitlab/`, elle parle d'un pipeline.
 
-    Le cas reproduit ici est celui de `gitlab` : `tests/test_secrets.py` ne contient ce mot que
-    dans un nom de test, `…_comme_gitlab`. Un fichier de `scripts/gitlab/` que personne ne nomme
-    doit quand même la jouer — c'est tout l'objet du repli.
+    Les tests de #375 couvrent le cas où le repli ne trouve RIEN et élargit donc à toute la suite
+    (`scripts/migration/inventaire.sh`, `scripts/orphelin.sh`). Celui-ci couvre l'autre moitié,
+    la seule qui puisse encore sur-sélectionner en silence : le repli trouve une suite légitime —
+    `tests/test_outillage.py` cite `scripts/gitlab/lib.sh` — et ne doit pas ramasser la voisine
+    au passage.
+
+    L'appât reste donc dans l'arborescence, sur l'invariant inverse de celui pour lequel il y a
+    été posé.
     """
     clone.equipe_tout()
     clone.modifie("scripts/gitlab/inconnu.sh", "echo encore\n")
     acheve = clone.lance("--only", "pytest")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    # Les deux : celle qui cite `scripts/gitlab/lib.sh`, et celle qui ne porte `gitlab` qu'au
-    # milieu d'un mot. Ancrer le repli perdrait la seconde.
-    assert suites_jouees(clone.appels()) == ["tests/test_outillage.py", "tests/test_secrets.py"]
+    # L'appât existe bien, et porte `gitlab` sans le chemin : sans ce contrôle, un jour où la
+    # suite-appât aurait perdu son mot, l'assertion ci-dessous passerait sans rien prouver.
+    appat = (clone.racine / "tests" / "test_secrets.py").read_text(encoding="utf-8")
+    assert "gitlab" in appat and "scripts/gitlab/" not in appat
+    assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
     assert "gitlab/" in ligne_du_job(acheve.stdout, "pytest")
 
 
@@ -690,8 +718,8 @@ def test_un_fichier_transverse_ramene_la_suite_entiere(clone: Clone) -> None:
     assert "toute la suite" in ligne and "transverse" in ligne
 
 
-def test_un_fichier_anonyme_est_rattrape_par_le_nom_de_son_dossier(clone: Clone) -> None:
-    """Repli du nom de fichier vers le nom du dossier : sans lui, toucher un prompt de
+def test_un_fichier_anonyme_est_rattrape_par_le_chemin_de_son_dossier(clone: Clone) -> None:
+    """Repli du nom de fichier vers le CHEMIN du dossier : sans lui, toucher un prompt de
     `.claude/commands/` rejouerait les 1100 tests — aucune suite ne cite un prompt par son nom,
     elles parcourent le répertoire."""
     clone.equipe_tout()
@@ -699,7 +727,52 @@ def test_un_fichier_anonyme_est_rattrape_par_le_nom_de_son_dossier(clone: Clone)
     acheve = clone.lance("--only", "pytest")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert suites_jouees(clone.appels()) == ["tests/test_prompts.py"]
-    assert "commands/" in ligne_du_job(acheve.stdout, "pytest")
+    # Le motif annonce le CHEMIN cherché et non le nom nu du dossier (#375) : c'est ce qui permet
+    # de relire un verdict sans rejouer la recherche pour savoir ce qui a été comparé à quoi.
+    assert ".claude/commands/" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_le_repli_par_dossier_ne_matche_pas_une_sous_chaine(clone: Clone) -> None:
+    """#375 — le défaut : le repli cherchait le nom NU du dossier. Sur `scripts/migration/`, le
+    mot « migration » traîne dans la prose d'une suite applicative sans rapport, et le filet
+    partait sur elle en annonçant « périmètre : 1 suite (migration/) » — un faux vert MOTIVÉ, pire
+    qu'un périmètre absent, sur un script que rien ne teste.
+
+    Le repli remplaçant l'élargissement, ce n'était pas du temps perdu mais de la couverture
+    perdue : la règle d'or veut que tout fichier dont personne ne parle ramène la suite entière.
+    """
+    clone.equipe_tout()
+    # Le piège d'abord — sans lui le test passerait sur une question jamais posée.
+    piege = (clone.racine / "tests" / "test_horloge.py").read_text(encoding="utf-8")
+    assert MOT_PIEGE in piege, "le mot piégé a disparu de la suite applicative : test désamorcé"
+    assert MOT_PIEGE not in (clone.racine / "tests" / "test_outillage.py").read_text(
+        encoding="utf-8"
+    ), "le piège doit être posé sur une suite SANS rapport avec scripts/migration/"
+
+    clone.modifie(f"scripts/{MOT_PIEGE}/inventaire.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == []
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "aucune suite ne nomme inventaire.sh" in ligne
+    assert "tests/test_horloge.py" not in ligne
+
+
+def test_le_repli_par_dossier_ignore_un_dossier_de_premier_niveau(clone: Clone) -> None:
+    """Le même défaut, un cran plus haut : `scripts/` EST un chemin, mais c'est une sous-chaîne de
+    tout `scripts/gitlab/lib.sh` cité quelque part — il ne désigne aucun répertoire en
+    particulier. Un fichier posé à la racine de `scripts/` que personne ne nomme élargit donc,
+    au lieu d'hériter des suites qui parlent d'un script voisin."""
+    clone.equipe_tout()
+    assert "scripts/" in (clone.racine / "tests" / "test_outillage.py").read_text(
+        encoding="utf-8"
+    ), "le piège suppose une suite qui cite un chemin sous scripts/ : test désamorcé"
+
+    clone.modifie("scripts/orphelin.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == []
+    assert "aucune suite ne nomme orphelin.sh" in ligne_du_job(acheve.stdout, "pytest")
 
 
 def test_un_fichier_que_personne_ne_nomme_elargit_au_lieu_de_sauter(clone: Clone) -> None:

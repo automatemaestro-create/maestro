@@ -520,12 +520,15 @@ suites_outillage() {
 #:     AUCUNE correspondance réelle (les tests citent leurs scripts en « scripts/gitlab/lib.sh »
 #:     ou « lib.sh », toujours précédés d'un `/`, d'un guillemet ou d'un blanc).
 #:
-#:   - un NOM DE DOSSIER se cherche SANS ancrage, et c'est délibéré. Ce repli existe pour les
-#:     fichiers que personne ne nomme (`.claude/commands/*.md`, cités par répertoire) ; sa
-#:     souplesse EST sa fonction, la sur-sélection étant « le bon sens de l'erreur ». L'ancrer
-#:     ferait perdre des suites sur des noms courts et fréquents — mesuré : `api`, `app`, `brief`,
-#:     `gitlab` en perdent chacun une à quatre. Ce serait un faux négatif, la seule dérive que
-#:     cette section s'interdit.
+#:   - un CHEMIN DE DOSSIER se cherche sans ancrage, et l'ancrage n'y changerait rien. #372
+#:     l'avait laissé souple pour une raison qui a cessé d'exister entre-temps : le repli
+#:     cherchait alors le nom NU du dossier, et l'ancrer aurait fait perdre des suites sur des
+#:     noms courts et fréquents (`api`, `app`, `brief`, `gitlab` en perdaient chacun une à
+#:     quatre). #375 a remplacé ce nom nu par le chemin AVEC son séparateur — `scripts/gitlab/`
+#:     et non `gitlab` —, et un chemin est toujours cité précédé d'un `/`, d'un guillemet ou
+#:     d'un blanc. Re-mesuré sur le dépôt du jour, 82 dossiers imbriqués croisés avec les
+#:     62 suites : **0 écart** entre les deux formes. Le `-F` reste donc par économie et non
+#:     par nécessité, et la souplesse d'hier n'est plus un argument à invoquer ici.
 suites_nommant() {
   local suites=() motif
   mapfile -t suites < <(suites_toutes)
@@ -591,21 +594,34 @@ classe_par_nom() { # <chemin>
     return 0
   fi
   # Second essai, par le DOSSIER : une suite qui relit tout un répertoire le désigne par son
-  # nom, jamais par celui de ses fichiers — `test_collaboration` parcourt
+  # CHEMIN, jamais par celui de ses fichiers — `test_collaboration` parcourt
   # `.claude/commands/*.md` (#196) sans citer aucun prompt en particulier. Repli seulement :
-  # quand le nom du fichier a répondu, il est plus précis. Un dossier au nom banal
-  # sélectionnera trop de suites, ce qui reste le bon sens de l'erreur.
+  # quand le nom du fichier a répondu, il est plus précis.
+  #
+  # Le chemin AVEC son séparateur, et jamais le nom nu du dossier (#375) : cherché en sous-chaîne,
+  # un nom court et courant en français matche la prose de n'importe quelle suite. Mesuré sur main
+  # au 2026-08-18 — `migration` → 10 suites dont aucune ne teste `scripts/migration/`, `github` →
+  # `test_cycle_de_vie`, et `ci` → 59 suites sur 61, « ci » étant une sous-chaîne d'« ici », de
+  # « précis », de « spécifique »… Le repli REMPLAÇANT l'élargissement, ces suites tirées au sort
+  # ne coûtaient pas du temps (elles sont rapides) mais un FAUX VERT annoncé avec un motif
+  # crédible : « périmètre : 10 suite(s) (migration/) » sur un script que rien ne teste.
+  #
+  # Un dossier de PREMIER niveau est écarté pour la même raison : `scripts/` est une sous-chaîne
+  # de tout `scripts/gitlab/lib.sh` cité quelque part (10 suites mesurées), il ne désigne aucun
+  # répertoire en particulier. Rien de crédible ⇒ on s'abstient, donc on élargit — le sens de
+  # dérive du filet, jamais l'inverse.
   dossier="$(dirname "$1")"
-  if [ "$dossier" != "." ]; then
-    nommant="$(suites_nommant "$(basename "$dossier")")"
-  fi
+  nommant=""
+  case "$dossier" in
+    */*) nommant="$(suites_nommant "$dossier/")" ;;
+  esac
   if [ -z "$nommant" ]; then
     PERIMETRE_TOUT=1
     ajoute_raison RAISONS_TOUT "aucune suite ne nomme $base"
   else
     CHOISIES="$CHOISIES$nommant"$'
 '
-    ajoute_raison RAISONS_CHOIX "$(basename "$dossier")/"
+    ajoute_raison RAISONS_CHOIX "$dossier/"
   fi
 }
 

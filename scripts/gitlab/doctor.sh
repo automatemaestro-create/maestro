@@ -350,7 +350,9 @@ else
   esac
   case "${REGLAGE[suppression_branche]:--}" in
     true)  ok "delete_branch_on_merge=true — la branche source est supprimée au merge" ;;
-    false) warn "delete_branch_on_merge ≠ true : les branches distantes s'accumuleraient après merge → relancer : $PROVISIONNER" ;;
+    false) warn "delete_branch_on_merge ≠ true : les branches distantes s'accumuleraient après merge"
+           printf '    → gh api -X PATCH repos/%s -F delete_branch_on_merge=true\n' "$DEPOT"
+           printf '    → aucun script ne le pose : ni bootstrap.sh (labels seuls) ni /ticket-finish (docs/10 §6)\n' ;;
     # « - » n'est PAS « false » : le champ n'est présent que si le jeton a le droit d'administration
     # du dépôt (mesuré le 2026-08-17 sur le PAT du projet). L'absence parle du jeton, pas du dépôt.
     *)     info "delete_branch_on_merge illisible (jeton sans droit d'administration du dépôt) — contrôle ignoré" ;;

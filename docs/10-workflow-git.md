@@ -883,17 +883,48 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   **franchissable sur demande explicite** de l'utilisateur (reprise assumée d'un ticket laissé en
   plan par quelqu'un qui a lâché le sujet), **jamais en silence** : il est alors rappelé dans le
   résumé de clôture.
-- Une branche (locale ou distante) n'est supprimée que si **GitLab confirme que sa MR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
-- Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par GitLab.
-- **La suppression de la branche source est portée par la MR elle-même.** `/ticket-finish` crée la
-  MR avec `--remove-source-branch` : la case « Supprimer la branche source » est cochée d'office,
-  et c'est **GitLab** qui supprime la branche **distante** au merge. Le drapeau est posé sur la MR
-  plutôt que hérité du seul défaut projet `remove_source_branch_after_merge=true` — lui aussi
-  provisionné par [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh), mais en *best-effort* (l'échec
-  du PUT est avalé), donc insuffisant comme unique garantie ; sa dérive est désormais signalée par
-  [`doctor.sh`](../scripts/gitlab/doctor.sh) (§6). Côté local, rien ne change pour
-  `/branch-cleanup` : il supprime la branche **locale** et tolère une branche distante déjà
-  supprimée.
+- Une branche (locale ou distante) n'est supprimée que si **la forge confirme que sa PR est à l'état `merged`**. C'est la garantie qui protège d'une perte de travail — plus forte que l'ancêtre git.
+- Vu cette confirmation, la suppression locale utilise `git branch -D` : le projet merge en **squash**, donc `git branch -d` refuserait la branche (sa pointe n'est pas un ancêtre du commit squashé). N'employer `-D` **que** sur une branche dont le merge est confirmé par la forge.
+- **La suppression de la branche distante est un réglage du DÉPÔT, pas une option de la PR.** C'est
+  le point où GitHub ne ressemble pas à GitLab, et l'écart s'est payé : côté GitLab le drapeau
+  `--remove-source-branch` était posé **sur chaque MR** par `/ticket-finish`, donc la garantie
+  voyageait avec la MR ; côté GitHub il n'y a aucun équivalent par PR — un seul réglage de dépôt,
+  `delete_branch_on_merge`, vaut pour toutes. Il est **posé à `true` depuis le 2026-08-19** (#384) ;
+  il ne l'était pas depuis la bascule (#343), et comme rien dans le cycle d'un ticket ne le
+  remplaçait, **22 branches distantes s'y sont accumulées** pour zéro PR ouverte. Ni
+  [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh) ni `/ticket-finish` ne le posent — c'est un
+  réglage de dépôt, il se (re)pose d'un appel et d'un seul :
+  ```
+  gh api -X PATCH repos/<owner>/<dépôt> -F delete_branch_on_merge=true
+  ```
+  Sa dérive est signalée par [`doctor.sh`](../scripts/gitlab/doctor.sh) (§6), qui nomme cette
+  commande. Côté local, rien ne change pour `/branch-cleanup` : il supprime la branche **locale** et
+  tolère une branche distante déjà supprimée.
+- **Les branches d'avant la bascule sont hors de portée de cette garantie, et se traitent
+  autrement.** Une branche mergée sur GitLab n'a pas de PR côté GitHub : la forge interrogée ne peut
+  ni confirmer ni infirmer, et l'archive de migration
+  ([`export-gitlab.sh`](../scripts/migration/export-gitlab.sh)) ne rattrape rien — elle a exporté
+  les **tickets**, jamais les MR. Le contenu ne tranche pas davantage : un `git merge-tree` de la
+  branche contre `main` rend un conflit sur presque toutes, ce qui ne dit **rien** de leur merge
+  (conflit fantôme d'après squash, §9.5) mais seulement que `main` a bougé depuis. La règle
+  appliquée au stock de #384, à rejouer telle quelle si le cas se représente : la branche est
+  **archivée en tag** `archive/pre-github/<branche>` poussé sur `origin` **avant** toute
+  suppression, ce qui garde ses commits joignables pour toujours, puis supprimée. L'archivage n'est
+  pas une précaution de forme — c'est ce qui remplace la confirmation manquante : on ne prouve plus
+  que la branche est mergée, on rend sa suppression sans conséquence.
+- **Le stock de 22 s'est réparti en trois classes, et c'est la classe qui décide** (#384,
+  2026-08-19 — au terme du rattrapage, `origin` ne porte plus que `main`). **Cinq** avaient une PR
+  GitHub `merged` : supprimées sous la règle ordinaire, sans archive. **Seize** dataient d'avant la
+  bascule (#290, #317, #321→#323, #331→#342, #333) : archivées puis supprimées, comme ci-dessus —
+  le ticket en annonçait 14 sur une première mesure, son propre inventaire en nommait bien seize.
+  La **vingt-deuxième**, `docs/353`, est la seule où le **contenu** tranche, et dans le bon sens :
+  son unique commit porte un fichier au **blob identique** à celui de `main` (même sha), donc la
+  branche n'apporte rien — l'exact inverse d'un `merge-tree` en conflit, qui lui ne prouve jamais
+  rien. Elle est archivée quand même, sous un préfixe qui **nomme sa raison**
+  (`archive/absorbee/<branche>`) plutôt que d'emprunter celle des seize : l'invariant à tenir n'est
+  pas « d'où vient la branche » mais « aucune ne part sans que la forge la confirme **ou** qu'un tag
+  la garde joignable ». Reste une dérive qui n'est pas d'hygiène de branches, laissée hors
+  périmètre : l'issue **#353 est encore ouverte** alors que son livrable est sur `main`.
 - **La revue est *best-effort*, pas bloquante.** À plusieurs, personne ne sait spontanément ce qui
   attend qui : le projet garde donc `approvals_before_merge=0` (une approbation obligatoire
   recréerait une dépendance entre personnes, et le merge resterait de toute façon humain) et joue
@@ -1376,13 +1407,42 @@ partira au push), fichier par fichier :
 | Ce qui change | Ce qui se joue |
 |---|---|
 | `maestro/**` | toutes les suites **applicatives** |
-| `scripts/**`, `.claude/**`, `.gitlab*`, `.env.example`… | les suites qui **nomment** le fichier |
+| `scripts/**`, `.claude/**`, `.gitlab*`, `.env.example`… | les suites qui **nomment** le fichier — à défaut, celles qui nomment le **chemin de son dossier** (ci-dessous) |
 | `tests/test_*.py` | elles-mêmes |
 | `tests/conftest.py`, `pyproject.toml`, `.node-version` | la suite entière |
 | `docs/**`, `apps/web/**`, prose de la racine | aucune suite pytest (`web-build` couvre le front) |
 | **tout le reste** | la suite entière |
 
-Deux points de conception valent d'être compris avant d'y toucher.
+Ces points de conception valent d'être compris avant d'y toucher.
+
+**Le repli par le dossier cherche un chemin, jamais un nom nu (#375).** La règle du nom a un repli :
+un fichier que personne ne cite hérite des suites qui nomment son **dossier** — une suite qui relit
+tout un répertoire le désigne ainsi, jamais par le nom de ses fichiers (`test_collaboration`
+parcourt `.claude/commands/*.md` sans citer un seul prompt, #196). Ce repli cherchait le **nom nu**
+du dossier, en sous-chaîne ; sur des noms courts et courants en français, il matche la prose de
+n'importe quelle suite. Mesuré sur `main` au 2026-08-18 : `migration` → **10 suites**, dont aucune
+ne teste `scripts/migration/` ; `github` → `test_cycle_de_vie` ; `workflows` → `test_durable` ; et
+`ci` aurait ramené **59 suites sur 61**, « ci » étant une sous-chaîne d'« ici », de « précis », de
+« spécifique »…
+
+Le coût n'était pas le **temps** — ces suites-là sont applicatives et rapides — mais la
+**couverture** : le repli **remplace** l'élargissement, donc un fichier que personne ne nomme
+repartait avec dix suites tirées au sort au lieu de la suite entière, sous un motif crédible
+(« périmètre : 10 suite(s) (migration/) »). Un faux vert **motivé**, exactement ce que le filet
+s'interdit en tête de fichier. Le défaut existait depuis #196 mais restait rare ; les cinq scripts
+arrivés avec la migration GitHub — que **rien ne nomme** — en ont fait le cas courant.
+
+Deux conséquences de la correction, dans le même sens de dérive. Le repli compare désormais le
+**chemin avec son séparateur** (`scripts/migration/`, `.claude/commands/`), ce qui laisse le cas
+#196 intact — mêmes suites — et ramène chacun des cas ci-dessus à **une** suite, celle qui nomme
+vraiment le répertoire. Et un dossier de **premier niveau** est écarté pour la raison qui a motivé
+tout le reste : `scripts/` est une sous-chaîne de tout `scripts/gitlab/lib.sh` cité quelque part
+(10 suites mesurées), il ne désigne aucun répertoire en particulier. Quand rien de crédible ne
+répond, le repli **s'abstient** — donc on élargit.
+
+Reste une question que la correction ne traite pas et qui n'est pas la sienne : les cinq scripts de
+la migration n'ont **aucun test**. Aucun périmètre, si large soit-il, n'invente une couverture qui
+n'existe pas.
 
 **Les suites d'outillage sont déduites, jamais listées.** Une suite est « outillage » si elle
 **nomme un script du dépôt** (`tests/test_orchestrate.py` cite `run.sh`, `test_collaboration.py`
@@ -1796,6 +1856,7 @@ bash scripts/git/worktree.sh 152          # crée (ou complète) le worktree du 
 bash scripts/git/worktree.sh list         # les worktrees en place, avec leurs ports
 bash scripts/git/worktree.sh remove 152   # retire le worktree — jamais la branche
 bash scripts/git/worktree.sh gc           # ramasse ceux dont le travail est soldé (§9.2)
+bash scripts/git/worktree.sh sessions 152 # retrouve les sessions Claude Code du ticket (§9.7)
 ```
 
 Le script fait plus qu'un `git worktree add` : il résout la branche comme
@@ -2406,6 +2467,77 @@ survit au ménage du journal et ne se contourne pas depuis un worktree, la déri
 [`test_worktree.py`](../tests/test_worktree.py) (le câblage sur `gc`, son mutisme, `--sauf`) et
 [`test_orchestrate.py`](../tests/test_orchestrate.py) (`queue.sh --orphelins`, `journal.sh
 origine`). Dépôt jetable, sans réseau ni `glab`.
+
+### 9.7 L'historique d'un ticket survit à son worktree (#385)
+
+Claude Code range le transcript d'une session dans un répertoire de projet **indexé sur le
+répertoire courant** — `<config>/projects/<chemin encodé>/<session-id>.jsonl` — et son sélecteur
+`/resume` ne montre **que** celui d'où on l'appelle. Or `/ticket-start` relocalise la session dans
+le worktree du ticket (§9.1) : l'historique d'un ticket est donc rangé sous le chemin du
+**worktree**, invisible depuis le clone principal. Puis `gc` retire le worktree (§9.2), et l'on ne
+peut même plus y revenir en `cd`.
+
+Constat du 2026-08-19 sur le clone de référence : **157 transcripts** (183 Mo) répartis dans **134
+répertoires de projet**, pour **13 worktrees** encore sur le disque. Autrement dit, l'essentiel du
+travail de ticket était devenu inatteignable — sans que rien, nulle part, ne le signale.
+
+**Rien n'est perdu : c'est l'adressage qui manquait, et il se dérive.** L'encodage de Claude Code
+remplace `:`, `\`, `/` et l'espace par `-`, sans rien tronquer ; le répertoire de projet d'un
+ticket est donc `<base des worktrees encodée>-<iid>-<slug>`, qu'un motif sur le seul **iid**
+retrouve — le slug n'est jamais nécessaire.
+
+```bash
+bash scripts/git/worktree.sh sessions 340   # les sessions du ticket #340
+bash scripts/git/worktree.sh sessions       # l'inventaire, tous tickets confondus
+```
+
+```
+#340 — worktree ramassé, transcripts conservés
+  2026-08-17 13:58  Import des 330 tickets sur GitHub
+                    claude --resume fe63adac-7f25-479c-81b8-b256a9b1d813
+```
+
+La reprise passe par l'**identifiant** : `claude --resume <id>` court-circuite le sélecteur, donc
+son cloisonnement par répertoire. C'est tout ce que le verbe a besoin de rendre.
+
+Trois choix à ne pas défaire :
+
+- **Dériver, jamais indexer.** Poser un index au moment du ramassage était le réflexe, et c'était
+  le mauvais : il n'aurait couvert que les ramassages postérieurs à sa mise en place, laissant
+  dehors les **121 worktrees déjà partis** — et il aurait ajouté un état de plus à tenir d'accord
+  avec la réalité.
+- **La base des worktrees vient de `create`**, jamais d'un `maestro-worktrees` figé dans le verbe :
+  `MAESTRO_WORKTREE_DIR` déplace les worktrees, donc l'encodage, donc ce qu'il faut chercher. Une
+  formule recopiée répondrait juste sur une machine et **vide** sur les autres, silence
+  indiscernable de « ce ticket n'a pas de session ».
+- **Le motif ignore la casse.** Claude Code encode le chemin **tel qu'il lui a été donné**, sans le
+  normaliser : sur la machine de référence le clone principal est rangé sous `e--` et ses worktrees
+  sous `E--`. Un motif sensible à la casse en manquerait la moitié, sans un mot.
+
+`gc` **nomme les sessions avant de retirer** un worktree — c'est l'instant exact où l'information
+quitte l'écran ; après coup, plus rien ne rappelle qu'il y avait un historique ni par quoi le
+rouvrir. Le retrait ne les efface pas (un transcript vit sous `<config>/projects/`, jamais dans le
+worktree), il coupe seulement le chemin qui les montrait :
+
+```
+✓ #340 retiré — MR !268 mergée — 2 session(s) conservée(s) : worktree.sh sessions 340
+```
+
+**Portée**, comme `gc` et `reconcile-workflow` : les worktrees de **cette machine**. Un transcript
+vit sur le poste qui l'a produit ; le verbe ne va rien chercher ailleurs, et l'annonce plutôt que
+de laisser confondre « pas ici » avec « nulle part ».
+
+⚠ **Ce qui n'est pas de notre ressort** : l'onglet Claude Code qui revient **sans nom** après un
+redémarrage de VS Code. L'extension ne persiste aucune identité de session — rien sous
+`globalStorage`, seule la coquille du webview dans l'état du workspace, et le registre des sessions
+vivantes (`~/.claude/sessions/<PID>.json`) est indexé **par PID**, donc périmé dès que les
+processus meurent. Nommer une session au lancement (`claude -n "<nom>"`) aide à s'y retrouver ; le
+reste est en amont de ce dépôt.
+
+Couvert par [`test_worktree.py`](../tests/test_worktree.py) : la dérivation avec et sans worktree
+sur le disque, le repli d'un transcript sans titre, le dernier titre qui l'emporte, l'ordre
+antichronologique, `MAESTRO_WORKTREE_DIR` respecté, la casse ignorée, et la mention portée par `gc`
+— y compris son silence quand il n'y a aucune session à nommer.
 
 ---
 
