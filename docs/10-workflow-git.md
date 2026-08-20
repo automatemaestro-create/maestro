@@ -2468,7 +2468,7 @@ survit au ménage du journal et ne se contourne pas depuis un worktree, la déri
 [`test_orchestrate.py`](../tests/test_orchestrate.py) (`queue.sh --orphelins`, `journal.sh
 origine`). Dépôt jetable, sans réseau ni `glab`.
 
-### 9.7 L'historique d'un ticket survit à son worktree (#385)
+### 9.7 L'historique d'une session reste adressable (#385, #397)
 
 Claude Code range le transcript d'une session dans un répertoire de projet **indexé sur le
 répertoire courant** — `<config>/projects/<chemin encodé>/<session-id>.jsonl` — et son sélecteur
@@ -2487,8 +2487,9 @@ ticket est donc `<base des worktrees encodée>-<iid>-<slug>`, qu'un motif sur le
 retrouve — le slug n'est jamais nécessaire.
 
 ```bash
-bash scripts/git/worktree.sh sessions 340   # les sessions du ticket #340
-bash scripts/git/worktree.sh sessions       # l'inventaire, tous tickets confondus
+bash scripts/git/worktree.sh sessions        # les 10 dernières de CE dossier (#397)
+bash scripts/git/worktree.sh sessions 340    # les sessions du ticket #340
+bash scripts/git/worktree.sh sessions --tous # l'inventaire, tous tickets confondus
 ```
 
 ```
@@ -2527,17 +2528,65 @@ worktree), il coupe seulement le chemin qui les montrait :
 vit sur le poste qui l'a produit ; le verbe ne va rien chercher ailleurs, et l'annonce plutôt que
 de laisser confondre « pas ici » avec « nulle part ».
 
-⚠ **Ce qui n'est pas de notre ressort** : l'onglet Claude Code qui revient **sans nom** après un
-redémarrage de VS Code. L'extension ne persiste aucune identité de session — rien sous
-`globalStorage`, seule la coquille du webview dans l'état du workspace, et le registre des sessions
-vivantes (`~/.claude/sessions/<PID>.json`) est indexé **par PID**, donc périmé dès que les
-processus meurent. Nommer une session au lancement (`claude -n "<nom>"`) aide à s'y retrouver ; le
-reste est en amont de ce dépôt.
+#### Après un redémarrage de VS Code : le dossier courant (#397)
+
+La dérivation ci-dessus ne couvre que les **worktrees**, et la question la plus fréquente ne se pose
+pas par iid : elle se pose **là où l'on est**, en rouvrant VS Code — dont l'onglet Claude Code
+revient vide et sans nom. Le clone principal, d'où l'on travaille le plus souvent, en était exclu :
+191 transcripts, aucun moyen de nommer celui d'hier.
+
+C'est pourquoi **`sessions` sans argument regarde désormais le répertoire courant** — l'inventaire de
+#385 n'a pas disparu, il se demande (`--tous`). Le geste le plus court répond à la question la plus
+fréquente ; celle de l'inventaire (« où sont passées mes sessions de tickets ? ») vient plus rarement
+et plus tard.
+
+```
+Sessions Claude Code — E:\Projects Solutions\Maestro
+  (ce dossier ; c'est tout ce que le sélecteur /resume y montre)
+
+  2026-08-20 18:05  [maestro-80] Ordre d'exécution milestone 14
+                    claude --resume 22bd3795-79d9-4273-a27f-74dc60e2d927
+
+191 session(s) ici.
+  181 plus anciennes non listées : worktree.sh sessions --limite 0
+  137 ticket(s) en ont aussi, dans leur worktree : worktree.sh sessions --tous
+```
+
+Trois choix, là encore :
+
+- **Le nom d'onglet vient du registre**, `<config>/sessions/<PID>.json` — la seule source qui le
+  porte, aucun transcript ne le connaissant. C'est le repère par lequel on reconnaît sa session : un
+  titre est posé en cours de route, parfois jamais, alors que le nom est celui qu'on avait sous les
+  yeux. Une session **reprise** garde son identifiant sous un nouveau PID (jusqu'à trois fiches pour
+  un même id), donc le nom retenu est celui de la fiche **la plus récente**.
+- **La liste est bornée à 10, et le dit.** Tout rendre reperdait la conversation d'hier dans 390
+  lignes ; en rendre 10 sans le dire ferait passer une troncature pour un inventaire, et conclure
+  qu'une session n'existe plus. `--limite 0` rend tout, `MAESTRO_SESSIONS_LIMITE` déplace le défaut.
+- **« Ce dossier » veut dire ce dossier.** Les sessions de worktrees sont **annoncées** en pied,
+  jamais mêlées à la liste : les y mêler proposerait une reprise dans un répertoire qui n'est pas
+  celui de la session.
+
+⚠ **Ce qui reste hors de portée** : que l'onglet se rouvre **tout seul** sur sa conversation. Vérifié
+le 2026-08-20 sur l'extension 2.1.237 — la clé `sessionGroups:<hash du realpath du workspace>`
+qu'elle sait écrire dans `globalState` est **absente** du `state.vscdb` (globalStorage et les 15
+workspaceStorage), et sa commande *Reopen Closed Session* travaille sur une pile
+`recentlyClosedSessions` en mémoire, perdue au redémarrage. On outille donc la reprise sans la rendre
+automatique ; nommer une session au lancement (`claude -n "<nom>"`) aide en complément.
+
+⚠ **Et #385 avait conclu « pas de notre ressort » sur une prémisse fausse** : que le registre, étant
+indexé par PID, serait « périmé dès que les processus meurent ». Indexé par PID, oui ; périmé, non —
+il porte le `cwd`, le `sessionId` et le nom, et il **survit** (36 fiches sur le poste de référence, en
+majorité de processus morts). Le PID ne périme qu'une question qu'on ne pose pas ici : « cette
+session tourne-t-elle encore ? ».
 
 Couvert par [`test_worktree.py`](../tests/test_worktree.py) : la dérivation avec et sans worktree
 sur le disque, le repli d'un transcript sans titre, le dernier titre qui l'emporte, l'ordre
 antichronologique, `MAESTRO_WORKTREE_DIR` respecté, la casse ignorée, et la mention portée par `gc`
-— y compris son silence quand il n'y a aucune session à nommer.
+— y compris son silence quand il n'y a aucune session à nommer ; puis, pour #397, le dossier courant
+hors worktree, les sessions d'ailleurs qui n'y entrent pas, le nom tiré du registre et la fiche la
+plus récente qui l'emporte, le repli sans registre, `CLAUDE_CONFIG_DIR` suivi par le registre comme
+par les transcripts, la troncature annoncée et son échappatoire, et un identifiant rendu une seule
+fois.
 
 ---
 
