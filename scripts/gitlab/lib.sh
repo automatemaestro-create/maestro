@@ -1592,7 +1592,7 @@ gl_worktree_done() {
   if [ -n "$branche" ] && brief="$(gl_mr_brief "$branche")"; then
     IFS=$'\t' read -r etat mr sha <<< "$brief"
     if [ "$etat" = "merged" ]; then
-      printf 'fini\t%s\tMR !%s mergée\n' "${sha:--}" "${mr:-?}"
+      printf 'fini\t%s\tPR #%s mergée\n' "${sha:--}" "${mr:-?}"
       return 0
     fi
   fi

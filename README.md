@@ -176,7 +176,7 @@ complète `.claude/settings.local.json` — non versionné — sans écraser ce 
    d'approbation de Claude Code : le script y inscrit les serveurs déclarés dans `.mcp.json`,
    il n'y a donc plus de « Pending approval » à lever à la main. Le corollaire vaut d'être
    dit : un `.mcp.json` est du **code exécutable**, il se relit avant d'être approuvé — la
-   revue se fait donc à la MR, pas au premier lancement.
+   revue se fait donc à la PR, pas au premier lancement.
 2. **Profil du navigateur.** `chrome-maestro` pilote Chrome via `@playwright/mcp` ; le script
    pose `MAESTRO_CHROME_PROFILE` sur `~/.maestro/chrome-profile` s'il n'est pas déjà défini.
    Pour réutiliser des sessions déjà ouvertes, pointez un profil **dédié** — jamais le profil

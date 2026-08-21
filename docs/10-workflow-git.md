@@ -19,15 +19,6 @@ Objectif : que chaque ticket soit traité de façon prévisible — même branch
 > toutes par `gh` ou par les helpers de `scripts/gitlab/lib.sh`, et
 > [`tests/test_migration.py`](../tests/test_migration.py) garde qu'aucune n'y revienne. L'outillage
 > GitLab lui-même — `.gitlab-ci.yml` et les 1 146 lignes de runner — a été **retiré** par #344.
->
-> ⚠ **Le document dit en revanche encore « MR », « GitLab » et « pipeline » à beaucoup
-> d'endroits, et ce n'est pas un oubli** : ce sont les mots que **les scripts impriment** —
-> `worktree.sh gc` rend « MR !398 mergée », `resume.tsv` porte une colonne `MR`. Aligner le
-> vocabulaire demande donc de changer les sorties, les tests qui les épinglent et la doc **du même
-> geste** ; le faire ici seul rendrait la doc fausse sur ce qu'on lit à l'écran. En attendant, lire
-> « MR » comme « PR » partout où il s'agit du travail d'aujourd'hui : le contrat de sortie de
-> `lib.sh` est identique des deux côtés (un « iid » désigne le `number` GitHub, un état de MR
-> `opened|closed|merged` désigne celui de la PR).
 
 > ## Le cycle de vie est porté par le **champ Status**, et par lui seul
 >
@@ -61,11 +52,11 @@ main ──●──●──────●──────────●─
 
 Règles :
 
-1. **Jamais de commit direct sur `main`.** Tout changement passe par une branche + une Merge Request (MR).
-2. **Une branche = un ticket = une MR.** Pas de branche fourre-tout multi-tickets.
+1. **Jamais de commit direct sur `main`.** Tout changement passe par une branche + une Pull Request (PR).
+2. **Une branche = un ticket = une PR.** Pas de branche fourre-tout multi-tickets.
 3. Une branche part toujours de `main` à jour (`git pull origin main` avant `git checkout -b`).
 4. Une branche est **courte** : quelques heures à quelques jours. Si un ticket prend plus longtemps, il est probablement trop gros — le redécouper (§5.1).
-5. La branche est supprimée (locale + distante) dès que la MR est mergée.
+5. La branche est supprimée (locale + distante) dès que la PR est mergée.
 
 ### Nommage des branches
 
@@ -102,7 +93,7 @@ Refs #<iid>
 
 - `type` : `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `build`, `perf`.
 - `scope` : optionnel, le dossier/module concerné (`api`, `web`, `router`, `queue`…).
-- Le **dernier commit de la branche** (ou la description de la MR) contient `Closes #<iid>` plutôt que `Refs #<iid>` — GitLab ferme alors le ticket automatiquement au merge.
+- Le **dernier commit de la branche** (ou la description de la PR) contient `Closes #<iid>` plutôt que `Refs #<iid>` — la forge ferme alors le ticket automatiquement au merge.
 
 Exemple :
 
@@ -658,9 +649,9 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
   `/ticket-finish` coche lui-même les cases qu'il a **effectivement vérifiées** (conventions de
   branche/commit, tests et doc jugés d'après le diff, pipeline verte constatée via `lib.sh
   pipeline-latest`) et laisse vides les autres — notamment « Pipeline CI verte », qui est
-  **normalement vide au premier passage** : la CI ne démarrant qu'avec la MR (§8), le pipeline
+  **normalement vide au premier passage** : la CI ne démarrant qu'avec la PR (§8), le pipeline
   naît après le constat. En cas de re-exécution, il remet la checklist à jour dans la
-  description de la MR sans toucher au reste (idempotent) et **ne décoche jamais** une case déjà
+  description de la PR sans toucher au reste (idempotent) et **ne décoche jamais** une case déjà
   cochée (elle peut venir d'un humain). Les cases restées vides sont l'affaire du relecteur.
 
 ---
@@ -696,7 +687,7 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
      qu'il remet le dépôt à niveau au passage, sans qu'aucun geste soit à retenir : `main` avancée
      sur `origin/main` (§9.3), dépendances ajoutées au dépôt (§9.4), worktrees soldés ramassés
      (§9.2) et **branches locales déjà mergées purgées** (§9.5 — même garde-fou que
-     `/branch-cleanup` : uniquement celles dont la forge confirme la MR `merged`, §6). Il **signale**
+     `/branch-cleanup` : uniquement celles dont la forge confirme la PR `merged`, §6). Il **signale**
      au même passage les tickets « En cours » que plus personne ne mène (§9.6) — consultatif : la
      reprise est un geste explicite, et le ticket qu'on est en train de démarrer en est écarté. Les
      cinq sont best-effort et muets quand il n'y a rien à faire ; aucun ne bloque un démarrage.
@@ -712,14 +703,14 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
    Une fois le cadrage résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé
    n'est pas une pause d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).
-4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la MR avec
+4. **`/ticket-finish`** — pousse la branche, ouvre (ou passe en "Ready") la PR avec
    `Closes #<iid>`, **coche dans sa checklist les cases qu'il a pu vérifier** (§4), passe le
    **statut** à `En revue`.
    - **Raccourci « zéro friction » : [`/ticket-ship`](../.claude/commands/ticket-ship.md).** Quand
      le travail est terminé mais **pas encore committé**, `/ticket-ship` enchaîne **en une seule
      action** : il **commite d'office** les changements en attente (message Conventional Commits
      généré + `Closes #<iid>`, **sans confirmation** — même parti pris que l'auto-estimation du temps,
-     §3.3) puis **délègue à `/ticket-finish`** (source unique du push/MR/statut/temps ; son étape de
+     §3.3) puis **délègue à `/ticket-finish`** (source unique du push/PR/statut/temps ; son étape de
      commit est alors sans objet, l'arbre étant propre). Il **refuse** si l'arbre est **vide** (rien à
      committer → utiliser `/ticket-finish`) ou **en conflit**, et **jamais sur `main`**. Le hook
      `commit-msg` (§2) reste appliqué — pas de `--no-verify`. Pensé pour la **boucle d'orchestration**
@@ -757,7 +748,7 @@ reste ainsi légère en contexte. L'évaluation de taille se fait en **charge es
 nombre de critères d'acceptation. Les **couches/composants distincts** touchés (moteur, backend,
 UI, script, commande, doc…) sont un **signal d'alerte** qui oblige à estimer finement, **pas un
 déclencheur automatique** (recalibrage ticket #63 : le découpage a un coût fixe par lot — cycle
-branche/MR/pipeline/merge complet, session repartant à froid — à ne payer que s'il évite une
+branche/PR/pipeline/merge complet, session repartant à froid — à ne payer que s'il évite une
 session qui déborde). Étalon : le **#48** n'affichait que 3 critères mais ses notes techniques
 annonçaient trois couches substantielles (moteur/file #41, backend Control Tower #46, UI #47) —
 il aurait dû être découpé (correctif ticket #54) ; à l'inverse, un script + sa doc tiennent en
@@ -766,11 +757,11 @@ description (pas de parent ni de sous-tickets). Au-delà d'une session (plusieur
 substantielles, plus de 3-4 critères d'acceptation, plusieurs livrables indépendants), le besoin
 est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit par le ticket #53) :
 
-- **Parent de suivi** — pas de branche, pas de code, pas de MR. Sa description porte l'objectif
+- **Parent de suivi** — pas de branche, pas de code, pas de PR. Sa description porte l'objectif
   global et une section `## Sous-tickets` : la checklist **ordonnée** (ordre de réalisation) des
   lots, au format `- [ ] #<iid> — <titre>`. Il reste ouvert tant que toutes les cases ne sont pas
   cochées — **en particulier celle du lot tests final** — et sa fermeture est une **décision
-  humaine/orchestrateur** (pas de MR → pas de `Closes #` automatique). Les cases sont cochées au
+  humaine/orchestrateur** (pas de PR → pas de `Closes #` automatique). Les cases sont cochées au
   fil de l'eau par les commandes (synchronisation idempotente : cocher les lots « Terminé »,
   jamais décocher).
 - **Sous-tickets** — un lot = ~1 session, **1 à 3 critères d'acceptation**, et surtout chaque lot
@@ -780,13 +771,13 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
   sous-ticket est **lié** au parent (issue link « relates to », posé par
   `lib.sh issue-link <parent> <sous-iid>`). C'est cette propriété (lots additifs, branchés depuis
   `main`) qui permet d'**enchaîner les lots sans attendre le merge** du précédent : un lot
-  « En revue » (MR ouverte) ne bloque pas le suivant, seul un lot encore « À faire » ou
+  « En revue » (PR ouverte) ne bloque pas le suivant, seul un lot encore « À faire » ou
   « En cours » l'arrête (recalibrage ticket #63).
 - **Tests différés** — les tests sont un **sous-ticket dédié**, par défaut le **lot final
   « tests + doc »**. Les lots intermédiaires n'embarquent des tests que si leur logique est
   critique, et portent la mention « Tests différés → #<iid-du-lot-tests> » — livrer un lot
   intermédiaire sans tests est donc **prévu**, pas un oubli (la case « Tests » de la checklist de
-  MR reste vide, le relecteur sait pourquoi).
+  PR reste vide, le relecteur sait pourquoi).
 - **Lots parallélisables** (ticket #160) — la sérialisation des lots protège les vraies
   dépendances, mais elle est souvent **artificielle** : les lots sont déjà additifs et mergeables
   seuls sur `main`, et deux personnes se bloquent alors mutuellement pour rien. Un lot dont le
@@ -823,7 +814,7 @@ Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subti
 | Commande | Besoin/ticket trop gros | Ticket parent | Sous-ticket |
 |---|---|---|---|
 | `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, marqueur `(parallèle)` sur les lots indépendants, lot tests en dernier) | — | — |
-| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ parent fermable si tout est « Terminé », sinon le travail est en route (« En cours ») ou livré et on n'attend plus que des merges | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une MR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête |
+| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ parent fermable si tout est « Terminé », sinon le travail est en route (« En cours ») ou livré et on n'attend plus que des merges | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête |
 | `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou que le parent est fermable si c'était le dernier), et coche les lots terminés dans la checklist du parent |
 
 **Voie « non réalisé ».** À tout moment (depuis `À faire`, `En cours` ou `En revue`), un ticket
@@ -836,11 +827,11 @@ la Control Tower (Phase 1) :
 - [`/backlog`](../.claude/commands/backlog.md) `[opened|all]` — vue d'ensemble du backlog groupée
   par **cycle de vie** (§3.1), avec `agent::`/`prio::` et la mise en avant de ce qui **attend une
   revue / est prêt à merger**. S'appuie sur `lib.sh backlog` (requête canonique du backlog).
-- [`/mr-review`](../.claude/commands/mr-review.md) `<mr|branche>` — synthèse d'une MR (aptitude au
+- [`/mr-review`](../.claude/commands/mr-review.md) `<mr|branche>` — synthèse d'une PR (aptitude au
   merge, pipeline, threads bloquants, résumé du diff) pour **éclairer la décision de merge humaine**.
   Conforme au garde-fou §6 : elle **ne merge, ne ferme, ni n'approuve jamais**.
 
-**Remédiation d'une MR.** [`/mr-fix`](../.claude/commands/mr-fix.md) `[mr|branche]` — quand une MR
+**Remédiation d'une PR.** [`/mr-fix`](../.claude/commands/mr-fix.md) `[mr|branche]` — quand une PR
 n'est pas mergeable, pour l'une **ou l'autre** des deux raisons possibles. D'abord le **conflit avec
 `origin/main`** (`lib.sh mr-conflict`), résolu par merge et jamais par rebase ; puis le **pipeline
 rouge** : diagnostic des jobs en échec (traces synthétisées via les
@@ -849,7 +840,7 @@ commit (`Refs #<iid>`), push et suivi du nouveau pipeline jusqu'au verdict (2 te
 re-déclenchement `gh run rerun <run-id>`, ou `gh workflow run ci.yml --ref <branche>` si le push
 n'a pas déclenché d'exécution). Un échec d'infrastructure (secret manquant, flaky) est signalé tel
 quel — au plus un `gh run rerun --failed <run-id>`, jamais de correctif
-inventé. Elle écrit des **commits**, mais jamais le cycle de vie : ni statut, ni MR, ni merge (§6),
+inventé. Elle écrit des **commits**, mais jamais le cycle de vie : ni statut, ni PR, ni merge (§6),
 ni commit sur `main` (voir §8).
 
 Détail des commandes : [`.claude/commands/`](../.claude/commands/).
@@ -860,7 +851,7 @@ Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
 Cohérent avec le principe « autonomie sous supervision » du projet (voir [README](../README.md)) :
 
-- **Aucune commande n'effectue de merge ou de fermeture de MR automatiquement.** La revue et le merge restent une décision humaine.
+- **Aucune commande n'effectue de merge ou de fermeture de PR automatiquement.** La revue et le merge restent une décision humaine.
 - **Aucun force-push** sur une branche déjà poussée.
 - **Aucun rebase automatique.** Le retard d'une branche sur `origin/main` est *signalé*, jamais
   rattrapé d'office : `bash scripts/gitlab/lib.sh behind-main [branche]` imprime le nombre de
@@ -875,11 +866,11 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   volontairement grossière (git seul tranche vraiment) : elle vise les **fichiers aimants**
   touchés par presque tous les tickets — `CLAUDE.md`, ce document, `scripts/gitlab/lib.sh`.
 - **Aucune clôture d'un ticket que la session ne traite pas.** `/ticket-finish` et `/ticket-ship`
-  vérifient, **avant toute écriture** (commit, push, MR, statut, temps), que le ticket
+  vérifient, **avant toute écriture** (commit, push, PR, statut, temps), que le ticket
   visé est bien celui de la session : `bash scripts/gitlab/lib.sh close-guard <iid> [branche]`.
   C'est le pendant en *sortie* de l'anti-collision d'entrée de `/ticket-start` (`issue-taken`, §5) —
   sans lui, un `/ticket-finish 158` lancé depuis `chore/163-…` faisait basculer **#158** « En
-  revue », y accrochait la MR de la branche de #163 et le temps d'un travail qui
+  revue », y accrochait la PR de la branche de #163 et le temps d'un travail qui
   n'était pas le sien ; via `/ticket-ship`, le commit généré portait en plus un `Closes #158` qui
   aurait fermé le ticket d'un autre au merge. Deux contrôles, de force très inégale :
   - **cohérence iid ↔ branche courante** (motif `<type>/<iid>-<slug>`, §1) — purement local, donc
@@ -920,7 +911,7 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   autrement.** Une branche mergée sur GitLab n'a pas de PR côté GitHub : la forge interrogée ne peut
   ni confirmer ni infirmer, et l'archive de migration
   ([`export-gitlab.sh`](../scripts/migration/export-gitlab.sh)) ne rattrape rien — elle a exporté
-  les **tickets**, jamais les MR. Le contenu ne tranche pas davantage : un `git merge-tree` de la
+  les **tickets**, jamais les PR. Le contenu ne tranche pas davantage : un `git merge-tree` de la
   branche contre `main` rend un conflit sur presque toutes, ce qui ne dit **rien** de leur merge
   (conflit fantôme d'après squash, §9.5) mais seulement que `main` a bougé depuis. La règle
   appliquée au stock de #384, à rejouer telle quelle si le cas se représente : la branche est
@@ -946,8 +937,8 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   recréerait une dépendance entre personnes, et le merge resterait de toute façon humain) et joue
   sur la **visibilité** — arbitrage du chantier #155.
   - **Aucun relecteur n'est posé automatiquement** (#196). `/ticket-finish` l'a fait un temps
-    (#161) ; ce n'est plus le cas : désigner un relecteur attribue une MR à quelqu'un qui ne l'a
-    pas demandé, alors que la file de revue donne déjà le signal « cette MR attend quelqu'un ». La
+    (#161) ; ce n'est plus le cas : désigner un relecteur attribue une PR à quelqu'un qui ne l'a
+    pas demandé, alors que la file de revue donne déjà le signal « cette PR attend quelqu'un ». La
     **visibilité** suffit donc, et la désignation redevient un **geste humain explicite**.
   - Le helper reste **outillé pour cette pose manuelle** :
     `bash scripts/gitlab/lib.sh set-reviewer [mr|branche] [username]` choisit, à défaut d'un nom
@@ -955,16 +946,16 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     **aucun nom en dur** ; les comptes d'automatisation sont écartés par la variable `GL_BOT_USERS`
     (défaut `MaestroAgents` : ce compte est un utilisateur GitLab ordinaire, `User.bot` y vaut
     `false`, l'API seule ne suffit donc pas à l'exclure). La désignation **tourne** entre les
-    candidats (graine = iid de la MR : même MR → même relecteur, MR différentes → charge répartie)
+    candidats (graine = iid de la PR : même PR → même relecteur, PR différentes → charge répartie)
     et elle est **idempotente** : un relecteur déjà posé n'est **jamais** remplacé. Sur un projet à
     une seule personne, il n'y a pas de candidat et le helper échoue proprement (code `1`). Aucune
     commande du workflow ne l'appelle — c'est un outil, plus une étape.
   - `/backlog` affiche la **file de revue** en tête (`bash scripts/gitlab/lib.sh review-queue`) :
-    MR ouvertes **la plus ancienne d'abord**, avec `age_j` (l'ancienneté, c'est elle qui déclenche
+    PR ouvertes **la plus ancienne d'abord**, avec `age_j` (l'ancienneté, c'est elle qui déclenche
     la relecture), l'état `draft`/`ready`, le statut du pipeline, l'auteur et le relecteur s'il en
     a été posé un à la main (colonne à « - » sinon, cas désormais normal). C'est **elle seule** qui
     porte le signal de revue.
-- **Une MR au pipeline rouge n'est pas mergeable.** Le réglage projet
+- **Une PR au pipeline rouge n'est pas mergeable.** Le réglage projet
   `only_allow_merge_if_pipeline_succeeds=true` (complété par `allow_merge_on_skipped_pipeline=false`)
   fait appliquer par **GitLab lui-même** la règle « pipeline vert avant merge » (§8) : le bouton de
   merge reste grisé tant que le pipeline échoue ou est sauté. Provisionné par
@@ -1021,7 +1012,7 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
     (ex. un timelog additif).
 - **Bilan de santé** : [`bash scripts/gitlab/doctor.sh`](../scripts/gitlab/doctor.sh) (lecture seule)
   vérifie auth, labels de catégorisation, options du champ Status, et **détecte les dérives**
-  (ticket « En revue » sans MR, ticket fermé au statut encore actif, branche locale mergée à
+  (ticket « En revue » sans PR, ticket fermé au statut encore actif, branche locale mergée à
   nettoyer, réglages de merge « pipeline vert » ou « suppression de la branche source » retombés — §6). Code de sortie non nul si un contrôle dur échoue (`--strict` pour échouer aussi sur les
   dérives — utile en CI).
 - **Hooks git** : posés par `scripts/setup.sh` (étape `hooks`), qui délègue à
@@ -1275,20 +1266,20 @@ sur sa branche source** tant qu'elle est ouverte — et `workflow_dispatch`, le 
 — pendant le développement, à la clôture du ticket, puis sur `main` une fois mergée — pour un seul
 verdict réellement lu, celui qui conditionne le merge. Trois conséquences pratiques :
 
-- **Vérifier son travail avant la MR est un geste local** :
+- **Vérifier son travail avant la PR est un geste local** :
   [`scripts/ci/local.sh`](../scripts/ci/local.sh) rejoue les mêmes jobs sur le poste (#157) — c'est
   lui qui remplace les pipelines de branche, et il ne dépend d'aucun runner. Depuis un **worktree**,
   il teste bien le code d'ici : voir §9 pour le piège d'import que cela suppose d'éviter (#194).
   Depuis #214 il ne joue par défaut que les **suites concernées par le diff** (§8.4) : la suite
-  complète, c'est `--complet`, ou le pipeline de cette MR.
+  complète, c'est `--complet`, ou le pipeline de cette PR.
 - **Le verdict d'un run se lit en DEUX champs** : Actions sépare `status` (en cours) de
   `conclusion` (issue), là où l'outillage raisonne sur une seule valeur
   (`success`/`failed`/`pending`…). `lib.sh pipeline-latest <branche>` les recompose, et c'est lui
   qu'utilisent `/mr-fix`, `/ticket-finish` et `/mr-review` — jamais un `gh run list` direct, qui
   verrait bien le run mais pas un verdict comparable. La file de revue (`lib.sh review-queue`) lit
   le `statusCheckRollup` du dernier commit en GraphQL : elle n'est pas concernée.
-- **La case « Pipeline CI verte » de la MR est vide au premier passage**, et c'est normal :
-  `/ticket-finish` pousse **puis** ouvre la MR, donc le pipeline naît *après* le constat (§6).
+- **La case « Pipeline CI verte » de la PR est vide au premier passage**, et c'est normal :
+  `/ticket-finish` pousse **puis** ouvre la PR, donc le pipeline naît *après* le constat (§6).
 
 Le garde-fou de merge, lui, n'est **pas posé** aujourd'hui, et c'est une décision documentée :
 la protection de branche n'existe pas sur un dépôt privé d'un compte Free (§8.8). Les six verdicts
@@ -1320,12 +1311,12 @@ route n'en a plus besoin du tout.
 > suivantes n'a **pas** été resserrée : elle est citée dans `CLAUDE.md`, dans les prompts et dans
 > les tests, et la faire glisser pour combler un trou coûterait plus qu'elle ne rapporte.
 
-### 8.3 MR non mergeable — remédiation (`/mr-fix`, anciennement `/pipeline-fix`)
+### 8.3 PR non mergeable — remédiation (`/mr-fix`, anciennement `/pipeline-fix`)
 
-**Deux choses empêchent de merger une MR**, et [`/mr-fix`](../.claude/commands/mr-fix.md) (voir §5)
-les traite toutes les deux, une MR à la fois : le **conflit avec `origin/main`** et le **pipeline
+**Deux choses empêchent de merger une PR**, et [`/mr-fix`](../.claude/commands/mr-fix.md) (voir §5)
+les traite toutes les deux, une PR à la fois : le **conflit avec `origin/main`** et le **pipeline
 rouge**. La commande s'appelait `/pipeline-fix` jusqu'à #303, où elle n'en traitait qu'une — un
-pipeline remis au vert sur une MR en conflit annonçait un ✅ trompeur.
+pipeline remis au vert sur une PR en conflit annonçait un ✅ trompeur.
 
 **L'ordre est le contenu de la décision** : le conflit d'abord. Le merge d'`origin/main` peut
 *lui-même* casser le pipeline — deux changements corrects séparément, faux ensemble —, donc
@@ -1334,7 +1325,7 @@ diagnostiquer le pipeline avant, c'est diagnostiquer un état qui n'existera plu
 **1. Le conflit** — `lib.sh mr-conflict [branche]` rend le verdict : `0` se merge proprement,
 `3` conflit (fichiers listés), `1` verdict impossible, `2` usage. Lecture seule, sans checkout ni
 index touché, donc jouable sur une branche qu'on ne sort pas — c'est le cas d'usage réel, juger la
-branche d'une MR depuis le clone principal.
+branche d'une PR depuis le clone principal.
 
 Le verdict vient de `git merge-tree --write-tree`, un **merge 3-way réel**, et non des deux sources
 qui existaient déjà — ni l'une ni l'autre ne pouvait porter cette décision :
@@ -1347,7 +1338,7 @@ qui existaient déjà — ni l'une ni l'autre ne pouvait porter cette décision 
 La résolution est un **`git merge origin/main`, jamais un rebase** : réécrire une branche déjà
 poussée appellerait un force-push, barré en `deny` (§6). Et une résolution qui n'est pas claire
 **ne se pousse pas** — `git merge --abort`, branche intacte, constat rendu : mieux vaut un conflit
-signalé qu'une résolution fausse sous une MR en Draft que personne ne relira ligne à ligne.
+signalé qu'une résolution fausse sous une PR en Draft que personne ne relira ligne à ligne.
 
 **2. Le pipeline** — diagnostic des jobs en échec, correctif local quand c'est corrigeable, commit
 `Refs #<iid>` poussé sur la branche, suivi du nouveau pipeline. Les briques réutilisables vivent
@@ -1359,7 +1350,7 @@ passe par le venv du repo, analyse un miroir LF pour shellcheck (la CI checkout 
 Windows CRLF produit des faux SC1017) et cadre `pytest` sur le périmètre du diff (§8.4) — la suite
 entière, ~10 min, se payerait ici en plein diagnostic.
 
-**Le résumé rend les deux blocages séparément**, jamais un verdict global : une MR au pipeline vert
+**Le résumé rend les deux blocages séparément**, jamais un verdict global : une PR au pipeline vert
 mais en conflit reste non mergeable.
 
 ⚠ **`git merge-tree` rend `128`** — pas `1` — quand le merge est impossible à évaluer (histoires
@@ -1370,7 +1361,7 @@ comme « poursuis sur le pipeline », pas comme un conflit.
 ### 8.4 Boucle courte en local, suite complète au pipeline (#214)
 
 **La suite complète ne se rejoue plus pendant le développement.** Elle est jouée par le pipeline
-de la MR, qui depuis #165 est de toute façon le **seul verdict complet** et la condition de merge.
+de la PR, qui depuis #165 est de toute façon le **seul verdict complet** et la condition de merge.
 En local, le filet ne joue que ce que le diff concerne.
 
 Ce que coûtait l'ancien réflexe, mesuré sur le dépôt (1102 tests, poste 16 cœurs) :
@@ -1945,7 +1936,7 @@ ni sur `main` après le merge — et c'est aussi ce qui **réduit** la consommat
 déclenchant jusque-là un run à chaque push pour un verdict que personne ne lisait (`docs/27` §10).
 `workflow_dispatch` est conservé : c'est le seul moyen de rejouer la CI hors PR. Aucun filtre
 `branches:` — une PR est par définition un candidat au merge —, et les `types:` par défaut couvrent
-le cycle de vie d'une MR Maestro, **Draft compris** : une PR en brouillon déclenche bien le
+le cycle de vie d'une PR Maestro, **Draft compris** : une PR en brouillon déclenche bien le
 workflow, ce qui tombe bien puisque `/ticket-finish` ouvre toujours en Draft (§6).
 
 **La protection de `main` : écartée, et c'est une décision.** Le pendant de
@@ -2072,7 +2063,7 @@ s'écrivent **sans barre oblique finale**, et
 
 Ces trois commandes restent disponibles, mais **on n'a plus à y penser** : `/ticket-start` monte
 lui-même le worktree du ticket, et le **clone principal ne change plus jamais de branche**. On peut
-donc y rester sur `main` — lire le code de référence, préparer un autre sujet, relire une MR —
+donc y rester sur `main` — lire le code de référence, préparer un autre sujet, relire une PR —
 pendant qu'un ticket est en cours ailleurs. Le parallélisme devient le régime par défaut au lieu
 d'une option à se rappeler.
 
@@ -2186,7 +2177,7 @@ refuse une branche empruntée par un worktree. Même principe, même garde-fou :
 **confirmée par GitLab**, jamais déduite du nom de la branche.
 
 **Ce qui déclenche le retrait** (`lib.sh worktree-done <iid> <branche>`, une lecture dans le cas
-nominal) : la **MR de la branche est mergée**, ou le **ticket est fermé** (réalisé, abandonné,
+nominal) : la **PR de la branche est mergée**, ou le **ticket est fermé** (réalisé, abandonné,
 doublon). Tout le reste est conservé — y compris un verdict **inconnu** (`gh` absent, hors ligne,
 ticket illisible) : ne rien savoir n'autorise rien.
 
@@ -2208,11 +2199,11 @@ serveur ? »**, posée dans cet ordre :
 1. **HEAD est-il un ancêtre d'`origin/main`** ? Alors tout est là-bas, quelle que soit l'histoire de
    la branche — y compris une branche **re-créée depuis `main`** après son merge, dont le sha de
    merge a divergé ;
-2. sinon `origin/<branche>`, s'il existe encore (branche poussée, MR pas encore mergée, ou case de
+2. sinon `origin/<branche>`, s'il existe encore (branche poussée, PR pas encore mergée, ou case de
    suppression décochée) ;
 3. sinon le **sha de merge** rendu par `worktree-done` — la tête de la branche source au moment du
    merge, seule trace locale de ce qui est parti ;
-4. sinon `origin/main`, cas de la branche **jamais poussée** (ticket fermé sans MR), où ses commits
+4. sinon `origin/main`, cas de la branche **jamais poussée** (ticket fermé sans PR), où ses commits
    locaux sont précisément le travail à ne pas perdre.
 
 **Où c'est câblé** — nulle part une commande dédiée :
@@ -2242,7 +2233,7 @@ ticket livré s'affichait « En revue » sur le board et dans `/backlog`, indéf
 la lançait. `doctor.sh` **diagnostiquait** déjà la dérive (« ticket fermé mais son état est encore
 actif ») sans jamais la réparer — 22 tickets concernés au moment d'écrire ces lignes.
 
-La réparation se greffe **ici**, et pas ailleurs, pour une raison simple : `fini` — MR mergée ou
+La réparation se greffe **ici**, et pas ailleurs, pour une raison simple : `fini` — PR mergée ou
 ticket fermé — est **exactement** la question que pose la réconciliation, et `gc` en a déjà la
 réponse en main. Aucune lecture de découverte en plus, aucune étape ajoutée à `ensure` (qui en porte
 déjà quatre : #181, #197, #205, #216), et les **trois points de passage du tableau ci-dessus** en
@@ -2377,8 +2368,8 @@ c'est-à-dire de faire tourner deux tickets sur un même dépôt. Le titre est l
 sous-sections se sont intercalées entre lui et le corps du §9 (#275, puis #377), au point qu'on
 pouvait le lire comme la suite de la dernière.
 
-- Le **runner CI est unique** (§8) : les pipelines des deux MR se **sérialisent**. Plus lent,
-  jamais bloquant.
+- Les pipelines des deux PR tournent **en parallèle** : ils se **sérialisaient** du temps du
+  runner unique, parti avec la CI GitLab (§8.1, #344) — plus lent, jamais bloquant.
 - Le venv partagé porte `maestro` en **mode éditable pointé sur le clone principal** — un `.pth`
   qui installe un finder vers `<clone principal>/maestro`. Ce finder passe *après* le `PathFinder`
   de Python : le `maestro/` d'ici l'emporte, **mais seulement si la racine du worktree est dans
@@ -2467,7 +2458,7 @@ aux **points de passage obligés** plutôt qu'un déclencheur qui n'existe pas :
 | `orchestrate/run.sh` | au **démarrage** d'un run, avant son premier ticket (#283, §11.3) |
 
 La troisième ligne n'est pas un doublon de la première. Un run est ce qui fait vieillir `main` le
-plus vite — il ouvre N MR destinées à être mergées —, et la mise à jour par `ensure` a lieu *dans*
+plus vite — il ouvre N PR destinées à être mergées —, et la mise à jour par `ensure` a lieu *dans*
 une session : elle ne joue donc pas du tout quand le run part sur un plan vide, saute tous ses
 tickets ou échoue avant le premier. Sur une nuit où le run est la seule chose qui tourne, c'est
 précisément le cas où personne ne repassera derrière. Elle a lieu **avant** le ramassage des
@@ -2592,7 +2583,7 @@ branches qu'il n'en avait examinées (3 sur 41 lors de la purge de rattrapage). 
 comptée à part et **nommée**, avec le worktree qui la retient :
 
 ```
-  ⚠ conservée : feat/251-… (MR merged, empruntée par le worktree E:/…/maestro-worktrees/251-…)
+  ⚠ conservée : feat/251-… (PR merged, empruntée par le worktree E:/…/maestro-worktrees/251-…)
 Nettoyage des branches : 32 supprimée(s), 6 conservée(s), 3 mergée(s) mais empruntée(s) par un worktree.
 ```
 
@@ -2796,7 +2787,7 @@ rouvrir. Le retrait ne les efface pas (un transcript vit sous `<config>/projects
 worktree), il coupe seulement le chemin qui les montrait :
 
 ```
-✓ #340 retiré — MR !268 mergée — 2 session(s) conservée(s) : worktree.sh sessions 340
+✓ #340 retiré — PR #268 mergée — 2 session(s) conservée(s) : worktree.sh sessions 340
 ```
 
 **Portée**, comme `gc` et `reconcile-workflow` : les worktrees de **cette machine**. Un transcript
@@ -2876,10 +2867,10 @@ est traité et pourquoi il existe.
 |---|---|---|
 | Deux sessions sur le même clone se marchent dessus (`HEAD` partagé) | un **worktree par session** — ports Control Tower et profil de navigateur dédiés | §9 |
 | Deux personnes démarrent le **même ticket** ; `begin` remplace les assignés et le retire à son propriétaire | **anti-collision** : `start-brief` dit « libre » ou « ⚠ déjà pris par … », `/backlog` sépare les tickets libres | §5 |
-| Une session clôture un ticket **qui n'est pas le sien** (MR et temps posés à la place d'un autre) | **garde-fou de clôture** : `close-guard` compare l'iid visé à la branche courante *et* aux assignés | §6 |
+| Une session clôture un ticket **qui n'est pas le sien** (PR et temps posés à la place d'un autre) | **garde-fou de clôture** : `close-guard` compare l'iid visé à la branche courante *et* aux assignés | §6 |
 | Les lots d'un parent s'attendent en file alors qu'ils sont indépendants | marqueur **`(parallèle)`** dans la checklist ; `startables` liste **tous** les lots prenables | §5.1 |
 | Une branche vieillit pendant qu'`origin/main` avance ; le conflit se découvre au merge | **alerte de retard** avant le push : `behind-main` (commits de retard + fichiers modifiés des deux côtés) | §6 |
-| Une MR ouverte n'est relue par personne, faute de savoir qu'elle attend | **revue best-effort outillée** : **file de revue** en tête de `/backlog`, la plus ancienne d'abord (aucun relecteur posé d'office, #196 ; `set-reviewer` reste là pour une pose manuelle) | §6 |
+| Une PR ouverte n'est relue par personne, faute de savoir qu'elle attend | **revue best-effort outillée** : **file de revue** en tête de `/backlog`, la plus ancienne d'abord (aucun relecteur posé d'office, #196 ; `set-reviewer` reste là pour une pose manuelle) | §6 |
 | Une session meurt sur un ticket : il reste « En cours » et assigné, donc **invisible de tous** — travail compris | **détection + reprise** : `reconcile-en-cours` signale d'office, `reprendre-en-cours` le rend prenable sans toucher au worktree | §9.6 |
 | La CI dépend du poste d'**une** personne : elle éteint sa machine, l'équipe ne merge plus | **runner partagé permanent** (`--partage`, machine toujours allumée), les runners locaux en secours | §8.1 |
 | Un échec de lint occupe le runner de quelqu'un d'autre pour une faute de frappe | **filet CI local** : `bash scripts/ci/local.sh` rejoue les jobs du pipeline avant le push | §8 |
@@ -2900,9 +2891,9 @@ outillé par `set-reviewer`. Les seuls refus durs restent ceux des garde-fous de
    dans un parent, quelqu'un d'autre peut prendre le lot voisin en même temps (§5.1).
 3. `/ticket-start <iid>` — s'arrête si le ticket est déjà pris ; sinon branche, statut, dates.
 4. `bash scripts/ci/local.sh` avant de pousser (§8).
-5. `/ticket-ship` — retard sur `origin/main` signalé, garde-fou de clôture, MR (sans relecteur
+5. `/ticket-ship` — retard sur `origin/main` signalé, garde-fou de clôture, PR (sans relecteur
    désigné : c'est la file de revue qui appelle un relecteur, §6).
-6. La MR apparaît en tête de `/backlog` chez tout le monde jusqu'à son merge — **décision humaine**
+6. La PR apparaît en tête de `/backlog` chez tout le monde jusqu'à son merge — **décision humaine**
    (§6).
 
 > **Tests.** Ces comportements sont couverts par [`tests/test_collaboration.py`](../tests/test_collaboration.py)
@@ -3078,7 +3069,7 @@ valeur à **chaque** session et le run brûlerait son plan en échecs jumeaux.
 **Le plafond de dépense, lui, ne s'applique plus par défaut (#286).** `run.sh` passait
 `--max-budget-usd 15` à chaque session — le garde-fou d'une boucle neuve, quand on craignait
 l'emballement. Il coûte aujourd'hui plus qu'il ne protège : une session qui touche le plafond est
-**tuée en plein travail**, elle sort sans commit et sans MR, et la boucle la compte en **échec** —
+**tuée en plein travail**, elle sort sans commit et sans PR, et la boucle la compte en **échec** —
 ce qui saborde du même coup les lots suivants de son parent (§11.5). Les deux runs du 2026-08-06
 l'ont payé au même montant exact — #277 et #245 coupés à 15.07 $, 16 et 24 fichiers laissés non
 commités dans leur worktree, 13 lots sautés en cascade derrière eux —, pour zéro livrable. Un run
@@ -3100,7 +3091,7 @@ minutes ; au régime épinglé par le dépôt (`claude-opus-5` + effort `xhigh`,
 devenues le premier tueur de sessions du run. Le run `20260810-141208` du 2026-08-10 en donne la
 mesure : **#315 livré en 42 min 50** — deux minutes de marge — et **#316 coupé à 45 min 02**, alors
 que son travail était **fini et commité** (2 047 lignes, dont 695 de tests) et que le couperet est
-tombé pendant le `git push` et l'ouverture de la MR. Le plafond n'a donc rien protégé : il a
+tombé pendant le `git push` et l'ouverture de la PR. Le plafond n'a donc rien protégé : il a
 transformé un ticket livrable en échec, et l'échec en **sept lots sautés** en cascade (§11.5), pour
 un seul livrable à 14,75 $.
 
@@ -3132,7 +3123,7 @@ plan, quel ticket tourne, depuis combien de temps. Elle existait pourtant, mais 
 **Ce que la console rend, c'est donc la checklist du plan**, mise à jour au fil du run :
 
 ```
-  ✓  1. #237      4 min    1.20 $ MR !312  Compteur [n/N] faux en reprise de run
+  ✓  1. #237      4 min    1.20 $ PR #312  Compteur [n/N] faux en reprise de run
   /  2. #240     12 min                    Console d'un run : une checklist vivante
        · Edit scripts/orchestrate/run.sh
      3. #284                               Écran Projets dans la Control Tower
@@ -3141,7 +3132,7 @@ plan, quel ticket tourne, depuis combien de temps. Elle existait pourtant, mais 
 
 Un ticket en vol porte un **rouet** et un **chrono**, plus **une seule** ligne d'action — le dernier
 outil appelé, réécrit sur place. Les tickets déjà jugés portent leur marque (`✓` livré, `✗` échec,
-`~` sauté), leur MR, leur durée et leur coût, lus dans `resume.tsv` ; le pied donne le cumul du run.
+`~` sauté), leur PR, leur durée et leur coût, lus dans `resume.tsv` ; le pied donne le cumul du run.
 L'attente d'une limite d'usage (§11.4) est un état comme un autre : la ligne reste au bloc, marquée
 `=` et décomptée jusqu'à l'heure de reprise, au lieu de paraître figée pendant des heures. Le flot
 d'outils de #176 reste disponible pour le diagnostic — **`--verbeux`**, ou
@@ -3152,7 +3143,7 @@ et c'est justement quand on lit chaque ligne qu'on ne veut rien qui bouge.
 plusieurs sessions à la fois ; chacune a son rouet, son chrono et son action :
 
 ```
-  ✓  1. #288      6 min    0.90 $ MR !401  queue.sh : le plan déclare ce qui est parallélisable
+  ✓  1. #288      6 min    0.90 $ PR #401  queue.sh : le plan déclare ce qui est parallélisable
   /  2. #290     12 min                    Console et status.sh : rendre compte de N en vol
        · Edit scripts/orchestrate/run.sh
   \  3. #291      4 min                    Limite d'usage avec N sessions en vol
@@ -3286,7 +3277,7 @@ flux ferait rapporter le coût d'un événement intermédiaire, une régression 
 invocations sont concernées, session neuve *et* reprise `--resume`.
 
 **Le verdict vient de GitLab, pas de la prose de la session.** Un ticket est réussi si, et seulement
-si, sa branche porte une **MR ouverte** *et* que son cycle de vie est **« En revue »** — exactement
+si, sa branche porte une **PR ouverte** *et* que son cycle de vie est **« En revue »** — exactement
 ce que `/ticket-ship` laisse derrière lui. Une session peut conclure « c'est fait » en s'étant
 trompée, ou échouer après avoir tout livré.
 
@@ -3303,7 +3294,7 @@ livré, 1 échec, 3 lots sautés). Deux réponses :
   un arbre sale sans aucun commit est précisément la trace qu'une session perdue laisse, et la
   version précédente, qui ne parlait que de commits, ne la déclenchait pas ;
 - **la boucle regarde le worktree** avant de consigner l'échec, et distingue deux situations que
-  « MR "aucune", statut "À faire" » confondait : `session terminée sans clôture, 5 fichier(s) non
+  « PR "aucune", statut "À faire" » confondait : `session terminée sans clôture, 5 fichier(s) non
   commité(s)` (rattrapable — le travail est là, la console dit où) contre `session terminée sans
   rien produire (worktree propre)` (à refaire). Les commits d'avance sur `origin/main` comptent au
   même titre : une session peut s'être arrêtée juste avant `/ticket-ship`.
@@ -3323,7 +3314,7 @@ ces garde-fous qui détruisent du travail au lieu d'en borner l'ampleur. Voir §
 Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<iid>.session`
 (l'UUID), `<iid>.jsonl` (le flux d'activité complet), `<iid>.json` (le seul résultat final — coût,
 `permission_denials`), `<iid>.resultat.txt` (le même, **en clair**), `<iid>.log` (stderr), et
-`resume.tsv` (une ligne par ticket : verdict, MR, durée, coût, raison) et `pid` (la carte du
+`resume.tsv` (une ligne par ticket : verdict, PR, durée, coût, raison) et `pid` (la carte du
 pilote — §11.9 —, présente le temps du run). Un run lancé avec `--detach` y ajoute `lancer.sh` (ce
 qui a été lancé) et `run.log` (toute la sortie de la console, flux d'activité compris) ; un run de
 **reprise** (§11.8), `reprise-de` — l'id du run dont il continue le plan.
@@ -3483,8 +3474,8 @@ bash scripts/orchestrate/status.sh --reprenables       # ce qui peut être repri
 ```
 
 En une sortie : l'état du run, **les tickets en cours** — une section chacun — avec leur temps écoulé,
-les **commits et fichiers modifiés de leur worktree**, leur **dernière activité**, leur **état
-GitLab** (statut, MR), puis le **reste du plan** et le **bilan des traités** (verdict, MR, durée,
+les **commits et fichiers modifiés de leur worktree**, leur **dernière activité**, leur **état de
+la forge** (statut, PR), puis le **reste du plan** et le **bilan des traités** (verdict, PR, durée,
 coût). Il y en a N depuis `--concurrence` (§11.10), et l'écran les rend **tous** (#290) : n'en montrer
 qu'un serait pire que de n'en montrer aucun — les autres tiennent un worktree et une session sans que
 rien ne le dise. Trois conséquences : le compteur « à venir » retranche **tous** les tickets en vol
@@ -3532,10 +3523,10 @@ Deux couches, parce qu'une seule tomberait :
   `guard.sh --check` vérifie que la copie des `deny` n'a pas dérivé du dépôt **et** que le hook
   refuse bien chacune d'elles — sans quoi la seconde couche donnerait une fausse sécurité.
 
-**Ce qu'un run ne fait jamais** : merger, fermer une MR, force-pusher, fermer un parent de suivi, ou
+**Ce qu'un run ne fait jamais** : merger, fermer une PR, force-pusher, fermer un parent de suivi, ou
 retirer le worktree d'un ticket qu'il vient de traiter — la branche y vit jusqu'au merge. Le
 ramassage de son **démarrage** (§9.2) ne touche que les worktrees dont GitLab confirme le travail
-soldé, donc jamais ceux du run en cours. Un run produit **N Merge Requests en Draft à relire** : le
+soldé, donc jamais ceux du run en cours. Un run produit **N Pull Requests en Draft à relire** : le
 merge reste une décision humaine (§6), et la file de revue les remonte (§10).
 
 ### 11.7 Après un run : instruire les refus de permission
@@ -3607,7 +3598,7 @@ journal (58 refus sur 24 sessions) : 29 échappées, 14 trous, 7 inclassés, 4 b
 chercher.
 
 **L'atelier de session** (#307) est la réponse à la moitié évitable de ces échappées. Une session
-écrit forcément des fichiers de travail quelque part — description de MR, corps de commentaire,
+écrit forcément des fichiers de travail quelque part — description de PR, corps de commentaire,
 sortie intermédiaire à relire —, et les deux endroits qu'elle connaît spontanément sont son
 répertoire temporaire et `/tmp`, tous deux **hors du répertoire de travail**. Le prompt ne pouvait
 donc pas s'en tenir à « reste en relatif » : interdire sans désigner ne fait que déplacer le refus.
@@ -3663,7 +3654,7 @@ ligne du tableau ci-dessus, et de loin la plus fréquente — le geste est dans 
 
 | Forme | Pourquoi rien ne la matche | Le geste |
 | --- | --- | --- |
-| **Saut de ligne** dans la commande | le CLI découpe dessus et exige chaque morceau ; une `--description` de MR en porte par nature | écrire le texte avec l'outil `Write`, passer son **chemin** |
+| **Saut de ligne** dans la commande | le CLI découpe dessus et exige chaque morceau ; une `--description` de PR en porte par nature | écrire le texte avec l'outil `Write`, passer son **chemin** |
 | **Substitution** `$(…)` ou `` `…` `` | la règle matche du texte, pas le résultat d'une exécution — `--description "$(cat f)"` n'est jamais reconnu | idem : le chemin, pas le contenu |
 | **Heredoc** `<<'EOF'` | même cause que le saut de ligne, plus le corps qui suit | l'outil `Write`, jamais `cat > … <<'EOF'` |
 | **Chemin absolu hors du worktree** | les règles bornent des chemins **relatifs** ; l'absolu sort de la borne et demande une approbation | rester en relatif depuis le worktree, et y écrire ses fichiers de travail (`.maestro/session/`) — et n'y envoyer personne (§8.5) |
@@ -3750,7 +3741,7 @@ Trois conséquences pratiques :
   le chemin du `file_path` qui les distingue.
 - **Une session qui le rencontre rend le contenu, elle ne contourne pas.** Un `printf … > <fichier>`
   passerait peut-être la liste, et ce serait précisément l'échec. #188 a fait ce qu'il fallait :
-  contenu de remplacement intégral dans la description de sa MR, section « Reste à appliquer à la
+  contenu de remplacement intégral dans la description de sa PR, section « Reste à appliquer à la
   main », plus un commentaire sur le ticket. Un humain l'applique ensuite en session interactive.
 - **Mieux vaut ne pas l'y envoyer.** Un ticket dont un critère touche `.claude/**` se traite en
   session interactive dès le départ ; le mettre dans le périmètre d'un run autonome, c'est en
@@ -3772,11 +3763,11 @@ retenu, et c'est bien la mesure qui permet de le dire plutôt que de le supposer
   instructions que la boucle suivante exécutera. De ce point de vue `.claude/skills/**` n'est pas
   moins sensible que `settings*.json`, que le ticket excluait pourtant d'emblée : un skill est du
   prompt, et `/ticket-ship` en est un ;
-- **le confinement invoqué ne couvre pas le bon moment.** Worktree dédié, MR en Draft, merge humain
+- **le confinement invoqué ne couvre pas le bon moment.** Worktree dédié, PR en Draft, merge humain
   valent pour ce qui est *relu* ; rien ne garantit qu'un skill réécrit dans le worktree ne soit pas
   relu par la session qui vient de l'écrire, avant qu'aucun humain n'ait vu le diff.
 
-Ce qui reste à faire est donc inchangé — rendre le contenu dans la MR (#188). Ce qui pourrait encore
+Ce qui reste à faire est donc inchangé — rendre le contenu dans la PR (#188). Ce qui pourrait encore
 être gagné est **en amont** : ne pas envoyer un tel ticket dans un run, ce que `queue.sh` ne détecte
 toujours pas.
 
@@ -3994,7 +3985,7 @@ rejoue tous les tickets en vol *et* la concurrence du run coupé (§11.8). Le fi
 ce qui était vrai d'un seul ticket devient, à N, une propriété du run.
 
 Chaque ligne de ticket porte au passage **son numéro** dans le journal — sans quoi rien ne dirait,
-dans une trace entrelacée, à qui appartient un « ✓ MR !99 ouverte ».
+dans une trace entrelacée, à qui appartient un « ✓ PR #99 ouverte ».
 
 **Un plan d'avant #288 retombe en séquentiel.** Rejoué par `--resume`, il n'a que cinq colonnes et son
 titre se lit là où on attend le groupe : rien n'y dit ce qui est indépendant. Le nombre de colonnes de
@@ -4024,7 +4015,7 @@ même valeur, écrivent la même, et une incrémentation disparaît. Ce que la b
 puisque c'est précisément son rôle de les faire arriver ensemble — d'où un pic plafonnant sous le
 nombre réel de sessions en vol, un `assert '2' == '3'` sous `-n auto`, vert dès que la machine est au
 repos. Le coût n'était pas dans ce test : le filet CI local et le pipeline jouant en parallèle, il
-rougissait **n'importe quelle MR** touchant `scripts/orchestrate/**`, sans rapport avec son contenu.
+rougissait **n'importe quelle PR** touchant `scripts/orchestrate/**`, sans rapport avec son contenu.
 Le compteur partagé a donc disparu : chaque session pose **son** marqueur d'entrée, compte les
 marqueurs présents et écrit **son** relevé dans **son** fichier, le maximum étant pris après coup côté
 Python (`_pic`). Aucun fichier n'a deux écrivains, donc aucune course ne peut fausser la mesure, et le

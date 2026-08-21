@@ -77,7 +77,7 @@ vous assigne, passe le statut à « En cours » et pose les dates. **Ne créez n
 worktree à la main** : le nommage, le statut et les ports dédiés en dépendent.
 
 Votre clone principal, lui, **ne change pas de branche** : il reste sur `main`, disponible pour
-lire du code ou relire une MR pendant que le ticket avance à côté ([docs/10 §9.1](./docs/10-workflow-git.md)).
+lire du code ou relire une PR pendant que le ticket avance à côté ([docs/10 §9.1](./docs/10-workflow-git.md)).
 
 > Besoin d'un ticket qui n'existe pas encore ? `/ticket-create <type> <titre>`. Au-delà d'environ
 > une session de travail, il propose un **découpage** en sous-tickets ([docs/10 §5.1](./docs/10-workflow-git.md)).
@@ -92,8 +92,8 @@ lire du code ou relire une MR pendant que le ticket avance à côté ([docs/10 �
   `commit-msg` refuse tout message hors convention — c'est voulu.
 - **Python** : toujours via le venv du dépôt (`.venv/Scripts/python.exe` sous Windows,
   `.venv/bin/python` sous Unix). Le `python` système n'a pas les dépendances.
-- **La CI distante ne tourne que sur les Merge Requests** : un push sur votre branche ne déclenche
-  rien tant que la MR n'est pas ouverte, et `main` n'est plus rejoué après le merge
+- **La CI distante ne tourne que sur les Pull Requests** : un push sur votre branche ne déclenche
+  rien tant que la PR n'est pas ouverte, et `main` n'est plus rejoué après le merge
   ([docs/10 §8](./docs/10-workflow-git.md)). Le filet, c'est donc le local :
 
   ```bash
@@ -104,7 +104,7 @@ lire du code ou relire une MR pendant que le ticket avance à côté ([docs/10 �
 
   Par défaut, **pytest n'y joue que les suites concernées par votre diff** ([docs/10
   §8.4](./docs/10-workflow-git.md)) : la suite complète prend 10 minutes, et c'est le pipeline de
-  la MR qui la joue — inutile de l'attendre à chaque itération. Le lint, lui, tourne toujours en
+  la PR qui la joue — inutile de l'attendre à chaque itération. Le lint, lui, tourne toujours en
   entier.
 
 ---
@@ -163,18 +163,18 @@ Pour éclairer une décision de merge : `/mr-review <pr>` (synthèse état + CI 
   **worktree** par ticket, avec ses propres ports Control Tower et son profil de navigateur. Deux
   sessions Claude Code sur le même dossier se marcheraient dessus ; elles n'y sont plus
   ([docs/10 §9](./docs/10-workflow-git.md)). Le geste manuel reste `bash scripts/git/worktree.sh <iid>`.
-  Et rien à ranger derrière : les worktrees dont la MR est mergée sont **ramassés d'office**
+  Et rien à ranger derrière : les worktrees dont la PR est mergée sont **ramassés d'office**
   (`worktree.sh gc`, [§9.2](./docs/10-workflow-git.md)) — sauf s'ils portent du travail non
   sauvegardé, qu'ils signalent alors au lieu de disparaître avec.
 - **La CI ne demande rien** : elle tourne sur les exécutants hébergés de GitHub, il n'y a aucun
   runner à monter ni à laisser allumé ([docs/10 §8.1](./docs/10-workflow-git.md)). Docker n'est
   utile que pour les bases locales, optionnelles.
 - **Bilan de santé** (lecture seule) : `bash scripts/gitlab/doctor.sh` détecte les dérives
-  (ticket « En revue » sans MR, branche mergée à nettoyer, réglages de merge retombés).
+  (ticket « En revue » sans PR, branche mergée à nettoyer, réglages de merge retombés).
 - **Laisser la machine dérouler le backlog** : `bash scripts/orchestrate/run.sh` traite les tickets
   libres du milestone courant un par un — un worktree et une session Claude Code chacun, de
   `/ticket-start` à `/ticket-ship`, avec reprise automatique après la limite d'usage de 5 h. À
-  lancer dans un terminal à part (`--dry-run` d'abord pour voir le plan) ; il produit des **MR en
+  lancer dans un terminal à part (`--dry-run` d'abord pour voir le plan) ; il produit des **PR en
   Draft à relire** et ne merge jamais ([docs/10 §11](./docs/10-workflow-git.md)). Un run coupé
   (console fermée, machine éteinte) se reprend par `--resume`, qui rejoue son plan sans rien
   recalculer — `/orchestrate` le propose de lui-même au lancement ([§11.8](./docs/10-workflow-git.md)).
