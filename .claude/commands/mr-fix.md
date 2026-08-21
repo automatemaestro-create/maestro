@@ -101,8 +101,8 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
    - Aucun pipeline alors qu'un commit vient d'être poussé ? **Vérifie d'abord qu'une PR est
      ouverte** sur la branche : sans PR, il est normal qu'il n'y ait rien (la CI ne se déclenche
      plus au push — #165) et la suite est `/ticket-ship`, pas un déclenchement forcé. PR ouverte et
-     toujours rien ? Déclenche manuellement (cas observé sur la MR 31 : un push interrompu peut ne
-     pas déclencher de pipeline), puis `pipeline-wait` :
+     toujours rien ? Déclenche manuellement (cas observé du temps de GitLab, sur la MR 31 : un
+     push interrompu peut ne pas déclencher de pipeline), puis `pipeline-wait` :
      - `gh run rerun <run-id>` s'il existe une exécution à rejouer, sinon
        `gh workflow run ci.yml --ref <branche>` : le `workflow_dispatch` de
        [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) est conservé exactement pour ça.

@@ -30,7 +30,7 @@ name: CI
 #
 # Aucun filtre `branches:` : une PR est par définition un candidat au merge, quelle que soit sa
 # cible. Les `types:` par défaut (`opened`, `synchronize`, `reopened`) couvrent le cycle de vie
-# d'une MR Maestro, y compris ouverte en Draft — une PR en brouillon déclenche bien le workflow,
+# d'une PR Maestro, y compris ouverte en Draft — une PR en brouillon déclenche bien le workflow,
 # et c'est voulu : /ticket-finish ouvre toujours en Draft (docs/10 §6).
 #
 # `workflow_dispatch` est conservé : c'est le seul moyen de rejouer la CI hors PR (diagnostic,

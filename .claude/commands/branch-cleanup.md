@@ -70,12 +70,9 @@ automatiquement — à n'ouvrir qu'en cas de doute ; cette commande est autosuff
    forte que l'ancêtre git) et le projet merge en **squash**, donc `-d` les refuserait à tort. Il
    vise le **clone principal** d'où qu'on l'appelle et **s'abstient en le disant** si l'arbre y est
    sale. Son bilan tient en quelques lignes :
-   - `supprimée : <branche> (MR merged)` — partie ;
-   - `⚠ conservée : <branche> (MR merged, …)` — mergée mais retenue par un worktree ou par git ;
+   - `supprimée : <branche> (PR merged)` — partie ;
+   - `⚠ conservée : <branche> (PR merged, …)` — mergée mais retenue par un worktree ou par git ;
    - le décompte final, dont les branches laissées de côté (aucune PR, ou PR pas encore mergée).
-
-   (Le helper écrit « MR » dans ses lignes de bilan des deux côtés — c'est son vocabulaire normalisé,
-   pas un signe qu'il interroge GitLab.)
 
    Ces deux premières lignes sont les branches **mergées** : ce sont elles, et elles seules, que
    l'étape 6 traite. Leur iid est le nombre de leur nom (`<type>/<iid>-<slug>` ;

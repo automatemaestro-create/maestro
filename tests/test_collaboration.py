@@ -2485,3 +2485,67 @@ def test_un_ticket_sans_aucun_commentaire_cree_son_suivi(depot: Depot) -> None:
     assert len(ecrits) == 1, ecrits
     assert "issues/400/comments" in ecrits[0]
     assert "debut=2026-08-21" in corps_ecrit(ecrits[0])
+
+
+# =================================================================================================
+# Le verdict « ce travail est-il soldé ? » nomme une PR, pas une MR (#403, parent #401)
+# =================================================================================================
+#
+# `tests/test_worktree.py` IMPOSE la réponse de `lib.sh worktree-done` (`impose_verdicts`), et c'est
+# le bon choix pour lui : son sujet est le ramassage, pas la forge. Mais personne d'autre ne
+# l'appelait, si bien que la raison qu'il imprime n'était épinglée nulle part — ses stubs disaient
+# déjà « PR #42 mergée » quand la production disait encore « MR !410 mergée », et les deux suites
+# restaient vertes. C'est ce qui a fait survivre la ligne au lot 1 (#402), dont le balayage
+# cherchait `\bMR\b` : un motif que `\tMR` ne satisfait pas, le `t` de la tabulation échappée
+# étant un caractère de mot. Le trou n'était donc pas dans la relecture, il était dans le filet.
+#
+# Ces deux tests tiennent le chaînon manquant : le VRAI helper, contre le `gh` factice.
+
+
+def _regle_pr(etat: str, numero: int = 42) -> dict:
+    """La réponse du `gh` factice à `gh_mr_brief` — de quoi rendre « etat<TAB>numéro<TAB>sha »."""
+    return {
+        "contient": ["pullRequests(headRefName:"],
+        "reponse": {
+            "data": {
+                "repository": {
+                    "pullRequests": {
+                        "nodes": [{"number": numero, "state": etat, "headRefOid": "a" * 40}]
+                    }
+                }
+            }
+        },
+    }
+
+
+def test_worktree_done_nomme_une_pr_et_jamais_une_mr(depot: Depot) -> None:
+    """Le cas nominal, celui que la console imprime à chaque `/ticket-start` : PR mergée.
+
+    L'assertion porte sur les DEUX moitiés du vocabulaire — le mot et sa numérotation. GitLab
+    numérotait ses MR avec « ! », GitHub numérote ses PR avec « # » : « PR !42 » serait un mot juste
+    sur un identifiant faux, et c'est précisément la moitié qu'un remplacement mécanique oublie.
+    """
+    depot.pose_etat(graphql=[_regle_pr("MERGED")])
+
+    acheve = depot.lib("worktree-done", "403", "chore/403-vocabulaire")
+
+    assert acheve.returncode == 0, acheve.stderr
+    verdict, sha, raison = acheve.stdout.rstrip("\n").split("\t")
+    assert verdict == "fini"
+    assert sha == "a" * 40
+    assert raison == "PR #42 mergée"
+
+
+def test_worktree_done_nomme_une_pr_dans_son_verdict_sans_merge(depot: Depot) -> None:
+    """L'autre voie — pas de PR mergée, c'est le ticket qui tranche — le dit aussi en « PR ».
+
+    Elle était déjà juste ; l'épingler est ce qui empêche qu'un prochain balayage la défasse en
+    silence, le ramassage ne lisant que le premier champ de la ligne.
+    """
+    depot.pose_etat(graphql=[_regle_pr("OPEN")], issues={"403": TICKET_SIMPLE})
+
+    acheve = depot.lib("worktree-done", "403", "chore/403-vocabulaire")
+
+    assert acheve.returncode == 0, acheve.stderr
+    assert acheve.stdout.rstrip("\n").endswith('ticket #403 « open » (PR « opened »)')
+    assert "MR" not in acheve.stdout
