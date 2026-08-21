@@ -20,8 +20,10 @@ cd maestro
 bash scripts/setup.sh
 ```
 
-C'est la **source unique** du parcours : prérequis (Python 3.11+, Node 20+, git, `gh`, `glab`),
-`.venv`, `.env`, hook git `commit-msg`, dépendances de `apps/web`, réglages Claude Code, Docker.
+C'est la **source unique** du parcours : prérequis (Python 3.11+, Node 20+, git, `gh`),
+`.venv`, `.env`, hook git `commit-msg`, dépendances de `apps/web`, réglages Claude Code.
+Ni `glab` ni Docker n'en font partie : la CI tourne sur les exécutants hébergés de GitHub, et
+l'archive GitLab ne se relit qu'à la demande (#344).
 Idempotent et non destructif — le relancer ne casse rien, un `.env` existant n'est jamais écrasé.
 `--check` diagnostique sans rien écrire ; `--only <étape>` en rejoue une seule.
 
@@ -210,15 +212,17 @@ tickets, dont GitHub n'a aucun équivalent.
 **Ce qui n'y est plus** : le backlog vivant, passé sur GitHub avec la plage `#1`→`#356` préservée au
 numéro près — un `Refs #123` d'un vieux commit y pointe toujours vers le bon ticket. Le temps passé,
 lui, **continue** d'être suivi côté GitHub sous forme maison (commentaire `maestro:suivi:v1`), et
-l'historique GitLab y a été importé sous cette forme.
+l'historique GitLab y a été importé sous une forme **voisine mais distincte**
+(`maestro:meta v1`, posée par l'import #340) — voir
+[docs/27 §12](./docs/27-decision-gitlab-vers-github.md).
 
 En pratique : tout ce qui date d'**avant** le 2026-08-17 et concerne une **revue** se cherche sur
 GitLab ; tout le reste, sur GitHub. Le détail — tableau de ce qui a suivi et de ce qui est resté —
 est en [docs/27 §11](./docs/27-decision-gitlab-vers-github.md).
 
-Pour relire l'archive : l'**UI web de GitLab**, ou en ligne de commande
-`glab <verbe> --repo maestro-group4345327/maestro`. Le `--repo` n'est pas optionnel — `glab` déduit
-sinon le projet des remotes, qui pointent maintenant sur GitHub.
+Pour relire l'archive : l'**UI web de GitLab**, ou le client GitLab installé à la main. Ce n'est
+pas un prérequis du dépôt et la recette tient en un endroit —
+[docs/27 §11](./docs/27-decision-gitlab-vers-github.md).
 
 ---
 

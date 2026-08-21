@@ -1046,6 +1046,15 @@ def test_aucun_commutateur_ne_choisit_plus_de_support() -> None:
     fautifs = []
     for dossier in (RACINE / "scripts", RACINE / ".claude", RACINE / "tests"):
         for fichier in dossier.rglob("*"):
+            # ⚠ `__pycache__` est écarté par le RÉPERTOIRE et non par le suffixe (#345). Python
+            # écrit son bytecode sous `<nom>.pyc.<pid>` avant de le renommer, et un worker xdist
+            # tué en laisse derrière lui : `suffix` y vaut alors « .2594 », pas « .pyc ». Le
+            # balayage lisait donc le bytecode de CE module — qui contient forcément les littéraux
+            # `MAESTRO_CYCLE` du motif — et rendait un rouge dont la cause n'a rien à voir avec le
+            # dépôt. C'est le seul des trois `grep` de ce fichier qui inclut `tests/`, donc le seul
+            # concerné. Un cache n'est pas une source : l'exclure ne réduit pas la portée.
+            if "__pycache__" in fichier.parts:
+                continue
             if not fichier.is_file() or fichier.suffix == ".pyc" or fichier == Path(__file__):
                 continue
             texte = fichier.read_text(encoding="utf-8", errors="replace")

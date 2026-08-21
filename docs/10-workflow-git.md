@@ -7,22 +7,27 @@ Objectif : que chaque ticket soit traité de façon prévisible — même branch
 >
 > Tickets, Pull Requests et CI vivent sur
 > [`automatemaestro-create/maestro`](https://github.com/automatemaestro-create/maestro) — bascule
-> #343, lot 8 du chantier #335. `MAESTRO_FORGE` vaut **`github`** sans qu'on la pose.
+> #343, lot 8 du chantier #335. Le commutateur `MAESTRO_FORGE` est parti avec la branche GitLab
+> (#344) : il n'y a plus de backend à choisir.
 >
 > Le projet **GitLab est archivé en lecture seule**. Il reste l'**archive** des 281 Merge Requests
 > d'avant la bascule et du time tracking natif (629 h) : ce qu'on y trouve encore, ce qu'on n'y
-> trouve plus et **comment le relire** sont écrits en
-> [docs/27 §11](./27-decision-gitlab-vers-github.md) — par l'UI web, ou
-> `glab <verbe> --repo maestro-group4345327/maestro`, le `--repo` étant obligatoire une fois
-> `origin` passé sur GitHub.
+> trouve plus et **comment le relire** — l'UI web, ou le client GitLab installé à la main — sont
+> écrits en [docs/27 §11](./27-decision-gitlab-vers-github.md), qui en est la source unique.
 >
-> ⚠ **Ce document dit encore « GitLab », « MR » et « pipeline » à beaucoup d'endroits.** Le
-> vocabulaire est en cours d'alignement (#345) ; l'outillage, lui, est déjà bilingue et le contrat
-> de sortie de `scripts/gitlab/lib.sh` est identique des deux côtés (un « iid » désigne le `number`
-> GitHub, un état de MR `opened|closed|merged` désigne celui de la PR). Lire « MR » comme « PR »
-> partout où il s'agit du travail d'aujourd'hui. L'outillage GitLab lui-même — `.gitlab-ci.yml`
-> et les 1 146 lignes de runner — a été **retiré** par #344 : ce qui en reste ici est de
-> l'histoire, jamais un geste à faire.
+> ⚠ **Plus aucun geste `glab` n'est prescrit ici** (#345) : les commandes du workflow passent
+> toutes par `gh` ou par les helpers de `scripts/gitlab/lib.sh`, et
+> [`tests/test_migration.py`](../tests/test_migration.py) garde qu'aucune n'y revienne. L'outillage
+> GitLab lui-même — `.gitlab-ci.yml` et les 1 146 lignes de runner — a été **retiré** par #344.
+>
+> ⚠ **Le document dit en revanche encore « MR », « GitLab » et « pipeline » à beaucoup
+> d'endroits, et ce n'est pas un oubli** : ce sont les mots que **les scripts impriment** —
+> `worktree.sh gc` rend « MR !398 mergée », `resume.tsv` porte une colonne `MR`. Aligner le
+> vocabulaire demande donc de changer les sorties, les tests qui les épinglent et la doc **du même
+> geste** ; le faire ici seul rendrait la doc fausse sur ce qu'on lit à l'écran. En attendant, lire
+> « MR » comme « PR » partout où il s'agit du travail d'aujourd'hui : le contrat de sortie de
+> `lib.sh` est identique des deux côtés (un « iid » désigne le `number` GitHub, un état de MR
+> `opened|closed|merged` désigne celui de la PR).
 
 > ## Le cycle de vie est porté par le **champ Status**, et par lui seul
 >
@@ -669,9 +674,9 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
    le **cycle de vie** à `En cours`. Le chemin nominal tient en deux helpers et un bloc git (refonte
    ticket #60, pour réduire la cérémonie et le contexte réinjecté à chaque démarrage) :
    - **`lib.sh start-brief <iid>`** — tout le préflight en un appel et **une seule lecture du
-     ticket** (un unique `glab issue view`, rejoué pour toutes les projections) : pré-requis
-     (`glab` authentifié), arbre propre, brief compact (titre/labels/critères — l'essentiel pour
-     cadrer, la description intégrale reste disponible via `glab issue view` en cas de doute),
+     ticket** (une unique requête GraphQL, rejouée pour toutes les projections) : pré-requis
+     (`gh` authentifié), arbre propre, brief compact (titre/labels/critères — l'essentiel pour
+     cadrer, la description intégrale reste disponible via `lib.sh issue-raw <iid>` en cas de doute),
      détection parent de suivi / sous-ticket (rang de lot, tests différés, contrôle des lots
      précédents — §5.1) et branche proposée (préfixe dérivé du label `type::` §1, slug du titre).
      Le helper est **informatif** : les avertissements sont dans sa sortie, la décision — démarrer,
@@ -681,19 +686,19 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
      qu'il remet le dépôt à niveau au passage, sans qu'aucun geste soit à retenir : `main` avancée
      sur `origin/main` (§9.3), dépendances ajoutées au dépôt (§9.4), worktrees soldés ramassés
      (§9.2) et **branches locales déjà mergées purgées** (§9.5 — même garde-fou que
-     `/branch-cleanup` : uniquement celles dont GitLab confirme la MR `merged`, §6). Il **signale**
+     `/branch-cleanup` : uniquement celles dont la forge confirme la MR `merged`, §6). Il **signale**
      au même passage les tickets « En cours » que plus personne ne mène (§9.6) — consultatif : la
      reprise est un geste explicite, et le ticket qu'on est en train de démarrer en est écarté. Les
      cinq sont best-effort et muets quand il n'y a rien à faire ; aucun ne bloque un démarrage.
    - **`lib.sh start-branch <branche>`** — place le dépôt sur la branche de travail. Après
      `ensure` c'est en général sans effet (la branche est déjà celle du worktree) ; il reste la
      source unique du placement et couvre le cas d'une reprise dans le clone principal.
-   - **`lib.sh begin <iid>`** — assignation (username auto-résolu via `glab api user`, parsé en
+   - **`lib.sh begin <iid>`** — assignation (username auto-résolu via `gh api user`, parsé en
      shell pur — pas de dépendance à `jq`/`python`, et couvert par l'allowlist §7.1 pour ne pas
-     déclencher de prompt), cycle de vie « En cours » (label ajouté et les cinq autres retirés,
-     §3.1) et dates début/échéance (§3.3) en **une seule mutation** `workItemUpdate`
-     multi-widgets. Les sous-commandes unitaires (`current-user`, `set-workflow`, `start-dates`…)
-     restent disponibles pour les autres commandes et les cas hors nominal.
+     déclencher de prompt), cycle de vie « En cours » (posé dans le champ **Status** de l'item de
+     projet, §3.1) et dates début/échéance (§3.3), groupés en un seul appel. Les sous-commandes
+     unitaires (`current-user`, `set-workflow`, `start-dates`…) restent disponibles pour les
+     autres commandes et les cas hors nominal.
    Une fois le cadrage résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé
    n'est pas une pause d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).
@@ -714,7 +719,7 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
      quelqu'un d'autre (`lib.sh close-guard`, §6). Sinon elles s'arrêtent en nommant le motif ;
      seule une demande explicite de l'utilisateur permet de passer outre.
    - Dans les deux cas, la clôture passe par **ces commandes et rien d'autre** : ne pas
-     ré-implémenter le cycle à la main (`git commit`/`git push`/`glab mr create` ad hoc) — elles en
+     ré-implémenter le cycle à la main (`git commit`/`git push`/`gh pr create` ad hoc) — elles en
      sont la source unique (ticket #37).
 5. **Revue + merge** — **toujours une action humaine** (voir garde-fous, §6). Le merge fait
    deux choses **automatiquement** : il **ferme** le ticket (via `Closes #`) et **supprime la
@@ -831,8 +836,9 @@ n'est pas mergeable, pour l'une **ou l'autre** des deux raisons possibles. D'abo
 rouge** : diagnostic des jobs en échec (traces synthétisées via les
 helpers `lib.sh pipeline-*`), **correctif en local** quand c'est corrigeable (lint/test/typage),
 commit (`Refs #<iid>`), push et suivi du nouveau pipeline jusqu'au verdict (2 tentatives max ;
-re-déclenchement `glab ci run` si le push n'a pas déclenché de pipeline). Un échec d'infrastructure
-(runner, secret, flaky) est signalé tel quel — au plus un `glab ci retry`, jamais de correctif
+re-déclenchement `gh run rerun <run-id>`, ou `gh workflow run ci.yml --ref <branche>` si le push
+n'a pas déclenché d'exécution). Un échec d'infrastructure (secret manquant, flaky) est signalé tel
+quel — au plus un `gh run rerun --failed <run-id>`, jamais de correctif
 inventé. Elle écrit des **commits**, mais jamais le cycle de vie : ni statut, ni MR, ni merge (§6),
 ni commit sur `main` (voir §8).
 
@@ -870,7 +876,7 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     toujours disponible : c'est le contrôle **fort**, la branche étant le seul témoin fiable de ce
     que la session travaille réellement ;
   - **propriété du ticket** (assignés, via `issue-owner`) — contrôle **faible** tant que l'équipe
-    partage un même compte `glab` (le bot `MaestroAgents`, cf. `GL_BOT_USERS`) : il n'attrape que
+    partage un même compte de forge (le bot `MaestroAgents`, cf. `GL_BOT_USERS`) : il n'attrape que
     les tickets assignés à une **personne nommée**, jamais deux sessions du même compte.
 
   Codes de retour : `0` cohérent, `3` la branche porte un **autre** ticket, `4` ticket assigné à
@@ -957,12 +963,12 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
 **Adossement à la couche permissions (Claude Code).** Ces garde-fous ne reposent pas que sur les
 consignes des commandes : ils sont aussi **filtrés par l'allowlist** [`.claude/settings.json`](../.claude/settings.json)
-(§7.1). Elle **autorise sans prompt** les commandes git/`glab` **non destructrices** du workflow (pour
+(§7.1). Elle **autorise sans prompt** les commandes git/`gh` **non destructrices** du workflow (pour
 que `/ticket-ship` s'enchaîne sans blocage), pose en **`deny`** les actions que les garde-fous
-interdisent (**force-push** `git push --force`/`-f`/`--force-with-lease`, **`glab mr merge`**,
-**`glab mr close`**) et en **`ask`** (confirmation explicite, jamais silencieuse) les actions
-sensibles hors chemin nominal (`git commit --no-verify`, `git reset --hard`, `git clean`,
-`glab issue close`). C'est un **filet de sécurité complémentaire** au jugement de l'agent, pas un
+interdisent (**force-push** `git push --force`/`-f`/`--force-with-lease`, **`gh pr merge`**,
+**`gh pr close`**, **`gh run delete`**) et en **`ask`** (confirmation explicite, jamais silencieuse)
+les actions sensibles hors chemin nominal (`git commit --no-verify`, `git reset --hard`,
+`git clean`, `gh issue close`). C'est un **filet de sécurité complémentaire** au jugement de l'agent, pas un
 remplacement : le matching est par préfixe (une variante d'ordre de drapeaux peut y échapper), donc
 la consigne « jamais de force-push / merge / close auto » reste la règle première.
 
@@ -972,9 +978,10 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 
 > **Tout ce qui suit est monté par une commande** sur un clone frais :
 > [`bash scripts/setup.sh`](../scripts/setup.sh) — ou [`/setup`](../.claude/commands/setup.md) en
-> session Claude Code. Il installe `glab`, active le hook `commit-msg`, s'authentifie depuis le
-> `GITLAB_TOKEN` du `.env` et crée le runner CI de la machine (§8). Ce qui est détaillé ici est le
-> **quoi et le pourquoi**, plus une check-list à dérouler à la main.
+> session Claude Code. Il installe `gh`, active le hook `commit-msg`, crée le `.venv` et le `.env`
+> et pose les réglages Claude Code. Il ne monte **plus de runner CI** : la CI tourne sur les
+> exécutants hébergés de GitHub (§8.1, #344). Ce qui est détaillé ici est le **quoi et le
+> pourquoi**, plus une check-list à dérouler à la main.
 
 > **Un humain qui arrive lit [`CONTRIBUTING.md`](../CONTRIBUTING.md)**, pas ce document. Ce
 > fichier-ci est exhaustif (et `CLAUDE.md` est écrit pour l'agent) : `CONTRIBUTING.md` tient en une
@@ -983,12 +990,12 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
 > connaître** ; tout ce qu'il affirme est une redite volontaire de ce document, jamais une règle
 > nouvelle.
 
-- [`glab`](https://gitlab.com/gitlab-org/cli) installé et authentifié : `glab auth login`
-  (automatique via `scripts/setup.sh` si le `.env` porte un `GITLAB_TOKEN` — le jeton passe par
-  stdin, jamais par une ligne de commande).
-- Vérifier l'accès : `glab issue list` doit lister les tickets du projet.
+- [`gh`](https://cli.github.com/) installé et authentifié : `gh auth login` (proposé par
+  `scripts/setup.sh`, qui n'automatise pas l'authentification — elle est interactive et son jeton
+  ne transite jamais par une ligne de commande ; §7.4 pour l'isolement par projet).
+- Vérifier l'accès : `gh issue list` doit lister les tickets du dépôt.
 - Les commandes `/ticket-*` et `/backlog` s'appuient sur le helper
-  [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels glab
+  [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (bash), qui factorise les appels `gh`
   (résolution work-item, **cycle de vie** par nom — `set-workflow`, §3.1 —, **listing du backlog**, slug, préfixe de
   branche, **sous-tickets** — `issue-link`/`parent-of`/`subtickets`, §5.1 —, **démarrage de
   ticket** — `start-brief`/`begin`, §5 —, **retard sur `origin/main`** — `behind-main`, §6 — et
@@ -998,7 +1005,7 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
   (`bash scripts/gitlab/lib.sh set-workflow <iid> "En cours"`, `… backlog opened`) — pratique pour les
   futurs scripts et agents. Vérif rapide : `bash scripts/gitlab/lib.sh require`.
   - **Robustesse des lectures** : toutes les **lectures** GraphQL passent par `gl_graphql_read`, qui
-    **ré-essaie sur réponse vide** (l'endpoint GraphQL de GitLab hoquette par intermittence). Réglable
+    **ré-essaie sur réponse vide** (l'endpoint GraphQL de la forge hoquette par intermittence). Réglable
     via `GL_GQL_RETRIES` (défaut 3) et `GL_GQL_RETRY_DELAY` (défaut 1 s). Les **mutations** (cycle
     de vie, dates, temps) gardent un appel direct — pas de retry, pour ne pas risquer une double application
     (ex. un timelog additif).
@@ -1012,8 +1019,8 @@ la consigne « jamais de force-push / merge / close auto » reste la règle prem
   [`commit-msg`](../scripts/git/hooks/commit-msg) qui valide la convention de commit (§2). Pose
   `core.hooksPath` ; désactivation : `git config --unset core.hooksPath`.
 - **Windows / Git Credential Manager** : si un `git push`/`pull` reste bloqué sur une demande
-  d'identifiants, forcer `glab` comme credential helper le temps de la commande —
-  `git -c credential.helper='!glab auth git-credential' push -u origin <branche>`.
+  d'identifiants, forcer `gh` comme credential helper le temps de la commande —
+  `git -c credential.helper='!gh auth git-credential' push -u origin <branche>`.
 
 ### 7.1 Permissions Claude Code (allowlist)
 
@@ -1024,9 +1031,9 @@ personnelles vont dans `.claude/settings.local.json`, non versionné).
 
 | Catégorie | Effet | Contenu (préfixes de commande) |
 |---|---|---|
-| **`allow`** | exécuté sans prompt | Lectures/écritures **non destructrices** du workflow : `git status`/`diff`/`log`/`show`/`branch`/`checkout`/`fetch`/`pull`/`add`/`commit`/`push`/`rev-parse`/`ls-files` ; `glab` `auth status`, `api user`/`graphql`, `issue` view/list/update/note, `mr` view/list/create/update ; `bash scripts/gitlab/lib.sh`, `… doctor.sh`, `… git/install-hooks.sh`. |
-| **`ask`** | confirmation explicite (jamais silencieux) | `git commit --no-verify` (le bypass du hook reste possible mais **volontaire**), `git reset --hard`, `git clean`, `glab issue close`. |
-| **`deny`** | bloqué | Ce que les garde-fous (§6) interdisent : `git push --force` / `-f` / `--force-with-lease`, `glab mr merge`, `glab mr close`. |
+| **`allow`** | exécuté sans prompt | Lectures/écritures **non destructrices** du workflow : `git status`/`diff`/`log`/`show`/`branch`/`checkout`/`fetch`/`pull`/`add`/`commit`/`push`/`rev-parse`/`ls-files` ; `gh` `auth status`, `api user`/`graphql`, `issue` view/list/create/edit/comment, `pr` view/list/create/edit/diff/ready, `run` list/view/rerun, `workflow` list/view/run ; `bash scripts/gitlab/lib.sh`, `… doctor.sh`, `… git/install-hooks.sh`. |
+| **`ask`** | confirmation explicite (jamais silencieux) | `git commit --no-verify` (le bypass du hook reste possible mais **volontaire**), `git reset --hard`, `git clean`, `gh issue close`. |
+| **`deny`** | bloqué | Ce que les garde-fous (§6) interdisent : `git push --force` / `-f` / `--force-with-lease`, `gh pr merge`, `gh pr close`, `gh run delete`. |
 
 - **`git commit`/`push` en `allow`** couvrent le chemin nominal de `/ticket-ship` et `/ticket-finish` ;
   le hook `commit-msg` (§2) s'applique toujours (le commit passe par lui), et le push non forcé est
@@ -1062,7 +1069,7 @@ injecte le rappel à chaque prompt.
 
 | Cas | Action |
 |---|---|
-| La demande **relève du ticket en cours ou d'un ticket existant** du backlog | **Mettre à jour ce ticket** : commentaire (`glab issue note -m`), et **description** si le périmètre change. |
+| La demande **relève du ticket en cours ou d'un ticket existant** du backlog | **Mettre à jour ce ticket** : commentaire (`lib.sh issue-note <iid> <fichier>`), et **description** (`lib.sh set-description`) si le périmètre change. Par les helpers, jamais par un `gh` direct : le texte long voyage par un **fichier** (§11.7). |
 | La demande **est nouvelle** (aucun ticket ne la couvre) | **Créer un ticket** via [`/ticket-create`](../.claude/commands/ticket-create.md) (labels `type::`/`agent::`/`prio::`, milestone courant §3.4). |
 | **Exceptions — rien à tracer** | Les commandes `/ticket-*` elles-mêmes (déjà tracées par le workflow) et les **échanges purement conversationnels** sans travail demandé. |
 
@@ -1092,7 +1099,7 @@ ligne de commentaire qui l'introduit — et qui vaut **jusqu'au marqueur suivant
 | Marqueur | Ce que c'est | Où vit la valeur |
 |---|---|---|
 | `# [perso]` | jeton nominatif, chemin de machine, service local | **chez vous** — le seul geste manuel qui reste sur un clone frais |
-| `# [partagé]` | secret du projet, endpoint, identifiants d'espace de travail | **variables CI/CD du projet GitLab** (masquées, réservées aux membres) |
+| `# [partagé]` | secret du projet, endpoint, identifiants d'espace de travail | **variables Actions du dépôt GitHub** (`GET /repos/:dépôt/actions/variables`, réservées aux membres) |
 
 ```bash
 bash scripts/env-pull.sh              # complète le .env avec les clés partagées qui manquent
@@ -1104,7 +1111,7 @@ Quatre promesses, que [`tests/test_env_pull.py`](../tests/test_env_pull.py) épi
 
 - **le gabarit fait foi** — la liste des clés partagées est *lue* dans `.env.example`, jamais
   recopiée dans le script : annoter une nouvelle clé là-bas suffit ;
-- **non destructif** — une clé déjà renseignée n'est **jamais** écrasée, même si la variable CI/CD
+- **non destructif** — une clé déjà renseignée n'est **jamais** écrasée, même si la variable Actions
   dit autre chose, et les clés `[perso]` ne sont pas même regardées ;
 - **aucune valeur imprimée** — la sortie ne porte que des *noms* de clés et des comptes ; les
   valeurs ne traversent ni l'affichage ni un argument de commande (lisible par tout processus de la
@@ -1115,8 +1122,13 @@ Quatre promesses, que [`tests/test_env_pull.py`](../tests/test_env_pull.py) épi
 **Publier une valeur partagée** est un geste de **mainteneur**, une fois par clé :
 
 ```bash
-glab variable set LANGFUSE_SECRET_KEY --masked < valeur.txt
+gh variable set LANGFUSE_HOST --body "https://cloud.langfuse.com"
 ```
+
+⚠ Une **variable** Actions se relit ; un **secret** Actions (`gh secret set`) est *write-only* et
+`env-pull.sh` ne pourra donc jamais le rendre. Ce qui doit atterrir dans un `.env` de clone passe
+par une variable — la distinction n'existait pas côté GitLab, où une variable masquée se relisait
+par l'API. Détail : [docs/27 §5](./27-decision-gitlab-vers-github.md).
 
 ### 7.4 Un compte GitHub par projet — `GH_CONFIG_DIR`
 
@@ -1180,11 +1192,8 @@ documenter la clé n'écrit rien nulle part.
   helper **global** (`credential.https://github.com.helper` dans le `.gitconfig` du poste), qui
   résout vers le compte actif du config dir **ambiant** : correct depuis une session Claude Code qui
   exporte `GH_CONFIG_DIR`, **faux depuis un terminal nu**, où c'est le config dir par défaut qui
-  répond. Dans le doute, forcer le helper le temps de la commande — même geste que pour `glab`
-  (§7) : `git -c credential.helper='!gh auth git-credential' push …`.
-
-`glab` répond à la même mécanique (`GLAB_CONFIG_DIR`) si le besoin se pose côté GitLab. Il ne se
-pose pas aujourd'hui : l'équipe y partage un même compte (§6).
+  répond. Dans le doute, forcer le helper le temps de la commande — même geste qu'en §7 :
+  `git -c credential.helper='!gh auth git-credential' push …`.
 
 ---
 
@@ -1675,13 +1684,13 @@ côté GitHub, et les **minutes facturées** se lisent à
 `/repos/{owner}/{repo}/actions/runs/{id}/timing` (champ `billable`), la durée de mur d'un run
 n'étant pas ce qui est décompté. D'où un token fine-grained limité au dépôt miroir,
 `Actions: Read` seul, posé par `gh auth login` — geste de la personne, au même titre que
-`glab auth login`, la session ne manipulant jamais le secret en clair.
+l'authentification de la forge d'alors, la session ne manipulant jamais le secret en clair.
 
 Les deux tokens sont **opposés par construction** et ne peuvent pas se substituer : celui du miroir
 **écrit** et vit **chez GitLab** ; celui-ci **lit** et vit **sur le poste**. Ce n'est pas un cumul
 de droits, c'est une séparation.
 
-Côté permissions, `gh` était **absent de l'allowlist** — les règles de `.claude/settings.json`
+Côté permissions, `gh` était alors **absent de l'allowlist** — les règles de `.claude/settings.json`
 visaient toutes `glab`, si bien que chaque `gh run list` aurait demandé une approbation (§11.7 : la
 classe de trou que #307 a mesurée). Six règles en lecture s'y ajoutent, dont un `gh api` **borné au
 chemin `actions/` du seul dépôt miroir** plutôt qu'ouvert : une règle est un préfixe de commande, et
@@ -1954,7 +1963,7 @@ l'installation est déléguée à `scripts/setup.sh --only web`, source unique d
 
 Le reste suit tout seul : les **hooks git** sont une configuration du dépôt (`core.hooksPath`,
 partagée par tous les worktrees) dont le chemin est **relatif**, donc résolu depuis la racine du
-worktree courant ; `glab` fonctionne depuis n'importe quel worktree.
+worktree courant ; `gh` fonctionne depuis n'importe quel worktree.
 
 **Ce que le workflow adapte.** `main` ne peut être emprunté que par **un seul** worktree à la
 fois : tout `git checkout main` échoue ailleurs que dans le clone principal. D'où
@@ -1999,7 +2008,7 @@ refuse une branche empruntée par un worktree. Même principe, même garde-fou :
 
 **Ce qui déclenche le retrait** (`lib.sh worktree-done <iid> <branche>`, une lecture dans le cas
 nominal) : la **MR de la branche est mergée**, ou le **ticket est fermé** (réalisé, abandonné,
-doublon). Tout le reste est conservé — y compris un verdict **inconnu** (glab absent, hors ligne,
+doublon). Tout le reste est conservé — y compris un verdict **inconnu** (`gh` absent, hors ligne,
 ticket illisible) : ne rien savoir n'autorise rien.
 
 **Trois refus**, dans cet ordre :
@@ -2043,7 +2052,7 @@ bloquaient l'un l'autre.
 `gc` ne supprime **aucune branche**. Le retrait passe par la même séquence que `remove` — délier,
 puis retirer (le garde-fou de #152 ci-dessus, écrit une seule fois dans le script).
 `MAESTRO_WORKTREE_GC=0` désactive le passage automatique ; les tests, eux, imposent le verdict par
-`MAESTRO_WORKTREE_VERDICT` et tournent donc sans réseau ni glab
+`MAESTRO_WORKTREE_VERDICT` et tournent donc sans réseau ni `gh`
 ([`test_worktree.py`](../tests/test_worktree.py)).
 
 #### Le cycle de vie posé sur le même verdict (#275)
@@ -2076,10 +2085,10 @@ ticket ne dirait qu'il a été abandonné.
 Trois choix à ne pas défaire :
 
 - la pose a lieu **avant** le garde-fou du travail non sauvegardé et **indépendamment du retrait** —
-  le cycle de vie suit le verdict de GitLab, pas la propreté d'un répertoire local ni le succès d'un
+  le cycle de vie suit le verdict de la forge, pas la propreté d'un répertoire local ni le succès d'un
   `rm`. Les lier ferait qu'un fichier oublié dans un worktree laisserait son ticket « En revue »
   pour toujours ;
-- elle est **best-effort et muette en cas d'échec** (glab absent, hors ligne), au même titre que
+- elle est **best-effort et muette en cas d'échec** (`gh` absent, hors ligne), au même titre que
   `sync-main` (§9.3) : elle n'empêche jamais un ticket de démarrer ni un run de continuer ;
 - elle passe par `set-workflow`, donc **les cinq autres labels partent dans le même appel** — une
   pose qui écrirait son propre `addLabelIds` laisserait le ticket à deux états (§3.1).
@@ -2339,18 +2348,18 @@ bash scripts/gitlab/lib.sh cleanup-merged --auto    # muet s'il n'y a ni suppres
 
 Le mode `--auto` est celui que câble `ensure`, au même titre que `gc --auto` : sans lui, chaque
 `/ticket-start` s'ouvrirait sur un inventaire dont personne n'a besoin. Le coût est d'une lecture
-`glab` par branche locale — l'ordre de grandeur du ramassage juste avant, qui en fait une par
+`gh` par branche locale — l'ordre de grandeur du ramassage juste avant, qui en fait une par
 worktree, et c'est justement parce que la purge tourne à nouveau que ce nombre reste petit.
 
 `MAESTRO_PURGE_BRANCHES=0` désactive le passage automatique. Couvert par
 [`test_worktree.py`](../tests/test_worktree.py) (le câblage, l'ordre vis-à-vis du ramassage, le
 compte rendu d'une branche retenue, l'abstention sur arbre sale et le fait que `start-branch` ne
-purge plus) — dépôt jetable, sans réseau ni `glab`.
+purge plus) — dépôt jetable, sans réseau ni `gh`.
 
 #### `/branch-cleanup` appelle ce même helper (#309)
 
 Jusque-là la commande **réimplémentait la boucle en prose** — un
-`glab mr view <branche> --output json` par branche locale, dont la charge utile réinjectée pèse
+`gh pr view <branche> --json …` par branche locale, dont la charge utile réinjectée pèse
 ~3 500 octets pour en tirer **un mot** (`merged`/`opened`/`closed`) : ~43 000 tokens par invocation
 sur ce dépôt, soit 25 fois le texte de la commande elle-même (audit
 [#304](25-audit-commandes-claude.md) §4.1, recommandation M1 — le plus gros gisement du lot). Elle
@@ -2363,11 +2372,11 @@ ne couvre pas** :
 | Supprimer la branche **distante** | il n'écrit rien côté serveur. Le cas ne se présente que si la case « Delete source branch » a été décochée au merge (§6) ; les branches restantes se lisent d'un coup dans les refs de suivi, que le helper vient de rafraîchir |
 | Poser « Terminé » | il n'écrit rien côté GitLab non plus. La commande le fait par `reconcile-workflow`, qui saute les tickets déjà finaux et n'écrase jamais « Abandonné »/« Doublon » (§9.2) |
 
-Le gain n'est pas que du contexte : le garde-fou « suppression **seulement** si GitLab confirme
+Le gain n'est pas que du contexte : le garde-fou « suppression **seulement** si la forge confirme
 `merged` » n'a plus qu'**une** implémentation. Deux, dont une en prose, c'est une divergence en
 attente — le jour où la règle change, le prompt ne suit pas. Le raccordement est épinglé par
 [`test_collaboration.py`](../tests/test_collaboration.py), qui relit le prompt (délégation présente,
-plus aucun `glab mr` prescrit, trois fonctions toujours nommées) — même parti pris que les tests
+plus aucune lecture de PR prescrite, trois fonctions toujours nommées) — même parti pris que les tests
 #196 et #233 : une règle qui vit dans un prompt ne se garde que par une lecture de ce prompt.
 
 ### 9.6 Un ticket abandonné par sa session redevient prenable (#327)
@@ -2466,7 +2475,7 @@ après l'autre jusqu'à la reprise, l'empreinte du worktree identique avant/apr�
 survit au ménage du journal et ne se contourne pas depuis un worktree, la dérive `doctor.sh` —,
 [`test_worktree.py`](../tests/test_worktree.py) (le câblage sur `gc`, son mutisme, `--sauf`) et
 [`test_orchestrate.py`](../tests/test_orchestrate.py) (`queue.sh --orphelins`, `journal.sh
-origine`). Dépôt jetable, sans réseau ni `glab`.
+origine`). Dépôt jetable, sans réseau ni `gh`.
 
 ### 9.7 L'historique d'une session reste adressable (#385, #397)
 
@@ -2634,8 +2643,9 @@ outillé par `set-reviewer`. Les seuls refus durs restent ceux des garde-fous de
 > (helpers `lib.sh` + contrôle runner de `doctor.sh`), [`tests/test_env_pull.py`](../tests/test_env_pull.py)
 > et [`tests/test_ci_local.py`](../tests/test_ci_local.py) — même parti pris que
 > [`test_setup.py`](../tests/test_setup.py) et [`test_worktree.py`](../tests/test_worktree.py) :
-> dépôt jetable, **ni réseau ni Docker ni compte GitLab** (un `glab` factice répond depuis une
-> fixture et journalise les appels), on teste la **décision** des scripts et non l'API.
+> dépôt jetable, **ni réseau ni compte de forge** (un `gh` factice répond depuis une
+> fixture et journalise les appels, cf. [`tests/harnais_forge.py`](../tests/harnais_forge.py)),
+> on teste la **décision** des scripts et non l'API.
 
 ## 11. Traitement autonome du backlog — la boucle d'orchestration
 
@@ -3251,7 +3261,7 @@ Deux couches, parce qu'une seule tomberait :
   est refusée et **tracée dans `permission_denials`**, ce qui sert à compléter la liste plutôt qu'à
   l'élargir à l'aveugle — la boucle de rétroaction est décrite en §11.7.
 - `scripts/orchestrate/guard.sh`, branché en hook **`PreToolUse`** : il refuse **en dur, quel que
-  soit le mode de permission**, force-push, `glab mr merge`/`close`, `glab ci delete`,
+  soit le mode de permission**, force-push, `gh pr merge`/`pr close`, `gh run delete`,
   `git reset --hard`, `git commit --no-verify` et **tout commit sur `main`**.
   `guard.sh --check` vérifie que la copie des `deny` n'a pas dérivé du dépôt **et** que le hook
   refuse bien chacune d'elles — sans quoi la seconde couche donnerait une fausse sécurité.
@@ -3372,8 +3382,8 @@ Deux pièges de lecture, découverts à ce prix, sans lesquels on instruit à c�
 - **L'`allow` est l'union de `settings.run.json` et de `.claude/settings.json`**, là où le `deny`
   est recopié à dessein (§11.6). Une commande « allowlistée dans le dépôt mais refusée en run »
   n'existe donc pas : c'est son emballage qui a changé. Preuve du run : la MR !149 a bien été
-  ouverte par un `glab mr create` que **seul** `.claude/settings.json` autorise. On ne recopie pas
-  pour autant les verbes git/glab du dépôt — une copie de l'`allow` dériverait en silence, là où
+  ouverte par une création de PR que **seul** `.claude/settings.json` autorise. On ne recopie pas
+  pour autant les verbes git/`gh` du dépôt — une copie de l'`allow` dériverait en silence, là où
   `guard.sh --check` veille sur celle du `deny`.
 
 Une règle ne prend pas non plus toujours de spécificateur : **`Skill` s'autorise nu**, le tool ne
@@ -3403,7 +3413,7 @@ existe déjà et ne coûte rien : `env` est allowlisté depuis #235, avec la ré
 le **texte entier** de l'appel).
 
 Les trois premières sont la cause n°1 de #232 : **huit sessions sur seize** ont buté sur un
-`glab mr create --description` multi-ligne, puis sur le `"$(cat …)"` par lequel elles essayaient de
+`gh pr create --body` multi-ligne, puis sur le `"$(cat …)"` par lequel elles essayaient de
 s'en sortir — **sur la dernière action du ticket**, tout commité et rien pour le déclarer. Deux
 remèdes s'y répondent, et il faut les deux : `prompt_ticket` **nomme** les formes et renvoie vers
 `Write` (une session ne peut pas les deviner d'un refus, qui ne dit jamais ce qui a manqué), et le
@@ -3566,9 +3576,10 @@ Trois choses à savoir sur ce que la reprise fait du plan :
   compté sur ce fichier-là.
 
 > **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) — même parti pris que le
-> reste : dépôt jetable, **ni réseau, ni quota, ni écriture GitLab**. Un `glab` factice répond
+> reste : dépôt jetable, **ni réseau, ni quota, ni écriture côté forge**. Un `gh` factice répond
 > depuis des fixtures (et **journalise ses appels**, ce qui rend vérifiable une promesse comme
-> `--no-gitlab`), `MAESTRO_CLAUDE_BIN` remplace le CLI, `MAESTRO_ORCHESTRATE_WORKTREE` le montage
+> `--no-forge`, dont l'alias historique `--no-gitlab` est joué lui aussi),
+> `MAESTRO_CLAUDE_BIN` remplace le CLI, `MAESTRO_ORCHESTRATE_WORKTREE` le montage
 > de worktree et `MAESTRO_ORCHESTRATE_SPAWN` l'ouverture de console, si bien qu'aucune branche,
 > aucune session ni aucune fenêtre réelles ne sont créées. Le **flux stream-json** se joue par un
 > bouchon qui émet plusieurs événements, dont un coût leurre en tête — la régression que §11.3
