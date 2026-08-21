@@ -2313,8 +2313,8 @@ est écouté — `reopened` n'est pas son symétrique et n'a rien à faire là :
 ticket rouvert demanderait de savoir lequel il portait avant, et « À faire » serait une valeur
 inventée.
 
-**Deux barrières devant « Abandonné »/« Doublon », et la seconde est celle qui porte.** Écraser
-l'état d'un ticket abandonné est la dérive « sans retour possible » nommée plus haut :
+**Deux barrières devant « Abandonné »/« Doublon », et chacune arrête ce que l'autre ne voit pas.**
+Écraser l'état d'un ticket abandonné est la dérive « sans retour possible » nommée plus haut :
 
 1. **la raison de fermeture**, dans le script — liste **blanche** sur `completed`, et non exclusion
    de `not_planned` : GitHub a ajouté `duplicate` à l'énumération sans rien demander, et une liste
@@ -2322,18 +2322,22 @@ l'état d'un ticket abandonné est la dérive « sans retour possible » nommée
 2. **l'état courant**, dans `reconcile-workflow` — qui saute « Abandonné », « Doublon » et
    « Terminé ».
 
-> ⚠ **C'est la seconde qui protège `/ticket-abandon`, pas la première.** La commande ferme par un
-> `gh issue close <iid>` **nu** (son étape 7), donc GitHub y met `state_reason: completed` comme sur
-> n'importe quel merge — la barrière n°1 le laisse passer. Ce qui sauve le ticket est l'**ordre** de
-> la commande : elle pose « Abandonné » (étape 6) **avant** de fermer, si bien que l'état est déjà
-> là quand le script lit. Une protection qui s'arrêterait au `state_reason` ne protégerait rien.
-> La barrière n°1 est le filet du geste **manuel** : un ticket fermé « as not planned » depuis
-> l'interface web, sans qu'aucun état ait été posé, ne doit pas ressortir « Terminé ».
+> ⚠ **Ce bloc n'a été une défense en profondeur qu'à partir de #388** — avant lui, une seule couche
+> était active devant un abandon, et ce n'était pas celle qu'on lisait en premier.
+> `/ticket-abandon` fermait par un `gh issue close <iid>` **nu**, donc GitHub y mettait
+> `state_reason: completed` comme sur n'importe quel merge : la barrière n°1 laissait **entrer**
+> tout abandon, et seule la n°2 l'arrêtait. Depuis #388, l'étape 7 ferme par
+> `gh issue close <iid> --reason "not planned"` — les **deux** variantes, doublon compris —, si bien
+> que la n°1 s'abstient **avant même de lire l'état**, et que l'issue cesse au passage de s'afficher
+> « Completed » sur GitHub.
 >
-> L'écart est **ticketé (#388)** : `--reason "not planned"` à l'étape 7 de `/ticket-abandon` ferait
-> tomber l'abandon dans la barrière n°1 — et corrigerait au passage l'affichage GitHub, où un
-> ticket abandonné porte aujourd'hui l'icône « Completed ». Tant que ce n'est pas fait, **ne pas
-> lire ce bloc comme une défense en profondeur** : une seule couche est active devant un abandon.
+> **Chacune est désormais le filet de l'autre, sur un geste que l'autre ne couvre pas** :
+> la **n°1** attrape le ticket fermé « as not planned » depuis l'interface web sans qu'aucun état
+> ait été posé ; la **n°2** attrape son symétrique — un ticket déjà « Abandonné » refermé « as
+> completed » à la main —, et elle tient parce que la commande pose l'état (étape 6) **avant** de
+> fermer (étape 7), si bien qu'il est déjà là quand le script lit. Le corollaire vaut d'être
+> retenu : ce n'est **pas** l'ordre de la commande qui protège l'abandon, c'est sa raison de
+> fermeture ; l'ordre ne sert plus qu'au cas manuel.
 
 **Le coût, nommé : un secret de dépôt.** `GITHUB_TOKEN` ne peut **pas** écrire dans un Projects v2
 appartenant à un compte utilisateur — le blocage est le **type** de jeton et non une permission

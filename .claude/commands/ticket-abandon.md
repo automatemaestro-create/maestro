@@ -48,16 +48,23 @@ une raison et confirmation.
 
 7. **Ferme le ticket** — c'est l'étape qui le clôt, plus aucun état ne le fait à sa place :
    ```
-   gh issue close <iid>
+   gh issue close <iid> --reason "not planned"
    ```
-   (`bash scripts/gitlab/lib.sh
-   forge-cli` tranche.) La fermeture est sous règle **`ask`** des deux côtés : la confirmation
-   demandée est voulue, ne cherche pas à la contourner.
+   ⚠ Le `--reason` **n'est pas décoratif** (#388), et il vaut pour les **deux variantes**, doublon
+   compris. Sans lui GitHub retient `state_reason: completed` — la valeur d'un ticket livré : l'issue
+   s'affiche « Completed » avec l'icône violette, rien dans la liste ne la distingue d'un ticket
+   réalisé, et le workflow `issues: closed` (docs/10 §9.2), dont la liste blanche n'ouvre que sur
+   `completed`, la laisse **entrer** au lieu de l'écarter. `gh` accepte aussi `duplicate`, non
+   retenu : sortir de la liste blanche est binaire, une seule valeur y suffit, et la nuance
+   « Abandonné »/« Doublon » vit dans le champ Status, qui en est la source. La fermeture est sous
+   règle **`ask`** : la confirmation demandée est voulue, ne cherche pas à la contourner.
 
    Puis vérifie l'état final : `bash scripts/gitlab/lib.sh issue-raw <iid>` doit rendre
    `state:` `closed`, et `bash scripts/gitlab/lib.sh issue-owner <iid>` doit rendre « Abandonné »
    (ou « Doublon ») en première colonne. Une fermeture ne touche pas au champ Status : si l'état
-   attendu n'y est pas, c'est que l'étape 6 a échoué — repose-le et signale-le.
+   attendu n'y est pas, c'est que l'étape 6 a échoué — repose-le et signale-le. La raison, elle, se
+   relit en un appel ciblé si besoin : `gh issue view <iid> --json stateReason` doit rendre
+   `NOT_PLANNED`, et l'issue porter « Not planned » sur GitHub.
 
 8. Si une **branche** locale existe pour ce ticket et qu'aucun travail n'y est à sauvegarder, tu
    peux proposer de la supprimer — mais **uniquement en local** et seulement après accord de
