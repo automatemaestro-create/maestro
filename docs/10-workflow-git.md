@@ -1557,10 +1557,98 @@ forke des centaines de fois. Le profil des durées est plat : du 1er test le plu
 25e (33,8 s). La vraie réponse reste celle du levier 2 — **viser directement la suite** pendant
 l'itération (`tests/test_engine.py`, 1,5 s), le filet complet avant le push.
 
+**4. Et le levier qui les dépasse tous : pytest joue dans un conteneur Linux (#372).** Les trois
+leviers ci-dessus optimisent le régime ; celui-ci en change. Le filet était retombé à **~15 min** sur
+un diff touchant `scripts/**` — le cas le plus courant du dépôt — et l'enquête a trouvé quatre
+causes, dont une qui domine les autres d'un ordre de grandeur.
+
+Les suites d'outillage sont faites à **100 % de sous-processus shell** : `test_orchestrate` en lance
+plus de deux cents à elle seule, sans compter les forks internes de `run.sh`, `lib.sh` et `awk`.
+Leur durée est donc une fonction quasi linéaire du prix d'un `CreateProcess` — et ce prix diffère de
+**trois ordres de grandeur** entre les deux plateformes. Mesuré le 2026-08-21, dos à dos, même
+machine, même `-n 8`, **aucune ligne de test modifiée** :
+
+| | Windows / MSYS | Conteneur Linux | |
+|---|---|---|---|
+| `bash -c 'exit 0'` | ~800 ms | **< 1 ms** | |
+| `tests/test_worktree.py` (97 tests) | 424 s | **13,5 s** | ×31 |
+| les 6 suites du périmètre `scripts/**` | 14 min 33 (547 tests) | **52,9 s** (599) | |
+| la suite **ENTIÈRE** | injouable en boucle courte | **1 min 51** (2 142) | |
+
+Ce n'est pas propre à MSYS — `cmd //c exit` coûte 842 ms et `git --version` 584 ms sur la même
+machine —, et ce n'est pas une constante : le même poste mesurait **96 ms** trois jours plus tôt. Ce
+qui a changé entre les deux, c'est son état (mémoire *committed* à 46 365 Mo pour une limite de
+48 033, soit 96,5 %). **Tant que le filet joue sous MSYS, sa durée reste indexée sur l'état du
+poste** — un onglet de navigateur de plus la fait bouger, et aucun réglage du dépôt n'y peut rien.
+C'est ce qui distingue ce levier des trois précédents : il ne rend pas seulement le filet plus
+rapide, il le rend **prévisible**.
+
+**Le second gain n'est pas de vitesse, et c'est le plus important** : le filet joue désormais sur
+**l'OS du verdict**. §8.7 raconte comment 285 tests d'outillage n'avaient jamais tourné ailleurs que
+sous Windows, et comment le premier runner Linux muni de git en a trouvé **16 rouges d'un coup**,
+dont un bug de production. Cette classe d'écart ne se voyait **qu'au merge** : le filet local ne
+pouvait structurellement pas l'attraper.
+
+```bash
+bash scripts/ci/local.sh                 # conteneur si Docker répond, sinon repli natif ANNONCÉ
+bash scripts/ci/local.sh --conteneur     # exigé : ÉCHOUE au lieu de retomber
+bash scripts/ci/local.sh --natif         # l'ancien régime
+```
+
+Les points de conception, à comprendre avant d'y toucher :
+
+- **Le repli natif est annoncé, deux fois** — sur la ligne du job et dans un bloc avant le verdict.
+  C'est la raison d'être du mécanisme : un filet qui retomberait en silence rendrait un vert de
+  quinze minutes en se faisant passer pour un vert d'une minute, et surtout un vert qui n'a pas vu
+  ce que la CI verra. `--conteneur` **échoue** au lieu de retomber, pour les contextes où personne
+  ne lit la sortie.
+- **L'étiquette de l'image porte l'empreinte de `pyproject.toml` et de
+  [`scripts/ci/pytest.Dockerfile`](../scripts/ci/pytest.Dockerfile).** Une dépendance ajoutée au
+  dépôt change l'étiquette, donc l'image manque, donc elle est reconstruite : personne n'a à s'en
+  souvenir, et une image périmée ne peut pas rendre un vert sur des dépendances qu'elle n'a pas.
+- **Le dépôt est monté, jamais copié** — c'est le code de la branche, travail non commité compris.
+  Et **jamais à la racine** : monté à `/w`, le parent du dépôt est `/`, et
+  `test_projets.py::test_depot_maestro_refuse` rend `racine-de-disque` au lieu de
+  `au-dessus-du-depot-maestro`. Le montage est à `/maestro/depot`. Trouvé par les tests.
+- **L'image part de `python:3.11` PLEINE et sans identité git globale** — les deux moitiés
+  indissociables de #333 (§8.7). L'image pleine porte git ; l'installer par `apt-get` mettrait les
+  miroirs Debian sur le chemin critique de chaque construction (le pipeline de !269 est mort
+  dessus). Et poser un `user.name` global remasquerait exactement le bug que #332 a trouvé.
+- **L'image installe un paquet vide, puis en efface les sources.** `pip install -e ".[dev]"` a
+  besoin d'un paquet pour résoudre la liste des dépendances : on lui en donne un vide, puis on
+  supprime son répertoire — l'éditable pointe alors vers rien. Après quoi `import maestro`
+  n'a plus qu'une source possible — le dépôt monté, désigné par `PYTHONPATH`. Elle ne le
+  **désinstalle pas** : la première version le faisait, et la suite entière l'a refusée —
+  `[project.scripts]` déclare une dizaine de points d'entrée que la désinstallation emporte, dont
+  le `maestro-sandbox-shim` que `tests/test_isolation.py` exige à côté de l'interpréteur. La question de #194
+  (« quel paquet `maestro` est testé ? ») y devient **sans objet** plutôt que résolue : la sonde
+  n'est jouée que dans le régime natif, où le venv partagé par jonction la rend nécessaire.
+- **`-n auto` dans le conteneur, comme la CI.** Le plafond `min(cœurs, 8)` du levier 3 est un fait
+  sur la **mémoire du poste Windows**, jamais un fait sur pytest — re-mesuré là-bas sur les six
+  suites du périmètre (598 tests) : `-n 4` 177 s · `-n 8` 63 s · `-n 16` 56 s · **`-n auto` 46 s**,
+  tous verts. Sous Windows, `-n 16` faisait *pire* que `-n 8` (11 min 37) **et** rougissait quatre
+  tests de la vue console par saturation. Le plafond reste donc au régime natif, et disparaît de
+  l'autre. `MAESTRO_PYTEST_WORKERS` le déplace des deux côtés.
+
+Réglages : `MAESTRO_PYTEST_REGIME=auto|conteneur|natif`, `MAESTRO_PYTEST_IMAGE` pour le nom de
+l'image. Garde-fous dans [`tests/test_ci_local.py`](../tests/test_ci_local.py), qui n'ouvre **aucun**
+conteneur : c'est un shim `docker` qui répond, et ce sont les *décisions* du script qu'on lit dans
+son journal. Le `docker` neutralisé de la fixture y est devenu le garde-fou central — sans lui,
+chaque test monterait un vrai conteneur sur son dépôt jetable, où les shims du `PATH` ne franchissent
+pas la frontière.
+
+Les trois autres causes des 15 min, pour mémoire, et parce qu'elles restent vraies : les tests
+ajoutés depuis #285 sont d'une autre échelle (les 25 plus lents du périmètre lui sont tous
+postérieurs) ; `lib.sh` avait gagné **trois forks au chargement** (`GL_ICI` par
+`$(cd "$(dirname …)" && pwd)`, pour une variable utile à trois lignes), corrigé en résolution sans
+fork — marginal d'un chargement 61,9 ms → 12,5 ms ; et shellcheck a doublé parce que `lib.sh` a
+doublé. Elles se partagent désormais une **minorité** du temps.
+
 **Le levier qui n'est pas dans le dépôt : shellcheck natif.** `winget install koalaman.shellcheck`
-supprime le repli Docker — donc les ~2 s de conteneur, mais surtout **le besoin de Docker Desktop
-pendant le filet**, et avec lui les ~500 Mo de `vmmemWSL`, au bénéfice des workers pytest. Rien
-dans le dépôt ne peut le faire à la place de qui installe ; le filet, lui, le rappelle déjà quand
+supprime le repli Docker — donc les ~2 s de conteneur. ⚠ Son second argument est **caduc depuis #372** :
+il valait « et avec lui le besoin de Docker Desktop pendant le filet, et ses ~500 Mo de
+`vmmemWSL` », or le job pytest a désormais besoin du démon — et le troque contre un facteur
+quinze. Rien dans le dépôt ne peut le faire à la place de qui installe ; le filet, lui, le rappelle déjà quand
 shellcheck manque (« `winget install koalaman.shellcheck` (ou `docker pull …`) »).
 
 **Ce que la mesure a écarté** — consigné pour que personne ne le réessaie :
@@ -1570,6 +1658,7 @@ shellcheck manque (« `winget install koalaman.shellcheck` (ou `docker pull …`
 | Exclusions Defender sur le dépôt | **Aucun effet.** Le coût est celui de `CreateProcess` lui-même (~60 ms, y compris pour `cmd.exe`), qu'aucune exclusion de chemin ne couvre. |
 | EDR (FortiClient) | **Hors de cause** : installé mais à l'arrêt. |
 | Disque | **Hors de cause** : NVMe local. |
+| Régler le problème **sous Windows** | **Écarté par #372** : le coût de `CreateProcess` n'est pas réglable depuis le dépôt, et il varie avec l'état du poste (96 ms le 2026-08-18, ~800 ms le 2026-08-21, même machine). On change d'OS plutôt que de l'optimiser. |
 | Montage bind du conteneur shellcheck | **Hors de cause** : 36 s avec ou sans copie interne. |
 | `-x` pour garder le lien entre fichiers | **Écarté** : 34 s, le découpage ne rapporte plus rien (ci-dessus). |
 

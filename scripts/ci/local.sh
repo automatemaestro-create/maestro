@@ -106,7 +106,53 @@ SHELLCHECK_IMAGE="${MAESTRO_SHELLCHECK_IMAGE:-koalaman/shellcheck-alpine:stable}
 COUVERTURE_MIN="$(lit_ci 'pytest[^#]*--cov-fail-under=[0-9]+' 'pytest --cov-fail-under=90')"
 COUVERTURE_MIN="${COUVERTURE_MIN##*=}"
 
-# --- Combien de workers pytest (#285) -------------------------------------------------------------
+# --- OÙ joue le job pytest (#372, docs/10 §8.4) ---------------------------------------------------
+# Le job pytest joue DANS UN CONTENEUR LINUX, et le repli natif n'est là que pour les postes sans
+# Docker. Ce n'est pas un choix de confort : les suites d'outillage sont faites à 100 % de
+# sous-processus shell, donc leur durée est une fonction du prix d'un `fork` — ~800 ms sous Windows
+# contre < 1 ms sous Linux, mesuré dos à dos le 2026-08-21 (voir scripts/ci/pytest.Dockerfile pour
+# la table complète : ×31 sur une suite, 14 min 33 → 52,9 s sur le périmètre `scripts/**`).
+#
+# Le second gain n'est pas de vitesse : le filet joue enfin sur L'OS DU VERDICT. #332/#333 ont
+# montré que 285 tests d'outillage n'avaient jamais tourné ailleurs que sous Windows, et que le
+# premier runner Linux muni de git en avait trouvé 16 rouges d'un coup. Cette classe d'écart ne se
+# voyait qu'au merge.
+PYTEST_DOCKERFILE_REL="scripts/ci/pytest.Dockerfile"
+PYTEST_IMAGE_NOM="${MAESTRO_PYTEST_IMAGE:-maestro-pytest}"
+# Deux niveaux, JAMAIS la racine : monté à `/w`, le parent du dépôt serait `/` et
+# `test_projets.py::test_depot_maestro_refuse` rendrait `racine-de-disque` au lieu de
+# `au-dessus-du-depot-maestro` — un rouge qui ne dit rien du code (trouvé par les tests, #372).
+PYTEST_MONTAGE=/maestro/depot
+#: auto (défaut) · conteneur (exige Docker, échoue sinon) · natif (l'ancien régime).
+PYTEST_REGIME_DEMANDE="${MAESTRO_PYTEST_REGIME:-auto}"
+case "$PYTEST_REGIME_DEMANDE" in
+  auto | conteneur | natif) ;;
+  *) PYTEST_REGIME_DEMANDE=auto ;;
+esac
+# Les deux sondes vivent ICI, et non près de `job_pytest` : la boucle d'analyse des options appelle
+# `liste_jobs`, et bash ne connaît une fonction qu'une fois la ligne qui la définit LUE. Définies
+# plus bas, elles rendaient « regime_pytest_pressenti: command not found » sur `--list` — attrapé
+# par les tests, pas à la relecture.
+docker_repond() { docker version --format '{{.Server.Version}}' >/dev/null 2>&1; }
+
+# Quel régime jouerait, SANS RIEN CONSTRUIRE. Sépare la sonde (gratuite) de l'engagement (coûteux) :
+# c'est ce qui permet à `--list` de dire la vérité sur la commande jouée — son contrat depuis #194 —
+# sans déclencher au passage une construction d'image de plusieurs minutes.
+regime_pytest_pressenti() {
+  case "$PYTEST_REGIME_DEMANDE" in
+    natif) PYTEST_REGIME=natif ;;
+    conteneur) PYTEST_REGIME=conteneur ;;
+    *) if docker_repond; then PYTEST_REGIME=conteneur; else PYTEST_REGIME=natif; fi ;;
+  esac
+}
+
+#: Rempli par `job_pytest` : « conteneur » ou « natif ». Lu par le résumé, qui doit le DIRE — un
+#: filet plus rapide qui tait qu'il a joué ailleurs est un faux vert en puissance.
+PYTEST_REGIME=""
+#: Pourquoi le régime demandé n'a pas pu être tenu (vide si de rien n'est).
+PYTEST_REGIME_MOTIF=""
+
+# --- Combien de workers pytest (#285, révisé #372) ------------------------------------------------
 # `-n auto` demande UN WORKER PAR CŒUR LOGIQUE : 16 sur le poste de mesure. La contrainte n'est pas
 # le CPU, c'est la MÉMOIRE — un worker de cette suite pèse ~130 Mo (il monte des dépôts git jetables
 # et attend des processus), soit ~2 Go à seize pour ~1,8 Go de RAM libre. Le poste pagine, et le
@@ -119,6 +165,23 @@ COUVERTURE_MIN="${COUVERTURE_MIN##*=}"
 # coûte ~50 ms, mais le raisonnement mémoire, lui, n'a rien de propre à Windows. Le job CI garde
 # `-n auto` : il tourne dans un conteneur dédié où la mémoire n'est pas le facteur limitant
 # (1 min 53 s au lieu de ~10 min, docs/10 §8.4).
+#
+# ⚠ CE PLAFOND NE VAUT QUE POUR LE RÉGIME NATIF (#372). Sa raison a toujours été la mémoire du
+# POSTE, jamais un fait sur pytest : dans le conteneur, la contrainte n'est pas la même et le
+# plafond coûte cher. Re-mesuré le 2026-08-21 sur les six suites du périmètre `scripts/**`
+# (598 tests), même machine, à la suite :
+#
+#              conteneur Linux        Windows/MSYS (#285, mémoire)
+#   -n 4          177,2 s              6 min 58
+#   -n 8           63,1 s              5 min 28
+#   -n 16          56,4 s             11 min 37  ET 4 ROUGES
+#   -n auto        46,1 s                  —
+#
+# Sous Windows, `-n 16` faisait pire que `-n 8` et rougissait quatre tests de la vue console
+# (#284/#290/#325) par saturation du poste. Dans le conteneur, les mêmes 598 tests passent à tous
+# les régimes et `-n auto` est le plus rapide — il n'y a donc rien à plafonner, et c'est en prime
+# EXACTEMENT le drapeau que joue `.github/workflows/ci.yml`. Un écart de moins entre le filet et le
+# verdict qu'il prédit.
 #
 # MAESTRO_PYTEST_WORKERS relève ou abaisse le plafond, pour un poste qui n'a pas ce profil-là.
 PYTEST_WORKERS_PLAFOND="${MAESTRO_PYTEST_WORKERS:-8}"
@@ -139,6 +202,12 @@ coeurs_logiques() {
 
 workers_pytest() {
   local coeurs
+  # Dans le conteneur : `auto`, comme la CI. Le plafond ci-dessus répond à une question du poste
+  # Windows (la mémoire) qui ne s'y pose pas — voir la table.
+  if [ "${PYTEST_REGIME:-}" = conteneur ] && [ -z "${MAESTRO_PYTEST_WORKERS:-}" ]; then
+    printf 'auto\n'
+    return 0
+  fi
   coeurs="$(coeurs_logiques)"
   if [ "$coeurs" -lt "$PYTEST_WORKERS_PLAFOND" ]; then
     printf '%s\n' "$coeurs"
@@ -169,6 +238,10 @@ Options :
                   de couverture ; le verdict est annoncé PARTIEL.
   --complet       pytest joue la suite ENTIÈRE avec sa couverture et son seuil — ce que fera
                   le pipeline de la MR.
+  --conteneur     (défaut si Docker répond) pytest joue dans un conteneur Linux — le régime
+                  nominal : ×15 à ×30 plus rapide, et sur l'OS du verdict. Exigé, il ÉCHOUE
+                  au lieu de retomber en natif.
+  --natif         pytest joue dans le venv du poste (l'ancien régime).
   --only <jobs>   N'exécute que ces jobs (séparés par des virgules). Les noms d'étages
                   « lint » et « test » sont acceptés et développés en leurs jobs.
   --skip <jobs>   Saute ces jobs (mêmes noms).
@@ -191,8 +264,16 @@ travail non commité compris :
 web-build ne tourne que si apps/web (ou .github/workflows/ci.yml) change par rapport à origin/main —
 même règle que le pipeline. « --only web-build » le force.
 
-pytest tourne sur min(cœurs, $PYTEST_WORKERS_PLAFOND) workers : au-delà, c'est la mémoire qui
-borne, pas les cœurs (#285). MAESTRO_PYTEST_WORKERS déplace ce plafond.
+OÙ pytest joue (#372) : dans un conteneur Linux construit depuis $PYTEST_DOCKERFILE_REL,
+parce que les suites d'outillage sont faites de sous-processus shell et qu'un fork y coûte < 1 ms
+contre ~800 ms sous Windows (les six suites du périmètre scripts/** : 14 min 33 → 53 s). Sans
+démon Docker, le filet retombe en NATIF et le DIT dans son verdict — c'est alors l'ancien régime,
+lent, et aveugle aux écarts Windows/Linux que la CI verra (docs/10 §8.7).
+MAESTRO_PYTEST_REGIME=auto|conteneur|natif ; MAESTRO_PYTEST_IMAGE nomme l'image.
+
+Workers : « -n auto » dans le conteneur, comme la CI. En natif, min(cœurs, $PYTEST_WORKERS_PLAFOND) :
+au-delà c'est la mémoire du poste qui borne, pas les cœurs (#285). MAESTRO_PYTEST_WORKERS déplace
+ce plafond et vaut pour les deux régimes.
 USAGE
 }
 
@@ -201,10 +282,30 @@ liste_jobs() {
   printf '  %-12s %-6s %s\n' JOB ÉTAGE COMMANDE
   printf '  %-12s %-6s %s\n' shellcheck   lint "shellcheck --severity=$SHELLCHECK_SEVERITE <script>, un appel par fichier de scripts/"
   printf '  %-12s %-6s %s\n' python-lint  lint "ruff check ."
-  if [ "$MODE_PYTEST" = complet ]; then
-    printf '  %-12s %-6s %s\n' pytest     test "python -m pytest -n $(workers_pytest) --cov=maestro --cov-fail-under=$COUVERTURE_MIN"
+  # `--list` SONDE le régime (un `docker version`, ~0,4 s) au lieu d'annoncer celui qui est demandé.
+  # C'est le contrat de cette commande depuis #194 : elle dit la commande RÉELLEMENT jouée, jamais
+  # celle du pipeline ni celle qu'on espère — et le régime décide du nombre de workers annoncé.
+  # Elle ne construit rien, en revanche : sonder est gratuit, construire ne l'est pas.
+  local ou lanceur
+  regime_pytest_pressenti
+  # Le LANCEUR fait partie de la commande réellement jouée, et il diffère d'un régime à l'autre :
+  # dans le conteneur c'est `pytest`, sur le poste c'est `python -m pytest` — jamais le script
+  # console, qui mettrait le dossier du script dans `sys.path` au lieu du répertoire courant (#194).
+  if [ "$PYTEST_REGIME" = conteneur ]; then
+    ou="conteneur Linux ($PYTEST_DOCKERFILE_REL)"
+    lanceur="pytest"
   else
-    printf '  %-12s %-6s %s\n' pytest     test "python -m pytest <suites déduites du diff>  (--complet : toute la suite + couverture)"
+    lanceur="python -m pytest"
+    if [ "$PYTEST_REGIME_DEMANDE" = natif ]; then
+      ou="venv du poste (--natif)"
+    else
+      ou="venv du poste — Docker ne répond pas, régime dégradé"
+    fi
+  fi
+  if [ "$MODE_PYTEST" = complet ]; then
+    printf '  %-12s %-6s %s\n' pytest     test "$lanceur -n $(workers_pytest) --cov=maestro --cov-fail-under=$COUVERTURE_MIN  [$ou]"
+  else
+    printf '  %-12s %-6s %s\n' pytest     test "$lanceur <suites déduites du diff>  (--complet : toute la suite + couverture)  [$ou]"
   fi
   printf '  %-12s %-6s %s\n' mypy         test "mypy maestro"
   printf '  %-12s %-6s %s\n' web-build    test "npm run lint && npm run typecheck && npm test && npm run build (dans apps/web)"
@@ -217,6 +318,8 @@ while [ $# -gt 0 ]; do
     --strict) STRICT=1 ;;
     --rapide) MODE_PYTEST=rapide ;;
     --complet) MODE_PYTEST=complet ;;
+    --conteneur) PYTEST_REGIME_DEMANDE=conteneur ;;
+    --natif) PYTEST_REGIME_DEMANDE=natif ;;
     --list) liste_jobs; exit 0 ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -485,26 +588,61 @@ PY
 # la suite, parce qu'elles attendent des processus.
 suites_toutes() { (cd "$RACINE" && find tests -maxdepth 1 -name 'test_*.py' 2>/dev/null | sort); }
 
+# Même ancrage que `suites_nommant` ci-dessous, et pour une raison plus forte (#372) : ici le sens
+# de l'erreur est le DANGEREUX. L'applicatif est le complément de cet ensemble, donc une suite
+# classée « outillage » à tort en sort — et n'est plus jouée quand `maestro/**` bouge, sans que
+# rien ne le dise. C'est exactement le « jamais sautée en silence » de §8.4 pris à revers.
+# Aujourd'hui aucune suite n'est dans ce cas (9 avant, 9 après, vérifié sur les 62 suites) : le
+# changement est un no-op, et c'est la latence qu'il retire, pas un bug qu'il corrige.
 suites_outillage() {
-  local motifs=() script suites=()
+  local motifs=() script suites=() base
   mapfile -t suites < <(suites_toutes)
   [ "${#suites[@]}" -gt 0 ] || return 0
   while IFS= read -r script; do
     [ -n "$script" ] || continue
-    motifs+=(-e "$(basename "$script")")
+    base="$(basename "$script")"
+    motifs+=(-e "(^|[^A-Za-z0-9_])$(printf '%s' "$base" | sed 's,[][^$.*+?(){}|\\],\\&,g')")
   done < <(cd "$RACINE" && find scripts -type f -name '*.sh' 2>/dev/null)
   [ "${#motifs[@]}" -gt 0 ] || return 0
-  (cd "$RACINE" && grep -lF "${motifs[@]}" "${suites[@]}" 2>/dev/null | sort)
+  (cd "$RACINE" && grep -lE "${motifs[@]}" "${suites[@]}" 2>/dev/null | sort)
 }
 
 # Les suites qui citent <chaîne> — le nom du fichier modifié. Ces tests-là invoquent le script ou
 # lisent le fichier par son chemin : le nommer est le lien le plus direct qu'on puisse observer
 # sans exécuter quoi que ce soit.
+#: `suites_nommant <nom> [ancre]` — les suites qui citent ce nom.
+#:
+#: Le second argument choisit la RIGUEUR, et les deux essais de `classe_par_nom` n'en veulent pas
+#: la même (#372) :
+#:
+#:   - un NOM DE FICHIER se cherche ancré à gauche sur un non-mot. Sans ancrage, `lib.sh` matche
+#:     le `hashlib.sha256` de tests/test_setup.py — et tirait donc cette suite entière dans le
+#:     périmètre de TOUT diff touchant scripts/gitlab/lib.sh, c'est-à-dire le diff le plus courant
+#:     du dépôt. Vérifié exhaustivement avant d'ancrer, sur les 462 noms du dépôt croisés avec les
+#:     mots des 62 suites : `hashlib.sh` est le seul faux positif, et l'ancrage ne fait perdre
+#:     AUCUNE correspondance réelle (les tests citent leurs scripts en « scripts/gitlab/lib.sh »
+#:     ou « lib.sh », toujours précédés d'un `/`, d'un guillemet ou d'un blanc).
+#:
+#:   - un CHEMIN DE DOSSIER se cherche sans ancrage, et l'ancrage n'y changerait rien. #372
+#:     l'avait laissé souple pour une raison qui a cessé d'exister entre-temps : le repli
+#:     cherchait alors le nom NU du dossier, et l'ancrer aurait fait perdre des suites sur des
+#:     noms courts et fréquents (`api`, `app`, `brief`, `gitlab` en perdaient chacun une à
+#:     quatre). #375 a remplacé ce nom nu par le chemin AVEC son séparateur — `scripts/gitlab/`
+#:     et non `gitlab` —, et un chemin est toujours cité précédé d'un `/`, d'un guillemet ou
+#:     d'un blanc. Re-mesuré sur le dépôt du jour, 82 dossiers imbriqués croisés avec les
+#:     62 suites : **0 écart** entre les deux formes. Le `-F` reste donc par économie et non
+#:     par nécessité, et la souplesse d'hier n'est plus un argument à invoquer ici.
 suites_nommant() {
-  local suites=()
+  local suites=() motif
   mapfile -t suites < <(suites_toutes)
   [ "${#suites[@]}" -gt 0 ] || return 0
-  (cd "$RACINE" && grep -lF -- "$1" "${suites[@]}" 2>/dev/null | sort)
+  if [ "${2:-}" = ancre ]; then
+    # Le nom est une donnée, pas un motif : ses métacaractères ERE sont échappés avant usage.
+    motif="$(printf '%s' "$1" | sed 's,[][^$.*+?(){}|\\],\\&,g')"
+    (cd "$RACINE" && grep -lE -- "(^|[^A-Za-z0-9_])$motif" "${suites[@]}" 2>/dev/null | sort)
+  else
+    (cd "$RACINE" && grep -lF -- "$1" "${suites[@]}" 2>/dev/null | sort)
+  fi
 }
 
 #: Résultat de `calcule_perimetre` : les suites à jouer (vide = aucune), pourquoi, et deux drapeaux.
@@ -551,7 +689,7 @@ rend_raisons() { printf '%s' "${1#|}" | tr '|' '
 classe_par_nom() { # <chemin>
   local base dossier nommant
   base="$(basename "$1")"
-  nommant="$(suites_nommant "$base")"
+  nommant="$(suites_nommant "$base" ancre)"
   if [ -n "$nommant" ]; then
     CHOISIES="$CHOISIES$nommant"$'
 '
@@ -710,51 +848,177 @@ derive_dependances() {
   return 0
 }
 
+# --- Le régime conteneur du job pytest (#372) -----------------------------------------------------
+# Trois questions, dans cet ordre : le démon répond-il ? quelle image ? est-elle là ?
+#
+# Aucune n'est posée au CHARGEMENT du fichier, toutes le sont dans `job_pytest` : `docker` répond en
+# ~0,4 s et le hachage coûte deux forks, ce qui serait payé par tout appel du filet — `--only lint`
+# compris. C'est la leçon de `GL_ICI` dans lib.sh, sur laquelle porte l'autre moitié de ce ticket.
+# L'étiquette de l'image PORTE L'EMPREINTE de ce dont elle est faite : les dépendances
+# (pyproject.toml) ET la recette (pytest.Dockerfile). Une dépendance ajoutée au dépôt change
+# l'étiquette, donc l'image manque, donc elle est reconstruite — personne n'a à s'en souvenir, et
+# une image périmée ne peut pas rendre un vert sur des dépendances qu'elle n'a pas.
+#
+# `git hash-object` plutôt que `sha256sum` : git est déjà une dépendance dure de ce fichier
+# (`fichiers_modifies`), là où les coreutils varient d'une plateforme à l'autre.
+pytest_image() {
+  local empreinte
+  # Les deux fichiers doivent être LÀ, et pas seulement lisibles « au mieux » : `cat` d'un fichier
+  # absent n'écrit rien, et `git hash-object --stdin` rend alors l'empreinte du vide — une étiquette
+  # parfaitement stable qui ne décrit plus rien. Mieux vaut renoncer au régime, en le disant.
+  [ -r "$RACINE/pyproject.toml" ] && [ -r "$RACINE/$PYTEST_DOCKERFILE_REL" ] || return 1
+  empreinte="$(cat "$RACINE/pyproject.toml" "$RACINE/$PYTEST_DOCKERFILE_REL" 2>/dev/null |
+    git hash-object --stdin 2>/dev/null)"
+  [ -n "$empreinte" ] || return 1
+  printf '%s:%s\n' "$PYTEST_IMAGE_NOM" "${empreinte:0:12}"
+}
+
+# Construit l'image si elle manque. C'est la SEULE chose que ce filet fabrique, et elle est
+# annoncée : contrairement au repli docker de shellcheck — qui ne télécharge rien et se contente
+# d'une image déjà là —, on ne peut pas se passer de celle-ci, elle est le régime nominal. Mais une
+# construction muette de plusieurs minutes au milieu d'une « boucle courte » serait pire que lente :
+# elle passerait pour un blocage.
+pytest_image_construit() { # <image> → 0 prête · 1 échec
+  local image="$1"
+  image_docker_disponible "$image" && return 0
+  printf '    ─── image %s absente : construction (une fois, puis mise en cache) …\n' "$image"
+  # Le contexte est réduit au strict nécessaire : le Dockerfile ne copie que pyproject.toml, mais
+  # docker enverrait sinon tout le dépôt au démon — .venv, .tools et node_modules compris.
+  MSYS_NO_PATHCONV=1 docker build \
+    --quiet \
+    --file "$(chemin_natif "$RACINE/$PYTEST_DOCKERFILE_REL")" \
+    --tag "$image" \
+    "$(chemin_natif "$RACINE")" >"$JOURNAL" 2>&1 || return 1
+  return 0
+}
+
+# Le `docker run` du job. Le dépôt est monté (jamais copié) : c'est le code de LA BRANCHE qui est
+# testé, travail non commité compris — exactement ce que le régime natif teste, et ce sur quoi le
+# pipeline se prononcera.
+pytest_conteneur() { # <image> <args pytest…>
+  local image="$1" identite=()
+  shift
+  # Sous Windows le montage n'a pas de propriétaire à respecter. Ailleurs, un conteneur qui tourne
+  # en root sèmerait dans le dépôt des fichiers appartenant à root (.pytest_cache, .coverage) que
+  # l'utilisateur ne pourrait plus effacer. HOME suit, sinon pytest cherche à écrire dans /root.
+  if [ "$WINDOWS" = 0 ]; then
+    identite=(--user "$(id -u):$(id -g)" -e HOME=/tmp)
+  fi
+  # GIT_CONFIG_* plutôt qu'un `git config --global` dans l'image : le dépôt monté n'appartient pas à
+  # l'uid du conteneur, donc git le refuserait comme « dubious ownership » — mais c'est une
+  # propriété de CET APPEL, pas de l'image, et l'image doit rester SANS identité git globale sous
+  # peine de remasquer le bug de #332 (docs/10 §8.7).
+  MSYS_NO_PATHCONV=1 docker run --rm \
+    "${identite[@]}" \
+    -v "$(chemin_natif "$RACINE"):$PYTEST_MONTAGE" \
+    -w "$PYTEST_MONTAGE" \
+    -e PYTHONPATH="$PYTEST_MONTAGE" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e 'GIT_CONFIG_VALUE_0=*' \
+    "$image" pytest "$@" >"$JOURNAL" 2>&1
+}
+
+# Décide OÙ le job va jouer et pose PYTEST_REGIME / PYTEST_IMAGE / PYTEST_REGIME_MOTIF.
+# → 0 un régime est tenu · 2 aucun (job IGNORÉ, DETAIL posé).
+#
+# Le repli est le même mécanisme que celui du job shellcheck, avec une différence qui compte : il
+# est ANNONCÉ dans le verdict. Un filet qui retomberait en silence sur le régime natif rendrait un
+# vert de quinze minutes en se faisant passer pour un vert d'une minute — et surtout un vert qui
+# n'a pas vu ce que la CI verra.
+choisit_regime_pytest() {
+  local image raison=""
+  PYTEST_IMAGE=""
+  PYTEST_REGIME_MOTIF=""
+  if [ "$PYTEST_REGIME_DEMANDE" = natif ]; then
+    PYTEST_REGIME=natif
+    return 0
+  fi
+  # `docker version` est posé ici et non dans la sonde : celle-ci répond « lequel des deux »,
+  # celui-ci « et est-ce que ça marche ». En régime EXIGÉ la sonde ne demande rien, donc la
+  # question doit être posée une fois, ici, pour les deux cas.
+  if ! docker_repond; then
+    raison="démon Docker injoignable"
+  elif ! image="$(pytest_image)"; then
+    raison="empreinte de l'image incalculable (git ou $PYTEST_DOCKERFILE_REL manquant)"
+  elif ! pytest_image_construit "$image"; then
+    raison="construction de $image en échec — voir le journal"
+  else
+    PYTEST_IMAGE="$image"
+    PYTEST_REGIME=conteneur
+    return 0
+  fi
+  # Régime EXIGÉ : on ne retombe pas sur un régime que personne n'a demandé. C'est ce qui rend
+  # MAESTRO_PYTEST_REGIME=conteneur utilisable en CI ou dans un test, où un repli silencieux ferait
+  # passer « Docker manquait » pour « tout va bien ».
+  if [ "$PYTEST_REGIME_DEMANDE" = conteneur ]; then
+    DETAIL="régime « conteneur » exigé mais indisponible : $raison"
+    return 2
+  fi
+  PYTEST_REGIME=natif
+  PYTEST_REGIME_MOTIF="$raison"
+  return 0
+}
+
+# `-n` est-il jouable ? Dans le conteneur, oui par construction : pytest-xdist vient des `[dev]` de
+# pyproject.toml, que l'image installe. La question ne se pose que pour le venv d'un poste.
+xdist_utilisable() { # <python|"">
+  [ "$PYTEST_REGIME" = conteneur ] && return 0
+  xdist_disponible "$1"
+}
+
 job_pytest() {
-  local exe couverture tests sonde args=() suite nb=0 workers
-  # pytest est lancé par `python -m`, mais c'est bien la présence du SCRIPT CONSOLE qui dit s'il est
-  # installé dans le venv du dépôt : `python -m pytest` sur un venv sans pytest sortirait en 1, donc
-  # en ÉCHEC, là où « outil absent » doit rendre IGNORÉ (même traitement que ruff et mypy).
-  venv_bin pytest >/dev/null || {
-    DETAIL="pytest absent du venv du dépôt — bash scripts/setup.sh --only venv"
-    return 2
-  }
-  exe="$(venv_bin python)" || {
-    DETAIL="python absent du venv du dépôt — bash scripts/setup.sh --only venv"
-    return 2
-  }
-  # Un job qui ne teste pas le code d'ici ne rend NI vert NI rouge : les deux mentiraient. Le rouge
-  # se voit (couverture 0 %) ; le vert, lui, passe inaperçu — un correctif cassé sort vert parce que
-  # le code fautif n'a jamais été chargé. On le dit, et le verdict n'en tient pas compte.
-  sonde="$(sonde_maestro "$exe")"
-  case "$sonde" in
-    ICI) ;;
-    AILLEURS*)
-      DETAIL="couverture et tests non mesurables ici : « import maestro » résout vers ${sonde#AILLEURS } au lieu du dépôt courant (venv partagé, docs/10 §9)"
+  local exe="" couverture tests sonde args=() suite nb=0 workers code
+
+  choisit_regime_pytest || return 2
+
+  # Les contrôles du venv n'ont de sens que pour le régime natif : dans le conteneur, il n'y a ni
+  # venv partagé par jonction, ni installation éditable pointant ailleurs. `import maestro` n'y a
+  # qu'une source possible — le dépôt MONTÉ, désigné par PYTHONPATH — ce qui rend la question de
+  # #194 (« quel paquet maestro est testé ? ») sans objet plutôt que résolue.
+  if [ "$PYTEST_REGIME" = natif ]; then
+    # pytest est lancé par `python -m`, mais c'est bien la présence du SCRIPT CONSOLE qui dit s'il est
+    # installé dans le venv du dépôt : `python -m pytest` sur un venv sans pytest sortirait en 1, donc
+    # en ÉCHEC, là où « outil absent » doit rendre IGNORÉ (même traitement que ruff et mypy).
+    venv_bin pytest >/dev/null || {
+      DETAIL="pytest absent du venv du dépôt — bash scripts/setup.sh --only venv"
       return 2
-      ;;
-    ABSENT*)
-      DETAIL="le paquet maestro ne s'importe pas (${sonde#ABSENT }) — bash scripts/setup.sh --only venv"
+    }
+    exe="$(venv_bin python)" || {
+      DETAIL="python absent du venv du dépôt — bash scripts/setup.sh --only venv"
       return 2
-      ;;
-    *)
-      DETAIL="impossible de vérifier quel paquet maestro serait testé (sonde muette) — le verdict serait sans valeur"
-      return 2
-      ;;
-  esac
+    }
+    # Un job qui ne teste pas le code d'ici ne rend NI vert NI rouge : les deux mentiraient. Le rouge
+    # se voit (couverture 0 %) ; le vert, lui, passe inaperçu — un correctif cassé sort vert parce que
+    # le code fautif n'a jamais été chargé. On le dit, et le verdict n'en tient pas compte.
+    sonde="$(sonde_maestro "$exe")"
+    case "$sonde" in
+      ICI) ;;
+      AILLEURS*)
+        DETAIL="couverture et tests non mesurables ici : « import maestro » résout vers ${sonde#AILLEURS } au lieu du dépôt courant (venv partagé, docs/10 §9)"
+        return 2
+        ;;
+      ABSENT*)
+        DETAIL="le paquet maestro ne s'importe pas (${sonde#ABSENT }) — bash scripts/setup.sh --only venv"
+        return 2
+        ;;
+      *)
+        DETAIL="impossible de vérifier quel paquet maestro serait testé (sonde muette) — le verdict serait sans valeur"
+        return 2
+        ;;
+    esac
+  fi
   # Un seul calcul pour les trois branches qui suivent — il fork (`nproc`), autant ne le faire
   # qu'une fois.
   workers="$(workers_pytest)"
   if [ "$MODE_PYTEST" = complet ]; then
     # Ce que joue la CI, au drapeau de parallélisme près : suite entière, couverture, seuil.
     args=(--cov=maestro "--cov-fail-under=$COUVERTURE_MIN")
-    xdist_disponible "$exe" && args=(-n "$workers" "${args[@]}")
+    xdist_utilisable "$exe" && args=(-n "$workers" "${args[@]}")
     PERIMETRE_MOTIF="--complet"
   else
     calcule_perimetre
     if [ "$PERIMETRE_TOUT" = 1 ]; then
       # Le périmètre couvre tout : autant le dire ainsi et laisser pytest collecter lui-même.
-      xdist_disponible "$exe" && args=(-n "$workers")
+      xdist_utilisable "$exe" && args=(-n "$workers")
     elif [ -z "$PERIMETRE_SUITES" ]; then
       # Rien de testable n'a bougé (prose, front). Ni vert ni rouge : hors périmètre, comme
       # web-build quand apps/web n'a pas changé.
@@ -763,7 +1027,7 @@ job_pytest() {
       PYTEST_JOUE=1
       return 3
     else
-      if [ "$PERIMETRE_OUTILLAGE" = 1 ] && xdist_disponible "$exe"; then args=(-n "$workers"); fi
+      if [ "$PERIMETRE_OUTILLAGE" = 1 ] && xdist_utilisable "$exe"; then args=(-n "$workers"); fi
       while IFS= read -r suite; do
         [ -n "$suite" ] || continue
         args+=("$suite")
@@ -774,14 +1038,18 @@ EOF
       PERIMETRE_REDUIT=1
     fi
   fi
-  # `python -m` et non le script console `pytest` : lui seul ajoute le répertoire courant à
-  # `sys.path` (le script console, lui, y met le dossier du script — #194). Sans ça, dans un
-  # worktree, les tests s'exécutent contre le `maestro/` du clone principal pendant que
-  # `--cov=maestro` instrumente celui d'ici — d'où une couverture à 0 %, et surtout un verdict qui
-  # ne porte pas sur la branche qu'on s'apprête à pousser.
   PYTEST_JOUE=1
-  execute "$exe" -m pytest "${args[@]}"
-  local code=$?
+  if [ "$PYTEST_REGIME" = conteneur ]; then
+    pytest_conteneur "$PYTEST_IMAGE" "${args[@]}"
+  else
+    # `python -m` et non le script console `pytest` : lui seul ajoute le répertoire courant à
+    # `sys.path` (le script console, lui, y met le dossier du script — #194). Sans ça, dans un
+    # worktree, les tests s'exécutent contre le `maestro/` du clone principal pendant que
+    # `--cov=maestro` instrumente celui d'ici — d'où une couverture à 0 %, et surtout un verdict qui
+    # ne porte pas sur la branche qu'on s'apprête à pousser.
+    execute "$exe" -m pytest "${args[@]}"
+  fi
+  code=$?
   couverture="$(grep -E '^TOTAL' "$JOURNAL" 2>/dev/null | tail -1 | awk '{print $NF}')"
   tests="$(grep -oE '[0-9]+ (passed|failed|error)[^=]*' "$JOURNAL" 2>/dev/null | tail -1 | sed 's/[[:space:]]*$//')"
   DETAIL="${tests:-$(derniere_ligne)}${couverture:+ — couverture $couverture (seuil $COUVERTURE_MIN %)}"
@@ -792,6 +1060,14 @@ EOF
   fi
   if [ "$XDIST_ABSENT" = 1 ]; then
     DETAIL="$DETAIL — en série (pytest-xdist absent du venv)"
+  fi
+  # OÙ le job a joué, toujours, dans les deux sens. Le régime natif n'est pas une note de bas de
+  # page : c'est celui qui ne voit pas ce que la CI verra (docs/10 §8.7), et il est dix à trente
+  # fois plus lent. Le taire ferait passer un vert partiel pour le vert complet.
+  if [ "$PYTEST_REGIME" = conteneur ]; then
+    DETAIL="$DETAIL — conteneur Linux"
+  else
+    DETAIL="$DETAIL — NATIF (${PYTEST_REGIME_MOTIF:-régime demandé})"
   fi
   [ "$code" -eq 0 ] || return 1
   return 0
@@ -1023,6 +1299,19 @@ if [ "$MODE_PYTEST" != complet ] && [ "$PYTEST_JOUE" = 1 ]; then
   else
     printf '%sCouverture non vérifiée%s — le seuil de %s %% est appliqué en « --complet » et en CI.\n\n' \
       "$C_Y" "$C_0" "$COUVERTURE_MIN"
+  fi
+fi
+# OÙ pytest a joué (#372) — dit AVANT le verdict, au même titre que le périmètre réduit, et pour la
+# même raison : c'est une limite de ce que ce vert-là couvre, pas un détail d'exécution. Le régime
+# natif ne voit rien des écarts Windows/Linux que la CI verra (docs/10 §8.7) — 16 rouges d'un coup
+# au premier runner Linux muni de git, #332 —, et il coûte dix à trente fois plus cher.
+if [ "$PYTEST_JOUE" = 1 ] && [ "$PYTEST_REGIME" = natif ]; then
+  if [ -n "$PYTEST_REGIME_MOTIF" ]; then
+    printf '%spytest a joué en NATIF%s — %s.\n' "$C_Y" "$C_0" "$PYTEST_REGIME_MOTIF"
+    printf 'Ce verdict ne porte donc que sur cette plateforme, et il a coûté dix à trente fois le\n'
+    printf 'régime nominal. Démarrer Docker suffit à retrouver les deux (docs/10 §8.4).\n\n'
+  else
+    printf '%spytest a joué en NATIF%s (demandé) — pas de contrôle croisé Windows/Linux.\n\n' "$C_Y" "$C_0"
   fi
 fi
 # Ce que ce clone n'a pas pris du dépôt (#216) : dit ici, jamais installé — c'est la contrepartie du
