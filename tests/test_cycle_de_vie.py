@@ -215,25 +215,6 @@ def mutations(depot: Depot) -> list[str]:
     ]
 
 
-def est_bytecode(fichier: Path) -> bool:
-    """Un `__pycache__` n'est ni un script ni un prompt : rien de ce qu'il porte n'est un USAGE.
-
-    ⚠ ET L'EXCLUSION NE PEUT PAS SE FAIRE SUR LE SUFFIXE, c'est tout l'intérêt de ce helper.
-    Sous Windows, un run `-n 8` laisse derrière lui des ORPHELINS `….pyc.<pid>` : CPython écrit le
-    bytecode sous un nom temporaire puis le renomme, et le renommage échoue quand un autre worker
-    tient déjà le fichier cible. Leur suffixe est alors `.17648`, que `fichier.suffix == ".pyc"`
-    laisse passer — et leur contenu est le bytecode d'un MODULE DE TEST, donc les chaînes mêmes que
-    ces `grep` cherchent (`MAESTRO_CYCLE`, `workflow::en-cours`), y compris celles du module que le
-    test s'exclut à lui-même.
-
-    Symptôme, mesuré le 2026-08-20 (#377) : rouge en local sur tout poste ayant déjà joué la suite
-    en parallèle, vert en CI où le checkout est neuf — et rouge de façon REPRODUCTIBLE, pas
-    transitoire, l'orphelin restant sur le disque. C'est le défaut que `tests/conftest.py` nomme
-    en tête : le verdict de la suite ne doit pas dépendre du poste, ni de ce qu'il a joué avant.
-    """
-    return "__pycache__" in fichier.parts
-
-
 # =================================================================================================
 # Le contrat de surface : le vocabulaire, et lui seul, traverse les supports
 # =================================================================================================
@@ -1032,8 +1013,6 @@ def test_aucun_label_de_cycle_de_vie_ne_subsiste_dans_le_depot() -> None:
         for fichier in dossier.rglob("*"):
             if not fichier.is_file() or fichier.parent.name == "migration":
                 continue
-            if est_bytecode(fichier):
-                continue
             texte = fichier.read_text(encoding="utf-8", errors="replace")
             for numero, ligne in enumerate(texte.splitlines(), start=1):
                 # Le nom du label, pas le mot « workflow » : `.github/workflows`, `labelsWidget` et
@@ -1073,32 +1052,22 @@ def test_aucun_commutateur_ne_choisit_plus_de_support() -> None:
     fautifs = []
     for dossier in (RACINE / "scripts", RACINE / ".claude", RACINE / "tests"):
         for fichier in dossier.rglob("*"):
-            # `est_bytecode` remplace le filtre par suffixe, qui laissait passer les orphelins
-            # `….pyc.<pid>` d'un run parallèle sous Windows — dont le contenu est le bytecode de
-            # CE module, c'est-à-dire les trois formes que les assertions ci-dessus écrivent.
-            if not fichier.is_file() or est_bytecode(fichier) or fichier == Path(__file__):
+            # ⚠ `__pycache__` est écarté par le RÉPERTOIRE et non par le suffixe (#345). Python
+            # écrit son bytecode sous `<nom>.pyc.<pid>` avant de le renommer, et un worker xdist
+            # tué en laisse derrière lui : `suffix` y vaut alors « .2594 », pas « .pyc ». Le
+            # balayage lisait donc le bytecode de CE module — qui contient forcément les littéraux
+            # `MAESTRO_CYCLE` du motif — et rendait un rouge dont la cause n'a rien à voir avec le
+            # dépôt. C'est le seul des trois `grep` de ce fichier qui inclut `tests/`, donc le seul
+            # concerné. Un cache n'est pas une source : l'exclure ne réduit pas la portée.
+            if "__pycache__" in fichier.parts:
+                continue
+            if not fichier.is_file() or fichier.suffix == ".pyc" or fichier == Path(__file__):
                 continue
             texte = fichier.read_text(encoding="utf-8", errors="replace")
             for numero, ligne in enumerate(texte.splitlines(), start=1):
                 if usage.search(ligne):
                     fautifs.append(f"{fichier.relative_to(RACINE)}:{numero} : {ligne.strip()[:90]}")
     assert not fautifs, "commutateur de backend ressuscité :\n" + "\n".join(fautifs)
-
-
-def test_les_deux_balayages_ecartent_le_bytecode_y_compris_ses_orphelins() -> None:
-    """L'exclusion des `__pycache__` est GARDÉE, sans quoi elle retomberait sur le suffixe.
-
-    C'est une correction qui a l'air d'un détail de propreté et n'en est pas une : le filtre
-    d'origine (`fichier.suffix == ".pyc"`) est *presque* juste, et sa forme évidente est
-    exactement celle qui laisse passer l'orphelin. Sans ce test, le premier qui « simplifie »
-    `est_bytecode` en un test de suffixe rendrait les deux `grep` du module rouges sur tout poste
-    Windows ayant déjà joué la suite en `-n 8` — et verts en CI, donc invisibles en revue.
-    """
-    cache = RACINE / "tests" / "__pycache__"
-    assert est_bytecode(cache / "test_cycle_de_vie.cpython-313-pytest-9.1.1.pyc")
-    assert est_bytecode(cache / "test_cycle_de_vie.cpython-313-pytest-9.1.1.pyc.15196")
-    assert not est_bytecode(RACINE / "tests" / "test_cycle_de_vie.py")
-    assert not est_bytecode(RACINE / "scripts" / "gitlab" / "lib.sh")
 
 
 def test_poser_un_etat_ne_touche_a_aucun_label(depot: Depot) -> None:

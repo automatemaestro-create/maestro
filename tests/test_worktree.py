@@ -79,15 +79,26 @@ class Depot:
     code_orphelins: str = "0"
 
     # --- exécution ---
-    def lance(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def lance(
+        self,
+        *args: str,
+        cwd: Path | None = None,
+        environnement: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         """Lance `bash scripts/git/worktree.sh <args>` (depuis le clone principal par défaut)."""
-        return self._bash("scripts/git/worktree.sh", *args, cwd=cwd)
+        return self._bash("scripts/git/worktree.sh", *args, cwd=cwd, surcharges=environnement)
 
     def lib(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         """Lance `bash scripts/gitlab/lib.sh <args>`."""
         return self._bash("scripts/gitlab/lib.sh", *args, cwd=cwd)
 
-    def _bash(self, script: str, *args: str, cwd: Path | None) -> subprocess.CompletedProcess[str]:
+    def _bash(
+        self,
+        script: str,
+        *args: str,
+        cwd: Path | None,
+        surcharges: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         environnement = os.environ.copy()
         # Le profil et les ports viennent parfois de la machine (bloc `env` des réglages Claude
         # Code de ce dépôt-ci) : on repart d'une base neutre.
@@ -136,6 +147,10 @@ class Depot:
             environnement["MAESTRO_FAUX_DERIVE"] = str(self.fauxbin / "derive.tsv")
             environnement["MAESTRO_FAUX_SETUP_CODE"] = self.code_setup
         environnement["PATH"] = os.pathsep.join([str(self.fauxbin), environnement.get("PATH", "")])
+        # Les surcharges du test passent EN DERNIER : elles disent ce que ce test-là veut voir, et
+        # doivent pouvoir reposer une variable que les neutralisations ci-dessus viennent d'ôter
+        # (`CLAUDE_CONFIG_DIR`, notamment, retirée plus haut pour couper les tests du vrai poste).
+        environnement.update(surcharges or {})
         assert BASH is not None
         # Le script est appelé par son chemin DANS le clone principal : c'est lui qui porte les
         # artefacts à partager, quel que soit le répertoire depuis lequel on lance.
@@ -1607,6 +1622,50 @@ def _bucket(depot: Depot, iid: str, slug: str = "essai") -> Path:
     return depot.home / ".claude" / "projects" / nom
 
 
+def _bucket_dossier(depot: Depot, dossier: Path) -> Path:
+    """Le répertoire de projet d'un dossier quelconque — le clone principal, typiquement (#397)."""
+    return depot.home / ".claude" / "projects" / _encode_chemin(dossier)
+
+
+def _pose_fiche(
+    depot: Depot,
+    pid: int,
+    session_id: str,
+    nom: str,
+    dossier: Path | None = None,
+    debut: int = 1_787_000_000_000,
+) -> Path:
+    """Écrit une fiche du registre des sessions — `<config>/sessions/<PID>.json`.
+
+    Reproduit la forme réelle, `nameSource` COMPRIS et placé juste après `name` : c'est la clé qui
+    piège une extraction trop lâche, un motif sur « name » sans son guillemet fermant la ramassant à
+    la place du nom.
+    """
+    dossier_sessions = depot.home / ".claude" / "sessions"
+    dossier_sessions.mkdir(parents=True, exist_ok=True)
+    fiche = dossier_sessions / f"{pid}.json"
+    fiche.write_text(
+        json.dumps(
+            {
+                "pid": pid,
+                "sessionId": session_id,
+                "cwd": str(dossier if dossier is not None else depot.racine),
+                "startedAt": debut,
+                "kind": "interactive",
+                "entrypoint": "claude-vscode",
+                "name": nom,
+                "nameSource": "derived",
+            },
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return fiche
+
+
 def _pose_transcript(
     dossier: Path,
     session_id: str,
@@ -1730,12 +1789,15 @@ def test_sessions_suit_le_dossier_de_worktrees_impose(depot: Depot) -> None:
     )
 
 
-def test_sessions_sans_iid_liste_tous_les_tickets(depot: Depot) -> None:
-    """Sans argument : l'inventaire — c'est par là qu'on entre quand on ne sait plus quel ticket."""
+def test_sessions_tous_liste_tous_les_tickets(depot: Depot) -> None:
+    """`--tous` : l'inventaire — par où l'on entre quand on ne sait plus de quel ticket il s'agit.
+
+    C'était le comportement du verbe SANS argument jusqu'à #397 ; il n'a pas disparu, il se demande.
+    """
     _pose_transcript(_bucket(depot, "152"), "aaaa1111-1111-1111-1111-111111111111", "Un")
     _pose_transcript(_bucket(depot, "207"), "bbbb2222-2222-2222-2222-222222222222", "Deux")
 
-    acheve = depot.lance("sessions")
+    acheve = depot.lance("sessions", "--tous")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "#152" in acheve.stdout
     assert "#207" in acheve.stdout
@@ -1777,6 +1839,178 @@ def test_sessions_est_franc_quand_il_n_y_a_rien(depot: Depot) -> None:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "Aucun historique de session" in acheve.stdout
     assert "cette machine" in acheve.stdout
+
+
+# --- Sessions du dossier courant (#397) ---------------------------------------------------------
+# La dérivation par iid de #385 ne couvre que les worktrees, alors que la question la plus fréquente
+# se pose LÀ OÙ L'ON EST : « je rouvre VS Code dans ce dossier, qu'est-ce que je reprends ? ». Le
+# clone principal, d'où l'on travaille le plus souvent, en était exclu. Ce que ces tests épinglent :
+# le mode par défaut regarde le répertoire courant, le NOM d'onglet vient du registre — la seule
+# source qui le porte, et elle survit à la fermeture de VS Code — et une liste bornée le DIT.
+
+
+def test_sessions_sans_iid_rend_le_dossier_courant(depot: Depot) -> None:
+    """Le cas qui motive le ticket : le clone principal, qu'aucun iid ne désigne."""
+    _pose_transcript(
+        _bucket_dossier(depot, depot.racine), "aaaa1111-1111-1111-1111-111111111111", "Ici"
+    )
+
+    acheve = depot.lance("sessions")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Ici" in acheve.stdout
+    assert "claude --resume aaaa1111-1111-1111-1111-111111111111" in acheve.stdout
+    assert "1 session(s) ici." in acheve.stdout
+
+
+def test_sessions_sans_iid_ignore_les_sessions_des_autres_dossiers(depot: Depot) -> None:
+    """« Ce dossier » veut dire ce dossier : une session de worktree n'est pas reprenable ici.
+
+    Elle est ANNONCÉE — le renvoi vers `--tous` existe pour ça — mais jamais mêlée à la liste, où
+    elle ferait proposer une reprise dans un répertoire qui n'est pas celui de la session.
+    """
+    _pose_transcript(_bucket(depot, "152"), "bbbb2222-2222-2222-2222-222222222222", "Ailleurs")
+
+    acheve = depot.lance("sessions")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Ailleurs" not in acheve.stdout
+    assert "aucune session enregistrée pour ce dossier" in acheve.stdout
+    assert "sessions --tous" in acheve.stdout
+
+
+def test_sessions_nomme_l_onglet_d_apres_le_registre(depot: Depot) -> None:
+    """Le nom de l'onglet ne vit que dans le registre — aucun transcript ne le porte.
+
+    C'est pourtant le repère par lequel on reconnaît la session cherchée : un titre est posé en
+    cours de route, parfois jamais, alors que le nom est celui qu'on a eu sous les yeux.
+    """
+    _pose_transcript(
+        _bucket_dossier(depot, depot.racine), "cccc3333-3333-3333-3333-333333333333", "Un titre"
+    )
+    _pose_fiche(depot, 4242, "cccc3333-3333-3333-3333-333333333333", "maestro-d3")
+
+    acheve = depot.lance("sessions")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "[maestro-d3] Un titre" in acheve.stdout
+
+
+def test_sessions_retient_le_nom_de_la_fiche_la_plus_recente(depot: Depot) -> None:
+    """Une session REPRISE garde son identifiant sous un nouveau PID : trois fiches pour un même id.
+
+    Le nom à rendre est celui de la dernière — c'est le dernier qu'on a vu à l'écran ; prendre le
+    premier fichier venu ferait dépendre le rendu de l'ordre du système de fichiers.
+    """
+    _pose_transcript(
+        _bucket_dossier(depot, depot.racine), "dddd4444-4444-4444-4444-444444444444", "Titre"
+    )
+    _pose_fiche(depot, 111, "dddd4444-4444-4444-4444-444444444444", "ancien-nom", debut=1_000)
+    _pose_fiche(depot, 222, "dddd4444-4444-4444-4444-444444444444", "nom-du-jour", debut=2_000)
+
+    acheve = depot.lance("sessions")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "[nom-du-jour]" in acheve.stdout
+    assert "ancien-nom" not in acheve.stdout
+
+
+def test_sessions_rend_la_session_meme_sans_registre(depot: Depot) -> None:
+    """Le registre enrichit, il ne conditionne pas : sans fiche, la session reste reprenable.
+
+    Un poste peut n'avoir aucun registre (session lancée hors VS Code, fiche ramassée) — le rendu ne
+    doit pas y perdre la seule chose qui compte, l'identifiant de reprise.
+    """
+    _pose_transcript(
+        _bucket_dossier(depot, depot.racine), "eeee5555-5555-5555-5555-555555555555", "Sans fiche"
+    )
+    assert not (depot.home / ".claude" / "sessions").exists()
+
+    acheve = depot.lance("sessions")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "Sans fiche" in acheve.stdout
+    assert "claude --resume eeee5555-5555-5555-5555-555555555555" in acheve.stdout
+    assert "[" not in acheve.stdout
+
+
+def test_sessions_lit_le_registre_de_claude_config_dir(depot: Depot) -> None:
+    """`CLAUDE_CONFIG_DIR` prime sur `HOME` — pour le registre comme pour les transcripts.
+
+    Les deux doivent suivre la MÊME configuration : un registre lu dans `HOME` pendant que les
+    transcripts viennent d'ailleurs rendrait des noms appartenant à une autre installation.
+    """
+    ailleurs = depot.home / "config-a-part"
+    (ailleurs / "projects").mkdir(parents=True)
+    _pose_transcript(
+        ailleurs / "projects" / _encode_chemin(depot.racine),
+        "ffff6666-6666-6666-6666-666666666666",
+        "Config à part",
+    )
+    (ailleurs / "sessions").mkdir()
+    (ailleurs / "sessions" / "9.json").write_text(
+        '{"pid":9,"sessionId":"ffff6666-6666-6666-6666-666666666666",'
+        '"startedAt":1787000000000,"name":"config-a-part","nameSource":"derived"}\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    acheve = depot.lance("sessions", environnement={"CLAUDE_CONFIG_DIR": str(ailleurs)})
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "[config-a-part] Config à part" in acheve.stdout
+
+
+def test_sessions_borne_la_liste_et_annonce_ce_qu_elle_tait(depot: Depot) -> None:
+    """Le clone principal de référence compte 192 transcripts, soit 390 lignes de sortie.
+
+    Tout rendre, c'est reperdre la conversation d'hier dans le flot ; en rendre 10 sans le dire,
+    c'est faire passer une troncature pour un inventaire — et conclure qu'une session n'existe plus.
+    """
+    bucket = _bucket_dossier(depot, depot.racine)
+    for rang in range(12):
+        _pose_transcript(bucket, f"aaaa0000-0000-0000-0000-00000000{rang:04d}", f"Session {rang}")
+
+    acheve = depot.lance("sessions")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert acheve.stdout.count("claude --resume ") == 10
+    assert "12 session(s) ici." in acheve.stdout
+    assert "2 plus anciennes non listées" in acheve.stdout
+
+
+def test_sessions_limite_zero_rend_tout(depot: Depot) -> None:
+    """L'échappatoire qu'annonce la troncature doit exister — et tout rendre, sans rien taire."""
+    bucket = _bucket_dossier(depot, depot.racine)
+    for rang in range(12):
+        _pose_transcript(bucket, f"bbbb0000-0000-0000-0000-00000000{rang:04d}", f"Session {rang}")
+
+    acheve = depot.lance("sessions", "--limite", "0")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert acheve.stdout.count("claude --resume ") == 12
+    assert "plus anciennes non listées" not in acheve.stdout
+
+
+def test_sessions_refuse_une_limite_qui_n_en_est_pas_une(depot: Depot) -> None:
+    """Une limite illisible se dit : repliée en silence sur le défaut, elle tronquerait à tort."""
+    acheve = depot.lance("sessions", "--limite", "beaucoup")
+    assert acheve.returncode == 2
+    assert "--limite attend un nombre" in acheve.stdout + acheve.stderr
+
+
+def test_sessions_refuse_tous_avec_un_iid(depot: Depot) -> None:
+    """Les deux portées s'excluent : en servir une en silence rendrait ce qu'on n'a pas demandé."""
+    acheve = depot.lance("sessions", "--tous", "152")
+    assert acheve.returncode == 2
+    assert "ne se combine pas" in acheve.stdout + acheve.stderr
+
+
+def test_sessions_ne_rend_un_identifiant_qu_une_fois(depot: Depot) -> None:
+    """Une session reprise ailleurs laisse un transcript de MÊME identifiant dans deux répertoires.
+
+    Le rendre deux fois ferait croire à deux conversations, et gonflerait un compte qui sert à
+    décider si l'on a tout vu.
+    """
+    _pose_transcript(_bucket(depot, "152"), "cccc7777-7777-7777-7777-777777777777", "Reprise")
+    _pose_transcript(_bucket(depot, "207"), "cccc7777-7777-7777-7777-777777777777", "Reprise")
+
+    acheve = depot.lance("sessions", "--tous")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert acheve.stdout.count("claude --resume cccc7777-7777-7777-7777-777777777777") == 1
+    assert "1 session(s)." in acheve.stdout
 
 
 def test_gc_nomme_les_sessions_du_worktree_qu_il_retire(depot: Depot) -> None:

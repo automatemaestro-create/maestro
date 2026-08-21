@@ -147,6 +147,13 @@ kv() {
 section() { [ "$format" = "tsv" ] || printf '\n%s%s%s\n' "$C_B" "$1" "$C_0"; }
 note()    { [ "$format" = "tsv" ] || printf '  %s\n' "$1"; }
 echec()   { printf '  %s✗%s %s\n' "$C_R" "$C_0" "$1" >&2; }
+# note_err : une note DEPUIS UNE FONCTION DONT LA SORTIE EST CAPTURÉE. `creer_objet` est appelée en
+# substitution de commande (« $(creer_objet …) »), donc tout ce qu'elle écrit sur stdout part dans
+# la variable de l'appelant — y compris, sans ceci, les trois lignes qui expliquent comment
+# reprendre après un arrêt (#345). L'échec restait visible (`echec` écrit déjà sur stderr) et son
+# mode d'emploi disparaissait : le pire découpage possible, puisque la personne voit le problème
+# sans jamais voir la réponse. Même raison que la ligne de limite d'API dans `gh_ecrire`.
+note_err() { [ "$format" = "tsv" ] || printf '  %s\n' "$1" >&2; }
 
 # duree <secondes> -> « 3 h 00 » / « 45 min ». Sert au rendu humain du temps passé, jamais à un
 # calcul : la valeur en secondes voyage à côté, dans le bloc machine.
@@ -339,9 +346,15 @@ TICKET_AWK="$AWK_LIB$(cat <<'AWK'
     for (k = 1; ; k++) {
       o = objet_n(notes, k); if (o == "") break
       if (index(o, "\"system\":true") > 0) continue
-      u = ""
+      # Même marqueur que pour l'échéance d'un milestone : l'auteur d'une note est vide quand le
+      # compte GitLab a été supprimé, et un champ vide au milieu d'une ligne décale les suivants
+      # à la lecture (`IFS=$'\t' read` fusionne les tabulations). Le corps passerait alors dans la
+      # date, `ncorps` serait vide, et le `[ -n "$ncorps" ] || continue` de l'appelant SAUTERAIT le
+      # commentaire — une perte de donnée silencieuse au milieu d'un import irréversible (#345).
+      u = "-"
       if (match(o, "\"username\":\"[^\"]*\"")) {
         u = substr(o, RSTART, RLENGTH); sub("^\"username\":\"", "", u); sub("\"$", "", u)
+        if (u == "") u = "-"
       }
       printf "N\t%s\t%s\t%s\n", u, champ(o, "createdAt"), span(o, "body")
     }
@@ -369,13 +382,21 @@ END {
 AWK
 )"
 
+# ⚠ UN CHAMP VIDE AU MILIEU D'UNE LIGNE DÉCALE TOUS LES SUIVANTS, et le lecteur ne le voit pas :
+# la tabulation est un caractère « IFS whitespace » pour bash, donc `IFS=$'\t' read` fusionne deux
+# tabulations consécutives en un seul séparateur. Un milestone SANS échéance faisait ainsi lire sa
+# DESCRIPTION comme titre et son TITRE comme échéance — donc un milestone créé sous le mauvais nom,
+# une `due_on` absurde, et une jointure ticket → milestone qui ne retrouve plus rien (#345). Le
+# champ optionnel voyage donc avec un marqueur, comme dans le journal (`journalise`, `${3:--}`),
+# que l'appelant retire. Le titre, lui, n'est jamais vide — `t == ""` fait sauter l'objet.
 MILESTONES_AWK="$AWK_LIB$(cat <<'AWK'
 { buf = buf $0 }
 END {
   for (k = 1; ; k++) {
     o = objet_n(dedans(buf), k); if (o == "") break
     t = span(o, "title"); if (t == "") continue
-    printf "%s\t%s\t%s\t%s\t%s\n", nombre(o, "iid"), champ(o, "state"), champ(o, "due_date"), t, span(o, "description")
+    d = champ(o, "due_date"); if (d == "") d = "-"
+    printf "%s\t%s\t%s\t%s\t%s\n", nombre(o, "iid"), champ(o, "state"), d, t, span(o, "description")
   }
 }
 AWK
@@ -649,8 +670,13 @@ verifier_prerequis() {
   #     irréversible.
   # Ce qui compte est que ça se sache : le compter ici, c'est refuser de le découvrir après coup.
   if [ -s "$SOURCE/mojibake-source.txt" ]; then
+    # `grep -c` IMPRIME son compte puis sort en 1 quand ce compte est zéro : le repli
+    # `|| printf '0'` ajoutait donc un second « 0 » à celui que grep venait d'écrire, et le
+    # `[ "$n_moji" -gt 0 ]` suivant partait en « integer expression expected » sur stderr —
+    # exactement dans le cas nominal, celui d'un export sans mojibake (#345).
     local n_moji
-    n_moji="$(LC_ALL=C grep -cv '^#' "$SOURCE/mojibake-source.txt" 2>/dev/null || printf '0')"
+    n_moji="$(LC_ALL=C grep -cv '^#' "$SOURCE/mojibake-source.txt" 2>/dev/null)"
+    [ -n "$n_moji" ] || n_moji=0
     [ "$n_moji" -gt 0 ] && kv "mojibake déjà dans GitLab" "$n_moji ticket(s), importés TELS QUELS (décision #340)"
   fi
 
@@ -839,6 +865,7 @@ importer_milestones() {
   while IFS=$'\t' read -r iid etat echeance titre desc; do
     [ -n "$titre" ] || continue
     if fait "milestone" "$titre"; then deja=$((deja + 1)); continue; fi
+    [ "$echeance" = "-" ] && echeance=""      # marqueur de champ vide, cf. MILESTONES_AWK
     # GitLab rend une DATE (2026-08-05), GitHub attend un instant. Midi UTC plutôt que minuit :
     # l'affichage se fait dans le fuseau du lecteur, et minuit bascule d'un jour dès qu'on est à
     # l'ouest — la date rendue ne serait pas celle du milestone.
@@ -891,10 +918,10 @@ creer_objet() {
   # une reprise d'une ligne pour une avarie irréparable. C'est exactement ce qui est arrivé sur #183.
   if [ "$avant" -eq "$attendu" ]; then
     echec "#$attendu existe déjà côté GitHub alors que le journal l'ignore."
-    note "l'arrêt précédent est tombé ENTRE le POST et sa ligne de journal : rien n'est décalé."
-    note "vérifier les octets : bash scripts/migration/import-github.sh --payload $attendu"
-    note "puis reprendre en ajoutant sa ligne au journal :"
-    note "  printf 'issue\\t%s\\t%s\\t%s\\n' $attendu $attendu https://github.com/$DEPOT/issues/$attendu >> ${JOURNAL#"$racine/"}"
+    note_err "l'arrêt précédent est tombé ENTRE le POST et sa ligne de journal : rien n'est décalé."
+    note_err "vérifier les octets : bash scripts/migration/import-github.sh --payload $attendu"
+    note_err "puis reprendre en ajoutant sa ligne au journal :"
+    note_err "  printf 'issue\\t%s\\t%s\\t%s\\n' $attendu $attendu https://github.com/$DEPOT/issues/$attendu >> ${JOURNAL#"$racine/"}"
     return 4
   fi
   if [ "$avant" -ne $((attendu - 1)) ]; then
@@ -1066,6 +1093,9 @@ importer_ticket() {
     local n_notes=0 rang=0 nauteur ndate ncorps entete
     while IFS=$'\t' read -r _ nauteur ndate ncorps; do
       [ -n "$ncorps" ] || continue
+      # Marqueur de champ vide (cf. TICKET_AWK) : le compte GitLab a été supprimé. On le dit
+      # plutôt que d'écrire « @ » suivi de rien, qui se lirait comme une coquille.
+      [ "$nauteur" = "-" ] && nauteur="compte supprimé"
       rang=$((rang + 1))
       if fait "note" "$iid/$rang"; then n_notes=$((n_notes + 1)); continue; fi
       # L'API attribue tout commentaire au porteur du jeton : l'auteur d'origine ne survit que si on
@@ -1094,8 +1124,17 @@ importer_ticket() {
       # « Abandonné » et « Doublon » ne sont pas des tickets réalisés : GitHub sait les distinguer
       # par state_reason, et c'est la seule nuance du cycle de vie qu'il porte nativement. Le reste
       # (« Terminé », « En revue »…) reste dans les labels workflow::, transposés tels quels.
+      # Le test se fait en awk et NON en `grep -E`, où « \t » ne désigne pas une tabulation : les
+      # expressions rationnelles étendues ne connaissent pas cet échappement, et `^B\tworkflow::…`
+      # y matche le littéral « Btworkflow::… ». Le motif ne pouvait donc jamais tomber juste, et
+      # tous les tickets fermés — abandonnés et doublons compris — partaient en « completed »,
+      # c'est-à-dire en travail réalisé (#345). Défaut silencieux par construction : la fermeture
+      # réussissait, seul son motif était faux. Même idiome que `fait` et `valeur_journal`, qui
+      # comparent des colonnes plutôt que des motifs.
       local raison="completed"
-      if LC_ALL=C grep -qE '^B\t(workflow::abandonne|workflow::doublon)$' "$t/flux.tsv"; then
+      if LC_ALL=C awk -F '\t' '
+           $1 == "B" && ($2 == "workflow::abandonne" || $2 == "workflow::doublon") { trouve = 1 }
+           END { exit !trouve }' "$t/flux.tsv"; then
         raison="not_planned"
       fi
       printf '{"state":"closed","state_reason":"%s"}' "$raison" > "$payload"

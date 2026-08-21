@@ -144,6 +144,34 @@ ARBORESCENCE = {
     ),
     "tests/test_outillage.py": '"""Pilote scripts/gitlab/lib.sh dans un dépôt jetable."""\n',
     "scripts/gitlab/lib.sh": "#!/usr/bin/env bash\necho lib\n",
+    # Le piège de #372, reproduit à l'identique. Cette suite-ci pilote `worktree.sh` — c'est donc
+    # une suite d'outillage, et elle DOIT être jouée quand `worktree.sh` bouge. Mais elle contient
+    # aussi `hashlib.sha256`, dont `lib.sh` est un SUFFIXE : un matcher par sous-chaîne la tirait
+    # dans le périmètre de tout diff touchant `scripts/gitlab/lib.sh`, c'est-à-dire le diff le plus
+    # courant du dépôt. Dans le vrai dépôt, c'était `tests/test_setup.py` — 2 min 08 s payées pour
+    # un mot.
+    #
+    # L'appât ne peut PAS être `scripts/setup.sh`, si tentant que soit le rappel du vrai cas :
+    # `test_le_filet_tourne_sans_sonde_de_derive` vérifie plus bas que ce fichier-là est ABSENT du
+    # dépôt jetable — c'est ainsi qu'il éteint la sonde de dérive de #216. Un appât qui le pose
+    # rend ce test-là rouge, pour une raison sans aucun rapport avec ce qu'il garde.
+    "tests/test_empreinte.py": (
+        '"""Pilote scripts/git/worktree.sh dans un dépôt jetable."""\n'
+        "import hashlib\n\n\n"
+        "def empreinte(chemin) -> str:\n"
+        "    return hashlib.sha256(chemin.read_bytes()).hexdigest()\n"
+    ),
+    "scripts/git/worktree.sh": "#!/usr/bin/env bash\necho worktree\n",
+    # Le pendant du piège précédent, côté REPLI PAR DOSSIER. Cette suite ne porte `gitlab` qu'au
+    # milieu d'un mot — comme `tests/test_secrets.py` dans le vrai dépôt. Elle NE doit PAS être
+    # sélectionnée quand un fichier de `scripts/gitlab/` que personne ne nomme change : depuis
+    # #375 le repli cherche le chemin `scripts/gitlab/`, pas le nom nu `gitlab`. L'appât a été
+    # posé par #372 pour l'invariant inverse, du temps du nom nu — voir le test qui s'en sert.
+    "tests/test_secrets.py": (
+        '"""Les secrets ne fuient pas."""\n\n\n'
+        "def test_un_etage_lint_rouge_arrete_le_pipeline_comme_gitlab() -> None:\n"
+        "    pass\n"
+    ),
     # Les deux scripts que PERSONNE ne nomme — l'un dans un dossier imbriqué dont le nom nu est un
     # mot courant, l'autre à la racine de `scripts/`, dont le chemin est une sous-chaîne de tout
     # `scripts/gitlab/lib.sh` cité quelque part. Les cinq scripts arrivés avec la migration GitHub
@@ -162,6 +190,11 @@ ARBORESCENCE = {
     # raisons, et ces tests ne prouveraient plus rien.
     ".gitignore": ".venv/\n.tools/\nnode_modules/\n",
 }
+
+#: Le `pyproject.toml` du dépôt jetable. Son CONTENU n'a aucune importance — seule compte sa
+#: présence, l'étiquette de l'image du régime conteneur étant l'empreinte de ce fichier et du
+#: Dockerfile (#372). Il est volontairement minuscule : ce n'est pas un pyproject qu'on teste.
+PYPROJECT = '[project]\nname = "jetable"\nversion = "0.0.0"\n'
 
 #: Le nom nu du dossier de `scripts/migration/inventaire.sh`, et le mot semé dans la prose de
 #: `tests/test_horloge.py`. Les deux emplois se lisent d'ici : le jour où l'un des deux change,
@@ -198,10 +231,21 @@ exit "${MAESTRO_FAUX_SHELLCHECK_CODE:-0}"
 # l'invariant qui rend le découpage par fichier payant plutôt que ruineux (~2 s par conteneur).
 # Les sauts de ligne de la boucle sont aplatis : le journal se relit LIGNE PAR LIGNE, et un appel
 # qui s'y étale sur cinq lignes ne serait plus reconnaissable comme un seul `docker run`.
+#
+# Depuis #372 il sert AUSSI le régime conteneur du job pytest, qui lui pose trois questions de plus
+# — `version` (le démon répond-il ?), `image inspect` (l'image est-elle là ?) et `build`. Chacune a
+# son propre code de retour, et TOUS valent 0 par défaut : les tests du repli shellcheck écrits
+# avant ce ticket continuent de voir le docker complaisant qu'ils attendent.
 SHIM_DOCKER = """\
 #!/usr/bin/env bash
 printf 'docker %s\\n' "${*//$'\\n'/ }" >> "$MAESTRO_FAUX_JOURNAL"
-[ "$1" = run ] || exit 0
+case "$1" in
+  version) exit "${MAESTRO_FAUX_DOCKER_VERSION_CODE:-0}" ;;
+  build) exit "${MAESTRO_FAUX_DOCKER_BUILD_CODE:-0}" ;;
+  image) exit "${MAESTRO_FAUX_DOCKER_INSPECT_CODE:-0}" ;;
+  run) ;;
+  *) exit 0 ;;
+esac
 printf '%b' "${MAESTRO_FAUX_DOCKER_SORTIE:-}"
 exit "${MAESTRO_FAUX_DOCKER_CODE:-0}"
 """
@@ -255,6 +299,24 @@ class Clone:
             self.pose_outil_venv(outil)
         self.pose_outil_venv("python", corps=SHIM_PYTHON)
         self.pose_node()
+
+    def equipe_conteneur(self) -> None:
+        """Le régime conteneur de #372 : un docker qui joue le jeu, et de quoi étiqueter l'image.
+
+        Les deux fichiers sont COMMITÉS PUIS POUSSÉS, pas seulement écrits : `pyproject.toml` est
+        un fichier transverse au sens du périmètre (#214), donc le laisser en travail non commité
+        ramènerait chaque test d'ici à la suite entière — les assertions sur les suites choisies ne
+        diraient plus rien de la règle qu'elles croient épingler.
+        """
+        self.pose_shim("docker", corps=SHIM_DOCKER)
+        (self.racine / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8", newline="\n")
+        shutil.copy2(
+            RACINE / "scripts" / "ci" / "pytest.Dockerfile",
+            self.racine / "scripts" / "ci" / "pytest.Dockerfile",
+        )
+        self.git("add", "-A")
+        self.git("commit", "--quiet", "-m", "chore: régime conteneur")
+        self.git("push", "--quiet", "origin", "main")
 
     # --- exécution ---
     def lance(self, *args: str, **reglages: str) -> subprocess.CompletedProcess[str]:
@@ -389,6 +451,16 @@ def clone(tmp_path: Path) -> Clone:
 
     clone = Clone(racine=racine, fauxbin=fauxbin, journal=tmp_path / "outils.log", tmp=tmp)
     # `docker` est systématiquement neutralisé : aucun test ne doit toucher au Docker du poste.
+    #
+    # C'est devenu le garde-fou CENTRAL de ce fichier avec #372 : le job pytest joue désormais dans
+    # un conteneur Linux dès que le démon répond — ce qui est le cas sur le poste comme sur les
+    # runners GitHub. Sans ce shim, chaque test d'ici monterait un vrai conteneur sur son dépôt
+    # jetable : lent, et surtout FAUX — les shims du PATH ne franchissent pas la frontière du
+    # conteneur, donc plus aucune des décisions observées ici ne le serait. Un `docker` qui refuse
+    # tout renvoie le filet au régime natif, celui que la quasi-totalité de ces tests épinglent.
+    # Les tests du régime conteneur, eux, remplacent ce shim par SHIM_DOCKER (bloc « Où pytest
+    # joue »). Ne pas doubler ce mécanisme par un MAESTRO_PYTEST_REGIME posé dans `lance()` : deux
+    # verrous pour une porte, c'est un verrou qu'on oubliera de tourner.
     clone.pose_shim("docker", corps="#!/usr/bin/env bash\nexit 1\n")
     return clone
 
@@ -616,6 +688,66 @@ def test_une_modification_de_script_ne_joue_que_les_suites_qui_le_nomment(clone:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
     assert "lib.sh" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_un_nom_de_fichier_ne_matche_pas_au_milieu_d_un_mot(clone: Clone) -> None:
+    """`lib.sh` ne doit pas matcher le `hashlib.sha256` d'une suite qui parle d'autre chose (#372).
+
+    Ce n'était pas une curiosité : dans le vrai dépôt, `tests/test_setup.py` rejoignait ainsi le
+    périmètre de TOUT diff touchant `scripts/gitlab/lib.sh` — le plus courant du dépôt — pour
+    2 min 08 s à chaque lancement du filet, sur un mot qui ne nomme aucun script.
+    """
+    clone.equipe_tout()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
+
+
+def test_l_ancrage_ne_fait_perdre_aucune_suite_qui_nomme_vraiment_le_script(clone: Clone) -> None:
+    """L'autre moitié du test précédent, et la seule qui puisse rendre un faux vert.
+
+    Ancrer le nom, c'est risquer de ne plus voir une suite qui cite bel et bien le script. La même
+    suite-appât sert donc de témoin : elle pilote `worktree.sh`, et un diff sur `worktree.sh` doit
+    la jouer.
+    """
+    clone.equipe_tout()
+    clone.modifie("scripts/git/worktree.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert suites_jouees(clone.appels()) == ["tests/test_empreinte.py"]
+    assert "worktree.sh" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_le_repli_par_dossier_ignore_le_nom_au_milieu_d_un_mot(clone: Clone) -> None:
+    """Le repli par dossier est exact MÊME QUAND il trouve quelque chose (#372 réconcilié à #375).
+
+    Ce test-ci a changé de sens en cours de route, et c'est le fait notable. #372 le tenait pour
+    le témoin de la souplesse du repli : celui-ci cherchait alors le nom NU du dossier, donc
+    `gitlab`, donc `tests/test_secrets.py` qui ne le porte qu'au milieu de `…_comme_gitlab`, et
+    l'ancrer aurait perdu cette suite. #375 a depuis remplacé le nom nu par le CHEMIN avec son
+    séparateur (`scripts/gitlab/`), ce qui rend cette sélection-là non seulement perdue mais
+    INDÉSIRABLE : la suite ne teste rien de `scripts/gitlab/`, elle parle d'un pipeline.
+
+    Les tests de #375 couvrent le cas où le repli ne trouve RIEN et élargit donc à toute la suite
+    (`scripts/migration/inventaire.sh`, `scripts/orphelin.sh`). Celui-ci couvre l'autre moitié,
+    la seule qui puisse encore sur-sélectionner en silence : le repli trouve une suite légitime —
+    `tests/test_outillage.py` cite `scripts/gitlab/lib.sh` — et ne doit pas ramasser la voisine
+    au passage.
+
+    L'appât reste donc dans l'arborescence, sur l'invariant inverse de celui pour lequel il y a
+    été posé.
+    """
+    clone.equipe_tout()
+    clone.modifie("scripts/gitlab/inconnu.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    # L'appât existe bien, et porte `gitlab` sans le chemin : sans ce contrôle, un jour où la
+    # suite-appât aurait perdu son mot, l'assertion ci-dessous passerait sans rien prouver.
+    appat = (clone.racine / "tests" / "test_secrets.py").read_text(encoding="utf-8")
+    assert "gitlab" in appat and "scripts/gitlab/" not in appat
+    assert suites_jouees(clone.appels()) == ["tests/test_outillage.py"]
+    assert "gitlab/" in ligne_du_job(acheve.stdout, "pytest")
 
 
 def test_un_fichier_transverse_ramene_la_suite_entiere(clone: Clone) -> None:
@@ -848,6 +980,236 @@ def test_list_annonce_le_nombre_de_workers_reellement_passe(clone: Clone) -> Non
         f"`--list` annonce autre chose que les {workers} workers réellement passés :\n"
         f"{annonce.stdout}"
     )
+
+
+# --- OÙ pytest joue (#372) ------------------------------------------------------------------------
+# Le job pytest joue dans un CONTENEUR LINUX, et le régime natif n'est plus qu'un repli. La raison
+# n'est pas la propreté : les suites d'outillage sont faites à 100 % de sous-processus shell, donc
+# leur durée est une fonction du prix d'un fork — ~800 ms sous Windows contre < 1 ms sous Linux.
+# Mesuré dos à dos le 2026-08-21 : tests/test_worktree.py 424 s → 13,5 s (×31), les six suites du
+# périmètre `scripts/**` 14 min 33 → 52,9 s, la suite ENTIÈRE 1 min 51.
+#
+# Le second gain n'est pas de vitesse et c'est le plus important : le filet joue sur l'OS DU
+# VERDICT. #332/#333 ont montré que 285 tests d'outillage n'avaient jamais tourné ailleurs que sous
+# Windows, et que le premier runner Linux muni de git en avait trouvé 16 rouges d'un coup.
+#
+# Ces tests n'ouvrent AUCUN conteneur : c'est SHIM_DOCKER qui répond, et ce sont les DÉCISIONS du
+# script qu'on lit dans son journal — quel régime, quelle image, quel montage, et surtout ce que le
+# verdict en dit.
+
+
+def lancements_conteneur(appels: list[str]) -> list[str]:
+    """Les `docker run` qui ont joué la suite — jamais un `docker build` ni un `image inspect`."""
+    return [appel for appel in appels if appel.startswith("docker run")]
+
+
+def cible_du_montage(lance: str) -> str:
+    """Le chemin DANS LE CONTENEUR où le dépôt est monté (`-v <hôte>:<cible>`)."""
+    trouve = re.search(r" -v \S+?:(/\S*) ", lance)
+    assert trouve, f"aucun montage lisible dans : {lance}"
+    return trouve.group(1)
+
+
+def etiquette_image(appels: list[str]) -> str:
+    """L'étiquette passée à `docker build --tag` (l'empreinte de ce dont l'image est faite)."""
+    for appel in appels:
+        trouve = re.search(r"--tag (\S+)", appel)
+        if trouve:
+            return trouve.group(1)
+    raise AssertionError(f"aucun `docker build --tag` dans : {appels}")
+
+
+def test_pytest_joue_dans_le_conteneur_quand_docker_repond(clone: Clone) -> None:
+    """Le régime nominal : un `docker run`, et PAS de `python -m pytest` sur le poste."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    runs = lancements_conteneur(clone.appels())
+    assert len(runs) == 1, f"un seul conteneur attendu, reçu : {runs}"
+    assert not lancements_pytest(clone.appels()), \
+        "le venv du poste ne doit pas jouer la suite quand le conteneur le fait"
+    # Le dépôt est MONTÉ, jamais copié : c'est le code de la branche — travail non commité compris —
+    # qui est testé, exactement ce sur quoi le pipeline se prononcera.
+    montage = cible_du_montage(runs[0])
+    assert f" -w {montage} " in runs[0], "le conteneur doit travailler dans le dépôt monté"
+    assert f"PYTHONPATH={montage}" in runs[0], \
+        "sans PYTHONPATH, `import maestro` n'a plus de source : l'image efface celle du stub"
+    # …et la suite retenue par le périmètre est bien celle qui est jouée.
+    assert "tests/test_outillage.py" in runs[0]
+
+
+def test_le_depot_n_est_jamais_monte_a_la_racine_du_conteneur(clone: Clone) -> None:
+    """Trouvé par les tests, et à ne pas défaire.
+
+    Monté à `/w`, le PARENT du dépôt est `/` : `test_projets.py::test_depot_maestro_refuse` reçoit
+    alors `racine-de-disque` là où il attend `au-dessus-du-depot-maestro`. Un rouge qui ne dit rien
+    du code et tout du point de montage — le genre d'écart qui fait douter du filet lui-même. Il
+    faut donc au moins deux niveaux, pour qu'il existe un « au-dessus » qui ne soit pas la racine.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    clone.lance("--only", "pytest")
+
+    montage = cible_du_montage(lancements_conteneur(clone.appels())[0])
+    segments = [morceau for morceau in montage.split("/") if morceau]
+    assert len(segments) >= 2, (
+        f"le dépôt est monté à {montage!r} : son parent serait la racine du disque, "
+        "et test_depot_maestro_refuse rougirait pour une raison qui n'est pas la sienne"
+    )
+
+
+def test_le_conteneur_joue_n_auto_comme_la_ci(clone: Clone) -> None:
+    """Le plafond de #285 est un fait sur la MÉMOIRE DU POSTE Windows, pas un fait sur pytest.
+
+    Re-mesuré dans le conteneur le 2026-08-21 sur les six suites du périmètre (598 tests) :
+    `-n 4` 177 s · `-n 8` 63 s · `-n 16` 56 s · `-n auto` 46 s, tous VERTS. Sous Windows, `-n 16`
+    faisait pire que `-n 8` (11 min 37) ET rougissait quatre tests de la vue console par saturation.
+    Il n'y a donc rien à plafonner là-bas — et `-n auto` est en prime le drapeau du pipeline, soit
+    un écart de moins entre le filet et le verdict qu'il prédit.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    clone.lance("--only", "pytest")
+
+    lance = lancements_conteneur(clone.appels())[0]
+    assert " -n auto " in f"{lance} ", f"le conteneur doit jouer `-n auto` : {lance}"
+
+    # L'autre moitié de l'invariant, sur le VRAI pipeline : si la CI cessait de jouer `-n auto`,
+    # ce test-ci resterait vert en épinglant un accord qui n'existerait plus.
+    pipeline = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert re.search(r"pytest -n auto", pipeline), \
+        "le filet s'aligne sur `-n auto` : le pipeline doit continuer de le jouer"
+
+
+def test_sans_docker_le_filet_retombe_en_natif_et_le_dit(clone: Clone) -> None:
+    """Le repli existe — mais il est ANNONCÉ, et c'est là tout le sujet.
+
+    Un filet qui retomberait en silence rendrait un vert de quinze minutes en se faisant passer
+    pour un vert d'une minute, et surtout un vert qui n'a pas vu ce que la CI verra. Le régime est
+    donc dit deux fois : sur la ligne du job, et dans un bloc d'avertissement avant le verdict.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--only", "pytest", MAESTRO_FAUX_DOCKER_VERSION_CODE="1")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not lancements_conteneur(clone.appels()), "aucun conteneur sans démon Docker"
+    assert lancements_pytest(clone.appels()), "le repli doit bel et bien jouer la suite"
+    assert "NATIF" in ligne_du_job(acheve.stdout, "pytest")
+    assert "Docker" in acheve.stdout, "le repli doit nommer sa cause avant le verdict"
+
+
+def test_le_regime_conteneur_exige_echoue_au_lieu_de_retomber(clone: Clone) -> None:
+    """`--conteneur` est une exigence, pas une préférence : sans Docker, le job est IGNORÉ.
+
+    C'est ce qui le rend utilisable là où un repli silencieux ferait passer « Docker manquait »
+    pour « tout va bien » — un pipeline, un test, un run autonome que personne ne regarde.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance("--conteneur", "--only", "pytest", MAESTRO_FAUX_DOCKER_VERSION_CODE="1")
+
+    ligne = ligne_du_job(acheve.stdout, "pytest")
+    assert "IGNORÉ" in ligne, f"attendu IGNORÉ, reçu : {ligne}"
+    assert not lancements_pytest(clone.appels()), \
+        "un régime exigé ne doit pas retomber en silence sur celui qu'on n'a pas demandé"
+    assert acheve.returncode == 0                       # ignoré ≠ rouge, comme tout outil absent
+    assert clone.lance(
+        "--conteneur", "--strict", "--only", "pytest", MAESTRO_FAUX_DOCKER_VERSION_CODE="1"
+    ).returncode == 1                                    # …mais bloquant sous --strict
+
+
+def test_l_image_est_construite_quand_elle_manque_et_pas_sinon(clone: Clone) -> None:
+    """La seule chose que ce filet fabrique — et il ne la refabrique pas à chaque lancement."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+
+    absente = clone.lance("--only", "pytest", MAESTRO_FAUX_DOCKER_INSPECT_CODE="1")
+    assert absente.returncode == 0, absente.stdout + absente.stderr
+    assert [appel for appel in clone.appels() if appel.startswith("docker build")], \
+        "une image absente doit être construite"
+    assert "construction" in absente.stdout, \
+        "une construction de plusieurs minutes se dit : muette, elle passe pour un blocage"
+
+    clone.journal.unlink()
+    presente = clone.lance("--only", "pytest")
+    assert presente.returncode == 0, presente.stdout + presente.stderr
+    assert not [appel for appel in clone.appels() if appel.startswith("docker build")], \
+        "une image déjà là ne se reconstruit pas"
+
+
+def test_l_etiquette_de_l_image_suit_pyproject_et_le_dockerfile(clone: Clone) -> None:
+    """L'étiquette EST l'empreinte de ce dont l'image est faite : les dépendances et la recette.
+
+    Sans ça, une dépendance ajoutée au dépôt laisserait tourner l'image d'hier — un vert rendu sur
+    un environnement que personne n'a plus. Ici, l'image manque, donc elle est reconstruite, et
+    personne n'a à s'en souvenir.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+
+    def etiquette(**reglages: str) -> str:
+        clone.journal.unlink(missing_ok=True)
+        clone.lance("--only", "pytest", MAESTRO_FAUX_DOCKER_INSPECT_CODE="1", **reglages)
+        return etiquette_image(clone.appels())
+
+    depart = etiquette()
+    clone.modifie("pyproject.toml", '\n[tool.rien]\nvaleur = "1"\n')
+    apres_dependances = etiquette()
+    clone.modifie("scripts/ci/pytest.Dockerfile", "\n# une couche de plus\n")
+    apres_recette = etiquette()
+
+    assert depart != apres_dependances, "une dépendance qui change doit changer l'image"
+    assert apres_dependances != apres_recette, "une recette qui change doit changer l'image"
+    assert depart.startswith("maestro-pytest:"), depart
+
+
+def test_le_verdict_dit_toujours_dans_quel_regime_pytest_a_joue(clone: Clone) -> None:
+    """Dans les DEUX sens : « conteneur » n'est pas plus tacite que « natif ».
+
+    Le lecteur du résumé n'a aucun autre moyen de le savoir — et c'est ce qui décide de la valeur
+    du vert qu'il lit.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+
+    dedans = clone.lance("--only", "pytest")
+    assert "conteneur" in ligne_du_job(dedans.stdout, "pytest").lower()
+
+    dehors = clone.lance("--natif", "--only", "pytest")
+    assert "NATIF" in ligne_du_job(dehors.stdout, "pytest")
+
+
+def test_le_dockerfile_porte_git_sans_identite_globale() -> None:
+    """Les deux moitiés indissociables de #333, sur le VRAI Dockerfile du dépôt.
+
+    Sept modules d'outillage sont gardés par `skipif(shutil.which("git") is None)` : sans git,
+    l'image sauterait 285 tests en rendant un vert que rien ne distinguerait d'un vert complet.
+    Mais git doit venir de l'IMAGE PLEINE et non d'un `apt-get install` — celui-ci met une
+    dépendance aux miroirs Debian sur le chemin critique (le pipeline de !269 est mort dessus) —,
+    et SANS identité globale, sous peine de remasquer le bug que #332 a trouvé : la fusion de
+    `maestro/projets/application.py` n'échouait que sur les machines sans `~/.gitconfig`.
+    """
+    recette = (RACINE / "scripts" / "ci" / "pytest.Dockerfile").read_text(encoding="utf-8")
+    lignes = [ligne.strip() for ligne in recette.splitlines() if not ligne.strip().startswith("#")]
+    instructions = "\n".join(lignes)
+
+    assert re.search(r"^FROM python:3\.11\s*$", instructions, re.MULTILINE), \
+        "l'image PLEINE porte git ; `-slim` ne l'a pas, et l'installer coûte une panne récurrente"
+    assert not re.search(r"apt-get\s+install[^\n]*\bgit\b", instructions), \
+        "git par apt-get met les miroirs Debian sur le chemin critique de chaque build (#333)"
+    assert not re.search(r"git config\s+--global\s+user\.", instructions), \
+        "une identité git globale remasquerait le bug de production trouvé par #332"
 
 
 # --- Périmètre de web-build -----------------------------------------------------------------------

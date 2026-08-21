@@ -5,3 +5,9 @@
 # Les hooks git n'ont pas d'extension .sh mais sont aussi du bash : même règle LF,
 # sinon le hook installé casse au checkout sous Windows.
 scripts/git/hooks/* text eol=lf
+
+# Même raison pour les Dockerfile (#372) : leurs continuations de ligne (« RUN … \ ») et le shell
+# qui exécute chaque RUN reçoivent le CR avec le reste. Le fichier est écrit sous Windows et lu
+# par un démon Linux — c'est exactement le cas que ce fichier existe pour couvrir.
+*.Dockerfile text eol=lf
+Dockerfile text eol=lf

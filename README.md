@@ -96,8 +96,9 @@ paquet en éditable (`pip install -e ".[dev]"`), copie **`.env.example` vers `.e
 Pull Requests et la CI vivent sur [GitHub](https://github.com/automatemaestro-create/maestro).
 **Docker n'est plus requis** pour une mise en route (#344) : la CI tourne sur les exécutants
 hébergés de la forge, il n'y a plus de runner de projet à monter ni de machine à laisser allumée.
-L'**archive GitLab**, gelée en lecture seule, se relit avec un `glab` installé à la main quand le
-besoin s'en présente ([docs/27 §11](./docs/27-decision-gitlab-vers-github.md)).
+L'**archive GitLab**, gelée en lecture seule, se relit avec le client GitLab installé à la main
+quand le besoin s'en présente — ce n'est plus un prérequis du dépôt, et la recette est en
+[docs/27 §11](./docs/27-decision-gitlab-vers-github.md).
 
 Il est **idempotent** (relancé sur une machine prête, tout ressort en `DÉJÀ FAIT`) et **non
 destructif** : un `.env` existant n'est **jamais** écrasé, et `settings.local.json` est **fusionné
