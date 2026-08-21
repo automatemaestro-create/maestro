@@ -2624,6 +2624,273 @@ gl_mr_conflict() {
   return 3
 }
 
+# --- Le merge, et ses prérequis en un seul endroit (#415, parent #413) --------------------------
+# Depuis #413, le merge n'attend plus un humain — mais il n'attend pas moins de vérifications pour
+# autant. Ce verbe est le SEUL chemin de merge du dépôt : ce qui disparaît est l'attente d'un
+# humain pour vérifier, pas la vérification.
+#
+# ⚠ POURQUOI PAS L'AUTO-MERGE NATIF DE GITHUB. `gh pr merge --auto` ne tient ses promesses que
+# derrière une protection de branche : ce sont les CHECKS REQUIS qui suspendent le merge jusqu'au
+# vert. Or la protection de branche n'existe pas sur un dépôt privé d'un compte Free (§8.8, mesuré
+# le 2026-08-14) et `allow_auto_merge` est à false sur ce dépôt. Activée telle quelle, la
+# fonctionnalité mergerait donc IMMÉDIATEMENT, pipeline rouge compris — exactement le faux verdict
+# que ce chantier existe pour empêcher. Les prérequis sont à notre charge, et ils vivent ici.
+#
+# ⚠ `gh pr merge` RESTE REFUSÉ par la couche permissions et par le hook guard.sh, et ce n'est pas
+# une incohérence : ces deux filets jugent le TEXTE de la commande que la session lance, pas ce
+# qu'un script appelle en interne. Le geste nu reste donc impossible — une session ne peut pas
+# merger à la main, ni par accident — et le geste vérifié passe par ici. L'interdit n'est pas « ne
+# jamais merger », il est « aucun merge non vérifié ».
+#
+# Les quatre prérequis, dans l'ordre où ils sont éprouvés — du plus décisif au plus cher. L'ordre
+# est le contenu de la décision : attendre un pipeline sur une branche qui ne pourra pas être
+# mergée de toute façon, c'est payer une attente pour un verdict sans objet.
+#   1. une PR OUVERTE, non brouillon, qui FERME le ticket ;
+#   2. rien de NON POUSSÉ — merger moins que ce qui existe est une perte silencieuse ;
+#   3. aucun CONFLIT réel avec origin/main ;
+#   4. un pipeline VERT, et vert SUR LA TÊTE DE LA PR.
+#
+# Codes de retour — une cause, un remède. Un booléen ne suffirait pas : c'est sur ce code que le
+# pilote (#419) décide entre « repasser plus tard », « faire réparer » et « laisser à un humain ».
+#   0 = mergé (en --check : mergeable)     4 = pipeline ROUGE          → réparer (/mr-fix)
+#   3 = pipeline pas encore rendu          5 = CONFLIT avec origin/main → résoudre (/mr-fix)
+#       (en cours, absent, ou périmé)      6 = PR absente/fermée/brouillon/sans « Closes »,
+#       → repasser plus tard                   commits non poussés      → geste humain
+#   1 = pré-requis outil manquant          2 = usage
+#
+# À appeler en `bash … merge-mr <iid> || verdict=$?` pour lire le verdict sans interrompre une
+# boucle sous `set -e`.
+GL_MERGE_METHOD="${MAESTRO_MERGE_METHOD:-squash}"
+
+# gh_merge_facts <branche> -> « etat<TAB>pr<TAB>sha<TAB>brouillon<TAB>tickets-fermés(CSV) », en UNE
+# lecture. Trois raisons de ne pas réutiliser gh_mr_brief ici : il ne rend ni le brouillon ni les
+# fermetures, et trois lectures pour une décision qui se prend d'un coup se paient en latence à
+# chaque tour du drain de #419.
+#
+# On demande à GitHub `closingIssuesReferences` plutôt que de chercher « Closes #<iid> » dans le
+# corps : c'est la forge elle-même qui dit quels tickets la PR fermera, donc les trois verbes
+# (`Closes`/`Fixes`/`Resolves`), leurs casses et la forme URL sont couverts sans qu'on ait à les
+# énumérer — et surtout, ce qui est vérifié est exactement ce qui se produira au merge.
+#
+# Parsing : la réponse GraphQL rend les champs dans l'ordre de la requête, donc le premier
+# « number » est celui de la PR ; les fermetures sont isolées par gh_bloc, sans quoi un grep global
+# les confondrait avec lui (même clé, deux objets — c'est précisément le cas pour lequel gh_bloc
+# existe).
+gh_merge_facts() {
+  local branche="$1" raw etat mr sha brouillon fermetures
+  if [ -z "$branche" ]; then echo "usage: gh_merge_facts <branche>" >&2; return 2; fi
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { pullRequests(headRefName: "'"$branche"'", first: 1, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state isDraft headRefOid closingIssuesReferences(first: 20) { nodes { number } } } } } }')" || return 1
+  mr="$(printf '%s' "$raw" | grep -o '"number":[0-9]*' | head -1 | sed 's/.*://')"
+  [ -n "$mr" ] || return 1
+  case "$(printf '%s' "$raw" | grep -o '"state":"[A-Z_]*"' | head -1)" in
+    *MERGED*) etat="merged" ;;
+    *CLOSED*) etat="closed" ;;
+    *OPEN*)   etat="opened" ;;
+    *)        return 1 ;;
+  esac
+  sha="$(printf '%s' "$raw" | grep -o '"headRefOid":"[0-9a-f]*"' | head -1 | sed 's/.*:"//; s/"$//')"
+  case "$(printf '%s' "$raw" | grep -o '"isDraft":[a-z]*' | head -1)" in
+    *true*) brouillon="oui" ;;
+    *)      brouillon="non" ;;
+  esac
+  fermetures="$(printf '%s' "$raw" | gh_bloc closingIssuesReferences \
+                | grep -o '"number":[0-9]*' | sed 's/.*://' | paste -sd, - 2>/dev/null)"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$etat" "$mr" "${sha:--}" "$brouillon" "${fermetures:--}"
+}
+
+# gl_branche_du_ticket <iid> -> la branche SOURCE de la PR ouverte du ticket, rien (code 1) sinon.
+# On part des PR ouvertes et non du nom de branche que `branch-for` recalculerait : ce qu'on merge
+# est une PR, donc sa branche de tête est l'autorité. Un slug qui aurait dérivé du titre du ticket
+# depuis la création de la branche rendrait le calcul faux là où cette lecture reste juste.
+gl_branche_du_ticket() {
+  local iid="$1" branche
+  if [ -z "$iid" ]; then echo "usage: gl_branche_du_ticket <iid>" >&2; return 2; fi
+  branche="$(gl_open_mr_branches | grep -E "^[a-z]+/${iid}(-|$)" | head -1)"
+  [ -n "$branche" ] || return 1
+  printf '%s\n' "$branche"
+}
+
+gl_merge_mr() {
+  local cible="" check=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check) check=1 ;;
+      -h | --help)
+        echo "usage: gl_merge_mr [<iid>|<branche>] [--check]" >&2
+        return 2 ;;
+      -*) echo "gl_merge_mr : option inconnue « $1 »" >&2; return 2 ;;
+      *)
+        if [ -n "$cible" ]; then
+          echo "gl_merge_mr : une seule cible attendue (« $cible », puis « $1 »)." >&2
+          return 2
+        fi
+        cible="$1" ;;
+    esac
+    shift
+  done
+
+  gl_require || return 1
+
+  # --- La cible : un iid, un nom de branche, ou la branche courante ---------------------------
+  local branche iid
+  cible="${cible:-$(git branch --show-current 2>/dev/null)}"
+  if [ -z "$cible" ]; then
+    echo "gl_merge_mr : cible indéterminée (HEAD détachée ?) — préciser un iid ou une branche." >&2
+    return 2
+  fi
+  case "$cible" in
+    *[!0-9]*) branche="$cible" ;;
+    *)
+      if ! branche="$(gl_branche_du_ticket "$cible")"; then
+        printf '✗ #%s : aucune PR ouverte dont la branche porte ce ticket.\n' "$cible" >&2
+        return 6
+      fi ;;
+  esac
+  case "$branche" in
+    main | master)
+      echo "gl_merge_mr : « $branche » n'est pas une branche de ticket." >&2
+      return 2 ;;
+  esac
+  iid="$(gl_branch_iid "$branche")" || iid=""
+
+  # --- Prérequis 1 : une PR ouverte, non brouillon, qui ferme le ticket -----------------------
+  local faits etat mr sha brouillon fermetures
+  if ! faits="$(gh_merge_facts "$branche")"; then
+    printf '✗ %s : aucune PR trouvée pour cette branche.\n' "$branche" >&2
+    return 6
+  fi
+  IFS=$'\t' read -r etat mr sha brouillon fermetures <<< "$faits"
+
+  if [ "$etat" != "opened" ]; then
+    printf '✗ PR #%s (%s) : état « %s » — seule une PR ouverte se merge.\n' "$mr" "$branche" "$etat" >&2
+    return 6
+  fi
+  if [ "$brouillon" = "oui" ]; then
+    # Le brouillon n'est pas levé ici, et c'est délibéré : « Draft » dit « pas fini », et le lever
+    # au passage ferait changer un verbe de merge un état qu'il est censé constater. La commande
+    # qui clôt le ticket (#418) le lève ; ici on le nomme.
+    printf '✗ PR #%s (%s) : brouillon — GitHub refuse de merger un brouillon.\n' "$mr" "$branche" >&2
+    printf '  la passer en prête d'\''abord : gh pr ready %s\n' "$mr" >&2
+    return 6
+  fi
+  if [ -n "$iid" ]; then
+    case ",$fermetures," in
+      *",$iid,"*) ;;
+      *)
+        # Sans cette référence, le merge laisserait le ticket ouvert ET sans état : plus personne
+        # ne le poserait, le workflow `issues: closed` (#377) n'ayant pas d'événement à écouter.
+        printf '✗ PR #%s (%s) : ne ferme pas #%s (tickets fermés : %s).\n' \
+          "$mr" "$branche" "$iid" "$fermetures" >&2
+        printf '  ajouter « Closes #%s » à sa description : bash scripts/gitlab/lib.sh set-mr-description %s <fichier>\n' \
+          "$iid" "$mr" >&2
+        return 6 ;;
+    esac
+  else
+    # Une branche hors convention (`<type>/<iid>-<slug>`) n'est pas forcément illégitime, mais le
+    # contrôle de fermeture n'a plus de cible. On le DIT plutôt que de le sauter en silence : un
+    # contrôle absent qui ne se voit pas est un contrôle dont on croit qu'il a eu lieu.
+    printf '  ⚠ %s : branche sans iid — contrôle « ferme bien son ticket » sauté.\n' "$branche" >&2
+  fi
+
+  # --- Prérequis 2 : rien de non poussé -------------------------------------------------------
+  # Le local EN RETARD n'est pas notre affaire (quelqu'un a poussé depuis). Ce qui bloque est le
+  # local EN AVANCE : des commits que la PR ne porte pas, donc du travail qui disparaîtrait du
+  # merge sans que rien ne le dise.
+  local sha_local="" inverifiable=""
+  if sha_local="$(git rev-parse --verify --quiet "refs/heads/$branche" 2>/dev/null)" && [ -n "$sha_local" ]; then
+    if [ "$sha_local" != "$sha" ]; then
+      GIT_TERMINAL_PROMPT=0 git fetch origin "$branche" >/dev/null 2>&1
+      if ! git cat-file -e "$sha^{commit}" 2>/dev/null; then
+        # Ne pas pouvoir vérifier n'est pas la même chose que vérifier et trouver bon : on le DIT
+        # et on continue — l'inverse bloquerait tout merge sur un poste sans réseau.
+        inverifiable="tête de la PR ($sha) absente du dépôt local — avance locale non vérifiée"
+      elif ! git merge-base --is-ancestor "$sha_local" "$sha" 2>/dev/null; then
+        printf '✗ PR #%s (%s) : la branche locale porte des commits que la PR n'\''a pas.\n' "$mr" "$branche" >&2
+        printf '  local %s, tête de la PR %s — pousser d'\''abord : git push\n' \
+          "${sha_local:0:8}" "${sha:0:8}" >&2
+        return 6
+      fi
+    fi
+  fi
+
+  # --- Prérequis 3 : aucun conflit réel avec origin/main ---------------------------------------
+  # Le verdict vient de `git merge-tree --write-tree` (un merge 3-way réel, en lecture seule) et
+  # jamais des deux sources déjà là, dont aucune ne peut porter la décision : `behind-main` est une
+  # heuristique de fichiers pessimiste, et le champ de mergeabilité de la forge est asynchrone
+  # (§8.3).
+  local conflit=0
+  gl_mr_conflict "$branche" >/dev/null 2>&1 || conflit=$?
+  case "$conflit" in
+    0) ;;
+    3)
+      printf '✗ PR #%s (%s) : en conflit avec origin/main.\n' "$mr" "$branche" >&2
+      gl_mr_conflict "$branche" >&2 || true
+      return 5 ;;
+    *)
+      # Ni propre ni en conflit : histoires sans ancêtre commun, origin/main introuvable… Le dire
+      # « en conflit » enverrait résoudre un merge qui ne peut pas avoir lieu (git rend 128 et non
+      # 1 dans ce cas — les confondre est le piège nommé en §8.3).
+      printf '✗ PR #%s (%s) : mergeabilité impossible à évaluer (mr-conflict a rendu %s).\n' \
+        "$mr" "$branche" "$conflit" >&2
+      return 6 ;;
+  esac
+
+  # --- Prérequis 4 : un pipeline vert, SUR LA TÊTE DE LA PR ------------------------------------
+  local pl id statut sha_run url
+  if ! pl="$(gl_pipeline_latest "$branche" 2>/dev/null)"; then
+    printf '⏳ PR #%s (%s) : aucun pipeline pour cette branche — le run naît après la PR.\n' "$mr" "$branche" >&2
+    return 3
+  fi
+  IFS=$'\t' read -r id statut sha_run url <<< "$pl"
+  if [ "$sha_run" != "$sha" ]; then
+    # Un vert porté par un commit antérieur ne dit RIEN du commit qu'on merge. C'est le cas
+    # nominal juste après un push : le run précédent est terminé, le nouveau n'a pas démarré.
+    printf '⏳ PR #%s (%s) : verdict périmé — run sur %s, tête de la PR %s.\n' \
+      "$mr" "$branche" "${sha_run:0:8}" "${sha:0:8}" >&2
+    return 3
+  fi
+  case "$statut" in
+    success) ;;
+    failed | canceled)
+      printf '✗ PR #%s (%s) : pipeline %s — %s\n' "$mr" "$branche" "$statut" "$url" >&2
+      return 4 ;;
+    *)
+      printf '⏳ PR #%s (%s) : pipeline « %s » — %s\n' "$mr" "$branche" "$statut" "$url" >&2
+      return 3 ;;
+  esac
+
+  # --- Verdict ---------------------------------------------------------------------------------
+  [ -z "$inverifiable" ] || printf '  ⚠ %s\n' "$inverifiable" >&2
+  if [ "$check" -eq 1 ]; then
+    printf '✓ PR #%s (%s) : mergeable — pipeline vert sur %s, aucun conflit, ferme #%s.\n' \
+      "$mr" "$branche" "${sha:0:8}" "${iid:-?}"
+    return 0
+  fi
+
+  # --- Le merge --------------------------------------------------------------------------------
+  # Par l'API REST et non par `gh pr merge`, pour la raison qui vaut déjà à gh_create_pr (l'appel
+  # explicite ne déduit rien du remote git) et pour une seconde qui compte davantage : le champ
+  # `sha` fait ÉCHOUER le merge si la tête a bougé depuis la vérification. Sans lui, une course
+  # entre le dernier contrôle et le merge passerait en silence — et ce serait précisément un merge
+  # non vérifié, c'est-à-dire la seule chose que ce verbe existe pour empêcher.
+  local out code=0
+  out="$(gh api -X PUT "repos/$GL_GH_REPO/pulls/$mr/merge" \
+        -f merge_method="$GL_MERGE_METHOD" -f sha="$sha" 2>&1)" || code=$?
+  if [ "$code" -ne 0 ] || ! printf '%s' "$out" | grep -q '"merged":[[:space:]]*true'; then
+    printf '✗ PR #%s (%s) : le merge a été refusé par GitHub.\n' "$mr" "$branche" >&2
+    printf '%s\n' "$out" | tail -3 >&2
+    return 6
+  fi
+
+  printf '✓ PR #%s mergée (%s, %s) — ferme #%s.\n' "$mr" "$GL_MERGE_METHOD" "${sha:0:8}" "${iid:-?}"
+  # La branche distante part avec le merge (`delete_branch_on_merge`, #384) ; la locale est du
+  # ressort de `cleanup-merged`, qui exige que la forge confirme le merge — ce qui vient d'arriver.
+  # `sync-main` est best-effort et muet en échec, au même titre qu'ailleurs : un run merge désormais
+  # autant de fois qu'il ouvre de PR, et c'est ce qui fait vieillir `main` le plus vite (#205).
+  gl_sync_main >/dev/null 2>&1 || true
+  return 0
+}
+
 # --- Garde-fou de clôture : la session traite-t-elle bien ce ticket ? ----------------------------
 # gl_branch_iid [branche] -> imprime l'iid porté par le NOM de la branche (motif
 # `<type>/<iid>-<slug>`, docs/10 §2), et rien (code 1) si le nom n'en porte pas — `main`, branche
@@ -4617,6 +4884,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     sync-main)      gl_sync_main "$@" ;;
     behind-main)    gl_behind_main "$@" ;;
     mr-conflict)    gl_mr_conflict "$@" ;;
+    merge-mr)       gl_merge_mr "$@" ;;
+    branche-du-ticket) gl_branche_du_ticket "$@" ;;
     branch-iid)     gl_branch_iid "$@" ;;
     close-guard)    gl_close_guard "$@" ;;
     get-description)    gl_get_description "$@" ;;
@@ -4718,6 +4987,14 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                 (--force lève les deux derniers). 0=repris, 3=refusé, 1=échec)" >&2
       echo "    reprises [<iid>]            (la trace : d'où venait chaque ticket repris, et combien de fois)" >&2
       echo "    mr-conflict [branche]       (conflit RÉEL avec origin/main via merge-tree ; 0=propre, 3=conflit)" >&2
+      echo "  Merge (SEUL chemin de merge du dépôt — « gh pr merge » reste refusé, cf. docs/10 §6) :" >&2
+      echo "    merge-mr [<iid>|<branche>] [--check]" >&2
+      echo "                                (merge en $GL_MERGE_METHOD, et SEULEMENT si : PR ouverte non brouillon" >&2
+      echo "                                 qui ferme le ticket, rien de non poussé, aucun conflit, pipeline VERT" >&2
+      echo "                                 SUR LA TÊTE DE LA PR. --check s'arrête au verdict, sans écriture." >&2
+      echo "                                 0=mergé/mergeable, 3=pipeline pas rendu (repasser), 4=pipeline rouge," >&2
+      echo "                                 5=conflit, 6=geste humain requis, 1=outil manquant)" >&2
+      echo "    branche-du-ticket <iid>     (branche source de la PR ouverte du ticket)" >&2
       echo "  Garde-fou de clôture (session ↔ ticket, avant toute écriture de /ticket-finish|ship) :" >&2
       echo "    branch-iid [branche]        (iid porté par le nom de la branche ; rien si hors convention)" >&2
       echo "    close-guard <iid> [branche] (0=cohérent, 3=autre ticket, 4=ticket d'un tiers, 5=branche sans iid, 1=ticket illisible)" >&2
