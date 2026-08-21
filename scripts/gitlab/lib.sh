@@ -411,7 +411,7 @@ gl_set_workflow() {
 #                       des worktrees s'y branche (worktree.sh gc), sur un verdict DÉJÀ rendu. Ce
 #                       mode FAIT CONFIANCE à l'appelant sur le fait que le travail est soldé — il
 #                       ne revérifie pas que le ticket est fermé, `gl_worktree_done` rendant « fini »
-#                       aussi sur une MR mergée dont le ticket est resté ouvert (MR sans `Closes`) ;
+#                       aussi sur une PR mergée dont le ticket est resté ouvert (PR sans `Closes`) ;
 #   • sans argument   : balaie le backlog FERMÉ en UNE lecture (les labels y sont déjà) et répare
 #                       tout ce qui traîne — le verbe explicite, utilisable seul. Périmètre : les
 #                       100 derniers fermés (le `first: 100` de gl_backlog), donc exactement celui
@@ -1051,8 +1051,8 @@ gl_log_time() {
 }
 
 # --- Descriptions : lecture/écriture fidèles aux octets (ticket #141) ------------------------------
-# Relire puis réécrire une description GitLab (cocher la checklist d'un parent, mettre à jour celle
-# d'une MR) est un aller-retour à risque : il a corrompu #111 le 2026-07-22 en y repoussant du
+# Relire puis réécrire une description (cocher la checklist d'un parent, mettre à jour celle
+# d'une PR) est un aller-retour à risque : il a corrompu #111 le 2026-07-22 en y repoussant du
 # mojibake (« â€” » au lieu de « — », « Ã© » au lieu de « é »).
 #
 # La cause n'est PAS glab, qui émet du bon UTF-8 : c'est un consommateur qui re-décode les octets —
@@ -1126,14 +1126,14 @@ gl_set_description() {
   gh_set_description "$@"
 }
 
-# gl_get_mr_description <mr> -> la description de la MR <mr>, en UTF-8 intact, sur stdout.
+# gl_get_mr_description <mr> -> la description de la PR <mr>, en UTF-8 intact, sur stdout.
 gl_get_mr_description() {
   local mr="$1"
   if [ -z "$mr" ]; then echo "usage: gl_get_mr_description <mr>" >&2; return 2; fi
   gh_get_mr_description "$@"
 }
 
-# gl_set_mr_description <mr> <fichier> -> remplace la description de la MR <mr> par le fichier.
+# gl_set_mr_description <mr> <fichier> -> remplace la description de la PR <mr> par le fichier.
 gl_set_mr_description() {
   local mr="$1" fichier="$2"
   if [ -z "$mr" ] || [ -z "$fichier" ]; then echo "usage: gl_set_mr_description <mr> <fichier>" >&2; return 2; fi
@@ -1171,10 +1171,10 @@ gl_roundtrip_description() {
   rm -f "$avant" "$apres"; return 1
 }
 
-# --- Création : MR et notes, depuis un FICHIER (#233) ---------------------------------------------
+# --- Création : PR et notes, depuis un FICHIER (#233) ---------------------------------------------
 # Pourquoi ces helpers existent alors que la création de PR et de commentaire est DÉJÀ autorisée
 # (docs/10-workflow-git.md §7.1) : la couche permissions de Claude Code découpe une commande sur ses
-# SAUTS DE LIGNE et ne sait matcher aucune SUBSTITUTION `$(…)`. Or une description de MR fait par
+# SAUTS DE LIGNE et ne sait matcher aucune SUBSTITUTION `$(…)`. Or une description de PR fait par
 # nature plusieurs lignes. La commande prescrite jusqu'ici par /ticket-finish était donc refusée
 # telle quelle, et ses deux replis naturels l'étaient tout autant — `--description "$(cat f)"`, puis
 # `D="$(cat f)"; gh pr create … "$D"`. 10 refus sur 8 sessions autonomes (#232, cause n°1), et
@@ -1195,16 +1195,16 @@ gl_issue_title() {
   gh_issue_title "$@"
 }
 
-# gl_create_mr <iid> <fichier> [branche] -> ouvre la MR de <branche> (défaut : la branche courante)
+# gl_create_mr <iid> <fichier> [branche] -> ouvre la PR de <branche> (défaut : la branche courante)
 # en DRAFT vers main, le TITRE lu depuis le ticket et la DESCRIPTION lue depuis le fichier. Imprime
-# l'URL de la MR en dernière ligne.
+# l'URL de la PR en dernière ligne.
 # NE POSE AUCUN drapeau de suppression de branche : le `--remove-source-branch` de GitLab n'a pas
 # d'équivalent par PR côté GitHub, où c'est le réglage de dépôt `delete_branch_on_merge` qui s'en
 # charge pour toutes les PR à la fois (docs/10 §6, voir gh_create_pr).
-# IDEMPOTENT : si une MR ouverte existe déjà pour la branche, sa description est mise à jour au lieu
+# IDEMPOTENT : si une PR ouverte existe déjà pour la branche, sa description est mise à jour au lieu
 # d'échouer — /ticket-finish peut donc être rejoué (reprise de session, second passage après un
 # commit de plus) sans que la deuxième passe casse.
-# Ne merge ni ne dé-draft jamais : passer une MR en « prête » reste un geste explicite.
+# Ne merge ni ne dé-draft jamais : passer une PR en « prête » reste un geste explicite.
 gl_create_mr() {
   local iid="$1" fichier="$2" branche="${3:-}" mr titre sortie
   if [ -z "$iid" ] || [ -z "$fichier" ]; then
@@ -1215,15 +1215,15 @@ gl_create_mr() {
   [ -n "$branche" ] || branche="$(git branch --show-current 2>/dev/null)"
   if [ -z "$branche" ]; then echo "gl_create_mr : branche courante indéterminable" >&2; return 1; fi
   case "$branche" in
-    main|master) echo "gl_create_mr : refus d'ouvrir une MR depuis « $branche »" >&2; return 1 ;;
+    main|master) echo "gl_create_mr : refus d'ouvrir une PR depuis « $branche »" >&2; return 1 ;;
   esac
 
-  # Une MR ouverte porte déjà cette branche : on met sa description à jour, on ne recrée pas.
+  # Une PR ouverte porte déjà cette branche : on met sa description à jour, on ne recrée pas.
   # Tout ce bloc — validations, idempotence, refus de partir de main — est COMMUN aux deux forges :
   # seule la création elle-même diffère, et c'est la seule chose qui soit déléguée.
   if mr="$(gl_mr_iid "$branche" 2>/dev/null)" && [ -n "$mr" ]; then
     gl_set_mr_description "$mr" "$fichier" >/dev/null || return 1
-    printf 'MR !%s déjà ouverte pour « %s » — description mise à jour (aucune MR recréée).\n' "$mr" "$branche"
+    printf 'PR #%s déjà ouverte pour « %s » — description mise à jour (aucune PR recréée).\n' "$mr" "$branche"
     gl_mr_url "$mr"
     return 0
   fi
@@ -1233,7 +1233,7 @@ gl_create_mr() {
   gh_create_pr "$iid" "$branche" "$titre" "$fichier"
 }
 
-# gl_mr_url <mr> -> l'URL web de la MR/PR. Les deux forges ne l'écrivent pas pareil
+# gl_mr_url <mr> -> l'URL web de la PR. Les deux forges ne l'écrivent pas pareil
 # (« /-/merge_requests/<n> » contre « /pull/<n> »), et c'est la seule chose qui les sépare ici.
 gl_mr_url() {
   local mr="$1"
@@ -1272,11 +1272,11 @@ gl_host() {
 
 # gl_pipeline_latest <ref> -> dernier pipeline de la branche, en une ligne TSV :
 #   id <TAB> status <TAB> sha <TAB> web_url
-# Cherche d'abord du côté de la MR ouverte de la branche — le cas NORMAL depuis #165, et cet
+# Cherche d'abord du côté de la PR ouverte de la branche — le cas NORMAL depuis #165, et cet
 # endpoint remonte AUSSI les pipelines de branche ou manuels du même sha, donc la même vue que le
 # garde-fou de merge ; puis, à défaut de PR, les runs portant la ref (`main`, branche sans PR,
 # déclenchement manuel `workflow_dispatch`).
-# Code 1 (et message) si aucun pipeline n'existe ni pour la MR, ni pour la ref.
+# Code 1 (et message) si aucun pipeline n'existe ni pour la PR, ni pour la ref.
 gl_pipeline_latest() {
   local ref="$1"
   if [ -z "$ref" ]; then echo "usage: gl_pipeline_latest <ref>" >&2; return 2; fi
@@ -1341,7 +1341,7 @@ gl_pipeline_wait() {
 # la VISIBILITÉ : la file d'attente est affichée en tête de /backlog (gl_review_queue), la plus
 # ancienne d'abord. La pose d'un relecteur (gl_set_reviewer) reste OUTILLÉE mais n'est plus
 # AUTOMATIQUE : depuis #196, /ticket-finish ne l'appelle plus — désigner un relecteur est un geste
-# humain explicite, la file de revue portant seule le signal « cette MR attend quelqu'un ».
+# humain explicite, la file de revue portant seule le signal « cette PR attend quelqu'un ».
 
 # gl_project_humans [access-min] -> membres HUMAINS du projet éligibles à une revue, une ligne TSV
 # par membre : username <TAB> access_level, triés par username (ordre stable, d'où la reproductibilité
@@ -1355,8 +1355,8 @@ gl_project_humans() {
 # gl_pick_reviewer [auteur] [graine] -> imprime le username d'un relecteur humain DIFFÉRENT de
 # l'auteur (défaut : l'utilisateur authentifié). Aucun nom n'est codé en dur : les candidats
 # viennent de l'API des membres (gl_project_humans).
-# La graine (l'iid de la MR en pratique) sert de ROTATION : même MR -> même relecteur (la pose est
-# donc reproductible et idempotente), MR différentes -> relecteurs répartis plutôt que toujours le
+# La graine (l'iid de la PR en pratique) sert de ROTATION : même PR -> même relecteur (la pose est
+# donc reproductible et idempotente), PR différentes -> relecteurs répartis plutôt que toujours le
 # même. Code 1 si aucun candidat (projet à une seule personne) : l'appelant continue sans relecteur,
 # la revue est best-effort.
 gl_pick_reviewer() {
@@ -1375,12 +1375,12 @@ gl_pick_reviewer() {
   printf '%s\n' "$candidats" | sed -n "${idx}p"
 }
 
-# gl_mr_iid [mr|branche] -> imprime l'iid de la MR OUVERTE désignée : un nombre est rendu tel quel,
-# un nom de branche est résolu via l'API (défaut : la branche courante). Code 1 si aucune MR ouverte.
+# gl_mr_iid [mr|branche] -> imprime l'iid de la PR OUVERTE désignée : un nombre est rendu tel quel,
+# un nom de branche est résolu via l'API (défaut : la branche courante). Code 1 si aucune PR ouverte.
 gl_mr_iid() {
   local ref="${1:-}"
   [ -n "$ref" ] || ref="$(git branch --show-current 2>/dev/null)"
-  if [ -z "$ref" ]; then echo "gl_mr_iid : ni MR ni branche à résoudre" >&2; return 2; fi
+  if [ -z "$ref" ]; then echo "gl_mr_iid : ni PR ni branche à résoudre" >&2; return 2; fi
   case "$ref" in
     *[!0-9]*) ;;
     *) printf '%s\n' "$ref"; return 0 ;;
@@ -1396,15 +1396,15 @@ gl_mr_review_info() {
   gh_mr_review_info "$mr"
 }
 
-# gl_mr_reviewers <mr|branche> -> relecteurs actuellement posés sur la MR (CSV, vide si aucun).
+# gl_mr_reviewers <mr|branche> -> relecteurs actuellement posés sur la PR (CSV, vide si aucun).
 gl_mr_reviewers() {
   local info
   info="$(gl_mr_review_info "$@")" || return 1
   printf '%s\n' "$info" | cut -f2
 }
 
-# gl_set_reviewer [mr|branche] [username] -> pose un relecteur humain sur la MR (défaut : la MR
-# ouverte de la branche courante ; relecteur choisi par gl_pick_reviewer, graine = iid de la MR).
+# gl_set_reviewer [mr|branche] [username] -> pose un relecteur humain sur la PR (défaut : la PR
+# ouverte de la branche courante ; relecteur choisi par gl_pick_reviewer, graine = iid de la PR).
 # APPEL EXPLICITE UNIQUEMENT (#196) : aucune commande du workflow ne l'invoque — /ticket-finish ne
 # pose plus de relecteur d'office, la désignation étant un geste humain.
 # IDEMPOTENT et non destructif : si un relecteur est DÉJÀ posé (par un humain ou par un passage
@@ -1417,21 +1417,21 @@ gl_set_reviewer() {
   info="$(gl_mr_review_info "$mr")" || return 1
   IFS=$'\t' read -r auteur rev <<< "$info"
   if [ -n "$rev" ]; then
-    printf 'MR !%s : relecteur déjà posé (@%s) — inchangé.\n' "$mr" "$rev"
+    printf 'PR #%s : relecteur déjà posé (@%s) — inchangé.\n' "$mr" "$rev"
     return 0
   fi
   if [ -z "$who" ]; then
     who="$(gl_pick_reviewer "$auteur" "$mr")" || return 1
   fi
   if [ "$who" = "$auteur" ]; then
-    echo "gl_set_reviewer : @$who est l'auteur de la MR !$mr — le relecteur doit en être distinct." >&2
+    echo "gl_set_reviewer : @$who est l'auteur de la PR #$mr — le relecteur doit en être distinct." >&2
     return 1
   fi
   gh_set_reviewer "$mr" "$who" "$auteur"
 }
 
-# gl_review_queue -> file des MR OUVERTES en attente de revue, la plus ANCIENNE d'abord, une ligne
-# TSV par MR (en-tête préfixée « # » à ignorer côté machine) :
+# gl_review_queue -> file des PR OUVERTES en attente de revue, la plus ANCIENNE d'abord, une ligne
+# TSV par PR (en-tête préfixée « # » à ignorer côté machine) :
 #     mr <TAB> age_j <TAB> etat <TAB> pipeline <TAB> auteur <TAB> relecteur <TAB> branche <TAB> titre
 # `age_j` = jours écoulés depuis la création (c'est l'ancienneté qui déclenche la relecture),
 # `etat` ∈ draft|ready, `pipeline` = statut du dernier pipeline en minuscules (success/failed/
@@ -1442,19 +1442,19 @@ gl_review_queue() {
 }
 
 # --- Nettoyage des branches locales -------------------------------------------------------------
-# gl_mr_brief <branche> -> « etat<TAB>numéro<TAB>sha » de la MR (PR côté GitHub) portant cette
+# gl_mr_brief <branche> -> « etat<TAB>numéro<TAB>sha » de la PR portant cette
 # branche source. Troisième primitive du commutateur de forge (cf. en-tête) : gl_mr_state et
 # gl_worktree_done en descendent tous les deux, donc ni l'un ni l'autre n'a de variante par forge.
 #
 #   etat    opened | closed | merged — le vocabulaire GITLAB, y compris côté GitHub, qui dit
 #           OPEN/CLOSED/MERGED : les comparaisons en dur des appelants (gl_cleanup_merged,
 #           worktree.sh, /branch-cleanup) sont ainsi hors du chantier de la migration.
-#   numéro  l'iid de la MR / le number de la PR, « ? » si illisible.
+#   numéro  le number de la PR, « ? » si illisible.
 #   sha     la tête de la branche source AU MOMENT du merge, « - » hors de ce cas. Le projet merge
 #           en SQUASH : les commits de la branche ne sont pas des ancêtres de main et la branche
 #           distante disparaît au merge, donc c'est la seule référence locale exploitable.
 #
-# Aucune MR : rien sur stdout, code 1 — « pas de MR » n'est pas un échec de lecture, l'appelant
+# Aucune PR : rien sur stdout, code 1 — « pas de PR » n'est pas un échec de lecture, l'appelant
 # décide (gl_cleanup_merged garde la branche, gl_worktree_done interroge le ticket).
 gl_mr_brief() {
   local branche="$1"
@@ -1462,8 +1462,8 @@ gl_mr_brief() {
   gh_mr_brief "$branche"
 }
 
-# gl_open_mr_branches -> la branche SOURCE de chaque MR/PR ouverte, une par ligne (non triées).
-# Répond à « ce ticket "En revue" a-t-il bien une MR ouverte ? » (doctor.sh §4a) en UNE lecture, là
+# gl_open_mr_branches -> la branche SOURCE de chaque PR ouverte, une par ligne (non triées).
+# Répond à « ce ticket "En revue" a-t-il bien une PR ouverte ? » (doctor.sh §4a) en UNE lecture, là
 # où un gl_mr_state par ticket en ferait autant que de tickets en revue.
 #
 # gl_review_queue rend déjà cette colonne, mais elle en rend sept autres — dont l'âge, calculé
@@ -1473,8 +1473,8 @@ gl_open_mr_branches() {
   gh_open_mr_branches
 }
 
-# gl_mr_state <branche> -> imprime l'état de la MR associée à la branche (opened|closed|merged),
-# vide si aucune MR n'est trouvée.
+# gl_mr_state <branche> -> imprime l'état de la PR associée à la branche (opened|closed|merged),
+# vide si aucune PR n'est trouvée.
 gl_mr_state() {
   local branch="$1" brief
   if [ -z "$branch" ]; then echo "gl_mr_state : branche manquante" >&2; return 2; fi
@@ -1483,13 +1483,13 @@ gl_mr_state() {
 }
 
 # gl_cleanup_merged [--auto] -> supprime les branches LOCALES (hors main et hors branche courante)
-# dont GitLab confirme la MR à l'état « merged ». Conçu pour tourner automatiquement (appelé par
+# dont la forge confirme la PR à l'état « merged ». Conçu pour tourner automatiquement (appelé par
 # `worktree.sh ensure`, donc tout /ticket-start) — c'est le pendant non-interactif de
 # /branch-cleanup :
-#   • ne supprime QUE ce que GitLab confirme mergé (garde-fou docs/10 §6) — jamais une branche au
-#     statut incertain (opened/closed/aucune MR) ;
+#   • ne supprime QUE ce que la forge confirme mergé (garde-fou docs/10 §6) — jamais une branche au
+#     statut incertain (opened/closed/aucune PR) ;
 #   • `git branch -D` est sûr ici car le merge est confirmé (le projet merge en squash) ;
-#   • ne change jamais de branche, n'écrit rien sur GitLab, et s'abstient si l'arbre est sale.
+#   • ne change jamais de branche, n'écrit rien côté forge, et s'abstient si l'arbre est sale.
 #
 # Opère sur le CLONE PRINCIPAL d'où qu'on l'appelle (#305) — même parti pris que gl_sync_main et
 # que worktree.sh gc, et pour une raison précise. Les refs, elles, sont partagées par tous les
@@ -1527,7 +1527,7 @@ gl_cleanup_merged() {
     return 0
   fi
   # Pruning cosmétique des refs de suivi ; non bloquant (jamais de prompt d'identifiants) et non
-  # fatal : la décision de suppression s'appuie sur l'état MR côté GitLab, pas sur ce fetch.
+  # fatal : la décision de suppression s'appuie sur l'état de la PR côté forge, pas sur ce fetch.
   GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch --prune origin >/dev/null 2>&1
   local current branch state porteur deleted=0 kept=0 empruntees=0
   current="$(git -C "$principal" branch --show-current 2>/dev/null)"
@@ -1541,15 +1541,15 @@ gl_cleanup_merged() {
       continue
     fi
     if git -C "$principal" branch -D "$branch" >/dev/null 2>&1; then
-      printf '  supprimée : %s (MR merged)\n' "$branch"
+      printf '  supprimée : %s (PR merged)\n' "$branch"
       deleted=$((deleted + 1))
       continue
     fi
     porteur="$(gl_worktree_de_branche "$principal" "$branch")"
     if [ -n "$porteur" ]; then
-      printf '  ⚠ conservée : %s (MR merged, empruntée par le worktree %s)\n' "$branch" "$porteur"
+      printf '  ⚠ conservée : %s (PR merged, empruntée par le worktree %s)\n' "$branch" "$porteur"
     else
-      printf '  ⚠ conservée : %s (MR merged, suppression refusée par git)\n' "$branch"
+      printf '  ⚠ conservée : %s (PR merged, suppression refusée par git)\n' "$branch"
     fi
     empruntees=$((empruntees + 1))
   done < <(git -C "$principal" branch --format='%(refname:short)')
@@ -1568,8 +1568,8 @@ gl_cleanup_merged() {
 # pose le ramassage de scripts/git/worktree.sh (#197) — ce worktree a-t-il encore une raison
 # d'exister ? La réponse vient de GitLab, JAMAIS du nom de la branche (garde-fou docs/10 §6).
 #
-#   fini     MR de la branche MERGÉE, ou ticket FERMÉ (réalisé, abandonné, doublon) ;
-#   actif    travail en cours (ticket ouvert, MR absente ou ouverte) — on n'y touche pas ;
+#   fini     PR de la branche MERGÉE, ou ticket FERMÉ (réalisé, abandonné, doublon) ;
+#   actif    travail en cours (ticket ouvert, PR absente ou ouverte) — on n'y touche pas ;
 #   inconnu  forge illisible (gh absent, hors ligne, ticket introuvable) — on n'y touche pas
 #            non plus, et le code de retour 1 le dit : ne rien savoir n'autorise rien.
 #
@@ -1583,7 +1583,7 @@ gl_cleanup_merged() {
 # BLANC, donc deux tabulations consécutives comptent pour une seule et le champ suivant se décale
 # (le sha atterrirait dans la raison). Même convention que le plan de scripts/orchestrate/run.sh.
 #
-# Une seule lecture dans le cas nominal (MR mergée) ; deux quand il faut départager par le ticket.
+# Une seule lecture dans le cas nominal (PR mergée) ; deux quand il faut départager par le ticket.
 gl_worktree_done() {
   local iid="$1" branche="${2:-}" brief etat="" mr sha raw etat_ticket
   if [ -z "$iid" ]; then echo "usage: gl_worktree_done <iid> [branche]" >&2; return 2; fi
@@ -1597,7 +1597,7 @@ gl_worktree_done() {
     fi
   fi
 
-  # Pas de MR mergée : le ticket tranche. Lecture en TEXTE et non en JSON — la ligne « state: » y est
+  # Pas de PR mergée : le ticket tranche. Lecture en TEXTE et non en JSON — la ligne « state: » y est
   # de premier niveau, là où le JSON d'un ticket imbrique le `state` de son jalon (« closed » sur
   # toute phase soldée), qu'un grep prendrait pour celui du ticket.
   raw="$(gl_issue_raw "$iid" 2>/dev/null)"
@@ -1607,8 +1607,8 @@ gl_worktree_done() {
   fi
   etat_ticket="$(printf '%s\n' "$raw" | sed -n 's/^state:[[:space:]]*//p' | head -1)"
   case "$etat_ticket" in
-    closed) printf 'fini\t-\tticket #%s fermé (MR « %s »)\n' "$iid" "${etat:-aucune}" ;;
-    ''|*)   printf 'actif\t-\tticket #%s « %s » (MR « %s »)\n' "$iid" "${etat_ticket:-?}" "${etat:-aucune}" ;;
+    closed) printf 'fini\t-\tticket #%s fermé (PR « %s »)\n' "$iid" "${etat:-aucune}" ;;
+    ''|*)   printf 'actif\t-\tticket #%s « %s » (PR « %s »)\n' "$iid" "${etat_ticket:-?}" "${etat:-aucune}" ;;
   esac
 }
 
@@ -2548,7 +2548,7 @@ gl_behind_main() {
 
 # --- Conflit réel avec origin/main --------------------------------------------------------------
 # gl_mr_conflict [branche] -> « cette branche se merge-t-elle proprement dans origin/main ? », le
-# verdict RÉEL, à consulter avant de remédier une MR (/mr-fix, docs/10 §8.3). Purement CONSULTATIF
+# verdict RÉEL, à consulter avant de remédier une PR (/mr-fix, docs/10 §8.3). Purement CONSULTATIF
 # et en lecture seule : ni checkout, ni index touché, ni écriture — d'où l'appel possible depuis le
 # clone principal comme depuis un worktree, sur une branche qu'on ne sort jamais.
 #
@@ -2640,7 +2640,7 @@ gl_branch_iid() {
 }
 
 # gl_close_guard <iid> [branche] -> « cette session traite-t-elle vraiment ce ticket ? », à
-# consulter AVANT toute écriture de /ticket-finish et /ticket-ship (commit, push, MR, statut,
+# consulter AVANT toute écriture de /ticket-finish et /ticket-ship (commit, push, PR, statut,
 # temps). C'est le pendant en SORTIE du garde-fou d'entrée de /ticket-start
 # (gl_issue_taken, #159) : rien n'empêchait jusqu'ici un `/ticket-finish 158` lancé depuis
 # `chore/163-…` de faire basculer #158 « En revue » et d'y logger le temps du travail d'un autre,
@@ -2684,7 +2684,7 @@ gl_close_guard() {
     inverifiable=1
   elif [ "$iid_branche" != "$iid" ]; then
     printf "⚠ décalage ticket ↔ branche : « %s » porte le ticket #%s, pas #%s.\n" "$branche" "$iid_branche" "$iid"
-    printf "  clôturer #%s d'ici poserait la MR de #%s sur #%s — statut et temps compris.\n" \
+    printf "  clôturer #%s d'ici poserait la PR de #%s sur #%s — statut et temps compris.\n" \
       "$iid" "$iid_branche" "$iid"
     printf "  cette session peut clôturer #%s ; pour #%s, reprendre sa branche (bash scripts/gitlab/lib.sh branch-for %s).\n" \
       "$iid_branche" "$iid" "$iid"
@@ -2720,7 +2720,7 @@ gl_close_guard() {
   else
     printf "⚠ #%s appartient à quelqu'un d'autre : « %s », assigné à %s (moi : %s).\n" \
       "$iid" "${statut:-statut non posé}" "$assignes" "${moi:-inconnu}"
-    printf "  clôturer à sa place lui pose une MR et un temps qu'il n'a pas demandés.\n"
+    printf "  clôturer à sa place lui pose une PR et un temps qu'il n'a pas demandés.\n"
     tiers=1
   fi
 
@@ -3442,9 +3442,9 @@ gh_set_mr_description() {
   if [ -z "$mr" ] || [ -z "$fichier" ]; then echo "usage: gh_set_mr_description <mr> <fichier>" >&2; return 2; fi
   if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
   if ! gh api -X PATCH "repos/$GL_GH_REPO/pulls/$mr" -F body=@"$fichier" >/dev/null 2>&1; then
-    echo "Échec de la mise à jour de la description de !$mr" >&2; return 1
+    echo "Échec de la mise à jour de la description de #$mr" >&2; return 1
   fi
-  printf 'Description de !%s mise à jour.\n' "$mr"
+  printf 'Description de #%s mise à jour.\n' "$mr"
 }
 
 gh_issue_note() {
@@ -4019,7 +4019,7 @@ gh_mr_review_info() {
   raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { pullRequest(number: '"$mr"') { author { login } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } } } } }')" || return 1
   case "$raw" in
     *'"reviewRequests"'*) ;;
-    *) echo "gh_mr_review_info : PR !$mr illisible dans $GL_GH_REPO" >&2; return 1 ;;
+    *) echo "gh_mr_review_info : PR #$mr illisible dans $GL_GH_REPO" >&2; return 1 ;;
   esac
   auteur="$(printf '%s' "$raw" | grep -o '"author":{"login":"[^"]*"' | head -1 | sed 's/.*"login":"//; s/"$//')"
   # Les relecteurs se lisent APRÈS la clé "reviewRequests" : l'auteur, lu plus haut, ne doit pas y entrer.
@@ -4031,10 +4031,10 @@ gh_mr_review_info() {
 gh_set_reviewer() {
   local mr="$1" who="$2" auteur="$3" out
   out="$(gh api -X POST "repos/$GL_GH_REPO/pulls/$mr/requested_reviewers" -f "reviewers[]=$who" 2>&1)" || {
-    echo "gh_set_reviewer : échec de la pose du relecteur @$who sur !$mr : $out" >&2
+    echo "gh_set_reviewer : échec de la pose du relecteur @$who sur #$mr : $out" >&2
     return 1
   }
-  printf 'MR !%s : relecteur → @%s (auteur @%s).\n' "$mr" "$who" "$auteur"
+  printf 'PR #%s : relecteur → @%s (auteur @%s).\n' "$mr" "$who" "$auteur"
 }
 
 # gh_project_humans [access-min] -> collaborateurs humains éligibles : « username <TAB> niveau ».
@@ -4643,7 +4643,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    depot-courant                  (le dépôt visé, « propriétaire/nom »)" >&2
       echo "  require | current-user | workitem-gid <iid>" >&2
       echo "  issue-raw <iid>                  (vue TEXTE canonique du ticket — la primitive dont six verbes descendent)" >&2
-      echo "  mr-brief <branche>               (etat/numéro/sha de la MR ou PR de la branche)" >&2
+      echo "  mr-brief <branche>               (etat/numéro/sha de la PR de la branche)" >&2
       echo "  Cycle de vie — le champ Status de Projects v2, projet \$MAESTRO_PROJECT_TITRE" >&2
       echo "  (défaut « $GL_PROJET_TITRE ») ; cf. contrat en tête de lib.sh :" >&2
       echo "    set-workflow <iid> <valeur>   (pose la valeur ; refuse si le ticket n'est pas un item du projet)" >&2
@@ -4685,12 +4685,12 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  Descriptions (aller-retour fidèle aux octets — à utiliser au lieu d'improviser une lecture) :" >&2
       echo "    get-description <iid>              (description du ticket, UTF-8 intact, sur stdout)" >&2
       echo "    set-description <iid> <fichier>    (remplace la description du ticket par le fichier)" >&2
-      echo "    get-mr-description <mr>            (idem pour une MR)" >&2
-      echo "    set-mr-description <mr> <fichier>  (idem pour une MR)" >&2
+      echo "    get-mr-description <mr>            (idem pour une PR)" >&2
+      echo "    set-mr-description <mr> <fichier>  (idem pour une PR)" >&2
       echo "    roundtrip-description <iid>        (valide la fidélité : lit/réécrit/relit et compare les octets)" >&2
       echo "  Création depuis un FICHIER (jamais de description multi-ligne ni de \$(cat …) sur la ligne de commande) :" >&2
-      echo "    create-mr <iid> <fichier> [branche]  (MR en Draft vers main, titre du ticket, description du fichier ;" >&2
-      echo "                                         idempotent : met à jour la MR ouverte existante au lieu d'échouer)" >&2
+      echo "    create-mr <iid> <fichier> [branche]  (PR en Draft vers main, titre du ticket, description du fichier ;" >&2
+      echo "                                         idempotent : met à jour la PR ouverte existante au lieu d'échouer)" >&2
       echo "    issue-note <iid> <fichier>          (poste le fichier en commentaire sur le ticket)" >&2
       echo "    issue-title <iid>                   (titre du ticket, UTF-8 intact)" >&2
       echo "  Peuplement du projet Projects v2 (le Status vit sur l'ITEM, pas sur l'issue — #361) :" >&2
@@ -4700,10 +4700,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                 réparation d'un ticket que doctor.sh signale hors projet ou sans état." >&2
       echo "                                 Rejouable sans doublon ; ÉCRASE un Status déjà posé)" >&2
       echo "  Branches :" >&2
-      echo "    cleanup-merged [--auto]     (supprime les branches locales dont la MR est mergée ; --auto = muet si rien)" >&2
+      echo "    cleanup-merged [--auto]     (supprime les branches locales dont la PR est mergée ; --auto = muet si rien)" >&2
       echo "    sync-main [--check]         (avance main du clone principal sur origin/main, fast-forward seul ; 0=à jour/fait, 3=divergent, 4=arbre sale)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
-      echo "    open-mr-branches            (branche source de chaque MR/PR ouverte, une par ligne)" >&2
+      echo "    open-mr-branches            (branche source de chaque PR ouverte, une par ligne)" >&2
       echo "    worktree-done <iid> [branche] (fini|actif|inconnu + sha de merge + raison — fin de vie d'un worktree)" >&2
       echo "    behind-main [branche]       (retard sur origin/main + conflit probable ; 0=à jour, 3=en retard, 4=+conflit)" >&2
       echo "  Tickets « En cours » orphelins (lecture seule — signale, ne répare rien) :" >&2
@@ -4722,12 +4722,12 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    branch-iid [branche]        (iid porté par le nom de la branche ; rien si hors convention)" >&2
       echo "    close-guard <iid> [branche] (0=cohérent, 3=autre ticket, 4=ticket d'un tiers, 5=branche sans iid, 1=ticket illisible)" >&2
       echo "  Revue best-effort (file de revue ; relecteur posé à la main seulement) :" >&2
-      echo "    review-queue                     (MR ouvertes en attente de revue, la plus ancienne d'abord — TSV)" >&2
+      echo "    review-queue                     (PR ouvertes en attente de revue, la plus ancienne d'abord — TSV)" >&2
       echo "    set-reviewer [mr|branche] [user] (pose un relecteur humain ≠ auteur — appel MANUEL, aucune commande ne l'invoque)" >&2
       echo "    mr-reviewers [mr|branche]        (relecteurs posés, CSV — vide si aucun)" >&2
       echo "    pick-reviewer [auteur] [graine]  (choisit un relecteur humain, rotation par graine)" >&2
       echo "    project-humans [access-min]      (membres humains éligibles : username/niveau, TSV)" >&2
-      echo "    mr-iid [mr|branche]              (iid de la MR ouverte — défaut : branche courante)" >&2
+      echo "    mr-iid [mr|branche]              (iid de la PR ouverte — défaut : branche courante)" >&2
       echo "  Réglages du dépôt (doctor.sh, bootstrap.sh) :" >&2
       echo "    merge-settings              (garde-fous de merge normalisés : pipeline_requis, merge_si_pipeline_saute, suppression_branche)" >&2
       echo "  Pipelines CI :" >&2

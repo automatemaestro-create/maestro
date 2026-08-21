@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bilan de santé (LECTURE SEULE) du setup de forge Maestro + détection de dérive.
-# N'écrit jamais rien (ni état, ni label, ni MR) — voir docs/10-workflow-git.md.
+# N'écrit jamais rien (ni état, ni label, ni PR) — voir docs/10-workflow-git.md.
 # Réutilise scripts/gitlab/lib.sh (cycle de vie par nom de label, pas de GID en dur).
 #
 # Usage :  bash scripts/gitlab/doctor.sh [--strict]
@@ -172,7 +172,7 @@ iids_with_workflow() { # $1=table TSV  $2=libellé de cycle de vie
   printf '%s\n' "$1" | awk -F'\t' -v cible="$2" '$1 !~ /^#/ && $2 == cible { print $1 }'
 }
 
-# 4a. Tickets « En revue » ouverts : une MR ouverte est-elle rattachée ?
+# 4a. Tickets « En revue » ouverts : une PR ouverte est-elle rattachée ?
 revue_iids="$(iids_with_workflow "$backlog_opened" "En revue")"
 open_mr_branches="$(gl_open_mr_branches 2>/dev/null)"
 if [ -z "$revue_iids" ]; then
@@ -180,9 +180,9 @@ if [ -z "$revue_iids" ]; then
 else
   for iid in $revue_iids; do
     if printf '%s\n' "$open_mr_branches" | grep -q "/$iid-"; then
-      ok "#$iid « En revue » ↔ MR ouverte"
+      ok "#$iid « En revue » ↔ PR ouverte"
     else
-      warn "#$iid « En revue » sans MR ouverte rattachée (état resté après merge/close ?)"
+      warn "#$iid « En revue » sans PR ouverte rattachée (état resté après merge/close ?)"
     fi
   done
 fi
@@ -308,7 +308,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     # qui décide, c'est signaler des branches que la purge refusera — ou taire celles qu'elle prendra.
     st="$(gl_mr_state "$b" 2>/dev/null)"
     if [ "$st" = merged ]; then
-      warn "branche locale « $b » : MR mergée → à nettoyer avec /branch-cleanup"
+      warn "branche locale « $b » : PR mergée → à nettoyer avec /branch-cleanup"
       cleanup_found=1
     fi
   done <<EOF

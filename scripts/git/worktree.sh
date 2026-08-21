@@ -33,7 +33,7 @@
 # Retirer un worktree ne supprime jamais sa branche : ni `create`, ni `remove`, ni `gc` n'y touchent.
 # La seule suppression de branche du script est la purge que `ensure` délègue à `lib.sh
 # cleanup-merged` (#305, docs/10 §9.5) — et elle ne porte que sur les branches dont GitLab confirme
-# la MR mergée, jamais sur celle du worktree qu'on monte (docs/10-workflow-git.md §6).
+# la PR mergée, jamais sur celle du worktree qu'on monte (docs/10-workflow-git.md §6).
 #
 # Le cycle de vie se REFERME tout seul (#197). Un worktree pèse ~535 Mo (dont 93 % de node_modules
 # installé sur place) et #181 en a fait la voie par défaut de tout ticket : sans ramassage, un run
@@ -74,7 +74,7 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
 en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà — cas d'orchestrate,
 qui monte le worktree lui-même) ou « WORKTREE <chemin> » (worktree prêt, s'y relocaliser).
 
-`gc` ramasse les worktrees dont le travail est SOLDÉ — MR mergée ou ticket fermé, confirmé par
+`gc` ramasse les worktrees dont le travail est SOLDÉ — PR mergée ou ticket fermé, confirmé par
 la forge. Il tourne d'office au début d'`ensure` (donc de /ticket-start) : le retrait n'est pas un
 geste à se rappeler. `--check` diagnostique sans rien retirer, `--auto` ne parle que s'il a
 quelque chose à dire. MAESTRO_WORKTREE_GC=0 désactive le passage automatique.
@@ -252,7 +252,7 @@ installe_web() {
 
 # --- L'atelier d'une session (#307) ------------------------------------------------------------------
 # atelier_session <worktree> : l'endroit DÉSIGNÉ où une session écrit ses fichiers de travail —
-# description de MR, corps de commentaire, sortie intermédiaire qu'elle veut relire (#307).
+# description de PR, corps de commentaire, sortie intermédiaire qu'elle veut relire (#307).
 #
 # Il est DANS le worktree parce que c'est la seule façon de l'atteindre EN CHEMIN RELATIF : les deux
 # endroits qu'une session connaît spontanément — son répertoire temporaire et `/tmp` — sont hors du
@@ -1154,7 +1154,7 @@ commande_sessions() {
 #      décochée au merge) — la référence exacte de ce que le serveur a reçu ;
 #   2. le <sha> de merge rendu par `lib.sh worktree-done` : la tête de la branche source au moment du
 #      merge, la seule trace locale de ce qui est parti quand GitLab a supprimé la branche distante ;
-#   3. `origin/main` en dernier recours — cas d'une branche JAMAIS poussée (ticket fermé sans MR),
+#   3. `origin/main` en dernier recours — cas d'une branche JAMAIS poussée (ticket fermé sans PR),
 #      où ses commits locaux sont précisément le travail non sauvegardé.
 # Aucune référence trouvable (dépôt sans distant) : on rend « 0 », et c'est le seul cas où le
 # compteur peut mentir par défaut ; les fichiers non commités, eux, restent comptés.
@@ -1335,7 +1335,7 @@ commande_gc() {
       continue
     fi
 
-    # Cycle de vie du ticket (#275, docs/10 §9.2) : « fini » — MR mergée ou ticket fermé — est
+    # Cycle de vie du ticket (#275, docs/10 §9.2) : « fini » — PR mergée ou ticket fermé — est
     # EXACTEMENT la question que pose la réconciliation. On la greffe donc ici, sur un verdict déjà
     # rendu, plutôt que d'ajouter une cinquième étape à `ensure` après #181/#197/#205/#216 : aucune
     # lecture de découverte en plus, et les trois points de passage de `gc` (ensure — donc tout

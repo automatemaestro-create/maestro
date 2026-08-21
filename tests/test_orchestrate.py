@@ -743,7 +743,7 @@ def test_le_prompt_nomme_les_trois_formes_qu_aucune_regle_ne_matche(depot: Depot
     """Elles ne se devinent PAS depuis un refus, qui ne dit jamais ce qui a manqué.
 
     Et la plus coûteuse tombe sur la dernière action du ticket : huit sessions sur seize ont buté
-    sur une création de MR à description multi-ligne, puis sur le `$(cat …)` par lequel elles
+    sur une création de PR à description multi-ligne, puis sur le `$(cat …)` par lequel elles
     essayaient de s'en sortir. Le prompt doit donc les nommer, et dire le geste de remplacement.
     """
     depot.ticket(130, "Ticket a traiter")
@@ -1064,7 +1064,7 @@ def test_l_effort_traverse_le_lancement_detache(depot: Depot) -> None:
 #
 # Miroir exact de la section précédente, à l'inverse près : ce qu'on protège ici n'est pas la
 # présence d'un réglage mais son ABSENCE. `run.sh` passait `--max-budget-usd 15` à chaque session ;
-# une session qui touche le plafond meurt en plein travail, sans commit ni MR, et la boucle la
+# une session qui touche le plafond meurt en plein travail, sans commit ni PR, et la boucle la
 # compte en échec — ce qui saborde les lots suivants du même parent. Les deux runs du 2026-08-06 y
 # ont laissé 2 tickets coupés au même montant (15.07 $) et 13 sautés en cascade. Le bouchon note ses
 # arguments, et c'est sur eux qu'on juge.
@@ -1862,7 +1862,7 @@ def test_avec_une_console_les_frames_y_vont_et_jamais_dans_run_log(depot: Depot)
 
 
 def test_la_checklist_porte_les_verdicts_deja_rendus_et_le_cumul_du_run(depot: Depot) -> None:
-    """Au deuxième ticket, le premier n'est plus « à venir » : il porte sa marque, sa MR et son
+    """Au deuxième ticket, le premier n'est plus « à venir » : il porte sa marque, sa PR et son
     coût, et le pied dit où en est le run — c'est l'information que le flot d'outils avait chassée
     de l'écran."""
     for iid in (130, 131):
@@ -1877,7 +1877,7 @@ def test_la_checklist_porte_les_verdicts_deja_rendus_et_le_cumul_du_run(depot: D
 
     vue = console.read_text(encoding="utf-8", errors="replace")
     assert "✓  1. #130" in vue, "le ticket livré porte sa marque dans la checklist"
-    assert "MR !99" in vue, "avec sa MR"
+    assert "PR #99" in vue, "avec sa PR"
     assert "2.00 $" in vue, "et son coût, arrondi comme dans resume.tsv"
     assert "reste " in vue and "✓ 1" in vue, "le pied donne le cumul du run"
 
@@ -2160,7 +2160,7 @@ def test_un_run_termine_rend_son_bilan_et_ne_se_dit_plus_en_cours(depot: Depot) 
         [(1, 130, "-", "haute"), (2, 131, "-", "moyenne")],
         resume=[
             (130, "OK", "99", 620, "3.50", "-"),
-            (131, "ECHEC", "-", 300, "1.20", "MR « aucune », cycle de vie « En cours »"),
+            (131, "ECHEC", "-", 300, "1.20", "PR « aucune », cycle de vie « En cours »"),
         ],
     )
     r = depot.lance("status.sh")
@@ -2347,7 +2347,7 @@ def test_le_worktree_est_le_signal_de_progression(depot: Depot) -> None:
     assert "commits    1 en avance sur origin/main" in r.stdout
     assert "feat: premiere moitie" in r.stdout
     assert "fichiers   1 modifié(s) : livrable.txt" in r.stdout
-    assert "MR !99 ouverte" in r.stdout, "l'état GitLab complète ce que le disque sait"
+    assert "PR #99 ouverte" in r.stdout, "l'état de la forge complète ce que le disque sait"
 
 
 @besoin_git
@@ -2390,7 +2390,7 @@ def test_l_activite_suit_le_worktree_et_pas_seulement_le_journal(depot: Depot) -
 #
 # Les tests reprennent `_init_git` : distinguer « a produit sans clore » de « n'a rien produit »
 # se lit dans un vrai dépôt git, pas dans un dossier quelconque. Toujours sans quota ni réseau :
-# le bouchon `claude` joue la sortie en code 0 sans MR, et écrit (ou non) dans le worktree.
+# le bouchon `claude` joue la sortie en code 0 sans PR, et écrit (ou non) dans le worktree.
 
 def _stub_sans_cloture(depot: Depot, corps: str = "") -> str:
     """Un `claude` qui sort comme un succès sans avoir rien clos — le cas du run 20260729-132807."""
@@ -2416,13 +2416,13 @@ def test_une_session_qui_croit_faire_une_pause_dit_le_travail_laisse_dans_le_wor
     r = depot.lance("run.sh", "--plan", plan, "--run-id", "pause",
                     env={"MAESTRO_CLAUDE_BIN": claude})
 
-    assert r.returncode == 1, "sans MR ni « En revue », c'est un échec : le code 0 ne dit rien"
+    assert r.returncode == 1, "sans PR ni « En revue », c'est un échec : le code 0 ne dit rien"
     resume = (depot.racine / ".maestro/orchestrate/pause/resume.tsv").read_text(encoding="utf-8")
     assert "130\tECHEC" in resume
     assert "session terminée sans clôture, 5 fichier(s) non commité(s)" in resume, (
-        "la raison consignée doit être exploitable, pas juste « MR aucune, cycle de vie À faire »"
+        "la raison consignée doit être exploitable, pas juste « PR aucune, cycle de vie À faire »"
     )
-    assert "MR « aucune »" in resume, "le verdict GitLab reste dit, il n'est pas remplacé"
+    assert "PR « aucune »" in resume, "le verdict de la forge reste dit, il n'est pas remplacé"
     assert "le travail est conservé dans" in r.stdout, "la console dit où le retrouver"
 
 
@@ -2783,7 +2783,7 @@ def test_le_resultat_d_une_session_se_lit_a_l_oeil_apres_le_run(depot: Depot) ->
     # 1. De quoi on parle, et ce que GitLab en a dit — le verdict ne vient jamais de la prose.
     #    Le titre est celui du PLAN (« Ticket 130 » ici) : la vue est écrite par la boucle.
     assert "ticket #130" in vue and "Ticket 130" in vue
-    assert "✓ OK" in vue and "MR !99" in vue
+    assert "✓ OK" in vue and "PR #99" in vue
     # 2. Ce qu'on vient y chercher : coût, durée, refus.
     assert "10.69 $" in vue and "10.686978499999995" not in vue
     assert "34min46" in vue, "duration_ms se lit en heures et minutes, pas en millisecondes"
@@ -4356,7 +4356,7 @@ def test_la_console_renvoie_vers_l_agregat_en_fin_de_run(depot: Depot) -> None:
 # =====================================================================================
 #
 # Un run est ce qui fait vieillir le plus vite la ref LOCALE `refs/heads/main` du clone principal :
-# il ouvre N MR destinées à être mergées, et plus personne ne repasse par `main` depuis #181. Elle
+# il ouvre N PR destinées à être mergées, et plus personne ne repasse par `main` depuis #181. Elle
 # n'avançait jusqu'ici qu'à l'intérieur d'une session (`worktree.sh ensure`, donc /ticket-start) —
 # donc pas du tout quand le run part sur un plan vide, saute tous ses tickets ou échoue avant le
 # premier. Le code produit, lui, n'a jamais été en cause : chaque worktree part d'`origin/main`.
@@ -4411,7 +4411,7 @@ def _origin_main_avance(depot: Depot) -> str:
 
 
 def _run_d_un_ticket(depot: Depot, run_id: str, **env: str) -> subprocess.CompletedProcess:
-    """Un run d'un ticket, livré (MR ouverte + « En revue ») — le décor de ces tests."""
+    """Un run d'un ticket, livré (PR ouverte + « En revue ») — le décor de ces tests."""
     depot.ticket(130, "Ticket a traiter")
     depot.mr("feat/130-ticket-a-traiter", "opened")
     claude = _claude_stub(depot, f"""
@@ -4615,7 +4615,7 @@ def _pic(depot: Depot) -> int:
 
 
 def _livrables(depot: Depot, iids: tuple[int, ...]) -> None:
-    """Déclare des tickets libres dont la MR est déjà ouverte — de quoi rendre un verdict « OK »."""
+    """Déclare des tickets libres dont la PR est déjà ouverte — de quoi rendre un verdict « OK »."""
     for iid in iids:
         depot.ticket(iid, f"Ticket {iid}")
         depot.mr(f"feat/{iid}-ticket-{iid}", "opened")
@@ -4819,7 +4819,7 @@ def test_la_cascade_d_echec_saute_ce_qui_n_est_pas_parti_et_laisse_finir_ce_qui_
     n'est pas parti : il est sauté au moment de le lancer.
     """
     _livrables(depot, (131, 132))
-    depot.ticket(130, "Ticket 130")  # sans MR : la session ne clôt rien, verdict ECHEC
+    depot.ticket(130, "Ticket 130")  # sans PR : la session ne clôt rien, verdict ECHEC
     plan = _plan_groupes(depot, [(1, 130, "500", "haute", "500.1"),
                                  (2, 131, "500", "haute", "500.1"),
                                  (3, 132, "500", "haute", "500.2")])
@@ -5065,10 +5065,10 @@ def test_une_ligne_permanente_de_session_passe_par_la_file_et_ne_casse_pas_le_bl
 
 
 def test_chaque_ligne_permanente_porte_le_numero_de_son_ticket(depot: Depot) -> None:
-    """Dans une trace entrelacée, rien d'autre ne dit à qui appartient un « ✓ MR !99 ouverte »."""
+    """Dans une trace entrelacée, rien d'autre ne dit à qui appartient un « ✓ PR #99 ouverte »."""
     r, _ = _run_a_trois_en_vol(depot, "prefixes")
     assert r.returncode == 0, r.stdout + r.stderr
-    verdicts = [ligne for ligne in r.stdout.splitlines() if "MR !99 ouverte" in ligne]
+    verdicts = [ligne for ligne in r.stdout.splitlines() if "PR #99 ouverte" in ligne]
     assert len(verdicts) == 4, f"un verdict par ticket — {verdicts}"
     assert all(re.search(r"#\d+", ligne) for ligne in verdicts), (
         f"chaque verdict doit nommer son ticket — {verdicts}"

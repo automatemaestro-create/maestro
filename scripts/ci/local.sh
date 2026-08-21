@@ -18,7 +18,7 @@
 # concerne, pas les 1100 tests du dépôt. Le raisonnement : la suite complète coûte 9 min 57 s en
 # série, dont 9 pour les ~360 tests d'OUTILLAGE (ceux qui montent un dépôt git jetable et lancent
 # un script shell) ; les rejouer pendant qu'on écrit du code applicatif ne dit rien de neuf. La
-# suite complète reste jouée — par le pipeline de la MR, qui depuis #165 est de toute façon le
+# suite complète reste jouée — par le pipeline de la PR, qui depuis #165 est de toute façon le
 # seul verdict lu et la condition de merge (docs/10 §8). D'où deux modes :
 #
 #   --rapide (DÉFAUT) : pytest sur le périmètre du diff, sans seuil de couverture (un
@@ -135,7 +135,7 @@ Options :
   --rapide        (défaut) pytest ne joue que les suites concernées par le diff, sans seuil
                   de couverture ; le verdict est annoncé PARTIEL.
   --complet       pytest joue la suite ENTIÈRE avec sa couverture et son seuil — ce que fera
-                  le pipeline de la MR.
+                  le pipeline de la PR.
   --conteneur     (défaut si Docker répond) pytest joue dans un conteneur Linux — le régime
                   nominal : ×15 à ×30 plus rapide, et sur l'OS du verdict. Exigé, il ÉCHOUE
                   au lieu de retomber en natif.
@@ -1017,7 +1017,7 @@ printf '\n'
 if [ "$MODE_PYTEST" != complet ] && [ "$PYTEST_JOUE" = 1 ]; then
   if [ "$PERIMETRE_REDUIT" = 1 ]; then
     printf '%sPérimètre réduit%s — pytest a joué les seules suites concernées par le diff, sans seuil\n' "$C_Y" "$C_0"
-    printf 'de couverture. La suite entière : « --complet » ici, ou le pipeline de la MR (docs/10 §8).\n\n'
+    printf 'de couverture. La suite entière : « --complet » ici, ou le pipeline de la PR (docs/10 §8).\n\n'
   else
     printf '%sCouverture non vérifiée%s — le seuil de %s %% est appliqué en « --complet » et en CI.\n\n' \
       "$C_Y" "$C_0" "$COUVERTURE_MIN"
