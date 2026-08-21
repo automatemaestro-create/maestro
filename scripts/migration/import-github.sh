@@ -33,7 +33,21 @@
 # auteur d'origine. Le choix du COMMENTAIRE plutôt que d'un pied de description n'est pas une
 # économie : le suivi du temps continue après la migration, et `/ticket-finish` loggue en AJOUTANT.
 # Un commentaire s'ajoute en un appel ; un pied de description demanderait un lire-modifier-écrire à
-# chaque log. L'historique et le quotidien partagent ainsi le même mécanisme et le même marqueur.
+# chaque log.
+#
+# ⚠ MÊME MÉCANISME, MAIS PAS LE MÊME MARQUEUR — cet en-tête a longtemps affirmé le contraire, et
+# c'était faux (#400, docs/27 §12.4). Le commentaire écrit ici porte `maestro:meta v1` et range ses
+# clés SUR UNE LIGNE ; le suivi quotidien de `scripts/gitlab/lib.sh` écrit `maestro:suivi:v1`, une
+# clé PAR LIGNE. Les deux formats ne se lisaient donc pas l'un l'autre : sur un ticket importé, le
+# premier `/ticket-finish` créait un second commentaire reparti de zéro, et les 603 h restaient
+# lisibles à l'œil sans être additionnées par rien.
+#
+# LA JOINTURE EST DU CÔTÉ DE LA LECTURE, et rien n'a changé ICI : `gh_suivi_lire` cherche les deux
+# marqueurs et recopie dans le bloc du suivi ce que l'import a écrit — les dates quand elles
+# manquent, le temps sous la forme d'une entrée `log=`, la seule que la somme additionne. Ce
+# commentaire-ci n'est JAMAIS réécrit : il reste l'archive (lien GitLab, tableau, relevés
+# détaillés), et une campagne de réécriture sur les 352 commentaires posés serait irréversible là
+# où une lecture ne l'est pas.
 #
 # CE QUI N'EST PAS REJOUÉ : les 271 merge requests (impossible sans leurs branches d'origine, §3 du
 # parent) et les notes SYSTÈME de GitLab (« added ~52011709 labels », « mentioned in issue #328 ») —

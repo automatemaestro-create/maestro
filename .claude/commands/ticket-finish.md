@@ -197,9 +197,13 @@ pas clair.
 
 12. Renseigne le **temps passé** — **estimé automatiquement, sans demander de confirmation** (voir
    `docs/10-workflow-git.md` §3.3) :
-   - Vérifie d'abord ce qui est déjà loggé : `bash scripts/gitlab/lib.sh get-time-spent <iid>`
-     (secondes). Si le résultat **n'est pas `0`**, du temps a déjà été enregistré — n'en rajoute
-     pas (idempotence : ne double pas un cycle déjà loggé) et passe à la suite.
+   - Vérifie d'abord ce qui est déjà loggé **depuis la bascule sur GitHub** :
+     `bash scripts/gitlab/lib.sh get-time-spent <iid> --hors-import` (secondes). Si le résultat
+     **n'est pas `0`**, du temps a déjà été enregistré — n'en rajoute pas (idempotence : ne double
+     pas un cycle déjà loggé) et passe à la suite. ⚠ `--hors-import` et non le total : sur un
+     ticket importé de GitLab, l'historique repris par la jointure de #400 fait répondre « oui »
+     au total avant qu'aucune session n'ait travaillé dessus, et le garde-fou avalerait alors en
+     silence le temps de celle qui termine le ticket.
    - Sinon, **estime toi-même l'effort** d'après la **portée réelle du travail** de la branche
      (ampleur du diff, nombre et nature des commits, ce que tu as fait durant la session) — pas le
      temps calendaire écoulé, qui n'est qu'un plafond peu fidèle. Traduis-la en une durée au format

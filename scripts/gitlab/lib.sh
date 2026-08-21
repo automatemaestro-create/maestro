@@ -60,6 +60,46 @@
 #     branche GitLab, et leurs appelants avec eux.
 #
 # ================================================================================================
+# SUIVI MAISON — dates et temps passé, dans un commentaire (implémentation : gh_suivi_*)
+# ================================================================================================
+# UN SEUL commentaire par ticket, réécrit EN PLACE. Un bloc HTML invisible porte la donnée, le
+# texte qui suit en est le rendu humain — DÉRIVÉ du bloc à chaque écriture, donc incapable d'en
+# diverger :
+#
+#     <!-- maestro:suivi:v1
+#     debut=2026-08-04
+#     echeance=2026-08-06
+#     log=2026-08-17|4500|Historique importé de GitLab
+#     log=2026-08-21|1800|Cycle de dev (start->finish)
+#     temps=6300
+#     -->
+#     **⏱ Suivi Maestro** — début … · échéance … · temps passé **1h 45m**
+#
+# Quatre règles : (1) une paire `clé=valeur` par ligne, entre le marqueur et le `-->` ; (2) `log=`
+# est le DÉTAIL, « date|secondes|résumé », le « | » ne pouvant apparaître dans un résumé (aplati à
+# l'écriture) ; (3) `temps` est TOUJOURS recalculé comme la somme des `log=` — l'agrégat ne peut
+# donc pas dériver de son détail, même après une reprise ou une écriture partielle ; (4) les clés
+# inconnues traversent intactes, ce qui rend le format extensible sans migration.
+#
+# LA JOINTURE AVEC L'HISTORIQUE IMPORTÉ (#400). L'import du backlog (#340) a écrit le temps passé de
+# chaque ticket dans un AUTRE commentaire, « <!-- maestro:meta v1 … temps_s=… --> », une seule ligne
+# de clés. Les deux formats ne se lisaient pas l'un l'autre : sur un ticket importé, le premier log
+# de temps repartait de zéro et le ticket se retrouvait avec deux commentaires disant chacun une
+# partie du total (mesuré sur #212 : 9000 s d'un côté, « 0m » de l'autre). `gh_suivi_lire` cherche
+# donc les DEUX marqueurs et FUSIONNE — la dissymétrie entre eux étant tout le sujet :
+#   → le commentaire d'import n'est JAMAIS réécrit. C'est une archive (lien GitLab, tableau, relevés
+#     détaillés) : la réparation est du côté de la LECTURE, jamais d'une réécriture de masse sur 352
+#     tickets, irréversible là où une lecture ne l'est pas ;
+#   → ce qu'il porte est RECOPIÉ dans le bloc du suivi. Les dates comblent ce qui manque (un
+#     /ticket-start postérieur l'emporte), et le temps devient une entrée `log=` ordinaire — la
+#     seule forme que la règle (3) additionne, un total rangé à côté du détail étant effacé au
+#     premier log. Le premier `gh_suivi_ecrire` qui suit pose le tout au format courant : la
+#     migration du ticket se fait au fil de l'eau, sans campagne.
+# L'entrée se reconnaît à son résumé ($GL_SUIVI_IMPORT), ce qui rend la fusion idempotente et permet
+# de la RETRANCHER : `get-time-spent --hors-import` est la forme que /ticket-finish interroge pour
+# son idempotence, un total importé n'étant pas un cycle de dev déjà loggé.
+#
+# ================================================================================================
 # CYCLE DE VIE — le champ Status de GitHub Projects v2, seule autorité (#365, chantier #358)
 # ================================================================================================
 # L'état d'un ticket (À faire / En cours / En revue / Terminé / Abandonné / Doublon) se lit et
@@ -198,6 +238,18 @@ GL_GH_REPO="${MAESTRO_GITHUB_REPO:-automatemaestro-create/maestro}"
 
 # Marqueur du commentaire de suivi maison (dates + temps passé) — voir l'en-tête du fichier.
 GL_SUIVI_MARQUEUR="maestro:suivi:v1"
+
+# Marqueur du commentaire de MÉTADONNÉES posé par l'import du backlog (`scripts/migration/
+# import-github.sh`, #340) : une ligne de clés, `temps_s=` en secondes. Ce n'est PAS un second
+# support du suivi — c'est une ARCHIVE, en lecture seule, que la fusion de gh_suivi_lire rapatrie
+# dans le format courant (#400). Voir SUIVI MAISON en tête de fichier.
+GL_META_MARQUEUR="maestro:meta v1"
+
+# Résumé de l'entrée `log=` qui porte l'historique importé, et par lequel on la RECONNAÎT : c'est ce
+# qui rend la fusion idempotente et le retranchement de l'historique possible (`get-time-spent
+# --hors-import`). Il ne porte aucun métacaractère d'expression rationnelle ni de « | » — les deux
+# le sont, et les motifs qui le cherchent en dépendent.
+GL_SUIVI_IMPORT="Historique importé de GitLab"
 
 # Nombre d'heures dans un « jour » de temps passé, et de jours dans une « semaine » : les unités de
 # durée de GitLab (« 1d », « 1w »), reprises TELLES QUELLES pour que les 603 h d'historique importées
@@ -938,8 +990,10 @@ gl_get_start_date() {
   gh_get_start_date "$@"
 }
 
-# gl_get_time_spent <iid> -> imprime le temps total déjà loggé, en secondes (0 si aucun).
-# Sert à /ticket-finish pour ne pas re-logger silencieusement du temps sur une ré-exécution.
+# gl_get_time_spent <iid> [--hors-import] -> imprime le temps total déjà loggé, en secondes (0 si
+# aucun) ; avec `--hors-import`, seulement ce qui a été loggé depuis la bascule sur GitHub.
+# C'est cette seconde forme qui sert l'idempotence de /ticket-finish (ne pas re-logger un cycle sur
+# une ré-exécution) : sur un ticket importé, le total ne vaut zéro ni avant ni après (#400).
 gl_get_time_spent() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "gl_get_time_spent : iid manquant" >&2; return 2; fi
@@ -3686,34 +3740,117 @@ gh_duree() {
 #
 # Plafond de 100 commentaires, et `first` plutôt que `last` : le suivi est créé au démarrage du
 # ticket puis réécrit EN PLACE, il garde donc sa position d'origine — tout au début du fil.
+#
+# DEUX MARQUEURS SONT CHERCHÉS, ET LEURS RÔLES SONT DISSYMÉTRIQUES (#400). Le commentaire de suivi
+# est la donnée VIVANTE : il porte l'identifiant qu'on rendra, et c'est lui seul qu'on réécrira. Le
+# commentaire d'import (`maestro:meta v1`) est une ARCHIVE : son identifiant n'est jamais rendu,
+# donc jamais réécrit — le rendre reviendrait à faire écraser par le premier `gh_suivi_ecrire` le
+# lien GitLab, le tableau et les relevés détaillés que l'import y a déposés, sur 352 tickets et sans
+# retour. Ce qu'on en tire est RECOPIÉ dans le bloc du suivi par gh_suivi_fusion.
 gh_suivi_lire() {
-  local iid="$1" raw noeud id
+  local iid="$1" raw noeuds suivi meta id bloc
   if [ -z "$iid" ]; then echo "usage: gh_suivi_lire <iid>" >&2; return 2; fi
-  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number:'"$iid"') { comments(first: 100) { nodes { databaseId body } } } } }')" || return 1
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number:'"$iid"') { comments(first: 100) { nodes { databaseId createdAt body } } } } }')" || return 1
   case "$raw" in
     *'"issue":null'*) echo "Ticket #$iid introuvable dans $GL_GH_REPO" >&2; return 1 ;;
   esac
-  noeud="$(printf '%s' "$raw" | awk -v marqueur="$GL_SUIVI_MARQUEUR" '
+  # Une seule passe pour les deux nœuds : le suivi en ligne 1, l'import en ligne 2, vides s'ils
+  # manquent. Un nœud tient sur UNE ligne — le JSON de `gh` est compact et échappe ses sauts de
+  # ligne —, ce qui est exactement ce qui permet d'en rendre deux sans les confondre.
+  noeuds="$(printf '%s' "$raw" | LC_ALL=C awk -v m_suivi="$GL_SUIVI_MARQUEUR" -v m_meta="$GL_META_MARQUEUR" '
     {
       n = split($0, parts, /\{"databaseId":/)
-      for (i = 2; i <= n; i++) if (index(parts[i], marqueur)) { printf "{\"databaseId\":%s", parts[i]; exit }
+      for (i = 2; i <= n; i++) {
+        if (suivi == "" && index(parts[i], m_suivi)) suivi = "{\"databaseId\":" parts[i]
+        if (meta  == "" && index(parts[i], m_meta))  meta  = "{\"databaseId\":" parts[i]
+      }
     }
+    END { print suivi; print meta }
   ')"
-  if [ -z "$noeud" ]; then printf -- '-\n'; return 0; fi
-  id="$(printf '%s' "$noeud" | grep -o '"databaseId":[0-9]*' | head -1 | sed 's/.*://')"
+  suivi="$(printf '%s\n' "$noeuds" | sed -n 1p)"
+  meta="$(printf '%s\n' "$noeuds" | sed -n 2p)"
+
+  id="-"
+  bloc=""
+  if [ -n "$suivi" ]; then
+    id="$(printf '%s' "$suivi" | grep -o '"databaseId":[0-9]*' | head -1 | sed 's/.*://')"
+    # Le corps déséchappé, puis les seules lignes situées ENTRE le marqueur et la fin du commentaire
+    # HTML : le rendu humain qui suit ne doit jamais être relu comme de la donnée.
+    bloc="$(printf '%s' "$suivi" | gl_json_string_field body | LC_ALL=C awk -v marqueur="$GL_SUIVI_MARQUEUR" '
+      dans && /^-->/ { exit }
+      dans { if ($0 ~ /^[a-z_]+=/) print }
+      index($0, marqueur) { dans = 1 }
+    ')"
+  fi
+  if [ -n "$meta" ]; then
+    bloc="$(printf '%s\n' "$bloc" | gh_suivi_fusion "$meta")"
+  fi
+
   printf '%s\n' "${id:--}"
-  # Le corps déséchappé, puis les seules lignes situées ENTRE le marqueur et la fin du commentaire
-  # HTML : le rendu humain qui suit ne doit jamais être relu comme de la donnée.
-  printf '%s' "$noeud" | gl_json_string_field body | awk -v marqueur="$GL_SUIVI_MARQUEUR" '
-    dans && /^-->/ { exit }
-    dans { if ($0 ~ /^[a-z_]+=/) print }
-    index($0, marqueur) { dans = 1 }
-  '
+  [ -n "$bloc" ] && printf '%s\n' "$bloc"
+  return 0
+}
+
+# gh_suivi_fusion <nœud JSON du commentaire d'import> (stdin = bloc du suivi, éventuellement vide)
+# -> le bloc machine augmenté de ce que l'import a écrit. C'est LA JOINTURE qui manquait (#400) :
+# l'import et le quotidien écrivaient deux formats que rien ne lisait ensemble, si bien qu'un ticket
+# importé repartait de zéro au premier log de temps.
+#
+# Trois règles, et la deuxième est le contenu de la décision :
+#   1. LES DATES DU SUIVI L'EMPORTENT — un /ticket-start postérieur a pu reposer un début ; l'import
+#      ne comble que ce qui manque. Sur un ticket jamais démarré depuis la bascule, le bloc est vide
+#      et ce sont donc les dates GitLab qui sortent.
+#   2. LE TEMPS IMPORTÉ DEVIENT UNE ENTRÉE `log=` comme une autre. Il n'est PAS rangé dans une clé à
+#      part, et ce n'est pas un détail de forme : `temps` est RECALCULÉ comme la somme des `log=`
+#      (gh_log_time), donc un total posé à côté du détail serait effacé au premier log — c'est
+#      exactement la panne qu'on répare. Y entrer par le détail est ce qui rend l'addition acquise.
+#   3. LA FUSION EST IDEMPOTENTE, et sa mémoire est l'entrée elle-même : son résumé vaut
+#      $GL_SUIVI_IMPORT, on ne la repose donc jamais deux fois. Aucune clé de témoin à tenir
+#      d'accord avec la donnée qu'elle décrit.
+gh_suivi_fusion() {
+  local noeud="$1" bloc lu jour cle val temps
+  bloc="$(cat)"
+  # La ligne de clés de l'import, rendue au format du bloc (« clé=valeur » par ligne). Seules les
+  # trois clés que le suivi sait porter sont reprises : `iid`, `assignes` et `lies` restent dans le
+  # commentaire d'import, qui n'est ni réécrit ni perdu — les recopier ferait deux archives.
+  lu="$(printf '%s' "$noeud" | gl_json_string_field body | LC_ALL=C awk -v marqueur="$GL_META_MARQUEUR" '
+    index($0, marqueur) {
+      for (i = 1; i <= NF; i++) if ($i ~ /^(temps_s|debut|echeance)=[^ ]+$/) print $i
+      exit
+    }')"
+
+  for cle in debut echeance; do
+    val="$(printf '%s\n' "$lu" | gh_suivi_champ "$cle")"
+    if [ -n "$val" ] && [ -z "$(printf '%s\n' "$bloc" | gh_suivi_champ "$cle")" ]; then
+      bloc="$bloc"$'\n'"$cle=$val"
+    fi
+  done
+
+  temps="$(printf '%s\n' "$lu" | gh_suivi_champ temps_s)"
+  case "$temps" in ''|0|*[!0-9]*) temps="" ;; esac
+  if [ -n "$temps" ] && ! printf '%s\n' "$bloc" | grep -q "^log=.*|$GL_SUIVI_IMPORT\$"; then
+    # La date de l'entrée est celle du commentaire d'import — le jour où cet historique est entré
+    # dans le registre, seule date que l'import ait laissée. À défaut, le début GitLab du ticket.
+    jour="$(printf '%s' "$noeud" | grep -o '"createdAt":"[0-9-]*' | head -1 | sed 's/.*:"//')"
+    [ -n "$jour" ] || jour="$(printf '%s\n' "$lu" | gh_suivi_champ debut)"
+    [ -n "$jour" ] || jour="$(date +%F)"
+    bloc="$bloc"$'\n'"log=$jour|$temps|$GL_SUIVI_IMPORT"
+    bloc="$(printf '%s\n' "$bloc" | grep -v '^temps=')"
+    bloc="$bloc"$'\n'"temps=$(printf '%s\n' "$bloc" | gh_suivi_total)"
+  fi
+  printf '%s\n' "$bloc" | sed '/^$/d'
 }
 
 # gh_suivi_champ <clé> (stdin = bloc machine) -> la valeur de la clé, vide si absente.
 gh_suivi_champ() {
   sed -n 's/^'"$1"'=//p' | head -1
+}
+
+# gh_suivi_total (stdin = bloc machine) -> la somme des entrées `log=`, en secondes. La règle du
+# format en une ligne, appelée par les DEUX endroits qui l'appliquent (gh_log_time et la fusion) :
+# deux copies de cette somme divergeraient le jour où l'une apprend à ignorer une entrée.
+gh_suivi_total() {
+  LC_ALL=C sed -n 's/^log=//p' | LC_ALL=C awk -F'|' '{ t += $2 } END { printf "%d", t + 0 }'
 }
 
 # gh_suivi_ecrire <iid> <id-commentaire|-> (stdin = bloc machine) -> écrit ou réécrit le commentaire
@@ -3759,10 +3896,23 @@ gh_get_start_date() {
   gh_suivi_lire "$iid" 2>/dev/null | tail -n +2 | gh_suivi_champ debut
 }
 
+# gh_get_time_spent <iid> [--hors-import] -> le temps total en secondes ; avec l'option, ce qui a
+# été loggé DEPUIS LA BASCULE, l'historique importé retranché.
+#
+# L'option existe parce que la jointure de #400 déplace une question que /ticket-finish posait à ce
+# verbe : « du temps est-il déjà loggé ? » servait d'idempotence — ne pas compter deux fois le cycle
+# de dev sur une ré-exécution —, et un ticket importé répond désormais « oui » avant qu'aucune
+# session n'ait travaillé dessus. Le garde-fou aurait donc avalé en silence le temps de la session
+# qui finit le ticket, ce qui est le contraire de ce que la jointure vient acquérir.
 gh_get_time_spent() {
-  local iid="$1" v
+  local iid="$1" mode="${2:-}" bloc v
   if [ -z "$iid" ]; then echo "gh_get_time_spent : iid manquant" >&2; return 2; fi
-  v="$(gh_suivi_lire "$iid" 2>/dev/null | tail -n +2 | gh_suivi_champ temps)"
+  bloc="$(gh_suivi_lire "$iid" 2>/dev/null | tail -n +2)"
+  case "$mode" in
+    --hors-import) v="$(printf '%s\n' "$bloc" | grep -v "^log=.*|$GL_SUIVI_IMPORT\$" | gh_suivi_total)" ;;
+    '')            v="$(printf '%s\n' "$bloc" | gh_suivi_champ temps)" ;;
+    *)             echo "gh_get_time_spent : option « $mode » inconnue (attendu : --hors-import)" >&2; return 2 ;;
+  esac
   printf '%s\n' "${v:-0}"
 }
 
@@ -3797,7 +3947,7 @@ gh_log_time() {
   id="$(printf '%s\n' "$lu" | head -1)"
   bloc="$(printf '%s\n' "$lu" | tail -n +2)"
   bloc="$(printf '%s\n' "$bloc" | grep -v '^temps=' | grep -v '^$')"$'\n'"log=$(date +%F)|$secondes|$resume"
-  total="$(printf '%s\n' "$bloc" | sed -n 's/^log=//p' | awk -F'|' '{ t += $2 } END { printf "%d", t + 0 }')"
+  total="$(printf '%s\n' "$bloc" | gh_suivi_total)"
   bloc="$bloc"$'\n'"temps=$total"
   if ! printf '%s\n' "$bloc" | gh_suivi_ecrire "$iid" "$id"; then
     echo "Échec du log de temps sur #$iid" >&2; return 1
@@ -4531,7 +4681,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    start-dates <iid>            (début=aujourd'hui + échéance selon prio)" >&2
       echo "    set-dates <iid> [début] [échéance]   get-start-date <iid>" >&2
       echo "    prio <iid>   prio-delay <prio>   elapsed-days <date>" >&2
-      echo "    log-time <iid> <durée> [résumé]   get-time-spent <iid>" >&2
+      echo "    log-time <iid> <durée> [résumé]   get-time-spent <iid> [--hors-import]" >&2
       echo "  Descriptions (aller-retour fidèle aux octets — à utiliser au lieu d'improviser une lecture) :" >&2
       echo "    get-description <iid>              (description du ticket, UTF-8 intact, sur stdout)" >&2
       echo "    set-description <iid> <fichier>    (remplace la description du ticket par le fichier)" >&2

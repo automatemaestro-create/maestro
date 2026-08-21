@@ -17,10 +17,16 @@ module couvre ce qu'ils ont ajouté à [`scripts/gitlab/lib.sh`](../scripts/gitl
   ce ticket ;
 * **contrôle doctor du runner** (#157) — section 7 de `doctor.sh`.
 
-S'y ajoute, parce que c'est le module qui outille `lib.sh` face à un `gh` factice, la **création
-depuis un fichier** (#233, parent #232) — `create-mr` / `issue-note` / `issue-title` : le texte
-long voyage par FICHIER pour qu'aucune commande d'une session autonome ne porte de saut de ligne
-ni de `$(…)`, formes qu'aucune règle de permission ne peut reconnaître (docs/10 §11.7).
+S'y ajoutent, parce que c'est le module qui outille `lib.sh` face à un `gh` factice :
+
+* la **création depuis un fichier** (#233, parent #232) — `create-mr` / `issue-note` /
+  `issue-title` : le texte long voyage par FICHIER pour qu'aucune commande d'une session autonome
+  ne porte de saut de ligne ni de `$(…)`, formes qu'aucune règle de permission ne peut reconnaître
+  (docs/10 §11.7) ;
+* la **jointure de temps** (#400, docs/27 §12.4) — `get-time-spent` / `get-start-date` /
+  `log-time` : l'historique importé de GitLab (`maestro:meta v1`) et le suivi quotidien
+  (`maestro:suivi:v1`) sont deux formats, et c'est la LECTURE qui les joint, le commentaire
+  d'import n'étant jamais réécrit.
 
 **Le harnais a été sorti d'ici** (#366) : le dépôt jetable, le `gh` factice et les fabriques de
 réponses vivent dans [`harnais_forge.py`](harnais_forge.py), d'où ce module les importe. Rien n'y a
@@ -34,6 +40,7 @@ traduction.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -2264,3 +2271,217 @@ def test_gl_ici_atteint_ses_voisins_quelle_que_soit_la_facon_de_charger(
         timeout=60,
     )
     assert "ATTEINT" in acheve.stdout, acheve.stdout + acheve.stderr
+
+
+# ================================================================================================
+# LA JOINTURE DE TEMPS — l'historique importé et le suivi quotidien (#400)
+# ================================================================================================
+# L'import du backlog (#340) a écrit le temps passé de chaque ticket dans un commentaire
+# `maestro:meta v1` (une ligne de clés) ; le suivi quotidien lit un `maestro:suivi:v1` (une clé par
+# ligne). Rien ne lisait les deux, si bien qu'un ticket importé repartait de ZÉRO au premier log de
+# temps et finissait avec deux commentaires disant chacun une partie du total — mesuré sur #212 :
+# 9000 s d'un côté, « 0m » de l'autre.
+#
+# CE QUE CES TESTS ÉPINGLENT, ET QUI EST LE CONTENU DE LA DÉCISION : la réparation est du côté de la
+# LECTURE. Le commentaire d'import n'est jamais réécrit — c'est une archive (lien GitLab, tableau,
+# relevés détaillés), et une campagne de réécriture sur 352 tickets serait irréversible là où une
+# lecture ne l'est pas. D'où deux assertions jumelles dans chaque test d'écriture : sur QUEL
+# commentaire l'appel part, et sur quel autre il ne part PAS.
+
+META_218 = (
+    "<!-- maestro:meta v1 iid=218 temps_s=4500 debut=2026-08-04 echeance=2026-08-06"
+    " assignes=MaestroAgents -->\n"
+    "**Importé de GitLab** · [`#218`](https://gitlab.com/x/maestro/-/work_items/218)\n"
+)
+META_212 = (
+    "<!-- maestro:meta v1 iid=212 temps_s=9000 debut=2026-08-03 echeance=2026-08-08 lies=207 -->\n"
+    "**Importé de GitLab** · [`#212`](https://gitlab.com/x/maestro/-/work_items/212)\n"
+)
+ID_IMPORT = 5313906639
+ID_SUIVI = 5325509519
+
+
+def suivi(*lignes: str) -> str:
+    """Un commentaire de suivi : bloc machine, puis le rendu humain que rien ne doit relire."""
+    return (
+        "<!-- maestro:suivi:v1\n"
+        + "".join(f"{ligne}\n" for ligne in lignes)
+        + "-->\n**⏱ Suivi Maestro** — début … · échéance … · temps passé **0m**\n"
+    )
+
+
+def commentaire(identifiant: int, corps: str, cree_le: str = "2026-08-17T08:55:04Z") -> dict:
+    return {"databaseId": identifiant, "createdAt": cree_le, "body": corps}
+
+
+def regle_commentaires(*noeuds: dict) -> dict:
+    """La réponse à la lecture du fil, DANS LA FORME D'OCTETS DE L'API RÉELLE.
+
+    GitHub échappe `<` et `>` en `\\u003c` / `\\u003e` — or les deux marqueurs vivent dans un
+    commentaire HTML. Rendre du `<` littéral ferait passer ces tests sur une forme que la
+    production n'envoie jamais, et laisserait vert un motif qui chercherait le « <!-- ».
+    """
+    charge = json.dumps(
+        {"data": {"repository": {"issue": {"comments": {"nodes": list(noeuds)}}}}},
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    charge = charge.replace("<", "\\u003c").replace(">", "\\u003e")
+    return {"contient": ["comments(first: 100)"], "brut": charge + "\n"}
+
+
+def corps_ecrit(appel: str) -> str:
+    """Le corps d'un appel d'écriture, ré-assemblé depuis le journal du `gh` factice.
+
+    Le double résout le `body=@<fichier>` (c'est ainsi que le texte long voyage, #233) puis échappe
+    les sauts de ligne : aucun corps de suivi ne porte d'antislash, un simple `\\n` → saut de ligne
+    suffit donc à l'inverser.
+    """
+    for arg in appel.split("\t"):
+        if arg.startswith("body="):
+            return arg[len("body=") :].replace("\\n", "\n")
+    raise AssertionError(f"aucun corps dans cet appel : {appel}")
+
+
+def entrees_importees(corps: str) -> list[str]:
+    """Les lignes `log=` du bloc machine qui portent l'historique importé."""
+    return [
+        ligne
+        for ligne in corps.splitlines()
+        if ligne.startswith("log=") and ligne.endswith("Historique importé de GitLab")
+    ]
+
+
+def test_le_temps_importe_se_lit_sans_commentaire_de_suivi(depot: Depot) -> None:
+    """LE test du ticket : un ticket qui ne porte QUE l'import rend déjà son temps et ses dates.
+
+    Et il les rend sans rien écrire — c'est ce qui distingue une jointure de lecture d'une
+    migration.
+    """
+    depot.pose_etat(graphql=[regle_commentaires(commentaire(ID_IMPORT, META_218))])
+
+    assert depot.lib("get-time-spent", "218").stdout.strip() == "4500"
+    assert depot.lib("get-start-date", "218").stdout.strip() == "2026-08-04"
+    assert ecritures(depot) == []
+
+
+def test_le_total_importe_n_est_pas_un_cycle_deja_loggue(depot: Depot) -> None:
+    """`--hors-import` retranche l'historique : c'est cette forme que /ticket-finish interroge.
+
+    Sans elle, le garde-fou d'idempotence de la commande (« du temps est-il déjà loggé ? »)
+    répondrait « oui » sur un ticket importé où personne n'a encore travaillé, et avalerait en
+    silence le temps de la session qui le termine — l'inverse de ce que la jointure acquiert.
+    """
+    depot.pose_etat(graphql=[regle_commentaires(commentaire(ID_IMPORT, META_218))])
+
+    assert depot.lib("get-time-spent", "218").stdout.strip() == "4500"
+    assert depot.lib("get-time-spent", "218", "--hors-import").stdout.strip() == "0"
+    assert depot.lib("get-time-spent", "218", "--n-importe-quoi").returncode == 2
+
+
+def test_un_log_sur_un_ticket_importe_ajoute_au_total_sans_toucher_a_l_archive(
+    depot: Depot,
+) -> None:
+    depot.pose_etat(graphql=[regle_commentaires(commentaire(ID_IMPORT, META_218))])
+
+    acheve = depot.lib("log-time", "218", "30m", "Cycle de dev (start->finish)")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    ecrits = ecritures(depot)
+    assert len(ecrits) == 1, ecrits
+    assert "issues/218/comments" in ecrits[0]              # un commentaire de suivi NEUF…
+    assert f"issues/comments/{ID_IMPORT}" not in ecrits[0]  # … et l'archive intacte
+
+    corps = corps_ecrit(ecrits[0])
+    assert "log=2026-08-17|4500|Historique importé de GitLab" in corps
+    assert "|1800|Cycle de dev (start->finish)" in corps
+    assert "temps=6300" in corps
+    # Les dates de l'import ont suivi, et le rendu humain est dérivé du même bloc.
+    assert "debut=2026-08-04" in corps
+    assert "echeance=2026-08-06" in corps
+    assert "temps passé **1h 45m**" in corps
+
+
+def test_le_ticket_qui_porte_les_deux_commentaires_les_fusionne(depot: Depot) -> None:
+    """Le cas #212, tel qu'il existe en production : import à 9000 s, suivi à « 0m ».
+
+    Les dates ne se fusionnent pas dans le même sens que le temps : celles du suivi l'emportent,
+    un /ticket-start postérieur à la bascule les ayant reposées.
+    """
+    depot.pose_etat(
+        graphql=[
+            regle_commentaires(
+                commentaire(ID_IMPORT, META_212, "2026-08-17T08:53:43Z"),
+                commentaire(ID_SUIVI, suivi("debut=2026-08-18", "echeance=2026-08-23")),
+            )
+        ]
+    )
+
+    assert depot.lib("get-time-spent", "212").stdout.strip() == "9000"
+    assert depot.lib("get-time-spent", "212", "--hors-import").stdout.strip() == "0"
+    assert depot.lib("get-start-date", "212").stdout.strip() == "2026-08-18"
+
+    assert depot.lib("log-time", "212", "30m", "Cycle de dev").returncode == 0
+    ecrits = ecritures(depot)
+    assert len(ecrits) == 1, ecrits
+    assert f"issues/comments/{ID_SUIVI}" in ecrits[0]       # le suivi, réécrit EN PLACE…
+    assert f"issues/comments/{ID_IMPORT}" not in ecrits[0]  # … l'archive, toujours intacte
+
+    corps = corps_ecrit(ecrits[0])
+    assert "temps=10800" in corps
+    assert "echeance=2026-08-23" in corps
+    assert "echeance=2026-08-08" not in corps
+
+
+def test_la_fusion_ne_repose_jamais_deux_fois_l_historique(depot: Depot) -> None:
+    """L'idempotence, et sa mémoire : l'entrée elle-même, reconnue à son résumé.
+
+    Aucune clé de témoin à tenir d'accord avec la donnée qu'elle décrit — relire un ticket déjà
+    fusionné ne doit ni doubler l'entrée, ni doubler le total.
+    """
+    depot.pose_etat(
+        graphql=[
+            regle_commentaires(
+                commentaire(ID_IMPORT, META_218),
+                commentaire(
+                    ID_SUIVI,
+                    suivi(
+                        "debut=2026-08-04",
+                        "echeance=2026-08-06",
+                        "log=2026-08-17|4500|Historique importé de GitLab",
+                        "log=2026-08-21|1800|Cycle de dev",
+                        "temps=6300",
+                    ),
+                ),
+            )
+        ]
+    )
+
+    assert depot.lib("get-time-spent", "218").stdout.strip() == "6300"
+    assert depot.lib("get-time-spent", "218", "--hors-import").stdout.strip() == "1800"
+
+    assert depot.lib("log-time", "218", "30m", "Second cycle").returncode == 0
+    corps = corps_ecrit(ecritures(depot)[0])
+    assert len(entrees_importees(corps)) == 1, corps
+    assert "temps=8100" in corps
+
+
+def test_un_ticket_sans_import_ne_gagne_aucune_entree(depot: Depot) -> None:
+    """La non-régression : un ticket né sur GitHub ne connaît aucun historique GitLab."""
+    depot.pose_etat(graphql=[regle_commentaires(commentaire(ID_SUIVI, suivi("debut=2026-08-20")))])
+
+    assert depot.lib("log-time", "400", "1h", "Cycle de dev").returncode == 0
+    corps = corps_ecrit(ecritures(depot)[0])
+    assert entrees_importees(corps) == []
+    assert "temps=3600" in corps
+
+
+def test_un_ticket_sans_aucun_commentaire_cree_son_suivi(depot: Depot) -> None:
+    """L'autre non-régression : chercher DEUX marqueurs ne change rien quand il n'y en a aucun."""
+    depot.pose_etat(graphql=[regle_commentaires()])
+
+    assert depot.lib("set-dates", "400", "2026-08-21", "2026-08-26").returncode == 0
+    ecrits = ecritures(depot)
+    assert len(ecrits) == 1, ecrits
+    assert "issues/400/comments" in ecrits[0]
+    assert "debut=2026-08-21" in corps_ecrit(ecrits[0])
