@@ -397,17 +397,17 @@ affiche_ticket_en_cours() { # <run-dir> <iid>
     fi
   fi
 
-  # La forge en dernier : c'est ce que la boucle regardera pour rendre son verdict (MR ouverte ET
+  # La forge en dernier : c'est ce que la boucle regardera pour rendre son verdict (PR ouverte ET
   # cycle de vie « En revue »), donc le voir bouger, c'est voir le ticket toucher au but.
   # Le libellé de colonne suit la forge active — « GitLab » et « GitHub » font six caractères, la
   # colonne ne bouge donc pas d'un cran d'une forge à l'autre.
   if gl="$(etat_gitlab "$iid" "$branche")"; then
     IFS=$'\t' read -r statut etat_mr mr_iid <<< "$gl"
     if [ "$etat_mr" = "opened" ]; then
-      printf '   %s     ticket « %s » · MR !%s ouverte\n' "$FORGE_NOM" "${statut:-?}" "${mr_iid:-?}"
+      printf '   %s     ticket « %s » · PR #%s ouverte\n' "$FORGE_NOM" "${statut:-?}" "${mr_iid:-?}"
     else
       printf '   %s     ticket « %s » · %s\n' "$FORGE_NOM" "${statut:-?}" \
-        "$([ -n "$etat_mr" ] && printf 'MR « %s »' "$etat_mr" || printf 'aucune MR')"
+        "$([ -n "$etat_mr" ] && printf 'PR « %s »' "$etat_mr" || printf 'aucune PR')"
     fi
   elif [ "$SANS_GITLAB" = 1 ]; then
     printf '   %s     %snon interrogé (--no-forge)%s\n' "$FORGE_NOM" "$C_D" "$C_0"
@@ -445,7 +445,7 @@ affiche_bilan() { # <run-dir>
   while IFS=$'\t' read -r iid verdict mr duree cout raison; do
     case "$iid" in '#'* | '') continue ;; esac
     case "$verdict" in
-      OK)    printf '   %s✓%s #%-5s MR !%-5s %-8s %6.2f $\n' "$C_G" "$C_0" "$iid" "${mr:--}" "$(duree_lisible "${duree:-0}")" "${cout:-0}" ;;
+      OK)    printf '   %s✓%s #%-5s PR #%-5s %-8s %6.2f $\n' "$C_G" "$C_0" "$iid" "${mr:--}" "$(duree_lisible "${duree:-0}")" "${cout:-0}" ;;
       ECHEC) printf '   %s✗%s #%-5s %-9s %-8s %6.2f $  %s\n' "$C_R" "$C_0" "$iid" "${mr:--}" "$(duree_lisible "${duree:-0}")" "${cout:-0}" "${raison:--}" ;;
       *)     printf '   %s~%s #%-5s %-9s %-8s %6s     %s\n' "$C_Y" "$C_0" "$iid" "${mr:--}" "-" "-" "${raison:--}" ;;
     esac
@@ -684,7 +684,7 @@ affiche_run() {
       ;;
     interrompu | termine)
       printf '   revue      bash scripts/gitlab/lib.sh review-queue\n'
-      printf '   ménage     %saucun — les worktrees sont ramassés d'\''office dès leur MR mergée (#197)%s\n' "$C_D" "$C_0"
+      printf '   ménage     %saucun — les worktrees sont ramassés d'\''office dès leur PR mergée (#197)%s\n' "$C_D" "$C_0"
       ;;
   esac
   printf '\n'

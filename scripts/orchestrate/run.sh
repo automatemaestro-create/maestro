@@ -19,7 +19,7 @@
 #
 # --- Le verdict d'un ticket vient de GitLab, pas du texte de la session ---------------------------
 # Une session peut conclure « c'est fait » en s'étant trompée, ou échouer après avoir tout livré.
-# On ne lit donc pas sa prose : un ticket est réussi si, et seulement si, sa branche porte une MR
+# On ne lit donc pas sa prose : un ticket est réussi si, et seulement si, sa branche porte une PR
 # OUVERTE et son cycle de vie est « En revue » — exactement ce que `/ticket-ship` laisse derrière
 # lui. C'est vérifiable, et ça ne dépend pas de la formulation du modèle.
 #
@@ -83,7 +83,7 @@
 #   <iid>.json        le résultat FINAL de la session seul (coût, usage, permission_denials…)
 #   <iid>.resultat.txt  le même, mais LISIBLE (#180) : verdict, coût, durée, refus, message final
 #   <iid>.log         ce que la session a écrit sur stderr
-#   resume.tsv        une ligne par ticket : iid, verdict, MR, durée, coût, raison
+#   resume.tsv        une ligne par ticket : iid, verdict, PR, durée, coût, raison
 #   pid               la carte d'identité du pilote (#213) : PID, WINPID, naissance, hôte — posée au
 #                     démarrage, retirée à la sortie, et seule chose qui permette de TUER un run
 #   concurrence       le nombre de tickets en vol de ce run (#291), relu par `--resume` pour rejouer
@@ -161,7 +161,7 @@ BUDGET="${MAESTRO_ORCHESTRATE_BUDGET:-}"
 # épinglé par le dépôt (`claude-opus-5` + effort `xhigh`, #206/#217) elles sont devenues le premier
 # tueur de sessions du run. Mesuré le 2026-08-10, run 20260810-141208 : #315 livré en 42min50 (2 min
 # de marge) et #316 coupé à 45min02 — son travail était FINI et commité, le couperet est tombé
-# pendant le push et l'ouverture de la MR. Le plafond n'a donc rien protégé : il a transformé un
+# pendant le push et l'ouverture de la PR. Le plafond n'a donc rien protégé : il a transformé un
 # ticket livrable en échec, puis l'échec en sept lots sautés en cascade (§11.5), pour un seul
 # livrable à 14,75 $. Un run reste borné par ce qui le borne vraiment — le fichier STOP, la limite
 # d'usage, le plafond d'attente de 5 h 30, et l'humain devant la console. `--timeout <durée>` et
@@ -224,7 +224,7 @@ Options :
                        session va au bout de son ticket, de son délai s'il en a un, ou de la
                        limite d'usage. 0 (ou vide) vaut « pas de plafond ».
   --timeout <durée>    Délai maximal par ticket : 45m, 90m, 2700… Par défaut AUCUN : un délai
-                       tue la session EN PLEIN TRAVAIL, sans commit ni MR, et fait sauter les
+                       tue la session EN PLEIN TRAVAIL, sans commit ni PR, et fait sauter les
                        lots suivants du même parent. 0 (ou vide) vaut « pas de délai ».
   --modele <modèle>    Modèle des sessions. Défaut : claude-opus-5.
   --effort <niveau>    Effort de raisonnement des sessions : low, medium, high, xhigh, max.
@@ -253,7 +253,7 @@ Limite d'usage : la boucle attend jusqu'au reset et reprend la même session Cla
 et c'est « --resume » qui le rejoue plus tard. Les runs reprenables : status.sh --reprenables.
 
 Arrêt d'urgence : créer .maestro/orchestrate/STOP (testé entre deux tickets et pendant l'attente).
-Le run ne merge, ne ferme et ne force-push jamais : il laisse N MR en Draft à relire.
+Le run ne merge, ne ferme et ne force-push jamais : il laisse N PR en Draft à relire.
 USAGE
 }
 
@@ -534,7 +534,7 @@ vue_ancre() {
 }
 
 # De qui parle une ligne (#289). À plusieurs tickets en vol, les sous-shells écrivent tous dans le
-# même journal et rien ne dirait à qui appartient un « ✓ MR !99 ouverte » : chaque ligne de ticket
+# même journal et rien ne dirait à qui appartient un « ✓ PR #99 ouverte » : chaque ligne de ticket
 # porte donc son numéro. À un seul en vol — le défaut — le préfixe est VIDE, et la sortie est celle
 # d'avant ce lot à l'octet près. Posé par le pilote autour de chaque ticket, et hérité par son
 # sous-shell ; les trois fonctions ci-dessous sont les seules à l'appliquer.
@@ -816,7 +816,7 @@ vue_recompose() {
     esac
     case "${duree:-}" in '' | *[!0-9]*) duree='' ;; *) duree="$(duree_lisible "$duree")" ;; esac
     case "${cout:-}" in '' | 0 | 0.00) cout='' ;; *) cout="$(arrondi_cout "$cout") \$" ;; esac
-    case "${mr:-}" in '' | '-') mr='' ;; *) mr="MR !$mr" ;; esac
+    case "${mr:-}" in '' | '-') mr='' ;; *) mr="PR #$mr" ;; esac
     VUE_STATIQUE[$i]="$(vue_ligne "$marque" "${P_RANG[$i]}" "$iid" "$duree" "$cout" "$mr" "${P_TITRE[$i]}")"
   done
   return 0
@@ -1051,8 +1051,8 @@ tue_les_runs_en_vol() {
 # travail_en_attente <dest> : « <fichiers non commités> <commits hors origin/main> » du worktree.
 #
 # Une session peut sortir en code 0 sans avoir rien clos (#178) — elle croyait faire une pause. Le
-# verdict GitLab la classe ECHEC à juste titre, mais « MR "aucune", cycle de vie "À faire" » ne dit
-# pas l'essentiel : le travail est-il PERDU, ou dort-il dans le worktree ? Ces deux compteurs
+# verdict de la forge la classe ECHEC à juste titre, mais « PR "aucune", cycle de vie "À faire" » ne
+# dit pas l'essentiel : le travail est-il PERDU, ou dort-il dans le worktree ? Ces deux compteurs
 # tranchent, et la différence est actionnable — un worktree qui porte du travail se rattrape par
 # une session ciblée sur la seule clôture, un worktree vide est à refaire.
 #
@@ -1625,14 +1625,14 @@ END {
   if (ligne != "") print ligne
   print ""
 
-  # Le verdict vient de la boucle, donc de GitLab (MR ouverte ET cycle de vie « En revue ») — jamais
-  # de la prose ci-dessous, qui peut se croire réussie sans l'être. Absent quand on relit un vieux
-  # fichier.
+  # Le verdict vient de la boucle, donc de la forge (PR ouverte ET cycle de vie « En revue ») —
+  # jamais de la prose ci-dessous, qui peut se croire réussie sans l'être. Absent quand on relit un
+  # vieux fichier.
   if (verdict != "") {
     v = verdict
     if (verdict == "OK") v = "✓ OK"
     else if (verdict == "ECHEC") v = "✗ ECHEC"
-    if (mr != "" && mr != "-") v = v " — MR !" mr
+    if (mr != "" && mr != "-") v = v " — PR #" mr
     if (raison != "" && raison != "-") v = v " — " raison
     champ("verdict", v)
   }
@@ -1827,21 +1827,21 @@ Règles de ce run autonome :
   refusé sans que personne soit là pour l'approuver. Pour poser quand même une variable, écris
   « env VAR=valeur <commande> » : cette forme-là est autorisée, « VAR=valeur <commande> » non.
 - TOUT CHEMIN ABSOLU est refusé, même vers ton propre worktree : c'est la cause n°1 des refus
-  (9 sur 12 du dernier run). Tes fichiers de travail — description de MR, corps de commentaire,
+  (9 sur 12 du dernier run). Tes fichiers de travail — description de PR, corps de commentaire,
   sortie intermédiaire que tu veux relire — s'écrivent dans « .maestro/session/ », qui existe déjà
   dans ton worktree et est gitignoré. N'écris ni dans « /tmp », ni dans le répertoire temporaire
   de la session : ils sont hors du répertoire de travail, donc illisibles pour toi ensuite.
 - Trois formes qu'AUCUNE règle ne peut reconnaître, quelle que soit la commande qu'elles habillent
   et même si elle est autorisée : un SAUT DE LIGNE dans la commande, une SUBSTITUTION \$(…), un
   HEREDOC (« <<'EOF' »). Tiens donc chaque appel sur UNE SEULE LIGNE, et n'y fais entrer aucun
-  texte long. Pour écrire un fichier — description de MR, corps de commentaire, note de travail —
+  texte long. Pour écrire un fichier — description de PR, corps de commentaire, note de travail —
   sers-toi de l'outil Write, puis donne le CHEMIN de ce fichier à la commande : jamais
   « cat > … <<'EOF' », jamais « --description "\$(cat …)" ».
 - Si la branche du ticket existe déjà et porte des commits, OU si le worktree contient des
   modifications non commitées, REPRENDS ce travail au lieu de recommencer : commence par regarder
   git status et git log. Tu es peut-être la reprise d'une session interrompue, et un arbre sale
   sans aucun commit est précisément la trace qu'elle laisse.
-- Ne merge jamais, ne ferme jamais une MR, ne force-push jamais — un garde-fou les refuse de
+- Ne merge jamais, ne ferme jamais une PR, ne force-push jamais — un garde-fou les refuse de
   toute façon.
 - Si tu ne peux pas terminer, écris en TOUTE DERNIÈRE LIGNE : ORCHESTRATE: ECHEC <raison courte>.
 PROMPT
@@ -2252,7 +2252,7 @@ if [ "$DRY" = 1 ]; then
   printf '                        --permission-mode acceptEdits --model %s --effort %s%s\n' \
     "$MODELE" "$EFFORT" \
     "$([ -n "$BUDGET" ] && printf ' --max-budget-usd %s' "$BUDGET")"
-  printf '  3. verdict            MR ouverte ET cycle de vie « En revue » (lu dans %s, pas dans la sortie)\n' "$(gl_forge_nom)"
+  printf '  3. verdict            PR ouverte ET cycle de vie « En revue » (lu dans %s, pas dans la sortie)\n' "$(gl_forge_nom)"
   printf '  4. limite d'\''usage    attente jusqu'\''au reset, puis réouverture de la même session Claude\n'
   printf '  5. sur échec          lots suivants du même parent sautés, run poursuivi\n'
   printf '  6. run coupé          « run.sh --resume » rejoue CE plan et CETTE concurrence, tous les\n'
@@ -2278,7 +2278,7 @@ printf '# iid\tverdict\tmr\tduree_s\tcout_usd\traison\n' >"$RESUME"
 # Ce n'est pas le code produit qui prenait du retard : chaque worktree part d'`origin/main`, que
 # `worktree.sh` fetch juste avant de créer la branche. C'est la ref LOCALE `refs/heads/main`, que
 # plus personne ne visite depuis #181 — et qu'un run fait vieillir plus vite que tout le reste,
-# puisqu'il ouvre N MR destinées à être mergées. Elle n'avançait jusqu'ici qu'à l'intérieur d'une
+# puisqu'il ouvre N PR destinées à être mergées. Elle n'avançait jusqu'ici qu'à l'intérieur d'une
 # session (le /ticket-start du ticket, via `worktree.sh ensure`), donc pas du tout quand le run part
 # sur un plan vide, saute tous ses tickets ou échoue avant le premier — le cas d'une nuit où c'est
 # la seule chose qui tourne.
@@ -2697,7 +2697,7 @@ solde_ticket() { # <index> <verdict> <mr> <duree> <cout> <raison>
 }
 
 # --- Le verdict d'un ticket qui vient de finir --------------------------------------------------------
-# Lu dans GitLab (MR ouverte ET cycle de vie « En revue »), jamais dans la prose de la session.
+# Lu dans la forge (PR ouverte ET cycle de vie « En revue »), jamais dans la prose de la session.
 juge_ticket() { # <index> <code rendu par le sous-shell>
   local i="$1" code="$2"
   local iid="${P_IID[$i]}" dest="${P_DEST[$i]}" branche="${P_BRANCHE[$i]}"
@@ -2731,20 +2731,20 @@ juge_ticket() { # <index> <code rendu par le sous-shell>
   statut="$(gl_issue_owner "$iid" 2>/dev/null | cut -f1)"
   mr="$(gl_mr_iid "$branche" 2>/dev/null)"
   if [ "$etat_mr" = "opened" ] && [ "$statut" = "En revue" ]; then
-    dit '  %s✓%s MR !%s ouverte, ticket « En revue » — %s, %s $\n' \
+    dit '  %s✓%s PR #%s ouverte, ticket « En revue » — %s, %s $\n' \
       "$C_G" "$C_0" "${mr:-?}" "$(duree_lisible "$duree")" "$(arrondi_cout "${cout:-?}")"
     solde_ticket "$i" OK "${mr:--}" "$duree" "${cout:-0}" -
-    # La raison dit sur quoi repose le verdict : la MR est déjà nommée juste avant, l'état non.
+    # La raison dit sur quoi repose le verdict : la PR est déjà nommée juste avant, l'état non.
     ecrit_resultat "$iid" "${P_TITRE[$i]}" OK "${mr:--}" "$duree" "ticket « En revue »"
   else
-    raison="MR « ${etat_mr:-aucune} », cycle de vie « ${statut:-?} »"
+    raison="PR « ${etat_mr:-aucune} », cycle de vie « ${statut:-?} »"
     # Ce que la session a laissé derrière elle : c'est cela qui dit si l'échec est rattrapable.
     reste="$(travail_en_attente "$dest")"
     n_modifs="${reste%% *}"; n_modifs="${n_modifs:-0}"
     n_commits="${reste##* }"; n_commits="${n_commits:-0}"
     detail=""
     [ "$n_modifs" -gt 0 ] && detail="$n_modifs fichier(s) non commité(s)"
-    # « sur la branche » et non « sans MR » : l'état de la MR est déjà dit juste après, et il
+    # « sur la branche » et non « sans PR » : l'état de la PR est déjà dit juste après, et il
     # arrive qu'elle existe sans que le statut ait suivi.
     [ "$n_commits" -gt 0 ] && detail="${detail:+$detail, }$n_commits commit(s) sur la branche"
     if [ -n "$detail" ]; then
@@ -2971,10 +2971,10 @@ if [ "$PLAFOND_ATTEINT" = 1 ]; then
   printf '  (hors Claude Code : bash scripts/orchestrate/run.sh --resume %s)\n' "$RUN_ID"
 fi
 if [ -n "$WORKTREES" ]; then
-  # Rien à faire : le ramassage (#197) les retirera de lui-même dès que GitLab confirmera leur MR
+  # Rien à faire : le ramassage (#197) les retirera de lui-même dès que la forge confirmera leur PR
   # mergée — au prochain /ticket-start, au prochain /branch-cleanup ou au prochain run. On les liste
   # quand même : c'est là que dort le travail si une session a échoué sans clôturer.
-  printf '\n  Worktrees montés (retirés d'\''office quand leur MR sera mergée — docs/10 §9.2) :\n'
+  printf '\n  Worktrees montés (retirés d'\''office quand leur PR sera mergée — docs/10 §9.2) :\n'
   for i in $WORKTREES; do printf '    #%s\n' "$i"; done
 fi
 printf '\n  Le merge reste une décision humaine : ce run n'\''a rien mergé ni fermé.\n'

@@ -789,12 +789,12 @@ def _commit_local(depot: Depot, wt: Path, texte: str) -> str:
 def test_gc_retire_un_worktree_dont_la_mr_est_mergee(depot: Depot) -> None:
     """Le cas nominal — et la branche, elle, survit : sa suppression reste à /branch-cleanup."""
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "#152 retiré" in acheve.stdout
-    assert "MR !42 mergée" in acheve.stdout
+    assert "PR #42 mergée" in acheve.stdout
     assert not depot.worktree().exists()
     assert BRANCHE in depot.git("branch", "--list", BRANCHE)
     # Le clone principal n'est ni retiré, ni amputé de ses artefacts partagés (jonctions, #152).
@@ -805,7 +805,7 @@ def test_gc_retire_un_worktree_dont_la_mr_est_mergee(depot: Depot) -> None:
 
 def test_gc_ne_touche_pas_un_worktree_actif(depot: Depot) -> None:
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket #152 « open » (MR « aucune »)")})
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket #152 « open » (PR « aucune »)")})
 
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -846,7 +846,7 @@ def test_gc_refuse_et_signale_un_travail_non_commite(depot: Depot) -> None:
     """
     depot.lance("create", "152", "--branche", BRANCHE)
     (depot.worktree() / "README.md").write_text("modifié", encoding="utf-8", newline="\n")
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -860,7 +860,7 @@ def test_gc_refuse_et_signale_des_commits_non_pousses(depot: Depot) -> None:
     """Un commit qui n'est jamais parti vers `origin` n'existe que là : il n'est pas jetable."""
     depot.lance("create", "152", "--branche", BRANCHE)
     _commit_local(depot, depot.worktree(), "jamais poussé")
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "ticket #152 fermé (MR « aucune »)")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "ticket #152 fermé (PR « aucune »)")})
 
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -879,7 +879,7 @@ def test_gc_retire_malgre_le_squash_grace_au_sha_de_merge(depot: Depot) -> None:
     depot.lance("create", "152", "--branche", BRANCHE)
     sha = _commit_local(depot, depot.worktree(), "mergé en squash")
     assert depot.git("rev-list", "--count", "origin/main..HEAD", cwd=depot.worktree()) == "1"
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée", sha)})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée", sha)})
 
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -910,7 +910,7 @@ def test_gc_retire_une_branche_recreee_depuis_main_apres_son_merge(depot: Depot)
         "le sha de merge doit bien avoir divergé, sinon le test ne prouve rien"
     )
 
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée", sha)})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée", sha)})
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "#152 retiré" in acheve.stdout
@@ -922,7 +922,7 @@ def test_gc_signale_un_commit_posterieur_au_merge(depot: Depot) -> None:
     depot.lance("create", "152", "--branche", BRANCHE)
     sha = _commit_local(depot, depot.worktree(), "mergé en squash")
     _commit_local(depot, depot.worktree(), "ajouté après le merge")
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée", sha)})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée", sha)})
 
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -937,7 +937,7 @@ def test_gc_ne_retire_jamais_le_worktree_de_la_session_courante(depot: Depot) ->
     et un `gc` lancé depuis un worktree ne doit pas se saborder.
     """
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("gc", cwd=depot.worktree())
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -947,7 +947,7 @@ def test_gc_ne_retire_jamais_le_worktree_de_la_session_courante(depot: Depot) ->
 
 def test_gc_check_ne_retire_rien(depot: Depot) -> None:
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("gc", "--check")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -962,7 +962,7 @@ def test_gc_auto_est_muet_quand_il_n_y_a_rien_a_dire(depot: Depot) -> None:
     Sans quoi chaque `/ticket-start` s'ouvrirait sur un inventaire dont personne n'a besoin.
     """
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket #152 « open » (MR « aucune »)")})
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket #152 « open » (PR « aucune »)")})
 
     acheve = depot.lance("gc", "--auto")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -972,7 +972,7 @@ def test_gc_auto_est_muet_quand_il_n_y_a_rien_a_dire(depot: Depot) -> None:
 def test_gc_ignore_une_branche_hors_convention(depot: Depot) -> None:
     """Sans iid dans le nom, aucun ticket à interroger — donc aucune décision à prendre."""
     depot.lance("create", "152", "--branche", "experimentation")
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -987,15 +987,15 @@ def test_ensure_retrouve_le_travail_d_un_ticket_repris(depot: Depot) -> None:
     poussés et le travail non commité ne sont pas touchés. Ce qui reste à prouver est l'autre bout :
     que le démarrage suivant les RETROUVE. Deux choses pourraient le défaire à ce moment précis, et
     ce sont justement les deux ménages câblés dans `ensure` — le ramassage des worktrees et la purge
-    des branches. Ni l'un ni l'autre ne doit y toucher : le ticket est ouvert, sa MR n'existe pas,
+    des branches. Ni l'un ni l'autre ne doit y toucher : le ticket est ouvert, sa PR n'existe pas,
     donc il est « actif » et sa branche n'est pas mergée.
     """
     depot.lance("create", "152", "--branche", BRANCHE)
     wt = depot.worktree()
     sha = _commit_local(depot, wt, "2047 lignes jamais poussées\n")
     (wt / "en-chantier.txt").write_text("pas encore commité\n", encoding="utf-8", newline="\n")
-    # Un ticket repris est OUVERT et sans MR mergée : c'est ce que `worktree-done` en dit.
-    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket ouvert, aucune MR mergée")})
+    # Un ticket repris est OUVERT et sans PR mergée : c'est ce que `worktree-done` en dit.
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket ouvert, aucune PR mergée")})
     depot.impose_mr({BRANCHE: "opened"})
 
     acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
@@ -1019,7 +1019,7 @@ def test_ensure_ramasse_les_worktrees_soldes_avant_de_monter_le_sien(depot: Depo
     le contrat de sortie sur lequel /ticket-start s'appuie (#181).
     """
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("ensure", "153", "--branche", "chore/153-suite")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -1046,8 +1046,8 @@ def test_ensure_ramasse_les_worktrees_soldes_avant_de_monter_le_sien(depot: Depo
 def test_ensure_purge_les_branches_mergees(depot: Depot) -> None:
     """Le câblage qui fait le ticket : plus aucun geste dédié à se rappeler.
 
-    Et le garde-fou reste entier — seule part la branche dont GitLab confirme la MR `merged`
-    (docs/10 §6) ; une MR ouverte, comme une branche sans MR, ne prouve rien.
+    Et le garde-fou reste entier — seule part la branche dont la forge confirme la PR `merged`
+    (docs/10 §6) ; une PR ouverte, comme une branche sans PR, ne prouve rien.
     """
     depot.git("branch", "chore/140-livree")
     depot.git("branch", "chore/141-en-cours")
@@ -1073,7 +1073,7 @@ def test_ensure_purge_la_branche_du_worktree_qu_il_vient_de_ramasser(depot: Depo
     la branche d'un ticket soldé resterait là à chaque passage.
     """
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
     depot.impose_mr({BRANCHE: "merged"})
 
     acheve = depot.lance("ensure", "153", "--branche", "chore/153-suite")
@@ -1167,7 +1167,7 @@ def test_start_branch_ne_purge_plus_les_branches_mergees(depot: Depot) -> None:
 
 # --- Cycle de vie posé sur le verdict du ramassage (#275) ------------------------------------
 # Le merge FERME le ticket mais ne pose aucun label : depuis #207 seul `/branch-cleanup`, lancé à la
-# main, posait « Terminé ». La greffe est ici plutôt que dans `ensure` parce que « fini » — MR
+# main, posait « Terminé ». La greffe est ici plutôt que dans `ensure` parce que « fini » — PR
 # mergée ou ticket fermé — est DÉJÀ la question de la réconciliation : aucune lecture de découverte
 # en plus, et les trois points de passage de `gc` en héritent d'un coup.
 #
@@ -1181,7 +1181,7 @@ def test_start_branch_ne_purge_plus_les_branches_mergees(depot: Depot) -> None:
 def test_gc_pose_le_cycle_de_vie_du_ticket_solde(depot: Depot) -> None:
     """Cas nominal : worktree ramassé ⇒ cycle de vie du ticket posé, et le rapport le dit."""
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
     depot.impose_pose()
 
     acheve = depot.lance("gc")
@@ -1204,7 +1204,7 @@ def test_gc_ne_pose_aucun_cycle_de_vie_sur_un_verdict_non_solde(depot: Depot) ->
 def test_gc_check_ne_pose_aucun_cycle_de_vie(depot: Depot) -> None:
     """`--check` est un diagnostic : il ne retire rien, donc il n'écrit rien côté GitLab."""
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
     depot.impose_pose()
 
     acheve = depot.lance("gc", "--check")
@@ -1222,7 +1222,7 @@ def test_gc_pose_le_cycle_de_vie_meme_quand_le_worktree_est_conserve(depot: Depo
     """
     depot.lance("create", "152", "--branche", BRANCHE)
     (depot.worktree() / "brouillon.txt").write_text("en cours", encoding="utf-8", newline="\n")
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
     depot.impose_pose()
 
     acheve = depot.lance("gc")
@@ -1239,7 +1239,7 @@ def test_ensure_pose_le_cycle_de_vie_des_tickets_soldes_au_passage(depot: Depot)
     ligne de pose ajoutée au rapport.
     """
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
     depot.impose_pose()
 
     acheve = depot.lance("ensure", "153", "--branche", "chore/153-suite")
@@ -1255,7 +1255,7 @@ def test_gc_survit_a_une_pose_en_echec(depot: Depot) -> None:
     démarrer ni un run de continuer.
     """
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
     depot.impose_pose()
     (depot.fauxbin / "pose").write_text(
         "#!/usr/bin/env bash\nexit 1\n", encoding="utf-8", newline="\n"
@@ -1556,7 +1556,7 @@ def test_ensure_ecarte_du_signalement_le_ticket_qu_il_demarre(depot: Depot) -> N
 def test_gc_ne_bloque_pas_sur_un_signalement_en_echec(depot: Depot) -> None:
     """Best-effort comme le reste de la famille : un verbe muet ou en erreur n'arrête rien."""
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
     depot.impose_orphelins("", code="1")
 
     acheve = depot.lance("gc")
@@ -2021,7 +2021,7 @@ def test_gc_nomme_les_sessions_du_worktree_qu_il_retire(depot: Depot) -> None:
     """
     depot.lance("create", "152", "--branche", BRANCHE)
     _pose_transcript(_bucket(depot, "152"), "aaaa4444-4444-4444-4444-4444", "Travail")
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("gc")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
@@ -2034,7 +2034,7 @@ def test_gc_nomme_les_sessions_du_worktree_qu_il_retire(depot: Depot) -> None:
 def test_gc_ne_parle_pas_de_sessions_quand_il_n_y_en_a_pas(depot: Depot) -> None:
     """La mention est portée par un fait, pas par le passage : sans transcript, rien à dire."""
     depot.lance("create", "152", "--branche", BRANCHE)
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("gc")
     assert "#152 retiré" in acheve.stdout
@@ -2045,7 +2045,7 @@ def test_gc_check_annonce_les_sessions_sans_rien_retirer(depot: Depot) -> None:
     """`--check` sert à décider : il doit montrer ce que le retrait rendrait moins accessible."""
     depot.lance("create", "152", "--branche", BRANCHE)
     _pose_transcript(_bucket(depot, "152"), "aaaa5555-5555-5555-5555-5555", "Travail")
-    depot.impose_verdicts({"152": _verdict_ligne("fini", "MR !42 mergée")})
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
 
     acheve = depot.lance("gc", "--check")
     assert "#152 à retirer" in acheve.stdout

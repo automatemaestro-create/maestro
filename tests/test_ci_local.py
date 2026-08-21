@@ -675,7 +675,7 @@ def test_pytest_absent_du_venv_reste_ignore_et_non_rouge(clone: Clone) -> None:
 # --- Périmètre de pytest (#214) -------------------------------------------------------------------
 # La suite complète coûte 9 min 57 s en série, dont 9 pour les ~360 tests d'outillage. Le filet ne
 # joue donc par défaut que les suites que le diff concerne, la suite entière restant celle du
-# pipeline de la MR (docs/10 §8). Un périmètre qui se trompe est pire que pas de périmètre : ces
+# pipeline de la PR (docs/10 §8). Un périmètre qui se trompe est pire que pas de périmètre : ces
 # tests épinglent la règle, et surtout son sens de dérive — dans le doute, on élargit.
 
 

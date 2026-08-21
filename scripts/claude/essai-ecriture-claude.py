@@ -42,7 +42,7 @@ Verdict, et code de sortie (les deux se lisent sans jq) :
     0   au moins une variante ciblée a ÉCRIT sous `.claude/` — le garde-fou se lève,
         `settings.run.json` peut porter les règles ;
     3   aucune règle de chemin n'a ouvert `.claude/` — la conclusion de #229 est
-        démontrée, une session doit rendre son contenu dans la MR (docs/10 §11.7) ;
+        démontrée, une session doit rendre son contenu dans la PR (docs/10 §11.7) ;
     1   l'essai n'a pas pu être conduit (CLI absent, session en échec, témoin non
         écrit) — pas de verdict, surtout pas de conclusion.
 
@@ -404,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     print(
         "VERDICT : le garde-fou TIENT — une règle `allow` à chemin explicite ne l'ouvre pas.\n"
-        "          Une session autonome rend son contenu dans la MR (docs/10 §11.7)."
+        "          Une session autonome rend son contenu dans la PR (docs/10 §11.7)."
     )
     return 3
 

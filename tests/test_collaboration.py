@@ -346,7 +346,7 @@ def test_startables_laisse_les_lots_paralleles_se_prendre_ensemble(depot: Depot)
 
 
 def test_startables_ne_bloque_pas_sur_un_lot_precedent_en_revue(depot: Depot) -> None:
-    """Les lots s'enchaînent dès « En revue » : une MR en attente de merge ne barre rien (#63)."""
+    """Les lots s'enchaînent dès « En revue » : une PR en attente de merge ne barre rien (#63)."""
     depot.pose_etat(
         issues={"155": PARENT},
         graphql=backlog_des_lots(
@@ -481,7 +481,7 @@ def test_pick_reviewer_ecarte_l_auteur_et_le_compte_d_automatisation(depot: Depo
 
 
 def test_pick_reviewer_est_reproductible_mais_tourne(depot: Depot) -> None:
-    """Même MR → même relecteur (pose idempotente) ; MR différentes → charge répartie."""
+    """Même PR → même relecteur (pose idempotente) ; PR différentes → charge répartie."""
     depot.pose_etat(graphql=[{"contient": ["collaborators("], "reponse": reponse_membres(MEMBRES)}])
     choisis = [depot.lib("pick-reviewer", "bea", str(g)).stdout.strip() for g in range(4)]
     assert choisis[0] == depot.lib("pick-reviewer", "bea", "0").stdout.strip()
@@ -549,7 +549,7 @@ def test_set_reviewer_refuse_de_designer_l_auteur(depot: Depot) -> None:
     etat_revue(depot, auteur="bea", relecteurs=[])
     acheve = depot.lib("set-reviewer", "12", "bea")
     assert acheve.returncode == 1
-    assert "est l'auteur de la MR" in acheve.stderr
+    assert "est l'auteur de la PR" in acheve.stderr
     assert [a for a in depot.appels() if a.startswith("mr\tupdate")] == []
 
 
@@ -557,7 +557,7 @@ def test_aucune_commande_ne_pose_de_relecteur_automatiquement() -> None:
     """#196 : la pose d'un relecteur reste outillée, mais n'est plus AUTOMATIQUE.
 
     Le helper `set-reviewer` continue d'exister et de fonctionner (tests ci-dessus) ; ce qui
-    disparaît, c'est son **appel** par le cycle de clôture — désigner un relecteur attribue une MR
+    disparaît, c'est son **appel** par le cycle de clôture — désigner un relecteur attribue une PR
     à quelqu'un qui ne l'a pas demandé, alors que la file de revue porte déjà le signal. Cette
     règle vit dans des **prompts** (`.claude/commands/*.md`), pas dans du code : seule une lecture
     de ces fichiers peut la garder. On cherche donc une *invocation* (une ligne de commande), pas
@@ -626,7 +626,7 @@ def test_le_cycle_de_cloture_appelle_les_helpers_de_creation() -> None:
         (nom, nue) for nom, _, nue in invocations_des_commandes() if "lib.sh create-mr" in nue
     ]
     assert [nom for nom, _ in appels] == ["ticket-finish.md"], (
-        "`/ticket-finish` doit être le seul à créer la MR, et il doit le faire par le helper "
+        "`/ticket-finish` doit être le seul à créer la PR, et il doit le faire par le helper "
         f"(#233) — trouvé : {appels}"
     )
     assert not [
@@ -637,9 +637,9 @@ def test_le_cycle_de_cloture_appelle_les_helpers_de_creation() -> None:
 
 
 def test_branch_cleanup_delegue_sa_boucle_au_helper() -> None:
-    """#309 : la boucle « quel est l'état de la MR de cette branche ? » vit dans `lib.sh`.
+    """#309 : la boucle « quel est l'état de la PR de cette branche ? » vit dans `lib.sh`.
 
-    `/branch-cleanup` la décrivait en prose — une lecture de l'état de la MR par branche locale,
+    `/branch-cleanup` la décrivait en prose — une lecture de l'état de la PR par branche locale,
     soit ~3 500 octets réinjectés pour en tirer un mot, **~43 000 tokens** sur ce dépôt à chaque
     invocation (audit #304 §4.1, le plus gros gisement du lot). `cleanup-merged` fait la même chose
     en shell, avec le **même** garde-fou, et n'imprime qu'un bilan.
@@ -883,7 +883,7 @@ def test_mr_conflict_ne_touche_ni_a_l_arbre_ni_a_l_index(depot: Depot) -> None:
 
 
 def test_mr_conflict_juge_une_branche_qu_on_ne_sort_pas(depot: Depot) -> None:
-    """Le cas d'usage réel de /mr-fix : juger la branche d'une MR depuis le clone principal."""
+    """Le cas d'usage réel de /mr-fix : juger la branche d'une PR depuis le clone principal."""
     prepare_retard(depot, fichier_main="fichier-a.txt")
     depot.git("checkout", "--quiet", "main")
 
@@ -957,7 +957,7 @@ def test_close_guard_valide_une_session_coherente(depot: Depot) -> None:
 
 
 def test_close_guard_detecte_le_decalage_ticket_branche(depot: Depot) -> None:
-    """Le contrôle FORT : `/ticket-finish 158` depuis `chore/163-…` poserait la MR sur #158."""
+    """Le contrôle FORT : `/ticket-finish 158` depuis `chore/163-…` poserait la PR sur #158."""
     depot.git("checkout", "--quiet", "-b", "chore/163-retard-sur-main")
     depot.pose_etat(
         graphql=[regle_owner("En cours", [MOI])]
@@ -1009,9 +1009,9 @@ def test_close_guard_n_ecrit_jamais_rien(depot: Depot) -> None:
 
 
 # =================================================================================================
-# Création depuis un fichier : MR et notes (#233, parent #232)
+# Création depuis un fichier : PR et notes (#233, parent #232)
 # =================================================================================================
-# Le texte long d'une MR ou d'un commentaire est la SEULE chose qu'une session autonome ne peut pas
+# Le texte long d'une PR ou d'un commentaire est la SEULE chose qu'une session autonome ne peut pas
 # faire tenir sur une ligne de commande, et les deux replis naturels sont pires que le mal : la
 # couche permissions découpe un appel sur ses SAUTS DE LIGNE et ne matche aucune SUBSTITUTION
 # `$(…)` (docs/10 §11.7). D'où ces helpers, qui prennent un CHEMIN — le `$(cat …)` survit, mais à
@@ -1019,7 +1019,7 @@ def test_close_guard_n_ecrit_jamais_rien(depot: Depot) -> None:
 #
 # Ce que ces tests gardent : le contenu arrive INTACT (c'est tout l'intérêt du détour par un
 # fichier), l'appel est IDEMPOTENT (la création est la dernière action du ticket, elle doit
-# supporter d'être rejouée), et un refus n'écrit RIEN — une MR sans description se découvrirait à
+# supporter d'être rejouée), et un refus n'écrit RIEN — une PR sans description se découvrirait à
 # la revue, quand tout est déjà commité.
 
 BRANCHE = "chore/237-tests-doc-appels-dune-session-autonome-a"
@@ -1053,7 +1053,7 @@ def regle_titre(iid: int, titre: str) -> dict:
 
 
 def regle_mr_de_branche(iid: str | None) -> dict:
-    """Réponse à la résolution « quelle MR ouverte porte cette branche ? » (`gl_mr_iid`)."""
+    """Réponse à la résolution « quelle PR ouverte porte cette branche ? » (`gl_mr_iid`)."""
     return {
         "contient": ["pullRequests(headRefName"],
         "reponse": {
@@ -1187,7 +1187,7 @@ def test_create_mr_met_a_jour_la_mr_deja_ouverte_au_lieu_d_echouer(depot: Depot)
     """Idempotence : la création est la DERNIÈRE action du ticket, elle doit se rejouer.
 
     Reprise de session, second passage après un commit de plus : `/ticket-finish` repasse ici et
-    ne doit ni échouer ni ouvrir une seconde MR sur la même branche.
+    ne doit ni échouer ni ouvrir une seconde PR sur la même branche.
     """
     depot.pose_etat(graphql=[regle_mr_de_branche("77"), regle_titre(237, "Titre")])
     sur_une_branche(depot)
@@ -1195,7 +1195,7 @@ def test_create_mr_met_a_jour_la_mr_deja_ouverte_au_lieu_d_echouer(depot: Depot)
 
     acheve = depot.lib("create-mr", "237", str(fichier))
     assert acheve.returncode == 0, acheve.stderr
-    assert "!77" in acheve.stdout, "la MR retrouvée est nommée"
+    assert "#77" in acheve.stdout, "la PR retrouvée est nommée"
     assert "pull/77" in acheve.stdout, "l'URL reste rendue, comme à la création"
 
     assert not chemins_appeles(depot, "/pulls"), \
@@ -1206,7 +1206,7 @@ def test_create_mr_met_a_jour_la_mr_deja_ouverte_au_lieu_d_echouer(depot: Depot)
 
 
 def test_create_mr_refuse_depuis_main_sans_rien_ecrire(depot: Depot) -> None:
-    """`main` n'a pas de MR à ouvrir : le dire vaut mieux qu'un appel qui échouera plus loin."""
+    """`main` n'a pas de PR à ouvrir : le dire vaut mieux qu'un appel qui échouera plus loin."""
     depot.pose_etat(graphql=[regle_mr_de_branche(None), regle_titre(237, "Titre")])
     fichier = fichier_description(depot)
 
@@ -1223,7 +1223,7 @@ def test_create_mr_refuse_depuis_main_sans_rien_ecrire(depot: Depot) -> None:
 def test_create_mr_refuse_un_fichier_inutilisable(
     depot: Depot, nom: str, contenu: str | None, attendu: str
 ) -> None:
-    """Une MR sans description est pire qu'aucune MR : le helper s'arrête AVANT d'écrire.
+    """Une PR sans description est pire qu'aucune PR : le helper s'arrête AVANT d'écrire.
 
     Le fichier vide est le cas réel — un `Write` qui n'a rien écrit, ou le chemin de scratchpad
     d'une session précédente.
@@ -1241,7 +1241,7 @@ def test_create_mr_refuse_un_fichier_inutilisable(
 
 
 def test_create_mr_signale_un_titre_illisible_plutot_que_d_en_inventer_un(depot: Depot) -> None:
-    """Sans titre, pas de MR : une MR intitulée « » ne se remarquerait qu'à la revue."""
+    """Sans titre, pas de PR : une PR intitulée « » ne se remarquerait qu'à la revue."""
     depot.pose_etat(graphql=[regle_mr_de_branche(None)], rest=[])
     sur_une_branche(depot)
     fichier = fichier_description(depot)
@@ -1273,7 +1273,7 @@ def test_issue_note_refuse_un_fichier_vide_sans_rien_poster(depot: Depot) -> Non
 
 
 def test_issue_title_rend_le_titre_en_utf8_intact(depot: Depot) -> None:
-    """Lecture seule, et fidèle : c'est ce titre qui devient celui de la MR."""
+    """Lecture seule, et fidèle : c'est ce titre qui devient celui de la PR."""
     depot.pose_etat(graphql=[regle_titre(237, "Tests + doc — appels « autonomes » d'une session")])
     acheve = depot.lib("issue-title", "237")
     assert acheve.returncode == 0, acheve.stderr
@@ -2142,7 +2142,7 @@ def section_en_cours(sortie: str) -> str:
 def test_doctor_nomme_le_ticket_en_cours_dont_plus_personne_ne_s_occupe(depot: Depot) -> None:
     """La quatrième dérive, et la seule qui ne se voie nulle part ailleurs.
 
-    Les trois autres se lisent dans GitLab (une MR manquante, un ticket fermé, deux labels) ;
+    Les trois autres se lisent dans la forge (une PR manquante, un ticket fermé, deux labels) ;
     celle-ci demande de regarder un disque. Sans elle, la seule façon d'apprendre qu'un ticket est
     abandonné est de démarrer un autre ticket.
     """
@@ -2152,7 +2152,7 @@ def test_doctor_nomme_le_ticket_en_cours_dont_plus_personne_ne_s_occupe(depot: D
     section = section_en_cours(depot.doctor().stdout)
     assert "#317 orphelin" in section
     assert "plus personne dessus" in section
-    # Nommer la réparation sans la jouer : même partage que la dérive « cycle de vie ↔ MR ».
+    # Nommer la réparation sans la jouer : même partage que la dérive « cycle de vie ↔ PR ».
     assert "reprendre-en-cours" in section
 
 
