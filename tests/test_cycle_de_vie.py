@@ -1210,23 +1210,22 @@ def test_une_fermeture_qui_ne_vaut_pas_livraison_n_ecrit_rien(depot: Depot, rais
 def test_un_ticket_abandonne_garde_son_etat_meme_ferme_comme_realise(
     depot: Depot, final: str
 ) -> None:
-    """Barrière n°2 — l'ÉTAT COURANT, et c'est elle qui protège réellement `/ticket-abandon`.
+    """Barrière n°2 — l'ÉTAT COURANT, le filet du geste MANUEL fermé « as completed ».
 
-    ⚠ LE PIÈGE DU TICKET, ET LA RAISON D'ÊTRE DE CE TEST. #377 décrit ce cas comme « un ticket
-    fermé en `not_planned` (donc par `/ticket-abandon`) » — or la commande ferme par un
-    `gh issue close <iid>` NU (son étape 7), et GitHub met alors `state_reason: completed`, comme
-    sur n'importe quel merge. La barrière n°1 le laisse donc passer : si la protection s'arrêtait
-    au `state_reason`, tout abandon repasserait « Terminé », c'est-à-dire exactement la dérive
-    « sans retour possible » que §9.2 nomme.
+    ⚠ CE TEST A CHANGÉ DE RÔLE SANS CHANGER D'UNE LIGNE, ET C'EST TOUT SON INTÉRÊT. #377 décrivait
+    ce cas comme « un ticket fermé en `not_planned` (donc par `/ticket-abandon`) » — or la commande
+    fermait alors par un `gh issue close <iid>` NU, et GitHub mettait `state_reason: completed`,
+    comme sur n'importe quel merge. La barrière n°1 laissait donc entrer TOUT abandon, et seul le
+    filtre d'état de `reconcile-workflow` (#275) l'arrêtait — une « défense en profondeur » à une
+    seule couche. Ce qui la rendait possible était l'ORDRE de la commande : l'état est posé
+    (étape 6) AVANT la fermeture (étape 7), donc il est déjà là quand ce script lit.
 
-    Ce qui l'arrête est le filtre d'état de `reconcile-workflow` (#275), et ce qui le rend possible
-    est l'ORDRE de `/ticket-abandon` : l'état est posé (étape 6) AVANT la fermeture (étape 7), donc
-    il est déjà là quand ce script lit. Le test joue donc la raison `completed` — la vraie — et non
-    celle que le ticket supposait.
-
-    L'écart est ticketé (**#388**), et ce test **restera vert inchangé** quand il sera corrigé : un
-    abandon fait à la main depuis l'interface web, ou par une commande qui oublierait le `--reason`,
-    reste exactement ce cas-ci.
+    **#388 a fermé cet écart** — l'étape 7 passe désormais `--reason "not planned"` dans les deux
+    variantes, donc la n°1 écarte l'abandon avant même de lire l'état. Ce test est resté vert
+    INCHANGÉ, et c'était l'un de ses critères : il ne jouait pas la commande mais la raison
+    `completed`, qui reste celle d'un abandon fait à la main depuis l'interface web (ou d'une
+    commande qui oublierait le `--reason`). C'est exactement ce cas-ci, et il n'a jamais cessé
+    d'exister — seul l'a quitté ce que `/ticket-abandon` y déversait.
     """
     depot.pose_etat(graphql=[regle_owner(final, []), regle_pose_status()])
 

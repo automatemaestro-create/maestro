@@ -22,33 +22,32 @@
 # conditionne aucun merge, `worktree.sh gc` gardant son rôle de filet de rattrapage.
 #
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
-# DEUX BARRIÈRES DEVANT « ABANDONNÉ »/« DOUBLON », ET LA SECONDE EST CELLE QUI PORTE
+# DEUX BARRIÈRES DEVANT « ABANDONNÉ »/« DOUBLON », ET CHACUNE ARRÊTE CE QUE L'AUTRE NE VOIT PAS
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
 # Écraser l'état d'un ticket abandonné est la dérive que §9.2 qualifie de « sans retour possible,
-# puisque rien dans le ticket ne dirait qu'il a été abandonné ». Deux filtres l'en empêchent, et
-# savoir LEQUEL protège réellement importe plus que l'ordre dans lequel on les lit :
+# puisque rien dans le ticket ne dirait qu'il a été abandonné ». Deux filtres l'en empêchent :
 #
 #   1. LA RAISON DE FERMETURE, ici — liste BLANCHE sur « completed ». En liste blanche et non en
 #      exclusion de « not_planned » : GitHub a ajouté « duplicate » à l'énumération sans rien nous
 #      demander, et une liste noire aurait laissé passer chaque valeur suivante.
 #
 #   2. L'ÉTAT COURANT du ticket, dans `lib.sh reconcile-workflow` — qui saute « Abandonné »,
-#      « Doublon » et « Terminé » (filtre de #275). C'EST CELUI-CI QUI PROTÈGE `/ticket-abandon` :
-#      la commande ferme par un `gh issue close <iid>` NU, donc GitHub y met `state_reason:
-#      completed` comme sur n'importe quel merge — la barrière n°1 le laisse passer, et seule la
-#      lecture de l'état l'arrête. Ce qui la sauve est l'ORDRE de la commande : elle pose
-#      « Abandonné » (étape 6) PUIS ferme (étape 7), donc l'état est déjà là quand ce script lit.
+#      « Doublon » et « Terminé » (filtre de #275).
 #
-# La barrière n°1 n'est donc pas la protection principale mais le filet du geste MANUEL : un ticket
-# fermé « as not planned » depuis l'interface web, sans qu'aucun état ait été posé, ne doit pas
-# ressortir « Terminé ».
+# `/ticket-abandon` TOMBE DANS LA n°1 DEPUIS #388, et c'est ce qui rend ce bloc lisible comme une
+# défense en profondeur — il ne l'était pas avant. La commande fermait par un `gh issue close <iid>`
+# NU, donc GitHub y mettait « completed » comme sur n'importe quel merge : la n°1 laissait ENTRER
+# tout abandon, et la n°2 était la SEULE couche active devant lui. Son étape 7 ferme désormais par
+# `gh issue close <iid> --reason "not planned"` — les DEUX variantes, doublon compris —, donc ce
+# script s'abstient sans même lire l'état, et l'issue cesse d'afficher « Completed » sur GitHub.
 #
-# ⚠ Cet écart est CONNU et TICKETÉ (#388) : passer `--reason "not planned"` à l'étape 7 de
-# `/ticket-abandon` ferait tomber l'abandon dans la barrière n°1, et corrigerait au passage
-# l'affichage GitHub (un ticket abandonné y porte aujourd'hui l'icône « Completed »). Ce n'est pas
-# fait ici — hors périmètre de #377, et une session Claude Code ne peut pas écrire sous `.claude/`
-# (#229). Tant que ce n'est pas fait, ne pas relire ce bloc comme une défense en profondeur : il
-# n'y a qu'une couche active devant un abandon, et c'est la n°2.
+# CHACUNE EST LE FILET DE L'AUTRE, sur un geste MANUEL que l'autre ne couvre pas :
+#   · la n°1 attrape le ticket fermé « as not planned » depuis l'interface web sans qu'aucun état
+#     ait été posé — il ne doit pas ressortir « Terminé » ;
+#   · la n°2 attrape son symétrique, un ticket déjà « Abandonné » refermé « as completed » à la
+#     main. Elle tient parce que `/ticket-abandon` pose l'état (étape 6) AVANT de fermer (étape 7),
+#     donc il est déjà là quand ce script lit — mais ce n'est PLUS cet ordre qui protège l'abandon
+#     de la commande, c'est sa raison de fermeture. L'ordre ne sert plus qu'au cas manuel.
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
