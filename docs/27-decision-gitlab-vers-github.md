@@ -12,7 +12,8 @@
 > reprises telles quelles par #335. **Ce qui est périmé, ce sont les conclusions** : §7
 > (« non à la migration ») et la « prochaine étape recommandée » qui en découle.
 >
-> Ne pas relire §7 comme une consigne. Pour l'état d'aujourd'hui : **§11, le rôle d'archive**.
+> Ne pas relire §7 comme une consigne. Pour l'état d'aujourd'hui : **§11, le rôle d'archive**, et
+> **§12, ce que la migration a réellement coûté** — la suite datée, écrite au lot final #345.
 
 > Ticket #331. Décision datée du **2026-08-14**, sur `origin/main` à `1b30bb1`.
 > Suite de #332 (miroir + CI Actions en double), qui a mesuré la traduction des jobs et laissé
@@ -366,13 +367,19 @@ Le `--repo` est **obligatoire** : `glab` déduit normalement le projet des remot
 `origin` pointe désormais sur github.com — sans lui, il répond « None of the git remotes configured
 for this repository point to a known GitLab host ».
 
-C'est aussi pourquoi `MAESTRO_FORGE=gitlab bash scripts/gitlab/lib.sh <verbe>` **ne relit pas
-l'archive**, contrairement à ce qu'on pourrait attendre du commutateur : ses verbes passent par ces
-mêmes sous-commandes, sans `--repo`. Le rendre capable de lire l'archive demanderait de propager ce
-drapeau dans une douzaine de verbes dont la moitié sont des **écritures** — refusées de toute façon
-par un projet archivé — et que **#344 supprime**. On ne l'a donc pas fait : le commutateur `gitlab`
-ne sert plus qu'aux **suites de tests**, qui montent un `glab` factice dans un dépôt jetable où
-aucun remote réel n'intervient.
+⚠ **`glab` n'est plus installé par `scripts/setup.sh`** (#344) : qui relit l'archive l'installe et
+l'authentifie à la main. C'est un geste ponctuel de mainteneur, pas un prérequis de clone — l'y
+laisser d'office pour une consultation qui n'arrive jamais est précisément ce que ce lot a
+supprimé.
+
+Le commutateur `MAESTRO_FORGE=gitlab` **n'existe plus**, et il ne relisait de toute façon pas
+l'archive : ses verbes passaient par ces mêmes sous-commandes, sans `--repo`. Le rendre capable de
+la lire aurait demandé de propager ce drapeau dans une douzaine de verbes dont la moitié sont des
+**écritures**, refusées de toute façon par un projet archivé. Il est parti avec la branche GitLab
+de `lib.sh` (#344), et les seules primitives `glab` qui restent dans le dépôt sont regroupées dans
+[`scripts/migration/gitlab-lecture.sh`](../scripts/migration/gitlab-lecture.sh) — deux scripts de
+migration s'en servent, rien d'autre, et c'est ce qui rend l'exception lisible d'un
+`grep -rn "glab " scripts/`.
 
 ### Où regarde-t-on, en pratique
 
@@ -382,3 +389,118 @@ aucun remote réel n'intervient.
 | « Combien de temps a coûté #218 ? » | GitHub — commentaire `maestro:suivi:v1` du ticket. GitLab pour le relevé natif d'origine |
 | « De quoi parle #123 ? » | GitHub, `#123` |
 | N'importe quoi après le 2026-08-17 | GitHub, toujours |
+
+---
+
+## 12. La suite — ce que la migration a coûté (2026-08-21)
+
+> Écrit au lot final #345, une semaine après la bascule. Cette section n'est **pas** une révision
+> des mesures de §2 et §3 — elles tiennent — mais leur **contrepartie constatée** : la décision
+> inverse a été prise, exécutée, et voici ce qu'elle a réellement coûté. Les chiffres ci-dessous
+> sont relevés sur le dépôt et sur la forge, jamais recopiés du plan.
+
+### 12.1 La décision inverse, et ce qui l'a motivée
+
+La note recommandait de **ne pas migrer les tickets** (§7). L'utilisateur a tranché dans l'autre
+sens le **2026-08-14** (parent #335). Deux motifs, tous deux **périssables**, et c'est ce qui a
+fait l'urgence plus que l'arbitrage lui-même :
+
+- la **plage de numéros** n'était importable que tant que le dépôt cible n'avait consommé aucun
+  numéro d'issue ni de PR. Vrai ce jour-là (le miroir de #332 ne répliquait que branches et tags),
+  faux dès la première issue créée là-bas. Repartir de zéro n'aurait pas donné des liens morts mais
+  des liens **faux** — `Refs #123` rendu comme un lien vers un objet sans rapport (§6) ;
+- la **CI en miroir consommait des minutes réelles** pour un verdict que personne ne lisait (§10) :
+  elle devait devenir l'autorité ou s'éteindre.
+
+Ce que la note avait sous-estimé, et qui n'apparaît qu'après coup : elle comparait GitHub à ce que
+GitLab offrait **alors**, c'est-à-dire à un GitLab Free amputé depuis la fin de l'essai Ultimate du
+2026-08-02. Le champ Status natif, perdu à cette date et remplacé par six labels `workflow::*`
+(#207), est **gratuit** sur Projects v2, dépôt privé compris — ce qui a rendu possible le chantier
+#358, neuf lots qui ont rendu au cycle de vie son support natif et retiré les labels (#365). Ce
+gain-là n'est pas dans §2 : il n'était pas mesurable avant d'être disponible.
+
+### 12.2 Ce qui a été importé — constaté sur le dépôt
+
+| Grandeur | Plan (#335) | Constaté (2026-08-21) |
+|---|---|---|
+| Objets créés par l'import | 330 tickets, plage `#2`→`#333` | **356 objets, plage `#1`→`#356`** |
+| Dont bouche-trous | 4 attendus | **4** — `#19`, `#20`, `#201`, `#241`, fermés `not_planned`, label `import::bouche-trou` |
+| Tickets réels | 330 | **352** |
+| Merge Requests rejouées | aucune | **aucune** — elles restent sur GitLab (§11) |
+
+L'écart de 22 tickets ne signale aucune dérive : la note #331 comptait sur `origin/main` à `1b30bb1`
+le 2026-08-14, l'export a tourné le 2026-08-17, et le backlog a vécu entre les deux. C'est
+exactement la raison pour laquelle `import-github.sh` traite la **fraîcheur de l'export comme un
+prérequis** et non comme une curiosité : ce que la forge a bougé depuis n'existe pas dans l'export,
+donc n'existera jamais côté GitHub.
+
+⚠ **Le nombre de MR archivées est écrit à deux valeurs dans le dépôt** — 271 (#335, §5) et 281
+(docs/10). Aucune ne se re-vérifie aujourd'hui sans réinstaller `glab` et interroger un projet gelé.
+Ne pas en choisir une au jugé : la question se tranche en relisant l'archive, ou pas du tout.
+
+### 12.3 Ce que le chantier a coûté en code
+
+Neuf lots mergés du **2026-08-14 au 2026-08-18**, cinq jours :
+
+| Périmètre | Fichiers | Lignes |
+|---|---|---|
+| Tout le chantier (`#336`→`#344`) | 65 | **+7 488 / −4 771** |
+| Dont `scripts/` et `.github/` | 31 | +5 207 / −2 994 |
+
+Le gain annoncé est tenu : **−1 146 lignes** d'outillage runner (`setup-runner.sh`,
+`ensure-runner.sh`, `clean-runner-containers.sh`) et, surtout, plus de machine à laisser allumée
+(§2.4). Le coût en CI facturée, lui, reste celui de §2.3 — la mesure n'a pas été refaite ici, et
+un dépôt privé continue de décompter ses minutes.
+
+### 12.4 Ce qu'elle a cassé, et qui n'était pas prévu
+
+Trois choses n'avaient d'équivalent ni dans la note ni dans le plan, et se sont vues à l'usage :
+
+1. **`delete_branch_on_merge` n'a pas d'équivalent par PR.** Côté GitLab, `--remove-source-branch`
+   était posé **sur chaque MR** par `/ticket-finish` : la garantie voyageait avec la MR. GitHub n'a
+   qu'un **réglage de dépôt**, qu'aucun script ne pose — 22 branches distantes s'étaient accumulées
+   avant qu'il ne soit mis à `true` le 2026-08-19 (#384). `doctor.sh` en surveille désormais la
+   dérive.
+2. **Un secret Actions est *write-only*.** Une variable CI/CD GitLab masquée se relisait par l'API,
+   ce dont `env-pull.sh` vivait ; un `gh secret set` ne se relit jamais. Ce qui doit atterrir dans
+   le `.env` d'un clone passe donc par une **variable** Actions, et ce qui doit rester secret ne se
+   distribue plus par ce mécanisme (§5, docs/10 §7.3).
+3. **L'historique de temps importé n'est pas lu par l'outillage.** L'import (#340) écrit un
+   commentaire `<!-- maestro:meta v1 … temps_s=… -->`, une ligne de clés ; le suivi quotidien
+   (`lib.sh`, `GL_SUIVI_MARQUEUR`) lit un commentaire `<!-- maestro:suivi:v1 -->` aux clés **une par
+   ligne**. L'en-tête de `import-github.sh` annonce pourtant que « l'historique et le quotidien
+   partagent le même mécanisme et le même marqueur » : ce n'est pas le cas. Conséquence concrète —
+   sur un ticket importé, le premier `/ticket-finish` crée un suivi **reparti de zéro**, et les
+   603 h d'historique restent lisibles à l'œil sans être additionnées. Ce n'est pas une perte de
+   donnée (le commentaire est là, horodaté, avec ses relevés), c'est une **jointure manquante**.
+   Elle se répare côté lecture, jamais en réécrivant 352 commentaires.
+
+### 12.5 Ce que le lot final a trouvé dans les scripts d'import
+
+Les scripts d'export et d'import n'avaient **aucune couverture** — ils sont nés avec le chantier, et
+les lots suivants n'ont adapté que les suites qui les nommaient déjà. Les écrire (#345,
+[`tests/test_migration.py`](../tests/test_migration.py)) a sorti **quatre défauts** de
+`import-github.sh`, tous silencieux, tous dans du code qui « avait marché » :
+
+| Défaut | Ce qu'il coûtait |
+|---|---|
+| `grep -E '^B\tworkflow::abandonne$'` — `\t` ne désigne pas une tabulation en ERE, le motif matchait le littéral `Btworkflow::…` | **aucun** ticket fermé n'a jamais reçu `not_planned` : abandonnés et doublons sont arrivés en « travail réalisé » |
+| `IFS=$'\t' read` fusionne deux tabulations (la tabulation est un caractère « IFS whitespace ») | un milestone **sans échéance** prenait sa description pour titre et son titre pour échéance ; un commentaire **sans auteur** (compte supprimé) était purement sauté |
+| `grep -cv … \|\| printf '0'` — `grep -c` imprime son compte *puis* sort en 1 quand il vaut zéro | `integer expression expected` sur stderr à chaque import sans mojibake, c'est-à-dire dans le cas nominal |
+| `note` depuis `creer_objet`, dont la sortie est **capturée** par une substitution de commande | l'échec restait visible (il passe par stderr) et son **mode d'emploi** — les trois lignes qui disent comment reprendre — partait dans une variable |
+
+Aucun n'aurait été trouvé en relisant : ils demandent tous de **jouer** le script. C'est l'argument
+pour avoir écrit ces tests après coup plutôt que de les avoir sautés — l'import ne se rejoue pas,
+mais les scripts, eux, restent dans le dépôt pour être rejoués, et un script conservé pour être
+rejouable doit être correct.
+
+### 12.6 Ce qui reste
+
+- **Le vocabulaire.** `docs/10` dit encore « MR », « GitLab » et « pipeline » à beaucoup
+  d'endroits. Ce n'est pas un oubli de ce lot : ce sont les mots que **les scripts impriment**
+  (`worktree.sh gc` rend « MR !398 mergée », `resume.tsv` porte une colonne `MR`). L'alignement
+  demande de changer les sorties, les tests qui les épinglent et la doc du même geste ; le faire
+  côté doc seul la rendrait fausse sur ce qu'on lit à l'écran.
+- **La jointure de temps** de §12.4, point 3.
+- **La protection de branche** — [`scripts/github/protect-main.sh`](../scripts/github/protect-main.sh)
+  est écrit mais n'a jamais été joué (docs/10 §8.8).
