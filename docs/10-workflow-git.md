@@ -1564,7 +1564,8 @@ même temps. Ce qui les explique reste le coût unitaire d'un test d'outillage �
 sous Windows coûte ~50 ms** (contre 2-3 ms sous Linux), et chaque test lance un script shell qui
 forke des centaines de fois. Le profil des durées est plat : du 1er test le plus lent (59,6 s) au
 25e (33,8 s). La vraie réponse reste celle du levier 2 — **viser directement la suite** pendant
-l'itération (`tests/test_engine.py`, 1,5 s), le filet complet avant le push.
+l'itération, le filet complet avant le push. ⚠ *Viser* la suite ne dit pas encore **où** la jouer :
+c'est le levier 4 qui tranche, et la réponse dépend de la famille de suite (§8.4bis).
 
 **4. Et le levier qui les dépasse tous : pytest joue dans un conteneur Linux (#372).** Les trois
 leviers ci-dessus optimisent le régime ; celui-ci en change. Le filet était retombé à **~15 min** sur
@@ -1670,6 +1671,85 @@ shellcheck manque (« `winget install koalaman.shellcheck` (ou `docker pull …`
 | Régler le problème **sous Windows** | **Écarté par #372** : le coût de `CreateProcess` n'est pas réglable depuis le dépôt, et il varie avec l'état du poste (96 ms le 2026-08-18, ~800 ms le 2026-08-21, même machine). On change d'OS plutôt que de l'optimiser. |
 | Montage bind du conteneur shellcheck | **Hors de cause** : 36 s avec ou sans copie interne. |
 | `-x` pour garder le lien entre fichiers | **Écarté** : 34 s, le découpage ne rapporte plus rien (ci-dessus). |
+
+
+### 8.4bis Itérer sur une suite : le lanceur, et où jouer selon la famille (#405)
+
+#372 a mis le job pytest du filet dans un conteneur Linux, mais **le régime n'était joignable que
+par `local.sh`**, dont le périmètre est déduit du diff. Viser une suite pendant l'itération
+retombait donc sur un `python -m pytest` **natif** — et c'est là que l'écart coûte le plus cher.
+Mesuré le 2026-08-21 sur `tests/test_cycle_de_vie.py`, même poste, même suite :
+
+| Régime | Durée |
+|---|---|
+| natif Windows (`.venv/Scripts/python.exe -m pytest`) | **~8 min** |
+| conteneur, sans xdist | 1 min 51 |
+| conteneur, `-n auto` | **21 s** (×18) |
+
+D'où un point d'entrée qui prend des arguments pytest **arbitraires** :
+
+```bash
+bash scripts/ci/pytest.sh tests/test_cycle_de_vie.py -q
+bash scripts/ci/pytest.sh tests/test_worktree.py -k ensure -x
+bash scripts/ci/pytest.sh tests/test_engine.py::test_boucle --natif
+```
+
+**Où jouer, par famille de suite.** Le conteneur n'est pas un régime universellement meilleur, et
+c'est la nuance que la doc taisait :
+
+| Famille | Reconnue à | Où | Pourquoi |
+|---|---|---|---|
+| **Outillage** | elle **nomme un script** du dépôt (`worktree.sh`, `lib.sh`, `run.sh`…) | **conteneur** | 100 % de sous-processus shell ; ~800 ms par fork sous MSYS contre < 1 ms sous Linux |
+| **Applicative** | elle ne pilote aucun script (`test_engine.py`, `test_projets.py`…) | **natif**, indifféremment | 6,3 s en natif, et le conteneur coûte ~6 s de démarrage + montage : le gain est nul |
+
+C'est **la même dérivation que le périmètre du filet** (§8.4, levier 1) — une suite est
+« outillage » si elle nomme un script du dépôt —, et ce n'est pas un hasard : les deux répondent à
+la même question, « cette suite passe-t-elle son temps à forker ? ».
+
+**Ce que le lanceur n'est pas : un verdict.** Il ne calcule aucun périmètre, n'applique aucun seuil
+de couverture, ne rejoue pas le lint. Avant de pousser, c'est toujours `bash scripts/ci/local.sh`.
+Les deux se distinguent par la question posée, pas par la vitesse : le filet demande « est-ce que ça
+passe ? », le lanceur « qu'est-ce que ça donne, là, maintenant ».
+
+Les points de conception, à comprendre avant d'y toucher :
+
+- **La plomberie est PARTAGÉE, pas recopiée**
+  ([`scripts/ci/pytest-regime.sh`](../scripts/ci/pytest-regime.sh), sourcé par les deux). Régime,
+  empreinte de l'image, point de montage, identité git, workers, garde-fous du venv (#194) : une
+  seule implémentation. Deux copies auraient divergé, et un filet qui ne prédit plus ce que le
+  lanceur exécute ramène exactement la phrase qu'on essaie de supprimer — « ça passe chez moi ».
+  `tests/test_ci_local.py` l'épingle : chaque fonction de la plomberie doit être définie **une
+  seule fois**, et dans la bibliothèque.
+- **Le parallélisme est ajouté d'office DANS LE CONTENEUR, et jamais en natif.** Dans le conteneur
+  c'est l'essentiel du gain (1 min 51 → 21 s) et c'est le drapeau même de la CI. En natif, c'est la
+  règle déjà écrite pour le filet — démarrer les workers coûte ~5,5 s, soit plus qu'une suite
+  applicative ciblée —, et elle a été **mesurée sur ce lanceur** : `tests/test_engine.py` fait 6,3 s
+  en série contre **37,5 s à `-n 8`**. Le parallélisme d'office rendait donc six fois plus lent le
+  cas même qu'il devait servir ; une suite d'outillage assez grosse pour rentabiliser des workers
+  est de toute façon celle qu'il faut jouer *ailleurs*.
+- **Jamais contre un choix explicite.** Un `-n`/`--numprocesses`/`-p no:xdist` déjà passé l'emporte,
+  et trois arguments disent qu'on veut **regarder** tourner — `--pdb`, `-s`, `--capture=no` — que
+  xdist vide de leur sens en capturant et entrelaçant la sortie par worker. À noter : pytest **ne
+  s'en plaint pas** (vérifié, `-n auto --pdb` passe sans broncher), il les rend seulement inutiles —
+  le pire des deux, puisque rien ne le signale.
+- **Le natif subi et le natif voulu ne se disent pas pareil.** Un repli se crie et nomme sa cause ;
+  un `--natif` demandé s'annonce sobrement. Avertir d'un facteur vingt celui qui a raison de jouer
+  en natif (suite applicative) est du bruit qui apprend à ne plus lire les avertissements.
+- **Il dit toujours où il a joué**, avant de jouer et non après : sur une suite d'outillage l'écart
+  est d'un facteur vingt, donc qui lit « NATIF » sait tout de suite qu'il a le temps d'aller
+  chercher un café, et pourquoi. `--conteneur` **échoue** au lieu de retomber, comme pour le filet.
+- **Il ne redirige rien.** `pytest_conteneur` a perdu sa redirection vers le journal, qui est passée
+  aux appelants : le filet l'envoie dans son journal (il rend un verdict, la trace ne sert qu'en cas
+  d'échec), le lanceur la laisse à l'écran (sur vingt secondes, voir les points défiler *est*
+  l'information, et une trace qu'il faut aller chercher dans un fichier est une trace qu'on ne lit
+  pas).
+- **Sans argument, il rend l'aide** au lieu de collecter toute la suite : une collecte surprise se
+  paie en minutes. Qui veut tout jouer le demande (`pytest.sh tests/`) ou passe par le filet
+  (`local.sh --complet`), dont c'est le métier.
+- **Pas de TTY dans le conteneur.** `docker run -it` est refusé depuis un Git Bash (« the input
+  device is not a TTY »), donc pytest y voit un tube et éteint la couleur. Le lanceur la rallume par
+  `--color=yes` quand **sa** sortie est un terminal — l'argument passe avant ceux de l'appelant, si
+  bien qu'un `--color=no` explicite gagne quand même.
 
 ### 8.5 Un journal se lit là où on travaille (#234)
 

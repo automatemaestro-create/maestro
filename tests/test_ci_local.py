@@ -319,7 +319,9 @@ class Clone:
         self.git("push", "--quiet", "origin", "main")
 
     # --- exécution ---
-    def lance(self, *args: str, **reglages: str) -> subprocess.CompletedProcess[str]:
+    def _lance(
+        self, script: str, args: tuple[str, ...], reglages: dict[str, str]
+    ) -> subprocess.CompletedProcess[str]:
         environnement = os.environ.copy()
         environnement.update(
             {
@@ -333,7 +335,7 @@ class Clone:
         environnement.update(reglages)
         assert BASH is not None
         return subprocess.run(  # noqa: S603
-            [BASH, str(self.racine / "scripts" / "ci" / "local.sh"), *args],
+            [BASH, str(self.racine / "scripts" / "ci" / script), *args],
             cwd=str(self.racine),
             env=environnement,
             capture_output=True,
@@ -342,6 +344,19 @@ class Clone:
             errors="replace",
             timeout=180,
         )
+
+    def lance(self, *args: str, **reglages: str) -> subprocess.CompletedProcess[str]:
+        """Le filet — il rend un verdict sur le périmètre du diff."""
+        return self._lance("local.sh", args, reglages)
+
+    def lance_pytest(self, *args: str, **reglages: str) -> subprocess.CompletedProcess[str]:
+        """Le lanceur d'itération (#405) — il joue ce qu'on lui passe, et rien d'autre.
+
+        Même environnement que le filet, à dessein : les deux sourcent `pytest-regime.sh`, donc
+        c'est le MÊME `docker` factice et le même venv factice qui répondent. Un harnais qui les
+        équiperait différemment ne pourrait plus rien dire du partage qu'on vient épingler ici.
+        """
+        return self._lance("pytest.sh", args, reglages)
 
     def modifie(self, chemin: str, contenu: str = "# modifié\n") -> None:
         """Un changement NON COMMITÉ — ce qui partira au push, donc ce que le périmètre regarde."""
@@ -428,7 +443,12 @@ def clone(tmp_path: Path) -> Clone:
     git("init", "--bare", "--quiet", "--initial-branch=main", cwd=origin)
 
     (racine / "scripts" / "ci").mkdir(parents=True)
-    shutil.copy2(RACINE / "scripts" / "ci" / "local.sh", racine / "scripts" / "ci" / "local.sh")
+    # Les TROIS fichiers du filet, pas seulement son point d'entrée : depuis #405 la plomberie du
+    # régime conteneur vit dans `pytest-regime.sh`, que `local.sh` ET `pytest.sh` sourcent. N'en
+    # copier qu'un rendrait le clone jetable incapable de démarrer — et surtout, ne pas copier
+    # `pytest.sh` reviendrait à tester un partage dont un seul des deux bénéficiaires est présent.
+    for fichier in ("local.sh", "pytest-regime.sh", "pytest.sh"):
+        shutil.copy2(RACINE / "scripts" / "ci" / fichier, racine / "scripts" / "ci" / fichier)
     (racine / ".github" / "workflows").mkdir(parents=True)
     (racine / ".github" / "workflows" / "ci.yml").write_text(
         WORKFLOW_CI, encoding="utf-8", newline="\n"
@@ -1210,6 +1230,266 @@ def test_le_dockerfile_porte_git_sans_identite_globale() -> None:
         "git par apt-get met les miroirs Debian sur le chemin critique de chaque build (#333)"
     assert not re.search(r"git config\s+--global\s+user\.", instructions), \
         "une identité git globale remasquerait le bug de production trouvé par #332"
+
+
+# --- Le lanceur d'itération serrée (#405) ---------------------------------------------------------
+# `local.sh` rend un VERDICT sur le périmètre du diff ; `pytest.sh` fait ITÉRER sur une cible. Deux
+# questions différentes, mais la même réponse sur le régime — et c'est tout l'enjeu de ce bloc.
+#
+# La panne qu'il ferme : le conteneur de #372 n'était joignable QUE par le périmètre déduit du diff,
+# donc viser une suite retombait sur un `python -m pytest` natif. Mesuré le 2026-08-21 sur
+# `tests/test_cycle_de_vie.py` : ~8 min en natif contre 21 s dans le conteneur (×18).
+#
+# Comme le bloc précédent, ces tests n'ouvrent AUCUN conteneur : SHIM_DOCKER répond, et ce sont les
+# DÉCISIONS du lanceur qu'on lit dans son journal.
+
+#: Les fonctions qui décident OÙ et COMMENT pytest joue. Chacune ne doit être DÉFINIE qu'une fois,
+#: dans `pytest-regime.sh` — c'est la forme vérifiable de « partagée, pas recopiée ».
+PLOMBERIE_PARTAGEE = (
+    "docker_repond",
+    "regime_pytest_pressenti",
+    "pytest_image",
+    "pytest_image_construit",
+    "pytest_conteneur",
+    "choisit_regime_pytest",
+    "workers_pytest",
+    "coeurs_logiques",
+    "xdist_installe",
+    "verifie_venv_natif",
+    "sonde_maestro",
+    "venv_bin",
+    "chemin_natif",
+    "image_docker_disponible",
+)
+
+
+def definitions(texte: str, fonction: str) -> int:
+    """Combien de fois ce texte DÉFINIT cette fonction (un appel n'est pas une définition)."""
+    return len(re.findall(rf"^{re.escape(fonction)}\(\)\s*\{{", texte, re.MULTILINE))
+
+
+def test_le_detecteur_de_definition_distingue_une_definition_d_un_appel() -> None:
+    """Le motif prouve ce qu'il cherche AVANT de balayer — sinon le test suivant est un ✓ vide.
+
+    Un compteur qui rendrait 0 partout ferait passer « aucune duplication » pour un fait alors
+    qu'il ne dit que « je ne sais pas lire une définition ». On lui montre donc les trois formes
+    qu'il doit distinguer.
+    """
+    assert definitions("pytest_conteneur() {\n  :\n}\n", "pytest_conteneur") == 1
+    assert definitions('  pytest_conteneur "$IMAGE" -q\n', "pytest_conteneur") == 0, \
+        "un APPEL n'est pas une définition"
+    assert definitions("pytest_conteneur() {\n:\n}\npytest_conteneur() {\n:\n}\n",
+                       "pytest_conteneur") == 2, "une recopie doit se voir"
+
+
+def test_la_plomberie_du_conteneur_n_est_definie_qu_une_seule_fois() -> None:
+    """« Partagée, pas recopiée » (#405) — l'invariant central du ticket, rendu vérifiable.
+
+    Deux plomberies à tenir d'accord seraient le premier moyen de rendre un vert sur une forme que
+    l'autre a corrigée depuis : le filet cesserait de prédire ce que le lanceur exécute, et « ça
+    passe chez moi » redeviendrait une phrase qu'on peut dire depuis deux endroits.
+    """
+    fichiers = {
+        nom: (RACINE / "scripts" / "ci" / nom).read_text(encoding="utf-8")
+        for nom in ("local.sh", "pytest-regime.sh", "pytest.sh")
+    }
+    for fonction in PLOMBERIE_PARTAGEE:
+        porteurs = {nom: definitions(texte, fonction) for nom, texte in fichiers.items()}
+        assert sum(porteurs.values()) == 1, \
+            f"`{fonction}` doit être définie une seule fois, trouvée : {porteurs}"
+        assert porteurs["pytest-regime.sh"] == 1, \
+            f"`{fonction}` doit vivre dans la bibliothèque partagée, trouvée : {porteurs}"
+
+
+def test_les_deux_appelants_sourcent_la_meme_bibliotheque() -> None:
+    """Le partage passe par un `source`, jamais par une copie du fichier au moment du build."""
+    for nom in ("local.sh", "pytest.sh"):
+        texte = (RACINE / "scripts" / "ci" / nom).read_text(encoding="utf-8")
+        assert re.search(r"^\.\s+\"\$RACINE/scripts/ci/pytest-regime\.sh\"", texte, re.MULTILINE), \
+            f"{nom} doit sourcer scripts/ci/pytest-regime.sh"
+
+
+def test_le_lanceur_joue_dans_le_conteneur_ce_qu_on_lui_passe(clone: Clone) -> None:
+    """Le cœur du ticket : une CIBLE, pas un périmètre déduit du diff."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest("tests/test_horloge.py", "-q")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    runs = lancements_conteneur(clone.appels())
+    assert len(runs) == 1, f"un seul conteneur attendu, reçu : {runs}"
+    assert not lancements_pytest(clone.appels()), \
+        "le venv du poste ne doit pas jouer la suite quand le conteneur le fait"
+    # Les arguments passent TELS QUELS — le lanceur n'a pas d'opinion sur ce qu'on veut jouer.
+    assert "tests/test_horloge.py" in runs[0]
+    assert " -q" in runs[0]
+    # …et le dépôt est monté exactement comme pour le filet, deux niveaux sous la racine (#372).
+    montage = cible_du_montage(runs[0])
+    assert montage.count("/") >= 2, \
+        f"le dépôt ne doit jamais être monté à la racine du conteneur, reçu : {montage}"
+    assert f" -w {montage} " in runs[0]
+    assert f"PYTHONPATH={montage}" in runs[0]
+
+
+def test_le_lanceur_annonce_toujours_ou_il_a_joue(clone: Clone) -> None:
+    """Un lanceur vingt fois plus rapide qui tait où il a joué est un faux vert en puissance."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest("tests/test_horloge.py")
+
+    assert "conteneur Linux" in acheve.stdout, acheve.stdout + acheve.stderr
+
+
+def test_le_lanceur_sans_docker_retombe_en_natif_et_le_dit(clone: Clone) -> None:
+    """Le repli est ANNONCÉ, jamais silencieux — et il nomme sa raison.
+
+    Sur une suite d'outillage l'écart est d'un facteur vingt : qui ne sait pas qu'il est retombé en
+    natif croit simplement que sa suite est lente, et n'ira jamais réveiller son démon Docker.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest("tests/test_horloge.py", MAESTRO_FAUX_DOCKER_VERSION_CODE="1")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not lancements_conteneur(clone.appels())
+    lances = lancements_pytest(clone.appels())
+    assert len(lances) == 1, f"le venv du poste devait jouer la suite, reçu : {clone.appels()}"
+    assert "tests/test_horloge.py" in lances[0]
+    sortie = acheve.stdout + acheve.stderr
+    assert "NATIF" in sortie, sortie
+    assert "Docker" in sortie, "le repli doit nommer ce qui manque"
+
+
+def test_le_lanceur_en_regime_conteneur_exige_echoue_au_lieu_de_retomber(clone: Clone) -> None:
+    """`--conteneur` est une EXIGENCE : un repli silencieux ferait passer « Docker manquait » pour
+    « tout va bien » — exactement ce que `local.sh --conteneur` refuse déjà."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest(
+        "--conteneur", "tests/test_horloge.py", MAESTRO_FAUX_DOCKER_VERSION_CODE="1"
+    )
+
+    assert acheve.returncode != 0, acheve.stdout + acheve.stderr
+    assert not lancements_pytest(clone.appels()), "rien ne doit être joué en repli"
+    assert not lancements_conteneur(clone.appels())
+
+
+def test_le_lanceur_force_le_venv_du_poste_avec_natif(clone: Clone) -> None:
+    """`--natif` ne SONDE même pas Docker : c'est l'ancien régime, demandé en toutes lettres."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest("--natif", "tests/test_horloge.py")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not lancements_conteneur(clone.appels())
+    assert len(lancements_pytest(clone.appels())) == 1
+
+
+def test_le_lanceur_ajoute_le_parallelisme_d_office_dans_le_conteneur(clone: Clone) -> None:
+    """C'est l'essentiel du gain : 1 min 51 sans xdist contre 21 s avec, sur la même suite."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.lance_pytest("tests/test_horloge.py")
+
+    runs = lancements_conteneur(clone.appels())
+    assert re.search(r" -n \S+", runs[0]), f"parallélisme attendu dans : {runs[0]}"
+
+
+def test_le_lanceur_n_impose_jamais_le_parallelisme_en_natif(clone: Clone) -> None:
+    """En natif, démarrer les workers coûte plus qu'une suite applicative ciblée.
+
+    C'est la règle déjà écrite pour le filet (~5,5 s de démarrage), et elle a été mesurée ici :
+    `tests/test_engine.py` fait 6,3 s en série contre 37,5 s à `-n 8` — le parallélisme d'office
+    rendait SIX FOIS plus lent le cas même qu'il devait servir. Une suite d'outillage assez grosse
+    pour rentabiliser des workers est de toute façon celle qu'il faut jouer dans le conteneur.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.lance_pytest("--natif", "tests/test_horloge.py")
+
+    lances = lancements_pytest(clone.appels())
+    assert lances, clone.appels()
+    assert not re.findall(r" -n (\S+)", lances[0]), \
+        f"le lanceur a imposé des workers en natif : {lances[0]}"
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        # Un choix déjà fait : le sien gagne, toujours.
+        "-n2",
+        "--numprocesses=3",
+        # Une intention de REGARDER tourner : xdist capture et entrelace la sortie par worker, ce
+        # qui vide ces options de leur sens. pytest ne s'en plaint pas — il les rend inutiles, ce
+        # qui est pire qu'une erreur franche.
+        "--pdb",
+        "-s",
+        "--capture=no",
+    ],
+)
+def test_le_lanceur_n_impose_jamais_le_parallelisme_contre_un_choix_explicite(
+    clone: Clone, argument: str
+) -> None:
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.lance_pytest("tests/test_horloge.py", argument)
+
+    runs = lancements_conteneur(clone.appels())
+    ajoutes = re.findall(r" -n (\S+)", runs[0])
+    assert not ajoutes, f"le lanceur a imposé -n {ajoutes} malgré {argument!r} : {runs[0]}"
+
+
+def test_le_lanceur_respecte_p_no_xdist_qui_voyage_en_deux_jetons(clone: Clone) -> None:
+    """`-p no:xdist` s'écrit en DEUX arguments : reconnaître `-p` seul désarmerait le parallélisme
+    pour tout autre plugin chargé de la même façon."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.lance_pytest("tests/test_horloge.py", "-p", "no:xdist")
+
+    runs = lancements_conteneur(clone.appels())
+    assert not re.findall(r" -n (\S+)", runs[0]), runs[0]
+
+
+def test_le_lanceur_sans_argument_rend_l_aide_et_ne_joue_rien(clone: Clone) -> None:
+    """Sans cible, pytest ramasserait TOUTE la suite : une collecte surprise qui se paie en
+    minutes. Le lanceur d'itération demande ce qu'on veut jouer."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest()
+
+    assert acheve.returncode != 0
+    assert "pytest.sh" in acheve.stdout, acheve.stdout + acheve.stderr
+    assert not lancements_conteneur(clone.appels())
+    assert not lancements_pytest(clone.appels())
+
+
+def test_le_lanceur_rend_le_code_de_sortie_de_pytest(clone: Clone) -> None:
+    """Un lanceur qui avalerait le rouge de pytest serait pire qu'inutile."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest("tests/test_horloge.py", MAESTRO_FAUX_DOCKER_CODE="1")
+
+    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
+
+
+def test_le_lanceur_herite_du_garde_fou_du_venv_partage(clone: Clone) -> None:
+    """En natif, `import maestro` doit se résoudre ICI — garde-fou de #194, hérité et non recopié.
+
+    Dans un worktree, le venv partagé installe `maestro` en éditable POINTÉ SUR LE CLONE PRINCIPAL :
+    sans ce contrôle, le lanceur testerait la branche du voisin en le disant vert.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest(
+        "--natif",
+        "tests/test_horloge.py",
+        MAESTRO_FAUX_SONDE_SORTIE="AILLEURS /ailleurs/maestro\\n",
+    )
+
+    assert acheve.returncode != 0, acheve.stdout + acheve.stderr
+    assert not lancements_pytest(clone.appels()), "rien ne doit être joué sur un venv qui ment"
+    assert "AILLEURS" in acheve.stdout + acheve.stderr or \
+        "ailleurs" in (acheve.stdout + acheve.stderr).lower()
 
 
 # --- Périmètre de web-build -----------------------------------------------------------------------
