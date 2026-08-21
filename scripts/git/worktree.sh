@@ -79,6 +79,12 @@ la forge. Il tourne d'office au début d'`ensure` (donc de /ticket-start) : le r
 geste à se rappeler. `--check` diagnostique sans rien retirer, `--auto` ne parle que s'il a
 quelque chose à dire. MAESTRO_WORKTREE_GC=0 désactive le passage automatique.
 
+Il écarte au passage les COQUILLES (#422) : les dossiers VIDES que `git worktree remove` laisse
+derrière lui quand un processus tient le dossier — il en supprime le contenu, échoue dessus, et
+désenregistre le worktree quand même. Personne ne les voyait (`git worktree list` ne les connaît
+plus), et une coquille BLOQUAIT le remontage de son ticket. Un dossier inconnu qui porte quelque
+chose est nommé, jamais touché.
+
 Sur ce même verdict « soldé », `gc` pose le CYCLE DE VIE « Terminé » du ticket (#275) via
 `lib.sh reconcile-workflow` — le merge ferme le ticket mais ne touche à aucun label, et sans ça
 un ticket mergé s'affiche « En revue » jusqu'au prochain /branch-cleanup manuel. Best-effort et
@@ -139,6 +145,13 @@ depot_principal() {
   dirname "$commun"
 }
 
+# base_worktrees <clone principal> : le dossier qui accueille les worktrees. Écrit UNE fois — la
+# création, l'inventaire et le ramassage des coquilles (#422) désignent forcément le même endroit,
+# et deux formules à tenir d'accord finiraient par ramasser ailleurs que là où l'on monte.
+base_worktrees() {
+  printf '%s' "${MAESTRO_WORKTREE_DIR:-$(dirname "$1")/maestro-worktrees}"
+}
+
 # worktree_de_branche <branche> : chemin du worktree qui a CETTE branche empruntée, s'il existe.
 #
 # git refuse la même branche dans deux worktrees — c'est un verrou d'exclusion mutuelle utile (deux
@@ -162,6 +175,79 @@ chemin_natif() {
   else
     printf '%s\n' "$1"
   fi
+}
+
+# --- Coquilles laissées par un retrait (#422) -------------------------------------------------------
+# `git worktree remove` supprime le CONTENU, échoue sur le DOSSIER lui-même quand un processus le
+# tient (« Permission denied » sous Windows) — et va au bout de son DÉSENREGISTREMENT quand même. Il
+# reste alors un dossier vide que plus rien ne revendique : ni `git worktree list`, ni `list`, ni
+# `gc`, qui itèrent tous les trois dessus. Observé en direct sur #415 le 2026-08-21, après dix
+# autres accumulées sans que rien ne les nomme jamais.
+#
+# Ce n'est pas qu'une affaire de propreté : `commande_create` refuse tout dossier déjà là qui n'est
+# pas un worktree, donc une coquille BLOQUE le remontage de son ticket — `ensure` rend 1 et
+# /ticket-start s'arrête, ce qui vaut un échec de plus (et la cascade des lots suivants) en run
+# autonome.
+#
+# Le repère est le `.git` que git pose à la racine de tout worktree lié : un dossier qui n'en a pas
+# n'est revendiqué par aucun. Il vaut mieux qu'une comparaison avec les chemins de
+# `git worktree list` — sous Windows git répond « E:/… » là où le shell manipule « /e/… », et un
+# `MAESTRO_WORKTREE_DIR` à contre-obliques ferait passer des worktrees VIVANTS pour des coquilles
+# (même piège que dans `commande_remove` et `commande_gc`).
+#
+# Rend « <chemin><TAB>vide|porteur » par dossier inconnu. Seuls les VIDES se retirent : un dossier
+# inconnu qui porte quelque chose est le travail de quelqu'un — on le nomme, on n'y touche pas.
+coquilles() {
+  local principal="$1" base entree chemin
+  base="$(base_worktrees "$principal")"
+  [ -d "$base" ] || return 0
+  for entree in "$base"/*/; do
+    chemin="${entree%/}"
+    # `nullglob` n'est pas posé : un motif sans correspondance reste littéral, et ce test l'écarte.
+    [ -d "$chemin" ] || continue
+    [ -e "$chemin/.git" ] && continue
+    if [ -z "$(ls -A "$chemin" 2>/dev/null)" ]; then
+      printf '%s\tvide\n' "$chemin"
+    else
+      printf '%s\tporteur\n' "$chemin"
+    fi
+  done
+}
+
+# ramasse_coquilles <clone principal> <check 0|1> : retire les coquilles vides, nomme le reste.
+#
+# Le compte rendu part dans COQUILLES_RAPPORT et non sur stdout, et les compteurs dans
+# COQUILLES_RETIREES / COQUILLES_SIGNALEES : un appelant qui capturerait la sortie par `$(…)` la
+# lirait depuis un SOUS-SHELL, où les compteurs mourraient avec lui. Même dispositif que
+# RETRAIT_ERREUR, et pour la même raison — un shell ne rend qu'un code de retour.
+COQUILLES_RAPPORT=""
+COQUILLES_RETIREES=0
+COQUILLES_SIGNALEES=0
+ramasse_coquilles() {
+  local principal="$1" check="$2" chemin etat ligne
+  COQUILLES_RAPPORT=""
+  COQUILLES_RETIREES=0
+  COQUILLES_SIGNALEES=0
+  while IFS=$'\t' read -r chemin etat; do
+    [ -n "$chemin" ] || continue
+    case "$etat" in
+      porteur)
+        COQUILLES_SIGNALEES=$((COQUILLES_SIGNALEES + 1))
+        ligne="$(alerte "dossier qu'aucun worktree ne revendique : $(chemin_natif "$chemin")")" ;;
+      *)
+        if [ "$check" = 1 ]; then
+          COQUILLES_RETIREES=$((COQUILLES_RETIREES + 1))
+          ligne="$(printf '  → coquille vide à écarter : %s' "$(chemin_natif "$chemin")")"
+        elif rmdir "$chemin" 2>/dev/null; then
+          COQUILLES_RETIREES=$((COQUILLES_RETIREES + 1))
+          ligne="$(ok "coquille vide écartée : $(chemin_natif "$chemin")")"
+        else
+          COQUILLES_SIGNALEES=$((COQUILLES_SIGNALEES + 1))
+          ligne="$(alerte "coquille vide impossible à retirer (dossier tenu ?) : $(chemin_natif "$chemin")")"
+        fi ;;
+    esac
+    COQUILLES_RAPPORT="$COQUILLES_RAPPORT$ligne"$'\n'
+  done <<< "$(coquilles "$principal")"
 }
 
 # --- Ports & profil --------------------------------------------------------------------------------
@@ -376,7 +462,7 @@ commande_create() {
 
   # 2) Emplacement : un dossier frère du dépôt, qui regroupe tous les worktrees.
   local base dest nom
-  base="${MAESTRO_WORKTREE_DIR:-$(dirname "$principal")/maestro-worktrees}"
+  base="$(base_worktrees "$principal")"
   nom="${branche#*/}"                      # « chore/152-slug » -> « 152-slug »
   dest="$base/$nom"
 
@@ -389,10 +475,23 @@ commande_create() {
   local sortie
   if [ -f "$dest/.git" ]; then
     deja "worktree déjà en place : $dest"
-  elif [ -e "$dest" ]; then
-    erreur "$dest existe déjà sans être un worktree — le retirer ou choisir un autre emplacement"
-    return 1
   else
+    # Une COQUILLE VIDE laissée par un retrait précédent (#422) n'est pas un obstacle : elle ne
+    # porte rien, et c'est le retrait de son propre worktree qui l'a laissée là. La refuser
+    # revenait à barrer le remontage du ticket pour un dossier de zéro octet. Un dossier qui porte
+    # QUELQUE CHOSE reste refusé — c'est le garde-fou d'origine, et il ne bouge pas.
+    if [ -d "$dest" ] && [ -z "$(ls -A "$dest" 2>/dev/null)" ]; then
+      if rmdir "$dest" 2>/dev/null; then
+        ignore "coquille vide d'un retrait précédent écartée"
+      else
+        erreur "coquille vide impossible à retirer (dossier tenu par un processus ?) : $dest"
+        return 1
+      fi
+    fi
+    if [ -e "$dest" ]; then
+      erreur "$dest existe déjà sans être un worktree — le retirer ou choisir un autre emplacement"
+      return 1
+    fi
     mkdir -p "$base" 2>/dev/null
     GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch origin main >/dev/null 2>&1
     if git -C "$principal" show-ref --verify --quiet "refs/heads/$branche"; then
@@ -732,6 +831,19 @@ commande_list() {
       detached) printf '  %-50s %s\n' "$chemin" "(HEAD détaché)" ;;
     esac
   done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
+
+  # Ce que la boucle ci-dessus ne peut pas montrer : les dossiers que `git worktree list` ne
+  # connaît plus (#422). Les nommer ICI est la moitié du remède — l'autre est que `gc` les écarte ;
+  # sans les deux, elles ne réapparaissent qu'au moment où elles bloquent un remontage.
+  local etat inconnus=""
+  while IFS=$'\t' read -r chemin etat; do
+    [ -n "$chemin" ] || continue
+    case "$etat" in
+      porteur) inconnus="$inconnus$(printf '  %-50s %s' "$chemin" "(dossier inconnu, non vide)")"$'\n' ;;
+      *)       inconnus="$inconnus$(printf '  %-50s %s' "$chemin" "(coquille vide — worktree.sh gc)")"$'\n' ;;
+    esac
+  done <<< "$(coquilles "$principal")"
+  [ -n "$inconnus" ] && printf '\nAucun worktree ne les revendique :\n\n%s' "$inconnus"
   printf '\n'
 }
 
@@ -795,6 +907,14 @@ commande_remove() {
     ok "worktree retiré : $chemin"
     printf '\nLa branche, elle, est intacte — sa suppression passe par /branch-cleanup, après\n'
     printf 'confirmation du merge par GitLab.\n'
+  elif [ "$RETRAIT_DESENREGISTRE" = 1 ]; then
+    # Le worktree est parti, le dossier résiste : ce n'est pas un retrait à retenter (git ne le
+    # connaît plus), c'est un dossier à supprimer quand ce qui le tient l'aura lâché.
+    erreur "worktree désenregistré, mais son dossier résiste :"
+    printf '%s\n' "$RETRAIT_ERREUR" >&2
+    printf '  Il ne reste qu'\''une coquille vide : %s\n' "$(chemin_natif "$chemin")" >&2
+    printf '  Elle sera écartée au prochain ramassage (worktree.sh gc), ou à la main.\n' >&2
+    return 1
   else
     erreur "git worktree remove a échoué :"
     printf '%s\n' "$RETRAIT_ERREUR" >&2
@@ -1181,7 +1301,13 @@ travail_non_sauvegarde() {
 # jonctions et viderait le .venv et le node_modules du CLONE PRINCIPAL. Rend 0 si le worktree est
 # parti ; sinon 1, la sortie de git étant laissée dans RETRAIT_ERREUR (sa cause varie : « Filename
 # too long » sur un node_modules profond, worktree verrouillé, dossier occupé par un shell…).
+#
+# En échec, RETRAIT_DESENREGISTRE dit LEQUEL des deux échecs : `0`, le worktree est intact et le
+# retrait reste à faire ; `1`, git l'a bel et bien désenregistré et seul le dossier résiste — dire
+# « non retiré » dans ce cas-là, c'est annoncer l'inverse de ce qui vient de se passer, et c'est ce
+# qui a laissé onze coquilles s'accumuler derrière autant de lignes rouges (#422).
 RETRAIT_ERREUR=""
+RETRAIT_DESENREGISTRE=0
 retire_worktree() {
   local chemin="$1" force="$2" verbeux="$3" principal artefact sortie
   local args=(worktree remove)
@@ -1193,10 +1319,29 @@ retire_worktree() {
     fi
   done
   [ "$force" = 1 ] && args+=(--force)
+  RETRAIT_DESENREGISTRE=0
   if sortie="$(git -C "$principal" "${args[@]}" "$chemin" 2>&1)"; then
     return 0
   fi
   RETRAIT_ERREUR="$sortie"
+
+  # git a échoué — mais sur QUOI ? Il supprime le contenu d'abord, et quand un processus tient le
+  # DOSSIER (« Permission denied » sous Windows) il va au bout de son désenregistrement quand même :
+  # le worktree quitte `git worktree list`, sa branche redevient supprimable, et il ne reste qu'une
+  # coquille vide que plus rien ne revendique (#422, observé sur #415). Le `.git` d'un worktree lié
+  # est le repère : parti, il ne s'agit plus d'un retrait à retenter mais d'un dossier à balayer.
+  if [ ! -e "$chemin" ]; then
+    return 0                                    # dossier parti malgré le message : rien à rattraper
+  fi
+  if [ ! -e "$chemin/.git" ]; then
+    RETRAIT_DESENREGISTRE=1
+    if [ -z "$(ls -A "$chemin" 2>/dev/null)" ] && rmdir "$chemin" 2>/dev/null; then
+      # `prune` pour le cas symétrique : le dossier avait disparu mais l'entrée d'administration
+      # restait, et `git worktree add` refuserait alors de remonter la même branche ici.
+      git -C "$principal" worktree prune >/dev/null 2>&1
+      return 0
+    fi
+  fi
   return 1
 }
 
@@ -1281,6 +1426,12 @@ commande_gc() {
     esac
   done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
 
+  # Les coquilles (#422) sont balayées AVANT tout le reste, et quoi qu'il arrive : elles sont
+  # précisément ce que `git worktree list` ne connaît plus, donc rien de ce qui suit ne les
+  # rencontrerait. Le cas « plus aucun worktree en place » est même celui où elles sont le plus
+  # probables — elles restent quand tout le reste est parti.
+  ramasse_coquilles "$principal" "$check"
+
   if [ -z "$paires" ]; then
     # Aucun worktree ici : le signalement des orphelins n'aurait rien à déduire non plus (sa portée
     # EST celle des worktrees de cette machine), mais on l'appelle quand même — c'est lui qui décide
@@ -1288,8 +1439,12 @@ commande_gc() {
     # pas à se souvenir qu'un `return 0` l'avait court-circuité.
     local seuls_orphelins
     seuls_orphelins="$(orphelins_en_cours "$sauf")"
-    if [ -n "$seuls_orphelins" ]; then
-      printf '\nTickets « En cours » dont plus personne ne s'\''occupe :\n%s\n' "$seuls_orphelins"
+    if [ -n "$COQUILLES_RAPPORT" ] || [ -n "$seuls_orphelins" ]; then
+      printf '\n'
+      [ -n "$COQUILLES_RAPPORT" ] && printf '%s' "$COQUILLES_RAPPORT"
+      [ -n "$seuls_orphelins" ] &&
+        printf '\nTickets « En cours » dont plus personne ne s'\''occupe :\n%s\n' "$seuls_orphelins"
+      [ "$auto" = 1 ] && printf '\n'
       return 0
     fi
     [ "$auto" = 1 ] || printf '\nAucun worktree en place — rien à ramasser.\n\n'
@@ -1397,7 +1552,14 @@ commande_gc() {
       # Construit à la main : `erreur` écrit sur stderr, la ligne sortirait donc du rapport (et hors
       # de son ordre). Ici tout le compte rendu part sur stdout, en un bloc.
       echecs=$((echecs + 1))
-      rapport="$rapport$(printf '  ✗ #%s non retiré : %s' "$iid" "$(printf '%s' "$RETRAIT_ERREUR" | head -1)")"$'\n'
+      if [ "$RETRAIT_DESENREGISTRE" = 1 ]; then
+        # « non retiré » serait faux : git ne le connaît plus. Ce qui reste est une coquille, et
+        # c'est le prochain passage ici qui l'écartera (#422).
+        rapport="$rapport$(printf '  ⚠ #%s désenregistré, son dossier résiste : %s' \
+          "$iid" "$(chemin_natif "$chemin")")"$'\n'
+      else
+        rapport="$rapport$(printf '  ✗ #%s non retiré : %s' "$iid" "$(printf '%s' "$RETRAIT_ERREUR" | head -1)")"$'\n'
+      fi
     fi
   done <<< "$paires"
 
@@ -1410,18 +1572,26 @@ commande_gc() {
   # En --auto (appelé par `ensure`, donc par /ticket-start) on ne parle que s'il y a quelque chose à
   # dire : un retrait, un travail en danger, un échec. Le silence est le cas normal — et un orphelin
   # signalé suffit à rompre ce silence, même quand le ramassage n'a rien à raconter.
+  # Une coquille écartée compte pour « quelque chose à dire » : c'est un retrait de plus, et se
+  # taire dessus est exactement ce qui les a laissées s'accumuler à onze (#422).
   local muet_ramassage=0
-  if [ "$auto" = 1 ] && [ "$retires" -eq 0 ] && [ "$signales" -eq 0 ] && [ "$echecs" -eq 0 ]; then
+  if [ "$auto" = 1 ] && [ "$retires" -eq 0 ] && [ "$signales" -eq 0 ] && [ "$echecs" -eq 0 ] &&
+     [ "$COQUILLES_RETIREES" -eq 0 ] && [ "$COQUILLES_SIGNALEES" -eq 0 ]; then
     muet_ramassage=1
     [ -z "$orphelins" ] && return 0
   fi
   [ "$auto" = 1 ] && printf '\n'
   if [ "$muet_ramassage" = 0 ]; then
-    printf '%s' "$rapport"
+    printf '%s%s' "$rapport" "$COQUILLES_RAPPORT"
+    local appoint=""
+    [ "$((COQUILLES_RETIREES + COQUILLES_SIGNALEES))" -gt 0 ] &&
+      appoint="$(printf ', %s coquille(s)' "$((COQUILLES_RETIREES + COQUILLES_SIGNALEES))")"
     if [ "$check" = 1 ]; then
-      printf 'Ramassage (--check) : %s à retirer, %s conservé(s) — rien n'\''a été touché.\n' "$retires" "$gardes"
+      printf 'Ramassage (--check) : %s à retirer, %s conservé(s)%s — rien n'\''a été touché.\n' \
+        "$retires" "$gardes" "$appoint"
     else
-      printf 'Ramassage des worktrees : %s retiré(s), %s conservé(s).\n' "$retires" "$gardes"
+      printf 'Ramassage des worktrees : %s retiré(s), %s conservé(s)%s.\n' \
+        "$retires" "$gardes" "$appoint"
     fi
   fi
   if [ -n "$orphelins" ]; then
