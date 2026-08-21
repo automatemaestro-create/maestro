@@ -465,15 +465,28 @@ Trois choses n'avaient d'équivalent ni dans la note ni dans le plan, et se sont
    ce dont `env-pull.sh` vivait ; un `gh secret set` ne se relit jamais. Ce qui doit atterrir dans
    le `.env` d'un clone passe donc par une **variable** Actions, et ce qui doit rester secret ne se
    distribue plus par ce mécanisme (§5, docs/10 §7.3).
-3. **L'historique de temps importé n'est pas lu par l'outillage.** L'import (#340) écrit un
-   commentaire `<!-- maestro:meta v1 … temps_s=… -->`, une ligne de clés ; le suivi quotidien
-   (`lib.sh`, `GL_SUIVI_MARQUEUR`) lit un commentaire `<!-- maestro:suivi:v1 -->` aux clés **une par
-   ligne**. L'en-tête de `import-github.sh` annonce pourtant que « l'historique et le quotidien
-   partagent le même mécanisme et le même marqueur » : ce n'est pas le cas. Conséquence concrète —
-   sur un ticket importé, le premier `/ticket-finish` crée un suivi **reparti de zéro**, et les
-   603 h d'historique restent lisibles à l'œil sans être additionnées. Ce n'est pas une perte de
-   donnée (le commentaire est là, horodaté, avec ses relevés), c'est une **jointure manquante**.
-   Elle se répare côté lecture, jamais en réécrivant 352 commentaires.
+3. **L'historique de temps importé n'était pas lu par l'outillage** — réparé par #400, le constat
+   ci-dessous est celui du 2026-08-19. L'import (#340) écrit un commentaire
+   `<!-- maestro:meta v1 … temps_s=… -->`, une ligne de clés ; le suivi quotidien (`lib.sh`,
+   `GL_SUIVI_MARQUEUR`) lit un commentaire `<!-- maestro:suivi:v1 -->` aux clés **une par ligne**.
+   L'en-tête de `import-github.sh` annonçait pourtant que « l'historique et le quotidien partagent
+   le même mécanisme et le même marqueur » : ce n'était pas le cas. Conséquence concrète — sur un
+   ticket importé, le premier `/ticket-finish` créait un suivi **reparti de zéro**, et les 603 h
+   d'historique restaient lisibles à l'œil sans être additionnées. Ce n'est pas une perte de donnée
+   (le commentaire est là, horodaté, avec ses relevés), c'est une **jointure manquante**.
+
+   **Ce qu'a fait #400**, et qui tient en une phrase : `gh_suivi_lire` cherche désormais les **deux**
+   marqueurs et fusionne. Trois décisions valent d'être connues avant d'y toucher. Le commentaire
+   d'import n'est **jamais réécrit** — la réparation est du côté de la lecture, une campagne sur
+   352 commentaires étant irréversible là où une lecture ne l'est pas ; le temps importé devient une
+   entrée **`log=` ordinaire** et non une clé à part, parce que `temps` est recalculé comme la somme
+   des `log=` et qu'un total rangé à côté du détail serait effacé au premier log — c'est-à-dire la
+   panne elle-même ; et l'entrée se reconnaît **à son résumé**, ce qui rend la fusion idempotente
+   sans témoin à tenir d'accord avec la donnée qu'il décrit. Le premier `/ticket-finish` qui suit
+   pose le tout au format courant : la migration du ticket se fait **au fil de l'eau**, sans
+   campagne. Un effet de bord qui n'en est pas un : le total d'un ticket importé n'étant plus jamais
+   nul, l'idempotence de `/ticket-finish` interroge `get-time-spent --hors-import`, un historique
+   repris n'étant pas un cycle de dev déjà loggé.
 
 ### 12.5 Ce que le lot final a trouvé dans les scripts d'import
 
@@ -501,6 +514,6 @@ rejouable doit être correct.
   (`worktree.sh gc` rend « MR !398 mergée », `resume.tsv` porte une colonne `MR`). L'alignement
   demande de changer les sorties, les tests qui les épinglent et la doc du même geste ; le faire
   côté doc seul la rendrait fausse sur ce qu'on lit à l'écran.
-- **La jointure de temps** de §12.4, point 3.
+- ~~La jointure de temps~~ — réparée par #400, voir §12.4 point 3.
 - **La protection de branche** — [`scripts/github/protect-main.sh`](../scripts/github/protect-main.sh)
   est écrit mais n'a jamais été joué (docs/10 §8.8).

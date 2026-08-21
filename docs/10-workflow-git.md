@@ -214,7 +214,7 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
 |---|---|---|---|
 | **Date de début** | `/ticket-start` | = jour du démarrage (aujourd'hui). Conservée si déjà posée. | `lib.sh begin <iid>` (groupé, §5) ; unitaire : `start-dates <iid>` |
 | **Échéance** (due date) | `/ticket-start` | = début + délai dérivé de `prio::` : `haute` → 2 j, `moyenne` → 5 j, `basse` → 10 j (défaut `moyenne`). | `lib.sh begin <iid>` (groupé, §5) ; unitaire : `start-dates <iid>` |
-| **Temps passé** | `/ticket-finish` | **estimé automatiquement par l'agent** d'après la portée du travail (diff, commits, contexte) et loggé directement, sans confirmation. | `lib.sh log-time` (`get-time-spent` pour l'idempotence) |
+| **Temps passé** | `/ticket-finish` | **estimé automatiquement par l'agent** d'après la portée du travail (diff, commits, contexte) et loggé directement, sans confirmation. | `lib.sh log-time` (`get-time-spent <iid> --hors-import` pour l'idempotence) |
 
 - **Délais d'échéance ajustables** : surcharger `GL_DUE_DELAY_HAUTE` / `GL_DUE_DELAY_MOYENNE` /
   `GL_DUE_DELAY_BASSE` (en jours) dans l'environnement.
@@ -227,7 +227,17 @@ saisie manuelle. Comme le statut, tout passe par la mutation `workItemUpdate` vi
   champ Estimation reste disponible à la main dans GitLab si besoin.
 - **Idempotence** : ré-exécuter `/ticket-start` garde la date de début d'origine (ne la réinitialise
   pas à aujourd'hui) et se contente de recalculer l'échéance. `/ticket-finish` vérifie le temps déjà
-  loggé (`get-time-spent`) et **n'en rajoute pas** si un cycle est déjà enregistré, pour ne pas doubler.
+  loggé (`get-time-spent <iid> --hors-import`) et **n'en rajoute pas** si un cycle est déjà
+  enregistré, pour ne pas doubler. ⚠ **`--hors-import` et non le total**, depuis que #400 rapatrie
+  l'historique de temps des tickets importés de GitLab (docs/27 §12.4) : leur total n'est jamais nul,
+  même avant qu'une session ait travaillé dessus, et le garde-fou avalerait sinon en silence le temps
+  de celle qui termine le ticket. Un historique repris n'est pas un cycle de dev déjà loggé.
+- **Temps d'un ticket importé** : le suivi maison de `lib.sh` et le commentaire de métadonnées de
+  l'import (`maestro:meta v1`) sont deux formats distincts, et c'est la **lecture** qui les joint —
+  le commentaire d'import reste l'archive, jamais réécrit ; le temps qu'il porte est recopié dans le
+  suivi comme une entrée ordinaire, à la première lecture, et posé au format courant à la première
+  écriture. Détail dans l'en-tête de [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) (section
+  « SUIVI MAISON »).
 
 ### 3.4 Milestone de phase — posé à la création
 
