@@ -2188,17 +2188,100 @@ l'appel — c'est la couture par laquelle les tests l'observent sans réseau, co
 lui, un test qui rallume `gc` appellerait le vrai réconciliateur avec des iid de fixture et poserait
 « Terminé » sur les vrais tickets du projet.
 
-**Limite assumée** : la couverture est celle des **worktrees vus par cette machine**. Un ticket
-mergé depuis le clone de quelqu'un d'autre n'est pas corrigé ici, et le board reste faux **au
-repos** — un ticket mergé vendredi soir s'affiche « En revue » lundi matin si personne n'a démarré
-de ticket entre-temps. Ce n'est pas une régression (c'est déjà la couverture de `/branch-cleanup`),
-c'est le geste manuel en moins ; le balayage sans argument reste là pour rattraper le reste à la
-demande, et `doctor.sh` le nomme quand il détecte la dérive. Si la vérité-au-repos devenait un
-besoin, l'ajout serait un **pipeline planifié** appelant ce même verbe avec un token à portée `api`
-en variable protégée — pas un job post-merge, qui obligerait à rouvrir un pipeline sur `main` (§8)
-pour la couverture la plus étroite.
+**Limite levée depuis #377** — elle a tenu de #275 au 2026-08-20, et il faut la connaître pour
+comprendre ce que la sous-section suivante ajoute : la couverture était celle des **worktrees vus
+par cette machine**. Un ticket mergé depuis le clone de quelqu'un d'autre n'était pas corrigé ici,
+et le board restait faux **au repos** — un ticket mergé vendredi soir s'affichait « En revue » lundi
+matin si personne n'avait démarré de ticket entre-temps. Le balayage sans argument rattrapait à la
+demande, et `doctor.sh` le nommait quand il détectait la dérive.
 
-**Limites assumées.**
+Ce paragraphe écartait aussi la voie qui l'aurait levée — « pas un job post-merge, qui obligerait à
+rouvrir un pipeline sur `main` (§8) » —, et l'objection était **propre à GitLab**, dont la CI ne se
+déclenchait que sur les MR. Elle est tombée avec la forge.
+
+#### La pose à l'événement — un workflow GitHub Actions sur `issues: closed` (#377)
+
+**Ce qui déclenche est désormais la fermeture du ticket elle-même**, quels que soient l'auteur du
+merge et la machine d'où il vient — y compris un merge fait depuis l'interface web, que rien ne
+voyait. Constat du 2026-08-19, celui qui a ouvert le ticket : trois tickets mergés la veille
+(#360, #361, #362) affichaient encore « En revue », aucun `/ticket-start` n'étant passé depuis.
+
+| Fichier | Rôle |
+|---|---|
+| [`.github/workflows/cycle-de-vie.yml`](../.github/workflows/cycle-de-vie.yml) | déclenche et transmet — `on: issues: [closed]`, un checkout, un appel |
+| [`scripts/github/ticket-ferme.sh`](../scripts/github/ticket-ferme.sh) | **décide** : filtre, délègue, ou s'abstient en le disant |
+| `lib.sh reconcile-workflow <iid>` | **pose**, inchangé — le verbe de #275 ci-dessus |
+
+La décision est dans le **script** et non dans un `if:` du YAML, pour une raison qui n'est pas de
+style : un `if:` ne se rejoue ni en local ni dans la suite pytest, si bien que le filtre y serait un
+second exemplaire qu'aucun test ne joue. Le script, lui, tourne sur le dépôt jetable de
+[`tests/test_cycle_de_vie.py`](../tests/test_cycle_de_vie.py), `gh` factice compris.
+
+`on: issues:` est un workflow **événementiel** et non un pipeline de push : il ne rouvre rien sur
+`main`, ne relance aucun test, et ne coûte que les quelques secondes d'un checkout. Seul `closed`
+est écouté — `reopened` n'est pas son symétrique et n'a rien à faire là : rendre son état à un
+ticket rouvert demanderait de savoir lequel il portait avant, et « À faire » serait une valeur
+inventée.
+
+**Deux barrières devant « Abandonné »/« Doublon », et la seconde est celle qui porte.** Écraser
+l'état d'un ticket abandonné est la dérive « sans retour possible » nommée plus haut :
+
+1. **la raison de fermeture**, dans le script — liste **blanche** sur `completed`, et non exclusion
+   de `not_planned` : GitHub a ajouté `duplicate` à l'énumération sans rien demander, et une liste
+   noire aurait laissé passer chaque valeur suivante ;
+2. **l'état courant**, dans `reconcile-workflow` — qui saute « Abandonné », « Doublon » et
+   « Terminé ».
+
+> ⚠ **C'est la seconde qui protège `/ticket-abandon`, pas la première.** La commande ferme par un
+> `gh issue close <iid>` **nu** (son étape 7), donc GitHub y met `state_reason: completed` comme sur
+> n'importe quel merge — la barrière n°1 le laisse passer. Ce qui sauve le ticket est l'**ordre** de
+> la commande : elle pose « Abandonné » (étape 6) **avant** de fermer, si bien que l'état est déjà
+> là quand le script lit. Une protection qui s'arrêterait au `state_reason` ne protégerait rien.
+> La barrière n°1 est le filet du geste **manuel** : un ticket fermé « as not planned » depuis
+> l'interface web, sans qu'aucun état ait été posé, ne doit pas ressortir « Terminé ».
+>
+> L'écart est **ticketé (#388)** : `--reason "not planned"` à l'étape 7 de `/ticket-abandon` ferait
+> tomber l'abandon dans la barrière n°1 — et corrigerait au passage l'affichage GitHub, où un
+> ticket abandonné porte aujourd'hui l'icône « Completed ». Tant que ce n'est pas fait, **ne pas
+> lire ce bloc comme une défense en profondeur** : une seule couche est active devant un abandon.
+
+**Le coût, nommé : un secret de dépôt.** `GITHUB_TOKEN` ne peut **pas** écrire dans un Projects v2
+appartenant à un compte utilisateur — le blocage est le **type** de jeton et non une permission
+(#359, §3.5). Le workflow lit donc `secrets.MAESTRO_PROJECT_TOKEN`, un jeton **classique** ou OAuth
+à portée `project`, et c'est le seul geste manuel du dispositif :
+
+```bash
+gh secret set MAESTRO_PROJECT_TOKEN --repo <owner>/<dépôt>   # colle le jeton, il n'est plus relisible
+```
+
+**Best-effort, et ce que ça veut dire ici** — trois comportements, trois raisons :
+
+| Situation | Ce qui se passe | Pourquoi |
+|---|---|---|
+| secret **absent** | abstention **annoncée**, run vert | c'est l'état du dépôt tant que personne n'a posé le secret ; un run rouge par ticket fermé ne dirait rien de plus que le premier |
+| fermeture sans livraison | abstention annoncée, **aucune lecture** | le journal reste lisible s'il ne parle que de ce qui le concerne |
+| pose **en échec** | code 1, run **rouge** | « best-effort » ne veut pas dire « vert quoi qu'il arrive » : le run rouge est la seule visibilité possible, et rien n'en dépend — ce workflow ne conditionne aucun merge et n'entre dans aucune protection de branche |
+
+**Le workflow natif de Projects v2 est disponible et disqualifié** — le projet en porte six, dont
+`Item closed`, tous désactivés. Deux faits l'écartent, mesurés le 2026-08-19 : il **écraserait**
+« Abandonné »/« Doublon » par construction (`/ticket-abandon` pose l'état *puis* ferme, donc
+l'automatisation passerait après notre écriture ; le natif n'offre aucune condition sur le
+`state_reason` ni sur la valeur déjà présente), et il n'est **ni provisionnable ni vérifiable** —
+la seule mutation exposée par l'API GraphQL est `deleteProjectV2Workflow`, donc rien que
+`bootstrap-project.sh` puisse poser, et le type `ProjectV2Workflow` expose `enabled` mais **pas la
+valeur cible** : `doctor.sh` pourrait dire « c'est allumé », jamais « ça pointe sur Terminé ».
+
+**`worktree.sh gc` garde son rôle**, désormais comme **filet** et non comme seul mécanisme : il
+rattrape ce qu'un secret absent, un jeton périmé ou un incident GitHub aurait laissé passer, et il
+reste le seul à poser l'état d'un ticket **fermé sans que le workflow ait pu tourner**. Le balayage
+`reconcile-workflow` sans argument, lui, ne sert plus qu'au rattrapage d'un arriéré.
+
+#### Limites assumées d'un worktree partagé
+
+Ce bloc ne se rattache à aucune des deux sous-sections ci-dessus : ce sont les limites de **§9**,
+c'est-à-dire de faire tourner deux tickets sur un même dépôt. Le titre est là parce que deux
+sous-sections se sont intercalées entre lui et le corps du §9 (#275, puis #377), au point qu'on
+pouvait le lire comme la suite de la dernière.
 
 - Le **runner CI est unique** (§8) : les pipelines des deux MR se **sérialisent**. Plus lent,
   jamais bloquant.
