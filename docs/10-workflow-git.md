@@ -2225,6 +2225,51 @@ puis retirer (le garde-fou de #152 ci-dessus, écrit une seule fois dans le scri
 `MAESTRO_WORKTREE_VERDICT` et tournent donc sans réseau ni `gh`
 ([`test_worktree.py`](../tests/test_worktree.py)).
 
+#### Les coquilles que le retrait laisse derrière lui (#422)
+
+`git worktree remove` supprime le **contenu**, échoue sur le **dossier** lui-même quand un processus
+le tient (« Permission denied » sous Windows) — et va au bout de son **désenregistrement quand
+même**. Le worktree quitte `git worktree list`, sa branche redevient supprimable (`cleanup-merged`
+l'emporte dans la foulée), et il reste un dossier **vide** que plus rien ne revendique.
+
+Observé en direct le 2026-08-21 sur #415, au démarrage même de ce ticket, après **dix** autres
+accumulées sans que rien ne les ait jamais nommées : `maestro-worktrees/` portait **12 dossiers pour
+2 worktrees réels**. Ni `git worktree list`, ni `worktree.sh list`, ni `gc` ne pouvaient les voir —
+les trois itèrent sur la même liste, celle dont ces dossiers sont justement sortis.
+
+Et ce qui tient le dossier n'a rien d'exotique : trois `bash.exe` vivaient encore dans celui de
+#415, c'est-à-dire **la session qui y travaillait, toujours ouverte**. C'est la situation nominale —
+le ramassage a lieu dans une session **voisine** (`/ticket-start`, `/branch-cleanup`, démarrage d'un
+run), au moment où la PR vient d'être mergée, donc souvent avant que la session d'origine soit
+fermée. L'accumulation était systématique, pas accidentelle.
+
+Et ce n'est pas qu'une affaire de propreté : `create` refusait **tout** dossier déjà présent qui
+n'est pas un worktree, donc une coquille **bloquait le remontage de son ticket** — `ensure` rendait
+`1` et `/ticket-start` s'arrêtait là, ce qui vaut en run autonome un échec de plus et la cascade des
+lots suivants du parent (§11.10). Un défaut latent qui attendait qu'un ticket soit repris.
+
+Trois réponses, du plus profond au plus superficiel :
+
+1. **Le retrait rattrape.** Après un `git worktree remove` en échec, si le `.git` du worktree a
+   disparu, ce n'est plus un retrait à retenter — git ne le connaît plus : le dossier vide est
+   retiré (`rmdir`), suivi d'un `git worktree prune` pour le cas symétrique (dossier parti, entrée
+   d'administration restée, qui ferait refuser le remontage de la même branche).
+2. **Une coquille ne bloque plus.** `create` traite un dossier **vide** comme un emplacement libre.
+   Un dossier qui **porte quelque chose** reste refusé — c'est le garde-fou d'origine, il ne bouge
+   pas.
+3. **Ce qui reste est visible.** `list` nomme les dossiers qu'aucun worktree ne revendique, et `gc`
+   **écarte les vides** — y compris quand il ne reste plus un seul worktree enregistré, cas où elles
+   sont le plus probables. Un dossier inconnu **non vide** est nommé, jamais touché : vide, c'est un
+   déchet ; porteur, c'est le travail de quelqu'un.
+
+Deux choix à ne pas défaire. Le repère est le **`.git` que git pose à la racine de tout worktree
+lié**, jamais une comparaison avec les chemins de `git worktree list` : sous Windows git répond
+« E:/… » là où le shell manipule « /e/… », et un `MAESTRO_WORKTREE_DIR` à contre-obliques ferait
+passer des worktrees **vivants** pour des coquilles (même piège que dans `remove` et `gc`, §9). Et
+le message d'échec **distingue les deux échecs** — « désenregistré, son dossier résiste » plutôt que
+« non retiré » : dire l'inverse de ce qui vient de se passer est précisément ce qui a laissé onze
+coquilles s'accumuler derrière autant de lignes rouges.
+
 #### Le cycle de vie posé sur le même verdict (#275)
 
 Le merge **ferme** le ticket (`Closes #<iid>`) mais ne touche à **aucun label**. Depuis #207, seul
