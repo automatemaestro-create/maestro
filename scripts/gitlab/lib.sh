@@ -1337,7 +1337,8 @@ gl_pipeline_wait() {
 # --- Revue best-effort : file de revue + relecteur posé à la main --------------------------------
 # Arbitrage du chantier « travail à plusieurs » (#155/#161) : l'approbation n'est PAS rendue
 # obligatoire (`approvals_before_merge` reste à 0 — une approbation bloquante recréerait une
-# dépendance entre personnes et le merge reste une décision humaine, §6). Ce qui est outillé, c'est
+# dépendance entre personnes, et ce que le merge exige vit dans `merge-mr` — aucun merge non
+# vérifié, §6/#417). Ce qui est outillé, c'est
 # la VISIBILITÉ : la file d'attente est affichée en tête de /backlog (gl_review_queue), la plus
 # ancienne d'abord. La pose d'un relecteur (gl_set_reviewer) reste OUTILLÉE mais n'est plus
 # AUTOMATIQUE : depuis #196, /ticket-finish ne l'appelle plus — désigner un relecteur est un geste

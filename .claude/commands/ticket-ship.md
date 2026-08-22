@@ -111,5 +111,6 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
 9. Résumé final : reprends le résumé produit par `/ticket-finish` (lien de la PR, état Draft/Ready,
    temps loggé) et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
    ajoute l'annonce de l'étape 8 (prochain lot démarrable dès maintenant, ou parent fermable).
-   Rappelle que le **merge reste une décision humaine** — `/ticket-ship` ne merge, ni ne ferme,
-   ni ne force-push jamais.
+   Rappelle qu'**aucun merge non vérifié** n'a lieu (#417, chantier #413) : `/ticket-ship` ne ferme
+   ni ne force-push jamais, et ne merge **jamais hors de `merge-mr`**, qui éprouve les prérequis
+   avant de merger.

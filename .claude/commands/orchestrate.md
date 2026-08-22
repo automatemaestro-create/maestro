@@ -177,8 +177,11 @@ toi-même.
    le ticket qui était en vol. Si l'utilisateur veut la certitude plutôt que le filet, donne-lui
    la commande **sans** `--detach` à lancer dans son propre terminal Git Bash laissé ouvert : c'est
    le seul montage qui ne dépende d'aucun processus tiers.
-4. **Dis ce que le run produira** : N Pull Requests **en Draft** à relire, une par ticket. Le run
-   ne merge, ne ferme et ne force-push **jamais** — le merge reste une décision humaine.
+4. **Dis ce que le run produira** : N Pull Requests **en Draft**, une par ticket. Le run ne ferme
+   et ne force-push **jamais**, et **aucun merge non vérifié** n'y a lieu : un merge, s'il vient,
+   passe par `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui éprouve ses prérequis — PR ouverte,
+   non brouillon, fermant le ticket ; rien de non poussé ; aucun conflit avec `origin/main` ;
+   pipeline vert sur la tête de la PR (#417, chantier #413).
 
 ### `--dry-run` — juste voir le plan
 
@@ -284,8 +287,11 @@ la boucle attendrait — ou qu'il s'agit d'un échec ordinaire, sans reprise.
 
 ## Garde-fous à rappeler
 
-- Le run **ne merge, ne ferme et ne force-push jamais** ; `guard.sh` le refuse en dur, quel que soit
-  le mode de permission de la session.
+- Le run **ne ferme et ne force-push jamais**, et **aucun merge non vérifié** n'y a lieu (#417,
+  chantier #413) : `guard.sh` refuse en dur `gh pr merge`/`pr close` et le force-push, quel que soit
+  le mode de permission de la session. Ce que ce refus barre est le geste **nu** — le hook juge le
+  texte de la commande lancée, pas ce qu'un script appelle en interne —, si bien qu'un merge ne peut
+  passer que par `bash scripts/gitlab/lib.sh merge-mr <iid>` et ses prérequis.
 - Un run **ne retire aucun worktree** : la branche y vit jusqu'au merge.
 - Un ticket **pris par quelqu'un d'autre** entre le calcul du plan et son tour est sauté, pas volé.
 - Un ticket « En cours » **abandonné par sa session** n'est jamais repris d'office : le run ne prend

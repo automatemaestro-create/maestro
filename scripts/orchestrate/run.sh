@@ -2977,7 +2977,7 @@ if [ -n "$WORKTREES" ]; then
   printf '\n  Worktrees montés (retirés d'\''office quand leur PR sera mergée — docs/10 §9.2) :\n'
   for i in $WORKTREES; do printf '    #%s\n' "$i"; done
 fi
-printf '\n  Le merge reste une décision humaine : ce run n'\''a rien mergé ni fermé.\n'
+printf '\n  Aucun merge non vérifié : ce run n'\''a rien mergé ni fermé.\n'
 printf '  File de revue : bash scripts/gitlab/lib.sh review-queue\n\n'
 
 [ "$NB_ECHEC" -eq 0 ] || exit 1

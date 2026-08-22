@@ -142,8 +142,13 @@ git fetch origin main && git rebase origin/main
   l'approbation **n'est pas bloquante**. Personne n'attend l'autre pour avancer. Pour vous attribuer
   une PR — ou en confier une à quelqu'un — la pose se fait à la main :
   `bash scripts/gitlab/lib.sh set-reviewer <pr|branche> [username]`.
-- **Le merge est toujours une décision humaine** — jamais un agent, jamais automatique. La
-  condition technique est une **CI verte** (GitHub Actions, en autorité depuis #338).
+- **Aucun merge non vérifié** (#417, chantier #413) — le merge n'attend plus un humain, il n'attend
+  pas moins de vérifications, et elles vivent en un seul endroit :
+  `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui refuse de merger tant que la PR n'est pas
+  ouverte, non brouillon et ne ferme pas le ticket, qu'il reste des commits non poussés, qu'un
+  conflit avec `origin/main` subsiste, ou que la **CI n'est pas verte sur la tête de la PR**
+  (GitHub Actions, en autorité depuis #338). Le `gh pr merge` **nu**, lui, reste refusé — merger à
+  la main hors de ce chemin n'est prévu nulle part.
 - **PR bloquée ?** `/mr-fix` la rend mergeable : il résout le conflit avec `origin/main` s'il y en
   a un, puis remet la CI au vert pour ce qui est corrigeable en local.
 - **Après le merge** : `/branch-cleanup` supprime la branche **locale**, revient sur `main` à jour

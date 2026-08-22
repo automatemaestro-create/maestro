@@ -106,7 +106,8 @@ pas clair.
    `.github/pull_request_template.md` ; les quatre lignes sont de toute façon reproduites au
    point 9.2) : pour chacune, détermine si tu peux la cocher
    (`- [x]`) parce que tu l'as **effectivement vérifiée**, ou si elle reste vide (`- [ ]`). La
-   checklist est un constat, pas un formulaire — et le merge reste une décision humaine.
+   checklist est un constat, pas un formulaire — et ce qui garde le merge n'est pas une case cochée
+   mais les prérequis éprouvés par `merge-mr` : **aucun merge non vérifié** (#417, chantier #413).
    - **Conventions de branche/commit** : nom de branche au motif `<type>/<iid>-<slug>` et messages
      de `git log main..HEAD` conformes (Conventional Commits + `Refs`/`Closes #<iid>`). Le hook
      `commit-msg` les valide déjà, mais un `--no-verify` a pu passer : re-vérifie rapidement.
@@ -181,9 +182,10 @@ pas clair.
 10. **Ne pose aucun relecteur sur la PR** (#196) — la désignation d'un relecteur est un **geste
    humain**, jamais automatique : n'appelle pas `lib.sh set-reviewer` et n'utilise pas
    `gh pr edit --add-reviewer`. Le helper reste disponible pour une pose explicite, sur demande.
-   La revue reste **best-effort** — aucune approbation n'est exigée pour merger, et le merge reste
-   une décision humaine ; la visibilité des PR en attente est portée par la **file de revue** en
-   tête de `/backlog` (la plus ancienne d'abord).
+   La revue reste **best-effort** — aucune approbation n'est exigée pour merger, ce que le merge
+   exige étant les prérequis de `merge-mr` et non un avis (**aucun merge non vérifié**, #417) ; la
+   visibilité des PR en attente est portée par la **file de revue** en tête de `/backlog` (la plus
+   ancienne d'abord).
 
 11. Fais passer l'**état** du ticket à « En revue » (le cycle de vie est porté par le champ Status
    du projet — voir `docs/10-workflow-git.md` §3) :

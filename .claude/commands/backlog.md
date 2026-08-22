@@ -49,7 +49,8 @@ n'ouvrir qu'en cas de doute.
    confondre un ticket et une PR. Mets en évidence les PR les plus **anciennes** (celles qui
    traînent) et celles au **pipeline rouge** (non mergeables en l'état). La revue est
    **best-effort** : c'est cette file qui appelle un relecteur, aucune approbation n'est obligatoire
-   et le merge reste une décision humaine.
+   et ce que le merge exige n'est pas un avis mais les prérequis de `merge-mr` — **aucun merge non
+   vérifié** (#417, chantier #413).
    Enchaîne ensuite sur le backlog groupé par **état**, dans cet ordre (le plus
    actionnable d'abord) :
    1. **🔍 En revue** — action humaine attendue (merge). Pour chaque ticket, affiche
