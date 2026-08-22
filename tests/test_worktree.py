@@ -1031,6 +1031,174 @@ def test_ensure_ramasse_les_worktrees_soldes_avant_de_monter_le_sien(depot: Depo
     assert Path(verdict[len("WORKTREE ") :]).resolve() == depot.worktree("153-suite").resolve()
 
 
+# --- Coquilles laissées par un retrait (#422) -------------------------------------------------
+# `git worktree remove` supprime le CONTENU, échoue sur le DOSSIER lui-même quand un processus le
+# tient (« Permission denied » sous Windows) — et va au bout de son DÉSENREGISTREMENT quand même.
+# Il reste un dossier vide que plus rien ne revendique : ni `git worktree list`, ni `list`, ni `gc`,
+# qui itèrent tous les trois dessus. Onze s'étaient accumulées sur le poste de référence, dont dix
+# sans que rien ne les ait jamais nommées — et la onzième est née pendant l'écriture de ce ticket.
+#
+# Ce n'est pas qu'une affaire de propreté : `create` refusait tout dossier déjà là, donc une
+# coquille BLOQUAIT le remontage de son ticket (`ensure` rend 1, /ticket-start s'arrête).
+
+
+def _git_qui_laisse_une_coquille(depot: Depot, *, vide: bool = True) -> None:
+    """Faux `git` qui reproduit la panne : contenu supprimé, worktree désenregistré, dossier resté.
+
+    Tout est délégué au vrai git — seul `worktree remove` est habillé de son échec, APRÈS coup,
+    exactement comme Windows le rend. `vide=False` laisse en plus un fichier dans le dossier, ce
+    qui est le cas où le rattrapage ne peut RIEN faire et doit le dire.
+
+    C'est la seule façon d'éprouver ce chemin sans dépendre d'un verrou de système de fichiers :
+    « un processus tient le dossier » ne se met pas en scène de façon reproductible.
+    """
+    assert GIT is not None
+    reste = "" if vide else '  printf reste > "$cible/reste.txt"\n'
+    shim = depot.fauxbin / "git"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'VRAI="{Path(GIT).as_posix()}"\n'
+        # `-C <racine>` précède le verbe : on cherche la paire, pas une position.
+        'case " $* " in\n'
+        '  *" worktree remove "*)\n'
+        '    cible="${@: -1}"\n'
+        '    "$VRAI" "$@" || exit $?\n'
+        '    mkdir -p "$cible"\n'
+        f"{reste}"
+        '    printf "error: failed to delete \'%s\': Permission denied\\n" "$cible" >&2\n'
+        "    exit 1 ;;\n"
+        "esac\n"
+        'exec "$VRAI" "$@"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    shim.chmod(0o755)
+
+
+def test_le_retrait_ecarte_la_coquille_que_git_laisse_derriere_lui(depot: Depot) -> None:
+    """Le rattrapage : git a désenregistré, il ne reste qu'un dossier vide — on le retire."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _git_qui_laisse_une_coquille(depot)
+
+    acheve = depot.lance("remove", "152")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not depot.worktree().exists(), "la coquille laissée par git devait être écartée"
+
+
+def test_un_dossier_qui_resiste_est_dit_desenregistre_et_non_non_retire(depot: Depot) -> None:
+    """« non retiré » annoncerait l'inverse de ce qui s'est passé : git ne le connaît plus.
+
+    C'est le fond du défaut : onze coquilles sont nées derrière autant de lignes rouges qui
+    disaient toutes qu'il n'y avait rien eu de fait.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _git_qui_laisse_une_coquille(depot, vide=False)
+
+    acheve = depot.lance("remove", "152")
+    assert acheve.returncode == 1
+    assert "désenregistré" in acheve.stderr
+    assert "non retiré" not in acheve.stderr
+
+
+def test_creation_accepte_une_coquille_vide(depot: Depot) -> None:
+    """Une coquille ne porte rien : la refuser barrait le remontage pour un dossier de 0 octet."""
+    coquille = depot.worktree()
+    coquille.mkdir(parents=True)
+
+    acheve = depot.lance("create", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert (depot.worktree() / ".git").exists(), "le worktree devait être monté malgré la coquille"
+    assert BRANCHE in depot.git("branch", "--show-current", cwd=depot.worktree())
+
+
+def test_ensure_remonte_un_ticket_dont_la_coquille_traine_encore(depot: Depot) -> None:
+    """Le symptôme d'origine, bout en bout : `ensure` rendait 1 et /ticket-start s'arrêtait là."""
+    depot.worktree().mkdir(parents=True)
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert _verdict(acheve).startswith("WORKTREE ")
+
+
+def test_gc_ecarte_les_coquilles_vides(depot: Depot) -> None:
+    """Elles sont hors de `git worktree list` : rien d'autre que ce balayage ne les rencontre."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    coquille = depot.worktree("183-partie-depuis-longtemps")
+    coquille.mkdir(parents=True)
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket ouvert")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "coquille vide écartée" in acheve.stdout
+    assert not coquille.exists()
+    assert depot.worktree().exists(), "le worktree vivant n'est pas concerné"
+
+
+def test_gc_ecarte_les_coquilles_meme_quand_il_ne_reste_aucun_worktree(depot: Depot) -> None:
+    """Le cas le plus probable : elles restent quand tout le reste est parti."""
+    coquille = depot.worktree("183-partie-depuis-longtemps")
+    coquille.mkdir(parents=True)
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "coquille vide écartée" in acheve.stdout
+    assert not coquille.exists()
+
+
+def test_gc_ne_touche_jamais_a_un_dossier_inconnu_non_vide(depot: Depot) -> None:
+    """Vide, c'est un déchet ; porteur, c'est le travail de quelqu'un — on le nomme, c'est tout."""
+    inconnu = depot.worktree("carnet-de-notes")
+    inconnu.mkdir(parents=True)
+    (inconnu / "notes.md").write_text("ne pas perdre", encoding="utf-8", newline="\n")
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "aucun worktree ne revendique" in acheve.stdout
+    assert (inconnu / "notes.md").read_text(encoding="utf-8") == "ne pas perdre"
+
+
+def test_gc_check_ne_retire_aucune_coquille(depot: Depot) -> None:
+    coquille = depot.worktree("183-partie-depuis-longtemps")
+    coquille.mkdir(parents=True)
+
+    acheve = depot.lance("gc", "--check")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "à écarter" in acheve.stdout
+    assert coquille.exists(), "--check ne touche à rien"
+
+
+def test_gc_auto_rompt_le_silence_pour_une_coquille(depot: Depot) -> None:
+    """Se taire dessus est exactement ce qui les a laissées s'accumuler."""
+    coquille = depot.worktree("183-partie-depuis-longtemps")
+    coquille.mkdir(parents=True)
+
+    acheve = depot.lance("gc", "--auto")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "coquille vide écartée" in acheve.stdout
+    assert not coquille.exists()
+
+
+def test_gc_auto_reste_muet_quand_il_n_y_a_aucune_coquille(depot: Depot) -> None:
+    """Le silence reste le cas normal : le balayage n'ajoute pas une ligne à chaque démarrage."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("actif", "ticket ouvert")})
+
+    acheve = depot.lance("gc", "--auto")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert acheve.stdout.strip() == "", acheve.stdout
+
+
+def test_list_nomme_les_coquilles(depot: Depot) -> None:
+    """L'autre moitié du remède : sans ça, elles ne réapparaissent qu'en bloquant un remontage."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.worktree("183-partie-depuis-longtemps").mkdir(parents=True)
+
+    acheve = depot.lance("list")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "183-partie-depuis-longtemps" in acheve.stdout
+    assert "coquille vide" in acheve.stdout
+
+
 # --- Purge des branches mergées (#305) --------------------------------------------------------
 # Le pendant du ramassage ci-dessus, pour les branches. Il existait depuis #23 mais était accroché à
 # `lib.sh start-branch`, devenu injoignable avec #181 : /ticket-start monte le worktree AVANT
