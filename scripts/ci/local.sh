@@ -164,10 +164,12 @@ même règle que le pipeline. « --only web-build » le force.
 
 OÙ pytest joue (#372) : dans un conteneur Linux construit depuis $PYTEST_DOCKERFILE_REL,
 parce que les suites d'outillage sont faites de sous-processus shell et qu'un fork y coûte < 1 ms
-contre ~800 ms sous Windows (les six suites du périmètre scripts/** : 14 min 33 → 53 s). Sans
-démon Docker, le filet retombe en NATIF et le DIT dans son verdict — c'est alors l'ancien régime,
+contre ~800 ms sous Windows (les six suites du périmètre scripts/** : 14 min 33 → 53 s). Si le
+démon dort et que Docker Desktop est là, il est DÉMARRÉ (#425, ~35 s, annoncé) ; s'il n'y a pas de
+Docker du tout, le filet retombe en NATIF et le DIT dans son verdict — c'est alors l'ancien régime,
 lent, et aveugle aux écarts Windows/Linux que la CI verra (docs/10 §8.7).
-MAESTRO_PYTEST_REGIME=auto|conteneur|natif ; MAESTRO_PYTEST_IMAGE nomme l'image.
+MAESTRO_PYTEST_REGIME=auto|conteneur|natif ; MAESTRO_PYTEST_IMAGE nomme l'image ;
+MAESTRO_DOCKER_DEMARRAGE=0 n'essaie jamais de démarrer le démon.
 
 Workers : « -n auto » dans le conteneur, comme la CI. En natif, min(cœurs, $PYTEST_WORKERS_PLAFOND) :
 au-delà c'est la mémoire du poste qui borne, pas les cœurs (#285). MAESTRO_PYTEST_WORKERS déplace
@@ -191,6 +193,12 @@ liste_jobs() {
   # console, qui mettrait le dossier du script dans `sys.path` au lieu du répertoire courant (#194).
   if [ "$PYTEST_REGIME" = conteneur ]; then
     ou="conteneur Linux ($PYTEST_DOCKERFILE_REL)"
+    # Le démon dort, mais le lancement le réveillera (#425) : le dire ICI est la seule façon de
+    # tenir le contrat de `--list`. Taire le démarrage annoncerait un régime gratuit là où il coûte
+    # une demi-minute ; annoncer « natif » annoncerait un régime qui ne jouera pas.
+    if [ "$PYTEST_REGIME_REVEIL" = 1 ]; then
+      ou="$ou — après démarrage de Docker Desktop"
+    fi
     lanceur="pytest"
   else
     lanceur="python -m pytest"
@@ -1031,7 +1039,11 @@ if [ "$PYTEST_JOUE" = 1 ] && [ "$PYTEST_REGIME" = natif ]; then
   if [ -n "$PYTEST_REGIME_MOTIF" ]; then
     printf '%spytest a joué en NATIF%s — %s.\n' "$C_Y" "$C_0" "$PYTEST_REGIME_MOTIF"
     printf 'Ce verdict ne porte donc que sur cette plateforme, et il a coûté dix à trente fois le\n'
-    printf 'régime nominal. Démarrer Docker suffit à retrouver les deux (docs/10 §8.4).\n\n'
+    # « Démarrer Docker suffit » n'est plus vrai depuis #425 : s'il était seulement éteint, le
+    # filet vient de le démarrer lui-même. Arriver ici veut donc dire qu'il n'y en a pas, ou que le
+    # démarrage a échoué — et c'est le MOTIF ci-dessus, jamais cette ligne, qui dit lequel des deux.
+    printf 'régime nominal. Docker Desktop rétablit les deux, et le filet le démarre de lui-même\n'
+    printf 'dès lors qu'\''il est installé (docs/10 §8.4).\n\n'
   else
     printf '%spytest a joué en NATIF%s (demandé) — pas de contrôle croisé Windows/Linux.\n\n' "$C_Y" "$C_0"
   fi

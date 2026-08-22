@@ -234,13 +234,38 @@ exit "${MAESTRO_FAUX_SHELLCHECK_CODE:-0}"
 #
 # Depuis #372 il sert AUSSI le régime conteneur du job pytest, qui lui pose trois questions de plus
 # — `version` (le démon répond-il ?), `image inspect` (l'image est-elle là ?) et `build`. Chacune a
-# son propre code de retour, et TOUS valent 0 par défaut : les tests du repli shellcheck écrits
-# avant ce ticket continuent de voir le docker complaisant qu'ils attendent.
+# son propre code de retour, et ces trois-là valent 0 par défaut : les tests du repli shellcheck
+# écrits avant ce ticket continuent de voir le docker complaisant qu'ils attendent.
+#
+# Depuis #425 il répond en plus à `docker desktop`, et il TIENT UNE SÉQUENCE — deux ajouts liés :
+#
+#   · `desktop` sort en 1 PAR DÉFAUT, c'est-à-dire « pas de plugin, donc pas de Docker Desktop sur
+#     ce poste ». C'est ce qui préserve à l'identique le sens des tests du repli écrits avant : leur
+#     scénario est « aucun démon ET rien pour en démarrer un », le seul où le repli natif est encore
+#     la bonne réponse. Un défaut à 0 les aurait transformés en silence en tests du DÉMARRAGE.
+#   · le TÉMOIN (`MAESTRO_FAUX_DOCKER_TEMOIN`) fait répondre `version` une fois `desktop start`
+#     passé. Sans mémoire, un shim ne peut pas distinguer « le démon ne répond pas » de « le démon
+#     ne répond pas ENCORE » — or c'est exactement la séquence qu'on veut observer. Même parti pris
+#     que le `gh` factice de tests/test_migration.py, et pour la même raison : une séquence ne
+#     s'observe que sur un double qui en tient une.
 SHIM_DOCKER = """\
 #!/usr/bin/env bash
 printf 'docker %s\\n' "${*//$'\\n'/ }" >> "$MAESTRO_FAUX_JOURNAL"
 case "$1" in
-  version) exit "${MAESTRO_FAUX_DOCKER_VERSION_CODE:-0}" ;;
+  version)
+    if [ -n "${MAESTRO_FAUX_DOCKER_TEMOIN:-}" ] && [ -f "${MAESTRO_FAUX_DOCKER_TEMOIN}" ]; then
+      exit 0
+    fi
+    exit "${MAESTRO_FAUX_DOCKER_VERSION_CODE:-0}" ;;
+  desktop)
+    if [ "${2:-}" = start ]; then
+      code="${MAESTRO_FAUX_DOCKER_DESKTOP_START_CODE:-${MAESTRO_FAUX_DOCKER_DESKTOP_CODE:-1}}"
+      if [ "$code" = 0 ] && [ -n "${MAESTRO_FAUX_DOCKER_TEMOIN:-}" ]; then
+        : > "$MAESTRO_FAUX_DOCKER_TEMOIN"
+      fi
+      exit "$code"
+    fi
+    exit "${MAESTRO_FAUX_DOCKER_DESKTOP_CODE:-1}" ;;
   build) exit "${MAESTRO_FAUX_DOCKER_BUILD_CODE:-0}" ;;
   image) exit "${MAESTRO_FAUX_DOCKER_INSPECT_CODE:-0}" ;;
   run) ;;
@@ -1230,6 +1255,182 @@ def test_le_dockerfile_porte_git_sans_identite_globale() -> None:
         "git par apt-get met les miroirs Debian sur le chemin critique de chaque build (#333)"
     assert not re.search(r"git config\s+--global\s+user\.", instructions), \
         "une identité git globale remasquerait le bug de production trouvé par #332"
+
+
+# --- Un démon éteint n'est pas un poste sans Docker (#425) ----------------------------------------
+# Le repli natif de #372 a été écrit pour les postes SANS Docker. Un second cas lui empruntait le
+# même chemin et payait le même prix — ×15 à ×30, et un verdict aveugle aux écarts Windows/Linux
+# (§8.7) — alors qu'il se répare en une commande : Docker Desktop installé, simplement pas démarré.
+#
+# Ce que ces tests épinglent est donc une DISTINCTION, pas une commande de plus : la présence du
+# plugin `docker desktop` sépare les deux situations, et chacune garde le comportement qui lui va.
+# Aucun ne touche au Docker du poste — c'est SHIM_DOCKER qui répond, avec son témoin (voir son
+# commentaire), et ce sont les décisions du script qu'on lit dans son journal.
+
+
+def demarrages_desktop(appels: list[str]) -> list[str]:
+    """Les tentatives de démarrage — jamais la sonde `docker desktop --help` qui les précède."""
+    return [appel for appel in appels if appel.startswith("docker desktop start")]
+
+
+def test_le_demon_endormi_est_demarre_plutot_que_de_retomber_en_natif(clone: Clone) -> None:
+    """Le cœur du ticket : Docker Desktop est là, il dort, on le réveille et le conteneur joue.
+
+    Le témoin du shim est ce qui rend la séquence observable — `docker version` est muet jusqu'à
+    `docker desktop start`, et répond après. Sans lui on ne pourrait vérifier que la tentative, pas
+    qu'elle SERT à quelque chose.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_VERSION_CODE="1",          # le démon dort…
+        MAESTRO_FAUX_DOCKER_DESKTOP_CODE="0",          # …mais Docker Desktop est installé
+        MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert demarrages_desktop(clone.appels()), \
+        "un démon endormi doit être DÉMARRÉ, pas contourné par le repli"
+    assert lancements_conteneur(clone.appels()), \
+        "une fois le démon réveillé, la suite doit jouer dans le conteneur"
+    assert not lancements_pytest(clone.appels()), \
+        "le venv du poste n'a plus rien à jouer dès lors que le conteneur le fait"
+    assert "NATIF" not in acheve.stdout, \
+        "un démarrage réussi ne doit laisser aucune trace d'avertissement de repli"
+
+
+def test_le_demarrage_est_annonce_avant_d_etre_tente(clone: Clone) -> None:
+    """Une attente d'une demi-minute qui ne se dit pas passe pour un blocage.
+
+    Même raison d'être que l'annonce de la construction d'image : ce qui est long doit se voir
+    venir. La mesure de référence est de 35 s sur le poste Windows (démon froid, 2026-08-22).
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_VERSION_CODE="1",
+        MAESTRO_FAUX_DOCKER_DESKTOP_CODE="0",
+        MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
+    )
+
+    assert "Docker Desktop" in acheve.stdout, \
+        f"le démarrage doit s'annoncer avant de faire attendre :\n{acheve.stdout}"
+
+
+def test_sans_le_plugin_desktop_rien_n_est_tente_et_le_repli_reste(clone: Clone) -> None:
+    """Le poste réellement sans Docker : aucune tentative, aucun délai payé, repli inchangé.
+
+    C'est la moitié du ticket qu'il ne faut pas perdre. Le repli natif garde exactement le
+    comportement pour lequel il a été écrit — et surtout, on ne fait pas payer à ce poste-là le
+    plafond d'un démarrage qui ne peut pas aboutir.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    # Pas de MAESTRO_FAUX_DOCKER_DESKTOP_CODE : le shim rend 1, « pas de plugin sur ce poste ».
+    acheve = clone.lance("--only", "pytest", MAESTRO_FAUX_DOCKER_VERSION_CODE="1")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not demarrages_desktop(clone.appels()), \
+        "sans plugin il n'y a rien à démarrer : tenter ne ferait que faire attendre pour rien"
+    assert lancements_pytest(clone.appels()), "le repli natif doit jouer la suite comme avant"
+    assert "NATIF" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_un_demarrage_en_echec_nomme_sa_cause_et_retombe_en_natif(clone: Clone) -> None:
+    """Échouer à démarrer Docker ne doit pas bloquer un lancement — mais doit se dire.
+
+    Le repli reste la bonne issue : ce filet rend un verdict, et un verdict natif annoncé vaut
+    mieux qu'un job qui refuse de jouer parce qu'un démarrage n'a pas abouti.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_VERSION_CODE="1",
+        MAESTRO_FAUX_DOCKER_DESKTOP_CODE="0",           # le plugin est là…
+        MAESTRO_FAUX_DOCKER_DESKTOP_START_CODE="1",     # …mais le démarrage échoue
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert demarrages_desktop(clone.appels()), "le plugin étant là, la tentative doit avoir lieu"
+    assert not lancements_conteneur(clone.appels()), "un démarrage raté ne donne pas de conteneur"
+    assert lancements_pytest(clone.appels()), "et le lancement continue, en natif"
+    assert "NATIF" in ligne_du_job(acheve.stdout, "pytest")
+    assert "échec" in acheve.stdout, (
+        "un démarrage raté doit nommer sa cause, pas se confondre avec un poste sans Docker :\n"
+        f"{acheve.stdout}"
+    )
+
+
+def test_l_interrupteur_rend_le_comportement_d_avant(clone: Clone) -> None:
+    """`MAESTRO_DOCKER_DEMARRAGE=0` : pour un poste où Docker ne doit pas se lancer tout seul."""
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    acheve = clone.lance(
+        "--only", "pytest",
+        MAESTRO_FAUX_DOCKER_VERSION_CODE="1",
+        MAESTRO_FAUX_DOCKER_DESKTOP_CODE="0",
+        MAESTRO_DOCKER_DEMARRAGE="0",
+    )
+
+    assert not demarrages_desktop(clone.appels()), \
+        "l'interrupteur doit empêcher la tentative, pas seulement son effet"
+    assert lancements_pytest(clone.appels()), "et le repli natif reprend sa place"
+    assert "NATIF" in ligne_du_job(acheve.stdout, "pytest")
+
+
+def test_la_sonde_ne_demarre_rien_mais_annonce_le_reveil(clone: Clone) -> None:
+    """`--list` dit la commande RÉELLEMENT jouée (#194) — sans rien engager pour le savoir.
+
+    Deux exigences qui tirent en sens contraire : annoncer « natif » alors que le lancement jouera
+    dans le conteneur trahirait le contrat de `--list` ; démarrer Docker pour pouvoir l'annoncer
+    trahirait le fait qu'une sonde est gratuite. Constater la présence du plugin tranche les deux.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    annonce = clone.lance(
+        "--list",
+        MAESTRO_FAUX_DOCKER_VERSION_CODE="1",
+        MAESTRO_FAUX_DOCKER_DESKTOP_CODE="0",
+    )
+
+    assert not demarrages_desktop(clone.appels()), \
+        "sonder est gratuit : `--list` ne doit rien démarrer, pas plus qu'il ne construit l'image"
+    # `--list` rend un TABLEAU de commandes, pas le résumé d'un lancement : sa ligne pytest se lit
+    # donc directement, et non par `ligne_du_job` (qui, lui, part de « Résumé »).
+    lignes = [ligne for ligne in annonce.stdout.splitlines() if ligne.strip().startswith("pytest ")]
+    assert lignes, f"aucune ligne pytest dans l'annonce :\n{annonce.stdout}"
+    ligne = lignes[0]
+    assert "conteneur" in ligne, f"le régime annoncé doit être celui qui jouera : {ligne}"
+    assert "démarrage de Docker Desktop" in ligne, \
+        f"…et son coût doit s'y voir, sans quoi le conteneur passe pour gratuit : {ligne}"
+
+
+def test_le_lanceur_demarre_docker_comme_le_filet(clone: Clone) -> None:
+    """La décision vit dans la plomberie PARTAGÉE, donc `pytest.sh` en hérite sans une ligne.
+
+    C'est l'invariant de #405 appliqué à ce ticket : deux implémentations à tenir d'accord seraient
+    le premier moyen pour qu'un lanceur cesse d'exécuter ce que le filet prédit.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    acheve = clone.lance_pytest(
+        "tests/test_engine.py",
+        MAESTRO_FAUX_DOCKER_VERSION_CODE="1",
+        MAESTRO_FAUX_DOCKER_DESKTOP_CODE="0",
+        MAESTRO_FAUX_DOCKER_TEMOIN=str(clone.tmp / "docker-demarre"),
+    )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert demarrages_desktop(clone.appels()), "le lanceur doit réveiller le démon lui aussi"
+    assert lancements_conteneur(clone.appels()), "…et jouer dans le conteneur qui en résulte"
 
 
 # --- Le lanceur d'itération serrée (#405) ---------------------------------------------------------

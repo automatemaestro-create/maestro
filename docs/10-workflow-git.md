@@ -1601,7 +1601,7 @@ dont un bug de production. Cette classe d'écart ne se voyait **qu'au merge** : 
 pouvait structurellement pas l'attraper.
 
 ```bash
-bash scripts/ci/local.sh                 # conteneur si Docker répond, sinon repli natif ANNONCÉ
+bash scripts/ci/local.sh                 # conteneur ; démon éteint → Docker Desktop est DÉMARRÉ
 bash scripts/ci/local.sh --conteneur     # exigé : ÉCHOUE au lieu de retomber
 bash scripts/ci/local.sh --natif         # l'ancien régime
 ```
@@ -1613,6 +1613,32 @@ Les points de conception, à comprendre avant d'y toucher :
   quinze minutes en se faisant passer pour un vert d'une minute, et surtout un vert qui n'a pas vu
   ce que la CI verra. `--conteneur` **échoue** au lieu de retomber, pour les contextes où personne
   ne lit la sortie.
+- **Mais un démon éteint n'est pas un poste sans Docker (#425).** Le repli ci-dessus a été écrit
+  pour le *poste sans Docker* ; celui qu'on rencontre tous les jours est le *démon éteint* — Docker
+  Desktop installé, simplement pas démarré, typiquement après un redémarrage. Il empruntait le même
+  chemin et payait le même prix, alors qu'il se répare en une commande : le filet **démarre donc
+  Docker Desktop lui-même** avant de conclure au repli. Ce qui sépare les deux cas est la présence
+  du plugin CLI **`docker desktop`**, livré *avec* Docker Desktop — un critère qui ne devine aucun
+  chemin d'installation et ne distingue aucune plateforme. Quatre points de conception :
+  - **Le démarrage est annoncé avant d'être tenté**, comme la construction d'image et pour la même
+    raison : une attente muette d'une demi-minute passe pour un blocage. Mesuré le 2026-08-22 sur
+    le poste de référence, démon froid : `docker desktop start` rend la main en **35 s**, et
+    `docker version` répond dans la foulée. Le plafond par défaut est à 180 s.
+  - **Sans le plugin, rien n'est tenté** — ni commande, ni délai. Le poste réellement sans Docker
+    garde le repli à l'identique, ce pour quoi il a été écrit. Un démarrage qui **échoue** nomme sa
+    cause et retombe en natif : ce filet rend un verdict, et un natif annoncé vaut mieux qu'un job
+    qui refuse de jouer.
+  - **La sonde reste gratuite.** `--list` doit dire la commande *réellement* jouée (#194) : il
+    annonce donc « conteneur Linux — après démarrage de Docker Desktop » **sans rien démarrer**.
+    Les deux moitiés comptent — annoncer « natif » trahirait le contrat, démarrer pour pouvoir
+    l'annoncer trahirait le fait qu'une sonde ne coûte rien. Constater la présence du plugin
+    tranche les deux.
+  - **La décision vit dans la plomberie partagée**, donc `pytest.sh` en hérite sans une ligne
+    (§8.4bis) — deux implémentations à tenir d'accord seraient le premier moyen pour qu'un lanceur
+    cesse d'exécuter ce que le filet prédit.
+
+  `MAESTRO_DOCKER_DEMARRAGE=0` éteint la tentative, `MAESTRO_DOCKER_DEMARRAGE_DELAI` déplace le
+  plafond.
 - **L'étiquette de l'image porte l'empreinte de `pyproject.toml` et de
   [`scripts/ci/pytest.Dockerfile`](../scripts/ci/pytest.Dockerfile).** Une dépendance ajoutée au
   dépôt change l'étiquette, donc l'image manque, donc elle est reconstruite : personne n'a à s'en
@@ -1642,9 +1668,13 @@ Les points de conception, à comprendre avant d'y toucher :
   l'autre. `MAESTRO_PYTEST_WORKERS` le déplace des deux côtés.
 
 Réglages : `MAESTRO_PYTEST_REGIME=auto|conteneur|natif`, `MAESTRO_PYTEST_IMAGE` pour le nom de
-l'image. Garde-fous dans [`tests/test_ci_local.py`](../tests/test_ci_local.py), qui n'ouvre **aucun**
-conteneur : c'est un shim `docker` qui répond, et ce sont les *décisions* du script qu'on lit dans
-son journal. Le `docker` neutralisé de la fixture y est devenu le garde-fou central — sans lui,
+l'image, `MAESTRO_DOCKER_DEMARRAGE=0` et `MAESTRO_DOCKER_DEMARRAGE_DELAI` pour le démarrage
+automatique du démon (#425, ci-dessus). Garde-fous dans
+[`tests/test_ci_local.py`](../tests/test_ci_local.py), qui n'ouvre **aucun** conteneur : c'est un
+shim `docker` qui répond, et ce sont les *décisions* du script qu'on lit dans son journal. Depuis
+#425 ce shim **tient une séquence** (un témoin fait répondre `version` une fois `desktop start`
+passé) — sans mémoire, un double ne peut pas distinguer « le démon ne répond pas » de « le démon ne
+répond pas *encore* », qui est précisément ce qu'on vient observer. Le `docker` neutralisé de la fixture y est devenu le garde-fou central — sans lui,
 chaque test monterait un vrai conteneur sur son dépôt jetable, où les shims du `PATH` ne franchissent
 pas la frontière.
 
