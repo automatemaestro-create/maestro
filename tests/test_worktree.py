@@ -108,6 +108,12 @@ class Depot:
         # poste qui la pose, la rediriger dans `HOME` seul ne suffirait pas — les tests liraient le
         # VRAI historique de la machine, et le verdict de la suite dépendrait du poste.
         environnement.pop("CLAUDE_CONFIG_DIR", None)
+        # Même raison, pour l'identifiant de session (#424) : Claude Code pose
+        # `CLAUDE_CODE_SESSION_ID` dans l'environnement de ses sous-processus, donc la suite
+        # lancée DEPUIS une session en hérite — et le message de `ensure` nommerait la session
+        # réelle du poste. Lancée par la CI, elle prendrait l'autre branche. On repart de zéro et
+        # les tests qui veulent l'un ou l'autre le posent explicitement.
+        environnement.pop("CLAUDE_CODE_SESSION_ID", None)
         environnement["HOME"] = str(self.home)
         environnement["MAESTRO_WORKTREE_DIR"] = str(self.worktrees)
         # Ramassage des worktrees (#197) : désactivé par défaut dans les tests de création — il
@@ -740,6 +746,48 @@ def test_ensure_annonce_les_ports_et_dit_qu_ils_ne_suivent_pas_la_relocalisation
 
     assert "8052" in acheve.stdout and "3052" in acheve.stdout, "les ports dédiés sont annoncés"
     assert "non hérités par une session relocalisée" in acheve.stdout
+
+
+def test_ensure_previent_que_l_onglet_vs_code_perdra_la_conversation(depot: Depot) -> None:
+    """#424 — le transcript suit le répertoire courant, donc la relocalisation le sort du dossier
+    où l'onglet VS Code ira le chercher au redémarrage. C'est ICI que la perte a lieu, et c'est
+    le seul instant où la question est sous les yeux : après coup, l'onglet vide ne rappelle rien.
+    L'identifiant vient de l'environnement — donc juste, et la commande de reprise est complète."""
+    acheve = depot.lance(
+        "ensure",
+        "152",
+        "--branche",
+        BRANCHE,
+        environnement={"CLAUDE_CODE_SESSION_ID": "abcd1234-0000-0000-0000-00000000cafe"},
+    )
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert "son onglet repartira vide" in acheve.stdout
+    assert "claude --resume abcd1234-0000-0000-0000-00000000cafe" in acheve.stdout
+
+
+def test_ensure_n_invente_aucun_identifiant_de_session(depot: Depot) -> None:
+    """Hors d'une session Claude Code — `orchestrate/run.sh`, un terminal nu — il n'y a pas
+    d'identifiant à donner. Le message renvoie alors vers l'inventaire du ticket : un identifiant
+    inventé enverrait rejouer une reprise qui n'existe pas, pire que pas d'identifiant du tout."""
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert "son onglet repartira vide" in acheve.stdout
+    assert "claude --resume" not in acheve.stdout
+    assert "worktree.sh sessions 152" in acheve.stdout
+
+
+def test_ensure_ne_previent_pas_quand_la_session_ne_bouge_pas(depot: Depot) -> None:
+    """Verdict `ICI` : la session est déjà au bon endroit, rien ne quitte quoi que ce soit.
+    Le dire quand même apprendrait à ne plus lire l'avertissement."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE, cwd=depot.worktree())
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    assert _verdict(acheve).startswith("ICI ")
+    assert "son onglet repartira vide" not in acheve.stdout
 
 
 def test_creation_dit_ou_la_branche_est_deja_empruntee(depot: Depot) -> None:
@@ -1875,6 +1923,9 @@ def test_sessions_sans_iid_ignore_les_sessions_des_autres_dossiers(depot: Depot)
     assert "Ailleurs" not in acheve.stdout
     assert "aucune session enregistrée pour ce dossier" in acheve.stdout
     assert "sessions --tous" in acheve.stdout
+    # #424 : le renvoi dit aussi POURQUOI elles ne sont pas là — la même absence qui fait repartir
+    # vide l'onglet VS Code du ticket. Sans la cause, le compte se lit comme un simple ailleurs.
+    assert "leur onglet repart vide" in acheve.stdout
 
 
 def test_sessions_nomme_l_onglet_d_apres_le_registre(depot: Depot) -> None:
