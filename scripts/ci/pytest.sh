@@ -52,8 +52,9 @@ argument inconnu — tout le reste part tel quel à pytest) :
   --natif       Force le venv du poste (.venv/), l'ancien régime.
   -h, --help    Cette aide.
 
-Par défaut : le conteneur si le démon Docker répond, sinon le venv du poste — et le lanceur
-DIT toujours lequel des deux a joué.
+Par défaut : le conteneur. Si le démon dort et que Docker Desktop est installé, il est DÉMARRÉ
+(#425, ~35 s, annoncé) ; sans Docker du tout, le venv du poste — et le lanceur DIT toujours
+lequel des deux a joué. MAESTRO_DOCKER_DEMARRAGE=0 n'essaie jamais de démarrer le démon.
 
 Exemples :
   bash scripts/ci/pytest.sh tests/test_cycle_de_vie.py -q

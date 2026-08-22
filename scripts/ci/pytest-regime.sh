@@ -89,14 +89,96 @@ esac
 # par les tests, pas à la relecture.
 docker_repond() { docker version --format '{{.Server.Version}}' >/dev/null 2>&1; }
 
-# Quel régime jouerait, SANS RIEN CONSTRUIRE. Sépare la sonde (gratuite) de l'engagement (coûteux) :
-# c'est ce qui permet à `--list` de dire la vérité sur la commande jouée — son contrat depuis #194 —
-# sans déclencher au passage une construction d'image de plusieurs minutes.
+# --- Un démon éteint n'est pas un poste sans Docker (#425) ----------------------------------------
+# Le repli natif plus bas a été écrit pour les postes SANS Docker. Un autre cas lui empruntait le
+# même chemin et payait le même prix — ×15 à ×30, et un verdict aveugle aux écarts Windows/Linux que
+# la CI verra (docs/10 §8.7) — alors qu'il se répare en une commande : **Docker Desktop installé,
+# simplement pas démarré**. Les confondre fait du repli le régime ordinaire de qui n'a pas pensé à
+# lancer Docker avant, c'est-à-dire à peu près tout le monde après un redémarrage.
+#
+# `docker desktop` est un plugin CLI livré AVEC Docker Desktop : sa présence est exactement ce qui
+# sépare les deux situations, sans avoir à deviner un chemin d'installation ni à distinguer les
+# plateformes. Absent, il n'y a rien à démarrer et le repli reste la bonne réponse — celle pour
+# laquelle il a été écrit.
+#: Tenter le démarrage ? 0 pour ne jamais essayer (poste où Docker ne doit pas se lancer seul).
+DOCKER_DEMARRAGE="${MAESTRO_DOCKER_DEMARRAGE:-1}"
+#: Le plafond laissé au démarrage, passé tel quel à `docker desktop start --timeout`. 180 s est
+#: large à dessein : la mesure de référence est de 35 s (poste Windows, démon froid, 2026-08-22).
+DOCKER_DEMARRAGE_DELAI="${MAESTRO_DOCKER_DEMARRAGE_DELAI:-180}"
+case "$DOCKER_DEMARRAGE_DELAI" in
+  '' | *[!0-9]*) DOCKER_DEMARRAGE_DELAI=180 ;;
+esac
+
+#: Pourquoi le démon n'a pas pu être joint — posée par `docker_reveille`, lue par son appelant.
+DOCKER_RAISON=""
+
+# Le plugin est-il là, et a-t-on le droit de s'en servir ? Sonde PURE : elle ne démarre rien, ce qui
+# la rend jouable depuis `regime_pytest_pressenti`, dont tout le contrat est d'être gratuit.
+docker_reveillable() {
+  [ "$DOCKER_DEMARRAGE" != 0 ] || return 1
+  docker desktop --help >/dev/null 2>&1
+}
+
+# Démarre Docker Desktop, puis attend que le MOTEUR réponde. → 0 il répond · 1 non.
+docker_demarre() {
+  local essais=15
+  docker desktop start --timeout "$DOCKER_DEMARRAGE_DELAI" >/dev/null 2>&1 || return 1
+  # `start` rend la main quand Docker Desktop est LANCÉ, ce qui ne dit pas encore que le MOTEUR
+  # répond — et c'est la seule question qui nous intéresse. On la repose donc, mais l'attente
+  # longue reste dans `--timeout` : ce sursis-ci ne couvre que l'écart entre les deux événements
+  # (nul sur le poste de référence, où `docker version` répond dès le retour de `start`). Il ne se
+  # paie que sur un poste plus lent, et la boucle sort au premier `oui` — jamais après 30 s.
+  while ! docker_repond; do
+    essais=$((essais - 1))
+    [ "$essais" -gt 0 ] || return 1
+    sleep 2
+  done
+  return 0
+}
+
+# Le démon ne répond pas : sait-on le réveiller ? → 0 il répond maintenant · 1 non (DOCKER_RAISON).
+#
+# Le démarrage est ANNONCÉ avant d'être tenté, au même titre que la construction de l'image : une
+# attente muette d'une demi-minute au milieu d'un lancement passerait pour un blocage.
+docker_reveille() {
+  DOCKER_RAISON="démon Docker injoignable"
+  docker_reveillable || return 1
+  printf '    ─── démon Docker éteint : démarrage de Docker Desktop (jusqu'\''à %s s) …\n' \
+    "$DOCKER_DEMARRAGE_DELAI"
+  docker_demarre && return 0
+  DOCKER_RAISON="démarrage de Docker Desktop en échec (plafond ${DOCKER_DEMARRAGE_DELAI} s)"
+  return 1
+}
+
+#: Le régime conteneur suppose-t-il de DÉMARRER Docker Desktop d'abord ? Posé par la sonde seule,
+#: lu par `local.sh` — que le lint ne voit jamais sur la même ligne de commande (#285), d'où le
+#: SC2034 désactivé ici comme sur la fonction qui l'écrit.
+# shellcheck disable=SC2034
+PYTEST_REGIME_REVEIL=0
+
+# Quel régime jouerait, SANS RIEN CONSTRUIRE NI RIEN DÉMARRER. Sépare la sonde (gratuite) de
+# l'engagement (coûteux) : c'est ce qui permet à `--list` de dire la vérité sur la commande jouée —
+# son contrat depuis #194 — sans déclencher au passage une construction d'image de plusieurs
+# minutes, ni le démarrage d'un Docker que personne n'a demandé à cet instant-là.
+# shellcheck disable=SC2034  # PYTEST_REGIME_REVEIL est lue par `local.sh` (lint fichier par fichier).
 regime_pytest_pressenti() {
+  PYTEST_REGIME_REVEIL=0
   case "$PYTEST_REGIME_DEMANDE" in
     natif) PYTEST_REGIME=natif ;;
     conteneur) PYTEST_REGIME=conteneur ;;
-    *) if docker_repond; then PYTEST_REGIME=conteneur; else PYTEST_REGIME=natif; fi ;;
+    *)
+      if docker_repond; then
+        PYTEST_REGIME=conteneur
+      elif docker_reveillable; then
+        # Le démon dort, mais on sait le réveiller (#425). Annoncer « natif » ici annoncerait un
+        # régime que le lancement ne tiendra pas — or cette sonde ne sert qu'à dire ce qui va
+        # RÉELLEMENT jouer. Constater que le plugin est là reste gratuit ; on ne démarre rien.
+        PYTEST_REGIME=conteneur
+        PYTEST_REGIME_REVEIL=1
+      else
+        PYTEST_REGIME=natif
+      fi
+      ;;
   esac
 }
 
@@ -287,8 +369,12 @@ choisit_regime_pytest() {
   # `docker version` est posé ici et non dans la sonde : celle-ci répond « lequel des deux »,
   # celui-ci « et est-ce que ça marche ». En régime EXIGÉ la sonde ne demande rien, donc la
   # question doit être posée une fois, ici, pour les deux cas.
-  if ! docker_repond; then
-    raison="démon Docker injoignable"
+  #
+  # Et s'il ne répond pas, on essaie de le réveiller AVANT de conclure (#425) : sur un poste où
+  # Docker Desktop est installé, « éteint » est une cause qui se répare, pas un verdict. C'est ici
+  # et non dans la sonde, parce que c'est ici qu'on s'engage — la sonde, elle, reste gratuite.
+  if ! docker_repond && ! docker_reveille; then
+    raison="$DOCKER_RAISON"
   elif ! image="$(pytest_image)"; then
     raison="empreinte de l'image incalculable (git ou $PYTEST_DOCKERFILE_REL manquant)"
   elif ! pytest_image_construit "$image"; then
