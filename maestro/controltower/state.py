@@ -374,6 +374,20 @@ class EtatExecution:
     # que l'UI la rend : « tour 1 sur 2 ».
     tour_clarification: int = 0
     tours_clarification_max: int = 0
+    # Le brief de ce run a-t-il été **approuvé par un humain** (#349) ? Posé par
+    # `brief.decision` sur approbation, jamais retiré ensuite. C'est un fait distinct
+    # de « `brief` est renseigné » : dès `brief.demande`, le champ ci-dessus porte le
+    # brief *proposé*, si bien qu'un run mort **pendant** l'attente en a un sans que
+    # personne ne l'ait validé. La relance (#349) a besoin de la différence — c'est
+    # exactement ce qu'elle rejoue, et rejouer un brief non approuvé reviendrait à
+    # sauter la validation que le run attendait encore.
+    brief_approuve: bool = False
+    # Le run dont celui-ci est la suite (#349) — vide pour un run qui ne reprend
+    # personne, c'est-à-dire l'immense majorité. Posé par l'événement de lancement,
+    # jamais retiré : c'est le pendant du fichier `reprise-de` d'un run
+    # d'orchestration (#204), et il se lit dans le même sens (« ceci est la suite de
+    # cela »), jamais dans l'autre.
+    reprise_de: str = ""
 
     @property
     def debut(self) -> str:
@@ -436,6 +450,14 @@ class EtatExecution:
             "attente_depuis": self.attente_depuis,
             "tour_clarification": self.tour_clarification,
             "tours_clarification_max": self.tours_clarification_max,
+            # Les deux faces de la relance (#349), dans le **résumé** et non dans le
+            # seul détail, pour la même raison que l'attente ci-dessus : ce sont deux
+            # scalaires, et c'est la **liste** des runs qui doit montrer lequel a du
+            # cadrage à rejouer et lequel est déjà la suite d'un autre. Le brief
+            # lui-même reste dans le détail — savoir qu'il a été approuvé ne demande
+            # pas de le lire.
+            "brief_approuve": self.brief_approuve,
+            "reprise_de": self.reprise_de,
             "debut": self.debut,
             "fin": self.fin,
         }
@@ -893,6 +915,11 @@ class ControlTowerState:
             # Le régime du brief (#320) : même règle une fois de plus — annoncé par
             # le lancement, jamais retiré par l'issue, qui ne le porte pas.
             execution.mode_brief = event.mode_brief
+        if event.reprise_de:
+            # Le run repris (#349) : même règle, une dernière fois. Seul le lancement
+            # d'une relance en porte un ; l'issue du run, qui n'en sait rien, ne doit
+            # pas effacer de qui il était la suite.
+            execution.reprise_de = event.reprise_de
         execution.fin = (
             event.horodatage if execution.statut in STATUTS_EXECUTION_TERMINAUX else None
         )
@@ -954,6 +981,12 @@ class ControlTowerState:
         else:
             execution.statut = EXECUTION_EN_COURS
             execution.fin = None
+            # Le cadrage a été **payé et validé** (#349) : c'est ce fait-là, et non la
+            # présence d'un brief, qui rend un run rejouable. Posé ici et nulle part
+            # ailleurs — l'approbation est le seul moment où quelqu'un a dit oui — et
+            # jamais retiré : un run approuvé puis mort reste un run approuvé, c'est
+            # même toute la matière que la relance vient chercher.
+            execution.brief_approuve = True
 
     def _applique_brief_questions(self, event: Event) -> None:
         """Le run pose les questions de son brief (#321) et attend les réponses.

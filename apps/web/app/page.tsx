@@ -41,6 +41,7 @@ import { FilActivite } from "@/components/FilActivite";
 import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord";
 import { Kanban } from "@/components/Kanban";
 import { PanneauBriefs } from "@/components/PanneauBriefs";
+import { PanneauRunsPerdus } from "@/components/PanneauRunsPerdus";
 import { PanneauValidations } from "@/components/PanneauValidations";
 import { PosteVide } from "@/components/PosteVide";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -67,6 +68,7 @@ export default function TableauDeBord() {
     erreur,
     reassigner,
     decider,
+    relancerRun,
   } = useEtatGlobal();
 
   const journal = entreeParLibelle("Journal");
@@ -105,6 +107,11 @@ export default function TableauDeBord() {
               une validation ne retient qu'une tâche. */}
           <PanneauBriefs executions={executions} />
           <PanneauValidations validations={validations} decider={decider} />
+          {/* Après les deux : ceux-là retiennent du travail **vivant**, un run
+              perdu ne retient plus rien — son hôte est tombé. L'urgence n'est pas
+              la même, et ce qui attend quelqu'un passe avant ce qui l'attendait
+              (#349). */}
+          <PanneauRunsPerdus executions={executions} relancer={relancerRun} />
           <IndicateursTableauDeBord
             taches={taches}
             agents={agents}

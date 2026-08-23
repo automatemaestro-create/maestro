@@ -163,8 +163,18 @@ Il répond à « **où en est-on, et qu'est-ce qui m'attend ?** » **en un écra
 (épuré par #191). Cinq panneaux de plein format s'y disputaient la place ; il n'en
 reste que ce qui se lit d'un coup d'œil, dans cet ordre :
 
-1. **Validations en attente** — ce qui demande un arbitrage humain, en tête.
-2. **Indicateurs de tête** — quatre tuiles : run en cours, tâches par statut,
+1. **Briefs en attente** (#322, §2.7.4) — un run arrêté sur son brief bloque le run
+   entier, là où une validation ne retient qu'une tâche : il passe donc devant. Il
+   **signale et achemine, il ne décide pas** — sept sections, des questions et un
+   coût ne tiennent pas dans une carte.
+2. **Validations en attente** — ce qui demande un arbitrage humain.
+3. **Runs interrompus** (#349, §6.1) — les runs **orphelins dont le brief a été
+   approuvé**, avec le bouton qui les reprend sur ce cadrage. Après les deux
+   précédents, et pour une raison de nature : ceux-là retiennent du travail
+   **vivant**, un run perdu ne retient plus rien. Rien ne s'affiche quand il n'y a
+   rien à récupérer — ni sur un run `indetermine` (on ne sait pas : le proposer
+   serait deviner), ni sur un orphelin sans brief approuvé (il n'a rien à rejouer).
+4. **Indicateurs de tête** — quatre tuiles : run en cours, tâches par statut,
    agents occupés et libres, dépense. Chaque tuile met en valeur **le chiffre
    qu'on vient y chercher** : la tuile Agents répond « combien travaillent,
    combien sont disponibles ? » et relègue le total et les agents désactivés en
@@ -172,8 +182,8 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
    **ici** — le parc étant celui du poste (§2.0), seul un décompte dérivé des
    tâches du projet a sa place en tête, les « occupés ailleurs » passant au
    détail.
-3. **Kanban** des tâches — qui prend **toute la hauteur restante** (#248, §2.2).
-4. **Aperçu de l'activité** en direct (quelques lignes, pas le fil entier).
+5. **Kanban** des tâches — qui prend **toute la hauteur restante** (#248, §2.2).
+6. **Aperçu de l'activité** en direct (quelques lignes, pas le fil entier).
 
 Le reste n'a pas été supprimé, il est **rangé**, et **chaque tuile renvoie vers
 la page où le détail vit désormais** : les fiches d'agent vers **Agents**, la
@@ -804,7 +814,7 @@ actif, elle n'a **aucun défaut** dans [`apps/web/lib/api.ts`](../apps/web/lib/a
 non cadrée ne compile pas —, et `tous` ne subsiste que là où il est justifié : le flux du **chat**,
 dont les événements ne portent pas de projet et qu'une socket cadrée ne recevrait jamais.
 
-### 6.1 Exécutions — lancement, suivi, annulation (#185) — **livré**
+### 6.1 Exécutions — lancement, suivi, annulation, relance (#185) — **livré**
 
 Piloter un vrai run depuis la Control Tower, sans passer par la CLI. Seule section de ce
 chapitre déjà implémentée (`maestro/controltower/executions.py`) : le contrat ci-dessous
@@ -819,6 +829,9 @@ décrit le comportement réel, pas une fixture.
 - `POST /api/executions/{run_id}/annuler` → `ResumeExecution` — interrompt un run en cours (statut
   `annulee`, `fin` posée). `404` si le run est inconnu, `409` s'il est déjà soldé — un run terminé
   n'est plus interruptible, et le dire vaut mieux que faire croire à une annulation.
+- `POST /api/executions/{run_id}/relancer` → `202` + `ResumeExecution` — rejoue un run interrompu
+  **sur son brief approuvé** (#349, ci-dessous) et rend le résumé du **nouveau** run. `404` inconnu,
+  `409` déjà soldé ou **encore vivant**, `422` sans brief approuvé.
 
 ```jsonc
 // LancementExecution (corps de POST /api/executions)
@@ -851,6 +864,8 @@ décrit le comportement réel, pas une fixture.
   "mode_brief": "humain",                  // le régime posé au lancement (#320)
   "tour_clarification": 0,                 // tour de questions en cours (#321)
   "tours_clarification_max": 2,            // 0 : aucun tour prévu
+  "brief_approuve": true,                  // un humain a validé le cadrage (#349)
+  "reprise_de": "",                        // "" : ce run ne reprend personne (#349)
   "nb_taches": 5,
   "cout_usd": 0.1665,                      // null : aucun coût rapporté
   "ticket": { "id": "#42", "url": "https://…/issues/42" },  // null : sans ticket
@@ -889,6 +904,50 @@ sur le même Redis sans passer par l'API, et reste donc reconnu vivant **à trav
 c'est tout l'intérêt d'un signal porté par l'hôte plutôt que d'une supposition faite par le lecteur.
 Corollaire assumé : un run `--publier` **terminé normalement** finit par apparaître `orphelin`,
 faute de publier un statut de fin — le verdict porte sur son **hôte**, jamais sur son travail.
+
+**Un run perdu se reprend sur le cadrage déjà payé** (#349). Voir qu'un run est mort ne le rattrape
+pas : sans geste, la seule issue reste de tout reprendre à zéro, clarification comprise. Or ce
+qu'un run emporte n'est pas du temps machine mais un **brief validé par un humain** — sur le run
+`3ff0bcb065f9`, deux tours de clarification, trois réponses et une approbation, soit **2,52 $ et une
+vingtaine de minutes d'attention** —, et ce brief est intégralement conservé dans la projection.
+`POST …/relancer` outille le rattrapage fait à la main le 2026-08-14 : il rejoue la **synthèse** du
+brief retenu en mode `sans`, donc sans repasser par la rédaction, la clarification ni la validation,
+en conservant le **projet** et le **ticket** du run repris. Les **sources**, elles, ne repartent pas
+(§6.8) : elles ont été résolues vers l'emplacement d'ingestion **du run mort**, propre à son
+`run_id`, et surtout elles n'ont plus rien à apprendre — le brief a été rédigé *après* les avoir
+lues, il en est la synthèse validée. Les redéclarer serait repayer la lecture d'un contenu déjà
+présent dans le texte qu'on rejoue.
+
+Ce n'est **pas** une reprise à l'endroit exact de l'interruption : celle-là suppose une frontière
+d'exécution durable, et fait l'objet d'un cadrage à part (#350). Le run relancé est un **nouveau**
+run, qui dit de qui il est la suite (`reprise_de`) — même relation, et même sens unique, que le
+fichier `reprise-de` entre deux runs d'orchestration ([docs/10 §11.8](./10-workflow-git.md)) : le run
+repris n'est jamais réécrit pour désigner son successeur. Il est en revanche **soldé** en `annulee`
+dans le même geste — « annulée » et non « échec » : rien n'a raté, son hôte est tombé et quelqu'un a
+repris la main, exactement comme un brief refusé (§6.10).
+
+| refus | code | ce qu'il dit |
+| --- | --- | --- |
+| `run-inconnu` | `404` | aucun run de cet identifiant dans la projection |
+| `run-solde` | `409` | il a rendu son issue : rien à reprendre, et le relancer le dupliquerait |
+| `run-vivant` | `409` | son hôte bat encore — l'interrompre d'abord si c'est bien voulu |
+| `cadrage-absent` | `422` | son brief n'a **jamais été approuvé** : il n'y a rien à rejouer |
+
+Deux choix à connaître. Le refus sur un run vivant s'appuie sur **le verdict de `vitalite` et sur
+lui seul** : re-déduire l'orphelinat ici donnerait une seconde formule à tenir d'accord avec la
+première. Et `indetermine` **passe** — un run qui n'a jamais battu est un run dont on ne sait rien,
+pas un run vivant, et refuser rendrait la route inutile précisément pour les quatre runs fantômes
+qui l'ont motivée. Le rapport de coûts penche du même côté que le seuil ci-dessus : rejouer un run
+qui travaillait encore coûte un run en double, qu'on annule ; refuser coûte le cadrage,
+définitivement. L'**UI**, elle, ne propose le geste que sur `orphelin` (panneau *Runs interrompus*
+du tableau de bord, §2.1) : proposer sur une absence d'information serait deviner, ce que le
+troisième verdict existe pour refuser.
+
+Le quatrième refus est le seul qui ne porte pas sur la vitalité, et il compte autant : un run mort
+**avant** la validation de son brief n'a rien de payé à rejouer. Le dire vaut mieux que repartir en
+silence sur son objectif brut, ce qui reviendrait à sauter la validation qu'il attendait encore.
+C'est à cela que sert `brief_approuve` dans le résumé — distinct de « le run a un brief », puisque le
+détail en porte un dès qu'il est *soumis*.
 
 **Les sources se déclarent, elles ne se devinent pas** (#315). Trois types, et rien d'autre :
 `fichier` (téléversé — §6.8), `dossier` (des **références**, jamais un projet : `lecture_seule`

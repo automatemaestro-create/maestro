@@ -55,6 +55,18 @@ Depuis #348 le service **fait battre le cœur** de ses runs (`maestro.controltow
 `resumes` rend le verdict de vitalité — vivant, orphelin, indéterminé — à côté du
 statut. C'est la contrepartie visible du corollaire ci-dessus : un run ne survit
 toujours pas au redémarrage de l'API, mais sa mort cesse d'être silencieuse.
+
+Et depuis #349 elle cesse d'être irrattrapable : `relancer` rejoue un run non
+soldé **sur son brief approuvé**, en mode `sans`, sans repasser par la
+clarification ni par la validation. Ce qu'un run mort emporte n'est pas du temps
+machine mais un cadrage validé par un humain — 2,52 $ et une vingtaine de minutes
+d'attention sur le run du 2026-08-14 —, et ce cadrage est intégralement conservé
+dans la projection. Le run relancé est un **nouveau** run, qui porte la référence
+de celui qu'il reprend (`reprise_de`, même relation que le fichier `reprise-de`
+entre deux runs d'orchestration, #204) ; le run repris est soldé au lieu de rester
+`en_cours`. Ce n'est **pas** une reprise à l'endroit exact de l'interruption :
+celle-là suppose une frontière d'exécution durable, et fait l'objet d'un cadrage à
+part (#350).
 """
 
 from __future__ import annotations
@@ -71,6 +83,7 @@ from maestro.appartenance import projet_id_valide
 from maestro.controltower.battement import (
     PERIODE_BATTEMENT_S,
     SEUIL_ORPHELIN_S,
+    VITALITE_VIVANT,
     RegistreBattements,
     RegistreBattementsMemoire,
     vitalite,
@@ -95,7 +108,12 @@ from maestro.controltower.state import (
     ControlTowerState,
 )
 from maestro.controltower.validation import ValidateurControlTower
-from maestro.engine.brief import MODE_BRIEF_HUMAIN, BriefRefuse, mode_brief_valide
+from maestro.engine.brief import (
+    MODE_BRIEF_HUMAIN,
+    MODE_BRIEF_SANS,
+    BriefRefuse,
+    mode_brief_valide,
+)
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.references import ReferenceTicket
 from maestro.sources import (
@@ -135,7 +153,35 @@ DELAI_ANNULATION_S: float = 5.0
 _ACTEUR_RUN = "orchestrateur"
 _ROLE_RUN = "Orchestrateur"
 
+#: Motifs de refus d'une **relance** (#349) — codes stables, à la convention des
+#: refus de sources et de projets (`{motif, message}`, cf. `detail_refus`). Ils
+#: disent *pourquoi* la relance n'a pas eu lieu, et c'est la route qui les traduit
+#: en code HTTP : le service, lui, n'a pas à connaître les codes de statut.
+#:
+#: Les trois premiers sont les refus **du ticket** ; le quatrième est sa note
+#: technique — « un run sans brief approuvé n'a rien à rejouer : le dire plutôt que
+#: de relancer sur l'objectif brut en silence ».
+MOTIF_RELANCE_RUN_INCONNU = "run-inconnu"
+MOTIF_RELANCE_RUN_SOLDE = "run-solde"
+MOTIF_RELANCE_RUN_VIVANT = "run-vivant"
+MOTIF_RELANCE_SANS_CADRAGE = "cadrage-absent"
+
 _LOGGER = logging.getLogger("maestro.controltower")
+
+
+class RelanceRefusee(ValueError):
+    """Une relance refusée, **avec son motif** — jamais un rejet muet (#349).
+
+    Même contrat que `SourceRefusee` (#315) et même raison d'hériter de
+    `ValueError` : un refus de relance est une requête invalide, pas une panne, et
+    `_detail_refus` sait déjà en tirer le corps `{motif, message}` que servent les
+    routes. `motif` est l'un des `MOTIF_RELANCE_*` ; le message reste la phrase
+    lisible, celle que l'UI affiche telle quelle.
+    """
+
+    def __init__(self, motif: str, message: str) -> None:
+        super().__init__(message)
+        self.motif = motif
 
 
 def moteur_par_defaut(**reglages: Any) -> OrchestrationEngine:
@@ -311,6 +357,7 @@ class ServiceExecutions:
         projet_id: str | None = None,
         sources: Sequence[Mapping[str, Any] | Source] | None = None,
         mode_brief: str | None = MODE_BRIEF_HUMAIN,
+        reprise_de: str = "",
     ) -> dict[str, Any]:
         """Lance une exécution en tâche de fond et rend son résumé **immédiatement**.
 
@@ -370,6 +417,13 @@ class ServiceExecutions:
         et décompose sans attendre ; `sans` décompose l'objectif brut, comme avant
         ce lot. L'arbitre est câblé sur le bus de l'app, donc la demande atteint
         l'UI par le même canal que tout le reste.
+
+        `reprise_de` (#349) est le run **dont celui-ci est la suite**, vide pour un
+        lancement ordinaire. Il n'a aucun effet sur le déroulement : il voyage avec
+        l'événement de lancement, rejoint donc la projection et survit au rejeu du
+        journal durable, exactement comme le ticket et le projet. C'est `relancer`
+        qui le pose — le renseigner depuis la route de lancement ferait dire « ceci
+        est la suite de cela » sans que rien n'ait été repris.
 
         Lève `ValueError` sur un objectif vide, un garde-fou hors bornes (les
         plafonds sont des maximums : ils doivent être > 0), un mode de brief
@@ -445,6 +499,7 @@ class ServiceExecutions:
             projet_id=projet,
             sources=matiere,
             mode_brief=regime_brief,
+            reprise_de=reprise_de,
         )
         # Premier battement **avant** la tâche de fond, pour la même raison que
         # l'événement de lancement l'a précédée : entre le moment où le run entre
@@ -480,15 +535,165 @@ class ServiceExecutions:
         """
         if self.resume(run_id) is None:
             return None
-        self._consigne(
-            run_id, EXECUTION_ANNULEE, "", "exécution interrompue depuis la Control Tower"
+        await self._solder(run_id, "exécution interrompue depuis la Control Tower")
+        return await self.resume_vivant(run_id)
+
+    async def relancer(self, run_id: str) -> dict[str, Any]:
+        """Rejoue un run interrompu **sur son brief approuvé** (#349) — le nouveau résumé.
+
+        Ce qui se perd quand un run meurt n'est pas du temps machine : c'est un
+        cadrage **validé par un humain** — sur le run `3ff0bcb065f9`, deux tours de
+        clarification, trois réponses et une approbation, soit 2,52 $ et une
+        vingtaine de minutes d'attention. Ce brief est intégralement conservé dans la
+        projection ; il ne manquait que le geste pour le rejouer, fait à la main le
+        2026-08-14 et outillé ici.
+
+        Le run relancé est un **nouveau run** — pas une reprise à l'endroit exact de
+        l'interruption, qui supposerait une frontière d'exécution durable (cadrage
+        #350). Il part de la **synthèse** du brief retenu, en mode `sans` : c'est,
+        au texte près, ce que le run mort allait décomposer (`OrchestrationEngine.run`
+        donne `brief.synthese()` à la planification dès qu'un brief existe), et
+        `sans` est le seul régime qui ne repaie ni la rédaction, ni la clarification,
+        ni la validation. Il conserve le **projet** du run repris — c'est le critère
+        du ticket — et son **ticket**, qui n'est qu'une référence : le travail reprend
+        là où il portait.
+
+        Ce qui n'est **pas** repris, et c'est un choix : les **sources** (#315). Elles
+        ont été résolues vers l'emplacement d'ingestion **du run mort**, propre à son
+        `run_id` ; les rattacher au nouveau ferait pointer sa matière vers le dossier
+        d'un autre. Et elles n'ont plus rien à apprendre : le brief a été rédigé
+        *après* les avoir lues, il en est la synthèse validée. Les redéclarer serait
+        repayer la lecture pour un contenu déjà dans le texte qu'on rejoue.
+
+        Quatre refus — les trois premiers sont ceux du ticket, le dernier est sa
+        note technique :
+
+        - le run est **inconnu** de la projection ;
+        - il est **déjà soldé** — il n'y a rien à reprendre d'un run qui a rendu son
+          issue, et le relancer serait le dupliquer ;
+        - il est **vivant** — verdict de `vitalite` (#348) et de lui seul : re-déduire
+          ici l'orphelinat depuis les horodatages donnerait une seconde formule à
+          tenir d'accord avec la première, et c'est exactement ce que le lot 1 existe
+          pour éviter ;
+        - son **cadrage n'a pas été approuvé** : un run mort avant la validation de
+          son brief n'a rien à rejouer, et le dire vaut mieux que repartir en silence
+          sur l'objectif brut — ce serait sauter la validation que le run attendait
+          encore, sans que personne ne l'ait demandé.
+
+        `indetermine` **passe**, et c'est le choix le moins évident. Un run qui n'a
+        jamais battu est un run dont on ne sait rien — les quatre runs fantômes du
+        2026-08-17 sont dans ce cas, tous antérieurs au battement, et refuser ici
+        rendrait la commande inutile précisément pour ceux qui l'ont motivée. Le
+        rapport de coûts penche du même côté que le seuil de #348 : rejouer un run
+        qui travaillait encore coûte un run en double, qu'on annule ; refuser coûte
+        le cadrage, définitivement. L'**UI**, elle, ne propose le geste que sur
+        `orphelin` — proposer sur une absence d'information serait deviner, ce que le
+        troisième verdict existe pour refuser.
+
+        Lève `RelanceRefusee` (⊂ `ValueError`) avec son motif dans les quatre cas ;
+        la route en fait un 404, un 409 ou un 422.
+        """
+        execution = self._state.execution(run_id)
+        if execution is None:
+            raise RelanceRefusee(
+                MOTIF_RELANCE_RUN_INCONNU,
+                f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if execution.statut in STATUTS_EXECUTION_TERMINAUX:
+            raise RelanceRefusee(
+                MOTIF_RELANCE_RUN_SOLDE,
+                f"exécution déjà soldée ({execution.statut}) : {run_id} — "
+                "il n'y a rien à reprendre d'un run qui a rendu son issue.",
+            )
+        verdict = vitalite(
+            execution.statut,
+            (await self._registre()).get(run_id),
+            seuil_s=self._seuil_orphelin_s,
         )
+        if verdict == VITALITE_VIVANT:
+            raise RelanceRefusee(
+                MOTIF_RELANCE_RUN_VIVANT,
+                f"exécution encore vivante : {run_id} — son hôte bat toujours. "
+                "L'interrompre d'abord (POST …/annuler) si c'est bien voulu.",
+            )
+        brief = execution.brief
+        if brief is None or not execution.brief_approuve:
+            raise RelanceRefusee(
+                MOTIF_RELANCE_SANS_CADRAGE,
+                f"exécution sans brief approuvé : {run_id} — elle s'est arrêtée "
+                f"avant la validation de son cadrage ({execution.statut}), il n'y a "
+                "donc rien à rejouer. La relancer reviendrait à repartir de son "
+                "objectif brut, ce qui est un nouveau run, pas une reprise.",
+            )
+        ticket, projet = execution.ticket, execution.projet_id
+
+        # Rien entre ce point et l'écriture ci-dessous ne doit **attendre** : la
+        # lecture du registre est passée, et c'est le statut relu ici puis soldé dans
+        # la foulée qui empêche deux relances concurrentes (un double clic dans l'UI)
+        # de partir toutes les deux. `_solder` commence par une écriture synchrone,
+        # donc la seconde requête trouvera le run déjà `annulee` et sortira en
+        # « déjà soldée » — un garde-fou par construction plutôt que par chance.
+        self._demarrer()
+        # Le run repris est soldé **avant** que le nouveau ne parte : c'est le
+        # critère du ticket (« au lieu de rester `en_cours` »), et l'ordre est ce qui
+        # évite qu'un lecteur voie un instant deux runs en vol sur le même cadrage.
+        # « annulée » et non « échec » : rien n'a raté — son hôte est tombé, et
+        # quelqu'un a décidé de reprendre. Même lecture que le refus d'un brief
+        # (#320), qui solde en « annulée » pour la même raison.
+        #
+        # Le lien entre les deux ne s'écrit **que** sur le nouveau (`reprise_de`) :
+        # le run repris n'est jamais réécrit pour désigner son successeur, comme le
+        # fichier `reprise-de` d'un run d'orchestration (#204). Un run peut donc être
+        # repris sans que sa trace change de forme.
+        await self._solder(
+            run_id,
+            "run repris sur son brief approuvé depuis la Control Tower : "
+            "un nouveau run en porte la suite",
+        )
+        return await self.lancer(
+            brief.synthese(),
+            ticket=ticket,
+            projet_id=projet,
+            mode_brief=MODE_BRIEF_SANS,
+            reprise_de=run_id,
+        )
+
+    async def _solder(self, run_id: str, detail: str) -> None:
+        """Solde un run en vol : issue consignée, tâche éteinte, battement oublié.
+
+        Le geste commun de l'annulation (#185) et de la relance (#349), qui soldent
+        toutes deux un run non terminé — la seule chose qui les distingue est le
+        `detail`, c'est-à-dire *pourquoi*. En faire deux copies laisserait diverger
+        l'ordre des trois écritures, dont chacune a sa raison :
+
+        1. l'**issue** d'abord : elle est acquise (une décision humaine, pas le
+           verdict de la tâche) ;
+        2. la **tâche** ensuite, si ce process la porte — au plus
+           `DELAI_ANNULATION_S`, un run qui avale son annulation ne suspendant pas
+           l'appelant. Dans le cas d'une relance, ce process ne la porte
+           généralement pas (le run est orphelin *parce que* son hôte est tombé) ;
+           s'il la porte quand même — registre muet, verdict `indetermine` —, ne pas
+           l'éteindre laisserait un run soldé continuer de travailler ;
+        3. le **battement** en dernier, jamais avant le statut terminal : entre les
+           deux, un lecteur verrait un run encore en cours et sans battement,
+           c'est-à-dire un orphelin qui n'en est pas un.
+
+        Le `_demarrer()` initial n'est pas une précaution de style. `_pousser`
+        **abandonne** l'événement tant que le câblage n'est pas armé, et il ne l'est
+        qu'au premier lancement : sur une API qui vient de redémarrer et n'a encore
+        rien lancé — le cas exact d'un run orphelin, dont l'hôte est justement
+        tombé —, l'issue serait appliquée à la projection en mémoire sans jamais
+        atteindre le bus, donc ni le journal durable (#97) ni le prochain rejeu. Le
+        run réapparaîtrait `en_cours` au redémarrage suivant, c'est-à-dire la panne
+        même que #347 traite.
+        """
+        self._demarrer()
+        self._consigne(run_id, EXECUTION_ANNULEE, "", detail)
         tache = self._runs.get(run_id)
         if tache is not None and not tache.done():
             tache.cancel()
             await asyncio.wait({tache}, timeout=DELAI_ANNULATION_S)
         await self._oublier(run_id)
-        return await self.resume_vivant(run_id)
 
     async def fermer(self) -> None:
         """Arrête le service : runs en vol annulés, pont déposé, pompe éteinte.
@@ -725,6 +930,7 @@ class ServiceExecutions:
         projet_id: str | None = None,
         sources: Sequence[Source] = (),
         mode_brief: str = "",
+        reprise_de: str = "",
     ) -> None:
         """Émet le cycle de vie du run : projection d'abord, bus ensuite.
 
@@ -734,10 +940,10 @@ class ServiceExecutions:
         détail sont expurgés des secrets avant de partir — ce qui va sur le bus
         est montrable, même filet que le journal (#8). Seul le **lancement**
         porte une référence externe (#187), un projet (#222), des sources
-        (#315) et le régime du brief (#320) : la projection ne les retire pas aux
-        événements suivants, qui n'en savent rien. Un lancement **sans** source
-        émet `sources=None` et non une liste vide — l'événement reste alors celui
-        d'avant ce lot.
+        (#315), le régime du brief (#320) et le run repris (#349) : la projection
+        ne les retire pas aux événements suivants, qui n'en savent rien. Un
+        lancement **sans** source émet `sources=None` et non une liste vide —
+        l'événement reste alors celui d'avant ce lot.
 
         Les sources, elles, ne passent **pas** par `redact_secrets`, et c'est un
         choix : l'objectif et le détail sont du texte libre écrit par un humain,
@@ -759,6 +965,7 @@ class ServiceExecutions:
                 projet_id=projet_id,
                 sources=list(sources) or None,
                 mode_brief=mode_brief,
+                reprise_de=reprise_de,
             )
         )
 

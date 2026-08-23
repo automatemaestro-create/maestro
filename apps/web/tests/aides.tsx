@@ -15,7 +15,7 @@ import type { ReactNode } from "react";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { ecrireProjetActifId } from "@/lib/projetActif";
 import type { ControlTower } from "@/lib/useControlTower";
-import { AGENT_SOURCE_DEFAUT } from "@/lib/types";
+import { AGENT_SOURCE_DEFAUT, EXECUTION_EN_COURS } from "@/lib/types";
 import type {
   AgentCatalogue,
   CoutExecution,
@@ -185,6 +185,20 @@ function etatParDefaut(): ControlTower {
     decider: async () => {},
     trancherBrief: async () => {},
     repondreAuBrief: async () => {},
+    // Rend le **nouveau** run, comme la vraie : c'est lui qui porte `reprise_de`,
+    // et un test qui n'en veut rien peut ignorer la valeur.
+    relancerRun: async (runId: string) => ({
+      run_id: `suite-de-${runId}`,
+      objectif: "# Brief",
+      statut: EXECUTION_EN_COURS,
+      nb_taches: 0,
+      cout_usd: null,
+      ticket: null,
+      projet_id: null,
+      reprise_de: runId,
+      debut: "2026-07-28T10:00:00Z",
+      fin: null,
+    }),
     reglerCapacite: async () => {},
   };
 }
