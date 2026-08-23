@@ -1,5 +1,5 @@
 ---
-description: Rend une PR mergeable — résout son conflit avec origin/main, puis remet son pipeline au vert ; ne merge jamais
+description: Rend une PR mergeable — résout son conflit avec origin/main, puis remet son pipeline au vert ; aucun merge non vérifié
 argument-hint: "[pr-numéro | branche]  (défaut : la branche courante)"
 allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 ---
@@ -181,10 +181,14 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
     | **Conflit** | ✅ aucun / ✅ résolu (fichiers + hash du commit de merge) / ❌ conflit laissé en place (fichiers + pourquoi la résolution n'était pas claire) |
     | **Pipeline** | ✅ vert / ❌ rouge (lien, jobs concernés, correctif appliqué le cas échéant, nombre de tentatives) |
     Conclus par l'**aptitude au merge** qui en découle — mergeable, ou ce qu'il reste à faire et par
-    qui. Rappelle que la PR n'a pas été modifiée et que **le merge reste une décision humaine**.
+    qui. Rappelle que la PR n'a pas été modifiée et qu'**aucun merge non vérifié** n'a lieu : le
+    merge, s'il vient, passe par `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui éprouve les
+    prérequis (#417, chantier #413).
 
 N'exécute **aucune** action de cycle de vie : ni `gh pr merge`/`close`/`review`/`edit`, ni
 `set-workflow`, ni création de PR (c'est le rôle de `/ticket-finish`). `merge` et `close` sont
-d'ailleurs en **`deny`** — la règle n'est pas une politesse.
+d'ailleurs en **`deny`** — la règle n'est pas une politesse, et elle n'a pas bougé avec #413 : ce
+qu'elle barre est le geste **nu**, le geste **vérifié** passant par `merge-mr`, que la couche
+permissions autorise déjà comme n'importe quel appel à `lib.sh`.
 Jamais de force-push, jamais de `--no-verify`, jamais de commit sur `main`. En cas de doute,
 abstiens-toi et demande.

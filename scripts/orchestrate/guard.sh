@@ -29,8 +29,15 @@
 #
 # Ce qui est refusé, et pourquoi (docs/10-workflow-git.md §6, CLAUDE.md « Garde-fous ») :
 #   - force-push : réécrit un historique déjà poussé, que d'autres ont pu reprendre ;
-#   - `gh pr merge`/`pr close` : le merge est TOUJOURS une décision
-#     humaine ;
+#   - `gh pr merge` : AUCUN MERGE NON VÉRIFIÉ (#417, chantier #413). Depuis que le merge n'attend
+#     plus un humain, l'interdit n'est plus « ne jamais merger » — c'est le geste NU qui reste
+#     impossible, le geste vérifié passant par `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui
+#     éprouve ses quatre prérequis (PR ouverte non brouillon fermant le ticket, rien de non poussé,
+#     aucun conflit avec origin/main, pipeline vert sur la tête de la PR). Ce filet-ci juge le TEXTE
+#     de la commande lancée par la session, jamais ce qu'un script appelle en interne : laisser le
+#     motif en place ne barre donc aucun appelant légitime, et lever le `deny` mettrait un merge au
+#     rouge à un `gh` près pour zéro gain ;
+#   - `gh pr close` : fermer une PR reste une décision humaine — rien ne l'a levée ;
 #   - `gh run delete` : détruit des runs dont d'autres lisent le verdict ;
 #   - `git reset --hard` : jette du travail non commité, sans rattrapage ;
 #   - `git commit --no-verify` : contourne le hook `commit-msg`, donc la convention de commit ;
@@ -38,9 +45,9 @@
 #
 # Limites assumées. Le contrôle porte sur le TEXTE de la commande : une commande construite
 # dynamiquement (variable, `eval`, script tiers) lui échappe. Ce n'est pas un bac à sable, c'est un
-# filet contre le geste accidentel — le vrai confinement, c'est le worktree et l'absence de droit
-# de merge. De même, le contrôle « commit sur main » lit la branche du répertoire du hook : un
-# `git -C <ailleurs> commit` n'est pas attrapé.
+# filet contre le geste accidentel — le vrai confinement, c'est le worktree et le passage obligé
+# par `merge-mr`, qui vérifie. De même, le contrôle « commit sur main » lit la branche du répertoire
+# du hook : un `git -C <ailleurs> commit` n'est pas attrapé.
 
 set -uo pipefail
 
@@ -80,8 +87,17 @@ refus() {
     fi
   fi
 
-  if printf '%s' "$cmd" | grep -qE 'gh[[:space:]]+pr[[:space:]]+(merge|close)'; then
-    printf 'le merge et la fermeture d'\''une PR sont des décisions humaines — une session autonome ne merge ni ne ferme jamais (CLAUDE.md, Garde-fous).'
+  # Deux gestes, deux motifs — et depuis #413 ils n'ont plus la même raison, d'où la séparation du
+  # motif unique qui les couvrait. Un motif de refus est lu par un modèle : lui dire que le merge
+  # n'a jamais lieu, alors que le dépôt merge désormais tout seul, l'envoie chercher un
+  # contournement au lieu du chemin prévu.
+  if printf '%s' "$cmd" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge'; then
+    printf 'aucun merge NON VÉRIFIÉ (CLAUDE.md, Garde-fous) : ce qui est interdit est le merge nu, pas le merge. Passe par « bash scripts/gitlab/lib.sh merge-mr <iid> », qui éprouve les prérequis avant de merger — PR ouverte, non brouillon, fermant le ticket ; rien de non poussé ; aucun conflit avec origin/main ; pipeline vert sur la tête de la PR.'
+    return 0
+  fi
+
+  if printf '%s' "$cmd" | grep -qE 'gh[[:space:]]+pr[[:space:]]+close'; then
+    printf 'fermer une PR reste une décision humaine — aucune commande ne la ferme à ta place (CLAUDE.md, Garde-fous). Pour un travail abandonné, « /ticket-abandon <iid> » clôt le ticket et laisse la PR à un humain.'
     return 0
   fi
 

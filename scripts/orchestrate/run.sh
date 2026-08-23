@@ -8,7 +8,8 @@
 #
 # Chaque ticket est traité DANS SON PROPRE WORKTREE et DANS SA PROPRE SESSION : `/ticket-start` →
 # implémentation → `/ticket-ship`, sans interruption. Le run produit N Merge Requests en Draft à
-# relire ; il ne merge, ne ferme et ne force-push jamais.
+# relire ; il ne ferme et ne force-push jamais, et ne merge jamais hors de `lib.sh merge-mr`, qui
+# éprouve ses prérequis avant de merger (#417).
 #
 # --- Pourquoi un script shell, et pas une session Claude Code qui piloterait les autres ------------
 # Une boucle écrite en `/loop` ou en sous-agents consommerait le MÊME QUOTA que le travail piloté :
@@ -253,7 +254,8 @@ Limite d'usage : la boucle attend jusqu'au reset et reprend la même session Cla
 et c'est « --resume » qui le rejoue plus tard. Les runs reprenables : status.sh --reprenables.
 
 Arrêt d'urgence : créer .maestro/orchestrate/STOP (testé entre deux tickets et pendant l'attente).
-Le run ne merge, ne ferme et ne force-push jamais : il laisse N PR en Draft à relire.
+Le run ne ferme et ne force-push jamais, et ne merge jamais hors de « lib.sh merge-mr » : il
+laisse N PR en Draft à relire.
 USAGE
 }
 
@@ -2977,7 +2979,7 @@ if [ -n "$WORKTREES" ]; then
   printf '\n  Worktrees montés (retirés d'\''office quand leur PR sera mergée — docs/10 §9.2) :\n'
   for i in $WORKTREES; do printf '    #%s\n' "$i"; done
 fi
-printf '\n  Le merge reste une décision humaine : ce run n'\''a rien mergé ni fermé.\n'
+printf '\n  Aucun merge non vérifié : ce run n'\''a rien mergé ni fermé.\n'
 printf '  File de revue : bash scripts/gitlab/lib.sh review-queue\n\n'
 
 [ "$NB_ECHEC" -eq 0 ] || exit 1

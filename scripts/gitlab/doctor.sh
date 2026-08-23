@@ -344,7 +344,8 @@ else
   case "${REGLAGE[pipeline_requis]:--}" in
     true)  ok "protection de branche sur main : les checks CI sont requis — aucun merge au rouge" ;;
     false) info "aucune protection de branche sur main — décision assumée (dépôt privé, compte Free : docs/10 §8.8)"
-           printf '    → les six verdicts se lisent sur la PR ; le merge reste une décision humaine (docs/10 §6)\n'
+           printf '    → aucun merge non vérifié : faute de checks requis, le pipeline vert est éprouvé\n'
+           printf '      par « lib.sh merge-mr », seul chemin de merge du dépôt (docs/10 §6, #417)\n'
            printf '    → le jour où le plan change : bash scripts/github/protect-main.sh\n' ;;
     *)     warn "protection de branche de main illisible — contrôle ignoré" ;;
   esac

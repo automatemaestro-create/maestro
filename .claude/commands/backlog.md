@@ -49,7 +49,8 @@ n'ouvrir qu'en cas de doute.
    confondre un ticket et une PR. Mets en évidence les PR les plus **anciennes** (celles qui
    traînent) et celles au **pipeline rouge** (non mergeables en l'état). La revue est
    **best-effort** : c'est cette file qui appelle un relecteur, aucune approbation n'est obligatoire
-   et le merge reste une décision humaine.
+   et ce que le merge exige n'est pas un avis mais les prérequis de `merge-mr` — **aucun merge non
+   vérifié** (#417, chantier #413).
    Enchaîne ensuite sur le backlog groupé par **état**, dans cet ordre (le plus
    actionnable d'abord) :
    1. **🔍 En revue** — action humaine attendue (merge). Pour chaque ticket, affiche
@@ -79,8 +80,10 @@ n'ouvrir qu'en cas de doute.
    (« À faire » sans assigné), la répartition des « En cours » par personne, ainsi que le nombre de
    **PR en attente de revue** et l'ancienneté de la plus vieille, plus un rappel des actions
    suggérées (ex. « 2 PR à relire, la plus ancienne depuis 4 j », « 3 tickets libres à prendre »).
-   N'invente pas de chiffres : ne compte que ce que la table contient. Rappelle que le merge reste une décision
-   humaine et propose `/mr-review <numéro>` pour inspecter une PR précise avant de merger.
+   N'invente pas de chiffres : ne compte que ce que la table contient. Rappelle qu'**aucun merge
+   non vérifié** n'a lieu — un merge passe par `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui
+   éprouve ses prérequis — et propose `/mr-review <numéro>` pour inspecter une PR précise avant
+   de merger.
 
 Ne lance aucune commande d'écriture (`gh issue edit`, `gh pr merge`, `set-workflow`, `git push`…) :
 cette commande observe, elle n'agit pas.

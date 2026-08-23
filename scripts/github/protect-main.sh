@@ -9,9 +9,11 @@
 #
 # ⚠ CE RÉGLAGE N'EST PAS EN PLACE AUJOURD'HUI, et ce n'est pas un oubli. La protection de branche
 # n'existe pas sur un dépôt PRIVÉ d'un compte GitHub Free ; ni GitHub Pro ni le passage en public
-# n'ont été retenus (décision utilisateur, 2026-08-14, docs/10 §8.8). Aucun garde-fou technique
-# n'empêche donc de merger une PR au rouge — les six verdicts se lisent sur la PR, et le merge
-# reste une décision humaine, comme la revue (docs/10 §6).
+# n'ont été retenus (décision utilisateur, 2026-08-14, docs/10 §8.8). Aucun garde-fou DE LA FORGE
+# n'empêche donc de merger une PR au rouge — les six verdicts se lisent sur la PR, et le pipeline
+# vert est éprouvé un cran plus haut, par `lib.sh merge-mr`, seul chemin de merge du dépôt : aucun
+# merge non vérifié (docs/10 §6, #417). Ce que ce script poserait, c'est ce même contrôle là où
+# aucune main ne peut le contourner.
 # Ce script est écrit sans être joué à dessein : il rend cette décision réversible en une commande
 # le jour où le plan change, au lieu d'une enquête à refaire. `--check` répond 3 et dit laquelle
 # des deux causes (plan, jeton) bloque.

@@ -142,8 +142,13 @@ git fetch origin main && git rebase origin/main
   l'approbation **n'est pas bloquante**. Personne n'attend l'autre pour avancer. Pour vous attribuer
   une PR — ou en confier une à quelqu'un — la pose se fait à la main :
   `bash scripts/gitlab/lib.sh set-reviewer <pr|branche> [username]`.
-- **Le merge est toujours une décision humaine** — jamais un agent, jamais automatique. La
-  condition technique est une **CI verte** (GitHub Actions, en autorité depuis #338).
+- **Aucun merge non vérifié** (#417, chantier #413) — le merge n'attend plus un humain, il n'attend
+  pas moins de vérifications, et elles vivent en un seul endroit :
+  `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui refuse de merger tant que la PR n'est pas
+  ouverte, non brouillon et ne ferme pas le ticket, qu'il reste des commits non poussés, qu'un
+  conflit avec `origin/main` subsiste, ou que la **CI n'est pas verte sur la tête de la PR**
+  (GitHub Actions, en autorité depuis #338). Le `gh pr merge` **nu**, lui, reste refusé — merger à
+  la main hors de ce chemin n'est prévu nulle part.
 - **PR bloquée ?** `/mr-fix` la rend mergeable : il résout le conflit avec `origin/main` s'il y en
   a un, puis remet la CI au vert pour ce qui est corrigeable en local.
 - **Après le merge** : `/branch-cleanup` supprime la branche **locale**, revient sur `main` à jour
@@ -175,7 +180,8 @@ Pour éclairer une décision de merge : `/mr-review <pr>` (synthèse état + CI 
   libres du milestone courant un par un — un worktree et une session Claude Code chacun, de
   `/ticket-start` à `/ticket-ship`, avec reprise automatique après la limite d'usage de 5 h. À
   lancer dans un terminal à part (`--dry-run` d'abord pour voir le plan) ; il produit des **PR en
-  Draft à relire** et ne merge jamais ([docs/10 §11](./docs/10-workflow-git.md)). Un run coupé
+  Draft à relire** ; il ne ferme ni ne force-push jamais, et ne merge **jamais hors de `merge-mr`**
+  ([docs/10 §11](./docs/10-workflow-git.md)). Un run coupé
   (console fermée, machine éteinte) se reprend par `--resume`, qui rejoue son plan sans rien
   recalculer — `/orchestrate` le propose de lui-même au lancement ([§11.8](./docs/10-workflow-git.md)).
 
