@@ -1313,24 +1313,146 @@ gl_job_trace() {
   gh_job_trace "$@"
 }
 
-# gl_pipeline_wait <pipeline-id> [timeout-s] -> suit le pipeline jusqu'à un état terminal et
-# imprime le statut final. Codes retour : 0 = success ; 1 = failed/canceled/skipped/manual ;
-# 3 = timeout (défaut 900 s), le dernier statut observé est quand même imprimé.
+# --- Attendre un verdict de pipeline (#416, parent #413) ----------------------------------------
+# Défauts du régime d'attente, surchargeables par l'environnement — jamais figés dans un appelant :
+# un plafond recopié dans un prompt se périme le jour où la CI change de durée.
+GL_PIPELINE_TIMEOUT="${MAESTRO_PIPELINE_TIMEOUT:-900}"     # plafond de l'attente entière
+GL_PIPELINE_SONDAGE="${MAESTRO_PIPELINE_SONDAGE:-15}"      # intervalle entre deux lectures
+GL_PIPELINE_NAISSANCE="${MAESTRO_PIPELINE_NAISSANCE:-120}" # délai laissé au run pour APPARAÎTRE
+
+# gl_pipeline_wait <ref|run-id> [--timeout <s>] -> attend un VERDICT et imprime le statut final.
+#
+# ⚠ C'est un verbe d'ATTENTE, et rien d'autre : il ne relance rien, ne corrige rien, ne juge rien
+# et n'écrit nulle part — ni sur la forge, ni dans le dépôt. Un pipeline rouge se remédie par
+# /mr-fix (§8.3) ; ici on se contente de le nommer.
+#
+# POURQUOI IL EXISTE. La CI ne se déclenche que sur les Pull Requests (#165, §8) et `/ticket-finish`
+# pousse PUIS ouvre : le pipeline naît donc APRÈS la PR, et tout merge qui suit une clôture arrive
+# trop tôt. `merge-mr` le constate et rend 3, « repasser plus tard » (§6) — c'est ici qu'on repasse,
+# de façon bornée.
+#
+# LA CIBLE se lit d'elle-même. Une REF est le cas normal : on attend le run que la branche va
+# produire, et on le redemande à `pipeline-latest` à chaque tour — donc un run qui n'existait pas au
+# premier tour est vu au suivant. Un RUN-ID est la cible de /mr-fix, qui tient déjà l'identifiant du
+# pipeline qu'il vient de déclencher et veut suivre CELUI-LÀ, pas le plus récent de la branche. Un
+# id est tout en chiffres, une branche de ticket ne l'est jamais (`<type>/<iid>-<slug>`, §2).
+#
+# DEUX BORNES, PARCE QU'IL Y A DEUX IGNORANCES. Le plafond (défaut 15 min) couvre une file
+# d'attente, pas une panne : un pipeline complet tourne en ~2-4 min. Mais l'attendre en entier pour
+# conclure « aucun pipeline » serait payer quinze minutes une réponse acquise en deux — un run qui
+# n'est pas né deux minutes après le push ne naîtra pas, faute d'événement pour le déclencher (pas
+# de PR ouverte, le cas le plus fréquent). D'où un délai de NAISSANCE plus court, qui ne borne que
+# la première apparition : une fois un run vu, la question est tranchée et seul le plafond compte.
+# Il est ramené au plafond quand celui-ci est plus court, de sorte qu'un seul endroit décide de 5.
+#
+# Codes de retour — une cause, une conduite. `4` et `5` sont deux ignorances, et les confondre
+# serait le faux verdict que ce verbe existe pour éviter : un plafond dit « pas encore », une
+# absence dit « il n'y en aura pas ». Ni l'un ni l'autre n'est un échec du ticket.
+#   0 = vert (success)                    4 = plafond atteint, run toujours en cours
+#   3 = verdict terminal NON vert         5 = aucun pipeline pour cette ref
+#       (failed/canceled/skipped/manual   2 = usage
+#        — le statut imprimé dit lequel)  1 = lecture impossible (outil, run introuvable)
+#
+# `--timeout 0` sonde UNE fois et rend le verdict sans attendre — de quoi relire l'état d'une
+# branche avec les mêmes codes, sans dupliquer la table de correspondance chez l'appelant.
+#
+# ⚠ CE QU'IL NE VÉRIFIE PAS : que le run porte bien la TÊTE de la PR. Un vert sur un commit
+# antérieur est un vert, et ce verbe le rend comme tel — c'est `merge-mr` qui compare les sha et
+# rend 3 « verdict périmé » (§6). Le mettre ici en ferait un juge, et deux endroits diraient
+# « mergeable » au lieu d'un. L'appelant qui enchaîne les deux doit donc être prêt à repasser :
+# un `0` ici n'est pas une promesse de merge, c'est la fin d'une attente.
+#
+# À appeler en `bash … pipeline-wait <ref> || verdict=$?` pour lire le verdict sans interrompre une
+# boucle sous `set -e`.
 gl_pipeline_wait() {
-  local pid="$1" timeout="${2:-900}" poll=15 waited=0 status
-  if [ -z "$pid" ]; then echo "usage: gl_pipeline_wait <pipeline-id> [timeout-s]" >&2; return 2; fi
-  while :; do
-    status="$(gl_pipeline_status "$pid")" || return 1
-    case "$status" in
-      success) printf '%s\n' "$status"; return 0 ;;
-      failed|canceled|skipped|manual) printf '%s\n' "$status"; return 1 ;;
+  local cible="" timeout="$GL_PIPELINE_TIMEOUT" timeout_pose=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --timeout)
+        shift
+        if [ $# -eq 0 ]; then
+          echo "gl_pipeline_wait : --timeout attend une durée en secondes." >&2; return 2
+        fi
+        timeout="$1"; timeout_pose=1 ;;
+      --timeout=*) timeout="${1#--timeout=}"; timeout_pose=1 ;;
+      -h | --help)
+        echo "usage: gl_pipeline_wait <ref|run-id> [--timeout <s>]" >&2; return 2 ;;
+      -*) echo "gl_pipeline_wait : option inconnue « $1 »" >&2; return 2 ;;
+      *)
+        if [ -z "$cible" ]; then
+          cible="$1"
+        elif [ "$timeout_pose" -eq 0 ]; then
+          # Forme historique `pipeline-wait <id> <timeout-s>`, conservée : /mr-fix et docs/10 §8.3
+          # la nomment, et une signature qui casse chez ses appelants n'est pas une amélioration.
+          timeout="$1"; timeout_pose=1
+        else
+          echo "gl_pipeline_wait : argument en trop « $1 »." >&2; return 2
+        fi ;;
     esac
-    if [ "$waited" -ge "$timeout" ]; then
-      echo "gl_pipeline_wait : délai dépassé (${timeout}s) — dernier statut : $status" >&2
-      printf '%s\n' "$status"
-      return 3
+    shift
+  done
+
+  if [ -z "$cible" ]; then
+    echo "usage: gl_pipeline_wait <ref|run-id> [--timeout <s>]" >&2; return 2
+  fi
+  case "$timeout" in
+    '' | *[!0-9]*)
+      printf 'gl_pipeline_wait : durée invalide « %s » (secondes attendues).\n' "$timeout" >&2
+      return 2 ;;
+  esac
+
+  gl_require || return 1
+
+  local mode="ref"
+  case "$cible" in *[!0-9]*) ;; *) mode="id" ;; esac
+
+  local naissance="$GL_PIPELINE_NAISSANCE"
+  [ "$naissance" -le "$timeout" ] || naissance="$timeout"
+  local poll="$GL_PIPELINE_SONDAGE"
+  [ "$poll" -ge 1 ] || poll=1
+
+  local attendu=0 vu=0 statut="" ligne id sha url=""
+  while :; do
+    statut=""
+    if [ "$mode" = "id" ]; then
+      if ! statut="$(gl_pipeline_status "$cible" 2>/dev/null)" || [ -z "$statut" ]; then
+        # Un id qu'on ne sait pas lire n'est pas « pas encore né » : il a été donné par un appelant
+        # qui l'avait en main, donc c'est une erreur de lecture et pas une attente.
+        printf 'gl_pipeline_wait : run %s illisible dans %s.\n' "$cible" "$GL_GH_REPO" >&2
+        return 1
+      fi
+      vu=1
+    elif ligne="$(gl_pipeline_latest "$cible" 2>/dev/null)" && [ -n "$ligne" ]; then
+      IFS=$'\t' read -r id statut sha url <<< "$ligne"
+      vu=1
     fi
-    sleep "$poll"; waited=$((waited + poll))
+
+    case "$statut" in
+      success)
+        printf '%s\n' "$statut"
+        return 0 ;;
+      failed | canceled | skipped | manual)
+        # Terminal sans être vert. Le regrouper sous un seul code est délibéré : l'appelant qui
+        # doit distinguer `failed` de `skipped` lit le statut imprimé, celui qui décide « ne pas
+        # merger » n'a pas à énumérer quatre mots pour la même conduite.
+        [ -z "$url" ] || printf '  %s\n' "$url" >&2
+        printf '%s\n' "$statut"
+        return 3 ;;
+    esac
+
+    if [ "$vu" -eq 0 ] && [ "$attendu" -ge "$naissance" ]; then
+      printf 'gl_pipeline_wait : aucun pipeline pour « %s » après %ss — la CI ne se déclenche que sur les PR (§8).\n' \
+        "$cible" "$attendu" >&2
+      return 5
+    fi
+    if [ "$attendu" -ge "$timeout" ]; then
+      printf 'gl_pipeline_wait : plafond atteint (%ss) — dernier statut : %s\n' "$timeout" "${statut:-inconnu}" >&2
+      [ -z "$url" ] || printf '  %s\n' "$url" >&2
+      printf '%s\n' "${statut:-inconnu}"
+      return 4
+    fi
+    sleep "$poll"
+    attendu=$((attendu + poll))
   done
 }
 
@@ -2888,6 +3010,174 @@ gl_merge_mr() {
   # `sync-main` est best-effort et muet en échec, au même titre qu'ailleurs : un run merge désormais
   # autant de fois qu'il ouvre de PR, et c'est ce qui fait vieillir `main` le plus vite (#205).
   gl_sync_main >/dev/null 2>&1 || true
+  return 0
+}
+
+# --- L'ordre de merge le moins conflictuel (#416, parent #413) ----------------------------------
+# gl_merge_order [<branche>…] -> dans quel ORDRE merger les PR ouvertes pour payer le moins de
+# résolutions de conflit. Une ligne TSV par branche (en-tête préfixée « # » à ignorer côté
+# machine) :
+#     rang <TAB> branche <TAB> pr <TAB> degre <TAB> voisines
+# `degre` = nombre de branches avec lesquelles celle-ci entre en conflit ; `voisines` = leurs noms
+# en CSV (« - » si aucune). Sans argument, les branches des PR ouvertes (`review-queue`).
+#
+# Repris du cadrage de #299 : le ticket a été abandonné, son analyse ne l'est pas.
+#
+# LE GRAPHE. Une arête par paire de branches qui ne se mergent pas proprement l'une dans l'autre,
+# mesurée par `git merge-tree --write-tree` — un merge 3-way RÉEL en base d'objets, en lecture
+# seule : aucun checkout, aucun index touché, aucune branche sortie. C'est la même primitive que
+# `mr-conflict` (§8.3), pour la même raison : `behind-main` est une heuristique de fichiers
+# pessimiste, et le champ de mergeabilité de la forge est asynchrone.
+#
+# LE TRI, ET LE MODÈLE DE COÛT QUI LE JUSTIFIE. Rang par degré CROISSANT : une PR sans voisine
+# passe en premier, une PR carrefour en dernier. Ce n'est pas une préférence esthétique — une PR ne
+# paie QU'UNE résolution quel que soit le nombre de voisines mergées avant elle (un seul
+# `git merge origin/main` les absorbe toutes), donc le coût d'un ordre est le nombre de PR ayant au
+# moins une voisine mergée avant elles. Une PR carrefour mergée en premier force CHACUNE de ses
+# voisines à payer ; mergée en dernier, elle ne paie qu'une fois. Sur la mesure du 2026-08-07
+# (6 PR, 5 arêtes) : 2 résolutions par degré croissant contre 4 en commençant par le carrefour.
+#
+# ⚠ C'EST UNE HEURISTIQUE, PAS UN OPTIMUM, et il ne faut ni le promettre ni chercher l'exact :
+# l'ordre optimal est un ensemble indépendant maximum du graphe, NP-difficile en général. À
+# l'échelle d'une dizaine de PR l'écart est au plus d'une résolution, et le tri par degré se relit.
+#
+# À degré égal, l'ordre d'entrée tranche — donc la PR la plus ANCIENNE d'abord quand la liste vient
+# de `review-queue`, qui est déjà triée ainsi. Un départage arbitraire rendrait deux appels
+# successifs incomparables pour rien.
+#
+# Le graphe coûte n(n-1)/2 appels à `merge-tree` — 66 pour une douzaine de PR ouvertes, l'échelle
+# de ce dépôt. Aucun plafond n'est posé : tronquer la liste rendrait un ordre calculé sur une
+# partie du graphe en le présentant comme l'ordre, ce qui est pire que lent. Un dépôt qui ouvrirait
+# des centaines de PR demanderait autre chose que ce verbe, pas une troncature silencieuse.
+#
+# Lecture seule intégrale : ce verbe ne merge rien, ne pousse rien et n'écrit ni dans la forge ni
+# dans le dépôt. Codes : 0 = ordre rendu, 1 = liste illisible, 2 = usage.
+gl_merge_order() {
+  local -a demandees=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h | --help) echo "usage: gl_merge_order [<branche>…]" >&2; return 2 ;;
+      -*) echo "gl_merge_order : option inconnue « $1 »" >&2; return 2 ;;
+      *) demandees+=("$1") ;;
+    esac
+    shift
+  done
+
+  # La file de revue rend la branche ET le numéro de PR en UNE lecture, ce que `open-mr-branches`
+  # ne fait pas. Elle est INDISPENSABLE sans argument (c'est elle qui donne la liste) et seulement
+  # DÉCORATIVE avec (la colonne `pr`) : d'où un pré-requis d'outil exigé dans le premier cas et une
+  # dégradation silencieuse dans le second — ordonner des branches nommées est du git pur, et
+  # refuser de le faire faute de réseau serait perdre la moitié utile du verbe.
+  if [ "${#demandees[@]}" -eq 0 ]; then
+    gl_require || return 1
+  fi
+  local file=""
+  file="$(gl_review_queue 2>/dev/null)" || file=""
+
+  # La file, dépliée une fois en deux colonnes — `mr` (1) et `branche` (7) de gl_review_queue, dont
+  # l'ordre des colonnes est le contrat : la table est relue une fois par branche retenue, et une
+  # dizaine de PR ne justifie pas d'y mettre autre chose que du shell.
+  local -a q_branche=() q_pr=()
+  local c_mr c_br
+  while IFS=$'\t' read -r c_mr c_br; do
+    case "$c_mr" in '#'* | '') continue ;; esac
+    [ -n "$c_br" ] && [ "$c_br" != "-" ] || continue
+    q_branche+=("$c_br"); q_pr+=("$c_mr")
+  done <<< "$(printf '%s\n' "$file" | cut -f1,7)"
+
+  local -a demandes=()
+  if [ "${#demandees[@]}" -gt 0 ]; then
+    demandes=("${demandees[@]}")
+  else
+    demandes=("${q_branche[@]}")
+    if [ "${#demandes[@]}" -eq 0 ]; then
+      echo "gl_merge_order : aucune PR ouverte à ordonner." >&2
+      return 1
+    fi
+  fi
+
+  # Fetch non bloquant (jamais de prompt d'identifiants), même politique que `mr-conflict` : sans
+  # réseau on tranche contre les dernières refs distantes connues, ce qui reste plus utile que se
+  # taire. On préfère `origin/<branche>` à la locale — c'est la PR qu'on ordonne, donc ce que la
+  # forge porte fait autorité ; une locale en avance appartient à `merge-mr`, pas à ce verbe.
+  GIT_TERMINAL_PROMPT=0 git fetch origin >/dev/null 2>&1 || true
+
+  local -a noms=() refs=() prs=()
+  local b ref k deja pr
+  for b in "${demandes[@]}"; do
+    [ -n "$b" ] || continue
+    case "$b" in
+      main | master)
+        printf 'gl_merge_order : « %s » n'\''est pas une branche de ticket — écartée.\n' "$b" >&2
+        continue ;;
+    esac
+    deja=0
+    for k in "${noms[@]}"; do if [ "$k" = "$b" ]; then deja=1; fi; done
+    [ "$deja" -eq 0 ] || continue
+
+    if git rev-parse --verify --quiet "refs/remotes/origin/$b" >/dev/null 2>&1; then
+      ref="refs/remotes/origin/$b"
+    elif git rev-parse --verify --quiet "refs/heads/$b" >/dev/null 2>&1; then
+      ref="refs/heads/$b"
+    else
+      printf 'gl_merge_order : branche « %s » introuvable (ni distante ni locale) — écartée.\n' "$b" >&2
+      continue
+    fi
+
+    pr="-"
+    for k in "${!q_branche[@]}"; do
+      if [ "${q_branche[k]}" = "$b" ]; then pr="${q_pr[k]}"; break; fi
+    done
+    noms+=("$b"); refs+=("$ref"); prs+=("$pr")
+  done
+
+  local n="${#noms[@]}"
+  if [ "$n" -eq 0 ]; then
+    echo "gl_merge_order : aucune branche exploitable." >&2
+    return 1
+  fi
+
+  local -a deg=() vois=()
+  local i j rc
+  for ((i = 0; i < n; i++)); do deg[i]=0; vois[i]=""; done
+  for ((i = 0; i < n; i++)); do
+    for ((j = i + 1; j < n; j++)); do
+      rc=0
+      git merge-tree --write-tree --name-only "${refs[i]}" "${refs[j]}" >/dev/null 2>&1 || rc=$?
+      case "$rc" in
+        0) continue ;;  # se mergent proprement : pas d'arête
+        1) ;;           # conflit — la SEULE valeur qui en soit un
+        *)
+          # ⚠ `git merge-tree` rend 128, et non 1, quand le merge est impossible à évaluer
+          # (histoires sans ancêtre commun, ref illisible). Le compter comme un conflit gonflerait
+          # un degré, donc fausserait tout l'ordre — c'est le piège nommé en §8.3.
+          printf 'gl_merge_order : %s ↔ %s impossible à évaluer (git a rendu %s) — arête ignorée.\n' \
+            "${noms[i]}" "${noms[j]}" "$rc" >&2
+          continue ;;
+      esac
+      deg[i]=$(( deg[i] + 1 )); vois[i]="${vois[i]:+${vois[i]},}${noms[j]}"
+      deg[j]=$(( deg[j] + 1 )); vois[j]="${vois[j]:+${vois[j]},}${noms[i]}"
+    done
+  done
+
+  # Tri par degré croissant, l'INDICE d'entrée départageant les ex æquo. Il voyage donc comme
+  # deuxième clé, et le `cut` le retire aussitôt : ce qui sort est un rang, pas une position
+  # d'entrée.
+  local trie rang=0 t_deg t_nom t_pr t_vois
+  trie="$(
+    for ((i = 0; i < n; i++)); do
+      printf '%s\t%s\t%s\t%s\t%s\n' "${deg[i]}" "$i" "${noms[i]}" "${prs[i]}" "${vois[i]:--}"
+    done | LC_ALL=C sort -t"$(printf '\t')" -k1,1n -k2,2n | cut -f1,3-
+  )"
+
+  printf '# rang\tbranche\tpr\tdegre\tvoisines\n'
+  # Chaque champ est garanti NON VIDE en amont (« - » à défaut) : `IFS=$'\t' read` fusionne deux
+  # tabulations consécutives, donc un champ vide au milieu d'une ligne décalerait tous les suivants.
+  while IFS=$'\t' read -r t_deg t_nom t_pr t_vois; do
+    [ -n "$t_nom" ] || continue
+    rang=$(( rang + 1 ))
+    printf '%s\t%s\t%s\t%s\t%s\n' "$rang" "$t_nom" "$t_pr" "$t_deg" "$t_vois"
+  done <<< "$trie"
   return 0
 }
 
@@ -4885,6 +5175,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     behind-main)    gl_behind_main "$@" ;;
     mr-conflict)    gl_mr_conflict "$@" ;;
     merge-mr)       gl_merge_mr "$@" ;;
+    merge-order)    gl_merge_order "$@" ;;
     branche-du-ticket) gl_branche_du_ticket "$@" ;;
     branch-iid)     gl_branch_iid "$@" ;;
     close-guard)    gl_close_guard "$@" ;;
@@ -4995,6 +5286,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                 0=mergé/mergeable, 3=pipeline pas rendu (repasser), 4=pipeline rouge," >&2
       echo "                                 5=conflit, 6=geste humain requis, 1=outil manquant)" >&2
       echo "    branche-du-ticket <iid>     (branche source de la PR ouverte du ticket)" >&2
+      echo "    merge-order [<branche>…]    (l'ordre le MOINS conflictuel — degré croissant dans le graphe des" >&2
+      echo "                                 conflits deux à deux, par merge-tree, sans sortir aucune branche." >&2
+      echo "                                 Défaut : les PR ouvertes. TSV rang/branche/pr/degre/voisines." >&2
+      echo "                                 Heuristique, pas un optimum — lecture seule)" >&2
       echo "  Garde-fou de clôture (session ↔ ticket, avant toute écriture de /ticket-finish|ship) :" >&2
       echo "    branch-iid [branche]        (iid porté par le nom de la branche ; rien si hors convention)" >&2
       echo "    close-guard <iid> [branche] (0=cohérent, 3=autre ticket, 4=ticket d'un tiers, 5=branche sans iid, 1=ticket illisible)" >&2
@@ -5012,7 +5307,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    pipeline-status <pipeline-id>    (statut courant)" >&2
       echo "    pipeline-failed-jobs <pipeline-id>  (jobs rouges : id/name/stage/failure_reason)" >&2
       echo "    job-trace <job-id> [lignes]      (queue de la trace du job)" >&2
-      echo "    pipeline-wait <pipeline-id> [timeout-s]  (suit jusqu'au verdict, 0=success)" >&2
+      echo "    pipeline-wait <ref|run-id> [--timeout <s>]" >&2
+      echo "                                (ATTEND un verdict, de façon bornée — ne relance ni ne corrige rien." >&2
+      echo "                                 Défauts : plafond ${GL_PIPELINE_TIMEOUT}s, sondage ${GL_PIPELINE_SONDAGE}s, naissance ${GL_PIPELINE_NAISSANCE}s." >&2
+      echo "                                 0=vert, 3=terminal non vert, 4=plafond atteint, 5=aucun pipeline)" >&2
       exit 2 ;;
   esac
 fi
