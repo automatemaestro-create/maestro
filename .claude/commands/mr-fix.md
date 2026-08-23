@@ -145,8 +145,8 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
    - applique le correctif **minimal** qui répond à l'erreur de la trace ;
    - **rejoue le job rouge en local avec le filet CI**, `scripts/ci/local.sh` — **source unique**
      des contrôles locaux depuis #214 (`docs/10-workflow-git.md` §8.4). Ne réinvente pas ses
-     commandes : il lit les jobs dans `.gitlab-ci.yml` (donc il suit le pipeline quand celui-ci
-     change), passe par le venv du repo, analyse un miroir **LF** pour `shellcheck` (une copie
+     commandes : il lit les jobs dans `.github/workflows/ci.yml` (donc il suit le pipeline quand
+     celui-ci change), passe par le venv du repo, analyse un miroir **LF** pour `shellcheck` (une copie
      Windows CRLF inventerait des SC1017 que la CI ne verra jamais) et écrit le journal de chaque
      job sous `.maestro/ci-local/<job>.log`, en chemin **relatif** — lisible depuis le worktree, y
      compris en session autonome (#234, §8.5) :
@@ -157,9 +157,17 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
      `web-build` ; `lint` et `test` désignent l'étage entier). **Ne rejoue pas la suite entière**
      — ni `--complet`, ni un `pytest -n auto` à la main : le filet cadre `pytest` sur le périmètre
      du diff (~40 s au lieu de ~10 min), et c'est ici, en plein diagnostic d'un pipeline rouge, que
-     la différence se paye. Pour reboucler sur le seul test rouge de la trace, vise-le directement :
-     `<venv-python> -m pytest tests/test_<suite>.py` (`.venv/Scripts/python.exe` sous Windows,
-     `.venv/bin/python` sous Unix). Le verdict complet, lui, reste celui du pipeline de la PR.
+     la différence se paye. Pour reboucler sur le seul test rouge de la trace, vise-le directement —
+     et **choisis où il joue par famille de suite** (§8.4bis), jamais par habitude. Suite
+     d'**outillage** (elle nomme un script du dépôt : `worktree.sh`, `lib.sh`, `run.sh`…) → le
+     conteneur Linux, qui y vaut un facteur vingt :
+     ```
+     bash scripts/ci/pytest.sh tests/test_<suite>.py -q
+     ```
+     Suite **applicative** (elle ne pilote aucun script) → le venv du poste, le conteneur n'y
+     gagnant rien : `<venv-python> -m pytest tests/test_<suite>.py` (`.venv/Scripts/python.exe` sous
+     Windows, `.venv/bin/python` sous Unix). Le verdict complet, lui, reste celui du pipeline de la
+     PR.
    - committe en **commit intermédiaire** — pied **`Refs #<iid>`**, pas `Closes` (la PR porte déjà
      le `Closes`), hook `commit-msg` respecté, **jamais `--no-verify`**. Le message passe par un
      **fichier** : écris-le avec l'outil `Write` dans ton scratchpad de session — jamais un

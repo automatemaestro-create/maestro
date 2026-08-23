@@ -149,6 +149,7 @@
       "Bash(npx:*)",
       "Bash(shellcheck:*)",
       "Bash(bash scripts/ci/local.sh:*)",
+      "Bash(bash scripts/ci/pytest.sh:*)",
       "Bash(bash scripts/git/worktree.sh:*)",
       "Bash(bash scripts/orchestrate/queue.sh:*)",
       "Bash(ls:*)",

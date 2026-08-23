@@ -1991,6 +1991,14 @@ Règles de ce run autonome :
   texte long. Pour écrire un fichier — description de PR, corps de commentaire, note de travail —
   sers-toi de l'outil Write, puis donne le CHEMIN de ce fichier à la commande : jamais
   « cat > … <<'EOF' », jamais « --description "\$(cat …)" ».
+- POUR JOUER DES TESTS, l'endroit se choisit PAR FAMILLE DE SUITE, et l'écart se paie sur ton
+  quota. Une suite d'OUTILLAGE — elle nomme un script du dépôt (worktree.sh, lib.sh, run.sh…) —
+  se joue dans le conteneur Linux, « bash scripts/ci/pytest.sh tests/test_<suite>.py -q » : vingt
+  fois plus rapide qu'en natif, un fork y coûtant moins d'une milliseconde contre ~800 ms ici. Une
+  suite APPLICATIVE se joue au venv du poste, « .venv/Scripts/python.exe -m pytest
+  tests/test_<suite>.py » : le conteneur n'y gagne rien, son seul démarrage coûte déjà la durée de
+  la suite. Les deux commandes sont autorisées ici. Avant de pousser, c'est toujours « bash
+  scripts/ci/local.sh » qui rend le verdict — lui n'a pas à être choisi, il sait où jouer.
 - Si la branche du ticket existe déjà et porte des commits, OU si le worktree contient des
   modifications non commitées, REPRENDS ce travail au lieu de recommencer : commence par regarder
   git status et git log. Tu es peut-être la reprise d'une session interrompue, et un arbre sale
@@ -2053,7 +2061,11 @@ Règles de ce run autonome :
   le verdict sera tombé : ce processus s'arrête à la fin de ton tour, rien ne te réveillera. Pousse
   ton correctif et sors. Le pilote relira le verdict et rouvrira une session si la PR est encore
   bloquée — tu n'as droit qu'à deux passages en tout, alors sers-toi du filet local pour vérifier
-  ton correctif en avant-plan : bash scripts/ci/local.sh --only <job>.
+  ton correctif en avant-plan : bash scripts/ci/local.sh --only <job>. Pour reboucler sur la seule
+  suite rouge, l'endroit se choisit PAR FAMILLE : une suite d'OUTILLAGE (elle nomme un script du
+  dépôt) dans le conteneur Linux, « bash scripts/ci/pytest.sh tests/test_<suite>.py -q », vingt
+  fois plus rapide sur ton quota ; une suite APPLICATIVE au venv du poste,
+  « .venv/Scripts/python.exe -m pytest tests/test_<suite>.py ». Les deux sont autorisées ici.
 - N'attends AUCUNE validation non plus : personne ne lira une question. Si un choix se présente,
   tranche, et dis dans ton résumé final ce que tu as tranché et pourquoi.
 - UNE RÉSOLUTION QUI N'EST PAS CLAIRE NE SE POUSSE PAS : git merge --abort, branche laissée

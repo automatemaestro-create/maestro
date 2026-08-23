@@ -43,6 +43,7 @@
       "Bash(bash scripts/git/worktree.sh list:*)",
       "Bash(bash scripts/git/worktree.sh gc:*)",
       "Bash(bash scripts/ci/local.sh:*)",
+      "Bash(bash scripts/ci/pytest.sh:*)",
       "EnterWorktree",
       "mcp__chrome-maestro",
       "mcp__figma-officiel"

@@ -1837,6 +1837,18 @@ passe ? », le lanceur « qu'est-ce que ça donne, là, maintenant ».
 
 Les points de conception, à comprendre avant d'y toucher :
 
+- **Utilisable en session autonome comme en interactive** (#436). Le lanceur est allowlisté des
+  **deux** côtés — [`.claude/settings.json`](../.claude/settings.json) et
+  [`scripts/orchestrate/settings.run.json`](../scripts/orchestrate/settings.run.json) — au même
+  titre que le filet, et pour la même raison : c'est un verbe qui ne lit ni n'écrit la forge et ne
+  touche à aucune branche. Sans règle, il était **refusé** en run — sans personne pour approuver
+  (§11.7) — et coûtait un prompt par appel en interactif, si bien qu'il n'a **jamais** été invoqué
+  dans un journal de run (constat du 2026-08-23 : zéro invocation, contre 5 à 10 `python -m pytest`
+  natifs par ticket). Les prompts de session (`prompt_ticket`, `prompt_mrfix`) le nomment **avec sa
+  règle de choix**, les deux branches ensemble : autoriser une commande que personne ne nomme ne la
+  fait pas exister, et n'en dire que la moitié enverrait les suites applicatives dans un conteneur
+  qui les ralentit. C'est la leçon de #310 prise dans l'autre sens — là-bas un prompt prescrivait
+  une recette que le filet portait déjà, ici il taisait un outil que rien d'autre n'annonce.
 - **La plomberie est PARTAGÉE, pas recopiée**
   ([`scripts/ci/pytest-regime.sh`](../scripts/ci/pytest-regime.sh), sourcé par les deux). Régime,
   empreinte de l'image, point de montage, identité git, workers, garde-fous du venv (#194) : une
