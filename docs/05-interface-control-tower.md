@@ -811,7 +811,7 @@ chapitre déjà implémentée (`maestro/controltower/executions.py`) : le contra
 décrit le comportement réel, pas une fixture.
 
 - `GET /api/executions` → `ResumeExecution[]` — les runs connus (en cours et passés), récents
-  d'abord.
+  d'abord, chacun avec sa **vitalité** (#348, ci-dessous).
 - `POST /api/executions` → `202` + `ResumeExecution` — lance un run **en arrière-plan** (les
   événements arrivent par le flux existant) et rend son `run_id` immédiatement. Corps
   `LancementExecution`. `422` si l'objectif est vide, un garde-fou est hors bornes — les
@@ -845,6 +845,9 @@ décrit le comportement réel, pas une fixture.
   // en_cours | terminee | annulee | echec
   // | en_attente_brief | en_attente_reponses  ← suspendu sur son brief (§6.10)
   "statut": "en_cours",
+  // vivant | orphelin | indetermine  ← l'hôte du run bat-il encore ? (#348)
+  // null sur un run soldé : la question ne se pose pas
+  "vitalite": "vivant",
   "mode_brief": "humain",                  // le régime posé au lancement (#320)
   "tour_clarification": 0,                 // tour de questions en cours (#321)
   "tours_clarification_max": 2,            // 0 : aucun tour prévu
@@ -862,6 +865,30 @@ décrit le comportement réel, pas une fixture.
   "rapport": { … }                         // RapportLecture (§6.8) — **seulement** au lancement
 }
 ```
+
+**Un run non soldé dit s'il est encore porté par quelqu'un** (#348). Un run lancé d'ici s'exécute
+en tâche de fond du process de `maestro-api` et **ne survit pas à son hôte** — ce qui était assumé ;
+ce qui ne l'était pas, c'est que sa mort soit invisible : le journal durable (#97) conserve le
+dernier état publié, donc un run dont l'hôte est tombé restait `en_cours` **pour toujours** (quatre
+runs fantômes au constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un
+**battement** périodique, et `vitalite` en tire trois verdicts :
+
+| `vitalite` | ce que ça dit | ce qu'on en fait |
+| --- | --- | --- |
+| `vivant` | l'hôte a battu il y a moins de 30 min | rien : le run travaille |
+| `orphelin` | il a battu, puis s'est tu | plus personne ne veille sur ce run |
+| `indetermine` | il n'a **jamais** battu (run antérieur à #348) | on ne sait pas, et on le dit |
+| `null` | le run est soldé (`terminee`/`annulee`/`echec`) | la question ne se pose pas |
+
+Deux choix qui expliquent le reste. Le seuil est **généreux** (30 min, soixante battements
+manqués) : rater un orphelin coûte un run affiché en cours un peu trop longtemps, déclarer orphelin
+un run vivant coûte de repartir sur le cadrage d'un run qui travaille encore — même arbitrage que le
+seuil de six heures de [docs/10 §9.6](./10-workflow-git.md). Et la vitalité n'est **jamais déduite du
+redémarrage de l'API** : un run lancé par `maestro-run --publier` vit dans son propre process, publie
+sur le même Redis sans passer par l'API, et reste donc reconnu vivant **à travers** un redémarrage —
+c'est tout l'intérêt d'un signal porté par l'hôte plutôt que d'une supposition faite par le lecteur.
+Corollaire assumé : un run `--publier` **terminé normalement** finit par apparaître `orphelin`,
+faute de publier un statut de fin — le verdict porte sur son **hôte**, jamais sur son travail.
 
 **Les sources se déclarent, elles ne se devinent pas** (#315). Trois types, et rien d'autre :
 `fichier` (téléversé — §6.8), `dossier` (des **références**, jamais un projet : `lecture_seule`

@@ -15,7 +15,9 @@ Endpoints :
   active/désactive l'agent et/ou ajuste son plafond d'instances — persisté
   (`maestro.agents.capacity`) et relu à chaud par moteur et workers ;
 - `GET  /api/executions` — les runs connus (en cours et passés), récents d'abord :
-  objectif, statut, volume, coût et bornes temporelles (#185) ;
+  objectif, statut, volume, coût, bornes temporelles (#185) et, sur un run non
+  soldé, sa **vitalité** (#348) — `vivant` / `orphelin` / `indetermine`, selon que
+  l'hôte du run bat encore, ne bat plus depuis le seuil, ou n'a jamais battu ;
 - `POST /api/executions` — **lance** une exécution (objectif + garde-fous + les
   **sources** de l'objectif, #317) en tâche de fond et rend son `run_id`
   immédiatement (#185), avec le **rapport de lecture** de sa matière ;
@@ -193,6 +195,11 @@ from maestro.controltower.auto_amelioration import (
     AnalyseurEchecs,
     RevisionIndisponible,
     echecs_du_run,
+)
+from maestro.controltower.battement import (
+    RegistreBattements,
+    RegistreBattementsMemoire,
+    RegistreBattementsRedis,
 )
 from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
@@ -671,6 +678,7 @@ def create_app(
     permissions: PermissionStore | None = None,
     projets: ServiceProjets | None = None,
     event_log: EventLog | None = None,
+    battements: RegistreBattements | None = None,
     fixtures: FixturesControlTower | None = None,
     fabrique_moteur: FabriqueMoteur | None = None,
     televersements: DepotTeleversements | None = None,
@@ -761,6 +769,14 @@ def create_app(
     le rejeu par-dessus (idempotent : les événements reconstruisent le même
     état).
 
+    `battements` (#348) est le registre où l'**hôte** d'un run pose son signal de
+    vie, et où `GET /api/executions` lit la vitalité de chaque run non soldé
+    (vivant / orphelin / indéterminé) — par défaut un registre mémoire, qui ne
+    voit battre que les runs de ce process. La production câble
+    `RegistreBattementsRedis` via `create_default_app` : c'est ce qui fait qu'un
+    run lancé par `maestro-run --publier` reste reconnu vivant **à travers un
+    redémarrage de l'API**, la lecture ne dépendant alors d'aucun process.
+
     `fixtures` (#183) branche les **contrats d'API v2** (routes des Phases 5/6 :
     exécutions, journal requêtable, registre de configuration, propositions de
     playbook globales, flux SSE d'un fil de chat) sur des **données factices**.
@@ -788,6 +804,7 @@ def create_app(
     """
     bus = bus if bus is not None else InMemoryEventBus()
     event_log = event_log if event_log is not None else InMemoryEventLog()
+    battements = battements if battements is not None else RegistreBattementsMemoire()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
     mcp = mcp if mcp is not None else McpStore.default()
@@ -839,6 +856,7 @@ def create_app(
         fabrique_moteur=fabrique_moteur,
         televersements=televersements,
         lecteur_sources=lecteur_sources,
+        battements=battements,
     )
 
     @asynccontextmanager
@@ -869,6 +887,7 @@ def create_app(
             await mailbox.close()
             await bus.close()
             await event_log.close()
+            await battements.close()
 
     app = FastAPI(
         title="Maestro — Control Tower",
@@ -1031,7 +1050,7 @@ def create_app(
         *Exécutions & traces* (docs/05 §2.4). `projet` est **obligatoire**
         (#277), au contrat commun : `<id>` | `tous` | `aucun`.
         """
-        return executions.resumes(_portee(projet))
+        return await executions.resumes(_portee(projet))
 
     @app.post("/api/executions", status_code=202)
     async def lancer_execution(requete: LancementExecutionRequete) -> dict[str, Any]:
@@ -1204,7 +1223,7 @@ def create_app(
         )
         state.appliquer(event)
         await bus.publish(event)
-        return executions.resume(run_id) or resume
+        return await executions.resume_vivant(run_id) or resume
 
     @app.post("/api/executions/{run_id}/brief/reponses")
     async def repondre_brief(
@@ -1279,20 +1298,20 @@ def create_app(
         )
         state.appliquer(event)
         await bus.publish(event)
-        return executions.resume(run_id) or resume
+        return await executions.resume_vivant(run_id) or resume
 
     @app.get("/api/executions/{run_id}")
     async def execution(run_id: str) -> dict[str, Any]:
         """L'état d'une exécution (#185) : son résumé, sa trace et son coût.
 
-        Le résumé de `GET /api/executions` (objectif, statut, volume, bornes)
-        enrichi de ce qu'il ne porte pas : le grand livre du run (#57) et sa
-        trace événement par événement.
+        Le résumé de `GET /api/executions` (objectif, statut, volume, bornes,
+        **vitalité** #348) enrichi de ce qu'il ne porte pas : le grand livre du
+        run (#57) et sa trace événement par événement.
         """
         detail = state.execution(run_id)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return {**detail.to_dict(), **(executions.resume(run_id) or {})}
+        return {**detail.to_dict(), **(await executions.resume_vivant(run_id) or {})}
 
     @app.get("/api/executions/{run_id}/cout")
     async def cout_execution(run_id: str) -> dict[str, Any]:
@@ -2604,6 +2623,12 @@ def create_default_app() -> FastAPI:
     Les événements y sont aussi **persistés** (#97) sur la liste Redis
     `maestro.evenements:journal` et rejoués au démarrage : l'état de la Control
     Tower survit au redémarrage de l'API.
+
+    Les **battements** des runs (#348) vivent sur la même instance, dans le hash
+    `maestro.runs:battements` — hors du process, seule façon de voir battre un run
+    lancé par `maestro-run --publier` et de le retrouver vivant après un
+    redémarrage de l'API.
+
     C'est la cible *factory* d'uvicorn :
     `uvicorn --factory maestro.controltower.app:create_default_app`
     (ou le script `maestro-api`).
@@ -2613,4 +2638,5 @@ def create_default_app() -> FastAPI:
         bus=RedisEventBus(settings.redis_url),
         mailbox=RedisMailbox(settings.redis_url),
         event_log=RedisEventLog(settings.redis_url),
+        battements=RegistreBattementsRedis(settings.redis_url),
     )
