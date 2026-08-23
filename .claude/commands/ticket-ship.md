@@ -5,11 +5,26 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 ---
 
 Tu vas clôturer le ticket courant **en une seule action** : committer les changements en attente
-(message généré, sans confirmation) puis enchaîner **`/ticket-finish`** (push + PR + état
-« En revue » + log du temps). C'est le pendant « zéro friction » de `/ticket-finish`, pensé pour
-la boucle d'orchestration : là où `/ticket-finish` suppose un commit déjà fait et demande
+(message généré, sans confirmation) puis enchaîner **`/ticket-finish`** (push + PR prête + état
+« En revue » + log du temps + **merge**). C'est le pendant « zéro friction » de `/ticket-finish`,
+pensé pour la boucle d'orchestration : là où `/ticket-finish` suppose un commit déjà fait et demande
 confirmation avant d'en créer un, `/ticket-ship` **commite d'office** ce qui est en attente puis
 délègue la suite à `/ticket-finish`.
+
+⚠ **Depuis #418 (chantier #413), « clore » veut dire « merger ».** La chaîne va jusqu'au bout, ce
+qui a un prix en temps de mur : le pipeline naît **après** la PR et tourne 2-4 min, donc la commande
+ne rend plus la main dans la seconde qui suit le commit. L'attente est **bornée** (15 min) et
+**annoncée** pendant qu'elle dure. Elle n'est pas non plus une promesse : un pipeline rouge ou un
+conflit laisse la PR **ouverte** et le ticket **« En revue »**, et c'est un état normal — jamais un
+✅ global.
+
+⚠ **En run autonome, cette attente se paie sur le quota du run** : une session pilotée par
+`/orchestrate` reste ouverte 2-4 min sans rien faire. Le lot 5 du même chantier (#419) part de
+l'hypothèse inverse — « aucune session ne merge, aucune n'attend un pipeline », le pilote tenant sa
+propre file de merge — et c'est **lui** qui possède le prompt des sessions de run, donc lui qui
+arbitre. Les deux mécanismes ne se marchent pas dessus pour autant : une PR mergée ici n'entre
+jamais dans la file du pilote (elle n'est plus « En revue »), et une PR laissée ouverte y entre
+normalement. Ne te dispense pas de l'attente de ton propre chef.
 
 Cette commande est autosuffisante (réf. complète `docs/10-workflow-git.md`, à n'ouvrir qu'en cas de
 doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans l'ordre et
@@ -81,17 +96,25 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
 7. **Enchaîne `/ticket-finish`.** Une fois le commit créé, l'arbre est propre : invoque la commande
    **`/ticket-finish`** (sans argument — elle relira l'IID depuis la branche — ou passe `<iid>`).
    Elle prend le relais pour : push de la branche (jamais de `--force`), création/mise à jour de la
-   PR en Draft avec `Closes #<iid>` et sa **checklist cochée sur ce qui est vérifié** (conventions,
-   tests/doc d'après le diff, pipeline verte), passage de l'**état** à « En revue », et **log
-   automatique du temps** (estimé d'après la portée du travail). **Ne ré-implémente pas ces étapes ici** :
-   `/ticket-finish` en est la source unique, et son étape de commit sera sans objet (arbre déjà
-   propre) — elle passera directement au push.
+   PR avec `Closes #<iid>` et sa **checklist cochée sur ce qui est vérifié** (conventions,
+   tests/doc d'après le diff, pipeline verte), **passage de la PR en « prête »** (`gh pr ready`, sans
+   demander : une PR qu'on s'apprête à merger n'est pas un brouillon), passage de l'**état** à
+   « En revue », **log automatique du temps** (estimé d'après la portée du travail), puis
+   l'**attente du pipeline et le merge** par `merge-mr` (#418). **Ne ré-implémente aucune de ces
+   étapes ici** — surtout pas le merge : `/ticket-finish` en est la source unique, et son étape de
+   commit sera sans objet (arbre déjà propre), elle passera directement au push.
+   **Lis son verdict de merge** : c'est lui qui ouvre ton résumé (étape 9), et c'est aussi lui qui
+   dit, à l'étape 8, si le lot que tu viens de shipper est mergé ou seulement « En revue ».
 
 8. **Sous-ticket d'un parent de suivi ?** Vérifie : `bash scripts/gitlab/lib.sh parent-of <iid>`.
    Si un parent est trouvé (convention `docs/10-workflow-git.md` §5.1), prépare l'**annonce de la
    suite** pour le résumé final :
    - Liste les lots : `bash scripts/gitlab/lib.sh subtickets <iid-parent>`. Profites-en pour
-     **cocher** dans la checklist du parent les lots à l'état « Terminé » encore décochés.
+     **cocher** dans la checklist du parent les lots à l'état « Terminé » encore décochés. Le lot
+     que tu viens de shipper en fait partie **s'il a été mergé** (verdict `0` à l'étape 7) : le
+     workflow `issues: closed` (#377) est asynchrone, donc `subtickets` peut encore le rendre
+     « En revue » quelques secondes après le merge — coche-le sur le **verdict du merge**, qui est
+     l'information fraîche, et jamais l'inverse (un lot **non** mergé ne se coche pas).
      **Relis et réécris la description uniquement via les helpers** :
      `bash scripts/gitlab/lib.sh get-description <iid-parent> > <fichier>`, tu édites le fichier,
      puis `bash scripts/gitlab/lib.sh set-description <iid-parent> <fichier>`. N'improvise
@@ -101,16 +124,21 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    - Demande les lots ouverts que rien ne bloque :
      `bash scripts/gitlab/lib.sh startables <iid-parent>` (les lots marqués « (parallèle) » ne se
      bloquent pas entre eux — docs/10 §5.1). S'il en reste, annonce-les **démarrables dès
-     maintenant** — « prochain lot : `/ticket-start <iid-suivant>` (sans attendre le merge : le
-     lot shippé est « En revue », les lots sont mergeables seuls depuis `main`) » — et, s'il y en
-     a plusieurs, précise qu'ils sont **prenables en parallèle** par d'autres personnes.
-   - Si le lot shippé est le **dernier encore ouvert**, annonce que le **parent sera fermable
-     après le merge** (toutes les cases cochées, y compris le lot tests) — sa fermeture reste une
-     décision humaine/orchestrateur : `/ticket-ship` ne ferme rien, pas même le parent.
+     maintenant** — « prochain lot : `/ticket-start <iid-suivant>` (rien à attendre : le lot shippé
+     est mergé, ou au pire « En revue », et les lots sont mergeables seuls depuis `main`) » — et,
+     s'il y en a plusieurs, précise qu'ils sont **prenables en parallèle** par d'autres personnes.
+   - Si le lot shippé est le **dernier encore ouvert**, annonce le parent **fermable** — dès
+     maintenant si le merge a eu lieu (toutes les cases cochées, y compris le lot tests), après le
+     merge sinon. Sa fermeture reste une décision humaine/orchestrateur : `/ticket-ship` ne ferme
+     rien, pas même le parent — merger la PR d'un lot n'est pas fermer son parent.
 
-9. Résumé final : reprends le résumé produit par `/ticket-finish` (lien de la PR, état Draft/Ready,
-   temps loggé) et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
+9. Résumé final : reprends le résumé produit par `/ticket-finish` — **verdict du merge en tête**
+   (mergé, ou la cause **telle que `merge-mr` l'a rendue** et la suite qu'elle appelle), lien de la
+   PR, temps loggé — et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
    ajoute l'annonce de l'étape 8 (prochain lot démarrable dès maintenant, ou parent fermable).
+   **Jamais de ✅ global** : un ticket dont la PR est restée ouverte sur un pipeline rouge n'est pas
+   « shippé avec une réserve », il est **inachevé**, et le résumé doit le dire avec ce mot-là — un
+   verdict qui masque son blocage est exactement ce que #303 a supprimé ailleurs.
    Rappelle qu'**aucun merge non vérifié** n'a lieu (#417, chantier #413) : `/ticket-ship` ne ferme
-   ni ne force-push jamais, et ne merge **jamais hors de `merge-mr`**, qui éprouve les prérequis
-   avant de merger.
+   ni ne force-push jamais une PR, et ne merge **jamais hors de `merge-mr`**, qui éprouve ses quatre
+   prérequis avant de merger.
