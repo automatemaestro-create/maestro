@@ -27,6 +27,11 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   `ServiceExecutions` lance un run en tâche de fond de l'API, le suit dans la
   projection et l'interrompt à la demande, ses étapes partant sur le bus par le
   pont télémétrie comme celles d'un run lancé en ligne de commande ;
+- `maestro.controltower.battement` : le **signal de vie** d'un run (#348) —
+  l'hôte bat (`RegistreBattements` côté API, `CoeurRun` côté `maestro-run
+  --publier`), la lecture en tire un verdict (`vitalite` : vivant / orphelin /
+  indéterminé) : un run dont l'hôte est tombé cesse de rester `en_cours` pour
+  toujours ;
 - `maestro.controltower.assistance` : le canal d'**aide à l'utilisateur** (#123)
   — même infrastructure que le chat sur le fil réservé `assistance`, mais une
   fiche hors catalogue (`AGENT_ASSISTANCE`) et un répondeur déterministe
@@ -57,6 +62,20 @@ from maestro.controltower.assistance import (
     RepondeurAssistance,
     SujetAssistance,
     repondre_assistance,
+)
+from maestro.controltower.battement import (
+    CLE_BATTEMENTS,
+    PERIODE_BATTEMENT_S,
+    SEUIL_ORPHELIN_S,
+    VITALITE_INDETERMINE,
+    VITALITE_ORPHELIN,
+    VITALITE_VIVANT,
+    CoeurRun,
+    RegistreBattements,
+    RegistreBattementsMemoire,
+    RegistreBattementsRedis,
+    batteur_redis,
+    vitalite,
 )
 from maestro.controltower.bridge import (
     JournalEventHandler,
@@ -133,6 +152,7 @@ from maestro.controltower.validation import (
 __all__ = [
     "AGENT_ASSISTANCE",
     "CANAL_EVENEMENTS",
+    "CLE_BATTEMENTS",
     "CLE_JOURNAL_EVENEMENTS",
     "CAPACITE_ACTIVE",
     "CAPACITE_DESACTIVE",
@@ -156,14 +176,20 @@ __all__ = [
     "PAS_JOUR",
     "PAS_MINUTE",
     "PAS_VALIDES",
+    "PERIODE_BATTEMENT_S",
+    "SEUIL_ORPHELIN_S",
     "STATUTS_EXECUTION_TERMINAUX",
     "SUJETS_ASSISTANCE",
     "UTILISATEUR",
     "VALIDATION_APPROUVEE",
     "VALIDATION_EN_ATTENTE",
     "VALIDATION_REFUSEE",
+    "VITALITE_INDETERMINE",
+    "VITALITE_ORPHELIN",
+    "VITALITE_VIVANT",
     "AnalyticsCouts",
     "ChatStore",
+    "CoeurRun",
     "ControlTowerState",
     "CoutAgent",
     "CoutExecutionResume",
@@ -187,6 +213,9 @@ __all__ = [
     "RedisEventBus",
     "RedisEventLog",
     "ReferenceTicket",
+    "RegistreBattements",
+    "RegistreBattementsMemoire",
+    "RegistreBattementsRedis",
     "RepondeurAssistance",
     "RepondeurChat",
     "RepondeurModele",
@@ -199,6 +228,7 @@ __all__ = [
     "activer_publication",
     "agrege_couts",
     "appliquer_sous_validation",
+    "batteur_redis",
     "create_app",
     "create_default_app",
     "evenements_depuis_step",
@@ -206,4 +236,5 @@ __all__ = [
     "publieur_redis",
     "repondre_assistance",
     "validateur_redis",
+    "vitalite",
 ]

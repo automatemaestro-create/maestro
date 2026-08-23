@@ -70,7 +70,11 @@ personne est une information, pas une section manquante.
 `--publier` (#46) publie chaque étape du journal en **événement temps réel**
 sur Redis Pub/Sub (canal `maestro.evenements`, via le pont
 `maestro.controltower.bridge`) : le backend Control Tower (`maestro-api`) les
-rediffuse aux clients WebSocket. Requiert le même Redis que `--queue`.
+rediffuse aux clients WebSocket. Requiert le même Redis que `--queue`. Depuis
+#348 il fait aussi **battre le cœur du run** (hash `maestro.runs:battements`, un
+fil démon) : sans ce signal, l'API ne pourrait pas distinguer ce run — qui vit
+hors d'elle et qu'aucun de ses redémarrages ne concerne — d'un run mort resté
+`en_cours` dans la projection, et le déclarerait orphelin à tort.
 
 `--validation-ui` (#48) route les demandes de validation humaine vers la
 **Control Tower** au lieu de la console : la tâche sensible passe en pause, la
@@ -137,6 +141,7 @@ from maestro.telemetry import (
 )
 
 if TYPE_CHECKING:
+    from maestro.controltower.battement import CoeurRun
     from maestro.durable import DurableEngine
 
 _USAGE = (
@@ -158,6 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     as_json = False
     via_queue = False
     via_durable = False
+    publier = False
     reprendre: str | None = None
     messagerie = False
     validation_ui = False
@@ -197,6 +203,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             via_durable = True
         elif flag == "--publier":
             activer_publication_evenements()
+            # Retenu en plus d'être appliqué : le **battement** (#348) a besoin du
+            # `run_id`, qui n'existe qu'une fois le journal construit, bien plus
+            # bas — publier ses étapes et publier son signal de vie ne peuvent donc
+            # pas se câbler au même endroit.
+            publier = True
         elif flag == "--messagerie":
             messagerie = True
         elif flag == "--validation-ui":
@@ -372,6 +383,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Export Langfuse (#81) : purement configuratif — no-op sans clés dans l'env.
     activer_export_langfuse()
 
+    # Battement de cœur (#348) : ce process est l'**hôte** du run, il le dit tant
+    # qu'il vit. Adossé à `--publier` et non à une option à lui : la question
+    # « l'API voit-elle ce run ? » a déjà une réponse, c'est cette option-là — un
+    # run qui ne publie rien n'apparaît nulle part, il n'y a donc aucun `en_cours`
+    # à ne pas laisser traîner. Le cœur bat **avant** le premier appel modèle,
+    # faute de quoi la phase la plus lente du run (le cadrage) serait aussi la
+    # seule sans signal de vie.
+    coeur = _battement_du_run(journal.run_id) if publier else None
+    if coeur is not None:
+        coeur.demarrer()
+
     try:
         engine = _build_engine(
             via_queue=via_queue,
@@ -422,6 +444,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
         return 1
+    finally:
+        # Le cœur s'arrête avec le run, quelle qu'en soit l'issue — mais **rien
+        # n'est effacé** : le dernier battement reste et vieillit. C'est ce qui
+        # distingue « l'hôte a fini » (le battement se tait, le run passera
+        # orphelin) de « ce run n'a jamais battu » (indéterminé), et la synthèse
+        # qui suit n'a plus besoin d'être signalée vivante.
+        if coeur is not None:
+            coeur.arreter()
 
     if notificateur is not None:
         # Fin de run (#105) : le bilan part sur le canal de supervision — avant
@@ -596,6 +626,20 @@ def _arbitre_clarification_ui() -> ArbitreClarification:
     from maestro.controltower.brief import arbitre_clarification_redis
 
     return arbitre_clarification_redis(load_settings().redis_url)
+
+
+def _battement_du_run(run_id: str) -> CoeurRun:
+    """Construit le cœur du run (#348) sur le Redis de la config.
+
+    Pendant exact de `activer_publication_evenements` : mêmes réglages, même
+    instance, même client **synchrone** — ce process n'a pas de boucle asyncio à
+    lui, celle du moteur étant ouverte et refermée par `run_borne`. Import local,
+    pour la même raison qu'ailleurs : seul ce chemin dépend de la Control Tower.
+    """
+    from maestro.config import load_settings
+    from maestro.controltower.battement import CoeurRun, batteur_redis
+
+    return CoeurRun(run_id, batteur_redis(load_settings().redis_url))
 
 
 def activer_publication_evenements() -> None:

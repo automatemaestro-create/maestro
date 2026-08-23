@@ -49,6 +49,12 @@ Deux précautions dans ce câblage :
   le pont publie de façon *synchrone* (c'est un handler `logging`) alors que le
   bus est asynchrone : l'ordre des événements est ainsi préservé jusqu'au bus,
   et rien n'est publié depuis un contexte annulé.
+
+Depuis #348 le service **fait battre le cœur** de ses runs (`maestro.controltower
+.battement`) : une tâche unique pose un battement pour chaque run en vol, et
+`resumes` rend le verdict de vitalité — vivant, orphelin, indéterminé — à côté du
+statut. C'est la contrepartie visible du corollaire ci-dessus : un run ne survit
+toujours pas au redémarrage de l'API, mais sa mort cesse d'être silencieuse.
 """
 
 from __future__ import annotations
@@ -62,6 +68,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from maestro.appartenance import projet_id_valide
+from maestro.controltower.battement import (
+    PERIODE_BATTEMENT_S,
+    SEUIL_ORPHELIN_S,
+    RegistreBattements,
+    RegistreBattementsMemoire,
+    vitalite,
+)
 from maestro.controltower.bridge import JournalEventHandler
 from maestro.controltower.brief import (
     ArbitreBriefControlTower,
@@ -78,6 +91,7 @@ from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
+    STATUTS_EXECUTION_TERMINAUX,
     ControlTowerState,
 )
 from maestro.controltower.validation import ValidateurControlTower
@@ -150,6 +164,15 @@ class ServiceExecutions:
     d'un fichier : le service y retrouve par identifiant ce qu'un lancement
     déclare, et **rattache** la matière au run une fois son emplacement connu.
     `lecteur_sources` (#316) produit le rapport de lecture rendu avec le résumé.
+
+    `battements` (#348) est le registre où l'hôte d'un run pose son signal de vie
+    — par défaut un registre **mémoire**, qui suffit tant qu'un seul process lance
+    et lit ; la production câble `RegistreBattementsRedis` via `create_app`, seule
+    façon de voir battre un run publié par un autre process. `seuil_orphelin_s`
+    est le silence au-delà duquel un run non soldé est déclaré orphelin (défaut :
+    `SEUIL_ORPHELIN_S`) ; `periode_battement_s` l'intervalle entre deux
+    battements. Les deux sont injectables **pour les tests**, pas comme réglage de
+    déploiement : y toucher est un choix de code, comme `DELAI_ANNULATION_S`.
     """
 
     def __init__(
@@ -161,6 +184,9 @@ class ServiceExecutions:
         garde_fous_ingestion: GardeFousIngestion | None = None,
         televersements: DepotTeleversements | None = None,
         lecteur_sources: LecteurSources | None = None,
+        battements: RegistreBattements | None = None,
+        seuil_orphelin_s: float = SEUIL_ORPHELIN_S,
+        periode_battement_s: float = PERIODE_BATTEMENT_S,
     ) -> None:
         self._bus = bus
         self._state = state
@@ -174,6 +200,12 @@ class ServiceExecutions:
             else DepotTeleversements.default(garde_fous=self._ingestion)
         )
         self._lecteur = lecteur_sources if lecteur_sources is not None else extraire_sources
+        self._battements = (
+            battements if battements is not None else RegistreBattementsMemoire()
+        )
+        self._seuil_orphelin_s = seuil_orphelin_s
+        self._periode_battement_s = periode_battement_s
+        self._coeur: asyncio.Task[None] | None = None
         self._runs: dict[str, asyncio.Task[None]] = {}
         # Logger **propre à ce service** : le pont télémétrie s'y pose sans
         # toucher au logger global du journal (cf. docstring du module). Les
@@ -188,7 +220,7 @@ class ServiceExecutions:
 
     # ------------------------------------------------------------------ lecture
 
-    def resumes(self, portee: PorteeProjet | None = None) -> list[dict[str, Any]]:
+    async def resumes(self, portee: PorteeProjet | None = None) -> list[dict[str, Any]]:
         """Les runs connus (`GET /api/executions`) : résumés, **récents d'abord**.
 
         Tous ceux dont la projection porte une trace — lancés par l'API comme
@@ -196,14 +228,69 @@ class ServiceExecutions:
         distingue pas leur origine. `portee` (#277) est le périmètre de la
         lecture, celui-là même qu'appliquent le Kanban et les coûts ; `None`
         rend tout, comme la projection qu'il ne fait que traverser.
+
+        Chaque résumé porte en plus sa **vitalité** (#348) — `vivant`, `orphelin`
+        ou `indetermine` sur un run non soldé, `null` sinon. La méthode est
+        devenue asynchrone pour cette seule raison : le verdict se lit dans le
+        registre des battements, qui vit hors du process en production, et **un
+        seul** aller-retour le rend pour tous les runs de la liste.
         """
-        resumes = [e.resume() for e in self._state.executions(portee)]
+        connus = await self._registre()
+        resumes = [self._avec_vitalite(e.resume(), connus) for e in self._state.executions(portee)]
         return sorted(resumes, key=lambda r: str(r["debut"]), reverse=True)
 
     def resume(self, run_id: str) -> dict[str, Any] | None:
-        """Le résumé du run `run_id`, ou None s'il est inconnu de la projection."""
+        """Le résumé du run `run_id`, ou None s'il est inconnu de la projection.
+
+        **Sans** verdict de vitalité, à dessein : c'est la lecture interne du
+        service (annulation, décision de brief, contrôles 404/409 des routes),
+        dont aucun appelant n'a besoin d'interroger un registre distant. La vue
+        publique d'un run, elle, passe par `resume_vivant`.
+        """
         execution = self._state.execution(run_id)
         return None if execution is None else execution.resume()
+
+    async def resume_vivant(self, run_id: str) -> dict[str, Any] | None:
+        """Le résumé du run `run_id`, **vitalité comprise** (#348) — None s'il est inconnu.
+
+        Le pendant unitaire de `resumes`, pour `GET /api/executions/{run_id}` :
+        une liste qui saurait dire qu'un run est orphelin pendant que l'écran de
+        ce run ne le saurait pas serait une couture, pas une économie.
+        """
+        resume = self.resume(run_id)
+        if resume is None:
+            return None
+        return self._avec_vitalite(resume, await self._registre())
+
+    def _avec_vitalite(
+        self, resume: dict[str, Any], battements: Mapping[str, str]
+    ) -> dict[str, Any]:
+        """Ajoute le verdict de vitalité à un résumé, sans toucher au reste."""
+        return {
+            **resume,
+            "vitalite": vitalite(
+                str(resume["statut"]),
+                battements.get(str(resume["run_id"])),
+                seuil_s=self._seuil_orphelin_s,
+            ),
+        }
+
+    async def _registre(self) -> Mapping[str, str]:
+        """Les battements connus — **jamais une levée** : un registre muet dit `{}`.
+
+        Un Redis injoignable ne doit pas faire échouer `GET /api/executions` : la
+        liste des runs est ce qu'on regarde *quand quelque chose ne va pas*.
+        Faute de battements, tous les runs non soldés ressortent `indetermine`,
+        ce qui est la vérité — on ne sait pas.
+        """
+        try:
+            return await self._battements.battements()
+        except Exception:
+            _LOGGER.exception(
+                "Lecture des battements impossible : les runs en cours sont rendus "
+                "« indetermine » (leur vitalité est inconnue, pas leur statut)."
+            )
+            return {}
 
     def en_vol(self, run_id: str) -> bool:
         """Le run est-il porté par ce service et encore en cours ?"""
@@ -359,6 +446,11 @@ class ServiceExecutions:
             sources=matiere,
             mode_brief=regime_brief,
         )
+        # Premier battement **avant** la tâche de fond, pour la même raison que
+        # l'événement de lancement l'a précédée : entre le moment où le run entre
+        # dans la projection et son premier tour d'horloge, il serait lu
+        # « indetermine » — c'est-à-dire indiscernable d'un run d'avant #348.
+        await self._battement(run_id)
         tache = asyncio.get_running_loop().create_task(
             self._derouler(
                 run_id,
@@ -372,7 +464,7 @@ class ServiceExecutions:
         )
         self._runs[run_id] = tache
         tache.add_done_callback(lambda _: self._runs.pop(run_id, None))
-        resume = self.resume(run_id)
+        resume = await self.resume_vivant(run_id)
         if resume is None:  # pragma: no cover - le lancement vient d'inscrire le run
             raise RuntimeError(f"run {run_id} absent de la projection après son lancement")
         return {**resume, "rapport": rapport.to_dict()}
@@ -395,7 +487,8 @@ class ServiceExecutions:
         if tache is not None and not tache.done():
             tache.cancel()
             await asyncio.wait({tache}, timeout=DELAI_ANNULATION_S)
-        return self.resume(run_id)
+        await self._oublier(run_id)
+        return await self.resume_vivant(run_id)
 
     async def fermer(self) -> None:
         """Arrête le service : runs en vol annulés, pont déposé, pompe éteinte.
@@ -403,12 +496,22 @@ class ServiceExecutions:
         Appelé à l'arrêt de l'app (lifespan), **avant** la fermeture du bus.
         Aucun run ne survit au process : c'est la contrepartie assumée de la
         tâche de fond (cf. docstring du module).
+
+        Le cœur s'éteint avec le service et **n'efface aucun battement** (#348) :
+        un run emporté par l'arrêt de l'API garde son dernier battement, qui
+        vieillit — c'est ainsi qu'il ressortira `orphelin` au lieu de rester
+        `en_cours` pour toujours, et c'est exactement la panne du 2026-08-14.
         """
         en_vol = {t for t in self._runs.values() if not t.done()}
         for tache in en_vol:
             tache.cancel()
         if en_vol:
             await asyncio.wait(en_vol, timeout=DELAI_ANNULATION_S)
+        if self._coeur is not None:
+            self._coeur.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._coeur
+            self._coeur = None
         if self._handler is not None:
             self._logger.removeHandler(self._handler)
             self._handler = None
@@ -467,8 +570,69 @@ class ServiceExecutions:
         self._boucle = asyncio.get_running_loop()
         self._file = asyncio.Queue()
         self._pompe = self._boucle.create_task(self._draine())
+        # Un **seul** cœur pour tous les runs du service, et non un par run : ce
+        # qu'il publie ne dépend que de la liste des runs en vol, et N tâches
+        # d'horloge pour une même information coûteraient N réveils par période.
+        self._coeur = self._boucle.create_task(self._battre())
         self._handler = JournalEventHandler(self._pousser)
         self._logger.addHandler(self._handler)
+
+    async def _battre(self) -> None:
+        """Le cœur du service : un battement par run en vol, à chaque période (#348).
+
+        « En vol » se juge sur **deux** choses, et la seconde n'est pas une
+        précaution de style : la tâche n'est pas finie, *et* le run n'a pas déjà
+        consigné son issue. Une issue est consignée **avant** que la tâche ne
+        s'éteigne (`annuler` le fait explicitement, `_derouler` en sortant), donc
+        s'en tenir à la tâche laisserait le cœur reposer un battement juste après
+        `_oublier` — et l'entrée d'un run soldé resterait alors pour toujours.
+
+        Un battement en échec (Redis injoignable) est tracé sans arrêter le cœur —
+        même parti pris que la pompe de publication : le run continue, seul son
+        signal de vie manque, et manquer un battement sur soixante ne change rien
+        au verdict.
+        """
+        while True:
+            await asyncio.sleep(self._periode_battement_s)
+            for run_id, tache in list(self._runs.items()):
+                if tache.done():
+                    continue
+                resume = self.resume(run_id)
+                if resume is not None and resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
+                    continue
+                await self._battement(run_id)
+
+    async def _battement(self, run_id: str) -> None:
+        """Pose le battement de `run_id` — **best-effort**, jamais une levée."""
+        try:
+            await self._battements.battre(run_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Battement du run %s impossible : le run continue, mais l'API "
+                "finira par le croire orphelin.",
+                run_id,
+            )
+
+    async def _oublier(self, run_id: str) -> None:
+        """Retire le battement d'un run **soldé** — best-effort, jamais une levée.
+
+        Seul effacement du dispositif, et il ne juge de rien : le run porte
+        désormais un statut terminal, donc sa vitalité n'est plus consultée. Ce
+        qui s'arrête sans statut terminal — API tuée, machine endormie — garde son
+        battement et vieillit vers `orphelin`.
+        """
+        try:
+            await self._battements.oublier(run_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Retrait du battement du run %s impossible : sans effet sur son "
+                "statut, déjà terminal.",
+                run_id,
+            )
 
     async def _derouler(
         self,
@@ -530,10 +694,12 @@ class ServiceExecutions:
             # run publié hors de l'API le montre aussi. La reconsigner ici est sans
             # effet sur l'état (idempotent) et pose la `fin` du run.
             self._consigne(run_id, EXECUTION_ANNULEE, "", str(refus))
+            await self._oublier(run_id)
             return
         except Exception as exc:
             _LOGGER.exception("Exécution %s interrompue par une erreur.", run_id)
             self._consigne(run_id, EXECUTION_ECHEC, "", f"{type(exc).__name__} : {exc}")
+            await self._oublier(run_id)
             return
         echouees = len(rapport.echouees) + len(rapport.bloquees)
         total = len(rapport.resultats)
@@ -543,6 +709,10 @@ class ServiceExecutions:
             "",
             f"{len(rapport.reussies)}/{total} tâche(s) réussie(s)",
         )
+        # Le battement s'efface **après** le statut terminal, jamais avant : entre
+        # les deux, un lecteur verrait un run encore `en_cours` sans battement,
+        # c'est-à-dire un orphelin qui n'en est pas un.
+        await self._oublier(run_id)
 
     def _consigne(
         self,
