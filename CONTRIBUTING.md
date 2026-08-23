@@ -151,14 +151,20 @@ git fetch origin main && git rebase origin/main
   la main hors de ce chemin n'est prévu nulle part.
 - **PR bloquée ?** `/mr-fix` la rend mergeable : il résout le conflit avec `origin/main` s'il y en
   a un, puis remet la CI au vert pour ce qui est corrigeable en local.
-- **Après le merge** : `/branch-cleanup` supprime la branche **locale**, revient sur `main` à jour
-  et passe le ticket « Terminé ». La branche **distante**, elle, est supprimée au merge. Le merge
-  **ferme** le ticket mais ne le passe pas « Terminé » tout seul — le cycle de vie est porté par le
-  champ **Status** du projet ([docs/10 §3.8](./docs/10-workflow-git.md)), que rien côté forge ne
-  met à jour : un ticket fraîchement mergé reste affiché « En revue » jusqu'à cette commande. C'est normal quelques
-  minutes, pas quelques jours.
+- **Quand le merge a-t-il lieu ?** À la clôture : `/ticket-ship` (et `/ticket-finish`) **attend le
+  pipeline** puis merge. Comptez quelques minutes — la commande ne rend plus la main dans la
+  seconde, et c'est le prix de la vérification. Si `merge-mr` refuse, la PR reste **ouverte** et le
+  ticket **« En revue »** : c'est un état normal, pas un échec, et le résumé dit la cause.
+- **Après le merge** : le plus souvent, **rien à faire**. Le `Closes` ferme le ticket, un workflow
+  GitHub le passe « Terminé » à l'événement ([docs/10 §9.2](./docs/10-workflow-git.md)), et la
+  branche **distante** part avec le merge. `/branch-cleanup` reste le geste à la demande pour la
+  branche **locale** et pour revenir sur `main` à jour — il est aussi joué d'office au prochain
+  `/ticket-start`.
 
-Pour éclairer une décision de merge : `/mr-review <pr>` (synthèse état + CI + threads + diff).
+**La revue se fait désormais APRÈS le merge** ([docs/10 §6](./docs/10-workflow-git.md)) : les PR
+n'attendent plus un relecteur pour entrer dans `main`. Ce qui disparaît est l'attente d'un humain
+pour *vérifier*, pas la vérification. Pour relire : `/mr-review <pr>` (synthèse état + CI + threads
++ diff) ; ce qu'on y trouve se corrige par un **ticket**, plus par un blocage de PR.
 
 ---
 
@@ -179,9 +185,11 @@ Pour éclairer une décision de merge : `/mr-review <pr>` (synthèse état + CI 
 - **Laisser la machine dérouler le backlog** : `bash scripts/orchestrate/run.sh` traite les tickets
   libres du milestone courant un par un — un worktree et une session Claude Code chacun, de
   `/ticket-start` à `/ticket-ship`, avec reprise automatique après la limite d'usage de 5 h. À
-  lancer dans un terminal à part (`--dry-run` d'abord pour voir le plan) ; il produit des **PR en
-  Draft à relire** ; il ne ferme ni ne force-push jamais, et ne merge **jamais hors de `merge-mr`**
-  ([docs/10 §11](./docs/10-workflow-git.md)). Un run coupé
+  lancer dans un terminal à part (`--dry-run` d'abord pour voir le plan). Il se solde **tout
+  mergé** : le pilote tient une file de merge qu'il vide au fil de l'eau, et une PR bloquée reçoit
+  jusqu'à deux sessions `/mr-fix` avant d'être nommée au bilan avec sa cause
+  ([docs/10 §11.11](./docs/10-workflow-git.md)). Il ne ferme ni ne force-push jamais, et ne merge
+  **jamais hors de `merge-mr`**. Un run coupé
   (console fermée, machine éteinte) se reprend par `--resume`, qui rejoue son plan sans rien
   recalculer — `/orchestrate` le propose de lui-même au lancement ([§11.8](./docs/10-workflow-git.md)).
 
@@ -191,7 +199,12 @@ Pour éclairer une décision de merge : `/mr-review <pr>` (synthèse état + CI 
 
 Ce qu'aucune commande — et personne — ne fait automatiquement :
 
-- **merger ou fermer une PR** ;
+- **fermer une PR** ;
+- **merger SANS VÉRIFIER.** ⚠ Cette ligne disait « merger ou fermer une PR » jusqu'au chantier
+  #413 : le merge, lui, est désormais automatique. Ce qui reste interdit est le merge **nu** —
+  tout passe par `bash scripts/gitlab/lib.sh merge-mr`, qui éprouve ses quatre prérequis avant
+  (PR ouverte non brouillon fermant le ticket, rien de non poussé, aucun conflit, pipeline vert sur
+  la tête de la PR) ;
 - **force-push** une branche déjà poussée (`--force`, `--force-with-lease`) ;
 - **supprimer une branche** dont la forge ne confirme pas la PR comme `merged` ;
 - **committer sur `main`** ;
@@ -201,7 +214,10 @@ Ce qu'aucune commande — et personne — ne fait automatiquement :
   temps sur le travail d'un collègue.
 
 Ces règles sont doublées par la couche permissions de [`.claude/settings.json`](./.claude/settings.json)
-(`deny` sur les force-push et `gh pr merge`/`close`) — un filet, pas un remplacement du jugement.
+(`deny` sur les force-push et `gh pr merge`/`close`) — un filet, pas un remplacement du jugement. Le
+`deny` sur `gh pr merge` n'a pas bougé avec le merge automatique, et ce n'est pas une contradiction :
+il juge le **texte de la commande** qu'une session lance, jamais ce qu'un script appelle en interne.
+Le geste nu reste donc impossible pendant que le geste vérifié passe.
 
 ---
 

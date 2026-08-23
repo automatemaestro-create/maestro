@@ -659,11 +659,17 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
 ## 5. Cycle de vie d'un ticket
 
 ```
-/ticket-create ──▶ À faire ──/ticket-start──▶ En cours ──/ticket-finish──▶ En revue ──(merge humain)──▶ Terminé
+/ticket-create ──▶ À faire ──/ticket-start──▶ En cours ──/ticket-finish──▶ En revue ──(merge-mr)──▶ Terminé
                       │                            │                             │
-                      └────────────────/ticket-abandon────────────────┘                    /branch-cleanup
-                                   (Abandonné / Doublon)
+                      └────────────────/ticket-abandon────────────────┘         (refus : la PR
+                                   (Abandonné / Doublon)                         reste ouverte ici)
 ```
+
+⚠ **La flèche du merge n'attend plus personne** (#418, §6) : `/ticket-finish` — donc aussi
+`/ticket-ship` — attend le pipeline puis appelle `merge-mr`, et le passage à « Terminé » est posé
+par le workflow `issues: closed` sur le `Closes` de la PR (§9.2), sans geste local. « En revue »
+n'est donc plus une salle d'attente mais un **état de passage**, où le ticket ne s'attarde que si
+`merge-mr` a refusé — et alors sa PR reste **ouverte**, avec sa cause.
 
 (les noms ci-dessus sont les **libellés** du cycle de vie, portés par le champ Status, §3.1)
 
@@ -828,8 +834,11 @@ la Control Tower (Phase 1) :
   par **cycle de vie** (§3.1), avec `agent::`/`prio::` et la mise en avant de ce qui **attend une
   revue / est prêt à merger**. S'appuie sur `lib.sh backlog` (requête canonique du backlog).
 - [`/mr-review`](../.claude/commands/mr-review.md) `<mr|branche>` — synthèse d'une PR (aptitude au
-  merge, pipeline, threads bloquants, résumé du diff) pour **éclairer la décision de merge humaine**.
-  Conforme au garde-fou §6 : elle **ne merge, ne ferme, ni n'approuve jamais**.
+  merge, pipeline, threads bloquants, résumé du diff) pour **éclairer un relecteur humain**. Depuis
+  #418 la revue est un geste d'**après-merge** (§6), donc la commande éclaire le plus souvent une PR
+  **déjà dans `main`** ; elle reste utile avant merge sur une PR qu'on reprend à la main. Conforme au
+  garde-fou §6 : elle **ne merge, ne ferme, ni n'approuve jamais** — le chemin de merge est
+  `lib.sh merge-mr`, et c'est le seul.
 
 **Remédiation d'une PR.** [`/mr-fix`](../.claude/commands/mr-fix.md) `[mr|branche]` — quand une PR
 n'est pas mergeable, pour l'une **ou l'autre** des deux raisons possibles. D'abord le **conflit avec
@@ -851,7 +860,57 @@ Détail des commandes : [`.claude/commands/`](../.claude/commands/).
 
 Cohérent avec le principe « autonomie sous supervision » du projet (voir [README](../README.md)) :
 
-- **Aucune commande n'effectue de merge ou de fermeture de PR automatiquement.** La revue et le merge restent une décision humaine.
+- **Aucun merge NON VÉRIFIÉ** (#417, chantier #413). C'est un **renversement assumé** du garde-fou
+  qui tenait cette place depuis l'origine — « aucune commande ne merge, le merge est une décision
+  humaine » —, et il porte sur un seul mot : ce qui disparaît n'est pas la vérification, c'est
+  **l'attente d'un humain pour la faire**. Les prérequis n'ont pas sauté, ils ont changé de gardien.
+
+  Ce gardien est **`bash scripts/gitlab/lib.sh merge-mr <iid|branche>`** (#415), **seul chemin de
+  merge du dépôt**. Il refuse de merger tant que les **quatre prérequis** ne sont pas réunis, et
+  rend **une cause par code** — c'est sur ce code que le pilote (§11) décide entre « repasser plus
+  tard », « faire réparer » et « laisser à un humain » :
+
+  | # | Prérequis | Ce qu'il empêche | Refus |
+  |---|---|---|---|
+  | 1 | une PR **ouverte**, **non brouillon**, qui **ferme le ticket** | un merge qui laisserait le ticket ouvert **et sans état** — plus personne ne le poserait, le workflow `issues: closed` (§9.2) n'ayant aucun événement à écouter | `6` — geste humain |
+  | 2 | rien de **non poussé** sur la branche | merger **moins que ce qui existe**, la seule perte que rien ne rattrape | `6` |
+  | 3 | **aucun conflit réel** avec `origin/main` — verdict `git merge-tree --write-tree`, jamais l'heuristique de `behind-main` ni le champ asynchrone de la forge (§8.3) | un merge qui casserait `main` | `5` → `/mr-fix` |
+  | 4 | un **pipeline vert**, et vert **sur la tête de la PR** | le merge au rouge, et le faux vert d'un **run périmé** (le cas nominal juste après un push : le run précédent est fini, le nouveau n'a pas démarré) | `4` rouge → `/mr-fix` · `3` pas encore rendu → repasser |
+
+  Le merge est un **squash**, et la branche distante part avec (`delete_branch_on_merge`, plus bas).
+  `--check` rend le même verdict **sans rien écrire**. Le PUT porte le `sha` vérifié, si bien qu'une
+  tête qui bouge entre le contrôle et le merge le fait **échouer** au lieu de passer en silence.
+
+  ⚠ **`gh pr merge` reste refusé** — par la couche permissions **et** par `guard.sh` (§11.6) — et ce
+  n'est pas une contradiction. Ces deux filets jugent le **texte de la commande qu'une session
+  lance**, jamais ce qu'un script appelle en interne : le geste **nu** demeure donc impossible
+  pendant que le geste **vérifié** passe. Lever le `deny` mettrait un merge au rouge à un `gh` près,
+  pour zéro gain — aucun appelant légitime n'a besoin de la commande nue, `merge-mr` passant par
+  l'API REST. ⚠ **L'auto-merge natif de GitHub n'est pas davantage une option** : `gh pr merge
+  --auto` ne tient ses promesses que derrière une protection de branche, qui n'existe pas sur ce
+  plan (§8.8) — activé tel quel, il mergerait **immédiatement**, pipeline rouge compris.
+
+  **Deux conséquences, à ne pas enterrer** — elles ne sont pas des effets de bord, ce sont les
+  décisions de cadrage du chantier (utilisateur, 2026-08-21) :
+
+  - ⚠ **La revue avant merge disparaît de fait, et devient un geste d'APRÈS-MERGE.** Les PR ne sont
+    plus ouvertes en Draft jusqu'à ce que quelqu'un les relise : elles entrent dans `main` dès
+    qu'elles sont vertes. Ce qui disparaît est l'attente d'un humain pour **vérifier**, pas la
+    vérification — qui vit tout entière dans le tableau ci-dessus. La file de revue de `/backlog` et
+    `/mr-review` gardent leur usage et perdent leur place dans le cycle : on relit ce qui est déjà
+    dans `main`, et un problème trouvé se corrige par un ticket, plus par un blocage de PR.
+  - ⚠ **Ceci renverse « pas d'attente pipeline à la clôture ».** `/ticket-finish` attend désormais le
+    verdict (~2-4 min, borné à 15 min par `pipeline-wait`) **avant** de merger, et `/ticket-ship`
+    avec lui : ces commandes ne rendent plus la main dans la seconde. L'ancienne règle disait qu'une
+    attente de pipeline en fin de ticket était du temps perdu — elle avait raison tant que le merge
+    venait plus tard et de quelqu'un d'autre. Elle est **fausse depuis #418**, et on l'écrit plutôt
+    que de laisser croire à un oubli.
+
+  Restent **interdits, nommément** : merger **hors de ce chemin**, **fermer une PR**
+  (`gh pr close`), **force-pusher**, et **rebaser** une branche poussée — un rebase appellerait un
+  force-push. Un refus de `merge-mr` laisse la PR **ouverte** et le ticket **« En revue »** : c'est
+  un état normal, pas un échec, et le résumé rend le merge **ou sa cause de refus**, jamais un ✅
+  global.
 - **Aucun force-push** sur une branche déjà poussée.
 - **Aucun rebase automatique.** Le retard d'une branche sur `origin/main` est *signalé*, jamais
   rattrapé d'office : `bash scripts/gitlab/lib.sh behind-main [branche]` imprime le nombre de
@@ -932,10 +991,15 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   pas « d'où vient la branche » mais « aucune ne part sans que la forge la confirme **ou** qu'un tag
   la garde joignable ». Reste une dérive qui n'est pas d'hygiène de branches, laissée hors
   périmètre : l'issue **#353 est encore ouverte** alors que son livrable est sur `main`.
-- **La revue est *best-effort*, pas bloquante.** À plusieurs, personne ne sait spontanément ce qui
-  attend qui : le projet garde donc `approvals_before_merge=0` (une approbation obligatoire
-  recréerait une dépendance entre personnes, et le merge resterait de toute façon humain) et joue
-  sur la **visibilité** — arbitrage du chantier #155.
+- **La revue est *best-effort*, pas bloquante — et depuis #413 elle est d'APRÈS-MERGE.** À
+  plusieurs, personne ne sait spontanément ce qui attend qui : le projet garde donc
+  `approvals_before_merge=0` et joue sur la **visibilité** — arbitrage du chantier #155. L'argument
+  d'origine (« une approbation obligatoire recréerait une dépendance entre personnes ») tient
+  toujours ; celui qui l'accompagnait — « et le merge resterait de toute façon humain » — est
+  **faux depuis #418** : une approbation obligatoire ne ralentirait plus un humain, elle
+  **bloquerait le merge automatique**, ce qui en fait un choix plus lourd qu'avant et non plus
+  léger. Ce qu'exige le merge vit dans `merge-mr` (premier point de cette section), pas dans une
+  approbation.
   - **Aucun relecteur n'est posé automatiquement** (#196). `/ticket-finish` l'a fait un temps
     (#161) ; ce n'est plus le cas : désigner un relecteur attribue une PR à quelqu'un qui ne l'a
     pas demandé, alors que la file de revue donne déjà le signal « cette PR attend quelqu'un ». La
@@ -955,12 +1019,14 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     la relecture), l'état `draft`/`ready`, le statut du pipeline, l'auteur et le relecteur s'il en
     a été posé un à la main (colonne à « - » sinon, cas désormais normal). C'est **elle seule** qui
     porte le signal de revue.
-- **Une PR au pipeline rouge n'est pas mergeable.** Le réglage projet
-  `only_allow_merge_if_pipeline_succeeds=true` (complété par `allow_merge_on_skipped_pipeline=false`)
-  fait appliquer par **GitLab lui-même** la règle « pipeline vert avant merge » (§8) : le bouton de
-  merge reste grisé tant que le pipeline échoue ou est sauté. Provisionné par
-  [`bootstrap.sh`](../scripts/gitlab/bootstrap.sh) (PUT idempotent), surveillé par
-  [`doctor.sh`](../scripts/gitlab/doctor.sh) (dérive signalée si le réglage retombe).
+- **Une PR au pipeline rouge n'est pas mergeable — et c'est NOUS qui le tenons, pas la forge.** Du
+  temps de GitLab, le réglage projet `only_allow_merge_if_pipeline_succeeds=true` (complété par
+  `allow_merge_on_skipped_pipeline=false`) faisait appliquer la règle par **GitLab lui-même** : le
+  bouton de merge restait grisé. **Ce réglage n'a pas d'équivalent joué côté GitHub** — son pendant
+  est la protection de branche, indisponible sur un dépôt privé d'un compte Free (§8.8, mesuré le
+  2026-08-14). La règle n'a pas changé, son gardien si : c'est le **quatrième prérequis de
+  `merge-mr`** (premier point de cette section), qui compare en plus le sha du run à la **tête de la
+  PR** — ce que la protection de branche, elle, n'aurait pas fait.
 
 **Adossement à la couche permissions (Claude Code).** Ces garde-fous ne reposent pas que sur les
 consignes des commandes : ils sont aussi **filtrés par l'allowlist** [`.claude/settings.json`](../.claude/settings.json)
@@ -971,7 +1037,9 @@ interdisent (**force-push** `git push --force`/`-f`/`--force-with-lease`, **`gh 
 les actions sensibles hors chemin nominal (`git commit --no-verify`, `git reset --hard`,
 `git clean`, `gh issue close`). C'est un **filet de sécurité complémentaire** au jugement de l'agent, pas un
 remplacement : le matching est par préfixe (une variante d'ordre de drapeaux peut y échapper), donc
-la consigne « jamais de force-push / merge / close auto » reste la règle première.
+la consigne reste la règle première — « jamais de force-push, jamais de fermeture de PR, et **aucun
+merge non vérifié** ». Le `deny` sur `gh pr merge` n'a pas bougé avec #413 et n'a pas à bouger : il
+barre le geste **nu**, que plus personne n'a de raison de lancer.
 
 ---
 
@@ -1281,9 +1349,10 @@ verdict réellement lu, celui qui conditionne le merge. Trois conséquences prat
 - **La case « Pipeline CI verte » de la PR est vide au premier passage**, et c'est normal :
   `/ticket-finish` pousse **puis** ouvre la PR, donc le pipeline naît *après* le constat (§6).
 
-Le garde-fou de merge, lui, n'est **pas posé** aujourd'hui, et c'est une décision documentée :
+Le garde-fou de merge **de la forge** n'est, lui, **pas posé**, et c'est une décision documentée :
 la protection de branche n'existe pas sur un dépôt privé d'un compte Free (§8.8). Les six verdicts
-se lisent sur la PR, et le merge reste une décision humaine (§6).
+se lisent sur la PR — et la règle « pas de merge au rouge » est tenue **par nous**, dans
+`lib.sh merge-mr`, quatrième prérequis (§6).
 
 ### 8.1 Aucun runner à tenir allumé (#344)
 
@@ -1338,7 +1407,10 @@ qui existaient déjà — ni l'une ni l'autre ne pouvait porter cette décision 
 La résolution est un **`git merge origin/main`, jamais un rebase** : réécrire une branche déjà
 poussée appellerait un force-push, barré en `deny` (§6). Et une résolution qui n'est pas claire
 **ne se pousse pas** — `git merge --abort`, branche intacte, constat rendu : mieux vaut un conflit
-signalé qu'une résolution fausse sous une PR en Draft que personne ne relira ligne à ligne.
+signalé qu'une résolution fausse mergée sans que personne ne l'ait relue ligne à ligne. ⚠ Cet
+argument **s'est renforcé** avec #413 : il valait déjà sous une PR en Draft que personne ne relisait
+en pratique ; depuis que le merge n'attend plus personne, la relecture ne peut plus arriver *par
+hasard* avant `main`. Une PR qui attend coûte infiniment moins qu'une résolution fausse mergée.
 
 **2. Le pipeline** — diagnostic des jobs en échec, correctif local quand c'est corrigeable, commit
 `Refs #<iid>` poussé sur la branche, suivi du nouveau pipeline. Les briques réutilisables vivent
@@ -1352,8 +1424,27 @@ passe par le venv du repo, analyse un miroir LF pour shellcheck (la CI checkout 
 Windows CRLF produit des faux SC1017) et cadre `pytest` sur le périmètre du diff (§8.4) — la suite
 entière, ~10 min, se payerait ici en plein diagnostic.
 
-**Le résumé rend les deux blocages séparément**, jamais un verdict global : une PR au pipeline vert
-mais en conflit reste non mergeable.
+**3. Le merge** — depuis #418, `/mr-fix` **merge ce qu'il vient de débloquer**, par
+`bash scripts/gitlab/lib.sh merge-mr` et **jamais** `gh pr merge` (§6). Débloquer sans merger
+laisserait la PR exactement là où on l'a trouvée, à attendre quelqu'un : c'est le geste que le
+chantier #413 supprime. Il ne touche à **rien d'autre** du cycle de vie — ni champ Status, ni
+création de PR, ni `gh pr ready` : lever un brouillon ferait déclarer terminé, par une commande de
+remédiation, un travail qu'elle n'a pas fait (#415).
+
+Et il ne merge **rien** quand il a dû abandonner — branche `main`, conflit non résolu, échec
+d'infrastructure, deux tentatives épuisées : ces cas sortent de la commande **sans passer par le
+merge**. Le résumé le dit alors d'un autre mot, et la nuance est le contenu du bilan : **« non
+tenté »** est la conséquence d'un abandon de la remédiation, **« refusé »** est un verdict de
+`merge-mr` sur la PR. Les confondre ferait chercher un problème de PR là où il y a une remédiation
+inachevée.
+
+⚠ **Dans un run autonome, `/mr-fix` ne merge pas** : le merge appartient au **pilote** (§11), qui
+sérialise les merges et attend les pipelines hors du quota des sessions. `guard.sh` y refuse en dur
+`lib.sh merge-mr` **et** `lib.sh pipeline-wait`, et le message le dit — une session de déblocage
+s'arrête à la PR **rendue mergeable**, ce qui est le verdict complet que le run attend d'elle.
+
+**Le résumé rend les blocages séparément**, jamais un verdict global : une PR au pipeline vert
+mais en conflit reste non mergeable, et une PR débloquée n'est pas une PR mergée.
 
 ⚠ **`git merge-tree` rend `128`** — pas `1` — quand le merge est impossible à évaluer (histoires
 sans ancêtre commun). Le confondre avec le `1` d'un conflit enverrait la commande résoudre un merge
@@ -1969,7 +2060,10 @@ déclenchant jusque-là un run à chaque push pour un verdict que personne ne li
 `workflow_dispatch` est conservé : c'est le seul moyen de rejouer la CI hors PR. Aucun filtre
 `branches:` — une PR est par définition un candidat au merge —, et les `types:` par défaut couvrent
 le cycle de vie d'une PR Maestro, **Draft compris** : une PR en brouillon déclenche bien le
-workflow, ce qui tombe bien puisque `/ticket-finish` ouvre toujours en Draft (§6).
+workflow. C'était indispensable tant que `/ticket-finish` ouvrait en Draft et n'en sortait pas ;
+depuis #418 la commande passe la PR en **prête** avant de merger (§6), mais le Draft reste sur le
+chemin — la PR est ouverte en brouillon puis levée, et sans les `types:` par défaut le pipeline ne
+naîtrait qu'à la levée, donc trop tard pour être attendu.
 
 **La protection de `main` : écartée, et c'est une décision.** Le pendant de
 `only_allow_merge_if_pipeline_succeeds` (§8.1) **n'est pas en place**, parce qu'il n'est pas
@@ -1981,15 +2075,30 @@ plan Free, tandis que #335 a arbitré le dépôt **privé**. Les deux issues pos
 présentées et **toutes deux refusées** (utilisateur, 2026-08-14) : GitHub Pro (~4 $/mois) et le
 passage en public (qui aurait renversé l'arbitrage de visibilité de #335).
 
-> ⚠ **Aucun garde-fou technique n'empêche donc de merger une PR au rouge sur le dépôt GitHub.** Ce
-> n'est pas un oubli ni un blocage à lever : c'est le régime choisi.
+> ⚠ **Aucun garde-fou de la FORGE n'empêche de merger une PR au rouge sur ce dépôt.** Ce n'est pas
+> un oubli ni un blocage à lever : c'est le régime choisi.
 
-Ce que cela laisse, et qui n'est pas rien : les six verdicts sont **rapportés sur la PR** et se
-lisent avant de cliquer. La CI rejoint ainsi le régime que ce dépôt applique déjà à la **revue**
+⚠ **Mais il y en a un, et c'est le nôtre** (#415/#417, chantier #413). Ce paragraphe a dit « aucun
+garde-fou technique » jusqu'à ce chantier, et c'est devenu faux : ce que la protection de branche
+aurait tenu — « pas de merge tant que les checks ne sont pas verts » — est désormais tenu par
+**`lib.sh merge-mr`**, qui refuse un pipeline rouge (code `4`) et va plus loin que la protection en
+exigeant un vert porté par la **tête de la PR** et non par un run antérieur (§6). La correction
+compte parce qu'elle a une conséquence pratique : `protect-main.sh` n'est plus le seul recours si un
+merge au rouge se produit, et l'arbitrage des 4 $/mois se pose autrement.
+
+⚠ **Et parce que ce garde-fou n'est PAS dans la forge, il ne protège que ce qui passe par lui.** Une
+protection de branche est opposable à tout le monde — un clic dans l'interface web, un `gh pr merge`
+lancé à la main, une intégration tierce. `merge-mr` ne l'est qu'aux chemins du dépôt : c'est
+pourquoi `gh pr merge` reste en `deny` côté permissions **et** dans `guard.sh` (§6), et pourquoi la
+question du plan payant n'est pas close par ce chantier — elle est seulement moins urgente. La
+différence entre les deux régimes ne s'annule pas, elle se déplace : de « rien ne tient la règle » à
+« la règle est tenue **pour les sessions**, jamais pour un humain pressé devant l'interface web ».
+
+Ce que le régime laisse par ailleurs, et qui n'est pas rien : les six verdicts sont **rapportés sur
+la PR** et restent lisibles. La CI rejoint ainsi le régime que ce dépôt applique à la **revue**
 (§6) — aucune approbation obligatoire, aucun relecteur posé d'office, c'est la **visibilité** qui
-déclenche le geste et la décision reste humaine. La règle « on ne merge pas au rouge » ne change
-pas ; ce qui change est qu'elle n'est plus tenue par la forge. À reconsidérer si un merge au rouge
-se produit réellement : ce serait la mesure qui manque aujourd'hui pour arbitrer les 4 $/mois.
+déclenche le geste. La règle « on ne merge pas au rouge » n'a jamais changé ; ce qui a changé deux
+fois, c'est son gardien : la forge, puis personne, puis nous.
 
 **Le réglage reste écrit et rejouable**, dans
 [`scripts/github/protect-main.sh`](../scripts/github/protect-main.sh) — **source unique**, au même
@@ -3025,7 +3134,10 @@ décision reste humaine. `behind-main` et `close-guard` rendent un **code de ret
 fatal** (`… || verdict=$?`) ; la revue n'exige **aucune approbation** — c'est la visibilité qui la
 déclenche ; et **aucun relecteur n'est désigné d'office** (#196), la pose restant un geste humain
 outillé par `set-reviewer`. Les seuls refus durs restent ceux des garde-fous de
-§6 : pas de merge automatique, pas de force-push, pas de suppression de branche non mergée.
+§6 : **aucun merge non vérifié**, pas de force-push, pas de suppression de branche non mergée. ⚠ Ce
+premier refus disait « pas de merge automatique » jusqu'au chantier #413 : le merge **est** devenu
+automatique, ce qui ne l'a pas rendu moins gardé — les quatre prérequis de `merge-mr` sont, eux,
+bloquants au sens plein, seuls de tout ce tableau.
 
 **Deux personnes, une machine chacune : le parcours.**
 
@@ -3036,9 +3148,14 @@ outillé par `set-reviewer`. Les seuls refus durs restent ceux des garde-fous de
 3. `/ticket-start <iid>` — s'arrête si le ticket est déjà pris ; sinon branche, statut, dates.
 4. `bash scripts/ci/local.sh` avant de pousser (§8).
 5. `/ticket-ship` — retard sur `origin/main` signalé, garde-fou de clôture, PR (sans relecteur
-   désigné : c'est la file de revue qui appelle un relecteur, §6).
-6. La PR apparaît en tête de `/backlog` chez tout le monde jusqu'à son merge — **décision humaine**
-   (§6).
+   désigné : c'est la file de revue qui appelle un relecteur, §6), **puis attente du pipeline et
+   merge** par `lib.sh merge-mr` (§6). Compter quelques minutes : la commande ne rend plus la main
+   dans la seconde.
+6. Le plus souvent il n'y a **rien à faire ensuite** — la PR est mergée, le ticket fermé par son
+   `Closes` et passé « Terminé » par le workflow `issues: closed` (§9.2). Si `merge-mr` a refusé, la
+   PR reste **ouverte** et le ticket **« En revue »** : elle apparaît alors en tête de `/backlog`
+   chez tout le monde, avec sa cause, et se débloque par `/mr-fix` (§8.3). La **revue**, elle, est
+   devenue un geste d'après-merge (§6).
 
 > **Tests.** Ces comportements sont couverts par [`tests/test_collaboration.py`](../tests/test_collaboration.py)
 > (helpers `lib.sh` + contrôle runner de `doctor.sh`), [`tests/test_env_pull.py`](../tests/test_env_pull.py)
@@ -3056,6 +3173,10 @@ lots entièrement décrits, c'est du travail séquentiel qui n'attend qu'un pilo
 d'orchestration (`scripts/orchestrate/`, parent #167) le déroule **sans supervision** : un ticket =
 **un worktree** = **une session Claude Code**, de `/ticket-start` à `/ticket-ship`, avec **reprise
 automatique** quand la limite d'usage de 5 h tombe au milieu.
+
+Depuis #419 il va jusqu'au bout : un run se solde **tout mergé** — PR fermées, `main` avancée,
+conflits résolus au passage — au lieu de laisser N PR ouvertes à reprendre après coup. Le pilote
+tient pour cela une **file de merge**, drainée au fil de l'eau puis en fin de run (§11.11).
 
 ```bash
 bash scripts/orchestrate/queue.sh --check   # l'ordre de traitement, et ce qui a été écarté
@@ -3666,12 +3787,22 @@ Deux couches, parce qu'une seule tomberait :
   `git reset --hard`, `git commit --no-verify` et **tout commit sur `main`**.
   `guard.sh --check` vérifie que la copie des `deny` n'a pas dérivé du dépôt **et** que le hook
   refuse bien chacune d'elles — sans quoi la seconde couche donnerait une fausse sécurité.
+- **Deux refus de plus, et ils ne visent pas `gh`** (#419/#420) : `lib.sh merge-mr` et
+  `lib.sh pipeline-wait` sont barrés **dans une session de run**. Ce n'est pas une contradiction
+  avec §6 — c'est exactement le chemin que #417 a rendu légitime *ailleurs* : dans un run, le merge
+  appartient au **pilote** (§11.11), qui sérialise les merges et attend les pipelines **hors du
+  quota des sessions**. Le message de refus le dit, parce qu'un refus est lu par un modèle : lui
+  laisser croire que le merge est interdit l'enverrait chercher un contournement, alors qu'il n'a
+  simplement plus rien à faire.
 
-**Ce qu'un run ne fait jamais** : merger, fermer une PR, force-pusher, fermer un parent de suivi, ou
+**Ce qu'un run ne fait jamais** : fermer une PR, force-pusher, fermer un parent de suivi, ou
 retirer le worktree d'un ticket qu'il vient de traiter — la branche y vit jusqu'au merge. Le
-ramassage de son **démarrage** (§9.2) ne touche que les worktrees dont GitLab confirme le travail
-soldé, donc jamais ceux du run en cours. Un run produit **N Pull Requests en Draft à relire** : le
-merge reste une décision humaine (§6), et la file de revue les remonte (§10).
+ramassage de son **démarrage** (§9.2) ne touche que les worktrees dont la forge confirme le travail
+soldé, donc jamais ceux du run en cours.
+
+⚠ **« Merger » a quitté cette liste** (#419). Jusqu'à ce chantier, un run produisait **N PR en Draft
+à relire** et s'arrêtait là ; il **merge désormais lui-même**, mais jamais hors de `merge-mr` et
+jamais depuis une session — voir §11.11.
 
 ### 11.7 Après un run : instruire les refus de permission
 
@@ -3907,9 +4038,11 @@ retenu, et c'est bien la mesure qui permet de le dire plutôt que de le supposer
   instructions que la boucle suivante exécutera. De ce point de vue `.claude/skills/**` n'est pas
   moins sensible que `settings*.json`, que le ticket excluait pourtant d'emblée : un skill est du
   prompt, et `/ticket-ship` en est un ;
-- **le confinement invoqué ne couvre pas le bon moment.** Worktree dédié, PR en Draft, merge humain
-  valent pour ce qui est *relu* ; rien ne garantit qu'un skill réécrit dans le worktree ne soit pas
-  relu par la session qui vient de l'écrire, avant qu'aucun humain n'ait vu le diff.
+- **le confinement invoqué ne couvre pas le bon moment.** Worktree dédié, PR ouverte à relire, merge
+  différé valent pour ce qui est *relu* ; rien ne garantit qu'un skill réécrit dans le worktree ne
+  soit pas relu par la session qui vient de l'écrire, avant qu'aucun humain n'ait vu le diff. ⚠ Cet
+  argument s'est **renforcé** avec #413 : le merge n'attend plus personne, donc le dernier moment où
+  un humain aurait pu voir le diff avant `main` a disparu du chemin nominal.
 
 Ce qui reste à faire est donc inchangé — rendre le contenu dans la PR (#188). Ce qui pourrait encore
 être gagné est **en amont** : ne pas envoyer un tel ticket dans un run, ce que `queue.sh` ne détecte
@@ -4205,3 +4338,132 @@ remonter est ce que la précédente a écrit* (une rangée d'écart et le bloc s
 cinq fois par seconde), la ligne d'action de chaque ticket en vol, le compteur du pied ; et la
 **reprise** — tous les tickets en vol repris, le « En cours » d'une session voisine toujours sauté, la
 concurrence du run coupé rejouée sauf choix explicite.
+
+
+### 11.11 La file de merge du run — au fil de l'eau, puis le drain final (chantier #413)
+
+Un run **merge ce qu'il livre**. Jusqu'à #419 il s'arrêtait à N Pull Requests ouvertes, à reprendre
+plus tard une par une ; il tient désormais une **file de merge** et la vide au fur et à mesure. Ce
+qui disparaît n'est pas la vérification — elle vit tout entière dans `lib.sh merge-mr` (§6) — mais
+l'attente d'un humain pour la faire.
+
+**Le pilote merge, jamais une session.** C'est le partage qui gouverne tout le reste, et le même
+qu'à #289 : le pilote garde ce qui dure (le plan, l'éligibilité, `resume.tsv`), les sessions ne font
+que travailler. Trois raisons, dont une seule suffirait :
+
+- **le quota.** Attendre un pipeline coûte 2 à 4 minutes de session pour ne rien faire — et une
+  session, c'est du quota. Le pilote, lui, attend hors quota ;
+- **la sérialisation.** À N tickets en vol, N sessions qui mergent en parallèle **périment
+  mutuellement leur verdict de conflit** : chacune a mesuré son `origin/main` avant les autres ;
+- **l'ordre.** Choisir *quelle* PR merger d'abord demande de voir toutes les PR à la fois, ce qu'une
+  session ne voit pas.
+
+D'où les deux refus de `guard.sh` propres au run (§11.6) : une session de ticket s'arrête à la PR
+ouverte + « En revue », une session de déblocage à la PR **rendue mergeable**.
+
+**Pourquoi au fil de l'eau plutôt qu'en salve.** C'est le renversement du constat de #299 : à la fin
+d'un run, les PR ne sont pas en conflit avec `main` (toutes les branches partent du même
+`origin/main`) mais **entre elles** — un conflit sans côté à résoudre… *tant que rien n'est mergé*.
+C'est le premier merge qui donne un côté au suivant. Merger tôt fait donc deux choses à la fois : un
+ticket lancé plus tard part d'un `origin/main` qui contient déjà les précédents (donc le conflit
+n'existe jamais), et ceux qui restent deviennent résolubles pendant le run plutôt qu'après.
+
+**Deux drains, parce qu'il y a deux moments.**
+
+| | Pendant le run | En fin de run |
+|---|---|---|
+| Déclenchement | dans la boucle d'attente, une passe toutes les `MAESTRO_ORCHESTRATE_MERGE_INTERVALLE` s (60) | le plan épuisé, plus aucun ticket en vol |
+| Attente de pipeline | **non** — le pilote doit continuer à moissonner et à tenir l'écran | **oui** (`pipeline-wait`), sauf si l'arrêt a été demandé |
+| Ordre | celui d'entrée | `lib.sh merge-order` (voir plus bas), **recalculé après chaque merge** |
+| Bornes | — | plafond global `MAESTRO_ORCHESTRATE_MERGE_PLAFOND` (3600 s) |
+
+⚠ **Une passe s'arrête au PREMIER merge réussi**, et ce n'est pas une économie : un merge déplace
+`origin/main` et **périme le verdict de conflit de toutes les autres PR**. Les juger dans la même
+passe reviendrait à les juger sur une mesure d'avant. Elles sont donc rejugées à la passe suivante,
+et jamais autrement.
+
+**L'ordre du drain final : `bash scripts/gitlab/lib.sh merge-order [<branche>…]`** (#416), repris du
+cadrage de #299 — le ticket a été abandonné, son analyse ne l'est pas. Il construit le graphe des
+conflits **entre PR** (une arête par paire qui ne se merge pas proprement, mesurée par
+`git merge-tree --write-tree`, en lecture seule) et rend les branches par **degré croissant** : une
+PR sans voisine d'abord, une PR carrefour en dernier. Le modèle de coût qui le justifie tient en une
+phrase — une PR ne paie **qu'une** résolution quel que soit le nombre de voisines mergées avant elle
+(un seul `git merge origin/main` les absorbe toutes) —, donc le coût d'un ordre est le nombre de PR
+ayant au moins une voisine mergée avant elles. Une PR carrefour mergée en premier force **chacune**
+de ses voisines à payer ; mergée en dernier, elle ne paie qu'une fois. Sur la mesure du 2026-08-07
+(6 PR, 5 arêtes, un carrefour) : **2 résolutions par degré croissant contre 4** en commençant par le
+carrefour. ⚠ C'est une **heuristique et non un optimum** — l'ordre optimal est un ensemble
+indépendant maximum, NP-difficile — et il ne faut ni le promettre ni le chercher : à l'échelle d'une
+dizaine de PR l'écart est au plus d'une résolution, et le tri par degré se relit. Il n'est appelé
+qu'au drain **final** : recalculer un graphe en n(n-1)/2 `merge-tree` à chaque passe coûterait plus
+que ce qu'il ferait gagner.
+
+**Ce que le code de `merge-mr` décide**, et lui seul — le drain ne fait que lire ce code (§6) :
+
+| Code | État en file | Suite |
+|---|---|---|
+| `0` | `mergee` | le ticket se ferme par son `Closes`, le workflow `issues: closed` pose « Terminé » (§9.2) |
+| `3` | `attente` | verdict pas encore rendu (en cours, absent, ou **périmé**) — la seule réponse qui laisse en file |
+| `4` / `5` | `bloquee` | pipeline rouge / conflit — **réparables**, d'où une session de déblocage |
+| autre | `bloquee` | geste humain : rien ne le tente, la PR est nommée au bilan avec sa cause |
+
+Un `4` ou un `5` **sort de la file** : ni un pipeline rouge ni un conflit ne se défont tout seuls, et
+y repasser à chaque passe coûterait des appels pour reconfirmer ce qu'on sait déjà. Une PR débloquée
+y **revient** (`attente`), et c'est le seul chemin de retour.
+
+**Débloquer pendant le run : une sous-session `/mr-fix`, deux au plus** (#420). Une PR `bloquee` et
+réparable reçoit une **session Claude**, montée exactement comme un ticket — même worktree, même
+reprise après limite d'usage, même régime — parce que réimplémenter une seconde façon de faire
+tourner une session la ferait diverger de la première au premier réglage ajouté. Quatre points :
+
+- **le plafond est de 2** (`MAESTRO_ORCHESTRATE_MRFIX_MAX`), et il est là pour une PR que *rien* ne
+  peut réparer : sans lui, un secret manquant consommerait des sessions jusqu'à la fin du run, sur
+  le quota du travail restant. Les sessions successives portent leur rang dans le journal
+  (`<iid>-mrfix`, `<iid>-mrfix2`), sans quoi la seconde écraserait ce qu'on ira lire pour comprendre
+  pourquoi la première n'a pas suffi ;
+- **le verdict de la session n'est pas lu** — ni sa prose, ni son code de sortie. La PR retourne en
+  `attente` quoi qu'elle ait fait, et c'est `merge-mr` qui tranche au passage suivant. Même règle
+  que pour un ticket (§11.3, « le verdict vient de la forge, pas de la prose de la session ») : la
+  seule chose qu'une session sache dire est ce qu'elle a *tenté*.
+  Une session qui a échoué coûte donc un appel de plus ; le plafond borne ce que cette générosité
+  peut coûter ;
+- **elle prend un créneau**, comme un ticket : mêmes refus au lancement (arrêt demandé, attente
+  d'une limite d'usage en cours, concurrence pleine) ;
+- **au drain final elle est le dernier recours** : on ne l'ouvre que si *aucune* PR n'a bougé — une
+  PR qui se merge telle quelle ne vaut pas une session.
+
+`--sans-merge` rend le run d'avant le chantier (PR laissées ouvertes) ; `--sans-mrfix` garde le merge
+et retire le déblocage. Le régime effectif est **annoncé dans la ligne `plan :`** : « aucune PR
+mergée » et « aucune PR mergeable » ne doivent pas se confondre.
+
+**Le journal.** `merge.tsv` porte la file en entier — `iid`, `pr`, `branche`, `etat`, `code`,
+`essais`, `cause`, puis `mrfix` et `cout` — réécrit à chaque changement plutôt qu'ajouté en fin de
+fichier : une ligne **change** d'état, et un journal en append demanderait de savoir laquelle fait
+foi. Les deux colonnes du déblocage viennent **après** `cause`, le seul champ de texte libre : un
+lecteur d'avant #420 lit ses sept champs et ignore la suite. `merge.log` garde la sortie brute de
+chaque appel. `status.sh` en rend une section (§11.5) — sans elle, un run occupé à drainer
+ressemblerait à une panne : tout le plan traité, plus rien en vol, et pourtant le pilote tourne.
+
+⚠ **Le coût des sessions de déblocage vit dans `merge.tsv`, pas dans `resume.tsv`.** Ce dernier a une
+ligne **par ticket**, et tout ce qui le lit en dépend — le bilan de `status.sh`, la vue, et
+`reprend_en_vol`, qui déduit d'une ligne absente qu'un ticket était en vol à la coupure. Une ligne de
+plus au nom d'un ticket y ferait compter un traité de plus, et mentirait sur ce que la coupure a
+interrompu.
+
+**La reprise relit la file** (§11.8) : ce qui était mergé le reste, le reste revient en file. Sans ce
+rechargement, les tickets livrés par le run coupé sortiraient du run par la porte de derrière — ils
+sont « En revue », donc sautés au moment de les prendre, donc jamais inscrits.
+
+**STOP arrête de lancer, pas de merger.** Un merge en cours va à son terme, et le drain final se joue
+alors **sans attendre de pipeline** : qui demande l'arrêt n'attend pas un quart d'heure par PR. Ce
+qui est déjà vert part quand même, le reste est nommé au bilan. Même règle pour le plafond du drain,
+relu **entre** deux passes : il n'interrompt ni un merge ni une session de déblocage en cours —
+couper une résolution de conflit au milieu n'économiserait que du temps de mur.
+
+> **Tests.** [`tests/test_merge_automatique.py`](../tests/test_merge_automatique.py) garde les
+> verbes (les quatre prérequis un par un, les quatre codes de `pipeline-wait`, l'ordre de
+> `merge-order` sur le graphe de #299, le `deny` et son message) ;
+> [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) garde le pilote — l'entrée en file, le
+> merge qui aboutit, la **sérialisation** (mesurée par une barrière et des relevés par écrivain,
+> jamais par un `sleep` ni un compteur partagé — #292, puis #313), la seconde PR rejugée après le
+> premier merge, le plafond de deux déblocages, et la reprise qui ne rejoue pas un merge fait.

@@ -78,12 +78,18 @@ n'ouvrir qu'en cas de doute.
 
 5. Termine par une **synthèse chiffrée** : nombre de tickets par état, **combien sont libres**
    (« À faire » sans assigné), la répartition des « En cours » par personne, ainsi que le nombre de
-   **PR en attente de revue** et l'ancienneté de la plus vieille, plus un rappel des actions
-   suggérées (ex. « 2 PR à relire, la plus ancienne depuis 4 j », « 3 tickets libres à prendre »).
+   **PR encore ouvertes** et l'ancienneté de la plus vieille, plus un rappel des actions suggérées
+   (ex. « 3 tickets libres à prendre »).
    N'invente pas de chiffres : ne compte que ce que la table contient. Rappelle qu'**aucun merge
    non vérifié** n'a lieu — un merge passe par `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui
-   éprouve ses prérequis — et propose `/mr-review <numéro>` pour inspecter une PR précise avant
-   de merger.
+   éprouve ses prérequis — et propose `/mr-review <numéro>` pour inspecter une PR précise.
+
+   ⚠ **Une PR ouverte n'est plus une PR « en attente de revue »** (#418, docs/10 §6). La clôture
+   merge : une PR verte et sans conflit ne s'attarde pas dans cette file. Ce qui s'y trouve est donc
+   ce que `merge-mr` a **refusé de merger** — l'action suggérée est `/mr-fix <pr>`, pas une
+   relecture. Formule-le ainsi (« 2 PR bloquées, la plus ancienne depuis 4 j ») plutôt qu'en
+   « à relire » : envoyer quelqu'un relire une PR qu'un conflit bloque lui fait perdre son temps sur
+   un diff qui va changer.
 
 Ne lance aucune commande d'écriture (`gh issue edit`, `gh pr merge`, `set-workflow`, `git push`…) :
 cette commande observe, elle n'agit pas.
