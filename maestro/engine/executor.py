@@ -37,7 +37,7 @@ from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.orchestrator.schema import Task
 from maestro.projets.modele import Projet
 from maestro.projets.store import ProjetStore
-from maestro.providers.base import ModelProvider, UnsupportedCapability
+from maestro.providers.base import ModelProvider, UnsupportedCapability, stderr_de
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
 from maestro.sandbox import ProducedFile
@@ -586,6 +586,15 @@ class LocalExecutor(TaskExecutor):
         de tours, capacité absente) sort immédiatement — jamais relancé. Sous
         time-out (#64), l'échéance ferme borne la boucle entière, relances et
         attentes comprises : à l'échéance, aucune nouvelle tentative.
+
+        Depuis #346, un échec dit **pourquoi** : le fournisseur accroche à son
+        exception ce que le CLI a écrit sur stderr (`stderr_de`), et cette matière
+        suit la cause jusqu'à l'étape `:relance` **et** jusqu'à l'échec final — donc
+        jusqu'à l'événement d'activité de la Control Tower. Avant, un CLI qui
+        mourait ne laissait que « Check stderr output for details » sur un flux que
+        personne n'écoutait : la tâche était relancée, rééchouait, et l'incident se
+        soldait sans qu'on sache s'il s'agissait d'une limite d'usage, d'un
+        dépassement de contexte ou d'un plantage.
         """
         relance = self._relance
         max_tentatives = relance.max_tentatives if relance is not None else 1
@@ -597,11 +606,19 @@ class LocalExecutor(TaskExecutor):
                     agent, task, description, playbook, serveurs_mcp, politique, journal
                 )
             except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
+                cause = str(exc)
+                # #346 : ce que le CLI du fournisseur a écrit sur stderr voyage
+                # accroché à l'exception — c'est la seule matière qui dise *pourquoi*
+                # un sous-processus est mort. Elle suit l'échec jusqu'au journal.
+                stderr_cli = stderr_de(exc)
                 if not est_transitoire(exc):
                     return _echec(
-                        task, agent=agent.nom, role=agent.role, score=score, erreur=str(exc)
+                        task,
+                        agent=agent.nom,
+                        role=agent.role,
+                        score=score,
+                        erreur=_avec_stderr_cli(cause, stderr_cli),
                     )
-                cause = str(exc)
             else:
                 sortie = sortie.strip()
                 if sortie or fichiers:
@@ -616,21 +633,27 @@ class LocalExecutor(TaskExecutor):
                         sortie=sortie,
                         fichiers=fichiers,
                     )
+                # Le CLI a rendu la main sans rien produire : aucune exception, donc
+                # aucun stderr accroché — l'échec n'a pas d'autre cause à donner.
                 cause = "réponse vide de l'agent."
+                stderr_cli = None
             if relance is None or tentative >= max_tentatives:
                 return _echec(
                     task,
                     agent=agent.nom,
                     role=agent.role,
                     score=score,
-                    erreur=cause if tentative == 1 else (
-                        f"{cause} — échec transitoire persistant après "
-                        f"{tentative} tentatives (relances épuisées)."
+                    erreur=_avec_stderr_cli(
+                        cause if tentative == 1 else (
+                            f"{cause} — échec transitoire persistant après "
+                            f"{tentative} tentatives (relances épuisées)."
+                        ),
+                        stderr_cli,
                     ),
                 )
             attente_s = relance.attente_s(tentative)
             self._consigne_relance(
-                task, agent, tentative, max_tentatives, cause, attente_s, journal
+                task, agent, tentative, max_tentatives, cause, stderr_cli, attente_s, journal
             )
             await asyncio.sleep(attente_s)
             tentative += 1
@@ -679,6 +702,7 @@ class LocalExecutor(TaskExecutor):
         tentative: int,
         max_tentatives: int,
         cause: str,
+        stderr_cli: str | None,
         attente_s: float,
         journal: RunJournal,
     ) -> None:
@@ -689,18 +713,26 @@ class LocalExecutor(TaskExecutor):
         porte la **raison** (l'échec transitoire constaté), `sortie` le geste (la
         relance qui vient). Usage nul : le coût réel de toutes les tentatives est
         porté par l'étape finale de la tâche — pas de double compte au grand livre.
+
+        `stderr_cli` (#346) est ce que le CLI du fournisseur a écrit avant de
+        mourir — ou la mention explicite qu'il s'est tu. Il est **collé en fin**
+        des deux champs, après le geste : le pont ne rend que `sortie` en `detail`,
+        et une raison de plusieurs lignes coupée en deux par un « — relance dans
+        2 s » se lit mal. C'est la matière qui manquait au diagnostic : sans elle,
+        l'événement d'activité ne portait que « Check stderr output for details ».
         """
+        geste = (
+            f"échec transitoire (tentative {tentative}/{max_tentatives}) : {cause} "
+            f"— relance dans {attente_s:g} s."
+        )
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_RELANCE}",
             nom=f"Relance — {task.titre}",
             agent=agent.nom,
             role=agent.role,
             statut="relance",
-            entree=cause,
-            sortie=(
-                f"échec transitoire (tentative {tentative}/{max_tentatives}) : {cause} "
-                f"— relance dans {attente_s:g} s."
-            ),
+            entree=_avec_stderr_cli(cause, stderr_cli),
+            sortie=_avec_stderr_cli(geste, stderr_cli),
             usage=StepUsage(),
             projet_id=task.projet_id,
         )
@@ -854,6 +886,19 @@ def _refus_plafond_creve(task: Task, plafond: PlafondDepense | None) -> TaskResu
     except PlafondDepenseDepasse as exc:
         return _echec(task, agent="—", role="non exécutée", score=0, erreur=str(exc))
     return None
+
+
+def _avec_stderr_cli(cause: str, stderr_cli: str | None) -> str:
+    """Colle à `cause` ce que le CLI du fournisseur a écrit sur stderr (#346).
+
+    `stderr_cli` vaut `None` quand personne n'a écouté — un fournisseur sans CLI,
+    ou un échec qui ne vient pas d'un sous-processus : la cause repart alors telle
+    quelle, sans ligne inutile. Quand il vaut quelque chose, c'est **soit** les
+    dernières lignes du CLI, **soit** la mention explicite qu'il n'en a produit
+    aucune : « pas de stderr » et « stderr jamais capturé » se ressemblaient à la
+    lecture, et un seul des deux se répare.
+    """
+    return f"{cause}\n{stderr_cli}" if stderr_cli else cause
 
 
 def _echec(task: Task, *, agent: str, role: str, score: int, erreur: str) -> TaskResult:

@@ -28,7 +28,7 @@ import asyncio
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from time import monotonic
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -50,10 +50,12 @@ from maestro.config import ConfigError, Settings
 from maestro.providers.base import (
     PLAFOND_TOURS_DEFAUT,
     AuthMode,
+    CollecteurStderr,
     Credentials,
     McpServerUnavailable,
     ModelProvider,
     TurnLimitReached,
+    attache_stderr,
 )
 from maestro.sandbox.container import IsolationConfig
 
@@ -82,6 +84,8 @@ _MCP_CONNEXION_MAX_S: float = 60.0
 
 #: Période du sondage de statut pendant l'attente de connexion des serveurs MCP.
 _MCP_SONDAGE_S: float = 0.5
+
+_E = TypeVar("_E", bound=BaseException)
 
 
 def _resolve_auth_mode(settings: Settings) -> AuthMode:
@@ -188,14 +192,20 @@ class ClaudeProvider(ModelProvider):
         `tools=[]` (→ `--tools ""`) retire au CLI jusqu'à ses outils par défaut :
         `generate` ne peut ni lire ni écrire de fichier, ni lancer de shell — c'est
         le contrat de la capacité (l'exécution outillée passe par `run_agent`).
+
+        `stderr=` (#346) branche la collecte bornée du stderr du CLI : sans elle,
+        un sous-processus qui meurt ne laisse que « Check stderr output for
+        details » sur un flux que personne n'écoutait.
         """
+        stderr = CollecteurStderr()
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
             env=self._auth_env(),
             tools=[],
+            stderr=stderr,
         )
-        return await _collect_response(prompt, options)
+        return await _collect_response(prompt, options, stderr=stderr)
 
     async def run_agent(
         self,
@@ -262,18 +272,25 @@ class ClaudeProvider(ModelProvider):
         signalé via `on_refus` — jamais mué en échec de run. Les outils déjà
         filtrés au montage ne repassent par ce hook que par sûreté : son vrai
         travail est l'outil MCP refusé individuellement sur un serveur monté.
+
+        `stderr` (#346) : le stderr du CLI — ou du shim, en mode isolé, ce qui y
+        fait remonter jusqu'aux erreurs de `docker run` — est collecté ligne à
+        ligne, borné, et accroché à l'exception d'un échec. C'est ce qui donne une
+        cause à une tentative plantée, là où le SDK ne renvoyait qu'à un flux vide.
         """
         env = self._auth_env()
         cli_path: Path | None = None
         if self._isolation is not None:
             cli_path = self._isolation.shim
             env |= self._isolation.env_sandbox(workspace, projet=projet)
+        stderr = CollecteurStderr()
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
             env=env,
             cwd=workspace,
             cli_path=cli_path,
+            stderr=stderr,
             tools=list(tools),
             allowed_tools=list(tools),
             permission_mode="bypassPermissions",
@@ -287,12 +304,15 @@ class ClaudeProvider(ModelProvider):
             ),
         )
         if not mcp_serveurs:
-            return await _collect_response(prompt, options, plafond_tours=plafond_tours)
+            return await _collect_response(
+                prompt, options, plafond_tours=plafond_tours, stderr=stderr
+            )
         return await _collect_response_pilotee(
             prompt,
             options,
             attendus=frozenset(s.nom for s in mcp_serveurs),
             plafond_tours=plafond_tours,
+            stderr=stderr,
         )
 
 
@@ -346,8 +366,26 @@ def _erreur_plafond(plafond_tours: int | None, detail: object) -> TurnLimitReach
     return TurnLimitReached(f"plafond de tours atteint ({borne}) : {detail}")
 
 
+def _avec_stderr(exc: _E, stderr: CollecteurStderr | None) -> _E:
+    """Accroche à `exc` ce que le CLI a écrit sur stderr — ou la mention qu'il s'est tu (#346).
+
+    Une seule règle, sans cas particulier : **toute** exception qui sort du flux
+    SDK repart avec le résumé du collecteur. Ni le type ni le message ne changent
+    (c'est un attribut), donc la classification transitoire / non transitoire et
+    les erreurs typées de la frontière restent exactement ce qu'elles étaient — le
+    stderr ne fait que voyager jusqu'au journal, où l'exécuteur le consigne.
+    """
+    if stderr is None:
+        return exc
+    return attache_stderr(exc, stderr.resume())
+
+
 async def _collect_response(
-    prompt: str, options: ClaudeAgentOptions, *, plafond_tours: int | None = None
+    prompt: str,
+    options: ClaudeAgentOptions,
+    *,
+    plafond_tours: int | None = None,
+    stderr: CollecteurStderr | None = None,
 ) -> str:
     """Déroule `query`, assemble le texte de la réponse et signale l'usage (ticket #8).
 
@@ -360,6 +398,10 @@ async def _collect_response(
     garde-fou déterministe (jamais relancé) sans lire d'erreur propre au SDK.
     `plafond_tours` est la borne posée par l'appelant (None sur le chemin texte,
     qui n'en fixe aucune) : elle nomme la limite dans le message (#239).
+
+    `stderr` (#346) est le collecteur branché sur les options : tout échec repart
+    avec ce que le CLI a écrit, faute de quoi l'exception du SDK renvoie à un flux
+    que personne n'a lu.
     """
     parts: list[str] = []
     outils: list[str] = []
@@ -368,7 +410,8 @@ async def _collect_response(
             _absorbe(message, parts, outils)
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
-            raise _erreur_plafond(plafond_tours, exc) from exc
+            raise _avec_stderr(_erreur_plafond(plafond_tours, exc), stderr) from exc
+        _avec_stderr(exc, stderr)
         raise
     return "".join(parts)
 
@@ -379,6 +422,7 @@ async def _collect_response_pilotee(
     *,
     attendus: frozenset[str],
     plafond_tours: int | None = None,
+    stderr: CollecteurStderr | None = None,
 ) -> str:
     """Comme `_collect_response`, mais en session pilotée : serveurs MCP connectés d'abord.
 
@@ -392,19 +436,28 @@ async def _collect_response_pilotee(
     `error_during_execution`…) par un `ResultMessage` d'erreur au lieu d'une
     exception : il est mué ici en `TurnLimitReached`/`RuntimeError` pour rendre
     les deux chemins indistinguables vus du moteur.
+
+    `stderr` (#346) suit la même règle que sur l'autre chemin : l'échec repart
+    avec ce que le CLI a écrit. Le `try` enveloppe **tout** le bloc, l'ouverture
+    de session comprise — un CLI qui meurt au démarrage est précisément le cas
+    où l'exception du SDK n'apprend rien.
     """
     parts: list[str] = []
     outils: list[str] = []
-    async with ClaudeSDKClient(options) as client:
-        await _attend_serveurs_mcp(client, attendus)
-        await client.query(prompt)
-        async for message in client.receive_response():
-            _absorbe(message, parts, outils)
-            if isinstance(message, ResultMessage) and message.is_error:
-                detail = message.result or message.subtype
-                if _MARQUEUR_MAX_TURNS in message.subtype:
-                    raise _erreur_plafond(plafond_tours, detail)
-                raise RuntimeError(f"Claude Code returned an error result: {detail}")
+    try:
+        async with ClaudeSDKClient(options) as client:
+            await _attend_serveurs_mcp(client, attendus)
+            await client.query(prompt)
+            async for message in client.receive_response():
+                _absorbe(message, parts, outils)
+                if isinstance(message, ResultMessage) and message.is_error:
+                    detail = message.result or message.subtype
+                    if _MARQUEUR_MAX_TURNS in message.subtype:
+                        raise _erreur_plafond(plafond_tours, detail)
+                    raise RuntimeError(f"Claude Code returned an error result: {detail}")
+    except Exception as exc:
+        _avec_stderr(exc, stderr)
+        raise
     return "".join(parts)
 
 

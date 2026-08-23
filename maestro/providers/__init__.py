@@ -21,13 +21,17 @@ moteur.
 from __future__ import annotations
 
 from maestro.providers.base import (
+    MENTION_STDERR_VIDE,
     AuthMode,
+    CollecteurStderr,
     Credentials,
     McpServerUnavailable,
     ModelProvider,
     ModelSpec,
     TurnLimitReached,
     UnsupportedCapability,
+    attache_stderr,
+    stderr_de,
 )
 from maestro.providers.claude import ClaudeProvider
 from maestro.providers.factory import default_model, provider_from_settings
@@ -42,8 +46,10 @@ from maestro.providers.registry import (
 )
 
 __all__ = [
+    "MENTION_STDERR_VIDE",
     "AuthMode",
     "ClaudeProvider",
+    "CollecteurStderr",
     "Credentials",
     "McpServerUnavailable",
     "ModelProvider",
@@ -54,10 +60,12 @@ __all__ = [
     "TurnLimitReached",
     "UnknownProviderError",
     "UnsupportedCapability",
+    "attache_stderr",
     "available_providers",
     "default_model",
     "provider_from_settings",
     "register",
     "resolve_provider",
+    "stderr_de",
     "unregister",
 ]
