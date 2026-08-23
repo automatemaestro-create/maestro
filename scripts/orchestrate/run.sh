@@ -112,6 +112,37 @@
 # revanche `pipeline-wait` du drain final : quelqu'un qui demande l'arrêt n'attend pas un quart
 # d'heure par PR — ce qui est déjà vert est mergé, le reste est nommé et laissé en file.
 #
+# --- Débloquer une PR pendant le run : une session /mr-fix, deux fois au plus (#420, parent #413) ----
+# Le drain sort une PR de la file sur un `4` (pipeline rouge) ou un `5` (conflit). Ces deux-là sont
+# RÉPARABLES, et souvent par le run lui-même : un merge qu'il vient de faire est ce qui a mis la PR
+# suivante en conflit. Les laisser là serait rendre la moitié de la promesse du chantier.
+#
+# POURQUOI UNE SESSION, ET PAS DU SHELL. Une résolution de conflit est une décision de CONTENU
+# (#299) : celle qui se règle toute seule n'a jamais été le cas intéressant, et celle qui laisse des
+# marqueurs demande de lire le code des deux côtés. Le dépôt sait déjà faire ça — c'est `/mr-fix` —
+# et le pilote sait déjà ouvrir une session Claude : il en ouvre une par ticket.
+#
+# ELLE NE MERGE PAS, et c'est ce qui garde « un seul endroit décide qu'un merge a lieu ». Elle rend
+# la PR mergeable ; le pilote la remet en file et retente `merge-mr`. `guard.sh` refuse de toute
+# façon `merge-mr` et `pipeline-wait` à toute session d'un run (#419) — le prompt le dit AVANT que
+# la session s'y heurte, parce que `/mr-fix` merge ce qu'il débloque depuis #418 et qu'un ordre
+# contredit sans explication se contourne au lieu de se suivre.
+#
+# ELLE N'ATTEND AUCUN PIPELINE non plus, pour la raison qui vaut déjà pour les sessions de ticket :
+# ce serait du quota brûlé à ne rien faire. Elle pousse son correctif et sort ; le pilote relira le
+# verdict à la passe suivante. La boucle « corriger, attendre, recommencer » de `/mr-fix` devient
+# donc celle du pilote — et c'est elle que le plafond de DEUX tentatives par PR borne.
+#
+# MÊME RÉGIME QUE LES SESSIONS DE TICKET, sans exception : worktree du ticket (remonté s'il a été
+# ramassé), modèle et effort du run, `settings.run.json` et son hook, journal `<iid>-mrfix.*`, coût
+# compté, et un CRÉNEAU de `--concurrence` occupé — toutes les sessions tirent sur le même quota, et
+# une remédiation qui s'en affranchirait ferait tourner N+1 sessions là où l'on en a demandé N.
+# La limite d'usage s'y applique aussi : elle se range derrière le rendez-vous unique de #291.
+#
+# CE QUI N'EST PAS RÉPARABLE ICI. Le `6` (geste humain) ne déclenche rien — c'est sa définition. Une
+# session qui abandonne (`git merge --abort`, résolution pas claire) laisse la PR OUVERTE et INTACTE,
+# et c'est un résultat, pas un échec : ce qui n'est pas résolu proprement n'est pas poussé.
+#
 # --- Journal --------------------------------------------------------------------------------------
 # .maestro/orchestrate/<run-id>/
 #   plan.tsv          le plan figé au démarrage (sortie de queue.sh)
@@ -122,11 +153,16 @@
 #   <iid>.resultat.txt  le même, mais LISIBLE (#180) : verdict, coût, durée, refus, message final
 #   <iid>.log         ce que la session a écrit sur stderr
 #   resume.tsv        une ligne par ticket : iid, verdict, PR, durée, coût, raison
-#   merge.tsv         la file de merge (#419) : iid, pr, branche, état, code, tentatives, cause.
-#                     Écrite par le pilote SEUL, réécrite en entier à chaque changement — quelques
-#                     lignes, et c'est ce qu'une reprise relit pour ne pas rejouer un merge déjà fait
+#   merge.tsv         la file de merge (#419) : iid, pr, branche, état, code, tentatives, cause,
+#                     puis les deux colonnes du déblocage (#420) — sessions /mr-fix jouées, et leur
+#                     coût cumulé. Écrite par le pilote SEUL, réécrite en entier à chaque changement
+#                     — quelques lignes, et c'est ce qu'une reprise relit pour ne pas rejouer un
+#                     merge déjà fait
 #   merge.log         la sortie brute de chaque appel à `merge-mr` — la cause d'un refus y est
 #                     entière, `merge.tsv` n'en gardant qu'une ligne
+#   <iid>-mrfix.*     la session de déblocage d'une PR (#420) : mêmes fichiers qu'un ticket
+#                     (`.jsonl`, `.json`, `.resultat.txt`, `.log`, `.session`), sous une clé qui la
+#                     distingue de la session du ticket. La seconde tentative porte `-mrfix2`
 #   pid               la carte d'identité du pilote (#213) : PID, WINPID, naissance, hôte — posée au
 #                     démarrage, retirée à la sortie, et seule chose qui permette de TUER un run
 #   concurrence       le nombre de tickets en vol de ce run (#291), relu par `--resume` pour rejouer
@@ -254,6 +290,18 @@ case "$MERGE" in 0 | non | off | false) MERGE=0 ;; *) MERGE=1 ;; esac
 # justement de changer.
 MERGE_INTERVALLE_S="${MAESTRO_ORCHESTRATE_MERGE_INTERVALLE:-60}"
 case "$MERGE_INTERVALLE_S" in '' | *[!0-9]*) MERGE_INTERVALLE_S=60 ;; esac
+# Le déblocage d'une PR PENDANT le run (#420). Actif par défaut, pour la même raison que la file
+# elle-même : une PR mise en conflit par le merge d'un ticket précédent du run est un blocage que le
+# run a FABRIQUÉ, et le laisser derrière lui rendrait la moitié de la promesse du chantier #413.
+# `MAESTRO_ORCHESTRATE_MRFIX=0` (ou `--sans-mrfix`) laisse la PR bloquée avec sa cause au bilan —
+# exactement ce que faisait le lot 5 seul.
+MRFIX="${MAESTRO_ORCHESTRATE_MRFIX:-1}"
+case "$MRFIX" in 0 | non | off | false) MRFIX=0 ;; *) MRFIX=1 ;; esac
+# Le plafond de tentatives PAR PR. Deux, et pas « jusqu'à ce que ça passe » : une session `/mr-fix`
+# coûte un ticket entier de quota, et ce qu'elle n'a pas su débloquer deux fois demande un humain —
+# insister au-delà, c'est brûler du quota sur un blocage qui ne bougera pas.
+MRFIX_MAX="${MAESTRO_ORCHESTRATE_MRFIX_MAX:-2}"
+case "$MRFIX_MAX" in '' | *[!0-9]*) MRFIX_MAX=2 ;; esac
 
 usage() {
   cat <<'USAGE'
@@ -292,6 +340,10 @@ Options :
                        #419. Par défaut, une PR verte est mergée PENDANT le run (par
                        « lib.sh merge-mr », qui vérifie avant de merger) et ce qui reste est drainé
                        en fin de run. MAESTRO_ORCHESTRATE_MERGE=0 fait de même.
+  --sans-mrfix         N'ouvre aucune session /mr-fix : une PR bloquée (conflit ou pipeline rouge)
+                       le reste, avec sa cause au bilan. Par défaut, le run tente de la débloquer
+                       PENDANT qu'il tourne, deux fois au plus par PR.
+                       MAESTRO_ORCHESTRATE_MRFIX=0 fait de même.
   --sans-kill          Ne tue pas les runs encore en cours avant de démarrer (voir plus bas).
   --tuer-les-runs      Ne fait QUE ça : tue les runs en cours, dit lesquels, et sort.
   --max-reprises <n>   Reprises maximales après limite d'usage, par ticket. Défaut : 3.
@@ -321,6 +373,11 @@ lancés ensuite partent donc d'un origin/main qui la contient. Le merge passe TO
 « lib.sh merge-mr », qui vérifie avant de merger (PR ouverte non brouillon qui ferme son ticket,
 rien de non poussé, aucun conflit, pipeline vert sur la tête de la PR) ; le run ne ferme et ne
 force-push jamais. Ce qui n'a pas pu être mergé est nommé dans le résumé, avec sa cause.
+
+Déblocage : une PR qu'un conflit ou un pipeline rouge empêche de merger ouvre une session /mr-fix
+dans le worktree de son ticket, sous le même régime que les sessions de ticket (modèle, effort,
+garde-fous, journal, quota) — deux fois au plus par PR. Elle rend la PR mergeable ; c'est le pilote
+qui merge, jamais elle. Au-delà, la PR reste ouverte et intacte, avec sa cause au bilan.
 USAGE
 }
 
@@ -340,6 +397,7 @@ while [ $# -gt 0 ]; do
     --effort) EFFORT="${2:-xhigh}"; shift ;;
     --plan) PLAN_IMPOSE="${2:-}"; shift ;;
     --sans-merge) MERGE=0 ;;
+    --sans-mrfix) MRFIX=0 ;;
     # La valeur est FACULTATIVE (« --resume » seul = le run reprenable le plus récent) : on ne
     # consomme l'argument suivant que s'il n'est pas lui-même une option, sans quoi
     # « --resume --detach » avalerait le mode de lancement.
@@ -880,13 +938,15 @@ vue_recompose() {
       # Un ticket livré porte DEUX états depuis #419 — livré, puis mergé —, et le second se lit dans
       # le marqueur plutôt que dans une colonne de plus : `vue_ligne` est le seul champ que `printf`
       # ne padde pas, donc le seul où un glyphe non-ASCII ne décale pas la colonne suivante (le
-      # gabarit compte des octets). Trois états, un caractère : ✓ livré, PR en file · ⇈ mergée ·
-      # ⚠ merge bloqué — le ticket reste livré, c'est sa PR qui attend un geste (le résumé la nomme).
+      # gabarit compte des octets). Quatre états, un caractère : ✓ livré, PR en file · ⇈ mergée ·
+      # ⚠ merge bloqué — le ticket reste livré, c'est sa PR qui attend un geste (le résumé la
+      # nomme) · ⟳ une session /mr-fix est en train de la débloquer (#420).
       OK)
         case "${MERGE_ETAT[$iid]:-}" in
-          mergee)  marque="$C_G⇈$C_0" ;;
-          bloquee) marque="$C_Y⚠$C_0" ;;
-          *)       marque="$C_G✓$C_0" ;;
+          mergee)    marque="$C_G⇈$C_0" ;;
+          bloquee)   marque="$C_Y⚠$C_0" ;;
+          deblocage) marque="$C_Y⟳$C_0" ;;
+          *)         marque="$C_G✓$C_0" ;;
         esac ;;
       ECHEC) marque="$C_R✗$C_0" ;;
       SAUTE) marque="$C_Y~$C_0" ;;
@@ -1283,6 +1343,12 @@ LIM_FIN=0; LIM_SOURCE=""; LIM_IID=""
 # une attente, et une deuxième limite dans le même run doit pouvoir rouvrir la sienne.
 limite_lit() {
   local fin source iid
+  # Le fichier est testé AVANT d'être ouvert, et le `2>/dev/null` de la ligne suivante n'y suffirait
+  # pas : les redirections sont appliquées de gauche à droite, donc l'échec de `<"$1"` sur un
+  # fichier absent — le cas NORMAL, aucune limite en cours — part sur stderr avant que la
+  # redirection ne le couvre. Une ligne de bruit dans `run.log` par appel, et il y en a désormais
+  # plusieurs par seconde (#420 interroge la limite avant chaque relance de déblocage).
+  [ -r "$1" ] || return 1
   IFS=$'\t' read -r fin source iid <"$1" 2>/dev/null || return 1
   case "${fin:-}" in '' | *[!0-9]*) return 1 ;; esac
   [ "$fin" -gt "$(date +%s)" ] || return 1
@@ -1693,7 +1759,11 @@ function champ(nom, valeur,   n) {
 
 END {
   ligne = "Résultat de session"
-  if (iid != "")   ligne = ligne " — ticket #" iid
+  # « ticket » seulement quand c'en est un : depuis #420 une clé de journal peut désigner une
+  # session de DÉBLOCAGE (`<iid>-mrfix`), et l'annoncer comme un ticket ferait chercher un ticket
+  # de ce numéro-là. Le titre, juste après, dit alors de quelle PR il s'agit.
+  if (iid ~ /^[0-9]+$/) ligne = ligne " — ticket #" iid
+  else if (iid != "")   ligne = ligne " — #" iid
   if (titre != "") ligne = ligne " · " titre
   print ligne
   sid = chaine(brut, "session_id")
@@ -1809,14 +1879,20 @@ ecrit_resultat() {
   return 0
 }
 
-# lance_session <iid> <dest> <uuid> <mode> : une session, neuve ou reprise. En reprise, `--resume`
-# rouvre la conversation interrompue — sans quoi la session repartirait de zéro et referait le
-# travail déjà payé. Si la reprise échoue (session perdue), on repart à froid sur un UUID neuf :
-# le prompt et /ticket-start sont idempotents, le travail déjà commité est retrouvé sur la branche.
+# lance_session <clé> <dest> <uuid> <mode> [<tâche>] [<cible>] : une session, neuve ou reprise. En
+# reprise, `--resume` rouvre la conversation interrompue — sans quoi la session repartirait de zéro
+# et referait le travail déjà payé. Si la reprise échoue (session perdue), on repart à froid sur un
+# UUID neuf : le prompt et /ticket-start sont idempotents, le travail déjà commité est retrouvé sur
+# la branche.
+#
+# La CLÉ nomme les fichiers de journal ; la TÂCHE dit quel prompt écrire et la CIBLE sur quoi. Pour
+# un ticket les trois se confondent (l'iid), et c'est pourquoi les deux derniers paramètres ont un
+# défaut : le déblocage d'une PR (#420) est la seule tâche à les dissocier — clé `<iid>-mrfix`,
+# tâche `mrfix`, cible le numéro de la PR.
 lance_session() {
-  local iid="$1" dest="$2" uuid="$3" mode="$4" code
+  local iid="$1" dest="$2" uuid="$3" mode="$4" tache="${5:-ticket}" cible="${6:-$1}" code
   if [ "$mode" = "reprise" ]; then
-    ( cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_reprise "$iid")" \
+    ( cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_reprise_de "$tache" "$cible")" \
         --resume "$uuid" \
         --output-format stream-json --verbose \
         --permission-mode acceptEdits \
@@ -1832,7 +1908,7 @@ lance_session() {
     uuid="$(genere_uuid)"
     printf '%s' "$uuid" >"$RUN_DIR/$iid.session"
   fi
-  ( cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_ticket "$iid")" \
+  ( cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_de "$tache" "$cible")" \
       --session-id "$uuid" \
       --output-format stream-json --verbose \
       --permission-mode acceptEdits \
@@ -1944,6 +2020,88 @@ ce processus s'arrête à la fin de ton tour, ne rends pas la main en annonçant
 plus tard — obtiens ce qui te manque en avant-plan, tranche sans lui, ou sors sur
 ORCHESTRATE: ECHEC.
 PROMPT
+}
+
+# --- Le prompt d'une session de déblocage (#420) ------------------------------------------------------
+# Il reprend mot pour mot les règles de forme du prompt de ticket — allowlist, chemins relatifs,
+# atelier `.maestro/session/`, les trois formes immatchables — parce que ces refus-là ne dépendent
+# pas de la tâche : c'est la même couche de permissions, dans le même worktree, avec le même hook.
+#
+# Ce qu'il ajoute est ce qui distingue une REMÉDIATION d'un ticket, et les deux points tiennent à ce
+# que la commande `/mr-fix` fait de plus depuis #418 : elle merge ce qu'elle débloque, et elle
+# attend des pipelines. Ni l'un ni l'autre n'a lieu d'être ici — le pilote merge, le pilote attend —
+# et `guard.sh` refuse les deux gestes. Le dire AVANT, plutôt que de laisser la session s'y heurter :
+# un ordre contredit sans explication se contourne, un ordre expliqué se suit. La session vaut donc
+# les étapes 1 à 11 de la commande, jamais la 12.
+prompt_mrfix() {
+  cat <<PROMPT
+Tu débloques la Pull Request #$1 de ce dépôt, seul et sans supervision humaine. Tu es dans le
+worktree de son ticket, sur sa branche : il n'y a rien à monter ni à sortir.
+
+1. Lance la commande /mr-fix $1.
+2. Va jusqu'à ce que la PR soit mergeable : conflit avec origin/main d'abord, pipeline rouge
+   ensuite — cet ordre-là et pas l'autre, le merge d'origin/main pouvant lui-même casser le
+   pipeline.
+
+Règles de ce run autonome :
+- NE MERGE PAS, c'est la seule étape de /mr-fix qui ne t'appartient pas : ni « gh pr merge », ni
+  « bash scripts/gitlab/lib.sh merge-mr », ni « lib.sh pipeline-wait » — un garde-fou refuse les
+  trois ici. C'est le PILOTE qui merge, hors de ta session : il sérialise les merges et n'attend
+  aucun pipeline sur ton quota. Ton travail s'arrête quand la PR est mergeable, et c'est un
+  résultat complet, pas une clôture manquée.
+- N'ATTENDS AUCUN PIPELINE, et ne rends jamais la main en annonçant que tu reprendras « dès que »
+  le verdict sera tombé : ce processus s'arrête à la fin de ton tour, rien ne te réveillera. Pousse
+  ton correctif et sors. Le pilote relira le verdict et rouvrira une session si la PR est encore
+  bloquée — tu n'as droit qu'à deux passages en tout, alors sers-toi du filet local pour vérifier
+  ton correctif en avant-plan : bash scripts/ci/local.sh --only <job>.
+- N'attends AUCUNE validation non plus : personne ne lira une question. Si un choix se présente,
+  tranche, et dis dans ton résumé final ce que tu as tranché et pourquoi.
+- UNE RÉSOLUTION QUI N'EST PAS CLAIRE NE SE POUSSE PAS : git merge --abort, branche laissée
+  intacte, et dis pourquoi. Une PR qui attend coûte infiniment moins qu'une résolution fausse
+  partie dans main. Ne prends jamais un côté en bloc (--ours/--theirs) pour faire disparaître des
+  marqueurs, et ne fabrique jamais un correctif de code pour une panne d'infrastructure.
+- Jamais de rebase (il appellerait un force-push, refusé), jamais de force-push, jamais de
+  fermeture de PR, jamais de commit sur main.
+- Tes commandes passent une allowlist, et une commande chaînée n'est autorisée que si CHACUN de
+  ses morceaux l'est : préfère un appel par commande à une longue chaîne « && ». Tu es déjà DANS
+  le worktree : inutile de commencer par « cd », et appelle les scripts du dépôt en chemin RELATIF
+  (« bash scripts/gitlab/lib.sh … ») sans préfixe de variable devant l'interpréteur. Pour poser
+  quand même une variable : « env VAR=valeur <commande> ».
+- TOUT CHEMIN ABSOLU est refusé, même vers ton propre worktree. Tes fichiers de travail — message
+  de commit, note intermédiaire — s'écrivent dans « .maestro/session/ », qui existe déjà ici et
+  est gitignoré ; ni « /tmp », ni le répertoire temporaire de la session.
+- Trois formes qu'AUCUNE règle ne peut reconnaître, même autour d'une commande autorisée : un SAUT
+  DE LIGNE dans la commande, une SUBSTITUTION \$(…), un HEREDOC. Tiens chaque appel sur UNE SEULE
+  ligne. Pour un message de commit, écris le fichier avec l'outil Write puis « git commit -F
+  <chemin> » — jamais « -m "\$(cat …)" ».
+- Si tu ne peux pas débloquer cette PR, écris en TOUTE DERNIÈRE LIGNE :
+  ORCHESTRATE: ECHEC <raison courte>. La laisser ouverte et intacte est une fin acceptable.
+PROMPT
+}
+
+# Le prompt de reprise d'un déblocage : même raison d'être que celui d'un ticket (#171) — la
+# conversation a déjà son contexte, il ne faut surtout pas qu'elle recommence, et la coupure
+# (limite d'usage, run coupé) ne se distingue pas d'ici.
+prompt_mrfix_reprise() {
+  cat <<PROMPT
+Reprends exactement là où tu t'es arrêté sur le déblocage de la PR #$1 : la session a été
+interrompue (limite d'usage, ou run coupé), pas par une erreur. Regarde d'abord l'état de la
+branche (git status, git log) — un merge en cours s'y voit — avant d'agir. Rappel : tu ne merges
+pas la PR (c'est le pilote), tu n'attends aucun pipeline, et une résolution qui n'est pas claire
+s'abandonne par git merge --abort plutôt que de se pousser. Si tu ne peux pas terminer, sors sur
+ORCHESTRATE: ECHEC <raison courte>.
+PROMPT
+}
+
+# prompt_de <tâche> <cible> / prompt_reprise_de <tâche> <cible> : quel prompt pour quelle tâche. Un
+# seul mécanisme de session sert les deux — un ticket à traiter, une PR à débloquer —, et c'est ce
+# qui donne à la seconde le régime de la première sans en recopier une ligne.
+prompt_de() {
+  case "$1" in mrfix) prompt_mrfix "$2" ;; *) prompt_ticket "$2" ;; esac
+}
+
+prompt_reprise_de() {
+  case "$1" in mrfix) prompt_mrfix_reprise "$2" ;; *) prompt_reprise "$2" ;; esac
 }
 
 # --- Diagnostic de la détection de limite d'usage -----------------------------------------------------
@@ -2453,7 +2611,14 @@ consigne() { # <iid> <verdict> <mr> <duree> <cout> <raison>
 # où il faut l'entendre : une passe n'examine que les PR qu'elle n'a pas vues depuis l'intervalle,
 # donc elle ne coûte RIEN la plupart du temps et ne fige jamais l'écran pour une réponse qui ne
 # change pas plus vite qu'un pipeline. Une entrée neuve porte -1 : elle est examinée tout de suite.
+# `Q_MRFIX` et `Q_COUT` sont au déblocage (#420) ce que `Q_ESSAIS` est au merge : le nombre de
+# sessions `/mr-fix` jouées sur cette PR — ce que le plafond de deux borne — et ce qu'elles ont
+# coûté. Le coût vit ICI et non dans `resume.tsv` : ce fichier-là a une ligne PAR TICKET, et tout ce
+# qui le lit en dépend (le bilan de `status.sh`, la vue, et `reprend_en_vol`, qui déduit d'une ligne
+# absente qu'un ticket était en vol à la coupure). Une ligne de plus au nom d'un ticket y ferait
+# compter un traité de plus et, pour `reprend_en_vol`, mentirait sur ce que la coupure a interrompu.
 Q_IID=(); Q_PR=(); Q_BRANCHE=(); Q_ETAT=(); Q_CODE=(); Q_ESSAIS=(); Q_RAISON=(); Q_VU=()
+Q_MRFIX=(); Q_COUT=()
 declare -A MERGE_ETAT=()
 
 # merge_ecrit : la file, en entier, à chaque changement. Réécrire plutôt que d'ajouter parce qu'une
@@ -2463,11 +2628,15 @@ declare -A MERGE_ETAT=()
 merge_ecrit() {
   [ -n "$MERGE_TSV" ] || return 0
   local i
+  # Les deux colonnes du déblocage viennent APRÈS la cause, et pas avant : `cause` est le seul champ
+  # de texte libre de la ligne, donc le seul qu'on ne veut pas voir bouger de place — un lecteur
+  # d'avant #420 (`status.sh`, la reprise) lit ses sept champs et ignore la suite.
   {
-    printf '# iid\tpr\tbranche\tetat\tcode\tessais\tcause\n'
+    printf '# iid\tpr\tbranche\tetat\tcode\tessais\tcause\tmrfix\tcout\n'
     for ((i = 0; i < ${#Q_IID[@]}; i++)); do
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_BRANCHE[$i]}" \
-        "${Q_ETAT[$i]}" "${Q_CODE[$i]}" "${Q_ESSAIS[$i]}" "${Q_RAISON[$i]}"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_BRANCHE[$i]}" \
+        "${Q_ETAT[$i]}" "${Q_CODE[$i]}" "${Q_ESSAIS[$i]}" "${Q_RAISON[$i]}" \
+        "${Q_MRFIX[$i]}" "${Q_COUT[$i]}"
     done
   } >"$MERGE_TSV.tmp" 2>/dev/null || return 0
   mv -f "$MERGE_TSV.tmp" "$MERGE_TSV" 2>/dev/null || true
@@ -2482,11 +2651,14 @@ merge_index() { # <iid> -> l'indice dans la file, rien si elle ne le porte pas
   return 1
 }
 
-# merge_enfile <iid> <pr> <branche> [<état> <cause>] : inscrit une PR dans la file. Idempotent —
-# un ticket déjà en file (reprise, second verdict) n'y entre pas deux fois.
-merge_enfile() { # <iid> <pr> <branche> [<état>] [<cause>]
+# merge_enfile <iid> <pr> <branche> [<état> <cause> <mrfix> <coût>] : inscrit une PR dans la file.
+# Idempotent — un ticket déjà en file (reprise, second verdict) n'y entre pas deux fois.
+merge_enfile() { # <iid> <pr> <branche> [<état>] [<cause>] [<mrfix>] [<coût>]
   [ "$MERGE" = 1 ] || return 0
   local iid="$1" pr="$2" branche="$3" etat="${4:-attente}" cause="${5:--}"
+  local mrfix="${6:-0}" cout="${7:-0}"
+  case "$mrfix" in '' | *[!0-9]*) mrfix=0 ;; esac
+  case "$cout" in '' | -) cout=0 ;; esac
   # Sans PR il n'y a rien à merger : un ticket livré sans PR n'existe pas (c'est le verdict qui le
   # dit), et une entrée sans numéro ferait échouer `merge-mr` pour une raison qui n'est pas la sienne.
   case "$pr" in '' | '-') return 0 ;; esac
@@ -2494,6 +2666,7 @@ merge_enfile() { # <iid> <pr> <branche> [<état>] [<cause>]
   merge_index "$iid" >/dev/null && return 0
   Q_IID+=("$iid"); Q_PR+=("$pr"); Q_BRANCHE+=("$branche")
   Q_ETAT+=("$etat"); Q_CODE+=('-'); Q_ESSAIS+=(0); Q_RAISON+=("$cause"); Q_VU+=(-1)
+  Q_MRFIX+=("$mrfix"); Q_COUT+=("$cout")
   MERGE_ETAT["$iid"]="$etat"
   merge_ecrit
   return 0
@@ -2538,9 +2711,11 @@ merge_tente() { # <index> [attendre]
     0) Q_ETAT[$i]=mergee;  Q_RAISON[$i]='-' ;;
     # « pas encore rendu » (en cours, absent, ou périmé) : la seule réponse qui laisse en file.
     3) Q_ETAT[$i]=attente; Q_RAISON[$i]="${cause:-verdict de pipeline pas encore rendu}" ;;
-    # 4 et 5 sont réparables, et c'est le lot 6 (#420) qui s'en saisira ; 6 est un geste humain.
-    # Les trois sortent de la file : ni un pipeline rouge ni un conflit ne se défont tout seuls, et
-    # y repasser à chaque passe coûterait des appels pour reconfirmer ce qu'on sait déjà.
+    # 4 et 5 sont réparables — c'est `mrfix_relance` (#420) qui s'en saisit, en ouvrant une session
+    # `/mr-fix` ; 6 est un geste humain, et rien ne le tente. Les trois sortent de la file : ni un
+    # pipeline rouge ni un conflit ne se défont tout seuls, et y repasser à chaque passe coûterait
+    # des appels pour reconfirmer ce qu'on sait déjà. Une PR débloquée y REVIENT (`attente`), et
+    # c'est le seul chemin de retour.
     4) Q_ETAT[$i]=bloquee; Q_RAISON[$i]="${cause:-pipeline rouge}" ;;
     5) Q_ETAT[$i]=bloquee; Q_RAISON[$i]="${cause:-conflit avec origin/main}" ;;
     *) Q_ETAT[$i]=bloquee; Q_RAISON[$i]="${cause:-merge-mr a rendu $code}" ;;
@@ -2609,6 +2784,208 @@ merge_draine() {
   return 0
 }
 
+# --- Débloquer une PR pendant le run : la session /mr-fix (#420, parent #413) --------------------------
+# Le raisonnement est en tête de fichier ; ici, la mécanique. Elle est CELLE D'UN TICKET, et c'est
+# tout son intérêt : `prepare_worktree` monte (ou retrouve) le worktree, `joue_session` porte les
+# reprises après limite d'usage et le rendez-vous partagé de #291, `lance_session` passe le régime
+# du run. Ce lot n'ajoute qu'une clé de journal, un prompt et un témoin — pas une seconde façon de
+# faire tourner une session Claude, qui divergerait de la première au premier réglage ajouté.
+MRFIX_EN_VOL=""     # les indices de la file dont une session de déblocage tourne
+MRFIX_CLE=()        # par indice de file : la clé de journal de la session en cours
+MRFIX_DEBUT=()      # par indice de file : SECONDS au lancement, pour la durée rendue au bilan
+MRFIX_SESSIONS=0    # combien de sessions de déblocage ce run a ouvertes, tous tickets confondus
+
+# mrfix_somme <a> <b> : deux montants en dollars, additionnés à deux décimales. `awk` parce que le
+# shell ne sait pas additionner des flottants ; par l'ENVIRONNEMENT et non par `-v`, qui interprète
+# les échappements (#340) — la règle vaut même quand on croit ne passer que des nombres, un champ
+# JSON absent pouvant rendre tout autre chose.
+mrfix_somme() { # <a> <b>
+  MRFIX_A="${1:-0}" MRFIX_B="${2:-0}" LC_ALL=C awk 'BEGIN {
+    printf "%.2f", (ENVIRON["MRFIX_A"] + 0) + (ENVIRON["MRFIX_B"] + 0) }' 2>/dev/null ||
+    printf '%s' "${1:-0}"
+}
+
+# mrfix_cle <index> : la clé de journal de la PROCHAINE session de cet indice. La première porte le
+# nom simple (`<iid>-mrfix`), les suivantes leur rang — sans quoi la seconde tentative écraserait le
+# `.json` et le `.resultat.txt` de la première, c'est-à-dire précisément ce qu'on ira relire pour
+# comprendre pourquoi la première n'a pas suffi.
+mrfix_cle() { # <index>
+  local i="$1"
+  local n=$((Q_MRFIX[i] + 1))
+  [ "$n" -le 1 ] && { printf '%s-mrfix' "${Q_IID[$i]}"; return 0; }
+  printf '%s-mrfix%s' "${Q_IID[$i]}" "$n"
+}
+
+# mrfix_eligible <index> : cette PR peut-elle être débloquée maintenant ? Trois conditions, et la
+# dernière est le plafond du ticket.
+mrfix_eligible() { # <index>
+  local i="$1"
+  [ "$MRFIX" = 1 ] || return 1
+  [ "${Q_ETAT[$i]}" = bloquee ] || return 1
+  # 4 = pipeline rouge, 5 = conflit : les deux blocages que `/mr-fix` sait traiter, dans cet ordre.
+  # Le 6 est un geste humain PAR DÉFINITION (#415) — lui envoyer une session, ce serait payer une
+  # session entière pour qu'elle reconfirme qu'elle ne peut rien.
+  case "${Q_CODE[$i]}" in 4 | 5) ;; *) return 1 ;; esac
+  [ "${Q_MRFIX[$i]}" -lt "$MRFIX_MAX" ] || return 1
+  return 0
+}
+
+# mrfix_lance <index> : ouvre la session, en SOUS-SHELL et avec témoin — exactement comme un ticket
+# (#289), et pour la même raison : le pilote doit continuer à moissonner, à drainer et à tenir
+# l'écran pendant qu'elle travaille. Rend 0 si une session est partie (un créneau est pris).
+mrfix_lance() { # <index>
+  local i="$1"
+  local iid="${Q_IID[$i]}" pr="${Q_PR[$i]}" branche="${Q_BRANCHE[$i]}"
+  local dest cle uuid temoin
+
+  # Le worktree du ticket, remonté s'il a été ramassé entre-temps (`gc` passé par là, run repris) —
+  # par le même chemin que les tickets, jamais un `git worktree add` réimplémenté ici. Idempotent :
+  # sur un worktree déjà en place, `worktree.sh` le dit et rend son chemin.
+  dest="$(prepare_worktree "$iid" "$branche" "$RUN_DIR/$iid-mrfix.worktree.log")"
+  if [ -z "$dest" ] || [ ! -d "$dest" ]; then
+    # Le compteur avance quand même : sans lui, un worktree qu'on ne sait pas monter serait retenté
+    # à chaque passe du drain, indéfiniment et sans jamais rien apprendre de neuf.
+    Q_MRFIX[$i]=$((Q_MRFIX[i] + 1))
+    merge_ecrit
+    dit '  %s⚠%s PR #%s (#%s) — worktree non monté, déblocage impossible (voir %s)\n' \
+      "$C_Y" "$C_0" "$pr" "$iid" "$RUN_DIR/$iid-mrfix.worktree.log"
+    return 1
+  fi
+
+  cle="$(mrfix_cle "$i")"
+  uuid="$(uuid_du_ticket "$cle")"
+  temoin="$RUN_DIR/$cle.fini"
+  rm -f "$temoin" 2>/dev/null
+
+  Q_MRFIX[$i]=$((Q_MRFIX[i] + 1))
+  Q_ETAT[$i]=deblocage
+  MERGE_ETAT["$iid"]=deblocage
+  MRFIX_CLE[$i]="$cle"
+  MRFIX_DEBUT[$i]=$SECONDS
+  MRFIX_SESSIONS=$((MRFIX_SESSIONS + 1))
+  merge_ecrit
+  dit '  %s⟳%s PR #%s (#%s) — session /mr-fix %s/%s : %s\n' \
+    "$C_Y" "$C_0" "$pr" "$iid" "${Q_MRFIX[$i]}" "$MRFIX_MAX" "${Q_RAISON[$i]}"
+
+  (
+    code=1
+    # Le préfixe est posé ICI et non sur toute la fonction : les lignes de `mrfix_lance` nomment
+    # déjà la PR et son ticket, celles de la session (attente d'une limite d'usage, reprise) non —
+    # et à N sessions en vol, rien ne dirait de laquelle elles viennent.
+    [ "$CONCURRENCE" -gt 1 ] && PREFIXE_TICKET="#$iid "
+    # Mêmes guillemets simples et même raison qu'au lancement d'un ticket : `$code` doit s'évaluer
+    # AU MOMENT du trap, `$temoin` étant un local visible d'ici.
+    trap 'printf "%s\n" "$code" >"$temoin"' EXIT
+    joue_session "$cle" "$dest" "$uuid" neuf mrfix "$pr"
+    code=$?
+  ) &
+  MRFIX_EN_VOL="$MRFIX_EN_VOL $i"
+  vue_recompose
+  return 0
+}
+
+# mrfix_moissonne : ramasse les sessions de déblocage finies. Rend 0 dès qu'au moins une l'a été —
+# même contrat que `moissonne`, et pour la même raison : c'est ce qui redonne la main au reste.
+#
+# Le verdict de la session n'est PAS lu dans sa prose, ni même dans son code de sortie : la PR
+# retourne EN ATTENTE quoi qu'elle ait fait, et c'est `merge-mr` qui tranchera au prochain passage.
+# Même règle que pour un ticket (#203, #415) — la seule chose qu'une session sait dire est ce
+# qu'elle a tenté, jamais si la PR est mergeable. Une session qui a échoué coûte donc un appel de
+# plus ; le plafond de deux borne ce que cette générosité peut coûter.
+mrfix_moissonne() {
+  local i reste="" pris=0 code cle cout duree verdict
+  for i in $MRFIX_EN_VOL; do
+    cle="${MRFIX_CLE[$i]}"
+    if [ -s "$RUN_DIR/$cle.fini" ]; then
+      read -r code <"$RUN_DIR/$cle.fini" || code=1
+      case "${code:-}" in '' | *[!0-9]*) code=1 ;; esac
+      rm -f "$RUN_DIR/$cle.fini" 2>/dev/null
+    else
+      reste="$reste $i"
+      continue
+    fi
+    duree=$((SECONDS - MRFIX_DEBUT[i]))
+    cout="$(champ_json "$RUN_DIR/$cle.json" total_cost_usd)"
+    Q_COUT[$i]="$(mrfix_somme "${Q_COUT[$i]}" "${cout:-0}")"
+    Q_ETAT[$i]=attente
+    MERGE_ETAT["${Q_IID[$i]}"]=attente
+    # À réexaminer TOUT DE SUITE : `Q_VU` est l'horloge du drain, et quelque chose vient justement
+    # de changer sur cette PR — l'y laisser attendre l'intervalle serait attendre pour rien.
+    Q_VU[$i]=-1
+    merge_ecrit
+    verdict=OK
+    [ "$code" -eq 0 ] || verdict=ECHEC
+    ecrit_resultat "$cle" "déblocage de la PR #${Q_PR[$i]} (#${Q_IID[$i]})" "$verdict" \
+      "${Q_PR[$i]}" "$duree" "session de déblocage — le verdict de merge est rendu par merge-mr"
+    compacte_flux "$cle"
+    # Les deux sorties d'urgence d'une session arrêtent le RUN, et pas seulement ce qu'elle faisait :
+    # exactement comme dans `juge_ticket`, dont c'est le pendant. Sans elles, un run dont le quota
+    # hebdomadaire est épuisé continuerait de lancer des tickets qui mourraient à leur première
+    # requête — la session de déblocage aurait appris la nouvelle et ne l'aurait dite à personne.
+    if [ "$code" -eq 3 ]; then
+      dit '\n%sLimite hebdomadaire%s — déclarée pendant le déblocage de la PR #%s.\n' \
+        "$C_Y" "$C_0" "${Q_PR[$i]}"
+      PLAFOND_ATTEINT=1
+      ARRET_LANCEMENT="limite hebdomadaire"
+    elif [ "$code" -eq 2 ]; then
+      ARRET_LANCEMENT="arrêt demandé"
+    fi
+    if [ "$code" -eq 0 ]; then
+      dit '  %s↩%s PR #%s (#%s) — session /mr-fix finie en %s, %s $ : on retente le merge.\n' \
+        "$C_B" "$C_0" "${Q_PR[$i]}" "${Q_IID[$i]}" "$(duree_lisible "$duree")" \
+        "$(arrondi_cout "${cout:-0}")"
+    else
+      # Ce n'est pas un verdict sur la PR : la session a pu abandonner proprement (résolution pas
+      # claire, panne d'infrastructure), ce qui est un RÉSULTAT et laisse la branche intacte. Le
+      # merge qui suit dira l'état réel, et c'est lui qui compte.
+      dit '  %s⚠%s PR #%s (#%s) — session /mr-fix sortie en %s (journal : %s) : on retente quand même le merge.\n' \
+        "$C_Y" "$C_0" "${Q_PR[$i]}" "${Q_IID[$i]}" "$code" "$RUN_DIR/$cle.resultat.txt"
+    fi
+    pris=1
+  done
+  MRFIX_EN_VOL="$reste"
+  # Seulement si quelque chose a bougé : cette fonction est appelée cinq fois par seconde dans la
+  # boucle d'attente, et `vue_recompose` relit `resume.tsv` et recompose TOUTES les lignes du plan.
+  [ "$pris" = 1 ] || return 1
+  vue_recompose
+  return 0
+}
+
+# mrfix_relance : lance UNE session de déblocage si les conditions sont réunies. Une seule, pour la
+# même raison qu'une passe du drain s'arrête au premier merge : ce qui vient de changer périme ce
+# qu'on savait des autres entrées.
+#
+# Les trois refus qui précèdent l'éligibilité sont ceux du lancement d'un ticket, à l'identique :
+# l'arrêt demandé (STOP arrête de LANCER), l'attente d'une limite d'usage en cours (ouvrir une
+# session dans cette fenêtre, c'est brûler une reprise pour rien) et le créneau libre. Rend 0 si une
+# session est partie.
+mrfix_relance() {
+  [ "$MRFIX" = 1 ] || return 1
+  [ "$MERGE" = 1 ] || return 1
+  [ -n "$ARRET_LANCEMENT" ] && return 1
+  arret_demande >/dev/null 2>&1 && return 1
+  limite_en_cours && return 1
+  compte_creneaux
+  [ "$CRENEAUX_PRIS" -ge "$CONCURRENCE" ] && return 1
+  local i
+  for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+    mrfix_eligible "$i" || continue
+    mrfix_lance "$i" && return 0
+  done
+  return 1
+}
+
+# mrfix_attend : bloque jusqu'à ce que plus aucune session de déblocage ne tourne. Réservé au drain
+# FINAL, où plus aucun ticket n'est en vol : ailleurs, bloquer le pilote reviendrait à cesser de
+# moissonner et à laisser l'écran figé le temps d'une session entière.
+mrfix_attend() {
+  while [ -n "$MRFIX_EN_VOL" ]; do
+    mrfix_moissonne && continue
+    sleep "$ORDO_TICK"
+  done
+  return 0
+}
+
 # merge_draine_final : ce qui reste, une fois le plan épuisé. Deux différences avec la passe
 # ordinaire, et une seule raison pour les deux — plus aucun ticket ne tourne :
 #   · `pipeline-wait` est autorisé (l'attente ne coûte que du temps de mur), sauf si l'arrêt a été
@@ -2622,12 +2999,13 @@ case "$MERGE_PLAFOND_S" in '' | *[!0-9]*) MERGE_PLAFOND_S=3600 ;; esac
 merge_draine_final() {
   [ "$MERGE" = 1 ] || return 0
   [ "${#Q_IID[@]}" -gt 0 ] || return 0
-  local i restants attendre=1 debut=$SECONDS progres
+  local i restants reparables attendre=1 debut=$SECONDS progres
   [ -n "$ARRET_LANCEMENT" ] && attendre=0
 
   restants=""
   for ((i = 0; i < ${#Q_IID[@]}; i++)); do
     [ "${Q_ETAT[$i]}" = attente ] && restants="$restants $i"
+    mrfix_eligible "$i" && restants="$restants $i"
   done
   [ -n "$restants" ] || return 0
 
@@ -2640,7 +3018,14 @@ merge_draine_final() {
     for ((i = 0; i < ${#Q_IID[@]}; i++)); do
       [ "${Q_ETAT[$i]}" = attente ] && restants="$restants $i"
     done
-    [ -n "$restants" ] || break
+    # Une PR bloquée mais RÉPARABLE n'est pas « ce qui reste à merger » — c'est ce qui reste à
+    # débloquer, et le drain final est le meilleur moment pour le faire : plus aucun ticket ne
+    # tourne, donc la session ne prend le créneau de personne et rien ne se dispute l'écran (#420).
+    reparables=""
+    for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+      mrfix_eligible "$i" && reparables="$reparables $i"
+    done
+    [ -n "$restants$reparables" ] || break
     # STOP est relu ici aussi. Il n'interrompt toujours pas un merge en cours — la passe en cours va
     # à son terme —, mais il retire l'ATTENTE : qui demande l'arrêt pendant un drain n'attend pas un
     # quart d'heure de pipeline par PR. Ce qui est déjà vert part quand même, le reste est nommé.
@@ -2648,6 +3033,10 @@ merge_draine_final() {
       printf '  %s⏹%s arrêt demandé — le drain finit sans attendre de pipeline.\n' "$C_Y" "$C_0"
       attendre=0
     fi
+    # Le plafond se lit ENTRE deux passes, et il n'interrompt donc ni un merge ni une session de
+    # déblocage en cours — même règle que STOP juste au-dessus. Une session `/mr-fix` peut à elle
+    # seule le dépasser ; l'interrompre au milieu d'une résolution de conflit laisserait un merge
+    # en cours dans le worktree pour n'économiser que du temps de mur.
     if [ $((SECONDS - debut)) -ge "$MERGE_PLAFOND_S" ]; then
       printf '  %s⚠%s plafond du drain atteint (%s) — le reste est laissé en file.\n' \
         "$C_Y" "$C_0" "$(duree_lisible "$MERGE_PLAFOND_S")"
@@ -2663,6 +3052,14 @@ merge_draine_final() {
       fi
       [ "${Q_ETAT[$i]}" = bloquee ] && merge_annonce "$i"
     done
+    # Rien n'a bougé côté merge : c'est le moment de débloquer, et pas avant — une PR qui se merge
+    # telle quelle ne vaut pas une session. `mrfix_relance` refait le tri (les états ont pu changer
+    # à l'instant) et pose les mêmes refus qu'au lancement d'un ticket, STOP compris : après un
+    # arrêt demandé, plus aucune session ne part et le bilan nommera ce qui reste bloqué.
+    if [ "$progres" = 0 ] && mrfix_relance; then
+      mrfix_attend
+      progres=1
+    fi
     # Aucune PR n'a bougé : ce qui reste attend un pipeline qui n'est pas venu. Y repasser
     # rejouerait la même attente sur les mêmes PR, sans qu'aucune information nouvelle soit arrivée.
     [ "$progres" = 1 ] || break
@@ -2676,25 +3073,39 @@ merge_draine_final() {
 # finir.
 merge_bilan() {
   [ "${#Q_IID[@]}" -gt 0 ] || return 0
-  local i n_m=0 n_a=0 n_b=0
+  local i n_m=0 n_a=0 n_b=0 cout_mrfix=0 essais
   for ((i = 0; i < ${#Q_IID[@]}; i++)); do
     case "${Q_ETAT[$i]}" in
       mergee) n_m=$((n_m + 1)) ;;
       attente) n_a=$((n_a + 1)) ;;
       *) n_b=$((n_b + 1)) ;;
     esac
+    cout_mrfix="$(mrfix_somme "$cout_mrfix" "${Q_COUT[$i]}")"
   done
   printf '\n  Merges : %s%s mergée(s)%s · %s%s en attente%s · %s%s bloquée(s)%s\n' \
     "$C_G" "$n_m" "$C_0" "$C_Y" "$n_a" "$C_0" "$C_R" "$n_b" "$C_0"
   for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+    # Ce que le déblocage a coûté se dit SUR LA LIGNE de la PR, et pas seulement en total : c'est là
+    # qu'on lit si une PR a mangé deux sessions, et le total seul ne le dirait pas.
+    essais=''
+    [ "${Q_MRFIX[$i]}" -gt 0 ] &&
+      essais="$(printf ' [%s session(s) /mr-fix, %s $]' "${Q_MRFIX[$i]}" "$(arrondi_cout "${Q_COUT[$i]}")")"
     case "${Q_ETAT[$i]}" in
-      mergee)  printf '    %s✓%s #%-5s PR #%-5s mergée\n' "$C_G" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" ;;
-      attente) printf '    %s⏳%s #%-5s PR #%-5s en attente — %s\n' \
-                 "$C_Y" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_RAISON[$i]}" ;;
-      *)       printf '    %s✗%s #%-5s PR #%-5s bloquée — %s\n' \
-                 "$C_R" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_RAISON[$i]}" ;;
+      mergee)  printf '    %s✓%s #%-5s PR #%-5s mergée%s\n' \
+                 "$C_G" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "$essais" ;;
+      attente) printf '    %s⏳%s #%-5s PR #%-5s en attente — %s%s\n' \
+                 "$C_Y" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_RAISON[$i]}" "$essais" ;;
+      *)       printf '    %s✗%s #%-5s PR #%-5s bloquée — %s%s%s\n' \
+                 "$C_R" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_RAISON[$i]}" "$essais" \
+                 "$([ "${Q_MRFIX[$i]}" -ge "$MRFIX_MAX" ] && printf ' — plafond de %s tentative(s) atteint' "$MRFIX_MAX")" ;;
     esac
   done
+  # Le coût des sessions de déblocage ne se cache pas dans le total des tickets : il est rendu ICI,
+  # à part, parce qu'il ne se compte pas au même endroit (voir `Q_COUT`) et qu'il répond à une autre
+  # question — ce que le run a payé pour réparer ce qu'il avait lui-même bloqué.
+  [ "$MRFIX_SESSIONS" -gt 0 ] &&
+    printf '    déblocages : %s session(s) /mr-fix, %s $ au total\n' \
+      "$MRFIX_SESSIONS" "$(arrondi_cout "$cout_mrfix")"
   [ "$n_b" -gt 0 ] && printf '    à débloquer, une PR à la fois : /mr-fix <pr>\n'
   printf '    détail des appels : %s\n' "$MERGE_LOG"
   return 0
@@ -2709,13 +3120,19 @@ merge_bilan() {
 # l'était pas — en attente comme bloqué — revient EN ATTENTE : entre les deux runs, un pipeline a pu
 # rendre son verdict et un /mr-fix a pu passer. Un `merge-mr` de plus est le prix d'une question
 # qu'on ne peut pas trancher sans la poser ; le garder bloqué serait trancher sur une mesure d'hier.
+#
+# Le compte de sessions `/mr-fix` (#420) SUIT, lui, et c'est le seul champ qu'une reprise ne remet
+# pas à zéro : il compte ce qu'on a déjà dépensé à débloquer cette PR-là, et le plafond de deux
+# n'aurait plus de sens si une reprise le rendait. C'est le raisonnement du plafond de reprises de
+# #327 — un compteur qu'un redémarrage remet à zéro est un compteur qui n'existe pas.
 if [ "$MERGE" = 1 ] && [ "$REPRISE" = 1 ] && [ -r "$REPRISE_DIR/merge.tsv" ]; then
-  while IFS=$'\t' read -r m_iid m_pr m_branche m_etat _ _ m_cause; do
+  while IFS=$'\t' read -r m_iid m_pr m_branche m_etat _ _ m_cause m_mrfix m_cout; do
     case "$m_iid" in '#'* | '') continue ;; esac
     [ -n "${m_branche:-}" ] || continue
     case "${m_etat:-}" in
-      mergee) merge_enfile "$m_iid" "$m_pr" "$m_branche" mergee '-' ;;
-      *)      merge_enfile "$m_iid" "$m_pr" "$m_branche" attente "${m_cause:--}" ;;
+      mergee) merge_enfile "$m_iid" "$m_pr" "$m_branche" mergee '-' "${m_mrfix:-0}" "${m_cout:-0}" ;;
+      *)      merge_enfile "$m_iid" "$m_pr" "$m_branche" attente "${m_cause:--}" \
+                "${m_mrfix:-0}" "${m_cout:-0}" ;;
     esac
   done <"$REPRISE_DIR/merge.tsv"
   if [ "${#Q_IID[@]}" -gt 0 ]; then
@@ -2813,13 +3230,13 @@ eligible() { # <index>
 #
 # 2 et 3 remplacent les `break 2` d'avant ce lot : un `break` depuis un sous-shell ne sortirait que de
 # lui, et il n'y a plus une boucle à quitter mais N tickets à laisser finir.
-joue_session() { # <iid> <dest> <uuid> <mode>
-  local iid="$1" dest="$2" uuid="$3" mode="$4"
+joue_session() { # <clé> <dest> <uuid> <mode> [<tâche>] [<cible>]
+  local iid="$1" dest="$2" uuid="$3" mode="$4" tache="${5:-ticket}" cible="${6:-$1}"
   local reprises=0 attente_cumulee=0 code delai
   local origine rendez_vous fin annonceur ouvreur attendu
 
   while :; do
-    lance_session "$iid" "$dest" "$uuid" "$mode"
+    lance_session "$iid" "$dest" "$uuid" "$mode" "$tache" "$cible"
     code=$?
     # Plus rien à effacer ici : une session n'écrit plus à l'écran (#290). Ses lignes permanentes
     # passent par la file de `dit`, que le pilote vide entre deux frames — c'est lui qui retire le
@@ -3163,6 +3580,20 @@ juge_ticket() { # <index> <code rendu par le sous-shell>
 EN_VOL=""
 ORDO_TICK=0.2   # la même horloge que la vue vivante : rien ici ne change plus vite
 
+# compte_creneaux : combien de sessions Claude sont en vol — tickets ET déblocages confondus
+# (#420) —, posé dans `CRENEAUX_PRIS`. Une variable et non une sortie de commande : la fonction est
+# appelée dans la boucle de remplissage, où un fork n'aurait rien à faire.
+#
+# Les deux ensembles se comptent ENSEMBLE parce qu'ils tirent sur le même quota : une remédiation
+# qui s'affranchirait de `--concurrence` ferait tourner N+1 sessions là où l'on en a demandé N.
+CRENEAUX_PRIS=0
+compte_creneaux() {
+  local j
+  CRENEAUX_PRIS=0
+  for j in $EN_VOL $MRFIX_EN_VOL; do CRENEAUX_PRIS=$((CRENEAUX_PRIS + 1)); done
+  return 0
+}
+
 # vue_tick : ce que le pilote fait entre deux moissons — vider la file des lignes permanentes, puis
 # redessiner s'il y a lieu (#290). Aucun appel réseau, aucune lecture de découverte : c'est ce qui la
 # distingue de `status.sh` et ce qui permet de l'appeler cinq fois par seconde.
@@ -3207,11 +3638,12 @@ vue_tick() {
 # passage et non la seule ligne suivante — c'est là qu'un créneau qui se libère va chercher le prochain
 # ticket éligible plutôt que le prochain tout court.
 remplit_les_creneaux() {
-  local i j n_vol iid parent statut
+  local i iid parent statut
   while :; do
     [ -n "$ARRET_LANCEMENT" ] && return 0
-    n_vol=0; for j in $EN_VOL; do n_vol=$((n_vol + 1)); done
-    [ "$n_vol" -ge "$CONCURRENCE" ] && return 0
+    # Les sessions de déblocage comptent dans les créneaux (#420) : voir `compte_creneaux`.
+    compte_creneaux
+    [ "$CRENEAUX_PRIS" -ge "$CONCURRENCE" ] && return 0
 
     # Une limite d'usage est en cours et des sessions l'attendent (#291) : jeter un ticket neuf dans
     # cette fenêtre, c'est ouvrir une session qui échouera à sa première requête, brûlera une reprise
@@ -3221,7 +3653,9 @@ remplit_les_creneaux() {
     # Seulement si quelque chose est EN VOL, et la condition n'est pas décorative : sans elle, un
     # rendez-vous encore ouvert alors que plus personne ne l'attend ferait sortir le pilote de sa
     # boucle sur un `EN_VOL` vide, et le reste du plan finirait le run sans une ligne de bilan.
-    if [ -n "$EN_VOL" ] && limite_en_cours; then return 0; fi
+    # Une session de déblocage compte ici comme un ticket : elle aussi attend le rendez-vous, et
+    # elle aussi finira par ramener le pilote dans sa boucle (#420).
+    if [ -n "$EN_VOL$MRFIX_EN_VOL" ] && limite_en_cours; then return 0; fi
 
     # Le fichier STOP est relu avant chaque lancement, comme il l'était avant chaque tour de boucle.
     if arret_demande; then ARRET_LANCEMENT="arrêt demandé"; return 0; fi
@@ -3324,8 +3758,14 @@ while :; do
   # a eu lieu. Merger d'abord, c'est faire partir les tickets suivants d'un `main` qui contient les
   # précédents — le conflit n'est pas résolu plus vite, il n'est pas fabriqué (#419).
   merge_draine
+  # Puis le déblocage de ce que le drain vient de sortir de la file (#420). APRÈS le drain, pour la
+  # même raison que le drain passe avant le remplissage : une PR qui se merge telle quelle ne vaut
+  # pas une session, et le seul moyen de le savoir est d'avoir essayé. AVANT le remplissage, parce
+  # qu'un créneau vaut mieux à une PR bloquée — qui retient déjà un ticket livré — qu'à un ticket
+  # neuf qui, lui, attendra sans rien retenir.
+  mrfix_relance
   remplit_les_creneaux
-  [ -n "$EN_VOL" ] || break
+  [ -n "$EN_VOL$MRFIX_EN_VOL" ] || break
   # Une frame par tour, AVANT d'attendre quoi que ce soit : `moissonne` peut réussir à chaque appel
   # (des sessions qui se soldent aussi vite qu'on les lance), auquel cas la boucle d'attente ci-dessous
   # ne tourne jamais — et c'était elle, seule, qui dessinait. Le bloc restait alors vide tout le run.
@@ -3338,7 +3778,13 @@ while :; do
   # elle est tout ce qui tourne pendant qu'une session travaille une heure. Il ne coûte rien tant
   # qu'aucune entrée n'est due (`Q_VU`), et une passe due tient en quelques appels — le bloc s'y
   # fige le temps d'un `merge-mr`, ce qu'un merge annoncé juste après explique.
-  until moissonne; do vue_tick; merge_draine; sleep "$ORDO_TICK"; done
+  # `moissonne || mrfix_moissonne` : les deux ensembles se ramassent ici, et il FAUT les deux — un
+  # run dont il ne reste qu'une session de déblocage en vol a un `EN_VOL` vide, donc `moissonne` ne
+  # rendrait jamais 0 et la boucle tournerait sans fin. Le `||` court-circuite dans le bon sens :
+  # ramasser un ticket rend la main tout de suite au remplissage, qui est l'urgence.
+  until moissonne || mrfix_moissonne; do
+    vue_tick; merge_draine; mrfix_relance; sleep "$ORDO_TICK"
+  done
 done
 
 # Les sous-shells sont tous sortis — leur témoin l'a dit. Ce `wait` ne fait que les récolter, pour

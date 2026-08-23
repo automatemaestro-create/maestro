@@ -45,7 +45,9 @@
 #     tickets en vol, N sessions qui mergent en parallèle périment mutuellement leur verdict de
 #     conflit, alors que la règle est « un merge à la fois, verdict recalculé après chacun ». Le
 #     pilote, lui, sérialise et ne consomme aucun quota. La clôture d'une session s'arrête donc à la
-#     PR ouverte + « En revue » : le pilote reprend de là ;
+#     PR ouverte + « En revue » : le pilote reprend de là. Le refus vaut aussi — et surtout — pour
+#     les sessions de DÉBLOCAGE (#420) : `/mr-fix` merge ce qu'il débloque depuis #418, et c'est
+#     exactement l'étape que le pilote reprend à son compte ;
 #   - `gh pr close` : fermer une PR reste une décision humaine — rien ne l'a levée ;
 #   - `gh run delete` : détruit des runs dont d'autres lisent le verdict ;
 #   - `git reset --hard` : jette du travail non commité, sans rattrapage ;
@@ -110,11 +112,11 @@ refus() {
   # message doit le dire — un refus qui laisserait croire que le merge est interdit enverrait la
   # session chercher un contournement, alors qu'elle n'a simplement plus rien à faire.
   if printf '%s' "$cmd" | grep -qE 'lib\.sh[[:space:]]+merge-mr'; then
-    printf 'dans un run autonome, le merge appartient au PILOTE (#419) : il sérialise les merges et n'\''attend aucun pipeline sur ton quota. Ta clôture s'\''arrête à la PR ouverte + cycle de vie « En revue » — c'\''est le verdict que le run attend de toi. Ne merge pas, ne réessaie pas.'
+    printf 'dans un run autonome, le merge appartient au PILOTE (#419) : il sérialise les merges et n'\''attend aucun pipeline sur ton quota. Une session de ticket s'\''arrête à la PR ouverte + cycle de vie « En revue » ; une session de déblocage (/mr-fix, #420) s'\''arrête à la PR rendue mergeable — dans les deux cas, c'\''est exactement le verdict que le run attend de toi. Ne merge pas, ne réessaie pas.'
     return 0
   fi
   if printf '%s' "$cmd" | grep -qE 'lib\.sh[[:space:]]+pipeline-wait'; then
-    printf 'n'\''attends aucun pipeline dans un run autonome (#419) : c'\''est du quota brûlé à ne rien faire, et c'\''est le pilote qui attend, hors session. Laisse la PR ouverte et le ticket « En revue » : il la mergera dès qu'\''elle sera verte.'
+    printf 'n'\''attends aucun pipeline dans un run autonome (#419) : c'\''est du quota brûlé à ne rien faire, et c'\''est le pilote qui attend, hors session. Laisse la PR en l'\''état — ticket « En revue » si tu la clôturais, correctif poussé si tu la débloquais (#420) : le pilote relira le verdict et la mergera dès qu'\''elle sera verte.'
     return 0
   fi
 
