@@ -175,6 +175,8 @@ L'UI reflète l'état en direct via **WebSocket** (ou Server-Sent Events) alimen
 
 Chaque exécution est **tracée** (étapes, outils appelés, tokens, coût, durée, erreurs) via une plateforme d'observabilité LLM (**Langfuse**, auto-hébergeable). Indispensable pour déboguer, mesurer les coûts et évaluer la qualité.
 
+**Un échec dit pourquoi** (#346). Le fournisseur Claude lance le CLI Claude Code en sous-processus : quand ce sous-processus meurt, le SDK ne remonte qu'un « Command failed with exit code 1 — Check stderr output for details », et ce stderr n'existait **nulle part**, faute d'avoir été écouté. Les deux constructions d'options du fournisseur branchent donc un **collecteur borné** (dernières lignes, chacune tronquée : `providers.base.CollecteurStderr`), dont le résumé est accroché à l'exception de l'échec et suit la cause jusqu'à l'**étape `:relance` du journal** et jusqu'à l'échec final — donc jusqu'à l'événement d'activité de la Control Tower. Deux choix à ne pas défaire : le stderr voyage par un **attribut**, jamais par un message enrichi (le type et le texte de l'exception portent la classification transitoire d'ENF-06 et les erreurs typées de la frontière — les toucher ferait changer un échec de nature en chemin) ; et un CLI **muet** le dit explicitement, au lieu de laisser une étape vide. « Pas de stderr » et « stderr jamais capturé » se ressemblaient à la lecture, et un seul des deux se répare. L'environnement passé au CLI (qui porte les credentials) n'entre jamais dans le journal — seul y passe ce que le CLI écrit lui-même.
+
 ---
 
 ## 4. Communication inter-agents

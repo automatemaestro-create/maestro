@@ -12,11 +12,12 @@ registre (voir `maestro.providers.registry`) — sans toucher au moteur.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, TypeVar
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -69,6 +70,109 @@ class McpServerUnavailable(RuntimeError):
     consignée au journal comme tout échec de tâche. Non transitoire par nature
     (configuration ou secret à corriger) — jamais relancée (ENF-06).
     """
+
+
+#: Nombre de lignes de stderr conservées d'un CLI fournisseur en échec (#346) :
+#: les **dernières**, celles qui portent la cause immédiate. Un stderr de CLI peut
+#: faire des milliers de lignes ; le journal d'un run est relu à l'écran, pas archivé.
+STDERR_LIGNES_MAX = 20
+
+#: Longueur maximale d'une ligne conservée (#346), au-delà tronquée : un CLI en
+#: détresse recrache volontiers un JSON de plusieurs milliers de caractères sur
+#: une seule ligne, qui ferait à lui seul tout le « résumé ».
+STDERR_LIGNE_MAX = 500
+
+#: Ce que dit l'étape de journal quand le CLI n'a **rien** écrit sur stderr (#346).
+#: C'est l'autre moitié du ticket : « Check stderr output for details » renvoyait à
+#: un flux vide sans jamais dire s'il était vide ou seulement jamais lu — les deux
+#: se ressemblent à la lecture, et un seul des deux se répare.
+MENTION_STDERR_VIDE = "stderr du CLI : aucune ligne — le CLI n'a rien écrit."
+
+#: Attribut par lequel une exception de fournisseur transporte le résumé du stderr
+#: jusqu'au journal (#346). Un **attribut** et non un message enrichi : le type et
+#: le texte de l'exception restent intacts, donc la classification transitoire /
+#: non transitoire (`maestro.engine.retry.est_transitoire`) et les erreurs typées
+#: de la frontière (`TurnLimitReached`…) ne changent pas de sens en chemin.
+_ATTR_STDERR = "_maestro_stderr"
+
+_E = TypeVar("_E", bound=BaseException)
+
+
+class CollecteurStderr:
+    """Collecte **bornée** du stderr d'un CLI de fournisseur (#346).
+
+    Le Claude Agent SDK lance le CLI en sous-processus et n'expose son stderr que
+    par un rappel ligne à ligne (`ClaudeAgentOptions.stderr`) : sans rappel, rien
+    n'est capturé et l'exception du SDK renvoie à un flux qui n'existe nulle part
+    (« Check stderr output for details »). Cet objet *est* ce rappel — il s'appelle
+    comme une fonction — et garde les `lignes_max` **dernières** lignes, chacune
+    tronquée à `ligne_max` caractères.
+
+    Ce qui est conservé est donc borné des deux côtés, et c'est le garde-fou du
+    ticket : un stderr volumineux ne noie pas le journal. Ce qui n'est **jamais**
+    recopié, c'est l'environnement passé au CLI (`ClaudeAgentOptions.env`, qui
+    porte les credentials) — seul ce que le CLI écrit lui-même passe ici.
+    """
+
+    def __init__(
+        self, *, lignes_max: int = STDERR_LIGNES_MAX, ligne_max: int = STDERR_LIGNE_MAX
+    ) -> None:
+        self._lignes: deque[str] = deque(maxlen=max(1, lignes_max))
+        self._ligne_max = max(1, ligne_max)
+        self._vues = 0
+
+    def __call__(self, ligne: str) -> None:
+        """Rappel du SDK — une ligne de stderr. Ne lève jamais : observer ne casse rien."""
+        texte = str(ligne).rstrip("\r\n")
+        if not texte.strip():
+            return
+        self._vues += 1
+        if len(texte) > self._ligne_max:
+            texte = texte[: self._ligne_max] + " […]"
+        self._lignes.append(texte)
+
+    @property
+    def lignes(self) -> tuple[str, ...]:
+        """Les dernières lignes retenues, dans l'ordre où le CLI les a écrites."""
+        return tuple(self._lignes)
+
+    def resume(self) -> str:
+        """Le texte à consigner : les lignes retenues, **ou** la mention d'un flux vide.
+
+        Toujours non vide — c'est le contrat : une étape de journal qui ne dit rien
+        du stderr est exactement ce que le ticket #346 est venu supprimer.
+        """
+        if not self._lignes:
+            return MENTION_STDERR_VIDE
+        omises = self._vues - len(self._lignes)
+        entete = "stderr du CLI"
+        if omises > 0:
+            entete += f" (dernières lignes ; {omises} antérieure(s) omise(s))"
+        return entete + " :\n" + "\n".join(self._lignes)
+
+
+def attache_stderr(exc: _E, resume: str) -> _E:
+    """Accroche `resume` à `exc` et rend l'exception, pour un `raise` en une ligne.
+
+    Best-effort : une exception qui refuse l'attribut (`__slots__`) repart telle
+    quelle plutôt que d'échouer — tracer une cause ne doit jamais en créer une.
+    """
+    try:
+        setattr(exc, _ATTR_STDERR, resume)
+    except Exception:  # noqa: BLE001 — l'observation ne casse jamais l'observé
+        pass
+    return exc
+
+
+def stderr_de(exc: BaseException) -> str | None:
+    """Le résumé de stderr accroché à `exc`, ou `None` si personne n'en a collecté.
+
+    `None` et `MENTION_STDERR_VIDE` ne disent pas la même chose : le premier est
+    « ce fournisseur ne capture pas le stderr » (aucun CLI, ou pas encore câblé),
+    le second « le CLI a été écouté et n'a rien dit ».
+    """
+    valeur = getattr(exc, _ATTR_STDERR, None)
+    return valeur if isinstance(valeur, str) and valeur else None
 
 
 class AuthMode(StrEnum):
