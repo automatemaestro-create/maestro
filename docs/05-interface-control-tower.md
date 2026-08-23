@@ -888,6 +888,12 @@ dernier état publié, donc un run dont l'hôte est tombé restait `en_cours` **
 runs fantômes au constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un
 **battement** périodique, et `vitalite` en tire trois verdicts :
 
+> **La frontière elle-même est tranchée par [doc 28](./28-decision-frontiere-execution-run.md)**
+> (#350) : l'exécution sortira du process de l'API pour un **hôte de run détaché**, si bien qu'un run
+> survivra à l'arrêt de l'API — mais **pas au sommeil de la machine**, qui reste traité par le
+> battement ci-dessous (on le voit) et par la relance sur brief de #349 (on le rattrape). Tant que
+> ce chantier n'est pas livré, le corollaire ci-dessus vaut sans réserve.
+
 | `vitalite` | ce que ça dit | ce qu'on en fait |
 | --- | --- | --- |
 | `vivant` | l'hôte a battu il y a moins de 30 min | rien : le run travaille |
