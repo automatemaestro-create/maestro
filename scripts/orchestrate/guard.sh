@@ -37,6 +37,15 @@
 #     de la commande lancée par la session, jamais ce qu'un script appelle en interne : laisser le
 #     motif en place ne barre donc aucun appelant légitime, et lever le `deny` mettrait un merge au
 #     rouge à un `gh` près pour zéro gain ;
+#   - `lib.sh merge-mr` ET `lib.sh pipeline-wait` : le merge appartient AU PILOTE (#419, parent
+#     #413), et c'est le seul refus de ce fichier qui ne vaille QUE pour un run autonome. Depuis
+#     #418, `/ticket-ship` merge le ticket qu'il clôt — juste en session interactive, faux ici pour
+#     deux raisons qu'aucune bonne volonté de prompt ne corrige : une session qui attend un pipeline
+#     brûle du quota à ne rien faire, en tenant un worktree et un créneau de concurrence ; et à N
+#     tickets en vol, N sessions qui mergent en parallèle périment mutuellement leur verdict de
+#     conflit, alors que la règle est « un merge à la fois, verdict recalculé après chacun ». Le
+#     pilote, lui, sérialise et ne consomme aucun quota. La clôture d'une session s'arrête donc à la
+#     PR ouverte + « En revue » : le pilote reprend de là ;
 #   - `gh pr close` : fermer une PR reste une décision humaine — rien ne l'a levée ;
 #   - `gh run delete` : détruit des runs dont d'autres lisent le verdict ;
 #   - `git reset --hard` : jette du travail non commité, sans rattrapage ;
@@ -93,6 +102,19 @@ refus() {
   # contournement au lieu du chemin prévu.
   if printf '%s' "$cmd" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge'; then
     printf 'aucun merge NON VÉRIFIÉ (CLAUDE.md, Garde-fous) : ce qui est interdit est le merge nu, pas le merge. Passe par « bash scripts/gitlab/lib.sh merge-mr <iid> », qui éprouve les prérequis avant de merger — PR ouverte, non brouillon, fermant le ticket ; rien de non poussé ; aucun conflit avec origin/main ; pipeline vert sur la tête de la PR.'
+    return 0
+  fi
+
+  # Le merge d'un run appartient au pilote (#419). Le motif vise le VERBE de lib.sh, pas `gh` : ce
+  # qui doit être barré ici est exactement le chemin que #417 a rendu légitime ailleurs, et le
+  # message doit le dire — un refus qui laisserait croire que le merge est interdit enverrait la
+  # session chercher un contournement, alors qu'elle n'a simplement plus rien à faire.
+  if printf '%s' "$cmd" | grep -qE 'lib\.sh[[:space:]]+merge-mr'; then
+    printf 'dans un run autonome, le merge appartient au PILOTE (#419) : il sérialise les merges et n'\''attend aucun pipeline sur ton quota. Ta clôture s'\''arrête à la PR ouverte + cycle de vie « En revue » — c'\''est le verdict que le run attend de toi. Ne merge pas, ne réessaie pas.'
+    return 0
+  fi
+  if printf '%s' "$cmd" | grep -qE 'lib\.sh[[:space:]]+pipeline-wait'; then
+    printf 'n'\''attends aucun pipeline dans un run autonome (#419) : c'\''est du quota brûlé à ne rien faire, et c'\''est le pilote qui attend, hors session. Laisse la PR ouverte et le ticket « En revue » : il la mergera dès qu'\''elle sera verte.'
     return 0
   fi
 

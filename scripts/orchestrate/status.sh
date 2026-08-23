@@ -21,6 +21,10 @@
 #
 #   plan.tsv        le plan figé au démarrage : rang, iid, parent, prio, groupe, titre
 #   resume.tsv      une ligne par ticket TERMINÉ : iid, verdict, mr, duree_s, cout_usd, raison
+#   merge.tsv       la file de merge du pilote (#419), s'il y en a une : iid, pr, branche, état,
+#                   code, essais, cause. Elle a sa propre horloge — un run dont tout le plan est
+#                   traité peut drainer sa file encore longtemps, et sans cette section ce temps-là
+#                   s'afficherait comme un run en cours sans rien en vol, c'est-à-dire comme une panne
 #   <iid>.session   présent dès que le ticket est pris en main -> c'est un ticket en cours
 #   <iid>.*         tout le reste (jsonl, json, vue, resultat.txt, log, worktree.log) — sert de témoin
 #                   d'activité, par sa date de modification. Le glob couvre aussi le `<iid>.jsonl.gz`
@@ -452,6 +456,38 @@ affiche_bilan() { # <run-dir>
   done < "$dir/resume.tsv"
 }
 
+# affiche_merges <run-dir> : la file de merge du pilote (#419), telle qu'elle est à cet instant.
+#
+# Elle a sa propre section parce qu'elle a sa propre horloge : « PR ouverte » n'est plus la fin de
+# la vie d'un ticket, et un run dont tout le plan est traité peut passer une heure de plus à drainer
+# sa file. Sans cette section, ce temps-là s'afficherait comme un run en cours sans rien en vol —
+# c'est-à-dire comme une panne.
+#
+# Lecture seule et sans réseau, comme tout ce fichier : l'état vient de `merge.tsv`, que le pilote
+# est seul à écrire. Un run d'avant #419 n'en a pas, et la section disparaît alors d'elle-même.
+affiche_merges() { # <run-dir>
+  local dir="$1" iid pr etat cause lignes="" n_m=0 n_a=0 n_b=0
+  [ -s "$dir/merge.tsv" ] || return 0
+  # La branche, le code et le compte d'essais sont dans le fichier mais pas à l'écran : ils servent
+  # au pilote (relance, conduite) et non à qui regarde — la cause dit déjà ce qu'il y a à savoir.
+  while IFS=$'\t' read -r iid pr _ etat _ _ cause; do
+    case "$iid" in '#'* | '') continue ;; esac
+    case "$etat" in
+      mergee)  n_m=$((n_m + 1))
+               lignes="$lignes$(printf '   %s✓%s #%-5s PR #%-5s mergée' "$C_G" "$C_0" "$iid" "$pr")"$'\n' ;;
+      attente) n_a=$((n_a + 1))
+               lignes="$lignes$(printf '   %s⏳%s #%-5s PR #%-5s en attente — %s' \
+                 "$C_Y" "$C_0" "$iid" "$pr" "${cause:--}")"$'\n' ;;
+      *)       n_b=$((n_b + 1))
+               lignes="$lignes$(printf '   %s✗%s #%-5s PR #%-5s bloquée — %s' \
+                 "$C_R" "$C_0" "$iid" "$pr" "${cause:--}")"$'\n' ;;
+    esac
+  done < "$dir/merge.tsv"
+  [ -n "$lignes" ] || return 0
+  titre_section "Merges ($((n_m + n_a + n_b))) — ${C_G}✓${C_0}${C_B} $n_m${C_0} · ${C_Y}⏳${C_0}${C_B} $n_a${C_0} · ${C_R}✗${C_0}${C_B} $n_b${C_0}"
+  printf '%s' "$lignes"
+}
+
 # --- L'état d'un run, décidé à un seul endroit ------------------------------------------------------
 # etat_du_run <run-id> : n'affiche RIEN et pose six variables globales —
 #
@@ -656,6 +692,7 @@ affiche_run() {
 
   [ "$nb_plan" -gt 0 ] && affiche_reste "$dir" "$en_vol"
   affiche_bilan "$dir"
+  affiche_merges "$dir"
 
   titre_section "Suite"
   [ -f "$dir/run.log" ] && printf '   sortie     tail -f %s/run.log\n' "$(relatif "$dir")"
