@@ -75,6 +75,43 @@
 # remise à niveau sur `origin/main` (#283, fast-forward seul, MAESTRO_SYNC_MAIN=0 pour l'éteindre),
 # worktrees soldés ramassés (#197), vieux journaux purgés (#198). Aucun ne tourne en `--dry-run`.
 #
+# --- La file de merge : au fil de l'eau pendant le run, drain en fin de run (#419, parent #413) -------
+# Un run laissait N PR ouvertes derrière lui, et c'est la raison d'être du chantier : il les MERGE
+# désormais, sans attendre son terme.
+#
+# POURQUOI AU FIL DE L'EAU, ET PAS UNE SALVE FINALE. Les branches de tickets partent toutes
+# d'`origin/main` au moment où `worktree.sh` les monte. Merger tôt fait donc démarrer les tickets
+# suivants sur un `origin/main` qui CONTIENT DÉJÀ les précédents : les conflits ne sont pas résolus
+# plus vite, ils ne sont pas fabriqués. C'est le seul des deux moments qui agisse sur la cause.
+#
+# CE QUE LE PILOTE FAIT, ET LUI SEUL. Même partage qu'à #289 : le pilote garde tout l'état du run,
+# les sessions ne font que travailler. Aucune session ne merge, aucune n'attend un pipeline — ce
+# serait du quota brûlé à ne rien faire. `merge.tsv` n'a donc qu'un écrivain, exactement comme
+# `resume.tsv`, et la question de l'atomicité d'une ligne ne se pose pas.
+#
+# UN MERGE À LA FOIS, ET LE VERDICT RECALCULÉ APRÈS CHACUN. Un merge déplace `origin/main`, donc
+# périme le verdict de conflit de TOUTES les autres PR. Une passe s'arrête donc au premier merge
+# réussi : ce qui reste sera rejugé au passage suivant, jamais sur une mesure d'avant. Même raison
+# que la sérialisation du montage des worktrees (#289). `sync-main` suit chaque merge — il est dans
+# `merge-mr` (#415), pour la raison de #205 : un run est ce qui fait vieillir `main` le plus vite, et
+# il en ouvre désormais autant qu'il en merge.
+#
+# LA DÉCISION N'EST PAS ICI. Elle est tout entière dans `lib.sh merge-mr` (#415), qui vérifie puis
+# merge en un geste — PR ouverte non brouillon qui ferme le ticket, rien de non poussé, aucun conflit
+# réel, pipeline vert SUR LA TÊTE de la PR. Le pilote ne fait que lire son code de retour et en tirer
+# une conduite : `0` mergée, `3` on repassera, `4`/`5` bloquée et réparable (/mr-fix, lot 6 #420),
+# `6` bloquée et c'est un geste humain. Rejouer ces contrôles ici en ferait deux endroits qui disent
+# « mergeable » au lieu d'un — c'est précisément ce que #415 a supprimé.
+#
+# DEUX DRAINS, PARCE QU'IL Y A DEUX MOMENTS. Pendant le run le drain est NON BLOQUANT : il ne fait
+# qu'appeler `merge-mr` et repart, une PR encore en pipeline restant en file. En fin de run, plus
+# aucun ticket ne tourne : l'attente ne coûte que du temps de mur, donc `pipeline-wait` est autorisé
+# et ce qui reste est traité dans l'ordre de `merge-order` (#416), le moins conflictuel.
+#
+# CE QUE STOP GARDE. Il arrête de LANCER, il n'interrompt pas un merge en cours. Il retire en
+# revanche `pipeline-wait` du drain final : quelqu'un qui demande l'arrêt n'attend pas un quart
+# d'heure par PR — ce qui est déjà vert est mergé, le reste est nommé et laissé en file.
+#
 # --- Journal --------------------------------------------------------------------------------------
 # .maestro/orchestrate/<run-id>/
 #   plan.tsv          le plan figé au démarrage (sortie de queue.sh)
@@ -85,6 +122,11 @@
 #   <iid>.resultat.txt  le même, mais LISIBLE (#180) : verdict, coût, durée, refus, message final
 #   <iid>.log         ce que la session a écrit sur stderr
 #   resume.tsv        une ligne par ticket : iid, verdict, PR, durée, coût, raison
+#   merge.tsv         la file de merge (#419) : iid, pr, branche, état, code, tentatives, cause.
+#                     Écrite par le pilote SEUL, réécrite en entier à chaque changement — quelques
+#                     lignes, et c'est ce qu'une reprise relit pour ne pas rejouer un merge déjà fait
+#   merge.log         la sortie brute de chaque appel à `merge-mr` — la cause d'un refus y est
+#                     entière, `merge.tsv` n'en gardant qu'une ligne
 #   pid               la carte d'identité du pilote (#213) : PID, WINPID, naissance, hôte — posée au
 #                     démarrage, retirée à la sortie, et seule chose qui permette de TUER un run
 #   concurrence       le nombre de tickets en vol de ce run (#291), relu par `--resume` pour rejouer
@@ -199,6 +241,19 @@ REPRISE_AVEC_VALEUR=0
 SANS_KILL=0
 TUER_SEUL=0
 VERBEUX="${MAESTRO_ORCHESTRATE_VERBEUX:-0}"
+# La file de merge (#419). Active par défaut : c'est la raison d'être du chantier #413, et un run
+# qui ne mergerait pas laisserait derrière lui exactement ce qu'on cherchait à supprimer.
+# `MAESTRO_ORCHESTRATE_MERGE=0` (ou `--sans-merge`) rend le run d'avant — il ouvre ses PR et s'arrête
+# là —, au même titre que MAESTRO_SYNC_MAIN=0 ou MAESTRO_PURGE_BRANCHES=0 ailleurs.
+MERGE="${MAESTRO_ORCHESTRATE_MERGE:-1}"
+case "$MERGE" in 0 | non | off | false) MERGE=0 ;; *) MERGE=1 ;; esac
+# L'intervalle entre deux passes du drain au fil de l'eau, DANS la boucle d'attente. Un drain coûte
+# une poignée d'appels réseau par PR en file : le jouer au rythme de la boucle (0,2 s) noierait
+# l'API pour une réponse qui ne change pas plus vite qu'un pipeline. À chaque verdict de ticket, en
+# revanche, le drain est joué SANS attendre l'intervalle — c'est le moment où quelque chose vient
+# justement de changer.
+MERGE_INTERVALLE_S="${MAESTRO_ORCHESTRATE_MERGE_INTERVALLE:-60}"
+case "$MERGE_INTERVALLE_S" in '' | *[!0-9]*) MERGE_INTERVALLE_S=60 ;; esac
 
 usage() {
   cat <<'USAGE'
@@ -233,6 +288,10 @@ Options :
   --plan <fichier>     Utilise un plan déjà calculé (TSV de queue.sh) au lieu d'en calculer un.
   --milestone <titre>  Transmis à queue.sh (par défaut : la phase courante).
   --run-id <id>        Identifiant du run. Défaut : horodatage.
+  --sans-merge         N'ouvre pas de file de merge : le run laisse ses PR ouvertes, comme avant
+                       #419. Par défaut, une PR verte est mergée PENDANT le run (par
+                       « lib.sh merge-mr », qui vérifie avant de merger) et ce qui reste est drainé
+                       en fin de run. MAESTRO_ORCHESTRATE_MERGE=0 fait de même.
   --sans-kill          Ne tue pas les runs encore en cours avant de démarrer (voir plus bas).
   --tuer-les-runs      Ne fait QUE ça : tue les runs en cours, dit lesquels, et sort.
   --max-reprises <n>   Reprises maximales après limite d'usage, par ticket. Défaut : 3.
@@ -254,8 +313,14 @@ Limite d'usage : la boucle attend jusqu'au reset et reprend la même session Cla
 et c'est « --resume » qui le rejoue plus tard. Les runs reprenables : status.sh --reprenables.
 
 Arrêt d'urgence : créer .maestro/orchestrate/STOP (testé entre deux tickets et pendant l'attente).
-Le run ne ferme et ne force-push jamais, et ne merge jamais hors de « lib.sh merge-mr » : il
-laisse N PR en Draft à relire.
+Il arrête de LANCER : un merge en cours n'est pas interrompu, et le drain final se joue alors sans
+attendre aucun pipeline.
+
+File de merge : une PR verte est mergée pendant le run, sans attendre son terme — les tickets
+lancés ensuite partent donc d'un origin/main qui la contient. Le merge passe TOUJOURS par
+« lib.sh merge-mr », qui vérifie avant de merger (PR ouverte non brouillon qui ferme son ticket,
+rien de non poussé, aucun conflit, pipeline vert sur la tête de la PR) ; le run ne ferme et ne
+force-push jamais. Ce qui n'a pas pu être mergé est nommé dans le résumé, avec sa cause.
 USAGE
 }
 
@@ -274,6 +339,7 @@ while [ $# -gt 0 ]; do
     --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
     --effort) EFFORT="${2:-xhigh}"; shift ;;
     --plan) PLAN_IMPOSE="${2:-}"; shift ;;
+    --sans-merge) MERGE=0 ;;
     # La valeur est FACULTATIVE (« --resume » seul = le run reprenable le plus récent) : on ne
     # consomme l'argument suivant que s'il n'est pas lui-même une option, sans quoi
     # « --resume --detach » avalerait le mode de lancement.
@@ -811,7 +877,17 @@ vue_recompose() {
     # « | » et non un tab : `read` préserve les champs vides d'un séparateur qui n'est pas un blanc.
     [ -n "${VUE_BILAN[$iid]:-}" ] && IFS='|' read -r verdict mr duree cout <<<"${VUE_BILAN[$iid]}"
     case "${verdict:-}" in
-      OK)    marque="$C_G✓$C_0" ;;
+      # Un ticket livré porte DEUX états depuis #419 — livré, puis mergé —, et le second se lit dans
+      # le marqueur plutôt que dans une colonne de plus : `vue_ligne` est le seul champ que `printf`
+      # ne padde pas, donc le seul où un glyphe non-ASCII ne décale pas la colonne suivante (le
+      # gabarit compte des octets). Trois états, un caractère : ✓ livré, PR en file · ⇈ mergée ·
+      # ⚠ merge bloqué — le ticket reste livré, c'est sa PR qui attend un geste (le résumé la nomme).
+      OK)
+        case "${MERGE_ETAT[$iid]:-}" in
+          mergee)  marque="$C_G⇈$C_0" ;;
+          bloquee) marque="$C_Y⚠$C_0" ;;
+          *)       marque="$C_G✓$C_0" ;;
+        esac ;;
       ECHEC) marque="$C_R✗$C_0" ;;
       SAUTE) marque="$C_Y~$C_0" ;;
       *)     marque=' '; mr=''; duree=''; cout='' ;;
@@ -1843,8 +1919,13 @@ Règles de ce run autonome :
   modifications non commitées, REPRENDS ce travail au lieu de recommencer : commence par regarder
   git status et git log. Tu es peut-être la reprise d'une session interrompue, et un arbre sale
   sans aucun commit est précisément la trace qu'elle laisse.
-- Ne merge jamais, ne ferme jamais une PR, ne force-push jamais — un garde-fou les refuse de
-  toute façon.
+- Ta clôture s'ARRÊTE à la PR : une PR ouverte, prête (pas un brouillon), et le ticket « En
+  revue ». C'est exactement le verdict que ce run lit de toi. N'attends AUCUN pipeline et ne
+  merge pas — ni « gh pr merge », ni « lib.sh merge-mr », ni « lib.sh pipeline-wait », qu'un
+  garde-fou refuse de toute façon ici. C'est le pilote qui merge, hors de ta session : il
+  sérialise les merges et n'attend rien sur ton quota. Si /ticket-ship s'y heurte, ton ticket
+  n'est pas en échec pour autant — il est fini, dis-le et sors.
+- Ne ferme jamais une PR, ne force-push jamais — un garde-fou les refuse aussi.
 - Si tu ne peux pas terminer, écris en TOUTE DERNIÈRE LIGNE : ORCHESTRATE: ECHEC <raison courte>.
 PROMPT
 }
@@ -2027,6 +2108,10 @@ RESUME="$RUN_DIR/resume.tsv"
 # non sa version séquentielle (#291). Un fichier d'une ligne plutôt qu'une colonne de plus au plan —
 # le plan décrit les tickets, jamais le régime du pilote, et une reprise joue le plan d'un autre run.
 printf '%s\n' "$CONCURRENCE" >"$RUN_DIR/concurrence"
+# La file de merge du run (#419). `merge.tsv` est le fichier qu'une reprise relit — voir plus bas,
+# où elle est rechargée : ce qui a déjà été mergé ne l'est pas deux fois.
+MERGE_TSV="$RUN_DIR/merge.tsv"
+MERGE_LOG="$RUN_DIR/merge.log"
 
 # renonce_au_run : retire le répertoire du run quand il ne s'y est RIEN passé (#180). Le `mkdir -p`
 # ci-dessus a lieu avant de savoir s'il y aura seulement quelque chose à traiter : un backlog vide,
@@ -2354,6 +2439,291 @@ vue_ouvre
 consigne() { # <iid> <verdict> <mr> <duree> <cout> <raison>
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$(arrondi_cout "${5:-0}")" "$6" >>"$RESUME"
 }
+
+# --- La file de merge (#419, parent #413) -------------------------------------------------------------
+# Le raisonnement est en tête de fichier ; ici, la mécanique. Un ticket jugé LIVRÉ entre en file ; le
+# drain appelle `merge-mr` et ne fait que lire son code — la décision de merger vit là-bas et nulle
+# part ailleurs (#415).
+#
+# Deux structures, et l'une n'est que la projection de l'autre : les tableaux `Q_*` portent la file
+# dans l'ordre d'entrée, `MERGE_ETAT` en donne l'état par iid — c'est ce que la vue vivante lit, une
+# fois par ligne et par recomposition, sans avoir à parcourir la file.
+#
+# `Q_VU` est l'horloge de chaque entrée, et c'est elle qui rend le drain « non bloquant » au sens
+# où il faut l'entendre : une passe n'examine que les PR qu'elle n'a pas vues depuis l'intervalle,
+# donc elle ne coûte RIEN la plupart du temps et ne fige jamais l'écran pour une réponse qui ne
+# change pas plus vite qu'un pipeline. Une entrée neuve porte -1 : elle est examinée tout de suite.
+Q_IID=(); Q_PR=(); Q_BRANCHE=(); Q_ETAT=(); Q_CODE=(); Q_ESSAIS=(); Q_RAISON=(); Q_VU=()
+declare -A MERGE_ETAT=()
+
+# merge_ecrit : la file, en entier, à chaque changement. Réécrire plutôt que d'ajouter parce qu'une
+# ligne CHANGE d'état (attente → mergée) et qu'un journal en append demanderait de savoir laquelle
+# des lignes d'un même iid fait foi. Le fichier tient en quelques lignes, l'écrivain est unique
+# (le pilote, comme pour `resume.tsv`), et la reprise n'a qu'à le lire tel quel.
+merge_ecrit() {
+  [ -n "$MERGE_TSV" ] || return 0
+  local i
+  {
+    printf '# iid\tpr\tbranche\tetat\tcode\tessais\tcause\n'
+    for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_BRANCHE[$i]}" \
+        "${Q_ETAT[$i]}" "${Q_CODE[$i]}" "${Q_ESSAIS[$i]}" "${Q_RAISON[$i]}"
+    done
+  } >"$MERGE_TSV.tmp" 2>/dev/null || return 0
+  mv -f "$MERGE_TSV.tmp" "$MERGE_TSV" 2>/dev/null || true
+  return 0
+}
+
+merge_index() { # <iid> -> l'indice dans la file, rien si elle ne le porte pas
+  local i
+  for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+    [ "${Q_IID[$i]}" = "$1" ] && { printf '%s' "$i"; return 0; }
+  done
+  return 1
+}
+
+# merge_enfile <iid> <pr> <branche> [<état> <cause>] : inscrit une PR dans la file. Idempotent —
+# un ticket déjà en file (reprise, second verdict) n'y entre pas deux fois.
+merge_enfile() { # <iid> <pr> <branche> [<état>] [<cause>]
+  [ "$MERGE" = 1 ] || return 0
+  local iid="$1" pr="$2" branche="$3" etat="${4:-attente}" cause="${5:--}"
+  # Sans PR il n'y a rien à merger : un ticket livré sans PR n'existe pas (c'est le verdict qui le
+  # dit), et une entrée sans numéro ferait échouer `merge-mr` pour une raison qui n'est pas la sienne.
+  case "$pr" in '' | '-') return 0 ;; esac
+  [ -n "$branche" ] || return 0
+  merge_index "$iid" >/dev/null && return 0
+  Q_IID+=("$iid"); Q_PR+=("$pr"); Q_BRANCHE+=("$branche")
+  Q_ETAT+=("$etat"); Q_CODE+=('-'); Q_ESSAIS+=(0); Q_RAISON+=("$cause"); Q_VU+=(-1)
+  MERGE_ETAT["$iid"]="$etat"
+  merge_ecrit
+  return 0
+}
+
+# merge_cause <sortie de merge-mr> : la ligne qui porte la cause, réduite à ce qui l'explique.
+# `merge-mr` préfixe ses refus de « ✗ »/« ⏳ » puis nomme la PR et sa branche avant un « : » — tout
+# cela est déjà dans la file, seule la fin apprend quelque chose. Le premier « : » de la ligne est
+# le bon : ni le nom d'une branche de ticket ni un numéro de PR n'en portent (une URL, si — elle
+# arrive après).
+merge_cause() {
+  printf '%s\n' "$1" | grep -m1 -e '^✗' -e '^⏳' |
+    sed 's/^[^:]*: *//; s/[[:space:]]\{1,\}/ /g; s/[[:space:]]*$//' | cut -c1-140
+}
+
+# merge_tente <index> [attendre] : UN appel à `merge-mr`, et la conduite que son code impose.
+# Rend le code de `merge-mr` — 0 = mergée.
+#
+# `attendre` n'est vrai qu'au drain final : plus aucun ticket ne tourne, donc l'attente ne coûte que
+# du temps de mur. Pendant le run elle coûterait un pilote qui ne moissonne plus, donc des sessions
+# finies qui gardent leur créneau.
+merge_tente() { # <index> [attendre]
+  local i="$1" attendre="${2:-0}"
+  local iid="${Q_IID[$i]}" branche="${Q_BRANCHE[$i]}" pr="${Q_PR[$i]}"
+  local sortie code=0 cause
+  Q_VU[$i]=$SECONDS
+  if [ "$attendre" = 1 ]; then
+    # Le verdict de `pipeline-wait` n'est pas lu : il ne juge pas la mergeabilité (il ne compare
+    # même pas les sha — §8.3), il ne fait que rendre la main quand il y a quelque chose à décider.
+    # C'est `merge-mr`, juste après, qui tranche, et lui seul.
+    sortie="$(gl_pipeline_wait "$branche" 2>&1)" || true
+    { printf -- '--- #%s (%s) : attente du pipeline\n' "$iid" "$branche"
+      printf '%s\n' "$sortie"; } >>"$MERGE_LOG" 2>/dev/null || true
+  fi
+  sortie="$(gl_merge_mr "$branche" 2>&1)" || code=$?
+  Q_ESSAIS[$i]=$((Q_ESSAIS[i] + 1))
+  Q_CODE[$i]="$code"
+  { printf -- '--- #%s (PR #%s, %s) : merge-mr a rendu %s\n' "$iid" "$pr" "$branche" "$code"
+    printf '%s\n' "$sortie"; } >>"$MERGE_LOG" 2>/dev/null || true
+  cause="$(merge_cause "$sortie")"
+  case "$code" in
+    0) Q_ETAT[$i]=mergee;  Q_RAISON[$i]='-' ;;
+    # « pas encore rendu » (en cours, absent, ou périmé) : la seule réponse qui laisse en file.
+    3) Q_ETAT[$i]=attente; Q_RAISON[$i]="${cause:-verdict de pipeline pas encore rendu}" ;;
+    # 4 et 5 sont réparables, et c'est le lot 6 (#420) qui s'en saisira ; 6 est un geste humain.
+    # Les trois sortent de la file : ni un pipeline rouge ni un conflit ne se défont tout seuls, et
+    # y repasser à chaque passe coûterait des appels pour reconfirmer ce qu'on sait déjà.
+    4) Q_ETAT[$i]=bloquee; Q_RAISON[$i]="${cause:-pipeline rouge}" ;;
+    5) Q_ETAT[$i]=bloquee; Q_RAISON[$i]="${cause:-conflit avec origin/main}" ;;
+    *) Q_ETAT[$i]=bloquee; Q_RAISON[$i]="${cause:-merge-mr a rendu $code}" ;;
+  esac
+  MERGE_ETAT["$iid"]="${Q_ETAT[$i]}"
+  merge_ecrit
+  return "$code"
+}
+
+# merge_annonce <index> : la ligne permanente d'un verdict de merge. Muette sur « attente » — un
+# drain qui répète « pas encore » à chaque passe est un drain qu'on cesse de lire.
+merge_annonce() { # <index>
+  # Deux `local` et non un : dans un seul, `$i` désignerait encore la variable de l'appelant (SC2318).
+  local i="$1"
+  local iid="${Q_IID[$i]}" pr="${Q_PR[$i]}"
+  case "${Q_ETAT[$i]}" in
+    mergee)  dit '  %s⇈%s PR #%s mergée — #%s est livré et fermé.\n' "$C_G" "$C_0" "$pr" "$iid" ;;
+    bloquee) dit '  %s⚠%s PR #%s (#%s) non mergée — %s\n' "$C_Y" "$C_0" "$pr" "$iid" "${Q_RAISON[$i]}" ;;
+  esac
+  return 0
+}
+
+# merge_ordre <indices…> : les mêmes indices, dans l'ordre le MOINS conflictuel (#416). Réservé au
+# drain final — pendant le run l'ordre est celui d'entrée, et recalculer un graphe en n(n-1)/2
+# `merge-tree` à chaque passe coûterait plus que ce qu'il ferait gagner. En dessous de deux entrées
+# il n'y a pas d'ordre à calculer : on ne paie pas la lecture de la file de revue pour l'apprendre.
+merge_ordre() {
+  local -a idx=("$@")
+  [ "${#idx[@]}" -gt 1 ] || { printf '%s\n' "${idx[@]}"; return 0; }
+  local -a branches=()
+  local i b rang ordonnees=""
+  for i in "${idx[@]}"; do branches+=("${Q_BRANCHE[$i]}"); done
+  local table
+  table="$(gl_merge_order "${branches[@]}" 2>/dev/null)" || table=""
+  if [ -z "$table" ]; then printf '%s\n' "${idx[@]}"; return 0; fi
+  while IFS=$'\t' read -r rang b _; do
+    case "$rang" in '#'* | '') continue ;; esac
+    for i in "${idx[@]}"; do
+      [ "${Q_BRANCHE[$i]}" = "$b" ] && { ordonnees="$ordonnees $i"; break; }
+    done
+  done <<<"$table"
+  # Ce que `merge-order` a écarté (branche introuvable, hors convention) reste à traiter : le rendre
+  # en queue vaut mieux que de le perdre — un ordre est une préférence, pas un filtre.
+  for i in "${idx[@]}"; do
+    case " $ordonnees " in *" $i "*) ;; *) ordonnees="$ordonnees $i" ;; esac
+  done
+  printf '%s\n' $ordonnees
+  return 0
+}
+
+# merge_draine : une passe du drain AU FIL DE L'EAU. Elle s'arrête au premier merge réussi — un merge
+# déplace `origin/main` et périme le verdict de conflit de toutes les autres PR, qui seront donc
+# rejugées à la passe suivante et jamais sur une mesure d'avant.
+merge_draine() {
+  [ "$MERGE" = 1 ] || return 0
+  local i
+  for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+    [ "${Q_ETAT[$i]}" = attente ] || continue
+    [ "${Q_VU[$i]}" -lt 0 ] || [ $((SECONDS - Q_VU[i])) -ge "$MERGE_INTERVALLE_S" ] || continue
+    if merge_tente "$i"; then
+      merge_annonce "$i"
+      return 0
+    fi
+    [ "${Q_ETAT[$i]}" = bloquee ] && merge_annonce "$i"
+  done
+  return 0
+}
+
+# merge_draine_final : ce qui reste, une fois le plan épuisé. Deux différences avec la passe
+# ordinaire, et une seule raison pour les deux — plus aucun ticket ne tourne :
+#   · `pipeline-wait` est autorisé (l'attente ne coûte que du temps de mur), sauf si l'arrêt a été
+#     demandé : qui demande STOP n'attend pas un quart d'heure par PR ;
+#   · l'ordre est celui de `merge-order` (#416), recalculé après chaque merge parce que le merge
+#     qu'on vient de faire a changé le graphe.
+# Borné par un plafond global : une PR dont le pipeline ne rendra jamais rien ne doit pas retenir un
+# run toute la nuit. Ce qui reste est nommé dans le résumé, avec sa cause.
+MERGE_PLAFOND_S="${MAESTRO_ORCHESTRATE_MERGE_PLAFOND:-3600}"
+case "$MERGE_PLAFOND_S" in '' | *[!0-9]*) MERGE_PLAFOND_S=3600 ;; esac
+merge_draine_final() {
+  [ "$MERGE" = 1 ] || return 0
+  [ "${#Q_IID[@]}" -gt 0 ] || return 0
+  local i restants attendre=1 debut=$SECONDS progres
+  [ -n "$ARRET_LANCEMENT" ] && attendre=0
+
+  restants=""
+  for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+    [ "${Q_ETAT[$i]}" = attente ] && restants="$restants $i"
+  done
+  [ -n "$restants" ] || return 0
+
+  printf '\n%sDrain de la file de merge%s — %s PR en attente%s.\n' \
+    "$C_B" "$C_0" "$(printf '%s' "$restants" | wc -w | tr -d ' ')" \
+    "$([ "$attendre" = 1 ] && printf ', pipeline attendu' || printf ', sans attendre de pipeline (arrêt demandé)')"
+
+  while :; do
+    restants=""
+    for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+      [ "${Q_ETAT[$i]}" = attente ] && restants="$restants $i"
+    done
+    [ -n "$restants" ] || break
+    # STOP est relu ici aussi. Il n'interrompt toujours pas un merge en cours — la passe en cours va
+    # à son terme —, mais il retire l'ATTENTE : qui demande l'arrêt pendant un drain n'attend pas un
+    # quart d'heure de pipeline par PR. Ce qui est déjà vert part quand même, le reste est nommé.
+    if [ "$attendre" = 1 ] && arret_demande; then
+      printf '  %s⏹%s arrêt demandé — le drain finit sans attendre de pipeline.\n' "$C_Y" "$C_0"
+      attendre=0
+    fi
+    if [ $((SECONDS - debut)) -ge "$MERGE_PLAFOND_S" ]; then
+      printf '  %s⚠%s plafond du drain atteint (%s) — le reste est laissé en file.\n' \
+        "$C_Y" "$C_0" "$(duree_lisible "$MERGE_PLAFOND_S")"
+      break
+    fi
+    progres=0
+    # shellcheck disable=SC2046  # des indices numériques : le découpage de mots est voulu
+    for i in $(merge_ordre $restants); do
+      if merge_tente "$i" "$attendre"; then
+        merge_annonce "$i"
+        progres=1
+        break
+      fi
+      [ "${Q_ETAT[$i]}" = bloquee ] && merge_annonce "$i"
+    done
+    # Aucune PR n'a bougé : ce qui reste attend un pipeline qui n'est pas venu. Y repasser
+    # rejouerait la même attente sur les mêmes PR, sans qu'aucune information nouvelle soit arrivée.
+    [ "$progres" = 1 ] || break
+  done
+  return 0
+}
+
+# merge_bilan : ce que le run a fait de ses PR, ticket par ticket. Le résumé s'arrêtait à « PR
+# ouverte », ce qui ne veut plus dire « travail livré » : une PR ouverte est désormais un état
+# transitoire, et ne pas dire lesquelles le sont restées serait rendre un ✅ pour un travail à
+# finir.
+merge_bilan() {
+  [ "${#Q_IID[@]}" -gt 0 ] || return 0
+  local i n_m=0 n_a=0 n_b=0
+  for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+    case "${Q_ETAT[$i]}" in
+      mergee) n_m=$((n_m + 1)) ;;
+      attente) n_a=$((n_a + 1)) ;;
+      *) n_b=$((n_b + 1)) ;;
+    esac
+  done
+  printf '\n  Merges : %s%s mergée(s)%s · %s%s en attente%s · %s%s bloquée(s)%s\n' \
+    "$C_G" "$n_m" "$C_0" "$C_Y" "$n_a" "$C_0" "$C_R" "$n_b" "$C_0"
+  for ((i = 0; i < ${#Q_IID[@]}; i++)); do
+    case "${Q_ETAT[$i]}" in
+      mergee)  printf '    %s✓%s #%-5s PR #%-5s mergée\n' "$C_G" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" ;;
+      attente) printf '    %s⏳%s #%-5s PR #%-5s en attente — %s\n' \
+                 "$C_Y" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_RAISON[$i]}" ;;
+      *)       printf '    %s✗%s #%-5s PR #%-5s bloquée — %s\n' \
+                 "$C_R" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_RAISON[$i]}" ;;
+    esac
+  done
+  [ "$n_b" -gt 0 ] && printf '    à débloquer, une PR à la fois : /mr-fix <pr>\n'
+  printf '    détail des appels : %s\n' "$MERGE_LOG"
+  return 0
+}
+
+# La file du run REPRIS, rechargée (#419, #204). Sans elle, une reprise ne mergerait jamais ce que
+# le run coupé avait livré : ces tickets-là sont « En revue », donc `remplit_les_creneaux` les saute
+# (« le plan datait »), donc `juge_ticket` ne les inscrit pas — ils sortiraient du run par la porte
+# de derrière, PR ouverte et personne pour la merger.
+#
+# Ce qui était MERGÉ le reste : on le recharge tel quel, et il n'est jamais rejoué. Ce qui ne
+# l'était pas — en attente comme bloqué — revient EN ATTENTE : entre les deux runs, un pipeline a pu
+# rendre son verdict et un /mr-fix a pu passer. Un `merge-mr` de plus est le prix d'une question
+# qu'on ne peut pas trancher sans la poser ; le garder bloqué serait trancher sur une mesure d'hier.
+if [ "$MERGE" = 1 ] && [ "$REPRISE" = 1 ] && [ -r "$REPRISE_DIR/merge.tsv" ]; then
+  while IFS=$'\t' read -r m_iid m_pr m_branche m_etat _ _ m_cause; do
+    case "$m_iid" in '#'* | '') continue ;; esac
+    [ -n "${m_branche:-}" ] || continue
+    case "${m_etat:-}" in
+      mergee) merge_enfile "$m_iid" "$m_pr" "$m_branche" mergee '-' ;;
+      *)      merge_enfile "$m_iid" "$m_pr" "$m_branche" attente "${m_cause:--}" ;;
+    esac
+  done <"$REPRISE_DIR/merge.tsv"
+  if [ "${#Q_IID[@]}" -gt 0 ]; then
+    printf '%sFile de merge reprise%s de %s : %s PR, dont %s déjà mergée(s).\n\n' \
+      "$C_B" "$C_0" "$REPRISE_ID" "${#Q_IID[@]}" \
+      "$(printf '%s\n' "${Q_ETAT[@]}" | grep -c '^mergee$')"
+  fi
+fi
 
 # --- Le plan, en mémoire (#289) -----------------------------------------------------------------------
 # La boucle lisait le plan ligne à ligne sur le descripteur 3. Un ordonnanceur ne peut pas : quand un
@@ -2738,6 +3108,23 @@ juge_ticket() { # <index> <code rendu par le sous-shell>
     solde_ticket "$i" OK "${mr:--}" "$duree" "${cout:-0}" -
     # La raison dit sur quoi repose le verdict : la PR est déjà nommée juste avant, l'état non.
     ecrit_resultat "$iid" "${P_TITRE[$i]}" OK "${mr:--}" "$duree" "ticket « En revue »"
+    # Le ticket est livré : sa PR entre en file, et c'est le pilote qui la mergera (#419). Après le
+    # `solde_ticket`, donc après la recomposition de la vue — la ligne du ticket porte alors son
+    # état de merge dès la frame suivante.
+    merge_enfile "$iid" "${mr:--}" "$branche"
+    vue_recompose
+  elif [ "$etat_mr" = "merged" ]; then
+    # Une PR MERGÉE est le verdict le plus fort qui soit : le travail est dans `main`, et le ticket
+    # est fermé par son « Closes ». Le cas ne devrait pas se produire dans un run — `guard.sh`
+    # refuse `merge-mr` aux sessions depuis #419 —, mais le tenir pour un échec ferait sauter en
+    # cascade tous les lots suivants du parent d'un ticket LIVRÉ. Un garde-fou qui se trompe de
+    # sens coûte plus cher que celui qui manque.
+    dit '  %s⇈%s PR #%s déjà mergée — %s, %s $\n' \
+      "$C_G" "$C_0" "${mr:-?}" "$(duree_lisible "$duree")" "$(arrondi_cout "${cout:-?}")"
+    solde_ticket "$i" OK "${mr:--}" "$duree" "${cout:-0}" "PR mergée hors du pilote"
+    ecrit_resultat "$iid" "${P_TITRE[$i]}" OK "${mr:--}" "$duree" "PR mergée"
+    merge_enfile "$iid" "${mr:--}" "$branche" mergee '-'
+    vue_recompose
   else
     raison="PR « ${etat_mr:-aucune} », cycle de vie « ${statut:-?} »"
     # Ce que la session a laissé derrière elle : c'est cela qui dit si l'échec est rattrapable.
@@ -2932,6 +3319,11 @@ moissonne() {
 }
 
 while :; do
+  # Le drain AVANT le remplissage, et ce n'est pas un détail d'ordonnancement : `worktree.sh` monte
+  # la branche du prochain ticket depuis `origin/main`, que `sync-main` vient d'avancer si un merge
+  # a eu lieu. Merger d'abord, c'est faire partir les tickets suivants d'un `main` qui contient les
+  # précédents — le conflit n'est pas résolu plus vite, il n'est pas fabriqué (#419).
+  merge_draine
   remplit_les_creneaux
   [ -n "$EN_VOL" ] || break
   # Une frame par tour, AVANT d'attendre quoi que ce soit : `moissonne` peut réussir à chaque appel
@@ -2942,7 +3334,11 @@ while :; do
   # lequel des enfants sans dire lequel, et il faudrait de toute façon relire les témoins. Un tour
   # toutes les 0,2 s ne coûte rien à côté d'une session qui dure des dizaines de minutes — et c'est
   # dans ce tour que le pilote tient l'écran (#290), la seule chose qu'il ait à faire en attendant.
-  until moissonne; do vue_tick; sleep "$ORDO_TICK"; done
+  # Le drain vit AUSSI dans cette boucle, et c'est même là qu'il gagne le plus : à `--concurrence 1`
+  # elle est tout ce qui tourne pendant qu'une session travaille une heure. Il ne coûte rien tant
+  # qu'aucune entrée n'est due (`Q_VU`), et une passe due tient en quelques appels — le bloc s'y
+  # fige le temps d'un `merge-mr`, ce qu'un merge annoncé juste après explique.
+  until moissonne; do vue_tick; merge_draine; sleep "$ORDO_TICK"; done
 done
 
 # Les sous-shells sont tous sortis — leur témoin l'a dit. Ce `wait` ne fait que les récolter, pour
@@ -2959,6 +3355,13 @@ wait 2>/dev/null || true
 vue_purge
 vue_efface
 vue_ferme
+
+# Le drain final, VUE FERMÉE (#419). Il peut durer — `pipeline-wait` attend jusqu'à quinze minutes
+# par PR — et rien ne redessinera plus : ses lignes prennent donc le chemin ordinaire, celui du
+# résumé. C'est aussi ce qui le rend lisible dans `run.log` : un drain qui aurait tourné pendant que
+# le bloc tenait l'écran y aurait laissé ses lignes entrelacées avec les frames.
+merge_draine_final
+
 printf '%sRésumé du run %s%s\n' "$C_B" "$RUN_ID" "$C_0"
 printf '  %s✓%s %s réussi(s) · %s✗%s %s en échec · %s~%s %s sauté(s)\n' \
   "$C_G" "$C_0" "$NB_OK" "$C_R" "$C_0" "$NB_ECHEC" "$C_Y" "$C_0" "$NB_SAUTE"
@@ -2979,7 +3382,15 @@ if [ -n "$WORKTREES" ]; then
   printf '\n  Worktrees montés (retirés d'\''office quand leur PR sera mergée — docs/10 §9.2) :\n'
   for i in $WORKTREES; do printf '    #%s\n' "$i"; done
 fi
-printf '\n  Aucun merge non vérifié : ce run n'\''a rien mergé ni fermé.\n'
+merge_bilan
+# « Aucun merge non vérifié » n'a jamais voulu dire « aucun merge » — depuis #417 c'est l'inverse,
+# et le run merge désormais lui-même. Ce qui reste vrai, et qui est la seule chose à dire ici :
+# chaque merge est passé par `merge-mr`, qui vérifie avant de merger, et rien n'a été fermé.
+if [ "$MERGE" = 1 ]; then
+  printf '\n  Aucun merge non vérifié : tout est passé par « lib.sh merge-mr ». Aucune PR fermée.\n'
+else
+  printf '\n  File de merge désactivée : ce run n'\''a rien mergé ni fermé (--sans-merge, ou MAESTRO_ORCHESTRATE_MERGE=0).\n'
+fi
 printf '  File de revue : bash scripts/gitlab/lib.sh review-queue\n\n'
 
 [ "$NB_ECHEC" -eq 0 ] || exit 1

@@ -447,6 +447,15 @@ def depot(tmp_path: Path) -> Depot:
         "MAESTRO_STUB_PYTHON": sys.executable,
         "MAESTRO_STUB_WORKTREE_DIR": str(racine),
         "MAESTRO_ORCHESTRATE_WORKTREE": str(binaires / "worktree-stub"),
+        # La file de merge (#419) est ÉTEINTE par défaut dans ce harnais, et c'est un choix sur ce
+        # que ces tests mesurent : ils portent sur la BOUCLE — plan, créneaux, verdicts, reprise —
+        # et le bouchon `gh` ne sait pas jouer un merge (il faudrait un `origin/main`, un run
+        # Actions et une PR non brouillon fermant son ticket). Laissée allumée, elle ferait passer
+        # chaque ticket livré par un `merge-mr` qui refuse, et cent assertions parleraient d'un
+        # refus de merge au lieu de ce qu'elles vérifient. Les tests qui la visent la rallument
+        # explicitement (voir « La file de merge » plus bas) ; sa couverture complète — un merge qui
+        # RÉUSSIT — est le lot 7 du chantier (#414), qui apporte le bouchon capable de le jouer.
+        "MAESTRO_ORCHESTRATE_MERGE": "0",
         "GL_GQL_RETRIES": "1",
         "GL_GQL_RETRY_DELAY": "0",
     }
@@ -5426,3 +5435,120 @@ def test_la_largeur_du_bloc_ne_depend_pas_de_la_locale(depot: Depot) -> None:
     vue = console.read_text(encoding="utf-8", errors="replace")
     assert titre in vue, "un titre qui tient en colonnes ne doit pas être tronqué"
     assert "daté…" not in vue and "dat…" not in vue
+
+
+# =====================================================================================
+# La file de merge du pilote (#419, parent #413)
+# =====================================================================================
+# Ces tests-ci RALLUMENT `MAESTRO_ORCHESTRATE_MERGE`, éteint dans le harnais (voir le bloc `env` du
+# dépôt jetable). Ce qu'ils mesurent est ce que le PILOTE fait de son côté — l'entrée en file,
+# l'écriture de `merge.tsv`, la conduite tirée du code de `merge-mr`, le bilan, la reprise — et
+# jamais le merge lui-même : le bouchon `gh` rend une PR EN BROUILLON, donc `merge-mr` refuse en 6,
+# ce qui est un verdict aussi observable qu'un autre. Le merge qui RÉUSSIT demande un bouchon
+# capable de jouer un `origin/main`, un run Actions et une PR non brouillon fermant son ticket :
+# c'est le lot 7 (#414) qui l'apporte, avec la couverture de bout en bout.
+
+
+def _merge_tsv(run_dir: Path) -> list[list[str]]:
+    return [ligne.split("\t")
+            for ligne in (run_dir / "merge.tsv").read_text(encoding="utf-8").splitlines()
+            if ligne and not ligne.startswith("#")]
+
+
+def test_un_ticket_livre_entre_dans_la_file_de_merge(depot: Depot) -> None:
+    """Le verdict « livré » (PR ouverte + « En revue ») inscrit la PR dans `merge.tsv`.
+
+    C'est la seule porte d'entrée de la file : sans elle, le pilote n'aurait rien à drainer et le
+    run laisserait ses PR ouvertes, ce que tout le chantier existe pour supprimer.
+    """
+    _livrables(depot, (130,))
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "file",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    lignes = _merge_tsv(depot.racine / ".maestro/orchestrate/file")
+    assert [ligne[0] for ligne in lignes] == ["130"], f"la file porte le ticket livré : {lignes}"
+    assert lignes[0][1] == "99", "la PR de la fixture"
+    assert lignes[0][2] == "feat/130-ticket-130", "la branche, seule chose que merge-mr sait juger"
+
+
+def test_le_code_de_merge_mr_decide_de_la_conduite(depot: Depot) -> None:
+    """Un `6` (geste humain — ici un brouillon) sort la PR de la file et NOMME sa cause.
+
+    Un booléen ne suffirait pas : c'est sur ce code que le pilote distingue « repasser plus tard »
+    de « bloquée », et une cause absente ferait chercher dans le journal ce que le résumé doit dire.
+    """
+    _livrables(depot, (130,))
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "conduite",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    ligne = _merge_tsv(depot.racine / ".maestro/orchestrate/conduite")[0]
+    assert ligne[3] == "bloquee", f"un 6 ne laisse pas la PR en attente : {ligne}"
+    assert ligne[4] == "6", "le code est gardé — il distingue le réparable du geste humain"
+    assert "brouillon" in ligne[6], f"la cause vient de merge-mr, pas d'un libellé : {ligne}"
+    assert "bloquée" in r.stdout, "le résumé rend l'état de merge, pas seulement « PR ouverte »"
+    assert "Merges :" in r.stdout, "le bilan par ticket"
+
+
+def test_sans_merge_le_run_est_celui_d_avant(depot: Depot) -> None:
+    """`--sans-merge` : aucune file, aucun bilan de merge, et le résumé dit lequel a tourné.
+
+    Sans cette annonce, « aucune PR mergée » serait indiscernable de « aucune PR mergeable ».
+    """
+    _livrables(depot, (130,))
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "sansmerge", "--sans-merge",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (depot.racine / ".maestro/orchestrate/sansmerge/merge.tsv").exists()
+    assert "Merges :" not in r.stdout
+    assert "--sans-merge" in r.stdout, "le régime effectif est annoncé, pas deviné"
+
+
+def test_une_reprise_ne_rejoue_pas_un_merge_deja_fait(depot: Depot) -> None:
+    """La file du run repris est rechargée : ce qui était mergé le reste, le reste revient en file.
+
+    Sans ce rechargement, les tickets livrés par le run coupé sortiraient du run par la porte de
+    derrière : ils sont « En revue », donc sautés au moment de les prendre, donc jamais inscrits.
+    """
+    depot.ticket(130, "Ticket 130", statut="En revue")
+    depot.ticket(131, "Ticket 131", statut="En revue")
+    depot.mr("feat/131-ticket-131", "opened")
+    dossier = _run_dir(depot, "coupe", [(1, 130, "-", "haute"), (2, 131, "-", "haute")])
+    (dossier / "merge.tsv").write_text(
+        "# iid\tpr\tbranche\tetat\tcode\tessais\tcause\n"
+        "130\t77\tfeat/130-ticket-130\tmergee\t0\t1\t-\n"
+        "131\t78\tfeat/131-ticket-131\tbloquee\t5\t1\tconflit avec origin/main\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    r = depot.lance("run.sh", "--resume", "coupe", "--run-id", "suite", "--sans-kill",
+                    env={"MAESTRO_CLAUDE_BIN": "true",
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode in (0, 1), r.stdout + r.stderr
+    lignes = {ligne[0]: ligne
+              for ligne in _merge_tsv(depot.racine / ".maestro/orchestrate/suite")}
+    assert lignes["130"][3] == "mergee", "un merge fait ne se rejoue pas"
+    assert lignes["130"][5] == "0", "il n'a pas été retenté : aucun essai de plus"
+    assert lignes["131"][5] == "1", "ce qui n'était pas mergé est rejugé, une fois"
+
+
+def test_status_rend_la_file_de_merge(depot: Depot) -> None:
+    """`status.sh` porte la file, sans quoi un run occupé à drainer ressemblerait à une panne :
+    tout le plan traité, plus rien en vol, et pourtant le pilote tourne encore."""
+    dossier = _run_dir(depot, "20260823-090000", [(1, 130, "-", "haute")],
+                       resume=[(130, "OK", "99", 620, "3.50", "-")])
+    (dossier / "merge.tsv").write_text(
+        "# iid\tpr\tbranche\tetat\tcode\tessais\tcause\n"
+        "130\t99\tfeat/130-ticket-130\tattente\t3\t2\tpipeline « in_progress »\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    r = depot.lance("status.sh")
+    assert r.returncode == 0, r.stderr
+    assert "Merges (1)" in r.stdout, "la file a sa section, avec sa propre horloge"
+    assert "en attente" in r.stdout and "in_progress" in r.stdout, "l'état ET sa cause"

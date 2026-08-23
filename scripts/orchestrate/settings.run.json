@@ -117,6 +117,17 @@
     "se fait refuser un `cat`/`grep`/`tail` — tous autorisés ici — vise un chemin hors de son",
     "worktree. D'où l'atelier `.maestro/session/`, monté par `worktree.sh` et nommé dans le prompt.",
     "",
+    "DEUX INTERDITS QUI N'EXISTENT QUE POUR UN RUN (#419, parent #413), et les seuls du bloc à ne",
+    "PAS venir du dépôt : `lib.sh merge-mr` et `lib.sh pipeline-wait`. Ils sont légitimes partout",
+    "ailleurs — c'est même le chemin que #417 a ouvert, et #418 les met dans /ticket-ship — mais pas",
+    "dans une session pilotée : attendre un pipeline brûle du quota à ne rien faire, en tenant un",
+    "worktree et un créneau de concurrence, et à N tickets en vol N sessions qui mergent en",
+    "parallèle périment mutuellement leur verdict de conflit. Le pilote merge à leur place, un merge",
+    "à la fois, hors quota (`run.sh`, « La file de merge »). Une session s'arrête donc à la PR",
+    "ouverte + « En revue », qui est exactement le verdict que le run lit d'elle. `guard.sh` les",
+    "refuse aussi en dur : `--check` ne contrôle que le sens dépôt → run, une règle EN PLUS ici ne",
+    "le fait donc pas rougir.",
+    "",
     "Comment relire ce journal après un run, et quoi en faire : docs/10-workflow-git.md §11.7.",
     "L'agrégat des refus, plutôt qu'un dépouillement à la main de chaque `<iid>.json` :",
     "`bash scripts/orchestrate/journal.sh refus [<run-id>|--tous]`."
@@ -168,7 +179,9 @@
       "Bash(git push --force-with-lease:*)",
       "Bash(gh pr merge:*)",
       "Bash(gh pr close:*)",
-      "Bash(gh run delete:*)"
+      "Bash(gh run delete:*)",
+      "Bash(bash scripts/gitlab/lib.sh merge-mr:*)",
+      "Bash(bash scripts/gitlab/lib.sh pipeline-wait:*)"
     ]
   },
   "hooks": {
