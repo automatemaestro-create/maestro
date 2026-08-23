@@ -466,25 +466,35 @@ affiche_bilan() { # <run-dir>
 # Lecture seule et sans réseau, comme tout ce fichier : l'état vient de `merge.tsv`, que le pilote
 # est seul à écrire. Un run d'avant #419 n'en a pas, et la section disparaît alors d'elle-même.
 affiche_merges() { # <run-dir>
-  local dir="$1" iid pr etat cause lignes="" n_m=0 n_a=0 n_b=0
+  local dir="$1" iid pr etat cause mrfix lignes="" n_m=0 n_a=0 n_b=0 n_d=0 essais
   [ -s "$dir/merge.tsv" ] || return 0
-  # La branche, le code et le compte d'essais sont dans le fichier mais pas à l'écran : ils servent
-  # au pilote (relance, conduite) et non à qui regarde — la cause dit déjà ce qu'il y a à savoir.
-  while IFS=$'\t' read -r iid pr _ etat _ _ cause; do
+  # La branche, le code et le compte d'essais de merge sont dans le fichier mais pas à l'écran : ils
+  # servent au pilote (relance, conduite) et non à qui regarde — la cause dit déjà ce qu'il y a à
+  # savoir. Le compte de sessions `/mr-fix` (#420), lui, s'affiche : c'est du quota dépensé, et une
+  # PR qui en a mangé deux ne bougera plus (c'est le plafond).
+  while IFS=$'\t' read -r iid pr _ etat _ _ cause mrfix _; do
     case "$iid" in '#'* | '') continue ;; esac
+    essais=''
+    case "${mrfix:-0}" in '' | 0 | *[!0-9]*) ;; *) essais="$(printf ' [%s /mr-fix]' "$mrfix")" ;; esac
     case "$etat" in
       mergee)  n_m=$((n_m + 1))
-               lignes="$lignes$(printf '   %s✓%s #%-5s PR #%-5s mergée' "$C_G" "$C_0" "$iid" "$pr")"$'\n' ;;
+               lignes="$lignes$(printf '   %s✓%s #%-5s PR #%-5s mergée%s' "$C_G" "$C_0" "$iid" "$pr" "$essais")"$'\n' ;;
       attente) n_a=$((n_a + 1))
-               lignes="$lignes$(printf '   %s⏳%s #%-5s PR #%-5s en attente — %s' \
-                 "$C_Y" "$C_0" "$iid" "$pr" "${cause:--}")"$'\n' ;;
+               lignes="$lignes$(printf '   %s⏳%s #%-5s PR #%-5s en attente — %s%s' \
+                 "$C_Y" "$C_0" "$iid" "$pr" "${cause:--}" "$essais")"$'\n' ;;
+      # Une session de déblocage tourne : ce n'est ni une PR qui attend un pipeline, ni une PR
+      # abandonnée. La confondre avec l'une des deux ferait chercher une panne là où le run
+      # travaille — et c'est justement l'état le plus long des trois.
+      deblocage) n_d=$((n_d + 1))
+               lignes="$lignes$(printf '   %s⟳%s #%-5s PR #%-5s déblocage en cours (/mr-fix) — %s%s' \
+                 "$C_Y" "$C_0" "$iid" "$pr" "${cause:--}" "$essais")"$'\n' ;;
       *)       n_b=$((n_b + 1))
-               lignes="$lignes$(printf '   %s✗%s #%-5s PR #%-5s bloquée — %s' \
-                 "$C_R" "$C_0" "$iid" "$pr" "${cause:--}")"$'\n' ;;
+               lignes="$lignes$(printf '   %s✗%s #%-5s PR #%-5s bloquée — %s%s' \
+                 "$C_R" "$C_0" "$iid" "$pr" "${cause:--}" "$essais")"$'\n' ;;
     esac
   done < "$dir/merge.tsv"
   [ -n "$lignes" ] || return 0
-  titre_section "Merges ($((n_m + n_a + n_b))) — ${C_G}✓${C_0}${C_B} $n_m${C_0} · ${C_Y}⏳${C_0}${C_B} $n_a${C_0} · ${C_R}✗${C_0}${C_B} $n_b${C_0}"
+  titre_section "Merges ($((n_m + n_a + n_d + n_b))) — ${C_G}✓${C_0}${C_B} $n_m${C_0} · ${C_Y}⏳${C_0}${C_B} $n_a${C_0}$([ "$n_d" -gt 0 ] && printf ' · %s⟳%s%s %s%s' "$C_Y" "$C_0" "$C_B" "$n_d" "$C_0") · ${C_R}✗${C_0}${C_B} $n_b${C_0}"
   printf '%s' "$lignes"
 }
 
