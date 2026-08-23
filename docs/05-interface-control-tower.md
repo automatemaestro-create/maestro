@@ -905,6 +905,35 @@ c'est tout l'intérêt d'un signal porté par l'hôte plutôt que d'une supposit
 Corollaire assumé : un run `--publier` **terminé normalement** finit par apparaître `orphelin`,
 faute de publier un statut de fin — le verdict porte sur son **hôte**, jamais sur son travail.
 
+**Ce qui survit à la mort d'un hôte, et ce qui ne survit pas** (#347). C'est la question qu'on se
+pose quand un run vient de disparaître, et la réponse tient en un inventaire — la ligne de conduite
+étant que **tout ce qui est passé par le bus est acquis**, et rien d'autre :
+
+| sort | ce qui est en jeu | pourquoi |
+| --- | --- | --- |
+| **perdu** | la tâche de fond et le travail qu'elle avait en cours | elle vit dans le process de `maestro-api` (`asyncio.Task`), pas ailleurs |
+| **perdu** | les événements encore en file de publication | ils n'atteignent alors ni le bus, ni le journal durable, ni l'écran |
+| **perdu** | l'**annulabilité** du run | plus aucun process ne porte sa tâche : `annuler` ne fait plus que consigner son issue |
+| **gardé** | objectif, statut, tâches, coûts, ticket, projet, sources | le journal durable (#97) les rejoue au démarrage suivant |
+| **gardé** | le **brief** et le fait qu'un humain l'ait approuvé | `brief_approuve` — c'est la matière de la reprise, et elle est déjà là |
+| **gardé** | le **dernier battement**, qui vieillit | seul un soldage l'efface : c'est ce vieillissement qui fait passer d'un `en_cours` éternel à `orphelin` |
+
+Le geste de rattrapage est `POST …/relancer` (ci-dessous), qui rejoue le cadrage approuvé dans un
+**nouveau** run. Ce qu'il ne rattrape pas, et il faut le savoir avant d'y compter : le **travail des
+tâches déjà faites**. Le run repart de la décomposition, jamais de sa tâche 3 — reprendre à l'endroit
+exact de l'interruption suppose une frontière d'exécution durable, et fait l'objet d'un cadrage à
+part (#350). Un run mort **avant** l'approbation de son brief n'a, lui, rien à rattraper du tout : il
+n'a pas encore de cadrage, seulement une proposition (`cadrage-absent`, ci-dessous).
+
+⚠ **Un run publié hors de l'API lit ce tableau à l'envers**, et le corollaire ci-dessus a une
+conséquence qu'il faut connaître **avant de cliquer**. Rien ne publie le cycle de vie d'un run de ce
+côté-là — `execution.statut` n'est émis que par le service de pilotage —, donc un
+`maestro-run --publier --brief humain` **terminé** se retrouve `orphelin` **avec** un brief approuvé :
+il apparaît dans *Runs interrompus* et se relance, ce qui donnerait un second run pour un travail
+déjà fait. Ni le verdict ni la règle d'affichage ne peuvent l'attraper — ils portent sur l'hôte,
+jamais sur le travail. Refermer cet écart demande de faire publier au run sa propre issue,
+c'est-à-dire de reprendre la question de la frontière d'exécution (#350).
+
 **Un run perdu se reprend sur le cadrage déjà payé** (#349). Voir qu'un run est mort ne le rattrape
 pas : sans geste, la seule issue reste de tout reprendre à zéro, clarification comprise. Or ce
 qu'un run emporte n'est pas du temps machine mais un **brief validé par un humain** — sur le run

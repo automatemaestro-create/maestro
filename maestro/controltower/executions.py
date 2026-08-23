@@ -29,8 +29,35 @@ l'annulation *à portée* (`asyncio.Task.cancel`, là où interrompre un run dé
 distribué demanderait un protocole de révocation côté workers) et n'ajoute aucune
 dépendance d'infrastructure à `maestro-api`. Le contrat REST n'en dépend pas :
 basculer sur la file plus tard ne change que la fabrique du moteur
-(`fabrique_moteur`), pas les routes. Le corollaire est assumé : un run ne survit
-pas au redémarrage de l'API — sa **trace**, elle, survit (journal durable #97).
+(`fabrique_moteur`), pas les routes. Le corollaire est assumé : **un run ne survit
+pas au redémarrage de l'API** — sa trace, elle, survit (journal durable #97).
+
+Cette phrase reste vraie, mais elle n'est plus toute l'histoire (#347) : depuis
+#348 la mort de l'hôte se **voit**, et depuis #349 ce qu'elle emporte se
+**rattrape**. L'inventaire, parce que c'est lui qu'on cherche quand un run vient
+de disparaître :
+
+- **ne survit pas** — la tâche de fond et le travail qu'elle avait en cours, le
+  cœur qui battait pour elle, et les événements encore en file de publication au
+  moment du coup d'arrêt (ils n'atteignent alors ni le bus, ni le journal). Un run
+  orphelin n'est plus **interruptible** non plus : plus aucun process ne porte sa
+  tâche, si bien qu'`annuler` ne fait plus que consigner son issue ;
+- **survit** — tout ce qui est passé par le bus avant l'arrêt : objectif, statut,
+  tâches, coûts, ticket, projet, sources, **brief** et le fait qu'un humain l'ait
+  approuvé (`brief_approuve`). Et le **dernier battement**, qui n'est effacé que
+  par un soldage : il vieillit, et c'est ce vieillissement qui transforme un
+  `en_cours` éternel en `orphelin` ;
+- **on rattrape par** `relancer` (ci-dessous), qui rejoue le cadrage approuvé dans
+  un nouveau run. Ce qui ne se rattrape **pas**, c'est le travail des tâches déjà
+  faites : le run repart de la décomposition, jamais de sa tâche 3. Reprendre à
+  l'endroit exact de l'interruption suppose une frontière d'exécution durable, et
+  fait l'objet d'un cadrage à part (#350).
+
+Un run publié hors de l'API (`maestro-run --publier`) lit cette liste à l'envers,
+et c'est le seul cas qui s'y ajoute : aucun redémarrage de l'API ne le concerne —
+il vit dans son process et y bat —, mais sa fin **normale** finit par l'afficher
+`orphelin`, faute pour lui de publier un statut de fin. Le verdict porte sur son
+hôte, jamais sur son travail.
 
 **Le flux d'événements existant reste le seul canal.** Le run est journalisé
 comme n'importe quel autre (`RunJournal`) et le pont télémétrie → bus

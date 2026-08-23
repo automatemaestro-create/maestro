@@ -367,6 +367,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/selecteur-projet.test.tsx` | Le sélecteur du shell : bascule sans quitter la page, gestion atteinte sans chemin en dur, et « Projets » sorti de la sidebar sans que son écran cesse d'être servi ni titré (#280) |
 | `tests/composer.test.tsx` | Composer un objectif : dossier pris dans l'explorateur (jamais saisi), aperçu gratuit qui ne lance rien et se périme dès qu'une source change, refus posé **sur la source qu'il vise** sans perdre la saisie, et « ignoré » qui n'est pas un refus (#319) |
 | `tests/brief.test.tsx` | Valider le brief, **logique critique du lot seule** (#322, le reste différé à #323) : approuvé **corrigé** vs approuvé **tel quel** (`brief: null`, qui fait retenir au moteur sa propre proposition), refus qui n'emporte jamais de brief, réponses appariées **par position** aux questions (chaînes vides comprises), et le coût engagé rendu face à la décision |
+| `tests/runs-perdus.test.tsx` | Les runs perdus (#349, testés en #351) : **la règle avant le panneau** (`lib/execution.ts`), qui n'est proposé que sur un `orphelin` **au brief approuvé** — l'API accepte pourtant de relancer un `indetermine`, et cet écart entre *accepter* et *proposer* est le sujet ; puis le panneau, absent quand rien n'est récupérable, désarmé pendant la reprise (un double clic partirait deux fois) et rendant le refus de l'API tel quel |
 
 Deux fichiers portent l'outillage plutôt que des tests :
 
