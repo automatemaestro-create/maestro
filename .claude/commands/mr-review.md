@@ -6,9 +6,10 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 
 Commande **de supervision, en lecture seule** : tu synthétises **une** Pull Request pour aider
 l'humain à décider s'il la merge. **Tu ne merges, ne fermes, n'approuves et ne modifies jamais**
-une PR ou un ticket — même si tout est vert, la décision de merge reste humaine (garde-fou détaillé
-dans `docs/10-workflow-git.md` §6, non chargé automatiquement ; cette commande est autosuffisante,
-n'ouvre le doc qu'en cas de doute).
+une PR ou un ticket — même si tout est vert : le merge, quand il vient, passe par
+`bash scripts/gitlab/lib.sh merge-mr <iid>`, qui éprouve ses prérequis — **aucun merge non
+vérifié** (garde-fou détaillé dans `docs/10-workflow-git.md` §6, non chargé automatiquement ;
+cette commande est autosuffisante, n'ouvre le doc qu'en cas de doute).
 
 1. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Arrête-toi si non authentifié.
 
@@ -80,9 +81,10 @@ n'ouvre le doc qu'en cas de doute).
    - **Changements** : N fichiers, résumé qualitatif ;
    - **Points d'attention pour la revue** : ce qu'un relecteur humain devrait vérifier — **pas** une
      décision de merge.
-   Termine en rappelant explicitement que **le merge est une action humaine** : tu ne le fais pas,
-   et tu proposes, si l'utilisateur le décide, de le faire lui-même dans l'UI de la forge ou via
-   `gh pr merge` **de sa propre main** — la commande t'est refusée en `deny`, à lui non.
+   Termine en rappelant explicitement qu'**aucun merge non vérifié** n'a lieu et que **toi** tu ne
+   merges pas : le merge, si l'utilisateur le décide, passe par
+   `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui éprouve ses prérequis avant de merger — c'est
+   le `gh pr merge` **nu** qui t'est refusé en `deny`, pas le chemin vérifié (#417, chantier #413).
 
 N'exécute **aucune** commande d'écriture : ni `gh pr merge`/`close`/`review`/`edit` (ni leurs
 ), ni `gh issue edit`/`set-workflow`, ni `git push`. En cas de doute,

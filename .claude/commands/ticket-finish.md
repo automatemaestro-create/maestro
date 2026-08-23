@@ -222,7 +222,8 @@ pas clair.
    s'il n'était pas vert (étape 5 — quel job, et pourquoi tu as poussé quand même), le **retard
    éventuel sur `origin/main`** relevé à l'étape 6 (et le rebase proposé si un conflit est probable), les cases
    de la checklist cochées et celles restées vides
-   (avec un mot sur pourquoi), le temps loggé le cas échéant, et rappelle que le merge reste une
-   action humaine (personne — pas même toi — ne doit merger automatiquement). Si un refus du
+   (avec un mot sur pourquoi), le temps loggé le cas échéant, et rappelle qu'**aucun merge non
+   vérifié** n'a lieu : personne — pas même toi — ne merge hors de
+   `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui éprouve ses prérequis. Si un refus du
    garde-fou de l'étape 3 a été **franchi sur demande explicite**, dis-le en tête du résumé (quel
    motif, et qui l'a demandé).
