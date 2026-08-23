@@ -408,6 +408,97 @@ def regles_carte(statuts: dict[str, str]) -> list[dict]:
     ]
 
 
+# --- Le merge et ses prérequis (#414, chantier #413) ----------------------------------------------
+# `merge-mr` (#415) tranche sur deux lectures et une écriture, toutes trois parsées en grep/awk : la
+# PLACE des clés y compte autant que leur valeur. Ces fabriques les centralisent pour la raison
+# donnée en tête de section — un test qui décrirait sa PR à la main passerait, ou échouerait, pour
+# une raison qui n'est pas celle qu'il annonce.
+
+
+def regle_pr(
+    branche: str,
+    pr: int = 42,
+    sha: str = "",
+    etat: str = "OPEN",
+    brouillon: bool = False,
+    ferme: tuple[int, ...] = (),
+) -> dict:
+    """La PR d'UNE branche, telle que `gh_merge_facts` la lit — en une seule requête.
+
+    ⚠ `number` vient EN PREMIER, et ce n'est pas cosmétique : le verbe retient le premier
+    `"number":<n>` de la réponse pour le numéro de la PR. Placé après `closingIssuesReferences`, un
+    numéro de TICKET prendrait sa place — et le test serait vert sur la mauvaise donnée.
+
+    `etat=""` décrit l'absence de PR (aucun nœud), qui n'est pas la même chose qu'une PR fermée :
+    l'une dit « rien à merger », l'autre « plus rien à merger », et le verbe les rend toutes deux
+    en `6` par des chemins différents.
+    """
+    noeuds = [] if not etat else [{
+        "number": pr,
+        "state": etat,
+        "isDraft": brouillon,
+        "headRefOid": sha,
+        "closingIssuesReferences": {"nodes": [{"number": n} for n in ferme]},
+    }]
+    return {
+        "contient": [f'pullRequests(headRefName: "{branche}"'],
+        "reponse": {"data": {"repository": {"pullRequests": {"nodes": noeuds}}}},
+    }
+
+
+def regle_prs_ouvertes(branches: tuple[str, ...]) -> dict:
+    """Les branches des PR ouvertes — ce qui résout un iid en branche (`gl_branche_du_ticket`)."""
+    return {
+        "contient": ["pullRequests(states: OPEN"],
+        "reponse": {"data": {"repository": {"pullRequests": {
+            "nodes": [{"headRefName": b} for b in branches]}}}},
+    }
+
+
+def regle_run(
+    branche: str,
+    sha: str = "",
+    statut: str = "completed",
+    conclusion: str = "success",
+    run: int = 900,
+) -> dict:
+    """Le dernier run Actions d'une branche (`gh_pipeline_latest`), côté REST.
+
+    `statut`/`conclusion` sont ceux de GitHub, pas le vocabulaire normalisé de `lib.sh` : la
+    traduction est faite par `gh_etat_run`, et la traverser est tout l'intérêt — un test qui
+    poserait directement « success » sauterait la moitié qui peut se tromper.
+    """
+    return {
+        "contient": [f"actions/runs?branch={branche}"],
+        "reponse": {"workflow_runs": [{
+            "id": run,
+            "status": statut,
+            "conclusion": conclusion,
+            "head_sha": sha,
+            "html_url": f"https://github.com/{DEPOT}/actions/runs/{run}",
+        }]},
+    }
+
+
+def regle_run_absent(branche: str) -> dict:
+    """Aucun run pour cette branche — la CI ne se déclenche que sur les PR (docs/10 §8)."""
+    return {"contient": [f"actions/runs?branch={branche}"], "reponse": {"workflow_runs": []}}
+
+
+def regle_merge(pr: int = 42, merge: bool = True) -> dict:
+    """Le PUT qui merge.
+
+    `merge=False` rend le refus de GitHub, c'est-à-dire une réponse SANS `"merged":true` — la forme
+    exacte que le verbe lit pour conclure à l'échec, et non un code d'erreur qu'il ne regarde pas.
+    """
+    corps = (
+        {"merged": True, "message": "Pull Request successfully merged"}
+        if merge
+        else {"message": "Head branch was modified. Review and try the merge again."}
+    )
+    return {"contient": [f"pulls/{pr}/merge"], "reponse": corps}
+
+
 def corps_ticket(titre: str, labels: str, description: str) -> str:
     """La VUE CANONIQUE d'un ticket : en-têtes `clé:<TAB>valeur`, séparateur `--`, puis le corps.
 

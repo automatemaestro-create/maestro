@@ -136,6 +136,49 @@ if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
   esac
   exit 1
 fi
+# --- REST : ce dont le MERGE a besoin (#414, chantier #413) -----------------------------------
+# Deux endpoints, et pas un de plus : le dernier run Actions d'une branche (`gh_pipeline_latest`,
+# #416) et le PUT qui merge (#415). Jusqu'ici le bouchon rendait 1 sur tout `api repos/…`, ce qui
+# suffisait à observer un REFUS de merge — la PR de la fixture était en brouillon, donc `merge-mr`
+# s'arrêtait à son premier prérequis. Un merge qui RÉUSSIT demande d'aller jusqu'au bout, d'où ces
+# deux réponses ; c'est ce que #419 avait laissé au lot 7.
+if [ "$1" = "api" ]; then
+  requete="$*"
+  case "$requete" in
+    *"-X PUT"*"/merge"*)
+      # La BARRIÈRE de sérialisation, quand un test en pose une : chaque écrivain dépose SON
+      # relevé puis regarde s'il en trouve un autre. Un fichier par écrivain, jamais un compteur
+      # partagé — c'est la leçon de #313, dont le compteur perdait l'incrémentation que la
+      # barrière rend justement probable.
+      if [ -n "$MAESTRO_STUB_BARRIERE" ]; then
+        pr="${requete#*pulls/}"; pr="${pr%%/merge*}"
+        mkdir -p "$MAESTRO_STUB_BARRIERE"
+        : > "$MAESTRO_STUB_BARRIERE/$pr.en-vol"
+        attendu=0
+        while [ "$attendu" -lt "${MAESTRO_STUB_BARRIERE_DELAI:-3}" ]; do
+          pairs=$(find "$MAESTRO_STUB_BARRIERE" -name '*.en-vol' | wc -l | tr -d ' ')
+          if [ "$pairs" -gt 1 ]; then break; fi
+          sleep 1
+          attendu=$((attendu + 1))
+        done
+        # Le relevé de CET écrivain : combien d'écrivains il a vus en vol, lui compris. Le pic se
+        # prend après coup, sur l'ensemble des relevés — aucun fichier n'a deux auteurs.
+        printf '%s\n' "$pairs" > "$MAESTRO_STUB_BARRIERE/$pr.vus"
+        rm -f "$MAESTRO_STUB_BARRIERE/$pr.en-vol"
+      fi
+      if [ -f "$FIX/merge-refuse" ]; then printf '{"message":"refus simule"}'; exit 0; fi
+      printf '{"merged":true,"sha":"deadbeef"}'
+      exit 0 ;;
+    *"actions/runs?branch="*)
+      branche="${requete#*actions/runs?branch=}"; branche="${branche%%&*}"
+      if [ -f "$FIX/run-${branche//\//__}.json" ]; then
+        cat "$FIX/run-${branche//\//__}.json"
+      else
+        printf '{"workflow_runs":[]}'
+      fi
+      exit 0 ;;
+  esac
+fi
 exit 1
 """
 
@@ -362,18 +405,33 @@ class Depot:
             encoding="utf-8",
         )
 
-    def mr(self, branche: str, etat: str = "opened", iid: int = 99) -> None:
+    def mr(
+        self,
+        branche: str,
+        etat: str = "opened",
+        iid: int = 99,
+        brouillon: bool = True,
+        ferme: tuple[int, ...] = (),
+    ) -> None:
         """La PR d'UNE branche. Le nom du fichier aplatit les « / » — le bouchon fait de même.
 
         Une branche sans fixture n'a pas de PR : c'est ce qui fait la différence entre un ticket
         livré et un ticket dont la session n'a rien clos, donc entre un verdict « OK » et un
         « ECHEC ». Une fixture unique pour toutes les branches les confondrait.
+
+        ⚠ `brouillon` vaut **vrai par défaut**, et ce n'est pas un détail de fixture : c'est ce que
+        `/ticket-finish` produisait avant #418, donc l'état dans lequel une PR de run se trouvait
+        quand tous ces tests ont été écrits. Un `merge-mr` (#415) s'y arrête à son premier
+        prérequis et rend `6` — un verdict observable, mais jamais un merge. `brouillon=False` avec
+        `ferme=(<iid>,)` décrit la PR que le chantier #413 rend MERGEABLE (#414).
         """
         etats = {"opened": "OPEN", "merged": "MERGED", "closed": "CLOSED"}
+        fermetures = ",".join(f'{{"number":{n}}}' for n in ferme)
         charge = (
             f'{{"data":{{"repository":{{"pullRequests":{{"nodes":[{{"number":{iid},'
             f'"state":"{etats.get(etat, etat.upper())}","headRefOid":"deadbeef",'
-            f'"isDraft":true}}]}}}}}}}}'
+            f'"isDraft":{"true" if brouillon else "false"},'
+            f'"closingIssuesReferences":{{"nodes":[{fermetures}]}}}}]}}}}}}}}'
         )
         (self.fixtures / f"mr-{branche.replace('/', '__')}.json").write_text(
             charge, encoding="utf-8"
@@ -381,6 +439,19 @@ class Depot:
         # Le repli des requêtes qui ne visent pas une branche (file de revue, branches des PR
         # ouvertes) : la dernière PR déclarée fait l'affaire, aucun test n'en distingue deux.
         (self.fixtures / "mr-iid.json").write_text(charge, encoding="utf-8")
+
+    def run_actions(self, branche: str, conclusion: str = "success", statut: str = "completed",
+                    sha: str = "deadbeef") -> None:
+        """Le dernier run Actions d'une branche (#416) — le quatrième prérequis du merge.
+
+        Le `sha` par défaut est celui que `mr()` donne à la tête de la PR : un run vert sur un
+        AUTRE sha est un verdict périmé, que `merge-mr` rend en `3` et non en `0`.
+        """
+        (self.fixtures / f"run-{branche.replace('/', '__')}.json").write_text(
+            f'{{"workflow_runs":[{{"id":9001,"status":"{statut}","conclusion":"{conclusion}",'
+            f'"head_sha":"{sha}","html_url":"https://github.com/x/y/actions/runs/9001"}}]}}',
+            encoding="utf-8",
+        )
 
     # --- Lancement -------------------------------------------------------------------------------
     def lance(
@@ -5552,3 +5623,231 @@ def test_status_rend_la_file_de_merge(depot: Depot) -> None:
     assert r.returncode == 0, r.stderr
     assert "Merges (1)" in r.stdout, "la file a sa section, avec sa propre horloge"
     assert "en attente" in r.stdout and "in_progress" in r.stdout, "l'état ET sa cause"
+
+
+# =====================================================================================
+# Le merge qui ABOUTIT, et sa sérialisation (#414, chantier #413)
+# =====================================================================================
+# Ce que #419 avait laissé au lot 7 : jusqu'ici la file était observée sur des REFUS (une PR en
+# brouillon, `merge-mr` rend 6), ce qui suffit à juger la conduite du pilote mais jamais le merge
+# lui-même. Ces tests-ci vont au bout — PR non brouillon fermant son ticket, pipeline vert sur la
+# tête, `origin/main` réel — parce que les deux propriétés qui restaient à garder ne s'observent
+# QUE sur un merge qui réussit : qu'il ait lieu, et qu'il ait lieu seul.
+
+
+def _pr_mergeables(depot: Depot, iids: tuple[int, ...]) -> None:
+    """Des tickets livrables dont la PR passe les quatre prérequis de `merge-mr`.
+
+    Le dépôt jetable devient un vrai dépôt git : le troisième prérequis est un
+    `git merge-tree --write-tree` contre `origin/main`, et il ne se bouchonne pas — c'est la seule
+    source dont #303 a montré qu'elle pouvait porter la décision. Les branches partent donc de
+    `main` sans diverger, ce qui est le cas nominal d'un run (toutes les branches d'un run
+    naissent du même `origin/main`).
+    """
+    _init_git_sur_main(depot)
+    for iid in iids:
+        branche = f"feat/{iid}-ticket-{iid}"
+        depot.ticket(iid, f"Ticket {iid}")
+        depot.mr(branche, "opened", iid=800 + iid, brouillon=False, ferme=(iid,))
+        depot.run_actions(branche)
+        _git(depot, "branch", branche, "main")
+
+
+def _pr_du_journal(depot: Depot, motif: str) -> list[str]:
+    """Les appels `gh` du run qui portent `motif`, dans l'ordre où ils sont partis."""
+    journal = depot.fixtures / "gh.log"
+    if not journal.exists():
+        return []
+    return [ligne for ligne in journal.read_text(encoding="utf-8").splitlines() if motif in ligne]
+
+
+@besoin_git
+def test_une_pr_verte_est_mergee_pendant_le_run(depot: Depot) -> None:
+    """Le critère du chantier : un run se termine TOUT MERGÉ, pas sur N PR à reprendre après coup.
+
+    C'est aussi le cas nominal sans lequel les tests de refus ne prouveraient rien : ils
+    vérifieraient qu'un merge impossible n'a pas lieu.
+    """
+    _pr_mergeables(depot, (130,))
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "vert",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    ligne = _merge_tsv(depot.racine / ".maestro/orchestrate/vert")[0]
+    assert ligne[3] == "mergee", f"la PR devait être mergée : {ligne}"
+    assert ligne[4] == "0", "le code de merge-mr est gardé tel quel"
+    puts = _pr_du_journal(depot, "pulls/930/merge")
+    assert len(puts) == 1, f"un merge, et un seul : {puts}"
+    assert "merge_method=squash" in puts[0]
+    assert "mergée" in r.stdout, "le résumé rend le merge, pas seulement « PR ouverte »"
+
+
+@besoin_git
+def test_les_merges_d_un_run_sont_serialises(depot: Depot) -> None:
+    """Un seul merge à la fois — mesuré par une BARRIÈRE et des relevés par écrivain.
+
+    ⚠ Pourquoi une barrière et pas un `sleep` : « deux merges en même temps » est une course, et un
+    `sleep` la fait trancher par la charge de la machine — le test dirait tantôt le code, tantôt
+    l'ordonnancement du système (#292). Chaque merge signale donc son arrivée puis ATTEND d'en voir
+    un autre ; si le pilote en lançait deux de front, la barrière se lèverait et les deux relevés
+    porteraient 2.
+
+    ⚠ Et pourquoi un fichier par écrivain plutôt qu'un compteur : un compteur partagé se lit puis
+    se réécrit en deux temps, donc perd une incrémentation dès que deux écrivains arrivent
+    ensemble — c'est-à-dire exactement ce que la barrière rend probable (#313). Le pic se prend
+    APRÈS COUP, sur des relevés dont aucun n'a deux auteurs.
+
+    Ce que ce test garde vraiment : le merge appartient au PILOTE et à lui seul (#419). Le jour où
+    il repartirait dans le sous-shell d'une session, deux PR se mergeraient de front et
+    périmeraient mutuellement leur verdict de conflit.
+    """
+    _pr_mergeables(depot, (130, 131))
+    barriere = depot.racine / ".maestro" / "barriere"
+    plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "serie",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1",
+                         "MAESTRO_STUB_BARRIERE": str(barriere),
+                         "MAESTRO_STUB_BARRIERE_DELAI": "3"})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    dossier = depot.racine / ".maestro/orchestrate/serie"
+    etats = {ligne[0]: ligne[3] for ligne in _merge_tsv(dossier)}
+    assert etats == {"130": "mergee", "131": "mergee"}, f"les deux PR sont mergées : {etats}"
+
+    releves = sorted(barriere.glob("*.vus"))
+    assert len(releves) == 2, f"un relevé par merge, et deux merges ont eu lieu : {releves}"
+    pic = max(int(f.read_text(encoding="utf-8").strip() or 0) for f in releves)
+    assert pic == 1, (
+        f"pic de simultanéité {pic} : deux merges se sont recouverts alors que le pilote doit les "
+        "sérialiser — le second aurait jugé son conflit sur un origin/main déjà périmé"
+    )
+    assert not list(barriere.glob("*.en-vol")), "chaque écrivain retire son témoin en partant"
+
+
+@besoin_git
+def test_le_verdict_de_la_seconde_pr_est_pris_apres_le_premier_merge(depot: Depot) -> None:
+    """Une passe du drain s'arrête au PREMIER merge réussi, et c'est le cœur du chantier.
+
+    Un merge déplace `origin/main` et périme le verdict de conflit de toutes les autres PR : les
+    juger dans la même passe, c'est les juger sur une mesure d'avant. C'est aussi ce qui rend les
+    conflits d'un run RÉSOLUBLES — à la fin d'un run les PR ne sont pas en conflit avec `main` mais
+    entre elles, et c'est le premier merge qui donne un côté au suivant.
+    """
+    _pr_mergeables(depot, (130, 131))
+    plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "ordre",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    journal = (depot.fixtures / "gh.log").read_text(encoding="utf-8").splitlines()
+    merge_130 = [i for i, ligne in enumerate(journal) if "pulls/930/merge" in ligne]
+    lectures_131 = [
+        i for i, ligne in enumerate(journal)
+        if 'headRefName: "feat/131-ticket-131"' in ligne
+    ]
+    assert merge_130 and lectures_131, f"les deux PR ont bien été lues et mergées : {journal[-6:]}"
+    assert lectures_131[-1] > merge_130[0], (
+        "la seconde PR est rejugée APRÈS le merge de la première — sinon son verdict de conflit "
+        "porterait sur un origin/main que le merge vient de déplacer"
+    )
+
+
+@besoin_git
+def test_une_pr_bloquee_ne_reçoit_pas_plus_de_deux_sessions_de_deblocage(depot: Depot) -> None:
+    """Le plafond de #420 : deux sessions `/mr-fix`, puis la PR est laissée à un humain.
+
+    Sans plafond, une PR que rien ne peut réparer — un secret manquant, un test cassé ailleurs —
+    consommerait des sessions jusqu'à la fin du run, sur le quota du travail restant.
+    """
+    _pr_mergeables(depot, (130,))
+    depot.run_actions("feat/130-ticket-130", conclusion="failure")
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "plafond",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    dossier = depot.racine / ".maestro/orchestrate/plafond"
+    ligne = _merge_tsv(dossier)[0]
+    assert ligne[3] == "bloquee", f"une PR au rouge reste bloquée : {ligne}"
+    assert ligne[4] == "4", "le code distingue le pipeline rouge du conflit et du geste humain"
+    assert ligne[7] == "2", f"exactement deux sessions de déblocage, pas trois : {ligne}"
+    assert (dossier / "130-mrfix.resultat.txt").exists()
+    assert (dossier / "130-mrfix2.resultat.txt").exists(), (
+        "la seconde session porte son rang : sans lui elle écraserait le journal de la première, "
+        "c'est-à-dire ce qu'on ira lire pour comprendre pourquoi la première n'a pas suffi"
+    )
+    assert not (dossier / "130-mrfix3.resultat.txt").exists()
+    assert not _pr_du_journal(depot, "/merge"), "aucun merge : la PR est restée au rouge"
+    assert "plafond de 2 tentative(s) atteint" in r.stdout
+
+
+@besoin_git
+def test_une_session_de_deblocage_en_echec_laisse_la_pr_ouverte_et_intacte(depot: Depot) -> None:
+    """Une session qui abandonne proprement est un RÉSULTAT, pas un verdict sur la PR.
+
+    Elle a pu renoncer pour la bonne raison — une résolution qui n'est pas claire ne se pousse pas
+    (§8.3). Le run retente donc le merge quand même, et c'est `merge-mr` qui tranche : la seule
+    chose qu'une session sache dire est ce qu'elle a tenté, jamais si la PR est mergeable.
+    """
+    _pr_mergeables(depot, (130,))
+    depot.run_actions("feat/130-ticket-130", conclusion="failure")
+    gabarit = _statut_json("%s", "En revue")
+    echoue = _claude_stub(depot, f"""
+        if printf '%s\\n' "$@" | grep -q '/mr-fix'; then
+          printf '{{"type":"result","subtype":"error","is_error":true,"total_cost_usd":0.5}}\\n'
+          exit 1
+        fi
+        iid=$(printf '%s\\n' "$@" | grep -o 'GitLab #[0-9]*' | head -1 | tr -dc '0-9')
+        printf '{gabarit}' "$iid" > "$MAESTRO_FIXTURES/owner-$iid.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "echec",
+                    env={"MAESTRO_CLAUDE_BIN": echoue, "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    dossier = depot.racine / ".maestro/orchestrate/echec"
+    ligne = _merge_tsv(dossier)[0]
+    assert ligne[3] == "bloquee", "la PR reste bloquée, et nommée comme telle au bilan"
+    assert not _pr_du_journal(depot, "/merge"), "rien n'a été mergé sur un déblocage en échec"
+    assert not _pr_du_journal(depot, "pr\tclose"), "et rien n'a été fermé : la PR est intacte"
+
+    # Le cœur du test : la PR est REJUGÉE après chaque session, et le verdict vient de `merge-mr`.
+    # Un essai initial, puis un par session de déblocage — la session qui a échoué coûte donc un
+    # appel de plus, et c'est le plafond de deux qui borne ce que cette générosité peut coûter.
+    assert ligne[5] == "3", f"1 essai initial + 1 par session de déblocage : {ligne}"
+    assert ligne[7] == "2", "les deux sessions ont bien été jouées malgré la première en échec"
+    assert "on retente le merge" in r.stdout
+
+    # ⚠ Et ce que ce test établit en creux : le CODE DE SORTIE d'une session n'est pas lu comme un
+    # verdict. Le bouchon sort en 1, et pourtant la session est comptée « finie » — même règle que
+    # pour un ticket (#203) : hors limite d'usage, une sortie non nulle dit seulement que le tour
+    # est terminé. La seule chose qu'une session sache dire est ce qu'elle a tenté, jamais si la PR
+    # est mergeable ; l'inverse ferait renoncer à une PR qu'un correctif poussé a peut-être sauvée.
+    resultat = (dossier / "130-mrfix.resultat.txt").read_text(encoding="utf-8")
+    assert "merge-mr" in resultat, (
+        "le résultat de la session renvoie au verbe qui tranche, au lieu de rendre un verdict"
+    )
+
+
+@besoin_git
+def test_sans_mrfix_une_pr_bloquee_reste_bloquee_avec_sa_cause(depot: Depot) -> None:
+    """`--sans-mrfix` : aucune session de déblocage, et le bilan dit pourquoi la PR reste là."""
+    _pr_mergeables(depot, (130,))
+    depot.run_actions("feat/130-ticket-130", conclusion="failure")
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "sansfix", "--sans-mrfix",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    dossier = depot.racine / ".maestro/orchestrate/sansfix"
+    ligne = _merge_tsv(dossier)[0]
+    assert ligne[3] == "bloquee"
+    assert ligne[7] == "0", "aucune session de déblocage n'a été ouverte"
+    assert not (dossier / "130-mrfix.resultat.txt").exists()

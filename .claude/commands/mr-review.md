@@ -1,5 +1,5 @@
 ---
-description: Synthétise une Pull Request (état, pipeline, threads, diff) pour éclairer la décision de merge humaine — ne merge jamais
+description: Synthétise une Pull Request (état, pipeline, threads, diff) pour éclairer un relecteur humain — ne merge jamais
 argument-hint: "<pr-numéro | branche>  (défaut : la PR de la branche courante)"
 allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 ---
@@ -79,13 +79,15 @@ cette commande est autosuffisante, n'ouvre le doc qu'en cas de doute).
    - **Aptitude au merge** : mergeable ? conflits ? threads bloquants ? pipeline ? ticket lié ?
      (une ligne par point, ✅/⚠️/❌) ;
    - **Changements** : N fichiers, résumé qualitatif ;
-   - **Points d'attention pour la revue** : ce qu'un relecteur humain devrait vérifier — **pas** une
-     décision de merge.
+   - **Points d'attention pour la revue** : ce qu'un relecteur humain devrait vérifier — **pas** un
+     verdict de mergeabilité, qui appartient à `merge-mr` seul.
+   ⚠ Depuis #418 la revue est un geste d'**après-merge** (docs/10 §6) : la PR que tu synthétises est
+   le plus souvent **déjà dans `main`**. Ne présente donc pas ton compte rendu comme un feu vert à
+   donner ou à retenir — ce qu'il relève se corrige par un **ticket**, plus par un blocage de PR.
    Termine en rappelant explicitement qu'**aucun merge non vérifié** n'a lieu et que **toi** tu ne
    merges pas : le merge, si l'utilisateur le décide, passe par
    `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui éprouve ses prérequis avant de merger — c'est
    le `gh pr merge` **nu** qui t'est refusé en `deny`, pas le chemin vérifié (#417, chantier #413).
 
-N'exécute **aucune** commande d'écriture : ni `gh pr merge`/`close`/`review`/`edit` (ni leurs
-), ni `gh issue edit`/`set-workflow`, ni `git push`. En cas de doute,
-abstiens-toi et demande.
+N'exécute **aucune** commande d'écriture : ni `gh pr merge`/`close`/`review`/`edit`, ni
+`gh issue edit`/`set-workflow`, ni `git push`. En cas de doute, abstiens-toi et demande.

@@ -177,11 +177,16 @@ toi-même.
    le ticket qui était en vol. Si l'utilisateur veut la certitude plutôt que le filet, donne-lui
    la commande **sans** `--detach` à lancer dans son propre terminal Git Bash laissé ouvert : c'est
    le seul montage qui ne dépende d'aucun processus tiers.
-4. **Dis ce que le run produira** : N Pull Requests **en Draft**, une par ticket. Le run ne ferme
-   et ne force-push **jamais**, et **aucun merge non vérifié** n'y a lieu : un merge, s'il vient,
+4. **Dis ce que le run produira** : une PR par ticket, et **le plus souvent déjà mergée** — depuis
+   #419 le pilote tient une **file de merge** qu'il draine au fil de l'eau puis en fin de run
+   (docs/10 §11.11). Ce qui reste ouvert est nommé au bilan **avec sa cause** (pipeline rouge,
+   conflit non résolu, plafond de deux sessions `/mr-fix` atteint), la PR restant ouverte et son
+   ticket « En revue ». Dis-le en ces termes : le run ne laisse plus N PR à reprendre après coup.
+   Il ne ferme et ne force-push **jamais**, et **aucun merge non vérifié** n'y a lieu : tout merge
    passe par `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui éprouve ses prérequis — PR ouverte,
    non brouillon, fermant le ticket ; rien de non poussé ; aucun conflit avec `origin/main` ;
-   pipeline vert sur la tête de la PR (#417, chantier #413).
+   pipeline vert sur la tête de la PR (#417, chantier #413). ⚠ Et c'est le **pilote** qui merge,
+   jamais une session : `guard.sh` refuse `merge-mr` et `pipeline-wait` dans une session de run.
 
 ### `--dry-run` — juste voir le plan
 
