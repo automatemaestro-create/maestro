@@ -2907,12 +2907,78 @@ Trois choix, là encore :
   jamais mêlées à la liste : les y mêler proposerait une reprise dans un répertoire qui n'est pas
   celui de la session.
 
-⚠ **Ce qui reste hors de portée** : que l'onglet se rouvre **tout seul** sur sa conversation. Vérifié
-le 2026-08-20 sur l'extension 2.1.237 — la clé `sessionGroups:<hash du realpath du workspace>`
-qu'elle sait écrire dans `globalState` est **absente** du `state.vscdb` (globalStorage et les 15
-workspaceStorage), et sa commande *Reopen Closed Session* travaille sur une pile
-`recentlyClosedSessions` en mémoire, perdue au redémarrage. On outille donc la reprise sans la rendre
-automatique ; nommer une session au lancement (`claude -n "<nom>"`) aide en complément.
+#### Pourquoi l'onglet d'un ticket repart vide — et pas celui du clone principal (#424)
+
+**La cause tient en une phrase : le transcript suit le répertoire courant, et un onglet ne cherche
+que dans le sien.** `/ticket-start` relocalise la session dans le worktree (§9.1), donc son
+transcript **quitte** le dossier de projet de l'espace de travail ; au redémarrage, l'onglet ne l'y
+trouve plus et ouvre une conversation **neuve**, sans un mot.
+
+```bash
+claude --resume <id>   # y revenir : marche depuis n'importe quel dossier, worktree ramassé ou non
+```
+
+⚠ **Et #397 s'était trompé en concluant « hors de portée ».** L'onglet **sait** se rebrancher : ce
+qu'il ne sait pas, c'est chercher ailleurs que dans son dossier. Les deux moitiés, mesurées le
+2026-08-22 sur l'extension 2.1.238 :
+
+- **La restauration fonctionne, et on l'a vue faire.** VS Code persiste chaque onglet Claude avec
+  `{"isFullEditor":…,"sessionID":"<uuid>"}` dans `memento/workbench.parts.editor`, et
+  `deserializeWebviewPanel` rebranche l'onglet sur cet identifiant. Preuve : le transcript de
+  l'onglet « Ordre de traitement milestone 14 » porte comme dernier horodatage interne
+  `2026-08-21T16:30`, et son fichier a été réécrit le **2026-08-22 à 19:54:56** — à la seconde du
+  redémarrage, sans qu'un seul message nouveau y soit ajouté. La piste `sessionGroups:<hash>`
+  explorée par #397 n'était donc pas la bonne : l'absence de cette clé ne prouvait rien.
+- **Mais la recherche est bornée au dossier.** Le rebranchement n'aboutit que si l'identifiant se
+  retrouve dans `listSessions({dir: <espace de travail>, includeWorktrees: false})` — worktrees
+  **exclus** en toutes lettres. Sinon l'onglet appelle `createSession()`.
+
+Et le transcript, lui, est bien parti. Mesuré **en direct sur la session qui a écrit ces lignes** :
+démarrée dans le clone principal, relocalisée par `/ticket-start 424`, son fichier n'existe plus
+qu'une fois — sous le dossier de projet du worktree — et porte dix lignes
+`{"type":"relocated","relocatedCwd":"…"}`. 112 transcripts sont dans ce cas depuis #181.
+
+⚠ **Le ramassage du worktree n'y est pour rien**, et c'était l'autre hypothèse : `gc` retire un
+répertoire de travail, jamais un transcript (`<config>/projects/…` lui survit), et `claude --resume`
+a été joué depuis un **autre worktree** sur une session du clone principal — il l'a retrouvée et
+**replacée dans son cwd d'origine**. C'est pourquoi la commande de reprise ci-dessus n'a aucune
+condition : ce qui manque à l'onglet ne manque pas au CLI.
+
+Conséquence pratique : **un onglet ouvert sur le clone principal se rouvre sur sa conversation**
+(c'est le cas courant, et il marche) ; **un onglet passé par `/ticket-start` ne le fait pas** — il
+faut son identifiant. `ensure` le donne au moment du départ (ci-dessous) ; après coup, `worktree.sh
+sessions <iid>` le retrouve. Nommer une session au lancement (`claude -n "<nom>"`) aide en
+complément.
+
+⚠ **Sans rapport avec VS Code, mais c'est de la vraie perte** : Claude Code supprime périodiquement
+les transcripts de plus de **30 jours** (`<config>/.last-cleanup`) — au constat du 2026-08-22, le
+plus ancien du clone principal datait du 2026-07-22, jour pour jour. `cleanupPeriodDays` déplace ce
+seuil pour qui veut garder plus loin.
+
+#### Le signalement tombe au départ, pas après coup (#424)
+
+La perte a lieu à la **relocalisation**, et c'est le seul instant où quelqu'un a la question sous
+les yeux — après, l'onglet vide ne rappelle rien. `ensure` le dit donc là, à côté des ports :
+
+```
+  ⚠ la conversation de cette session quitte le dossier courant : au prochain
+    démarrage de VS Code, son onglet repartira vide (un onglet ne cherche que
+    dans le dossier de son espace de travail, worktrees exclus — §9.7).
+    y revenir : claude --resume 74b811f3-2707-4b14-b04c-115b3ec622a9
+```
+
+Deux choix à ne pas défaire :
+
+- **L'identifiant vient de `CLAUDE_CODE_SESSION_ID`**, que Claude Code pose dans l'environnement de
+  ses sous-processus — donc juste, jamais deviné. **Hors d'une session** (`orchestrate/run.sh`, un
+  terminal nu) la variable est absente : le message renvoie alors vers `worktree.sh sessions <iid>`
+  plutôt que d'inventer un identifiant, qui enverrait rejouer une reprise inexistante.
+- **Rien n'est dit sur le verdict `ICI`** : la session y est déjà au bon endroit, rien ne quitte
+  quoi que ce soit. Avertir quand même apprendrait à ne plus lire l'avertissement.
+
+Le pied de `sessions` porte la même cause, pour qui arrive après coup : `137 ticket(s) en ont aussi,
+dans leur worktree` est suivi de *(parties d'ici avec leur session — c'est pourquoi leur onglet
+repart vide)*. Le compte seul se lisait comme un simple « il y en a ailleurs ».
 
 ⚠ **Et #385 avait conclu « pas de notre ressort » sur une prémisse fausse** : que le registre, étant
 indexé par PID, serait « périmé dès que les processus meurent ». Indexé par PID, oui ; périmé, non —
@@ -2927,7 +2993,8 @@ antichronologique, `MAESTRO_WORKTREE_DIR` respecté, la casse ignorée, et la me
 hors worktree, les sessions d'ailleurs qui n'y entrent pas, le nom tiré du registre et la fiche la
 plus récente qui l'emporte, le repli sans registre, `CLAUDE_CONFIG_DIR` suivi par le registre comme
 par les transcripts, la troncature annoncée et son échappatoire, et un identifiant rendu une seule
-fois.
+fois ; puis, pour #424, l'avertissement de départ avec son identifiant tiré de l'environnement, son
+repli hors session, son silence sur le verdict `ICI`, et la cause portée par le pied de `sessions`.
 
 ---
 

@@ -355,6 +355,36 @@ atelier_session() {
   mkdir -p "$1/.maestro/session" 2>/dev/null
 }
 
+# --- Ce que la relocalisation coûte à l'onglet VS Code (#424) --------------------------------------
+# Claude Code range le transcript d'une session sous son RÉPERTOIRE COURANT (§9.7), et le déplace
+# quand ce répertoire change : `/ticket-start` relocalise la session dans le worktree, donc le
+# transcript quitte le dossier de projet du clone principal — mesuré en direct le 2026-08-22, dix
+# lignes `{"type":"relocated"}` posées dans le fichier, un seul exemplaire, sous le worktree.
+#
+# Or un onglet VS Code se rebranche sur sa conversation en cherchant son identifiant dans la liste
+# des sessions de SON dossier, worktrees exclus (`listSessions({dir, includeWorktrees:false})` de
+# l'extension 2.1.238). Ne l'y trouvant plus, il ouvre une conversation NEUVE, sans un mot — c'est
+# tout le symptôme, et c'est ici qu'il naît, pas au ramassage du worktree (qui, lui, ne touche pas
+# aux transcripts et laisse `--resume` fonctionner).
+#
+# On le dit donc à l'instant du départ, à côté des ports : c'est le seul moment où quelqu'un a la
+# question sous les yeux. Après coup, l'onglet vide ne rappelle rien.
+#
+# L'identifiant vient de `CLAUDE_CODE_SESSION_ID`, que Claude Code pose dans l'environnement de ses
+# sous-processus — donc juste, et jamais deviné. Absent (appel hors session : `run.sh`, un terminal
+# nu), on renvoie vers l'inventaire du ticket plutôt que d'inventer un identifiant.
+session_qui_part() {
+  local iid="$1" id="${CLAUDE_CODE_SESSION_ID:-}"
+  printf '  ⚠ la conversation de cette session quitte le dossier courant : au prochain\n'
+  printf '    démarrage de VS Code, son onglet repartira vide (un onglet ne cherche que\n'
+  printf '    dans le dossier de son espace de travail, worktrees exclus — §9.7).\n'
+  if [ -n "$id" ]; then
+    printf '    y revenir : claude --resume %s\n' "$id"
+  else
+    printf '    y revenir : bash scripts/git/worktree.sh sessions %s\n' "$iid"
+  fi
+}
+
 # --- Réglages Claude Code du worktree --------------------------------------------------------------
 # Au premier passage : copie du settings.local.json du clone principal (on hérite ainsi de
 # l'approbation des serveurs MCP et des permissions locales). Ensuite, c'est le fichier DU WORKTREE
@@ -600,6 +630,7 @@ commande_create() {
     printf '  profil de navigateur dédié   : %s\n' "$profil"
     printf '  ⚠ non hérités par une session relocalisée (bloc env résolu au démarrage) :\n'
     printf '    les passer explicitement pour démarrer la stack ou piloter le navigateur.\n'
+    session_qui_part "$iid"
   else
     printf '\nPrêt. Ouvrir une seconde session Claude Code sur :\n\n  %s\n\n' "$(chemin_natif "$dest")"
     printf 'Control Tower de cette session : http://localhost:%s (API :%s).\n' "$port_ui" "$port_api"
@@ -1160,6 +1191,10 @@ sessions_ici() {
   ailleurs="$(sessions_buckets | grep -c .)" || ailleurs=0
   if [ "${ailleurs:-0}" -gt 0 ]; then
     printf '  %s ticket(s) en ont aussi, dans leur worktree : worktree.sh sessions --tous\n' "$ailleurs"
+    # La CAUSE, pas seulement le compte (#424) : ces sessions ont commencé ici et sont parties
+    # avec leur worktree. C'est la même absence qui fait repartir vide l'onglet VS Code d'un
+    # ticket, et sans cette ligne le renvoi se lit comme un simple « il y en a ailleurs ».
+    printf '    (parties d'\''ici avec leur session — c'\''est pourquoi leur onglet repart vide)\n'
   fi
   printf '\n'
   return 0
