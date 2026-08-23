@@ -271,6 +271,15 @@ class Event:
     # l'UI : « tour 1 sur 2 » dit à celui qui répond ce qui lui reste.
     tour: int = 0
     tours_max: int = 0
+    # Le run **dont celui-ci est la suite** (#349), porté par l'événement de
+    # lancement d'une relance et vide partout ailleurs. Chaîne vide plutôt que
+    # `None`, contrairement aux champs ci-dessus : il n'y a rien à ne pas effacer —
+    # aucun événement ultérieur n'en parle, et « ce run ne reprend personne » est un
+    # fait, pas une absence d'information. Même relation que le fichier `reprise-de`
+    # entre deux runs d'orchestration (#204), et même parti pris : le run repris
+    # n'est jamais réécrit pour désigner son successeur, c'est le **nouveau** qui
+    # dit de qui il est la suite.
+    reprise_de: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -305,6 +314,7 @@ class Event:
             "reponses": list(self.reponses) if self.reponses is not None else None,
             "tour": self.tour,
             "tours_max": self.tours_max,
+            "reprise_de": self.reprise_de,
             "horodatage": self.horodatage,
         }
 
@@ -363,6 +373,11 @@ class Event:
             ),
             tour=_entier_positif(data.get("tour")),
             tours_max=_entier_positif(data.get("tours_max")),
+            # Relu en texte, sans vérifier que le run désigné existe (#349) : c'est
+            # une **référence historique**, pas une clé étrangère. Le run repris peut
+            # avoir été purgé du journal ; le nouveau doit continuer de dire de qui
+            # il est la suite, comme `reprise-de` côté orchestration (#204).
+            reprise_de=str(data.get("reprise_de") or ""),
             horodatage=data.get("horodatage", ""),
         )
 

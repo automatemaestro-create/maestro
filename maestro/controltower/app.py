@@ -223,8 +223,12 @@ from maestro.controltower.events import (
     brief_depuis,
 )
 from maestro.controltower.executions import (
+    MOTIF_RELANCE_RUN_INCONNU,
+    MOTIF_RELANCE_RUN_SOLDE,
+    MOTIF_RELANCE_RUN_VIVANT,
     FabriqueMoteur,
     LecteurSources,
+    RelanceRefusee,
     ServiceExecutions,
 )
 from maestro.controltower.fixtures import (
@@ -603,6 +607,20 @@ class Diffusion:
 
 
 _LOGGER = logging.getLogger("maestro.controltower")
+
+
+#: Le code HTTP de chaque motif de refus d'une **relance** (#349). La table vit
+#: ici et non dans le service : c'est la route qui parle HTTP, le service ne
+#: connaît que ses motifs. Repli à `422` pour un motif non listé — un refus qu'on
+#: n'a pas su classer reste une requête que l'API n'a pas honorée, jamais un
+#: succès.
+_CODE_REFUS_RELANCE: dict[str, int] = {
+    MOTIF_RELANCE_RUN_INCONNU: 404,
+    # Les deux mêmes 409 que l'annulation, et pour la même raison : l'état du run
+    # interdit le geste, sans que la requête soit malformée.
+    MOTIF_RELANCE_RUN_SOLDE: 409,
+    MOTIF_RELANCE_RUN_VIVANT: 409,
+}
 
 
 def _detail_refus(exc: Exception) -> dict[str, Any]:
@@ -1159,6 +1177,36 @@ def create_app(
         if annulee is None:  # pragma: no cover - le résumé vient d'être lu
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return annulee
+
+    @app.post("/api/executions/{run_id}/relancer", status_code=202)
+    async def relancer_execution(run_id: str) -> dict[str, Any]:
+        """Rejoue un run interrompu **sur son brief approuvé** (#349) : le nouveau résumé.
+
+        Un run dont l'hôte est tombé emporte un cadrage **payé et validé par un
+        humain** — clarification, brief, approbation. Ce cadrage est intégralement
+        conservé dans la projection : cette route le rejoue en mode `sans`, donc sans
+        repasser par la clarification ni par la validation, en conservant le projet
+        et le ticket du run repris.
+
+        La réponse est celle d'un lancement (`202` + `ResumeExecution`) parce que
+        c'en est un : le run relancé est un **nouveau** run, qui porte `reprise_de`
+        — de qui il est la suite. Le run repris, lui, est soldé en `annulee` : rien
+        n'a raté, son hôte est tombé et quelqu'un a repris la main.
+
+        `404` si le run est inconnu, `409` s'il est **déjà soldé** (rien à reprendre)
+        ou **encore vivant** (verdict de `vitalite`, #348 — l'interrompre d'abord si
+        c'est bien voulu), `422` si son brief n'a **jamais été approuvé** : le
+        relancer reviendrait à repartir de son objectif brut en silence, c'est-à-dire
+        à sauter la validation qu'il attendait encore. Le refus est motivé à la
+        convention du reste (`{motif, message}`, §6.1).
+        """
+        try:
+            return await executions.relancer(run_id)
+        except RelanceRefusee as refus:
+            raise HTTPException(
+                status_code=_CODE_REFUS_RELANCE.get(refus.motif, 422),
+                detail=_detail_refus(refus),
+            ) from refus
 
     @app.post("/api/executions/{run_id}/brief/decision")
     async def decider_brief(

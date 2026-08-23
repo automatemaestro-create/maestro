@@ -668,6 +668,22 @@ export const MODE_BRIEF_SANS = "sans";
 export const MODE_BRIEF_AUTO = "auto";
 export const MODE_BRIEF_HUMAIN = "humain";
 
+/**
+ * La **vitalité** d'un run non soldé (#348) : son hôte bat-il encore ? Un run
+ * lancé depuis la Control Tower s'exécute en tâche de fond du process de l'API et
+ * ne lui survit pas ; le journal durable conservant le dernier état publié, un run
+ * dont l'hôte est tombé restait `en_cours` **pour toujours**. L'hôte publie donc un
+ * battement périodique, et ces trois verdicts en découlent.
+ *
+ * `indetermine` n'est pas une commodité mais le refus explicite de deviner : le run
+ * n'a **jamais** battu (trace antérieure à #348, registre injoignable), donc on ne
+ * sait pas. Un run soldé, lui, n'en porte aucun (`null`) — la question ne se pose
+ * plus pour un run qui a rendu son issue.
+ */
+export const VITALITE_VIVANT = "vivant";
+export const VITALITE_ORPHELIN = "orphelin";
+export const VITALITE_INDETERMINE = "indetermine";
+
 /** Les trois types de source d'un objectif (#315, EF-39) — et rien d'autre. */
 export const SOURCE_FICHIER = "fichier";
 export const SOURCE_DOSSIER = "dossier";
@@ -843,6 +859,27 @@ export type ResumeExecution = {
    */
   tour_clarification?: number;
   tours_clarification_max?: number;
+  /**
+   * L'hôte de ce run bat-il encore (#348, `VITALITE_*`) ? `null` sur un run soldé :
+   * la question ne se pose pas. C'est le seul signal qui distingue un run qui
+   * travaille d'un run mort trois jours plus tôt — les deux affichent `en_cours`.
+   */
+  vitalite?: string | null;
+  /**
+   * Le cadrage de ce run a-t-il été **approuvé par un humain** (#349) ? Distinct de
+   * « le run a un brief » : dès que le brief est soumis, le détail en porte un —
+   * celui qui est *proposé*. Un run mort pendant l'attente en a donc un que personne
+   * n'a validé, et il n'y a rien à y rejouer. C'est ce booléen qui dit si la relance
+   * a de la matière, sans avoir à charger les sept sections pour le savoir.
+   */
+  brief_approuve?: boolean;
+  /**
+   * Le run **dont celui-ci est la suite** (#349) — chaîne vide pour un run qui ne
+   * reprend personne. Le lien ne s'écrit que dans ce sens : le run repris n'est
+   * jamais réécrit pour désigner son successeur, comme le fichier `reprise-de`
+   * entre deux runs d'orchestration (#204).
+   */
+  reprise_de?: string;
   debut: string;
   fin: string | null;
   /**

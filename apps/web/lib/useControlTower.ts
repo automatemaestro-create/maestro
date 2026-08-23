@@ -39,6 +39,7 @@ import {
   deciderValidation,
   reassignerTache,
   reglerCapaciteAgent,
+  relancerExecution,
   repondreBrief,
   urlEvenements,
   type PorteeProjet,
@@ -102,6 +103,13 @@ export type ControlTower = {
    * rédiger en les intégrant. Appariées **par position** aux questions du brief.
    */
   repondreAuBrief: (runId: string, reponses: string[]) => Promise<void>;
+  /**
+   * Rejoue un run interrompu sur son **brief approuvé** (#349) : le cadrage déjà
+   * payé repart sans repasser par la clarification ni par la validation, et le run
+   * repris est soldé. Rend le résumé du **nouveau** run — celui qui porte
+   * `reprise_de` —, de quoi en afficher l'identifiant sans attendre le rechargement.
+   */
+  relancerRun: (runId: string) => Promise<ResumeExecution>;
   /** Règle la capacité d'un agent (#86) : activer/désactiver, instances. */
   reglerCapacite: (
     nom: string,
@@ -272,6 +280,19 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     [recharger],
   );
 
+  const relancerRun = useCallback(
+    async (runId: string) => {
+      const nouveau = await relancerExecution(runId);
+      // Même mécanique que les décisions : le WebSocket portera le lancement du
+      // nouveau run **et** l'issue de celui qui est repris, le rechargement direct
+      // fait sortir l'orphelin de la liste sans dépendre de la socket. Deux runs
+      // changent d'état ici, ce qui est justement ce qu'un seul rechargement rend.
+      await recharger();
+      return nouveau;
+    },
+    [recharger],
+  );
+
   const reglerCapacite = useCallback(
     async (nom: string, reglage: { actif?: boolean; instances?: number }) => {
       await reglerCapaciteAgent(nom, reglage);
@@ -296,6 +317,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     decider,
     trancherBrief,
     repondreAuBrief,
+    relancerRun,
     reglerCapacite,
   };
 }

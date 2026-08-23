@@ -796,6 +796,34 @@ export async function lancerExecution(
 }
 
 /**
+ * Rejoue un run interrompu **sur son brief approuvé**
+ * (`POST /api/executions/{run_id}/relancer`, #349) et rend le résumé du **nouveau**
+ * run — celui qui porte `reprise_de`.
+ *
+ * Ce qu'un run mort emporte n'est pas du temps machine mais un cadrage validé par
+ * un humain : clarification, brief, approbation. La relance le rejoue en mode
+ * `sans`, donc sans repasser par la clarification ni par la validation, en
+ * conservant le projet. Le run repris est soldé dans le même geste.
+ *
+ * Les refus du backend sont relayés tels quels, motif compris : `409` sur un run
+ * **déjà soldé** (rien à reprendre) ou **encore vivant** (l'interrompre d'abord si
+ * c'est bien voulu), `422` sur un run dont le brief n'a jamais été approuvé — il
+ * n'y a rien à rejouer, et le dire vaut mieux que repartir en silence sur son
+ * objectif brut. C'est le message de l'API qui s'affiche : lui seul sait ce qu'il
+ * a refusé.
+ */
+export async function relancerExecution(
+  runId: string,
+): Promise<ResumeExecution> {
+  const reponse = await fetch(
+    `${API_URL}/api/executions/${encodeURIComponent(runId)}/relancer`,
+    { method: "POST" },
+  );
+  if (!reponse.ok) throw await refusSource(reponse, "relance refusée");
+  return (await reponse.json()) as ResumeExecution;
+}
+
+/**
  * Les exécutions connues du backend, à la portée demandée (`GET /api/executions`,
  * #185) — un **résumé** par run, sans son brief ni sa trace.
  *
