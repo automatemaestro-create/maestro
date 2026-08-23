@@ -2211,8 +2211,15 @@ def prescrit_sa_propre_recette(nue: str) -> bool:
     pour reproduire le seul test rouge » —, si bien qu'un simple `"tests/test_" in nue` aurait
     laissé passer la régression que ce test existe pour attraper. Parler de parallélisme ou de
     couverture, c'est reparler de la suite entière.
+
+    Les DEUX scripts du dépôt sont hors de cause (#436) : `local.sh` porte la recette, `pytest.sh`
+    porte la même plomberie pour une cible (§8.4bis). Un prompt qui les appelle ne fige rien —
+    c'est l'inverse, il délègue —, et sans cette seconde exemption la forme la plus utile du
+    lanceur (`pytest.sh -k <motif>`, sans chemin de suite) serait comptée fautive.
     """
-    if "ci/local.sh" in nue or not any(outil in nue for outil in OUTILS_CI):
+    if any(script in nue for script in ("ci/local.sh", "ci/pytest.sh")):
+        return False
+    if not any(outil in nue for outil in OUTILS_CI):
         return False
     return not ("tests/test_" in nue and "-n " not in nue and "--cov" not in nue)
 
@@ -2239,6 +2246,9 @@ def test_le_garde_fou_attrape_la_table_que_310_a_supprimee() -> None:
     assert prescrit_sa_propre_recette("| `mypy` | `<venv-python> -m mypy maestro` |")
     assert not prescrit_sa_propre_recette("bash scripts/ci/local.sh --only pytest")
     assert not prescrit_sa_propre_recette("<venv-python> -m pytest tests/test_engine.py")
+    # #436 : le lanceur d'itération délègue à la même plomberie, y compris sans chemin de suite.
+    assert not prescrit_sa_propre_recette("bash scripts/ci/pytest.sh tests/test_worktree.py -q")
+    assert not prescrit_sa_propre_recette("bash scripts/ci/pytest.sh -k ensure -x")
 
 
 def test_les_commandes_qui_verifient_en_local_renvoient_au_filet() -> None:
@@ -2250,15 +2260,73 @@ def test_les_commandes_qui_verifient_en_local_renvoient_au_filet() -> None:
             f"/{nom[:-3]} ne renvoie plus au filet CI local (#310)"
 
 
-def test_le_filet_est_autorise_dans_les_DEUX_regimes() -> None:
-    """Une commande prescrite mais non autorisée, c'est un refus de permission par ticket (§11.7).
+#: Les deux fichiers de réglages, parce qu'ils servent deux régimes : `.claude/settings.json` la
+#: session interactive, `settings.run.json` la session autonome — dont l'`allow` est l'UNION des
+#: deux, mais qui ne peut compter sur personne pour accorder ce qui manque.
+REGLAGES = (
+    Path(".claude/settings.json"),
+    Path("scripts/orchestrate/settings.run.json"),
+)
 
-    Les deux fichiers, parce qu'ils servent deux régimes : `.claude/settings.json` la session
-    interactive, `settings.run.json` la session autonome — dont l'`allow` est l'UNION des deux, mais
-    qui ne peut compter sur personne pour accorder ce qui manque.
+
+def allow_de(relatif: Path) -> list[str]:
+    return json.loads((RACINE / relatif).read_text(encoding="utf-8"))["permissions"]["allow"]
+
+
+def test_le_filet_est_autorise_dans_les_DEUX_regimes() -> None:
+    """Une commande prescrite mais non autorisée, c'est un refus de permission par ticket
+    (§11.7)."""
+    for relatif in REGLAGES:
+        assert "Bash(bash scripts/ci/local.sh:*)" in allow_de(relatif), \
+            f"{relatif.name} n'autorise pas le filet, que deux commandes prescrivent (#310)"
+
+
+def test_le_lanceur_d_iteration_est_autorise_dans_les_DEUX_regimes() -> None:
+    """Même raison que le filet, et un enjeu de plus (#436).
+
+    Le conteneur de #372 n'était joignable QUE par `local.sh`, dont le périmètre est déduit du
+    diff ; #405 lui a donné un point d'entrée ciblé, mais sans règle d'allowlist il restait hors de
+    portée — refusé sans personne pour approuver en session autonome, un prompt par appel en
+    interactif. Constat du 2026-08-23 : ZÉRO invocation de `scripts/ci/pytest.sh` dans l'ensemble
+    des journaux de run, contre 5 à 10 `python -m pytest` natifs par ticket. Sur une suite
+    d'outillage, c'est le facteur vingt de §8.4bis payé sur le quota du run.
     """
-    for chemin in (RACINE / ".claude" / "settings.json",
-                   RACINE / "scripts" / "orchestrate" / "settings.run.json"):
-        allow = json.loads(chemin.read_text(encoding="utf-8"))["permissions"]["allow"]
-        assert "Bash(bash scripts/ci/local.sh:*)" in allow, \
-            f"{chemin.name} n'autorise pas le filet, que deux commandes prescrivent (#310)"
+    for relatif in REGLAGES:
+        assert "Bash(bash scripts/ci/pytest.sh:*)" in allow_de(relatif), (
+            f"{relatif.name} n'autorise pas le lanceur d'itération (#436, §8.4bis) — "
+            "une session y retombe sur le natif, vingt fois plus lent sur une suite d'outillage"
+        )
+
+
+def test_le_garde_fou_d_allowlist_attrape_une_regle_manquante() -> None:
+    """Prouver le motif sur un échantillon fautif : un ✓ sur une question jamais posée ne garde
+    rien. On rejoue la vérification sur des `allow` fabriqués, jamais sur les vrais."""
+    def autorise(allow: list[str], script: str) -> bool:
+        return f"Bash(bash scripts/ci/{script}:*)" in allow
+
+    complet = ["Bash(bash scripts/ci/local.sh:*)", "Bash(bash scripts/ci/pytest.sh:*)"]
+    assert autorise(complet, "local.sh") and autorise(complet, "pytest.sh")
+    # L'état d'avant #436 : le filet passait, le lanceur non — et rien ne le disait.
+    avant = ["Bash(bash scripts/ci/local.sh:*)"]
+    assert autorise(avant, "local.sh")
+    assert not autorise(avant, "pytest.sh")
+    # Une règle nue ne vaut pas une règle à préfixe : elle ne matcherait aucun argument.
+    assert not autorise(["Bash(bash scripts/ci/pytest.sh)"], "pytest.sh")
+
+
+def test_les_prompts_du_run_disent_ou_jouer_une_suite() -> None:
+    """Le pendant POSITIF de l'allowlist (#436), et la leçon de #310 : autoriser une commande que
+    personne ne nomme ne la fait pas exister.
+
+    Les deux prompts, parce qu'ils couvrent les deux moments où une session joue des tests :
+    l'implémentation (`prompt_ticket`) et la remédiation (`prompt_mrfix`). Et les deux BRANCHES de
+    la règle, parce qu'une moitié seule serait un contresens : envoyer une suite applicative au
+    conteneur la rend plus lente (§8.4bis).
+    """
+    texte = (RACINE / "scripts" / "orchestrate" / "run.sh").read_text(encoding="utf-8")
+    for debut, fin in (("prompt_ticket()", "prompt_reprise()"), ("prompt_mrfix()", "PROMPT\n}")):
+        bloc = texte.split(debut, 1)[1].split(fin, 1)[0]
+        assert "scripts/ci/pytest.sh" in bloc, \
+            f"{debut} ne nomme pas le lanceur d'itération : il restera inutilisé (#436)"
+        assert "-m pytest" in bloc, \
+            f"{debut} n'énonce que la moitié de la règle — une suite applicative se joue en natif"
