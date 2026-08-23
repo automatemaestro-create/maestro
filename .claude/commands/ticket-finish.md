@@ -1,5 +1,5 @@
 ---
-description: Termine le travail sur le ticket courant (push + PR + état « En revue »)
+description: Termine le travail sur le ticket courant (push + PR prête + état « En revue » + merge)
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
 allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 ---
@@ -7,8 +7,15 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
 Tu vas clôturer le cycle de développement de la branche courante selon les règles de Maestro
 (résumées ci-dessous — cette commande est autosuffisante ; réf. complète `docs/10-workflow-git.md`,
 non chargée automatiquement, à n'ouvrir qu'en cas de doute). Arrête-toi et demande confirmation
-avant toute action qui modifie l'état partagé (push, création/mise à jour de PR) si un point n'est
-pas clair.
+avant toute action qui modifie l'état partagé (push, création/mise à jour de PR, merge) si un point
+n'est pas clair.
+
+⚠ **Depuis #418 (chantier #413), cette commande va jusqu'au merge** : elle passe la PR en « prête »,
+**attend le pipeline** puis appelle `merge-mr`. Deux conséquences à assumer plutôt qu'à masquer —
+elle ne rend plus la main dans la seconde (l'attente est bornée à 15 min, annoncée pendant qu'elle
+dure), et **la revue avant merge disparaît de fait** (docs/10 §6). Ce qui disparaît est l'attente
+d'un humain pour *vérifier*, pas la vérification : les quatre prérequis vivent dans `merge-mr`
+(#415), et **aucun merge non vérifié** n'a lieu (#417).
 
 1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom
    de la branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si
@@ -120,8 +127,9 @@ pas clair.
      qui retrouve aussi le pipeline porté par la PR). En cours, échoué ou absent → laisse vide.
      **Une case vide est le cas NORMAL ici** : la CI ne se déclenche qu'à partir de la PR (#165 sur
      GitLab, `on: pull_request` sur GitHub — docs/10 §8), donc à la première clôture d'un ticket
-     **aucun pipeline n'existe encore** à ce stade — il naîtra de l'étape 9. Le relecteur verra le
-     verdict sur la PR ; n'attends pas.
+     **aucun pipeline n'existe encore** à ce stade — il naîtra de l'étape 9. N'attends pas **ici** :
+     l'attente a désormais sa propre étape (13), et ce qui garde le merge n'est de toute façon pas
+     cette case mais le verdict que `merge-mr` éprouvera **sur la tête de la PR**.
 
 9. **Crée (ou mets à jour) la PR — la description passe toujours par un FICHIER.** Jamais de
    description sur la ligne de commande : elle fait par nature plusieurs lignes, la couche
@@ -173,11 +181,19 @@ pas clair.
       déjà pour la branche, il met sa description à jour au lieu d'échouer. La suppression de la
       branche source au merge est un **réglage du dépôt** des deux côtés (`doctor.sh` le vérifie),
       pas une option de cet appel.
-   4. **Si la PR existait déjà et qu'elle est en Draft** : demande à l'utilisateur si le travail
-      est réellement terminé et prêt pour revue ; si oui, `gh pr ready <numéro>` (sur GitLab :
-      `gh pr ready <numéro>`). Si elle n'est **plus en Draft**, ne fais rien de plus sur la
-      PR. Une PR **fraîchement créée** reste en Draft : c'est voulu, le passage en « prête » est un
-      geste explicite.
+   4. **Passe la PR en « prête » — sans demander.** `create-mr` l'ouvre en Draft ; c'est ici
+      qu'on la lève :
+      ```
+      gh pr ready <numéro>
+      ```
+      La question qui se posait ici — « le travail est-il réellement prêt pour la revue ? » — a
+      disparu avec #418 : la commande s'apprête à **merger** cette PR à l'étape 13, et une PR qu'on
+      merge n'est pas un brouillon. Ce n'est pas la question qui a été escamotée, c'est sa réponse
+      qui est devenue certaine — lancer `/ticket-finish`, c'est déclarer le travail fini.
+      L'appel est **sans effet sur une PR déjà prête** : un « already ready for review » est un
+      constat, pas un échec. Et ce n'est **pas** une promesse de merge : le brouillon n'est qu'**un**
+      des quatre prérequis de `merge-mr`, qui refusera toujours une PR levée mais rouge, en conflit,
+      ou qui ne ferme pas son ticket (#415).
 
 10. **Ne pose aucun relecteur sur la PR** (#196) — la désignation d'un relecteur est un **geste
    humain**, jamais automatique : n'appelle pas `lib.sh set-reviewer` et n'utilise pas
@@ -218,12 +234,73 @@ pas clair.
      ```
    - Indique dans le résumé final la durée estimée et loggée (transparence a posteriori).
 
-13. Termine par un résumé : lien de la PR, état (Draft/Ready), le **verdict du filet CI local**
-   s'il n'était pas vert (étape 5 — quel job, et pourquoi tu as poussé quand même), le **retard
-   éventuel sur `origin/main`** relevé à l'étape 6 (et le rebase proposé si un conflit est probable), les cases
-   de la checklist cochées et celles restées vides
-   (avec un mot sur pourquoi), le temps loggé le cas échéant, et rappelle qu'**aucun merge non
-   vérifié** n'a lieu : personne — pas même toi — ne merge hors de
-   `bash scripts/gitlab/lib.sh merge-mr <iid>`, qui éprouve ses prérequis. Si un refus du
-   garde-fou de l'étape 3 a été **franchi sur demande explicite**, dis-le en tête du résumé (quel
-   motif, et qui l'a demandé).
+13. **Attends le pipeline, puis merge** (#418, chantier #413) — c'est ici que la clôture se
+   termine vraiment. L'étape a été placée **après** l'état « En revue » et le log du temps, et pas
+   avant : l'attente dure quelques minutes, et une session qui meurt pendant ce créneau doit
+   laisser un ticket **lisible** (poussé, PR ouverte et prête, « En revue ») plutôt qu'un ticket
+   resté « En cours » que plus personne ne réclame — c'est le mode de panne de #327.
+
+   1. **Annonce l'attente, puis attends.** La CI ne se déclenche qu'à partir de la PR (#165) et tu
+      viens tout juste de la pousser : le run **naît après** la PR, donc aucun verdict n'est encore
+      rendu à cet instant.
+      ```
+      bash scripts/gitlab/lib.sh pipeline-wait <branche> || verdict=$?
+      ```
+      **Dis-le avant de lancer l'appel** — « pipeline en cours, attente bornée à 15 min » : c'est
+      2-4 min en régime normal, mais une commande qui ne rend pas la main pendant trois minutes
+      sans avoir prévenu passe pour bloquée. `pipeline-wait` **n'écrit nulle part, ne relance rien
+      et ne juge rien** (#416) ; ses codes (`0` vert, `3` verdict terminal non vert, `4` plafond
+      atteint, `5` aucun pipeline) servent à **formuler**, jamais à décider. Enchaîne sur `merge-mr`
+      **dans tous les cas** : deux endroits qui disent « mergeable » valent moins qu'un, et c'est
+      `merge-mr` qui tranche.
+   2. **Merge** :
+      ```
+      bash scripts/gitlab/lib.sh merge-mr <iid> || verdict=$?
+      ```
+      Jamais `gh pr merge` : le geste **nu** reste en `deny` côté permissions **et** dans
+      `guard.sh`, et ce n'est pas une contradiction — ces filets jugent le **texte de la commande
+      que tu lances**, pas ce qu'un script appelle en interne (#417). Le code de retour décide de
+      la suite, et lui seul :
+      - `0` → **mergé** (squash). Le ticket se ferme par son `Closes`, et son état passe
+        « Terminé » tout seul via le workflow `issues: closed` (#377) : **ne pose rien**, ne
+        repasse pas `set-workflow`, ne ferme rien à la main. La branche distante part avec le merge
+        (`delete_branch_on_merge`, #384) ; la locale et le worktree sont du ressort de
+        `/branch-cleanup`.
+      - `3` → le verdict n'est **pas encore rendu** : run en cours, absent, ou **périmé** — un vert
+        porté par un commit antérieur au tien. Ce dernier cas est le plus fréquent, et il est
+        normal : `pipeline-wait` ne compare pas les sha (il le dit lui-même), donc il a pu rendre
+        `0` sur le run précédent de la branche pendant que le tien démarrait. **Repasse une fois,
+        pas plus** — `pipeline-wait <branche>` puis `merge-mr <iid>` à nouveau. Toujours `3` :
+        laisse la PR **ouverte**, le ticket **« En revue »**, et dis-le — quelqu'un repassera, ou
+        le drain de fin de run (#419).
+      - `4` → **pipeline rouge** → PR ouverte, ticket « En revue », propose `/mr-fix <numéro>`.
+        Ne corrige rien ici : réparer un pipeline est un métier à part, et c'est le sien.
+      - `5` → **conflit avec `origin/main`** → idem ; `/mr-fix` le résout par un merge, jamais par
+        un rebase.
+      - `6` → **anomalie** : PR absente, fermée, encore brouillon, sans `Closes`, ou commits non
+        poussés. **Nomme-la telle que le helper l'a rendue**, et ne la contourne pas — ni un
+        `gh pr ready` « au cas où », ni un push de rattrapage, ni un merge par un autre chemin. Un
+        `6` dit qu'une hypothèse de la clôture est fausse : le remède est de la regarder.
+      - `1`/`2` → prérequis outil manquant / usage : signale-le, ne merge pas.
+   3. **Ce qui ne bouge dans aucun de ces cas** : tu ne force-pushes pas, tu ne fermes pas la PR,
+      tu ne repasses pas le cycle de vie et tu ne relances pas la commande en boucle. Un refus de
+      merge n'est **pas** un échec du ticket — le travail est poussé, la PR est ouverte et prête,
+      le ticket est « En revue ». C'est un état normal, et il a un nom.
+
+14. Termine par un résumé : **le verdict du merge en tête** (table ci-dessous), le lien de la PR, le
+   **verdict du filet CI local** s'il n'était pas vert (étape 5 — quel job, et pourquoi tu as poussé
+   quand même), le **retard éventuel sur `origin/main`** relevé à l'étape 6 (et le rebase proposé si
+   un conflit est probable), les cases de la checklist cochées et celles restées vides (avec un mot
+   sur pourquoi), et le temps loggé le cas échéant. Si un refus du garde-fou de l'étape 3 a été
+   **franchi sur demande explicite**, dis-le en tête du résumé (quel motif, et qui l'a demandé).
+
+   **Jamais de ✅ global.** Une clôture dont la PR est restée ouverte sur un pipeline rouge n'est
+   pas « terminée avec une réserve » : elle est **inachevée**, et le dire avec ce mot-là est tout ce
+   qui sépare ce résumé du faux verdict que #303 a supprimé ailleurs.
+   | Issue | À rapporter |
+   |---|---|
+   | **Mergé** (`0`) | « PR #N mergée (squash) — #<iid> fermé, état « Terminé » posé par le workflow `issues: closed` » ; rappelle que la branche locale et le worktree partent avec `/branch-cleanup` |
+   | **Non mergé** (`3`/`4`/`5`/`6`) | la **cause telle que `merge-mr` l'a rendue** (jamais reformulée en « il faudra revoir ça »), l'**état laissé** — PR **ouverte** et prête, ticket **« En revue »** — et la **suite** : `/mr-fix <numéro>` sur `4`/`5`, repasser plus tard sur `3`, le geste humain nommé sur `6` |
+
+   Rappelle enfin qu'**aucun merge non vérifié** n'a lieu (#417) : ce qui a mergé — ou refusé de
+   merger — est `bash scripts/gitlab/lib.sh merge-mr <iid>` et ses quatre prérequis, jamais toi.
