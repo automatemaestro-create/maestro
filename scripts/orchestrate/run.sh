@@ -2694,6 +2694,51 @@ merge_cause() {
     sed 's/^[^:]*: *//; s/[[:space:]]\{1,\}/ /g; s/[[:space:]]*$//' | cut -c1-140
 }
 
+# merge_ramasse <iid> <branche> : ce que le merge vient de rendre inutile ICI (#438).
+#
+# POURQUOI ICI. Le ramassage des worktrees (#197) et la purge des branches locales (#23/#305)
+# existent depuis longtemps, mais leurs trois déclencheurs — `ensure` (donc /ticket-start),
+# /branch-cleanup, et le DÉMARRAGE d'un run — sont tous ANTÉRIEURS au merge. C'était juste tant
+# qu'un humain mergeait plus tard ; depuis #418/#419 le merge a lieu pendant et à la fin du run, si
+# bien qu'un run de huit tickets se terminait en laissant huit worktrees (~535 Mo pièce) et huit
+# branches que rien ne ramassait avant le run suivant. Le quatrième déclencheur manquant, c'est
+# celui-ci.
+#
+# POURQUOI LE PILOTE ET PAS `merge-mr`. Mettre le ramassage dans `merge-mr` l'aurait donné à tous
+# ses appelants d'un coup — c'est là que vit déjà `sync-main` —, mais deux raisons l'écartent :
+# `lib.sh` devrait alors appeler `worktree.sh`, qui l'appelle déjà (dépendance mutuelle entre deux
+# couches qui n'en ont qu'une aujourd'hui) ; et surtout le pilote est le SEUL appelant qui se tienne
+# HORS des worktrees. Une session qui merge par /ticket-finish est DANS celui qu'il faudrait
+# retirer, et `gc` refuse par construction de retirer le sol sous les pieds de la session courante :
+# le geste y serait un no-op déguisé en ménage.
+#
+# CIBLÉ, jamais balayé : `gc --iid` et `cleanup-merged <branche>` ne regardent que ce ticket-là. Le
+# drain appelle ceci une fois par PR mergée, et un balayage complet y coûterait une lecture de forge
+# par worktree ET par branche, à chaque merge — soit N² sur un run de N tickets, dans la boucle
+# précisément conçue pour ne rien coûter la plupart du temps.
+#
+# BEST-EFFORT ET MUET, au même titre que `sync-main` dans `merge-mr` : ni le merge, ni le drain, ni
+# le run ne doivent échouer parce qu'un répertoire résiste. Ce qui n'est PAS muet est ce que `gc`
+# refuse de supprimer — un worktree porteur de travail non sauvegardé —, et c'est la seule chose que
+# taire ferait perdre : elle remonte à l'écran.
+# MAESTRO_ORCHESTRATE_RAMASSAGE=0 l'éteint.
+merge_ramasse() { # <iid> <branche>
+  [ "${MAESTRO_ORCHESTRATE_RAMASSAGE:-1}" != 0 ] || return 0
+  local iid="$1" branche="$2" sortie="" alerte=""
+  sortie="$(bash "$RACINE/scripts/git/worktree.sh" gc --auto --iid "$iid" </dev/null 2>&1)" || true
+  # L'ORDRE compte, et c'est le seul point non négociable ici : `git branch -D` REFUSE une branche
+  # empruntée par un worktree (#305), donc purger avant d'avoir retiré ne purgerait jamais rien.
+  sortie="$sortie"$'\n'"$(gl_cleanup_merged --auto "$branche" 2>&1)" || true
+  { printf -- '--- #%s (%s) : ramassage après merge\n' "$iid" "$branche"
+    printf '%s\n' "$sortie"; } >>"$MERGE_LOG" 2>/dev/null || true
+  # Le travail non sauvegardé est le seul cas où le journal ne suffit pas : personne ne relit
+  # `merge.log` d'un run qui s'est bien passé, et c'est justement là que la ligne se perdrait —
+  # 535 Mo de trop se pardonnent, un commit perdu non.
+  alerte="$(printf '%s\n' "$sortie" | grep -m1 '⚠' | sed 's/^[[:space:]]*⚠[[:space:]]*//')" || alerte=""
+  [ -z "$alerte" ] || dit '  %s⚠%s #%s — %s\n' "$C_Y" "$C_0" "$iid" "$alerte"
+  return 0
+}
+
 # merge_tente <index> [attendre] : UN appel à `merge-mr`, et la conduite que son code impose.
 # Rend le code de `merge-mr` — 0 = mergée.
 #
@@ -2720,7 +2765,10 @@ merge_tente() { # <index> [attendre]
     printf '%s\n' "$sortie"; } >>"$MERGE_LOG" 2>/dev/null || true
   cause="$(merge_cause "$sortie")"
   case "$code" in
-    0) Q_ETAT[$i]=mergee;  Q_RAISON[$i]='-' ;;
+    # Le ramassage est ici, sur le verdict et non dans la boucle du drain : les DEUX drains — au fil
+    # de l'eau et final — passent par `merge_tente`, donc un seul point d'accroche les sert tous
+    # deux, et il n'y a aucun instant où « mergé » est vrai sans que le ménage ait été tenté (#438).
+    0) Q_ETAT[$i]=mergee;  Q_RAISON[$i]='-'; merge_ramasse "$iid" "$branche" ;;
     # « pas encore rendu » (en cours, absent, ou périmé) : la seule réponse qui laisse en file.
     3) Q_ETAT[$i]=attente; Q_RAISON[$i]="${cause:-verdict de pipeline pas encore rendu}" ;;
     # 4 et 5 sont réparables — c'est `mrfix_relance` (#420) qui s'en saisit, en ouvrant une session

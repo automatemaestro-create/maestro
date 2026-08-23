@@ -264,8 +264,14 @@ d'un humain pour *vérifier*, pas la vérification : les quatre prérequis viven
       - `0` → **mergé** (squash). Le ticket se ferme par son `Closes`, et son état passe
         « Terminé » tout seul via le workflow `issues: closed` (#377) : **ne pose rien**, ne
         repasse pas `set-workflow`, ne ferme rien à la main. La branche distante part avec le merge
-        (`delete_branch_on_merge`, #384) ; la locale et le worktree sont du ressort de
-        `/branch-cleanup`.
+        (`delete_branch_on_merge`, #384) ; la locale et le worktree, eux, **restent** — et ce n'est
+        pas un oubli (#438) : tu es **dans** ce worktree, et `worktree.sh gc` refuse par
+        construction de retirer celui de la session courante. Le ramassage d'office existe, mais
+        c'est le **pilote** d'un run qui l'a, parce que lui seul se tient dehors. Ici, dis-le
+        au lieu de le taire — « worktree et branche locale conservés (session en cours dedans) :
+        ils partiront au prochain `/ticket-start`, ou tout de suite avec `/branch-cleanup` depuis
+        le clone principal » — et n'invente aucun contournement : ni `worktree.sh remove`, ni un
+        `git branch -D` à la main.
       - `3` → le verdict n'est **pas encore rendu** : run en cours, absent, ou **périmé** — un vert
         porté par un commit antérieur au tien. Ce dernier cas est le plus fréquent, et il est
         normal : `pipeline-wait` ne compare pas les sha (il le dit lui-même), donc il a pu rendre
@@ -299,7 +305,7 @@ d'un humain pour *vérifier*, pas la vérification : les quatre prérequis viven
    qui sépare ce résumé du faux verdict que #303 a supprimé ailleurs.
    | Issue | À rapporter |
    |---|---|
-   | **Mergé** (`0`) | « PR #N mergée (squash) — #<iid> fermé, état « Terminé » posé par le workflow `issues: closed` » ; rappelle que la branche locale et le worktree partent avec `/branch-cleanup` |
+   | **Mergé** (`0`) | « PR #N mergée (squash) — #<iid> fermé, état « Terminé » posé par le workflow `issues: closed` » ; dis que la branche locale et le worktree sont **conservés** (la session est dedans, #438) et partiront au prochain `/ticket-start` ou avec `/branch-cleanup` |
    | **Non mergé** (`3`/`4`/`5`/`6`) | la **cause telle que `merge-mr` l'a rendue** (jamais reformulée en « il faudra revoir ça »), l'**état laissé** — PR **ouverte** et prête, ticket **« En revue »** — et la **suite** : `/mr-fix <numéro>` sur `4`/`5`, repasser plus tard sur `3`, le geste humain nommé sur `6` |
 
    Rappelle enfin qu'**aucun merge non vérifié** n'a lieu (#417) : ce qui a mergé — ou refusé de

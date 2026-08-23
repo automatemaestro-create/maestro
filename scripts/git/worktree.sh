@@ -67,7 +67,7 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
   bash scripts/git/worktree.sh ensure <iid> [--branche <nom>]
   bash scripts/git/worktree.sh list
   bash scripts/git/worktree.sh remove <iid|chemin> [--force]
-  bash scripts/git/worktree.sh gc [--check] [--auto] [--sauf <iid>]
+  bash scripts/git/worktree.sh gc [--check] [--auto] [--sauf <iid>] [--iid <iid>]
   bash scripts/git/worktree.sh sessions [<iid>|--tous]
 
 `ensure` est l'aiguillage de /ticket-start : il dit où la session doit travailler, en rendant
@@ -1414,8 +1414,14 @@ orphelins_en_cours() {
   fi
 }
 
-# commande_gc [--check] [--auto] [--sauf <iid>] : retire les worktrees dont GitLab confirme le
-# travail soldé, et signale les tickets « En cours » que plus personne ne mène (#328).
+# commande_gc [--check] [--auto] [--sauf <iid>] [--iid <iid>] : retire les worktrees dont GitLab
+# confirme le travail soldé, et signale les tickets « En cours » que plus personne ne mène (#328).
+#
+# `--iid <iid>` en fait un ramassage CIBLÉ (#438) : ce worktree-là, et rien d'autre — ni balayage
+# des coquilles, ni signalement des orphelins, ni lecture du backlog. C'est ce qui le rend jouable
+# APRÈS CHAQUE MERGE du drain d'un run, là où le balayage complet coûterait une lecture de forge par
+# worktree et par PR mergée. Les trois refus ci-dessous, eux, ne bougent pas : cibler dit QUI est
+# candidat, jamais ce qu'on s'autorise sur lui.
 #
 # Trois refus, dans cet ordre, parce qu'ils ne coûtent pas la même chose :
 #   - le worktree de la SESSION COURANTE, jamais candidat (on ne se retire pas le sol sous les pieds) ;
@@ -1431,12 +1437,13 @@ orphelins_en_cours() {
 # « <iid> <branche> » et imprime la ligne de verdict : c'est la couture par laquelle les tests font
 # tourner le ramassage sans réseau ni CLI de forge (même dispositif que MAESTRO_ORCHESTRATE_WORKTREE, #172).
 commande_gc() {
-  local check=0 auto=0 sauf=""
+  local check=0 auto=0 sauf="" cible=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --check) check=1 ;;
       --auto)  auto=1 ;;
       --sauf)  sauf="${2:-}"; shift ;;
+      --iid)   cible="${2:-}"; shift ;;
       -h|--help) usage; return 0 ;;
       *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
     esac
@@ -1451,13 +1458,21 @@ commande_gc() {
 
   # Un couple « chemin<TAB>branche » par ligne : le chemin peut porter des espaces (« Projects
   # Solutions »), la tabulation ne risque rien.
-  local ligne chemin="" paires=""
+  local ligne chemin="" paires="" b_ligne b_ligne_iid
   while IFS= read -r ligne; do
     case "$ligne" in
       worktree\ *) chemin="${ligne#worktree }" ;;
       branch\ refs/heads/*)
         [ "$chemin" = "$principal" ] && continue
-        paires="$paires$chemin"$'\t'"${ligne#branch refs/heads/}"$'\n' ;;
+        b_ligne="${ligne#branch refs/heads/}"
+        # `--iid` (#438) : le ramassage d'UN worktree, celui du ticket qu'on vient de merger. Même
+        # dérivation de l'iid que la boucle principale plus bas — une seconde formule finirait par
+        # ne plus désigner le même worktree que celle qui décide.
+        if [ -n "$cible" ]; then
+          b_ligne_iid="${b_ligne#*/}"
+          [ "${b_ligne_iid%%-*}" = "$cible" ] || continue
+        fi
+        paires="$paires$chemin"$'\t'"$b_ligne"$'\n' ;;
     esac
   done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
 
@@ -1465,13 +1480,21 @@ commande_gc() {
   # précisément ce que `git worktree list` ne connaît plus, donc rien de ce qui suit ne les
   # rencontrerait. Le cas « plus aucun worktree en place » est même celui où elles sont le plus
   # probables — elles restent quand tout le reste est parti.
-  ramasse_coquilles "$principal" "$check"
+  #
+  # Sauf en mode ciblé (#438), qui répond à UNE question et n'en pose pas d'autre : un balayage est
+  # un geste de passage obligé (`ensure`, `/branch-cleanup`, démarrage d'un run), pas quelque chose
+  # qu'on rejoue après chaque merge d'un drain. Une coquille laissée là attendra le prochain
+  # balayage — c'est déjà ce qu'elle faisait avant ce ticket.
+  [ -n "$cible" ] || ramasse_coquilles "$principal" "$check"
 
   if [ -z "$paires" ]; then
     # Aucun worktree ici : le signalement des orphelins n'aurait rien à déduire non plus (sa portée
     # EST celle des worktrees de cette machine), mais on l'appelle quand même — c'est lui qui décide
     # de sa portée, pas cette branche-ci, et un jour où il saura conclure sans worktree il n'aura
     # pas à se souvenir qu'un `return 0` l'avait court-circuité.
+    # En mode ciblé (#438), « aucun worktree » veut dire « celui de ce ticket n'est pas ici » — un
+    # non-événement, et pas une occasion d'aller inventorier le backlog.
+    [ -z "$cible" ] || return 0
     local seuls_orphelins
     seuls_orphelins="$(orphelins_en_cours "$sauf")"
     if [ -n "$COQUILLES_RAPPORT" ] || [ -n "$seuls_orphelins" ]; then
@@ -1601,8 +1624,12 @@ commande_gc() {
   # Le signalement des orphelins (#328) est indépendant de ce qui précède : il a sa propre question,
   # sa propre portée et son propre silence. Il est demandé ICI, une fois le ramassage joué, pour que
   # le compte rendu garde l'ordre « ce que j'ai fait, puis ce que je constate ».
-  local orphelins
-  orphelins="$(orphelins_en_cours "$sauf")"
+  #
+  # Muet en mode ciblé (#438), pour la raison qui vaut déjà aux coquilles, et une de plus : ce
+  # signalement lit TOUT le backlog en cours, donc le rejouer après chaque merge d'un drain coûterait
+  # un balayage de forge par PR mergée — précisément ce que le mode ciblé existe pour éviter.
+  local orphelins=""
+  [ -n "$cible" ] || orphelins="$(orphelins_en_cours "$sauf")"
 
   # En --auto (appelé par `ensure`, donc par /ticket-start) on ne parle que s'il y a quelque chose à
   # dire : un retrait, un travail en danger, un échec. Le silence est le cas normal — et un orphelin
