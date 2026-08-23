@@ -1343,8 +1343,10 @@ signalé qu'une résolution fausse sous une PR en Draft que personne ne relira l
 **2. Le pipeline** — diagnostic des jobs en échec, correctif local quand c'est corrigeable, commit
 `Refs #<iid>` poussé sur la branche, suivi du nouveau pipeline. Les briques réutilisables vivent
 dans `lib.sh` : `pipeline-latest <ref>`, `pipeline-status <id>`, `pipeline-failed-jobs <id>`,
-`job-trace <job-id> [lignes]`, `pipeline-wait <id> [timeout]` (parsing shell pur, comme le reste du
-fichier). Le job rouge se rejoue en local par le **filet CI** — `bash scripts/ci/local.sh --only
+`job-trace <job-id> [lignes]`, `pipeline-wait <ref|run-id> [--timeout <s>]` (parsing shell pur,
+comme le reste du fichier ; la forme `<id> <timeout-s>` que cette commande emploie reste acceptée
+— #416 lui a ajouté la cible **ref** et les codes `4`/`5`, elle ne lui en a rien retiré). Le job
+rouge se rejoue en local par le **filet CI** — `bash scripts/ci/local.sh --only
 <job>` —, jamais par une recette recopiée à côté : le filet lit les jobs dans le workflow,
 passe par le venv du repo, analyse un miroir LF pour shellcheck (la CI checkout en LF, une copie
 Windows CRLF produit des faux SC1017) et cadre `pytest` sur le périmètre du diff (§8.4) — la suite
