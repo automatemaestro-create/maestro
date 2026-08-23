@@ -1634,11 +1634,21 @@ gl_mr_state() {
 # suppression et aucun refus = aucune ligne. Même parti pris que `worktree.sh gc --auto`.
 gl_cleanup_merged() {
   local auto=0
-  case "${1:-}" in
-    --auto) auto=1 ;;
-    '') ;;
-    *) echo "usage: gl_cleanup_merged [--auto]" >&2; return 2 ;;
-  esac
+  # Des branches NOMMÉES en font une purge ciblée (#438) : celles-là, et rien d'autre. Le drain d'un
+  # run merge N PR, et un balayage complet lui coûterait une lecture de forge par branche locale ET
+  # par merge. Ce que la cible ne change pas : le garde-fou. `gl_mr_state` reste interrogé pour
+  # chacune — le nom d'une branche n'a jamais valu preuve de merge (docs/10 §6), et ce n'est pas
+  # parce que l'appelant croit savoir qu'on cesse de demander.
+  local -a cibles=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --auto) auto=1 ;;
+      '') ;;
+      -*) echo "usage: gl_cleanup_merged [--auto] [<branche>…]" >&2; return 2 ;;
+      *) cibles+=("$1") ;;
+    esac
+    shift
+  done
 
   local principal
   principal="$(gl_depot_principal)" || {
@@ -1658,6 +1668,10 @@ gl_cleanup_merged() {
     [ -z "$branch" ] && continue
     [ "$branch" = "main" ] && continue
     [ "$branch" = "$current" ] && continue
+    # Une branche nommée peut ne plus être là (déjà purgée, jamais créée ici) : sans ce contrôle,
+    # `git branch -D` échouerait et la ligne « conservée, suppression refusée par git » dirait le
+    # contraire de ce qui s'est passé. Sans objet pour le balayage, dont git dicte la liste.
+    git -C "$principal" show-ref --verify --quiet "refs/heads/$branch" || continue
     state="$(gl_mr_state "$branch")"
     if [ "$state" != "merged" ]; then
       kept=$((kept + 1))
@@ -1675,7 +1689,11 @@ gl_cleanup_merged() {
       printf '  ⚠ conservée : %s (PR merged, suppression refusée par git)\n' "$branch"
     fi
     empruntees=$((empruntees + 1))
-  done < <(git -C "$principal" branch --format='%(refname:short)')
+  done < <(if [ "${#cibles[@]}" -gt 0 ]; then
+             printf '%s\n' "${cibles[@]}"
+           else
+             git -C "$principal" branch --format='%(refname:short)'
+           fi)
 
   [ "$auto" = 1 ] && [ "$deleted" -eq 0 ] && [ "$empruntees" -eq 0 ] && return 0
   if [ "$empruntees" -gt 0 ]; then
@@ -5261,7 +5279,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                 réparation d'un ticket que doctor.sh signale hors projet ou sans état." >&2
       echo "                                 Rejouable sans doublon ; ÉCRASE un Status déjà posé)" >&2
       echo "  Branches :" >&2
-      echo "    cleanup-merged [--auto]     (supprime les branches locales dont la PR est mergée ; --auto = muet si rien)" >&2
+      echo "    cleanup-merged [--auto] [<branche>…]  (supprime les branches locales dont la PR est mergée ; sans argument, toutes ; --auto = muet si rien)" >&2
       echo "    sync-main [--check]         (avance main du clone principal sur origin/main, fast-forward seul ; 0=à jour/fait, 3=divergent, 4=arbre sale)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
       echo "    open-mr-branches            (branche source de chaque PR ouverte, une par ligne)" >&2

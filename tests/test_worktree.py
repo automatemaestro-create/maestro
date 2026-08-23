@@ -1028,6 +1028,102 @@ def test_gc_ignore_une_branche_hors_convention(depot: Depot) -> None:
     assert depot.worktree("experimentation").exists()
 
 
+# --- Le ramassage CIBLÉ : le quatrième déclencheur, celui d'après un merge (#438) ----------------
+# Les trois déclencheurs d'origine — `ensure` (donc /ticket-start), /branch-cleanup, démarrage d'un
+# run — sont tous ANTÉRIEURS au merge. C'était juste tant qu'un humain mergeait plus tard ; depuis
+# #418/#419 le pilote merge PENDANT le run et à sa fin, si bien qu'un run de huit tickets se
+# terminait en laissant huit worktrees que rien ne ramassait avant le run suivant.
+#
+# Le mode ciblé est ce qui rend le geste jouable là : après chaque merge, un ticket. Un balayage
+# complet y coûterait une lecture de forge par worktree ET par branche, à chaque merge — N² sur un
+# run de N tickets, dans la boucle conçue pour ne rien coûter la plupart du temps.
+
+
+def test_gc_cible_ne_juge_que_le_worktree_demande(depot: Depot) -> None:
+    """`--iid` restreint les CANDIDATS — et le test le prouve sur l'échantillon qui bougerait :
+    les deux worktrees sont soldés, donc un filtre absent les emporterait tous les deux."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.lance("create", "153", "--branche", "chore/153-voisin")
+    depot.impose_verdicts({
+        "152": _verdict_ligne("fini", "PR #42 mergée"),
+        "153": _verdict_ligne("fini", "PR #43 mergée"),
+    })
+
+    acheve = depot.lance("gc", "--iid", "152")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout
+    assert "153" not in acheve.stdout, "le voisin n'est pas même examiné"
+    assert not depot.worktree().exists()
+    assert depot.worktree("153-voisin").exists(), "un worktree soldé mais non visé reste en place"
+
+    # Le contre-échantillon : sans le filtre, le voisin serait parti au premier passage.
+    balayage = depot.lance("gc")
+    assert "#153 retiré" in balayage.stdout
+    assert not depot.worktree("153-voisin").exists()
+
+
+def test_gc_cible_garde_les_refus_du_balayage(depot: Depot) -> None:
+    """Cibler dit QUI est candidat, jamais ce qu'on s'autorise sur lui.
+
+    Le garde-fou de #197 est le seul que le merge pourrait donner envie de lever — « la PR est
+    mergée, que reste-t-il à sauver ? » — et c'est justement celui qu'il ne faut pas : un merge dit
+    ce qui est parti sur `origin/main`, jamais ce qui est resté sur le disque.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+    (depot.worktree() / "brouillon.txt").write_text("non commité\n", encoding="utf-8",
+                                                    newline="\n")
+
+    acheve = depot.lance("gc", "--auto", "--iid", "152")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "fichier(s) non commité(s)" in acheve.stdout, "l'alerte est dite même en --auto"
+    assert depot.worktree().exists(), "un worktree porteur de travail ne part pas, merge ou pas"
+
+
+def test_gc_cible_sur_un_ticket_sans_worktree_ne_dit_rien(depot: Depot) -> None:
+    """Le cas le plus fréquent après un merge : le worktree n'est pas sur cette machine.
+
+    Un non-événement, et surtout pas une occasion d'aller inventorier le backlog — c'est ce que le
+    balayage fait à sa place, et ce qu'on ne veut pas payer une fois par PR mergée.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    acheve = depot.lance("gc", "--auto", "--iid", "999")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert acheve.stdout.strip() == "", acheve.stdout
+    assert depot.worktree().exists()
+
+
+def test_purge_ciblee_ne_touche_qu_a_la_branche_nommee(depot: Depot) -> None:
+    """Le pendant de `--iid` sur les branches : nommer restreint, sans rien relâcher.
+
+    `mr-state` reste interrogé pour la branche visée — ce n'est pas parce que l'appelant vient de
+    merger qu'on cesse de demander à la forge (docs/10 §6).
+    """
+    depot.git("branch", "chore/140-livree")
+    depot.git("branch", "chore/141-livree-aussi")
+    depot.impose_mr({"chore/140-livree": "merged", "chore/141-livree-aussi": "merged"})
+
+    acheve = depot.lib("cleanup-merged", "--auto", "chore/140-livree")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "chore/140-livree" in acheve.stdout
+    assert depot.git("branch", "--list", "chore/140-livree") == ""
+    assert "chore/141-livree-aussi" in depot.git("branch", "--list", "chore/141-livree-aussi"), \
+        "une branche mergée mais non nommée survit — le balayage, lui, l'emporterait"
+
+
+def test_purge_ciblee_ignore_une_branche_absente(depot: Depot) -> None:
+    """Déjà purgée, ou jamais créée ici. Sans ce contrôle, `git branch -D` échouerait et la ligne
+    « conservée, suppression refusée par git » dirait le contraire de ce qui s'est passé."""
+    depot.impose_mr({"chore/140-livree": "merged"})
+
+    acheve = depot.lib("cleanup-merged", "--auto", "chore/140-livree")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert acheve.stdout.strip() == "", acheve.stdout
+    assert "refusée par git" not in acheve.stdout + acheve.stderr
+
+
 def test_ensure_retrouve_le_travail_d_un_ticket_repris(depot: Depot) -> None:
     """La dernière boucle du critère de #329 : « sans rien perdre » se vérifie ICI, pas ailleurs.
 

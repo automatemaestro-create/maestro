@@ -2320,9 +2320,28 @@ mergées**, soit 100 % de déchets. Le coût n'est pas la duplication du dépôt
 535 Mo d'un worktree, 93 %. À l'échelle d'un run `/orchestrate` de dix tickets, ~5 Go en silence.
 
 ```bash
-bash scripts/git/worktree.sh gc            # ramasse ce qui est soldé
-bash scripts/git/worktree.sh gc --check    # dit ce qu'il retirerait, sans rien toucher
+bash scripts/git/worktree.sh gc              # ramasse ce qui est soldé
+bash scripts/git/worktree.sh gc --check      # dit ce qu'il retirerait, sans rien toucher
+bash scripts/git/worktree.sh gc --iid 436    # ciblé : ce worktree-là, et rien d'autre (#438)
 ```
+
+**Le mode ciblé, et le quatrième déclencheur** (#438). `--iid` restreint les **candidats** à un
+ticket : ni balayage des coquilles, ni signalement des orphelins, ni lecture du backlog. C'est ce
+qui rend le ramassage jouable **après chaque merge** du drain d'un run (§11.11) — un balayage
+complet y coûterait une lecture de forge par worktree **et** par PR mergée, soit N² sur un run de
+N tickets, dans la boucle précisément conçue pour ne rien coûter la plupart du temps. Cibler dit
+**qui est candidat**, jamais ce qu'on s'autorise sur lui : les trois refus ci-dessous ne bougent
+pas, et le premier des trois est celui que le merge donnerait le plus envie de lever (« la PR est
+mergée, que reste-t-il à sauver ? ») — or un merge dit ce qui est parti sur `origin/main`, jamais
+ce qui est resté sur le disque.
+
+⚠ **Le pilote d'un run l'a, une session non** : `gc` refuse par construction de retirer le worktree
+de la **session courante**, et une session qui merge par `/ticket-finish` est justement dedans. Le
+pilote, lui, se tient dehors — c'est pourquoi le quatrième déclencheur vit dans
+`scripts/orchestrate/run.sh` (`merge_ramasse`) et non dans `lib.sh merge-mr`, où il aurait servi
+tout le monde d'un coup mais aurait fait dépendre `lib.sh` de `worktree.sh`, qui en dépend déjà. En
+clôture interactive, worktree et branche **restent** donc, et `/ticket-finish` le **dit** au lieu de
+le taire : ils partiront au prochain `/ticket-start` ou avec `/branch-cleanup`.
 
 C'est le **symétrique de `cleanup-merged`** (#23, §9.5), qui purge les branches locales mergées au
 démarrage d'un ticket — et qui, dans `ensure`, tourne **juste après** ce ramassage : `git branch -D`
@@ -2767,8 +2786,13 @@ retard se lit dans l'IDE, une branche morte de plus ne se remarque pas.
 
 | | Avant #305 | Après |
 |---|---|---|
-| Déclencheur automatique | `lib.sh start-branch` (injoignable depuis #181) | `worktree.sh ensure`, comme §9.2/§9.3/§9.4 |
+| Déclencheur automatique | `lib.sh start-branch` (injoignable depuis #181) | `worktree.sh ensure`, comme §9.2/§9.3/§9.4 — **plus le merge d'un run** depuis #438 |
 | À la demande | `/branch-cleanup` | `/branch-cleanup` (inchangé) |
+
+Depuis #438, `cleanup-merged` accepte des **branches nommées** — `cleanup-merged --auto <branche>` —
+et n'examine alors que celles-là. Pendant du `--iid` de §9.2, pour la même raison et avec le même
+principe : nommer restreint, sans rien relâcher. `mr-state` reste interrogé pour chaque branche
+visée — ce n'est pas parce que l'appelant vient de merger qu'on cesse de demander à la forge (§6).
 
 L'ordre dans `ensure` **n'est pas cosmétique** : la purge passe **après** le ramassage des
 worktrees (§9.2), parce que `git branch -D` refuse une branche empruntée par un worktree. La
@@ -4372,6 +4396,20 @@ que travailler. Trois raisons, dont une seule suffirait :
 
 D'où les deux refus de `guard.sh` propres au run (§11.6) : une session de ticket s'arrête à la PR
 ouverte + « En revue », une session de déblocage à la PR **rendue mergeable**.
+
+**Et le pilote ramasse ce que son merge rend inutile** (#438). Sur le verdict `0` de `merge-mr`, et
+là seulement, `merge_ramasse` retire le worktree du ticket puis purge sa branche locale — `gc --iid`
+**puis** `cleanup-merged <branche>`, dans cet ordre (§9.5 : `git branch -D` refuse une branche
+empruntée). C'est le **quatrième déclencheur** du ramassage, et il manquait pour une raison de
+calendrier : les trois autres — `ensure`, `/branch-cleanup`, démarrage d'un run — sont tous
+*antérieurs* au merge, ce qui était juste tant qu'un humain mergeait plus tard. Depuis #418/#419 un
+run de huit tickets se terminait tout mergé **et** avec huit worktrees (~535 Mo pièce) que rien ne
+ramassait avant le run suivant. Trois choix à ne pas défaire : le geste est **ciblé** (§9.2 — un
+balayage par PR mergée coûterait N² lectures de forge) ; il est **best-effort et muet**, au même
+titre que le `sync-main` de `merge-mr` (ni le merge, ni le drain, ni le run n'échouent parce qu'un
+répertoire résiste) ; et il est accroché **au verdict, pas à la boucle** — les deux drains passent
+par `merge_tente`, donc il n'existe aucun instant où « mergé » est vrai sans que le ménage ait été
+tenté. `MAESTRO_ORCHESTRATE_RAMASSAGE=0` l'éteint.
 
 **Pourquoi au fil de l'eau plutôt qu'en salve.** C'est le renversement du constat de #299 : à la fin
 d'un run, les PR ne sont pas en conflit avec `main` (toutes les branches partent du même

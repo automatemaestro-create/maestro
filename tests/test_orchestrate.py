@@ -167,6 +167,16 @@ if [ "$1" = "api" ]; then
         rm -f "$MAESTRO_STUB_BARRIERE/$pr.en-vol"
       fi
       if [ -f "$FIX/merge-refuse" ]; then printf '{"message":"refus simule"}'; exit 0; fi
+      # La PR passe MERGED dans sa fixture (#438). Sans ça, tout ce qui relit son état APRÈS le
+      # merge — la purge des branches locales, qui exige que la forge confirme — verrait une PR
+      # encore ouverte et se tairait : le harnais mentirait sur la seule chose que ces tests-là
+      # observent, et un ramassage qui ne ramasse pas passerait pour un ramassage.
+      pr="${requete#*pulls/}"; pr="${pr%%/merge*}"
+      for fixture in "$FIX"/mr-*.json; do
+        [ -e "$fixture" ] || continue
+        grep -q "\"number\":$pr," "$fixture" || continue
+        sed -i 's/"state":"OPEN"/"state":"MERGED"/' "$fixture"
+      done
       printf '{"merged":true,"sha":"deadbeef"}'
       exit 0 ;;
     *"actions/runs?branch="*)
@@ -5682,6 +5692,56 @@ def test_une_pr_verte_est_mergee_pendant_le_run(depot: Depot) -> None:
     assert len(puts) == 1, f"un merge, et un seul : {puts}"
     assert "merge_method=squash" in puts[0]
     assert "mergée" in r.stdout, "le résumé rend le merge, pas seulement « PR ouverte »"
+
+
+@besoin_git
+def test_un_merge_reussi_ramasse_ce_qu_il_rend_inutile(depot: Depot) -> None:
+    """Le quatrième déclencheur du ramassage (#438) : après CHAQUE merge, et non au prochain départ.
+
+    Les trois autres — `ensure`, /branch-cleanup, démarrage d'un run — sont tous antérieurs au
+    merge, ce qui était juste tant qu'un humain mergeait plus tard. Depuis #418/#419 un run de huit
+    tickets se terminait en laissant huit worktrees et huit branches.
+
+    Observé sur la BRANCHE LOCALE, seule des deux moitiés que ce harnais porte : le worktree d'un
+    ticket y est un bouchon (`MAESTRO_ORCHESTRATE_WORKTREE`), donc il n'y a pas de répertoire à
+    retirer. Le ramassage ciblé lui-même — ce qu'il retire, et surtout ce qu'il refuse de
+    retirer — est gardé par `tests/test_worktree.py`.
+    """
+    _pr_mergeables(depot, (130,))
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "ramasse",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    dossier = depot.racine / ".maestro/orchestrate/ramasse"
+    assert _merge_tsv(dossier)[0][3] == "mergee", "sans merge, le reste ne prouverait rien"
+    assert "feat/130-ticket-130" not in _git(depot, "branch", "--format=%(refname:short)"), \
+        "la branche locale d'une PR mergée ne survit pas au run qui l'a mergée"
+    assert "ramassage après merge" in (dossier / "merge.log").read_text(encoding="utf-8"), \
+        "le ramassage laisse sa trace là où on relit un merge, pas seulement dans son effet"
+
+
+@besoin_git
+def test_un_merge_refuse_ne_ramasse_rien(depot: Depot) -> None:
+    """Le contre-échantillon, sans lequel le test précédent ne dirait pas D'OÙ vient le ramassage.
+
+    Une PR non mergée garde son travail : sa branche est peut-être la seule copie d'un correctif
+    que `/mr-fix` reprendra. Ramasser sur autre chose que le verdict `0` de `merge-mr`, ce serait
+    déduire d'un passage dans la file ce que seul le merge établit.
+    """
+    _pr_mergeables(depot, (130,))
+    (depot.fixtures / "merge-refuse").write_text("", encoding="utf-8")
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "refuse",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+                         "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    dossier = depot.racine / ".maestro/orchestrate/refuse"
+    assert _merge_tsv(dossier)[0][3] != "mergee", "la fixture doit bien faire échouer le merge"
+    assert "feat/130-ticket-130" in _git(depot, "branch", "--format=%(refname:short)")
+    assert "ramassage après merge" not in (dossier / "merge.log").read_text(encoding="utf-8")
 
 
 @besoin_git
