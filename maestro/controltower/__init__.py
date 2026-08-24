@@ -157,6 +157,7 @@ from maestro.controltower.hote import (
     OrdreRun,
 )
 from maestro.controltower.hote_en_process import DerouleurRun, HoteRunEnProcess
+from maestro.controltower.journal import EntreeJournal, ServiceJournal
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
     EventLog,
@@ -236,6 +237,7 @@ __all__ = [
     "CoutTacheAgregee",
     "DemarrageHoteRate",
     "DerouleurRun",
+    "EntreeJournal",
     "EtatAgent",
     "EtatExecution",
     "EtatTache",
@@ -269,6 +271,7 @@ __all__ = [
     "ReponseIndisponible",
     "ServiceChat",
     "ServiceExecutions",
+    "ServiceJournal",
     "SujetAssistance",
     "ValidateurControlTower",
     "activer_publication",

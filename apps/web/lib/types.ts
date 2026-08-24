@@ -945,29 +945,42 @@ export type DetailExecution = ResumeExecution & {
   evenements: Evenement[];
 };
 
-/** Clés de tri et sens du journal requêtable (maestro/controltower/fixtures.py). */
+/** Clés de tri et sens du journal requêtable (maestro/controltower/journal.py). */
 export const TRI_JOURNAL_HORODATAGE = "horodatage";
 export const TRI_JOURNAL_AGENT = "agent";
 export const TRI_JOURNAL_TYPE = "type";
 export const ORDRE_ASC = "asc";
 export const ORDRE_DESC = "desc";
 
+/** Plafond dur d'une page de journal (au-delà, le backend refuse en 422). */
+export const TAILLE_PAGE_JOURNAL_MAX = 200;
+
 /**
  * Une entrée du journal requêtable (`GET /api/journal`) : un événement persisté
  * doté d'un `id` stable (référençable, triable) — le reste reprend la forme d'un
- * `Evenement` (type, run, tâche, agent, statut, détail, projet, horodatage).
+ * `Evenement` (type, run, tâche, titre, agent, statut, détail, description,
+ * projet, horodatage).
  * Le journal se restreint à un projet par `?projet=<id>` (#222) ; une entrée
  * sans `projet_id` ne relève d'aucun et sort donc de toute vue filtrée.
+ *
+ * `titre` et `description` s'y sont ajoutés en #478, quand la route a cessé
+ * d'être une promesse : ce sont eux que la ligne d'activité **prononce**
+ * (`resumeEvenement`), et sans eux un fil relu après rechargement dirait « dev a
+ * terminé : une étape » là où le direct disait le nom de l'étape. Les charges
+ * lourdes d'un `Evenement` (`usage`, `brief`, `sources`, `diff`) restent dehors :
+ * aucune ligne ne les montre, et une page en compte jusqu'à 200.
  */
 export type EntreeJournal = {
   id: string;
   type: string;
   run_id: string;
   tache_id: string;
+  titre: string;
   agent: string;
   role: string;
   statut: string;
   detail: string;
+  description: string;
   projet_id: string | null;
   horodatage: string;
 };

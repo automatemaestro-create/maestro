@@ -130,7 +130,7 @@ par la démo ; **501** en production tant que leur lot n'est pas livré) :
   ticket) ; `POST /api/executions` — lance un run (objectif + garde-fous) ;
   `POST /api/executions/{run_id}/annuler` — interrompt un run en cours (#185) ;
 - `GET  /api/journal` — le journal requêtable (filtres agent / type / run /
-  période, tri, pagination) ;
+  période, tri, pagination) — servi **pour de bon** depuis #478 ;
 - `GET  /api/configuration` — le registre de configuration éditable (réglages
   produit, couche 1 du cadrage sécurité #182) ;
 - `GET  /api/playbooks/propositions` — les propositions d'auto-amélioration
@@ -139,13 +139,14 @@ par la démo ; **501** en production tant que leur lot n'est pas livré) :
   `debut`/`fragment`/`fin`).
 
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
-événement sur l'état (`ControlTowerState`), le **consigne** au journal durable
-(`EventLog`, #97) puis le rediffuse aux WebSockets connectées — l'ordre « état
-d'abord, diffusion ensuite » garantit qu'un client qui reçoit un événement lit
-un REST déjà à jour. Au démarrage, le lifespan **rejoue** le journal pour
-reconstruire la projection (exécutions, grands livres, analytics, tâches,
-agents, validations) d'avant un redémarrage de l'API : l'état survit à la vie du
-process (#97). `create_app` s'injecte bus, état et journal (les tests d'API
+événement sur l'état (`ControlTowerState`), l'ajoute au journal requêtable
+(`ServiceJournal`, #478), le **consigne** au journal durable (`EventLog`, #97)
+puis le rediffuse aux WebSockets connectées — l'ordre « état d'abord, diffusion
+ensuite » garantit qu'un client qui reçoit un événement lit un REST déjà à jour.
+Au démarrage, le lifespan **rejoue** le journal pour reconstruire la projection
+(exécutions, grands livres, analytics, tâches, agents, validations) **et
+l'historique requêtable** d'avant un redémarrage de l'API : l'état survit à la
+vie du process (#97). `create_app` s'injecte bus, état et journal (les tests d'API
 tournent sur `InMemoryEventBus`/`InMemoryEventLog`, sans Redis) ;
 `create_default_app` câble le `RedisEventBus` et le `RedisEventLog` de production
 (canal `maestro.evenements`, alimenté par `maestro.controltower.bridge` côté
@@ -232,20 +233,21 @@ from maestro.controltower.executions import (
     RelanceRefusee,
     ServiceExecutions,
 )
-from maestro.controltower.fixtures import (
+from maestro.controltower.fixtures import FixturesControlTower
+from maestro.controltower.hote import (
+    HOTE_RUN_DETACHE,
+    HOTE_RUN_EN_PROCESS,
+    HOTES_RUN,
+    HoteRun,
+)
+from maestro.controltower.journal import (
     ORDRE_DESC,
     ORDRES_JOURNAL,
     TAILLE_PAGE_DEFAUT,
     TAILLE_PAGE_MAX,
     TRI_JOURNAL_HORODATAGE,
     TRIS_JOURNAL,
-    FixturesControlTower,
-)
-from maestro.controltower.hote import (
-    HOTE_RUN_DETACHE,
-    HOTE_RUN_EN_PROCESS,
-    HOTES_RUN,
-    HoteRun,
+    ServiceJournal,
 )
 from maestro.controltower.persistence import (
     EventLog,
@@ -658,11 +660,15 @@ async def _pompe(
     state: ControlTowerState,
     diffusion: Diffusion,
     event_log: EventLog,
+    journal: ServiceJournal,
 ) -> None:
     """Le seul consommateur du bus : projette sur l'état, **persiste**, puis rediffuse.
 
     Cet ordre rend le flux cohérent pour les clients : à réception d'un
-    événement WebSocket, l'état REST le reflète déjà. Chaque événement est
+    événement WebSocket, l'état REST le reflète déjà — le journal requêtable
+    (#478) compris, d'où sa consignation **avant** la diffusion : un client qui
+    recharge sur un événement qu'il vient de recevoir en direct doit le
+    retrouver dans son historique, jamais l'inverse. Chaque événement est
     consigné au journal durable (#97) entre la projection et la diffusion —
     c'est la mémoire longue qui, rejouée au démarrage, reconstruit l'état après
     un redémarrage de l'API. Une panne de **persistance** (Redis injoignable le
@@ -674,6 +680,7 @@ async def _pompe(
     try:
         async for event in bus.subscribe():
             state.appliquer(event)
+            journal.consigner(event)
             try:
                 await event_log.consigner(event)
             except Exception:
@@ -709,6 +716,7 @@ def create_app(
     permissions: PermissionStore | None = None,
     projets: ServiceProjets | None = None,
     event_log: EventLog | None = None,
+    journal: ServiceJournal | None = None,
     battements: RegistreBattements | None = None,
     fixtures: FixturesControlTower | None = None,
     fabrique_moteur: FabriqueMoteur | None = None,
@@ -801,6 +809,12 @@ def create_app(
     le rejeu par-dessus (idempotent : les événements reconstruisent le même
     état).
 
+    `journal` (#478) est le **journal requêtable** servi par `GET /api/journal` :
+    l'index transverse, filtrable et paginé, des événements consignés. Il n'a
+    aucune durabilité propre — il se remplit du rejeu d'`event_log` à l'ouverture
+    puis de la pompe au fil de l'eau —, ce qui fait de lui une **vue** du journal
+    durable et non un second stockage à tenir d'accord avec lui.
+
     `battements` (#348) est le registre où l'**hôte** d'un run pose son signal de
     vie, et où `GET /api/executions` lit la vitalité de chaque run non soldé
     (vivant / orphelin / indéterminé) — par défaut un registre mémoire, qui ne
@@ -810,8 +824,9 @@ def create_app(
     redémarrage de l'API**, la lecture ne dépendant alors d'aucun process.
 
     `fixtures` (#183) branche les **contrats d'API v2** (routes des Phases 5/6 :
-    exécutions, journal requêtable, registre de configuration, propositions de
-    playbook globales, flux SSE d'un fil de chat) sur des **données factices**.
+    registre de configuration, propositions de playbook globales, flux SSE d'un
+    fil de chat) sur des **données factices**. Les exécutions (#185) puis le
+    journal requêtable (#478) en sont sortis à mesure que leur lot était livré.
     None (production) : ces routes répondent **501** — le contrat est stable, son
     lot d'implémentation n'est pas encore livré. Fourni (la démo, #65) : elles
     servent les fixtures, et la voie front code contre elles sans backend réel.
@@ -846,6 +861,7 @@ def create_app(
     """
     bus = bus if bus is not None else InMemoryEventBus()
     event_log = event_log if event_log is not None else InMemoryEventLog()
+    journal = journal if journal is not None else ServiceJournal()
     battements = battements if battements is not None else RegistreBattementsMemoire()
     agents_store = agents_store if agents_store is not None else AgentStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
@@ -907,17 +923,22 @@ def create_app(
         # Rejeu du journal durable (#97) **avant** d'ouvrir la pompe : la
         # projection retrouve l'historique (exécutions, grands livres, analytics)
         # d'avant le redémarrage, puis la pompe prend le relais du flux à venir.
+        # Le journal requêtable (#478) se remplit du **même** parcours : c'est ce
+        # qui fait de lui une vue de l'historique durable et non un second
+        # stockage — et ce qui lui donne des rangs, donc des identifiants
+        # d'entrée, stables d'un redémarrage à l'autre.
         # Un journal illisible (Redis absent au démarrage…) est tracé sans bloquer
         # l'API : elle repart sur la projection courante (vide en production).
         try:
             for event in await event_log.relire():
                 state.appliquer(event)
+                journal.consigner(event)
         except Exception:
             _LOGGER.exception(
                 "Rejeu du journal des événements impossible : démarrage sur la "
                 "projection courante (l'historique persisté n'a pas pu être relu)."
             )
-        pompe = asyncio.create_task(_pompe(bus, state, diffusion, event_log))
+        pompe = asyncio.create_task(_pompe(bus, state, diffusion, event_log, journal))
         try:
             yield
         finally:
@@ -1022,15 +1043,18 @@ def create_app(
     ) -> dict[str, Any]:
         """Le journal requêtable : filtres (agent / type / run / projet / période), tri, pagination.
 
+        Servi **en mode réel** depuis #478 : l'historique des événements consignés
+        par la pompe et rejoués au démarrage (`ServiceJournal`, journal durable
+        #97). La gate 501 qui le murait hors démo a disparu avec l'implémentation
+        qu'elle annonçait, et les fixtures du journal avec elle — les exécutions
+        avaient ouvert la voie (#185).
+
         `depuis`/`jusqua` sont des horodatages ISO-8601 (bornes incluses).
         `projet` est **obligatoire** (#277) et suit le contrat commun :
         `<id>` | `tous` | `aucun` — 422 `projet-requis` s'il manque, 404
         `projet-inconnu` sur un identifiant non déclaré. 422 aussi sur un
         `tri`/`ordre` inconnu, une `page` < 1 ou une `taille` hors [1, {max}].
         """
-        # La gate 501 passe **avant** la portée : une route dont le lot n'est pas
-        # livré doit le dire, plutôt que reprocher un paramètre à qui l'appelle.
-        fx = _exige_fixtures()
         portee = _portee(projet)
         if tri not in TRIS_JOURNAL:
             raise HTTPException(
@@ -1049,7 +1073,7 @@ def create_app(
                 status_code=422,
                 detail=f"taille invalide : {taille} (attendu entre 1 et {TAILLE_PAGE_MAX}).",
             )
-        return fx.journal(
+        return journal.page(
             agent=agent,
             type=type,
             run_id=run_id,

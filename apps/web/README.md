@@ -54,15 +54,18 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   fil d'activité en a fait la démonstration : son renvoi, écrit dès #191, est
   resté éteint jusqu'à ce que #249 crée le Journal — sans une ligne de plus dans
   `FilActivite` ;
-- **Journal** (#249, lot 5 de #242) : le fil d'activité en **plein format**, avec
-  filtres par type d'événement, par agent et par tâche, recherche texte et une
-  case « Notable seulement » qui reprend le filtre de la cloche
-  (`estNotableNotification`, #119 — pas de seconde logique de tri). La page rend
-  le même `FilActivite` que l'aperçu, sans `limite` : une seule mise en forme de
-  ligne pour les deux écrans. Le fil y est **éphémère** — les 50 derniers
+- **Journal** (#249, lot 5 de #242 ; **persisté** par #478) : le fil d'activité en
+  **plein format**, avec filtres par type d'événement, par agent et par tâche,
+  recherche texte et une case « Notable seulement » qui reprend le filtre de la
+  cloche (`estNotableNotification`, #119 — pas de seconde logique de tri). La page
+  rend le même `FilActivite` que l'aperçu, sans `limite` : une seule mise en forme
+  de ligne pour les deux écrans. Le fil y était **éphémère** — les 50 derniers
   événements reçus depuis l'ouverture de la page, remis à zéro au rechargement —
-  et l'écran le dit : le journal persisté et requêtable (`GET /api/journal`)
-  existe côté contrat (#183) mais n'est pas encore servi par le backend ;
+  jusqu'à ce que #478 serve `GET /api/journal`, figé au contrat depuis #183 : la
+  page **part désormais de l'historique persisté** (`lib/useJournal`) et le temps
+  réel s'y superpose (`lib/journal`), si bien qu'un rechargement ne perd plus rien.
+  Elle en montre au plus 200 (le plafond d'une page côté backend) et le dit
+  au-delà ;
 - **Runs** (#474, lot 2 de #472, docs/05 §2.4.1) : la liste des runs du projet
   actif, du plus récent au plus ancien — état, objectif, progression et coût. Un run
   n'était l'objet d'aucun écran : on y entrait par « Composer un objectif » et on
@@ -75,17 +78,21 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   s'apparie par les tâches. L'ordre et la progression viennent du backend (#473) :
   ni tri ni recomptage ici. Vide, l'écran **nomme le projet** et propose le geste
   qui le remplit ; API injoignable, il ne laisse que la bannière ;
-- **Vue d'un run** (#475, lot 3 de #472, docs/05 §2.4.2) : `/runs/<run_id>` — sa
-  **progression** en tête, son **Kanban** dessous. Le Kanban est le composant de
-  toujours, réutilisé et non réimplémenté : mêmes colonnes, mêmes cartes, même
-  détail sur place (#251) — ce qui change est ce qu'on lui donne. Les tâches
-  viennent de `?run=` (#473) et **jamais** d'un filtre sur celles du projet : un
-  identifiant de tâche est partagé entre un run et sa relance (#349), et filtrer
-  localement ferait disparaître de la vue ce qu'un successeur a repris. Le temps
-  réel est celui du shell — **aucune seconde WebSocket** : la vue se rafraîchit au
-  *pouls* de `useControlTower` (`revision`), c'est-à-dire quand celui-ci vient de
-  relire (`lib/useTachesRun.ts`). Un run d'un autre projet **le dit** au lieu
-  d'afficher un tableau vide qui se lirait « ce run n'a rien fait » ;
+- **Vue d'un run** (#475 puis #478, lots 3 et 6 de #472, docs/05 §2.4.2) :
+  `/runs/<run_id>` — sa **progression** en tête, son **Kanban** au milieu, son
+  **journal** au pied. Le Kanban est le composant de toujours, réutilisé et non
+  réimplémenté : mêmes colonnes, mêmes cartes, même détail sur place (#251) — ce
+  qui change est ce qu'on lui donne. Les tâches viennent de `?run=` (#473) et
+  **jamais** d'un filtre sur celles du projet : un identifiant de tâche est partagé
+  entre un run et sa relance (#349), et filtrer localement ferait disparaître de la
+  vue ce qu'un successeur a repris. Le journal suit la même règle par `?run_id=`
+  (`components/runs/JournalRun.tsx`) : il manquait au lot 3 faute de source, le fil
+  du shell ne portant que ce qui est arrivé depuis l'ouverture de la page — donc
+  rien du tout sur un run terminé la veille. Le temps réel est celui du shell —
+  **aucune seconde WebSocket** : la vue se rafraîchit au *pouls* de
+  `useControlTower` (`revision`), c'est-à-dire quand celui-ci vient de relire
+  (`lib/useTachesRun.ts`, `lib/useJournal.ts`). Un run d'un autre projet **le dit**
+  au lieu d'afficher un tableau vide qui se lirait « ce run n'a rien fait » ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **État des runs** (#476, lot 4 de #472, docs/05 §2.1) : ce que le tableau de bord

@@ -194,7 +194,9 @@ describe("un écran vide dit de quel projet il est vide", () => {
   it("sur le Journal, distinctement d'un filtre sans résultat", async () => {
     const utilisateur = userEvent.setup();
     rendreAvecEtat(<PageJournal />, { evenements: [] }, DEPENSIO);
-    expect(screen.getByText(/Rien encore sur Dépensio/)).toBeInTheDocument();
+    // `findBy` : depuis #478 le vide n'est prononcé qu'une fois la lecture du
+    // journal persisté revenue (l'écran dit « Lecture du journal… » avant).
+    expect(await screen.findByText(/Rien encore sur Dépensio/)).toBeInTheDocument();
 
     // Avec des événements, mais un filtre qui n'en retient aucun, la phrase
     // change : ce n'est plus le projet qui est vide, c'est la question posée.

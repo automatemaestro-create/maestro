@@ -442,13 +442,15 @@ listé au même titre : le suivi lit la projection, il ne distingue pas l'origin
 > regarde pendant qu'il travaille. Le chantier #472 en fait un objet de premier
 > plan : une entrée **« Runs »** et la liste des runs du projet actif (#474), une
 > **vue par run** portant son Kanban et sa progression (#475), le tableau de bord qui
-> montre l'état des runs (#476), la **pause** (#477 — elle n'existe à aucun étage
-> aujourd'hui, ni UI, ni API, ni moteur), un **journal persisté** qui survit au
-> rechargement (#478, là où le fil est éphémère par construction) et un run qui
+> montre l'état des runs (#476), la **pause** (#477 — elle n'existait à aucun étage,
+> ni UI, ni API, ni moteur), un **journal persisté** qui survit au rechargement
+> (#478, là où le fil était éphémère par construction) et un run qui
 > **dit pourquoi il s'est arrêté** (#479). L'API qui porte tout cela est #473 ; le
 > suivi en pipeline — graphe des tâches, checklists, branches parallèles — est le
-> chantier voisin #488. **Les trois premiers lots sont livrés** : l'API (#473, §6.0bis),
-> la liste (#474, §2.4.1) et la vue d'un run (#475, §2.4.2).
+> chantier voisin #488. **Il ne reste que le dernier lot fonctionnel** : l'API (#473,
+> §6.0bis), la liste (#474, §2.4.1), la vue d'un run (#475, §2.4.2), l'état des runs
+> au tableau de bord (#476, §2.1), la pause (#477) et le journal persisté (#478,
+> §2.8 et §6.2) sont livrés ; #479 suit.
 
 #### 2.4.1 La liste des runs du projet actif (#474) — **livré**
 
@@ -522,12 +524,13 @@ des questions, « Validations » pour un arbitrage de tâche —, parce que la v
 le *montre* sans le débloquer. Le jour où elle portera ces gestes, c'est la table
 `ATTENTES` (`components/runs/EtatRun.tsx`) qu'il faudra changer, et elle seule.
 
-#### 2.4.2 La vue d'un run — son Kanban et sa progression (#475) — **livré**
+#### 2.4.2 La vue d'un run — son Kanban, sa progression et son journal (#475, #478) — **livré**
 
-`/runs/<run_id>` : la **progression** du run en tête, son **Kanban** dessous. Ouvrir
-un run donne enfin son backlog — jusqu'ici le Kanban était celui du **projet** (#248)
-et un run n'avait pas de vue à lui, si bien que dans un projet où plusieurs runs se
-succèdent, *ce que ce run avait fait* n'était visible nulle part.
+`/runs/<run_id>` : la **progression** du run en tête, son **Kanban** au milieu, son
+**journal** au pied. Ouvrir un run donne enfin son backlog — jusqu'ici le Kanban était
+celui du **projet** (#248) et un run n'avait pas de vue à lui, si bien que dans un
+projet où plusieurs runs se succèdent, *ce que ce run avait fait* n'était visible nulle
+part.
 
 **Le Kanban est réutilisé, pas réimplémenté.** C'est le composant de §2.2 :
 mêmes colonnes, mêmes cartes, même **détail sur place** (#251), même réassignation.
@@ -575,6 +578,17 @@ coût, ancienneté de l'attente — et se met à jour d'elle-même, sans un appe
 Un run qui en **reprend** un autre (#349) le dit et y mène : sans ce renvoi, le cadrage
 déjà payé et les tâches du run repris seraient hors de portée depuis celui qui les
 continue.
+
+**Son journal**, enfin (#478, `components/runs/JournalRun`), sous le Kanban : le Kanban
+répond à « où en est-il ? », le journal à « qu'a-t-il fait ? », et on ne consulte le
+second qu'après avoir lu le premier. Il manquait au lot 3 faute de source — le fil du
+shell ne contient que ce qui est passé par le WebSocket depuis l'ouverture de la page,
+donc ouvrir la vue d'un run terminé la veille ne montrait rien du tout. C'est le
+journal persisté au filtre `run_id` (§6.2), avec les trois mêmes décisions que le
+Kanban ci-dessus et pour les mêmes raisons : appartenance lue **de l'API**, aucune
+seconde WebSocket, et la **ligne d'activité n'est pas réécrite** — `FilActivite` rend
+ici ce qu'il rend au tableau de bord et sur la page Journal, seuls son titre et son
+vide étant nommés.
 
 ### 2.5 💰 Coûts & analytics
 
@@ -891,7 +905,7 @@ de grandeur avec sa source. Couverture : `apps/web/tests/brief.test.tsx` et
 `apps/web/tests/composer-sources.test.tsx` côté UI, [`tests/test_brief.py`](../tests/test_brief.py)
 et [`tests/test_clarifications.py`](../tests/test_clarifications.py) côté API (#323).
 
-### 2.8 🗒️ Journal — l'activité en direct, en plein format *(#249, #250 — **livré**)*
+### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
 Le fil d'activité a **quitté le tableau de bord pour sa propre entrée de menu**.
 Le tableau de bord n'en garde qu'un **aperçu** de quelques lignes, avec le
@@ -918,11 +932,28 @@ tiennent l'écran :
 - **L'horodatage est relatif** près du présent (« il y a 3 min ») et redevient
   absolu au-delà de la semaine ; l'heure exacte reste en infobulle.
 
-Ce fil est **éphémère** par construction : il ne contient que ce qui est passé
-par le WebSocket depuis l'ouverture de la page, l'état de référence restant le
-REST — et l'écran le dit. Un journal **persisté et requêtable** existe côté
-contrat (`GET /api/journal`, §6.2) mais n'est pas encore servi : cette page ne
-le promet pas.
+Ce fil a longtemps été **éphémère** par construction : il ne contenait que ce qui
+était passé par le WebSocket depuis l'ouverture de la page, si bien qu'un F5
+pendant un run d'une heure effaçait tout ce qu'on avait sous les yeux. **Ce n'est
+plus le cas depuis #478** : la page **part du journal persisté**
+(`GET /api/journal`, §6.2, à la portée du projet actif) et le temps réel s'y
+superpose au fil de l'eau, le temps que la lecture suivante le rattrape
+(`lib/journal`, `lib/useJournal`). Trois conséquences à l'écran :
+
+- **un rechargement ne perd rien** — c'est l'objet du ticket, et l'écran le dit
+  au lieu d'annoncer, comme avant, ce qu'il allait perdre ;
+- **une coupure du flux ne vide plus la page** : le bandeau distingue désormais
+  « le fil n'avance plus » de « il n'y a rien » — l'historique, lui, reste lisible ;
+- **la page est bornée et le dit** : le backend plafonne une page à 200 entrées, et
+  la prose annonce le compte affiché sur le total dès que le journal les dépasse.
+
+Les filtres, eux, restent **côté client** sur ce que la page a chargé : le
+backend sait filtrer (agent, type, run, période) et c'est le même contrat, mais
+les remonter dans l'UI est un autre écran — pagination, états de chargement,
+débounce — et pas ce que #478 devait rendre.
+
+Le **journal d'un run** est le même dispositif au filtre près (`?run_id=`) : voir
+§2.4.2, où il complète le Kanban et la progression.
 
 ---
 
@@ -1048,8 +1079,11 @@ elles sans attendre le backend réel (ticket #183).
 que leur lot n'est pas livré (Phase 5, #184+). Fournir des fixtures (`create_app(fixtures=…)`, ce
 que fait la démo) les fait servir des données factices cohérentes avec le scénario existant. La
 forme est le contrat ; le backend réel la remplira **à contrat identique** — les **exécutions**
-(§6.1) l'ont déjà fait : leur lot #185 est livré, elles ne passent donc plus ni par le `501` ni
-par les fixtures, et se servent de `maestro.controltower.executions`. Miroir TypeScript :
+(§6.1, lot #185) puis le **journal requêtable** (§6.2, lot #478) l'ont déjà fait : ils ne passent
+plus ni par le `501` ni par les fixtures, et se servent de
+`maestro.controltower.executions` / `maestro.controltower.journal`. Une fixture livrée **quitte**
+donc ce module au lieu d'y rester en double : garder les deux ferait de la démo un écran nourri
+de faux à côté d'un vrai. Miroir TypeScript :
 [`apps/web/lib/types.ts`](../apps/web/lib/types.ts) ; fixtures : `maestro/controltower/fixtures.py`.
 
 Ce chapitre est depuis devenu **le** répertoire des formes JSON de l'API, phases 5/6 ou non : les
@@ -1424,19 +1458,21 @@ obligerait à tout relire pour savoir quoi retirer.
 | `taille-absente`, `taille-invalide` | une source non mesurée ne peut pas être plafonnée |
 | `source-trop-volumineuse`, `ingestion-trop-volumineuse`, `trop-de-sources` | plafonds d'ingestion (§6.8) |
 
-### 6.2 Journal requêtable — filtres, tri, pagination
+### 6.2 Journal requêtable — filtres, tri, pagination *(#183, #478 — **livré**)*
 
-Une page de journal d'événements interrogeable, source de la future page *Logs* (Phase 6).
+Une page de journal d'événements interrogeable — la mémoire longue du fil d'activité (§2.8).
 
-> ⚠ **Ce contrat est figé depuis #183 et n'est toujours pas servi** — `_exige_fixtures()` le rend
-> `501` hors démo —, alors que la page qu'il devait alimenter existe depuis #249. La conséquence
-> se voit à l'usage et la revue du 2026-08-24 l'a relevée (revue #470,
-> [docs/29 §7](./29-decision-run-objet-de-premier-plan.md)) : le fil d'activité est **éphémère par
-> construction** (`FilActivite`, `app/journal/page.tsx`), donc **un rechargement de page perd tout
-> ce qu'un run a dit**. C'est #478 qui le sert pour de bon ; la forme ci-dessous ne change pas,
-> elle cesse d'être une promesse.
+> Ce contrat a été **figé en #183 et servi en #478**, et l'écart entre les deux dates est
+> l'histoire du ticket : `_exige_fixtures()` le rendait `501` hors démo, alors que la page qu'il
+> devait alimenter existait depuis #249. La conséquence se voyait à l'usage et la revue du
+> 2026-08-24 l'a relevée (revue #470,
+> [docs/29 §7](./29-decision-run-objet-de-premier-plan.md)) : le fil d'activité était **éphémère
+> par construction** (`FilActivite`, `app/journal/page.tsx`), donc **un rechargement de page
+> perdait tout ce qu'un run avait dit**. La forme n'a pas changé en devenant réelle, à une
+> extension additive près (`titre`, `description` — ci-dessous).
 
-- `GET /api/journal` → `PageJournal`. Paramètres de requête (tous optionnels) :
+- `GET /api/journal` → `PageJournal`. Paramètres de requête (`projet` excepté, cf. §6.0, tous
+  optionnels) :
   - **filtres** : `agent`, `type`, `run_id`, `depuis`, `jusqua` (fenêtre ISO-8601, bornes
     incluses) ;
   - **tri** : `tri` ∈ `horodatage` (défaut) | `agent` | `type`, `ordre` ∈ `desc` (défaut) | `asc` ;
@@ -1452,10 +1488,13 @@ Une page de journal d'événements interrogeable, source de la future page *Logs
       "type": "tache.statut",
       "run_id": "demo-live",
       "tache_id": "demo-t1",
+      "titre": "Schéma des contacts",       // #478 — ce que la ligne prononce
       "agent": "bdd",
       "role": "Base de données",
       "statut": "en_cours",
       "detail": "Concevoir le schéma SQL de la table contacts",
+      "description": "",                    // #478 — le contexte long, vide le plus souvent
+      "projet_id": "prj-demo",
       "horodatage": "2026-07-30T09:00:12+00:00"
     }
   ],
@@ -1465,6 +1504,34 @@ Une page de journal d'événements interrogeable, source de la future page *Logs
   "pages": 1
 }
 ```
+
+**Ce qui sert la route** (#478, `maestro/controltower/journal.py`) : un `ServiceJournal`, index
+transverse alimenté **par le rejeu du journal durable** (`EventLog`, #97) à l'ouverture de l'API
+puis par la pompe au fil de l'eau. Il ne stocke rien de nouveau — c'est une **vue** de
+l'historique déjà persisté, pas un second stockage à tenir d'accord avec lui —, et l'`id` d'une
+entrée est son **rang** dans ce journal : le journal durable étant append-only, un `j-0002` reste
+`j-0002` d'un redémarrage à l'autre.
+
+Trois décisions à connaître avant d'y toucher :
+
+- **L'index est à part, et pas dans la projection.** `ControlTowerState` n'indexe les événements
+  que par run et **jette** ceux qui n'en portent pas (`agent.capacite`, `chat.message`,
+  `playbook.proposition`) : un journal qui les perdrait ne serait pas le journal.
+- **On ne relit pas le journal durable à chaque requête.** `EventLog.relire()` rend *tout*
+  l'historique (`LRANGE 0 -1` + un `json.loads` par événement) : ouvrir la page Journal pendant un
+  run parallèle paierait ce prix à chaque affichage.
+- **Volumétrie** : une entrée ne garde que les douze champs de texte que la ligne montre — les
+  charges lourdes d'un événement (`usage`, `brief`, `sources`, `diff`) restent dehors, lisibles là
+  où elles ont un sens (§6.1, résumé d'un run). Le reste est tenu par le contrat : pagination
+  obligatoire et bornes de période. La **rétention n'est pas bornée**, comme pour le journal
+  durable et la projection — la borner ici seule ferait perdre en silence ce que le disque a
+  gardé ; elle viendra pour les trois avec la bascule PostgreSQL.
+
+`titre` et `description` se sont ajoutés aux dix champs de #183 pour une raison de critère : `titre`
+est ce que la ligne d'activité **prononce** (`resumeEvenement`), et sans lui un fil relu après
+rechargement dirait « dev a terminé : une étape » là où le direct nommait l'étape — « un
+rechargement ne perd rien » aurait été faux d'une ligne sur deux. Un consommateur qui ignore ces
+deux clés lit exactement la forme d'avant.
 
 ### 6.3 Registre de configuration
 

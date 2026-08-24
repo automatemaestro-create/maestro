@@ -29,8 +29,10 @@ projection → vues ; ces tests le suivent d'un bout à l'autre.
    identifiant inconnu rend une vue vide — a donc été **remplacé**, pas oublié ;
 ⑥ le **journal requêtable**, ajouté par le lot 6 de #276 (#282) : servi par les
    fixtures et par elles seules, il échappait aux tests d'au-dessus, qui
-   tournent sur une projection réelle. C'est pourtant la vue où un mélange se
-   voit le moins — un fil d'activité ne dit pas de quel projet il est le fil ;
+   tournent sur une projection réelle — jusqu'à #478, qui le sert pour de bon,
+   si bien qu'il se cadre désormais par les événements qu'on lui consigne. C'est
+   la vue où un mélange se voit le moins — un fil d'activité ne dit pas de quel
+   projet il est le fil ;
 ⑦ le **contrat de portée pris pour lui-même** (#282) : jusqu'ici mesuré
    uniquement à travers l'API, donc jamais sur ses branches sans HTTP — le
    libellé rappelé dans les réponses, les mots réservés résolus sans dépôt, et
@@ -56,10 +58,11 @@ from maestro.controltower import (
     ControlTowerState,
     Event,
     InMemoryEventBus,
+    InMemoryEventLog,
+    ServiceJournal,
     create_app,
 )
 from maestro.controltower.analytics import agrege_couts
-from maestro.controltower.fixtures import FixturesControlTower
 from maestro.controltower.portee import PorteeProjet, PorteeRefusee, resoudre_portee
 from maestro.controltower.projets import ServiceProjets
 from maestro.engine import OrchestrationEngine
@@ -557,21 +560,37 @@ def test_les_validations_d_un_projet_ne_montrent_que_les_siennes(
 
 # --- ⑥ Le journal requêtable, cadré comme les autres vues (#277) --------------
 #
-# Servi par les **fixtures** et par elles seules (`maestro.controltower.fixtures`),
-# le journal échappe aux tests d'au-dessus, qui tournent sur une projection
-# réelle : sans fixtures il répond 501 avant même de regarder la portée. C'est
-# pourtant la vue la plus exposée au mélange — un fil d'activité qui montre le
-# travail d'un autre projet se lit « il se passe quelque chose ici ».
+# Le journal n'était servi que par les **fixtures** jusqu'à #478 — sans elles il
+# répondait 501 avant même de regarder la portée —, si bien qu'il échappait aux
+# tests d'au-dessus, qui tournent sur une projection réelle. Il est désormais
+# servi pour de vrai (`maestro.controltower.journal`) et se cadre donc comme le
+# reste : par les événements qu'on lui consigne. C'est la vue la plus exposée au
+# mélange — un fil d'activité qui montre le travail d'un autre projet se lit « il
+# se passe quelque chose ici ».
 
 
 @pytest.fixture()
-def client_journal(projets: ServiceProjets) -> TestClient:
-    """App branchée sur les fixtures : la seule où `/api/journal` est servi."""
+def client_journal(projets: ServiceProjets, ids: tuple[str, str]) -> TestClient:
+    """App réelle dont le journal durable porte déjà des entrées des deux bords."""
+    projet, autre = ids
+    log = InMemoryEventLog()
+    for projet_id in (projet, projet, autre, None):
+        asyncio.run(
+            log.consigner(
+                Event(
+                    type=EVENEMENT_TACHE_STATUT,
+                    run_id="r1",
+                    tache_id="t1",
+                    statut="en_cours",
+                    projet_id=projet_id,
+                )
+            )
+        )
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
         projets=projets,
-        fixtures=FixturesControlTower(),
+        event_log=log,
     )
     with TestClient(app) as client:
         yield client
@@ -580,47 +599,53 @@ def client_journal(projets: ServiceProjets) -> TestClient:
 def test_le_journal_refuse_lui_aussi_une_lecture_sans_projet(
     client_journal: TestClient,
 ) -> None:
-    """Même contrat, même motif — la gate 501 passe avant, mais elle est franchie ici."""
+    """Même contrat, même motif que les quatre autres vues qui agrègent."""
     reponse = client_journal.get("/api/journal")
 
     assert reponse.status_code == 422
     assert reponse.json()["detail"]["motif"] == "projet-requis"
 
 
-def test_le_journal_hors_projet_est_vide_la_ou_le_transverse_est_plein(
+def test_le_journal_separe_transverse_projet_et_hors_projet(
     client_journal: TestClient,
+    ids: tuple[str, str],
 ) -> None:
-    """`tous` et `aucun` sur le même jeu : la portée est bien appliquée aux entrées.
+    """Les trois portées sur le même jeu : la règle est bien appliquée aux entrées.
 
-    Toutes les entrées du scénario de démo appartiennent à un projet, donc
-    `aucun` doit rendre une page **vide mais valide** — pas un refus, pas la
-    liste entière. C'est la différence que #277 a rendue observable.
+    Le journal porte quatre entrées — deux du projet, une d'un autre, une sans
+    projet. `tous` les rend toutes, une portée de projet **seulement les
+    siennes** (jamais celles qui n'ont pas de projet, #222), et `aucun` rend une
+    page **vide mais valide** de tout ce qui appartient à quelqu'un — pas un
+    refus, pas la liste entière. C'est la différence que #277 a rendue
+    observable.
     """
+    projet, _ = ids
     transverse = client_journal.get("/api/journal", params={"projet": "tous"}).json()
+    du_projet = client_journal.get("/api/journal", params={"projet": projet}).json()
     hors_projet = client_journal.get("/api/journal", params={"projet": "aucun"}).json()
 
-    assert transverse["total"] > 0
-    assert hors_projet["total"] == 0
-    assert hors_projet["entrees"] == []
+    assert transverse["total"] == 4
+    assert du_projet["total"] == 2
+    assert {e["projet_id"] for e in du_projet["entrees"]} == {projet}
+    assert hors_projet["total"] == 1
+    assert hors_projet["entrees"][0]["projet_id"] is None
 
 
 def test_le_journal_filtre_ses_entrees_sur_la_portee_demandee() -> None:
     """La règle elle-même, mesurée sans HTTP : `portee.retient` décide, entrée par entrée.
 
-    Le passer par l'API demanderait de **déclarer** le projet de la démo dans le
-    dépôt (la portée n'accepte qu'un projet existant), c'est-à-dire de faire
-    dépendre le test d'un identifiant engendré — alors que ce qu'on mesure est
-    le filtre, pas la résolution.
+    Le passer par l'API demanderait de **déclarer** chaque projet dans le dépôt
+    (la portée n'accepte qu'un projet existant), alors que ce qu'on mesure est le
+    filtre, pas la résolution.
     """
-    fixtures = FixturesControlTower()
-    demo = fixtures.journal(portee=PorteeProjet.tous())["entrees"][0]["projet_id"]
+    journal = ServiceJournal()
+    for projet_id in (PROJET, AUTRE, None):
+        journal.consigner(Event(type=EVENEMENT_TACHE_STATUT, projet_id=projet_id))
 
-    du_projet = fixtures.journal(portee=PorteeProjet.projet(demo))
-    d_un_autre = fixtures.journal(portee=PorteeProjet.projet(AUTRE))
-
-    assert demo is not None
-    assert du_projet["total"] == fixtures.journal(portee=PorteeProjet.tous())["total"]
-    assert d_un_autre["total"] == 0
+    assert journal.page(portee=PorteeProjet.tous())["total"] == 3
+    assert journal.page(portee=PorteeProjet.projet(PROJET))["total"] == 1
+    assert journal.page(portee=PorteeProjet.projet("prj-fantome"))["total"] == 0
+    assert journal.page(portee=PorteeProjet.aucun())["total"] == 1
 
 
 # --- ⑦ Le contrat de portée pris pour lui-même (#277) -------------------------

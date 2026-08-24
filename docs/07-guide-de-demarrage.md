@@ -452,7 +452,9 @@ d'événements**. Un **journal durable** (`EventLog`) consigne chaque événemen
 **rejoue au démarrage** de l'API : l'état survit désormais au redémarrage du process
 (auparavant, seuls les artefacts JSON du moteur subsistaient). En production, le journal
 est une **liste Redis** (event sourcing, sur l'instance déjà mutualisée avec la file, le
-bus et les boîtes) ; en test et mono-process, un journal mémoire.
+bus et les boîtes) ; en test et mono-process, un journal mémoire. Depuis #478 ce même
+rejeu alimente le **journal requêtable** servi par `GET /api/journal` — une *vue* de cet
+historique, pas un second stockage.
 
 **Limites connues (POC).** Le mode durable est **opt-in** : sans `--durable`, un run se déroule
 dans une boucle `asyncio` ordinaire, celle du moteur en process. `--durable` n'est **pas
@@ -553,7 +555,10 @@ produit ne doit pas prendre des données factices pour la réalité. Ce que cela
   signalée par sa bannière d'erreur — l'écran vide *connecté* et l'écran vide *muet* ne se
   diagnostiquent pas pareil.
 - **L'historique survit au redémarrage** : en mode réel, les événements passent par le
-  journal durable de #97 (liste Redis) et sont rejoués à l'ouverture de l'API.
+  journal durable de #97 (liste Redis) et sont rejoués à l'ouverture de l'API. Depuis
+  #478 ce rejeu remplit aussi le **journal requêtable** (`GET /api/journal`,
+  [docs/05 §6.2](./05-interface-control-tower.md)) : la page Journal et la vue d'un run
+  partent de cet historique, donc un **rechargement de page** ne perd rien non plus.
 
 Le mode `--demo` reste le bon choix pour le **développement front**, le skill `/verify` et
 les captures de `/milestone-presentation` : app réelle, mêmes endpoints, mais bus mémoire et

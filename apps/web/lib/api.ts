@@ -23,6 +23,7 @@ import type {
   IntegrationPoolMcp,
   LancementExecution,
   PageExplorateur,
+  PageJournal,
   PasSerie,
   PlaybookDetail,
   PlaybookFiche,
@@ -163,6 +164,46 @@ export function chargerAnalyticsCouts(options: {
   if (options.pas !== undefined) params.set("pas", options.pas);
   params.set("projet", options.projet);
   return chargerJson<AnalyticsCouts>(`/api/analytics/couts?${params.toString()}`);
+}
+
+/**
+ * Une page du **journal persisté** (`GET /api/journal`, #478) : l'historique des
+ * événements, filtré, trié et paginé côté serveur.
+ *
+ * C'est ce qui rend un fil d'activité relisible après un rechargement — le
+ * WebSocket ne sert plus qu'au direct, par-dessus cet historique. Comme toutes
+ * les lectures qui agrègent, la portée projet est **exigée** (#277) ; `runId`
+ * s'y ajoute par le filtre `run_id` déjà au contrat (#183), et c'est lui que la
+ * vue d'un run utilise pour n'avoir que son journal.
+ *
+ * `taille` est plafonnée à 200 par le backend (`422` au-delà) : un appelant qui
+ * veut « tout » demande la plus grande page, il ne demande pas l'infini.
+ */
+export function chargerJournal(
+  portee: PorteeProjet,
+  options: {
+    runId?: string;
+    agent?: string;
+    type?: string;
+    depuis?: string;
+    jusqua?: string;
+    tri?: string;
+    ordre?: string;
+    page?: number;
+    taille?: number;
+  } = {},
+): Promise<PageJournal> {
+  const params = new URLSearchParams({ projet: portee });
+  if (options.runId !== undefined) params.set("run_id", options.runId);
+  if (options.agent !== undefined) params.set("agent", options.agent);
+  if (options.type !== undefined) params.set("type", options.type);
+  if (options.depuis !== undefined) params.set("depuis", options.depuis);
+  if (options.jusqua !== undefined) params.set("jusqua", options.jusqua);
+  if (options.tri !== undefined) params.set("tri", options.tri);
+  if (options.ordre !== undefined) params.set("ordre", options.ordre);
+  if (options.page !== undefined) params.set("page", String(options.page));
+  if (options.taille !== undefined) params.set("taille", String(options.taille));
+  return chargerJson<PageJournal>(`/api/journal?${params.toString()}`);
 }
 
 /**

@@ -109,9 +109,9 @@ réalité du backlog :
 > ⚠ **Les deux « en cours » de ce tableau ont été relus le 2026-08-24** (#470) : les milestones
 > étaient **fermés** côté forge et ce document ne l'avait pas repris. Deux réserves à garder en
 > tête, parce que « milestone soldé » ne veut pas dire « chantier fini » : quelques **contrats
-> d'API du §6 de docs/05 restent figés sans être servis** — `GET /api/journal` répond encore `501`
-> hors fixtures, et c'est #478 qui le sert —, et le **chat global** de la Phase 6 a été redécoupé
-> dans la vague front (#268/#269).
+> d'API du §6 de docs/05 restent figés sans être servis** — `GET /api/journal` en était, il a
+> été **servi par #478** ([docs/05 §6.2](./05-interface-control-tower.md)) —, et le **chat
+> global** de la Phase 6 a été redécoupé dans la vague front (#268/#269).
 
 ---
 
