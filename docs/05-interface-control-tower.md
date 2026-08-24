@@ -24,9 +24,10 @@ plus (il est servi, mais atteint depuis le sélecteur du shell).
 > ⚠ **Ce menu change deux fois, et les deux ont été décidées le 2026-08-24**
 > (revue #470, [docs/29](./29-decision-run-objet-de-premier-plan.md)). Une entrée
 > **« Runs »** s'ajoute — **c'est fait** (#474, §2.4.1) : un run n'était l'objet
-> d'aucun écran, il a désormais le sien. Reste la seconde moitié de l'arbitrage ① :
-> le Kanban **cesse d'être** le tableau de bord pour devenir la vue d'un run
-> (#475/#476 — ce qui renverse #248). Les deux entrées de la Phase 8 **partent** en
+> d'aucun écran, il a désormais le sien, et **sa vue** depuis #475 (§2.4.2), servie
+> sous cette entrée à `/runs/<run_id>` sans en réclamer une nouvelle. Reste la seconde
+> moitié de l'arbitrage ① : le Kanban **cesse d'être** le tableau de bord (#476 — ce
+> qui renverse #248 ; il est aux deux endroits en attendant). Les deux entrées de la Phase 8 **partent** en
 > sens inverse (#484, arbitrage ②) : composer et valider le brief déménagent dans
 > le chat, qui devient la seule porte d'entrée. Rien n'est supprimé de ce que ces
 > écrans savent faire ; les chemins restent servis et redirigés. Tant que ces lots
@@ -43,6 +44,8 @@ flowchart LR
     Home --> Journal[Journal]
     Home --> Settings[Paramètres]
     Home --> Tasks[Kanban des tâches]
+    Runs --> RunDetail[Vue d'un run]
+    RunDetail --> Tasks
     Runs -. suspendu .-> Brief[Valider le brief]
     Runs -. suspendu .-> Approve
     Agents --> AgentDetail[Fiche agent]
@@ -254,12 +257,19 @@ redémarrage de l'API (journal durable, #97).
 
 > ⚠ **« Il *est* l'objet du tableau de bord » a été renversé le 2026-08-24** (revue
 > #470, [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)). Le Kanban devient
-> **la vue d'un run** (#475) : mêmes colonnes, mêmes cartes, même détail sur place —
-> ce qui change est ce qu'il rend, les tâches de **ce run** au lieu de celles du
-> projet entier. Le tableau de bord montre l'état des runs (#476), et une entrée de
-> menu **« Runs »** liste ceux du projet actif (#474). Tout ce qui suit reste vrai du
-> composant ; seule sa **portée** et sa page changent. #191 (l'épure) et #251 (le
-> détail sur place) ne sont pas touchés.
+> **la vue d'un run** (#475, **livré** — §2.4.2) : mêmes colonnes, mêmes cartes, même
+> détail sur place — ce qui change est ce qu'il rend, les tâches de **ce run** au lieu
+> de celles du projet entier. Le tableau de bord montre l'état des runs (#476), et une
+> entrée de menu **« Runs »** liste ceux du projet actif (#474, livré). Tout ce qui
+> suit reste vrai du composant ; seule sa **portée** et sa page changent. #191
+> (l'épure) et #251 (le détail sur place) ne sont pas touchés.
+>
+> ⚠ **Il est aux deux endroits en attendant le lot 4**, et c'est voulu : #475 *ajoute*
+> la vue d'un run sans rien retirer du tableau de bord, pour que le lot se merge seul
+> sans écran cassé. C'est #476 qui fera le retrait. Le composant est **le même**, à une
+> prise près — `messageVide`, parce que la phrase par défaut nomme le **projet** et
+> que « rien encore sur Dépensio » désignerait le mauvais vide dans la vue d'un run :
+> le projet peut être plein pendant que *ce* run n'a créé aucune tâche.
 
 Le Kanban n'a **pas d'entrée de menu à lui** : il *est* l'objet du tableau de
 bord, et depuis #248 il en prend la place — les tuiles rendent une rangée, le
@@ -368,7 +378,8 @@ listé au même titre : le suivi lit la projection, il ne distingue pas l'origin
 > rechargement (#478, là où le fil est éphémère par construction) et un run qui
 > **dit pourquoi il s'est arrêté** (#479). L'API qui porte tout cela est #473 ; le
 > suivi en pipeline — graphe des tâches, checklists, branches parallèles — est le
-> chantier voisin #488. **Le premier de ces lots est livré** : voir §2.4.1.
+> chantier voisin #488. **Les trois premiers lots sont livrés** : l'API (#473, §6.0bis),
+> la liste (#474, §2.4.1) et la vue d'un run (#475, §2.4.2).
 
 #### 2.4.1 La liste des runs du projet actif (#474) — **livré**
 
@@ -432,12 +443,69 @@ injoignable, elle, garde sa bannière et **rien d'autre** — conseiller « lanc
 run » à qui n'a pas de backend serait un contresens, exactement l'argument du poste
 vide.
 
-Enfin, **aucun lien mort** : la vue d'un run (#475) n'existe pas encore, donc les
-cartes ne s'ouvrent pas. En attendant, chaque attente mène à l'écran qui porte **le
-geste** qui la lève — « Valider le brief » pour un brief ou des questions,
-« Validations » pour un arbitrage de tâche —, et les renvois sont résolus **par le
-menu** (`entreeParLibelle`), jamais par un chemin en dur : le jour où la vue d'un
-run entre au menu, ils suivront.
+Enfin, **une carte s'ouvre** (#475) : son titre mène à la vue du run, §2.4.2. Le
+chemin est dérivé de l'entrée de menu (`hrefRun`, `apps/web/lib/navigation.ts`) et
+non écrit en dur — c'est la règle de #191 tenue dans l'autre sens, celui de la
+fabrication : une page à segment dynamique n'a pas d'entrée à elle, elle vit **sous**
+celle de sa liste. L'autre renvoi, lui, ne change pas : une **attente** mène toujours
+à l'écran qui porte **le geste** qui la lève — « Valider le brief » pour un brief ou
+des questions, « Validations » pour un arbitrage de tâche —, parce que la vue d'un run
+le *montre* sans le débloquer. Le jour où elle portera ces gestes, c'est la table
+`ATTENTES` (`components/runs/EtatRun.tsx`) qu'il faudra changer, et elle seule.
+
+#### 2.4.2 La vue d'un run — son Kanban et sa progression (#475) — **livré**
+
+`/runs/<run_id>` : la **progression** du run en tête, son **Kanban** dessous. Ouvrir
+un run donne enfin son backlog — jusqu'ici le Kanban était celui du **projet** (#248)
+et un run n'avait pas de vue à lui, si bien que dans un projet où plusieurs runs se
+succèdent, *ce que ce run avait fait* n'était visible nulle part.
+
+**Le Kanban est réutilisé, pas réimplémenté.** C'est le composant de §2.2 :
+mêmes colonnes, mêmes cartes, même **détail sur place** (#251), même réassignation.
+Ce qui change est ce qu'on lui donne — les tâches de ce run — et une seule prise a été
+ajoutée, `messageVide`, parce que la phrase par défaut nomme le projet (voir l'encadré
+de §2.2). Il **reste** au tableau de bord jusqu'au lot 4 : ce lot ajoute une vue, il
+n'en retire aucune, pour se merger seul sans écran cassé.
+
+**L'appartenance au run vient de l'API, jamais d'un filtre local.** Les tâches sont
+lues par `GET /api/taches?projet=…&run=<run_id>` (§6.0bis). Filtrer
+`etatGlobal.taches` sur `Tache.run_id` aurait été la solution gratuite et elle est
+**fausse** : ce champ porte le *dernier* run qui a touché la tâche, or un identifiant
+de tâche est un slug engendré depuis son contenu, donc partagé entre un run et sa
+**relance** (#349) — la vue d'un run y perdrait les tâches que son propre successeur a
+reprises.
+
+**La progression n'est pas recomptée** (#473) : elle arrive comptée sur la machine à
+états du moteur, avec ses six compartiments et son `soldees`. La barre est la même que
+celle de la liste, en format `ample` — dans une liste elle s'empile par dizaines, ici
+elle est *la* réponse à « où en est-il ? ». Le badge, l'attente et l'interruption sont
+eux aussi ceux de la liste (`components/runs/EtatRun.tsx`, extrait de #474 le jour où
+un second écran a eu à dire la même chose) : un run lu « Brief à valider » dans la
+liste et « En cours » dans sa vue serait un run dont on doute.
+
+**Le temps réel est celui du shell — aucune seconde WebSocket.** Le shell en ouvre une
+pour toute l'application et coalesce les rafales (#117/#281) ; une vue qui rouvrirait
+la sienne doublerait connexions et requêtes pour un flux identique. Elle s'abonne donc
+au **pouls** du shell (`ControlTower.revision`, un compteur incrémenté à chaque lecture
+aboutie) et relit ses tâches à chaque battement — chargement initial, reconnexion,
+rafale d'événements. Un compteur et non « le tableau `taches` a changé d'identité » :
+la seconde formule marcherait aujourd'hui et cesserait sans bruit le jour où un
+rechargement comparerait avant de poser son état.
+
+Trois cas qui ne se confondent pas :
+
+| Situation | Ce que l'écran montre |
+| --- | --- |
+| run **d'un autre projet**, ou identifiant inexistant | il le **dit** et renvoie à la liste — jamais un Kanban vide, qui se lirait « ce run n'a rien fait » (c'est la raison du 404 `run-inconnu`, §6.0bis) |
+| run **arrêté sur son brief** | Kanban vide **expliqué** : la décomposition n'a pas eu lieu, c'est son état normal |
+| **API injoignable** | la bannière, et rien d'autre |
+
+Le run lui-même est lu dans `executions`, la liste que le shell tient déjà pour le
+projet actif : elle porte tout ce que la tête affiche — statut, vitalité, progression,
+coût, ancienneté de l'attente — et se met à jour d'elle-même, sans un appel de plus.
+Un run qui en **reprend** un autre (#349) le dit et y mène : sans ce renvoi, le cadrage
+déjà payé et les tâches du run repris seraient hors de portée depuis celui qui les
+continue.
 
 ### 2.5 💰 Coûts & analytics
 

@@ -147,3 +147,20 @@ export function entreeCourante(chemin: string): EntreeMenu | undefined {
 export function entreeParLibelle(libelle: string): EntreeMenu | undefined {
   return PAGES.find((entree) => entree.libelle === libelle);
 }
+
+/**
+ * Le chemin de la **vue d'un run** (#475) — `/runs/<run_id>`, dérivé de l'entrée
+ * « Runs » et jamais écrit en dur.
+ *
+ * Une page à segment dynamique n'a pas d'entrée à elle : elle vit **sous** celle
+ * de sa liste, ce que `entreeCourante` sait déjà (une entrée couvre ses
+ * sous-chemins, donc la barre supérieure titre « Runs » sur la vue d'un run). Il
+ * manquait le sens inverse — fabriquer le chemin —, et le faire ici plutôt que
+ * dans un composant donne la même propriété qu'`entreeParLibelle` : le jour où
+ * « Runs » déménage, les renvois suivent, et un renvoi vers une page qui n'existe
+ * pas encore ne s'allume pas (`undefined` plutôt qu'un lien mort).
+ */
+export function hrefRun(runId: string): string | undefined {
+  const runs = entreeParLibelle("Runs");
+  return runs && `${runs.href}/${encodeURIComponent(runId)}`;
+}

@@ -85,6 +85,28 @@ export type ControlTower = {
   couts: CoutExecution[];
   /** WebSocket ouverte : les mises à jour arrivent en temps réel. */
   connecte: boolean;
+  /**
+   * Le **pouls du shell** (#475) : un compteur incrémenté à chaque lecture
+   * aboutie — donc au chargement initial, à chaque reconnexion et à chaque rafale
+   * d'événements coalescée.
+   *
+   * Il existe pour ce que ce hook ne peut pas tenir : une lecture **cadrée
+   * autrement** que sur le projet actif. La vue d'un run charge les tâches de
+   * *son* run (`?run=`, #473), que le shell n'a aucune raison de tenir pour toutes
+   * les pages — mais elle doit se rafraîchir aux mêmes instants, sans ouvrir une
+   * seconde WebSocket ni redupliquer la coalescence des rafales. Elle s'abonne
+   * donc à ce compteur (`lib/useTachesRun`).
+   *
+   * Un compteur et non la référence d'un tableau : « `taches` a changé d'identité »
+   * marcherait aujourd'hui et cesserait sans bruit le jour où un rechargement
+   * comparerait avant de poser son état. Ici la promesse est explicite — le nombre
+   * change quand une lecture vient d'aboutir, et pour aucune autre raison.
+   *
+   * Incrémenté **aussi** sur échec : une API injoignable est une lecture qui a
+   * abouti à quelque chose, et les vues qui en dépendent doivent réessayer au même
+   * rythme que le shell plutôt que rester figées sur leur dernière erreur.
+   */
+  revision: number;
   /** Premier chargement REST encore en cours. */
   chargement: boolean;
   /** API injoignable au dernier chargement (null si tout va bien). */
@@ -125,6 +147,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
   const [executions, setExecutions] = useState<ResumeExecution[]>([]);
   const [couts, setCouts] = useState<CoutExecution[]>([]);
   const [connecte, setConnecte] = useState(false);
+  const [revision, setRevision] = useState(0);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
 
@@ -170,6 +193,11 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
       setErreur(e instanceof Error ? e.message : String(e));
     } finally {
       setChargement(false);
+      // Le pouls bat ici et nulle part ailleurs : une lecture vient de se
+      // terminer, quoi qu'elle ait rendu. `recharger` ne dépend pas de `revision`
+      // (forme fonctionnelle), donc ce battement ne se réinjecte pas dans l'effet
+      // qui l'a déclenché.
+      setRevision((precedente) => precedente + 1);
     }
   }, [portee]);
 
@@ -311,6 +339,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     executions,
     couts,
     connecte,
+    revision,
     chargement,
     erreur,
     reassigner,

@@ -74,6 +74,17 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   s'apparie par les tâches. L'ordre et la progression viennent du backend (#473) :
   ni tri ni recomptage ici. Vide, l'écran **nomme le projet** et propose le geste
   qui le remplit ; API injoignable, il ne laisse que la bannière ;
+- **Vue d'un run** (#475, lot 3 de #472, docs/05 §2.4.2) : `/runs/<run_id>` — sa
+  **progression** en tête, son **Kanban** dessous. Le Kanban est le composant de
+  toujours, réutilisé et non réimplémenté : mêmes colonnes, mêmes cartes, même
+  détail sur place (#251) — ce qui change est ce qu'on lui donne. Les tâches
+  viennent de `?run=` (#473) et **jamais** d'un filtre sur celles du projet : un
+  identifiant de tâche est partagé entre un run et sa relance (#349), et filtrer
+  localement ferait disparaître de la vue ce qu'un successeur a repris. Le temps
+  réel est celui du shell — **aucune seconde WebSocket** : la vue se rafraîchit au
+  *pouls* de `useControlTower` (`revision`), c'est-à-dire quand celui-ci vient de
+  relire (`lib/useTachesRun.ts`). Un run d'un autre projet **le dit** au lieu
+  d'afficher un tableau vide qui se lirait « ce run n'a rien fait » ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **Kanban** des tâches par statut (machine à états docs/03 §3), qui **prend la
