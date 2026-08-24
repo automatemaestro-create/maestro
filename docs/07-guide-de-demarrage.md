@@ -377,10 +377,13 @@ journaux caviardent les motifs de tokens connus (`xoxb-`, `glpat-`…).
   (serveur déclaré dans [`core/mcp/devops.json`](../core/mcp/devops.json), token via
   `${SLACK_BOT_TOKEN}`) poste les **notifications de supervision** d'un run — fin de
   run, validation humaine en attente — via `maestro-run --notifier devops` ;
-- **Tickets GitLab** ([doc 16](./16-pilote-mcp-tickets-gitlab.md), ticket #106) :
-  l'agent `qa` (serveur déclaré dans `core/mcp/qa.json`, token via `${GITLAB_TOKEN}`,
-  toolset restreint aux issues — ni merge ni suppression) **lit et crée des tickets**
-  pendant un run réel ;
+- **Tickets de la forge** (ticket #106, passé à GitHub par #412) : l'agent `qa`
+  (serveur déclaré dans `core/mcp/qa.json`, token via `${GITHUB_TOKEN}`, périmètre
+  borné par les **scopes du jeton** — Issues et Pull requests du seul dépôt du
+  projet ; serveur **optionnel**, omis du montage sans token) **lit et crée des
+  tickets** pendant un run réel. Le pilote d'origine visait GitLab : son rapport
+  [doc 16](./16-pilote-mcp-tickets-gitlab.md) décrit cet état-là, au passé —
+  décision et procédure du jeton dans [`core/mcp/README.md`](../core/mcp/README.md) ;
 - **Figma** ([doc 20](./20-pilote-mcp-figma.md), tickets #115/#125/#128) : l'agent
   `designer` (serveur MCP **officiel** Figma déclaré dans `core/mcp/designer.json`,
   token OAuth fourni par l'humain via `${FIGMA_OAUTH_TOKEN}`, serveur **optionnel** —

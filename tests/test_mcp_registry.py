@@ -40,9 +40,27 @@ from maestro.controltower.events import InMemoryEventBus
 # ── ① seed curé ───────────────────────────────────────────────────────────────
 
 
-def test_seed_expose_les_trois_pilotes() -> None:
+def test_seed_expose_les_pilotes_et_les_deux_forges() -> None:
     registre = RegistreMcp.curee()
-    assert [e.id for e in registre.lister()] == ["gitlab", "slack", "figma-officiel"]
+    assert [e.id for e in registre.lister()] == ["github", "gitlab", "slack", "figma-officiel"]
+
+
+def test_les_deux_forges_cohabitent_dans_la_bibliotheque() -> None:
+    """Le registre est une bibliothèque, pas la config d'un agent (#412).
+
+    Il répond à « quelles intégrations existe-t-il ? », jamais à « laquelle ce
+    projet utilise-t-il ? » — ce dernier point se lit dans `core/mcp/qa.json`
+    seul, et c'est `tests/test_controltower.py` qui l'épingle. Garder les deux
+    n'est donc pas une hésitation : l'allowlist *est* le registre, donc en
+    sortir `gitlab` interdirait de monter un serveur GitLab, alors qu'un projet
+    outillé par Maestro n'est pas forcément sur la forge du nôtre.
+    """
+    registre = RegistreMcp.curee()
+    forges = [e.id for e in registre.rechercher("forge")]
+    assert forges == ["github", "gitlab"]
+    # Les deux restent instanciables — c'est ce que « curé » veut dire.
+    assert registre.instancier("github").type == "http"
+    assert registre.instancier("gitlab").type == "stdio"
 
 
 def test_chaque_entree_porte_ses_metadonnees() -> None:
@@ -84,8 +102,10 @@ def test_recherche_par_nom() -> None:
 
 
 def test_recherche_par_tag() -> None:
+    # « tickets » est porté par les deux forges (#412) : la recherche rend les
+    # deux, dans l'ordre du seed — elle filtre, elle ne départage pas.
     resultats = RegistreMcp.curee().rechercher("tickets")
-    assert [e.id for e in resultats] == ["gitlab"]
+    assert [e.id for e in resultats] == ["github", "gitlab"]
 
 
 def test_recherche_insensible_casse_et_accents() -> None:
@@ -197,7 +217,7 @@ def test_api_liste_le_registre(client: TestClient) -> None:
     reponse = client.get("/api/mcp/registre")
     assert reponse.status_code == 200
     corps = reponse.json()
-    assert [e["id"] for e in corps] == ["gitlab", "slack", "figma-officiel"]
+    assert [e["id"] for e in corps] == ["github", "gitlab", "slack", "figma-officiel"]
     assert all(e["curee"] is True for e in corps)
 
 

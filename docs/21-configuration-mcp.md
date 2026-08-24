@@ -2,6 +2,13 @@
 
 **Version :** 0.2 — §3 mis à jour après livraison du parent #129 (pool projet,
 bibliothèque curée, secrets chiffrés, écriture depuis la Control Tower).
+
+> ⚠ **Revue datée (juillet 2026).** Ce qu'elle *classe* — les trois modes
+> d'authentification — n'a pas bougé et reste le contrat. Ce qu'elle *situe* a
+> bougé une fois : la **forge du produit** est passée de GitLab à **GitHub** le
+> 2026-08-24 (#412), et §2 le dit ligne par ligne. Partout ailleurs dans cette
+> page, « GitLab » est un **exemple d'outil émetteur de PAT** — vrai hier comme
+> aujourd'hui, et indépendant de la forge que ce projet-ci utilise.
 Revue transverse des intégrations MCP en place (GitLab #106, Slack #105,
 Figma #115/#125) sous un angle mis au jour par l'évaluation du serveur MCP
 officiel Figma : dans une configuration MCP, **tout ne se décide pas au même
@@ -39,7 +46,8 @@ client autonome comme Maestro peut faire seul, d'où la classification qui suit.
 
 | Intégration | Déclaration | Mode d'auth | Obtention | Durée de vie |
 | --- | --- | --- | --- | --- |
-| **GitLab** (#106) | [core/mcp/qa.json](../core/mcp/qa.json) → `${GITLAB_TOKEN}` | **Token statique saisissable** | PAT (`glpat-…`, scope `api`) créé dans l'UI GitLab par un humain ([docs/16 §2.3](./16-pilote-mcp-tickets-gitlab.md)) | Durable (expiration choisie à la création, révocable) ; la démo a utilisé le token OAuth du CLI `glab`, qui expire en ~2 h — le PAT est la forme recommandée |
+| **Forge — GitHub** (#412, *depuis le 2026-08-24*) | [core/mcp/qa.json](../core/mcp/qa.json) → `${GITHUB_TOKEN}` | **Token statique saisissable** | PAT *fine-grained* créé dans l'UI GitHub par un humain, borné au dépôt du projet (Issues + Pull requests) — procédure dans [core/mcp/README.md](../core/mcp/README.md#obtention-du-token-github) | Durable (expiration choisie à la création, révocable) |
+| **Forge — GitLab** (#106, *défaut du produit jusqu'au 2026-08-24*) | ~~core/mcp/qa.json~~ → entrée `gitlab` du **registre curé** → `${GITLAB_TOKEN}` | **Token statique saisissable** | PAT (`glpat-…`, scope `api`) créé dans l'UI GitLab par un humain ([docs/16 §2.3](./16-pilote-mcp-tickets-gitlab.md)) | Durable (expiration choisie à la création, révocable) ; la démo a utilisé le token OAuth du CLI `glab`, qui expire en ~2 h — le PAT est la forme recommandée |
 | **Slack** (#105) | [core/mcp/devops.json](../core/mcp/devops.json) → `${SLACK_BOT_TOKEN}` | **Token statique saisissable** | Bot User OAuth Token (`xoxb-…`) obtenu en installant l'app sur le workspace, scopes `chat:write` + `channels:read` ([docs/15 §2](./15-pilote-mcp-slack.md)) | N'expire pas par défaut (révoqué en désinstallant l'app) |
 | **Figma — pont communautaire** (#115) | [core/mcp/designer.json](../core/mcp/designer.json) → `${FIGMA_CHANNEL}` | **Sans token** (appairage) | Canal WebSocket affiché par le plugin compagnon dans Figma ; l'agent agit avec la session Figma de l'utilisateur | Le temps de la session du plugin — aucun token d'API n'existe |
 | **Figma — serveur officiel** (#125, en revue) | designer.json (variante) → `${FIGMA_OAUTH_TOKEN}` | **OAuth verrouillé — clients pré-approuvés seulement** | Token `mcp:connect` émis par Figma **uniquement** à l'issue d'un flux OAuth mené par un client approuvé (Claude Code…) ; l'humain le recopie dans l'environnement de Maestro ([docs/20 §6](./20-pilote-mcp-figma.md)) | Court ; refresh **non** géré par Maestro — token expiré = serveur refusé au montage, renouvellement humain |

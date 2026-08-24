@@ -31,6 +31,10 @@ _ENV_SENSIBLES: tuple[str, ...] = (
     "CLAUDE_CODE_OAUTH_TOKEN",
     "DATABASE_URL",
     "FIGMA_OAUTH_TOKEN",
+    # Les deux forges : GitHub équipe l'agent QA depuis #412, GitLab reste au
+    # catalogue et sert l'archive. Une clé qui cesse d'être le défaut ne cesse
+    # pas d'être un secret — on ne la retire pas de cette liste.
+    "GITHUB_TOKEN",
     "GITLAB_TOKEN",
     "REDIS_URL",
     "SLACK_BOT_TOKEN",
@@ -60,12 +64,18 @@ def enregistre_secret(valeur: str) -> None:
 
 #: Motifs de secrets reconnaissables hors environnement (clés Anthropic `sk-ant-…`,
 #: dont les tokens OAuth `sk-ant-oat…`, clés génériques `sk-…` assez longues,
-#: tokens GitLab `glpat-…` — pilote MCP tickets #106 — et tokens Slack
+#: tokens GitLab `glpat-…` — pilote MCP tickets #106 —, tokens GitHub
+#: `ghp_…`/`github_pat_…` — serveur MCP de forge #412 — et tokens Slack
 #: `xoxb-…`/`xoxp-…` — pilote MCP Slack #105).
 _MOTIFS_SECRETS: tuple[re.Pattern[str], ...] = (
     re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}"),
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
     re.compile(r"glpat-[A-Za-z0-9_-]{8,}"),
+    # GitHub, deux familles : `github_pat_…` (fine-grained, la forme que
+    # core/mcp/README.md recommande) et les classiques `ghp_`/`gho_`/`ghu_`/
+    # `ghs_`/`ghr_`. Le fine-grained d'abord — `gh[pousr]_` ne le couvre pas.
+    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"xox[a-z]-[A-Za-z0-9-]{10,}"),
 )
 

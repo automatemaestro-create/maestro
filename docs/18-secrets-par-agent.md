@@ -77,12 +77,12 @@ En mode distribué, moteur et workers doivent voir le **même stockage**
 ```bash
 # Écrire le premier coffre = activer le scoping (pour TOUS les agents) :
 cat > core/secrets/qa.json <<'EOF'
-{"secrets": {"GITLAB_TOKEN": "glpat-…"}}
+{"secrets": {"GITHUB_TOKEN": "github_pat_…"}}
 EOF
 ```
 
 - La bascule est le **premier coffre écrit** : migrez d'un coup tous les
-  agents à intégrations (au POC : `qa` → `GITLAB_TOKEN`, `devops` →
+  agents à intégrations (au POC : `qa` → `GITHUB_TOKEN` (#412), `devops` →
   `SLACK_BOT_TOKEN`/`SLACK_TEAM_ID`), sinon les serveurs des agents non
   migrés deviennent indisponibles (échec propre, cause nommée) ;
 - Racine remplaçable par `MAESTRO_SECRETS_DIR` (cf. `.env.example`) ;

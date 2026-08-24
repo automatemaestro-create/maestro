@@ -23,7 +23,7 @@
 | **Frontend** | **Next.js + React + TypeScript + Tailwind + shadcn/ui** | Remix, SvelteKit |
 | **Observabilité LLM** | **Langfuse** (open source, auto-hébergeable) | LangSmith (intégré LangChain) |
 | **Isolation d'exécution** | **Docker** par tâche (→ micro-VM si besoin) | E2B, Firecracker, gVisor |
-| **CI/CD & versionnement** | **Git + GitLab + GitLab CI** (choix effectif du projet) | GitHub + GitHub Actions |
+| **CI/CD & versionnement** | **Git + GitHub + GitHub Actions** (choix effectif du projet depuis #343/#344) | GitLab + GitLab CI, Forgejo/Gitea |
 | **Conteneurisation / déploiement** | **Docker Compose** (dev) → **Kubernetes** (échelle) | Fly.io, Render, ECS |
 | **Authentification** | **Clerk** ou **Auth.js** | Supabase Auth, Keycloak |
 | **Extraction de documents** *(Phase 8)* | **markitdown** (unifié) ou `python-docx` + `pypdf` — tout ramené à du Markdown | Unstructured, Tika |
@@ -145,7 +145,7 @@ Deux protocoles complémentaires :
 
 Le **MCP (Model Context Protocol)** standardise le branchement d'outils aux agents. Serveurs MCP utiles :
 
-- **GitLab / Git** : lecture/écriture de code, MR (merge requests), revues.
+- **Forge / Git** : lecture/écriture de code, tickets, PR (pull requests), revues. Deux niveaux à ne pas confondre — le **défaut du produit** suit la forge du projet, donc **GitHub** ([`core/mcp/qa.json`](../core/mcp/qa.json), #412) ; le **registre curé** est une bibliothèque et garde **GitLab à côté de GitHub**, parce qu'un projet outillé par Maestro n'est pas forcément sur la nôtre.
 - **Base de données** : exécution de migrations et requêtes (agent BDD).
 - **CI/CD & cloud** : déclenchement de pipelines, déploiements (agent DevOps).
 - **Design** : Figma (agent Designer).

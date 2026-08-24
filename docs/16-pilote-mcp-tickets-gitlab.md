@@ -1,6 +1,20 @@
 # Pilote MCP gestion de tickets — GitLab (ticket #106)
 
 **Version :** 0.1
+
+> ⚠ **Rapport de pilote daté — tout ce qui suit se lit au passé.** Cette page
+> consigne le pilote **#106**, mené sur **GitLab** quand c'était la forge du
+> projet. Elle n'est plus la description de la configuration courante : depuis
+> **#412** (2026-08-24), le serveur de forge de l'agent QA est **GitHub**, et
+> [`core/mcp/qa.json`](../core/mcp/qa.json) ne déclare plus `@zereight/mcp-gitlab`.
+> Ce qui reste vrai — et qui est tout l'intérêt de la conserver — est la
+> **preuve générique** que le pilote a établie (§1) : déclaration versionnée →
+> montage à chaud → outils `mcp__<nom>__…`, le même contrat pour n'importe quel
+> outil de tickets. Changer de forge n'a effectivement demandé qu'un fichier de
+> déclaration. La décision, ses raisons et la procédure du jeton sont dans
+> [`core/mcp/README.md`](../core/mcp/README.md) ; les outils s'y nomment
+> `mcp__forge__…`, plus `mcp__gitlab__…`.
+
 Second pilote concret du socle MCP (#104, parent #101) : un agent **équipé d'un
 serveur MCP GitLab** lit et crée des tickets du backlog au fil d'un run — les
 runs Maestro se connectent à l'outil de gestion de tickets de l'équipe. Cette
@@ -18,13 +32,14 @@ secrets et la démonstration réelle.
 
 ## 1. Choix de l'outil : GitLab (plutôt que Linear/Jira)
 
-La roadmap citait Linear/Jira ; le ticket laissait le choix ouvert. GitLab est
-retenu pour ce pilote :
+La roadmap citait Linear/Jira ; le ticket laissait le choix ouvert. GitLab a été
+retenu pour ce pilote — **au vu de la situation d'alors**, et c'est le seul des
+trois arguments qui ait péri (le backlog a migré sur GitHub, #335/#343/#344) :
 
-- **C'est l'outil du projet** : le backlog Maestro vit déjà sur GitLab — la
-  démonstration « en conditions réelles » se fait sur de vrais tickets, sans
+- **C'était l'outil du projet** : le backlog Maestro vivait déjà sur GitLab — la
+  démonstration « en conditions réelles » s'est faite sur de vrais tickets, sans
   compte ni espace de travail à créer ;
-- **Le compte bot existe** (`MaestroAgents`, celui du CLI `glab`) : mêmes
+- **Le compte bot existait** (`MaestroAgents`, celui du CLI `glab`) : mêmes
   exigences sur les secrets que le pilote Slack, sans provisionnement neuf ;
 - **La preuve est générique** : le contrat exercé (déclaration versionnée →
   montage à chaud → outils `mcp__<nom>__…`) est strictement le même pour

@@ -46,11 +46,15 @@ Trois fichiers cohabitent sous la racine (remplaçable par `MAESTRO_MCP_DIR`) :
 
 ## Déclarations en place
 
-- [`qa.json`](./qa.json) — serveur **GitLab** (`@zereight/mcp-gitlab`, stdio via
-  `npx`) pour le pilote gestion de tickets (#106) : l'agent QA lit et crée des
-  tickets du backlog au fil d'un run. Restreint au toolset `issues` en mode
-  `modify` (ni suppression, ni merge) ; token via `${GITLAB_TOKEN}` — voir
-  [docs/16](../../docs/16-pilote-mcp-tickets-gitlab.md).
+- [`qa.json`](./qa.json) — serveur **de forge** pour le pilote gestion de
+  tickets (#106) : l'agent QA lit et crée des tickets du backlog au fil d'un
+  run. Depuis **#412** c'est **GitHub** (serveur MCP officiel de GitHub, endpoint
+  distant `https://api.githubcopilot.com/mcp/`, http), et non plus GitLab —
+  voir « La forge du produit » ci-dessous. Token via `${GITHUB_TOKEN}`.
+  La déclaration d'origine (GitLab, `@zereight/mcp-gitlab` en stdio via `npx`,
+  toolset `issues` en mode `modify`) est celle que décrit
+  [docs/16](../../docs/16-pilote-mcp-tickets-gitlab.md), rapport **daté** du
+  pilote #106 : elle s'y lit au passé.
 - [`devops.json`](./devops.json) — serveur **Slack** (pilote #105) : l'agent
   `devops` poste les notifications de supervision d'un run (fin de run,
   validation humaine en attente) via `maestro-run --notifier devops`.
@@ -67,6 +71,58 @@ Trois fichiers cohabitent sous la racine (remplaçable par `MAESTRO_MCP_DIR`) :
   retiré de la configuration active — trace historique et repli documenté dans
   [docs/20](../../docs/20-pilote-mcp-figma.md).
 
+## La forge du produit : un défaut, et un catalogue (#412)
+
+La bascule #343/#344 a porté **l'outillage** du dépôt sur GitHub ; le **produit**
+disait encore GitLab. La question n'était pas le mot mais le **rôle**, et il a
+deux réponses parce qu'il y a deux objets :
+
+- **`qa.json` est un défaut**, pas un catalogue : c'est ce que l'agent QA monte
+  réellement à chaque exécution outillée. Un défaut du produit **suit la forge du
+  projet** — il est donc passé à **GitHub**.
+- **Le registre curé est une bibliothèque** (#131) : il répond à *« quelles
+  intégrations existe-t-il ? »*, jamais à *« laquelle ce projet utilise-t-il ? »*.
+  Il porte donc **GitHub et GitLab côte à côte**, et c'est l'entrée **GitHub** qui
+  y manquait. Retirer `gitlab` aurait été la vraie dérive : l'allowlist *est* le
+  registre (garde-fou supply-chain ci-dessous), donc l'en sortir **interdirait**
+  de monter un serveur GitLab — alors qu'un projet outillé par Maestro n'est pas
+  forcément sur la forge du nôtre.
+
+Deux conséquences à connaître :
+
+- **Le serveur s'appelle `forge`, plus `gitlab`.** Le nom d'une liaison est le
+  préfixe de ses outils (`mcp__forge__…`) : le figer sur une marque, c'est
+  reprogrammer les playbooks le jour où la forge change. Aucun playbook ne
+  référençait `mcp__gitlab__…` — les seules occurrences sont dans docs/16, qui
+  raconte la démo #106 au passé.
+- **La voie est `optionnel: true`** (canal #125). `${GITHUB_TOKEN}` est une clé
+  **neuve** : l'outillage du dépôt s'authentifie par le CLI `gh`, pas par le
+  `.env`, donc aucun poste ne la porte. Non optionnelle, la bascule ferait
+  **échouer** toute exécution outillée du QA au premier run, sur une forge
+  correcte. Sans jeton, la voie est simplement omise du montage.
+
+`${GITLAB_TOKEN}` **reste déclarée** dans `.env.example` et n'est pas orpheline :
+elle sert l'entrée `gitlab` du registre, et elle est la seule voie de lecture de
+l'**archive** GitLab ([docs/27 §11](../../docs/27-decision-gitlab-vers-github.md)).
+Elle a seulement cessé d'être le défaut.
+
+### Obtention du token GitHub
+
+Un **PAT à portée restreinte** (*fine-grained*), créé par un humain dans
+*Settings > Developer settings > Personal access tokens* : dépôt **unique** (celui
+du projet), permissions **Issues** et **Pull requests** en lecture/écriture, rien
+d'autre. Le jeton est **nominatif** — les écritures portent votre nom.
+
+C'est ici une différence avec le pilote GitLab, et elle est voulue : là-bas le
+périmètre était borné par la **configuration du serveur**
+(`GITLAB_TOOLSETS=issues`, `GITLAB_PERMISSION_MODE=modify`), donc par une valeur
+qu'une déclaration versionnée peut se voir changer. Ici il est borné par les
+**scopes du jeton**, côté GitHub — ce qu'aucune modification du dépôt ne peut
+élargir.
+
+La valeur elle-même ne vit pas dans le fichier : `${GITHUB_TOKEN}` est résolue au
+montage depuis le coffre chiffré de l'agent (#132, section « Secrets » ci-dessous).
+
 ## Registre curé (bibliothèque recherchable, #131)
 
 Un **fichier par agent** répond à *« quels serveurs cet agent monte-t-il ? »*
@@ -75,8 +131,9 @@ C'est le rôle du **registre curé** (`maestro.agents.mcp_registry`, parent #129
 une bibliothèque de **templates** de serveurs MCP, recherchable par nom/tag,
 chaque entrée portant transport, gabarit d'exécution `${VAR}`, **mode d'auth**
 ([docs/21](../../docs/21-configuration-mcp.md)), variables à fournir et lien de
-procédure côté outil. Le seed initial (GitLab, Slack, Figma officiel) dérive des
-déclarations ci-dessus.
+procédure côté outil. Le seed (GitHub, GitLab, Slack, Figma officiel) dérive des
+déclarations ci-dessus — **GitLab excepté**, qui n'équipe plus aucun agent et n'y
+figure qu'au titre de la bibliothèque (#412).
 
 - Un **template** (`EntreeRegistre`) est versionné et agnostique du modèle ;
   l'**instanciation** (`RegistreMcp.instancier`) le transforme en `ServeurMcp`
