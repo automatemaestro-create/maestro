@@ -87,6 +87,13 @@ _SUFFIXE_DEBUT = ":debut"
 #: `maestro.engine.executor`, `SUFFIXE_ETAPE_REFUS`).
 _SUFFIXE_REFUS = ":refus-outil"
 
+#: Suffixe des étapes d'activité (#479 — cf. `maestro.engine.executor`,
+#: `SUFFIXE_ETAPE_ACTIVITE`) : ce que l'agent fait **pendant** sa tâche, publié à
+#: débit borné par le fournisseur. Rangé avec `:validation`, `:relance` et
+#: `:refus-outil` — même nature (une activité d'agent rattachée à sa tâche, qui
+#: ne la fait pas changer de colonne) et donc même traitement.
+_SUFFIXE_ACTIVITE = ":activite"
+
 #: Suffixe des étapes de messagerie inter-agents (#44 — cf.
 #: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
 _SUFFIXE_MESSAGE = ":message"
@@ -106,12 +113,13 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     - les étapes `<tache>:message` (#44) deviennent des **messages
       inter-agents** (entité AGENT_MESSAGE — handoff, notification…) ;
     - les étapes `planification`, `brief` (#318) et `reprise` (#96) et les étapes
-      `<tache>:validation`, `<tache>:relance` (#91) et `<tache>:refus-outil`
-      (#110) deviennent des **activités d'agent** (l'orchestrateur cadre puis
-      planifie, le moteur reprend un run interrompu, un humain tranche, le moteur
-      relance, la politique de permissions refuse un outil — la raison voyage dans
-      `detail`) ; `planification`, `brief` et `reprise` portent sur le run entier,
-      donc sans `tache_id` ;
+      `<tache>:validation`, `<tache>:relance` (#91), `<tache>:refus-outil`
+      (#110) et `<tache>:activite` (#479) deviennent des **activités d'agent**
+      (l'orchestrateur cadre puis planifie, le moteur reprend un run interrompu,
+      un humain tranche, le moteur relance, la politique de permissions refuse un
+      outil, l'agent travaille — la raison voyage dans `detail`) ;
+      `planification`, `brief` et `reprise` portent sur le run entier, donc sans
+      `tache_id` ;
     - les étapes `<tache>:debut` (#98) deviennent le **début** de leur tâche :
       événement `tache.statut` au statut `en_cours` (agent, heure de début),
       sans usage ni coût — rien n'entre au grand livre avant l'issue ;
@@ -152,7 +160,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_reference = etape.endswith(_SUFFIXE_REFERENCE)
     est_detail = etape.endswith(_SUFFIXE_DETAIL)
     est_activite = etape in _ETAPES_RUN or etape.endswith(
-        (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE, _SUFFIXE_REFUS)
+        (_SUFFIXE_VALIDATION, _SUFFIXE_RELANCE, _SUFFIXE_REFUS, _SUFFIXE_ACTIVITE)
     )
     if est_reference:
         type_evenement = EVENEMENT_TACHE_REFERENCE
@@ -188,6 +196,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             else etape.removesuffix(_SUFFIXE_VALIDATION)
             .removesuffix(_SUFFIXE_RELANCE)
             .removesuffix(_SUFFIXE_REFUS)
+            .removesuffix(_SUFFIXE_ACTIVITE)
         )
         detail = str(record.get("sortie") or record.get("erreur") or "")
     else:
@@ -272,6 +281,7 @@ def solder_le_run(
     statut: str,
     detail: str = "",
     *,
+    cause: str = "",
     url: str | None = None,
     canal: str = CANAL_EVENEMENTS,
 ) -> bool:
@@ -315,6 +325,9 @@ def solder_le_run(
                 # reprend une exception, où un secret servi pendant le run peut
                 # ressurgir. Ce qui part sur le bus est montrable.
                 detail=redact_secrets(detail),
+                # La cause (#479) n'est pas expurgée : c'est un code d'un
+                # ensemble fermé, pas du texte libre — même raison que côté API.
+                cause=cause,
             )
         )
     except Exception:

@@ -290,6 +290,14 @@ class Event:
     # n'est jamais réécrit pour désigner son successeur, c'est le **nouveau** qui
     # dit de qui il est la suite.
     reprise_de: str = ""
+    # **Pourquoi** un run s'est arrêté (#479), porté par son événement d'issue et
+    # vide partout ailleurs : l'un des codes de `maestro.controltower.causes`, ou
+    # la chaîne vide quand aucun ne s'applique. Chaîne vide plutôt que `None`,
+    # pour la même raison que `reprise_de` : il n'y a rien à ne pas effacer — un
+    # seul événement en parle, et « aucune cause reconnue » est un fait, pas une
+    # absence d'information. Il vient **en plus** de `detail`, jamais à sa place :
+    # le code dit de quoi il s'agit, le détail ce qui s'est passé.
+    cause: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -325,6 +333,7 @@ class Event:
             "tour": self.tour,
             "tours_max": self.tours_max,
             "reprise_de": self.reprise_de,
+            "cause": self.cause,
             "horodatage": self.horodatage,
         }
 
@@ -388,6 +397,13 @@ class Event:
             # avoir été purgé du journal ; le nouveau doit continuer de dire de qui
             # il est la suite, comme `reprise-de` côté orchestration (#204).
             reprise_de=str(data.get("reprise_de") or ""),
+            # Relu en texte et **non vérifié** contre `CAUSES` (#479), au même
+            # titre que le brief ou les sources : un run passé doit rester
+            # lisible si le vocabulaire des causes s'enrichit, et le rejeu du
+            # journal durable (#97) ne doit pas trébucher sur un code qu'une
+            # version ultérieure a introduit. L'écran, lui, sait déjà ne rien
+            # afficher d'un code qu'il ne connaît pas.
+            cause=str(data.get("cause") or ""),
             horodatage=data.get("horodatage", ""),
         )
 

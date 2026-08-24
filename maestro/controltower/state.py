@@ -407,6 +407,12 @@ class EtatExecution:
     # d'orchestration (#204), et il se lit dans le même sens (« ceci est la suite de
     # cela »), jamais dans l'autre.
     reprise_de: str = ""
+    # **Pourquoi** ce run s'est arrêté (#479) — l'un des codes de
+    # `maestro.controltower.causes`, vide tant qu'il n'y a rien à dire. Posé par
+    # l'événement d'issue et **retiré** si le run repart : un run relancé après
+    # un plafond de coût ne doit pas continuer d'afficher la cause de sa mort
+    # précédente, qui est précisément ce qu'on vient de corriger.
+    cause: str = ""
     # Ce run est-il **suspendu** (#477) ? Posé et retiré par les deux ordres de
     # pause, remis à False par tout statut terminal. Un drapeau **à côté** du
     # statut et non dedans, parce que la pause ne dit pas où en est le run mais
@@ -503,6 +509,13 @@ class EtatExecution:
             # ne le remplace pas — un run suspendu reste `en_cours`, ou
             # `en_attente_brief`, ou ce qu'il était.
             "en_pause": self.en_pause,
+            # La cause d'arrêt (#479) dans le **résumé**, et c'est le critère du
+            # ticket : « dans la liste comme dans sa vue ». Un run en échec dont
+            # il faut ouvrir la page pour savoir s'il a manqué de budget ou
+            # d'hôte laisse la liste dire « Échec » à dix runs qui ne se
+            # réparent pas de la même façon. Un code court n'y pèse rien, à la
+            # différence du brief resté dans le détail.
+            "cause": self.cause,
             "debut": self.debut,
             "fin": self.fin,
         }
@@ -1026,6 +1039,19 @@ class ControlTowerState:
             # d'une relance en porte un ; l'issue du run, qui n'en sait rien, ne doit
             # pas effacer de qui il était la suite.
             execution.reprise_de = event.reprise_de
+        # La cause d'arrêt (#479) suit **exactement** le régime de `fin`, et pour
+        # la même raison : elle ne vaut que d'un run soldé. Elle est donc posée
+        # avec le statut terminal et **effacée** si le run repart — un run relancé
+        # (#349) qui continuerait d'afficher le plafond qui l'avait tué la
+        # première fois ferait chercher une panne qu'on vient de réparer.
+        #
+        # ⚠ Ce n'est **pas** la règle des champs ci-dessus (`ticket`, `projet_id`,
+        # `sources`, `mode_brief`, `reprise_de`), qui sont posés au lancement et
+        # que l'issue ne doit jamais effacer. Ici c'est l'inverse : seule l'issue
+        # en parle, et un run qui n'est plus soldé n'a plus de cause.
+        execution.cause = (
+            event.cause if execution.statut in STATUTS_EXECUTION_TERMINAUX else ""
+        )
         execution.fin = (
             event.horodatage if execution.statut in STATUTS_EXECUTION_TERMINAUX else None
         )

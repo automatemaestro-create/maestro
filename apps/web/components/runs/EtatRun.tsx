@@ -67,6 +67,7 @@ import {
 import {
   formatCout,
   formatHeureRelative,
+  libelleCause,
   libelleStatutExecution,
 } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
@@ -335,6 +336,42 @@ export function BoutonsPause({
 }
 
 /**
+ * **Pourquoi** ce run s'est arrêté (#479). Ne rend rien quand il n'y a rien à
+ * dire — un run en cours, un run qui a fini normalement, un échec que le backend
+ * n'a pas su classer.
+ *
+ * Elle est ici, avec `LigneAttente` et `LigneInterruption`, parce que le critère
+ * est « dans la liste **comme** dans sa vue » : c'est exactement ce que ce
+ * fichier existe pour garantir depuis #475 — deux formulations du même état
+ * finiraient par diverger. La cause est donc écrite une fois et montée aux deux
+ * endroits, comme tout ce qui l'entoure.
+ *
+ * Le **statut** reste le badge, la cause vient dessous : « Échec » dit ce qui est
+ * arrivé au run, « Plafond de dépense atteint » ce qu'il faut aller changer. Les
+ * fondre en un seul badge ferait perdre l'un des deux, et c'est le badge qui a
+ * la place la plus contrainte.
+ */
+export function LigneCause({
+  run,
+  className = "",
+}: {
+  run: ResumeExecution;
+  className?: string;
+}) {
+  const libelle = libelleCause(run.cause);
+  if (libelle === null) return null;
+  return (
+    <p
+      className={`text-annexe text-rose-700 dark:text-rose-400 ${className}`}
+      // Le run est soldé : `role="status"` annoncerait un changement en cours.
+      // C'est un fait acquis qu'on lit, pas une alerte qui survient.
+    >
+      {libelle}
+    </p>
+  );
+}
+
+/**
  * L'hôte de ce run ne bat plus (#348), et ce qu'on peut encore en faire (#349).
  * Ne rend rien pour les autres régimes.
  */
@@ -543,6 +580,10 @@ export function CarteRun({
       <Avancement run={run} />
 
       <LigneAttente run={run} attente={attente} className="mt-2" />
+      {/* La cause **avant** l'interruption : les deux peuvent coexister sur un
+          run mort dont l'hôte ne bat plus, et « pourquoi il s'est arrêté »
+          précède « et son hôte ne répond plus » dans l'ordre où on les lit. */}
+      <LigneCause run={run} className="mt-2" />
       <LigneInterruption run={run} regime={regime} className="mt-2" />
       <LignePause regime={regime} className="mt-2" />
       {/* Le geste **sur la ligne** et pas seulement dans la vue du run (#477) :

@@ -48,6 +48,7 @@ import {
   BoutonsPause,
   fondDe,
   LigneAttente,
+  LigneCause,
   LigneInterruption,
   LignePause,
 } from "@/components/runs/EtatRun";
@@ -248,6 +249,10 @@ function EnTeteRun({
       <Avancement run={run} taille="ample" />
 
       <LigneAttente run={run} attente={attente} className="mt-3" />
+      {/* Même ordre que dans la liste (`CarteRun`), et c'est le point : un run
+          lu « Plafond de dépense atteint » dans la liste doit se lire pareil
+          ici. */}
+      <LigneCause run={run} className="mt-3" />
       <LigneInterruption run={run} regime={regime} className="mt-3" />
       <LignePause regime={regime} className="mt-3" />
       <BoutonsPause run={run} className="mt-3 block" />

@@ -47,6 +47,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import HookInput
 
 from maestro.config import ConfigError, Settings
+from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.base import (
     PLAFOND_TOURS_DEFAUT,
     AuthMode,
@@ -218,6 +219,7 @@ class ClaudeProvider(ModelProvider):
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
+        on_activite: Callable[[str], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -283,6 +285,16 @@ class ClaudeProvider(ModelProvider):
         fait remonter jusqu'aux erreurs de `docker run` — est collecté ligne à
         ligne, borné, et accroché à l'exception d'un échec. C'est ce qui donne une
         cause à une tentative plantée, là où le SDK ne renvoyait qu'à un flux vide.
+
+        `on_activite` (#479) reçoit, **pendant** l'exécution, ce que l'agent est
+        en train de faire. Le SDK donne exactement la matière que le pilote lit
+        déjà dans le `.jsonl` du CLI pour son `--verbeux` (#176) — appels
+        d'outil, cibles, prose du modèle — et elle était jetée : `_absorbe`
+        accumulait sans rien publier. Le régulateur monté ici la publie à débit
+        borné, et il est **vidé dans un `finally`** : une tâche courte, ou une
+        tâche qui meurt sur une exception, doit dire ses derniers gestes plutôt
+        que de les emporter — c'est justement d'une tâche en échec qu'on veut
+        savoir ce qu'elle faisait juste avant.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -309,17 +321,29 @@ class ClaudeProvider(ModelProvider):
                 else None
             ),
         )
-        if not mcp_serveurs:
-            return await _collect_response(
-                prompt, options, plafond_tours=plafond_tours, stderr=stderr
+        # None quand personne n'écoute : `_absorbe` retombe alors exactement sur
+        # son comportement d'avant ce lot, sans même composer de ligne.
+        regulateur = None if on_activite is None else RegulateurActivite(on_activite)
+        try:
+            if not mcp_serveurs:
+                return await _collect_response(
+                    prompt,
+                    options,
+                    plafond_tours=plafond_tours,
+                    stderr=stderr,
+                    regulateur=regulateur,
+                )
+            return await _collect_response_pilotee(
+                prompt,
+                options,
+                attendus=frozenset(s.nom for s in mcp_serveurs),
+                plafond_tours=plafond_tours,
+                stderr=stderr,
+                regulateur=regulateur,
             )
-        return await _collect_response_pilotee(
-            prompt,
-            options,
-            attendus=frozenset(s.nom for s in mcp_serveurs),
-            plafond_tours=plafond_tours,
-            stderr=stderr,
-        )
+        finally:
+            if regulateur is not None:
+                regulateur.vider()
 
 
 def _hook_permissions(
@@ -397,6 +421,7 @@ async def _collect_response(
     *,
     plafond_tours: int | None = None,
     stderr: CollecteurStderr | None = None,
+    regulateur: RegulateurActivite | None = None,
 ) -> str:
     """Déroule `query`, assemble le texte de la réponse et signale l'usage (ticket #8).
 
@@ -414,12 +439,15 @@ async def _collect_response(
     `stderr` (#346) est le collecteur branché sur les options : tout échec repart
     avec ce que le CLI a écrit, faute de quoi l'exception du SDK renvoie à un flux
     que personne n'a lu.
+
+    `regulateur` (#479) publie l'activité au fil du flux — None quand personne
+    n'écoute.
     """
     parts: list[str] = []
     outils: list[str] = []
     try:
         async for message in query(prompt=prompt, options=options):
-            _absorbe(message, parts, outils)
+            _absorbe(message, parts, outils, regulateur)
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
             raise _avec_stderr(_erreur_plafond(plafond_tours, exc), stderr) from exc
@@ -435,6 +463,7 @@ async def _collect_response_pilotee(
     attendus: frozenset[str],
     plafond_tours: int | None = None,
     stderr: CollecteurStderr | None = None,
+    regulateur: RegulateurActivite | None = None,
 ) -> str:
     """Comme `_collect_response`, mais en session pilotée : serveurs MCP connectés d'abord.
 
@@ -461,7 +490,7 @@ async def _collect_response_pilotee(
             await _attend_serveurs_mcp(client, attendus)
             await client.query(prompt)
             async for message in client.receive_response():
-                _absorbe(message, parts, outils)
+                _absorbe(message, parts, outils, regulateur)
                 if isinstance(message, ResultMessage) and message.is_error:
                     detail = message.result or message.subtype
                     if _MARQUEUR_MAX_TURNS in message.subtype:
@@ -517,20 +546,45 @@ async def _attend_serveurs_mcp(client: ClaudeSDKClient, attendus: frozenset[str]
         await asyncio.sleep(_MCP_SONDAGE_S)
 
 
-def _absorbe(message: Any, parts: list[str], outils: list[str]) -> None:
+def _absorbe(
+    message: Any,
+    parts: list[str],
+    outils: list[str],
+    regulateur: RegulateurActivite | None = None,
+) -> None:
     """Absorbe un message du flux SDK : texte et outils relevés, usage signalé (#8).
 
     Facteur commun des deux chemins (`query` one-shot, session pilotée) : les
     blocs texte s'ajoutent à `parts`, chaque outil vu une fois à `outils`, et le
     `ResultMessage` remonte tokens/coût/durée via `report_usage` — y compris sur
     un résultat en échec (le coût d'un `error_max_turns` compte au grand livre).
+
+    C'est aussi, depuis #479, **le seul endroit où le flux est observé**, donc le
+    seul d'où l'activité peut partir : `regulateur` reçoit chaque bloc d'outil et
+    chaque bloc de texte, dans l'ordre, au moment où ils passent. C'était le
+    constat du ticket — la matière traversait cette fonction et personne ne la
+    publiait.
+
+    ⚠ Les deux comptes ne sont **pas** le même et ne doivent pas être fusionnés.
+    `outils` reste **dédupliqué** parce qu'il alimente `StepUsage.outils`, dont
+    le contrat est l'union ordonnée des outils employés (`StepUsage.fusion` la
+    refait à chaque agrégation) : y laisser les doublons gonflerait la liste du
+    grand livre à chaque tâche sans rien y apprendre. Le régulateur, lui, voit
+    **chaque occurrence** — c'est exactement la séquence que la déduplication
+    détruisait, et elle vit désormais là où on en a besoin plutôt que d'être
+    reconstituée depuis un ensemble qui l'a perdue.
     """
     if isinstance(message, AssistantMessage):
         for block in message.content:
             if isinstance(block, TextBlock):
                 parts.append(block.text)
-            elif isinstance(block, ToolUseBlock) and block.name not in outils:
-                outils.append(block.name)
+                if regulateur is not None and block.text.strip():
+                    regulateur.note(Geste.jalon(block.text))
+            elif isinstance(block, ToolUseBlock):
+                if regulateur is not None:
+                    regulateur.note(Geste.outil_appele(block.name, block.input))
+                if block.name not in outils:
+                    outils.append(block.name)
     elif isinstance(message, ResultMessage):
         report_usage(_usage_from_result(message, tuple(outils)))
 

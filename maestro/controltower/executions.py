@@ -164,6 +164,7 @@ from maestro.controltower.brief import (
     ArbitreBriefControlTower,
     ArbitreClarificationControlTower,
 )
+from maestro.controltower.causes import CAUSE_ANNULATION, cause_de, detail_avec_cause
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_EXECUTION_STATUT,
@@ -678,7 +679,12 @@ class ServiceExecutions:
             # le seuil d'orphelinat l'éteigne une demi-heure plus tard. C'est le
             # seul instant où quelqu'un peut l'écrire, et c'est l'appelant.
             _LOGGER.error("Démarrage de l'hôte du run %s raté : %s", run_id, echec)
-            self._consigne(run_id, EXECUTION_ECHEC, "", str(echec))
+            # `str(echec)` et non `detail_avec_cause` : le détail d'un démarrage
+            # raté est déjà une phrase écrite pour être lue (la commande, le code
+            # de sortie, les dernières lignes du journal de l'hôte), et la
+            # préfixer de « DemarrageHoteRate : » n'y ajouterait qu'un nom de
+            # classe. Seule la **cause** manquait.
+            self._consigne(run_id, EXECUTION_ECHEC, "", str(echec), cause=cause_de(echec))
             await self._oublier(run_id)
         resume = await self.resume_vivant(run_id)
         if resume is None:  # pragma: no cover - le lancement vient d'inscrire le run
@@ -942,7 +948,7 @@ class ServiceExecutions:
         continuerait de travailler sous son ancien identifiant.
         """
         self._demarrer()
-        self._consigne(run_id, EXECUTION_ANNULEE, "", detail)
+        self._consigne(run_id, EXECUTION_ANNULEE, "", detail, cause=CAUSE_ANNULATION)
         await self._hote.annuler(run_id, delai_s=DELAI_ANNULATION_S)
         await self._oublier(run_id)
 
@@ -1245,12 +1251,15 @@ class ServiceExecutions:
             # « annulée » dès la décision (`_applique_brief_decision`), pour qu'un
             # run publié hors de l'API le montre aussi. La reconsigner ici est sans
             # effet sur l'état (idempotent) et pose la `fin` du run.
-            self._consigne(run_id, EXECUTION_ANNULEE, "", str(refus))
+            self._consigne(
+                run_id, EXECUTION_ANNULEE, "", str(refus), cause=CAUSE_ANNULATION
+            )
             await self._oublier(run_id)
             return
         except Exception as exc:
             _LOGGER.exception("Exécution %s interrompue par une erreur.", run_id)
-            self._consigne(run_id, EXECUTION_ECHEC, "", f"{type(exc).__name__} : {exc}")
+            detail, cause = detail_avec_cause(exc)
+            self._consigne(run_id, EXECUTION_ECHEC, "", detail, cause=cause)
             await self._oublier(run_id)
             return
         echouees = len(rapport.echouees) + len(rapport.bloquees)
@@ -1278,6 +1287,7 @@ class ServiceExecutions:
         sources: Sequence[Source] = (),
         mode_brief: str = "",
         reprise_de: str = "",
+        cause: str = "",
     ) -> None:
         """Émet le cycle de vie du run : projection d'abord, bus ensuite.
 
@@ -1313,6 +1323,12 @@ class ServiceExecutions:
                 sources=list(sources) or None,
                 mode_brief=mode_brief,
                 reprise_de=reprise_de,
+                # La cause n'est **pas** expurgée, contrairement à l'objectif et
+                # au détail (#479) : c'est un code d'un ensemble fermé
+                # (`causes.CAUSES`), jamais du texte libre — il n'y a rien à y
+                # masquer, et un masquage le rendrait illisible pour l'écran qui
+                # doit le ranger.
+                cause=cause,
             )
         )
 

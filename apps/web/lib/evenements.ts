@@ -38,6 +38,7 @@ import {
   EXECUTION_TERMINEE,
   ORDRE_PAUSE,
   ORDRE_REPRISE,
+  STATUT_ACTIVITE,
   VALIDATION_APPROUVEE,
   type Evenement,
 } from "@/lib/types";
@@ -124,6 +125,21 @@ function phraseEtapeAgent(evenement: Evenement): string {
   const quoi = evenement.titre || "une étape";
   const qui = evenement.agent;
   switch (evenement.statut) {
+    // Ce que l'agent fait **pendant** que sa tâche dure (#479). Seule branche de
+    // cette table où la phrase est le `detail` et non le `titre` : le titre est
+    // celui de la tâche, que la carte du Kanban montre déjà à côté — le rendre
+    // ici dirait « dev — Écrire le module en cours » et tairait le geste, qui est
+    // la seule chose que cette ligne apporte.
+    //
+    // Le détail est déjà une phrase composée par le fournisseur
+    // (`maestro/providers/activite.py`) : un geste seul (« Read ·
+    // engine/executor.py ») ou une salve qui annonce son regroupement (« 7
+    // gestes · … »). Le front ne la réécrit pas — la composition vit là où l'on
+    // sait ce qui a été observé et ce qui a été regroupé.
+    case STATUT_ACTIVITE:
+      return evenement.detail
+        ? `${qui ? `${qui} · ` : ""}${evenement.detail}`
+        : `${qui ? `${qui} ` : ""}travaille sur ${quoi}`;
     // Le moteur consigne la décision humaine sur l'étape `:validation`
     // (executor.py) — c'est la même information que `validation.decision`, vue
     // depuis le journal du run.

@@ -175,6 +175,7 @@ class AgentRuntime:
         environ: Mapping[str, str] | None = None,
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
+        on_activite: Callable[[str], None] | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
     ) -> AgentOutcome:
@@ -211,6 +212,13 @@ class AgentRuntime:
         chaque refus est signalé via `on_refus(outil, raison)`, le canal de
         traçage de l'appelant. None : aucune politique (comportement
         historique).
+
+        `on_activite` (#479) est le second canal de traçage, et il traverse ce
+        runtime sans qu'il en fasse rien : ce que l'agent fait **pendant** sa
+        tâche est observé par le fournisseur, seul à voir le flux du SDK, et
+        consigné par l'appelant, seul à connaître la tâche et son run. Le runtime
+        n'est ni l'un ni l'autre — il ne fait que relier les deux, comme pour
+        `on_refus`.
 
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
@@ -260,6 +268,7 @@ class AgentRuntime:
                 mcp_serveurs=montables,
                 politique=politique,
                 on_refus=on_refus,
+                on_activite=on_activite,
                 plafond_tours=self._plafond_tours,
                 projet=projet,
             )

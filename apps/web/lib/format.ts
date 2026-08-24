@@ -1,6 +1,11 @@
 /** Formatages partagés de l'UI : coûts, heures, libellés de statut. */
 
 import {
+  CAUSE_ANNULATION,
+  CAUSE_HOTE_NON_DEMARRE,
+  CAUSE_LIMITE_USAGE,
+  CAUSE_PLAFOND_COUT,
+  CAUSE_PLAFOND_TOURS,
   EXECUTION_ANNULEE,
   EXECUTION_ECHEC,
   EXECUTION_EN_ATTENTE_BRIEF,
@@ -178,4 +183,38 @@ const LIBELLES_STATUT_EXECUTION: Record<string, string> = {
 /** Le libellé d'un statut de run, ou le statut brut si le flux s'est enrichi. */
 export function libelleStatutExecution(statut: string): string {
   return LIBELLES_STATUT_EXECUTION[statut] ?? statut;
+}
+
+/**
+ * Ce que **dit** chaque cause d'arrêt d'un run (#479, `CAUSE_*`).
+ *
+ * Une phrase et non une étiquette : la question à laquelle cette ligne répond est
+ * « pourquoi s'est-il arrêté ? », et « Plafond de tours » y répond moins bien que
+ * « Plafond de tours atteint ». C'est le même parti pris que la table `ATTENTES`
+ * (`components/runs/EtatRun`), qui porte une `phrase` à côté de son `libelle`.
+ *
+ * Ces phrases restent **génériques** : le chiffre — quelle borne, quel montant —
+ * vit dans le `detail` de l'événement d'issue, que le fil d'activité rend. Les
+ * recopier ici demanderait de faire voyager un second champ pour un gain nul.
+ */
+const LIBELLES_CAUSE: Record<string, string> = {
+  [CAUSE_PLAFOND_TOURS]: "Plafond de tours atteint",
+  [CAUSE_PLAFOND_COUT]: "Plafond de dépense atteint",
+  [CAUSE_LIMITE_USAGE]: "Limite d'usage du fournisseur",
+  [CAUSE_HOTE_NON_DEMARRE]: "L'hôte du run n'a pas démarré",
+  [CAUSE_ANNULATION]: "Interrompu",
+};
+
+/**
+ * Le libellé d'une cause d'arrêt — `null` quand il n'y a rien à dire.
+ *
+ * `null` couvre **deux** cas qu'on ne cherche pas à distinguer : le backend n'a
+ * pas su classer l'échec (chaîne vide), ou il a émis un code que ce front ne
+ * connaît pas encore. Dans les deux cas la bonne conduite est la même — ne rien
+ * afficher plutôt qu'un code brut, le `detail` de l'issue restant lisible au fil
+ * d'activité. Rendre `cause` tel quel afficherait « hote_non_demarre » à
+ * quelqu'un le jour où le backend prendrait de l'avance sur le front.
+ */
+export function libelleCause(cause: string | undefined): string | null {
+  return cause ? (LIBELLES_CAUSE[cause] ?? null) : null;
 }
