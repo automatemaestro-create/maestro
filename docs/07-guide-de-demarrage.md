@@ -456,7 +456,13 @@ défaut — il ne doit jamais régresser pendant ce chantier. `--durable` n'est 
 combinable** avec `--queue` (frontières d'exécution exclusives), ni avec `--messagerie` /
 `--validation-ui` / `--notifier` / `--parallele` (en durable, dépendances et handoffs
 passent par le workflow et la validation humaine par la console) : ces transports Redis et
-le plafond global viendront dans un lot ultérieur. Le journal des événements n'a **pas de
+le plafond global viendront dans un lot ultérieur. ⚠ **Ces refus ne sont pas seulement un
+lot en retard** : le mode durable et l'arrêt humain sur brief — défaut de la Control Tower —
+sont mutuellement exclusifs par construction, et lever le verrou suppose de réécrire les
+attentes humaines en signaux de workflow. C'est instruit et chiffré par
+[doc 28](./28-decision-frontiere-execution-run.md) (#350), qui **écarte Temporal pour
+l'instant** au profit d'un hôte de run détaché et nomme ce qui rouvrirait la question. Le
+journal des événements n'a **pas de
 rétention bornée** (la liste croît avec l'historique, pour préserver l'historique complet)
 et la bascule vers PostgreSQL (entités RUN/TASK, [doc 03](./03-modele-de-donnees.md)) avec
 sa politique de rétention viendra ensuite substituer un stockage requêtable au rejeu
