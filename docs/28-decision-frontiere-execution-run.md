@@ -280,6 +280,15 @@ Corollaire assumé, à écrire là où le corollaire d'aujourd'hui est écrit (d
 `battement.py`) : **un run survivra à son API, pas à sa machine.** Le sommeil de la machine reste
 traité par #348 (on le voit) et #349 (on le rattrape sur le brief), pas par la frontière.
 
+> ⚠ **Ce corollaire était trop large d'un cas, et il a été corrigé le 2026-08-24** (revue #470,
+> [docs/29 §5](./29-decision-run-objet-de-premier-plan.md)). Il énumérait trois gestes — « fermer la
+> fenêtre, relancer l'API, `--stop` » — comme s'ils étaient de même nature. Les deux premiers sont
+> des **accidents**, et les protéger est ce que ce chantier a acheté ; `start.sh --stop` est une
+> **décision**, et un run qui lui survit tourne sans écran pour le suivre ni bouton pour l'arrêter.
+> Le corollaire à jour se lit : **un run survit à l'accident, pas à l'extinction — ni à sa
+> machine.** Rien du verdict ci-dessus n'est défait ; c'est sa formulation qui l'était. Voir le
+> **§11**, plus bas.
+
 ## 6. Pourquoi les autres sont écartées — récapitulatif
 
 - **O1, statu quo** : le geste le plus banal de la journée tue un run en vol, et le supprimer ne
@@ -339,6 +348,13 @@ O4 est derrière une porte. Les conditions qui la franchissent, nommées d'avanc
    d'exécution durable (cadrage #350). »
 
 Aucune de ces quatre conditions n'est remplie au 2026-08-23.
+
+> ⚠ **Il y en a une cinquième depuis le 2026-08-24, et elle va dans l'autre sens** (revue #470,
+> [docs/29 §5](./29-decision-run-objet-de-premier-plan.md)). Les quatre ci-dessus rouvrent toutes la
+> question vers **plus** de durabilité — elles mènent à O4. La cinquième demande **moins** de
+> survie, sur un geste précis : **l'arrêt volontaire doit solder les runs**. Elle n'était pas
+> prévue ici parce que la section ne regardait qu'une direction. Elle ne franchit aucune porte
+> d'O4 et ne rapproche d'aucune ; elle est traitée au **§11** et par #486.
 
 ## 9. Le chantier — découpage en lots
 
@@ -455,6 +471,11 @@ change vraiment est le sens du verdict `orphelin` :
 | Un hôte mort **sous les yeux de l'API** | reste `en_cours` jusqu'au seuil d'orphelinat, puis pour toujours | ramassé et soldé `echec` **avec sa cause** |
 | Machine endormie, process tué net, Redis muet au dernier instant | `orphelin` | `orphelin` — et c'est exactement ce que le verdict doit signaler |
 
+> ⚠ **La première ligne mélange deux gestes que le 2026-08-24 a séparés.** « Le run continue » reste
+> vrai des deux **accidents** — fenêtre fermée, API relancée — et cesse de l'être de
+> `start.sh --stop`, qui soldera ses runs (#486, §11). Le tableau est laissé tel qu'il a été mesuré
+> au 2026-08-24 ; c'est la ligne qui a vieilli d'un cas, pas la mesure.
+
 Deux mesures relevées au passage, sur le poste de référence (Windows, 2026-08-24) : un hôte détaché
 s'arme en **1,3 s** quand Redis répond et **5,5 s** quand il ne répond pas (le premier battement est
 synchrone et une connexion refusée coûte ses quatre secondes de tentatives), d'où un plafond
@@ -480,3 +501,49 @@ validation, transporter le `projet_id`, publier son issue en partant — tout ce
 un contrat que ni les routes, ni les événements, ni la projection ne connaissent autrement que par
 son nom. Un hôte Temporal s'y brancherait sans réécrire l'appelant ; c'est la seule chose qu'il
 fallait acheter d'avance, et elle est acquise.
+
+---
+
+## 11. La cinquième porte — l'arrêt volontaire (2026-08-24)
+
+> Écrit au ticket **#470**, le jour même de la livraison du chantier. Cette section ne révise ni le
+> verdict du §5, ni aucune des quatre options : l'hôte détaché reste retenu et rien de ce qui a été
+> construit n'est repris. Elle corrige une **formulation** — celle du corollaire — qui couvrait un
+> cas de trop, et ajoute au §8 une condition qu'il ne pouvait pas voir parce qu'il ne regardait
+> qu'une direction. L'arbitrage complet est en
+> [docs/29 §5](./29-decision-run-objet-de-premier-plan.md).
+
+**Les trois gestes du §5 ne sont pas de même nature.** « Fermer la fenêtre, relancer l'API,
+`--stop` » : les deux premiers sont des **accidents** — personne n'a demandé d'arrêter le run, et
+les rendre inoffensifs est exactement ce que ce chantier a acheté. Le troisième est une
+**décision**. Les traiter ensemble était juste tant que la question posée était « qui tue un run
+qu'on voulait garder ? » ; elle ne l'est plus dès qu'on pose l'autre : « que devient un run qu'on
+voulait arrêter ? »
+
+**Ce qu'un run survivant à l'extinction coûte réellement.** Control Tower éteinte, il continue de
+consommer du quota et d'écrire dans le projet de l'utilisateur — sans écran pour le suivre, sans
+bouton pour l'arrêter, et sans rien qui signale son existence. Ce n'est pas la robustesse que le §5
+défendait, c'est son ombre portée : la survie devient une fuite dès qu'elle dépasse l'intention.
+
+| Geste | Nature | Ce que devient le run |
+| --- | --- | --- |
+| Fenêtre du navigateur fermée (chien de garde #149) | accident | **continue** — inchangé, et c'est la propriété qu'on ne défait pas |
+| API relancée après une modification, crash | accident | **continue** — inchangé |
+| `start.sh --stop`, quitter l'enveloppe le jour où elle existe | **décision** | **soldé**, et reprenable au redémarrage (#439) |
+| Machine endormie | ni l'un ni l'autre | `orphelin` — inchangé, traité par #348 et #349 |
+
+**La distinction vit du côté qui sait.** `start.sh --stop` sait qu'il arrête exprès ; un `SIGTERM`
+reçu par l'API ne le sait pas — il peut venir d'un arrêt propre comme d'un gestionnaire de tâches.
+La déduire d'un signal ferait exactement la confusion que cette section défait, à l'étage en
+dessous. Elle descend donc depuis l'appelant, comme une cause.
+
+**Ce que ça ne coûte pas.** Aucun des six lots n'est repris. L'extinction passe par `_eteindre`
+(`hote_detache.py`), qui vise **déjà** le groupe de process et non l'hôte seul — la leçon de #291,
+*tuer un parent avant ses enfants fabrique l'orphelin qu'on veut éviter*, et un hôte tenait cinq
+process au premier essai du lot 3. Ce qui manque est la cause d'arrêt et la reprise au redémarrage.
+Le travail est **ajouté**, pas repayé : c'est #486.
+
+**Et cette porte ne mène pas à O4.** Les quatre du §8 sont des conditions de *plus* de durabilité ;
+celle-ci demande moins de survie sur un geste précis, et n'en rapproche aucune. Le jour où
+quelqu'un voudra délibérément partir en laissant tourner, la réponse sera une **option** sur un
+geste qui solde par défaut — jamais un défaut qui laisse tourner en silence.
