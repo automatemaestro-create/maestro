@@ -63,9 +63,16 @@ OBJECTIF_DEFAUT = (
     "pas d'authentification, pas d'outillage au-delà du strict nécessaire."
 )
 
-#: Garde-fous par défaut de la démo (#9) : plafonnée et bornée d'office — la démo
-#: illustre les bonnes pratiques du POC (docs/07 §4), elle ne tourne jamais « sans filet ».
-PLAFOND_COUT_DEFAUT_USD = 5.0
+#: Garde-fous par défaut de la démo (#9). Le **plafond de dépense n'en fait plus
+#: partie** (#494) : c'était le seul plafond de budget que le dépôt appliquait sans
+#: qu'on le demande — partout ailleurs (`Guardrails`, `engine/cli.py`,
+#: `POST /api/executions`) il vaut déjà `None` —, et une démo coupée à 5 $ en plein
+#: travail ne montre pas les bonnes pratiques, elle montre une démo tronquée.
+#: `--plafond-cout N` en pose toujours un.
+#:
+#: Le **time-out par tâche reste** : c'est un garde-fou d'une autre nature — il borne
+#: une tâche qui ne rend pas la main, pas un travail qui avance.
+PLAFOND_COUT_DEFAUT_USD: float | None = None
 TIMEOUT_DEFAUT_S = 600.0
 
 
@@ -239,7 +246,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=float,
         default=PLAFOND_COUT_DEFAUT_USD,
         metavar="USD",
-        help=f"plafond de dépense de l'exécution en USD (défaut : {PLAFOND_COUT_DEFAUT_USD:g})",
+        help="plafond de dépense de l'exécution en USD (défaut : aucun plafond)",
     )
     parser.add_argument(
         "--plafond-tokens",

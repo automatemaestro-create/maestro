@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
-from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* DevOps : son playbook « du code » (#295), le document
 #: `playbooks_defaut/devops.md` — régime sénior commun compris, et la particularité du
@@ -58,12 +57,4 @@ DEVOPS_PROFILE = RoleProfile(
         f"modification d'infrastructure), {CONSIGNE_RENDU_COMPTE}"
     ),
     workspace_prefix="maestro-devops-",
-    # Borne conservatrice (#239) : pipelines et runbooks se valident à blanc, sans
-    # la boucle rendre/regarder/reprendre du design. Un plafond atteint ici a
-    # signalé un emballement réel (run D de la démo v1, docs/13) — pas une borne trop courte.
-    # Revérifié à #296 : la méthode de spécialiste n'ajoute pas d'étape, elle **nomme**
-    # ce qui était déjà attendu (cadrage, validation à blanc, runbook, retour arrière).
-    # Relever le plafond affaiblirait le seul garde-fou anti-emballement qui ait déjà
-    # servi, pour un besoin que rien ne mesure — conservé.
-    plafond_tours=PLAFOND_TOURS_DEFAUT,
 )

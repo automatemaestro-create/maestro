@@ -218,7 +218,7 @@ class ClaudeProvider(ModelProvider):
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
-        plafond_tours: int = PLAFOND_TOURS_DEFAUT,
+        plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
         """Lance une exécution *agentique outillée* de l'Agent SDK dans `workspace`.
@@ -229,11 +229,17 @@ class ClaudeProvider(ModelProvider):
         confirmer), l'isolation reposant sur le répertoire dédié et sur la restriction
         de `tools`.
 
-        `plafond_tours` (#239) alimente le `max_turns` du SDK, qui borne la boucle
-        (garde-fou anti-emballement) : la valeur vient de l'appelant — le profil de
-        l'agent — et non plus d'une constante de ce fournisseur, qui imposait la même
-        borne à des tours au coût sans commune mesure. Elle est reportée telle quelle
-        dans le message de `TurnLimitReached`, pour qu'un échec nomme sa borne.
+        `plafond_tours` (#239) alimente le `max_turns` du SDK, qui borne la boucle :
+        la valeur vient de l'appelant — le profil de l'agent — et non d'une constante
+        de ce fournisseur, qui imposait la même borne à des tours au coût sans commune
+        mesure. Elle est reportée telle quelle dans le message de `TurnLimitReached`,
+        pour qu'un échec nomme sa borne.
+
+        À `None` — le **défaut** depuis #494 — le SDK ne pose aucune borne : son
+        transport ne passe `--max-turns` au CLI que si la valeur est renseignée
+        (`_internal/transport/subprocess_cli.py`), donc l'absence de plafond se dit
+        en ne disant rien, sans cas particulier à écrire ici. La boucle s'arrête
+        alors quand l'agent a fini, quand il échoue, ou quand on l'annule.
 
         Les serveurs `mcp_serveurs` (#104, déjà résolus) sont montés sur la
         session via `mcp_servers` de l'Agent SDK ; `strict_mcp_config` verrouille
@@ -357,10 +363,15 @@ def _hook_permissions(
 def _erreur_plafond(plafond_tours: int | None, detail: object) -> TurnLimitReached:
     """Compose l'erreur typée du plafond de tours en **nommant la borne appliquée** (#239).
 
-    Le plafond étant désormais réglé par agent, un « plafond atteint » qui ne dit
-    pas *lequel* n'apprend rien : le message porte donc le nombre de tours
-    effectivement passé au SDK. Reste le chemin texte (`generate`), qui ne fixe
-    aucun `max_turns` — la borne y est celle du SDK, nommée comme telle.
+    Le plafond étant réglé par agent, un « plafond atteint » qui ne dit pas
+    *lequel* n'apprend rien : le message porte donc le nombre de tours
+    effectivement passé au SDK. Sans borne posée — le chemin texte (`generate`),
+    qui n'en fixe jamais, et depuis #494 le **cas courant** des exécutions
+    outillées — il n'y a aucun chiffre à citer : le message nomme alors le signal
+    reçu, `max_turns`, plutôt que d'inventer une valeur que nous n'avons pas posée.
+    C'est un chemin qu'on ne s'attend plus guère à emprunter (rien ne borne la
+    boucle quand `--max-turns` n'est pas passé), et c'est bien pourquoi il doit
+    rester lisible : s'il se produit, la borne vient d'ailleurs que d'ici.
     """
     borne = f"{plafond_tours} tours" if plafond_tours is not None else "max_turns"
     return TurnLimitReached(f"plafond de tours atteint ({borne}) : {detail}")
@@ -396,8 +407,9 @@ async def _collect_response(
     Le **plafond de tours** (`max_turns`) est mué en `TurnLimitReached` (#91) :
     c'est le contrat de la couche d'abstraction — le moteur reconnaît ainsi un
     garde-fou déterministe (jamais relancé) sans lire d'erreur propre au SDK.
-    `plafond_tours` est la borne posée par l'appelant (None sur le chemin texte,
-    qui n'en fixe aucune) : elle nomme la limite dans le message (#239).
+    `plafond_tours` est la borne posée par l'appelant — `None` quand il n'en pose
+    pas, ce qui est le défaut depuis #494 comme ce l'a toujours été sur le chemin
+    texte : elle nomme la limite dans le message (#239).
 
     `stderr` (#346) est le collecteur branché sur les options : tout échec repart
     avec ce que le CLI a écrit, faute de quoi l'exception du SDK renvoie à un flux

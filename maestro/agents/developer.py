@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
-from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* Développeur : son playbook « du code » (#295), le
 #: document `playbooks_defaut/developpeur.md` — régime sénior commun compris. C'est
@@ -52,12 +51,4 @@ DEVELOPER_PROFILE = RoleProfile(
         f"l'utiliser, {CONSIGNE_RENDU_COMPTE}"
     ),
     workspace_prefix="maestro-dev-",
-    # Borne conservatrice (#239) : ses tours sont parmi les plus légers (~10 000
-    # tokens le tour, mesuré sur `validation-depenses`, 5 tours) — 40 laisse une
-    # marge large sans qu'un emballement coûte cher.
-    # Revérifié à #296 : la méthode de spécialiste ajoute un cycle « écrire les tests →
-    # les lancer → corriger », soit une poignée de tours sur une tâche de cette taille
-    # (ordre de grandeur : 5 mesurés → une quinzaine). La marge reste d'un facteur 2 et
-    # plus — plafond conservé, sans relèvement à l'aveugle.
-    plafond_tours=PLAFOND_TOURS_DEFAUT,
 )

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
-from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* QA : son playbook « du code » (#295), le document
 #: `playbooks_defaut/qa.md` — régime sénior commun compris, et la particularité du rôle :
@@ -63,12 +62,4 @@ QA_PROFILE = RoleProfile(
         f"renvoyé au rôle producteur, {CONSIGNE_RENDU_COMPTE}"
     ),
     workspace_prefix="maestro-qa-",
-    # Borne conservatrice (#239) : rôle de lecture et d'analyse (relire les
-    # livrables amont, exécuter des tests, rendre un verdict) — c'est lui que le
-    # relevé global du plafond protégeait le moins bien, il garde le défaut.
-    # Revérifié à #297 : ce que la méthode de spécialiste ajoute — analyse de risque
-    # en amont, hiérarchisation des défauts en aval — se joue dans le raisonnement,
-    # pas en appels d'outil ; le cycle coûteux (écrire les tests, les lancer, lire les
-    # résultats) était déjà là. Plafond conservé, sans relèvement à l'aveugle.
-    plafond_tours=PLAFOND_TOURS_DEFAUT,
 )

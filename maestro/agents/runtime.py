@@ -47,13 +47,16 @@ class RoleProfile:
     `consigne_finale`) encadrent la description de la tâche dans le message confié
     à l'agent ; `prompt_systeme` porte l'identité et les garde-fous du rôle.
 
-    `plafond_tours` (#239) est le garde-fou anti-boucle du rôle (docs/02 §7),
-    exprimé en tours de boucle agentique. Il vit **ici** et non dans le
-    fournisseur parce qu'un tour n'a pas de coût comparable d'un rôle à l'autre —
-    ~10 000 tokens pour une tâche de validation, ~70 000 pour une tâche de
-    conception : une borne unique protège mal les uns en bridant les autres. Le
-    défaut est celui de la couche fournisseur ; chaque profil du dépôt le déclare
-    tout de même, pour que sa valeur soit un choix lisible plutôt qu'un héritage.
+    `plafond_tours` (#239) est le garde-fou anti-boucle du rôle, exprimé en tours
+    de boucle agentique. Il vit **ici** et non dans le fournisseur parce qu'un tour
+    n'a pas de coût comparable d'un rôle à l'autre — ~10 000 tokens pour une tâche
+    de validation, ~70 000 pour une tâche de conception : une borne unique protège
+    mal les uns en bridant les autres.
+
+    Il vaut `None` par défaut et **aucun profil du dépôt n'en déclare** (#494) : un
+    agent n'est plus borné en tours, la boucle s'arrêtant quand il a fini, quand il
+    échoue ou quand on l'annule. Le champ reste pour qu'une borne puisse être posée
+    — c'est le retrait du *défaut*, pas du réglage.
     """
 
     nom: str
@@ -65,7 +68,7 @@ class RoleProfile:
     consignes: str
     consigne_finale: str
     workspace_prefix: str
-    plafond_tours: int = PLAFOND_TOURS_DEFAUT
+    plafond_tours: int | None = PLAFOND_TOURS_DEFAUT
 
 
 @dataclass(frozen=True)
@@ -138,7 +141,8 @@ class AgentRuntime:
         self._tools = tuple(tools) if tools is not None else profile.outils
         self._system_prompt = system_prompt or profile.prompt_systeme
         # Surcharge du plafond du profil, comme `model`/`tools` : le câblage peut
-        # serrer ou desserrer la borne d'un rôle sans toucher à son profil.
+        # poser une borne sur un rôle qui n'en a pas — plus aucun n'en a (#494) —
+        # sans toucher à son profil. `None` des deux côtés = pas de borne.
         self._plafond_tours = plafond_tours if plafond_tours is not None else profile.plafond_tours
 
     @property

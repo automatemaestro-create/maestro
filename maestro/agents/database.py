@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from maestro.agents.playbook_du_code import CONSIGNE_RENDU_COMPTE, playbook_du_code
 from maestro.agents.runtime import DEFAULT_TOOLS, RoleProfile
-from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Prompt système du *runtime* BDD : son playbook « du code » (#295), le document
 #: `playbooks_defaut/bdd.md` — régime sénior commun compris, et le garde-fou
@@ -60,11 +59,4 @@ DATABASE_PROFILE = RoleProfile(
         f"{CONSIGNE_RENDU_COMPTE}"
     ),
     workspace_prefix="maestro-bdd-",
-    # Borne conservatrice (#239) : schémas et migrations tiennent en une douzaine
-    # de tours à ~13 000 tokens (mesuré sur `schema-depenses`) — le défaut suffit.
-    # Revérifié à #296 : l'épreuve sur base jetable est plus fournie (migrations *puis*
-    # retour arrière, insertions qui doivent être refusées, plan d'exécution), mais
-    # chaque vérification est un tour court. On reste autour d'une vingtaine, soit la
-    # moitié du plafond — conservé.
-    plafond_tours=PLAFOND_TOURS_DEFAUT,
 )

@@ -14,6 +14,7 @@ Plus : capacité optionnelle refusée proprement, validation d'entrée, sériali
 """
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -320,17 +321,26 @@ def test_le_runtime_accepte_des_surcharges_ponctuelles():
     assert call["tools"] == ("Read", "Write")
 
 
-# --- ④ Plafond de tours réglable par agent (#239) --------------------------------------
+# --- ④ Plafond de tours réglable par agent (#239), sans défaut (#494) ------------------
 
 
 def test_le_runtime_transmet_le_plafond_du_profil():
-    # C'est le profil qui borne la boucle, pas le fournisseur : deux rôles aux
-    # tours de coûts très différents n'héritent plus de la même limite.
-    for profil, attendu in ((DEVELOPER_PROFILE, PLAFOND_TOURS_DEFAUT), (DESIGNER_PROFILE, 120)):
+    # C'est le profil qui borne la boucle, pas le fournisseur — et il transmet ce
+    # qu'il porte, y compris « rien » : plus aucun profil du dépôt ne déclare de
+    # borne (#494), donc ce qui arrive au fournisseur est `None`.
+    for profil in (DEVELOPER_PROFILE, DESIGNER_PROFILE):
         provider = WritingProvider(files={"a.txt": "x"})
         asyncio.run(AgentRuntime(provider, profil).execute("Tâche"))
         (call,) = provider.calls
-        assert call["plafond_tours"] == attendu
+        assert call["plafond_tours"] is None
+
+    # Et il transmet tout aussi fidèlement une borne posée sur un profil : ce qui
+    # tombe est le défaut, pas le réglage.
+    borne = replace(DEVELOPER_PROFILE, plafond_tours=40)
+    provider = WritingProvider(files={"a.txt": "x"})
+    asyncio.run(AgentRuntime(provider, borne).execute("Tâche"))
+    (call,) = provider.calls
+    assert call["plafond_tours"] == 40
 
 
 def test_le_plafond_est_surchargeable_comme_le_modele():
@@ -342,19 +352,20 @@ def test_le_plafond_est_surchargeable_comme_le_modele():
     assert call["plafond_tours"] == 12
 
 
-def test_chaque_profil_outille_declare_un_plafond_borne():
-    # Déclaration explicite (#239) : la valeur d'un rôle est un choix lisible, pas
-    # un héritage silencieux — et aucune n'est absente, nulle ni négative.
-    assert all(isinstance(p.plafond_tours, int) and p.plafond_tours > 0 for p in TOOLED_PROFILES)
-    # Marge accrue pour la conception, défaut conservateur pour les autres.
-    assert DESIGNER_PROFILE.plafond_tours > PLAFOND_TOURS_DEFAUT
-    autres = [p for p in TOOLED_PROFILES if p is not DESIGNER_PROFILE]
-    assert all(p.plafond_tours == PLAFOND_TOURS_DEFAUT for p in autres)
+def test_aucun_profil_outille_ne_declare_de_plafond():
+    # #494 renverse #239, qui exigeait ici de chaque rôle une borne explicite et non
+    # nulle. Aucun n'en porte plus, Designer et son 120 compris : un plafond atteint
+    # est un échec non transitoire (ENF-06), donc du travail perdu et non ralenti.
+    assert all(p.plafond_tours is None for p in TOOLED_PROFILES), {
+        p.nom: p.plafond_tours for p in TOOLED_PROFILES
+    }
+    assert DESIGNER_PROFILE.plafond_tours is None
 
 
-def test_un_profil_qui_ne_declare_rien_reste_borne_par_le_defaut():
-    # Le champ a un défaut : un profil tiers (agent personnalisé, docs/04 §4) qui
-    # l'ignore est borné quand même — jamais illimité.
+def test_un_profil_qui_ne_declare_rien_n_est_pas_borne():
+    # Le champ n'a plus de défaut (#494) : un profil tiers (agent personnalisé,
+    # docs/04 §4) qui l'ignore n'est **pas** borné. C'est l'inverse exact de ce que
+    # #239 garantissait ici, et c'est délibéré — qui veut une borne la déclare.
     redacteur = RoleProfile(
         nom="redacteur",
         role="Rédacteur technique",
@@ -366,7 +377,8 @@ def test_un_profil_qui_ne_declare_rien_reste_borne_par_le_defaut():
         consigne_finale="Résume ce que tu as produit.",
         workspace_prefix="maestro-redacteur-",
     )
-    assert redacteur.plafond_tours == PLAFOND_TOURS_DEFAUT
+    assert redacteur.plafond_tours is None
+    assert PLAFOND_TOURS_DEFAUT is None
 
 
 # --- Garde-fous : entrée, capacité, sérialisation -------------------------------------

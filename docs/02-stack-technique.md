@@ -115,7 +115,7 @@ Le parallélisme et la fiabilité reposent sur une **file de tâches**.
 - **Micro-VM (E2B / Firecracker / gVisor)** : isolation renforcée si les agents exécutent du code arbitraire à grande échelle.
 - **Branche Git par tâche** : évite les collisions sur les fichiers entre agents parallèles.
 - **Gestion des secrets** : coffre (ex. variables chiffrées, Vault) ; jamais de secret dans les prompts ni les logs.
-- **Plafonds** : budget par tâche/jour, time-outs, liste d'actions interdites, **plafond de tours par agent** (#239 — porté par le profil du rôle, cf. [docs/04 §2](./04-specifications-agents.md) ; un tour de conception pèse ~7× un tour de validation, d'où une borne réglée par rôle plutôt qu'une constante commune).
+- **Plafonds** : budget par tâche/jour, time-outs, liste d'actions interdites, **plafond de tours par agent** (#239 — porté par le profil du rôle, cf. [docs/04 §2](./04-specifications-agents.md) ; un tour de conception pèse ~7× un tour de validation, d'où une borne réglée par rôle plutôt qu'une constante commune). ⚠ **Aucun de ces plafonds ne s'applique par défaut** (#494) : ils se posent, ils ne s'imposent pas. Un plafond de tours atteint est un échec **non transitoire** — jamais relancé (ENF-06) —, donc une borne prudente ne ralentit pas un run qui s'emballe, elle tue un run qui allait aboutir ; c'est ce qu'ont établi #286 (budget) et #326 (time-out) sur les sessions autonomes, et #494 l'étend aux agents. Ce qui protège encore est ce qu'on choisit d'armer : `plafond_tours` sur un profil, `plafond_cout_usd`/`plafond_tokens` au lancement.
 
 ---
 

@@ -152,8 +152,9 @@ main, on comprend, on règle.
 - Mener une tâche de bout en bout — analyse, action, résultat — sans pilotage pas à pas.
 - Utiliser des outils : lecture/écriture de fichiers, exécution de code, appels d'API via MCP.
 - Travailler en parallèle, chacun dans un **contexte isolé** et un bac à sable.
-- Passer le relais à un pair, poser une question, publier un résultat — tracé, et borné par un
-  plafond de tours ([docs/04 §5](./04-specifications-agents.md)).
+- Passer le relais à un pair, poser une question, publier un résultat — tracé, et bornable par un
+  plafond de tours ([docs/04 §2](./04-specifications-agents.md)) : réglable par agent, mais **sans
+  défaut** depuis #494 — rien ne borne un agent qu'on n'a pas choisi de borner.
 - **N'écrire jamais dans la racine du projet** : branche/worktree si le projet est versionné, copie
   sinon.
 
