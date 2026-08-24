@@ -44,8 +44,16 @@ est-il en vol ? ». C'est le seam sur lequel un hôte **détaché** se branchera
 (#443) sans réécrire ni les routes, ni les événements, ni la projection — et le
 service, lui, ne tient plus aucune tâche : il demande à son hôte ce qu'il porte.
 
-Cet hôte détaché existe depuis #443 (`maestro.controltower.hote_detache`), et le
-service n'en sait toujours rien d'autre qu'une chose : **un hôte peut rater son
+Cet hôte détaché existe depuis #443 (`maestro.controltower.hote_detache`), et
+**l'annulation le rejoint depuis #444** — sans que ce module ait une ligne de plus
+à ce sujet, ce qui est la propriété qu'on cherchait. L'issue que `_solder` consigne
+part sur le bus comme le reste ; le process détaché la guette, y reconnaît la fin
+de *son* run et annule sa propre tâche `asyncio`. Deux conséquences pour qui relit
+ce fichier : la publication de cette issue n'est plus seulement une trace, c'est
+**l'ordre lui-même** (cf. `_solder`), et l'ordre des deux gestes — consigner, puis
+demander l'interruption — n'est plus seulement juste, il est *nécessaire*.
+
+Le service n'en sait toujours rien d'autre qu'une chose : **un hôte peut rater son
 départ**. Créer une tâche de fond n'échoue pas ; créer un process, si. Ce qu'il
 en fait est écrit une fois, dans `lancer` — le run est soldé `echec` avec sa
 cause, parce qu'à cet instant plus rien ne viendra de l'hôte et que l'appelant
@@ -622,6 +630,12 @@ class ServiceExecutions:
         d'interrompre le run et l'on attend son extinction au plus
         `DELAI_ANNULATION_S` — un run qui avale son annulation ne suspend pas la
         requête. Rend None si le run est inconnu de la projection.
+
+        Cet ordre vaut pour **tous** les hôtes, y compris celui qui n'est pas dans
+        ce process (#444) : consigner l'issue, c'est la publier, et c'est ce que le
+        run détaché écoute pour s'annuler lui-même. La borne d'attente ne bouge pas
+        pour autant — un hôte qui ne répond plus ne fait pas patienter la requête
+        au-delà de `DELAI_ANNULATION_S`, et le run est soldé de toute façon.
         """
         if self.resume(run_id) is None:
             return None
@@ -769,6 +783,23 @@ class ServiceExecutions:
            deux, un lecteur verrait un run encore en cours et sans battement,
            c'est-à-dire un orphelin qui n'en est pas un.
 
+        Depuis #444, le premier de ces trois gestes en fait **deux** : consigner
+        l'issue, c'est la publier sur le bus, et c'est par là que l'annulation
+        traverse la frontière d'exécution. Un hôte détaché
+        (`maestro.controltower.hote_detache`) guette cette issue, y reconnaît la fin
+        de son run et annule sa propre tâche `asyncio` — `Task.cancel` à un aller
+        Redis près. Rien ne change ici, et c'est bien le sujet : la bascule vit dans
+        **l'hôte**, seul à savoir *où* le run tourne, pendant que ce service reste
+        celui qui ne le sait pas.
+
+        Deux corollaires à ne pas défaire. L'ordre 1 → 2 devient **nécessaire** et
+        non plus seulement juste : demander l'interruption avant de consigner
+        reviendrait à laisser l'hôte détaché attendre un ordre qui n'est pas encore
+        parti. Et cette issue est le **seul** message : aucun événement d'annulation
+        ne double `execution.statut`, parce que deux façons de dire un même fait
+        finissent par se séparer — l'une émise sans l'autre — et qu'on aurait alors
+        un run soldé qui travaille encore.
+
         Le `_demarrer()` initial n'est pas une précaution de style. `_pousser`
         **abandonne** l'événement tant que le câblage n'est pas armé, et il ne l'est
         qu'au premier lancement : sur une API qui vient de redémarrer et n'a encore
@@ -776,7 +807,10 @@ class ServiceExecutions:
         tombé —, l'issue serait appliquée à la projection en mémoire sans jamais
         atteindre le bus, donc ni le journal durable (#97) ni le prochain rejeu. Le
         run réapparaîtrait `en_cours` au redémarrage suivant, c'est-à-dire la panne
-        même que #347 traite.
+        même que #347 traite. Depuis #444 il porte une seconde charge, et c'est la
+        même : sans câblage armé, l'ordre d'annulation n'atteindrait pas davantage
+        le process détaché que le journal — un run relancé depuis une API fraîche
+        continuerait de travailler sous son ancien identifiant.
         """
         self._demarrer()
         self._consigne(run_id, EXECUTION_ANNULEE, "", detail)

@@ -39,6 +39,35 @@ tiré, sans quoi ses étapes rejoindraient un autre run — et **bat son cœur**
 canal de toujours, et c'est ce qui fait qu'une API redémarrée le retrouve
 `vivant` sans rien avoir gardé en mémoire.
 
+**L'annulation traverse la frontière par le bus** (#444). Le process n'est pas
+seulement un émetteur : il **écoute**. Il s'abonne au canal d'événements avant de
+se déclarer armé, guette l'issue `annulee` de **son** run — celle que
+`ServiceExecutions._solder` consigne, donc publie, *avant* de demander
+l'interruption, parce qu'une annulation est une décision humaine et non le verdict
+de l'exécution — et annule alors sa propre tâche `asyncio`. `Task.cancel` reste
+donc le mécanisme réel, à un aller Redis près : c'est la propriété que le POC
+avait protégée en choisissant la tâche de fond (#185), et que docs/28 §4.3 refuse
+de repayer.
+
+Trois conséquences qu'il vaut mieux lire ici que découvrir :
+
+- **l'ordre ne dépend d'aucun process.** Une API redémarrée ne tient plus le
+  `Popen` du run, mais elle consigne toujours son issue sur le même Redis : le
+  process l'entend et s'arrête. C'est l'autre moitié du trou que ce module
+  laissait ouvert, et le `False` que rend `annuler` ne veut plus dire « rien ne
+  l'interrompra » ;
+- **l'issue *est* l'ordre** — aucun second événement n'est publié, et ce n'est pas
+  une économie de canal. Deux façons de dire un même fait finissent par se
+  séparer, l'une émise sans l'autre, et l'on aurait alors un run soldé qui
+  travaille encore ; là où « ce run est soldé annulé » a pour conséquence
+  **nécessaire** « ce run doit cesser de travailler ». C'est la raison inverse de
+  celle qui donne au brief son canal propre (#320) : sa décision, elle, dit autre
+  chose que l'état du run ;
+- **le repli franc reste**, et c'est lui qui rend la course inoffensive. Entre le
+  témoin posé et l'abonnement Redis effectif, un ordre peut passer sans être vu ;
+  le lanceur attend l'extinction, puis éteint le groupe de process. Un ordre
+  manqué coûte donc une mort brutale, jamais un run qui continue.
+
 **Deux propriétés sont explicitement hors de ce lot**, et il vaut mieux les lire
 ici que les découvrir :
 
@@ -68,12 +97,22 @@ import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from maestro.controltower.events import (
+    EVENEMENT_EXECUTION_STATUT,
+    EventBus,
+    RedisEventBus,
+)
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
+from maestro.controltower.state import EXECUTION_ANNULEE
 from maestro.engine.brief import MODE_BRIEF_HUMAIN
 from maestro.references import ReferenceTicket
+
+if TYPE_CHECKING:
+    from maestro.engine.loop import RunReport
 
 #: Le module que le process fils exécute (`python -m …`). Un **module** et non un
 #: script installé (`[project.scripts]`) : `sys.executable -m` désigne le même
@@ -127,7 +166,36 @@ PAS_DEMARRAGE_S = 0.05
 LIGNES_CAUSE = 5
 LONGUEUR_CAUSE = 800
 
+#: Temps laissé à la tâche du run pour **dérouler** son annulation, une fois
+#: l'ordre reçu (#444). Au-delà, elle est abandonnée : même parti pris que
+#: `maestro.engine.runner` et que `HoteRunEnProcess.annuler` — une réalisation qui
+#: avale son annulation ne doit suspendre personne. Ce qui traîne encore sera de
+#: toute façon repris par la fermeture bornée de `run_borne`, puis, s'il le faut,
+#: par le repli franc du lanceur : trois filets pour la même obstination.
+DELAI_EXTINCTION_S = 5.0
+
+#: Code de sortie d'un run **annulé** — 128 + SIGINT, la convention shell de
+#: « interrompu ». Ni 0 ni 1, et c'est le point : le dépôt refuse ailleurs de
+#: confondre une annulation avec un échec (`_solder` consigne « annulee » et non
+#: « echec » précisément parce que rien n'a raté), et un journal d'hôte qui rendrait
+#: 1 ferait chercher une panne là où quelqu'un a simplement dit stop.
+CODE_ANNULE = 130
+
 _USAGE = f"Usage : python -m {MODULE_HOTE} <atelier du run>"
+
+
+class RunAnnule(RuntimeError):
+    """Le run a été interrompu depuis la Control Tower — ni panne, ni échec (#444).
+
+    Levée par `_derouler` quand l'ordre d'annulation a été vu sur le bus et que la
+    tâche du run a été annulée. C'est une exception et non un statut rendu parce
+    qu'elle doit **court-circuiter** le chemin nominal : il n'y a pas de rapport à
+    imprimer, pas de synthèse à rendre, et le seul geste qui reste est de sortir.
+
+    Son issue, elle, n'est pas ici : elle a été consignée par l'API *avant* que
+    l'ordre ne parte (`ServiceExecutions._solder`), et la republier ferait dire deux
+    fois un fait déjà acquis.
+    """
 
 
 # --------------------------------------------------------------------- transport
@@ -284,32 +352,42 @@ class HoteRunDetache(HoteRun):
         await self._attendre_demarrage(ordre.run_id, process, atelier, journal)
 
     async def annuler(self, run_id: str, *, delai_s: float) -> bool:
-        """Éteint le process du run s'il est porté **ici** — True s'il l'était.
+        """Laisse le run s'éteindre de lui-même, puis l'achève s'il s'obstine (#444).
 
-        L'annulation locale, celle qui fonctionne tant que l'API qui a lancé le
-        run est la même. Elle est **franche** — l'hôte et toute sa descendance
-        (`_eteindre`) — parce que l'issue est déjà consignée quand on arrive ici :
-        ce qu'on éteint est un run soldé, et le laisser travailler serait pire que
-        l'interrompre sans ménagement. On attend son extinction au plus `delai_s`
-        sans jamais en faire une condition — un run qui avale son signal ne doit
-        pas suspendre l'appelant.
+        Le geste **gracieux ne s'écrit pas ici**, et c'est tout le lot 3 : il est
+        déjà parti quand on arrive. L'issue que `ServiceExecutions._solder`
+        consigne avant d'appeler cette méthode est publiée sur le bus, le process
+        la guette (`_observer_annulation`), annule sa propre tâche `asyncio` et
+        déroule ses tâches proprement. Ce qui reste à faire ici est de **lui en
+        laisser le temps** — borné par `delai_s`, jamais plus.
 
-        Le lot 3 (#444) rendra ce geste **gracieux** : l'annulation traversera la
-        frontière par le bus, l'hôte annulera sa propre tâche `asyncio` et
-        déroulera ses tâches proprement. Ce qui est ici en restera le repli — le
-        seul chemin quand plus personne n'écoute.
+        Passé ce délai, le repli de #443 : on éteint l'hôte **et sa descendance**
+        (`_eteindre`). Ce n'est pas l'aveu d'un geste raté — un process qui a
+        entendu l'ordre a déjà annulé ses tâches et signalé ses sous-process quand
+        on l'achève, si bien que ce qu'on interrompt alors est une fermeture de
+        boucle et non du travail. Ce qu'on refuse, c'est qu'un run **soldé**
+        continue de coûter parce que personne n'écoutait.
 
-        `False` est le cas **normal** après un redémarrage de l'API : ce process ne
-        porte plus rien, alors que le run, lui, tourne toujours. C'est exactement
-        l'autre moitié du trou que le lot 3 comble, le bus ne dépendant d'aucun
-        process.
+        L'attente est le seul endroit borné ; le repli, lui, n'attend rien. Il n'y
+        a pas d'issue à observer après avoir tué un groupe de process, et
+        `runs_en_vol` ramasse la dépouille au tour d'horloge suivant : c'est ce qui
+        fait qu'un hôte muet ne suspend pas la requête au-delà de ce que l'appelant
+        a accordé.
+
+        `False` garde son sens de contrat — ce process ne porte pas le run — mais
+        plus sa conclusion. Après un redémarrage de l'API, le run n'est plus tenu
+        ici et s'arrête **quand même** : l'ordre voyage par le bus, qui ne dépend
+        d'aucun process. C'est la moitié du trou que ce module laissait ouverte, et
+        c'est aussi pourquoi rien n'est publié depuis ici — l'appelant l'a déjà
+        fait, pour tous les hôtes à la fois.
         """
         process = self._process.get(run_id)
         if process is None or process.poll() is not None:
             self._process.pop(run_id, None)
             return False
+        if await asyncio.to_thread(self._attendre_extinction, process, delai_s):
+            return True
         await asyncio.to_thread(_eteindre, process)
-        await asyncio.to_thread(self._attendre_extinction, process, delai_s)
         return True
 
     def en_vol(self, run_id: str) -> bool:
@@ -460,12 +538,20 @@ class HoteRunDetache(HoteRun):
             await asyncio.sleep(PAS_DEMARRAGE_S)
 
     @staticmethod
-    def _attendre_extinction(process: subprocess.Popen[bytes], delai_s: float) -> None:
-        """Attend la fin du process au plus `delai_s` — l'échéance n'est pas un échec."""
+    def _attendre_extinction(process: subprocess.Popen[bytes], delai_s: float) -> bool:
+        """Attend la fin du process au plus `delai_s` — **True** s'il s'est éteint.
+
+        L'échéance n'est pas un échec : elle dit seulement que le geste gracieux
+        n'a pas abouti dans le temps accordé, et c'est exactement ce qui déclenche
+        le repli. Un hôte tombé sans être joignable et un hôte qui prend son temps
+        rendent donc la même chose, ce qui est la bonne lecture — on ne sait pas
+        lequel des deux on a, et le repli convient aux deux.
+        """
         try:
             process.wait(timeout=delai_s)
         except subprocess.TimeoutExpired:
-            return
+            return False
+        return True
 
 
 def _detachement() -> dict[str, Any]:
@@ -563,7 +649,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     télémétrie (#46) et rejoignent la Control Tower par le canal de toujours, celui
     qu'emprunte déjà `maestro-run --publier`.
 
-    L'ordre des quatre gestes d'armement est le sujet, et chacun a sa raison :
+    L'ordre des cinq gestes d'armement est le sujet, et chacun a sa raison :
 
     1. **relire l'ordre**, et l'effacer — il porte l'objectif, donc du texte libre
        où un secret est plausible, et il n'a plus d'usage une fois lu ;
@@ -572,29 +658,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     3. **battre**, tout de suite et non au premier tour d'horloge : l'étape la plus
        lente d'un run est son cadrage, et c'est celle qui n'aurait aucun signal de
        vie ;
-    4. **poser le témoin** en dernier, parce qu'il ne dit pas « je suis né » mais
-       « je suis armé » — c'est sur cette promesse-là que le lanceur rend la main.
+    4. **écouter l'annulation** (#444) : le lanceur rend la main sur le témoin, et
+       l'ordre peut suivre à la milliseconde — s'abonner après lui serait s'abonner
+       trop tard. Même précaution qu'en #48 et #320 (« s'abonner avant de
+       publier »), à une différence près qui compte : ici une course perdue ne coûte
+       pas la décision, le repli franc du lanceur restant derrière ;
+    5. **poser le témoin** en dernier, parce qu'il ne dit pas « je suis né » mais
+       « je suis armé » — c'est sur cette promesse-là que le lanceur rend la main,
+       et depuis ce lot « armé » veut aussi dire « à l'écoute ».
 
-    Les **imports du moteur sont locaux** à cette fonction, et ce n'est pas une
+    Les deux derniers vivent dans `_derouler`, et non ici, pour une raison
+    mécanique : s'abonner est **asynchrone**, donc n'a de lieu qu'une fois la boucle
+    ouverte. Ce qui reste dans cette fonction est ce qui ne l'est pas.
+
+    Les **imports du moteur sont locaux** aux deux fonctions, et ce n'est pas une
     économie de démarrage : `maestro.controltower` est importé par toute app, et y
     faire entrer `maestro.engine.loop` au niveau du module reviendrait à résoudre
     un fournisseur à la construction de l'API — exactement ce que
     `moteur_par_defaut` évite depuis #185.
 
     Rend 0 si toutes les tâches réussissent, 1 sinon (ou sur une panne), 2 sur un
-    appel mal formé. **Personne ne lit ce code** — le process n'a pas d'appelant —
-    et c'est assumé : ce qui compte est la trace laissée au journal, et le statut
-    que l'hôte publiera en partant au lot 5 (#446).
+    appel mal formé, `CODE_ANNULE` sur une **annulation** — qui n'est ni l'un ni
+    l'autre, exactement comme `_solder` solde en « annulee » et non en « echec ».
+    **Personne ne lit ce code** — le process n'a pas d'appelant — et c'est assumé :
+    ce qui compte est la trace laissée au journal, et le statut que l'hôte publiera
+    en partant au lot 5 (#446).
     """
     from maestro.config import ConfigError, load_settings
     from maestro.controltower.battement import CoeurRun, batteur_redis
     from maestro.engine.brief import BriefRefuse
     from maestro.engine.cli import activer_publication_evenements, console_tolerante
-    from maestro.engine.guardrails import Guardrails
-    from maestro.engine.loop import OrchestrationEngine
     from maestro.engine.runner import run_borne
     from maestro.orchestrator.errors import OrchestratorError
-    from maestro.telemetry import RunJournal, activer_export_langfuse, redact_secrets
+    from maestro.telemetry import activer_export_langfuse, redact_secrets
 
     console_tolerante()
     args = list(sys.argv[1:] if argv is None else argv)
@@ -617,39 +713,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     activer_publication_evenements()
     coeur = CoeurRun(ordre.run_id, batteur_redis(load_settings().redis_url))
     coeur.demarrer()
-    _poser_temoin(atelier)
 
     try:
-        # Les garde-fous se recomposent ici pour la raison exacte qui vaut côté API
-        # (`_derouler`) : les plafonds sont un réglage du **lancement**, donc ils
-        # voyagent dans l'ordre. Le **validateur** est un câblage de déploiement,
-        # donc il se branche là où le run se déroule — et il n'y en a pas encore
-        # ici (lot 4, #445), ce qui laisse le fail-safe de `Guardrails` opérer :
-        # sans validateur, toute action sensible est refusée, jamais approuvée.
-        garde_fous = Guardrails(
-            plafond_cout_usd=ordre.plafond_cout_usd,
-            plafond_tokens=ordre.plafond_tokens,
-            timeout_s=ordre.timeout_tache_s,
-        )
-        moteur = OrchestrationEngine.default(
-            guardrails=garde_fous, max_parallele=ordre.parallelisme
-        )
-        rapport = run_borne(
-            moteur.run(
-                ordre.objectif,
-                # Le `run_id` de l'API, jamais un neuf : c'est lui qui rattache les
-                # étapes de ce process au run que la projection connaît déjà. Un
-                # journal neuf ferait un second run, invisible depuis l'écran du
-                # premier.
-                journal=RunJournal(run_id=ordre.run_id),
-                ticket=ordre.ticket,
-                # Le prérequis commun du chantier (docs/28 §3) : sans lui,
-                # `espace_de_travail(None)` retombe sur un `mkdtemp()` et le
-                # livrable n'atteint jamais la racine du projet.
-                projet_id=ordre.projet_id,
-                mode_brief=ordre.mode_brief,
-            )
-        )
+        rapport = run_borne(_derouler(ordre, atelier))
+    except RunAnnule as annulation:
+        # Ni panne ni échec : quelqu'un a dit stop, et son issue est déjà consignée
+        # côté API. Il ne reste qu'à le dire au journal de l'hôte, seule trace que
+        # ce process laisse derrière lui.
+        print(f"Run annulé : {annulation}", file=sys.stderr)
+        return CODE_ANNULE
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
         return 1
@@ -674,6 +746,167 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(redact_secrets(rapport.synthese()))
     return 0 if not rapport.echouees else 1
+
+
+async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
+    """Déroule le run **sous la garde du bus** : il s'arrête si on l'annule (#444).
+
+    La moitié asynchrone de `main`, et elle existe pour une raison qui tient en une
+    phrase : on ne s'abonne pas hors d'une boucle. D'où les deux derniers gestes
+    d'armement ici — le guet, puis le témoin — dans cet ordre, parce que le témoin
+    est la promesse sur laquelle le lanceur rend la main : la tenir avant d'écouter
+    reviendrait à s'annoncer joignable en étant sourd.
+
+    L'attente est une course entre **deux** tâches, et sa lecture est le sujet :
+
+    - le **run** finit d'abord → son résultat est rendu, l'ordre éventuellement
+      arrivé dans la même passe est arrivé trop tard (un run terminé ne s'annule
+      pas, et sa synthèse a plus de valeur qu'une annulation nominale) ;
+    - le **guet** finit d'abord en ayant *vu* l'ordre → la tâche du run est annulée
+      puis attendue au plus `DELAI_EXTINCTION_S`, et `RunAnnule` court-circuite
+      tout le reste ;
+    - le **guet** finit d'abord sans avoir rien vu (bus refermé, Redis injoignable)
+      → le run **continue**, simplement sans son canal gracieux. C'est le cas où
+      l'on tient à ne pas confondre « je n'écoute plus » avec « on m'a dit stop » :
+      la première lecture coûterait un run tué par une panne de Redis.
+
+    Le bus n'apparaît pas ici, et c'est voulu : c'est le guet qui l'ouvre et le
+    referme (`_observer_annulation`), ce qui met **toutes** les façons dont Redis
+    peut manquer — client impossible à construire, abonnement refusé, flux tari en
+    cours de route — derrière la même promesse de ne pas lever. Les partager entre
+    deux fonctions reviendrait à en laisser une hors de la promesse, et c'est
+    justement celle-là qui ferait échouer un run pour une panne de bus.
+    """
+    from maestro.engine.guardrails import Guardrails
+    from maestro.engine.loop import OrchestrationEngine
+    from maestro.telemetry import RunJournal
+
+    guet = asyncio.create_task(_observer_annulation(ordre.run_id))
+    # Laisse l'abonnement partir avant de se déclarer armé — même précaution qu'en
+    # #48 et #320. Elle ne suffit pas à garantir le SUBSCRIBE Redis, et c'est
+    # assumé : ce qui rattrape la course ici, et qui manquait là-bas, est le repli
+    # franc du lanceur.
+    await asyncio.sleep(0)
+    _poser_temoin(atelier)
+    try:
+        # Les garde-fous se recomposent ici pour la raison exacte qui vaut côté API
+        # (`ServiceExecutions._derouler`) : les plafonds sont un réglage du
+        # **lancement**, donc ils voyagent dans l'ordre. Le **validateur** est un
+        # câblage de déploiement, donc il se branche là où le run se déroule — et il
+        # n'y en a pas encore ici (lot 4, #445), ce qui laisse le fail-safe de
+        # `Guardrails` opérer : sans validateur, toute action sensible est refusée,
+        # jamais approuvée.
+        garde_fous = Guardrails(
+            plafond_cout_usd=ordre.plafond_cout_usd,
+            plafond_tokens=ordre.plafond_tokens,
+            timeout_s=ordre.timeout_tache_s,
+        )
+        moteur = OrchestrationEngine.default(
+            guardrails=garde_fous, max_parallele=ordre.parallelisme
+        )
+        run = asyncio.create_task(
+            moteur.run(
+                ordre.objectif,
+                # Le `run_id` de l'API, jamais un neuf : c'est lui qui rattache les
+                # étapes de ce process au run que la projection connaît déjà. Un
+                # journal neuf ferait un second run, invisible depuis l'écran du
+                # premier.
+                journal=RunJournal(run_id=ordre.run_id),
+                ticket=ordre.ticket,
+                # Le prérequis commun du chantier (docs/28 §3) : sans lui,
+                # `espace_de_travail(None)` retombe sur un `mkdtemp()` et le
+                # livrable n'atteint jamais la racine du projet.
+                projet_id=ordre.projet_id,
+                mode_brief=ordre.mode_brief,
+            )
+        )
+        attendus: set[asyncio.Future[Any]] = {run, guet}
+        termines, _ = await asyncio.wait(attendus, return_when=asyncio.FIRST_COMPLETED)
+        if run not in termines and _annulation_vue(guet):
+            run.cancel()
+            await asyncio.wait({run}, timeout=DELAI_EXTINCTION_S)
+            raise RunAnnule(
+                f"run {ordre.run_id} interrompu depuis la Control Tower — tâches en vol annulées"
+            )
+        return await run
+    finally:
+        guet.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await guet
+
+
+async def _observer_annulation(run_id: str, *, bus: EventBus | None = None) -> bool:
+    """Guette l'ordre d'annulation de `run_id` — **True** quand il est passé (#444).
+
+    L'ordre n'a pas de canal à lui : c'est l'**issue** du run, `execution.statut`
+    au statut « annulee », consignée par `ServiceExecutions._solder` avant qu'il ne
+    demande l'interruption. Un fait dont la conséquence est nécessaire vaut mieux
+    qu'un second message qui pourrait manquer (cf. l'en-tête du module).
+
+    Tout le reste du bus est ignoré, y compris les issues des **autres** runs : ce
+    process n'en porte qu'un, et il est nommé.
+
+    Le bus est **ouvert ici** (celui de la config, comme le battement et la
+    publication) et refermé en partant : un abonnement Redis est une connexion, et
+    la laisser derrière soi dans un process qui vit des heures est le genre de fuite
+    qu'on ne remarque qu'au trentième run. Un bus **passé** par l'appelant lui
+    appartient et n'est pas refermé — c'est le point d'injection du lot 6 (#447).
+
+    **Ne lève jamais**, et c'est le point délicat : client Redis impossible à
+    construire, abonnement refusé, flux tari, événement illisible — tout rend
+    `False`, c'est-à-dire « je n'écoute plus », jamais « on m'a dit stop ».
+    Confondre les deux ferait tuer un run par une panne de bus, alors que le run,
+    lui, se passe très bien de ce canal (le lanceur garde son repli franc). C'est
+    pour tenir cette promesse d'un seul tenant que l'ouverture du bus est **dans**
+    le `try` : la laisser dehors, chez l'appelant, y laisserait la seule panne
+    capable d'emporter le run.
+    """
+    from maestro.config import load_settings
+
+    flux = None
+    propre: EventBus | None = None
+    try:
+        if bus is None:
+            bus = propre = RedisEventBus(load_settings().redis_url)
+        flux = bus.subscribe()
+        async for event in flux:
+            if event.type != EVENEMENT_EXECUTION_STATUT:
+                continue
+            if event.run_id != run_id:
+                continue
+            if event.statut == EXECUTION_ANNULEE:
+                return True
+        return False
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - un guet en panne n'emporte pas le run
+        print(
+            f"Guet de l'annulation interrompu — {type(exc).__name__} : {exc} "
+            "(le run continue, son annulation passera par le repli du lanceur)",
+            file=sys.stderr,
+        )
+        return False
+    finally:
+        aclose = getattr(flux, "aclose", None)
+        if aclose is not None:
+            with suppress(asyncio.CancelledError, Exception):
+                await aclose()
+        if propre is not None:
+            with suppress(asyncio.CancelledError, Exception):
+                await propre.close()
+
+
+def _annulation_vue(guet: asyncio.Task[bool]) -> bool:
+    """Le guet a-t-il **vu** l'ordre ? — False sur tout le reste, sans lever.
+
+    `_observer_annulation` promet de ne pas lever, mais lire le résultat d'une tâche
+    est précisément l'endroit où une promesse tenue ailleurs se paie ici : une
+    tâche annulée ou en erreur relèverait à la lecture, et transformerait un guet en
+    panne du run. On la traite donc comme un guet qui n'a rien vu, ce qu'elle est.
+    """
+    if guet.cancelled() or guet.exception() is not None:
+        return False
+    return guet.result()
 
 
 def lire_ordre(atelier: Path) -> OrdreRun:
