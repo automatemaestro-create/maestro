@@ -15,6 +15,7 @@ import {
   IconeObjectif,
   IconeParametres,
   IconeProjets,
+  IconeRuns,
   IconeTableauDeBord,
   IconeValidations,
 } from "@/components/Icones";
@@ -60,11 +61,20 @@ export type EntreeMenu = {
  * où quelque chose l'appelle est une destination qu'on ne pense pas à ouvrir. La
  * file y est vide la plupart du temps, et le dit : c'est le prix de savoir qu'on
  * n'a rien laissé en plan.
+ *
+ * « Runs » (#474, lot 2 de #472) **ferme ce groupe de tête** : on compose, le Chef
+ * de projet rédige, on tranche — puis on regarde ce qui tourne. Elle est au menu
+ * parce qu'un run n'était l'objet d'**aucun** écran : on y entrait par « Composer
+ * un objectif » et on n'y revenait jamais, les runs passés n'étant listés nulle
+ * part (revue #470, docs/29 §3). Sa place **avant** « Agents » suit le principe des
+ * deux précédentes — le haut du menu porte le travail en cours, le bas les
+ * ressources qui le servent et ce qu'on observe après coup.
  */
 export const MENU: EntreeMenu[] = [
   { href: "/", libelle: "Tableau de bord", Icone: IconeTableauDeBord },
   { href: "/composer", libelle: "Composer un objectif", Icone: IconeObjectif },
   { href: "/brief", libelle: "Valider le brief", Icone: IconeBrief },
+  { href: "/runs", libelle: "Runs", Icone: IconeRuns },
   { href: "/agents", libelle: "Agents", Icone: IconeAgents },
   { href: "/chat", libelle: "Chat", Icone: IconeChat },
   { href: "/couts", libelle: "Coûts & analytics", Icone: IconeCouts },
