@@ -372,9 +372,17 @@ class ServiceExecutions:
         devenue asynchrone pour cette seule raison : le verdict se lit dans le
         registre des battements, qui vit hors du process en production, et **un
         seul** aller-retour le rend pour tous les runs de la liste.
+
+        Et sa **progression** (#473), posée par `resume` ci-dessous : c'est ce
+        qui rend la liste utile sans un appel par ligne — état, objectif,
+        progression, début et coût y sont désormais tous, de quoi dresser la
+        liste des runs d'un projet d'une seule lecture.
         """
         connus = await self._registre()
-        resumes = [self._avec_vitalite(e.resume(), connus) for e in self._state.executions(portee)]
+        resumes = [
+            self._avec_vitalite(self._avec_progression(e.resume()), connus)
+            for e in self._state.executions(portee)
+        ]
         return sorted(resumes, key=lambda r: str(r["debut"]), reverse=True)
 
     def resume(self, run_id: str) -> dict[str, Any] | None:
@@ -384,9 +392,13 @@ class ServiceExecutions:
         service (annulation, décision de brief, contrôles 404/409 des routes),
         dont aucun appelant n'a besoin d'interroger un registre distant. La vue
         publique d'un run, elle, passe par `resume_vivant`.
+
+        **Avec** sa progression (#473), en revanche, et c'est la même raison lue
+        dans l'autre sens : elle se compte dans la projection déjà en mémoire,
+        donc rien ne justifie de la réserver aux vues publiques.
         """
         execution = self._state.execution(run_id)
-        return None if execution is None else execution.resume()
+        return None if execution is None else self._avec_progression(execution.resume())
 
     async def resume_vivant(self, run_id: str) -> dict[str, Any] | None:
         """Le résumé du run `run_id`, **vitalité comprise** (#348) — None s'il est inconnu.
@@ -399,6 +411,27 @@ class ServiceExecutions:
         if resume is None:
             return None
         return self._avec_vitalite(resume, await self._registre())
+
+    def _avec_progression(self, resume: dict[str, Any]) -> dict[str, Any]:
+        """Ajoute la progression par statut de tâche à un résumé, sans toucher au reste.
+
+        Même patron que `_avec_vitalite`, mais **synchrone et gratuit** : le
+        compte se lit dans la projection déjà en mémoire, là où la vitalité
+        demande un registre qui vit hors du process. C'est ce qui permet de la
+        poser dès `resume`, donc sur *toutes* les réponses qui portent un run —
+        liste, détail, lancement, annulation, relance — au lieu des seules vues
+        publiques.
+
+        Elle est posée **ici** et non dans `EtatExecution.resume()`, pour la
+        raison qui y garde la vitalité au-dehors : un run ne sait pas compter ses
+        propres tâches. Ce qu'il connaît, ce sont ses événements ; le statut
+        courant d'une tâche appartient à la projection, et le recopier dans le
+        run en ferait une seconde vérité à tenir d'accord.
+        """
+        return {
+            **resume,
+            "progression": self._state.progression(str(resume["run_id"])).to_dict(),
+        }
 
     def _avec_vitalite(
         self, resume: dict[str, Any], battements: Mapping[str, str]

@@ -252,7 +252,13 @@ from maestro.controltower.persistence import (
     InMemoryEventLog,
     RedisEventLog,
 )
-from maestro.controltower.portee import PorteeProjet, PorteeRefusee, resoudre_portee
+from maestro.controltower.portee import (
+    PorteeProjet,
+    PorteeRefusee,
+    PorteeRun,
+    resoudre_portee,
+    resoudre_portee_run,
+)
 from maestro.controltower.projets import (
     ProjetInconnu,
     ServiceProjets,
@@ -982,6 +988,25 @@ def create_app(
         except PorteeRefusee as exc:
             raise _refus_projet(exc) from exc
 
+    def _portee_run(run: str | None) -> PorteeRun:
+        """La **portée run** d'une lecture (#473), ou un refus motivé.
+
+        Le second périmètre, qui **s'ajoute** au premier sans le remplacer :
+        `?run=<run_id>` restreint aux tâches que ce run a portées, `?projet=`
+        restant obligatoire à côté. Omis, il ne restreint rien — c'est un
+        paramètre facultatif, et l'absence y est la lecture normale d'avant ce
+        lot, non le mélange silencieux que #277 refusait. Un run dont la
+        projection n'a aucune trace sort en 404 `run-inconnu`, par la porte de
+        `projet-inconnu` et pour la même raison : une liste vide se lirait « ce
+        run n'a rien fait ».
+        """
+        try:
+            return resoudre_portee_run(
+                run, run_connu=lambda run_id: state.execution(run_id) is not None
+            )
+        except PorteeRefusee as exc:
+            raise _refus_projet(exc) from exc
+
     @app.get("/api/journal")
     async def journal_requetable(
         agent: str | None = None,
@@ -1061,7 +1086,7 @@ def create_app(
         return _exige_fixtures().propositions_playbook()
 
     @app.get("/api/taches")
-    async def taches(projet: str | None = None) -> list[dict[str, Any]]:
+    async def taches(projet: str | None = None, run: str | None = None) -> list[dict[str, Any]]:
         """Les tâches connues : statut, agent, coût détaillé (#57) — la source du Kanban.
 
         `projet` est **obligatoire** (#277) : `<id>` cadre le Kanban sur un
@@ -1069,8 +1094,16 @@ def create_app(
         Omis, 422 `projet-requis` ; inconnu, 404 `projet-inconnu`. Une tâche
         sans projet n'apparaît dans la vue d'aucun projet — on ne devine pas à
         quel projet elle appartiendrait.
+
+        `run` est **facultatif** et s'**ajoute** au précédent (#473) : il
+        restreint aux tâches que ce run a portées, sans dispenser de dire sur
+        quel projet on lit — un run appartient à un projet, les deux filtres se
+        composent donc au lieu de se relayer. C'est la source du Kanban **d'un
+        run**, et elle compte exactement les tâches que sa `progression` répartit
+        (`GET /api/executions/{run_id}`). 404 `run-inconnu` sur un run dont la
+        projection n'a aucune trace.
         """
-        return [t.to_dict() for t in state.taches(_portee(projet))]
+        return [t.to_dict() for t in state.taches(_portee(projet), _portee_run(run))]
 
     @app.get("/api/agents")
     async def agents() -> list[dict[str, Any]]:
@@ -1086,6 +1119,10 @@ def create_app(
         leur origine — la projection est la même. C'est la source de l'écran
         *Exécutions & traces* (docs/05 §2.4). `projet` est **obligatoire**
         (#277), au contrat commun : `<id>` | `tous` | `aucun`.
+
+        Chaque résumé porte de quoi **dresser une liste utile** sans un appel par
+        ligne (#473) : état, objectif, `progression` par statut de tâche, début
+        et coût cumulé.
         """
         return await executions.resumes(_portee(projet))
 
@@ -1374,8 +1411,14 @@ def create_app(
         """L'état d'une exécution (#185) : son résumé, sa trace et son coût.
 
         Le résumé de `GET /api/executions` (objectif, statut, volume, bornes,
-        **vitalité** #348) enrichi de ce qu'il ne porte pas : le grand livre du
-        run (#57) et sa trace événement par événement.
+        **vitalité** #348, **progression** #473) enrichi de ce qu'il ne porte
+        pas : le grand livre du run (#57) et sa trace événement par événement.
+
+        La `progression` est comptée **ici**, sur la machine à états du moteur
+        (docs/03 §3) : à faire, en cours, bloquées, terminées, échecs — jamais
+        recomptée par le front, qui ne verrait de toute façon que les tâches
+        qu'il a chargées. Les tâches ainsi comptées sont exactement celles que
+        rend `GET /api/taches?projet=…&run=<run_id>`.
         """
         detail = state.execution(run_id)
         if detail is None:

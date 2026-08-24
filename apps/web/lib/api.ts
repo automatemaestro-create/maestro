@@ -98,9 +98,22 @@ export function chargerSante(): Promise<Sante> {
   return chargerJson<Sante>("/api/sante");
 }
 
-/** Les tâches connues du backend, à la portée demandée — la source du Kanban. */
-export function chargerTaches(portee: PorteeProjet): Promise<Tache[]> {
-  return chargerJson<Tache[]>(`/api/taches?projet=${encodeURIComponent(portee)}`);
+/**
+ * Les tâches connues du backend, à la portée demandée — la source du Kanban.
+ *
+ * `runId` (#473) **s'ajoute** à la portée projet sans la remplacer : passé, il
+ * restreint aux tâches que ce run a portées — le Kanban **d'un run** —, et la
+ * portée projet reste requise, un run appartenant à un projet. Omis, la lecture
+ * est celle d'avant : toutes les tâches de la portée.
+ */
+export function chargerTaches(
+  portee: PorteeProjet,
+  runId?: string,
+): Promise<Tache[]> {
+  const run = runId ? `&run=${encodeURIComponent(runId)}` : "";
+  return chargerJson<Tache[]>(
+    `/api/taches?projet=${encodeURIComponent(portee)}${run}`,
+  );
 }
 
 /**

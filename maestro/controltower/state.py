@@ -49,7 +49,8 @@ from maestro.controltower.events import (
     Event,
     ReferenceTicket,
 )
-from maestro.controltower.portee import PorteeProjet
+from maestro.controltower.portee import PorteeProjet, PorteeRun
+from maestro.controltower.progression import Progression, progression_des_statuts
 from maestro.detail_tache import (
     EtapeTache,
     LienUtile,
@@ -399,15 +400,28 @@ class EtatExecution:
         return self.evenements[0].horodatage if self.evenements else ""
 
     @property
+    def taches_vues(self) -> frozenset[str]:
+        """Les tâches que **ce run** a portées — son identité, lue dans ses événements.
+
+        C'est la réponse à « quelles sont les tâches de ce run ? » (#473), et
+        elle se lit ici plutôt que sur le `run_id` des tâches de la projection,
+        qui ne porte que le **dernier** run les ayant touchées. Un identifiant de
+        tâche est un slug engendré depuis son contenu, donc partagé dès que deux
+        runs décomposent le même objectif — c'est le cas nominal d'une relance
+        (#349), qui rejoue le brief approuvé. Lu là-bas, un run se ferait voler
+        ses tâches par son propre successeur ; lu ici, son histoire ne change
+        jamais rétroactivement.
+        """
+        return frozenset(
+            e.tache_id
+            for e in self.evenements
+            if e.type == EVENEMENT_TACHE_STATUT and e.tache_id
+        )
+
+    @property
     def nb_taches(self) -> int:
         """Le nombre de tâches distinctes vues dans le run (0 avant planification)."""
-        return len(
-            {
-                e.tache_id
-                for e in self.evenements
-                if e.type == EVENEMENT_TACHE_STATUT and e.tache_id
-            }
-        )
+        return len(self.taches_vues)
 
     def resume(self) -> dict[str, Any]:
         """Le **résumé** du run (`ResumeExecution` du contrat #183), sans sa trace.
@@ -575,7 +589,9 @@ class ControlTowerState:
 
     # ------------------------------------------------------------------ lecture
 
-    def taches(self, portee: PorteeProjet | None = None) -> list[EtatTache]:
+    def taches(
+        self, portee: PorteeProjet | None = None, run: PorteeRun | None = None
+    ) -> list[EtatTache]:
         """Les tâches connues, dans l'ordre de première apparition.
 
         `portee` (#277) est le périmètre de la lecture — c'est le filtre du
@@ -586,15 +602,65 @@ class ControlTowerState:
         aucune vue de projet — on ne devine pas à quel projet elle
         appartiendrait —, elle n'apparaît que sous `tous` ou `aucun`.
 
-        `None` reste la vue **transverse** : la projection est une structure de
-        données, pas une API, et rien n'y justifie de refuser une question qui
-        n'a pas dit son périmètre. Le refus (« rien plutôt qu'un mélange ») est
-        le rôle des routes, qui ont un client à qui répondre.
+        `run` (#473) est le périmètre **run**, et il s'**ajoute** au premier au
+        lieu de le remplacer : un run appartient à un projet, les deux filtres se
+        composent donc, et une portée de run sans portée de projet reste une
+        question légitime. Les tâches retenues sont celles que le run a
+        lui-même portées (`EtatExecution.taches_vues`), jamais celles dont le
+        `run_id` le désigne — voir `PorteeRun` pour la différence, qui n'en est
+        une que sur une relance, c'est-à-dire précisément quand elle compte.
+
+        `None` reste, des deux côtés, la vue **transverse** : la projection est
+        une structure de données, pas une API, et rien n'y justifie de refuser
+        une question qui n'a pas dit son périmètre. Le refus (« rien plutôt
+        qu'un mélange ») est le rôle des routes, qui ont un client à qui
+        répondre.
         """
         taches = list(self._taches.values())
-        if portee is None:
-            return taches
-        return [t for t in taches if portee.retient(t.projet_id)]
+        if portee is not None:
+            taches = [t for t in taches if portee.retient(t.projet_id)]
+        if run is not None and not run.transverse:
+            vues = self.taches_du_run(str(run.run_id))
+            taches = [t for t in taches if run.retient(t.id, vues)]
+        return taches
+
+    def taches_du_run(self, run_id: str) -> frozenset[str]:
+        """Les tâches que le run `run_id` a portées — vide s'il est inconnu (#473)."""
+        execution = self._executions.get(run_id)
+        return frozenset() if execution is None else execution.taches_vues
+
+    def progression(self, run_id: str) -> Progression:
+        """Où en est le run `run_id` : ses tâches réparties par compartiment (#473).
+
+        Deux sources, et chacune est celle qui fait autorité sur sa moitié de la
+        question. **Quelles** tâches : les événements du run
+        (`EtatExecution.taches_vues`), si bien que `progression.total` vaut son
+        `nb_taches` par construction — un résumé qui se contredirait sur le
+        nombre de ses propres tâches serait pire qu'un résumé sans progression.
+        **Dans quel état** : le statut que la projection tient pour chacune,
+        c'est-à-dire celui de sa carte. Le run n'en garde donc pas une copie
+        figée, et c'est voulu : `GET /api/taches?run=<id>` rend exactement ces
+        cartes-là, si bien que la barre de progression et le Kanban d'un même
+        écran comptent la même chose. Une tâche reprise avec succès par une
+        relance se lit « terminée » des deux côtés plutôt que « échouée » d'un
+        côté et « terminée » de l'autre.
+
+        Un run inconnu rend une progression **vide** plutôt qu'une erreur : la
+        projection répond à ce qu'elle sait, le refus motivé est le rôle des
+        routes (`resoudre_portee_run`).
+        """
+        vues = self.taches_du_run(run_id)
+        return progression_des_statuts(
+            # Une tâche que la projection ne connaîtrait pas compte pour
+            # `autres` plutôt que de disparaître du décompte : elle est déjà
+            # comptée dans `nb_taches`, et l'écarter ici ferait mentir l'égalité
+            # que la docstring promet — par soustraction, donc sans rien à voir.
+            # Le cas n'existe pas aujourd'hui (tout `tache.statut` crée sa
+            # carte) ; c'est bien pour ça qu'il doit rester impossible à
+            # constater autrement.
+            tache.statut if (tache := self._taches.get(tache_id)) is not None else ""
+            for tache_id in vues
+        )
 
     def tache(self, tache_id: str) -> EtatTache | None:
         """La tâche `tache_id`, ou None si inconnue de la projection."""

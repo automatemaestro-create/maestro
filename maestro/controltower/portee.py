@@ -32,6 +32,12 @@ silencieux de tous les projets, qui était le défaut d'avant.
 projet réel, dont l'identifiant est engendré par le dépôt sous la forme
 ``prj-<empreinte>`` (#221). Un projet ne peut donc pas les masquer.
 
+Depuis #473 s'y ajoute une **seconde portée**, celle du run (`PorteeRun`, plus
+bas). Elle **s'ajoute** — le mot est le critère : `?run=` ne remplace pas
+`?projet=`, qui reste obligatoire, parce qu'un run appartient à un projet et que
+les deux questions ne sont pas la même. Les deux portées se composent donc au
+lieu de se relayer, et chacune garde son unique prédicat.
+
 Ce module est volontairement une **feuille de la couche lecture** : il ne connaît
 ni FastAPI ni HTTP (la traduction du motif en code est le rôle d'`app.py`, via
 `maestro.controltower.projets.statut_http`), et il n'importe du dépôt de projets
@@ -42,6 +48,7 @@ partager le même objet de portée sans dépendre de l'API.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Container
 from dataclasses import dataclass
 
 from maestro.appartenance import projet_id_valide
@@ -130,6 +137,92 @@ class PorteeProjet:
         if self.transverse:
             return True
         return projet_id == self.projet_id
+
+
+@dataclass(frozen=True)
+class PorteeRun:
+    """Le périmètre **run** d'une lecture : un run, ou aucun filtre (#473).
+
+    La portée du second critère de #473, et sa dissymétrie avec `PorteeProjet`
+    est le critère lui-même. Là où le projet est **obligatoire** (« rien plutôt
+    qu'un mélange », #277), le run est **facultatif** : l'omettre n'est pas une
+    question sans périmètre, c'est la lecture d'avant ce lot — toutes les tâches
+    du projet demandé. `?run=` **s'ajoute** donc à `?projet=` sans le remplacer,
+    et une portée sans run ne restreint rien.
+
+    Elle ne se juge pas non plus sur le même champ. `EtatTache.run_id` porte le
+    **dernier** run qui a touché la tâche, or un identifiant de tâche est un slug
+    engendré à partir de son contenu (`schema-bdd`, `api-users` — voir le
+    playbook de l'orchestrateur), donc **partagé** dès que deux runs décomposent
+    le même objectif : c'est le cas nominal d'une relance (#349), qui rejoue le
+    brief approuvé. Filtrer sur ce champ ferait disparaître de la vue d'un run
+    les tâches qu'un run ultérieur a reprises — il les lui aurait volées. La
+    portée se juge donc sur les tâches que **le run a lui-même portées**, lues
+    dans ses propres événements (`EtatExecution.taches_vues`), qui ne changent
+    jamais rétroactivement.
+    """
+
+    run_id: str | None = None
+
+    @classmethod
+    def tous(cls) -> PorteeRun:
+        """Aucun filtre de run — la lecture d'avant #473, et le défaut."""
+        return cls()
+
+    @classmethod
+    def run(cls, run_id: str) -> PorteeRun:
+        """La vue d'un run : les tâches qu'il a portées, et rien d'autre."""
+        return cls(run_id=run_id)
+
+    @property
+    def transverse(self) -> bool:
+        """La portée ne restreint-elle rien ? (`?run=` omis)"""
+        return self.run_id is None
+
+    @property
+    def libelle(self) -> str:
+        """La portée telle qu'elle a été demandée — `tous` quand aucun run n'est visé."""
+        return self.run_id if self.run_id is not None else PORTEE_TOUS
+
+    def retient(self, tache_id: str, taches_du_run: Container[str]) -> bool:
+        """Cette tâche entre-t-elle dans la portée ?
+
+        La règle unique du lot, pendant exact de `PorteeProjet.retient` :
+        une portée sans run retient tout — c'est ce qui la rend additive —, une
+        portée de run ne retient que les tâches de `taches_du_run`, l'ensemble
+        que la projection résout sur les événements du run.
+        """
+        if self.transverse:
+            return True
+        return tache_id in taches_du_run
+
+
+def resoudre_portee_run(
+    brut: str | None, *, run_connu: Callable[[str], bool] | None = None
+) -> PorteeRun:
+    """La portée run d'une requête, ou `PorteeRefusee` motivée — jamais une devinette.
+
+    `brut` est le paramètre `run` reçu tel quel. Absent ou vide, il rend la
+    portée **transverse** sans rien refuser : contrairement à `?projet=`, ce
+    paramètre est facultatif, et l'omettre est la lecture normale d'un Kanban de
+    projet. Un run **inconnu** est en revanche refusé (`run-inconnu`), par le
+    même raisonnement que `projet-inconnu` : une liste vide se lit « ce run n'a
+    rien fait », ce qui est un mensonge coûteux sur une faute de frappe.
+
+    `run_connu` est ce qui sait répondre « ce run a-t-il laissé une trace ? » —
+    en pratique la projection. Passé à `None`, l'existence n'est pas vérifiée :
+    la portée se résout alors sur le seul identifiant, comme `resoudre_portee`
+    sans dépôt.
+    """
+    valeur = (brut or "").strip()
+    if not valeur:
+        return PorteeRun.tous()
+    if run_connu is not None and not run_connu(valeur):
+        raise PorteeRefusee(
+            "run-inconnu",
+            f"Run inconnu : {valeur} (voir GET /api/executions).",
+        )
+    return PorteeRun.run(valeur)
 
 
 def resoudre_portee(brut: str | None, *, projet_connu: object = None) -> PorteeProjet:

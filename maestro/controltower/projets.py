@@ -86,12 +86,17 @@ STATUT_HTTP_PAR_MOTIF: dict[str, int] = {
     "depot-maestro": 403,
     "acces-refuse": 403,
     "projet-inconnu": 404,
+    "run-inconnu": 404,
 }
 
 #: Les refus de **portée projet** (#277) passent par la même table : ils sont de
 #: même nature que ceux du CRUD (« ce projet n'existe pas ») et doivent donc
 #: sortir par la même porte — motif, message, code. `projet-inconnu` y est déjà
 #: (404) ; `projet-requis` retombe sur le défaut 422, la saisie étant en cause.
+#: La **portée run** (#473) suit le même chemin : `run-inconnu` est un 404 pour
+#: la raison exacte qui en fait un pour un projet — une liste vide se lirait
+#: « ce run n'a rien fait ». Il n'a pas de pendant « requis » : `?run=` est
+#: facultatif et l'omettre ne restreint rien.
 
 #: Le code rendu par un motif inconnu de la table : la saisie est en cause.
 STATUT_HTTP_DEFAUT = 422

@@ -885,6 +885,41 @@ actif, elle n'a **aucun défaut** dans [`apps/web/lib/api.ts`](../apps/web/lib/a
 non cadrée ne compile pas —, et `tous` ne subsiste que là où il est justifié : le flux du **chat**,
 dont les événements ne portent pas de projet et qu'une socket cadrée ne recevrait jamais.
 
+#### 6.0bis Portée **run** d'une lecture — `?run=` (#473) — **livré**
+
+`GET /api/taches` accepte un **second** périmètre, qui **s'ajoute** au premier au lieu de le
+remplacer : `?projet=<id>&run=<run_id>` rend les tâches de ce run, et `?projet=` reste obligatoire
+à côté. C'est l'arbitrage du parent #472 appliqué à l'API — *le run s'ajoute au projet, il ne le
+remplace pas* : un run appartient à un projet, les deux questions ne sont pas la même, et une vue
+qui troquerait l'une contre l'autre obligerait le shell à oublier son projet actif pour ouvrir un
+run.
+
+| `?run=` | ce qui sort |
+| --- | --- |
+| `<run_id>` | les tâches que **ce run a portées**, dans la portée projet demandée |
+| *omis / vide* | aucun filtre de run — la lecture d'avant ce lot |
+| run sans trace dans la projection | **refus** `404` `{motif: "run-inconnu"}` |
+
+Trois choses à ne pas défaire. **Le paramètre est facultatif, et c'est une dissymétrie voulue** :
+« rien plutôt qu'un mélange » (§6.0) répond à « de quel projet parle-t-on ? », question qu'une
+lecture ne peut pas ne pas avoir tranchée ; l'absence de run, elle, n'est pas une portée oubliée
+mais le Kanban de projet, qui reste la vue par défaut. **Un run inconnu est refusé** en revanche,
+par la porte de `projet-inconnu` et pour la raison exacte qui l'y a mis : sur une faute de frappe,
+une liste vide se lit « ce run n'a rien fait ».
+
+Et surtout : **l'appartenance d'une tâche à un run se lit dans les événements du run, jamais sur le
+`run_id` de la tâche.** Ce champ porte le *dernier* run qui l'a touchée, or un identifiant de tâche
+est un slug engendré depuis son contenu (`schema-bdd`, `api-users` — playbook de l'orchestrateur),
+donc **partagé** dès que deux runs décomposent le même objectif. C'est le cas nominal d'une
+**relance** (§6.1, #349), qui rejoue le brief approuvé : filtrer sur ce champ ferait disparaître de
+la vue d'un run les tâches que son propre successeur a reprises. La portée se juge donc sur
+`EtatExecution.taches_vues`, qui ne change jamais rétroactivement — d'où l'égalité
+`progression.total == nb_taches`, vraie par construction.
+
+Implémentation : `PorteeRun` et son unique prédicat `retient`, dans le même
+[`maestro/controltower/portee.py`](../maestro/controltower/portee.py) que la portée projet — deux
+portées, deux objets, une seule écriture de chaque règle.
+
 ### 6.1 Exécutions — lancement, suivi, annulation, relance (#185) — **livré**
 
 Piloter un vrai run depuis la Control Tower, sans passer par la CLI. Seule section de ce
@@ -892,7 +927,9 @@ chapitre déjà implémentée (`maestro/controltower/executions.py`) : le contra
 décrit le comportement réel, pas une fixture.
 
 - `GET /api/executions` → `ResumeExecution[]` — les runs connus (en cours et passés), récents
-  d'abord, chacun avec sa **vitalité** (#348, ci-dessous).
+  d'abord, chacun avec sa **vitalité** (#348, ci-dessous) et sa **progression** (#473, ci-dessous) :
+  état, objectif, progression, début et coût y sont tous, de quoi dresser la liste des runs d'un
+  projet sans un appel par ligne.
 - `POST /api/executions` → `202` + `ResumeExecution` — lance un run **en arrière-plan** (les
   événements arrivent par le flux existant) et rend son `run_id` immédiatement. Corps
   `LancementExecution`. `422` si l'objectif est vide, un garde-fou est hors bornes — les
@@ -938,6 +975,10 @@ décrit le comportement réel, pas une fixture.
   "brief_approuve": true,                  // un humain a validé le cadrage (#349)
   "reprise_de": "",                        // "" : ce run ne reprend personne (#349)
   "nb_taches": 5,
+  // Où en est le run (#473) — compté ici, sur la machine à états du moteur.
+  // `total` vaut `nb_taches` ; `soldees` = terminees + echecs + bloquees.
+  "progression": { "a_faire": 1, "en_cours": 1, "bloquees": 0, "terminees": 2,
+                   "echecs": 1, "autres": 0, "soldees": 3, "total": 5 },
   "cout_usd": 0.1665,                      // null : aucun coût rapporté
   "ticket": { "id": "#42", "url": "https://…/issues/42" },  // null : sans ticket
   "projet_id": "prj-7f3a",                 // null : hors de tout projet
@@ -951,6 +992,39 @@ décrit le comportement réel, pas une fixture.
   "rapport": { … }                         // RapportLecture (§6.8) — **seulement** au lancement
 }
 ```
+
+**Un run dit où il en est, et le compte se fait ici** (#473). `progression` répartit les tâches du
+run sur la machine à états du moteur ([docs/03 §3](./03-modele-de-donnees.md)) — **jamais recomptée
+par le front**, qui ne verrait de toute façon que les tâches qu'il a chargées : une barre de
+progression y mesurerait sa propre pagination. La table est le contrat partagé
+([`maestro/controltower/progression.py`](../maestro/controltower/progression.py)) ; une colonne de
+Kanban la lit plutôt que d'inventer sa correspondance.
+
+| compartiment | statuts de tâche rassemblés |
+| --- | --- |
+| `a_faire` | `backlog`, `prete`, `assignee` |
+| `en_cours` | `en_cours`, `en_attente_validation` |
+| `bloquees` | `bloquee` |
+| `terminees` | `terminee` |
+| `echecs` | `echec` |
+| `autres` | tout statut absent de la table |
+
+Trois précisions qui sont le contenu du contrat. **`assignee` compte pour « à faire »** : la tâche a
+un exécutant mais n'a pas commencé, et c'est ce que « à faire » veut dire dans une barre — la
+colonne « Assignées » du Kanban (§2.2) est la même population, vue autrement. **`autres` n'est pas
+une commodité** : sans lui, un statut nouveau disparaîtrait du compte et `total` cesserait
+silencieusement d'égaler `nb_taches` ; un compartiment visible à 1 se remarque, une somme fausse
+non. **`soldees` est servi plutôt que laissé à déduire** (`terminees + echecs + bloquees`, les trois
+statuts terminaux du moteur) : une barre se dessine par `soldees / total`, sans que le client ait à
+savoir lesquels des compartiments sont terminaux — ce qui serait la machine à états réécrite
+ailleurs, c'est-à-dire exactement ce que le critère interdit.
+
+Les tâches comptées sont celles que le run a **lui-même portées**, et ce sont exactement celles que
+rend `GET /api/taches?projet=…&run=<run_id>` (§6.0bis) : la barre et le Kanban d'un même écran
+comptent la même population. Corollaire d'une **relance** (#349), où deux runs portent le même
+identifiant de tâche : l'état compté est celui de la **carte** — une tâche reprise avec succès se
+lit « terminée » des deux côtés, plutôt qu'« échouée » dans la barre et « terminée » dans la
+colonne.
 
 **Un run non soldé dit s'il est encore porté par quelqu'un** (#348). Un run lancé d'ici vit dans un
 **process détaché** (#446) et **ne survit pas à sa machine** — ce qui est assumé ; ce qui ne l'était
