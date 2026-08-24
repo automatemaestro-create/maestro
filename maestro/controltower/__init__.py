@@ -43,7 +43,12 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   Il **écoute** aussi ce même Redis (#444) : l'issue « annulee » qu'y consigne
   `ServiceExecutions._solder` est l'ordre par lequel l'annulation traverse la
   frontière, et le run annule alors sa propre tâche — donc `Task.cancel` reste le
-  mécanisme réel, à un aller Redis près, quel que soit l'hôte.
+  mécanisme réel, à un aller Redis près, quel que soit l'hôte. Les **trois attentes
+  humaines** l'empruntent de même (#445) : décision sur le brief (#320), réponses
+  de clarification (#321) et validation d'action sensible (#9/#48) s'y branchent
+  par les mêmes arbitres que côté API, sur un bus unique par process — et le
+  fail-safe est celui de toujours, un bus refermé sans décision faisant lever
+  l'attente ou refuser l'action, jamais approuver.
   Ce dernier n'est **pas réexporté ici**, et pas par oubli : son module est aussi
   un point d'entrée (`python -m maestro.controltower.hote_detache`), et un module
   déjà importé par le paquet est ensuite exécuté **une seconde fois** comme
