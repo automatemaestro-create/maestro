@@ -937,6 +937,16 @@ process des runs qu'elle a lancés, et une mort observée est un fait, pas une d
 - il attend quelques secondes avant de conclure : un process publie son issue *puis* sort, et
   regarder entre les deux ferait solder en `echec` un run qui vient d'annoncer sa réussite.
 
+> **Couverture** (#447) : [`tests/test_hote_detache.py`](../tests/test_hote_detache.py) éprouve le
+> **process** — l'ordre qui traverse la frontière sans rien perdre, le démarrage raté qui nomme sa
+> cause, l'annulation reçue par le bus, les trois attentes humaines, l'issue publiée en partant, le
+> ramassage — et sa **survie sur de vrais process** : un lanceur qui meurt pendant que ses deux runs
+> continuent de battre, parce que vérifier qu'un process survit à un autre ne se simule pas.
+> [`tests/test_hote_run.py`](../tests/test_hote_run.py) éprouve la frontière **vue d'ici** : les deux
+> hôtes et la seule méthode où ils se contredisent (`fermer`), le run soldé avec sa cause quand
+> l'hôte ne part pas, les trois bornes du ramassage, et la résolution de `MAESTRO_HOTE_RUN`. Ni
+> Redis, ni Temporal, ni réseau dans l'une ni dans l'autre.
+
 **Ce qui survit à la mort d'un hôte, et ce qui ne survit pas** (#347). C'est la question qu'on se
 pose quand un run vient de disparaître, et la réponse tient en un inventaire — la ligne de conduite
 étant que **tout ce qui est passé par le bus est acquis**, et rien d'autre :

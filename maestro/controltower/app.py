@@ -19,8 +19,9 @@ Endpoints :
   soldé, sa **vitalité** (#348) — `vivant` / `orphelin` / `indetermine`, selon que
   l'hôte du run bat encore, ne bat plus depuis le seuil, ou n'a jamais battu ;
 - `POST /api/executions` — **lance** une exécution (objectif + garde-fous + les
-  **sources** de l'objectif, #317) en tâche de fond et rend son `run_id`
-  immédiatement (#185), avec le **rapport de lecture** de sa matière ;
+  **sources** de l'objectif, #317) chez l'**hôte de run** du déploiement — un
+  process détaché depuis #446 — et rend son `run_id` immédiatement (#185), avec le
+  **rapport de lecture** de sa matière ;
 - `POST /api/sources` — **téléverse** un ou plusieurs fichiers (multipart) et
   rend leurs identifiants de source (#317, EF-39) : les octets attendent dans le
   dépôt de téléversement, hors de tout projet, jusqu'au lancement qui les
@@ -1092,8 +1093,10 @@ def create_app(
     async def lancer_execution(requete: LancementExecutionRequete) -> dict[str, Any]:
         """Lance une exécution (#185) et rend son résumé, `run_id` compris, **aussitôt**.
 
-        Le run se déroule **hors** de la requête HTTP (tâche de fond de l'API) :
-        la réponse ne dit pas ce qu'il a produit, elle dit qu'il est parti. La
+        Le run se déroule **hors** de la requête HTTP — et, depuis #446, hors du
+        process de l'API : il part chez son **hôte** (`MAESTRO_HOTE_RUN`, un
+        process détaché par défaut), qui lui survit. La réponse ne dit donc ni ce
+        qu'il a produit ni même qu'il ira au bout : elle dit qu'il est parti. La
         suite arrive par le flux d'événements existant — chaque étape devient un
         `tache.statut` du WebSocket et une ligne du Kanban — et se relit sur
         `GET /api/executions/{run_id}`. 422 sur un objectif vide, un garde-fou

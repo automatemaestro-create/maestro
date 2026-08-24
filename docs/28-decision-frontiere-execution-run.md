@@ -342,6 +342,10 @@ Aucune de ces quatre conditions n'est remplie au 2026-08-23.
 
 ## 9. Le chantier — découpage en lots
 
+> ⚠ **Ce paragraphe est le plan, pas l'état des lieux.** Le chantier est livré : ce qui a
+> réellement été construit, ce que le plan a dû corriger en route et ce que ça a coûté se lisent
+> au **§10**, plus bas.
+
 Le chantier est ouvert : **parent de suivi #441**, six lots d'~1 session, chacun mergeable seul sur
 `main` sans casser l'existant. Le défaut reste **l'exécution en process** jusqu'au lot 5 : chaque lot
 intermédiaire livre du code inerte tant que la bascule n'a pas eu lieu, ce qui est la condition pour
@@ -364,3 +368,115 @@ jour où la porte du §8 s'ouvre.
 Deux lots sont marqués **(parallèle)** : l'annulation et le canal humain sont indépendants l'un de
 l'autre une fois le lancement détaché en place. Le lot 6, comme toujours, n'est jamais marqué et
 reste derrière l'ensemble.
+
+---
+
+## 10. La suite — le chantier livré (2026-08-24)
+
+> Écrit au lot final **#447**, le lendemain de la décision. Cette section ne révise ni §4 ni §5 —
+> les options tiennent, le verdict aussi — mais rend leur **contrepartie constatée** : l'hôte
+> détaché a été construit, basculé en défaut, et voici ce qu'il a tenu, ce qu'il a coûté et les
+> trois endroits où le plan a dû être corrigé en route. Les chiffres sont relevés sur le dépôt,
+> jamais recopiés du plan.
+
+### 10.1 Ce qui a été livré
+
+Les **cinq** premiers lots ont été mergés le **2026-08-24**, de `3102576` (la note) à `4a10fd3` (la
+bascule) : **15 fichiers, +2 654 / −185**. Le sixième est la PR qui porte cette section.
+
+| Lot | Livré | Taille |
+| --- | --- | --- |
+| **#442** — le contrat | `maestro/controltower/hote.py` (`HoteRun`, `OrdreRun`, `DemarrageHoteRate`) et `hote_en_process.py` : la connaissance « un run est une tâche de ce process », qui vivait dans cinq méthodes du service, tient désormais dans une classe. Aucun changement de comportement. | +456 / −80 |
+| **#443** — l'hôte détaché | `hote_detache.py` : les deux côtés de la frontière dans un fichier — le lanceur sérialise l'ordre, `main` le relit. Détachement par plateforme, témoin de démarrage, journal, `MAESTRO_HOTE_RUN` **opt-in**. | +877 / −19 |
+| **#444** — l'annulation | Le process **écoute** : il guette l'issue `annulee` de son run sur le bus et annule sa propre tâche. Repli franc du lanceur derrière. | +338 / −67 |
+| **#445** — le canal humain | Les trois arbitres branchés sur le bus de *ce* process, un seul bus pour quatre abonnements. Le refus temporaire du brief `humain` au lancement disparaît. | +482 / −63 |
+| **#446** — la bascule et la fin de vie | `detache` devient le défaut ; l'hôte **publie son issue** en partant et retire son battement (`bridge.solder_le_run`), `maestro-run --publier` compris ; `HoteRun.ramasser` + `ServiceExecutions._ramasser` pour ce qui meurt sans un mot. | +760 / −215 |
+| **#447** — tests et doc | [`tests/test_hote_detache.py`](../tests/test_hote_detache.py) (le process : transport, démarrage, survie, annulation, canal humain, issue, ramassage) et [`tests/test_hote_run.py`](../tests/test_hote_run.py) (la frontière vue de l'appelant : les deux hôtes, le service, le déploiement). Plus cette section, docs/05 et docs/07 §6.8. | cette PR |
+
+### 10.2 Ce que la note avait bien vu
+
+Quatre prévisions du §4.3, tenues sans mauvaise surprise :
+
+- **aucune dépendance d'infra nouvelle.** `sys.executable -m <module>` : même interpréteur, même
+  `.venv`, même machine, même Redis. Le chantier de résolution de binaire d'AionUi (§7) n'a pas eu
+  lieu, et rien n'a été ajouté à `infra/` ;
+- **`Task.cancel` reste le mécanisme réel**, à un aller Redis près. La propriété que le POC avait
+  protégée exprès (#185) n'a pas été repayée ;
+- **les trois attentes humaines sont du câblage.** Le lot 4 n'invente aucun mécanisme d'attente et
+  aucun fail-safe : les deux existants — lever sur le brief, refuser l'action sensible — retombent
+  d'eux-mêmes sur le bon comportement, y compris dans le cas neuf du lot (un bus qu'on n'a pas pu
+  *construire*, où rien n'est câblé du tout) ;
+- **« on peut rater un démarrage »** est bien la seule chose que la veille AionUi coûte, et c'est
+  le seul défaut que `lancer` remonte (`DemarrageHoteRate`) — code de sortie, dernières lignes du
+  journal de l'hôte et chemin de ce journal, dans le `detail` du run.
+
+Une cinquième, moins visible : le **prérequis commun** du §3 (faire descendre `projet_id`) a été
+payé au lot 2 comme prévu, et il servira O4 tel quel le jour où la porte du §8 s'ouvre.
+
+### 10.3 Les trois corrections en route
+
+**① Le contrat a un quatrième verbe.** Le §7 le décrivait comme une abstraction de « lancement /
+annulation / observation » ; il en a une de plus, `ramasser` (#446). Ce n'est pas un quatrième
+*pouvoir* et c'est ce qui le rend sûr : `runs_en_vol` dit ce qui vit, donc rien de ce qui vient de
+cesser. L'hôte rapporte un **fait** — ce process est mort, voici son code et sa trace — et
+l'appelant seul, qui lit la projection, décide de ce qu'il signifie. Lui faire dire « ce run a
+échoué » lui demanderait de connaître le statut du run, c'est-à-dire précisément ce que le contrat
+existe pour lui épargner.
+
+**② Le brief `humain` a été refusé pendant deux lots.** La note le donnait « inchangé » (§4.3) et il
+l'est *au bout* — mais entre le lot 2 et le lot 4, la décision n'avait aucun canal jusqu'au process,
+et un run parti dans ces conditions serait resté suspendu pour toujours. Or chaque lot doit être
+mergeable seul sans casser l'existant : `HoteRunDetache.lancer` a donc **refusé** le mode `humain`
+le temps que le canal existe. Le refus temporaire est le prix de la découpe, pas un revirement — et
+il valait mieux que l'alternative, qui était de fusionner les lots 2 et 4.
+
+**③ La fin de vie d'un hôte a coûté plus cher que sa naissance.** Le lot 5 est le plus gros du
+chantier en lignes **touchées** (+760 / −215, sur 14 fichiers, contre 7 pour le lot qui a écrit
+l'hôte lui-même), et ce n'est pas la bascule qui pèse : elle tient dans une valeur de repli, exactement
+comme les quatre lots précédents l'avaient préparée. Ce qui pèse est le **corollaire de #348**, que
+le plan mentionnait en une ligne. Un run publié hors de l'API n'émettait aucun statut de fin, donc
+son dernier battement vieillissait et le faisait apparaître `orphelin` alors qu'il avait très bien
+terminé. Acceptable tant que le détaché était opt-in ; plus du tout une fois qu'il est le chemin de
+tous les lancements Control Tower. Quatre gestes ont dû naître ensemble — publier l'issue
+(`bridge.solder_le_run`), retirer le battement (`battement.oublieur_redis`), constater les morts
+(`HoteRun.ramasser`) et les trancher (`ServiceExecutions._ramasser`) — et le **même défaut vivait à
+côté**, dans `maestro-run --publier`, qu'il a fallu réparer dans le même lot sous peine de le voir
+survivre à sa propre correction.
+
+### 10.4 Le corollaire, à jour
+
+Il ne disparaît pas, il **change de portée** : un run survit à son API, **pas à sa machine**. Ce qui
+change vraiment est le sens du verdict `orphelin` :
+
+| | avant le chantier | depuis #446 |
+| --- | --- | --- |
+| Fermer la fenêtre du navigateur, relancer l'API, `start.sh --stop` | le run meurt | **le run continue** |
+| Un run terminé normalement hors de l'API | finit `orphelin`, faute de statut de fin | publie son issue et se solde |
+| Un hôte mort **sous les yeux de l'API** | reste `en_cours` jusqu'au seuil d'orphelinat, puis pour toujours | ramassé et soldé `echec` **avec sa cause** |
+| Machine endormie, process tué net, Redis muet au dernier instant | `orphelin` | `orphelin` — et c'est exactement ce que le verdict doit signaler |
+
+Deux mesures relevées au passage, sur le poste de référence (Windows, 2026-08-24) : un hôte détaché
+s'arme en **1,3 s** quand Redis répond et **5,5 s** quand il ne répond pas (le premier battement est
+synchrone et une connexion refusée coûte ses quatre secondes de tentatives), d'où un plafond
+d'attente de démarrage à trente secondes — le triple de marge sur le pire cas observé. Et le
+ramassage accorde un **délai de grâce** de cinq secondes avant de conclure : un process publie son
+issue *puis* sort, et regarder entre les deux ferait solder en `echec` un run qui vient d'annoncer
+sa réussite.
+
+### 10.5 Les quatre portes du §8, au 2026-08-24
+
+Aucune n'est franchie, et le chantier n'en a rapproché aucune :
+
+1. **un second run perdu par sommeil machine** *après* cette livraison — il n'y en a pas eu ;
+2. **l'exécution quitte la machine** — non : le process fils est sur la même machine, par
+   construction ;
+3. **des runs plus longs qu'une journée** — non : un run se compte toujours en dizaines de minutes ;
+4. **une reprise à l'endroit exact de l'interruption** — toujours pas offerte, et toujours pas
+   demandée ; #349 repart du brief.
+
+Ce que la livraison change pour O4 est ailleurs, et c'est le §5 qui l'annonçait : la Control Tower a
+**cessé de supposer que le run vit dans son process**. Lancer, annuler, recevoir le brief et la
+validation, transporter le `projet_id`, publier son issue en partant — tout cela passe désormais par
+un contrat que ni les routes, ni les événements, ni la projection ne connaissent autrement que par
+son nom. Un hôte Temporal s'y brancherait sans réécrire l'appelant ; c'est la seule chose qu'il
+fallait acheter d'avance, et elle est acquise.
