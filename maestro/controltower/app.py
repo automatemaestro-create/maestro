@@ -1236,6 +1236,92 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return annulee
 
+    @app.post("/api/executions/{run_id}/pause")
+    async def suspendre_execution(run_id: str) -> dict[str, Any]:
+        """Suspend un run en cours (#477) : rend son résumé passé à « en pause ».
+
+        **Aucune tâche nouvelle n'est lancée ; celles qui sont en vol vont à leur
+        terme.** C'est ce qui sépare cette route d'`…/annuler`, où les tâches sont
+        tuées là où elles en sont et perdent leur travail. Le run n'est pas soldé,
+        il ne change même pas de statut : `en_pause` est un drapeau **à côté** du
+        statut, si bien qu'un run suspendu pendant l'attente de son brief continue
+        de montrer qu'il attend ce brief.
+
+        L'ordre traverse la frontière d'exécution par le **bus**, comme
+        l'annulation (#444) : l'événement consigné ici est celui que le process
+        détaché guette. Il survit donc au redémarrage de l'API — il est dans le
+        journal durable (#97), rejoué au démarrage suivant.
+
+        Le run **bat toujours** pendant sa pause (#348) : un run suspendu qui
+        cesserait de battre ressortirait `orphelin` au bout d'une demi-heure, et
+        #349 proposerait de le relancer depuis son brief, c'est-à-dire de repayer
+        le cadrage d'un run qui n'a rien perdu.
+
+        `404` si le run est inconnu, `409` s'il est **déjà soldé** (il n'y a plus
+        rien à suspendre) ou **déjà suspendu** — répondre 200 à une pause qui
+        n'était pas la première ferait passer pour un geste ce qui n'en est pas un.
+        """
+        resume = executions.resume(run_id)
+        if resume is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"exécution déjà soldée ({resume['statut']}) : {run_id} — "
+                    "il n'y a rien à suspendre d'un run qui a rendu son issue."
+                ),
+            )
+        if resume["en_pause"]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"exécution déjà suspendue : {run_id} (POST …/reprendre pour la relancer).",
+            )
+        suspendue = await executions.mettre_en_pause(run_id)
+        if suspendue is None:  # pragma: no cover - le résumé vient d'être lu
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        return suspendue
+
+    @app.post("/api/executions/{run_id}/reprendre")
+    async def reprendre_execution(run_id: str) -> dict[str, Any]:
+        """Reprend un run suspendu **là où il en était** (#477) : son résumé remis en route.
+
+        Le plan, les tâches déjà terminées, le brief approuvé, le coût engagé : rien
+        n'a bougé pendant la pause, puisque rien n'a été tué. Cette route ne
+        reconstruit donc rien — elle rouvre la porte, et les tâches qui attendaient
+        repartent.
+
+        ⚠ À ne pas confondre avec `…/relancer` (#349), qui rejoue un run **mort**
+        depuis son brief approuvé et repaie une planification : c'est un **nouveau**
+        run, avec un nouvel identifiant. Ici il n'y a qu'un run, le même, qui
+        reprend son travail — repayer le cadrage n'est pas une reprise.
+
+        `404` si le run est inconnu, `409` s'il n'est **pas suspendu** : il n'y a
+        rien à reprendre d'un run qui travaille, et le dire vaut mieux que rendre un
+        200 sans effet.
+        """
+        resume = executions.resume(run_id)
+        if resume is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if not resume["en_pause"]:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"exécution non suspendue ({resume['statut']}) : {run_id} — "
+                    "il n'y a rien à reprendre d'un run qui n'a pas été mis en pause."
+                ),
+            )
+        reprise = await executions.reprendre(run_id)
+        if reprise is None:  # pragma: no cover - le résumé vient d'être lu
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        return reprise
+
     @app.post("/api/executions/{run_id}/relancer", status_code=202)
     async def relancer_execution(run_id: str) -> dict[str, Any]:
         """Rejoue un run interrompu **sur son brief approuvé** (#349) : le nouveau résumé.

@@ -4,7 +4,7 @@
  * Ce qu'un run montre de lui-même : son **badge**, ce qui le **retient** et son
  * **avancement**.
  *
- * Ces quatre briques sont nées dans la liste des runs (#474) ; #475 les en a
+ * Ces briques sont nées dans la liste des runs (#474) ; #475 les en a
  * sorties le jour où un second écran a eu à dire la même chose — la **vue d'un
  * run**, qui rend son Kanban sous une barre de progression et doit annoncer son
  * état exactement comme la ligne dont on vient de l'ouvrir. Deux formulations du
@@ -15,17 +15,34 @@
  * Rien n'a changé de comportement au passage : ce fichier est l'extraction de ce
  * que `ListeRuns` portait, à la seule addition de `taille` sur la barre — une
  * liste l'empile par dizaines, une vue de run en a une seule et de tête.
+ *
+ * ⚠ #477 y a mis le premier **geste** (`BoutonsPause`), et c'est un revirement
+ * assumé : jusque-là ces briques montraient sans débloquer, et la table `ATTENTES`
+ * ci-dessous renvoyait vers l'écran qui porte l'action. La règle tenait pour ce
+ * qui demande de *lire* avant de trancher — un brief ne se valide pas depuis une
+ * ligne de liste. Suspendre un run n'est pas un arbitrage sur un contenu : rien
+ * n'est détruit, rien n'est perdu, et le geste se défait par son jumeau. Les
+ * attentes, elles, continuent de renvoyer ailleurs.
  */
 
 import Link from "next/link";
+import { useState } from "react";
 
-import { IconeFlecheDroite } from "@/components/Icones";
+import {
+  IconeFlecheDroite,
+  IconePause,
+  IconeReprise,
+} from "@/components/Icones";
 import { BadgeEtat, type TonBadge, type TonCarte } from "@/components/Primitives";
+import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   ATTENTE_BRIEF,
   ATTENTE_REPONSES,
   ATTENTE_VALIDATION,
+  estEnPause,
   estRelancable,
+  peutEtreSuspendu,
+  REGIME_EN_PAUSE,
   REGIME_INTERROMPU,
   REGIME_SUSPENDU,
   REGIME_TRAVAILLE,
@@ -81,9 +98,14 @@ export const ATTENTES: Record<
 
 /**
  * Le fond d'une surface qui porte un run. Seul le régime **suspendu** en change,
- * et c'est mesuré : teinter les quatre reviendrait à n'en signaler aucun. Ce qui
- * attend quelqu'un est le seul état qui appelle un geste — les trois autres se
- * lisent au badge.
+ * et c'est mesuré : teinter les cinq reviendrait à n'en signaler aucun. Ce qui
+ * attend quelqu'un est le seul état qui appelle un geste — les autres se lisent
+ * au badge.
+ *
+ * Un run **en pause** (#477) garde donc le fond ordinaire, alors qu'il est lui
+ * aussi arrêté : la teinte dit « quelqu'un doit intervenir », et un run qu'on
+ * vient de mettre de côté n'attend justement rien de personne. Le teinter
+ * mettrait sur le même plan une décision déjà prise et une décision qui manque.
  */
 export function fondDe(regime: RegimeRun): TonCarte {
   return regime === REGIME_SUSPENDU ? "attentionClaire" : "pleine";
@@ -124,6 +146,12 @@ function apparence(
 ): { ton: TonBadge; libelle: string; pulse: boolean } {
   if (regime === REGIME_TRAVAILLE) {
     return { ton: "info", libelle: "En cours", pulse: true };
+  }
+  if (regime === REGIME_EN_PAUSE) {
+    // Neutre et immobile, à dessein : le run est vivant et personne ne l'attend
+    // — c'est le seul état arrêté qui ne demande rien. Le faire pulser dirait
+    // qu'il avance, le mettre en « attention » qu'il manque une décision.
+    return { ton: "neutre", libelle: "En pause", pulse: false };
   }
   if (regime === REGIME_SUSPENDU && attente !== null) {
     return { ton: "attention", libelle: ATTENTES[attente].libelle, pulse: false };
@@ -182,8 +210,114 @@ export function LigneAttente({
 }
 
 /**
+ * Ce qu'une pause veut dire, en toutes lettres (#477). Ne rend rien ailleurs.
+ *
+ * C'est une exigence du ticket et non une politesse : « une tâche tuée en cours
+ * perd son travail — d'où *on ne lance plus* plutôt que *on interrompt* ». La
+ * distinction entre pause et annulation ne se devine pas d'un badge gris, et
+ * quelqu'un qui croirait avoir tout arrêté serait surpris de voir une tâche
+ * rendre son livrable trois minutes plus tard.
+ */
+export function LignePause({
+  regime,
+  className = "",
+}: {
+  regime: RegimeRun;
+  className?: string;
+}) {
+  if (regime !== REGIME_EN_PAUSE) return null;
+  return (
+    <p
+      className={`text-annexe text-neutral-600 dark:text-neutral-400 ${className}`}
+    >
+      {"Aucune tâche nouvelle n'est lancée ; celles qui étaient en vol vont à leur terme. Le run reprendra son plan là où il en est."}
+    </p>
+  );
+}
+
+const CLASSE_BOUTON_ORDRE =
+  "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-neutral-300 px-3 py-1.5 text-annexe font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800";
+
+/**
+ * Les **deux boutons** d'un run : le suspendre, le reprendre (#477).
+ *
+ * Un seul est jamais visible — ce sont deux faces du même geste, et en montrer
+ * deux dont un inerte ferait chercher lequel s'applique. Aucun n'apparaît sur un
+ * run soldé ou orphelin (`peutEtreSuspendu` : rien à suspendre là où plus rien ne
+ * tourne, et un orphelin ne recevrait pas l'ordre).
+ *
+ * Les ordres partent par le contexte plutôt que par des props : le composant est
+ * monté à la fois dans la liste et dans la vue d'un run, et faire descendre deux
+ * fonctions à travers deux arbres pour un bouton donnerait deux endroits où les
+ * oublier. C'est déjà d'où `ListeRuns` et `VueRun` tirent leurs runs.
+ *
+ * Le bouton se **désarme pendant l'appel** et rend le refus de l'API sous lui :
+ * un 409 « déjà suspendue » se lit, il ne se devine pas. C'est le patron de
+ * `PanneauRunsPerdus`, à une différence près — ici la carte ne disparaît pas au
+ * succès, c'est le badge qui bascule.
+ */
+export function BoutonsPause({
+  run,
+  className = "",
+}: {
+  run: ResumeExecution;
+  className?: string;
+}) {
+  const { suspendreRun, reprendreRun } = useEtatGlobal();
+  const [enCours, setEnCours] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const enPause = estEnPause(run);
+
+  if (!enPause && !peutEtreSuspendu(run)) return null;
+
+  const ordonner = async () => {
+    setEnCours(true);
+    setErreur(null);
+    try {
+      await (enPause ? reprendreRun(run.run_id) : suspendreRun(run.run_id));
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      // Réarmé dans tous les cas, succès compris : le bouton qui reste est
+      // l'**autre** — un run repris se resuspend, et laisser le geste inverse
+      // désarmé obligerait à recharger la page pour le reprendre.
+      setEnCours(false);
+    }
+  };
+
+  return (
+    <span className={className}>
+      <button
+        type="button"
+        disabled={enCours}
+        onClick={() => void ordonner()}
+        className={CLASSE_BOUTON_ORDRE}
+      >
+        {enPause ? (
+          <IconeReprise className="size-3.5 shrink-0" />
+        ) : (
+          <IconePause className="size-3.5 shrink-0" />
+        )}
+        {enCours
+          ? enPause
+            ? "Reprise…"
+            : "Mise en pause…"
+          : enPause
+            ? "Reprendre"
+            : "Mettre en pause"}
+      </button>
+      {erreur && (
+        <span className="mt-1 block text-annexe text-rose-600 dark:text-rose-400">
+          {erreur}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
  * L'hôte de ce run ne bat plus (#348), et ce qu'on peut encore en faire (#349).
- * Ne rend rien pour les trois autres régimes.
+ * Ne rend rien pour les autres régimes.
  */
 export function LigneInterruption({
   run,

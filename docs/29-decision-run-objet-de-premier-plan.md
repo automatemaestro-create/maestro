@@ -215,6 +215,17 @@ Deux d'entre eux méritent un mot, parce qu'ils portent un prix nommé d'avance.
 d'exécution. Elle n'existe à aucun étage : ni UI, ni API, ni moteur. `annuler` et `relancer` sont
 seuls, et une pause n'est pas une annulation qu'on regretterait.
 
+> **Livré**, et moins cher que prévu côté moteur : la boucle n'a coûté qu'un `await` — une tâche
+> prête franchit une **porte** avant d'atteindre l'exécuteur, celle qui est déjà passée n'en a plus
+> devant elle ([`maestro/engine/pause.py`](../maestro/engine/pause.py)). Le prix réel était ailleurs,
+> dans la **modélisation** : la pause n'est **pas un statut** mais un drapeau à côté du statut
+> (`en_pause`), faute de quoi une pause demandée pendant le cadrage aurait été effacée par la demande
+> de brief qui suit — porte fermée, et plus rien à l'écran pour la rouvrir. Contrat complet en
+> [docs/05 §6.1](./05-interface-control-tower.md). L'ordre emprunte le canal de l'annulation (#444),
+> ce qui lui donne gratuitement la survie au redémarrage de l'API ; le run **continue de battre**
+> (#348), sans quoi #349 aurait proposé de le relancer depuis son brief — c'est-à-dire de repayer un
+> cadrage que la pause avait justement préservé.
+
 **#487, la détection, est un chantier à lui seul, et c'est un choix assumé.** [docs/28
 §7](./28-decision-frontiere-execution-run.md) note que le coût d'AionUi vient très majoritairement
 de là — résolution de binaire par plateforme × architecture, diagnostics de démarrage, détection

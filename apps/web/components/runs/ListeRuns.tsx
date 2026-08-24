@@ -42,9 +42,11 @@ import { IconeRuns } from "@/components/Icones";
 import {
   Avancement,
   BadgeRun,
+  BoutonsPause,
   fondDe,
   LigneAttente,
   LigneInterruption,
+  LignePause,
 } from "@/components/runs/EtatRun";
 import { BadgeEtat, Carte, EnTeteSection, EtatVide } from "@/components/Primitives";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -172,6 +174,12 @@ function CarteRun({
 
       <LigneAttente run={run} attente={attente} className="mt-2" />
       <LigneInterruption run={run} regime={regime} className="mt-2" />
+      <LignePause regime={regime} className="mt-2" />
+      {/* Le geste **dans la liste** et pas seulement dans la vue (#477) : on met
+          un run de côté en le voyant passer, sans avoir à l'ouvrir. Rien ne
+          s'affiche pour un run soldé ou orphelin, donc la liste ne s'alourdit
+          pas d'une rangée de boutons inertes. */}
+      <BoutonsPause run={run} className="mt-2 block" />
     </Carte>
   );
 }

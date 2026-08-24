@@ -83,7 +83,7 @@ inter-process. Il n'y avait donc rien à réinventer, seulement à brancher —
 pas une économie de style : `RedisEventBus.subscribe` ouvre un `pubsub` par appel
 sur un client partagé, si bien que quatre bus coûteraient quatre connexions là où
 une suffit — dans un process qui vit des heures, c'est exactement la fuite que
-`_observer_annulation` refusait déjà pour son propre compte. C'est aussi la forme
+`_observer_ordres` refusait déjà pour son propre compte. C'est aussi la forme
 de l'API, qui n'a jamais eu qu'un `self._bus`. Les fabriques `arbitre_brief_redis`
 / `validateur_redis` en ouvrent un chacune parce que leur appelant (`maestro-run`)
 n'en a aucun sous la main ; ce n'est pas notre cas.
@@ -151,7 +151,10 @@ from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
     EXECUTION_TERMINEE,
+    ORDRE_PAUSE,
+    ORDRES_PAUSE,
 )
+from maestro.engine.pause import PorteExecution
 from maestro.references import ReferenceTicket
 
 if TYPE_CHECKING:
@@ -428,7 +431,7 @@ class HoteRunDetache(HoteRun):
         Le geste **gracieux ne s'écrit pas ici**, et c'est tout le lot 3 : il est
         déjà parti quand on arrive. L'issue que `ServiceExecutions._solder`
         consigne avant d'appeler cette méthode est publiée sur le bus, le process
-        la guette (`_observer_annulation`), annule sa propre tâche `asyncio` et
+        la guette (`_observer_ordres`), annule sa propre tâche `asyncio` et
         déroule ses tâches proprement. Ce qui reste à faire ici est de **lui en
         laisser le temps** — borné par `delai_s`, jamais plus.
 
@@ -969,7 +972,12 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
     from maestro.telemetry import RunJournal
 
     bus = _bus_du_run()
-    guet = asyncio.create_task(_observer_annulation(ordre.run_id, bus=bus))
+    # La porte de pause (#477) est ouverte avant le guet, jamais après : il la
+    # ferme sur l'ordre qu'il lit, et un guet qui trouverait `None` laisserait
+    # passer l'ordre sans que rien ne le rattrape — celui qui arrive pendant le
+    # cadrage, précisément, quand le moteur n'existe pas encore.
+    porte = PorteExecution()
+    guet = asyncio.create_task(_observer_ordres(ordre.run_id, bus=bus, porte=porte))
     # Laisse l'abonnement partir avant de se déclarer armé — même précaution qu'en
     # #48 et #320. Elle ne suffit pas à garantir le SUBSCRIBE Redis, et c'est
     # assumé : ce qui rattrape la course ici, et qui manquait là-bas, est le repli
@@ -1021,6 +1029,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
                 # livrable n'atteint jamais la racine du projet.
                 projet_id=ordre.projet_id,
                 mode_brief=ordre.mode_brief,
+                porte=porte,
             )
         )
         attendus: set[asyncio.Future[Any]] = {run, guet}
@@ -1045,13 +1054,28 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
                 await bus.close()
 
 
-async def _observer_annulation(run_id: str, *, bus: EventBus | None = None) -> bool:
-    """Guette l'ordre d'annulation de `run_id` — **True** quand il est passé (#444).
+async def _observer_ordres(
+    run_id: str,
+    *,
+    bus: EventBus | None = None,
+    porte: PorteExecution | None = None,
+) -> bool:
+    """Guette les ordres visant `run_id` — **True** quand l'annulation est passée (#444).
 
     L'ordre n'a pas de canal à lui : c'est l'**issue** du run, `execution.statut`
     au statut « annulee », consignée par `ServiceExecutions._solder` avant qu'il ne
     demande l'interruption. Un fait dont la conséquence est nécessaire vaut mieux
     qu'un second message qui pourrait manquer (cf. l'en-tête du module).
+
+    Depuis #477 le même événement porte deux ordres de plus — **pause** et
+    **reprise** —, et c'était le choix du ticket : le guet est déjà là, abonné, à
+    lire chaque `execution.statut` de ce run ; lui faire reconnaître deux mots de
+    plus ne coûte rien, là où un second abonnement coûterait une connexion et un
+    second endroit où l'ordre peut se perdre. Ils ne **terminent pas** le guet, et
+    c'est toute leur différence de nature avec l'annulation : une pause se lève, se
+    repose, se relève — un guet qui sortirait au premier ordre ne verrait jamais le
+    second. Ils basculent la `porte`, si l'appelant en a passé une, et la boucle
+    continue.
 
     Tout le reste du bus est ignoré, y compris les issues des **autres** runs : ce
     process n'en porte qu'un, et il est nommé.
@@ -1089,13 +1113,22 @@ async def _observer_annulation(run_id: str, *, bus: EventBus | None = None) -> b
                 continue
             if event.statut == EXECUTION_ANNULEE:
                 return True
+            if porte is not None and event.statut in ORDRES_PAUSE:
+                # La pause (#477) ne sort pas de la boucle : elle bascule la porte
+                # et le guet reprend son écoute. Un `continue` implicite, mais qui
+                # mérite d'être vu — c'est ce qui rend le geste réversible.
+                if event.statut == ORDRE_PAUSE:
+                    porte.fermer()
+                else:
+                    porte.ouvrir()
         return False
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 - un guet en panne n'emporte pas le run
         print(
-            f"Guet de l'annulation interrompu — {type(exc).__name__} : {exc} "
-            "(le run continue, son annulation passera par le repli du lanceur)",
+            f"Guet des ordres interrompu — {type(exc).__name__} : {exc} "
+            "(le run continue, son annulation passera par le repli du lanceur ; "
+            "il ne répondra plus à une pause)",
             file=sys.stderr,
         )
         return False
@@ -1119,7 +1152,7 @@ def _bus_du_run() -> RedisEventBus | None:
     bien que quatre abonnements concurrents tiennent sur une connexion.
 
     **Ne lève jamais**, et c'est le point. Cette fonction reprend la charge que
-    `_observer_annulation` portait pour son propre compte : l'ouverture était
+    `_observer_ordres` portait pour son propre compte : l'ouverture était
     **dans** son `try` précisément pour qu'aucune façon de manquer Redis ne puisse
     emporter le run, et sortir cette ligne de là sans rien mettre à la place aurait
     rendu fatal ce qui ne l'était pas (`redis` absent, URL illisible, configuration
@@ -1148,7 +1181,7 @@ def _bus_du_run() -> RedisEventBus | None:
 def _annulation_vue(guet: asyncio.Task[bool]) -> bool:
     """Le guet a-t-il **vu** l'ordre ? — False sur tout le reste, sans lever.
 
-    `_observer_annulation` promet de ne pas lever, mais lire le résultat d'une tâche
+    `_observer_ordres` promet de ne pas lever, mais lire le résultat d'une tâche
     est précisément l'endroit où une promesse tenue ailleurs se paie ici : une
     tâche annulée ou en erreur relèverait à la lecture, et transformerait un guet en
     panne du run. On la traite donc comme un guet qui n'a rien vu, ce qu'elle est.

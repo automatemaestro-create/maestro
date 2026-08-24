@@ -103,6 +103,31 @@ export function estSolde(execution: ResumeExecution): boolean {
   return STATUTS_EXECUTION_SOLDES.includes(execution.statut);
 }
 
+/**
+ * Ce run est-il **suspendu par quelqu'un** (#477) ?
+ *
+ * À ne pas confondre avec `REGIME_SUSPENDU` ci-dessous, qui dit « ce run attend un
+ * humain » : ici c'est l'inverse du sens de la flèche — un humain a arrêté de lui
+ * donner du travail, et rien ne repartira sans un second geste. Le drapeau vit à
+ * côté du statut, qui ne bouge pas : un run peut être suspendu *et* arrêté sur son
+ * brief, les deux étant vrais en même temps.
+ */
+export function estEnPause(execution: ResumeExecution): boolean {
+  return execution.en_pause === true;
+}
+
+/**
+ * Peut-on **suspendre** ce run ? — la même règle que la route, à l'écran (#477).
+ *
+ * Un run soldé n'a plus rien à suspendre, un run déjà suspendu non plus. Un run
+ * orphelin est exclu à dessein, et c'est le seul arbitrage : son hôte est mort,
+ * personne ne recevra l'ordre — proposer le geste inviterait à un clic sans effet,
+ * là où ce run demande à être **repris** (#349), c'est-à-dire rejoué.
+ */
+export function peutEtreSuspendu(execution: ResumeExecution): boolean {
+  return !estSolde(execution) && !estOrphelin(execution) && !estEnPause(execution);
+}
+
 /** Ce qui retient un run en vol — les trois causes, et rien d'autre (#474). */
 export const ATTENTE_BRIEF = "brief";
 export const ATTENTE_REPONSES = "reponses";
@@ -165,20 +190,29 @@ export function causeDAttente(
 }
 
 /**
- * Les quatre régimes d'un run, tels que la liste les distingue **à l'œil** (#474).
+ * Les cinq régimes d'un run, tels que la liste les distingue **à l'œil** (#474).
  *
  * `travaille` et `suspendu` sont tous deux « en cours » pour l'API : c'est
  * précisément la confusion que ce vocabulaire supprime. `interrompu` est le
  * verdict de #348 — l'hôte ne bat plus — et `solde` regroupe les trois issues.
+ *
+ * `en_pause` (#477) est le cinquième, et il ne recouvre aucun des autres : le run
+ * est vivant, il bat, personne ne l'attend — quelqu'un a simplement cessé de lui
+ * donner du travail. Le mot est **« en pause »** et non « suspendu », alors même
+ * que le ticket dit « suspendu » : ce dernier désigne déjà, ici et à l'écran, un
+ * run arrêté *sur* un humain (#474). Deux choses différentes sous un même mot
+ * feraient chercher un brief à valider sur un run qu'on vient de mettre de côté.
  */
 export const REGIME_TRAVAILLE = "travaille";
 export const REGIME_SUSPENDU = "suspendu";
+export const REGIME_EN_PAUSE = "en_pause";
 export const REGIME_INTERROMPU = "interrompu";
 export const REGIME_SOLDE = "solde";
 
 export type RegimeRun =
   | typeof REGIME_TRAVAILLE
   | typeof REGIME_SUSPENDU
+  | typeof REGIME_EN_PAUSE
   | typeof REGIME_INTERROMPU
   | typeof REGIME_SOLDE;
 
@@ -193,7 +227,12 @@ export type RegimeRun =
  *    un run orphelin *arrêté sur son brief* est bien en attente, mais personne ne
  *    recevra la réponse — son hôte est mort. Le proposer comme suspendu inviterait
  *    à un geste sans effet ; il faut le **reprendre** (#349), pas lui répondre ;
- * 3. **suspendu** enfin, avant `travaille` : c'est la moitié du signal — un run
+ * 3. **en pause** (#477) juste après, et avant l'attente : les deux peuvent être
+ *    vrais à la fois — on suspend volontiers un run arrêté sur son brief —, mais
+ *    c'est la pause qui décide de ce qu'il y a à faire. Montrer « brief à valider »
+ *    sur un run mis de côté enverrait approuver un cadrage dont aucune tâche ne
+ *    partirait ensuite ;
+ * 4. **suspendu** enfin, avant `travaille` : c'est la moitié du signal — un run
  *    qui attend quelqu'un depuis trois heures ne « travaille » pas, et c'est
  *    exactement ce que #355 reproche à l'écran d'aujourd'hui.
  */
@@ -203,6 +242,7 @@ export function regimeDuRun(
 ): RegimeRun {
   if (estSolde(execution)) return REGIME_SOLDE;
   if (estOrphelin(execution)) return REGIME_INTERROMPU;
+  if (estEnPause(execution)) return REGIME_EN_PAUSE;
   if (causeDAttente(execution, attendUneValidation) !== null) {
     return REGIME_SUSPENDU;
   }

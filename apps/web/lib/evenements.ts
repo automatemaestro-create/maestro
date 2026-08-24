@@ -36,6 +36,8 @@ import {
   EXECUTION_ECHEC,
   EXECUTION_EN_COURS,
   EXECUTION_TERMINEE,
+  ORDRE_PAUSE,
+  ORDRE_REPRISE,
   VALIDATION_APPROUVEE,
   type Evenement,
 } from "@/lib/types";
@@ -156,6 +158,14 @@ function phraseExecution(evenement: Evenement): string {
       return `Exécution en échec — ${objectif}`;
     case EXECUTION_ANNULEE:
       return `Exécution annulée — ${objectif}`;
+    // Les deux ordres de pause (#477) empruntent le même événement sans être des
+    // statuts : le fil les rend en toutes lettres, faute de quoi ils sortiraient
+    // sous le « Exécution — … » générique, indiscernables l'un de l'autre alors
+    // qu'ils sont exactement inverses.
+    case ORDRE_PAUSE:
+      return `Exécution suspendue — ${objectif}`;
+    case ORDRE_REPRISE:
+      return `Exécution reprise — ${objectif}`;
     default:
       return `Exécution — ${objectif}`;
   }

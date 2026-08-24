@@ -120,6 +120,24 @@ STATUTS_EXECUTION_TERMINAUX = frozenset(
     {EXECUTION_TERMINEE, EXECUTION_ANNULEE, EXECUTION_ECHEC}
 )
 
+#: Les deux **ordres de pause** d'un run (#477), portés par `execution.statut` —
+#: le canal de l'annulation (#444), et surtout pas un second transport : le guet
+#: du process détaché est déjà branché là, et un run qui vit des heures n'a pas à
+#: ouvrir une connexion de plus pour un fait qui passe par celle-ci.
+#:
+#: ⚠ Ce ne sont pas des **statuts**, et c'est la décision de ce lot. Une pause
+#: n'est pas une étape du run : elle se superpose à ce qu'il fait. Un run peut
+#: être suspendu *et* en attente de son brief (#320) — les deux sont vrais en même
+#: temps, et écraser l'un par l'autre ferait perdre celui qui reste. C'est aussi
+#: la panne qu'un statut `en_pause` aurait fabriquée : une pause demandée pendant
+#: le cadrage aurait été effacée par la demande de brief qui suit, laissant une
+#: porte fermée que plus rien à l'écran ne permettait de rouvrir. `appliquer` les
+#: traite donc à part — ils posent `EtatExecution.en_pause` et **ne touchent ni au
+#: statut ni à la fin**.
+ORDRE_PAUSE = "pause"
+ORDRE_REPRISE = "reprise"
+ORDRES_PAUSE = frozenset({ORDRE_PAUSE, ORDRE_REPRISE})
+
 #: Issues d'une décision sur un brief (#320). Volontairement **le vocabulaire des
 #: validations** ci-dessus — approuver ou refuser se dit pareil : ce qui distingue
 #: les deux mécanismes est le canal (`brief.*` vs `validation.*`) et ce qui y
@@ -389,6 +407,13 @@ class EtatExecution:
     # d'orchestration (#204), et il se lit dans le même sens (« ceci est la suite de
     # cela »), jamais dans l'autre.
     reprise_de: str = ""
+    # Ce run est-il **suspendu** (#477) ? Posé et retiré par les deux ordres de
+    # pause, remis à False par tout statut terminal. Un drapeau **à côté** du
+    # statut et non dedans, parce que la pause ne dit pas où en est le run mais
+    # qu'on a arrêté de lui donner du travail : les deux faits coexistent, et un
+    # run suspendu pendant l'attente de son brief doit continuer de montrer qu'il
+    # attend ce brief — c'est ce qu'on regarde pour décider de le reprendre.
+    en_pause: bool = False
 
     @property
     def debut(self) -> str:
@@ -472,6 +497,12 @@ class EtatExecution:
             # pas de le lire.
             "brief_approuve": self.brief_approuve,
             "reprise_de": self.reprise_de,
+            # La pause (#477), dans le résumé pour la raison qui a mis l'attente
+            # ici : c'est la **liste** des runs qui doit montrer lequel est
+            # suspendu, et un booléen ne pèse rien. Il vient en plus du statut et
+            # ne le remplace pas — un run suspendu reste `en_cours`, ou
+            # `en_attente_brief`, ou ce qu'il était.
+            "en_pause": self.en_pause,
             "debut": self.debut,
             "fin": self.fin,
         }
@@ -958,9 +989,18 @@ class ControlTowerState:
         événement sans `run_id` est ignoré (rien à rattacher). Idempotent :
         réappliquer le même événement (application directe par le service puis
         rediffusion par la pompe) laisse l'état inchangé.
+
+        Les deux **ordres de pause** (#477) empruntent le même événement et sortent
+        **avant** tout le reste : ils ne disent pas où en est le run, seulement
+        qu'on le suspend ou qu'on le reprend. Les laisser traverser la suite
+        écraserait son statut par un mot qui n'en est pas un — et effacerait sa
+        `fin`, son attente, tout ce qu'il portait par ailleurs.
         """
         execution = self._executions.get(event.run_id)
         if execution is None:
+            return
+        if event.statut in ORDRES_PAUSE:
+            execution.en_pause = event.statut == ORDRE_PAUSE
             return
         execution.objectif = event.titre or execution.objectif
         execution.statut = event.statut or execution.statut
@@ -989,6 +1029,12 @@ class ControlTowerState:
         execution.fin = (
             event.horodatage if execution.statut in STATUTS_EXECUTION_TERMINAUX else None
         )
+        if execution.statut in STATUTS_EXECUTION_TERMINAUX:
+            # Un run soldé n'est plus suspendu (#477) : il n'y a plus rien à
+            # reprendre, et laisser le drapeau derrière soi ferait proposer
+            # « Reprendre » sur un run annulé pendant sa pause — le cas exact,
+            # puisque `en_pause` n'empêche pas l'annulation.
+            execution.en_pause = False
         # Le run n'attend plus dès qu'il n'est plus dans un état d'attente (#321) —
         # au premier chef l'**annulation en pleine attente**, qui est le cas que la
         # troisième exigence du ticket protège. Laisser l'ancienneté derrière soi

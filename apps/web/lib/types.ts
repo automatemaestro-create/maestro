@@ -658,6 +658,20 @@ export const EXECUTION_EN_ATTENTE_BRIEF = "en_attente_brief";
 export const EXECUTION_EN_ATTENTE_REPONSES = "en_attente_reponses";
 
 /**
+ * Les deux **ordres de pause** d'un run (#477), tels qu'ils voyagent dans
+ * `execution.statut` sur le flux — le canal de l'annulation, et pas un second.
+ *
+ * ⚠ Ce ne sont **pas** des statuts, et c'est la décision du lot : une pause ne dit
+ * pas où en est le run, elle dit qu'on a cessé de lui donner du travail. Les deux
+ * faits coexistent — un run peut être suspendu *et* en attente de son brief —, d'où
+ * un drapeau à côté du statut (`ResumeExecution.en_pause`) plutôt qu'une valeur de
+ * plus dedans. Ils n'apparaissent donc jamais dans `statut` : les lire ici sert au
+ * seul fil d'activité, qui rend l'ordre en toutes lettres.
+ */
+export const ORDRE_PAUSE = "pause";
+export const ORDRE_REPRISE = "reprise";
+
+/**
  * Le **régime du brief** d'un run (#320) : `sans` décompose l'objectif brut (le
  * comportement d'avant ce lot), `auto` rédige le brief et le décompose sans
  * attendre personne (lancement headless), `humain` arrête le run dessus jusqu'à
@@ -918,6 +932,14 @@ export type ResumeExecution = {
    * entre deux runs d'orchestration (#204).
    */
   reprise_de?: string;
+  /**
+   * Le run est-il **suspendu** (#477) ? Aucune tâche nouvelle n'est lancée, celles
+   * qui étaient en vol sont allées à leur terme. Un drapeau **en plus** du statut,
+   * qui ne bouge pas : un run suspendu reste `en_cours`, ou `en_attente_brief`,
+   * ou ce qu'il était — c'est ce qu'on regarde pour décider de le reprendre.
+   * Absent des flux antérieurs au lot, d'où l'optionnel.
+   */
+  en_pause?: boolean;
   debut: string;
   fin: string | null;
   /**
