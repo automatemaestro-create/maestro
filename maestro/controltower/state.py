@@ -39,6 +39,7 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
@@ -49,6 +50,7 @@ from maestro.controltower.events import (
     Event,
     ReferenceTicket,
 )
+from maestro.controltower.graphe import EtatNoeud, GrapheRun, graphe_du_run
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 from maestro.controltower.progression import Progression, progression_des_statuts
 from maestro.detail_tache import (
@@ -58,6 +60,7 @@ from maestro.detail_tache import (
     liens_en_liste,
 )
 from maestro.engine.executor import STATUT_BLOQUEE, STATUT_ECHEC, STATUT_TERMINEE
+from maestro.plan_run import NoeudPlan
 from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
 from maestro.sources.modele import Source, sources_en_liste
@@ -420,6 +423,16 @@ class EtatExecution:
     # run suspendu pendant l'attente de son brief doit continuer de montrer qu'il
     # attend ce brief — c'est ce qu'on regarde pour décider de le reprendre.
     en_pause: bool = False
+    # Le **graphe du plan** (#490), posé une fois par `run.plan` et jamais
+    # retiré : nœuds, arêtes, ossatures de checklist, tels que la décomposition
+    # les a écrits. Vide pour un run qui n'en a pas publié — moteur antérieur à
+    # ce lot, journal durable rejoué d'avant, ou planification jamais aboutie —,
+    # et c'est ce vide qui vaut `plan_connu: false` au graphe servi. Il vit
+    # **ici** et non sur les tâches, pour la raison qui a fait exister
+    # `taches_vues` : un identifiant de tâche est un slug partagé dès que deux
+    # runs décomposent le même objectif, donc une relance (#349) volerait ses
+    # arêtes au run qu'elle reprend.
+    plan: list[NoeudPlan] = field(default_factory=list)
 
     @property
     def debut(self) -> str:
@@ -608,7 +621,9 @@ class ControlTowerState:
 
     Quatre vues, chacune derrière un endpoint REST : `taches` (Kanban),
     `agents` (fiches et charge), `execution(run_id)` (détail d'un run),
-    `validations` (demandes de validation humaine, #48).
+    `validations` (demandes de validation humaine, #48). Plus deux **lectures
+    dérivées** d'un run, qui ne stockent rien et se recomposent à chaque appel :
+    `progression(run_id)` (#473) et `graphe(run_id)` (#490).
     """
 
     def __init__(
@@ -704,6 +719,73 @@ class ControlTowerState:
             # constater autrement.
             tache.statut if (tache := self._taches.get(tache_id)) is not None else ""
             for tache_id in vues
+        )
+
+    def graphe(self, run_id: str) -> GrapheRun:
+        """Le **graphe** du run `run_id` : nœuds, arêtes, branches parallèles (#490).
+
+        La jointure des deux moitiés, chacune lue là où elle fait autorité. Les
+        **nœuds et les arêtes** viennent du plan que le run a publié
+        (`EtatExecution.plan`), figé au moment de la décomposition ; l'**état** de
+        chaque nœud vient de la carte que la projection tient de sa tâche —
+        exactement celle que rend `GET /api/taches?run=<id>`, si bien que le
+        graphe, le Kanban et la barre de progression d'un même écran ne peuvent
+        pas se contredire.
+
+        Un run **sans plan publié** ne rend pas un graphe vide : ses nœuds sont
+        reconstruits de ses tâches vues, dans leur ordre d'apparition, sans
+        aucune arête — et le graphe le **dit** (`plan_connu: false`). C'est le
+        seul cas où les nœuds ne viennent pas du plan, et il fallait qu'il se
+        distingue d'un plan réellement sans dépendance : les deux se dessinent
+        pareil, on n'a pas le droit d'en conclure la même chose.
+
+        Un run inconnu rend un graphe **vide** plutôt qu'une erreur, comme
+        `progression` : la projection répond à ce qu'elle sait, le refus motivé
+        est le rôle des routes.
+        """
+        execution = self._executions.get(run_id)
+        plan = list(execution.plan) if execution is not None else []
+        plan_connu = bool(plan)
+        if not plan_connu:
+            # Repli : les tâches que le run a portées, dans leur ordre de
+            # première apparition — celui de `taches()`, et non celui de
+            # `taches_vues`, qui est un `frozenset` et rendrait un graphe dont
+            # l'ordre changerait d'un appel à l'autre.
+            vues = self.taches_du_run(run_id)
+            plan = [
+                NoeudPlan(id=tache.id, titre=tache.titre)
+                for tache in self._taches.values()
+                if tache.id in vues
+            ]
+        return graphe_du_run(
+            run_id,
+            plan,
+            {
+                noeud.id: self._etat_noeud(noeud.id)
+                for noeud in plan
+                if noeud.id in self._taches
+            },
+            plan_connu=plan_connu,
+        )
+
+    def _etat_noeud(self, tache_id: str) -> EtatNoeud:
+        """Ce que le graphe (#490) a besoin de savoir d'une tâche connue, et rien de plus.
+
+        Le pendant exact de l'extraction des statuts pour la progression
+        (#473) : la projection décide de quelles tâches elle parle et de leur
+        état, le module feuille ne décide que du dessin. La **durée** se lit dans
+        `usage`, où le moteur pose la durée horloge de la tâche (relances
+        comprises) ; `None` tant que rien n'a été mesuré — inconnu n'est pas
+        zéro, et une boîte annoncée à « 0 ms » se lirait comme instantanée.
+        """
+        tache = self._taches[tache_id]
+        return EtatNoeud(
+            statut=tache.statut,
+            agent=tache.agent,
+            role=tache.role,
+            cout_usd=tache.cout_usd,
+            duree_ms=tache.usage.duree_ms if tache.usage is not None else None,
+            etapes=tuple(tache.etapes),
         )
 
     def tache(self, tache_id: str) -> EtatTache | None:
@@ -810,6 +892,8 @@ class ControlTowerState:
             self._applique_validation_demande(event)
         elif event.type == EVENEMENT_VALIDATION_DECISION:
             self._applique_validation_decision(event)
+        elif event.type == EVENEMENT_RUN_PLAN:
+            self._applique_run_plan(event)
         elif event.type == EVENEMENT_EXECUTION_STATUT:
             self._applique_execution_statut(event)
         elif event.type == EVENEMENT_BRIEF_DEMANDE:
@@ -992,6 +1076,27 @@ class ControlTowerState:
             agent.actif = False
         if event.instances is not None:
             agent.instances = event.instances
+
+    def _applique_run_plan(self, event: Event) -> None:
+        """Pose le **graphe du plan** d'un run (#490) — et **rien d'autre**.
+
+        Le pendant, pour le run, de ce que `_applique_reference` et
+        `_applique_detail` font pour une tâche : l'événement n'apprend qu'une
+        chose, il ne touche donc qu'à elle. Il ne crée aucune tâche, ne fait
+        bouger aucune colonne du Kanban et ne change pas `nb_taches` — le plan
+        annonce ce qui *sera* fait, les tâches d'un run restent celles que ses
+        événements ont réellement portées (`taches_vues`), et confondre les deux
+        ferait diverger `progression.total` de `nb_taches` pendant tout le run.
+
+        Un plan **vide** ne remplace rien : le pont ne publie l'événement que sur
+        un plan non vide, et si un producteur minimaliste en envoyait un, il
+        n'apprendrait rien. Idempotent, donc rejouable : le journal durable (#97)
+        reconstruit le graphe à l'identique au redémarrage de l'API.
+        """
+        execution = self._executions.get(event.run_id)
+        if execution is None or not event.plan:
+            return
+        execution.plan = list(event.plan)
 
     def _applique_execution_statut(self, event: Event) -> None:
         """Pose le cycle de vie d'un run (#185) : objectif, statut, heure de fin.

@@ -27,6 +27,7 @@ import {
   EVENEMENT_EXECUTION_STATUT,
   EVENEMENT_MESSAGE_INTER_AGENTS,
   EVENEMENT_PLAYBOOK_PROPOSITION,
+  EVENEMENT_RUN_PLAN,
   EVENEMENT_TACHE_REASSIGNATION,
   EVENEMENT_TACHE_REFERENCE,
   EVENEMENT_TACHE_STATUT,
@@ -264,6 +265,16 @@ export function resumeEvenement(evenement: Evenement): string {
     }
     case EVENEMENT_EXECUTION_STATUT:
       return phraseExecution(evenement);
+    case EVENEMENT_RUN_PLAN:
+      // #490 : le plan du run est arrêté. Le volume est lu dans `detail`, où le
+      // backend l'a mis, et non recompté sur `plan` : le journal requêtable
+      // (#478) ne garde pas les charges lourdes d'un événement, si bien qu'un
+      // fil relu après rechargement compterait zéro nœud et l'annoncerait.
+      // Historique et direct disent la même phrase parce qu'ils lisent le même
+      // champ, pas parce que deux calculs concordent.
+      return evenement.detail
+        ? `Le plan du run est arrêté : ${evenement.detail}`
+        : "Le plan du run est arrêté";
     default:
       return `${evenement.agent || "?"}${sujet ? ` — ${sujet}` : ""}${
         evenement.statut ? ` : ${libelleStatut(evenement.statut)}` : ""

@@ -36,6 +36,10 @@ Endpoints :
   et, depuis #320, le **brief** soumis ou retenu ;
 - `GET  /api/executions/{run_id}/cout` — le grand livre du run (#57) : coût
   par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat ;
+- `GET  /api/executions/{run_id}/graphe` — le **graphe** du run (#490) : un nœud
+  par tâche du plan, une arête par dépendance, les nœuds rangés par niveaux —
+  deux tâches indépendantes y tombent au même niveau, donc se lisent comme
+  parallèles ;
 - `GET  /api/analytics/couts` — la vue coûts & analytics (#87) : agrégats par
   tâche, par agent et par exécution, total et série temporelle du coût
   (`depuis` pour la période, `pas` pour la granularité des seaux) ;
@@ -1549,6 +1553,37 @@ def create_app(
         if detail is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return detail.cout.to_dict()
+
+    @app.get("/api/executions/{run_id}/graphe")
+    async def graphe_execution(run_id: str) -> dict[str, Any]:
+        """Le **graphe** d'une exécution (#490) : nœuds, arêtes, branches parallèles.
+
+        La troisième lecture d'un run, à côté du Kanban (« combien dans quel
+        état ») et de la progression (« où en est-on ») : celle qui dit **quoi
+        après quoi**. Un nœud par tâche du plan — agent, statut, checklist, coût,
+        durée —, une arête par dépendance, et les nœuds rangés par `niveaux` :
+        deux tâches sans dépendance entre elles y tombent au **même** niveau,
+        donc se lisent comme parallèles au lieu de paraître séquentielles.
+
+        Rien n'est à recalculer côté client : `niveau`/`rang` par nœud,
+        `compartiment` (la table partagée de la progression, #473),
+        `profondeur`, `largeur` et `plat` sont servis.
+
+        Un plan **sans aucune dépendance** rend un graphe plat et le dit
+        (`plat: true`, tous les nœuds au niveau 0) : c'est le cas courant, pas un
+        graphe vide. `plan_connu: false` marque le cas qu'on ne peut pas
+        deviner — un run qui n'a jamais publié son plan, dont les nœuds sont
+        alors reconstruits de ses seules tâches vues, sans arête.
+
+        La mise à jour **en direct** passe par le flux existant, sans second
+        canal : le graphe se recompose à chaque lecture depuis la projection, et
+        ce sont donc `run.plan` (le plan est connu), `tache.statut` (un nœud
+        démarre, une arête s'allume) et `tache.detail` (une étape se coche, #489)
+        qui le font bouger. 404 si aucune trace reçue pour ce `run_id`.
+        """
+        if state.execution(run_id) is None:
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        return state.graphe(run_id).to_dict()
 
     @app.post("/api/sources/apercu")
     async def apercu_ingestion(

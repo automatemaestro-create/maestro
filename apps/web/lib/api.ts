@@ -20,6 +20,7 @@ import type {
   EntreeRegistreMcp,
   EtatAgent,
   FilChat,
+  GrapheRun,
   IntegrationPoolMcp,
   LancementExecution,
   PageExplorateur,
@@ -145,6 +146,23 @@ export function chargerValidations(
 export function chargerCoutExecution(runId: string): Promise<CoutExecution> {
   return chargerJson<CoutExecution>(
     `/api/executions/${encodeURIComponent(runId)}/cout`,
+  );
+}
+
+/**
+ * Le graphe d'une exécution (`GET /api/executions/{run_id}/graphe`, #490) : un
+ * nœud par tâche du plan, une arête par dépendance, les nœuds rangés par
+ * niveaux — deux tâches indépendantes y tombent au même niveau, donc se lisent
+ * comme parallèles.
+ *
+ * Tout ce qui sert à dessiner est **servi** (`niveau`/`rang` par nœud,
+ * `compartiment`, `profondeur`, `largeur`, `plat`) : rien n'est à recalculer
+ * ici. Se recharge sur les événements du flux — `run.plan`, `tache.statut`,
+ * `tache.detail` —, le graphe n'ayant pas de canal à lui.
+ */
+export function chargerGrapheExecution(runId: string): Promise<GrapheRun> {
+  return chargerJson<GrapheRun>(
+    `/api/executions/${encodeURIComponent(runId)}/graphe`,
   );
 }
 

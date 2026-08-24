@@ -36,6 +36,8 @@ from maestro.detail_tache import EtapeTache as EtapeTache  # ré-export explicit
 from maestro.detail_tache import LienUtile as LienUtile  # ré-export explicite
 from maestro.detail_tache import etapes_depuis, liens_depuis
 from maestro.orchestrator.schema import Brief as Brief  # ré-export explicite
+from maestro.plan_run import NoeudPlan as NoeudPlan  # ré-export explicite
+from maestro.plan_run import noeuds_depuis
 from maestro.projets.application import DiffProjet
 from maestro.references import ReferenceTicket as ReferenceTicket  # ré-export explicite
 from maestro.sources.modele import Source as Source  # ré-export explicite
@@ -54,6 +56,9 @@ from maestro.telemetry.usage import StepUsage
 # cinquième, à ceci près qu'il vient de `maestro.orchestrator.schema` : c'est
 # l'orchestrateur qui le produit, et il n'y a aucune raison d'en tenir un second
 # modèle ici — il voyage du moteur (#320) à l'écran de validation (#322) tel quel.
+# `NoeudPlan` (#490) est le sixième, et il suit `EtapeTache` au mot près :
+# défini dans `maestro.plan_run`, feuille, parce que le journal le transporte
+# (`StepRecord.plan`) et que la projection le garde (`EtatExecution.plan`).
 
 #: Types d'événements diffusés (docs/05 §2.1 : flux d'activité temps réel).
 #: `tache.statut` suit la machine à états de docs/03 §3 ; `tache.reassignation`
@@ -132,6 +137,22 @@ EVENEMENT_BRIEF_DECISION = "brief.decision"
 #: savoir s'il lui reste un tour.
 EVENEMENT_BRIEF_QUESTIONS = "brief.questions"
 EVENEMENT_BRIEF_REPONSES = "brief.reponses"
+
+#: `run.plan` (#490) porte le **graphe du run** — un nœud par tâche, ses
+#: dépendances, son ossature de checklist —, publié **une fois**, à l'instant où
+#: la décomposition rend son plan. Il ne dit rien de l'état : ni agent, ni
+#: statut, ni coût, ni durée, aucun de ces faits n'existant encore (cf.
+#: `maestro.plan_run`). Le run visé est dans `run_id` et jamais dans `tache_id` —
+#: l'événement porte sur le run entier, comme `execution.statut`.
+#:
+#: ⚠ Il **double** la ligne de journal de la planification, il ne la remplace
+#: pas : la même étape produit toujours son `agent.activite` (c'est par lui que
+#: l'usage du cadrage entre au grand livre, #57, et qu'il s'affiche au fil
+#: d'activité). Deux événements pour une ligne, parce que ce sont deux faits :
+#: ce que la planification a **coûté**, et ce qu'elle a **décidé**. Les fondre
+#: aurait fait dépendre le graphe d'un type d'événement dont la projection ne
+#: touche, à dessein, ni aux tâches ni aux runs.
+EVENEMENT_RUN_PLAN = "run.plan"
 
 #: Canal Redis Pub/Sub des événements — sur l'instance mutualisée avec la file
 #: de tâches (#41), d'où un canal nommé plutôt que le canal par défaut.
@@ -298,6 +319,13 @@ class Event:
     # absence d'information. Il vient **en plus** de `detail`, jamais à sa place :
     # le code dit de quoi il s'agit, le détail ce qui s'est passé.
     cause: str = ""
+    # Le **graphe du plan** (#490), porté par le seul `run.plan` : nœuds, arêtes
+    # et ossatures de checklist, tels que la décomposition les a écrits. None
+    # (et non `[]`) partout ailleurs, pour la raison qui vaut déjà
+    # d'`etapes`/`liens`/`sources` : la projection distingue « cet événement
+    # n'apprend rien du plan » de « le plan est vide », et rien de ce qui suit la
+    # planification ne doit effacer le graphe qu'elle a posé.
+    plan: list[NoeudPlan] | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -334,6 +362,9 @@ class Event:
             "tours_max": self.tours_max,
             "reprise_de": self.reprise_de,
             "cause": self.cause,
+            "plan": (
+                [noeud.to_dict() for noeud in self.plan] if self.plan is not None else None
+            ),
             "horodatage": self.horodatage,
         }
 
@@ -404,6 +435,12 @@ class Event:
             # version ultérieure a introduit. L'écran, lui, sait déjà ne rien
             # afficher d'un code qu'il ne connaît pas.
             cause=str(data.get("cause") or ""),
+            # Même régime que les autres listes (#490) : absente → None
+            # (l'événement n'en dit rien) ; présente → les seuls nœuds lisibles.
+            # **Relecture, jamais revalidation** — le plan a été validé contre
+            # `task.schema.json` à sa production, et le rejuger ici rendrait
+            # illisible le graphe d'un run passé dès que le schéma bougerait.
+            plan=(noeuds_depuis(data["plan"]) if data.get("plan") is not None else None),
             horodatage=data.get("horodatage", ""),
         )
 

@@ -113,6 +113,7 @@ from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Brief, Clarification, Task, topological_order
+from maestro.plan_run import noeuds_du_plan
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
@@ -834,6 +835,15 @@ class OrchestrationEngine:
         titre que les tâches (c'est la convention du grand livre, #57), et
         l'omettre creuserait un écart entre le total d'un projet et la somme de
         ses runs.
+
+        L'étape de succès porte aussi le **graphe du plan** (#490,
+        `maestro.plan_run`) : un nœud par tâche, ses dépendances, son ossature de
+        checklist. C'est le seul chemin par lequel les arêtes quittent le moteur,
+        et il passe **par cette étape-là** parce que c'est l'instant où le plan
+        existe et où il est figé — le publier tâche par tâche, au fil des
+        démarrages, donnerait à lire une découverte progressive d'un ordre qui a
+        été décidé une fois pour toutes. Un plan **en échec** n'en porte aucun :
+        il n'y a pas de graphe à dessiner.
         """
         debut = perf_counter()
         with collect_usage() as recolte:
@@ -864,6 +874,7 @@ class OrchestrationEngine:
             sortie=f"{len(tasks)} tâche(s) planifiée(s)",
             usage=usage,
             projet_id=projet_id,
+            plan=noeuds_du_plan(tasks),
         )
         return usage, tasks
 
@@ -947,6 +958,13 @@ def _dependants_directs(tasks: Sequence[Task]) -> dict[str, list[str]]:
     C'est le carnet d'adresses du handoff (#44) : une tâche sans dépendant n'a
     personne à qui passer la main (aucune annonce), une tâche à dépendants
     annonce son issue pour les débloquer. Les ids sont dans l'ordre du plan.
+
+    Le pendant côté lecture est `maestro.plan_run.dependants_directs` (#490),
+    qui rend la même table sur la forme **transportée** du plan — celle que la
+    Control Tower reçoit. Deux fonctions plutôt qu'une parce qu'elles ne
+    travaillent pas sur le même objet (des `Task` ici, des `NoeudPlan` là-bas) et
+    ne franchissent pas la même frontière : ce module est le moteur, l'autre est
+    une feuille que le journal, le bus et la projection se partagent.
     """
     dependants: dict[str, list[str]] = {task.id: [] for task in tasks}
     for task in tasks:

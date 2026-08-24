@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from maestro.appartenance import projet_id_valide
@@ -40,6 +40,7 @@ from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
@@ -48,6 +49,7 @@ from maestro.controltower.events import (
     Event,
 )
 from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depuis
+from maestro.plan_run import NoeudPlan, noeuds_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
 from maestro.telemetry import LOGGER_NAME, redact_secrets
 from maestro.telemetry.usage import StepUsage
@@ -133,6 +135,13 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
       portant statut, agent, rôle et coût rapporté (#8).
 
+    L'étape `planification` est la seule à produire **deux** événements (#490) :
+    son `agent.activite`, inchangé, et — quand elle porte un plan — un
+    `run.plan` qui transporte le **graphe** décidé (nœuds, arêtes, ossatures de
+    checklist). Deux faits distincts sur une même ligne : ce que le cadrage a
+    coûté, et ce qu'il a décidé. Sans plan (ligne d'échec, journal antérieur à ce
+    lot, producteur minimaliste), l'étape rend exactement l'événement d'avant.
+
     Chaque événement embarque la **référence externe** de son étape quand le
     journal en porte une (#187) : c'est le seul chemin par lequel le ticket d'un
     run atteint la Control Tower — le moteur ne fait que la transporter. Il en va
@@ -203,6 +212,11 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         type_evenement = EVENEMENT_TACHE_STATUT
         tache_id = etape
         detail = str(record.get("erreur") or "")
+    # Le graphe du plan (#490) : lu **avant** de construire quoi que ce soit,
+    # parce qu'il décide s'il y a un ou deux événements. Une liste vide n'est pas
+    # un plan — annoncer un graphe sans nœud ferait remplacer, dans la
+    # projection, un plan déjà posé par rien du tout.
+    noeuds = noeuds_depuis(record.get("plan")) if etape == _ETAPE_PLANIFICATION else []
     return (
         Event(
             type=type_evenement,
@@ -227,7 +241,49 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             liens=(liens_depuis(record["liens"]) if record.get("liens") is not None else None),
             horodatage=str(record.get("horodatage", "")),
         ),
+        *(
+            (
+                Event(
+                    type=EVENEMENT_RUN_PLAN,
+                    run_id=str(record.get("run_id", "")),
+                    # Sur le run entier, jamais sur une tâche : `tache_id` reste
+                    # vide, comme pour `execution.statut`. En poser un ferait
+                    # naître une carte fantôme au Kanban — le défaut que la
+                    # branche par défaut de cette fonction fabrique dès qu'une
+                    # étape du run n'est pas nommée.
+                    agent=str(record.get("agent", "")),
+                    role=str(record.get("role", "")),
+                    titre=str(record.get("nom", "")),
+                    # Le **volume** du graphe en clair, et c'est ce que la ligne
+                    # d'activité prononce. Il est ici plutôt que déduit de `plan`
+                    # côté client parce que le journal requêtable (#478) ne garde
+                    # pas les charges lourdes d'un événement : un fil relu après
+                    # rechargement compterait alors zéro nœud et l'annoncerait.
+                    # Historique et direct disent ainsi la même phrase par
+                    # construction, et non par deux calculs à tenir d'accord.
+                    detail=_resume_du_plan(noeuds),
+                    projet_id=projet_id_valide(record.get("projet_id")),
+                    plan=noeuds,
+                    horodatage=str(record.get("horodatage", "")),
+                ),
+            )
+            if noeuds
+            else ()
+        ),
     )
+
+
+def _resume_du_plan(noeuds: Sequence[NoeudPlan]) -> str:
+    """Ce que le plan dit en clair — la ligne du fil d'activité n'affiche que ça (#490).
+
+    Le volume, et rien de plus : un graphe se regarde, il ne se raconte pas.
+    « aucune dépendance » plutôt que « 0 enchaînement » parce que c'est un cas
+    **normal** et le plus courant — la plupart des plans n'en déclarent aucune —,
+    et qu'un compteur à zéro se lit comme un manque.
+    """
+    aretes = sum(len(noeud.dependances) for noeud in noeuds)
+    enchainements = f"{aretes} enchaînement(s)" if aretes else "aucune dépendance"
+    return f"{len(noeuds)} tâche(s), {enchainements}"
 
 
 class JournalEventHandler(logging.Handler):
