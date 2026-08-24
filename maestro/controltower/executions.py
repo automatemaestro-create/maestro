@@ -5,8 +5,9 @@ un run se lançait en ligne de commande (`maestro-run`), ce qui interdisait à l
 Control Tower d'être un vrai poste de pilotage. Ce module est la pièce
 manquante — le service que les routes `/api/executions` appellent :
 
-- `lancer` construit les garde-fous (#9) du run, l'ouvre en **tâche de fond** du
-  process de l'API et rend son résumé (donc son `run_id`) immédiatement ;
+- `lancer` valide les garde-fous (#9) du run, le confie à l'**hôte** du service
+  — par défaut la **tâche de fond** du process de l'API — et rend son résumé
+  (donc son `run_id`) immédiatement ;
   depuis #317 il **compose** aussi la matière de l'objectif : sources résolues
   (#315), octets téléversés rattachés au run, rapport de lecture (#316) rendu
   avec le résumé ;
@@ -31,6 +32,17 @@ dépendance d'infrastructure à `maestro-api`. Le contrat REST n'en dépend pas 
 basculer sur la file plus tard ne change que la fabrique du moteur
 (`fabrique_moteur`), pas les routes. Le corollaire est assumé : **un run ne survit
 pas au redémarrage de l'API** — sa trace, elle, survit (journal durable #97).
+
+Depuis #442, cette frontière a un **nom** et n'est plus un détail
+d'implémentation du service : `maestro.controltower.hote` porte le contrat
+d'hôte de run — lancer, annuler, observer —, et `HoteRunEnProcess` en est
+l'unique implémentation, celle que ce module appliquait lui-même. Rien n'a
+changé de ce que fait un run ; ce qui a changé, c'est que la phrase « un run est
+une tâche de ce process » ne se lit plus qu'à un endroit, au lieu d'être répandue
+dans le lancement, l'annulation, la fermeture, le cœur et la question « ce run
+est-il en vol ? ». C'est le seam sur lequel un hôte **détaché** se branchera
+(#443) sans réécrire ni les routes, ni les événements, ni la projection — et le
+service, lui, ne tient plus aucune tâche : il demande à son hôte ce qu'il porte.
 
 Cette phrase reste vraie, mais elle n'est plus toute l'histoire (#347) : depuis
 #348 la mort de l'hôte se **voit**, et depuis #349 ce qu'elle emporte se
@@ -125,6 +137,8 @@ from maestro.controltower.events import (
     Event,
     EventBus,
 )
+from maestro.controltower.hote import HoteRun, OrdreRun
+from maestro.controltower.hote_en_process import HoteRunEnProcess
 from maestro.controltower.portee import PorteeProjet
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
@@ -246,6 +260,15 @@ class ServiceExecutions:
     `SEUIL_ORPHELIN_S`) ; `periode_battement_s` l'intervalle entre deux
     battements. Les deux sont injectables **pour les tests**, pas comme réglage de
     déploiement : y toucher est un choix de code, comme `DELAI_ANNULATION_S`.
+
+    `hote` (#442) est **l'hôte de run** : ce à quoi le service confie une
+    exécution, et à qui il ne demande que de la lancer, de l'annuler et de dire ce
+    qu'il porte encore (`maestro.controltower.hote`). Par défaut
+    `HoteRunEnProcess`, qui déroule le run en tâche de fond de l'API — le
+    comportement de toujours, désormais nommé. Injectable comme
+    `fabrique_moteur`, et pour la même raison : le service ne doit rien savoir de
+    *où* le run s'exécute, condition pour qu'un hôte survivant à l'API (#441) s'y
+    branche sans réécrire ni les routes, ni les événements, ni la projection.
     """
 
     def __init__(
@@ -260,6 +283,7 @@ class ServiceExecutions:
         battements: RegistreBattements | None = None,
         seuil_orphelin_s: float = SEUIL_ORPHELIN_S,
         periode_battement_s: float = PERIODE_BATTEMENT_S,
+        hote: HoteRun | None = None,
     ) -> None:
         self._bus = bus
         self._state = state
@@ -279,7 +303,12 @@ class ServiceExecutions:
         self._seuil_orphelin_s = seuil_orphelin_s
         self._periode_battement_s = periode_battement_s
         self._coeur: asyncio.Task[None] | None = None
-        self._runs: dict[str, asyncio.Task[None]] = {}
+        # L'hôte des runs (#442) — leur seul registre : le service ne tient plus
+        # aucune tâche, il demande à l'hôte ce qu'il porte. Par défaut celui en
+        # process, construit autour du déroulement de ce service : c'est le seul
+        # hôte qui puisse recevoir une coroutine, et le contrat le dit en ne
+        # passant à `lancer` que des données.
+        self._hote = hote if hote is not None else HoteRunEnProcess(self._derouler)
         # Logger **propre à ce service** : le pont télémétrie s'y pose sans
         # toucher au logger global du journal (cf. docstring du module). Les
         # lignes remontent quand même à `maestro.trace` par propagation — un
@@ -366,9 +395,13 @@ class ServiceExecutions:
             return {}
 
     def en_vol(self, run_id: str) -> bool:
-        """Le run est-il porté par ce service et encore en cours ?"""
-        tache = self._runs.get(run_id)
-        return tache is not None and not tache.done()
+        """Le run est-il porté par l'hôte de ce service, et encore en cours ?
+
+        La question porte sur l'**hôte**, jamais sur le statut : un run peut être
+        soldé dans la projection pendant que son exécution s'éteint encore, et
+        c'est même la fenêtre que le cœur (#348) doit savoir distinguer.
+        """
+        return self._hote.en_vol(run_id)
 
     # ----------------------------------------------------------------- écriture
 
@@ -386,7 +419,12 @@ class ServiceExecutions:
         mode_brief: str | None = MODE_BRIEF_HUMAIN,
         reprise_de: str = "",
     ) -> dict[str, Any]:
-        """Lance une exécution en tâche de fond et rend son résumé **immédiatement**.
+        """Confie une exécution à l'hôte et rend son résumé **immédiatement**.
+
+        L'hôte (#442) est celui du service — par défaut la tâche de fond du
+        process de l'API, comme depuis #185. Ce que la méthode fait avant de la
+        lui confier ne change pas selon l'hôte : les refus, la matière, l'événement
+        de lancement et le premier battement sont écrits ici, une bonne fois.
 
         Les garde-fous (#9) sont ceux du lancement : plafonds de coût et de
         tokens, time-out par tâche, plafond de parallélisme — chacun optionnel
@@ -480,12 +518,6 @@ class ServiceExecutions:
         # la clé, et deux façons d'écrire « je ne précise pas » ne peuvent pas
         # donner deux régimes différents.
         regime_brief = mode_brief_valide(mode_brief or MODE_BRIEF_HUMAIN)
-        garde_fous = Guardrails(
-            plafond_cout_usd=plafond_cout_usd,
-            plafond_tokens=plafond_tokens,
-            timeout_s=timeout_tache_s,
-            validateur=ValidateurControlTower(self._bus),
-        )
 
         reference = (
             ticket
@@ -512,7 +544,7 @@ class ServiceExecutions:
         )
 
         self._demarrer()
-        # L'événement de lancement **avant** la tâche de fond : la projection
+        # L'événement de lancement **avant** que l'hôte ne parte : la projection
         # connaît le run (donc le résumé rendu est complet) avant qu'une seule
         # étape ne puisse y arriver. C'est lui qui porte le ticket du run (#187)
         # et son projet (#222) : il part sur le bus, donc dans le journal
@@ -528,24 +560,28 @@ class ServiceExecutions:
             mode_brief=regime_brief,
             reprise_de=reprise_de,
         )
-        # Premier battement **avant** la tâche de fond, pour la même raison que
+        # Premier battement **avant** le départ chez l'hôte, pour la même raison que
         # l'événement de lancement l'a précédée : entre le moment où le run entre
         # dans la projection et son premier tour d'horloge, il serait lu
         # « indetermine » — c'est-à-dire indiscernable d'un run d'avant #348.
         await self._battement(run_id)
-        tache = asyncio.get_running_loop().create_task(
-            self._derouler(
-                run_id,
-                objectif,
-                garde_fous,
-                parallelisme,
-                reference,
-                projet,
-                regime_brief,
+        # Le run part chez son **hôte** (#442), qui n'en reçoit que l'ordre : des
+        # données, jamais le travail à exécuter. Les plafonds y voyagent bruts —
+        # les garde-fous sont recomposés au déroulement, où seul le validateur
+        # humain, câblage de *ce* bus, a un sens (cf. `_derouler`).
+        await self._hote.lancer(
+            OrdreRun(
+                run_id=run_id,
+                objectif=objectif,
+                plafond_cout_usd=plafond_cout_usd,
+                plafond_tokens=plafond_tokens,
+                timeout_tache_s=timeout_tache_s,
+                parallelisme=parallelisme,
+                ticket=reference,
+                projet_id=projet,
+                mode_brief=regime_brief,
             )
         )
-        self._runs[run_id] = tache
-        tache.add_done_callback(lambda _: self._runs.pop(run_id, None))
         resume = await self.resume_vivant(run_id)
         if resume is None:  # pragma: no cover - le lancement vient d'inscrire le run
             raise RuntimeError(f"run {run_id} absent de la projection après son lancement")
@@ -555,10 +591,10 @@ class ServiceExecutions:
         """Interrompt le run `run_id` et rend son résumé passé à « annulée ».
 
         L'issue est consignée **d'abord** (elle est acquise : c'est une décision
-        humaine, pas le verdict de la tâche), puis la tâche de fond est annulée
-        et l'on attend son extinction au plus `DELAI_ANNULATION_S` — un run qui
-        avale son annulation ne suspend pas la requête. Rend None si le run est
-        inconnu de la projection.
+        humaine, pas le verdict de l'exécution), puis l'hôte (#442) est prié
+        d'interrompre le run et l'on attend son extinction au plus
+        `DELAI_ANNULATION_S` — un run qui avale son annulation ne suspend pas la
+        requête. Rend None si le run est inconnu de la projection.
         """
         if self.resume(run_id) is None:
             return None
@@ -686,7 +722,7 @@ class ServiceExecutions:
         )
 
     async def _solder(self, run_id: str, detail: str) -> None:
-        """Solde un run en vol : issue consignée, tâche éteinte, battement oublié.
+        """Solde un run en vol : issue consignée, exécution éteinte, battement oublié.
 
         Le geste commun de l'annulation (#185) et de la relance (#349), qui soldent
         toutes deux un run non terminé — la seule chose qui les distingue est le
@@ -695,12 +731,13 @@ class ServiceExecutions:
 
         1. l'**issue** d'abord : elle est acquise (une décision humaine, pas le
            verdict de la tâche) ;
-        2. la **tâche** ensuite, si ce process la porte — au plus
+        2. l'**exécution** ensuite, si l'hôte la porte — au plus
            `DELAI_ANNULATION_S`, un run qui avale son annulation ne suspendant pas
-           l'appelant. Dans le cas d'une relance, ce process ne la porte
-           généralement pas (le run est orphelin *parce que* son hôte est tombé) ;
-           s'il la porte quand même — registre muet, verdict `indetermine` —, ne pas
-           l'éteindre laisserait un run soldé continuer de travailler ;
+           l'appelant. Dans le cas d'une relance, l'hôte ne la porte généralement
+           pas (le run est orphelin *parce que* son hôte est tombé) et le dit en
+           rendant False ; s'il la porte quand même — registre muet, verdict
+           `indetermine` —, ne pas l'éteindre laisserait un run soldé continuer de
+           travailler ;
         3. le **battement** en dernier, jamais avant le statut terminal : entre les
            deux, un lecteur verrait un run encore en cours et sans battement,
            c'est-à-dire un orphelin qui n'en est pas un.
@@ -716,29 +753,25 @@ class ServiceExecutions:
         """
         self._demarrer()
         self._consigne(run_id, EXECUTION_ANNULEE, "", detail)
-        tache = self._runs.get(run_id)
-        if tache is not None and not tache.done():
-            tache.cancel()
-            await asyncio.wait({tache}, timeout=DELAI_ANNULATION_S)
+        await self._hote.annuler(run_id, delai_s=DELAI_ANNULATION_S)
         await self._oublier(run_id)
 
     async def fermer(self) -> None:
-        """Arrête le service : runs en vol annulés, pont déposé, pompe éteinte.
+        """Arrête le service : l'hôte se retire, pont déposé, pompe éteinte.
 
-        Appelé à l'arrêt de l'app (lifespan), **avant** la fermeture du bus.
-        Aucun run ne survit au process : c'est la contrepartie assumée de la
-        tâche de fond (cf. docstring du module).
+        Appelé à l'arrêt de l'app (lifespan), **avant** la fermeture du bus. Ce
+        qu'il advient des runs en vol n'est plus décidé ici mais par l'**hôte**
+        (#442) : celui en process les annule, faute de pouvoir leur survivre —
+        c'est la contrepartie assumée de la tâche de fond (cf. docstring du
+        module) —, là où un hôte détaché les laissera vivre. Le service, lui, dit
+        seulement qu'il se retire.
 
         Le cœur s'éteint avec le service et **n'efface aucun battement** (#348) :
         un run emporté par l'arrêt de l'API garde son dernier battement, qui
         vieillit — c'est ainsi qu'il ressortira `orphelin` au lieu de rester
         `en_cours` pour toujours, et c'est exactement la panne du 2026-08-14.
         """
-        en_vol = {t for t in self._runs.values() if not t.done()}
-        for tache in en_vol:
-            tache.cancel()
-        if en_vol:
-            await asyncio.wait(en_vol, timeout=DELAI_ANNULATION_S)
+        await self._hote.fermer(delai_s=DELAI_ANNULATION_S)
         if self._coeur is not None:
             self._coeur.cancel()
             with suppress(asyncio.CancelledError):
@@ -813,11 +846,12 @@ class ServiceExecutions:
         """Le cœur du service : un battement par run en vol, à chaque période (#348).
 
         « En vol » se juge sur **deux** choses, et la seconde n'est pas une
-        précaution de style : la tâche n'est pas finie, *et* le run n'a pas déjà
-        consigné son issue. Une issue est consignée **avant** que la tâche ne
-        s'éteigne (`annuler` le fait explicitement, `_derouler` en sortant), donc
-        s'en tenir à la tâche laisserait le cœur reposer un battement juste après
-        `_oublier` — et l'entrée d'un run soldé resterait alors pour toujours.
+        précaution de style : l'hôte porte encore le run, *et* celui-ci n'a pas
+        déjà consigné son issue. Une issue est consignée **avant** que l'exécution
+        ne s'éteigne (`annuler` le fait explicitement, `_derouler` en sortant),
+        donc s'en tenir à l'hôte laisserait le cœur reposer un battement juste
+        après `_oublier` — et l'entrée d'un run soldé resterait alors pour
+        toujours.
 
         Un battement en échec (Redis injoignable) est tracé sans arrêter le cœur —
         même parti pris que la pompe de publication : le run continue, seul son
@@ -826,9 +860,7 @@ class ServiceExecutions:
         """
         while True:
             await asyncio.sleep(self._periode_battement_s)
-            for run_id, tache in list(self._runs.items()):
-                if tache.done():
-                    continue
+            for run_id in self._hote.runs_en_vol():
                 resume = self.resume(run_id)
                 if resume is not None and resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
                     continue
@@ -866,17 +898,15 @@ class ServiceExecutions:
                 run_id,
             )
 
-    async def _derouler(
-        self,
-        run_id: str,
-        objectif: str,
-        garde_fous: Guardrails,
-        parallelisme: int | None,
-        ticket: ReferenceTicket | None = None,
-        projet_id: str | None = None,
-        mode_brief: str = MODE_BRIEF_HUMAIN,
-    ) -> None:
-        """Déroule le run en tâche de fond et consigne son issue.
+    async def _derouler(self, ordre: OrdreRun) -> None:
+        """Déroule le run décrit par `ordre` et consigne son issue.
+
+        C'est ce que le service confie à son hôte en process (#442) : l'hôte crée
+        la tâche, cette méthode est ce qu'elle exécute. Elle ne prend plus qu'un
+        `OrdreRun` — des données —, ce qui n'est pas un rangement de signature :
+        c'est la forme sous laquelle un hôte qui exécute **ailleurs** recevra le
+        même run, et la garantie que rien d'intransportable (un bus, un moteur,
+        une closure) ne s'y est glissé.
 
         Aucune exception ne remonte : une tâche de fond n'a pas d'appelant à qui
         les rendre — l'échec devient le **statut** du run (visible dans la
@@ -884,25 +914,40 @@ class ServiceExecutions:
         l'annulation se propage, pour que la tâche finisse bien « annulée » (son
         issue, elle, a déjà été consignée par `annuler`).
 
+        Les **garde-fous** (#9) se recomposent ici, et la séparation est le sujet :
+        les plafonds sont un réglage du **lancement**, donc ils voyagent dans
+        l'ordre ; le **validateur** humain est un câblage de déploiement (*où* la
+        décision est demandée — ici le bus de cette app), donc il se branche là où
+        le run se déroule. Les faire voyager ensemble rendrait l'ordre
+        intransportable pour un seul de ses cinq champs.
+
         `ticket` (#187) descend jusqu'au moteur, qui en dote chaque
         tâche du plan : le ticket du run se retrouve ainsi sur chaque carte, par
         le seul chemin du journal — le moteur n'a rien à savoir de son origine.
         `projet_id` (#222) descend par le même chemin et pour la même raison :
         chaque tâche du plan en hérite, et l'appartenance remonte aux vues.
 
-        `mode_brief` (#320) descend, lui, en deux morceaux, et la séparation est le
-        sujet : l'**arbitre** est un câblage de déploiement (*où* la question est
-        posée — ici le bus de l'app), donc il part à la construction du moteur avec
-        les garde-fous ; le **mode** est un choix du lancement (*y a-t-il quelqu'un
-        devant ?*), donc il part avec l'objectif. Un refus humain remonte en
-        `BriefRefuse` et devient un run **annulé**, jamais un échec : rien n'a raté,
-        quelqu'un a dit non — et rien de payant n'a été engagé au-delà du brief.
+        `mode_brief` (#320) descend, lui, en deux morceaux, et la séparation est la
+        même que celle des garde-fous : l'**arbitre** est un câblage de déploiement
+        (*où* la question est posée — ici le bus de l'app), donc il part à la
+        construction du moteur ; le **mode** est un choix du lancement (*y a-t-il
+        quelqu'un devant ?*), donc il part avec l'objectif. Un refus humain remonte
+        en `BriefRefuse` et devient un run **annulé**, jamais un échec : rien n'a
+        raté, quelqu'un a dit non — et rien de payant n'a été engagé au-delà du
+        brief.
         """
+        run_id = ordre.run_id
+        garde_fous = Guardrails(
+            plafond_cout_usd=ordre.plafond_cout_usd,
+            plafond_tokens=ordre.plafond_tokens,
+            timeout_s=ordre.timeout_tache_s,
+            validateur=ValidateurControlTower(self._bus),
+        )
         journal = RunJournal(run_id=run_id, logger=self._logger)
         try:
             moteur = self._fabrique(
                 guardrails=garde_fous,
-                max_parallele=parallelisme,
+                max_parallele=ordre.parallelisme,
                 arbitre_brief=ArbitreBriefControlTower(self._bus),
                 # Les questions de clarification (#321) passent par le même bus et
                 # se câblent au même endroit, pour la même raison : *où* la question
@@ -912,11 +957,11 @@ class ServiceExecutions:
                 arbitre_clarification=ArbitreClarificationControlTower(self._bus),
             )
             rapport = await moteur.run(
-                objectif,
+                ordre.objectif,
                 journal=journal,
-                ticket=ticket,
-                projet_id=projet_id,
-                mode_brief=mode_brief,
+                ticket=ordre.ticket,
+                projet_id=ordre.projet_id,
+                mode_brief=ordre.mode_brief,
             )
         except asyncio.CancelledError:
             raise
