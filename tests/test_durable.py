@@ -31,6 +31,16 @@ Temporal est lié à la boucle qui l'a créé). Le serveur de test — binaire t
 une fois puis mis en cache — est démarré **une fois pour tout le module**. Sans accès
 réseau pour ce téléchargement, le module est ignoré avec un message explicite ; la
 CI, elle, y a accès (elle installe déjà ses dépendances depuis PyPI).
+
+⚠ **Horloge verrouillée et requêtes (#457).** Le serveur *time-skipping* tient son
+horloge **arrêtée** hors de `WorkflowHandle.result()` : aucun timer du serveur n'y
+expire jamais. C'est sans effet tant qu'une requête (`query`) est servie par le
+worker qui a exécuté le workflow — le cas de tous les scénarios sauf un. Mais une
+**reprise** interroge un workflow dont le worker est mort : sa requête part alors
+vers une file « sticky » que plus personne ne relève, et le repli qui devrait la
+rattraper est justement l'un de ces timers. `_EnvTest.horloge_libre` (voir sa
+docstring) rend l'horloge au seul appel concerné ; sans lui, le test était rouge par
+intermittence, sur le délai de la requête et non sur ce qu'il vérifie.
 """
 
 from __future__ import annotations
@@ -174,6 +184,38 @@ class _EnvTest:
     def run(self, coro):
         """Déroule une coroutine sur la boucle du serveur de test (client lié à elle)."""
         return self.loop.run_until_complete(coro)
+
+    def horloge_libre(self, coro):
+        """`coro` déroulée pendant que l'horloge du serveur de test **avance** (#457).
+
+        À réserver au code qui **interroge** (`query`) un workflow que le worker
+        du process courant n'a pas exécuté lui-même — en pratique : une reprise
+        (`DurableEngine.reprendre`), dont c'est tout le propos.
+
+        Le serveur adresse une requête au worker qu'il croit détenir le workflow
+        en cache (file « sticky »). Si ce worker n'est plus là, un
+        **`sticky_queue_schedule_to_start_timeout`** (10 s par défaut, cf. SDK)
+        la fait retomber sur la file normale, où n'importe quel worker la sert.
+        Ce repli est un **timer du serveur**, donc porté par son horloge — or
+        `WorkflowEnvironment.start_time_skipping()` la tient **verrouillée** hors
+        de `WorkflowHandle.result()`. Une requête que le premier dispatch ne sert
+        pas ne peut alors plus jamais l'être : le repli qui devrait la rattraper
+        n'expire pas, et elle épuise le délai de sa requête RPC (30 s) — c'est le
+        `RPCError: Query deadline of 29999 milliseconds exceeded` de #457, rouge
+        une fois sur le pipeline puis vert au simple rejeu.
+
+        Déverrouiller l'horloge le temps de l'appel rend au test le mécanisme qui
+        existe en production : les 10 s du repli passent en temps **virtuel**
+        (mesuré : requête servie en 0,02 s), donc le verdict cesse de dépendre de
+        qui, du dispatch ou du démarrage des pollers, gagne la course. Ce n'est
+        pas un plafond relevé : sans le repli, aucune attente ne suffirait.
+        """
+
+        async def _deroule():
+            async with self.environnement.time_skipping_unlocked():
+                return await coro
+
+        return _deroule()
 
 
 @pytest.fixture(scope="module")
@@ -341,7 +383,12 @@ def test_reprendre_un_run_acheve_rend_le_rapport_sans_rien_reexecuter(env):
     assert len(report.reussies) == 2
 
     journal_reprise = RunJournal(run_id="run-fini")
-    repris = env.run(engine.reprendre("run-fini", journal=journal_reprise))
+    # `horloge_libre` : le worker du run vient de s'éteindre, et la requête de la
+    # reprise a besoin du repli « sticky → file normale » — un timer du serveur,
+    # que l'horloge verrouillée du serveur de test fige (#457).
+    repris = env.run(
+        env.horloge_libre(engine.reprendre("run-fini", journal=journal_reprise))
+    )
 
     # Aucune ré-exécution : l'amont vient de l'historique, pas d'un nouvel appel.
     assert provider.executions == executions_avant
