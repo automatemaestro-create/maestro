@@ -27,6 +27,7 @@ import type {
   MessageChat,
   PageExplorateur,
   Projet,
+  ResumeExecution,
   Tache,
   Usage,
   Validation,
@@ -204,7 +205,34 @@ function etatParDefaut(): ControlTower {
       debut: "2026-07-28T10:00:00Z",
       fin: null,
     }),
+    // Les deux ordres de pause (#477) rendent le run **tel quel**, drapeau posé
+    // ou retiré : la vraie implémentation rend le résumé relu après l'ordre, et
+    // c'est ce que l'appelant en attend. Un test qui exerce le geste passe le
+    // sien (`vi.fn()`), comme il le fait déjà de `relancerRun`.
+    suspendreRun: async (runId: string) => ({
+      ...runFactice(runId),
+      en_pause: true,
+    }),
+    reprendreRun: async (runId: string) => ({
+      ...runFactice(runId),
+      en_pause: false,
+    }),
     reglerCapacite: async () => {},
+  };
+}
+
+/** Un résumé de run minimal — le socle des doubles ci-dessus. */
+function runFactice(runId: string): ResumeExecution {
+  return {
+    run_id: runId,
+    objectif: "objectif",
+    statut: EXECUTION_EN_COURS,
+    nb_taches: 0,
+    cout_usd: null,
+    ticket: null,
+    projet_id: null,
+    debut: "2026-07-28T10:00:00Z",
+    fin: null,
   };
 }
 

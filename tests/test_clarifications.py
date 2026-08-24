@@ -405,7 +405,16 @@ class MoteurQuiQuestionne:
     def __call__(self, **reglages):
         return self
 
-    async def run(self, objectif, *, journal=None, ticket=None, projet_id=None, mode_brief=""):
+    async def run(
+        self,
+        objectif,
+        *,
+        journal=None,
+        ticket=None,
+        projet_id=None,
+        mode_brief="",
+        porte=None,
+    ):
         run_id = journal.run_id if journal is not None else ""
         try:
             self.reponses = await self._arbitre(

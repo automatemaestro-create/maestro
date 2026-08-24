@@ -135,10 +135,12 @@ class MoteurDouble:
         ticket: ReferenceTicket | None = None,
         projet_id: str | None = None,
         mode_brief: str = MODE_BRIEF_SANS,
+        porte: object = None,
     ) -> RunReport:
-        # `ticket` (#187), `projet_id` (#222) et `mode_brief` (#320) font partie de
-        # la signature du vrai moteur : le service les lui passe pour qu'il en dote
-        # chaque tâche du plan, et pour lui dire sous quel régime de brief tourner.
+        # `ticket` (#187), `projet_id` (#222), `mode_brief` (#320) et `porte` (#477)
+        # font partie de la signature du vrai moteur : le service les lui passe pour
+        # qu'il en dote chaque tâche du plan, pour lui dire sous quel régime de brief
+        # tourner, et pour pouvoir le suspendre en cours de route.
         # Le double la reproduit — sans quoi il ne testerait plus l'appel réellement
         # effectué. Le double, lui, ne *joue* pas le régime : il n'appelle aucun
         # modèle, donc aucun brief n'est rédigé — l'arrêt sur brief s'exerce sur le

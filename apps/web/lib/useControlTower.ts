@@ -41,6 +41,8 @@ import {
   reglerCapaciteAgent,
   relancerExecution,
   repondreBrief,
+  reprendreExecution,
+  suspendreExecution,
   urlEvenements,
   type PorteeProjet,
 } from "./api";
@@ -132,6 +134,17 @@ export type ControlTower = {
    * `reprise_de` —, de quoi en afficher l'identifiant sans attendre le rechargement.
    */
   relancerRun: (runId: string) => Promise<ResumeExecution>;
+  /**
+   * Suspend un run en cours (#477) : aucune tâche nouvelle n'est lancée, celles
+   * qui sont en vol vont à leur terme. Le run n'est pas soldé — il bat toujours.
+   */
+  suspendreRun: (runId: string) => Promise<ResumeExecution>;
+  /**
+   * Reprend un run suspendu **là où il en était** (#477) — le plan, les tâches
+   * déjà faites et le cadrage n'ont pas bougé. À ne pas confondre avec
+   * `relancerRun`, qui rejoue un run **mort** depuis son brief et en crée un neuf.
+   */
+  reprendreRun: (runId: string) => Promise<ResumeExecution>;
   /** Règle la capacité d'un agent (#86) : activer/désactiver, instances. */
   reglerCapacite: (
     nom: string,
@@ -321,6 +334,29 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     [recharger],
   );
 
+  const suspendreRun = useCallback(
+    async (runId: string) => {
+      const suspendu = await suspendreExecution(runId);
+      // Même mécanique que les décisions. Elle compte davantage ici : l'ordre de
+      // pause **ne produit aucune tâche** et n'apparaît donc dans aucune vue
+      // dérivée — sans ce rechargement, l'écran garderait « En cours » jusqu'au
+      // prochain événement du run, c'est-à-dire potentiellement jamais, puisque
+      // c'est précisément ce qu'on vient d'arrêter.
+      await recharger();
+      return suspendu;
+    },
+    [recharger],
+  );
+
+  const reprendreRun = useCallback(
+    async (runId: string) => {
+      const repris = await reprendreExecution(runId);
+      await recharger();
+      return repris;
+    },
+    [recharger],
+  );
+
   const reglerCapacite = useCallback(
     async (nom: string, reglage: { actif?: boolean; instances?: number }) => {
       await reglerCapaciteAgent(nom, reglage);
@@ -347,6 +383,8 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     trancherBrief,
     repondreAuBrief,
     relancerRun,
+    suspendreRun,
+    reprendreRun,
     reglerCapacite,
   };
 }

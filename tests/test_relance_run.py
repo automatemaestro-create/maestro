@@ -136,6 +136,7 @@ class MoteurEnVol:
         ticket: ReferenceTicket | None = None,
         projet_id: str | None = None,
         mode_brief: str = MODE_BRIEF_SANS,
+        porte: object = None,
     ) -> None:
         self.objectifs.append(objectif)
         self.modes_brief.append(mode_brief)

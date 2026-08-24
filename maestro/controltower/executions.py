@@ -179,6 +179,8 @@ from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
+    ORDRE_PAUSE,
+    ORDRE_REPRISE,
     STATUTS_EXECUTION_TERMINAUX,
     ControlTowerState,
 )
@@ -190,6 +192,7 @@ from maestro.engine.brief import (
     mode_brief_valide,
 )
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
+from maestro.engine.pause import PorteExecution
 from maestro.references import ReferenceTicket
 from maestro.sources import (
     DepotTeleversements,
@@ -355,6 +358,14 @@ class ServiceExecutions:
         self._file: asyncio.Queue[Event] | None = None
         self._pompe: asyncio.Task[None] | None = None
         self._boucle: asyncio.AbstractEventLoop | None = None
+        # Les portes des runs que **ce process** déroule (#477), c'est-à-dire ceux
+        # de l'hôte en process et d'eux seuls. Un run détaché n'en a pas ici : sa
+        # porte vit dans son process, et l'ordre l'y rejoint par le bus. D'où deux
+        # chemins pour un même geste, et c'est la conséquence directe d'avoir deux
+        # hôtes — ce que le service assume déjà pour l'annulation, où l'issue
+        # publiée sert d'ordre au détaché pendant que `HoteRunEnProcess.annuler`
+        # fait un `Task.cancel()` de la main à la main.
+        self._portes: dict[str, PorteExecution] = {}
 
     # ------------------------------------------------------------------ lecture
 
@@ -692,6 +703,72 @@ class ServiceExecutions:
         if self.resume(run_id) is None:
             return None
         await self._solder(run_id, "exécution interrompue depuis la Control Tower")
+        return await self.resume_vivant(run_id)
+
+    async def mettre_en_pause(self, run_id: str) -> dict[str, Any] | None:
+        """Suspend le run `run_id` et rend son résumé passé à « en pause » (#477).
+
+        **Ce qui est parti va à son terme, ce qui ne l'est pas attend** : c'est la
+        seule chose qui distingue ce geste de l'annulation, et elle ne se décide
+        pas ici — elle vit dans la porte que le moteur franchit avant chaque tâche
+        (`maestro.engine.pause`). Ici on ne fait que fermer cette porte, par les
+        deux chemins que le service a déjà pour tout ordre :
+
+        - l'**événement**, consigné donc publié, qui traverse la frontière
+          d'exécution — c'est par là que le process détaché (#444) reçoit l'ordre,
+          sur le canal où il guette déjà l'annulation, sans un transport de plus ;
+        - la **porte en mémoire**, quand le run est déroulé par ce process
+          (`HoteRunEnProcess`) : pas de bus à traverser, la porte est là.
+
+        Les deux sont posés systématiquement, et non l'un *ou* l'autre : le
+        service ne sait pas quel hôte porte ce run, c'est tout son propos, et
+        `self._portes` est simplement vide pour un run détaché.
+
+        Trois choses qu'on **ne** fait **pas**, chacune pour une raison :
+
+        - le **battement** n'est pas oublié — un run suspendu bat toujours (#348),
+          sans quoi il ressortirait `orphelin` au bout d'une demi-heure et #349
+          proposerait de le relancer **depuis son brief**, c'est-à-dire de repayer
+          le cadrage d'un run qui n'a rien perdu ;
+        - le **statut** n'est pas touché : la pause se superpose à ce que le run
+          fait, elle ne le remplace pas (cf. `ORDRES_PAUSE` dans `state`) ;
+        - l'**hôte** n'est pas prié d'interrompre quoi que ce soit. C'est
+          exactement l'inverse du geste, et l'appeler tuerait le travail en vol.
+
+        Rend None si le run est inconnu de la projection. Ne juge de rien d'autre :
+        run déjà soldé, déjà suspendu — c'est la route qui refuse, comme pour
+        l'annulation, parce que c'est elle qui a un code HTTP à rendre.
+        """
+        if self.resume(run_id) is None:
+            return None
+        self._demarrer()
+        self._consigne(run_id, ORDRE_PAUSE, "", "exécution suspendue depuis la Control Tower")
+        porte = self._portes.get(run_id)
+        if porte is not None:
+            porte.fermer()
+        return await self.resume_vivant(run_id)
+
+    async def reprendre(self, run_id: str) -> dict[str, Any] | None:
+        """Reprend le run `run_id` **là où il en était** — le pendant exact de la pause.
+
+        Le plan, les tâches déjà terminées, le brief approuvé, le coût engagé : rien
+        n'a bougé pendant la pause, puisque rien n'a été tué. Reprendre n'a donc rien
+        à reconstruire — c'est un `Event.set()` à un aller Redis près, et c'est ce
+        qui sépare ce verbe de `relancer` (#349), qui rejoue un run **mort** depuis
+        son brief et paie une planification neuve. Les deux existent parce que les
+        deux situations existent ; les confondre ferait repayer le cadrage d'un run
+        qu'on avait simplement mis de côté.
+
+        Rend None si le run est inconnu. Comme la pause, ne juge de rien : la route
+        refuse de reprendre ce qui n'est pas suspendu.
+        """
+        if self.resume(run_id) is None:
+            return None
+        self._demarrer()
+        self._consigne(run_id, ORDRE_REPRISE, "", "exécution reprise depuis la Control Tower")
+        porte = self._portes.get(run_id)
+        if porte is not None:
+            porte.ouvrir()
         return await self.resume_vivant(run_id)
 
     async def relancer(self, run_id: str) -> dict[str, Any]:
@@ -1110,6 +1187,28 @@ class ServiceExecutions:
         en `BriefRefuse` et devient un run **annulé**, jamais un échec : rien n'a
         raté, quelqu'un a dit non — et rien de payant n'a été engagé au-delà du
         brief.
+
+        La **porte** de pause (#477) est ouverte ici et retirée en partant. Elle
+        n'est pas un câblage de déploiement comme le validateur ou les arbitres :
+        c'est un objet **par run**, que `mettre_en_pause` retrouve par son
+        `run_id`. Le `finally` compte autant que l'ouverture — une porte laissée
+        derrière soi ferait grossir le registre d'un service qui vit aussi
+        longtemps que l'API, et un `run_id` réutilisé (une relance rejoue le même
+        objectif, pas le même identifiant, mais rien ne l'interdit) trouverait la
+        porte d'un run mort, refermée, donc un run neuf figé sans cause lisible.
+        """
+        run_id = ordre.run_id
+        self._portes[run_id] = PorteExecution()
+        try:
+            await self._derouler_sous_porte(ordre, self._portes[run_id])
+        finally:
+            self._portes.pop(run_id, None)
+
+    async def _derouler_sous_porte(self, ordre: OrdreRun, porte: PorteExecution) -> None:
+        """Le déroulement proprement dit — séparé pour que la porte soit retirée d'un `finally`.
+
+        Découpage purement structurel : `_derouler` pose et retire la porte, ceci
+        est son corps d'avant #477, à un paramètre près.
         """
         run_id = ordre.run_id
         garde_fous = Guardrails(
@@ -1137,6 +1236,7 @@ class ServiceExecutions:
                 ticket=ordre.ticket,
                 projet_id=ordre.projet_id,
                 mode_brief=ordre.mode_brief,
+                porte=porte,
             )
         except asyncio.CancelledError:
             raise

@@ -568,6 +568,27 @@ export function IconeLienExterne(props: Props) {
   );
 }
 
+/**
+ * Suspendre un run (#477) — les deux barres du signe universel. Un carré plein
+ * dirait « arrêter », ce qui est l'autre geste, celui qui tue les tâches en vol.
+ */
+export function IconePause(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M9.5 5v14M14.5 5v14" />
+    </Trait>
+  );
+}
+
+/** Reprendre un run suspendu (#477) — le triangle de lecture, contour compris. */
+export function IconeReprise(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M7.5 5.5 19 12 7.5 18.5Z" />
+    </Trait>
+  );
+}
+
 /** Le renvoi « voir la page dédiée » — l'ancien → des liens de tuile. */
 export function IconeFlecheDroite(props: Props) {
   return (

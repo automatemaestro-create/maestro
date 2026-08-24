@@ -1140,7 +1140,7 @@ Implémentation : `PorteeRun` et son unique prédicat `retient`, dans le même
 [`maestro/controltower/portee.py`](../maestro/controltower/portee.py) que la portée projet — deux
 portées, deux objets, une seule écriture de chaque règle.
 
-### 6.1 Exécutions — lancement, suivi, annulation, relance (#185) — **livré**
+### 6.1 Exécutions — lancement, suivi, pause, annulation, relance (#185) — **livré**
 
 Piloter un vrai run depuis la Control Tower, sans passer par la CLI. Seule section de ce
 chapitre déjà implémentée (`maestro/controltower/executions.py`) : le contrat ci-dessous
@@ -1157,9 +1157,20 @@ décrit le comportement réel, pas une fixture.
 - `POST /api/executions/{run_id}/annuler` → `ResumeExecution` — interrompt un run en cours (statut
   `annulee`, `fin` posée). `404` si le run est inconnu, `409` s'il est déjà soldé — un run terminé
   n'est plus interruptible, et le dire vaut mieux que faire croire à une annulation.
+- `POST /api/executions/{run_id}/pause` → `ResumeExecution` — **suspend** un run en cours (#477,
+  ci-dessous) : `en_pause` passe à `true`, le statut ne bouge pas. `404` si le run est inconnu,
+  `409` s'il est déjà soldé ou **déjà suspendu**.
+- `POST /api/executions/{run_id}/reprendre` → `ResumeExecution` — **reprend** un run suspendu là où
+  il en était : `en_pause` repasse à `false` et les tâches qui attendaient repartent. `404` inconnu,
+  `409` si le run n'est **pas** suspendu.
 - `POST /api/executions/{run_id}/relancer` → `202` + `ResumeExecution` — rejoue un run interrompu
   **sur son brief approuvé** (#349, ci-dessous) et rend le résumé du **nouveau** run. `404` inconnu,
   `409` déjà soldé ou **encore vivant**, `422` sans brief approuvé.
+
+⚠ **`reprendre` et `relancer` ne sont pas le même geste**, et les confondre coûte un cadrage :
+`reprendre` rouvre la porte d'un run **vivant** qu'on avait suspendu — même `run_id`, même plan,
+même coût engagé, rien à reconstruire ; `relancer` rejoue un run **mort** depuis son brief et
+repaie une planification, sous un **nouveau** `run_id`.
 
 ```jsonc
 // LancementExecution (corps de POST /api/executions)
@@ -1194,6 +1205,10 @@ décrit le comportement réel, pas une fixture.
   "tours_clarification_max": 2,            // 0 : aucun tour prévu
   "brief_approuve": true,                  // un humain a validé le cadrage (#349)
   "reprise_de": "",                        // "" : ce run ne reprend personne (#349)
+  // Le run est-il **suspendu** (#477) ? Un drapeau à côté du statut, pas dedans :
+  // un run en pause reste `en_cours` — ou `en_attente_brief` —, les deux étant
+  // vrais en même temps. Toujours `false` sur un run soldé.
+  "en_pause": false,
   "nb_taches": 5,
   // Où en est le run (#473) — compté ici, sur la machine à états du moteur.
   // `total` vaut `nb_taches` ; `soldees` = terminees + echecs + bloquees.
@@ -1387,6 +1402,52 @@ Le quatrième refus est le seul qui ne porte pas sur la vitalité, et il compte 
 silence sur son objectif brut, ce qui reviendrait à sauter la validation qu'il attendait encore.
 C'est à cela que sert `brief_approuve` dans le résumé — distinct de « le run a un brief », puisque le
 détail en porte un dès qu'il est *soumis*.
+
+**Un run se met en pause, et se reprend où il en était** (#477). Un run s'annulait (#185) et se
+relançait depuis son brief (#349) ; il ne se **suspendait** pas — ni à l'écran, ni dans l'API, ni
+dans le moteur. Or les deux gestes existants n'en tiennent pas lieu : annuler **tue les tâches en
+vol**, qui perdent le travail déjà payé ; relancer **repaie la planification**. Mettre un run de
+côté le temps d'arbitrer une priorité n'a à coûter ni l'un ni l'autre.
+
+La pause est donc « **on ne lance plus** » et non « on interrompt », et c'est la seule chose à
+retenir :
+
+| | `…/pause` (#477) | `…/annuler` (#185) | `…/relancer` (#349) |
+| --- | --- | --- | --- |
+| tâches **en vol** | vont à leur terme | tuées, travail perdu | (le run est déjà mort) |
+| tâches **à venir** | attendent la reprise | jamais lancées | replanifiées |
+| le run | **le même**, vivant, il bat | soldé `annulee` | un **nouveau** `run_id` |
+| ce que ça coûte | rien | le travail en cours | le cadrage, non — le plan, oui |
+
+Trois conséquences qui font le contrat :
+
+- **le statut ne bouge pas.** `en_pause` est un drapeau **à côté**, parce que la pause ne dit pas où
+  en est le run mais qu'on a cessé de lui donner du travail : les deux faits coexistent, et un run
+  suspendu pendant l'attente de son brief doit continuer de montrer qu'il attend ce brief. Un statut
+  `en_pause` aurait en outre été *écrasé* par la demande de brief qui suit, laissant un run figé sans
+  que rien à l'écran ne permette de le reprendre ;
+- **l'ordre traverse la frontière par le bus**, sur `execution.statut` — le canal où le process
+  détaché guette déjà l'annulation (#444), et pas un second transport. Il est donc dans le journal
+  durable (#97) : un run suspendu le reste **à travers un redémarrage de l'API**, et l'ordre de
+  reprise atteint un process que l'API n'a pas lancé ;
+- **un run suspendu bat toujours** (#348). Sans quoi il ressortirait `orphelin` au bout d'une
+  demi-heure et *Runs interrompus* proposerait de le relancer depuis son brief — c'est-à-dire de
+  repayer le cadrage d'un run qui n'a rien perdu. Il reste **annulable** pour la même raison qu'un
+  run arrêté sur son brief l'est : ne plus pouvoir arrêter ce qu'on a suspendu serait une impasse.
+
+Côté moteur, tout tient en un `await` : une tâche prête **franchit une porte** avant d'atteindre
+l'exécuteur ([`maestro/engine/pause.py`](../maestro/engine/pause.py)), et une tâche déjà passée n'en
+a plus devant elle. Un blocage aval (#43) n'est **pas** retenu par la porte — il n'engage rien, et
+retenir la cascade rendrait un run suspendu indiscernable d'un run figé.
+
+À l'écran (§2.x), l'état se lit dans la **liste** comme dans la **vue** d'un run, badge neutre « En
+pause » et les deux boutons — un seul visible à la fois, ce sont deux faces d'un même geste. Le
+libellé est « en pause » et non « suspendu » alors que le ticket dit « suspendu » : ce mot désigne
+déjà, ici et à l'écran, un run arrêté **sur** un humain (#474), et deux choses différentes sous un
+même mot feraient chercher un brief à valider sur un run qu'on vient de mettre de côté. La ligne qui
+accompagne le badge dit ce que la pause ne fait pas — « celles qui étaient en vol vont à leur
+terme » —, parce que quelqu'un qui croirait avoir tout arrêté serait surpris de voir une tâche rendre
+son livrable trois minutes plus tard.
 
 **Les sources se déclarent, elles ne se devinent pas** (#315). Trois types, et rien d'autre :
 `fichier` (téléversé — §6.8), `dossier` (des **références**, jamais un projet : `lecture_seule`

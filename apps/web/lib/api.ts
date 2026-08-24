@@ -424,7 +424,13 @@ export function deciderValidation(
 
 /**
  * Comme `envoyerJson`, mais **rend le corps de la réponse** — pour les
- * écritures dont l'appelant relit le résultat (l'intégration créée au pool).
+ * écritures dont l'appelant relit le résultat (l'intégration créée au pool, le
+ * résumé d'un run qu'on vient de suspendre).
+ *
+ * Corps `undefined` : ni en-tête ni charge utile, comme `envoyerJson`. Un ordre
+ * qui tient tout entier dans son URL (`…/{run_id}/pause`) n'a rien à envoyer, et
+ * annoncer un `Content-Type: application/json` sans rien derrière décrirait un
+ * corps qui n'existe pas.
  */
 async function envoyerJsonEtLire<T>(
   chemin: string,
@@ -434,8 +440,10 @@ async function envoyerJsonEtLire<T>(
 ): Promise<T> {
   const reponse = await fetch(`${API_URL}${chemin}`, {
     method: methode,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(corps),
+    ...(corps !== undefined && {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corps),
+    }),
   });
   if (!reponse.ok) {
     let detail = `${refusParDefaut} (${reponse.status})`;
@@ -806,6 +814,46 @@ export async function lancerExecution(
   });
   if (!reponse.ok) throw await refusSource(reponse, "lancement refusé");
   return (await reponse.json()) as ResumeExecution;
+}
+
+/**
+ * Suspend un run en cours (`POST /api/executions/{run_id}/pause`, #477) et rend
+ * son résumé, `en_pause` posé.
+ *
+ * **Aucune tâche nouvelle n'est lancée ; celles qui sont en vol vont à leur
+ * terme.** C'est ce qui sépare ce geste de l'annulation, où les tâches sont tuées
+ * là où elles en sont et perdent leur travail. Le run n'est pas soldé et ne change
+ * même pas de statut : la pause est un drapeau à côté.
+ *
+ * `409` sur un run **déjà soldé** ou **déjà suspendu**, relayé tel quel.
+ */
+export function suspendreExecution(runId: string): Promise<ResumeExecution> {
+  return envoyerJsonEtLire<ResumeExecution>(
+    `/api/executions/${encodeURIComponent(runId)}/pause`,
+    undefined,
+    "mise en pause refusée",
+  );
+}
+
+/**
+ * Reprend un run suspendu **là où il en était**
+ * (`POST /api/executions/{run_id}/reprendre`, #477) et rend son résumé, `en_pause`
+ * retiré.
+ *
+ * ⚠ À ne pas confondre avec `relancerExecution` ci-dessous, qui rejoue un run
+ * **mort** depuis son brief et repaie une planification : c'est un nouveau run,
+ * avec un nouvel identifiant. Ici il n'y a qu'un run, le même, dont les tâches
+ * repartent — rien n'a été tué, il n'y a rien à reconstruire.
+ *
+ * `409` si le run n'est pas suspendu : il n'y a rien à reprendre d'un run qui
+ * travaille.
+ */
+export function reprendreExecution(runId: string): Promise<ResumeExecution> {
+  return envoyerJsonEtLire<ResumeExecution>(
+    `/api/executions/${encodeURIComponent(runId)}/reprendre`,
+    undefined,
+    "reprise refusée",
+  );
 }
 
 /**

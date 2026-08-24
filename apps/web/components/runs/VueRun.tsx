@@ -42,9 +42,11 @@ import { Carte, EtatVide } from "@/components/Primitives";
 import {
   Avancement,
   BadgeRun,
+  BoutonsPause,
   fondDe,
   LigneAttente,
   LigneInterruption,
+  LignePause,
 } from "@/components/runs/EtatRun";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
@@ -230,6 +232,8 @@ function EnTeteRun({
 
       <LigneAttente run={run} attente={attente} className="mt-3" />
       <LigneInterruption run={run} regime={regime} className="mt-3" />
+      <LignePause regime={regime} className="mt-3" />
+      <BoutonsPause run={run} className="mt-3 block" />
     </Carte>
   );
 }

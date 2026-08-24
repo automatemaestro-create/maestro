@@ -28,6 +28,11 @@ rapport suivent l'ordre topologique du plan, pas l'ordre d'achèvement.
 `max_parallele` plafonne au besoin le nombre d'exécutions simultanées (illimité par
 défaut — les plans du POC sont petits).
 
+La boucle est **suspendable** (#477) : une `PorteExecution` passée à `run` se ferme
+en cours de route, et plus aucune tâche n'atteint alors l'exécuteur — celles qui y
+sont déjà vont à leur terme. C'est le seul point du moteur qui distingue une pause
+d'une annulation, et il tient en un `await` (`maestro.engine.pause`).
+
 Le moteur ne dépend que de `ModelProvider` : il reste **agnostique du fournisseur**.
 `OrchestrationEngine.default` résout fournisseur et modèle depuis la config
 (`MAESTRO_PROVIDER`/`MAESTRO_MODEL`, #69), comme `Orchestrator.default`.
@@ -102,6 +107,7 @@ from maestro.engine.executor import (
     _ecoule_ms,
 )
 from maestro.engine.guardrails import Guardrails
+from maestro.engine.pause import PorteExecution
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
@@ -525,6 +531,7 @@ class OrchestrationEngine:
         ticket: ReferenceTicket | None = None,
         projet_id: str | None = None,
         mode_brief: str = MODE_BRIEF_SANS,
+        porte: PorteExecution | None = None,
     ) -> RunReport:
         """Exécute la boucle complète pour `objective` et renvoie l'agrégat.
 
@@ -580,6 +587,11 @@ class OrchestrationEngine:
         au plafond part en validation **inscrit en hypothèses explicites** plutôt que
         de faire boucler le run. Sans arbitre de clarification, cette étape n'a pas
         lieu et les questions partent telles quelles en validation.
+
+        `porte` (#477) est la **pause** du run : tant qu'elle est fermée, aucune
+        tâche nouvelle n'atteint l'exécuteur, et celles qui y sont déjà vont à leur
+        terme. None (le défaut) : rien à franchir, le comportement d'avant ce lot.
+        Le moteur ne sait ni qui la ferme ni pourquoi — voir `maestro.engine.pause`.
         """
         journal = journal if journal is not None else RunJournal()
         mode_brief = mode_brief_valide(mode_brief)
@@ -637,12 +649,27 @@ class OrchestrationEngine:
             if insatisfaites:
                 # Blocage aval (#43) : la tâche n'atteint jamais l'exécuteur — ni
                 # exécution ni mise en file — et le blocage cascade sur l'aval.
+                # Volontairement **avant** la porte de pause (#477) : consigner un
+                # blocage n'engage rien (pas d'appel modèle, pas de mise en file),
+                # et retenir la cascade rendrait un run suspendu indiscernable
+                # d'un run figé — l'aval d'un échec doit se lire tout de suite.
                 result = _consigne_blocage(task, insatisfaites, journal)
-            elif semaphore is None:
-                result = await self._executor.execute(task, dependances, journal)
             else:
-                async with semaphore:
+                if porte is not None:
+                    # La pause (#477), et elle est **ici** : la dernière ligne
+                    # avant que quoi que ce soit ne soit engagé. Franchie avant le
+                    # sémaphore, pour la raison qui vaut déjà des dépendances —
+                    # une tâche qui attend n'occupe pas un créneau. Une tâche déjà
+                    # passée n'a plus de porte devant elle : elle finit, et c'est
+                    # ce qui distingue une pause d'une annulation.
+                    await porte.franchir()
+                if semaphore is None:
                     result = await self._executor.execute(task, dependances, journal)
+                else:
+                    async with semaphore:
+                        result = await self._executor.execute(
+                            task, dependances, journal
+                        )
             if relais is not None and dependants[task.id]:
                 # L'agent qui termine annonce l'issue à l'aval (handoff ou
                 # notification) — publication journalisée, résiliente.

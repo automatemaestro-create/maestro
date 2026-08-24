@@ -547,7 +547,7 @@ def hote_double(
 def sans_redis(monkeypatch: pytest.MonkeyPatch) -> None:
     """Coupe la **dernière** porte par laquelle un test atteindrait un vrai Redis.
 
-    `_observer_annulation` garde une ouverture de secours pour le cas où l'appelant
+    `_observer_ordres` garde une ouverture de secours pour le cas où l'appelant
     ne lui passe pas de bus — et `_derouler` lui en passe un `None` quand
     `_bus_du_run` a échoué. Sans cette doublure, ce chemin-là ouvrirait un
     `pubsub` vers `localhost:6379` : l'échec serait immédiat et le test passerait
@@ -1111,7 +1111,7 @@ def test_le_guet_retient_l_issue_annulee_de_son_run_et_rien_d_autre() -> None:
         ]
     )
 
-    assert asyncio.run(hote_detache._observer_annulation(RUN, bus=bus)) is True
+    assert asyncio.run(hote_detache._observer_ordres(RUN, bus=bus)) is True
     # Le bus est celui de l'appelant : le guet ferme son flux, jamais le bus.
     assert bus.ferme is False
 
@@ -1125,7 +1125,7 @@ def test_un_guet_en_panne_dit_je_n_ecoute_plus_jamais_on_m_a_dit_stop(bus) -> No
     cette promesse d'un seul tenant que l'ouverture du bus est **dans** le `try` —
     la laisser dehors y laisserait la seule panne capable d'emporter le run.
     """
-    assert asyncio.run(hote_detache._observer_annulation(RUN, bus=bus)) is False
+    assert asyncio.run(hote_detache._observer_ordres(RUN, bus=bus)) is False
 
 
 def test_le_guet_referme_le_bus_qu_il_a_ouvert_lui_meme(
@@ -1140,7 +1140,7 @@ def test_le_guet_referme_le_bus_qu_il_a_ouvert_lui_meme(
     propre = BusScripte([])
     monkeypatch.setattr(hote_detache, "RedisEventBus", lambda *_a, **_k: propre)
 
-    assert asyncio.run(hote_detache._observer_annulation(RUN)) is False
+    assert asyncio.run(hote_detache._observer_ordres(RUN)) is False
     assert propre.ferme is True
 
 
@@ -1208,7 +1208,7 @@ def test_un_guet_qui_n_a_rien_vu_laisse_le_run_continuer(
 def test_un_guet_annule_ou_en_erreur_est_lu_comme_n_ayant_rien_vu() -> None:
     """Lire le résultat d'une tâche est l'endroit où une promesse tenue ailleurs se paie.
 
-    `_observer_annulation` promet de ne pas lever, mais une tâche annulée ou en
+    `_observer_ordres` promet de ne pas lever, mais une tâche annulée ou en
     erreur relèverait **à la lecture**, et transformerait un guet en panne du run.
     """
 
@@ -1445,7 +1445,7 @@ def test_sans_bus_rien_n_est_cable_et_les_deux_fail_safes_prennent_la_main(
 def test_ouvrir_le_bus_ne_leve_jamais(monkeypatch: pytest.MonkeyPatch) -> None:
     """`_bus_du_run` rend None au lieu de lever — sinon le run mourrait du bus.
 
-    L'ouverture vivait **dans** le `try` de `_observer_annulation`, précisément
+    L'ouverture vivait **dans** le `try` de `_observer_ordres`, précisément
     pour qu'aucune façon de manquer Redis ne puisse emporter le run. La sortir de
     là sans reprendre la promesse aurait rendu fatal ce qui ne l'était pas.
     """
