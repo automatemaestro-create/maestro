@@ -670,10 +670,16 @@ export const MODE_BRIEF_HUMAIN = "humain";
 
 /**
  * La **vitalité** d'un run non soldé (#348) : son hôte bat-il encore ? Un run
- * lancé depuis la Control Tower s'exécute en tâche de fond du process de l'API et
- * ne lui survit pas ; le journal durable conservant le dernier état publié, un run
- * dont l'hôte est tombé restait `en_cours` **pour toujours**. L'hôte publie donc un
- * battement périodique, et ces trois verdicts en découlent.
+ * lancé depuis la Control Tower vit dans son propre process (#446) : il survit à
+ * l'arrêt de l'API, mais pas au sommeil de sa machine — et le journal durable
+ * conservant le dernier état publié, un run dont l'hôte est tombé restait
+ * `en_cours` **pour toujours**. L'hôte publie donc un battement périodique, et ces
+ * trois verdicts en découlent.
+ *
+ * `orphelin` s'est resserré avec #446 : un hôte publie désormais son **issue** en
+ * partant, donc ce verdict ne désigne plus un run terminé dont personne n'a écrit
+ * la fin, mais un run mort **sans avoir pu le dire**. C'est exactement celui que
+ * le panneau *Runs interrompus* propose de relancer (#349).
  *
  * `indetermine` n'est pas une commodité mais le refus explicite de deviner : le run
  * n'a **jamais** battu (trace antérieure à #348, registre injoignable), donc on ne

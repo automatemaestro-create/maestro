@@ -97,6 +97,16 @@ EVENEMENT_VALIDATION_DECISION = "validation.decision"
 EVENEMENT_CHAT_MESSAGE = "chat.message"
 EVENEMENT_PLAYBOOK_PROPOSITION = "playbook.proposition"
 EVENEMENT_EXECUTION_STATUT = "execution.statut"
+
+#: L'acteur au nom duquel le **cycle de vie d'un run** est consigné — le même que
+#: celui de l'étape de planification du journal (#8). Il vit ici, avec le type
+#: d'événement qu'il accompagne, parce que depuis #446 il n'a plus un seul
+#: écrivain : `ServiceExecutions._consigne` l'émet côté API, et un **hôte** l'émet
+#: en partant (`maestro.controltower.bridge.solder_le_run`), qu'il soit détaché ou
+#: `maestro-run --publier`. Deux constantes recopiées seraient deux acteurs
+#: différents sur le même écran le jour où l'une des deux change.
+ACTEUR_RUN = "orchestrateur"
+ROLE_RUN = "Orchestrateur"
 #: `brief.demande` et `brief.decision` (#320) portent la **validation humaine du
 #: brief** avant décomposition (décision D5) : le moteur soumet, la Control Tower
 #: rend la décision. Canal **distinct** de `validation.*` à dessein — celui-là

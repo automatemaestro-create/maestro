@@ -7,13 +7,20 @@ du journal d'exécution (`RunJournal`, une ligne JSON par étape sur le logger
 journal — là où le worker ou l'orchestrateur consigne déjà, la Control Tower
 écoute.
 
-Deux pièces :
+Trois pièces :
 
 - `evenements_depuis_step(record)` : la conversion pure d'une ligne de journal
   (forme `StepRecord.to_dict`) en événements — testable sans logger ni Redis ;
 - `JournalEventHandler` + `publieur_redis` : le branchement production — le
   handler publie chaque événement via un callable synchrone, typiquement le
-  `PUBLISH` Redis (le côté API consomme le canal via `RedisEventBus`).
+  `PUBLISH` Redis (le côté API consomme le canal via `RedisEventBus`) ;
+- `solder_le_run(...)` (#446) : le seul événement qu'un hôte publie **de
+  lui-même**, sans passer par le journal — son **issue**. Le journal ne parle que
+  de tâches ; le cycle de vie du run, lui, n'a longtemps eu qu'un écrivain, le
+  service de pilotage de l'API. Un hôte qui vit ailleurs (process détaché #443,
+  `maestro-run --publier`) doit pouvoir dire comment il finit, faute de quoi son
+  run reste `en_cours` puis vieillit en `orphelin` alors qu'il s'est très bien
+  passé.
 
 Le journal amont expurge déjà les secrets (`redact_secrets`) : ce qui part sur
 le bus est ce qui partait déjà dans les logs.
@@ -28,19 +35,24 @@ from typing import Any
 
 from maestro.appartenance import projet_id_valide
 from maestro.controltower.events import (
+    ACTEUR_RUN,
     CANAL_EVENEMENTS,
     EVENEMENT_AGENT_ACTIVITE,
+    EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_DETAIL,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_TACHE_STATUT,
     REDIS_URL_DEFAUT,
+    ROLE_RUN,
     Event,
 )
 from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
-from maestro.telemetry import LOGGER_NAME
+from maestro.telemetry import LOGGER_NAME, redact_secrets
 from maestro.telemetry.usage import StepUsage
+
+_LOGGER = logging.getLogger("maestro.controltower")
 
 #: Étape du journal qui n'est pas une tâche : la planification de l'orchestrateur.
 _ETAPE_PLANIFICATION = "planification"
@@ -253,6 +265,78 @@ def publieur_redis(
         client.publish(canal, evenement.to_json())
 
     return publier
+
+
+def solder_le_run(
+    run_id: str,
+    statut: str,
+    detail: str = "",
+    *,
+    url: str | None = None,
+    canal: str = CANAL_EVENEMENTS,
+) -> bool:
+    """Un hôte **publie son issue en partant** et se tait (#446) — jamais une levée.
+
+    Deux gestes, et c'est volontairement le même appel : consigner l'issue du run
+    (`execution.statut`, statut terminal), puis **retirer son battement**. C'est,
+    à l'identique, ce que fait `ServiceExecutions._derouler` de l'autre côté de la
+    frontière (`_consigne` puis `_oublier`), et l'**ordre** y a la même raison :
+    entre les deux, un lecteur verrait un run encore en cours et sans battement,
+    c'est-à-dire un orphelin qui n'en est pas un. Les séparer en deux appels
+    laisserait un hôte publier l'un sans l'autre, ce qui est précisément la moitié
+    de panne que ce lot supprime.
+
+    Ce que ce geste lève, c'est le **corollaire de #348** : un run publié hors de
+    l'API n'émettait aucun statut de fin, donc son dernier battement vieillissait
+    et le faisait apparaître `orphelin` alors qu'il avait très bien fini. Le
+    verdict portait sur son hôte, jamais sur son travail — mais depuis que l'hôte
+    détaché est le **défaut** des lancements Control Tower, ce corollaire porterait
+    sur tous les runs, et il cesse d'être acceptable.
+
+    L'oubli du battement n'a lieu **qu'après** une publication réussie, et c'est le
+    point délicat : effacer le signal de vie d'un run dont l'issue n'a pas atteint
+    l'API le ferait passer d'`orphelin` à `indetermine`, c'est-à-dire remplacer un
+    verdict juste par une absence d'information. Sur un Redis muet, on préfère donc
+    laisser le dispositif d'avant faire son travail.
+
+    Rend True si l'issue est partie. **Ne lève jamais** : un hôte qui n'a pas pu
+    publier a de toute façon fini son travail, et le faire échouer sur son dernier
+    geste ferait perdre la synthèse d'un run réussi.
+    """
+    try:
+        publieur_redis(url, canal=canal)(
+            Event(
+                type=EVENEMENT_EXECUTION_STATUT,
+                run_id=run_id,
+                agent=ACTEUR_RUN,
+                role=ROLE_RUN,
+                statut=statut,
+                # Même filet que `_consigne` côté API : le détail d'une issue
+                # reprend une exception, où un secret servi pendant le run peut
+                # ressurgir. Ce qui part sur le bus est montrable.
+                detail=redact_secrets(detail),
+            )
+        )
+    except Exception:
+        _LOGGER.exception(
+            "Issue du run %s non publiée : son travail est fait, mais l'API le "
+            "verra vieillir en « orphelin » faute de statut de fin.",
+            run_id,
+        )
+        return False
+    try:
+        # Import local, comme celui du client Redis : seul ce geste-ci a besoin du
+        # registre des battements, et `bridge` est importé par tout producteur.
+        from maestro.controltower.battement import oublieur_redis
+
+        oublieur_redis(url)(run_id)
+    except Exception:
+        _LOGGER.exception(
+            "Battement du run %s non retiré : sans effet sur son statut, déjà "
+            "terminal — seule l'entrée du registre reste.",
+            run_id,
+        )
+    return True
 
 
 def activer_publication(publier: Callable[[Event], None]) -> logging.Handler:

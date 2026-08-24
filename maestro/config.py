@@ -104,12 +104,14 @@ class Settings:
     #: fenêtre, quel que soit ce réglage.
     selecteur_natif: str | None = None
     #: **Hôte des runs** lancés par la Control Tower (`MAESTRO_HOTE_RUN`, #443), ou
-    #: None : la tâche de fond du process de l'API (`process`, le défaut de
-    #: toujours). `detache` fait vivre chaque run dans un process indépendant, qui
-    #: survit à l'arrêt de `maestro-api`. Interprété et validé par
+    #: None : le process **détaché** (`detache`, le défaut depuis #446), qui fait
+    #: vivre chaque run hors de `maestro-api` et lui survit — un Redis joignable en
+    #: est le prérequis. `process` ramène la tâche de fond de l'API, dont les runs
+    #: meurent avec elle : c'est un choix qui se nomme, plus ce qu'on obtient en se
+    #: taisant. Interprété et validé par
     #: `maestro.controltower.app.create_default_app` — toute autre valeur non vide
-    #: est une erreur de config explicite, jamais un détachement silencieusement
-    #: absent (même parti pris que `MAESTRO_ISOLATION`).
+    #: est une erreur de config explicite, jamais une frontière d'exécution
+    #: silencieusement autre (même parti pris que `MAESTRO_ISOLATION`).
     hote_run: str | None = None
     #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None :
     #: exécution directe sur l'hôte (défaut). Seule valeur reconnue : `conteneur`.

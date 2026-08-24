@@ -103,17 +103,26 @@ premier appel modèle* (`loop.py`) et les garde-fous refusant sans validateur.
 Inventer ici un troisième refus n'aurait fait qu'ajouter un endroit de plus où la
 règle peut diverger de celle qu'elle recopie.
 
-**Une propriété reste explicitement hors de ce lot**, et il vaut mieux la lire ici
-que la découvrir : l'hôte **ne publie pas son issue** en partant, comme
-`--publier` ne le fait pas aujourd'hui — un run détaché terminé normalement finira
-donc `orphelin`, le verdict portant sur son hôte (« plus personne ne veille ») et
-jamais sur son travail (`battement.py`, corollaire assumé). C'est le lot 5 (#446),
-et le corollaire vaut aussi pour un run que le fail-safe fait échouer : le process
-sort en 1, sa cause est au journal de l'hôte, et personne ne la publie encore.
+**L'hôte publie son issue en partant** (#446), et c'est ce qui manquait pour que
+ce module devienne le défaut. Le process consigne son statut terminal sur le même
+bus — `terminee`, `echec`, ou `annulee` sur un brief refusé — puis **retire son
+battement** (`bridge.solder_le_run`), au geste et à l'ordre près comme
+`ServiceExecutions._derouler` de l'autre côté de la frontière. Une seule issue ne
+part pas d'ici : celle d'un run **annulé**, déjà consignée par l'API avant que
+l'ordre ne parte, et la republier ferait dire deux fois un fait acquis.
 
-Le mode reste **opt-in** (`MAESTRO_HOTE_RUN=detache`, résolu par
-`create_default_app`) : le défaut demeure la tâche de fond de l'API jusqu'au
-lot 5.
+Ce que ce geste lève est le corollaire de #348 — un run terminé normalement
+finissait `orphelin`, faute de statut de fin. Il ne disparaît pas, il **change de
+portée** : un run survit à son API, **pas à sa machine**. Reste donc `orphelin` ce
+qui est mort sans pouvoir le dire, et c'est exactement ce que le verdict doit
+signaler. L'autre moitié de cette fin de vie est chez l'appelant : tant que l'API
+tient le `Popen`, `ramasser` lui rend les hôtes qu'elle a vus mourir **sans**
+publier d'issue, et elle solde leur run avec sa cause au lieu de le laisser
+`en_cours` (`ServiceExecutions._ramasser`).
+
+Le mode est le **défaut** depuis #446 (`MAESTRO_HOTE_RUN` vide ou `detache`,
+résolu par `create_default_app`) ; `process` reste disponible et ramène la tâche
+de fond de l'API, dont les runs meurent avec elle.
 """
 
 from __future__ import annotations
@@ -131,13 +140,18 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from maestro.controltower.bridge import solder_le_run
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EventBus,
     RedisEventBus,
 )
-from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
-from maestro.controltower.state import EXECUTION_ANNULEE
+from maestro.controltower.hote import DemarrageHoteRate, HoteMort, HoteRun, OrdreRun
+from maestro.controltower.state import (
+    EXECUTION_ANNULEE,
+    EXECUTION_ECHEC,
+    EXECUTION_TERMINEE,
+)
 from maestro.references import ReferenceTicket
 
 if TYPE_CHECKING:
@@ -202,6 +216,19 @@ LONGUEUR_CAUSE = 800
 #: toute façon repris par la fermeture bornée de `run_borne`, puis, s'il le faut,
 #: par le repli franc du lanceur : trois filets pour la même obstination.
 DELAI_EXTINCTION_S = 5.0
+
+#: Délai de grâce accordé à l'issue d'un process qui s'éteint, avant que sa mort
+#: ne soit **rapportée** comme une mort sans issue (#446). Le process publie son
+#: statut *puis* sort : entre les deux, il y a un aller Redis et la pompe de
+#: l'API, et un `poll()` tombé pile dans cette fenêtre ferait solder en « echec »
+#: un run qui vient d'annoncer sa réussite.
+#:
+#: Cinq secondes, comme `DELAI_EXTINCTION_S` et `DELAI_ANNULATION_S` : le
+#: ramassage est de toute façon cadencé par le cœur (une passe par période), donc
+#: ce délai ne retarde rien qu'on attendait. Le seul risque qu'il porte est de
+#: rendre un run une passe plus tard — contre, en face, un verdict faux et
+#: définitif.
+DELAI_ISSUE_S = 5.0
 
 #: Code de sortie d'un run **annulé** — 128 + SIGINT, la convention shell de
 #: « interrompu ». Ni 0 ni 1, et c'est le point : le dépôt refuse ailleurs de
@@ -325,6 +352,14 @@ class HoteRunDetache(HoteRun):
     registre est celui d'un process, pas celui des runs : une API qui redémarre le
     perd et ne prétend plus rien porter — les runs, eux, continuent de battre pour
     leur compte, et c'est ainsi qu'ils ressortent `vivant`.
+
+    Il en tient un second depuis #446, et c'est la contrepartie du premier : les
+    **dépouilles**, c'est-à-dire les process qu'il a vus s'éteindre et dont il n'a
+    pas encore rendu compte (`ramasser`). Sa portée est la même — ce que *cette*
+    API a lancé, jamais ce qui tourne sur la machine —, et c'est ce qui fait du
+    ramassage un constat local plutôt qu'une déduction : un redémarrage de l'API le
+    vide, et ce qu'elle ne peut plus observer retombe alors sur le seul dispositif
+    qui n'a besoin de personne, le battement qui vieillit.
     """
 
     def __init__(
@@ -333,11 +368,20 @@ class HoteRunDetache(HoteRun):
         python: str | None = None,
         atelier: Path | None = None,
         delai_demarrage_s: float = DELAI_DEMARRAGE_S,
+        delai_issue_s: float = DELAI_ISSUE_S,
     ) -> None:
         self._python = python or sys.executable
         self._atelier = atelier
         self._delai = delai_demarrage_s
+        self._delai_issue = delai_issue_s
         self._process: dict[str, subprocess.Popen[bytes]] = {}
+        # Le journal de chaque run en vol : sa seule trace quand le process meurt
+        # sans un mot, donc la matière de la `cause` que `ramasser` rendra.
+        self._journaux: dict[str, Path] = {}
+        # Les dépouilles pas encore rendues : `run_id → (code, journal, instant où
+        # on l'a vu mort)`. L'instant est celui de l'**observation** et non de la
+        # mort — on ne l'a pas —, ce qui ne fait qu'allonger le délai de grâce.
+        self._morts: dict[str, tuple[int, Path | None, float]] = {}
 
     async def lancer(self, ordre: OrdreRun) -> None:
         """Ouvre le process du run et **attend son démarrage**, jamais son issue.
@@ -375,6 +419,7 @@ class HoteRunDetache(HoteRun):
                 f"({self._python} -m {MODULE_HOTE}) : {type(exc).__name__} — {exc}"
             ) from exc
         self._process[ordre.run_id] = process
+        self._journaux[ordre.run_id] = journal
         await self._attendre_demarrage(ordre.run_id, process, atelier, journal)
 
     async def annuler(self, run_id: str, *, delai_s: float) -> bool:
@@ -407,9 +452,9 @@ class HoteRunDetache(HoteRun):
         c'est aussi pourquoi rien n'est publié depuis ici — l'appelant l'a déjà
         fait, pour tous les hôtes à la fois.
         """
+        self._recolter()
         process = self._process.get(run_id)
-        if process is None or process.poll() is not None:
-            self._process.pop(run_id, None)
+        if process is None:
             return False
         if await asyncio.to_thread(self._attendre_extinction, process, delai_s):
             return True
@@ -430,19 +475,52 @@ class HoteRunDetache(HoteRun):
     def runs_en_vol(self) -> tuple[str, ...]:
         """Les runs dont le process tourne encore, dans l'ordre de leur lancement.
 
-        Le parcours **ramasse** au passage les process éteints : c'est le pendant
-        de l'`add_done_callback` de l'hôte en process — un `Popen` qu'on n'attend
-        jamais laisse un zombie sous POSIX, et `poll()` est ce qui le récolte. Le
-        cœur appelle cette méthode à chaque période : le ménage se fait donc tout
-        seul, sans tâche à lui.
+        Le parcours **récolte** au passage les process éteints (`_recolter`) :
+        c'est le pendant de l'`add_done_callback` de l'hôte en process — un `Popen`
+        qu'on n'attend jamais laisse un zombie sous POSIX, et `poll()` est ce qui
+        le récolte. Le cœur appelle cette méthode à chaque période : le ménage se
+        fait donc tout seul, sans tâche à lui.
         """
-        vivants: list[str] = []
-        for run_id, process in list(self._process.items()):
-            if process.poll() is None:
-                vivants.append(run_id)
-            else:
-                self._process.pop(run_id, None)
-        return tuple(vivants)
+        self._recolter()
+        return tuple(self._process)
+
+    def ramasser(self) -> tuple[HoteMort, ...]:
+        """Les hôtes vus morts, une fois passé leur délai de grâce (#446).
+
+        Le contrat en fait un **constat** et non un verdict (`hote.py`) : ce qui est
+        rendu ici est « ce process est mort, voici son code et les dernières lignes
+        de son journal ». Si le run avait déjà publié son issue, l'appelant le lira
+        dans la projection et n'aura rien à faire ; sinon, c'est la seule chose qui
+        distingue un run mort d'un run qu'on regarde vieillir.
+
+        Le **délai de grâce** (`DELAI_ISSUE_S`) est ce qui rend le constat sûr : un
+        process publie son issue *puis* sort, si bien qu'un `poll()` tombé dans
+        cette fenêtre verrait la mort avant l'issue — et solderait en « echec » un
+        run qui vient d'annoncer sa réussite. On préfère rendre une passe plus tard.
+
+        Chaque dépouille n'est rendue **qu'une fois** : elle quitte le registre en
+        partant. Ce qui reste dedans est ce qui n'a pas encore mûri, jamais un
+        historique — un hôte n'a pas à tenir la mémoire des runs, c'est le rôle de
+        la projection.
+        """
+        self._recolter()
+        maintenant = time.monotonic()
+        rendus: list[HoteMort] = []
+        for run_id, (code, journal, vu) in list(self._morts.items()):
+            if maintenant - vu < self._delai_issue:
+                continue
+            self._morts.pop(run_id, None)
+            trace = "aucun journal" if journal is None else _cause(journal)
+            rendus.append(
+                HoteMort(
+                    run_id=run_id,
+                    cause=(
+                        f"l'hôte détaché du run {run_id} s'est arrêté sans publier "
+                        f"d'issue (code {code}) : {trace}"
+                    ),
+                )
+            )
+        return tuple(rendus)
 
     async def fermer(self, *, delai_s: float) -> None:
         """L'API se retire : **aucun run ne s'arrête**. C'est tout l'objet de #441.
@@ -458,6 +536,27 @@ class HoteRunDetache(HoteRun):
         """
 
     # ------------------------------------------------------------------ interne
+
+    def _recolter(self) -> None:
+        """Passe les `Popen` en revue : les morts quittent le registre pour l'autre.
+
+        Le seul endroit où un process sort de `_process`, et le seul où une
+        dépouille y entre — deux registres, une transition, ce qui évite qu'un run
+        soit à la fois « en vol » et « ramassable ». `poll()` récolte au passage le
+        zombie POSIX, ce que faisait déjà `runs_en_vol` avant #446.
+
+        Un run **annulé** y passe comme les autres, et c'est voulu : son issue a été
+        consignée par l'API avant l'ordre, donc l'appelant trouvera son statut déjà
+        terminal et n'aura rien à solder. Filtrer ici demanderait à l'hôte de savoir
+        pourquoi son process est mort, ce que le contrat lui épargne.
+        """
+        vu = time.monotonic()
+        for run_id, process in list(self._process.items()):
+            code = process.poll()
+            if code is None:
+                continue
+            self._process.pop(run_id, None)
+            self._morts[run_id] = (code, self._journaux.pop(run_id, None), vu)
 
     def _ouvrir_atelier(self, run_id: str) -> Path:
         """Le dossier de travail du run — temporaire par défaut, et c'est voulu.
@@ -554,7 +653,12 @@ class HoteRunDetache(HoteRun):
                 return
             code = process.poll()
             if code is not None:
+                # Ni registre, ni **dépouille** : cette mort-là n'est pas à
+                # ramasser, elle est levée à l'appelant qui en fera le statut du
+                # run tout de suite (#443). La rendre aussi par `ramasser`
+                # solderait une seconde fois un run déjà soldé.
                 self._process.pop(run_id, None)
+                self._journaux.pop(run_id, None)
                 raise DemarrageHoteRate(
                     f"l'hôte détaché du run {run_id} s'est arrêté aussitôt "
                     f"(code {code}) : {_cause(journal)}"
@@ -675,6 +779,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     télémétrie (#46) et rejoignent la Control Tower par le canal de toujours, celui
     qu'emprunte déjà `maestro-run --publier`.
 
+    Et il en a désormais la **fin** aussi (#446) : quelle que soit la sortie, ce
+    process **publie son issue** avant de partir et retire son battement dans le
+    même geste (`solder_le_run`). Une seule sortie n'en publie pas, l'annulation :
+    son issue est déjà consignée côté API, où elle a servi d'ordre.
+
     L'ordre des six gestes d'armement est le sujet, et chacun a sa raison :
 
     1. **relire l'ordre**, et l'effacer — il porte l'objectif, donc du texte libre
@@ -714,8 +823,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     Un **brief refusé** (#445) rejoint ce troisième cas et non le deuxième, pour la
     même raison et parce que l'hôte en process en fait déjà un run annulé : rien n'a
     raté, quelqu'un a dit non. **Personne ne lit ce code** — le process n'a pas
-    d'appelant — et c'est assumé : ce qui compte est la trace laissée au journal, et
-    le statut que l'hôte publiera en partant au lot 5 (#446).
+    d'appelant — et c'est assumé : ce qui compte est la trace laissée au journal et,
+    depuis #446, l'issue publiée.
+
+    Ne pas confondre les deux, d'ailleurs : le code de sortie compte les tâches
+    **échouées**, l'issue compte aussi les **bloquées**. Ce n'est pas une
+    incohérence à corriger au passage — l'issue doit dire ce que dit l'hôte en
+    process pour le même rapport (`ServiceExecutions._derouler`), c'est le seul
+    point où les deux hôtes n'ont pas le droit de diverger, tandis que le code de
+    sortie garde la lecture qu'il a partout ailleurs dans le dépôt (`maestro-run`).
     """
     from maestro.config import ConfigError, load_settings
     from maestro.controltower.battement import CoeurRun, batteur_redis
@@ -747,17 +863,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     coeur = CoeurRun(ordre.run_id, batteur_redis(load_settings().redis_url))
     coeur.demarrer()
 
+    # L'issue à publier en partant (#446), et le code à rendre. Le premier est vide
+    # dans le seul cas où l'on n'a rien à dire : l'annulation, dont l'issue est
+    # déjà consignée côté API — c'est elle qui a servi d'ordre.
+    statut = ""
+    detail = ""
+    rapport: RunReport | None = None
+    code = 1
     try:
         rapport = run_borne(_derouler(ordre, atelier))
     except RunAnnule as annulation:
         # Ni panne ni échec : quelqu'un a dit stop, et son issue est déjà consignée
         # côté API. Il ne reste qu'à le dire au journal de l'hôte, seule trace que
-        # ce process laisse derrière lui.
+        # ce process laisse derrière lui — republier ferait dire deux fois un fait
+        # acquis, et c'est la règle « l'issue *est* l'ordre » (cf. l'en-tête).
         print(f"Run annulé : {annulation}", file=sys.stderr)
-        return CODE_ANNULE
+        code = CODE_ANNULE
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
-        return 1
+        statut, detail, code = EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}", 1
     except BriefRefuse as refus:
         # **Annulé, pas échoué** — et ce chemin n'existait pas avant #445 : le brief
         # « humain » était refusé au lancement, et les deux autres modes ne
@@ -768,26 +892,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         # qu'une seule tâche existe. Rendre 1 ferait chercher une panne là où le
         # dispositif a fonctionné, et divergerait de l'hôte en process sur le seul
         # point où les deux doivent dire la même chose : l'issue d'un run.
+        #
+        # Celle-ci **se publie**, contrairement à l'annulation : la projection l'a
+        # peut-être déjà posée sur la décision (`_applique_brief_decision`), mais
+        # rien ne l'a soldée côté hôte, et c'est ce geste qui pose sa `fin`.
         print(f"Brief refusé : {refus}", file=sys.stderr)
-        return CODE_ANNULE
+        statut, detail, code = EXECUTION_ANNULEE, str(refus), CODE_ANNULE
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
-        return 1
+        statut, detail, code = EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}", 1
     except Exception as exc:  # noqa: BLE001 - le fils n'a pas d'appelant à qui lever
         print(f"Exécution interrompue — {type(exc).__name__} : {exc}", file=sys.stderr)
         import traceback
 
         traceback.print_exc()
-        return 1
+        statut, detail, code = EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}", 1
+    else:
+        # Mot pour mot ce que consigne l'hôte en process pour le même rapport : les
+        # deux hôtes n'ont pas le droit de raconter deux issues différentes.
+        echouees = len(rapport.echouees) + len(rapport.bloquees)
+        statut = EXECUTION_ECHEC if echouees else EXECUTION_TERMINEE
+        detail = f"{len(rapport.reussies)}/{len(rapport.resultats)} tâche(s) réussie(s)"
+        code = 0 if not rapport.echouees else 1
     finally:
-        # Le cœur s'arrête avec le run, quelle qu'en soit l'issue — mais **rien
-        # n'est effacé** : le dernier battement reste et vieillit, ce qui fera
-        # passer ce run `orphelin` faute de publier son issue. Le corollaire est
-        # celui de `maestro-run --publier` (#348), et le lot 5 (#446) le lève.
+        # Le cœur s'arrête avec le run, quelle qu'en soit l'issue, et **n'efface
+        # rien** : l'effacement appartient au soldage, qui suit — un battement
+        # retiré avant que l'issue soit partie ferait d'un orphelin un run dont on
+        # ne sait rien (cf. `bridge.solder_le_run`).
         coeur.arreter()
 
-    print(redact_secrets(rapport.synthese()))
-    return 0 if not rapport.echouees else 1
+    if statut:
+        solder_le_run(ordre.run_id, statut, detail, url=load_settings().redis_url)
+    if rapport is not None:
+        print(redact_secrets(rapport.synthese()))
+    return code
 
 
 async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:

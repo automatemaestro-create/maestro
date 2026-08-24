@@ -74,7 +74,12 @@ rediffuse aux clients WebSocket. Requiert le même Redis que `--queue`. Depuis
 #348 il fait aussi **battre le cœur du run** (hash `maestro.runs:battements`, un
 fil démon) : sans ce signal, l'API ne pourrait pas distinguer ce run — qui vit
 hors d'elle et qu'aucun de ses redémarrages ne concerne — d'un run mort resté
-`en_cours` dans la projection, et le déclarerait orphelin à tort.
+`en_cours` dans la projection, et le déclarerait orphelin à tort. Depuis #446 il
+publie enfin son **issue** en partant et retire son battement : ce process est
+l'hôte du run, et un hôte dit comment il finit. Sans quoi un run terminé
+normalement finissait quand même `orphelin` — et un `--brief humain` terminé se
+retrouvait proposé à la relance, avec son brief approuvé, pour un travail déjà
+fait.
 
 `--validation-ui` (#48) route les demandes de validation humaine vers la
 **Control Tower** au lieu de la console : la tâche sensible passe en pause, la
@@ -394,6 +399,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if coeur is not None:
         coeur.demarrer()
 
+    # Les statuts du cycle de vie d'un run (#446), pour l'**issue** que cet hôte
+    # publiera en partant. Import local comme tout ce que ce module emprunte à la
+    # Control Tower : `--publier` est la seule option qui l'y branche.
+    from maestro.controltower.state import (
+        EXECUTION_ANNULEE,
+        EXECUTION_ECHEC,
+        EXECUTION_TERMINEE,
+    )
+
+    # L'issue à publier, ou None quand le run est allé au bout : elle se lit alors
+    # dans son rapport, plus bas, et non dans l'exception qui n'a pas eu lieu.
+    issue: tuple[str, str] | None = None
     try:
         engine = _build_engine(
             via_queue=via_queue,
@@ -434,24 +451,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
-        return 1
+        issue = (EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}")
     except BriefRefuse as refus:
         # Un refus n'est pas un plantage : quelqu'un a lu le brief et dit non. Le
         # dire comme tel, et sortir en 1 comme pour un run qui n'a rien produit —
-        # rien n'a été décomposé, donc il n'y a pas de synthèse à imprimer.
+        # rien n'a été décomposé, donc il n'y a pas de synthèse à imprimer. Son
+        # **issue**, elle, est « annulée » et non « échec », comme partout ailleurs
+        # dans le dépôt : rien n'a raté, quelqu'un a dit non.
         print(f"Brief refusé : {refus}", file=sys.stderr)
-        return 1
+        issue = (EXECUTION_ANNULEE, str(refus))
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
-        return 1
+        issue = (EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}")
     finally:
-        # Le cœur s'arrête avec le run, quelle qu'en soit l'issue — mais **rien
-        # n'est effacé** : le dernier battement reste et vieillit. C'est ce qui
-        # distingue « l'hôte a fini » (le battement se tait, le run passera
-        # orphelin) de « ce run n'a jamais battu » (indéterminé), et la synthèse
-        # qui suit n'a plus besoin d'être signalée vivante.
+        # Le cœur s'arrête avec le run, quelle qu'en soit l'issue, et **n'efface
+        # rien** : l'effacement appartient au soldage qui suit, et l'ordre a une
+        # raison — un battement retiré avant que l'issue soit partie ferait d'un
+        # orphelin un run dont on ne sait rien (cf. `bridge.solder_le_run`).
         if coeur is not None:
             coeur.arreter()
+
+    if issue is not None:
+        if publier:
+            _solder_le_run(journal.run_id, *issue)
+        return 1
+
+    if publier:
+        # Mot pour mot l'issue que consigne l'hôte en process pour le même rapport
+        # (`ServiceExecutions._derouler`) : deux hôtes n'ont pas le droit de
+        # raconter deux fins différentes du même run. Le **code de sortie**, lui,
+        # garde sa lecture historique (les seules tâches échouées) — personne ne le
+        # confond avec un statut, et le changer ici ne servirait personne.
+        echouees = len(report.echouees) + len(report.bloquees)
+        _solder_le_run(
+            journal.run_id,
+            EXECUTION_ECHEC if echouees else EXECUTION_TERMINEE,
+            f"{len(report.reussies)}/{len(report.resultats)} tâche(s) réussie(s)",
+        )
 
     if notificateur is not None:
         # Fin de run (#105) : le bilan part sur le canal de supervision — avant
@@ -640,6 +676,30 @@ def _battement_du_run(run_id: str) -> CoeurRun:
     from maestro.controltower.battement import CoeurRun, batteur_redis
 
     return CoeurRun(run_id, batteur_redis(load_settings().redis_url))
+
+
+def _solder_le_run(run_id: str, statut: str, detail: str) -> None:
+    """Publie l'**issue** du run vers la Control Tower et retire son battement (#446).
+
+    Le geste qui manquait à `--publier` : ce process est l'**hôte** du run — il
+    publie ses étapes, il bat son cœur —, mais il ne disait pas comment il finit.
+    Son dernier battement vieillissait donc jusqu'à le faire apparaître `orphelin`
+    alors qu'il avait très bien terminé (corollaire assumé de #348), et un
+    `--brief humain` terminé se retrouvait même proposé à la **relance** avec son
+    brief approuvé — soit un second run pour un travail déjà fait.
+
+    Appelé seulement sous `--publier`, comme le cœur et pour la raison exacte : la
+    question « l'API voit-elle ce run ? » a déjà cette réponse-là. Sans l'option,
+    aucun `en_cours` ne traîne nulle part, donc il n'y a rien à solder.
+
+    Import local et **best-effort**, comme tout ce que ce module emprunte à la
+    Control Tower : le run est fini, sa synthèse est due à l'appelant, et un Redis
+    muet au dernier instant ne doit pas coûter la sortie du process.
+    """
+    from maestro.config import load_settings
+    from maestro.controltower.bridge import solder_le_run
+
+    solder_le_run(run_id, statut, detail, url=load_settings().redis_url)
 
 
 def activer_publication_evenements() -> None:

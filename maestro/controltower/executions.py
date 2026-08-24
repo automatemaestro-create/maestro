@@ -6,8 +6,8 @@ Control Tower d'être un vrai poste de pilotage. Ce module est la pièce
 manquante — le service que les routes `/api/executions` appellent :
 
 - `lancer` valide les garde-fous (#9) du run, le confie à l'**hôte** du service
-  — par défaut la **tâche de fond** du process de l'API — et rend son résumé
-  (donc son `run_id`) immédiatement ;
+  — depuis #446, un **process détaché** dans le déploiement de production — et
+  rend son résumé (donc son `run_id`) immédiatement ;
   depuis #317 il **compose** aussi la matière de l'objectif : sources résolues
   (#315), octets téléversés rattachés au run, rapport de lecture (#316) rendu
   avec le résumé ;
@@ -23,15 +23,21 @@ généralise pas : la Control Tower est la voie de lancement qui a quelqu'un dev
 Un run suspendu reste **annulable** — attendre une approbation n'est pas un état
 terminal —, et un refus le solde en « annulée », pas en « échec ».
 
-**Frontière d'exécution retenue : la tâche de fond du process de l'API.** Le
-ticket laissait le choix avec la soumission à la file (`--queue`,
-`maestro.queue`). La tâche de fond est retenue pour le POC : elle garde
-l'annulation *à portée* (`asyncio.Task.cancel`, là où interrompre un run déjà
-distribué demanderait un protocole de révocation côté workers) et n'ajoute aucune
-dépendance d'infrastructure à `maestro-api`. Le contrat REST n'en dépend pas :
-basculer sur la file plus tard ne change que la fabrique du moteur
-(`fabrique_moteur`), pas les routes. Le corollaire est assumé : **un run ne survit
-pas au redémarrage de l'API** — sa trace, elle, survit (journal durable #97).
+**Frontière d'exécution retenue : un hôte de run détaché** (docs/28 §5, livré par
+le chantier #441 et basculé en défaut par #446). Le POC avait retenu la tâche de
+fond du process de l'API, pour de bonnes raisons — annulation *à portée*
+(`asyncio.Task.cancel`, là où interrompre un run déjà distribué demanderait un
+protocole de révocation côté workers) et aucune dépendance d'infrastructure
+ajoutée à `maestro-api` —, et l'hôte détaché ne repaie ni l'une ni l'autre :
+l'annulation reste `Task.cancel`, à un aller Redis près (#444), et le process fils
+est le même interpréteur dans le même `.venv`. Ce qu'il supprime est la panne de
+chaque heure : fermer la fenêtre du navigateur, relancer l'API, `start.sh --stop`
+n'arrête plus le run.
+
+Le corollaire n'a pas disparu, il a **changé de portée** : un run survit à son
+API, **pas à sa machine** — sa trace, elle, survit aux deux (journal durable #97).
+La tâche de fond reste disponible et se nomme (`MAESTRO_HOTE_RUN=process`) ; le
+contrat REST ne dépend d'aucun des deux.
 
 Depuis #442, cette frontière a un **nom** et n'est plus un détail
 d'implémentation du service : `maestro.controltower.hote` porte le contrat
@@ -53,21 +59,27 @@ ce fichier : la publication de cette issue n'est plus seulement une trace, c'est
 **l'ordre lui-même** (cf. `_solder`), et l'ordre des deux gestes — consigner, puis
 demander l'interruption — n'est plus seulement juste, il est *nécessaire*.
 
-Le service n'en sait toujours rien d'autre qu'une chose : **un hôte peut rater son
-départ**. Créer une tâche de fond n'échoue pas ; créer un process, si. Ce qu'il
-en fait est écrit une fois, dans `lancer` — le run est soldé `echec` avec sa
-cause, parce qu'à cet instant plus rien ne viendra de l'hôte et que l'appelant
-est le seul encore là pour l'écrire. Le mode reste **opt-in**
-(`MAESTRO_HOTE_RUN=detache`, résolu par `create_default_app`) : le défaut demeure
-la tâche de fond jusqu'au lot 5 du chantier #441.
+Le service n'en sait toujours rien d'autre que **deux** choses, et les deux
+portent sur la **fin de vie** d'un hôte plutôt que sur son travail :
 
-Cette phrase reste vraie, mais elle n'est plus toute l'histoire (#347) : depuis
-#348 la mort de l'hôte se **voit**, et depuis #349 ce qu'elle emporte se
-**rattrape**. L'inventaire, parce que c'est lui qu'on cherche quand un run vient
-de disparaître :
+- **un hôte peut rater son départ**. Créer une tâche de fond n'échoue pas ; créer
+  un process, si. Ce qu'il en fait est écrit une fois, dans `lancer` — le run est
+  soldé `echec` avec sa cause, parce qu'à cet instant plus rien ne viendra de
+  l'hôte et que l'appelant est le seul encore là pour l'écrire ;
+- **un hôte peut mourir sans dire son issue** (#446). Un hôte qui part
+  normalement la publie désormais lui-même (`bridge.solder_le_run`), donc ce qui
+  reste muet est ce qui est mort net. `_ramasser` confronte alors ce que l'hôte a
+  vu mourir (`HoteRun.ramasser`, un constat) à la projection (l'issue, s'il y en a
+  une) et solde le reste avec sa cause. Le verdict d'orphelinat, lui, n'est **pas
+  redéduit** ici : `vitalite` en est la seule formule, comme pour `relancer`.
 
-- **ne survit pas** — la tâche de fond et le travail qu'elle avait en cours, le
-  cœur qui battait pour elle, et les événements encore en file de publication au
+Ce dispositif n'est pas toute l'histoire (#347) : depuis #348 la mort de l'hôte se
+**voit**, et depuis #349 ce qu'elle emporte se **rattrape**. L'inventaire, parce
+que c'est lui qu'on cherche quand un run vient de disparaître — et il se lit
+maintenant sur la mort de la **machine**, l'arrêt de l'API ne coûtant plus rien :
+
+- **ne survit pas** — le process du run et le travail qu'il avait en cours, le
+  cœur qui battait pour lui, et les événements encore en file de publication au
   moment du coup d'arrêt (ils n'atteignent alors ni le bus, ni le journal). Un run
   orphelin n'est plus **interruptible** non plus : plus aucun process ne porte sa
   tâche, si bien qu'`annuler` ne fait plus que consigner son issue ;
@@ -84,9 +96,9 @@ de disparaître :
 
 Un run publié hors de l'API (`maestro-run --publier`) lit cette liste à l'envers,
 et c'est le seul cas qui s'y ajoute : aucun redémarrage de l'API ne le concerne —
-il vit dans son process et y bat —, mais sa fin **normale** finit par l'afficher
-`orphelin`, faute pour lui de publier un statut de fin. Le verdict porte sur son
-hôte, jamais sur son travail.
+il vit dans son process et y bat. Sa fin **normale**, elle, n'est plus muette
+depuis #446 : `--publier` fait de ce process l'hôte du run, et un hôte publie son
+issue en partant.
 
 **Le flux d'événements existant reste le seul canal.** Le run est journalisé
 comme n'importe quel autre (`RunJournal`) et le pont télémétrie → bus
@@ -110,7 +122,10 @@ Depuis #348 le service **fait battre le cœur** de ses runs (`maestro.controltow
 .battement`) : une tâche unique pose un battement pour chaque run en vol, et
 `resumes` rend le verdict de vitalité — vivant, orphelin, indéterminé — à côté du
 statut. C'est la contrepartie visible du corollaire ci-dessus : un run ne survit
-toujours pas au redémarrage de l'API, mais sa mort cesse d'être silencieuse.
+toujours pas au sommeil de sa machine, mais sa mort cesse d'être silencieuse. La
+même tâche porte depuis #446 le **ramassage** (`_ramasser`), pour la raison qui a
+fait mettre le battement là : ce qui doit être fait à chaque période l'est par un
+seul réveil, jamais par une tâche d'horloge de plus.
 
 Et depuis #349 elle cesse d'être irrattrapable : `relancer` rejoue un run non
 soldé **sur son brief approuvé**, en mode `sans`, sans repasser par la
@@ -150,7 +165,9 @@ from maestro.controltower.brief import (
     ArbitreClarificationControlTower,
 )
 from maestro.controltower.events import (
+    ACTEUR_RUN,
     EVENEMENT_EXECUTION_STATUT,
+    ROLE_RUN,
     Event,
     EventBus,
 )
@@ -205,11 +222,6 @@ LecteurSources = Callable[[Sequence[Source]], RapportLecture]
 #: à son extinction — même parti pris que `maestro.engine.runner` : une
 #: réalisation qui avale son annulation ne doit pas suspendre l'appelant.
 DELAI_ANNULATION_S: float = 5.0
-
-#: L'acteur au nom duquel le cycle de vie d'un run est consigné — le même que
-#: celui de l'étape de planification du journal (#8).
-_ACTEUR_RUN = "orchestrateur"
-_ROLE_RUN = "Orchestrateur"
 
 #: Motifs de refus d'une **relance** (#349) — codes stables, à la convention des
 #: refus de sources et de projets (`{motif, message}`, cf. `detail_refus`). Ils
@@ -279,13 +291,20 @@ class ServiceExecutions:
     déploiement : y toucher est un choix de code, comme `DELAI_ANNULATION_S`.
 
     `hote` (#442) est **l'hôte de run** : ce à quoi le service confie une
-    exécution, et à qui il ne demande que de la lancer, de l'annuler et de dire ce
-    qu'il porte encore (`maestro.controltower.hote`). Par défaut
-    `HoteRunEnProcess`, qui déroule le run en tâche de fond de l'API — le
-    comportement de toujours, désormais nommé. Injectable comme
-    `fabrique_moteur`, et pour la même raison : le service ne doit rien savoir de
-    *où* le run s'exécute, condition pour qu'un hôte survivant à l'API (#441) s'y
-    branche sans réécrire ni les routes, ni les événements, ni la projection.
+    exécution, et à qui il ne demande que de la lancer, de l'annuler, de dire ce
+    qu'il porte encore et ce qu'il a vu mourir (`maestro.controltower.hote`).
+    Injectable comme `fabrique_moteur`, et pour la même raison : le service ne doit
+    rien savoir de *où* le run s'exécute, condition pour qu'un hôte survivant à
+    l'API (#441) s'y branche sans réécrire ni les routes, ni les événements, ni la
+    projection.
+
+    ⚠ Son défaut n'est **pas** celui du déploiement, et les deux se lisent à des
+    endroits différents depuis #446. Ici, faute d'hôte injecté, c'est
+    `HoteRunEnProcess` : le seul à qui l'on puisse passer une coroutine, donc le
+    seul qu'une app puisse se donner sans avoir de process à fabriquer — c'est ce
+    que veulent les tests et une démo mono-process. Le défaut de **production**,
+    lui, est l'hôte détaché, et il se résout là où se résolvent le bus, le journal
+    et le registre (`create_default_app`, `MAESTRO_HOTE_RUN`).
     """
 
     def __init__(
@@ -918,14 +937,76 @@ class ServiceExecutions:
         même parti pris que la pompe de publication : le run continue, seul son
         signal de vie manque, et manquer un battement sur soixante ne change rien
         au verdict.
+
+        Le **ramassage** (#446) partage ce réveil, et passe **avant** les
+        battements : un hôte mort n'a pas à recevoir un signal de vie de plus au
+        tour où on le solde. Il n'a pas de tâche à lui pour la raison qui a fait
+        n'en donner qu'une au cœur — ce qui se fait à chaque période se fait sur un
+        seul réveil.
         """
         while True:
             await asyncio.sleep(self._periode_battement_s)
+            await self._ramasser()
             for run_id in self._hote.runs_en_vol():
                 resume = self.resume(run_id)
                 if resume is not None and resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
                     continue
                 await self._battement(run_id)
+
+    async def _ramasser(self) -> None:
+        """Solde les runs dont l'hôte est mort **sans publier d'issue** (#446).
+
+        L'hôte rend un constat — ces process se sont éteints, voici leur code et
+        leur trace (`HoteRun.ramasser`) — et c'est **ici** qu'on décide de ce qu'il
+        signifie, en le confrontant à la projection. Un hôte qui a publié son issue
+        avant de partir laisse un run déjà terminal : rien à faire. Un hôte tué net
+        laisse un run `en_cours` que plus personne ne porte, et qui attendrait sinon
+        le seuil d'orphelinat pour cesser d'être affiché comme actif — puis le
+        resterait indéfiniment, `orphelin` n'étant pas un statut mais un verdict sur
+        son hôte.
+
+        `echec` et non `annulee`, à la différence de tout ce que solde `_solder` :
+        personne n'a dit stop, l'hôte est tombé. Et le `detail` porte la **cause**
+        telle que l'hôte la connaît — code de sortie, dernières lignes de son
+        journal —, ce qui est la seule information dont dispose quelqu'un qui
+        découvre le run soldé une heure plus tard.
+
+        Trois choses qu'il ne fait pas, et chacune est un choix :
+
+        - il ne **redéduit pas l'orphelinat**. Il ne balaie pas la projection à la
+          recherche de runs muets : `vitalite` est la seule formule du verdict
+          (#348), comme `relancer` l'a déjà tranché, et un second calcul serait un
+          second endroit à tenir d'accord avec le premier ;
+        - il ne solde donc **pas les orphelins**, seulement les morts *observées*.
+          Un run dont l'hôte est mort pendant que l'API était arrêtée reste
+          `orphelin`, et c'est ce qu'on veut : c'est exactement le run que
+          `relancer` (#349) sait rejouer sur son brief approuvé, et le solder le
+          rendrait au contraire irrattrapable (`run-solde`) ;
+        - il ne **lève jamais**. Le ramassage vit dans le cœur : une panne ici
+          arrêterait les battements de tous les autres runs, c'est-à-dire ferait
+          exactement le mal qu'il existe pour réparer.
+        """
+        try:
+            for defunt in self._hote.ramasser():
+                resume = self.resume(defunt.run_id)
+                if resume is None or resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
+                    continue
+                _LOGGER.error(
+                    "Hôte du run %s mort sans publier d'issue : %s",
+                    defunt.run_id,
+                    defunt.cause,
+                )
+                self._consigne(defunt.run_id, EXECUTION_ECHEC, "", defunt.cause)
+                # Après le statut terminal, jamais avant — même ordre et même
+                # raison que partout ailleurs (cf. `_solder`).
+                await self._oublier(defunt.run_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Ramassage des hôtes morts impossible : les runs concernés "
+                "resteront « en cours » jusqu'à leur seuil d'orphelinat."
+            )
 
     async def _battement(self, run_id: str) -> None:
         """Pose le battement de `run_id` — **best-effort**, jamais une levée."""
@@ -1090,8 +1171,8 @@ class ServiceExecutions:
                 type=EVENEMENT_EXECUTION_STATUT,
                 run_id=run_id,
                 titre=redact_secrets(objectif),
-                agent=_ACTEUR_RUN,
-                role=_ROLE_RUN,
+                agent=ACTEUR_RUN,
+                role=ROLE_RUN,
                 statut=statut,
                 detail=redact_secrets(detail),
                 ticket=ticket,

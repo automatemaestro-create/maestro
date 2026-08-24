@@ -24,31 +24,34 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   (`RepondeurModele`) ou scriptée (`RepondeurScripte`), flux d'un envoi
   (`ServiceChat` : persistance, messagerie #44, diffusion `chat.message`) ;
 - `maestro.controltower.executions` : le **pilotage des exécutions** (#185) —
-  `ServiceExecutions` lance un run en tâche de fond de l'API, le suit dans la
-  projection et l'interrompt à la demande, ses étapes partant sur le bus par le
-  pont télémétrie comme celles d'un run lancé en ligne de commande ;
+  `ServiceExecutions` confie un run à son hôte, le suit dans la projection,
+  l'interrompt à la demande et **ramasse** les hôtes morts sans issue (#446), ses
+  étapes partant sur le bus par le pont télémétrie comme celles d'un run lancé en
+  ligne de commande ;
 - `maestro.controltower.battement` : le **signal de vie** d'un run (#348) —
-  l'hôte bat (`RegistreBattements` côté API, `CoeurRun` côté `maestro-run
-  --publier`), la lecture en tire un verdict (`vitalite` : vivant / orphelin /
+  l'hôte bat (`RegistreBattements` côté API, `CoeurRun` côté process qui n'a pas
+  de boucle), la lecture en tire un verdict (`vitalite` : vivant / orphelin /
   indéterminé) : un run dont l'hôte est tombé cesse de rester `en_cours` pour
-  toujours ;
+  toujours. Depuis #446 un hôte **publie son issue** en partant et retire son
+  battement (`bridge.solder_le_run`), si bien qu'`orphelin` ne désigne plus que ce
+  qui est mort sans pouvoir le dire ;
 - `maestro.controltower.hote` : le **contrat d'hôte de run** (#442) — ce à quoi
-  une exécution est confiée (`HoteRun` : lancer un `OrdreRun`, annuler, observer),
-  sans que l'appelant sache où elle vit. `HoteRunEnProcess`
-  (`maestro.controltower.hote_en_process`) est le **défaut** : la tâche de fond de
-  l'API, le comportement de toujours ; `HoteRunDetache`
-  (`maestro.controltower.hote_detache`, #443) est celui qui **survit à l'API** —
-  un process indépendant par run, qui publie sur le même Redis et bat son cœur,
-  activé par `MAESTRO_HOTE_RUN=detache` (opt-in jusqu'au lot 5 du chantier #441).
-  Il **écoute** aussi ce même Redis (#444) : l'issue « annulee » qu'y consigne
-  `ServiceExecutions._solder` est l'ordre par lequel l'annulation traverse la
-  frontière, et le run annule alors sa propre tâche — donc `Task.cancel` reste le
-  mécanisme réel, à un aller Redis près, quel que soit l'hôte. Les **trois attentes
-  humaines** l'empruntent de même (#445) : décision sur le brief (#320), réponses
-  de clarification (#321) et validation d'action sensible (#9/#48) s'y branchent
-  par les mêmes arbitres que côté API, sur un bus unique par process — et le
-  fail-safe est celui de toujours, un bus refermé sans décision faisant lever
-  l'attente ou refuser l'action, jamais approuver.
+  une exécution est confiée (`HoteRun` : lancer un `OrdreRun`, annuler, observer
+  ce qu'il porte et ce qu'il a vu mourir), sans que l'appelant sache où elle vit.
+  `HoteRunDetache` (`maestro.controltower.hote_detache`, #443) est le **défaut**
+  depuis #446 : un process indépendant par run, qui **survit à l'API**, publie sur
+  le même Redis et y bat son cœur ; `HoteRunEnProcess`
+  (`maestro.controltower.hote_en_process`) reste disponible sous
+  `MAESTRO_HOTE_RUN=process` — la tâche de fond de l'API, dont les runs meurent
+  avec elle. Le détaché **écoute** aussi ce même Redis (#444) : l'issue « annulee »
+  qu'y consigne `ServiceExecutions._solder` est l'ordre par lequel l'annulation
+  traverse la frontière, et le run annule alors sa propre tâche — donc
+  `Task.cancel` reste le mécanisme réel, à un aller Redis près, quel que soit
+  l'hôte. Les **trois attentes humaines** l'empruntent de même (#445) : décision
+  sur le brief (#320), réponses de clarification (#321) et validation d'action
+  sensible (#9/#48) s'y branchent par les mêmes arbitres que côté API, sur un bus
+  unique par process — et le fail-safe est celui de toujours, un bus refermé sans
+  décision faisant lever l'attente ou refuser l'action, jamais approuver.
   Ce dernier n'est **pas réexporté ici**, et pas par oubli : son module est aussi
   un point d'entrée (`python -m maestro.controltower.hote_detache`), et un module
   déjà importé par le paquet est ensuite exécuté **une seconde fois** comme
@@ -97,6 +100,7 @@ from maestro.controltower.battement import (
     RegistreBattementsMemoire,
     RegistreBattementsRedis,
     batteur_redis,
+    oublieur_redis,
     vitalite,
 )
 from maestro.controltower.bridge import (
@@ -104,6 +108,7 @@ from maestro.controltower.bridge import (
     activer_publication,
     evenements_depuis_step,
     publieur_redis,
+    solder_le_run,
 )
 from maestro.controltower.chat import (
     UTILISATEUR,
@@ -147,6 +152,7 @@ from maestro.controltower.hote import (
     HOTE_RUN_EN_PROCESS,
     HOTES_RUN,
     DemarrageHoteRate,
+    HoteMort,
     HoteRun,
     OrdreRun,
 )
@@ -240,6 +246,7 @@ __all__ = [
     "EventLog",
     "FabriqueMoteur",
     "FixturesControlTower",
+    "HoteMort",
     "HoteRun",
     "HoteRunEnProcess",
     "InMemoryEventBus",
@@ -272,8 +279,10 @@ __all__ = [
     "create_default_app",
     "evenements_depuis_step",
     "moteur_par_defaut",
+    "oublieur_redis",
     "publieur_redis",
     "repondre_assistance",
+    "solder_le_run",
     "validateur_redis",
     "vitalite",
 ]
