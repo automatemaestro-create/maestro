@@ -15,33 +15,36 @@ en **une** fiche agent à onglets, et un agent se consulte d'un seul endroit.
 Deux entrées se sont ajoutées depuis — **Projets** (#225) et **Journal** (#249),
 où le fil d'activité s'est installé en plein format —, puis **Projets en est
 ressortie** (#280, §2.0.1). Le menu est déclaré une seule fois
-(`apps/web/lib/navigation.ts`) et fait aujourd'hui **neuf entrées** — les deux
+(`apps/web/lib/navigation.ts`) et fait aujourd'hui **dix entrées** — les deux
 écrans de la Phase 8, « Composer un objectif » (#319) et « Valider le brief »
-(#322), s'y sont ajoutés sans que ce compte soit repris ; le Kanban des tâches
+(#322), s'y sont ajoutés, puis **« Runs »** (#474, §2.4.1) ; le Kanban des tâches
 n'en est pas une (il **est** le tableau de bord, #248) et l'écran Projets non
 plus (il est servi, mais atteint depuis le sélecteur du shell).
 
 > ⚠ **Ce menu change deux fois, et les deux ont été décidées le 2026-08-24**
 > (revue #470, [docs/29](./29-decision-run-objet-de-premier-plan.md)). Une entrée
-> **« Runs »** s'ajoute (#474) : un run n'est aujourd'hui l'objet d'aucun écran, et
+> **« Runs »** s'ajoute — **c'est fait** (#474, §2.4.1) : un run n'était l'objet
+> d'aucun écran, il a désormais le sien. Reste la seconde moitié de l'arbitrage ① :
 > le Kanban **cesse d'être** le tableau de bord pour devenir la vue d'un run
-> (#475/#476, arbitrage ① — ce qui renverse #248). Les deux entrées de la Phase 8
-> **partent** en sens inverse (#484, arbitrage ②) : composer et valider le brief
-> déménagent dans le chat, qui devient la seule porte d'entrée. Rien n'est
-> supprimé de ce que ces écrans savent faire ; les chemins restent servis et
-> redirigés. Tant que ces lots ne sont pas livrés, c'est le texte ci-dessus qui
-> décrit l'écran.
+> (#475/#476 — ce qui renverse #248). Les deux entrées de la Phase 8 **partent** en
+> sens inverse (#484, arbitrage ②) : composer et valider le brief déménagent dans
+> le chat, qui devient la seule porte d'entrée. Rien n'est supprimé de ce que ces
+> écrans savent faire ; les chemins restent servis et redirigés. Tant que ces lots
+> ne sont pas livrés, c'est le texte ci-dessus qui décrit l'écran.
 
 ```mermaid
 flowchart LR
     Selecteur[Sélecteur de projet · shell] -. gérer .-> Projets[Projets]
-    Home[Tableau de bord] --> Agents[Agents]
+    Home[Tableau de bord] --> Runs[Runs]
+    Home --> Agents[Agents]
     Home --> Chat[Chat global]
     Home --> Costs[Coûts & analytics]
     Home --> Approve[Validations]
     Home --> Journal[Journal]
     Home --> Settings[Paramètres]
     Home --> Tasks[Kanban des tâches]
+    Runs -. suspendu .-> Brief[Valider le brief]
+    Runs -. suspendu .-> Approve
     Agents --> AgentDetail[Fiche agent]
     AgentDetail --> Profil[Onglet Profil]
     AgentDetail --> Playbook[Onglet Playbook]
@@ -365,7 +368,76 @@ listé au même titre : le suivi lit la projection, il ne distingue pas l'origin
 > rechargement (#478, là où le fil est éphémère par construction) et un run qui
 > **dit pourquoi il s'est arrêté** (#479). L'API qui porte tout cela est #473 ; le
 > suivi en pipeline — graphe des tâches, checklists, branches parallèles — est le
-> chantier voisin #488.
+> chantier voisin #488. **Le premier de ces lots est livré** : voir §2.4.1.
+
+#### 2.4.1 La liste des runs du projet actif (#474) — **livré**
+
+Une entrée de menu **« Runs »** (`/runs`) liste les runs du projet actif, **du plus
+récent au plus ancien**, avec état, objectif, progression et coût. C'est la porte
+qui manquait : on entrait dans un run par « Composer un objectif » et on n'y
+revenait jamais — les runs passés n'étaient listés nulle part, et un run suspendu
+sur son brief n'apparaissait ni au Kanban, ni dans les grands livres, ni dans le fil
+d'activité, tous dérivés des tâches.
+
+L'entrée ferme le **groupe de tête** du menu, juste après « Valider le brief » : on
+compose, le Chef de projet rédige, on tranche, puis on regarde ce qui tourne. Le
+haut du menu porte le travail en cours, le bas les ressources qui le servent et ce
+qu'on observe après coup. Elle est déclarée **une fois**
+(`apps/web/lib/navigation.ts`) : sidebar, titre de page et renvois lisent la même
+liste.
+
+**« En cours » ne veut pas dire « travaille », et c'est tout l'écran.** Un run
+arrêté sur son brief, sur des questions de clarification ou sur une validation de
+tâche porte le même statut qu'un run qui avance. C'est le défaut d'origine —
+**53 minutes perdues le 2026-08-14** (#355) sur une attente de décision humaine
+indiscernable du travail en cours. La liste sépare donc **quatre régimes**
+(`apps/web/lib/execution.ts`), et l'ordre dans lequel ils sont décidés *est* la
+décision :
+
+| Régime | Ce que c'est | À l'œil |
+| --- | --- | --- |
+| **soldé** | `terminee`, `annulee`, `echec` — le run a rendu son verdict | badge vert / neutre / rouge, immobile |
+| **interrompu** | orphelin (#348) : son hôte ne bat plus | badge rouge, la cause nommée |
+| **suspendu** | il attend un humain — brief, réponses **ou** validation de tâche | fond ambré, l'attente et son ancienneté, le geste qui la lève |
+| **travaille** | rien de ce qui précède | badge bleu à **pastille battante** |
+
+Trois précisions qui expliquent la forme :
+
+- **La troisième attente ne se lit pas sur le run.** Une demande de validation porte
+  sa tâche (`tache_id`), jamais son run, et le statut du run reste `en_cours`
+  pendant qu'elle dort. L'appariement passe par les tâches, sur les deux listes que
+  le shell tient déjà — aucun appel de plus.
+- **Un run qui travaille est bleu et bat ; un run terminé est vert et immobile.**
+  Deux verts, dont un pulsant, auraient demandé de lire le libellé pour trancher, ce
+  qu'un coup d'œil doit éviter. Le libellé est là quand même : la couleur appuie le
+  sens, elle ne le porte jamais seule.
+- **Un run orphelin l'emporte sur un run suspendu**, et c'est le seul arbitrage
+  discutable : un orphelin arrêté sur son brief *attend* bien, mais personne ne
+  recevra la réponse. Il faut le **reprendre** (#349), pas lui répondre.
+
+**L'ordre vient du backend** (`GET /api/executions` rend ses résumés récents
+d'abord, §6.1) et **la progression n'est pas recomptée** : elle arrive comptée sur
+la machine à états du moteur (#473, §6.0bis). Recompter ici depuis les tâches
+chargées ferait d'une barre d'avancement la mesure de sa propre pagination ;
+retrier poserait une seconde règle d'ordre à tenir d'accord avec la première pour un
+résultat identique. La progression est **optionnelle** dans le contrat — une trace
+d'un backend antérieur n'en porte pas —, d'où le repli sur `nb_taches` : dire
+« 8 tâches » sans savoir où elles en sont vaut mieux qu'une barre inventée. Et un
+run **sans aucune tâche** le dit : c'est l'état normal d'un run arrêté sur son
+brief, pas le symptôme d'une lecture ratée.
+
+**Vide, l'écran n'est pas une panne** (§2.1.1) : il **nomme le projet** (convention
+#281), dit ce qui s'y inscrira et propose « Composer un objectif ». Une API
+injoignable, elle, garde sa bannière et **rien d'autre** — conseiller « lancez un
+run » à qui n'a pas de backend serait un contresens, exactement l'argument du poste
+vide.
+
+Enfin, **aucun lien mort** : la vue d'un run (#475) n'existe pas encore, donc les
+cartes ne s'ouvrent pas. En attendant, chaque attente mène à l'écran qui porte **le
+geste** qui la lève — « Valider le brief » pour un brief ou des questions,
+« Validations » pour un arbitrage de tâche —, et les renvois sont résolus **par le
+menu** (`entreeParLibelle`), jamais par un chemin en dur : le jour où la vue d'un
+run entre au menu, ils suivront.
 
 ### 2.5 💰 Coûts & analytics
 

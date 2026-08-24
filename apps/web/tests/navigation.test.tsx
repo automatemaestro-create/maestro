@@ -47,10 +47,15 @@ describe("le menu (lib/navigation)", () => {
     // qu'on y arrive surtout par la cloche ou le tableau de bord — un run
     // suspendu sur son brief ne crée aucune tâche, donc rien d'autre ne le
     // montre.
+    //
+    // « Runs » (#474) ferme ce groupe de tête : un run n'était l'objet d'aucun
+    // écran — on y entrait par « Composer un objectif » et on n'y revenait
+    // jamais, les runs passés n'étant listés nulle part (revue #470).
     expect(MENU.map((entree) => entree.libelle)).toEqual([
       "Tableau de bord",
       "Composer un objectif",
       "Valider le brief",
+      "Runs",
       "Agents",
       "Chat",
       "Coûts & analytics",

@@ -1,5 +1,14 @@
 /** Formatages partagés de l'UI : coûts, heures, libellés de statut. */
 
+import {
+  EXECUTION_ANNULEE,
+  EXECUTION_ECHEC,
+  EXECUTION_EN_ATTENTE_BRIEF,
+  EXECUTION_EN_ATTENTE_REPONSES,
+  EXECUTION_EN_COURS,
+  EXECUTION_TERMINEE,
+} from "./types";
+
 /**
  * Les montants se lisent à **deux décimales** (#247) : c'est la précision d'un
  * relevé de dépense. Quatre décimales rendaient « 1,2345 $US » partout — tuile
@@ -147,4 +156,26 @@ const LIBELLES_STATUT: Record<string, string> = {
 /** Le libellé d'un statut, ou le statut brut si le flux s'est enrichi. */
 export function libelleStatut(statut: string): string {
   return LIBELLES_STATUT[statut] ?? statut;
+}
+
+/**
+ * Libellés français des statuts d'**exécution** (`EXECUTION_*`, #185/#320/#321).
+ *
+ * Distincts de ceux des tâches ci-dessus, et pas seulement par prudence : les deux
+ * machines à états partagent le mot `en_cours` sans partager sa portée — une tâche
+ * en cours est portée par un agent, un run en cours peut n'attendre qu'un humain.
+ * Une seule table les confondrait au premier statut ajouté d'un côté.
+ */
+const LIBELLES_STATUT_EXECUTION: Record<string, string> = {
+  [EXECUTION_EN_COURS]: "En cours",
+  [EXECUTION_TERMINEE]: "Terminée",
+  [EXECUTION_ANNULEE]: "Annulée",
+  [EXECUTION_ECHEC]: "Échec",
+  [EXECUTION_EN_ATTENTE_BRIEF]: "Brief à valider",
+  [EXECUTION_EN_ATTENTE_REPONSES]: "Questions en attente",
+};
+
+/** Le libellé d'un statut de run, ou le statut brut si le flux s'est enrichi. */
+export function libelleStatutExecution(statut: string): string {
+  return LIBELLES_STATUT_EXECUTION[statut] ?? statut;
 }

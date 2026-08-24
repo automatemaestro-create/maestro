@@ -62,6 +62,18 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   événements reçus depuis l'ouverture de la page, remis à zéro au rechargement —
   et l'écran le dit : le journal persisté et requêtable (`GET /api/journal`)
   existe côté contrat (#183) mais n'est pas encore servi par le backend ;
+- **Runs** (#474, lot 2 de #472, docs/05 §2.4.1) : la liste des runs du projet
+  actif, du plus récent au plus ancien — état, objectif, progression et coût. Un run
+  n'était l'objet d'aucun écran : on y entrait par « Composer un objectif » et on
+  n'y revenait jamais. L'écran sépare **quatre régimes** (`lib/execution.ts`) là où
+  l'API n'a qu'un statut : *travaille* (badge bleu à pastille battante), *suspendu*
+  (fond ambré, l'attente nommée et son ancienneté), *interrompu* (orphelin #348) et
+  *soldé*. La distinction n'est pas cosmétique — une attente de décision humaine est
+  restée 53 minutes indiscernable d'un run qui travaillait (#355), et la troisième
+  attente, la **validation d'une tâche**, ne se lit même pas sur le run : elle
+  s'apparie par les tâches. L'ordre et la progression viennent du backend (#473) :
+  ni tri ni recomptage ici. Vide, l'écran **nomme le projet** et propose le geste
+  qui le remplit ; API injoignable, il ne laisse que la bannière ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **Kanban** des tâches par statut (machine à états docs/03 §3), qui **prend la

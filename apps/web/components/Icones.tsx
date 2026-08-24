@@ -88,6 +88,24 @@ export function IconeBrief(props: Props) {
   );
 }
 
+/**
+ * Les runs (#474) : le triangle de lecture dans son cercle — ce qui **s'exécute**.
+ *
+ * Il côtoie `IconeObjectif` au menu, juste sous « Valider le brief », et s'en
+ * distingue par son asymétrie : la cible est parfaitement radiale (trois cercles
+ * concentriques), celle-ci porte un triangle décentré, reconnaissable à 20 px dans
+ * une sidebar repliée. Le rapport entre les deux est le bon : on vise un objectif,
+ * puis on regarde le run qui l'exécute.
+ */
+export function IconeRuns(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M10 8.25 16 12l-6 3.75Z" />
+    </Trait>
+  );
+}
+
 export function IconeProjets(props: Props) {
   return (
     <Trait {...props}>
