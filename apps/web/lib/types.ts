@@ -826,6 +826,32 @@ export type Brief = {
 };
 
 /**
+ * Où en est un run : ses tâches réparties par statut (#473), **comptées par le
+ * backend** sur la machine à états du moteur (docs/03 §3) et jamais recomptées
+ * ici — le front ne voit que les tâches qu'il a chargées, ce qui ferait d'une
+ * barre de progression une mesure de sa propre pagination.
+ *
+ * Les cinq compartiments sont ceux du Kanban, plus `autres`, qui ramasse un
+ * statut que la table du backend ne connaît pas (`maestro/controltower/
+ * progression.py`) : sans lui, `total` cesserait d'égaler `nb_taches` sans que
+ * rien ne le montre.
+ *
+ * `total` vaut le `nb_taches` du run et `soldees` compte ce qui ne bougera plus
+ * (terminées + échecs + bloquées) : une barre se dessine par `soldees / total`,
+ * sans avoir à savoir lesquels des compartiments sont terminaux.
+ */
+export type Progression = {
+  a_faire: number;
+  en_cours: number;
+  bloquees: number;
+  terminees: number;
+  echecs: number;
+  autres: number;
+  soldees: number;
+  total: number;
+};
+
+/**
  * Le résumé d'une exécution (`GET /api/executions`, `POST /api/executions` et
  * `.../annuler`, #185) : identité, `statut` (`EXECUTION_*`), nombre de tâches et
  * coût cumulé (`null` : aucun coût rapporté, inconnu ≠ nul). `debut` est posé au
@@ -837,6 +863,12 @@ export type ResumeExecution = {
   objectif: string;
   statut: string;
   nb_taches: number;
+  /**
+   * La progression du run par statut de tâche (#473) — de quoi dresser une liste
+   * de runs utile sans un appel par ligne. Les tâches qu'elle compte sont
+   * exactement celles que rend `GET /api/taches?projet=…&run=<run_id>`.
+   */
+  progression?: Progression;
   cout_usd: number | null;
   ticket: ReferenceTicket | null;
   /** Le projet dans lequel le run travaille (#222), `null` hors de tout projet. */
