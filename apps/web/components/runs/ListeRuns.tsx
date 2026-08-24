@@ -33,31 +33,20 @@
  * Kanban et sa progression. Ce qui reste inchangé est l'autre renvoi — une attente
  * mène toujours à l'écran qui porte **le geste** qui la lève, pas à la vue du run,
  * qui montre sans débloquer (`components/runs/EtatRun`).
+ *
+ * La **carte** elle-même a rejoint ce même fichier partagé avec #476, où le tableau
+ * de bord est devenu le troisième écran à rendre une ligne de run : cet écran-ci les
+ * empile toutes, celui-là ne montre que ce qui tourne, mais une ligne s'y lit à
+ * l'identique.
  */
-
-import Link from "next/link";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconeRuns } from "@/components/Icones";
-import {
-  Avancement,
-  BadgeRun,
-  fondDe,
-  LigneAttente,
-  LigneInterruption,
-} from "@/components/runs/EtatRun";
-import { BadgeEtat, Carte, EnTeteSection, EtatVide } from "@/components/Primitives";
+import { CarteRun } from "@/components/runs/EtatRun";
+import { BadgeEtat, EnTeteSection, EtatVide } from "@/components/Primitives";
 import { useEtatGlobal } from "@/lib/etatGlobal";
-import {
-  causeDAttente,
-  regimeDuRun,
-  runsEnAttenteDeValidation,
-  REGIME_SUSPENDU,
-} from "@/lib/execution";
-import { formatCout, formatHeureRelative } from "@/lib/format";
-import { useHorloge } from "@/lib/horloge";
-import { entreeParLibelle, hrefRun } from "@/lib/navigation";
-import type { ResumeExecution } from "@/lib/types";
+import { runsEnAttenteDeValidation } from "@/lib/execution";
+import { entreeParLibelle } from "@/lib/navigation";
 
 export function ListeRuns() {
   const { projet, executions, validations, taches, chargement, erreur } =
@@ -118,60 +107,5 @@ export function ListeRuns() {
         />
       )}
     </>
-  );
-}
-
-/**
- * Une ligne de la liste : l'objectif, l'état, la progression, le coût — et, quand
- * le run attend quelqu'un, **quoi** et **depuis quand**.
- *
- * Le titre est un **lien vers la vue du run** (#475) : c'est la carte entière qui
- * mène quelque part, mais seul le titre porte le geste, pour que le clavier et les
- * lecteurs d'écran aient une cible nommée plutôt qu'un bloc cliquable — même parti
- * pris que la carte du Kanban (#251).
- */
-function CarteRun({
-  run,
-  attendUneValidation,
-}: {
-  run: ResumeExecution;
-  attendUneValidation: boolean;
-}) {
-  const maintenant = useHorloge();
-  const regime = regimeDuRun(run, attendUneValidation);
-  const attente =
-    regime === REGIME_SUSPENDU ? causeDAttente(run, attendUneValidation) : null;
-  const nom = run.objectif || run.run_id;
-  const vue = hrefRun(run.run_id);
-
-  return (
-    <Carte balise="li" ton={fondDe(regime)}>
-      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-        <h3 className="min-w-0 flex-1 truncate text-corps font-medium" title={nom}>
-          {vue ? (
-            <Link
-              href={vue}
-              className="rounded hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-400"
-            >
-              {nom}
-            </Link>
-          ) : (
-            nom
-          )}
-        </h3>
-        <BadgeRun run={run} regime={regime} attente={attente} />
-      </div>
-
-      <p className="chiffre mt-0.5 truncate text-annexe text-neutral-500 dark:text-neutral-400">
-        {run.run_id}
-        {run.debut ? ` · ${formatHeureRelative(run.debut, maintenant)}` : ""}
-        {` · ${formatCout(run.cout_usd)}`}
-      </p>
-
-      <Avancement run={run} />
-
-      <LigneAttente run={run} attente={attente} className="mt-2" />
-      <LigneInterruption run={run} regime={regime} className="mt-2" />
-    </Carte>
   );
 }

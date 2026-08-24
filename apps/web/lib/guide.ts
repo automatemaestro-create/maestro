@@ -59,10 +59,14 @@ export const ETAPES_GUIDE: EtapeGuide[] = [
     chemin: "/",
     titre: "Le tableau de bord",
     texte:
-      "L'essentiel en un écran : ce qui attend votre arbitrage, quelques indicateurs de tête — run en cours, tâches par statut, agents occupés et libres, dépense —, les tâches réparties par colonnes et un aperçu de l'activité. Le détail vit dans les pages dédiées, vers lesquelles chaque tuile renvoie. Tout se met à jour par WebSocket, sans recharger la page.",
+      "L'essentiel en un écran : ce qui attend votre arbitrage, quelques indicateurs de tête — run en cours, tâches par statut, agents occupés et libres, dépense —, l'état de vos runs et un aperçu de l'activité. Le détail vit dans les pages dédiées, vers lesquelles chaque tuile renvoie : ouvrir un run donne ses tâches en colonnes. Tout se met à jour par WebSocket, sans recharger la page.",
+    // `etat-runs` et non `kanban` depuis #476 : le Kanban a quitté cet écran pour
+    // la vue d'un run (docs/05 §2.1/§2.2). L'ancre l'aurait suivi en silence — le
+    // test qui garde ce contrat vérifie qu'une ancre est posée *quelque part*, et
+    // `Kanban.tsx` la pose toujours, sur une page où cette étape ne passe pas.
     ancres: [
       '[data-guide="indicateurs"]',
-      '[data-guide="kanban"]',
+      '[data-guide="etat-runs"]',
       '[data-guide="contenu"]',
     ],
   },

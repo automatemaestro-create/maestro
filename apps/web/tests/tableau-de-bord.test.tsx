@@ -286,16 +286,30 @@ describe("le tableau de bord épuré (app/page)", () => {
       ...partiel,
     });
 
-  it("garde l'arbitrage, les indicateurs, le Kanban et l'aperçu", () => {
+  it("garde l'arbitrage, les indicateurs, l'état des runs et l'aperçu", () => {
     monter({ validations: [validationFactice()] });
     for (const zone of [
       "Validations en attente",
       "Indicateurs de tête",
-      "Tâches (Kanban)",
+      "État des runs",
       "Activité en direct",
     ]) {
       expect(screen.getByRole("region", { name: zone })).toBeInTheDocument();
     }
+  });
+
+  it("a rendu le Kanban à la vue d'un run (#476, renverse #248)", () => {
+    // Le Kanban *était* cet écran et en prenait toute la hauteur. Il n'est pas
+    // supprimé, il a changé de portée : les tâches d'un **run** (§2.4.2) au lieu
+    // de celles du projet entier. C'est la même promesse que #191 tenait déjà —
+    // rien n'est retiré du produit, tout est rangé —, et le renvoi qui la tient
+    // est ici l'en-tête de l'état des runs. Le regroupement lui-même (en cours,
+    // suspendus, interrompus, soldés du jour) est couvert par le lot 8.
+    monter();
+    expect(screen.queryByRole("region", { name: "Tâches (Kanban)" })).toBeNull();
+    expect(
+      screen.getByRole("link", { name: /Tous les runs/ }),
+    ).toHaveAttribute("href", entreeParLibelle("Runs")?.href ?? "");
   });
 
   it("a rangé le grand livre par exécution sur la page Coûts", () => {
@@ -347,7 +361,7 @@ describe("le tableau de bord épuré (app/page)", () => {
   it("ne montre rien d'autre que le chargement pendant le premier appel", () => {
     monter({ chargement: true });
     expect(screen.getByText(/Chargement de l'état/)).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Tâches (Kanban)" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "État des runs" })).toBeNull();
   });
 });
 

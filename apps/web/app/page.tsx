@@ -5,8 +5,8 @@
  *
  * Il répond à « où en est-on, et qu'est-ce qui m'attend ? » en un écran, dans
  * cet ordre : **ce qui attend un arbitrage humain** (#48), les **indicateurs de
- * tête** (run en cours, tâches par statut, agents, dépense), le **Kanban** des
- * tâches (#47) et un **aperçu** de l'activité en direct.
+ * tête** (run en cours, tâches par statut, agents, dépense), **l'état des runs**
+ * (#476) et un **aperçu** de l'activité en direct.
  *
  * Ce qui en est parti n'a pas disparu, il est rangé — et chaque tuile renvoie
  * vers sa page : les fiches d'agent (statut, capacité, coût par agent) vers
@@ -15,14 +15,21 @@
  * depuis #249 : il tient en plein format au Journal, ne reste ici qu'en aperçu,
  * et son lien s'est allumé de lui-même le jour où la page est entrée au menu.
  *
- * **La hauteur va aux tâches** (#248). Le `<main>` du shell est une colonne flex
- * qui occupe au moins la fenêtre (#117) et ces sections en sont les enfants
- * directs — le fragment ci-dessous ne crée aucun nœud. Trois d'entre elles
- * prennent la hauteur de leur contenu ; le Kanban, lui, prend tout le reste et
- * fait défiler chaque colonne chez elle. C'est là toute la mise en page : rien
- * à répartir ici, le seul contrat est que ce composant reste **le seul** à
- * s'étirer — deux enfants extensibles se partageraient la place et aucun des
- * deux n'aurait la sienne.
+ * **Le Kanban en est parti à son tour** (#476, renverse #248 — revue #470,
+ * docs/29 §3). Il *était* l'objet de cet écran et en prenait toute la hauteur ; ce
+ * qu'on lui reproche n'est pas sa place mais sa **portée** — il rend les tâches du
+ * projet (#277/#281), donc ce qui court mêlé à ce qui est fini depuis trois jours,
+ * là où « où en est-on ? » porte sur ce qui tourne, c'est-à-dire un **run**. Il
+ * reparaît entier dans la vue d'un run (#475), et `EtatDesRuns` prend sa place ici.
+ *
+ * **Plus rien ne s'étire donc sur cette page**, et c'est le seul effet de mise en
+ * page du lot : le `<main>` du shell est une colonne flex qui occupe au moins la
+ * fenêtre (#117) et ces sections en sont les enfants directs — le fragment ci-dessous
+ * ne crée aucun nœud. Toutes prennent maintenant la hauteur de leur contenu, la
+ * chaîne `min-h-0 flex-1` de #248 partant avec le Kanban qui la portait, ainsi que
+ * la borne `max-h-96` que #191 lui avait posée. Il n'y a rien à répartir en
+ * remplacement : l'état des runs est une liste, une liste se lit du haut, et lui
+ * donner tout l'écran ne ferait qu'étirer du vide les jours calmes.
  *
  * L'état vient du contexte partagé du shell (#117) : ce lot réorganise
  * l'affichage, la mécanique temps réel (WebSocket, rechargements coalescés) est
@@ -39,11 +46,11 @@
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
 import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord";
-import { Kanban } from "@/components/Kanban";
 import { PanneauBriefs } from "@/components/PanneauBriefs";
 import { PanneauRunsPerdus } from "@/components/PanneauRunsPerdus";
 import { PanneauValidations } from "@/components/PanneauValidations";
 import { PosteVide } from "@/components/PosteVide";
+import { EtatDesRuns } from "@/components/runs/EtatDesRuns";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle } from "@/lib/navigation";
 
@@ -66,7 +73,6 @@ export default function TableauDeBord() {
     connecte,
     chargement,
     erreur,
-    reassigner,
     decider,
     relancerRun,
   } = useEtatGlobal();
@@ -117,10 +123,14 @@ export default function TableauDeBord() {
             agents={agents}
             couts={couts}
           />
-          <Kanban
+          {/* Là où le Kanban prenait toute la hauteur (#248) : l'état des runs
+              (#476). Il ne décide de rien — les trois panneaux au-dessus portent
+              les gestes, celui-ci porte l'état, et un run qui attend paraît donc
+              aux deux endroits. */}
+          <EtatDesRuns
+            executions={executions}
+            validations={validations}
             taches={taches}
-            agents={agents}
-            reassigner={reassigner}
             projet={projet}
           />
           <FilActivite
