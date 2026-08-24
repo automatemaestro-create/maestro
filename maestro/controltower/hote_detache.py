@@ -68,18 +68,48 @@ Trois conséquences qu'il vaut mieux lire ici que découvrir :
   le lanceur attend l'extinction, puis éteint le groupe de process. Un ordre
   manqué coûte donc une mort brutale, jamais un run qui continue.
 
-**Deux propriétés sont explicitement hors de ce lot**, et il vaut mieux les lire
-ici que les découvrir :
+**Les trois attentes humaines traversent la même frontière, par le même bus**
+(#445) : la décision sur le brief (#320), les réponses de clarification (#321) et
+la validation d'une action sensible (#9/#48). C'est le lot le moins cher du
+chantier, et c'est une des raisons qui ont fait retenir l'hôte détaché plutôt
+qu'un workflow durable (docs/28 §4.3) : les trois arbitres attendaient **déjà**
+sur un abonnement au bus, et le bus avait **déjà** une implémentation
+inter-process. Il n'y avait donc rien à réinventer, seulement à brancher —
+`ArbitreBriefControlTower`, `ArbitreClarificationControlTower` et
+`ValidateurControlTower`, sur le bus de *ce* process, au geste près comme
+`ServiceExecutions._derouler` les branche sur celui de l'API.
 
-- l'hôte **ne publie pas son issue** en partant, comme `--publier` ne le fait pas
-  aujourd'hui : un run détaché terminé normalement finira donc `orphelin` — le
-  verdict porte sur son hôte (« plus personne ne veille »), jamais sur son travail
-  (`battement.py`, corollaire assumé). C'est le lot 5 (#446) ;
-- le **brief `humain`** n'a pas encore de canal ici (lot 4, #445), et un run qui
-  demanderait une approbation que personne ne peut donner resterait suspendu pour
-  toujours. Plutôt que de le laisser partir, `lancer` le **refuse** — le run est
-  soldé avec sa cause, ce qui est exactement ce que le troisième critère demande
-  de tout départ qui n'aura pas lieu.
+**Un seul bus les sert tous les quatre**, guet d'annulation compris, et ce n'est
+pas une économie de style : `RedisEventBus.subscribe` ouvre un `pubsub` par appel
+sur un client partagé, si bien que quatre bus coûteraient quatre connexions là où
+une suffit — dans un process qui vit des heures, c'est exactement la fuite que
+`_observer_annulation` refusait déjà pour son propre compte. C'est aussi la forme
+de l'API, qui n'a jamais eu qu'un `self._bus`. Les fabriques `arbitre_brief_redis`
+/ `validateur_redis` en ouvrent un chacune parce que leur appelant (`maestro-run`)
+n'en a aucun sous la main ; ce n'est pas notre cas.
+
+**Le fail-safe est la partie qui compte, et il n'est pas réécrit ici : il est
+hérité**, deux fois plutôt qu'une. Un bus refermé sans décision fait **lever**
+l'attente du brief et celle des clarifications (`brief.py`) — donc échouer le run,
+sans qu'aucune tâche ait été créée —, et fait **refuser** l'action sensible
+(`Guardrails.demande_validation`) — donc solder la tâche. Aucune des deux ne rend
+d'approbation par défaut, que le bus tombe, se referme ou n'ait jamais répondu.
+
+Ce que ce lot ajoute est **en amont de ces deux-là**, et c'est le seul cas neuf :
+un bus qu'on n'a pas pu **construire** ne câble rien du tout — pas d'arbitre, pas
+de validateur — et les deux mêmes fail-safes retombent alors d'eux-mêmes sur le
+bon comportement, le moteur refusant un mode « humain » sans arbitre *avant le
+premier appel modèle* (`loop.py`) et les garde-fous refusant sans validateur.
+Inventer ici un troisième refus n'aurait fait qu'ajouter un endroit de plus où la
+règle peut diverger de celle qu'elle recopie.
+
+**Une propriété reste explicitement hors de ce lot**, et il vaut mieux la lire ici
+que la découvrir : l'hôte **ne publie pas son issue** en partant, comme
+`--publier` ne le fait pas aujourd'hui — un run détaché terminé normalement finira
+donc `orphelin`, le verdict portant sur son hôte (« plus personne ne veille ») et
+jamais sur son travail (`battement.py`, corollaire assumé). C'est le lot 5 (#446),
+et le corollaire vaut aussi pour un run que le fail-safe fait échouer : le process
+sort en 1, sa cause est au journal de l'hôte, et personne ne la publie encore.
 
 Le mode reste **opt-in** (`MAESTRO_HOTE_RUN=detache`, résolu par
 `create_default_app`) : le défaut demeure la tâche de fond de l'API jusqu'au
@@ -108,7 +138,6 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.state import EXECUTION_ANNULEE
-from maestro.engine.brief import MODE_BRIEF_HUMAIN
 from maestro.references import ReferenceTicket
 
 if TYPE_CHECKING:
@@ -313,28 +342,25 @@ class HoteRunDetache(HoteRun):
     async def lancer(self, ordre: OrdreRun) -> None:
         """Ouvre le process du run et **attend son démarrage**, jamais son issue.
 
-        Trois temps. On **refuse** d'abord ce que cet hôte ne sait pas encore
-        porter — un brief `humain`, dont le canal est le lot 4 (#445) : le laisser
-        partir donnerait un run suspendu sur une question que personne ne recevrait,
-        c'est-à-dire le contraire du critère qui suit. On **écrit** ensuite l'ordre
-        dans l'atelier du run et on lance le process, détaché de la console et du
-        groupe de l'API. On **regarde** enfin s'il a tenu — témoin posé, ou process
-        déjà mort.
+        Deux temps. On **écrit** l'ordre dans l'atelier du run et on lance le
+        process, détaché de la console et du groupe de l'API. On **regarde** ensuite
+        s'il a tenu — témoin posé, ou process déjà mort.
 
-        Lève `DemarrageHoteRate` dans les trois cas de non-départ (refus,
-        `Popen` en échec, process mort aussitôt) ; l'appelant en fait un run soldé
-        avec sa cause. Un process **vivant mais lent** au-delà du plafond est tenu
-        pour parti : on ne tue pas ce qui n'a rien fait de mal, et l'orphelinat
-        (#348) reste le filet de ce qui mourra plus tard.
+        Il y en avait trois jusqu'à #445 : un **refus** du brief `humain` ouvrait la
+        méthode, parce que la décision n'avait alors aucun canal jusqu'ici et qu'un
+        run parti dans ces conditions serait resté suspendu pour toujours. Le canal
+        existe (cf. l'en-tête du module), donc le refus a disparu — et **aucun mode
+        de brief n'est plus refusé au lancement**. Ce qui manquerait pour trancher
+        se dit désormais là où on s'en aperçoit vraiment, c'est-à-dire dans le
+        process : sans arbitre, le moteur refuse le mode « humain » avant le premier
+        appel modèle.
+
+        Lève `DemarrageHoteRate` dans les deux cas de non-départ (`Popen` en échec,
+        process mort aussitôt) ; l'appelant en fait un run soldé avec sa cause. Un
+        process **vivant mais lent** au-delà du plafond est tenu pour parti : on ne
+        tue pas ce qui n'a rien fait de mal, et l'orphelinat (#348) reste le filet
+        de ce qui mourra plus tard.
         """
-        if ordre.mode_brief == MODE_BRIEF_HUMAIN:
-            raise DemarrageHoteRate(
-                f"l'hôte détaché ne sait pas encore porter un brief « {MODE_BRIEF_HUMAIN} » "
-                "(le canal de la décision est le lot 4 du chantier #441, ticket #445) : "
-                "le run resterait suspendu sur une question que personne ne recevrait. "
-                "Relancer en « auto » (le brief est rédigé et décomposé sans attendre) "
-                "ou « sans », ou lancer ce run dans l'hôte en process."
-            )
         atelier = self._ouvrir_atelier(ordre.run_id)
         journal = atelier / FICHIER_JOURNAL
         (atelier / FICHIER_ORDRE).write_text(
@@ -649,7 +675,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     télémétrie (#46) et rejoignent la Control Tower par le canal de toujours, celui
     qu'emprunte déjà `maestro-run --publier`.
 
-    L'ordre des cinq gestes d'armement est le sujet, et chacun a sa raison :
+    L'ordre des six gestes d'armement est le sujet, et chacun a sa raison :
 
     1. **relire l'ordre**, et l'effacer — il porte l'objectif, donc du texte libre
        où un secret est plausible, et il n'a plus d'usage une fois lu ;
@@ -657,17 +683,22 @@ def main(argv: Sequence[str] | None = None) -> int:
        premières étapes du run n'atteindraient personne ;
     3. **battre**, tout de suite et non au premier tour d'horloge : l'étape la plus
        lente d'un run est son cadrage, et c'est celle qui n'aurait aucun signal de
-       vie ;
-    4. **écouter l'annulation** (#444) : le lanceur rend la main sur le témoin, et
+       vie. Et le cœur bat depuis un **fil**, ce qui est ce qui rend une attente
+       humaine sûre au sens de #348 : suspendu sur son brief, ce process continue de
+       dire qu'il est là, donc « personne n'a encore répondu » reste distinguable de
+       « celui qui posait la question est mort » ;
+    4. **ouvrir le bus** (#445) — un seul pour les quatre abonnements qui suivent,
+       et une ouverture qui ne peut pas échouer bruyamment (`_bus_du_run`) ;
+    5. **écouter l'annulation** (#444) : le lanceur rend la main sur le témoin, et
        l'ordre peut suivre à la milliseconde — s'abonner après lui serait s'abonner
        trop tard. Même précaution qu'en #48 et #320 (« s'abonner avant de
        publier »), à une différence près qui compte : ici une course perdue ne coûte
        pas la décision, le repli franc du lanceur restant derrière ;
-    5. **poser le témoin** en dernier, parce qu'il ne dit pas « je suis né » mais
+    6. **poser le témoin** en dernier, parce qu'il ne dit pas « je suis né » mais
        « je suis armé » — c'est sur cette promesse-là que le lanceur rend la main,
-       et depuis ce lot « armé » veut aussi dire « à l'écoute ».
+       et depuis #444 « armé » veut aussi dire « à l'écoute ».
 
-    Les deux derniers vivent dans `_derouler`, et non ici, pour une raison
+    Les trois derniers vivent dans `_derouler`, et non ici, pour une raison
     mécanique : s'abonner est **asynchrone**, donc n'a de lieu qu'une fois la boucle
     ouverte. Ce qui reste dans cette fonction est ce qui ne l'est pas.
 
@@ -680,9 +711,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     Rend 0 si toutes les tâches réussissent, 1 sinon (ou sur une panne), 2 sur un
     appel mal formé, `CODE_ANNULE` sur une **annulation** — qui n'est ni l'un ni
     l'autre, exactement comme `_solder` solde en « annulee » et non en « echec ».
-    **Personne ne lit ce code** — le process n'a pas d'appelant — et c'est assumé :
-    ce qui compte est la trace laissée au journal, et le statut que l'hôte publiera
-    en partant au lot 5 (#446).
+    Un **brief refusé** (#445) rejoint ce troisième cas et non le deuxième, pour la
+    même raison et parce que l'hôte en process en fait déjà un run annulé : rien n'a
+    raté, quelqu'un a dit non. **Personne ne lit ce code** — le process n'a pas
+    d'appelant — et c'est assumé : ce qui compte est la trace laissée au journal, et
+    le statut que l'hôte publiera en partant au lot 5 (#446).
     """
     from maestro.config import ConfigError, load_settings
     from maestro.controltower.battement import CoeurRun, batteur_redis
@@ -726,8 +759,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Configuration : {exc}", file=sys.stderr)
         return 1
     except BriefRefuse as refus:
+        # **Annulé, pas échoué** — et ce chemin n'existait pas avant #445 : le brief
+        # « humain » était refusé au lancement, et les deux autres modes ne
+        # sollicitent personne, donc rien ne pouvait lever ici. Il devient
+        # atteignable avec le canal humain, et la question qu'il pose a déjà sa
+        # réponse dans le dépôt : `ServiceExecutions._derouler` solde un refus de
+        # brief en « annulée », parce que rien n'a raté — quelqu'un a dit non, avant
+        # qu'une seule tâche existe. Rendre 1 ferait chercher une panne là où le
+        # dispositif a fonctionné, et divergerait de l'hôte en process sur le seul
+        # point où les deux doivent dire la même chose : l'issue d'un run.
         print(f"Brief refusé : {refus}", file=sys.stderr)
-        return 1
+        return CODE_ANNULE
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
         return 1
@@ -770,18 +812,26 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
       l'on tient à ne pas confondre « je n'écoute plus » avec « on m'a dit stop » :
       la première lecture coûterait un run tué par une panne de Redis.
 
-    Le bus n'apparaît pas ici, et c'est voulu : c'est le guet qui l'ouvre et le
-    referme (`_observer_annulation`), ce qui met **toutes** les façons dont Redis
-    peut manquer — client impossible à construire, abonnement refusé, flux tari en
-    cours de route — derrière la même promesse de ne pas lever. Les partager entre
-    deux fonctions reviendrait à en laisser une hors de la promesse, et c'est
-    justement celle-là qui ferait échouer un run pour une panne de bus.
+    Le bus, lui, **apparaît ici depuis #445** — il n'est plus au seul usage du
+    guet : les trois attentes humaines s'y abonnent aussi, et un process qui vit
+    des heures n'a pas à ouvrir quatre connexions pour un canal. Il est ouvert par
+    `_bus_du_run`, qui **ne lève pas** : ce qui était garanti tant que le guet
+    l'ouvrait seul — aucune façon de manquer Redis ne peut emporter le run — reste
+    donc vrai, et un `None` traverse tranquillement jusqu'aux fail-safes d'en face,
+    qui savent quoi en faire. Il est refermé ici et pas ailleurs, en dernier : le
+    premier abonné n'est pas propriétaire d'un bus qu'il partage.
     """
+    from maestro.controltower.brief import (
+        ArbitreBriefControlTower,
+        ArbitreClarificationControlTower,
+    )
+    from maestro.controltower.validation import ValidateurControlTower
     from maestro.engine.guardrails import Guardrails
     from maestro.engine.loop import OrchestrationEngine
     from maestro.telemetry import RunJournal
 
-    guet = asyncio.create_task(_observer_annulation(ordre.run_id))
+    bus = _bus_du_run()
+    guet = asyncio.create_task(_observer_annulation(ordre.run_id, bus=bus))
     # Laisse l'abonnement partir avant de se déclarer armé — même précaution qu'en
     # #48 et #320. Elle ne suffit pas à garantir le SUBSCRIBE Redis, et c'est
     # assumé : ce qui rattrape la course ici, et qui manquait là-bas, est le repli
@@ -791,18 +841,33 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
     try:
         # Les garde-fous se recomposent ici pour la raison exacte qui vaut côté API
         # (`ServiceExecutions._derouler`) : les plafonds sont un réglage du
-        # **lancement**, donc ils voyagent dans l'ordre. Le **validateur** est un
-        # câblage de déploiement, donc il se branche là où le run se déroule — et il
-        # n'y en a pas encore ici (lot 4, #445), ce qui laisse le fail-safe de
-        # `Guardrails` opérer : sans validateur, toute action sensible est refusée,
-        # jamais approuvée.
+        # **lancement**, donc ils voyagent dans l'ordre ; le **validateur** est un
+        # câblage de déploiement, donc il se branche là où le run se déroule (#445).
+        # Idem pour les deux arbitres du brief : le **mode** voyage, l'**arbitre**
+        # se branche. Aucun des trois n'est conditionné au mode — le moteur ignore
+        # de lui-même un arbitre qu'il n'a pas à consulter (`loop.py`), et une
+        # seconde règle ici serait une règle de plus à tenir d'accord avec la
+        # sienne.
+        #
+        # Sans bus, les trois sont `None` : les fail-safes d'en face refusent alors
+        # ce qu'ils ne peuvent pas faire trancher, et c'est tout ce qu'on veut d'eux
+        # (cf. l'en-tête du module).
         garde_fous = Guardrails(
             plafond_cout_usd=ordre.plafond_cout_usd,
             plafond_tokens=ordre.plafond_tokens,
             timeout_s=ordre.timeout_tache_s,
+            validateur=None if bus is None else ValidateurControlTower(bus),
         )
         moteur = OrchestrationEngine.default(
-            guardrails=garde_fous, max_parallele=ordre.parallelisme
+            guardrails=garde_fous,
+            max_parallele=ordre.parallelisme,
+            arbitre_brief=None if bus is None else ArbitreBriefControlTower(bus),
+            # Le **plafond** de tours n'est pas passé, comme côté API : c'est un
+            # réglage du moteur, dont le défaut vaut pour tout run de la Control
+            # Tower — le poser ici en ferait un réglage de l'hôte.
+            arbitre_clarification=(
+                None if bus is None else ArbitreClarificationControlTower(bus)
+            ),
         )
         run = asyncio.create_task(
             moteur.run(
@@ -833,6 +898,13 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         guet.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await guet
+        # **Après** le guet, jamais avant : fermer le client sous un abonnement
+        # encore vivant ferait lever là où on a promis de ne pas lever. Le bus est
+        # celui de ce process (#445), donc c'est à lui de le refermer — les
+        # abonnements des arbitres, eux, sont déjà retombés avec le run.
+        if bus is not None:
+            with suppress(asyncio.CancelledError, Exception):
+                await bus.close()
 
 
 async def _observer_annulation(run_id: str, *, bus: EventBus | None = None) -> bool:
@@ -846,11 +918,14 @@ async def _observer_annulation(run_id: str, *, bus: EventBus | None = None) -> b
     Tout le reste du bus est ignoré, y compris les issues des **autres** runs : ce
     process n'en porte qu'un, et il est nommé.
 
-    Le bus est **ouvert ici** (celui de la config, comme le battement et la
-    publication) et refermé en partant : un abonnement Redis est une connexion, et
-    la laisser derrière soi dans un process qui vit des heures est le genre de fuite
-    qu'on ne remarque qu'au trentième run. Un bus **passé** par l'appelant lui
-    appartient et n'est pas refermé — c'est le point d'injection du lot 6 (#447).
+    Le bus est en principe **passé** par l'appelant depuis #445 (`_bus_du_run`, un
+    seul pour tout le process) ; il lui appartient alors, et n'est **pas** refermé
+    ici — seul le flux l'est. L'ouverture de secours reste, pour le cas où il n'y en
+    a pas : celui de la config, comme le battement et la publication, refermé en
+    partant, parce qu'un abonnement Redis est une connexion et que la laisser
+    derrière soi dans un process qui vit des heures est le genre de fuite qu'on ne
+    remarque qu'au trentième run. C'est aussi ce que passe un test qui veut un bus
+    en mémoire (#447).
 
     **Ne lève jamais**, et c'est le point délicat : client Redis impossible à
     construire, abonnement refusé, flux tari, événement illisible — tout rend
@@ -894,6 +969,42 @@ async def _observer_annulation(run_id: str, *, bus: EventBus | None = None) -> b
         if propre is not None:
             with suppress(asyncio.CancelledError, Exception):
                 await propre.close()
+
+
+def _bus_du_run() -> RedisEventBus | None:
+    """Le bus de ce process — **un seul**, pour le guet et les trois attentes (#445).
+
+    Celui de la config, comme le battement et la publication : même Redis, même
+    canal `maestro.evenements`, donc les mêmes demandes et les mêmes décisions que
+    pour un run porté par l'API. Un seul objet parce qu'un seul suffit —
+    `RedisEventBus.subscribe` ouvre un `pubsub` par appel sur un client partagé, si
+    bien que quatre abonnements concurrents tiennent sur une connexion.
+
+    **Ne lève jamais**, et c'est le point. Cette fonction reprend la charge que
+    `_observer_annulation` portait pour son propre compte : l'ouverture était
+    **dans** son `try` précisément pour qu'aucune façon de manquer Redis ne puisse
+    emporter le run, et sortir cette ligne de là sans rien mettre à la place aurait
+    rendu fatal ce qui ne l'était pas (`redis` absent, URL illisible, configuration
+    en défaut).
+
+    Un `None` n'est donc pas une panne à traiter ici : c'est un fait que l'appelant
+    fait descendre tel quel, et que les fail-safes d'en face muent en refus — le
+    moteur pour un brief que personne ne pourrait trancher, les garde-fous pour une
+    action sensible que personne ne pourrait approuver. La cause part au journal de
+    l'hôte, seule trace que ce process laisse derrière lui.
+    """
+    from maestro.config import load_settings
+
+    try:
+        return RedisEventBus(load_settings().redis_url)
+    except Exception as exc:  # noqa: BLE001 - un bus manquant se dit, il n'emporte rien
+        print(
+            f"Bus d'événements indisponible — {type(exc).__name__} : {exc} "
+            "(pas de décision humaine possible : un brief « humain » sera refusé "
+            "avant le premier appel modèle, et toute action sensible sera refusée)",
+            file=sys.stderr,
+        )
+        return None
 
 
 def _annulation_vue(guet: asyncio.Task[bool]) -> bool:
