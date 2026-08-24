@@ -17,6 +17,12 @@ dure), et **la revue avant merge disparaît de fait** (docs/10 §6). Ce qui disp
 d'un humain pour *vérifier*, pas la vérification : les quatre prérequis vivent dans `merge-mr`
 (#415), et **aucun merge non vérifié** n'a lieu (#417).
 
+⚠ **Et depuis #460, un refus pour une cause RÉPARABLE se répare au lieu de se signaler** : sur un
+pipeline rouge (`4`) ou un conflit avec `origin/main` (`5`), la commande enchaîne d'elle-même sur
+`/mr-fix`, **deux fois au plus** — exactement ce qu'un run autonome fait d'office depuis #420, où
+la même cause était traitée par le pilote pendant qu'ici on se contentait de la proposer à un
+humain. L'attente s'allonge d'autant, et se dit plutôt que de se masquer (étape 13.3).
+
 1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom
    de la branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si
    aucun IID ne peut être déterminé, demande-le à l'utilisateur.
@@ -234,8 +240,8 @@ d'un humain pour *vérifier*, pas la vérification : les quatre prérequis viven
      ```
    - Indique dans le résumé final la durée estimée et loggée (transparence a posteriori).
 
-13. **Attends le pipeline, puis merge** (#418, chantier #413) — c'est ici que la clôture se
-   termine vraiment. L'étape a été placée **après** l'état « En revue » et le log du temps, et pas
+13. **Attends le pipeline, merge — et débloque ce qui est réparable** (#418 puis #460, chantier
+   #413) — c'est ici que la clôture se termine vraiment. L'étape a été placée **après** l'état « En revue » et le log du temps, et pas
    avant : l'attente dure quelques minutes, et une session qui meurt pendant ce créneau doit
    laisser un ticket **lisible** (poussé, PR ouverte et prête, « En revue ») plutôt qu'un ticket
    resté « En cours » que plus personne ne réclame — c'est le mode de panne de #327.
@@ -279,21 +285,56 @@ d'un humain pour *vérifier*, pas la vérification : les quatre prérequis viven
         pas plus** — `pipeline-wait <branche>` puis `merge-mr <iid>` à nouveau. Toujours `3` :
         laisse la PR **ouverte**, le ticket **« En revue »**, et dis-le — quelqu'un repassera, ou
         le drain de fin de run (#419).
-      - `4` → **pipeline rouge** → PR ouverte, ticket « En revue », propose `/mr-fix <numéro>`.
-        Ne corrige rien ici : réparer un pipeline est un métier à part, et c'est le sien.
-      - `5` → **conflit avec `origin/main`** → idem ; `/mr-fix` le résout par un merge, jamais par
-        un rebase.
+      - `4` → **pipeline rouge** · `5` → **conflit avec `origin/main`** → **enchaîne sur `/mr-fix
+        <numéro>`, sans demander** (#460). Ne corrige rien toi-même : réparer un pipeline ou
+        résoudre un conflit est un métier à part, et c'est le sien — invoque la commande, elle est
+        autosuffisante. Ces deux causes sont les seules **réparables** des six, et un run autonome
+        les fait réparer d'office depuis #420 : laisser la clôture interactive *proposer* ce que le
+        pilote *fait* traitait la même cause de deux façons selon l'appelant. Le détail est à
+        l'étape 13.3.
       - `6` → **anomalie** : PR absente, fermée, encore brouillon, sans `Closes`, ou commits non
         poussés. **Nomme-la telle que le helper l'a rendue**, et ne la contourne pas — ni un
         `gh pr ready` « au cas où », ni un push de rattrapage, ni un merge par un autre chemin. Un
         `6` dit qu'une hypothèse de la clôture est fausse : le remède est de la regarder.
       - `1`/`2` → prérequis outil manquant / usage : signale-le, ne merge pas.
-   3. **Ce qui ne bouge dans aucun de ces cas** : tu ne force-pushes pas, tu ne fermes pas la PR,
-      tu ne repasses pas le cycle de vie et tu ne relances pas la commande en boucle. Un refus de
-      merge n'est **pas** un échec du ticket — le travail est poussé, la PR est ouverte et prête,
-      le ticket est « En revue ». C'est un état normal, et il a un nom.
+   3. **Le déblocage — sur `4` et `5` seulement** (#460). `/mr-fix` traite les deux blocages dans
+      l'ordre qui est le sien (conflit d'abord, pipeline ensuite) et, depuis #418, **merge ce qu'il
+      vient de débloquer**. Quatre choses à tenir :
+      - **Annonce l'attente avant de lancer.** `/mr-fix` attend un pipeline à son tour, qui
+        s'ajoute aux 15 min de 13.1 : dis-le — « pipeline rouge, je lance `/mr-fix` : nouvelle
+        attente de pipeline ». #418 a choisi d'annoncer cette attente plutôt que de la masquer ;
+        elle s'allonge ici, la règle ne change pas.
+      - **Ne repasse pas `merge-mr` derrière lui.** Son étape 12 *est* l'appel à `merge-mr`, donc
+        son verdict de merge est le tien — le relire n'ajouterait aucune vérification et en
+        inventerait une fausse : sur une PR qu'il vient de merger, `merge-mr` rend `6` (PR fermée),
+        soit une « anomalie » fabriquée par la relecture elle-même.
+      - **Deux tentatives au plus**, et la seconde n'est due que si la première a **fait bouger la
+        PR** — correctif poussé, conflit résolu, run relancé. Rejouer la commande sur un état
+        inchangé ne peut rendre que le même verdict : c'est un abandon, pas une seconde tentative,
+        et le résumé le dit ainsi. Ce plafond est **le tien**, écrit ici : la variable
+        `MAESTRO_ORCHESTRATE_MRFIX_MAX` borne les sessions qu'un **run** ouvre (#420) et ne se lit
+        pas depuis une clôture interactive — deux plafonds de même valeur, jamais le même réglage.
+      - **Au-delà — ou sur un arrêt de `/mr-fix` avant son merge** (résolution pas claire abandonnée
+        par `git merge --abort`, échec d'infrastructure, tentatives internes épuisées) : la PR reste
+        **ouverte**, le ticket **« En revue »**, et tu rends la cause. C'est un état normal, pas un
+        échec.
 
-14. Termine par un résumé : **le verdict du merge en tête** (table ci-dessous), le lien de la PR, le
+      ⚠ **En run autonome, n'enchaîne rien.** Une session de run n'atteint jamais ce verdict : dès
+      13.1, `guard.sh` refuse `pipeline-wait` (et `merge-mr`), et ce refus **est** la fin normale de
+      ta clôture — PR ouverte et prête, ticket « En revue », rien d'autre à faire. Le déblocage y
+      appartient au **pilote**, qui ouvre lui-même les sessions `/mr-fix` (#420) : en lancer une
+      d'ici ferait tourner deux remédiations sur la même PR, et attendrait un pipeline sur le quota
+      du run — les deux choses que ce garde-fou existe pour empêcher.
+
+   4. **Ce qui ne bouge dans aucun de ces cas** : tu ne force-pushes pas, tu ne fermes pas la PR,
+      tu ne repasses pas le cycle de vie et tu ne relances rien en boucle — le déblocage de 13.3
+      est **borné à deux tentatives**, et c'est la seule relance prévue. Un refus de merge n'est
+      **pas** un échec du ticket — le travail est poussé, la PR est ouverte et prête, le ticket est
+      « En revue ». C'est un état normal, et il a un nom.
+
+14. Termine par un résumé : **le verdict du merge en tête** (table ci-dessous), l'**issue du
+   déblocage** si l'étape 13.3 a joué — sur sa **propre ligne**, jamais fondue dans celle du
+   merge —, le lien de la PR, le
    **verdict du filet CI local** s'il n'était pas vert (étape 5 — quel job, et pourquoi tu as poussé
    quand même), le **retard éventuel sur `origin/main`** relevé à l'étape 6 (et le rebase proposé si
    un conflit est probable), les cases de la checklist cochées et celles restées vides (avec un mot
@@ -305,8 +346,16 @@ d'un humain pour *vérifier*, pas la vérification : les quatre prérequis viven
    qui sépare ce résumé du faux verdict que #303 a supprimé ailleurs.
    | Issue | À rapporter |
    |---|---|
-   | **Mergé** (`0`) | « PR #N mergée (squash) — #<iid> fermé, état « Terminé » posé par le workflow `issues: closed` » ; dis que la branche locale et le worktree sont **conservés** (la session est dedans, #438) et partiront au prochain `/ticket-start` ou avec `/branch-cleanup` |
-   | **Non mergé** (`3`/`4`/`5`/`6`) | la **cause telle que `merge-mr` l'a rendue** (jamais reformulée en « il faudra revoir ça »), l'**état laissé** — PR **ouverte** et prête, ticket **« En revue »** — et la **suite** : `/mr-fix <numéro>` sur `4`/`5`, repasser plus tard sur `3`, le geste humain nommé sur `6` |
+   | **Mergé** (`0`, du premier appel **ou** au terme du déblocage) | « PR #N mergée (squash) — #<iid> fermé, état « Terminé » posé par le workflow `issues: closed` » ; dis que la branche locale et le worktree sont **conservés** (la session est dedans, #438) et partiront au prochain `/ticket-start` ou avec `/branch-cleanup` |
+   | **Déblocage** (étape 13.3) | ⊘ **non tenté** — le verdict n'était pas réparable (`3`/`6`/`1`/`2`), ou un run autonome l'interdisait · ✅ **tenté et abouti** — ce que `/mr-fix` a réparé (conflit résolu, job remis au vert) et le nombre de tentatives · ❌ **tenté sans succès** — sur quel arrêt `/mr-fix` s'est arrêté, et combien de tentatives ont été consommées |
+   | **Non mergé** (`3`/`4`/`5`/`6`) | la **cause telle que `merge-mr` l'a rendue** (jamais reformulée en « il faudra revoir ça »), l'**état laissé** — PR **ouverte** et prête, ticket **« En revue »** — et la **suite** : repasser plus tard sur `3`, le geste humain nommé sur `6`, et sur `4`/`5` ce que le déblocage n'a pas su lever |
+
+   **« Non tenté » et « refusé » ne se disent pas du même mot** — c'est la distinction que #303 a
+   établie pour `/mr-fix`, et elle vaut ici mot pour mot : le premier est la conséquence de **ton**
+   abandon (ou d'un verdict qui n'appelait aucune réparation), le second est un verdict sur **la
+   PR**. Les confondre ferait chercher un problème de PR là où il y a une remédiation inachevée.
 
    Rappelle enfin qu'**aucun merge non vérifié** n'a lieu (#417) : ce qui a mergé — ou refusé de
    merger — est `bash scripts/gitlab/lib.sh merge-mr <iid>` et ses quatre prérequis, jamais toi.
+   Cela reste vrai **après un déblocage** : ce qui merge alors est le `merge-mr` de l'étape 12 de
+   `/mr-fix`, avec les mêmes quatre prérequis, jamais `/mr-fix` lui-même.
