@@ -5,6 +5,8 @@
 #   bash scripts/orchestrate/journal.sh gc --check   # ce qui serait retiré, sans rien écrire
 #   bash scripts/orchestrate/journal.sh refus        # ce qui a été refusé au dernier run
 #   bash scripts/orchestrate/journal.sh refus --tous # le même agrégat, sur tout le journal
+#   bash scripts/orchestrate/journal.sh audit        # où passe le temps du dernier run
+#   bash scripts/orchestrate/journal.sh audit --tous # le même relevé, sur tout le journal
 #
 # --- Pourquoi -----------------------------------------------------------------------------------------
 # `run.sh` crée un répertoire horodaté PAR LANCEMENT et n'en supprime aucun : ses deux `rm -rf` sont
@@ -108,6 +110,13 @@ GARDES="${MAESTRO_ORCHESTRATE_JOURNAL_RUNS:-10}"
 SEUIL_SILENCE="${MAESTRO_ORCHESTRATE_SILENCE:-900}"
 [ "$SEUIL_SILENCE" -ge 0 ] 2>/dev/null || SEUIL_SILENCE=900
 
+# Au-delà de ce délai HORS DE TOUT APPEL, `audit` nomme le trou au lieu de le fondre dans le total.
+# 120 s sépare ce qu'on peut lire (une réflexion longue, une attente de limite d'usage) de ce qu'on
+# ne peut pas (les centaines de pauses de quelques secondes entre deux appels, dont la liste ne
+# serait qu'un second flux brut).
+SEUIL_TROU_AUDIT="${MAESTRO_AUDIT_TROU:-120}"
+[ "$SEUIL_TROU_AUDIT" -ge 1 ] 2>/dev/null || SEUIL_TROU_AUDIT=120
+
 ok()     { printf '  ✓ %s\n' "$*"; }
 ignore() { printf '  ~ %s\n' "$*"; }
 
@@ -117,6 +126,7 @@ Le journal d'orchestration — .maestro/orchestrate/
 
   bash scripts/orchestrate/journal.sh gc [--check] [--auto] [--courant <run-id>]
   bash scripts/orchestrate/journal.sh refus [<run-id> | --tous]
+  bash scripts/orchestrate/journal.sh audit [<run-id> | --tous]
   bash scripts/orchestrate/journal.sh origine <iid>
 
 `gc` ne garde que les N runs les plus récents (MAESTRO_ORCHESTRATE_JOURNAL_RUNS, défaut 10),
@@ -134,6 +144,14 @@ MAESTRO_ORCHESTRATE_JOURNAL_GC=0 désactive le passage automatique.
 `.claude/`, refus voulu, forme immatchable — puis les agrège par outil et par commande, chaque
 maillon d'une chaîne comptant pour lui-même. Sans argument : le dernier run qui en porte.
 Lecture seule ; les instruire au cas par cas se fait en docs/10-workflow-git.md §11.7.
+
+`audit` dit OÙ PASSE LE TEMPS d'un run : part du mur passée sous outil (ticket par ticket, puis
+pour le run), détail par outil et par forme de commande Bash, palmarès des appels les plus longs,
+pré-vol de /ticket-start, temps mort et commandes rejouées à l'identique. Sans argument : le
+dernier run qui porte un flux — un run EN COURS se lit comme un autre. Hors ligne, lecture seule.
+Il MESURE, il ne corrige pas : chaque remède est son propre ticket (portée de #495).
+
+  MAESTRO_AUDIT_TROU   délai au-delà duquel un temps hors appel est nommé (défaut 120 s)
 
 Le journal lu est TOUJOURS celui du clone principal, y compris appelé depuis un worktree : c'est
 là que le pilote écrit, et y renvoyer par un chemin absolu ferait refuser la lecture (§11.7).
@@ -878,11 +896,573 @@ commande_origine() {
   return 1
 }
 
+# --- audit : où passe le temps d'un run (#497, parent #495) --------------------------------------------
+# `status.sh` dit OÙ EN EST un run, `refus` dit ce qui lui a été REFUSÉ. Personne ne disait OÙ PASSE
+# SON TEMPS — alors qu'un run coûte des heures de mur et un quota partagé par N sessions (#289), et
+# que depuis #418 il va jusqu'au merge sans reprendre son souffle.
+#
+# La matière est là depuis #176 : `<iid>.jsonl` est le flux `stream-json` intégral, un événement par
+# ligne, HORODATÉ À LA MILLISECONDE. Ce qui manquait est l'appariement — la durée d'un appel ne se
+# lit sur aucune ligne, elle est l'écart entre le `tool_use` et son `tool_result`, qui vivent sur
+# deux lignes différentes et se retrouvent par leur identifiant.
+#
+# Deux passes, comme `refus` et pour la même raison : l'extraction connaît la FORME du flux et rend
+# des faits en TSV, l'agrégation connaît la QUESTION et ne relit plus le JSON. Les huit sections du
+# rapport se servent toutes des mêmes faits, au lieu de parcourir le flux huit fois.
+#
+# Ce que l'audit MESURE, et qu'une lecture ticket par ticket rate :
+#   - la PART du mur passée sous outil — 38 % sur un ticket, 89 % sur un autre : un run lent n'a pas
+#     toujours la même maladie, et un rapport qui dirait seulement « Bash est lent » se tromperait
+#     de remède une fois sur deux ;
+#   - le poids d'une FORME de commande. Mesure du 2026-08-24 sur le run 20260823-182458 (6 tickets) :
+#     `lib.sh` pèse 22,9 min en 93 invocations de 14,8 s — premier poste du run, invisible appel par
+#     appel. Le filet CI, lui, coûte 16,5 min en 6 appels : c'est un coût ATTENDU, et les mettre sur
+#     la même ligne sans les distinguer ferait chercher l'économie du mauvais côté ;
+#   - le PRÉ-VOL, payé une fois PAR TICKET (~3 min : `worktree.sh ensure` 61 s, `lib.sh begin` 23 s,
+#     `start-brief` 19 s, `start-branch` 5 s) — donc N fois par run, ce qu'aucune vue ne totalisait ;
+#   - le TEMPS MORT, qui n'est pas du temps lent : ce qui est hors de tout appel.
+#
+# Ce qu'il NE FAIT PAS, et c'est la portée de #495 : corriger. Il mesure et classe ; chaque remède
+# est son propre ticket, priorisé sur ce que l'audit chiffre.
+#
+# Lecture seule, hors ligne, sans `jq` ni Python — le pilote est un script shell, il le reste (#180).
+# Un run EN COURS se lit comme un autre : c'est même la question qu'on pose le plus souvent.
+
+AWK_AUDIT_EXTRAIT=$(cat <<'AWK'
+# Extraction d'un flux `<iid>.jsonl` : une ligne TSV par FAIT mesuré, rien d'agrégé ici.
+#
+# La durée d'un appel d'outil ne se lit sur aucune ligne : elle s'obtient en APPARIANT le `tool_use`
+# (ligne `"type":"assistant"`) et son `tool_result` (ligne `"type":"user"`) PAR leur identifiant, sur
+# les horodatages de LIGNE. Les deux ne sont jamais sur la même ligne — d'où une table
+# `id -> (nom, cible, horodatage)` tenue au fil de la lecture, et des appels laissés OUVERTS quand
+# la session est morte avant leur retour.
+#
+# L'appariement ne s'ancre PAS sur `"type":"tool_use"` / `"type":"tool_result"`, et c'est le point
+# qui a demandé deux essais : l'ORDRE DES CLÉS D'UN BLOC N'EST PAS STABLE. Mesuré sur le flux de
+# #346, un bloc de résultat s'écrit tantôt `{"type":"tool_result","tool_use_id":…}`, tantôt
+# `{"tool_use_id":…,"type":"tool_result"}` — si bien qu'un découpage sur le marqueur de type range
+# l'identifiant tantôt dans le segment courant, tantôt dans le précédent, et n'apparie plus que les
+# appels dont l'ordre l'arrange (4 sur 98 au premier essai, tous les autres déclarés « morts sans
+# retour »). On s'ancre donc sur ce qui ne varie pas : le PRÉFIXE `toolu_` d'un identifiant, et la
+# CLÉ QUI LE PORTE — `"id":"` le déclare, `"tool_use_id":"` le référence. Le discriminant est exact
+# et ne suppose aucun ordre.
+
+# _epoch : « 2026-08-23T15:27:33.570Z » -> secondes. Écrit à la main plutôt que par `mktime`, qui
+# est une extension gawk : l'image du job pytest est une Debian, donc `mawk`, qui ne l'a pas. Tout
+# est en Z, donc aucun fuseau n'entre dans le calcul.
+function _epoch(s,   y,mo,d,h,mi,se,ms,era,yoe,doy,doe,a) {
+  if (length(s) < 19) return -1
+  y = substr(s,1,4)+0; mo = substr(s,6,2)+0; d = substr(s,9,2)+0
+  h = substr(s,12,2)+0; mi = substr(s,15,2)+0; se = substr(s,18,2)+0
+  ms = (substr(s,20,1) == ".") ? substr(s,21,3)+0 : 0
+  a = y; if (mo <= 2) a -= 1
+  era = int((a >= 0 ? a : a-399) / 400)
+  yoe = a - era*400
+  doy = int((153*(mo + (mo > 2 ? -3 : 9)) + 2)/5) + d-1
+  doe = yoe*365 + int(yoe/4) - int(yoe/100) + doy
+  return (era*146097 + doe - 719468)*86400 + h*3600 + mi*60 + se + ms/1000
+}
+
+# _jval : la valeur de chaîne JSON qui commence à `pos` (premier caractère APRÈS le guillemet
+# ouvrant), rendue DÉSESCAPÉE.
+#
+# C'est le point où l'on ne peut pas se contenter d'un `[^"]*` : la valeur est échappée, si bien
+# qu'un `{"command":"cd \"E:/…\" && git log"}` s'arrête au guillemet ÉCHAPPÉ et rend « cd \ ». C'est
+# le défaut que #496 corrige dans la vue, et l'audit ne peut pas se permettre de le refaire — il
+# rangerait tout le run sous une seule et même forme de commande.
+function _jval(s, pos,   out, c, n) {
+  out = ""; n = length(s)
+  while (pos <= n) {
+    c = substr(s, pos, 1)
+    if (c == "\\") {
+      c = substr(s, pos+1, 1)
+      if (c == "n" || c == "t" || c == "r") out = out " "
+      else if (c == "u") { out = out "?"; pos += 4 }
+      else out = out c
+      pos += 2
+    } else if (c == "\"") return out
+    else { out = out c; pos++ }
+  }
+  return out
+}
+
+# _pos : l'index où COMMENCE la valeur de `key` dans `s`, 0 si absente. Le motif `"key":"` occupe
+# `length(key) + 4` caractères (guillemet, clé, guillemet, deux-points, guillemet) : la valeur
+# commence donc juste après. Un caractère de moins et `_jval` démarre SUR le guillemet ouvrant, y
+# lit une fin de chaîne et rend le vide — panne muette, aucune ligne en sortie.
+function _pos(s, key,   p) {
+  p = index(s, "\"" key "\":\"")
+  return (p == 0) ? 0 : p + length(key) + 4
+}
+function _key(s, key,   p) {
+  p = _pos(s, key)
+  return (p == 0) ? "" : _jval(s, p)
+}
+
+# _cible : la première des clés d'entrée présentes, par POSITION et non par ordre de la liste — un
+# `description` placé avant `command` dans le JSON décrirait sinon l'appel à la place de sa commande.
+function _cible(seg,   i, n, p, best, bestp, cles) {
+  n = split("command,file_path,pattern,path,url,description", cles, ",")
+  bestp = 0; best = ""
+  for (i = 1; i <= n; i++) {
+    p = _pos(seg, cles[i])
+    if (p > 0 && (bestp == 0 || p < bestp)) { bestp = p; best = _jval(seg, p) }
+  }
+  return best
+}
+
+{
+  # `rate_limit_event` : télémétrie que le CLI place en tête de CHAQUE flux (#203). Elle ne dit rien
+  # de ce que la session fait — l'écarter ici évite qu'elle compte pour un événement de travail.
+  if (index($0, "\"type\":\"rate_limit_event\"") > 0) next
+
+  t = _epoch(_key($0, "timestamp"))
+  if (t >= 0) { if (premier == 0) premier = t; dernier = t; nb++ }
+  if (index($0, "toolu_") == 0) next
+
+  # Un `tool_use_id` ne suffit pas à faire un résultat : les lignes `"type":"system"` de suivi d'une
+  # tâche d'arrière-plan (`task_started`, `task_progress`, `task_notification`) en portent un aussi,
+  # SANS horodatage de ligne. Les prendre pour des retours refermait l'appel à l'instant -1 et rendait
+  # des durées négatives de dix-sept chiffres — l'`Agent` et les `Bash` longs, c'est-à-dire
+  # exactement les appels que l'audit cherche. On exige donc que la LIGNE porte le bloc, garde qui ne
+  # suppose toujours aucun ordre de clés puisqu'elle ne regarde pas où il est.
+  est_use = (index($0, "\"type\":\"tool_use\"") > 0)
+  est_res = (index($0, "\"type\":\"tool_result\"") > 0 && t >= 0)
+  if (!est_use && !est_res) next
+
+  # 1er passage : relever TOUS les identifiants de la ligne, avec leur rôle et leur position.
+  nocc = 0; pos = 1
+  while ((p = index(substr($0, pos), "toolu_")) > 0) {
+    abs = pos + p - 1
+    role = ""
+    if (substr($0, abs-6, 6) == "\"id\":\"") role = "use"
+    else if (substr($0, abs-15, 15) == "\"tool_use_id\":\"") role = "res"
+    if (role != "") {
+      nocc++
+      O_pos[nocc] = abs; O_role[nocc] = role; O_id[nocc] = _jval($0, abs)
+    }
+    pos = abs + 6
+  }
+
+  # 2e passage : un `use` prend son nom et sa cible dans la FENÊTRE qui va de son identifiant au
+  # suivant — la borne évite qu'un bloc emprunte le `name` de son voisin quand plusieurs appels
+  # partent dans le même message (appels parallèles).
+  for (k = 1; k <= nocc; k++) {
+    id = O_id[k]
+    if (O_role[k] == "res") {
+      if (est_res && id in U_t && !(id in vu)) {
+        printf "A\t%s\t%s\t%s\t%.3f\t%.3f\t%.3f\t%s\n", run, iid, U_nom[id], U_t[id], t, t - U_t[id], U_cible[id]
+        vu[id] = 1
+      }
+      continue
+    }
+    if (!est_use) continue
+    fin = (k < nocc) ? O_pos[k+1] : length($0) + 1
+    seg = substr($0, O_pos[k], fin - O_pos[k])
+    nom = _key(seg, "name")
+    if (nom == "") continue
+    U_nom[id] = nom; U_cible[id] = _cible(seg); U_t[id] = t
+    ordre[++rang] = id
+  }
+}
+
+END {
+  # Les appels restés OUVERTS : la session est morte avant leur retour (limite d'usage, `taskkill`,
+  # flux tronqué). Les taire ferait passer un run coupé en plein `local.sh` pour un run sans incident.
+  for (k = 1; k <= rang; k++) {
+    id = ordre[k]
+    if (!(id in vu)) printf "O\t%s\t%s\t%s\t%.3f\t%s\n", run, iid, U_nom[id], U_t[id], U_cible[id]
+  }
+  if (nb > 0) printf "W\t%s\t%s\t%.3f\t%.3f\t%d\n", run, iid, premier, dernier, nb
+}
+AWK
+)
+
+AWK_AUDIT_AGREGE=$(cat <<'AWK'
+# Agrégation des faits extraits par `AWK_AUDIT_EXTRAIT` — rend le rapport, ne lit aucun fichier.
+#
+# Deux temps plutôt qu'un, comme `refus` : l'extraction connaît la forme du flux, l'agrégation
+# connaît la question posée. Les mêmes faits servent les six sections sans être relus six fois.
+
+function _duree(s,   h, m) {
+  if (s < 0) return "?"
+  if (s < 90) return sprintf("%.1fs", s)
+  if (s < 5400) return sprintf("%.1f min", s/60)
+  h = int(s/3600); m = int((s - h*3600)/60)
+  return sprintf("%dh%02d", h, m)
+}
+
+# _sans_worktree : le chemin, privé de son préfixe `…/maestro-worktrees/<nom-du-worktree>/`. Il est
+# le MÊME sur toutes les lignes d'un ticket et fait à lui seul la moitié de la largeur — même raison
+# que le `cd` retiré par `_forme`, et que le `${cible#"$RACINE/"}` de la vue.
+#
+# Découpé à la main plutôt que par une expression régulière, et ce n'est pas un excès de prudence :
+# un `[\/\\]` dans un LITTÉRAL regex awk n'est pas portable — gawk consomme le `\\` à la lecture du
+# littéral, la classe devient `[\/\]`, le `\]` échappe le crochet et le motif ne se termine plus
+# (« unterminated regexp », mesuré). Dans une chaîne, `"\\"` vaut un antislash partout, sans
+# ambiguïté. La base est celle de `worktree.sh` par défaut : un `MAESTRO_WORKTREE_DIR` déplacé ne
+# fait que laisser la ligne plus longue, jamais fausse.
+function _sans_worktree(s,   p, q, c, base) {
+  base = "maestro-worktrees"
+  p = index(s, base)
+  if (p == 0) return s
+  q = p + length(base)
+  c = substr(s, q, 1)
+  if (c != "/" && c != "\\") return s
+  q++
+  while (q <= length(s)) {
+    c = substr(s, q, 1)
+    if (c == "/" || c == "\\") return substr(s, q+1)
+    q++
+  }
+  return s
+}
+
+# _court : la cible, ramenée à ce qui la distingue.
+function _court(s, n) {
+  gsub(/[ \t]+/, " ", s)
+  s = _sans_worktree(s)
+  return (length(s) > n) ? substr(s, 1, n-1) "…" : s
+}
+
+# _forme : la commande, réduite à ce qui la désigne — ses deux premiers mots utiles.
+#
+# Le `cd "<worktree>" &&` de préfixe est RETIRÉ d'abord : le prompt d'une session autonome lui fait
+# préfixer presque tous ses appels (règle #234 — la cible doit rester dans le worktree), si bien que
+# le garder rangerait tout le run sous une seule forme, « cd », et ne dirait plus rien de personne.
+# Même raison que le maillon d'une chaîne compté pour lui-même dans `refus`.
+function _forme(c,   p, n, w) {
+  sub(/^[ \t]+/, "", c)
+  if (substr(c, 1, 4) == "cd \"") { p = index(substr(c, 5), "\""); if (p > 0) c = substr(c, 5+p) }
+  else if (substr(c, 1, 3) == "cd ") { p = index(c, "&&"); if (p > 0) c = substr(c, p) }
+  sub(/^[ \t]*&&[ \t]*/, "", c)
+  sub(/^[ \t]+/, "", c)
+  n = split(c, w, /[ \t]+/)
+  if (n == 0) return "(sans commande)"
+  return (n >= 2) ? w[1] " " w[2] : w[1]
+}
+
+# _prevol : le geste de démarrage que cet appel exécute, vide s'il n'en est pas un. Les quatre
+# gestes de `/ticket-start` sont NOMMÉS — jamais devinés d'une position dans le flux, un run repris
+# ne commençant pas au même endroit. Rendre le geste et non un booléen permet de les détailler :
+# rangés par `_forme`, `start-brief` et `begin` se confondraient sous « bash scripts/gitlab/lib.sh »,
+# et le pré-vol ne dirait plus lequel de ses quatre temps coûte.
+function _est_prevol(c,   i, n, g, gestes) {
+  n = split("worktree.sh ensure,lib.sh start-brief,lib.sh start-branch,lib.sh begin", gestes, ",")
+  for (i = 1; i <= n; i++) if (index(c, gestes[i]) > 0) return gestes[i]
+  return ""
+}
+
+# _etiq : comment nommer un ticket dans le rapport. Les faits sont indexés par (run, iid) et non par
+# iid seul — un ticket REPRIS apparaît dans deux runs, et les fondre additionnerait deux temps de mur
+# qui ne se suivent pas, pour un total que rien ne vérifierait. Sur un seul run l'étiquette reste
+# « #<iid> » ; dès qu'il y en a plusieurs elle porte le run, sans quoi deux lignes identiques
+# désigneraient deux passages différents.
+function _etiq(cle) {
+  return (nb_runs > 1) ? K_run[cle] "/#" K_iid[cle] : "#" K_iid[cle]
+}
+# La colonne suit l'étiquette : la caler sur le pire cas laisserait treize blancs par ligne sur
+# l'usage courant, qui ne porte qu'un run.
+function _larg() { return (nb_runs > 1) ? 21 : 8 }
+
+BEGIN { FS = "\t"; SEUIL_TROU = (SEUIL_TROU == "") ? 120 : SEUIL_TROU }
+
+$1 == "A" {
+  iid = $2 SUBSEP $3; nom = $4; d = $5; f = $6; duree = $7; cible = $8
+  if (!(iid in vus)) { vus[iid] = 1; tickets[++nb_tickets] = iid; K_run[iid] = $2; K_iid[iid] = $3 }
+  if (!($2 in runs_vus)) { runs_vus[$2] = 1; nb_runs++ }
+  k = iid SUBSEP (++par_ticket[iid])
+  D[k] = d; F[k] = f
+  t_outil[nom] += duree; n_outil[nom]++
+  cumul_ticket[iid] += duree
+  if (nom == "Bash") {
+    fo = _forme(cible)
+    t_forme[fo] += duree; n_forme[fo]++
+  }
+  # Palmarès : on garde tout, le tri se fait à la fin sur au plus quelques centaines d'entrées.
+  n_long++; L_d[n_long] = duree; L_iid[n_long] = iid; L_nom[n_long] = nom; L_cible[n_long] = cible
+  # Commandes rejouées à l'identique — BASH SEULEMENT, et c'est le tri qui fait le sens : rouvrir
+  # deux fois le même fichier avec `Read` ou l'éditer dix fois avec `Edit` est du travail normal, et
+  # les compter noyait le signal sous la liste des fichiers du ticket. Une même COMMANDE relancée,
+  # elle, est soit une reprise après échec, soit du temps qui n'apprend rien.
+  if (nom == "Bash") { r = cible; n_repet[r]++; t_repet[r] += duree }
+  if (nom == "Bash") {
+    pv = _est_prevol(cible)
+    if (pv != "") {
+      prevol_t[iid] += duree; prevol_par[iid SUBSEP pv] += duree
+      if (!(iid SUBSEP pv in pv_vu)) {
+        pv_vu[iid SUBSEP pv] = 1
+        prevol_ordre[iid] = prevol_ordre[iid] (prevol_ordre[iid] == "" ? "" : "\n") pv
+      }
+    }
+  }
+}
+
+$1 == "O" { orphelins[++nb_orph] = $3 "\t" $4 "\t" $6 }
+
+$1 == "W" {
+  iid = $2 SUBSEP $3
+  if (!(iid in vus)) { vus[iid] = 1; tickets[++nb_tickets] = iid; K_run[iid] = $2; K_iid[iid] = $3 }
+  if (!($2 in runs_vus)) { runs_vus[$2] = 1; nb_runs++ }
+  W_debut[iid] = $4; W_fin[iid] = $5; W_nb[iid] = $6
+  mur[iid] = $5 - $4
+}
+
+END {
+  # Les formats sont CONSTRUITS et non écrits en dur, la colonne du ticket dépendant de la portée
+  # (« #473 » sur un run, « 20260824-192234/#473 » sur le journal entier). Une largeur variable
+  # s'écrirait `%-*s`, que POSIX prévoit mais que rien ne garantit dans le `mawk` de l'image Debian
+  # du job pytest — un format assemblé, lui, marche partout.
+  L = _larg()
+  F_ENTETE = "   %-" L "s %10s %10s %7s %8s\n"
+  F_LIGNE  = "   %-" L "s %10s %10s %6.0f%% %8d\n"
+  F_LONG   = "   %9s  %-" L "s %-6s %s\n"
+  F_PREVOL = "   %-" L "s %9s   %s\n"
+  F_TROU   = "   %9s  %-" L "s après %.0f s de session\n"
+
+  # --- occupation réelle : l'UNION des intervalles, jamais leur somme ---------------------------
+  # Des appels PARALLÈLES se recouvrent (plusieurs `tool_use` dans un même message) : leur somme
+  # dépasserait alors le temps de mur et rendrait une « part d'outils » de 110 %. On trie par début
+  # et on fusionne — c'est la seule mesure qui reste juste quand la session appelle de front.
+  for (ti = 1; ti <= nb_tickets; ti++) {
+    iid = tickets[ti]
+    n = par_ticket[iid]
+    for (i = 1; i <= n; i++) { ord[i] = i }
+    for (i = 2; i <= n; i++) {            # tri par insertion : n vaut quelques centaines au plus
+      v = ord[i]; j = i - 1
+      while (j >= 1 && D[iid SUBSEP ord[j]] > D[iid SUBSEP v]) { ord[j+1] = ord[j]; j-- }
+      ord[j+1] = v
+    }
+    occ = 0; cd = -1; cf = -1; ntrou = 0
+    for (i = 1; i <= n; i++) {
+      dd = D[iid SUBSEP ord[i]]; ff = F[iid SUBSEP ord[i]]
+      if (cd < 0) { cd = dd; cf = ff; continue }
+      if (dd <= cf) { if (ff > cf) cf = ff; continue }
+      occ += cf - cd
+      if (dd - cf >= SEUIL_TROU) { ntrou++; T_iid[++nb_trous] = iid; T_debut[nb_trous] = cf; T_duree[nb_trous] = dd - cf }
+      cd = dd; cf = ff
+    }
+    if (cd >= 0) occ += cf - cd
+    occup[iid] = occ
+    total_occ += occ; total_mur += mur[iid]; total_appels += n
+  }
+
+  printf "\n"
+  printf "  Audit — %s\n", portee
+  printf "\n"
+
+  # --- 1. vue d'ensemble ------------------------------------------------------------------------
+  printf "── Où passe le temps, ticket par ticket\n"
+  printf F_ENTETE, "ticket", "mur", "sous outil", "part", "appels"
+  for (ti = 1; ti <= nb_tickets; ti++) {
+    iid = tickets[ti]
+    printf F_LIGNE, _etiq(iid), _duree(mur[iid]), _duree(occup[iid]),
+           (mur[iid] > 0 ? 100*occup[iid]/mur[iid] : 0), par_ticket[iid]
+  }
+  if (nb_tickets > 1)
+    printf F_LIGNE, (nb_runs > 1 ? "TOTAL" : "run"), _duree(total_mur), _duree(total_occ),
+           (total_mur > 0 ? 100*total_occ/total_mur : 0), total_appels
+  printf "\n"
+  printf "   « sous outil » est l'UNION des appels, pas leur somme : des appels parallèles se\n"
+  printf "   recouvrent. Le reste du mur est de la réflexion ou de l'attente — voir « temps mort ».\n"
+  printf "\n"
+
+  # --- 2. par outil -----------------------------------------------------------------------------
+  printf "── Par outil\n"
+  _classe(t_outil, n_outil, 99)
+  printf "\n"
+
+  # --- 3. Bash par forme de commande ------------------------------------------------------------
+  if (length(t_forme) > 0) {
+    printf "── Bash, par forme de commande — le `cd \"<worktree>\" &&` de préfixe est écarté\n"
+    _classe(t_forme, n_forme, 12)
+    printf "\n"
+  }
+
+  # --- 4. les appels les plus longs -------------------------------------------------------------
+  printf "── Les appels les plus longs\n"
+  for (rangc = 1; rangc <= 10 && rangc <= n_long; rangc++) {
+    best = 0; bi = 0
+    for (i = 1; i <= n_long; i++) if (!pris[i] && L_d[i] > best) { best = L_d[i]; bi = i }
+    if (bi == 0) break
+    pris[bi] = 1
+    printf F_LONG, _duree(L_d[bi]), _etiq(L_iid[bi]), L_nom[bi], _court(L_cible[bi], 58)
+  }
+  printf "\n"
+
+  # --- 5. le pré-vol ----------------------------------------------------------------------------
+  if (length(prevol_t) > 0) {
+    printf "── Le pré-vol — les quatre gestes de /ticket-start, avant la première ligne de code\n"
+    for (ti = 1; ti <= nb_tickets; ti++) {
+      iid = tickets[ti]
+      if (!(iid in prevol_t)) continue
+      detail = ""
+      np = split(prevol_ordre[iid], pvs, "\n")
+      for (i = 1; i <= np; i++)
+        detail = detail (detail == "" ? "" : " · ") pvs[i] " " _duree(prevol_par[iid SUBSEP pvs[i]])
+      printf F_PREVOL, _etiq(iid), _duree(prevol_t[iid]), detail
+      total_pv += prevol_t[iid]
+    }
+    if (nb_tickets > 1) printf "   %-7s %9s   payé une fois par ticket\n", "total", _duree(total_pv)
+    printf "\n"
+  }
+
+  # --- 6. le temps mort -------------------------------------------------------------------------
+  # Le total D'ABORD, les gros trous ensuite : c'est le total qui répond à « où est passé le reste
+  # du mur ? », et il vaut souvent plusieurs minutes sans qu'aucun trou pris isolément ne dépasse le
+  # seuil. N'afficher que le palmarès rendait « aucun trou » sur un ticket qui passait la moitié de
+  # son temps hors appel — une réponse qui se lit comme « rien à signaler ».
+  printf "── Le temps mort — %s hors de tout appel, soit %.0f%% du mur\n",
+         _duree(total_mur - total_occ), (total_mur > 0 ? 100*(total_mur - total_occ)/total_mur : 0)
+  if (nb_trous == 0) printf "   réparti en attentes courtes : aucun trou n'atteint %d s.\n", SEUIL_TROU
+  else {
+    printf "   dont %d trou(s) d'au moins %d s :\n", nb_trous, SEUIL_TROU
+    for (rangt = 1; rangt <= 8 && rangt <= nb_trous; rangt++) {
+      best = 0; bi = 0
+      for (i = 1; i <= nb_trous; i++) if (!prist[i] && T_duree[i] > best) { best = T_duree[i]; bi = i }
+      if (bi == 0) break
+      prist[bi] = 1
+      total_trou_vu += T_duree[bi]
+      printf F_TROU, _duree(T_duree[bi]), _etiq(T_iid[bi]),
+             T_debut[bi] - W_debut[T_iid[bi]]
+    }
+    printf "\n   Un trou de plusieurs heures est une limite d'usage ; quelques minutes, de la\n"
+    printf "   réflexion — l'audit les mesure, il ne les départage pas.\n"
+  }
+  printf "\n"
+
+  # --- 7. ce qui a été refait à l'identique -----------------------------------------------------
+  nr = 0
+  for (r in n_repet) if (n_repet[r] > 1) { nr++; R_k[nr] = r; total_repet += t_repet[r] - t_repet[r]/n_repet[r] }
+  if (nr > 0) {
+    printf "── Commandes rejouées à l'identique — %s en tout au-delà du premier passage\n", _duree(total_repet)
+    for (rangr = 1; rangr <= 8 && rangr <= nr; rangr++) {
+      best = 0; bi = 0
+      for (i = 1; i <= nr; i++) if (!prisr[i] && t_repet[R_k[i]] > best) { best = t_repet[R_k[i]]; bi = i }
+      if (bi == 0) break
+      prisr[bi] = 1
+      printf "   %3dx %9s  %s\n", n_repet[R_k[bi]], _duree(t_repet[R_k[bi]]), _court(R_k[bi], 64)
+    }
+    printf "\n"
+  }
+
+  # --- 8. les appels sans retour ----------------------------------------------------------------
+  if (nb_orph > 0) {
+    printf "── Appels restés sans retour — la session s'est arrêtée pendant\n"
+    for (i = 1; i <= nb_orph && i <= 8; i++) {
+      split(orphelins[i], o, "\t")
+      printf "   #%-6s %-6s %s\n", o[1], o[2], _court(o[3], 62)
+    }
+    printf "\n"
+  }
+
+  printf "  Ce que ceci ne dit pas : ce qui a été REFUSÉ à une session — `journal.sh refus`.\n"
+  printf "\n"
+}
+
+# _classe : un tableau temps + un tableau comptes, du plus coûteux au moins coûteux.
+function _classe(t, n, max,   i, k, best, bk, pris2, r, cles, nb) {
+  nb = 0
+  for (k in t) { nb++; cles[nb] = k }
+  for (r = 1; r <= max && r <= nb; r++) {
+    best = -1; bk = ""
+    for (i = 1; i <= nb; i++) if (!(cles[i] in pris2) && t[cles[i]] > best) { best = t[cles[i]]; bk = cles[i] }
+    if (bk == "") break
+    pris2[bk] = 1
+    printf "   %10s %5dx  moy %7s   %s\n", _duree(t[bk]), n[bk], _duree(t[bk]/n[bk]), bk
+  }
+}
+AWK
+)
+
+commande_audit() {
+  local cible="" tous=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tous) tous=1 ;;
+      -h | --help) usage; return 0 ;;
+      -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
+      *) cible="$1" ;;
+    esac
+    shift
+  done
+
+  [ -d "$ORCH_DIR" ] || {
+    printf '\nAucun journal d'"'"'orchestration — aucun run n'"'"'a encore tourné ici.\n\n'
+    return 0
+  }
+
+  local dirs="" d portee f
+  if [ "$tous" = 1 ]; then
+    for d in "$ORCH_DIR"/*/; do
+      [ -d "$d" ] || continue
+      dirs="$dirs${d%/}"$'\n'
+    done
+    portee="tout le journal"
+  elif [ -n "$cible" ]; then
+    [ -d "$ORCH_DIR/$cible" ] || {
+      printf 'journal.sh audit : run inconnu — %s\n' "$cible" >&2
+      printf 'Les runs présents : %s\n' "$(ls -1 "$ORCH_DIR" 2>/dev/null | tr '\n' ' ')" >&2
+      return 2
+    }
+    dirs="$ORCH_DIR/$cible"$'\n'
+    portee="run $cible"
+  else
+    # Le dernier run qui porte un FLUX — et non, comme `refus`, un RÉSULTAT : un run en cours n'a
+    # pas encore rendu la main, mais son `.jsonl` est déjà écrit et parfaitement mesurable. Exiger
+    # un résultat renverrait sur le run précédent celui qu'on regarde tourner.
+    for d in "$ORCH_DIR"/*/; do
+      [ -d "$d" ] || continue
+      for f in "$d"[0-9]*.jsonl "$d"[0-9]*.jsonl.gz; do
+        [ -s "$f" ] || continue
+        dirs="${d%/}"$'\n'
+        break
+      done
+    done
+    [ -n "$dirs" ] || {
+      printf '\nAucun flux de session dans le journal — rien à mesurer.\n\n'
+      return 0
+    }
+    portee="run $(basename "${dirs%$'\n'}")"
+  fi
+
+  local brut="" id id_run vus=""
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    id_run="$(basename "$d")"
+    # `.jsonl` AVANT `.jsonl.gz` dans le glob, et un ticket déjà vu est sauté : `gc` retire le flux
+    # clair en le compactant, mais un run rejoué sous le même run-id peut laisser les deux — les
+    # compter tous les deux doublerait le ticket sans que rien ne le montre.
+    for f in "$d"/[0-9]*.jsonl "$d"/[0-9]*.jsonl.gz; do
+      [ -s "$f" ] || continue
+      id="$(basename "$f")"; id="${id%%.*}"
+      case " $vus " in *" $id_run/$id "*) continue ;; esac
+      vus="$vus $id_run/$id"
+      case "$f" in
+        *.gz) brut="$brut$(gzip -dc "$f" 2>/dev/null | awk -v run="$id_run" -v iid="$id" "$AWK_AUDIT_EXTRAIT")"$'\n' ;;
+        *)    brut="$brut$(awk -v run="$id_run" -v iid="$id" "$AWK_AUDIT_EXTRAIT" "$f")"$'\n' ;;
+      esac
+    done
+  done <<EOF
+$dirs
+EOF
+
+  case "$brut" in
+    *[!$' \t\n']*) ;;
+    *) printf '\nAudit — %s : aucun appel d'"'"'outil mesurable dans ce journal.\n\n' "$portee"; return 0 ;;
+  esac
+
+  # LC_ALL=C : les comptes et les tris se font sur des octets, comme partout ailleurs dans ce dépôt.
+  printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" -v SEUIL_TROU="$SEUIL_TROU_AUDIT" "$AWK_AUDIT_AGREGE"
+  return 0
+}
+
 cmd="${1:-}"
 [ "$#" -gt 0 ] && shift
 case "$cmd" in
   gc)           commande_gc "$@" ;;
   refus)        commande_refus "$@" ;;
+  audit)        commande_audit "$@" ;;
   origine)      commande_origine "$@" ;;
   -h | --help | '') usage ;;
   *) printf 'Sous-commande inconnue : %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
