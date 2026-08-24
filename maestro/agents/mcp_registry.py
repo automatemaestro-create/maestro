@@ -27,8 +27,12 @@ n'existe pour Maestro que si elle a été curée ici, en clair, revue et version
 Le format d'entrée réutilise la forme `server.json` du **registre MCP officiel**
 (`registry.modelcontextprotocol.io` : nom/description + transport + gabarit
 d'exécution) enrichie des métadonnées Maestro (mode d'auth, clés de secrets,
-procédure d'émission). Le seed initial (GitLab, Slack, Figma officiel) dérive
-des pilotes #106/#105/#128 déjà versionnés dans `core/mcp/`.
+procédure d'émission). Le seed dérive des pilotes déjà versionnés dans
+`core/mcp/` (#106/#105/#128), augmenté de la forge du projet (GitHub, #412).
+
+Le registre est une **bibliothèque**, pas la configuration d'un agent : il porte
+**GitHub et GitLab** côte à côte sans que ce soit une hésitation. Quelle forge ce
+projet-ci utilise se lit dans `core/mcp/qa.json` — jamais ici.
 
 Au POC le registre est un **seed en code** (`SEED`, versionné avec le dépôt) —
 c'est cohérent avec « template versionné » et avec le garde-fou : l'allowlist
@@ -186,7 +190,7 @@ class RegistreMcp:
 
     @classmethod
     def curee(cls) -> RegistreMcp:
-        """Le registre curé du POC : le seed en code (GitLab, Slack, Figma officiel)."""
+        """Le registre curé du POC : le seed en code (GitHub, GitLab, Slack, Figma officiel)."""
         return cls(SEED)
 
     def lister(self) -> tuple[EntreeRegistre, ...]:
@@ -246,11 +250,44 @@ def _secrets(*variables: tuple[str, str, bool]) -> tuple[VariableSecret, ...]:
 
 
 #: Le seed curé du POC — dérivé des pilotes déjà versionnés dans `core/mcp/`
-#: (GitLab #106 → `qa.json`, Slack #105 → `devops.json`, Figma officiel #128 →
+#: (forge #412 → `qa.json`, Slack #105 → `devops.json`, Figma officiel #128 →
 #: `designer.json`). Chaque entrée porte transport, gabarit `${VAR}`, mode
 #: d'auth (docs/21) et lien de procédure côté outil. **Cette liste EST
 #: l'allowlist** : y ajouter une intégration est un geste de revue de code.
+#:
+#: ⚠ **Deux forges y figurent, et ce n'est pas une hésitation** (#412). Le
+#: registre est une **bibliothèque** (#131), pas la configuration d'un agent :
+#: il répond à « quelles intégrations existe-t-il ? », jamais à « laquelle ce
+#: projet utilise-t-il ? ». Le **défaut du produit** est GitHub et se lit dans
+#: `core/mcp/qa.json` seul ; `gitlab` reste curé parce qu'un projet outillé par
+#: Maestro n'est pas forcément sur la forge du nôtre — et l'en retirer
+#: interdirait de le monter (l'allowlist *est* le registre).
 SEED: tuple[EntreeRegistre, ...] = (
+    EntreeRegistre(
+        id="github",
+        nom="GitHub",
+        description="Lecture/écriture des tickets et Pull Requests GitHub — la forge du projet.",
+        mode_auth="token_statique",
+        transport="http",
+        url="https://api.githubcopilot.com/mcp/",
+        headers={"Authorization": "Bearer ${GITHUB_TOKEN}"},
+        tags=("tickets", "issues", "pull-request", "devops", "scm", "forge"),
+        secrets=_secrets(
+            (
+                "GITHUB_TOKEN",
+                "PAT GitHub à portée restreinte (Issues + Pull requests du seul dépôt "
+                "du projet) — c'est le jeton, et non la config du serveur, qui borne "
+                "le périmètre",
+                True,
+            ),
+        ),
+        procedure_url="core/mcp/README.md#obtention-du-token-github",
+        # Aucun poste ne porte encore `GITHUB_TOKEN` (l'outillage s'authentifie
+        # par `gh`, pas par ce fichier) : non optionnel, la bascule ferait
+        # échouer toute exécution outillée du QA au premier run. Canal #125 —
+        # sans jeton, la voie est omise du montage, sans échec.
+        optionnel=True,
+    ),
     EntreeRegistre(
         id="gitlab",
         nom="GitLab",
@@ -264,7 +301,7 @@ SEED: tuple[EntreeRegistre, ...] = (
             "GITLAB_TOOLSETS": "issues",
             "GITLAB_PERMISSION_MODE": "modify",
         },
-        tags=("tickets", "issues", "merge-request", "devops", "scm"),
+        tags=("tickets", "issues", "merge-request", "devops", "scm", "forge"),
         secrets=_secrets(
             ("GITLAB_TOKEN", "PAT GitLab (glpat-…), scope api, créé dans l'UI GitLab", True),
         ),

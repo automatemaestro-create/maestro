@@ -42,6 +42,13 @@ critères d'acceptation du ticket #46 :
    déclaration invalide rendue avec sa cause (`mcp_erreur`) sans casser la
    fiche ni le listing. Le socle lui-même (dépôt, résolution, montage par le
    moteur, couture SDK) est couvert dans `tests/test_mcp.py` ;
+⑦ter la forge du produit (#412) — seuls tests de ce fichier à lire le
+   `core/mcp/` **réel** : ce ne sont pas des tests d'API mais l'épinglage
+   d'une décision versionnée. `qa.json` est un **défaut** et suit la forge du
+   projet (GitHub, optionnel pour ne casser aucun poste) ; le registre curé
+   est une **bibliothèque** et garde GitLab *à côté de* GitHub ; les deux
+   disent la même chose de GitHub — c'est cette divergence-là que le ticket
+   visait ;
 ⑧ chat utilisateur ↔ agent (#84, tests différés du parent #82 → #83) : fil
    vide tant que l'agent n'a jamais été contacté, envoi d'un message rendant
    la paire message/réponse, fil persisté (relu par le GET, survivant à un
@@ -61,12 +68,14 @@ critères d'acceptation du ticket #46 :
 import asyncio
 import json
 import logging
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from maestro.agents.catalog import DEFAULT_AGENTS
 from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp
+from maestro.agents.mcp_registry import RegistreMcp
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.store import AgentDefinition, AgentStore
 from maestro.controltower import (
@@ -1408,6 +1417,72 @@ def test_une_activation_vers_une_integration_absente_du_pool_rend_la_cause(clien
     assert fiche["mcp_serveurs"] == []
     assert "absente(s) du pool : fantome" in fiche["mcp_erreur"]
     assert client_mcp.get("/api/catalogue").status_code == 200
+
+
+# --------------------- ⑦ter La forge du produit : un défaut, un catalogue (#412)
+#
+# Les tests ci-dessus jugent le **comportement** de l'API sur des déclarations
+# jetables — d'où la fixture `depot_mcp`, qui n'ouvre jamais le `core/mcp/` réel.
+# Ceux qui suivent jugent l'inverse : la **décision versionnée** elle-même. Ils
+# lisent donc le vrai dépôt, comme
+# `test_mcp.py::test_les_declarations_versionnees_du_depot_sont_valides`.
+#
+# Ce que #412 a tranché, et que ces tests empêchent de défaire par distraction :
+# `qa.json` est un **défaut** (il suit la forge du projet → GitHub), le registre
+# curé est une **bibliothèque** (il garde GitLab *à côté de* GitHub). Les deux
+# affirmations sont fausses séparément — d'où un test chacune, plus un troisième
+# qui vérifie qu'elles racontent la même histoire.
+
+
+def _serveurs_qa_versionnes() -> tuple[ServeurMcp, ...]:
+    """Les serveurs réellement déclarés pour l'agent QA dans le dépôt Git."""
+    depot = McpStore(Path(__file__).resolve().parents[1] / "core" / "mcp")
+    return tuple(depot.lire("qa"))
+
+
+def test_le_defaut_de_forge_de_l_agent_qa_est_github():
+    (forge,) = _serveurs_qa_versionnes()
+
+    # Le défaut du produit suit la forge du projet (#343/#344 pour l'outillage,
+    # #412 pour le produit) : plus aucune trace de GitLab dans ce fichier-ci.
+    assert "github" in forge.url
+    declaration = json.dumps(forge.to_stored_dict())
+    assert "gitlab" not in declaration.lower()
+    assert "${GITHUB_TOKEN}" in declaration
+
+    # Le nom d'une liaison est le préfixe de ses outils (`mcp__forge__…`) : il
+    # nomme le rôle et non la marque, sans quoi changer de forge rouvrirait les
+    # playbooks.
+    assert forge.nom == "forge"
+
+
+def test_le_defaut_de_forge_est_optionnel_pour_ne_casser_aucun_poste():
+    """`${GITHUB_TOKEN}` est une clé neuve : aucun poste ne la porte encore.
+
+    Non optionnelle, la bascule ferait échouer toute exécution outillée de
+    l'agent QA au premier run — sur une forge pourtant correcte. Canal #125 :
+    sans jeton, la voie est omise du montage, sans échec.
+    """
+    (forge,) = _serveurs_qa_versionnes()
+    assert forge.optionnel is True
+
+
+def test_le_registre_cure_garde_les_deux_forges_et_dit_la_meme_chose_que_qa_json():
+    registre = RegistreMcp.curee()
+    ids = [entree.id for entree in registre.lister()]
+
+    # La bibliothèque (#131) répond à « quelles intégrations existe-t-il ? » :
+    # les deux forges y sont, et retirer `gitlab` INTERDIRAIT de le monter —
+    # l'allowlist *est* le registre (docs/19, découverte ≠ installation).
+    assert "github" in ids and "gitlab" in ids
+    assert registre.instancier("gitlab").url == ""  # stdio : toujours montable
+
+    # … et elle dit de GitHub exactement ce que `qa.json` déclare : c'est la
+    # dérive que le ticket visait — deux fichiers qui parlent de la même
+    # intégration et divergent en silence.
+    (forge,) = _serveurs_qa_versionnes()
+    curee = registre.instancier("github", nom=forge.nom)
+    assert curee == forge
 
 
 # ------------------------------------------- ⑧ Chat utilisateur ↔ agent (#84)

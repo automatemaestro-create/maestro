@@ -64,7 +64,11 @@ def test_de_la_bibliotheque_au_pool_via_instanciation(registre, mcp_store):
     # instanciation du template curé, posé au pool — sans éditer de fichier à la
     # main (l'écriture que fera la Control Tower, #133). Le gabarit `${VAR}`
     # traverse intact : le secret se pose au coffre, pas dans la déclaration.
-    (trouvee,) = registre.rechercher("issues")  # tag propre à l'entrée GitLab
+    # `merge-request` est le tag qui distingue GitLab de GitHub depuis que les
+    # deux forges cohabitent au registre (#412) — `issues`, lui, les rend toutes
+    # les deux. Le parcours reste joué sur GitLab à dessein : il éprouve une
+    # entrée de la **bibliothèque**, pas le défaut du produit (`core/mcp/qa.json`).
+    (trouvee,) = registre.rechercher("merge-request")
     assert trouvee.id == "gitlab"
 
     mcp_store.ecrire_pool([IntegrationMcp(id="gitlab", serveur=registre.instancier("gitlab"))])
