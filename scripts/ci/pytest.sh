@@ -50,6 +50,9 @@ Options du lanceur (elles se lisent AVANT les arguments pytest, et s'arrêtent a
 argument inconnu — tout le reste part tel quel à pytest) :
   --conteneur   Exige le conteneur Linux : ÉCHOUE si Docker ne répond pas, au lieu de retomber.
   --natif       Force le venv du poste (.venv/), l'ancien régime.
+  --gc          Retire les images pytest périmées et sort, sans jouer de test (#463). Le
+                ramassage a lieu de lui-même après chaque construction ; ceci n'est que le
+                rattrapage à la demande. MAESTRO_PYTEST_GC=0 l'éteint des deux côtés.
   -h, --help    Cette aide.
 
 Par défaut : le conteneur. Si le démon dort et que Docker Desktop est installé, il est DÉMARRÉ
@@ -89,6 +92,27 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --conteneur) PYTEST_REGIME_DEMANDE=conteneur ;;
     --natif) PYTEST_REGIME_DEMANDE=natif ;;
+    --gc)
+      # Le rattrapage manuel. Il DIT quand il n'y a rien à faire, là où le ramassage automatique
+      # reste muet : appelé exprès, le silence se lirait comme une panne.
+      if ! image_courante="$(pytest_image)"; then
+        printf '%s\n' "${C_R}empreinte de l'image incalculable (git ou $PYTEST_DOCKERFILE_REL manquant)${C_0}" >&2
+        exit 1
+      fi
+      # L'interrupteur se dit AVANT tout le reste. Éteint, `pytest_image_gc` sort sans un mot —
+      # muet est ce qu'on veut du ramassage automatique, jamais d'un geste qu'on vient de demander :
+      # un « rien » silencieux se lirait comme « c'est fait ».
+      if [ "$PYTEST_GC" = 0 ]; then
+        printf '%s\n' "${C_Y}ramassage éteint par MAESTRO_PYTEST_GC=0 — rien n'a été retiré.${C_0}" >&2
+        exit 0
+      fi
+      if [ -z "$(pytest_images_perimees "$image_courante")" ]; then
+        printf '%s\n' "${C_D}rien à retirer — seule $image_courante est là.${C_0}"
+      else
+        pytest_image_gc "$image_courante"
+      fi
+      exit 0
+      ;;
     -h | --help)
       usage
       exit 0

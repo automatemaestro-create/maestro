@@ -73,6 +73,8 @@ image_docker_disponible() { docker image inspect "$1" >/dev/null 2>&1; }
 # voyait qu'au merge.
 PYTEST_DOCKERFILE_REL="scripts/ci/pytest.Dockerfile"
 PYTEST_IMAGE_NOM="${MAESTRO_PYTEST_IMAGE:-maestro-pytest}"
+#: Ramasser les images périmées après une construction ? 0 pour ne jamais le faire (#463).
+PYTEST_GC="${MAESTRO_PYTEST_GC:-1}"
 # Deux niveaux, JAMAIS la racine : monté à `/w`, le parent du dépôt serait `/` et
 # `test_projets.py::test_depot_maestro_refuse` rendrait `racine-de-disque` au lieu de
 # `au-dessus-du-depot-maestro` — un rouge qui ne dit rien du code (trouvé par les tests, #372).
@@ -300,6 +302,74 @@ pytest_image() {
   printf '%s:%s\n' "$PYTEST_IMAGE_NOM" "${empreinte:0:12}"
 }
 
+# --- Ce que la construction laisse derrière elle (#463, docs/10 §8.4) -----------------------------
+# L'étiquette porte l'empreinte, donc une image neuve ne REMPLACE pas l'ancienne : elle s'ajoute à
+# côté. Le mécanisme de `pytest_image` est juste — « personne n'a à s'en souvenir » — mais sa
+# seconde moitié manquait : personne ne ramasse. Mesuré le 2026-08-24, trois jours après #372 : deux
+# `maestro-pytest` côte à côte, dont une périmée, à 835 Mo de couches propres l'une (la base
+# `python:3.11`, 1,595 Go, est partagée — d'où un coût unitaire bien inférieur aux 2,43 Go affichés).
+#
+# ⚠ Ce qui rend l'affaire sérieuse n'est pas le disque mais le CLIQUET : `docker_data.vhdx` n'est pas
+# sparse (vérifié), donc il grandit et ne rétrécit JAMAIS de lui-même. Chaque Go qui y entre est pris
+# sur le disque définitivement, même après suppression de l'image — récupérer vraiment demande un
+# compactage explicite, Docker arrêté. Autrement dit : supprimer après coup ne rend rien, seul le
+# fait de ne pas entrer protège. C'est pourquoi ce ramassage est PRÉVENTIF et accroché à la
+# construction, et non un ménage périodique.
+#
+# Trois choix à ne pas défaire :
+#
+#   · Le ciblage passe par `docker images "$PYTEST_IMAGE_NOM"`, qui ne peut RIEN lister d'autre que
+#     ce dépôt d'images. Ce n'est pas un filtre appliqué après coup mais une borne structurelle : le
+#     poste porte les images d'autres projets (n8n, Postgres, Temporal…), et un ramassage lancé
+#     depuis Maestro n'a aucune raison de pouvoir les atteindre, fût-ce par un motif mal écrit. Pour
+#     la même raison, jamais de `docker system prune` : il emporterait l'image COURANTE, qui n'est
+#     « active » que le temps d'un conteneur, et ferait payer une reconstruction complète au
+#     prochain lancement — l'inverse exact du but.
+#   · L'image courante est gardée par comparaison EXACTE (`grep -x -F`), jamais par un tri par date :
+#     « la plus récente » et « celle dont l'empreinte est courante » divergent dès qu'on revient sur
+#     une branche antérieure, et c'est alors l'image dont on a besoin qui partirait.
+#   · Best-effort de bout en bout. Un ramassage qui ferait échouer un `--only pytest` transformerait
+#     une question de ménage en verdict rouge ; il ne rend donc jamais autre chose que 0, et un
+#     `docker rmi` refusé (image retenue par un conteneur arrêté) est simplement laissé là.
+#
+# Les `<none>` sont écartés : ce mécanisme n'en produit pas — deux empreintes différentes font deux
+# étiquettes différentes, jamais un retag qui orphelinerait la précédente — et `docker rmi
+# "$nom:<none>"` ne désigne rien de supprimable. Les images sans étiquette du poste viennent
+# d'ailleurs (reconstructions de `python:3.11`) et ne nous appartiennent pas.
+pytest_images_perimees() { # <image-courante> → une étiquette à retirer par ligne
+  local courante="$1" ligne
+  while IFS= read -r ligne; do
+    # Ceinture ET bretelles. `docker images "$PYTEST_IMAGE_NOM"` ne PEUT déjà rien rendre d'autre —
+    # c'est la borne qui compte — mais s'appuyer sur ce seul fait rendrait la garantie invisible
+    # ici et invérifiable par un test. Ce filtre la met sur place : une ligne qui n'appartient pas
+    # à notre dépôt d'images ne part pas, quoi qu'il arrive en amont.
+    case "$ligne" in
+      "$PYTEST_IMAGE_NOM":*) ;;
+      *) continue ;;
+    esac
+    [ "$ligne" = "$courante" ] && continue
+    [ "$ligne" = "$PYTEST_IMAGE_NOM:<none>" ] && continue
+    printf '%s\n' "$ligne"
+  done < <(docker images "$PYTEST_IMAGE_NOM" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null)
+  return 0
+}
+
+pytest_image_gc() { # <image-courante> → toujours 0
+  local courante="$1" perimees retirees=0 image
+  [ "$PYTEST_GC" = 0 ] && return 0
+  perimees="$(pytest_images_perimees "$courante")"
+  [ -n "$perimees" ] || return 0
+  # Annoncé, jamais muet : retirer plusieurs centaines de mégaoctets sans le dire est le genre de
+  # geste qu'on découvre en cherchant pourquoi une image « qui était là hier » a disparu.
+  while IFS= read -r image; do
+    [ -n "$image" ] || continue
+    docker rmi "$image" >"${JOURNAL:-/dev/null}" 2>&1 && retirees=$((retirees + 1))
+  done <<<"$perimees"
+  [ "$retirees" -gt 0 ] &&
+    printf '    ─── %d image(s) pytest périmée(s) retirée(s) — la courante est gardée\n' "$retirees"
+  return 0
+}
+
 # Construit l'image si elle manque. C'est la SEULE chose que ce filet fabrique, et elle est
 # annoncée : contrairement au repli docker de shellcheck — qui ne télécharge rien et se contente
 # d'une image déjà là —, on ne peut pas se passer de celle-ci, elle est le régime nominal. Mais une
@@ -316,6 +386,11 @@ pytest_image_construit() { # <image> → 0 prête · 1 échec
     --file "$(chemin_natif "$RACINE/$PYTEST_DOCKERFILE_REL")" \
     --tag "$image" \
     "$(chemin_natif "$RACINE")" >"${JOURNAL:-/dev/stderr}" 2>&1 || return 1
+  # ICI, et pas ailleurs (#463) : c'est l'instant précis où la précédente devient périmée — même
+  # parti pris qu'en #438, où le pilote ramasse le worktree sur le VERDICT du merge et non dans sa
+  # boucle. Le chemin nominal (image déjà là) sort plus haut par `image_docker_disponible`, donc
+  # un lancement ordinaire ne paie pas un seul appel docker de plus.
+  pytest_image_gc "$image"
   return 0
 }
 
