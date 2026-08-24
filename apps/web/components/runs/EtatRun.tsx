@@ -1,40 +1,59 @@
 "use client";
 
 /**
- * Ce qu'un run montre de lui-même : son **badge**, ce qui le **retient** et son
- * **avancement**.
+ * Ce qu'un run montre de lui-même : son **badge**, ce qui le **retient**, son
+ * **avancement** — et la **carte** qui assemble les trois.
  *
- * Ces quatre briques sont nées dans la liste des runs (#474) ; #475 les en a
- * sorties le jour où un second écran a eu à dire la même chose — la **vue d'un
- * run**, qui rend son Kanban sous une barre de progression et doit annoncer son
- * état exactement comme la ligne dont on vient de l'ouvrir. Deux formulations du
- * même état finiraient par diverger, et c'est la raison habituelle du dépôt :
- * un run qu'on lit « En cours » dans la liste et « en_cours » dans sa vue est un
- * run dont on doute.
+ * Ces briques sont nées dans la liste des runs (#474) ; #475 les en a sorties le
+ * jour où un second écran a eu à dire la même chose — la **vue d'un run**, qui
+ * rend son Kanban sous une barre de progression et doit annoncer son état
+ * exactement comme la ligne dont on vient de l'ouvrir. Deux formulations du même
+ * état finiraient par diverger, et c'est la raison habituelle du dépôt : un run
+ * qu'on lit « En cours » dans la liste et « en_cours » dans sa vue est un run
+ * dont on doute.
  *
- * Rien n'a changé de comportement au passage : ce fichier est l'extraction de ce
- * que `ListeRuns` portait, à la seule addition de `taille` sur la barre — une
- * liste l'empile par dizaines, une vue de run en a une seule et de tête.
+ * `CarteRun` a suivi le même chemin, un lot plus tard et pour la même raison :
+ * #476 met **l'état des runs** au tableau de bord, ce qui fait un troisième écran
+ * à rendre une ligne de run. Elle était restée dans `ListeRuns` tant qu'un seul
+ * écran l'affichait ; l'y laisser aurait fait dépendre le tableau de bord du
+ * composant d'une autre page, alors que ce fichier-ci est précisément l'endroit
+ * où vit « ce qu'un run montre de lui-même ».
+ *
+ * Rien n'a changé de comportement à aucun des deux passages : ce fichier est
+ * l'extraction de ce que `ListeRuns` portait, à la seule addition de `taille` sur
+ * la barre — une liste l'empile par dizaines, une vue de run en a une seule et de
+ * tête.
  */
 
 import Link from "next/link";
 
 import { IconeFlecheDroite } from "@/components/Icones";
-import { BadgeEtat, type TonBadge, type TonCarte } from "@/components/Primitives";
+import {
+  BadgeEtat,
+  Carte,
+  type TonBadge,
+  type TonCarte,
+} from "@/components/Primitives";
 import {
   ATTENTE_BRIEF,
   ATTENTE_REPONSES,
   ATTENTE_VALIDATION,
+  causeDAttente,
   estRelancable,
+  regimeDuRun,
   REGIME_INTERROMPU,
   REGIME_SUSPENDU,
   REGIME_TRAVAILLE,
   type CauseAttente,
   type RegimeRun,
 } from "@/lib/execution";
-import { formatHeureRelative, libelleStatutExecution } from "@/lib/format";
+import {
+  formatCout,
+  formatHeureRelative,
+  libelleStatutExecution,
+} from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
-import { entreeParLibelle } from "@/lib/navigation";
+import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import {
   EXECUTION_ECHEC,
   EXECUTION_TERMINEE,
@@ -331,5 +350,66 @@ export function Avancement({
         {` — ${progression.soldees}/${progression.total} soldée${progression.soldees > 1 ? "s" : ""}`}
       </p>
     </>
+  );
+}
+
+/**
+ * Un run en une ligne : l'objectif, l'état, la progression, le coût — et, quand
+ * le run attend quelqu'un, **quoi** et **depuis quand**.
+ *
+ * Le titre est un **lien vers la vue du run** (#475) : c'est la carte entière qui
+ * mène quelque part, mais seul le titre porte le geste, pour que le clavier et les
+ * lecteurs d'écran aient une cible nommée plutôt qu'un bloc cliquable — même parti
+ * pris que la carte du Kanban (#251).
+ *
+ * Elle sert la liste des runs (#474) et **l'état des runs** du tableau de bord
+ * (#476), sans une prise pour les distinguer : les deux écrans répondent à la même
+ * question sur le même objet, et une ligne qui se lirait autrement selon la page
+ * serait le défaut que l'extraction de ce fichier existe pour empêcher. Ce qui les
+ * sépare est en amont — *quels* runs, et regroupés comment.
+ */
+export function CarteRun({
+  run,
+  attendUneValidation,
+}: {
+  run: ResumeExecution;
+  attendUneValidation: boolean;
+}) {
+  const maintenant = useHorloge();
+  const regime = regimeDuRun(run, attendUneValidation);
+  const attente =
+    regime === REGIME_SUSPENDU ? causeDAttente(run, attendUneValidation) : null;
+  const nom = run.objectif || run.run_id;
+  const vue = hrefRun(run.run_id);
+
+  return (
+    <Carte balise="li" ton={fondDe(regime)}>
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+        <h3 className="min-w-0 flex-1 truncate text-corps font-medium" title={nom}>
+          {vue ? (
+            <Link
+              href={vue}
+              className="rounded hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-400"
+            >
+              {nom}
+            </Link>
+          ) : (
+            nom
+          )}
+        </h3>
+        <BadgeRun run={run} regime={regime} attente={attente} />
+      </div>
+
+      <p className="chiffre mt-0.5 truncate text-annexe text-neutral-500 dark:text-neutral-400">
+        {run.run_id}
+        {run.debut ? ` · ${formatHeureRelative(run.debut, maintenant)}` : ""}
+        {` · ${formatCout(run.cout_usd)}`}
+      </p>
+
+      <Avancement run={run} />
+
+      <LigneAttente run={run} attente={attente} className="mt-2" />
+      <LigneInterruption run={run} regime={regime} className="mt-2" />
+    </Carte>
   );
 }

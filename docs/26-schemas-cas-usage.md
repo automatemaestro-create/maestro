@@ -344,8 +344,9 @@ validations, journal, flux temps réel — s'y rapporte
 | Écran | Ce qu'on vient y faire | Cas d'usage (§2) |
 | --- | --- | --- |
 | Porte d'entrée · sélecteur de projet | Choisir le projet sur lequel on travaille, ou en déclarer un ; le sélecteur reste ensuite dans la barre supérieure | UC1 |
-| Tableau de bord | « Où en est-on, et qu'est-ce qui m'attend ? » — validations en tête, quatre indicateurs, Kanban, aperçu d'activité | UC4, UC5 |
-| Kanban des tâches | Suivre les colonnes de la machine à états, ouvrir le détail d'une tâche sur place, réassigner un agent | UC4 |
+| Tableau de bord | « Où en est-on, et qu'est-ce qui m'attend ? » — validations en tête, quatre indicateurs, **état des runs** (en cours, suspendus, interrompus, soldés du jour — #476, le Kanban tenait cette place jusqu'au 2026-08-24), aperçu d'activité | UC4, UC5 |
+| Runs | Lister les runs du projet, ouvrir celui qu'on suit | UC4 |
+| Kanban des tâches | Suivre les colonnes de la machine à états, ouvrir le détail d'une tâche sur place, réassigner un agent — **dans la vue d'un run** depuis #475 | UC4 |
 | Agents | Une fiche par agent, quatre onglets — Profil, Playbook, MCP & permissions, Chat. Le parc est une ressource du **poste**, partagée entre projets | UC11 |
 | Validations | Trancher une action sensible : contexte, diff, approuver / refuser / modifier la consigne | UC5, UC6 |
 | Coûts & analytics | Comprendre la dépense : agrégats sur une période, grand livre par exécution, débit et taux de réussite | UC10 |
