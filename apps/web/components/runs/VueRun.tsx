@@ -2,7 +2,7 @@
 
 /**
  * La vue d'un run (#475, lot 3 de #472, docs/05 §2.4.2) : sa progression en tête,
- * son Kanban dessous.
+ * son Kanban dessous, et **son journal** au pied (#478).
  *
  * Ouvrir un run donne enfin son backlog. Jusqu'ici le Kanban était celui du
  * **projet** (#248) et un run n'avait pas de vue à lui : impossible de voir ce que
@@ -24,6 +24,9 @@
  *   rafraîchit au **pouls** du shell (`revision`), c'est-à-dire aux instants où
  *   celui-ci vient de relire — chargement initial, reconnexion, rafale
  *   d'événements coalescée.
+ * - **Le journal du run part du persisté** (#478, `components/runs/JournalRun`) :
+ *   ouvrir un run terminé hier montre ce qu'il a dit, là où le fil du shell —
+ *   borné aux derniers événements **reçus** — n'aurait rien eu à montrer.
  *
  * Le run lui-même est lu dans `executions`, la liste que le shell tient déjà pour
  * le projet actif : elle porte tout ce que la tête affiche (statut, vitalité,
@@ -48,6 +51,7 @@ import {
   LigneInterruption,
   LignePause,
 } from "@/components/runs/EtatRun";
+import { JournalRun } from "@/components/runs/JournalRun";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   ATTENTE_BRIEF,
@@ -72,6 +76,7 @@ export function VueRun({ runId }: { runId: string }) {
     validations,
     taches: tachesDuProjet,
     agents,
+    evenements,
     reassigner,
     revision,
     chargement,
@@ -154,6 +159,18 @@ export function VueRun({ runId }: { runId: string }) {
               ? "Chargement des tâches de ce run…"
               : messageVideDuRun(attente)
           }
+        />
+      )}
+
+      {/* Sous le Kanban, et non à côté : le Kanban répond à « où en est-il ? »,
+          le journal à « qu'a-t-il fait ? » — on ne consulte le second qu'après
+          avoir lu le premier. */}
+      {run !== undefined && (
+        <JournalRun
+          portee={portee}
+          runId={runId}
+          direct={evenements}
+          revision={revision}
         />
       )}
     </>

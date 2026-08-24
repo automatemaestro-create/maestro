@@ -123,12 +123,16 @@ describe("la page Journal", () => {
     expect(screen.queryByText(/Aucun événement reçu/)).toBeNull();
   });
 
-  it("annonce la coupure du flux, dont il dépend entièrement", () => {
+  it("annonce la coupure du flux, sans confondre avec un projet vide", async () => {
     rendreAvecEtat(<PageJournal />, { evenements: [], connecte: false });
     expect(screen.getByText(/Flux temps réel interrompu/)).toBeInTheDocument();
     // Le vide, lui, nomme le projet (#281) : les deux phrases répondent à deux
     // questions distinctes — « pourquoi ça ne se remplit plus » et « de quoi
-    // est-ce vide » —, et une coupure ne doit pas les confondre.
-    expect(screen.getByText(/Rien encore sur Dépensio/)).toBeInTheDocument();
+    // est-ce vide » —, et une coupure ne doit pas les confondre. `findBy` et non
+    // `getBy` depuis #478 : le vide n'est prononcé qu'une fois la lecture du
+    // journal persisté revenue, l'écran disant « Lecture du journal… » avant —
+    // c'est tout l'intérêt, un « rien encore » affiché pendant la lecture serait
+    // faux une fois sur deux.
+    expect(await screen.findByText(/Rien encore sur Dépensio/)).toBeInTheDocument();
   });
 });

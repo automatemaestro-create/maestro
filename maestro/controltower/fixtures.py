@@ -14,9 +14,6 @@ voie front peut coder contre elles le jour même (cadrage #182).
 Périmètre figé ici (aucune implémentation réelle — elle vient dans les lots de la
 Phase 5, #184+) :
 
-- **exécutions** — lancement, suivi (liste + résumé) et annulation (`#185`) ;
-- **journal requêtable** — filtres (agent / type / run / période), tri et
-  pagination (chantier *Journal*, Phase 5) ;
 - **registre de configuration** — réglages produit éditables, versionnés côté
   serveur (couche 1 du cadrage sécurité #182) ;
 - **propositions de playbook globales** — l'agrégat transverse qui alimente
@@ -24,11 +21,17 @@ Phase 5, #184+) :
 - **flux SSE d'un fil de chat** — les fragments d'une réponse en streaming
   (chantier *Conversation*, items 2/4/12).
 
+Deux contrats sont **partis** d'ici, dans l'ordre où leur lot a été livré : les
+**exécutions** (#185, `maestro.controltower.executions`) puis le **journal
+requêtable** (#478, `maestro.controltower.journal`). C'est le cycle de vie
+normal d'une fixture — elle tient la place d'une implémentation, puis lui cède
+la sienne : garder les deux ferait de la démo un écran nourri de faux à côté
+d'un vrai, et de la forme figée une seconde source à tenir d'accord.
+
 La référence de ticket externe (#187) portée par une tâche n'est **pas** ici :
 c'est un champ de données (`Event.ticket`, `EtatTache.ticket`) servi par
 `GET /api/taches`, que la démo pose sur une tâche du scénario. Il en va de même
-du `projet_id` (#222) — sauf pour le **journal**, qui n'est servi que d'ici :
-ses entrées le portent, et son filtre `projet` est implémenté ci-dessous.
+du `projet_id` (#222).
 """
 
 from __future__ import annotations
@@ -37,25 +40,6 @@ from collections.abc import Iterator
 from typing import Any
 
 from maestro.controltower.chat import AUTEUR_AGENT
-from maestro.controltower.events import (
-    EVENEMENT_AGENT_ACTIVITE,
-    EVENEMENT_MESSAGE_INTER_AGENTS,
-    EVENEMENT_TACHE_STATUT,
-    EVENEMENT_VALIDATION_DEMANDE,
-)
-from maestro.controltower.portee import PorteeProjet
-
-#: Clés de tri du journal requêtable (chantier *Journal*, Phase 5) et sens.
-TRI_JOURNAL_HORODATAGE = "horodatage"
-TRI_JOURNAL_AGENT = "agent"
-TRI_JOURNAL_TYPE = "type"
-TRIS_JOURNAL = (TRI_JOURNAL_HORODATAGE, TRI_JOURNAL_AGENT, TRI_JOURNAL_TYPE)
-ORDRE_ASC = "asc"
-ORDRE_DESC = "desc"
-ORDRES_JOURNAL = (ORDRE_ASC, ORDRE_DESC)
-#: Taille de page par défaut et plafond dur (au-delà, 422 : pas de scan illimité).
-TAILLE_PAGE_DEFAUT = 50
-TAILLE_PAGE_MAX = 200
 
 #: Types de fragments d'un flux SSE de chat (chantier *Conversation*, Phase 5) :
 #: ouverture du flux, incrément de texte, clôture (message complet), erreur.
@@ -63,16 +47,6 @@ FRAGMENT_CHAT_DEBUT = "debut"
 FRAGMENT_CHAT_DELTA = "fragment"
 FRAGMENT_CHAT_FIN = "fin"
 FRAGMENT_CHAT_ERREUR = "erreur"
-
-#: Le run du scénario de la démo (`maestro.controltower.demo`) — les fixtures
-#: s'y rattachent pour rester cohérentes avec ce que sert déjà `GET /api/taches`.
-_RUN_DEMO = "demo-live"
-
-#: Le projet du même scénario (#222) : le run de la démo travaille dans un
-#: projet, ce qui rend le filtre `?projet=` démontrable dès les fixtures. Une
-#: entrée peut le porter à None — un travail sans projet reste normal, c'est le
-#: comportement d'avant ce lot.
-_PROJET_DEMO = "prj-demo"
 
 
 class FixturesControlTower:
@@ -82,64 +56,9 @@ class FixturesControlTower:
     documenté (docs/05 §6) et typé (`apps/web/lib/types.ts`). Sans état : on fige
     la forme de la réponse, pas le comportement réel (qui vient dans les lots
     dédiés de la Phase 5). La voie front code contre ces formes ; le backend réel
-    les remplira à contrat identique — les **exécutions** l'ont déjà fait (#185,
-    `maestro.controltower.executions`), d'où leur absence ici.
+    les remplira à contrat identique — les **exécutions** (#185) puis le
+    **journal requêtable** (#478) l'ont déjà fait, d'où leur absence ici.
     """
-
-    # -------------------------------------------------------------------- journal
-
-    def journal(
-        self,
-        *,
-        agent: str | None = None,
-        type: str | None = None,
-        run_id: str | None = None,
-        portee: PorteeProjet | None = None,
-        depuis: str | None = None,
-        jusqua: str | None = None,
-        tri: str = TRI_JOURNAL_HORODATAGE,
-        ordre: str = ORDRE_DESC,
-        page: int = 1,
-        taille: int = TAILLE_PAGE_DEFAUT,
-    ) -> dict[str, Any]:
-        """Une page du journal requêtable (`GET /api/journal`) : filtres, tri, pagination.
-
-        Filtre les entrées par `agent`, `type`, `run_id`, `portee` (#277) et fenêtre temporelle
-        (`depuis`/`jusqua`, ISO-8601, bornes incluses, comparaison lexicale des
-        horodatages ISO), trie sur `tri`/`ordre`, puis découpe en pages de
-        `taille` (1-indexé). `total` est le compte **après filtres, avant
-        pagination** ; `pages` le nombre de pages. Les paramètres sont réputés
-        déjà validés par la route (tri/ordre connus, page ≥ 1, taille bornée) —
-        `portee` comprise, résolue et refusée en amont.
-        """
-        entrees = list(_ENTREES_JOURNAL)
-        if agent:
-            entrees = [e for e in entrees if e["agent"] == agent]
-        if type:
-            entrees = [e for e in entrees if e["type"] == type]
-        if run_id:
-            entrees = [e for e in entrees if e["run_id"] == run_id]
-        if portee is not None:
-            # Une entrée sans projet (`None`) ne relève d'aucun : elle sort de
-            # toute vue de projet plutôt que d'être rattachée au hasard (#222),
-            # et c'est la portée du lot #277 qui en décide — la même règle que
-            # le Kanban, les runs, les coûts et le flux temps réel.
-            entrees = [e for e in entrees if portee.retient(e["projet_id"])]
-        if depuis:
-            entrees = [e for e in entrees if e["horodatage"] >= depuis]
-        if jusqua:
-            entrees = [e for e in entrees if e["horodatage"] <= jusqua]
-        entrees.sort(key=lambda e: (e[tri], e["id"]), reverse=(ordre == ORDRE_DESC))
-        total = len(entrees)
-        pages = (total + taille - 1) // taille if total else 0
-        debut = (page - 1) * taille
-        return {
-            "entrees": entrees[debut : debut + taille],
-            "total": total,
-            "page": page,
-            "taille": taille,
-            "pages": pages,
-        }
 
     # -------------------------------------------------------------- configuration
 
@@ -212,135 +131,6 @@ class FixturesControlTower:
                 "horodatage": "2026-07-31T10:10:00+00:00",
             },
         }
-
-
-def _entree(
-    id: str,
-    *,
-    type: str,
-    horodatage: str,
-    agent: str = "",
-    role: str = "",
-    run_id: str = _RUN_DEMO,
-    tache_id: str = "",
-    statut: str = "",
-    detail: str = "",
-    projet_id: str | None = _PROJET_DEMO,
-) -> dict[str, Any]:
-    """Une entrée de journal figée — un événement persisté doté d'un id stable."""
-    return {
-        "id": id,
-        "type": type,
-        "run_id": run_id,
-        "tache_id": tache_id,
-        "agent": agent,
-        "role": role,
-        "statut": statut,
-        "detail": detail,
-        "projet_id": projet_id,
-        "horodatage": horodatage,
-    }
-
-
-#: Le journal figé : la trace du scénario de la démo, requêtable en fixtures.
-_ENTREES_JOURNAL: tuple[dict[str, Any], ...] = (
-    _entree(
-        "j-0001",
-        type=EVENEMENT_AGENT_ACTIVITE,
-        horodatage="2026-07-30T09:00:04+00:00",
-        agent="orchestrateur",
-        role="Orchestrateur",
-        detail="Objectif décomposé en 4 tâches (mini-CRM : schéma, API, CI, maquette)",
-    ),
-    _entree(
-        "j-0002",
-        type=EVENEMENT_TACHE_STATUT,
-        horodatage="2026-07-30T09:00:12+00:00",
-        agent="bdd",
-        role="Base de données",
-        tache_id="demo-t1",
-        statut="en_cours",
-        detail="Concevoir le schéma SQL de la table contacts",
-    ),
-    _entree(
-        "j-0003",
-        type=EVENEMENT_TACHE_STATUT,
-        horodatage="2026-07-30T09:00:50+00:00",
-        agent="bdd",
-        role="Base de données",
-        tache_id="demo-t1",
-        statut="terminee",
-        detail="Schéma prêt (table contacts + migration)",
-    ),
-    _entree(
-        "j-0004",
-        type=EVENEMENT_MESSAGE_INTER_AGENTS,
-        horodatage="2026-07-30T09:00:52+00:00",
-        agent="bdd",
-        role="Base de données",
-        detail="→ developpeur : schéma prêt, la table `contacts` est disponible",
-    ),
-    _entree(
-        "j-0005",
-        type=EVENEMENT_TACHE_STATUT,
-        horodatage="2026-07-30T09:01:05+00:00",
-        agent="developpeur",
-        role="Développeur",
-        tache_id="demo-t2",
-        statut="en_cours",
-        detail="Implémenter l'API REST des contacts (créer / lister)",
-    ),
-    _entree(
-        "j-0006",
-        type=EVENEMENT_TACHE_STATUT,
-        horodatage="2026-07-30T09:02:06+00:00",
-        agent="developpeur",
-        role="Développeur",
-        tache_id="demo-t2",
-        statut="terminee",
-        detail="API créer/lister livrée",
-    ),
-    _entree(
-        "j-0007",
-        type=EVENEMENT_TACHE_STATUT,
-        horodatage="2026-07-30T09:02:20+00:00",
-        agent="devops",
-        role="DevOps",
-        tache_id="demo-t3",
-        statut="en_cours",
-        detail="Pipeline CI et déploiement de l'API",
-    ),
-    _entree(
-        "j-0008",
-        type=EVENEMENT_VALIDATION_DEMANDE,
-        horodatage="2026-07-30T09:02:25+00:00",
-        agent="devops",
-        role="DevOps",
-        tache_id="demo-t3",
-        statut="en_attente",
-        detail="validation requise avant déploiement",
-    ),
-    _entree(
-        "j-0009",
-        type=EVENEMENT_TACHE_STATUT,
-        horodatage="2026-07-30T09:02:40+00:00",
-        agent="designer",
-        role="Designer",
-        tache_id="demo-t4",
-        statut="assignee",
-        detail="Maquette de l'écran de gestion des contacts",
-    ),
-    _entree(
-        "j-0010",
-        type=EVENEMENT_TACHE_STATUT,
-        horodatage="2026-07-30T09:03:00+00:00",
-        agent="qa",
-        role="QA / Testeur",
-        tache_id="demo-qa",
-        statut="terminee",
-        detail="Vérification de santé de l'API (QA)",
-    ),
-)
 
 
 def _reglage(

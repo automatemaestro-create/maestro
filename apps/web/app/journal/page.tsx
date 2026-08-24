@@ -26,18 +26,22 @@
  *   pas de liste à maintenir quand le backend enrichit le flux, et aucune option
  *   morte qui ne rendrait jamais un résultat.
  *
- * Enfin le fil est **éphémère** par construction — il ne contient que ce qui est
- * passé par le WebSocket depuis l'ouverture de la page (`MAX_EVENEMENTS` au
- * plus), l'état de référence restant le REST. L'écran le dit : un journal
- * persisté et requêtable existe côté contrat (`GET /api/journal`, #183) mais
- * n'est pas encore servi par le backend, et cette page ne le promet pas.
+ * Enfin le fil **part de l'historique persisté** (#478) et non plus du seul
+ * WebSocket. C'était le défaut que cette page portait depuis sa création : elle
+ * ne contenait que ce qui était passé par la socket depuis son ouverture, donc
+ * un rechargement pendant un run d'une heure effaçait tout ce qu'on avait sous
+ * les yeux. `GET /api/journal` — figé au contrat depuis #183, jamais servi
+ * jusque-là — rend désormais le journal du projet ; le direct du shell se
+ * superpose par-dessus le temps que la lecture suivante le rattrape
+ * (`lib/journal`, `lib/useJournal`).
  *
  * Depuis #281 le fil est celui **du projet actif** : la socket déclare sa portée
- * à l'ouverture (#277), le tri se fait donc côté backend et il n'y a rien à
- * refiltrer ici. Les listes de filtres, dérivées du fil, en héritent — elles ne
- * proposent que des agents et des tâches de ce projet, sans une ligne de plus.
- * Un changement de projet remonte cette page (`key` du shell) : les filtres
- * repartent à zéro plutôt que de rester posés sur une tâche qui n'est plus.
+ * à l'ouverture (#277) et l'historique se lit à la même portée, le tri se fait
+ * donc côté backend et il n'y a rien à refiltrer ici. Les listes de filtres,
+ * dérivées du fil, en héritent — elles ne proposent que des agents et des tâches
+ * de ce projet, sans une ligne de plus. Un changement de projet remonte cette
+ * page (`key` du shell) : les filtres repartent à zéro plutôt que de rester
+ * posés sur une tâche qui n'est plus.
  */
 
 import { useMemo, useState } from "react";
@@ -50,8 +54,9 @@ import {
   libelleTypeEvenement,
   resumeEvenement,
 } from "@/lib/evenements";
+import { fusionnerJournal } from "@/lib/journal";
 import { type Evenement } from "@/lib/types";
-import { MAX_EVENEMENTS } from "@/lib/useControlTower";
+import { useJournal } from "@/lib/useJournal";
 
 const CLASSE_CHAMP =
   "w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-normal " +
@@ -69,7 +74,17 @@ const TOUS = "";
 type Option = { valeur: string; libelle: string };
 
 export default function PageJournal() {
-  const { projet, evenements, connecte, erreur } = useEtatGlobal();
+  const { projet, portee, evenements: direct, connecte, erreur, revision } =
+    useEtatGlobal();
+  const historique = useJournal(portee, null, revision);
+
+  // L'historique d'abord, le direct qu'il n'a pas encore rattrapé par-dessus :
+  // c'est ce qui fait qu'un rechargement ne perd rien **et** qu'un événement
+  // reçu à l'instant s'affiche sans attendre la lecture suivante.
+  const evenements = useMemo(
+    () => fusionnerJournal(historique.evenements, direct),
+    [historique.evenements, direct],
+  );
 
   const [recherche, setRecherche] = useState("");
   const [type, setType] = useState(TOUS);
@@ -101,6 +116,10 @@ export default function PageJournal() {
     tache !== TOUS ||
     notableSeul;
 
+  // Le backend plafonne une page à 200 entrées : au-delà, l'écran en montre une
+  // partie et doit le dire (`total` est le compte avant pagination).
+  const tronque = historique.total > historique.evenements.length;
+
   const reinitialiser = () => {
     setRecherche("");
     setType(TOUS);
@@ -111,26 +130,33 @@ export default function PageJournal() {
 
   return (
     <>
-      <BanniereErreurApi erreur={erreur} />
+      {/* Celle du shell d'abord : elle couvre l'API entière, là où la seconde ne
+          dit que la lecture du journal — mais un journal illisible sur une API
+          par ailleurs debout ne doit pas passer pour un projet sans activité. */}
+      <BanniereErreurApi erreur={erreur ?? historique.erreur} />
 
       {/* Ce que la page montre, et ce qu'elle ne montre pas : la promesse est
-          faite ici plutôt que devinée d'une liste courte. */}
+          faite ici plutôt que devinée d'une liste courte. Le compte tronqué se
+          dit — une page bornée qui se tait passe pour un inventaire. */}
       <p className="rounded-lg border border-neutral-200 bg-white p-3 text-sm text-neutral-600 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        Le fil de la <strong className="font-medium">session</strong>, sur{" "}
-        <strong className="font-medium">{projet.nom}</strong> : les{" "}
-        {MAX_EVENEMENTS} derniers événements reçus en temps réel depuis
-        l&apos;ouverture de la Control Tower, du plus récent au plus ancien. Il
-        repart à zéro au rechargement de la page — et au changement de projet,
-        dont il ne mélange jamais les fils. L&apos;état de référence, lui, reste
-        celui des tâches, des agents et des coûts.
+        Le <strong className="font-medium">journal persisté</strong> de{" "}
+        <strong className="font-medium">{projet.nom}</strong>, du plus récent au
+        plus ancien : il est relu à l&apos;ouverture de la page, et le temps réel
+        s&apos;y ajoute au fil de l&apos;eau.{" "}
+        {tronque
+          ? `Les ${evenements.length} plus récents des ${historique.total} événements du projet sont affichés.`
+          : "Un rechargement ne perd donc rien."}{" "}
+        Il ne mélange jamais les fils de deux projets. L&apos;état de référence,
+        lui, reste celui des tâches, des agents et des coûts.
       </p>
 
       {!connecte && (
-        // Toute cette page vient du WebSocket : coupé, elle ne se remplira plus.
-        // La barre supérieure porte déjà l'indicateur, mais nulle part ailleurs
-        // il n'explique un écran vide.
+        // L'historique, lui, est là : ce qui s'arrête est l'ajout des lignes
+        // suivantes. La barre supérieure porte déjà l'indicateur, mais nulle
+        // part ailleurs il n'explique un fil qui cesse d'avancer.
         <p className="text-sm text-amber-700 dark:text-amber-400">
-          Flux temps réel interrompu — le fil reprendra à la reconnexion.
+          Flux temps réel interrompu — le journal ci-dessous reste lisible, il
+          reprendra son avance à la reconnexion.
         </p>
       )}
 
@@ -207,13 +233,19 @@ export default function PageJournal() {
         </p>
       </section>
 
-      {evenements.length === 0 ? (
+      {evenements.length === 0 && historique.chargement ? (
+        // La première lecture est encore en vol : un « rien encore » affiché ici
+        // serait faux la moitié du temps, l'historique arrivant juste après.
+        <p className="text-sm text-neutral-500 dark:text-neutral-400">
+          Lecture du journal…
+        </p>
+      ) : evenements.length === 0 ? (
         // Le vide du projet, et non celui d'un filtre : le distinguer est ce
         // qui évite de chercher une panne (le bandeau ci-dessus dit si le flux
         // est coupé) ou de croire que rien ne tourne nulle part (#281).
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Rien encore sur {projet.nom} : aucun événement de ce projet n&apos;est
-          arrivé depuis l&apos;ouverture de la Control Tower.
+          Rien encore sur {projet.nom} : aucun événement de ce projet n&apos;a
+          été consigné.
         </p>
       ) : filtres.length === 0 ? (
         <p className="text-sm text-neutral-500 dark:text-neutral-400">

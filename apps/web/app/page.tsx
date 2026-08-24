@@ -56,8 +56,12 @@ import { entreeParLibelle } from "@/lib/navigation";
 
 /**
  * Longueur de l'aperçu d'activité. Assez pour voir le flux vivre, assez court
- * pour que l'ensemble tienne sous la ligne de flottaison d'un portable (le fil
- * complet en garde 50 côté client — `MAX_EVENEMENTS`).
+ * pour que l'ensemble tienne sous la ligne de flottaison d'un portable.
+ *
+ * Cet aperçu-ci reste celui du **direct** (`MAX_EVENEMENTS` côté client) : c'est
+ * la page Journal qui, depuis #478, part de l'historique persisté et le renvoi
+ * ci-dessous y mène. Un tableau de bord qui relirait le journal à son tour paierait
+ * une lecture de plus pour six lignes.
  */
 const APERCU_ACTIVITE = 6;
 

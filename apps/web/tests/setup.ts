@@ -18,11 +18,12 @@
  *    et rendraient l'ordre d'exécution signifiant. Tout est remis à zéro ici,
  *    plutôt que dans chaque fichier.
  * 4. **Le réseau débranché** — `useControlTower` et `useChat` ouvrent un
- *    WebSocket et appellent l'API REST, et la porte d'entrée du shell (#279)
- *    lit les projets déclarés. C'est la plomberie des tickets #47, #85 et #223,
- *    pas ce que la refonte a changé : les tests la remplacent globalement par un
- *    état immobile que chacun règle (`poserEtatGlobal`, `poserFilAssistance`,
- *    `poserProjets`), si bien qu'aucun test n'a besoin de backend ni de faux
+ *    WebSocket et appellent l'API REST, la porte d'entrée du shell (#279) lit
+ *    les projets déclarés et le fil d'activité part du journal persisté (#478).
+ *    C'est la plomberie des tickets #47, #85, #223 et #478, pas ce que la
+ *    refonte a changé : les tests la remplacent globalement par un état immobile
+ *    que chacun règle (`poserEtatGlobal`, `poserFilAssistance`, `poserProjets`,
+ *    `poserJournal`), si bien qu'aucun test n'a besoin de backend ni de faux
  *    serveur. Le vrai va-et-vient réseau reste couvert de bout en bout par le
  *    skill `/verify`.
  * 5. **De quoi attendre sur un runner chargé** — voir `asyncUtilTimeout`
@@ -43,10 +44,12 @@ import {
   installerMatchMedia,
   navigations,
   noterPortee,
+  pageJournalCourante,
   porteesDemandees,
   poserChemin,
   poserEtatGlobal,
   poserFilAssistance,
+  poserJournal,
   poserProjets,
   projetsDeclares,
   routeurFactice,
@@ -70,10 +73,10 @@ configure({ asyncUtilTimeout: 5_000 });
 // toutes), pour qu'un `poser…` suivi d'un nouveau rendu soit vu.
 //
 // Mock **partiel** (#249) : seul le hook est remplacé, le reste du module passe
-// tel quel. Un module entièrement substitué perd ses autres exports — la page
-// Journal lit `MAX_EVENEMENTS` pour dire combien d'événements elle garde, et
-// tomberait ici sur « No "MAX_EVENEMENTS" export is defined on the mock » sans
-// que rien, ni au build ni au lint, ne l'ait laissé prévoir.
+// tel quel. Un module entièrement substitué perd ses autres exports — un
+// appelant qui lit `MAX_EVENEMENTS` à côté du hook tomberait ici sur « No
+// "MAX_EVENEMENTS" export is defined on the mock » sans que rien, ni au build ni
+// au lint, ne l'ait laissé prévoir.
 // La **portée** reçue est notée au passage (#281) : le hook est factice, mais
 // ce qu'on lui demande est précisément ce que ce lot promet — chaque écran ne
 // lit que le projet actif. Sans cette note, la promesse ne serait observable
@@ -106,9 +109,16 @@ vi.mock("@/lib/useChat", () => ({
 // silencieusement inopérants. C'est pour cela que la mémoire du projet actif
 // (`lib/projetActif`) est séparée de sa résolution (`lib/etatProjetActif`) :
 // `./aides` n'a besoin que de la première, qui ne dépend de rien.
+// Le **journal persisté** (#478) rejoint cette liste pour la même raison : depuis
+// que la page Journal et la vue d'un run partent de l'historique, les rendre
+// sans ce mock taperait le réseau et laisserait l'écran figé sur sa lecture.
 vi.mock("@/lib/api", async (importOriginal) => {
   const reel = await importOriginal<typeof import("@/lib/api")>();
-  return { ...reel, chargerProjets: () => Promise.resolve(projetsDeclares()) };
+  return {
+    ...reel,
+    chargerProjets: () => Promise.resolve(projetsDeclares()),
+    chargerJournal: () => Promise.resolve(pageJournalCourante()),
+  };
 });
 
 // Hors d'un routeur Next, `usePathname` et `useRouter` n'ont pas de contexte :
@@ -132,6 +142,7 @@ beforeEach(() => {
   poserFilAssistance();
   poserChemin("/");
   poserProjets([]);
+  poserJournal([]);
   navigations.length = 0;
   porteesDemandees.length = 0;
   window.localStorage.clear();

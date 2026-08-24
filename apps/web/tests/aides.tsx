@@ -15,17 +15,24 @@ import type { ReactNode } from "react";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { ecrireProjetActifId } from "@/lib/projetActif";
 import type { ControlTower } from "@/lib/useControlTower";
-import { AGENT_SOURCE_DEFAUT, EXECUTION_EN_COURS } from "@/lib/types";
+import {
+  AGENT_SOURCE_DEFAUT,
+  EVENEMENT_TACHE_STATUT,
+  EXECUTION_EN_COURS,
+  TAILLE_PAGE_JOURNAL_MAX,
+} from "@/lib/types";
 import type {
   AgentCatalogue,
   CoutExecution,
   CoutTache,
   CoutTacheAgregee,
   DossierExplorateur,
+  EntreeJournal,
   EtatAgent,
   Evenement,
   MessageChat,
   PageExplorateur,
+  PageJournal,
   Projet,
   ResumeExecution,
   Tache,
@@ -278,6 +285,60 @@ export function poserProjets(liste: Projet[]): void {
 
 export function projetsDeclares(): Projet[] {
   return projets;
+}
+
+// --- Journal persisté (#478) -----------------------------------------------
+
+let entreesJournal: EntreeJournal[] = [];
+
+/**
+ * Ce que `chargerJournal` rendra — le mock vit dans `setup.ts`, au même titre
+ * que celui des hooks temps réel.
+ *
+ * Depuis #478 la page Journal et la vue d'un run **partent de l'historique
+ * persisté** au lieu du seul WebSocket : sans ce point d'entrée, tout test qui
+ * les rend taperait le réseau, et son premier rendu resterait figé sur « Lecture
+ * du journal… » — un écran de chargement qu'aucune assertion ne cherche.
+ * L'historique par défaut est **vide**, ce qui rend exactement ce que rendait un
+ * fil sans événement avant ce lot : les tests d'avant continuent de dire vrai.
+ */
+export function poserJournal(entrees: EntreeJournal[]): void {
+  entreesJournal = entrees;
+}
+
+/** Une page de journal factice — le `total` suit ce qui a été posé. */
+export function pageJournalCourante(): PageJournal {
+  return {
+    entrees: entreesJournal,
+    total: entreesJournal.length,
+    page: 1,
+    taille: TAILLE_PAGE_JOURNAL_MAX,
+    pages: entreesJournal.length > 0 ? 1 : 0,
+  };
+}
+
+/**
+ * Une entrée de journal, réduite à ce qu'un test nomme — le reste vide, comme
+ * une vraie entrée dont l'événement ne renseignait pas tout.
+ */
+export function entreeJournalFactice(
+  partiel: Partial<EntreeJournal> = {},
+): EntreeJournal {
+  return {
+    id: "j-0001",
+    type: EVENEMENT_TACHE_STATUT,
+    run_id: "",
+    tache_id: "",
+    titre: "",
+    agent: "",
+    role: "",
+    statut: "",
+    detail: "",
+    description: "",
+    projet_id: null,
+    horodatage: "2026-07-28T10:00:00+00:00",
+    ...partiel,
+  };
 }
 
 /**
