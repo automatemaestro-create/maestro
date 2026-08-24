@@ -1736,6 +1736,34 @@ Les points de conception, à comprendre avant d'y toucher :
   [`scripts/ci/pytest.Dockerfile`](../scripts/ci/pytest.Dockerfile).** Une dépendance ajoutée au
   dépôt change l'étiquette, donc l'image manque, donc elle est reconstruite : personne n'a à s'en
   souvenir, et une image périmée ne peut pas rendre un vert sur des dépendances qu'elle n'a pas.
+- **Et la précédente est ramassée** (#463). Le corollaire du point ci-dessus manquait : une image
+  neuve ne *remplace* pas l'ancienne, elle s'ajoute à côté. Mesuré le 2026-08-24, trois jours après
+  #372 : deux `maestro-pytest` côte à côte, dont une périmée, à **835 Mo de couches propres**
+  chacune (la base `python:3.11`, 1,595 Go, est partagée — le coût unitaire est donc très inférieur
+  aux 2,43 Go qu'affiche `docker images`). Or `pyproject.toml` et le Dockerfile ont bougé **31 fois
+  en 3 mois**, soit ~8,6 Go par mois que rien ne ramassait.
+
+  ⚠ **Ce qui rend l'affaire sérieuse n'est pas le disque, c'est le cliquet.** `docker_data.vhdx`
+  **n'est pas sparse** (vérifié) : il grandit et ne rétrécit jamais de lui-même. Chaque Go qui y
+  entre est pris sur le disque **définitivement**, y compris après suppression de l'image —
+  récupérer vraiment demande un **compactage explicite**, Docker arrêté, qui n'est pas automatisé
+  ici (il touche le stockage de toute la machine, pas le seul dépôt). Autrement dit : **supprimer
+  après coup ne rend rien, seul le fait de ne pas entrer protège.** C'est pourquoi le ramassage est
+  *préventif* — accroché à la construction, l'instant où la précédente devient périmée, même parti
+  pris qu'en #438 où le pilote ramasse sur le **verdict** du merge et non dans sa boucle — et non
+  un ménage périodique. Le chemin nominal (image déjà là) sort avant, donc une itération ordinaire
+  ne paie pas un appel docker de plus.
+
+  Trois choix à ne pas défaire : le ciblage passe par `docker images "$PYTEST_IMAGE_NOM"`, qui ne
+  **peut** rien rendre d'autre — jamais de `docker system prune`, qui emporterait l'image
+  **courante** (elle n'est « active » que le temps d'un conteneur) et ferait payer une
+  reconstruction complète, l'inverse exact du but ; la courante est gardée par comparaison
+  **exacte** et jamais par un tri par date, « la plus récente » et « celle dont l'empreinte est
+  courante » divergeant dès qu'on revient sur une branche antérieure ; et le tout est
+  **best-effort**, un `rmi` refusé étant laissé là plutôt que de transformer une question de ménage
+  en verdict rouge. `MAESTRO_PYTEST_GC=0` l'éteint ; `bash scripts/ci/pytest.sh --gc` fait le
+  rattrapage à la demande — et, lui, **dit** quand il n'a rien à retirer ou qu'il est éteint, là où
+  le ramassage automatique reste muet.
 - **Le dépôt est monté, jamais copié** — c'est le code de la branche, travail non commité compris.
   Et **jamais à la racine** : monté à `/w`, le parent du dépôt est `/`, et
   `test_projets.py::test_depot_maestro_refuse` rend `racine-de-disque` au lieu de

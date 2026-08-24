@@ -243,6 +243,13 @@ exit "${MAESTRO_FAUX_SHELLCHECK_CODE:-0}"
 #     ce poste ». C'est ce qui préserve à l'identique le sens des tests du repli écrits avant : leur
 #     scénario est « aucun démon ET rien pour en démarrer un », le seul où le repli natif est encore
 #     la bonne réponse. Un défaut à 0 les aurait transformés en silence en tests du DÉMARRAGE.
+#
+# Depuis #463 il répond aussi à `docker images`, en rendant l'inventaire que
+# `MAESTRO_FAUX_DOCKER_IMAGES` lui dicte — et il NE FILTRE PAS sur le dépôt d'images demandé, à
+# dessein : c'est ce qui permet de lui faire rendre une image étrangère et de vérifier que le
+# ramassage ne la retire pas. Un shim qui filtrerait comme le vrai docker rendrait ce test
+# tautologique — il prouverait le shim, pas le code.
+#
 #   · le TÉMOIN (`MAESTRO_FAUX_DOCKER_TEMOIN`) fait répondre `version` une fois `desktop start`
 #     passé. Sans mémoire, un shim ne peut pas distinguer « le démon ne répond pas » de « le démon
 #     ne répond pas ENCORE » — or c'est exactement la séquence qu'on veut observer. Même parti pris
@@ -268,6 +275,10 @@ case "$1" in
     exit "${MAESTRO_FAUX_DOCKER_DESKTOP_CODE:-1}" ;;
   build) exit "${MAESTRO_FAUX_DOCKER_BUILD_CODE:-0}" ;;
   image) exit "${MAESTRO_FAUX_DOCKER_INSPECT_CODE:-0}" ;;
+  images)
+    printf '%b' "${MAESTRO_FAUX_DOCKER_IMAGES:-}"
+    exit 0 ;;
+  rmi) exit "${MAESTRO_FAUX_DOCKER_RMI_CODE:-0}" ;;
   run) ;;
   *) exit 0 ;;
 esac
@@ -1216,6 +1227,130 @@ def test_l_etiquette_de_l_image_suit_pyproject_et_le_dockerfile(clone: Clone) ->
     assert depart != apres_dependances, "une dépendance qui change doit changer l'image"
     assert apres_dependances != apres_recette, "une recette qui change doit changer l'image"
     assert depart.startswith("maestro-pytest:"), depart
+
+
+def _retirees(appels: list[str]) -> list[str]:
+    """Les étiquettes que le ramassage a effectivement passées à `docker rmi`."""
+    return [appel.split()[-1] for appel in appels if appel.startswith("docker rmi ")]
+
+
+def test_le_ramassage_retire_la_perimee_et_garde_la_courante(clone: Clone) -> None:
+    """La seconde moitié du mécanisme d'empreinte (#463).
+
+    L'étiquette porte l'empreinte, donc une image neuve s'AJOUTE à côté de l'ancienne au lieu de la
+    remplacer. Sans ramassage, chaque dépendance ajoutée au dépôt laisse 835 Mo derrière elle — dans
+    un vhdx qui n'est pas sparse, donc qui ne rétrécit jamais : ce qui y entre est pris pour de bon.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+
+    lance = clone.lance(
+        "--only",
+        "pytest",
+        MAESTRO_FAUX_DOCKER_INSPECT_CODE="1",  # l'image manque → elle est construite…
+        MAESTRO_FAUX_DOCKER_IMAGES="maestro-pytest:vieille\\nmaestro-pytest:plus-vieille\\n",
+    )
+    assert lance.returncode == 0, lance.stdout + lance.stderr
+
+    appels = clone.appels()
+    courante = etiquette_image(appels)
+    retirees = _retirees(appels)
+
+    assert sorted(retirees) == ["maestro-pytest:plus-vieille", "maestro-pytest:vieille"], retirees
+    assert courante not in retirees, "l'image qu'on vient de construire ne se retire pas"
+
+
+def test_le_ramassage_n_a_lieu_qu_a_la_construction(clone: Clone) -> None:
+    """Accroché au VERDICT, pas à la boucle — même parti pris qu'en #438.
+
+    Le chemin nominal est « l'image est déjà là » : il sort avant, et ne doit donc pas payer un
+    seul appel docker de plus. Un ramassage à chaque lancement serait une lecture de plus par
+    itération, pour une question qui ne se pose qu'après une construction.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+
+    presente = clone.lance(
+        "--only",
+        "pytest",
+        MAESTRO_FAUX_DOCKER_IMAGES="maestro-pytest:vieille\\n",
+    )
+    assert presente.returncode == 0, presente.stdout + presente.stderr
+
+    appels = clone.appels()
+    assert not [appel for appel in appels if appel.startswith("docker build")], \
+        "prérequis du test : l'image est censée être déjà là"
+    assert not _retirees(appels), \
+        "sans construction, rien n'est devenu périmé : il n'y a rien à ramasser"
+
+
+def test_le_ramassage_ne_touche_jamais_l_image_d_un_autre_projet(clone: Clone) -> None:
+    """Le poste porte les images d'autres projets — n8n, Postgres, Temporal… — et un ramassage
+    lancé depuis Maestro n'a aucune raison de pouvoir les atteindre.
+
+    La borne réelle est `docker images "$PYTEST_IMAGE_NOM"`, qui ne peut rien rendre d'autre. Ici on
+    éprouve la SECONDE ligne de défense : le shim rend exprès des images étrangères — ce que le vrai
+    docker ne ferait pas — et aucune ne doit partir. C'est la différence entre « docker nous
+    protège » et « le code protège », et seule la seconde survit à un changement de format amont.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+
+    lance = clone.lance(
+        "--only",
+        "pytest",
+        MAESTRO_FAUX_DOCKER_INSPECT_CODE="1",
+        MAESTRO_FAUX_DOCKER_IMAGES=(
+            "maestro-pytest:vieille\\n"
+            "n8nio/n8n:latest\\n"
+            "postgres:16\\n"
+            "maestro-tests:local\\n"        # même préfixe, autre dépôt d'images : hors cible
+            "maestro-pytest-bis:latest\\n"  # le piège du préfixe non borné par « : »
+        ),
+    )
+    assert lance.returncode == 0, lance.stdout + lance.stderr
+
+    retirees = _retirees(clone.appels())
+    assert retirees == ["maestro-pytest:vieille"], retirees
+
+
+def test_le_ramassage_s_eteint_et_ne_fait_jamais_echouer_le_job(clone: Clone) -> None:
+    """Deux promesses en une : l'interrupteur, et le best-effort.
+
+    Un ramassage qui ferait rougir un `--only pytest` transformerait une question de ménage en
+    verdict — exactement ce qu'un filet ne doit pas faire.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+
+    eteint = clone.lance(
+        "--only",
+        "pytest",
+        MAESTRO_PYTEST_GC="0",
+        MAESTRO_FAUX_DOCKER_INSPECT_CODE="1",
+        MAESTRO_FAUX_DOCKER_IMAGES="maestro-pytest:vieille\\n",
+    )
+    assert eteint.returncode == 0, eteint.stdout + eteint.stderr
+    assert not _retirees(clone.appels()), "MAESTRO_PYTEST_GC=0 doit tout éteindre"
+
+    clone.journal.unlink(missing_ok=True)
+    recalcitrant = clone.lance(
+        "--only",
+        "pytest",
+        MAESTRO_FAUX_DOCKER_INSPECT_CODE="1",
+        MAESTRO_FAUX_DOCKER_IMAGES="maestro-pytest:vieille\\n",
+        # Cibler `rmi` SEUL, et pas `MAESTRO_FAUX_DOCKER_CODE` : celui-ci fait aussi échouer le
+        # `docker run`, donc le job pytest lui-même — le test rougissait alors pour la bonne
+        # valeur et la mauvaise raison, ce qui n'aurait rien prouvé du best-effort.
+        MAESTRO_FAUX_DOCKER_RMI_CODE="1",  # image retenue par un conteneur arrêté
+    )
+    assert recalcitrant.returncode == 0, \
+        "un rmi refusé se laisse là : le verdict du job n'en dépend pas"
+    assert _retirees(clone.appels()), "prérequis : le rmi doit bien avoir été tenté"
 
 
 def test_le_verdict_dit_toujours_dans_quel_regime_pytest_a_joue(clone: Clone) -> None:
