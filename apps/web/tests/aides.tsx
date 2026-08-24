@@ -217,21 +217,32 @@ function etatParDefaut(): ControlTower {
     // c'est ce que l'appelant en attend. Un test qui exerce le geste passe le
     // sien (`vi.fn()`), comme il le fait déjà de `relancerRun`.
     suspendreRun: async (runId: string) => ({
-      ...runFactice(runId),
+      ...runFactice({ run_id: runId }),
       en_pause: true,
     }),
     reprendreRun: async (runId: string) => ({
-      ...runFactice(runId),
+      ...runFactice({ run_id: runId }),
       en_pause: false,
     }),
     reglerCapacite: async () => {},
   };
 }
 
-/** Un résumé de run minimal — le socle des doubles ci-dessus. */
-function runFactice(runId: string): ResumeExecution {
+/**
+ * Un résumé de run minimal — le socle des doubles ci-dessus, et **exporté**
+ * depuis #480 : trois écrans du chantier #472 en rendent (la liste, la vue d'un
+ * run, l'état des runs au tableau de bord), et chacun réécrivait le sien.
+ *
+ * Les champs facultatifs du contrat (`vitalite`, `progression`, `en_pause`,
+ * `cause`, `attente_depuis`…) restent **absents** plutôt que posés à une valeur
+ * neutre : c'est ce que rend un backend antérieur au lot qui les a ajoutés, donc
+ * le cas qu'un écran doit savoir traiter. Un test qui les veut les passe.
+ */
+export function runFactice(
+  partiel: Partial<ResumeExecution> = {},
+): ResumeExecution {
   return {
-    run_id: runId,
+    run_id: "run-1",
     objectif: "objectif",
     statut: EXECUTION_EN_COURS,
     nb_taches: 0,
@@ -240,6 +251,7 @@ function runFactice(runId: string): ResumeExecution {
     projet_id: null,
     debut: "2026-07-28T10:00:00Z",
     fin: null,
+    ...partiel,
   };
 }
 
