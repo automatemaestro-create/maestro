@@ -179,6 +179,11 @@ function etatParDefaut(): ControlTower {
     executions: [],
     couts: [],
     connecte: true,
+    // Le pouls du shell (#475) : immobile par défaut, parce qu'un état factice ne
+    // recharge rien. Un test qui exerce une vue abonnée au pouls
+    // (`lib/useTachesRun`) le fait avancer d'un `poserEtatGlobal` au suivant —
+    // c'est le seul observable qui distingue « rien n'a bougé » d'un rechargement.
+    revision: 0,
     chargement: false,
     erreur: null,
     reassigner: async () => {},

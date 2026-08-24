@@ -1,0 +1,335 @@
+"use client";
+
+/**
+ * Ce qu'un run montre de lui-même : son **badge**, ce qui le **retient** et son
+ * **avancement**.
+ *
+ * Ces quatre briques sont nées dans la liste des runs (#474) ; #475 les en a
+ * sorties le jour où un second écran a eu à dire la même chose — la **vue d'un
+ * run**, qui rend son Kanban sous une barre de progression et doit annoncer son
+ * état exactement comme la ligne dont on vient de l'ouvrir. Deux formulations du
+ * même état finiraient par diverger, et c'est la raison habituelle du dépôt :
+ * un run qu'on lit « En cours » dans la liste et « en_cours » dans sa vue est un
+ * run dont on doute.
+ *
+ * Rien n'a changé de comportement au passage : ce fichier est l'extraction de ce
+ * que `ListeRuns` portait, à la seule addition de `taille` sur la barre — une
+ * liste l'empile par dizaines, une vue de run en a une seule et de tête.
+ */
+
+import Link from "next/link";
+
+import { IconeFlecheDroite } from "@/components/Icones";
+import { BadgeEtat, type TonBadge, type TonCarte } from "@/components/Primitives";
+import {
+  ATTENTE_BRIEF,
+  ATTENTE_REPONSES,
+  ATTENTE_VALIDATION,
+  estRelancable,
+  REGIME_INTERROMPU,
+  REGIME_SUSPENDU,
+  REGIME_TRAVAILLE,
+  type CauseAttente,
+  type RegimeRun,
+} from "@/lib/execution";
+import { formatHeureRelative, libelleStatutExecution } from "@/lib/format";
+import { useHorloge } from "@/lib/horloge";
+import { entreeParLibelle } from "@/lib/navigation";
+import {
+  EXECUTION_ECHEC,
+  EXECUTION_TERMINEE,
+  type Progression,
+  type ResumeExecution,
+} from "@/lib/types";
+
+/**
+ * Ce que chaque cause d'attente **dit** et **où elle mène**.
+ *
+ * Le libellé de page est résolu par le menu (`entreeParLibelle`) et non par un
+ * chemin en dur : c'est la règle du dépôt depuis #191 — un renvoi suit sa page si
+ * elle déménage, et ne s'allume pas vers une page qui n'existe pas encore.
+ *
+ * Chaque attente mène à l'écran qui porte **le geste** qui la lève, et non à la
+ * vue du run : celle-ci existe depuis #475, mais elle *montre* le run, elle ne le
+ * débloque pas — un brief se tranche à « Valider le brief », un arbitrage de tâche
+ * à « Validations ». Le jour où la vue d'un run portera ces gestes, c'est cette
+ * table qu'il faudra changer, et elle seule.
+ */
+export const ATTENTES: Record<
+  CauseAttente,
+  { libelle: string; phrase: string; page: string; action: string }
+> = {
+  [ATTENTE_BRIEF]: {
+    libelle: "Brief à valider",
+    phrase: "Le brief attend votre décision",
+    page: "Valider le brief",
+    action: "Relire",
+  },
+  [ATTENTE_REPONSES]: {
+    libelle: "Questions en attente",
+    phrase: "Le Chef de projet attend vos réponses",
+    page: "Valider le brief",
+    action: "Répondre",
+  },
+  [ATTENTE_VALIDATION]: {
+    libelle: "Validation en attente",
+    phrase: "Une tâche attend un arbitrage humain",
+    page: "Validations",
+    action: "Trancher",
+  },
+};
+
+/**
+ * Le fond d'une surface qui porte un run. Seul le régime **suspendu** en change,
+ * et c'est mesuré : teinter les quatre reviendrait à n'en signaler aucun. Ce qui
+ * attend quelqu'un est le seul état qui appelle un geste — les trois autres se
+ * lisent au badge.
+ */
+export function fondDe(regime: RegimeRun): TonCarte {
+  return regime === REGIME_SUSPENDU ? "attentionClaire" : "pleine";
+}
+
+/**
+ * Le badge d'un run — son ton, son libellé, et s'il bat.
+ *
+ * **La pastille ne bat que pour ce qui travaille**, et c'est là que se joue le
+ * critère « un run en cours se distingue d'un run soldé » (#474) : un run qui
+ * avance est bleu et bat, un run terminé est vert et immobile. Deux verts, dont un
+ * pulsant, auraient demandé de lire le libellé pour trancher — ce qui est
+ * précisément ce qu'un coup d'œil doit éviter.
+ */
+export function BadgeRun({
+  run,
+  regime,
+  attente,
+  className,
+}: {
+  run: ResumeExecution;
+  regime: RegimeRun;
+  attente: CauseAttente | null;
+  className?: string;
+}) {
+  const { ton, libelle, pulse } = apparence(run, regime, attente);
+  return (
+    <BadgeEtat ton={ton} pastille pulse={pulse} className={className}>
+      {libelle}
+    </BadgeEtat>
+  );
+}
+
+function apparence(
+  run: ResumeExecution,
+  regime: RegimeRun,
+  attente: CauseAttente | null,
+): { ton: TonBadge; libelle: string; pulse: boolean } {
+  if (regime === REGIME_TRAVAILLE) {
+    return { ton: "info", libelle: "En cours", pulse: true };
+  }
+  if (regime === REGIME_SUSPENDU && attente !== null) {
+    return { ton: "attention", libelle: ATTENTES[attente].libelle, pulse: false };
+  }
+  if (regime === REGIME_INTERROMPU) {
+    return { ton: "alerte", libelle: "Interrompu", pulse: false };
+  }
+  // Soldé : le statut porte l'issue, et les trois ne se valent pas — un run
+  // terminé n'est pas un run annulé, un run en échec appelle une lecture.
+  const ton: TonBadge =
+    run.statut === EXECUTION_TERMINEE
+      ? "positif"
+      : run.statut === EXECUTION_ECHEC
+        ? "alerte"
+        : "neutre";
+  return { ton, libelle: libelleStatutExecution(run.statut), pulse: false };
+}
+
+/**
+ * Ce qui retient le run, **depuis quand**, et le geste qui le lève. Ne rend rien
+ * quand il n'attend personne : c'est le cas courant.
+ */
+export function LigneAttente({
+  run,
+  attente,
+  className = "",
+}: {
+  run: ResumeExecution;
+  attente: CauseAttente | null;
+  className?: string;
+}) {
+  const maintenant = useHorloge();
+  if (attente === null) return null;
+  const page = entreeParLibelle(ATTENTES[attente].page);
+  return (
+    <p
+      className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-annexe text-amber-800 dark:text-amber-300 ${className}`}
+    >
+      <span>
+        {ATTENTES[attente].phrase}
+        {run.attente_depuis
+          ? ` · ${formatHeureRelative(run.attente_depuis, maintenant)}`
+          : ""}
+      </span>
+      {page && (
+        <Link
+          href={page.href}
+          className="inline-flex items-center gap-1 font-medium hover:underline"
+        >
+          {ATTENTES[attente].action}
+          <IconeFlecheDroite className="size-3.5 shrink-0" />
+        </Link>
+      )}
+    </p>
+  );
+}
+
+/**
+ * L'hôte de ce run ne bat plus (#348), et ce qu'on peut encore en faire (#349).
+ * Ne rend rien pour les trois autres régimes.
+ */
+export function LigneInterruption({
+  run,
+  regime,
+  className = "",
+}: {
+  run: ResumeExecution;
+  regime: RegimeRun;
+  className?: string;
+}) {
+  if (regime !== REGIME_INTERROMPU) return null;
+  return (
+    <p className={`text-annexe text-rose-700 dark:text-rose-400 ${className}`}>
+      Son hôte ne répond plus (#348)
+      {estRelancable(run)
+        ? " — son brief a été validé, il peut repartir depuis le tableau de bord."
+        : " et rien ne s'y joue plus."}
+    </p>
+  );
+}
+
+/**
+ * Les compartiments de la progression (#473), **dans l'ordre où la barre les
+ * empile** : ce qui est acquis à gauche, ce qui reste à droite — de sorte que la
+ * barre se remplit dans le sens de la lecture.
+ *
+ * Chaque segment porte son libellé au singulier et au pluriel : la couleur appuie
+ * le sens, elle ne le porte jamais seule (règle des primitives — deux teintes se
+ * ressemblent pour qui ne les distingue pas, et disparaissent à l'impression).
+ */
+const SEGMENTS = [
+  {
+    cle: "terminees",
+    couleur: "bg-emerald-500",
+    singulier: "terminée",
+    pluriel: "terminées",
+  },
+  { cle: "echecs", couleur: "bg-rose-500", singulier: "échec", pluriel: "échecs" },
+  {
+    cle: "bloquees",
+    couleur: "bg-amber-500",
+    singulier: "bloquée",
+    pluriel: "bloquées",
+  },
+  {
+    cle: "en_cours",
+    couleur: "bg-sky-500",
+    singulier: "en cours",
+    pluriel: "en cours",
+  },
+  {
+    cle: "a_faire",
+    couleur: "bg-neutral-300 dark:bg-neutral-700",
+    singulier: "à faire",
+    pluriel: "à faire",
+  },
+  {
+    cle: "autres",
+    couleur: "bg-neutral-400 dark:bg-neutral-500",
+    singulier: "autre",
+    pluriel: "autres",
+  },
+] as const satisfies readonly {
+  cle: keyof Progression;
+  couleur: string;
+  singulier: string;
+  pluriel: string;
+}[];
+
+/**
+ * Les deux formats de la barre. `compacte` est celui de la liste, où elle
+ * s'empile par dizaines ; `ample` celui de la vue d'un run, où elle est **la**
+ * réponse à « où en est-il ? » et se lit de loin.
+ */
+const TAILLES = {
+  compacte: { barre: "h-1.5", compte: "text-annexe" },
+  ample: { barre: "h-2.5", compte: "text-corps" },
+} as const;
+
+export type TailleAvancement = keyof typeof TAILLES;
+
+/**
+ * L'avancement d'un run : la barre, puis le compte en toutes lettres.
+ *
+ * `progression` est **optionnelle** dans le contrat (#473) — une trace relue d'un
+ * backend antérieur n'en porte pas —, d'où le repli sur `nb_taches` : dire « 8
+ * tâches » sans savoir où elles en sont vaut mieux qu'une barre inventée. Et un run
+ * **sans aucune tâche** le dit aussi : c'est l'état normal d'un run arrêté sur son
+ * brief, qui n'en a créé aucune, pas le symptôme d'une lecture ratée.
+ */
+export function Avancement({
+  run,
+  taille = "compacte",
+}: {
+  run: ResumeExecution;
+  taille?: TailleAvancement;
+}) {
+  const progression = run.progression;
+  const format = TAILLES[taille];
+
+  if (progression === undefined || progression.total === 0) {
+    const nb = progression?.total ?? run.nb_taches;
+    return (
+      <p
+        className={`chiffre mt-1.5 ${format.compte} text-neutral-500 dark:text-neutral-400`}
+      >
+        {nb === 0 ? "Aucune tâche" : `${nb} tâche${nb > 1 ? "s" : ""}`}
+      </p>
+    );
+  }
+
+  const parts = SEGMENTS.map((segment) => ({
+    ...segment,
+    valeur: progression[segment.cle],
+  })).filter((segment) => segment.valeur > 0);
+
+  return (
+    <>
+      <div
+        role="progressbar"
+        aria-label="Progression du run"
+        aria-valuemin={0}
+        aria-valuemax={progression.total}
+        aria-valuenow={progression.soldees}
+        aria-valuetext={`${progression.soldees} tâche${progression.soldees > 1 ? "s" : ""} soldée${progression.soldees > 1 ? "s" : ""} sur ${progression.total}`}
+        className={`mt-2 flex ${format.barre} w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800`}
+      >
+        {parts.map((segment) => (
+          <div
+            key={segment.cle}
+            className={`h-full ${segment.couleur}`}
+            style={{ width: `${(segment.valeur / progression.total) * 100}%` }}
+          />
+        ))}
+      </div>
+      <p
+        className={`chiffre mt-1 ${format.compte} text-neutral-500 dark:text-neutral-400`}
+      >
+        {parts
+          .map(
+            (segment) =>
+              `${segment.valeur} ${segment.valeur > 1 ? segment.pluriel : segment.singulier}`,
+          )
+          .join(" · ")}
+        {` — ${progression.soldees}/${progression.total} soldée${progression.soldees > 1 ? "s" : ""}`}
+      </p>
+    </>
+  );
+}

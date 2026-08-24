@@ -68,6 +68,16 @@ type Props = {
    * se lit « rien ne tourne » alors qu'il dit « rien ici ».
    */
   projet: Projet;
+  /**
+   * Ce que dit le tableau **vide**, quand le périmètre n'est pas le projet (#475).
+   *
+   * La phrase par défaut nomme le projet, ce qui est juste au tableau de bord et
+   * faux dans la vue d'un run : « rien encore sur Dépensio » y désignerait le
+   * mauvais vide — le projet peut être plein pendant que *ce* run n'a créé aucune
+   * tâche, ce qui est l'état normal d'un run arrêté sur son brief. Un appelant qui
+   * cadre autrement nomme donc son vide ; les autres n'ont rien à changer.
+   */
+  messageVide?: string;
 };
 
 /**
@@ -112,7 +122,13 @@ const COLONNES: {
 /** Ouvre le panneau de détail sur une tâche, en retenant d'où on est parti. */
 type Ouvrir = (tache: Tache, declencheur: HTMLElement | null) => void;
 
-export function Kanban({ taches, agents, reassigner, projet }: Props) {
+export function Kanban({
+  taches,
+  agents,
+  reassigner,
+  projet,
+  messageVide,
+}: Props) {
   // Le panneau est tenu **ici**, pas dans la carte : il est modal (une tâche à
   // la fois), et une carte est un `<article>` cliquable au fond d'une colonne
   // qui déroule — y imbriquer le dialogue le ferait hériter du clic de la carte
@@ -248,8 +264,8 @@ export function Kanban({ taches, agents, reassigner, projet }: Props) {
       </div>
       {taches.length === 0 && (
         <p className="mt-2 text-corps text-neutral-500">
-          Rien encore sur {projet.nom} — les tâches apparaîtront dès qu&apos;un
-          run de ce projet publiera ses événements.
+          {messageVide ??
+            `Rien encore sur ${projet.nom} — les tâches apparaîtront dès qu'un run de ce projet publiera ses événements.`}
         </p>
       )}
       {affichee !== null && (
