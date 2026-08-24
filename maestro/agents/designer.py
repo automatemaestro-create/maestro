@@ -66,16 +66,4 @@ DESIGNER_PROFILE = RoleProfile(
         f"soumise à accord avant adoption, {CONSIGNE_RENDU_COMPTE}"
     ),
     workspace_prefix="maestro-designer-",
-    # Marge accrue (#239) : concevoir est itératif — rendre, regarder, reprendre —
-    # et c'est le rôle dont les tours sont les plus lourds (jusqu'à ~71 000 tokens
-    # le tour, mesuré sur `concepts-esquisses`, contre ~10 000 pour une validation).
-    # C'est ici que le plafond global a cédé : une tâche Figma a épuisé ses tours
-    # en conception sans atteindre son livrable (`error_max_turns`, docs/15 §4.3).
-    # Revérifié à #297 : la méthode de spécialiste ajoute une passe de vérification
-    # d'accessibilité (relire ses écrans, calculer des contrastes) et une couverture
-    # d'états plus large — les deux se paient en tours, sur le rôle qui en avait déjà
-    # le plus besoin. 120 était déjà dimensionné pour la boucle itérative et garde de
-    # la marge : plafond conservé, à surveiller au premier `error_max_turns` observé
-    # sur une tâche de design, qui serait alors le signal de le relever — pas avant.
-    plafond_tours=120,
 )

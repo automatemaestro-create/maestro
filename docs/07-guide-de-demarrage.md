@@ -156,7 +156,7 @@ un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` �
 1. **Déléguer précisément.** Toujours fournir à un agent : objectif, format de sortie, outils à utiliser, limites. C'est ce qui évite doublons et oublis.
 2. **Commencer simple.** Pas de framework lourd avant d'en avoir besoin ; l'Agent SDK natif suffit pour le POC.
 3. **Isoler.** Une branche Git par tâche, un conteneur par exécution.
-4. **Plafonner.** Mettre tout de suite un plafond de dépense (budget de l'exécution, adossé à la comptabilité par tâche — #56) et un time-out par tâche. Sur un fournisseur qui ne rapporte pas de coût, le plafond en USD n'a aucune prise : armer alors un **plafond en tokens** (`--plafond-tokens`, #113), toujours opérant — la synthèse dit quel contrôle a réellement tenu.
+4. **Plafonner — mais en le décidant.** Un plafond de dépense (budget de l'exécution, adossé à la comptabilité par tâche — #56) et un time-out par tâche se posent explicitement : **rien n'est armé par défaut** (#494), ni ici ni côté agents, où le plafond de tours a lui aussi perdu son défaut. Sur un fournisseur qui ne rapporte pas de coût, le plafond en USD n'a aucune prise : armer alors un **plafond en tokens** (`--plafond-tokens`, #113), toujours opérant — la synthèse dit quel contrôle a réellement tenu. Et le choix inverse est légitime : une borne prudente coupe en plein travail un run qui allait aboutir, et l'échec coûte alors plus que l'emballement qu'elle prévenait.
 5. **Tracer.** Logger coûts et étapes dès le premier jour — le coût est comptabilisé **par tâche** et agrégé par exécution (#55, critère MVP n°6).
 6. **Garder l'humain dans la boucle.** Les actions sensibles attendent une validation, même au POC.
 7. **Modulariser.** Chaque agent et chaque outil doit être remplaçable sans tout casser.
@@ -600,6 +600,10 @@ Trois choses à savoir :
 - **Les garde-fous se posent au lancement** : `plafond_cout_usd`, `plafond_tokens`,
   `timeout_tache_s`, `parallelisme`. Absents (`null`), le moteur garde ses défauts ; hors
   bornes ou objectif vide, la requête est refusée en **422** et **aucun run ne part**.
+  ⚠ « Ses défauts » veut dire **aucun plafond** (#494) : ni en dépense, ni en tokens, ni
+  en tours — un run s'arrête quand il a fini, quand il échoue ou quand on l'annule. Les
+  poser est un choix, et ne pas les poser en est un aussi : c'est ce champ à `null` qui
+  arme ou désarme, rien d'implicite en dessous.
 - **Un run terminé n'est plus annulable** : `409` plutôt qu'une annulation de façade
   (`404` si le `run_id` est inconnu).
 

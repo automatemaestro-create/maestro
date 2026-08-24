@@ -24,12 +24,20 @@ if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution
     from maestro.agents.permissions import PolitiqueOutils
     from maestro.projets.modele import Projet
 
-#: Plafond de tours appliqué à une exécution agentique dont l'appelant n'en fixe
-#: aucun (#239). Valeur **conservatrice** : c'est le garde-fou anti-boucle de
-#: docs/02 §7, pas une marge de confort — un agent qui a besoin de plus le déclare
-#: dans son profil (`maestro.agents.runtime.RoleProfile.plafond_tours`). Ce défaut
-#: existe pour qu'aucun appel ne soit jamais *illimité*, non pour dispenser de choisir.
-PLAFOND_TOURS_DEFAUT = 40
+#: Borne appliquée à une exécution agentique dont l'appelant n'en fixe pas — depuis
+#: #494 il n'y en a plus : le défaut est **l'absence de borne**, et c'est un choix,
+#: pas un oubli. Une borne posée « au cas où » tue en plein travail un run
+#: qui allait aboutir : `TurnLimitReached` est un échec **non transitoire**, donc
+#: jamais relancé (ENF-06), et ce qui n'était pas commité est perdu net. Le défaut
+#: conservateur de #239 (40 tours, 120 pour le Designer) avait déjà dû être desserré
+#: après un `error_max_turns` qui a coûté un livrable — tâche runbook coupée à 41
+#: tours pour 0,80 $ dépensés en vain, docs/15 §4.3 : relever une borne au premier
+#: échec observé, c'est constater qu'elle protégeait mal. Même leçon que #286
+#: (budget) et #326 (timeout).
+#:
+#: Le **réglage survit** : `plafond_tours` reste sur `RoleProfile`, `AgentRuntime` et
+#: `run_agent`, à poser explicitement par qui en veut un.
+PLAFOND_TOURS_DEFAUT: int | None = None
 
 
 class UnsupportedCapability(RuntimeError):
@@ -56,6 +64,11 @@ class TurnLimitReached(RuntimeError):
     **nomme la borne effectivement appliquée** : un échec dit de quelle limite il
     parle, et la lecture d'un journal distingue l'agent qu'on a serré trop court
     de celui qui s'emballe vraiment.
+
+    Elle **subsiste sans défaut** (#494) : aucun agent du dépôt n'est plus borné,
+    mais un `plafond_tours` explicite en pose toujours un, un fournisseur tiers peut
+    avoir sa propre borne, et #479 en fait une cause d'arrêt nommée à l'écran. Sans
+    borne posée, la levée dit `max_turns` faute de chiffre à citer.
     """
 
 
@@ -267,7 +280,7 @@ class ModelProvider(ABC):
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
-        plafond_tours: int = PLAFOND_TOURS_DEFAUT,
+        plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
         """Exécution *agentique outillée* : renvoie le compte-rendu final de l'agent.
@@ -303,14 +316,15 @@ class ModelProvider(ABC):
         c'est le canal de traçage de l'appelant (journal, fil temps réel) ; un
         échec du callback ne doit jamais casser l'exécution observée.
 
-        `plafond_tours` (#239) borne la boucle agentique — le garde-fou
-        anti-emballement de docs/02 §7, dépassé ⇒ `TurnLimitReached`. Il est
-        **fourni par l'appelant** (le profil de l'agent, via `AgentRuntime`) et
-        non plus lu dans une constante du fournisseur : un tour n'a pas de coût
-        stable d'un rôle à l'autre (facteur 7 mesuré entre une tâche de
-        validation et une tâche de conception), donc une borne unique protège
-        mal les uns en bridant les autres. Un appel qui n'en fournit pas retombe
-        sur `PLAFOND_TOURS_DEFAUT` — jamais sur l'absence de borne.
+        `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
+        `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de
+        l'agent, via `AgentRuntime`) et non lu dans une constante du fournisseur :
+        un tour n'a pas de coût stable d'un rôle à l'autre (facteur 7 mesuré entre
+        une tâche de validation et une tâche de conception), donc une borne unique
+        protège mal les uns en bridant les autres. Un appel qui n'en fournit pas
+        n'est **pas borné** (#494, `PLAFOND_TOURS_DEFAUT` valant `None`) : le
+        défaut est l'absence de borne, et un fournisseur ne doit donc pas en
+        inventer une — celui qui en veut une la reçoit.
 
         Capacité **optionnelle** : la base la refuse (`UnsupportedCapability`) ; un
         fournisseur outillé (Claude via l'Agent SDK) la surcharge. Le moteur reste

@@ -87,7 +87,13 @@ Un même agent s'exécute de deux façons, et les deux doivent porter le même m
 
 > **Le fournisseur est configurable par agent** (voir §4 et [stack §2](./02-stack-technique.md)). Les modèles ci-dessus sont le **défaut Claude du POC** ; on peut affecter à chaque agent un autre fournisseur/modèle (OpenAI, Google, ouvert/local) **sans changer son rôle ni son playbook** — c'est l'objet de la couche d'abstraction.
 
-> **Le plafond de tours l'est aussi** (#239) : chaque profil porte le sien (`RoleProfile.plafond_tours`), passé au fournisseur à chaque exécution outillée. Défaut conservateur de **40 tours** pour les rôles de production et d'analyse (Développeur, BDD, DevOps, QA) ; **120** pour le Designer, dont la boucle *rendre → regarder → reprendre* consomme des tours bien plus lourds (~71 000 tokens le tour, contre ~10 000 pour une tâche de validation — facteur 7). Une borne unique protégeait mal les uns en bridant les autres : elle avait dû être relevée globalement après un `error_max_turns` sur une tâche de conception ([docs/15 §4.3](./15-pilote-mcp-slack.md)), au prix de la protection de tous les autres. Un agent qui ne déclare rien reste borné par le défaut — jamais illimité — et l'échec nomme la borne qu'il a atteinte.
+> **Le plafond de tours l'est aussi** (#239) : chaque profil peut porter le sien (`RoleProfile.plafond_tours`), passé au fournisseur à chaque exécution outillée. Il vit sur le profil parce qu'un tour n'a pas de coût comparable d'un rôle à l'autre : la boucle *rendre → regarder → reprendre* du Designer consomme jusqu'à **~71 000 tokens le tour** (mesuré sur `concepts-esquisses`) contre **~10 000** pour une tâche de validation — facteur 7. Une borne unique protégeait donc mal les uns en bridant les autres : elle avait dû être relevée globalement après un `error_max_turns` qui a coûté un livrable — la tâche runbook du pilote MCP/Slack, coupée à **41 tours** pour **0,80 $** dépensés en pure perte, jamais relancée (ENF-06), [docs/15 §4.3](./15-pilote-mcp-slack.md) —, au prix de la protection de tous les autres.
+>
+> ⚠ **Depuis #494, plus aucun profil n'en déclare, et le défaut est l'absence de borne** — `PLAFOND_TOURS_DEFAUT` vaut `None`, le `40` des rôles de production et d'analyse comme le `120` du Designer sont partis, et le SDK ne reçoit plus `--max-turns`. Le raisonnement de #239 tenait toujours ; c'est sa prémisse qui a cédé. Un plafond atteint lève `TurnLimitReached`, échec **non transitoire** donc jamais relancé (ENF-06) : ce qui n'était pas commité est perdu net. Une borne prudente ne ralentit pas un agent qui s'emballe, elle tue un agent qui allait aboutir — et #239 en avait déjà fait l'expérience, puisqu'il n'a desserré les bornes *qu'après* le livrable perdu de docs/15 §4.3. Relever une borne au premier échec observé, c'est constater qu'elle protégeait mal ; #494 en tire la conclusion complète. Même leçon que #286 (budget) et #326 (time-out) sur les sessions autonomes.
+>
+> Le **réglage survit au défaut** : un `plafond_tours=N` sur un profil, ou en surcharge d'`AgentRuntime`, borne toujours la boucle, et l'échec **nomme la borne** atteinte. Ce qui disparaît est l'imposition, pas la possibilité.
+>
+> Le seul contre-exemple mesuré mérite d'être conservé : un plafond atteint côté **DevOps** a bel et bien signalé un emballement réel (run D de la démo v1, [docs/13](./13-demo-v1.md)) — c'est le cas où la borne a fait son travail. Il est jugé moins coûteux qu'un livrable perdu, mais il n'est pas nul : un agent DevOps qui part en boucle n'a plus, aujourd'hui, que le plafond de dépense du lancement pour l'arrêter.
 
 > Le **routage** (doc 01 §3.2) s'appuie sur ces tags + un classifieur léger pour les cas ambigus.
 
@@ -108,7 +114,7 @@ Chaque fiche renvoie au **document qui fait foi** — celui que le moteur charge
 
 ### 3.2 💻 Développeur
 
-📄 [`maestro/agents/playbooks_defaut/developpeur.md`](../maestro/agents/playbooks_defaut/developpeur.md) · profil : `maestro.agents.developer.DEVELOPER_PROFILE` · plafond : 40 tours
+📄 [`maestro/agents/playbooks_defaut/developpeur.md`](../maestro/agents/playbooks_defaut/developpeur.md) · profil : `maestro.agents.developer.DEVELOPER_PROFILE` · plafond de tours : aucun (#494)
 
 - **Mission :** implémenter et modifier le code applicatif de bout en bout — backend, frontend, API, refactorisation. Le livrable est **du code qui s'exécute**, pas une esquisse.
 - **Outils :** fichiers + shell dans un espace de travail isolé.
@@ -118,7 +124,7 @@ Chaque fiche renvoie au **document qui fait foi** — celui que le moteur charge
 
 ### 3.3 🗄️ Base de données
 
-📄 [`maestro/agents/playbooks_defaut/bdd.md`](../maestro/agents/playbooks_defaut/bdd.md) · profil : `maestro.agents.database.DATABASE_PROFILE` · plafond : 40 tours
+📄 [`maestro/agents/playbooks_defaut/bdd.md`](../maestro/agents/playbooks_defaut/bdd.md) · profil : `maestro.agents.database.DATABASE_PROFILE` · plafond de tours : aucun (#494)
 
 - **Mission :** modéliser, écrire les migrations, optimiser les accès. Le livrable s'applique : un schéma qui s'installe, des migrations qui se rejouent **et s'annulent**.
 - **Méthode :** modéliser avant d'écrire du SQL (entités, relations, cardinalités, types, nullabilité) ; l'**intégrité d'abord** (clés, unicité, contraintes de domaine, cascades — ce que la base garantit n'a pas à être revérifié par cinq applications), les **accès ensuite** (un index par requête réelle, et pas un de plus) ; migrer de façon réversible, chaque migration portant son retour arrière à côté ; éprouver sur une **base jetable** créée dans l'espace de travail.
@@ -127,7 +133,7 @@ Chaque fiche renvoie au **document qui fait foi** — celui que le moteur charge
 
 ### 3.4 ⚙️ DevOps
 
-📄 [`maestro/agents/playbooks_defaut/devops.md`](../maestro/agents/playbooks_defaut/devops.md) · profil : `maestro.agents.devops.DEVOPS_PROFILE` · plafond : 40 tours
+📄 [`maestro/agents/playbooks_defaut/devops.md`](../maestro/agents/playbooks_defaut/devops.md) · profil : `maestro.agents.devops.DEVOPS_PROFILE` · plafond de tours : aucun (#494 — c'est le seul rôle dont une borne ait déjà attrapé un emballement réel, run D de [docs/13](./13-demo-v1.md))
 
 - **Mission :** construire les pipelines CI/CD et l'infrastructure, et **préparer** les déploiements.
 - **Méthode :** cadrer l'environnement cible (plateforme, ressources, secrets, services voisins) en écrivant ses hypothèses quand rien ne les donne ; écrire l'infrastructure **comme du code** — versions épinglées, rien qui dépende de l'état d'une machine, aucun secret en clair ; valider à blanc ce qui peut l'être et consigner les résultats réels ; produire un **runbook étape par étape** avec sa vérification et son plan de retour arrière.
@@ -136,7 +142,7 @@ Chaque fiche renvoie au **document qui fait foi** — celui que le moteur charge
 
 ### 3.5 🎨 Designer
 
-📄 [`maestro/agents/playbooks_defaut/designer.md`](../maestro/agents/playbooks_defaut/designer.md) · profil : `maestro.agents.designer.DESIGNER_PROFILE` · plafond : **120 tours** (#239 — sa boucle *rendre → regarder → reprendre* consomme des tours ~7× plus lourds que les autres rôles)
+📄 [`maestro/agents/playbooks_defaut/designer.md`](../maestro/agents/playbooks_defaut/designer.md) · profil : `maestro.agents.designer.DESIGNER_PROFILE` · plafond de tours : aucun (#494 — le **120** que #239 lui avait accordé est parti avec les autres ; sa boucle *rendre → regarder → reprendre* consomme des tours ~7× plus lourds, c'est-à-dire le rôle qui gagne le plus à n'être pas borné)
 
 - **Mission :** concevoir écrans, parcours, composants et **design tokens** conformes à la charte.
 - **Outils :** fichiers + shell ; MCP Figma prévu, absent au POC — les maquettes se matérialisent en HTML ou SVG.
@@ -146,7 +152,7 @@ Chaque fiche renvoie au **document qui fait foi** — celui que le moteur charge
 
 ### 3.6 🧪 QA / Testeur
 
-📄 [`maestro/agents/playbooks_defaut/qa.md`](../maestro/agents/playbooks_defaut/qa.md) · profil : `maestro.agents.qa.QA_PROFILE` · plafond : 40 tours
+📄 [`maestro/agents/playbooks_defaut/qa.md`](../maestro/agents/playbooks_defaut/qa.md) · profil : `maestro.agents.qa.QA_PROFILE` · plafond de tours : aucun (#494)
 
 - **Mission :** analyser le risque, écrire et exécuter les tests, faire la revue des livrables amont (le tableau noir), et rendre un **verdict étayé et priorisé** — de quoi décider quoi corriger d'abord, pas une case à cocher.
 - **Méthode :** partir du **risque** (ce qui casse le plus probablement, ce qui coûte le plus cher si ça casse) ; retenir pour chacun le niveau de test le moins cher qui l'attrape vraiment, et **écrire ce qu'il laisse délibérément de côté** — une couverture assumée se relit, une couverture silencieuse se confond avec un oubli ; exécuter pour de vrai et consigner les résultats **réels**.

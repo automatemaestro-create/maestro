@@ -35,6 +35,7 @@ Aucun appel réseau ni modèle : on lit des fichiers du paquet et un dépôt tem
 """
 
 import re
+from dataclasses import replace
 
 import pytest
 
@@ -258,16 +259,26 @@ def test_le_prompt_texte_du_catalogue_porte_le_regime_et_des_garde_fous(role):
     assert "Décisions & arbitrages" in garde_fous and "Recommandations" in garde_fous
 
 
-def test_les_plafonds_de_tours_restent_bornes():
-    # #239 : chaque rôle porte sa borne anti-emballement, jamais illimitée. Le Designer
-    # est le seul à sortir du défaut (sa boucle rendre/regarder/reprendre coûte ~7× le tour).
+def test_aucun_role_ne_borne_ses_tours_par_defaut():
+    # #494 renverse l'invariant de #239 : plus aucun rôle ne porte de borne, pas même
+    # le Designer et son 120. Un plafond atteint lève `TurnLimitReached`, échec **non
+    # transitoire** donc jamais relancé (ENF-06) : la borne prudente ne freinait pas un
+    # agent qui s'emballe, elle perdait le travail d'un agent qui allait aboutir.
     plafonds = {nom: profil.plafond_tours for nom, profil in PROFILS.items()}
 
-    assert all(plafond > 0 for plafond in plafonds.values())
-    assert plafonds["designer"] > PLAFOND_TOURS_DEFAUT
-    assert {nom for nom, p in plafonds.items() if p == PLAFOND_TOURS_DEFAUT} == set(ROLES) - {
-        "designer"
-    }
+    assert set(plafonds) == set(ROLES), plafonds
+    assert set(plafonds.values()) == {None}, plafonds
+    assert PLAFOND_TOURS_DEFAUT is None
+
+
+def test_le_reglage_du_plafond_survit_a_son_defaut():
+    # Ce qui tombe est le défaut, pas le réglage : poser une borne sur un rôle marche
+    # toujours. Sans ce contrôle, « plus aucun plafond » et « plus de plafond du tout »
+    # deviendraient indistinguables, et #494 pourrait être relu comme le retrait de #239.
+    borne = replace(PROFILS["designer"], plafond_tours=120)
+
+    assert borne.plafond_tours == 120
+    assert PROFILS["designer"].plafond_tours is None
 
 
 # --- ⑤ Invariants de chargement, rôle par rôle (#76, #78, #111) -----------------------

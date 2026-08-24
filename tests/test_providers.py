@@ -365,11 +365,14 @@ def test_claude_borne_la_boucle_sur_le_plafond_recu(monkeypatch):
     assert _max_turns_vu(monkeypatch, plafond_tours=7) == 7
 
 
-def test_claude_sans_plafond_reste_borne_par_le_defaut(monkeypatch):
-    # Un appel qui n'en fournit pas retombe sur le défaut conservateur — jamais
-    # sur l'absence de borne (le garde-fou anti-boucle de docs/02 §7 tient seul).
-    assert _max_turns_vu(monkeypatch) == PLAFOND_TOURS_DEFAUT
-    assert PLAFOND_TOURS_DEFAUT > 0
+def test_claude_sans_plafond_ne_borne_plus_la_boucle(monkeypatch):
+    # #494 : un appel qui n'en fournit pas n'est plus borné du tout. Ce n'est pas
+    # « le défaut a changé de valeur » mais « il n'y a plus de défaut » : le SDK ne
+    # passe `--max-turns` au CLI que si `max_turns` est renseigné, donc c'est bien
+    # `None` — et pas un grand nombre — qui vaut absence de borne.
+    assert _max_turns_vu(monkeypatch) is None
+    assert PLAFOND_TOURS_DEFAUT is None
+
 
 
 def test_le_message_du_plafond_nomme_la_borne_appliquee(monkeypatch):
