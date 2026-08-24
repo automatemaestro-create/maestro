@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, replace
 from time import perf_counter
@@ -32,6 +32,7 @@ from maestro.agents.permissions import PermissionStore, PolitiqueOutils
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
+from maestro.detail_tache import EtapeTache, SuiviChecklist, consigne_detail
 from maestro.engine.guardrails import DemandeValidation, Guardrails
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.orchestrator.schema import Task
@@ -622,15 +623,28 @@ class LocalExecutor(TaskExecutor):
         personne n'écoutait : la tâche était relancée, rééchouait, et l'incident se
         soldait sans qu'on sache s'il s'agissait d'une limite d'usage, d'un
         dépassement de contexte ou d'un plantage.
+
+        La **checklist** de la tâche (#489) est tenue ici, et non dans la boucle
+        de tentative : un `SuiviChecklist` par exécution, monté sur l'ossature que
+        le plan déclare (`task.etapes`), posé une fois avant la première tentative
+        et complété par les relevés de l'agent. Le placer plus bas le remettrait à
+        neuf à chaque relance, c'est-à-dire ferait reculer l'avancement au moment
+        précis où l'on a le plus besoin de savoir ce qui était déjà acquis.
         """
         relance = self._relance
         max_tentatives = relance.max_tentatives if relance is not None else 1
         tentative = 1
+        suivi = SuiviChecklist(task.etapes)
+        # L'ossature part avant la première tentative : c'est ce qui donne à lire
+        # la tâche pendant qu'elle démarre, là où l'agent n'a encore rien dit.
+        # Muet quand le plan n'en déclare aucune (règle de #246).
+        if not suivi.vide:
+            self._consigne_etapes(task, agent, suivi.etapes(), journal)
         while True:
             self._consigne_debut(task, agent, tentative, max_tentatives, journal)
             try:
                 sortie, fichiers = await self._produce(
-                    agent, task, description, playbook, serveurs_mcp, politique, journal
+                    agent, task, description, playbook, serveurs_mcp, politique, journal, suivi
                 )
             except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
                 cause = str(exc)
@@ -831,6 +845,59 @@ class LocalExecutor(TaskExecutor):
             projet_id=task.projet_id,
         )
 
+    def _consigne_etapes(
+        self,
+        task: Task,
+        agent: Agent,
+        etapes: Sequence[EtapeTache],
+        journal: RunJournal,
+    ) -> None:
+        """Pose la checklist de la tâche au journal (#489) — par `consigne_detail` (#246).
+
+        Le **chemin existant**, et pas un second transport : `consigne_detail`
+        écrit une étape `<task.id>:detail`, le pont (#46) la mue en événement
+        `tache.detail`, la projection la pose sur la carte et le panneau de détail
+        (#251) la rend. Toute cette plomberie était posée depuis #246 et attendait
+        un appelant — c'est celui-ci.
+
+        La tâche ne **change pas de colonne** au passage : `tache.detail` ne porte
+        que le détail, jamais un statut. Une checklist qui se coche est un
+        avancement *dans* la tâche, pas une tâche qui avance.
+
+        Rien n'entre au grand livre : poser une case à cocher ne dépense pas, et
+        le pont écarte de lui-même l'usage des étapes de détail.
+        """
+        consigne_detail(
+            journal,
+            task.id,
+            etapes=[etape.to_dict() for etape in etapes],
+            agent=agent.nom,
+            role=agent.role,
+        )
+
+    def _on_etapes(
+        self,
+        task: Task,
+        agent: Agent,
+        suivi: SuiviChecklist,
+        journal: RunJournal,
+    ) -> Callable[[Sequence[EtapeTache]], None]:
+        """Le canal par lequel un relevé de l'agent devient une checklist consignée (#489).
+
+        Réconcilie d'abord (`SuiviChecklist.rapporte` : l'ossature supplantée au
+        premier relevé, puis la fusion monotone), et ne consigne que si la
+        checklist a **changé** — un agent rappelle volontiers sa liste à
+        l'identique, et republier à chaque fois coûterait une ligne de journal et
+        un événement de bus pour rien.
+        """
+
+        def signale(relevees: Sequence[EtapeTache]) -> None:
+            etapes = suivi.rapporte(relevees)
+            if etapes is not None:
+                self._consigne_etapes(task, agent, etapes, journal)
+
+        return signale
+
     async def _produce(
         self,
         agent: Agent,
@@ -840,6 +907,7 @@ class LocalExecutor(TaskExecutor):
         serveurs_mcp: tuple[ServeurMcp, ...] = (),
         politique: PolitiqueOutils | None = None,
         journal: RunJournal | None = None,
+        suivi: SuiviChecklist | None = None,
     ) -> tuple[str, tuple[ProducedFile, ...]]:
         """Produit le livrable de `task` : runtime outillé si le rôle en a un, sinon texte.
 
@@ -875,6 +943,12 @@ class LocalExecutor(TaskExecutor):
         son issue. Le repli texte (`generate`) n'en émet aucune — un appel texte
         n'a pas d'étapes à raconter, et il ne dure pas.
 
+        La **checklist** (#489) suit le même chemin et pour la même raison : un
+        appel texte n'a pas de liste de travail à tenir. L'ossature du plan, elle,
+        a déjà été posée par l'appelant — donc une tâche traitée en repli texte
+        garde la checklist que le plan annonçait, sans jamais la voir se cocher.
+        C'est exact et c'est dit : personne n'a rapporté d'avancement.
+
         Le **projet** de la tâche (#224) n'équipe lui aussi que le chemin
         outillé : c'est de lui qu'est dérivé l'espace de travail (worktree ou
         copie). Le chemin texte ne produit aucun fichier — il n'a pas d'espace
@@ -905,6 +979,11 @@ class LocalExecutor(TaskExecutor):
                         else lambda texte: self._consigne_activite(
                             task, agent, texte, journal
                         )
+                    ),
+                    on_etapes=(
+                        None
+                        if journal is None or suivi is None
+                        else self._on_etapes(task, agent, suivi, journal)
                     ),
                     projet=self._projet(task),
                     tache_id=task.id,
@@ -1001,6 +1080,15 @@ def _build_task_description(task: Task, dependances: Sequence[TaskResult]) -> st
     Les résultats des dépendances forment le tableau noir : l'agent voit ce que les
     tâches prérequises ont produit, pour enchaîner de façon cohérente. C'est la
     matière commune aux deux chemins d'exécution — runtime outillé et appel texte.
+
+    L'**ossature de la checklist** (#489) y figure quand le plan en déclare une,
+    et c'est ce qui rend la moitié « complétée par l'agent » de l'arbitrage
+    possible : sans elle sous les yeux, l'agent ouvre sa liste de travail sur ce
+    qu'il imagine, et ce que l'orchestrateur avait annoncé disparaît de l'écran
+    au premier relevé. Elle est donnée comme une **proposition** et non comme une
+    consigne — un agent qui découvre en travaillant a raison contre un plan écrit
+    à l'aveugle, et c'est précisément pourquoi son relevé la supplante
+    (`maestro.detail_tache.SuiviChecklist`).
     """
     lignes = [
         f"Tâche : {task.titre}",
@@ -1008,6 +1096,13 @@ def _build_task_description(task: Task, dependances: Sequence[TaskResult]) -> st
         "Description :",
         task.description,
     ]
+    if task.etapes:
+        lignes += [
+            "",
+            "Étapes prévues au plan (proposition — ta liste de travail fait foi, "
+            "reprends-les, corrige-les ou remplace-les selon ce que la tâche exige) :",
+        ]
+        lignes += [f"- {etape}" for etape in task.etapes]
     if dependances:
         lignes += ["", "Résultats des tâches dont celle-ci dépend :"]
         for dep in dependances:

@@ -174,7 +174,7 @@ export function PanneauDetailTache({
               >
                 Étapes
               </TitreSection>
-              <Avancement faites={detail.faites} total={detail.etapes.length} />
+              <Avancement etapes={detail.etapes} faites={detail.faites} />
               <ul className="mt-2 space-y-1.5">
                 {detail.etapes.map((etape, rang) => (
                   <LigneEtape key={`${rang}-${etape.libelle}`} etape={etape} />
@@ -231,9 +231,27 @@ function TitreSection({
   );
 }
 
-/** La barre d'avancement de la checklist — la même lecture, d'un coup d'œil. */
-function Avancement({ faites, total }: { faites: number; total: number }) {
-  const part = total === 0 ? 0 : Math.round((faites / total) * 100);
+/**
+ * L'avancement de la checklist, **une case par étape** — la même lecture d'un
+ * coup d'œil, mais qui ne peut pas reculer (#489).
+ *
+ * C'était une barre unique remplie à `faites / total`, et c'est le dénominateur
+ * qui a changé de nature : la checklist n'est plus déclarée une fois pour toutes
+ * par le plan, elle est **complétée par l'agent en cours de route**
+ * (`maestro.detail_tache`, l'arbitrage). Un agent qui découvre une étape de plus
+ * fait donc grandir le total — et sur une barre proportionnelle, « 3/5 » qui
+ * devient « 3/8 » se voit comme un recul : la barre se rétracte alors que rien
+ * n'a été perdu. Une progression qui redescend est pire que pas de progression
+ * du tout, c'est le critère du ticket.
+ *
+ * Une case par étape retire au dénominateur son pouvoir de rétracter : ce qui
+ * est acquis reste allumé, la rangée s'**allonge**. C'est aussi ce que montre un
+ * pipeline d'intégration continue, pour la même raison — on y lit des étapes
+ * franchies, jamais un pourcentage. Le compteur `3/8` du titre dit, lui, que le
+ * dénominateur a bougé : les deux moitiés du critère se répondent.
+ */
+function Avancement({ etapes, faites }: { etapes: EtapeAffichee[]; faites: number }) {
+  const total = etapes.length;
   return (
     <div
       role="progressbar"
@@ -242,12 +260,22 @@ function Avancement({ faites, total }: { faites: number; total: number }) {
       aria-valuemax={total}
       aria-valuenow={faites}
       aria-valuetext={`${faites} étape${faites > 1 ? "s" : ""} terminée${faites > 1 ? "s" : ""} sur ${total}`}
-      className="h-1 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800"
+      className="flex w-full gap-0.5"
     >
-      <div
-        className="h-full rounded-full bg-emerald-500 transition-[width]"
-        style={{ width: `${part}%` }}
-      />
+      {etapes.map((etape, rang) => (
+        <span
+          key={`${rang}-${etape.libelle}`}
+          aria-hidden="true"
+          className={
+            "h-1 flex-1 rounded-full transition-colors " +
+            (etape.etat === ETAPE_FAITE
+              ? "bg-emerald-500"
+              : etape.etat === ETAPE_EN_COURS
+                ? "bg-amber-500"
+                : "bg-neutral-200 dark:bg-neutral-800")
+          }
+        />
+      ))}
     </div>
   );
 }

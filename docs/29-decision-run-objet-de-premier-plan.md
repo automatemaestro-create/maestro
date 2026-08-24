@@ -247,6 +247,10 @@ agents » plutôt qu'au chantier des runs, et une priorité `moyenne` là où le
   réelle (`consigne_detail` est défini, transporté, diffusé, affiché… et **appelé par personne** :
   ses seules occurrences dans `maestro/` sont des commentaires), mais elle appartient au chantier du
   suivi en pipeline (#488) et s'y tranche sur pièces, pas ici.
+  ⚠ **Tranchée depuis, au lot #489** : *ossature au plan, complétée et cochée par l'agent*. Le
+  motif, les deux options écartées et les règles de réconciliation sont écrits en tête de
+  [`maestro/detail_tache.py`](../maestro/detail_tache.py) — c'est là qu'ils vivent, pas ici : la
+  décision s'est prise sur pièces, comme prévu, et ce document n'en garde que le renvoi.
 - **La cible visuelle de la Control Tower** (#471) : une recherche, pas une refonte, et rien de ce
   qui est décidé ici n'en dépend.
 

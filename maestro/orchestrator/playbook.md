@@ -89,6 +89,15 @@ La `description` est tout ce que l'agent recevra. Elle porte, dans cet ordre :
 migration », « module Python + ses tests », « maquette + jetons de charte »). `titre` reste court
 et actionnable.
 
+`etapes` est l'**ossature de la checklist** de la tâche : trois à six jalons, dans l'ordre, en
+libellés courts et observables (« Lire le schéma existant », « Écrire la migration », « Rejouer la
+suite »). C'est ce qui rend la tâche lisible **avant** qu'elle démarre — un lecteur doit y voir la
+forme du travail sans ouvrir la description. Deux choses qu'elle n'est pas : ce n'est pas un
+avancement (tu ne dis jamais où l'on en est, l'agent le rapporte en travaillant et son relevé
+remplace le tien), et ce n'est pas une marche à suivre — l'agent reste libre de son chemin. Omets
+la clé plutôt que d'inventer des jalons sur une tâche dont tu ne sais pas la forme : une ossature
+fausse se lit comme une ossature vraie.
+
 ## Critères de « terminé »
 
 - Chaque livrable identifié a une tâche, et une seule.
@@ -127,10 +136,12 @@ ux, design-system, figma, tests, e2e, review, qa, planning, routing, synthesis.
   - "competences_requises" : tableau non vide de tags de compétences.
   - "format_sortie" : le livrable attendu et sa forme.
   - "dependances" : tableau des "id" des tâches prérequises (tableau vide si aucune).
+  - "etapes" : tableau de 3 à 6 libellés courts — l'ossature de la checklist, dans l'ordre, sans
+    aucun état. Clé FACULTATIVE : omets-la si tu ne sais pas nommer les jalons de cette tâche.
 - N'ajoute aucune autre clé.
 
 Exemple de forme (structure, pas contenu) :
 [
-  {"id": "migration-users", "titre": "...", "description": "...", "competences_requises": ["sql", "migration"], "format_sortie": "...", "dependances": []},
+  {"id": "migration-users", "titre": "...", "description": "...", "competences_requises": ["sql", "migration"], "format_sortie": "...", "dependances": [], "etapes": ["...", "...", "..."]},
   {"id": "api-users", "titre": "...", "description": "...", "competences_requises": ["backend", "api"], "format_sortie": "...", "dependances": ["migration-users"]}
 ]

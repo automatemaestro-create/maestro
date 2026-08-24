@@ -56,6 +56,17 @@
       "uniqueItems": true,
       "default": []
     },
+    "etapes": {
+      "type": "array",
+      "description": "Ossature de la checklist de la tache (#489) : les etapes prevues, dans l'ordre, en libelles seuls. L'orchestrateur declare CE QU'IL Y A A FAIRE ; il ne declare jamais OU L'ON EN EST — l'avancement se coche en cours d'execution (maestro.detail_tache.consigne_detail) et n'a donc pas sa place dans un plan. Absente par defaut : un plan sans ossature reste valide, et sa tache n'affiche aucune checklist (regle de #246). Le premier releve de l'agent en cours d'execution SUPPLANTE cette ossature — elle sert a rendre la tache lisible avant qu'elle demarre, pas a contraindre l'agent.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "maxItems": 12,
+      "default": []
+    },
     "projet_id": {
       "type": "string",
       "description": "Identifiant optionnel du projet (entite PROJECT, #221) auquel la tache appartient (#222). Absent par defaut : un plan sans projet reste valide et se deroule comme avant. Pose par le lancement du run, dont chaque tache du plan herite ; c'est ce qui permet aux vues (Kanban, couts, journal) de filtrer par projet.",

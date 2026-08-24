@@ -26,15 +26,32 @@ from typing import Any
 from maestro.agents.mcp import ServeurMcp, resolus
 from maestro.agents.permissions import PolitiqueOutils
 from maestro.config import Settings, load_settings
+from maestro.detail_tache import EtapeTache
 from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
 from maestro.sandbox import ProducedFile, espace_de_travail
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
-#: explorer, shell. Volontairement restreint (docs/02 §7 : permissions scopées) —
-#: pas d'outils réseau ni MCP au POC.
-DEFAULT_TOOLS: tuple[str, ...] = ("Read", "Write", "Edit", "Glob", "Grep", "Bash")
+#: explorer, shell, **tenir sa liste de travail**. Volontairement restreint
+#: (docs/02 §7 : permissions scopées) — pas d'outils réseau ni MCP au POC.
+#:
+#: `TodoWrite` (#489) est le seul de la liste qui n'agisse sur rien : il ne lit,
+#: n'écrit ni n'exécute quoi que ce soit, il **dit** où l'agent en est. C'est ce
+#: qui en fait le canal de la checklist d'une tâche (`maestro.providers.checklist`)
+#: — la moitié « cochée par l'agent » de l'arbitrage de #489 — sans rien lui
+#: demander qu'il ne fasse déjà, et sans élargir d'un pouce ce qu'il peut faire.
+#: Un rôle dont la politique de permissions le refuse (#110) travaille comme
+#: avant : sa tâche n'a simplement pas de checklist.
+DEFAULT_TOOLS: tuple[str, ...] = (
+    "Read",
+    "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "Bash",
+    "TodoWrite",
+)
 
 
 @dataclass(frozen=True)
@@ -176,6 +193,7 @@ class AgentRuntime:
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
         on_activite: Callable[[str], None] | None = None,
+        on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
     ) -> AgentOutcome:
@@ -219,6 +237,13 @@ class AgentRuntime:
         consigné par l'appelant, seul à connaître la tâche et son run. Le runtime
         n'est ni l'un ni l'autre — il ne fait que relier les deux, comme pour
         `on_refus`.
+
+        `on_etapes` (#489) est le troisième, et il traverse ce runtime pour la
+        même raison : la **checklist** de l'agent est observée par le fournisseur
+        (dans l'entrée de ses appels `TodoWrite`) et réconciliée par l'appelant,
+        seul à connaître l'ossature que le plan avait annoncée. Le runtime ne
+        tient aucun état de checklist — il n'en verrait qu'une exécution, et
+        l'avancement doit survivre aux relances.
 
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
@@ -269,6 +294,7 @@ class AgentRuntime:
                 politique=politique,
                 on_refus=on_refus,
                 on_activite=on_activite,
+                on_etapes=on_etapes,
                 plafond_tours=self._plafond_tours,
                 projet=projet,
             )
