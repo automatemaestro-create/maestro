@@ -451,22 +451,36 @@ d'événements**. Un **journal durable** (`EventLog`) consigne chaque événemen
 est une **liste Redis** (event sourcing, sur l'instance déjà mutualisée avec la file, le
 bus et les boîtes) ; en test et mono-process, un journal mémoire.
 
-**Limites connues (POC).** Le mode durable est **opt-in** et le moteur en process reste le
-défaut — il ne doit jamais régresser pendant ce chantier. `--durable` n'est **pas encore
-combinable** avec `--queue` (frontières d'exécution exclusives), ni avec `--messagerie` /
-`--validation-ui` / `--notifier` / `--parallele` (en durable, dépendances et handoffs
-passent par le workflow et la validation humaine par la console) : ces transports Redis et
-le plafond global viendront dans un lot ultérieur. ⚠ **Ces refus ne sont pas seulement un
-lot en retard** : le mode durable et l'arrêt humain sur brief — défaut de la Control Tower —
-sont mutuellement exclusifs par construction, et lever le verrou suppose de réécrire les
-attentes humaines en signaux de workflow. C'est instruit et chiffré par
-[doc 28](./28-decision-frontiere-execution-run.md) (#350), qui **écarte Temporal pour
-l'instant** au profit d'un hôte de run détaché et nomme ce qui rouvrirait la question. Le
-journal des événements n'a **pas de
-rétention bornée** (la liste croît avec l'historique, pour préserver l'historique complet)
-et la bascule vers PostgreSQL (entités RUN/TASK, [doc 03](./03-modele-de-donnees.md)) avec
-sa politique de rétention viendra ensuite substituer un stockage requêtable au rejeu
-intégral.
+**Limites connues (POC).** Le mode durable est **opt-in** : sans `--durable`, un run se déroule
+dans une boucle `asyncio` ordinaire, celle du moteur en process. `--durable` n'est **pas
+encore combinable** avec `--queue` (frontières d'exécution exclusives), ni avec
+`--messagerie` / `--validation-ui` / `--notifier` / `--parallele` (en durable, dépendances
+et handoffs passent par le workflow et la validation humaine par la console) : ces
+transports Redis et le plafond global viendront dans un lot ultérieur. ⚠ **Ces refus ne
+sont pas seulement un lot en retard** : le mode durable et l'arrêt humain sur brief —
+défaut de la Control Tower — sont mutuellement exclusifs par construction, et lever le
+verrou suppose de réécrire les attentes humaines en signaux de workflow. C'est instruit et
+chiffré par [doc 28](./28-decision-frontiere-execution-run.md) (#350), qui **écarte
+Temporal pour l'instant** au profit d'un **hôte de run détaché** et nomme les quatre
+conditions qui rouvriraient la question.
+
+⚠ **Ce dernier point n'est plus une intention : il est livré** (chantier #441, doc 28 §10).
+Depuis #446, un run lancé depuis la Control Tower vit dans un **process indépendant** qui
+survit à l'arrêt de `maestro-api` — fermer la fenêtre du navigateur, relancer après une
+modification, `start.sh --stop` n'emportent plus le run —, y publie ses étapes, y bat son
+cœur et y consigne son issue en partant. `MAESTRO_HOTE_RUN=process` ramène la tâche de fond
+de l'API, dont les runs meurent avec elle. Ne pas confondre les deux frontières, qui
+répondent à deux questions différentes : `--durable` décide **de quoi tient la boucle
+d'orchestration** (un workflow Temporal, ou une boucle `asyncio`), `MAESTRO_HOTE_RUN`
+décide **quel process la porte**. Le détaché est celui du chemin Control Tower ; le durable
+reste réservé à `maestro-run`, et le corollaire assumé du premier est qu'un run survit à
+son API, **pas à sa machine** — c'est là, exactement, que la reprise automatique de Temporal
+resterait à acheter.
+
+Le journal des événements n'a **pas de rétention bornée** (la liste croît avec l'historique,
+pour préserver l'historique complet) et la bascule vers PostgreSQL (entités RUN/TASK,
+[doc 03](./03-modele-de-donnees.md)) avec sa politique de rétention viendra ensuite
+substituer un stockage requêtable au rejeu intégral.
 
 Tout est rejoué **sans serveur Temporal réel ni appel modèle** dans
 [`tests/test_durable.py`](../tests/test_durable.py) : l'**environnement de test Temporal**
@@ -474,8 +488,14 @@ Tout est rejoué **sans serveur Temporal réel ni appel modèle** dans
 fournisseurs factices couvrent l'exécution workflow + activités, le blocage aval, la
 reprise sans repayer l'amont et la planification invalide ; la persistance de l'état
 Control Tower est couverte dans
-[`tests/test_controltower.py`](../tests/test_controltower.py). Détails :
-[`maestro/durable/`](../maestro/durable/) et [`infra/README.md`](../infra/README.md).
+[`tests/test_controltower.py`](../tests/test_controltower.py), et l'**hôte de run détaché**
+dans [`tests/test_hote_detache.py`](../tests/test_hote_detache.py) (le process : survie à
+l'arrêt de son lanceur sur de vrais process, annulation à travers la frontière, canal
+humain, issue publiée en partant) et
+[`tests/test_hote_run.py`](../tests/test_hote_run.py) (la frontière vue de l'appelant : les
+deux hôtes, le démarrage raté qui solde, le ramassage, `MAESTRO_HOTE_RUN`). Détails :
+[`maestro/durable/`](../maestro/durable/), [`maestro/controltower/hote.py`](../maestro/controltower/hote.py)
+et [`infra/README.md`](../infra/README.md).
 
 ### 6.9 — Auto-amélioration des playbooks : proposer une révision depuis les échecs (disponible — ticket #111)
 
