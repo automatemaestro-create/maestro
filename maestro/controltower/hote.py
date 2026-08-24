@@ -61,6 +61,38 @@ from dataclasses import dataclass
 from maestro.engine.brief import MODE_BRIEF_HUMAIN
 from maestro.references import ReferenceTicket
 
+#: Les hôtes que le dépôt sait construire, par leur **nom** — le vocabulaire du
+#: réglage de déploiement `MAESTRO_HOTE_RUN` (#443), résolu par
+#: `create_default_app`. Les noms vivent ici, avec le contrat, et non dans les
+#: modules d'implémentation : les nommer suppose seulement qu'ils existent, alors
+#: qu'aller les chercher ferait importer un sous-process (et demain un client
+#: Temporal) à toute app qui n'en veut pas.
+HOTE_RUN_EN_PROCESS = "process"
+HOTE_RUN_DETACHE = "detache"
+HOTES_RUN: tuple[str, ...] = (HOTE_RUN_EN_PROCESS, HOTE_RUN_DETACHE)
+
+
+class DemarrageHoteRate(RuntimeError):
+    """L'hôte n'a pas réussi à **partir** — la seule panne que `lancer` remonte (#443).
+
+    Un hôte en process ne peut pas rater son départ : créer une `asyncio.Task`
+    n'échoue pas. Un hôte qui doit fabriquer quelque chose — un process, demain un
+    workflow — le peut, et c'est le prix que la veille AionUi conseille de garder
+    (docs/28 §7) : « on peut rater un démarrage ».
+
+    C'est une panne du **lancement**, jamais du run : elle dit que rien n'est
+    parti, donc que plus rien ne viendra — ni événement, ni battement, ni statut
+    de fin. D'où l'exception plutôt qu'un statut publié par l'hôte : à cet
+    instant, l'appelant est encore là et il est le seul à pouvoir écrire. Il en
+    fait un run **soldé** avec sa cause (`ServiceExecutions.lancer`) au lieu d'un
+    run laissé `en_cours` que seul le seuil d'orphelinat viendrait éteindre, une
+    demi-heure plus tard.
+
+    Le message porte la cause telle qu'on la connaît — code de sortie, dernières
+    lignes du journal de l'hôte, chemin de ce journal : c'est ce qui atterrit dans
+    le `detail` du run, donc sous les yeux de quelqu'un.
+    """
+
 
 @dataclass(frozen=True, slots=True)
 class OrdreRun:
@@ -132,6 +164,12 @@ class HoteRun(ABC):
         Ce qui arrive ensuite au run ne remonte pas par un retour : il se lit dans
         son **statut**, publié sur le bus et projeté par la Control Tower, seul
         canal qui survive déjà au redémarrage de l'API (#97).
+
+        **Une seule exception à cette règle, et c'est le démarrage** (#443) : un
+        hôte qui n'a pas réussi à partir lève `DemarrageHoteRate`. Rien ne partira
+        alors sur aucun canal — pas même le statut — donc le seul moment où la
+        panne est dicible est celui-ci, tant que l'appelant est encore là pour
+        l'écrire.
         """
         raise NotImplementedError
 

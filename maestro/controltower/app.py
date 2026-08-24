@@ -183,7 +183,7 @@ from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import NOMS_RESERVES, AgentDefinition, AgentStore, catalogue
-from maestro.config import load_settings
+from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower import selecteur
 from maestro.controltower.analytics import PAS_HEURE, PAS_VALIDES, agrege_couts
 from maestro.controltower.assistance import (
@@ -240,7 +240,12 @@ from maestro.controltower.fixtures import (
     TRIS_JOURNAL,
     FixturesControlTower,
 )
-from maestro.controltower.hote import HoteRun
+from maestro.controltower.hote import (
+    HOTE_RUN_DETACHE,
+    HOTE_RUN_EN_PROCESS,
+    HOTES_RUN,
+    HoteRun,
+)
 from maestro.controltower.persistence import (
     EventLog,
     InMemoryEventLog,
@@ -2688,6 +2693,14 @@ def create_default_app() -> FastAPI:
     lancé par `maestro-run --publier` et de le retrouver vivant après un
     redémarrage de l'API.
 
+    L'**hôte des runs** (#443) se choisit ici, et nulle part ailleurs :
+    `MAESTRO_HOTE_RUN=detache` fait vivre chaque run dans un process indépendant,
+    qui survit à l'arrêt de `maestro-api` ; vide ou `process` garde la tâche de
+    fond, le défaut jusqu'au lot 5 du chantier #441. C'est le seul endroit du
+    dépôt qui *nomme* un hôte : le service ne connaît que le contrat, et le
+    résoudre là où sont déjà résolus le bus, le journal et le registre met la
+    frontière d'exécution parmi les autres choix de déploiement, ce qu'elle est.
+
     C'est la cible *factory* d'uvicorn :
     `uvicorn --factory maestro.controltower.app:create_default_app`
     (ou le script `maestro-api`).
@@ -2698,4 +2711,33 @@ def create_default_app() -> FastAPI:
         mailbox=RedisMailbox(settings.redis_url),
         event_log=RedisEventLog(settings.redis_url),
         battements=RegistreBattementsRedis(settings.redis_url),
+        hote_run=_hote_configure(settings),
+    )
+
+
+def _hote_configure(settings: Settings) -> HoteRun | None:
+    """Résout `MAESTRO_HOTE_RUN` en hôte — None pour le défaut en process (#443).
+
+    Une valeur inconnue est une **erreur franche** et non un repli silencieux :
+    `MAESTRO_HOTE_RUN=detaché` (avec l'accent) laisserait sinon croire que les
+    runs survivent à l'API alors qu'ils meurent avec elle, et la panne ne se
+    verrait qu'au premier arrêt — c'est-à-dire trop tard, sur le run qu'on voulait
+    protéger. Même parti pris que `MAESTRO_ISOLATION` (#108), pour la même raison :
+    une frontière d'exécution absente ne doit jamais ressembler à rien.
+
+    L'import de l'hôte détaché est **local** à cette branche : il tire
+    `subprocess` et, par la ligne de commande du fils, tout le moteur — une app
+    qui ne le demande pas n'a pas à le charger, exactement comme `moteur_par_defaut`
+    ne résout aucun fournisseur tant qu'aucun run ne part.
+    """
+    nom = (settings.hote_run or HOTE_RUN_EN_PROCESS).strip().lower()
+    if nom == HOTE_RUN_EN_PROCESS:
+        return None
+    if nom == HOTE_RUN_DETACHE:
+        from maestro.controltower.hote_detache import HoteRunDetache
+
+        return HoteRunDetache()
+    raise ConfigError(
+        f"MAESTRO_HOTE_RUN : hôte inconnu {nom!r} "
+        f"(attendu : {' | '.join(HOTES_RUN)}, ou vide pour « {HOTE_RUN_EN_PROCESS} »)."
     )

@@ -103,6 +103,14 @@ class Settings:
     #: voie complète). Un backend joint depuis le réseau n'ouvre jamais de
     #: fenêtre, quel que soit ce réglage.
     selecteur_natif: str | None = None
+    #: **Hôte des runs** lancés par la Control Tower (`MAESTRO_HOTE_RUN`, #443), ou
+    #: None : la tâche de fond du process de l'API (`process`, le défaut de
+    #: toujours). `detache` fait vivre chaque run dans un process indépendant, qui
+    #: survit à l'arrêt de `maestro-api`. Interprété et validé par
+    #: `maestro.controltower.app.create_default_app` — toute autre valeur non vide
+    #: est une erreur de config explicite, jamais un détachement silencieusement
+    #: absent (même parti pris que `MAESTRO_ISOLATION`).
+    hote_run: str | None = None
     #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None :
     #: exécution directe sur l'hôte (défaut). Seule valeur reconnue : `conteneur`.
     #: Interprété et validé par la couche sandbox (maestro.sandbox.container, #108).
@@ -157,6 +165,7 @@ class Settings:
             ingestion_dir=(os.getenv("MAESTRO_INGESTION_DIR") or "").strip() or None,
             explorateur_racines=(os.getenv("MAESTRO_EXPLORATEUR_RACINES") or "").strip() or None,
             selecteur_natif=(os.getenv("MAESTRO_SELECTEUR_NATIF") or "").strip().lower() or None,
+            hote_run=(os.getenv("MAESTRO_HOTE_RUN") or "").strip().lower() or None,
             isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
             isolation_image=(os.getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
             isolation_reseau=(os.getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()

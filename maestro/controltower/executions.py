@@ -44,6 +44,15 @@ est-il en vol ? ». C'est le seam sur lequel un hôte **détaché** se branchera
 (#443) sans réécrire ni les routes, ni les événements, ni la projection — et le
 service, lui, ne tient plus aucune tâche : il demande à son hôte ce qu'il porte.
 
+Cet hôte détaché existe depuis #443 (`maestro.controltower.hote_detache`), et le
+service n'en sait toujours rien d'autre qu'une chose : **un hôte peut rater son
+départ**. Créer une tâche de fond n'échoue pas ; créer un process, si. Ce qu'il
+en fait est écrit une fois, dans `lancer` — le run est soldé `echec` avec sa
+cause, parce qu'à cet instant plus rien ne viendra de l'hôte et que l'appelant
+est le seul encore là pour l'écrire. Le mode reste **opt-in**
+(`MAESTRO_HOTE_RUN=detache`, résolu par `create_default_app`) : le défaut demeure
+la tâche de fond jusqu'au lot 5 du chantier #441.
+
 Cette phrase reste vraie, mais elle n'est plus toute l'histoire (#347) : depuis
 #348 la mort de l'hôte se **voit**, et depuis #349 ce qu'elle emporte se
 **rattrape**. L'inventaire, parce que c'est lui qu'on cherche quand un run vient
@@ -137,7 +146,7 @@ from maestro.controltower.events import (
     Event,
     EventBus,
 )
-from maestro.controltower.hote import HoteRun, OrdreRun
+from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
 from maestro.controltower.portee import PorteeProjet
 from maestro.controltower.state import (
@@ -495,6 +504,14 @@ class ServiceExecutions:
         inconnu ou une source refusée (`SourceRefusee`, qui en hérite et porte son
         motif) — la route en fait un 422. Le run, lui, ne peut plus échouer de
         façon synchrone : ce qui lui arrive ensuite se lit dans son statut.
+
+        Un **démarrage raté** de l'hôte (#443, `DemarrageHoteRate` — un process qui
+        ne part pas, ou qui meurt aussitôt) ne fait pas exception à cette phrase :
+        il est rattrapé ici et devient le **statut** du run, `echec` avec sa cause.
+        Ce n'est pas une requête invalide — rien de ce que le client a demandé
+        n'était fautif —, et le lancement rend donc son résumé comme les autres,
+        déjà soldé. La seule chose qu'on refuse est de rendre un run `en_cours` que
+        personne ne porte : il attendrait le seuil d'orphelinat pour s'éteindre.
         """
         objectif = objectif.strip()
         if not objectif:
@@ -569,19 +586,29 @@ class ServiceExecutions:
         # données, jamais le travail à exécuter. Les plafonds y voyagent bruts —
         # les garde-fous sont recomposés au déroulement, où seul le validateur
         # humain, câblage de *ce* bus, a un sens (cf. `_derouler`).
-        await self._hote.lancer(
-            OrdreRun(
-                run_id=run_id,
-                objectif=objectif,
-                plafond_cout_usd=plafond_cout_usd,
-                plafond_tokens=plafond_tokens,
-                timeout_tache_s=timeout_tache_s,
-                parallelisme=parallelisme,
-                ticket=reference,
-                projet_id=projet,
-                mode_brief=regime_brief,
+        try:
+            await self._hote.lancer(
+                OrdreRun(
+                    run_id=run_id,
+                    objectif=objectif,
+                    plafond_cout_usd=plafond_cout_usd,
+                    plafond_tokens=plafond_tokens,
+                    timeout_tache_s=timeout_tache_s,
+                    parallelisme=parallelisme,
+                    ticket=reference,
+                    projet_id=projet,
+                    mode_brief=regime_brief,
+                )
             )
-        )
+        except DemarrageHoteRate as echec:
+            # Un hôte qui n'est pas parti (#443) : rien ne viendra plus de lui —
+            # ni étape, ni battement, ni statut de fin. Le run est donc **soldé
+            # ici**, avec sa cause, au lieu d'être laissé `en_cours` jusqu'à ce que
+            # le seuil d'orphelinat l'éteigne une demi-heure plus tard. C'est le
+            # seul instant où quelqu'un peut l'écrire, et c'est l'appelant.
+            _LOGGER.error("Démarrage de l'hôte du run %s raté : %s", run_id, echec)
+            self._consigne(run_id, EXECUTION_ECHEC, "", str(echec))
+            await self._oublier(run_id)
         resume = await self.resume_vivant(run_id)
         if resume is None:  # pragma: no cover - le lancement vient d'inscrire le run
             raise RuntimeError(f"run {run_id} absent de la projection après son lancement")
