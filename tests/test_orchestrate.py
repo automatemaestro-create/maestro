@@ -3435,18 +3435,75 @@ def test_un_pid_recycle_n_est_jamais_tue(depot: Depot) -> None:
     """Le garde-fou qui protège les processus des autres : le numéro seul ne prouve rien.
 
     Un run tué par SIGKILL laisse sa carte derrière lui (aucun trap ne survit), et son numéro finit
-    par désigner quelqu'un d'autre. La naissance du processus, elle, ne se recycle pas.
+    par désigner quelqu'un d'autre. Ce sont les TÉMOINS de la carte qui le démasquent.
+
+    On les invalide TOUS, et c'est le sujet de #456 : un vrai recyclage change la naissance ET le
+    winpid, alors qu'une carte dont seule la naissance ne colle plus est le cas courant d'un run
+    long — le décalage d'échelle mesuré le 2026-08-24 (test voisin). N'en casser qu'un ici rendrait
+    ce test vert sous Linux (où le winpid n'existe pas, donc où la naissance décide seule) et faux
+    sous Windows : exactement l'écart inter-plateformes de #333.
     """
     dossier = _run_dir(depot, "20260803-171434", [(1, 130, "-", "haute")], resume=[])
     proc = _pilote_factice(depot, dossier)
     try:
-        _carte(dossier, naissance="999999999")
+        _carte(dossier, naissance="999999999", winpid="999999999")
         r = depot.lance("run.sh", "--tuer-les-runs")
         assert r.returncode == 0, r.stderr
         assert "Aucun run en cours" in r.stdout
         assert proc.poll() is None, "un processus dont l'identité ne colle pas doit être épargné"
     finally:
         proc.kill()
+
+
+def _identite(depot: Depot, n_carte: str, n_lue: str, w_carte: str, w_lu: str) -> bool:
+    """La règle d'identité de `pilote.sh`, éprouvée sur ses quatre témoins et rien d'autre.
+
+    On appelle la fonction PURE plutôt que `pilote_vivant` : le winpid n'existe que sous MSYS, donc
+    un test qui passerait par /proc ne poserait la question que sous Windows et rendrait, en CI
+    Linux, un vert sur une question jamais posée (#333).
+    """
+    script = (
+        f'. "{depot.racine}/scripts/orchestrate/pilote.sh"\n'
+        'pilote_identite_concorde "$1" "$2" "$3" "$4"\n'
+    )
+    r = subprocess.run(
+        [BASH, "-c", script, "bash", n_carte, n_lue, w_carte, w_lu],
+        env=depot.env, capture_output=True, text=True,
+    )
+    assert r.returncode in (0, 1), f"verdict inattendu ({r.returncode}) : {r.stderr}"
+    return r.returncode == 0
+
+
+@pytest.mark.parametrize(
+    ("cas", "temoins", "concorde"),
+    [
+        # Le cœur de #456 : la naissance a dérivé, le winpid tient — c'est bien lui.
+        ("naissance dérivée, winpid OK", ("834570974", "834568417", "20968", "20968"), True),
+        ("les deux témoins concordent", ("100", "100", "20968", "20968"), True),
+        # Un vrai recyclage : plus aucun témoin ne reconnaît le processus.
+        ("les deux témoins divergent", ("100", "999", "20968", "999"), False),
+        # Un seul témoin disponible, selon la plateforme — la règle d'avant #456, intacte.
+        ("Linux, naissance concordante", ("100", "100", "", ""), True),
+        ("Linux, naissance divergente", ("100", "999", "", ""), False),
+        # Témoin enregistré, devenu illisible, et aucun autre : on s'abstient plutôt que de tuer.
+        ("naissance perdue, seul témoin", ("100", "", "", ""), False),
+        ("winpid perdu, seul témoin", ("", "", "20968", ""), False),
+        # Rien n'a jamais été enregistré (plateforme sans /proc) : `kill -0` fait foi.
+        ("aucun témoin", ("", "", "", ""), True),
+    ],
+)
+def test_un_seul_temoin_concordant_suffit_a_reconnaitre_le_pilote(
+    depot: Depot, cas: str, temoins: tuple[str, str, str, str], concorde: bool
+) -> None:
+    """#456 : la naissance ne condamne plus seule, son échelle pouvant se décaler en cours de run.
+
+    Mesuré le 2026-08-24 sur le run `20260824-094229` : carte à 834570974, relecture à 834568417
+    pour le même processus jamais redémarré (2,557 s, CLK_TCK=1000), stable sur deux heures — et
+    pendant que le pilote travaillait. Le verdict « mort » n'était pas qu'un affichage faux :
+    `pilotes_vivants` s'en sert pour savoir QUI TUER, donc un pilote vivant déclaré mort n'est pas
+    tué et deux runs cohabitent, ce que #213 existe pour empêcher.
+    """
+    assert _identite(depot, *temoins) is concorde, cas
 
 
 def test_une_carte_orpheline_ne_fait_ni_erreur_ni_degat(depot: Depot) -> None:

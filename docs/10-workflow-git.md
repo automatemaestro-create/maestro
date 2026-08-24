@@ -4186,10 +4186,26 @@ faute de mieux, et une déduction suffit à **dire** qu'un run semble mort, jama
 **Ce qui n'est jamais tué.** Uniquement les PID des cartes, et leurs descendants : jamais un
 `claude.exe` trouvé au jugé — la session Claude Code interactive de l'utilisateur en est un. Un
 numéro se recycle, et un run tué par SIGKILL laisse sa carte derrière lui (aucun trap ne survit à
-un SIGKILL) : c'est la **naissance** du processus, en ticks depuis le démarrage de la machine, qui
-démasque un PID réattribué. L'asymétrie est assumée — carte invérifiable, on s'abstient. Ne pas
-tuer un run mourant coûte un doublon signalé ; tuer le mauvais processus coûte le travail de
-quelqu'un d'autre.
+un SIGKILL) : ce sont les **témoins** de la carte — **naissance** du processus (en ticks depuis le
+démarrage de la machine) et **WINPID** sous MSYS — qui démasquent un PID réattribué. Il suffit
+qu'**un seul concorde** pour reconnaître le processus ; il faut que **tous** les témoins comparables
+divergent pour conclure au recyclage, et un témoin enregistré devenu illisible fait s'abstenir.
+
+⚠ **La naissance ne peut pas condamner seule** (#456), et c'est ce qui a changé. Son échelle — les
+ticks depuis le boot — **peut se décaler pendant un run** : mesuré le 2026-08-24 sur le run
+`20260824-094229`, carte à `834570974` contre `834568417` relus pour le même processus jamais
+redémarré, soit 2,557 s d'écart (`CLK_TCK=1000`), stable sur deux heures, pendant que le pilote
+travaillait. Deux mesures encadrent le fait : la carte **ne diverge pas à l'écriture**, et la valeur
+relue est cohérente avec `/proc/uptime` **après** coup — c'est donc l'échelle qui bouge, pas la carte
+qui serait née fausse. Un témoin de plus ne relâche pas la protection contre le recyclage, il la
+renforce : il faudrait qu'un processus recycle **à la fois** le numéro MSYS et le winpid de l'ancien.
+
+⚠ **Et « dans le doute, ne pas tuer » ne vaut pas pour ce verdict-là.** L'asymétrie est juste pour
+l'arrêt, qui vise un processus ; elle est fausse pour la **vivacité**, que `pilotes_vivants`
+interroge pour savoir *qui* tuer — un pilote déclaré mort à tort n'est pas tué, donc deux runs
+cohabitent, ce que ce mécanisme existe précisément pour empêcher. Et le « doublon signalé » ne l'est
+pas : l'arrêt est muet quand il n'a rien à tuer. La protection ne vient donc pas de la prudence du
+verdict, elle vient du **nombre de témoins**.
 
 **Sous Windows, deux mondes de processus.** Le pilote est un `bash.exe` MSYS, la session un
 `claude.exe` natif que `/proc` ne liste pas et que `kill` n'atteint pas. D'où le WINPID enregistré
