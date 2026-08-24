@@ -141,6 +141,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from maestro.controltower.bridge import solder_le_run
+from maestro.controltower.causes import CAUSE_ANNULATION, detail_avec_cause
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EventBus,
@@ -871,6 +872,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # déjà consignée côté API — c'est elle qui a servi d'ordre.
     statut = ""
     detail = ""
+    # La cause d'arrêt qui accompagne l'issue (#479) — vide quand aucune ne
+    # s'applique, et notamment sur une fin normale.
+    cause = ""
     rapport: RunReport | None = None
     code = 1
     try:
@@ -884,7 +888,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         code = CODE_ANNULE
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
-        statut, detail, code = EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}", 1
+        statut, code = EXECUTION_ECHEC, 1
+        detail, cause = detail_avec_cause(exc)
     except BriefRefuse as refus:
         # **Annulé, pas échoué** — et ce chemin n'existait pas avant #445 : le brief
         # « humain » était refusé au lancement, et les deux autres modes ne
@@ -901,15 +906,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         # rien ne l'a soldée côté hôte, et c'est ce geste qui pose sa `fin`.
         print(f"Brief refusé : {refus}", file=sys.stderr)
         statut, detail, code = EXECUTION_ANNULEE, str(refus), CODE_ANNULE
+        cause = CAUSE_ANNULATION
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
-        statut, detail, code = EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}", 1
+        statut, code = EXECUTION_ECHEC, 1
+        detail, cause = detail_avec_cause(exc)
     except Exception as exc:  # noqa: BLE001 - le fils n'a pas d'appelant à qui lever
         print(f"Exécution interrompue — {type(exc).__name__} : {exc}", file=sys.stderr)
         import traceback
 
         traceback.print_exc()
-        statut, detail, code = EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}", 1
+        statut, code = EXECUTION_ECHEC, 1
+        detail, cause = detail_avec_cause(exc)
     else:
         # Mot pour mot ce que consigne l'hôte en process pour le même rapport : les
         # deux hôtes n'ont pas le droit de raconter deux issues différentes.
@@ -925,7 +933,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         coeur.arreter()
 
     if statut:
-        solder_le_run(ordre.run_id, statut, detail, url=load_settings().redis_url)
+        solder_le_run(
+            ordre.run_id, statut, detail, cause=cause, url=load_settings().redis_url
+        )
     if rapport is not None:
         print(redact_secrets(rapport.synthese()))
     return code

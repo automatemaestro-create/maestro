@@ -89,7 +89,8 @@ class OutilleEnregistreur(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, plafond_tours=None, projet=None,
+        mcp_serveurs=(), politique=None, on_refus=None, on_activite=None,
+        plafond_tours=None, projet=None,
     ):
         self.run_calls.append({"prompt": prompt, "system_prompt": system_prompt})
         (Path(workspace) / "livrable.txt").write_text("contenu", encoding="utf-8")

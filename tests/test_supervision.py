@@ -153,6 +153,7 @@ class Publieur(ModelProvider):
         mcp_serveurs=(),
         politique=None,
         on_refus=None,
+        on_activite=None,
         plafond_tours=None,
         projet=None,
     ):

@@ -78,6 +78,33 @@ SUFFIXE_ETAPE_REFUS = ":refus-outil"
 #: c'est un appel d'outil qui est refusé, pas la tâche.
 STATUT_REFUS_OUTIL = "refus_outil"
 
+#: Suffixe des étapes d'activité au journal (#479) : `<task.id>:activite`, une
+#: par salve publiée par le fournisseur pendant que la tâche tourne — le pont
+#: Control Tower les mue en activités d'agent, comme `:relance` et
+#: `:refus-outil`.
+#:
+#: C'est la **seule** étape du journal qui soit émise *pendant* une tâche plutôt
+#: qu'à un de ses jalons : `:debut` ouvre, l'étape nue solde, et entre les deux
+#: il n'y avait rien, quelle que soit la durée. Elle emprunte le canal existant
+#: (journal → pont #46 → bus) et n'en ouvre aucun second : ce qui manquait
+#: n'était pas un transport, c'était quelque chose à transporter.
+SUFFIXE_ETAPE_ACTIVITE = ":activite"
+
+#: Statut des étapes d'activité (#479) — un mot à lui, et c'est délibéré.
+#:
+#: Réutiliser `en_cours` était tentant (la tâche *est* en cours) mais rendait la
+#: ligne fausse à l'écran : le fil habille un `en_cours` d'activité en « dev —
+#: <titre de la tâche> en cours », c'est-à-dire qu'il redit ce que la carte du
+#: Kanban montre déjà et **tait la salve**, seule information que la ligne
+#: apporte. Un statut à part permet au fil de rendre le geste lui-même, ce que
+#: le critère « l'écran montre l'activité en cours pendant qu'elle dure »
+#: demande — sans quoi on aurait ajouté du trafic sans lever le silence.
+#:
+#: Il ne déplace aucune carte : le pont range ces étapes en `agent.activite`, que
+#: la projection n'utilise que pour rafraîchir la dernière activité de l'agent
+#: (`_applique_activite`) — jamais le statut d'une tâche.
+STATUT_ACTIVITE = "activite"
+
 #: Délai de grâce accordé à l'annulation d'une réalisation en dépassement (#64) :
 #: le temps, dans le cas nominal, que le SDK ferme son sous-processus. Au-delà,
 #: la tâche est détachée — le time-out ne dépend jamais de sa coopération.
@@ -766,6 +793,44 @@ class LocalExecutor(TaskExecutor):
             projet_id=task.projet_id,
         )
 
+    def _consigne_activite(
+        self,
+        task: Task,
+        agent: Agent,
+        texte: str,
+        journal: RunJournal,
+    ) -> None:
+        """Trace une salve d'activité au journal (#479) — donc au fil temps réel.
+
+        Étape dédiée `<task.id>:activite` (même modèle que `:relance` et
+        `:refus-outil`), que le pont (`maestro.controltower.bridge`) mue en
+        activité d'agent. `sortie` porte ce que le fournisseur a composé — un
+        geste, ou une salve qui annonce son regroupement. Usage nul : le coût de
+        la tâche est porté par son étape finale, et une salve n'est pas un appel
+        modèle de plus.
+
+        C'est ce qui supprime le silence d'une tâche longue. Le reste du
+        dispositif était déjà là : `:debut` disait qu'elle démarrait, l'étape nue
+        qu'elle avait fini, et le Kanban ne bougeait pas entre les deux parce que
+        rien ne lui parlait — pas parce qu'il ne savait pas écouter.
+
+        `texte` vide n'est pas consigné : une salve sans contenu ne dit rien, et
+        une ligne vide au fil d'activité se lirait comme une panne d'affichage.
+        """
+        if not texte.strip():
+            return
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_ACTIVITE}",
+            nom=task.titre,
+            agent=agent.nom,
+            role=agent.role,
+            statut=STATUT_ACTIVITE,
+            entree="",
+            sortie=texte,
+            usage=StepUsage(),
+            projet_id=task.projet_id,
+        )
+
     async def _produce(
         self,
         agent: Agent,
@@ -803,6 +868,13 @@ class LocalExecutor(TaskExecutor):
         (étape `:refus-outil`), donc visible au fil temps réel, sans jamais
         condamner la tâche.
 
+        L'**activité** (#479) suit exactement ce chemin-là, et n'équipe donc que
+        le chemin outillé : c'est celui qui dure. Le fournisseur publie à débit
+        borné ce que l'agent fait, chaque salve est consignée au `journal`
+        (étape `:activite`), et la tâche cesse d'être muette entre son début et
+        son issue. Le repli texte (`generate`) n'en émet aucune — un appel texte
+        n'a pas d'étapes à raconter, et il ne dure pas.
+
         Le **projet** de la tâche (#224) n'équipe lui aussi que le chemin
         outillé : c'est de lui qu'est dérivé l'espace de travail (worktree ou
         copie). Le chemin texte ne produit aucun fichier — il n'a pas d'espace
@@ -825,6 +897,13 @@ class LocalExecutor(TaskExecutor):
                         if journal is None
                         else lambda outil, raison: self._consigne_refus(
                             task, agent, outil, raison, journal
+                        )
+                    ),
+                    on_activite=(
+                        None
+                        if journal is None
+                        else lambda texte: self._consigne_activite(
+                            task, agent, texte, journal
                         )
                     ),
                     projet=self._projet(task),

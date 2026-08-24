@@ -280,6 +280,7 @@ class ModelProvider(ABC):
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
+        on_activite: Callable[[str], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -315,6 +316,29 @@ class ModelProvider(ABC):
         refus est signalé via `on_refus(outil, raison)` quand il est fourni —
         c'est le canal de traçage de l'appelant (journal, fil temps réel) ; un
         échec du callback ne doit jamais casser l'exécution observée.
+
+        `on_activite` (#479) est le canal de « ce que l'agent fait **pendant**
+        qu'il le fait » : le fournisseur l'appelle avec une ligne déjà composée
+        (`maestro.providers.activite`) chaque fois qu'il a quelque chose à dire —
+        appel d'outil et sa cible, jalon de texte — **pendant** l'exécution, et
+        non à son issue. Sans lui, une tâche de dix minutes produit dix minutes
+        de silence : le moteur ne consigne que le début et la fin, et rien entre
+        les deux, quelle que soit la durée.
+
+        Deux exigences pèsent sur le fournisseur qui l'honore, et elles ne sont
+        pas symétriques. Il doit signaler **chaque occurrence**, sans
+        déduplication : savoir *quels* outils ont servi, mais ni combien de fois
+        ni dans quel ordre, ne dit pas ce qu'un agent est en train de faire. Il
+        doit en revanche **borner le débit** de ce qu'il publie — un agent
+        outillé émet vite, et republier tout tel quel noierait le bus comme le
+        flot d'une ligne par outil noyait la console du pilote (#240). Les deux
+        tiennent ensemble parce que le regroupement se fait **après**
+        l'observation, jamais à sa place : `RegulateurActivite` voit tous les
+        gestes et n'en publie qu'un compte rendu périodique, qui annonce son
+        propre regroupement.
+
+        Même règle que `on_refus` sur les échecs : un callback qui lève ne doit
+        jamais casser l'exécution observée.
 
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de

@@ -402,6 +402,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Les statuts du cycle de vie d'un run (#446), pour l'**issue** que cet hôte
     # publiera en partant. Import local comme tout ce que ce module emprunte à la
     # Control Tower : `--publier` est la seule option qui l'y branche.
+    # La **cause** d'arrêt qui accompagne l'issue (#479) : même import local et
+    # pour la même raison — un run sans `--publier` n'a personne à qui la dire.
+    from maestro.controltower.causes import (
+        CAUSE_ANNULATION as _CAUSE_ANNULATION,
+    )
+    from maestro.controltower.causes import (
+        detail_avec_cause as _detail_avec_cause,
+    )
     from maestro.controltower.state import (
         EXECUTION_ANNULEE,
         EXECUTION_ECHEC,
@@ -410,7 +418,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # L'issue à publier, ou None quand le run est allé au bout : elle se lit alors
     # dans son rapport, plus bas, et non dans l'exception qui n'a pas eu lieu.
-    issue: tuple[str, str] | None = None
+    # Trois membres depuis #479 : statut, détail, **cause**.
+    issue: tuple[str, str, str] | None = None
     try:
         engine = _build_engine(
             via_queue=via_queue,
@@ -451,7 +460,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
     except ConfigError as exc:
         print(f"Configuration : {exc}", file=sys.stderr)
-        issue = (EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}")
+        issue = (EXECUTION_ECHEC, *_detail_avec_cause(exc))
     except BriefRefuse as refus:
         # Un refus n'est pas un plantage : quelqu'un a lu le brief et dit non. Le
         # dire comme tel, et sortir en 1 comme pour un run qui n'a rien produit —
@@ -459,10 +468,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # **issue**, elle, est « annulée » et non « échec », comme partout ailleurs
         # dans le dépôt : rien n'a raté, quelqu'un a dit non.
         print(f"Brief refusé : {refus}", file=sys.stderr)
-        issue = (EXECUTION_ANNULEE, str(refus))
+        issue = (EXECUTION_ANNULEE, str(refus), _CAUSE_ANNULATION)
     except OrchestratorError as exc:
         print(f"Orchestration : {exc}", file=sys.stderr)
-        issue = (EXECUTION_ECHEC, f"{type(exc).__name__} : {exc}")
+        issue = (EXECUTION_ECHEC, *_detail_avec_cause(exc))
     finally:
         # Le cœur s'arrête avec le run, quelle qu'en soit l'issue, et **n'efface
         # rien** : l'effacement appartient au soldage qui suit, et l'ordre a une
@@ -678,7 +687,7 @@ def _battement_du_run(run_id: str) -> CoeurRun:
     return CoeurRun(run_id, batteur_redis(load_settings().redis_url))
 
 
-def _solder_le_run(run_id: str, statut: str, detail: str) -> None:
+def _solder_le_run(run_id: str, statut: str, detail: str, cause: str = "") -> None:
     """Publie l'**issue** du run vers la Control Tower et retire son battement (#446).
 
     Le geste qui manquait à `--publier` : ce process est l'**hôte** du run — il
@@ -692,6 +701,9 @@ def _solder_le_run(run_id: str, statut: str, detail: str) -> None:
     question « l'API voit-elle ce run ? » a déjà cette réponse-là. Sans l'option,
     aucun `en_cours` ne traîne nulle part, donc il n'y a rien à solder.
 
+    `cause` (#479) est le code d'arrêt qui accompagne l'issue — vide quand aucun
+    ne s'applique, ce qui est le cas d'une fin normale.
+
     Import local et **best-effort**, comme tout ce que ce module emprunte à la
     Control Tower : le run est fini, sa synthèse est due à l'appelant, et un Redis
     muet au dernier instant ne doit pas coûter la sortie du process.
@@ -699,7 +711,7 @@ def _solder_le_run(run_id: str, statut: str, detail: str) -> None:
     from maestro.config import load_settings
     from maestro.controltower.bridge import solder_le_run
 
-    solder_le_run(run_id, statut, detail, url=load_settings().redis_url)
+    solder_le_run(run_id, statut, detail, cause=cause, url=load_settings().redis_url)
 
 
 def activer_publication_evenements() -> None:

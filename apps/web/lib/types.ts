@@ -122,6 +122,13 @@ export type Evenement = {
   reponses?: string[] | null;
   tour?: number;
   tours_max?: number;
+  /**
+   * La cause d'arrêt (#479, `CAUSE_*`) — portée par l'issue d'un run
+   * (`execution.statut` terminal) et vide partout ailleurs. Optionnelle pour la
+   * même raison que les champs ci-dessus : une trace relue d'un run antérieur au
+   * lot n'en porte pas.
+   */
+  cause?: string;
   horodatage: string;
 };
 
@@ -672,6 +679,33 @@ export const ORDRE_PAUSE = "pause";
 export const ORDRE_REPRISE = "reprise";
 
 /**
+ * **Pourquoi** un run s'est arrêté (#479, `maestro/controltower/causes.py`).
+ *
+ * Cinq codes, et pas un de plus : le moteur les *connaissait* déjà — un plafond
+ * de tours lève `TurnLimitReached`, un plafond de dépense `PlafondDepenseDepasse`,
+ * un hôte qui ne part pas `DemarrageHoteRate` — mais rien ne les acheminait, si
+ * bien que la liste des runs disait « Échec » à des pannes qui ne se réparent pas
+ * de la même façon.
+ *
+ * Un run que le backend n'a pas su classer porte la **chaîne vide** plutôt qu'un
+ * sixième code fourre-tout : « je n'ai pas su ranger ceci » n'est pas un
+ * diagnostic, et son `detail` reste lisible au fil d'activité.
+ */
+export const CAUSE_PLAFOND_TOURS = "plafond_tours";
+export const CAUSE_PLAFOND_COUT = "plafond_cout";
+export const CAUSE_LIMITE_USAGE = "limite_usage";
+export const CAUSE_HOTE_NON_DEMARRE = "hote_non_demarre";
+export const CAUSE_ANNULATION = "annulation";
+
+/**
+ * Le statut d'une étape d'**activité** (#479) : ce que l'agent fait pendant que
+ * sa tâche dure. Il ne dit rien de l'état de la tâche — il est là pour que le fil
+ * rende la salve elle-même (`phraseEtapeAgent`) plutôt que de redire « en cours »,
+ * que la carte du Kanban montre déjà.
+ */
+export const STATUT_ACTIVITE = "activite";
+
+/**
  * Le **régime du brief** d'un run (#320) : `sans` décompose l'objectif brut (le
  * comportement d'avant ce lot), `auto` rédige le brief et le décompose sans
  * attendre personne (lancement headless), `humain` arrête le run dessus jusqu'à
@@ -940,6 +974,19 @@ export type ResumeExecution = {
    * Absent des flux antérieurs au lot, d'où l'optionnel.
    */
   en_pause?: boolean;
+  /**
+   * **Pourquoi** ce run s'est arrêté (#479, `CAUSE_*`) — chaîne vide tant qu'il
+   * n'y a rien à dire, ce qui est le cas d'un run en cours comme d'un run qui a
+   * fini normalement. Dans le **résumé** et non dans le seul détail, parce que
+   * c'est la liste qui doit distinguer un run à court de budget d'un run dont
+   * l'hôte n'a jamais démarré : les deux affichent « Échec » et ne se réparent
+   * pas du tout de la même façon.
+   *
+   * Elle vient **en plus** du `detail` de l'événement d'issue, jamais à sa
+   * place : le code dit de quoi il s'agit, le détail ce qui s'est passé (quelle
+   * borne, quel montant). Absente des flux antérieurs au lot, d'où l'optionnel.
+   */
+  cause?: string;
   debut: string;
   fin: string | null;
   /**
