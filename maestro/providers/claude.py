@@ -47,6 +47,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import HookInput
 
 from maestro.config import ConfigError, Settings
+from maestro.detail_tache import EtapeTache
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.base import (
     PLAFOND_TOURS_DEFAUT,
@@ -58,6 +59,7 @@ from maestro.providers.base import (
     TurnLimitReached,
     attache_stderr,
 )
+from maestro.providers.checklist import est_checklist, etapes_depuis_outil
 from maestro.sandbox.container import IsolationConfig
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
@@ -220,6 +222,7 @@ class ClaudeProvider(ModelProvider):
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
         on_activite: Callable[[str], None] | None = None,
+        on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -295,6 +298,16 @@ class ClaudeProvider(ModelProvider):
         tâche qui meurt sur une exception, doit dire ses derniers gestes plutôt
         que de les emporter — c'est justement d'une tâche en échec qu'on veut
         savoir ce qu'elle faisait juste avant.
+
+        `on_etapes` (#489) reçoit la **checklist** de l'agent, lue là où il la
+        tient déjà : l'entrée de ses appels `TodoWrite`
+        (`maestro.providers.checklist`). Elle passe par le même `_absorbe`, pour
+        la même raison qu'en #479 — c'est le seul endroit où le flux est observé.
+        Elle n'est en revanche **pas régulée** : un agent pose sa liste et la
+        recoche, pas plus d'une poignée de fois par tâche, et son appelant ne
+        republie que ce qui a changé (`SuiviChecklist.rapporte`). Un régulateur y
+        ajouterait une latence sur l'information qu'on veut la plus fraîche, pour
+        borner un débit qui ne déborde pas.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -332,6 +345,7 @@ class ClaudeProvider(ModelProvider):
                     plafond_tours=plafond_tours,
                     stderr=stderr,
                     regulateur=regulateur,
+                    on_etapes=on_etapes,
                 )
             return await _collect_response_pilotee(
                 prompt,
@@ -340,6 +354,7 @@ class ClaudeProvider(ModelProvider):
                 plafond_tours=plafond_tours,
                 stderr=stderr,
                 regulateur=regulateur,
+                on_etapes=on_etapes,
             )
         finally:
             if regulateur is not None:
@@ -422,6 +437,7 @@ async def _collect_response(
     plafond_tours: int | None = None,
     stderr: CollecteurStderr | None = None,
     regulateur: RegulateurActivite | None = None,
+    on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
 ) -> str:
     """Déroule `query`, assemble le texte de la réponse et signale l'usage (ticket #8).
 
@@ -441,13 +457,13 @@ async def _collect_response(
     que personne n'a lu.
 
     `regulateur` (#479) publie l'activité au fil du flux — None quand personne
-    n'écoute.
+    n'écoute. `on_etapes` (#489) reçoit la checklist de l'agent, même régime.
     """
     parts: list[str] = []
     outils: list[str] = []
     try:
         async for message in query(prompt=prompt, options=options):
-            _absorbe(message, parts, outils, regulateur)
+            _absorbe(message, parts, outils, regulateur, on_etapes)
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
             raise _avec_stderr(_erreur_plafond(plafond_tours, exc), stderr) from exc
@@ -464,6 +480,7 @@ async def _collect_response_pilotee(
     plafond_tours: int | None = None,
     stderr: CollecteurStderr | None = None,
     regulateur: RegulateurActivite | None = None,
+    on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
 ) -> str:
     """Comme `_collect_response`, mais en session pilotée : serveurs MCP connectés d'abord.
 
@@ -490,7 +507,7 @@ async def _collect_response_pilotee(
             await _attend_serveurs_mcp(client, attendus)
             await client.query(prompt)
             async for message in client.receive_response():
-                _absorbe(message, parts, outils, regulateur)
+                _absorbe(message, parts, outils, regulateur, on_etapes)
                 if isinstance(message, ResultMessage) and message.is_error:
                     detail = message.result or message.subtype
                     if _MARQUEUR_MAX_TURNS in message.subtype:
@@ -551,6 +568,7 @@ def _absorbe(
     parts: list[str],
     outils: list[str],
     regulateur: RegulateurActivite | None = None,
+    on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
 ) -> None:
     """Absorbe un message du flux SDK : texte et outils relevés, usage signalé (#8).
 
@@ -564,6 +582,12 @@ def _absorbe(
     chaque bloc de texte, dans l'ordre, au moment où ils passent. C'était le
     constat du ticket — la matière traversait cette fonction et personne ne la
     publiait.
+
+    Et c'est pour la même raison que la **checklist** de l'agent part d'ici
+    (#489) : elle est l'entrée d'un appel d'outil comme un autre, et cet appel
+    passait déjà là. `on_etapes` la reçoit **en plus** du régulateur, jamais à sa
+    place — poser une case à cocher est aussi un geste, et le taire au fil
+    d'activité ferait un trou dans la séquence que #479 existe pour reconstituer.
 
     ⚠ Les deux comptes ne sont **pas** le même et ne doivent pas être fusionnés.
     `outils` reste **dédupliqué** parce qu'il alimente `StepUsage.outils`, dont
@@ -583,10 +607,31 @@ def _absorbe(
             elif isinstance(block, ToolUseBlock):
                 if regulateur is not None:
                     regulateur.note(Geste.outil_appele(block.name, block.input))
+                if on_etapes is not None and est_checklist(block.name):
+                    _publie_etapes(on_etapes, block.input)
                 if block.name not in outils:
                     outils.append(block.name)
     elif isinstance(message, ResultMessage):
         report_usage(_usage_from_result(message, tuple(outils)))
+
+
+def _publie_etapes(
+    on_etapes: Callable[[Sequence[EtapeTache]], None], entree: object
+) -> None:
+    """Lit la checklist de l'agent dans l'entrée de l'outil et la signale (#489).
+
+    Ne lève jamais, aux deux étages : ni la lecture (tolérante par construction,
+    `maestro.providers.checklist`), ni le callback — même règle que `on_refus` et
+    que le régulateur d'activité. Une liste vide n'est pas signalée : un appel
+    illisible dirait « l'agent n'a plus rien à faire » là où il ne dit rien du
+    tout, et `SuiviChecklist` effacerait une checklist en place.
+    """
+    try:
+        etapes = etapes_depuis_outil(entree)
+        if etapes:
+            on_etapes(etapes)
+    except Exception:  # noqa: BLE001 — observer ne casse jamais l'observé
+        pass
 
 
 def _config_mcp_sdk(serveur: ServeurMcp) -> McpServerConfig:

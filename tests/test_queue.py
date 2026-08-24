@@ -135,7 +135,7 @@ class ToolingProvider(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, on_activite=None,
+        mcp_serveurs=(), politique=None, on_refus=None, on_activite=None, on_etapes=None,
         plafond_tours=None, projet=None,
     ):
         for chemin, contenu in self._files.items():

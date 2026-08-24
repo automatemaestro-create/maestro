@@ -395,6 +395,26 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > [`tests/test_detail_tache.py`](../tests/test_detail_tache.py) — le modèle, le
 > journal, le pont et la projection, **idempotence du rejeu comprise**.
 
+> **Et qui les pose (#489).** #246 avait tout posé sauf l'appelant :
+> `consigne_detail` n'était appelé par personne, donc la checklist était un
+> contrat entièrement plombé et entièrement vide. L'arbitrage — écrit en tête de
+> `maestro/detail_tache.py`, avec son motif — est **l'ossature au plan, complétée
+> et cochée par l'agent** : l'orchestrateur déclare les jalons prévus
+> (`etapes` de [`task.schema.json`](../packages/shared/schemas/task.schema.json),
+> libellés seuls, jamais d'avancement), ce qui rend la tâche lisible **avant**
+> qu'elle démarre ; l'agent rapporte où il en est **pendant** qu'elle tourne, et
+> son premier relevé supplante l'ossature. Il le fait là où il tient déjà sa
+> liste de travail — l'entrée de ses appels `TodoWrite`, lue par
+> `maestro/providers/checklist.py` : aucun protocole n'a été inventé, aucun
+> second transport ouvert. `SuiviChecklist` réconcilie les deux et garantit que
+> **rien ne recule** — un état ne redescend pas, une étape connue ne disparaît
+> pas d'un relevé qui l'oublie, y compris à travers une relance. Le
+> **dénominateur, lui, peut grandir**, et c'est pourquoi la jauge du panneau est
+> une **case par étape** et non un pourcentage : ce qui est acquis reste allumé,
+> la rangée s'allonge. Un fournisseur sans checklist observable, un rôle dont la
+> politique refuse l'outil, un plan sans ossature : la tâche reste exactement ce
+> qu'elle est aujourd'hui. Tests différés au lot 4 du chantier (#492).
+
 Le **glisser-déposer** entre colonnes reste une **cible non livrée** : le statut
 d'une tâche est aujourd'hui posé par la machine à états du moteur, et seule la
 réassignation d'agent s'obtient depuis l'écran.

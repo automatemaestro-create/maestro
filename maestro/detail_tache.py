@@ -25,6 +25,44 @@ Deux règles gouvernent tout ce qui suit, et ce sont celles du contrat :
 - **rien ne se refuse** — la validation ne lève jamais et ne fait pas échouer un
   run : un état inconnu reste tel quel (le front le ramènera à « à faire »), une
   URL de schéma inattendu est jetée en gardant le libellé.
+
+Qui remplit la checklist — l'arbitrage de #489
+----------------------------------------------
+
+#246 avait posé le contrat, le journal, l'événement et le panneau ; il restait
+une question que le dépôt n'avait pas tranchée, et `consigne_detail` n'était donc
+appelé par personne. Trois réponses étaient possibles, et deux ne tiennent pas :
+
+- **l'orchestrateur seul** connaît les étapes d'avance, donc le dénominateur est
+  stable — mais personne ne coche : la checklist resterait figée à « à faire »
+  du début à la fin, ce qui est exactement ce que le ticket appelle « un contrat
+  entièrement plombé et entièrement vide » ;
+- **l'agent seul** produit une checklist juste, parce qu'il découvre en
+  travaillant — mais une tâche qui n'a pas encore démarré n'a alors **rien** à
+  montrer, et un plan illisible tant qu'il ne tourne pas est précisément ce que
+  le précédent des outils cités écarte : GitHub Actions déclare ses `steps`
+  d'avance, n8n déclare ses nœuds, et c'est la déclaration préalable qui rend la
+  vue lisible ;
+- **ossature au plan, complétée et cochée par l'agent** — celle qui est retenue.
+  Le plan (`Task.etapes`, `task.schema.json`) donne de quoi lire la tâche
+  **avant** qu'elle démarre ; l'agent donne la vérité **pendant** qu'elle tourne.
+  Chacun répond de ce qu'il sait, et aucun des deux ne répond de ce qu'il ignore.
+
+La couture des deux est `SuiviChecklist`, et son arbitrage propre mérite d'être
+dit : le **premier relevé de l'agent supplante l'ossature** au lieu de s'y
+apparier par libellé. Apparier serait un pari sur la formulation du modèle —
+« Écrire la migration » contre « Rédiger la migration SQL » —, et un pari perdu
+ne coûte pas rien : il **double** la checklist d'étapes qui ne se cocheront
+jamais, c'est-à-dire qu'il rend le dispositif pire que les deux options pures.
+Supplanter est déterministe, et gratuit tant que rien n'est acquis — au premier
+relevé, l'ossature est tout entière « à faire ».
+
+Ce que le suivi garantit ensuite, et c'est le troisième critère du ticket : **ce
+qui est acquis ne se perd pas**. Un état ne redescend jamais, une étape connue ne
+disparaît jamais d'un relevé qui l'oublie. Le **dénominateur, lui, peut
+grandir** — un agent découvre en travaillant —, et c'est assumé plutôt que
+masqué : l'écran rend une jauge **par étape** (une case gagnée reste gagnée, la
+liste s'allonge) au lieu d'un pourcentage qui redescendrait à chaque ajout.
 """
 
 from __future__ import annotations
@@ -228,6 +266,122 @@ def etapes_en_liste(etapes: Sequence[EtapeTache]) -> list[dict[str, str]]:
 def liens_en_liste(liens: Sequence[LienUtile]) -> list[dict[str, str]]:
     """La forme JSON d'une liste de liens utiles — `[]` quand il n'y en a aucun."""
     return [lien.to_dict() for lien in liens]
+
+
+#: Rang d'avancement des trois états connus — ce qui permet de dire qu'une étape
+#: a **progressé**, et donc de refuser qu'elle recule. Un état inconnu n'y figure
+#: pas à dessein : on ne sait pas le classer, donc on ne le laisse pas défaire un
+#: état connu (cf. `SuiviChecklist`). C'est la seule façon de tenir ensemble les
+#: deux règles du contrat — « rien ne se refuse » le fait passer, « la
+#: progression ne recule pas » l'empêche d'effacer un acquis.
+_RANGS_ETAT: dict[str, int] = {ETAPE_A_FAIRE: 0, ETAPE_EN_COURS: 1, ETAPE_FAITE: 2}
+
+
+def _cle(libelle: str) -> str:
+    """L'identité d'une étape à travers deux relevés : son libellé, casse neutralisée.
+
+    Un agent qui rapporte trois fois sa liste ne réécrit pas ses libellés à la
+    virgule près ; l'apparier sur la chaîne exacte ferait apparaître trois étapes
+    là où il y en a une. La normalisation reste **minimale** — espaces et casse,
+    rien de plus : deux formulations réellement différentes sont deux étapes, et
+    c'est la raison pour laquelle l'ossature du plan est *supplantée* plutôt
+    qu'appariée (cf. l'arbitrage, en tête de module).
+    """
+    return " ".join(libelle.split()).casefold()
+
+
+def _avance(connue: EtapeTache, relevee: EtapeTache) -> EtapeTache:
+    """La même étape, avancée du relevé — jamais reculée.
+
+    Garde le **libellé déjà connu** : la clé étant la même à la casse et aux
+    espaces près, réécrire le libellé ne changerait rien au fond mais ferait
+    scintiller la ligne à l'écran d'un relevé à l'autre.
+    """
+    rang_connu = _RANGS_ETAT.get(connue.etat)
+    rang_releve = _RANGS_ETAT.get(relevee.etat)
+    if rang_releve is None:
+        # État inconnu : il passe (« rien ne se refuse »), mais seulement là où
+        # il n'y a rien à défaire — sur une étape déjà en cours ou faite, on ne
+        # saurait pas dire s'il avance ou recule, donc on garde l'acquis.
+        return relevee if rang_connu in (None, 0) else connue
+    if rang_connu is not None and rang_releve < rang_connu:
+        return connue
+    return EtapeTache(libelle=connue.libelle, etat=relevee.etat)
+
+
+class SuiviChecklist:
+    """L'état courant de la checklist d'une tâche, de l'ossature au dernier relevé (#489).
+
+    Monté avec l'**ossature** que le plan déclare (libellés seuls, tous « à
+    faire ») : c'est ce que la tâche montre avant même d'avoir démarré. Puis
+    `rapporte` intègre chaque relevé de l'agent, tel que le fournisseur l'observe
+    pendant l'exécution.
+
+    Trois règles, et ce sont les critères du ticket :
+
+    - le **premier relevé supplante l'ossature**. Le plan annonçait une
+      intention, l'agent dit ce qu'il fait vraiment ; et comme rien n'est encore
+      acquis à cet instant, remplacer ne perd rien. Les relevés suivants, eux, ne
+      remplacent plus jamais : ils fusionnent ;
+    - **rien ne recule** : un état ne redescend pas (`_avance`), et une étape
+      connue qu'un relevé oublie garde sa place et son état plutôt que de
+      disparaître. Le numérateur de l'avancement est donc monotone, y compris à
+      travers une relance de la tâche — qui repart de zéro côté agent ;
+    - **le dénominateur peut grandir** : une étape inédite est ajoutée. C'est le
+      prix d'une checklist juste, et il est payé à l'écran (jauge par étape) et
+      non ici, en bridant ce que l'agent a le droit de découvrir.
+
+    `rapporte` rend `None` quand la checklist n'a **pas changé** : un agent
+    rappelle volontiers sa liste à l'identique, et republier à chaque fois
+    coûterait une ligne de journal, un événement de bus et un rendu pour rien.
+    """
+
+    def __init__(self, ossature: Sequence[str] = ()) -> None:
+        self._etapes: dict[str, EtapeTache] = {}
+        # Tant qu'aucun relevé n'est venu, ce qu'on porte est l'annonce du plan —
+        # et c'est ce drapeau, pas le contenu, qui dit si le prochain relevé
+        # supplante : une ossature vide se remplace aussi bien qu'une pleine.
+        self._ossature = True
+        for libelle in ossature:
+            etape = EtapeTache(libelle=libelle).valide()
+            if not etape.vide:
+                self._etapes.setdefault(_cle(etape.libelle), etape)
+
+    @property
+    def vide(self) -> bool:
+        """La checklist n'a-t-elle rien à montrer (règle de #246) ?"""
+        return not self._etapes
+
+    def etapes(self) -> list[EtapeTache]:
+        """La checklist courante, dans l'ordre où elle se lit."""
+        return list(self._etapes.values())
+
+    def rapporte(self, relevees: Sequence[EtapeTache]) -> list[EtapeTache] | None:
+        """Intègre un relevé — rend la checklist si elle a **changé**, `None` sinon.
+
+        Un relevé qui n'apprend rien (vide, ou fait entièrement d'étapes sans
+        libellé) laisse la checklist intacte, ossature comprise : c'est un agent
+        qui n'a rien dit, pas un agent qui annonce n'avoir plus rien à faire.
+        """
+        lues = [etape for etape in (brute.valide() for brute in relevees) if not etape.vide]
+        if not lues:
+            return None
+        avant = self.etapes()
+        if self._ossature:
+            self._etapes = {}
+            self._ossature = False
+        fusion: dict[str, EtapeTache] = {}
+        for etape in lues:
+            cle = _cle(etape.libelle)
+            connue = self._etapes.get(cle)
+            fusion[cle] = etape if connue is None else _avance(connue, etape)
+        # Ce qu'un relevé oublie n'est pas ce qu'il retire : une étape connue
+        # reprend sa place à la suite, avec l'état qu'elle avait.
+        for cle, etape in self._etapes.items():
+            fusion.setdefault(cle, etape)
+        self._etapes = fusion
+        apres = self.etapes()
+        return apres if apres != avant else None
 
 
 def consigne_detail(

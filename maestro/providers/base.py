@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, ClassVar, TypeVar
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
     from maestro.agents.permissions import PolitiqueOutils
+    from maestro.detail_tache import EtapeTache
     from maestro.projets.modele import Projet
 
 #: Borne appliquée à une exécution agentique dont l'appelant n'en fixe pas — depuis
@@ -281,6 +282,7 @@ class ModelProvider(ABC):
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
         on_activite: Callable[[str], None] | None = None,
+        on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -339,6 +341,25 @@ class ModelProvider(ABC):
 
         Même règle que `on_refus` sur les échecs : un callback qui lève ne doit
         jamais casser l'exécution observée.
+
+        `on_etapes` (#489) est le canal de la **checklist** de la tâche : le
+        fournisseur l'appelle avec l'état complet de la liste de travail de
+        l'agent, tel qu'il vient de l'observer, chaque fois que celui-ci la pose
+        ou la met à jour. L'état **complet** et non un delta, à dessein — c'est
+        `maestro.detail_tache.SuiviChecklist` qui décide de ce qui progresse, et
+        lui confier des deltas l'obligerait à reconstituer un état que le
+        fournisseur a déjà sous les yeux.
+
+        Capacité **optionnelle au second degré** : un fournisseur peut honorer
+        `run_agent` sans jamais appeler ce canal, s'il n'a pas d'endroit où
+        observer une checklist. La tâche reste alors exactement ce qu'elle est
+        sans lui — pas de checklist vide, pas de bloc qui promette un contenu
+        absent (règle de #246). C'est ce qui permet au couplage à l'outil
+        d'exister d'un seul côté (`maestro.providers.checklist`) sans remonter
+        jusqu'au moteur.
+
+        Même règle que les deux autres canaux sur les échecs : un callback qui
+        lève ne casse jamais l'exécution observée.
 
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de

@@ -110,6 +110,14 @@ class Task:
     régime que `ticket` : None dans le cas courant (le plan n'en produit pas de
     lui-même), posé au lancement d'un run et hérité par chaque tâche, et la clé
     est **omise** de `to_dict` quand il n'y en a pas.
+
+    `etapes` (#489) porte l'**ossature** de la checklist : les libellés des
+    étapes prévues, dans l'ordre, sans aucun état. Le plan dit *ce qu'il y a à
+    faire*, jamais *où l'on en est* — l'avancement se coche en cours
+    d'exécution et n'existe pas au moment où le plan est écrit. Vide dans le cas
+    courant (l'orchestrateur peut n'en déclarer aucune), et la clé est alors
+    **omise** de `to_dict` : un plan sans ossature doit rester sérialisable tel
+    quel, comme pour `ticket` et `projet_id`.
     """
 
     id: str
@@ -120,6 +128,7 @@ class Task:
     dependances: tuple[str, ...] = ()
     ticket: ReferenceTicket | None = None
     projet_id: str | None = None
+    etapes: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Task:
@@ -133,6 +142,7 @@ class Task:
             dependances=tuple(data.get("dependances", ())),
             ticket=ReferenceTicket.depuis(data.get("ticket")),
             projet_id=projet_id_valide(data.get("projet_id")),
+            etapes=tuple(data.get("etapes", ())),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -149,6 +159,8 @@ class Task:
             data["ticket"] = self.ticket.to_dict()
         if self.projet_id is not None:
             data["projet_id"] = self.projet_id
+        if self.etapes:
+            data["etapes"] = list(self.etapes)
         return data
 
 
