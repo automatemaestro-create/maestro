@@ -18,20 +18,22 @@ ressortie** (#280, §2.0.1). Le menu est déclaré une seule fois
 (`apps/web/lib/navigation.ts`) et fait aujourd'hui **dix entrées** — les deux
 écrans de la Phase 8, « Composer un objectif » (#319) et « Valider le brief »
 (#322), s'y sont ajoutés, puis **« Runs »** (#474, §2.4.1) ; le Kanban des tâches
-n'en est pas une (il **est** le tableau de bord, #248) et l'écran Projets non
-plus (il est servi, mais atteint depuis le sélecteur du shell).
+n'en est pas une (il est l'objet de la **vue d'un run**, servie sous « Runs »
+depuis #476 — §2.4.2) et l'écran Projets non plus (il est servi, mais atteint
+depuis le sélecteur du shell).
 
 > ⚠ **Ce menu change deux fois, et les deux ont été décidées le 2026-08-24**
 > (revue #470, [docs/29](./29-decision-run-objet-de-premier-plan.md)). Une entrée
 > **« Runs »** s'ajoute — **c'est fait** (#474, §2.4.1) : un run n'était l'objet
 > d'aucun écran, il a désormais le sien, et **sa vue** depuis #475 (§2.4.2), servie
-> sous cette entrée à `/runs/<run_id>` sans en réclamer une nouvelle. Reste la seconde
-> moitié de l'arbitrage ① : le Kanban **cesse d'être** le tableau de bord (#476 — ce
-> qui renverse #248 ; il est aux deux endroits en attendant). Les deux entrées de la Phase 8 **partent** en
+> sous cette entrée à `/runs/<run_id>` sans en réclamer une nouvelle. La seconde
+> moitié de l'arbitrage ① est **livrée elle aussi** : le Kanban a **cessé d'être** le
+> tableau de bord (#476 — ce qui renverse #248), qui montre désormais l'état des runs
+> (§2.1.2). Les deux entrées de la Phase 8 **partent** en
 > sens inverse (#484, arbitrage ②) : composer et valider le brief déménagent dans
 > le chat, qui devient la seule porte d'entrée. Rien n'est supprimé de ce que ces
-> écrans savent faire ; les chemins restent servis et redirigés. Tant que ces lots
-> ne sont pas livrés, c'est le texte ci-dessus qui décrit l'écran.
+> écrans savent faire ; les chemins restent servis et redirigés. Tant que **ce**
+> lot-là n'est pas livré, c'est le texte ci-dessus qui décrit l'écran.
 
 ```mermaid
 flowchart LR
@@ -43,9 +45,8 @@ flowchart LR
     Home --> Approve[Validations]
     Home --> Journal[Journal]
     Home --> Settings[Paramètres]
-    Home --> Tasks[Kanban des tâches]
     Runs --> RunDetail[Vue d'un run]
-    RunDetail --> Tasks
+    RunDetail --> Tasks[Kanban des tâches]
     Runs -. suspendu .-> Brief[Valider le brief]
     Runs -. suspendu .-> Approve
     Agents --> AgentDetail[Fiche agent]
@@ -201,7 +202,10 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
    **ici** — le parc étant celui du poste (§2.0), seul un décompte dérivé des
    tâches du projet a sa place en tête, les « occupés ailleurs » passant au
    détail.
-5. **Kanban** des tâches — qui prend **toute la hauteur restante** (#248, §2.2).
+5. **État des runs** (#476, §2.1.2) — ce qui tourne, ce qui attend quelqu'un, ce
+   qui est tombé et ce qui s'est soldé aujourd'hui, chacun avec sa progression et
+   un renvoi vers sa vue. Le **Kanban** occupait cette place jusqu'au 2026-08-24
+   (#248) ; voir l'encadré ci-dessous.
 6. **Aperçu de l'activité** en direct (quelques lignes, pas le fil entier).
 
 Le reste n'a pas été supprimé, il est **rangé**, et **chaque tuile renvoie vers
@@ -219,14 +223,25 @@ Le **coût cumulé** — celui du projet actif depuis #281 (§2.0) — et le sta
 temps réel vivent en permanence dans la barre supérieure, sur toutes les pages. Tout
 se met à jour par WebSocket.
 
-> ⚠ **L'item 5 est renversé depuis le 2026-08-24** (revue #470,
-> [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)) : le **Kanban quitte le
-> tableau de bord**, qui montre à la place **l'état des runs** (#476). Le motif est
-> une question de portée, pas de place : le Kanban rend les tâches du **projet**
-> (#277/#281) — ce qui court avec ce qui est fini depuis trois jours —, alors que la
-> question « où en est-on ? » porte sur ce qui tourne, c'est-à-dire un **run**. Il
-> reparaît entier dans la vue d'un run (#475). Les items 1 à 4 et 6 ne bougent pas,
-> et la portée **projet** n'est pas défaite : le run s'y **ajoute**.
+> ⚠ **L'item 5 a été renversé le 2026-08-24** (revue #470,
+> [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)) et **livré par #476** : le
+> **Kanban a quitté le tableau de bord**, qui montre à la place **l'état des runs**.
+> Le motif est une question de portée, pas de place : le Kanban rend les tâches du
+> **projet** (#277/#281) — ce qui court avec ce qui est fini depuis trois jours —,
+> alors que la question « où en est-on ? » porte sur ce qui tourne, c'est-à-dire un
+> **run**. Il reparaît entier dans la vue d'un run (#475, §2.4.2). Les items 1 à 4 et
+> 6 n'ont pas bougé, et la portée **projet** n'est pas défaite : le run s'y
+> **ajoute**.
+>
+> **#248 n'est pas effacé pour autant**, il est **daté** : « le Kanban prend toute la
+> hauteur restante » a décrit cet écran jusqu'au 2026-08-24, et c'est cet encadré qui
+> dit ce qui l'a remplacé et pourquoi. Ce que #248 avait gagné n'est pas perdu — la
+> hauteur pleine et le défilement par colonne sont partis **avec** le composant dans
+> la vue d'un run, où les tâches sont de nouveau l'objet de l'écran. Ce qui disparaît
+> ici est seulement leur place **sur cette page**, avec la borne `max-h-96` que #191
+> lui avait posée : plus rien ne s'étire sur le tableau de bord, et rien n'a été
+> inventé pour reprendre l'étirement — l'état des runs est une liste, une liste se lit
+> du haut, et lui donner tout l'écran étirerait du vide les jours calmes.
 
 #### 2.1.1 Le poste vide — ce que montre un démarrage en mode réel (#186)
 
@@ -253,30 +268,84 @@ distingue ce vide-là des deux autres (§2.0). Une fois le premier événement p
 le poste se remplit **sans rechargement** (WebSocket), et l'historique est rejoué au
 redémarrage de l'API (journal durable, #97).
 
+#### 2.1.2 L'état des runs — ce qui a pris la place du Kanban (#476) — **livré**
+
+L'item 5 du tableau de bord : les runs du projet actif **groupés par régime**, chacun
+avec sa progression et le renvoi vers sa vue (§2.4.2).
+
+| Groupe | Ce qu'il porte |
+| --- | --- |
+| **En cours** | les runs qui **avancent** — badge bleu à pastille battante |
+| **Suspendus** | ceux qui attendent quelqu'un : brief à valider, questions de clarification, arbitrage sur une tâche — avec **depuis quand** |
+| **Interrompus** | ceux dont l'hôte ne bat plus (#348) |
+| **Soldés du jour** | ceux qui ont rendu leur verdict aujourd'hui — terminé, annulé, échec |
+
+**Le découpage est celui de `regimeDuRun`** (`lib/execution.ts`), le même que la liste
+des runs (§2.4.1) et la vue d'un run — jamais un second tri écrit pour cet écran. Il
+importe ici plus qu'ailleurs : « en cours » au sens de l'API recouvre un run qui
+travaille *et* un run arrêté depuis trois heures sur une question, et c'est le défaut
+d'origine du chantier — 53 minutes perdues le 2026-08-14 (#355). Un tableau de bord
+qui dirait « 3 runs en cours » sans les séparer referait exactement cette promesse.
+De même, **une ligne de run se lit à l'identique** sur les trois écrans : c'est la
+`CarteRun` de `components/runs/EtatRun.tsx`, extraite de la liste le jour où un
+troisième écran a eu à la rendre.
+
+**Le quatrième groupe n'est pas dans le ticket, et c'est délibéré.** #476 en nomme
+trois — en cours, suspendus, soldés du jour — mais `regimeDuRun` en rend **quatre**,
+et omettre *interrompu* ferait **disparaître** ces runs-là de l'écran : le panneau
+« Runs interrompus » qui les précède (item 3) ne montre que les **récupérables** —
+orphelin *et* brief approuvé (#349) —, si bien qu'un run mort avant validation de son
+cadrage ne serait nulle part. Sa place, après « suspendus », suit l'arbitrage déjà
+rendu un cran plus haut sur le même écran : ce qui retient du travail **vivant** passe
+devant ce qui ne retient plus rien.
+
+**Seuls les soldés sont bornés** — au jour, puis à cinq, le groupe disant alors ce
+qu'il masque. C'est le seul qui grossisse sans fin, et un run terminé avant-hier
+n'apprend rien sur « où en est-on » ; les autres s'affichent **en entier**, puisque
+c'est précisément ce que l'écran existe pour montrer. Le renvoi de l'en-tête mène à la
+liste, qui les porte tous. Un run soldé sans date de fin est daté de son **début**
+(le contrat garde `fin` nullable), et **sans horloge personne n'est du jour** : le
+rendu serveur n'a pas d'instant (#250), le groupe apparaît donc au premier battement
+— même règle qu'un « il y a 3 min » qui remplace une heure absolue.
+
+**Il ne décide de rien**, et c'est ce qui le sépare des trois panneaux qui le
+précèdent : ceux-là portent le geste qui lève une attente, celui-ci porte l'état. Un
+run interrompu peut donc paraître deux fois sur l'écran — dans « Runs interrompus »
+avec son bouton, et ici avec son état. C'est la superposition que le Kanban avait déjà
+avec les validations, et elle est voulue : ce qui appelle un geste passe devant, ce qui
+décrit l'état se lit d'un bloc.
+
+Composant : `apps/web/components/runs/EtatDesRuns.tsx`. Couverture : lot 8 (#480) —
+`tests/tableau-de-bord.test.tsx` garde en attendant que le Kanban a bien quitté l'écran
+et que le renvoi vers la liste y est.
+
 ### 2.2 📋 Tâches — tableau Kanban
 
 > ⚠ **« Il *est* l'objet du tableau de bord » a été renversé le 2026-08-24** (revue
-> #470, [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)). Le Kanban devient
-> **la vue d'un run** (#475, **livré** — §2.4.2) : mêmes colonnes, mêmes cartes, même
-> détail sur place — ce qui change est ce qu'il rend, les tâches de **ce run** au lieu
-> de celles du projet entier. Le tableau de bord montre l'état des runs (#476), et une
-> entrée de menu **« Runs »** liste ceux du projet actif (#474, livré). Tout ce qui
-> suit reste vrai du composant ; seule sa **portée** et sa page changent. #191
-> (l'épure) et #251 (le détail sur place) ne sont pas touchés.
+> #470, [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)), et le renversement
+> est **complet depuis #476**. Le Kanban est désormais **la vue d'un run** (#475,
+> §2.4.2) : mêmes colonnes, mêmes cartes, même détail sur place — ce qui change est ce
+> qu'il rend, les tâches de **ce run** au lieu de celles du projet entier. Le tableau
+> de bord montre l'état des runs (#476, §2.1.2), et une entrée de menu **« Runs »**
+> liste ceux du projet actif (#474, §2.4.1). Tout ce qui suit reste vrai du composant ;
+> seules sa **portée** et sa page ont changé. #191 (l'épure) et #251 (le détail sur
+> place) ne sont pas touchés.
 >
-> ⚠ **Il est aux deux endroits en attendant le lot 4**, et c'est voulu : #475 *ajoute*
-> la vue d'un run sans rien retirer du tableau de bord, pour que le lot se merge seul
-> sans écran cassé. C'est #476 qui fera le retrait. Le composant est **le même**, à une
-> prise près — `messageVide`, parce que la phrase par défaut nomme le **projet** et
-> que « rien encore sur Dépensio » désignerait le mauvais vide dans la vue d'un run :
-> le projet peut être plein pendant que *ce* run n'a créé aucune tâche.
+> Le retrait s'est fait **en deux temps, à dessein** : #475 a *ajouté* la vue d'un run
+> sans rien retirer du tableau de bord — il y était donc aux deux endroits — pour que
+> le lot se merge seul sans écran cassé, et #476 a fait le retrait une fois le Kanban
+> pourvu d'un autre endroit où vivre. Le composant est **le même**, à une prise près —
+> `messageVide`, parce que la phrase par défaut nomme le **projet** et que « rien
+> encore sur Dépensio » désignerait le mauvais vide dans la vue d'un run : le projet
+> peut être plein pendant que *ce* run n'a créé aucune tâche.
 
-Le Kanban n'a **pas d'entrée de menu à lui** : il *est* l'objet du tableau de
-bord, et depuis #248 il en prend la place — les tuiles rendent une rangée, le
-tableau prend **toute la hauteur restante** et chaque colonne défile chez elle.
-La borne `max-h-96` de #191 protégeait la densité d'un écran qui portait encore
-cinq panneaux de plein format ; ceux-ci sont partis, elle est restée, et les
-tâches tenaient dans le tiers supérieur d'un grand écran. En largeur, ce sont
+Le Kanban n'a **pas d'entrée de menu à lui** : il est l'objet de la **vue d'un run**,
+servie sous l'entrée « Runs » à `/runs/<run_id>` (§2.4.2), et il y prend la place que
+lui donnait déjà #248 — la progression rend une tête, le tableau prend **toute la
+hauteur restante** et chaque colonne défile chez elle. La borne `max-h-96` de #191
+protégeait la densité d'un écran qui portait encore cinq panneaux de plein format ;
+ceux-ci sont partis, elle est restée, et les tâches tenaient dans le tiers supérieur
+d'un grand écran. En largeur, ce sont
 les colonnes qui commandent : une **largeur minimale par colonne** plutôt qu'un
 nombre de colonnes, si bien qu'elles s'élargissent jusqu'à 2 560 px et se
 replient en lignes en dessous, au lieu d'être toutes tassées de front.
@@ -917,42 +986,53 @@ le promet pas.
 
 ## 5. Maquette textuelle du tableau de bord
 
-Tel qu'épuré par #191, puis rééquilibré par la vague v3 : l'arbitrage d'abord,
-quatre tuiles de tête **resserrées**, le Kanban qui prend **toute la hauteur
-restante** (#248), puis un aperçu de l'activité qui renvoie au Journal. Chaque
-tuile qui résume un panneau rangé porte le renvoi (`→`) vers la page où il vit.
+Tel qu'épuré par #191, rééquilibré par la vague v3, puis **renversé par #476** :
+l'arbitrage d'abord, quatre tuiles de tête **resserrées**, **l'état des runs**
+groupé par régime (§2.1.2), puis un aperçu de l'activité qui renvoie au Journal.
+Chaque tuile qui résume un panneau rangé porte le renvoi (`→`) vers la page où il vit.
 Les pictogrammes ci-dessous sont ceux de cette maquette, pas ceux de l'écran :
 l'interface, elle, n'a plus d'émoji (#245, §4).
 
-> ⚠ **Le bloc `TÂCHES` de cette maquette est renversé depuis le 2026-08-24** (revue
-> #470, [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)) : il cède la place
-> à **l'état des runs** (#476), et reparaît entier dans la vue d'un run (#475). La
-> maquette est laissée telle qu'elle décrit l'écran **aujourd'hui** — la redessiner
-> avant que le lot soit livré ferait décrire un écran qui n'existe pas.
+> ⚠ **Un bloc `TÂCHES` occupait ici toute la hauteur restante jusqu'au 2026-08-24**
+> (#248). Il a cédé la place à **l'état des runs** (#476, arbitrage ① de la revue
+> #470, [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)) et se retrouve
+> entier dans la vue d'un run (#475, §2.4.2) — colonnes, cartes, détail sur place et
+> défilement par colonne compris. Ce qui a changé est sa **portée**, pas son contenu.
 
 ```
 ┌──────────────┬──────────────────────────────────────────────────────────────┐
 │ M Maestro    │  Tableau de bord       ● Temps réel    4,80 $     🔔 ☀ ?     │
 │              ├──────────────────────────────────────────────────────────────┤
 │ ▸ Tableau…   │  VALIDATIONS EN ATTENTE                                      │
-│   Projets    │  « Déploiement en production » — devops  [Approuver][Refuser]│
-│   Agents     ├──────────────┬──────────────┬──────────────┬─────────────────┤
-│   Chat       │ Run en cours │ Tâches       │ Agents       │ Dépense         │
-│   Coûts…     │ run-2f9c     │ 20           │ 2 occ. 2 lib.│ 4,95 $US        │
-│   Validations│ 5 ouvertes   │ 4 en cours…  │ 4 au total…  │ 3 exécution(s)  │
-│   Journal    │              │              │ Voir les →   │ Détail par →    │
-│   Paramètres ├──────────────┴──────────────┴──────────────┴─────────────────┤
-│              │  TÂCHES                                                      │
-│              │ Assignées 3│ En cours 4 │Bloquées 1│Terminées 12│ Échecs 0   │
-│              │ ┌─────────┐│ ┌─────────┐│          │            │            │
-│              │ │ carte…  ││ │ carte…  ││          │            │            │
-│              │ └─────────┘│ └─────────┘│          │            │            │
-│              │      ⇕ chaque colonne défile chez elle, jusqu'en bas         │
+│   Composer…  │  « Déploiement en production » — devops  [Approuver][Refuser]│
+│   Brief      ├──────────────┬──────────────┬──────────────┬─────────────────┤
+│   Runs       │ Run en cours │ Tâches       │ Agents       │ Dépense         │
+│   Agents     │ run-2f9c     │ 20           │ 2 occ. 2 lib.│ 4,95 $US        │
+│   Chat       │ 5 ouvertes   │ 4 en cours…  │ 4 au total…  │ 3 exécution(s)  │
+│   Coûts…     │              │              │ Voir les →   │ Détail par →    │
+│   Validations├──────────────┴──────────────┴──────────────┴─────────────────┤
+│   Journal    │  ÉTAT DES RUNS                            tous les runs →    │
+│   Paramètres │  En cours 1                                                  │
+│              │   Migrer la facturation                    ● En cours        │
+│              │   run-2f9c · il y a 12 min · 4,95 $US                        │
+│              │   ▓▓▓▓▓▓▓▓▓░░░░░░  12 terminées · 4 en cours — 12/20 soldées │
+│              │  Suspendus 1                                                 │
+│              │   Refondre l'onboarding              ● Brief à valider       │
+│              │   run-8b1e · il y a 3 h · 0,42 $US                           │
+│              │   Le brief attend votre décision · il y a 3 h      Relire →  │
+│              │  Soldés du jour 6                          + 1 autre soldé   │
+│              │   Corriger l'export CSV                    ● Terminé         │
 │              ├──────────────────────────────────────────────────────────────┤
 │              │  ACTIVITÉ EN DIRECT                        voir le Journal → │
 │              │  il y a 2 min  dev a terminé « Écrire les tests »  4 étapes  │
 └──────────────┴──────────────────────────────────────────────────────────────┘
 ```
+
+Deux détails de la maquette qui **sont** des décisions : le groupe *Interrompus*
+n'apparaît pas parce qu'il n'y a rien dedans — un groupe vide ne s'affiche pas —, et
+« + 1 autre soldé » est la borne des soldés du jour, seul groupe plafonné (§2.1.2).
+La barre de progression, elle, est celle de la liste des runs et de la vue d'un run,
+comptée par le backend (#473) : trois écrans, une seule mesure.
 
 ---
 

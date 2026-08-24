@@ -40,8 +40,9 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   action de la page ;
 - **Tableau de bord épuré** (#191, lot 2 de la navigation v2 #189) : l'essentiel
   en **un écran** — ce qui attend un arbitrage, quatre **indicateurs de tête**
-  (run en cours, tâches par statut, agents occupés et libres, dépense), le
-  Kanban, puis un **aperçu** de l'activité. Chaque tuile met en valeur **le
+  (run en cours, tâches par statut, agents occupés et libres, dépense),
+  **l'état des runs** (#476 — le Kanban tenait cette place jusque-là, voir plus
+  bas), puis un **aperçu** de l'activité. Chaque tuile met en valeur **le
   chiffre qu'on vient y chercher** (#247) : la tuile Agents répond « combien
   travaillent, combien sont disponibles ? » et relègue le total et les agents
   désactivés en ligne de détail. Les trois panneaux de plein format qui s'y empilaient
@@ -87,8 +88,22 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   d'afficher un tableau vide qui se lirait « ce run n'a rien fait » ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
-- **Kanban** des tâches par statut (machine à états docs/03 §3), qui **prend la
-  place** du tableau de bord depuis #248 (lot 4 de #242) : les tuiles se
+- **État des runs** (#476, lot 4 de #472, docs/05 §2.1) : ce que le tableau de bord
+  montre **à la place du Kanban**, groupé par régime — *en cours*, *suspendus*,
+  *interrompus*, *soldés du jour* —, chaque run avec sa progression et le renvoi
+  vers sa vue. Le renversement de #248 tient à la **portée** et non à la place : le
+  Kanban rend les tâches du **projet** (#277/#281), donc ce qui court mêlé à ce qui
+  est fini depuis trois jours, quand « où en est-on ? » porte sur ce qui tourne —
+  un **run**. Le découpage vient de `regimeDuRun` et la ligne est la `CarteRun` de
+  la liste (`components/runs/EtatRun.tsx`) : ni second tri, ni seconde mise en
+  forme. Seuls les **soldés** sont bornés — au jour, puis à cinq, le reste étant
+  dans la liste des runs — parce que c'est le seul groupe qui grossit sans fin ;
+  le groupe *interrompus* s'ajoute aux trois du ticket parce que `regimeDuRun` en
+  rend quatre et que le panneau « Runs interrompus » ne montre que les
+  **récupérables** (#349) ;
+- **Kanban** des tâches par statut (machine à états docs/03 §3), qui a **pris la
+  place** du tableau de bord de #248 (lot 4 de #242) à #476, où il est devenu la
+  **vue d'un run** (§2.4.2) : les tuiles se
   resserrent à une rangée, le tableau absorbe la hauteur restante et chaque
   colonne défile chez elle. En largeur, c'est une **largeur minimale par
   colonne** qui commande et non un nombre de colonnes : au-delà les colonnes
