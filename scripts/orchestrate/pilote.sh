@@ -20,18 +20,36 @@
 # --- Le PID seul ne suffit pas ----------------------------------------------------------------------
 # Un numéro de processus se recycle, et une carte laissée par un run tué (aucun trap ne survit à un
 # SIGKILL) désignerait un jour un processus innocent — que l'on tuerait à sa place. On enregistre
-# donc aussi la DATE DE NAISSANCE du processus (`/proc/<pid>/stat`, champ 22, en ticks depuis le
-# démarrage de la machine) : deux processus qui portent le même numéro n'ont jamais démarré au même
-# tick. La règle qui en découle est volontairement asymétrique —
+# donc, à côté du numéro, de quoi RECONNAÎTRE le processus : sa DATE DE NAISSANCE
+# (`/proc/<pid>/stat`, champ 22, en ticks depuis le démarrage de la machine) et son WINPID sous MSYS.
 #
-#   * naissance enregistrée et vérifiable → elle doit correspondre, sinon le PID est celui d'un
-#     autre et le run est tenu pour mort ;
-#   * naissance enregistrée mais plus lisible → on s'abstient (mort), plutôt que de tuer au jugé ;
-#   * naissance jamais enregistrée (plateforme sans /proc) → `kill -0` fait foi, seule chose
-#     disponible là-bas.
+# ⚠ La naissance ne peut pas porter seule cette décision, et c'est #456 : elle est exprimée dans une
+# échelle — « ticks depuis le boot » — et cette ÉCHELLE PEUT SE DÉCALER PENDANT UN RUN. Mesuré le
+# 2026-08-24 sur le run `20260824-094229` : carte à 834570974, relecture à 834568417 pour le même
+# processus jamais redémarré, soit 2,557 s d'écart (CLK_TCK=1000), stable sur deux heures. Le pilote
+# travaillait, `kill -0` répondait, son winpid concordait, son état était `R` — et il était déclaré
+# MORT. Deux mesures encadrent le fait : la carte ne diverge PAS à l'écriture (banc `pilote_ecrit`
+# puis relecture immédiate : identiques), et la naissance relue est cohérente avec `/proc/uptime`
+# APRÈS coup. C'est donc l'échelle qui a bougé, pas la carte qui serait née fausse.
 #
-# Ne pas tuer un run mourant coûte un doublon signalé ; tuer le mauvais processus coûte le travail
-# de quelqu'un d'autre. L'asymétrie va donc toujours dans le même sens.
+# D'où la règle actuelle : plusieurs TÉMOINS, et il suffit qu'UN SEUL concorde.
+#
+#   * un témoin comparable qui concorde (naissance, ou winpid) → c'est bien lui, il est vivant ;
+#   * aucun témoin qui concorde, mais au moins un qui diverge → le PID est celui d'un autre, mort ;
+#   * un témoin enregistré mais devenu illisible, et aucun autre → on s'abstient (mort), plutôt que
+#     de tuer au jugé ;
+#   * rien de jamais enregistré (plateforme sans /proc) → `kill -0` fait foi, seule chose disponible.
+#
+# Un témoin de plus ne relâche pas la protection contre le recyclage, il la renforce : pour tromper
+# la règle il faudrait qu'un processus recycle À LA FOIS le numéro MSYS et le winpid de l'ancien.
+#
+# ⚠ Et l'asymétrie « dans le doute, ne pas tuer » ne vaut PAS ici, contrairement à ce que ce fichier
+# a longtemps dit. Elle est juste pour `pilote_tue`, qui vise un processus ; elle est fausse pour
+# `pilote_vivant`, que `pilotes_vivants` interroge pour savoir QUI TUER : un pilote déclaré mort à
+# tort n'est pas tué, donc deux runs cohabitent — ce que #213 existe précisément pour empêcher — et
+# le prétendu « doublon signalé » ne l'est même pas, l'arrêt étant muet quand il n'a rien à tuer.
+# La protection contre le recyclage ne vient donc pas de la prudence du verdict, elle vient du
+# NOMBRE DE TÉMOINS.
 #
 # --- Windows : deux mondes de processus ---------------------------------------------------------------
 # Sous Git Bash, le pilote est un `bash.exe` MSYS et la session un `claude.exe` natif. `/proc` ne
@@ -131,11 +149,49 @@ pilote_retire() {
   return 0
 }
 
+# pilote_identite_concorde <naissance-carte> <naissance-lue> <winpid-carte> <winpid-lu>
+#   0 = c'est bien le processus de la carte · 1 = un autre (PID recyclé), ou invérifiable.
+#
+# Fonction PURE : elle ne lit ni /proc, ni la carte, ni l'horloge. C'est délibéré et c'est la moitié
+# du ticket #456 — la règle qu'elle porte doit pouvoir être éprouvée cas par cas sur N'IMPORTE QUELLE
+# plateforme. Le winpid n'existe que sous MSYS ; une règle qui ne vivrait qu'à l'intérieur de
+# `pilote_vivant` ne serait donc testable que sous Windows, et le job Linux de la CI rendrait un vert
+# sur une question jamais posée (#333). Ici, les quatre témoins sont des arguments : le test les pose.
+#
+# « Comparable » veut dire : les deux côtés portent une valeur. Un témoin absent des deux côtés n'a
+# pas d'avis ; un témoin enregistré mais devenu illisible en a un, et c'est l'abstention.
+pilote_identite_concorde() {
+  local n_carte="${1:-}" n_lue="${2:-}" w_carte="${3:-}" w_lu="${4:-}"
+  local comparable=0 perdu=0
+
+  # Un seul témoin concordant suffit — voir « Le PID seul ne suffit pas » en tête de fichier.
+  if [ -n "$n_carte" ] && [ -n "$n_lue" ]; then
+    comparable=1
+    [ "$n_carte" = "$n_lue" ] && return 0
+  elif [ -n "$n_carte" ]; then
+    perdu=1
+  fi
+  if [ -n "$w_carte" ] && [ -n "$w_lu" ]; then
+    comparable=1
+    [ "$w_carte" = "$w_lu" ] && return 0
+  elif [ -n "$w_carte" ]; then
+    perdu=1
+  fi
+
+  # Au moins un témoin comparable, et aucun n'a concordé : le numéro désigne quelqu'un d'autre.
+  [ "$comparable" = 1 ] && return 1
+  # Aucun témoin comparable. Un témoin enregistré qu'on ne sait plus relire fait s'abstenir ; rien
+  # d'enregistré du tout laisse `kill -0` faire foi, seule chose disponible sur une plateforme
+  # sans /proc.
+  [ "$perdu" = 1 ] && return 1
+  return 0
+}
+
 # pilote_vivant <run-dir> : 0 si le processus décrit par la carte tourne ENCORE ET est bien celui
 # qu'on croit. 1 sinon — carte absente, processus disparu, zombie pas encore ramassé, PID recyclé,
-# ou identité invérifiable (cf. l'asymétrie en tête de fichier).
+# ou identité invérifiable (cf. les témoins en tête de fichier).
 pilote_vivant() {
-  local dir="$1" pid hote naissance actuelle
+  local dir="$1" pid hote naissance actuelle winpid winpid_lu
   pid="$(pilote_champ "$dir" pid)" || return 1
   case "$pid" in '' | *[!0-9]*) return 1 ;; esac
 
@@ -150,11 +206,10 @@ pilote_vivant() {
   pilote_zombie "$pid" && return 1
 
   naissance="$(pilote_champ "$dir" naissance)" || naissance=""
-  [ -n "$naissance" ] || return 0
   actuelle="$(pilote_naissance "$pid")" || actuelle=""
-  [ -n "$actuelle" ] || return 1
-  [ "$actuelle" = "$naissance" ] || return 1
-  return 0
+  winpid="$(pilote_champ "$dir" winpid)" || winpid=""
+  winpid_lu="$(pilote_winpid "$pid")" || winpid_lu=""
+  pilote_identite_concorde "$naissance" "$actuelle" "$winpid" "$winpid_lu"
 }
 
 # --- L'arrêt --------------------------------------------------------------------------------------
