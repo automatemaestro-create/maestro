@@ -16,7 +16,17 @@ choses :
 - **lancer** un run décrit par un `OrdreRun` ;
 - **annuler** un run qu'il porte ;
 - **observer** ce qu'il porte encore — un run précis (`en_vol`), ou tous
-  (`runs_en_vol`), parce que le cœur (#348) a N runs à faire battre et pas un.
+  (`runs_en_vol`), parce que le cœur (#348) a N runs à faire battre et pas un —
+  et, depuis #446, ce qu'il a **vu mourir** (`ramasser`).
+
+Ce quatrième verbe est une observation et non un quatrième pouvoir, et c'est ce
+qui le rend sûr : l'hôte rapporte un **fait** — ce process est mort, voici son
+code et sa trace —, il ne dit pas ce que ce fait signifie. C'est l'appelant qui
+tranche, en confrontant la dépouille à la projection : un hôte qui a publié son
+issue avant de partir n'a rien laissé à ramasser, un hôte tué net a laissé un run
+`en_cours` que plus personne ne portera. Faire dire à l'hôte « ce run a échoué »
+lui demanderait de connaître le statut du run, c'est-à-dire précisément ce que ce
+contrat existe pour lui épargner.
 
 **Le contrat ne connaît pas son transport**, et c'est sa seule règle de
 conception — la leçon reprise de la veille AionUi (#352) : « lancer un
@@ -67,9 +77,34 @@ from maestro.references import ReferenceTicket
 #: modules d'implémentation : les nommer suppose seulement qu'ils existent, alors
 #: qu'aller les chercher ferait importer un sous-process (et demain un client
 #: Temporal) à toute app qui n'en veut pas.
+#:
+#: Depuis #446, `detache` est le **défaut** du déploiement — `process` reste
+#: disponible, et le nommer est un choix, plus un silence. Le défaut de
+#: *construction* (`ServiceExecutions` sans hôte) reste l'hôte en process pour une
+#: raison qui n'est pas un reste : c'est le seul à qui l'on puisse passer une
+#: coroutine, donc le seul qu'une app puisse se donner sans process à fabriquer.
 HOTE_RUN_EN_PROCESS = "process"
 HOTE_RUN_DETACHE = "detache"
 HOTES_RUN: tuple[str, ...] = (HOTE_RUN_EN_PROCESS, HOTE_RUN_DETACHE)
+
+
+@dataclass(frozen=True, slots=True)
+class HoteMort:
+    """Un hôte que l'appelant a vu mourir, avec ce qu'on sait d'elle (#446).
+
+    Le rendu de `ramasser` — un **constat**, jamais un verdict : `run_id` désigne
+    le run qui y vivait, `cause` dit ce que l'hôte a pu en apprendre (code de
+    sortie, dernières lignes de son journal, chemin de ce journal), dans la forme
+    exacte où elle atterrira dans le `detail` du run.
+
+    Elle ne porte **pas** de statut, et c'est le point : « ce process est mort » ne
+    dit pas « ce run a échoué ». Un hôte qui vient de publier son issue meurt
+    aussi, et son run n'a rien à ramasser — seul l'appelant, qui lit la projection,
+    peut faire la différence.
+    """
+
+    run_id: str
+    cause: str
 
 
 class DemarrageHoteRate(RuntimeError):
@@ -211,6 +246,25 @@ class HoteRun(ABC):
         pour reprendre.
         """
         raise NotImplementedError
+
+    def ramasser(self) -> tuple[HoteMort, ...]:
+        """Les hôtes morts **depuis le dernier appel** — vides par défaut (#446).
+
+        L'observation qui manquait : `runs_en_vol` dit ce qui vit, et ne dit donc
+        rien de ce qui vient de cesser. Un hôte qui fabrique quelque chose peut
+        voir ce quelque chose mourir sans un mot — process tué, machine qui
+        s'endort, panne au milieu d'un run — et le run reste alors `en_cours` dans
+        la projection jusqu'à ce que le seuil d'orphelinat l'y laisse pour de bon.
+
+        Chaque mort n'est rendue **qu'une fois** : l'appelant en fait un run soldé,
+        et la redire ferait réécrire l'issue d'un run à chaque tour d'horloge.
+
+        Concret et non abstrait, contrairement à `fermer`, parce qu'ici le no-op a
+        un sens plein et le silence ne cache aucune décision : un hôte dont les
+        runs consignent eux-mêmes leur issue — celui en process *est* le run —
+        n'a jamais rien à ramasser. Même parti pris que `RegistreBattements.close`.
+        """
+        return ()
 
     @abstractmethod
     async def fermer(self, *, delai_s: float) -> None:

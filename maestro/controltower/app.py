@@ -828,12 +828,14 @@ def create_app(
     besoin.
 
     `hote_run` (#442) est **où** les exécutions se déroulent : le contrat d'hôte
-    de run (`maestro.controltower.hote`), dont le défaut — `HoteRunEnProcess` — est
-    la tâche de fond de l'API, c'est-à-dire le comportement de toujours. Même
-    point d'injection que `fabrique_moteur`, et pour une raison voisine : la
-    fabrique décide de *quoi* déroule le run, l'hôte de *où* il vit. C'est par lui
-    qu'un hôte survivant à l'API (#441) se câblera, sans que les routes, les
-    événements ni la projection en sachent quoi que ce soit.
+    de run (`maestro.controltower.hote`). Même point d'injection que
+    `fabrique_moteur`, et pour une raison voisine : la fabrique décide de *quoi*
+    déroule le run, l'hôte de *où* il vit. C'est par lui que l'hôte survivant à
+    l'API (#441) se câble, sans que les routes, les événements ni la projection en
+    sachent quoi que ce soit. `None` laisse le service se donner
+    `HoteRunEnProcess` — la tâche de fond, la configuration des tests et d'une démo
+    mono-process ; la **production** câble l'hôte détaché, résolu depuis
+    l'environnement par `create_default_app` (#446).
     """
     bus = bus if bus is not None else InMemoryEventBus()
     event_log = event_log if event_log is not None else InMemoryEventLog()
@@ -2693,13 +2695,15 @@ def create_default_app() -> FastAPI:
     lancé par `maestro-run --publier` et de le retrouver vivant après un
     redémarrage de l'API.
 
-    L'**hôte des runs** (#443) se choisit ici, et nulle part ailleurs :
-    `MAESTRO_HOTE_RUN=detache` fait vivre chaque run dans un process indépendant,
-    qui survit à l'arrêt de `maestro-api` ; vide ou `process` garde la tâche de
-    fond, le défaut jusqu'au lot 5 du chantier #441. C'est le seul endroit du
-    dépôt qui *nomme* un hôte : le service ne connaît que le contrat, et le
-    résoudre là où sont déjà résolus le bus, le journal et le registre met la
-    frontière d'exécution parmi les autres choix de déploiement, ce qu'elle est.
+    L'**hôte des runs** (#443) se choisit ici, et nulle part ailleurs. Depuis #446
+    le défaut est l'hôte **détaché** : chaque run vit dans un process indépendant,
+    qui survit à l'arrêt de `maestro-api` — fermer la fenêtre du navigateur,
+    relancer après une modification, `start.sh --stop` n'emportent plus le run.
+    `MAESTRO_HOTE_RUN=process` ramène la tâche de fond de l'API, dont les runs
+    meurent avec elle. C'est le seul endroit du dépôt qui *nomme* un hôte : le
+    service ne connaît que le contrat, et le résoudre là où sont déjà résolus le
+    bus, le journal et le registre met la frontière d'exécution parmi les autres
+    choix de déploiement, ce qu'elle est.
 
     C'est la cible *factory* d'uvicorn :
     `uvicorn --factory maestro.controltower.app:create_default_app`
@@ -2716,21 +2720,34 @@ def create_default_app() -> FastAPI:
 
 
 def _hote_configure(settings: Settings) -> HoteRun | None:
-    """Résout `MAESTRO_HOTE_RUN` en hôte — None pour le défaut en process (#443).
+    """Résout `MAESTRO_HOTE_RUN` en hôte — **détaché** par défaut depuis #446.
+
+    La bascule du chantier #441 tient dans la valeur de repli de la première
+    ligne, et c'est voulu : les quatre lots précédents ont livré du code inerte
+    pour que celui-ci n'ait rien d'autre à changer. Ce que ce défaut promet est
+    écrit dans `hote_detache` — un run survit à son API, pas à sa machine ; ce
+    qu'il exige est un Redis joignable, sur lequel le process publie ses étapes,
+    bat son cœur, reçoit les décisions humaines et consigne son issue.
+
+    `process` reste disponible et **doit se nommer** : le silence ne le désigne
+    plus. C'est le sens de la bascule — un déploiement qui veut des runs mourant
+    avec l'API le dit, là où c'était jusqu'ici ce qu'on obtenait sans rien dire.
+    `None` est rendu pour lui, et non `HoteRunEnProcess()` : le service en fabrique
+    un autour de son propre dérouleur, qu'on n'a pas ici.
 
     Une valeur inconnue est une **erreur franche** et non un repli silencieux :
-    `MAESTRO_HOTE_RUN=detaché` (avec l'accent) laisserait sinon croire que les
-    runs survivent à l'API alors qu'ils meurent avec elle, et la panne ne se
-    verrait qu'au premier arrêt — c'est-à-dire trop tard, sur le run qu'on voulait
-    protéger. Même parti pris que `MAESTRO_ISOLATION` (#108), pour la même raison :
-    une frontière d'exécution absente ne doit jamais ressembler à rien.
+    `MAESTRO_HOTE_RUN=procesus` laisserait sinon croire que les runs meurent avec
+    l'API alors qu'ils lui survivent — et depuis la bascule, l'erreur se lit dans
+    l'autre sens qu'avant, ce qui ne change rien à sa nature : une frontière
+    d'exécution mal orthographiée ne doit jamais ressembler à un choix. Même parti
+    pris que `MAESTRO_ISOLATION` (#108).
 
     L'import de l'hôte détaché est **local** à cette branche : il tire
     `subprocess` et, par la ligne de commande du fils, tout le moteur — une app
     qui ne le demande pas n'a pas à le charger, exactement comme `moteur_par_defaut`
     ne résout aucun fournisseur tant qu'aucun run ne part.
     """
-    nom = (settings.hote_run or HOTE_RUN_EN_PROCESS).strip().lower()
+    nom = (settings.hote_run or HOTE_RUN_DETACHE).strip().lower()
     if nom == HOTE_RUN_EN_PROCESS:
         return None
     if nom == HOTE_RUN_DETACHE:
@@ -2739,5 +2756,5 @@ def _hote_configure(settings: Settings) -> HoteRun | None:
         return HoteRunDetache()
     raise ConfigError(
         f"MAESTRO_HOTE_RUN : hôte inconnu {nom!r} "
-        f"(attendu : {' | '.join(HOTES_RUN)}, ou vide pour « {HOTE_RUN_EN_PROCESS} »)."
+        f"(attendu : {' | '.join(HOTES_RUN)}, ou vide pour « {HOTE_RUN_DETACHE} »)."
     )

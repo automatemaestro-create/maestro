@@ -49,8 +49,15 @@ class HoteRunEnProcess(HoteRun):
     Les runs **ne survivent pas** à ce process, et c'est la propriété assumée du
     POC (#185) : annulation à portée (`asyncio.Task.cancel`), aucune dépendance
     d'infrastructure ajoutée à `maestro-api`. Ce que cette perte coûte se voit
-    (#348) et se rattrape (#349) ; l'empêcher est le chantier #441, qui branchera
-    un autre hôte sur ce même contrat.
+    (#348) et se rattrape (#349) ; l'empêcher est le chantier #441, dont #446 a
+    fait le **défaut** l'autre hôte — celui-ci reste disponible et se nomme
+    (`MAESTRO_HOTE_RUN=process`).
+
+    `ramasser` (#446) n'est pas redéfini, et le no-op hérité est ici la réponse
+    juste et non un trou : le dérouleur de cette classe *est* le run, il consigne
+    donc lui-même son issue avant de rendre la main — il n'existe aucun cas où une
+    tâche s'éteint en laissant un run `en_cours`, sauf l'annulation de `fermer`,
+    que l'appelant a déjà soldée.
     """
 
     def __init__(self, derouler: DerouleurRun) -> None:

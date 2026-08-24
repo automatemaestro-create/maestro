@@ -1,12 +1,12 @@
 """Battement de cœur d'un run — ce qui ne bat plus est signalé orphelin (#348).
 
-Un run lancé depuis la Control Tower s'exécute en **tâche de fond du process de
-`maestro-api`** (`maestro.controltower.executions`, en-tête) : il ne survit pas à
-son hôte, et c'est un choix assumé. Ce qui ne l'était pas, c'est que sa **mort
-soit invisible** — le journal durable (#97) conserve le dernier état publié, donc
-un run dont l'hôte est tombé reste `en_cours` pour toujours. Au constat du
-2026-08-17, quatre runs fantômes étaient affichés comme actifs, dont deux du
-22 juillet.
+Un run lancé depuis la Control Tower vit dans un **process détaché** depuis #446
+(`maestro.controltower.hote_detache`) : il survit à l'arrêt de `maestro-api`,
+mais pas au sommeil de sa machine, et c'est un choix assumé. Ce qui ne l'était
+pas, c'est que sa **mort soit invisible** — le journal durable (#97) conserve le
+dernier état publié, donc un run dont l'hôte est tombé reste `en_cours` pour
+toujours. Au constat du 2026-08-17, quatre runs fantômes étaient affichés comme
+actifs, dont deux du 22 juillet.
 
 La déduction naïve — « l'API vient de démarrer, donc tout `en_cours` est mort » —
 est **fausse** : un run lancé par `maestro-run --publier` publie sur le même Redis
@@ -25,24 +25,38 @@ Deux moitiés, et leur asymétrie est celle du reste de la Control Tower :
 - **Écrire** — un hôte pose un battement. Deux formes, comme le bus a un
   `RedisEventBus` asynchrone côté API et un `publieur_redis` **synchrone** côté
   producteur : `RegistreBattements` (asynchrone) pour l'API, qui vit déjà dans
-  une boucle asyncio, et `CoeurRun` + `batteur_redis` (synchrones, un fil démon)
-  pour `maestro-run --publier`, qui n'en a pas. Une seule forme obligerait l'un
-  des deux hôtes à en fabriquer une.
+  une boucle asyncio, et `CoeurRun` + `batteur_redis` / `oublieur_redis`
+  (synchrones, un fil démon) pour les hôtes qui n'ont pas de boucle à eux —
+  `maestro-run --publier` et le process détaché de #443. Une seule forme
+  obligerait l'un des deux côtés à en fabriquer une.
 - **Lire** — l'API relit tous les battements d'un coup (`battements()`) et
   `vitalite()` en tire le verdict d'un run. La lecture ne dépend d'aucun process
   particulier : c'est ce qui fait qu'un run publié hors de l'API reste reconnu
   vivant **pendant un redémarrage de l'API**, troisième exigence du ticket.
 
 **Un battement ne s'efface jamais parce que l'hôte s'arrête** — il s'arrête, et
-c'est le fait qu'on veut lire. Le seul effacement est celui d'un run **soldé**
-côté API (`ServiceExecutions`) : son statut est alors terminal, la question de sa
-vitalité ne se pose plus, et l'entrée n'a plus qu'un coût de stockage. Corollaire
-assumé : un run `maestro-run --publier` **terminé normalement** finit par
-apparaître `orphelin`, parce qu'il ne publie aucun statut de fin — le verdict
-porte sur son **hôte** (« plus personne ne veille sur ce run »), jamais sur son
-travail, et c'est exactement ce que dit `orphelin` pour un ticket dans #327. Lui
-faire publier une issue est une autre question, celle de la frontière d'exécution
-(cadrage #350).
+c'est le fait qu'on veut lire. Il s'efface quand un run est **soldé**, et à cette
+seule condition : son statut est alors terminal, la question de sa vitalité ne se
+pose plus, et l'entrée n'a plus qu'un coût de stockage.
+
+⚠ **Ce qui a changé avec #446, c'est qui solde.** Tant que l'API était le seul à
+publier un statut de fin, un run vivant hors d'elle (`maestro-run --publier`, puis
+l'hôte détaché de #443) n'en publiait aucun : son dernier battement vieillissait
+et le faisait apparaître `orphelin` **terminé normalement** — corollaire assumé,
+le verdict portant sur son **hôte** (« plus personne ne veille sur ce run »)
+jamais sur son travail, exactement comme `orphelin` pour un ticket dans #327.
+Avec l'hôte détaché devenu le **défaut** des lancements Control Tower, ce
+corollaire aurait porté sur *tous* les runs. Un hôte publie donc désormais son
+issue en partant, et retire son battement dans le même geste
+(`maestro.controltower.bridge.solder_le_run`).
+
+Le corollaire ne disparaît pas pour autant, il **change de portée** : un run
+survit à son API, **pas à sa machine**. Ce qui reste `orphelin` est donc ce qui
+est mort sans pouvoir le dire — machine endormie, process tué net, Redis muet au
+dernier instant — et c'est là, exactement, que le verdict garde son sens : il
+signale ce que personne n'a soldé. On le voit ici, on le ramasse quand l'API
+portait l'hôte (`ServiceExecutions._ramasser`), et on le rattrape sur le brief
+(#349).
 """
 
 from __future__ import annotations
@@ -263,20 +277,52 @@ def batteur_redis(
     return battre
 
 
+def oublieur_redis(
+    url: str | None = None, *, cle: str = CLE_BATTEMENTS
+) -> Callable[[str], None]:
+    """Construit l'effaceur de battement **synchrone** — le pendant de `batteur_redis` (#446).
+
+    Même client, même clé, même paresse : ce qu'il manquait à un hôte sans boucle
+    asyncio pour **finir** proprement. Tant que l'API était seule à solder un run,
+    `RegistreBattements.oublier` suffisait ; depuis que l'hôte détaché est le
+    défaut, chaque run laisserait sinon une entrée définitive dans un hash relu en
+    entier (`HGETALL`) à chaque `GET /api/executions`.
+
+    Le geste ne se juge pas ici : il n'a de sens qu'**après** une issue publiée, et
+    c'est `maestro.controltower.bridge.solder_le_run` qui tient les deux ensemble
+    (cf. l'en-tête du module). Appelé seul, il transformerait un orphelin en
+    indéterminé, c'est-à-dire un verdict juste en absence d'information.
+    """
+    import redis
+
+    client = redis.Redis.from_url(url or REDIS_URL_DEFAUT)
+
+    def oublier(run_id: str) -> None:
+        client.hdel(cle, run_id)
+
+    return oublier
+
+
 class CoeurRun:
     """Fait battre un run depuis un **fil démon** — l'hôte bat tant qu'il vit (#348).
 
-    L'hôte visé est `maestro-run --publier` : un process synchrone, dont la boucle
-    asyncio est ouverte et refermée par le moteur (`run_borne`) et n'appartient
-    donc pas à l'appelant. Un fil démon est ce qui bat *à côté* du run sans rien
-    lui demander — et « démon » est le point : un cœur ne doit jamais retenir un
-    process qui veut sortir.
+    Les hôtes visés sont `maestro-run --publier` et le process détaché de #443 :
+    des process synchrones, dont la boucle asyncio est ouverte et refermée par le
+    moteur (`run_borne`) et n'appartient donc pas à l'appelant. Un fil démon est ce
+    qui bat *à côté* du run sans rien lui demander — et « démon » est le point : un
+    cœur ne doit jamais retenir un process qui veut sortir.
 
     `demarrer` bat **tout de suite** puis toutes les `periode` secondes ; c'est ce
     premier battement synchrone qui garantit qu'aucun run n'est lu `indetermine`
     entre son lancement et son premier tour d'horloge. `arreter` arrête le fil
     sans rien effacer : le dernier battement reste, il vieillit, et c'est lui qui
     fera le verdict (cf. l'en-tête du module).
+
+    L'effacement, lui, n'est **pas** ici et ce n'est pas un oubli : arrêter de
+    battre et solder un run sont deux faits différents, et les confondre ferait
+    disparaître le signal des morts brutales, seules à mériter encore `orphelin`.
+    Un hôte qui a une issue à publier passe par `solder_le_run` (#446), qui
+    effacera son battement **après** l'avoir publiée.
 
     Un battement en échec (Redis injoignable) est **tracé et abandonné**, jamais
     levé : même politique que le pont télémétrie — un signal de vie ne doit pas

@@ -881,23 +881,24 @@ décrit le comportement réel, pas une fixture.
 }
 ```
 
-**Un run non soldé dit s'il est encore porté par quelqu'un** (#348). Un run lancé d'ici s'exécute
-en tâche de fond du process de `maestro-api` et **ne survit pas à son hôte** — ce qui était assumé ;
-ce qui ne l'était pas, c'est que sa mort soit invisible : le journal durable (#97) conserve le
-dernier état publié, donc un run dont l'hôte est tombé restait `en_cours` **pour toujours** (quatre
-runs fantômes au constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un
-**battement** périodique, et `vitalite` en tire trois verdicts :
+**Un run non soldé dit s'il est encore porté par quelqu'un** (#348). Un run lancé d'ici vit dans un
+**process détaché** (#446) et **ne survit pas à sa machine** — ce qui est assumé ; ce qui ne l'était
+pas, c'est que sa mort soit invisible : le journal durable (#97) conserve le dernier état publié,
+donc un run dont l'hôte est tombé restait `en_cours` **pour toujours** (quatre runs fantômes au
+constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un **battement** périodique, et
+`vitalite` en tire trois verdicts :
 
-> **La frontière elle-même est tranchée par [doc 28](./28-decision-frontiere-execution-run.md)**
-> (#350) : l'exécution sortira du process de l'API pour un **hôte de run détaché**, si bien qu'un run
-> survivra à l'arrêt de l'API — mais **pas au sommeil de la machine**, qui reste traité par le
-> battement ci-dessous (on le voit) et par la relance sur brief de #349 (on le rattrape). Tant que
-> ce chantier n'est pas livré, le corollaire ci-dessus vaut sans réserve.
+> **La frontière est tranchée par [doc 28](./28-decision-frontiere-execution-run.md)** (#350) et
+> **livrée** par le chantier #441 : l'exécution est sortie du process de l'API pour un **hôte de run
+> détaché**, devenu le défaut avec #446 (`MAESTRO_HOTE_RUN=process` ramène la tâche de fond). Un run
+> survit donc à l'arrêt de l'API — fermer la fenêtre du navigateur, relancer après une modification,
+> `start.sh --stop` — mais **pas au sommeil de la machine**, qui reste traité par le battement
+> ci-dessous (on le voit) et par la relance sur brief de #349 (on le rattrape).
 
 | `vitalite` | ce que ça dit | ce qu'on en fait |
 | --- | --- | --- |
 | `vivant` | l'hôte a battu il y a moins de 30 min | rien : le run travaille |
-| `orphelin` | il a battu, puis s'est tu | plus personne ne veille sur ce run |
+| `orphelin` | il a battu, puis s'est tu **sans publier d'issue** | plus personne ne veille sur ce run |
 | `indetermine` | il n'a **jamais** battu (run antérieur à #348) | on ne sait pas, et on le dit |
 | `null` | le run est soldé (`terminee`/`annulee`/`echec`) | la question ne se pose pas |
 
@@ -905,19 +906,47 @@ Deux choix qui expliquent le reste. Le seuil est **généreux** (30 min, soixant
 manqués) : rater un orphelin coûte un run affiché en cours un peu trop longtemps, déclarer orphelin
 un run vivant coûte de repartir sur le cadrage d'un run qui travaille encore — même arbitrage que le
 seuil de six heures de [docs/10 §9.6](./10-workflow-git.md). Et la vitalité n'est **jamais déduite du
-redémarrage de l'API** : un run lancé par `maestro-run --publier` vit dans son propre process, publie
-sur le même Redis sans passer par l'API, et reste donc reconnu vivant **à travers** un redémarrage —
-c'est tout l'intérêt d'un signal porté par l'hôte plutôt que d'une supposition faite par le lecteur.
-Corollaire assumé : un run `--publier` **terminé normalement** finit par apparaître `orphelin`,
-faute de publier un statut de fin — le verdict porte sur son **hôte**, jamais sur son travail.
+redémarrage de l'API** : un run vit dans son propre process, publie sur le même Redis sans passer par
+l'API, et reste donc reconnu vivant **à travers** un redémarrage — c'est tout l'intérêt d'un signal
+porté par l'hôte plutôt que d'une supposition faite par le lecteur.
+
+**Et un hôte publie désormais son issue en partant** (#446). C'était le corollaire assumé de #348 :
+un run terminé normalement finissait quand même `orphelin`, faute d'un statut de fin — le verdict
+portant sur son **hôte**, jamais sur son travail. Acceptable tant que le détaché était opt-in ; plus
+du tout une fois qu'il est le chemin normal. Le process consigne donc son statut terminal sur le
+même bus et retire son battement dans le même geste, `maestro-run --publier` compris. Une seule
+issue ne vient pas de lui : celle d'un run **annulé**, déjà consignée par l'API — c'est elle qui a
+servi d'ordre (§6.1 ci-dessus, #444), et la republier dirait deux fois un fait acquis.
+
+Reste donc `orphelin` ce qui est mort **sans pouvoir le dire** : machine endormie, process tué net,
+Redis muet au dernier instant. C'est exactement ce que le verdict doit signaler, et c'est le run que
+`POST …/relancer` sait rejouer (ci-dessous).
+
+**Un hôte mort sans issue est ramassé** (#446), et le run soldé `echec` **avec sa cause** — code de
+sortie et dernières lignes du journal de l'hôte — au lieu d'être laissé `en_cours` indéfiniment. Le
+ramassage a lieu au rythme du battement, et il porte sur ce que l'API a **vu** mourir : elle tient le
+process des runs qu'elle a lancés, et une mort observée est un fait, pas une déduction. Trois bornes
+à connaître :
+
+- il ne **redéduit pas l'orphelinat** : `vitalite` en est la seule formule, comme pour le refus de
+  relance ci-dessous — une seconde formule serait un second endroit à tenir d'accord avec le premier ;
+- il ne solde donc **pas les orphelins**, seulement les morts observées. Un run dont l'hôte est tombé
+  pendant que l'API était arrêtée — ou sur une autre machine — reste `orphelin`, ce qui est voulu :
+  c'est précisément le run que la relance sait rattraper, et le solder le rendrait irrattrapable
+  (`run-solde`) ;
+- il attend quelques secondes avant de conclure : un process publie son issue *puis* sort, et
+  regarder entre les deux ferait solder en `echec` un run qui vient d'annoncer sa réussite.
 
 **Ce qui survit à la mort d'un hôte, et ce qui ne survit pas** (#347). C'est la question qu'on se
 pose quand un run vient de disparaître, et la réponse tient en un inventaire — la ligne de conduite
 étant que **tout ce qui est passé par le bus est acquis**, et rien d'autre :
 
+Depuis #446 la question ne se pose plus au redémarrage de l'API — un run lui survit — mais à la mort
+de sa **machine**, et l'inventaire vaut alors mot pour mot :
+
 | sort | ce qui est en jeu | pourquoi |
 | --- | --- | --- |
-| **perdu** | la tâche de fond et le travail qu'elle avait en cours | elle vit dans le process de `maestro-api` (`asyncio.Task`), pas ailleurs |
+| **perdu** | le process du run et le travail qu'il avait en cours | il vit sur cette machine, pas ailleurs |
 | **perdu** | les événements encore en file de publication | ils n'atteignent alors ni le bus, ni le journal durable, ni l'écran |
 | **perdu** | l'**annulabilité** du run | plus aucun process ne porte sa tâche : `annuler` ne fait plus que consigner son issue |
 | **gardé** | objectif, statut, tâches, coûts, ticket, projet, sources | le journal durable (#97) les rejoue au démarrage suivant |
@@ -931,14 +960,14 @@ exact de l'interruption suppose une frontière d'exécution durable, et fait l'o
 part (#350). Un run mort **avant** l'approbation de son brief n'a, lui, rien à rattraper du tout : il
 n'a pas encore de cadrage, seulement une proposition (`cadrage-absent`, ci-dessous).
 
-⚠ **Un run publié hors de l'API lit ce tableau à l'envers**, et le corollaire ci-dessus a une
-conséquence qu'il faut connaître **avant de cliquer**. Rien ne publie le cycle de vie d'un run de ce
-côté-là — `execution.statut` n'est émis que par le service de pilotage —, donc un
-`maestro-run --publier --brief humain` **terminé** se retrouve `orphelin` **avec** un brief approuvé :
-il apparaît dans *Runs interrompus* et se relance, ce qui donnerait un second run pour un travail
-déjà fait. Ni le verdict ni la règle d'affichage ne peuvent l'attraper — ils portent sur l'hôte,
-jamais sur le travail. Refermer cet écart demande de faire publier au run sa propre issue,
-c'est-à-dire de reprendre la question de la frontière d'exécution (#350).
+⚠ **Un run publié hors de l'API lisait ce tableau à l'envers**, et c'est l'écart que #446 a refermé.
+Rien ne publiait le cycle de vie d'un run de ce côté-là — `execution.statut` n'était émis que par le
+service de pilotage —, donc un `maestro-run --publier --brief humain` **terminé** se retrouvait
+`orphelin` **avec** un brief approuvé : il apparaissait dans *Runs interrompus* et se relançait, ce
+qui donnait un second run pour un travail déjà fait. Ni le verdict ni la règle d'affichage ne
+pouvaient l'attraper — ils portent sur l'hôte, jamais sur le travail. La réponse n'était donc pas
+dans l'affichage mais dans la frontière d'exécution : **un hôte publie son issue en partant**,
+`--publier` compris (ci-dessus).
 
 **Un run perdu se reprend sur le cadrage déjà payé** (#349). Voir qu'un run est mort ne le rattrape
 pas : sans geste, la seule issue reste de tout reprendre à zéro, clarification comprise. Or ce
