@@ -35,9 +35,16 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
 - `maestro.controltower.hote` : le **contrat d'hôte de run** (#442) — ce à quoi
   une exécution est confiée (`HoteRun` : lancer un `OrdreRun`, annuler, observer),
   sans que l'appelant sache où elle vit. `HoteRunEnProcess`
-  (`maestro.controltower.hote_en_process`) en est l'unique implémentation et le
-  défaut : la tâche de fond de l'API, le comportement de toujours — c'est le seam
-  sur lequel un hôte survivant à l'API se branchera (#441) ;
+  (`maestro.controltower.hote_en_process`) est le **défaut** : la tâche de fond de
+  l'API, le comportement de toujours ; `HoteRunDetache`
+  (`maestro.controltower.hote_detache`, #443) est celui qui **survit à l'API** —
+  un process indépendant par run, qui publie sur le même Redis et bat son cœur,
+  activé par `MAESTRO_HOTE_RUN=detache` (opt-in jusqu'au lot 5 du chantier #441).
+  Ce dernier n'est **pas réexporté ici**, et pas par oubli : son module est aussi
+  un point d'entrée (`python -m maestro.controltower.hote_detache`), et un module
+  déjà importé par le paquet est ensuite exécuté **une seconde fois** comme
+  `__main__` — Python le signale par un `RuntimeWarning` qui atterrirait en tête
+  du seul fichier où l'on va chercher la cause d'un démarrage raté ;
 - `maestro.controltower.assistance` : le canal d'**aide à l'utilisateur** (#123)
   — même infrastructure que le chat sur le fil réservé `assistance`, mais une
   fiche hors catalogue (`AGENT_ASSISTANCE`) et un répondeur déterministe
@@ -126,7 +133,14 @@ from maestro.controltower.executions import (
     moteur_par_defaut,
 )
 from maestro.controltower.fixtures import FixturesControlTower
-from maestro.controltower.hote import HoteRun, OrdreRun
+from maestro.controltower.hote import (
+    HOTE_RUN_DETACHE,
+    HOTE_RUN_EN_PROCESS,
+    HOTES_RUN,
+    DemarrageHoteRate,
+    HoteRun,
+    OrdreRun,
+)
 from maestro.controltower.hote_en_process import DerouleurRun, HoteRunEnProcess
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
@@ -179,6 +193,9 @@ __all__ = [
     "EXECUTION_ECHEC",
     "EXECUTION_EN_COURS",
     "EXECUTION_TERMINEE",
+    "HOTES_RUN",
+    "HOTE_RUN_DETACHE",
+    "HOTE_RUN_EN_PROCESS",
     "NOM_ASSISTANCE",
     "PAS_HEURE",
     "PAS_JOUR",
@@ -202,6 +219,7 @@ __all__ = [
     "CoutAgent",
     "CoutExecutionResume",
     "CoutTacheAgregee",
+    "DemarrageHoteRate",
     "DerouleurRun",
     "EtatAgent",
     "EtatExecution",
