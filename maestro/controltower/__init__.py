@@ -32,6 +32,12 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   --publier`), la lecture en tire un verdict (`vitalite` : vivant / orphelin /
   indéterminé) : un run dont l'hôte est tombé cesse de rester `en_cours` pour
   toujours ;
+- `maestro.controltower.hote` : le **contrat d'hôte de run** (#442) — ce à quoi
+  une exécution est confiée (`HoteRun` : lancer un `OrdreRun`, annuler, observer),
+  sans que l'appelant sache où elle vit. `HoteRunEnProcess`
+  (`maestro.controltower.hote_en_process`) en est l'unique implémentation et le
+  défaut : la tâche de fond de l'API, le comportement de toujours — c'est le seam
+  sur lequel un hôte survivant à l'API se branchera (#441) ;
 - `maestro.controltower.assistance` : le canal d'**aide à l'utilisateur** (#123)
   — même infrastructure que le chat sur le fil réservé `assistance`, mais une
   fiche hors catalogue (`AGENT_ASSISTANCE`) et un répondeur déterministe
@@ -120,6 +126,8 @@ from maestro.controltower.executions import (
     moteur_par_defaut,
 )
 from maestro.controltower.fixtures import FixturesControlTower
+from maestro.controltower.hote import HoteRun, OrdreRun
+from maestro.controltower.hote_en_process import DerouleurRun, HoteRunEnProcess
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
     EventLog,
@@ -194,6 +202,7 @@ __all__ = [
     "CoutAgent",
     "CoutExecutionResume",
     "CoutTacheAgregee",
+    "DerouleurRun",
     "EtatAgent",
     "EtatExecution",
     "EtatTache",
@@ -204,11 +213,14 @@ __all__ = [
     "EventLog",
     "FabriqueMoteur",
     "FixturesControlTower",
+    "HoteRun",
+    "HoteRunEnProcess",
     "InMemoryEventBus",
     "InMemoryEventLog",
     "JournalEventHandler",
     "LienUtile",
     "MessageChat",
+    "OrdreRun",
     "PointCout",
     "RedisEventBus",
     "RedisEventLog",

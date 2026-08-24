@@ -240,6 +240,7 @@ from maestro.controltower.fixtures import (
     TRIS_JOURNAL,
     FixturesControlTower,
 )
+from maestro.controltower.hote import HoteRun
 from maestro.controltower.persistence import (
     EventLog,
     InMemoryEventLog,
@@ -701,6 +702,7 @@ def create_app(
     fabrique_moteur: FabriqueMoteur | None = None,
     televersements: DepotTeleversements | None = None,
     lecteur_sources: LecteurSources | None = None,
+    hote_run: HoteRun | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -819,6 +821,14 @@ def create_app(
     lecture — par défaut `extraire_sources`. Injectable parce qu'une source `url`
     part sur le réseau : `tests/conftest.py` (#195) exige qu'aucun test n'en ait
     besoin.
+
+    `hote_run` (#442) est **où** les exécutions se déroulent : le contrat d'hôte
+    de run (`maestro.controltower.hote`), dont le défaut — `HoteRunEnProcess` — est
+    la tâche de fond de l'API, c'est-à-dire le comportement de toujours. Même
+    point d'injection que `fabrique_moteur`, et pour une raison voisine : la
+    fabrique décide de *quoi* déroule le run, l'hôte de *où* il vit. C'est par lui
+    qu'un hôte survivant à l'API (#441) se câblera, sans que les routes, les
+    événements ni la projection en sachent quoi que ce soit.
     """
     bus = bus if bus is not None else InMemoryEventBus()
     event_log = event_log if event_log is not None else InMemoryEventLog()
@@ -875,6 +885,7 @@ def create_app(
         televersements=televersements,
         lecteur_sources=lecteur_sources,
         battements=battements,
+        hote=hote_run,
     )
 
     @asynccontextmanager
