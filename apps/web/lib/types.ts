@@ -129,6 +129,15 @@ export type Evenement = {
    * lot n'en porte pas.
    */
   cause?: string;
+  /**
+   * Le **plan du run** (#490) — porté par le seul `run.plan`, et `null` partout
+   * ailleurs. Optionnel pour la même raison que les champs ci-dessus : une trace
+   * relue d'un run antérieur au lot n'en porte pas. Un client n'a pas à le
+   * recomposer lui-même : `GET /api/executions/{run_id}/graphe` rend le graphe
+   * déjà joint à l'état des tâches ; cet événement dit seulement *qu'il a
+   * changé*.
+   */
+  plan?: NoeudPlan[] | null;
   horodatage: string;
 };
 
@@ -583,6 +592,17 @@ export const EVENEMENT_BRIEF_DEMANDE = "brief.demande";
 export const EVENEMENT_BRIEF_DECISION = "brief.decision";
 export const EVENEMENT_BRIEF_QUESTIONS = "brief.questions";
 export const EVENEMENT_BRIEF_REPONSES = "brief.reponses";
+/**
+ * Le **graphe du run** (#490), publié une fois : à l'instant où la décomposition
+ * rend son plan. `plan` porte les nœuds et leurs dépendances, `run_id` le run
+ * visé (jamais `tache_id` : l'événement porte sur le run entier). Il ne dit rien
+ * de l'état — ni agent, ni statut, ni coût —, aucun de ces faits n'existant
+ * encore ; c'est `GET /api/executions/{run_id}/graphe` qui joint les deux.
+ *
+ * Il **double** l'`agent.activite` de la planification, il ne le remplace pas :
+ * ce que le cadrage a coûté et ce qu'il a décidé sont deux faits.
+ */
+export const EVENEMENT_RUN_PLAN = "run.plan";
 
 // ---------------------------------------------------------------------------
 // Contrats d'API v2 (#183) — formes JSON figées des routes des Phases 5/6,
@@ -1012,6 +1032,100 @@ export type DetailExecution = ResumeExecution & {
   brief: Brief | null;
   cout: CoutExecution;
   evenements: Evenement[];
+};
+
+/**
+ * Un nœud du **plan** tel qu'il voyage sur `run.plan` (#490,
+ * `maestro/plan_run.py`) : ce que la décomposition a écrit, et rien de plus —
+ * ni agent, ni statut, ni coût, aucun de ces faits n'existant au moment du plan.
+ * `etapes` est l'**ossature** de la checklist (#489) : des libellés seuls, jamais
+ * un état.
+ */
+export type NoeudPlan = {
+  id: string;
+  titre: string;
+  dependances: string[];
+  etapes: string[];
+};
+
+/**
+ * L'état d'une arête, c'est-à-dire du passage de relais entre deux tâches
+ * (#490) : `attendue` tant que l'amont n'a pas rendu son issue, `franchie`
+ * quand il a terminé (la main passe), `rompue` quand il a échoué ou a été
+ * bloqué — l'aval ne démarrera pas et se bloquera à son tour (#43).
+ */
+export const ARETE_ATTENDUE = "attendue";
+export const ARETE_FRANCHIE = "franchie";
+export const ARETE_ROMPUE = "rompue";
+
+/**
+ * Un nœud du graphe d'un run (#490) : la tâche du plan **jointe** à là où elle en
+ * est. `niveau` est son rang topologique — le plus long chemin qui y mène — et
+ * `rang` sa position dans ce niveau : de quoi poser la boîte sans recalculer un
+ * tri topologique en TypeScript. `compartiment` est la couleur, lue dans la table
+ * partagée de la progression (#473) et non dans une correspondance réinventée
+ * ici. `dependances` sont les arêtes entrantes, `dependants` les sortantes.
+ *
+ * Un nœud qui n'a pas démarré porte le statut `backlog` et une checklist tirée de
+ * l'ossature du plan : c'est ce qui rend une tâche lisible **avant** qu'elle
+ * tourne, et sur un graphe c'est la moitié des boîtes.
+ */
+export type NoeudGraphe = {
+  id: string;
+  titre: string;
+  dependances: string[];
+  dependants: string[];
+  niveau: number;
+  rang: number;
+  statut: string;
+  compartiment: string;
+  agent: string;
+  role: string;
+  cout_usd: number | null;
+  duree_ms: number | null;
+  etapes: EtapeTache[];
+};
+
+/** Une arête du graphe (#490) : `de` l'amont, `vers` l'aval — le sens du flux. */
+export type AreteGraphe = {
+  de: string;
+  vers: string;
+  etat: string;
+};
+
+/**
+ * Le graphe d'un run, servi par `GET /api/executions/{run_id}/graphe` (#490) :
+ * la lecture qui dit **quoi après quoi**, là où le Kanban dit « combien dans
+ * quel état » et la progression « où en est-on ».
+ *
+ * `niveaux` range les identifiants par rang topologique : deux tâches sans
+ * dépendance entre elles y tombent au **même** niveau, donc se lisent comme
+ * parallèles au lieu de paraître séquentielles. `largeur` est le niveau le plus
+ * peuplé — la parallélisation que le plan **autorise**, jamais celle qu'il
+ * obtiendra (le `parallelisme` du moteur peut être plus étroit).
+ *
+ * Deux booléens qu'il ne faut pas confondre. `plat` : aucune arête — le cas
+ * courant d'un plan dont les tâches sont indépendantes, et un graphe normal, pas
+ * un vide. `plan_connu` : le run a-t-il publié son plan ? À `false`, les nœuds
+ * sont reconstruits de ses seules tâches vues et il n'y a **aucune** arête faute
+ * de les connaître ; le dessin est le même, ce qu'on a le droit d'en conclure ne
+ * l'est pas.
+ *
+ * ⚠ `nb_noeuds` ne vaut pas `nb_taches` (donc pas `progression.total`) : le plan
+ * annonce ce qui **sera** fait, le run compte ce qu'il a **porté**. Les deux se
+ * rejoignent à la fin d'un run qui va au bout.
+ */
+export type GrapheRun = {
+  run_id: string;
+  plan_connu: boolean;
+  plat: boolean;
+  nb_noeuds: number;
+  nb_aretes: number;
+  profondeur: number;
+  largeur: number;
+  noeuds: NoeudGraphe[];
+  aretes: AreteGraphe[];
+  niveaux: string[][];
 };
 
 /** Clés de tri et sens du journal requêtable (maestro/controltower/journal.py). */

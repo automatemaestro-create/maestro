@@ -30,6 +30,7 @@ from maestro.detail_tache import (
     etapes_en_liste,
     liens_en_liste,
 )
+from maestro.plan_run import NoeudPlan, noeuds_en_liste
 from maestro.references import ReferenceTicket, ticket_en_dict
 from maestro.telemetry.redact import redact_secrets
 from maestro.telemetry.usage import StepUsage
@@ -60,6 +61,11 @@ class StepRecord:
     resterait vide. Absents (chaîne vide, listes vides) tant que rien ne les
     renseigne, et rendus `null` par `to_dict` pour que le pont sache distinguer
     « l'étape n'en dit rien » de « plus aucune étape ».
+    `plan` (#490) est le **graphe du run** — un nœud par tâche, ses dépendances,
+    son ossature de checklist —, porté par la seule étape `planification` et par
+    elle seule : c'est l'instant où le plan existe et où il est figé. Même raison
+    d'être ici que les précédents, et la plus nette de toutes — les arêtes ne
+    quittaient le moteur par aucun autre chemin.
     """
 
     run_id: str
@@ -79,6 +85,7 @@ class StepRecord:
     description: str = ""
     etapes: list[EtapeTache] = field(default_factory=list)
     liens: list[LienUtile] = field(default_factory=list)
+    plan: list[NoeudPlan] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trace en dict JSON-sérialisable (la ligne du journal)."""
@@ -104,6 +111,11 @@ class StepRecord:
             "description": self.description or None,
             "etapes": etapes_en_liste(self.etapes) or None,
             "liens": liens_en_liste(self.liens) or None,
+            # Même règle (#490) : `null` quand l'étape ne porte pas de plan,
+            # c'est-à-dire partout sauf sur la planification. Le pont n'en tire
+            # un `run.plan` que sur une liste non vide — un plan vide n'est pas
+            # un plan, et le publier ferait annoncer un graphe sans nœud.
+            "plan": noeuds_en_liste(self.plan) or None,
         }
 
 
@@ -156,6 +168,7 @@ class RunJournal:
         description: str = "",
         etapes: Sequence[EtapeTache] = (),
         liens: Sequence[LienUtile] = (),
+        plan: Sequence[NoeudPlan] = (),
     ) -> StepRecord:
         """Consigne une étape (textes expurgés des secrets) et émet sa ligne JSON."""
         record = StepRecord(
@@ -179,6 +192,13 @@ class RunJournal:
             description=redact_secrets(description),
             etapes=list(etapes),
             liens=list(liens),
+            # Le plan (#490) n'est pas expurgé, au même titre que `nom` : il
+            # porte des identifiants et des **titres** de tâches, exactement ce
+            # que chaque ligne de tâche consigne déjà en clair. L'expurgation
+            # vise ce qui a été dit au modèle et ce qu'il a rendu
+            # (`entree`/`sortie`/`erreur`), et les étapes de checklist suivent
+            # `etapes` (#246) : des libellés, déjà bornés.
+            plan=list(plan),
         )
         self._records.append(record)
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))

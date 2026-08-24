@@ -2215,3 +2215,123 @@ Implémentation : [`maestro/controltower/app.py`](../maestro/controltower/app.py
 Couverture : [`tests/test_brief.py`](../tests/test_brief.py) et
 [`tests/test_clarifications.py`](../tests/test_clarifications.py) côté API,
 `apps/web/tests/brief.test.tsx` côté UI.
+
+### 6.11 Le graphe d'un run — nœuds, arêtes, branches parallèles (#490) — **livré**
+
+La **troisième lecture** d'un run, à côté du Kanban et de la progression (§6.1). Le Kanban dit
+« combien dans quel état », la progression « où en est-on », celle-ci **« quoi après quoi »** — le
+run suivi comme un pipeline GitHub Actions ou un flux n8n : l'action en cours, ce qu'elle enchaîne,
+ce qui part en parallèle.
+
+- `GET /api/executions/{run_id}/graphe` → `GrapheRun` — le graphe du run. `404` si aucune trace
+  reçue pour ce `run_id`, par la même porte que `/cout`.
+
+```jsonc
+// GrapheRun
+{
+  "run_id": "demo-live",
+  // Le run a-t-il publié son plan ? À `false`, les nœuds sont reconstruits de
+  // ses seules tâches vues et il n'y a AUCUNE arête, faute de les connaître.
+  "plan_connu": true,
+  "plat": false,           // aucune arête — un cas normal, pas un graphe vide
+  "nb_noeuds": 4,          // les nœuds du PLAN (≠ nb_taches, voir plus bas)
+  "nb_aretes": 4,
+  "profondeur": 3,         // le plus long enchaînement, en niveaux
+  "largeur": 2,            // le niveau le plus peuplé : la parallélisation autorisée
+  "noeuds": [
+    { "id": "schema-sql", "titre": "Schéma SQL",
+      "dependances": [], "dependants": ["api-crud", "ui-liste"],
+      "niveau": 0, "rang": 0,
+      // Le statut de la machine à états (docs/03 §3) et son compartiment, lu
+      // dans la table partagée de la progression — jamais une correspondance
+      // réinventée par écran. `backlog` : le nœud n'a pas démarré.
+      "statut": "terminee", "compartiment": "terminees",
+      "agent": "Développeur backend", "role": "Backend",
+      "cout_usd": 0.02, "duree_ms": 1234,      // null : inconnu (≠ zéro)
+      // La checklist de la tâche (#489) : celle que l'agent tient, ou —
+      // tant qu'elle n'a pas démarré — l'ossature déclarée au plan.
+      "etapes": [ { "libelle": "Lister les entités", "etat": "faite" } ] }
+  ],
+  // `de` l'amont, `vers` l'aval : le sens du FLUX, jamais celui de la
+  // déclaration (`Task.dependances` se lit « j'attends ceux-ci »).
+  "aretes": [
+    { "de": "schema-sql", "vers": "api-crud", "etat": "franchie" },
+    { "de": "api-crud",   "vers": "tests-e2e", "etat": "attendue" }
+  ],
+  "niveaux": [ ["schema-sql"], ["api-crud", "ui-liste"], ["tests-e2e"] ]
+}
+```
+
+**Ce que le front n'a pas à recalculer**, et c'est le premier critère du ticket. `niveaux`, plus
+`niveau`/`rang` sur chaque nœud : un client qui les déduirait réécrirait un tri topologique en
+TypeScript, sur les seuls nœuds qu'il a chargés. `compartiment` : la couleur du nœud, lue dans
+[`maestro/controltower/progression.py`](../maestro/controltower/progression.py), exactement comme
+une colonne de Kanban. `plat`, `profondeur`, `largeur` : de quoi choisir une mise en page **avant**
+d'avoir parcouru les nœuds.
+
+**Les branches parallèles sont les niveaux, et le rang est le plus long chemin.** Deux tâches sans
+dépendance entre elles ne doivent pas paraître séquentielles — c'est un fait du moteur, où chaque
+tâche n'attend que ses propres dépendances et où le parallélisme est borné par un sémaphore, jamais
+par un ordre. Le niveau d'un nœud est donc le **plus long chemin qui y mène**, et non son rang dans
+un tri topologique : à ce compte-là seulement, deux tâches indépendantes tombent au même niveau. Le
+`topological_order` du moteur rend une **séquence** — vraie comme ordre d'exécution possible,
+fausse comme dessin.
+
+⚠ `largeur` dit ce que le plan **autorise**, jamais ce que le run fera : le `parallelisme` du moteur
+peut être plus étroit, et un run suspendu (#477) ne démarre rien. Le graphe rend la **topologie**,
+pas l'ordonnancement.
+
+| `etat` d'une arête | ce qu'il dit | quand |
+| --- | --- | --- |
+| `attendue` | rien n'est passé | l'amont n'a pas rendu son issue |
+| `franchie` | la main passe, l'aval peut démarrer | l'amont a **terminé** |
+| `rompue` | l'aval ne démarrera pas et se bloquera à son tour (#43) | l'amont a **échoué** ou été **bloqué** |
+
+Ce sont, aux mots près, les deux annonces de `HandoffRelais.annonce` (#44) — `handoff` quand la
+tâche a réussi, `notification` sinon. Elles sont lues **dans le statut de l'amont**, là où elles
+existent toujours : le relais n'existe que si une messagerie est injectée
+(`OrchestrationEngine(..., mailbox=…)`), et la Control Tower lance ses runs par
+`OrchestrationEngine.default()`, qui n'en injecte aucune. Se brancher sur le message lui-même aurait
+laissé **toutes les arêtes éteintes** dans la configuration ordinaire — le défaut exact que #488 a
+nommé chez `consigne_detail` : « toute la plomberie est posée, rien ne la remplit ».
+
+**Un graphe plat est un graphe, pas un vide** (quatrième critère). Un plan sans aucune dépendance
+déclarée est le cas le **plus courant** : `plat: true`, tous les nœuds au niveau 0, `niveaux` à une
+seule entrée — la lecture juste, puisque tout peut effectivement partir en même temps.
+`plan_connu: false` marque le cas qu'on ne peut pas deviner : un run qui n'a jamais publié son plan
+(moteur antérieur au lot, journal durable rejoué d'avant, planification en échec). Les deux se
+dessinent pareil ; ce qu'on a le droit d'en conclure ne l'est pas, d'où deux booléens et non un.
+
+⚠ **`nb_noeuds` ne vaut pas `nb_taches`**, donc pas `progression.total`, et l'écart n'est pas un
+défaut : le plan annonce ce qui **sera** fait, `nb_taches` compte ce que le run a **réellement
+porté** (§6.1 — les tâches qui ont démarré). Les deux se rejoignent à la fin d'un run qui va au
+bout, et divergent tout du long — ce qu'un graphe est précisément là pour montrer. Les faire
+coïncider aurait demandé de retirer du graphe les nœuds pas encore démarrés, c'est-à-dire de rendre
+un dessin qui pousse au lieu d'un plan.
+
+**Le direct passe par le canal existant, et le graphe n'a pas d'événement à lui** (troisième
+critère). Il se recompose **à la lecture**, en joignant le plan à l'état que la projection tient de
+chaque tâche : ce sont donc les événements déjà diffusés qui le font bouger — `tache.statut` (un
+nœud démarre, une arête s'allume), `tache.detail` (une étape se coche, #489), et le nouveau
+`run.plan`. Ce dernier est publié **une fois**, quand la décomposition rend son plan ; il porte les
+nœuds et leurs dépendances, jamais d'état.
+
+⚠ **Il double la ligne de journal de la planification, il ne la remplace pas** : la même étape
+produit toujours son `agent.activite` — c'est par lui que l'usage du cadrage entre au grand livre
+(#57). Deux événements pour une ligne, parce que ce sont deux faits : ce que la planification a
+**coûté**, et ce qu'elle a **décidé**.
+
+**Pourquoi le plan entier plutôt qu'une arête par tâche.** Les nœuds auraient pu arriver un par un,
+portés par le `tache.statut` de chaque tâche qui démarre — le chemin qu'ont pris le ticket externe
+(#187), le projet (#222) et le détail (#246). Il aurait été faux ici : une tâche n'émet son premier
+événement qu'en **démarrant**, donc le graphe aurait poussé dans l'ordre d'exécution et donné à lire
+une découverte progressive d'un ordre **figé au départ**. Un graphe qui pousse en direct ne se lit
+pas, il se subit — c'est l'argument par lequel #489 a tranché en faveur d'une ossature déclarée
+d'avance, et il vaut à l'identique un cran au-dessus.
+
+Implémentation : [`maestro/plan_run.py`](../maestro/plan_run.py) (la forme transportée, module
+feuille comme `detail_tache.py`), [`maestro/controltower/graphe.py`](../maestro/controltower/graphe.py)
+(la composition, module feuille comme `progression.py`),
+`ControlTowerState.graphe(run_id)` pour la jointure et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour la route. Tests différés au lot
+final du chantier (#492, [docs/10 §5.1](./10-workflow-git.md)).
