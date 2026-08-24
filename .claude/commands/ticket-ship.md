@@ -18,6 +18,12 @@ ne rend plus la main dans la seconde qui suit le commit. L'attente est **bornée
 conflit laisse la PR **ouverte** et le ticket **« En revue »**, et c'est un état normal — jamais un
 ✅ global.
 
+⚠ **Depuis #460, ces deux causes-là sont d'abord réparées.** Un pipeline rouge ou un conflit avec
+`origin/main` fait enchaîner `/ticket-finish` sur `/mr-fix`, **deux fois au plus**, avant de rendre
+la PR à un humain — donc l'attente peut s'allonger d'un pipeline ou deux. C'est le prix de ce que
+la commande promet, et il s'annonce plutôt qu'il ne se masque. Ce qui n'a pas bougé : ce que
+`/mr-fix` n'a pas su débloquer laisse la PR ouverte et le ticket « En revue ».
+
 ⚠ **En run autonome, cette attente se paie sur le quota du run** : une session pilotée par
 `/orchestrate` reste ouverte 2-4 min sans rien faire. Le lot 5 du même chantier (#419) part de
 l'hypothèse inverse — « aucune session ne merge, aucune n'attend un pipeline », le pilote tenant sa
@@ -100,11 +106,15 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    tests/doc d'après le diff, pipeline verte), **passage de la PR en « prête »** (`gh pr ready`, sans
    demander : une PR qu'on s'apprête à merger n'est pas un brouillon), passage de l'**état** à
    « En revue », **log automatique du temps** (estimé d'après la portée du travail), puis
-   l'**attente du pipeline et le merge** par `merge-mr` (#418). **Ne ré-implémente aucune de ces
-   étapes ici** — surtout pas le merge : `/ticket-finish` en est la source unique, et son étape de
-   commit sera sans objet (arbre déjà propre), elle passera directement au push.
+   l'**attente du pipeline et le merge** par `merge-mr` (#418) — et, si ce merge est refusé pour un
+   **pipeline rouge** ou un **conflit**, le **déblocage** par `/mr-fix`, deux fois au plus (#460).
+   **Ne ré-implémente aucune de ces étapes ici** — surtout pas le merge, ni le déblocage :
+   `/ticket-finish` en est la source unique, et son étape de commit sera sans objet (arbre déjà
+   propre), elle passera directement au push.
    **Lis son verdict de merge** : c'est lui qui ouvre ton résumé (étape 9), et c'est aussi lui qui
-   dit, à l'étape 8, si le lot que tu viens de shipper est mergé ou seulement « En revue ».
+   dit, à l'étape 8, si le lot que tu viens de shipper est mergé ou seulement « En revue ». Un
+   ticket mergé **au terme d'un déblocage** est mergé sans réserve : c'est le même `merge-mr` qui a
+   tranché, avec les mêmes quatre prérequis.
 
 8. **Sous-ticket d'un parent de suivi ?** Vérifie : `bash scripts/gitlab/lib.sh parent-of <iid>`.
    Si un parent est trouvé (convention `docs/10-workflow-git.md` §5.1), prépare l'**annonce de la
@@ -133,7 +143,9 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
      rien, pas même le parent — merger la PR d'un lot n'est pas fermer son parent.
 
 9. Résumé final : reprends le résumé produit par `/ticket-finish` — **verdict du merge en tête**
-   (mergé, ou la cause **telle que `merge-mr` l'a rendue** et la suite qu'elle appelle), lien de la
+   (mergé, ou la cause **telle que `merge-mr` l'a rendue** et la suite qu'elle appelle), l'**issue
+   du déblocage** s'il a eu lieu, sur sa propre ligne (⊘ non tenté · ✅ tenté et abouti · ❌ tenté
+   sans succès — jamais fondue dans le verdict du merge, #460), lien de la
    PR, temps loggé — et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
    ajoute l'annonce de l'étape 8 (prochain lot démarrable dès maintenant, ou parent fermable).
    **Jamais de ✅ global** : un ticket dont la PR est restée ouverte sur un pipeline rouge n'est pas

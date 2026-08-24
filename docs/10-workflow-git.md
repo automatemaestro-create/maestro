@@ -911,6 +911,37 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   force-push. Un refus de `merge-mr` laisse la PR **ouverte** et le ticket **« En revue »** : c'est
   un état normal, pas un échec, et le résumé rend le merge **ou sa cause de refus**, jamais un ✅
   global.
+
+  **Une cause réparable se répare — des deux côtés depuis #460.** Deux des quatre refus n'appellent
+  pas un humain mais un correctif : le `4` (pipeline rouge) et le `5` (conflit). Le déblocage
+  existait déjà, **d'un seul côté** — en run autonome, le pilote ouvre une session `/mr-fix` dès
+  #420, tandis qu'en clôture interactive `/ticket-finish` se contentait de la **proposer** : la même
+  cause était donc traitée d'office ou laissée à un geste manuel selon l'appelant, alors que
+  `/mr-fix` est la *même* commande. Le constat qui a tranché est celui de **#456, le 2026-08-24** :
+  filet CI local vert, puis pipeline rouge sur une suite **étrangère au diff**, pour un dépassement
+  de délai RPC — un rerun aurait suffi, mais la clôture s'est arrêtée et la PR est restée ouverte,
+  là où un run l'aurait rejouée tout seul. Depuis #460, `/ticket-finish` enchaîne d'elle-même,
+  **deux tentatives au plus** — le même plafond que le run, jamais le même réglage :
+  `MAESTRO_ORCHESTRATE_MRFIX_MAX` (§11.11) ne borne que les sessions qu'un **pilote** ouvre, une
+  clôture interactive n'en lit rien. Une seconde tentative n'est due que si la première a **fait
+  bouger la PR** (correctif poussé, conflit résolu, run relancé) : rejouer sur un état inchangé ne
+  peut rendre que le même verdict, et c'est un abandon, pas une tentative.
+
+  Ce que cela **ne change pas** : `merge-mr` reste seul à décider qu'un merge a lieu — ce qui merge
+  au terme d'un déblocage est l'étape 12 de `/mr-fix` (§8.3), avec les mêmes quatre prérequis, si
+  bien que la clôture **ne repasse pas** `merge-mr` derrière lui (sur une PR qu'il vient de merger,
+  le verbe rendrait `6` « PR fermée », une anomalie fabriquée par la relecture) ; et ce que le
+  déblocage n'a pas su lever laisse la PR **ouverte** et le ticket **« En revue »**. Le résumé de
+  clôture rend donc le **déblocage sur sa propre ligne**, jamais fondu dans le verdict du merge —
+  ⊘ **non tenté** (verdict non réparable, ou run autonome), ✅ **tenté et abouti**, ❌ **tenté sans
+  succès** —, en gardant la distinction de #303 : « non tenté » est la conséquence d'un abandon de
+  la remédiation, « refusé » un verdict sur la PR. ⚠ Le prix est du **temps de mur** : `/mr-fix`
+  attend un pipeline à son tour, qui s'ajoute aux 15 min de la clôture. #418 avait choisi
+  d'annoncer cette attente plutôt que de la masquer ; l'attente s'allonge, la règle ne change pas.
+  ⚠ **En run autonome, rien de tout cela ne joue** : une session n'atteint pas ce verdict, `guard.sh`
+  lui refusant `pipeline-wait` et `merge-mr` dès l'attente (§11.6) — le déblocage y appartient au
+  pilote, et une session qui lancerait `/mr-fix` d'elle-même ferait tourner deux remédiations sur
+  la même PR.
 - **Aucun force-push** sur une branche déjà poussée.
 - **Aucun rebase automatique.** Le retard d'une branche sur `origin/main` est *signalé*, jamais
   rattrapé d'office : `bash scripts/gitlab/lib.sh behind-main [branche]` imprime le nombre de
@@ -1437,6 +1468,20 @@ merge**. Le résumé le dit alors d'un autre mot, et la nuance est le contenu du
 tenté »** est la conséquence d'un abandon de la remédiation, **« refusé »** est un verdict de
 `merge-mr` sur la PR. Les confondre ferait chercher un problème de PR là où il y a une remédiation
 inachevée.
+
+**Qui l'appelle, et quand.** Depuis #460, la commande a **deux appelants automatiques**, et le
+même blocage n'y attend plus un humain d'un côté pendant qu'il est réparé de l'autre :
+
+| Appelant | Déclencheur | Plafond | Qui merge |
+|---|---|---|---|
+| `/ticket-finish` (donc `/ticket-ship`) — #460 | `merge-mr` refuse en `4` ou `5` à la clôture | **2 tentatives**, en dur dans la commande | `/mr-fix`, à son étape 12 |
+| le **pilote** d'un run — #420, §11.11 | le drain sort une PR de la file sur un `4` ou un `5` | **2 sessions**, `MAESTRO_ORCHESTRATE_MRFIX_MAX` | le **pilote**, après coup |
+| un **humain** | quand il veut, sur ce que la file de revue de `/backlog` lui montre | ses 2 tentatives internes (étape 9) | `/mr-fix` |
+
+Deux plafonds de même valeur, jamais le même réglage : la variable ne borne que les sessions d'un
+pilote, une clôture interactive n'en lit rien. Et le `6` ne déclenche **rien** d'aucun côté — c'est
+sa définition (« geste humain ») : lui envoyer une remédiation ferait payer une session entière
+pour qu'elle reconfirme qu'elle ne peut rien.
 
 ⚠ **Dans un run autonome, `/mr-fix` ne merge pas** : le merge appartient au **pilote** (§11), qui
 sérialise les merges et attend les pipelines hors du quota des sessions. `guard.sh` y refuse en dur

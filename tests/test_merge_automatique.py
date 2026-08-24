@@ -13,6 +13,12 @@ Trois verbes de [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) et un hook :
 * **`merge-order`** (#416) — l'ordre le moins conflictuel, sur le graphe mesuré de #299.
 * **`guard.sh`** (#417) — le `deny` tient, et aucun prompt du dépôt ne prescrit `gh pr merge`.
 
+…et, depuis #460, **ce que la clôture fait de chaque code** : les deux causes réparables (`4`
+pipeline rouge, `5` conflit) enchaînent d'office sur `/mr-fix`, les quatre autres non. Cette
+conduite-là ne vit que dans un prompt, et c'est justement pourquoi elle se garde : elle décide
+entre « réparer », « repasser » et « laisser à un humain », et un glissement d'un code à l'autre ne
+se verrait nulle part ailleurs.
+
 **Ni réseau ni compte de forge** : le harnais partagé [`harnais_forge.py`](harnais_forge.py)
 monte un dépôt jetable (avec un `origin` local, réel) et un `gh` factice en tête du `PATH`. Il est
 partagé avec `test_collaboration.py` et `test_cycle_de_vie.py` pour la raison qu'il énonce : deux
@@ -736,3 +742,225 @@ def test_aucun_prompt_ne_prescrit_le_merge_nu() -> None:
         "le geste nu est prescrit quelque part — il doit passer par « lib.sh merge-mr » :\n"
         + "\n".join(fautifs)
     )
+
+
+# =====================================================================================
+# La clôture interactive débloque ce qui est réparable (#460)
+# =====================================================================================
+# Le déblocage automatique existait déjà, mais D'UN SEUL CÔTÉ : le pilote d'un run ouvre une session
+# `/mr-fix` sur un `4`/`5` depuis #420, pendant qu'en clôture interactive la même cause était
+# seulement PROPOSÉE à un humain. #460 aligne les deux appelants sur la commande qu'ils partagent.
+#
+# Ce qui se garde ici est un PROMPT, donc du texte — mais pas n'importe lequel : la conduite par
+# verdict est ce qui décide entre « réparer », « repasser » et « laisser à un humain », et une
+# conduite qui glisserait d'un code à l'autre ne se verrait nulle part ailleurs. Les blocs sont donc
+# découpés par leur NUMÉROTATION (étape, sous-étape, puce de verdict), jamais par une phrase : c'est
+# la structure qu'on veut garder stable, pas une formulation.
+
+COMMANDES = RACINE / ".claude" / "commands"
+
+
+def _prompt(nom: str) -> str:
+    fichier = COMMANDES / nom
+    assert fichier.is_file(), f"{fichier} introuvable"
+    return fichier.read_text(encoding="utf-8")
+
+
+def _etape(texte: str, numero: int) -> str:
+    """L'étape numérotée `numero` d'un prompt de commande, jusqu'à la suivante."""
+    debut = re.search(rf"^{numero}\. ", texte, re.M)
+    assert debut, f"étape {numero} introuvable — la numérotation du prompt a changé"
+    reste = texte[debut.start() :]
+    suite = re.search(rf"^{numero + 1}\. ", reste, re.M)
+    return reste[: suite.start()] if suite else reste
+
+
+def _sous_etape(etape: str, numero: int) -> str:
+    """La sous-étape indentée `numero.` d'une étape, jusqu'à la suivante."""
+    debut = re.search(rf"^ +{numero}\. ", etape, re.M)
+    assert debut, f"sous-étape {numero} introuvable"
+    reste = etape[debut.start() :]
+    suite = re.search(rf"^ +{numero + 1}\. ", reste, re.M)
+    return reste[: suite.start()] if suite else reste
+
+
+def _verdicts(sous_etape: str) -> dict[str, str]:
+    """Les puces « - `N` → … », indexées par CHAQUE code que leur ligne d'ouverture cite.
+
+    Un même bloc peut répondre pour deux codes — c'est le cas de `4`/`5` depuis #460, qui partagent
+    une conduite parce qu'ils partagent une cause : réparable. Indexer par code plutôt que par puce
+    est ce qui permet de demander « que dit le prompt du verdict N ? » sans présumer de la mise en
+    forme du jour.
+    """
+    ouvertures = list(re.finditer(r"^ *- +(`\d`.*)$", sous_etape, re.M))
+    assert ouvertures, "aucune puce de verdict — le découpage du prompt a changé de forme"
+    blocs: dict[str, str] = {}
+    for rang, ouverture in enumerate(ouvertures):
+        fin = ouvertures[rang + 1].start() if rang + 1 < len(ouvertures) else len(sous_etape)
+        bloc = sous_etape[ouverture.start() : fin]
+        for code in re.findall(r"`(\d)`", ouverture.group(1)):
+            blocs[code] = bloc
+    return blocs
+
+
+def _verdicts_de_cloture() -> dict[str, str]:
+    """Les six conduites de `merge-mr` telles que `/ticket-finish` les tient (étape 13.2)."""
+    blocs = _verdicts(_sous_etape(_etape(_prompt("ticket-finish.md"), 13), 2))
+    manquants = {"0", "1", "2", "3", "4", "5", "6"} - blocs.keys()
+    assert not manquants, f"des verdicts de merge-mr ne sont plus tenus : {sorted(manquants)}"
+    return blocs
+
+
+# Une PROPOSITION se reconnaît à ce qu'elle laisse la main : « propose /mr-fix », « tu peux lancer
+# /mr-fix ». C'est le geste que #460 remplace, et le distinguer d'une simple MENTION de la commande
+# est tout l'objet du motif — le bloc réécrit nomme `/mr-fix` à chaque ligne.
+_PROPOSITION = re.compile(r"propos\w+[^.\n]{0,24}`?/mr-fix")
+
+
+def test_sur_une_cause_reparable_la_cloture_enchaine_au_lieu_de_proposer() -> None:
+    """Le critère du ticket : sur `4` et `5`, on répare sans demander.
+
+    Ces deux verdicts sont les seuls des six à nommer un correctif plutôt qu'une décision. Les
+    laisser à un geste manuel revenait à traiter la même cause de deux façons selon l'appelant —
+    d'office en run (#420), à la main ici — alors que `/mr-fix` est la MÊME commande.
+    """
+    # Le motif prouve d'abord qu'il sait trouver ce qu'il cherche : sans ça, un ✓ ne dirait rien.
+    for fautif in (
+        "propose `/mr-fix <numéro>`.",
+        "PR ouverte, ticket « En revue », propose /mr-fix",
+        "tu peux proposer `/mr-fix` à l'utilisateur",
+    ):
+        assert _PROPOSITION.search(fautif), f"le motif ne voit pas la proposition : {fautif!r}"
+
+    blocs = _verdicts_de_cloture()
+    for code in ("4", "5"):
+        bloc = blocs[code]
+        assert "/mr-fix" in bloc, f"le verdict {code} ne nomme plus la commande de remédiation"
+        assert "sans demander" in bloc, (
+            f"le verdict {code} doit enchaîner D'OFFICE : « sans demander » est le mot qui sépare "
+            "l'enchaînement de la proposition qu'il remplace"
+        )
+        assert not _PROPOSITION.search(bloc), (
+            f"le verdict {code} propose encore `/mr-fix` au lieu de l'enchaîner"
+        )
+    # `4` et `5` partagent la même conduite : le découpage doit le rendre visible, sans quoi la
+    # moitié du critère pourrait tomber sans que rien ne rougisse.
+    assert blocs["4"] == blocs["5"], "les deux causes réparables ne partagent plus leur conduite"
+
+
+def test_les_autres_verdicts_ne_declenchent_aucun_deblocage() -> None:
+    """Le second critère, et le plus facile à perdre : ce qui ne se répare pas ne s'envoie pas.
+
+    Un `6` est un geste humain PAR DÉFINITION (#415) — lui envoyer une remédiation ferait payer une
+    session entière pour qu'elle reconfirme qu'elle ne peut rien. Un `3` n'a pas de correctif à
+    écrire : il attend un verdict, et sa reprise unique lui suffit.
+    """
+    blocs = _verdicts_de_cloture()
+    for code in ("0", "1", "2", "3", "6"):
+        assert "/mr-fix" not in blocs[code], (
+            f"le verdict {code} déclenche un déblocage qu'il ne devrait pas — "
+            "seuls `4` et `5` sont réparables"
+        )
+    assert "pas plus" in blocs["3"], "le `3` a perdu sa reprise UNIQUE (pipeline-wait + merge-mr)"
+    assert "geste humain" in blocs["6"] or "anomalie" in blocs["6"]
+
+
+def test_le_plafond_du_deblocage_est_borne_et_aligne_sur_celui_du_run() -> None:
+    """« Borné », et borné sur la même valeur que le run — sans partager son réglage.
+
+    Le prompt écrit son plafond en toutes lettres : une clôture interactive ne lit aucune variable
+    d'environnement de pilote. C'est donc ICI que les deux valeurs peuvent diverger en silence, et
+    ce test les compare à la SOURCE plutôt qu'à une constante recopiée : le jour où le run change
+    de plafond, la question « et la clôture ? » est posée au lieu d'être ignorée.
+    """
+    deblocage = _sous_etape(_etape(_prompt("ticket-finish.md"), 13), 3)
+    assert "deux tentatives" in deblocage.lower(), "le déblocage n'annonce plus son plafond"
+
+    run = (RACINE / "scripts/orchestrate/run.sh").read_text(encoding="utf-8")
+    plafond = re.search(r'MRFIX_MAX="\$\{MAESTRO_ORCHESTRATE_MRFIX_MAX:-(\d+)\}"', run)
+    assert plafond, "le plafond du run est introuvable — a-t-il changé de nom ?"
+    assert plafond.group(1) == "2", (
+        f"le run borne à {plafond.group(1)} sessions et la clôture à deux : les aligner, ou dire "
+        "pourquoi ils diffèrent"
+    )
+    # …et la variable est nommée comme celle du RUN, jamais comme un réglage de la clôture.
+    assert "MAESTRO_ORCHESTRATE_MRFIX_MAX" in deblocage, (
+        "le prompt doit nommer la variable du run pour qu'on ne la croie pas sienne"
+    )
+    assert "run" in deblocage.split("MAESTRO_ORCHESTRATE_MRFIX_MAX")[1][:200]
+
+
+def test_la_cloture_ne_repasse_pas_merge_mr_apres_le_deblocage() -> None:
+    """Relire le verdict après `/mr-fix` n'ajoute aucune vérification, et en invente une fausse.
+
+    Son étape 12 EST l'appel à `merge-mr` : sur une PR qu'il vient de merger, le verbe rendrait `6`
+    (« PR fermée »), c'est-à-dire une anomalie fabriquée par la relecture elle-même — le genre de
+    faux verdict que tout ce chantier existe pour supprimer.
+    """
+    deblocage = _sous_etape(_etape(_prompt("ticket-finish.md"), 13), 3)
+    assert "Ne repasse pas `merge-mr`" in deblocage, (
+        "le déblocage doit interdire de relire le verdict après `/mr-fix` — sans quoi la clôture "
+        "rendrait une anomalie sur une PR qu'elle vient de merger"
+    )
+    assert "`6`" in deblocage, "la conséquence du repassage (un `6` inventé) doit être nommée"
+
+
+def test_le_resume_de_cloture_rend_le_deblocage_sur_sa_propre_ligne() -> None:
+    """Le troisième critère : jamais un ✅ global, et « non tenté » ≠ « refusé ».
+
+    C'est la distinction que #303 a établie pour `/mr-fix`, et elle vaut mot pour mot ici : « non
+    tenté » est la conséquence d'un abandon de la remédiation, « refusé » un verdict sur la PR. Les
+    confondre ferait chercher un problème de PR là où il y a une remédiation inachevée.
+    """
+    resume = _etape(_prompt("ticket-finish.md"), 14)
+    lignes = [ligne for ligne in resume.splitlines() if ligne.lstrip().startswith("| **")]
+    deblocage = [ligne for ligne in lignes if "**Déblocage**" in ligne]
+    assert len(deblocage) == 1, (
+        "le résumé doit porter UNE ligne « Déblocage », distincte de celle du merge : "
+        f"{[ligne.strip()[:60] for ligne in lignes]}"
+    )
+    for issue in ("non tenté", "abouti", "sans succès"):
+        assert issue in deblocage[0], f"l'issue « {issue} » manque à la ligne du déblocage"
+    assert "« Non tenté » et « refusé »" in resume
+    assert "Jamais de ✅ global" in resume
+
+
+def test_une_session_de_run_ne_debloque_pas_elle_meme() -> None:
+    """En run, le déblocage est au pilote — et la porte est fermée en dur, pas seulement dite.
+
+    Une session qui lancerait `/mr-fix` d'elle-même ferait tourner deux remédiations sur la même PR
+    et attendrait un pipeline sur le quota du run : les deux choses que #419 refuse. Le prompt le
+    dit AVANT que la session s'y heurte, et `guard.sh` le tient quoi qu'il arrive.
+    """
+    deblocage = _sous_etape(_etape(_prompt("ticket-finish.md"), 13), 3)
+    assert "En run autonome, n'enchaîne rien" in deblocage, (
+        "le déblocage doit s'exclure lui-même d'un run — sinon une session le tenterait en "
+        "concurrence du pilote, sur le quota du run"
+    )
+    assert "guard.sh" in deblocage and "pilote" in deblocage, (
+        "l'exclusion doit nommer QUI débloque en run (le pilote) et ce qui la tient (`guard.sh`) : "
+        "un ordre contredit sans explication se contourne au lieu de se suivre"
+    )
+
+    # Le refus est réel : c'est lui qui rend ce verdict INATTEIGNABLE en run, l'attente venant
+    # avant le merge. Sans ce maillon, la consigne du prompt serait la seule barrière.
+    r = _guard("--test", "bash scripts/gitlab/lib.sh pipeline-wait main")
+    assert r.returncode == 2, f"l'attente de pipeline devrait être refusée en run : {r.stdout}"
+    assert "pilote" in r.stdout
+
+
+def test_ticket_ship_annonce_le_deblocage_sans_le_reimplementer() -> None:
+    """`/ticket-ship` délègue tout à `/ticket-finish` — le déblocage compris, et son attente avec.
+
+    Ce qu'il doit ajouter n'est pas une étape mais un AVERTISSEMENT : la commande peut désormais
+    attendre un pipeline de plus. #418 a choisi d'annoncer ces attentes plutôt que de les masquer,
+    et une commande « zéro friction » qui ne rend pas la main pendant dix minutes sans avoir
+    prévenu passe pour bloquée.
+    """
+    ship = _prompt("ticket-ship.md")
+    assert "/mr-fix" in ship and "#460" in ship
+    assert "Ne ré-implémente aucune de ces étapes ici" in ship
+    # Le déblocage ne se décrit pas comme une étape de `/ticket-ship` : la commande qui l'exécute
+    # est nommée, et c'est elle qui en porte les règles.
+    delegation = _etape(ship, 7)
+    assert "/mr-fix" in delegation and "/ticket-finish" in delegation
