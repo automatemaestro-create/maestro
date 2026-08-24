@@ -257,7 +257,7 @@ lots sont mergeables un à un sur `main` ; les tests sont différés au lot fina
 
 | Chantier | Parent | Lots | Milestone |
 | --- | --- | --- | --- |
-| Le run se liste, s'ouvre, se suit et se pilote | **#472** | #473, #474, #475, #476, #477 ∥, #478 ∥, #479 ∥, #480 (tests + doc) | Le run, objet de premier plan |
+| Le run se liste, s'ouvre, se suit et se pilote | **#472** | #473, #474, #475, #476, #477 ∥, #478 ∥, #479 ∥, #480 (tests + doc) — **les huit livrés** | Le run, objet de premier plan |
 | Suivre un run comme un pipeline | **#488** | #489, #490 ∥, #491, #492 (tests + doc) | Le run, objet de premier plan |
 | Le chat, seule porte d'entrée | **#481** | #482, #483, #484, #485 (tests + doc) | Control Tower v3 — conversation & intégrations |
 | L'extinction solde les runs | — (lot seul) | **#486** | Résilience des runs |
@@ -266,6 +266,16 @@ lots sont mergeables un à un sur `main` ; les tests sont différés au lot fina
 **L'ordre entre les chantiers n'est pas libre.** #472 précède #488 : on ne suit pas un run comme un
 pipeline avant d'avoir un écran de run où le dessiner. #481 dépend de #268/#269, qu'il prolonge.
 #486 et #487 sont indépendants des trois autres et de tout le reste.
+
+**Ce que les lots ∥ ont coûté, une fois, et ce que ça apprend** (constat de #480) : #476 fige la
+table des groupes du tableau de bord sur les **quatre** régimes qui existent le jour où il est
+écrit, et #477 en crée un **cinquième** — les deux lots sont corrects séparément, mergés dans cet
+ordre ils font disparaître de l'écran tout run qu'on suspend. C'est exactement le défaut que #476
+avait nommé pour un autre régime et évité à la main. Le lot final l'a rattrapé, ce qui est son
+rôle ; la leçon n'est donc pas de renoncer au marqueur ∥ — il a fait gagner trois lots de temps de
+mur — mais que **le rattrapage vaut par sa forme** : le garde-fou posé balaie l'énumération du
+régime au lieu de nommer les cinq groupes, si bien qu'un sixième ne pourra plus passer en silence.
+Une table exhaustive se garde par un test qui la parcourt, jamais par une relecture.
 
 **Deux d'entre eux ne prennent pas de numéro de phase**, et pour la raison déjà écrite pour la vague
 front dans [docs/06](./06-roadmap.md) : ce sont des chantiers qui **recouvrent** les phases qu'ils

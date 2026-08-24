@@ -48,6 +48,7 @@ import { CarteRun } from "@/components/runs/EtatRun";
 import {
   regimeDuRun,
   runsEnAttenteDeValidation,
+  REGIME_EN_PAUSE,
   REGIME_INTERROMPU,
   REGIME_SOLDE,
   REGIME_SUSPENDU,
@@ -65,18 +66,25 @@ import type {
 
 /**
  * Les groupes, **dans l'ordre de lecture de l'écran** : ce qui avance, ce qui
- * attend quelqu'un, ce qui est tombé, ce qui est fini.
+ * attend quelqu'un, ce qu'on a mis de côté, ce qui est tombé, ce qui est fini.
  *
- * Le critère du ticket en nomme trois — en cours, suspendus, soldés du jour. Le
- * quatrième, **interrompu**, est ajouté parce que `regimeDuRun` en rend quatre et
- * qu'en omettre un ferait **disparaître** ces runs-là du tableau de bord : le panneau
- * « Runs interrompus » qui les précède ne montre que les **récupérables** (orphelin
- * *et* brief approuvé, #349), si bien qu'un run mort avant validation de son cadrage
- * ne serait nulle part. Il ne s'affiche que s'il y en a, comme les trois autres.
+ * **Un groupe par régime, et la table doit rester exhaustive** — c'est la seule
+ * règle à tenir ici, parce qu'un régime sans groupe ne dégrade pas l'affichage :
+ * il fait **disparaître** ces runs-là du tableau de bord. Le critère de #476 en
+ * nommait trois (en cours, suspendus, soldés du jour) ; **interrompu** a été
+ * ajouté avec lui, le panneau « Runs interrompus » qui précède ne montrant que
+ * les **récupérables** (orphelin *et* brief approuvé, #349) — un run mort avant
+ * validation de son cadrage n'aurait été nulle part. **En pause** a été ajouté
+ * par #480 pour la raison exacte : #477 a créé le régime après le merge de ce
+ * lot-ci, et suspendre un run le retirait alors de l'écran qui existe pour dire
+ * où l'on en est. Un régime nouveau demande donc une ligne ici, et
+ * `tests/etat-des-runs.test.tsx` garde qu'aucun ne manque.
  *
- * Sa place — après « suspendus », avant « soldés » — suit l'arbitrage de #349, déjà
- * rendu un cran plus haut sur le même écran : ce qui retient du travail **vivant**
- * passe devant ce qui ne retient plus rien.
+ * L'ordre suit l'arbitrage de #349, déjà rendu un cran plus haut sur le même
+ * écran : ce qui retient du travail **vivant** passe devant ce qui ne retient
+ * plus rien. Un run suspendu passe avant un run en pause parce qu'il attend
+ * quelqu'un **qui l'ignore peut-être**, là où une pause est un geste qu'on vient
+ * de faire ; les deux passent avant « interrompu », qui ne retient plus rien.
  */
 const GROUPES: readonly {
   regime: RegimeRun;
@@ -87,6 +95,7 @@ const GROUPES: readonly {
 }[] = [
   { regime: REGIME_TRAVAILLE, titre: "En cours", ton: "info" },
   { regime: REGIME_SUSPENDU, titre: "Suspendus", ton: "attention" },
+  { regime: REGIME_EN_PAUSE, titre: "En pause", ton: "neutre" },
   { regime: REGIME_INTERROMPU, titre: "Interrompus", ton: "alerte" },
   {
     regime: REGIME_SOLDE,

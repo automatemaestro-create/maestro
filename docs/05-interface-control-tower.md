@@ -277,6 +277,7 @@ avec sa progression et le renvoi vers sa vue (§2.4.2).
 | --- | --- |
 | **En cours** | les runs qui **avancent** — badge bleu à pastille battante |
 | **Suspendus** | ceux qui attendent quelqu'un : brief à valider, questions de clarification, arbitrage sur une tâche — avec **depuis quand** |
+| **En pause** | ceux qu'on a mis de côté (#477) — ils ne lancent plus rien, ils n'ont rien perdu |
 | **Interrompus** | ceux dont l'hôte ne bat plus (#348) |
 | **Soldés du jour** | ceux qui ont rendu leur verdict aujourd'hui — terminé, annulé, échec |
 
@@ -290,14 +291,26 @@ De même, **une ligne de run se lit à l'identique** sur les trois écrans : c'e
 `CarteRun` de `components/runs/EtatRun.tsx`, extraite de la liste le jour où un
 troisième écran a eu à la rendre.
 
-**Le quatrième groupe n'est pas dans le ticket, et c'est délibéré.** #476 en nomme
-trois — en cours, suspendus, soldés du jour — mais `regimeDuRun` en rend **quatre**,
-et omettre *interrompu* ferait **disparaître** ces runs-là de l'écran : le panneau
-« Runs interrompus » qui les précède (item 3) ne montre que les **récupérables** —
-orphelin *et* brief approuvé (#349) —, si bien qu'un run mort avant validation de son
-cadrage ne serait nulle part. Sa place, après « suspendus », suit l'arbitrage déjà
-rendu un cran plus haut sur le même écran : ce qui retient du travail **vivant** passe
-devant ce qui ne retient plus rien.
+**La table des groupes doit rester exhaustive, et deux d'entre eux n'étaient pas
+dans le ticket.** #476 en nomme trois — en cours, suspendus, soldés du jour — mais
+`regimeDuRun` en rend **cinq**, et un régime sans groupe ne dégrade pas
+l'affichage : il fait **disparaître** ces runs-là de l'écran. *Interrompu* a donc
+été ajouté avec #476, parce que le panneau « Runs interrompus » qui le précède
+(item 3) ne montre que les **récupérables** — orphelin *et* brief approuvé (#349) —,
+si bien qu'un run mort avant validation de son cadrage ne serait nulle part. *En
+pause* a été ajouté par **#480**, pour la raison exacte et sur une panne réelle :
+#477 a créé ce régime **après** le merge de #476, deux lots corrects séparément, et
+suspendre un run le retirait alors de l'écran qui existe pour dire où l'on en est.
+C'est le prix des lots marqués « (parallèle) », et il se paie au lot final — d'où
+un test qui **balaie `regimeDuRun`** au lieu de nommer les groupes un par un
+(`apps/web/tests/etat-des-runs.test.tsx`) : un régime nouveau ne peut plus passer
+sans qu'un test rougisse.
+
+L'ordre suit l'arbitrage déjà rendu un cran plus haut sur le même écran : ce qui
+retient du travail **vivant** passe devant ce qui ne retient plus rien. Un run
+suspendu passe donc avant un run en pause — il attend quelqu'un **qui l'ignore
+peut-être**, là où une pause est un geste qu'on vient de faire —, et les deux
+avant « interrompu ».
 
 **Seuls les soldés sont bornés** — au jour, puis à cinq, le groupe disant alors ce
 qu'il masque. C'est le seul qui grossisse sans fin, et un run terminé avant-hier
@@ -315,9 +328,12 @@ avec son bouton, et ici avec son état. C'est la superposition que le Kanban ava
 avec les validations, et elle est voulue : ce qui appelle un geste passe devant, ce qui
 décrit l'état se lit d'un bloc.
 
-Composant : `apps/web/components/runs/EtatDesRuns.tsx`. Couverture : lot 8 (#480) —
-`tests/tableau-de-bord.test.tsx` garde en attendant que le Kanban a bien quitté l'écran
-et que le renvoi vers la liste y est.
+Composant : `apps/web/components/runs/EtatDesRuns.tsx`. Couverture (#480) :
+`apps/web/tests/etat-des-runs.test.tsx` — l'exhaustivité de la table, les cinq
+groupes, le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` (fin, repli
+sur le début, horodatage illisible), le vide nommé et l'absence de tout geste ;
+`tests/tableau-de-bord.test.tsx` garde depuis #476 que le Kanban a quitté l'écran et
+que le renvoi vers la liste y est.
 
 ### 2.2 📋 Tâches — tableau Kanban
 
@@ -447,10 +463,13 @@ listé au même titre : le suivi lit la projection, il ne distingue pas l'origin
 > (#478, là où le fil était éphémère par construction) et un run qui
 > **dit pourquoi il s'est arrêté** (#479). L'API qui porte tout cela est #473 ; le
 > suivi en pipeline — graphe des tâches, checklists, branches parallèles — est le
-> chantier voisin #488. **Il ne reste que le dernier lot fonctionnel** : l'API (#473,
-> §6.0bis), la liste (#474, §2.4.1), la vue d'un run (#475, §2.4.2), l'état des runs
-> au tableau de bord (#476, §2.1), la pause (#477) et le journal persisté (#478,
-> §2.8 et §6.2) sont livrés ; #479 suit.
+> chantier voisin #488. **Le chantier est complet** : l'API (#473, §6.0bis), la
+> liste (#474, §2.4.1), la vue d'un run (#475, §2.4.2), l'état des runs au tableau
+> de bord (#476, §2.1), la pause (#477, §6.1), le journal persisté (#478, §2.8 et
+> §6.2) et l'activité en direct avec sa cause d'arrêt (#479, §2.4.3) sont livrés,
+> et **#480 les couvre** — c'est le lot final « tests + doc » prévu par le parent,
+> les sept précédents ayant livré sans tests ([docs/10
+> §5.1](./10-workflow-git.md)). Ce qui suit décrit donc un écran qui existe.
 
 #### 2.4.1 La liste des runs du projet actif (#474) — **livré**
 
@@ -524,6 +543,11 @@ des questions, « Validations » pour un arbitrage de tâche —, parce que la v
 le *montre* sans le débloquer. Le jour où elle portera ces gestes, c'est la table
 `ATTENTES` (`components/runs/EtatRun.tsx`) qu'il faudra changer, et elle seule.
 
+Couverture (#480) : `apps/web/tests/runs-liste.test.tsx` — les cinq régimes et
+**l'ordre dans lequel ils sont décidés**, l'appariement des validations, la carte
+partagée (badge, avancement, attente, cause, interruption, pause) et les quatre
+états de l'écran, dont la distinction entre « vide » et « injoignable ».
+
 #### 2.4.2 La vue d'un run — son Kanban, sa progression et son journal (#475, #478) — **livré**
 
 `/runs/<run_id>` : la **progression** du run en tête, son **Kanban** au milieu, son
@@ -589,6 +613,70 @@ Kanban ci-dessus et pour les mêmes raisons : appartenance lue **de l'API**, auc
 seconde WebSocket, et la **ligne d'activité n'est pas réécrite** — `FilActivite` rend
 ici ce qu'il rend au tableau de bord et sur la page Journal, seuls son titre et son
 vide étant nommés.
+
+Couverture (#480) : `apps/web/tests/runs-vue.test.tsx` — la lecture partie avec
+`?run=` (et non un filtre sur la carte), la relecture au **pouls** du shell, les
+trois vides ci-dessus, la tête et ses renvois, le journal persisté et la fusion
+avec le direct.
+
+#### 2.4.3 Un run dit ce qu'il fait, et pourquoi il s'est arrêté (#479) — **livré**
+
+Deux silences, et ils n'avaient pas la même cause.
+
+**Ce qu'il fait.** Entre `<tache>:debut` et l'issue d'une tâche, **rien** n'était
+émis, quelle que soit la durée : le fournisseur consommait le flux du SDK message
+par message sans rien publier — les textes dans une liste, les outils dans une
+autre, **dédupliqués**, donc sans compte ni ordre — et seul le message final
+déclenchait un report d'usage. Aucun écran ne pouvait y remédier : la donnée
+n'existait pas. Le silence était **à la source**, et c'est là qu'il a été traité.
+Le fournisseur émet désormais chaque **geste** au moment où il passe — l'outil et sa
+cible (`Read · maestro/engine/loop.py`), ou le début d'un bloc de prose —, et un
+régulateur les publie à **débit borné** : au plus une salve par tâche et par
+fenêtre, qui **annonce son regroupement** (« 7 gestes · Read×4, Bash×3 — dernier :
+… »). Republier tout tel quel noierait le bus comme le flot d'une ligne par outil
+noyait la console du pilote (#240) ; une ligne qui **tairait** son regroupement se
+lirait comme un geste isolé, et un observateur en conclurait que l'agent est huit
+fois plus lent qu'il ne l'est. Le **premier** geste part sans attendre la fenêtre :
+l'attendre recréerait au démarrage le trou qu'on vient de combler.
+
+Ces salves empruntent le **canal existant** et n'en ouvrent aucun second : une étape
+`<tache>:activite` au journal, que le pont mue en `agent.activite` rattachée à sa
+tâche et à son run — comme `:relance` et `:refus-outil`. Elles **ne déplacent aucune
+carte** du Kanban : la projection ne s'en sert que pour rafraîchir la dernière
+activité de l'agent. Un statut à part (`activite`) et non `en_cours`, parce que le
+fil habillait un `en_cours` en « dev — <titre> en cours », c'est-à-dire qu'il
+redisait ce que le Kanban montre déjà **en taisant la salve**, seule information que
+la ligne apporte : on aurait ajouté du trafic sans lever le silence.
+
+**Pourquoi il s'est arrêté.** Un run soldé en échec porte désormais sa **cause
+nommée**, lue à l'identique dans la liste (§2.4.1) et dans la vue (`LigneCause`,
+montée aux deux endroits). Le moteur les connaissait — plafond de tours (#91),
+plafond de dépense, hôte qui ne démarre pas (#443), annulation — mais trois
+appelants recopiaient `TypeErreur : message`, si bien que la liste disait « Échec »
+à des pannes qui ne se réparent pas de la même façon. Les cinq codes et leur
+libellé sont en §6.1 ; deux choses à ne pas défaire, parce qu'elles étaient le
+contenu de la décision :
+
+- la cause vient **en plus** du détail, jamais à sa place — le code dit *de quoi il
+  s'agit*, le détail *ce qui s'est passé* ; un code que l'écran ne sait pas nommer
+  ne rend **aucune** ligne plutôt qu'un identifiant brut ;
+- la **limite d'usage du fournisseur** est la seule reconnue **au texte**, faute de
+  type — rien dans `maestro/` ne la détectait, et le classement des aléas la range
+  même parmi les relançables. Ses marqueurs sont **repris** de
+  `scripts/orchestrate/run.sh` (#171) plutôt que réinventés, et le texte examiné est
+  celui de **l'exception**, jamais le `stderr` collecté (#346), qui porte la
+  télémétrie du CLI : un `rate_limit_event` de statut « allowed » y ferait nommer
+  « limite d'usage » à peu près tous les échecs (le piège de #203).
+
+L'ordre de classement est celui de la **précision** — les types d'abord, le texte en
+dernier : un plafond de tours dont le message citerait « rate limit » reste un
+plafond de tours, ce que le moteur *sait* l'emportant sur ce qu'un message
+*suggère*.
+
+Couverture (#480) : `tests/test_run_activite.py` côté Python (les cinq causes et
+leur ordre, la cible d'un appel d'outil, le regroupement d'une salve, la fenêtre,
+l'étape `:activite` et son passage au pont) ; `apps/web/tests/runs-liste.test.tsx`
+côté écran.
 
 ### 2.5 💰 Coûts & analytics
 
@@ -1174,6 +1262,11 @@ Implémentation : `PorteeRun` et son unique prédicat `retient`, dans le même
 [`maestro/controltower/portee.py`](../maestro/controltower/portee.py) que la portée projet — deux
 portées, deux objets, une seule écriture de chaque règle.
 
+Couverture (#480) : `tests/test_run_portee.py` — la table des compartiments et ses deux arbitrages,
+la portée et son refus, la composition avec `?projet=`, l'invariant `progression.total ==
+nb_taches` et le cas qui a motivé le choix du champ lu — **une relance ne vole pas les tâches du run
+qu'elle reprend**.
+
 ### 6.1 Exécutions — lancement, suivi, pause, annulation, relance (#185) — **livré**
 
 Piloter un vrai run depuis la Control Tower, sans passer par la CLI. Seule section de ce
@@ -1248,6 +1341,10 @@ repaie une planification, sous un **nouveau** `run_id`.
   // `total` vaut `nb_taches` ; `soldees` = terminees + echecs + bloquees.
   "progression": { "a_faire": 1, "en_cours": 1, "bloquees": 0, "terminees": 2,
                    "echecs": 1, "autres": 0, "soldees": 3, "total": 5 },
+  // **Pourquoi** le run s'est arrêté (#479) — un code parmi les cinq ci-dessous,
+  // "" quand il n'y a rien à dire. Vient **en plus** du détail, jamais à sa place,
+  // et n'est porté que par un run **soldé** : un run qui repart la perd.
+  "cause": "",
   "cout_usd": 0.1665,                      // null : aucun coût rapporté
   "ticket": { "id": "#42", "url": "https://…/issues/42" },  // null : sans ticket
   "projet_id": "prj-7f3a",                 // null : hors de tout projet
@@ -1474,7 +1571,7 @@ l'exécuteur ([`maestro/engine/pause.py`](../maestro/engine/pause.py)), et une t
 a plus devant elle. Un blocage aval (#43) n'est **pas** retenu par la porte — il n'engage rien, et
 retenir la cascade rendrait un run suspendu indiscernable d'un run figé.
 
-À l'écran (§2.x), l'état se lit dans la **liste** comme dans la **vue** d'un run, badge neutre « En
+À l'écran (§2.4.1 et §2.4.2), l'état se lit dans la **liste** comme dans la **vue** d'un run, badge neutre « En
 pause » et les deux boutons — un seul visible à la fois, ce sont deux faces d'un même geste. Le
 libellé est « en pause » et non « suspendu » alors que le ticket dit « suspendu » : ce mot désigne
 déjà, ici et à l'écran, un run arrêté **sur** un humain (#474), et deux choses différentes sous un
@@ -1482,6 +1579,38 @@ même mot feraient chercher un brief à valider sur un run qu'on vient de mettre
 accompagne le badge dit ce que la pause ne fait pas — « celles qui étaient en vol vont à leur
 terme » —, parce que quelqu'un qui croirait avoir tout arrêté serait surpris de voir une tâche rendre
 son livrable trois minutes plus tard.
+
+**Un run soldé dit *pourquoi*, et pas seulement *quoi*** (#479). `cause` est un code
+court porté par le résumé, à côté du `detail` qui reste ce qu'il était (`TypeErreur :
+message`). Le partage est celui de la lecture : le **code** dit de quoi il s'agit —
+c'est lui que l'écran range et teinte —, le **détail** dit ce qui s'est passé. Cinq
+codes, et pas de sixième :
+
+| `cause` | ce qui a arrêté le run | ce qu'on en fait |
+| --- | --- | --- |
+| `plafond_tours` | le plafond de tours d'un agent (#91) | relever le plafond, ou découper la tâche |
+| `plafond_cout` | un plafond de dépense, en dollars ou en tokens | relever la borne, ou réduire le périmètre |
+| `limite_usage` | le fournisseur a refusé de servir : quota, 429, solde épuisé | attendre la fenêtre suivante, puis relancer |
+| `hote_non_demarre` | le process du run n'est jamais parti (#443) | ni tâche, ni coût, ni journal à lire — regarder la machine |
+| `annulation` | quelqu'un a interrompu, ou refusé le brief | rien à réparer |
+
+Quatre choses à ne pas défaire. **`""` n'est pas une sixième cause** : un échec que le
+classement ne sait pas ranger n'est pas « inconnu » au sens où il faudrait l'annoncer
+— son `detail` porte déjà le type et le message, et inventer un fourre-tout ferait
+passer « je n'ai pas su ranger ceci » pour un diagnostic ; à l'écran, la ligne
+disparaît. **Un code que le client ne connaît pas ne s'affiche pas non plus** —
+l'API peut en gagner un, un front plus ancien ne doit pas rendre un identifiant brut.
+**La cause suit exactement le régime de `fin`** : posée quand le run est soldé,
+**effacée** dès qu'il ne l'est plus — un run relancé qui garderait la cause d'un
+plafond de coût continuerait d'afficher la mort dont il revient. Et **le classement
+va du type vers le texte**, jamais l'inverse : un `plafond_tours` dont le message
+citerait « rate limit » reste un plafond de tours, parce que c'est ce que le moteur
+*sait* contre ce qu'un message *suggère* — `limite_usage` est la seule cause reconnue
+au texte, faute de type, et sur le message de l'exception seul (voir §2.4.3).
+
+Implémentation : [`maestro/controltower/causes.py`](../maestro/controltower/causes.py),
+un module **feuille** que les trois soldeurs appellent au lieu de recopier chacun sa
+formule. Couverture (#480) : `tests/test_run_activite.py`.
 
 **Les sources se déclarent, elles ne se devinent pas** (#315). Trois types, et rien d'autre :
 `fichier` (téléversé — §6.8), `dossier` (des **références**, jamais un projet : `lecture_seule`
@@ -1593,6 +1722,21 @@ est ce que la ligne d'activité **prononce** (`resumeEvenement`), et sans lui un
 rechargement dirait « dev a terminé : une étape » là où le direct nommait l'étape — « un
 rechargement ne perd rien » aurait été faux d'une ligne sur deux. Un consommateur qui ignore ces
 deux clés lit exactement la forme d'avant.
+
+**Deux asymétries avec le reste du chapitre, et elles sont voulues.** `?run_id=` est
+ici un **filtre**, pas une portée : un run sans ligne rend un journal vide et non le
+`404 run-inconnu` de `GET /api/taches?run=` (§6.0bis) — cette route ne connaît pas les
+runs, elle ne connaît que des entrées, et lui faire consulter la projection pour
+refuser lui donnerait une dépendance qu'elle n'a pas. Et une page **au-delà de la
+dernière** rend une liste vide avec des compteurs justes, jamais un `404` : « et
+après ? » a une réponse, ce n'est pas une erreur de chemin.
+
+Couverture (#480) : `tests/test_contrats_v2.py` (le contrat HTTP, depuis #478),
+`tests/test_appartenance_projet.py` (la portée projet, depuis #478) et
+`tests/test_run_journal.py` — la forme d'une entrée, le départage du tri par rang, la
+page hors bornes, l'alimentation à deux sources et surtout **la promesse du lot** :
+le journal d'un run terminé la veille se lit encore, et ses identifiants sont les
+mêmes à chaque redémarrage.
 
 ### 6.3 Registre de configuration
 
