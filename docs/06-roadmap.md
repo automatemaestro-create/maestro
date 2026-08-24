@@ -97,13 +97,21 @@ gantt
 ## Phases 4 à 6 — au-delà du plan initial (état réel)
 
 Le plan ci-dessus s'arrêtait à la V2 ; le projet a continué. Ces trois phases existent comme
-**milestones GitLab** et sont la réalité du backlog :
+**milestones de la forge** — GitHub depuis la migration #344, GitLab avant elle — et sont la
+réalité du backlog :
 
 | Phase | But | État |
 |---|---|---|
 | **Phase 4 — Control Tower UX** | Refonte de l'interface (navigation, thème, notifications, identité, visite guidée, assistant), lots MCP configurables | **soldée** (66/66) |
-| **Phase 5 — Socle réel (backend)** | Sortie du mode simulation : lancement/suivi/annulation d'un run par l'API, journal requêtable, streaming, registre de configuration, référence de ticket externe | **en cours** — cadrée par #182, contrats d'API figés dans [docs/05 §6](./05-interface-control-tower.md) |
-| **Phase 6 — Control Tower v2 (front)** | Navigation regroupée (fiche agent à onglets), tableau de bord épuré, page Logs, badges d'attente, chat global et direct, paramètres en écriture | **en cours** — voie **parallèle** à la Phase 5, rendue indépendante par les contrats d'API |
+| **Phase 5 — Socle réel (backend)** | Sortie du mode simulation : lancement/suivi/annulation d'un run par l'API, journal requêtable, streaming, registre de configuration, référence de ticket externe | **soldée** (24/24) — cadrée par #182, contrats d'API figés dans [docs/05 §6](./05-interface-control-tower.md) |
+| **Phase 6 — Control Tower v2 (front)** | Navigation regroupée (fiche agent à onglets), tableau de bord épuré, page Logs, badges d'attente, chat global et direct, paramètres en écriture | **soldée** (5/5) — voie **parallèle** à la Phase 5, rendue indépendante par les contrats d'API |
+
+> ⚠ **Les deux « en cours » de ce tableau ont été relus le 2026-08-24** (#470) : les milestones
+> étaient **fermés** côté forge et ce document ne l'avait pas repris. Deux réserves à garder en
+> tête, parce que « milestone soldé » ne veut pas dire « chantier fini » : quelques **contrats
+> d'API du §6 de docs/05 restent figés sans être servis** — `GET /api/journal` répond encore `501`
+> hors fixtures, et c'est #478 qui le sert —, et le **chat global** de la Phase 6 a été redécoupé
+> dans la vague front (#268/#269).
 
 ---
 
@@ -210,6 +218,51 @@ Deux points d'articulation avec le reste de la roadmap :
 > complète** : aucun de ces lots ne touche à la machine à états du moteur ni à la navigation posée
 > par #117/#189, et l'essentiel du travail est front — seuls quelques lots de socle passent par
 > l'API (#246, #253, #268, #277).
+
+---
+
+## Chantiers hors phases — ce que l'usage a ouvert (2026-08)
+
+Quatre milestones sont nés **après** la vague front, d'un usage réel plutôt que d'un cadrage : on
+s'est servi du produit et de son outillage, et ce qui manquait s'est vu. Ils ne prennent **pas de
+numéro de phase**, pour la raison déjà écrite pour la vague front — un chantier né de l'usage
+**recouvre** les phases qu'il accompagne au lieu de s'y insérer, et le numéro 10 reste réservé à
+« Continuité & multi-projet ».
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Le run, objet de premier plan** | Un run se **liste**, s'**ouvre**, se **suit** et se **pilote** depuis la Control Tower : entrée de menu « Runs », vue par run portant son Kanban et sa progression, tableau de bord qui montre l'état des runs, **pause**, journal persisté, causes d'arrêt remontées — puis le suivi **en pipeline** (graphe des tâches, checklists, branches parallèles) | 2027-06-15 | **#472** — 8 lots (#473–#480) et **#488** — 4 lots (#489–#492) |
+| **Résilience des runs** | Un run ne se perd plus : il survit à l'arrêt de son API (**hôte détaché**, livré), se voit quand il meurt, se rattrape sur son brief — et, depuis la revue du 2026-08-24, **se solde quand on éteint Maestro exprès** | 2027-06-30 | **#441** — 6 lots (#442–#447), **#347** et #486 |
+| **Collaboration inter-agents** | Ce que les agents se disent pendant un run, et une surface qu'ils écrivent ensemble | 2027-09-01 | #354, #355, #356 |
+| **Outillage de la forge** | Le workflow lui-même : merge automatique en fin de ticket, découpage porté par les sub-issues natives | 2027-09-15 | **#413** et **#389** |
+
+**Le chantier « Le run, objet de premier plan » est le seul des quatre à être né d'une décision
+écrite** : la revue d'usage du **2026-08-24** portait seize demandes, dont **trois renversaient une
+décision documentée et livrée** — elles ont été tranchées en note avant d'être découpées
+([docs/29](./29-decision-run-objet-de-premier-plan.md), #470). Les trois arbitrages : le **Kanban
+quitte le tableau de bord** pour la vue d'un run — le run devient une portée d'écran **à côté** du
+projet, qui reste le cadre (#277/#281 ne sont pas défaits) ; le **chat devient la seule porte
+d'entrée**, où « composer » et « valider le brief » déménagent sans que la décision **D5** tombe ;
+l'**arrêt volontaire solde les runs**, l'accident ne les touche pas.
+
+Deux articulations avec le reste de la roadmap :
+
+- **Le chantier du chat ne vit pas ici** : ses quatre lots (#481 — #482–#485) sont rattachés à
+  **« Control Tower v3 — conversation & intégrations »**, qu'ils prolongent. Le chat global (#268,
+  #269) y est déjà découpé et ne prévoit ni pièces jointes ni sources ; les y ajouter est le
+  chantier, pas une seconde implémentation à côté.
+- **La détection de ce que le poste a déjà installé** (#487) est rattachée à **« Control Tower v3 —
+  agents »**, derrière #253 : le catalogue servi par l'API doit exister avant qu'une sonde ait un
+  endroit où se rendre. Son prix avait été nommé et refusé pour un autre usage
+  ([docs/28 §7](./28-decision-frontiere-execution-run.md)) ; le payer ici est un choix, rendu en
+  [docs/29 §7](./29-decision-run-objet-de-premier-plan.md).
+
+> **Tickets : les quatre milestones sont découpés**, comme la vague front et pour la même raison —
+> ils portent sur un produit et un outillage qui **existent**, il n'y a rien à attendre pour les
+> découper. Même patron : un **parent de suivi** par chantier, qui porte la checklist ordonnée et
+> ne se ferme que toutes cases cochées, et des lots mergeables un à un sur `main`, les lots marqués
+> **« (parallèle) »** étant prenables en même temps. Les échéances sont des repères de
+> planification, comme partout ailleurs dans ce document.
 
 ---
 

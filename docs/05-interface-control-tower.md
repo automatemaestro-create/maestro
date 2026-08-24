@@ -15,9 +15,22 @@ en **une** fiche agent à onglets, et un agent se consulte d'un seul endroit.
 Deux entrées se sont ajoutées depuis — **Projets** (#225) et **Journal** (#249),
 où le fil d'activité s'est installé en plein format —, puis **Projets en est
 ressortie** (#280, §2.0.1). Le menu est déclaré une seule fois
-(`apps/web/lib/navigation.ts`) et fait aujourd'hui **sept entrées** ; le Kanban
-des tâches n'en est pas une (il **est** le tableau de bord, #248) et l'écran
-Projets non plus (il est servi, mais atteint depuis le sélecteur du shell).
+(`apps/web/lib/navigation.ts`) et fait aujourd'hui **neuf entrées** — les deux
+écrans de la Phase 8, « Composer un objectif » (#319) et « Valider le brief »
+(#322), s'y sont ajoutés sans que ce compte soit repris ; le Kanban des tâches
+n'en est pas une (il **est** le tableau de bord, #248) et l'écran Projets non
+plus (il est servi, mais atteint depuis le sélecteur du shell).
+
+> ⚠ **Ce menu change deux fois, et les deux ont été décidées le 2026-08-24**
+> (revue #470, [docs/29](./29-decision-run-objet-de-premier-plan.md)). Une entrée
+> **« Runs »** s'ajoute (#474) : un run n'est aujourd'hui l'objet d'aucun écran, et
+> le Kanban **cesse d'être** le tableau de bord pour devenir la vue d'un run
+> (#475/#476, arbitrage ① — ce qui renverse #248). Les deux entrées de la Phase 8
+> **partent** en sens inverse (#484, arbitrage ②) : composer et valider le brief
+> déménagent dans le chat, qui devient la seule porte d'entrée. Rien n'est
+> supprimé de ce que ces écrans savent faire ; les chemins restent servis et
+> redirigés. Tant que ces lots ne sont pas livrés, c'est le texte ci-dessus qui
+> décrit l'écran.
 
 ```mermaid
 flowchart LR
@@ -200,6 +213,15 @@ Le **coût cumulé** — celui du projet actif depuis #281 (§2.0) — et le sta
 temps réel vivent en permanence dans la barre supérieure, sur toutes les pages. Tout
 se met à jour par WebSocket.
 
+> ⚠ **L'item 5 est renversé depuis le 2026-08-24** (revue #470,
+> [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)) : le **Kanban quitte le
+> tableau de bord**, qui montre à la place **l'état des runs** (#476). Le motif est
+> une question de portée, pas de place : le Kanban rend les tâches du **projet**
+> (#277/#281) — ce qui court avec ce qui est fini depuis trois jours —, alors que la
+> question « où en est-on ? » porte sur ce qui tourne, c'est-à-dire un **run**. Il
+> reparaît entier dans la vue d'un run (#475). Les items 1 à 4 et 6 ne bougent pas,
+> et la portée **projet** n'est pas défaite : le run s'y **ajoute**.
+
 #### 2.1.1 Le poste vide — ce que montre un démarrage en mode réel (#186)
 
 Le lanceur local démarre en **mode réel** (`bash scripts/controltower/start.sh`,
@@ -226,6 +248,15 @@ le poste se remplit **sans rechargement** (WebSocket), et l'historique est rejou
 redémarrage de l'API (journal durable, #97).
 
 ### 2.2 📋 Tâches — tableau Kanban
+
+> ⚠ **« Il *est* l'objet du tableau de bord » a été renversé le 2026-08-24** (revue
+> #470, [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)). Le Kanban devient
+> **la vue d'un run** (#475) : mêmes colonnes, mêmes cartes, même détail sur place —
+> ce qui change est ce qu'il rend, les tâches de **ce run** au lieu de celles du
+> projet entier. Le tableau de bord montre l'état des runs (#476), et une entrée de
+> menu **« Runs »** liste ceux du projet actif (#474). Tout ce qui suit reste vrai du
+> composant ; seule sa **portée** et sa page changent. #191 (l'épure) et #251 (le
+> détail sur place) ne sont pas touchés.
 
 Le Kanban n'a **pas d'entrée de menu à lui** : il *est* l'objet du tableau de
 bord, et depuis #248 il en prend la place — les tuiles rendent une rangée, le
@@ -321,6 +352,20 @@ son `run_id` est connu avant qu'il ne produise quoi que ce soit —, ce qui perm
 d'afficher le run « en cours » puis de le suivre par le flux temps réel habituel.
 Un run **publié par un autre process** (`maestro-run --publier`, worker #41) est
 listé au même titre : le suivi lit la projection, il ne distingue pas l'origine.
+
+> ⚠ **Cette section est le seul endroit où un run est un écran, et c'est ce que le
+> 2026-08-24 a changé** (revue #470,
+> [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)). Elle décrit un écran qui
+> n'a **pas d'entrée de menu** et pas de chemin à lui, alors que le run est ce qu'on
+> regarde pendant qu'il travaille. Le chantier #472 en fait un objet de premier
+> plan : une entrée **« Runs »** et la liste des runs du projet actif (#474), une
+> **vue par run** portant son Kanban et sa progression (#475), le tableau de bord qui
+> montre l'état des runs (#476), la **pause** (#477 — elle n'existe à aucun étage
+> aujourd'hui, ni UI, ni API, ni moteur), un **journal persisté** qui survit au
+> rechargement (#478, là où le fil est éphémère par construction) et un run qui
+> **dit pourquoi il s'est arrêté** (#479). L'API qui porte tout cela est #473 ; le
+> suivi en pipeline — graphe des tâches, checklists, branches parallèles — est le
+> chantier voisin #488.
 
 ### 2.5 💰 Coûts & analytics
 
@@ -487,6 +532,15 @@ Implémentation : `maestro/controltower/selecteur.py` et `projets.py` (`points_e
 
 #### 2.7.3 Composer un objectif (#319) — **livré**
 
+> ⚠ **Cet écran a été condamné le 2026-08-24, et ce qu'il fait ne l'est pas** (revue #470,
+> [docs/29 §4](./29-decision-run-objet-de-premier-plan.md)). Le **chat devient la seule porte
+> d'entrée** : objectif, fichiers, dossiers et liens se déposent dans le fil (#482), et l'écran part
+> une fois qu'il n'a plus rien d'unique (#484). C'est un **déménagement**, pas une suppression —
+> l'ingestion, l'aperçu et leurs contrats (§6.8, §6.9) sont rebranchés tels quels, et `/composer`
+> reste servi et redirigé. Le paragraphe « Place dans la navigation » ci-dessous est celui qui
+> tombe : l'argument « une action qu'on ne trouve pas est une action qui n'existe pas » reste vrai,
+> mais l'endroit où on la trouve devient le fil.
+
 Le troisième des quatre écrans, et celui par lequel on **entre** dans un run. Jusqu'ici lancer une
 orchestration passait par `curl` : `POST /api/executions` ne prenait qu'un objectif **texte** et le
 poste vide (§2.1.1) renvoyait à la ligne de commande. Un cahier des charges de quinze pages n'avait
@@ -542,6 +596,17 @@ trois routes des §6.1, §6.8 et §6.9 ; `maestro/sources/apercu.py` côté back
 côté API — le reste de la Phase 8 est différé au lot final #323.
 
 #### 2.7.4 Valider le brief (#322) — **livré**
+
+> ⚠ **Le brief déménage dans le chat le 2026-08-24 ; il ne disparaît pas** (revue #470,
+> [docs/29 §4](./29-decision-run-objet-de-premier-plan.md)). La décision **D5** tient — on ne
+> décompose pas avant validation humaine —, et c'est précisément ce qui a été tranché : supprimer
+> l'écran de composition était clair, supprimer le **point de contrôle** ne l'était pas, et il ne
+> l'est pas. Les questions de clarification et les sept sections se décident **dans le fil** (#483),
+> l'entrée de menu part avec celle de « Composer » (#484), `/brief` reste servi et redirigé. Un
+> paragraphe ci-dessous garde toute sa force et devient un argument **pour** le déménagement : « un
+> run suspendu sur son brief ne crée aucune tâche, donc ni le Kanban, ni les grands livres, ni le
+> fil d'activité ne le montrent » — c'est le constat qui fait du run un objet de premier plan
+> (#472, §2.4).
 
 Le dernier des quatre écrans, et le **point de contrôle le plus rentable du produit** : corriger un
 brief coûte un message, corriger douze tâches coûte douze exécutions (décision D5, #218). Le run est
@@ -718,6 +783,12 @@ restante** (#248), puis un aperçu de l'activité qui renvoie au Journal. Chaque
 tuile qui résume un panneau rangé porte le renvoi (`→`) vers la page où il vit.
 Les pictogrammes ci-dessous sont ceux de cette maquette, pas ceux de l'écran :
 l'interface, elle, n'a plus d'émoji (#245, §4).
+
+> ⚠ **Le bloc `TÂCHES` de cette maquette est renversé depuis le 2026-08-24** (revue
+> #470, [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)) : il cède la place
+> à **l'état des runs** (#476), et reparaît entier dans la vue d'un run (#475). La
+> maquette est laissée telle qu'elle décrit l'écran **aujourd'hui** — la redessiner
+> avant que le lot soit livré ferait décrire un écran qui n'existe pas.
 
 ```
 ┌──────────────┬──────────────────────────────────────────────────────────────┐
@@ -1062,6 +1133,14 @@ obligerait à tout relire pour savoir quoi retirer.
 ### 6.2 Journal requêtable — filtres, tri, pagination
 
 Une page de journal d'événements interrogeable, source de la future page *Logs* (Phase 6).
+
+> ⚠ **Ce contrat est figé depuis #183 et n'est toujours pas servi** — `_exige_fixtures()` le rend
+> `501` hors démo —, alors que la page qu'il devait alimenter existe depuis #249. La conséquence
+> se voit à l'usage et la revue du 2026-08-24 l'a relevée (revue #470,
+> [docs/29 §7](./29-decision-run-objet-de-premier-plan.md)) : le fil d'activité est **éphémère par
+> construction** (`FilActivite`, `app/journal/page.tsx`), donc **un rechargement de page perd tout
+> ce qu'un run a dit**. C'est #478 qui le sert pour de bon ; la forme ci-dessous ne change pas,
+> elle cesse d'être une promesse.
 
 - `GET /api/journal` → `PageJournal`. Paramètres de requête (tous optionnels) :
   - **filtres** : `agent`, `type`, `run_id`, `depuis`, `jusqua` (fenêtre ISO-8601, bornes
