@@ -83,6 +83,7 @@ from harnais_forge import (
     regle_pose_status,
     regles_backlog,
     regles_carte,
+    reponse_owner,
 )
 
 pytestmark = [
@@ -138,8 +139,8 @@ def regle_ajout_item(item: str = "PVTI_ajoute") -> dict:
     }
 
 
-def option_posee(depot: Depot) -> str | None:
-    """Le LIBELLÉ que la dernière mutation a réellement posé, relu depuis son id d'option.
+def libelle_pose(ligne: str) -> str | None:
+    """Le LIBELLÉ qu'une mutation a réellement posé, relu depuis son id d'option.
 
     C'EST L'ALLER-RETOUR, dans le seul sens qu'un double puisse attester : le verbe reçoit un
     libellé, résout l'option PAR NOM, et c'est cet identifiant-là — inventé par le harnais, écrit
@@ -147,12 +148,20 @@ def option_posee(depot: Depot) -> str | None:
     boucle : libellé → id d'option → libellé.
     """
     ids = {f"{ID_PROJET}_opt{i}": libelle for i, libelle in enumerate(LIBELLES_WORKFLOW)}
+    trouve = re.search(r'singleSelectOptionId: \\?"([^"\\]+)', ligne)
+    if not trouve:
+        return None
+    return ids.get(trouve.group(1), f"id inconnu : {trouve.group(1)}")
+
+
+def option_posee(depot: Depot) -> str | None:
+    """Le libellé posé par la DERNIÈRE mutation du journal, quel qu'en soit le ticket."""
     for ligne in reversed(depot.appels()):
         if "updateProjectV2ItemFieldValue" not in ligne:
             continue
-        trouve = re.search(r'singleSelectOptionId: \\?"([^"\\]+)', ligne)
-        if trouve:
-            return ids.get(trouve.group(1), f"id inconnu : {trouve.group(1)}")
+        libelle = libelle_pose(ligne)
+        if libelle is not None:
+            return libelle
     return None
 
 
@@ -1664,3 +1673,228 @@ def test_les_deux_questions_sont_independantes(depot: Depot) -> None:
     assert acheve.returncode == 1, "la pose a échoué, le run est rouge"
     assert "reconcile-workflow" in acheve.stderr
     assert len(fermeture_du_parent(depot)) == 1, "et le parent a quand même été fermé"
+
+
+# =================================================================================================
+# #517 — L'AUTRE BOUT DU MÊME CYCLE : le parent entre en travail avec son premier lot
+# =================================================================================================
+# La section ci-dessus solde un parent quand son dernier lot tombe ; celle-ci le fait ENTRER en
+# travail quand son premier lot démarre. Les deux se relisent ensemble à dessein — ce sont les deux
+# seuls moments où l'état d'un parent de suivi est écrit par quelqu'un. Avant #517, personne :
+# `/ticket-create` posait « À faire », `/ticket-start` REFUSAIT de démarrer un parent (il ne porte
+# ni branche ni code) et `/ticket-ship` ne touchait que le lot, si bien qu'un parent affichait
+# « À faire » pendant que ses lots partaient un par un.
+#
+# CE QUI SE TESTE ICI EST LE FILTRE, et il est une LISTE BLANCHE : on écrit sur « À faire » ou sur
+# rien, jamais sur les cinq autres états. Une liste noire des états à protéger laisserait passer
+# tout ce qu'elle n'a pas prévu — une option renommée dans l'UI, un état ajouté demain — et
+# écraserait un parent « En revue » ou « Abandonné », ce dont on ne revient pas. C'est la leçon de
+# la liste blanche `completed` de la section précédente, appliquée à l'autre bout.
+#
+# ET LE POINT DE GREFFE EST L'AUTRE MOITIÉ DU SUJET : la pose vit dans `lib.sh begin`, la mutation
+# groupée de `/ticket-start`, donc dans le point de passage OBLIGÉ de ses DEUX appelants — session
+# interactive et session de run. C'est ce que garde le dernier test de la section.
+
+#: Le motif d'un APPEL au verbe (et non d'une mention) — cf. `test_la_pose_vit_dans_le_verbe…`.
+_APPEL_DEMARRE_PARENT = re.compile(r"lib\.sh\s+demarre-parent")
+
+
+def regle_contexte(iid: str, statut: str, dans_projet: bool = True) -> dict:
+    """Le contexte d'UN ticket, CIBLÉ par son numéro — `regle_owner` en sachant les distinguer.
+
+    `regle_owner` répond à n'importe quel ticket (son fragment s'arrête à `issue(number:`), ce qui
+    suffit partout ailleurs. Ici il en faut deux dans le même test — l'état du lot et celui de son
+    parent, différents par construction —, donc le numéro entre dans le fragment.
+    """
+    return {
+        "contient": [f"issue(number:{iid})", "projectItems(first:"],
+        "brut": reponse_owner(statut, [], iid, dans_projet),
+    }
+
+
+def regles_demarrage(etat_parent: str, dans_projet: bool = True) -> list[dict]:
+    """Les règles d'un `begin` sur le premier lot : son contexte, celui du parent, la mutation.
+
+    Les deux contextes sont disjoints par leur NUMÉRO, pas par leur ordre : c'est ce qui permet de
+    décrire un lot « À faire » et son parent dans un tout autre état sans que l'un réponde pour
+    l'autre — et un test qui les confondrait serait vert quel que soit le filtre.
+    """
+    return [
+        regle_contexte(str(PREMIER_LOT), "À faire"),
+        regle_contexte(PARENT_SUIVI, etat_parent, dans_projet),
+        regle_pose_status(),
+    ]
+
+
+def pose_sur(depot: Depot, iid: str) -> list[str]:
+    """Les mutations du champ Status qui visent l'ITEM de CE ticket-là (`PVTI_<iid>`, cf. harnais).
+
+    `begin` en écrit DEUX quand le lot a un parent — la sienne, puis celle du parent. Un test qui
+    compterait les mutations sans les distinguer passerait au vert dans les deux sens.
+    """
+    return [
+        ligne
+        for ligne in depot.appels()
+        if "updateProjectV2ItemFieldValue" in ligne and f"PVTI_{iid}" in ligne
+    ]
+
+
+def test_demarrer_un_lot_fait_entrer_son_parent_en_travail(depot: Depot) -> None:
+    """Le cas nominal, et la raison d'être du ticket : le premier lot part, le parent suit.
+
+    Deux mutations, deux items, une seule commande — et c'est bien l'item du PARENT qui reçoit
+    « En cours », relu par son id d'option comme partout ailleurs dans ce module.
+    """
+    depot.pose_etat(graphql=regles_demarrage("À faire"), issues=chantier("open", "open"))
+
+    acheve = depot.lib("begin", str(PREMIER_LOT))
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    posees = pose_sur(depot, PARENT_SUIVI)
+    assert len(posees) == 1, f"le parent devait être posé une fois — {mutations(depot)}"
+    assert libelle_pose(posees[0]) == "En cours"
+    assert len(pose_sur(depot, str(PREMIER_LOT))) == 1, "et le lot garde la sienne"
+    assert f"#{PARENT_SUIVI}" in acheve.stdout, "le démarrage dit ce qu'il a posé de plus"
+
+
+@pytest.mark.parametrize("etat", ["En cours", "En revue", "Terminé", "Abandonné", "Doublon"])
+def test_un_parent_deja_engage_n_est_jamais_ecrase(depot: Depot, etat: str) -> None:
+    """Les cinq états que la liste blanche laisse dehors, éprouvés UN PAR UN.
+
+    Les vérifier ensemble ne dirait pas lequel garde. Deux d'entre eux ne se rattrapent pas —
+    « Abandonné » et « Doublon » n'ont pas de retour — et « En cours » est le cas NOMINAL dès le
+    deuxième lot d'un chantier : c'est lui qui rend le coût de la greffe nul sur la durée.
+    """
+    depot.pose_etat(graphql=regles_demarrage(etat), issues=chantier("open", "open"))
+
+    acheve = depot.lib("begin", str(PREMIER_LOT))
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not pose_sur(depot, PARENT_SUIVI), f"« {etat} » ne se réécrit pas"
+    assert len(pose_sur(depot, str(PREMIER_LOT))) == 1, "le lot, lui, démarre normalement"
+
+
+def test_un_ticket_sans_parent_ne_coute_qu_une_lecture(depot: Depot) -> None:
+    """L'abstention est le cas NOMINAL : la plupart des tickets ne sont pas des lots.
+
+    Ce verbe passe à CHAQUE démarrage. D'où un contrôle sur le NOMBRE DE LECTURES et pas seulement
+    sur l'absence d'écriture : lire l'état d'un parent qui n'existe pas serait un aller-retour de
+    plus sur tous les tickets du dépôt, pour une question qui n'en concerne qu'une minorité.
+
+    La lecture se compte sur `jalon: title`, l'alias que seule la vue canonique porte : `begin` lit
+    aussi le bloc de suivi du ticket, dont la requête frôle la même sélection (« … body } »).
+    """
+    depot.pose_etat(
+        graphql=[regle_contexte("700", "À faire"), regle_pose_status()],
+        issues={"700": corps_ticket("Ticket ordinaire", "type::infra", "Aucun parent ici.")},
+    )
+
+    acheve = depot.lib("begin", "700")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert len(pose_sur(depot, "700")) == 1, "son propre état, et pas un de plus"
+    assert "n'est pas un lot" not in acheve.stdout, "l'abstention nominale est MUETTE au démarrage"
+
+    vues = [
+        ligne
+        for ligne in depot.appels()
+        if "issue(number:700)" in ligne and "jalon: title" in ligne
+    ]
+    assert len(vues) == 1, "une seule lecture du ticket pour répondre « pas de parent »"
+
+
+def test_une_pose_en_echec_sur_le_parent_ne_fait_pas_echouer_le_demarrage(depot: Depot) -> None:
+    """« Best-effort » au même titre que les dates de `st_begin` et que `sync-main` (docs/10 §9.3).
+
+    Le cas décrit est celui qui arrive vraiment : un parent créé depuis l'interface web, donc ABSENT
+    du projet — la lecture le rend « sans état », l'écriture le refuse. Le lot, lui, est démarré,
+    assigné et daté : refuser un démarrage pour un board en retard d'un état serait le mauvais
+    arbitrage. Et le rattrapage est NOMMÉ, un avertissement sans geste à faire n'apprenant rien.
+    """
+    depot.pose_etat(
+        graphql=regles_demarrage("", dans_projet=False), issues=chantier("open", "open")
+    )
+
+    acheve = depot.lib("begin", str(PREMIER_LOT))
+    assert acheve.returncode == 0, "le lot est démarré : c'est ce qui compte"
+    assert len(pose_sur(depot, str(PREMIER_LOT))) == 1
+    assert not pose_sur(depot, PARENT_SUIVI)
+    assert any("assignees" in ligne for ligne in ecritures(depot)), "le lot est bien assigné"
+    assert "demarre-parent" in acheve.stderr, "le rattrapage manuel est nommé"
+
+
+def test_demarre_parent_repond_par_son_code_de_retour(depot: Depot) -> None:
+    """Les codes du verbe appelé seul, et son `--check` qui n'écrit rien.
+
+    Le 3 existe pour la raison qui l'a fait naître dans `lots-ouverts` : « il n'y a rien à faire »
+    est une RÉPONSE, pas une panne — et `begin` traite les deux différemment, le premier en silence,
+    le second par une ligne de rattrapage sur stderr.
+    """
+    depot.pose_etat(
+        graphql=regles_demarrage("À faire"),
+        issues={
+            **chantier("open", "open"),
+            "700": corps_ticket("Ticket ordinaire", "type::infra", "Pas de parent."),
+        },
+    )
+
+    simule = depot.lib("demarre-parent", "--check", str(PREMIER_LOT))
+    assert simule.returncode == 0, simule.stderr
+    assert f"#{PARENT_SUIVI}" in simule.stdout
+    assert not mutations(depot), "`--check` ne pose rien"
+
+    pose = depot.lib("demarre-parent", str(PREMIER_LOT))
+    assert pose.returncode == 0, pose.stderr
+    assert libelle_pose(pose_sur(depot, PARENT_SUIVI)[0]) == "En cours"
+
+    pas_un_lot = depot.lib("demarre-parent", "700")
+    assert pas_un_lot.returncode == 3
+    assert "n'est pas un lot" in pas_un_lot.stdout
+
+    depot.pose_etat(graphql=regles_demarrage("En revue"))
+    deja = depot.lib("demarre-parent", str(PREMIER_LOT))
+    assert deja.returncode == 3
+    assert "En revue" in deja.stdout, "l'abstention NOMME l'état qui l'a décidée"
+
+
+def test_le_commutateur_eteint_la_pose_sans_toucher_au_demarrage(depot: Depot) -> None:
+    """`MAESTRO_PARENT_EN_COURS=0` — même statut que `MAESTRO_WORKFLOW_POSE` : une décision.
+
+    Ce qu'il éteint est la GREFFE, jamais le démarrage : le lot passe « En cours », est assigné et
+    daté comme avant #517.
+    """
+    depot.pose_etat(graphql=regles_demarrage("À faire"), issues=chantier("open", "open"))
+
+    acheve = depot.lib(
+        "begin", str(PREMIER_LOT), reglages={"MAESTRO_PARENT_EN_COURS": "0"}
+    )
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert len(pose_sur(depot, str(PREMIER_LOT))) == 1, "le lot démarre comme avant"
+    assert not pose_sur(depot, PARENT_SUIVI)
+
+
+def test_la_pose_vit_dans_le_verbe_partage_et_dans_aucun_prompt() -> None:
+    """Les deux appelants en héritent parce qu'elle est dans `begin`, et pas dans leur prompt.
+
+    `/ticket-start` est joué à l'identique par une session interactive et par une session de run
+    (`scripts/orchestrate/run.sh`) : la seule chose que les deux ont en commun est le VERBE. Une
+    pose recopiée dans un prompt en ferait deux à tenir d'accord — et un prompt est ce qu'une
+    session lit en dernier, donc c'est lui qui l'emporterait.
+
+    Le motif cherche un APPEL (`lib.sh demarre-parent`), jamais une mention : la doc de
+    `/ticket-start` a le droit de dire que le parent suit, elle n'a pas à le faire elle-même. Il
+    prouve d'abord qu'il trouve un appel, faute de quoi le balayage rendrait un ✓ sur une question
+    jamais posée.
+    """
+    assert _APPEL_DEMARRE_PARENT.search("bash scripts/gitlab/lib.sh demarre-parent 517"), (
+        "le motif doit reconnaître un appel avant qu'on balaie avec"
+    )
+
+    lib = (RACINE / "scripts/gitlab/lib.sh").read_text(encoding="utf-8")
+    corps_begin = lib.split("\ngl_begin() {", 1)[1].split("\n}\n", 1)[0]
+    assert "gl_demarre_parent" in corps_begin, "la greffe est dans la mutation groupée"
+
+    fautifs = [
+        chemin.relative_to(RACINE).as_posix()
+        for chemin in (RACINE / ".claude").rglob("*.md")
+        if _APPEL_DEMARRE_PARENT.search(chemin.read_text(encoding="utf-8", errors="replace"))
+    ]
+    assert not fautifs, f"aucun prompt ne repose l'état du parent lui-même : {fautifs}"

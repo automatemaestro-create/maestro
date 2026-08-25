@@ -37,7 +37,7 @@
 #   • gl_issue_raw <iid>     — la vue TEXTE canonique d'un ticket (en-tête « clé:<TAB>valeur », puis
 #                              « -- », puis le corps). Tout ce qui lit un ticket passe par elle —
 #                              issue-brief, parent-of, subtickets, start-brief, branch-for,
-#                              worktree-done, lots-ouverts, ferme-parent.
+#                              worktree-done, lots-ouverts, ferme-parent, demarre-parent.
 #   • gh_issues_state <iid…> — « <iid><TAB>open|closed » pour N tickets en UNE lecture. La seule
 #                              source de l'OUVERT/FERMÉ d'un lot, que ni la table du backlog (bornée
 #                              à 100) ni le cycle de vie (posé après coup) ne peuvent porter.
@@ -976,6 +976,99 @@ gl_ferme_parent() {
   printf 'Parent #%s fermé : tous ses lots sont soldés (dernier : #%s).\n' "$parent" "$iid"
 }
 
+# --- Entrée en travail du parent (#517, docs/10 §5.1) -------------------------------------------
+# L'AUTRE BOUT DU MÊME CYCLE. `gl_ferme_parent` ci-dessus solde le parent quand son dernier lot
+# tombe ; celui-ci le fait entrer en travail quand son PREMIER lot démarre. Rien, jusqu'ici,
+# n'écrivait jamais l'état d'un parent de suivi : `/ticket-create` le pose « À faire »,
+# `/ticket-start` REFUSE de le démarrer (il ne porte ni branche ni code) et `/ticket-ship` ne touche
+# que le lot — si bien qu'un parent affichait « À faire » pendant que ses lots partaient un par un,
+# et que depuis #419, où un run en solde plusieurs d'affilée, le board mentait sur tout un chantier
+# à la fois.
+#
+# LE DÉCLENCHEUR EST `gl_begin`, ET C'EST LE SEUL À L'ÊTRE : « En cours » ne s'obtient QUE par
+# /ticket-start, dont `gl_begin` est la mutation groupée — donc le point de passage OBLIGÉ de ses
+# deux appelants, session interactive et session de run. Câbler les prompts en ferait deux à tenir
+# d'accord, et une session autonome lit le prompt en dernier : c'est lui qui l'emporterait. Même
+# raisonnement que la greffe de `reconcile-workflow` dans `worktree.sh gc` plutôt que dans ses trois
+# points de passage (#275).
+#
+# ET IL N'Y A PAS DE FILET DERRIÈRE, à la différence de « Terminé » — choix, pas oubli. Celui-là
+# naît d'un merge côté forge, donc pouvait arriver sans qu'aucune machine ne regarde, d'où le
+# ramassage de #275 puis l'événement de #377. Ici la pose est SUR le chemin qui crée l'événement :
+# un `reconcile` n'aurait rien à rattraper, et une dérive `doctor.sh` rien à diagnostiquer. À
+# rouvrir seulement si un `set-workflow` manuel devenait courant.
+#
+# LE GESTE INVERSE N'EXISTE PAS NON PLUS : `gl_liberer_ticket` ne fait pas repasser le parent
+# « À faire ». D'autres lots peuvent être en vol, et un parent dont un lot a démarré reste
+# légitimement en travail — le seul retour du parent est sa fermeture (#515).
+
+# gl_demarre_parent [--check] <iid> -> <iid> est un LOT qui vient de démarrer : si son parent est
+# encore « À faire » (ou sans état), le passe « En cours ».
+# Codes : 0 = posé (ou, en --check, le serait) · 3 = abstention NOMMÉE (pas un lot, parent déjà en
+# travail ou soldé) · 1 = échec.
+#
+# POURQUOI LE LOT EN ARGUMENT ET PAS LE PARENT : même raison que `gl_ferme_parent`, c'est ce que
+# l'appelant a. `/ticket-start` démarre un lot et ne sait rien du parent avant de l'avoir lu.
+#
+# LE FILTRE EST UNE LISTE BLANCHE SUR L'ÉTAT COURANT — « À faire », ou pas d'état du tout — et non
+# une liste noire des cinq autres. Nous n'avons pas la main sur ce que porte le champ : une option
+# renommée dans l'UI, un état ajouté demain, une lecture qui rend une valeur exotique passeraient
+# tous une liste noire et écraseraient un parent « En revue » ou « Abandonné ». C'est la leçon de la
+# liste blanche `completed` de scripts/github/ticket-ferme.sh. « Sans état » est DEDANS à dessein :
+# un parent hors projet n'a aucun état à protéger, et l'écriture qui suit refusera d'elle-même en
+# nommant sa cause (`st_set_workflow` sur un ticket hors projet).
+#
+# L'ABSTENTION EST LE CAS NOMINAL, et c'est ce qui gouverne le coût. Deux abstentions, deux prix :
+# un ticket SANS PARENT ne coûte qu'UNE lecture — celle qui répond « pas de parent » —, et un parent
+# DÉJÀ « En cours » en coûte une seconde mais AUCUNE écriture. Ce second cas est celui de tous les
+# lots à partir du deuxième, c'est-à-dire de la majorité des démarrages d'un chantier.
+gl_demarre_parent() {
+  local check=0
+  while [ "${1:-}" = "--check" ]; do check=1; shift; done
+  local iid="${1:-}"
+  if [ -z "$iid" ]; then echo "usage: gl_demarre_parent [--check] <iid>" >&2; return 2; fi
+
+  # UN TICKET ILLISIBLE EST UNE ABSTENTION (3) ET NON UN ÉCHEC (1), pour la raison exacte donnée
+  # dans gl_ferme_parent : la question posée ici est « ce ticket est-il un lot ? », et sans réponse
+  # le repli — le parent reste « À faire », quelqu'un le pousse à la main — est l'état d'avant #517.
+  # Une fois qu'on SAIT qu'il y a un parent, en revanche, l'échec se propage : voir plus bas.
+  local raw parent
+  if ! raw="$(gl_issue_raw "$iid")"; then
+    echo "Ticket #$iid illisible — parent non recherché." >&2
+    return 3
+  fi
+  parent="$(printf '%s\n' "$raw" | gl_parent_marqueur)"
+  if [ -z "$parent" ]; then
+    printf "#%s n'est pas un lot (aucun parent déclaré) — rien à poser.\n" "$iid"
+    return 3
+  fi
+
+  # Capture PUIS découpe, comme dans gl_ferme_parent : `gl_issue_owner | cut` rendrait le code de
+  # `cut`, toujours 0, et un parent illisible passerait alors pour un parent SANS ÉTAT — c'est-à-dire
+  # pour un parent à écrire, ce qui est exactement le cas où il ne faut pas.
+  local owner petat
+  if ! owner="$(gl_issue_owner "$parent")"; then
+    echo "État de #$parent illisible — « En cours » non posé." >&2
+    return 1
+  fi
+  petat="${owner%%$'\t'*}"
+
+  case "$petat" in
+    ''|'À faire') ;;
+    *)
+      printf 'Parent #%s déjà « %s » — rien à poser.\n' "$parent" "$petat"
+      return 3 ;;
+  esac
+
+  if [ "$check" = 1 ]; then
+    printf '  → #%s passerait « En cours » (lot démarré : #%s).\n' "$parent" "$iid"
+    return 0
+  fi
+
+  gl_set_workflow "$parent" "en-cours" >/dev/null || return 1
+  printf 'Parent #%s → « En cours » (lot démarré : #%s).\n' "$parent" "$iid"
+}
+
 # --- Démarrage de ticket (/ticket-start : préflight + mutation groupée) --------------------------
 # Deux helpers pour que /ticket-start remplace une dizaine d'allers-retours par deux (ticket #61) :
 # gl_start_brief fait tout le préflight en UNE lecture du ticket, gl_begin pose assignation,
@@ -1114,10 +1207,35 @@ gl_start_brief() {
 # d'écriture de st_begin — l'état D'ABORD, voir son en-tête. Les dates, elles, ont toujours été un
 # appel à part : elles n'ont pas de domicile natif sur GitHub et vivent dans le commentaire de
 # suivi maison.
+#
+# LA QUATRIÈME ÉCRITURE N'EST PAS SUR CE TICKET-CI (#517) : démarrer un LOT fait entrer son parent
+# de suivi en travail. Elle est greffée ici et pas dans le prompt de /ticket-start parce que ce
+# verbe est le point de passage obligé des deux appelants — voir l'en-tête de `gl_demarre_parent`.
 gl_begin() {
   local iid="$1" user="${2:-}"
   if [ -z "$iid" ]; then echo "usage: gl_begin <iid> [username]" >&2; return 2; fi
-  st_begin "$@"
+  st_begin "$@" || return $?
+
+  # BEST-EFFORT, au même titre que les dates ci-dessus et que `sync-main` (docs/10 §9.3) : le ticket
+  # est démarré, sa branche est là, et un board en retard d'un état ne vaut pas de refuser un
+  # démarrage. L'échec se DIT — avec le geste qui le rattrape — et ne remonte pas.
+  #
+  # L'ABSTENTION NOMINALE EST MUETTE ICI, alors que le verbe la NOMME, et l'asymétrie est voulue :
+  # appelé seul, il doit dire pourquoi il n'a rien fait ; appelé sur CHAQUE démarrage, un « #517
+  # n'est pas un lot » ajouterait une ligne de bruit à l'immense majorité des tickets, qui n'en sont
+  # pas — et une ligne qu'on apprend à ne plus lire est une ligne qui ne dira rien le jour où elle
+  # portera autre chose.
+  if [ "${MAESTRO_PARENT_EN_COURS:-1}" = 0 ]; then return 0; fi
+  local sortie rc
+  sortie="$(gl_demarre_parent "$iid" 2>&1)"; rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$sortie" ;;
+    3) ;;
+    *)
+      printf '%s\n' "$sortie" >&2
+      printf '  ~ parent de #%s non passé « En cours » — rattrapage : bash scripts/gitlab/lib.sh demarre-parent %s\n' \
+        "$iid" "$iid" >&2 ;;
+  esac
 }
 
 # --- Dates & time tracking ----------------------------------------------------------------------
@@ -5382,6 +5500,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     startables)     gl_subtickets "$@" | tail -n +2 | gl_subtickets_startables ;;
     lots-ouverts)   gl_lots_ouverts "$@" ;;
     ferme-parent)   gl_ferme_parent "$@" ;;
+    demarre-parent) gl_demarre_parent "$@" ;;
     start-brief)    gl_start_brief "$@" ;;
     begin)          gl_begin "$@" ;;
     prio)           gl_prio "$@" ;;
@@ -5469,6 +5588,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    startables <iid-parent>         (lots « À faire » démarrables maintenant)" >&2
       echo "    lots-ouverts <iid-parent>       (lots encore OUVERTS — 0 = parent soldé, 3 = il en reste)" >&2
       echo "    ferme-parent [--check] <iid>    (<iid> = un lot qui vient de se fermer : ferme son parent s'il était le dernier)" >&2
+      echo "    demarre-parent [--check] <iid>  (<iid> = un lot qui vient de démarrer : passe son parent « En cours » s'il était « À faire »)" >&2
       echo "  Démarrage de ticket (/ticket-start) :" >&2
       echo "    start-brief <iid>            (préflight en une lecture : pré-requis, arbre sale signalé, brief, parent/sous-ticket, branche proposée)" >&2
       echo "    branch-for <iid>             (nom de la branche de travail du ticket)" >&2

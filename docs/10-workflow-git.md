@@ -124,7 +124,7 @@ de Projects v2), et c'est ce qui a permis à chaque bascule de ne toucher **aucu
 | Libellé | Slug | Posé par |
 |---|---|---|
 | **À faire** | `a-faire` | [`/ticket-create`](../.claude/commands/ticket-create.md), via `project-add` (§3.7) |
-| **En cours** | `en-cours` | [`/ticket-start`](../.claude/commands/ticket-start.md) |
+| **En cours** | `en-cours` | [`/ticket-start`](../.claude/commands/ticket-start.md) — sur le ticket, **et sur son parent de suivi** si c'est un lot (#517, §5.1) |
 | **En revue** | `en-revue` | [`/ticket-finish`](../.claude/commands/ticket-finish.md) (PR ouverte) |
 | **Terminé** | `termine` | [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) et le ramassage des worktrees (§9.2) |
 | **Abandonné** | `abandonne` | [`/ticket-abandon`](../.claude/commands/ticket-abandon.md) (won't-do) |
@@ -705,7 +705,10 @@ n'est donc plus une salle d'attente mais un **état de passage**, où le ticket 
      déclencher de prompt), cycle de vie « En cours » (posé dans le champ **Status** de l'item de
      projet, §3.1) et dates début/échéance (§3.3), groupés en un seul appel. Les sous-commandes
      unitaires (`current-user`, `set-workflow`, `start-dates`…) restent disponibles pour les
-     autres commandes et les cas hors nominal.
+     autres commandes et les cas hors nominal. Si le ticket est un **lot**, ce même appel fait
+     passer son **parent de suivi** « En cours » quand il était « À faire » (#517, §5.1) —
+     best-effort, et à cet endroit précisément parce qu'il est le point de passage obligé des deux
+     appelants de `/ticket-start`, session interactive comme session de run.
    Une fois le cadrage résumé, l'agent **enchaîne directement sur l'implémentation** — le résumé
    n'est pas une pause d'autorisation, aucun « go » n'est attendu.
 3. Développement sur la branche (commits `Refs #<iid>`).
@@ -765,9 +768,18 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
 
 - **Parent de suivi** — pas de branche, pas de code, pas de PR. Sa description porte l'objectif
   global et une section `## Sous-tickets` : la checklist **ordonnée** (ordre de réalisation) des
-  lots, au format `- [ ] #<iid> — <titre>`. Il reste ouvert tant qu'un lot l'est, et **se ferme tout
-  seul quand le dernier se ferme** (ticket #515). Les cases sont cochées au fil de l'eau par les
-  commandes (synchronisation idempotente : cocher les lots « Terminé », jamais décocher).
+  lots, au format `- [ ] #<iid> — <titre>`. Il **passe « En cours » dès qu'un de ses lots démarre**
+  (ticket #517), reste ouvert tant qu'un lot l'est, et **se ferme tout seul quand le dernier se
+  ferme** (ticket #515). Les cases sont cochées au fil de l'eau par les commandes (synchronisation
+  idempotente : cocher les lots « Terminé », jamais décocher).
+
+  **Son état, aux deux bouts — et personne d'autre ne l'écrit.** Un parent ne porte ni branche ni
+  code : rien dans le cycle d'un ticket ordinaire ne passe jamais par lui. `/ticket-create` le pose
+  « À faire », `/ticket-start` **refuse de le démarrer** et `/ticket-ship` ne touche que le lot,
+  si bien qu'il n'existe **que deux moments** où son état change, et ils sont automatiques tous les
+  deux : le **premier lot qui démarre** le fait entrer en travail (#517, ci-dessous), le **dernier
+  lot qui se ferme** le solde (#515, `lib.sh ferme-parent`, dont la fermeture repasse par l'événement
+  `issues: closed` et y reçoit « Terminé », §9.2). Entre les deux, aucun geste manuel n'est attendu.
 
   **La fermeture automatique, et ce qu'elle mesure.** Pas de PR sur un parent, donc pas de
   `Closes #` : sa fermeture était le seul geste du cycle d'un chantier resté **manuel**, décrit ici
@@ -806,6 +818,44 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
   après un `--check` —, et il n'y a pas de verbe de rattrapage en masse parce qu'il n'y a pas de
   question à poser : la liste se lit dans `/backlog`, et fermer un chantier est un geste qu'on veut
   relire un par un.
+
+  **L'entrée en travail, l'autre bout du même cycle** (ticket #517). Le pendant exact du paragraphe
+  précédent, à l'autre extrémité : **démarrer un lot fait passer son parent de « À faire » à
+  « En cours »**, dans le même geste et sans qu'aucune commande ne le demande. Avant #517 un parent
+  affichait « À faire » pendant que ses lots partaient un par un — et depuis #419, où un run en
+  solde plusieurs d'affilée, le board mentait sur tout un chantier à la fois. Quatre choses à
+  connaître avant d'y toucher :
+
+  - **la greffe est dans `lib.sh begin`**, la mutation groupée de `/ticket-start` (assignation +
+    « En cours » + dates), et pas dans le prompt de la commande. C'est le point de passage **obligé**
+    de ses deux appelants — session interactive et session de run —, donc les deux en héritent d'un
+    coup, là où un câblage par prompt en ferait deux à tenir d'accord (et un prompt est ce qu'une
+    session lit en dernier : c'est lui qui l'emporterait). Même raisonnement que la greffe de
+    `reconcile-workflow` dans `worktree.sh gc` plutôt que dans ses trois points de passage (§9.2) ;
+  - **le filtre est une liste blanche sur l'état courant** — « À faire », ou pas d'état du tout —
+    et non une liste noire des cinq autres. Nous n'avons pas la main sur ce que porte le champ :
+    une option renommée dans l'UI, un état ajouté demain, une lecture qui rend une valeur exotique
+    passeraient tous une liste noire et **écraseraient** un parent « En revue » ou « Abandonné ».
+    Même leçon que la liste blanche `completed` ci-dessus. Un parent déjà « En cours » est **sauté
+    sans écriture** : c'est le cas nominal dès le deuxième lot, donc la greffe ne coûte qu'**une
+    écriture par chantier** ;
+  - **la pose est best-effort** : son échec ne fait pas échouer le démarrage du lot — il est
+    **signalé** avec son geste de rattrapage, jamais fatal. Même statut que les dates de `begin` et
+    que `sync-main` (§9.3). Un ticket **sans parent** ne coûte, lui, aucune écriture : au plus la
+    lecture qui répond « pas de parent ». L'abstention nominale est **muette** au démarrage alors
+    que le verbe la nomme quand on l'appelle seul — une ligne de bruit sur l'immense majorité des
+    tickets est une ligne qu'on apprend à ne plus lire ;
+  - **pas de filet derrière, et c'est un choix.** « Terminé » naît d'un merge côté forge, donc
+    pouvait arriver sans qu'aucune machine ne regarde — d'où le ramassage de #275 puis l'événement
+    de #377. « En cours », lui, ne s'obtient **que** par `/ticket-start` : la pose est sur le seul
+    chemin qui crée l'événement, un `reconcile` n'aurait rien à rattraper et aucune dérive
+    `doctor.sh` n'a été ajoutée. À rouvrir seulement si un `set-workflow` manuel devenait courant.
+
+  Le **geste inverse n'existe pas** : `lib.sh liberer-ticket`/`reprendre-en-cours` (§9.6) ne fait
+  pas repasser le parent « À faire » — d'autres lots peuvent être en vol, et un parent dont un lot a
+  démarré reste légitimement en travail. Le seul retour du parent est sa fermeture. Verbe à la main :
+  `lib.sh demarre-parent [--check] <iid>`, où `<iid>` est **le lot** qui vient de démarrer (`0` =
+  posé, `3` = abstention nommée, `1` = échec) ; `MAESTRO_PARENT_EN_COURS=0` éteint la greffe.
 - **Sous-tickets** — un lot = ~1 session, **1 à 3 critères d'acceptation**, et surtout chaque lot
   est **mergeable directement sur `main` sans casser l'existant** (code additif ou inoffensif tant
   que les lots suivants manquent). La description de chaque sous-ticket **commence par**
@@ -856,7 +906,7 @@ Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subti
 | Commande | Besoin/ticket trop gros | Ticket parent | Sous-ticket |
 |---|---|---|---|
 | `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, marqueur `(parallèle)` sur les lots indépendants, lot tests en dernier) | — | — |
-| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ le travail est en route (« En cours ») ou livré et on n'attend plus que des merges — un parent dont tout est fermé s'est fermé tout seul (#515) | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête |
+| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ le travail est en route (« En cours ») ou livré et on n'attend plus que des merges — un parent dont tout est fermé s'est fermé tout seul (#515) | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête. Et **fait passer le parent « En cours »** s'il était « À faire » (#515 à l'autre bout, ici #517, `lib.sh begin` → `demarre-parent`) |
 | `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou, si c'était le dernier, que le parent **se fermera de lui-même** au merge, #515), et coche les lots terminés dans la checklist du parent |
 | l'événement `issues: closed` | — | **ferme le parent** dès que son dernier lot se ferme (#515, `lib.sh ferme-parent`) — quels que soient l'auteur du merge et la machine | pose « Terminé » (#377) |
 
