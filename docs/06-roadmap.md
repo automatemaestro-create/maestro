@@ -200,6 +200,15 @@ milestones s'enchaînent dans cet ordre parce qu'ils dépendent les uns des autr
 visuel** du premier lot (#245) est ce dont les deux autres héritent, et le **streaming** de
 l'onglet Chat (#264) est ce que le chat global réutilise au lieu de le réimplémenter.
 
+> ⚠ **La demande est revenue, plus large, et la recherche l'a instruite** (#471,
+> [docs/30](./30-cible-visuelle-control-tower.md), mesures du 2026-08-25). Non plus « harmoniser ce
+> qu'on a » mais « aller chercher un niveau » — et le renversement est que **le niveau ne se tient
+> pas par une maquette, mais par un test** : Code Connect, la seule mécanique qui relierait un
+> design system Figma au code, est **refusée sur ce compte** (plan `starter`), et le langage visuel
+> de #245 est aujourd'hui **contourné plus souvent qu'il n'est utilisé** (18 recopies de carte, 26
+> boutons refaits, 1 750 couleurs en dur pour 0 token). La recherche ne rejuge pas #245 : elle
+> demande ce qui le **tient**. Chantier : **#532**, 7 lots (#533–#539), 7 sessions.
+
 Deux points d'articulation avec le reste de la roadmap :
 
 - **#276 précède les autres lots du socle** : chaque écran v3 doit *naître* filtré par le projet
