@@ -23,6 +23,7 @@ import {
 } from "@/lib/types";
 import type {
   AgentCatalogue,
+  AreteGraphe,
   CoutExecution,
   CoutTache,
   CoutTacheAgregee,
@@ -30,7 +31,9 @@ import type {
   EntreeJournal,
   EtatAgent,
   Evenement,
+  GrapheRun,
   MessageChat,
+  NoeudGraphe,
   PageExplorateur,
   PageJournal,
   Projet,
@@ -421,6 +424,66 @@ export function tacheFactice(partiel: Partial<Tache> = {}): Tache {
     // Idem pour le projet (#222) : le cas courant est la tâche hors projet.
     projet_id: null,
     horodatage: "2026-07-28T10:00:00Z",
+    ...partiel,
+  };
+}
+
+/** Un nœud du graphe d'un run (#490) — n'a pas démarré, sans dépendance. */
+export function noeudGrapheFactice(
+  partiel: Partial<NoeudGraphe> = {},
+): NoeudGraphe {
+  return {
+    id: "T-1",
+    titre: "Écrire les tests",
+    dependances: [],
+    dependants: [],
+    niveau: 0,
+    rang: 0,
+    // Le défaut du contrat : un nœud du plan que rien n'a encore touché.
+    statut: "backlog",
+    compartiment: "a_faire",
+    agent: "dev",
+    role: "Développeur",
+    cout_usd: null,
+    duree_ms: null,
+    etapes: [],
+    ...partiel,
+  };
+}
+
+/**
+ * Le graphe d'un run (#490), **dérivé de ses nœuds** : `niveaux` regroupe sur le
+ * `niveau` que chaque nœud porte déjà, et les compteurs se comptent. Rien n'y
+ * est retrié — le tri topologique appartient au backend, et une fabrique qui le
+ * rejouerait finirait par le contredire.
+ *
+ * `plan_connu` suit la présence de nœuds et `plat` l'absence d'arêtes : ce sont
+ * les deux cas courants. Un test qui veut l'un sans l'autre — un run sans plan
+ * publié, un graphe plat malgré des nœuds — les pose explicitement.
+ */
+export function grapheFactice(partiel: Partial<GrapheRun> = {}): GrapheRun {
+  const noeuds: NoeudGraphe[] = partiel.noeuds ?? [];
+  const aretes: AreteGraphe[] = partiel.aretes ?? [];
+  const parNiveau = new Map<number, string[]>();
+  for (const noeud of noeuds) {
+    const rangee = parNiveau.get(noeud.niveau);
+    if (rangee) rangee.push(noeud.id);
+    else parNiveau.set(noeud.niveau, [noeud.id]);
+  }
+  const niveaux = [...parNiveau.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, ids]) => ids);
+  return {
+    run_id: "run-1",
+    plan_connu: noeuds.length > 0,
+    plat: aretes.length === 0,
+    nb_noeuds: noeuds.length,
+    nb_aretes: aretes.length,
+    profondeur: niveaux.length,
+    largeur: Math.max(0, ...niveaux.map((niveau) => niveau.length)),
+    noeuds,
+    aretes,
+    niveaux,
     ...partiel,
   };
 }

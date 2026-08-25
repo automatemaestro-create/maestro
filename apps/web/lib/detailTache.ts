@@ -97,9 +97,18 @@ function natureDe(brut: unknown): NatureAffichee {
   return NATURES_CONNUES.has(valeur) ? (valeur as NatureAffichee) : "lien";
 }
 
-/** Les étapes affichables de la tâche, dans l'ordre où le flux les a posées. */
-export function etapesDe(tache: Tache): EtapeAffichee[] {
-  const brutes = tache.etapes;
+/**
+ * Des étapes brutes du flux aux étapes affichables — la normalisation seule,
+ * détachée de la tâche qui les porte.
+ *
+ * Elle est publique depuis #491 parce qu'un **nœud du graphe** d'un run porte
+ * lui aussi ses `etapes` (#490, `NoeudGraphe.etapes`) sans être une `Tache` : il
+ * n'a ni description, ni liens, ni `usage`. Passer par la même fonction est ce
+ * qui garantit qu'une checklist se compte pareil des deux côtés — l'étape sans
+ * libellé y est retirée au même endroit, et l'état inconnu y retombe sur « à
+ * faire » plutôt que de disparaître.
+ */
+export function normaliserEtapes(brutes: unknown): EtapeAffichee[] {
   if (!Array.isArray(brutes)) return [];
   return brutes
     .map((etape) => ({
@@ -109,6 +118,11 @@ export function etapesDe(tache: Tache): EtapeAffichee[] {
     // Une étape sans libellé est une case à cocher sans énoncé : rien à lire,
     // et elle fausserait l'avancement en gonflant le dénominateur.
     .filter((etape) => etape.libelle !== "");
+}
+
+/** Les étapes affichables de la tâche, dans l'ordre où le flux les a posées. */
+export function etapesDe(tache: Tache): EtapeAffichee[] {
+  return normaliserEtapes(tache.etapes);
 }
 
 /** Les liens affichables de la tâche, URL filtrée par `lienExterneSur`. */

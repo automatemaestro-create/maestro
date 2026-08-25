@@ -570,11 +570,17 @@ partagée (badge, avancement, attente, cause, interruption, pause) et les quatre
 
 #### 2.4.2 La vue d'un run — son Kanban, sa progression et son journal (#475, #478) — **livré**
 
-`/runs/<run_id>` : la **progression** du run en tête, son **Kanban** au milieu, son
-**journal** au pied. Ouvrir un run donne enfin son backlog — jusqu'ici le Kanban était
-celui du **projet** (#248) et un run n'avait pas de vue à lui, si bien que dans un
-projet où plusieurs runs se succèdent, *ce que ce run avait fait* n'était visible nulle
-part.
+`/runs/<run_id>` : la **progression** du run en tête, sa **lecture des tâches** au
+milieu, son **journal** au pied. Ouvrir un run donne enfin son backlog — jusqu'ici le
+Kanban était celui du **projet** (#248) et un run n'avait pas de vue à lui, si bien que
+dans un projet où plusieurs runs se succèdent, *ce que ce run avait fait* n'était
+visible nulle part.
+
+> ⚠ **Cette lecture est double depuis #491** : le **pipeline** (§2.4.3) et le
+> **Kanban** coexistent sous une bascule, et c'est le pipeline qui ouvre. Tout ce
+> que dit cette section vaut inchangé — la tête, le journal, l'appartenance par
+> l'API, le pouls du shell —, seul le milieu de l'écran a désormais deux formes.
+> L'arbitrage est rendu en §2.4.3.
 
 **Le Kanban est réutilisé, pas réimplémenté.** C'est le composant de §2.2 :
 mêmes colonnes, mêmes cartes, même **détail sur place** (#251), même réassignation.
@@ -697,6 +703,122 @@ Couverture (#480) : `tests/test_run_activite.py` côté Python (les cinq causes 
 leur ordre, la cible d'un appel d'outil, le regroupement d'une salve, la fenêtre,
 l'étape `:activite` et son passage au pont) ; `apps/web/tests/runs-liste.test.tsx`
 côté écran.
+
+#### 2.4.4 La vue pipeline — le flux d'un run, ses checklists et ses branches (#491) — **livré**
+
+La **troisième lecture** d'un run, et celle qui a motivé le chantier #488 : on suit un
+run comme on suit un pipeline GitHub Actions ou un flux n8n — l'action en cours, sa
+checklist qui se coche, et à la fin de l'action la **suite** qui s'allume, avec le
+**lien** qui l'y relie ; plusieurs liens quand ça part en parallèle. Elle consomme le
+graphe de §6.11 et n'invente rien : `niveaux`, `niveau`/`rang`, `compartiment`,
+`plat`/`profondeur`/`largeur` sont **servis**.
+
+**L'arbitrage avec le Kanban de #475 — les deux vues coexistent, sous une bascule, et
+le pipeline ouvre.** C'était le quatrième critère du ticket, et il se décompose en
+trois décisions :
+
+- **Elles ne se remplacent pas**, parce qu'elles ne répondent pas à la même question :
+  le Kanban dit « combien dans quel état », le pipeline « quoi après quoi ». Aucune des
+  deux ne se déduit de l'autre — on ne lit pas un enchaînement dans cinq colonnes, on
+  ne compte pas un état dans un graphe.
+- **Elles ne s'affichent jamais ensemble.** Empilées, ce serait deux fois les mêmes
+  tâches sur le même écran sans que rien ne dise laquelle regarder : exactement ce que
+  #488 interdit (« jamais laissé aux deux écrans de se concurrencer »). Une bascule à
+  deux positions n'en montre qu'une, et le geste de passer de l'une à l'autre *est* la
+  question qu'on se pose.
+- **Le pipeline est le défaut.** La question du Kanban est déjà à moitié répondue
+  au-dessus de lui — la barre de progression compte par compartiment, mêmes couleurs,
+  mêmes libellés (§2.4.2). Ouvrir dessus, c'est ouvrir sur une redondance, et faire du
+  pipeline une vue qu'on n'ouvre jamais.
+
+Deux options **écartées**, et pourquoi. **Deux routes** (`/runs/<id>/pipeline`,
+`/runs/<id>/kanban`), sur le modèle des onglets d'une fiche agent (§2.3) : le patron
+existe et rendrait le choix partageable par URL, mais il coûterait un remontage complet
+— la tête, le journal et la lecture de l'autre vue repartiraient pour un changement qui
+ne change **rien** aux données, les deux portant le *même* run déjà chargé. Le prix
+assumé est qu'on partage un **run**, pas la façon dont on le regarde. **Retirer le
+Kanban de la vue d'un run**, l'autre branche de l'alternative du ticket : elle
+laisserait sans rien les runs dont le plan n'est pas connu (`plan_connu: false` —
+moteur antérieur, journal rejoué, planification en échec), où le graphe se réduit aux
+tâches vues et sans aucune arête. Échanger un défaut contre un autre. Le raisonnement
+vit dans `apps/web/lib/vuesRun.ts`, à un seul endroit.
+
+**Les branches parallèles sont les colonnes.** Un niveau, une colonne ; les nœuds d'un
+même niveau s'empilent dedans. Comme le niveau est le *plus long chemin* qui mène au
+nœud et non un rang de tri (§6.11), deux tâches sans dépendance entre elles y tombent
+ensemble et se lisent comme simultanées — une file les aurait mises l'une derrière
+l'autre, ce que le deuxième critère interdit.
+
+**Les arêtes sont dessinées, pas listées.** Un `<svg>` en fond, une courbe de Bézier
+par dépendance, tracée du bord **droit** de l'amont au bord **gauche** de l'aval — le
+sens du flux —, mesurée sur les boîtes réelles (`getBoundingClientRect`, et non
+`offsetLeft` : les colonnes sont positionnées, ce qui change leur `offsetParent`). Le
+trait suit l'état de l'arête : plein et vert `franchie`, pointillé neutre `attendue`,
+pointillé rose `rompue`. Survoler un nœud met **ses** arêtes en avant et estompe les
+autres. Aucune dépendance de rendu de graphe n'a été ajoutée — `apps/web` tient en
+trois paquets, et le précédent local du SVG à la main est `GraphiqueEvolutionCout`. Le
+`<svg>` est `aria-hidden` (un tracé n'a rien à annoncer) : les enchaînements sont
+**aussi** rendus en toutes lettres, dans un `<details>` replié.
+
+**« La suite apparaît » veut dire qu'elle s'allume, pas qu'elle se crée.** Sur un plan
+déclaré d'avance (#489/#490), la boîte de l'aval est là depuis le début — grise, en
+retrait. Ce qui change quand l'amont termine, c'est que **toutes** ses arêtes entrantes
+deviennent `franchie` : le nœud passe alors à « Prête à partir », surface pleine et
+badge nommé. Un nœud **sans aucune** dépendance n'est jamais marqué ainsi : sur un plan
+plat tout serait « prêt » au niveau 0, et le signal ne dirait plus rien.
+
+**Ce qui attend un humain est teinté et immobile ; ce qui travaille bat.** C'est la
+règle du badge d'un run (§2.4.1), reprise telle quelle : la pastille ne pulse que pour
+ce qui avance. Le nœud en attente est le **seul** à porter une surface `attention`, et
+il renvoie vers l'écran qui porte le geste (« Trancher → », même table `ATTENTES` que
+la liste). ⚠ L'attente se lit dans la **file des validations**, pas sur la tâche : le
+moteur n'émet pas le statut `en_attente_validation` de la machine à états, et la table
+partagée le rangerait de toute façon dans « en cours », à raison — la tâche est en vol.
+« En vol » et « quelqu'un doit trancher » ne se ressemblent pas à l'œil, et les
+confondre est le défaut d'origine du chantier (#355 : 53 minutes indiscernables d'un
+travail en cours). L'appariement passe par `tachesEnAttenteDeValidation`
+(`lib/execution`), la moitié amont de ce que #474 utilisait déjà pour les runs.
+
+**Un graphe ne se lit pas s'il déborde**, et la réponse n'est pas de tout montrer plus
+petit. Deux moyens : le dessin vit dans un cadre **borné qui défile chez lui** — jamais
+le corps de la page —, et une bascule **cadre sur la branche courante**, c'est-à-dire
+ce qui tourne (à défaut, ce qui est prêt), tout ce qui y mène et tout ce qui en
+découle. Les branches **sœurs** en sortent : c'est ce qui fait gagner de la place, et
+c'est assumé. Un run entièrement soldé n'a pas de branche courante — la bascule s'y
+éteint plutôt que de désigner un nœud au hasard.
+
+**Un nœud porte ce qui tient en 16 rem** : son titre, son état, son agent et son rôle,
+sa checklist — la rangée de cases qui dit *combien* (#489, une case par étape, jamais
+un pourcentage) plus l'étape en cours qui dit *quoi* —, son coût et sa durée. La liste
+entière s'ouvre dans le **panneau de détail qui existe déjà** (#251), en croisant le
+nœud avec la tâche de même identifiant ; un nœud dont la tâche n'a pas démarré reste
+strictement inerte, exactement comme une carte de Kanban sans détail. La rangée de
+cases et la ligne d'étape ont été **extraites** de ce panneau
+(`components/EtapesTache.tsx`) le jour où un second écran a eu à dire la même chose —
+même geste que `components/runs/EtatRun.tsx` en #475, et pour la même raison.
+
+**Le direct est celui du shell**, comme partout ailleurs : le graphe n'a pas
+d'événement à lui (§6.11), il se recompose à la lecture, donc `lib/useGrapheRun`
+s'abonne au **pouls** (`revision`) et relit à chaque battement — un nœud qui démarre,
+une étape qui se coche, un plan qui arrive.
+
+Deux notes de lecture, jamais confondues : `plan_connu: false` dit que le run n'a pas
+publié son plan (nœuds reconstruits, aucune arête connue) ; `plat: true` qu'il n'a
+déclaré aucune dépendance — un graphe normal, et le cas le plus courant. La première
+recouvre la seconde, donc elle l'emporte.
+
+⚠ **La démo publie désormais son plan** (`maestro/controltower/demo.py`) : sans lui
+`--demo` rendait un graphe `plan_connu: false`, c'est-à-dire une file de boîtes grises
+sans une arête — l'écran que cette démo est justement là pour montrer n'aurait rien eu
+à montrer. La topologie reprend celle de l'exemple de §6.11 sur les tâches du scénario
+(schéma → API ∥ maquette → CI), ossature de checklist comprise.
+
+Vérification : `apps/web/tests/runs-vue.test.tsx` (un nœud par tâche avec agent et
+checklist, les parallèles au même niveau, la suite qui s'allume, l'attente humaine qui
+ne se lit plus « en cours ») — la couverture complète est différée au lot 4 (#492). La
+**géométrie**, elle, ne se teste pas en jsdom : elle a été mesurée au skill
+`/banc-mise-en-page` sur la démo, à 1280×800, 1280×500 et 375×667, clair et sombre —
+rien d'inatteignable, aucun débordement horizontal, aucun rogneur.
 
 ### 2.5 💰 Coûts & analytics
 
@@ -2335,3 +2457,8 @@ feuille comme `detail_tache.py`), [`maestro/controltower/graphe.py`](../maestro/
 `ControlTowerState.graphe(run_id)` pour la jointure et
 [`maestro/controltower/app.py`](../maestro/controltower/app.py) pour la route. Tests différés au lot
 final du chantier (#492, [docs/10 §5.1](./10-workflow-git.md)).
+
+L'écran qui consomme ce contrat est la **vue pipeline** (§2.4.4, #491) : un niveau, une
+colonne ; un nœud, une boîte ; une arête, une courbe orientée. C'est aussi elle qui
+ajoute les deux questions que ce contrat ne pose pas — « ce nœud attend-il un humain ? »
+(la file des validations, pas le compartiment) et « quelle est la branche courante ? ».

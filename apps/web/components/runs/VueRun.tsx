@@ -2,7 +2,13 @@
 
 /**
  * La vue d'un run (#475, lot 3 de #472, docs/05 §2.4.2) : sa progression en tête,
- * son Kanban dessous, et **son journal** au pied (#478).
+ * **sa lecture des tâches** dessous, et **son journal** au pied (#478).
+ *
+ * Cette lecture est double depuis #491, et c'est l'arbitrage que ce lot-là avait
+ * à rendre : le **pipeline** (le flux — quoi après quoi) et le **Kanban** (les
+ * états — combien dans quel colonne) coexistent sous une bascule, le pipeline
+ * ouvrant. Le raisonnement complet, et les deux options écartées, vivent dans
+ * `lib/vuesRun` — pas ici : cette page les monte, elle ne les tranche pas.
  *
  * Ouvrir un run donne enfin son backlog. Jusqu'ici le Kanban était celui du
  * **projet** (#248) et un run n'avait pas de vue à lui : impossible de voir ce que
@@ -37,6 +43,7 @@
  */
 
 import Link from "next/link";
+import { useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconeFlecheGauche, IconeRuns } from "@/components/Icones";
@@ -53,6 +60,7 @@ import {
   LignePause,
 } from "@/components/runs/EtatRun";
 import { JournalRun } from "@/components/runs/JournalRun";
+import { VuePipeline } from "@/components/runs/VuePipeline";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   ATTENTE_BRIEF,
@@ -60,6 +68,7 @@ import {
   causeDAttente,
   regimeDuRun,
   runsEnAttenteDeValidation,
+  tachesEnAttenteDeValidation,
   REGIME_SUSPENDU,
   type CauseAttente,
 } from "@/lib/execution";
@@ -68,6 +77,13 @@ import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import type { ResumeExecution } from "@/lib/types";
 import { useTachesRun } from "@/lib/useTachesRun";
+import {
+  VUES_RUN,
+  VUE_KANBAN,
+  VUE_PIPELINE,
+  VUE_RUN_DEFAUT,
+  type VueRunCle,
+} from "@/lib/vuesRun";
 
 export function VueRun({ runId }: { runId: string }) {
   const {
@@ -83,6 +99,11 @@ export function VueRun({ runId }: { runId: string }) {
     chargement,
     erreur,
   } = useEtatGlobal();
+
+  // La lecture affichée. `useState` et non une route : les deux vues portent le
+  // *même* run, déjà chargé — une frontière de route ferait repartir la tête, le
+  // journal et l'autre lecture pour un changement de regard (`lib/vuesRun`).
+  const [vue, setVue] = useState<VueRunCle>(VUE_RUN_DEFAUT);
 
   const run = executions.find((execution) => execution.run_id === runId);
   // `null` tant que le run n'est pas reconnu comme un run de ce projet : inutile
@@ -150,17 +171,39 @@ export function VueRun({ runId }: { runId: string }) {
       </section>
 
       {run !== undefined && (
-        <Kanban
-          taches={taches}
-          agents={agents}
-          reassigner={reassigner}
-          projet={projet}
-          messageVide={
-            chargementTaches
-              ? "Chargement des tâches de ce run…"
-              : messageVideDuRun(attente)
-          }
-        />
+        <>
+          <OngletsVueRun vue={vue} choisir={setVue} />
+
+          {vue === VUE_PIPELINE && (
+            <VuePipeline
+              runId={runId}
+              taches={taches}
+              agents={agents}
+              reassigner={reassigner}
+              // L'attente humaine se lit dans la file des validations et non sur
+              // la tâche : le moteur n'émet pas encore `en_attente_validation`
+              // (`lib/execution`). C'est le troisième critère de #491, et le
+              // défaut d'origine du chantier.
+              enAttenteHumaine={tachesEnAttenteDeValidation(validations)}
+              revision={revision}
+              messageVide={messageVideDuRun(attente)}
+            />
+          )}
+
+          {vue === VUE_KANBAN && (
+            <Kanban
+              taches={taches}
+              agents={agents}
+              reassigner={reassigner}
+              projet={projet}
+              messageVide={
+                chargementTaches
+                  ? "Chargement des tâches de ce run…"
+                  : messageVideDuRun(attente)
+              }
+            />
+          )}
+        </>
       )}
 
       {/* Sous le Kanban, et non à côté : le Kanban répond à « où en est-il ? »,
@@ -175,6 +218,56 @@ export function VueRun({ runId }: { runId: string }) {
         />
       )}
     </>
+  );
+}
+
+/**
+ * La bascule entre les deux lectures d'un run (#491).
+ *
+ * Des **boutons** et non des liens, contrairement aux onglets d'une fiche agent
+ * (`components/OngletsAgent`) : ceux-là changent de page, celui-ci change de
+ * regard sur la page qu'on a déjà. La forme reste la même — un onglet souligné,
+ * `aria-current` sur l'actif — pour que le geste se reconnaisse d'un écran à
+ * l'autre.
+ *
+ * L'infobulle porte **la question** à laquelle chaque vue répond, et non son
+ * contenu : « Pipeline » et « Kanban » ne disent pas d'eux-mêmes lequel montre
+ * quoi, et c'est précisément la confusion que l'arbitrage devait lever.
+ */
+function OngletsVueRun({
+  vue,
+  choisir,
+}: {
+  vue: VueRunCle;
+  choisir: (vue: VueRunCle) => void;
+}) {
+  return (
+    <nav
+      aria-label="Lectures de ce run"
+      className="flex flex-wrap gap-1 border-b border-neutral-200 dark:border-neutral-800"
+    >
+      {VUES_RUN.map(({ cle, libelle, question, icone: Icone }) => {
+        const courant = cle === vue;
+        return (
+          <button
+            key={cle}
+            type="button"
+            onClick={() => choisir(cle)}
+            aria-current={courant ? "page" : undefined}
+            title={question}
+            className={
+              "-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-2 text-corps transition-colors " +
+              (courant
+                ? "border-emerald-600 font-medium text-neutral-900 dark:border-emerald-500 dark:text-neutral-100"
+                : "border-transparent text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100")
+            }
+          >
+            <Icone className="size-4 shrink-0" />
+            {libelle}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -261,15 +354,19 @@ function EnTeteRun({
 }
 
 /**
- * Ce que dit le Kanban **vide** de ce run — et il y a deux vides, qui ne
+ * Ce que dit la vue **vide** de ce run — et il y a deux vides, qui ne
  * s'expliquent pas de la même façon.
  *
  * Un run arrêté sur son brief n'a créé **aucune** tâche : la décomposition n'a pas
  * eu lieu, c'est son état normal et non le symptôme d'une lecture ratée. Les
  * autres cas n'ont rien à expliquer, seulement à dire que ça viendra.
+ *
+ * La phrase ne nomme plus « le tableau » depuis #491 : les deux lectures la
+ * partagent, et un pipeline vide qui promettrait de remplir un tableau désignerait
+ * l'écran d'à côté.
  */
 function messageVideDuRun(attente: CauseAttente | null): string {
   return attente === ATTENTE_BRIEF || attente === ATTENTE_REPONSES
     ? "Aucune tâche : ce run attend une décision sur son brief, la décomposition n'a pas encore eu lieu."
-    : "Aucune tâche pour ce run — le tableau se remplira dès qu'il publiera ses événements.";
+    : "Aucune tâche pour ce run — cette vue se remplira dès qu'il publiera ses événements.";
 }

@@ -162,12 +162,38 @@ export function runsEnAttenteDeValidation(
 ): Set<string> {
   const runParTache = new Map(taches.map((tache) => [tache.id, tache.run_id]));
   const runs = new Set<string>();
-  for (const validation of validations) {
-    if (validation.statut !== VALIDATION_EN_ATTENTE) continue;
-    const runId = runParTache.get(validation.tache_id);
+  for (const tacheId of tachesEnAttenteDeValidation(validations)) {
+    const runId = runParTache.get(tacheId);
     if (runId) runs.add(runId);
   }
   return runs;
+}
+
+/**
+ * Les **tâches** dont une demande de validation dort encore (#491).
+ *
+ * La moitié amont de la fonction ci-dessus, et le tour de la question qui
+ * intéresse un écran centré sur les tâches : la vue pipeline colore un **nœud**,
+ * pas un run — savoir que « ce run attend quelque part » ne dit pas *où*, et sur
+ * un graphe de douze boîtes c'est toute l'information.
+ *
+ * Elle est ici, avec sa jumelle, parce que c'est **la** source qui existe : le
+ * moteur n'émet pas encore le statut `en_attente_validation` de la machine à
+ * états (`maestro/controltower/progression.py` le dit en toutes lettres), si bien
+ * qu'une tâche arrêtée sur un humain reste `en_cours` pour tout le monde. C'est
+ * exactement ce que #355 reproche à l'écran — 53 minutes d'attente indiscernables
+ * d'un travail en cours —, et la file des validations est le seul endroit où le
+ * fait est écrit.
+ */
+export function tachesEnAttenteDeValidation(
+  validations: Validation[],
+): Set<string> {
+  const taches = new Set<string>();
+  for (const validation of validations) {
+    if (validation.statut !== VALIDATION_EN_ATTENTE) continue;
+    taches.add(validation.tache_id);
+  }
+  return taches;
 }
 
 /**

@@ -20,23 +20,32 @@
  *    qui ne contient que ce qui est passé par le WebSocket depuis l'ouverture de
  *    la page : un run terminé la veille n'y aurait rien.
  *
- * ⚠ `chargerTaches` n'est **pas** mocké par `tests/setup.ts` : sans le
- * `vi.mock` local ci-dessous, la vue partirait sur un vrai `fetch` et n'afficherait
- * qu'une bannière d'erreur. Le mock local **remplace** celui du setup, d'où le
- * `importOriginal` et la reconduction de `chargerProjets`/`chargerJournal`.
+ * ⚠ Depuis #491 la vue ouvre sur le **pipeline** et non sur le Kanban
+ * (`lib/vuesRun` porte l'arbitrage) : les contrôles qui regardent une carte de
+ * Kanban basculent donc d'abord d'onglet. Ce n'est pas un détour de test, c'est
+ * ce que fait quelqu'un devant l'écran.
+ *
+ * ⚠ Ni `chargerTaches` ni `chargerGrapheExecution` ne sont mockés par
+ * `tests/setup.ts` : sans le `vi.mock` local ci-dessous, la vue partirait sur un
+ * vrai `fetch` et n'afficherait qu'une bannière d'erreur. Le mock local
+ * **remplace** celui du setup, d'où le `importOriginal` et la reconduction de
+ * `chargerProjets`/`chargerJournal`.
  */
 
 import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { VueRun } from "@/components/runs/VueRun";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { evenementDepuisEntree, fusionnerJournal } from "@/lib/journal";
 import {
+  ARETE_FRANCHIE,
   EXECUTION_EN_ATTENTE_BRIEF,
   EXECUTION_ECHEC,
   EXECUTION_TERMINEE,
   CAUSE_PLAFOND_COUT,
+  type GrapheRun,
   type PageJournal,
   type Tache,
 } from "@/lib/types";
@@ -44,6 +53,8 @@ import {
 import {
   entreeJournalFactice,
   evenementFactice,
+  grapheFactice,
+  noeudGrapheFactice,
   pageJournalCourante,
   poserEtatGlobal,
   poserJournal,
@@ -51,12 +62,14 @@ import {
   rendreAvecEtat,
   runFactice,
   tacheFactice,
+  validationFactice,
 } from "./aides";
 
-/** Ce que le faux `chargerTaches` rendra, et avec quels arguments il a été appelé. */
+/** Ce que les fausses lectures rendront, et avec quels arguments on les a appelées. */
 const lecture = vi.hoisted(() => ({
   taches: [] as Tache[],
   appels: [] as { portee: string; runId?: string }[],
+  graphe: null as GrapheRun | null,
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -70,12 +83,16 @@ vi.mock("@/lib/api", async (importOriginal) => {
       lecture.appels.push({ portee, runId });
       return lecture.taches;
     },
+    chargerGrapheExecution: async () => lecture.graphe,
   };
 });
 
 beforeEach(() => {
   lecture.taches = [];
   lecture.appels.length = 0;
+  // Le cas courant : un run dont le graphe n'a rien à montrer. Un test qui
+  // regarde le pipeline pose ses nœuds.
+  lecture.graphe = grapheFactice({ run_id: RUN });
 });
 
 const RUN = "3ff0bcb065f9";
@@ -86,6 +103,10 @@ const monter = (partiel = {}, runId = RUN) =>
     { executions: [runFactice({ run_id: RUN, objectif: "Prototyper un mini-CRM" })], ...partiel },
     projetFactice({ id: "prj-7f3a1c2b", nom: "Dépensio" }),
   );
+
+/** Bascule sur le Kanban — la vue ouvre sur le pipeline depuis #491. */
+const versLeKanban = () =>
+  userEvent.click(screen.getByRole("button", { name: "Kanban" }));
 
 // ------------------------- ① L'appartenance au run vient de l'API
 
@@ -99,6 +120,7 @@ describe("les tâches d'un run", () => {
     await waitFor(() => expect(lecture.appels.length).toBeGreaterThan(0));
     expect(lecture.appels[0]).toEqual({ portee: "prj-7f3a1c2b", runId: RUN });
     // La tâche s'affiche, bien que sa carte nomme un autre run.
+    await versLeKanban();
     expect(await screen.findByText("Schéma")).toBeInTheDocument();
   });
 
@@ -144,13 +166,16 @@ describe("les trois cas qui ne se confondent pas", () => {
     expect(
       screen.getByRole("link", { name: "Voir les runs du projet" }),
     ).toHaveAttribute("href", "/runs");
-    // Jamais un Kanban vide : il se lirait « ce run n'a rien fait ».
+    // Jamais une vue vide : elle se lirait « ce run n'a rien fait ».
     expect(
       screen.queryByRole("region", { name: "Tâches (Kanban)" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Pipeline du run" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("explique le Kanban vide d'un run arrêté sur son brief", async () => {
+  it("explique la vue vide d'un run arrêté sur son brief", async () => {
     monter({
       executions: [
         runFactice({ run_id: RUN, statut: EXECUTION_EN_ATTENTE_BRIEF }),
@@ -165,8 +190,15 @@ describe("les trois cas qui ne se confondent pas", () => {
   it("dit qu'un run sans tâche attend ses événements, sans accuser personne", async () => {
     monter();
 
+    // La phrase ne nomme aucune des deux vues (#491) : elles la partagent, et un
+    // pipeline vide qui promettrait de remplir « le tableau » désignerait
+    // l'écran d'à côté.
     expect(
-      await screen.findByText(/le tableau se remplira dès qu'il publiera/),
+      await screen.findByText(/cette vue se remplira dès qu'il publiera/),
+    ).toBeInTheDocument();
+    await versLeKanban();
+    expect(
+      await screen.findByText(/cette vue se remplira dès qu'il publiera/),
     ).toBeInTheDocument();
   });
 
@@ -256,6 +288,124 @@ describe("la tête de la vue", () => {
     expect(
       screen.getByRole("button", { name: "Mettre en pause" }),
     ).toBeInTheDocument();
+  });
+});
+
+// ------------------------------------------------- La vue pipeline (#491)
+
+/**
+ * Le strict nécessaire pour que le **dessin** soit joué : la couverture du
+ * pipeline est différée au lot 4 (#492), mais les trois vides ci-dessus rendent
+ * tous un graphe *sans nœud*, donc n'entrent jamais dans le graphe lui-même.
+ * Quatre contrôles suffisent à ce qu'une régression de rendu ne passe pas
+ * inaperçue jusque-là — un par critère du ticket.
+ *
+ * ⚠ jsdom ne calcule aucune géométrie : les rectangles y sont tous nuls, donc
+ * aucune courbe n'est tracée (`Arete` s'abstient sans mesure). C'est voulu — la
+ * géométrie se vérifie au skill `/banc-mise-en-page`, jamais ici (#306/#308).
+ */
+describe("le pipeline d'un run", () => {
+  const troisTaches = () =>
+    grapheFactice({
+      run_id: RUN,
+      noeuds: [
+        noeudGrapheFactice({
+          id: "schema",
+          titre: "Schéma SQL",
+          niveau: 0,
+          dependants: ["api", "ui"],
+          statut: "terminee",
+          compartiment: "terminees",
+          agent: "Développeur backend",
+          etapes: [{ libelle: "Lister les entités", etat: "faite" }],
+        }),
+        noeudGrapheFactice({
+          id: "api",
+          titre: "API CRUD",
+          niveau: 1,
+          rang: 0,
+          dependances: ["schema"],
+          statut: "en_cours",
+          compartiment: "en_cours",
+          etapes: [
+            { libelle: "Routes", etat: "faite" },
+            { libelle: "Sérialiseurs", etat: "en_cours" },
+          ],
+        }),
+        noeudGrapheFactice({
+          id: "ui",
+          titre: "UI liste",
+          niveau: 1,
+          rang: 1,
+          dependances: ["schema"],
+        }),
+      ],
+      aretes: [
+        { de: "schema", vers: "api", etat: ARETE_FRANCHIE },
+        { de: "schema", vers: "ui", etat: ARETE_FRANCHIE },
+      ],
+    });
+
+  /** Le pipeline, une fois sa lecture aboutie — sinon on tient sa coquille. */
+  const pipelineCharge = async () => {
+    await screen.findByText("Schéma SQL");
+    return screen.getByRole("region", { name: "Pipeline du run" });
+  };
+
+  it("rend un nœud par tâche du plan, avec son agent et sa checklist", async () => {
+    lecture.graphe = troisTaches();
+    monter();
+
+    const pipeline = await pipelineCharge();
+    expect(within(pipeline).getByText("Schéma SQL")).toBeInTheDocument();
+    expect(within(pipeline).getByText(/Développeur backend/)).toBeInTheDocument();
+    // Une case par étape, jamais un pourcentage (#489) : le dénominateur peut
+    // grandir, une barre proportionnelle se lirait comme un recul.
+    expect(within(pipeline).getByText("1/2")).toBeInTheDocument();
+    expect(within(pipeline).getByText("Sérialiseurs")).toBeInTheDocument();
+  });
+
+  it("range les tâches parallèles au même niveau, et non en file", async () => {
+    lecture.graphe = troisTaches();
+    monter();
+
+    // Deuxième critère : deux tâches sans dépendance entre elles tombent au même
+    // niveau — donc dans la même colonne, lisibles comme simultanées.
+    await pipelineCharge();
+    const niveau = screen.getByRole("list", { name: "Niveau 2" });
+    expect(within(niveau).getByText("API CRUD")).toBeInTheDocument();
+    expect(within(niveau).getByText("UI liste")).toBeInTheDocument();
+  });
+
+  it("allume la suite dès que l'arête amont est franchie", async () => {
+    lecture.graphe = troisTaches();
+    monter();
+
+    // « UI liste » n'a pas démarré, mais sa seule dépendance a rendu la main :
+    // elle sort du retrait au lieu de rester « À faire » avec le reste du plan.
+    const pipeline = await pipelineCharge();
+    expect(
+      within(pipeline).getAllByText("Prête à partir").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("distingue ce qui attend un humain de ce qui travaille", async () => {
+    // **Le** défaut d'origine du chantier (#355) : une attente de décision est
+    // restée 53 minutes indiscernable d'un travail en cours. Elle ne se lit pas
+    // sur la tâche — le moteur n'émet pas `en_attente_validation` — mais dans la
+    // file des validations.
+    lecture.graphe = troisTaches();
+    monter({
+      validations: [validationFactice({ tache_id: "api", statut: "en_attente" })],
+    });
+
+    const pipeline = await pipelineCharge();
+    expect(
+      within(pipeline).getAllByText("Attente humaine").length,
+    ).toBeGreaterThan(0);
+    // Et le nœud ne se lit plus « En cours », alors que c'est bien son
+    // compartiment côté backend.
+    expect(within(pipeline).queryByText("En cours")).not.toBeInTheDocument();
   });
 });
 

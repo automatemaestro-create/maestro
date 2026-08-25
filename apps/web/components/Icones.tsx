@@ -464,6 +464,22 @@ export function IconeArbitrage(props: Props) {
   );
 }
 
+/**
+ * Le **graphe** d'un run (#491) : deux nœuds amont qui convergent vers un aval —
+ * la forme même de ce que la vue pipeline dessine, et ce qui la distingue de
+ * l'icône des tâches, qui dit un inventaire.
+ */
+export function IconeGraphe(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="5" cy="6" r="2.5" />
+      <circle cx="5" cy="18" r="2.5" />
+      <circle cx="19" cy="12" r="2.5" />
+      <path d="M7.5 6.75 16.5 11M7.5 17.25 16.5 13" />
+    </Trait>
+  );
+}
+
 /** La puce neutre d'un événement dont le type n'a pas d'icône dédiée. */
 export function IconePuce(props: Props) {
   return (

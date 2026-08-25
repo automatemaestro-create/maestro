@@ -253,6 +253,13 @@ agents » plutôt qu'au chantier des runs, et une priorité `moyenne` là où le
   décision s'est prise sur pièces, comme prévu, et ce document n'en garde que le renvoi.
 - **La cible visuelle de la Control Tower** (#471) : une recherche, pas une refonte, et rien de ce
   qui est décidé ici n'en dépend.
+- **Le Kanban d'un run ou son pipeline** — les deux vues du même objet, dont ce document notait
+  qu'elles « ne répondent pas à la même question » sans trancher laquelle occupe l'écran. Renvoyée
+  au lot 3 de #488, comme prévu.
+  ⚠ **Tranchée depuis, au lot #491** : *les deux coexistent sous une bascule, et le pipeline
+  ouvre*. Le motif, les deux options écartées — deux routes, ou le retrait du Kanban — sont écrits
+  dans [`apps/web/lib/vuesRun.ts`](../apps/web/lib/vuesRun.ts) et en
+  [docs/05 §2.4.4](./05-interface-control-tower.md) ; ce document n'en garde que le renvoi.
 
 ## 9. Le chantier — milestones et lots
 
