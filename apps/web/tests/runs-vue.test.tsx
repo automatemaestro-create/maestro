@@ -25,6 +25,12 @@
  * Kanban basculent donc d'abord d'onglet. Ce n'est pas un détour de test, c'est
  * ce que fait quelqu'un devant l'écran.
  *
+ * ⚠ Et depuis #516 le **journal est un onglet lui aussi**, plus un pied de vue :
+ * on l'atteint par un clic, exactement comme le Kanban. Le contrôle qui compte
+ * n'est pas qu'il s'affiche dans le sien — c'est qu'il **ne s'affiche pas** dans
+ * les deux autres, le défaut du ticket étant un fil d'événements collé sous un
+ * graphe, qui se lisait comme le détail de ce graphe.
+ *
  * ⚠ Ni `chargerTaches` ni `chargerGrapheExecution` ne sont mockés par
  * `tests/setup.ts` : sans le `vi.mock` local ci-dessous, la vue partirait sur un
  * vrai `fetch` et n'afficherait qu'une bannière d'erreur. Le mock local
@@ -107,6 +113,10 @@ const monter = (partiel = {}, runId = RUN) =>
 /** Bascule sur le Kanban — la vue ouvre sur le pipeline depuis #491. */
 const versLeKanban = () =>
   userEvent.click(screen.getByRole("button", { name: "Kanban" }));
+
+/** Bascule sur le journal — un onglet comme les autres depuis #516. */
+const versLeJournal = () =>
+  userEvent.click(screen.getByRole("button", { name: "Journal" }));
 
 // ------------------------- ① L'appartenance au run vient de l'API
 
@@ -430,6 +440,7 @@ describe("le journal d'un run", () => {
       evenements: [],
     });
 
+    await versLeJournal();
     const journal = await screen.findByRole("region", { name: "Journal du run" });
     expect(within(journal).getByText(/Planification/)).toBeInTheDocument();
   });
@@ -438,9 +449,47 @@ describe("le journal d'un run", () => {
     poserJournal([]);
     monter();
 
+    await versLeJournal();
     expect(
       await screen.findByText("Aucun événement consigné pour ce run."),
     ).toBeInTheDocument();
+  });
+
+  it("ne s'affiche ni sous le pipeline ni sous le Kanban (#516)", async () => {
+    // **Le** défaut du ticket : rendu hors du `vue === …`, le journal tombait
+    // sous les deux lectures — donc sous le pipeline, qui ouvre. Rien à l'écran
+    // ne disait qu'il n'appartenait pas à l'onglet ouvert, et un fil d'événements
+    // collé sous un graphe se lit comme le détail de ce graphe.
+    poserJournal([
+      entreeJournalFactice({ id: "j-0001", run_id: RUN, titre: "Planification" }),
+    ]);
+    monter();
+
+    // Sur le pipeline, l'onglet par défaut.
+    await screen.findByRole("region", { name: "Pipeline du run" });
+    expect(
+      screen.queryByRole("region", { name: "Journal du run" }),
+    ).not.toBeInTheDocument();
+
+    // Puis sur le Kanban.
+    await versLeKanban();
+    await screen.findByRole("region", { name: "Tâches (Kanban)" });
+    expect(
+      screen.queryByRole("region", { name: "Journal du run" }),
+    ).not.toBeInTheDocument();
+
+    // Et dans le sien, il est là — sans les deux autres, la bascule n'en montre
+    // qu'une.
+    await versLeJournal();
+    expect(
+      await screen.findByRole("region", { name: "Journal du run" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Pipeline du run" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Tâches (Kanban)" }),
+    ).not.toBeInTheDocument();
   });
 });
 

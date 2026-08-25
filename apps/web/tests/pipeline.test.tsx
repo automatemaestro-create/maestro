@@ -68,7 +68,13 @@ import {
   type PageJournal,
   type Tache,
 } from "@/lib/types";
-import { VUES_RUN, VUE_KANBAN, VUE_PIPELINE, VUE_RUN_DEFAUT } from "@/lib/vuesRun";
+import {
+  VUES_RUN,
+  VUE_JOURNAL,
+  VUE_KANBAN,
+  VUE_PIPELINE,
+  VUE_RUN_DEFAUT,
+} from "@/lib/vuesRun";
 
 import {
   grapheFactice,
@@ -418,7 +424,7 @@ describe("la checklist d'un nœud", () => {
   });
 });
 
-describe("l'arbitrage entre les deux lectures d'un run", () => {
+describe("l'arbitrage entre les trois lectures d'un run", () => {
   it("ouvre sur le pipeline", () => {
     // La question du Kanban est déjà à moitié répondue au-dessus de lui (la barre
     // de progression compte par compartiment) : ouvrir dessus, c'est ouvrir sur
@@ -426,16 +432,24 @@ describe("l'arbitrage entre les deux lectures d'un run", () => {
     expect(VUE_RUN_DEFAUT).toBe(VUE_PIPELINE);
   });
 
-  it("propose les deux, le flux d'abord et l'inventaire ensuite", () => {
-    expect(VUES_RUN.map((onglet) => onglet.cle)).toEqual([VUE_PIPELINE, VUE_KANBAN]);
+  it("propose les trois : le flux, puis l'inventaire, puis le récit", () => {
+    // L'ordre *est* la décision. Le journal ferme la rangée (#516) : c'est ce que
+    // #478 défendait en le posant sous les tâches — on le consulte après avoir vu
+    // où en est le run —, reporté sur la bascule au lieu d'un empilement.
+    expect(VUES_RUN.map((onglet) => onglet.cle)).toEqual([
+      VUE_PIPELINE,
+      VUE_KANBAN,
+      VUE_JOURNAL,
+    ]);
   });
 
   it("donne à chaque onglet la question à laquelle il répond", () => {
-    // « Pipeline » et « Kanban » ne disent pas d'eux-mêmes lequel montre quoi, et
-    // c'est précisément la confusion que l'arbitrage devait lever.
-    const [pipeline, kanban] = VUES_RUN;
+    // « Pipeline », « Kanban » et « Journal » ne disent pas d'eux-mêmes lequel
+    // montre quoi, et c'est précisément la confusion que l'arbitrage devait lever.
+    const [pipeline, kanban, journal] = VUES_RUN;
     expect(pipeline.question).toMatch(/Quoi après quoi/);
     expect(kanban.question).toMatch(/Combien dans quel état/);
+    expect(journal.question).toMatch(/Qu'a-t-il fait/);
   });
 });
 
