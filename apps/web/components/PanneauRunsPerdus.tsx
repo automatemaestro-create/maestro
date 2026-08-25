@@ -12,14 +12,20 @@
  * par un humain** : sur le run du 2026-08-14, deux tours de clarification, trois
  * réponses et une approbation, soit 2,52 $ et une vingtaine de minutes d'attention.
  *
- * **Il ne montre que ce qui est récupérable** — orphelin *et* brief approuvé
- * (`runsRelancables`). Deux exclusions, chacune pour sa raison. Un run `indetermine`
- * n'est pas un run mort mais un run dont on ne sait rien : l'API accepte quand même
- * de le relancer, l'UI ne le **propose** pas — proposer sur une absence
- * d'information serait deviner, ce que le troisième verdict existe pour refuser. Et
- * un orphelin **sans** brief approuvé n'a rien à rejouer : le bouton n'aboutirait
- * pas (422), et l'offrir ferait passer pour une panne ce qui est un run mort avant
- * d'avoir rien coûté.
+ * **Il ne montre que ce qui est récupérable** — orphelin **ou éteint** (#486), *et*
+ * brief approuvé (`runsRelancables`). Deux exclusions, chacune pour sa raison. Un
+ * run `indetermine` n'est pas un run mort mais un run dont on ne sait rien : l'API
+ * accepte quand même de le relancer, l'UI ne le **propose** pas — proposer sur une
+ * absence d'information serait deviner, ce que le troisième verdict existe pour
+ * refuser. Et un run **sans** brief approuvé n'a rien à rejouer : le bouton
+ * n'aboutirait pas (422), et l'offrir ferait passer pour une panne ce qui est un run
+ * mort avant d'avoir rien coûté.
+ *
+ * Le **second** état vient de #486 et le panneau ne s'en distingue pas : un run que
+ * l'extinction de Maestro a soldé (`start.sh --stop`) se reprend par le **même**
+ * bouton, ce qui est le critère du ticket. Seule la phrase change — l'un a perdu son
+ * hôte, l'autre a été arrêté avec l'application, et présenter le second comme une
+ * panne ferait chercher un incident là où il n'y a qu'un redémarrage.
  *
  * Il **décide**, contrairement au panneau des briefs — et c'est la même règle qui
  * l'autorise : un brief ne tient pas dans une carte (sept sections, des questions,
@@ -32,7 +38,7 @@ import { useState } from "react";
 
 import { IconeHistorique } from "@/components/Icones";
 import { BadgeEtat, Carte, EnTeteSection } from "@/components/Primitives";
-import { runsRelancables } from "@/lib/execution";
+import { estEteint, runsRelancables } from "@/lib/execution";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import type { ResumeExecution } from "@/lib/types";
@@ -65,8 +71,8 @@ export function PanneauRunsPerdus({
         className="mb-2"
       />
       <p className="mb-2 text-annexe text-neutral-600 dark:text-neutral-300">
-        Leur hôte ne répond plus, mais leur brief a été validé : il peut repartir
-        sans repasser par la clarification.
+        Leur brief a été validé : il peut repartir sans repasser par la
+        clarification.
       </p>
       <ul className="space-y-2">
         {runs.map((run) => (
@@ -112,6 +118,11 @@ function CarteRunPerdu({
           </span>
           <span className="chiffre mt-0.5 block text-annexe text-neutral-500 dark:text-neutral-400">
             {run.run_id}
+            {/* Pourquoi ce run est là (#486) — sur la ligne déjà présente et non
+                sur une de plus : les deux états mènent au même geste, seule leur
+                origine diffère, et présenter une extinction volontaire comme une
+                panne ferait chercher un incident après un simple redémarrage. */}
+            {` · ${estEteint(run) ? "arrêté avec Maestro" : "hôte muet"}`}
             {run.debut ? ` · ${formatHeureRelative(run.debut, maintenant)}` : ""}
             {run.nb_taches > 0
               ? ` · ${run.nb_taches} tâche${run.nb_taches > 1 ? "s" : ""} planifiée${run.nb_taches > 1 ? "s" : ""}`

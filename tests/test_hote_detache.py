@@ -1311,6 +1311,46 @@ def test_fermer_n_arrete_aucun_run(bouchon: Path) -> None:
     )
 
 
+def test_l_extinction_volontaire_emporte_ce_que_fermer_laisse_vivre(bouchon: Path) -> None:
+    """Les deux arrêts, **sur le même process**, dans l'ordre où ils se distinguent (#486).
+
+    Le test ci-dessus prouve la moitié qu'on ne défait pas ; celui-ci prouve l'autre,
+    et les mettre côte à côte est le sujet : c'est **le même hôte**, au même instant,
+    qui survit à l'arrêt subi et meurt de l'arrêt volontaire. Deux tests séparés
+    diraient chacun la moitié, et aucun ne dirait que la distinction *tient* — un
+    `fermer` qui se mettrait à tuer laisserait le second vert.
+
+    `fermer` d'abord, parce que c'est ce que l'API subit (lifespan, `SIGTERM`,
+    fenêtre du navigateur refermée) : le battement doit **avancer** après lui, un
+    process encore là mais figé ne serait pas une survie. `annuler` ensuite, parce
+    que c'est le verbe par lequel passe l'extinction volontaire
+    (`ServiceExecutions.eteindre` → `_solder` → `_hote.annuler`) — le repli franc y
+    emporte le groupe de process, ce que les deux tests de `_eteindre` plus bas
+    éprouvent jusqu'à la descendance.
+    """
+    hote = HoteRunDetache(atelier=bouchon)
+    asyncio.run(hote.lancer(ordre()))
+    process = hote._process[RUN]
+    repere = _battement(bouchon, RUN)
+
+    # ① L'accident : l'API se retire, le run continue.
+    asyncio.run(hote.fermer(delai_s=5.0))
+    assert hote.en_vol(RUN) is True
+    _attendre(
+        lambda: _battement(bouchon, RUN) > repere,
+        "le run s'est arrêté avec l'API : l'arrêt subi a emporté ce qu'il doit laisser vivre.",
+    )
+
+    # ② La décision : Maestro s'éteint, le run s'éteint avec lui.
+    assert asyncio.run(hote.annuler(RUN, delai_s=0.2)) is True
+    _attendre(
+        lambda: process.poll() is not None,
+        "le run a survécu à l'extinction volontaire : il tourne désormais sans "
+        "écran pour le suivre ni bouton pour l'arrêter (#486).",
+    )
+    assert hote.runs_en_vol() == ()
+
+
 def test_deux_runs_en_vol_survivent_a_la_mort_de_leur_lanceur(bouchon: Path) -> None:
     """La propriété du chantier, sur de **vrais** process : le run survit à son API.
 

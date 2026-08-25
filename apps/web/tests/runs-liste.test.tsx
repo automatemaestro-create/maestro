@@ -58,6 +58,7 @@ import { libelleCause, libelleStatutExecution } from "@/lib/format";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import {
   CAUSE_ANNULATION,
+  CAUSE_EXTINCTION,
   CAUSE_HOTE_NON_DEMARRE,
   CAUSE_LIMITE_USAGE,
   CAUSE_PLAFOND_COUT,
@@ -186,12 +187,16 @@ describe("les libellés que la liste emprunte au format", () => {
     expect(libelleStatutExecution("venu-du-futur")).toBe("venu-du-futur");
   });
 
-  it("nomme les cinq causes d'arrêt et se tait sur ce qu'elle ne sait pas (#479)", () => {
+  it("nomme les six causes d'arrêt et se tait sur ce qu'elle ne sait pas (#479, #486)", () => {
     expect(libelleCause(CAUSE_PLAFOND_TOURS)).toBe("Plafond de tours atteint");
     expect(libelleCause(CAUSE_PLAFOND_COUT)).toBe("Plafond de dépense atteint");
     expect(libelleCause(CAUSE_LIMITE_USAGE)).toBe("Limite d'usage du fournisseur");
     expect(libelleCause(CAUSE_HOTE_NON_DEMARRE)).toBe("L'hôte du run n'a pas démarré");
     expect(libelleCause(CAUSE_ANNULATION)).toBe("Interrompu");
+    // #486 — la phrase dit **qui** a arrêté : le statut consigné est le même que
+    // ci-dessus (`annulee`), et « Interrompu » tout court ferait chercher qui a
+    // cliqué sur quoi après un simple `start.sh --stop`.
+    expect(libelleCause(CAUSE_EXTINCTION)).toBe("Maestro s'est éteint");
     // Une cause absente ou venue d'un backend plus récent ne rend **rien** : la
     // ligne disparaît, plutôt que d'afficher un code brut à l'écran.
     expect(libelleCause(undefined)).toBeNull();

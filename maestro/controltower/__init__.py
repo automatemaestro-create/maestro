@@ -112,6 +112,7 @@ from maestro.controltower.bridge import (
 )
 from maestro.controltower.causes import (
     CAUSE_ANNULATION,
+    CAUSE_EXTINCTION,
     CAUSE_HOTE,
     CAUSE_LIMITE_USAGE,
     CAUSE_PLAFOND_COUT,
@@ -222,6 +223,7 @@ __all__ = [
     "CAPACITE_DESACTIVE",
     "CAUSES",
     "CAUSE_ANNULATION",
+    "CAUSE_EXTINCTION",
     "CAUSE_HOTE",
     "CAUSE_LIMITE_USAGE",
     "CAUSE_PLAFOND_COUT",

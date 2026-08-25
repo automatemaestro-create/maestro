@@ -978,6 +978,33 @@ def create_app(
         """Vitalité du service (sonde de supervision)."""
         return {"statut": "ok"}
 
+    @app.post("/api/extinction")
+    async def eteindre() -> dict[str, Any]:
+        """**Maestro s'éteint** : ses runs en vol sont soldés avec lui (#486).
+
+        La porte de l'arrêt **volontaire**, et la seule : `scripts/controltower/
+        start.sh --stop` l'appelle avant de libérer les ports, et la fermeture de
+        l'enveloppe le fera le jour où elle existera. Chaque hôte détaché est éteint
+        avec sa **descendance**, son run consigné `annulee` avec la cause
+        `extinction` — donc jamais laissé `en_cours` —, et ses tâches soldées avec
+        lui.
+
+        ⚠ **Ce n'est pas l'arrêt de l'API.** Fermer la fenêtre du navigateur (#149),
+        relancer après une modification, planter : ces trois-là passent par le
+        `lifespan`, où l'hôte détaché ne touche à rien — c'est la propriété de #441
+        et elle n'est pas défaite. La distinction ne se déduit d'aucun signal reçu
+        ici : elle **descend** de l'appelant, seul à savoir qu'il arrête exprès
+        (docs/28 §11).
+
+        Rend les résumés des runs soldés — vide quand rien ne tournait, ce qui est
+        le cas courant. `200` dans les deux cas : éteindre une Control Tower au
+        repos n'est pas une erreur, et un code d'échec ferait chercher une panne là
+        où il n'y avait simplement rien à éteindre. Ce que le run **redevient** est
+        décrit par `POST …/relancer`, qui accepte un run soldé de la sorte.
+        """
+        soldes = await executions.eteindre()
+        return {"runs": soldes, "nb": len(soldes)}
+
     # --- Contrats d'API v2 (#183) : routes des Phases 5/6, formes JSON figées ---
     # Le contrat (chemin, méthode, forme) est stable ; l'implémentation réelle
     # vient dans les lots dédiés (Phase 5, #184+). Sans `fixtures` (production),
@@ -2888,8 +2915,10 @@ def create_default_app() -> FastAPI:
 
     L'**hôte des runs** (#443) se choisit ici, et nulle part ailleurs. Depuis #446
     le défaut est l'hôte **détaché** : chaque run vit dans un process indépendant,
-    qui survit à l'arrêt de `maestro-api` — fermer la fenêtre du navigateur,
-    relancer après une modification, `start.sh --stop` n'emportent plus le run.
+    qui survit à l'arrêt **subi** de `maestro-api` — fermer la fenêtre du
+    navigateur, relancer après une modification, planter n'emportent plus le run.
+    Il ne survit pas à l'arrêt **volontaire** (#486, `POST /api/extinction`), qui
+    est une décision et non un accident.
     `MAESTRO_HOTE_RUN=process` ramène la tâche de fond de l'API, dont les runs
     meurent avec elle. C'est le seul endroit du dépôt qui *nomme* un hôte : le
     service ne connaît que le contrat, et le résoudre là où sont déjà résolus le
@@ -2916,7 +2945,8 @@ def _hote_configure(settings: Settings) -> HoteRun | None:
     La bascule du chantier #441 tient dans la valeur de repli de la première
     ligne, et c'est voulu : les quatre lots précédents ont livré du code inerte
     pour que celui-ci n'ait rien d'autre à changer. Ce que ce défaut promet est
-    écrit dans `hote_detache` — un run survit à son API, pas à sa machine ; ce
+    écrit dans `hote_detache` — un run survit à l'accident, pas à l'extinction ni
+    à sa machine (#486) ; ce
     qu'il exige est un Redis joignable, sur lequel le process publie ses étapes,
     bat son cœur, reçoit les décisions humaines et consigne son issue.
 

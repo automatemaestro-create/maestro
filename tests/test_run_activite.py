@@ -34,6 +34,7 @@ import pytest
 
 from maestro.controltower import (
     CAUSE_ANNULATION,
+    CAUSE_EXTINCTION,
     CAUSE_HOTE,
     CAUSE_LIMITE_USAGE,
     CAUSE_PLAFOND_COUT,
@@ -450,10 +451,23 @@ def test_la_limite_d_usage_est_la_seule_cause_reconnue_au_texte(message):
 
 
 def test_un_echec_inclassable_rend_une_chaine_vide_et_non_une_cause_fourre_tout():
-    """Inventer une sixième cause ferait passer « je n'ai pas su ranger » pour un
+    """Inventer une cause de plus ferait passer « je n'ai pas su ranger » pour un
     diagnostic — le `detail` porte déjà le type et le message."""
     assert cause_de(ValueError("chemin introuvable")) == ""
     assert "" not in CAUSES
+
+
+def test_l_extinction_ne_se_classe_pas_elle_se_pose():
+    """La cause de #486 n'a **aucun type d'exception**, et ce n'est pas un manque.
+
+    Rien n'a levé : éteindre Maestro est un geste posé de l'extérieur
+    (`ServiceExecutions.eteindre`), et ce que ce module classe sont des **erreurs**.
+    Elle rejoint donc `CAUSES` — l'écran doit savoir la ranger — sans jamais sortir
+    de `cause_de`, exactement comme `annulation` sur un brief refusé, que l'hôte
+    détaché pose lui aussi à la main.
+    """
+    assert CAUSE_EXTINCTION in CAUSES
+    assert cause_de(RuntimeError("Maestro s'est éteint")) != CAUSE_EXTINCTION
 
 
 def test_le_detail_garde_la_forme_que_les_trois_soldeurs_recopiaient():

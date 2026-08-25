@@ -71,6 +71,23 @@ CAUSE_HOTE = "hote_non_demarre"
 #: Le run a été interrompu : annulation humaine, brief refusé, tâche annulée.
 CAUSE_ANNULATION = "annulation"
 
+#: **Maestro s'est éteint** (#486) — `start.sh --stop`, et la fermeture de
+#: l'enveloppe le jour où elle existe. Une seconde forme d'interruption, distincte
+#: de `CAUSE_ANNULATION` alors que le statut consigné est le même (`annulee`), et
+#: la distinction porte du sens plutôt que du vocabulaire : personne n'a dit stop
+#: **à ce run-là**, on a éteint l'application qui le tenait. D'où la seule
+#: différence de traitement du dépôt — un run soldé de la sorte reste
+#: **reprenable** (`ServiceExecutions.relancer`), là où un run qu'on a délibérément
+#: annulé n'a rien à reprendre : les confondre ferait soit reproposer un run que
+#: quelqu'un venait d'arrêter, soit perdre au redémarrage le cadrage de tous les
+#: autres.
+#:
+#: Elle n'est **pas** rendue par `cause_de` et n'a aucun type d'exception : rien
+#: n'a levé, l'extinction est un geste posé de l'extérieur. Elle se pose donc par
+#: son appelant, exactement comme `CAUSE_ANNULATION` sur un brief refusé
+#: (`hote_detache.main`).
+CAUSE_EXTINCTION = "extinction"
+
 #: Les causes que ce module sait nommer, dans l'ordre où elles se lisent.
 CAUSES = (
     CAUSE_PLAFOND_TOURS,
@@ -78,6 +95,7 @@ CAUSES = (
     CAUSE_LIMITE_USAGE,
     CAUSE_HOTE,
     CAUSE_ANNULATION,
+    CAUSE_EXTINCTION,
 )
 
 #: Ce qui trahit une limite d'usage du fournisseur dans le message d'un échec.

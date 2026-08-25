@@ -24,8 +24,16 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { PanneauRunsPerdus } from "@/components/PanneauRunsPerdus";
-import { estOrphelin, estRelancable, runsRelancables } from "@/lib/execution";
 import {
+  estEteint,
+  estOrphelin,
+  estRelancable,
+  runsRelancables,
+} from "@/lib/execution";
+import {
+  CAUSE_ANNULATION,
+  CAUSE_EXTINCTION,
+  EXECUTION_ANNULEE,
   EXECUTION_EN_COURS,
   EXECUTION_TERMINEE,
   VITALITE_INDETERMINE,
@@ -57,6 +65,23 @@ function runPerdu(partiel: Partial<ResumeExecution> = {}): ResumeExecution {
     fin: null,
     ...partiel,
   };
+}
+
+/**
+ * Un run **éteint avec Maestro** (#486) : soldé exprès, donc terminal et sans
+ * verdict de vitalité — c'est sa `cause` qui le rend récupérable, et elle seule.
+ *
+ * Il part du run perdu ci-dessus et n'en change que ce qui compte : les tests se
+ * lisent alors comme la différence entre les deux états, qui est tout le sujet.
+ */
+function runEteint(partiel: Partial<ResumeExecution> = {}): ResumeExecution {
+  return runPerdu({
+    statut: EXECUTION_ANNULEE,
+    vitalite: null,
+    cause: CAUSE_EXTINCTION,
+    fin: "2026-08-25T09:00:00Z",
+    ...partiel,
+  });
 }
 
 describe("la règle — ce qu'on propose de reprendre", () => {
@@ -92,6 +117,43 @@ describe("la règle — ce qu'on propose de reprendre", () => {
   it("écarte un run soldé, qui n'a plus de verdict du tout", () => {
     const solde = runPerdu({ statut: EXECUTION_TERMINEE, vitalite: null });
     expect(runsRelancables([solde])).toEqual([]);
+  });
+
+  it("retient un run que l'extinction de Maestro a soldé", () => {
+    // #486 — le second état récupérable, et il ne ressemble pas au premier : ce
+    // run-là n'est pas perdu, il a été soldé exprès. Son statut est donc terminal
+    // et `estOrphelin` répond non, à raison — son hôte n'a pas cessé de battre,
+    // on l'a éteint. C'est la **cause** qui le distingue, et rien d'autre.
+    const eteint = runEteint();
+    expect(estOrphelin(eteint)).toBe(false);
+    expect(estEteint(eteint)).toBe(true);
+    expect(runsRelancables([eteint])).toEqual([eteint]);
+  });
+
+  it("écarte un run annulé à la main, sous le même statut", () => {
+    // Le statut consigné est le **même** (`annulee`) : seule la cause sépare « on a
+    // éteint l'application qui tenait ce run » de « quelqu'un a arrêté ce run-là ».
+    // Les confondre reproposerait de reprendre un run que son auteur venait
+    // délibérément d'annuler, à chaque rechargement du tableau de bord.
+    const annule = runEteint({ cause: CAUSE_ANNULATION });
+    expect(estEteint(annule)).toBe(false);
+    expect(runsRelancables([annule])).toEqual([]);
+  });
+
+  it("écarte un run éteint sans brief approuvé : rien de payé à rejouer", () => {
+    // L'extinction ouvre la porte du statut, jamais celle du cadrage : la seconde
+    // moitié de la règle vaut des deux côtés, et l'API refuserait en 422.
+    expect(runsRelancables([runEteint({ brief_approuve: false })])).toEqual([]);
+  });
+
+  it("n'appelle pas « éteint » un run en vol qui porterait une cause", () => {
+    // Les deux moitiés d'`estEteint` disent aujourd'hui la même chose — la
+    // projection efface la cause dès qu'un run repart. Le jour où elles ne le
+    // diraient plus, proposer « Reprendre » sur un run qui travaille serait la
+    // pire des deux lectures.
+    const en_vol = runPerdu({ vitalite: VITALITE_VIVANT, cause: CAUSE_EXTINCTION });
+    expect(estEteint(en_vol)).toBe(false);
+    expect(runsRelancables([en_vol])).toEqual([]);
   });
 
   it("garde l'ordre du backend — le plus récent d'abord, sans retrier", () => {
@@ -138,6 +200,27 @@ describe("le panneau — ce qu'on voit et ce qu'on déclenche", () => {
     // dans le journal quand on veut savoir ce que le run avait déjà fait.
     expect(panneau.textContent).toContain("3ff0bcb065f9");
     expect(panneau.textContent).toContain("Prototyper un mini-CRM");
+  });
+
+  it("dit d'où vient chaque run, sous le même bouton", async () => {
+    // #486 — les deux états mènent au **même** geste (c'est le critère du ticket :
+    // « par le bouton existant »), et c'est justifié : ce que la relance rejoue est
+    // un cadrage, qu'on l'ait perdu ou rangé. Seule l'origine se dit, parce que
+    // présenter une extinction volontaire comme une panne ferait chercher un
+    // incident après un simple redémarrage.
+    rendreAvecEtat(
+      <PanneauRunsPerdus
+        executions={[runPerdu(), runEteint({ run_id: "4b33ea332e60" })]}
+        relancer={vi.fn()}
+      />,
+    );
+
+    const panneau = screen.getByRole("region", { name: "Runs interrompus" });
+    expect(within(panneau).getAllByRole("button", { name: "Reprendre" })).toHaveLength(
+      2,
+    );
+    expect(panneau.textContent).toContain("hôte muet");
+    expect(panneau.textContent).toContain("arrêté avec Maestro");
   });
 
   it("reprend le run sur lequel on a cliqué, et lui seul", async () => {

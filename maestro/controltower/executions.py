@@ -38,13 +38,20 @@ protocole de révocation côté workers) et aucune dépendance d'infrastructure
 ajoutée à `maestro-api` —, et l'hôte détaché ne repaie ni l'une ni l'autre :
 l'annulation reste `Task.cancel`, à un aller Redis près (#444), et le process fils
 est le même interpréteur dans le même `.venv`. Ce qu'il supprime est la panne de
-chaque heure : fermer la fenêtre du navigateur, relancer l'API, `start.sh --stop`
-n'arrête plus le run.
+chaque heure : fermer la fenêtre du navigateur, relancer l'API, planter n'arrête
+plus le run.
 
-Le corollaire n'a pas disparu, il a **changé de portée** : un run survit à son
-API, **pas à sa machine** — sa trace, elle, survit aux deux (journal durable #97).
-La tâche de fond reste disponible et se nomme (`MAESTRO_HOTE_RUN=process`) ; le
-contrat REST ne dépend d'aucun des deux.
+Le corollaire n'a pas disparu, il a **changé de portée** : un run survit à
+l'**accident**, pas à l'**extinction** — ni à sa machine ; sa trace, elle, survit
+aux trois (journal durable #97). La tâche de fond reste disponible et se nomme
+(`MAESTRO_HOTE_RUN=process`) ; le contrat REST ne dépend d'aucun des deux.
+
+⚠ L'**extinction** est le mot que #486 a ajouté à ce corollaire, et il ne défait
+rien de ce qui précède (docs/28 §11) : `start.sh --stop` n'est pas un accident
+mais une décision, et laisser tourner un run après avoir éteint la Control Tower
+revient à le laisser consommer du quota sans écran pour le suivre ni bouton pour
+l'arrêter. Elle entre donc par une porte explicite — `eteindre`, plus bas —, et
+`fermer` (l'arrêt **subi**) continue de ne toucher à rien.
 
 Depuis #442, cette frontière a un **nom** et n'est plus un détail
 d'implémentation du service : `maestro.controltower.hote` porte le contrat
@@ -171,7 +178,12 @@ from maestro.controltower.brief import (
     ArbitreBriefControlTower,
     ArbitreClarificationControlTower,
 )
-from maestro.controltower.causes import CAUSE_ANNULATION, cause_de, detail_avec_cause
+from maestro.controltower.causes import (
+    CAUSE_ANNULATION,
+    CAUSE_EXTINCTION,
+    cause_de,
+    detail_avec_cause,
+)
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_EXECUTION_STATUT,
@@ -249,6 +261,13 @@ MOTIF_RELANCE_RUN_INCONNU = "run-inconnu"
 MOTIF_RELANCE_RUN_SOLDE = "run-solde"
 MOTIF_RELANCE_RUN_VIVANT = "run-vivant"
 MOTIF_RELANCE_SANS_CADRAGE = "cadrage-absent"
+
+#: Le détail consigné sur un run que l'**extinction** de Maestro solde (#486) —
+#: écrit ici plutôt qu'au point d'appel parce que c'est la phrase qu'un humain lira
+#: au redémarrage, sur un run qu'il n'a pas vu s'arrêter.
+DETAIL_EXTINCTION = (
+    "Maestro s'est éteint : le run a été interrompu avec lui et peut être repris."
+)
 
 _LOGGER = logging.getLogger("maestro.controltower")
 
@@ -819,7 +838,14 @@ class ServiceExecutions:
 
         - le run est **inconnu** de la projection ;
         - il est **déjà soldé** — il n'y a rien à reprendre d'un run qui a rendu son
-          issue, et le relancer serait le dupliquer ;
+          issue, et le relancer serait le dupliquer. **Sauf un** (#486) : celui que
+          l'**extinction** de Maestro a soldé, reconnu à sa `cause`. C'est le
+          troisième critère de ce ticket, et il tient à un mot — un run qu'on a
+          délibérément annulé n'a rien à reprendre, un run que l'extinction a
+          emporté n'a jamais rendu de verdict sur son travail : on l'a arrêté en
+          partant, et le retrouver au redémarrage est exactement ce qu'on veut.
+          Rien d'autre ne change, le brief approuvé restant requis comme partout
+          ailleurs ;
         - il est **vivant** — verdict de `vitalite` (#348) et de lui seul : re-déduire
           ici l'orphelinat depuis les horodatages donnerait une seconde formule à
           tenir d'accord avec la première, et c'est exactement ce que le lot 1 existe
@@ -848,7 +874,10 @@ class ServiceExecutions:
                 MOTIF_RELANCE_RUN_INCONNU,
                 f"exécution inconnue : {run_id} (voir GET /api/executions).",
             )
-        if execution.statut in STATUTS_EXECUTION_TERMINAUX:
+        if (
+            execution.statut in STATUTS_EXECUTION_TERMINAUX
+            and execution.cause != CAUSE_EXTINCTION
+        ):
             raise RelanceRefusee(
                 MOTIF_RELANCE_RUN_SOLDE,
                 f"exécution déjà soldée ({execution.statut}) : {run_id} — "
@@ -882,6 +911,15 @@ class ServiceExecutions:
         # de partir toutes les deux. `_solder` commence par une écriture synchrone,
         # donc la seconde requête trouvera le run déjà `annulee` et sortira en
         # « déjà soldée » — un garde-fou par construction plutôt que par chance.
+        #
+        # Il tient **aussi** sur un run que l'extinction avait soldé (#486), et
+        # c'est pour cela que celui-là est re-soldé au lieu d'être sauté : la
+        # seconde écriture remplace sa `cause` par `annulation`, donc le laissez-
+        # passer de l'extinction est **consommé** — un double clic retombe sur le
+        # refus « déjà soldée ». C'est aussi la lecture juste : ce run n'attend plus
+        # d'être repris, il l'a été. Les trois gestes que `_solder` fait par ailleurs
+        # sont sans effet sur un run déjà terminal (l'hôte ne le porte plus, ses
+        # tâches sont soldées, son battement est oublié).
         self._demarrer()
         # Le run repris est soldé **avant** que le nouveau ne parte : c'est le
         # critère du ticket (« au lieu de rester `en_cours` »), et l'ordre est ce qui
@@ -907,13 +945,16 @@ class ServiceExecutions:
             reprise_de=run_id,
         )
 
-    async def _solder(self, run_id: str, detail: str) -> None:
+    async def _solder(
+        self, run_id: str, detail: str, *, cause: str = CAUSE_ANNULATION
+    ) -> None:
         """Solde un run en vol : issue, exécution éteinte, tâches soldées, battement oublié.
 
-        Le geste commun de l'annulation (#185) et de la relance (#349), qui soldent
-        toutes deux un run non terminé — la seule chose qui les distingue est le
-        `detail`, c'est-à-dire *pourquoi*. En faire deux copies laisserait diverger
-        l'ordre des quatre écritures, dont chacune a sa raison :
+        Le geste commun de l'annulation (#185), de la relance (#349) et de
+        l'extinction (#486), qui soldent tous trois un run non terminé — la seule
+        chose qui les distingue est le `detail` et la `cause`, c'est-à-dire
+        *pourquoi*. En faire trois copies laisserait diverger l'ordre des quatre
+        écritures, dont chacune a sa raison :
 
         1. l'**issue** d'abord : elle est acquise (une décision humaine, pas le
            verdict de la tâche) ;
@@ -962,12 +1003,87 @@ class ServiceExecutions:
         même : sans câblage armé, l'ordre d'annulation n'atteindrait pas davantage
         le process détaché que le journal — un run relancé depuis une API fraîche
         continuerait de travailler sous son ancien identifiant.
+
+        La `cause` est le seul paramètre de forme, et elle vaut `annulation` par
+        défaut parce que c'est ce que disent deux appelants sur trois. Le troisième
+        (#486) pose `extinction`, qui n'est pas un synonyme : c'est ce code, et lui
+        seul, qui rend le run **reprenable** au redémarrage (`relancer`). Elle
+        voyage jusqu'aux **tâches** soldées avec le run, comme la précédente : ce
+        qui explique la mort du run explique celle de ce qu'il portait.
         """
         self._demarrer()
-        self._consigne(run_id, EXECUTION_ANNULEE, "", detail, cause=CAUSE_ANNULATION)
+        self._consigne(run_id, EXECUTION_ANNULEE, "", detail, cause=cause)
         await self._hote.annuler(run_id, delai_s=DELAI_ANNULATION_S)
-        self._solder_les_taches(run_id, detail, cause=CAUSE_ANNULATION)
+        self._solder_les_taches(run_id, detail, cause=cause)
         await self._oublier(run_id)
+
+    async def eteindre(self) -> list[dict[str, Any]]:
+        """**Maestro s'éteint : ses runs en vol s'éteignent avec lui** (#486).
+
+        Le pendant volontaire de `fermer`, et tout ce ticket tient dans l'écart
+        entre les deux. `fermer` est ce que l'API subit — un `SIGTERM`, la fenêtre
+        du navigateur refermée (#149), un plantage — et depuis #441 elle ne touche
+        à rien : les hôtes détachés survivent, c'est la panne de chaque heure que ce
+        chantier a supprimée. Cette méthode-ci est ce que quelqu'un **demande** :
+        `scripts/controltower/start.sh --stop`, et la fermeture de l'enveloppe le
+        jour où elle existe. Un run qu'on laisse tourner après avoir éteint la
+        Control Tower continue de consommer du quota et d'écrire dans le projet,
+        sans écran pour le suivre ni bouton pour l'arrêter (docs/28 §11).
+
+        **La distinction ne se déduit pas, elle descend de l'appelant.** C'est la
+        raison d'être de cette méthode plutôt que d'un drapeau sur `fermer` ou d'un
+        gestionnaire de signal : un `SIGTERM` reçu par l'API ne sait pas s'il vient
+        d'un arrêt propre ou d'un gestionnaire de tâches, alors que `--stop` sait
+        qu'il arrête exprès. Le savoir vit du côté qui l'a.
+
+        Le geste lui-même n'invente rien : c'est `_solder`, run par run, avec la
+        cause `extinction`. Il en découle les trois propriétés du ticket, sans une
+        ligne de plus — l'issue est **publiée** donc le process détaché l'entend et
+        annule sa propre tâche (#444) ; `_hote.annuler` **attend** puis éteint le
+        groupe de process, descendance comprise (`hote_detache._eteindre`, la leçon
+        de #291) ; et le run est consigné `annulee`, donc **jamais laissé
+        `en_cours`**, ce qui est le premier critère.
+
+        **La portée est ce que cette API porte** (`runs_en_vol`), jamais ce qui
+        tourne sur la machine — même portée que `_ramasser`, et pour une raison plus
+        forte ici : éteindre une descendance demande le `Popen` du chef de groupe.
+        Un run lancé par une API précédente n'est pas le nôtre à tuer, et c'est
+        justement le run que l'accident a laissé vivre — le solder de loin, sur la
+        seule foi du bus, reviendrait à faire de cette méthode un ordre sans repli.
+
+        Les runs sont soldés **ensemble** et non l'un après l'autre : chacun est
+        borné par `DELAI_ANNULATION_S`, et une extinction ne doit pas faire attendre
+        N fois un délai qui est le même pour tous. Un run soldé entre-temps par sa
+        propre issue est **sauté** — l'hôte le porte encore une fraction de seconde
+        après sa dernière publication.
+
+        Rend le résumé de chaque run soldé, dans l'ordre de l'hôte : c'est ce que
+        `start.sh` imprime, et un arrêt qui ne dirait pas ce qu'il vient d'éteindre
+        laisserait chercher où est passé le travail en cours. La liste est **vide**
+        quand rien ne tournait, ce qui est le cas courant.
+        """
+        soldes = [
+            run_id
+            for run_id in self._hote.runs_en_vol()
+            if (resume := self.resume(run_id)) is not None
+            and resume["statut"] not in STATUTS_EXECUTION_TERMINAUX
+        ]
+        if not soldes:
+            return []
+        _LOGGER.info(
+            "Extinction de Maestro : %d run(s) en vol soldé(s) — %s",
+            len(soldes),
+            ", ".join(soldes),
+        )
+        await asyncio.gather(
+            *(
+                self._solder(run_id, DETAIL_EXTINCTION, cause=CAUSE_EXTINCTION)
+                for run_id in soldes
+            )
+        )
+        return [
+            resume for run_id in soldes if (resume := await self.resume_vivant(run_id))
+        ]
 
     def _solder_les_taches(self, run_id: str, motif: str, *, cause: str = "") -> None:
         """Solde ce que le run **portait** : ses tâches non terminales, donc ses agents (#466).
@@ -1063,6 +1179,15 @@ class ServiceExecutions:
         un run emporté par l'arrêt de l'API garde son dernier battement, qui
         vieillit — c'est ainsi qu'il ressortira `orphelin` au lieu de rester
         `en_cours` pour toujours, et c'est exactement la panne du 2026-08-14.
+
+        ⚠ **Ceci est l'arrêt subi, et il ne solde rien** (#486). Fenêtre du
+        navigateur refermée, API relancée après une modification, plantage : trois
+        accidents, et les rendre inoffensifs est ce que #441 a acheté. L'arrêt
+        **volontaire** est ailleurs — `eteindre`, appelée depuis `start.sh --stop`
+        —, et la séparation est le ticket entier : elle ne peut pas se faire ici,
+        où rien ne distingue un `SIGTERM` propre d'un gestionnaire de tâches.
+        Ajouter un drapeau à cette méthode reviendrait à demander à celui qui ne
+        sait pas de deviner.
         """
         await self._hote.fermer(delai_s=DELAI_ANNULATION_S)
         if self._coeur is not None:
