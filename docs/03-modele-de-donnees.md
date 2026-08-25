@@ -66,6 +66,7 @@ erDiagram
         string priorite
         string statut
         json competences_requises
+        json etapes
     }
     RUN {
         uuid id PK
@@ -171,8 +172,62 @@ Un ticket de travail. Champs notables :
 - `format_sortie` : ce que l'agent doit produire (essentiel pour une bonne délégation).
 - `competences_requises` : sert au routage.
 - `statut` : `backlog`, `prete`, `assignee`, `en_cours`, `en_attente_validation`, `terminee`, `echec`, `bloquee` (dépendance en échec — la tâche n'est jamais mise en file ni exécutée).
-- Auto-relation `TASK → TASK` : graphe de **dépendances**.
+- Auto-relation `TASK → TASK` : graphe de **dépendances**. Il vivait dans le seul moteur jusqu'à #490 ; il en sort désormais avec le plan, publié une fois à la décomposition, et se lit par `GET /api/executions/{run_id}/graphe` ([docs/05 §6.11](./05-interface-control-tower.md)) — nœuds, arêtes, niveaux. Deux tâches sans dépendance entre elles y tombent au **même** niveau : le rang d'un nœud est le *plus long chemin* qui y mène, et non son rang dans un tri topologique quelconque.
+- `etapes` : l'**ossature de la checklist** de la tâche (#489) — les libellés des étapes prévues, dans l'ordre, **sans aucun avancement**. Le plan dit *ce qu'il y a à faire*, jamais *où l'on en est* : l'état de chaque ligne se coche en cours d'exécution et n'existe pas au moment où le plan est écrit. Optionnelle et vide dans le cas courant ; qui la pose et qui la coche est tranché juste dessous.
 - `projet_id` : le **projet** auquel la tâche appartient (#222) — **optionnel**, `null` valant « aucun projet » (le comportement d'avant la Phase 7 : une tâche sans projet reste une tâche). Posé au lancement d'un run et hérité par chaque tâche du plan, sauf celle qui en porte déjà un ; il traverse le journal (#8) et les événements (#46) jusqu'aux vues, que le Kanban, les coûts et le journal savent alors filtrer (`?projet=<id>`). Un travail sans `projet_id` n'apparaît dans **aucune** vue filtrée — on ne devine pas son appartenance.
+
+#### Qui pose la checklist d'une tâche (#489) — **tranché**
+
+La question était ouverte depuis #246 : les étapes étaient **définies** (`EtapeTache`), le
+journal les **transportait**, l'événement `tache.detail` les **diffusait**, le panneau de
+détail les **affichait** — et `consigne_detail` n'était appelé par personne. Un contrat
+entièrement plombé et entièrement vide, faute d'avoir dit **qui remplit**. Trois réponses
+étaient possibles, et l'arbitrage n'est pas cosmétique : il décide de ce qu'une tâche
+donne à lire, et à quel moment.
+
+| Qui pose | Ce que ça donne | Pourquoi ça ne suffit pas |
+| --- | --- | --- |
+| **L'orchestrateur seul** | Un dénominateur stable, connu d'avance | **Personne ne coche** : la checklist reste figée à « à faire » du début à la fin — le contrat vide, sous une autre forme |
+| **L'agent seul** | Une checklist **juste**, parce qu'il découvre en travaillant | Une tâche qui n'a pas démarré n'a **rien** à montrer, et c'est la déclaration préalable qui rend une vue lisible : GitHub Actions déclare ses `steps`, n8n ses nœuds |
+| **Les deux — retenu** | Le plan dit la **forme** du travail, l'agent son **avancement** | — |
+
+**La décision est donc : ossature au plan, complétée et cochée par l'agent.** Chacun
+répond de ce qu'il sait, et aucun des deux ne répond de ce qu'il ignore. Le plan porte
+`etapes` (libellés seuls) ; l'agent rapporte sa liste **là où il la tient déjà** —
+l'entrée de ses appels `TodoWrite`, lue par `maestro/providers/checklist.py` : aucun
+protocole n'a été inventé, aucun second transport ouvert, et un fournisseur sans
+checklist observable n'appelle simplement jamais le canal.
+
+La couture des deux (`maestro.detail_tache.SuiviChecklist`) porte quatre règles, et
+chacune a son motif :
+
+- **Le premier relevé de l'agent supplante l'ossature**, au lieu de s'y apparier par
+  libellé. Apparier serait un pari sur la formulation du modèle — « Écrire la migration »
+  contre « Rédiger la migration SQL » —, et un pari perdu **double** la checklist
+  d'étapes qui ne se cocheront jamais : pire que les deux options pures. Supplanter est
+  déterministe, et gratuit — au premier relevé, l'ossature est tout entière « à faire »,
+  donc rien d'acquis n'est perdu.
+- **Rien ne recule.** Un état ne redescend jamais, et une étape connue qu'un relevé
+  oublie garde sa place et son état plutôt que de disparaître. Le suivi vit à l'échelle de
+  l'**exécution** et non de la tentative : le remettre à neuf à chaque relance ferait
+  reculer l'avancement à l'instant précis où l'on veut savoir ce qui était déjà acquis.
+- **Le dénominateur, lui, peut grandir** — un agent découvre en travaillant. C'est le prix
+  d'une checklist juste, et il est payé **à l'écran** plutôt que masqué ici : la jauge est
+  une **case par étape** et non un pourcentage, si bien que ce qui est acquis reste
+  allumé et que la rangée s'allonge ([docs/05 §2.2](./05-interface-control-tower.md)).
+  Brider ce que l'agent a le droit de découvrir aurait rendu la checklist fausse pour
+  protéger une jauge.
+- **Rien n'est republié pour rien.** Un agent rappelle volontiers sa liste à l'identique ;
+  une checklist inchangée ne produit ni ligne de journal, ni événement de bus.
+
+⚠ **Ce qui existait avant reste vrai** : une tâche sans ossature, un fournisseur sans
+checklist, un rôle dont la politique de permissions refuse l'outil, un repli texte — aucun
+ne produit de checklist vide ni de bloc qui promette un contenu absent (règle de #246).
+
+Le motif complet vit en tête de [`maestro/detail_tache.py`](../maestro/detail_tache.py) et
+de [`maestro/providers/checklist.py`](../maestro/providers/checklist.py) ; l'écran est en
+[docs/05 §2.2 et §2.4.4](./05-interface-control-tower.md). Le dispositif est gardé par
+[`tests/test_checklist_tache.py`](../tests/test_checklist_tache.py).
 
 ### RUN
 Une **exécution** concrète d'une tâche par un agent. Trace les tokens, le **coût**, la durée, le statut. Une tâche peut avoir plusieurs runs (relances). `projet_id` (#222) dit dans quel **projet** le run travaille — même régime que sur `TASK` (optionnel, `null` hors projet) ; il est porté par l'événement de lancement, survit donc au redémarrage de l'API, et la planification le porte aussi pour que le total d'un projet reste égal à la somme de ses runs.

@@ -26,8 +26,10 @@
  * - **« qu'est-ce que la branche courante ? »** — de quoi suivre un flux au lieu
  *   de tout montrer, sur un graphe qui déborde (note technique du ticket).
  *
- * Aucun import React : ces règles se testent sans rendu (tests différés au lot 4,
- * #492), et la table qui les traduit en pixels vit dans
+ * Aucun import React : ces règles se testent sans rendu — `apps/web/tests/
+ * pipeline.test.tsx` (#492) les éprouve hors de tout montage, et l'**ordre** dans
+ * lequel les questions ci-dessus sont posées y est gardé comme la décision qu'il
+ * est. La table qui les traduit en pixels vit, elle, dans
  * `components/runs/VuePipeline`.
  */
 

@@ -250,7 +250,10 @@ agents » plutôt qu'au chantier des runs, et une priorité `moyenne` là où le
   ⚠ **Tranchée depuis, au lot #489** : *ossature au plan, complétée et cochée par l'agent*. Le
   motif, les deux options écartées et les règles de réconciliation sont écrits en tête de
   [`maestro/detail_tache.py`](../maestro/detail_tache.py) — c'est là qu'ils vivent, pas ici : la
-  décision s'est prise sur pièces, comme prévu, et ce document n'en garde que le renvoi.
+  décision s'est prise sur pièces, comme prévu, et ce document n'en garde que le renvoi. Le lot
+  final (#492) l'a en outre portée dans le **modèle de données**
+  ([docs/03 § TASK](./03-modele-de-donnees.md)), là où un lecteur qui découvre `TASK.etapes` se pose
+  la question — un motif qui ne vit que dans une docstring ne se trouve pas.
 - **La cible visuelle de la Control Tower** (#471) : une recherche, pas une refonte, et rien de ce
   qui est décidé ici n'en dépend.
 - **Le Kanban d'un run ou son pipeline** — les deux vues du même objet, dont ce document notait
@@ -269,7 +272,7 @@ lots sont mergeables un à un sur `main` ; les tests sont différés au lot fina
 | Chantier | Parent | Lots | Milestone |
 | --- | --- | --- | --- |
 | Le run se liste, s'ouvre, se suit et se pilote | **#472** | #473, #474, #475, #476, #477 ∥, #478 ∥, #479 ∥, #480 (tests + doc) — **les huit livrés** | Le run, objet de premier plan |
-| Suivre un run comme un pipeline | **#488** | #489, #490 ∥, #491, #492 (tests + doc) | Le run, objet de premier plan |
+| Suivre un run comme un pipeline | **#488** | #489, #490 ∥, #491, #492 (tests + doc) — **les quatre livrés** | Le run, objet de premier plan |
 | Le chat, seule porte d'entrée | **#481** | #482, #483, #484, #485 (tests + doc) | Control Tower v3 — conversation & intégrations |
 | L'extinction solde les runs | — (lot seul) | **#486** | Résilience des runs |
 | Détecter ce que le poste a | — (lot seul) | **#487** | Control Tower v3 — agents |
