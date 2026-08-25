@@ -16,6 +16,8 @@ import { useEffect, useRef, useState } from "react";
 import { IconeChat } from "@/components/Icones";
 import { Infobulle } from "@/components/Infobulle";
 import { BadgeEtat, Bouton, EnTeteSection } from "@/components/Primitives";
+import { RegionLive } from "@/components/RegionLive";
+import { mesureDesMessages } from "@/lib/annonces";
 import { formatDateHeure, formatHeure } from "@/lib/format";
 import { CHAT_AUTEUR_UTILISATEUR, type MessageChat } from "@/lib/types";
 import { useChat } from "@/lib/useChat";
@@ -80,6 +82,20 @@ export function FilChat({
           </BadgeEtat>
         }
       />
+      {/* La région live de l'écran (#538). Elle compte les messages, elle ne les
+          relit pas : un agent qui déroule son travail en pousse des rafales, et
+          faire lire chaque bulle à voix haute rendrait l'écran impraticable —
+          c'est exactement le « journal » que le ticket refuse. Le fil lui-même
+          reste lisible à la demande, dans sa liste juste en dessous.
+          Elle n'est pas montée sous `chargement` : le fil est chargé par le même
+          hook que les messages, donc le premier relevé est celui d'un fil vide et
+          l'historique qui arrive s'annoncerait comme du direct. */}
+      {!chargement && (
+        <RegionLive
+          libelle={`Activité du fil avec ${agent}`}
+          mesures={[mesureDesMessages(messages.length)]}
+        />
+      )}
       {erreur && (
         <p
           role="alert"

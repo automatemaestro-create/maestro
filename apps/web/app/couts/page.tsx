@@ -27,7 +27,9 @@ import { GraphiqueEvolutionCout } from "@/components/GraphiqueEvolutionCout";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
 import { PanneauCouts } from "@/components/PanneauCouts";
 import { Carte } from "@/components/Primitives";
+import { RegionLive } from "@/components/RegionLive";
 import { RepartitionAgents } from "@/components/RepartitionAgents";
+import { mesureDeLaDepense } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   formatCout,
@@ -53,7 +55,16 @@ export default function PageCouts() {
   // relire ici ne coûte ni requête ni connexion supplémentaire. C'est aussi de
   // là que vient la portée projet (#281), pour que les deux sources de cette
   // page portent le même périmètre sans qu'on ait à le rappeler deux fois.
-  const { couts, portee, projet } = useEtatGlobal();
+  const {
+    couts,
+    coutTotal,
+    portee,
+    projet,
+    // Le chargement **du shell**, à ne pas confondre avec celui des agrégats
+    // ci-dessous : c'est lui qui porte la dépense cumulée, donc lui qui dit
+    // quand la région live peut prendre son premier relevé.
+    chargement: chargementProjet,
+  } = useEtatGlobal();
   // Le statut du flux temps réel est porté par la barre supérieure du shell
   // (#117) : la page n'a plus qu'à consommer les agrégats.
   const { vue, chargement, rafraichissement, erreur } = useAnalyticsCouts(
@@ -64,6 +75,19 @@ export default function PageCouts() {
   return (
     <>
       <BanniereErreurApi erreur={erreur} />
+      {/* La région live de l'écran (#538). Elle ne parle **que** de la dépense,
+          et pas à chaque rafraîchissement : cette page se relit à tout événement
+          du bus (`useAnalyticsCouts` ne filtre rien), donc annoncer le
+          rafraîchissement serait annoncer le flux. Ce qui vaut d'être dit est le
+          franchissement d'un dollar — un seuil, pas un rechargement.
+          Le total vient du contexte du shell et non de `vue.total` : celui-ci
+          suit la période choisie, et changer de période n'est pas une dépense. */}
+      {!chargementProjet && (
+        <RegionLive
+          libelle="Dépense du projet"
+          mesures={[mesureDeLaDepense(coutTotal)]}
+        />
+      )}
       {/* La rangée de filtres : une seule, au-dessus de tout ce qu'elle borne —
           chaque vue en dessous (compteurs, graphiques, tables) suit la même
           fenêtre, les chiffres concordent toujours. */}

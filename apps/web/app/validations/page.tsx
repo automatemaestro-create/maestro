@@ -17,6 +17,8 @@
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { PanneauValidations } from "@/components/PanneauValidations";
 import { Carte } from "@/components/Primitives";
+import { RegionLive } from "@/components/RegionLive";
+import { mesureDesValidationsTranchees } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatDateHeure } from "@/lib/format";
 import {
@@ -42,6 +44,15 @@ export default function PageValidations() {
         <p className="text-sm text-neutral-500">Chargement des demandes…</p>
       ) : (
         <>
+          {/* La région live de l'écran (#538) : elle annonce les décisions
+              **prises** — depuis un autre onglet, ou par quelqu'un d'autre. Les
+              demandes qui arrivent, elles, coupent la parole depuis la région
+              assertive du shell : les dire ici aussi les dirait deux fois sur le
+              seul écran où elles sont déjà sous les yeux. */}
+          <RegionLive
+            libelle="Arbitrages tranchés"
+            mesures={[mesureDesValidationsTranchees(validations)]}
+          />
           {enAttente.length === 0 ? (
             <Carte
               balise="p"

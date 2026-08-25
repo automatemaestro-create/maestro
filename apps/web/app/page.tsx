@@ -50,7 +50,13 @@ import { PanneauBriefs } from "@/components/PanneauBriefs";
 import { PanneauRunsPerdus } from "@/components/PanneauRunsPerdus";
 import { PanneauValidations } from "@/components/PanneauValidations";
 import { PosteVide } from "@/components/PosteVide";
+import { RegionLive } from "@/components/RegionLive";
 import { EtatDesRuns } from "@/components/runs/EtatDesRuns";
+import {
+  mesureDeLaDepense,
+  mesuresDesRuns,
+  mesuresDesTaches,
+} from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle } from "@/lib/navigation";
 
@@ -74,6 +80,7 @@ export default function TableauDeBord() {
     validations,
     executions,
     couts,
+    coutTotal,
     connecte,
     chargement,
     erreur,
@@ -113,6 +120,21 @@ export default function TableauDeBord() {
         <PosteVide projet={projet} connecte={connecte} />
       ) : (
         <>
+          {/* La région live de l'écran (#538) — montée **ici**, dans la branche
+              qui rend le contenu : son premier relevé est donc celui des données
+              déjà chargées, et arriver sur le tableau de bord n'annonce rien.
+              Ce qu'elle dit : les tâches qui changent de colonne, les runs qui
+              se soldent et la dépense qui franchit un dollar. Ce qu'elle ne dit
+              pas : les arbitrages en attente, qui relèvent de la région
+              assertive du shell et se diraient sinon deux fois. */}
+          <RegionLive
+            libelle="Activité du tableau de bord"
+            mesures={[
+              ...mesuresDesTaches(taches),
+              ...mesuresDesRuns(executions),
+              mesureDeLaDepense(coutTotal),
+            ]}
+          />
           {/* Avant les validations : un brief suspendu bloque le run entier,
               une validation ne retient qu'une tâche. */}
           <PanneauBriefs executions={executions} />
