@@ -321,7 +321,7 @@ function CarteTache({
       className={
         "text-corps" +
         (ouvrable
-          ? " cursor-pointer transition hover:border-neutral-300 hover:shadow dark:hover:border-neutral-700"
+          ? " cursor-pointer transition motion-reduce:transition-none hover:border-neutral-300 hover:shadow dark:hover:border-neutral-700"
           : "")
       }
     >

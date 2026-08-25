@@ -36,6 +36,23 @@ import { IconeFlecheDroite } from "@/components/Icones";
 /** Une icône du jeu (`components/Icones`) : décorative, à `currentColor`. */
 export type Icone = ComponentType<SVGProps<SVGSVGElement>>;
 
+/**
+ * Le plancher d'une **cible interactive** (#537) — 24 px, le minimum de WCAG 2.2
+ * §2.5.8. `min-h-6` vaut `1.5rem`, soit exactement 24 px au pas par défaut.
+ *
+ * Il vit ici, et pas recopié en six endroits, pour la raison qui a fait naître
+ * ce fichier (#245) : une valeur écrite six fois est une valeur qui divergera.
+ * Ce qu'il corrige est mesuré (docs/30 §3.4) — les liens de renvoi et les liens
+ * en petit corps du produit sortaient à **22 px**, deux pixels sous la barre, et
+ * rien ne les en avertissait.
+ *
+ * ⚠ `min-h-` et non `h-` : un libellé qui passe à la ligne doit pouvoir grandir.
+ * Et un plancher, jamais un `py-*` : la hauteur d'un `py-1.5` dépend du pas
+ * typographique de l'élément, donc changerait sous lui le jour où le libellé
+ * passe de `text-annexe` à `text-micro`.
+ */
+export const CIBLE_MINIMALE = "min-h-6";
+
 /* ------------------------------------------------------------------ *
  * Carte
  * ------------------------------------------------------------------ */
@@ -199,7 +216,7 @@ export function LienRenvoi({
     <Link
       href={renvoi.href}
       className={
-        "inline-flex items-center gap-1 text-annexe font-medium text-sky-700 " +
+        `inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-annexe font-medium text-sky-700 ` +
         "hover:underline dark:text-sky-400 " +
         className
       }
@@ -345,7 +362,7 @@ export function BadgeEtat({
         <span
           aria-hidden="true"
           className={`size-1.5 shrink-0 rounded-full ${TON_PASTILLE[ton]} ${
-            pulse ? "animate-pulse" : ""
+            pulse ? "animate-pulse motion-reduce:animate-none" : ""
           }`}
         />
       )}

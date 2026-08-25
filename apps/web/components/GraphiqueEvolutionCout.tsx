@@ -144,10 +144,17 @@ export function GraphiqueEvolutionCout({
 
   return (
     <div className="relative">
+      {/* `group` et non `img` (#537) : le graphe **contient** des éléments
+          atteignables au clavier — une zone de visée par créneau, chacune
+          nommée —, or les descendants d'un `role="img"` sont présentationnels
+          par la spécification ARIA. Les y laisser revenait à écrire vingt
+          libellés qu'aucune technologie d'assistance n'atteindrait, et le
+          `tabIndex` du créneau amenait alors le focus sur un nœud muet. Le
+          groupe garde l'alternative d'ensemble *et* expose ce qu'il contient. */}
       <svg
         viewBox={`0 0 ${LARGEUR} ${HAUTEUR}`}
         className="w-full"
-        role="img"
+        role="group"
         aria-label={`Évolution du coût par ${pas === "jour" ? "jour" : pas} sur la période`}
       >
         {graduations.map((valeur) => {
@@ -201,13 +208,18 @@ export function GraphiqueEvolutionCout({
                 </text>
               )}
               {/* La zone de visée : tout le créneau, bien plus large que la
-                  colonne — l'infobulle se gagne au survol comme au clavier. */}
+                  colonne — l'infobulle se gagne au survol comme au clavier.
+                  `role="img"` (#537) : un `<rect>` SVG n'a **aucun** rôle
+                  implicite, et un élément sans rôle n'a pas le droit de porter
+                  un `aria-label` (axe : `aria-prohibited-attr`, `serious`) — le
+                  libellé était donc écrit sans être exposé. */}
               <rect
                 x={MARGE.gauche + i * creneau}
                 y={MARGE.haut}
                 width={creneau}
                 height={hauteurTrace}
                 fill="transparent"
+                role="img"
                 tabIndex={0}
                 aria-label={`${libelleSeau(point.periode, pas)} : ${formatCout(point.usage.cout_usd)}, ${formatTokens(point.usage.tokens_total)} tokens`}
                 onPointerEnter={() => setSurvol(i)}

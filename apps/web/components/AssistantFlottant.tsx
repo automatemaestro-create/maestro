@@ -69,7 +69,7 @@ export function AssistantFlottant() {
         title={ouvert ? "Fermer l'assistant" : "Assistant — poser une question"}
         className={
           "flex size-12 items-center justify-center rounded-full border border-neutral-200 " +
-          "bg-white text-neutral-600 shadow-lg transition hover:text-neutral-900 " +
+          "bg-white text-neutral-600 shadow-lg transition motion-reduce:transition-none hover:text-neutral-900 " +
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 " +
           "dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
         }
@@ -139,7 +139,9 @@ function PanneauAssistance({ fermer }: { fermer: () => void }) {
               aria-hidden="true"
               className={
                 "size-1.5 shrink-0 rounded-full " +
-                (connecte ? "bg-emerald-500" : "animate-pulse bg-amber-500")
+                (connecte
+                  ? "bg-emerald-500"
+                  : "animate-pulse motion-reduce:animate-none bg-amber-500")
               }
             />
             {connecte ? "Vos questions sur la Control Tower" : "Reconnexion…"}

@@ -262,6 +262,17 @@ un choix nommé, pas un `bg-*` passé en `className` : deux règles de fond dans
 même attribut ne se départagent pas par l'ordre d'écriture mais par celui de la
 feuille générée — une surcharge au cas par cas est silencieusement instable.
 
+Le fichier porte aussi une **constante** et non une brique : `CIBLE_MINIMALE`
+(#537), le plancher de 24 px d'une cible interactive (WCAG 2.2 §2.5.8). Elle vaut
+`min-h-6` et s'ajoute à tout lien ou bouton **en petit corps**
+(`text-annexe`/`text-micro`/`text-xs`), dont la seule hauteur de ligne ne suffit
+pas — c'est là que la mesure de #471 trouvait des cibles à **22 px**, deux pixels
+sous la barre. Un plancher (`min-h-`) et non une hauteur (`h-`), pour qu'un
+libellé qui passe à la ligne puisse grandir ; et une hauteur plutôt qu'un `py-*`,
+dont l'effet dépend du pas typographique de l'élément et changerait sous lui.
+Écrite ici une fois, comme le reste : elle est importée par les six composants
+qui portent ce genre de lien, et gardée par `tests/a11y.test.tsx`.
+
 ### La palette sémantique — `app/globals.css`
 
 Posée par #533 (lot 1 de #532). Avant elle, le produit portait **1 750 couleurs
@@ -483,6 +494,57 @@ bas du formulaire de la porte d'entrée inatteignable — est passé au travers 
 tests, du lint, du typage et de `next build` : la suite verte ne prouve rien sur
 la mise en page.
 
+### Le filet d'accessibilité (#537)
+
+Le travail d'accessibilité du produit était déjà sérieux — **104 `aria-label` sur
+48 fichiers**, 44 rôles corrects, un `<h1>` par écran et **0 saut de niveau**
+(docs/30 §2.1). Ce qui manquait n'était pas de la rigueur, c'était **ce qui la
+garde** : `axe-core` 4.12.1 était dans le dépôt depuis toujours — en transitif,
+tiré par `eslint-plugin-jsx-a11y` — et n'avait **jamais été importé une seule
+fois**. Les deux paquets sont désormais des dépendances **déclarées** : une
+dépendance transitive n'est pas un contrat, et un `npm dedupe` chez quelqu'un
+d'autre suffisait à faire disparaître le filet.
+
+Quatre mécanismes, et chacun garde ce que les autres ne voient pas :
+
+| Mécanisme | Où | Ce qu'il refuse |
+| --- | --- | --- |
+| `plugin:jsx-a11y/recommended` en **`error`** | `eslint.config.mjs` | les ~36 règles du preset, contre **6 en `warn`** auparavant — un `warn` ne fait pas rougir un pipeline, donc ne garde rien |
+| `axe-core` sur les **10 écrans** | `tests/a11y.test.tsx` | toute violation `serious`/`critical` sur un écran monté dans son shell réel |
+| `motion-reduce:` | balayage des sources, même fichier | une utilité `transition`/`animate-` écrite **sans sa garde** dans la même chaîne de classes |
+| `CIBLE_MINIMALE` | rendu des 10 écrans, même fichier | un lien ou bouton **en petit corps** sans plancher de 24 px |
+
+Trois règles à connaître avant de toucher à un écran :
+
+1. **Toute utilité de mouvement s'écrit avec sa garde**, sur la même chaîne :
+   `transition-colors motion-reduce:transition-none`,
+   `animate-pulse motion-reduce:animate-none`. Le produit en comptait **19** au
+   lot (15 transitions, 4 animations) et **zéro** garde.
+2. **Toute cible interactive en petit corps porte `CIBLE_MINIMALE`** (voir « Les
+   primitives » ci-dessus).
+3. **Le `<main>` du shell est une ancre** (`ID_CONTENU_PRINCIPAL`), visée par le
+   lien d'évitement qui ouvre le `Shell`. Il porte `tabindex="-1"` : sans lui,
+   suivre l'ancre déplace le point d'insertion du document mais **pas le focus**,
+   et la tabulation suivante repart du menu — c'est-à-dire de ce que le lien
+   devait faire sauter.
+
+⚠ **Quatre règles axe sont écartées, et aucune ne l'est par confort** —
+`color-contrast`, parce que jsdom ne calcule aucune couleur et que le contraste
+est gardé **mieux** ailleurs (`contraste.test.ts` mesure 36 paires par thème sur
+les octets de `globals.css`, #534) ; `html-has-lang`, `html-lang-valid` et
+`document-title`, parce qu'elles jugent le **document qui enveloppe** l'écran —
+le `<html lang="fr">` et le `metadata.title` de `app/layout.tsx`, que le rendu
+d'un composant ne monte pas. Les garder ferait rapporter une faute du **harnais**
+comme une faute du produit, sur les dix écrans à la fois. Elles ne disparaissent
+pas pour autant : elles changent de juge, et `tests/a11y.test.tsx` les vérifie
+sur la source du layout.
+
+⚠ **Deux exemptions de fond** sont arrêtées par #471 et **assumées** (docs/30
+§3.5) : le graphe de pipeline (`VuePipeline`) n'est pas rendu accessible nœud à
+nœud — aucun motif ARIA n'établit comment lire un DAG, et il porte une
+alternative textuelle équivalente (Kanban + journal du run) —, et **AAA n'est pas
+visé**.
+
 ### La suite de tests
 
 Posée par le ticket #124 (lot final de la refonte #116, où les tests des lots 1
@@ -522,9 +584,10 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/runs-vue.test.tsx` | La vue d'un run (#475/#478, testée en #480) : les tâches lues **avec `?run=`** et non filtrées sur `Tache.run_id` — le champ porte le *dernier* run qui les a touchées, une relance volerait celles du run repris —, la relecture au **pouls** du shell sans seconde WebSocket, les trois vides (autre projet, arrêt sur brief, API muette) et le journal persisté fusionné au direct sans doublon — atteint **par son onglet** depuis #516, avec le contrôle qu'il ne s'affiche ni sous le pipeline ni sous le Kanban |
 | `tests/pipeline.test.tsx` | La vue pipeline d'un run (#491, testée en #492) en **trois étages**, parce qu'ils ne se gardent pas de la même façon : les règles hors JSX (`lib/graphe` — le backend sert tout ce qui se dessine, ce module ne porte que les trois questions qu'il ne pose pas, et l'**ordre** dans lequel elles sont posées *est* la décision ; `lib/vuesRun` — le pipeline ouvre) ; la checklist rendue (`components/EtapesTache` — **une case par étape**, le contrôle qui compte étant le dénominateur qui grandit sans que le numérateur bouge) ; puis la vue montée : le nœud en cours, l'étape qui se coche au battement suivant, l'arête qui s'allume, et l'attente humaine qui ne se lit plus « en cours » |
 | `tests/etat-des-runs.test.tsx` | L'état des runs au tableau de bord (#476, testé en #480) : **l'exhaustivité de la table des groupes**, balayée sur `regimeDuRun` plutôt qu'énumérée — un régime sans groupe fait disparaître ces runs-là de l'écran, ce qui est arrivé à « en pause » entre #476 et #477 — puis le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` sur ses trois entrées, et l'écran qui ne porte **aucun** geste |
+| `tests/a11y.test.tsx` | Le **filet d'accessibilité** (#537) en trois étages : `axe-core` joué sur les **10 écrans** montés dans leur shell réel, verdict **0 violation `serious`/`critical`** — table d'écrans **dérivée de `MENU`**, donc une page ajoutée au menu sans cas d'audit rougit ; puis ce qu'axe ne sait pas voir — le **lien d'évitement** (premier dans l'ordre du DOM, visant un `<main>` que le focus peut atteindre), la **garde de mouvement** sur chaque utilité `transition`/`animate-` du produit, et le **plancher de 24 px** des cibles en petit corps. Comme `contraste.test.ts`, **la sonde est prouvée avant de servir** : sur un fragment fautif (image sans alternative, bouton sans nom, champ sans étiquette), puis sur un fragment sain |
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
 
-Deux fichiers portent l'outillage plutôt que des tests :
+Trois fichiers portent l'outillage plutôt que des tests :
 
 - `tests/setup.ts` — ce que jsdom ne fournit pas (`matchMedia`, `ResizeObserver`,
   `scrollIntoView`), la remise à zéro entre deux tests (stockage, `data-theme`,
@@ -538,9 +601,17 @@ Deux fichiers portent l'outillage plutôt que des tests :
   backend), `poserProjetActif` (le projet retenu sans
   lequel tout rendu du shell s'arrête à la porte) et `rendreAvecEtat`, qui monte
   un composant sous le **vrai** fournisseur d'état du shell avec une source temps
-  réel factice.
+  réel factice ;
+- `tests/axe.ts` — le branchement d'`axe-core` (#537) : le seuil du verdict
+  (`serious`/`critical`), les règles écartées **avec la raison de chacune**, et
+  le récit d'un échec, qui nomme la règle et le nœud plutôt que de rendre un
+  nombre. Le contexte donné à axe est le **document entier** et non le conteneur
+  rendu : les règles de *page* (`region`, `bypass`, `landmark-one-main`,
+  `page-has-heading-one`) ne se jouent qu'à ce prix, et les passer à côté
+  reviendrait à auditer des composants là où on veut auditer des écrans.
 
-⚠ Deux pièges de ce harnais, apparus en écrivant les trois suites de runs :
+⚠ Trois pièges de ce harnais, les deux premiers apparus en écrivant les trois
+suites de runs, le troisième en montant les dix écrans de #537 :
 
 - **`chargerTaches` n'est pas mocké par `tests/setup.ts`**, contrairement à
   `chargerProjets` et `chargerJournal` — et **`chargerGrapheExecution` non plus**
@@ -551,7 +622,17 @@ Deux fichiers portent l'outillage plutôt que des tests :
 - **`runFactice` ne pose que les champs obligatoires** du contrat. `vitalite`,
   `progression`, `en_pause` et `cause` restent **absents** plutôt que posés à une
   valeur neutre — c'est ce que rend un backend antérieur au lot qui les a ajoutés,
-  donc le cas qu'un écran doit savoir traiter.
+  donc le cas qu'un écran doit savoir traiter ;
+- **la liste des lectures non mockées est plus longue qu'on ne croit** :
+  `chargerCatalogue` (Agents, Paramètres › Fournisseurs), `chargerSante`
+  (Paramètres › Général), `chargerPoolMcp`/`chargerRegistreMcp` (Paramètres ›
+  MCP), `chargerExplorateur`/`chargerDisponibiliteSelecteur` (Composer) et
+  `chargerExecution` (Valider le brief). Un test qui rend un **écran entier**
+  plutôt qu'un composant les rencontre toutes. Et `useAnalyticsCouts` (page
+  Coûts) se mocke **au hook** et non à l'API, parce qu'il ouvre sa propre
+  WebSocket et se reconnecte en backoff : la couper à la source laisserait la
+  promesse « aucun test n'a besoin de backend » tenue par un `fetch` qui échoue
+  et des minuteurs qui survivent au test.
 
 Quelques tests méritent d'être connus parce qu'ils gardent des invariants
 qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :

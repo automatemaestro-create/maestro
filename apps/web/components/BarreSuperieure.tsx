@@ -100,7 +100,9 @@ export function BarreSuperieure({
           <span
             className={
               "size-1.5 rounded-full " +
-              (connecte ? "bg-emerald-500" : "animate-pulse bg-amber-500")
+              (connecte
+                ? "bg-emerald-500"
+                : "animate-pulse motion-reduce:animate-none bg-amber-500")
             }
           />
           <span className="hidden sm:inline">
