@@ -3343,6 +3343,7 @@ bash scripts/orchestrate/run.sh --detach    # idem, dans une console indépendan
 bash scripts/orchestrate/run.sh --resume    # reprend un run qui ne s'est pas terminé (§11.8)
 bash scripts/orchestrate/run.sh --concurrence 3  # jusqu'à 3 tickets INDÉPENDANTS en vol (§11.10)
 bash scripts/orchestrate/status.sh --watch  # où en est le run, depuis n'importe quel terminal
+bash scripts/orchestrate/journal.sh audit   # où est passé son temps, pendant ou après (§11.12)
 touch .maestro/orchestrate/STOP             # arrêt d'urgence
 ```
 
@@ -3934,6 +3935,9 @@ bash scripts/orchestrate/status.sh --run-id <id>       # un run précis   (--lis
 bash scripts/orchestrate/status.sh --no-gitlab         # hors ligne : tout sauf l'état GitLab
 bash scripts/orchestrate/status.sh --reprenables       # ce qui peut être repris, en TSV (§11.8)
 ```
+
+⚠ Il répond de **l'instant**, jamais de la dépense : « où est passé le temps de ce run ? » est
+l'autre question, et c'est `journal.sh audit` qui la porte (§11.12).
 
 En une sortie : l'état du run, **les tickets en cours** — une section chacun — avec leur temps écoulé,
 les **commits et fichiers modifiés de leur worktree**, leur **dernière activité**, leur **état de
@@ -4694,3 +4698,77 @@ couper une résolution de conflit au milieu n'économiserait que du temps de mur
 > merge qui aboutit, la **sérialisation** (mesurée par une barrière et des relevés par écrivain,
 > jamais par un `sleep` ni un compteur partagé — #292, puis #313), la seconde PR rejugée après le
 > premier merge, le plafond de deux déblocages, et la reprise qui ne rejoue pas un merge fait.
+
+### 11.12 Après un run : où est passé son temps — `journal.sh audit` et `/run-audit` (chantier #495)
+
+`status.sh` dit **où en est** un run (§11.5), `journal.sh refus` dit **ce qui lui a été refusé**
+(§11.7). Personne ne disait **où passe son temps** — alors qu'un run coûte des heures de mur et un
+quota partagé par N sessions (§11.10), et que depuis #418 il va jusqu'au merge sans reprendre son
+souffle. La matière était pourtant là depuis #176 : `<iid>.jsonl` est le flux `stream-json`
+intégral, un événement par ligne, **horodaté à la milliseconde**.
+
+```bash
+bash scripts/orchestrate/journal.sh audit            # le dernier run qui porte un flux
+bash scripts/orchestrate/journal.sh audit <run-id>   # un run précis
+bash scripts/orchestrate/journal.sh audit --tous     # tout le journal, pour la tendance
+```
+
+Depuis Claude Code, **`/run-audit [<run-id>]`** est le geste : elle appelle ce verbe **et** `refus`,
+et n'ajoute au-dessus d'eux que ce qu'un script ne sait pas faire — le **jugement**, puis les
+**tickets de correction** qu'il appelle. Elle est en **lecture seule**, comme `/backlog` et
+`/mr-review` : ni cycle de vie, ni PR, ni merge, et aucun ticket ouvert sans un « go » explicite.
+Le résumé de fin de run la rappelle, au même titre que `refus` — pour la même raison, et c'est la
+seule qui vaille : **le seul moment où quelqu'un lit un run est celui-là.** Un audit qu'on ne relit
+pas après chaque run est un audit qu'on écrit une fois.
+
+**Ce que l'audit répond, et que rien d'autre ne répondait.** Sans argument il porte sur le dernier
+run qui porte un flux — un run **en cours** se lit comme un autre, et c'est même la question la plus
+fréquente. Huit sections, toutes tirées des mêmes faits extraits une seule fois :
+
+| Ce qu'on veut savoir | Ce que la section montre |
+| --- | --- |
+| **La part du mur sous outil**, ticket par ticket | 38 % sur un ticket, 63 % sur un autre du même run : un run lent n'a pas toujours la même maladie, et un rapport qui dirait « Bash est lent » se tromperait de remède une fois sur deux |
+| **Le poids d'une forme** de commande | invisible appel par appel — mesure du 2026-08-24 : `lib.sh` pèse 22,9 min en 93 invocations de 14,8 s, premier poste du run |
+| **Le pré-vol** de `/ticket-start` | ~2 min payées **une fois par ticket**, donc N fois par run, qu'aucune vue ne totalisait ; le détail dit lequel des quatre gestes coûte |
+| **Le temps mort** | ce qui est hors de **tout** appel — du temps qui n'est pas lent, et qu'on confondait avec du temps d'outil |
+| **Les commandes rejouées** à l'identique | soit une reprise après échec, soit du temps qui n'apprend rien |
+| **Les appels restés sans retour** | la session s'est arrêtée pendant — les taire ferait passer un run coupé en plein `local.sh` pour un run sans incident |
+
+**Ce qu'il ne répond pas, et c'est la portée que #495 s'est donnée : il ne corrige pas.** Il mesure
+et classe ; chaque remède est **son propre ticket**, priorisé sur ce que l'audit chiffre. La
+frontière avec ses voisins tient en une ligne chacun — `status.sh` répond de **l'instant**, `refus`
+des **permissions**, `gc` de la **rétention** (§11.3, §11.7, et `gc` **écrit**, ce que ni l'audit ni
+la commande ne font jamais).
+
+**Ce que la commande ajoute aux deux verbes, et pourquoi ce n'est pas une recette recopiée.** Elle
+les **appelle** — l'appariement, le désescapage, les seuils et le classement des refus vivent dans
+`journal.sh`, jamais dans le prompt. Une analyse réécrite dans une commande fige l'outil au jour où
+elle a été écrite : c'est exactement ce que #310 a retiré de `/mr-fix` et de `/ticket-finish`, et
+[`tests/test_ci_local.py`](../tests/test_ci_local.py) garde qu'aucun bloc de code de `.claude/**`
+n'en réintroduise une. Ce qui reste au prompt est le **jugement**, qu'aucun compteur ne porte :
+séparer le coût **attendu** — le filet CI (16,5 min en 6 appels sur le run de référence, et c'est
+le prix du verdict avant push), un `Agent` de recherche, le pré-vol, un temps mort de plusieurs
+heures qui **est** une limite d'usage — de ce qui ne l'est pas. Mettre le filet CI et `lib.sh` sur
+la même ligne sans les distinguer ferait chercher l'économie du mauvais côté.
+
+⚠ **Le temps mort se mesure, il ne se départage pas.** Un trou de plusieurs heures est une limite
+d'usage ; quelques minutes, de la réflexion. L'audit nomme les trous au-delà de
+`MAESTRO_AUDIT_TROU` (défaut 120 s) et les additionne — il ne dira jamais lequel était du gras.
+Le seuil sépare ce qu'on peut lire de ce qu'on ne peut pas : la liste des centaines de pauses de
+quelques secondes ne serait qu'un second flux brut.
+
+**Hors ligne, lecture seule, sans `jq` ni Python** — le pilote est un script shell, il le reste
+(#180), et l'audit se lit en `awk` comme `refus`. Le journal lu est **toujours celui du clone
+principal**, y compris appelé depuis un worktree (§11.7) : c'est là que le pilote écrit, et y
+renvoyer par un chemin absolu ferait refuser la lecture.
+
+> **Tests.** [`tests/test_orchestrate.py`](../tests/test_orchestrate.py), sur un journal **jeté**
+> aux horodatages posés à la main — un audit qui se jugerait sur un vrai run mesurerait la machine
+> et non le code. Cinq questions : l'appariement par `tool_use_id` **y compris entrelacé** (trois
+> appels ouverts avant que le premier ne se referme, sur lesquels « le dernier vu », LIFO et FIFO se
+> trompent chacun au moins une fois — et les deux ordres de clés du bloc de résultat, qui ne sont
+> pas stables) ; un flux **tronqué** et un `.jsonl.gz`, qui rendent un rapport partiel et jamais une
+> erreur ; le `cd "<worktree>" &&` de préfixe **écarté** du regroupement par forme, qui éprouve du
+> même coup le désescapage de #496 ; et l'**absence de `jq` et de Python** dans le chemin
+> d'exécution — prouvée par trois bouchons en tête de `PATH` plutôt que par un `grep`, le script
+> nommant les deux dans ses commentaires.

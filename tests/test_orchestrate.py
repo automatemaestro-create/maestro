@@ -4599,6 +4599,313 @@ def test_la_console_renvoie_vers_l_agregat_en_fin_de_run(depot: Depot) -> None:
 
 
 # =====================================================================================
+# journal.sh audit — où passe le temps d'un run (#497, puis #498 — parent #495)
+# =====================================================================================
+# Tests différés du lot 2 (#497), écrits ici avec la commande qui s'en sert (lot final, #498) —
+# c'est la convention de découpage (docs/10 §5.1).
+#
+# Le journal est FABRIQUÉ et ses horodatages posés à la main : un audit qu'on jugerait sur un vrai
+# run mesurerait la machine — sa charge, ses disques, le quota du jour — et non le code. Les durées
+# attendues sont donc des soustractions exactes, jamais des ordres de grandeur.
+
+
+def _t(secondes: float) -> str:
+    """Un horodatage du flux, à `secondes` du début — la forme que le CLI écrit, à la ms près."""
+    ms = round(secondes * 1000)
+    h, reste = divmod(ms, 3_600_000)
+    m, reste = divmod(reste, 60_000)
+    s, ms = divmod(reste, 1000)
+    return f"2026-08-23T{15 + h:02d}:{m:02d}:{s:02d}.{ms:03d}Z"
+
+
+def _entree(outil: str, cible: str) -> dict:
+    """La clé d'entrée que porte cet outil — parmi celles que `_cible` sait lire."""
+    return {
+        "Bash": {"command": cible},
+        "Agent": {"description": cible},
+        "Grep": {"pattern": cible},
+    }.get(outil, {"file_path": cible})
+
+
+def _jsonl(objet: dict) -> str:
+    """Une ligne du flux, compacte comme le CLI l'écrit : l'extraction s'ancre sur les clés."""
+    return json.dumps(objet, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
+def _appel(instant: float, *blocs: tuple[str, str, str]) -> str:
+    """Une ligne `assistant`. Plusieurs blocs = des appels PARALLÈLES, partis du même message."""
+    return _jsonl({
+        "type": "assistant",
+        "timestamp": _t(instant),
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": ident, "name": outil, "input": _entree(outil, cible)}
+            for ident, outil, cible in blocs
+        ]},
+    })
+
+
+def _retour(instant: float, ident: str, *, type_d_abord: bool = False) -> str:
+    """Une ligne `user`. `type_d_abord` inverse l'ordre des clés du bloc — il n'est pas stable.
+
+    Mesuré sur le flux de #346 : un même run écrit tantôt `{"type":"tool_result","tool_use_id":…}`,
+    tantôt l'inverse. Un appariement qui découperait sur le marqueur de type n'apparie alors que
+    les appels dont l'ordre l'arrange — 4 sur 98 au premier essai de #497, tous les autres déclarés
+    « morts sans retour ». Les deux ordres doivent donc voyager dans le même flux de test.
+    """
+    bloc = {"type": "tool_result", "tool_use_id": ident} if type_d_abord else \
+        {"tool_use_id": ident, "type": "tool_result"}
+    bloc["content"] = "ok"
+    return _jsonl({"type": "user", "timestamp": _t(instant),
+                   "message": {"role": "user", "content": [bloc]}})
+
+
+def _journal_audit(depot: Depot, run_id: str, flux: dict[int, str], *,
+                   compacte: tuple[int, ...] = ()) -> Path:
+    """Un run dont chaque session a laissé son flux brut `<iid>.jsonl` — la matière de #176."""
+    plan = [(rang, iid, "-", "moyenne") for rang, iid in enumerate(flux, 1)]
+    dossier = _run_dir(depot, run_id, plan)
+    for iid, lignes in flux.items():
+        if iid in compacte:
+            with gzip.open(dossier / f"{iid}.jsonl.gz", "wt", encoding="utf-8", newline="\n") as f:
+                f.write(lignes)
+        else:
+            (dossier / f"{iid}.jsonl").write_text(lignes, encoding="utf-8", newline="\n")
+    return dossier
+
+
+def _section_audit(sortie: str, titre: str) -> list[str]:
+    """Les lignes d'une section du rapport, son titre exclu."""
+    lignes, dedans = [], False
+    for ligne in sortie.splitlines():
+        if ligne.startswith("── "):
+            dedans = ligne.startswith(f"── {titre}")
+            continue
+        if dedans:
+            lignes.append(ligne)
+    return lignes
+
+
+# « <durée cumulée>  <n>x  moy <moyenne>   <nom> » — la forme des deux tables agrégées du rapport.
+_POSTE = re.compile(
+    r"^\s+(?P<total>\S+(?: min)?)\s+(?P<n>\d+)x\s+moy\s+\S+(?: min)?\s+(?P<nom>.+?)\s*$"
+)
+
+
+def _postes(sortie: str, titre: str) -> dict[str, tuple[str, int]]:
+    """Une table agrégée du rapport : nom -> (durée cumulée, nombre d'appels)."""
+    trouves = {}
+    for ligne in _section_audit(sortie, titre):
+        m = _POSTE.match(ligne)
+        if m:
+            trouves[m["nom"]] = (m["total"], int(m["n"]))
+    return trouves
+
+
+def test_audit_apparie_par_identifiant_meme_quand_des_appels_s_entrelacent(depot: Depot) -> None:
+    """La durée d'un appel n'est sur aucune ligne : elle sépare son `tool_use` de SON retour.
+
+    Trois appels sont ouverts avant que le premier ne se referme, et les retours arrivent dans un
+    ordre qu'aucune heuristique de position ne devine : « le dernier `tool_use` vu », « le plus
+    récent encore ouvert » (LIFO) et « le plus ancien encore ouvert » (FIFO) se trompent chacune au
+    moins une fois sur ce flux. Seul l'identifiant tranche — et c'est le cas ordinaire dès que la
+    session appelle de front, ce qui arrive à chaque message portant plusieurs `tool_use`.
+    """
+    flux = (
+        _appel(0, ("toolu_a", "Bash", "bash scripts/ci/local.sh"))
+        + _appel(2, ("toolu_b", "Read", "docs/10-workflow-git.md"))
+        + _appel(4, ("toolu_c", "Grep", "merge-mr"))
+        + _retour(10, "toolu_b")
+        + _retour(20, "toolu_c", type_d_abord=True)
+        + _retour(100, "toolu_a")
+    )
+    _journal_audit(depot, "entrelace", {473: flux})
+    r = depot.lance("journal.sh", "audit", "entrelace")
+
+    assert r.returncode == 0, r.stderr
+    assert _postes(r.stdout, "Par outil") == {
+        "Bash": ("1.7 min", 1),   # 100 s — et non 6 s, que « le dernier vu » aurait rendu
+        "Grep": ("16.0s", 1),     # 20 - 4, et non 20 - 2 (LIFO) ni 20 - 0 (FIFO)
+        "Read": ("8.0s", 1),      # 10 - 2, et non 10 - 4 (LIFO) ni 10 - 0 (FIFO)
+    }, r.stdout
+    assert "Appels restés sans retour" not in r.stdout, "les trois appels sont appariés"
+
+
+def test_audit_rend_un_rapport_partiel_sur_un_flux_tronque(depot: Depot) -> None:
+    """Une session tuée laisse un appel ouvert et une ligne coupée en deux : pas une erreur.
+
+    Ce sont même les runs les plus intéressants à auditer : refuser de les lire, ou taire l'appel
+    resté ouvert, ferait passer un run coupé en plein `local.sh` pour un run sans incident.
+    """
+    coupee = _jsonl({"type": "assistant", "timestamp": _t(50), "message": {"content": [
+        {"type": "tool_use", "id": "toolu_coupe", "name": "Bash",
+         "input": {"command": "git log"}}]}})
+    flux = (
+        _appel(0, ("toolu_ok", "Bash", "bash scripts/ci/local.sh"))
+        + _retour(30, "toolu_ok")
+        + _appel(40, ("toolu_vif", "Bash", "npm test"))
+        + coupee[:-30]   # le pilote a été tué pendant l'écriture : la ligne s'arrête au milieu
+    )
+    _journal_audit(depot, "tronque", {480: flux})
+    r = depot.lance("journal.sh", "audit", "tronque")
+
+    assert r.returncode == 0, r.stderr
+    assert r.stderr == "", f"un flux tronqué n'est pas une erreur : {r.stderr}"
+    assert _postes(r.stdout, "Par outil") == {"Bash": ("30.0s", 1)}, r.stdout
+    orphelins = "\n".join(_section_audit(r.stdout, "Appels restés sans retour"))
+    assert "npm test" in orphelins, f"l'appel qui n'est jamais revenu doit être nommé : {r.stdout}"
+
+
+def test_audit_lit_un_flux_compacte_comme_un_flux_en_clair(depot: Depot) -> None:
+    """`gc` compacte le `.jsonl` dès le verdict rendu (#198) : lire un `.gz` est le cas NORMAL.
+
+    Un audit qui ne saurait pas les ouvrir ne mesurerait que le run en cours — c'est-à-dire
+    justement pas ceux qu'on compare.
+    """
+    flux = (
+        _appel(0, ("toolu_a", "Bash", "bash scripts/ci/local.sh"))
+        + _retour(45, "toolu_a")
+        + _appel(50, ("toolu_b", "Edit", "scripts/orchestrate/run.sh"))
+        + _retour(51, "toolu_b")
+    )
+    _journal_audit(depot, "clair", {490: flux})
+    _journal_audit(depot, "compacte", {490: flux}, compacte=(490,))
+
+    clair = depot.lance("journal.sh", "audit", "clair")
+    compacte = depot.lance("journal.sh", "audit", "compacte")
+
+    assert compacte.returncode == 0, compacte.stderr
+    assert _postes(compacte.stdout, "Par outil") == {"Bash": ("45.0s", 1), "Edit": ("1.0s", 1)}
+    assert _postes(compacte.stdout, "Par outil") == _postes(clair.stdout, "Par outil")
+
+
+def test_audit_ne_compte_pas_deux_fois_un_ticket_sous_ses_deux_formes(depot: Depot) -> None:
+    """Un run rejoué sous le même run-id peut laisser le clair ET le `.gz` du même ticket.
+
+    Les additionner doublerait son temps sans que rien ne le montre — un rapport faux qui a
+    exactement l'air d'un rapport juste.
+    """
+    flux = _appel(0, ("toolu_a", "Bash", "git status")) + _retour(3, "toolu_a")
+    dossier = _journal_audit(depot, "double", {491: flux})
+    with gzip.open(dossier / "491.jsonl.gz", "wt", encoding="utf-8", newline="\n") as f:
+        f.write(flux)
+
+    r = depot.lance("journal.sh", "audit", "double")
+
+    assert r.returncode == 0, r.stderr
+    assert _postes(r.stdout, "Par outil") == {"Bash": ("3.0s", 1)}, r.stdout
+
+
+def test_audit_ecarte_le_cd_de_prefixe_en_regroupant_les_commandes(depot: Depot) -> None:
+    """Le prompt d'une session autonome préfixe presque tous ses appels d'un `cd "<worktree>"`.
+
+    C'est la règle #234 — la cible doit rester dans le worktree —, si bien que garder le préfixe
+    rangerait tout le run sous une seule forme, « cd », qui ne dirait plus rien de personne. Même
+    raison que le maillon d'une chaîne compté pour lui-même dans `refus`.
+
+    Ce cas éprouve du même coup le DÉSESCAPAGE : la commande porte des guillemets échappés dans le
+    JSON, et une extraction qui s'arrêterait au premier rendrait la commande amputée dès son
+    deuxième caractère — la panne que #496 a corrigée dans la vue, et que l'audit ne peut pas se
+    permettre de refaire : elle rangerait, elle aussi, tout le run sous une seule et même forme.
+    """
+    worktree = "E:/Projets/maestro-worktrees/498-la-commande"
+    flux = (
+        _appel(0, ("toolu_a", "Bash", f'cd "{worktree}" && bash scripts/ci/local.sh'))
+        + _retour(60, "toolu_a")
+        + _appel(61, ("toolu_b", "Bash", "bash scripts/ci/local.sh 2>&1 | tail -40"))
+        + _retour(101, "toolu_b")
+        + _appel(102, ("toolu_c", "Bash", f'cd "{worktree}" && git status'))
+        + _retour(104, "toolu_c")
+    )
+    _journal_audit(depot, "formes", {492: flux})
+    r = depot.lance("journal.sh", "audit", "formes")
+
+    assert r.returncode == 0, r.stderr
+    formes = _postes(r.stdout, "Bash, par forme")
+    assert formes == {"bash scripts/ci/local.sh": ("1.7 min", 2), "git status": ("2.0s", 1)}, \
+        r.stdout
+    assert not [f for f in formes if f.startswith("cd")], \
+        f"le `cd` de préfixe rangerait tout le run sous une seule forme : {formes}"
+
+
+def test_audit_ne_passe_ni_par_jq_ni_par_python(depot: Depot) -> None:
+    """Le pilote est un script shell et le reste (#180) : l'audit se lit en `awk`, comme `refus`.
+
+    La preuve se fait à l'EXÉCUTION plutôt que par un `grep` du script, et c'est le seul moyen
+    honnête : `journal.sh` nomme `jq` et Python dans ses commentaires, et `python` figure dans une
+    expression régulière de `refus` — un motif textuel dirait donc l'inverse de la vérité. Trois
+    bouchons en tête de `PATH` dénoncent l'appel s'il a lieu ; un rapport complet et un témoin
+    absent prouvent qu'il n'a pas eu lieu.
+    """
+    for nom in ("jq", "python", "python3"):
+        chemin = depot.racine.parent / "bin" / nom
+        chemin.write_text(
+            "#!/usr/bin/env bash\n"
+            'echo "$0" >> "$MAESTRO_FIXTURES/interprete.log"\n'
+            "exit 127\n",
+            encoding="utf-8", newline="\n",
+        )
+        chemin.chmod(0o755)
+
+    flux = _appel(0, ("toolu_a", "Bash", "bash scripts/ci/local.sh")) + _retour(42, "toolu_a")
+    _journal_audit(depot, "shell-pur", {489: flux})
+    r = depot.lance("journal.sh", "audit", "shell-pur")
+
+    assert r.returncode == 0, r.stderr
+    assert _postes(r.stdout, "Par outil") == {"Bash": ("42.0s", 1)}, r.stdout
+    temoin = depot.fixtures / "interprete.log"
+    assert not temoin.exists(), (
+        f"l'audit a appelé un interpréteur : {temoin.read_text(encoding='utf-8')}"
+    )
+
+
+def test_audit_ne_touche_a_rien_et_mesure_un_run_encore_en_vol(depot: Depot) -> None:
+    """Deux promesses en une, et la seconde est ce qui le distingue de `refus`.
+
+    Lecture seule d'abord : l'audit sert à décider, il ne décide pas. Puis, sans argument, il part
+    du dernier run qui porte un FLUX et non un RÉSULTAT — un run en cours n'a pas encore rendu la
+    main, mais son `.jsonl` est déjà écrit et parfaitement mesurable. Exiger un résultat renverrait
+    sur le run précédent celui qu'on regarde tourner, c'est-à-dire sur la mauvaise réponse à la
+    question la plus fréquente.
+    """
+    _journal_audit(depot, "20260801-100000", {
+        470: _appel(0, ("toolu_z", "Bash", "git log")) + _retour(1, "toolu_z"),
+    })
+    # Aucun `<iid>.json` : ce run n'a pas rendu son verdict, il est encore en vol.
+    dossier = _journal_audit(depot, "20260804-100000", {
+        473: _appel(0, ("toolu_a", "Bash", "bash scripts/ci/local.sh")) + _retour(75, "toolu_a"),
+    })
+    fichiers = [p for p in sorted(dossier.rglob("*")) if p.is_file()]
+    empreinte = {p: p.stat().st_mtime_ns for p in fichiers}
+
+    r = depot.lance("journal.sh", "audit")
+
+    assert r.returncode == 0, r.stderr
+    assert "run 20260804-100000" in r.stdout, "le dernier run qui porte un flux, en vol ou non"
+    assert _postes(r.stdout, "Par outil") == {"Bash": ("75.0s", 1)}, r.stdout
+    assert {p: p.stat().st_mtime_ns for p in fichiers} == empreinte, "l'audit n'écrit rien"
+
+
+def test_la_console_renvoie_vers_l_audit_en_fin_de_run(depot: Depot) -> None:
+    """Un audit qu'on ne relit pas après chaque run est un audit qu'on écrit une fois (#498).
+
+    Même raison que pour `refus` juste au-dessus : le seul moment où quelqu'un lit un run est
+    celui-là. La COMMANDE est nommée à côté du verbe — depuis Claude Code c'est elle qu'on lance.
+    """
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    claude = _claude_stub(depot, """
+        echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "invite-audit",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+
+    assert "journal.sh audit invite-audit" in r.stdout, r.stdout[-1500:]
+    assert "/run-audit" in r.stdout, "la commande est le geste, le verbe en est la plomberie"
+
+
+# =====================================================================================
 # `main` remise à niveau au démarrage d'un run (#283)
 # =====================================================================================
 #

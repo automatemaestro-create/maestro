@@ -3923,6 +3923,10 @@ printf '  journal : %s\n' "$RUN_DIR"
 # les refus a une chance d'être suivie (#235). Sans elle, la boucle de rétroaction de §11.7 ne part
 # que si on y pense — et onze runs ont montré que non.
 printf '  refus de permission : bash scripts/orchestrate/journal.sh refus %s\n' "$RUN_ID"
+# Même raison, autre question (#498) : « où est passé le temps ? » ne se pose qu'ici, et un audit
+# qu'on ne relit jamais après un run est un audit qu'on écrit une fois. La commande est nommée à
+# côté du verbe — depuis Claude Code c'est elle qu'on lance, et sans argument pour le dernier run.
+printf '  où passe le temps   : bash scripts/orchestrate/journal.sh audit %s  (ou /run-audit)\n' "$RUN_ID"
 if [ "$PLAFOND_ATTEINT" = 1 ]; then
   printf '\n  %sRun arrêté sur une limite hebdomadaire%s — le reste du plan est intact.\n' "$C_Y" "$C_0"
   printf '  Le rejouer plus tard, sans recalculer l'\''ordre : /orchestrate --resume %s\n' "$RUN_ID"
