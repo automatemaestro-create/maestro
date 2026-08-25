@@ -2445,13 +2445,65 @@ pas, et le premier des trois est celui que le merge donnerait le plus envie de l
 mergée, que reste-t-il à sauver ? ») — or un merge dit ce qui est parti sur `origin/main`, jamais
 ce qui est resté sur le disque.
 
-⚠ **Le pilote d'un run l'a, une session non** : `gc` refuse par construction de retirer le worktree
-de la **session courante**, et une session qui merge par `/ticket-finish` est justement dedans. Le
-pilote, lui, se tient dehors — c'est pourquoi le quatrième déclencheur vit dans
-`scripts/orchestrate/run.sh` (`merge_ramasse`) et non dans `lib.sh merge-mr`, où il aurait servi
-tout le monde d'un coup mais aurait fait dépendre `lib.sh` de `worktree.sh`, qui en dépend déjà. En
-clôture interactive, worktree et branche **restent** donc, et `/ticket-finish` le **dit** au lieu de
-le taire : ils partiront au prochain `/ticket-start` ou avec `/branch-cleanup`.
+⚠ **La garde « session courante » ne se lève pas — c'est la session qui se déplace** (#519). `gc`
+refuse par construction de retirer le worktree de la session qui l'appelle, et une session qui merge
+par `/ticket-finish` est justement dedans : c'est cette contrainte de **position**, et non un choix
+de conception, qui a d'abord donné le quatrième déclencheur au seul appelant se tenant dehors — le
+pilote d'un run, dans `scripts/orchestrate/run.sh` (`merge_ramasse`) et non dans `lib.sh merge-mr`,
+où il aurait servi tout le monde d'un coup mais aurait fait dépendre `lib.sh` de `worktree.sh`, qui
+en dépend déjà. La contrainte se lève sans toucher à la garde : `ExitWorktree` rend le répertoire de
+travail d'avant `EnterWorktree`, donc le clone principal, où se tient précisément le pilote. D'où un
+**cinquième déclencheur** — la clôture interactive, ci-dessous.
+
+#### Le cinquième déclencheur : la session qui merge ramasse elle-même (#519)
+
+Depuis #418 la clôture interactive va jusqu'au merge ; le ménage, lui, attendait encore le
+**prochain** `/ticket-start` ou un `/branch-cleanup` explicite. Sur le verdict `0` de `merge-mr`,
+`/ticket-finish` sort donc du worktree — `ExitWorktree action: "keep"` — puis rejoue les deux verbes
+du pilote, dans l'ordre du pilote :
+
+```bash
+bash scripts/git/worktree.sh gc --iid <iid>            # depuis le clone principal, la garde ne matche plus
+bash scripts/gitlab/lib.sh cleanup-merged --auto <branche>
+```
+
+**`action: "keep"`, jamais `"remove"`**, et pour deux raisons indépendantes : le tool ne retire que
+les worktrees qu'`EnterWorktree` a **créés** dans la session, or ceux du dépôt sont créés par
+`worktree.sh create` et seulement *rejoints* par `EnterWorktree path` — sa documentation dit
+explicitement qu'`ExitWorktree` ne les retirera pas ; et même s'il le pouvait, il court-circuiterait
+tous les garde-fous accumulés ici — confirmation du merge par la forge (#197), mesure du travail non
+sauvegardé contre le sha de merge (#438), pose de « Terminé » (#275), rattrapage des coquilles
+(#422). **On sort du worktree avec `ExitWorktree`, on nettoie avec les verbes du dépôt.**
+
+**Aucun code nouveau** : `gc --iid` et `cleanup-merged --auto` existent depuis #438 et #305, et une
+fois la session sortie, la garde « session courante » ne matche simplement plus — le répertoire
+courant est alors le clone principal, écarté comme `principal`. Le ticket est un changement de
+prompts, de doc et de garde-fous de test.
+
+Trois propriétés partagées avec le quatrième déclencheur, et une qui est propre au cinquième :
+
+- **sur `0` seulement** — sur `3`/`4`/`5`/`6` la PR est encore ouverte et le travail vit encore dans
+  ce worktree : rien n'est retiré, et la session y reste ;
+- **ciblé**, et dans **cet ordre** : `git branch -D` refuse une branche encore empruntée (§9.5) ;
+- **la garde du travail non sauvegardé n'est ni contournée ni doublée** — c'est `gc` qui la tient, et
+  ce qu'il refuse remonte tel quel dans le résumé de clôture, avec la cause qu'il a nommée ;
+- ce qui lui est propre : **la session finit dans le clone principal**, et non dans le worktree du
+  ticket qu'elle vient de livrer. C'est le but, pas un dommage collatéral.
+
+**Pas de doublon avec le quatrième.** En session de run, `guard.sh` refuse `pipeline-wait` **et**
+`merge-mr` (§11.6), donc le verdict `0` n'y est jamais atteint et cette étape ne s'y déclenche
+jamais. Les deux ramassages sont exclusifs **par construction** — aucun drapeau à tenir d'accord.
+
+**Le ménage vient après le verdict du merge, jamais avant** : si `ExitWorktree` ou `gc` échoue, un
+ticket mergé doit rester un ticket mergé. L'échec du ménage se dit, et ne change pas le verdict.
+
+**Pourquoi maintenant.** Cette fenêtre — worktree **soldé mais encore habité** — n'est pas qu'une
+question de propreté : c'est celle dans laquelle l'incident de #503 s'est produit le 2026-08-24. Une
+session interactive a mergé #497 à 21:00:54 et est restée dans son worktree ; à 21:09:51 le `gc`
+complet d'un run démarrant son ticket suivant l'a vidé, désenregistré et a purgé sa branche — la
+session a découvert son répertoire courant vide sept minutes plus tard, sur un `No such file or
+directory` qui ne nommait pas sa cause. Fermer la fenêtre ici **supprime l'occasion** ; #503 corrige
+la garde qui n'a pas protégé. Les deux sont complémentaires, aucun ne rend l'autre inutile.
 
 C'est le **symétrique de `cleanup-merged`** (#23, §9.5), qui purge les branches locales mergées au
 démarrage d'un ticket — et qui, dans `ensure`, tourne **juste après** ce ramassage : `git branch -D`
@@ -2495,6 +2547,8 @@ serveur ? »**, posée dans cet ordre :
 | `/ticket-start` | `worktree.sh ensure` → `gc --auto` | le seul point de passage garanti d'un ticket ; muet quand il n'y a rien à faire |
 | [`/branch-cleanup`](../.claude/commands/branch-cleanup.md) | `worktree.sh gc`, **avant** la purge des branches | le merge vient d'être confirmé, c'est le moment le plus précoce |
 | `scripts/orchestrate/run.sh` | `gc --auto` au démarrage du run | c'est là que l'accumulation fait le plus mal, sans personne devant |
+| `scripts/orchestrate/run.sh` | `merge_ramasse` → `gc --auto --iid`, sur le verdict `0` (#438) | le pilote merge, donc il sait le premier que le worktree est soldé (§11.11) |
+| [`/ticket-finish`](../.claude/commands/ticket-finish.md) | `ExitWorktree` → `gc --iid`, sur le verdict `0` (#519) | idem, côté clôture interactive : la session sort d'abord, la garde ne matche plus |
 
 L'ordre dans `/branch-cleanup` n'est pas cosmétique : `git branch -D` **refuse** une branche
 empruntée par un worktree (« checked out at … »). Sans ramassage préalable, les branches des
@@ -4591,6 +4645,14 @@ titre que le `sync-main` de `merge-mr` (ni le merge, ni le drain, ni le run n'é
 répertoire résiste) ; et il est accroché **au verdict, pas à la boucle** — les deux drains passent
 par `merge_tente`, donc il n'existe aucun instant où « mergé » est vrai sans que le ménage ait été
 tenté. `MAESTRO_ORCHESTRATE_RAMASSAGE=0` l'éteint.
+
+⚠ **Ce déclencheur n'est plus le seul de son espèce, et les deux ne se croisent jamais** (#519,
+§9.2). La clôture **interactive** ramasse elle aussi ce que son merge rend inutile, en sortant
+d'abord du worktree (`ExitWorktree`) pour se replacer là où le pilote se tient déjà. Aucun doublon à
+craindre : en session de run, `guard.sh` refuse `pipeline-wait` **et** `merge-mr` (§11.6), donc le
+verdict `0` n'y est jamais atteint et le ramassage de `/ticket-finish` ne s'y déclenche jamais — les
+deux sont exclusifs par construction, sans drapeau à tenir d'accord. Ce qui a changé côté clôture
+n'a rien changé ici : `merge_ramasse` reste le ramasseur du pilote, et lui seul.
 
 **Pourquoi au fil de l'eau plutôt qu'en salve.** C'est le renversement du constat de #299 : à la fin
 d'un run, les PR ne sont pas en conflit avec `main` (toutes les branches partent du même

@@ -34,6 +34,7 @@ la décision (docs/10 §8.3).
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -912,7 +913,7 @@ def test_le_resume_de_cloture_rend_le_deblocage_sur_sa_propre_ligne() -> None:
     tenté » est la conséquence d'un abandon de la remédiation, « refusé » un verdict sur la PR. Les
     confondre ferait chercher un problème de PR là où il y a une remédiation inachevée.
     """
-    resume = _etape(_prompt("ticket-finish.md"), 14)
+    resume = _etape(_prompt("ticket-finish.md"), 15)
     lignes = [ligne for ligne in resume.splitlines() if ligne.lstrip().startswith("| **")]
     deblocage = [ligne for ligne in lignes if "**Déblocage**" in ligne]
     assert len(deblocage) == 1, (
@@ -964,3 +965,240 @@ def test_ticket_ship_annonce_le_deblocage_sans_le_reimplementer() -> None:
     # est nommée, et c'est elle qui en porte les règles.
     delegation = _etape(ship, 7)
     assert "/mr-fix" in delegation and "/ticket-finish" in delegation
+
+
+# =====================================================================================
+# Le worktree se ramasse dans la session qui merge (#519)
+# =====================================================================================
+# Le ménage d'après-merge existait déjà, mais D'UN SEUL CÔTÉ lui aussi : le pilote d'un run retire
+# worktree et branche sur le verdict `0` depuis #438, pendant qu'en clôture interactive ils
+# attendaient le PROCHAIN `/ticket-start`. La raison n'était pas un choix de conception mais une
+# contrainte de position — `gc` refuse de retirer le worktree de la session qui l'appelle —, et
+# `ExitWorktree` la lève en replaçant la session dans le clone principal.
+#
+# Ce qui se garde ici est encore un PROMPT, pour la raison de la section précédente : aucun code
+# n'a été écrit (`gc --iid` et `cleanup-merged --auto` existent depuis #438 et #305, et leur
+# mécanique est gardée par `test_worktree.py`). Ce qui peut se perdre est donc ce que la commande
+# PRESCRIT — les deux verbes, leur ordre, le verdict qui les déclenche, et les contournements
+# qu'elle s'interdit.
+
+
+def _aplati(texte: str) -> str:
+    """Le texte sur une seule ligne, espaces normalisés.
+
+    Les prompts sont repliés à 100 colonnes : chercher « A … B » à quelques mots de distance y
+    échouerait une fois sur deux selon l'endroit où tombe le retour à la ligne. Aplatir d'abord
+    fait porter le motif sur la phrase plutôt que sur sa mise en page.
+    """
+    return re.sub(r"\s+", " ", texte)
+
+
+def _ramassage() -> str:
+    """L'étape de ramassage de `/ticket-finish` — celle qui suit le merge et précède le résumé."""
+    etape = _etape(_prompt("ticket-finish.md"), 14)
+    assert "ExitWorktree" in etape, (
+        "l'étape 14 n'est pas celle du ramassage — la numérotation du prompt a changé"
+    )
+    return etape
+
+
+def test_sur_un_merge_reussi_la_cloture_ramasse_son_worktree() -> None:
+    """Le premier critère : sortir du worktree, puis les deux verbes du pilote, dans son ordre.
+
+    L'ORDRE est le seul point non négociable des deux : `git branch -D` refuse une branche encore
+    empruntée par un worktree (#305), donc purger avant d'avoir retiré ne purgerait jamais rien —
+    et l'inversion serait silencieuse, la clôture continuant comme si de rien n'était.
+    """
+    etape = _aplati(_ramassage())
+    sortie = etape.find("ExitWorktree")
+    gc = etape.find("worktree.sh gc --iid")
+    purge = etape.find("cleanup-merged --auto")
+    assert gc > 0, "le retrait du worktree doit passer par `worktree.sh gc --iid`"
+    assert purge > 0, "la purge de la branche doit passer par `lib.sh cleanup-merged --auto`"
+    assert sortie < gc < purge, (
+        "l'ordre prescrit doit être : sortir du worktree, retirer le worktree, purger la branche — "
+        f"trouvé ExitWorktree={sortie}, gc={gc}, cleanup-merged={purge}"
+    )
+
+
+def test_le_ramassage_ne_se_declenche_que_sur_un_merge_reussi() -> None:
+    """Le deuxième critère : sur `3`/`4`/`5`/`6`, rien n'est retiré.
+
+    Ces quatre verdicts laissent la PR ouverte, donc un travail qui vit encore dans ce worktree.
+    Un ménage qui s'y déclencherait retirerait le répertoire de travail d'un ticket non livré —
+    exactement le dommage que la garde de `gc` existe pour empêcher, mais par le mauvais bout.
+    """
+    etape = _aplati(_ramassage())
+    assert re.search(r"sur\s+`0`\s+seulement", etape), (
+        "l'étape doit dire dans son titre que seul le verdict `0` la déclenche"
+    )
+    assert re.search(r"[Nn]'entreprends rien sur `3`", etape), (
+        "les quatre autres verdicts doivent être nommés et écartés explicitement"
+    )
+    # Et le bloc du verdict `0` renvoie ici : sans ce fil, une session lirait le merge sans jamais
+    # apprendre qu'une étape lui succède.
+    assert "étape 14" in _aplati(_verdicts_de_cloture()["0"]), (
+        "le verdict `0` doit renvoyer à l'étape de ramassage — c'est lui qui la déclenche"
+    )
+
+
+def test_le_ramassage_ne_court_circuite_aucun_garde_fou() -> None:
+    """Le troisième critère : `ExitWorktree` sort, il ne nettoie pas.
+
+    `action: "remove"` est refusé pour deux raisons indépendantes, et la seconde suffirait seule :
+    le tool ne connaît ni la confirmation du merge par la forge (#197), ni la mesure du travail non
+    sauvegardé contre le sha de merge (#438), ni la pose de « Terminé » (#275), ni le rattrapage
+    des coquilles (#422). On sort du worktree avec `ExitWorktree`, on nettoie avec les verbes du
+    dépôt.
+    """
+    prescrit = re.compile(r"(?<!jamais )`?action: \"remove\"")
+    # Le motif prouve d'abord qu'il sait trouver ce qu'il cherche — sinon un ✓ ne dirait rien.
+    for fautif in (
+        'appelle `ExitWorktree` avec `action: "remove"`',
+        'sors du worktree : `action: "remove"`',
+    ):
+        assert prescrit.search(_aplati(fautif)), f"le motif rate un cas fautif : {fautif}"
+
+    etape = _aplati(_ramassage())
+    assert 'action: "keep"' in etape, "la sortie doit se faire en `action: \"keep\"`"
+    for occurrence in re.finditer(r'action: "remove"', etape):
+        amont = etape[max(0, occurrence.start() - 40) : occurrence.start()]
+        assert re.search(r"[Jj]amais|pas\b|refus", amont), (
+            "`action: \"remove\"` n'apparaît que pour être interdit, jamais pour être employé : "
+            f"…{amont}"
+        )
+
+    # La garde du travail non sauvegardé est celle de `gc`, et elle n'est ni contournée…
+    # Ce qu'une session LANCE tient dans les blocs de code : le corps du texte, lui, cite
+    # `git branch -D` pour expliquer POURQUOI l'ordre compte, et confondre les deux rendrait le
+    # test rouge sur la phrase qui justifie la règle qu'il garde.
+    lance = "\n".join(re.findall(r"^ *```\n(.*?)^ *```", _ramassage(), re.M | re.S))
+    for fautif in ("bash scripts/git/worktree.sh remove 519 --force\n", "git branch -D feat/519\n"):
+        assert re.search(r"worktree\.sh remove|git branch -D|--force", fautif), (
+            f"le motif rate un cas fautif : {fautif}"
+        )
+    for contournement in ("worktree.sh remove", "git branch -D", "--force"):
+        assert contournement not in lance, (
+            f"le ramassage ne doit lancer aucun contournement de `gc` — trouvé : {contournement}"
+        )
+    # …ni doublée par une vérification maison : deux formules qui divergeraient se remarqueraient
+    # trop tard, et c'est la garde qui perdrait.
+    assert re.search(r"non sauvegardé", etape), (
+        "l'étape doit nommer ce que `gc` conserve, pour que l'abstention se relaie au lieu de "
+        "passer pour une panne"
+    )
+
+
+# La règle PÉRIMÉE ne disait pas « conservé » (ce que `gc` fait toujours d'un worktree porteur de
+# travail) mais « conservé EN ATTENDANT un autre geste » : c'est le report qui a disparu, pas la
+# conservation. Le motif vise donc le couple, jamais le mot seul.
+_MENAGE_DIFFERE = re.compile(
+    r"(conservés|restent|resteront|partiront)[^.]{0,120}(/ticket-start|/branch-cleanup)"
+)
+
+
+def test_plus_aucun_prompt_n_annonce_un_menage_reporte() -> None:
+    """Le quatrième critère, côté prompts : une seule version de la règle en vigueur.
+
+    Deux prompts qui se contredisent ne se départagent pas : c'est celui que la session lit en
+    dernier qui l'emporte, donc le hasard. La règle d'hier — « ils partiront au prochain
+    `/ticket-start` » — doit avoir disparu, pas cohabiter avec la nouvelle.
+    """
+    for fautif in (
+        "worktree et branche locale conservés (session en cours dedans) : ils partiront au "
+        "prochain `/ticket-start`",
+        "la locale et le worktree, eux, restent — ils partiront avec `/branch-cleanup`",
+    ):
+        assert _MENAGE_DIFFERE.search(_aplati(fautif)), f"le motif rate un cas fautif : {fautif}"
+
+    fautifs = [
+        f"{fichier.name} : …{trouve.group(0)[:80]}…"
+        for fichier in sorted(COMMANDES.glob("*.md"))
+        for trouve in [_MENAGE_DIFFERE.search(_aplati(fichier.read_text(encoding="utf-8")))]
+        if trouve
+    ]
+    assert not fautifs, (
+        "un prompt annonce encore un ménage reporté à un autre geste (#519) :\n"
+        + "\n".join(fautifs)
+    )
+
+
+def test_le_resume_de_cloture_rend_ce_qui_a_ete_ramasse() -> None:
+    """Le premier critère, seconde moitié : le résumé rend le retrait, ou la cause de l'abstention.
+
+    Une abstention de `gc` n'est pas un échec de la clôture — c'est un travail que personne
+    n'attend plus là, et le seul endroit où l'information peut encore atteindre quelqu'un.
+    """
+    resume = _aplati(_etape(_prompt("ticket-finish.md"), 15))
+    merge = [
+        ligne for ligne in _etape(_prompt("ticket-finish.md"), 15).splitlines()
+        if ligne.lstrip().startswith("| **Mergé**")
+    ]
+    assert len(merge) == 1, "le tableau de résumé doit porter une ligne « Mergé »"
+    assert "worktree" in merge[0], (
+        "la ligne « Mergé » doit dire ce qu'il est advenu du worktree — c'est elle qui annonçait "
+        "sa conservation"
+    )
+    assert "clone principal" in resume, (
+        "le résumé doit dire où la session se trouve désormais : finir ailleurs qu'on a commencé "
+        "est le seul effet de bord visible du ticket"
+    )
+
+
+def test_le_ramassage_de_la_cloture_et_celui_du_pilote_sont_exclusifs() -> None:
+    """Aucun drapeau à tenir d'accord : en run, le verdict `0` n'est jamais atteint.
+
+    `guard.sh` refuse `pipeline-wait` ET `merge-mr` à toute session de run (#419), donc la clôture
+    s'y arrête avant le merge et cette étape ne s'y joue pas. C'est le pilote qui ramasse après son
+    propre merge (#438). L'exclusion est par construction — encore faut-il que le prompt la dise,
+    sans quoi une session tenterait le ménage d'un worktree que le pilote occupe.
+    """
+    etape = _aplati(_ramassage())
+    assert "run autonome" in etape and "guard.sh" in etape, (
+        "l'étape doit s'exclure elle-même d'un run, et nommer ce qui la tient"
+    )
+    assert "#438" in etape, "et nommer qui ramasse à sa place là-bas — le pilote"
+
+    # Le refus est réel, pas seulement écrit : c'est lui qui rend le verdict `0` inatteignable.
+    r = _guard("--test", "bash scripts/gitlab/lib.sh merge-mr 519")
+    assert r.returncode == 2, f"le merge devrait être refusé en session de run : {r.stdout}"
+
+
+def test_exitworktree_est_autorise_nu_comme_enterworktree() -> None:
+    """Le cinquième critère : sans lui, la clôture s'interrompt sur son tout dernier geste.
+
+    C'est le défaut que #199 avait corrigé à l'autre bout du cycle, pour `EnterWorktree`. Et comme
+    lui, `ExitWorktree` ne déclare aucun `ruleContentField` (mesuré le 2026-08-25, #520) : une
+    règle paramétrée — `ExitWorktree(keep)` — ne matcherait rien du tout, silencieusement.
+    """
+    reglages = json.loads((RACINE / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    allow = reglages["permissions"]["allow"]
+    assert "ExitWorktree" in allow, (
+        "`ExitWorktree` doit être dans l'`allow` du dépôt — sinon la clôture demande une "
+        "autorisation qu'une session autonome n'a personne pour donner"
+    )
+    assert "EnterWorktree" in allow, "le pendant d'entrée ne doit pas avoir disparu (#199)"
+    parametrees = [regle for regle in allow if regle.startswith("ExitWorktree(")]
+    assert not parametrees, (
+        f"une règle paramétrée ne matcherait rien : {parametrees} — poser le tool NU, comme "
+        "`EnterWorktree` et `Skill`"
+    )
+
+
+def test_ticket_ship_herite_du_ramassage_sans_le_reimplementer() -> None:
+    """`/ticket-ship` délègue le merge, donc il délègue ce qui le suit.
+
+    Il n'a rien à rejouer — mais son résumé, lui, est le sien : une commande « zéro friction » qui
+    finit dans un autre répertoire que celui où elle a commencé doit le dire, sans quoi la
+    surprise se découvre au premier chemin relatif qui ne résout plus.
+    """
+    ship = _prompt("ticket-ship.md")
+    assert "#519" in ship
+    aplati = _aplati(ship)
+    assert "clone principal" in aplati, (
+        "le résumé de `/ticket-ship` doit dire où la session se trouve à la fin"
+    )
+    for verbe in ("worktree.sh gc --iid", "cleanup-merged --auto", "ExitWorktree"):
+        assert verbe not in aplati, (
+            f"`/ticket-ship` ne doit pas ré-implémenter le ramassage — trouvé : {verbe}"
+        )

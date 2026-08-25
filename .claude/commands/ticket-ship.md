@@ -115,6 +115,10 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    dit, à l'étape 8, si le lot que tu viens de shipper est mergé ou seulement « En revue ». Un
    ticket mergé **au terme d'un déblocage** est mergé sans réserve : c'est le même `merge-mr` qui a
    tranché, avec les mêmes quatre prérequis.
+   ⚠ **Sur un merge réussi, elle te ramène dans le clone principal** (#519) : son dernier geste est
+   de sortir du worktree du ticket pour le retirer, lui et sa branche locale. Ne t'en étonne pas et
+   ne le rejoue pas — les étapes 8 et 9 se jouent très bien de là, les helpers `lib.sh` visant le
+   dépôt d'où qu'on les appelle.
 
 8. **Sous-ticket d'un parent de suivi ?** Vérifie : `bash scripts/gitlab/lib.sh parent-of <iid>`.
    Si un parent est trouvé (convention `docs/10-workflow-git.md` §5.1), prépare l'**annonce de la
@@ -152,7 +156,10 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
    sans succès — jamais fondue dans le verdict du merge, #460), lien de la
    PR, temps loggé — et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
    ajoute l'annonce de l'étape 8 (prochain lot démarrable dès maintenant, ou parent fermé si
-   c'était le dernier).
+   c'était le dernier). Sur un merge réussi, reprends aussi ce que son **ramassage** a retiré —
+   worktree et branche locale — ou la cause de son abstention, et dis que la session travaille
+   désormais depuis le **clone principal** (#519) : une commande « zéro friction » qui change de
+   répertoire sans le dire fait découvrir la surprise au premier chemin relatif qui ne résout plus.
    **Jamais de ✅ global** : un ticket dont la PR est restée ouverte sur un pipeline rouge n'est pas
    « shippé avec une réserve », il est **inachevé**, et le résumé doit le dire avec ce mot-là — un
    verdict qui masque son blocage est exactement ce que #303 a supprimé ailleurs.

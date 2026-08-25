@@ -2752,12 +2752,18 @@ merge_cause() {
 # celui-ci.
 #
 # POURQUOI LE PILOTE ET PAS `merge-mr`. Mettre le ramassage dans `merge-mr` l'aurait donné à tous
-# ses appelants d'un coup — c'est là que vit déjà `sync-main` —, mais deux raisons l'écartent :
-# `lib.sh` devrait alors appeler `worktree.sh`, qui l'appelle déjà (dépendance mutuelle entre deux
-# couches qui n'en ont qu'une aujourd'hui) ; et surtout le pilote est le SEUL appelant qui se tienne
-# HORS des worktrees. Une session qui merge par /ticket-finish est DANS celui qu'il faudrait
-# retirer, et `gc` refuse par construction de retirer le sol sous les pieds de la session courante :
-# le geste y serait un no-op déguisé en ménage.
+# ses appelants d'un coup — c'est là que vit déjà `sync-main` —, mais `lib.sh` devrait alors appeler
+# `worktree.sh`, qui l'appelle déjà : une dépendance mutuelle entre deux couches qui n'en ont qu'une
+# aujourd'hui. La seconde raison, elle, a cessé de valoir : le pilote fut le SEUL appelant à se tenir
+# HORS des worktrees, une session qui merge par /ticket-finish étant DANS celui qu'il faudrait
+# retirer, et `gc` refusant par construction de retirer le sol sous les pieds de la session courante.
+# C'était une contrainte de POSITION, et #519 la lève sans toucher à la garde : la clôture
+# interactive appelle `ExitWorktree` d'abord, se replace dans le clone principal — là où ce pilote se
+# tient — puis joue ces deux verbes-ci, dans cet ordre-ci (docs/10 §9.2).
+#
+# AUCUN DOUBLON À CRAINDRE, et rien à tenir d'accord : en session de run, `guard.sh` refuse
+# `pipeline-wait` ET `merge-mr`, donc le verdict `0` n'y est jamais atteint et le ramassage de
+# /ticket-finish ne s'y déclenche jamais. Les deux sont exclusifs par construction.
 #
 # CIBLÉ, jamais balayé : `gc --iid` et `cleanup-merged <branche>` ne regardent que ce ticket-là. Le
 # drain appelle ceci une fois par PR mergée, et un balayage complet y coûterait une lecture de forge
