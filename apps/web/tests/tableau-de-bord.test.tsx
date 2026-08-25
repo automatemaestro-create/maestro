@@ -18,6 +18,7 @@
  */
 
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import PageCouts from "@/app/couts/page";
@@ -424,7 +425,10 @@ describe("le ticket externe dans les tables de coûts (#192)", () => {
       serie: [],
     };
     rendreAvecEtat(<PageCouts />);
-    const table = screen.getByRole("region", { name: "Coûts par tâche" });
+    // Depuis #539 la vue par tâche est la première lecture du bloc « Détail de
+    // la période » et non plus un bloc à elle : c'est la règle des trois places
+    // appliquée à cet écran (docs/30 §4), pas un déplacement de la table.
+    const table = screen.getByRole("region", { name: "Détail de la période" });
     expect(
       within(table).getByRole("link", { name: /Ouvrir le ticket externe #192/ }),
     ).toHaveAttribute("href", referenceFactice.url);
@@ -442,7 +446,107 @@ describe("le ticket externe dans les tables de coûts (#192)", () => {
       serie: [],
     };
     rendreAvecEtat(<PageCouts />);
-    const table = screen.getByRole("region", { name: "Coûts par tâche" });
+    const table = screen.getByRole("region", { name: "Détail de la période" });
     expect(within(table).queryByRole("link")).toBeNull();
+  });
+});
+
+describe("le second niveau de la page Coûts (#539)", () => {
+  /**
+   * Une période qui porte les deux lectures. C'est le cas qui compte : c'est
+   * parce que les deux existent que la page dépassait de deux blocs.
+   */
+  function periodePeuplee() {
+    analytics.vue = {
+      depuis: null,
+      pas: "heure",
+      projet: null,
+      total: usageFactice(),
+      executions: [
+        {
+          run_id: "run-7",
+          nb_taches: 2,
+          debut: "2026-07-28T10:00:00Z",
+          fin: "2026-07-28T10:12:00Z",
+          usage: usageFactice(),
+          projet_id: null,
+        },
+      ],
+      agents: [
+        { agent: "dev", role: "Développeur", taches: 1, usage: usageFactice() },
+      ],
+      taches: [coutTacheAgregeeFactice()],
+      serie: [],
+    };
+  }
+
+  it("ouvre sur la vue par tâche, une seule table à la fois", async () => {
+    periodePeuplee();
+    rendreAvecEtat(<PageCouts />);
+    const bloc = screen.getByRole("region", { name: "Détail de la période" });
+    expect(within(bloc).getByText("Par tâche")).toBeInTheDocument();
+    // La table par tâche porte une colonne « Statut » que celle par exécution
+    // n'a pas, et réciproquement pour « Exécution » : c'est le repère le plus
+    // court pour dire laquelle des deux est rendue.
+    expect(within(bloc).getByRole("columnheader", { name: "Statut" })).toBeInTheDocument();
+    expect(
+      within(bloc).queryByRole("columnheader", { name: "Exécution" }),
+    ).toBeNull();
+  });
+
+  it("bascule sur la vue par exécution sans quitter le bloc", async () => {
+    periodePeuplee();
+    const utilisateur = userEvent.setup();
+    rendreAvecEtat(<PageCouts />);
+    const bloc = screen.getByRole("region", { name: "Détail de la période" });
+
+    await utilisateur.click(within(bloc).getByRole("button", { name: "Par exécution" }));
+
+    expect(
+      within(bloc).getByRole("columnheader", { name: "Exécution" }),
+    ).toBeInTheDocument();
+    expect(within(bloc).queryByRole("columnheader", { name: "Statut" })).toBeNull();
+    // Rien d'autre n'a bougé : le bloc est toujours là, et c'est bien un second
+    // niveau — pas une navigation vers un autre écran.
+    expect(
+      screen.getByRole("region", { name: "Détail de la période" }),
+    ).toBe(bloc);
+  });
+
+  it("range la répartition par agent dans la colonne de propriétés", () => {
+    // La troisième place (docs/30 §4) : ce n'est pas un bloc de corps qu'on a
+    // retiré, c'est une ventilation qu'on a rangée. `sobriete.test.tsx` compte,
+    // celui-ci dit **où** elle a atterri.
+    periodePeuplee();
+    rendreAvecEtat(<PageCouts />);
+    const colonne = screen.getByRole("complementary", {
+      name: "Propriétés de la période",
+    });
+    expect(
+      within(colonne).getByRole("heading", { name: "Répartition par agent" }),
+    ).toBeInTheDocument();
+  });
+
+  it("efface le bloc quand la période n'a ni tâche ni exécution", () => {
+    analytics.vue = {
+      depuis: null,
+      pas: "heure",
+      projet: null,
+      total: usageFactice(),
+      executions: [],
+      agents: [],
+      taches: [],
+      serie: [],
+    };
+    rendreAvecEtat(<PageCouts />);
+    // Un bloc à deux onglets vides serait la page à moitié chargée que #281 a
+    // précisément voulu éviter : la page dit « rien encore », les chiffres
+    // restent, le bloc part.
+    expect(
+      screen.queryByRole("region", { name: "Détail de la période" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("region", { name: "Totaux de la période" }),
+    ).toBeInTheDocument();
   });
 });

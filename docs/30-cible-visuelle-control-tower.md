@@ -295,6 +295,15 @@ arrivent — **rien n'est annoncé**. Aucun `aria-label`, si soigné soit-il, ne
 2. **Le niveau AAA n'est pas visé.** Le contraste 7:1 imposerait `neutral-700` minimum pour tout
    texte secondaire et supprimerait la distinction primaire/secondaire dont la densité dépend.
 
+⚠ **Elles vivent désormais aussi dans la doc du produit** (#539) —
+[`apps/web/README.md` §« Le filet d'accessibilité »](../apps/web/README.md#le-filet-daccessibilité-537)
+et [docs/05 §4](./05-interface-control-tower.md) —, et c'est le sens de « plutôt qu'à découvrir plus
+tard » : une note de recherche se lit une fois, au moment de l'arbitrage. Une exemption qu'on ne
+retrouve pas dans la doc du produit est une exemption que le prochain ticket prendra pour un oubli,
+ou pour un défaut à corriger dans l'urgence d'une revue. Ni l'une ni l'autre n'est un blanc-seing
+sur son voisinage : le graphe reste soumis au reste du filet, et « AAA non visé » ne dispense
+d'**aucun** critère AA.
+
 ### 3.6 Trancher : primitives accessibles, ou checklist ?
 
 Le ticket demande de trancher, et de chiffrer plutôt que de supposer.
@@ -400,6 +409,38 @@ n'y a pas touché. Les deux dépassements sont `/couts` et `/parametres`, tous d
 d'exploration : la règle leur donne une réponse (une colonne de propriétés, ou un second niveau)
 plutôt qu'un interdit.
 
+#### Le comptage est passé à la machine (#539, 2026-08-26)
+
+Le tableau ci-dessus est celui de la recherche, compté **à la main** sur le code du 2026-08-25 ;
+il vaut désormais comme état de départ, pas comme mesure courante. Celle-ci vit dans
+[`apps/web/tests/sobriete.test.tsx`](../apps/web/tests/sobriete.test.tsx), qui monte les dix écrans
+du menu et échoue au-delà du plafond — c'est ce qui rend la règle opposable à un ticket futur, et
+le tableau ci-dessus ne l'était pas : personne ne recompte une doc.
+
+Les deux dépassements sont **résorbés** (docs/05 §2.5 pour `/couts`, `apps/web/README.md` pour la
+règle appliquée) : `/couts` tient en 3 blocs — la répartition par agent passée en colonne de
+propriétés, les deux tables réunies sous un second niveau — et `/parametres` en 3 familles, dont
+les sept sections deviennent les sous-parties.
+
+⚠ **Un chiffre du tableau était faux, et c'est la mesure automatique qui l'a montré** : `/journal`
+compte **2** blocs de corps et non 3 — les filtres et le fil. Le troisième était le paragraphe
+d'introduction de la page, une `Carte balise="p"` : une carte, pas un bloc de plein format. L'écart
+ne changeait aucun verdict, mais il dit ce que vaut un comptage manuel — et c'est exactement le
+reproche que ce ticket fait au §5 de docs/05 (le « piège de fraîcheur » de #476).
+
+Trois écarts entre ce que la règle **dit** et ce que le test **compte**, tranchés en l'écrivant :
+
+- **la balise fait foi.** Un bloc est une `<section>`, la colonne de propriétés un `<aside>`, un
+  chiffre de tête une `TuileChiffre` (`data-chiffre`, posé sur la primitive). Une `<nav>` n'occupe
+  aucune place : le filtre de période de `/couts`, le sommaire de `/parametres` et la bascule de
+  vues d'un run règlent l'écran ou y naviguent ;
+- **l'arbitrage n'est pas déclaré, il est prouvé.** Chaque écran est monté **deux fois** — files
+  pleines, puis files vides — et ce qui survit aux deux est ce que le plafond compte. Un bloc qui
+  prétendrait arbitrer sans disparaître compte comme les autres, sans que personne ait à le classer ;
+- **il n'y a qu'une colonne de propriétés par écran.** La troisième place étant la seule sans
+  plafond, elle serait sinon la sortie de secours des deux autres : emballer chaque bloc dans son
+  `<aside>` rendrait n'importe quel écran conforme sans rien épurer.
+
 ### 4.3 Ce qu'elle répond au prochain ticket
 
 - « Ajouter un panneau X au tableau de bord » → **le corps est plein**. Soit X remplace un bloc
@@ -480,7 +521,11 @@ pour un gain nul sur le problème mesuré. La direction est de **donner du relie
   `banc-mise-en-page`, `chrome-maestro`, `@radix-ui` pour les 3 motifs qui échouent.
 - **Écarté** : le design system Figma comme source — **Code Connect refusé, aucune bibliothèque
   d'organisation** (§5). Figma reste un outil d'exploration.
-- **À réparer** : `captures.sh` (projet actif manquant, §5).
+- ~~**À réparer** : `captures.sh` (projet actif manquant, §5).~~ **Réparé** (vérifié le 2026-08-26 au
+  lot 7) : `captures.sh` déclare le projet de la démo dans un dépôt à lui, en **lisant** son
+  identifiant dans `maestro/controltower/demo.py` plutôt qu'en le recopiant, et `captures.mjs` pose
+  `maestro.projet.actif` dans le `localStorage` — les deux moitiés sont indissociables et présentes.
+  Le lot 7 devait ouvrir un ticket « si quelqu'un le confirme » ; la confirmation a rendu l'inverse.
 
 ### 6.3 Découpage du chantier — parent + 7 lots, 7 sessions
 
@@ -498,6 +543,13 @@ final **sauf** ceux qui *sont* le livrable du lot (lots 2 et 5).
 | 7 | **Les trois places** — application de la règle de sobriété à `/couts` et `/parametres`, + doc et tests du chantier | 1 | tous |
 
 **Total : 7 sessions.** Les lots 3 et 4 sont marqués `(parallèle)` : ils ne se touchent pas.
+
+⚠ **Le lot 7 a livré une chose que ce tableau ne prévoyait pas** : le comptage lui-même
+(`apps/web/tests/sobriete.test.tsx`, §4.2). Le découpage l'appelait « doc et tests du chantier »,
+c'est-à-dire une couverture de ce que les six autres lots avaient produit ; ce qui manquait
+réellement était la **machine qui refuse un huitième bloc**. Sans elle, la règle du §4 aurait rejoint
+la doc de langage visuel qui existait déjà, détaillée, et par-dessus laquelle 18 recopies de carte
+sont passées (§3.6) : c'est le même défaut, un cran plus haut.
 
 **L'ordre porte la décision** : les tokens d'abord (lot 1), leur test tout de suite (lot 2) — sans
 quoi le lot 1 se défait au premier écran retouché. Le filet (lot 5) avant les régions live (lot 6),

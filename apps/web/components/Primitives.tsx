@@ -539,6 +539,13 @@ export type Renvoi = { href: string; libelle: string };
  * Un chiffre de tête : la valeur, ce qu'elle compte, ce qu'elle recouvre, et
  * la page où le détail se trouve. C'est le format des indicateurs du tableau
  * de bord — un résumé qui renvoie, jamais un cul-de-sac.
+ *
+ * `data-chiffre` (#539) : c'est **ici** que « la première des trois places »
+ * devient comptable. La règle des trois places plafonne le bandeau de tête à
+ * quatre chiffres (docs/30 §4), et `tests/sobriete.test.tsx` reconnaît ce
+ * bandeau à ce marqueur plutôt qu'à une liste d'écrans recopiée. Il est posé
+ * sur la primitive et non sur les appelants : un cinquième chiffre se compte
+ * du seul fait d'être une tuile, sans que personne ait à le déclarer.
  */
 export function TuileChiffre({
   libelle,
@@ -572,7 +579,7 @@ export function TuileChiffre({
     // Densité `compacte` et non `normale` : depuis #248 le tableau des tâches
     // prend la hauteur que la page lui laisse, donc tout ce que cette rangée
     // garde en hauteur, il le perd. Un pas nommé plutôt qu'un `py-*` improvisé.
-    <Carte densite="compacte" className="flex flex-col">
+    <Carte densite="compacte" data-chiffre="" className="flex flex-col">
       <p className="flex items-center gap-1.5 text-annexe text-neutral-500 dark:text-neutral-400">
         {Icone && <Icone className="size-3.5 shrink-0" />}
         {libelle}

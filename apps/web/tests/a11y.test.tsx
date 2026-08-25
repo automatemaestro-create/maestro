@@ -31,8 +31,13 @@
  * `chargerSante`, ni le pool MCP, ni l'explorateur** (piège documenté dans
  * `apps/web/README.md`). Un écran qui les lit partirait sur un vrai `fetch` et
  * n'offrirait à l'audit qu'une bannière d'erreur — donc un écran vert parce
- * qu'il est vide. Le mock local ci-dessous **remplace** celui du setup, d'où la
+ * qu'il est vide. Les mocks ci-dessous **remplacent** ceux du setup, d'où la
  * reconduction de `chargerProjets`/`chargerJournal`.
+ *
+ * Le harnais — les dix écrans, leur état, leur montage — vit dans `./ecrans`
+ * depuis #539 : `sobriete.test.tsx` monte exactement les mêmes pages dans le
+ * même état, et deux tables recopiées seraient le premier moyen qu'une suite
+ * audite un produit que l'autre ne monte plus.
  */
 
 import { readFileSync, readdirSync } from "node:fs";
@@ -42,49 +47,13 @@ import { fileURLToPath } from "node:url";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ID_CONTENU_PRINCIPAL, Shell } from "@/components/Shell";
-import { ListeAgents } from "@/components/ListeAgents";
-import { ongletAgentOuDefaut } from "@/lib/agents";
+import { ID_CONTENU_PRINCIPAL } from "@/components/Shell";
 import { marquerGuideVu } from "@/lib/guide";
 import { MENU } from "@/lib/navigation";
-import {
-  EXECUTION_EN_ATTENTE_BRIEF,
-  EXECUTION_TERMINEE,
-  type AnalyticsCouts,
-  type DetailExecution,
-  type PageJournal,
-} from "@/lib/types";
-
-import PageTableauDeBord from "@/app/page";
-import PageBrief from "@/app/brief/page";
-import PageChat from "@/app/chat/page";
-import PageComposer from "@/app/composer/page";
-import PageCouts from "@/app/couts/page";
-import PageJournalEcran from "@/app/journal/page";
-import PageParametres from "@/app/parametres/page";
-import PageRuns from "@/app/runs/page";
-import PageValidations from "@/app/validations/page";
 
 import { auditerLaPage, bloquantes, raconter } from "./axe";
-import {
-  agentFactice,
-  coutExecutionFactice,
-  coutTacheAgregeeFactice,
-  entreeJournalFactice,
-  evenementFactice,
-  ficheCatalogueFactice,
-  pageExplorateurFactice,
-  pageJournalCourante,
-  poserChemin,
-  poserEtatGlobal,
-  poserJournal,
-  poserProjetActif,
-  projetsDeclares,
-  runFactice,
-  tacheFactice,
-  usageFactice,
-  validationFactice,
-} from "./aides";
+import { ECRANS, monterEcran, peuplerEtat } from "./ecrans";
+import { poserProjetActif } from "./aides";
 
 const racine = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -107,189 +76,17 @@ function sourcesDuProduit(): string[] {
 
 // --- Le réseau, pour de bon ------------------------------------------------
 
-const CATALOGUE = [
-  ficheCatalogueFactice({ nom: "dev", role: "Développeur" }),
-  ficheCatalogueFactice({ nom: "qa", role: "Testeur" }),
-];
-
-/** Le détail que l'écran « Valider le brief » ouvre sur le run en attente. */
-function detailFactice(): DetailExecution {
-  return {
-    ...runFactice({ run_id: "run-1", statut: EXECUTION_EN_ATTENTE_BRIEF }),
-    brief: {
-      objectif: "Ajouter l'export CSV des dépenses",
-      perimetre: ["Écran Dépenses", "API /export"],
-      hors_perimetre: ["Le format XLSX"],
-      contraintes: ["Pas de dépendance nouvelle"],
-      criteres_acceptation: ["Le fichier s'ouvre dans un tableur"],
-      hypotheses: ["Les montants sont déjà en euros"],
-      questions: [],
-    },
-    cout: coutExecutionFactice(),
-    evenements: [],
-  };
-}
-
 vi.mock("@/lib/api", async (importOriginal) => {
   const reel = await importOriginal<typeof import("@/lib/api")>();
-  return {
-    ...reel,
-    // Reconduits : ce mock **remplace** celui de `tests/setup.ts`.
-    chargerProjets: async () => projetsDeclares(),
-    chargerJournal: async (): Promise<PageJournal> => pageJournalCourante(),
-    // Ce que le setup ne couvre pas, et sans quoi quatre des dix écrans
-    // s'auditeraient à l'état « bannière d'erreur ».
-    chargerCatalogue: async () => CATALOGUE,
-    chargerSante: async () => ({ statut: "ok" }),
-    chargerRegistreMcp: async () => [],
-    chargerPoolMcp: async () => ({ integrations: [], erreur: null }),
-    chargerExplorateur: async () => pageExplorateurFactice(),
-    chargerDisponibiliteSelecteur: async () => ({
-      disponible: false,
-      motif: "hors_poste",
-      message: "Le sélecteur natif n'est pas disponible ici.",
-      outil: null,
-    }),
-    chargerExecution: async (): Promise<DetailExecution> => detailFactice(),
-  };
+  const { mocksApi } = await import("./ecrans-reseau");
+  return { ...reel, ...mocksApi() };
 });
 
-/**
- * La vue analytics est mockée **au hook** et non à l'API, contrairement au
- * reste : `useAnalyticsCouts` ouvre sa propre WebSocket et se reconnecte en
- * backoff. La couper à la source laisserait le socle du principe « aucun test
- * n'a besoin de backend » (docs/10 §8) tenu par un `fetch` qui échoue et des
- * minuteurs qui survivent au test. Mock **partiel** : `PERIODES`, que la page
- * lit à côté du hook, passe tel quel.
- */
-vi.mock("@/lib/useAnalyticsCouts", async (original) => ({
-  ...(await original<Record<string, unknown>>()),
-  useAnalyticsCouts: () => ({
-    vue: vueAnalytics(),
-    connecte: true,
-    chargement: false,
-    rafraichissement: false,
-    erreur: null,
-  }),
-}));
-
-function vueAnalytics(): AnalyticsCouts {
-  const usage = usageFactice({
-    appels: 12,
-    tokens_entree: 4200,
-    tokens_sortie: 900,
-    tokens_total: 5100,
-    cout_usd: 1.42,
-    duree_ms: 43_000,
-    tours: 3,
-  });
-  return {
-    depuis: null,
-    pas: "heure",
-    projet: "prj-7f3a1c2b",
-    portee: "prj-7f3a1c2b",
-    total: usage,
-    executions: [
-      {
-        run_id: "run-1",
-        nb_taches: 3,
-        debut: "2026-07-28T10:00:00Z",
-        fin: "2026-07-28T10:12:00Z",
-        usage,
-        projet_id: "prj-7f3a1c2b",
-      },
-    ],
-    agents: [{ agent: "dev", role: "Développeur", taches: 2, usage }],
-    taches: [coutTacheAgregeeFactice({ usage })],
-    serie: [{ periode: "2026-07-28T10:00:00Z", usage }],
-  };
-}
-
-// --- L'état partagé, peuplé -------------------------------------------------
-
-/**
- * Un projet qui travaille : des tâches à plusieurs statuts, deux agents, un
- * arbitrage en attente, deux runs — dont un arrêté sur son brief — et un grand
- * livre. Un écran vide n'a presque pas de balises : l'auditer rendrait un vert
- * qui ne parle que du vide, et c'est exactement le verdict qu'on ne veut pas.
- */
-function peuplerEtat(): void {
-  poserEtatGlobal({
-    taches: [
-      tacheFactice({ id: "T-1", statut: "en_cours", titre: "Écrire les tests" }),
-      tacheFactice({
-        id: "T-2",
-        statut: "terminee",
-        titre: "Poser le schéma",
-        agent: "qa",
-        cout_usd: 0.42,
-      }),
-      tacheFactice({ id: "T-3", statut: "backlog", titre: "Documenter" }),
-    ],
-    agents: [
-      agentFactice({ nom: "dev", statut: "occupe", tache_courante: "T-1" }),
-      agentFactice({ nom: "qa", role: "Testeur", taches_terminees: 4 }),
-    ],
-    evenements: [
-      evenementFactice({ statut: "en_cours" }),
-      evenementFactice({ tache_id: "T-2", statut: "terminee" }),
-    ],
-    validations: [validationFactice()],
-    executions: [
-      runFactice({ run_id: "run-1", statut: EXECUTION_EN_ATTENTE_BRIEF }),
-      runFactice({
-        run_id: "run-0",
-        statut: EXECUTION_TERMINEE,
-        nb_taches: 3,
-        cout_usd: 1.42,
-        fin: "2026-07-28T10:12:00Z",
-      }),
-    ],
-    couts: [
-      coutExecutionFactice({ total: usageFactice({ cout_usd: 1.42 }) }),
-    ],
-  });
-  poserJournal([
-    entreeJournalFactice({ titre: "Écrire les tests", statut: "en_cours" }),
-    entreeJournalFactice({ id: "j-0002", titre: "Poser le schéma", statut: "terminee" }),
-  ]);
-}
-
-// --- Les dix écrans ---------------------------------------------------------
-
-/**
- * Un écran = une entrée de menu et le composant que sa route rend.
- *
- * `/agents` est le seul à ne pas passer par son fichier `page.tsx` : c'est un
- * composant **serveur `async`** qui ne fait que lire `?onglet=` avant de rendre
- * `ListeAgents`, et un composant async ne se monte pas dans Testing Library. On
- * rend donc ce qu'il rend, avec l'onglet qu'il aurait résolu — la coquille
- * sautée ne porte pas une balise.
- */
-const ECRANS: { href: string; rendu: () => React.ReactElement }[] = [
-  { href: "/", rendu: () => <PageTableauDeBord /> },
-  { href: "/composer", rendu: () => <PageComposer /> },
-  { href: "/brief", rendu: () => <PageBrief /> },
-  { href: "/runs", rendu: () => <PageRuns /> },
-  {
-    href: "/agents",
-    rendu: () => <ListeAgents ongletCible={ongletAgentOuDefaut(undefined)} />,
-  },
-  { href: "/chat", rendu: () => <PageChat /> },
-  { href: "/couts", rendu: () => <PageCouts /> },
-  { href: "/validations", rendu: () => <PageValidations /> },
-  { href: "/journal", rendu: () => <PageJournalEcran /> },
-  { href: "/parametres", rendu: () => <PageParametres /> },
-];
-
-/** Monte un écran dans son shell réel et attend que la garde du projet ouvre. */
-async function monterEcran(ecran: (typeof ECRANS)[number]) {
-  poserChemin(ecran.href);
-  render(<Shell>{ecran.rendu()}</Shell>);
-  // La barre supérieure titre la page depuis le menu : sa présence dit que la
-  // garde du projet a tranché et que l'écran est monté sous le cadre.
-  await screen.findByRole("heading", { level: 1 });
-}
+/** Mock **partiel** : `PERIODES`, que `/couts` lit à côté du hook, passe tel quel. */
+vi.mock("@/lib/useAnalyticsCouts", async (original) => {
+  const { mockAnalytics } = await import("./ecrans-reseau");
+  return { ...(await original<Record<string, unknown>>()), ...mockAnalytics() };
+});
 
 // --- 1. La sonde, prouvée avant de servir -----------------------------------
 
