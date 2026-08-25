@@ -312,8 +312,12 @@ Quatre choses à savoir avant d'y toucher :
   migration.
 - **72 paires mesurées** (36 par thème), **0 faute**. Les marges les plus
   courtes sont `bord-fort` sur `surface-creuse` (3,40) et `alerte-texte` sur
-  `alerte-creux` (5,02). #534 en fait un test de CI : ici la promesse est
-  vérifiée, pas encore **gardée**.
+  `alerte-creux` (5,02). Depuis #534 cette promesse est **gardée** et non plus
+  seulement vérifiée : `tests/contraste.test.ts` rejoue les 72 paires à chaque
+  pipeline (job `web-build`), et **refuse** une valeur qu'il ne sait pas lire au
+  lieu de la sauter. Y toucher sans le lire coûte un pipeline rouge — c'est le
+  but. Un token **ajouté** sans paire y rougit aussi : c'est ce qui empêche le
+  filet de vieillir en instantané.
 
 Les valeurs vivent dans les blocs `:root` / `[data-theme="sombre"]` et sont
 émises telles quelles ; le bloc `@theme inline` ne fait que les brancher sur les
@@ -518,6 +522,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/runs-vue.test.tsx` | La vue d'un run (#475/#478, testée en #480) : les tâches lues **avec `?run=`** et non filtrées sur `Tache.run_id` — le champ porte le *dernier* run qui les a touchées, une relance volerait celles du run repris —, la relecture au **pouls** du shell sans seconde WebSocket, les trois vides (autre projet, arrêt sur brief, API muette) et le journal persisté fusionné au direct sans doublon — atteint **par son onglet** depuis #516, avec le contrôle qu'il ne s'affiche ni sous le pipeline ni sous le Kanban |
 | `tests/pipeline.test.tsx` | La vue pipeline d'un run (#491, testée en #492) en **trois étages**, parce qu'ils ne se gardent pas de la même façon : les règles hors JSX (`lib/graphe` — le backend sert tout ce qui se dessine, ce module ne porte que les trois questions qu'il ne pose pas, et l'**ordre** dans lequel elles sont posées *est* la décision ; `lib/vuesRun` — le pipeline ouvre) ; la checklist rendue (`components/EtapesTache` — **une case par étape**, le contrôle qui compte étant le dénominateur qui grandit sans que le numérateur bouge) ; puis la vue montée : le nœud en cours, l'étape qui se coche au battement suivant, l'arête qui s'allume, et l'attente humaine qui ne se lit plus « en cours » |
 | `tests/etat-des-runs.test.tsx` | L'état des runs au tableau de bord (#476, testé en #480) : **l'exhaustivité de la table des groupes**, balayée sur `regimeDuRun` plutôt qu'énumérée — un régime sans groupe fait disparaître ces runs-là de l'écran, ce qui est arrivé à « en pause » entre #476 et #477 — puis le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` sur ses trois entrées, et l'écran qui ne porte **aucun** geste |
+| `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
 
 Deux fichiers portent l'outillage plutôt que des tests :
 
