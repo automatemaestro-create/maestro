@@ -899,6 +899,103 @@ def test_le_prompt_designe_un_atelier_dans_le_worktree(depot: Depot) -> None:
     assert "env VAR=" in prompt, "le remplacement du préfixe de variable (#307) se dit ici aussi"
 
 
+# --- Trois maillons refusés run après run, et aucun ne reçoit de règle (#528) ---------------------
+# Mesure du 2026-08-25 sur tout le journal : 88 refus sur 36 sessions, dont 45 TROUS d'allowlist —
+# première famille depuis que #307 les classe. `for` (19 refus), `curl` (5) et `python -` (5) en
+# portent 29 à eux seuls, et reviennent depuis #292 sans avoir jamais été instruits. Les trois
+# sortent par la FORME, comme #307 avait DÉSIGNÉ `.maestro/session/` au lieu d'autoriser `/tmp`.
+
+def _elargissements_ecartes(allow: list) -> list:
+    """Les règles que #528 a écartées, repérées comme le ferait un élargissement distrait.
+
+    Le motif porte sur le VERBE de la règle, pas sur son texte entier : la variante « bornée »
+    `Bash(curl -s http://127.0.0.1:*)` doit tomber autant que `Bash(curl:*)`, puisqu'elle fige le
+    drapeau et l'hôte tout en pariant sur ce que le CLI fait d'un préfixe qui ne s'arrête pas sur
+    une espace.
+    """
+    return [r for r in allow if re.match(r"Bash\((for|curl|python3?)[ :)]", r)]
+
+
+def test_le_motif_des_trois_maillons_attrape_un_elargissement() -> None:
+    """Prouver le motif sur un échantillon fautif : un ✓ sur une question jamais posée ne garde
+    rien. On le rejoue sur des `allow` fabriqués, jamais sur le vrai."""
+    assert _elargissements_ecartes(["Bash(for:*)"]) == ["Bash(for:*)"]
+    assert _elargissements_ecartes(["Bash(curl:*)"]) == ["Bash(curl:*)"]
+    assert _elargissements_ecartes(["Bash(curl -s http://127.0.0.1:*)"]), \
+        "la variante « bornée » parie sur le matching du CLI — elle doit tomber aussi"
+    assert _elargissements_ecartes(["Bash(python:*)", "Bash(python3:*)"]) == \
+        ["Bash(python:*)", "Bash(python3:*)"]
+    # Et ce qu'il ne doit PAS confondre avec un élargissement : les formes de remplacement, dont
+    # deux commencent par les mêmes lettres que ce qu'on écarte.
+    assert _elargissements_ecartes([
+        "Bash(.venv/Scripts/python.exe:*)", "Bash(node:*)", "Bash(sed:*)",
+        "Bash(env:*)", "Bash(printf:*)", "Bash(printenv:*)",
+    ]) == []
+
+
+def test_les_trois_maillons_restent_dehors_avec_leur_raison_et_leur_remplacement() -> None:
+    """Un refus mérité n'est un choix que s'il dit par quoi remplacer (#307), et que si sa raison
+    est écrite là où on regarde quand on s'apprête à élargir la liste."""
+    reglages = json.loads(
+        (RACINE / "scripts/orchestrate/settings.run.json").read_text(encoding="utf-8")
+    )
+    allow = reglages["permissions"]["allow"]
+    assert _elargissements_ecartes(allow) == [], (
+        "une tête de boucle n'est pas une commande, la cible d'un `curl` est un ARGUMENT et "
+        "`python -` est un heredoc : aucun des trois ne se borne par une règle de préfixe (#528)"
+    )
+    # La forme de remplacement, elle, doit passer : prescrire un geste que la liste refuse, c'est
+    # un refus de plus par ticket — la leçon de #310, mesurée par #436.
+    for regle, pourquoi in (
+        ("Bash(sed:*)", "la boucle se remplace par une commande qui prend la liste"),
+        ("Bash(node:*)", "la sonde HTTP locale passe par node, jamais par curl"),
+        ("Bash(.venv/Scripts/python.exe:*)", "le snippet Python se joue au venv, dans un fichier"),
+        ("Bash(env:*)", "`env PYTHONPATH=.` lui fait importer le maestro du worktree"),
+    ):
+        assert regle in allow, f"{regle} manquant — {pourquoi}"
+    # Les lignes du `$comment` portent leur propre indentation : on compare le texte, pas la façon
+    # dont il est replié, sinon le test casserait au premier reformatage du fichier.
+    commentaire = re.sub(r"\s+", " ", " ".join(reglages["$comment"]))
+    assert "#528" in commentaire
+    for raison in (
+        "tête de boucle n'est pas une commande",
+        "pouvoir de `curl` est dans son ARGUMENT",
+        "c'est un HEREDOC",
+    ):
+        assert raison in commentaire, f"la raison « {raison} » doit rester écrite dans le fichier"
+    # Le résultat ATTENDU compte autant que la décision : traités par la forme, les trois restent
+    # dans « maillons qu'aucune règle ne couvre » — un vieux run les montrera pour toujours.
+    assert "RESTENT dans la liste" in commentaire, \
+        "sans l'attendu écrit, la prochaine lecture de `journal.sh refus` passera pour un échec"
+
+
+def test_le_prompt_donne_la_forme_couverte_des_trois_maillons(depot: Depot) -> None:
+    """Interdire sans DÉSIGNER ne fait que déplacer le refus (#307) — la leçon vaut ici entière.
+
+    Les trois maillons ne reçoivent aucune règle : ce qui les remplace vit donc TOUT ENTIER dans le
+    prompt. Sans lui, une session réessaierait la même forme au run suivant, comme depuis #292.
+    """
+    depot.ticket(130, "Ticket a traiter")
+    claude = _claude_stub(depot, """
+        printf '%s' "$2" > "$MAESTRO_FIXTURES/prompt-maillons.txt"
+        printf '{"type":"result","subtype":"success","is_error":false}\\n'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    depot.lance("run.sh", "--plan", plan, "--run-id", "maillons",
+                env={"MAESTRO_CLAUDE_BIN": claude})
+
+    prompt = (depot.fixtures / "prompt-maillons.txt").read_text(encoding="utf-8")
+    for refuse, remplacement in (
+        ("for … ; do … ; done", "sed -n -e 12p -e 40p"),
+        ("python - ", ".venv/Scripts/python.exe .maestro/session/<nom>.py"),
+        ("curl", "fetch('http://127.0.0.1:"),
+    ):
+        assert refuse in prompt, f"le geste refusé « {refuse} » doit être nommé"
+        assert remplacement in prompt, \
+            f"sans « {remplacement} », le prompt ne ferait qu'interdire (#307)"
+
+
 # =====================================================================================
 # run.sh — la boucle (#170)
 # =====================================================================================

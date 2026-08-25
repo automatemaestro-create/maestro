@@ -2465,3 +2465,37 @@ def test_les_prompts_du_run_disent_ou_jouer_une_suite() -> None:
             f"{debut} ne nomme pas le lanceur d'itération : il restera inutilisé (#436)"
         assert "-m pytest" in bloc, \
             f"{debut} n'énonce que la moitié de la règle — une suite applicative se joue en natif"
+
+
+# --- Les trois maillons de #528, des deux côtés ---------------------------------------------------
+# `for`, `python -` et `curl` portent 29 des 45 trous d'allowlist du journal (mesure du 2026-08-25)
+# et aucun ne reçoit de règle : le geste vit donc ENTIÈREMENT dans les prompts. Même raison qu'au
+# test ci-dessus pour les tenir tous les deux — l'implémentation et la remédiation sont deux moments
+# de la même session, sous la même couche de permissions, et une moitié seule laisserait une session
+# de déblocage retomber sur la forme refusée.
+
+FORMES_528 = ("for … ; do … ; done", ".maestro/session/<nom>.py", "fetch('http://127.0.0.1:")
+
+
+def _formes_manquantes(bloc: str) -> list[str]:
+    return [f for f in FORMES_528 if f not in bloc]
+
+
+def test_le_motif_des_formes_de_528_attrape_un_prompt_incomplet() -> None:
+    """Prouver le motif sur un échantillon fautif avant de balayer : sans cette moitié, le ✓
+    ci-dessous serait un ✓ sur une question jamais posée."""
+    assert _formes_manquantes(" ".join(FORMES_528)) == []
+    # Un prompt qui n'en nommerait que deux — l'oubli le plus probable, la sonde HTTP étant la
+    # dernière arrivée — doit ressortir, et nommer CELLE qui manque.
+    assert _formes_manquantes(" ".join(FORMES_528[:2])) == ["fetch('http://127.0.0.1:"]
+    assert _formes_manquantes("") == list(FORMES_528)
+
+
+def test_les_deux_prompts_donnent_la_forme_couverte_des_trois_maillons() -> None:
+    texte = (RACINE / "scripts" / "orchestrate" / "run.sh").read_text(encoding="utf-8")
+    for debut, fin in (("prompt_ticket()", "prompt_reprise()"), ("prompt_mrfix()", "PROMPT\n}")):
+        bloc = texte.split(debut, 1)[1].split(fin, 1)[0]
+        assert _formes_manquantes(bloc) == [], (
+            f"{debut} ne donne pas la forme couverte de {_formes_manquantes(bloc)} (#528) — "
+            "aucune règle ne lèvera ces maillons, la session réessaiera donc la forme refusée"
+        )
