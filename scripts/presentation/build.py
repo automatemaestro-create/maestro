@@ -1,16 +1,17 @@
-"""Génère la présentation HTML d'un milestone (#142).
+"""Génère la présentation HTML d'un milestone (#142, enrichie par #546).
 
-Entrée : un fichier JSON décrivant le milestone, ses tickets et les captures
-disponibles (voir `SCHEMA` plus bas et la commande `/milestone-presentation`).
-Sortie : un fichier HTML **autonome** — CSS en ligne, images en `data:`, aucune
-ressource externe — lisible en thème clair comme sombre.
+Entrée : un fichier JSON décrivant le milestone, ses tickets, les captures, les
+**écrans touchés** et les **démonstrations filmées** (voir `SCHEMA` plus bas et la
+commande `/milestone-presentation`). Sortie : un fichier HTML **autonome** — CSS
+en ligne, images et vidéos en `data:`, aucune ressource externe — lisible en
+thème clair comme sombre.
 
     .venv/Scripts/python.exe scripts/presentation/build.py <donnees.json> [--sortie <fichier.html>]
 
 Le gabarit vit ici, pas dans le prompt de la commande : c'est ce qui rend le
 rendu stable d'une génération à l'autre. La commande fournit la matière (quels
-tickets, quel résumé, quelle capture illustre quoi) ; ce script décide de la
-forme.
+tickets, quel résumé, quelle capture illustre quoi, quels écrans un ticket a
+touchés, quels clips ont été tournés) ; ce script décide de la forme.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
+import os
 import re
 import sys
 import unicodedata
@@ -34,8 +37,12 @@ SCHEMA = """\
   "projet":    {"url": str},                       # base des liens vers les tickets
   "tickets":   [{"iid": int, "titre": str, "statut": str, "type": str|null,
                  "agent": str|null, "prio": str|null, "resume": str|null,
-                 "capture": str|null}],            # `capture` = clé d'une entrée de `captures`
+                 "capture": str|null,              # `capture` = clé d'une entrée de `captures`
+                 "ecrans": [str]|null}],           # clés d'entrées de `ecrans` (ecrans-touches.sh)
   "captures":  [{"cle": str, "libelle": str, "fichier": str}],
+  "ecrans":    [{"cle": str, "libelle": str, "route": str|null}],
+  "videos":    [{"cle": str, "libelle": str, "fichier": str,
+                 "affiche": str|null}],            # image de repli si le clip est écarté
   "notes":     [str]                               # avertissements affichés en pied
 }
 """
@@ -93,6 +100,36 @@ PRIOS = {"haute": "Priorité haute", "moyenne": "Priorité moyenne", "basse": "P
 # Ordre d'apparition des types dans une section : le lecteur cherche d'abord les fonctionnalités.
 ORDRE_TYPES = ["feature", "bug", "infra", "doc", "-"]
 
+# --- Écrans touchés & démonstrations (#546) -------------------------------------------------------
+
+#: La clé que `ecrans-touches.sh` rend pour une surface visible SANS ROUTE : un composant partagé
+#: (`apps/web/components/**`), ou la coquille de tous les écrans (`layout.tsx`, `globals.css`). Ce
+#: n'est PAS un écran, et c'est tout l'intérêt de la garder : #543 demande que la limite soit
+#: **nommée** plutôt que devinée ou tue — la rattacher à une route serait la rattacher au hasard.
+CLE_INDETERMINEE = "-"
+LIBELLE_INDETERMINE = "Composants partagés"
+AIDE_INDETERMINEE = (
+    "Écran indéterminé : la modification porte sur une surface commune à plusieurs écrans."
+)
+
+#: Un mébioctet, l'unité des deux plafonds ci-dessous.
+MIO = 1024 * 1024
+
+#: Plafond **par clip**, réglable (`MAESTRO_PRESENTATION_VIDEO_MAX`, en Mio ; `0` = aucun).
+#: Généreux au regard du mesuré (334 à 1215 Kio pour les cinq parcours de #545) : il n'est pas là
+#: pour rogner les clips normaux, mais pour qu'un clip parti en vrille ne coule pas le fichier.
+VIDEO_MAX_MIO_DEFAUT = 6.0
+
+#: Plafond **du fichier produit**, réglable (`MAESTRO_PRESENTATION_MAX`, en Mio ; `0` = aucun).
+#: Une présentation est faite pour être ENVOYÉE : au-delà de ce que prend une pièce jointe, elle a
+#: perdu sa raison d'être. 25 Mio est la limite de la plupart des messageries.
+FICHIER_MAX_MIO_DEFAUT = 25.0
+
+#: Marge retranchée du budget vidéo : la page est pesée AVANT d'y insérer les clips, or leur
+#: balisage (~1 Kio par clip) et les notes de repli s'y ajouteront. Quelques dizaines de Kio face à
+#: un plafond en Mio — mais les compter en trop plutôt qu'en moins est ce qui rend le plafond vrai.
+MARGE_OCTETS = 64 * 1024
+
 
 # --- Utilitaires ---------------------------------------------------------------------------------
 
@@ -111,6 +148,56 @@ def image_en_data_uri(chemin: Path) -> str | None:
         print(f"[build] ⚠ capture illisible ({chemin}) : {erreur}", file=sys.stderr)
         return None
     return f"data:image/png;base64,{base64.b64encode(octets).decode('ascii')}"
+
+
+def video_en_data_uri(chemin: Path) -> str | None:
+    """Encode un clip webm en `data:` — même motif que l'image, même promesse d'autonomie."""
+    try:
+        octets = chemin.read_bytes()
+    except OSError as erreur:
+        print(f"[build] ⚠ clip illisible ({chemin}) : {erreur}", file=sys.stderr)
+        return None
+    return f"data:video/webm;base64,{base64.b64encode(octets).decode('ascii')}"
+
+
+def plafond_octets(variable: str, defaut_mio: float) -> float:
+    """
+    Un plafond de taille lu dans l'environnement, en Mio, rendu en octets.
+
+    `0` (ou une valeur vide) vaut **aucun plafond** — le même repli qu'ailleurs dans le dépôt
+    (`MAESTRO_ORCHESTRATE_BUDGET`, `--timeout 0`), et la seule façon d'annuler une variable déjà
+    posée. Une valeur illisible retombe sur le défaut **en le disant** : un plafond silencieusement
+    ignoré est pire qu'un plafond absent.
+    """
+    brut = os.environ.get(variable, "").strip()
+    if not brut:
+        return defaut_mio * MIO
+    try:
+        valeur = float(brut.replace(",", "."))
+    except ValueError:
+        print(
+            f"[build] ⚠ {variable} = « {brut} » n'est pas un nombre de Mio"
+            f" — plafond par défaut ({defaut_mio:g} Mio)",
+            file=sys.stderr,
+        )
+        return defaut_mio * MIO
+    if valeur < 0:
+        print(
+            f"[build] ⚠ {variable} = « {brut} » est négatif"
+            f" — plafond par défaut ({defaut_mio:g} Mio)",
+            file=sys.stderr,
+        )
+        return defaut_mio * MIO
+    return math.inf if valeur == 0 else valeur * MIO
+
+
+def poids_texte(octets: float) -> str:
+    """« 512 Kio », « 1,6 Mio », « sans plafond » — à la virgule française."""
+    if octets == math.inf:
+        return "sans plafond"
+    if octets < MIO:
+        return f"{max(round(octets / 1024), 0)} Kio"
+    return f"{octets / MIO:.1f}".replace(".", ",") + " Mio"
 
 
 def libelle_groupe(statut: str) -> str:
@@ -135,6 +222,62 @@ def pourcent_texte(part: int, total: int) -> str:
     return f"{pourcent(part, total):g}".replace(".", ",")
 
 
+def ancre_ecran(cle: str) -> str:
+    """L'ancre d'un écran dans la page. `-` ne se slugifie pas : il lui faut un nom à lui."""
+    return slugifier(cle) or "indetermine"
+
+
+def libelle_ecran_defaut(cle: str) -> str:
+    """Le nom d'un écran quand le référentiel n'en donne pas : la clé, sauf pour l'indéterminé."""
+    return LIBELLE_INDETERMINE if cle == CLE_INDETERMINEE else cle
+
+
+def ecrans_du_ticket(ticket: dict[str, Any]) -> list[str]:
+    """Les clés d'écrans d'un ticket, dédoublonnées dans l'ordre donné.
+
+    Un ticket **sans surface visible** rend une liste vide, et n'affichera donc rien : c'est la
+    règle déjà écrite pour les captures (« une vignette qui n'illustre rien dessert la
+    présentation »), et l'absence de ligne est précisément ce que rend `ecrans-touches.sh`.
+    """
+    return list(dict.fromkeys(c for c in (ticket.get("ecrans") or []) if c))
+
+
+def preparer_ecrans(
+    declares: list[dict[str, Any]], tickets: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """Le référentiel des écrans : ce que le JSON déclare, complété par ce que les tickets citent.
+
+    Un écran cité par un ticket mais absent du référentiel est **rendu quand même**, sous sa clé.
+    Le cas n'est pas théorique : `ecrans-touches.sh` rend la clé d'une route SERVIE MAIS HORS MENU
+    (`/projets`, #280), pour laquelle aucune capture n'existe. Le taire retirerait de la vue un
+    écran que les commits désignent — l'inverse de ce que ce chantier cherche.
+    """
+    ecrans: dict[str, dict[str, Any]] = {}
+    for entree in declares:
+        cle = entree.get("cle")
+        if not cle:
+            continue
+        ecrans[cle] = {
+            "cle": cle,
+            "libelle": entree.get("libelle") or libelle_ecran_defaut(cle),
+            "route": entree.get("route"),
+        }
+    for ticket in tickets:
+        for cle in ecrans_du_ticket(ticket):
+            ecrans.setdefault(
+                cle, {"cle": cle, "libelle": libelle_ecran_defaut(cle), "route": None}
+            )
+    return ecrans
+
+
+def compter_ecrans(tickets: list[dict[str, Any]]) -> Counter[str]:
+    """Combien de tickets ont touché chaque écran — un ticket compte **une fois** par écran."""
+    comptes: Counter[str] = Counter()
+    for ticket in tickets:
+        comptes.update(ecrans_du_ticket(ticket))
+    return comptes
+
+
 # --- Rendu ----------------------------------------------------------------------------------------
 
 
@@ -153,7 +296,28 @@ def rendre_badges(ticket: dict[str, Any]) -> str:
     return "".join(morceaux)
 
 
-def rendre_carte(ticket: dict[str, Any], base_url: str, captures: dict[str, dict[str, str]]) -> str:
+def rendre_ecrans_touches(ticket: dict[str, Any], ecrans: dict[str, dict[str, Any]]) -> str:
+    """Les écrans qu'un ticket a touchés, sur sa carte — vides, ils n'affichent rien du tout."""
+    cles = ecrans_du_ticket(ticket)
+    if not cles:
+        return ""
+    puces = "".join(
+        f'<a class="ecran-puce" href="#ecran-{escape(ancre_ecran(cle))}">'
+        f"{escape(ecrans.get(cle, {}).get('libelle') or libelle_ecran_defaut(cle))}</a>"
+        for cle in cles
+    )
+    return (
+        '<p class="carte-ecrans"><span class="carte-ecrans-titre">Écrans touchés</span>'
+        f"{puces}</p>"
+    )
+
+
+def rendre_carte(
+    ticket: dict[str, Any],
+    base_url: str,
+    captures: dict[str, dict[str, str]],
+    ecrans: dict[str, dict[str, Any]],
+) -> str:
     iid = ticket["iid"]
     lien = f"{base_url.rstrip('/')}/-/work_items/{iid}"
     resume = ticket.get("resume") or ""
@@ -179,6 +343,7 @@ def rendre_carte(ticket: dict[str, Any], base_url: str, captures: dict[str, dict
             </div>
             <h4 class="carte-titre">{escape(ticket["titre"])}</h4>
             {bloc_resume}
+            {rendre_ecrans_touches(ticket, ecrans)}
           </div>
           {vignette}
         </article>"""
@@ -190,6 +355,7 @@ def rendre_section(
     tickets: list[dict[str, Any]],
     base_url: str,
     captures: dict[str, dict[str, str]],
+    ecrans: dict[str, dict[str, Any]],
 ) -> str:
     """Une section de statut, sous-groupée par type de travail."""
     par_type: dict[str, list[dict[str, Any]]] = {}
@@ -202,7 +368,7 @@ def rendre_section(
         if not lot:
             continue
         lot.sort(key=lambda t: t["iid"])
-        cartes = "".join(rendre_carte(t, base_url, captures) for t in lot)
+        cartes = "".join(rendre_carte(t, base_url, captures, ecrans) for t in lot)
         titre_type = TYPES.get(type_, "Divers")
         blocs.append(
             f'<h3 class="sous-titre">{escape(titre_type)}'
@@ -292,6 +458,129 @@ def rendre_tuiles(comptes: Counter[str], total: int, par_type: Counter[str]) -> 
     )
     ligne_detail = f'<p class="tuiles-detail">{escape(detail)}</p>' if detail else ""
     return f'<div class="tuiles">{"".join(rendu)}</div>{ligne_detail}'
+
+
+def rendre_ecrans(
+    comptes: Counter[str],
+    ecrans: dict[str, dict[str, Any]],
+    captures: dict[str, dict[str, str]],
+) -> str:
+    """
+    La vue « écrans touchés par la phase » : chaque écran, et combien de tickets l'ont modifié.
+
+    L'ordre est le poids décroissant — ce que la phase a le plus remué se lit en premier —, à
+    égalité le nom. L'**indéterminé** sort de ce classement et passe en dernier : le ranger parmi
+    les écrans le ferait lire comme un écran, alors qu'il dit exactement l'inverse.
+    """
+    if not comptes:
+        return ""
+
+    ordonnes = sorted(
+        comptes.items(),
+        key=lambda kv: (
+            kv[0] == CLE_INDETERMINEE,
+            -kv[1],
+            slugifier(ecrans.get(kv[0], {}).get("libelle") or kv[0]),
+        ),
+    )
+
+    cartes = []
+    for cle, compte in ordonnes:
+        ecran = ecrans.get(cle, {})
+        libelle = ecran.get("libelle") or libelle_ecran_defaut(cle)
+        capture = captures.get(cle)
+        # Pas de `loading="lazy"` ici ni sur l'affiche d'un clip : la source est une data URI, donc
+        # il n'y a AUCUNE requête à différer — les octets sont déjà dans le document. Le report
+        # n'économise rien et peut coûter l'image : mesuré sur cette page, une image `lazy` dont la
+        # hauteur calculée vaut zéro tant qu'elle n'est pas chargée reste à 0×0 et ne s'affiche
+        # jamais. Un visuel qui doit être vu ne se charge pas paresseusement.
+        vue = (
+            f'<a class="ecran-vue" href="#capture-{escape(cle)}" '
+            f'title="Voir « {escape(capture["libelle"])} » en grand">'
+            f'<img src="{capture["uri"]}" alt="Control Tower — {escape(capture["libelle"])}"></a>'
+            if capture
+            else ""
+        )
+        route = ecran.get("route")
+        ligne_route = f'<p class="ecran-route">{escape(route)}</p>' if route else ""
+        aide = (
+            f'<p class="ecran-aide">{escape(AIDE_INDETERMINEE)}</p>'
+            if cle == CLE_INDETERMINEE
+            else ""
+        )
+        cartes.append(
+            f'<article class="ecran" id="ecran-{escape(ancre_ecran(cle))}">{vue}'
+            f'<div class="ecran-corps"><h4 class="ecran-titre">{escape(libelle)}</h4>'
+            f'{ligne_route}<p class="ecran-compte">{compte} ticket(s)</p>{aide}</div></article>'
+        )
+
+    return f"""
+      <section class="section" id="section-ecrans">
+        <header class="section-entete">
+          <h2>Écrans touchés par la phase
+              <span class="compte compte-fort">{len(ordonnes)}</span></h2>
+          <p class="aide">Dérivés des commits de chaque ticket, pas devinés.</p>
+        </header>
+        <div class="grille-ecrans">{"".join(cartes)}</div>
+      </section>"""
+
+
+def rendre_demonstrations(clips: list[dict[str, Any]]) -> str:
+    """
+    Les démonstrations filmées, jouables **dans le fichier** — source `data:`, zéro requête réseau.
+
+    Pas de démarrage automatique : plusieurs clips qui partent ensemble à l'ouverture rendent la
+    page illisible. Muet, en boucle, avec les contrôles — la main reste au lecteur.
+
+    Un clip **écarté** garde sa place et dit pourquoi : son affiche s'il en a une, un cartouche
+    sinon, et jamais un trou silencieux.
+    """
+    if not clips:
+        return ""
+
+    figures = []
+    for clip in clips:
+        libelle = clip["libelle"]
+        if clip["ecarte"] is None:
+            affiche = f' poster="{clip["affiche"]}"' if clip["affiche"] else ""
+            visuel = (
+                f'<video class="clip-video" controls muted loop playsinline'
+                f' preload="metadata"{affiche} src="{clip["uri"]}">'
+                f"Ce navigateur ne sait pas lire les vidéos webm — le clip"
+                f" « {escape(libelle)} » ne peut pas être joué ici.</video>"
+            )
+            note = ""
+        else:
+            # L'affiche est le repli EXIGÉ par le critère : elle se charge donc tout de suite
+            # (voir `rendre_ecrans` — une data URI n'a rien à différer, et `lazy` l'a laissée
+            # invisible à la mesure).
+            visuel = (
+                f'<span class="clip-affiche"><img src="{clip["affiche"]}" '
+                f'alt="Control Tower — {escape(libelle)}"></span>'
+                if clip["affiche"]
+                else f'<p class="clip-absente">Clip non intégré — {escape(libelle)}</p>'
+            )
+            note = f'<p class="clip-note">Clip écarté : {escape(clip["ecarte"])}.</p>'
+        figures.append(
+            f'<figure class="clip" id="clip-{escape(slugifier(clip["cle"]) or "clip")}">{visuel}'
+            f'<figcaption class="clip-legende">{escape(libelle)}</figcaption>{note}</figure>'
+        )
+
+    retenus = sum(1 for c in clips if c["ecarte"] is None)
+    aide = (
+        "Tournées sur la stack de démonstration, jouables ici même."
+        if retenus == len(clips)
+        else f"Tournées sur la stack de démonstration. {len(clips) - retenus} clip(s) sur "
+        f"{len(clips)} écartés pour tenir le plafond de taille."
+    )
+    return f"""
+      <section class="section" id="section-demonstrations">
+        <header class="section-entete">
+          <h2>Démonstrations<span class="compte compte-fort">{retenus}</span></h2>
+          <p class="aide">{escape(aide)}</p>
+        </header>
+        <div class="grille-clips">{"".join(figures)}</div>
+      </section>"""
 
 
 def rendre_galerie(captures: dict[str, dict[str, str]]) -> str:
@@ -466,7 +755,7 @@ def feuille_de_style() -> str:
 
   /* --- Cartes --- */
   .grille-cartes {{ display: grid; gap: 1rem;
-                    grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }}
+                    grid-template-columns: repeat(auto-fill, minmax(min(20rem, 100%), 1fr)); }}
   .carte {{ background: var(--surface); border: 1px solid var(--trait); border-radius: 10px;
             padding: 1.1rem 1.2rem 1.2rem; display: flex; flex-direction: column; gap: .9rem; }}
   .carte-entete {{ display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }}
@@ -482,9 +771,53 @@ def feuille_de_style() -> str:
                border: 1px solid var(--trait); line-height: 0; }}
   .vignette img {{ width: 100%; height: auto; display: block; }}
 
+  /* --- Écrans touchés, sur la carte d'un ticket --- */
+  .carte-ecrans {{ margin: 0; display: flex; flex-wrap: wrap; align-items: center;
+                   gap: .35rem; font-size: .6875rem; }}
+  .carte-ecrans-titre {{ color: var(--encre-3); text-transform: uppercase;
+                         letter-spacing: .06em; font-weight: 600; margin-right: .15rem; }}
+  .ecran-puce {{ color: var(--encre-2); text-decoration: none; background: var(--plan);
+                 border: 1px solid var(--trait); border-radius: 999px; padding: .1rem .5rem; }}
+  .ecran-puce:hover {{ color: var(--encre); border-color: var(--encre-3); }}
+
+  /* --- Écrans touchés par la phase --- */
+  .grille-ecrans {{ display: grid; gap: 1rem;
+                    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }}
+  .ecran {{ background: var(--surface); border: 1px solid var(--trait); border-radius: 10px;
+            overflow: hidden; display: flex; flex-direction: column; }}
+  .ecran-vue {{ display: block; line-height: 0; border-bottom: 1px solid var(--trait); }}
+  .ecran-vue img {{ width: 100%; height: auto; display: block; }}
+  .ecran-corps {{ padding: .9rem 1rem 1rem; display: flex; flex-direction: column; gap: .3rem; }}
+  .ecran-titre {{ margin: 0; font-size: .9375rem; font-weight: 580; line-height: 1.4; }}
+  .ecran-route {{ margin: 0; font-size: .75rem; color: var(--encre-3);
+                  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+  .ecran-compte {{ margin: .15rem 0 0; font-size: .8125rem; color: var(--encre-2);
+                   font-variant-numeric: tabular-nums; }}
+  .ecran-aide {{ margin: .15rem 0 0; font-size: .75rem; color: var(--encre-3); line-height: 1.5; }}
+
+  /* --- Démonstrations --- */
+  /* `min(26rem, 100%)` et non `26rem` : une piste de grille ne descend JAMAIS sous son minimum,
+     donc `minmax(26rem, …)` déborde de toute fenêtre plus étroite que 416 px — mesuré, 65 px de
+     débordement horizontal à 390 px de large. Le `min()` laisse la piste se rabattre sur la
+     largeur disponible. Même correction sur .galerie et .grille-cartes, qui portaient le défaut. */
+  .grille-clips {{ display: grid; gap: 1.75rem;
+                   grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr)); }}
+  .clip {{ margin: 0; }}
+  .clip-video {{ width: 100%; height: auto; display: block; border-radius: 10px;
+                 border: 1px solid var(--trait); background: #000; }}
+  .clip-affiche {{ display: block; line-height: 0; }}
+  .clip-affiche img {{ width: 100%; height: auto; display: block; border-radius: 10px;
+                       border: 1px solid var(--trait); }}
+  .clip-absente {{ margin: 0; aspect-ratio: 8 / 5; display: flex; align-items: center;
+                   justify-content: center; text-align: center; padding: 1rem;
+                   background: var(--surface); border: 1px dashed var(--encre-3);
+                   border-radius: 10px; color: var(--encre-3); font-size: .8125rem; }}
+  .clip-legende {{ margin: .6rem 0 0; font-size: .8125rem; color: var(--encre-2); }}
+  .clip-note {{ margin: .35rem 0 0; font-size: .75rem; color: var(--encre-3); line-height: 1.5; }}
+
   /* --- Galerie --- */
   .galerie {{ display: grid; gap: 1.75rem;
-              grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr)); }}
+              grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr)); }}
   .figure {{ margin: 0; }}
   .figure img {{ width: 100%; height: auto; display: block; border-radius: 10px;
                  border: 1px solid var(--trait); }}
@@ -553,6 +886,95 @@ SCRIPT_THEME = """
 """
 
 
+# --- Clips : encodage, plafonds, repli ------------------------------------------------------------
+
+
+def resoudre(chemin_brut: str, racine: Path) -> Path:
+    """Un chemin du JSON, relatif au fichier de données quand il n'est pas absolu."""
+    chemin = Path(chemin_brut)
+    return chemin if chemin.is_absolute() else racine / chemin
+
+
+def preparer_clips(
+    declares: list[dict[str, Any]], racine: Path, captures: dict[str, dict[str, str]]
+) -> list[dict[str, Any]]:
+    """
+    Encode les clips et leur affiche de repli. Aucun plafond n'est appliqué ici : peser vient
+    d'abord, trier vient après (`selectionner_clips`).
+
+    Le poids retenu est celui de la **data URI**, pas celui du webm sur le disque : base64 coûte
+    +33 %, et ce que les plafonds protègent est le fichier *produit*. Mesurer le webm ferait
+    promettre 25 Mio pour en écrire 33.
+
+    L'affiche se cherche dans cet ordre : celle que le JSON déclare, puis la capture de **même
+    clé** — gratuite quand les clés coïncident (`couts`), absente quand elles divergent (les
+    parcours de #545 ne portent pas les clés du menu). Sans aucune des deux, le repli reste
+    **visible** : un cartouche qui nomme le clip, jamais un trou.
+    """
+    clips = []
+    for entree in declares:
+        cle = entree.get("cle") or ""
+        libelle = entree.get("libelle") or cle or "Démonstration"
+
+        affiche = None
+        if entree.get("affiche"):
+            affiche = image_en_data_uri(resoudre(entree["affiche"], racine))
+        if affiche is None and cle in captures:
+            affiche = captures[cle]["uri"]
+
+        fichier = entree.get("fichier")
+        if not fichier:
+            # Un parcours en échec laisse sa ligne au manifeste avec `fichier: null` (#545) : il
+            # n'y a rien à jouer, et rien à dire d'une démonstration qui n'a pas eu lieu.
+            print(f"[build] ⚠ clip sans fichier ({libelle}) — ignoré", file=sys.stderr)
+            continue
+        uri = video_en_data_uri(resoudre(fichier, racine))
+        if uri is None:
+            continue
+
+        clips.append(
+            {
+                "cle": cle or slugifier(libelle),
+                "libelle": libelle,
+                "uri": uri,
+                "poids": len(uri),
+                "affiche": affiche,
+                "ecarte": None,
+            }
+        )
+    return clips
+
+
+def selectionner_clips(
+    clips: list[dict[str, Any]], plafond_clip: float, budget: float
+) -> list[str]:
+    """
+    Applique les deux plafonds et rend les motifs d'écart, pour le pied de page.
+
+    Les clips sont examinés dans **l'ordre déclaré** : un clip lourd ne double pas la file parce
+    qu'il est lourd, et deux générations sur les mêmes données écartent les mêmes clips. Un clip
+    au-delà du plafond individuel ne consomme rien du budget — il n'entre pas.
+    """
+    motifs = []
+    reste = budget
+    for clip in clips:
+        if clip["poids"] > plafond_clip:
+            clip["ecarte"] = (
+                f"{poids_texte(clip['poids'])} une fois encodé, au-delà du plafond de "
+                f"{poids_texte(plafond_clip)} par clip"
+            )
+        elif clip["poids"] > reste:
+            clip["ecarte"] = (
+                f"le budget vidéo du fichier est épuisé — il restait "
+                f"{poids_texte(max(reste, 0))} pour {poids_texte(clip['poids'])} demandés"
+            )
+        else:
+            reste -= clip["poids"]
+            continue
+        motifs.append(f"« {clip['libelle']} » : {clip['ecarte']}")
+    return motifs
+
+
 # --- Assemblage -----------------------------------------------------------------------------------
 
 
@@ -563,12 +985,13 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
 
     captures: dict[str, dict[str, str]] = {}
     for capture in donnees.get("captures", []):
-        chemin = Path(capture["fichier"])
-        if not chemin.is_absolute():
-            chemin = racine_captures / chemin
-        uri = image_en_data_uri(chemin)
+        uri = image_en_data_uri(resoudre(capture["fichier"], racine_captures))
         if uri:
             captures[capture["cle"]] = {"libelle": capture["libelle"], "uri": uri}
+
+    ecrans = preparer_ecrans(donnees.get("ecrans") or [], tickets)
+    comptes_ecrans = compter_ecrans(tickets)
+    clips = preparer_clips(donnees.get("videos") or [], racine_captures, captures)
 
     for ticket in tickets:
         ticket["_groupe"] = libelle_groupe(ticket.get("statut", ""))
@@ -582,7 +1005,7 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
     for nom, _, aide in GROUPES:
         lot = [t for t in tickets if t["_groupe"] == nom]
         if lot:
-            sections.append(rendre_section(nom, aide, lot, base_url, captures))
+            sections.append(rendre_section(nom, aide, lot, base_url, captures, ecrans))
 
     dates = [d for d in (milestone.get("debut"), milestone.get("echeance")) if d]
     meta = [" → ".join(dates)] if dates else []
@@ -592,18 +1015,18 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
     resume = milestone.get("resume")
     bloc_resume = f'<p class="resume">{escape(resume)}</p>' if resume else ""
 
-    notes = donnees.get("notes") or []
-    bloc_notes = ""
-    if notes:
-        items = "".join(f"<li>{escape(n)}</li>" for n in notes)
-        bloc_notes = f"<ul>{items}</ul>"
-
     titre = milestone["titre"]
     lien_projet = (
         f'<a href="{escape(base_url)}">{escape(base_url)}</a>' if base_url else "GitLab"
     )
+    notes_donnees = list(donnees.get("notes") or [])
 
-    return f"""<!doctype html>
+    def page(section_clips: str, notes: list[str]) -> str:
+        bloc_notes = ""
+        if notes:
+            items = "".join(f"<li>{escape(n)}</li>" for n in notes)
+            bloc_notes = f"<ul>{items}</ul>"
+        return f"""<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -639,6 +1062,10 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
 
   {"".join(sections)}
 
+  {rendre_ecrans(comptes_ecrans, ecrans, captures)}
+
+  {section_clips}
+
   {rendre_galerie(captures)}
 
   <footer class="pied">
@@ -652,6 +1079,45 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
 </body>
 </html>
 """
+
+    if not clips:
+        return page("", notes_donnees)
+
+    # Première passe : la page SANS un seul clip. C'est elle qui dit ce qui reste sous le plafond
+    # du fichier — mesuré, pas estimé. Sans ça, « plafond pour le fichier » ne serait qu'un plafond
+    # sur les vidéos déguisé, faux dès que les captures pèsent.
+    plafond_clip = plafond_octets("MAESTRO_PRESENTATION_VIDEO_MAX", VIDEO_MAX_MIO_DEFAUT)
+    plafond_fichier = plafond_octets("MAESTRO_PRESENTATION_MAX", FICHIER_MAX_MIO_DEFAUT)
+    sans_clips = len(page("", notes_donnees).encode("utf-8"))
+    budget = (
+        math.inf
+        if plafond_fichier == math.inf
+        else max(plafond_fichier - sans_clips - MARGE_OCTETS, 0)
+    )
+
+    motifs = selectionner_clips(clips, plafond_clip, budget)
+    retenus = [c for c in clips if c["ecarte"] is None]
+    print(
+        f"[build] clips : {len(retenus)}/{len(clips)} intégré(s)"
+        f" — par clip : {poids_texte(plafond_clip)}"
+        f" · fichier : {poids_texte(plafond_fichier)}"
+        f" (budget vidéo {poids_texte(budget)})",
+        file=sys.stderr,
+    )
+
+    notes = list(notes_donnees)
+    if motifs:
+        # Le pied de page reprend ce que la section dit déjà en place : c'est là qu'un lecteur
+        # cherche les réserves, et un clip absent doit se lire sans avoir à repérer son cartouche.
+        notes.append(
+            f"{len(motifs)} clip(s) sur {len(clips)} écartés pour tenir le plafond de taille "
+            f"({poids_texte(plafond_clip)} par clip, {poids_texte(plafond_fichier)} pour le "
+            f"fichier) — " + " ; ".join(motifs) + "."
+        )
+        for motif in motifs:
+            print(f"[build] ⚠ clip écarté — {motif}", file=sys.stderr)
+
+    return page(rendre_demonstrations(clips), notes)
 
 
 def principal(argv: list[str] | None = None) -> int:
