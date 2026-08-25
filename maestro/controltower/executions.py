@@ -13,7 +13,14 @@ manquante — le service que les routes `/api/executions` appellent :
   avec le résumé ;
 - `resumes`/`resume` lisent la **projection** (`ControlTowerState`) : le service
   ne tient pas de second registre des runs, il lit celui qui existe déjà ;
-- `annuler` interrompt un run en vol et consigne l'issue.
+- `annuler` interrompt un run en vol et consigne l'issue — **et solde ce que ce
+  run portait** (#466) : ses tâches non terminées passent `echec`, donc les agents
+  qui les tenaient redeviennent `libre`. Ce n'était pas le cas avant, et pas
+  seulement à l'écran : la projection se reconstruit par rejeu du journal, si bien
+  qu'une tâche laissée `en_cours` par une annulation l'était **pour toujours**, son
+  agent compris. Le geste vit dans `_solder`, donc la relance (#349) en hérite ;
+  `_ramasser` le rejoue pour l'autre façon dont un run meurt sans écrire l'issue
+  de ses tâches.
 
 Depuis #320 un run lancé d'ici **s'arrête sur son brief** par défaut (décision D5,
 mode `humain`) : `en_attente_brief` dans la projection, aucune tâche créée, et la
@@ -168,13 +175,14 @@ from maestro.controltower.causes import CAUSE_ANNULATION, cause_de, detail_avec_
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_EXECUTION_STATUT,
+    EVENEMENT_TACHE_STATUT,
     ROLE_RUN,
     Event,
     EventBus,
 )
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
-from maestro.controltower.portee import PorteeProjet
+from maestro.controltower.portee import PorteeProjet, PorteeRun
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
@@ -183,6 +191,7 @@ from maestro.controltower.state import (
     ORDRE_PAUSE,
     ORDRE_REPRISE,
     STATUTS_EXECUTION_TERMINAUX,
+    STATUTS_TACHE_TERMINAUX,
     ControlTowerState,
 )
 from maestro.controltower.validation import ValidateurControlTower
@@ -192,6 +201,7 @@ from maestro.engine.brief import (
     BriefRefuse,
     mode_brief_valide,
 )
+from maestro.engine.executor import STATUT_ECHEC
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.engine.pause import PorteExecution
 from maestro.references import ReferenceTicket
@@ -898,12 +908,12 @@ class ServiceExecutions:
         )
 
     async def _solder(self, run_id: str, detail: str) -> None:
-        """Solde un run en vol : issue consignée, exécution éteinte, battement oublié.
+        """Solde un run en vol : issue, exécution éteinte, tâches soldées, battement oublié.
 
         Le geste commun de l'annulation (#185) et de la relance (#349), qui soldent
         toutes deux un run non terminé — la seule chose qui les distingue est le
         `detail`, c'est-à-dire *pourquoi*. En faire deux copies laisserait diverger
-        l'ordre des trois écritures, dont chacune a sa raison :
+        l'ordre des quatre écritures, dont chacune a sa raison :
 
         1. l'**issue** d'abord : elle est acquise (une décision humaine, pas le
            verdict de la tâche) ;
@@ -914,7 +924,13 @@ class ServiceExecutions:
            rendant False ; s'il la porte quand même — registre muet, verdict
            `indetermine` —, ne pas l'éteindre laisserait un run soldé continuer de
            travailler ;
-        3. le **battement** en dernier, jamais avant le statut terminal : entre les
+        3. les **tâches** que le run portait (#466), et les agents avec elles —
+           après l'extinction et jamais avant, sous peine de les voir remises
+           `en_cours` par le dernier événement d'une exécution qui s'éteint encore
+           (cf. `_solder_les_taches`). C'est ici que le geste vit, et pas chez ses
+           deux appelants, pour la raison même qui a fait exister cette méthode :
+           solder un run est **un** geste, pas une liste à recopier ;
+        4. le **battement** en dernier, jamais avant le statut terminal : entre les
            deux, un lecteur verrait un run encore en cours et sans battement,
            c'est-à-dire un orphelin qui n'en est pas un.
 
@@ -950,7 +966,88 @@ class ServiceExecutions:
         self._demarrer()
         self._consigne(run_id, EXECUTION_ANNULEE, "", detail, cause=CAUSE_ANNULATION)
         await self._hote.annuler(run_id, delai_s=DELAI_ANNULATION_S)
+        self._solder_les_taches(run_id, detail, cause=CAUSE_ANNULATION)
         await self._oublier(run_id)
+
+    def _solder_les_taches(self, run_id: str, motif: str, *, cause: str = "") -> None:
+        """Solde ce que le run **portait** : ses tâches non terminales, donc ses agents (#466).
+
+        Solder un run ne soldait que le run. Ses tâches restaient `en_cours` et les
+        agents qui les portaient `occupe`, **définitivement** : la projection est
+        reconstruite par rejeu du journal, donc l'état faux survivait au
+        redémarrage de l'API. Constat du 2026-08-24 sur le poste — `brief-directions`
+        en vol depuis vingt jours sur un run annulé le jour même, `bdd` et
+        `designer` occupés sur des tâches mortes.
+
+        Rien de neuf n'est inventé pour le réparer, et c'est tout le point : la
+        projection **sait déjà** libérer un agent — un `tache.statut` terminal
+        appelle `agent.termine(event.tache_id)`, instance par instance (#100) —, il
+        n'y manquait que l'émission. C'est exactement le geste fait à la main ce
+        jour-là, trois `tache.statut` publiés sur le bus ; on le rend ici à la
+        machine qui aurait dû le faire.
+
+        **`echec` et non `bloquee`**, alors que les deux sont terminaux et que seul
+        le premier incrémente `taches_echouees` sur la fiche de l'agent. `bloquee` a
+        un sens précis dans la machine à états (docs/03 §3 : « dépendance en échec —
+        la tâche n'est jamais mise en file ni exécutée »), et le poser sur une tâche
+        qui était bel et bien en vol ferait mentir l'état plutôt qu'épargner un
+        compteur. Le compteur, lui, dit vrai : la tâche n'a pas abouti. Le *pourquoi*
+        voyage à côté — `cause` (#479) et le `motif` en clair —, ce qui est
+        précisément la séparation que `causes.py` existe pour tenir.
+
+        Trois choses à ne pas défaire :
+
+        - les tâches sont celles que **le run a portées** (`PorteeRun`, #473) et non
+          celles dont le `run_id` le désigne : un identifiant de tâche est un slug
+          engendré de son contenu, donc partagé dès qu'une relance rejoue le même
+          brief — lu là-bas, un run annulé solderait les tâches de son successeur ;
+        - le geste vient **après** `_hote.annuler`, jamais avant : une tâche soldée
+          pendant que l'exécution s'éteint encore serait remise `en_cours` par le
+          dernier événement du moteur, et on aurait réparé dans le sens du vent ;
+        - les tâches déjà terminales sont **sautées**. Sans ce filtre, une tâche
+          réussie avant l'annulation repasserait `echec` et l'agent perdrait un
+          `taches_terminees` acquis — un run annulé n'annule pas ce qui a été fait.
+
+        ⚠ Et l'événement se **pousse** (`_pousser`), il ne s'émet pas (`_emettre`) :
+        c'est la seule différence de forme avec les issues de run d'à côté, et elle
+        n'est pas cosmétique. `_emettre` applique à la projection *puis* publie, en
+        s'appuyant sur l'idempotence pour que la pompe réapplique sans effet — vrai
+        d'`execution.statut`, **faux** de `tache.statut`, dont l'application
+        incrémente `taches_terminees`/`taches_echouees` sur la fiche de l'agent.
+        Émettre ici compterait donc chaque tâche soldée **deux fois** (constaté :
+        `taches_echouees` à 2 pour un seul échec). Pousser est aussi ce que fait
+        déjà tout autre événement de tâche — le pont télémétrie n'a jamais eu
+        d'autre chemin —, et c'est exactement le geste de la réparation manuelle du
+        2026-08-24 : publier sur le bus, laisser la pompe appliquer, consigner au
+        journal durable (#97) et rediffuser à l'UI.
+
+        Ne rattrape **pas** l'existant : ce qui est déjà en vol aujourd'hui le reste,
+        la projection étant rejouée depuis un journal que ce correctif ne réécrit
+        pas. Le geste de rattrapage est le même qu'en août — republier un
+        `tache.statut` terminal par tâche restée en l'air.
+        """
+        for tache in self._state.taches(run=PorteeRun.run(run_id)):
+            if tache.statut in STATUTS_TACHE_TERMINAUX:
+                continue
+            self._pousser(
+                Event(
+                    type=EVENEMENT_TACHE_STATUT,
+                    run_id=run_id,
+                    tache_id=tache.id,
+                    titre=tache.titre,
+                    # L'agent **de la tâche**, sans quoi rien ne serait libéré : la
+                    # projection ne rend son créneau qu'à l'agent que l'événement
+                    # nomme (`_applique_statut_tache`), et un événement sans
+                    # exécutant est écarté d'emblée (`_AGENTS_NON_EXECUTANTS`).
+                    agent=tache.agent,
+                    role=tache.role,
+                    statut=STATUT_ECHEC,
+                    detail=f"tâche non terminée quand son run a été soldé — {motif}",
+                    ticket=tache.ticket,
+                    projet_id=tache.projet_id,
+                    cause=cause,
+                )
+            )
 
     async def fermer(self) -> None:
         """Arrête le service : l'hôte se retire, pont déposé, pompe éteinte.
@@ -1113,6 +1210,14 @@ class ServiceExecutions:
                     defunt.cause,
                 )
                 self._consigne(defunt.run_id, EXECUTION_ECHEC, "", defunt.cause)
+                # Ce que le run portait est soldé avec lui (#466) : le process est
+                # mort, il n'écrira plus l'issue de ses tâches, et sans ce geste
+                # elles resteraient `en_cours` avec leurs agents `occupe` pour
+                # toujours — le défaut de l'annulation, à l'identique, par l'autre
+                # chemin qui solde un run de l'extérieur. Sans `cause` : personne
+                # n'a dit stop, c'est l'hôte qui est tombé, et `defunt.cause` porte
+                # déjà en clair ce qu'on en sait.
+                self._solder_les_taches(defunt.run_id, defunt.cause)
                 # Après le statut terminal, jamais avant — même ordre et même
                 # raison que partout ailleurs (cf. `_solder`).
                 await self._oublier(defunt.run_id)

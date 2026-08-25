@@ -85,7 +85,7 @@ COMPARTIMENT_PAR_STATUT: dict[str, str] = {
 }
 
 #: Les compartiments qui rassemblent les statuts **terminaux** du moteur
-#: (`terminee`, `echec`, `bloquee` — docs/03 §3, et le `_STATUTS_TERMINAUX` de
+#: (`terminee`, `echec`, `bloquee` — docs/03 §3, et le `STATUTS_TACHE_TERMINAUX` de
 #: la projection) : une tâche qui y est comptée ne bougera plus. C'est ce qui
 #: donne `soldees`, donc le dénominateur d'une barre de progression honnête —
 #: une tâche bloquée est acquise au même titre qu'une tâche échouée, elle ne
