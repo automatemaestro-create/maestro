@@ -11,42 +11,30 @@
  * Un menu plutôt qu'un bouton direct, pour cette raison même : la géométrie de
  * la barre n'a pas bougé quand le lot suivant y a ajouté son entrée.
  *
- * Le comportement du menu (clic à l'extérieur, Échap, focus rendu au bouton)
- * reprend celui de la bascule de thème (#118, `BasculeTheme`).
+ * Le comportement du menu (clic à l'extérieur, `Échap`, focus rendu au bouton,
+ * et depuis #536 la navigation aux flèches) ne « reprend » plus celui de la
+ * bascule de thème : les deux **sourcent le même hook**, `useSurfaceDeroulee`.
+ * C'est le sens du lot — quatre menus portaient quatre copies du même bloc, et
+ * c'est pour ça qu'aucun des quatre n'avait de navigation au clavier.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { IconeAide } from "@/components/Icones";
 import { ouvrirAssistant } from "@/lib/assistance";
 import { ETAPES_GUIDE, lancerGuide } from "@/lib/guide";
+import { useSurfaceDeroulee } from "@/lib/useSurfaceDeroulee";
 
 export function MenuAide() {
   const [ouvert, setOuvert] = useState(false);
   const conteneur = useRef<HTMLDivElement>(null);
   const declencheur = useRef<HTMLButtonElement>(null);
+  const surface = useRef<HTMLDivElement>(null);
 
-  // Fermeture du menu : clic à l'extérieur ou Échap (le focus revient alors au
-  // bouton, sans quoi il retomberait sur le document).
-  useEffect(() => {
-    if (!ouvert) return;
-    const surPointeur = (evenement: PointerEvent) => {
-      if (!conteneur.current?.contains(evenement.target as Node)) {
-        setOuvert(false);
-      }
-    };
-    const surTouche = (evenement: KeyboardEvent) => {
-      if (evenement.key !== "Escape") return;
-      setOuvert(false);
-      declencheur.current?.focus();
-    };
-    document.addEventListener("pointerdown", surPointeur);
-    document.addEventListener("keydown", surTouche);
-    return () => {
-      document.removeEventListener("pointerdown", surPointeur);
-      document.removeEventListener("keydown", surTouche);
-    };
-  }, [ouvert]);
+  // Clic à l'extérieur, `Échap`, flèches, `Home`/`End` et focus d'entrée : tout
+  // vient du hook partagé (#536), qui a remplacé quatre copies du même bloc.
+  const fermer = useCallback(() => setOuvert(false), []);
+  useSurfaceDeroulee({ ouvert, fermer, conteneur, declencheur, surface });
 
   return (
     // `data-guide` : la dernière étape de la visite pointe ce bouton — c'est
@@ -59,7 +47,6 @@ export function MenuAide() {
         aria-haspopup="menu"
         aria-expanded={ouvert}
         aria-label="Aide"
-        title="Aide"
         className="block rounded-md p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
       >
         <IconeAide className="size-5" />
@@ -67,8 +54,10 @@ export function MenuAide() {
 
       {ouvert && (
         <div
+          ref={surface}
           role="menu"
           aria-label="Aide"
+          tabIndex={-1}
           className="absolute top-full right-0 z-20 mt-2 w-64 max-w-[calc(100vw-1.5rem)] rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
         >
           <button

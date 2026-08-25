@@ -320,6 +320,48 @@ Les faits qui portent la décision :
 Chiffrage : **3 composants à remplacer** (`PanneauDetailTache`, `GuidePriseEnMain`, les 4 menus qui
 partagent un patron identique) — **1 session**, tests compris.
 
+#### Révision du 2026-08-25 (#536) — la décision tient, la bibliothèque non
+
+Le lot 4 a implémenté les trois motifs. **La moitié de cette recommandation a été suivie, l'autre
+retournée**, et c'est la seconde qu'il faut lire ici :
+
+- **Tenu : « primitives plutôt que checklist ».** C'était le fond de l'arbitrage, et il est acquis —
+  trois primitives partagées ([`lib/usePiegeDeFocus.ts`](../apps/web/lib/usePiegeDeFocus.ts),
+  [`lib/useSurfaceDeroulee.ts`](../apps/web/lib/useSurfaceDeroulee.ts),
+  [`components/Infobulle.tsx`](../apps/web/components/Infobulle.tsx)) portent désormais ce que sept
+  surfaces réimplémentaient chacune de son côté. Le hook de surface a remplacé **quatre copies du
+  même bloc de dix-huit lignes** : c'est cette duplication, et non un oubli, qui expliquait que la
+  navigation aux flèches manque aux quatre menus à la fois.
+- **Retourné : Radix.** `@radix-ui/react-dialog` + `react-dropdown-menu` + `react-tooltip` n'ont pas
+  été ajoutés, et `apps/web` tient toujours en **trois dépendances de production**.
+
+Ce qui a fait changer d'avis est ce que cette recherche n'avait pas regardé : elle a **compté des
+motifs** (occurrences de `"Tab"`, de `ArrowUp`, de `title=`) sans ouvrir les composants. Ouverts,
+**trois des sept surfaces ne sont pas la forme que la bibliothèque sait servir** :
+
+| Surface | Ce qu'elle est | Ce que Radix en aurait fait |
+|---|---|---|
+| `GuidePriseEnMain` | une **surbrillance** qui suit un élément de la page, mesurée en `requestAnimationFrame` et amenée à l'écran par `scrollIntoView` | `Dialog` modal monte `react-remove-scroll`, qui **verrouille le défilement du corps** — le mécanisme même de la visite |
+| `CentreNotifications` | un **panneau** : sections, titres, listes, cartes à deux boutons d'arbitrage | `DropdownMenu` attend des `DropdownMenuItem` ; le panneau n'a aucune entrée de menu |
+| `AssistantFlottant` | **non modal par conception** (aucune fermeture au clic extérieur, la page reste utilisable) | `Dialog` non modal n'apporte aucun piège de focus : la dépendance pour rien |
+
+Restaient quatre surfaces où Radix tombait juste — mais pour elles, le portail et le DOM de la
+bibliothèque réécrivaient **sept fichiers de tests** dans un lot dont les tests sont explicitement
+différés (#537, #539). On aurait payé une dépendance et une suite à reprendre pour livrer sur 4/7 ce
+qu'un hook partagé livre sur 7/7.
+
+**Ce que la recommandation avait raison de refuser reste refusé.** L'objection à la checklist —
+« une checklist qu'aucune machine ne vérifie ne tient pas » — ne visait pas l'absence de
+bibliothèque mais la **recopie** : 18 cartes et 26 boutons refaits à la main. Une primitive partagée
+la supprime exactement comme une bibliothèque le ferait, et l'audit `vitest-axe` du lot 5 (#537) est
+la machine qui vérifie. Ce qui aurait rouvert le défaut serait de réécrire ces motifs surface par
+surface — ce que ce lot a précisément fermé.
+
+⚠ **Ne pas relire cette révision comme « pas de bibliothèque, jamais ».** Elle porte sur ces trois
+motifs et sur ces sept surfaces, mesurés. Un besoin dont la forme correspond à ce qu'une
+bibliothèque sert — un vrai `DropdownMenu`, un positionnement flottant à collisions — se rejugera
+sur ses propres faits.
+
 ---
 
 ## 4. Critère de sobriété opposable
@@ -450,7 +492,7 @@ final **sauf** ceux qui *sont* le livrable du lot (lots 2 et 5).
 | 1 | **Palette sémantique et échelle typographique** — tokens CSS, 5 pas, doublons retirés, aucun écran retouché | 1 | — |
 | 2 | **Le test de contraste** — la palette du lot 1 vérifiée AA dans les 2 thèmes, en CI | 1 | 1 |
 | 3 | **Primitives manquantes** — `Bouton`, `Champ`, + reprise des 18 recopies de carte *(parallèle)* | 1 | 1 |
-| 4 | **Modale et menu accessibles** — Radix sur 3 modales + 4 menus : piège de focus, flèches, infobulle *(parallèle)* | 1 | 1 |
+| 4 | **Modale et menu accessibles** — piège de focus, flèches, infobulle sur 3 modales + 4 menus *(parallèle)* — livré par primitives du dépôt, sans Radix (voir la révision du 2026-08-25 en §3.6) | 1 | 1 |
 | 5 | **Le filet a11y** — `vitest-axe` sur les 10 écrans, `jsx-a11y/recommended` en `error`, `motion-reduce`, lien d'évitement | 1 | 3, 4 |
 | 6 | **Les régions live** — 1 `polite` par écran temps réel, `assertive` pour l'arbitrage, + le test qui les garde | 1 | 5 |
 | 7 | **Les trois places** — application de la règle de sobriété à `/couts` et `/parametres`, + doc et tests du chantier | 1 | tous |

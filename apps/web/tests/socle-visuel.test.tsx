@@ -131,7 +131,9 @@ describe("les primitives (components/Primitives)", () => {
         detail="4 au total"
       />,
     );
-    expect(screen.getByTitle("2 occupé(s)")).toHaveTextContent("2 occupé(s)");
+    // `titre` est rendu par `Infobulle` depuis #536, plus par un `title=` : la
+    // valeur reste lisible, et son explication devient atteignable au clavier.
+    expect(screen.getByRole("tooltip")).toHaveTextContent("2 occupé(s)");
   });
 
   it("mène le renvoi d'une tuile vers la page qui porte le détail", () => {
