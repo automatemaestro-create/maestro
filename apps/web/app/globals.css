@@ -7,42 +7,265 @@
    ni l'autre » où les styles sombres seraient inertes. */
 @custom-variant dark (&:where([data-theme="sombre"], [data-theme="sombre"] *));
 
+/* =====================================================================
+   La palette sémantique (#533, lot 1 de #532)
+   =====================================================================
+
+   Avant ce lot, `apps/web` portait **1 750 couleurs Tailwind brutes et zéro
+   token sémantique** ; les deux seules variables de couleur (`--background`,
+   `--foreground`) ne servaient qu'à la règle `body`. Conséquence directe :
+   **542 lignes portant un `dark:`** sur 59 fichiers — chaque couleur écrite
+   deux fois, à la main. C'est le multiplicateur de coût de toute retouche
+   (docs/30 §2.4), et c'est lui que ce bloc supprime : une couleur se choisit
+   **ici**, les deux thèmes viennent avec elle.
+
+   Quatre décisions portent ce bloc, et chacune se défait mal :
+
+   1. **Les valeurs sont écrites en hexadécimal, pas en `oklch()`.** Tailwind v4
+      émet sa propre palette en `oklch()`, qu'aucun parseur `rgb()` naïf ne lit :
+      c'est le piège rencontré et corrigé pendant #471 (docs/30 §3.1), qui a
+      d'abord rendu des ratios faux. Écrire la source en hexadécimal met ce
+      piège hors sujet plutôt que de le retraiter — la sonde du lot #534 lira
+      des octets, pas un espace de couleur.
+
+   2. **Les teintes sont celles de Tailwind v4**, converties une fois
+      (oklch → sRGB) et figées ici. Ce n'est pas de la déférence : pendant les
+      lots 3 à 7 les écrans tokenisés et les écrans encore bruts cohabitent, et
+      un vert « presque emerald » se verrait côte à côte avec `bg-emerald-700`.
+      Les swatches empruntées sont nommées en regard de chaque valeur.
+
+   3. **Chaque paire tient AA, et le chiffre est connu** — 72 paires mesurées
+      (36 par thème), 0 faute : ≥ 4,5:1 pour tout ce qui est du texte, ≥ 3:1 pour ce qui borne
+      un contrôle ou porte un état (WCAG 2.2, 1.4.3 et 1.4.11). Les marges les
+      plus courtes sont `bord-fort` sur `surface-creuse` (3,40) et
+      `alerte-texte` sur `alerte-creux` (5,02). Le lot #534 en fait un test de
+      CI ; ici, c'est une promesse vérifiée, pas encore gardée.
+
+   4. **Ce lot ne migre aucun écran.** Il rend la bonne valeur *disponible* — le
+      remplacement de `text-neutral-400` (230 occurrences, 2,58:1) et du bouton
+      `bg-emerald-600` (3,65:1, 18 fichiers) est le sujet du lot 3. D'où des
+      tokens qu'aucun composant ne consomme encore : c'est voulu.
+
+   ⚠ `--background` / `--foreground` sont **laissés tels quels**. Ils portent
+   aujourd'hui la même valeur que `--surface` (en clair) et `--texte`, mais la
+   règle `body` et le mappage `@theme` les consomment déjà : les replier sur la
+   palette est un geste de migration, donc d'un lot qui a le droit de changer le
+   rendu. Ici on ajoute, on ne déplace rien. */
+
 :root,
 [data-theme="clair"] {
   --background: #ffffff;
   --foreground: #171717;
   /* Aligne les éléments natifs (champs, ascenseurs) sur le thème choisi. */
   color-scheme: light;
+
+  /* Les surfaces. `creuse` est *en retrait* du contenu — dans les deux thèmes,
+     c'est la plus sombre des deux ; c'est déjà ce que fait `Carte ton="creuse"`. */
+  --surface: #ffffff;
+  --surface-creuse: #fafafa; /* neutral-50 */
+
+  /* Deux bords, et la distinction n'est pas cosmétique. `bord` est le filet qui
+     sépare (contour de carte, séparateur de liste) : décoratif, donc **hors du
+     champ de WCAG 1.4.11**, et volontairement discret — c'est le
+     `border-neutral-200` d'aujourd'hui. `bord-fort` est celui qui **identifie
+     un contrôle** (champ de saisie, case, contour de bouton) : celui-là est
+     dans le champ de 1.4.11 et tient 3:1. Les confondre donnerait soit des
+     cartes cerclées de gris moyen, soit des champs qu'on ne voit pas. */
+  --bord: #e5e5e5; /* neutral-200 */
+  --bord-fort: #888888; /* 3,54:1 sur surface — hors barème Tailwind : neutral-400 n'est qu'à 2,8 */
+
+  --texte: #171717; /* neutral-900 — 17,9:1 */
+  /* Le remplaçant de `text-neutral-400` (2,58:1). neutral-500 échoue de
+     justesse sur `surface-creuse` (4,42), d'où une valeur à la main. */
+  --texte-secondaire: #6b6b6b; /* 5,33:1 sur surface, 5,11:1 sur surface-creuse */
+
+  /* Ce qui s'écrit **sur** un ton plein. Un seul token pour les cinq tons :
+     c'est une propriété de la palette, choisie et vérifiée — chaque ton plein
+     ci-dessous passe 4,5:1 avec cette valeur-là. Un ton futur qui ne la
+     tiendrait pas prend son propre `--sur-<ton>` ; il n'y en a aucun besoin
+     aujourd'hui, et cinq tokens identiques cacheraient l'invariant. */
+  --sur-ton: #ffffff;
+
+  /* L'accent — la couleur d'action. Le produit est vert depuis #245 et le reste
+     (docs/30 §6.1 : pas d'identité nouvelle) ; ce qui change est la valeur, le
+     bouton primaire actuel (`bg-emerald-600` + blanc) étant à 3,65:1.
+     `accent` et `positif` partagent la famille : ce sont deux **rôles** — une
+     action, un succès —, donc deux tokens, même si leurs valeurs coïncident
+     aujourd'hui. Les dissocier plus tard ne coûtera alors qu'une valeur. */
+  --accent: #007a55; /* emerald-700 — blanc dessus : 5,36:1 */
+  --accent-texte: #006045; /* emerald-800 — l'accent lisible en texte */
+  --accent-creux: #d0fae5; /* emerald-100 — le fond d'une pastille d'accent */
+
+  --info: #0069a8; /* sky-700 — blanc dessus : 5,86:1 */
+  --info-texte: #00598a; /* sky-800 */
+  --info-creux: #dff2fe; /* sky-100 */
+
+  --positif: #007a55; /* emerald-700 */
+  --positif-texte: #006045; /* emerald-800 */
+  --positif-creux: #d0fae5; /* emerald-100 */
+
+  --attention: #bb4d00; /* amber-700 — blanc dessus : 5,03:1 (amber-600 n'est qu'à 3,20) */
+  --attention-texte: #973c00; /* amber-800 */
+  --attention-creux: #fef3c6; /* amber-100 */
+
+  --alerte: #c70036; /* rose-700 — blanc dessus : 6,03:1 */
+  --alerte-texte: #c70036; /* rose-700 */
+  --alerte-creux: #ffe4e6; /* rose-100 */
 }
 
 [data-theme="sombre"] {
   --background: #0a0a0a;
   --foreground: #ededed;
   color-scheme: dark;
+
+  /* En sombre, le contenu est *surélevé* : la carte (neutral-900) se pose sur
+     le fond de page (neutral-950). L'ordre entre `surface` et `surface-creuse`
+     est donc le même qu'en clair — la creuse est la plus sombre — alors que
+     leurs valeurs s'inversent. C'est déjà le rendu de `Carte` aujourd'hui. */
+  --surface: #171717; /* neutral-900 */
+  --surface-creuse: #0a0a0a; /* neutral-950 */
+
+  --bord: #262626; /* neutral-800 */
+  --bord-fort: #737373; /* neutral-500 — 3,78:1 sur surface */
+
+  --texte: #ededed; /* 15,3:1 sur surface */
+  --texte-secondaire: #9a9a9a; /* 6,37:1 sur surface — neutral-500 y échoue (3,91) */
+
+  /* En sombre, les tons pleins sont **clairs** : ce qui s'écrit dessus est donc
+     sombre. C'est tout l'intérêt d'un token plutôt que d'un `text-white` figé. */
+  --sur-ton: #0a0a0a;
+
+  --accent: #00bc7d; /* emerald-500 — 8,00:1 avec sur-ton */
+  --accent-texte: #00d492; /* emerald-400 — 9,25:1 sur surface */
+  --accent-creux: #002c22; /* emerald-950 */
+
+  --info: #00bcff; /* sky-400 */
+  --info-texte: #00bcff; /* sky-400 */
+  --info-creux: #052f4a; /* sky-950 */
+
+  --positif: #00bc7d; /* emerald-500 */
+  --positif-texte: #00d492; /* emerald-400 */
+  --positif-creux: #002c22; /* emerald-950 */
+
+  --attention: #ffb900; /* amber-400 */
+  --attention-texte: #ffb900; /* amber-400 */
+  --attention-creux: #461901; /* amber-950 */
+
+  --alerte: #ff637e; /* rose-400 */
+  --alerte-texte: #ff637e; /* rose-400 */
+  --alerte-creux: #4d0218; /* rose-950 */
 }
 
+/* Le mappage vers les utilitaires (`bg-surface`, `text-texte-secondaire`,
+   `border-bord`, `bg-alerte-creux`…).
+
+   ⚠ `inline` n'est pas décoratif : sans lui, `--color-surface: var(--surface)`
+   serait **résolu là où il est déclaré** et les utilitaires garderaient la
+   valeur claire sous `[data-theme="sombre"]`. Ça marcherait ici par accident —
+   l'attribut vit sur `<html>`, qui *est* `:root` — et cesserait de marcher le
+   jour où un thème serait posé plus bas dans l'arbre. Corollaire à connaître :
+   un bloc `inline` **n'émet pas** ses variables ; ce sont les blocs `:root` /
+   `[data-theme="sombre"]` ci-dessus qui portent les valeurs à l'exécution, et
+   c'est là qu'une sonde de contraste (lot #534) doit aller les lire. */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
 
-  /* L'échelle typographique de la Control Tower (#245) — cinq pas nommés par
-     leur RÔLE, pas par leur taille : `text-annexe` reste juste sous le corps
-     même si sa valeur bouge un jour, là où `text-xs` fige une décision de
-     rendu dans chaque appel. Ces pas s'ajoutent à l'échelle Tailwind sans la
-     remplacer ; c'est celle-ci que le produit emploie.
+  --color-surface: var(--surface);
+  --color-surface-creuse: var(--surface-creuse);
+  --color-bord: var(--bord);
+  --color-bord-fort: var(--bord-fort);
+  --color-texte: var(--texte);
+  --color-texte-secondaire: var(--texte-secondaire);
+  --color-sur-ton: var(--sur-ton);
 
-     Un pas de plus se discute ici. Le symptôme qu'il en manque un, c'est un
-     `text-[0.6875rem]` improvisé dans un composant — le lot en a retiré cinq. */
+  --color-accent: var(--accent);
+  --color-accent-texte: var(--accent-texte);
+  --color-accent-creux: var(--accent-creux);
+
+  --color-info: var(--info);
+  --color-info-texte: var(--info-texte);
+  --color-info-creux: var(--info-creux);
+
+  --color-positif: var(--positif);
+  --color-positif-texte: var(--positif-texte);
+  --color-positif-creux: var(--positif-creux);
+
+  --color-attention: var(--attention);
+  --color-attention-texte: var(--attention-texte);
+  --color-attention-creux: var(--attention-creux);
+
+  --color-alerte: var(--alerte);
+  --color-alerte-texte: var(--alerte-texte);
+  --color-alerte-creux: var(--alerte-creux);
+}
+
+/* =====================================================================
+   L'échelle typographique
+   =====================================================================
+
+   Cinq pas de **texte**, nommés par leur RÔLE et non par leur taille :
+   `text-annexe` reste juste sous le corps même si sa valeur bouge un jour, là
+   où `text-xs` fige une décision de rendu dans chaque appel.
+
+   Ce que #533 y change, et pourquoi :
+
+   - **Un pas de titre de page manquait.** Le plus grand titre courant du
+     produit était `text-titre` à 16 px — employé **nulle part** —, si bien que
+     **408 des 439 usages typographiques (93 %) tenaient sur deux pas**, 0,75 et
+     0,875 rem. C'est la cause mesurée du rendu « plat » (docs/30 §2.3), pas un
+     manque de goût. `--text-page` comble le trou entre 16 et 24 px.
+
+   - **Les doublons sont tranchés, et pas seulement en prose.** Trois tailles
+     étaient rendues par deux classes chacune : `text-xs` (158 usages) *et*
+     `text-annexe` (110) à 0,75 rem, `text-sm` (90) *et* `text-corps` (50) à
+     0,875 rem — même corps, mais **pas la même interligne**, ce qui en faisait
+     des jumelles qui divergeaient déjà en silence. Le pas nommé est désormais
+     la **source de la valeur**, et la classe Tailwind son **alias** : les deux
+     noms ne peuvent plus porter deux tailles. Ce lot ne migre aucun appel — il
+     rend la divergence impossible en attendant que les lots suivants retirent
+     les 248 usages jumeaux.
+
+     Une note de doc n'aurait pas suffi : le dépôt a déjà une doc de langage
+     visuel détaillée, et 18 recopies de carte et 26 boutons refaits sont passés
+     quand même (docs/30 §3.6). Ce qui tient, c'est ce qu'une machine refuse.
+
+   ⚠ L'interligne des jumelles n'est **pas** aliasée : `text-xs` garde
+   `calc(1 / 0.75)` et `text-sm` `calc(1.25 / 0.875)`, leurs valeurs Tailwind.
+   Les aligner sur celles des pas nommés changerait le rendu de 248 appels, ce
+   que ce lot s'interdit.
+
+   `text-chiffre` reste **hors de l'échelle de texte** : c'est un pas
+   d'affichage, réservé à la valeur d'une tuile de tête. Le compter parmi les
+   cinq ferait croire à un sixième niveau de titre.
+
+   ⚠ Ce bloc n'est **pas** `inline`, à la différence de la palette : l'alias
+   `--text-xs: var(--text-annexe)` exige que `--text-annexe` existe à
+   l'exécution, or un bloc `inline` n'émet rien. Vérifié : Tailwind suit la
+   dépendance et sort `--text-annexe` même sur un écran qui n'emploie que
+   `text-xs`.
+
+   Un pas de plus se discute ici. Le symptôme qu'il en manque un, c'est un
+   `text-[0.6875rem]` improvisé dans un composant — #245 en a retiré cinq. */
+@theme {
   --text-micro: 0.6875rem; /* horodatage, exposant : lisible, pas lu */
   --text-micro--line-height: 1rem;
   --text-annexe: 0.75rem; /* détail, aide, pastille — le second plan */
   --text-annexe--line-height: 1.05rem;
   --text-corps: 0.875rem; /* le texte courant et les titres de section */
   --text-corps--line-height: 1.35rem;
-  --text-titre: 1rem; /* le titre d'un écran ou d'une carte de plein format */
+  --text-titre: 1rem; /* le titre d'une carte ou d'une section de plein format */
   --text-titre--line-height: 1.4rem;
-  --text-chiffre: 1.5rem; /* la valeur d'une tuile de tête, et elle seule */
+  --text-page: 1.25rem; /* le titre d'un écran — le pas qui manquait */
+  --text-page--line-height: 1.6rem;
+
+  /* Hors échelle de texte : la valeur d'une tuile de tête, et elle seule. */
+  --text-chiffre: 1.5rem;
   --text-chiffre--line-height: 1.85rem;
+
+  /* L'arbitrage des doublons. La jumelle Tailwind n'a plus de valeur propre. */
+  --text-xs: var(--text-annexe);
+  --text-sm: var(--text-corps);
 }
 
 /* Tout chiffre qui se compare en colonne (un tableau) ou qui change sous les

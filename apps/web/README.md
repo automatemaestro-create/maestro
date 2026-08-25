@@ -219,7 +219,8 @@ Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 
 ## Le langage visuel
 
-Posé par #245 (lot 1 de #242), il tient en trois fichiers. Ce qui suit n'est pas
+Posé par #245 (lot 1 de #242), étendu par #533 (lot 1 de #532) qui lui a donné sa
+palette sémantique, il tient en trois fichiers. Ce qui suit n'est pas
 un inventaire : c'est **où décider**, pour qu'une décision de rendu n'ait plus à
 se reprendre écran par écran.
 
@@ -261,24 +262,108 @@ un choix nommé, pas un `bg-*` passé en `className` : deux règles de fond dans
 même attribut ne se départagent pas par l'ordre d'écriture mais par celui de la
 feuille générée — une surcharge au cas par cas est silencieusement instable.
 
+### La palette sémantique — `app/globals.css`
+
+Posée par #533 (lot 1 de #532). Avant elle, le produit portait **1 750 couleurs
+Tailwind brutes et zéro token sémantique** : chaque couleur s'écrivait deux fois
+— une fois nue, une fois en `dark:` —, d'où **542 lignes** sur 59 fichiers à
+tenir d'accord à la main, et le multiplicateur de coût de toute retouche
+(docs/30 §2.4). Une couleur se choisit désormais **une fois**, et les deux
+thèmes viennent avec elle.
+
+| Token | Rôle |
+| --- | --- |
+| `surface` | ce sur quoi on lit du contenu (la page en clair, la carte en sombre) |
+| `surface-creuse` | la surface **en retrait** — la plus sombre des deux, dans les deux thèmes |
+| `bord` | le filet qui sépare : contour de carte, séparateur de liste |
+| `bord-fort` | le bord qui **identifie un contrôle** : champ, case, contour de bouton |
+| `texte` | le texte principal |
+| `texte-secondaire` | le second plan — le remplaçant de `text-neutral-400` (2,58:1) |
+| `accent` | la couleur d'action |
+| `info` `positif` `attention` `alerte` | les quatre tons d'état |
+
+`accent` et les quatre états portent **trois** valeurs chacun, parce qu'un ton ne
+sert jamais à une seule chose :
+
+| Suffixe | Où il va | Ce qu'il garantit |
+| --- | --- | --- |
+| *(aucun)* | l'aplat : bouton plein, pastille, bord d'état | ≥ 3:1 sur les deux surfaces |
+| `-texte` | le ton **écrit** : lien, libellé, valeur | ≥ 4,5:1 sur les deux surfaces **et** sur son `-creux` |
+| `-creux` | le fond teinté d'une pastille | porte son `-texte` à ≥ 4,5:1 |
+
+`sur-ton` est ce qui s'écrit **sur** un aplat — blanc en clair, presque noir en
+sombre. Un seul token pour les cinq tons : c'est une propriété **vérifiée** de la
+palette, pas une coïncidence, et cinq tokens identiques la cacheraient.
+
+Quatre choses à savoir avant d'y toucher :
+
+- **`bord` et `bord-fort` ne sont pas deux nuances du même gris.** Un filet
+  décoratif est hors du champ de WCAG 1.4.11 et reste discret ; ce qui **borne un
+  contrôle** y est soumis et tient 3:1. Les confondre donne soit des cartes
+  cerclées de gris moyen, soit des champs qu'on ne voit pas.
+- **`accent` et `positif` partagent la famille verte** — le bouton d'action et le
+  succès. Ce sont deux **rôles**, donc deux tokens, même si leurs valeurs
+  coïncident aujourd'hui ; les dissocier plus tard ne coûtera qu'une valeur.
+- **Les valeurs sont écrites en hexadécimal, pas en `oklch()`.** Tailwind v4 émet
+  sa propre palette en `oklch()`, qu'aucun parseur `rgb()` naïf ne lit — le piège
+  a rendu de faux ratios pendant #471 (docs/30 §3.1). La source est en octets ;
+  les teintes, elles, **sont** celles de Tailwind v4, converties une fois, pour
+  qu'un écran tokenisé ne jure pas à côté d'un écran encore brut pendant la
+  migration.
+- **72 paires mesurées** (36 par thème), **0 faute**. Les marges les plus
+  courtes sont `bord-fort` sur `surface-creuse` (3,40) et `alerte-texte` sur
+  `alerte-creux` (5,02). #534 en fait un test de CI : ici la promesse est
+  vérifiée, pas encore **gardée**.
+
+Les valeurs vivent dans les blocs `:root` / `[data-theme="sombre"]` et sont
+émises telles quelles ; le bloc `@theme inline` ne fait que les brancher sur les
+utilitaires (`bg-surface`, `text-texte-secondaire`, `border-bord-fort`,
+`bg-alerte-creux`…). C'est là qu'une sonde doit aller lire la palette — un bloc
+`@theme inline` n'émet rien.
+
+`--background` / `--foreground` sont **laissés en place** : ils portent la même
+valeur que `--surface` (en clair) et `--texte`, mais la règle `body` les consomme
+déjà, et les replier sur la palette est un geste de migration.
+
 ### L'échelle typographique et la densité — `app/globals.css`
 
-Cinq pas, nommés par leur **rôle** plutôt que par leur taille : `text-annexe`
-reste juste sous le corps même si sa valeur bouge, là où `text-xs` fige une
-décision de rendu dans chaque appel.
+Cinq pas de **texte**, nommés par leur **rôle** plutôt que par leur taille :
+`text-annexe` reste juste sous le corps même si sa valeur bouge, là où `text-xs`
+fige une décision de rendu dans chaque appel.
 
 | Pas | Taille | Emploi |
 | --- | --- | --- |
 | `text-micro` | 0,6875 rem | horodatage, exposant — lisible, pas lu |
 | `text-annexe` | 0,75 rem | détail, aide, pastille — le second plan |
 | `text-corps` | 0,875 rem | le texte courant **et** les titres de section |
-| `text-titre` | 1 rem | le titre d'un écran ou d'une carte de plein format |
-| `text-chiffre` | 1,5 rem | la valeur d'une tuile de tête, et elle seule |
+| `text-titre` | 1 rem | le titre d'une carte ou d'une section de plein format |
+| `text-page` | 1,25 rem | **le titre d'un écran** |
 
-Ces pas **s'ajoutent** à l'échelle Tailwind sans la remplacer ; c'est celle-ci
-que le produit emploie. Le symptôme qu'il en manque un, c'est un
-`text-[0.6875rem]` improvisé dans un composant — le lot en a retiré cinq. Un pas
-de plus se discute dans `globals.css`, pas dans un écran.
+`text-page` a été ajouté par #533 : le plus grand titre courant du produit était
+`text-titre` à 16 px — employé **nulle part** —, si bien que **408 des 439 usages
+typographiques (93 %) tenaient sur deux pas**, 0,75 et 0,875 rem. C'est la cause
+mesurée du rendu « plat » (docs/30 §2.3), pas un manque de goût.
+
+`text-chiffre` (1,5 rem) reste **hors de cette échelle** : c'est un pas
+d'affichage, réservé à la valeur d'une tuile de tête. Le compter parmi les cinq
+ferait croire à un sixième niveau de titre.
+
+**Un pas, un nom.** Trois tailles étaient rendues par **deux classes chacune** :
+`text-xs` (158 usages) *et* `text-annexe` (110) à 0,75 rem, `text-sm` (90) *et*
+`text-corps` (50) à 0,875 rem — même corps, mais **pas la même interligne**, donc
+des jumelles qui divergeaient déjà en silence. #533 a tranché : **le pas nommé
+est la source de la valeur, la classe Tailwind n'en est plus qu'un alias**
+(`--text-xs: var(--text-annexe)`). Les deux noms ne peuvent plus porter deux
+tailles. On écrit `text-annexe` et `text-corps` ; les 248 appels jumeaux partent
+avec les lots de migration.
+
+⚠ L'**interligne** des jumelles n'est **pas** aliasée : `text-xs` garde
+`calc(1 / 0.75)` et `text-sm` `calc(1.25 / 0.875)`. Les aligner changerait le
+rendu de 248 appels, ce que le lot qui *pose* les tokens s'interdit.
+
+Ces pas **s'ajoutent** à l'échelle Tailwind sans la remplacer. Le symptôme qu'il
+en manque un, c'est un `text-[0.6875rem]` improvisé dans un composant — #245 en a
+retiré cinq. Un pas de plus se discute dans `globals.css`, pas dans un écran.
 
 La **densité** suit la même logique, portée par la prop `densite` de `Carte` :
 `compacte` (0,625 rem) pour ce qui s'empile en nombre, `normale` (0,75 rem) par
