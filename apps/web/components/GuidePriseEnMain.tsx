@@ -33,6 +33,7 @@ import {
   lireGuideVu,
   marquerGuideVu,
 } from "@/lib/guide";
+import { usePiegeDeFocus } from "@/lib/usePiegeDeFocus";
 
 /** Le rectangle de l'ancre, en coordonnées de la fenêtre (position fixe). */
 type Rect = { haut: number; gauche: number; largeur: number; hauteur: number };
@@ -180,6 +181,12 @@ export function GuidePriseEnMain() {
     if (actif) carte.current?.focus();
   }, [actif, index]);
 
+  // La tabulation reste dans la carte tant que la visite dure (#536). Le piège
+  // est ici la seule pièce à ajouter : le voile absorbe déjà les clics, `Échap`
+  // et la restauration du focus sont tenus plus haut. Conditionné par `actif`,
+  // parce que ce composant reste monté entre deux visites.
+  usePiegeDeFocus(carte, actif);
+
   if (!actif) return null;
 
   return (
@@ -227,7 +234,10 @@ export function GuidePriseEnMain() {
           <button
             type="button"
             onClick={arreter}
-            title="Quitter la visite (Échap)"
+            // Le raccourci a rejoint le nom accessible (#536) : dans un `title`
+            // il n'était annoncé à personne, alors que c'est précisément le
+            // clavier qu'il concerne.
+            aria-label="Quitter la visite (Échap)"
             className="-mr-1 rounded px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
           >
             Quitter

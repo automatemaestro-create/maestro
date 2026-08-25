@@ -26,6 +26,7 @@ import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { GraphiqueEvolutionCout } from "@/components/GraphiqueEvolutionCout";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
 import { PanneauCouts } from "@/components/PanneauCouts";
+import { Carte } from "@/components/Primitives";
 import { RepartitionAgents } from "@/components/RepartitionAgents";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
@@ -108,24 +109,28 @@ export default function PageCouts() {
             </p>
           )}
           <div className="grid gap-6 lg:grid-cols-5">
-            <section
+            <Carte
+              balise="section"
+              densite="aeree"
               aria-label="Évolution du coût"
-              className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm lg:col-span-3 dark:border-neutral-800 dark:bg-neutral-900"
+              className="lg:col-span-3"
             >
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
                 Évolution du coût
               </h2>
               <GraphiqueEvolutionCout serie={vue.serie} pas={vue.pas as PasSerie} />
-            </section>
-            <section
+            </Carte>
+            <Carte
+              balise="section"
+              densite="aeree"
               aria-label="Répartition par agent"
-              className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm lg:col-span-2 dark:border-neutral-800 dark:bg-neutral-900"
+              className="lg:col-span-2"
             >
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
                 Répartition par agent
               </h2>
               <RepartitionAgents agents={vue.agents} />
-            </section>
+            </Carte>
           </div>
           <TableTaches taches={vue.taches} />
           <TableExecutions executions={vue.executions} />
@@ -173,7 +178,7 @@ function Compteur({
   detail?: string;
 }) {
   return (
-    <article className="rounded-lg border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+    <Carte>
       <p className="text-xs text-neutral-500 dark:text-neutral-400">{libelle}</p>
       <p className="mt-1 text-2xl font-semibold">{valeur}</p>
       {detail && (
@@ -181,7 +186,7 @@ function Compteur({
           {detail}
         </p>
       )}
-    </article>
+    </Carte>
   );
 }
 
@@ -189,10 +194,7 @@ function Compteur({
 function TableTaches({ taches }: { taches: CoutTacheAgregee[] }) {
   if (taches.length === 0) return null;
   return (
-    <section
-      aria-label="Coûts par tâche"
-      className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
-    >
+    <Carte balise="section" densite="aeree" aria-label="Coûts par tâche">
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
         Par tâche
       </h2>
@@ -249,7 +251,7 @@ function TableTaches({ taches }: { taches: CoutTacheAgregee[] }) {
           </tbody>
         </table>
       </div>
-    </section>
+    </Carte>
   );
 }
 
@@ -257,10 +259,7 @@ function TableTaches({ taches }: { taches: CoutTacheAgregee[] }) {
 function TableExecutions({ executions }: { executions: CoutExecutionResume[] }) {
   if (executions.length === 0) return null;
   return (
-    <section
-      aria-label="Coûts par exécution"
-      className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
-    >
+    <Carte balise="section" densite="aeree" aria-label="Coûts par exécution">
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
         Par exécution
       </h2>
@@ -303,6 +302,6 @@ function TableExecutions({ executions }: { executions: CoutExecutionResume[] }) 
           </tbody>
         </table>
       </div>
-    </section>
+    </Carte>
   );
 }

@@ -89,9 +89,19 @@ describe("le bouton flottant (AssistantFlottant)", () => {
     render(<AssistantFlottant />);
     await ouvrirPanneau(utilisateur);
 
-    const flottant = screen.getByTitle("Fermer l'assistant");
+    // Par le nom accessible et non par un `title` : le second a disparu avec
+    // #536, il ne faisait que redoubler le premier. Ouvert, deux boutons
+    // portent ce nom — la croix de l'en-tête du panneau et le bouton flottant,
+    // qui font la même chose ; on vise celui qui vit **hors** du panneau.
+    const panneau = screen.getByRole("region", {
+      name: "Assistant de la Control Tower",
+    });
+    const flottant = screen
+      .getAllByRole("button", { name: "Fermer l'assistant" })
+      .find((bouton) => !panneau.contains(bouton));
+    expect(flottant).toBeDefined();
     expect(flottant).toHaveAttribute("aria-expanded", "true");
-    await utilisateur.click(flottant);
+    await utilisateur.click(flottant!);
     expect(
       screen.queryByRole("region", { name: "Assistant de la Control Tower" }),
     ).not.toBeInTheDocument();

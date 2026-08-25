@@ -19,7 +19,7 @@
 import { useState } from "react";
 
 import { IconeAgent, IconeAlerte } from "@/components/Icones";
-import { BadgeEtat, Carte, EnTeteSection } from "@/components/Primitives";
+import { BadgeEtat, Bouton, Carte, EnTeteSection } from "@/components/Primitives";
 import { formatHeure } from "@/lib/format";
 import {
   NATURE_AJOUT,
@@ -123,22 +123,17 @@ function CarteValidation({
         </p>
       )}
       <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          disabled={enCours}
-          onClick={() => void surDecision(true)}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
+        <Bouton occupe={enCours} onClick={() => void surDecision(true)}>
           {enCours ? "Envoi…" : "Approuver"}
-        </button>
-        <button
-          type="button"
+        </Bouton>
+        <Bouton
+          variante="contour"
+          ton="alerte"
           disabled={enCours}
           onClick={() => void surDecision(false)}
-          className="rounded-md border border-rose-300 px-3 py-1.5 text-annexe font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950"
         >
           Refuser
-        </button>
+        </Bouton>
       </div>
       {erreur && (
         <p className="mt-2 text-annexe text-rose-600 dark:text-rose-400">{erreur}</p>

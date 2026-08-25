@@ -819,9 +819,7 @@ function NoeudCarte({
           <p className="chiffre mt-1 flex items-baseline gap-1.5 text-annexe text-neutral-500 dark:text-neutral-400">
             <span>{`${faites}/${total}`}</span>
             {courante !== null && (
-              <span className="min-w-0 truncate" title={courante.libelle}>
-                {courante.libelle}
-              </span>
+              <span className="min-w-0 truncate">{courante.libelle}</span>
             )}
           </p>
         </div>
@@ -938,10 +936,13 @@ function BasculeCadrage({
         aria-pressed={cadrage === CADRAGE_BRANCHE}
         disabled={!actif}
         onClick={() => cadrer(CADRAGE_BRANCHE)}
-        title={
+        // Ce que le cadrage montre — et, désactivé, pourquoi il ne montre rien
+        // — a rejoint le nom accessible (#536) : le `title` d'un bouton
+        // `disabled` n'apparaît pas dans plusieurs navigateurs.
+        aria-label={
           actif
-            ? "Ce qui tourne, ce qui y mène et ce qui en découle"
-            : "Aucune tâche en cours ni prête : il n'y a pas de branche à suivre."
+            ? "Branche courante — ce qui tourne, ce qui y mène et ce qui en découle"
+            : "Branche courante — indisponible : aucune tâche en cours ni prête, il n'y a pas de branche à suivre"
         }
         className={`${commun} ${cadrage === CADRAGE_BRANCHE ? choisi : autre}`}
       >

@@ -34,7 +34,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import {
   IconeAgent,
@@ -48,6 +48,7 @@ import { runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle } from "@/lib/navigation";
+import { useSurfaceDeroulee } from "@/lib/useSurfaceDeroulee";
 import {
   EXECUTION_EN_ATTENTE_REPONSES,
   VALIDATION_EN_ATTENTE,
@@ -89,6 +90,7 @@ export function CentreNotifications() {
   const [ouvert, setOuvert] = useState(false);
   const conteneur = useRef<HTMLDivElement>(null);
   const declencheur = useRef<HTMLButtonElement>(null);
+  const surface = useRef<HTMLDivElement>(null);
 
   const enAttente = validations.filter(
     (v) => v.statut === VALIDATION_EN_ATTENTE,
@@ -99,27 +101,12 @@ export function CentreNotifications() {
     evenements.filter(estNotableNotification),
   ).slice(0, MAX_EVENEMENTS_NOTABLES);
 
-  // Fermeture du menu : clic à l'extérieur ou Échap (le focus revient alors au
-  // bouton, sans quoi il retomberait sur le document).
-  useEffect(() => {
-    if (!ouvert) return;
-    const surPointeur = (evenement: PointerEvent) => {
-      if (!conteneur.current?.contains(evenement.target as Node)) {
-        setOuvert(false);
-      }
-    };
-    const surTouche = (evenement: KeyboardEvent) => {
-      if (evenement.key !== "Escape") return;
-      setOuvert(false);
-      declencheur.current?.focus();
-    };
-    document.addEventListener("pointerdown", surPointeur);
-    document.addEventListener("keydown", surTouche);
-    return () => {
-      document.removeEventListener("pointerdown", surPointeur);
-      document.removeEventListener("keydown", surTouche);
-    };
-  }, [ouvert]);
+  // Clic à l'extérieur, `Échap` et focus d'entrée viennent du hook partagé
+  // (#536). Les flèches, elles, ne s'y appliquent pas — et c'est le hook qui
+  // le constate, en ne trouvant aucune entrée de menu : voir le changement de
+  // rôle plus bas.
+  const fermer = useCallback(() => setOuvert(false), []);
+  useSurfaceDeroulee({ ouvert, fermer, conteneur, declencheur, surface });
 
   const etiquette = etiquetteCloche(enAttente.length, briefs.length);
 
@@ -131,10 +118,9 @@ export function CentreNotifications() {
         ref={declencheur}
         type="button"
         onClick={() => setOuvert((avant) => !avant)}
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={ouvert}
         aria-label={etiquette}
-        title={etiquette}
         className="relative block rounded-md p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
       >
         <IconeNotifications className="size-5" />
@@ -150,9 +136,19 @@ export function CentreNotifications() {
       </button>
 
       {ouvert && (
+        // `dialog` et non `menu` (#536). Un `role="menu"` engage un contenu fait
+        // d'entrées `menuitem` — le motif ARIA l'exige, et l'audit du lot 5
+        // (#537) le vérifiera. Or ce panneau porte des sections, des titres, des
+        // listes et des cartes à **deux boutons d'arbitrage chacune** : ce n'est
+        // pas un menu, ça n'en a jamais été un, et le déclarer tel promettait au
+        // lecteur d'écran une navigation aux flèches qui ne pouvait pas exister.
+        // Non modal à dessein : on y prend une décision sans que la page se
+        // fige derrière.
         <div
-          role="menu"
+          ref={surface}
+          role="dialog"
           aria-label="Notifications"
+          tabIndex={-1}
           className="absolute top-full right-0 z-20 mt-2 flex max-h-[min(70vh,32rem)] w-80 max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
         >
           <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-2 dark:border-neutral-800">

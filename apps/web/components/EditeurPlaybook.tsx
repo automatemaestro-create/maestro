@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { IconeHistorique, IconePlaybooks } from "@/components/Icones";
-import { BadgeEtat, EnTeteSection } from "@/components/Primitives";
+import { BadgeEtat, Bouton, EnTeteSection } from "@/components/Primitives";
 import {
   appliquerPropositionPlaybook,
   chargerPlaybook,
@@ -162,24 +162,23 @@ export function EditeurPlaybook({
           className="h-96 w-full resize-y rounded-md border border-neutral-200 bg-white p-3 font-mono text-xs leading-relaxed shadow-sm focus:border-neutral-400 focus:outline-none disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:focus:border-neutral-600"
         />
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            disabled={enCours || !modifie || !contenu.trim()}
+          <Bouton
+            disabled={!modifie || !contenu.trim()}
+            occupe={enCours}
             onClick={() => void executer(() => ecrirePlaybook(agent, contenu))}
-            className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
           >
             {enCours
               ? "Envoi…"
               : `Publier la version ${fiche.version + 1}`}
-          </button>
+          </Bouton>
           {modifie && !enCours && (
-            <button
-              type="button"
+            <Bouton
+              variante="contour"
+              ton="neutre"
               onClick={() => setContenu(fiche.contenu)}
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
             >
               Annuler les modifications
-            </button>
+            </Bouton>
           )}
           <span className="text-xs text-neutral-500 dark:text-neutral-400">
             {modifie
@@ -314,22 +313,22 @@ function LigneProposition({
           >
             {ouverte ? "Masquer" : "Voir"}
           </button>
-          <button
-            type="button"
+          <Bouton
+            taille="petite"
             disabled={enCours}
             onClick={() => appliquer(proposition.version)}
-            className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
           >
             Appliquer
-          </button>
-          <button
-            type="button"
+          </Bouton>
+          <Bouton
+            variante="contour"
+            ton="alerte"
+            taille="petite"
             disabled={enCours}
             onClick={() => rejeter(proposition.version)}
-            className="rounded-md border border-rose-300 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950"
           >
             Rejeter
-          </button>
+          </Bouton>
         </div>
       </div>
       {proposition.justification && (

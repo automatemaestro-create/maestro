@@ -14,7 +14,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import { IconeChat } from "@/components/Icones";
-import { BadgeEtat, EnTeteSection } from "@/components/Primitives";
+import { Infobulle } from "@/components/Infobulle";
+import { BadgeEtat, Bouton, EnTeteSection } from "@/components/Primitives";
 import { formatDateHeure, formatHeure } from "@/lib/format";
 import { CHAT_AUTEUR_UTILISATEUR, type MessageChat } from "@/lib/types";
 import { useChat } from "@/lib/useChat";
@@ -135,13 +136,13 @@ export function FilChat({
             "dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-600"
           }
         />
-        <button
+        <Bouton
           type="submit"
-          disabled={envoi || brouillon.trim() === ""}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          disabled={brouillon.trim() === ""}
+          occupe={envoi}
         >
           {envoi ? "Envoi…" : "Envoyer"}
-        </button>
+        </Bouton>
       </form>
       {erreurEnvoi && (
         <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
@@ -173,10 +174,13 @@ function Bulle({ message }: { message: MessageChat }) {
               ? "text-emerald-100"
               : "text-neutral-400 dark:text-neutral-500")
           }
-          title={formatDateHeure(message.horodatage)}
         >
           {utilisateur ? "vous" : message.auteur} ·{" "}
-          {formatHeure(message.horodatage)}
+          <Infobulle texte={formatDateHeure(message.horodatage)}>
+            <time dateTime={message.horodatage}>
+              {formatHeure(message.horodatage)}
+            </time>
+          </Infobulle>
         </p>
       </div>
     </li>

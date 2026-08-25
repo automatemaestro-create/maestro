@@ -11,6 +11,7 @@
  */
 
 import { IconeGrandLivre, IconeMonnaie } from "@/components/Icones";
+import { Infobulle } from "@/components/Infobulle";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
 import { Carte, EnTeteSection } from "@/components/Primitives";
 import { formatCout, formatDuree, formatTokens } from "@/lib/format";
@@ -121,11 +122,14 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
 function CellulesUsage({ usage }: { usage: Usage }) {
   return (
     <>
-      <td
-        className="chiffre py-1 pr-3 text-right"
-        title={`${formatTokens(usage.tokens_entree)} tokens en entrée / ${formatTokens(usage.tokens_sortie)} en sortie`}
-      >
-        {formatTokens(usage.tokens_total)}
+      <td className="chiffre py-1 pr-3 text-right">
+        {/* L'infobulle est **dans** la cellule et non autour (#536) : un `<td>`
+            ne s'enrobe pas, le tableau perdrait sa structure. */}
+        <Infobulle
+          texte={`${formatTokens(usage.tokens_entree)} tokens en entrée / ${formatTokens(usage.tokens_sortie)} en sortie`}
+        >
+          {formatTokens(usage.tokens_total)}
+        </Infobulle>
       </td>
       <td className="chiffre py-1 pr-3 text-right">{formatCout(usage.cout_usd)}</td>
       <td className="chiffre py-1 text-right">{formatDuree(usage.duree_ms)}</td>

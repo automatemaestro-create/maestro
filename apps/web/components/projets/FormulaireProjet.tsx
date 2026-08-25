@@ -24,6 +24,7 @@
 import { useState } from "react";
 
 import { IconePlus } from "@/components/Icones";
+import { Bouton, Carte, Champ } from "@/components/Primitives";
 import {
   cheminEnfant,
   motifsDepuisTexte,
@@ -36,14 +37,6 @@ import {
 import type { DeclarationProjet, Projet, RefusProjet } from "@/lib/types";
 
 import { ExplorateurDossiers, refusDepuis, RefusMotive } from "./ExplorateurDossiers";
-
-const CLASSE_CHAMP =
-  "w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-normal " +
-  "text-neutral-900 shadow-sm focus:border-neutral-400 focus:outline-none disabled:opacity-50 " +
-  "dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-600";
-
-const CLASSE_LIBELLE =
-  "flex flex-col gap-1 text-xs font-medium text-neutral-600 dark:text-neutral-400";
 
 export function FormulaireProjet({
   projet,
@@ -115,13 +108,15 @@ export function FormulaireProjet({
   };
 
   return (
-    <form
+    <Carte
+      balise="form"
+      densite="aeree"
       aria-label={creation ? "Nouveau projet" : `Modifier ${projet.nom}`}
       onSubmit={(e) => {
         e.preventDefault();
         void soumettre();
       }}
-      className="flex flex-col gap-4 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+      className="flex flex-col gap-4"
     >
       <h3 className="text-sm font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
         {creation ? (
@@ -134,17 +129,16 @@ export function FormulaireProjet({
         )}
       </h3>
 
-      <label className={CLASSE_LIBELLE + " sm:max-w-sm"}>
-        Nom du projet
-        <input
-          type="text"
-          value={nom}
-          onChange={(e) => setNom(e.target.value)}
-          disabled={enCours}
-          placeholder="Dépensio"
-          className={CLASSE_CHAMP}
-        />
-      </label>
+      <Champ
+        id="projet-nom"
+        libelle="Nom du projet"
+        className="sm:max-w-sm"
+        type="text"
+        value={nom}
+        onChange={(e) => setNom(e.target.value)}
+        disabled={enCours}
+        placeholder="Dépensio"
+      />
 
       {creation ? (
         <fieldset className="flex flex-col gap-1" disabled={enCours}>
@@ -189,15 +183,15 @@ export function FormulaireProjet({
           <code className="min-w-0 flex-1 font-mono text-xs break-all text-neutral-800 dark:text-neutral-200">
             {dossier ?? "aucun dossier choisi"}
           </code>
-          <button
-            type="button"
+          <Bouton
+            variante="contour"
+            ton="neutre"
             onClick={() => setExplorateurOuvert(!explorateurOuvert)}
             disabled={enCours}
             aria-expanded={explorateurOuvert}
-            className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
           >
             {dossier === null ? "Choisir un dossier…" : "Changer de dossier…"}
-          </button>
+          </Bouton>
         </div>
         {explorateurOuvert && (
           <ExplorateurDossiers
@@ -207,25 +201,25 @@ export function FormulaireProjet({
           />
         )}
         {nouveauDossier && (
-          <>
-            <label className={CLASSE_LIBELLE + " sm:max-w-sm"}>
-              Nom du dossier à créer
-              <input
-                type="text"
-                value={nomDossier}
-                onChange={(e) => setNomDossier(e.target.value)}
-                disabled={enCours}
-                placeholder="depensio"
-                className={CLASSE_CHAMP + " font-mono"}
-              />
-            </label>
-            {nomDossier !== "" && !nomDossierValide(nomDossier) && (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                Un nom de dossier, pas un chemin : ni « / » ni « \ ». Le dossier
-                parent se choisit dans l&apos;explorateur.
-              </p>
-            )}
-          </>
+          // L'erreur passe **dans** le champ : `aria-invalid` et
+          // `aria-describedby` la lient à la saisie, là où le paragraphe qui la
+          // suivait n'était rattaché à rien pour un lecteur d'écran.
+          <Champ
+            id="projet-nom-dossier"
+            libelle="Nom du dossier à créer"
+            className="sm:max-w-sm"
+            monospace
+            erreur={
+              nomDossier !== "" && !nomDossierValide(nomDossier)
+                ? "Un nom de dossier, pas un chemin : ni « / » ni « \\ ». Le dossier parent se choisit dans l'explorateur."
+                : undefined
+            }
+            type="text"
+            value={nomDossier}
+            onChange={(e) => setNomDossier(e.target.value)}
+            disabled={enCours}
+            placeholder="depensio"
+          />
         )}
         {racine !== null && (
           <p className="text-xs text-neutral-500 dark:text-neutral-400">
@@ -236,28 +230,26 @@ export function FormulaireProjet({
       </div>
 
       <div className="grid gap-3 @md:grid-cols-2">
-        <label className={CLASSE_LIBELLE}>
-          Périmètre — inclus (motifs séparés par des virgules)
-          <input
-            type="text"
-            value={inclusTexte}
-            onChange={(e) => setInclusTexte(e.target.value)}
-            disabled={enCours}
-            placeholder={texteDepuisMotifs(PERIMETRE_PAR_DEFAUT.inclus)}
-            className={CLASSE_CHAMP + " font-mono"}
-          />
-        </label>
-        <label className={CLASSE_LIBELLE}>
-          Périmètre — exclus (l&apos;emporte sur les inclus)
-          <input
-            type="text"
-            value={exclusTexte}
-            onChange={(e) => setExclusTexte(e.target.value)}
-            disabled={enCours}
-            placeholder={texteDepuisMotifs(PERIMETRE_PAR_DEFAUT.exclus)}
-            className={CLASSE_CHAMP + " font-mono"}
-          />
-        </label>
+        <Champ
+          id="projet-perimetre-inclus"
+          libelle="Périmètre — inclus (motifs séparés par des virgules)"
+          monospace
+          type="text"
+          value={inclusTexte}
+          onChange={(e) => setInclusTexte(e.target.value)}
+          disabled={enCours}
+          placeholder={texteDepuisMotifs(PERIMETRE_PAR_DEFAUT.inclus)}
+        />
+        <Champ
+          id="projet-perimetre-exclus"
+          libelle="Périmètre — exclus (l'emporte sur les inclus)"
+          monospace
+          type="text"
+          value={exclusTexte}
+          onChange={(e) => setExclusTexte(e.target.value)}
+          disabled={enCours}
+          placeholder={texteDepuisMotifs(PERIMETRE_PAR_DEFAUT.exclus)}
+        />
       </div>
       <p className="-mt-2 text-xs text-neutral-500 dark:text-neutral-400">
         Laissés vides, les deux champs retombent sur les défauts du modèle.
@@ -271,26 +263,22 @@ export function FormulaireProjet({
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="submit"
-          disabled={enCours || !pret}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
+        <Bouton type="submit" disabled={!pret} occupe={enCours}>
           {enCours
             ? "Enregistrement…"
             : creation
               ? "Déclarer le projet"
               : "Enregistrer les modifications"}
-        </button>
-        <button
-          type="button"
+        </Bouton>
+        <Bouton
+          variante="contour"
+          ton="neutre"
           onClick={onAnnuler}
           disabled={enCours}
-          className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
         >
           Annuler
-        </button>
+        </Bouton>
       </div>
-    </form>
+    </Carte>
   );
 }

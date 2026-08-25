@@ -26,15 +26,12 @@
 import { useState } from "react";
 
 import { IconeArbitrage, IconeHistorique } from "@/components/Icones";
-import { BadgeEtat, Carte, EnTeteSection } from "@/components/Primitives";
+import { BadgeEtat, Bouton, Carte, EnTeteSection } from "@/components/Primitives";
 import type { TourClarification } from "@/lib/brief";
 import { formatDateHeure } from "@/lib/format";
 
 const CLASSE_CHAMP =
   "w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-corps text-neutral-900 placeholder:text-neutral-400 focus:border-emerald-500 focus:outline-none disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600";
-
-const CLASSE_BOUTON_PRIMAIRE =
-  "rounded-md bg-emerald-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-emerald-700 disabled:opacity-50";
 
 /** Le formulaire de réponse : une question, un champ, dans l'ordre du brief. */
 export function FormulaireReponses({
@@ -115,14 +112,9 @@ export function FormulaireReponses({
         ))}
       </ol>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          disabled={enCours}
-          onClick={envoyer}
-          className={CLASSE_BOUTON_PRIMAIRE}
-        >
+        <Bouton occupe={enCours} onClick={envoyer}>
           {enCours ? "Envoi…" : "Envoyer les réponses"}
-        </button>
+        </Bouton>
         <span className="text-annexe text-neutral-500 dark:text-neutral-400">
           {repondues} sur {questions.length} renseignée
           {repondues > 1 ? "s" : ""}

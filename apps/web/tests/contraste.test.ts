@@ -179,6 +179,16 @@ type Paire = {
 const TONS = ["accent", "info", "positif", "attention", "alerte"];
 const SURFACES = ["surface", "surface-creuse"];
 
+/**
+ * Les tons qu'un **bouton** peut porter, donc les seuls à avoir un `-appui`
+ * (l'aplat survolé, #535). `positif` n'en est pas, et son absence est une
+ * décision et non un oubli : un aplat `positif` est un **état**, jamais une
+ * action, donc il n'est jamais survolé. Itérer sur `TONS` ici réclamerait un
+ * `--positif-appui` que `globals.css` refuse d'écrire — le trou dit quelque
+ * chose, et le combler par symétrie dirait le contraire.
+ */
+const TONS_ACTION = ["accent", "info", "attention", "alerte"];
+
 const PAIRES: readonly Paire[] = [
   // Le texte courant, sur les deux surfaces.
   ...SURFACES.flatMap((fond): Paire[] => [
@@ -238,6 +248,42 @@ const PAIRES: readonly Paire[] = [
       motif: "le contour d'un contrôle",
     }),
   ),
+
+  // ── L'état survolé (#535) ────────────────────────────────────────────────
+  // Ce que le survol change, c'est le FOND ; ce qui doit continuer de tenir,
+  // c'est ce qui est écrit dessus. Sans ces paires, un `-appui` mal choisi
+  // rendrait le libellé d'un bouton illisible pendant qu'on le vise — l'instant
+  // exact où l'on en a besoin — et rien ici ne le verrait.
+  ...TONS_ACTION.map(
+    (ton): Paire => ({
+      avant: "sur-ton",
+      arriere: `${ton}-appui`,
+      seuil: SEUIL_TEXTE,
+      motif: `le bouton plein « ${ton} » survolé`,
+    }),
+  ),
+
+  // Le fond d'un contrôle SANS aplat (bouton de contour, bouton discret, entrée
+  // de menu). Les trois choses qui s'y posent, et rien d'autre : le libellé, le
+  // libellé de second plan, et le trait qui borne le contrôle.
+  {
+    avant: "texte",
+    arriere: "survol",
+    seuil: SEUIL_TEXTE,
+    motif: "le libellé d'un contrôle survolé",
+  },
+  {
+    avant: "texte-secondaire",
+    arriere: "survol",
+    seuil: SEUIL_TEXTE,
+    motif: "le second plan d'un contrôle survolé",
+  },
+  {
+    avant: "bord-fort",
+    arriere: "survol",
+    seuil: SEUIL_NON_TEXTE,
+    motif: "le contour d'un bouton de contour survolé",
+  },
 ];
 
 /**
@@ -370,12 +416,14 @@ describe("la sonde, prouvée avant de servir", () => {
 
   it("place le seuil des objets graphiques à 3 et pas à 4,5", () => {
     // La preuve par l'autre bord, et elle est déjà dans la palette : `bord-fort`
-    // vit ENTRE les deux seuils (3,54 sur surface, 3,40 sur surface-creuse). Si
-    // la sonde lui appliquait le seuil du texte, la palette réelle rougirait —
-    // cette paire-là est donc le témoin vivant que les deux seuils sont
-    // distincts, et il n'y a pas à en fabriquer un.
+    // vit ENTRE les deux seuils (3,54 sur surface, 3,40 sur surface-creuse, et
+    // 3,25 sur le `survol` de #535). Si la sonde lui appliquait le seuil du
+    // texte, la palette réelle rougirait — ces paires-là sont donc le témoin
+    // vivant que les deux seuils sont distincts, et il n'y a pas à en fabriquer
+    // un. Le compte les épingle : une paire de contour qui disparaîtrait de la
+    // table emporterait le témoin avec elle.
     const contour = PAIRES.filter((p) => p.avant === "bord-fort");
-    expect(contour).toHaveLength(2);
+    expect(contour).toHaveLength(3);
     for (const paire of contour) {
       const { ratio, tient } = mesure(paire, CLAIR);
       expect(tient, paire.motif).toBe(true);
@@ -419,12 +467,13 @@ describe("la couverture du filet", () => {
     }
   });
 
-  it("mesure les 36 paires par thème que #533 annonce", () => {
-    // Le chiffre est celui du README et de `globals.css` (« 72 paires mesurées,
-    // 36 par thème »). Il garde le CONSTRUCTEUR de la table : une boucle qui
+  it("mesure les 43 paires par thème qu'annoncent #533 et #535", () => {
+    // Le chiffre est celui du README et de `globals.css` (« 86 paires mesurées,
+    // 43 par thème » : les 36 de #533, plus les 7 dont #535 a besoin pour son
+    // état survolé). Il garde le CONSTRUCTEUR de la table : une boucle qui
     // n'itère plus rendrait une table courte, donc un vert plus rapide et faux.
     // S'il bouge un jour, il bouge aux trois endroits ensemble.
-    expect(PAIRES).toHaveLength(36);
+    expect(PAIRES).toHaveLength(43);
   });
 
   it("couvre chaque token de la palette, ou nomme pourquoi il en est exempt", () => {

@@ -38,7 +38,7 @@
 import { useId, useMemo, useRef, useState } from "react";
 
 import { ExplorateurDossiers } from "@/components/projets/ExplorateurDossiers";
-import { BadgeEtat, Carte, EtatVide } from "@/components/Primitives";
+import { BadgeEtat, Bouton, Carte, EtatVide } from "@/components/Primitives";
 import { IconeDossier, IconeFermer, IconeLienExterne } from "@/components/Icones";
 import { RapportExtraction } from "@/components/composer/RapportExtraction";
 import { RefusSource } from "@/components/composer/RefusSource";
@@ -64,12 +64,6 @@ const CLASSE_CHAMP =
 
 const CLASSE_LIBELLE =
   "flex flex-col gap-1 text-annexe font-medium text-neutral-600 dark:text-neutral-400";
-
-const CLASSE_BOUTON_PRIMAIRE =
-  "rounded-md bg-emerald-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-emerald-700 disabled:opacity-50";
-
-const CLASSE_BOUTON_SECONDAIRE =
-  "rounded-md border border-neutral-300 px-3 py-1.5 text-annexe font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800";
 
 /** Le refus d'une exception quelconque — une panne réseau en est un aussi. */
 function refusDepuis(erreur: unknown): ErreurSource {
@@ -267,14 +261,14 @@ export function ComposerObjectif() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
+            <Bouton
+              variante="contour"
+              ton="neutre"
               disabled={occupe}
               onClick={() => entreeFichiers.current?.click()}
-              className={CLASSE_BOUTON_SECONDAIRE}
             >
               Déposer des fichiers…
-            </button>
+            </Bouton>
             <input
               ref={entreeFichiers}
               type="file"
@@ -289,15 +283,15 @@ export function ComposerObjectif() {
               }}
               className="sr-only"
             />
-            <button
-              type="button"
+            <Bouton
+              variante="contour"
+              ton="neutre"
               disabled={occupe}
               aria-expanded={explorateurOuvert}
               onClick={() => setExplorateurOuvert(!explorateurOuvert)}
-              className={CLASSE_BOUTON_SECONDAIRE}
             >
               {explorateurOuvert ? "Fermer l'explorateur" : "Choisir un dossier de références…"}
-            </button>
+            </Bouton>
           </div>
 
           {explorateurOuvert && (
@@ -327,14 +321,14 @@ export function ComposerObjectif() {
                 className={CLASSE_CHAMP}
               />
             </label>
-            <button
-              type="button"
+            <Bouton
+              variante="contour"
+              ton="neutre"
               disabled={occupe || url.trim() === ""}
               onClick={ajouterUrl}
-              className={CLASSE_BOUTON_SECONDAIRE}
             >
               Ajouter l&apos;adresse
-            </button>
+            </Bouton>
           </div>
 
           <ListeSources
@@ -348,14 +342,15 @@ export function ComposerObjectif() {
 
       <Carte balise="section" densite="aeree" className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+          <Bouton
+            variante="contour"
+            ton="neutre"
             disabled={occupe || sources.length === 0}
+            occupe={apercuEnCours}
             onClick={() => void voirApercu()}
-            className={CLASSE_BOUTON_SECONDAIRE}
           >
             {apercuEnCours ? "Lecture des sources…" : "Voir ce qui sera lu"}
-          </button>
+          </Bouton>
           <p className="text-annexe text-neutral-500 dark:text-neutral-400">
             Gratuit et sans effet : rien n&apos;est lancé, rien n&apos;est
             conservé.
@@ -372,14 +367,13 @@ export function ComposerObjectif() {
         {rapport !== null && <RapportExtraction rapport={rapport} />}
 
         <div className="flex flex-wrap items-center gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <button
-            type="button"
+          <Bouton
             disabled={occupe || !objectifPret}
+            occupe={lancementEnCours}
             onClick={() => void lancer()}
-            className={CLASSE_BOUTON_PRIMAIRE}
           >
             {lancementEnCours ? "Lancement…" : "Lancer l'orchestration"}
-          </button>
+          </Bouton>
           <p className="text-annexe text-neutral-500 dark:text-neutral-400">
             {objectifPret
               ? "Le moteur décompose l'objectif en tâches et publie chaque étape sur le tableau de bord."

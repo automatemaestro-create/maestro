@@ -19,7 +19,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { CreationAgent } from "@/components/EditeurAgent";
 import { IconeAgent, IconeAgents, IconePlus } from "@/components/Icones";
-import { EnTeteSection } from "@/components/Primitives";
+import { classesCarte, EnTeteSection } from "@/components/Primitives";
 import { chargerCatalogue } from "@/lib/api";
 import {
   type CleOngletAgent,
@@ -127,7 +127,13 @@ function CarteAgent({
   return (
     <Link
       href={cheminOnglet(fiche.nom, onglet)}
-      className="block h-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-left text-corps shadow-sm hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+      // La surface vient de la primitive ; ce qui reste ici est ce qu'un lien
+      // ajoute — sa hauteur dans la grille, son alignement, son survol.
+      className={classesCarte({
+        densite: "aucune",
+        className:
+          "block h-full px-3 py-2 text-left text-corps hover:bg-neutral-50 dark:hover:bg-neutral-800",
+      })}
     >
       <span className="flex items-center gap-1.5 font-medium">
         <IconeAgent className="size-4 shrink-0 text-neutral-400 dark:text-neutral-500" />

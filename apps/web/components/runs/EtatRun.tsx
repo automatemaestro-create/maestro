@@ -52,6 +52,7 @@ import {
 } from "@/components/Icones";
 import {
   BadgeEtat,
+  Bouton,
   Carte,
   type TonBadge,
   type TonCarte,
@@ -265,9 +266,6 @@ export function LignePause({
   );
 }
 
-const CLASSE_BOUTON_ORDRE =
-  "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-neutral-300 px-3 py-1.5 text-annexe font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800";
-
 /**
  * Les **deux boutons** d'un run : le suspendre, le reprendre (#477).
  *
@@ -317,17 +315,13 @@ export function BoutonsPause({
 
   return (
     <span className={className}>
-      <button
-        type="button"
-        disabled={enCours}
+      <Bouton
+        variante="contour"
+        ton="neutre"
+        icone={enPause ? IconeReprise : IconePause}
+        occupe={enCours}
         onClick={() => void ordonner()}
-        className={CLASSE_BOUTON_ORDRE}
       >
-        {enPause ? (
-          <IconeReprise className="size-3.5 shrink-0" />
-        ) : (
-          <IconePause className="size-3.5 shrink-0" />
-        )}
         {enCours
           ? enPause
             ? "Reprise…"
@@ -335,7 +329,7 @@ export function BoutonsPause({
           : enPause
             ? "Reprendre"
             : "Mettre en pause"}
-      </button>
+      </Bouton>
       {erreur && (
         <span className="mt-1 block text-annexe text-rose-600 dark:text-rose-400">
           {erreur}
@@ -344,12 +338,6 @@ export function BoutonsPause({
     </span>
   );
 }
-
-const CLASSE_BOUTON_DANGER =
-  "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-rose-300 px-3 py-1.5 text-annexe font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900 dark:text-rose-400 dark:hover:bg-rose-950";
-
-const CLASSE_BOUTON_DANGER_ARME =
-  "inline-flex shrink-0 items-center gap-1.5 rounded-md bg-rose-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-rose-700 disabled:opacity-50";
 
 /**
  * **Interrompre** ce run (#467) — le geste qui manquait, et le seul de cette carte
@@ -407,22 +395,21 @@ export function BoutonInterrompre({
     <span className={className}>
       {armee ? (
         <span className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={enCours}
+          <Bouton
+            ton="alerte"
+            occupe={enCours}
             onClick={() => void interrompre()}
-            className={CLASSE_BOUTON_DANGER_ARME}
           >
             {enCours ? "Interruption…" : "Confirmer l'interruption"}
-          </button>
-          <button
-            type="button"
+          </Bouton>
+          <Bouton
+            variante="contour"
+            ton="neutre"
             disabled={enCours}
             onClick={() => setArmee(false)}
-            className={CLASSE_BOUTON_ORDRE}
           >
             Laisser tourner
-          </button>
+          </Bouton>
           <span className="text-annexe text-neutral-500 dark:text-neutral-400">
             {
               "Les tâches en vol sont tuées là où elles en sont et perdent leur travail. C'est sans retour."
@@ -430,14 +417,14 @@ export function BoutonInterrompre({
           </span>
         </span>
       ) : (
-        <button
-          type="button"
+        <Bouton
+          variante="contour"
+          ton="alerte"
+          icone={IconeArret}
           onClick={() => setArmee(true)}
-          className={CLASSE_BOUTON_DANGER}
         >
-          <IconeArret className="size-3.5 shrink-0" />
           Interrompre
-        </button>
+        </Bouton>
       )}
       {erreur && (
         <span className="mt-1 block text-annexe text-rose-600 dark:text-rose-400">
@@ -700,7 +687,9 @@ export function CarteRun({
   return (
     <Carte balise="li" ton={fondDe(regime)}>
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-        <h3 className="min-w-0 flex-1 truncate text-corps font-medium" title={nom}>
+        {/* Pas de `title={nom}` (#536) : il répétait le texte du titre, que le
+            lecteur d'écran lit en entier même tronqué à l'écran. */}
+        <h3 className="min-w-0 flex-1 truncate text-corps font-medium">
           {vue ? (
             <Link
               href={vue}

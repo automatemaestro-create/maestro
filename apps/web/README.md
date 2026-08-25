@@ -243,24 +243,138 @@ Deux règles s'appliquent à l'ajout d'une icône :
 
 ### Les primitives — `components/Primitives.tsx`
 
-Cinq briques, et le `className` qu'on n'écrit plus :
+Sept briques, et le `className` qu'on n'écrit plus :
 
 | Brique | Ce qu'elle porte |
 | --- | --- |
 | `Carte` | la surface : bord, fond, ombre, arrondi, **densité**, **ton** |
+| `Bouton` / `BoutonLien` | l'action : **variante**, **ton**, **taille**, désactivé, occupé |
+| `Champ` / `ChampListe` / `ChampTexte` | la saisie : libellé lié, aide, erreur, `aria-invalid` |
 | `TuileChiffre` | un chiffre de tête, son libellé, son détail, son renvoi |
 | `EnTeteSection` | le titre d'une zone, son icône, ce qui l'accompagne |
 | `BadgeEtat` | la pastille d'état (compte, statut, provenance, temps réel) |
 | `EtatVide` | ce qui manque, et par où l'obtenir |
 
-Chaque brique porte ses variants `dark:` **elle-même** : c'est la seule façon de
-garantir qu'aucun écran n'oublie le thème sombre, et le point sur lequel les
-classes recopiées divergeaient le plus.
+Les briques de #245 portent leurs variants `dark:` **elles-mêmes** ; celles de
+#535 n'en portent **aucun** — elles sont écrites sur les tokens de #533, qui
+*sont* les deux thèmes. C'est la même promesse, une couche plus bas : aucun écran
+ne peut oublier le sombre.
 
 Le **ton** d'une `Carte` (`pleine`, `creuse`, `attention`, `attentionClaire`) est
 un choix nommé, pas un `bg-*` passé en `className` : deux règles de fond dans le
 même attribut ne se départagent pas par l'ordre d'écriture mais par celui de la
-feuille générée — une surcharge au cas par cas est silencieusement instable.
+feuille générée — une surcharge au cas par cas est silencieusement instable. La
+même règle vaut pour le ton et la variante d'un `Bouton`.
+
+#### Le bouton — `Bouton`, `BoutonLien`
+
+Avant #535 le produit n'avait **aucune** primitive de bouton : 92 `<button>` dans
+36 fichiers, dont une vingtaine redéfinissant leur bouton plein. C'est la
+primitive manquante la plus coûteuse, parce que c'est elle qui portait le
+contraste fautif — `bg-emerald-600` + blanc, **3,65:1 dans les deux thèmes**
+(docs/30 §3.2), à corriger dans autant d'endroits.
+
+| Axe | Valeurs | Ce qu'il dit |
+| --- | --- | --- |
+| `variante` | `plein` · `contour` · `discret` | le **rang** de l'action : ce qu'on vient faire, ce qui l'accompagne, ce qui ne doit pas peser |
+| `ton` | `accent` · `neutre` · `alerte` · `attention` · `info` | le **rôle**, jamais une couleur |
+| `taille` | `normale` · `petite` | le formulaire, ou la ligne |
+| `occupe` | booléen | l'action **est en cours** : inerte, anneau qui tourne, `aria-busy` |
+
+`occupe` n'est pas un synonyme de `disabled` : un bouton désactivé dit qu'il n'y
+a rien à faire, un bouton occupé dit qu'on attend. Les deux rendent le bouton
+inerte ; un seul l'annonce.
+
+Le **contour de focus** vit dans la primitive, pas dans l'appelant : c'est le
+seul endroit d'où l'on peut promettre qu'aucune action du produit n'est invisible
+au clavier (WCAG 2.2, 2.4.7).
+
+`BoutonLien` est le même bouton quand l'action est une **navigation** : c'est un
+lien — il s'ouvre dans un onglet, il se copie —, il en a seulement l'allure.
+
+#### Le champ — `Champ`, `ChampListe`, `ChampTexte`
+
+Trois contrôles, un seul cadre : le libellé, l'**aide** et l'**erreur**, celle-ci
+posant `aria-invalid` et se rattachant à la saisie par `aria-describedby`. Avant
+#535, chaque écran refaisait ses deux constantes `CLASSE_CHAMP` /
+`CLASSE_LIBELLE` — et une erreur s'affichait dans un paragraphe voisin que rien
+ne reliait au champ pour un lecteur d'écran.
+
+⚠ Le libellé **entoure** le contrôle au lieu de le viser par `htmlFor`, et ce
+n'est pas un détail de style : `label.control` résout un `for` par
+`getElementById`, donc par **le premier** identifiant de ce nom dans le document.
+Deux instances du même écran montées ensemble — ce que fait déjà
+`tests/projet-cadre.test.tsx` — et la seconde perd son nom accessible en silence.
+L'`id` reste obligatoire : c'est lui qui rattache l'aide et l'erreur. Il n'est
+pas dérivé d'un `useId` parce que `Primitives.tsx` est partagé avec des
+composants serveur, où aucun hook ne peut tourner.
+
+#### Ce qui ne peut pas être une `<Carte>`
+
+`classesCarte()` rend les classes de la surface **sans** la balise qui les porte.
+Deux appelants seulement, et pour une raison chacun : un `<Link>` (le composant
+de Next, pas une balise) et un `<button>` pleine largeur (dont le `type` et le
+`disabled` ne vivent pas dans `HTMLAttributes`). Les exposer plutôt que de rendre
+`Carte` polymorphe garde **une** source à la décision — c'est bien la recopie qui
+disparaît, pas seulement sa forme.
+
+### Les primitives d'accessibilité — `Infobulle`, `usePiegeDeFocus`, `useSurfaceDeroulee`
+
+Posées par #536 (lot 4 de #532), en réponse aux trois motifs que la recherche
+#471 avait mesurés en échec ([docs/30 §3.4](../../docs/30-cible-visuelle-control-tower.md)) :
+piège de focus **0/3 modales**, navigation aux flèches **0/4 menus**, infobulle
+accessible **0** pour 42 `title=`. Tout le reste était déjà bon — `Échap` 7/7,
+restauration du focus 7/7, rôles corrects — et n'a pas été touché.
+
+| Primitive | Ce qu'elle tient | Qui s'en sert |
+| --- | --- | --- |
+| `lib/usePiegeDeFocus.ts` | la tabulation reste dans la surface modale | `PanneauDetailTache`, `GuidePriseEnMain` |
+| `lib/useSurfaceDeroulee.ts` | clic extérieur, `Échap`, flèches, `Home`/`End`, focus d'entrée | `MenuAide`, `BasculeTheme`, `SelecteurProjet`, `CentreNotifications` |
+| `components/Infobulle.tsx` | une bulle `role="tooltip"` atteignable au clavier | ~14 emplacements, en remplacement de `title=` |
+
+Trois choses à connaître avant d'y toucher :
+
+- **`useSurfaceDeroulee` a remplacé quatre copies du même bloc de dix-huit
+  lignes.** C'est la cause de la panne autant que sa réparation : la navigation
+  aux flèches manquait aux quatre menus *à la fois* parce qu'il aurait fallu
+  l'écrire quatre fois. Le hook **regarde ce que la surface contient** plutôt
+  que de recevoir un drapeau — zéro entrée `menuitem` ⇒ c'est un panneau, donc
+  ni flèches ni fermeture sur `Tab`. La donnée décide, pas la configuration.
+- **La cloche n'est plus un `menu` mais un `dialog` non modal.** Elle déclarait
+  `role="menu"` sans porter la moindre entrée `menuitem` — des sections, des
+  titres, des listes et des cartes à deux boutons d'arbitrage chacune. Le motif
+  ARIA exige ces entrées, l'audit du lot 5 (#537) le vérifiera, et le rôle
+  promettait au lecteur d'écran une navigation aux flèches qui ne pouvait pas
+  exister.
+- **`AssistantFlottant` reste non modal, et n'a donc pas de piège de focus.**
+  Le ticket le prévoyait (« la surface de `AssistantFlottant` **si elle le
+  devient** ») ; elle ne le devient pas. Toute sa conception est de laisser
+  travailler dans la page pendant qu'il est ouvert — c'est pourquoi il n'a pas
+  de fermeture au clic extérieur, et un test s'appelle « reste ouvert quand on
+  agit ailleurs ».
+
+**Quand remplacer un `title=` — la règle, en une ligne :** `Infobulle` quand
+l'information n'existe **nulle part ailleurs** ; `aria-label` quand l'élément est
+déjà focusable ; suppression quand le `title` redouble le nom accessible ou le
+texte visible.
+
+Reste en `title=`, à dessein, une seule famille : la **forme longue d'un texte
+déjà affiché** et l'**identifiant technique** posé en repli d'un nom
+(`title={tache_id}` à côté de `{nom || tache_id}`). Ces `title` sont du confort
+de souris posé **par ligne** de tableau et par carte du Kanban : les convertir
+ajouterait un arrêt de tabulation par ligne, et la navigation clavier y perdrait
+plus qu'elle n'y gagnerait. Une exception dans l'exception, `LigneActivite` :
+sa date absolue vit dans un `<time>` **à l'intérieur d'un bouton**, où le
+wrapper focusable de l'infobulle créerait un contrôle imbriqué dans un contrôle
+— elle rejoint donc le texte accessible du bouton par un `sr-only`.
+
+⚠ Le `className` d'`Infobulle` **remplace** son `inline` par défaut, il ne s'y
+ajoute pas : deux utilitaires `display` dans la même liste se départagent par
+l'ordre de la feuille Tailwind, pas par celui de la chaîne. Et ce défaut est
+`inline` et non `inline-flex` parce qu'il doit être **neutre** — le wrapper
+prend la place d'un `title=`, qui n'occupait aucune place, et une boîte atomique
+que le `truncate` du parent ne sait plus abréger ferait déborder les tuiles de
+chiffres au lieu de les finir en points de suspension.
 
 Le fichier porte aussi une **constante** et non une brique : `CIBLE_MINIMALE`
 (#537), le plancher de 24 px d'une cible interactive (WCAG 2.2 §2.5.8). Elle vaut
@@ -290,17 +404,32 @@ thèmes viennent avec elle.
 | `bord-fort` | le bord qui **identifie un contrôle** : champ, case, contour de bouton |
 | `texte` | le texte principal |
 | `texte-secondaire` | le second plan — le remplaçant de `text-neutral-400` (2,58:1) |
+| `survol` | le fond d'un contrôle **sous le pointeur**, quand il n'a pas d'aplat |
 | `accent` | la couleur d'action |
 | `info` `positif` `attention` `alerte` | les quatre tons d'état |
 
-`accent` et les quatre états portent **trois** valeurs chacun, parce qu'un ton ne
-sert jamais à une seule chose :
+`accent` et les quatre états portent **trois** valeurs chacun — quatre pour ceux
+qu'un bouton peut porter —, parce qu'un ton ne sert jamais à une seule chose :
 
 | Suffixe | Où il va | Ce qu'il garantit |
 | --- | --- | --- |
 | *(aucun)* | l'aplat : bouton plein, pastille, bord d'état | ≥ 3:1 sur les deux surfaces |
 | `-texte` | le ton **écrit** : lien, libellé, valeur | ≥ 4,5:1 sur les deux surfaces **et** sur son `-creux` |
 | `-creux` | le fond teinté d'une pastille | porte son `-texte` à ≥ 4,5:1 |
+| `-appui` | l'aplat **survolé** (#535) | ≥ 4,5:1 avec `sur-ton`, et **toujours plus** qu'au repos |
+
+`-appui` s'écarte de `sur-ton` dans les deux thèmes — le pas -800 en clair, le
+pas -300 en sombre —, si bien que le libellé d'un bouton ne peut que **gagner**
+en contraste au survol : 7,09:1 au pire en clair contre 5,03:1 au repos, 10,33:1
+au pire en sombre contre 6,92:1. Un `hover:opacity-90` ou un
+`hover:brightness-110` aurait fait l'inverse, en silence. `positif` n'en a
+**pas** : un aplat `positif` est un état, jamais une action, donc il n'est jamais
+survolé — le trou dit quelque chose.
+
+`survol` est le pendant pour un contrôle **sans aplat** (bouton de contour,
+bouton discret, entrée de menu). Il ne pouvait pas être `surface-creuse` : en
+sombre la creuse est plus sombre que la surface, ce qui aurait *creusé* le bouton
+au survol au lieu de l'éclairer.
 
 `sur-ton` est ce qui s'écrit **sur** un aplat — blanc en clair, presque noir en
 sombre. Un seul token pour les cinq tons : c'est une propriété **vérifiée** de la
@@ -321,14 +450,17 @@ Quatre choses à savoir avant d'y toucher :
   les teintes, elles, **sont** celles de Tailwind v4, converties une fois, pour
   qu'un écran tokenisé ne jure pas à côté d'un écran encore brut pendant la
   migration.
-- **72 paires mesurées** (36 par thème), **0 faute**. Les marges les plus
-  courtes sont `bord-fort` sur `surface-creuse` (3,40) et `alerte-texte` sur
+- **86 paires mesurées** (43 par thème), **0 faute** : les 72 de #533, plus les
+  **14** qu'ajoutent `-appui` et `survol` (#535) — ≥ 4,89:1 pour tout ce qui est
+  du texte et ≥ 3,19:1 pour un bord. Les marges les plus courtes restent celles
+  de #533 : `bord-fort` sur `surface-creuse` (3,40) et `alerte-texte` sur
   `alerte-creux` (5,02). Depuis #534 cette promesse est **gardée** et non plus
-  seulement vérifiée : `tests/contraste.test.ts` rejoue les 72 paires à chaque
-  pipeline (job `web-build`), et **refuse** une valeur qu'il ne sait pas lire au
-  lieu de la sauter. Y toucher sans le lire coûte un pipeline rouge — c'est le
-  but. Un token **ajouté** sans paire y rougit aussi : c'est ce qui empêche le
-  filet de vieillir en instantané.
+  seulement vérifiée : `tests/contraste.test.ts` les rejoue à chaque pipeline
+  (job `web-build`), et **refuse** une valeur qu'il ne sait pas lire au lieu de
+  la sauter. Y toucher sans le lire coûte un pipeline rouge — c'est le but. Un
+  token **ajouté** sans paire y rougit aussi : c'est ce qui empêche le filet de
+  vieillir en instantané — et c'est ce qui a fait déclarer les sept paires de
+  #535 dans la table plutôt que de les laisser vertes par construction.
 
 Les valeurs vivent dans les blocs `:root` / `[data-theme="sombre"]` et sont
 émises telles quelles ; le bloc `@theme inline` ne fait que les brancher sur les
@@ -538,6 +670,17 @@ d'un composant ne monte pas. Les garder ferait rapporter une faute du **harnais*
 comme une faute du produit, sur les dix écrans à la fois. Elles ne disparaissent
 pas pour autant : elles changent de juge, et `tests/a11y.test.tsx` les vérifie
 sur la source du layout.
+
+⚠ **Une seule règle `jsx-a11y` est éteinte, sur deux lignes d'un seul fichier** :
+`no-static-element-interactions` et `no-noninteractive-tabindex` sur le wrapper
+d'`Infobulle` (#536). Les deux décrivent le défaut **inverse** de celui-là — un
+élément inerte rendu *actionnable* à la main —, alors que ce wrapper n'active
+rien : il rend une description **atteignable au clavier**, ce qui est le motif
+ARIA du `tooltip` quand le contenu décrit n'est pas focusable, et son unique
+`onKeyDown` referme la bulle sur `Échap` (WCAG 2.1 §1.4.13). L'exemption est
+posée **à la ligne près et pour ces règles-là**, jamais au fichier ni à la
+configuration : un `off` dans `eslint.config.mjs` ferait taire la règle sur les
+48 autres fichiers, c'est-à-dire partout où elle attrape le vrai défaut.
 
 ⚠ **Deux exemptions de fond** sont arrêtées par #471 et **assumées** (docs/30
 §3.5) : le graphe de pipeline (`VuePipeline`) n'est pas rendu accessible nœud à

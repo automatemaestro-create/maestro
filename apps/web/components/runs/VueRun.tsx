@@ -46,7 +46,7 @@
  */
 
 import Link from "next/link";
-import { useState } from "react";
+import { Fragment, useId, useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconeFlecheGauche, IconeRuns } from "@/components/Icones";
@@ -239,10 +239,16 @@ export function VueRun({ runId }: { runId: string }) {
  * `aria-current` sur l'actif — pour que le geste se reconnaisse d'un écran à
  * l'autre.
  *
- * L'infobulle porte **la question** à laquelle chaque vue répond, et non son
+ * Chaque onglet porte **la question** à laquelle sa vue répond, et non son
  * contenu : « Pipeline », « Kanban » et « Journal » ne disent pas d'eux-mêmes
  * lequel montre quoi, et c'est précisément la confusion que l'arbitrage devait
  * lever.
+ *
+ * Cette question est une **description accessible** depuis #536, et non un
+ * `title=`. Deux raisons de ne pas la mettre ailleurs : dans le `title` elle
+ * n'existait que pour la souris, et l'ajouter au **nom** de l'onglet ferait
+ * annoncer « Journal, ce qui s'est passé… » à chaque tabulation — un nom
+ * d'onglet doit rester le mot qu'on cherche.
  */
 function OngletsVueRun({
   vue,
@@ -251,6 +257,7 @@ function OngletsVueRun({
   vue: VueRunCle;
   choisir: (vue: VueRunCle) => void;
 }) {
+  const base = useId();
   return (
     <nav
       aria-label="Lectures de ce run"
@@ -259,12 +266,15 @@ function OngletsVueRun({
       {VUES_RUN.map(({ cle, libelle, question, icone: Icone }) => {
         const courant = cle === vue;
         return (
+          // La question vit **hors** du bouton : dedans, elle serait lue comme
+          // une partie de son nom, ce que `aria-describedby` est justement là
+          // pour éviter.
+          <Fragment key={cle}>
           <button
-            key={cle}
             type="button"
             onClick={() => choisir(cle)}
             aria-current={courant ? "page" : undefined}
-            title={question}
+            aria-describedby={`${base}-${cle}`}
             className={
               "-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-2 text-corps transition-colors motion-reduce:transition-none " +
               (courant
@@ -275,6 +285,10 @@ function OngletsVueRun({
             <Icone className="size-4 shrink-0" />
             {libelle}
           </button>
+          <span id={`${base}-${cle}`} className="sr-only">
+            {question}
+          </span>
+          </Fragment>
         );
       })}
     </nav>
@@ -313,12 +327,10 @@ function EnTeteRun({
         {/* `line-clamp-3` et non `truncate` : un objectif tient rarement sur une
             ligne, et sur un run **relancé** (#349) c'est le brief approuvé qui
             en tient lieu — plusieurs paragraphes. Trois lignes suffisent à
-            reconnaître le run ; le texte entier reste en infobulle, comme la
-            cloche le fait déjà du même champ (`CentreNotifications`). */}
-        <h2
-          className="line-clamp-3 min-w-0 flex-1 text-corps font-semibold"
-          title={run.objectif || run.run_id}
-        >
+            reconnaître le run. Le `title` qui redoublait ce texte est parti
+            (#536) : il ne disait rien de plus que le titre lui-même, que le
+            lecteur d'écran lit en entier quoi qu'en montre le `line-clamp`. */}
+        <h2 className="line-clamp-3 min-w-0 flex-1 text-corps font-semibold">
           {run.objectif || run.run_id}
         </h2>
         <BadgeRun run={run} regime={regime} attente={attente} />

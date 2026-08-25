@@ -239,7 +239,10 @@ describe("la visite (GuidePriseEnMain)", () => {
     const utilisateur = userEvent.setup();
     render(<GuidePriseEnMain />);
     await attendreVisite();
-    await utilisateur.click(screen.getByRole("button", { name: "Quitter" }));
+    // Le raccourci est passé du `title` au nom accessible (#536).
+    await utilisateur.click(
+      screen.getByRole("button", { name: "Quitter la visite (Échap)" }),
+    );
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
