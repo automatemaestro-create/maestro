@@ -1,7 +1,7 @@
 ---
 description: Termine le travail sur le ticket courant (push + PR prête + état « En revue » + merge)
 argument-hint: "[issue-iid] (optionnel si le nom de la branche courante le contient déjà)"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*)
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), ExitWorktree
 ---
 
 Tu vas clôturer le cycle de développement de la branche courante selon les règles de Maestro
@@ -22,6 +22,11 @@ pipeline rouge (`4`) ou un conflit avec `origin/main` (`5`), la commande enchaî
 `/mr-fix`, **deux fois au plus** — exactement ce qu'un run autonome fait d'office depuis #420, où
 la même cause était traitée par le pilote pendant qu'ici on se contentait de la proposer à un
 humain. L'attente s'allonge d'autant, et se dit plutôt que de se masquer (étape 13.3).
+
+⚠ **Et depuis #519, un merge réussi emporte son worktree** : la commande sort du worktree du ticket
+(`ExitWorktree`) puis retire worktree et branche locale, comme le pilote d'un run le fait depuis
+#438 — le ménage n'attend plus le prochain `/ticket-start` (étape 14). Conséquence à connaître : la
+session **finit dans le clone principal**, pas là où elle a travaillé. C'est le but.
 
 1. Détermine l'IID du ticket : utilise `$ARGUMENTS` s'il est fourni, sinon extrais-le du nom
    de la branche courante (`git branch --show-current`, motif `<type>/<iid>-<slug>`). Si
@@ -270,14 +275,8 @@ humain. L'attente s'allonge d'autant, et se dit plutôt que de se masquer (étap
       - `0` → **mergé** (squash). Le ticket se ferme par son `Closes`, et son état passe
         « Terminé » tout seul via le workflow `issues: closed` (#377) : **ne pose rien**, ne
         repasse pas `set-workflow`, ne ferme rien à la main. La branche distante part avec le merge
-        (`delete_branch_on_merge`, #384) ; la locale et le worktree, eux, **restent** — et ce n'est
-        pas un oubli (#438) : tu es **dans** ce worktree, et `worktree.sh gc` refuse par
-        construction de retirer celui de la session courante. Le ramassage d'office existe, mais
-        c'est le **pilote** d'un run qui l'a, parce que lui seul se tient dehors. Ici, dis-le
-        au lieu de le taire — « worktree et branche locale conservés (session en cours dedans) :
-        ils partiront au prochain `/ticket-start`, ou tout de suite avec `/branch-cleanup` depuis
-        le clone principal » — et n'invente aucun contournement : ni `worktree.sh remove`, ni un
-        `git branch -D` à la main.
+        (`delete_branch_on_merge`, #384) ; la branche locale et le worktree, eux, partent à
+        l'**étape 14** — c'est le seul des six verdicts qui la déclenche (#519).
       - `3` → le verdict n'est **pas encore rendu** : run en cours, absent, ou **périmé** — un vert
         porté par un commit antérieur au tien. Ce dernier cas est le plus fréquent, et il est
         normal : `pipeline-wait` ne compare pas les sha (il le dit lui-même), donc il a pu rendre
@@ -332,21 +331,63 @@ humain. L'attente s'allonge d'autant, et se dit plutôt que de se masquer (étap
       **pas** un échec du ticket — le travail est poussé, la PR est ouverte et prête, le ticket est
       « En revue ». C'est un état normal, et il a un nom.
 
-14. Termine par un résumé : **le verdict du merge en tête** (table ci-dessous), l'**issue du
+14. **Ramasse le worktree et la branche — sur `0` seulement** (#519, docs/10 §9.2). Le merge vient
+   de rendre ce worktree inutile, et cette session est la première à le savoir : le ménage n'attend
+   plus le prochain `/ticket-start` ni un `/branch-cleanup` explicite. Il vient **après** le verdict
+   du merge et ne le change jamais — si l'un de ces gestes échoue, un ticket mergé reste un ticket
+   mergé, et l'échec se dit au lieu de devenir une réserve sur le merge.
+
+   **N'entreprends rien sur `3`/`4`/`5`/`6`** : la PR est encore ouverte, donc le travail vit encore
+   dans ce worktree. Passe directement au résumé.
+
+   1. **Sors du worktree** avec l'outil **`ExitWorktree`**, `action: "keep"` — il te ramène au clone
+      principal, la position d'où le pilote d'un run ramasse depuis #438, et c'est tout ce qu'on lui
+      demande. **Jamais `action: "remove"`**, pour deux raisons indépendantes : le tool ne retire que
+      les worktrees qu'`EnterWorktree` a *créés* dans la session, or celui-ci a été créé par
+      `worktree.sh create` et seulement *rejoint* ; et même s'il le pouvait, il court-circuiterait
+      tous les garde-fous du ramassage — confirmation du merge par la forge (#197), mesure du travail non
+      sauvegardé contre le sha de merge (#438), pose de « Terminé » (#275), rattrapage des coquilles
+      (#422). **On sort du worktree avec `ExitWorktree`, on nettoie avec les verbes du dépôt.**
+      S'il répond qu'aucune session de worktree n'est active — la session n'y est pas *entrée* par
+      `EnterWorktree`, elle y a démarré (verdict `ICI` de `/ticket-start`) —, **n'insiste pas** :
+      reste où tu es, joue quand même 14.2, et relaie ce que `gc` répondra.
+   2. **Retire le worktree, puis purge la branche** — les deux verbes du pilote, **dans cet ordre**,
+      qui est le seul point non négociable ici (`git branch -D` refuse une branche encore empruntée
+      par un worktree, #305) :
+      ```
+      bash scripts/git/worktree.sh gc --iid <iid>
+      bash scripts/gitlab/lib.sh cleanup-merged --auto <branche>
+      ```
+      Si l'un des deux s'abstient, **n'invente aucun contournement** : la garde qui compte est celle
+      de `gc`, et un worktree porteur de travail **non sauvegardé** est gardé exprès — un merge dit
+      ce qui est parti sur `origin/main`, jamais ce qui est resté sur le disque. Ne la double pas
+      d'une vérification à toi : deux formules qui divergeraient se remarqueraient trop tard, et
+      c'est la garde qui perdrait.
+   3. **Rends-en compte dans le résumé** : ce qui a été retiré, ou la **cause que `gc` a nommée** en
+      s'abstenant. Une abstention n'est pas un échec de la clôture — c'est un travail que personne
+      n'attend plus là, et ce résumé est le dernier endroit où l'information atteint quelqu'un.
+
+   ⚠ **En run autonome, cette étape ne se joue jamais** : `guard.sh` refuse `pipeline-wait` et
+   `merge-mr` dès 13.1, donc le verdict `0` n'y est pas atteint. C'est le **pilote** qui ramasse
+   après son propre merge (#438) — les deux ramassages sont exclusifs par construction, et il n'y a
+   aucun drapeau à tenir d'accord.
+
+15. Termine par un résumé : **le verdict du merge en tête** (table ci-dessous), l'**issue du
    déblocage** si l'étape 13.3 a joué — sur sa **propre ligne**, jamais fondue dans celle du
-   merge —, le lien de la PR, le
-   **verdict du filet CI local** s'il n'était pas vert (étape 5 — quel job, et pourquoi tu as poussé
-   quand même), le **retard éventuel sur `origin/main`** relevé à l'étape 6 (et le rebase proposé si
-   un conflit est probable), les cases de la checklist cochées et celles restées vides (avec un mot
-   sur pourquoi), et le temps loggé le cas échéant. Si un refus du garde-fou de l'étape 3 a été
-   **franchi sur demande explicite**, dis-le en tête du résumé (quel motif, et qui l'a demandé).
+   merge —, ce que le **ramassage** de l'étape 14 a retiré (ou la cause de son abstention), le
+   lien de la PR, le **verdict du filet CI local** s'il n'était pas vert (étape 5 — quel job,
+   et pourquoi tu as poussé quand même), le **retard éventuel sur `origin/main`** relevé à
+   l'étape 6 (et le rebase proposé si un conflit est probable), les cases de la checklist
+   cochées et celles restées vides (avec un mot sur pourquoi), et le temps loggé le cas
+   échéant. Si un refus du garde-fou de l'étape 3 a été **franchi sur demande explicite**,
+   dis-le en tête du résumé (quel motif, et qui l'a demandé).
 
    **Jamais de ✅ global.** Une clôture dont la PR est restée ouverte sur un pipeline rouge n'est
    pas « terminée avec une réserve » : elle est **inachevée**, et le dire avec ce mot-là est tout ce
    qui sépare ce résumé du faux verdict que #303 a supprimé ailleurs.
    | Issue | À rapporter |
    |---|---|
-   | **Mergé** (`0`, du premier appel **ou** au terme du déblocage) | « PR #N mergée (squash) — #<iid> fermé, état « Terminé » posé par le workflow `issues: closed` » ; dis que la branche locale et le worktree sont **conservés** (la session est dedans, #438) et partiront au prochain `/ticket-start` ou avec `/branch-cleanup` |
+   | **Mergé** (`0`, du premier appel **ou** au terme du déblocage) | « PR #N mergée (squash) — #<iid> fermé, état « Terminé » posé par le workflow `issues: closed` » ; puis le **ramassage** de l'étape 14 — worktree et branche locale retirés, ou la cause que `gc` a nommée en s'abstenant (travail non sauvegardé : gardé, c'est voulu) —, et le fait que la session travaille désormais depuis le **clone principal** (#519) |
    | **Déblocage** (étape 13.3) | ⊘ **non tenté** — le verdict n'était pas réparable (`3`/`6`/`1`/`2`), ou un run autonome l'interdisait · ✅ **tenté et abouti** — ce que `/mr-fix` a réparé (conflit résolu, job remis au vert) et le nombre de tentatives · ❌ **tenté sans succès** — sur quel arrêt `/mr-fix` s'est arrêté, et combien de tentatives ont été consommées |
    | **Non mergé** (`3`/`4`/`5`/`6`) | la **cause telle que `merge-mr` l'a rendue** (jamais reformulée en « il faudra revoir ça »), l'**état laissé** — PR **ouverte** et prête, ticket **« En revue »** — et la **suite** : repasser plus tard sur `3`, le geste humain nommé sur `6`, et sur `4`/`5` ce que le déblocage n'a pas su lever |
 

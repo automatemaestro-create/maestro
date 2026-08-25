@@ -47,6 +47,7 @@
       "Bash(bash scripts/ci/local.sh:*)",
       "Bash(bash scripts/ci/pytest.sh:*)",
       "EnterWorktree",
+      "ExitWorktree",
       "mcp__chrome-maestro",
       "mcp__figma-officiel"
     ],
