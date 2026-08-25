@@ -70,6 +70,7 @@ import { PanneauDetailTache } from "@/components/PanneauDetailTache";
 import {
   BadgeEtat,
   Carte,
+  CIBLE_MINIMALE,
   EnTeteSection,
   EtatVide,
   type Icone,
@@ -691,7 +692,7 @@ function Arete({
       strokeWidth={concerne && survole !== null ? 2.5 : 1.5}
       strokeDasharray={apparence.tirets}
       markerEnd={`url(#${MARQUEUR}-${arete.etat})`}
-      className={`${apparence.trait} transition-opacity ${
+      className={`${apparence.trait} transition-opacity motion-reduce:transition-none ${
         concerne ? "opacity-100" : "opacity-20"
       }`}
     />
@@ -749,7 +750,7 @@ function NoeudCarte({
       className={
         "text-corps" +
         (ouvrable
-          ? " cursor-pointer transition hover:border-neutral-300 hover:shadow dark:hover:border-neutral-700"
+          ? " cursor-pointer transition motion-reduce:transition-none hover:border-neutral-300 hover:shadow dark:hover:border-neutral-700"
           : "")
       }
     >
@@ -791,7 +792,7 @@ function NoeudCarte({
         <p className="mt-1.5">
           <Link
             href={validations.href}
-            className="inline-flex items-center gap-1 text-annexe font-medium text-amber-800 hover:underline dark:text-amber-300"
+            className={`inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-annexe font-medium text-amber-800 hover:underline dark:text-amber-300`}
           >
             {ATTENTES[ATTENTE_VALIDATION].action}
             <IconeFlecheDroite className="size-3.5 shrink-0" />
@@ -910,7 +911,7 @@ function BasculeCadrage({
   nbBranche: number;
 }) {
   const commun =
-    "rounded-md px-2.5 py-1 text-annexe font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+    "rounded-md px-2.5 py-1 text-annexe font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-50";
   const choisi =
     "bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-neutral-100";
   const autre =

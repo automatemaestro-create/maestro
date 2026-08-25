@@ -61,6 +61,18 @@ export function Infobulle({
   const [visible, setVisible] = useState(false);
 
   return (
+    // `jsx-a11y/recommended` est passé en `error` (#537), et les deux règles
+    // éteintes ici — à la ligne près, pour ces règles-là — décrivent le défaut
+    // **inverse** de celui-ci : un élément inerte qu'on a rendu *actionnable* à
+    // la main, sans clavier ni rôle. Ce wrapper n'active rien. Il ne fait que
+    // rendre une description **atteignable au clavier**, ce qui est le motif
+    // ARIA du `tooltip` quand le contenu décrit n'est pas focusable (voir
+    // l'en-tête de ce fichier), et son unique `onKeyDown` referme la bulle sur
+    // `Échap` — exigé par WCAG 2.1 §1.4.13, pas une activation déguisée. Lui
+    // donner `role="button"` pour faire taire le lint mentirait au lecteur
+    // d'écran sur ce qu'il y a à faire ; l'enrober d'un `<button>` créerait
+    // l'arrêt de tabulation en double que l'en-tête écarte déjà.
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <span
       className={"relative " + (className.trim() || "inline")}
       onPointerEnter={() => setVisible(true)}
@@ -75,6 +87,11 @@ export function Infobulle({
         evenement.stopPropagation();
         setVisible(false);
       }}
+      // Même exemption, même motif : le `tabIndex` n'ajoute pas une action, il
+      // ajoute le seul point d'entrée clavier vers `aria-describedby`. Sans
+      // lui, l'information n'existe que pour qui a une souris — c'est-à-dire le
+      // défaut exact que ce composant a été écrit pour corriger.
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
       aria-describedby={id}
     >

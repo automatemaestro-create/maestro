@@ -201,7 +201,7 @@ export function GuidePriseEnMain() {
         // `box-shadow`, que l'ombre du voile écraserait.
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed z-40 rounded-lg outline-2 outline-sky-500 transition-[top,left,width,height] duration-200"
+          className="pointer-events-none fixed z-40 rounded-lg outline-2 outline-sky-500 transition-[top,left,width,height] duration-200 motion-reduce:transition-none"
           style={{
             top: cible.haut - MARGE_SURBRILLANCE,
             left: cible.gauche - MARGE_SURBRILLANCE,

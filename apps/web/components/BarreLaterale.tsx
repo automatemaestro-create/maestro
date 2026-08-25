@@ -25,7 +25,7 @@ export function BarreLaterale({ repliee }: { repliee: boolean }) {
   return (
     <aside
       className={
-        "sticky top-0 flex h-dvh shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 transition-[width] duration-200 dark:border-neutral-800 dark:bg-neutral-950 " +
+        "sticky top-0 flex h-dvh shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 transition-[width] duration-200 motion-reduce:transition-none dark:border-neutral-800 dark:bg-neutral-950 " +
         largeur
       }
     >
@@ -70,7 +70,7 @@ export function BarreLaterale({ repliee }: { repliee: boolean }) {
               // qu'au `title`.
               aria-label={libelle}
               className={
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors " +
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors motion-reduce:transition-none " +
                 (actif
                   ? "bg-neutral-200 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
                   : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100")

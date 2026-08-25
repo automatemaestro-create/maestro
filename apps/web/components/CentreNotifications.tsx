@@ -43,7 +43,7 @@ import {
   IconeNotifications,
 } from "@/components/Icones";
 import { LigneActivite } from "@/components/LigneActivite";
-import { BadgeEtat, Carte } from "@/components/Primitives";
+import { BadgeEtat, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
 import { runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -266,7 +266,7 @@ function CarteBriefCompacte({
       <Link
         href={page.href}
         onClick={surOuverture}
-        className="mt-2 inline-flex items-center gap-1 text-micro font-medium text-amber-800 hover:underline dark:text-amber-300"
+        className={`mt-2 inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-micro font-medium text-amber-800 hover:underline dark:text-amber-300`}
       >
         {reponses ? "Répondre" : "Relire le brief"}
         <IconeFlecheDroite className="size-3 shrink-0" />

@@ -82,7 +82,7 @@ export function AvancementEtapes({
           aria-hidden="true"
           className={
             (taille === "ample" ? "h-1 " : "h-0.5 ") +
-            "flex-1 rounded-full transition-colors " +
+            "flex-1 rounded-full transition-colors motion-reduce:transition-none " +
             (etape.etat === ETAPE_FAITE
               ? "bg-emerald-500"
               : etape.etat === ETAPE_EN_COURS

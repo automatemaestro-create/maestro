@@ -51,7 +51,7 @@ import { Fragment, useId, useState } from "react";
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconeFlecheGauche, IconeRuns } from "@/components/Icones";
 import { Kanban } from "@/components/Kanban";
-import { Carte, EtatVide } from "@/components/Primitives";
+import { Carte, CIBLE_MINIMALE, EtatVide } from "@/components/Primitives";
 import {
   Avancement,
   BadgeRun,
@@ -145,7 +145,7 @@ export function VueRun({ runId }: { runId: string }) {
           <p className="mb-2">
             <Link
               href={liste.href}
-              className="inline-flex items-center gap-1 text-annexe font-medium text-sky-700 hover:underline dark:text-sky-400"
+              className={`inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-annexe font-medium text-sky-700 hover:underline dark:text-sky-400`}
             >
               <IconeFlecheGauche className="size-3.5 shrink-0" />
               Tous les runs
@@ -276,7 +276,7 @@ function OngletsVueRun({
             aria-current={courant ? "page" : undefined}
             aria-describedby={`${base}-${cle}`}
             className={
-              "-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-2 text-corps transition-colors " +
+              "-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-2 text-corps transition-colors motion-reduce:transition-none " +
               (courant
                 ? "border-emerald-600 font-medium text-neutral-900 dark:border-emerald-500 dark:text-neutral-100"
                 : "border-transparent text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100")

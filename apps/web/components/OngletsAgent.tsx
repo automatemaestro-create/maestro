@@ -16,7 +16,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { IconeAgent, IconeFlecheGauche } from "@/components/Icones";
-import { EnTeteSection } from "@/components/Primitives";
+import { CIBLE_MINIMALE, EnTeteSection } from "@/components/Primitives";
 import { cheminOnglet, ONGLETS_AGENT, ongletDuChemin } from "@/lib/agents";
 
 export function OngletsAgent({
@@ -33,7 +33,7 @@ export function OngletsAgent({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Link
           href="/agents"
-          className="inline-flex items-center gap-1 text-annexe font-medium text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          className={`inline-flex items-center gap-1 ${CIBLE_MINIMALE} text-annexe font-medium text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100`}
         >
           <IconeFlecheGauche className="size-3.5 shrink-0" />
           Tous les agents
@@ -53,7 +53,7 @@ export function OngletsAgent({
               href={cheminOnglet(nom, cle)}
               aria-current={courant ? "page" : undefined}
               className={
-                "-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-2 text-corps transition-colors " +
+                "-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-2 text-corps transition-colors motion-reduce:transition-none " +
                 (courant
                   ? "border-emerald-600 font-medium text-neutral-900 dark:border-emerald-500 dark:text-neutral-100"
                   : "border-transparent text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100")

@@ -156,7 +156,7 @@ export function Interrupteur({
       disabled={desactive}
       onClick={basculer}
       className={
-        "relative inline-flex h-6 w-11 shrink-0 rounded-full border transition-colors disabled:opacity-40 " +
+        "relative inline-flex h-6 w-11 shrink-0 rounded-full border transition-colors motion-reduce:transition-none disabled:opacity-40 " +
         (actif
           ? "border-emerald-600 bg-emerald-600"
           : "border-neutral-300 bg-neutral-200 dark:border-neutral-700 dark:bg-neutral-800")
@@ -165,7 +165,7 @@ export function Interrupteur({
       <span
         aria-hidden="true"
         className={
-          "m-0.5 size-4.5 rounded-full bg-white shadow transition-transform dark:bg-neutral-100 " +
+          "m-0.5 size-4.5 rounded-full bg-white shadow transition-transform motion-reduce:transition-none dark:bg-neutral-100 " +
           (actif ? "translate-x-5" : "translate-x-0")
         }
       />

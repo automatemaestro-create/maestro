@@ -38,6 +38,15 @@ import {
 } from "@/lib/preferences";
 import type { Projet } from "@/lib/types";
 
+/**
+ * L'ancre du contenu principal (#537), visée par le lien d'évitement.
+ *
+ * Exportée plutôt qu'écrite deux fois : le lien et sa cible sont à deux endroits
+ * du même fichier, et une faute de frappe entre eux ne se voit ni au lint, ni au
+ * build, ni dans un rendu — le lien mènerait simplement nulle part.
+ */
+export const ID_CONTENU_PRINCIPAL = "contenu-principal";
+
 export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <FournisseurProjetActif>
@@ -104,6 +113,24 @@ function CadreControlTower({
     // sidebar, lui, est **au-dessus** de la clé : c'est une préférence
     // d'affichage, elle ne change pas avec le projet.
     <FournisseurEtatGlobal key={projet.id} projet={projet}>
+      {/* Le lien d'évitement (#537, WCAG 2.2 §2.4.1). Le produit n'en avait
+          aucun (docs/30 §3.4) : au clavier, chaque écran commençait par les
+          **dix entrées** du menu, puis la barre supérieure, avant d'atteindre
+          quoi que ce soit de la page — et le menu est identique partout, donc
+          c'était dix tabulations à repayer à chaque navigation.
+          Il est **premier dans l'ordre du DOM** et non seulement à l'écran :
+          c'est sa position ici, avant la barre latérale, qui en fait le premier
+          arrêt de la touche Tab.
+          `sr-only` + `focus:not-sr-only` : invisible tant qu'il n'a pas le
+          focus, visible dès qu'il l'a. Le masquer par `display:none` ou
+          `visibility:hidden` le sortirait de l'ordre de tabulation, c'est-à-dire
+          le supprimerait ; `sr-only` le garde atteignable. */}
+      <a
+        href={`#${ID_CONTENU_PRINCIPAL}`}
+        className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:border focus:border-bord-fort focus:bg-surface focus:px-4 focus:py-2 focus:text-corps focus:font-medium focus:text-texte focus:shadow-lg"
+      >
+        Aller au contenu principal
+      </a>
       {/* `min-h-0` tout le long (#248) : la hauteur définie posée par le
           `<body>` ne descend jusqu'aux pages que si chaque élément flex
           accepte de rétrécir sous son contenu — le `min-height:auto` par
@@ -135,9 +162,22 @@ function CadreControlTower({
               la barre supérieure y reste collée (`sticky`) comme quand c'était
               la fenêtre qui défilait, et l'ascenseur reste au bord de l'écran
               plutôt qu'au bord de la colonne centrée. */}
+          {/* `tabIndex={-1}` (#537) : sans lui, suivre le lien d'évitement
+              déplace l'ancre du document mais **pas le focus** — Chrome et
+              Firefox refusent de le poser sur un élément non focalisable, si
+              bien que la tabulation suivante repartait de la barre latérale,
+              c'est-à-dire exactement ce que le lien devait éviter.
+              `focus-visible:` et non `focus:` : Chrome pose le focus sur un
+              `tabindex="-1"` au simple **clic**, si bien qu'un `focus:` dessinerait
+              un cadre pleine largeur à chaque clic dans le contenu. On garde donc
+              la confirmation d'arrivée pour qui vient au clavier, et rien pour
+              qui vient à la souris — plutôt qu'un `outline-none` sec, qui
+              retirerait le seul signe que le saut a eu lieu. */}
           <main
+            id={ID_CONTENU_PRINCIPAL}
+            tabIndex={-1}
             data-guide="contenu"
-            className="@container mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 pb-24 sm:p-6 sm:pb-24"
+            className="@container mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col gap-6 p-4 pb-24 outline-none focus-visible:outline-2 focus-visible:outline-sky-600 sm:p-6 sm:pb-24"
           >
             {children}
           </main>

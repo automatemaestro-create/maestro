@@ -93,7 +93,7 @@ export default function PageCouts() {
       ) : (
         <div
           className={
-            "flex flex-col gap-6 transition-opacity " +
+            "flex flex-col gap-6 transition-opacity motion-reduce:transition-none " +
             (rafraichissement ? "opacity-60" : "opacity-100")
           }
         >

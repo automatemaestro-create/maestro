@@ -19,6 +19,7 @@
 
 import { IconeLienExterne, IconeTicket } from "@/components/Icones";
 import { Infobulle } from "@/components/Infobulle";
+import { CIBLE_MINIMALE } from "@/components/Primitives";
 import { lienExterneSur } from "@/lib/liens";
 import type { ReferenceTicket } from "@/lib/types";
 
@@ -40,8 +41,13 @@ const LIBELLE_PAR_DEFAUT = "Ticket externe";
 // Les teintes tiennent les deux thèmes : `sky-700` sur fond clair, `sky-300`
 // sur fond sombre — le même accent que la colonne « Assignées » du Kanban.
 const STYLE_COMMUN = "inline-flex max-w-full items-center gap-1 text-annexe";
+// `CIBLE_MINIMALE` est **sur le style du lien** et non sur le style commun : la
+// même référence se rend en `<span>` quand elle n'a pas d'URL suivable, et un
+// texte inerte n'est pas une cible (WCAG 2.2 §2.5.8 ne borne que ce qu'on
+// actionne). L'y mettre l'aurait fait grossir sans raison, à côté d'un libellé
+// qui n'a rien à cliquer.
 const STYLE_LIEN =
-  "rounded text-sky-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:text-sky-300 dark:focus-visible:outline-sky-400";
+  `${CIBLE_MINIMALE} rounded text-sky-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:text-sky-300 dark:focus-visible:outline-sky-400`;
 const STYLE_TEXTE = "text-neutral-500 dark:text-neutral-400";
 
 export function LienTicketExterne({ reference, tache, className }: Props) {
