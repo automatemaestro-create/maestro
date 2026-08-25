@@ -3998,8 +3998,9 @@ ces garde-fous qui détruisent du travail au lieu d'en borner l'ampleur. Voir §
 Journal, sous `.maestro/orchestrate/<run-id>/` : `plan.tsv` (le plan figé), `<iid>.session`
 (l'UUID), `<iid>.jsonl` (le flux d'activité complet), `<iid>.json` (le seul résultat final — coût,
 `permission_denials`), `<iid>.resultat.txt` (le même, **en clair**), `<iid>.log` (stderr), et
-`resume.tsv` (une ligne par ticket : verdict, PR, durée, coût, raison) et `pid` (la carte du
-pilote — §11.9 —, présente le temps du run). Un run lancé avec `--detach` y ajoute `lancer.sh` (ce
+`resume.tsv` (une ligne par ticket : verdict, PR, durée, coût, raison), `pid` (la carte du
+pilote — §11.9 —, présente le temps du run) et `audit.txt` (où est passé le temps du run, figé à la
+fin — §11.12). Un run lancé avec `--detach` y ajoute `lancer.sh` (ce
 qui a été lancé) et `run.log` (toute la sortie de la console, flux d'activité compris) ; un run de
 **reprise** (§11.8), `reprise-de` — l'id du run dont il continue le plan.
 
@@ -5020,9 +5021,35 @@ Depuis Claude Code, **`/run-audit [<run-id>]`** est le geste : elle appelle ce v
 et n'ajoute au-dessus d'eux que ce qu'un script ne sait pas faire — le **jugement**, puis les
 **tickets de correction** qu'il appelle. Elle est en **lecture seule**, comme `/backlog` et
 `/mr-review` : ni cycle de vie, ni PR, ni merge, et aucun ticket ouvert sans un « go » explicite.
-Le résumé de fin de run la rappelle, au même titre que `refus` — pour la même raison, et c'est la
-seule qui vaille : **le seul moment où quelqu'un lit un run est celui-là.** Un audit qu'on ne relit
-pas après chaque run est un audit qu'on écrit une fois.
+
+**L'audit ne s'invite plus, il se joue** (#530). Le résumé de fin de run rappelait la commande, au
+même titre que `refus`, pour la seule raison qui vaille : le seul moment où quelqu'un lit un run est
+celui-là. Sauf qu'une invitation suppose un lecteur, et qu'un run `--detach` se termine dans une
+fenêtre que personne ne regarde — souvent des heures après le feu vert. Le partage est donc celui du
+**coût** : le **pilote écrit** le rapport, une **session propose** le jugement.
+
+* **Le rapport** — en terminant, `run.sh` fige la sortie de `journal.sh audit <run-id>` dans
+  **`<run-dir>/audit.txt`**, au même titre qu'il y écrit `resume.tsv`. Coût : quelques secondes de
+  CPU, aucun quota, aucune question à poser. Le résumé **le nomme** à la place de l'invitation.
+* **Le jugement** — `/run-audit` consomme du quota et demande une session : cela ne peut pas se
+  déclencher tout seul dans un pilote détaché, et cela ne doit pas. La question se pose donc au seul
+  endroit où une session constate qu'un run est **terminé** : `/orchestrate --status`, qui
+  **propose** de lancer `/run-audit <run-id>` — et nomme `audit.txt`, déjà là et gratuit à lire.
+
+Il y a une seconde perte, propre à l'audit, et c'est elle qui rend le report coûteux :
+`journal.sh gc` ne garde que les **dix derniers runs** (§11.3). Un rapport qu'on n'écrit pas au
+moment où le run se termine est un rapport qu'on ne pourra **plus** écrire dix runs plus tard — les
+`.jsonl` seront partis avec le répertoire.
+
+Trois choix à ne pas défaire. L'écriture a lieu **après la compaction** des flux en `.jsonl.gz` :
+`audit` sait relire un `.gz`, mais la placer avant la ferait dépendre d'un ordre que rien n'oblige à
+tenir. Elle est **best-effort**, comme `gc` et comme la pose du cycle de vie de §9.2 — ni le verdict
+du run ni son code de sortie n'en dépendent, un run réussi reste réussi sans son audit —, et le
+fichier est **retiré s'il n'a pas pu être écrit en entier**, « `audit.txt` est là » devant vouloir
+dire « le rapport est complet » ; le résumé retombe alors sur la **commande**, sans quoi le ticket
+aurait retiré l'invitation sans la remplacer. Enfin **rien n'a bougé dans `journal.sh`** : l'audit
+**mesure**, il ne gère pas de fichiers (portée de #495) — c'est l'appelant qui redirige sa sortie.
+`MAESTRO_AUDIT_FIN_RUN=0` éteint l'écriture.
 
 **Ce que l'audit répond, et que rien d'autre ne répondait.** Sans argument il porte sur le dernier
 run qui porte un flux — un run **en cours** se lit comme un autre, et c'est même la question la plus
@@ -5075,3 +5102,11 @@ renvoyer par un chemin absolu ferait refuser la lecture.
 > même coup le désescapage de #496 ; et l'**absence de `jq` et de Python** dans le chemin
 > d'exécution — prouvée par trois bouchons en tête de `PATH` plutôt que par un `grep`, le script
 > nommant les deux dans ses commentaires.
+>
+> S'y ajoutent, pour l'écriture de fin de run (#530), trois questions posées **sur un vrai run** du
+> harnais et non sur un journal fabriqué — c'est le pilote qu'elles gardent, pas l'audit : le
+> rapport est écrit et **nommé dans le résumé**, avec un contenu qui vient bien du flux de la
+> session ; l'écriture est **best-effort** — un `journal.sh` qui échoue laisse le run réussi, son
+> code de sortie intact et **aucun `audit.txt` tronqué** derrière lui, le résumé retombant sur la
+> commande ; et `MAESTRO_AUDIT_FIN_RUN=0` l'**éteint**, sans rien retirer d'autre. Une quatrième
+> vérifie l'**ordre** : à l'instant où l'audit est écrit, le flux du ticket est déjà en `.jsonl.gz`.

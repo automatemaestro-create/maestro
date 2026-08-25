@@ -4982,24 +4982,149 @@ def test_audit_ne_touche_a_rien_et_mesure_un_run_encore_en_vol(depot: Depot) -> 
     assert {p: p.stat().st_mtime_ns for p in fichiers} == empreinte, "l'audit n'écrit rien"
 
 
-def test_la_console_renvoie_vers_l_audit_en_fin_de_run(depot: Depot) -> None:
-    """Un audit qu'on ne relit pas après chaque run est un audit qu'on écrit une fois (#498).
+# =====================================================================================
+# L'audit se JOUE en fin de run, au lieu de s'inviter (#530)
+# =====================================================================================
+#
+# #498 imprimait une invitation dans le résumé — ce qui suppose quelqu'un devant la console au bon
+# moment, or un run `--detach` se termine dans une fenêtre que personne ne regarde. Le partage se
+# fait donc sur le COÛT : le pilote ÉCRIT le rapport (quelques secondes de CPU, aucun quota), une
+# session PROPOSE le jugement (`/orchestrate --status`, hors de ce fichier).
+#
+# Ces quatre tests gardent le PILOTE et non l'audit, dont les huit sections sont éprouvées juste
+# au-dessus sur un journal fabriqué. Ils tournent donc sur un vrai run du harnais : ce qu'on veut
+# savoir est quand le pilote appelle, ce qu'il fait du résultat, et ce qu'il ne fait pas.
 
-    Même raison que pour `refus` juste au-dessus : le seul moment où quelqu'un lit un run est
-    celui-là. La COMMANDE est nommée à côté du verbe — depuis Claude Code c'est elle qu'on lance.
+
+def _stub_flux_mesurable(depot: Depot, iid: int = 130) -> str:
+    """Un bouchon de session dont le flux est MESURABLE : des appels horodatés et appariés.
+
+    `_stub_flux` suffit à la vue, qui ne lit que les `tool_use`. L'audit, lui, apparie chaque appel
+    à son retour et soustrait des horodatages : sur un flux qui n'en porte pas, il rend « aucun
+    appel mesurable » — un fichier écrit, non vide, et qui ne prouverait rien de son contenu.
     """
-    depot.ticket(130, "Ticket a traiter")
-    depot.mr("feat/130-ticket-a-traiter", "opened")
-    claude = _claude_stub(depot, """
-        echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}'
+    flux = (
+        _appel(0, ("toolu_a", "Bash", "bash scripts/ci/local.sh"))
+        + _retour(45, "toolu_a")
+        + _appel(46, ("toolu_b", "Edit", "scripts/orchestrate/run.sh"))
+        + _retour(47, "toolu_b")
+    ).rstrip("\n")
+    return _claude_stub(depot, f"""
+        printf '%s' '{_statut_json(str(iid), "En revue")}' > "$MAESTRO_FIXTURES/owner-{iid}.json"
+        cat <<'FLUX'
+{flux}
+{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}
+FLUX
         exit 0
     """)
-    plan = _plan(depot, [(1, 130, "-", "moyenne")])
-    r = depot.lance("run.sh", "--plan", plan, "--run-id", "invite-audit",
-                    env={"MAESTRO_CLAUDE_BIN": claude})
 
-    assert "journal.sh audit invite-audit" in r.stdout, r.stdout[-1500:]
-    assert "/run-audit" in r.stdout, "la commande est le geste, le verbe en est la plomberie"
+
+def _journal_espion(depot: Depot, *, code: int = 0) -> None:
+    """Remplace `journal.sh` par un espion — le seul moyen d'observer un ORDRE et une ABSTENTION.
+
+    Il note deux choses qu'aucun état final ne montre : ce que le pilote a demandé au journal, et ce
+    que le répertoire du run contenait AU MOMENT où il l'a demandé. Il écrit toujours quelque chose
+    avant de rendre son code, ce qui est justement ce qui rend `code != 0` intéressant : un
+    `audit.txt` tronqué existe alors sur le disque, et le pilote doit le retirer.
+    """
+    chemin = depot.racine / "scripts/orchestrate/journal.sh"
+    chemin.write_text(
+        "#!/usr/bin/env bash\n"
+        'racine="${0%/scripts/orchestrate/journal.sh}"\n'
+        "printf '%s\\n' \"$*\" >> \"$MAESTRO_FIXTURES/journal.log\"\n"
+        '[ "$1" = audit ] || exit 0\n'
+        'ls "$racine/.maestro/orchestrate/$2" > "$MAESTRO_FIXTURES/instant.txt" 2>/dev/null\n'
+        "printf 'rapport partiel'\n"
+        f"exit {code}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    chemin.chmod(0o755)
+
+
+def _run_audite(depot: Depot, run_id: str, **env: str) -> subprocess.CompletedProcess:
+    """Un run d'un ticket, dont la session laisse un flux mesurable."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    return depot.lance("run.sh", "--plan", plan, "--run-id", run_id,
+                       env={"MAESTRO_CLAUDE_BIN": _stub_flux_mesurable(depot), **env})
+
+
+def test_le_pilote_fige_l_audit_du_run_dans_son_journal(depot: Depot) -> None:
+    """Le rapport est écrit, il est JUSTE, et le résumé le nomme au lieu d'inviter à le refaire.
+
+    L'invitation de #498 est remplacée et non doublée : la nommer encore laisserait croire qu'il
+    reste une commande à jouer. Ce qui reste proposé est le JUGEMENT — `/run-audit`, qui coûte du
+    quota et ouvre une session, donc qui se demande.
+    """
+    r = _run_audite(depot, "audit-fige")
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    rapport = (depot.racine / ".maestro/orchestrate/audit-fige/audit.txt").read_text(
+        encoding="utf-8")
+    assert _postes(rapport, "Par outil") == {"Bash": ("45.0s", 1), "Edit": ("1.0s", 1)}, rapport
+    assert "audit.txt" in r.stdout, "le résumé nomme le rapport, il ne le fait pas deviner"
+    assert "/run-audit audit-fige" in r.stdout, "le jugement, lui, reste une proposition"
+    assert "journal.sh audit audit-fige" not in r.stdout, \
+        "l'invitation de #498 est REMPLACÉE, pas doublée"
+
+
+def test_l_audit_de_fin_de_run_est_ecrit_apres_la_compaction_des_flux(depot: Depot) -> None:
+    """L'ordre, et pas seulement le résultat : `audit` sait relire un `.gz`, mais l'écrire avant la
+    compaction ferait dépendre le rapport d'un ordre que rien n'oblige à tenir.
+
+    Observé à l'instant de l'appel — un état final ne dirait rien, les deux gestes ayant tous deux
+    eu lieu à la fin du run.
+    """
+    _journal_espion(depot)
+    r = _run_audite(depot, "apres-compaction")
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    instant = (depot.fixtures / "instant.txt").read_text(encoding="utf-8").split()
+    assert "130.jsonl.gz" in instant, f"le flux devait être compacté avant l'audit : {instant}"
+    assert "130.jsonl" not in instant, f"le flux clair survit à la compaction : {instant}"
+
+
+def test_l_ecriture_de_l_audit_est_best_effort(depot: Depot) -> None:
+    """Même statut que `gc` : son échec ne change ni le verdict du run ni son code de sortie.
+
+    Et il ne laisse RIEN derrière : « `audit.txt` est là » doit vouloir dire « le rapport est
+    complet », sans quoi la prochaine lecture jugerait un run sur un rapport tronqué. Le résumé
+    retombe alors sur la commande — retirer l'invitation de #498 sans la remplacer laisserait un run
+    sans rien à dire sur son temps.
+    """
+    _journal_espion(depot, code=1)
+    r = _run_audite(depot, "audit-casse")
+    assert r.returncode == 0, "un run réussi reste réussi sans son audit"
+
+    assert "1 réussi(s)" in r.stdout, "le verdict du run est intact"
+    assert not (depot.racine / ".maestro/orchestrate/audit-casse/audit.txt").exists(), \
+        "un rapport tronqué est retiré, jamais gardé ni nommé"
+    assert "journal.sh audit audit-casse" in r.stdout, \
+        "sans rapport, le résumé rend l'invitation qu'il remplaçait"
+
+
+def test_un_commutateur_eteint_l_ecriture_de_l_audit(depot: Depot) -> None:
+    """`MAESTRO_AUDIT_FIN_RUN=0`, sur le modèle des autres greffes best-effort du pilote.
+
+    L'appel lui-même n'a pas lieu — c'est ce que l'espion prouve, et un simple `audit.txt` absent ne
+    dirait pas la différence entre « éteint » et « en échec », que le test précédent sépare.
+    """
+    _journal_espion(depot)
+    # Un run-id sans le mot « audit » : le journal de l'espion porte le run-id de chaque appel, et
+    # `gc --auto --courant <run-id>` suffirait sinon à faire matcher le verbe qu'on cherche à ne PAS
+    # voir — un test vert pour la mauvaise raison, ou rouge pour rien.
+    r = _run_audite(depot, "eteint", MAESTRO_AUDIT_FIN_RUN="0")
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    demandes = (depot.fixtures / "journal.log").read_text(encoding="utf-8").splitlines()
+    assert any(d.startswith("gc --auto") for d in demandes), \
+        "le reste du journal continue de tourner"
+    assert not [d for d in demandes if d.startswith("audit")], \
+        f"le commutateur éteint l'APPEL, pas seulement le fichier : {demandes}"
+    assert not (depot.racine / ".maestro/orchestrate/eteint/audit.txt").exists()
+    assert "journal.sh audit eteint" in r.stdout
 
 
 # =====================================================================================

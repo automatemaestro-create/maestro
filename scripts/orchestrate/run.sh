@@ -160,6 +160,9 @@
 #                     merge déjà fait
 #   merge.log         la sortie brute de chaque appel à `merge-mr` — la cause d'un refus y est
 #                     entière, `merge.tsv` n'en gardant qu'une ligne
+#   audit.txt         où est passé le temps du run (#530) : la sortie de `journal.sh audit <run-id>`,
+#                     figée à la fin du run — après la compaction des flux, et best-effort (son
+#                     absence ne dit rien du verdict). `MAESTRO_AUDIT_FIN_RUN=0` l'éteint
 #   <iid>-mrfix.*     la session de déblocage d'une PR (#420) : mêmes fichiers qu'un ticket
 #                     (`.jsonl`, `.json`, `.resultat.txt`, `.log`, `.session`), sous une clé qui la
 #                     distingue de la session du ticket. La seconde tentative porte `-mrfix2`
@@ -3952,6 +3955,46 @@ vue_ferme
 # le bloc tenait l'écran y aurait laissé ses lignes entrelacées avec les frames.
 merge_draine_final
 
+# --- L'audit du run, figé dans son journal (#530) ------------------------------------------------------
+# `journal.sh audit` sait déjà tout dire de ce run : il est hors ligne, en lecture seule, sans `jq`
+# ni Python, et relit les flux compactés. Ce qui manquait n'était donc pas la mesure mais le MOMENT.
+# L'invitation qu'on imprimait ici (#498) suppose quelqu'un devant la console au bon moment — or un
+# run `--detach` se termine dans une fenêtre que personne ne regarde, souvent des heures après le
+# feu vert. C'est le constat de #235 sur les refus, reproduit à l'identique sur le temps : une
+# boucle de rétroaction qui ne part que si on y pense ne part pas.
+#
+# Et l'attendre coûte plus que du confort : `journal.sh gc` ne garde que les DIX derniers runs
+# (#198), donc un rapport qu'on n'écrit pas au moment où le run se termine est un rapport qu'on ne
+# pourra PLUS écrire dix runs plus tard — les `.jsonl` seront partis avec le répertoire.
+#
+# ICI et pas plus haut : l'audit lit les flux, et `compacte_flux` vient de les gzipper — celui d'un
+# ticket dans `juge_ticket`, celui d'une session de déblocage dans `mrfix_moissonne`, dont le drain
+# final ci-dessus est le dernier appelant. `audit` sait relire un `.jsonl.gz`, mais écrire AVANT la
+# compaction ferait dépendre le rapport d'un ordre que rien n'oblige à tenir.
+#
+# BEST-EFFORT de bout en bout, au même titre que `gc` : ni le verdict du run ni son code de sortie
+# n'en dépendent — un run réussi reste réussi sans son audit. D'où le fichier retiré s'il n'a pas
+# pu être écrit en entier : « audit.txt est là » doit vouloir dire « le rapport est complet », et un
+# résumé qui nommerait un chemin vide ou tronqué serait pire que l'invitation qu'il remplace.
+#
+# Ce qui n'est PAS ici et n'y sera pas : le JUGEMENT. Séparer le coût attendu de ce qui ne l'est pas,
+# puis proposer les tickets de correction, coûte du quota et demande une session — le pilote est un
+# script détaché, il n'a personne à qui poser la question. Elle vit dans `/orchestrate --status`, au
+# seul endroit où une session constate qu'un run est terminé.
+AUDIT_FICHIER=""
+audit_ecrit() {
+  [ "${MAESTRO_AUDIT_FIN_RUN:-1}" != 0 ] || return 0
+  local dest="$RUN_DIR/audit.txt"
+  if ! bash "$RACINE/scripts/orchestrate/journal.sh" audit "$RUN_ID" \
+    >"$dest" 2>/dev/null </dev/null || [ ! -s "$dest" ]; then
+    rm -f "$dest" 2>/dev/null
+    return 0
+  fi
+  AUDIT_FICHIER="$dest"
+  return 0
+}
+audit_ecrit
+
 printf '%sRésumé du run %s%s\n' "$C_B" "$RUN_ID" "$C_0"
 printf '  %s✓%s %s réussi(s) · %s✗%s %s en échec · %s~%s %s sauté(s)\n' \
   "$C_G" "$C_0" "$NB_OK" "$C_R" "$C_0" "$NB_ECHEC" "$C_Y" "$C_0" "$NB_SAUTE"
@@ -3960,10 +4003,18 @@ printf '  journal : %s\n' "$RUN_DIR"
 # les refus a une chance d'être suivie (#235). Sans elle, la boucle de rétroaction de §11.7 ne part
 # que si on y pense — et onze runs ont montré que non.
 printf '  refus de permission : bash scripts/orchestrate/journal.sh refus %s\n' "$RUN_ID"
-# Même raison, autre question (#498) : « où est passé le temps ? » ne se pose qu'ici, et un audit
-# qu'on ne relit jamais après un run est un audit qu'on écrit une fois. La commande est nommée à
-# côté du verbe — depuis Claude Code c'est elle qu'on lance, et sans argument pour le dernier run.
-printf '  où passe le temps   : bash scripts/orchestrate/journal.sh audit %s  (ou /run-audit)\n' "$RUN_ID"
+# Même question, mais elle ne s'invite plus : le rapport est DÉJÀ écrit (#530), on le nomme. Ce qui
+# reste une invitation est le JUGEMENT — il coûte du quota, donc il se propose, et c'est
+# `/orchestrate --status` qui pose la question à qui relit ce run.
+#
+# Le repli sur la commande n'est pas une politesse : sans lui, un run dont l'audit n'a pas pu être
+# écrit — commutateur éteint, `journal.sh` en échec — n'aurait plus rien à dire sur son temps, et le
+# ticket aurait retiré l'invitation de #498 sans la remplacer.
+if [ -n "$AUDIT_FICHIER" ]; then
+  printf '  où passe le temps   : %s  (jugement : /run-audit %s)\n' "$AUDIT_FICHIER" "$RUN_ID"
+else
+  printf '  où passe le temps   : bash scripts/orchestrate/journal.sh audit %s  (ou /run-audit)\n' "$RUN_ID"
+fi
 if [ "$PLAFOND_ATTEINT" = 1 ]; then
   printf '\n  %sRun arrêté sur une limite hebdomadaire%s — le reste du plan est intact.\n' "$C_Y" "$C_0"
   printf '  Le rejouer plus tard, sans recalculer l'\''ordre : /orchestrate --resume %s\n' "$RUN_ID"
