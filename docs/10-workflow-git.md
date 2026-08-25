@@ -765,11 +765,47 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
 
 - **Parent de suivi** — pas de branche, pas de code, pas de PR. Sa description porte l'objectif
   global et une section `## Sous-tickets` : la checklist **ordonnée** (ordre de réalisation) des
-  lots, au format `- [ ] #<iid> — <titre>`. Il reste ouvert tant que toutes les cases ne sont pas
-  cochées — **en particulier celle du lot tests final** — et sa fermeture est une **décision
-  humaine/orchestrateur** (pas de PR → pas de `Closes #` automatique). Les cases sont cochées au
-  fil de l'eau par les commandes (synchronisation idempotente : cocher les lots « Terminé »,
-  jamais décocher).
+  lots, au format `- [ ] #<iid> — <titre>`. Il reste ouvert tant qu'un lot l'est, et **se ferme tout
+  seul quand le dernier se ferme** (ticket #515). Les cases sont cochées au fil de l'eau par les
+  commandes (synchronisation idempotente : cocher les lots « Terminé », jamais décocher).
+
+  **La fermeture automatique, et ce qu'elle mesure.** Pas de PR sur un parent, donc pas de
+  `Closes #` : sa fermeture était le seul geste du cycle d'un chantier resté **manuel**, décrit ici
+  même comme « une décision humaine/orchestrateur ». Depuis #418/#419 un run **se solde tout
+  mergé** — les lots d'un parent se ferment tous dans la foulée du run, et il ne reste personne
+  pour fermer le parent. Le déclencheur n'était pas à inventer : `issues: closed`
+  (§9.2) passe à **chaque** fermeture de ticket, quels
+  que soient l'auteur du merge et la machine. `scripts/github/ticket-ferme.sh` y pose « Terminé » ;
+  il y pose désormais **une seconde question** — « ce lot était-il le dernier de son parent ? » —
+  déléguée à `lib.sh ferme-parent`, qui ferme le parent en `completed` et y poste un commentaire
+  nommant le lot déclencheur. Quatre choses à connaître avant d'y toucher :
+
+  - **un lot est soldé quand il est FERMÉ**, pas quand il porte un état. Le cycle de vie est posé
+    *après coup* par ce même événement (un lot fermé à l'instant est encore « En revue » le temps
+    que la pose passe), et surtout « Abandonné » et « Doublon » ferment le ticket au même titre que
+    « Terminé » : un chantier qui se termine sur un lot qu'on renonce à faire se solde comme les
+    autres. Mesurer le cycle de vie laisserait ce parent-là ouvert pour toujours ;
+  - **la coche ne décide de rien.** Elle est tenue au fil de l'eau, donc best-effort — un lot mergé
+    depuis l'interface web n'en coche aucune. Faire dépendre la fermeture d'une synchronisation qui
+    peut manquer reconstruirait le geste manuel qu'on retire ;
+  - **la question 2 n'est pas rangée sous le filtre de la question 1.** « Terminé » n'est posé que
+    sur `completed` (liste blanche, §9.2) ; la fermeture du parent, elle, vaut pour **toute** raison
+    de fermeture. Les enchaîner est le plus court des deux chemins, et le faux ;
+  - **rien ne boucle** : fermer le parent redéclenche l'événement, ce second passage lui pose
+    « Terminé » et s'arrête faute de lui trouver un parent. La récursion est bornée par la donnée,
+    pas par un compteur. Et un parent ne se ferme **jamais trop tôt**, ce qui le rend compatible
+    par construction avec la garde de #394, qui rouvre l'inverse.
+
+  Les deux verbes sont utilisables à la main : `lib.sh lots-ouverts <parent>` (lecture seule —
+  `0` = parent soldé, `3` = il reste des lots, listés) et `lib.sh ferme-parent [--check] <iid>`, où
+  `<iid>` est **le lot** qui vient de se fermer, comme le porte l'événement.
+
+  ⚠ **Rien n'est rétroactif, et aucun balayage n'a été écrit.** Le mécanisme est accroché à un
+  ÉVÉNEMENT : un parent dont le dernier lot s'est fermé *avant* #515 ne se fermera pas tout seul,
+  l'événement étant passé. Ces parents-là se ferment à la main — `lib.sh ferme-parent <iid-d-un-lot>`
+  après un `--check` —, et il n'y a pas de verbe de rattrapage en masse parce qu'il n'y a pas de
+  question à poser : la liste se lit dans `/backlog`, et fermer un chantier est un geste qu'on veut
+  relire un par un.
 - **Sous-tickets** — un lot = ~1 session, **1 à 3 critères d'acceptation**, et surtout chaque lot
   est **mergeable directement sur `main` sans casser l'existant** (code additif ou inoffensif tant
   que les lots suivants manquent). La description de chaque sous-ticket **commence par**
@@ -820,8 +856,9 @@ Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subti
 | Commande | Besoin/ticket trop gros | Ticket parent | Sous-ticket |
 |---|---|---|---|
 | `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, marqueur `(parallèle)` sur les lots indépendants, lot tests en dernier) | — | — |
-| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ parent fermable si tout est « Terminé », sinon le travail est en route (« En cours ») ou livré et on n'attend plus que des merges | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête |
-| `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou que le parent est fermable si c'était le dernier), et coche les lots terminés dans la checklist du parent |
+| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ le travail est en route (« En cours ») ou livré et on n'attend plus que des merges — un parent dont tout est fermé s'est fermé tout seul (#515) | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête |
+| `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou, si c'était le dernier, que le parent **se fermera de lui-même** au merge, #515), et coche les lots terminés dans la checklist du parent |
+| l'événement `issues: closed` | — | **ferme le parent** dès que son dernier lot se ferme (#515, `lib.sh ferme-parent`) — quels que soient l'auteur du merge et la machine | pose « Terminé » (#377) |
 
 **Voie « non réalisé ».** À tout moment (depuis `À faire`, `En cours` ou `En revue`), un ticket
 peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** : statut `Abandonné`
@@ -2582,6 +2619,16 @@ voyait. Constat du 2026-08-19, celui qui a ouvert le ticket : trois tickets merg
 | [`.github/workflows/cycle-de-vie.yml`](../.github/workflows/cycle-de-vie.yml) | déclenche et transmet — `on: issues: [closed]`, un checkout, un appel |
 | [`scripts/github/ticket-ferme.sh`](../scripts/github/ticket-ferme.sh) | **décide** : filtre, délègue, ou s'abstient en le disant |
 | `lib.sh reconcile-workflow <iid>` | **pose**, inchangé — le verbe de #275 ci-dessus |
+| `lib.sh ferme-parent <iid>` | **ferme le parent** dont ce ticket était le dernier lot (#515, §5.1) |
+
+**Deux questions, un seul événement, un seul script** (#515). « Ce ticket mérite-t-il "Terminé" ? »
+et « était-il le dernier lot de son parent ? » ne partagent que le déclencheur : la première n'ouvre
+que sur `completed`, la seconde vaut pour **toute** raison de fermeture, un lot abandonné soldant
+son parent comme un lot livré. Elles sont donc **indépendantes** — une pose en échec n'empêche pas
+la fermeture d'être tentée — et le second workflow qu'aurait pu appeler la seconde n'a **pas** été
+écrit : deux workflows sur `issues: closed` se relisent mal, chacun ignorant ce que l'autre vient
+d'écrire sur le même ticket. Conséquence assumée d'ordre : le **jeton est vérifié avant la raison**,
+là où #377 faisait l'inverse — sans lui la seconde question ne pourrait rien écrire non plus.
 
 La décision est dans le **script** et non dans un `if:` du YAML, pour une raison qui n'est pas de
 style : un `if:` ne se rejoue ni en local ni dans la suite pytest, si bien que le filtre y serait un

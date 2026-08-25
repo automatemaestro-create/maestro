@@ -35,8 +35,10 @@ lieu d'inventer.
    ticket monolithique : crée un **ticket parent de suivi + des sous-tickets liés** :
    - **Parent de suivi** : un ticket du type du besoin dont la description porte l'objectif
      global et une section `## Sous-tickets` — la checklist **ordonnée** des lots (remplie une
-     fois les sous-tickets créés). Le parent ne porte ni branche ni code ; il **ne se ferme que
-     quand toutes ses cases sont cochées**, en particulier celle du lot tests final.
+     fois les sous-tickets créés). Le parent ne porte ni branche ni code ; il reste ouvert tant
+     qu'un lot l'est — lot tests final compris — et **se ferme tout seul** quand le dernier se
+     ferme (#515, docs/10 §5.1). Rien à prévoir pour ça : c'est l'événement `issues: closed` qui
+     le fait, pas la checklist.
    - **Sous-tickets** : un par lot d'~1 session, **1 à 3 critères d'acceptation chacun**, et
      surtout chaque lot **mergeable directement sur `main` sans casser l'existant** (code additif
      ou inoffensif tant que les lots suivants manquent). La description de chaque sous-ticket

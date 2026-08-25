@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
-# Pose « Terminé » quand un ticket se ferme — la décision du workflow GitHub Actions
-# `.github/workflows/cycle-de-vie.yml` (ticket #377, docs/10 §9.2).
+# CE QU'ON FAIT QUAND UN TICKET SE FERME — la décision du workflow GitHub Actions
+# `.github/workflows/cycle-de-vie.yml` (tickets #377 et #515, docs/10 §9.2 et §5.1).
+#
+# DEUX QUESTIONS INDÉPENDANTES, sur un seul et même événement :
+#   1. ce ticket mérite-t-il « Terminé » ?      (#377 — ci-dessous)
+#   2. était-il le dernier lot de son parent ?  (#515 — `lib.sh ferme-parent`)
+#
+# Elles ne partagent que le déclencheur, et surtout PAS leurs filtres : la n°1 n'ouvre que sur
+# « completed », la n°2 vaut pour TOUTE raison de fermeture — un lot abandonné est soldé comme un
+# lot livré. Les enchaîner derrière un seul filtre laisserait un chantier abandonné lot par lot
+# garder son parent ouvert pour toujours.
 #
 # Le merge d'une PR FERME le ticket (`Closes #<iid>`) mais ne touche à aucun état : « Terminé »
 # n'était posé qu'ensuite, par `worktree.sh gc` (#275) — donc au prochain `/ticket-start`, au
@@ -16,10 +25,12 @@
 # Usage :
 #   bash scripts/github/ticket-ferme.sh <iid> [<state_reason>]
 #
-# Codes de retour : 0 = posé, ou ABSTENTION voulue (raison non « completed », secret absent, état
-# déjà final) ; 1 = la pose a échoué ; 2 = usage. Le 1 laisse le run ROUGE dans l'onglet Actions —
-# c'est là toute la visibilité qu'on peut lui donner, et il ne casse rien : ce workflow ne
-# conditionne aucun merge, `worktree.sh gc` gardant son rôle de filet de rattrapage.
+# Codes de retour : 0 = les deux questions ont été traitées, pose et fermeture comprises, ou
+# ABSTENTION voulue (raison non « completed », secret absent, état déjà final, ticket qui n'est pas
+# un lot, lots encore ouverts) ; 1 = l'une des deux a ÉCHOUÉ ; 2 = usage. Le 1 laisse le run ROUGE
+# dans l'onglet Actions — c'est là toute la visibilité qu'on peut lui donner, et il ne casse rien :
+# ce workflow ne conditionne aucun merge, `worktree.sh gc` gardant son rôle de filet de rattrapage.
+# Une question en échec n'empêche pas l'autre d'être posée : elles sont indépendantes.
 #
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
 # DEUX BARRIÈRES DEVANT « ABANDONNÉ »/« DOUBLON », ET CHACUNE ARRÊTE CE QUE L'AUTRE NE VOIT PAS
@@ -59,14 +70,12 @@ if [ -z "$iid" ] || [ -n "${iid//[0-9]/}" ]; then
   exit 2
 fi
 
-# La raison, d'abord : sur un ticket abandonné il n'y a rien à dire du secret, et ce script tourne
-# à CHAQUE fermeture de ticket — le journal reste lisible s'il ne parle que de ce qui le concerne.
-if [ "$raison" != "completed" ]; then
-  printf '#%s fermé en « %s » : rien à poser (seul « completed » vaut livraison).\n' \
-    "$iid" "${raison:-sans raison}"
-  exit 0
-fi
-
+# LE JETON PASSE AVANT LA RAISON, ET C'EST #515 QUI A INVERSÉ CET ORDRE. #377 plaçait la raison en
+# premier, avec un argument juste À L'ÉPOQUE : « sur un ticket abandonné il n'y a rien à dire du
+# secret ». Il ne l'est plus — la seconde question, elle, se pose sur toutes les raisons, donc le
+# jeton la gouverne aussi. Le remettre après ferait annoncer « rien à poser » puis échouer
+# silencieusement la fermeture du parent, faute de jeton pour l'écrire.
+#
 # `GITHUB_TOKEN` n'est VOLONTAIREMENT pas un repli. Il ne peut pas écrire dans un Projects v2
 # appartenant à un compte utilisateur — c'est ce qu'a établi #359 : le blocage est le TYPE de jeton,
 # pas une permission qu'on aurait oublié de cocher. L'accepter ferait tenter une écriture vouée à un
@@ -85,15 +94,48 @@ if [ ! -f "$lib" ]; then
   exit 1
 fi
 
+code=0
+
+# ── Question 1 : ce ticket mérite-t-il « Terminé » ? (#377) ──────────────────────────────────────
 # LA POSE N'EST PAS RÉÉCRITE ICI, elle est déléguée. `reconcile-workflow <iid>` est le verbe de
 # #275 : il lit l'état, saute les trois états finaux, pose « Terminé » sinon, et il est idempotent
 # — reposer une valeur déjà présente ne change rien. Le recopier ferait deux formulations du même
 # filtre à tenir d'accord, et une seule des deux qu'on penserait à corriger.
-printf '#%s fermé comme réalisé — réconciliation du cycle de vie.\n' "$iid"
-if bash "$lib" reconcile-workflow "$iid"; then
-  exit 0
+if [ "$raison" = "completed" ]; then
+  printf '#%s fermé comme réalisé — réconciliation du cycle de vie.\n' "$iid"
+  if ! bash "$lib" reconcile-workflow "$iid"; then
+    echo "Pose de « Terminé » en échec sur #$iid — le run reste rouge, rien d'autre n'en dépend." >&2
+    echo "  Rattrapage : bash scripts/gitlab/lib.sh reconcile-workflow $iid" >&2
+    code=1
+  fi
+else
+  printf '#%s fermé en « %s » : rien à poser (seul « completed » vaut livraison).\n' \
+    "$iid" "${raison:-sans raison}"
 fi
 
-echo "Pose de « Terminé » en échec sur #$iid — le run reste rouge, rien d'autre n'en dépend." >&2
-echo "  Rattrapage : bash scripts/gitlab/lib.sh reconcile-workflow $iid" >&2
-exit 1
+# ── Question 2 : était-il le dernier lot de son parent ? (#515) ──────────────────────────────────
+# SANS FILTRE SUR LA RAISON, et c'est le contenu de la décision : un lot fermé « as not planned »
+# est soldé — un chantier peut parfaitement se terminer sur un lot qu'on renonce à faire. Le passer
+# sous la liste blanche ci-dessus laisserait ce parent-là ouvert pour toujours.
+#
+# LA DÉCISION N'EST PAS RÉÉCRITE ICI NON PLUS : `ferme-parent <iid>` remonte au parent, mesure ses
+# lots à l'ouvert/fermé et ferme, ou s'abstient en le nommant (code 3, qui n'est pas un échec).
+# La fermeture qu'il déclenche repasse par cet événement — le parent y recevra son « Terminé » par
+# la question 1, et n'ira pas plus loin faute d'avoir lui-même un parent.
+#
+# Le code est relevé par un `if`, jamais par un `$?` nu : sous `set -e`, un verbe qui rend 3 —
+# l'abstention, c'est-à-dire le cas nominal — sortirait du script avant la ligne qui le lit.
+if bash "$lib" ferme-parent "$iid"; then
+  rc_parent=0
+else
+  rc_parent=$?
+fi
+# 3 = abstention nommée (pas un lot, parent déjà fermé, lots restants) : ce n'est pas un échec, et
+# c'est ce que ce script voit passer presque à chaque fois.
+if [ "$rc_parent" != 0 ] && [ "$rc_parent" != 3 ]; then
+  echo "Fermeture du parent en échec depuis #$iid — le run reste rouge, le parent reste ouvert." >&2
+  echo "  Rattrapage : bash scripts/gitlab/lib.sh ferme-parent $iid" >&2
+  code=1
+fi
+
+exit "$code"
