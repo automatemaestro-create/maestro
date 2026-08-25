@@ -22,7 +22,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconeDossier, IconePlus } from "@/components/Icones";
-import { BadgeEtat, Carte, EtatVide } from "@/components/Primitives";
+import { BadgeEtat, Bouton, Carte, EtatVide } from "@/components/Primitives";
 import { chargerProjets, creerProjet, modifierProjet, supprimerProjet } from "@/lib/api";
 import { formatDateHeure } from "@/lib/format";
 import { libelleOrigine } from "@/lib/projets";
@@ -30,11 +30,6 @@ import type { DeclarationProjet, Projet, RefusProjet } from "@/lib/types";
 
 import { refusDepuis, RefusMotive } from "./ExplorateurDossiers";
 import { FormulaireProjet } from "./FormulaireProjet";
-
-const CLASSE_BOUTON_SECONDAIRE =
-  "rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 " +
-  "hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 " +
-  "dark:hover:bg-neutral-800";
 
 /** Ce qu'un projet expose aux agents, en une ligne lisible. */
 function Perimetre({ projet }: { projet: Projet }) {
@@ -107,45 +102,44 @@ function CarteProjet({
       </p>
       {refus && <RefusMotive refus={refus} titre="Suppression refusée" />}
       <div className="mt-1 flex flex-wrap gap-2">
-        <button
-          type="button"
+        <Bouton
+          variante="contour"
+          ton="neutre"
           onClick={onModifier}
           disabled={enCours}
-          className={CLASSE_BOUTON_SECONDAIRE}
         >
           Modifier
-        </button>
+        </Bouton>
         {armee ? (
           <>
-            <button
-              type="button"
+            <Bouton
+              ton="alerte"
+              occupe={enCours}
               onClick={() => void supprimer()}
-              disabled={enCours}
-              className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50"
             >
               {enCours ? "Suppression…" : "Confirmer la suppression"}
-            </button>
-            <button
-              type="button"
+            </Bouton>
+            <Bouton
+              variante="contour"
+              ton="neutre"
               onClick={() => setArmee(false)}
               disabled={enCours}
-              className={CLASSE_BOUTON_SECONDAIRE}
             >
               Garder le projet
-            </button>
+            </Bouton>
             <span className="self-center text-xs text-neutral-500 dark:text-neutral-400">
               Seule la déclaration part : le dossier reste sur le disque.
             </span>
           </>
         ) : (
-          <button
-            type="button"
+          <Bouton
+            variante="contour"
+            ton="alerte"
             onClick={() => setArmee(true)}
             disabled={enCours}
-            className="rounded-md border border-rose-300 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900 dark:text-rose-400 dark:hover:bg-rose-950"
           >
             Supprimer
-          </button>
+          </Bouton>
         )}
       </div>
     </Carte>
@@ -226,17 +220,15 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
             l&apos;explorateur servi par le backend — jamais en tapant un chemin.
           </p>
           {!creationOuverte && (
-            <button
-              type="button"
+            <Bouton
+              icone={IconePlus}
               onClick={() => {
                 setCreationOuverte(true);
                 setEditionId(null);
               }}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-emerald-700"
             >
-              <IconePlus className="size-3.5 shrink-0" />
               Nouveau projet
-            </button>
+            </Bouton>
           )}
         </div>
 

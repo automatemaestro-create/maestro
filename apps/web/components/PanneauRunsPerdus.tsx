@@ -37,7 +37,7 @@
 import { useState } from "react";
 
 import { IconeHistorique } from "@/components/Icones";
-import { BadgeEtat, Carte, EnTeteSection } from "@/components/Primitives";
+import { BadgeEtat, Bouton, Carte, EnTeteSection } from "@/components/Primitives";
 import { estEteint, runsRelancables } from "@/lib/execution";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
@@ -129,14 +129,9 @@ function CarteRunPerdu({
               : ""}
           </span>
         </span>
-        <button
-          type="button"
-          disabled={enCours}
-          onClick={() => void surRelance()}
-          className="shrink-0 rounded-md bg-amber-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-        >
+        <Bouton ton="attention" occupe={enCours} onClick={() => void surRelance()}>
           {enCours ? "Reprise…" : "Reprendre"}
-        </button>
+        </Bouton>
       </div>
       {erreur && (
         <p className="mt-2 text-annexe text-rose-600 dark:text-rose-400">{erreur}</p>

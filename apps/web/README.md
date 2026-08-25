@@ -243,24 +243,80 @@ Deux règles s'appliquent à l'ajout d'une icône :
 
 ### Les primitives — `components/Primitives.tsx`
 
-Cinq briques, et le `className` qu'on n'écrit plus :
+Sept briques, et le `className` qu'on n'écrit plus :
 
 | Brique | Ce qu'elle porte |
 | --- | --- |
 | `Carte` | la surface : bord, fond, ombre, arrondi, **densité**, **ton** |
+| `Bouton` / `BoutonLien` | l'action : **variante**, **ton**, **taille**, désactivé, occupé |
+| `Champ` / `ChampListe` / `ChampTexte` | la saisie : libellé lié, aide, erreur, `aria-invalid` |
 | `TuileChiffre` | un chiffre de tête, son libellé, son détail, son renvoi |
 | `EnTeteSection` | le titre d'une zone, son icône, ce qui l'accompagne |
 | `BadgeEtat` | la pastille d'état (compte, statut, provenance, temps réel) |
 | `EtatVide` | ce qui manque, et par où l'obtenir |
 
-Chaque brique porte ses variants `dark:` **elle-même** : c'est la seule façon de
-garantir qu'aucun écran n'oublie le thème sombre, et le point sur lequel les
-classes recopiées divergeaient le plus.
+Les briques de #245 portent leurs variants `dark:` **elles-mêmes** ; celles de
+#535 n'en portent **aucun** — elles sont écrites sur les tokens de #533, qui
+*sont* les deux thèmes. C'est la même promesse, une couche plus bas : aucun écran
+ne peut oublier le sombre.
 
 Le **ton** d'une `Carte` (`pleine`, `creuse`, `attention`, `attentionClaire`) est
 un choix nommé, pas un `bg-*` passé en `className` : deux règles de fond dans le
 même attribut ne se départagent pas par l'ordre d'écriture mais par celui de la
-feuille générée — une surcharge au cas par cas est silencieusement instable.
+feuille générée — une surcharge au cas par cas est silencieusement instable. La
+même règle vaut pour le ton et la variante d'un `Bouton`.
+
+#### Le bouton — `Bouton`, `BoutonLien`
+
+Avant #535 le produit n'avait **aucune** primitive de bouton : 92 `<button>` dans
+36 fichiers, dont une vingtaine redéfinissant leur bouton plein. C'est la
+primitive manquante la plus coûteuse, parce que c'est elle qui portait le
+contraste fautif — `bg-emerald-600` + blanc, **3,65:1 dans les deux thèmes**
+(docs/30 §3.2), à corriger dans autant d'endroits.
+
+| Axe | Valeurs | Ce qu'il dit |
+| --- | --- | --- |
+| `variante` | `plein` · `contour` · `discret` | le **rang** de l'action : ce qu'on vient faire, ce qui l'accompagne, ce qui ne doit pas peser |
+| `ton` | `accent` · `neutre` · `alerte` · `attention` · `info` | le **rôle**, jamais une couleur |
+| `taille` | `normale` · `petite` | le formulaire, ou la ligne |
+| `occupe` | booléen | l'action **est en cours** : inerte, anneau qui tourne, `aria-busy` |
+
+`occupe` n'est pas un synonyme de `disabled` : un bouton désactivé dit qu'il n'y
+a rien à faire, un bouton occupé dit qu'on attend. Les deux rendent le bouton
+inerte ; un seul l'annonce.
+
+Le **contour de focus** vit dans la primitive, pas dans l'appelant : c'est le
+seul endroit d'où l'on peut promettre qu'aucune action du produit n'est invisible
+au clavier (WCAG 2.2, 2.4.7).
+
+`BoutonLien` est le même bouton quand l'action est une **navigation** : c'est un
+lien — il s'ouvre dans un onglet, il se copie —, il en a seulement l'allure.
+
+#### Le champ — `Champ`, `ChampListe`, `ChampTexte`
+
+Trois contrôles, un seul cadre : le libellé, l'**aide** et l'**erreur**, celle-ci
+posant `aria-invalid` et se rattachant à la saisie par `aria-describedby`. Avant
+#535, chaque écran refaisait ses deux constantes `CLASSE_CHAMP` /
+`CLASSE_LIBELLE` — et une erreur s'affichait dans un paragraphe voisin que rien
+ne reliait au champ pour un lecteur d'écran.
+
+⚠ Le libellé **entoure** le contrôle au lieu de le viser par `htmlFor`, et ce
+n'est pas un détail de style : `label.control` résout un `for` par
+`getElementById`, donc par **le premier** identifiant de ce nom dans le document.
+Deux instances du même écran montées ensemble — ce que fait déjà
+`tests/projet-cadre.test.tsx` — et la seconde perd son nom accessible en silence.
+L'`id` reste obligatoire : c'est lui qui rattache l'aide et l'erreur. Il n'est
+pas dérivé d'un `useId` parce que `Primitives.tsx` est partagé avec des
+composants serveur, où aucun hook ne peut tourner.
+
+#### Ce qui ne peut pas être une `<Carte>`
+
+`classesCarte()` rend les classes de la surface **sans** la balise qui les porte.
+Deux appelants seulement, et pour une raison chacun : un `<Link>` (le composant
+de Next, pas une balise) et un `<button>` pleine largeur (dont le `type` et le
+`disabled` ne vivent pas dans `HTMLAttributes`). Les exposer plutôt que de rendre
+`Carte` polymorphe garde **une** source à la décision — c'est bien la recopie qui
+disparaît, pas seulement sa forme.
 
 ### La palette sémantique — `app/globals.css`
 
@@ -279,17 +335,32 @@ thèmes viennent avec elle.
 | `bord-fort` | le bord qui **identifie un contrôle** : champ, case, contour de bouton |
 | `texte` | le texte principal |
 | `texte-secondaire` | le second plan — le remplaçant de `text-neutral-400` (2,58:1) |
+| `survol` | le fond d'un contrôle **sous le pointeur**, quand il n'a pas d'aplat |
 | `accent` | la couleur d'action |
 | `info` `positif` `attention` `alerte` | les quatre tons d'état |
 
-`accent` et les quatre états portent **trois** valeurs chacun, parce qu'un ton ne
-sert jamais à une seule chose :
+`accent` et les quatre états portent **trois** valeurs chacun — quatre pour ceux
+qu'un bouton peut porter —, parce qu'un ton ne sert jamais à une seule chose :
 
 | Suffixe | Où il va | Ce qu'il garantit |
 | --- | --- | --- |
 | *(aucun)* | l'aplat : bouton plein, pastille, bord d'état | ≥ 3:1 sur les deux surfaces |
 | `-texte` | le ton **écrit** : lien, libellé, valeur | ≥ 4,5:1 sur les deux surfaces **et** sur son `-creux` |
 | `-creux` | le fond teinté d'une pastille | porte son `-texte` à ≥ 4,5:1 |
+| `-appui` | l'aplat **survolé** (#535) | ≥ 4,5:1 avec `sur-ton`, et **toujours plus** qu'au repos |
+
+`-appui` s'écarte de `sur-ton` dans les deux thèmes — le pas -800 en clair, le
+pas -300 en sombre —, si bien que le libellé d'un bouton ne peut que **gagner**
+en contraste au survol : 7,09:1 au pire en clair contre 5,03:1 au repos, 10,33:1
+au pire en sombre contre 6,92:1. Un `hover:opacity-90` ou un
+`hover:brightness-110` aurait fait l'inverse, en silence. `positif` n'en a
+**pas** : un aplat `positif` est un état, jamais une action, donc il n'est jamais
+survolé — le trou dit quelque chose.
+
+`survol` est le pendant pour un contrôle **sans aplat** (bouton de contour,
+bouton discret, entrée de menu). Il ne pouvait pas être `surface-creuse` : en
+sombre la creuse est plus sombre que la surface, ce qui aurait *creusé* le bouton
+au survol au lieu de l'éclairer.
 
 `sur-ton` est ce qui s'écrit **sur** un aplat — blanc en clair, presque noir en
 sombre. Un seul token pour les cinq tons : c'est une propriété **vérifiée** de la
@@ -310,10 +381,11 @@ Quatre choses à savoir avant d'y toucher :
   les teintes, elles, **sont** celles de Tailwind v4, converties une fois, pour
   qu'un écran tokenisé ne jure pas à côté d'un écran encore brut pendant la
   migration.
-- **72 paires mesurées** (36 par thème), **0 faute**. Les marges les plus
-  courtes sont `bord-fort` sur `surface-creuse` (3,40) et `alerte-texte` sur
-  `alerte-creux` (5,02). #534 en fait un test de CI : ici la promesse est
-  vérifiée, pas encore **gardée**.
+- **72 paires mesurées** (36 par thème), **0 faute** — plus les 16 qu'ajoutent
+  `-appui` et `survol` (#535), ≥ 4,89:1 pour tout ce qui est du texte et ≥ 3,19:1
+  pour un bord. Les marges les plus courtes restent celles de #533 : `bord-fort`
+  sur `surface-creuse` (3,40) et `alerte-texte` sur `alerte-creux` (5,02). #534
+  en fait un test de CI : ici la promesse est vérifiée, pas encore **gardée**.
 
 Les valeurs vivent dans les blocs `:root` / `[data-theme="sombre"]` et sont
 émises telles quelles ; le bloc `@theme inline` ne fait que les brancher sur les

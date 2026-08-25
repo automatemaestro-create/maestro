@@ -48,6 +48,7 @@ import { useMemo, useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
+import { Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   estNotableNotification,
@@ -57,15 +58,6 @@ import {
 import { fusionnerJournal } from "@/lib/journal";
 import { type Evenement } from "@/lib/types";
 import { useJournal } from "@/lib/useJournal";
-
-const CLASSE_CHAMP =
-  "w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-normal " +
-  "text-neutral-900 shadow-sm focus:border-neutral-400 focus:outline-none " +
-  "dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 " +
-  "dark:focus:border-neutral-600 dark:[&>option]:bg-neutral-900";
-
-const CLASSE_LIBELLE =
-  "flex flex-col gap-1 text-xs font-medium text-neutral-600 dark:text-neutral-400";
 
 /** La valeur du choix « tout » d'une liste déroulante — jamais un vrai filtre. */
 const TOUS = "";
@@ -138,7 +130,7 @@ export default function PageJournal() {
       {/* Ce que la page montre, et ce qu'elle ne montre pas : la promesse est
           faite ici plutôt que devinée d'une liste courte. Le compte tronqué se
           dit — une page bornée qui se tait passe pour un inventaire. */}
-      <p className="rounded-lg border border-neutral-200 bg-white p-3 text-sm text-neutral-600 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+      <Carte balise="p" className="text-sm text-neutral-600 dark:text-neutral-400">
         Le <strong className="font-medium">journal persisté</strong> de{" "}
         <strong className="font-medium">{projet.nom}</strong>, du plus récent au
         plus ancien : il est relu à l&apos;ouverture de la page, et le temps réel
@@ -148,7 +140,7 @@ export default function PageJournal() {
           : "Un rechargement ne perd donc rien."}{" "}
         Il ne mélange jamais les fils de deux projets. L&apos;état de référence,
         lui, reste celui des tâches, des agents et des coûts.
-      </p>
+      </Carte>
 
       {!connecte && (
         // L'historique, lui, est là : ce qui s'arrête est l'ajout des lignes
@@ -160,24 +152,25 @@ export default function PageJournal() {
         </p>
       )}
 
-      <section
+      <Carte
+        balise="section"
+        densite="aeree"
         aria-label="Filtres du journal"
-        className="flex flex-col gap-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+        className="flex flex-col gap-3"
       >
         <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-4">
-          <label className={CLASSE_LIBELLE}>
-            Rechercher
-            <input
-              type="search"
-              name="recherche-journal"
-              autoComplete="off"
-              value={recherche}
-              onChange={(e) => setRecherche(e.target.value)}
-              placeholder="tâche, agent, détail…"
-              className={CLASSE_CHAMP}
-            />
-          </label>
+          <Champ
+            id="journal-recherche"
+            libelle="Rechercher"
+            type="search"
+            name="recherche-journal"
+            autoComplete="off"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+            placeholder="tâche, agent, détail…"
+          />
           <ListeFiltre
+            id="journal-type"
             libelle="Type d'événement"
             tout="Tous les types"
             options={types}
@@ -185,6 +178,7 @@ export default function PageJournal() {
             surChoix={setType}
           />
           <ListeFiltre
+            id="journal-agent"
             libelle="Agent"
             tout="Tous les agents"
             options={agents}
@@ -192,6 +186,7 @@ export default function PageJournal() {
             surChoix={setAgent}
           />
           <ListeFiltre
+            id="journal-tache"
             libelle="Tâche"
             tout="Toutes les tâches"
             options={taches}
@@ -214,13 +209,14 @@ export default function PageJournal() {
             </span>
           </label>
           {filtre && (
-            <button
-              type="button"
+            <Bouton
+              variante="contour"
+              ton="neutre"
+              taille="petite"
               onClick={reinitialiser}
-              className="rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-800"
             >
               Réinitialiser les filtres
-            </button>
+            </Bouton>
           )}
         </div>
 
@@ -231,7 +227,7 @@ export default function PageJournal() {
             ? `${filtres.length} événement(s) sur ${evenements.length}`
             : `${evenements.length} événement(s)`}
         </p>
-      </section>
+      </Carte>
 
       {evenements.length === 0 && historique.chargement ? (
         // La première lecture est encore en vol : un « rien encore » affiché ici
@@ -261,12 +257,14 @@ export default function PageJournal() {
 
 /** Une liste déroulante de filtre, choix « tout » en tête. */
 function ListeFiltre({
+  id,
   libelle,
   tout,
   options,
   valeur,
   surChoix,
 }: {
+  id: string;
   libelle: string;
   /** Le libellé du choix neutre — « Tous les agents », « Toutes les tâches »… */
   tout: string;
@@ -275,24 +273,22 @@ function ListeFiltre({
   surChoix: (valeur: string) => void;
 }) {
   return (
-    <label className={CLASSE_LIBELLE}>
-      {libelle}
-      <select
-        value={valeur}
-        onChange={(e) => surChoix(e.target.value)}
-        // Rien à filtrer tant que le fil est vide : la liste n'aurait que son
-        // choix neutre, autant la désigner comme inerte.
-        disabled={options.length === 0}
-        className={CLASSE_CHAMP + " disabled:opacity-50"}
-      >
-        <option value={TOUS}>{tout}</option>
-        {options.map((option) => (
-          <option key={option.valeur} value={option.valeur}>
-            {option.libelle}
-          </option>
-        ))}
-      </select>
-    </label>
+    <ChampListe
+      id={id}
+      libelle={libelle}
+      value={valeur}
+      onChange={(e) => surChoix(e.target.value)}
+      // Rien à filtrer tant que le fil est vide : la liste n'aurait que son
+      // choix neutre, autant la désigner comme inerte.
+      disabled={options.length === 0}
+    >
+      <option value={TOUS}>{tout}</option>
+      {options.map((option) => (
+        <option key={option.valeur} value={option.valeur}>
+          {option.libelle}
+        </option>
+      ))}
+    </ChampListe>
   );
 }
 

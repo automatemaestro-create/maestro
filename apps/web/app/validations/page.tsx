@@ -16,6 +16,7 @@
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { PanneauValidations } from "@/components/PanneauValidations";
+import { Carte } from "@/components/Primitives";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatDateHeure } from "@/lib/format";
 import {
@@ -42,11 +43,15 @@ export default function PageValidations() {
       ) : (
         <>
           {enAttente.length === 0 ? (
-            <p className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+            <Carte
+              balise="p"
+              densite="aeree"
+              className="text-sm text-neutral-500 dark:text-neutral-400"
+            >
               {validations.length === 0
                 ? `Rien encore sur ${projet.nom} : aucune demande d'arbitrage n'y a été faite.`
                 : `Aucune validation en attente sur ${projet.nom} — les moteurs y tournent sans demander d'arbitrage.`}
-            </p>
+            </Carte>
           ) : (
             <PanneauValidations validations={validations} decider={decider} />
           )}
@@ -61,10 +66,7 @@ export default function PageValidations() {
 function HistoriqueValidations({ validations }: { validations: Validation[] }) {
   if (validations.length === 0) return null;
   return (
-    <section
-      aria-label="Validations tranchées"
-      className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
-    >
+    <Carte balise="section" densite="aeree" aria-label="Validations tranchées">
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
         Déjà tranchées
       </h2>
@@ -113,6 +115,6 @@ function HistoriqueValidations({ validations }: { validations: Validation[] }) {
           </tbody>
         </table>
       </div>
-    </section>
+    </Carte>
   );
 }

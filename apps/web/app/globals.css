@@ -50,7 +50,28 @@
    aujourd'hui la même valeur que `--surface` (en clair) et `--texte`, mais la
    règle `body` et le mappage `@theme` les consomment déjà : les replier sur la
    palette est un geste de migration, donc d'un lot qui a le droit de changer le
-   rendu. Ici on ajoute, on ne déplace rien. */
+   rendu. Ici on ajoute, on ne déplace rien.
+
+   ---
+
+   **Ce que #535 (lot 3) y ajoute : l'état survolé.** Poser `Bouton` sur cette
+   palette a fait apparaître le seul rôle qui manquait — un aplat qui change
+   sous le pointeur. Deux tokens, et le second n'est pas une nuance du premier :
+
+   - `--<ton>-appui` : l'aplat **survolé**. Il s'écarte de `sur-ton` dans les
+     deux thèmes — plus sombre en clair (le pas -800), plus clair en sombre (le
+     pas -300) — donc le contraste du libellé ne peut que **monter** au survol :
+     7,09:1 au pire en clair, 10,33:1 au pire en sombre, contre 5,03:1 et 6,92:1
+     au repos. Un survol qui *baisserait* le contraste est la faute que
+     `hover:opacity-90` ou `hover:brightness-110` auraient introduite en silence.
+   - `--survol` : le fond d'un contrôle **sans aplat** (contour, discret, entrée
+     de menu). Il ne pouvait pas être `surface-creuse` : en sombre la creuse est
+     plus sombre que la surface, ce qui aurait *creusé* le bouton au survol au
+     lieu de l'éclairer.
+
+   `positif` n'a **pas** de `-appui`, et c'est une décision : un aplat `positif`
+   est un **état**, jamais une action, donc il n'est jamais survolé. Le trou dit
+   quelque chose ; le combler par symétrie dirait le contraire. */
 
 :root,
 [data-theme="clair"] {
@@ -79,6 +100,14 @@
      justesse sur `surface-creuse` (4,42), d'où une valeur à la main. */
   --texte-secondaire: #6b6b6b; /* 5,33:1 sur surface, 5,11:1 sur surface-creuse */
 
+  /* Le fond d'un contrôle **sous le pointeur** quand il n'a pas d'aplat :
+     bouton de contour, bouton discret, entrée de menu (#535). Un token à lui
+     et non `surface-creuse` : en sombre la creuse est *plus sombre* que la
+     surface, donc l'emprunter creuserait le bouton au survol là où il doit
+     s'éclairer. Ce qui s'écrit dessus tient AA — `texte` 16,44:1,
+     `texte-secondaire` 4,89:1, `bord-fort` 3,25:1. */
+  --survol: #f5f5f5; /* neutral-100 */
+
   /* Ce qui s'écrit **sur** un ton plein. Un seul token pour les cinq tons :
      c'est une propriété de la palette, choisie et vérifiée — chaque ton plein
      ci-dessous passe 4,5:1 avec cette valeur-là. Un ton futur qui ne la
@@ -95,10 +124,12 @@
   --accent: #007a55; /* emerald-700 — blanc dessus : 5,36:1 */
   --accent-texte: #006045; /* emerald-800 — l'accent lisible en texte */
   --accent-creux: #d0fae5; /* emerald-100 — le fond d'une pastille d'accent */
+  --accent-appui: #006045; /* emerald-800 — l'aplat survolé : 7,61:1 avec sur-ton */
 
   --info: #0069a8; /* sky-700 — blanc dessus : 5,86:1 */
   --info-texte: #00598a; /* sky-800 */
   --info-creux: #dff2fe; /* sky-100 */
+  --info-appui: #00598a; /* sky-800 — 7,51:1 avec sur-ton */
 
   --positif: #007a55; /* emerald-700 */
   --positif-texte: #006045; /* emerald-800 */
@@ -107,10 +138,12 @@
   --attention: #bb4d00; /* amber-700 — blanc dessus : 5,03:1 (amber-600 n'est qu'à 3,20) */
   --attention-texte: #973c00; /* amber-800 */
   --attention-creux: #fef3c6; /* amber-100 */
+  --attention-appui: #973c00; /* amber-800 — 7,09:1 avec sur-ton */
 
   --alerte: #c70036; /* rose-700 — blanc dessus : 6,03:1 */
   --alerte-texte: #c70036; /* rose-700 */
   --alerte-creux: #ffe4e6; /* rose-100 */
+  --alerte-appui: #a50036; /* rose-800 — 7,92:1 avec sur-ton */
 }
 
 [data-theme="sombre"] {
@@ -131,6 +164,11 @@
   --texte: #ededed; /* 15,3:1 sur surface */
   --texte-secondaire: #9a9a9a; /* 6,37:1 sur surface — neutral-500 y échoue (3,91) */
 
+  /* Le survol *éclaire* ici, là où il assombrit en clair — c'est ce qu'un seul
+     token permet de dire une fois. `texte` 12,93:1, `texte-secondaire` 5,38:1,
+     `bord-fort` 3,19:1. */
+  --survol: #262626; /* neutral-800 */
+
   /* En sombre, les tons pleins sont **clairs** : ce qui s'écrit dessus est donc
      sombre. C'est tout l'intérêt d'un token plutôt que d'un `text-white` figé. */
   --sur-ton: #0a0a0a;
@@ -138,10 +176,12 @@
   --accent: #00bc7d; /* emerald-500 — 8,00:1 avec sur-ton */
   --accent-texte: #00d492; /* emerald-400 — 9,25:1 sur surface */
   --accent-creux: #002c22; /* emerald-950 */
+  --accent-appui: #5ee9b5; /* emerald-300 — l'aplat survolé : 13,01:1 avec sur-ton */
 
   --info: #00bcff; /* sky-400 */
   --info-texte: #00bcff; /* sky-400 */
   --info-creux: #052f4a; /* sky-950 */
+  --info-appui: #74d4ff; /* sky-300 — 11,88:1 avec sur-ton */
 
   --positif: #00bc7d; /* emerald-500 */
   --positif-texte: #00d492; /* emerald-400 */
@@ -150,10 +190,12 @@
   --attention: #ffb900; /* amber-400 */
   --attention-texte: #ffb900; /* amber-400 */
   --attention-creux: #461901; /* amber-950 */
+  --attention-appui: #ffd230; /* amber-300 — 13,68:1 avec sur-ton */
 
   --alerte: #ff637e; /* rose-400 */
   --alerte-texte: #ff637e; /* rose-400 */
   --alerte-creux: #4d0218; /* rose-950 */
+  --alerte-appui: #ffa1ad; /* rose-300 — 10,33:1 avec sur-ton */
 }
 
 /* Le mappage vers les utilitaires (`bg-surface`, `text-texte-secondaire`,
@@ -178,14 +220,17 @@
   --color-texte: var(--texte);
   --color-texte-secondaire: var(--texte-secondaire);
   --color-sur-ton: var(--sur-ton);
+  --color-survol: var(--survol);
 
   --color-accent: var(--accent);
   --color-accent-texte: var(--accent-texte);
   --color-accent-creux: var(--accent-creux);
+  --color-accent-appui: var(--accent-appui);
 
   --color-info: var(--info);
   --color-info-texte: var(--info-texte);
   --color-info-creux: var(--info-creux);
+  --color-info-appui: var(--info-appui);
 
   --color-positif: var(--positif);
   --color-positif-texte: var(--positif-texte);
@@ -194,10 +239,12 @@
   --color-attention: var(--attention);
   --color-attention-texte: var(--attention-texte);
   --color-attention-creux: var(--attention-creux);
+  --color-attention-appui: var(--attention-appui);
 
   --color-alerte: var(--alerte);
   --color-alerte-texte: var(--alerte-texte);
   --color-alerte-creux: var(--alerte-creux);
+  --color-alerte-appui: var(--alerte-appui);
 }
 
 /* =====================================================================

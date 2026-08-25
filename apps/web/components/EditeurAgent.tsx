@@ -23,7 +23,7 @@ import {
   IconePlaybooks,
   IconePlus,
 } from "@/components/Icones";
-import { EnTeteSection } from "@/components/Primitives";
+import { Bouton, EnTeteSection } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
 import {
   chargerAgentCatalogue,
@@ -245,14 +245,9 @@ export function CreationAgent({
         desactive={enCours}
       />
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          disabled={enCours || !pret}
-          onClick={() => void creer()}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
+        <Bouton disabled={!pret} occupe={enCours} onClick={() => void creer()}>
           {enCours ? "Création…" : "Créer l'agent"}
-        </button>
+        </Bouton>
         <span className="text-xs text-neutral-500 dark:text-neutral-400">
           L&apos;agent créé est routable et exécutable par les moteurs
           construits ensuite.
@@ -392,22 +387,21 @@ export function EditeurAgent({
           desactive={enCours}
         />
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            disabled={enCours || !modifie || !champsComplets(champs)}
+          <Bouton
+            disabled={!modifie || !champsComplets(champs)}
+            occupe={enCours}
             onClick={() => void enregistrer()}
-            className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
           >
             {enCours ? "Envoi…" : "Enregistrer les modifications"}
-          </button>
+          </Bouton>
           {modifie && !enCours && (
-            <button
-              type="button"
+            <Bouton
+              variante="contour"
+              ton="neutre"
               onClick={() => setChamps(champsDepuis(fiche))}
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
             >
               Annuler les modifications
-            </button>
+            </Bouton>
           )}
           <span className="text-xs text-neutral-500 dark:text-neutral-400">
             {modifie
@@ -432,32 +426,31 @@ export function EditeurAgent({
               Supprimer définitivement « {nom} » ? Les moteurs construits
               ensuite ne le chargeront plus.
             </span>
-            <button
-              type="button"
-              disabled={enCours}
+            <Bouton
+              ton="alerte"
+              occupe={enCours}
               onClick={() => void supprimer()}
-              className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50"
             >
               {enCours ? "Suppression…" : "Confirmer la suppression"}
-            </button>
-            <button
-              type="button"
+            </Bouton>
+            <Bouton
+              variante="contour"
+              ton="neutre"
               disabled={enCours}
               onClick={() => setSuppressionArmee(false)}
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
             >
               Garder l&apos;agent
-            </button>
+            </Bouton>
           </>
         ) : (
-          <button
-            type="button"
+          <Bouton
+            variante="contour"
+            ton="alerte"
             disabled={enCours}
             onClick={() => setSuppressionArmee(true)}
-            className="rounded-md border border-rose-300 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900 dark:text-rose-400 dark:hover:bg-rose-950"
           >
             Supprimer l&apos;agent…
-          </button>
+          </Bouton>
         )}
       </section>
     </div>

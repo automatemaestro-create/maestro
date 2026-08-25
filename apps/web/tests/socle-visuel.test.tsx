@@ -32,7 +32,11 @@ import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord"
 import { Kanban } from "@/components/Kanban";
 import {
   BadgeEtat,
+  Bouton,
+  BoutonLien,
   Carte,
+  Champ,
+  ChampListe,
   EnTeteSection,
   EtatVide,
   TuileChiffre,
@@ -176,6 +180,114 @@ describe("les primitives (components/Primitives)", () => {
       "href",
       "/agents",
     );
+  });
+});
+
+/**
+ * Les deux briques de #535 (lot 3 de #532). Le gros des tests du chantier est
+ * différé au lot 7 (#539) ; ce qui suit couvre ce qui régresserait **en
+ * silence** — un état annoncé qui cesse de l'être ne se voit sur aucun écran.
+ */
+describe("le bouton (Bouton)", () => {
+  it("ne soumet rien qu'on ne lui ait demandé de soumettre", () => {
+    // Sans `type`, un bouton posé dans un formulaire le soumet : c'est le piège
+    // que chaque appel du produit évitait à la main, une fois par bouton.
+    render(<Bouton>Enregistrer</Bouton>);
+    expect(screen.getByRole("button", { name: "Enregistrer" })).toHaveAttribute(
+      "type",
+      "button",
+    );
+  });
+
+  it("distingue « occupé » de « désactivé » : les deux sont inertes, un seul le dit", () => {
+    const surClic = vi.fn();
+    const { rerender } = render(
+      <Bouton disabled onClick={surClic}>
+        Envoyer
+      </Bouton>,
+    );
+    const desactive = screen.getByRole("button", { name: "Envoyer" });
+    expect(desactive).toBeDisabled();
+    expect(desactive).not.toHaveAttribute("aria-busy");
+
+    rerender(
+      <Bouton occupe onClick={surClic}>
+        Envoi…
+      </Bouton>,
+    );
+    const occupe = screen.getByRole("button", { name: /Envoi/ });
+    expect(occupe).toBeDisabled();
+    expect(occupe).toHaveAttribute("aria-busy", "true");
+
+    occupe.click();
+    expect(surClic).not.toHaveBeenCalled();
+  });
+
+  it("porte le ton et la variante en classes nommées, jamais en couleur brute", () => {
+    // La promesse du lot : plus un seul `bg-emerald-600` (3,65:1) dans un écran.
+    // Le test ne fige pas une teinte — il exige que la couleur vienne d'un
+    // **token**, ce que `bg-accent` dit et que `bg-emerald-600` ne dit pas.
+    const { container } = render(<Bouton>Approuver</Bouton>);
+    const classes = (container.firstElementChild as HTMLElement).className;
+    expect(classes).toContain("bg-accent");
+    expect(classes).not.toMatch(/bg-(emerald|rose|amber|sky)-\d/);
+  });
+
+  it("rend une navigation comme un lien, et non comme un bouton", () => {
+    // `BoutonLien` en a l'allure ; ce doit rester ce qui s'ouvre dans un onglet
+    // et se copie. Un `<button>` qui navigue perdrait les deux.
+    render(<BoutonLien href="/composer">Composer un objectif</BoutonLien>);
+    expect(
+      screen.getByRole("link", { name: "Composer un objectif" }),
+    ).toHaveAttribute("href", "/composer");
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+});
+
+describe("le champ (Champ)", () => {
+  it("lie le libellé au contrôle sans dépendre de l'unicité d'un identifiant", () => {
+    // Deux instances du même écran dans un document — ce que fait déjà
+    // `projet-cadre.test.tsx` : un `htmlFor` résout par `getElementById`, donc
+    // la seconde perdrait son nom accessible en silence.
+    render(
+      <>
+        <Champ id="recherche" libelle="Rechercher" type="search" />
+        <Champ id="recherche" libelle="Rechercher" type="search" />
+      </>,
+    );
+    expect(screen.getAllByRole("searchbox", { name: "Rechercher" })).toHaveLength(2);
+  });
+
+  it("rattache l'aide et l'erreur au champ, et marque la saisie invalide", () => {
+    render(
+      <Champ
+        id="nom-dossier"
+        libelle="Nom du dossier"
+        aide="Un nom, pas un chemin."
+        erreur="Ni « / » ni « \ »."
+      />,
+    );
+    const champ = screen.getByRole("textbox", { name: "Nom du dossier" });
+    expect(champ).toHaveAttribute("aria-invalid", "true");
+    expect(champ).toHaveAccessibleDescription(/Un nom, pas un chemin/);
+    expect(champ).toHaveAccessibleDescription(/Ni « \/ »/);
+  });
+
+  it("n'annonce pas d'erreur là où il n'y en a pas", () => {
+    render(<Champ id="nom" libelle="Nom du projet" />);
+    expect(screen.getByRole("textbox", { name: "Nom du projet" })).not.toHaveAttribute(
+      "aria-invalid",
+    );
+  });
+
+  it("garde le nom accessible d'une liste hors de ses options", () => {
+    render(
+      <ChampListe id="agent" libelle="Agent">
+        <option value="">Tous les agents</option>
+        <option value="dev">dev</option>
+      </ChampListe>,
+    );
+    expect(screen.getByRole("combobox", { name: "Agent" })).toBeInTheDocument();
   });
 });
 
