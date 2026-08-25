@@ -14,6 +14,7 @@
 
 import { attendUnHumain } from "./brief";
 import {
+  CAUSE_EXTINCTION,
   EXECUTION_ANNULEE,
   EXECUTION_ECHEC,
   EXECUTION_EN_ATTENTE_REPONSES,
@@ -46,17 +47,51 @@ export function estOrphelin(execution: ResumeExecution): boolean {
 }
 
 /**
- * Ce run orphelin a-t-il un **cadrage à rejouer** (#349) ?
+ * Ce run a-t-il été emporté par l'**extinction de Maestro** (#486) ?
  *
- * Les deux moitiés sont nécessaires et aucune ne suffit. Un run vivant n'a pas à
- * être repris ; un run orphelin **sans brief approuvé** n'a rien à rejouer — il
- * s'est arrêté avant que quelqu'un ne valide son cadrage, et le relancer
- * reviendrait à repartir de son objectif brut, c'est-à-dire à sauter la validation
- * qu'il attendait encore. L'API refuse ce cas en 422 ; ne pas proposer le geste
- * évite d'offrir un bouton qui n'aboutira pas.
+ * Le second cas d'un run qu'on peut reprendre, et il ne ressemble pas au premier :
+ * ce run-là n'est pas perdu, il a été **soldé exprès** — `start.sh --stop`, ou la
+ * fermeture de l'enveloppe le jour où elle existe. Son statut est donc terminal, et
+ * `estOrphelin` répond non, à raison : son hôte n'a pas cessé de battre, on l'a
+ * éteint.
+ *
+ * La reconnaissance passe par la **cause** et non par le statut, qui est celui de
+ * n'importe quelle annulation (`annulee`) : c'est le seul champ qui distingue « on
+ * a éteint l'application qui tenait ce run » de « quelqu'un a arrêté ce run-là ».
+ * Les confondre reproposerait de reprendre un run que son auteur venait
+ * délibérément d'annuler.
+ *
+ * Le statut est vérifié **en plus** de la cause, alors que le backend ne pose
+ * jamais l'une sans l'autre : la projection efface la cause dès qu'un run repart
+ * (`state.py`), donc les deux disent la même chose — et le jour où elles ne le
+ * diraient plus, proposer « Reprendre » sur un run en vol serait la pire des deux
+ * lectures.
+ */
+export function estEteint(execution: ResumeExecution): boolean {
+  return estSolde(execution) && execution.cause === CAUSE_EXTINCTION;
+}
+
+/**
+ * Ce run a-t-il un **cadrage à rejouer** (#349, #486) ?
+ *
+ * Deux moitiés, et aucune ne suffit. La première est l'état du run : **perdu**
+ * (orphelin, son hôte s'est tu) ou **éteint** (Maestro s'est arrêté en l'emportant)
+ * — un run qui travaille n'a pas à être repris. La seconde est son **brief
+ * approuvé** : sans lui il n'y a rien à rejouer, le run s'étant arrêté avant que
+ * quelqu'un ne valide son cadrage, et le relancer reviendrait à repartir de son
+ * objectif brut, c'est-à-dire à sauter la validation qu'il attendait encore. L'API
+ * refuse ce cas en 422 ; ne pas proposer le geste évite d'offrir un bouton qui
+ * n'aboutira pas.
+ *
+ * Les deux états mènent au **même** bouton — c'est le critère de #486, « par le
+ * bouton existant » —, et c'est justifié : ce que la relance rejoue est un cadrage,
+ * et un cadrage payé se rejoue de la même façon qu'on l'ait perdu ou rangé.
  */
 export function estRelancable(execution: ResumeExecution): boolean {
-  return estOrphelin(execution) && execution.brief_approuve === true;
+  return (
+    (estOrphelin(execution) || estEteint(execution)) &&
+    execution.brief_approuve === true
+  );
 }
 
 /**

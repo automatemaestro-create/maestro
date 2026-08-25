@@ -708,14 +708,21 @@ export const ORDRE_REPRISE = "reprise";
  * de la même façon.
  *
  * Un run que le backend n'a pas su classer porte la **chaîne vide** plutôt qu'un
- * sixième code fourre-tout : « je n'ai pas su ranger ceci » n'est pas un
+ * code fourre-tout de plus : « je n'ai pas su ranger ceci » n'est pas un
  * diagnostic, et son `detail` reste lisible au fil d'activité.
+ *
+ * Le sixième est arrivé avec #486, et c'est le seul dont l'UI tire une
+ * **conséquence** plutôt qu'une phrase : `extinction` dit que Maestro s'est éteint
+ * en emportant le run, donc que celui-ci est **reprenable** au redémarrage
+ * (`lib/execution`). Un run délibérément annulé ne l'est pas — les confondre
+ * ferait reproposer un run que quelqu'un venait d'arrêter.
  */
 export const CAUSE_PLAFOND_TOURS = "plafond_tours";
 export const CAUSE_PLAFOND_COUT = "plafond_cout";
 export const CAUSE_LIMITE_USAGE = "limite_usage";
 export const CAUSE_HOTE_NON_DEMARRE = "hote_non_demarre";
 export const CAUSE_ANNULATION = "annulation";
+export const CAUSE_EXTINCTION = "extinction";
 
 /**
  * Le statut d'une étape d'**activité** (#479) : ce que l'agent fait pendant que

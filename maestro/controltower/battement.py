@@ -51,12 +51,13 @@ issue en partant, et retire son battement dans le même geste
 (`maestro.controltower.bridge.solder_le_run`).
 
 Le corollaire ne disparaît pas pour autant, il **change de portée** : un run
-survit à son API, **pas à sa machine**. Ce qui reste `orphelin` est donc ce qui
-est mort sans pouvoir le dire — machine endormie, process tué net, Redis muet au
-dernier instant — et c'est là, exactement, que le verdict garde son sens : il
-signale ce que personne n'a soldé. On le voit ici, on le ramasse quand l'API
-portait l'hôte (`ServiceExecutions._ramasser`), et on le rattrape sur le brief
-(#349).
+survit à l'**accident**, pas à l'**extinction** — ni à sa machine (#486,
+docs/28 §11 ; l'arrêt volontaire solde ses runs, l'arrêt subi ne les touche pas).
+Ce qui reste `orphelin` est donc ce qui est mort sans pouvoir le dire — machine
+endormie, process tué net, Redis muet au dernier instant — et c'est là,
+exactement, que le verdict garde son sens : il signale ce que personne n'a soldé.
+On le voit ici, on le ramasse quand l'API portait l'hôte
+(`ServiceExecutions._ramasser`), et on le rattrape sur le brief (#349).
 """
 
 from __future__ import annotations

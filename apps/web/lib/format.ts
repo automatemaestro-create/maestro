@@ -2,6 +2,7 @@
 
 import {
   CAUSE_ANNULATION,
+  CAUSE_EXTINCTION,
   CAUSE_HOTE_NON_DEMARRE,
   CAUSE_LIMITE_USAGE,
   CAUSE_PLAFOND_COUT,
@@ -203,6 +204,10 @@ const LIBELLES_CAUSE: Record<string, string> = {
   [CAUSE_LIMITE_USAGE]: "Limite d'usage du fournisseur",
   [CAUSE_HOTE_NON_DEMARRE]: "L'hôte du run n'a pas démarré",
   [CAUSE_ANNULATION]: "Interrompu",
+  // #486 — la phrase dit **qui** a arrêté, parce que c'est ce qui distingue cette
+  // cause de la précédente : le statut consigné est le même (« annulée »), et
+  // « Interrompu » tout court ferait chercher qui a cliqué sur quoi.
+  [CAUSE_EXTINCTION]: "Maestro s'est éteint",
 };
 
 /**

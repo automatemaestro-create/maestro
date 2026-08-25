@@ -280,14 +280,16 @@ Corollaire assumé, à écrire là où le corollaire d'aujourd'hui est écrit (d
 `battement.py`) : **un run survivra à son API, pas à sa machine.** Le sommeil de la machine reste
 traité par #348 (on le voit) et #349 (on le rattrape sur le brief), pas par la frontière.
 
-> ⚠ **Ce corollaire était trop large d'un cas, et il a été corrigé le 2026-08-24** (revue #470,
-> [docs/29 §5](./29-decision-run-objet-de-premier-plan.md)). Il énumérait trois gestes — « fermer la
-> fenêtre, relancer l'API, `--stop` » — comme s'ils étaient de même nature. Les deux premiers sont
-> des **accidents**, et les protéger est ce que ce chantier a acheté ; `start.sh --stop` est une
-> **décision**, et un run qui lui survit tourne sans écran pour le suivre ni bouton pour l'arrêter.
-> Le corollaire à jour se lit : **un run survit à l'accident, pas à l'extinction — ni à sa
+> ⚠ **Ce corollaire était trop large d'un cas, corrigé le 2026-08-24** (revue #470,
+> [docs/29 §5](./29-decision-run-objet-de-premier-plan.md)) **et livré par #486**. Il énumérait trois
+> gestes — « fermer la fenêtre, relancer l'API, `--stop` » — comme s'ils étaient de même nature. Les
+> deux premiers sont des **accidents**, et les protéger est ce que ce chantier a acheté ;
+> `start.sh --stop` est une **décision**, et un run qui lui survit tourne sans écran pour le suivre
+> ni bouton pour l'arrêter.
+>
+> **Le corollaire à jour se lit : un run survit à l'accident, pas à l'extinction — ni à sa
 > machine.** Rien du verdict ci-dessus n'est défait ; c'est sa formulation qui l'était. Voir le
-> **§11**, plus bas.
+> **§11**, plus bas, pour ce que #486 a livré.
 
 ## 6. Pourquoi les autres sont écartées — récapitulatif
 
@@ -472,9 +474,9 @@ change vraiment est le sens du verdict `orphelin` :
 | Machine endormie, process tué net, Redis muet au dernier instant | `orphelin` | `orphelin` — et c'est exactement ce que le verdict doit signaler |
 
 > ⚠ **La première ligne mélange deux gestes que le 2026-08-24 a séparés.** « Le run continue » reste
-> vrai des deux **accidents** — fenêtre fermée, API relancée — et cesse de l'être de
-> `start.sh --stop`, qui soldera ses runs (#486, §11). Le tableau est laissé tel qu'il a été mesuré
-> au 2026-08-24 ; c'est la ligne qui a vieilli d'un cas, pas la mesure.
+> vrai des deux **accidents** — fenêtre fermée, API relancée — et a cessé de l'être de
+> `start.sh --stop`, qui **solde ses runs depuis #486** (§11). Le tableau est laissé tel qu'il a été
+> mesuré au 2026-08-24 ; c'est la ligne qui a vieilli d'un cas, pas la mesure.
 
 Deux mesures relevées au passage, sur le poste de référence (Windows, 2026-08-24) : un hôte détaché
 s'arme en **1,3 s** quand Redis répond et **5,5 s** quand il ne répond pas (le premier battement est
@@ -547,3 +549,33 @@ Le travail est **ajouté**, pas repayé : c'est #486.
 celle-ci demande moins de survie sur un geste précis, et n'en rapproche aucune. Le jour où
 quelqu'un voudra délibérément partir en laissant tourner, la réponse sera une **option** sur un
 geste qui solde par défaut — jamais un défaut qui laisse tourner en silence.
+
+### 11.1 Ce que #486 a livré (2026-08-25)
+
+**Une porte, et elle est explicite** : `POST /api/extinction`. C'est le seul endroit par lequel un
+arrêt volontaire se déclare — `scripts/controltower/start.sh --stop` l'appelle **avant** de libérer
+les ports, et la fermeture de l'enveloppe l'appellera le jour où elle existera. Le service y solde
+chaque run que **cette API porte** (`HoteRun.runs_en_vol`), par le geste qui existait déjà
+(`ServiceExecutions._solder`) : issue publiée — donc entendue par le process détaché, qui annule sa
+propre tâche (#444) —, hôte éteint **avec sa descendance** au bout du délai de grâce
+(`hote_detache._eteindre`), tâches soldées et battement retiré.
+
+**La distinction ne se déduit toujours d'aucun signal**, et c'est ce que cette forme achète : le
+`lifespan` de l'API — donc un `SIGTERM`, un plantage, la fenêtre du navigateur refermée par le chien
+de garde #149 — passe par `ServiceExecutions.fermer`, qui **ne touche à rien**. Un drapeau sur cette
+méthode-là aurait demandé à celui qui ne sait pas de deviner. Corollaire de forme : l'appel vit dans
+la seule branche `--stop` de `start.sh` et **surtout pas** dans `arreter_session`, que le démarrage
+rejoue pour remplacer la session précédente — l'y mettre aurait soldé les runs à chaque relance,
+c'est-à-dire fabriqué l'accident qu'on protège.
+
+**Ce qui rend le run reprenable est une cause, pas un statut.** Le run est consigné `annulee` comme
+n'importe quelle interruption ; ce qui le distingue est `CAUSE_EXTINCTION`
+(`maestro/controltower/causes.py`), le sixième code de #479. C'est lui, et lui seul, que
+`ServiceExecutions.relancer` accepte parmi les runs soldés, et que l'UI lit pour proposer le bouton
+**« Reprendre » déjà existant** (#349, `PanneauRunsPerdus`) — le brief approuvé restant requis comme
+partout ailleurs. Un run **délibérément annulé** n'entre pas par là : personne ne veut se voir
+reproposer un run qu'il vient d'arrêter. Le laissez-passer est **consommé** à la reprise (la relance
+re-solde le run avec la cause `annulation`), ce qui garde le garde-fou de #349 contre le double clic.
+
+**L'option annoncée plus haut existe déjà** : `MAESTRO_EXTINCTION=0` laisse délibérément tourner —
+sur un geste qui solde par défaut, et **en le disant**, jamais en silence.

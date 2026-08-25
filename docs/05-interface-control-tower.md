@@ -188,12 +188,18 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
    **signale et achemine, il ne décide pas** — sept sections, des questions et un
    coût ne tiennent pas dans une carte.
 2. **Validations en attente** — ce qui demande un arbitrage humain.
-3. **Runs interrompus** (#349, §6.1) — les runs **orphelins dont le brief a été
-   approuvé**, avec le bouton qui les reprend sur ce cadrage. Après les deux
-   précédents, et pour une raison de nature : ceux-là retiennent du travail
+3. **Runs interrompus** (#349, #486, §6.1) — les runs **orphelins ou éteints dont
+   le brief a été approuvé**, avec le bouton qui les reprend sur ce cadrage. Après
+   les deux précédents, et pour une raison de nature : ceux-là retiennent du travail
    **vivant**, un run perdu ne retient plus rien. Rien ne s'affiche quand il n'y a
    rien à récupérer — ni sur un run `indetermine` (on ne sait pas : le proposer
-   serait deviner), ni sur un orphelin sans brief approuvé (il n'a rien à rejouer).
+   serait deviner), ni sur un run sans brief approuvé (il n'a rien à rejouer). Le
+   second état vient de #486 : un run que `start.sh --stop` a soldé (cause
+   `extinction`) se retrouve **ici** au redémarrage, par le **même** bouton — sa
+   ligne dit « arrêté avec Maestro » là où un orphelin dit « hôte muet », les deux
+   menant au même geste parce que ce qui se rejoue est un cadrage. Un run
+   **délibérément annulé**, lui, n'y figure pas : personne ne veut se voir
+   reproposer un run qu'il vient d'arrêter.
 4. **Indicateurs de tête** — quatre tuiles : run en cours, tâches par statut,
    agents occupés et libres, dépense. Chaque tuile met en valeur **le chiffre
    qu'on vient y chercher** : la tuile Agents répond « combien travaillent,
@@ -876,9 +882,10 @@ L'API sert `POST /api/executions/{run_id}/annuler` depuis **#185** ; l'UI ne l'a
 dans un test de brief. Interrompre un run demandait donc de sortir de l'outil et de
 lancer un `curl`, ce qu'il a fallu faire le **2026-08-24** pour solder quatre runs
 fantômes qui traînaient depuis le 22 juillet. Le trou est d'autant plus visible depuis
-#446, où l'hôte détaché est le défaut : un run **survit** à l'arrêt de l'API, donc ni
-fermer le navigateur ni `start.sh --stop` ne l'arrêtent. Le seul geste qui interrompt un
-run était précisément celui que l'interface n'offrait pas.
+#446, où l'hôte détaché est le défaut : un run **survit** à l'arrêt de l'API, donc fermer
+le navigateur ne l'arrête pas. Le seul geste qui interrompt un run était précisément celui
+que l'interface n'offrait pas. (Depuis #486, `start.sh --stop` en est un second — mais
+c'est un arrêt **de Maestro**, pas d'un run choisi : il les solde **tous**.)
 
 Le bouton vit avec les autres gestes d'un run (`GestesRun`,
 `components/runs/EtatRun.tsx`), donc **dans la liste (§2.4.1) comme dans la vue
@@ -1558,6 +1565,20 @@ décrit le comportement réel, pas une fixture.
 - `POST /api/executions/{run_id}/relancer` → `202` + `ResumeExecution` — rejoue un run interrompu
   **sur son brief approuvé** (#349, ci-dessous) et rend le résumé du **nouveau** run. `404` inconnu,
   `409` déjà soldé ou **encore vivant**, `422` sans brief approuvé.
+  ⚠ **Un run soldé par l'extinction de Maestro fait exception** (#486) : reconnu à sa `cause`
+  (`extinction`), il repart au lieu d'être refusé — c'est le troisième critère du ticket, « un run
+  soldé de la sorte doit être reprenable, pas orphelin ». Un run **délibérément annulé** reste
+  refusé sous le même statut : seule la cause les sépare, et les confondre reproposerait de
+  reprendre un run que quelqu'un venait d'arrêter. Le laissez-passer est **consommé** — la reprise
+  re-solde le run en `annulation` —, ce qui garde le garde-fou du double clic.
+- `POST /api/extinction` → `{runs: ResumeExecution[], nb: number}` — **Maestro s'éteint** (#486,
+  [docs/28 §11](./28-decision-frontiere-execution-run.md)) : chaque run que cette API porte est
+  soldé `annulee` avec la cause `extinction`, son hôte éteint **avec sa descendance**, ses tâches
+  soldées et son battement retiré. `200` même quand rien ne tournait (liste vide) : éteindre une
+  Control Tower au repos n'est pas une erreur. C'est la porte de l'arrêt **volontaire**, appelée par
+  `scripts/controltower/start.sh --stop` avant qu'il ne libère les ports — et la seule : l'arrêt
+  **subi** (fenêtre du navigateur refermée, API relancée, plantage) passe par le `lifespan`, qui ne
+  touche à rien. La distinction ne se déduit d'aucun signal, elle **descend** de l'appelant.
 
 ⚠ **`reprendre` et `relancer` ne sont pas le même geste**, et les confondre coûte un cadrage :
 `reprendre` rouvre la porte d'un run **vivant** qu'on avait suspendu — même `run_id`, même plan,
@@ -1667,9 +1688,12 @@ constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un **battem
 > **La frontière est tranchée par [doc 28](./28-decision-frontiere-execution-run.md)** (#350) et
 > **livrée** par le chantier #441 : l'exécution est sortie du process de l'API pour un **hôte de run
 > détaché**, devenu le défaut avec #446 (`MAESTRO_HOTE_RUN=process` ramène la tâche de fond). Un run
-> survit donc à l'arrêt de l'API — fermer la fenêtre du navigateur, relancer après une modification,
-> `start.sh --stop` — mais **pas au sommeil de la machine**, qui reste traité par le battement
-> ci-dessous (on le voit) et par la relance sur brief de #349 (on le rattrape).
+> survit donc à l'arrêt **accidentel** de l'API — fermer la fenêtre du navigateur, relancer après
+> une modification, planter — mais **pas au sommeil de la machine**, qui reste traité par le
+> battement ci-dessous (on le voit) et par la relance sur brief de #349 (on le rattrape). Ni à
+> l'arrêt **volontaire** depuis #486 : `start.sh --stop` solde ses runs (`annulee`, cause
+> `extinction`) et les rend **reprenables** par le bouton « Reprendre » du panneau ci-dessous —
+> un run soldé de la sorte y figure au même titre qu'un orphelin.
 
 | `vitalite` | ce que ça dit | ce qu'on en fait |
 | --- | --- | --- |
@@ -1780,6 +1804,7 @@ repris la main, exactement comme un brief refusé (§6.10).
 | --- | --- | --- |
 | `run-inconnu` | `404` | aucun run de cet identifiant dans la projection |
 | `run-solde` | `409` | il a rendu son issue : rien à reprendre, et le relancer le dupliquerait |
+| — | — | ⚠ **sauf s'il porte la cause `extinction`** (#486) : Maestro l'a soldé en s'éteignant, pas quelqu'un en l'arrêtant, et le reprendre est le troisième critère du ticket |
 | `run-vivant` | `409` | son hôte bat encore — l'interrompre d'abord si c'est bien voulu |
 | `cadrage-absent` | `422` | son brief n'a **jamais été approuvé** : il n'y a rien à rejouer |
 
@@ -1789,9 +1814,9 @@ première. Et `indetermine` **passe** — un run qui n'a jamais battu est un run
 pas un run vivant, et refuser rendrait la route inutile précisément pour les quatre runs fantômes
 qui l'ont motivée. Le rapport de coûts penche du même côté que le seuil ci-dessus : rejouer un run
 qui travaillait encore coûte un run en double, qu'on annule ; refuser coûte le cadrage,
-définitivement. L'**UI**, elle, ne propose le geste que sur `orphelin` (panneau *Runs interrompus*
-du tableau de bord, §2.1) : proposer sur une absence d'information serait deviner, ce que le
-troisième verdict existe pour refuser.
+définitivement. L'**UI**, elle, ne propose le geste que sur `orphelin` — et, depuis #486, sur un run
+**éteint** (panneau *Runs interrompus* du tableau de bord, §2.1) : proposer sur une absence
+d'information serait deviner, ce que le troisième verdict existe pour refuser.
 
 Le quatrième refus est le seul qui ne porte pas sur la vitalité, et il compte autant : un run mort
 **avant** la validation de son brief n'a rien de payé à rejouer. Le dire vaut mieux que repartir en
@@ -1856,7 +1881,7 @@ son livrable trois minutes plus tard.
 court porté par le résumé, à côté du `detail` qui reste ce qu'il était (`TypeErreur :
 message`). Le partage est celui de la lecture : le **code** dit de quoi il s'agit —
 c'est lui que l'écran range et teinte —, le **détail** dit ce qui s'est passé. Cinq
-codes, et pas de sixième :
+codes, plus un sixième arrivé avec #486 :
 
 | `cause` | ce qui a arrêté le run | ce qu'on en fait |
 | --- | --- | --- |
@@ -1865,8 +1890,15 @@ codes, et pas de sixième :
 | `limite_usage` | le fournisseur a refusé de servir : quota, 429, solde épuisé | attendre la fenêtre suivante, puis relancer |
 | `hote_non_demarre` | le process du run n'est jamais parti (#443) | ni tâche, ni coût, ni journal à lire — regarder la machine |
 | `annulation` | quelqu'un a interrompu, ou refusé le brief | rien à réparer |
+| `extinction` | **Maestro s'est éteint** en emportant le run (#486, `start.sh --stop`) | le **reprendre** au redémarrage (§2.1, panneau *Runs interrompus*) |
 
-Quatre choses à ne pas défaire. **`""` n'est pas une sixième cause** : un échec que le
+Le sixième est le seul dont l'écran tire une **conséquence** et pas seulement une
+phrase, et c'est ce qui justifie de ne pas l'avoir fondu dans `annulation` : le statut
+consigné est le même (`annulee`), et seule la cause sépare « on a éteint l'application
+qui tenait ce run » de « quelqu'un a arrêté ce run-là ». Le premier se repropose, le
+second jamais.
+
+Quatre choses à ne pas défaire. **`""` n'est pas une cause de plus** : un échec que le
 classement ne sait pas ranger n'est pas « inconnu » au sens où il faudrait l'annoncer
 — son `detail` porte déjà le type et le message, et inventer un fourre-tout ferait
 passer « je n'ai pas su ranger ceci » pour un diagnostic ; à l'écran, la ligne

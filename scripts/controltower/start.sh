@@ -25,8 +25,27 @@
 #   bash scripts/controltower/start.sh                     # (re)démarre tout + navigateur (réel)
 #   bash scripts/controltower/start.sh --demo              # scénario factice, sans Redis
 #   bash scripts/controltower/start.sh --no-browser        # sans navigateur ni arrêt auto
-#   bash scripts/controltower/start.sh --stop              # arrête seulement (nettoyage)
+#   bash scripts/controltower/start.sh --stop              # arrête seulement (et SOLDE les runs en vol)
 #   bash scripts/controltower/start.sh --diagnostic-navigateur  # dit quel navigateur serait ouvert
+#
+# ⚠ « --stop » N'EST PAS COMME LES DEUX AUTRES ARRÊTS (#486, docs/28 §11). Depuis
+# #441 un run de la Control Tower vit dans un process détaché qui SURVIT à son API :
+# fermer la fenêtre du navigateur (le chien de garde ci-dessous) et relancer après
+# une modification sont des ACCIDENTS — personne n'a demandé d'arrêter le run —, et
+# les rendre inoffensifs est toute la raison d'être de ce mécanisme. « --stop » est
+# une DÉCISION : il solde donc les runs en vol avant de libérer les ports (chaque
+# hôte détaché éteint AVEC SA DESCENDANCE, son run consigné « annulée » et non
+# laissé « en cours »). Ce que l'extinction a interrompu se reprend au redémarrage
+# par le bouton « Reprendre » de la Control Tower.
+#
+# La distinction vit ICI et pas dans l'API, parce que c'est ici qu'on la connaît :
+# un SIGTERM reçu par l'API ne dit pas s'il vient d'un arrêt propre ou d'un
+# gestionnaire de tâches. D'où l'appel EXPLICITE à « POST /api/extinction », placé
+# dans la seule branche « --stop » — surtout pas dans « arreter_session », que le
+# démarrage rejoue pour nettoyer la session précédente : l'y mettre solderait les
+# runs à chaque relance, c'est-à-dire exactement l'accident qu'on protège.
+# MAESTRO_EXTINCTION=0 laisse délibérément tourner (annoncé, jamais silencieux) ;
+# MAESTRO_EXTINCTION_DELAI déplace le plafond d'attente (20 s).
 #
 # Tout le reste est IDENTIQUE dans les deux modes : mêmes ports (donc mêmes
 # dossiers de logs et profil de navigateur indexés dessus), même nettoyage des
@@ -71,6 +90,11 @@ LOG_DIR="$RACINE/$LOG_DIR_REL"
 # garde, la seconde arrêtant la première.
 ETAT_DIR="${TMPDIR:-/tmp}/maestro-controltower-${PORT_API}-${PORT_UI}"
 URL_UI="http://localhost:${PORT_UI}"
+# Plafond d'attente du soldage des runs en vol (#486). L'API borne l'extinction de
+# CHAQUE run à quelques secondes et les solde ENSEMBLE : ce délai n'est donc pas
+# proportionnel au nombre de runs, et l'atteindre veut dire que l'API ne répond
+# plus — auquel cas on libère les ports comme avant, sans rien attendre de plus.
+DELAI_EXTINCTION="${MAESTRO_EXTINCTION_DELAI:-20}"
 
 # Trace de la session courante. Le chien de garde ne nettoie que si le jeton qu'il
 # surveille est toujours celui du fichier : un `--stop` manuel ou un relancement
@@ -184,6 +208,44 @@ arreter_session() {
   fermer_navigateur
   liberer_port "$PORT_API" "API"
   liberer_port "$PORT_UI" "UI"
+}
+
+# Solde les runs en vol — l'arrêt VOLONTAIRE, et lui seul (#486, docs/28 §11).
+#
+# Appelée AVANT arreter_session, qui va tuer l'API : c'est elle qui tient les hôtes
+# détachés et sait les éteindre avec leur descendance. Et appelée DEPUIS LA SEULE
+# BRANCHE « --stop », jamais depuis arreter_session, que le démarrage rejoue pour
+# nettoyer la session précédente — l'y mettre solderait les runs à chaque relance.
+#
+# Best-effort de bout en bout : une API qui ne répond pas (déjà arrêtée, ou dont la
+# fenêtre vient d'être fermée) n'empêche pas d'arrêter le reste. On le DIT, en
+# revanche : un run qui continue sans écran pour le suivre est précisément ce que
+# ce ticket supprime, et le taire ferait chercher plus tard d'où vient la dépense.
+solder_les_runs() {
+  reponse=""
+  runs=""
+  if [ "${MAESTRO_EXTINCTION:-1}" = "0" ]; then
+    echo "[extinction] désactivée (MAESTRO_EXTINCTION=0) — les runs en vol continuent sans écran pour les suivre"
+    return 0
+  fi
+  reponse="$(curl -s -X POST --max-time "$DELAI_EXTINCTION" \
+    "http://127.0.0.1:${PORT_API}/api/extinction" 2>/dev/null || true)"
+  if [ -z "$reponse" ]; then
+    echo "[extinction] l'API ne répond pas sur :${PORT_API} — rien à solder par ici"
+    return 0
+  fi
+  # Les identifiants, extraits du JSON sans jq (pas un prérequis du dépôt) : la
+  # réponse est une liste de résumés, et « run_id » n'y apparaît qu'une fois par run.
+  runs="$(printf '%s' "$reponse" \
+    | grep -o '"run_id"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed 's/^.*"\([^"]*\)"$/\1/' || true)"
+  if [ -z "$runs" ]; then
+    echo "[extinction] aucun run en vol"
+    return 0
+  fi
+  for run in $runs; do
+    echo "[extinction] run ${run} interrompu — reprenable au redémarrage (bouton « Reprendre »)"
+  done
 }
 
 # Attend qu'une URL réponde en HTTP (1 essai/s, délai max en secondes).
@@ -634,6 +696,13 @@ if [ "$MODE" = "demarrer" ] && [ "$STACK" = "reel" ]; then
 fi
 
 # ── Nettoyage puis démarrage ─────────────────────────────────────────────────
+# L'extinction des runs vient AVANT le nettoyage (qui tue l'API, seule à tenir les
+# hôtes) et **seulement** sur « --stop » : un démarrage rejoue arreter_session pour
+# remplacer la session précédente, et c'est l'accident que #441 protège.
+if [ "$MODE" = "arreter" ]; then
+  solder_les_runs
+fi
+
 arreter_session
 
 if [ "$MODE" = "arreter" ]; then

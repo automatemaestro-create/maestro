@@ -179,6 +179,12 @@ au redémarrage par le bouton existant (#439). Le travail est ajouté, pas repri
 trois arbitrages qui ne renverse rien — il **complète** une décision dont la formulation était trop
 large d'un cas.
 
+> **Livré le 2026-08-25 par #486**, et au prix annoncé : aucune ligne des six lots de #441 reprise.
+> La porte est `POST /api/extinction`, appelée par `start.sh --stop` avant qu'il ne libère les
+> ports ; la cause d'arrêt est `extinction` (`maestro/controltower/causes.py`), sixième code de
+> #479 ; et c'est elle, et rien d'autre, qui rend le run reprenable par le bouton existant. Détail
+> en [docs/28 §11.1](./28-decision-frontiere-execution-run.md).
+
 ## 6. Ce que les trois arbitrages coûtent, récapitulé
 
 Mesuré sur le dépôt, jamais estimé.
