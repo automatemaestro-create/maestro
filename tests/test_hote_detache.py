@@ -17,7 +17,10 @@ Ce qui est couvert, dans l'ordre où le module le construit :
 ③ **la survie** — le run ne meurt pas avec l'API. C'est *la* propriété du
    chantier, et elle se vérifie sur de **vrais process** : un process qui survit à
    un autre ne se simule pas (même parti pris que les tests d'arrêt de
-   `tests/test_orchestrate.py`) ;
+   `tests/test_orchestrate.py`). Depuis #469 s'y ajoute ce que les drapeaux de
+   `_detachement` achètent **de l'autre côté** : aucune fenêtre de console pour la
+   descendance, et l'hôte hors de la console de son lanceur — la seconde étant la
+   raison pour laquelle la première ne coûte pas l'isolation ;
 ④ **l'annulation** — elle traverse la frontière par le bus, jamais par un canal à
    elle : l'issue `annulee` *est* l'ordre, et un guet en panne n'emporte pas le run ;
 ⑤ **le canal humain** (#445) — les trois attentes tiennent sur le bus de ce
@@ -133,6 +136,25 @@ FICHIER_BATTEMENT = "battement"
 FICHIER_ARRET = "arret"
 FICHIER_PID = "pid"
 
+#: Le relevé de console du bouchon (#469) : la console qu'il a **pour lui**, et la
+#: liste des process qui la partagent. Écrit à l'armement, avant tout petit-fils.
+FICHIER_CONSOLE = "console.json"
+
+#: Le petit-fils du bouchon (#469) — le tenant-lieu du `claude.exe` d'une tâche :
+#: son pid, et le relevé de la console dont il hérite. `hwnd` non nul = fenêtre.
+FICHIER_PETIT_FILS_PID = "petitfils.pid"
+FICHIER_PETIT_FILS_CONSOLE = "petitfils.json"
+
+#: Les drapeaux **d'avant #469**, gardés ici comme **témoin fautif** et nulle part
+#: ailleurs : un test qui mesure une fenêtre doit d'abord prouver qu'il sait en
+#: voir une, faute de quoi son verdict vert ne distingue pas « aucune fenêtre » de
+#: « aucune mesure ». Ils ne sont pas importés du module — ils n'y sont plus.
+DRAPEAUX_AVANT_469 = (
+    (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+    if sys.platform == "win32"
+    else 0
+)
+
 #: Les deux marques de la barrière : celle qu'on pose en arrivant, celle qu'on pose
 #: quand on **renonce** à l'attendre. La seconde n'est pas décorative — sans elle,
 #: un relevé pris avant que tout le monde soit là passerait pour un verdict (#313).
@@ -164,12 +186,36 @@ process (#313), jamais un compteur partagé qu'une écriture perdue rendrait fau
 moment précis où deux hôtes vivent ensemble.
 """
 
+import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 # <noms>
+
+
+def releve_console():
+    """La console de CE process : sa fenêtre, et qui la partage (#469).
+
+    `GetConsoleWindow` rend 0 quand la console n'a pas de fenêtre — c'est tout le
+    correctif — comme quand il n'y en a aucune ; `GetConsoleProcessList` sépare
+    les deux, et c'est lui qui dit si l'hôte partage la console de son lanceur.
+    """
+    if sys.platform != "win32":
+        return {"hwnd": 0, "partagee_avec": [], "pid": os.getpid()}
+    import ctypes
+
+    k = ctypes.windll.kernel32
+    tampon = (ctypes.c_ulong * 64)()
+    combien = k.GetConsoleProcessList(tampon, 64)
+    return {
+        "hwnd": int(k.GetConsoleWindow()),
+        "partagee_avec": [int(tampon[i]) for i in range(combien)],
+        "pid": os.getpid(),
+    }
+
 
 atelier = Path(sys.argv[1])
 run_id = atelier.name
@@ -189,8 +235,25 @@ battement = atelier / BATTEMENT
 arret = atelier / ARRET
 
 (atelier / PID).write_text(str(os.getpid()), encoding="utf-8")
+(atelier / CONSOLE).write_text(json.dumps(releve_console()), encoding="utf-8")
+
+petit_fils = os.environ.get("BOUCHON_PETIT_FILS", "")
+if petit_fils:
+    # Le tenant-lieu du `claude.exe` d'une tâche (#469) : une application
+    # CONSOLE, lancée exactement comme le claude-agent-sdk la lance — par
+    # `anyio.open_process`, donc SANS aucun creationflags, stdin/stdout sur des
+    # pipes. C'est ce lancement-là qui réclamait une fenêtre.
+    enfant = subprocess.Popen(
+        [sys.executable, petit_fils, str(atelier / PETIT_FILS_CONSOLE)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    (atelier / PETIT_FILS_PID).write_text(str(enfant.pid), encoding="utf-8")
+
 # Armé : c'est sur ce témoin-là, et pas sur la naissance du process, que le
-# lanceur rend la main.
+# lanceur rend la main. Il vient APRÈS le petit-fils : un test qui l'attend doit
+# pouvoir compter sur le fait que la descendance est là.
 (atelier / TEMOIN).write_text("", encoding="utf-8")
 
 porte = os.environ.get("BOUCHON_BARRIERE", "")
@@ -214,6 +277,44 @@ while time.monotonic() < echeance and not arret.exists():
     tour += 1
     battement.write_text(str(tour), encoding="utf-8")
     time.sleep(0.02)
+'''
+
+
+#: Le corps du petit-fils : le tenant-lieu du `claude.exe` d'une tâche (#469).
+#:
+#: Il n'a qu'un travail — dire quelle console il a reçue — et il n'importe rien de
+#: `maestro` : ce qu'on éprouve est une règle de Windows sur la création de
+#: process, pas une ligne de notre code. Il **vit** ensuite, parce qu'une fenêtre
+#: se mesure sur un process vivant et qu'un `_eteindre` doit avoir une descendance
+#: à emporter ; son échéance est celle du bouchon, même filet de ménage.
+_CORPS_PETIT_FILS = '''\
+"""Un `claude.exe` de tâche, en tenant-lieu : il dit sa console, puis il vit."""
+
+import ctypes
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+if sys.platform == "win32":
+    import ctypes
+
+    hwnd = int(ctypes.windll.kernel32.GetConsoleWindow())
+    # `IsWindowVisible` vit dans user32 et non dans kernel32 : l'appeler sur le
+    # mauvais module lève, et ne lèverait QUE dans le cas où hwnd est non nul,
+    # c'est-à-dire dans le seul cas que ce relevé existe pour attraper.
+    visible = int(ctypes.windll.user32.IsWindowVisible(hwnd)) if hwnd else 0
+else:
+    # POSIX n'a pas de fenêtre à ouvrir : le petit-fils n'y sert qu'à donner une
+    # descendance à `_eteindre`, et son relevé n'a que son pid d'utile.
+    hwnd, visible = 0, 0
+
+Path(sys.argv[1]).write_text(
+    json.dumps({"hwnd": hwnd, "visible": visible, "pid": os.getpid()}),
+    encoding="utf-8",
+)
+time.sleep(float(os.environ.get("BOUCHON_VIE_S", "60")))
 '''
 
 
@@ -257,6 +358,9 @@ def _source_bouchon() -> str:
             ("PID", FICHIER_PID),
             ("ARRIVE", SUFFIXE_ARRIVE),
             ("RATEE", SUFFIXE_BARRIERE_RATEE),
+            ("CONSOLE", FICHIER_CONSOLE),
+            ("PETIT_FILS_PID", FICHIER_PETIT_FILS_PID),
+            ("PETIT_FILS_CONSOLE", FICHIER_PETIT_FILS_CONSOLE),
         )
     )
     return _CORPS_BOUCHON.replace("# <noms>", noms)
@@ -306,6 +410,77 @@ def _battement(atelier: Path, run_id: str) -> int:
         return 0
 
 
+def _releve(atelier: Path, run_id: str, nom: str) -> dict[str, Any]:
+    """Un relevé JSON écrit par le bouchon ou son petit-fils, attendu puis relu.
+
+    L'attente est celle du reste de la suite — un **fait observable**, jamais une
+    durée —, et la lecture échoue franchement : un relevé absent n'est pas un
+    relevé vide, et le confondre rendrait vert un test qui n'a rien mesuré.
+    """
+    fichier = atelier / run_id / nom
+    _attendre(fichier.exists, f"{run_id} n'a jamais écrit son relevé {nom}.")
+    return json.loads(fichier.read_text(encoding="utf-8"))
+
+
+def _process_de_ma_console() -> list[int]:
+    """Les pids attachés à la console de CE process — vide s'il n'en a aucune.
+
+    C'est la liste exacte que le système consulte pour dispatcher un événement de
+    console (Ctrl-C, Ctrl-Break, fermeture de la fenêtre) : y être ou non *est* la
+    question, et elle se pose depuis le lanceur, jamais depuis l'hôte.
+    """
+    if sys.platform != "win32":
+        return []
+    import ctypes
+
+    k = ctypes.windll.kernel32
+    tampon = (ctypes.c_ulong * 64)()
+    combien = k.GetConsoleProcessList(tampon, 64)
+    return [int(tampon[i]) for i in range(combien)]
+
+
+def _vivant(pid: int) -> bool:
+    """Ce pid **tourne**-t-il encore ? — et un zombie ne tourne pas.
+
+    Sous Windows, `OpenProcess` + `GetExitCodeProcess` : `os.kill(pid, 0)` y **tue**
+    au lieu d'interroger, ce qui ferait de la question sa propre réponse.
+
+    Sous POSIX, `os.kill(pid, 0)` réussit encore sur un **zombie** — un process
+    mort dont personne n'a lu le code de sortie —, et c'est exactement ce qu'on
+    rencontre ici : le petit-fils est le fils de l'hôte, `_eteindre` les emporte
+    tous les deux, et plus personne n'est là pour le récolter. Dans le conteneur du
+    filet CI le PID 1 n'adopte ni ne récolte, si bien que la dépouille reste
+    visible pour toujours et qu'un test qui interroge le signal 0 conclut « il a
+    survécu » d'un process que le noyau donne pour mort. D'où la lecture de
+    `/proc/<pid>/stat`, où l'état `Z` tranche ; le repli sur le signal 0 couvre les
+    POSIX sans `/proc` (macOS), où le cas ne se pose pas de la même façon.
+
+    Le champ `comm` de `stat` peut contenir des espaces et des parenthèses : l'état
+    se lit **après la dernière** `)`, jamais en découpant sur les espaces.
+    """
+    if sys.platform != "win32":
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return False
+            return True
+        etat = stat.rpartition(")")[2].split()
+        return bool(etat) and etat[0] != "Z"
+    import ctypes
+
+    k = ctypes.windll.kernel32
+    handle = k.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    code = ctypes.c_ulong()
+    k.GetExitCodeProcess(handle, ctypes.byref(code))
+    k.CloseHandle(handle)
+    return code.value == 259  # STILL_ACTIVE
+
+
 @pytest.fixture()
 def bouchon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]:
     """Substitue le module du fils par un bouchon, et rend la racine des ateliers.
@@ -323,6 +498,7 @@ def bouchon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]:
     bouchon le relit à chaque tour), puis on tue par PID ce qui n'est pas parti.
     """
     (tmp_path / "bouchon.py").write_text(_source_bouchon(), encoding="utf-8")
+    (tmp_path / "petit_fils.py").write_text(_CORPS_PETIT_FILS, encoding="utf-8")
     racine = tmp_path / "ateliers"
     racine.mkdir()
     monkeypatch.setattr(hote_detache, "MODULE_HOTE", "bouchon")
@@ -334,9 +510,14 @@ def bouchon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]:
         for atelier in sorted(racine.glob("*")):
             with suppress(OSError):
                 (atelier / FICHIER_ARRET).write_text("", encoding="utf-8")
-        for fichier in sorted(racine.glob(f"*/{FICHIER_PID}")):
-            with suppress(OSError, ValueError):
-                _achever(int(fichier.read_text(encoding="utf-8")))
+        # Le petit-fils **avant** son père : un `taskkill /T` sur l'hôte l'emporte
+        # déjà, mais l'ordre inverse est précisément ce qui fabrique l'orphelin
+        # (#291) le jour où l'hôte est mort avant le démontage.
+        motifs = (f"*/{FICHIER_PETIT_FILS_PID}", f"*/{FICHIER_PID}")
+        for motif in motifs:
+            for fichier in sorted(racine.glob(motif)):
+                with suppress(OSError, ValueError):
+                    _achever(int(fichier.read_text(encoding="utf-8")))
 
 
 # ------------------------------------------------------------------- les doubles
@@ -984,16 +1165,123 @@ def test_le_fils_est_coupe_de_la_console_et_du_groupe_de_l_api() -> None:
     raison de ces drapeaux. `CREATE_BREAKAWAY_FROM_JOB` n'y est **pas**, et son
     absence est un choix : il échoue en `ACCESS_DENIED` quand le job de l'appelant
     n'autorise pas l'évasion, et ferait alors rater *tous* les démarrages.
+
+    **L'absence de `DETACHED_PROCESS` est le contrôle qui compte** (#469), et c'est
+    le seul qui ne se lit pas comme une redite du code : les deux drapeaux sont
+    **exclusifs** — `CREATE_NO_WINDOW` est ignoré en présence de l'autre —, si bien
+    que le remettre « pour faire bonne mesure » ne l'ajouterait pas, il
+    **annulerait** le correctif sans rien casser de visible ici. La fenêtre qu'il
+    ramènerait ne se voit que sur un vrai petit-fils console, sous Windows, et
+    c'est le test suivant qui la regarde.
     """
     detachement = hote_detache._detachement()
 
     if sys.platform == "win32":
         drapeaux = detachement["creationflags"]
-        assert drapeaux & subprocess.DETACHED_PROCESS
+        assert drapeaux & subprocess.CREATE_NO_WINDOW
         assert drapeaux & subprocess.CREATE_NEW_PROCESS_GROUP
+        assert not drapeaux & subprocess.DETACHED_PROCESS
         assert not drapeaux & getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
     else:
         assert detachement == {"start_new_session": True}
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="la fenêtre de console est une règle Windows : POSIX n'a rien à ouvrir.",
+)
+def test_un_petit_fils_console_n_ouvre_aucune_fenetre(
+    monkeypatch: pytest.MonkeyPatch, bouchon: Path
+) -> None:
+    """La panne de #469, sur un vrai petit-fils console — et son témoin fautif.
+
+    Le run lance un `claude.exe` par tâche, application **console**, par
+    l'`anyio.open_process` du `claude-agent-sdk`, sans aucun `creationflags`. Sous
+    `DETACHED_PROCESS`, l'hôte n'avait **aucune** console, et la règle Windows veut
+    qu'un process console dont le parent n'en a pas s'en voie allouer une neuve
+    **avec fenêtre** — un terminal noir par tâche en vol, vide parce que rien ne
+    s'y écrit jamais. `CREATE_NO_WINDOW` donne à l'hôte une console *propre et
+    invisible*, dont les petits-enfants héritent au lieu d'en réclamer une.
+
+    Le test **joue d'abord le régime fautif** (les drapeaux d'avant #469) et exige
+    d'y voir la fenêtre : sans cette moitié, un `hwnd == 0` ne distinguerait pas
+    « aucune fenêtre » de « aucune mesure », et le jour où le petit-fils ne
+    démarrerait plus le test resterait vert sur une question jamais posée. C'est la
+    discipline que le dépôt applique déjà à ses `grep` de garde.
+
+    Ce qu'on mesure est `GetConsoleWindow()` **dans le petit-fils**, seul endroit
+    d'où la réponse est un fait : le lanceur, lui, ne peut que supposer.
+    """
+    monkeypatch.setenv("BOUCHON_PETIT_FILS", str(bouchon.parent / "petit_fils.py"))
+    reel = hote_detache._detachement
+    hote = HoteRunDetache(atelier=bouchon)
+
+    monkeypatch.setattr(
+        hote_detache, "_detachement", lambda: {"creationflags": DRAPEAUX_AVANT_469}
+    )
+    asyncio.run(hote.lancer(ordre(run_id=f"{RUN}-avant")))
+    avant = _releve(bouchon, f"{RUN}-avant", FICHIER_PETIT_FILS_CONSOLE)
+
+    monkeypatch.setattr(hote_detache, "_detachement", reel)
+    asyncio.run(hote.lancer(ordre(run_id=f"{RUN}-apres")))
+    apres = _releve(bouchon, f"{RUN}-apres", FICHIER_PETIT_FILS_CONSOLE)
+
+    assert avant["hwnd"] != 0, (
+        "le témoin fautif n'a ouvert aucune fenêtre : ce banc ne sait plus en voir, "
+        "donc le verdict qui suit ne vaut rien."
+    )
+    assert apres["hwnd"] == 0, (
+        f"le petit-fils a reçu une console à fenêtre (hwnd={apres['hwnd']}) : "
+        "chaque tâche en vol rouvre un terminal vide (#469)."
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="les événements de console sont un mécanisme Windows.",
+)
+def test_l_hote_ne_partage_pas_la_console_de_son_lanceur(bouchon: Path) -> None:
+    """Ce qui remplace le Ctrl-C injecté : la raison pour laquelle il n'arrive pas.
+
+    Le critère du ticket demande que l'hôte survive au **Ctrl-C dans la console de
+    l'API**. Le geste ne se synthétise pas de façon fiable — mesuré le 2026-08-25 :
+    `AttachConsole` puis `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)` rendent tous
+    deux `TRUE` et ne réveillent personne, ni l'API visée ni l'émetteur. Un banc
+    qui rend « survit » parce que son signal n'est jamais parti prouve exactement
+    rien, et c'est le genre de vert qu'on préfère ne pas avoir.
+
+    On mesure donc la propriété **à sa source**, et elle est plus large que le seul
+    Ctrl-C : un événement de console — Ctrl-C, Ctrl-Break, fermeture de la fenêtre
+    — n'est dispatché qu'aux process **attachés à cette console-là**.
+    `GetConsoleProcessList`, lu depuis le lanceur, donne cette liste exacte. L'hôte
+    n'y est pas : aucun de ces trois événements ne peut donc l'atteindre, et la
+    démonstration ne dépend d'aucune course.
+
+    C'est la propriété que `DETACHED_PROCESS` achetait en ne donnant **aucune**
+    console ; une console *à soi* l'achète tout autant, et c'est ce qui rendait le
+    correctif sûr avant même de le mesurer.
+    """
+    partagent_ma_console = _process_de_ma_console()
+    if not partagent_ma_console:
+        pytest.skip("ce process n'a pas de console : la question n'a pas de sens ici.")
+
+    hote = HoteRunDetache(atelier=bouchon)
+    asyncio.run(hote.lancer(ordre()))
+    vu_de_l_hote = _releve(bouchon, RUN, FICHIER_CONSOLE)
+
+    assert os.getpid() in partagent_ma_console, (
+        "l'instrument ne sait pas lire sa propre console : le verdict qui suit "
+        "serait vrai pour la mauvaise raison."
+    )
+    assert vu_de_l_hote["pid"] not in partagent_ma_console, (
+        "l'hôte partage la console de son lanceur : un Ctrl-C, un Ctrl-Break ou "
+        "la fermeture de la fenêtre l'emporterait avec l'API (#469)."
+    )
+    assert hote._process[RUN].pid not in partagent_ma_console
+    # Sa console à lui existe — c'est ce qui distingue `CREATE_NO_WINDOW` de
+    # `DETACHED_PROCESS` — et elle n'a pas de fenêtre.
+    assert vu_de_l_hote["pid"] in vu_de_l_hote["partagee_avec"]
+    assert vu_de_l_hote["hwnd"] == 0
 
 
 def test_fermer_n_arrete_aucun_run(bouchon: Path) -> None:
@@ -1276,6 +1564,42 @@ def test_un_hote_qui_s_obstine_est_eteint_pour_de_bon(bouchon: Path) -> None:
         "l'hôte obstiné a survécu à son extinction : le repli franc n'a pas eu lieu.",
     )
     assert hote.runs_en_vol() == ()
+
+
+def test_eteindre_emporte_toujours_la_descendance_de_l_hote(
+    monkeypatch: pytest.MonkeyPatch, bouchon: Path
+) -> None:
+    """La leçon de #291, éprouvée sur un vrai petit-fils — et non déduite (#469).
+
+    Le test ci-dessus regarde mourir l'**hôte** ; celui-ci regarde mourir ce qu'il
+    tenait. C'est la moitié qui compte : un hôte de run est le père d'un
+    `claude.exe` par tâche en vol, et un `terminate()` sur lui seul les laisserait
+    travailler pour un run déjà soldé, sans que rien ne les nomme — *tuer un parent
+    avant ses enfants est ce qui fabrique l'orphelin qu'on veut éviter*.
+
+    Il est ici parce que #469 a changé les drapeaux de `_detachement`, et que
+    `_eteindre` s'adresse au **groupe** qu'ils créent : `CREATE_NEW_PROCESS_GROUP`
+    reste, mais la propriété qui en dépend ne se relit pas dans un `assert` sur des
+    constantes. Le pid visé est celui que le petit-fils **se voit** et non celui que
+    `Popen` a rendu : sous un venv à trampoline (uv), les deux diffèrent, et viser
+    le second laisserait le vrai process hors du contrôle.
+
+    Il vaut sur les deux plateformes — `taskkill /T` d'un côté, `killpg` de
+    l'autre —, donc il tourne aussi dans le conteneur du filet, où POSIX répond.
+    """
+    monkeypatch.setenv("BOUCHON_PETIT_FILS", str(bouchon.parent / "petit_fils.py"))
+    hote = HoteRunDetache(atelier=bouchon)
+    asyncio.run(hote.lancer(ordre()))
+    petit_fils = _releve(bouchon, RUN, FICHIER_PETIT_FILS_CONSOLE)["pid"]
+    assert _vivant(petit_fils), "le petit-fils n'a jamais vécu : rien à emporter."
+
+    assert asyncio.run(hote.annuler(RUN, delai_s=0.2)) is True
+
+    _attendre(
+        lambda: not _vivant(petit_fils),
+        f"le petit-fils {petit_fils} a survécu à l'extinction de son hôte : "
+        "`_eteindre` n'emporte plus la descendance (#291).",
+    )
 
 
 # --- ⑤ Le canal humain : les trois attentes tiennent sur le bus du process -----
