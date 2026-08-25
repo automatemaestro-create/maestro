@@ -30,6 +30,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  annulerExecution,
   chargerAgents,
   chargerCoutExecution,
   chargerExecutions,
@@ -145,6 +146,13 @@ export type ControlTower = {
    * `relancerRun`, qui rejoue un run **mort** depuis son brief et en crée un neuf.
    */
   reprendreRun: (runId: string) => Promise<ResumeExecution>;
+  /**
+   * Interrompt un run en vol (#467) : les tâches en cours sont tuées là où elles en
+   * sont et perdent leur travail. Le run est **soldé** (`annulee`) — c'est ce qui le
+   * sépare de `suspendreRun`, et ce qui fait que le geste demande confirmation à
+   * l'écran. Rend le résumé annulé, de quoi rendre la nouvelle issue sans attendre.
+   */
+  interrompreRun: (runId: string) => Promise<ResumeExecution>;
   /** Règle la capacité d'un agent (#86) : activer/désactiver, instances. */
   reglerCapacite: (
     nom: string,
@@ -357,6 +365,21 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     [recharger],
   );
 
+  const interrompreRun = useCallback(
+    async (runId: string) => {
+      const annule = await annulerExecution(runId);
+      // Même mécanique que la pause, et pour une raison de plus : l'annulation
+      // solde le run **et** ses tâches, donc plusieurs vues dérivées changent
+      // d'un coup (Kanban, grands livres, état des runs). Le WebSocket portera
+      // l'issue, le rechargement direct la montre sans dépendre de la socket —
+      // sur un run **orphelin**, dont l'hôte ne parle plus, c'est même le seul
+      // chemin : personne n'émettra plus rien pour ce run.
+      await recharger();
+      return annule;
+    },
+    [recharger],
+  );
+
   const reglerCapacite = useCallback(
     async (nom: string, reglage: { actif?: boolean; instances?: number }) => {
       await reglerCapaciteAgent(nom, reglage);
@@ -385,6 +408,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     relancerRun,
     suspendreRun,
     reprendreRun,
+    interrompreRun,
     reglerCapacite,
   };
 }

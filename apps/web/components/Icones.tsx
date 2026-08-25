@@ -596,6 +596,23 @@ export function IconePause(props: Props) {
   );
 }
 
+/**
+ * Interrompre un run (#467) — le carré du signe universel d'arrêt, celui que
+ * `IconePause` désigne en creux pour dire ce qu'elle n'est pas : « ce geste-ci tue
+ * les tâches en vol ».
+ *
+ * Contour et non aplat, comme le triangle de `IconeReprise` : le gabarit du jeu est
+ * le trait, et une icône pleine se verrait à côté des autres. C'est la **forme** qui
+ * sépare l'arrêt de la pause, pas le remplissage.
+ */
+export function IconeArret(props: Props) {
+  return (
+    <Trait {...props}>
+      <path d="M6.75 6.75h10.5v10.5H6.75Z" />
+    </Trait>
+  );
+}
+
 /** Reprendre un run suspendu (#477) — le triangle de lecture, contour compris. */
 export function IconeReprise(props: Props) {
   return (

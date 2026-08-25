@@ -128,6 +128,29 @@ export function peutEtreSuspendu(execution: ResumeExecution): boolean {
   return !estSolde(execution) && !estOrphelin(execution) && !estEnPause(execution);
 }
 
+/**
+ * Peut-on **interrompre** ce run (#467) ? — la même règle que la route, à l'écran.
+ *
+ * Une seule condition, et c'est exactement celle de l'API : un run **soldé** a rendu
+ * son verdict, il n'y a plus rien à interrompre (`409`). Tout le reste s'annule,
+ * arrêt sur brief compris — un run qui attend une décision est en vol, il tient un
+ * hôte et le cadrage déjà payé.
+ *
+ * ⚠ **L'orphelin en fait partie, et c'est la divergence assumée avec
+ * `peutEtreSuspendu`.** La pause l'écarte parce que personne ne recevrait l'ordre ;
+ * l'annulation, elle, n'a pas besoin qu'il soit reçu — l'attente est bornée côté API
+ * (`DELAI_ANNULATION_S`) et **le run est soldé de toute façon**. C'est même le cas
+ * qui a fait naître le ticket : quatre runs fantômes du 22 juillet, soldés au `curl`
+ * le 2026-08-24 faute d'un bouton. Les exclure ici laisserait précisément les runs
+ * qu'on n'a aucun autre moyen d'éteindre hors de portée de l'interface.
+ *
+ * Un run **en pause** s'annule aussi : la pause n'est pas une issue, seulement un
+ * robinet fermé — le run tient toujours son hôte et son plan.
+ */
+export function peutEtreInterrompu(execution: ResumeExecution): boolean {
+  return !estSolde(execution);
+}
+
 /** Ce qui retient un run en vol — les trois causes, et rien d'autre (#474). */
 export const ATTENTE_BRIEF = "brief";
 export const ATTENTE_REPONSES = "reponses";

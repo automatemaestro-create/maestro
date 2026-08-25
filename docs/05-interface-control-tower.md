@@ -479,6 +479,12 @@ d'afficher le run « en cours » puis de le suivre par le flux temps réel habit
 Un run **publié par un autre process** (`maestro-run --publier`, worker #41) est
 listé au même titre : le suivi lit la projection, il ne distingue pas l'origine.
 
+⚠ **« Sans quitter l'écran » n'a été vrai de l'annulation qu'à partir de #467** (§2.4.5).
+La route existait depuis #185 et rien dans `apps/web/` ne l'appelait : interrompre un run
+demandait un `curl`, ce qui a coûté quatre runs fantômes laissés en vol du 22 juillet au
+2026-08-24. Une route servie n'est pas un geste offert, et c'est la seule leçon à en
+tirer — le contrat de §6.1 ne dit rien de ce que l'interface en fait.
+
 > ⚠ **Cette section est le seul endroit où un run est un écran, et c'est ce que le
 > 2026-08-24 a changé** (revue #470,
 > [docs/29 §3](./29-decision-run-objet-de-premier-plan.md)). Elle décrit un écran qui
@@ -833,6 +839,67 @@ quatre traits depuis #491, et l'y laisser est voulu : ce sont ceux qui tombent s
 aucune courbe n'y est tracée : elle a été mesurée au skill `/banc-mise-en-page` sur la
 démo, à 1280×800, 1280×500 et 375×667, clair et sombre — rien d'inatteignable, aucun
 débordement horizontal, aucun rogneur.
+
+#### 2.4.5 Interrompre un run depuis la Control Tower (#467) — **livré**
+
+L'API sert `POST /api/executions/{run_id}/annuler` depuis **#185** ; l'UI ne l'appelait
+**jamais** — le mot n'apparaissait dans `apps/web/` que dans un commentaire de types et
+dans un test de brief. Interrompre un run demandait donc de sortir de l'outil et de
+lancer un `curl`, ce qu'il a fallu faire le **2026-08-24** pour solder quatre runs
+fantômes qui traînaient depuis le 22 juillet. Le trou est d'autant plus visible depuis
+#446, où l'hôte détaché est le défaut : un run **survit** à l'arrêt de l'API, donc ni
+fermer le navigateur ni `start.sh --stop` ne l'arrêtent. Le seul geste qui interrompt un
+run était précisément celui que l'interface n'offrait pas.
+
+Le bouton vit avec les autres gestes d'un run (`GestesRun`,
+`components/runs/EtatRun.tsx`), donc **dans la liste (§2.4.1) comme dans la vue
+(§2.4.2)** — la brique partagée depuis #475, pour que le même run se lise et se pilote
+pareil des deux côtés. La rangée va **du plus doux au plus définitif** : mettre en pause,
+puis interrompre. Les empiler laisserait croire à deux décisions séparées, alors qu'on
+les choisit l'une contre l'autre — « je le reprends dans dix minutes » ou « je perds ce
+qu'il fait » —, et l'ordre met le geste destructeur ailleurs que sous le curseur.
+
+Trois choses qui font la forme :
+
+- **Il ne se propose que sur un run non soldé** (`peutEtreInterrompu` : `!estSolde`, la
+  règle de la route à l'écran). Un run qui a rendu son verdict recevrait un `409` :
+  l'interface n'a pas à poser une question dont elle connaît déjà le refus.
+- ⚠ **L'orphelin en fait partie**, et c'est la divergence assumée avec la pause
+  (`peutEtreSuspendu`, §6.1). Celle-ci l'écarte parce que personne ne recevrait l'ordre ;
+  l'annulation n'a **pas besoin qu'il soit reçu** — l'attente est bornée côté API
+  (`DELAI_ANNULATION_S`), un hôte qui ne répond plus ne suspend pas la requête et le run
+  est soldé de toute façon. Les exclure ici mettrait hors de portée de l'interface
+  exactement les runs qu'aucun autre geste n'éteint : les quatre fantômes du 22 juillet.
+  Un run **en pause** s'annule aussi — la pause n'est pas une issue, seulement un robinet
+  fermé.
+- **Il s'arme avant de partir.** Les tâches en vol sont tuées là où elles en sont et
+  perdent leur travail : la confirmation est une exigence du geste, pas une politesse. Le
+  patron est celui du dépôt (`ListeProjets`, `EditeurAgent`) — deux boutons en place
+  (« Confirmer l'interruption » / « Laisser tourner ») plutôt qu'un `window.confirm`, que
+  jsdom ne rend pas, que chaque navigateur habille à sa façon et qui n'a jamais la place
+  de dire *ce qu'on perd*. La phrase qui le dit **n'apparaît qu'armé** : sur une liste de
+  vingt runs, l'afficher d'office rendrait l'avertissement invisible à force d'être
+  partout.
+
+Le refus de l'API se lit **sous le bouton**, jamais deviné — le `409` qu'on ne peut pas
+prévoir est celui du run qui s'est soldé entre l'affichage et le clic —, et il
+**désarme** : recliquer sur une confirmation qu'on vient de voir refuser rendrait le même
+refus. Au succès, en revanche, rien ne se réarme : contrairement à la pause, dont le
+geste inverse reste à portée, il n'y a pas de moitié inverse — le run est soldé, le badge
+bascule sur « Annulée » au rechargement et le bouton disparaît de lui-même. Ce
+rechargement direct (`interrompreRun`, `lib/useControlTower`) n'est pas un confort : sur
+un run **orphelin**, dont l'hôte ne parle plus, c'est le seul chemin — le WebSocket
+n'émettra plus rien pour ce run.
+
+⚠ **Ce que ce lot ne fait pas** : tant que l'annulation ne solde pas les tâches ni les
+agents (#466), l'écran peut afficher du travail en cours après coup. Les deux tickets
+sont mergeables séparément ; le bouton est honnête sur le **run**, pas encore sur tout ce
+qu'il traînait.
+
+Couverture : `apps/web/tests/runs-liste.test.tsx` — `peutEtreInterrompu` sur les quatre
+états en vol et les trois issues, la divergence avec `peutEtreSuspendu` sur l'orphelin,
+le premier clic qui n'envoie rien, la phrase qui ne paraît qu'armée, le refus affiché et
+désarmé, et la rangée `GestesRun` dans ses quatre configurations.
 
 ### 2.5 💰 Coûts & analytics
 
@@ -1439,7 +1506,9 @@ décrit le comportement réel, pas une fixture.
   plafonds sont des maximums, ils doivent être **> 0** — ou une **source** est refusée (#317).
 - `POST /api/executions/{run_id}/annuler` → `ResumeExecution` — interrompt un run en cours (statut
   `annulee`, `fin` posée). `404` si le run est inconnu, `409` s'il est déjà soldé — un run terminé
-  n'est plus interruptible, et le dire vaut mieux que faire croire à une annulation.
+  n'est plus interruptible, et le dire vaut mieux que faire croire à une annulation. Servi depuis
+  #185, **appelé par l'UI depuis #467** (§2.4.5) : il a vécu trois mois sans qu'aucun écran ne le
+  câble, si bien qu'interrompre un run demandait un `curl` hors de l'outil.
 - `POST /api/executions/{run_id}/pause` → `ResumeExecution` — **suspend** un run en cours (#477,
   ci-dessous) : `en_pause` passe à `true`, le statut ne bouge pas. `404` si le run est inconnu,
   `409` s'il est déjà soldé ou **déjà suspendu**.
@@ -1720,7 +1789,8 @@ Trois conséquences qui font le contrat :
 - **un run suspendu bat toujours** (#348). Sans quoi il ressortirait `orphelin` au bout d'une
   demi-heure et *Runs interrompus* proposerait de le relancer depuis son brief — c'est-à-dire de
   repayer le cadrage d'un run qui n'a rien perdu. Il reste **annulable** pour la même raison qu'un
-  run arrêté sur son brief l'est : ne plus pouvoir arrêter ce qu'on a suspendu serait une impasse.
+  run arrêté sur son brief l'est : ne plus pouvoir arrêter ce qu'on a suspendu serait une impasse —
+  et depuis #467 (§2.4.5) le bouton d'interruption s'affiche bien à côté de celui de reprise.
 
 Côté moteur, tout tient en un `await` : une tâche prête **franchit une porte** avant d'atteindre
 l'exécuteur ([`maestro/engine/pause.py`](../maestro/engine/pause.py)), et une tâche déjà passée n'en
