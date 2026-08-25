@@ -49,6 +49,8 @@ import { useMemo, useState } from "react";
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { FilActivite } from "@/components/FilActivite";
 import { Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
+import { RegionLive } from "@/components/RegionLive";
+import { mesureDesEvenements } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   estNotableNotification,
@@ -126,6 +128,19 @@ export default function PageJournal() {
           dit que la lecture du journal — mais un journal illisible sur une API
           par ailleurs debout ne doit pas passer pour un projet sans activité. */}
       <BanniereErreurApi erreur={erreur ?? historique.erreur} />
+
+      {/* La région live de l'écran (#538) : le fil **non filtré**, pour que ce
+          qui s'annonce soit l'arrivée d'événements et non le résultat d'une
+          frappe dans la zone de recherche.
+          Montée une fois l'historique lu — les deux lectures qui alimentent ce
+          fil sont monotones —, sinon les cent entrées relues à l'ouverture
+          s'annonceraient comme du direct. */}
+      {!historique.chargement && (
+        <RegionLive
+          libelle="Activité du journal"
+          mesures={[mesureDesEvenements(evenements.length)]}
+        />
+      )}
 
       {/* Ce que la page montre, et ce qu'elle ne montre pas : la promesse est
           faite ici plutôt que devinée d'une liste courte. Le compte tronqué se
@@ -220,8 +235,14 @@ export default function PageJournal() {
           )}
         </div>
 
-        {/* Pas de région « live » : le flux temps réel ferait de ce compteur un
-            bavard permanent pour un lecteur d'écran. */}
+        {/* Le compteur reste muet, mais l'écran ne l'est plus (#538) : la région
+            live est **au-dessus**, et elle n'annonce pas ce compteur-ci — elle
+            annonce le fil, agrégé sur la fenêtre de `lib/useAnnonce`. Ce que
+            refusait la note d'origine (« un bavard permanent ») était d'annoncer
+            chaque ligne ; « 12 nouveaux événements » toutes les cinq secondes est
+            l'inverse exact, et c'est ce que le ticket appelle annoncer un état
+            plutôt qu'un journal. Ce compteur-là suit les **filtres**, donc il
+            bougerait à chaque frappe : il n'a rien à faire dans une annonce. */}
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
           {filtre
             ? `${filtres.length} événement(s) sur ${evenements.length}`

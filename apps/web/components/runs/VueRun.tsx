@@ -64,6 +64,8 @@ import {
 } from "@/components/runs/EtatRun";
 import { JournalRun } from "@/components/runs/JournalRun";
 import { VuePipeline } from "@/components/runs/VuePipeline";
+import { RegionLive } from "@/components/RegionLive";
+import { mesuresDesRuns, mesuresDesTaches } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   ATTENTE_BRIEF,
@@ -176,6 +178,18 @@ export function VueRun({ runId }: { runId: string }) {
 
       {run !== undefined && (
         <>
+          {/* La région live de l'écran (#538) — montée seulement une fois les
+              tâches du run lues (`chargement` ne repasse jamais à vrai pour un
+              même run) : sinon son premier relevé serait le Kanban vide de
+              l'ouverture, et l'arrivée des tâches s'annoncerait comme une
+              activité. Un seul run dans le relevé, ce qui suffit à dire « 1 run
+              terminé » quand celui-ci se solde. */}
+          {!chargementTaches && (
+            <RegionLive
+              libelle="Activité du run"
+              mesures={[...mesuresDesTaches(taches), ...mesuresDesRuns([run])]}
+            />
+          )}
           <OngletsVueRun vue={vue} choisir={setVue} />
 
           {vue === VUE_PIPELINE && (

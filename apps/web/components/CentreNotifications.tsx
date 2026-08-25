@@ -44,6 +44,7 @@ import {
 } from "@/components/Icones";
 import { LigneActivite } from "@/components/LigneActivite";
 import { BadgeEtat, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
+import { resumeArbitrages } from "@/lib/annonces";
 import { runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -69,20 +70,15 @@ const MAX_EVENEMENTS_NOTABLES = 8;
  * Ce que la cloche annonce — le seul endroit où le compte est **nommé**, la
  * pastille n'étant qu'un chiffre décoratif (`aria-hidden`).
  *
- * Les deux familles sont dites séparément quand les deux sont là, et chacune
- * seule quand elle est seule : « 2 en attente » obligerait à ouvrir le panneau
- * pour savoir de quoi il retourne, alors que répondre à des questions et
- * approuver une action sensible ne demandent ni la même disponibilité ni la
- * même personne.
+ * La formule elle-même vit dans `lib/annonces` depuis #538 : la région assertive
+ * du shell dit la **même** file, avec les mêmes mots, et deux formulations
+ * auraient fini par diverger — c'est déjà la raison d'être de `lib/brief`. Ce qui
+ * reste ici est le cadrage propre à la cloche : le nom du bouton quand rien
+ * n'attend.
  */
 function etiquetteCloche(validations: number, briefs: number): string {
-  const morceaux: string[] = [];
-  if (validations > 0) {
-    morceaux.push(`${validations} validation${validations > 1 ? "s" : ""}`);
-  }
-  if (briefs > 0) morceaux.push(`${briefs} brief${briefs > 1 ? "s" : ""}`);
-  if (morceaux.length === 0) return "Notifications";
-  return `Notifications — ${morceaux.join(" et ")} en attente`;
+  const resume = resumeArbitrages(validations, briefs);
+  return resume === null ? "Notifications" : `Notifications — ${resume}`;
 }
 
 export function CentreNotifications() {

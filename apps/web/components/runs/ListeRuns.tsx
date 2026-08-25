@@ -44,6 +44,8 @@ import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconeRuns } from "@/components/Icones";
 import { CarteRun } from "@/components/runs/EtatRun";
 import { BadgeEtat, EnTeteSection, EtatVide } from "@/components/Primitives";
+import { RegionLive } from "@/components/RegionLive";
+import { mesuresDesRuns } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { runsEnAttenteDeValidation } from "@/lib/execution";
 import { entreeParLibelle } from "@/lib/navigation";
@@ -61,6 +63,19 @@ export function ListeRuns() {
   return (
     <>
       <BanniereErreurApi erreur={erreur} />
+      {/* La région live de l'écran (#538) : un run qui se solde, un run qui
+          démarre. Les deux attentes humaines n'y sont pas — elles partent dans
+          la région assertive du shell (`lib/annonces`).
+          Montée **après** le chargement et **hors** du partage plein/vide :
+          après, pour que son premier relevé soit celui des runs déjà lus ;
+          hors, parce qu'un projet vide est justement l'écran où un premier run
+          qui démarre mérite d'être annoncé. */}
+      {!chargement && (
+        <RegionLive
+          libelle="Activité des runs"
+          mesures={mesuresDesRuns(executions)}
+        />
+      )}
       {chargement ? (
         <p className="text-sm text-neutral-500">Chargement des runs…</p>
       ) : executions.length > 0 ? (

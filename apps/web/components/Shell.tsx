@@ -27,6 +27,7 @@ import { BasculeTheme } from "@/components/BasculeTheme";
 import { CentreNotifications } from "@/components/CentreNotifications";
 import { GuidePriseEnMain } from "@/components/GuidePriseEnMain";
 import { MenuAide } from "@/components/MenuAide";
+import { RegionArbitrage } from "@/components/RegionLive";
 import { ChoixProjet, EcranOuverture } from "@/components/projets/ChoixProjet";
 import { SelecteurProjet } from "@/components/projets/SelecteurProjet";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
@@ -131,6 +132,16 @@ function CadreControlTower({
       >
         Aller au contenu principal
       </a>
+      {/* La seule région `aria-live="assertive"` de l'application (#538) : les
+          demandes d'arbitrage humain interrompent, et elles doivent s'entendre
+          quel que soit l'écran ouvert. Elle est **sous** la clé du projet, comme
+          l'état qu'elle annonce : changer de projet remonte la région, donc son
+          premier relevé est celui du nouveau projet et la file du précédent ne
+          s'annonce pas une dernière fois en partant.
+          **Après** le lien d'évitement (#537) et pas avant : celui-ci doit
+          rester le premier arrêt de la touche Tab, ce que seule sa position dans
+          le DOM lui donne. La région, elle, n'est jamais focusable. */}
+      <RegionArbitrage />
       {/* `min-h-0` tout le long (#248) : la hauteur définie posée par le
           `<body>` ne descend jusqu'aux pages que si chaque élément flex
           accepte de rétrécir sous son contenu — le `min-height:auto` par

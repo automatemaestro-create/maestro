@@ -387,6 +387,85 @@ dont l'effet dépend du pas typographique de l'élément et changerait sous lui.
 Écrite ici une fois, comme le reste : elle est importée par les six composants
 qui portent ce genre de lien, et gardée par `tests/a11y.test.tsx`.
 
+### Les régions live — `RegionLive`, `lib/annonces`, `lib/useAnnonce`
+
+Posées par #538 (lot 6 de #532), en réponse au **trou principal** de la recherche
+#471 ([docs/30 §3.3](../../docs/30-cible-visuelle-control-tower.md)) : sonde du
+2026-08-25 sur **10 écrans × 2 thèmes**, `aria-live` = **0 partout**. Le dépôt en
+contenait pourtant un — `AssistantFlottant` —, mais son fil n'est dans le DOM que
+panneau ouvert : présent dans le code, absent de l'écran. Pendant ce temps
+l'interface se met à jour sans action de l'utilisateur (jusqu'à **3 WebSockets**,
+rechargements coalescés à **150 ms**, horloge à **30 s**). Un écran qui bouge tout
+seul et ne le dit pas est muet pour qui ne le regarde pas.
+
+| Brique | Ce qu'elle tient |
+| --- | --- |
+| `lib/annonces.ts` | le **vocabulaire** : des relevés de compteurs nommés (`Mesure`), et la phrase que produit leur comparaison |
+| `lib/useAnnonce.ts` | le **débit** : la fenêtre d'agrégation, et la clé qui fait réentendre une phrase répétée |
+| `components/RegionLive.tsx` | les deux **nœuds accessibles** : `RegionLive` (polie, une par écran) et `RegionArbitrage` (assertive, une pour tout le shell) |
+
+**Le débit est le vrai sujet**, et c'est lui qui commande la forme. Une région
+branchée sur le flux annoncerait plusieurs fois par seconde et rendrait le lecteur
+d'écran inutilisable. Un écran ne fournit donc pas des phrases mais un **relevé**,
+et c'est la comparaison de deux relevés qui parle — d'où trois propriétés, aucune
+accidentelle : seules les **hausses** parlent (une tâche qui change de colonne fait
+baisser une colonne et monter l'autre ; dire les deux dirait deux fois le même
+événement), une **rafale ne coûte qu'une phrase** (la comparaison porte sur les
+deux bouts de la fenêtre et ignore le milieu), et **rien de tout cela n'est du
+React**, donc tout se teste sans monter d'écran.
+
+L'agrégation est un **étranglement à front avant** : un changement isolé s'annonce
+tout de suite — attendre cinq secondes pour dire « 1 tâche terminée » quand rien
+d'autre ne bouge serait une latence sans contrepartie —, tout ce qui arrive
+pendant la fenêtre qui suit est dit d'un coup à la fin (`DELAI_ANNONCE_MS` = 5 s,
+`DELAI_ARBITRAGE_MS` = 1 s).
+
+**Le partage poli / assertif est une frontière de contenu, pas de ton.**
+L'assertive coupe la parole : elle est réservée aux **demandes d'arbitrage
+humain** — validations et briefs —, les seuls événements qui attendent une action.
+Elle vit dans le shell, **une seule fois**, parce qu'une demande doit s'entendre
+quel que soit l'écran ouvert. Tout le reste (tâches, runs, dépense, flux,
+messages) part dans la région polie de l'écran. La réciproque compte autant et
+elle est testée : les attentes humaines sont **absentes** de `mesuresDesRuns`, et
+la région polie de `/validations` ne dit que ce qui a été **tranché** — les dire
+des deux côtés les dirait deux fois, une fois en coupant la parole.
+
+Les huit écrans temps réel et ce que chacun annonce :
+
+| Écran | Région polie | Ce qu'elle dit |
+| --- | --- | --- |
+| `/` | Activité du tableau de bord | tâches par colonne, runs soldés, dépense au dollar franchi |
+| `/runs` | Activité des runs | un run qui démarre, un run qui se solde |
+| `/runs/<id>` | Activité du run | les tâches **de ce run**, et son propre statut |
+| `/couts` | Dépense du projet | le franchissement d'un dollar, jamais un rafraîchissement |
+| `/validations` | Arbitrages tranchés | une décision prise (ailleurs, ou par quelqu'un d'autre) |
+| `/journal` | Activité du journal | « 12 nouveaux événements », sur le fil **non filtré** |
+| `/brief` | Activité des briefs | ce qui **sort** de la file — un brief approuvé fait démarrer son run |
+| `/agents/<nom>/chat` | Activité du fil avec `<nom>` | le compte de messages, jamais leur contenu |
+
+Quatre choses à ne pas défaire :
+
+- **La clé du nœud interne n'est pas décorative.** Une région live parle sur
+  *mutation*, pas sur affectation : réécrire la même chaîne ne touche pas le DOM,
+  donc ne s'annonce pas — et « 1 tâche terminée » deux fenêtres d'affilée est un
+  cas courant. La clé force le remplacement du nœud à chaque annonce. C'est la
+  seule chose du lot qu'aucune lecture du texte rendu ne peut vérifier, d'où un
+  test qui compare l'**identité** des nœuds à texte égal.
+- **Rien n'est annoncé au montage**, et c'est ce qui rend la région montable à
+  côté du contenu qu'elle décrit : le premier relevé sert de référence. Corollaire
+  d'implémentation — une région se monte **après** le chargement de sa source
+  (`!chargement`), sinon l'arrivée des données s'annoncerait comme une activité.
+- **`role` et `aria-live` sont écrits tous les deux**, bien que `status` implique
+  `polite`. Le rôle rend la région adressable en test ; l'attribut est ce que la
+  sonde du ticket compte sur écran, et une implication n'est pas une mesure.
+- **`sr-only`, jamais `hidden`** : une région masquée par `display:none` n'est pas
+  annoncée du tout.
+
+⚠ L'`aria-live` de `AssistantFlottant` **reste** et n'est pas une neuvième région
+au sens ci-dessus : c'est un fil de **conversation**, où lire le contenu est le
+but, et il n'est dans le DOM que quand quelqu'un a ouvert le panneau. La règle
+« une région par écran » porte sur ce qu'un écran annonce **au repos**.
+
 ### La palette sémantique — `app/globals.css`
 
 Posée par #533 (lot 1 de #532). Avant elle, le produit portait **1 750 couleurs
@@ -728,6 +807,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/pipeline.test.tsx` | La vue pipeline d'un run (#491, testée en #492) en **trois étages**, parce qu'ils ne se gardent pas de la même façon : les règles hors JSX (`lib/graphe` — le backend sert tout ce qui se dessine, ce module ne porte que les trois questions qu'il ne pose pas, et l'**ordre** dans lequel elles sont posées *est* la décision ; `lib/vuesRun` — le pipeline ouvre) ; la checklist rendue (`components/EtapesTache` — **une case par étape**, le contrôle qui compte étant le dénominateur qui grandit sans que le numérateur bouge) ; puis la vue montée : le nœud en cours, l'étape qui se coche au battement suivant, l'arête qui s'allume, et l'attente humaine qui ne se lit plus « en cours » |
 | `tests/etat-des-runs.test.tsx` | L'état des runs au tableau de bord (#476, testé en #480) : **l'exhaustivité de la table des groupes**, balayée sur `regimeDuRun` plutôt qu'énumérée — un régime sans groupe fait disparaître ces runs-là de l'écran, ce qui est arrivé à « en pause » entre #476 et #477 — puis le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` sur ses trois entrées, et l'écran qui ne porte **aucun** geste |
 | `tests/a11y.test.tsx` | Le **filet d'accessibilité** (#537) en trois étages : `axe-core` joué sur les **10 écrans** montés dans leur shell réel, verdict **0 violation `serious`/`critical`** — table d'écrans **dérivée de `MENU`**, donc une page ajoutée au menu sans cas d'audit rougit ; puis ce qu'axe ne sait pas voir — le **lien d'évitement** (premier dans l'ordre du DOM, visant un `<main>` que le focus peut atteindre), la **garde de mouvement** sur chaque utilité `transition`/`animate-` du produit, et le **plancher de 24 px** des cibles en petit corps. Comme `contraste.test.ts`, **la sonde est prouvée avant de servir** : sur un fragment fautif (image sans alternative, bouton sans nom, champ sans étiquette), puis sur un fragment sain |
+| `tests/regions-live.test.tsx` | Les régions live des écrans temps réel (#538) : le **vocabulaire sans DOM** (seules les hausses parlent, un franchissement dit le total, les deux attentes humaines **absentes** du relevé des runs) ; la **présence** écran par écran, comptée sur l'attribut `aria-live` comme la sonde du ticket — une polie, zéro assertive ; le **contenu** après un événement simulé ; le **débit**, où une rafale de trois tâches ne coûte que deux phrases et douze événements du journal une seule ; et l'**assertive** avec sa réserve — unique dans le shell, muette sur une tâche terminée, et jamais redite par la région polie de l'écran qui montre l'arbitrage |
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
 
 Trois fichiers portent l'outillage plutôt que des tests :

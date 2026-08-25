@@ -19,6 +19,8 @@ import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { ValidationBrief } from "@/components/brief/ValidationBrief";
 import { IconeObjectif } from "@/components/Icones";
 import { BadgeEtat, EtatVide } from "@/components/Primitives";
+import { RegionLive } from "@/components/RegionLive";
+import { mesuresDesRuns } from "@/lib/annonces";
 import { runsEnAttente } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
@@ -41,6 +43,19 @@ export function ValidationBriefs() {
   return (
     <>
       <BanniereErreurApi erreur={erreur} />
+      {/* La région live de l'écran (#538). Elle annonce ce qui **sort** de la
+          file — un brief approuvé fait démarrer son run —, jamais ce qui y
+          entre : une demande d'arbitrage coupe la parole depuis la région
+          assertive du shell, et la redire ici la dirait deux fois.
+          Montée hors du partage plein/vide, mais **après** le chargement : son
+          premier relevé doit être celui des runs déjà lus, sinon leur arrivée
+          s'annoncerait comme une activité. */}
+      {!chargement && (
+        <RegionLive
+          libelle="Activité des briefs"
+          mesures={mesuresDesRuns(executions)}
+        />
+      )}
       {chargement ? (
         <p className="text-sm text-neutral-500">Chargement des briefs…</p>
       ) : courant === undefined ? (
