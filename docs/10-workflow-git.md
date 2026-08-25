@@ -3560,6 +3560,47 @@ d'outils de #176 reste disponible pour le diagnostic — **`--verbeux`**, ou
 `MAESTRO_ORCHESTRATE_VERBEUX=1` — et **désactive alors la vue** : les deux se disputeraient l'écran,
 et c'est justement quand on lit chaque ligne qu'on ne veut rien qui bouge.
 
+**La ligne d'action a menti tant qu'elle a existé (#496).** La valeur d'un `tool_use` est une chaîne
+JSON, donc **échappée**, et `outils_de` l'extrayait par une classe `[^"]*` refermée d'un
+`cut -d'"' -f4` : sur l'événement réel
+
+```json
+{"type":"tool_use","name":"Bash","input":{"command":"cd \"E:/Projects Solutions/…\" && git log"}}
+```
+
+le motif s'arrêtait au **guillemet échappé** et rendait **`cd \`**. Toute commande dont un argument
+est entre guillemets était concernée — mesuré sur le run `20260824-192234` : **715 appels d'outil sur
+2 979 (24 %)** rendus amputés, dont **278 sous la même chaîne « `cd \` »** et 181 sous
+« `grep -n \` ». Le second effet pèse plus lourd que l'affichage : une session ne republie son action
+que sur **changement** (`<iid>.vue`, ci-dessous), or dix appels différents rendus identiques ne
+produisaient **aucune** republication — la ligne se figeait pendant que le chrono courait à côté, et
+l'écran donnait à lire **une** commande de plusieurs minutes là où il y en avait dix de quelques
+secondes (3,9 s à 10,6 s à la mesure). Le bug d'affichage fabriquait donc un **faux diagnostic de
+lenteur**, et c'est lui qui a motivé le chantier #495.
+
+Deux gestes le réparent, et il faut **les deux** pour que deux appels différents publient deux
+actions différentes :
+
+- **désescaper** la valeur — `\"` → `"`, `\\` → `\`, en shell pur (ni `jq` ni Python : c'est la
+  contrainte de `run.sh`, #180) ; un `\n` de heredoc n'a pas à survivre sur une ligne d'action, la
+  troncature s'en charge bien avant ;
+- **retirer le chemin du worktree**, sans quoi la troncature recolle tout : un worktree pèse
+  ~84 colonnes pour 64 affichées, et un `file_path` est **absolu par construction** — tous les
+  `Read`/`Edit` d'un run se ressemblaient donc jusqu'à la coupe, le même écran figé par une autre
+  cause. Avec sa barre le chemin disparaît (`…/470-x/docs/a.md` → `docs/a.md`) ; **seul**, il devient
+  `.`, qui dit la vérité d'un `cd "<worktree>"` — la session y est déjà — là où le retirer laisserait
+  `cd ""`.
+
+Deux points à connaître avant d'y toucher : l'intention de retirer la racine **existait déjà** dans
+le code (`${cible#"$RACINE/"}`) mais ne matchait rien — `RACINE` est le **clone principal**, en forme
+MSYS (`/e/…`), quand les chemins arrivent en forme Windows (`E:/…`, `E:\…`) et depuis le **worktree**
+du ticket ; c'est pourquoi `formate_flux` reçoit désormais ce worktree en second argument, et le
+publie sous ses deux formes. Et les globales qui le portent sont **déclarées vides** au chargement :
+sous `set -u`, une globale absente ferait sortir la boucle de formatage — donc la session — sans un
+mot. Gardé par `tests/test_orchestrate.py`, dont la première moitié **rejoue l'ancien motif sur
+l'échantillon** et exige qu'il rende le préfixe : sans elle, un échantillon adouci laisserait un ✓ sur
+une question jamais posée.
+
 **À N tickets en vol, il y a N lignes vivantes (#290).** `--concurrence` (§11.10) fait tourner
 plusieurs sessions à la fois ; chacune a son rouet, son chrono et son action :
 
