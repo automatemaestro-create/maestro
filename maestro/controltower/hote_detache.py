@@ -175,9 +175,11 @@ MODULE_HOTE = "maestro.controltower.hote_detache"
 #: `redact_secrets`).
 FICHIER_ORDRE = "ordre.json"
 
-#: Le journal du process (stdout **et** stderr) — la seule trace d'un hôte qui n'a
-#: pas de console. C'est là que le lanceur va chercher la **cause** d'un démarrage
-#: raté, et le chemin voyage avec elle pour qu'on puisse lire le reste.
+#: Le journal du process (stdout **et** stderr) — la seule trace d'un hôte dont
+#: personne ne voit la console (depuis #469 il en a une, mais sans fenêtre : ce qui
+#: s'y écrirait n'aurait toujours aucun lecteur). C'est là que le lanceur va
+#: chercher la **cause** d'un démarrage raté, et le chemin voyage avec elle pour
+#: qu'on puisse lire le reste.
 FICHIER_JOURNAL = "hote.log"
 
 #: Le témoin de démarrage, posé par le fils **une fois armé** — publication
@@ -391,8 +393,8 @@ class HoteRunDetache(HoteRun):
         """Ouvre le process du run et **attend son démarrage**, jamais son issue.
 
         Deux temps. On **écrit** l'ordre dans l'atelier du run et on lance le
-        process, détaché de la console et du groupe de l'API. On **regarde** ensuite
-        s'il a tenu — témoin posé, ou process déjà mort.
+        process, hors de la console et du groupe de l'API (`_detachement`). On
+        **regarde** ensuite s'il a tenu — témoin posé, ou process déjà mort.
 
         Il y en avait trois jusqu'à #445 : un **refus** du brief `humain` ouvrait la
         méthode, parce que la décision n'avait alors aucun canal jusqu'ici et qu'un
@@ -590,9 +592,10 @@ class HoteRunDetache(HoteRun):
     def _ouvrir_process(self, atelier: Path, journal: Path) -> subprocess.Popen[bytes]:
         """Lance le process, détaché, sa sortie entière dans `journal`.
 
-        `stdin` sur le vide : un hôte sans console ne doit jamais attendre une
-        frappe — c'est aussi le fail-safe de la validation console, qui refuse sur
-        EOF plutôt que de suspendre. `stderr` fondu dans `stdout` pour que la trace
+        `stdin` sur le vide : un hôte dont la console n'a pas de fenêtre (#469) ne
+        doit jamais attendre une frappe — personne ne pourrait la lui donner —, et
+        c'est aussi le fail-safe de la validation console, qui refuse sur EOF
+        plutôt que de suspendre. `stderr` fondu dans `stdout` pour que la trace
         d'une panne soit **un** fichier dans l'ordre où elle s'est produite : deux
         flux séparés obligeraient à recoller ce qu'on lit pour diagnostiquer.
         """
@@ -691,28 +694,50 @@ class HoteRunDetache(HoteRun):
 def _detachement() -> dict[str, Any]:
     """Ce qui coupe le process fils du cycle de vie de l'API, par plateforme.
 
-    Sous Windows, deux drapeaux et pas un : `DETACHED_PROCESS` lui retire la
-    console de l'API, `CREATE_NEW_PROCESS_GROUP` le sort de son groupe — sans le
-    second, un Ctrl-C dans la console de l'API emporterait le run, c'est-à-dire la
-    panne que ce module supprime. Sous POSIX, `start_new_session` fait les deux
-    (nouvelle session, donc plus de terminal de contrôle, donc pas de SIGHUP).
+    Sous Windows, deux drapeaux et pas un : `CREATE_NO_WINDOW` lui donne une
+    console **propre et sans fenêtre**, `CREATE_NEW_PROCESS_GROUP` le sort du
+    groupe de l'API. Sous POSIX, `start_new_session` fait les deux (nouvelle
+    session, donc plus de terminal de contrôle, donc pas de SIGHUP).
 
-    Les deux font aussi du fils un **chef de groupe**, ce dont `_eteindre` a
-    besoin : ce n'est pas un effet de bord, c'est la seconde raison de ces
-    drapeaux.
+    **Le premier était `DETACHED_PROCESS` jusqu'à #469**, et c'est un
+    remplacement et non un ajout : les deux drapeaux sont **exclusifs**
+    (`CREATE_NO_WINDOW` est ignoré en présence de `DETACHED_PROCESS`), si bien que
+    remettre l'ancien ne le compléterait pas — il le neutraliserait en silence.
+    C'est la régression que garde `tests/test_hote_detache.py`.
 
-    `CREATE_BREAKAWAY_FROM_JOB` n'y est **pas** : il échoue en `ACCESS_DENIED`
-    quand le job de l'appelant n'autorise pas l'évasion, et ferait alors rater
-    *tous* les démarrages pour couvrir un cas qui n'est pas le nôtre.
+    Ce que `DETACHED_PROCESS` coûtait n'était pas visible d'ici : il laissait
+    l'hôte **sans aucune console**, et la règle Windows veut qu'un process console
+    dont le parent n'en a pas s'en voie allouer une **neuve, avec fenêtre**. Or le
+    run lance un `claude.exe` par tâche — une application console — par
+    l'`anyio.open_process` du `claude-agent-sdk`, sans `creationflags` : chaque
+    tâche en vol ouvrait donc un terminal noir, vide (stdin/stdout sur des pipes,
+    stderr sur le journal : rien ne s'y écrit jamais). Une console *propre et
+    invisible* supprime la cause plutôt que le symptôme — les petits-enfants en
+    héritent au lieu d'en réclamer une.
+
+    **L'isolation est la propriété qu'on ne pouvait pas se permettre de casser**,
+    puisqu'elle est la raison d'être du module, et elle tient pour une raison
+    mécanique : un événement de console — Ctrl-C, Ctrl-Break, fermeture de la
+    fenêtre — n'est dispatché qu'aux process **attachés à cette console-là**. Une
+    console à soi vaut donc ici ce que valait l'absence de console. Mesuré le
+    2026-08-25 sur le poste de référence, `GetConsoleProcessList` appelé **depuis
+    l'API** : sous les deux régimes, le pid de l'hôte est **absent** de la liste
+    des process attachés à la console de l'API. `CREATE_NEW_PROCESS_GROUP` reste
+    la seconde barrière, inchangée, et fait toujours du fils un **chef de
+    groupe** — ce dont `_eteindre` a besoin, seconde raison de ces drapeaux.
+
+    `CREATE_BREAKAWAY_FROM_JOB` n'y est toujours **pas** : il échoue en
+    `ACCESS_DENIED` quand le job de l'appelant n'autorise pas l'évasion, et ferait
+    alors rater *tous* les démarrages pour couvrir un cas qui n'est pas le nôtre.
 
     Le test porte sur `sys.platform` et non sur `os.name` : c'est la forme que
-    `mypy` sait restreindre, donc celle qui laisse `DETACHED_PROCESS` — déclaré
+    `mypy` sait restreindre, donc celle qui laisse `CREATE_NO_WINDOW` — déclaré
     pour Windows seulement — passer le typage joué sous Linux.
     """
     if sys.platform == "win32":
         return {
             "creationflags": (
-                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
             )
         }
     return {"start_new_session": True}
