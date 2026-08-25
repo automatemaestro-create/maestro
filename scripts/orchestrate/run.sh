@@ -621,6 +621,11 @@ VUE_DEBUT_TICKET=$SECONDS
 # L'état de reprise, affiché comme action tant que la session rouverte n'a rien fait d'autre : sans
 # lui, la vue d'un ticket repris est indiscernable de celle d'un ticket qui démarre.
 VUE_REPRISE=""
+# Le worktree du ticket en cours de formatage, sous les deux formes où ses chemins arrivent dans le
+# flux (#496) — voir `outils_de`. Posées par `formate_flux`, vides partout ailleurs : sous `set -u`
+# une globale non déclarée ferait sortir la boucle de formatage, donc la session, sans un mot.
+VUE_RAC_U=""
+VUE_RAC_W=""
 
 # Le journal du run, quand le lanceur nous en a ouvert un descripteur (#284). Sans lui, la trace
 # permanente n'a qu'un chemin — stdout, donc `tee`, donc la CONSOLE. C'est ce détour qu'il évite
@@ -1506,6 +1511,27 @@ tronque() { # <texte> [colonnes] : une ligne de progression ne doit jamais noyer
 # ligne. Une ligne peut en porter PLUSIEURS — on les découpe sur leur marqueur plutôt que d'en
 # montrer un seul. L'extraction est volontairement approximative (grep, pas un parseur JSON) : c'est
 # un fil d'activité, pas une donnée dont dépend un verdict.
+#
+# APPROXIMATIVE NE VEUT PAS DIRE FAUSSE (#496). La valeur d'un `input` est une chaîne JSON, donc
+# ÉCHAPPÉE, et le motif d'origine (`[^"]*` refermé par `cut -d'"' -f4`) s'arrêtait au premier
+# guillemet ÉCHAPPÉ : sur l'événement réel
+#     {"type":"tool_use","name":"Bash","input":{"command":"cd \"E:/…\" && git log --oneline -10"}}
+# il rendait « cd \ ». Toute commande dont un argument est entre guillemets était concernée, et le
+# second effet pesait plus lourd que l'affichage : `formate_flux` ne republie que sur CHANGEMENT
+# d'action (`[ "$action" != "$publiee" ]`), or dix appels différents rendaient tous la même chaîne —
+# la ligne restait figée pendant que le chrono courait, ce qui se lit comme UNE commande de plusieurs
+# minutes. Le bug d'affichage fabriquait donc un faux diagnostic de lenteur (les appels mesurés
+# derrière un « cd \ » : 3,9 s à 10,6 s), et c'est ce qui a motivé le chantier #495.
+#
+# Deux gestes le réparent, et il faut LES DEUX pour que deux appels différents publient deux actions
+# différentes : désescaper la valeur (sans quoi elle est coupée), puis retirer le chemin du worktree
+# (sans quoi `tronque` recolle tout — un worktree pèse ~84 colonnes pour 64 affichées, donc TOUS les
+# `file_path`, qui sont absolus par construction, se ressemblaient jusqu'à la coupe).
+#
+# Deux globales le paramètrent, posées par `formate_flux` : `VUE_RAC_U`/`VUE_RAC_W`, le worktree du
+# ticket dans les deux formes sous lesquelles il arrive — « E:/… », de git et des `cd "…"`, et
+# « E:\… », des chemins que les outils de fichier rendent. Vides, on ne retire rien : une chaîne vide
+# passée à `${x//…/}` remplacerait à chaque position.
 outils_de() {
   local reste="$1" nom cible
   while :; do
@@ -1515,16 +1541,33 @@ outils_de() {
     esac
     nom="$(printf '%s' "$reste" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)"
     [ -n "$nom" ] || continue
+    # `\\.` : une séquence échappée compte pour un caractère de la chaîne, guillemet compris.
     cible="$(printf '%s' "$reste" |
-      grep -o '"\(file_path\|command\|pattern\|path\|url\|description\)":"[^"]*"' |
-      head -1 | cut -d'"' -f4)"
-    # Les chemins absolus du worktree mangeraient la ligne pour ne rien apprendre à personne.
+      grep -o '"\(file_path\|command\|pattern\|path\|url\|description\)":"\(\\.\|[^"\\]\)*"' |
+      head -1)"
+    # `cut -d'"' -f4` ne peut plus servir : la valeur PORTE des guillemets. On retire la clé et les
+    # deux guillemets qui la délimitent par expansion, sans fork.
+    cible="${cible#*\":\"}"
+    cible="${cible%\"}"
+    # Désescapade MINIMALE : de quoi rendre la commande, pas un décodeur JSON. Un « \n » de heredoc
+    # n'a pas à survivre sur une ligne d'action — `tronque` s'en charge bien avant.
+    cible="${cible//\\\"/\"}"
+    cible="${cible//\\\\/\\}"
+    # Les chemins absolus du worktree mangeraient la ligne pour ne rien apprendre à personne. Avec sa
+    # barre, il disparaît (« …/470-x/docs/a.md » → « docs/a.md ») ; seul, il devient « . », qui dit la
+    # vérité d'un `cd "<worktree>"` — la session y est déjà — là où le retirer laisserait `cd ""`.
+    if [ -n "$VUE_RAC_U" ]; then
+      cible="${cible//"$VUE_RAC_U/"/}"; cible="${cible//"$VUE_RAC_W\\"/}"
+      cible="${cible//"$VUE_RAC_U"/.}"; cible="${cible//"$VUE_RAC_W"/.}"
+    fi
     cible="${cible#"$RACINE/"}"
     printf '%s%s\n' "$nom" "${cible:+ $(tronque "$cible")}"
   done
 }
 
-# formate_flux <iid> : lit le flux sur stdin, l'archive, et PUBLIE l'état du ticket (#240, #290).
+# formate_flux <iid> [<worktree>] : lit le flux sur stdin, l'archive, et PUBLIE l'état du ticket
+# (#240, #290). Le worktree ne sert qu'à raccourcir les chemins des actions (#496, `outils_de`) — il
+# est facultatif, et son absence ne coûte que des lignes plus longues.
 #
 # La boucle bat au rythme de `read -t` (voir la section « vue vivante ») : un tour toutes les
 # VUE_TICK secondes, qu'une ligne soit arrivée ou non — c'est ce qui garde le battement régulier
@@ -1538,6 +1581,10 @@ outils_de() {
 # à cette boucle, c'est de dire CE QUE LA SESSION FAIT — la seule chose qu'elle soit seule à savoir.
 formate_flux() {
   local iid="$1" ligne resultat="" derniere="" partiel="" code
+  # La barre finale est retirée pour que le worktree NU (`cd "<worktree>"`) reste reconnaissable ;
+  # `outils_de` remet la barre lui-même quand il cherche un préfixe de chemin.
+  VUE_RAC_U="${2:-}"; VUE_RAC_U="${VUE_RAC_U%/}"
+  VUE_RAC_W="${VUE_RAC_U//'/'/'\'}"
   local jsonl="$RUN_DIR/$iid.jsonl"
   : >"$jsonl"
   # Un `.jsonl.gz` laissé par une tentative précédente (run rejoué sous le même run-id) doit partir
@@ -1899,7 +1946,7 @@ lance_session() {
         --settings "$RACINE/scripts/orchestrate/settings.run.json" \
         ${OPT_BUDGET+"${OPT_BUDGET[@]}"} \
         --model "$MODELE" \
-        --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
+        --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid" "$dest"
     # Le code du CLI, pas celui du formateur : c'est lui qui dit si la session a abouti.
     code=${PIPESTATUS[0]}
     [ "$code" -eq 0 ] && return 0
@@ -1915,7 +1962,7 @@ lance_session() {
       --settings "$RACINE/scripts/orchestrate/settings.run.json" \
       ${OPT_BUDGET+"${OPT_BUDGET[@]}"} \
       --model "$MODELE" \
-      --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid"
+      --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid" "$dest"
   return "${PIPESTATUS[0]}"
 }
 

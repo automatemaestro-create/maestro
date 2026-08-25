@@ -1763,6 +1763,106 @@ def test_le_flux_donne_une_ligne_par_action_et_garde_le_resultat_final(depot: De
     assert "4.2" in resume and "0.01" not in resume
 
 
+# =====================================================================================
+# Une valeur de `tool_use` est une chaîne JSON, donc ÉCHAPPÉE (#496)
+# =====================================================================================
+#
+# L'extraction d'origine (`[^"]*` refermé par `cut -d'"' -f4`) s'arrêtait au premier guillemet
+# ÉCHAPPÉ : toute commande dont un argument est entre guillemets était rendue amputée. Mesuré sur le
+# run 20260824-192234 — 715 appels d'outil sur 2 979 (24 %) rendus tronqués, dont 278 sous la MÊME
+# chaîne « cd \ » et 181 sous « grep -n \ ».
+#
+# Le second effet pèse plus lourd que l'affichage : `formate_flux` ne republie que sur CHANGEMENT
+# d'action, donc dix appels différents rendus identiques ne produisaient AUCUNE republication — la
+# ligne se figeait pendant que le chrono courait, et l'écran donnait à lire UNE commande de
+# plusieurs minutes là où il y en avait dix de quelques secondes. C'est ce faux diagnostic de
+# lenteur qui a motivé le chantier #495.
+
+# L'échantillon fautif : deux appels DIFFÉRENTS dont le premier argument est entre guillemets.
+_ECHANTILLON_GUILLEMETS = (
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash",'
+    '"input":{"command":"cd \\"apps/web\\" && npm test"}}]}}',
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash",'
+    '"input":{"command":"cd \\"apps/web\\" && npx vitest run runs-liste.test.tsx"}}]}}',
+)
+
+
+def test_le_motif_d_origine_amputait_la_commande_au_guillemet_echappe() -> None:
+    """Le motif prouvé sur l'échantillon fautif, AVANT de vérifier qu'il ne tombe plus.
+
+    Sans cette moitié, le test suivant serait un ✓ sur une question jamais posée : rien ne dirait
+    que son échantillon est bien celui qui faisait tomber `outils_de`, et un jour où quelqu'un
+    l'aurait adouci en retirant les guillemets, il resterait vert sans plus rien garder. On rejoue
+    donc ici l'extraction d'ORIGINE — la classe `[^"]*`, puis le quatrième champ découpé sur le
+    guillemet — et on exige qu'elle rende le préfixe, identique pour les deux appels.
+    """
+    origine = re.compile(r'"(?:file_path|command|pattern|path|url|description)":"[^"]*"')
+    rendus = []
+    for evenement in _ECHANTILLON_GUILLEMETS:
+        premier = origine.search(evenement)
+        assert premier is not None, "l'échantillon doit au moins matcher l'ancien motif"
+        rendus.append(premier.group(0).split('"')[3])  # l'exact `cut -d'"' -f4`
+    assert rendus == ["cd \\", "cd \\"], (
+        f"l'échantillon doit être celui qui tombe — obtenu {rendus!r}"
+    )
+
+
+def test_une_commande_a_guillemets_s_affiche_entiere_et_republie_a_chaque_appel(
+    depot: Depot,
+) -> None:
+    """Les deux critères de #496 sur un même flux : la commande entière, deux actions distinctes.
+
+    La publication se vérifie sur `<iid>.vue`, qui garde la DERNIÈRE action publiée : avant le
+    correctif il y serait resté la première (`Bash cd \\`), la garde « on ne publie que sur
+    changement » n'ayant jamais rien vu changer. Y trouver la SECONDE commande prouve donc les deux
+    choses d'un coup — la valeur est rendue entière, et le changement a été vu.
+
+    Le troisième appel est un chemin ABSOLU, comme l'est tout `file_path` par construction : il
+    couvre l'autre moitié du correctif. Le laisser entier ferait reculer la troncature de `tronque`
+    jusque dans le chemin du worktree (~84 colonnes pour 64 affichées), et TOUS les Read/Edit d'un
+    run se ressembleraient jusqu'à la coupe — le même écran figé, par une autre cause.
+    """
+    depot.ticket(130, "Ticket à traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    absolu = json.dumps(str(depot.racine / "docs" / "a.md"))  # échappé comme le CLI l'émet
+    flux = "\n".join([
+        *_ECHANTILLON_GUILLEMETS,
+        '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit",'
+        f'"input":{{"file_path":{absolu}}}}}]}}}}',
+        '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}',
+    ])
+    claude = _claude_stub(depot, f"""
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        cat <<'FLUX'
+{flux}
+FLUX
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "echappe", "--verbeux",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    # 1. La commande est rendue ENTIÈRE, guillemets compris — et non son préfixe.
+    assert '· Bash cd "apps/web" && npm test' in r.stdout
+    assert '· Bash cd "apps/web" && npx vitest run runs-liste.test.tsx' in r.stdout
+    assert "· Bash cd \\" not in r.stdout, "le préfixe amputé ne doit plus apparaître"
+
+    # 2. Le chemin absolu perd le worktree, et rien d'autre : c'est ce qui garde deux fichiers
+    #    voisins distincts une fois la ligne coupée.
+    edit = [x for x in r.stdout.splitlines() if "· Edit" in x]
+    assert len(edit) == 1, f"un seul Edit attendu — obtenu {edit!r}"
+    assert edit[0].strip().endswith("a.md"), edit[0]
+    assert str(depot.racine) not in edit[0], "le chemin du worktree n'apprend rien à personne"
+
+    # 3. Et l'action PUBLIÉE est la dernière, donc la garde n'a pas été court-circuitée.
+    publie = (depot.racine / ".maestro/orchestrate/echappe/130.vue").read_text(encoding="utf-8")
+    assert publie.startswith("."), publie
+    assert publie.split("\t", 1)[1].strip().endswith("a.md"), (
+        f"la dernière action doit avoir été publiée — obtenu {publie!r}"
+    )
+
+
 def test_une_limite_d_usage_annoncee_dans_le_flux_est_detectee(depot: Depot) -> None:
     """Le signal peut n'apparaître qu'au fil du flux, sans jamais atteindre l'objet `result`."""
     depot.ticket(130, "Ticket bloqué")
