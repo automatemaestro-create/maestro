@@ -2,13 +2,14 @@
 
 /**
  * La vue d'un run (#475, lot 3 de #472, docs/05 §2.4.2) : sa progression en tête,
- * **sa lecture des tâches** dessous, et **son journal** au pied (#478).
+ * et **la lecture qu'on a choisie** dessous.
  *
- * Cette lecture est double depuis #491, et c'est l'arbitrage que ce lot-là avait
- * à rendre : le **pipeline** (le flux — quoi après quoi) et le **Kanban** (les
- * états — combien dans quel colonne) coexistent sous une bascule, le pipeline
- * ouvrant. Le raisonnement complet, et les deux options écartées, vivent dans
- * `lib/vuesRun` — pas ici : cette page les monte, elle ne les tranche pas.
+ * Cette lecture est **triple** — #491 l'a rendue double (le **pipeline**, le flux
+ * — quoi après quoi ; le **Kanban**, les états — combien dans quelle colonne),
+ * #516 y a ajouté le **journal** (qu'a-t-il fait), qui se lisait jusque-là au
+ * pied de la vue, sous les deux autres. Le raisonnement complet, ce que l'ordre
+ * des onglets conserve de #478 et les options écartées vivent dans `lib/vuesRun`
+ * — pas ici : cette page les monte, elle ne les tranche pas.
  *
  * Ouvrir un run donne enfin son backlog. Jusqu'ici le Kanban était celui du
  * **projet** (#248) et un run n'avait pas de vue à lui : impossible de voir ce que
@@ -32,7 +33,9 @@
  *   d'événements coalescée.
  * - **Le journal du run part du persisté** (#478, `components/runs/JournalRun`) :
  *   ouvrir un run terminé hier montre ce qu'il a dit, là où le fil du shell —
- *   borné aux derniers événements **reçus** — n'aurait rien eu à montrer.
+ *   borné aux derniers événements **reçus** — n'aurait rien eu à montrer. C'est
+ *   aussi ce qui rend son démontage sans conséquence quand on regarde un autre
+ *   onglet : il se relit à l'ouverture, il ne se perd pas.
  *
  * Le run lui-même est lu dans `executions`, la liste que le shell tient déjà pour
  * le projet actif : elle porte tout ce que la tête affiche (statut, vitalité,
@@ -79,6 +82,7 @@ import type { ResumeExecution } from "@/lib/types";
 import { useTachesRun } from "@/lib/useTachesRun";
 import {
   VUES_RUN,
+  VUE_JOURNAL,
   VUE_KANBAN,
   VUE_PIPELINE,
   VUE_RUN_DEFAUT,
@@ -100,9 +104,9 @@ export function VueRun({ runId }: { runId: string }) {
     erreur,
   } = useEtatGlobal();
 
-  // La lecture affichée. `useState` et non une route : les deux vues portent le
-  // *même* run, déjà chargé — une frontière de route ferait repartir la tête, le
-  // journal et l'autre lecture pour un changement de regard (`lib/vuesRun`).
+  // La lecture affichée. `useState` et non une route : les trois vues portent le
+  // *même* run, déjà chargé — une frontière de route ferait repartir la tête et
+  // les autres lectures pour un changement de regard (`lib/vuesRun`).
   const [vue, setVue] = useState<VueRunCle>(VUE_RUN_DEFAUT);
 
   const run = executions.find((execution) => execution.run_id === runId);
@@ -203,26 +207,31 @@ export function VueRun({ runId }: { runId: string }) {
               }
             />
           )}
-        </>
-      )}
 
-      {/* Sous le Kanban, et non à côté : le Kanban répond à « où en est-il ? »,
-          le journal à « qu'a-t-il fait ? » — on ne consulte le second qu'après
-          avoir lu le premier. */}
-      {run !== undefined && (
-        <JournalRun
-          portee={portee}
-          runId={runId}
-          direct={evenements}
-          revision={revision}
-        />
+          {/* Dans la bascule, et non sous elle (#516). L'ordre de lecture que
+              #478 défendait tient toujours — le Kanban répond à « où en est-il ? »,
+              le journal à « qu'a-t-il fait ? », et on ne consulte le second
+              qu'après avoir lu le premier —, mais il se dit désormais par la
+              **position** de l'onglet, qui ferme la rangée. Rendu en dehors du
+              `vue === …`, ce fil s'affichait sous les deux autres lectures, donc
+              sous le pipeline : collé à un graphe, il s'en lisait comme le
+              détail. */}
+          {vue === VUE_JOURNAL && (
+            <JournalRun
+              portee={portee}
+              runId={runId}
+              direct={evenements}
+              revision={revision}
+            />
+          )}
+        </>
       )}
     </>
   );
 }
 
 /**
- * La bascule entre les deux lectures d'un run (#491).
+ * La bascule entre les trois lectures d'un run (#491, troisième position #516).
  *
  * Des **boutons** et non des liens, contrairement aux onglets d'une fiche agent
  * (`components/OngletsAgent`) : ceux-là changent de page, celui-ci change de
@@ -231,8 +240,9 @@ export function VueRun({ runId }: { runId: string }) {
  * l'autre.
  *
  * L'infobulle porte **la question** à laquelle chaque vue répond, et non son
- * contenu : « Pipeline » et « Kanban » ne disent pas d'eux-mêmes lequel montre
- * quoi, et c'est précisément la confusion que l'arbitrage devait lever.
+ * contenu : « Pipeline », « Kanban » et « Journal » ne disent pas d'eux-mêmes
+ * lequel montre quoi, et c'est précisément la confusion que l'arbitrage devait
+ * lever.
  */
 function OngletsVueRun({
   vue,

@@ -584,17 +584,17 @@ partagée (badge, avancement, attente, cause, interruption, pause) et les quatre
 
 #### 2.4.2 La vue d'un run — son Kanban, sa progression et son journal (#475, #478) — **livré**
 
-`/runs/<run_id>` : la **progression** du run en tête, sa **lecture des tâches** au
-milieu, son **journal** au pied. Ouvrir un run donne enfin son backlog — jusqu'ici le
-Kanban était celui du **projet** (#248) et un run n'avait pas de vue à lui, si bien que
-dans un projet où plusieurs runs se succèdent, *ce que ce run avait fait* n'était
-visible nulle part.
+`/runs/<run_id>` : la **progression** du run en tête, et **la lecture qu'on a choisie**
+dessous. Ouvrir un run donne enfin son backlog — jusqu'ici le Kanban était celui du
+**projet** (#248) et un run n'avait pas de vue à lui, si bien que dans un projet où
+plusieurs runs se succèdent, *ce que ce run avait fait* n'était visible nulle part.
 
-> ⚠ **Cette lecture est double depuis #491** : le **pipeline** (§2.4.3) et le
-> **Kanban** coexistent sous une bascule, et c'est le pipeline qui ouvre. Tout ce
-> que dit cette section vaut inchangé — la tête, le journal, l'appartenance par
-> l'API, le pouls du shell —, seul le milieu de l'écran a désormais deux formes.
-> L'arbitrage est rendu en §2.4.3.
+> ⚠ **Cette lecture est triple** : le **pipeline** (§2.4.4), le **Kanban** et le
+> **journal** coexistent sous une bascule, et c'est le pipeline qui ouvre. #491 l'a
+> rendue double, #516 y a ajouté la troisième position. Tout ce que dit cette
+> section vaut inchangé — la tête, le contenu du journal, l'appartenance par l'API,
+> le pouls du shell —, seul le corps de l'écran a désormais trois formes, dont on
+> ne voit **qu'une** à la fois. L'arbitrage est rendu en §2.4.4.
 
 **Le Kanban est réutilisé, pas réimplémenté.** C'est le composant de §2.2 :
 mêmes colonnes, mêmes cartes, même **détail sur place** (#251), même réassignation.
@@ -643,21 +643,36 @@ Un run qui en **reprend** un autre (#349) le dit et y mène : sans ce renvoi, le
 déjà payé et les tâches du run repris seraient hors de portée depuis celui qui les
 continue.
 
-**Son journal**, enfin (#478, `components/runs/JournalRun`), sous le Kanban : le Kanban
-répond à « où en est-il ? », le journal à « qu'a-t-il fait ? », et on ne consulte le
-second qu'après avoir lu le premier. Il manquait au lot 3 faute de source — le fil du
-shell ne contient que ce qui est passé par le WebSocket depuis l'ouverture de la page,
-donc ouvrir la vue d'un run terminé la veille ne montrait rien du tout. C'est le
-journal persisté au filtre `run_id` (§6.2), avec les trois mêmes décisions que le
-Kanban ci-dessus et pour les mêmes raisons : appartenance lue **de l'API**, aucune
-seconde WebSocket, et la **ligne d'activité n'est pas réécrite** — `FilActivite` rend
-ici ce qu'il rend au tableau de bord et sur la page Journal, seuls son titre et son
-vide étant nommés.
+**Son journal**, enfin (#478, `components/runs/JournalRun`), **dans le dernier onglet
+de la bascule** (#516) : le Kanban répond à « où en est-il ? », le journal à « qu'a-t-il
+fait ? », et on ne consulte le second qu'après avoir lu le premier. Il manquait au lot 3
+faute de source — le fil du shell ne contient que ce qui est passé par le WebSocket
+depuis l'ouverture de la page, donc ouvrir la vue d'un run terminé la veille ne montrait
+rien du tout. C'est le journal persisté au filtre `run_id` (§6.2), avec les trois mêmes
+décisions que le Kanban ci-dessus et pour les mêmes raisons : appartenance lue **de
+l'API**, aucune seconde WebSocket, et la **ligne d'activité n'est pas réécrite** —
+`FilActivite` rend ici ce qu'il rend au tableau de bord et sur la page Journal, seuls
+son titre et son vide étant nommés.
 
-Couverture (#480) : `apps/web/tests/runs-vue.test.tsx` — la lecture partie avec
-`?run=` (et non un filtre sur la carte), la relecture au **pouls** du shell, les
-trois vides ci-dessus, la tête et ses renvois, le journal persisté et la fusion
-avec le direct.
+> ⚠ **Il était au pied de la vue jusqu'à #516**, hors de toute bascule, et c'est ce
+> que ce ticket renverse. La raison d'origine tenait — l'ordre de lecture ci-dessus —,
+> mais #491 a ensuite posé la bascule **au-dessus** de lui : rendu en dehors du
+> `vue === …`, le journal s'affichait sous **les deux** lectures, donc sous le
+> pipeline, qui est le défaut. Rien à l'écran ne disait qu'il n'appartenait pas à
+> l'onglet ouvert, et un fil d'événements collé sous un graphe se lit comme le détail
+> de ce graphe. Les deux décisions restaient justes séparément ; c'est leur
+> superposition qui ne tenait plus. L'ordre de lecture, lui, est **conservé** : le
+> journal ferme la rangée d'onglets, on l'atteint en dernier. Rien à changer côté
+> données — le monter dans un onglet le **démonte** quand on regarde ailleurs, donc il
+> se relit au retour, ce qui est le comportement voulu (le fil est repris à
+> l'ouverture, il part du persisté) et non une régression à compenser par un cache.
+
+Couverture (#480, complétée par #516) : `apps/web/tests/runs-vue.test.tsx` — la
+lecture partie avec `?run=` (et non un filtre sur la carte), la relecture au **pouls**
+du shell, les trois vides ci-dessus, la tête et ses renvois, le journal persisté et la
+fusion avec le direct. Le journal s'y atteint **après un clic sur son onglet**, sur le
+modèle du Kanban depuis #491 ; et le contrôle qui garde ce ticket n'est pas qu'il
+s'affiche dans le sien, c'est qu'il **ne s'affiche pas** dans les deux autres.
 
 #### 2.4.3 Un run dit ce qu'il fait, et pourquoi il s'est arrêté (#479) — **livré**
 
@@ -720,14 +735,14 @@ côté écran.
 
 #### 2.4.4 La vue pipeline — le flux d'un run, ses checklists et ses branches (#491) — **livré**
 
-La **troisième lecture** d'un run, et celle qui a motivé le chantier #488 : on suit un
-run comme on suit un pipeline GitHub Actions ou un flux n8n — l'action en cours, sa
+La lecture qui a motivé le chantier #488, et le **premier onglet** de la vue d'un run :
+on suit un run comme on suit un pipeline GitHub Actions ou un flux n8n — l'action en cours, sa
 checklist qui se coche, et à la fin de l'action la **suite** qui s'allume, avec le
 **lien** qui l'y relie ; plusieurs liens quand ça part en parallèle. Elle consomme le
 graphe de §6.11 et n'invente rien : `niveaux`, `niveau`/`rang`, `compartiment`,
 `plat`/`profondeur`/`largeur` sont **servis**.
 
-**L'arbitrage avec le Kanban de #475 — les deux vues coexistent, sous une bascule, et
+**L'arbitrage avec le Kanban de #475 — les vues coexistent, sous une bascule, et
 le pipeline ouvre.** C'était le quatrième critère du ticket, et il se décompose en
 trois décisions :
 
@@ -737,25 +752,36 @@ trois décisions :
   ne compte pas un état dans un graphe.
 - **Elles ne s'affichent jamais ensemble.** Empilées, ce serait deux fois les mêmes
   tâches sur le même écran sans que rien ne dise laquelle regarder : exactement ce que
-  #488 interdit (« jamais laissé aux deux écrans de se concurrencer »). Une bascule à
-  deux positions n'en montre qu'une, et le geste de passer de l'une à l'autre *est* la
-  question qu'on se pose.
+  #488 interdit (« jamais laissé aux deux écrans de se concurrencer »). Une bascule
+  n'en montre qu'une, et le geste de passer de l'une à l'autre *est* la question qu'on
+  se pose.
 - **Le pipeline est le défaut.** La question du Kanban est déjà à moitié répondue
   au-dessus de lui — la barre de progression compte par compartiment, mêmes couleurs,
   mêmes libellés (§2.4.2). Ouvrir dessus, c'est ouvrir sur une redondance, et faire du
   pipeline une vue qu'on n'ouvre jamais.
 
-Deux options **écartées**, et pourquoi. **Deux routes** (`/runs/<id>/pipeline`,
-`/runs/<id>/kanban`), sur le modèle des onglets d'une fiche agent (§2.3) : le patron
-existe et rendrait le choix partageable par URL, mais il coûterait un remontage complet
-— la tête, le journal et la lecture de l'autre vue repartiraient pour un changement qui
-ne change **rien** aux données, les deux portant le *même* run déjà chargé. Le prix
-assumé est qu'on partage un **run**, pas la façon dont on le regarde. **Retirer le
-Kanban de la vue d'un run**, l'autre branche de l'alternative du ticket : elle
-laisserait sans rien les runs dont le plan n'est pas connu (`plan_connu: false` —
+**La bascule a trois positions depuis #516**, le **journal** fermant la rangée. Il se
+lisait jusque-là au pied de la vue, hors de toute bascule (#478) — donc sous les deux
+lectures, donc sous le pipeline, qui ouvre : un fil d'événements collé à un graphe se
+lit comme le détail de ce graphe. Le troisième onglet applique au journal la deuxième
+décision ci-dessus, celle qui interdit l'empilement, et **conserve** ce que #478
+défendait — on consulte le journal après avoir vu où en est le run —, désormais dit par
+la **position** de l'onglet. Trois questions, trois onglets : « quoi après quoi », «
+combien dans quel état », « qu'a-t-il fait ». Détail en §2.4.2.
+
+Trois options **écartées**, et pourquoi. **Une route par lecture**
+(`/runs/<id>/pipeline`, `…/kanban`, `…/journal`), sur le modèle des onglets d'une fiche
+agent (§2.3) : le patron existe et rendrait le choix partageable par URL, mais il
+coûterait un remontage complet — la tête et les autres lectures repartiraient pour un
+changement qui ne change **rien** aux données, toutes portant le *même* run déjà
+chargé. Le prix assumé est qu'on partage un **run**, pas la façon dont on le regarde.
+**Retirer le Kanban de la vue d'un run**, l'autre branche de l'alternative de #491 :
+elle laisserait sans rien les runs dont le plan n'est pas connu (`plan_connu: false` —
 moteur antérieur, journal rejoué, planification en échec), où le graphe se réduit aux
-tâches vues et sans aucune arête. Échanger un défaut contre un autre. Le raisonnement
-vit dans `apps/web/lib/vuesRun.ts`, à un seul endroit.
+tâches vues et sans aucune arête. Échanger un défaut contre un autre. **Un cache pour
+garder le journal monté** hors de son onglet (#516) : le démontage est le comportement
+voulu, ce fil partant du persisté et se reprenant à l'ouverture. Le raisonnement vit
+dans `apps/web/lib/vuesRun.ts`, à un seul endroit.
 
 **Les branches parallèles sont les colonnes.** Un niveau, une colonne ; les nœuds d'un
 même niveau s'empilent dedans. Comme le niveau est le *plus long chemin* qui mène au
@@ -832,9 +858,12 @@ Vérification : [`apps/web/tests/pipeline.test.tsx`](../apps/web/tests/pipeline.
 règles hors JSX (`lib/graphe`, `lib/vuesRun` : l'ordre des questions *est* la décision),
 la checklist rendue (`components/EtapesTache`), puis la vue montée dans `VueRun` : le nœud
 en cours, l'étape qui se coche au battement suivant, l'arête qui s'allume, l'attente
-humaine qui ne se lit plus « en cours ». `apps/web/tests/runs-vue.test.tsx` garde en plus
-quatre traits depuis #491, et l'y laisser est voulu : ce sont ceux qui tombent si la
-**bascule** cesse d'ouvrir sur le pipeline, ce que la suite dédiée ne verrait pas. La
+humaine qui ne se lit plus « en cours ». L'**ordre des trois onglets** s'y garde aussi
+(#516) : il porte l'ordre de lecture — le flux, l'inventaire, puis le récit —, donc une
+permutation n'est pas un détail de présentation. `apps/web/tests/runs-vue.test.tsx` garde
+en plus quatre traits depuis #491, et l'y laisser est voulu : ce sont ceux qui tombent si
+la **bascule** cesse d'ouvrir sur le pipeline, ce que la suite dédiée ne verrait pas —
+plus, depuis #516, le contrôle que le **journal ne déborde pas de son onglet**. La
 **géométrie**, elle, ne se teste pas en jsdom — les rectangles y sont tous nuls, donc
 aucune courbe n'y est tracée : elle a été mesurée au skill `/banc-mise-en-page` sur la
 démo, à 1280×800, 1280×500 et 375×667, clair et sombre — rien d'inatteignable, aucun
@@ -1264,7 +1293,8 @@ les remonter dans l'UI est un autre écran — pagination, états de chargement,
 débounce — et pas ce que #478 devait rendre.
 
 Le **journal d'un run** est le même dispositif au filtre près (`?run_id=`) : voir
-§2.4.2, où il complète le Kanban et la progression.
+§2.4.2, où il est **la troisième lecture** de la vue d'un run — son propre onglet
+depuis #516, à côté du pipeline et du Kanban.
 
 ---
 
@@ -2424,10 +2454,16 @@ Couverture : [`tests/test_brief.py`](../tests/test_brief.py) et
 
 ### 6.11 Le graphe d'un run — nœuds, arêtes, branches parallèles (#490) — **livré**
 
-La **troisième lecture** d'un run, à côté du Kanban et de la progression (§6.1). Le Kanban dit
+Une **lecture de plus** d'un run, à côté du Kanban et de la progression (§6.1). Le Kanban dit
 « combien dans quel état », la progression « où en est-on », celle-ci **« quoi après quoi »** — le
 run suivi comme un pipeline GitHub Actions ou un flux n8n : l'action en cours, ce qu'elle enchaîne,
 ce qui part en parallèle.
+
+⚠ **À l'écran, la bascule de la vue d'un run a trois positions et non deux** (§2.4.2, §2.4.4) :
+pipeline, Kanban, **journal** — cette dernière ajoutée par #516, qui a sorti le journal du pied de
+la vue. La progression, elle, n'est pas un onglet : elle est **en tête**, au-dessus de la bascule,
+et se lit avec n'importe laquelle des trois. Le décompte de cette section est celui des **lectures
+servies par l'API**, pas celui des onglets.
 
 - `GET /api/executions/{run_id}/graphe` → `GrapheRun` — le graphe du run. `404` si aucune trace
   reçue pour ce `run_id`, par la même porte que `/cout`.
