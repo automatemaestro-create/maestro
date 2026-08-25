@@ -34,12 +34,14 @@
       un vert « presque emerald » se verrait côte à côte avec `bg-emerald-700`.
       Les swatches empruntées sont nommées en regard de chaque valeur.
 
-   3. **Chaque paire tient AA, et le chiffre est connu** — 72 paires mesurées
-      (36 par thème), 0 faute : ≥ 4,5:1 pour tout ce qui est du texte, ≥ 3:1 pour ce qui borne
+   3. **Chaque paire tient AA, et le chiffre est connu** — 86 paires mesurées
+      (43 par thème), 0 faute : les 72 de ce lot, plus les 14 qu'ajoute l'état
+      survolé de #535. Seuils : ≥ 4,5:1 pour tout ce qui est du texte, ≥ 3:1 pour ce qui borne
       un contrôle ou porte un état (WCAG 2.2, 1.4.3 et 1.4.11). Les marges les
       plus courtes sont `bord-fort` sur `surface-creuse` (3,40) et
-      `alerte-texte` sur `alerte-creux` (5,02). Le lot #534 en fait un test de
-      CI ; ici, c'est une promesse vérifiée, pas encore gardée.
+      `alerte-texte` sur `alerte-creux` (5,02). Depuis le lot #534 c'est un test
+      de CI (`tests/contraste.test.ts`) : la promesse n'est plus seulement
+      vérifiée, elle est **gardée** — un token ajouté ici sans paire y rougit.
 
    4. **Ce lot ne migre aucun écran.** Il rend la bonne valeur *disponible* — le
       remplacement de `text-neutral-400` (230 occurrences, 2,58:1) et du bouton
