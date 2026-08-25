@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { IconeAssistant, IconeFermer } from "@/components/Icones";
+import { Infobulle } from "@/components/Infobulle";
 import {
   ACCUEIL_ASSISTANCE,
   AGENT_ASSISTANCE,
@@ -66,7 +67,6 @@ export function AssistantFlottant() {
         onClick={() => setOuvert((avant) => !avant)}
         aria-expanded={ouvert}
         aria-label={ouvert ? "Fermer l'assistant" : "Ouvrir l'assistant"}
-        title={ouvert ? "Fermer l'assistant" : "Assistant — poser une question"}
         className={
           "flex size-12 items-center justify-center rounded-full border border-neutral-200 " +
           "bg-white text-neutral-600 shadow-lg transition hover:text-neutral-900 " +
@@ -273,9 +273,12 @@ function Bulle({ message }: { message: MessageChat }) {
               ? "text-sky-100"
               : "text-neutral-400 dark:text-neutral-500")
           }
-          title={formatDateHeure(message.horodatage)}
         >
-          {formatHeure(message.horodatage)}
+          <Infobulle texte={formatDateHeure(message.horodatage)}>
+            <time dateTime={message.horodatage}>
+              {formatHeure(message.horodatage)}
+            </time>
+          </Infobulle>
         </p>
       </div>
     </li>

@@ -230,9 +230,11 @@ describe("le choix de la racine (explorateur servi par l'API)", () => {
     const explorateur = await formulaireAvecExplorateur(utilisateur);
 
     expect(explorateur).toHaveTextContent("déjà déclaré");
+    // Le motif du blocage est passé du `title` au nom accessible (#536) : sur
+    // un bouton `disabled`, le `title` n'était affiché par personne.
     expect(
       await within(explorateur).findByRole("button", {
-        name: "Choisir depensio",
+        name: "Choisir depensio — indisponible : ce dossier est déjà la racine d'un projet",
       }),
     ).toBeDisabled();
   });

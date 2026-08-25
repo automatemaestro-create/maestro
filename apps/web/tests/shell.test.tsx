@@ -85,7 +85,9 @@ describe("le shell applicatif (Shell)", () => {
       screen.getByRole("button", { name: "Ouvrir l'assistant" }),
     ).toBeInTheDocument();
     // #120 : le monogramme du lien de marque, à la place de l'emoji 🎼.
-    const marque = screen.getByTitle("Maestro — Control Tower");
+    // Par le nom accessible : le `title` du lien de marque est devenu un
+    // `aria-label` avec #536 — repliée, la sidebar n'a que lui pour le nommer.
+    const marque = screen.getByRole("link", { name: "Maestro — Control Tower" });
     expect(marque.querySelector("svg")).not.toBeNull();
   });
 
@@ -99,7 +101,11 @@ describe("le shell applicatif (Shell)", () => {
     });
     await monterShell();
     expect(screen.getByText("Temps réel connecté")).toBeInTheDocument();
-    expect(screen.getByTitle(/Coût cumulé/)).toHaveTextContent("1,25");
+    expect(
+      screen.getByText(/Coût cumulé/, {
+        selector: "[data-guide='cout-cumule']",
+      }),
+    ).toHaveTextContent("1,25");
   });
 
   it("restitue la sidebar repliée d'une session à l'autre", async () => {

@@ -18,6 +18,7 @@
  */
 
 import { IconeLienExterne, IconeTicket } from "@/components/Icones";
+import { Infobulle } from "@/components/Infobulle";
 import { lienExterneSur } from "@/lib/liens";
 import type { ReferenceTicket } from "@/lib/types";
 
@@ -57,13 +58,13 @@ export function LienTicketExterne({ reference, tache, className }: Props) {
 
   if (url === null) {
     return (
-      <span
+      <Infobulle
+        texte={`Ticket externe${surTache} — aucune URL exploitable`}
         className={`${classes} ${STYLE_TEXTE}`}
-        title={`Ticket externe${surTache} — aucune URL exploitable`}
       >
         <IconeTicket className="size-3.5 shrink-0" />
         <span className="truncate">{libelle}</span>
-      </span>
+      </Infobulle>
     );
   }
 
@@ -72,8 +73,10 @@ export function LienTicketExterne({ reference, tache, className }: Props) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
+      // Pas de `title={url}` (#536) : sur un lien, la destination est déjà
+      // portée par `href` — le navigateur l'affiche dans sa barre d'état et le
+      // lecteur d'écran sait l'annoncer. Le `title` ne faisait que la répéter.
       aria-label={`Ouvrir le ticket externe ${libelle}${surTache} dans un nouvel onglet`}
-      title={url}
       className={`${classes} ${STYLE_LIEN}`}
     >
       <IconeTicket className="size-3.5 shrink-0" />

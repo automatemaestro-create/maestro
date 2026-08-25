@@ -11,7 +11,7 @@
  * chargement, et d'écart entre l'état React et le thème déjà appliqué au DOM.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   IconeCoche,
@@ -27,6 +27,7 @@ import {
   lireChoix,
   type ChoixTheme,
 } from "@/lib/theme";
+import { useSurfaceDeroulee } from "@/lib/useSurfaceDeroulee";
 
 const OPTIONS: {
   valeur: ChoixTheme;
@@ -49,6 +50,7 @@ export function BasculeTheme() {
   const [ouvert, setOuvert] = useState(false);
   const conteneur = useRef<HTMLDivElement>(null);
   const declencheur = useRef<HTMLButtonElement>(null);
+  const surface = useRef<HTMLDivElement>(null);
 
   // En mode « système », l'OS peut basculer pendant que la page est ouverte.
   useEffect(() => {
@@ -67,27 +69,10 @@ export function BasculeTheme() {
     [],
   );
 
-  // Fermeture du menu : clic à l'extérieur ou Échap (le focus revient alors au
-  // bouton, sans quoi il retomberait sur le document).
-  useEffect(() => {
-    if (!ouvert) return;
-    const surPointeur = (evenement: PointerEvent) => {
-      if (!conteneur.current?.contains(evenement.target as Node)) {
-        setOuvert(false);
-      }
-    };
-    const surTouche = (evenement: KeyboardEvent) => {
-      if (evenement.key !== "Escape") return;
-      setOuvert(false);
-      declencheur.current?.focus();
-    };
-    document.addEventListener("pointerdown", surPointeur);
-    document.addEventListener("keydown", surTouche);
-    return () => {
-      document.removeEventListener("pointerdown", surPointeur);
-      document.removeEventListener("keydown", surTouche);
-    };
-  }, [ouvert]);
+  // Clic à l'extérieur, `Échap`, flèches, `Home`/`End` et focus d'entrée : tout
+  // vient du hook partagé (#536), qui a remplacé quatre copies du même bloc.
+  const fermer = useCallback(() => setOuvert(false), []);
+  useSurfaceDeroulee({ ouvert, fermer, conteneur, declencheur, surface });
 
   const choisir = (valeur: ChoixTheme) => {
     setChoix(valeur);
@@ -106,7 +91,6 @@ export function BasculeTheme() {
         aria-haspopup="menu"
         aria-expanded={ouvert}
         aria-label="Thème de l'interface"
-        title="Thème de l'interface"
         className="block rounded-md p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
       >
         {/* Icône pilotée par le CSS : elle suit le thème **appliqué** sans
@@ -118,8 +102,10 @@ export function BasculeTheme() {
 
       {ouvert && (
         <div
+          ref={surface}
           role="menu"
           aria-label="Thème de l'interface"
+          tabIndex={-1}
           className="absolute top-full right-0 z-20 mt-2 w-44 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
         >
           {OPTIONS.map(({ valeur, libelle, Icone }) => {

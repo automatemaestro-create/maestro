@@ -35,6 +35,7 @@ import {
   IconeStatutTerminee,
   IconeTache,
 } from "@/components/Icones";
+import { Infobulle } from "@/components/Infobulle";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
 import { PanneauDetailTache } from "@/components/PanneauDetailTache";
 import {
@@ -364,9 +365,11 @@ function CarteTache({
         </span>
       </p>
       {tache.usage && (
-        <p
+        // La ventilation entrée/sortie ne se lit nulle part ailleurs : elle
+        // passe donc du `title` à l'infobulle (#536).
+        <Infobulle
+          texte={`${formatTokens(tache.usage.tokens_entree)} tokens en entrée / ${formatTokens(tache.usage.tokens_sortie)} en sortie`}
           className="chiffre mt-0.5 flex justify-between gap-2 text-annexe text-neutral-500 dark:text-neutral-400"
-          title={`${formatTokens(tache.usage.tokens_entree)} tokens en entrée / ${formatTokens(tache.usage.tokens_sortie)} en sortie`}
         >
           <span className="inline-flex items-center gap-1">
             <IconeJetons className="size-3.5 shrink-0" />
@@ -376,7 +379,7 @@ function CarteTache({
             <IconeChrono className="size-3.5 shrink-0" />
             {formatDuree(tache.usage.duree_ms)}
           </span>
-        </p>
+        </Infobulle>
       )}
       <SelecteurReassignation
         tache={tache}

@@ -700,7 +700,9 @@ export function CarteRun({
   return (
     <Carte balise="li" ton={fondDe(regime)}>
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-        <h3 className="min-w-0 flex-1 truncate text-corps font-medium" title={nom}>
+        {/* Pas de `title={nom}` (#536) : il répétait le texte du titre, que le
+            lecteur d'écran lit en entier même tronqué à l'écran. */}
+        <h3 className="min-w-0 flex-1 truncate text-corps font-medium">
           {vue ? (
             <Link
               href={vue}

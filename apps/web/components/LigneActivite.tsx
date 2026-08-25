@@ -17,6 +17,7 @@
 
 import { useId, useState } from "react";
 
+import { Infobulle } from "@/components/Infobulle";
 import type { Icone } from "@/components/Primitives";
 import {
   detailEvenement,
@@ -83,6 +84,13 @@ export function LigneActivite({
           }`}
         >
           {formatHeureRelative(tete.horodatage, maintenant)}
+          {/* Pas d'`Infobulle` ici, et c'est la seule exception du lot (#536) :
+              cette date est **dans un bouton**, et le wrapper focusable de
+              l'infobulle y créerait un contrôle imbriqué dans un contrôle. La
+              date rejoint donc le texte accessible du bouton, ce qui la rend au
+              clavier sans ajouter d'arrêt de tabulation. Le `title` reste pour
+              le confort de la souris. */}
+          <span className="sr-only"> ({formatDateHeure(tete.horodatage)})</span>
         </time>
         <PuceEvenement
           icone={iconeEvenement(tete)}
@@ -121,9 +129,13 @@ export function LigneActivite({
                 <span className="chiffre shrink-0 font-mono text-micro text-neutral-400 dark:text-neutral-500">
                   {formatHeure(evenement.horodatage)}
                 </span>
-                <span className="min-w-0" title={evenement.detail || undefined}>
-                  {resumeEvenement(evenement)}
-                </span>
+                {evenement.detail ? (
+                  <Infobulle texte={evenement.detail} className="min-w-0 block">
+                    {resumeEvenement(evenement)}
+                  </Infobulle>
+                ) : (
+                  <span className="min-w-0">{resumeEvenement(evenement)}</span>
+                )}
               </li>
             ))}
           </ol>

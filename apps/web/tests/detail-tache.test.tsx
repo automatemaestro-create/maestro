@@ -269,6 +269,35 @@ describe("ouverture du détail", () => {
     ).toHaveFocus();
   });
 
+  // Le piège de focus de #536 : le panneau se déclarait `aria-modal` sans
+  // l'être au clavier — la chaîne `"Tab"` n'apparaissait nulle part dans
+  // `apps/web`. On vérifie ici que le mécanisme mord, pas qu'il couvre tout :
+  // l'audit des trois surfaces revient au lot 5 (#537).
+  it("retient la tabulation dans le panneau", async () => {
+    rendreKanban();
+    const utilisateur = await ouvrirLeDetail();
+    const panneau = screen.getByRole("dialog");
+    const focusables = Array.from(
+      panneau.querySelectorAll<HTMLElement>("button, a[href], select"),
+    );
+    expect(focusables.length).toBeGreaterThan(0);
+
+    // Depuis le panneau lui-même (l'état d'ouverture), la première tabulation
+    // entre sur le premier élément focusable.
+    await utilisateur.tab();
+    expect(focusables[0]).toHaveFocus();
+
+    // Et depuis le dernier, elle **revient au premier** au lieu de rendre la
+    // main à la page derrière le voile.
+    focusables[focusables.length - 1].focus();
+    await utilisateur.tab();
+    expect(focusables[0]).toHaveFocus();
+
+    // En arrière depuis le premier, on repart du dernier.
+    await utilisateur.tab({ shift: true });
+    expect(focusables[focusables.length - 1]).toHaveFocus();
+  });
+
   it("le bouton de fermeture referme aussi", async () => {
     rendreKanban();
     const utilisateur = await ouvrirLeDetail();

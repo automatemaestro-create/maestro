@@ -22,11 +22,14 @@
  * 3. **rien de neuf côté comportement de menu** — ouverture, clic à l'extérieur,
  *    Échap et focus rendu au bouton sont ceux de la bascule de thème (#118) et
  *    du menu d'aide (#122). Trois menus dans la même barre s'ouvrent et se
- *    ferment de la même façon, ou l'un des trois surprend.
+ *    ferment de la même façon, ou l'un des trois surprend. Depuis #536 cette
+ *    identité n'est plus une intention tenue à la relecture : les quatre
+ *    surfaces **appellent le même hook**, `useSurfaceDeroulee`, qui leur a
+ *    apporté d'un coup la navigation aux flèches qu'aucune n'avait.
  */
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import {
   IconeChevronBas,
@@ -36,34 +39,19 @@ import {
 import { useProjetActif } from "@/lib/etatProjetActif";
 import { entreeParLibelle } from "@/lib/navigation";
 import type { Projet } from "@/lib/types";
+import { useSurfaceDeroulee } from "@/lib/useSurfaceDeroulee";
 
 export function SelecteurProjet() {
   const { projet, projets, choisir } = useProjetActif();
   const [ouvert, setOuvert] = useState(false);
   const conteneur = useRef<HTMLDivElement>(null);
   const declencheur = useRef<HTMLButtonElement>(null);
+  const surface = useRef<HTMLDivElement>(null);
 
-  // Fermeture du menu : clic à l'extérieur ou Échap (le focus revient alors au
-  // bouton, sans quoi il retomberait sur le document).
-  useEffect(() => {
-    if (!ouvert) return;
-    const surPointeur = (evenement: PointerEvent) => {
-      if (!conteneur.current?.contains(evenement.target as Node)) {
-        setOuvert(false);
-      }
-    };
-    const surTouche = (evenement: KeyboardEvent) => {
-      if (evenement.key !== "Escape") return;
-      setOuvert(false);
-      declencheur.current?.focus();
-    };
-    document.addEventListener("pointerdown", surPointeur);
-    document.addEventListener("keydown", surTouche);
-    return () => {
-      document.removeEventListener("pointerdown", surPointeur);
-      document.removeEventListener("keydown", surTouche);
-    };
-  }, [ouvert]);
+  // Clic à l'extérieur, `Échap`, flèches, `Home`/`End` et focus d'entrée : tout
+  // vient du hook partagé (#536), qui a remplacé quatre copies du même bloc.
+  const fermer = useCallback(() => setOuvert(false), []);
+  useSurfaceDeroulee({ ouvert, fermer, conteneur, declencheur, surface });
 
   // La garde du shell (#279) ne monte le cadre qu'avec un projet actif : hors de
   // là il n'y a ni nom à afficher ni bascule à proposer. Rendre `null` plutôt
@@ -91,9 +79,11 @@ export function SelecteurProjet() {
         aria-haspopup="menu"
         aria-expanded={ouvert}
         // Le nom accessible dit à la fois **où l'on est** et **ce que le bouton
-        // fait** : lu seul, « Dépensio » ne se distinguerait pas d'un titre.
-        aria-label={`Projet actif : ${projet.nom} — changer de projet`}
-        title={projet.racine}
+        // fait** : lu seul, « Dépensio » ne se distinguerait pas d'un titre. La
+        // racine y a rejoint le nom (#536) : elle vivait dans un `title=`,
+        // c'est-à-dire nulle part pour qui n'a pas de souris, alors que c'est
+        // elle qui départage deux clones d'un même dépôt.
+        aria-label={`Projet actif : ${projet.nom} (${projet.racine}) — changer de projet`}
         className="flex min-w-0 items-center gap-1.5 rounded-md border border-neutral-200 px-2 py-1 text-sm text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
       >
         <IconeProjets className="size-4 shrink-0 text-neutral-500 dark:text-neutral-400" />
@@ -105,8 +95,10 @@ export function SelecteurProjet() {
 
       {ouvert && (
         <div
+          ref={surface}
           role="menu"
           aria-label="Projet actif"
+          tabIndex={-1}
           className="absolute top-full left-0 z-20 mt-2 w-72 max-w-[calc(100vw-1.5rem)] rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
         >
           {/* La liste défile plutôt que de pousser la gestion hors de l'écran :

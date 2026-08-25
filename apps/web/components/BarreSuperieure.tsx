@@ -20,6 +20,7 @@ import {
   IconeNotifications,
   IconeReplier,
 } from "@/components/Icones";
+import { Infobulle } from "@/components/Infobulle";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatCout } from "@/lib/format";
 import { entreeCourante } from "@/lib/navigation";
@@ -67,7 +68,6 @@ export function BarreSuperieure({
         aria-expanded={!repliee}
         aria-controls="navigation-principale"
         aria-label={repliee ? "Déplier la navigation" : "Replier la navigation"}
-        title={repliee ? "Déplier la navigation" : "Replier la navigation"}
         // Le rail est imposé sous `lg` : le bouton n'y aurait rien à basculer.
         className="-ml-1 hidden rounded-md p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 lg:block dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
       >
@@ -82,7 +82,9 @@ export function BarreSuperieure({
           étroite, un nom de projet long ne doit pas pousser le titre de page
           hors de la barre, ni l'inverse. */}
       <h1
-        title={titre}
+        // Pas de `title` (#536) : il ne répétait que le texte du titre, donc
+        // n'apprenait rien à personne — ni à la souris, ni au lecteur d'écran,
+        // qui lit le `<h1>` en entier même tronqué à l'écran.
         className="min-w-0 truncate text-base font-semibold tracking-tight"
       >
         {titre}
@@ -113,14 +115,20 @@ export function BarreSuperieure({
             Depuis #281 c'est la dépense **du projet actif** — le titre le dit,
             un montant qui suit l'utilisateur de page en page ne pouvant pas
             rester le seul chiffre de l'écran à parler de tous les projets. */}
-        <span
-          data-guide="cout-cumule"
-          className="hidden whitespace-nowrap text-sm text-neutral-600 sm:inline dark:text-neutral-400"
-          title={`Coût cumulé sur ${projet.nom} — somme des grands livres, planification comprise`}
+        {/* Ce que le montant recouvre ne se lit nulle part ailleurs — c'est
+            donc une infobulle et non un `title` (#536), atteignable au clavier
+            comme à la souris. */}
+        <Infobulle
+          texte={`Coût cumulé sur ${projet.nom} — somme des grands livres, planification comprise`}
+          className="hidden whitespace-nowrap text-sm text-neutral-600 sm:inline-flex dark:text-neutral-400"
         >
-          Coût cumulé :{" "}
-          <span className="font-medium tabular-nums">{formatCout(coutTotal)}</span>
-        </span>
+          <span data-guide="cout-cumule">
+            Coût cumulé :{" "}
+            <span className="font-medium tabular-nums">
+              {formatCout(coutTotal)}
+            </span>
+          </span>
+        </Infobulle>
 
         <div className="flex items-center gap-1 border-l border-neutral-200 pl-2 sm:pl-3 dark:border-neutral-800">
           {notifications ?? (
@@ -155,8 +163,10 @@ function EmplacementReserve({
     <button
       type="button"
       disabled
-      aria-label={`${libelle} — bientôt disponible`}
-      title={`${libelle} — bientôt (ticket #${lot})`}
+      // Le numéro de ticket a rejoint le nom accessible (#536) : sur un bouton
+      // `disabled`, le `title` n'apparaît de toute façon pas dans plusieurs
+      // navigateurs — l'information n'était donc lisible à peu près nulle part.
+      aria-label={`${libelle} — bientôt disponible (ticket #${lot})`}
       className="rounded-md p-2 text-neutral-400 opacity-50 dark:text-neutral-600"
     >
       <Icone className="size-5" />

@@ -207,15 +207,19 @@ describe("la sidebar (BarreLaterale)", () => {
   });
 
   it("garde chaque section atteignable une fois repliée", () => {
-    // Repliée, la sidebar masque les libellés : c'est le `title` (et l'icône)
-    // qui portent alors le nom de la section — les liens doivent rester tous là.
+    // Repliée, la sidebar masque les libellés : c'est l'`aria-label` (et
+    // l'icône) qui portent alors le nom de la section — les liens doivent
+    // rester tous là. C'était un `title` jusqu'à #536, c'est-à-dire un nom que
+    // ni le clavier ni le tactile n'atteignaient.
     render(<BarreLaterale repliee />);
     const navigation = screen.getByRole("navigation", {
       name: "Navigation principale",
     });
     expect(within(navigation).getAllByRole("link")).toHaveLength(MENU.length);
     for (const { libelle } of MENU) {
-      expect(within(navigation).getByTitle(libelle)).toBeInTheDocument();
+      expect(
+        within(navigation).getByRole("link", { name: libelle }),
+      ).toBeInTheDocument();
     }
   });
 });
@@ -229,6 +233,17 @@ describe("la barre supérieure (BarreSuperieure)", () => {
       aide={<span>aide</span>}
     />
   );
+
+  /**
+   * Le nœud qui porte le **montant affiché**, et lui seul : depuis #536 son
+   * explication est une `Infobulle` (donc du texte présent dans le DOM), si
+   * bien qu'une recherche par texte ramènerait l'enrobage autant que le
+   * montant. `data-guide` est déjà l'ancre de la visite guidée sur ce nœud.
+   */
+  const montantCumule = () =>
+    screen.getByText(/Coût cumulé/, {
+      selector: "[data-guide='cout-cumule']",
+    });
 
   it("titre la page d'après le menu", () => {
     poserChemin("/chat");
@@ -274,21 +289,27 @@ describe("la barre supérieure (BarreSuperieure)", () => {
     });
     // Espace insécable étroit de `Intl` en fr-FR : on cible le nombre.
     expect(screen.getByText(/0,75/)).toBeInTheDocument();
-    expect(screen.getByTitle(/Coût cumulé/)).not.toHaveTextContent("12");
+    // Le montant se cible par son propre nœud (#536) : l'explication qui vivait
+    // dans un `title` est désormais une `Infobulle`, donc du texte dans le DOM
+    // — une recherche large ramènerait les deux.
+    expect(montantCumule()).not.toHaveTextContent("12");
   });
 
   it("distingue « aucun coût rapporté » de « coût nul »", () => {
     // Un grand livre sans montant (cout_usd null) ne vaut pas 0 $ : la barre
     // affiche un tiret, sans quoi on lirait une gratuité qui n'existe pas.
     rendreAvecEtat(barre(), { couts: [coutExecutionFactice()] });
-    expect(screen.getByTitle(/Coût cumulé/)).toHaveTextContent("—");
+    expect(montantCumule()).toHaveTextContent("—");
   });
 
   it("dit de quel projet ce coût est le coût", () => {
-    // Le titre porte le nom : sur une Control Tower multi-projets, un total
-    // anonyme se lit comme le total de tout ce qui tourne (#281).
+    // L'infobulle porte le nom : sur une Control Tower multi-projets, un total
+    // anonyme se lit comme le total de tout ce qui tourne (#281). C'était un
+    // `title` avant #536, donc une information réservée à la souris.
     rendreAvecEtat(barre(), {});
-    expect(screen.getByTitle(/Coût cumulé sur Dépensio/)).toBeInTheDocument();
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Coût cumulé sur Dépensio",
+    );
   });
 
   it("bascule le repli et décrit l'état de la navigation", async () => {

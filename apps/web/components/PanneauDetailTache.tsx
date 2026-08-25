@@ -36,6 +36,7 @@ import {
   IconeTicket,
 } from "@/components/Icones";
 import type { Icone } from "@/components/Primitives";
+import { Infobulle } from "@/components/Infobulle";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
 import {
   SelecteurReassignation,
@@ -49,6 +50,7 @@ import {
 } from "@/lib/detailTache";
 import { formatCout, libelleStatut } from "@/lib/format";
 import { type EtatAgent, type Tache } from "@/lib/types";
+import { usePiegeDeFocus } from "@/lib/usePiegeDeFocus";
 
 /**
  * L'icône d'un lien, choisie sur sa **nature** — jamais devinée d'après l'URL,
@@ -94,6 +96,11 @@ export function PanneauDetailTache({
   // Le panneau prend le focus à l'ouverture, sans quoi Échap ne serait entendu
   // que par le document et la lecture d'écran resterait sur la carte.
   useEffect(() => panneau.current?.focus(), []);
+
+  // La tabulation reste dans le panneau (#536) : il se déclare `aria-modal`, il
+  // doit donc l'être pour le clavier aussi. Le composant n'est monté que quand
+  // il est ouvert — le piège n'a pas de condition à recevoir.
+  usePiegeDeFocus(panneau);
 
   return (
     <>
@@ -232,13 +239,13 @@ function LigneLien({ lien }: { lien: LienAffiche }) {
 
   if (lien.url === null) {
     return (
-      <span
+      <Infobulle
+        texte={`${libelleDeNature(lien.nature)} — aucune URL exploitable`}
         className={`${commun} text-neutral-500 dark:text-neutral-400`}
-        title={`${libelleDeNature(lien.nature)} — aucune URL exploitable`}
       >
         <Glyphe className="size-4 shrink-0" />
         <span className="truncate">{lien.libelle}</span>
-      </span>
+      </Infobulle>
     );
   }
 
@@ -247,8 +254,9 @@ function LigneLien({ lien }: { lien: LienAffiche }) {
       href={lien.url}
       target="_blank"
       rel="noopener noreferrer"
+      // Pas de `title={lien.url}` (#536) : même raison qu'au ticket externe —
+      // la destination d'un lien est déjà portée par `href`.
       aria-label={`Ouvrir ${nature} ${lien.libelle} dans un nouvel onglet`}
-      title={lien.url}
       className={`${commun} rounded text-sky-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:text-sky-300 dark:focus-visible:outline-sky-400`}
     >
       <Glyphe className="size-4 shrink-0" />

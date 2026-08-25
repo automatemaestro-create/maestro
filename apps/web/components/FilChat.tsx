@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { IconeChat } from "@/components/Icones";
+import { Infobulle } from "@/components/Infobulle";
 import { BadgeEtat, EnTeteSection } from "@/components/Primitives";
 import { formatDateHeure, formatHeure } from "@/lib/format";
 import { CHAT_AUTEUR_UTILISATEUR, type MessageChat } from "@/lib/types";
@@ -173,10 +174,13 @@ function Bulle({ message }: { message: MessageChat }) {
               ? "text-emerald-100"
               : "text-neutral-400 dark:text-neutral-500")
           }
-          title={formatDateHeure(message.horodatage)}
         >
           {utilisateur ? "vous" : message.auteur} ·{" "}
-          {formatHeure(message.horodatage)}
+          <Infobulle texte={formatDateHeure(message.horodatage)}>
+            <time dateTime={message.horodatage}>
+              {formatHeure(message.horodatage)}
+            </time>
+          </Infobulle>
         </p>
       </div>
     </li>

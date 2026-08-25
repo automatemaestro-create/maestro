@@ -7,6 +7,7 @@
  * rapporté, la part retombe sur les tokens — le libellé l'annonce.
  */
 
+import { Infobulle } from "@/components/Infobulle";
 import { formatCout, formatDuree, formatTokens } from "@/lib/format";
 import type { CoutAgentAgrege } from "@/lib/types";
 
@@ -38,13 +39,17 @@ export function RepartitionAgents({ agents }: { agents: CoutAgentAgrege[] }) {
           : (agent.usage.cout_usd ?? 0);
         const part = reference > 0 ? valeur / reference : 0;
         return (
-          <div
-            key={agent.agent}
-            title={`${formatTokens(agent.usage.tokens_total)} tokens · ${agent.usage.appels} appel(s) · ${formatDuree(agent.usage.duree_ms)}`}
-          >
+          <div key={agent.agent}>
             <div className="flex items-baseline justify-between gap-x-4 text-sm">
               <p className="truncate">
-                <span className="font-medium">{agent.agent}</span>
+                {/* L'infobulle se pose sur le **nom** de l'agent, pas sur la
+                    ligne entière (#536) : le wrapper focusable est un `<span>`,
+                    qui ne peut pas contenir les `<div>` de la barre. */}
+                <Infobulle
+                  texte={`${formatTokens(agent.usage.tokens_total)} tokens · ${agent.usage.appels} appel(s) · ${formatDuree(agent.usage.duree_ms)}`}
+                >
+                  <span className="font-medium">{agent.agent}</span>
+                </Infobulle>
                 {agent.role && (
                   <span className="text-neutral-500 dark:text-neutral-400">
                     {" "}
