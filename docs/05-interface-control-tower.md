@@ -1539,6 +1539,16 @@ décrit le comportement réel, pas une fixture.
   n'est plus interruptible, et le dire vaut mieux que faire croire à une annulation. Servi depuis
   #185, **appelé par l'UI depuis #467** (§2.4.5) : il a vécu trois mois sans qu'aucun écran ne le
   câble, si bien qu'interrompre un run demandait un `curl` hors de l'outil.
+  ⚠ **Depuis #466 il solde aussi ce que le run portait** : ses tâches non terminées passent `echec`
+  — cause `annulation` (#479), détail en clair — et les agents qui les tenaient redeviennent `libre`,
+  instance par instance (#100). Avant, annuler ne soldait *que* le run : `GET /api/taches` montrait
+  la tâche encore `en_cours` et `GET /api/agents` son agent encore `occupe`, **définitivement** — la
+  projection étant reconstruite par rejeu du journal, l'état faux survivait au redémarrage de l'API
+  (constat du 2026-08-24 : une tâche en vol depuis vingt jours sur un run annulé le jour même). Le
+  geste vit dans `_solder`, donc `…/relancer` en hérite ; le ramassage d'un hôte mort (#446) le
+  rejoue pour l'autre façon dont un run part sans écrire l'issue de ses tâches. Il ne **rattrape
+  pas** l'existant : une tâche déjà en l'air aujourd'hui le reste, le correctif ne réécrivant aucun
+  journal — la sortir de là demande de republier un `tache.statut` terminal, comme en août.
 - `POST /api/executions/{run_id}/pause` → `ResumeExecution` — **suspend** un run en cours (#477,
   ci-dessous) : `en_pause` passe à `true`, le statut ne bouge pas. `404` si le run est inconnu,
   `409` s'il est déjà soldé ou **déjà suspendu**.
@@ -1724,7 +1734,7 @@ de sa **machine**, et l'inventaire vaut alors mot pour mot :
 | --- | --- | --- |
 | **perdu** | le process du run et le travail qu'il avait en cours | il vit sur cette machine, pas ailleurs |
 | **perdu** | les événements encore en file de publication | ils n'atteignent alors ni le bus, ni le journal durable, ni l'écran |
-| **perdu** | l'**annulabilité** du run | plus aucun process ne porte sa tâche : `annuler` ne fait plus que consigner son issue |
+| **perdu** | l'**annulabilité** du run | plus aucun process ne porte sa tâche : `annuler` ne fait plus qu'écrire — son issue, et depuis #466 celle de ses tâches, donc la libération de leurs agents |
 | **gardé** | objectif, statut, tâches, coûts, ticket, projet, sources | le journal durable (#97) les rejoue au démarrage suivant |
 | **gardé** | le **brief** et le fait qu'un humain l'ait approuvé | `brief_approuve` — c'est la matière de la reprise, et elle est déjà là |
 | **gardé** | le **dernier battement**, qui vieillit | seul un soldage l'efface : c'est ce vieillissement qui fait passer d'un `en_cours` éternel à `orphelin` |
@@ -1800,10 +1810,16 @@ retenir :
 
 | | `…/pause` (#477) | `…/annuler` (#185) | `…/relancer` (#349) |
 | --- | --- | --- | --- |
-| tâches **en vol** | vont à leur terme | tuées, travail perdu | (le run est déjà mort) |
+| tâches **en vol** | vont à leur terme | tuées **et soldées** `echec` (#466), travail perdu | celles du run repris, soldées de même (#466) |
 | tâches **à venir** | attendent la reprise | jamais lancées | replanifiées |
+| les **agents** | restent dessus | libérés avec leurs tâches (#466) | libérés avec celles du run repris |
 | le run | **le même**, vivant, il bat | soldé `annulee` | un **nouveau** `run_id` |
 | ce que ça coûte | rien | le travail en cours | le cadrage, non — le plan, oui |
+
+⚠ La ligne « agents » n'a été vraie qu'à partir de #466, et son absence ne se voyait nulle part :
+jusque-là un run soldé laissait ses tâches `en_cours` et ses agents `occupe` **pour toujours** — la
+projection étant reconstruite par rejeu du journal, même un redémarrage de l'API ne les délivrait
+pas. Ce n'est donc pas une précision de tableau : c'est la moitié du geste qui manquait.
 
 Trois conséquences qui font le contrat :
 

@@ -152,7 +152,13 @@ BRIEF_REFUSE = VALIDATION_REFUSEE
 
 #: Statuts de tâche *terminaux* (machine à états docs/03 §3) : l'agent redevient
 #: libre et les compteurs de la fiche agent s'incrémentent.
-_STATUTS_TERMINAUX = frozenset({STATUT_TERMINEE, STATUT_ECHEC, STATUT_BLOQUEE})
+#:
+#: **Public** depuis #466, pendant exact de `STATUTS_EXECUTION_TERMINAUX` : solder
+#: un run demande de savoir lesquelles de ses tâches sont encore en vol, et cette
+#: question ne peut pas avoir deux réponses. Une seconde liste, fût-elle recopiée
+#: juste, se serait séparée de celle-ci au premier statut ajouté — et le premier
+#: symptôme aurait été un agent libéré ici mais compté occupé là.
+STATUTS_TACHE_TERMINAUX = frozenset({STATUT_TERMINEE, STATUT_ECHEC, STATUT_BLOQUEE})
 
 #: Valeurs d'`Event.agent` qui ne désignent pas un exécutant réel (tâche bloquée
 #: jamais exécutée : « — », routage sans élu…) : rien à mettre à jour côté agents.
@@ -937,7 +943,7 @@ class ControlTowerState:
             event.agent, EtatAgent(nom=event.agent, role=event.role)
         )
         agent.derniere_activite = event.horodatage or agent.derniere_activite
-        if event.statut in _STATUTS_TERMINAUX:
+        if event.statut in STATUTS_TACHE_TERMINAUX:
             # Multi-instances (#100) : seule l'instance de CETTE tâche se libère —
             # l'agent reste occupé tant qu'une autre de ses tâches est en vol.
             agent.termine(event.tache_id)
@@ -979,7 +985,7 @@ class ControlTowerState:
             event.agent, EtatAgent(nom=event.agent, role=event.role)
         )
         agent.derniere_activite = event.horodatage or agent.derniere_activite
-        if tache.statut not in _STATUTS_TERMINAUX:
+        if tache.statut not in STATUTS_TACHE_TERMINAUX:
             agent.commence(event.tache_id)
 
     def _applique_reference(self, event: Event) -> None:

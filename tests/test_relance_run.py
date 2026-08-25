@@ -29,6 +29,12 @@ Ce que ce fichier vérifie, et qui ne se voit nulle part ailleurs :
    lancé — c'est-à-dire le cas exact d'un run orphelin, dont l'hôte est justement
    tombé — sans quoi le run réapparaît `en_cours` au redémarrage suivant, la panne même
    que #347 traite. Et un **double clic** ne doit pas partir deux fois.
+
+④ **Le run repris rend ce qu'il tenait** (#466) — ses tâches non terminées sont
+   soldées et leurs agents libérés, parce que le geste vit dans `_solder` et non chez
+   ses appelants. C'est ce que ce test garde : posé dans `annuler`, le correctif
+   aurait laissé la relance libérer un run sans libérer ses agents, et la panne
+   aurait survécu à son propre correctif par l'autre chemin.
 """
 
 from __future__ import annotations
@@ -53,6 +59,7 @@ from maestro.controltower.brief import evenement_demande_brief
 from maestro.controltower.events import (
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_EXECUTION_STATUT,
+    EVENEMENT_TACHE_STATUT,
     ReferenceTicket,
 )
 from maestro.controltower.executions import (
@@ -62,13 +69,21 @@ from maestro.controltower.executions import (
     MOTIF_RELANCE_SANS_CADRAGE,
 )
 from maestro.controltower.state import (
+    AGENT_LIBRE,
+    AGENT_OCCUPE,
     BRIEF_APPROUVE,
     EXECUTION_ANNULEE,
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
+    STATUTS_TACHE_TERMINAUX,
 )
-from maestro.engine import MODE_BRIEF_HUMAIN, MODE_BRIEF_SANS, DemandeBrief
+from maestro.engine import (
+    MODE_BRIEF_HUMAIN,
+    MODE_BRIEF_SANS,
+    STATUT_EN_COURS,
+    DemandeBrief,
+)
 from maestro.orchestrator import Brief
 from maestro.sources import Source
 
@@ -616,3 +631,63 @@ def test_un_double_clic_ne_relance_pas_deux_fois():
             if r["reprise_de"] == MORT
         ]
         assert len(suites) == 1
+
+
+# --------------------- ④ le run repris rend ce qu'il tenait (#466)
+
+
+def _carte(client: TestClient, tache_id: str) -> dict:
+    """La carte de `tache_id` vue par le REST — `{}` tant qu'elle n'existe pas."""
+    cartes = client.get("/api/taches?projet=tous").json()
+    return next((c for c in cartes if c["id"] == tache_id), {})
+
+
+def _fiche(client: TestClient, nom: str) -> dict:
+    """La fiche de l'agent `nom` — celle de l'écran Agents."""
+    return next(a for a in client.get("/api/agents").json() if a["nom"] == nom)
+
+
+def _tache_en_vol() -> Event:
+    """Ce qu'un run laisse au journal quand son hôte tombe **pendant** une tâche.
+
+    Le dernier fait connu, et rien après : une tâche démarrée, son agent dessus.
+    C'est le `coeur-donnees-persistance` du constat du 2026-08-24 — `en_cours`
+    depuis dix jours sur un run que plus personne ne portait.
+    """
+    return Event(
+        type=EVENEMENT_TACHE_STATUT,
+        run_id=MORT,
+        tache_id="coeur-donnees-persistance",
+        titre="Cœur de données",
+        agent="bdd",
+        role="Ingénieur BDD",
+        statut=STATUT_EN_COURS,
+        projet_id=PROJET,
+    )
+
+
+def test_la_relance_solde_les_taches_du_run_repris_et_libere_ses_agents():
+    """#466 : `_solder` est le geste commun, donc la relance répare ce que l'annulation répare.
+
+    Le critère n'est pas une redite du volet annulation : c'est ce qui interdit
+    d'aller poser le soldage chez l'appelant. Écrit dans `annuler`, il aurait laissé
+    la relance libérer un run sans libérer ses agents — et la panne aurait survécu à
+    son propre correctif, sur l'autre chemin.
+    """
+    battements = RegistreBattementsMemoire()
+    journal = _journal(*_evenements_du_run_mort(), _tache_en_vol())
+    with _app(journal, battements, MoteurEnVol()) as client:
+        # Le décor : la tâche du run mort est en vol, son agent occupé.
+        assert _carte(client, "coeur-donnees-persistance")["statut"] == STATUT_EN_COURS
+        assert _fiche(client, "bdd")["statut"] == AGENT_OCCUPE
+
+        assert client.post(f"/api/executions/{MORT}/relancer").status_code == 202
+        _attendre(
+            lambda: _carte(client, "coeur-donnees-persistance")["statut"] != STATUT_EN_COURS,
+            "la tâche du run repris est soldée",
+        )
+
+        assert _carte(client, "coeur-donnees-persistance")["statut"] in STATUTS_TACHE_TERMINAUX
+        bdd = _fiche(client, "bdd")
+        assert bdd["statut"] == AGENT_LIBRE
+        assert bdd["taches_en_cours"] == []

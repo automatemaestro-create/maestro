@@ -28,9 +28,19 @@ Deux volets, les deux critères de données de #188 :
 ③ **Le ticket du lancement descend jusqu'aux tâches** (#187) — le service le passe
    au moteur (`run(…, ticket=…)`), qui en dote **chaque tâche du plan**, sauf celle
    qui en porte déjà une : le plan a été plus précis que le lancement, sa référence
-   gagne. Ce dernier volet tourne sur le **vrai moteur**, fournisseurs factices à la
+   gagne. Ce volet tourne sur le **vrai moteur**, fournisseurs factices à la
    place des modèles — c'est le seul endroit où le double ne suffirait pas, la règle
    à vérifier étant précisément celle qu'il remplace.
+
+④ **Solder un run solde ce qu'il portait** (#466) — annuler ne soldait que le run :
+   ses tâches restaient `en_cours` et leurs agents `occupe`, et comme la projection
+   se reconstruit par rejeu du journal, **définitivement**. Le volet exige un moteur
+   double qui *fasse vivre* des tâches (`MoteurQuiSeFige`) : le `MoteurDouble`
+   bloquant ne consigne rien, si bien que ni tâche ni agent n'entrait dans la
+   projection — c'est ce vide-là qui a laissé le défaut vivre sous une suite verte
+   depuis l'origine. Trois faits gardés : les tâches en vol sont soldées et les
+   agents libérés, ce qui était **déjà fait** n'est pas défait, et la cause de
+   l'arrêt voyage avec le soldage.
 """
 
 from __future__ import annotations
@@ -50,16 +60,21 @@ from maestro.controltower import (
     InMemoryEventLog,
     create_app,
 )
+from maestro.controltower.causes import CAUSE_ANNULATION
 from maestro.controltower.events import ReferenceTicket
 from maestro.controltower.state import (
+    AGENT_LIBRE,
+    AGENT_OCCUPE,
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
+    STATUTS_TACHE_TERMINAUX,
 )
 from maestro.engine import (
     MODE_BRIEF_SANS,
     STATUT_ECHEC,
+    STATUT_EN_COURS,
     STATUT_TERMINEE,
     OrchestrationEngine,
     RunReport,
@@ -69,6 +84,7 @@ from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import TaskValidationError, validate_plan
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal
+from maestro.telemetry.usage import StepUsage
 
 #: Plafond d'attente d'un statut de run, en secondes. Le moteur double rend la
 #: main tout de suite : c'est l'ordonnancement de la boucle de l'app qu'on
@@ -647,3 +663,188 @@ def test_un_run_sans_ticket_laisse_les_taches_sans_reference():
     asyncio.run(moteur.run("Prototyper", journal=journal))
 
     assert tickets_des_taches(journal) == {"schema-bdd": None}
+
+
+# ------------------- ④ Solder un run solde ce qu'il portait (#466)
+
+
+class MoteurQuiSeFige:
+    """Moteur double qui **fait vivre des tâches**, puis se fige — le run reste en vol.
+
+    Le `MoteurDouble(bloquant=True)` ci-dessus suffisait à exercer l'annulation d'un
+    run, jamais ce que ce run *portait* : il ne consigne rien, donc ni tâche ni agent
+    n'entre dans la projection — et c'est précisément pour ça que le défaut de #466 a
+    pu vivre depuis l'origine sous une suite verte.
+
+    Il consigne par le **journal**, comme le vrai exécuteur : l'étape `<id>:debut`
+    (`maestro.engine.executor`) que le pont mue en `tache.statut` « en cours », et
+    l'étape nue `<id>` pour une issue. Le chemin est donc celui de la production
+    — pont, bus, pompe, projection —, pas un événement fabriqué à la main : un test
+    qui publierait l'événement lui-même vérifierait sa propre mise en scène.
+    """
+
+    def __init__(
+        self,
+        *,
+        demarrees: tuple[tuple[str, str], ...] = (),
+        achevees: tuple[tuple[str, str, str], ...] = (),
+    ) -> None:
+        self.demarrees = demarrees  # (tache_id, agent) — laissées en vol
+        self.achevees = achevees  # (tache_id, agent, statut terminal)
+        self.annule = False
+
+    def __call__(self, **_reglages: object) -> MoteurQuiSeFige:
+        return self
+
+    def _consigne(self, journal: RunJournal, etape: str, agent: str, statut: str) -> None:
+        journal.consigne(
+            etape=etape,
+            nom=f"Tâche {etape.removesuffix(':debut')}",
+            agent=agent,
+            role="Développeur",
+            statut=statut,
+            entree="",
+            sortie="",
+            usage=StepUsage(),
+        )
+
+    async def run(self, objectif: str, *, journal: RunJournal, **_: object) -> None:
+        for tache_id, agent, statut in self.achevees:
+            self._consigne(journal, f"{tache_id}:debut", agent, STATUT_EN_COURS)
+            self._consigne(journal, tache_id, agent, statut)
+        for tache_id, agent in self.demarrees:
+            self._consigne(journal, f"{tache_id}:debut", agent, STATUT_EN_COURS)
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.annule = True
+            raise
+
+
+def _tache(client: TestClient, tache_id: str) -> dict:
+    """La carte de `tache_id` vue par le REST — `{}` tant qu'elle n'existe pas."""
+    cartes = client.get("/api/taches?projet=tous").json()
+    return next((c for c in cartes if c["id"] == tache_id), {})
+
+
+def _agent(client: TestClient, nom: str) -> dict:
+    """La fiche de l'agent `nom` vue par le REST — celle de l'écran Agents."""
+    return next(a for a in client.get("/api/agents").json() if a["nom"] == nom)
+
+
+def _attendre(condition, quoi: str) -> None:
+    """Attend un fait asynchrone : le pont publie sur le bus, la pompe l'applique."""
+    limite = time.monotonic() + DELAI_ATTENTE_S
+    while not condition():
+        if time.monotonic() > limite:  # pragma: no cover - filet anti-blocage
+            pytest.fail(f"{quoi} n'est jamais arrivé en {DELAI_ATTENTE_S} s")
+        time.sleep(0.02)
+
+
+def test_annuler_un_run_solde_ses_taches_en_vol_et_libere_ses_agents(state):
+    """Le critère de #466 : ni tâche « en_cours », ni agent « occupe » après l'annulation.
+
+    Le scénario du constat du 2026-08-24, en petit : une tâche démarrée, son agent
+    occupé, le run annulé. Avant ce correctif, la tâche restait `en_cours` et
+    l'agent `occupe` **définitivement** — la projection étant reconstruite par
+    rejeu du journal, l'état faux survivait même au redémarrage de l'API.
+    """
+    moteur = MoteurQuiSeFige(demarrees=(("brief-directions", "designer"),))
+    with app_avec(moteur, state) as client:
+        run_id = client.post("/api/executions", json={"objectif": "Long"}).json()["run_id"]
+        _attendre(
+            lambda: _tache(client, "brief-directions").get("statut") == STATUT_EN_COURS,
+            "la tâche « brief-directions » démarre",
+        )
+        # Le décor **est** la panne : c'est cet état-là qui ne se réparait jamais.
+        assert _agent(client, "designer")["statut"] == AGENT_OCCUPE
+        assert _agent(client, "designer")["tache_courante"] == "brief-directions"
+
+        client.post(f"/api/executions/{run_id}/annuler")
+        # Le soldage d'une tâche **se publie** : c'est la pompe qui l'applique, comme
+        # pour tout autre `tache.statut` (cf. `_solder_les_taches`). Attendre ici,
+        # c'est attendre un ordonnancement — et c'est aussi ce qui garantit qu'on
+        # observe le chemin réel plutôt qu'une écriture directe dans la projection.
+        _attendre(
+            lambda: _tache(client, "brief-directions").get("statut") != STATUT_EN_COURS,
+            "la tâche « brief-directions » est soldée",
+        )
+
+        tache = _tache(client, "brief-directions")
+        assert tache["statut"] in STATUTS_TACHE_TERMINAUX
+        designer = _agent(client, "designer")
+        assert designer["statut"] == AGENT_LIBRE
+        # Les trois, et pas seulement le premier : `statut` est *dérivé* de
+        # `taches_en_cours` (#100), donc n'assurer que lui laisserait passer une
+        # libération qui oublierait la liste dont il se déduit.
+        assert designer["tache_courante"] == ""
+        assert designer["taches_en_cours"] == []
+
+
+def test_l_annulation_ne_revient_pas_sur_ce_qui_etait_deja_fait(state):
+    """Une tâche déjà terminée reste terminée : annuler un run n'annule pas son travail.
+
+    Sans le filtre sur les statuts terminaux, le soldage repasserait `echec` sur une
+    tâche réussie avant l'annulation — et l'agent y perdrait un `taches_terminees`
+    acquis, remplacé par un échec qui n'a pas eu lieu.
+    """
+    moteur = MoteurQuiSeFige(
+        achevees=(("schema-bdd", "bdd", STATUT_TERMINEE),),
+        demarrees=(("api-users", "bdd"),),
+    )
+    with app_avec(moteur, state) as client:
+        run_id = client.post("/api/executions", json={"objectif": "Long"}).json()["run_id"]
+        _attendre(
+            lambda: _tache(client, "api-users").get("statut") == STATUT_EN_COURS,
+            "la seconde tâche démarre",
+        )
+
+        client.post(f"/api/executions/{run_id}/annuler")
+        _attendre(
+            lambda: _tache(client, "api-users").get("statut") == STATUT_ECHEC,
+            "la tâche en vol est soldée",
+        )
+
+        assert _tache(client, "schema-bdd")["statut"] == STATUT_TERMINEE
+        bdd = _agent(client, "bdd")
+        assert bdd["statut"] == AGENT_LIBRE
+        # Un succès acquis, un échec — et non deux échecs. Ce compte garde aussi
+        # la publication contre le **double comptage** : `tache.statut` n'est pas
+        # idempotent à l'application, donc une émission qui appliquerait puis
+        # publierait ferait ici (1, 2).
+        assert (bdd["taches_terminees"], bdd["taches_echouees"]) == (1, 1)
+
+
+def test_la_tache_soldee_dit_pourquoi_elle_s_est_arretee(state):
+    """« Cause consignée » : le code d'arrêt et la phrase voyagent avec le soldage.
+
+    Sans eux, une tâche passée `echec` par une annulation serait indiscernable
+    d'une tâche que son agent a ratée — c'est exactement la confusion que
+    `causes.py` (#479) existe pour lever.
+    """
+    moteur = MoteurQuiSeFige(demarrees=(("brief-directions", "designer"),))
+    with app_avec(moteur, state) as client:
+        run_id = client.post("/api/executions", json={"objectif": "Long"}).json()["run_id"]
+        _attendre(
+            lambda: _tache(client, "brief-directions").get("statut") == STATUT_EN_COURS,
+            "la tâche démarre",
+        )
+
+        client.post(f"/api/executions/{run_id}/annuler")
+        _attendre(
+            lambda: _tache(client, "brief-directions").get("statut") == STATUT_ECHEC,
+            "la tâche est soldée",
+        )
+
+    execution = next(e for e in state.executions() if e.run_id == run_id)
+    soldage = [
+        e
+        for e in execution.evenements
+        if e.type == EVENEMENT_TACHE_STATUT
+        and e.tache_id == "brief-directions"
+        and e.statut == STATUT_ECHEC
+    ][-1]
+    assert soldage.cause == CAUSE_ANNULATION
+    assert "interrompue depuis la Control Tower" in soldage.detail
+    # L'agent est nommé : sans lui, la projection n'aurait aucun créneau à rendre.
+    assert soldage.agent == "designer"
