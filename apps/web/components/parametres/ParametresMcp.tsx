@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { Bouton } from "@/components/Primitives";
 import {
   ajouterIntegrationPoolMcp,
   chargerPoolMcp,
@@ -502,17 +503,13 @@ function FormulaireConfiguration({
         </p>
       )}
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="submit"
-          disabled={enCours || !pret}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
+        <Bouton type="submit" disabled={!pret} occupe={enCours}>
           {enCours
             ? "Ajout…"
             : dejaAuPool
               ? "Enregistrer la configuration"
               : "Ajouter au pool"}
-        </button>
+        </Bouton>
         <span className="text-xs text-neutral-500 dark:text-neutral-400">
           {entree.mode_auth === MCP_MODE_APPAIRAGE
             ? "Valeur d'appairage jetable, à renouveler à chaque session."

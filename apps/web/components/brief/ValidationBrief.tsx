@@ -42,7 +42,13 @@ import {
 } from "@/components/brief/QuestionsBrief";
 import { ChampsBrief, SectionsBrief } from "@/components/brief/SectionsBrief";
 import { IconeObjectif } from "@/components/Icones";
-import { BadgeEtat, Carte, EnTeteSection, EtatVide } from "@/components/Primitives";
+import {
+  BadgeEtat,
+  Bouton,
+  Carte,
+  EnTeteSection,
+  EtatVide,
+} from "@/components/Primitives";
 import {
   briefDepuisEdition,
   editionDepuis,
@@ -60,12 +66,6 @@ import {
   type DetailExecution,
   type ResumeExecution,
 } from "@/lib/types";
-
-const CLASSE_BOUTON_APPROUVER =
-  "rounded-md bg-emerald-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-emerald-700 disabled:opacity-50";
-
-const CLASSE_BOUTON_REFUSER =
-  "rounded-md border border-rose-300 px-3 py-1.5 text-annexe font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950";
 
 /**
  * Ce que le schéma partagé exige et qu'un formulaire peut vider — le miroir
@@ -306,26 +306,25 @@ export function ValidationBrief({ execution }: { execution: ResumeExecution }) {
             <EnTeteSection titre="Décision" ton="attention" className="mb-3" />
             <CoutBrief cout={detail.cout} brief={briefDepuisEdition(edite)} />
             <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={enCours || manques.length > 0}
+              <Bouton
+                disabled={manques.length > 0}
+                occupe={enCours}
                 onClick={() => void surDecision(true)}
-                className={CLASSE_BOUTON_APPROUVER}
               >
                 {enCours
                   ? "Envoi…"
                   : corrige
                     ? "Approuver la version corrigée"
                     : "Approuver"}
-              </button>
-              <button
-                type="button"
+              </Bouton>
+              <Bouton
+                variante="contour"
+                ton="alerte"
                 disabled={enCours}
                 onClick={() => void surDecision(false)}
-                className={CLASSE_BOUTON_REFUSER}
               >
                 Refuser
-              </button>
+              </Bouton>
             </div>
             {manques.length > 0 && (
               <p className="mt-2 text-annexe text-amber-700 dark:text-amber-400">

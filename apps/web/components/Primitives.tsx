@@ -1,13 +1,17 @@
 /**
- * Les primitives visuelles de la Control Tower (#245, lot 1 de #242).
+ * Les primitives visuelles de la Control Tower (#245, lot 1 de #242 ; #535,
+ * lot 3 de #532 pour `Bouton` et `Champ`).
  *
  * Avant ce lot, chaque écran recopiait ses classes : la carte du Kanban, celle
  * du grand livre, celle d'un projet et celle d'une section de Paramètres
  * disaient la même chose en quatre variantes — et un écran « épuré » ne
  * différait d'un écran « brouillon » que par la vigilance de qui l'avait
- * écrit. Les cinq briques ci-dessous portent ces décisions **une fois** :
+ * écrit. Les briques ci-dessous portent ces décisions **une fois** :
  *
  * - `Carte` — la surface : bord, fond, ombre, arrondi, densité, ton ;
+ * - `Bouton` / `BoutonLien` — l'action : variante, ton, taille, occupé ;
+ * - `Champ` / `ChampListe` / `ChampTexte` — la saisie : libellé lié, aide,
+ *   erreur, `aria-invalid` ;
  * - `TuileChiffre` — un chiffre de tête, son libellé, son détail, son renvoi ;
  * - `EnTeteSection` — le titre d'une zone, avec son icône et son compte ;
  * - `BadgeEtat` — la pastille d'état (compte, statut, provenance) ;
@@ -15,9 +19,11 @@
  *
  * Trois règles tiennent l'ensemble :
  *
- * - **Les deux thèmes viennent avec la brique.** Chaque classe porte son
- *   variant `dark:` ici ; un appelant qui compose n'a plus à y penser, et c'est
- *   la seule façon de garantir qu'aucun écran n'oublie le thème sombre.
+ * - **Les deux thèmes viennent avec la brique.** Les briques d'origine portent
+ *   leur variant `dark:` ici ; celles de #535 n'en portent aucun — elles sont
+ *   écrites sur les **tokens** de #533 (`bg-surface`, `text-texte-secondaire`),
+ *   qui *sont* les deux thèmes. C'est la même promesse, une couche plus bas :
+ *   un appelant n'a jamais à y penser, et aucun écran ne peut oublier le sombre.
  * - **La densité est un choix nommé, pas un `p-*` improvisé** : trois pas
  *   (`compacte`, `normale`, `aeree`) couvrent tout le produit. Un quatrième se
  *   discute ici, pas dans un composant.
@@ -29,7 +35,16 @@
  */
 
 import Link from "next/link";
-import type { ComponentType, HTMLAttributes, ReactNode, SVGProps } from "react";
+import type {
+  ButtonHTMLAttributes,
+  ComponentType,
+  HTMLAttributes,
+  InputHTMLAttributes,
+  ReactNode,
+  SelectHTMLAttributes,
+  SVGProps,
+  TextareaHTMLAttributes,
+} from "react";
 
 import { Infobulle } from "@/components/Infobulle";
 
@@ -89,13 +104,39 @@ const SURFACE = {
 export type TonCarte = keyof typeof SURFACE;
 
 type ProprietesCarte = {
-  /** La balise rendue — `article` par défaut, `li` dans une liste, etc. */
-  balise?: "article" | "section" | "div" | "li";
+  /**
+   * La balise rendue — `article` par défaut, `li` dans une liste, `p` quand la
+   * carte n'est qu'un paragraphe encadré, `form` quand elle encadre une saisie
+   * (#535 : les recopies reprises étaient de ces quatre sortes).
+   */
+  balise?: "article" | "section" | "div" | "li" | "p" | "form";
   densite?: DensiteCarte;
   ton?: TonCarte;
   className?: string;
   children: ReactNode;
 } & Omit<HTMLAttributes<HTMLElement>, "className" | "children">;
+
+/**
+ * Les classes de la surface, **sans** la balise qui les porte. C'est ce que
+ * `Carte` rend, et le seul recours de ce qui ne peut pas en être une : un
+ * `<Link>` (le composant de Next, pas une balise) et un `<button>` (dont le
+ * `type` et le `disabled` ne vivent pas dans `HTMLAttributes`). Les exposer
+ * plutôt que de rendre `Carte` polymorphe garde **une** source à la décision —
+ * et c'est bien la recopie qui disparaît, pas seulement sa forme.
+ */
+export function classesCarte({
+  densite = "normale",
+  ton = "pleine",
+  className = "",
+}: {
+  densite?: DensiteCarte;
+  ton?: TonCarte;
+  className?: string;
+} = {}): string {
+  return ["rounded-lg border", SURFACE[ton], DENSITE[densite], className]
+    .filter(Boolean)
+    .join(" ");
+}
 
 /** La surface commune à tout ce qui se pose sur le fond de page. */
 export function Carte({
@@ -106,18 +147,367 @@ export function Carte({
   children,
   ...reste
 }: ProprietesCarte) {
-  const classes = [
-    "rounded-lg border",
-    SURFACE[ton],
-    DENSITE[densite],
-    className,
-  ]
-    .filter(Boolean)
-    .join(" ");
   return (
-    <Balise className={classes} {...reste}>
+    <Balise className={classesCarte({ densite, ton, className })} {...reste}>
       {children}
     </Balise>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Bouton
+ * ------------------------------------------------------------------ */
+
+/**
+ * Les trois formes d'un bouton. Elles disent le **rang** de l'action, pas son
+ * apparence : `plein` pour ce qu'on vient faire sur l'écran (un seul par zone),
+ * `contour` pour ce qui l'accompagne (annuler, fermer), `discret` pour ce qui
+ * ne doit pas peser (une action de ligne, une bascule d'affichage).
+ */
+export type VarianteBouton = "plein" | "contour" | "discret";
+
+/**
+ * L'aplat d'un bouton `plein` : le fond, ce qui s'écrit dessus, et le fond du
+ * survol. Les trois viennent des tokens de #533 — **jamais un `bg-*` brut** :
+ * c'est ce qui a fait passer le bouton d'action de **3,65:1** (le
+ * `bg-emerald-600` + blanc recopié dans 18 fichiers, docs/30 §3.2) à 5,36:1 en
+ * clair et 8,00:1 en sombre, sans qu'un seul écran ait à le savoir.
+ *
+ * Le survol **s'écarte** de `sur-ton` dans les deux thèmes (plus sombre en
+ * clair, plus clair en sombre), donc le libellé ne peut que gagner en
+ * contraste : 7,09:1 au pire en clair, 10,33:1 au pire en sombre. Un
+ * `hover:opacity-90` aurait fait l'inverse, en silence.
+ */
+const BOUTON_PLEIN = {
+  accent: "bg-accent text-sur-ton hover:bg-accent-appui",
+  info: "bg-info text-sur-ton hover:bg-info-appui",
+  attention: "bg-attention text-sur-ton hover:bg-attention-appui",
+  alerte: "bg-alerte text-sur-ton hover:bg-alerte-appui",
+  /** Sans appelant aujourd'hui : la table est complète pour qu'un ton n'ait
+      jamais de trou selon la variante choisie. */
+  neutre: "bg-texte text-surface hover:bg-texte-secondaire",
+} as const;
+
+/**
+ * Le même ton, **écrit** : `contour` et `discret` partagent la couleur du
+ * libellé (le pas `-texte`, celui qui tient 4,5:1 sur les deux surfaces) et ne
+ * diffèrent que par le filet.
+ */
+const BOUTON_ECRIT = {
+  accent: "text-accent-texte",
+  info: "text-info-texte",
+  attention: "text-attention-texte",
+  alerte: "text-alerte-texte",
+  neutre: "text-texte-secondaire",
+} as const;
+
+export type TonBouton = keyof typeof BOUTON_PLEIN;
+
+/**
+ * Deux tailles, et pas trois : le produit n'en emploie que deux — la taille
+ * courante d'un formulaire, et celle d'une action posée dans une ligne. Une
+ * troisième se discute ici, pas dans un composant.
+ */
+const TAILLE_BOUTON = {
+  petite: "gap-1 rounded-md px-2.5 py-1 text-annexe",
+  normale: "gap-1.5 rounded-md px-3 py-1.5 text-annexe",
+} as const;
+
+export type TailleBouton = keyof typeof TAILLE_BOUTON;
+
+/**
+ * Ce que toute forme de bouton porte. Le contour de focus est ici et pas dans
+ * l'appelant : c'est le seul endroit d'où l'on peut promettre qu'aucune action
+ * du produit n'est invisible au clavier (WCAG 2.2, 2.4.7).
+ */
+const BOUTON_SOCLE =
+  "inline-flex shrink-0 cursor-pointer items-center justify-center font-medium " +
+  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent " +
+  "disabled:cursor-not-allowed disabled:opacity-50";
+
+function classesBouton(
+  variante: VarianteBouton,
+  ton: TonBouton,
+  taille: TailleBouton,
+  className: string,
+): string {
+  const forme =
+    variante === "plein"
+      ? BOUTON_PLEIN[ton]
+      : variante === "contour"
+        ? `border border-bord-fort ${BOUTON_ECRIT[ton]} hover:bg-survol`
+        : `${BOUTON_ECRIT[ton]} hover:bg-survol`;
+  return [BOUTON_SOCLE, TAILLE_BOUTON[taille], forme, className]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** L'anneau qui tourne d'un bouton `occupe` — décoratif, l'état est dit par `aria-busy`. */
+function AnneauOccupe() {
+  return (
+    <span
+      aria-hidden="true"
+      className="size-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none"
+    />
+  );
+}
+
+type ApparenceBouton = {
+  variante?: VarianteBouton;
+  ton?: TonBouton;
+  taille?: TailleBouton;
+  /** Une icône du jeu, posée devant le libellé — décorative, jamais seule. */
+  icone?: Icone;
+  /** Mise en page seulement (marge, largeur, ordre) — jamais une couleur. */
+  className?: string;
+  children: ReactNode;
+};
+
+/**
+ * L'action du produit. Le **ton** et la **variante** sont des choix nommés, pas
+ * un `bg-*` passé en `className` : deux règles de fond dans le même attribut ne
+ * se départagent pas par l'ordre d'écriture mais par celui de la feuille
+ * générée, donc une surcharge au cas par cas est silencieusement instable
+ * (même raison que le `ton` d'une `Carte`).
+ *
+ * `occupe` n'est pas un synonyme de `disabled` : il dit qu'une action **est en
+ * cours**, la rend inerte le temps qu'elle dure et l'annonce (`aria-busy`) — un
+ * bouton simplement désactivé, lui, dit qu'il n'y a rien à faire.
+ */
+export function Bouton({
+  variante = "plein",
+  ton = "accent",
+  taille = "normale",
+  icone: Icone,
+  occupe = false,
+  className = "",
+  children,
+  type = "button",
+  disabled,
+  ...reste
+}: ApparenceBouton & {
+  /** L'action est en vol : bouton inerte, anneau qui tourne, `aria-busy`. */
+  occupe?: boolean;
+} & Omit<
+    ButtonHTMLAttributes<HTMLButtonElement>,
+    "className" | "children"
+  >) {
+  return (
+    <button
+      // `button` et non `submit` par défaut : dans un formulaire, un bouton sans
+      // `type` explicite le soumet — c'est le piège que le produit évite déjà à
+      // la main dans chaque appel.
+      type={type}
+      disabled={disabled || occupe}
+      aria-busy={occupe || undefined}
+      className={classesBouton(variante, ton, taille, className)}
+      {...reste}
+    >
+      {occupe ? <AnneauOccupe /> : Icone && <Icone className="size-3.5 shrink-0" />}
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Le même bouton, quand l'action est une **navigation** : une porte de sortie
+ * d'un état vide, un renvoi vers l'écran qui fait le travail. C'est un lien —
+ * il s'ouvre dans un onglet, il se copie —, il en a seulement l'allure.
+ */
+export function BoutonLien({
+  href,
+  variante = "plein",
+  ton = "accent",
+  taille = "normale",
+  icone: Icone,
+  className = "",
+  children,
+}: ApparenceBouton & { href: string }) {
+  return (
+    <Link
+      href={href}
+      className={classesBouton(variante, ton, taille, className)}
+    >
+      {Icone && <Icone className="size-3.5 shrink-0" />}
+      {children}
+    </Link>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Champ
+ * ------------------------------------------------------------------ */
+
+/**
+ * Le contrôle lui-même — saisie, liste, zone de texte. Écrit sur les tokens :
+ * `bord` est le filet au repos, `bord-fort` celui du focus (le bord qui
+ * **identifie un contrôle**, soumis à WCAG 1.4.11, là où le premier est
+ * décoratif), et le contour d'accent double le tout pour qui navigue au clavier.
+ */
+const CLASSE_CONTROLE =
+  "w-full rounded-md border border-bord bg-surface px-3 py-1.5 text-corps " +
+  "text-texte shadow-sm placeholder:text-texte-secondaire " +
+  "focus:border-bord-fort focus-visible:outline-2 focus-visible:outline-offset-1 " +
+  "focus-visible:outline-accent disabled:opacity-50";
+
+function classesControle(monospace?: boolean): string {
+  return monospace ? `${CLASSE_CONTROLE} font-mono` : CLASSE_CONTROLE;
+}
+
+type ApparenceChamp = {
+  /**
+   * L'identifiant du contrôle — **obligatoire** : c'est lui qui rattache l'aide
+   * et l'erreur (`aria-describedby`). Il n'est pas dérivé d'un `useId` parce que
+   * ce module est partagé avec des composants serveur, où aucun hook ne peut
+   * tourner.
+   */
+  id: string;
+  libelle: ReactNode;
+  /** Ce qu'il faut savoir avant de saisir — annoncé avec le champ. */
+  aide?: ReactNode;
+  /** Ce qui ne va pas — annoncé avec le champ, et pose `aria-invalid`. */
+  erreur?: ReactNode;
+  /**
+   * La saisie est en chasse fixe : un chemin, un motif, un identifiant — ce qui
+   * se compare caractère à caractère. Même nom que sur `TuileChiffre`, et même
+   * raison : c'est un choix nommé, pas un `font-mono` recollé au `className`.
+   */
+  monospace?: boolean;
+  /** Mise en page du bloc (largeur, colonne) — jamais une couleur. */
+  className?: string;
+};
+
+/** Ce que l'aide et l'erreur ajoutent au contrôle : de quoi être annoncées. */
+function liaisonsChamp({ id, aide, erreur }: ApparenceChamp) {
+  const decrit = [aide ? `${id}-aide` : "", erreur ? `${id}-erreur` : ""]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    "aria-describedby": decrit || undefined,
+    "aria-invalid": erreur ? true : undefined,
+  };
+}
+
+/**
+ * Le libellé, le contrôle, puis ce qui l'explique — toujours dans cet ordre.
+ *
+ * Le libellé **entoure** le contrôle au lieu de le viser par `htmlFor`, et ce
+ * n'est pas un détail de style : `label.control` résout un `for` par
+ * `getElementById`, donc **le premier** identifiant de ce nom dans le document.
+ * Deux instances du même écran montées ensemble — ce que fait déjà
+ * `projet-cadre.test.tsx` — et la seconde perd son nom accessible en silence.
+ * L'association implicite, elle, ne peut désigner que le contrôle qu'elle
+ * contient. L'aide et l'erreur restent **hors** du libellé : tout texte à
+ * l'intérieur entrerait dans le nom accessible du champ.
+ */
+function CadreChamp({
+  id,
+  libelle,
+  aide,
+  erreur,
+  className = "",
+  children,
+}: ApparenceChamp & { children: ReactNode }) {
+  return (
+    <div className={["flex flex-col gap-1", className].filter(Boolean).join(" ")}>
+      <label className="flex flex-col gap-1">
+        <span className="text-annexe font-medium text-texte-secondaire">
+          {libelle}
+        </span>
+        {children}
+      </label>
+      {aide && (
+        <p id={`${id}-aide`} className="text-annexe text-texte-secondaire">
+          {aide}
+        </p>
+      )}
+      {erreur && (
+        // Pas de `role="alert"` ici : l'erreur d'un champ est annoncée par le
+        // champ lui-même (`aria-describedby`), et une seconde annonce ferait
+        // parler l'écran deux fois pour une seule faute.
+        <p id={`${id}-erreur`} className="text-annexe font-medium text-alerte-texte">
+          {erreur}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Une saisie sur une ligne. */
+export function Champ({
+  id,
+  libelle,
+  aide,
+  erreur,
+  monospace,
+  className,
+  ...reste
+}: ApparenceChamp &
+  Omit<InputHTMLAttributes<HTMLInputElement>, "id" | "className">) {
+  const cadre = { id, libelle, aide, erreur, monospace, className };
+  return (
+    <CadreChamp {...cadre}>
+      <input
+        id={id}
+        className={classesControle(monospace)}
+        {...liaisonsChamp(cadre)}
+        {...reste}
+      />
+    </CadreChamp>
+  );
+}
+
+/** Une liste déroulante — les `<option>` sont l'affaire de l'appelant. */
+export function ChampListe({
+  id,
+  libelle,
+  aide,
+  erreur,
+  monospace,
+  className,
+  children,
+  ...reste
+}: ApparenceChamp &
+  Omit<SelectHTMLAttributes<HTMLSelectElement>, "id" | "className">) {
+  const cadre = { id, libelle, aide, erreur, monospace, className };
+  return (
+    <CadreChamp {...cadre}>
+      <select
+        id={id}
+        // Les options d'un `select` natif héritent du fond du système, pas de
+        // celui du champ : sans cette règle, une liste ouverte repasse en clair
+        // sous le thème sombre.
+        className={`${classesControle(monospace)} [&>option]:bg-surface`}
+        {...liaisonsChamp(cadre)}
+        {...reste}
+      >
+        {children}
+      </select>
+    </CadreChamp>
+  );
+}
+
+/** Une saisie sur plusieurs lignes. */
+export function ChampTexte({
+  id,
+  libelle,
+  aide,
+  erreur,
+  monospace,
+  className,
+  ...reste
+}: ApparenceChamp &
+  Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "id" | "className">) {
+  const cadre = { id, libelle, aide, erreur, monospace, className };
+  return (
+    <CadreChamp {...cadre}>
+      <textarea
+        id={id}
+        className={classesControle(monospace)}
+        {...liaisonsChamp(cadre)}
+        {...reste}
+      />
+    </CadreChamp>
   );
 }
 

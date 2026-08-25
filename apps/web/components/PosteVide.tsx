@@ -32,8 +32,7 @@
  * périmètre.
  */
 
-import Link from "next/link";
-
+import { Bouton, BoutonLien, Carte } from "@/components/Primitives";
 import { lancerGuide } from "@/lib/guide";
 import type { Projet } from "@/lib/types";
 
@@ -53,9 +52,14 @@ export function PosteVide({
   connecte: boolean;
 }) {
   return (
-    <section
+    <Carte
+      balise="section"
       aria-label="Poste de pilotage vide"
-      className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900"
+      // `aucune` et non `aeree` : le pas de 1,25 rem de cet écran n'est aucun
+      // des trois, et l'aligner sur `aeree` le resserrerait — la densité reste
+      // un choix nommé, celui-ci dit « le contenu gère le sien ».
+      densite="aucune"
+      className="p-5"
     >
       <h2 className="text-base font-semibold">
         Rien encore sur {projet.nom}
@@ -116,15 +120,16 @@ export function PosteVide({
           L&apos;historique, lui, est conservé : un redémarrage de l&apos;API
           rejoue les événements déjà publiés.
         </p>
-        <button
-          type="button"
+        <Bouton
+          variante="contour"
+          ton="neutre"
           onClick={lancerGuide}
-          className="mt-3 rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+          className="mt-3"
         >
           Faire la visite guidée
-        </button>
+        </Bouton>
       </div>
-    </section>
+    </Carte>
   );
 }
 
@@ -157,12 +162,9 @@ function Action({
         </pre>
       )}
       {lien && (
-        <Link
-          href={lien.href}
-          className="mt-2 inline-block rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
-        >
+        <BoutonLien href={lien.href} className="mt-2">
           {lien.libelle}
-        </Link>
+        </BoutonLien>
       )}
       <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{note}</p>
     </article>

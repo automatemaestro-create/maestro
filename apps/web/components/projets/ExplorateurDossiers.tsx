@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { IconeDossier, IconeFlecheHaut } from "@/components/Icones";
-import { BadgeEtat } from "@/components/Primitives";
+import { BadgeEtat, Bouton } from "@/components/Primitives";
 import {
   chargerDisponibiliteSelecteur,
   chargerExplorateur,
@@ -53,10 +53,6 @@ export function refusDepuis(erreur: unknown): RefusProjet {
   };
 }
 
-const CLASSE_BOUTON_DOUX =
-  "rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 " +
-  "hover:bg-neutral-50 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300 " +
-  "dark:hover:bg-neutral-800";
 
 /**
  * Ce que dit la pastille d'un point d'entrée (#278). Le libellé répond à
@@ -215,8 +211,11 @@ export function ExplorateurDossiers({
           </code>
         </p>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <button
-            type="button"
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            taille="petite"
+            icone={IconeFlecheHaut}
             onClick={() => void ouvrir(page?.parent ?? null)}
             disabled={chargement || courant === null}
             // Même raison qu'au bouton « Choisir » plus bas (#536) : sur un
@@ -226,28 +225,26 @@ export function ExplorateurDossiers({
                 ? "Dossiers explorables — remonter sortirait des dossiers explorables"
                 : undefined
             }
-            className={`inline-flex items-center gap-1 ${CLASSE_BOUTON_DOUX}`}
           >
-            <IconeFlecheHaut className="size-3.5 shrink-0" />
             {page?.parent === null && courant !== null
               ? "Dossiers explorables"
               : "Remonter"}
-          </button>
-          <button
-            type="button"
+          </Bouton>
+          <Bouton
+            taille="petite"
             onClick={() => courant !== null && onChoisir(courant)}
             disabled={chargement || courant === null}
-            className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
           >
             Choisir ce dossier
-          </button>
-          <button
-            type="button"
+          </Bouton>
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            taille="petite"
             onClick={onFermer}
-            className={CLASSE_BOUTON_DOUX}
           >
             Fermer
-          </button>
+          </Bouton>
         </div>
       </div>
 
@@ -257,16 +254,18 @@ export function ExplorateurDossiers({
           serveur : c'est l'API qui la vérifie, jamais le navigateur. */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {selecteur?.disponible && (
-          <button
-            type="button"
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            taille="petite"
+            occupe={ouvertureNative}
+            disabled={chargement}
             onClick={() => void parcourirNatif()}
-            disabled={ouvertureNative || chargement}
-            className={CLASSE_BOUTON_DOUX}
           >
             {ouvertureNative
               ? "Fenêtre ouverte sur votre poste…"
               : "Parcourir sur mon poste…"}
-          </button>
+          </Bouton>
         )}
         {/* Un `<div>`, et la soumission tenue à la main : voir l'en-tête du
             fichier — un `<form>` ici serait imbriqué dans celui du formulaire
@@ -291,14 +290,15 @@ export function ExplorateurDossiers({
             placeholder="Aller à un chemin absolu (ex. D:/depots)"
             className="min-w-0 flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 font-mono text-xs text-neutral-800 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
           />
-          <button
-            type="button"
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            taille="petite"
             onClick={allerAuChemin}
             disabled={chargement || saisie.trim() === ""}
-            className={CLASSE_BOUTON_DOUX + " shrink-0"}
           >
             Aller
-          </button>
+          </Bouton>
         </div>
       </div>
 
@@ -314,13 +314,15 @@ export function ExplorateurDossiers({
       {refus && (
         <div className="mt-3">
           <RefusMotive refus={refus} titre="Dossier non exploré" />
-          <button
-            type="button"
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            taille="petite"
+            className="mt-2"
             onClick={() => void ouvrir(null)}
-            className={CLASSE_BOUTON_DOUX + " mt-2"}
           >
             Revenir aux dossiers explorables
-          </button>
+          </Bouton>
         </div>
       )}
 
@@ -360,8 +362,10 @@ export function ExplorateurDossiers({
                 </BadgeEtat>
               )}
             </button>
-            <button
-              type="button"
+            <Bouton
+              variante="contour"
+              ton="neutre"
+              taille="petite"
               onClick={() => onChoisir(dossier.chemin)}
               disabled={chargement || dossier.projet_id !== null}
               // Le motif du blocage est passé du `title` au nom accessible
@@ -373,10 +377,10 @@ export function ExplorateurDossiers({
                   ? `Choisir ${dossier.nom} — indisponible : ce dossier est déjà la racine d'un projet`
                   : `Choisir ${dossier.nom}`
               }
-              className={CLASSE_BOUTON_DOUX + " shrink-0"}
+              className="shrink-0"
             >
               Choisir
-            </button>
+            </Bouton>
           </li>
         ))}
       </ul>

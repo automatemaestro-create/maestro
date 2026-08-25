@@ -28,7 +28,9 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import { IconePlus } from "@/components/Icones";
 import { LogoMaestro } from "@/components/Logo";
+import { Bouton, classesCarte } from "@/components/Primitives";
 import { creerProjet } from "@/lib/api";
 import { useProjetActif } from "@/lib/etatProjetActif";
 import { entreeCourante } from "@/lib/navigation";
@@ -132,7 +134,13 @@ function CarteChoix({
         type="button"
         onClick={onOuvrir}
         aria-label={`Ouvrir ${projet.nom}`}
-        className="flex w-full flex-col gap-1 rounded-lg border border-neutral-200 bg-white p-4 text-left shadow-sm hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-600"
+        // La surface vient de la primitive ; ne reste ici que ce qu'un bouton
+        // pleine largeur ajoute — sa mise en page et son survol.
+        className={classesCarte({
+          densite: "aeree",
+          className:
+            "flex w-full flex-col gap-1 text-left hover:border-neutral-400 dark:hover:border-neutral-600",
+        })}
       >
         <span className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold">{projet.nom}</span>
@@ -205,14 +213,14 @@ export function ChoixProjet() {
       <BanniereErreurApi erreur={erreur} />
       {erreur !== null && (
         <div>
-          <button
-            type="button"
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            occupe={chargement}
             onClick={() => void recharger()}
-            disabled={chargement}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
           >
             {chargement ? "Relecture…" : "Réessayer"}
-          </button>
+          </Bouton>
         </div>
       )}
 
@@ -248,13 +256,12 @@ export function ChoixProjet() {
         />
       ) : (
         <div>
-          <button
-            type="button"
-            onClick={() => setCreationDemandee(true)}
-            className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
-          >
-            ➕ Nouveau projet
-          </button>
+          {/* L'émoji part avec la migration : il apportait sa propre graisse et
+              son propre rendu par plateforme, ce que le jeu d'icônes a retiré
+              partout ailleurs (#245). */}
+          <Bouton icone={IconePlus} onClick={() => setCreationDemandee(true)}>
+            Nouveau projet
+          </Bouton>
         </div>
       )}
     </CadrePorte>
