@@ -93,6 +93,21 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   `useControlTower` (`revision`), c'est-à-dire quand celui-ci vient de relire
   (`lib/useTachesRun.ts`, `lib/useJournal.ts`). Un run d'un autre projet **le dit**
   au lieu d'afficher un tableau vide qui se lirait « ce run n'a rien fait » ;
+- **Vue pipeline** (#491, lot 3 de #488, docs/05 §2.4.4) : le **flux** du run à la
+  place de son inventaire — un niveau du graphe (#490) par colonne, un nœud par
+  boîte, une courbe orientée par dépendance, tracée en SVG à la main sur les boîtes
+  mesurées (aucune dépendance de rendu de graphe : `apps/web` tient en trois
+  paquets). Chaque nœud porte son agent, son état et sa **checklist qui se coche en
+  direct** (#489) ; le détail complet rouvre le panneau de #251, en croisant le nœud
+  avec la tâche de même identifiant. Deux choses s'y voient et nulle part ailleurs :
+  ce qui **attend un humain** — teinté et immobile, quand ce qui travaille bat —, lu
+  dans la file des validations et non sur la tâche (le moteur n'émet pas
+  `en_attente_validation`, et la table des compartiments le rangerait dans « en
+  cours ») ; et la **suite qui s'allume** quand toutes les arêtes entrantes d'un nœud
+  sont franchies. Un graphe qui déborde ne se lit pas : le dessin défile **chez lui**
+  et une bascule cadre sur la **branche courante**. Elle **coexiste** avec le Kanban
+  sous une bascule et l'ouvre par défaut — l'arbitrage, et les deux options écartées,
+  sont dans `lib/vuesRun.ts` ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **État des runs** (#476, lot 4 de #472, docs/05 §2.1) : ce que le tableau de bord

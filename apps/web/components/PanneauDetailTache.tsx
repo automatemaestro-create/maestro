@@ -24,8 +24,11 @@
 import { useEffect, useRef } from "react";
 
 import {
+  AvancementEtapes,
+  LigneEtape,
+} from "@/components/EtapesTache";
+import {
   IconeAgent,
-  IconeCoche,
   IconeDepot,
   IconeFermer,
   IconeLienExterne,
@@ -41,17 +44,11 @@ import {
 import {
   detailDe,
   libelleDeNature,
-  type EtapeAffichee,
   type LienAffiche,
   type NatureAffichee,
 } from "@/lib/detailTache";
 import { formatCout, libelleStatut } from "@/lib/format";
-import {
-  ETAPE_EN_COURS,
-  ETAPE_FAITE,
-  type EtatAgent,
-  type Tache,
-} from "@/lib/types";
+import { type EtatAgent, type Tache } from "@/lib/types";
 
 /**
  * L'icône d'un lien, choisie sur sa **nature** — jamais devinée d'après l'URL,
@@ -67,13 +64,6 @@ const ICONE_PAR_NATURE: Record<NatureAffichee, Icone> = {
   ticket: IconeTicket,
   depot: IconeDepot,
   lien: IconeLienExterne,
-};
-
-/** Ce que l'état d'une étape dit à voix haute (lecteurs d'écran, `title`). */
-const ETAT_EN_TOUTES_LETTRES: Record<EtapeAffichee["etat"], string> = {
-  faite: "terminée",
-  en_cours: "en cours",
-  a_faire: "à faire",
 };
 
 export function PanneauDetailTache({
@@ -174,7 +164,10 @@ export function PanneauDetailTache({
               >
                 Étapes
               </TitreSection>
-              <Avancement etapes={detail.etapes} faites={detail.faites} />
+              <AvancementEtapes
+                etapes={detail.etapes}
+                faites={detail.faites}
+              />
               <ul className="mt-2 space-y-1.5">
                 {detail.etapes.map((etape, rang) => (
                   <LigneEtape key={`${rang}-${etape.libelle}`} etape={etape} />
@@ -228,93 +221,6 @@ function TitreSection({
         </span>
       )}
     </h3>
-  );
-}
-
-/**
- * L'avancement de la checklist, **une case par étape** — la même lecture d'un
- * coup d'œil, mais qui ne peut pas reculer (#489).
- *
- * C'était une barre unique remplie à `faites / total`, et c'est le dénominateur
- * qui a changé de nature : la checklist n'est plus déclarée une fois pour toutes
- * par le plan, elle est **complétée par l'agent en cours de route**
- * (`maestro.detail_tache`, l'arbitrage). Un agent qui découvre une étape de plus
- * fait donc grandir le total — et sur une barre proportionnelle, « 3/5 » qui
- * devient « 3/8 » se voit comme un recul : la barre se rétracte alors que rien
- * n'a été perdu. Une progression qui redescend est pire que pas de progression
- * du tout, c'est le critère du ticket.
- *
- * Une case par étape retire au dénominateur son pouvoir de rétracter : ce qui
- * est acquis reste allumé, la rangée s'**allonge**. C'est aussi ce que montre un
- * pipeline d'intégration continue, pour la même raison — on y lit des étapes
- * franchies, jamais un pourcentage. Le compteur `3/8` du titre dit, lui, que le
- * dénominateur a bougé : les deux moitiés du critère se répondent.
- */
-function Avancement({ etapes, faites }: { etapes: EtapeAffichee[]; faites: number }) {
-  const total = etapes.length;
-  return (
-    <div
-      role="progressbar"
-      aria-label="Avancement des étapes"
-      aria-valuemin={0}
-      aria-valuemax={total}
-      aria-valuenow={faites}
-      aria-valuetext={`${faites} étape${faites > 1 ? "s" : ""} terminée${faites > 1 ? "s" : ""} sur ${total}`}
-      className="flex w-full gap-0.5"
-    >
-      {etapes.map((etape, rang) => (
-        <span
-          key={`${rang}-${etape.libelle}`}
-          aria-hidden="true"
-          className={
-            "h-1 flex-1 rounded-full transition-colors " +
-            (etape.etat === ETAPE_FAITE
-              ? "bg-emerald-500"
-              : etape.etat === ETAPE_EN_COURS
-                ? "bg-amber-500"
-                : "bg-neutral-200 dark:bg-neutral-800")
-          }
-        />
-      ))}
-    </div>
-  );
-}
-
-/**
- * Une ligne de checklist. La case n'est pas un `<input>` : l'avancement vient du
- * moteur, il ne se coche pas à la main — un contrôle cliquable promettrait une
- * action qui n'existe pas.
- */
-function LigneEtape({ etape }: { etape: EtapeAffichee }) {
-  const faite = etape.etat === ETAPE_FAITE;
-  const enCours = etape.etat === ETAPE_EN_COURS;
-  return (
-    <li className="flex items-start gap-2 text-corps">
-      <span
-        aria-hidden="true"
-        className={
-          "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border " +
-          (faite
-            ? "border-emerald-500 bg-emerald-500 text-white"
-            : enCours
-              ? "border-amber-500 text-amber-500"
-              : "border-neutral-300 dark:border-neutral-600")
-        }
-      >
-        {faite && <IconeCoche className="size-3" />}
-        {enCours && <span className="size-1.5 rounded-full bg-amber-500" />}
-      </span>
-      <span
-        className={
-          faite
-            ? "text-neutral-400 line-through dark:text-neutral-500"
-            : "text-neutral-700 dark:text-neutral-300"
-        }
-      >
-        {etape.libelle}
-        <span className="sr-only"> — {ETAT_EN_TOUTES_LETTRES[etape.etat]}</span>
-      </span>
-    </li>
   );
 }
 

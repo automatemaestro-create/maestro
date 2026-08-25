@@ -39,6 +39,7 @@ from maestro.controltower.chat import ChatStore, RepondeurScripte
 from maestro.controltower.events import (
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DEMANDE,
     Event,
@@ -57,6 +58,7 @@ from maestro.detail_tache import (
     EtapeTache,
     LienUtile,
 )
+from maestro.plan_run import NoeudPlan
 from maestro.telemetry.usage import StepUsage
 
 #: Écoute par défaut : locale, même défaut que `maestro-api` — et que l'UI
@@ -79,6 +81,51 @@ PERIODE_PULSATION_S = 20.0
 
 #: Respiration entre deux statuts d'une même tâche : l'œil voit la carte bouger.
 PAUSE_ENTRE_STATUTS_S = 0.8
+
+#: **Le plan du run** (#490), tel que la décomposition l'aurait rendu — publié une
+#: fois, sur `run.plan`, juste après l'activité de planification qu'il détaille.
+#:
+#: Sans lui la démo rend un graphe `plan_connu: false` : des nœuds reconstruits
+#: des seules tâches vues, tous au niveau 0 et **sans une arête**. Le dessin est
+#: le même, ce qu'on en conclut ne l'est pas — et la vue pipeline (#491), qui est
+#: précisément l'écran que cette démo doit montrer, n'y aurait rien à montrer
+#: d'autre qu'une file de boîtes grises.
+#:
+#: La topologie reprend celle de l'exemple de docs/05 §6.11, sur les tâches du
+#: scénario : le schéma d'abord, l'API et la maquette **en parallèle** derrière —
+#: deux tâches sans dépendance entre elles, donc au même niveau —, la CI au bout.
+#: Elle porte aussi l'**ossature de checklist** (#489), des libellés seuls : c'est
+#: ce qui rend lisible une tâche qui n'a pas encore démarré.
+PLAN_DEMO: tuple[NoeudPlan, ...] = (
+    NoeudPlan(
+        id="demo-t1",
+        titre="Concevoir le schéma SQL de la table contacts",
+        etapes=("Lister les entités", "Écrire la migration"),
+    ),
+    NoeudPlan(
+        id="demo-t2",
+        titre="Implémenter l'API REST des contacts (créer / lister)",
+        dependances=("demo-t1",),
+        etapes=(
+            "Définir le contrat OpenAPI",
+            "Implémenter la création",
+            "Implémenter la liste paginée",
+            "Tests d'intégration",
+        ),
+    ),
+    NoeudPlan(
+        id="demo-t4",
+        titre="Maquette de l'écran de gestion des contacts",
+        dependances=("demo-t1",),
+        etapes=("Cadrer les écrans", "Poser la maquette"),
+    ),
+    NoeudPlan(
+        id="demo-t3",
+        titre="Pipeline CI et déploiement de l'API",
+        dependances=("demo-t2",),
+        etapes=("Écrire le workflow", "Brancher le déploiement"),
+    ),
+)
 
 
 async def _avancer_tache(
@@ -164,6 +211,22 @@ async def _scenario(bus: EventBus) -> None:
             # tâches (#222) : sans ce champ, le total filtré par projet serait
             # inférieur à la somme des runs de ce projet.
             projet_id=PROJET_ID,
+        )
+    )
+    # Deux événements pour une même étape, et c'est voulu (#490) : celui du
+    # dessus dit ce que la planification a **coûté**, celui-ci ce qu'elle a
+    # **décidé**. Sans lui, la vue pipeline (#491) n'aurait que des nœuds
+    # reconstruits, sans une arête — le seul écran que cette démo n'a jamais su
+    # montrer.
+    await bus.publish(
+        Event(
+            type=EVENEMENT_RUN_PLAN,
+            run_id=RUN_ID,
+            agent="orchestrateur",
+            role="Orchestrateur",
+            detail="4 tâche(s), 3 enchaînement(s)",
+            projet_id=PROJET_ID,
+            plan=list(PLAN_DEMO),
         )
     )
     await asyncio.sleep(1)
