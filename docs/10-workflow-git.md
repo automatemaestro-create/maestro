@@ -2515,13 +2515,14 @@ nominal) : la **PR de la branche est mergée**, ou le **ticket est fermé** (ré
 doublon). Tout le reste est conservé — y compris un verdict **inconnu** (`gh` absent, hors ligne,
 ticket illisible) : ne rien savoir n'autorise rien.
 
-**Trois refus**, dans cet ordre :
+**Quatre refus**, dans cet ordre :
 
 | Refus | Pourquoi |
 |---|---|
 | le worktree de la **session courante** | on ne se retire pas le sol sous les pieds |
-| un worktree porteur de **travail non sauvegardé** | signalé, jamais supprimé en silence — mieux vaut 535 Mo de trop qu'un commit perdu |
 | un verdict autre que « fini » | le nom `chore/152-…` n'est pas une preuve de merge (§6) |
+| un worktree porteur de **travail non sauvegardé** | signalé, jamais supprimé en silence — mieux vaut 535 Mo de trop qu'un commit perdu |
+| un worktree qu'une **autre session vivante occupe** (#503, ci-dessous) | le premier refus ne protège que l'appelant ; le danger, lui, est global au poste |
 
 Le second refus a une subtilité qui décide de tout : **le projet merge en squash**. Les commits
 d'une branche mergée ne sont donc jamais des ancêtres de `main`, et GitLab supprime la branche
@@ -2560,6 +2561,64 @@ puis retirer (le garde-fou de #152 ci-dessus, écrit une seule fois dans le scri
 `MAESTRO_WORKTREE_GC=0` désactive le passage automatique ; les tests, eux, imposent le verdict par
 `MAESTRO_WORKTREE_VERDICT` et tournent donc sans réseau ni `gh`
 ([`test_worktree.py`](../tests/test_worktree.py)).
+
+#### Le worktree d'une autre session vivante (#503)
+
+Le premier refus — « le worktree de la session courante » — protège **l'appelant**, alors que le
+danger est **global au poste**. Un run `/orchestrate` qui démarre son ticket suivant joue `ensure` →
+`gc` et balaie les worktrees soldés des **autres** sessions, y compris celles qui travaillent dedans.
+
+**Observé le 2026-08-24**, en livrant #497 depuis une session interactive pendant qu'un run tournait :
+la PR mergée à 21:00:54, le run démarre son lot suivant à 21:09:51, `gc` vide et désenregistre le
+worktree de #497 — et à 21:17 la session découvre son répertoire courant vide, sur un
+`run.sh: No such file or directory` qui ne nomme pas sa cause. Aucune donnée perdue (tout était
+mergé, et le garde-fou du travail non sauvegardé a joué), mais une session bloquée sans savoir
+pourquoi, et une coquille de plus.
+
+**Le défaut était l'ORDRE, pas le ramassage** : on supprimait le contenu, *puis* on découvrait que le
+dossier était tenu. La coquille de §9.2/#422 n'est donc pas un cas limite ici, c'est l'issue
+**normale** du scénario — alors que la même information était disponible avant. `gc` pose désormais
+la question d'abord, et **conserve en le disant** (`= #497 conservé — occupé par …`), même forme que
+le signalement du travail non sauvegardé.
+
+**Deux sources, et il en faut deux** — aucune ne voit ce que l'autre voit :
+
+| Source | Ce qu'elle voit | Son angle mort |
+|---|---|---|
+| les processus dont le **répertoire courant** est le worktree (`/proc/<pid>/cwd`) | canonique sous Linux ; sous MSYS, tout ce qu'un shell a lancé — donc le `claude.exe` d'une session de run | l'onglet **VS Code**, que l'extension lance hors de tout shell : `/proc` ne le liste pas |
+| le **registre** de Claude Code (`<config>/sessions/<PID>.json`, déjà lu par `sessions` §9.7) — `cwd`, `pid`, `sessionId` | l'onglet VS Code **au repos**, c'est-à-dire la victime de l'incident | une session qui n'écrit pas de fiche |
+
+Quatre choix à ne pas défaire :
+
+- **l'asymétrie des erreurs décide de tout** : un faux positif coûte un worktree qui survit un tour de
+  plus (le passage suivant le reprendra), un faux négatif coûte son répertoire courant à une session
+  vivante. On ratisse donc large, et on ne cherche pas à démasquer les **PID recyclés** — le
+  `procStart` du registre le permettrait, du mauvais côté de l'asymétrie ;
+- **la comparaison de chemins passe par `[ -ef ]`**, qui compare *device+inode* et non des chaînes :
+  les trois formes du même dossier — `/e/…` du shell, `E:\…` natif, `E:/…` de git — y sont égales
+  sans normalisation. Le piège récurrent de #422 est rendu **sans objet** plutôt que traité une fois
+  de plus, et le test est un **builtin** : 9 ms le balayage complet contre 280 ms à coups de
+  `readlink`, sur un chemin que tout `/ticket-start` emprunte (mesuré le 2026-08-25) ;
+- **on ne se compte pas soi-même**, et la chaîne des ancêtres n'y suffit pas : sous MSYS les
+  processus que Claude Code lance sont réparentés sur le pid 1, si bien qu'une session ne se
+  reconnaîtrait pas. On écarte donc aussi le processus dont le WINPID est celui que le registre
+  associe à `CLAUDE_CODE_SESSION_ID` — sans quoi une session qui vient de sortir du worktree par
+  `ExitWorktree` **s'interdirait le ramassage qu'elle a elle-même organisé** (#519, ci-dessus) ;
+- le refus vaut **aussi en mode ciblé** (`--iid`, #438) : cibler dit *qui est candidat*, jamais ce
+  qu'on s'autorise sur lui — sinon il serait le seul chemin par lequel un worktree habité peut
+  disparaître.
+
+Un worktree occupé est un **état normal** : le signalement est donc **muet en `--auto`**, comme les
+autres « conservé », et un `/ticket-start` ne s'ouvre pas sur une ligne par session en vol.
+`MAESTRO_WORKTREE_OCCUPE=0` éteint la détection ; les tests, eux, la remplacent par une commande
+(même couture que `MAESTRO_WORKTREE_VERDICT`) **et** l'éprouvent pour de vrai, sur un processus
+vivant et une fiche de registre plantée — sur les **deux** plateformes, l'écart Windows/Linux étant
+exactement ce qu'une source dépendante de `/proc` peut cacher (§8.7).
+
+**Portée assumée** : le répertoire courant **exact**. Un processus posté dans un *sous*-dossier
+(`apps/web`) n'est pas vu — il retombe alors sur le comportement d'avant, coquille comprise, que le
+rattrapage ci-dessous écarte au passage suivant. Ce ticket ferme l'occasion la plus courante, il ne
+prétend pas la supprimer.
 
 #### Les coquilles que le retrait laisse derrière lui (#422)
 
