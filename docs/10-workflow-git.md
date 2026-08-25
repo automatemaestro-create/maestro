@@ -2322,6 +2322,32 @@ s'écrivent **sans barre oblique finale**, et
 [`tests/test_worktree.py`](../tests/test_worktree.py) épingle désormais l'invariant directement :
 *un worktree fraîchement monté est propre*.
 
+**La création native d'un worktree, écartée** (#520). Claude Code sait en monter un lui-même :
+`EnterWorktree` accepte un `name` au lieu d'un `path`, crée le répertoire sous
+`.claude/worktrees/<nom>` — exclu par `.git/info/exclude`, donc le clone principal reste propre —
+sur une branche `worktree-<nom>` partie d'`origin/<défaut>`. Mesuré le 2026-08-25 (CLI 2.1.215) :
+**ça fonctionne**, et ça ne remplace pas `worktree.sh create`. Trois raisons, dans l'ordre où elles
+coûtent cher :
+
+1. **Elle recopie le `.claude/settings.local.json` du clone principal tel quel** — même
+   `MAESTRO_CHROME_PROFILE`, mêmes ports Control Tower. C'est exactement la collision que
+   `reglages_claude` existe pour empêcher : le script, lui, hérite du fichier voisin *puis*
+   **impose** les trois valeurs qui doivent différer d'une session à l'autre (tableau de §9.1).
+   Deux worktrees natifs se disputeraient le verrou du profil Chrome et se tueraient la stack.
+2. **Elle ne monte que le dépôt** : pas de `.env`, pas de `.venv`/`.tools` liés, pas de
+   `node_modules` installé, pas d'atelier `.maestro/session/` (§11.7) — et une branche nommée
+   d'après le worktree, jamais d'après le ticket, donc hors de la convention dont `lib.sh` déduit
+   l'iid (§1).
+3. **Son `remove` supprime la branche**, là où `create`, `remove` et `gc` n'y touchent **jamais** :
+   la suppression appartient à `cleanup-merged` (§9.5) et n'a lieu que sur confirmation du merge par
+   la forge (§6, §9.2).
+
+⚠ **Ce n'est pas le blocage `.claude/` qui l'écarte** — et c'est le résultat qui aurait tranché dans
+l'autre sens s'il était tombé autrement. Le refus dur en écriture sous `.claude/` (#229, mesuré par
+#238, §11.7) **ne s'applique pas** à l'intérieur d'un tel worktree : `Write` comme `bash` y
+écrivent. Le noter évite de rouvrir l'étude en croyant la question pendante : ce qui écarte la
+création native est tout ce que `worktree.sh create` fait et qu'elle ne fait pas, rien d'autre.
+
 ### 9.1 Monté d'office par `/ticket-start` (#181)
 
 Ces trois commandes restent disponibles, mais **on n'a plus à y penser** : `/ticket-start` monte
@@ -2375,6 +2401,38 @@ s'installe ticket par ticket, sans migration.
 > pour un ticket qui démarre la stack ou pilote le navigateur, les passer explicitement, ou ouvrir
 > une **session neuve** sur le worktree (elle, chargera son `settings.local.json`). Pour tous les
 > autres — script, backend, doc — la relocalisation est complète.
+
+**En revanche elle isole les commandes, et plus largement qu'on ne le croit** (#520). Toute session
+relocalisée par `EnterWorktree` passe sous une **garde d'isolation** du CLI, qui juge le **texte** de
+chaque appel `Bash` et refuse ce dont elle ne peut pas établir que ça reste dans le worktree. Mesuré
+le 2026-08-25 (CLI 2.1.215) :
+
+| Refusé | Passe |
+|---|---|
+| toute commande jugée « *too complex to verify that it stays inside the worktree* » — une **boucle `for` sans le moindre `git`** suffit | `&&`, `\|`, `$(…)`, `if/then`, heredocs |
+| `git -C <clone principal>` (« *redirects git to the shared checkout via `-C`* ») | `bash scripts/…` dont le script vise le clone principal **de l'intérieur** |
+
+⚠ Colonne de droite : ces formes passent **la garde d'isolation**, ce qui ne dit rien de la couche
+**permissions**, qui les juge séparément et en refuse plusieurs (§11.7). Deux couches distinctes,
+deux verdicts à ne pas confondre.
+
+**Pourquoi les scripts du dépôt y échappent** : la garde juge le texte de la commande que la session
+lance, jamais ce qu'un script appelle ensuite — le principe exact de `guard.sh` et du `deny` du
+dépôt (§6, §11.6). C'est ce qui laisse `sync-main` (§9.3), `cleanup-merged` (§9.5) et `gc` (§9.2)
+fonctionner depuis un worktree alors qu'ils visent tous le clone principal, et `worktree.sh list`
+répondre normalement. Le geste, face à un tel refus, est donc de **passer par un script du dépôt** —
+jamais de réécrire une règle.
+
+**Et pourquoi les runs autonomes n'y sont pas soumis** : la garde ne s'arme qu'à la relocalisation.
+`scripts/orchestrate/run.sh` lance ses sessions **dans** le worktree (répertoire courant), sans
+jamais appeler `EnterWorktree` — aucun journal de `.maestro/orchestrate/` n'en porte trace. Le
+verdict `ICI` du tableau ci-dessus a le même effet, pour la même raison : une session déjà sur place
+n'est pas relocalisée, donc pas gardée (vérifié le 2026-08-25 depuis un worktree en `ICI` —
+`for f in a b; do echo hi; done` passe).
+
+⚠ **Le défaut n'est pas la garde, c'est son message** : il parle de git là où aucun git n'est en
+cause. Un `for` refusé « pour cause de git » envoie chercher une règle de permission qui n'existe
+pas — c'est exactement le mauvais diagnostic que §11.7 nomme.
 
 Conséquence de bord : `start-brief` (étape 1) ne **refuse** plus un arbre de travail non propre, il
 le **signale**. Puisque le travail part dans un autre répertoire, des changements non commités dans
@@ -4164,6 +4222,21 @@ désormais sur un **classement**, et il range chaque refus dans **une seule** fa
 | **Blocage dur `.claude/`** | refus du CLI, en amont de la liste (#229, mesuré par #238) | rien : le ticket se traite en session interactive |
 | **Refus voulu (`ask`/`deny`)** | une règle du dépôt le demande, personne ne peut approuver | rien : c'est le contrat de la règle |
 | **Forme immatchable** | saut de ligne, `$(…)`, heredoc — quoi qu'elle habille | l'outil `Write`, puis le **chemin** (tableau ci-dessous) |
+
+**Une sixième famille, que ce tableau ne porte pas** (#520) : la **garde d'isolation d'un worktree**
+(§9.1). Le CLI refuse à une session relocalisée par `EnterWorktree` toute commande dont il ne peut
+pas établir qu'elle reste dans le worktree — une **boucle `for` sans le moindre `git`** suffit, et
+son message parle pourtant de git. Le refus n'a alors rien à voir avec l'`allow` : ni trou, ni
+échappée, ni forme. Classé à l'œil il tombe en **« forme immatchable »**, la famille la plus proche
+— qui envoie corriger `prompt_ticket` ou passer par `Write`, quand le geste est de **passer par un
+script du dépôt**, seul objet que la garde ne lit pas.
+
+Elle n'est pas dans le tableau parce qu'elle **ne peut pas s'y trouver** : `journal.sh refus` ne lit
+que les `permission_denials` de **sessions de run**, et une session de run n'est jamais relocalisée
+— `run.sh` lance la sienne **dans** le worktree, sans `EnterWorktree` (§9.1, §11.3). Cette famille
+vit donc entièrement **hors** du seul régime que la commande observe, et c'est en session
+interactive qu'on la rencontre. La nommer ici sert à ne pas la reclasser au premier refus lu de
+travers.
 
 Trois choix de méthode, sans lesquels le chiffre ne voudrait rien dire :
 
