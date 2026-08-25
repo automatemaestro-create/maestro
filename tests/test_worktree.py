@@ -17,11 +17,13 @@ un `.env` présent, des artefacts lourds partagés, et une branche que le retrai
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1026,6 +1028,265 @@ def test_gc_ignore_une_branche_hors_convention(depot: Depot) -> None:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "hors convention" in acheve.stdout
     assert depot.worktree("experimentation").exists()
+
+
+# --- Le worktree d'une AUTRE session vivante (#503) ----------------------------------------------
+# `gc` refusait déjà le worktree de la session COURANTE — mais « courante » veut dire *celle qui
+# appelle*, pas *celles qui vivent sur la machine* : un run qui démarre son ticket suivant joue
+# `ensure` → `gc` et balayait les worktrees soldés des autres sessions, y compris celles qui
+# travaillaient dedans (observé le 2026-08-24 sur #497).
+#
+# Deux sources se relaient, et chacune a son test, parce qu'aucune ne voit ce que l'autre voit : les
+# processus dont le répertoire courant est le worktree, et le registre des sessions Claude Code —
+# seul à voir un onglet VS Code au repos, c'est-à-dire la victime de l'incident.
+
+
+@contextlib.contextmanager
+def _occupant(ou: Path) -> Iterator[subprocess.Popen[str]]:
+    """Un processus vivant dont le répertoire courant est `ou`, tué à la sortie du bloc.
+
+    Lancé par **bash** et non par `sys.executable`, pour une raison de plateforme : sous MSYS,
+    `/proc` ne liste que les processus MSYS, et un python natif y serait invisible — le test
+    passerait sous Linux et mentirait sous Windows, l'écart exact que la suite existe pour attraper.
+
+    La ligne lue sur sa sortie est une **barrière** et non un `sleep` (#292) : elle prouve que le
+    processus tourne, là où une attente arbitraire ferait dépendre le verdict de la charge du poste.
+    """
+    assert BASH is not None
+    processus = subprocess.Popen(  # noqa: S603
+        [BASH, "-c", "printf 'pret\\n'; sleep 60"],
+        cwd=str(ou),
+        stdout=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    try:
+        assert processus.stdout is not None
+        assert processus.stdout.readline().strip() == "pret"
+        yield processus
+    finally:
+        processus.kill()
+        processus.wait(timeout=30)
+
+
+def _fiche_de_session(depot: Depot, pid: int, cwd: Path, *, identifiant: str, nom: str) -> None:
+    """Plante une fiche du registre de Claude Code, telle qu'il l'écrit.
+
+    Trois détails la font ressembler à la vraie, et les trois comptent : le chemin y voyage
+    **échappé** (« E:\\\\… », ce que `json.dumps` produit tout seul) ; le JSON est **compact**, sans
+    espace après les deux-points — le défaut de `json.dumps` en met, et il suffit à ne plus rien
+    reconnaître ; et le fichier n'a **aucun saut de ligne final** — `read` rend alors 1 tout en
+    ayant affecté la variable, ce qui suffit à faire lire le registre entier comme vide.
+    """
+    racine = depot.home / ".claude" / "sessions"
+    racine.mkdir(parents=True, exist_ok=True)
+    (racine / f"{pid}.json").write_text(
+        json.dumps(
+            {"pid": pid, "sessionId": identifiant, "cwd": str(cwd), "name": nom},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def test_gc_conserve_et_nomme_un_worktree_solde_qu_un_processus_occupe(depot: Depot) -> None:
+    """Le cœur de #503 : soldé côté forge, mais quelqu'un est dedans.
+
+    Les trois exigences du ticket tiennent dans les dernières assertions — conservé, **nommé**, et
+    **non désenregistré** : c'est le désenregistrement qui fabriquait la coquille de #422, en
+    supprimant d'abord le contenu pour découvrir ensuite que le dossier était tenu.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.worktree()):
+        acheve = depot.lance("gc")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 conservé" in acheve.stdout
+    assert "occupé par" in acheve.stdout
+    assert "0 retiré(s)" in acheve.stdout
+    # Non désenregistré : git le connaît encore, et le `.git` qu'il pose à la racine d'un worktree
+    # lié est toujours là — c'est le repère même dont `coquilles()` se sert.
+    assert (depot.worktree() / ".git").exists()
+    assert BRANCHE in depot.git("worktree", "list")
+    # Zéro coquille : rien n'a été supprimé, donc rien à rattraper au passage suivant.
+    assert "coquille" not in acheve.stdout
+    assert (depot.worktree() / ".env").is_file()
+
+
+def test_gc_retire_le_meme_worktree_une_fois_le_processus_parti(depot: Depot) -> None:
+    """Le contrôle du test précédent : sans occupant, tout le reste étant identique, il est retiré.
+
+    Sans ce pendant, « conservé » ne prouverait rien — un `gc` cassé le rendrait aussi.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.worktree()):
+        occupe = depot.lance("gc")
+    apres = depot.lance("gc")
+
+    assert "#152 conservé" in occupe.stdout
+    assert "#152 retiré" in apres.stdout, apres.stdout
+    assert not depot.worktree().exists()
+
+
+def test_gc_voit_la_session_du_registre_que_les_processus_ne_montrent_pas(depot: Depot) -> None:
+    """La source qui voit l'onglet VS Code au repos — la victime de l'incident.
+
+    Son `claude.exe` est lancé par l'extension, hors de tout shell : `/proc` ne le liste pas sous
+    MSYS. Le processus vivant est donc posté **ailleurs** ici, pour que seul le registre puisse
+    répondre — et le nom de l'onglet est rendu, parce qu'un pid seul ne dit à personne qui déranger.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.racine) as ailleurs:
+        _fiche_de_session(
+            depot,
+            ailleurs.pid,
+            depot.worktree(),
+            identifiant="d1e2-session-voisine",
+            nom="onglet-du-voisin",
+        )
+        acheve = depot.lance("gc")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 conservé" in acheve.stdout
+    assert "onglet-du-voisin" in acheve.stdout
+    assert depot.worktree().exists()
+
+
+def test_gc_ignore_une_fiche_de_session_dont_le_processus_est_mort(depot: Depot) -> None:
+    """Le registre est indexé par PID et ses fiches SURVIVENT aux processus (#397).
+
+    Sans contrôle de vivacité, la première session à avoir travaillé dans un worktree l'y
+    protégerait pour toujours — le ramassage ne ramasserait plus jamais rien.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.racine) as defunt:
+        pid_mort = defunt.pid
+    _fiche_de_session(
+        depot, pid_mort, depot.worktree(), identifiant="ab12-session-finie", nom="onglet-clos"
+    )
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout, acheve.stdout
+    assert not depot.worktree().exists()
+
+
+def test_gc_ne_se_compte_pas_lui_meme_parmi_les_occupants(depot: Depot) -> None:
+    """La garantie que #519 exige : /ticket-finish sort du worktree, PUIS le ramasse.
+
+    Sa fiche peut encore nommer le worktree qu'elle vient de quitter — s'en tenir compte lui ferait
+    refuser le ramassage qu'elle vient elle-même d'organiser. Le test est l'exact jumeau du
+    précédent, à une seule chose près : la fiche porte l'identifiant de la session appelante.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.racine) as moi:
+        _fiche_de_session(
+            depot, moi.pid, depot.worktree(), identifiant="c0ffee-moi", nom="ma-propre-session"
+        )
+        acheve = depot.lance(
+            "gc", environnement={"CLAUDE_CODE_SESSION_ID": "c0ffee-moi"}
+        )
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout, acheve.stdout
+    assert not depot.worktree().exists()
+
+
+def test_le_garde_fou_du_travail_non_sauvegarde_garde_le_mot_de_la_fin(depot: Depot) -> None:
+    """Occupé ET porteur de travail non commité : c'est le travail qu'on nomme, pas l'occupant.
+
+    L'ordre est le contenu de la décision — le garde-fou de #197 reste le dernier mot parce qu'il
+    nomme ce qui pourrait se PERDRE, là où l'occupation ne nomme que ce qu'on n'a pas à toucher.
+    Dans les deux cas le worktree est conservé, donc rien n'est en jeu que le message.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    (depot.worktree() / "README.md").write_text("modifié", encoding="utf-8", newline="\n")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.worktree()):
+        acheve = depot.lance("gc")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "non commité" in acheve.stdout
+    assert "occupé par" not in acheve.stdout
+    assert depot.worktree().exists()
+
+
+def test_gc_check_annonce_conserve_un_worktree_occupe(depot: Depot) -> None:
+    """`--check` PRÉDIT `gc` : annoncer « à retirer » ce qu'il conserverait serait un faux plan."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.worktree()):
+        acheve = depot.lance("gc", "--check")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "occupé par" in acheve.stdout
+    assert "#152 à retirer" not in acheve.stdout
+    assert "0 à retirer" in acheve.stdout
+
+
+def test_gc_auto_reste_muet_sur_un_worktree_occupe(depot: Depot) -> None:
+    """Un worktree occupé est un état NORMAL, pas une anomalie.
+
+    Le dire à chaque /ticket-start ferait une ligne par session en vol — c'est le silence que
+    `--auto` existe pour tenir, et il vaut ici comme pour les autres « conservé ».
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.worktree()):
+        acheve = depot.lance("gc", "--auto")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert acheve.stdout.strip() == "", acheve.stdout
+    assert depot.worktree().exists()
+
+
+def test_gc_cible_refuse_lui_aussi_un_worktree_occupe(depot: Depot) -> None:
+    """Cibler dit QUI est candidat, jamais ce qu'on s'autorise sur lui (#438).
+
+    C'est le mode que le pilote joue après chaque merge, et depuis #519 la clôture interactive
+    aussi : si un refus valait pour le balayage et pas pour lui, il serait le seul chemin par lequel
+    un worktree habité peut disparaître.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.worktree()):
+        acheve = depot.lance("gc", "--iid", "152")
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "occupé par" in acheve.stdout
+    assert depot.worktree().exists()
+    assert (depot.worktree() / ".git").exists()
+
+
+def test_la_detection_d_occupation_s_eteint(depot: Depot) -> None:
+    """`MAESTRO_WORKTREE_OCCUPE=0` — l'échappatoire d'un poste où la détection se tromperait.
+
+    Même statut que MAESTRO_WORKFLOW_POSE : une décision qu'on peut reprendre, jamais un défaut.
+    """
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    with _occupant(depot.worktree()):
+        acheve = depot.lance("gc", environnement={"MAESTRO_WORKTREE_OCCUPE": "0"})
+
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "occupé par" not in acheve.stdout
 
 
 # --- Le ramassage CIBLÉ : le quatrième déclencheur, celui d'après un merge (#438) ----------------

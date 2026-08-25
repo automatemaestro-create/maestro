@@ -1331,6 +1331,246 @@ travail_non_sauvegarde() {
   printf '%s %s' "${modifs:-0}" "${commits:-0}"
 }
 
+# --- Qui occupe un worktree ? (#503) ----------------------------------------------------------------
+# `gc` refuse depuis toujours de retirer le worktree de la SESSION COURANTE — mais « courante » veut
+# dire *celle qui appelle*, pas *celles qui vivent sur la machine* : la protection est locale à
+# l'appelant alors que le danger est global au poste. Un run `/orchestrate` qui démarre son ticket
+# suivant joue `ensure` → `gc`, et balaie les worktrees soldés des AUTRES sessions, y compris celles
+# qui sont en train de travailler dedans. Observé le 2026-08-24 : le worktree de #497 vidé sous une
+# session interactive qui venait d'en merger la PR et y était restée, découverte huit minutes plus
+# tard sur un « run.sh: No such file or directory » qui ne nommait pas sa cause.
+#
+# Le vrai défaut est l'ORDRE, et pas le ramassage : on supprime le contenu, PUIS on découvre que le
+# dossier est tenu (« Permission denied » sous Windows) — et `git worktree remove` désenregistre
+# quand même. La coquille de #422 est donc l'issue NORMALE de ce scénario et non un cas limite,
+# alors que la même information — « quelqu'un est dedans » — était disponible AVANT.
+#
+# Deux sources, et il en faut deux : aucune ne voit ce que l'autre voit.
+#   A. les processus dont le RÉPERTOIRE COURANT est le worktree (`/proc/<pid>/cwd`). Canonique sous
+#      Linux ; sous MSYS `/proc` ne liste que les processus MSYS et ceux qu'ils ont lancés — donc le
+#      `claude.exe` d'une session de run (vérifié le 2026-08-25), mais PAS celui d'un onglet VS Code,
+#      que l'extension lance hors de tout shell.
+#   B. le REGISTRE de Claude Code (`<config>/sessions/<PID>.json`, déjà lu par `sessions` #397), qui
+#      porte le `cwd`, le `pid` et le `sessionId` de chaque session. C'est lui, et lui seul, qui voit
+#      l'onglet VS Code au repos — c'est-à-dire exactement la victime de l'incident.
+#
+# L'asymétrie des erreurs décide du reste : un FAUX POSITIF coûte un worktree qui survit un tour de
+# plus (le passage suivant le reprendra), un FAUX NÉGATIF coûte son répertoire courant à une session
+# vivante. On ratisse donc large, et on ne cherche pas à démasquer les PID recyclés — le `procStart`
+# du registre le permettrait, pour un gain qui ne vaut pas sa complexité du bon côté de l'asymétrie.
+#
+# MAESTRO_WORKTREE_OCCUPE remplace la détection par une commande qui reçoit le chemin et imprime
+# l'occupant (rien = libre) : même couture que MAESTRO_WORKTREE_VERDICT. `0` l'éteint, comme
+# MAESTRO_WORKFLOW_POSE — de quoi débloquer un poste où la détection se tromperait.
+
+# pids_de_soi : la chaîne des ancêtres du processus courant, soi compris.
+#
+# « On ne se compte pas soi-même » généralise le refus qui existait déjà (le worktree de la session
+# courante), et #519 l'a rendu nécessaire : /ticket-finish sort du worktree par `ExitWorktree` PUIS
+# joue `gc --iid` depuis le clone principal — si le `claude.exe` de la session gardait le worktree
+# pour répertoire courant, elle s'interdirait à elle-même le ramassage qu'elle vient d'organiser.
+#
+# Lecture de `/proc/<pid>/stat` sans fork, même découpage que `pilote.sh` : le nom de la commande est
+# entre parenthèses et peut contenir des espaces, on coupe donc APRÈS la dernière parenthèse
+# fermante. Bornée à 32 remontées — une table de processus incohérente ne doit pas faire boucler un
+# ramassage. Sans `/proc` (Windows hors MSYS), on ne rend que soi, ce qui suffit : la source A n'a
+# alors rien à balayer non plus.
+#
+# ⚠ `2>/dev/null` passe AVANT la redirection d'entrée, et l'ordre est le contenu de la ligne : c'est
+# le SHELL qui écrit « No such file or directory » quand une redirection échoue, avant même que
+# `read` s'exécute — la taire demande que stderr soit déjà détourné à ce moment-là. La chaîne
+# s'arrête normalement sur un ppid que `/proc` ne connaît pas (sous MSYS elle atteint le pid 1, qui
+# n'y figure pas), donc cet échec est le cas NOMINAL et non une anomalie à rapporter.
+pids_de_soi() {
+  local pid=$$ n=0 s ppid
+  while [ "$n" -lt 32 ]; do
+    printf ' %s' "$pid"
+    read -r s 2>/dev/null <"/proc/$pid/stat" || return 0
+    s="${s##*) }"                                  # « <état> <ppid> … »
+    s="${s#* }"                                    # « <ppid> … »
+    ppid="${s%% *}"
+    case "$ppid" in '' | *[!0-9]* | 0) return 0 ;; esac
+    pid="$ppid"
+    n=$((n + 1))
+  done
+}
+
+# occupants_proc <chemin> : les pid dont le répertoire courant EST ce worktree, hors soi-même.
+#
+# `[ <lien> -ef <chemin> ]` compare device+inode et non des chaînes : les trois formes du même
+# dossier — « /e/… » du shell, « E:\… » natif, « E:/… » de git — y sont égales sans normalisation.
+# C'est le piège de #422 rendu sans objet plutôt que traité une fois de plus. C'est aussi un test
+# BUILTIN, donc sans fork : 9 ms le balayage complet contre 280 ms à coups de `readlink` (mesuré le
+# 2026-08-25 sous MSYS), sur un chemin que tout /ticket-start emprunte.
+#
+# Portée assumée : le répertoire courant EXACT. Un processus posté dans un SOUS-dossier (`apps/web`)
+# n'est pas vu — il retombe alors sur le comportement d'avant ce ticket, coquille comprise, que le
+# rattrapage de #422 écarte au passage suivant. Élargir demanderait de lire le lien, donc un fork par
+# processus, pour un cas qui n'est pas celui de l'incident.
+#
+# Deux exclusions, et il en faut deux : la chaîne des ancêtres NE SUFFIT PAS. Sous MSYS les processus
+# que Claude Code lance sont réparentés sur le pid 1 (mesuré : la chaîne d'un outil `Bash` s'arrête
+# avant d'atteindre le `claude.exe` de sa propre session), si bien que la session ne se reconnaîtrait
+# pas elle-même. On écarte donc AUSSI le processus dont le WINPID est celui que le registre associe à
+# `CLAUDE_CODE_SESSION_ID` — sans quoi une session qui vient de sortir du worktree par `ExitWorktree`
+# s'interdirait le ramassage qu'elle a elle-même organisé (#519). `/proc/<pid>/winpid` est la table
+# de correspondance des deux mondes, et elle se lit sans fork.
+occupants_proc() {
+  local chemin="$1" soi mien d pid winpid trouves=""
+  [ -d /proc ] || return 0
+  # `$BASHPID` est ajouté ICI et pas dans `pids_de_soi` : `$$` désigne le shell d'origine jusque dans
+  # un sous-shell, or ce balayage s'exécute justement dans celui qu'ouvre `$(occupants_proc …)` — il
+  # se compterait lui-même parmi les occupants, son répertoire courant étant celui de l'appelant.
+  soi=" $BASHPID $(pids_de_soi) "
+  charge_sessions_ouvertes
+  mien="$MA_SESSION_PID"
+  for d in /proc/[0-9]*; do
+    pid="${d##*/}"
+    case "$soi" in *" $pid "*) continue ;; esac
+    if [ -n "$mien" ]; then
+      if [ "$WINDOWS" = 1 ]; then
+        read -r winpid 2>/dev/null <"$d/winpid" && [ "$winpid" = "$mien" ] && continue
+      elif [ "$pid" = "$mien" ]; then
+        continue
+      fi
+    fi
+    [ "$d/cwd" -ef "$chemin" ] || continue
+    trouves="$trouves $pid"
+  done
+  printf '%s' "$trouves"
+}
+
+# processus_vivant <pid> : ce numéro désigne-t-il encore quelque chose ?
+#
+# Deux mondes sous Windows (même constat que `pilote.sh`) : le registre enregistre le PID WINDOWS
+# d'un `claude.exe` natif, que `kill -0` n'atteint pas et que `/proc` ne liste pas — pire, il
+# répondrait sur un processus MSYS sans rapport qui porterait le même numéro. `ps -W` est la seule
+# vue des deux mondes, son WINPID est en 4e colonne, et il se lit UNE fois par invocation (84 ms pour
+# 392 lignes sur le poste de référence).
+WINPIDS_VIVANTS=""
+processus_vivant() {
+  local pid="$1"
+  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  if [ "$WINDOWS" = 1 ]; then
+    [ -n "$WINPIDS_VIVANTS" ] ||
+      WINPIDS_VIVANTS=" $(ps -W 2>/dev/null | awk 'NR > 1 { printf "%s ", $4 }') "
+    case "$WINPIDS_VIVANTS" in *" $pid "*) return 0 ;; *) return 1 ;; esac
+  fi
+  # Ailleurs l'entrée de /proc suffit et ne coûte rien ; `kill -0`, gardé en repli, refuserait le
+  # processus d'un AUTRE utilisateur (EPERM) qui est pourtant bien vivant.
+  [ -d "/proc/$pid" ] && return 0
+  kill -0 "$pid" 2>/dev/null
+}
+
+# fiche_champ <contenu> <clé> : la valeur d'une clé du registre, rendue dans FICHE_VALEUR.
+#
+# Elle part dans une globale et non sur stdout : quatre `$(…)` par fiche coûteraient quatre forks
+# (~19 ms pièce sous MSYS) sur un chemin joué à chaque /ticket-start — même raison que RETRAIT_ERREUR
+# et COQUILLES_RAPPORT, qui ne rendent rien non plus.
+#
+# Le registre écrit un JSON à plat et sans espaces : `"clé":"valeur"` ou `"clé":123`. Le motif exige
+# le guillemet qui OUVRE la clé, sans quoi `sessionId` matcherait dans `bridgeSessionId`. Une valeur
+# portant un `"` échappé serait tronquée : Windows l'interdit dans un chemin, et `sessions_texte` vit
+# déjà avec la même limite.
+FICHE_VALEUR=""
+fiche_champ() {
+  local s="$1" cle="$2" v
+  FICHE_VALEUR=""
+  case "$s" in *"\"$cle\":"*) ;; *) return 1 ;; esac
+  v="${s#*\"$cle\":}"
+  v="${v# }"                                       # tolère un JSON espacé, que le registre n'écrit pas
+  case "$v" in
+    '"'*)
+      v="${v#\"}"; v="${v%%\"*}"
+      v="${v//\\\\/\\}" ;;                         # un chemin Windows voyage en « \\ » dans le JSON
+    *) v="${v%%,*}"; v="${v%%\}*}" ;;
+  esac
+  FICHE_VALEUR="$v"
+}
+
+# charge_sessions_ouvertes : les sessions Claude Code encore vivantes, « <cwd><TAB><pid><TAB><nom> ».
+#
+# Lue UNE fois par invocation et non par worktree : le registre est indépendant du candidat qu'on
+# examine, et le relire à chaque ligne rendrait le coût quadratique.
+#
+# On s'écarte soi-même par `CLAUDE_CODE_SESSION_ID` (#424) : c'est le pendant, pour cette source, du
+# refus « session courante » de `gc`, et c'est ce qui laisse #519 ramasser le worktree dont la
+# session vient de sortir par `ExitWorktree` — sa fiche peut encore le nommer. Le même passage note
+# au passage MON pid (MA_SESSION_PID), dont la source A a besoin pour la même raison : le registre
+# est le seul endroit qui relie une session à son processus.
+SESSIONS_OUVERTES=()
+SESSIONS_OUVERTES_LUES=0
+MA_SESSION_PID=""
+charge_sessions_ouvertes() {
+  local racine f contenu cwd pid nom
+  [ "$SESSIONS_OUVERTES_LUES" = 0 ] || return 0
+  SESSIONS_OUVERTES_LUES=1
+  racine="$(sessions_config)/sessions"
+  [ -d "$racine" ] || return 0
+  for f in "$racine"/*.json; do
+    [ -e "$f" ] || continue
+    # ⚠ Le `|| [ -n "$contenu" ]` n'est pas une précaution : une fiche est du JSON d'UNE ligne SANS
+    # saut final, et `read` rend 1 sur une fin de fichier — même après avoir affecté la variable.
+    # Sans lui, le registre entier est lu comme vide et la source B ne voit jamais personne.
+    contenu=""
+    read -r contenu 2>/dev/null <"$f" || [ -n "$contenu" ] || continue
+    fiche_champ "$contenu" pid || continue
+    pid="$FICHE_VALEUR"
+    if fiche_champ "$contenu" sessionId && [ -n "$FICHE_VALEUR" ] &&
+       [ "$FICHE_VALEUR" = "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+      MA_SESSION_PID="$pid"
+      continue
+    fi
+    fiche_champ "$contenu" cwd || continue
+    cwd="$FICHE_VALEUR"
+    [ -n "$cwd" ] || continue
+    processus_vivant "$pid" || continue
+    fiche_champ "$contenu" name || FICHE_VALEUR=""
+    nom="$FICHE_VALEUR"
+    SESSIONS_OUVERTES+=("$cwd"$'\t'"$pid"$'\t'"$nom")
+  done
+}
+
+# occupe_par <chemin> : 0 si quelque chose de vivant occupe ce worktree, et OCCUPANT le nomme.
+#
+# Rend son verdict par une globale, comme RETRAIT_ERREUR : un appelant qui le capturerait par `$(…)`
+# le lirait depuis un sous-shell, où le cache de `ps -W` et celui du registre mourraient avec lui —
+# soit un balayage complet des processus par worktree examiné.
+OCCUPANT=""
+occupe_par() {
+  local chemin="$1" pids entree cwd pid nom desc=""
+  OCCUPANT=""
+  [ "${MAESTRO_WORKTREE_OCCUPE:-}" != 0 ] || return 1
+  if [ -n "${MAESTRO_WORKTREE_OCCUPE:-}" ]; then
+    OCCUPANT="$("$MAESTRO_WORKTREE_OCCUPE" "$chemin" 2>/dev/null)" || OCCUPANT=""
+    [ -n "$OCCUPANT" ]
+    return
+  fi
+
+  # Le registre EN PREMIER, et l'ordre compte : `occupants_proc` s'exécute dans un sous-shell (il
+  # rend sa liste sur stdout), donc tout ce qu'il chargerait mourrait avec lui — MA_SESSION_PID
+  # compris, dont il a besoin pour ne pas compter la session appelante parmi les occupants.
+  charge_sessions_ouvertes
+
+  pids="$(occupants_proc "$chemin")"
+  if [ -n "$pids" ]; then
+    # `occupants_proc` rend « <espace>pid[ pid…] » : deux espaces valent deux processus.
+    case "$pids" in
+      ' '*' '*) desc="des processus vivants (pid$pids)" ;;
+      *) desc="un processus vivant (pid$pids)" ;;
+    esac
+  fi
+
+  for entree in ${SESSIONS_OUVERTES[@]+"${SESSIONS_OUVERTES[@]}"}; do
+    IFS=$'\t' read -r cwd pid nom <<< "$entree"
+    [ -n "$cwd" ] && [ "$cwd" -ef "$chemin" ] || continue
+    desc="${desc:+$desc, }la session ${nom:+« $nom » }(pid $pid)"
+  done
+
+  OCCUPANT="$desc"
+  [ -n "$OCCUPANT" ]
+}
+
 # retire_worktree <chemin> <force 0|1> <verbeux 0|1> : la séquence de retrait, écrite UNE FOIS —
 # délier PUIS retirer. L'ordre est le garde-fou de #152 : `git worktree remove` descend dans les
 # jonctions et viderait le .venv et le node_modules du CLONE PRINCIPAL. Rend 0 si le worktree est
@@ -1586,6 +1826,20 @@ commande_gc() {
       signales=$((signales + 1))
       gardes=$((gardes + 1))
       rapport="$rapport$(alerte "#$iid conservé — $detail dans $(chemin_natif "$chemin")$cycle")"$'\n'
+      continue
+    fi
+
+    # Quelqu'un est-il DEDANS ? (#503) Le retrait d'un worktree soldé qu'une AUTRE session occupe lui
+    # retire son répertoire courant sans un mot, et laisse une coquille de #422 derrière lui : le
+    # défaut était de le découvrir après avoir supprimé le contenu, alors que la question se pose
+    # avant. Elle se pose donc ici, en dernier — APRÈS le garde-fou du travail non sauvegardé, qui
+    # garde le mot de la fin quand les deux valent : il nomme ce qui pourrait se PERDRE, là où
+    # celui-ci ne nomme que ce qu'on n'a pas à toucher, et rien ne se perd dans les deux cas.
+    if occupe_par "$chemin"; then
+      # Silencieux en --auto, comme les autres « conservé » : un worktree occupé est un état normal
+      # et non une anomalie, et le dire à chaque /ticket-start ferait une ligne par session en vol.
+      gardes=$((gardes + 1))
+      [ "$auto" = 1 ] || rapport="$rapport$(deja "#$iid conservé — occupé par $OCCUPANT")"$'\n'
       continue
     fi
 
