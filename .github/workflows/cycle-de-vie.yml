@@ -1,4 +1,10 @@
-# Pose « Terminé » à la fermeture d'un ticket (ticket #377, docs/10 §9.2).
+# Ce qu'on fait à la fermeture d'un ticket (tickets #377 et #515, docs/10 §9.2 et §5.1).
+#
+# DEUX QUESTIONS, UN SEUL ÉVÉNEMENT, UN SEUL SCRIPT : « ce ticket mérite-t-il Terminé ? » (#377) et
+# « était-il le dernier lot de son parent ? » (#515). Le second workflow qu'appelait cette seconde
+# question n'a pas été écrit, et c'est délibéré — deux workflows sur `issues: closed` se relisent
+# mal, chacun ignorant ce que l'autre vient d'écrire sur le même ticket. Ils partagent donc le job,
+# le secret et le script, qui décide pour les deux.
 #
 # Le merge d'une PR ferme le ticket (`Closes #<iid>`) mais ne touche à AUCUN état. « Terminé »
 # n'était posé qu'ensuite, par `worktree.sh gc` (#275) — donc au prochain `/ticket-start`, au
@@ -54,7 +60,7 @@ permissions:
 jobs:
   termine:
     runs-on: ubuntu-latest
-    # Un job qui dépasse la minute est un job pendu : la pose est une lecture et une mutation.
+    # Un job qui dépasse la minute est un job pendu : quelques lectures et deux mutations au plus.
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7

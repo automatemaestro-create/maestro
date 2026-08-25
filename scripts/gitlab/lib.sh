@@ -37,7 +37,10 @@
 #   • gl_issue_raw <iid>     — la vue TEXTE canonique d'un ticket (en-tête « clé:<TAB>valeur », puis
 #                              « -- », puis le corps). Tout ce qui lit un ticket passe par elle —
 #                              issue-brief, parent-of, subtickets, start-brief, branch-for,
-#                              worktree-done.
+#                              worktree-done, lots-ouverts, ferme-parent.
+#   • gh_issues_state <iid…> — « <iid><TAB>open|closed » pour N tickets en UNE lecture. La seule
+#                              source de l'OUVERT/FERMÉ d'un lot, que ni la table du backlog (bornée
+#                              à 100) ni le cycle de vie (posé après coup) ne peuvent porter.
 #   • gl_backlog_table       — la table plate TSV du backlog. Idem : subtickets, startables,
 #                              reconcile-workflow et reconcile-en-cours s'y branchent.
 #   • gl_mr_brief <branche>  — « etat<TAB>numéro<TAB>sha » de la PR d'une branche, d'où mr-state,
@@ -724,7 +727,19 @@ gl_parent_of() {
   if [ -z "$iid" ]; then echo "usage: gl_parent_of <iid>" >&2; return 2; fi
   local raw
   raw="$(gl_issue_raw "$iid")" || return 1
-  printf '%s\n' "$raw" | grep -o 'Sous-ticket de #[0-9]\+' | head -1 | grep -o '[0-9]\+$'
+  printf '%s\n' "$raw" | gl_parent_marqueur
+}
+
+# gl_parent_marqueur — cœur du parsing de gl_parent_of, séparé pour être rejoué sur un ticket DÉJÀ
+# LU (stdin = sortie de gl_issue_raw), exactement comme gl_subticket_rows l'est pour gl_subtickets.
+# Imprime l'iid du parent, rien s'il n'y a pas de marqueur.
+#
+# CE QUE LA SÉPARATION ACHÈTE : `gl_parent_of` rend « rien » aussi bien pour un ticket sans parent
+# que pour un ticket illisible, et gl_ferme_parent doit les distinguer — le premier est le cas
+# nominal (la plupart des tickets ne sont pas des lots), le second une panne à ne pas annoncer comme
+# une réponse. L'appelant lit donc le ticket lui-même et rejoue le marqueur sur ce qu'il a lu.
+gl_parent_marqueur() {
+  grep -o 'Sous-ticket de #[0-9]\+' | head -1 | grep -o '[0-9]\+$'
 }
 
 # gl_subtickets <iid-parent> -> liste ORDONNÉE des sous-tickets déclarés dans la checklist
@@ -812,6 +827,153 @@ gl_subtickets_startables() {
       }
     }
   '
+}
+
+# --- Fermeture du parent (#515, docs/10 §5.1) ---------------------------------------------------
+# Un parent de suivi ne porte ni branche ni code : aucune PR ne le ferme par un `Closes #`, et sa
+# fermeture était le SEUL geste du cycle d'un chantier resté manuel — §5.1 la décrivait comme « une
+# décision humaine/orchestrateur ». Depuis #418/#419 un run se solde TOUT MERGÉ : les lots d'un
+# parent se ferment tous dans la foulée du run, et il ne reste plus personne pour fermer le parent.
+#
+# Le déclencheur n'est pas à inventer, il est câblé depuis #377 : `issues: closed` passe à chaque
+# fermeture de ticket, quels que soient l'auteur du merge et la machine d'où il vient.
+# `scripts/github/ticket-ferme.sh` y pose « Terminé » ; il y pose désormais la seconde question,
+# celle de ces deux verbes — « ce lot était-il le dernier de son parent ? ».
+
+# gl_lots_ouverts <iid-parent> -> les lots de la checklist « ## Sous-tickets » encore OUVERTS,
+# « <iid><TAB><titre> », dans l'ordre de la checklist.
+# Codes : 0 = aucun, le parent est soldé · 3 = il en reste (listés sur stdout) · 1 = pas un parent,
+# ou lecture impossible. Le 3 plutôt qu'un 1 : « il reste des lots » est une RÉPONSE, pas une panne,
+# et l'appelant n'a pas à trancher entre les deux sur la même valeur.
+#
+# LA MESURE EST L'OUVERT/FERMÉ DU LOT, JAMAIS SON CYCLE DE VIE. C'est ce qui rend vrai, sans une
+# ligne pour lui, « un lot abandonné compte comme soldé » : « Abandonné » et « Doublon » ferment le
+# ticket au même titre que « Terminé ». Prendre le cycle de vie ferait l'inverse — un chantier dont
+# un lot a été abandonné garderait son parent ouvert pour toujours — et le ferait dépendre d'une
+# pose qui, sur le lot qu'on vient de fermer, n'a pas encore eu lieu.
+#
+# LA COCHE NE DÉCIDE DE RIEN NON PLUS : elle est tenue au fil de l'eau par /ticket-ship, donc
+# best-effort. Un parent dont la checklist a pris du retard doit se fermer quand même.
+gl_lots_ouverts() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_lots_ouverts <iid-parent>" >&2; return 2; fi
+  local raw rows ids etats restants
+  raw="$(gl_issue_raw "$iid")" || return 1
+  rows="$(printf '%s\n' "$raw" | gl_subticket_rows)"
+  if [ -z "$rows" ]; then
+    echo "Pas de section « ## Sous-tickets » dans #$iid — pas un ticket parent." >&2
+    return 1
+  fi
+  ids="$(printf '%s\n' "$rows" | cut -f1 | tr '\n' ' ')"
+  # shellcheck disable=SC2086  # la liste d'iid est délibérément éclatée en autant d'arguments.
+  etats="$(gh_issues_state $ids)" || return 1
+  # Les états voyagent par l'ENVIRONNEMENT et non par `awk -v` : `-v` interprète les échappements de
+  # sa valeur, et une donnée qui traverse ce décodage n'est plus la donnée (piège de #340).
+  restants="$(printf '%s\n' "$rows" | MAESTRO_ETATS="$etats" awk -F '\t' '
+    BEGIN {
+      n = split(ENVIRON["MAESTRO_ETATS"], lignes, "\n")
+      for (i = 1; i <= n; i++) { split(lignes[i], champs, "\t"); etat[champs[1]] = champs[2] }
+    }
+    # Un lot dont la réponse ne porte aucun état (ticket supprimé, réponse partielle) est compté
+    # OUVERT : fermer un parent sur une donnée manquante ne se rattrape pas tout seul.
+    etat[$1] != "closed" { printf "%s\t%s\n", $1, $4 }
+  ')"
+  if [ -z "$restants" ]; then return 0; fi
+  printf '%s\n' "$restants"
+  return 3
+}
+
+# gl_ferme_parent [--check] <iid> -> <iid> est un LOT qui vient de se fermer : si c'était le dernier
+# encore ouvert de son parent, ferme le parent (« completed ») et y poste un commentaire disant sur
+# quoi la fermeture s'appuie.
+# Codes : 0 = parent fermé (ou, en --check, le serait) · 3 = abstention NOMMÉE (pas un lot, parent
+# déjà fermé, lots encore ouverts) · 1 = échec.
+#
+# POURQUOI LE LOT EN ARGUMENT ET PAS LE PARENT : c'est ce que l'appelant a. L'événement
+# `issues: closed` porte le ticket qui vient de se fermer et rien d'autre.
+#
+# L'ABSTENTION EST LE CAS NOMINAL, et c'est ce qui gouverne le coût : ce verbe passe à CHAQUE
+# fermeture de ticket du dépôt, dont l'immense majorité ne sont pas des lots. Sur ce cas-là il ne
+# fait qu'UNE lecture — celle qui répond « ce ticket a-t-il un parent ? ».
+#
+# IL NE POSE AUCUN CYCLE DE VIE, et n'a pas à le faire : la fermeture qu'il déclenche repasse par
+# `issues: closed`, donc par la pose de « Terminé » de #377. C'est aussi ce qui borne la récursion à
+# deux passages — au second, le parent n'a plus de parent (ou en a un dont il reste des lots).
+gl_ferme_parent() {
+  local check=0
+  while [ "${1:-}" = "--check" ]; do check=1; shift; done
+  local iid="${1:-}"
+  if [ -z "$iid" ]; then echo "usage: gl_ferme_parent [--check] <iid>" >&2; return 2; fi
+
+  # UN TICKET ILLISIBLE EST UNE ABSTENTION (3) ET NON UN ÉCHEC (1), et l'asymétrie avec le reste de
+  # ce verbe est le contenu de la décision : ici on ne sait même pas s'il y a quelque chose à faire
+  # — la question est « ce ticket est-il un lot ? », et sans réponse le repli (le parent reste
+  # ouvert, quelqu'un le ferme à la main) est exactement l'état d'avant #515. Rougir un run
+  # d'Actions pour ça mettrait un voyant rouge sur la moitié des fermetures de tickets le jour d'un
+  # hoquet d'API. Une fois qu'on SAIT qu'il y a un parent, en revanche, l'échec se propage : voir
+  # plus bas, où des lots illisibles rendent 1.
+  local raw parent
+  if ! raw="$(gl_issue_raw "$iid")"; then
+    echo "Ticket #$iid illisible — parent non recherché." >&2
+    return 3
+  fi
+  parent="$(printf '%s\n' "$raw" | gl_parent_marqueur)"
+  if [ -z "$parent" ]; then
+    printf "#%s n'est pas un lot (aucun parent déclaré) — rien à fermer.\n" "$iid"
+    return 3
+  fi
+
+  # L'état du parent AVANT sa description : un parent déjà fermé n'a pas à faire lire sa checklist,
+  # et surtout pas à recevoir un second commentaire. Le cas se produit dès qu'un chantier finit par
+  # deux lots fermés coup sur coup — le second repasse ici quand le premier a déjà tout soldé.
+  # Capture PUIS découpe : `gh_issues_state | cut` rendrait le code de `cut`, toujours 0 — un parent
+  # illisible passerait alors pour un parent ouvert, et on lui lirait sa checklist pour rien.
+  local petat brut
+  brut="$(gh_issues_state "$parent")" || return 1
+  petat="${brut##*$'\t'}"
+  if [ "$petat" = "closed" ]; then
+    printf 'Parent #%s déjà fermé — rien à faire.\n' "$parent"
+    return 3
+  fi
+
+  local restants rc
+  restants="$(gl_lots_ouverts "$parent")"; rc=$?
+  case "$rc" in
+    1) echo "Lots de #$parent illisibles — le parent est laissé ouvert." >&2; return 1 ;;
+    3)
+      printf 'Parent #%s : %s lot(s) encore ouvert(s) — rien à fermer.\n' \
+        "$parent" "$(printf '%s\n' "$restants" | wc -l | tr -d ' ')"
+      printf '%s\n' "$restants" | awk -F '\t' '{ printf "  #%s — %s\n", $1, $2 }'
+      return 3
+      ;;
+  esac
+
+  if [ "$check" = 1 ]; then
+    printf '  → #%s serait fermé : tous ses lots sont soldés (dernier : #%s).\n' "$parent" "$iid"
+    return 0
+  fi
+
+  gh_issue_close "$parent" || return 1
+
+  # Brouillon que personne ne relit : répertoire temporaire du système, pas .maestro/ (règle #234).
+  local note
+  if ! note="$(mktemp "${TMPDIR:-/tmp}/maestro-parent.XXXXXX")"; then
+    echo "Parent #$parent fermé, mais son commentaire n'a pas pu être écrit." >&2
+    return 0
+  fi
+  {
+    printf 'Tous les lots de ce chantier sont soldés (dernier : #%s) — parent fermé automatiquement.\n\n' "$iid"
+    printf 'Fermeture posée par `lib.sh ferme-parent` sur `issues: closed` (docs/10 §5.1, #515).\n'
+    printf 'Un lot fermé sans être réalisé — « Abandonné », « Doublon » — y compte comme soldé : '
+    printf 'une fermeture reste une fermeture.\n'
+  } > "$note"
+  # Le commentaire est le CONTEXTE de la fermeture, pas la fermeture : son échec se dit et ne
+  # rougit rien. Rendre 1 ici ferait clignoter un run d'Actions pour un ticket correctement fermé.
+  if ! gh_issue_note "$parent" "$note" >/dev/null; then
+    echo "Parent #$parent fermé, mais son commentaire n'a pas pu être posté." >&2
+  fi
+  rm -f "$note"
+  printf 'Parent #%s fermé : tous ses lots sont soldés (dernier : #%s).\n' "$parent" "$iid"
 }
 
 # --- Démarrage de ticket (/ticket-start : préflight + mutation groupée) --------------------------
@@ -3977,6 +4139,58 @@ gh_issue_raw() {
   printf '%s\n' "$corps"
 }
 
+# gh_issues_state <iid…> -> « <iid><TAB>open|closed » pour chacun des tickets demandés, en UNE
+# lecture. Les iid sont demandés sous des ALIAS GraphQL (`i390: issue(number:390)`), le nom d'un
+# alias ne pouvant pas commencer par un chiffre.
+#
+# POURQUOI PAS `gh_backlog_table all`, QUI EST DÉJÀ UNE SEULE LECTURE : elle est bornée à
+# `first: 100` (mesuré le 2026-08-25 : #349 → #516 sur 515 tickets), donc muette sur tout lot plus
+# ancien que sa fenêtre — un parent de la Phase 4 n'y verrait aucun de ses lots. Et elle ne porte
+# pas l'ouvert/fermé mais le CYCLE DE VIE, qui est justement posé par l'événement d'où l'on vient :
+# un lot fermé à l'instant y ressort « En revue » le temps que la pose passe. La question est ici
+# « ce ticket est-il fermé ? », et elle se pose à la forge — sans fenêtre, sans délai.
+#
+# UN ALIAS SANS RÉPONSE NE REND PAS DE LIGNE : un ticket inexistant rend `null`, donc rien. C'est
+# l'appelant qui décide de ce que vaut ce silence — et `gl_lots_ouverts` le compte OUVERT, fermer un
+# parent sur une donnée manquante étant la seule erreur d'ici qui ne se rattrape pas toute seule.
+gh_issues_state() {
+  if [ "$#" -eq 0 ]; then echo "usage: gh_issues_state <iid…>" >&2; return 2; fi
+  local iid champs='' raw
+  for iid in "$@"; do
+    case "$iid" in ''|*[!0-9]*) echo "gh_issues_state : iid invalide « $iid »" >&2; return 2 ;; esac
+    champs="$champs i$iid: issue(number:$iid) { number state }"
+  done
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' {'"$champs"' } }')" || return 1
+  case "$raw" in
+    *'"repository":null'*) echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
+  esac
+  # OPEN/CLOSED -> open/closed, comme gh_issue_raw : les appelants comparent sur « closed ».
+  printf '%s' "$raw" | grep -o '"number":[0-9]*,"state":"[A-Z_]*"' \
+    | sed 's/"number"://; s/,"state":"/\t/; s/"$//' \
+    | awk -F '\t' '{ print $1 "\t" (($2 == "CLOSED") ? "closed" : "open") }'
+}
+
+# gh_issue_close <iid> -> ferme le ticket comme RÉALISÉ (cf. gl_ferme_parent).
+#
+# EN REST (`-X PATCH`) ET NON `gh issue close`, pour la raison qui vaut déjà pour gh_issue_note et
+# gh_set_description : c'est la forme que prennent toutes les écritures de ce fichier. Elle a ici un
+# second mérite — `gh issue close` est en `ask` dans la couche permissions (.claude/settings.json),
+# donc une session qui passerait par ce verbe verrait une confirmation surgir au milieu d'un script.
+#
+# `state_reason: completed` est POSÉ EXPLICITEMENT plutôt que laissé au défaut de l'API : c'est lui
+# que lit la liste blanche de scripts/github/ticket-ferme.sh au tour suivant, et un parent fermé sans
+# raison en ressortirait « rien à poser » — fermé à la forge et resté « En cours » au board, la
+# dérive exacte que #377 avait supprimée.
+gh_issue_close() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gh_issue_close <iid>" >&2; return 2; fi
+  if ! gh api -X PATCH "repos/$GL_GH_REPO/issues/$iid" \
+       -f state=closed -f state_reason=completed >/dev/null 2>&1; then
+    echo "Échec de la fermeture de #$iid" >&2; return 1
+  fi
+  printf 'Ticket #%s fermé.\n' "$iid"
+}
+
 # gh_issue_title <iid> / gh_get_description <iid> / gh_set_description <iid> <fichier>
 # Les deux lectures passent par GraphQL — un champ demandé, un champ rendu, aucune ambiguïté de clé
 # (le JSON REST d'un ticket porte plusieurs `title`, dont celui du jalon).
@@ -5166,6 +5380,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     parent-of)      gl_parent_of "$@" ;;
     subtickets)     gl_subtickets "$@" ;;
     startables)     gl_subtickets "$@" | tail -n +2 | gl_subtickets_startables ;;
+    lots-ouverts)   gl_lots_ouverts "$@" ;;
+    ferme-parent)   gl_ferme_parent "$@" ;;
     start-brief)    gl_start_brief "$@" ;;
     begin)          gl_begin "$@" ;;
     prio)           gl_prio "$@" ;;
@@ -5251,6 +5467,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    parent-of <iid>                 (iid du parent si <iid> est un sous-ticket)" >&2
       echo "    subtickets <iid-parent>         (checklist ## Sous-tickets : iid/coche/statut/par/titre)" >&2
       echo "    startables <iid-parent>         (lots « À faire » démarrables maintenant)" >&2
+      echo "    lots-ouverts <iid-parent>       (lots encore OUVERTS — 0 = parent soldé, 3 = il en reste)" >&2
+      echo "    ferme-parent [--check] <iid>    (<iid> = un lot qui vient de se fermer : ferme son parent s'il était le dernier)" >&2
       echo "  Démarrage de ticket (/ticket-start) :" >&2
       echo "    start-brief <iid>            (préflight en une lecture : pré-requis, arbre sale signalé, brief, parent/sous-ticket, branche proposée)" >&2
       echo "    branch-for <iid>             (nom de la branche de travail du ticket)" >&2

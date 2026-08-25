@@ -137,17 +137,22 @@ doute). Les **garde-fous** priment sur l'automatisation : suis les étapes dans 
      maintenant** — « prochain lot : `/ticket-start <iid-suivant>` (rien à attendre : le lot shippé
      est mergé, ou au pire « En revue », et les lots sont mergeables seuls depuis `main`) » — et,
      s'il y en a plusieurs, précise qu'ils sont **prenables en parallèle** par d'autres personnes.
-   - Si le lot shippé est le **dernier encore ouvert**, annonce le parent **fermable** — dès
-     maintenant si le merge a eu lieu (toutes les cases cochées, y compris le lot tests), après le
-     merge sinon. Sa fermeture reste une décision humaine/orchestrateur : `/ticket-ship` ne ferme
-     rien, pas même le parent — merger la PR d'un lot n'est pas fermer son parent.
+   - Si le lot shippé est le **dernier encore ouvert**, annonce le parent **fermé** si le merge a
+     eu lieu, **à fermer au merge** sinon : depuis #515, la fermeture du dernier lot ferme le parent
+     dans la foulée, par l'événement `issues: closed` (docs/10 §5.1). Ce n'est toujours **pas
+     `/ticket-ship` qui ferme** — il ne ferme rien, pas même le parent —, et c'est ce qui permet de
+     l'annoncer sans rien vérifier : la fermeture suit le merge, quel qu'en soit l'auteur. Ne
+     propose donc aucun geste manuel ; si le parent est encore ouvert quelques instants plus tard,
+     c'est l'événement qui n'est pas passé (secret absent, run rouge), pas un oubli à rattraper à la
+     main — `bash scripts/gitlab/lib.sh ferme-parent <iid-du-lot>` est le rattrapage.
 
 9. Résumé final : reprends le résumé produit par `/ticket-finish` — **verdict du merge en tête**
    (mergé, ou la cause **telle que `merge-mr` l'a rendue** et la suite qu'elle appelle), l'**issue
    du déblocage** s'il a eu lieu, sur sa propre ligne (⊘ non tenté · ✅ tenté et abouti · ❌ tenté
    sans succès — jamais fondue dans le verdict du merge, #460), lien de la
    PR, temps loggé — et préfixe-le du **commit créé** (hash court + en-tête). Pour un sous-ticket,
-   ajoute l'annonce de l'étape 8 (prochain lot démarrable dès maintenant, ou parent fermable).
+   ajoute l'annonce de l'étape 8 (prochain lot démarrable dès maintenant, ou parent fermé si
+   c'était le dernier).
    **Jamais de ✅ global** : un ticket dont la PR est restée ouverte sur un pipeline rouge n'est pas
    « shippé avec une réserve », il est **inachevé**, et le résumé doit le dire avec ce mot-là — un
    verdict qui masque son blocage est exactement ce que #303 a supprimé ailleurs.

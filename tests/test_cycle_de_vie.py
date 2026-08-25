@@ -1191,18 +1191,32 @@ def test_un_ticket_ferme_comme_realise_passe_a_termine(depot: Depot) -> None:
 
 
 @pytest.mark.parametrize("raison", RAISONS_SANS_LIVRAISON)
-def test_une_fermeture_qui_ne_vaut_pas_livraison_n_ecrit_rien(depot: Depot, raison: str) -> None:
+def test_une_fermeture_qui_ne_vaut_pas_livraison_ne_pose_aucun_etat(
+    depot: Depot, raison: str
+) -> None:
     """Barrière n°1 — la liste blanche, qui n'ouvre que sur « completed ».
 
-    L'abstention est totale : pas même une LECTURE. Un ticket fermé « as not planned » depuis
-    l'interface web n'a rien à faire déclencher, et le journal du workflow reste lisible s'il ne
-    parle que de ce qui le concerne.
+    ⚠ CE TEST A PERDU UNE ASSERTION EN GAGNANT SON VRAI PÉRIMÈTRE (#515). Il exigeait une
+    abstention TOTALE — « pas même une LECTURE » —, ce qui n'était juste que tant que ce script
+    n'avait qu'une seule question à poser. Il en a deux depuis, et la seconde (« ce lot était-il le
+    dernier de son parent ? ») vaut pour TOUTE raison de fermeture : un lot abandonné solde son
+    parent comme un lot livré. La lecture qui l'établit est donc légitime, et l'interdire ferait
+    exactement ce que #515 corrige.
+
+    Ce que la barrière n°1 garde, elle, n'a pas bougé d'un caractère : sur une raison qui ne vaut
+    pas livraison, AUCUN ÉTAT n'est posé — ni « Terminé », ni quoi que ce soit d'autre. C'est cette
+    assertion-là qui porte la défense en profondeur, et c'est la seule que ce test ait jamais
+    vraiment protégée ; `not depot.appels()` en était une conséquence de l'époque, pas la règle.
+
+    La lecture supplémentaire n'est d'ailleurs plus gratuite à décrire : le ticket #377 n'étant
+    décrit dans aucun `etat["issues"]`, elle échoue et la question 2 s'abstient — ce que le test de
+    l'abstention sur un ticket illisible garde de son côté.
     """
     depot.pose_etat(graphql=[regle_owner("En revue", []), regle_pose_status()])
 
     acheve = depot.ticket_ferme("377", raison)
     assert acheve.returncode == 0, acheve.stderr
-    assert not depot.appels(), "une fermeture sans livraison ne pose même pas la question"
+    assert not mutations(depot), "une fermeture sans livraison ne pose aucun état"
     assert "rien à poser" in acheve.stdout
 
 
@@ -1361,3 +1375,292 @@ def test_aucune_expression_du_workflow_n_atterrit_dans_un_run() -> None:
         if "${{" in ligne and not commentaire.match(ligne) and not affectation.match(ligne)
     ]
     assert not fautives, "expression hors du bloc env: :\n" + "\n".join(fautives)
+
+
+# =================================================================================================
+# #515 — La SECONDE question du même événement : « était-ce le dernier lot de son parent ? »
+# =================================================================================================
+# Un parent de suivi ne porte ni branche ni code : aucune PR ne le ferme par un `Closes #`, et sa
+# fermeture était le seul geste du cycle d'un chantier resté MANUEL (§5.1 : « une décision
+# humaine/orchestrateur »). Depuis #418/#419 un run se solde tout mergé — les lots se ferment tous
+# dans la foulée, et il ne reste personne pour fermer le parent.
+#
+# CE QUI SE TESTE ICI EST LA MESURE, et elle tient en une phrase : un lot est soldé quand il est
+# FERMÉ. Ni son cycle de vie (posé après coup, par l'événement d'où l'on vient), ni sa coche dans la
+# checklist (tenue au fil de l'eau, donc best-effort) n'entrent dans la décision — et les deux tests
+# qui le prouvent sont les seuls de la section à décrire un chantier incohérent exprès.
+
+#: Le parent de suivi des chantiers de cette section, et la base de ses lots.
+PARENT_SUIVI = "600"
+PREMIER_LOT = 601
+
+
+def chantier(*etats: str, coche: str = " ") -> dict[str, str]:
+    """Un parent et ses lots, décrits par l'ÉTAT de chacun (« open »/« closed »), dans l'ordre.
+
+    La coche de la checklist est un paramètre séparé, et par défaut FAUSSE (aucune case cochée,
+    lots fermés compris) : c'est l'état d'un parent dont personne n'a synchronisé la description,
+    et il ne doit rien changer au verdict. Un test le prouve explicitement ; tous les autres
+    travaillent dessus sans y penser, ce qui est la meilleure garantie qu'elle ne sert à rien ici.
+    """
+    lots = [str(PREMIER_LOT + i) for i in range(len(etats))]
+    checklist = "\n".join(
+        f"- [{coche}] #{iid} — Lot {rang}" for rang, iid in enumerate(lots, start=1)
+    )
+    issues = {
+        PARENT_SUIVI: corps_ticket(
+            "Chantier de suivi", "type::infra", f"## Sous-tickets\n\n{checklist}\n"
+        )
+    }
+    for rang, (iid, etat) in enumerate(zip(lots, etats, strict=True), start=1):
+        issues[iid] = corps_ticket(
+            f"Lot {rang}",
+            "type::infra",
+            f"Sous-ticket de #{PARENT_SUIVI} — lot {rang}/{len(etats)}.\n\nCorps.",
+            etat,
+        )
+    return issues
+
+
+def fermeture_du_parent(depot: Depot) -> list[str]:
+    """Les appels qui FERMENT le parent — le PATCH REST, isolé des autres écritures.
+
+    Le commentaire passe par le même verbe REST (`gh api -X POST …/comments`) : filtrer sur « -X »
+    seul les confondrait, et un test qui vérifie qu'on ne ferme PAS passerait alors au vert sur un
+    script qui ferme sans commenter.
+    """
+    return [
+        ligne
+        for ligne in ecritures(depot)
+        if "PATCH" in ligne and f"issues/{PARENT_SUIVI}" in ligne
+    ]
+
+
+def commentaires(depot: Depot, iid: str) -> list[str]:
+    """Les commentaires postés sur un ticket (`gh api -X POST …/issues/<iid>/comments`)."""
+    return [ligne for ligne in ecritures(depot) if f"issues/{iid}/comments" in ligne]
+
+
+def test_la_fermeture_du_dernier_lot_ferme_le_parent(depot: Depot) -> None:
+    """Le cas nominal, et la raison d'être du ticket : le dernier lot tombe, le parent suit.
+
+    La fermeture est posée en `state_reason=completed` PLUTÔT QU'AU DÉFAUT DE L'API, et ce n'est pas
+    un détail de forme : c'est ce champ que relit la liste blanche de `ticket-ferme.sh` au tour
+    suivant. Un parent fermé « sans raison » en ressortirait « rien à poser » — fermé côté forge et
+    resté « En cours » au board, c'est-à-dire la dérive exacte que #377 avait supprimée.
+    """
+    depot.pose_etat(
+        graphql=[regle_owner("En revue", []), regle_pose_status()],
+        issues=chantier("closed", "closed", "closed"),
+    )
+
+    acheve = depot.ticket_ferme(str(PREMIER_LOT + 2), "completed")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    ferme = fermeture_du_parent(depot)
+    assert len(ferme) == 1, f"le parent devait être fermé une fois — {ecritures(depot)}"
+    assert "state=closed" in ferme[0]
+    assert "state_reason=completed" in ferme[0]
+    assert f"#{PARENT_SUIVI}" in acheve.stdout
+
+
+def test_le_parent_ferme_recoit_un_commentaire_qui_dit_sur_quoi_il_s_appuie(depot: Depot) -> None:
+    """Une fermeture automatique sans explication est une fermeture qu'on rouvre pour comprendre.
+
+    Le commentaire nomme le lot déclencheur et le verbe : c'est ce qui distingue, pour qui relit le
+    chantier six mois plus tard, une fermeture décidée d'une fermeture subie.
+    """
+    depot.pose_etat(
+        graphql=[regle_owner("En revue", []), regle_pose_status()],
+        issues=chantier("closed", "closed"),
+    )
+
+    acheve = depot.ticket_ferme(str(PREMIER_LOT + 1), "completed")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    postes = commentaires(depot, PARENT_SUIVI)
+    assert len(postes) == 1, "un commentaire, et un seul"
+    assert f"#{PREMIER_LOT + 1}" in postes[0], "le lot déclencheur est nommé"
+    assert "ferme-parent" in postes[0], "le verbe qui a fermé est nommé"
+
+
+def test_un_lot_encore_ouvert_laisse_le_parent_intact(depot: Depot) -> None:
+    """La garde qui compte : tant qu'un lot est ouvert, le parent ne bouge pas.
+
+    C'est aussi ce qui rend #515 et #394 compatibles sans qu'ils aient à se parler — la garde de
+    #394 rouvre un parent fermé trop tôt, celle-ci ne ferme jamais trop tôt. Deux mécanismes sur le
+    même événement, incapables de se déclencher l'un contre l'autre.
+    """
+    depot.pose_etat(
+        graphql=[regle_owner("En revue", []), regle_pose_status()],
+        issues=chantier("closed", "open", "closed"),
+    )
+
+    acheve = depot.ticket_ferme(str(PREMIER_LOT + 2), "completed")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not fermeture_du_parent(depot), "un lot ouvert, donc un parent resté ouvert"
+    assert not commentaires(depot, PARENT_SUIVI)
+    # Le lot qui bloque est NOMMÉ : « il en reste » sans dire lequel oblige à rouvrir la checklist.
+    assert f"#{PREMIER_LOT + 1}" in acheve.stdout
+
+
+def test_un_ticket_qui_n_est_pas_un_lot_ne_coute_qu_une_lecture(depot: Depot) -> None:
+    """L'abstention est le cas NOMINAL : la plupart des tickets fermés ne sont pas des lots.
+
+    Ce verbe passe à chaque fermeture du dépôt. S'il lisait une checklist à chaque fois, il paierait
+    sur tous les tickets le prix d'une question qui n'en concerne qu'une minorité — d'où un contrôle
+    sur le NOMBRE DE LECTURES, et pas seulement sur l'absence d'écriture.
+    """
+    depot.pose_etat(
+        graphql=[regle_owner("En revue", []), regle_pose_status()],
+        issues={"700": corps_ticket("Ticket ordinaire", "type::infra", "Aucun parent ici.")},
+    )
+
+    acheve = depot.ticket_ferme("700", "completed")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not ecritures(depot), "rien n'est fermé ni commenté"
+    assert "n'est pas un lot" in acheve.stdout
+
+    vues = [ligne for ligne in depot.appels() if "issue(number:700)" in ligne and "body }" in ligne]
+    assert len(vues) == 1, "une seule lecture du ticket pour répondre « pas un lot »"
+
+
+@pytest.mark.parametrize("raison", RAISONS_SANS_LIVRAISON)
+def test_un_lot_abandonne_ferme_son_parent_comme_un_lot_livre(depot: Depot, raison: str) -> None:
+    """Le critère qui a fait sortir la question 2 de dessous la liste blanche de la question 1.
+
+    Un chantier peut parfaitement se terminer sur un lot qu'on RENONCE à faire : « Abandonné » et
+    « Doublon » ferment le ticket au même titre que « Terminé », donc ils le soldent. Ranger la
+    fermeture du parent derrière le filtre « completed » — ce qu'aurait fait le plus court des deux
+    chemins — laisserait ce parent-là ouvert pour toujours, et personne ne saurait dire pourquoi.
+
+    ⚠ Aucun état n'est posé pour autant : le parent est fermé, la barrière n°1 tient sur SA moitié.
+    """
+    depot.pose_etat(
+        graphql=[regle_owner("En revue", []), regle_pose_status()],
+        issues=chantier("closed", "closed"),
+    )
+
+    acheve = depot.ticket_ferme(str(PREMIER_LOT + 1), raison)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "rien à poser" in acheve.stdout, "la question 1 s'abstient toujours"
+    assert not mutations(depot), "un abandon ne pose aucun cycle de vie"
+    assert len(fermeture_du_parent(depot)) == 1, "la question 2, elle, a bien été posée"
+
+
+def test_la_coche_de_la_checklist_ne_decide_de_rien(depot: Depot) -> None:
+    """Deux chantiers identiques aux cases près : elles ne changent pas le verdict.
+
+    La coche est tenue au fil de l'eau par `/ticket-ship`, donc best-effort — un lot mergé depuis
+    l'interface web n'en coche aucune. Faire dépendre une fermeture d'une synchronisation qui peut
+    manquer reconstruirait à l'identique le geste manuel qu'on retire.
+    """
+    for coche in (" ", "x"):
+        depot.journal.unlink(missing_ok=True)
+        depot.pose_etat(
+            graphql=[regle_owner("En revue", []), regle_pose_status()],
+            issues=chantier("closed", "closed", coche=coche),
+        )
+        acheve = depot.ticket_ferme(str(PREMIER_LOT + 1), "completed")
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert len(fermeture_du_parent(depot)) == 1, f"coche « {coche} »"
+
+
+def test_un_lot_dont_l_etat_ne_revient_pas_est_compte_ouvert(depot: Depot) -> None:
+    """La seule erreur d'ici qui ne se rattrape pas est de fermer sur une donnée manquante.
+
+    Un lot supprimé, une réponse partielle : la requête d'états ne rend rien pour cet alias. Le
+    compter « fermé » viderait la garde de son sens exactement quand la donnée manque — alors que
+    le compter « ouvert » ne coûte qu'une fermeture différée, que le lot suivant redéclenchera.
+    """
+    issues = chantier("closed", "closed")
+    del issues[str(PREMIER_LOT)]  # le premier lot n'existe plus
+    depot.pose_etat(graphql=[regle_owner("En revue", []), regle_pose_status()], issues=issues)
+
+    acheve = depot.ticket_ferme(str(PREMIER_LOT + 1), "completed")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not fermeture_du_parent(depot), "un état manquant ne vaut pas « soldé »"
+
+
+def test_la_fermeture_du_parent_ne_boucle_pas(depot: Depot) -> None:
+    """La récursion est bornée par la DONNÉE et non par un compteur — c'est ce qui la rend sûre.
+
+    Fermer le parent redéclenche `issues: closed`, donc rejoue ce script SUR LE PARENT. Ce second
+    passage fait deux choses puis s'arrête : il pose « Terminé » (question 1) et ne trouve aucun
+    parent au parent (question 2). Il n'y a pas de troisième passage à empêcher — un ticket sans
+    marqueur `Sous-ticket de #` est un point fixe.
+    """
+    depot.pose_etat(
+        graphql=[regle_owner("En revue", []), regle_pose_status()],
+        issues=chantier("closed", "closed"),
+    )
+
+    # Le tour n°2 : l'événement que la fermeture du tour n°1 vient de produire.
+    acheve = depot.ticket_ferme(PARENT_SUIVI, "completed")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert option_posee(depot) == "Terminé", "le parent reçoit son état comme n'importe quel ticket"
+    assert not ecritures(depot), "et ne ferme rien de plus : il n'a pas de parent"
+    assert "n'est pas un lot" in acheve.stdout
+
+
+def test_lots_ouverts_repond_par_son_code_de_retour(depot: Depot) -> None:
+    """Les trois codes du verbe de mesure, éprouvés un par un.
+
+    Le 3 existe pour que « il reste des lots » — une RÉPONSE — ne se confonde pas avec le 1 d'une
+    lecture impossible. `ferme-parent` en fait deux choses différentes : le premier s'abstient sans
+    bruit, le second laisse le run rouge.
+    """
+    depot.pose_etat(
+        graphql=[regle_owner("En revue", []), regle_pose_status()],
+        issues={
+            **chantier("closed", "open"),
+            "700": corps_ticket("Ticket ordinaire", "type::infra", "Pas de checklist."),
+        },
+    )
+
+    reste = depot.lib("lots-ouverts", PARENT_SUIVI)
+    assert reste.returncode == 3
+    assert f"{PREMIER_LOT + 1}\t" in reste.stdout
+
+    pas_un_parent = depot.lib("lots-ouverts", "700")
+    assert pas_un_parent.returncode == 1
+    assert "pas un ticket parent" in pas_un_parent.stderr
+
+    depot.pose_etat(issues=chantier("closed", "closed"))
+    solde = depot.lib("lots-ouverts", PARENT_SUIVI)
+    assert solde.returncode == 0
+    assert solde.stdout.strip() == "", "un parent soldé ne liste rien"
+
+
+def test_un_echec_de_fermeture_laisse_le_run_rouge_et_nomme_le_rattrapage(depot: Depot) -> None:
+    """« Best-effort » ne veut pas dire « vert quoi qu'il arrive » — même règle que pour la pose.
+
+    Un jeton périmé, un ticket verrouillé : la fermeture échoue et le script propage, ce qui laisse
+    le run rouge dans l'onglet Actions. Le parent reste ouvert, ce qui est le bon état de repli — et
+    le rattrapage manuel est nommé, un run rouge sans geste à faire n'apprenant rien à personne.
+    """
+    depot.pose_etat(
+        graphql=[regle_owner("En revue", []), regle_pose_status()],
+        issues=chantier("closed", "closed"),
+        ecriture_en_echec=True,
+    )
+
+    acheve = depot.ticket_ferme(str(PREMIER_LOT + 1), "completed")
+    assert acheve.returncode == 1
+    assert "ferme-parent" in acheve.stderr, "le rattrapage manuel est nommé"
+
+
+def test_les_deux_questions_sont_independantes(depot: Depot) -> None:
+    """Une pose en échec n'empêche pas la fermeture du parent d'être tentée, et réciproquement.
+
+    Elles ne partagent que le déclencheur. Les enchaîner ferait qu'un projet injoignable — la panne
+    la plus banale des deux — emporterait la fermeture du parent avec lui, sans que rien ne dise que
+    la seconde question n'a pas même été posée.
+    """
+    # Aucune règle pour la mutation : la pose échouera, comme dans le test de #377 qui la garde.
+    depot.pose_etat(graphql=[regle_owner("En revue", [])], issues=chantier("closed", "closed"))
+
+    acheve = depot.ticket_ferme(str(PREMIER_LOT + 1), "completed")
+    assert acheve.returncode == 1, "la pose a échoué, le run est rouge"
+    assert "reconcile-workflow" in acheve.stderr
+    assert len(fermeture_du_parent(depot)) == 1, "et le parent a quand même été fermé"

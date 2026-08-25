@@ -185,6 +185,26 @@ if args[:2] == ["api", "graphql"]:
         texte = etat.get("issues", {}).get(iid)
         if texte is not None:
             sortie(compact(vue_texte_en_json(texte)))
+    # La requête d'ÉTATS de `gh_issues_state` : N tickets sous alias, un seul aller-retour. Elle est
+    # servie DEPUIS LES MÊMES `etat["issues"]` que la vue canonique — un test décrit ses tickets une
+    # fois, et les deux lectures ne peuvent pas se contredire.
+    #
+    # DEUX MARQUEURS, parce qu'un seul serait à un champ près de capter autre chose : l'ALIAS
+    # (« i390: issue(number: »), qu'aucune autre requête du fichier n'utilise, et la SÉLECTION
+    # exacte (« number state } »), que les deux requêtes de PR frôlent sans l'atteindre
+    # (« number state isDraft », « number state headRefOid »).
+    if ": issue(number:" in requete and "number state }" in requete:
+        aliases = {}
+        for morceau in requete.split("issue(number:")[1:]:
+            iid = morceau.split(")", 1)[0].strip()
+            texte = etat.get("issues", {}).get(iid)
+            # Ticket que le test n'a pas décrit = ticket inexistant : `null`, comme le ferait
+            # GitHub. C'est ce silence que gl_lots_ouverts compte « ouvert ».
+            aliases["i" + iid] = None if texte is None else {
+                "number": int(iid),
+                "state": vue_texte_en_json(texte)["data"]["repository"]["issue"]["state"],
+            }
+        sortie(compact({"data": {"repository": aliases}}))
     reponse = repond(etat.get("graphql", []), requete)
     sortie(reponse) if reponse is not None else sortie(code=1)
 
@@ -499,15 +519,19 @@ def regle_merge(pr: int = 42, merge: bool = True) -> dict:
     return {"contient": [f"pulls/{pr}/merge"], "reponse": corps}
 
 
-def corps_ticket(titre: str, labels: str, description: str) -> str:
+def corps_ticket(titre: str, labels: str, description: str, etat: str = "open") -> str:
     """La VUE CANONIQUE d'un ticket : en-têtes `clé:<TAB>valeur`, séparateur `--`, puis le corps.
 
     C'est le format de sortie de `lib.sh issue-raw`, dont six verbes descendent — et c'est lui que
     les tests décrivent, le double se chargeant de le re-rendre en JSON (cf. `vue_texte_en_json`).
+
+    `etat` (« open »/« closed ») sert la mesure de #515 : un lot est soldé quand il est FERMÉ, quel
+    que soit son cycle de vie. C'est donc ici, et pas dans la carte du projet, que se décrit un lot
+    livré — ou abandonné, qui est fermé au même titre.
     """
     return (
         f"title:\t{titre}\n"
-        "state:\topen\n"
+        f"state:\t{etat}\n"
         "author:\tMaestroAgents\n"
         f"labels:\t{labels}\n"
         "comments:\t0\n"
