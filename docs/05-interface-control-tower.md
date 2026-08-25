@@ -413,7 +413,15 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > une **case par étape** et non un pourcentage : ce qui est acquis reste allumé,
 > la rangée s'allonge. Un fournisseur sans checklist observable, un rôle dont la
 > politique refuse l'outil, un plan sans ossature : la tâche reste exactement ce
-> qu'elle est aujourd'hui. Tests différés au lot 4 du chantier (#492).
+> qu'elle est aujourd'hui. Le **motif complet de l'arbitrage**, avec les deux
+> options écartées, vit en [docs/03 § TASK](./03-modele-de-donnees.md) — c'est
+> une décision de modèle avant d'être un écran. Vérification :
+> [`tests/test_checklist_tache.py`](../tests/test_checklist_tache.py) côté moteur
+> (l'ossature posée avant la première tentative, le premier relevé qui supplante,
+> l'avancement qui ne recule pas à travers une relance) et
+> [`apps/web/tests/pipeline.test.tsx`](../apps/web/tests/pipeline.test.tsx) pour
+> la rangée de cases — dont le contrôle qui compte : le dénominateur grandit sans
+> que le numérateur bouge.
 
 Le **glisser-déposer** entre colonnes reste une **cible non livrée** : le statut
 d'une tâche est aujourd'hui posé par la machine à états du moteur, et seule la
@@ -813,12 +821,18 @@ sans une arête — l'écran que cette démo est justement là pour montrer n'au
 à montrer. La topologie reprend celle de l'exemple de §6.11 sur les tâches du scénario
 (schéma → API ∥ maquette → CI), ossature de checklist comprise.
 
-Vérification : `apps/web/tests/runs-vue.test.tsx` (un nœud par tâche avec agent et
-checklist, les parallèles au même niveau, la suite qui s'allume, l'attente humaine qui
-ne se lit plus « en cours ») — la couverture complète est différée au lot 4 (#492). La
-**géométrie**, elle, ne se teste pas en jsdom : elle a été mesurée au skill
-`/banc-mise-en-page` sur la démo, à 1280×800, 1280×500 et 375×667, clair et sombre —
-rien d'inatteignable, aucun débordement horizontal, aucun rogneur.
+Vérification : [`apps/web/tests/pipeline.test.tsx`](../apps/web/tests/pipeline.test.tsx)
+(#492) porte la couverture, en trois étages qui ne se gardent pas de la même façon — les
+règles hors JSX (`lib/graphe`, `lib/vuesRun` : l'ordre des questions *est* la décision),
+la checklist rendue (`components/EtapesTache`), puis la vue montée dans `VueRun` : le nœud
+en cours, l'étape qui se coche au battement suivant, l'arête qui s'allume, l'attente
+humaine qui ne se lit plus « en cours ». `apps/web/tests/runs-vue.test.tsx` garde en plus
+quatre traits depuis #491, et l'y laisser est voulu : ce sont ceux qui tombent si la
+**bascule** cesse d'ouvrir sur le pipeline, ce que la suite dédiée ne verrait pas. La
+**géométrie**, elle, ne se teste pas en jsdom — les rectangles y sont tous nuls, donc
+aucune courbe n'y est tracée : elle a été mesurée au skill `/banc-mise-en-page` sur la
+démo, à 1280×800, 1280×500 et 375×667, clair et sombre — rien d'inatteignable, aucun
+débordement horizontal, aucun rogneur.
 
 ### 2.5 💰 Coûts & analytics
 
@@ -2455,8 +2469,17 @@ Implémentation : [`maestro/plan_run.py`](../maestro/plan_run.py) (la forme tran
 feuille comme `detail_tache.py`), [`maestro/controltower/graphe.py`](../maestro/controltower/graphe.py)
 (la composition, module feuille comme `progression.py`),
 `ControlTowerState.graphe(run_id)` pour la jointure et
-[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour la route. Tests différés au lot
-final du chantier (#492, [docs/10 §5.1](./10-workflow-git.md)).
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour la route.
+
+Vérification : [`tests/test_graphe_run.py`](../tests/test_graphe_run.py) (#492) — la forme
+transportée et sa tolérance, la composition (le niveau comme plus long chemin, le graphe plat, les
+trois états d'arête lus dans le statut de l'amont, un cycle relu du bus qui rend un graphe étrange
+plutôt que rien), le transport (le plan qui double l'activité de la planification sans la remplacer,
+et qu'un rejeu ne dérive pas), la route et ses trois vides. Le dernier volet éprouve les **deux
+branches simultanées sur le vrai moteur**, et la simultanéité s'y prouve par une **barrière** et
+jamais par un `sleep` (règle du dépôt, #292) : les deux tâches doivent s'y rejoindre pour avancer,
+si bien qu'un moteur qui les sérialiserait ne finirait pas son run — le motif a d'ailleurs été
+prouvé sur un moteur fautif (`max_parallele=1`) avant d'être posé.
 
 L'écran qui consomme ce contrat est la **vue pipeline** (§2.4.4, #491) : un niveau, une
 colonne ; un nœud, une boîte ; une arête, une courbe orientée. C'est aussi elle qui

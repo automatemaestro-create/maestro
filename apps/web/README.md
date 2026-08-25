@@ -430,6 +430,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/runs-perdus.test.tsx` | Les runs perdus (#349, testés en #351) : **la règle avant le panneau** (`lib/execution.ts`), qui n'est proposé que sur un `orphelin` **au brief approuvé** — l'API accepte pourtant de relancer un `indetermine`, et cet écart entre *accepter* et *proposer* est le sujet ; puis le panneau, absent quand rien n'est récupérable, désarmé pendant la reprise (un double clic partirait deux fois) et rendant le refus de l'API tel quel |
 | `tests/runs-liste.test.tsx` | La liste des runs (#474, testée en #480) : **le régime avant l'écran** (`regimeDuRun`), dont l'ordre de décision *est* la décision — soldé, puis interrompu, puis en pause, puis suspendu ; la `CarteRun` que **trois** écrans rendent (badge, avancement, cause d'arrêt #479, ligne de pause #477, ordres de pause et leur refus) ; puis l'écran dans ses quatre états, dont « vide » et « injoignable », qui ne se confondent pas |
 | `tests/runs-vue.test.tsx` | La vue d'un run (#475/#478, testée en #480) : les tâches lues **avec `?run=`** et non filtrées sur `Tache.run_id` — le champ porte le *dernier* run qui les a touchées, une relance volerait celles du run repris —, la relecture au **pouls** du shell sans seconde WebSocket, les trois vides (autre projet, arrêt sur brief, API muette) et le journal persisté fusionné au direct sans doublon |
+| `tests/pipeline.test.tsx` | La vue pipeline d'un run (#491, testée en #492) en **trois étages**, parce qu'ils ne se gardent pas de la même façon : les règles hors JSX (`lib/graphe` — le backend sert tout ce qui se dessine, ce module ne porte que les trois questions qu'il ne pose pas, et l'**ordre** dans lequel elles sont posées *est* la décision ; `lib/vuesRun` — le pipeline ouvre) ; la checklist rendue (`components/EtapesTache` — **une case par étape**, le contrôle qui compte étant le dénominateur qui grandit sans que le numérateur bouge) ; puis la vue montée : le nœud en cours, l'étape qui se coche au battement suivant, l'arête qui s'allume, et l'attente humaine qui ne se lit plus « en cours » |
 | `tests/etat-des-runs.test.tsx` | L'état des runs au tableau de bord (#476, testé en #480) : **l'exhaustivité de la table des groupes**, balayée sur `regimeDuRun` plutôt qu'énumérée — un régime sans groupe fait disparaître ces runs-là de l'écran, ce qui est arrivé à « en pause » entre #476 et #477 — puis le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` sur ses trois entrées, et l'écran qui ne porte **aucun** geste |
 
 Deux fichiers portent l'outillage plutôt que des tests :
@@ -440,7 +441,10 @@ Deux fichiers portent l'outillage plutôt que des tests :
   des projets déclarés sont mockés globalement, si bien qu'aucun test n'a besoin
   de backend ni de faux serveur ;
 - `tests/aides.tsx` — les fabriques du domaine (agent, événement, validation,
-  message, projet, **run** depuis #480), `poserProjetActif` (le projet retenu sans
+  message, projet, **run** depuis #480, **nœud et graphe** depuis #491 — ce
+  dernier *dérivé* de ses nœuds : `niveaux` regroupe sur le `niveau` que chaque
+  nœud porte déjà, rien n'y est retrié, le tri topologique appartenant au
+  backend), `poserProjetActif` (le projet retenu sans
   lequel tout rendu du shell s'arrête à la porte) et `rendreAvecEtat`, qui monte
   un composant sous le **vrai** fournisseur d'état du shell avec une source temps
   réel factice.
@@ -448,8 +452,9 @@ Deux fichiers portent l'outillage plutôt que des tests :
 ⚠ Deux pièges de ce harnais, apparus en écrivant les trois suites de runs :
 
 - **`chargerTaches` n'est pas mocké par `tests/setup.ts`**, contrairement à
-  `chargerProjets` et `chargerJournal`. Un écran qui la lit — la vue d'un run — part
-  donc sur un vrai `fetch` et n'affiche qu'une bannière d'erreur : il lui faut un
+  `chargerProjets` et `chargerJournal` — et **`chargerGrapheExecution` non plus**
+  depuis #490. Un écran qui les lit — la vue d'un run — part donc sur un vrai
+  `fetch` et n'affiche qu'une bannière d'erreur : il lui faut un
   `vi.mock("@/lib/api")` local. Ce mock **remplace** celui du setup, d'où le
   `importOriginal` et la reconduction des deux autres lectures ;
 - **`runFactice` ne pose que les champs obligatoires** du contrat. `vitalite`,
