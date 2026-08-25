@@ -52,8 +52,8 @@ import { Carte, EtatVide } from "@/components/Primitives";
 import {
   Avancement,
   BadgeRun,
-  BoutonsPause,
   fondDe,
+  GestesRun,
   LigneAttente,
   LigneCause,
   LigneInterruption,
@@ -348,7 +348,7 @@ function EnTeteRun({
       <LigneCause run={run} className="mt-3" />
       <LigneInterruption run={run} regime={regime} className="mt-3" />
       <LignePause regime={regime} className="mt-3" />
-      <BoutonsPause run={run} className="mt-3 block" />
+      <GestesRun run={run} className="mt-3" />
     </Carte>
   );
 }

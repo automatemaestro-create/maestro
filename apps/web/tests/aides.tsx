@@ -18,6 +18,7 @@ import type { ControlTower } from "@/lib/useControlTower";
 import {
   AGENT_SOURCE_DEFAUT,
   EVENEMENT_TACHE_STATUT,
+  EXECUTION_ANNULEE,
   EXECUTION_EN_COURS,
   TAILLE_PAGE_JOURNAL_MAX,
 } from "@/lib/types";
@@ -226,6 +227,14 @@ function etatParDefaut(): ControlTower {
     reprendreRun: async (runId: string) => ({
       ...runFactice({ run_id: runId }),
       en_pause: false,
+    }),
+    // L'interruption (#467) rend le run **soldé**, `fin` posée : c'est ce que la
+    // route rend, et ce qui fait disparaître le bouton au rendu suivant. Un test
+    // qui exerce le geste passe le sien (`vi.fn()`).
+    interrompreRun: async (runId: string) => ({
+      ...runFactice({ run_id: runId }),
+      statut: EXECUTION_ANNULEE,
+      fin: "2026-07-28T10:05:00Z",
     }),
     reglerCapacite: async () => {},
   };

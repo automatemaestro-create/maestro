@@ -31,12 +31,21 @@
  * ligne de liste. Suspendre un run n'est pas un arbitrage sur un contenu : rien
  * n'est détruit, rien n'est perdu, et le geste se défait par son jumeau. Les
  * attentes, elles, continuent de renvoyer ailleurs.
+ *
+ * ⚠ #467 y met le second (`BoutonInterrompre`), et celui-là **détruit** — ce qui
+ * n'invalide pas l'argument ci-dessus mais en déplace le prix : ce n'est toujours
+ * pas un arbitrage sur un contenu (il n'y a rien à lire pour décider d'arrêter un
+ * run), c'est un geste sans retour, d'où la confirmation en place. Le raccourci
+ * n'est pas un confort : l'API sert `…/annuler` depuis #185 et rien ne l'appelait,
+ * si bien qu'interrompre un run demandait un `curl` hors de l'outil. `GestesRun`
+ * les met sur une rangée, du plus doux au plus définitif.
  */
 
 import Link from "next/link";
 import { useState } from "react";
 
 import {
+  IconeArret,
   IconeFlecheDroite,
   IconePause,
   IconeReprise,
@@ -55,6 +64,7 @@ import {
   causeDAttente,
   estEnPause,
   estRelancable,
+  peutEtreInterrompu,
   peutEtreSuspendu,
   regimeDuRun,
   REGIME_EN_PAUSE,
@@ -335,6 +345,140 @@ export function BoutonsPause({
   );
 }
 
+const CLASSE_BOUTON_DANGER =
+  "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-rose-300 px-3 py-1.5 text-annexe font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900 dark:text-rose-400 dark:hover:bg-rose-950";
+
+const CLASSE_BOUTON_DANGER_ARME =
+  "inline-flex shrink-0 items-center gap-1.5 rounded-md bg-rose-600 px-3 py-1.5 text-annexe font-medium text-white hover:bg-rose-700 disabled:opacity-50";
+
+/**
+ * **Interrompre** ce run (#467) — le geste qui manquait, et le seul de cette carte
+ * qui détruise quelque chose.
+ *
+ * Il ne s'affiche que sur un run non soldé (`peutEtreInterrompu`) : l'API répond
+ * `409` sur les autres, et l'UI n'a pas à poser une question dont elle connaît le
+ * refus. **L'orphelin en fait partie**, contrairement à la pause — l'attente est
+ * bornée côté API et le run est soldé de toute façon, ce qui est précisément le cas
+ * des quatre fantômes qu'il a fallu solder au `curl` le 2026-08-24.
+ *
+ * Il **s'arme avant de partir**, et c'est une exigence du ticket, pas une politesse :
+ * les tâches en vol sont tuées là où elles en sont et perdent leur travail. Le patron
+ * est celui du dépôt (`ListeProjets`, `EditeurAgent`) — deux boutons en place plutôt
+ * qu'un `window.confirm`, que jsdom ne rend pas, que le navigateur habille à sa façon
+ * et qui n'a jamais la place de dire *ce qu'on perd*. La phrase, elle, n'apparaît
+ * qu'armé : sur une liste de vingt runs, l'afficher d'office rendrait le danger
+ * invisible à force d'être partout.
+ *
+ * Une fois parti, le bouton **ne se réarme pas** au succès — contrairement à
+ * `BoutonsPause`, dont le geste inverse reste à portée. Ici il n'y a pas de moitié
+ * inverse : le run est soldé, la carte le dira au rechargement, et un second ordre ne
+ * rendrait qu'un `409`.
+ */
+export function BoutonInterrompre({
+  run,
+  className = "",
+}: {
+  run: ResumeExecution;
+  className?: string;
+}) {
+  const { interrompreRun } = useEtatGlobal();
+  const [armee, setArmee] = useState(false);
+  const [enCours, setEnCours] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  if (!peutEtreInterrompu(run)) return null;
+
+  const interrompre = async () => {
+    setEnCours(true);
+    setErreur(null);
+    try {
+      await interrompreRun(run.run_id);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : String(e));
+      // Désarmé **et** réarmable sur refus : un `409` veut dire que la question
+      // n'avait plus lieu d'être, et laisser la confirmation ouverte inviterait à
+      // recliquer sur un ordre qu'on vient de voir refuser.
+      setEnCours(false);
+      setArmee(false);
+    }
+  };
+
+  return (
+    <span className={className}>
+      {armee ? (
+        <span className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={enCours}
+            onClick={() => void interrompre()}
+            className={CLASSE_BOUTON_DANGER_ARME}
+          >
+            {enCours ? "Interruption…" : "Confirmer l'interruption"}
+          </button>
+          <button
+            type="button"
+            disabled={enCours}
+            onClick={() => setArmee(false)}
+            className={CLASSE_BOUTON_ORDRE}
+          >
+            Laisser tourner
+          </button>
+          <span className="text-annexe text-neutral-500 dark:text-neutral-400">
+            {
+              "Les tâches en vol sont tuées là où elles en sont et perdent leur travail. C'est sans retour."
+            }
+          </span>
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setArmee(true)}
+          className={CLASSE_BOUTON_DANGER}
+        >
+          <IconeArret className="size-3.5 shrink-0" />
+          Interrompre
+        </button>
+      )}
+      {erreur && (
+        <span className="mt-1 block text-annexe text-rose-600 dark:text-rose-400">
+          {erreur}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Les gestes qu'on peut poser sur un run, **sur une même rangée** : le mettre de
+ * côté (#477), l'arrêter pour de bon (#467).
+ *
+ * Ils voisinent parce qu'ils se choisissent l'un contre l'autre — « je le reprends
+ * dans dix minutes » ou « je perds ce qu'il fait » —, et les empiler l'un sous
+ * l'autre laisserait croire à deux décisions séparées. L'ordre va du plus doux au
+ * plus définitif, ce qui est aussi celui du danger : le bouton destructeur n'est pas
+ * le premier sous le curseur.
+ *
+ * Ne rend rien quand aucun des deux ne s'applique — un run soldé n'alourdit donc ni
+ * la liste ni le tableau de bord d'une rangée de boutons inertes.
+ */
+export function GestesRun({
+  run,
+  className = "",
+}: {
+  run: ResumeExecution;
+  className?: string;
+}) {
+  if (!peutEtreSuspendu(run) && !estEnPause(run) && !peutEtreInterrompu(run)) {
+    return null;
+  }
+  return (
+    <div className={`flex flex-wrap items-start gap-2 ${className}`}>
+      <BoutonsPause run={run} />
+      <BoutonInterrompre run={run} />
+    </div>
+  );
+}
+
 /**
  * **Pourquoi** ce run s'est arrêté (#479). Ne rend rien quand il n'y a rien à
  * dire — un run en cours, un run qui a fini normalement, un échec que le backend
@@ -586,11 +730,11 @@ export function CarteRun({
       <LigneCause run={run} className="mt-2" />
       <LigneInterruption run={run} regime={regime} className="mt-2" />
       <LignePause regime={regime} className="mt-2" />
-      {/* Le geste **sur la ligne** et pas seulement dans la vue du run (#477) :
-          on met un run de côté en le voyant passer, sans avoir à l'ouvrir. Rien
-          ne s'affiche pour un run soldé ou orphelin, donc ni la liste ni le
-          tableau de bord ne s'alourdissent d'une rangée de boutons inertes. */}
-      <BoutonsPause run={run} className="mt-2 block" />
+      {/* Les gestes **sur la ligne** et pas seulement dans la vue du run (#477,
+          #467) : on met un run de côté — ou on l'arrête — en le voyant passer,
+          sans avoir à l'ouvrir. Rien ne s'affiche pour un run soldé, donc ni la
+          liste ni le tableau de bord ne s'alourdissent de boutons inertes. */}
+      <GestesRun run={run} className="mt-2" />
     </Carte>
   );
 }

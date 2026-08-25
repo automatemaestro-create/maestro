@@ -27,13 +27,20 @@
  *   ce qui tourne, attend ou est tombé s'affiche **en entier**, puisque c'est
  *   précisément ce que l'écran existe pour montrer.
  *
- * Il ne **décide** de rien, et cela le distingue des trois panneaux qui le précèdent
- * (§2.1) : ceux-là portent le geste qui lève une attente — trancher un brief,
- * arbitrer une tâche, reprendre un run perdu —, celui-ci montre. Un run interrompu
- * peut donc paraître deux fois sur l'écran, dans « Runs interrompus » avec son bouton
- * et ici avec son état : c'est la même superposition que le Kanban avait avec les
- * validations, et elle est voulue — ce qui appelle un geste passe devant, ce qui
- * décrit l'état reste lisible d'un bloc.
+ * Il ne **décide** de rien **en propre**, et cela le distingue des trois panneaux qui
+ * le précèdent (§2.1) : ceux-là portent le geste qui lève une attente — trancher un
+ * brief, arbitrer une tâche, reprendre un run perdu —, celui-ci montre. Un run
+ * interrompu peut donc paraître deux fois sur l'écran, dans « Runs interrompus » avec
+ * son bouton et ici avec son état : c'est la même superposition que le Kanban avait
+ * avec les validations, et elle est voulue — ce qui appelle un geste passe devant, ce
+ * qui décrit l'état reste lisible d'un bloc.
+ *
+ * ⚠ « En propre » compte depuis #477, puis #467 : `CarteRun` porte les **ordres du
+ * run** (le mettre en pause, l'interrompre), et cet écran en hérite en la rendant. Ce
+ * n'est pas une entorse mais la conséquence de la deuxième décision ci-dessus — une
+ * ligne de run se lit *et se pilote* à l'identique partout, sans quoi il faudrait
+ * ouvrir la liste pour arrêter un run qu'on voit tourner ici. Ce que l'écran continue
+ * de ne pas porter, c'est un geste **à lui**, qui n'existerait que sur cette page.
  */
 
 import { IconeRuns } from "@/components/Icones";

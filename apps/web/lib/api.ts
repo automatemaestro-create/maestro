@@ -916,6 +916,33 @@ export function reprendreExecution(runId: string): Promise<ResumeExecution> {
 }
 
 /**
+ * Interrompt un run en vol (`POST /api/executions/{run_id}/annuler`, #185) et rend
+ * son résumé, passé à `annulee` et `fin` posée.
+ *
+ * **Les tâches en vol sont tuées là où elles en sont et perdent leur travail** —
+ * c'est tout ce qui sépare ce geste de `suspendreExecution`, qui laisse celles qui
+ * tournent aller à leur terme. Le run est soldé : rien ne le fera repartir, et le
+ * seul recours est de le **relancer** (`relancerExecution` ci-dessous), c'est-à-dire
+ * de rejouer son cadrage dans un run neuf.
+ *
+ * L'API borne son attente (`DELAI_ANNULATION_S`) : un hôte qui ne répond plus ne
+ * suspend pas la requête, le run est soldé de toute façon. C'est ce qui rend le
+ * geste utile sur un run **orphelin** — quatre fantômes du 22 juillet ont dû être
+ * soldés au `curl` le 2026-08-24, faute de ce bouton (#467).
+ *
+ * Refus relayés tels quels : `404` run inconnu, `409` run **déjà soldé** — un run
+ * terminé n'est plus interruptible, et le dire vaut mieux que faire croire à une
+ * annulation.
+ */
+export function annulerExecution(runId: string): Promise<ResumeExecution> {
+  return envoyerJsonEtLire<ResumeExecution>(
+    `/api/executions/${encodeURIComponent(runId)}/annuler`,
+    undefined,
+    "annulation refusée",
+  );
+}
+
+/**
  * Rejoue un run interrompu **sur son brief approuvé**
  * (`POST /api/executions/{run_id}/relancer`, #349) et rend le résumé du **nouveau**
  * run — celui qui porte `reprise_de`.

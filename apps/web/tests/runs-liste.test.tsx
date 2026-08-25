@@ -28,8 +28,10 @@ import { ListeRuns } from "@/components/runs/ListeRuns";
 import {
   ATTENTES,
   Avancement,
+  BoutonInterrompre,
   BoutonsPause,
   CarteRun,
+  GestesRun,
   LigneCause,
   LignePause,
   fondDe,
@@ -46,6 +48,7 @@ import {
   causeDAttente,
   estEnPause,
   estSolde,
+  peutEtreInterrompu,
   peutEtreSuspendu,
   regimeDuRun,
   runsEnAttenteDeValidation,
@@ -390,6 +393,164 @@ describe("les ordres de pause — le seul geste que la carte porte", () => {
     const { container } = rendreAvecEtat(<BoutonsPause run={run} />);
 
     expect(container.querySelector("button")).toBeNull();
+  });
+});
+
+describe("interrompre un run — le geste qui manquait (#467)", () => {
+  it.each([
+    [EXECUTION_EN_COURS, VITALITE_VIVANT],
+    // L'orphelin, et c'est **la** divergence avec la pause : celle-ci l'écarte
+    // parce que personne ne recevrait l'ordre, l'annulation n'a pas besoin qu'il
+    // soit reçu — l'API borne son attente et solde le run de toute façon. C'est
+    // le cas des quatre fantômes soldés au `curl` le 2026-08-24.
+    [EXECUTION_EN_COURS, VITALITE_ORPHELIN],
+    // En vol mais arrêté sur un humain : il tient un hôte et du cadrage payé.
+    [EXECUTION_EN_ATTENTE_BRIEF, VITALITE_VIVANT],
+    [EXECUTION_EN_ATTENTE_REPONSES, VITALITE_VIVANT],
+  ])("s'applique à tout run non soldé (%s, %s)", (statut, vitalite) => {
+    expect(peutEtreInterrompu(runFactice({ statut, vitalite }))).toBe(true);
+  });
+
+  it("laisse la pause et l'interruption diverger sur l'orphelin, à dessein", () => {
+    const fantome = runFactice({ vitalite: VITALITE_ORPHELIN });
+
+    expect(peutEtreSuspendu(fantome)).toBe(false);
+    expect(peutEtreInterrompu(fantome)).toBe(true);
+  });
+
+  it.each([[EXECUTION_TERMINEE], [EXECUTION_ANNULEE], [EXECUTION_ECHEC]])(
+    "ne pose pas la question sur un run déjà soldé (%s)",
+    (statut) => {
+      // L'API répond 409 : proposer le geste serait offrir un clic dont on connaît
+      // déjà le refus.
+      expect(peutEtreInterrompu(runFactice({ statut }))).toBe(false);
+
+      const { container } = rendreAvecEtat(
+        <BoutonInterrompre run={runFactice({ statut })} />,
+      );
+      expect(container.querySelector("button")).toBeNull();
+    },
+  );
+
+  it("ne part pas au premier clic : il faut confirmer", async () => {
+    const interrompre = vi.fn().mockResolvedValue(runFactice());
+    rendreAvecEtat(<BoutonInterrompre run={runFactice({ run_id: "run-9" })} />, {
+      interrompreRun: interrompre,
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /Interrompre/ }));
+
+    // Armé, pas parti — c'est tout le sujet du critère : le geste est
+    // irréversible et coûte le travail en cours.
+    expect(interrompre).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Confirmer l'interruption" }),
+    );
+
+    await waitFor(() => expect(interrompre).toHaveBeenCalledTimes(1));
+    expect(interrompre).toHaveBeenCalledWith("run-9");
+  });
+
+  it("dit ce qu'on perd, et seulement une fois armé", async () => {
+    // Sur une liste de vingt runs, l'afficher d'office rendrait l'avertissement
+    // invisible à force d'être partout.
+    const perte = /perdent leur travail/;
+    rendreAvecEtat(<BoutonInterrompre run={runFactice()} />);
+
+    expect(screen.queryByText(perte)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /Interrompre/ }));
+
+    expect(screen.getByText(perte)).toBeInTheDocument();
+  });
+
+  it("se ravise sans rien envoyer", async () => {
+    const interrompre = vi.fn();
+    rendreAvecEtat(<BoutonInterrompre run={runFactice()} />, {
+      interrompreRun: interrompre,
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /Interrompre/ }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Laisser tourner" }),
+    );
+
+    expect(interrompre).not.toHaveBeenCalled();
+    // Et le bouton d'origine est revenu : se raviser ne condamne pas le geste.
+    expect(
+      screen.getByRole("button", { name: /Interrompre/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("dit le refus de l'API au lieu de le taire", async () => {
+    // Le 409 qu'on ne peut pas prévoir : le run s'est soldé entre l'affichage et
+    // le clic.
+    const interrompre = vi
+      .fn()
+      .mockRejectedValue(new Error("exécution déjà soldée (terminee) : run-1."));
+    rendreAvecEtat(<BoutonInterrompre run={runFactice()} />, {
+      interrompreRun: interrompre,
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /Interrompre/ }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Confirmer l'interruption" }),
+    );
+
+    expect(await screen.findByText(/exécution déjà soldée/)).toBeInTheDocument();
+    // Désarmé : recliquer sur une confirmation qu'on vient de voir refuser
+    // rendrait le même refus.
+    expect(
+      screen.queryByRole("button", { name: "Confirmer l'interruption" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("les gestes d'un run, sur une même rangée", () => {
+  it("met la pause et l'interruption côte à côte sur un run qui travaille", () => {
+    rendreAvecEtat(<GestesRun run={runFactice()} />);
+
+    expect(
+      screen.getByRole("button", { name: "Mettre en pause" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Interrompre/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("ne garde que l'interruption sur un orphelin", () => {
+    // La pause n'y arriverait pas ; l'annulation, si — et c'est le seul moyen
+    // d'éteindre un fantôme depuis l'interface.
+    rendreAvecEtat(
+      <GestesRun run={runFactice({ vitalite: VITALITE_ORPHELIN })} />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Mettre en pause" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Interrompre/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("garde les deux sur un run en pause : la pause n'est pas une issue", () => {
+    rendreAvecEtat(<GestesRun run={runFactice({ en_pause: true })} />);
+
+    expect(
+      screen.getByRole("button", { name: "Reprendre" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Interrompre/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("disparaît entièrement sur un run soldé", () => {
+    const { container } = rendreAvecEtat(
+      <GestesRun run={runFactice({ statut: EXECUTION_TERMINEE })} />,
+    );
+
+    expect(container.textContent).toBe("");
   });
 });
 
