@@ -46,9 +46,10 @@
  */
 
 import Link from "next/link";
-import { Fragment, useId, useState } from "react";
+import { useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
+import { BasculeDeVues } from "@/components/BasculeDeVues";
 import { IconeFlecheGauche, IconeRuns } from "@/components/Icones";
 import { Kanban } from "@/components/Kanban";
 import { Carte, CIBLE_MINIMALE, EtatVide } from "@/components/Primitives";
@@ -247,22 +248,15 @@ export function VueRun({ runId }: { runId: string }) {
 /**
  * La bascule entre les trois lectures d'un run (#491, troisième position #516).
  *
- * Des **boutons** et non des liens, contrairement aux onglets d'une fiche agent
- * (`components/OngletsAgent`) : ceux-là changent de page, celui-ci change de
- * regard sur la page qu'on a déjà. La forme reste la même — un onglet souligné,
- * `aria-current` sur l'actif — pour que le geste se reconnaisse d'un écran à
- * l'autre.
- *
- * Chaque onglet porte **la question** à laquelle sa vue répond, et non son
- * contenu : « Pipeline », « Kanban » et « Journal » ne disent pas d'eux-mêmes
- * lequel montre quoi, et c'est précisément la confusion que l'arbitrage devait
- * lever.
- *
- * Cette question est une **description accessible** depuis #536, et non un
- * `title=`. Deux raisons de ne pas la mettre ailleurs : dans le `title` elle
- * n'existait que pour la souris, et l'ajouter au **nom** de l'onglet ferait
- * annoncer « Journal, ce qui s'est passé… » à chaque tabulation — un nom
- * d'onglet doit rester le mot qu'on cherche.
+ * Elle **était** écrite ici, à trente lignes ; depuis #539 elle appelle
+ * `BasculeDeVues` (`components/BasculeDeVues`), qui porte la forme — bouton
+ * souligné, `aria-current` sur l'actif, question en description accessible — et
+ * la sert aussi au second niveau du bloc « Détail de la période » de `/couts`.
+ * Rien n'a bougé dans ce que l'écran rend : c'est le même DOM, à un seul
+ * endroit. Chaque onglet porte **la question** à laquelle sa vue répond
+ * (`lib/vuesRun`) et non son contenu — « Pipeline », « Kanban » et « Journal »
+ * ne disent pas d'eux-mêmes lequel montre quoi, et c'est précisément la
+ * confusion que l'arbitrage devait lever.
  */
 function OngletsVueRun({
   vue,
@@ -271,41 +265,13 @@ function OngletsVueRun({
   vue: VueRunCle;
   choisir: (vue: VueRunCle) => void;
 }) {
-  const base = useId();
   return (
-    <nav
-      aria-label="Lectures de ce run"
-      className="flex flex-wrap gap-1 border-b border-neutral-200 dark:border-neutral-800"
-    >
-      {VUES_RUN.map(({ cle, libelle, question, icone: Icone }) => {
-        const courant = cle === vue;
-        return (
-          // La question vit **hors** du bouton : dedans, elle serait lue comme
-          // une partie de son nom, ce que `aria-describedby` est justement là
-          // pour éviter.
-          <Fragment key={cle}>
-          <button
-            type="button"
-            onClick={() => choisir(cle)}
-            aria-current={courant ? "page" : undefined}
-            aria-describedby={`${base}-${cle}`}
-            className={
-              "-mb-px inline-flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-2 text-corps transition-colors motion-reduce:transition-none " +
-              (courant
-                ? "border-emerald-600 font-medium text-neutral-900 dark:border-emerald-500 dark:text-neutral-100"
-                : "border-transparent text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100")
-            }
-          >
-            <Icone className="size-4 shrink-0" />
-            {libelle}
-          </button>
-          <span id={`${base}-${cle}`} className="sr-only">
-            {question}
-          </span>
-          </Fragment>
-        );
-      })}
-    </nav>
+    <BasculeDeVues
+      etiquette="Lectures de ce run"
+      vues={VUES_RUN}
+      courante={vue}
+      choisir={choisir}
+    />
   );
 }
 

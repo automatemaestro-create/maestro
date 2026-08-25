@@ -31,21 +31,50 @@ import {
   ecrireRepliSidebar,
   lireRepliSidebar,
 } from "@/lib/preferences";
-import { DECALAGE_ANCRE_PX, SECTIONS_PARAMETRES } from "@/lib/parametres";
+import {
+  DECALAGE_ANCRE_PX,
+  FAMILLES_PARAMETRES,
+  SECTIONS_PARAMETRES,
+} from "@/lib/parametres";
 
 const racine = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("le sommaire des Paramètres (lib/parametres)", () => {
   it("couvre les domaines de configuration annoncés", () => {
+    // L'ordre est celui des familles depuis #539 : « Notifications » a suivi
+    // « Le poste », dont elle règle ce qui remonte à l'utilisateur. Les sept
+    // sections sont les mêmes, et aucune n'a quitté le sommaire.
     expect(SECTIONS_PARAMETRES.map((section) => section.id)).toEqual([
       "general",
       "apparence",
+      "notifications",
       "agents",
       "fournisseurs",
       "mcp",
       "couts",
-      "notifications",
     ]);
+  });
+
+  it("range chaque section sous une famille, et une seule (#539)", () => {
+    // `SECTIONS_PARAMETRES` est **dérivé** des familles : ce contrôle garde
+    // qu'aucune section ne se perde en route (déclarée dans deux familles, ou
+    // dans aucune) et que les trois blocs de plein format de l'écran restent
+    // trois — c'est le plafond de la deuxième place (docs/30 §4), gardé ici sur
+    // la donnée et par `sobriete.test.tsx` sur l'écran rendu.
+    expect(FAMILLES_PARAMETRES).toHaveLength(3);
+    const rangees = FAMILLES_PARAMETRES.flatMap((f) =>
+      f.sections.map((s) => s.id),
+    );
+    expect(new Set(rangees).size).toBe(rangees.length);
+    expect(rangees).toEqual(SECTIONS_PARAMETRES.map((s) => s.id));
+  });
+
+  it("dit ce que chaque famille rassemble", () => {
+    for (const famille of FAMILLES_PARAMETRES) {
+      expect(famille.libelle).not.toBe("");
+      expect(famille.description).not.toBe("");
+      expect(famille.sections.length).toBeGreaterThan(0);
+    }
   });
 
   it("décrit chaque section en une phrase", () => {

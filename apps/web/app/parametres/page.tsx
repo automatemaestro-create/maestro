@@ -16,8 +16,19 @@
  * de la barre latérale (#117) sont des préférences du poste, portées par les
  * mêmes modules que les contrôles de la barre supérieure — ils s'appliquent
  * immédiatement, des deux côtés.
+ *
+ * ⚠ **Trois familles depuis #539** (règle des trois places, docs/30 §4). L'écran
+ * empilait **sept** sections de plein format — le plus gros dépassement du
+ * produit, quatre au-dessus du plafond. Aucune n'a été retirée : elles se
+ * rangent sous trois familles (`FAMILLES_PARAMETRES`), qui sont désormais les
+ * blocs, et deviennent leurs sous-parties. Le sous-menu, lui, était déjà la
+ * moitié de la réponse ; il gagne le niveau qui lui manquait. Ce qu'on aurait
+ * perdu à passer par des **onglets** est ce qui avait fait choisir les ancres
+ * (`NavigationParametres`) : une page imprimable, cherchable au Ctrl+F et
+ * partageable au lien près.
  */
 
+import { FamilleParametres } from "@/components/parametres/SectionParametres";
 import { NavigationParametres } from "@/components/parametres/NavigationParametres";
 import { ParametresAgents } from "@/components/parametres/ParametresAgents";
 import { ParametresApparence } from "@/components/parametres/ParametresApparence";
@@ -30,7 +41,7 @@ import {
   EspaceDefilement,
   SectionParametres,
 } from "@/components/parametres/SectionParametres";
-import { SECTIONS_PARAMETRES, type IdSection } from "@/lib/parametres";
+import { FAMILLES_PARAMETRES, type IdSection } from "@/lib/parametres";
 
 /**
  * Le contenu de chaque section, par ancre — le sommaire, lui, vit dans
@@ -52,14 +63,18 @@ export default function PageParametres() {
     <div className="flex flex-col gap-6 @3xl:flex-row @3xl:items-start @3xl:gap-8">
       <NavigationParametres />
       <div className="flex min-w-0 flex-1 flex-col gap-6">
-        {SECTIONS_PARAMETRES.map((section) => {
-          const Contenu = CONTENUS[section.id];
-          return (
-            <SectionParametres key={section.id} section={section}>
-              <Contenu />
-            </SectionParametres>
-          );
-        })}
+        {FAMILLES_PARAMETRES.map((famille) => (
+          <FamilleParametres key={famille.id} famille={famille}>
+            {famille.sections.map((section) => {
+              const Contenu = CONTENUS[section.id];
+              return (
+                <SectionParametres key={section.id} section={section}>
+                  <Contenu />
+                </SectionParametres>
+              );
+            })}
+          </FamilleParametres>
+        ))}
         <EspaceDefilement />
       </div>
     </div>

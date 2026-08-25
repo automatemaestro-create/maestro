@@ -255,6 +255,12 @@ Sept briques, et le `className` qu'on n'écrit plus :
 | `BadgeEtat` | la pastille d'état (compte, statut, provenance, temps réel) |
 | `EtatVide` | ce qui manque, et par où l'obtenir |
 
+Une huitième vit **à côté**, dans son propre fichier :
+`components/BasculeDeVues.tsx` (#539) — plusieurs lectures d'un même bloc, une à
+la fois. Elle n'est pas dans `Primitives.tsx` pour la raison qui en écarte aussi
+`Infobulle` : elle appelle un hook (`useId`), et ce fichier-là est partagé avec
+des composants serveur.
+
 Les briques de #245 portent leurs variants `dark:` **elles-mêmes** ; celles de
 #535 n'en portent **aucun** — elles sont écrites sur les tokens de #533, qui
 *sont* les deux thèmes. C'est la même promesse, une couche plus bas : aucun écran
@@ -465,6 +471,75 @@ Quatre choses à ne pas défaire :
 au sens ci-dessus : c'est un fil de **conversation**, où lire le contenu est le
 but, et il n'est dans le DOM que quand quelqu'un a ouvert le panneau. La règle
 « une région par écran » porte sur ce qu'un écran annonce **au repos**.
+
+### Les trois places — la règle de sobriété (#539)
+
+Les sections précédentes disent **comment** une chose se rend. Celle-ci dit
+**où elle a le droit de se poser**, et c'est la seule du langage visuel qu'une
+machine vérifie écran par écran.
+
+Le tableau de bord a déjà été épuré une fois — #191 a ramené cinq panneaux de
+plein format à « ce qui se lit d'un coup d'œil ». Six mois plus tard le compte
+était refait. La cause n'est pas qu'on ait mal épuré : c'est qu'**aucune règle
+n'a été laissée derrière**. Chaque ajout était légitime pris seul ; c'est leur
+somme qui refaisait le problème, et « est-ce utile ? » ne l'arrête jamais, parce
+que la réponse est toujours oui.
+
+> **Tout ce qu'un écran affiche occupe l'une de trois places, et une seule.**
+>
+> 1. **Le bandeau de tête** — au plus **4 chiffres**, et rien d'autre. Un chiffre
+>    y entre seulement s'il change la décision de l'utilisateur *dans la minute*.
+> 2. **Le corps** — au plus **3 blocs de plein format**, plus les blocs
+>    d'**arbitrage** (ceux qui demandent une décision humaine), qui ne comptent
+>    pas dans le plafond **et disparaissent quand la file est vide**.
+> 3. **La colonne de propriétés** — tout le reste : métadonnées, réglages,
+>    historique, liens. Elle s'allonge sans plafond, parce qu'elle défile et ne
+>    dispute rien au corps.
+>
+> **Ce qui ne tient dans aucune des trois n'est pas un bloc : c'est une ligne
+> avec un renvoi**, vers l'écran dont c'est le sujet.
+
+La règle ne dit pas « moins », elle dit **où** — et elle répond au prochain
+ticket sans qu'on ait à juger (docs/30 §4.3) : « ajouter un panneau X au tableau
+de bord » → le corps est plein, donc soit X remplace un bloc, soit X est un bloc
+d'arbitrage, soit X est une ligne + un renvoi ; « ajouter un 5ᵉ indicateur » →
+non, sauf à en retirer un ; « ce réglage doit être visible » → colonne de
+propriétés.
+
+**Comment elle se traduit dans le DOM.** Un bloc est une `<section>` ; la colonne
+de propriétés est un `<aside>` ; un chiffre de tête est une `TuileChiffre`. Ce
+qui n'occupe **aucune** place et ne compte donc pas : une `<nav>` — le filtre de
+période de `/couts`, le sommaire de `/parametres`, la bascule de vues d'un run
+règlent l'écran ou y naviguent —, et tout ce qui vit **dans** un bloc.
+
+**Ce que le comptage refuse, et pourquoi ces bornes-là.** Le bandeau de tête n'en
+est un que si **tous** ses enfants sont des chiffres : sinon, une table posée sous
+une tuile sortirait du plafond. Il n'y a **qu'une** colonne de propriétés par
+écran : sans cette borne, la seule place sans plafond deviendrait la sortie de
+secours de toutes les autres, et emballer chaque bloc dans son `<aside>` rendrait
+n'importe quel écran « conforme » sans rien épurer. Et un bloc de premier niveau
+**sans nom accessible** fait rougir — c'est ce qui l'empêche d'échapper au
+recensement en silence.
+
+**Les deux réponses à un corps qui déborde**, et jamais le simple retrait d'une
+information — les deux écrans qui dépassaient sont là pour servir d'exemple :
+
+| Écran | Ce qu'il faisait | Ce qu'il fait |
+| --- | --- | --- |
+| `/couts` | **5 blocs** : évolution, répartition, table par tâche, table par exécution, grand livre | **3** — la répartition passe en **colonne de propriétés**, les deux tables deviennent un **second niveau** (`BasculeDeVues`) du bloc « Détail de la période », le grand livre reste à part (la période ne le borne pas) |
+| `/parametres` | **7 sections** de plein format | **3 familles** (`lib/parametres.ts`), dont les sept sections deviennent les sous-parties. Les ancres, l'impression et le Ctrl+F sont intacts — c'est ce qu'un passage aux **onglets** aurait coûté |
+
+**Ce qui la garde** : `tests/sobriete.test.tsx`, qui monte les dix écrans du menu
+et compte. L'arbitrage n'y est pas déclaré, il se **prouve** : chaque écran est
+monté deux fois, files pleines puis files vides, et ce qui survit aux deux est ce
+que le plafond compte. Un bloc qui prétendrait arbitrer sans disparaître compte
+comme les autres. Comme `contraste.test.ts` et `a11y.test.tsx`, la sonde est
+**prouvée sur un échantillon fautif avant de balayer** — sans quoi un comptage
+mal branché rendrait « 0 dépassement » sur une question jamais posée.
+
+⚠ La règle plafonne des **blocs**, jamais des pixels : jsdom n'en calcule aucun,
+et la géométrie reste au skill `/banc-mise-en-page` (#308). Un écran conforme
+peut très bien être trop haut ; ce sont deux questions, et deux outils.
 
 ### La palette sémantique — `app/globals.css`
 
@@ -761,11 +836,31 @@ posée **à la ligne près et pour ces règles-là**, jamais au fichier ni à la
 configuration : un `off` dans `eslint.config.mjs` ferait taire la règle sur les
 48 autres fichiers, c'est-à-dire partout où elle attrape le vrai défaut.
 
-⚠ **Deux exemptions de fond** sont arrêtées par #471 et **assumées** (docs/30
-§3.5) : le graphe de pipeline (`VuePipeline`) n'est pas rendu accessible nœud à
-nœud — aucun motif ARIA n'établit comment lire un DAG, et il porte une
-alternative textuelle équivalente (Kanban + journal du run) —, et **AAA n'est pas
-visé**.
+#### Les deux exemptions de fond — arrêtées, écrites, et non découvertes plus tard
+
+Le niveau visé est **WCAG 2.2 niveau AA sur les dix écrans**. Deux exemptions
+sortent de ce périmètre. Elles ont été arrêtées par la recherche #471 (docs/30
+§3.5) et sont écrites ici parce qu'une exemption qu'on ne trouve pas dans la doc
+du produit est une exemption que le prochain ticket prendra pour un oubli — ou,
+pire, pour un défaut à corriger dans l'urgence d'une revue.
+
+1. **Le graphe de pipeline (`VuePipeline`) n'est pas rendu accessible nœud à
+   nœud.** Aucun motif ARIA n'établit comment lire un DAG à un lecteur d'écran :
+   il n'y a ni rôle pour « ce nœud a deux prédécesseurs », ni convention de
+   parcours. Ce qui rend l'exemption acceptable n'est pas cette absence mais la
+   **contrepartie** : le run porte une **alternative textuelle équivalente** — sa
+   vue Kanban et son journal, à un onglet de là, donnent la même information sous
+   une forme linéaire. L'exemption tomberait le jour où le graphe porterait une
+   information qu'aucune des deux autres lectures ne donne.
+2. **Le niveau AAA n'est pas visé.** Son contraste de 7:1 imposerait
+   `neutral-700` au minimum pour **tout** texte secondaire, ce qui supprimerait
+   la distinction primaire/secondaire dont la densité de ces écrans dépend : on
+   paierait la conformité d'un niveau par la lisibilité de tous les autres. AA
+   est tenu, mesuré, et gardé par `contraste.test.ts`.
+
+⚠ Ni l'une ni l'autre n'est un blanc-seing sur son voisinage : le graphe reste
+soumis au reste du filet (contraste, mouvement, taille des cibles, lint), et
+« AAA non visé » ne dispense d'**aucun** critère AA.
 
 ### La suite de tests
 
@@ -787,7 +882,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/assistant.test.tsx` | Ouverture, envoi, échec d'envoi, non-fermeture au clic extérieur (#123) |
 | `tests/shell.test.tsx` | La composition : les sept lots effectivement branchés dans le cadre |
 | `tests/agents.test.tsx` | La fiche agent à onglets, la liste, et la survie des chemins v1 par redirection (#190, testé en #193) |
-| `tests/tableau-de-bord.test.tsx` | Le tableau de bord épuré — ce qui reste, ce qui renvoie ailleurs — et le ticket externe dans les tables de coûts (#191/#192, testés en #193) |
+| `tests/tableau-de-bord.test.tsx` | Le tableau de bord épuré — ce qui reste, ce qui renvoie ailleurs — et le ticket externe dans les tables de coûts (#191/#192, testés en #193) ; puis le **second niveau de `/couts`** (#539) : la vue par tâche à l'ouverture, la bascule vers la vue par exécution **sans quitter le bloc** (c'est un second niveau, pas une navigation), la répartition par agent rangée dans la colonne de propriétés, et le bloc qui s'efface quand la période n'a ni tâche ni exécution — les chiffres, eux, restent |
 | `tests/ticket-externe.test.tsx` | Le filtrage d'URL et les cartes du Kanban (#192, livré avec le lot : logique critique) |
 | `tests/detail-tache.test.tsx` | Le panneau de détail d'une tâche : description, étapes en checklist, liens filtrés et rendus selon leur nature, et la carte laissée intacte quand il n'y a rien à ouvrir (#251, livré avec le lot : filtrage d'URL et absence totale) |
 | `tests/parametres-mcp.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231) |
@@ -808,9 +903,10 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/etat-des-runs.test.tsx` | L'état des runs au tableau de bord (#476, testé en #480) : **l'exhaustivité de la table des groupes**, balayée sur `regimeDuRun` plutôt qu'énumérée — un régime sans groupe fait disparaître ces runs-là de l'écran, ce qui est arrivé à « en pause » entre #476 et #477 — puis le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` sur ses trois entrées, et l'écran qui ne porte **aucun** geste |
 | `tests/a11y.test.tsx` | Le **filet d'accessibilité** (#537) en trois étages : `axe-core` joué sur les **10 écrans** montés dans leur shell réel, verdict **0 violation `serious`/`critical`** — table d'écrans **dérivée de `MENU`**, donc une page ajoutée au menu sans cas d'audit rougit ; puis ce qu'axe ne sait pas voir — le **lien d'évitement** (premier dans l'ordre du DOM, visant un `<main>` que le focus peut atteindre), la **garde de mouvement** sur chaque utilité `transition`/`animate-` du produit, et le **plancher de 24 px** des cibles en petit corps. Comme `contraste.test.ts`, **la sonde est prouvée avant de servir** : sur un fragment fautif (image sans alternative, bouton sans nom, champ sans étiquette), puis sur un fragment sain |
 | `tests/regions-live.test.tsx` | Les régions live des écrans temps réel (#538) : le **vocabulaire sans DOM** (seules les hausses parlent, un franchissement dit le total, les deux attentes humaines **absentes** du relevé des runs) ; la **présence** écran par écran, comptée sur l'attribut `aria-live` comme la sonde du ticket — une polie, zéro assertive ; le **contenu** après un événement simulé ; le **débit**, où une rafale de trois tâches ne coûte que deux phrases et douze événements du journal une seule ; et l'**assertive** avec sa réserve — unique dans le shell, muette sur une tâche terminée, et jamais redite par la région polie de l'écran qui montre l'arbitrage |
+| `tests/sobriete.test.tsx` | La **règle des trois places** (#539, voir « Le langage visuel » ci-dessus) rendue opposable : les 10 écrans du menu recensés, bandeau de tête ≤ 4 chiffres, corps ≤ 3 blocs, une seule colonne de propriétés, aucun bloc anonyme. Rien n'y est **déclaré** — le bandeau se reconnaît à ses `TuileChiffre`, la colonne à sa balise `<aside>`, et l'**arbitrage se prouve** en montant chaque écran une seconde fois files vides : un bloc qui prétendrait arbitrer sans disparaître compterait comme les autres. Sonde prouvée sur un échantillon fautif avant de balayer, comme `contraste.test.ts` |
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
 
-Trois fichiers portent l'outillage plutôt que des tests :
+Cinq fichiers portent l'outillage plutôt que des tests :
 
 - `tests/setup.ts` — ce que jsdom ne fournit pas (`matchMedia`, `ResizeObserver`,
   `scrollIntoView`), la remise à zéro entre deux tests (stockage, `data-theme`,
@@ -825,6 +921,21 @@ Trois fichiers portent l'outillage plutôt que des tests :
   lequel tout rendu du shell s'arrête à la porte) et `rendreAvecEtat`, qui monte
   un composant sous le **vrai** fournisseur d'état du shell avec une source temps
   réel factice ;
+- `tests/ecrans.tsx` — **les dix écrans** (#537, extrait ici par #539) : quel
+  composant chaque route rend, l'état partagé dans lequel on les monte
+  (`peuplerEtat`, files d'arbitrage pleines, et `peuplerEtatSansArbitrage`, files
+  vides mais projet toujours peuplé — tout vider ferait basculer le tableau de
+  bord sur `PosteVide`, donc mesurer un autre écran), et `monterEcran`, qui monte
+  sous le **vrai** `Shell` et attend que la garde du projet ouvre. `a11y` et
+  `sobriete` s'en servent tous les deux : deux tables recopiées seraient le
+  premier moyen qu'une suite rende un verdict sur un produit que l'autre ne monte
+  plus ;
+- `tests/ecrans-reseau.ts` — les fabriques de mock des mêmes écrans, **séparées**
+  du fichier ci-dessus et pas par confort : `vi.mock` est hissé en tête du
+  fichier de test, ses fabriques ne peuvent donc charger leurs dépendances que
+  dedans (`await import(…)`) — et si ce qu'elles chargent importait les pages, le
+  mock de `useAnalyticsCouts` se rappellerait lui-même par `app/couts/page` et
+  rendrait un module à moitié construit ;
 - `tests/axe.ts` — le branchement d'`axe-core` (#537) : le seuil du verdict
   (`serious`/`critical`), les règles écartées **avec la raison de chacune**, et
   le récit d'un échec, qui nomme la règle et le nœud plutôt que de rendre un

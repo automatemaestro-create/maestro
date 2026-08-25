@@ -1,23 +1,61 @@
 "use client";
 
 /**
- * Les briques communes aux sections de la page Paramètres (#121) : le cadre
- * d'une section (ancre + en-tête), la ligne « libellé / aide / contrôle » qui
- * porte un réglage, et l'état vide des sections dont le réglage n'existe pas
- * encore côté API.
+ * Les briques communes de la page Paramètres (#121) : le cadre d'une **famille**
+ * (#539), celui d'une section (ancre + en-tête), la ligne « libellé / aide /
+ * contrôle » qui porte un réglage, et l'état vide des sections dont le réglage
+ * n'existe pas encore côté API.
  *
  * L'état vide est explicite par construction : il dit **pourquoi** c'est vide et
  * **où** la chose se règle aujourd'hui — jamais un lien mort (critère #121).
+ *
+ * ⚠ **Deux niveaux depuis #539** (docs/30 §4, `lib/parametres`). Le bloc de
+ * plein format est désormais la **famille** ; la section, elle, est devenue une
+ * sous-partie — même contenu, même ancre, un cran plus bas dans la hiérarchie
+ * du document (`h3` sous le `h2` de la famille). Ce qui n'a pas bougé est ce à
+ * quoi le sous-menu s'accroche : la section garde son `id` et son
+ * `scroll-mt-20`, parce que c'est elle que l'ancre vise et elle que le repère de
+ * défilement reconnaît.
  */
 
 import { useEffect, useState, type ReactNode } from "react";
 
-import { Carte } from "@/components/Primitives";
+import { Carte, EnTeteSection } from "@/components/Primitives";
 import {
   DECALAGE_ANCRE_PX,
   SECTIONS_PARAMETRES,
+  type FamilleParametres as Famille,
   type SectionParametres as Section,
 } from "@/lib/parametres";
+
+/**
+ * Une famille de réglages — l'un des trois blocs de plein format de l'écran.
+ * Elle porte le titre et la phrase qui disent **ce que ses sections engagent** ;
+ * ses sections s'empilent dedans, séparées par un filet.
+ */
+export function FamilleParametres({
+  famille,
+  children,
+}: {
+  famille: Famille;
+  children: ReactNode;
+}) {
+  return (
+    <Carte
+      balise="section"
+      densite="aeree"
+      id={famille.id}
+      aria-labelledby={`${famille.id}-titre`}
+      className="scroll-mt-20"
+    >
+      <EnTeteSection titre={famille.libelle} id={`${famille.id}-titre`} />
+      <p className="mt-0.5 text-annexe text-neutral-500 dark:text-neutral-400">
+        {famille.description}
+      </p>
+      <div className="mt-5 flex flex-col gap-5">{children}</div>
+    </Carte>
+  );
+}
 
 export function SectionParametres({
   section,
@@ -30,24 +68,21 @@ export function SectionParametres({
     // `scroll-mt-20` : l'ancre dépose la section juste sous la barre supérieure
     // collante, pas dessous — et exactement sur le repère du sous-menu
     // (DECALAGE_ANCRE_PX, à garder égal à ces 5rem).
-    <Carte
-      balise="section"
-      densite="aeree"
+    <section
       id={section.id}
       aria-labelledby={`${section.id}-titre`}
-      className="scroll-mt-20"
+      className="scroll-mt-20 border-t border-neutral-100 pt-5 first:border-t-0 first:pt-0 dark:border-neutral-800/60"
     >
-      <h2
+      <EnTeteSection
+        titre={section.libelle}
+        niveau={3}
         id={`${section.id}-titre`}
-        className="text-corps font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400"
-      >
-        {section.libelle}
-      </h2>
+      />
       <p className="mt-0.5 text-annexe text-neutral-500 dark:text-neutral-400">
         {section.description}
       </p>
       <div className="mt-4">{children}</div>
-    </Carte>
+    </section>
   );
 }
 

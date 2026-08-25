@@ -960,6 +960,21 @@ comme un bug là où ce ne serait qu'un mélange de périmètres. Et quand la p�
 page **le dit avec le nom du projet** : les compteurs à zéro restent (« 0 $ » est une réponse) mais
 les tables s'effacent, et l'écran passerait sinon pour à moitié chargé.
 
+⚠ **La disposition a changé le 2026-08-26** (#539, règle des trois places, §4). Rien n'a été
+retiré ; chaque élément a changé de place, l'écran comptant **cinq** blocs de plein format pour un
+plafond de trois :
+
+| Ce qui est affiché | Où c'est, depuis #539 |
+|---|---|
+| Coût total, tokens, appels, exécutions | **bandeau de tête** — 4 chiffres, le plafond exact |
+| Évolution du coût | bloc de corps 1 |
+| Détail par tâche **et** par exécution | bloc de corps 2 — **un** bloc, « Détail de la période », dont les deux tables sont un **second niveau** (une bascule d'onglets, la même que les lectures d'un run, §2.4.2) |
+| Grand livre par exécution (#58) | bloc de corps 3 — toujours **à part**, la période ne le bornant pas |
+| Répartition par agent | **colonne de propriétés** — une ventilation de la période, pas un sujet à elle |
+
+Le filtre de période, lui, n'occupe aucune des trois places : c'est le réglage de tout l'écran, il
+reste en tête de page au-dessus de ce qu'il borne.
+
 ### 2.6 ✅ Validation humaine (human-in-the-loop)
 
 Quand un agent atteint une action sensible, une carte **« Validation requise »** apparaît :
@@ -1358,6 +1373,39 @@ depuis #516, à côté du pipeline et du Kanban.
   parce que « 🤖 dev » n'apprenait rien à qui ne le voyait pas. Cette décision
   est prise **une fois**, en lot socle : traitée écran par écran, la même
   demande de revue aurait produit quatre styles différents.
+- **Sobriété opposable — la règle des trois places** (#471 pour la règle, #539
+  pour son application et son filet ; [docs/30 §4](./30-cible-visuelle-control-tower.md),
+  détail dans [`apps/web/README.md`](../apps/web/README.md#les-trois-places--la-règle-de-sobriété-539)) :
+
+  > Tout ce qu'un écran affiche occupe l'une de **trois places**, et une seule :
+  > **1.** le bandeau de tête — au plus **4 chiffres** ; **2.** le corps — au plus
+  > **3 blocs de plein format**, les blocs d'**arbitrage** exceptés (ils ne
+  > comptent pas et disparaissent quand la file est vide) ; **3.** la colonne de
+  > propriétés — tout le reste, sans plafond. Ce qui ne tient dans aucune des
+  > trois n'est pas un bloc : **c'est une ligne avec un renvoi**.
+
+  Ce principe-ci diffère des autres sur un point : il se vérifie **par un
+  comptage**, donc par une machine (`apps/web/tests/sobriete.test.tsx`), et non
+  par le jugement de qui relit. C'est ce qui manquait à #191, qui a épuré le
+  tableau de bord **une fois** sans laisser de règle derrière — six mois plus tard
+  le compte était refait, chaque ajout étant légitime pris seul. La règle ne dit
+  pas « moins », elle dit **où** : la question posée à un ticket n'est plus
+  « est-ce utile ? » (ça l'est toujours) mais « **quelle place ?** ». Les deux
+  seules réponses à un corps qui déborde sont une **colonne de propriétés** ou un
+  **second niveau** — jamais un simple retrait d'information ; c'est ainsi que
+  `/couts` est passé de 5 blocs à 3 et `/parametres` de 7 sections à 3 familles.
+- **Accessibilité : WCAG 2.2 niveau AA sur les dix écrans**, gardé par quatre
+  mécanismes (#537, [`apps/web/README.md`](../apps/web/README.md#le-filet-daccessibilité-537))
+  — audit `axe-core` sans violation `serious`/`critical`, `jsx-a11y/recommended`
+  en `error`, garde `motion-reduce:` et plancher de 24 px des cibles. **Deux
+  exemptions, et deux seulement**, arrêtées par #471 et assumées par écrit
+  ([docs/30 §3.5](./30-cible-visuelle-control-tower.md)) : le **graphe de
+  pipeline** n'est pas rendu accessible nœud à nœud — aucun motif ARIA n'établit
+  comment lire un DAG, et il porte une **alternative textuelle équivalente** (la
+  vue Kanban et le journal du run donnent la même information) —, et le niveau
+  **AAA n'est pas visé**, son contraste de 7:1 supprimant la distinction
+  primaire/secondaire dont la densité de ces écrans dépend. Ni l'une ni l'autre ne
+  dispense d'un critère AA.
 - **Vulgarisation & multilingue** : interface multilingue (français par défaut, autres langues activables via i18n), libellés clairs, jargon technique expliqué au survol.
 - **Traçabilité** : depuis n'importe quelle tâche, on remonte à la trace complète.
 

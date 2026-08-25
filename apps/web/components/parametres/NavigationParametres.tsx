@@ -14,12 +14,19 @@
  * la dernière : c'est le rôle de l'`EspaceDefilement` posé sous elles par la
  * page. Sans lui, cliquer une des dernières entrées défilerait jusqu'en butée
  * sans que la section vise le repère, et le sous-menu désignerait la précédente.
+ *
+ * ⚠ **Deux niveaux depuis #539** : les sept entrées se groupent sous leurs trois
+ * familles (`FAMILLES_PARAMETRES`). Rien ne change côté ancres — ce sont
+ * toujours les **sections** qui sont visées et mises en évidence —, et le repère
+ * de défilement continue de se calculer sur elles seules : une famille n'a pas
+ * d'état « courante », elle n'est qu'un intitulé.
  */
 
 import { useEffect, useState } from "react";
 
 import {
   DECALAGE_ANCRE_PX,
+  FAMILLES_PARAMETRES,
   SECTIONS_PARAMETRES,
   type IdSection,
 } from "@/lib/parametres";
@@ -77,27 +84,46 @@ export function NavigationParametres() {
       aria-label="Sections des paramètres"
       className="@3xl:sticky @3xl:top-20 @3xl:w-56 @3xl:shrink-0"
     >
-      <ul className="flex flex-row flex-wrap gap-1 @3xl:flex-col">
-        {SECTIONS_PARAMETRES.map(({ id, libelle }) => {
-          const active = id === courante;
-          return (
-            <li key={id}>
-              <a
-                href={`#${id}`}
-                aria-current={active ? "true" : undefined}
-                className={
-                  "block rounded-md px-3 py-2 text-sm transition-colors motion-reduce:transition-none " +
-                  (active
-                    ? "bg-neutral-200 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
-                    : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100")
-                }
-              >
-                {libelle}
-              </a>
-            </li>
-          );
-        })}
-      </ul>
+      {/* Deux niveaux depuis #539 : la famille intitule, les sections restent
+          les ancres. L'ordre des liens est celui de `SECTIONS_PARAMETRES`, qui
+          est **dérivé** de ces mêmes familles — le sommaire et la page ne
+          peuvent donc pas se contredire, quel que soit le niveau qu'on lit. */}
+      <div className="flex flex-row flex-wrap gap-x-4 gap-y-3 @3xl:flex-col">
+        {FAMILLES_PARAMETRES.map((famille) => (
+          <div key={famille.id}>
+            <p
+              id={`sommaire-${famille.id}`}
+              className="px-3 py-1 text-annexe font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400"
+            >
+              {famille.libelle}
+            </p>
+            <ul
+              aria-labelledby={`sommaire-${famille.id}`}
+              className="flex flex-row flex-wrap gap-1 @3xl:flex-col"
+            >
+              {famille.sections.map(({ id, libelle }) => {
+                const active = id === courante;
+                return (
+                  <li key={id}>
+                    <a
+                      href={`#${id}`}
+                      aria-current={active ? "true" : undefined}
+                      className={
+                        "block rounded-md px-3 py-2 text-sm transition-colors motion-reduce:transition-none " +
+                        (active
+                          ? "bg-neutral-200 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
+                          : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100")
+                      }
+                    >
+                      {libelle}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </div>
     </nav>
   );
 }
