@@ -33,7 +33,11 @@ export function BarreLaterale({ repliee }: { repliee: boolean }) {
         href="/"
         data-guide="marque"
         className="flex h-14 shrink-0 items-center gap-2 px-4 text-neutral-900 dark:text-neutral-100"
-        title="Maestro — Control Tower"
+        // `aria-label` et non `title` (#536) : repliée, la sidebar masque le
+        // libellé et le glyphe est `aria-hidden` — le `title` était alors le
+        // **seul** nom accessible du lien, c'est-à-dire un nom que ni le
+        // clavier ni le tactile n'atteignaient.
+        aria-label="Maestro — Control Tower"
       >
         {/* Repliée, la sidebar masque le libellé : le glyphe seul (variante
             compacte) subsiste. Le mark hérite de `currentColor` — lisible en
@@ -61,7 +65,10 @@ export function BarreLaterale({ repliee }: { repliee: boolean }) {
               key={href}
               href={href}
               aria-current={actif ? "page" : undefined}
-              title={libelle}
+              // Même raison qu'au lien de marque ci-dessus (#536) : repliée, la
+              // sidebar n'affiche plus que l'icône, et le nom du lien ne tenait
+              // qu'au `title`.
+              aria-label={libelle}
               className={
                 "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors " +
                 (actif

@@ -318,6 +318,64 @@ de Next, pas une balise) et un `<button>` pleine largeur (dont le `type` et le
 `Carte` polymorphe garde **une** source à la décision — c'est bien la recopie qui
 disparaît, pas seulement sa forme.
 
+### Les primitives d'accessibilité — `Infobulle`, `usePiegeDeFocus`, `useSurfaceDeroulee`
+
+Posées par #536 (lot 4 de #532), en réponse aux trois motifs que la recherche
+#471 avait mesurés en échec ([docs/30 §3.4](../../docs/30-cible-visuelle-control-tower.md)) :
+piège de focus **0/3 modales**, navigation aux flèches **0/4 menus**, infobulle
+accessible **0** pour 42 `title=`. Tout le reste était déjà bon — `Échap` 7/7,
+restauration du focus 7/7, rôles corrects — et n'a pas été touché.
+
+| Primitive | Ce qu'elle tient | Qui s'en sert |
+| --- | --- | --- |
+| `lib/usePiegeDeFocus.ts` | la tabulation reste dans la surface modale | `PanneauDetailTache`, `GuidePriseEnMain` |
+| `lib/useSurfaceDeroulee.ts` | clic extérieur, `Échap`, flèches, `Home`/`End`, focus d'entrée | `MenuAide`, `BasculeTheme`, `SelecteurProjet`, `CentreNotifications` |
+| `components/Infobulle.tsx` | une bulle `role="tooltip"` atteignable au clavier | ~14 emplacements, en remplacement de `title=` |
+
+Trois choses à connaître avant d'y toucher :
+
+- **`useSurfaceDeroulee` a remplacé quatre copies du même bloc de dix-huit
+  lignes.** C'est la cause de la panne autant que sa réparation : la navigation
+  aux flèches manquait aux quatre menus *à la fois* parce qu'il aurait fallu
+  l'écrire quatre fois. Le hook **regarde ce que la surface contient** plutôt
+  que de recevoir un drapeau — zéro entrée `menuitem` ⇒ c'est un panneau, donc
+  ni flèches ni fermeture sur `Tab`. La donnée décide, pas la configuration.
+- **La cloche n'est plus un `menu` mais un `dialog` non modal.** Elle déclarait
+  `role="menu"` sans porter la moindre entrée `menuitem` — des sections, des
+  titres, des listes et des cartes à deux boutons d'arbitrage chacune. Le motif
+  ARIA exige ces entrées, l'audit du lot 5 (#537) le vérifiera, et le rôle
+  promettait au lecteur d'écran une navigation aux flèches qui ne pouvait pas
+  exister.
+- **`AssistantFlottant` reste non modal, et n'a donc pas de piège de focus.**
+  Le ticket le prévoyait (« la surface de `AssistantFlottant` **si elle le
+  devient** ») ; elle ne le devient pas. Toute sa conception est de laisser
+  travailler dans la page pendant qu'il est ouvert — c'est pourquoi il n'a pas
+  de fermeture au clic extérieur, et un test s'appelle « reste ouvert quand on
+  agit ailleurs ».
+
+**Quand remplacer un `title=` — la règle, en une ligne :** `Infobulle` quand
+l'information n'existe **nulle part ailleurs** ; `aria-label` quand l'élément est
+déjà focusable ; suppression quand le `title` redouble le nom accessible ou le
+texte visible.
+
+Reste en `title=`, à dessein, une seule famille : la **forme longue d'un texte
+déjà affiché** et l'**identifiant technique** posé en repli d'un nom
+(`title={tache_id}` à côté de `{nom || tache_id}`). Ces `title` sont du confort
+de souris posé **par ligne** de tableau et par carte du Kanban : les convertir
+ajouterait un arrêt de tabulation par ligne, et la navigation clavier y perdrait
+plus qu'elle n'y gagnerait. Une exception dans l'exception, `LigneActivite` :
+sa date absolue vit dans un `<time>` **à l'intérieur d'un bouton**, où le
+wrapper focusable de l'infobulle créerait un contrôle imbriqué dans un contrôle
+— elle rejoint donc le texte accessible du bouton par un `sr-only`.
+
+⚠ Le `className` d'`Infobulle` **remplace** son `inline` par défaut, il ne s'y
+ajoute pas : deux utilitaires `display` dans la même liste se départagent par
+l'ordre de la feuille Tailwind, pas par celui de la chaîne. Et ce défaut est
+`inline` et non `inline-flex` parce qu'il doit être **neutre** — le wrapper
+prend la place d'un `title=`, qui n'occupait aucune place, et une boîte atomique
+que le `truncate` du parent ne sait plus abréger ferait déborder les tuiles de
+chiffres au lieu de les finir en points de suspension.
+
 ### La palette sémantique — `app/globals.css`
 
 Posée par #533 (lot 1 de #532). Avant elle, le produit portait **1 750 couleurs

@@ -145,7 +145,14 @@ describe("changer de projet", () => {
     const recherche = screen.getByRole("searchbox", { name: /Rechercher/ });
     await utilisateur.type(recherche, "dev");
     expect(recherche).toHaveValue("dev");
-    expect(screen.getByText(/sur Dépensio/)).toBeInTheDocument();
+    // L'infobulle du coût cumulé nomme elle aussi le projet depuis #536 (c'était
+    // un `title`, donc hors du texte) : on écarte les bulles, sinon la
+    // recherche en ramène deux et ne dit plus rien de la page.
+    expect(
+      screen.getByText(/sur Dépensio/, {
+        ignore: "script, style, [role='tooltip']",
+      }),
+    ).toBeInTheDocument();
 
     // La bascule passe par le stockage — le chemin qu'emprunteront le sélecteur
     // du lot 4 (#280) comme un autre onglet.

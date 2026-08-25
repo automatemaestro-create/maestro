@@ -23,6 +23,7 @@ import {
   IconePlaybooks,
   IconePlus,
 } from "@/components/Icones";
+import { Infobulle } from "@/components/Infobulle";
 import { Bouton, EnTeteSection } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
 import {
@@ -719,12 +720,12 @@ function SectionServeursMcp({ fiche }: { fiche: AgentCatalogueDetail }) {
                     {serveur.type}
                   </span>
                   {serveur.optionnel ? (
-                    <span
-                      className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-                      title="Serveur omis du montage (sans échec) tant que son secret n'est pas fourni"
+                    <Infobulle
+                      texte="Serveur omis du montage (sans échec) tant que son secret n'est pas fourni"
+                      className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
                     >
                       optionnel
-                    </span>
+                    </Infobulle>
                   ) : null}
                   <code className="truncate font-mono text-neutral-600 dark:text-neutral-400">
                     {serveur.type === "stdio"
@@ -775,12 +776,12 @@ function LigneActivation({
         {integration.serveur.type}
       </span>
       {actif && secretManquant && (
-        <span
-          className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-          title="Configurer le secret dans Paramètres → Intégrations MCP"
+        <Infobulle
+          texte="Configurer le secret dans Paramètres → Intégrations MCP"
+          className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
         >
           secret à configurer
-        </span>
+        </Infobulle>
       )}
     </li>
   );

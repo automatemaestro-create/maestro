@@ -46,6 +46,8 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 
+import { Infobulle } from "@/components/Infobulle";
+
 import { IconeFlecheDroite } from "@/components/Icones";
 
 /** Une icône du jeu (`components/Icones`) : décorative, à `currentColor`. */
@@ -540,7 +542,11 @@ export function TuileChiffre({
   detail?: string;
   /** Rendu en chasse fixe : un identifiant, pas un compte. */
   monospace?: boolean;
-  /** Infobulle quand la valeur peut être tronquée. */
+  /**
+   * Ce que la valeur affichée ne dit pas : l'identifiant du run derrière un
+   * chiffre, la ventilation derrière un total. Rendu par `Infobulle` depuis
+   * #536 — c'était un `title=`, donc rien pour qui n'a pas de souris.
+   */
   titre?: string;
   renvoi?: Renvoi;
   icone?: Icone;
@@ -559,9 +565,8 @@ export function TuileChiffre({
           "chiffre mt-1 truncate font-semibold " +
           (monospace ? "font-mono text-corps" : "text-chiffre")
         }
-        title={titre}
       >
-        {valeur}
+        {titre ? <Infobulle texte={titre}>{valeur}</Infobulle> : valeur}
       </p>
       {detail && (
         <p className="chiffre mt-0.5 text-annexe text-neutral-500 dark:text-neutral-400">

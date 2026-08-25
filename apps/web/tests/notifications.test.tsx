@@ -182,7 +182,9 @@ describe("le tri du notable (estNotableNotification)", () => {
 describe("la cloche (CentreNotifications)", () => {
   const ouvrir = async (utilisateur: ReturnType<typeof userEvent.setup>) => {
     await utilisateur.click(screen.getByRole("button", { name: /Notifications/ }));
-    return screen.getByRole("menu", { name: "Notifications" });
+    // `dialog` et non `menu` depuis #536 : le panneau porte des sections et des
+    // cartes d'arbitrage, jamais d'entrées `menuitem`.
+    return screen.getByRole("dialog", { name: "Notifications" });
   };
 
   it("ne porte pas de badge quand rien n'attend d'arbitrage", () => {
@@ -365,6 +367,6 @@ describe("la cloche (CentreNotifications)", () => {
     rendreAvecEtat(<CentreNotifications />);
     await ouvrir(utilisateur);
     await utilisateur.keyboard("{Escape}");
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

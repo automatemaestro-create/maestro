@@ -85,7 +85,11 @@ describe("le sélecteur de projet (SelecteurProjet)", () => {
   it("affiche le projet actif, et sa racine pour le distinguer", async () => {
     const bouton = await monterSelecteur();
     expect(bouton).toHaveTextContent("Dépensio");
-    expect(bouton).toHaveAttribute("title", "D:/projets/depensio");
+    // La racine est passée du `title=` au nom accessible (#536) : dans un
+    // `title` elle n'existait que pour qui a une souris.
+    expect(bouton).toHaveAccessibleName(
+      "Projet actif : Dépensio (D:/projets/depensio) — changer de projet",
+    );
   });
 
   it("liste les projets déclarés et coche celui qui est ouvert", async () => {

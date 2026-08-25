@@ -218,9 +218,11 @@ export function ExplorateurDossiers({
             icone={IconeFlecheHaut}
             onClick={() => void ouvrir(page?.parent ?? null)}
             disabled={chargement || courant === null}
-            title={
+            // Même raison qu'au bouton « Choisir » plus bas (#536) : sur un
+            // bouton désactivé, le `title` n'atteignait personne.
+            aria-label={
               page?.parent === null && courant !== null
-                ? "Remonter sortirait des dossiers explorables"
+                ? "Dossiers explorables — remonter sortirait des dossiers explorables"
                 : undefined
             }
           >
@@ -366,12 +368,16 @@ export function ExplorateurDossiers({
               taille="petite"
               onClick={() => onChoisir(dossier.chemin)}
               disabled={chargement || dossier.projet_id !== null}
-              title={
+              // Le motif du blocage est passé du `title` au nom accessible
+              // (#536) : sur un bouton `disabled`, plusieurs navigateurs
+              // n'affichent aucun `title` — il n'était donc lisible ni à la
+              // souris, ni au clavier.
+              aria-label={
                 dossier.projet_id !== null
-                  ? "Ce dossier est déjà la racine d'un projet"
-                  : undefined
+                  ? `Choisir ${dossier.nom} — indisponible : ce dossier est déjà la racine d'un projet`
+                  : `Choisir ${dossier.nom}`
               }
-              aria-label={`Choisir ${dossier.nom}`}
+              className="shrink-0"
             >
               Choisir
             </Bouton>

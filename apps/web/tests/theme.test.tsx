@@ -186,6 +186,45 @@ describe("la bascule de la barre supérieure (BasculeTheme)", () => {
     expect(screen.getByRole("button", { name: "Thème de l'interface" })).toHaveFocus();
   });
 
+  // Ces deux-là gardent le hook partagé `useSurfaceDeroulee` (#536), pas la
+  // bascule de thème : elle est ici le représentant des quatre surfaces, celle
+  // dont les entrées sont les plus simples. L'audit complet — les quatre
+  // surfaces, les sept écrans, `vitest-axe` — reste différé au lot 5 (#537) ;
+  // ce qui est vérifié ici est seulement que le mécanisme existe et bouge, une
+  // navigation clavier qui ne serait jouée par personne étant indiscernable de
+  // code mort.
+  it("amène le focus sur la première entrée à l'ouverture", async () => {
+    const utilisateur = userEvent.setup();
+    render(<BasculeTheme />);
+    await utilisateur.click(
+      screen.getByRole("button", { name: "Thème de l'interface" }),
+    );
+    expect(screen.getByRole("menuitemradio", { name: /Clair/ })).toHaveFocus();
+  });
+
+  it("se parcourt aux flèches, avec Home, End et le bouclage", async () => {
+    const utilisateur = userEvent.setup();
+    render(<BasculeTheme />);
+    await utilisateur.click(
+      screen.getByRole("button", { name: "Thème de l'interface" }),
+    );
+    const [clair, sombre, systeme] = screen.getAllByRole("menuitemradio");
+
+    await utilisateur.keyboard("{ArrowDown}");
+    expect(sombre).toHaveFocus();
+    await utilisateur.keyboard("{End}");
+    expect(systeme).toHaveFocus();
+    // Depuis la dernière entrée, la flèche du bas revient à la première : un
+    // menu boucle, il ne bute pas.
+    await utilisateur.keyboard("{ArrowDown}");
+    expect(clair).toHaveFocus();
+    // Et symétriquement vers le haut.
+    await utilisateur.keyboard("{ArrowUp}");
+    expect(systeme).toHaveFocus();
+    await utilisateur.keyboard("{Home}");
+    expect(clair).toHaveFocus();
+  });
+
   it("se referme sur Échap sans rien changer", async () => {
     const utilisateur = userEvent.setup();
     render(<BasculeTheme />);
