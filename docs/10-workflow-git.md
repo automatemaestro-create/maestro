@@ -4392,6 +4392,65 @@ survit, mais à l'**intérieur** du script, où aucune permission ne s'applique 
 pris de `set-description` / `set-mr-description`, dont ce sont les pendants à la création. La
 quatrième relève de §8.5 — un journal ne s'écrit pas là où personne n'a le droit de le lire.
 
+**Trois maillons soldés d'un coup, et aucun n'a reçu de règle** (#528). Mesure du **2026-08-25** sur
+tout le journal (`journal.sh refus --tous`) : **88 refus sur 36 sessions**, et le classement de #307
+range désormais les **trous d'allowlist** en tête — 45, soit 51 %, devant les échappées de chemin
+(35, 40 %). Trois maillons en portent **29, soit 64 %** :
+
+| Maillon | Refus | Forme observée | Verdict |
+| --- | --- | --- | --- |
+| `for` | 19 | `for n in 1609 1610 …; do printf …; sed -n …; done` | **refus mérité** |
+| `curl` | 5 | `curl -s http://127.0.0.1:8076/api/executions \| head -c 600` | **refus mérité** |
+| `python -` | 5 | `python - <<'PY' … PY` | **refus mérité** |
+
+Ils reviennent run après run **depuis #292** sans avoir jamais été tranchés, et le coût unitaire est
+faible — un refus sur un `for` ne fait pas échouer un ticket, la session reformule pour un
+aller-retour d'outil. Ce n'est pas le cas de #232, où le `gh pr create --body` tombait sur la
+**dernière** action. Ce qui justifie de les solder est le **cumul** : les instruire rend à nouveau
+lisible la liste « maillons qu'aucune règle ne couvre », qu'on relit après chaque run.
+
+Les trois sortent par la **forme**, comme #307 avait **désigné** `.maestro/session/` au lieu
+d'autoriser `/tmp` — `prompt_ticket` **et** `prompt_mrfix` nomment désormais la forme couverte de
+chacun, qui existe déjà tout entière dans la liste :
+
+- **`for` n'est pas une commande, c'est une tête de boucle.** Une règle est un préfixe de
+  **commande** : `Bash(for:*)` bénirait la **forme** sans rien juger de ce qu'elle répète, dans une
+  boucle sans surveillance — exactement ce que `settings.run.json` existe pour borner (#169). Elle
+  ne débloquerait même pas à coup sûr : le CLI découpe sur `;`, donc les maillons `do <commande>` et
+  `done` resteraient à couvrir, et rien ici ne dit ce qu'il en fait — **un pari qui élargit qu'il
+  soit gagné ou perdu**. La forme couverte est meilleure de toute façon : une seule commande qui
+  prend la liste (`sed -n -e 12p -e 40p <fichier>`, `git show <sha1> <sha2>`, `grep -e x -e y`), ou
+  un appel par élément, plus lisible dans la trace et jugé maillon par maillon comme tout le reste.
+- **`python -` est un heredoc doublé d'un interpréteur hors venv.** Deux défauts, dont un
+  immatchable par construction (troisième ligne du tableau ci-dessus) ; `python` nu n'est en outre
+  pas le venv du dépôt, que CLAUDE.md impose. Un `Bash(python:*)` lèverait le second sans toucher au
+  premier, c'est-à-dire rien — et le journal le **prouve** : `.venv/Scripts/python.exe - <<'PY'`
+  (#447, #480) est refusé avec un préfixe pourtant autorisé, donc c'est bien le heredoc qui tombe.
+  La forme couverte est là depuis #179 : `Write` le script dans `.maestro/session/`, puis
+  `.venv/Scripts/python.exe .maestro/session/<nom>.py` — précédé de `env PYTHONPATH=.` s'il importe
+  `maestro`, sans quoi c'est celui du **clone principal** qu'il chargerait (§9.4).
+- **La cible d'un `curl` est un argument, or une règle borne un préfixe.** C'est la cinquième ligne
+  du tableau — le préfixe de variable — sur un autre objet, et le mur est le même. `Bash(curl:*)`
+  donnerait à une session sans surveillance un **client HTTP quelconque**, la seule forme de cette
+  liste capable d'envoyer le worktree hors de la machine ; `Bash(curl -s http://127.0.0.1:*)`
+  figerait le drapeau **et** l'hôte tout en pariant sur ce que le CLI fait d'un préfixe qui ne
+  s'arrête pas sur une espace. Le besoin réel est une **sonde en boucle locale**, et `node` la
+  couvre depuis #235 :
+  `node -e "fetch('http://127.0.0.1:8076/api/x').then(r=>r.text()).then(console.log)"`.
+
+⚠ **Ce qu'il faut en attendre, pour ne pas le relire comme un échec.** Traités par la forme, les
+trois **restent** dans la liste « maillons qu'aucune règle ne couvre ». Elle ne se vide que par une
+**règle**, et les règles y sont relues à chaque appel, y compris sur un vieux run : un run de
+2026-08 y montrera `for`, `curl` et `python -` pour toujours. Relecture faite après coup, et c'est
+bien ce qu'elle rend — **88 refus, 45 trous, `for` 19 · `curl` 5 · `python -` 5, à l'identique**,
+pour 86 règles `allow` lues des deux fichiers, inchangées. Ce qui doit bouger est leur **fréquence
+dans les runs postérieurs** à ce ticket, et c'est le seul observable à regarder.
+
+Deux voisins que cette passe ne traite pas, nommés ici pour qu'on ne les redécouvre pas : **`rg`**
+(6 refus, tous sur #471) est le trou suivant par le volume — le tool `Grep` couvre le besoin et est
+autorisé nu, mais l'écart mérite sa propre décision ; **`rm`** (2 refus) reste dehors pour la raison
+déjà écrite dans le `$comment` de `settings.run.json` — aucune règle de préfixe n'en borne la cible.
+
 Ce que la passe #179 a donné sur ces 17 refus : **11 levés** par six règles (`Skill`, puis `cd`,
 `echo`, `printf`, `grep`, `sed` — du décor de pipeline, sans pouvoir propre, mais qui faisait tomber
 des commandes déjà autorisées) ; **2 relèvent de la forme d'appel** et sont traités par le prompt

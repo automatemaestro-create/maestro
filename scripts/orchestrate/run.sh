@@ -2001,6 +2001,15 @@ lance_session() {
 # `worktree.sh` —, sans quoi la consigne n'aurait fait qu'interdire. Il donne au passage la seule
 # forme qui pose une variable sans tomber : `env VAR=… <commande>`, un préfixe nu n'étant matchable
 # par aucune règle (§11.7).
+#
+# Huit runs de plus (#528, mesure du 2026-08-25 : 88 refus sur 36 sessions), et le classement de #307
+# a fait remonter les TROUS d'allowlist en tête — 45 sur 88. Trois maillons en portent 29 à eux
+# seuls : `for` (19), `curl` (5), `python -` (5), tous les trois refusés run après run depuis #292
+# sans avoir jamais été tranchés. Aucun ne reçoit de règle, et c'est écrit dans le `$comment` de
+# `settings.run.json` : une tête de boucle n'est pas une commande, la cible d'un `curl` est un
+# ARGUMENT là où une règle borne un PRÉFIXE, et `python -` est un heredoc doublé d'un interpréteur
+# hors venv. Le prompt fait donc ici ce que #307 avait fait pour `/tmp` — il ne se contente pas
+# d'interdire, il NOMME la forme couverte de chacun, qui existe déjà tout entière dans la liste.
 prompt_ticket() {
   cat <<PROMPT
 Tu traites intégralement le ticket GitLab #$1 de ce dépôt, seul et sans supervision humaine.
@@ -2038,6 +2047,20 @@ Règles de ce run autonome :
   texte long. Pour écrire un fichier — description de PR, corps de commentaire, note de travail —
   sers-toi de l'outil Write, puis donne le CHEMIN de ce fichier à la commande : jamais
   « cat > … <<'EOF' », jamais « --description "\$(cat …)" ».
+- TROIS GESTES QU'AUCUNE RÈGLE NE LÈVERA, et la forme couverte de chacun — ce sont les trois
+  maillons les plus refusés du journal (#528, 29 refus mesurés le 2026-08-25) :
+  · une BOUCLE « for … ; do … ; done » : le corps d'une boucle sans surveillance ne s'autorise pas.
+    Donne la liste à UNE SEULE commande qui la prend — « sed -n -e 12p -e 40p <fichier> »,
+    « git show <sha1> <sha2> », « grep -n -e motif1 -e motif2 <fichier> » — ou fais un appel par
+    élément : c'est aussi plus lisible dans la trace du run ;
+  · un SNIPPET PYTHON en « python - » : c'est un heredoc, et « python » nu n'est pas le venv du
+    dépôt. Écris le script avec l'outil Write dans « .maestro/session/ », puis joue
+    « .venv/Scripts/python.exe .maestro/session/<nom>.py » — précédé de « env PYTHONPATH=. » s'il
+    importe maestro, sinon il importera celui du clone principal et non le tien ;
+  · une SONDE HTTP en « curl » : sa cible est un ARGUMENT, qu'aucune règle de préfixe ne borne. Lis
+    ton API locale avec node, autorisé ici :
+    node -e "fetch('http://127.0.0.1:<port>/api/x').then(r=>r.text()).then(console.log)" — sur une
+    seule ligne et sans accent grave, que le CLI lit comme une substitution.
 - POUR JOUER DES TESTS, l'endroit se choisit PAR FAMILLE DE SUITE, et l'écart se paie sur ton
   quota. Une suite d'OUTILLAGE — elle nomme un script du dépôt (worktree.sh, lib.sh, run.sh…) —
   se joue dans le conteneur Linux, « bash scripts/ci/pytest.sh tests/test_<suite>.py -q » : vingt
@@ -2133,6 +2156,14 @@ Règles de ce run autonome :
   DE LIGNE dans la commande, une SUBSTITUTION \$(…), un HEREDOC. Tiens chaque appel sur UNE SEULE
   ligne. Pour un message de commit, écris le fichier avec l'outil Write puis « git commit -F
   <chemin> » — jamais « -m "\$(cat …)" ».
+- TROIS GESTES QU'AUCUNE RÈGLE NE LÈVERA, et la forme couverte de chacun (#528) : une BOUCLE
+  « for … ; do … ; done » — donne la liste à une seule commande qui la prend
+  (« sed -n -e 12p -e 40p <fichier> », « git show <sha1> <sha2> », « grep -n -e a -e b »), ou fais
+  un appel par élément ; un SNIPPET PYTHON en « python - » — c'est un heredoc, et « python » nu
+  n'est pas le venv : écris-le avec Write dans « .maestro/session/ » puis
+  « .venv/Scripts/python.exe .maestro/session/<nom>.py », précédé de « env PYTHONPATH=. » s'il
+  importe maestro ; une SONDE HTTP en « curl » — sa cible est un ARGUMENT qu'aucun préfixe ne
+  borne : node -e "fetch('http://127.0.0.1:<port>/api/x').then(r=>r.text()).then(console.log)".
 - Si tu ne peux pas débloquer cette PR, écris en TOUTE DERNIÈRE LIGNE :
   ORCHESTRATE: ECHEC <raison courte>. La laisser ouverte et intacte est une fin acceptable.
 PROMPT
