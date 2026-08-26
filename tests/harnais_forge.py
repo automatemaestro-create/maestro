@@ -382,10 +382,67 @@ def regle_owner(
     Le fragment `projectItems(first:` est ce qui distingue cette requête de toutes les autres : la
     requête backlog porte elle aussi `issue(number:` et `assignees(first:`, et capterait la règle
     si elle était moins spécifique.
+
+    `repositoryOwner` s'y est ajouté avec `st_statuts` (#577), qui demande LUI AUSSI un
+    `issue(number:` doublé d'un `projectItems(first:` — les deux fragments d'origine ne
+    départageaient donc plus les deux requêtes, et la première règle déclarée aurait répondu pour
+    l'autre. La seconde racine de `st_contexte` (les projets du propriétaire, d'où sortent les ids
+    d'option) est ce qu'il est seul à demander.
     """
     return {
-        "contient": ["issue(number:", "projectItems(first:"],
+        "contient": ["issue(number:", "projectItems(first:", "repositoryOwner"],
         "brut": reponse_owner(statut, assignes, iid, dans_projet),
+    }
+
+
+def regle_statuts(statuts: dict[str, str], inexistants: tuple[str, ...] = ()) -> dict:
+    """Règle de réponse à `st_statuts` — le Status de N tickets NOMMÉS, en UN aller (#577).
+
+    `statuts` est « iid -> libellé », même convention que `regles_carte` : un libellé VIDE est un
+    ticket présent dans le projet au Status non posé (« - » en sortie).
+
+    `inexistants` porte les iid qui NE DÉSIGNENT AUCUNE ISSUE — le cas d'un numéro de PR recopié
+    dans une checklist. C'est le pire cas du verbe, et il n'est pas cosmétique : l'API rend alors
+    l'alias à `null` **et un tableau `errors`**, sur quoi `gh api graphql --jq` recrache la réponse
+    NON FILTRÉE. Un `st_statuts` écrit avec `--jq` aurait donc rendu zéro ligne — « aucun état »
+    pour tous les lots — avec le code de succès. D'où le parsing en awk sur le JSON brut, et d'où
+    ce paramètre : sans lui, le double ne rendrait jamais la réponse qui a dicté cette forme.
+
+    ⚠ LA RÉPONSE EST DU JSON BRUT, et non les lignes aplaties de `reponse_owner`, pour la même
+    raison : le double doit rendre ce que l'API rend, sous peine de valider un parsing qui ne
+    s'applique pas en vrai.
+
+    Le fragment `nodes{ project{title}` est ce qui la distingue de `st_contexte`, dont les items
+    portent `nodes{ id project{ id title }`.
+    """
+    alias: dict[str, object] = {}
+    for iid, statut in statuts.items():
+        alias[f"i{iid}"] = {
+            "number": int(iid),
+            "projectItems": {
+                "nodes": [
+                    {
+                        "project": {"title": PROJET},
+                        "fieldValueByName": {"name": statut} if statut else None,
+                    }
+                ]
+            },
+        }
+    reponse: dict[str, object] = {"data": {"repository": alias}}
+    if inexistants:
+        for iid in inexistants:
+            alias[f"i{iid}"] = None
+        reponse["errors"] = [
+            {
+                "type": "NOT_FOUND",
+                "path": ["repository", f"i{iid}"],
+                "message": f"Could not resolve to an Issue with the number of {iid}.",
+            }
+            for iid in inexistants
+        ]
+    return {
+        "contient": ["issue(number:", "nodes{ project{title}"],
+        "reponse": reponse,
     }
 
 

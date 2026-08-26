@@ -59,12 +59,10 @@ from harnais_forge import (
     corps_ticket,
     ecritures,
     monte_depot,
-    noeud_ticket,
     regle_owner,
     regle_pose_status,
+    regle_statuts,
     regles_backlog,
-    regles_carte,
-    reponse_backlog,
 )
 
 pytestmark = [
@@ -283,23 +281,16 @@ Rien à voir avec la checklist.
 
 
 def backlog_des_lots(statuts: dict[str, str]) -> list[dict]:
-    """Le backlog des lots d'un parent : QUI EXISTE côté issues, QUEL ÉTAT côté carte.
+    """L'état des lots d'un parent, tel que `gl_subtickets_enrich` le demande.
 
-    Les deux sources sont fabriquées à partir du même dictionnaire, ce qui garde les tests lisibles
-    (« ce lot est Terminé ») tout en respectant la séparation que le backend impose : l'issue porte
-    ses labels de catégorisation, l'item de projet porte l'état.
+    ⚠ UNE SEULE RÈGLE, ET C'EST LE SUJET DE #577. L'enrichissement demandait autrefois le backlog
+    ENTIER (« qui existe ? ») recouvert par la carte d'ensemble du projet (« quel état ? »), soit
+    six allers pour une question qui en vaut un ; il demande désormais les lots PAR LEUR NUMÉRO
+    (`st_statuts`). Ne pas remettre ici les règles de la carte et du backlog « au cas où » : leur
+    absence est ce qui prouve que le verbe ne les demande plus — une règle de trop rendrait ce
+    test vert sur l'ancien chemin comme sur le nouveau.
     """
-    return regles_carte(statuts) + [
-        {
-            "contient": ["states: [OPEN, CLOSED]"],
-            "reponse": reponse_backlog(
-                [
-                    noeud_ticket(iid, f"Lot {iid}", statut, ["type::infra"], [])
-                    for iid, statut in statuts.items()
-                ]
-            ),
-        }
-    ]
+    return [regle_statuts(statuts)]
 
 
 def test_subtickets_lit_la_checklist_et_le_marqueur_parallele(depot: Depot) -> None:
@@ -367,6 +358,115 @@ def test_startables_barre_un_lot_parallele_derriere_un_lot_non_marque(depot: Dep
     )
     acheve = depot.lib("startables", "155")
     assert acheve.stdout.strip() == ""
+
+
+# --- Le prix de la question (#577) ----------------------------------------------------------------
+# `subtickets` et `startables` sont les deux verbes les plus appelés d'un run (16 invocations sur 31
+# au run 20260826-134119), et ils payaient l'état de leurs lots au prix de l'ENSEMBLE : le backlog
+# entier, recouvert par la carte du projet paginée en pages de 100 items — six allers pour une
+# question qui en vaut un, ~30 s pièce. Ils demandent désormais les lots PAR LEUR NUMÉRO.
+#
+# Ce que ces deux tests gardent n'est pas une durée (un chronomètre en CI mesure la charge de la
+# machine) mais **ce qui est demandé à la forge** : c'est la seule forme sous laquelle la propriété
+# survit à un poste lent, et c'est aussi elle qui porte la CORRECTION — voir le second test.
+
+
+def test_subtickets_demande_les_lots_par_leur_numero_et_pas_le_backlog(depot: Depot) -> None:
+    """Deux lectures en tout : la checklist du parent, puis l'état des lots nommés."""
+    depot.pose_etat(
+        issues={"155": PARENT},
+        graphql=backlog_des_lots({"201": "Terminé", "202": "À faire", "203": "À faire"}),
+    )
+    acheve = depot.lib("subtickets", "155")
+    assert acheve.returncode == 0, acheve.stderr
+
+    lectures = [appel for appel in depot.appels() if "graphql" in appel]
+    assert len(lectures) == 2, lectures
+    # Ni le backlog (« qui existe ? ») ni la carte d'ensemble (« quel état pour tout le monde ? ») :
+    # ce sont les deux lectures que la question ne demandait pas.
+    assert not any("states: [OPEN, CLOSED]" in appel for appel in lectures), lectures
+    assert not any("items(first:100" in appel for appel in lectures), lectures
+    # …et les lots sont bien demandés sous leur alias, en UNE requête.
+    par_numero = [appel for appel in lectures if "i201:" in appel]
+    assert len(par_numero) == 1, lectures
+    assert "i202:" in par_numero[0] and "i203:" in par_numero[0]
+
+
+def test_subtickets_ne_depend_plus_de_la_fenetre_de_cent_du_backlog(depot: Depot) -> None:
+    """La moitié qui ne se voit pas au chronomètre : le backlog est borné à `first: 100`.
+
+    Un lot plus ancien que cette fenêtre en sortait absent, donc « ? », donc jamais « À faire »,
+    donc JAMAIS DÉMARRABLE — un `/ticket-start` sur un tel parent annonçait « aucun lot démarrable »
+    en croyant dire la vérité (mesuré le 2026-08-26 sur #167 : cinq lots « Terminé » rendus « ? »).
+
+    Le double le rejoue à l'endroit exact où ça se jouait : AUCUNE règle de backlog n'est posée —
+    c'est l'échantillon fautif —, seuls les lots nommés répondent. Sur l'ancien chemin la table
+    sortait vide et les quatre lots « ? » ; ici ils portent leur état, et les lots libres sont
+    démarrables.
+    """
+    depot.pose_etat(
+        issues={"155": PARENT},
+        graphql=[
+            regle_statuts(
+                {"201": "Terminé", "202": "À faire", "203": "À faire", "204": "À faire"}
+            )
+        ],
+    )
+    table = depot.lib("subtickets", "155")
+    assert table.returncode == 0, table.stderr
+    assert [ligne[2] for ligne in colonnes(table.stdout)] == [
+        "Terminé",
+        "À faire",
+        "À faire",
+        "À faire",
+    ]
+    assert "?" not in table.stdout
+
+    demarrables = depot.lib("startables", "155")
+    assert demarrables.returncode == 0, demarrables.stderr
+    assert "#202" in demarrables.stdout
+
+
+def test_statuts_distingue_le_hors_projet_du_ticket_inexistant(depot: Depot) -> None:
+    """« - » = le ticket existe mais n'a pas d'état ; aucune ligne = il n'existe pas.
+
+    C'est le contrat de `gh_issues_state`, et la raison en est la même : ce que vaut le silence
+    d'un alias appartient à l'appelant. `gl_subtickets_enrich` le compte « ? » — un iid de
+    checklist qui ne désigne aucun ticket n'est pas un état, c'est une checklist à corriger.
+
+    ⚠ Le double rend ici la réponse du PIRE cas — les alias inexistants s'accompagnant d'un
+    tableau `errors` —, et c'est ce qui donne son sens au test : sur cette réponse-là,
+    `gh api graphql --jq` recrache le JSON non filtré, si bien qu'un `st_statuts` écrit avec un
+    `--jq` aurait rendu ZÉRO ligne, avec le code de succès. Les lots voisins auraient tous été
+    « ? » à cause d'un seul numéro faux. Ce qui est gardé ici n'est pas le « - » : c'est que le
+    reste de la réponse survive à l'erreur.
+    """
+    depot.pose_etat(
+        graphql=[regle_statuts({"201": "Terminé", "202": ""}, inexistants=("999",))]
+    )
+    lu = depot.lib("statuts", "201", "202", "999")
+    assert lu.returncode == 0, lu.stderr
+    assert colonnes(lu.stdout) == [["201", "Terminé"], ["202", "-"]]
+
+    depot.pose_etat(
+        issues={"155": PARENT},
+        graphql=[
+            regle_statuts({"201": "Terminé", "202": ""}, inexistants=("203", "204"))
+        ],
+    )
+    table = depot.lib("subtickets", "155")
+    assert [ligne[2] for ligne in colonnes(table.stdout)] == ["Terminé", "-", "?", "?"]
+
+
+def test_statuts_refuse_un_iid_qui_n_en_est_pas_un(depot: Depot) -> None:
+    """Les iid partent dans un ALIAS GraphQL (`i201:`) : un argument non numérique s'y glisserait.
+
+    Le refus a lieu AVANT toute lecture — la requête n'est pas construite, donc rien n'est envoyé.
+    """
+    acheve = depot.lib("statuts", "201; drop")
+    assert acheve.returncode == 2
+    assert "iid invalide" in acheve.stderr
+    assert depot.appels() == []
 
 
 def test_start_brief_sur_un_parent_liste_les_lots_demarrables(depot: Depot) -> None:

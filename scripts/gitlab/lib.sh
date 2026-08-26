@@ -41,8 +41,12 @@
 #   • gh_issues_state <iid…> — « <iid><TAB>open|closed » pour N tickets en UNE lecture. La seule
 #                              source de l'OUVERT/FERMÉ d'un lot, que ni la table du backlog (bornée
 #                              à 100) ni le cycle de vie (posé après coup) ne peuvent porter.
-#   • gl_backlog_table       — la table plate TSV du backlog. Idem : subtickets, startables,
-#                              reconcile-workflow et reconcile-en-cours s'y branchent.
+#   • gl_backlog_table       — la table plate TSV du backlog, pour les questions d'ENSEMBLE :
+#                              /backlog, queue.sh, doctor.sh, reconcile-workflow, reconcile-en-cours.
+#   • st_statuts <iid…>      — « <iid><TAB><libellé> » : le cycle de vie de N tickets NOMMÉS en UNE
+#                              lecture, pendant unitaire de la table. Même sortie colonne pour
+#                              colonne, mais SANS sa fenêtre de 100 ni la pagination des items du
+#                              projet — subtickets/startables s'y branchent (#577, docs/10 §3.6).
 #   • gl_mr_brief <branche>  — « etat<TAB>numéro<TAB>sha » de la PR d'une branche, d'où mr-state,
 #                              cleanup-merged et worktree-done sortent inchangés.
 #
@@ -793,17 +797,46 @@ gl_subticket_rows() {
 }
 
 # gl_subtickets_enrich — enrichit du CYCLE DE VIE les lignes TSV de gl_subticket_rows (stdin) et
-# imprime la table finale « iid/coche/statut/par/titre » (une seule requête backlog, pas N).
+# imprime la table finale « iid/coche/statut/par/titre » (une seule lecture, pas N).
 # La colonne `statut` reprend telle quelle celle de gl_backlog_table : le LIBELLÉ (« À faire »),
 # jamais le slug — c'est sur ces libellés que gl_subtickets_startables compare.
+#
+# ELLE DEMANDE LES LOTS PAR LEUR NUMÉRO (#577, docs/10 §3.6), et non plus le backlog entier. La
+# question posée ici est unitaire — « quel est l'état de ces 8 lots ? » —, et la payer au prix de
+# l'ensemble coûtait 6 allers (résolution du projet + 5 pages de 100 items) pour 1 aller utile :
+# `subtickets`/`startables` sont les deux verbes les plus appelés d'un run (16 invocations sur 31
+# au run 20260826-134119), à ~30 s pièce. Deux conséquences, et la seconde ne se voit pas au
+# chronomètre : `gl_backlog_table` est bornée à `first: 100`, si bien que tout lot plus ancien que
+# cette fenêtre sortait « ? » — donc jamais « À faire », donc jamais démarrable (mesuré : les cinq
+# lots de #167, tous « Terminé », rendus « ? »). Voir l'en-tête de `st_statuts`.
+#
+# LA JOINTURE SE FAIT EN UN SEUL AWK et non par une recherche par ligne : la boucle d'avant payait
+# un fork par lot pour relire la même table, ce qui sous MSYS (~120 ms le fork) coûtait plus cher
+# que la lecture réseau qu'elle évitait.
+#
+# UNE LECTURE EN ÉCHEC N'EST PAS FATALE — comportement d'origine conservé : les lots sortent « ? »
+# et l'appelant voit qu'aucun état n'est lisible, au lieu de perdre la checklist elle-même.
 gl_subtickets_enrich() {
-  local table siid coche par titre statut
-  table="$(gl_backlog_table all)" || table=""
+  local rows iids table
+  rows="$(cat)"
+  iids="$(printf '%s\n' "$rows" | awk -F '\t' 'NF && $1 ~ /^[0-9]+$/ { print $1 }' | tr '\n' ' ')"
+  table=''
+  # shellcheck disable=SC2086  # découpage en mots VOULU : st_statuts prend N iid en arguments.
+  [ -n "${iids// /}" ] && { table="$(st_statuts $iids)" || table=''; }
   printf '# iid\tcoche\tstatut\tpar\ttitre\n'
-  while IFS=$'\t' read -r siid coche par titre; do
-    statut="$(printf '%s\n' "$table" | awk -F '\t' -v id="$siid" '$1 == id { print $2; exit }')"
-    printf '%s\t%s\t%s\t%s\t%s\n' "$siid" "$coche" "${statut:-?}" "$par" "$titre"
-  done
+  # La table voyage par ENVIRON et jamais par `awk -v`, qui interprète les échappements (#340).
+  printf '%s\n' "$rows" | ST_TABLE="$table" awk -F '\t' -v OFS='\t' '
+    BEGIN {
+      n = split(ENVIRON["ST_TABLE"], lignes, "\n")
+      for (i = 1; i <= n; i++) {
+        p = index(lignes[i], "\t")
+        if (p == 0) continue
+        etat[substr(lignes[i], 1, p - 1)] = substr(lignes[i], p + 1)
+      }
+    }
+    NF == 0 { next }
+    { print $1, $2, (($1 in etat && etat[$1] != "") ? etat[$1] : "?"), $3, $4 }
+  '
 }
 
 # gl_subtickets_startables — stdin = table enrichie de gl_subtickets SANS son en-tête. Imprime les
@@ -4182,6 +4215,79 @@ st_carte_lire() {
   done
 }
 
+# st_statuts <iid…> -> « <iid><TAB><libellé> » pour N tickets NOMMÉS, en UNE lecture. Les iid sont
+# demandés sous des ALIAS GraphQL (`i390: issue(number:390)`), exactement comme `gh_issues_state` —
+# le nom d'un alias ne pouvant pas commencer par un chiffre.
+#
+# C'EST LE PENDANT UNITAIRE DE LA CARTE, ET IL RÉPOND À UNE AUTRE QUESTION (#577, docs/10 §3.6).
+# `st_carte_lire` répond à « quel est l'état de TOUT le monde ? » et le paie en pages de 100 items ;
+# ce verbe répond à « quel est l'état de CES tickets-ci ? », qu'un appelant connaissant ses iid n'a
+# aucune raison de payer au prix de l'ensemble. Mesuré le 2026-08-26 sur les 8 lots d'un parent :
+# **1,6 s en un aller**, contre **20 à 32 s** pour la carte (6 allers : la résolution du projet, puis
+# 5 pages) — le facteur vingt tient au fait qu'on ne pagine plus 577 tickets pour en lire huit.
+#
+# ⚠ IL CORRIGE AUSSI UN FAUX SILENCE, et c'est la moitié qui ne se voit pas au chronomètre. La carte
+# se lisait à travers `gl_backlog_table`, bornée à `first: 100` : tout lot plus ancien que cette
+# fenêtre sortait « ? », donc jamais « À faire », donc JAMAIS DÉMARRABLE. Mesuré le 2026-08-26 :
+# `subtickets 167` rendait « ? » sur ses cinq lots, tous « Terminé ». Ici, aucune fenêtre — on
+# demande les tickets par leur numéro.
+#
+# LE CONTRAT DE SORTIE EST CELUI DE LA TABLE, colonne pour colonne, pour que les appelants ne
+# changent pas : un ticket qui existe mais n'est pas un item du projet (ou dont le Status est vide)
+# sort « - », comme le rendait `st_overlay_statut`. Un ticket qui N'EXISTE PAS ne rend AUCUNE LIGNE —
+# même parti pris que `gh_issues_state`, et c'est l'appelant qui décide de ce que vaut ce silence
+# (`gl_subtickets_enrich` le compte « ? », un iid de checklist illisible n'étant pas un état).
+#
+# LE LIBELLÉ SORT TEL QUEL, sans renormalisation, exactement comme `st_carte_statuts` : une option
+# renommée à la main dans l'UI traverse, et la signaler est le rôle de `doctor.sh` (#363). C'est
+# aussi ce qui évite N forks de `gl_workflow_slug` pour une valeur que bootstrap-project.sh écrit
+# déjà au bon libellé.
+st_statuts() {
+  if [ "$#" -eq 0 ]; then echo "usage: st_statuts <iid…>" >&2; return 2; fi
+  local iid champs='' raw
+  for iid in "$@"; do
+    case "$iid" in ''|*[!0-9]*) echo "st_statuts : iid invalide « $iid »" >&2; return 2 ;; esac
+    champs="$champs i$iid: issue(number:$iid) { number projectItems(first:20){nodes{ project{title} fieldValueByName(name:\"Status\"){ ... on ProjectV2ItemFieldSingleSelectValue { name } } }} }"
+  done
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' {'"$champs"' } }')" || return 1
+  case "$raw" in
+    *'"repository":null'*) echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
+  esac
+  # Parsing en awk et non par `--jq`, et ce n'est pas le goût de la maison : un alias NOT_FOUND
+  # (un iid de checklist qui ne désigne aucune issue — le cas d'un numéro de PR) fait rendre à
+  # l'API un tableau `errors`, sur quoi `gh api graphql --jq` recrache la réponse BRUTE sans
+  # appliquer le filtre. Le résultat aurait été zéro ligne, c'est-à-dire « aucun état » pour tous
+  # les lots, avec le code de succès. Même raison, et même forme, que `gh_issues_state`.
+  #
+  # Le titre du projet est borné par le champ SUIVANT et non par un guillemet fermant (un titre
+  # porteur d'un guillemet échappé le traverse ainsi), même parti pris que `gh_backlog_table` ; et
+  # il voyage par ENVIRON, jamais par `awk -v`, qui interprète les échappements (#340).
+  printf '%s' "$raw" | ST_TITRE="$GL_PROJET_TITRE" awk '
+    {
+      n = split($0, parts, /"number":/)
+      for (i = 2; i <= n; i++) {
+        chunk = parts[i]
+        if (match(chunk, /^[0-9]+/) == 0) continue
+        iid = substr(chunk, RSTART, RLENGTH)
+        reste = chunk; statut = ""
+        while (match(reste, /\{"project":\{"title":"/)) {
+          reste = substr(reste, RSTART + RLENGTH)
+          if (match(reste, /"\},"fieldValueByName":/) == 0) break
+          titre = substr(reste, 1, RSTART - 1)
+          reste = substr(reste, RSTART + RLENGTH)
+          val = ""
+          if (match(reste, /^\{"name":"/)) {
+            apres = substr(reste, RLENGTH + 1)
+            if (match(apres, /"\}/)) val = substr(apres, 1, RSTART - 1)
+          }
+          if (titre == ENVIRON["ST_TITRE"]) { statut = val; break }
+        }
+        printf "%s\t%s\n", iid, (statut == "" ? "-" : statut)
+      }
+    }
+  '
+}
+
 # st_overlay_statut <carte> (stdin = une table plate) -> la même table, colonne `statut` relue dans
 # la carte. C'est la 2e colonne des DEUX tables du fichier (`iid statut …`), et un ticket absent de
 # la carte sort « - ».
@@ -4328,17 +4434,69 @@ gh_issue_raw() {
   esac
 
   titre="$(printf '%s' "$raw" | gl_json_string_field title)"
-  # OPEN/CLOSED -> open/closed : gl_worktree_done compare sur « closed », gl_issue_brief_render ne
-  # lit pas ce champ. Traduire ici plutôt que chez eux garde la migration hors de leur code.
-  case "$(printf '%s' "$raw" | grep -o '"state":"[A-Z_]*"' | head -1)" in
-    *CLOSED*) etat="closed" ;;
-    *)        etat="open" ;;
-  esac
-  auteur="$(printf '%s' "$raw" | grep -o '"author":{"login":"[^"]*"' | head -1 | sed 's/.*"login":"//; s/"$//')"
-  labels="$(printf '%s' "$raw" | gh_bloc labels | grep -o '"name":"[^"]*"' | sed 's/.*:"//; s/"$//' \
-            | awk '{ out = (NR == 1 ? $0 : out ", " $0) } END { if (NR) print out }')"
-  assignes="$(printf '%s' "$raw" | gh_bloc assignees | grep -o '"login":"[^"]*"' | sed 's/.*:"//; s/"$//' \
-              | awk '{ out = (NR == 1 ? $0 : out ", " $0) } END { if (NR) print out }')"
+  # LES QUATRE CHAMPS PLATS SORTENT D'UN SEUL AWK (#577, docs/10 §3.6). Ils sortaient de quatre
+  # chaînes — `grep | head`, `grep | head | sed`, et deux `gh_bloc | grep | sed | awk` —, soit
+  # TREIZE processus pour quatre valeurs. Ce n'est pas une préciosité : `gh_issue_raw` est la
+  # primitive dont descendent six verbes, elle est lue une douzaine de fois par ticket, et sous
+  # MSYS un fork coûte ~120 ms là où il en coûte moins d'un sous Linux (même écart que #372).
+  # Mesuré le 2026-08-26 : ~1,3 s par lecture de ticket, sur un poste où l'aller GraphQL lui-même
+  # en coûte 1,4. Le prix du script cessait d'être négligeable devant celui du réseau.
+  #
+  # Le déséchappage, lui, N'EST PAS RECOPIÉ ICI : titre, jalon et corps continuent de passer par
+  # `gl_json_string_field`, seul décodeur du fichier (#141). Les quatre champs ci-dessous sont des
+  # atomes ASCII — un état, un login, des noms de label —, sans échappement à défaire ; les fondre
+  # dans le même awk demanderait de dupliquer le décodeur, c'est-à-dire d'en avoir deux à tenir
+  # d'accord pour économiser trois forks.
+  #
+  # `index`/`substr` plutôt qu'une expression rationnelle : le programme traverse mawk (conteneur
+  # du filet, #372) autant que gawk (poste), et l'accolade de `"author":{` y est un début
+  # d'intervalle qu'il faudrait échapper différemment selon l'un et l'autre.
+  local plats=()
+  mapfile -t plats < <(printf '%s' "$raw" | LC_ALL=C awk '
+    { buf = buf $0 }
+    function valeur(s, tete,   i, v) {
+      i = index(s, tete)
+      if (i == 0) return ""
+      v = substr(s, i + length(tete))
+      i = index(v, "\"")
+      return (i ? substr(v, 1, i - 1) : v)
+    }
+    # Le contenu du tableau « "<cle>":{"nodes":[ … ] », borné au premier « ] » — les nœuds demandés
+    # ici ne portent aucun tableau imbriqué. Isoler le bloc est ce qui empêche de confondre deux
+    # objets qui partagent une clé : le « login » de l assigné et celui de l auteur, le « name » du
+    # label et celui du dépôt.
+    function bloc(s, cle,   i, tete, j) {
+      tete = "\"" cle "\":{\"nodes\":["
+      i = index(s, tete)
+      if (i == 0) return ""
+      s = substr(s, i + length(tete))
+      j = index(s, "]")
+      return (j ? substr(s, 1, j - 1) : s)
+    }
+    function joints(s, cle,   out, tete, i, v) {
+      tete = "\"" cle "\":\""
+      out = ""
+      while ((i = index(s, tete)) > 0) {
+        s = substr(s, i + length(tete))
+        i = index(s, "\"")
+        v = (i ? substr(s, 1, i - 1) : s)
+        out = (out == "" ? v : out ", " v)
+      }
+      return out
+    }
+    END {
+      # OPEN/CLOSED -> open/closed : gl_worktree_done compare sur « closed », gl_issue_brief_render
+      # ne lit pas ce champ. Traduire ici plutôt que chez eux garde la migration hors de leur code.
+      print (valeur(buf, "\"state\":\"") == "CLOSED") ? "closed" : "open"
+      print valeur(buf, "\"author\":{\"login\":\"")
+      print joints(bloc(buf, "labels"), "name")
+      print joints(bloc(buf, "assignees"), "login")
+    }
+  ')
+  etat="${plats[0]:-open}"
+  auteur="${plats[1]-}"
+  labels="${plats[2]-}"
+  assignes="${plats[3]-}"
   jalon="$(printf '%s' "$raw" | gl_json_string_field jalon)"
   corps="$(printf '%s' "$raw" | gl_json_string_field body)"
 
@@ -5597,6 +5755,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     merge-settings) gl_merge_settings ;;
     issue-brief)    gl_issue_brief "$@" ;;
     issue-owner)    gl_issue_owner "$@" ;;
+    statuts)        st_statuts "$@" ;;
     issue-taken)    gl_issue_taken "$@" ;;
     current-milestone) gl_current_milestone ;;
     milestones)        gl_milestones ;;
@@ -5685,6 +5844,9 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  issues-sans-milestone              (iid des tickets ouverts sans jalon)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation)" >&2
       echo "  issue-owner <iid>                  (cycle de vie + assignés du ticket, TSV — vide = libre)" >&2
+      echo "  statuts <iid…>                     (cycle de vie de N tickets NOMMÉS en UNE lecture, TSV iid/libellé ;" >&2
+      echo "                                      « - » = hors projet ou Status vide, aucune ligne = ticket inexistant." >&2
+      echo "                                      Pendant unitaire de backlog-table, sans sa fenêtre de 100 — docs/10 §3.6)" >&2
       echo "  issue-taken <iid> [username]       (0 + assignés si le ticket est « En cours » chez quelqu'un d'autre)" >&2
       echo "  current-milestone                  (titre du milestone de la phase courante — actif le plus ancien non soldé)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
