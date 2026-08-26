@@ -319,7 +319,11 @@ def rendre_carte(
     ecrans: dict[str, dict[str, Any]],
 ) -> str:
     iid = ticket["iid"]
-    lien = f"{base_url.rstrip('/')}/-/work_items/{iid}"
+    # `/issues/<iid>` et non le `/-/work_items/<iid>` de #142 : `projet.url` suit la forge ACTIVE
+    # (`lib.sh host`, #343), donc la base est passée à GitHub sans que le chemin suive — tous les
+    # liens de ticket d'une présentation générée depuis la migration tombaient sur un 404. Trouvé
+    # en écrivant les tests de #547, corrigé ici parce qu'il n'y a pas de lot après celui-ci.
+    lien = f"{base_url.rstrip('/')}/issues/{iid}"
     resume = ticket.get("resume") or ""
     bloc_resume = f'<p class="carte-resume">{escape(resume)}</p>' if resume else ""
 
