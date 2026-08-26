@@ -32,6 +32,12 @@ from maestro.agents.permissions import PermissionStore, PolitiqueOutils, Verdict
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
+from maestro.deliberation import (
+    CreditArbitrage,
+    Deliberation,
+    MemoireArbitrage,
+    cle_acte,
+)
 from maestro.detail_tache import EtapeTache, SuiviChecklist, consigne_detail
 from maestro.engine.guardrails import (
     ORIGINE_AGENT,
@@ -349,8 +355,18 @@ class LocalExecutor(TaskExecutor):
         plafond est celle du run entier (étapes déjà consignées au `journal` +
         étape en cours), pas celle de la seule tâche — et une exécution au budget
         déjà épuisé ne démarre plus aucune tâche.
+
+        La **délibération** (#584) naît ici et meurt avec la tâche : un crédit,
+        qui tient le temps passé suspendu à une décision humaine, et une mémoire,
+        qui tient les décisions rendues sur ses actes. Ici et pas plus bas, parce
+        que les deux doivent survivre aux **relances** (#91) — une tâche relancée
+        reprend sur la décision qu'elle avait obtenue, et une relance ne rend pas
+        à la tâche le délai qu'elle a déjà consommé. Ici et pas plus haut, parce
+        que ni l'un ni l'autre n'a de sens en dehors d'une tâche : deux tâches
+        exécutées de front n'attendent pas la même personne sur le même acte.
         """
         debut = perf_counter()
+        deliberation = Deliberation()
         entree = task.description
         # Un contrôle par exécution (#56) : il ne compte rien lui-même, il relit
         # le grand livre du `journal` à chaque mesure — planification et tâches
@@ -413,10 +429,20 @@ class LocalExecutor(TaskExecutor):
                                 playbook,
                                 serveurs_mcp,
                                 politique,
+                                deliberation,
                             )
                         if playbook is not None:
                             result = replace(result, playbook_version=playbook.version)
-        result = replace(result, usage=recolte.total.avec_duree(_ecoule_ms(debut)))
+        # La part d'arbitrage voyage avec la durée horloge (#584) : c'est la même
+        # mesure, décomposée. Elle est posée sur **cette** étape et sur aucune
+        # autre — l'étape finale de la tâche est la seule qui porte sa durée, donc
+        # la seule où « dont tant d'arbitrage » veuille dire quelque chose.
+        result = replace(
+            result,
+            usage=recolte.total.avec_duree(
+                _ecoule_ms(debut), arbitrage_ms=deliberation.credit.ecoule_ms()
+            ),
+        )
         journal.consigne(
             etape=task.id,
             nom=task.titre,
@@ -531,14 +557,14 @@ class LocalExecutor(TaskExecutor):
         playbook: PlaybookVersion | None,
         serveurs_mcp: tuple[ServeurMcp, ...] = (),
         politique: PolitiqueOutils | None = None,
+        deliberation: Deliberation | None = None,
     ) -> TaskResult:
         """Réalise la tâche sous garde-fous (#9) : validation humaine, puis time-out.
 
         Une tâche sensible non approuvée est stoppée **avant** toute exécution.
-        Le time-out ne court que sur la réalisation elle-même : l'attente d'une
-        décision humaine n'y est pas comptée. Le plafond de dépense, lui, est armé
-        plus haut (sur le collecteur d'usage de `execute`) — son dépassement
-        remonte en exception du fournisseur, muée ici en échec comme les autres.
+        Le plafond de dépense, lui, est armé plus haut (sur le collecteur d'usage
+        de `execute`) — son dépassement remonte en exception du fournisseur, muée
+        ici en échec comme les autres.
 
         Le time-out est une **échéance ferme** (#64) : la réalisation court dans sa
         propre tâche asyncio et l'attente est bornée par `asyncio.wait`, qui rend
@@ -546,37 +572,109 @@ class LocalExecutor(TaskExecutor):
         restait suspendu quand le transport du SDK avalait l'annulation. À
         l'échéance, l'échec est consigné immédiatement ; l'annulation de la
         réalisation n'est qu'un vœu (`_annule_ou_detache`), jamais une attente.
+
+        ⚠ **L'attente d'une décision humaine n'y est jamais comptée**, et depuis
+        #584 ce n'est plus une affaire de placement. Cette fonction validait avant
+        d'armer le délai, ce qui suffisait tant que le seul arbitrage possible
+        portait sur le *texte* de la tâche. Le chantier #573 a déplacé le
+        déclencheur sur l'**acte** : l'arbitrage vit maintenant dans l'appel
+        d'outil, donc au cœur de la réalisation, donc dans l'échéance — et un
+        `timeout_s` posé tuait une tâche en pleine question à l'opérateur.
+
+        L'échéance est donc **repoussée du temps passé à délibérer**
+        (`maestro.deliberation`), sur trois principes qui ne se déduisent pas les
+        uns des autres :
+
+        - elle se **recalcule** à chaque réveil au lieu de se poser une fois :
+          le crédit n'existe pas encore au moment d'armer, il se gagne pendant ;
+        - une échéance atteinte **pendant** une délibération ne conclut à rien —
+          on attend le retour au repos, sinon la tâche mourrait entre l'instant où
+          la question part et celui où le crédit la couvre ;
+        - le crédit **déjà acquis avant l'armement** (la validation ci-dessus, qui
+          n'a jamais couru sur le délai) ne compte pas : seul le delta est rendu.
+          Le poser rendrait à la tâche du temps qu'elle n'a pas payé.
         """
-        refus = await self._valide_si_sensible(agent, task, score, journal)
+        deliberation = deliberation if deliberation is not None else Deliberation()
+        credit = deliberation.credit
+        # La validation d'une tâche sensible (#9) est du temps d'arbitrage comme
+        # un autre — le journal doit le dire (#584) —, mais elle précède
+        # l'armement : le délai ne courait pas encore, il n'y a rien à lui rendre.
+        # D'où la mesure ici et la remise à zéro du compteur au moment d'armer.
+        with credit.attente():
+            refus = await self._valide_si_sensible(agent, task, score, journal)
         if refus is not None:
             return refus
         timeout_s = self._guardrails.timeout_s
         if timeout_s is None:
             return await self._realise(
-                agent, task, description, score, playbook, serveurs_mcp, politique, journal
+                agent, task, description, score, playbook, serveurs_mcp, politique,
+                journal, deliberation,
             )
         realisation = asyncio.create_task(
             self._realise(
-                agent, task, description, score, playbook, serveurs_mcp, politique, journal
+                agent, task, description, score, playbook, serveurs_mcp, politique,
+                journal, deliberation,
             ),
             name=f"maestro-realisation:{task.id}",
         )
+        acquis = credit.ecoule()
+        debut = perf_counter()
+        arbitre_ms = 0
         try:
-            fini, _ = await asyncio.wait({realisation}, timeout=timeout_s)
+            while True:
+                if credit.en_attente():
+                    # Quelqu'un délibère : l'échéance est suspendue, et il n'y a
+                    # rien à recalculer avant qu'il ait tranché — attendre le
+                    # `restant` d'ici là ferait tourner cette boucle pour rien,
+                    # d'autant plus vite qu'il est court.
+                    if await self._attend_repos(realisation, credit):
+                        return realisation.result()
+                    continue
+                arbitre_ms = int((credit.ecoule() - acquis) * 1000)
+                restant = timeout_s + (credit.ecoule() - acquis) - (perf_counter() - debut)
+                if restant <= 0:
+                    break
+                fini, _ = await asyncio.wait({realisation}, timeout=restant)
+                if realisation in fini:
+                    return realisation.result()
         except asyncio.CancelledError:
             # Annulation externe (arrêt de l'exécution) : relayée à la réalisation.
             realisation.cancel()
             raise
-        if realisation in fini:
-            return realisation.result()
         issue = await _annule_ou_detache(realisation)
         return _echec(
             task,
             agent=agent.nom,
             role=agent.role,
             score=score,
-            erreur=f"time-out : la tâche a dépassé {timeout_s:g} s — {issue}.",
+            erreur=(
+                f"time-out : la tâche a dépassé {timeout_s:g} s"
+                f"{_hors_arbitrage(arbitre_ms)} — {issue}."
+            ),
         )
+
+    @staticmethod
+    async def _attend_repos(
+        realisation: asyncio.Task[TaskResult], credit: CreditArbitrage
+    ) -> bool:
+        """Attend la fin de la réalisation ou celle de la délibération en cours (#584).
+
+        Rend `True` si c'est la **réalisation** qui a fini — la seule question que
+        l'appelant se pose ici : dans l'autre cas il n'a rien à conclure, il a
+        juste une échéance à recalculer.
+
+        Le guetteur du repos est **annulé dans un `finally`** : la boucle repasse
+        ici à chaque délibération, et un guetteur oublié par tour laisserait
+        derrière une tâche asyncio par arbitrage.
+        """
+        repos: asyncio.Task[None] = asyncio.ensure_future(credit.repos())
+        try:
+            fini, _ = await asyncio.wait(
+                {realisation, repos}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            repos.cancel()
+        return realisation in fini
 
     async def _valide_si_sensible(
         self, agent: Agent, task: Task, score: int, journal: RunJournal
@@ -738,6 +836,7 @@ class LocalExecutor(TaskExecutor):
         serveurs_mcp: tuple[ServeurMcp, ...],
         politique: PolitiqueOutils | None,
         journal: RunJournal,
+        deliberation: Deliberation,
     ) -> TaskResult:
         """Produit le livrable de `task` et le mue en `TaskResult` (échec consigné, jamais levé).
 
@@ -771,6 +870,13 @@ class LocalExecutor(TaskExecutor):
         et complété par les relevés de l'agent. Le placer plus bas le remettrait à
         neuf à chaque relance, c'est-à-dire ferait reculer l'avancement au moment
         précis où l'on a le plus besoin de savoir ce qui était déjà acquis.
+
+        La **délibération** (#584) traverse cette boucle sans lui appartenir : elle
+        vient de `execute`, pour la raison exacte qui fait tenir le `SuiviChecklist`
+        ici plutôt qu'en dessous — une relance ne doit pas remettre à neuf ce qui
+        était déjà acquis, et une décision humaine obtenue à la tentative 1 est ce
+        qu'il y a de plus coûteux à redemander. C'est ce qui donne son sens à
+        « la tâche relancée reprend sur elle ».
         """
         relance = self._relance
         max_tentatives = relance.max_tentatives if relance is not None else 1
@@ -785,7 +891,8 @@ class LocalExecutor(TaskExecutor):
             self._consigne_debut(task, agent, tentative, max_tentatives, journal)
             try:
                 sortie, fichiers = await self._produce(
-                    agent, task, description, playbook, serveurs_mcp, politique, journal, suivi
+                    agent, task, description, playbook, serveurs_mcp, politique, journal,
+                    suivi, deliberation,
                 )
             except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
                 cause = str(exc)
@@ -975,6 +1082,7 @@ class LocalExecutor(TaskExecutor):
         task: Task,
         agent: Agent,
         journal: RunJournal | None,
+        memoire: MemoireArbitrage | None = None,
     ) -> ArbitreActe:
         """Le canal d'arbitrage **sur l'acte** confié au fournisseur (#583).
 
@@ -1007,7 +1115,26 @@ class LocalExecutor(TaskExecutor):
         attente », qui n'est l'issue d'aucune validation — la personne n'a pas
         tranché. Les ranger sous `approuve`/`refuse` obligerait la troisième à se
         déguiser en l'une des deux.
+
+        `memoire` (#584) est ce qui fait que la troisième issue n'est plus
+        définitive. La demande passe désormais par elle, indexée sur l'**acte** et
+        non sur la tâche (`maestro.deliberation.cle_acte`), et cela répond à deux
+        questions d'un coup : un appel rejoué sur le même acte retrouve la
+        décision arrivée après que le hook a cessé d'attendre, et deux appels
+        simultanés sur le même acte partagent une seule demande au lieu d'en
+        empiler deux devant l'opérateur.
+
+        L'acte et non la tâche, parce que c'est ce qu'une personne tranche
+        réellement : approuver `rm build/` n'approuve pas `rm /`, et indexer par
+        `tache_id` — ce que fait la projection de la Control Tower — ferait
+        hériter le second de la décision rendue sur le premier. C'est la seule
+        façon que « retrouver une décision » ne devienne pas « en réutiliser une
+        autre ».
+
+        Sans mémoire, chaque demande repart de zéro : le comportement exact de
+        #583, celui qu'ont les appelants qui ne composent pas de délibération.
         """
+        memoire = memoire if memoire is not None else MemoireArbitrage()
 
         async def arbitre(
             outil: str, arguments: dict[str, str], motif: str
@@ -1030,7 +1157,10 @@ class LocalExecutor(TaskExecutor):
                 # garde-fou quand l'agent se trompe ou se fait manipuler.
                 origine=ORIGINE_POLITIQUE,
             )
-            return await self._guardrails.demande_validation(demande)
+            return await memoire.tranche(
+                cle_acte(outil, arguments),
+                lambda: self._guardrails.demande_validation(demande),
+            )
 
         return arbitre
 
@@ -1135,6 +1265,7 @@ class LocalExecutor(TaskExecutor):
         politique: PolitiqueOutils | None = None,
         journal: RunJournal | None = None,
         suivi: SuiviChecklist | None = None,
+        deliberation: Deliberation | None = None,
     ) -> tuple[str, tuple[ProducedFile, ...]]:
         """Produit le livrable de `task` : runtime outillé si le rôle en a un, sinon texte.
 
@@ -1197,6 +1328,7 @@ class LocalExecutor(TaskExecutor):
         copie). Le chemin texte ne produit aucun fichier — il n'a pas d'espace
         de travail du tout.
         """
+        deliberation = deliberation if deliberation is not None else Deliberation()
         runtime = self._runtimes.get(agent.nom)
         if runtime is not None:
             try:
@@ -1222,7 +1354,9 @@ class LocalExecutor(TaskExecutor):
                     # Sans politique en revanche, aucun outil n'est classé `ask` :
                     # il n'y a rien à arbitrer, et le hook n'existe même pas.
                     on_arbitrage_acte=(
-                        None if politique is None else self._arbitre_acte(task, agent, journal)
+                        None
+                        if politique is None
+                        else self._arbitre_acte(task, agent, journal, deliberation.memoire)
                     ),
                     on_activite=(
                         None
@@ -1239,6 +1373,9 @@ class LocalExecutor(TaskExecutor):
                     on_arbitrage=(
                         None if journal is None else self._arbitre(task, agent, journal)
                     ),
+                    # Le crédit descend, la mémoire non (#584) : le fournisseur
+                    # mesure une attente, il n'a pas à connaître les demandes.
+                    credit_arbitrage=deliberation.credit,
                     projet=self._projet(task),
                     tache_id=task.id,
                 )
@@ -1251,6 +1388,20 @@ class LocalExecutor(TaskExecutor):
             system_prompt=playbook.contenu if playbook is not None else agent.prompt_systeme,
         )
         return sortie, ()
+
+
+def _hors_arbitrage(arbitrage_ms: int) -> str:
+    """Nuance un dépassement de délai du temps d'arbitrage qui lui a été rendu (#584).
+
+    Muet quand il n'y en a pas eu, c'est-à-dire dans l'immense majorité des cas :
+    le message d'un time-out ordinaire ne change pas d'un caractère. Quand il y en
+    a eu, en revanche, il faut le dire — « la tâche a dépassé 600 s » sur une tâche
+    qui en a passé 240 suspendue à une question enverrait chercher une lenteur
+    d'exécution là où l'échéance a déjà été repoussée d'autant.
+    """
+    if arbitrage_ms <= 0:
+        return ""
+    return f" hors les {arbitrage_ms / 1000:.1f} s rendues à l'arbitrage humain"
 
 
 async def _annule_ou_detache(realisation: asyncio.Task[TaskResult]) -> str:

@@ -19,6 +19,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, TypeVar
 
+from maestro.deliberation import CreditArbitrage
 from maestro.providers.arbitrage import Arbitre, ArbitreActe
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
@@ -287,6 +288,7 @@ class ModelProvider(ABC):
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
+        credit_arbitrage: CreditArbitrage | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -407,6 +409,24 @@ class ModelProvider(ABC):
         panne d'observation ne coûte qu'une ligne de journal ; une panne du
         canal de décision laisserait l'agent sans réponse devant l'action même
         qu'il jugeait irréversible.
+
+        `credit_arbitrage` (#584, `maestro.deliberation`) est le seul canal qui
+        ne transporte ni observation ni décision : il transporte du **temps**. Le
+        fournisseur qui honore l'un ou l'autre des deux canaux d'arbitrage
+        ci-dessus **ouvre une fenêtre** (`credit.attente()`) autour de l'attente
+        elle-même, et rien d'autre. L'appelant, lui, en déduit ce temps du délai
+        qu'il a posé sur la tâche : un `timeout_s` ne tue jamais une tâche
+        suspendue à une question adressée à un humain.
+
+        C'est le fournisseur qui mesure parce qu'il est le seul à savoir, et
+        l'écart n'est pas un détail de précision : il **cesse d'attendre** à sa
+        propre borne pendant que la demande reste en vol (voir plus haut). Une
+        mesure prise là où la demande est composée — dans le moteur — continuerait
+        donc de courir pendant que l'agent a déjà repris son travail, et rendrait
+        à la tâche du délai qu'elle a passé à travailler.
+
+        Capacité optionnelle : sans ce canal, l'arbitrage fonctionne exactement
+        comme avant et son temps reste compté dans celui de la tâche.
 
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de

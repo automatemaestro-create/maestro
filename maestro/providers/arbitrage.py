@@ -51,6 +51,15 @@ Une borne qui ne laisse même pas la marge est en revanche une **erreur de
 config** franche (`ConfigError`), jamais un repli silencieux : à ce régime plus
 aucun arbitrage n'aboutirait, et le découvrir sur un run serait le découvrir
 trop tard.
+
+⚠ Ces bornes bornent une **attente**, jamais une décision — et depuis #584 elles
+ne bornent plus rien d'autre. Le temps passé ici ne consomme pas le délai de la
+tâche (`maestro.deliberation.CreditArbitrage`, mesuré par le hook lui-même
+puisqu'il est le seul à savoir quand il cesse d'attendre), et une décision qui
+arrive après l'expiration n'est plus perdue : elle est retenue
+(`maestro.deliberation.MemoireArbitrage`) et le rappel du même acte la retrouve.
+Ce qui se joue à l'expiration est donc « qui répond maintenant », pas « quel sort
+est réservé à cet acte ».
 """
 
 from __future__ import annotations
@@ -147,8 +156,15 @@ def reponse(approuve: bool, detail: str) -> str:
 #: Ce qu'on laisse à la personne qui tranche, en secondes. Quatre minutes : assez
 #: pour lire l'acte et décider, assez court pour qu'un agent ne reste pas suspendu
 #: une demi-heure sur un appel que personne ne regarde. Ce n'est pas le temps
-#: qu'un humain *devrait* avoir — c'est le temps qu'un **hook** peut tenir ; le
-#: découplage de l'attente et du délai de la tâche est le sujet de #584.
+#: qu'un humain *devrait* avoir — c'est le temps qu'un **hook** peut tenir.
+#:
+#: Ce n'est plus non plus le temps qu'un humain *a* (#584) : ces quatre minutes
+#: bornent une **attente**, pas une décision. Au-delà, l'appel est écarté pour
+#: cette fois et la demande reste en vol ; la décision, quand elle vient, est
+#: retenue (`maestro.deliberation.MemoireArbitrage`) et le rappel du même acte la
+#: retrouve. Et pendant tout ce temps, le délai de la tâche ne court pas
+#: (`CreditArbitrage`) : il n'y a donc plus d'arbitrage à faire entre « laisser à
+#: quelqu'un le temps de lire » et « ne pas tuer la tâche ».
 ATTENTE_S: float = 240.0
 
 #: Ce qu'on annonce au runtime (`HookMatcher(timeout=…)`), en secondes. Posé
@@ -278,15 +294,28 @@ def motif_refus(outil: str, detail: str) -> str:
 def motif_attente(outil: str, attente_s: float) -> str:
     """Ce qu'on sert à l'agent — et trace — quand l'arbitrage **n'a pas encore tranché**.
 
-    C'est le motif qui donne son sens au ticket : à l'expiration de *notre*
-    attente, **nous** répondons. Le texte dit l'état exact des choses — la
-    demande est toujours en attente, l'appel est écarté *pour cette fois* — plutôt
-    que d'annoncer un refus qui n'a été prononcé par personne.
+    C'est le motif qui donne son sens à #583 : à l'expiration de *notre* attente,
+    **nous** répondons. Le texte dit l'état exact des choses — la demande est
+    toujours en attente, l'appel est écarté *pour cette fois* — plutôt que
+    d'annoncer un refus qui n'a été prononcé par personne.
+
+    Il dit aussi, depuis #584, **ce qu'il y a à en faire** : la décision qui
+    arrivera est retenue (`maestro.deliberation.MemoireArbitrage`) et le même
+    appel, rejoué plus tard, la retrouvera sans rouvrir de demande ni attendre à
+    nouveau. Sans cette phrase, le dispositif existerait sans que le seul acteur
+    capable de le déclencher sache qu'il est là — l'agent lisait « poursuis sans
+    cet outil » et n'avait aucune raison d'y revenir.
+
+    « Plus tard » et non « tout de suite », à dessein : rappeler l'outil dans la
+    seconde rouvrirait l'attente pour rien et brûlerait les tours de l'agent
+    (#239) sur une personne qui n'a pas fini de lire. Ce qu'on lui demande est de
+    continuer, puis de repasser — pas de faire le pied de grue.
     """
     return (
         f"appel de l'outil {outil!r} écarté : arbitrage en cours, aucune décision "
         f"humaine après {attente_s:g} s. La demande reste en attente. "
-        "Poursuis la tâche sans cet outil."
+        "Poursuis la tâche sans cet outil ; si tu y reviens plus tard, la "
+        "décision rendue entre-temps s'appliquera sans nouvelle attente."
     )
 
 

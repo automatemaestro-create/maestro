@@ -26,6 +26,7 @@ from typing import Any
 from maestro.agents.mcp import ServeurMcp, resolus
 from maestro.agents.permissions import PolitiqueOutils
 from maestro.config import Settings, load_settings
+from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
 from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
@@ -197,6 +198,7 @@ class AgentRuntime:
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
+        credit_arbitrage: CreditArbitrage | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
     ) -> AgentOutcome:
@@ -264,6 +266,13 @@ class AgentRuntime:
         celui qui décide : la décision appartient au `Guardrails` du moteur, seul
         endroit où vit le fail-safe.
 
+        `credit_arbitrage` (#584) traverse aussi, et c'est le seul des cinq qui
+        ne porte ni observation ni décision mais du **temps** : le fournisseur y
+        ouvre une fenêtre autour de chaque attente d'arbitrage, l'appelant en
+        déduit le délai qu'il a posé sur la tâche. Le runtime, une fois de plus,
+        n'est ni celui qui mesure ni celui qui décompte. None : le temps
+        d'arbitrage reste compté dans celui de la tâche, comme avant #584.
+
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
         `maestro/<tache_id>` si le projet est versionné, copie de son périmètre
@@ -316,6 +325,7 @@ class AgentRuntime:
                 on_activite=on_activite,
                 on_etapes=on_etapes,
                 on_arbitrage=on_arbitrage,
+                credit_arbitrage=credit_arbitrage,
                 plafond_tours=self._plafond_tours,
                 projet=projet,
             )
