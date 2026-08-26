@@ -539,15 +539,23 @@ décision :
 | --- | --- | --- |
 | **soldé** | `terminee`, `annulee`, `echec` — le run a rendu son verdict | badge vert / neutre / rouge, immobile |
 | **interrompu** | orphelin (#348) : son hôte ne bat plus | badge rouge, la cause nommée |
-| **suspendu** | il attend un humain — brief, réponses **ou** validation de tâche | fond ambré, l'attente et son ancienneté, le geste qui la lève |
+| **suspendu** | il attend un humain — `en_attente_brief`, `en_attente_reponses` **ou** `en_attente_arbitrage` | fond ambré, l'attente et son ancienneté, le geste qui la lève |
 | **travaille** | rien de ce qui précède | badge bleu à **pastille battante** |
 
 Trois précisions qui expliquent la forme :
 
-- **La troisième attente ne se lit pas sur le run.** Une demande de validation porte
-  sa tâche (`tache_id`), jamais son run, et le statut du run reste `en_cours`
-  pendant qu'elle dort. L'appariement passe par les tâches, sur les deux listes que
-  le shell tient déjà — aucun appel de plus.
+- **La troisième attente se lit sur le run, comme les deux autres** (#571). Elle ne
+  s'y lisait pas : une demande de validation portait sa tâche (`tache_id`) et rien
+  d'autre, le statut du run restant `en_cours` pendant qu'elle dormait, si bien que
+  l'appariement passait par les tâches. Cet appariement **n'avait rien à apparier au
+  moment exact où il aurait servi** — une tâche sensible est stoppée *avant* toute
+  exécution, donc sa demande est publiée avant que sa tâche n'existe pour qui que ce
+  soit (#568, mesuré au §2.6). Le run porte donc un statut de plus,
+  `en_attente_arbitrage`, posé par la projection à la réception de la demande ; le
+  régime, le badge, la ligne d'attente et son ancienneté en découlent sans que
+  personne ait à savoir *laquelle* des trois attentes c'est. L'appariement **reste**,
+  en second et jamais en premier : c'est le filet des demandes qui ne portent pas
+  leur run — trace d'avant ce lot, producteur tiers —, et aucun appel de plus.
 - **Un run qui travaille est bleu et bat ; un run terminé est vert et immobile.**
   Deux verts, dont un pulsant, auraient demandé de lire le libellé pour trancher, ce
   qu'un coup d'œil doit éviter. Le libellé est là quand même : la couleur appuie le
@@ -988,6 +996,44 @@ depuis cet écran l'arbitrage d'un projet qu'on n'a pas sous les yeux, et la clo
 supérieure ne compte pas ce qu'il ne montre pas. L'écran vide sépare deux cas que « aucune
 validation en attente » confondait : *rien encore sur ce projet* et *rien en attente, mais des
 arbitrages déjà rendus* — l'historique en dessous le prouve.
+
+**Une demande porte son run et son projet** (#570, chantier #569) — elle ne les laisse pas
+déduire. C'est la règle que ce cadrage-là a coûté cher à apprendre : la demande naissait sans
+`run_id` ni `projet_id`, et la projection cherchait le projet « sur la tâche déjà projetée ». Or une
+validation qui garde le démarrage de sa propre tâche est publiée **avant** que cette tâche n'existe
+pour qui que ce soit — une tâche sensible est stoppée avant toute exécution —, si bien que le
+rattrapage était **en aval de ce qu'il devait réparer**, et que le cas qu'il ratait était le cas
+nominal de toute tâche sensible. Le repli existe toujours, pour les producteurs qui ne portent
+rien ; il n'est plus la source, il est le filet.
+
+Ce que l'absence de ces deux champs coûtait, **mesuré le 2026-08-26 sur le run `5f531654e03b`**
+(revue complète : **#568**) : trois tâches sur trois ont demandé un arbitrage, **aucune** n'a été
+affichée. La demande sortait de la portée projet — qui cadre *tous* les écrans, donc il n'existait
+aucun chemin vers elle depuis l'interface —, sortait du journal du run (0 événement
+`validation.demande` sur les 48 du run) et le run lui-même ne changeait d'aucun champ : 88 relevés
+de `GET /api/executions/{id}` strictement identiques entre « bloqué » et « au travail ». Le run est
+resté figé **31 % de son temps de mur** et n'a repris que par un `POST` à la main, pendant que cet
+écran affirmait « aucune validation en attente ». Pire que l'absence : l'écran **affirmait le
+contraire**.
+
+**Et le run le dit désormais lui-même** (#571) : il porte le statut `en_attente_arbitrage` tant
+qu'une demande dort sur l'une de ses tâches, avec l'`attente_depuis` des deux autres attentes
+(§6.1). Troisième exemplaire d'un motif écrit deux fois — `en_attente_brief` (#320) et
+`en_attente_reponses` (#321) — et rien de neuf côté mécanisme. Trois points en sont le contenu :
+l'ancienneté est celle de la **première** demande en vol et ne se réécrit pas (un run peut en
+porter plusieurs, et « depuis quand attend-il ? » n'a qu'une réponse) ; **un refus lève l'attente
+autant qu'un accord** (il rend la main au moteur aussi sûrement, et ne garder que l'accord
+laisserait un run refusé « en attente » pour toujours) ; et une **autre demande encore en vol** le
+laisse suspendu, faute de quoi trancher la première de trois lui rendrait un « en cours » qu'il ne
+mérite pas.
+
+Couverture (#572) : [`tests/test_arbitrage_visible.py`](../tests/test_arbitrage_visible.py) — l'ordre
+nominal joué sur un vrai run (la demande publiée avant le premier `tache.statut` de sa tâche, avec
+le motif prouvé sur l'échantillon d'avant le correctif), les trois attentes humaines éprouvées
+ensemble par une table confrontée à `STATUTS_EXECUTION_EN_ATTENTE`, et les abstentions propres à
+l'arbitrage ; `apps/web/tests/arbitrage.test.tsx` côté UI — le contrat d'`execution.ts` sur les
+trois attentes, et cet écran-ci rendant la demande **sans rien changer de son côté**, ce qui est la
+preuve que le chantier a réparé la donnée et non l'affichage.
 
 ### 2.7 📁 Projets et composition d'un objectif *(retenu — [docs/24](./24-projets-locaux-et-poste-de-travail.md), **Phases 7 et 8**)*
 
@@ -1657,11 +1703,18 @@ repaie une planification, sous un **nouveau** `run_id`.
   "objectif": "Prototyper un mini-CRM",
   // en_cours | terminee | annulee | echec
   // | en_attente_brief | en_attente_reponses  ← suspendu sur son brief (§6.10)
+  // | en_attente_arbitrage                    ← suspendu sur un arbitrage (§2.6, #571)
   "statut": "en_cours",
   // vivant | orphelin | indetermine  ← l'hôte du run bat-il encore ? (#348)
   // null sur un run soldé : la question ne se pose pas
   "vitalite": "vivant",
   "mode_brief": "humain",                  // le régime posé au lancement (#320)
+  // Depuis quand le run attend un geste humain (#321) — l'horodatage de
+  // l'événement qui l'a suspendu, `null` dès qu'il repart ou qu'il est soldé.
+  // Une seule question pour les **trois** attentes, donc un seul champ : sans
+  // elle, une attente est indiscernable d'un run planté. Sur un arbitrage (#571)
+  // c'est celle de la **première** demande en vol, jamais de la dernière.
+  "attente_depuis": null,
   "tour_clarification": 0,                 // tour de questions en cours (#321)
   "tours_clarification_max": 2,            // 0 : aucun tour prévu
   "brief_approuve": true,                  // un humain a validé le cadrage (#349)
@@ -1749,6 +1802,12 @@ constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un **battem
 | `orphelin` | il a battu, puis s'est tu **sans publier d'issue** | plus personne ne veille sur ce run |
 | `indetermine` | il n'a **jamais** battu (run antérieur à #348) | on ne sait pas, et on le dit |
 | `null` | le run est soldé (`terminee`/`annulee`/`echec`) | la question ne se pose pas |
+
+⚠ **La vitalité ne dit pas si un run est bloqué**, et les confondre a coûté treize
+minutes (#568) : un run suspendu sur une attente humaine est porté par un hôte qui bat
+normalement, donc il ressort `vivant` — exactement comme un run qui travaille. Seuls
+les statuts **terminaux** rendent la question sans objet. « Attend-il quelqu'un ? » se
+lit sur le **statut** (les trois `en_attente_*` ci-dessus), jamais ici.
 
 Deux choix qui expliquent le reste. Le seuil est **généreux** (30 min, soixante battements
 manqués) : rater un orphelin coûte un run affiché en cours un peu trop longtemps, déclarer orphelin

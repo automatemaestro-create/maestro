@@ -76,10 +76,9 @@ from maestro.controltower.executions import ServiceExecutions
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
-    EXECUTION_EN_ATTENTE_BRIEF,
-    EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
+    STATUTS_EXECUTION_EN_ATTENTE,
 )
 from maestro.engine import STATUT_TERMINEE, RunReport, TaskResult
 from maestro.engine import cli as engine_cli
@@ -165,15 +164,18 @@ def test_un_run_solde_n_a_pas_de_verdict(statut):
     assert vitalite(statut, _il_y_a(1), maintenant=MAINTENANT) is None
 
 
-@pytest.mark.parametrize(
-    "statut", [EXECUTION_EN_ATTENTE_BRIEF, EXECUTION_EN_ATTENTE_REPONSES]
-)
+@pytest.mark.parametrize("statut", sorted(STATUTS_EXECUTION_EN_ATTENTE))
 def test_un_run_suspendu_sur_un_humain_garde_un_verdict(statut):
     """Attendre quelqu'un n'est pas être mort — et c'est là que la distinction sert le plus.
 
-    Ces deux états ne sont pas terminaux : le run est en vol, simplement suspendu.
-    Sans verdict, « personne n'a encore répondu » serait indiscernable de « le
-    process qui posait la question est mort », c'est-à-dire des deux pertes de #347.
+    Ces états ne sont pas terminaux : le run est en vol, simplement suspendu. Sans
+    verdict, « personne n'a encore répondu » serait indiscernable de « le process qui
+    posait la question est mort », c'est-à-dire des deux pertes de #347.
+
+    La liste est **lue sur le backend** plutôt que recopiée (#572) : elle en portait
+    deux quand `STATUTS_EXECUTION_EN_ATTENTE` en comptait trois depuis #571, et une
+    liste recopiée ne se remarque pas quand elle vieillit. Ce que ces attentes ont en
+    commun est éprouvé ensemble par `tests/test_arbitrage_visible.py`.
     """
     assert vitalite(statut, _il_y_a(5), maintenant=MAINTENANT) == VITALITE_VIVANT
     assert (

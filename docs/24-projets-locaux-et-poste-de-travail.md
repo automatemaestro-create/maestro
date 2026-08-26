@@ -140,6 +140,35 @@ C'est **la** décision structurante de ce chantier. Trois options :
 > l'est. Le chantier n'invente donc pas de mécanisme de sûreté : il **branche un nouveau type
 > d'action sur celui qui existe**, avec le diff en pièce jointe de la demande.
 
+⚠ **Un garde-fou qu'on ne voit pas ne garde rien, et celui-ci a été invisible.** La phrase
+ci-dessus est juste et le mécanisme a toujours fonctionné : la tâche s'arrêtait bien, personne n'a
+jamais écrit dans un projet sans accord. Ce qui manquait est l'autre moitié — **la demande
+n'atteignait aucun écran**. Mesuré le 2026-08-26 (revue **#568**, chantier #569) : trois tâches
+sensibles sur trois ont demandé un arbitrage, aucune n'a été affichée, le run est resté figé 31 %
+de son temps de mur et n'a repris que par un `POST` à la main, pendant que l'écran Validations
+affirmait « aucune validation en attente ». Un garde-fou dont le blocage est indiscernable d'un
+plantage se contourne par le seul geste qui reste : le désarmer.
+
+Deux règles en sortent, et elles valent pour **toute** demande de validation — celle du déploiement
+comme celle de l'application des livrables :
+
+- **une demande porte son run et son projet** (#570). `run_id` et `projet_id` ne sont pas du
+  contexte d'agrément : ce sont les deux **critères de filtre** de la Control Tower, et ce qui ne
+  les porte pas disparaît des vues (cadrées sur le projet actif) comme du journal de son run. On ne
+  pouvait pas les déduire à l'arrivée : une validation qui garde le démarrage de sa propre tâche est
+  publiée **avant** que cette tâche n'existe, donc le repli déductif était en aval de ce qu'il
+  devait réparer. Pour `appliquer_sous_validation`, le projet est le **sujet** de la question et le
+  `run_id` vient de l'appelant, seul à savoir au nom de quel run il applique ;
+- **un run qui attend un arbitrage le dit** (#571) : il porte le statut `en_attente_arbitrage`,
+  troisième exemplaire du motif de `en_attente_brief` (#320) et `en_attente_reponses` (#321), avec
+  la même ancienneté (`attente_depuis`). ⚠ La **vitalité** ne peut pas tenir ce rôle : un run
+  suspendu est porté par un hôte qui bat, donc elle répond `vivant` — c'est précisément ce qui
+  rendait le blocage invisible.
+
+Le dispositif est gardé par [`tests/test_arbitrage_visible.py`](../tests/test_arbitrage_visible.py)
+et `apps/web/tests/arbitrage.test.tsx` (#572), et le contrat d'API est au
+[docs/05 §2.6 et §6.1](./05-interface-control-tower.md).
+
 Un corollaire est à assumer : **le premier lot ne rend pas les agents capables de lire tout un
 gros dépôt**. Charger un projet entier en contexte n'est ni possible ni souhaitable (coût). La
 lecture doit rester **outillée** (l'agent explore avec ses outils, comme le fait Claude Code)
