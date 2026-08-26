@@ -147,7 +147,7 @@ Lecture seule ; les instruire au cas par cas se fait en docs/10-workflow-git.md 
 
 `audit` dit OÙ PASSE LE TEMPS d'un run : part du mur passée sous outil (ticket par ticket, puis
 pour le run), détail par outil et par forme de commande Bash, palmarès des appels les plus longs,
-pré-vol de /ticket-start, temps mort et commandes rejouées à l'identique. Sans argument : le
+pré-vol de /ticket-start, temps mort et commandes rejouées DANS UN MÊME TICKET. Sans argument : le
 dernier run qui porte un flux — un run EN COURS se lit comme un autre. Hors ligne, lecture seule.
 Il MESURE, il ne corrige pas : chaque remède est son propre ticket (portée de #495).
 
@@ -1181,11 +1181,27 @@ $1 == "A" {
   }
   # Palmarès : on garde tout, le tri se fait à la fin sur au plus quelques centaines d'entrées.
   n_long++; L_d[n_long] = duree; L_iid[n_long] = iid; L_nom[n_long] = nom; L_cible[n_long] = cible
-  # Commandes rejouées à l'identique — BASH SEULEMENT, et c'est le tri qui fait le sens : rouvrir
-  # deux fois le même fichier avec `Read` ou l'éditer dix fois avec `Edit` est du travail normal, et
-  # les compter noyait le signal sous la liste des fichiers du ticket. Une même COMMANDE relancée,
-  # elle, est soit une reprise après échec, soit du temps qui n'apprend rien.
-  if (nom == "Bash") { r = cible; n_repet[r]++; t_repet[r] += duree }
+  # Commandes rejouées à l'identique — BASH SEULEMENT, et DANS UN MÊME TICKET. Deux restrictions,
+  # deux motifs distincts, et aucune n'est un raffinement de l'autre.
+  #
+  # Bash seulement : rouvrir deux fois le même fichier avec `Read` ou l'éditer dix fois avec `Edit`
+  # est du travail normal, et les compter noyait le signal sous la liste des fichiers du ticket.
+  #
+  # Dans un même ticket (#578) : la clé était la commande SEULE, agrégée sur tout le run — si bien
+  # qu'un appel joué UNE FOIS PAR TICKET remontait « 2x … au-delà du premier passage » sur un run de
+  # deux tickets. Le filet CI avant push, un verbe `lib.sh` sur le parent commun de deux lots : la
+  # CHAÎNE est identique, le rejeu ne l'est pas. Le défaut n'était pas de calcul — « au-delà du
+  # premier passage » était exact au sens littéral — mais de LECTURE, et il grandissait avec le run :
+  # sur douze tickets la section aurait été dominée par les douze passages du filet CI, c'est-à-dire
+  # par le coût le plus attendu de tous, dans la section faite pour montrer l'inattendu. Ce que la
+  # section attrape est la commande relancée à l'intérieur d'une même session — reprise après échec,
+  # ou tour en rond —, et elle seule ; le coût d'un appel structurel se lit « par forme de commande »
+  # et, pour le pré-vol, dans sa propre section.
+  if (nom == "Bash") {
+    r = iid SUBSEP cible
+    n_repet[r]++; t_repet[r] += duree
+    R_iid[r] = iid; R_cmd[r] = cible   # portés à côté : `cible` peut tout contenir, SUBSEP compris
+  }
   if (nom == "Bash") {
     pv = _est_prevol(cible)
     if (pv != "") {
@@ -1219,6 +1235,7 @@ END {
   F_LONG   = "   %9s  %-" L "s %-6s %s\n"
   F_PREVOL = "   %-" L "s %9s   %s\n"
   F_TROU   = "   %9s  %-" L "s après %.0f s de session\n"
+  F_REPET  = "   %3dx %9s  %-" L "s %s\n"
 
   # --- occupation réelle : l'UNION des intervalles, jamais leur somme ---------------------------
   # Des appels PARALLÈLES se recouvrent (plusieurs `tool_use` dans un même message) : leur somme
@@ -1331,18 +1348,26 @@ END {
   }
   printf "\n"
 
-  # --- 7. ce qui a été refait à l'identique -----------------------------------------------------
+  # --- 7. ce qui a été refait à l'identique, DANS UN MÊME TICKET --------------------------------
+  # Le total est calculé sur les MÊMES entrées que les lignes en dessous : un total qui compterait
+  # aussi les appels une-fois-par-ticket annoncerait un gisement d'économie que rien de ce qui suit
+  # ne montrerait — et c'est ce chiffre-là qu'on lit en premier. L'intitulé porte la portée, faute
+  # de quoi « rejouées à l'identique » se relit comme « sur tout le run ».
   nr = 0
   for (r in n_repet) if (n_repet[r] > 1) { nr++; R_k[nr] = r; total_repet += t_repet[r] - t_repet[r]/n_repet[r] }
   if (nr > 0) {
-    printf "── Commandes rejouées à l'identique — %s en tout au-delà du premier passage\n", _duree(total_repet)
+    printf "── Commandes rejouées dans un même ticket — %s au-delà du premier passage\n", _duree(total_repet)
     for (rangr = 1; rangr <= 8 && rangr <= nr; rangr++) {
       best = 0; bi = 0
       for (i = 1; i <= nr; i++) if (!prisr[i] && t_repet[R_k[i]] > best) { best = t_repet[R_k[i]]; bi = i }
       if (bi == 0) break
       prisr[bi] = 1
-      printf "   %3dx %9s  %s\n", n_repet[R_k[bi]], _duree(t_repet[R_k[bi]]), _court(R_k[bi], 64)
+      printf F_REPET, n_repet[R_k[bi]], _duree(t_repet[R_k[bi]]), _etiq(R_iid[R_k[bi]]),
+             _court(R_cmd[R_k[bi]], 58)
     }
+    printf "\n"
+    printf "   Une commande jouée une fois PAR TICKET n'est pas un rejeu (filet CI avant push, verbe\n"
+    printf "   `lib.sh` sur un parent commun) : son coût se lit « par forme de commande ».\n"
     printf "\n"
   }
 

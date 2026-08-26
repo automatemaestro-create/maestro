@@ -4832,6 +4832,26 @@ def _postes(sortie: str, titre: str) -> dict[str, tuple[str, int]]:
     return trouves
 
 
+# « <n>x <durée cumulée>  #<iid> <commande> » — la section des rejeux, qui porte SON ticket (#578).
+_REJEU = re.compile(
+    r"^\s+(?P<n>\d+)x\s+(?P<total>\S+(?: min)?)\s+#(?P<iid>\d+)\s+(?P<cmd>.+?)\s*$"
+)
+
+
+def _rejeux(sortie: str) -> dict[tuple[str, str], tuple[str, int]]:
+    """La section des rejeux : (ticket, commande) -> (durée cumulée, nombre de passages).
+
+    La clé est le COUPLE, et c'est tout le sujet de #578 : la même commande jouée dans deux
+    tickets y fait deux entrées distinctes, dont aucune ne compte pour un rejeu.
+    """
+    trouves = {}
+    for ligne in _section_audit(sortie, "Commandes rejouées"):
+        m = _REJEU.match(ligne)
+        if m:
+            trouves[(f"#{m['iid']}", m["cmd"])] = (m["total"], int(m["n"]))
+    return trouves
+
+
 def test_audit_apparie_par_identifiant_meme_quand_des_appels_s_entrelacent(depot: Depot) -> None:
     """La durée d'un appel n'est sur aucune ligne : elle sépare son `tool_use` de SON retour.
 
@@ -4956,6 +4976,103 @@ def test_audit_ecarte_le_cd_de_prefixe_en_regroupant_les_commandes(depot: Depot)
         r.stdout
     assert not [f for f in formes if f.startswith("cd")], \
         f"le `cd` de préfixe rangerait tout le run sous une seule forme : {formes}"
+
+
+# Les rejeux se comptent DANS UN TICKET, jamais sur le run (#578)
+# -------------------------------------------------------------------------------------
+# Le journal de ces deux tests est un ÉCHANTILLON FAUTIF : il porte, côte à côte, les deux appels
+# qui remontaient à tort — le filet CI joué une fois avant chaque push, et un verbe `lib.sh` sur le
+# parent commun de deux lots — et un rejeu qui, lui, en est un. Prouver l'absence des premiers ne
+# vaut que si le second est présent dans la même sortie : sans lui, une section vide, un titre
+# renommé ou un parser mal branché rendraient un ✓ sur une question jamais posée.
+
+
+def _run_deux_lots(depot: Depot, run_id: str) -> None:
+    """Deux tickets d'un même parent — le décor où #578 se voyait, et le plus banal des runs.
+
+    Chaque ticket joue le filet CI avant son push et interroge le parent commun : deux chaînes
+    identiques d'un ticket à l'autre, dont aucune n'est rejouée. Le ticket #571 rejoue en plus une
+    suite de tests qui vient d'échouer — le seul vrai rejeu du run, et le seul que la section doit
+    retenir.
+    """
+    pytest_ = ".venv/Scripts/python.exe -m pytest tests/test_queue.py"
+    _journal_audit(depot, run_id, {
+        571: (
+            _appel(0, ("toolu_a", "Bash", "bash scripts/ci/local.sh 2>&1 | tail -45"))
+            + _retour(60, "toolu_a")
+            + _appel(61, ("toolu_b", "Bash", "bash scripts/gitlab/lib.sh subtickets 569"))
+            + _retour(71, "toolu_b")
+            + _appel(100, ("toolu_c", "Bash", pytest_))      # rouge
+            + _retour(120, "toolu_c")
+            + _appel(121, ("toolu_d", "Bash", pytest_))      # la reprise, à l'identique
+            + _retour(141, "toolu_d")
+        ),
+        572: (
+            _appel(0, ("toolu_e", "Bash", "bash scripts/ci/local.sh 2>&1 | tail -45"))
+            + _retour(90, "toolu_e")
+            + _appel(91, ("toolu_f", "Bash", "bash scripts/gitlab/lib.sh subtickets 569"))
+            + _retour(101, "toolu_f")
+            + _appel(110, ("toolu_g", "Bash", "git status --short"))
+            + _retour(112, "toolu_g")
+        ),
+    })
+
+
+def test_un_appel_une_fois_par_ticket_n_est_pas_un_rejeu(depot: Depot) -> None:
+    """La clé était la commande SEULE, agrégée sur tout le run : un appel joué une fois par ticket
+    remontait donc « 2x … au-delà du premier passage » dès que le run portait deux tickets.
+
+    Ce n'est pas un défaut de calcul — la ligne était exacte au sens littéral — mais de LECTURE, et
+    il grandit avec le run : sur douze tickets la section serait dominée par les douze passages du
+    filet CI, c'est-à-dire par le coût le plus attendu de tous, dans la section faite pour montrer
+    l'inattendu. Mesuré sur le run `20260826-134119`, dont le premier poste était
+    `bash scripts/ci/local.sh` à 7,3 min.
+    """
+    _run_deux_lots(depot, "deux-lots")
+    r = depot.lance("journal.sh", "audit", "deux-lots")
+
+    assert r.returncode == 0, r.stderr
+
+    # D'abord : l'échantillon porte BIEN le piège. Les deux chaînes structurelles ont été jouées
+    # deux fois chacune sur le run — c'est ce que comptait l'ancienne clé. Sans ce contrôle, un
+    # échantillon adouci plus tard (deux chaînes qui cesseraient d'être identiques) laisserait les
+    # deux absences ci-dessous passer pour un verdict.
+    formes = _postes(r.stdout, "Bash, par forme")
+    assert formes["bash scripts/ci/local.sh"] == ("2.5 min", 2), formes
+    assert formes["bash scripts/gitlab/lib.sh"] == ("20.0s", 2), formes
+
+    # Puis ce que la section garde : sans cette moitié, tout le reste passerait sur une sortie
+    # vide. Le ticket est NOMMÉ — « rejoué » sans dire où ne se vérifie pas.
+    assert _rejeux(r.stdout) == {
+        ("#571", ".venv/Scripts/python.exe -m pytest tests/test_queue.py"): ("40.0s", 2),
+    }, r.stdout
+
+    # Et enfin ce qu'elle écarte, appel par appel.
+    joues = "\n".join(_section_audit(r.stdout, "Commandes rejouées"))
+    assert "scripts/ci/local.sh" not in joues, \
+        f"le filet CI est joué une fois par ticket, jamais rejoué : {joues}"
+    assert "subtickets 569" not in joues, \
+        f"le parent commun est interrogé une fois depuis chaque lot : {joues}"
+
+
+def test_le_total_des_rejeux_ne_compte_que_ce_que_la_section_retient(depot: Depot) -> None:
+    """Le chiffre du titre est ce qu'on lit en premier, et c'est sur lui qu'on décide de chercher.
+
+    Compté sur toutes les répétitions du run, il annoncerait un gisement d'économie que les lignes
+    en dessous ne montreraient pas : 1.8 min ici, dont 1.5 min de filet CI irréductible. Le titre
+    porte en outre la PORTÉE, faute de quoi « rejouées à l'identique » se relit « sur tout le run ».
+    """
+    _run_deux_lots(depot, "total-rejeux")
+    r = depot.lance("journal.sh", "audit", "total-rejeux")
+
+    assert r.returncode == 0, r.stderr
+    titre = next(x for x in r.stdout.splitlines() if x.startswith("── Commandes rejouées"))
+
+    # 40 s de pytest moins son premier passage (20 s) — et rien d'autre. Les 150 s de filet CI et
+    # les 20 s de `subtickets` n'y entrent plus, ni en lignes ni au compteur.
+    assert "20.0s" in titre, f"le total ne compte que le rejeu réel : {titre}"
+    assert "min" not in titre, f"1.8 min serait le total d'avant #578 : {titre}"
+    assert "dans un même ticket" in titre, f"l'intitulé doit dire sur quoi il porte : {titre}"
 
 
 def test_audit_ne_passe_ni_par_jq_ni_par_python(depot: Depot) -> None:
