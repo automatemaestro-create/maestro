@@ -158,6 +158,7 @@ const LIBELLES_STATUT: Record<string, string> = {
   approuve: "Approuvée",
   refuse: "Refusée",
   refus_outil: "Outil refusé",
+  arbitrage_outil: "Outil arbitré",
 };
 
 /** Le libellé d'un statut, ou le statut brut si le flux s'est enrichi. */

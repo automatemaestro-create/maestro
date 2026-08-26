@@ -113,6 +113,16 @@ class Settings:
     #: est une erreur de config explicite, jamais une frontière d'exécution
     #: silencieusement autre (même parti pris que `MAESTRO_ISOLATION`).
     hote_run: str | None = None
+    #: Ce qu'on laisse à la personne qui **arbitre** un appel d'outil classé `ask`
+    #: (`MAESTRO_ARBITRAGE_ATTENTE`, en secondes), ou None : le défaut du module
+    #: (cf. maestro.providers.arbitrage, #583).
+    arbitrage_attente: str | None = None
+    #: Ce qu'on annonce au runtime comme borne du hook `PreToolUse`
+    #: (`MAESTRO_ARBITRAGE_BORNE_HOOK`, en secondes), ou None : le défaut du
+    #: module. Notre attente reste **sous** cette borne quoi qu'on règle — c'est
+    #: l'invariant de `BornesArbitrage`, et ce qui fait que le verdict d'un appel
+    #: sensible ne revient jamais au CLI par échéance (#583).
+    arbitrage_borne_hook: str | None = None
     #: Mode d'isolation des exécutions outillées (`MAESTRO_ISOLATION`), ou None :
     #: exécution directe sur l'hôte (défaut). Seule valeur reconnue : `conteneur`.
     #: Interprété et validé par la couche sandbox (maestro.sandbox.container, #108).
@@ -168,6 +178,9 @@ class Settings:
             explorateur_racines=(os.getenv("MAESTRO_EXPLORATEUR_RACINES") or "").strip() or None,
             selecteur_natif=(os.getenv("MAESTRO_SELECTEUR_NATIF") or "").strip().lower() or None,
             hote_run=(os.getenv("MAESTRO_HOTE_RUN") or "").strip().lower() or None,
+            arbitrage_attente=(os.getenv("MAESTRO_ARBITRAGE_ATTENTE") or "").strip() or None,
+            arbitrage_borne_hook=(os.getenv("MAESTRO_ARBITRAGE_BORNE_HOOK") or "").strip()
+            or None,
             isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
             isolation_image=(os.getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
             isolation_reseau=(os.getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()

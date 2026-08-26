@@ -49,6 +49,9 @@ def test_claude_from_settings_reads_optional_api_key():
         claude_auth_mode = None
         claude_oauth_token = None
         isolation = None  # mode isolé (#108) non demandé : exécution sur l'hôte
+        # Bornes de l'arbitrage au vol (#583) non réglées : celles du module.
+        arbitrage_attente = None
+        arbitrage_borne_hook = None
 
     provider = ClaudeProvider.from_settings(_Settings())
     assert provider.credentials.api_key is None

@@ -29,7 +29,7 @@ from maestro.config import Settings, load_settings
 from maestro.detail_tache import EtapeTache
 from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
-from maestro.providers.arbitrage import Arbitre
+from maestro.providers.arbitrage import Arbitre, ArbitreActe
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
 from maestro.sandbox import ProducedFile, espace_de_travail
 
@@ -193,6 +193,7 @@ class AgentRuntime:
         environ: Mapping[str, str] | None = None,
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
+        on_arbitrage_acte: ArbitreActe | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
@@ -232,6 +233,15 @@ class AgentRuntime:
         chaque refus est signalé via `on_refus(outil, raison)`, le canal de
         traçage de l'appelant. None : aucune politique (comportement
         historique).
+
+        `on_arbitrage_acte` (#583) traverse ce runtime sans qu'il en fasse rien,
+        comme `on_refus` : c'est le fournisseur qui suspend l'appel classé `ask`
+        (son hook est le seul point de contrôle avant l'acte) et l'appelant qui
+        compose la demande, la soumet au validateur et hérite du fail-safe. Le
+        runtime n'est ni l'un ni l'autre — il relie les deux. None : aucun canal,
+        et un outil `ask` est alors refusé par le fournisseur, jamais approuvé.
+        À ne pas confondre avec `on_arbitrage` (#582) plus bas : l'un intercepte
+        un acte, l'autre relaie une demande de l'agent.
 
         `on_activite` (#479) est le second canal de traçage, et il traverse ce
         runtime sans qu'il en fasse rien : ce que l'agent fait **pendant** sa
@@ -302,6 +312,7 @@ class AgentRuntime:
                 mcp_serveurs=montables,
                 politique=politique,
                 on_refus=on_refus,
+                on_arbitrage_acte=on_arbitrage_acte,
                 on_activite=on_activite,
                 on_etapes=on_etapes,
                 on_arbitrage=on_arbitrage,
