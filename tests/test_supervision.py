@@ -155,6 +155,7 @@ class Publieur(ModelProvider):
         on_refus=None,
         on_activite=None,
         on_etapes=None,
+        on_arbitrage=None,
         plafond_tours=None,
         projet=None,
     ):

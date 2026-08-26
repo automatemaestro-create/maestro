@@ -25,6 +25,15 @@ détection d'actions sensibles (refus par défaut). La classification par mots-c
 est assumée comme heuristique de POC : la V1 la remplacera par une liste d'actions
 outillées classées côté serveur (docs/03, entité APPROVAL) sans changer ce contrat.
 
+Depuis #582, ce même canal a un **second producteur** : l'agent peut demander
+l'arbitrage lui-même (`maestro.providers.arbitrage`). Rien du mécanisme ci-dessus
+n'a bougé pour l'accueillir — c'est une `DemandeValidation` de plus, soumise au
+même `validateur`, donc frappée du même fail-safe : **sans validateur, elle est
+refusée**. Ce qui la distingue est son `origine`, et cette distinction compte :
+la classification est faite par nous et tient quand l'agent se trompe ou se fait
+manipuler, sa demande n'est qu'un canal **de plus** dont le silence ne prouve
+rien.
+
 À côté d'eux, et pour la même raison — ce sont les **limites du run**, elles
 n'ont pas à vivre dans un troisième endroit —, `GardeFousIngestion` (#315,
 ENF-07) plafonne la **matière d'entrée** d'un objectif : taille par source,
@@ -81,6 +90,23 @@ TAILLE_MAX_INGESTION_OCTETS = 50 * 1024 * 1024
 #: coût : au-delà, ce n'est plus un objectif composé, c'est un dossier — et un
 #: dossier a son propre type de source.
 NB_MAX_SOURCES = 20
+
+#: Provenance d'une demande de validation : **Maestro l'a déduite** (#582).
+#: C'est le régime historique et le défaut — la classification d'une tâche
+#: sensible (`Guardrails.raison_sensible`) comme la demande d'application dans
+#: un projet (#227) naissent d'une règle à nous, jamais d'un aveu de l'agent.
+ORIGINE_POLITIQUE = "politique"
+
+#: Provenance d'une demande de validation : **l'agent l'a demandée lui-même**
+#: (#582, `maestro.providers.arbitrage`). Un canal *de plus* : son silence ne
+#: dispense d'aucune classification, et une demande qui porte cette origine ne
+#: prouve rien de celles qui ne l'ont pas.
+#:
+#: La distinction est portée par un **champ** et non déduite du texte de la
+#: raison : les deux provenances n'ont pas la même valeur de preuve, et laisser
+#: quelqu'un la retrouver à la grammaire d'une phrase, c'est la perdre au
+#: premier reformulage.
+ORIGINE_AGENT = "agent"
 
 
 @dataclass(frozen=True)
@@ -167,6 +193,15 @@ class DemandeValidation:
     servi à personne, et un dict par défaut demanderait un `default_factory` pour
     la même valeur. Leur forme est celle de `maestro.acte` : du texte, clé par
     clé, chaque valeur bornée.
+
+    `origine` (#582) dit **qui a demandé** : `ORIGINE_POLITIQUE`, le défaut —
+    Maestro l'a déduite d'une de ses règles — ou `ORIGINE_AGENT` — l'agent a
+    levé la main lui-même. Les deux ne valent pas la même chose et c'est tout
+    l'intérêt de les distinguer : une demande déduite tient même quand l'agent
+    se trompe ou se fait manipuler, une demande d'agent ne prouve que ce qu'il
+    a bien voulu dire. Sans le champ, le journal rendrait les deux
+    indiscernables, et une déclaration d'agent finirait par se lire comme une
+    classification.
     """
 
     task_id: str
@@ -180,6 +215,7 @@ class DemandeValidation:
     projet_id: str | None = None
     outil: str = ""
     arguments: dict[str, str] | None = None
+    origine: str = ORIGINE_POLITIQUE
 
 
 #: Validateur humain : reçoit la demande, répond vrai (approuvée) ou faux (refusée).

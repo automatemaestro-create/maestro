@@ -276,6 +276,7 @@ class BavardProvider(ModelProvider):
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
         mcp_serveurs=(), politique=None, on_refus=None, on_activite=None, on_etapes=None,
+        on_arbitrage=None,
         plafond_tours=None, projet=None,
     ):
         self.run_calls.append({"mcp_serveurs": tuple(mcp_serveurs)})
