@@ -620,6 +620,7 @@ export function validationFactice(partiel: Partial<Validation> = {}): Validation
     decision: "",
     diff: null,
     projet_id: null,
+    run_id: "",
     horodatage: "2026-07-28T10:00:00Z",
     ...partiel,
   };

@@ -125,6 +125,24 @@ class DemandeValidation:
     description), l'agent qui l'exécuterait, et la `raison` pour laquelle elle a
     été classée sensible.
 
+    `run_id` et `projet_id` (#570) disent **d'où elle vient**, et ce n'est pas du
+    contexte d'agrément : ce sont les deux critères de filtre de la Control Tower.
+    Sans eux, l'événement `validation.demande` sort du run (absent de son journal)
+    et du projet (écarté de toutes les vues, qui sont cadrées dessus) — mesuré le
+    2026-08-26 (#568) : trois demandes bloquant un run, aucune affichée nulle part,
+    et l'écran affirmant « aucune validation en attente » pendant treize minutes.
+
+    On ne pouvait pas les déduire à l'arrivée, et c'est ce qui distingue ce champ
+    d'un confort : la projection les cherchait sur la tâche déjà connue, or une
+    validation qui **garde le démarrage de sa propre tâche** est publiée avant que
+    cette tâche n'existe pour qui que ce soit. Le repli est en aval de ce qu'il
+    répare ; il reste en place, pour les producteurs qui ne portent rien, mais il
+    n'est plus la source.
+
+    Les deux restent **optionnels** : une demande peut naître hors d'un run ou hors
+    d'un projet, et les rendre obligatoires ferait échouer un appelant légitime là
+    où l'absence se lit très bien (`""` / `None`).
+
     `diff` (#227, EF-37) est la **pièce jointe** d'une demande d'application dans
     le projet de l'utilisateur : les fichiers touchés et leurs lignes
     ajoutées/supprimées, ce sans quoi « appliquer ces modifications ? » n'est pas
@@ -141,6 +159,8 @@ class DemandeValidation:
     role: str
     raison: str
     diff: DiffProjet | None = None
+    run_id: str = ""
+    projet_id: str | None = None
 
 
 #: Validateur humain : reçoit la demande, répond vrai (approuvée) ou faux (refusée).

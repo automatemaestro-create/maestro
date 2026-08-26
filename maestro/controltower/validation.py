@@ -64,10 +64,18 @@ def evenement_demande(demande: DemandeValidation) -> Event:
     qui l'exécuterait, la `raison` de la classification (dans `detail`) et
     l'action demandée (`description`). Expurgé des secrets avant publication —
     même filet que le journal (#8) : ce qui part sur le bus est montrable.
+
+    Et depuis #570, **d'où elle vient** : `run_id` et `projet_id`, sans lesquels
+    la demande est montrable mais jamais montrée — le journal du run ne la
+    contient pas et les vues, cadrées sur le projet actif, l'écartent. Ni l'un ni
+    l'autre n'est expurgé : ce sont des identifiants que nous produisons, pas du
+    texte d'agent.
     """
     return Event(
         type=EVENEMENT_VALIDATION_DEMANDE,
         tache_id=demande.task_id,
+        run_id=demande.run_id,
+        projet_id=demande.projet_id,
         titre=redact_secrets(demande.titre),
         agent=demande.agent,
         role=demande.role,
@@ -145,6 +153,7 @@ async def appliquer_sous_validation(
     agent: str = "",
     role: str = "",
     titre: str = "",
+    run_id: str = "",
 ) -> ResultatApplication:
     """Applique le travail de la tâche dans `projet` — **après accord humain** (EF-37).
 
@@ -178,6 +187,10 @@ async def appliquer_sous_validation(
     délibération ne porte donc **ni plafond ni time-out** — ceux du run
     s'appliquent ailleurs, et les redéclarer ici en inventerait un second jeu.
 
+    `run_id` (#570) est le run au nom duquel on applique : seul l'appelant le
+    sait, et sans lui la demande sort du journal de son run — le projet, lui, est
+    déduit de `projet`, qui est le sujet même de la question.
+
     `branche` est la branche de tâche posée par l'espace de travail dérivé
     (#224, `branche_de_tache`) — requise pour un projet versionné, jamais
     recalculée ici. `espace` est le répertoire de travail de la tâche : requis
@@ -208,6 +221,10 @@ async def appliquer_sous_validation(
             f"({diff.fichiers} fichier(s), +{diff.ajouts} / −{diff.suppressions})"
         ),
         diff=diff,
+        # Le projet n'est pas à déduire ici : la demande *porte* sur lui (#570).
+        # `run_id` vient de l'appelant, seul à savoir au nom de quel run il applique.
+        run_id=run_id,
+        projet_id=projet.id,
     )
     approuve, detail = await Guardrails(validateur=validateur).demande_validation(demande)
     if not approuve:

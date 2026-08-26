@@ -561,6 +561,13 @@ class LocalExecutor(TaskExecutor):
             agent=agent.nom,
             role=agent.role,
             raison=raison,
+            # D'où vient la demande (#570) — même règle que la décision consignée
+            # plus bas, et pour la même raison : ce sont des critères de filtre, et
+            # ce qui ne les porte pas disparaît des vues. La demande est le cas où
+            # ça coûte le plus cher : elle **précède** le premier `tache.statut` de
+            # sa tâche, donc rien en aval ne peut recoller l'appartenance à sa place.
+            run_id=journal.run_id,
+            projet_id=task.projet_id,
         )
         approuve, detail = await self._guardrails.demande_validation(demande)
         journal.consigne(
