@@ -33,11 +33,17 @@ from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
 from maestro.detail_tache import EtapeTache, SuiviChecklist, consigne_detail
-from maestro.engine.guardrails import DemandeValidation, Guardrails
+from maestro.engine.guardrails import (
+    ORIGINE_AGENT,
+    ORIGINE_POLITIQUE,
+    DemandeValidation,
+    Guardrails,
+)
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.orchestrator.schema import Task
 from maestro.projets.modele import Projet
 from maestro.projets.store import ProjetStore
+from maestro.providers.arbitrage import Arbitre
 from maestro.providers.base import ModelProvider, UnsupportedCapability, stderr_de
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
@@ -78,6 +84,21 @@ SUFFIXE_ETAPE_REFUS = ":refus-outil"
 #: étapes annexes (`:validation` porte approuve/refuse) mais distinct : ici
 #: c'est un appel d'outil qui est refusé, pas la tâche.
 STATUT_REFUS_OUTIL = "refus_outil"
+
+#: Suffixe des étapes de validation humaine au journal (#9) : `<task.id>:validation`.
+#: Constante depuis #582, où ce suffixe a gagné un **second producteur** —
+#: l'arbitrage demandé par l'agent lui-même : deux endroits qui composent le même
+#: nom d'étape sont deux endroits à tenir d'accord, et le pont les reconnaît par
+#: ce suffixe (`maestro.controltower.bridge`).
+SUFFIXE_ETAPE_VALIDATION = ":validation"
+
+#: Statuts d'une étape `:validation` — le vocabulaire de l'entité APPROVAL
+#: (docs/03), commun aux deux producteurs : la classification d'une tâche
+#: sensible et la demande de l'agent (#582) se lisent au même endroit avec les
+#: mêmes mots. Ce qui les distingue est la **provenance** de la demande
+#: (`maestro.engine.guardrails.ORIGINE_*`), jamais son issue.
+STATUT_VALIDATION_APPROUVE = "approuve"
+STATUT_VALIDATION_REFUSE = "refuse"
 
 #: Suffixe des étapes d'activité au journal (#479) : `<task.id>:activite`, une
 #: par salve publiée par le fournisseur pendant que la tâche tourne — le pont
@@ -568,21 +589,20 @@ class LocalExecutor(TaskExecutor):
             # sa tâche, donc rien en aval ne peut recoller l'appartenance à sa place.
             run_id=journal.run_id,
             projet_id=task.projet_id,
+            # Qui a demandé (#582) : ici, nous — c'est la classification du
+            # moteur. Posée explicitement plutôt que laissée au défaut du champ :
+            # ce chemin-ci *est* celui qui donne son sens à `ORIGINE_POLITIQUE`.
+            origine=ORIGINE_POLITIQUE,
         )
         approuve, detail = await self._guardrails.demande_validation(demande)
-        journal.consigne(
-            etape=f"{task.id}:validation",
+        self._consigne_validation(
+            task,
+            agent,
             nom=f"Validation humaine — {task.titre}",
-            agent=agent.nom,
-            role=agent.role,
-            statut="approuve" if approuve else "refuse",
-            entree=raison,
-            sortie=detail,
-            usage=StepUsage(),
-            # Le projet (#222) est porté par **toutes** les étapes de la tâche,
-            # annexes comprises : c'est un critère de filtre, et une étape qui ne
-            # le porterait pas disparaîtrait des vues restreintes à ce projet.
-            projet_id=task.projet_id,
+            raison=raison,
+            approuve=approuve,
+            detail=detail,
+            journal=journal,
         )
         if approuve:
             return None
@@ -592,6 +612,104 @@ class LocalExecutor(TaskExecutor):
             role=agent.role,
             score=score,
             erreur=f"action sensible ({raison}) : {detail} — tâche stoppée avant exécution.",
+        )
+
+    def _arbitre(self, task: Task, agent: Agent, journal: RunJournal) -> Arbitre:
+        """Le canal par lequel l'agent demande lui-même l'arbitrage (#582).
+
+        Rend au fournisseur un `Arbitre` — une raison en entrée, `(approuvée ?,
+        détail)` en sortie — qui **n'invente aucun garde-fou** : la demande part
+        au `Guardrails` de l'exécuteur, celui-là même qui traite une tâche
+        classée sensible. Le fail-safe est donc littéralement inchangé, parce que
+        c'est le même code qui répond : sans validateur configuré, la demande de
+        l'agent est refusée, comme n'importe quelle autre.
+
+        Ce qui change est la **provenance** (`ORIGINE_AGENT`), et elle voyage sur
+        les deux chemins que quelqu'un lira : le champ de la demande, qui atteint
+        l'écran par le validateur (#48), et l'étape consignée ici. Sans elle, une
+        déclaration d'agent se lirait comme une classification — or elles n'ont
+        pas la même valeur : la nôtre tient quand l'agent se trompe ou se fait
+        manipuler, la sienne ne prouve que ce qu'il a bien voulu dire.
+
+        La décision **n'est pas mêlée** à celle de la tâche : la demande d'un
+        agent porte sur une action qu'il s'apprête à commettre *dans* sa tâche,
+        déjà autorisée à s'exécuter. Un refus lui est rendu et il poursuit sans
+        l'action — jamais un `TaskResult` en échec, ce qui reviendrait à
+        condamner une tâche pour la prudence de celui qui la mène.
+        """
+
+        async def arbitre(raison: str) -> tuple[bool, str]:
+            demande = DemandeValidation(
+                task_id=task.id,
+                titre=task.titre,
+                description=task.description,
+                agent=agent.nom,
+                role=agent.role,
+                # La raison **est** l'action que l'agent décrit : c'est elle que
+                # l'humain lit pour trancher (le validateur la rend en `detail`,
+                # cf. `maestro.controltower.validation.evenement_demande`). Elle
+                # est préfixée pour que la provenance survive aussi là où seul le
+                # texte voyage — le champ `origine` reste la source.
+                raison=f"arbitrage demandé par l'agent {agent.nom} : {raison}",
+                run_id=journal.run_id,
+                projet_id=task.projet_id,
+                origine=ORIGINE_AGENT,
+            )
+            approuve, detail = await self._guardrails.demande_validation(demande)
+            self._consigne_validation(
+                task,
+                agent,
+                nom=f"Arbitrage demandé par l'agent — {task.titre}",
+                raison=demande.raison,
+                approuve=approuve,
+                detail=detail,
+                journal=journal,
+            )
+            return approuve, detail
+
+        return arbitre
+
+    def _consigne_validation(
+        self,
+        task: Task,
+        agent: Agent,
+        *,
+        nom: str,
+        raison: str,
+        approuve: bool,
+        detail: str,
+        journal: RunJournal,
+    ) -> None:
+        """Trace une décision de validation au journal (#9) — les deux provenances.
+
+        Étape dédiée `<task.id>:validation`, statuts alignés sur l'entité
+        APPROVAL de docs/03, que la décision soit oui ou non. Depuis #582 ce
+        n'est plus la classification qui en est le seul producteur : l'arbitrage
+        demandé par l'agent passe **par ici aussi**, et c'est voulu — le critère
+        demande qu'il soit consigné « comme les autres ». Ce qui l'en distingue
+        est le `nom` de l'étape, seul champ du journal qui puisse porter la
+        provenance sans qu'un consommateur ait à la déduire d'une tournure de
+        phrase.
+
+        `entree` porte la raison, `sortie` le détail de la décision. Usage nul :
+        délibérer ne dépense pas — le coût de la tâche est porté par son étape
+        finale.
+        """
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_VALIDATION}",
+            nom=nom,
+            agent=agent.nom,
+            role=agent.role,
+            statut=(
+                STATUT_VALIDATION_APPROUVE if approuve else STATUT_VALIDATION_REFUSE
+            ),
+            entree=raison,
+            sortie=detail,
+            usage=StepUsage(),
+            # Le projet (#222) est porté par **toutes** les étapes de la tâche,
+            # annexes comprises : c'est un critère de filtre, et une étape qui ne
+            # le porterait pas disparaîtrait des vues restreintes à ce projet.
+            projet_id=task.projet_id,
         )
 
     async def _realise(
@@ -956,6 +1074,14 @@ class LocalExecutor(TaskExecutor):
         garde la checklist que le plan annonçait, sans jamais la voir se cocher.
         C'est exact et c'est dit : personne n'a rapporté d'avancement.
 
+        L'**arbitrage demandé par l'agent** (#582) n'équipe lui aussi que le
+        chemin outillé, et la raison est plus forte que pour les trois autres :
+        un appel texte n'*agit* pas — il n'a aucune action irréversible à
+        soumettre, et rien à faire d'une approbation. Le canal ne perd donc rien
+        à s'arrêter là où l'agent cesse d'avoir des outils. Sans `journal`, pas
+        de canal non plus : une décision qu'on ne pourrait pas consigner serait
+        une décision prise nulle part.
+
         Le **projet** de la tâche (#224) n'équipe lui aussi que le chemin
         outillé : c'est de lui qu'est dérivé l'espace de travail (worktree ou
         copie). Le chemin texte ne produit aucun fichier — il n'a pas d'espace
@@ -991,6 +1117,9 @@ class LocalExecutor(TaskExecutor):
                         None
                         if journal is None or suivi is None
                         else self._on_etapes(task, agent, suivi, journal)
+                    ),
+                    on_arbitrage=(
+                        None if journal is None else self._arbitre(task, agent, journal)
                     ),
                     projet=self._projet(task),
                     tache_id=task.id,

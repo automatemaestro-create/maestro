@@ -29,6 +29,7 @@ from maestro.config import Settings, load_settings
 from maestro.detail_tache import EtapeTache
 from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
+from maestro.providers.arbitrage import Arbitre
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
 from maestro.sandbox import ProducedFile, espace_de_travail
 
@@ -194,6 +195,7 @@ class AgentRuntime:
         on_refus: Callable[[str, str], None] | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
+        on_arbitrage: Arbitre | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
     ) -> AgentOutcome:
@@ -245,6 +247,13 @@ class AgentRuntime:
         tient aucun état de checklist — il n'en verrait qu'une exécution, et
         l'avancement doit survivre aux relances.
 
+        `on_arbitrage` (#582) est le quatrième et traverse de même — mais dans
+        l'autre sens : c'est l'agent qui **demande** l'arbitrage, le fournisseur
+        qui lui expose l'outil, et l'appelant qui tient le garde-fou et le
+        journal. Le runtime n'est ni l'un ni l'autre, et surtout il n'est pas
+        celui qui décide : la décision appartient au `Guardrails` du moteur, seul
+        endroit où vit le fail-safe.
+
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
         `maestro/<tache_id>` si le projet est versionné, copie de son périmètre
@@ -295,6 +304,7 @@ class AgentRuntime:
                 on_refus=on_refus,
                 on_activite=on_activite,
                 on_etapes=on_etapes,
+                on_arbitrage=on_arbitrage,
                 plafond_tours=self._plafond_tours,
                 projet=projet,
             )

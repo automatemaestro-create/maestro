@@ -40,15 +40,28 @@ from claude_agent_sdk import (
     McpServerConfig,
     McpServerStatus,
     ResultMessage,
+    SdkMcpTool,
     TextBlock,
     ToolUseBlock,
+    create_sdk_mcp_server,
     query,
+    tool,
 )
 from claude_agent_sdk.types import HookInput
 
 from maestro.config import ConfigError, Settings
 from maestro.detail_tache import EtapeTache
 from maestro.providers.activite import Geste, RegulateurActivite
+from maestro.providers.arbitrage import (
+    CANAL_EN_ERREUR,
+    DESCRIPTION_OUTIL,
+    NOM_OUTIL,
+    NOM_SERVEUR,
+    RAISON_MANQUANTE,
+    SCHEMA_ENTREE,
+    Arbitre,
+    reponse,
+)
 from maestro.providers.base import (
     PLAFOND_TOURS_DEFAUT,
     AuthMode,
@@ -223,6 +236,7 @@ class ClaudeProvider(ModelProvider):
         on_refus: Callable[[str, str], None] | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
+        on_arbitrage: Arbitre | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -308,6 +322,32 @@ class ClaudeProvider(ModelProvider):
         republie que ce qui a changé (`SuiviChecklist.rapporte`). Un régulateur y
         ajouterait une latence sur l'information qu'on veut la plus fraîche, pour
         borner un débit qui ne déborde pas.
+
+        `on_arbitrage` (#582) monte sur la session un **serveur MCP in-process**
+        (`maestro.providers.arbitrage`) portant le seul outil
+        `demander_arbitrage(raison)` : l'agent qui s'apprête à quelque chose
+        d'irréversible lève la main, l'appel attend la décision et la lui rend.
+        C'est le seul des quatre canaux qui reparte vers l'agent, et le seul dont
+        une panne se traduit en **refus servi** plutôt qu'en silence.
+
+        Trois choix à ne pas défaire dans ce montage. Le serveur n'est **pas
+        ajouté à `attendus`** : `_attend_serveurs_mcp` existe pour le serveur
+        externe qui met du temps à venir — un `npx -y` qui télécharge (#105) —,
+        or un serveur SDK est servi **en process** par le SDK lui-même
+        (`type: "sdk"`, déclaré au CLI dès l'initialisation) : il n'a rien à
+        connecter, et l'y inscrire n'ajouterait qu'un risque de 60 s d'attente
+        sur un canal dont l'absence ne doit jamais arrêter une tâche. Le
+        **routage** n'a donc pas bougé non plus — session pilotée si et seulement
+        si l'agent déclare des serveurs, exactement comme avant ce lot. Et il est
+        monté **après** les serveurs déclarés, si bien qu'une déclaration
+        homonyme ne peut pas masquer le canal d'un garde-fou (nom réservé,
+        `arbitrage.NOM_SERVEUR`).
+
+        Une politique de permissions (#110) le régit **comme n'importe quel
+        outil** : une liste `allow` fermée qui ne le cite pas, ou un `deny`
+        dessus, retire à l'agent la possibilité de lever la main. C'est le sens
+        sûr — la classification, elle, ne dépend pas de lui — et le refus est
+        tracé comme les autres.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -315,6 +355,13 @@ class ClaudeProvider(ModelProvider):
             cli_path = self._isolation.shim
             env |= self._isolation.env_sandbox(workspace, projet=projet)
         stderr = CollecteurStderr()
+        serveurs: dict[str, McpServerConfig] = {
+            s.nom: _config_mcp_sdk(s) for s in mcp_serveurs
+        }
+        if on_arbitrage is not None:
+            # En dernier, à dessein : le nom est réservé, et une déclaration
+            # homonyme ne masque pas le canal d'un garde-fou.
+            serveurs[NOM_SERVEUR] = _serveur_arbitrage(on_arbitrage)
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
@@ -326,7 +373,7 @@ class ClaudeProvider(ModelProvider):
             allowed_tools=list(tools),
             permission_mode="bypassPermissions",
             max_turns=plafond_tours,
-            mcp_servers={s.nom: _config_mcp_sdk(s) for s in mcp_serveurs},
+            mcp_servers=serveurs,
             strict_mcp_config=True,
             hooks=(
                 {"PreToolUse": [HookMatcher(hooks=[_hook_permissions(politique, on_refus)])]}
@@ -359,6 +406,63 @@ class ClaudeProvider(ModelProvider):
         finally:
             if regulateur is not None:
                 regulateur.vider()
+
+
+def _outil_arbitrage(on_arbitrage: Arbitre) -> SdkMcpTool[Any]:
+    """L'outil `demander_arbitrage(raison)` servi à l'agent (#582).
+
+    Un seul outil, dont l'appel **attend** la décision et rend à l'agent de quoi
+    enchaîner. La forme de la réponse ne s'invente pas ici — elle vit dans
+    `maestro.providers.arbitrage`, avec le reste du vocabulaire, pour rester
+    lisible sans monter de session SDK.
+
+    Trois refus se ressemblent et n'ont pas la même cause ; aucun n'est rendu en
+    **erreur d'outil**, ce qui inviterait l'agent à réessayer contre la décision
+    qu'on vient de lui rendre :
+
+    - **raison vide** : rien n'a été soumis à personne, donc rien n'est refusé —
+      on le lui dit et il rappelle l'outil. Lui servir un refus l'enverrait
+      renoncer à une action sur laquelle nul n'a été consulté ;
+    - **refus du garde-fou** (dont le fail-safe « pas de validateur ») : la
+      décision, motivée, rendue telle quelle ;
+    - **canal en erreur** : le callback a levé. On refuse — une panne du canal de
+      décision n'a jamais autorisé une action —, et on ne laisse surtout pas
+      l'exception remonter : elle tuerait la tâche au moment précis où l'agent
+      se montrait prudent.
+
+    L'outil est rendu **séparément de son serveur** pour qu'on puisse l'appeler
+    tel quel : ce qui décide ici tient en une poignée de lignes, et les éprouver
+    ne doit pas coûter un CLI, un sous-processus et un quota (tests → #579).
+    """
+
+    @tool(NOM_OUTIL, DESCRIPTION_OUTIL, SCHEMA_ENTREE)
+    async def demander_arbitrage(args: dict[str, Any]) -> dict[str, Any]:
+        raison = str(args.get("raison") or "").strip()
+        if not raison:
+            texte = RAISON_MANQUANTE
+        else:
+            try:
+                approuve, detail = await on_arbitrage(raison)
+            except Exception as exc:  # noqa: BLE001 — refus servi, jamais une tâche tuée
+                approuve, detail = False, CANAL_EN_ERREUR.format(cause=exc)
+            texte = reponse(approuve, detail)
+        return {"content": [{"type": "text", "text": texte}]}
+
+    return demander_arbitrage
+
+
+def _serveur_arbitrage(on_arbitrage: Arbitre) -> McpServerConfig:
+    """Le serveur MCP **in-process** qui porte l'outil d'arbitrage (#582).
+
+    In-process (`type: "sdk"`) et non stdio : il n'y a ni processus à lancer ni
+    connexion à attendre — le SDK le sert lui-même, et le callback qu'il ferme
+    vit dans la boucle du moteur, là où sont le garde-fou et le journal. C'est
+    aussi pourquoi il ne rejoint jamais les `attendus` de
+    `_attend_serveurs_mcp` (cf. `run_agent`).
+    """
+    return create_sdk_mcp_server(
+        name=NOM_SERVEUR, tools=[_outil_arbitrage(on_arbitrage)]
+    )
 
 
 def _hook_permissions(

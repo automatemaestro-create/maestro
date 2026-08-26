@@ -19,6 +19,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, TypeVar
 
+from maestro.providers.arbitrage import Arbitre
+
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
     from maestro.agents.permissions import PolitiqueOutils
@@ -283,6 +285,7 @@ class ModelProvider(ABC):
         on_refus: Callable[[str, str], None] | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
+        on_arbitrage: Arbitre | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -360,6 +363,24 @@ class ModelProvider(ABC):
 
         Même règle que les deux autres canaux sur les échecs : un callback qui
         lève ne casse jamais l'exécution observée.
+
+        `on_arbitrage` (#582, `maestro.providers.arbitrage`) est le seul canal
+        des quatre qui aille **dans l'autre sens** : les trois précédents
+        rapportent ce que le fournisseur observe, celui-ci porte une question de
+        l'agent et rapporte la réponse. Un fournisseur qui l'honore expose à
+        l'agent un outil `demander_arbitrage(raison)`, appelle ce canal quand
+        l'agent s'en sert, **attend** la décision et la lui rend — approuvée, il
+        poursuit ; refusée, il reçoit un motif exploitable et poursuit sans
+        l'action. Capacité optionnelle au second degré, comme `on_etapes` : un
+        fournisseur sans outillage n'expose rien et le moteur ne s'en aperçoit
+        pas.
+
+        L'exigence n'est pas non plus la même : ici, un callback qui lève ne
+        peut pas être avalé en silence — le fournisseur doit rendre à l'agent un
+        **refus** motivé (`maestro.providers.arbitrage.CANAL_EN_ERREUR`). Une
+        panne d'observation ne coûte qu'une ligne de journal ; une panne du
+        canal de décision laisserait l'agent sans réponse devant l'action même
+        qu'il jugeait irréversible.
 
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de
