@@ -9,6 +9,13 @@ violations tracées » :
    toujours ; `allow` vide = tout permis, non vide = liste fermée ; une entrée
    couvre l'outil exact ou tout ce qu'elle préfixe aux frontières `__`
    (`mcp__slack` couvre `mcp__slack__send_message`, pas `mcp__slackbot__x`) ;
+①bis **le troisième cran** (`ask`, #580) : la priorité `deny` > `ask` >
+   `allow` éprouvée **cran par cran** — un outil des deux listes fermées est
+   refusé et non arbitré, un outil `ask` absent d'une liste `allow` fermée est
+   arbitré et non refusé (sans quoi fermer sa liste suffirait à rendre le cran
+   du milieu lettre morte) ; un outil classé `ask` n'est **pas** interdit et
+   reste monté (`autorise`/`filtre_outils`/`serveur_autorise`) ; un fichier
+   écrit avant ce lot se relit sous le régime d'hier (champ absent = vide) ;
 ② **dépôt** (`PermissionStore`) : validation à la lecture (JSON illisible,
    forme inattendue, entrée malformée — une politique douteuse est refusée
    avec sa cause, jamais appliquée à moitié), nom d'agent verrouillé, racine
@@ -35,7 +42,12 @@ import pytest
 
 from maestro.agents import QA_PROFILE, AgentRuntime
 from maestro.agents.mcp import ServeurMcp
-from maestro.agents.permissions import PermissionStore, PolitiqueOutils
+from maestro.agents.permissions import (
+    DecisionOutil,
+    PermissionStore,
+    PolitiqueOutils,
+    Verdict,
+)
 from maestro.engine import OrchestrationEngine
 from maestro.engine.executor import STATUT_REFUS_OUTIL, SUFFIXE_ETAPE_REFUS
 from maestro.orchestrator import Orchestrator
@@ -222,8 +234,79 @@ def test_raison_refus_nomme_l_outil_et_la_liste_en_cause():
 
 
 def test_aller_retour_dict_preserve_la_politique():
-    politique = PolitiqueOutils(allow=("Read",), deny=("mcp__slack",))
+    politique = PolitiqueOutils(allow=("Read",), ask=("Write",), deny=("mcp__slack",))
     assert PolitiqueOutils.from_dict(politique.to_dict()) == politique
+
+
+# --- ①bis Le troisième cran : `ask` (#580) ----------------------------------------------
+
+
+def test_le_verdict_a_trois_valeurs_et_porte_son_motif():
+    politique = PolitiqueOutils(ask=("Bash",), deny=("Write",))
+
+    assert politique.decide("Read") == DecisionOutil(Verdict.PASSE)
+    assert politique.decide("Bash").verdict is Verdict.ARBITRAGE
+    assert politique.decide("Write").verdict is Verdict.REFUS
+    # Le motif nomme l'outil et la liste en cause, comme `raison_refus`…
+    assert "'Bash'" in politique.decide("Bash").motif
+    assert "ask" in politique.decide("Bash").motif
+    assert "deny" in politique.decide("Write").motif
+    # …et il est vide quand rien ne s'oppose à l'appel : il n'y a rien à dire.
+    assert politique.decide("Read").motif == ""
+
+
+def test_deny_l_emporte_sur_ask():
+    # Le cran le plus fermé gagne : un outil des deux listes est refusé, pas arbitré.
+    politique = PolitiqueOutils(ask=("Bash",), deny=("Bash",))
+
+    assert politique.decide("Bash").verdict is Verdict.REFUS
+    assert "deny" in politique.decide("Bash").motif
+    assert not politique.autorise("Bash")
+
+
+def test_ask_l_emporte_sur_une_liste_allow_fermee():
+    # Sans cette priorité, fermer sa liste `allow` suffirait à rendre `ask`
+    # lettre morte : l'outil serait refusé avant d'avoir pu être arbitré.
+    politique = PolitiqueOutils(allow=("Read",), ask=("Bash",))
+
+    assert politique.decide("Bash").verdict is Verdict.ARBITRAGE
+    assert politique.decide("Read").verdict is Verdict.PASSE
+    # Le reste de la liste fermée reste refusé : `ask` déborde `allow`, ne l'ouvre pas.
+    assert politique.decide("Write").verdict is Verdict.REFUS
+
+
+def test_un_outil_classe_ask_n_est_pas_interdit_et_reste_monte():
+    # `autorise` répond « non interdit » : un outil retiré de la session
+    # n'atteindrait jamais le point de contrôle censé le suspendre.
+    politique = PolitiqueOutils(allow=("Read",), ask=("Bash", "mcp__slack__chat_delete"))
+
+    assert politique.autorise("Bash")
+    assert politique.filtre_outils(("Read", "Bash", "Write")) == ("Read", "Bash")
+    assert politique.serveur_autorise("slack")
+
+
+def test_ask_couvre_par_prefixe_comme_les_deux_autres_listes():
+    politique = PolitiqueOutils(ask=("mcp__slack",))
+
+    assert politique.decide("mcp__slack__send_message").verdict is Verdict.ARBITRAGE
+    # Jamais en plein mot : un serveur au nom voisin passe sans arbitrage.
+    assert politique.decide("mcp__slackbot__envoyer").verdict is Verdict.PASSE
+
+
+def test_une_politique_sans_ask_se_relit_a_l_identique():
+    # Champ absent = liste vide = régime d'avant #580, au bit près.
+    ancienne = {"allow": ["Read"], "deny": ["Bash"]}
+
+    politique = PolitiqueOutils.from_dict(ancienne)
+
+    assert politique == PolitiqueOutils(allow=("Read",), deny=("Bash",))
+    assert politique.ask == ()
+    assert politique.decide("Read").verdict is Verdict.PASSE
+    assert politique.decide("Bash").verdict is Verdict.REFUS
+
+
+def test_to_dict_porte_toujours_les_trois_listes():
+    assert PolitiqueOutils().to_dict() == {"allow": [], "ask": [], "deny": []}
 
 
 # --- ② Dépôt : validation à la lecture --------------------------------------------------
@@ -237,6 +320,34 @@ def test_lire_une_politique_valide(store):
     politique = store.lire("qa")
 
     assert politique == PolitiqueOutils(allow=("Read", "mcp__tickets"), deny=("Bash",))
+
+
+def test_lire_une_politique_qui_porte_ask(store):
+    _ecrire_politique(
+        store.racine, "qa", {"allow": ["Read"], "ask": ["Bash"], "deny": ["Write"]}
+    )
+
+    politique = store.lire("qa")
+
+    assert politique == PolitiqueOutils(allow=("Read",), ask=("Bash",), deny=("Write",))
+
+
+def test_un_fichier_ecrit_avant_ask_se_relit_sous_le_regime_d_hier(store):
+    _ecrire_politique(store.racine, "qa", {"allow": ["Read"], "deny": ["Bash"]})
+
+    politique = store.lire("qa")
+
+    assert politique == PolitiqueOutils(allow=("Read",), deny=("Bash",))
+    assert politique.ask == ()
+
+
+@pytest.mark.parametrize("entree", ["", "outil interdit", "mcp__", 42])
+def test_entree_ask_malformee_refusee_en_bloc(store, entree):
+    # `ask` est validée comme ses deux voisines : jamais appliquée en partie.
+    _ecrire_politique(store.racine, "qa", {"ask": ["Read", entree]})
+
+    with pytest.raises(ValueError, match="entrée ask"):
+        store.lire("qa")
 
 
 def test_agent_sans_politique_rend_none(store):
