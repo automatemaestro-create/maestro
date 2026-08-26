@@ -49,6 +49,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import HookInput
 
+from maestro.acte import arguments_depuis
 from maestro.config import ConfigError, Settings
 from maestro.detail_tache import EtapeTache
 from maestro.providers.activite import Geste, RegulateurActivite
@@ -60,6 +61,13 @@ from maestro.providers.arbitrage import (
     RAISON_MANQUANTE,
     SCHEMA_ENTREE,
     Arbitre,
+    ArbitreActe,
+    BornesArbitrage,
+    motif_approbation,
+    motif_attente,
+    motif_panne,
+    motif_refus,
+    motif_sans_arbitre,
     reponse,
 )
 from maestro.providers.base import (
@@ -132,13 +140,21 @@ class ClaudeProvider(ModelProvider):
     _MODEL_PREFIX: ClassVar[str] = "claude-"
 
     def __init__(
-        self, credentials: Credentials, *, isolation: IsolationConfig | None = None
+        self,
+        credentials: Credentials,
+        *,
+        isolation: IsolationConfig | None = None,
+        arbitrage: BornesArbitrage | None = None,
     ) -> None:
         self._credentials = credentials
         # Mode isolé (#108) : quand il est actif, `run_agent` lance le CLI dans un
         # conteneur durci via le shim (`cli_path`). None : exécution sur l'hôte
         # (comportement historique, défaut).
         self._isolation = isolation
+        # Bornes de l'arbitrage au vol (#583) : ce qu'on laisse à la personne qui
+        # tranche, et ce qu'on annonce au runtime comme durée max du hook. None :
+        # les défauts du module — jamais ceux du SDK, qu'on ne choisit pas.
+        self._arbitrage = arbitrage or BornesArbitrage()
 
     @property
     def credentials(self) -> Credentials:
@@ -154,6 +170,9 @@ class ClaudeProvider(ModelProvider):
         (auth par abonnement Claude Code, ou `CLAUDE_CODE_OAUTH_TOKEN` en CI).
         Le mode isolé (#108, `MAESTRO_ISOLATION`) est validé ici aussi — une
         config d'isolation bancale casse au câblage, pas en cours d'exécution.
+        Les **bornes de l'arbitrage** (#583) le sont pour la même raison, et elle
+        pèse plus lourd : découvrir en plein run qu'une borne est illisible, c'est
+        le découvrir sur l'appel d'outil qu'on voulait justement faire trancher.
         """
         mode = _resolve_auth_mode(settings)
         if mode is AuthMode.API_KEY and not settings.anthropic_api_key:
@@ -169,6 +188,7 @@ class ClaudeProvider(ModelProvider):
                 oauth_token=settings.claude_oauth_token,
             ),
             isolation=IsolationConfig.from_settings(settings),
+            arbitrage=BornesArbitrage.from_settings(settings),
         )
 
     def supports(self, model: str) -> bool:
@@ -234,6 +254,7 @@ class ClaudeProvider(ModelProvider):
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
+        on_arbitrage_acte: ArbitreActe | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
@@ -297,6 +318,26 @@ class ClaudeProvider(ModelProvider):
         signalé via `on_refus` — jamais mué en échec de run. Les outils déjà
         filtrés au montage ne repassent par ce hook que par sûreté : son vrai
         travail est l'outil MCP refusé individuellement sur un serveur monté.
+
+        `on_arbitrage_acte` (#583) arme le **troisième cran** du même hook : un
+        appel classé `ask` (#580) y est suspendu, la demande part sur ce canal
+        avec l'outil et ses arguments, et l'issue décide — approuvée, l'appel
+        passe ; refusée, `deny` motivé. Sans ce canal, un outil `ask` est
+        **refusé** et jamais approuvé par défaut (fail-safe EF-08/ENF-04).
+
+        ⚠ À ne pas confondre avec `on_arbitrage` (#582), plus bas : les deux
+        aboutissent au même validateur, mais l'un porte **l'acte qu'on a
+        intercepté** et l'autre **la raison qu'un agent a rédigée**. Le second
+        est un canal *de plus*, et son silence ne dispense de rien — c'est le
+        cadrage du parent #573, et c'est pourquoi ils ont deux noms.
+
+        La borne du hook est **posée explicitement** ici (`HookMatcher(timeout=…)`)
+        et pas seulement subie : notre attente d'arbitrage vit sous cette borne
+        (`BornesArbitrage`), si bien qu'à l'expiration c'est nous qui rendons un
+        `deny` motivé, jamais le CLI par échéance — dont la sémantique d'un hook
+        expiré ne doit porter aucun fail-safe. Sans politique il n'y a pas de
+        hook du tout, donc rien à borner : c'est le seul cas où la borne du SDK
+        s'applique encore, et elle ne garde alors rien.
 
         `stderr` (#346) : le stderr du CLI — ou du shim, en mode isolé, ce qui y
         fait remonter jusqu'aux erreurs de `docker run` — est collecté ligne à
@@ -376,7 +417,24 @@ class ClaudeProvider(ModelProvider):
             mcp_servers=serveurs,
             strict_mcp_config=True,
             hooks=(
-                {"PreToolUse": [HookMatcher(hooks=[_hook_permissions(politique, on_refus)])]}
+                {
+                    "PreToolUse": [
+                        HookMatcher(
+                            hooks=[
+                                _hook_permissions(
+                                    politique,
+                                    on_refus,
+                                    on_arbitrage_acte,
+                                    self._arbitrage,
+                                )
+                            ],
+                            # Posée, jamais subie (#583) : la borne par défaut du
+                            # SDK est de 60 s, et c'est elle qui déciderait de
+                            # l'issue d'un arbitrage si on la laissait faire.
+                            timeout=self._arbitrage.borne_hook_s,
+                        )
+                    ]
+                }
                 if politique is not None
                 else None
             ),
@@ -466,41 +524,148 @@ def _serveur_arbitrage(on_arbitrage: Arbitre) -> McpServerConfig:
 
 
 def _hook_permissions(
-    politique: PolitiqueOutils, on_refus: Callable[[str, str], None] | None
+    politique: PolitiqueOutils,
+    on_refus: Callable[[str, str], None] | None,
+    on_arbitrage_acte: ArbitreActe | None = None,
+    bornes: BornesArbitrage | None = None,
 ) -> Callable[[HookInput, str | None, HookContext], Any]:
-    """Le hook PreToolUse qui applique la politique allow/deny de l'agent (#110).
+    """Le hook PreToolUse : applique la politique de l'agent, et **arme l'arbitrage** (#110, #583).
 
     Consulté par le CLI avant **chaque** appel d'outil, y compris sous
-    `bypassPermissions` (seul point de contrôle restant dans ce mode). Un
-    appel permis rend une sortie vide (le flux normal continue) ; un appel
-    interdit rend un `permissionDecision: deny` motivé — le modèle lit le
-    motif et poursuit sa tâche — et signale la violation via `on_refus`
-    (canal de traçage de l'exécuteur : journal + fil temps réel). Le hook ne
-    lève jamais : un traçage en échec est avalé — l'observation ne casse pas
-    l'exécution observée.
+    `bypassPermissions` (seul point de contrôle restant dans ce mode). Il rend
+    désormais les trois crans de la politique (#580) et non plus deux :
+
+    - `PASSE` → sortie vide, le flux normal continue ;
+    - `REFUS` → `permissionDecision: deny` motivé, le modèle lit le motif et
+      poursuit sa tâche — comportement de #110, inchangé ;
+    - `ARBITRAGE` → l'appel est **suspendu** : la demande part sur
+      `on_arbitrage_acte` avec l'outil et ses arguments (`maestro.acte`, #581),
+      et l'issue décide. Approuvée, l'appel passe ; refusée, `deny` motivé.
+
+    ⚠ `on_arbitrage_acte` n'est pas `on_arbitrage` (#582) : celui-ci intercepte
+    un acte, celui-là relaie une demande que l'agent a formulée. Ils aboutissent
+    au même validateur et ne transportent pas la même chose — voir
+    `maestro.providers.arbitrage`.
+
+    **La borne du hook ne décide jamais à notre place**, et c'est tout l'objet du
+    ticket. `HookMatcher.timeout` borne la durée d'un hook (60 s par défaut) et
+    la sémantique d'un hook expiré appartient au CLI : elle ne doit pas porter le
+    fail-safe. L'attente est donc bornée **sous** cette borne
+    (`BornesArbitrage.attente_effective`), et à son expiration c'est **nous** qui
+    répondons — `deny` motivé « arbitrage en cours ».
+
+    ⚠ L'attente expirée n'**annule pas** la demande : le `shield` la laisse en
+    vol, ce que dit le motif servi à l'agent. C'est la différence entre « refusé »
+    et « pas encore tranché », et c'est le seuil que #584 reprendra pour ne pas
+    perdre une décision tardive. Son issue est absorbée (`_absorbe_arbitrage_tardif`),
+    comme celle d'une réalisation détachée par le moteur (#64) : sans cela, une
+    décision qui arrive après coup serait signalée par asyncio comme une exception
+    jamais relevée.
+
+    Les **trois issues** (approuvée, refusée, toujours en attente) passent par
+    `on_refus`, le canal de traçage de l'exécuteur (journal + fil temps réel) —
+    comme un refus de politique aujourd'hui. Un acte sensible parti sur accord
+    humain doit laisser la même trace qu'un acte écarté : c'est le seul endroit
+    où le run dira plus tard *qui* a laissé passer *quoi*.
+
+    Deux **fail-safe**, dans l'esprit d'EF-08/ENF-04 : un outil classé `ask` sans
+    canal d'arbitrage câblé est refusé (jamais approuvé par défaut), et un canal
+    qui lève l'est aussi (bus en panne — même règle que
+    `Guardrails.demande_validation` depuis #9).
+
+    Le hook ne lève jamais : un traçage en échec est avalé — l'observation ne
+    casse pas l'exécution observée.
     """
+    # Import différé : `maestro.providers` ne dépend pas de `maestro.agents` à
+    # l'exécution (cf. le bloc TYPE_CHECKING plus haut). Payé une fois, à la
+    # construction du hook, jamais à chaque appel d'outil.
+    from maestro.agents.permissions import Verdict
+
+    bornes = bornes or BornesArbitrage()
+
+    def trace(outil: str, motif: str) -> None:
+        """Signale l'issue à l'exécuteur — un traçage en panne ne change rien au verdict."""
+        if on_refus is None:
+            return
+        try:
+            on_refus(outil, motif)
+        except Exception:  # noqa: BLE001 — le traçage ne casse jamais l'exécution
+            pass
+
+    def refuse(outil: str, motif: str) -> HookJSONOutput:
+        """Compose le `deny` du hook après l'avoir tracé — le seul chemin de refus."""
+        trace(outil, motif)
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": motif,
+            }
+        }
+
+    async def arbitre(outil: str, motif: str, entree: object) -> HookJSONOutput:
+        """Suspend l'appel le temps de l'arbitrage, et rend son issue — toujours à l'heure."""
+        if on_arbitrage_acte is None:
+            return refuse(outil, motif_sans_arbitre(outil))
+        attente = asyncio.ensure_future(
+            on_arbitrage_acte(outil, arguments_depuis(entree), motif)
+        )
+        try:
+            approuve, detail = await asyncio.wait_for(
+                asyncio.shield(attente), bornes.attente_effective
+            )
+        except TimeoutError:
+            # Deux causes que le type ne distingue pas : notre attente qui expire
+            # (la demande est encore en vol, donc `attente` n'est pas soldée) et
+            # la demande elle-même qui lève un `TimeoutError` — un bus qui coupe.
+            # Elles ne se réparent pas au même endroit, et rendre le motif de
+            # l'une pour l'autre enverrait chercher une décision humaine là où
+            # c'est un transport qui est tombé.
+            if attente.done() and not attente.cancelled() and attente.exception():
+                return refuse(outil, motif_panne(outil, attente.exception()))
+            attente.add_done_callback(_absorbe_arbitrage_tardif)
+            return refuse(outil, motif_attente(outil, bornes.attente_effective))
+        except Exception as exc:  # noqa: BLE001 — fail-safe : un canal en panne ne passe pas
+            return refuse(outil, motif_panne(outil, exc))
+        if not approuve:
+            return refuse(outil, motif_refus(outil, detail))
+        # Approuvé : on trace, et on rend la sortie vide plutôt qu'un `allow`
+        # explicite — l'appel n'a pas besoin d'être *forcé*, il a besoin de ne
+        # plus être suspendu, et sous `bypassPermissions` il n'y a rien à lever.
+        trace(outil, motif_approbation(outil, detail))
+        return {}
 
     async def hook(
         input_data: HookInput, tool_use_id: str | None, context: HookContext
     ) -> HookJSONOutput:
         outil = str(input_data.get("tool_name") or "")
-        if not outil or politique.autorise(outil):
+        if not outil:
             return {}
-        raison = politique.raison_refus(outil)
-        if on_refus is not None:
-            try:
-                on_refus(outil, raison)
-            except Exception:  # noqa: BLE001 — le traçage ne casse jamais l'exécution
-                pass
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": raison,
-            }
-        }
+        decision = politique.decide(outil)
+        if decision.verdict is Verdict.PASSE:
+            return {}
+        if decision.verdict is Verdict.REFUS:
+            return refuse(outil, decision.motif)
+        return await arbitre(outil, decision.motif, input_data.get("tool_input"))
 
     return hook
+
+
+def _absorbe_arbitrage_tardif(attente: asyncio.Future[tuple[bool, str]]) -> None:
+    """Absorbe l'issue d'un arbitrage qui a dépassé notre attente (#583).
+
+    Pendant exact de `_absorbe_issue_tardive` côté moteur (#64), et pour la même
+    raison : la demande est restée en vol après que le hook a répondu, donc son
+    issue — décision tardive ou exception du bus — arrive quand plus personne ne
+    l'attend. Sans cette relève, asyncio signalerait une « exception never
+    retrieved » sur un objet dont on a déjà rendu le verdict.
+
+    Ce qu'elle **ne fait pas** est le sujet de #584 : rien ici ne rattrape une
+    décision tardive. Elle est reçue et laissée de côté ; l'appel, lui, a été
+    écarté pour cette fois.
+    """
+    if not attente.cancelled():
+        attente.exception()
 
 
 def _erreur_plafond(plafond_tours: int | None, detail: object) -> TurnLimitReached:

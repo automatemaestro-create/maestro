@@ -31,7 +31,16 @@ violations tracées » :
 ⑤ **refus au vol** (fournisseur Claude) : le hook PreToolUse — seul point de
    contrôle sous `bypassPermissions` — refuse un appel interdit avec son
    motif, signale la violation via `on_refus`, et n'échoue jamais lui-même
-   (un traçage en échec est avalé).
+   (un traçage en échec est avalé) ;
+⑥ **arbitrage au vol** (#583) : le même hook suspend un appel classé `ask`,
+   et c'est **l'attente et sa borne** qui sont éprouvées ici — le reste de la
+   couverture du chantier #573 est différé au lot final (#579). Trois choses
+   qui ne doivent pas se défaire : l'attente reste **sous** la borne annoncée
+   au runtime quoi qu'on règle (donc à l'expiration c'est nous qui répondons,
+   jamais le CLI par échéance) ; la demande expirée n'est **pas annulée** — la
+   décision tardive arrive et est absorbée sans casser quoi que ce soit ; et
+   les **deux fail-safe** tiennent, un outil `ask` sans canal d'arbitrage ou
+   avec un canal en panne étant refusé et jamais approuvé par défaut.
 """
 
 import asyncio
@@ -48,11 +57,24 @@ from maestro.agents.permissions import (
     PolitiqueOutils,
     Verdict,
 )
+from maestro.config import ConfigError, Settings
 from maestro.engine import OrchestrationEngine
-from maestro.engine.executor import STATUT_REFUS_OUTIL, SUFFIXE_ETAPE_REFUS
+from maestro.engine.executor import (
+    STATUT_ARBITRAGE_OUTIL,
+    STATUT_REFUS_OUTIL,
+    SUFFIXE_ETAPE_REFUS,
+)
+from maestro.engine.guardrails import Guardrails
 from maestro.orchestrator import Orchestrator
 from maestro.providers import ClaudeProvider, Credentials
 from maestro.providers import claude as claude_mod
+from maestro.providers.arbitrage import (
+    BORNE_HOOK_S,
+    MARGE_MIN_S,
+    BornesArbitrage,
+    motif_approbation,
+    motif_refus,
+)
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal
 
@@ -90,8 +112,9 @@ class MontageEnregistreur(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, on_activite=None, on_etapes=None,
-        on_arbitrage=None, plafond_tours=None, projet=None,
+        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None,
+        plafond_tours=None, projet=None,
     ):
         self.run_calls.append(
             {
@@ -117,11 +140,52 @@ class ViolateurProvider(MontageEnregistreur):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, on_activite=None, on_etapes=None,
-        on_arbitrage=None, plafond_tours=None, projet=None,
+        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None,
+        plafond_tours=None, projet=None,
     ):
         if politique is not None and not politique.autorise("Bash") and on_refus is not None:
             on_refus("Bash", politique.raison_refus("Bash"))
+        return await super().run_agent(
+            prompt, model=model, system_prompt=system_prompt, workspace=workspace,
+            tools=tools, mcp_serveurs=mcp_serveurs, politique=politique, on_refus=on_refus,
+            plafond_tours=plafond_tours,
+        )
+
+
+class ArbitreProvider(MontageEnregistreur):
+    """Exécutant factice qui appelle un outil classé `ask` : simule l'arbitrage au vol.
+
+    C'est le comportement du fournisseur réel (hook PreToolUse) vu du moteur :
+    l'appel est suspendu, la demande part sur `on_arbitrage_acte`, et l'issue est
+    tracée par `on_refus` — le canal qui existe depuis #110. Le double s'arrête
+    là : borner l'attente est le travail du vrai hook, éprouvé à part.
+
+    ⚠ `on_arbitrage_acte` et non `on_arbitrage` (#582) : celui-ci relaie une
+    demande que l'agent a formulée, celui-là un acte qu'on a intercepté.
+    """
+
+    name = "arbitre"
+
+    async def run_agent(
+        self, prompt, *, model, system_prompt=None, workspace, tools,
+        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None,
+        plafond_tours=None, projet=None,
+    ):
+        decision = None if politique is None else politique.decide("Bash")
+        if decision is not None and decision.verdict is Verdict.ARBITRAGE:
+            approuve, detail = await on_arbitrage_acte(
+                "Bash", {"command": "rm -rf /srv"}, decision.motif
+            )
+            self.run_calls.append({"arbitrage": (approuve, detail)})
+            if on_refus is not None:
+                on_refus(
+                    "Bash",
+                    motif_approbation("Bash", detail)
+                    if approuve
+                    else motif_refus("Bash", detail),
+                )
         return await super().run_agent(
             prompt, model=model, system_prompt=system_prompt, workspace=workspace,
             tools=tools, mcp_serveurs=mcp_serveurs, politique=politique, on_refus=on_refus,
@@ -621,7 +685,7 @@ class _FakeAssistantMessage:
         self.content = content
 
 
-def _run_agent_capture_options(monkeypatch, *, politique):
+def _run_agent_capture_options(monkeypatch, *, politique, arbitrage=None):
     """Lance `run_agent` sur un `query` factice et capture les options SDK."""
     vu: dict[str, object] = {}
 
@@ -632,7 +696,7 @@ def _run_agent_capture_options(monkeypatch, *, politique):
     monkeypatch.setattr(claude_mod, "query", fake_query)
     monkeypatch.setattr(claude_mod, "AssistantMessage", _FakeAssistantMessage)
     monkeypatch.setattr(claude_mod, "TextBlock", _FakeTextBlock)
-    provider = ClaudeProvider(Credentials())
+    provider = ClaudeProvider(Credentials(), arbitrage=arbitrage)
     asyncio.run(
         provider.run_agent(
             "Fais", model="claude-sonnet-5", workspace=Path("."), tools=("Read",),
@@ -651,3 +715,326 @@ def test_run_agent_arme_le_hook_quand_une_politique_est_fournie(monkeypatch, tmp
 def test_run_agent_sans_politique_n_arme_aucun_hook(monkeypatch, tmp_path):
     vu = _run_agent_capture_options(monkeypatch, politique=None)
     assert vu["hooks"] is None
+
+
+# --- ⑥ Arbitrage au vol : l'attente, sa borne, et qui rend le verdict (#583) ------------
+
+
+def _hook_arbitre(on_arbitrage_acte, on_refus=None, bornes=None):
+    """Le hook armé sur une politique qui met `Bash` en arbitrage."""
+    return claude_mod._hook_permissions(
+        PolitiqueOutils(ask=("Bash",)), on_refus, on_arbitrage_acte, bornes
+    )
+
+
+def _appelle(hook, entree=None):
+    """Joue le hook sur un appel de `Bash` et rend sa sortie."""
+    return asyncio.run(
+        hook({"tool_name": "Bash", "tool_input": entree or {}}, "tu-1", None)
+    )
+
+
+def _motif(sortie):
+    """Le motif du `deny` rendu par le hook (échoue si ce n'en est pas un)."""
+    decision = sortie["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    return decision["permissionDecisionReason"]
+
+
+# ⑥a — les bornes et leur invariant
+
+
+def test_l_attente_par_defaut_reste_sous_la_borne_annoncee_au_runtime():
+    # L'invariant du ticket : notre attente finit **avant** l'échéance du hook,
+    # donc le verdict d'un appel sensible ne revient jamais au CLI.
+    bornes = BornesArbitrage()
+    assert bornes.attente_effective <= bornes.borne_hook_s - MARGE_MIN_S
+
+
+def test_une_attente_reglee_au_dela_de_la_borne_est_raccourcie_pas_honoree():
+    # Le fail-safe ne dépend pas de la cohérence de deux nombres réglés
+    # séparément : c'est le `min` qui le tient, pas la discipline de qui règle.
+    bornes = BornesArbitrage(attente_s=1000.0, borne_hook_s=100.0)
+    assert bornes.attente_effective == 100.0 - MARGE_MIN_S
+
+
+def test_une_attente_sous_la_borne_est_honoree_telle_quelle():
+    bornes = BornesArbitrage(attente_s=30.0, borne_hook_s=100.0)
+    assert bornes.attente_effective == 30.0
+
+
+def test_une_borne_qui_ne_laisse_pas_la_marge_est_une_erreur_de_config():
+    # Sous ce seuil, plus aucun arbitrage n'aboutirait : mieux vaut casser au
+    # câblage que le découvrir sur l'appel qu'on voulait faire trancher.
+    with pytest.raises(ConfigError, match="marge"):
+        BornesArbitrage(borne_hook_s=MARGE_MIN_S)
+    with pytest.raises(ConfigError):
+        BornesArbitrage(attente_s=0)
+
+
+def test_les_bornes_se_reglent_par_la_config(monkeypatch):
+    monkeypatch.setenv("MAESTRO_ARBITRAGE_ATTENTE", "30")
+    monkeypatch.setenv("MAESTRO_ARBITRAGE_BORNE_HOOK", "90")
+
+    bornes = BornesArbitrage.from_settings(Settings.from_env())
+
+    assert (bornes.attente_s, bornes.borne_hook_s) == (30.0, 90.0)
+
+
+def test_sans_reglage_les_bornes_sont_celles_du_module(monkeypatch):
+    monkeypatch.delenv("MAESTRO_ARBITRAGE_ATTENTE", raising=False)
+    monkeypatch.delenv("MAESTRO_ARBITRAGE_BORNE_HOOK", raising=False)
+
+    assert BornesArbitrage.from_settings(Settings.from_env()) == BornesArbitrage()
+
+
+def test_une_borne_illisible_ne_retombe_pas_en_silence_sur_le_defaut(monkeypatch):
+    # Un réglage de garde-fou qu'on ne sait pas lire ne se remplace pas par un
+    # défaut : c'est le seul endroit où l'écart entre ce qu'on croit avoir réglé
+    # et ce qui s'applique ne se verrait jamais.
+    monkeypatch.setenv("MAESTRO_ARBITRAGE_ATTENTE", "cinq minutes")
+
+    with pytest.raises(ConfigError, match="MAESTRO_ARBITRAGE_ATTENTE"):
+        BornesArbitrage.from_settings(Settings.from_env())
+
+
+def test_la_borne_du_hook_est_posee_explicitement_dans_le_matcher(monkeypatch, tmp_path):
+    # Le fait mesuré du ticket : sans ce `timeout`, la borne serait celle du SDK
+    # (60 s), c'est-à-dire une valeur qu'on subit au lieu de la choisir.
+    vu = _run_agent_capture_options(monkeypatch, politique=PolitiqueOutils(ask=("Bash",)))
+    (matcher,) = vu["hooks"]["PreToolUse"]
+    assert matcher.timeout == BORNE_HOOK_S
+
+    vu = _run_agent_capture_options(
+        monkeypatch,
+        politique=PolitiqueOutils(ask=("Bash",)),
+        arbitrage=BornesArbitrage(attente_s=10.0, borne_hook_s=42.0),
+    )
+    (matcher,) = vu["hooks"]["PreToolUse"]
+    assert matcher.timeout == 42.0
+
+
+# ⑥b — les trois issues
+
+
+def test_un_appel_arbitre_approuve_passe_et_laisse_sa_trace():
+    vu: list[tuple[str, str]] = []
+
+    async def arbitrage(outil, arguments, motif):
+        return True, "approuvée par le validateur humain"
+
+    sortie = _appelle(_hook_arbitre(arbitrage, lambda o, m: vu.append((o, m))))
+
+    # Sortie vide : l'appel n'a pas besoin d'être *forcé*, seulement de ne plus
+    # être suspendu — sous `bypassPermissions` il n'y a rien à lever.
+    assert sortie == {}
+    ((outil, motif),) = vu
+    assert outil == "Bash"
+    assert "approuvé" in motif
+
+
+def test_un_appel_arbitre_refuse_rend_un_deny_motive_et_l_agent_poursuit():
+    vu: list[tuple[str, str]] = []
+
+    async def arbitrage(outil, arguments, motif):
+        return False, "refusée par le validateur humain"
+
+    motif = _motif(_appelle(_hook_arbitre(arbitrage, lambda o, m: vu.append((o, m)))))
+
+    assert "'Bash'" in motif
+    assert "refusé à l'arbitrage humain" in motif
+    # Un refus propre n'est jamais un échec de tâche : le modèle lit la consigne.
+    assert "Poursuis la tâche" in motif
+    assert vu == [("Bash", motif)]
+
+
+def test_a_l_expiration_c_est_nous_qui_repondons_et_la_demande_reste_en_vol():
+    # Le cœur du ticket. La borne du hook (60 s par défaut côté SDK) ne doit
+    # jamais trancher à notre place : à l'expiration de **notre** attente, le
+    # hook rend un `deny` motivé — et la demande, elle, continue son chemin.
+    async def scenario():
+        tranche = asyncio.Event()
+        etats: list[str] = []
+        vu: list[tuple[str, str]] = []
+
+        async def arbitrage(outil, arguments, motif):
+            try:
+                await tranche.wait()
+            except asyncio.CancelledError:
+                etats.append("annulée")
+                raise
+            etats.append("aboutie")
+            return True, "décision tardive"
+
+        hook = _hook_arbitre(
+            arbitrage,
+            lambda o, m: vu.append((o, m)),
+            BornesArbitrage(attente_s=0.01, borne_hook_s=10.0),
+        )
+        sortie = await hook({"tool_name": "Bash", "tool_input": {}}, "tu-1", None)
+        # La décision arrive *après* que le hook a répondu : elle doit pouvoir
+        # aboutir (la demande n'a pas été annulée) sans rien casser.
+        tranche.set()
+        await asyncio.sleep(0.02)
+        return sortie, list(vu), list(etats)
+
+    sortie, vu, etats = asyncio.run(scenario())
+
+    motif = _motif(sortie)
+    assert "arbitrage en cours" in motif
+    assert "reste en attente" in motif
+    assert vu == [("Bash", motif)]
+    # « encore en attente » et non « annulée » : c'est ce qui distingue la
+    # troisième issue d'un refus, et le seuil que #584 reprendra.
+    assert etats == ["aboutie"]
+
+
+def test_les_trois_issues_passent_toutes_par_le_canal_on_refus():
+    reponses = iter([(True, "oui"), (False, "non")])
+
+    async def tranche(outil, arguments, motif):
+        return next(reponses)
+
+    async def jamais(outil, arguments, motif):
+        await asyncio.Event().wait()
+        raise AssertionError("inatteignable")  # pragma: no cover
+
+    vu: list[tuple[str, str]] = []
+    trace = lambda outil, motif: vu.append((outil, motif))  # noqa: E731
+    _appelle(_hook_arbitre(tranche, trace))
+    _appelle(_hook_arbitre(tranche, trace))
+    _appelle(
+        _hook_arbitre(jamais, trace, BornesArbitrage(attente_s=0.01, borne_hook_s=10.0))
+    )
+
+    assert [outil for outil, _ in vu] == ["Bash"] * 3
+    assert "approuvé" in vu[0][1]
+    assert "refusé à l'arbitrage" in vu[1][1]
+    assert "arbitrage en cours" in vu[2][1]
+
+
+def test_la_demande_porte_l_outil_et_ses_arguments():
+    # C'est tout l'objet du parent #573 : ce qu'on fait trancher est l'acte, pas
+    # le titre de la tâche. Les arguments arrivent sous la forme de `maestro.acte`.
+    vu: list[tuple[str, dict[str, str], str]] = []
+
+    async def arbitrage(outil, arguments, motif):
+        vu.append((outil, arguments, motif))
+        return True, "ok"
+
+    _appelle(
+        _hook_arbitre(arbitrage),
+        {"command": "rm -rf /srv", "timeout": 120},
+    )
+
+    (outil, arguments, motif) = vu[0]
+    assert outil == "Bash"
+    assert arguments == {"command": "rm -rf /srv", "timeout": "120"}
+    assert "ask" in motif
+
+
+# ⑥c — les deux fail-safe
+
+
+def test_un_outil_a_arbitrer_sans_canal_est_refuse_jamais_approuve():
+    # « Sans validateur humain, un acte classé humain est refusé » (#573) :
+    # laisser passer serait l'exact inverse du cran qu'on vient d'ajouter.
+    motif = _motif(_appelle(_hook_arbitre(None)))
+    assert "aucun canal d'arbitrage" in motif
+
+
+def test_un_canal_d_arbitrage_en_panne_ne_laisse_rien_passer():
+    async def casse(outil, arguments, motif):
+        raise RuntimeError("bus injoignable")
+
+    motif = _motif(_appelle(_hook_arbitre(casse)))
+    assert "bus injoignable" in motif
+
+
+def test_un_transport_qui_coupe_n_est_pas_pris_pour_une_attente_qui_expire():
+    # Les deux causes lèvent le même type. Rendre le motif de l'une pour l'autre
+    # enverrait chercher une décision humaine là où c'est le transport qui est
+    # tombé — et la demande, elle, n'est pas « encore en attente ».
+    async def coupe(outil, arguments, motif):
+        raise TimeoutError("lecture Redis expirée")
+
+    motif = _motif(_appelle(_hook_arbitre(coupe)))
+
+    assert "lecture Redis expirée" in motif
+    assert "arbitrage en cours" not in motif
+
+
+def test_l_arbitrage_ne_change_rien_aux_deux_autres_crans():
+    # Le hook rend toujours les verdicts de #110 : ce lot en ajoute un troisième,
+    # il n'en remplace aucun.
+    hook = claude_mod._hook_permissions(
+        PolitiqueOutils(ask=("Bash",), deny=("Write",)), None, None
+    )
+    assert asyncio.run(hook({"tool_name": "Read"}, None, None)) == {}
+    refus = asyncio.run(hook({"tool_name": "Write"}, None, None))
+    assert "deny" in refus["hookSpecificOutput"]["permissionDecision"]
+
+
+# ⑥d — l'issue vue du moteur : une trace qui ne se fait pas passer pour un refus
+
+
+def _moteur_arbitre(provider, store, *, accord):
+    """Moteur dont le validateur humain rend toujours `accord`."""
+    return OrchestrationEngine(
+        provider,
+        Orchestrator(ConstantProvider(_plan_json()), model="claude-opus-4-8"),
+        permissions=store,
+        guardrails=Guardrails(validateur=lambda demande: accord),
+    )
+
+
+@pytest.mark.parametrize("accord", [True, False])
+def test_l_issue_d_un_arbitrage_est_consignee_sous_son_propre_statut(store, accord):
+    _ecrire_politique(store.racine, "developpeur", {"ask": ["Bash"]})
+    provider = ArbitreProvider()
+    journal = RunJournal(run_id="run-arbitrage")
+
+    rapport = asyncio.run(
+        _moteur_arbitre(provider, store, accord=accord).run("Objectif", journal=journal)
+    )
+
+    # L'arbitrage n'est jamais fatal : la tâche a rendu son livrable.
+    assert rapport.resultats[0].ok
+    (trace,) = [r for r in journal.records if r.etape == f"tache-unique{SUFFIXE_ETAPE_REFUS}"]
+    # Statut à part : le fil rend `refus_outil` par « s'est vu refuser un outil »,
+    # phrase fausse pour un appel qu'une personne vient d'approuver.
+    assert trace.statut == STATUT_ARBITRAGE_OUTIL
+    assert trace.statut != STATUT_REFUS_OUTIL
+    assert trace.nom.startswith("Outil arbitré")
+    assert trace.entree == "Bash"
+    assert ("approuvé" if accord else "refusé") in trace.sortie
+
+
+def test_un_refus_de_politique_garde_son_statut_d_avant(store):
+    # Le statut de #110 ne bouge pas : c'est bien deux natures d'issue, pas un
+    # renommage de l'ancienne.
+    _ecrire_politique(store.racine, "developpeur", {"deny": ["Bash"]})
+    journal = RunJournal(run_id="run-refus")
+
+    asyncio.run(_moteur(ViolateurProvider(), store).run("Objectif", journal=journal))
+
+    (trace,) = [r for r in journal.records if r.etape == f"tache-unique{SUFFIXE_ETAPE_REFUS}"]
+    assert trace.statut == STATUT_REFUS_OUTIL
+    assert trace.nom.startswith("Outil refusé")
+
+
+def test_le_fail_safe_du_moteur_tient_sans_validateur(store):
+    # Le canal existe (le moteur le câble dès qu'il y a une politique), mais
+    # personne ne tranche : `Guardrails` refuse par défaut, et l'orchestrateur ne
+    # peut jamais approuver à la place d'une personne (EF-08, ENF-04).
+    _ecrire_politique(store.racine, "developpeur", {"ask": ["Bash"]})
+    provider = ArbitreProvider()
+
+    asyncio.run(_moteur(provider, store).run("Objectif"))
+
+    (arbitrage,) = [
+        appel["arbitrage"] for appel in provider.run_calls if "arbitrage" in appel
+    ]
+    approuve, detail = arbitrage
+    assert not approuve
+    assert "aucun validateur" in detail

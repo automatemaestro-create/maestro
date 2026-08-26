@@ -150,6 +150,16 @@ function phraseEtapeAgent(evenement: Evenement): string {
       return `Accord refusé : ${quoi}`;
     case "refus_outil":
       return qui ? `${qui} s'est vu refuser un outil : ${quoi}` : `Outil refusé : ${quoi}`;
+    // L'issue d'un **arbitrage humain sur un acte** (#583) — approuvé, refusé,
+    // ou toujours en attente. C'est la seule des trois que `refus_outil` ne
+    // pouvait pas porter : « s'est vu refuser un outil » est faux pour un appel
+    // qu'une personne vient d'approuver. On rend donc le `detail`, qui *est*
+    // l'issue (`maestro/providers/arbitrage.py`) — et non le titre de la tâche,
+    // que la carte du Kanban montre déjà, comme pour l'activité plus haut.
+    case "arbitrage_outil":
+      return evenement.detail
+        ? `${qui ? `${qui} · ` : ""}${evenement.detail}`
+        : `${qui ? `${qui} — ` : ""}arbitrage sur ${quoi}`;
     case "terminee":
       return qui ? `${qui} a terminé : ${quoi}` : `${quoi} — terminé`;
     case "echec":
