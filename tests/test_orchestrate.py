@@ -6851,6 +6851,56 @@ def test_un_merge_refuse_ne_ramasse_rien(depot: Depot) -> None:
 
 
 @besoin_git
+def test_une_pr_mergee_entre_temps_est_livree_et_non_bloquee(depot: Depot) -> None:
+    """Le scénario exact de #593, rejoué : une REPRISE dont la PR a été mergée entre-temps.
+
+    C'est ce qui rend le cas courant plutôt que marginal — entre la coupure d'un run et sa reprise,
+    une PR peut être mergée par une session interactive, un `/mr-fix` ou un run jumeau. Le drain la
+    retente, `merge-mr` rend `7`, et tout ce que ce test garde tient dans ce que le pilote en fait.
+
+    Trois choses se jouaient ensemble et se sont toutes trompées de sens le 2026-08-26 (#582, PR
+    #590) : le ticket comptait parmi les BLOQUÉS d'un run qui l'avait livré, la console annonçait
+    « non mergée » à propos d'une PR mergée, et le ramassage — accroché au seul code `0` — laissait
+    worktree et branche derrière lui.
+
+    La quatrième assertion est celle qui distingue `7` de `0` : le run ne rejoue pas le merge, donc
+    aucun PUT. La cinquième dit qu'il ne se l'attribue pas non plus.
+    """
+    _init_git_sur_main(depot)
+    depot.ticket(130, "Ticket 130", statut="En revue")
+    depot.mr("feat/130-ticket-130", "merged", iid=930, brouillon=False, ferme=(130,))
+    depot.run_actions("feat/130-ticket-130")
+    _git(depot, "branch", "feat/130-ticket-130", "main")
+    dossier = _run_dir(depot, "coupe593", [(1, 130, "-", "haute")])
+    (dossier / "merge.tsv").write_text(
+        "# iid\tpr\tbranche\tetat\tcode\tessais\tcause\n"
+        "130\t930\tfeat/130-ticket-130\tattente\t3\t1\tpipeline « in_progress »\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    r = depot.lance("run.sh", "--resume", "coupe593", "--run-id", "repris593", "--sans-kill",
+                    env={"MAESTRO_CLAUDE_BIN": "true", "MAESTRO_ORCHESTRATE_MERGE": "1"})
+    assert r.returncode in (0, 1), r.stdout + r.stderr
+
+    suite = depot.racine / ".maestro/orchestrate/repris593"
+    ligne = _merge_tsv(suite)[0]
+    assert ligne[3] == "mergee", f"un ticket livré ne se compte pas parmi les bloqués : {ligne}"
+    assert ligne[4] == "7", "le code distingue « déjà mergée » des cinq gestes humains du 6"
+    assert "déjà mergée" in ligne[6], f"la cause dit d'où vient le merge : {ligne}"
+    assert _pr_du_journal(depot, "pulls/930/merge") == [], (
+        "constater qu'une PR est mergée ne consiste pas à la merger une seconde fois"
+    )
+    assert "non mergée" not in r.stdout, (
+        "le run annonçait l'inverse de la vérité — c'est le symptôme qui a ouvert #593"
+    )
+    assert "feat/130-ticket-130" not in _git(depot, "branch", "--format=%(refname:short)"), (
+        "le ramassage suit le VERDICT et non l'auteur du merge : une branche mergée est inutile "
+        "ici, que ce run l'ait mergée ou qu'il l'ait trouvée mergée"
+    )
+    assert "ramassage après merge" in (suite / "merge.log").read_text(encoding="utf-8")
+
+
+@besoin_git
 def test_les_merges_d_un_run_sont_serialises(depot: Depot) -> None:
     """Un seul merge à la fois — mesuré par une BARRIÈRE et des relevés par écrivain.
 

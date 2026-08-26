@@ -532,6 +532,24 @@ def regle_prs_ouvertes(branches: tuple[str, ...]) -> dict:
     }
 
 
+def regle_pr_fermante(branches: tuple[tuple[str, str], ...] = ()) -> dict:
+    """Les PR qui FERMENT un ticket, mergées et fermées comprises (`gh_branche_fermante`, #593).
+
+    Le miroir de `regle_pr` : là on part de la branche pour trouver la PR, ici on part du ticket.
+    Une paire `(état, branche)` par PR — c'est ce qui permet de décrire le seul cas où l'ordre
+    compte, une tentative `CLOSED` coexistant avec la `MERGED` qui a abouti.
+
+    Sans argument : aucune PR ne ferme le ticket. C'est ce qui distingue « jamais eu de PR » de
+    « la sienne est déjà mergée », les deux situations que `gl_branche_du_ticket` seul ne pouvait
+    pas départager — il ne regarde que les PR ouvertes, où ni l'une ni l'autre n'apparaît.
+    """
+    return {
+        "contient": ["closedByPullRequestsReferences"],
+        "reponse": {"data": {"repository": {"issue": {"closedByPullRequestsReferences": {
+            "nodes": [{"state": etat, "headRefName": b} for etat, b in branches]}}}}},
+    }
+
+
 def regle_run(
     branche: str,
     sha: str = "",
