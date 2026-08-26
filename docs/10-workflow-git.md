@@ -409,6 +409,124 @@ Reste **+12 s au démarrage d'un run**, qui les absorbe (le plan se calcule une 
 des heures), et une croissance d'environ **2,6 s par tranche de 100 tickets** — à re-mesurer au
 moment de la bascule, le dépôt en comptant 367 aujourd'hui.
 
+#### La re-mesure annoncée, et ce qu'elle a trouvé (#577)
+
+Le paragraphe ci-dessus se donnait rendez-vous ; le voici, à **577 tickets** au lieu de 367. La
+croissance annoncée s'est vérifiée — la carte tient désormais en **5 pages** au lieu de 4, et coûte
+**20 à 32 s** au lieu de 12,7 — mais ce n'est pas ce que la mesure a trouvé de plus intéressant.
+
+Ce qui l'a déclenchée est un constat d'audit (§11.12) sur le run `20260826-134119` : `lib.sh` y
+pesait **5,8 min pour 31 invocations** (11,3 s de moyenne) contre **7,3 min de filet CI** — la forme
+même que §11.12 nomme, « un cumul qui rivalise avec le filet CI **sans en être un** ». Le filet est
+un coût attendu, un verdict avant push, payé une fois par ticket ; `lib.sh` ne l'est pas.
+
+**Les 11,3 s se décomposent en trois, et un seul des trois pesait** (mesuré le 2026-08-26, poste de
+référence Windows, médianes sur 5 exécutions) :
+
+| | coût | ce que ça vaut |
+|---|---|---|
+| démarrage de `bash` + chargement des 5 782 lignes de `lib.sh` | 124 ms + **38 ms** | négligeable |
+| démarrage du binaire `gh`, sans réseau (`gh --version`) | **277 ms** | par aller |
+| un aller GraphQL nu (`{viewer{login}}`) | **1 227 ms** | par aller |
+
+Le script ne coûtait donc rien, et **le nombre d'allers faisait tout** : `backlog-table` en payait
+**7** (43 s de mur, dont 33 s — 76 % — sous `gh`), `startables` **8**. C'est cette table qui dit
+lequel des remèdes valait la peine, et elle en a écarté un d'emblée — un cache n'aurait servi à rien
+sur un poste où le script se charge en 38 ms.
+
+**Le défaut n'était pas la carte, c'était la question posée.** La carte répond à « quel est l'état de
+tout le monde ? » et le paie en pages de 100 items ; les quatre consommateurs du tableau en tête de
+section la posent vraiment. Mais `subtickets` et `startables`, embarqués « d'un coup » avec les sept
+appelants des deux tables, demandent l'état de **huit lots qu'ils nomment** — et le payaient au prix
+de l'ensemble. Ce sont les deux verbes les plus appelés d'un run (**16 invocations sur 31**), à ~30 s
+pièce : à eux seuls, les deux tiers du poste.
+
+D'où **`st_statuts <iid…>`**, le pendant unitaire de la carte : le Status de N tickets nommés en
+**un** aller, par alias GraphQL — exactement l'idiome de `gh_issues_state`, et pour la même raison.
+**1,6 s pour huit lots**, contre 20 à 32 s.
+
+⚠ **Et il corrige un faux silence, ce qui ne se voit pas au chronomètre — c'est même la moitié la
+plus grave.** L'enrichissement lisait la carte *à travers* `gl_backlog_table`, bornée à `first: 100`
+: tout lot plus ancien que cette fenêtre en sortait absent, donc « ? », donc jamais « À faire », donc
+**jamais démarrable**. Un `/ticket-start` sur un tel parent annonçait « aucun lot démarrable » en
+croyant dire vrai.
+
+Ce n'était pas un cas de coin. Les **treize parents** du dépôt rejoués le 2026-08-26 contre l'ancien
+puis le nouveau `lib.sh` :
+
+| | parents | lots |
+|---|---|---|
+| sortie identique (parents récents, dans la fenêtre) | 5 | — |
+| **tous leurs lots rendus « ? » avant, aucun après** | **8** | **57** |
+| écart inattendu | 0 | — |
+
+Autrement dit : **passé la centième issue la plus récente, la checklist d'un parent ne portait plus
+aucun état**, et le verbe le disait sans le dire. Demander les lots par leur numéro n'a pas de
+fenêtre.
+
+**Le second poste était le `fork`**, et c'est la moitié que le tableau ci-dessus rendait visible sans
+la nommer : 24 % à 40 % du mur d'un verbe se passait **hors de `gh`**. `gh_issue_raw` — la primitive
+dont descendent six verbes, lue une douzaine de fois par ticket — tirait **treize processus** de sa
+réponse pour quatre champs plats (`grep | head`, `grep | head | sed`, deux `gh_bloc | grep | sed |
+awk`). Sous MSYS un fork coûte **~120 ms** là où il en coûte moins d'un sous Linux : le même écart
+qui a fait passer le filet CI dans un conteneur (§8.4). Les quatre champs sortent désormais d'**un
+seul `awk`** — ~1,3 s regagnées par lecture de ticket, sur un poste où l'aller GraphQL lui-même en
+coûte 1,4.
+
+**Le résultat, sur la séquence de lectures exacte de ce run** (20 invocations, rejouées contre
+l'ancien puis le nouveau `lib.sh`, même machine, même heure) :
+
+| | avant | après |
+|---|---|---|
+| cumul | 257,5 s | **83,6 s** (3,1×) |
+| moyenne par invocation | 12,9 s | **4,2 s** |
+
+#### Les deux pistes que la mesure a écartées
+
+Le ticket en proposait trois, à trancher une fois mesuré. La troisième — mesurer d'abord — est ce
+qui a tranché les deux autres, et toutes deux sont **restées au tiroir** :
+
+- **Un cache de lecture partagé entre deux commandes.** Son exemple était le meilleur qui soit :
+  `startables 569` appelé par le `/ticket-ship` de #571 puis par le `/ticket-start` de #572, à
+  quelques minutes d'intervalle, **72 s à eux deux — 21 % du poste** pour une réponse qui n'avait
+  pas bougé. Mais un cache entre deux processus vit sur le disque, donc survit à ce qui le périme,
+  et c'est exactement ce que le critère du ticket interdisait. Le remède structurel le rend sans
+  objet : les deux appels coûtent aujourd'hui **~10 s à eux deux** au lieu de 72, sans qu'aucune
+  réponse ne soit conservée. Un cache aurait masqué le défaut au lieu de le corriger — et n'aurait
+  rien fait pour les **57 lots** rendus « ? ».
+- **Un verbe composite pour le pré-vol**, sur le modèle de `start-brief` (#61). L'idée était juste
+  dans son principe et sans objet dans les chiffres : `start-brief` faisait déjà **une** lecture du
+  ticket pour toutes ses projections (c'est le travail de #61), et ce qui lui coûtait cher n'était
+  pas le nombre de verbes appelés mais le prix d'un seul d'entre eux. Le grouper davantage aurait
+  déplacé le coût sans le retirer.
+
+Ce qui reste vrai, et qui vaudra pour le prochain : **la question à poser à un verbe lent n'est pas
+« comment le rappeler moins souvent ? » mais « demande-t-il plus que ce qu'il lui faut ? »**.
+
+Quatre choses à ne pas défaire :
+
+- **Le déséchappage n'a pas été recopié.** Titre, jalon et corps continuent de passer par
+  `gl_json_string_field`, seul décodeur du fichier (#141) ; les quatre champs consolidés sont des
+  atomes ASCII sans échappement à défaire. Les fondre dans le même `awk` demanderait un second
+  décodeur à tenir d'accord avec le premier, pour économiser trois forks.
+- **Aucun cache n'a été ajouté**, et la mesure est ce qui l'a décidé : le remède est d'avoir
+  supprimé des allers, pas de les avoir mémorisés. La mémoire de la carte (`GL_ST_CARTE_MEMO`)
+  n'a pas bougé — même portée, même oubli à l'écriture. Un cache **sur disque** aurait rendu une
+  réponse périmée pour un gain que ce ticket a obtenu sans en prendre le risque.
+- **`gl_backlog_table` reste la source des questions d'ensemble** — `/backlog`, `queue.sh`,
+  `doctor.sh`, `reconcile-workflow`. Rien n'y a changé, et ce n'est pas un oubli : leur question
+  *est* l'ensemble.
+- **La sortie de `st_statuts` est celle de la table, colonne pour colonne** : « - » pour un ticket
+  hors projet ou au Status vide, **aucune ligne** pour un ticket qui n'existe pas (contrat de
+  `gh_issues_state` : ce que vaut le silence d'un alias appartient à l'appelant). C'est ce qui a
+  permis de rebrancher l'enrichissement sans toucher à `gl_subtickets_startables` ni à la règle de
+  blocage des lots (§5.1).
+
+Gardé par [`tests/test_collaboration.py`](../tests/test_collaboration.py), qui compte **ce qui est
+demandé à la forge** et non une durée — un chronomètre en CI mesure la charge de la machine, tandis
+que l'absence des lectures `states: [OPEN, CLOSED]` et `items(first:100` est la propriété qui porte
+*à la fois* le gain et la correction du faux silence.
+
 #### Ce que ça laisse aux lots suivants
 
 - **#363** — la dérive change de *nature* : un champ à valeur unique rend « ≥ 2 états » impossible
