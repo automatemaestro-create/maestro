@@ -621,6 +621,11 @@ export function validationFactice(partiel: Partial<Validation> = {}): Validation
     diff: null,
     projet_id: null,
     run_id: "",
+    // Sans acte par défaut (#581) : c'est la demande d'avant le chantier #573 —
+    // une tâche classée sensible sur son texte —, donc celle dont l'écran doit
+    // continuer à rendre le titre. Un test qui veut l'acte le passe.
+    outil: "",
+    arguments: null,
     horodatage: "2026-07-28T10:00:00Z",
     ...partiel,
   };

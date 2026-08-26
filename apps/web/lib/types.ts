@@ -250,6 +250,15 @@ export type AnalyticsCouts = {
  * plus déduits à l'arrivée : une demande qui garde le démarrage de sa propre
  * tâche est publiée avant que cette tâche n'existe, et se trouvait donc écartée
  * de toutes les vues (#568).
+ *
+ * `outil` et `arguments` (#581) portent l'**acte** qui a déclenché la demande —
+ * l'outil appelé et ce qu'on lui passe, déjà expurgé côté backend. C'est ce que
+ * l'écran d'arbitrage montre en tête quand ils sont là : depuis que le
+ * déclencheur est l'acte (#573), le titre de la tâche n'est plus la question
+ * qu'on pose — « Rédiger le README » au-dessus d'un `rm -rf` ferait trancher à
+ * côté. `outil` vide et `arguments` à `null` pour une demande qui n'en porte pas
+ * — validation de tâche (#48), application d'un diff (#227) —, et l'écran retombe
+ * alors sur le titre, comme avant ce lot.
  */
 export type Validation = {
   tache_id: string;
@@ -263,6 +272,8 @@ export type Validation = {
   diff: DiffProjet | null;
   projet_id: string | null;
   run_id: string;
+  outil: string;
+  arguments: Record<string, string> | null;
   horodatage: string;
 };
 

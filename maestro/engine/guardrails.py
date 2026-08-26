@@ -150,6 +150,23 @@ class DemandeValidation:
     sensibles, qui se décrivent en texte. L'annotation est différée (`TYPE_CHECKING`)
     pour garder ce module de garde-fous indépendant des projets à l'exécution :
     c'est `maestro.projets.application` qui dépend de lui, jamais l'inverse.
+
+    `outil` et `arguments` (#581) portent l'**acte** qui a déclenché la demande —
+    la pièce jointe de l'arbitrage sur l'acte, comme `diff` l'est de l'application
+    dans le projet. Ils existent parce que le chantier #573 déplace le déclencheur
+    du texte de la tâche vers ce que l'agent s'apprête à commettre : dès lors,
+    « Rédiger le README » n'est plus ce qu'un humain doit lire pour trancher un
+    `rm -rf`, c'est l'outil appelé et ce qu'on lui passe.
+
+    Les deux sont **optionnels**, et le lot qui les introduit ne les remplit
+    encore nulle part : une demande qui n'en porte pas — validation d'une tâche
+    (#48), application d'un diff (#227) — reste valide et voyage exactement comme
+    avant. `outil` vide est ce qui dit « cette demande ne porte pas d'acte » ;
+    `arguments` à None dit qu'on n'en connaît aucun, ce qu'un outil sans paramètre
+    partage avec un producteur qui ne les rapporte pas — la distinction n'aurait
+    servi à personne, et un dict par défaut demanderait un `default_factory` pour
+    la même valeur. Leur forme est celle de `maestro.acte` : du texte, clé par
+    clé, chaque valeur bornée.
     """
 
     task_id: str
@@ -161,6 +178,8 @@ class DemandeValidation:
     diff: DiffProjet | None = None
     run_id: str = ""
     projet_id: str | None = None
+    outil: str = ""
+    arguments: dict[str, str] | None = None
 
 
 #: Validateur humain : reçoit la demande, répond vrai (approuvée) ou faux (refusée).

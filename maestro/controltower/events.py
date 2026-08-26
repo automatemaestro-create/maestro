@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from maestro.acte import arguments_depuis
 from maestro.appartenance import projet_id_valide
 from maestro.detail_tache import EtapeTache as EtapeTache  # ré-export explicite
 from maestro.detail_tache import LienUtile as LienUtile  # ré-export explicite
@@ -326,6 +327,17 @@ class Event:
     # n'apprend rien du plan » de « le plan est vide », et rien de ce qui suit la
     # planification ne doit effacer le graphe qu'elle a posé.
     plan: list[NoeudPlan] | None = None
+    # L'**acte** qui a déclenché une demande d'arbitrage (#581) : l'outil appelé
+    # et ce qu'on lui passe, portés par le seul `validation.demande` et vides
+    # partout ailleurs. `outil` en chaîne vide plutôt qu'en None, pour la raison
+    # de `reprise_de`/`cause` : un seul événement en parle, et « cette demande ne
+    # porte pas d'acte » est un fait — celui d'une validation de tâche (#48) ou
+    # d'une application de diff (#227) — et non une absence d'information.
+    # `arguments` reste None, lui, parce qu'il porte une **charge** : None dit
+    # qu'il n'y a rien à afficher, `{}` dirait qu'un outil n'a aucun paramètre,
+    # et aucun consommateur n'a à faire la différence.
+    outil: str = ""
+    arguments: dict[str, str] | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -365,6 +377,8 @@ class Event:
             "plan": (
                 [noeud.to_dict() for noeud in self.plan] if self.plan is not None else None
             ),
+            "outil": self.outil,
+            "arguments": dict(self.arguments) if self.arguments is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -441,6 +455,18 @@ class Event:
             # `task.schema.json` à sa production, et le rejuger ici rendrait
             # illisible le graphe d'un run passé dès que le schéma bougerait.
             plan=(noeuds_depuis(data["plan"]) if data.get("plan") is not None else None),
+            # Même régime que les listes ci-dessus (#581) : absents → None
+            # (l'événement n'apprend rien de l'acte) ; présents → les seules
+            # entrées lisibles, chaque valeur bornée. **Relecture, jamais
+            # revalidation** : les arguments ont été bornés et expurgés à la
+            # publication, et les rejuger ici rendrait illisible l'arbitrage d'un
+            # run passé le jour où la borne bougerait.
+            outil=str(data.get("outil") or ""),
+            arguments=(
+                arguments_depuis(data["arguments"])
+                if data.get("arguments") is not None
+                else None
+            ),
             horodatage=data.get("horodatage", ""),
         )
 
