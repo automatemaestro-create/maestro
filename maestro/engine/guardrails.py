@@ -14,25 +14,43 @@ d'orchestration, en trois protections appliquées à chaque tâche :
   `maestro/telemetry` est la source unique du coût comme des tokens ;
 - **time-out** (`timeout_s`) : la tâche est annulée si sa réalisation excède le
   délai (l'attente d'une validation humaine n'y est pas comptée) ;
-- **validation humaine** : une tâche classée **sensible** (déploiement, production,
-  suppression… — cf. `MOTS_SENSIBLES`) déclenche une `DemandeValidation` soumise au
-  `validateur` configuré avant toute exécution. **Fail-safe** : sans validateur, ou
-  si le validateur échoue, la demande est refusée — l'action sensible ne part
-  jamais sans accord humain explicite (EF-08, ENF-04).
+- **validation humaine** : une action classée **sensible** déclenche une
+  `DemandeValidation` soumise au `validateur` configuré avant toute exécution.
+  **Fail-safe** : sans validateur, ou si le validateur échoue, la demande est
+  refusée — l'action sensible ne part jamais sans accord humain explicite
+  (EF-08, ENF-04).
 
-`Guardrails()` sans argument laisse plafond et time-out inactifs mais garde la
-détection d'actions sensibles (refus par défaut). La classification par mots-clés
-est assumée comme heuristique de POC : la V1 la remplacera par une liste d'actions
-outillées classées côté serveur (docs/03, entité APPROVAL) sans changer ce contrat.
+**Ce qui déclenche un arbitrage (#585).** Le déclencheur est l'**acte que l'agent
+s'apprête à commettre**, plus le texte de ce qu'on lui demande d'écrire. Trois
+producteurs, un seul canal : un outil classé `ask` par la politique de l'agent
+(`maestro.agents.permissions.PolitiqueOutils`, #580) suspend l'appel au hook
+`PreToolUse` (#583) et compose une demande portant l'outil et ses arguments
+(#581) ; l'agent peut lever la main lui-même (#582) ; et l'application d'un diff
+dans le projet de l'utilisateur (#227) reste soumise au même accord. Tous
+passent par `demande_validation`, donc par le même fail-safe.
 
-Depuis #582, ce même canal a un **second producteur** : l'agent peut demander
-l'arbitrage lui-même (`maestro.providers.arbitrage`). Rien du mécanisme ci-dessus
-n'a bougé pour l'accueillir — c'est une `DemandeValidation` de plus, soumise au
-même `validateur`, donc frappée du même fail-safe : **sans validateur, elle est
-refusée**. Ce qui la distingue est son `origine`, et cette distinction compte :
-la classification est faite par nous et tient quand l'agent se trompe ou se fait
-manipuler, sa demande n'est qu'un canal **de plus** dont le silence ne prouve
-rien.
+**Ce qui reste du régime par mots-clés.** Le mécanisme est intact —
+`raison_sensible` et `MOTS_SENSIBLES` n'ont pas bougé — mais il n'est plus
+**armé** : `mots_sensibles` est **vide par défaut** depuis #585, et le régime
+d'avant s'obtient en la renseignant (`Guardrails(mots_sensibles=MOTS_SENSIBLES)`,
+ou une liste à soi). Le motif du désarmement est mesuré (#568) : le mot vient du
+**brief** et se propage à toutes les descriptions que la décomposition en tire,
+si bien qu'un objectif demandant « une sous-commande **supprimer** une note »
+rendait **3 tâches sur 3** sensibles — « Rédiger le README » comprise. Développer
+une fonction de suppression n'est pas exécuter une suppression. Désarmer ne
+retire donc pas un garde-fou, ça retire un déclencheur qui jugeait le mauvais
+objet — et ce lot vient **après** que l'arbitrage sur l'acte est vivant, jamais
+avant.
+
+**Ces producteurs ne se valent pas, et le champ `origine` (#582) est ce qui les
+départage.** Rien du mécanisme n'a bougé pour accueillir l'agent qui lève la main
+(`maestro.providers.arbitrage`) — c'est une `DemandeValidation` de plus, soumise
+au même `validateur`, donc frappée du même fail-safe : **sans validateur, elle
+est refusée**. Mais une demande que **nous** avons déduite (un outil classé
+`ask`, un diff à appliquer) tient quand l'agent se trompe ou se fait manipuler,
+là où la sienne n'est qu'un canal **de plus** dont le silence ne prouve rien.
+C'est aussi pourquoi désarmer les mots-clés ne déplace pas le garde-fou vers
+l'agent : le déclencheur nominal reste une règle à nous, appliquée à l'acte.
 
 Depuis #586, ce canal a aussi **trois portes** au lieu d'une, et c'est le
 `decideur` de la demande qui dit laquelle (`maestro.decideur`) :
@@ -78,6 +96,12 @@ if TYPE_CHECKING:  # pragma: no cover - annotation seule (cf. `DemandeValidation
 #: les fiches de rôles (docs/04 : déploiement, migration destructive, suppression).
 #: Des radicaux plutôt que des mots entiers : « deploi » couvre déploiement/déploie,
 #: « supprim » couvre supprimer/suppression, « destructi » destructive/destructif.
+#:
+#: ⚠ **Ce n'est plus le défaut de `Guardrails.mots_sensibles`** depuis #585, qui
+#: est vide : cette liste est ce qu'on **passe** pour retrouver l'ancien régime.
+#: Elle est conservée nommée plutôt que recopiée par chaque appelant — le jour où
+#: quelqu'un veut ce régime, il vaut mieux qu'il reprenne les radicaux éprouvés
+#: que sa propre approximation.
 MOTS_SENSIBLES: tuple[str, ...] = (
     "deploi",
     "deploy",
@@ -269,9 +293,8 @@ class Guardrails:
     tous deux contrôlés via la comptabilité par tâche (#56) et inactifs à None,
     plafonnent l'exécution entière ; le seuil en tokens reste opérant sur un
     fournisseur sans coût rapporté (#113). `timeout_s` (par tâche) est inactif à
-    None ; `mots_sensibles` pilote la classification (vide = détection désactivée) ;
-    `validateur` est le canal de la décision humaine — absent, toute action
-    sensible est refusée (fail-safe).
+    None ; `validateur` est le canal de la décision humaine — absent, toute
+    action sensible est refusée (fail-safe).
 
     `orchestrateur` (#586) est le canal du **cran du milieu** : ce que la
     machine tranche seule, sans réveiller personne, quand la politique l'a
@@ -284,6 +307,22 @@ class Guardrails:
     (`demande_validation`) : un orchestrateur qui approuverait tout ne peut rien
     approuver de ce qui appartient à une personne, parce qu'on ne lui pose pas
     la question.
+
+    `mots_sensibles` pilote la classification par mots-clés et est **vide par
+    défaut** (#585) : elle ne se déclenche donc plus d'elle-même, l'arbitrage
+    naissant de l'**acte** (cf. la docstring du module). La renseigner rearme
+    l'ancien régime, tâche par tâche et sur le seul texte du titre et de la
+    description — `Guardrails(mots_sensibles=MOTS_SENSIBLES)` pour les radicaux
+    d'origine.
+
+    Le défaut vide n'est pas du même ordre que les trois `None` au-dessus, et
+    c'est voulu : un plafond absent laisse passer ce qu'on n'a pas voulu borner,
+    là où cette liste absente ne retire aucun contrôle — elle retire un
+    déclencheur que le hook `PreToolUse` a remplacé par un meilleur. Le
+    fail-safe, lui, est ailleurs et n'a pas bougé : il porte sur `validateur` et
+    sur `orchestrateur`, et frappe toute demande qui atteint
+    `demande_validation`, quel qu'en soit le producteur — et désormais quelle
+    qu'en soit la porte.
     """
 
     plafond_cout_usd: float | None = None
@@ -291,7 +330,7 @@ class Guardrails:
     timeout_s: float | None = None
     validateur: Validateur | None = None
     orchestrateur: Validateur | None = None
-    mots_sensibles: tuple[str, ...] = MOTS_SENSIBLES
+    mots_sensibles: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.plafond_cout_usd is not None and self.plafond_cout_usd <= 0:
@@ -310,6 +349,14 @@ class Guardrails:
 
         Heuristique POC : recherche des mots-clés dans le titre et la description,
         après normalisation (minuscules, accents retirés) pour tolérer les variantes.
+
+        **Rend None pour toute tâche tant que `mots_sensibles` n'est pas
+        renseignée**, ce qui est le cas par défaut depuis #585 : la boucle
+        continue de l'appeler à chaque tâche, elle ne classe simplement plus rien.
+        Le déclencheur nominal est l'acte (cf. la docstring du module) ; ceci
+        reste le régime de qui veut arbitrer sur l'énoncé, en connaissance de sa
+        limite — le mot cherché vient souvent du **brief**, donc de toutes les
+        tâches qu'on en a tirées, et non de ce que la tâche fera.
         """
         texte = _normalise(f"{task.titre} {task.description}")
         for mot in self.mots_sensibles:

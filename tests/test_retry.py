@@ -30,7 +30,7 @@ from maestro.engine import (
     PolitiqueRelance,
 )
 from maestro.engine.executor import SUFFIXE_ETAPE_DEBUT, SUFFIXE_ETAPE_RELANCE
-from maestro.engine.guardrails import Guardrails
+from maestro.engine.guardrails import MOTS_SENSIBLES, Guardrails
 from maestro.engine.retry import est_transitoire
 from maestro.orchestrator import Orchestrator
 from maestro.providers.base import (
@@ -221,6 +221,10 @@ def test_un_depassement_du_plafond_de_cout_n_est_jamais_relance():
 def test_un_refus_de_validation_humaine_n_est_jamais_relance():
     # Tâche sensible refusée : stoppée avant toute exécution, un seul passage
     # devant le validateur, aucune relance.
+    #
+    # La classification par mots-clés est armée explicitement (#585 l'a désarmée
+    # par défaut) : ce que ce test éprouve est la politique de relance face à un
+    # refus humain, et il lui faut un refus à observer, d'où qu'il vienne.
     decisions: list[object] = []
 
     def validateur(demande):
@@ -234,7 +238,7 @@ def test_un_refus_de_validation_humaine_n_est_jamais_relance():
         exec_provider=provider,
         plan_json=plan,
         relance=PolitiqueRelance(max_tentatives=3, backoff_s=0),
-        guardrails=Guardrails(validateur=validateur),
+        guardrails=Guardrails(validateur=validateur, mots_sensibles=MOTS_SENSIBLES),
     )
     report = asyncio.run(engine.run("Objectif", journal=journal))
 

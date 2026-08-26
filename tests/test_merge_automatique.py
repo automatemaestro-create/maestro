@@ -48,6 +48,7 @@ from harnais_forge import (
     monte_depot,
     regle_merge,
     regle_pr,
+    regle_pr_fermante,
     regle_prs_ouvertes,
     regle_run,
     regle_run_absent,
@@ -136,6 +137,11 @@ def test_tout_vert_la_pr_est_mergee_en_squash(depot: Depot) -> None:
 # Quatre façons de ne pas l'avoir, un seul code (`6` — geste humain), et c'est voulu : aucune des
 # quatre ne se répare en réessayant, et aucune ne se répare par `/mr-fix`. Ce qui doit les
 # distinguer est le MESSAGE, que chaque test lit.
+#
+# La CINQUIÈME façon, elle, a son propre code depuis #593 : une PR DÉJÀ MERGÉE n'appelle aucun
+# geste — l'état visé est atteint, par un autre chemin. Les tests qui la couvrent sont juste après
+# ceux du `6`, et ils vérifient d'abord qu'elle n'est plus rendue comme les quatre autres : c'est
+# la moitié qui garde, l'autre ne faisant que décrire le nouveau code.
 
 
 def test_sans_pr_il_n_y_a_rien_a_merger(depot: Depot) -> None:
@@ -173,6 +179,67 @@ def test_un_brouillon_n_est_pas_merge_et_n_est_pas_leve_au_passage(depot: Depot)
     assert not [ligne for ligne in depot.appels() if "pr\tready" in ligne], (
         "constater n'est pas réparer : le verbe ne lève pas le brouillon lui-même"
     )
+
+
+def test_une_pr_deja_mergee_rend_sept_et_non_six(depot: Depot) -> None:
+    """La seule des cinq qui soit un SUCCÈS : la PR est dans `main`, personne n'a rien à faire.
+
+    Le `6` disait « geste humain » — et le pilote, qui décide sur ce code, en tirait « bloquée ».
+    Sur le run `20260826-183242` cela donnait « PR #590 (#582) non mergée » à propos d'une PR
+    mergée, un ticket LIVRÉ compté parmi les bloqués, et le worktree jamais ramassé (#593).
+
+    Le test vérifie les deux moitiés : le code n'est plus `6` (ce qui garde), et il n'est pas `0`
+    non plus (le verbe n'a pas mergé — s'attribuer ce merge raconterait un run faux). Et surtout,
+    AUCUN PUT : constater qu'une PR est mergée ne consiste pas à la merger une seconde fois.
+    """
+    sha = _branche(depot, BRANCHE, {"livrable.txt": "le travail du ticket\n"})
+    depot.pose_etat(
+        graphql=[regle_pr(BRANCHE, pr=PR, sha=sha, etat="MERGED", ferme=(IID,))],
+        rest=[regle_run(BRANCHE, sha=sha)],
+        ecritures=[regle_merge(PR)],
+    )
+    r = depot.lib("merge-mr", BRANCHE)
+    assert r.returncode == 7, r.stdout + r.stderr
+    assert "déjà mergée" in r.stdout, (
+        "sur stdout et sous « ✓ » : c'est un verdict positif, pas un refus"
+    )
+    assert ecritures(depot) == [], "constater n'est pas merger"
+
+
+def test_un_iid_dont_la_pr_est_mergee_rend_sept_lui_aussi(depot: Depot) -> None:
+    """L'autre chemin d'entrée, celui de `/ticket-finish` — sans lui le correctif serait à moitié.
+
+    `gl_branche_du_ticket` ne regarde que les PR OUVERTES : une PR mergée y est indiscernable d'une
+    PR jamais créée, et les deux sortaient en `6` sur le même message. On demande donc à la forge
+    quelle PR ferme le ticket, PR mergées comprises, puis le flux normal juge la branche trouvée —
+    une seule voie de sortie pour le `7`, quel que soit le chemin d'entrée.
+    """
+    sha = _branche(depot, BRANCHE, {"livrable.txt": "le travail du ticket\n"})
+    depot.pose_etat(
+        graphql=[
+            regle_pr(BRANCHE, pr=PR, sha=sha, etat="MERGED", ferme=(IID,)),
+            regle_prs_ouvertes(()),
+            regle_pr_fermante((("MERGED", BRANCHE),)),
+        ],
+        rest=[regle_run(BRANCHE, sha=sha)],
+        ecritures=[regle_merge(PR)],
+    )
+    r = depot.lib("merge-mr", str(IID))
+    assert r.returncode == 7, r.stdout + r.stderr
+    assert ecritures(depot) == []
+
+
+def test_un_iid_sans_aucune_pr_reste_un_six(depot: Depot) -> None:
+    """L'autre moitié de la question posée à la forge : aucune PR ne ferme le ticket.
+
+    Sans ce test, rendre `7` dès qu'il n'y a pas de PR ouverte passerait — et le verbe déclarerait
+    « déjà mergé » un ticket qui n'a jamais eu de PR.
+    """
+    _branche(depot, BRANCHE, {"livrable.txt": "le travail du ticket\n"})
+    depot.pose_etat(graphql=[regle_prs_ouvertes(()), regle_pr_fermante()])
+    r = depot.lib("merge-mr", str(IID))
+    assert r.returncode == 6, r.stdout + r.stderr
+    assert "aucune PR" in r.stderr
 
 
 def test_une_pr_qui_ne_ferme_pas_son_ticket_n_est_pas_mergee(depot: Depot) -> None:

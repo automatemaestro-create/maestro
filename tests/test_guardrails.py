@@ -29,6 +29,17 @@ d'acceptation du ticket #9 :
    sur la configuration exacte où ça compte : lui seul câblé, aucune personne
    pour dire non. Ce qui est vérifié n'est pas qu'on refuse son approbation,
    c'est qu'on ne la lui demande pas.
+
+⚠ Depuis #585, la classification par mots-clés n'est **plus armée par défaut** :
+les tests de ③ passent donc `mots_sensibles=MOTS_SENSIBLES` explicitement. Ce
+n'est pas une formalité d'adaptation — ce qu'ils éprouvent est le **canal** de la
+décision humaine et son fail-safe, qui ne dépendent d'aucun déclencheur en
+particulier ; l'armer sur place est ce qui garde ces tests lisibles le jour où le
+déclencheur nominal (l'acte, chantier #573) changera à son tour. Le nouveau
+défaut, lui, est éprouvé pour lui-même plus bas.
+
+④ ne l'arme jamais, et c'est cohérent avec la même idée : il éprouve le
+**routage** d'une demande déjà née, quel que soit ce qui l'a déclenchée.
 """
 
 import asyncio
@@ -37,7 +48,10 @@ import json
 import pytest
 
 from maestro.engine import DemandeValidation, Guardrails, OrchestrationEngine, executor
-from maestro.engine.guardrails import _normalise  # test ciblé de la normalisation
+from maestro.engine.guardrails import (
+    MOTS_SENSIBLES,
+    _normalise,  # test ciblé de la normalisation
+)
 from maestro.engine.runner import run_borne
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
@@ -423,7 +437,7 @@ def test_une_action_sensible_declenche_une_demande_de_validation():
         _engine(
             exec_provider=provider,
             plan_json=_plan_sensible(),
-            guardrails=Guardrails(validateur=validateur),
+            guardrails=Guardrails(validateur=validateur, mots_sensibles=MOTS_SENSIBLES),
         ).run("Objectif", journal=journal)
     )
 
@@ -449,7 +463,7 @@ def test_une_action_sensible_refusee_est_stoppee_avant_execution():
         _engine(
             exec_provider=provider,
             plan_json=_plan_sensible(),
-            guardrails=Guardrails(validateur=validateur),
+            guardrails=Guardrails(validateur=validateur, mots_sensibles=MOTS_SENSIBLES),
         ).run("Objectif", journal=journal)
     )
 
@@ -463,10 +477,20 @@ def test_une_action_sensible_refusee_est_stoppee_avant_execution():
 
 
 def test_sans_validateur_une_action_sensible_est_refusee_par_defaut():
-    # Fail-safe : le moteur *par défaut* (aucun Guardrails injecté) refuse déjà
-    # les actions sensibles — jamais d'exécution sensible sans accord explicite.
+    # Fail-safe : une action classée sensible sans canal de décision humaine est
+    # refusée — jamais d'exécution sensible sans accord explicite.
+    #
+    # Le garde-fou éprouvé ici est celui du **validateur absent**, pas celui du
+    # déclencheur : on arme donc la classification et on laisse `validateur` à
+    # None, ce qui est exactement la situation à couvrir. Depuis #585, ne rien
+    # injecter du tout ne classerait plus rien (`mots_sensibles` vide par défaut)
+    # et le test passerait au vert sans avoir posé sa question.
     provider = RecordingProvider()
-    engine = _engine(exec_provider=provider, plan_json=_plan_sensible())
+    engine = _engine(
+        exec_provider=provider,
+        plan_json=_plan_sensible(),
+        guardrails=Guardrails(mots_sensibles=MOTS_SENSIBLES),
+    )
     report = asyncio.run(engine.run("Objectif"))
 
     tache = report.resultats[0]
@@ -484,7 +508,9 @@ def test_un_validateur_en_erreur_vaut_refus():
         _engine(
             exec_provider=provider,
             plan_json=_plan_sensible(),
-            guardrails=Guardrails(validateur=validateur_casse),
+            guardrails=Guardrails(
+                validateur=validateur_casse, mots_sensibles=MOTS_SENSIBLES
+            ),
         ).run("Objectif")
     )
 
@@ -503,7 +529,10 @@ def test_un_validateur_asynchrone_est_supporte():
 
     report = asyncio.run(
         _engine(
-            plan_json=_plan_sensible(), guardrails=Guardrails(validateur=validateur)
+            plan_json=_plan_sensible(),
+            guardrails=Guardrails(
+                validateur=validateur, mots_sensibles=MOTS_SENSIBLES
+            ),
         ).run("Objectif")
     )
 
@@ -535,7 +564,7 @@ def _task(titre, description="RAS."):
 
 
 def test_la_detection_des_mots_sensibles_ignore_casse_et_accents():
-    guardrails = Guardrails()
+    guardrails = Guardrails(mots_sensibles=MOTS_SENSIBLES)
     assert guardrails.raison_sensible(_task("DÉPLOIEMENT en préproduction")) is not None
     assert guardrails.raison_sensible(_task("Nettoyage", "Supprimer les données.")) is not None
     assert guardrails.raison_sensible(_task("Écrire les tests unitaires")) is None
@@ -548,6 +577,76 @@ def test_les_mots_sensibles_sont_configurables():
     assert guardrails.raison_sensible(_task("Déploiement en production")) is None
     # Tuple vide : détection désactivée.
     assert Guardrails(mots_sensibles=()).raison_sensible(_task("Déploiement")) is None
+
+
+def test_par_defaut_la_classification_par_mots_cles_ne_se_declenche_pas():
+    """#585 — `mots_sensibles` est vide par défaut : plus aucun mot ne déclenche.
+
+    C'est le lot qui ferme le défaut du chantier #573 : le déclencheur n'est plus
+    le texte de ce qu'on demande d'écrire. On éprouve les deux moitiés du contrat
+    — plus rien ne se déclenche tout seul, et le régime d'avant reste **atteignable**
+    en renseignant la liste — parce qu'une seule des deux laisserait passer la
+    régression symétrique (désarmer en supprimant le mécanisme).
+    """
+    par_defaut = Guardrails()
+    assert par_defaut.mots_sensibles == ()
+    # Les radicaux d'origine, y compris celui mesuré sur #568.
+    assert par_defaut.raison_sensible(_task("Déployer l'API en production")) is None
+    assert par_defaut.raison_sensible(_task("Supprimer une note")) is None
+    assert par_defaut.raison_sensible(_task("Migration destructive")) is None
+    # Le mécanisme n'a pas été retiré : le renseigner rearme exactement l'ancien
+    # régime, radical par radical.
+    ancien = Guardrails(mots_sensibles=MOTS_SENSIBLES)
+    assert ancien.raison_sensible(_task("Déployer l'API en production")) is not None
+    assert ancien.raison_sensible(_task("Supprimer une note")) is not None
+
+
+def test_un_objectif_qui_dit_supprimer_ne_rend_aucune_tache_sensible():
+    """#585 — le cas mesuré sur #568, joué de bout en bout sur la boucle.
+
+    Un objectif demandant « une sous-commande **supprimer** une note » rendait
+    3 tâches sur 3 sensibles, « Rédiger le README » comprise, parce que le mot
+    vient du brief et se propage à toutes les descriptions que la décomposition
+    en tire. Le validateur est branché **et refuse** : s'il était consulté, les
+    tâches échoueraient — leur succès est donc ce qui prouve qu'il ne l'a pas été.
+
+    L'autre moitié du critère — « un agent qui appelle un outil classé `ask` en
+    rend une » — se joue là où vit le déclencheur qui la produit :
+    `tests/test_permissions.py::test_l_issue_d_un_arbitrage_est_consignee_sous_son_propre_statut`,
+    sur un plan sans le moindre mot-clé. Depuis ce lot, elle prouve davantage
+    qu'avant : `Guardrails` y prend le nouveau défaut, donc rien d'autre que
+    l'outil `ask` ne peut y avoir déclenché la demande.
+    """
+    # Les deux tâches sont routées vers qa (« tests ») comme le plan anodin : ce
+    # qu'on éprouve est le texte, pas l'aiguillage — un routage qui échoue rendrait
+    # « echec » pour une raison étrangère au ticket, et masquerait le vrai verdict.
+    plan = json.dumps(
+        [
+            _tache(
+                "cli-supprimer",
+                "Ajouter la sous-commande supprimer",
+                "Implémenter `notes supprimer <id>` puis la couvrir de tests.",
+                ["tests"],
+            ),
+            _tache(
+                "readme",
+                "Rédiger le README",
+                "Documenter la sous-commande supprimer une note.",
+                ["tests"],
+            ),
+        ],
+        ensure_ascii=False,
+    )
+    validateur = ValidateurEnregistreur(decision=False)
+    report = asyncio.run(
+        _engine(plan_json=plan, guardrails=Guardrails(validateur=validateur)).run(
+            "Ajouter une sous-commande supprimer une note"
+        )
+    )
+
+    assert validateur.demandes == []
+    assert len(report.resultats) == 2
+    assert all(r.ok for r in report.resultats)
 
 
 def test_les_garde_fous_invalides_sont_refuses():
