@@ -37,6 +37,7 @@ from maestro.controltower import (
     create_app,
 )
 from maestro.controltower.brief import (
+    ACTEUR_BRIEF,
     ArbitreClarificationControlTower,
     arbitre_clarification_redis,
     evenement_questions_brief,
@@ -47,6 +48,7 @@ from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
 )
+from maestro.decideur import ACTEUR_ORCHESTRATEUR, Decideur
 from maestro.engine import MODE_BRIEF_HUMAIN, OrchestrationEngine
 from maestro.engine.brief import (
     TOURS_CLARIFICATION_DEFAUT,
@@ -605,6 +607,34 @@ def test_l_evenement_de_questions_annonce_le_plafond(brief_a_questions):
     # Aller-retour JSON : les nouveaux champs survivent au bus Redis.
     relu = Event.from_dict(event.to_dict())
     assert relu.tour == 2 and relu.tours_max == 2
+
+
+def test_le_canal_de_clarification_est_celui_de_l_orchestrateur(brief_a_questions):
+    """La moitié « répondre à une demande d'information » du critère de #586.
+
+    L'orchestrateur ne peut pas approuver un acte classé `humain` — mais deux
+    pouvoirs lui restent, et ce canal-ci en est un : répondre à une question
+    n'est pas approuver un acte. Il tient donc, et il tient **sous le même nom**
+    que le cran de décision (`maestro.decideur.ACTEUR_ORCHESTRATEUR`), sans quoi
+    la trace de ce qu'un même acteur a fait se lirait comme celle de deux
+    acteurs qui se ressemblent.
+
+    L'autre moitié de ce test est ce que le canal **ne transporte pas** : des
+    questions et des réponses de texte libre, jamais un oui/non sur un acte —
+    c'est la distinction que `maestro.controltower.brief` pose en tête de
+    fichier entre ce canal et le validateur de #48, et c'est elle qui rend ce
+    pouvoir-là inoffensif.
+    """
+    event = evenement_questions_brief(
+        DemandeClarification(
+            run_id="r-11", objectif="Un CRM", brief=brief_a_questions, tour=1, tours_max=2
+        )
+    )
+
+    assert event.agent == ACTEUR_BRIEF == ACTEUR_ORCHESTRATEUR == Decideur.ORCHESTRATEUR
+    # Aucune approbation ne voyage ici : ni décideur, ni acte à trancher.
+    assert event.decideur == ""
+    assert event.outil == "" and event.arguments is None
 
 
 def test_les_reponses_survivent_a_l_aller_retour_json():

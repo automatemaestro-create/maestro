@@ -52,6 +52,7 @@ from claude_agent_sdk.types import HookInput
 
 from maestro.acte import arguments_depuis
 from maestro.config import ConfigError, Settings
+from maestro.decideur import Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
 from maestro.providers.activite import Geste, RegulateurActivite
@@ -67,6 +68,7 @@ from maestro.providers.arbitrage import (
     BornesArbitrage,
     motif_approbation,
     motif_attente,
+    motif_auto,
     motif_panne,
     motif_refus,
     motif_sans_arbitre,
@@ -585,6 +587,13 @@ def _hook_permissions(
       `on_arbitrage_acte` avec l'outil et ses arguments (`maestro.acte`, #581),
       et l'issue décide. Approuvée, l'appel passe ; refusée, `deny` motivé.
 
+    Depuis #586, l'arbitrage a un **décideur** (`DecisionOutil.decideur`), et le
+    hook en applique un lui-même : `auto` — celui qui ne désigne personne — est
+    tracé puis laissé passer, sans canal ni attente. Les deux autres
+    (`orchestrateur`, `humain`) partent sur `on_arbitrage_acte` : le hook ne
+    sait pas *qui* est au bout, et n'a pas à le savoir — c'est le garde-fou qui
+    route (`maestro.engine.guardrails`), sur le cran que la demande porte.
+
     ⚠ `on_arbitrage_acte` n'est pas `on_arbitrage` (#582) : celui-ci intercepte
     un acte, celui-là relaie une demande que l'agent a formulée. Ils aboutissent
     au même validateur et ne transportent pas la même chose — voir
@@ -705,6 +714,16 @@ def _hook_permissions(
             return {}
         if decision.verdict is Verdict.REFUS:
             return refuse(outil, decision.motif)
+        if decision.decideur is Decideur.AUTO:
+            # Le cran qui ne désigne personne (#586) : rien à soumettre, donc
+            # rien à attendre — et surtout aucun canal requis. Le faire passer
+            # par `arbitre` le ferait refuser (`motif_sans_arbitre`) chez tout
+            # appelant qui exécute hors de la Control Tower, c'est-à-dire
+            # refuser un acte dont la politique dit qu'il n'a personne à
+            # déranger. Il laisse quand même sa trace : c'est la seule chose qui
+            # le distingue d'un `allow`.
+            trace(outil, motif_auto(outil))
+            return {}
         return await arbitre(outil, decision.motif, input_data.get("tool_input"))
 
     return hook

@@ -34,6 +34,23 @@ la classification est faite par nous et tient quand l'agent se trompe ou se fait
 manipuler, sa demande n'est qu'un canal **de plus** dont le silence ne prouve
 rien.
 
+Depuis #586, ce canal a aussi **trois portes** au lieu d'une, et c'est le
+`decideur` de la demande qui dit laquelle (`maestro.decideur`) :
+
+- `auto` — personne n'est sollicité, la demande est accordée d'office. Le cran
+  de ce qu'on veut **voir** sans vouloir l'arrêter : la décision est consignée
+  comme les autres, aucun validateur n'est appelé ;
+- `orchestrateur` — la machine tranche seule, par `orchestrateur` ;
+- `humain` — le `validateur`, et lui seul. C'est le défaut, y compris pour une
+  demande qui ne dit rien de son décideur.
+
+L'asymétrie d'EF-08/ENF-04 tient au **routage** et non à un contrôle qu'on
+aurait pu oublier d'écrire : sur le cran `humain`, `orchestrateur` n'est pas sur
+le chemin — il n'est pas consulté, donc son avis, fût-il « oui », ne peut pas
+devenir une approbation. Et le fail-safe vaut porte par porte : pas
+d'orchestrateur pour un acte qui lui revient, pas de validateur pour un acte
+humain, l'un ou l'autre en panne — refus, toujours.
+
 À côté d'eux, et pour la même raison — ce sont les **limites du run**, elles
 n'ont pas à vivre dans un troisième endroit —, `GardeFousIngestion` (#315,
 ENF-07) plafonne la **matière d'entrée** d'un objectif : taille par source,
@@ -51,6 +68,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from maestro.decideur import DECIDEUR_DEFAUT, Decideur, decideur_depuis
 from maestro.orchestrator.schema import Task
 
 if TYPE_CHECKING:  # pragma: no cover - annotation seule (cf. `DemandeValidation.diff`)
@@ -107,6 +125,12 @@ ORIGINE_POLITIQUE = "politique"
 #: quelqu'un la retrouver à la grammaire d'une phrase, c'est la perdre au
 #: premier reformulage.
 ORIGINE_AGENT = "agent"
+
+#: Le détail traçable d'une demande accordée par le cran `auto` (#586) — celui
+#: qui dit, à qui relira le journal, qu'aucune personne n'a été dérangée. C'est
+#: la seule issue « approuvée » que personne n'a prononcée, et la taire ferait
+#: lire un accord humain là où il n'y en a jamais eu.
+DETAIL_AUTO = "accordée d'office — décideur « auto », personne n'a été sollicité"
 
 
 @dataclass(frozen=True)
@@ -202,6 +226,19 @@ class DemandeValidation:
     a bien voulu dire. Sans le champ, le journal rendrait les deux
     indiscernables, et une déclaration d'agent finirait par se lire comme une
     classification.
+
+    `decideur` (#586) dit **qui doit trancher** : `auto`, `orchestrateur` ou
+    `humain` (`maestro.decideur`). À ne pas confondre avec `origine`, qui est
+    la question d'à côté et d'avant — celle-là dit *qui a demandé*, celle-ci
+    *qui répond*, et les deux se combinent librement (un agent peut lever la
+    main sur un acte qui revient à l'orchestrateur, notre classification peut
+    désigner un humain).
+
+    Le défaut est `humain`, et c'est le critère du ticket plutôt qu'un choix de
+    commodité : un producteur qui ne dit rien de son décideur escalade, il ne
+    s'auto-approuve pas. Les deux demandes qui existaient avant ce lot — une
+    tâche classée sensible (#9), une application de diff (#227) — restent donc
+    exactement ce qu'elles étaient, sans porter le champ.
     """
 
     task_id: str
@@ -216,6 +253,7 @@ class DemandeValidation:
     outil: str = ""
     arguments: dict[str, str] | None = None
     origine: str = ORIGINE_POLITIQUE
+    decideur: str = DECIDEUR_DEFAUT
 
 
 #: Validateur humain : reçoit la demande, répond vrai (approuvée) ou faux (refusée).
@@ -234,12 +272,25 @@ class Guardrails:
     None ; `mots_sensibles` pilote la classification (vide = détection désactivée) ;
     `validateur` est le canal de la décision humaine — absent, toute action
     sensible est refusée (fail-safe).
+
+    `orchestrateur` (#586) est le canal du **cran du milieu** : ce que la
+    machine tranche seule, sans réveiller personne, quand la politique l'a
+    explicitement classé ainsi. Absent, un acte qui lui revient est refusé — même
+    fail-safe que le validateur humain, et pour la même raison : ne trouver
+    personne à qui demander n'a jamais autorisé une action sensible.
+
+    Il n'est **jamais** consulté sur un acte classé `humain`. Ce n'est pas une
+    règle qu'on applique, c'est un chemin qu'il n'emprunte pas
+    (`demande_validation`) : un orchestrateur qui approuverait tout ne peut rien
+    approuver de ce qui appartient à une personne, parce qu'on ne lui pose pas
+    la question.
     """
 
     plafond_cout_usd: float | None = None
     plafond_tokens: int | None = None
     timeout_s: float | None = None
     validateur: Validateur | None = None
+    orchestrateur: Validateur | None = None
     mots_sensibles: tuple[str, ...] = MOTS_SENSIBLES
 
     def __post_init__(self) -> None:
@@ -267,33 +318,79 @@ class Guardrails:
         return None
 
     async def demande_validation(self, demande: DemandeValidation) -> tuple[bool, str]:
-        """Soumet la demande au validateur ; renvoie (approuvée ?, détail traçable).
+        """Soumet la demande à **son** décideur ; renvoie (approuvée ?, détail traçable).
 
-        Fail-safe : sans validateur, ou si le validateur lève une exception, la
-        demande est **refusée** — jamais d'action sensible sans accord explicite.
-        Le détail est destiné au journal et au message d'erreur de la tâche.
+        Trois portes, et c'est `demande.decideur` qui dit laquelle (#586) — le
+        cran étant posé dans la politique, à froid, jamais déduit ici :
+
+        - `auto` : accordée **d'office**, sans qu'aucun canal soit appelé. Elle
+          n'en est pas moins tracée : c'est ce qui distingue ce cran d'un
+          `allow`, où l'appel passe en silence ;
+        - `orchestrateur` : soumise à `self.orchestrateur` ;
+        - `humain` (le défaut) : soumise à `self.validateur`, comme depuis #9.
+
+        Fail-safe, inchangé et désormais porte par porte : sans le canal qui
+        correspond au cran, ou si ce canal lève une exception, la demande est
+        **refusée** — jamais d'action sensible sans accord explicite. Le détail
+        est destiné au journal et au message d'erreur de la tâche, et **nomme
+        qui a tranché** : c'est ce qui rend la décision lisible là où elle est
+        consignée, le champ restant la source.
+
+        ⚠ Sur le cran `humain`, `self.orchestrateur` n'est pas appelé — pas
+        « appelé puis ignoré ». La différence est tout le garde-fou : il n'y a
+        aucun endroit où une approbation d'orchestrateur pourrait être prise
+        pour une approbation humaine, fût-ce par erreur de relecture.
         """
-        if self.validateur is None:
-            return False, "aucun validateur humain configuré — refus par défaut"
-        try:
-            decision: Any
-            if inspect.iscoroutinefunction(self.validateur):
-                decision = await self.validateur(demande)
-            else:
-                # Validateur **synchrone** (console #9 : `input()`) : exécuté hors
-                # de la boucle d'événements. Appelé directement, il la bloquerait
-                # tout le temps de la délibération humaine — anodin en local, mais
-                # fatal en mode durable (#96), où la boucle doit continuer à battre
-                # le cœur des activités : un worker qui ne bat plus est réputé mort
-                # et sa tâche relancée sous 30 s, en pleine question à l'opérateur.
-                decision = await asyncio.to_thread(self.validateur, demande)
-                if inspect.isawaitable(decision):
-                    decision = await decision
-        except Exception as exc:  # fail-safe : un validateur en panne ne laisse rien passer
-            return False, f"validateur en erreur ({exc}) — refus par défaut"
-        if decision:
-            return True, "approuvée par le validateur humain"
-        return False, "refusée par le validateur humain"
+        decideur = decideur_depuis(demande.decideur)
+        if decideur is Decideur.AUTO:
+            return True, DETAIL_AUTO
+        if decideur is Decideur.ORCHESTRATEUR:
+            return await _tranche(
+                self.orchestrateur, demande, nom="orchestrateur", par="l'orchestrateur"
+            )
+        return await _tranche(
+            self.validateur, demande, nom="validateur humain", par="le validateur humain"
+        )
+
+
+async def _tranche(
+    canal: Validateur | None, demande: DemandeValidation, *, nom: str, par: str
+) -> tuple[bool, str]:
+    """Soumet `demande` à `canal` et rend (approuvée ?, détail) — **fail-safe compris**.
+
+    Le corps de `demande_validation` d'avant #586, extrait tel quel pour servir
+    les deux portes qui existent désormais : le validateur humain et
+    l'orchestrateur. L'extraction n'est pas cosmétique — deux copies de ce
+    fail-safe seraient deux endroits où l'oublier, et c'est précisément le genre
+    de règle dont on découvre l'absence après coup.
+
+    Les textes du cran humain sont **inchangés au caractère près** (« aucun
+    validateur humain configuré — refus par défaut », « approuvée par le
+    validateur humain »…) : ils sont lus par des tests, par le journal et par
+    l'agent lui-même, dont le comportement diffère selon le motif
+    (`maestro.providers.arbitrage.reponse`).
+    """
+    if canal is None:
+        return False, f"aucun {nom} configuré — refus par défaut"
+    try:
+        decision: Any
+        if inspect.iscoroutinefunction(canal):
+            decision = await canal(demande)
+        else:
+            # Canal **synchrone** (console #9 : `input()`) : exécuté hors de la
+            # boucle d'événements. Appelé directement, il la bloquerait tout le
+            # temps de la délibération humaine — anodin en local, mais fatal en
+            # mode durable (#96), où la boucle doit continuer à battre le cœur
+            # des activités : un worker qui ne bat plus est réputé mort et sa
+            # tâche relancée sous 30 s, en pleine question à l'opérateur.
+            decision = await asyncio.to_thread(canal, demande)
+            if inspect.isawaitable(decision):
+                decision = await decision
+    except Exception as exc:  # fail-safe : un canal en panne ne laisse rien passer
+        return False, f"{nom} en erreur ({exc}) — refus par défaut"
+    if decision:
+        return True, f"approuvée par {par}"
+    return False, f"refusée par {par}"
 
 
 def _normalise(texte: str) -> str:

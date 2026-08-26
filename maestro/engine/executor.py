@@ -28,10 +28,16 @@ from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore, JaugeInstances
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore, ServeurMcp
-from maestro.agents.permissions import PermissionStore, PolitiqueOutils, Verdict
+from maestro.agents.permissions import (
+    DecisionOutil,
+    PermissionStore,
+    PolitiqueOutils,
+    Verdict,
+)
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
+from maestro.decideur import DECIDEUR_DEFAUT
 from maestro.deliberation import (
     CreditArbitrage,
     Deliberation,
@@ -1056,15 +1062,24 @@ class LocalExecutor(TaskExecutor):
         classification : le jour où l'on change une phrase, la ligne change de
         nature en silence. La politique, elle, rend le même verdict au moment de
         consigner qu'au moment où le hook l'a rendu.
+
+        Le **nom** de l'étape porte en plus le décideur (#586) — « Outil arbitré
+        (orchestrateur) », « (humain) », « (auto) » —, et il le tient de la même
+        source, pour la même raison. C'est le critère du ticket : *qui a tranché
+        se lit, il ne se déduit pas*. Il vient là plutôt qu'ailleurs parce que
+        c'est le seul champ du journal qui puisse porter une provenance sans
+        qu'un consommateur ait à la deviner d'une tournure de phrase — c'est
+        déjà lui qui distingue les deux producteurs d'une étape `:validation`
+        (#582).
         """
-        arbitrage = (
-            politique is not None
-            and politique.decide(outil).verdict is Verdict.ARBITRAGE
+        decision = (
+            politique.decide(outil) if politique is not None else DecisionOutil(Verdict.REFUS)
         )
+        arbitrage = decision.verdict is Verdict.ARBITRAGE
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_REFUS}",
             nom=(
-                f"Outil arbitré — {task.titre}"
+                f"Outil arbitré ({decision.decideur}) — {task.titre}"
                 if arbitrage
                 else f"Outil refusé — {task.titre}"
             ),
@@ -1083,6 +1098,7 @@ class LocalExecutor(TaskExecutor):
         agent: Agent,
         journal: RunJournal | None,
         memoire: MemoireArbitrage | None = None,
+        politique: PolitiqueOutils | None = None,
     ) -> ArbitreActe:
         """Le canal d'arbitrage **sur l'acte** confié au fournisseur (#583).
 
@@ -1133,6 +1149,15 @@ class LocalExecutor(TaskExecutor):
 
         Sans mémoire, chaque demande repart de zéro : le comportement exact de
         #583, celui qu'ont les appelants qui ne composent pas de délibération.
+
+        `politique` (#586) est ce qui permet de dire **qui tranche**. Le cran
+        n'est pas transporté depuis le hook mais **redemandé** à la politique,
+        exactement comme `_consigne_refus_outil` lui redemande son verdict
+        plutôt que de le lire dans un texte : c'est la même source, elle rend la
+        même réponse, et un argument de plus dans `ArbitreActe` serait un
+        contrat à faire évoluer chez tous les fournisseurs pour une valeur déjà
+        disponible ici. Sans politique, aucun outil n'est classé `ask` — il n'y
+        a rien à arbitrer, et ce canal n'est pas câblé.
         """
         memoire = memoire if memoire is not None else MemoireArbitrage()
 
@@ -1156,6 +1181,15 @@ class LocalExecutor(TaskExecutor):
                 # à nous, pas un aveu de l'agent — et c'est ce qui fait tenir le
                 # garde-fou quand l'agent se trompe ou se fait manipuler.
                 origine=ORIGINE_POLITIQUE,
+                # Qui doit trancher (#586) : le cran posé dans la politique. Sans
+                # politique, `humain` — le défaut du champ, qui escalade au lieu
+                # de s'auto-approuver ; ce chemin n'est de toute façon pas câblé
+                # dans ce cas.
+                decideur=(
+                    DECIDEUR_DEFAUT
+                    if politique is None
+                    else (politique.decideur(outil) or DECIDEUR_DEFAUT)
+                ),
             )
             return await memoire.tranche(
                 cle_acte(outil, arguments),
@@ -1356,7 +1390,9 @@ class LocalExecutor(TaskExecutor):
                     on_arbitrage_acte=(
                         None
                         if politique is None
-                        else self._arbitre_acte(task, agent, journal, deliberation.memoire)
+                        else self._arbitre_acte(
+                            task, agent, journal, deliberation.memoire, politique
+                        )
                     ),
                     on_activite=(
                         None

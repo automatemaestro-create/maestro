@@ -73,6 +73,7 @@ from maestro.agents.devops import DEVOPS_PROFILE
 from maestro.agents.mcp import TYPES_SERVEUR, IntegrationMcp, McpStore, ServeurMcp
 from maestro.agents.permissions import (
     DecisionOutil,
+    EntreeArbitrage,
     PermissionStore,
     PolitiqueOutils,
     Verdict,
@@ -165,6 +166,7 @@ __all__ = [
     "CapaciteAgent",
     "CapacityStore",
     "DecisionOutil",
+    "EntreeArbitrage",
     "EtatSecret",
     "IntegrationMcp",
     "JaugeInstances",

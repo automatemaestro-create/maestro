@@ -338,6 +338,15 @@ class Event:
     # et aucun consommateur n'a à faire la différence.
     outil: str = ""
     arguments: dict[str, str] | None = None
+    # **Qui tranche** l'acte soumis (#586) : `auto`, `orchestrateur` ou `humain`
+    # (`maestro.decideur`), porté par le seul `validation.demande` et vide
+    # partout ailleurs. Chaîne vide plutôt que `humain`, pour la raison
+    # de `outil`/`cause`/`reprise_de` : un seul événement en parle, et « cet
+    # événement ne dit rien d'un décideur » n'est pas « cet acte revient à une
+    # personne » — le défaut du **champ métier** vit dans `DemandeValidation`,
+    # pas dans le transport, où il ferait annoncer une attente humaine à chaque
+    # statut de tâche.
+    decideur: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -379,6 +388,7 @@ class Event:
             ),
             "outil": self.outil,
             "arguments": dict(self.arguments) if self.arguments is not None else None,
+            "decideur": self.decideur,
             "horodatage": self.horodatage,
         }
 
@@ -467,6 +477,12 @@ class Event:
                 if data.get("arguments") is not None
                 else None
             ),
+            # Même régime que `cause` (#586) : la valeur brute passe telle quelle,
+            # sans être rejugée. Un cran émis par une version plus récente doit
+            # arriver jusqu'à l'écran, qui sait ne pas afficher ce qu'il ne
+            # connaît pas ; le repli sûr (`decideur_depuis`) est appliqué là où
+            # une **décision** se prend, jamais sur un transport.
+            decideur=str(data.get("decideur") or ""),
             horodatage=data.get("horodatage", ""),
         )
 
