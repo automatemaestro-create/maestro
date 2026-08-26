@@ -76,7 +76,7 @@ from maestro.controltower.state import (
     ControlTowerState,
 )
 from maestro.controltower.validation import appliquer_sous_validation, evenement_demande
-from maestro.engine import Guardrails, OrchestrationEngine
+from maestro.engine import MOTS_SENSIBLES, Guardrails, OrchestrationEngine
 from maestro.engine.guardrails import DemandeValidation
 from maestro.orchestrator import Orchestrator
 from maestro.projets.modele import Perimetre, Projet
@@ -177,13 +177,22 @@ def _joue_une_tache_sensible(*, decision: bool = True) -> Partie:
     écrivent en synchrone : l'ordre du recueil est donc l'ordre réel de publication,
     qui est le sujet du critère n°1. Le handler est retiré dans tous les cas — le
     logger `maestro.trace` est global, un handler oublié suivrait la suite entière.
+
+    La classification par mots-clés est **armée explicitement** (#585 l'a désarmée
+    par défaut) : ce qu'on éprouve ici est le trajet d'une `DemandeValidation`
+    jusqu'aux vues, pas ce qui l'a produite. Le mot-clé reste le producteur le
+    moins coûteux à déclencher depuis un test de bout en bout, et le trajet est
+    le même pour les trois (politique `ask`, main levée de l'agent, diff).
     """
     recueil: list[Event] = []
     executant = _Executant()
     moteur = OrchestrationEngine(
         executant,
         Orchestrator(_Planificateur(_PLAN_SENSIBLE), model="claude-opus-4-8"),
-        guardrails=Guardrails(validateur=_ValidateurQuiPublie(recueil, decision)),
+        guardrails=Guardrails(
+            validateur=_ValidateurQuiPublie(recueil, decision),
+            mots_sensibles=MOTS_SENSIBLES,
+        ),
     )
     handler = activer_publication(recueil.append)
     try:
