@@ -901,11 +901,60 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
   sur un parent (tous les lots démarrables, plus seulement le premier) et ce que `/ticket-ship`
   annonce après un lot.
 
-Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subtickets`) :
+- **L'arbitrage, et pourquoi « pas de marqueur » ne voulait rien dire** (ticket #562) — le marqueur
+  étant facultatif, son **absence est ambiguë** : elle dit indifféremment « ce lot dépend réellement
+  de ce qui le précède » (l'intention de #160, et le cas du lot final « tests + doc ») ou « personne
+  n'y a pensé ». Un run part alors en séquentiel sans que ce séquentiel ait jamais été décidé, et
+  rien ne le distingue d'un séquentiel voulu. Mesure du 2026-08-26, en rejouant le parsing de
+  `gl_subticket_rows` sur les 42 parents du dépôt : **77 lots marqués sur 228 (34 %)**, 43 % depuis
+  #160, et **16 parents sans un seul marqueur**.
+
+  Le défaut n'était donc pas que le marqueur soit peu posé — il l'est plutôt bien — mais qu'on ne
+  puisse pas savoir **si la question avait été posée**. D'où le label `lot::arbitre` sur le
+  **parent**, posé par l'arbitrage **quel qu'en soit le verdict**, y compris « aucun lot n'est
+  parallélisable ». Sans lui cette réponse-là est **inexprimable** : le marqueur ne sait dire que
+  l'inverse, si bien qu'un parent légitimement séquentiel serait signalé à chaque run, pour
+  toujours — le défaut symétrique de celui qu'on corrige.
+
+  **Un parent est arbitré s'il porte le label, ou, à défaut, si au moins un de ses lots est
+  marqué.** La seconde moitié est la règle de fait : elle évite de signaler les 25 parents arbitrés
+  à la main avant que le label n'existe, et un signalement qui nomme 25 parents dont 24 vont bien
+  n'est plus lu. Deux verbes :
+  - `lib.sh arbitrage <parent>` **lit** — `<verdict>⇥<marqués>⇥<lots>⇥<source>`, codes **0**
+    arbitré · **3** jamais · **1** pas un parent (même asymétrie que `lots-ouverts` : « jamais »
+    est une réponse, pas une panne) ;
+  - `lib.sh arbitre <parent>` **enregistre** — pose le label, refuse un non-parent, idempotent.
+
+  ⚠ L'écriture est un **verbe** et non un `gh issue edit --add-label` recopié dans les prompts, pour
+  deux raisons dont une seule saute aux yeux. La visible : `tests/test_cycle_de_vie.py` **interdit**
+  `--add-label` dans `.claude/commands/**`, parce que c'est par là qu'un prompt remettrait le
+  **cycle de vie** sur l'issue, à côté de `set-workflow` — la garde est plus large que son motif, et
+  elle a raison de l'être. L'autre : #389 fera bouger le support du marqueur, donc l'écriture de
+  l'arbitrage ; un prompt qui appelle `gh` directement serait à retrouver, un verbe non.
+
+  Ce qui est automatique est la **détection du manque**, jamais le verdict. Marquer d'office
+  enverrait un lot partir d'une base incomplète, et le sens sûr reste le séquentiel : « ces deux
+  lots sont-ils indépendants ? » est un jugement, rendu **une fois par parent** puis persisté.
+  `/ticket-create` pose le label en créant un parent ; `queue.sh` signale ce qui manque et
+  `/orchestrate` le **propose** au feu vert (§11.2), dans la forme de la reprise des orphelins.
+
+  ⚠ Deux fausses pistes, écartées **après mesure** plutôt qu'en principe :
+  - *« distinguer un lot ajouté depuis l'arbitrage »* — l'ordre des iid ne le dit pas (un lot non
+    marqué d'iid supérieur aux marqués est simplement la queue non marquée du même lot de
+    création), et les dates non plus : **41 parents sur 42 ont toute leur checklist créée en moins
+    de 8 minutes**, le seul écart au-delà de l'heure étant #472 → #479 (1,9 h, même session). Les
+    lots naissent d'un seul geste ; le cas n'existe pas ici.
+  - *« déduire l'indépendance du contenu des lots »* — à l'heure du plan les lots ne sont pas
+    écrits, il n'y a aucun diff à comparer ; et une inférence dans `queue.sh` casserait sa règle 4
+    (deux appels sur le même backlog rendent le même plan), dont dépend la reprise d'un run sur
+    *son* plan.
+
+Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subtickets`,
+`arbitrage`) :
 
 | Commande | Besoin/ticket trop gros | Ticket parent | Sous-ticket |
 |---|---|---|---|
-| `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, marqueur `(parallèle)` sur les lots indépendants, lot tests en dernier) | — | — |
+| `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, marqueur `(parallèle)` sur les lots indépendants, lot tests en dernier) et pose `lot::arbitre` sur le parent, **quel qu'ait été le verdict** (#562) | — | — |
 | `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ le travail est en route (« En cours ») ou livré et on n'attend plus que des merges — un parent dont tout est fermé s'est fermé tout seul (#515) | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête. Et **fait passer le parent « En cours »** s'il était « À faire » (#515 à l'autre bout, ici #517, `lib.sh begin` → `demarre-parent`) |
 | `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou, si c'était le dernier, que le parent **se fermera de lui-même** au merge, #515), et coche les lots terminés dans la checklist du parent |
 | l'événement `issues: closed` | — | **ferme le parent** dès que son dernier lot se ferme (#515, `lib.sh ferme-parent`) — quels que soient l'auteur du merge et la machine | pose « Terminé » (#377) |
@@ -3649,6 +3698,30 @@ déjà.
 
 C'est la seule source d'indépendance du run : `run.sh --concurrence <n>` la **lit** et ne recalcule
 rien (§11.10). Sans l'option, il la lit et l'ignore — le run reste séquentiel.
+
+**Et le plan dit ce qu'il ne sait pas** (#562). La colonne `groupe` ne relaie que ce que la checklist
+**déclare** : un parent dont aucun lot ne porte le marqueur rend autant de vagues que de lots, donc
+un plan parfaitement séquentiel qu'aucune lecture ne distingue d'un séquentiel voulu (§5.1). Trois
+surfaces, une seule règle — celle de `lib.sh arbitrage`, rejouée par `gl_arbitrage_de` sur la vue que
+`queue.sh` a **déjà** en cache, donc sans une lecture de forge de plus :
+
+| Surface | Ce qu'elle rend |
+|---|---|
+| `queue.sh --non-arbitres` | TSV `parent`, `au-plan`, `marques`, `lots`, `titre` — ce que `/orchestrate` lit au point 0 |
+| `queue.sh --check` | les mêmes, en clair sur stderr, sous les groupes de dépendance |
+| le **plan lui-même** | des lignes `# non-arbitre⇥…` en fin de fichier |
+
+Les lignes du plan sont des **commentaires** : les deux lectures du plan par `run.sh` les écartent
+déjà (`grep -v '^#'`, puis `case "$rang" in '#'*`), et un plan **antérieur** à ce lot n'en porte
+aucune — même dégradation douce que la colonne `groupe` sur un plan d'avant #288. C'est ce qui permet
+à la ligne `plan :` d'un run de signaler l'arbitrage manquant **sans repayer une planification** : le
+fichier qu'il vient de recevoir le lui dit. Tout est **muet** quand le plan est entièrement arbitré —
+règle de `gc --auto` : signaler l'abstention nominale apprend à ne plus lire les signalements.
+
+⚠ Rien de tout cela ne **décide** : `/orchestrate` propose l'arbitrage au feu vert et l'écrit avant
+le lancement (§11.3, question (d)), dans la forme exacte de la reprise des orphelins de #327 — un
+« oui » explicite, jamais un contournement d'office. L'ordre compte pour la même raison : arbitrer
+**après** le lancement ne servirait qu'au run suivant, le plan étant figé au départ.
 
 **Le milestone, lui, se choisit** (#204). La phase courante reste le défaut — c'est presque toujours
 le bon — mais plusieurs milestones actifs peuvent porter du travail en même temps, et le run partait

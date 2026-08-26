@@ -70,6 +70,12 @@ create_label "prio::haute"   "#cc0033" "À traiter en priorité"
 create_label "prio::moyenne" "#ec9d00" "Priorité normale"
 create_label "prio::basse"   "#388e3c" "Peut attendre"
 
+# lot:: — ce qu'on sait du DÉCOUPAGE d'un parent de suivi, et non du ticket lui-même (#562).
+# `lot::arbitre` dit que la question « quels lots sont parallélisables ? » a été POSÉE sur ce parent,
+# quelle qu'ait été la réponse. Sans lui, un parent dont la réponse juste est « aucun » serait
+# indiscernable d'un parent que personne n'a arbitré, et proposé à chaque run (docs/10 §5.1).
+create_label "lot::arbitre"  "#0e8a16" "Parent de suivi : lots parallélisables arbitrés"
+
 echo "Labels prêts."
 
 echo

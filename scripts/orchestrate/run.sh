@@ -2581,6 +2581,19 @@ grep -v '^#' "$PLAN" | while IFS=$'\t' read -r rang iid parent prio groupe titre
 done
 printf '\n'
 
+# L'arbitrage manquant, s'il y en a (#562, docs/10 §5.1). Le plan le porte lui-même en lignes de
+# commentaire, donc rien n'est relu ni recalculé ici — et un plan d'avant ce lot, rejoué par
+# `--resume`, n'en porte aucune et ne dit simplement rien. MUET quand tout est arbitré : c'est un
+# séquentiel SUBI qu'on signale, jamais un séquentiel voulu.
+if grep -q '^# non-arbitre	' "$PLAN" 2>/dev/null; then
+  printf 'arbitrage : ces parents n'\''ont jamais été arbitrés — leurs lots partiront en séquentiel\n'
+  printf '            sans que personne ne l'\''ait décidé :\n'
+  grep '^# non-arbitre	' "$PLAN" | while IFS=$'\t' read -r _ p au_plan _ lots t; do
+    printf '            #%-5s %s lot(s) au plan sur %s — %s\n' "$p" "$au_plan" "$lots" "$t"
+  done
+  printf '            les arbitrer avant de lancer : /orchestrate le propose au feu vert.\n\n'
+fi
+
 if [ "$DRY" = 1 ]; then
   printf 'Mode --dry-run : rien n'\''a été lancé — « main » elle-même reste où elle est (#283 : un\n'
   printf 'vrai run l'\''avance d'\''abord sur origin/main, fetch + fast-forward, lib.sh sync-main).\n\n'
