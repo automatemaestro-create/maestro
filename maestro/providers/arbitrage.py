@@ -319,6 +319,24 @@ def motif_attente(outil: str, attente_s: float) -> str:
     )
 
 
+def motif_auto(outil: str) -> str:
+    """Ce qu'on trace d'un appel que la politique laisse passer **seul** (#586).
+
+    Le cran `auto` est celui de ce qu'on veut **voir** sans vouloir l'arrêter :
+    l'appel n'est suspendu ni soumis à personne, mais il laisse la même ligne au
+    journal et au fil temps réel qu'un acte approuvé. C'est toute la différence
+    avec un `allow`, qui passe en silence — et c'est la seule raison de classer
+    un outil `ask` + `auto` plutôt que de l'autoriser.
+
+    Rien n'est servi à l'agent, pour la raison de `motif_approbation` : il n'a
+    jamais su qu'on se posait la question.
+    """
+    return (
+        f"appel de l'outil {outil!r} laissé passer — décideur « auto », "
+        "personne n'a été sollicité."
+    )
+
+
 def motif_sans_arbitre(outil: str) -> str:
     """Le fail-safe : un acte à arbitrer, et personne à qui demander (EF-08, ENF-04).
 
@@ -328,6 +346,11 @@ def motif_sans_arbitre(outil: str) -> str:
     humain, un acte classé humain est refusé, et l'orchestrateur ne peut jamais
     l'approuver à la place d'une personne ». Laisser passer serait l'exact inverse
     du cran qu'on vient d'ajouter.
+
+    ⚠ Il ne couvre pas le cran `auto` (#586), et c'est voulu : `auto` ne
+    **désigne personne**, il n'a donc aucun canal à trouver. Le hook le tranche
+    avant d'arriver ici (`motif_auto`), sans quoi un acte qu'on a explicitement
+    dit « personne n'a à trancher » serait refusé faute de trouver quelqu'un.
     """
     return (
         f"appel de l'outil {outil!r} refusé : il demande un arbitrage humain et "

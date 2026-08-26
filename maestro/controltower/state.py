@@ -343,6 +343,14 @@ class EtatValidation:
     l'autre sens. `outil` vide et `arguments` à None pour une demande qui n'en
     porte pas — validation de tâche, application d'un diff —, qui reste alors
     rendue exactement comme avant ce lot.
+
+    `decideur` (#586) dit **qui doit trancher** cet acte : `auto`,
+    `orchestrateur` ou `humain`. Vide pour une demande qui n'en porte pas, où
+    l'écran retrouve exactement le rendu d'avant ce lot. Il ne remplace pas
+    `statut` et ne s'en déduit pas : celui-là dit *où en est* la demande
+    (en attente, approuvée, refusée), celui-ci *de qui* la réponse doit venir —
+    une demande en attente d'orchestrateur et une demande en attente d'une
+    personne portent le même statut et n'appellent pas le même geste.
     """
 
     tache_id: str
@@ -358,6 +366,7 @@ class EtatValidation:
     run_id: str = ""
     outil: str = ""
     arguments: dict[str, str] | None = None
+    decideur: str = ""
     horodatage: str = ""
 
     @property
@@ -381,6 +390,7 @@ class EtatValidation:
             "run_id": self.run_id,
             "outil": self.outil,
             "arguments": dict(self.arguments) if self.arguments is not None else None,
+            "decideur": self.decideur,
             "horodatage": self.horodatage,
         }
 
@@ -1365,6 +1375,10 @@ class ControlTowerState:
             # publication, et la projection est un miroir — elle ne rejuge rien.
             outil=event.outil,
             arguments=event.arguments,
+            # Qui doit trancher (#586) — repris tel quel pour la même raison :
+            # c'est un cran que nous avons posé, la projection n'a rien à en
+            # rejuger.
+            decideur=event.decideur,
             horodatage=event.horodatage,
         )
         self._suspend_sur_arbitrage(event.run_id, event.horodatage)

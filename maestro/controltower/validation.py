@@ -87,6 +87,11 @@ def evenement_demande(demande: DemandeValidation) -> Event:
     la raison qui vaut déjà pour le diff : ce sont des identifiants — celui de
     l'acte à trancher et ceux du schéma de l'outil —, et les masquer reviendrait à
     faire disparaître de l'écran l'objet même de la question.
+
+    Depuis #586, **qui doit trancher** : `decideur`. Ni expurgé ni réinterprété —
+    c'est l'un des trois crans que nous avons posés dans la politique, pas du
+    texte d'agent —, et c'est ce qui permet à l'écran de dire « cet acte attend
+    une personne » plutôt que de le laisser deviner à l'absence de réponse.
     """
     return Event(
         type=EVENEMENT_VALIDATION_DEMANDE,
@@ -110,6 +115,7 @@ def evenement_demande(demande: DemandeValidation) -> Event:
             if demande.arguments is not None
             else None
         ),
+        decideur=demande.decideur,
     )
 
 
