@@ -241,7 +241,7 @@ flowchart TB
 L'autonomie n'est pas l'absence de contrôle. Trois niveaux de garde-fous :
 
 1. **Permissions par agent** — chaque agent ne peut faire que ce que son rôle autorise.
-2. **Human-in-the-loop** — les actions classées sensibles (déploiement, migration destructive, dépense, suppression) se mettent en pause et attendent une validation explicite dans l'UI.
+2. **Human-in-the-loop** — un **appel d'outil** classé `ask` par la politique de permissions de l'agent (`core/permissions/<agent>.json`) est suspendu au vol et attend une décision explicite dans l'UI. Le déclencheur est l'**acte** que l'agent s'apprête à commettre, pas le texte de la tâche : développer une fonction de suppression n'est pas exécuter une suppression (chantier #573, [docs/04 §1.4bis](./04-specifications-agents.md)). Qui tranche est posé dans la politique — `auto`, `orchestrateur` ou `humain`, ce dernier par défaut ; sans personne pour trancher, l'acte est **refusé**.
 3. **Limites globales** — plafonds de dépense, liste d'actions interdites, time-outs.
 
 ---

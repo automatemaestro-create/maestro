@@ -21,7 +21,7 @@ d'orchestration, en trois protections appliquées à chaque tâche :
   (EF-08, ENF-04).
 
 **Ce qui déclenche un arbitrage (#585).** Le déclencheur est l'**acte que l'agent
-s'apprête à commettre**, plus le texte de ce qu'on lui demande d'écrire. Trois
+s'apprête à commettre**, et non le texte de ce qu'on lui demande d'écrire. Trois
 producteurs, un seul canal : un outil classé `ask` par la politique de l'agent
 (`maestro.agents.permissions.PolitiqueOutils`, #580) suspend l'appel au hook
 `PreToolUse` (#583) et compose une demande portant l'outil et ses arguments

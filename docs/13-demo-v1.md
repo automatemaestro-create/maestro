@@ -150,6 +150,11 @@ fil, tâches qui tombent dans le Kanban avec coût/tokens/durée, **handoffs** i
 observables, et à la tâche de déploiement la demande de validation en tête d'UI — contexte
 complet (agent, tâche, description, motif : *mot sensible « deploi » détecté*) :
 
+> ⚠ Relevé **à sa date**, et conservé tel quel. Depuis #585 la classification par mots-clés
+> n'est plus armée par défaut : le déclencheur nominal est l'**acte** — un outil classé `ask`
+> dans la politique de l'agent (chantier #573, [docs/04 §1.4bis](./04-specifications-agents.md)) —
+> et le motif nommerait aujourd'hui l'outil appelé, non un mot de la tâche.
+
 ![Validation en attente dans la Control Tower](./assets/demo-v1/validation-en-attente.png)
 
 Cliquer **Approuver** relance la tâche : la séquence `en_attente → approuvée` est tracée au

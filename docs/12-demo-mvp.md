@@ -93,6 +93,13 @@ s'adosse à la comptabilité par tâche (n°6), et le mot « déploiement » du 
 classification sensible (garde-fous #9). Le rapport structuré part sur stdout, le journal (#8)
 sur stderr — les rediriger comme ci-dessus les conserve en artefacts.
 
+> ⚠ **Rejouer cette démo aujourd'hui ne déclenchera plus rien par le mot.** Le compte rendu
+> ci-dessous est daté et n'est pas réécrit, mais depuis #585 `Guardrails.mots_sensibles` est
+> **vide par défaut** : le déclencheur nominal est l'**acte** — un outil classé `ask` dans la
+> politique de l'agent (chantier #573, [docs/04 §1.4bis](./04-specifications-agents.md)) —, et le
+> motif nommera l'outil appelé plutôt qu'un mot du livrable. Pour retrouver le régime de la démo,
+> renseigner la liste (`Guardrails(mots_sensibles=MOTS_SENSIBLES)`).
+
 **Pendant le run, dans l'UI** : la planification apparaît dans le fil d'activité ; les tâches
 surgissent dans le Kanban avec coût, tokens et durée à mesure qu'elles se terminent ; chaque fin
 de tâche à dépendants émet un **message inter-agents** visible dans le fil (« la main passe à
