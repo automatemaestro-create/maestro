@@ -281,6 +281,22 @@ def compter_ecrans(tickets: list[dict[str, Any]]) -> Counter[str]:
 # --- Rendu ----------------------------------------------------------------------------------------
 
 
+def attributs_agrandir(libelle: str) -> str:
+    """
+    Ce qui fait d'un élément le déclencheur de la visionneuse : `data-agrandir` et son nom.
+
+    Le nom accessible est posé sur le **déclencheur** et dit l'action (« Agrandir … »), là où
+    l'`alt` de l'image qu'il enveloppe dit le contenu — sans quoi le lecteur d'écran annoncerait
+    deux fois la même chose et jamais ce qu'un appui déclenche.
+
+    La visionneuse **réutilise la source de la vignette** : rien n'est encodé une seconde fois
+    ici. C'est ce qui la rend gratuite en octets, sur une page où une capture pèse déjà quelques
+    centaines de kilo-octets en `data:` et où le fichier entier vit sous un plafond.
+    """
+    nom = escape(f"Agrandir « {libelle} »", quote=True)
+    return f' data-agrandir aria-label="{nom}" data-legende="{escape(libelle, quote=True)}"'
+
+
 def rendre_badges(ticket: dict[str, Any]) -> str:
     """Les étiquettes d'un ticket — texte seul, jamais la couleur seule."""
     morceaux = []
@@ -332,8 +348,8 @@ def rendre_carte(
     if cle and cle in captures:
         capture = captures[cle]
         vignette = (
-            f'<a class="vignette" href="#capture-{escape(cle)}" '
-            f'title="Voir « {escape(capture["libelle"])} » en grand">'
+            f'<a class="vignette" href="#capture-{escape(cle)}"'
+            f'{attributs_agrandir(capture["libelle"])}>'
             f'<img src="{capture["uri"]}" alt="Control Tower — {escape(capture["libelle"])}" '
             f'loading="lazy"></a>'
         )
@@ -499,8 +515,8 @@ def rendre_ecrans(
         # hauteur calculée vaut zéro tant qu'elle n'est pas chargée reste à 0×0 et ne s'affiche
         # jamais. Un visuel qui doit être vu ne se charge pas paresseusement.
         vue = (
-            f'<a class="ecran-vue" href="#capture-{escape(cle)}" '
-            f'title="Voir « {escape(capture["libelle"])} » en grand">'
+            f'<a class="ecran-vue" href="#capture-{escape(cle)}"'
+            f'{attributs_agrandir(capture["libelle"])}>'
             f'<img src="{capture["uri"]}" alt="Control Tower — {escape(capture["libelle"])}"></a>'
             if capture
             else ""
@@ -559,8 +575,9 @@ def rendre_demonstrations(clips: list[dict[str, Any]]) -> str:
             # (voir `rendre_ecrans` — une data URI n'a rien à différer, et `lazy` l'a laissée
             # invisible à la mesure).
             visuel = (
-                f'<span class="clip-affiche"><img src="{clip["affiche"]}" '
-                f'alt="Control Tower — {escape(libelle)}"></span>'
+                f'<button type="button" class="clip-affiche"'
+                f'{attributs_agrandir(libelle)}><img src="{clip["affiche"]}" '
+                f'alt="Control Tower — {escape(libelle)}"></button>'
                 if clip["affiche"]
                 else f'<p class="clip-absente">Clip non intégré — {escape(libelle)}</p>'
             )
@@ -590,9 +607,15 @@ def rendre_demonstrations(clips: list[dict[str, Any]]) -> str:
 def rendre_galerie(captures: dict[str, dict[str, str]]) -> str:
     if not captures:
         return ""
+    # Le déclencheur est un `<button>` et non un `<a>` : ici il n'y a aucune ancre où aller — la
+    # galerie EST la cible des liens du haut de page. Un bouton est focusable, s'actionne à
+    # l'Entrée comme à l'Espace et s'annonce comme une action ; un `<a href="#">` ferait les trois
+    # moins bien, et déplacerait le fragment de l'URL pour rien.
     figures = "".join(
         f'<figure class="figure" id="capture-{escape(cle)}">'
+        f'<button type="button" class="figure-vue"{attributs_agrandir(c["libelle"])}>'
         f'<img src="{c["uri"]}" alt="Control Tower — {escape(c["libelle"])}" loading="lazy">'
+        f"</button>"
         f"<figcaption>{escape(c['libelle'])}</figcaption></figure>"
         for cle, c in captures.items()
     )
@@ -827,6 +850,45 @@ def feuille_de_style() -> str:
                  border: 1px solid var(--trait); }}
   .figure figcaption {{ margin: .6rem 0 0; font-size: .8125rem; color: var(--encre-2); }}
 
+  /* --- Visionneuse : toute image s'ouvre en grand --- */
+  /* Le déclencheur est tantôt un <a> (il garde son saut d'ancre sans JS), tantôt un <button> :
+     les deux se règlent ici, pour que rien ne trahisse lequel a été employé. */
+  [data-agrandir] {{ cursor: zoom-in; }}
+  button[data-agrandir] {{ display: block; width: 100%; padding: 0; border: 0;
+                           background: none; font: inherit; line-height: 0; }}
+  [data-agrandir]:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
+
+  /* Le <dialog> natif porte le piège de focus, la fermeture par Échap et le retour du focus au
+     déclencheur — trois choses qu'une pile de <div> aurait fallu réécrire, et moins bien. */
+  .visionneuse {{ border: 0; padding: 0; background: transparent; overflow: hidden;
+                  width: 100%; height: 100%; max-width: 100vw; max-height: 100vh; }}
+  .visionneuse::backdrop {{ background: rgba(0,0,0,.84); }}
+  .visionneuse[open] {{ display: flex; align-items: center; justify-content: center; }}
+  .visionneuse-figure {{ margin: 0; display: flex; flex-direction: column; align-items: center;
+                         gap: .85rem; max-width: 96vw; max-height: 94vh; }}
+  .visionneuse-image {{ display: block; width: auto; height: auto;
+                        max-width: 96vw; max-height: 84vh; object-fit: contain;
+                        border-radius: 8px; background: #fff;
+                        box-shadow: 0 1.5rem 4rem rgba(0,0,0,.5); }}
+  .visionneuse-legende {{ margin: 0; max-width: 62ch; text-align: center;
+                          font-size: .875rem; line-height: 1.5; color: #f2f1ec; }}
+  .visionneuse-fermer {{ position: fixed; top: 1rem; right: 1.25rem;
+                         font: inherit; font-size: 1.125rem; line-height: 1;
+                         color: #f2f1ec; background: rgba(0,0,0,.55);
+                         border: 1px solid rgba(255,255,255,.28); border-radius: 999px;
+                         width: 2.5rem; height: 2.5rem; cursor: pointer; }}
+  .visionneuse-fermer:hover {{ background: rgba(0,0,0,.8); }}
+  .visionneuse-fermer:focus-visible {{ outline: 2px solid #fff; outline-offset: 2px; }}
+
+  /* L'animation n'est PAS neutralisée après coup : elle n'est déclarée que sous
+     `no-preference`, donc elle n'existe pas du tout pour qui demande moins de mouvement. */
+  @media (prefers-reduced-motion: no-preference) {{
+    .visionneuse[open] {{ animation: visionneuse-entree .18s ease-out; }}
+    .visionneuse[open]::backdrop {{ animation: visionneuse-fond .18s ease-out; }}
+  }}
+  @keyframes visionneuse-entree {{ from {{ opacity: 0; transform: scale(.985); }} }}
+  @keyframes visionneuse-fond {{ from {{ opacity: 0; }} }}
+
   /* --- Pied --- */
   .pied {{ margin: 4rem 0 0; padding-top: 1.5rem; border-top: 1px solid var(--filet);
            font-size: .8125rem; color: var(--encre-3); }}
@@ -886,6 +948,56 @@ SCRIPT_THEME = """
     appliquer(suivant);
     try { localStorage.setItem(CLE, suivant); } catch (e) {}
   });
+})();
+"""
+
+
+VISIONNEUSE = """
+  <dialog id="visionneuse" class="visionneuse" aria-label="Image en plein écran">
+    <button type="button" class="visionneuse-fermer"
+            aria-label="Fermer l'image">&#10005;</button>
+    <figure class="visionneuse-figure">
+      <img class="visionneuse-image" alt="">
+      <figcaption class="visionneuse-legende"></figcaption>
+    </figure>
+  </dialog>"""
+
+
+SCRIPT_VISIONNEUSE = """
+(function () {
+  var dialogue = document.getElementById("visionneuse");
+  // Sans <dialog> utilisable, on ne fait RIEN : les déclencheurs qui sont des liens gardent leur
+  // saut vers la galerie, et rien ne se met en travers. Un repli maison serait un piège de focus
+  // à réécrire pour le seul navigateur qui n'a pas la balise.
+  if (!dialogue || typeof dialogue.showModal !== "function") return;
+
+  var image = dialogue.querySelector(".visionneuse-image");
+  var legende = dialogue.querySelector(".visionneuse-legende");
+
+  // Un seul écouteur, sur le document : la page en porte des dizaines, de déclencheurs, et ils
+  // sont produits par quatre fonctions de rendu différentes.
+  document.addEventListener("click", function (evenement) {
+    var cible = evenement.target;
+    if (!cible || !cible.closest) return;
+    var declencheur = cible.closest("[data-agrandir]");
+    if (!declencheur) return;
+    var vue = declencheur.querySelector("img");
+    if (!vue) return;
+    evenement.preventDefault();
+    image.src = vue.currentSrc || vue.src;
+    image.alt = vue.alt || "";
+    legende.textContent = declencheur.getAttribute("data-legende") || vue.alt || "";
+    dialogue.showModal();
+  });
+
+  // Le fond fait partie du <dialog> : un clic qui n'atteint aucun enfant est un clic « à côté ».
+  dialogue.addEventListener("click", function (evenement) {
+    if (evenement.target === dialogue) dialogue.close();
+  });
+  dialogue.querySelector(".visionneuse-fermer").addEventListener("click", function () {
+    dialogue.close();
+  });
+  // Échap et le retour du focus au déclencheur sont natifs — rien à écrire pour eux.
 })();
 """
 
@@ -1079,7 +1191,9 @@ def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
   </footer>
 
 </div>
+{VISIONNEUSE}
 <script>{SCRIPT_THEME}</script>
+<script>{SCRIPT_VISIONNEUSE}</script>
 </body>
 </html>
 """

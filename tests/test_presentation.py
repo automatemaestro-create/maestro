@@ -1138,3 +1138,165 @@ def test_aucun_script_de_presentation_n_est_orphelin() -> None:
     # invoquer les cinq, mais elle doit dire d'où viennent les parcours qu'on lui demande de trier.
     for nom in ("build.py", "captures.sh", "ecrans-touches.sh", "parcours.mjs"):
         assert nom in commande, f"{nom} n'est nommé nulle part dans /milestone-presentation"
+
+
+# --- La visionneuse : toute image s'ouvre en grand (#563) -----------------------------------------
+
+
+#: Un déclencheur enveloppant DIRECTEMENT une image de contenu. Le lien et le bouton sont les deux
+#: seules balises admises : toutes deux sont focusables et s'actionnent au clavier sans une ligne
+#: de JS, là où un `<div>` cliquable serait invisible à qui n'a pas de souris.
+_ENVELOPPE = re.compile(r'<(?:a|button)\b[^>]*\bdata-agrandir\b[^>]*>\s*<img\b[^>]*src="data:')
+
+#: Les images de contenu — celles qui portent des octets. L'`<img>` de la visionneuse, laissée vide
+#: dans le document et remplie par le script, n'en fait pas partie : c'est tout le sujet.
+_IMAGE_DE_CONTENU = re.compile(r'<img\b[^>]*src="data:')
+
+
+def test_le_detecteur_d_enveloppe_attrape_un_echantillon_fautif() -> None:
+    """Prouver le motif sur un cas fautif AVANT de balayer — sans quoi le test qui suit rendrait un
+    ✓ sur une question jamais posée (même méthode que `references_externes`, #534)."""
+    nue = '<figure><img src="data:image/png;base64,AAA"></figure>'
+    assert _IMAGE_DE_CONTENU.findall(nue), "l'échantillon ne contient même pas d'image de contenu"
+    assert _ENVELOPPE.findall(nue) == [], "une image NUE est comptée comme enveloppée"
+    # Un déclencheur qui n'est ni lien ni bouton ne compte pas davantage : il ne s'actionne pas au
+    # clavier, et c'est ce que le motif doit refuser.
+    muet = '<div data-agrandir><img src="data:image/png;base64,AAA"></div>'
+    assert _ENVELOPPE.findall(muet) == []
+    # Le cas conforme, lui, est reconnu sous ses deux formes.
+    assert _ENVELOPPE.findall('<a data-agrandir href="#x"><img src="data:image/png;base64,A">')
+    assert _ENVELOPPE.findall('<button type="button" data-agrandir><img src="data:image/png,A">')
+
+
+def donnees_aux_quatre_origines(presentation: Presentation) -> dict:
+    """Un jeu qui produit UNE image par endroit du gabarit qui en rend une : vignette de carte,
+    écran touché, galerie, et affiche de repli d'un clip écarté."""
+    return donnees_minimales(
+        tickets=[ticket(96, capture="couts", ecrans=["couts"])],
+        captures=[{"cle": "couts", "libelle": "Coûts", "fichier": presentation.png("couts.png")}],
+        ecrans=[{"cle": "couts", "libelle": "Coûts", "route": "/couts"}],
+        videos=[
+            {
+                "cle": "runs",
+                "libelle": "Les runs",
+                "fichier": presentation.webm("runs.webm", 4096),
+                "affiche": presentation.png("affiche.png"),
+            }
+        ],
+    )
+
+
+def test_toute_image_de_la_page_s_ouvre_en_grand(presentation: Presentation) -> None:
+    """Le critère du ticket, mesuré sur les OCTETS produits. Compter les déclencheurs ne suffirait
+    pas : c'est l'ÉGALITÉ avec les images qui dit qu'aucune n'a été oubliée en chemin."""
+    # Le plafond minuscule écarte le clip — c'est ce qui fait rendre son affiche de repli, la
+    # quatrième et la plus facile à oublier des origines d'image.
+    processus = presentation.construire(
+        donnees_aux_quatre_origines(presentation), MAESTRO_PRESENTATION_VIDEO_MAX="0.001"
+    )
+    assert processus.returncode == 0, processus.stderr
+    html = presentation.html()
+
+    images = _IMAGE_DE_CONTENU.findall(html)
+    assert len(images) == 4, f"les quatre origines d'image ne sont pas toutes rendues : {images}"
+    assert len(_ENVELOPPE.findall(html)) == len(images), (
+        "une image de contenu n'est pas enveloppée dans un déclencheur de visionneuse"
+    )
+    # Chaque déclencheur est NOMMÉ par l'action qu'il déclenche, et non par le contenu de l'image
+    # (que l'`alt` dit déjà) : sans ça, un lecteur d'écran annonce deux fois la même chose et
+    # jamais ce qu'un appui va faire.
+    assert html.count('aria-label="Agrandir') == len(images)
+
+
+def test_la_visionneuse_n_encode_aucune_image_une_seconde_fois(presentation: Presentation) -> None:
+    """La page vit sous un plafond de taille : la visionneuse doit être gratuite en octets. Elle
+    l'est parce qu'elle réutilise la source de la vignette au lieu d'embarquer la sienne."""
+    processus = presentation.construire(donnees_aux_quatre_origines(presentation))
+    assert processus.returncode == 0, processus.stderr
+
+    vue = re.search(r'<img\b[^>]*\bclass="visionneuse-image"[^>]*>', presentation.html())
+    assert vue, "la visionneuse n'a pas d'image"
+    assert "src=" not in vue.group(0), (
+        "l'image de la visionneuse porte une source dans le document — elle doit être remplie"
+        " par le script, depuis la vignette cliquée"
+    )
+
+
+def test_la_visionneuse_s_appuie_sur_le_dialog_natif(presentation: Presentation) -> None:
+    """`Échap`, le piège de focus et le retour du focus au déclencheur sont NATIFS à un `<dialog>`
+    ouvert en modal. Les réécrire à la main serait moins sûr : le test garde donc le choix de la
+    balise, et non une implémentation de rechange."""
+    processus = presentation.construire(donnees_aux_quatre_origines(presentation))
+    assert processus.returncode == 0, processus.stderr
+    html = presentation.html()
+
+    assert re.search(r'<dialog\b[^>]*\bid="visionneuse"', html), (
+        "la visionneuse n'est pas un <dialog> — Échap et le piège de focus sont alors à écrire"
+    )
+    assert "showModal()" in html, "ouverte hors du mode modal : ni piège de focus, ni ::backdrop"
+    # Fermeture au clic hors de l'image, et par un bouton explicitement nommé.
+    assert 'aria-label="Fermer' in html
+    assert "dialogue.close()" in html
+
+
+def test_l_animation_de_la_visionneuse_n_existe_pas_sous_mouvement_reduit(
+    presentation: Presentation,
+) -> None:
+    """Elle n'est pas neutralisée après coup : elle n'est DÉCLARÉE que sous `no-preference`. Une
+    surcharge qui vient après se contourne par n'importe quelle règle plus spécifique ; une
+    déclaration absente, non."""
+    processus = presentation.construire(donnees_minimales())
+    assert processus.returncode == 0, processus.stderr
+    html = presentation.html()
+
+    bloc = re.search(
+        r"@media \(prefers-reduced-motion: no-preference\) \{(.*?)\n  \}", html, re.DOTALL
+    )
+    assert bloc, "aucun bloc `no-preference` : l'animation joue pour tout le monde"
+    assert "animation:" in bloc.group(1)
+    dehors = html.replace(bloc.group(0), "")
+    assert not re.search(r"\.visionneuse[^{]*\{[^}]*animation:", dehors), (
+        "une animation de la visionneuse est déclarée hors du bloc `no-preference`"
+    )
+
+
+# --- Le pied de page ne porte que les échecs de génération (#563) ---------------------------------
+
+
+def pied_de(html: str) -> str:
+    return html.split('<footer class="pied">', 1)[1].split("</footer>", 1)[0]
+
+
+def test_sans_note_le_pied_de_page_n_a_pas_de_liste(presentation: Presentation) -> None:
+    """Le cas nominal : rien n'a manqué, donc le pied ne porte que sa ligne de provenance. Des
+    réserves méthodologiques y coûteraient la fin du document au lecteur à qui la page est
+    destinée — elles appartiennent au résumé rendu dans le terminal."""
+    processus = presentation.construire(donnees_minimales())
+    assert processus.returncode == 0, processus.stderr
+
+    pied = pied_de(presentation.html())
+    assert "<ul>" not in pied, "le pied de page porte une liste alors que rien n'a manqué"
+    assert "Généré le" in pied
+
+
+def test_une_note_de_generation_est_rendue_dans_le_pied(presentation: Presentation) -> None:
+    """La mécanique reste : ce qui a MANQUÉ à cette génération-ci doit se lire sur la page, son
+    lecteur n'ayant aucun moyen de le deviner en la regardant."""
+    manque = "Captures indisponibles : la stack de démo n'a pas démarré."
+    processus = presentation.construire(donnees_minimales(notes=[manque]))
+    assert processus.returncode == 0, processus.stderr
+
+    pied = pied_de(presentation.html())
+    assert "<ul>" in pied
+    assert "la stack de démo n" in pied and "a pas démarré" in pied
+
+
+def test_la_commande_borne_ce_que_les_notes_acceptent() -> None:
+    """Le gabarit ne peut pas distinguer une réserve de production d'un échec de génération : c'est
+    le prompt qui tranche, et c'est donc lui qu'on garde."""
+    morceaux = COMMANDE.read_text(encoding="utf-8").split("`notes` ne porte que", 1)
+    assert len(morceaux) == 2, "/milestone-presentation ne dit plus ce que `notes` accepte"
+    regle = morceaux[1].split("\n\n", 1)[0]
+    assert "Ce que la commande ne sait pas" in regle, (
+        "la règle ne renvoie pas les limites méthodologiques vers le résumé du terminal"
+    )
