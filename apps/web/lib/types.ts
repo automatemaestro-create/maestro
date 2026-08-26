@@ -245,6 +245,11 @@ export type AnalyticsCouts = {
  * action demandée (description), justification (raison) — puis l'issue.
  * `projet_id` (#277) est le projet de la tâche mise en pause : c'est par lui que
  * `?projet=` filtre le panneau, `null` quand elle ne relève d'aucun projet.
+ * `run_id` (#570) est le run que la demande **retient** — vide quand elle ne
+ * relève d'aucun run. Les deux voyagent désormais **sur la demande** et ne sont
+ * plus déduits à l'arrivée : une demande qui garde le démarrage de sa propre
+ * tâche est publiée avant que cette tâche n'existe, et se trouvait donc écartée
+ * de toutes les vues (#568).
  */
 export type Validation = {
   tache_id: string;
@@ -257,6 +262,7 @@ export type Validation = {
   decision: string;
   diff: DiffProjet | null;
   projet_id: string | null;
+  run_id: string;
   horodatage: string;
 };
 

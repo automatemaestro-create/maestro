@@ -311,6 +311,11 @@ class EtatValidation:
     `projet_id` (#277) est le projet de la **tâche** mise en pause, hérité de
     l'événement de demande : c'est ce qui rend le panneau des validations
     filtrable comme le Kanban. `None` quand la tâche ne relève d'aucun projet.
+
+    `run_id` (#570) est le run que cette demande **retient**. Il répond à la
+    question que le panneau ne pouvait pas poser — « quel run attend ? » — et
+    c'est par lui que le run saura dire qu'il attend (#571). Vide quand la
+    demande ne relève d'aucun run.
     """
 
     tache_id: str
@@ -323,6 +328,7 @@ class EtatValidation:
     decision: str = ""
     diff: DiffProjet | None = None
     projet_id: str | None = None
+    run_id: str = ""
     horodatage: str = ""
 
     @property
@@ -343,6 +349,7 @@ class EtatValidation:
             "decision": self.decision,
             "diff": self.diff.to_dict() if self.diff is not None else None,
             "projet_id": self.projet_id,
+            "run_id": self.run_id,
             "horodatage": self.horodatage,
         }
 
@@ -1294,13 +1301,19 @@ class ControlTowerState:
         la précédente : le moteur attend toujours la décision de la **dernière**
         demande publiée, l'historique complet reste dans le journal (#8).
 
-        Le **projet** (#277) se lit sur l'événement, ou à défaut sur la tâche
-        déjà projetée : `validation.demande` ne le porte pas (il naît d'une
-        `DemandeValidation` du moteur, qui ignore les projets), et le déduire ici
-        évite d'ajouter un champ à une couche que ce lot n'a pas à retoucher —
-        une validation appartient de toute façon au projet de sa tâche, pas au
-        sien. Si l'ordre des événements l'a précédée, `_applique_statut_tache`
-        recolle l'appartenance quand la tâche l'apprend.
+        Le **projet** (#277) se lit sur l'événement, ou à défaut sur la tâche déjà
+        projetée. Depuis #570 c'est la **première** branche qui sert : la demande
+        porte son projet, parce que la seconde ne pouvait pas tenir. Elle supposait
+        que la tâche serait projetée avant la demande, or une validation qui garde
+        le démarrage de sa propre tâche est publiée **avant** que cette tâche
+        n'existe — le repli était en aval de ce qu'il devait réparer, et le cas
+        qu'il ratait était le cas nominal (#568 : trois demandes sur trois, aucune
+        rattachée, treize minutes de blocage muet).
+
+        Le repli **reste** : un producteur qui ne porte rien — journal durable
+        antérieur, double minimaliste d'un test, moteur tiers — retombe dessus, et
+        `_applique_statut_tache` recolle encore l'appartenance quand la tâche
+        l'apprend. Il n'est plus la source, il est le filet.
         """
         connue = self._taches.get(event.tache_id)
         projet_id = event.projet_id
@@ -1315,6 +1328,7 @@ class ControlTowerState:
             raison=event.detail,
             diff=event.diff,
             projet_id=projet_id,
+            run_id=event.run_id,
             horodatage=event.horodatage,
         )
 
