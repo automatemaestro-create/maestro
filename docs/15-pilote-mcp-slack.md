@@ -134,6 +134,15 @@ Objectif volontairement minimal : une seule tâche suffit."
 L'objectif contient « mise en production » / « déploiement » : la tâche planifiée
 est classée **sensible** (#9), ce qui déclenche l'événement de validation.
 
+⚠ **Rejouer ce pilote aujourd'hui demande un geste de plus** : depuis #585,
+`Guardrails.mots_sensibles` est **vide par défaut**, donc aucun mot de l'objectif
+ne classe plus rien — il faut l'armer explicitement
+(`Guardrails(mots_sensibles=MOTS_SENSIBLES, …)`) pour retrouver le déclencheur de
+ce relevé. Le compte rendu ci-dessous est celui du run tel qu'il a eu lieu, à sa
+date : il n'est pas réécrit. Le déclencheur nominal est désormais l'**acte** —
+un outil classé `ask` dans la politique de l'agent (chantier #573) —, et c'est un
+motif nommant l'outil qui apparaîtrait à la ligne « Raison ».
+
 ### 4.2 Événements postés sur le canal (vérifiés)
 
 **1. Validation humaine en attente** — posté *avant* l'attente de la décision
