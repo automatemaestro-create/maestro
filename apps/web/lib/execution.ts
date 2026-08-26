@@ -17,6 +17,7 @@ import {
   CAUSE_EXTINCTION,
   EXECUTION_ANNULEE,
   EXECUTION_ECHEC,
+  EXECUTION_EN_ATTENTE_ARBITRAGE,
   EXECUTION_EN_ATTENTE_REPONSES,
   EXECUTION_TERMINEE,
   VALIDATION_EN_ATTENTE,
@@ -116,9 +117,9 @@ export function runsRelancables(
 /**
  * Les trois **issues** d'un run : il a rendu son verdict, il ne bougera plus.
  *
- * `en_attente_brief` et `en_attente_reponses` n'en sont pas, et le contrat le dit
- * en toutes lettres (`lib/types`) : ce sont des états **non terminaux** — le run
- * est en vol, simplement arrêté sur quelqu'un.
+ * `en_attente_brief`, `en_attente_reponses` et `en_attente_arbitrage` n'en sont
+ * pas, et le contrat le dit en toutes lettres (`lib/types`) : ce sont des états
+ * **non terminaux** — le run est en vol, simplement arrêté sur quelqu'un.
  */
 export const STATUTS_EXECUTION_SOLDES: readonly string[] = [
   EXECUTION_TERMINEE,
@@ -257,14 +258,31 @@ export function tachesEnAttenteDeValidation(
 /**
  * Ce qui retient ce run, ou `null` s'il n'attend personne.
  *
- * `attendUneValidation` vient de `runsEnAttenteDeValidation` ci-dessus : il est
- * passé plutôt que redéduit ici, parce que l'appariement demande les tâches du
- * projet et que cette fonction-ci ne doit connaître qu'un run.
+ * **Les trois attentes se lisent d'abord sur le statut du run** (#571), et c'est
+ * le critère du ticket : `en_attente_arbitrage` est un statut d'exécution au même
+ * titre que les deux du brief, posé par la projection à la réception de la demande
+ * (`state.py`). Une seule question, une seule source — le régime, le badge, la
+ * ligne d'attente et son ancienneté en découlent sans que personne n'ait à savoir
+ * *laquelle* des trois c'est.
+ *
+ * L'appariement `attendUneValidation` **reste**, en second et jamais en premier.
+ * Il vient de `runsEnAttenteDeValidation` ci-dessus — passé plutôt que redéduit
+ * ici, parce qu'il demande les tâches du projet quand cette fonction-ci ne doit
+ * connaître qu'un run — et il ne sert plus que de filet : une trace d'avant ce
+ * lot, ou une demande publiée par un producteur qui ne porte pas son run (#570).
+ * Il ne pouvait pas porter la réponse seul, et c'est le défaut d'origine du
+ * chantier : la demande est publiée **avant** que sa tâche n'existe (une tâche
+ * sensible est stoppée avant toute exécution), donc l'appariement n'avait rien à
+ * apparier au moment exact où il aurait servi — treize minutes de blocage muet
+ * (#568).
  */
 export function causeDAttente(
   execution: ResumeExecution,
   attendUneValidation: boolean,
 ): CauseAttente | null {
+  if (execution.statut === EXECUTION_EN_ATTENTE_ARBITRAGE) {
+    return ATTENTE_VALIDATION;
+  }
   if (attendUnHumain(execution)) {
     return execution.statut === EXECUTION_EN_ATTENTE_REPONSES
       ? ATTENTE_REPONSES

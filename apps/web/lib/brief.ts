@@ -21,18 +21,26 @@ import {
 } from "./types";
 
 /**
- * Les deux états où un run est **suspendu sur un humain** (#320, #321) : en vol,
- * mais rien ne bougera sans un geste. Rassemblés parce que la question « ce run
- * attend-il quelqu'un ? » se pose à plusieurs endroits et qu'aucun n'a à
- * connaître les deux noms — pendant exact de `STATUTS_EXECUTION_EN_ATTENTE`
- * côté backend.
+ * Les deux états où un run est arrêté **sur son brief** (#320, #321) : en vol,
+ * mais rien ne bougera sans un geste. Rassemblés parce que la question se pose à
+ * plusieurs endroits et qu'aucun n'a à connaître les deux noms.
+ *
+ * ⚠ Ce n'est **plus** le pendant exact de `STATUTS_EXECUTION_EN_ATTENTE` côté
+ * backend, qui en compte trois depuis #571 : `en_attente_arbitrage` en est
+ * délibérément absent ici. Ce module sert les écrans du **brief** — le panneau du
+ * tableau de bord, la file de la cloche, l'écran de validation —, et un run arrêté
+ * sur un arbitrage de tâche n'y a rien à faire : il n'a aucun brief à relire, et
+ * l'y lister enverrait quelqu'un chercher une décision de cadrage là où c'est une
+ * action sensible qui attend. La question générale — « ce run attend-il
+ * quelqu'un ? », les trois attentes confondues — se pose à `causeDAttente`
+ * (`lib/execution`), qui est l'endroit qui la traite.
  */
 export const STATUTS_ATTENTE_HUMAINE: readonly string[] = [
   EXECUTION_EN_ATTENTE_BRIEF,
   EXECUTION_EN_ATTENTE_REPONSES,
 ];
 
-/** Ce run est-il arrêté sur un geste humain (décision ou réponses) ? */
+/** Ce run est-il arrêté sur son brief (décision ou réponses) ? */
 export function attendUnHumain(execution: ResumeExecution): boolean {
   return STATUTS_ATTENTE_HUMAINE.includes(execution.statut);
 }

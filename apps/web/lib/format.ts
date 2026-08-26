@@ -9,6 +9,7 @@ import {
   CAUSE_PLAFOND_TOURS,
   EXECUTION_ANNULEE,
   EXECUTION_ECHEC,
+  EXECUTION_EN_ATTENTE_ARBITRAGE,
   EXECUTION_EN_ATTENTE_BRIEF,
   EXECUTION_EN_ATTENTE_REPONSES,
   EXECUTION_EN_COURS,
@@ -179,6 +180,10 @@ const LIBELLES_STATUT_EXECUTION: Record<string, string> = {
   [EXECUTION_ECHEC]: "Échec",
   [EXECUTION_EN_ATTENTE_BRIEF]: "Brief à valider",
   [EXECUTION_EN_ATTENTE_REPONSES]: "Questions en attente",
+  // Le libellé de la table `ATTENTES` (`components/runs/EtatRun`) au mot près
+  // (#571) : c'est le même fait, et deux formulations pour un run selon qu'on lit
+  // son badge ou son statut brut feraient chercher deux états.
+  [EXECUTION_EN_ATTENTE_ARBITRAGE]: "Validation en attente",
 };
 
 /** Le libellé d'un statut de run, ou le statut brut si le flux s'est enrichi. */

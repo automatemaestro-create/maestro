@@ -689,6 +689,17 @@ export const EXECUTION_EN_ATTENTE_BRIEF = "en_attente_brief";
  * on pose des questions serait une impasse.
  */
 export const EXECUTION_EN_ATTENTE_REPONSES = "en_attente_reponses";
+/**
+ * Le run s'est arrêté sur un **arbitrage de tâche** (#571) : une action sensible
+ * attend qu'un humain l'approuve ou la refuse (#48). Non terminal comme les deux
+ * autres, et posé par la projection sur la demande elle-même — pas déduit d'un
+ * appariement validation → tâche → run, qui arrive trop tard (`lib/execution`).
+ *
+ * Troisième exemplaire d'un motif qui existait déjà deux fois, et c'est tout le
+ * ticket : sans lui, un run bloqué et un run qui travaille rendaient la même
+ * réponse — `en_cours`, 0 tâche, coût figé, cœur battant (#568).
+ */
+export const EXECUTION_EN_ATTENTE_ARBITRAGE = "en_attente_arbitrage";
 
 /**
  * Les deux **ordres de pause** d'un run (#477), tels qu'ils voyagent dans
