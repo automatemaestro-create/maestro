@@ -25,7 +25,8 @@ ambiant.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
@@ -51,6 +52,7 @@ from claude_agent_sdk.types import HookInput
 
 from maestro.acte import arguments_depuis
 from maestro.config import ConfigError, Settings
+from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
@@ -258,6 +260,7 @@ class ClaudeProvider(ModelProvider):
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         on_arbitrage: Arbitre | None = None,
+        credit_arbitrage: CreditArbitrage | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -389,6 +392,15 @@ class ClaudeProvider(ModelProvider):
         dessus, retire à l'agent la possibilité de lever la main. C'est le sens
         sûr — la classification, elle, ne dépend pas de lui — et le refus est
         tracé comme les autres.
+
+        `credit_arbitrage` (#584) est ce que ce fournisseur **rend** à l'appelant
+        des deux canaux ci-dessus : une fenêtre ouverte autour de chaque attente,
+        et rien de plus. Elle est ouverte aux deux endroits où un appel de l'agent
+        est réellement suspendu — le hook pour l'acte intercepté, l'outil MCP pour
+        l'agent qui lève la main — parce que ce sont les deux seuls instants dont
+        la durée soit celle du blocage. En particulier, elle se **referme quand le
+        hook cesse d'attendre**, pas quand la demande aboutit : la demande reste
+        en vol, l'agent, lui, a repris son travail.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -402,7 +414,7 @@ class ClaudeProvider(ModelProvider):
         if on_arbitrage is not None:
             # En dernier, à dessein : le nom est réservé, et une déclaration
             # homonyme ne masque pas le canal d'un garde-fou.
-            serveurs[NOM_SERVEUR] = _serveur_arbitrage(on_arbitrage)
+            serveurs[NOM_SERVEUR] = _serveur_arbitrage(on_arbitrage, credit_arbitrage)
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
@@ -426,6 +438,7 @@ class ClaudeProvider(ModelProvider):
                                     on_refus,
                                     on_arbitrage_acte,
                                     self._arbitrage,
+                                    credit_arbitrage,
                                 )
                             ],
                             # Posée, jamais subie (#583) : la borne par défaut du
@@ -466,7 +479,9 @@ class ClaudeProvider(ModelProvider):
                 regulateur.vider()
 
 
-def _outil_arbitrage(on_arbitrage: Arbitre) -> SdkMcpTool[Any]:
+def _outil_arbitrage(
+    on_arbitrage: Arbitre, credit: CreditArbitrage | None = None
+) -> SdkMcpTool[Any]:
     """L'outil `demander_arbitrage(raison)` servi à l'agent (#582).
 
     Un seul outil, dont l'appel **attend** la décision et rend à l'agent de quoi
@@ -491,6 +506,14 @@ def _outil_arbitrage(on_arbitrage: Arbitre) -> SdkMcpTool[Any]:
     L'outil est rendu **séparément de son serveur** pour qu'on puisse l'appeler
     tel quel : ce qui décide ici tient en une poignée de lignes, et les éprouver
     ne doit pas coûter un CLI, un sous-processus et un quota (tests → #579).
+
+    `credit` (#584) mesure l'attente : ici, elle n'est bornée par rien — l'agent
+    a levé la main et *attend sa réponse*, il n'y a pas d'échéance de hook à
+    respecter — et c'est justement le canal où un délai par tâche faisait le plus
+    de dégâts. Un `timeout_s` de dix minutes tuait une tâche dont l'agent s'était
+    montré prudent, ce qui apprend exactement le contraire de ce qu'on veut lui
+    apprendre. La fenêtre couvre le seul `await` qui bloque, et pas la
+    composition de la réponse.
     """
 
     @tool(NOM_OUTIL, DESCRIPTION_OUTIL, SCHEMA_ENTREE)
@@ -500,7 +523,8 @@ def _outil_arbitrage(on_arbitrage: Arbitre) -> SdkMcpTool[Any]:
             texte = RAISON_MANQUANTE
         else:
             try:
-                approuve, detail = await on_arbitrage(raison)
+                with _fenetre_arbitrage(credit):
+                    approuve, detail = await on_arbitrage(raison)
             except Exception as exc:  # noqa: BLE001 — refus servi, jamais une tâche tuée
                 approuve, detail = False, CANAL_EN_ERREUR.format(cause=exc)
             texte = reponse(approuve, detail)
@@ -509,7 +533,25 @@ def _outil_arbitrage(on_arbitrage: Arbitre) -> SdkMcpTool[Any]:
     return demander_arbitrage
 
 
-def _serveur_arbitrage(on_arbitrage: Arbitre) -> McpServerConfig:
+@contextmanager
+def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
+    """Ouvre la fenêtre d'attente du crédit quand il y en a un (#584), sinon ne fait rien.
+
+    Le canal est optionnel — un appelant qui n'a pas de délai à défendre n'a rien
+    à mesurer —, et ce petit adaptateur évite d'écrire deux fois le même `await`
+    sous un `if`. Deux corps à tenir d'accord pour une différence de mesure
+    seraient le premier moyen qu'une des deux branches cesse d'être arbitrée.
+    """
+    if credit is None:
+        yield
+        return
+    with credit.attente():
+        yield
+
+
+def _serveur_arbitrage(
+    on_arbitrage: Arbitre, credit: CreditArbitrage | None = None
+) -> McpServerConfig:
     """Le serveur MCP **in-process** qui porte l'outil d'arbitrage (#582).
 
     In-process (`type: "sdk"`) et non stdio : il n'y a ni processus à lancer ni
@@ -519,7 +561,7 @@ def _serveur_arbitrage(on_arbitrage: Arbitre) -> McpServerConfig:
     `_attend_serveurs_mcp` (cf. `run_agent`).
     """
     return create_sdk_mcp_server(
-        name=NOM_SERVEUR, tools=[_outil_arbitrage(on_arbitrage)]
+        name=NOM_SERVEUR, tools=[_outil_arbitrage(on_arbitrage, credit)]
     )
 
 
@@ -528,6 +570,7 @@ def _hook_permissions(
     on_refus: Callable[[str, str], None] | None,
     on_arbitrage_acte: ArbitreActe | None = None,
     bornes: BornesArbitrage | None = None,
+    credit: CreditArbitrage | None = None,
 ) -> Callable[[HookInput, str | None, HookContext], Any]:
     """Le hook PreToolUse : applique la politique de l'agent, et **arme l'arbitrage** (#110, #583).
 
@@ -556,11 +599,23 @@ def _hook_permissions(
 
     ⚠ L'attente expirée n'**annule pas** la demande : le `shield` la laisse en
     vol, ce que dit le motif servi à l'agent. C'est la différence entre « refusé »
-    et « pas encore tranché », et c'est le seuil que #584 reprendra pour ne pas
-    perdre une décision tardive. Son issue est absorbée (`_absorbe_arbitrage_tardif`),
-    comme celle d'une réalisation détachée par le moteur (#64) : sans cela, une
-    décision qui arrive après coup serait signalée par asyncio comme une exception
-    jamais relevée.
+    et « pas encore tranché ». Son issue est absorbée
+    (`_absorbe_arbitrage_tardif`), comme celle d'une réalisation détachée par le
+    moteur (#64) : sans cela, une décision qui arrive après coup serait signalée
+    par asyncio comme une exception jamais relevée.
+
+    Elle n'est plus **perdue** pour autant (#584) : l'appelant la range dans la
+    mémoire de la tâche (`maestro.deliberation.MemoireArbitrage`) et le rappel du
+    même acte par l'agent la retrouve sans rouvrir de demande. Le partage vit
+    là-bas et pas ici, à dessein — ce hook ne connaît ni la tâche, ni le run, ni
+    qui tranche, et deux appels au même outil n'ont d'identité commune que du
+    côté qui compose la demande.
+
+    `credit` (#584) est la **fenêtre d'attente** rendue à l'appelant : ouverte
+    juste avant de se suspendre, refermée dès que ce hook cesse d'attendre —
+    verdict rendu ou borne atteinte —, jamais quand la demande aboutit. C'est
+    exactement la durée pendant laquelle l'appel de l'agent est resté en
+    suspens, et c'est elle que l'appelant déduit du délai de la tâche.
 
     Les **trois issues** (approuvée, refusée, toujours en attente) passent par
     `on_refus`, le canal de traçage de l'exécuteur (journal + fil temps réel) —
@@ -611,9 +666,13 @@ def _hook_permissions(
             on_arbitrage_acte(outil, arguments_depuis(entree), motif)
         )
         try:
-            approuve, detail = await asyncio.wait_for(
-                asyncio.shield(attente), bornes.attente_effective
-            )
+            # La fenêtre se referme ici, avec le `with` — pas avec `attente`, qui
+            # peut survivre à ce hook. C'est la durée du **blocage de l'appel**,
+            # la seule que l'appelant puisse honnêtement rendre à la tâche.
+            with _fenetre_arbitrage(credit):
+                approuve, detail = await asyncio.wait_for(
+                    asyncio.shield(attente), bornes.attente_effective
+                )
         except TimeoutError:
             # Deux causes que le type ne distingue pas : notre attente qui expire
             # (la demande est encore en vol, donc `attente` n'est pas soldée) et
@@ -660,9 +719,12 @@ def _absorbe_arbitrage_tardif(attente: asyncio.Future[tuple[bool, str]]) -> None
     l'attend. Sans cette relève, asyncio signalerait une « exception never
     retrieved » sur un objet dont on a déjà rendu le verdict.
 
-    Ce qu'elle **ne fait pas** est le sujet de #584 : rien ici ne rattrape une
-    décision tardive. Elle est reçue et laissée de côté ; l'appel, lui, a été
-    écarté pour cette fois.
+    Ce qu'elle ne fait **toujours pas**, et c'est voulu : elle ne rattrape rien.
+    Le rattrapage d'une décision tardive vit chez l'appelant (#584,
+    `maestro.deliberation.MemoireArbitrage`), qui seul sait de quel acte il
+    s'agit et à quelle tâche il appartient. Ici on absorbe, et c'est tout — un
+    fournisseur qui retiendrait des décisions tiendrait un état de garde-fou
+    dans une couche de transport.
     """
     if not attente.cancelled():
         attente.exception()

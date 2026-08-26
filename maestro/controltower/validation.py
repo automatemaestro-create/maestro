@@ -10,6 +10,14 @@ la décision humaine** (`validation.decision`, publiée par
 personne n'a tranché — pas de time-out silencieux : le time-out par tâche du
 moteur ne court pas pendant cette attente (cf. `LocalExecutor._realise_gardee`).
 
+⚠ Depuis #584 cette dernière phrase ne tient plus par la **place** de l'attente
+mais par une mesure. Elle était vraie parce que la validation d'une tâche
+précédait l'armement du délai ; l'arbitrage d'un **acte** (#583), lui, vit au
+cœur de la réalisation. Ce qu'un appelant doit savoir de ce validateur n'a pas
+changé pour autant — il attend indéfiniment, sans borne à lui —, mais ce qui
+protège la tâche est désormais `maestro.deliberation.CreditArbitrage`, et non
+plus l'ordre des lignes de l'exécuteur.
+
 Le contrat est celui du `Validateur` des garde-fous : approbation → le moteur
 reprend la tâche ; refus → il l'annule proprement avant toute exécution ; dans
 les deux cas la décision est consignée au journal (#8, étape

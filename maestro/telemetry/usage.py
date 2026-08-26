@@ -50,6 +50,21 @@ class StepUsage:
     fournisseur. `cout_usd` reste None quand aucun fournisseur ne l'a rapporté
     (inconnu, à distinguer d'un coût nul). `tokens_entree` inclut le cache côté
     fournisseur (cf. `maestro.providers.claude`).
+
+    `duree_arbitrage_ms` (#584) est la part de `duree_ms` passée **suspendue à une
+    décision humaine** (`maestro.deliberation.CreditArbitrage`) — jamais un temps
+    de plus, toujours une part de celui qui est déjà là. C'est ce qui permet de
+    lire « le temps d'exécution » (`duree_execution_ms`) sans le confondre avec le
+    temps qu'un opérateur a mis à trancher : sans ce champ, une tâche suspendue
+    quatre minutes sur un acte sensible se lit exactement comme une tâche lente,
+    et l'audit d'un run (#495) range le second au compte du premier.
+
+    Il vaut `None` — inconnu — partout où personne n'a mesuré, et `0` là où l'on a
+    mesuré qu'il n'y a pas eu d'arbitrage : la distinction est celle de `cout_usd`,
+    et elle vaut ici pour la même raison. Il n'est posé que sur l'étape **finale**
+    d'une tâche, la seule qui porte sa durée horloge ; le poser aussi sur les
+    étapes annexes (`:validation`, `:refus-outil`, à usage nul) le ferait compter
+    deux fois dans `usage_totale`.
     """
 
     appels: int = 0
@@ -58,6 +73,7 @@ class StepUsage:
     cout_usd: float | None = None
     duree_ms: int | None = None
     duree_api_ms: int | None = None
+    duree_arbitrage_ms: int | None = None
     tours: int = 0
     outils: tuple[str, ...] = ()
 
@@ -65,6 +81,21 @@ class StepUsage:
     def tokens_total(self) -> int:
         """Total des tokens consommés (entrée + sortie)."""
         return self.tokens_entree + self.tokens_sortie
+
+    @property
+    def duree_execution_ms(self) -> int | None:
+        """La durée horloge **moins** l'arbitrage : le temps réellement passé à travailler (#584).
+
+        `None` quand la durée horloge l'est — il n'y a alors rien à décomposer.
+        Sans arbitrage mesuré, c'est la durée horloge elle-même : une tâche qui
+        n'a rien fait arbitrer a passé tout son temps à travailler. Bornée à zéro,
+        les deux mesures venant d'horloges qui ne partent pas au même instant.
+        """
+        if self.duree_ms is None:
+            return None
+        if self.duree_arbitrage_ms is None:
+            return self.duree_ms
+        return max(0, self.duree_ms - self.duree_arbitrage_ms)
 
     def fusion(self, autre: StepUsage) -> StepUsage:
         """Agrège deux mesures : somme des compteurs, union ordonnée des outils."""
@@ -75,17 +106,33 @@ class StepUsage:
             cout_usd=_somme_optionnelle(self.cout_usd, autre.cout_usd),
             duree_ms=_somme_optionnelle(self.duree_ms, autre.duree_ms),
             duree_api_ms=_somme_optionnelle(self.duree_api_ms, autre.duree_api_ms),
+            duree_arbitrage_ms=_somme_optionnelle(
+                self.duree_arbitrage_ms, autre.duree_arbitrage_ms
+            ),
             tours=self.tours + autre.tours,
             outils=self.outils + tuple(o for o in autre.outils if o not in self.outils),
         )
 
-    def avec_duree(self, duree_ms: int) -> StepUsage:
-        """Copie de la mesure avec la durée horloge posée par l'appelant."""
-        return replace(self, duree_ms=duree_ms)
+    def avec_duree(self, duree_ms: int, *, arbitrage_ms: int | None = None) -> StepUsage:
+        """Copie de la mesure avec la durée horloge posée par l'appelant.
+
+        `arbitrage_ms` (#584) pose du même geste la part de cette durée passée
+        suspendue à une décision humaine. Absent, le champ reste `None` : un
+        appelant qui ne mesure pas l'arbitrage ne déclare pas qu'il n'y en a pas
+        eu — la plupart des appelants de ce verbe (files, activités durables,
+        boucle de planification) n'ont aucun arbitrage à mesurer.
+        """
+        return replace(self, duree_ms=duree_ms, duree_arbitrage_ms=arbitrage_ms)
 
     def resume_court(self) -> str:
         """Rend la mesure en une ligne lisible (pour les synthèses Markdown)."""
         duree = "n/d" if self.duree_ms is None else f"{self.duree_ms / 1000:.1f} s"
+        if self.duree_arbitrage_ms:
+            # Nommé **seulement** quand il y en a eu : annoncer « dont 0,0 s
+            # d'arbitrage » sur chacune des tâches d'un run apprendrait à ne plus
+            # lire la mention, et c'est elle qui doit sauter aux yeux le jour où
+            # une tâche a passé quatre minutes à attendre quelqu'un.
+            duree += f" (dont {self.duree_arbitrage_ms / 1000:.1f} s d'arbitrage)"
         if not self.appels:
             return f"aucun usage fournisseur rapporté · durée {duree}"
         cout = "n/d" if self.cout_usd is None else f"{self.cout_usd:.4f} $"
@@ -105,6 +152,7 @@ class StepUsage:
             "cout_usd": self.cout_usd,
             "duree_ms": self.duree_ms,
             "duree_api_ms": self.duree_api_ms,
+            "duree_arbitrage_ms": self.duree_arbitrage_ms,
             "tours": self.tours,
             "outils": list(self.outils),
         }
@@ -123,6 +171,7 @@ class StepUsage:
             cout_usd=data.get("cout_usd"),
             duree_ms=data.get("duree_ms"),
             duree_api_ms=data.get("duree_api_ms"),
+            duree_arbitrage_ms=data.get("duree_arbitrage_ms"),
             tours=data.get("tours", 0),
             outils=tuple(data.get("outils", ())),
         )
