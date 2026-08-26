@@ -30,9 +30,20 @@ interdit (`autorise` le dit permis, `filtre_outils`/`serveur_autorise`
 continuent de le monter : un outil retiré de la session n'atteindrait jamais
 l'arbitrage), et `ask` l'emporte sur `allow`, donc un outil cité en `ask` est
 arbitré **même** quand une liste `allow` fermée ne le cite pas — sinon le cran
-du milieu serait lettre morte dès qu'une politique ferme sa liste. À ce lot
-c'est un **contrat** : le verdict existe, aucun appelant ne le consulte encore
-(le hook `PreToolUse` reste inchangé — lot #583).
+du milieu serait lettre morte dès qu'une politique ferme sa liste.
+
+Et depuis #586, une entrée `ask` porte **qui la tranche** : `auto`,
+`orchestrateur` ou `humain` (`maestro.decideur`). Le cran est posé ici, à froid
+et versionné avec le dépôt, parce qu'un « et si l'orchestrateur répondait
+lui-même ? » décidé au vol par un LLM ne serait ni traçable ni testable. Deux
+formes se relisent donc pour `ask` — une **liste** (`["Bash"]`, tout `humain` :
+c'est le fichier d'avant ce lot, au bit près) ou un **objet**
+(`{"Bash": "auto"}`) —, et il n'y en a qu'une en écriture : `to_dict` réémet
+toujours l'objet, seule forme qui porte l'information entière. Un cran absent
+vaut `humain` (*un cran non précisé escalade, il ne s'auto-approuve pas*) ; un
+cran **inconnu** est une erreur franche, comme toute politique douteuse — le
+repli tolérant vit chez `decideur_depuis`, pour ce qui se relit après coup et ne
+peut plus être corrigé.
 
 Le dépôt suit le pattern des voisins (`maestro.agents.mcp`, `capacity`) : un
 fichier JSON par agent (`core/permissions/<agent>.json`, versionné avec le
@@ -54,6 +65,7 @@ from pathlib import Path
 from typing import Any
 
 from maestro.config import Settings, load_settings
+from maestro.decideur import DECIDEUR_DEFAUT, Decideur, decideur_depuis
 
 #: Nom d'agent admissible comme fichier de stockage — même verrou que les
 #: dépôts voisins (`maestro.agents.mcp`, `store`) : slug sûr, jamais un chemin.
@@ -89,6 +101,46 @@ def _cite_serveur(entrees: Iterable[str], prefixe: str) -> bool:
     )
 
 
+class EntreeArbitrage(str):
+    """Une entrée `ask` : le nom de l'outil, **et qui tranche son appel** (#586).
+
+    Sous-classe de `str` à dessein, et ce n'est pas une commodité d'écriture :
+    l'entrée *est* son nom d'outil partout où ce module la manipulait déjà —
+    `_correspond`, `_cite_serveur`, la comparaison de deux politiques,
+    `json.dumps` — si bien que le cran s'y ajoute sans qu'aucun de ces
+    endroits ait à connaître son existence. Une politique écrite avant ce lot
+    se relit donc à l'identique, sous le défaut `humain`, et une politique
+    construite en Python avec des chaînes nues (`PolitiqueOutils(ask=("Bash",))`)
+    continue de dire exactement ce qu'elle disait.
+
+    L'égalité et le hachage sont ceux de `str` : deux entrées de même nom sont
+    la même entrée quel que soit leur cran. C'est ce qu'il faut — une entrée ne
+    peut porter qu'un cran (la forme objet a des clés uniques, la forme liste
+    n'en porte aucun), et le dédoublonnage de `_liste_validee` garde ainsi son
+    sens sans avoir à départager deux crans qui ne peuvent pas coexister.
+    """
+
+    __slots__ = ("decideur",)
+
+    decideur: Decideur
+
+    def __new__(cls, entree: str, decideur: Decideur = DECIDEUR_DEFAUT) -> EntreeArbitrage:
+        objet = super().__new__(cls, entree)
+        objet.decideur = decideur
+        return objet
+
+
+def _entree_arbitrage(entree: str) -> EntreeArbitrage:
+    """Normalise une entrée `ask` — une chaîne nue vaut le cran par défaut.
+
+    Le point de passage unique par lequel `PolitiqueOutils` s'assure que sa
+    liste `ask` ne porte que des `EntreeArbitrage`, d'où qu'elle vienne : un
+    fichier en forme liste, un appelant Python qui passe des chaînes, ou une
+    politique déjà normalisée qu'on reconstruit.
+    """
+    return entree if isinstance(entree, EntreeArbitrage) else EntreeArbitrage(entree)
+
+
 class Verdict(StrEnum):
     """Ce qu'une politique dit d'un appel d'outil — trois crans, plus deux (#580).
 
@@ -110,10 +162,17 @@ class DecisionOutil:
     arbitre — il nomme l'outil et la liste en cause, comme `raison_refus`
     aujourd'hui. Il est **vide sur `PASSE`** : rien ne s'oppose à l'appel, il
     n'y a rien à en dire.
+
+    `decideur` (#586) dit **qui tranche**, et il n'est renseigné que sur
+    `ARBITRAGE` — `None` ailleurs, exactement pour la raison qui laisse le motif
+    vide sur `PASSE` : un appel qu'on laisse passer ou qu'on refuse d'office
+    n'est soumis à personne, il n'a donc pas de décideur. Le nommer quand même
+    ferait lire « humain » là où aucune personne n'a été ni ne sera sollicitée.
     """
 
     verdict: Verdict
     motif: str = ""
+    decideur: Decideur | None = None
 
 
 def _motif_deny(outil: str) -> str:
@@ -132,15 +191,22 @@ def _motif_allow(outil: str) -> str:
     )
 
 
-def _motif_ask(outil: str) -> str:
-    """Le motif d'une mise en arbitrage — lu par la personne qui tranche.
+def _motif_ask(outil: str, decideur: Decideur) -> str:
+    """Le motif d'une mise en arbitrage — lu par celui qui tranche, et tracé.
 
     Il nomme l'**acte** (l'outil appelé) et jamais le titre de la tâche : c'est
     tout l'objet du parent #573, où un mot du livrable déclenchait l'arbitrage.
+
+    Il nomme aussi **qui décide** (#586), et c'est la moitié qui manquait : le
+    motif est ce que le journal consigne en `sortie` et ce que l'écran affiche
+    sous la question. Sans le décideur dedans, « qui a tranché » se déduirait de
+    l'endroit d'où la ligne vient — c'est-à-dire pas du tout, une fois la ligne
+    relue. Le champ (`DecisionOutil.decideur`, `DemandeValidation.decideur`)
+    reste la source ; ce texte est ce qui la rend lisible.
     """
     return (
-        f"outil {outil!r} soumis à arbitrage humain par la politique de "
-        "permissions de l'agent (liste ask)."
+        f"outil {outil!r} soumis à arbitrage par la politique de permissions "
+        f"de l'agent (liste ask, décideur « {decideur} »)."
     )
 
 
@@ -154,11 +220,45 @@ class PolitiqueOutils:
     étant arbitré et non refusé. Les entrées des trois listes ont la même
     forme : un outil intégré (`Bash`), un serveur MCP entier (`mcp__slack`) ou
     un outil MCP précis (`mcp__slack__send_message`).
+
+    Celles d'`ask` portent en plus leur **décideur** (#586,
+    `EntreeArbitrage`) : une chaîne nue vaut `humain`, et la normalisation a
+    lieu ici, une fois, pour que le reste du module n'ait jamais affaire qu'à
+    des `EntreeArbitrage`.
+
+    ⚠ L'annotation d'`ask` décrit donc ce qu'on **lit** après construction, pas
+    ce que le constructeur **accepte** : `PolitiqueOutils(ask=("Bash",))` reste
+    valide et dit exactement ce qu'il disait avant ce lot — c'est
+    `__post_init__` qui promeut la chaîne. Annoter l'union rendrait l'inverse :
+    la tolérance à l'entrée serait exacte, et tous les appelants devraient
+    prouver à chaque lecture qu'ils ne tiennent pas une chaîne nue, ce qui n'est
+    jamais le cas.
     """
 
     allow: tuple[str, ...] = ()
-    ask: tuple[str, ...] = ()
+    ask: tuple[EntreeArbitrage, ...] = ()
     deny: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Frozen : la normalisation passe par `object.__setattr__`, comme dans
+        # les autres dataclasses immuables du dépôt. Elle est **idempotente** —
+        # reconstruire une politique déjà normalisée ne recrée aucune entrée —,
+        # ce dont dépend l'aller-retour `from_dict(to_dict(p)) == p`.
+        object.__setattr__(
+            self, "ask", tuple(_entree_arbitrage(entree) for entree in self.ask)
+        )
+
+    def decideur(self, outil: str) -> Decideur | None:
+        """Qui tranche `outil` s'il est soumis à arbitrage — None s'il ne l'est pas.
+
+        Le raccourci de `decide(outil).decideur`, pour les appelants qui ne
+        posent que cette question — l'exécuteur qui compose la demande, le
+        journal qui la consigne. Comme `_consigne_refus_outil` redemande son
+        verdict à la politique plutôt que de le déduire d'un texte (#583), on
+        redemande ici le cran plutôt que de le faire voyager : la politique rend
+        la même réponse au moment de consigner qu'au moment où le hook l'a lue.
+        """
+        return self.decide(outil).decideur
 
     def decide(self, outil: str) -> DecisionOutil:
         """Le verdict de la politique sur `outil`, motif compris.
@@ -169,11 +269,24 @@ class PolitiqueOutils:
         refusé (le cran le plus fermé gagne), et un outil en `ask` absent
         d'une liste `allow` fermée est **arbitré** plutôt que refusé, sans
         quoi fermer sa liste `allow` suffirait à rendre `ask` lettre morte.
+
+        La **première** entrée `ask` qui couvre l'outil donne son décideur
+        (#586). Première et non la plus précise, à dessein : c'est la même règle
+        que les deux autres listes, où l'ordre du fichier fait foi, et une
+        « plus précise » demanderait de départager `mcp__slack` de
+        `mcp__slack__send_message` par une convention que personne n'a écrite —
+        alors qu'un auteur de politique n'a qu'à mettre le cas particulier
+        d'abord.
         """
         if any(_correspond(entree, outil) for entree in self.deny):
             return DecisionOutil(Verdict.REFUS, _motif_deny(outil))
-        if any(_correspond(entree, outil) for entree in self.ask):
-            return DecisionOutil(Verdict.ARBITRAGE, _motif_ask(outil))
+        for entree in self.ask:
+            if _correspond(entree, outil):
+                return DecisionOutil(
+                    Verdict.ARBITRAGE,
+                    _motif_ask(outil, entree.decideur),
+                    entree.decideur,
+                )
         if not self.allow or any(_correspond(entree, outil) for entree in self.allow):
             return DecisionOutil(Verdict.PASSE)
         return DecisionOutil(Verdict.REFUS, _motif_allow(outil))
@@ -225,10 +338,19 @@ class PolitiqueOutils:
         return _cite_serveur(self.allow, prefixe)
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet la politique en dict JSON-sérialisable (la forme stockée/publique)."""
+        """Réémet la politique en dict JSON-sérialisable (la forme stockée/publique).
+
+        `ask` sort **toujours** en objet `{entrée: décideur}` (#586), y compris
+        quand toutes ses entrées sont au défaut. L'asymétrie avec la lecture,
+        qui accepte les deux formes, est voulue : à l'entrée on relit ce qui
+        existe déjà — des fichiers écrits avant ce lot —, à la sortie on n'écrit
+        qu'une forme, la seule qui porte l'information entière. Deux formes en
+        sortie obligeraient chaque consommateur à savoir les distinguer, pour
+        n'économiser que quelques caractères sur le cas par défaut.
+        """
         return {
             "allow": list(self.allow),
-            "ask": list(self.ask),
+            "ask": {str(entree): str(entree.decideur) for entree in self.ask},
             "deny": list(self.deny),
         }
 
@@ -237,13 +359,35 @@ class PolitiqueOutils:
         """Reconstruit une politique depuis sa forme stockée (sans la valider).
 
         `ask` absent vaut liste vide : une politique écrite avant #580 se
-        relit à l'identique, donc sous le régime d'hier.
+        relit à l'identique, donc sous le régime d'hier. En **liste**, toutes
+        ses entrées valent `humain` — le régime d'avant #586, au bit près ; en
+        **objet**, chacune porte le sien.
+
+        Sans validation, donc **tolérant** sur le cran (`decideur_depuis` :
+        inconnu ⇒ `humain`). C'est `PermissionStore.lire` qui refuse franchement
+        une politique douteuse, et ce partage est celui qui existe déjà entre ce
+        verbe et `_liste_validee` : ici on reconstruit une valeur déjà admise,
+        là-bas on décide si elle l'est.
         """
         return cls(
             allow=tuple(str(entree) for entree in data.get("allow", ())),
-            ask=tuple(str(entree) for entree in data.get("ask", ())),
+            ask=_ask_depuis(data.get("ask", ())),
             deny=tuple(str(entree) for entree in data.get("deny", ())),
         )
+
+
+def _ask_depuis(brut: Any) -> tuple[EntreeArbitrage, ...]:
+    """Relit la liste `ask` sous ses **deux** formes admises (#586).
+
+    Un mapping porte un cran par entrée ; toute autre séquence est la forme
+    d'avant ce lot, où le cran n'existait pas — donc `humain` partout.
+    """
+    if isinstance(brut, Mapping):
+        return tuple(
+            EntreeArbitrage(str(entree), decideur_depuis(cran))
+            for entree, cran in brut.items()
+        )
+    return tuple(EntreeArbitrage(str(entree)) for entree in brut)
 
 
 class PermissionStore:
@@ -252,7 +396,9 @@ class PermissionStore:
     Un fichier par agent : `{"allow": [...], "ask": [...], "deny": [...]}` — le
     nom d'agent fait foi côté fichier, comme pour les autres dépôts. Une liste
     absente vaut vide, `ask` comprise : un fichier écrit avant #580 se relit
-    tel quel. Relu à chaque tâche
+    tel quel. `ask` accepte en plus la forme `{"<outil>": "<décideur>"}` (#586),
+    où un cran **inconnu** est refusé avec sa cause : une politique de
+    garde-fou qu'on ne sait pas lire ne s'applique pas à moitié. Relu à chaque tâche
     (application à chaud, comme les playbooks #78) : une politique corrigée
     vaut pour la tâche suivante, sans redémarrage. `lire` valide le fichier et
     lève `ValueError` avec sa cause exacte s'il est invalide — on n'applique
@@ -300,7 +446,7 @@ class PermissionStore:
             )
         return PolitiqueOutils(
             allow=_liste_validee(data, "allow", agent=agent),
-            ask=_liste_validee(data, "ask", agent=agent),
+            ask=_ask_validee(data, agent=agent),
             deny=_liste_validee(data, "deny", agent=agent),
         )
 
@@ -338,16 +484,56 @@ def _liste_validee(data: Mapping[str, Any], cle: str, *, agent: str) -> tuple[st
         )
     entrees: list[str] = []
     for entree in brut:
-        if (
-            not isinstance(entree, str)
-            or not entree
-            or not all(_ENTREE.match(segment) for segment in entree.split("__"))
-        ):
-            raise ValueError(
-                f"politique de permissions invalide pour l'agent {agent!r} : "
-                f"entrée {cle} {entree!r} (nom d'outil attendu — ex. « Bash », "
-                "« mcp__slack » ou « mcp__slack__send_message »)."
-            )
+        _valide_entree(entree, cle, agent=agent)
         if entree not in entrees:
             entrees.append(entree)
     return tuple(entrees)
+
+
+def _ask_validee(data: Mapping[str, Any], *, agent: str) -> tuple[EntreeArbitrage, ...]:
+    """La liste `ask` du fichier, sous ses deux formes, entrées **et crans** validés (#586).
+
+    En **liste**, c'est `_liste_validee` mot pour mot, et chaque entrée retombe
+    sur le cran par défaut : un fichier écrit avant ce lot passe par le même
+    code qu'avant et rend la même chose.
+
+    En **objet**, chaque clé est validée comme une entrée et chaque valeur doit
+    être l'un des trois crans. Un cran inconnu est refusé **avec la liste de ce
+    qui est admis** : c'est le seul message qui évite d'aller chercher les
+    valeurs dans le code, et ce fichier est celui d'un garde-fou — on n'en
+    applique jamais une version approximative. Le repli tolérant existe, mais
+    ailleurs et pour autre chose (`decideur_depuis`, sur ce qui se relit après
+    coup et ne peut plus être corrigé).
+    """
+    brut = data.get("ask", [])
+    if not isinstance(brut, Mapping):
+        return tuple(
+            EntreeArbitrage(entree) for entree in _liste_validee(data, "ask", agent=agent)
+        )
+    entrees: list[EntreeArbitrage] = []
+    for entree, cran in brut.items():
+        _valide_entree(entree, "ask", agent=agent)
+        if not isinstance(cran, str) or cran not in tuple(Decideur):
+            admis = ", ".join(f"« {valeur} »" for valeur in Decideur)
+            raise ValueError(
+                f"politique de permissions invalide pour l'agent {agent!r} : "
+                f"décideur {cran!r} de l'entrée ask {entree!r} inconnu "
+                f"({admis} attendus)."
+            )
+        if entree not in entrees:
+            entrees.append(EntreeArbitrage(entree, Decideur(cran)))
+    return tuple(entrees)
+
+
+def _valide_entree(entree: Any, cle: str, *, agent: str) -> None:
+    """Refuse une entrée qui n'est pas un nom d'outil admissible — la même pour les trois listes."""
+    if (
+        not isinstance(entree, str)
+        or not entree
+        or not all(_ENTREE.match(segment) for segment in entree.split("__"))
+    ):
+        raise ValueError(
+            f"politique de permissions invalide pour l'agent {agent!r} : "
+            f"entrée {cle} {entree!r} (nom d'outil attendu — ex. « Bash », "
+            "« mcp__slack » ou « mcp__slack__send_message »)."
+        )

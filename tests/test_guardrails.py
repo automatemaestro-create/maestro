@@ -19,7 +19,16 @@ d'acceptation du ticket #9 :
 ③ une **action sensible** déclenche une demande de validation humaine avant toute
    exécution : approuvée elle s'exécute, refusée elle est stoppée sans avoir rien
    lancé — et sans validateur configuré (ou validateur en panne), le refus est le
-   défaut (fail-safe). La demande et la décision sont consignées au journal.
+   défaut (fail-safe). La demande et la décision sont consignées au journal ;
+④ **qui décide** (#586, lot 7 de #573) : le cran porté par la demande route vers
+   l'une des trois portes — `auto` accorde sans solliciter personne,
+   `orchestrateur` fait trancher la machine seule, `humain` attend une personne,
+   et c'est le défaut de tout ce qui n'en dit rien. Le fail-safe vaut porte par
+   porte (canal absent ou en panne ⇒ refus), et surtout **l'orchestrateur ne peut
+   pas approuver un acte classé `humain`** — éprouvé en le lui faisant tenter,
+   sur la configuration exacte où ça compte : lui seul câblé, aucune personne
+   pour dire non. Ce qui est vérifié n'est pas qu'on refuse son approbation,
+   c'est qu'on ne la lui demande pas.
 
 ⚠ Depuis #585, la classification par mots-clés n'est **plus armée par défaut** :
 les tests de ③ passent donc `mots_sensibles=MOTS_SENSIBLES` explicitement. Ce
@@ -28,6 +37,9 @@ décision humaine et son fail-safe, qui ne dépendent d'aucun déclencheur en
 particulier ; l'armer sur place est ce qui garde ces tests lisibles le jour où le
 déclencheur nominal (l'acte, chantier #573) changera à son tour. Le nouveau
 défaut, lui, est éprouvé pour lui-même plus bas.
+
+④ ne l'arme jamais, et c'est cohérent avec la même idée : il éprouve le
+**routage** d'une demande déjà née, quel que soit ce qui l'a déclenchée.
 """
 
 import asyncio
@@ -644,3 +656,154 @@ def test_les_garde_fous_invalides_sont_refuses():
         Guardrails(plafond_tokens=0)
     with pytest.raises(ValueError):
         Guardrails(timeout_s=-1)
+
+
+# --- Qui décide : `auto`, `orchestrateur` ou `humain` (#586) ----------------------------
+#
+# La **logique critique** du lot 7 de #573, admise ici alors que le reste de la
+# couverture du chantier est différé à #579 : c'est l'asymétrie du fail-safe
+# (EF-08/ENF-04) — refuser est le défaut sûr, approuver ne l'est jamais.
+
+
+def _demande(decideur: str | None = None) -> DemandeValidation:
+    """Une demande d'arbitrage minimale, sur le cran demandé (défaut du champ sinon)."""
+    champs = {} if decideur is None else {"decideur": decideur}
+    return DemandeValidation(
+        task_id="t1",
+        titre="Nettoyer le dossier de build",
+        description="RAS.",
+        agent="dev",
+        role="Développeur",
+        raison="outil 'Bash' soumis à arbitrage",
+        outil="Bash",
+        arguments={"command": "rm -rf build/"},
+        **champs,
+    )
+
+
+class _Mouchard:
+    """Un canal de décision qui répond toujours pareil, et qui compte ses appels."""
+
+    def __init__(self, reponse: bool) -> None:
+        self.reponse = reponse
+        self.vues: list[DemandeValidation] = []
+
+    def __call__(self, demande: DemandeValidation) -> bool:
+        self.vues.append(demande)
+        return self.reponse
+
+
+def test_un_cran_non_precise_escalade_vers_l_humain():
+    # Le défaut n'est pas un détail de mise en œuvre : une demande qui ne dit
+    # rien de son décideur ne s'auto-approuve pas, elle attend une personne.
+    orchestrateur = _Mouchard(True)
+    guardrails = Guardrails(orchestrateur=orchestrateur)
+
+    approuve, detail = asyncio.run(guardrails.demande_validation(_demande()))
+
+    assert approuve is False
+    assert "aucun validateur humain configuré" in detail
+    assert orchestrateur.vues == []
+
+
+def test_le_cran_auto_accorde_sans_solliciter_personne():
+    # Ce qui distingue `ask` + `auto` d'un `allow` : l'appel passe, mais il
+    # laisse une trace — d'où un détail qui dit que personne n'a été dérangé.
+    humain = _Mouchard(False)
+    orchestrateur = _Mouchard(False)
+    guardrails = Guardrails(validateur=humain, orchestrateur=orchestrateur)
+
+    approuve, detail = asyncio.run(guardrails.demande_validation(_demande("auto")))
+
+    assert approuve is True
+    assert "auto" in detail
+    assert humain.vues == [] and orchestrateur.vues == []
+
+
+def test_l_orchestrateur_tranche_seul_le_cran_qui_lui_revient():
+    # Aucun validateur humain configuré, et pourtant la décision est rendue :
+    # c'est tout l'intérêt du cran du milieu dans un run que personne ne regarde.
+    approbateur = _Mouchard(True)
+    approuve, detail = asyncio.run(
+        Guardrails(orchestrateur=approbateur).demande_validation(_demande("orchestrateur"))
+    )
+    assert approuve is True
+    assert detail == "approuvée par l'orchestrateur"
+    assert len(approbateur.vues) == 1
+
+    # Et il refuse **seul** tout aussi bien : le refus est le sens sûr des deux.
+    refuseur = _Mouchard(False)
+    approuve, detail = asyncio.run(
+        Guardrails(orchestrateur=refuseur).demande_validation(_demande("orchestrateur"))
+    )
+    assert approuve is False
+    assert detail == "refusée par l'orchestrateur"
+
+
+def test_l_orchestrateur_ne_peut_pas_approuver_un_acte_humain():
+    """On lui fait **tenter** l'approbation, et elle n'atteint jamais l'acte.
+
+    L'orchestrateur monté ici approuve tout ce qu'on lui soumet, et il est le
+    seul canal câblé. Si son avis pouvait devenir une approbation, ce serait
+    ici : il n'y a personne d'autre pour dire non, et un `deny` humain absent
+    est la situation exacte d'un run autonome.
+
+    Deux assertions et non une, parce qu'elles ne disent pas la même chose : la
+    première dit que l'acte est **refusé**, la seconde qu'il l'est parce que
+    l'orchestrateur n'a **pas été consulté**. Sans la seconde, le test
+    passerait encore le jour où on lui demanderait son avis pour l'ignorer —
+    un dispositif où l'approbation existe quelque part et n'est « pas retenue »
+    est un dispositif à un `if` de la faute.
+    """
+    orchestrateur = _Mouchard(True)
+
+    approuve, detail = asyncio.run(
+        Guardrails(orchestrateur=orchestrateur).demande_validation(_demande("humain"))
+    )
+
+    assert approuve is False
+    assert "aucun validateur humain configuré" in detail
+    assert orchestrateur.vues == []
+
+
+def test_sans_orchestrateur_le_cran_du_milieu_est_refuse_et_jamais_delegue():
+    # Fail-safe porte par porte : ne trouver personne à qui demander n'a jamais
+    # autorisé une action sensible. Et la demande ne **retombe pas** sur le
+    # validateur humain — la déléguer reviendrait à réveiller quelqu'un pour un
+    # acte dont la politique a dit qu'il ne lui revenait pas.
+    humain = _Mouchard(True)
+
+    approuve, detail = asyncio.run(
+        Guardrails(validateur=humain).demande_validation(_demande("orchestrateur"))
+    )
+
+    assert approuve is False
+    assert "aucun orchestrateur configuré" in detail
+    assert humain.vues == []
+
+
+def test_un_orchestrateur_en_panne_vaut_refus():
+    def casse(demande: DemandeValidation) -> bool:
+        raise RuntimeError("canal d'orchestration indisponible")
+
+    approuve, detail = asyncio.run(
+        Guardrails(orchestrateur=casse).demande_validation(_demande("orchestrateur"))
+    )
+
+    assert approuve is False
+    assert "orchestrateur en erreur" in detail
+    assert "canal d'orchestration indisponible" in detail
+
+
+def test_un_cran_illisible_escalade_au_lieu_de_s_auto_approuver():
+    # Relecture d'une valeur venue du dehors (journal rejoué, producteur d'une
+    # autre version) : on ne sait pas la lire, donc on la traite comme `humain`.
+    # Le repli inverse ferait d'une chaîne inconnue un laissez-passer.
+    orchestrateur = _Mouchard(True)
+
+    approuve, _ = asyncio.run(
+        Guardrails(orchestrateur=orchestrateur).demande_validation(_demande("dieu"))
+    )
+
+    assert approuve is False
+    assert orchestrateur.vues == []

@@ -48,6 +48,7 @@ from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_ATTENTE_REPONSES,
 )
+from maestro.decideur import ACTEUR_ORCHESTRATEUR
 from maestro.engine.brief import (
     MODE_BRIEF_HUMAIN,
     DecisionBrief,
@@ -63,7 +64,16 @@ from maestro.telemetry import redact_secrets
 #: Public parce que la **décision** est émise ailleurs (la route de l'API) et doit
 #: porter le même acteur que la demande : deux orthographes rendraient la trace d'un
 #: même cadrage illisible.
-ACTEUR_BRIEF = "orchestrateur"
+#:
+#: Depuis #586 le nom vient de `maestro.decideur`, et ce n'est pas un rangement :
+#: c'est **le même acteur** que le cran de décision `orchestrateur`, et le lien
+#: est le contenu d'un critère du chantier #573 — *l'orchestrateur peut refuser
+#: seul et répondre à une demande d'information*. Ce canal-ci **est** la moitié
+#: « demande d'information » de cette phrase (`brief.questions` /
+#: `brief.reponses`, #321), et elle ne lui est pas retirée : répondre à une
+#: question n'est pas approuver un acte. Deux constantes littérales laisseraient
+#: croire à deux acteurs qui se ressemblent.
+ACTEUR_BRIEF = ACTEUR_ORCHESTRATEUR
 ROLE_BRIEF = "Orchestrateur"
 
 

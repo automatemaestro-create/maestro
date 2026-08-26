@@ -32,6 +32,13 @@ violations tracées » :
    contrôle sous `bypassPermissions` — refuse un appel interdit avec son
    motif, signale la violation via `on_refus`, et n'échoue jamais lui-même
    (un traçage en échec est avalé) ;
+①ter **qui décide** (`ask` + décideur, #586) : chaque entrée porte son cran —
+   `auto`, `orchestrateur` ou `humain` —, une chaîne nue et une liste `ask`
+   d'avant ce lot valant `humain` (*un cran non précisé escalade, il ne
+   s'auto-approuve pas*) ; le décideur n'est renseigné que sur un `ARBITRAGE` ;
+   une entrée reste son nom d'outil (préfixage, égalité, JSON) ; un cran inconnu
+   **dans un fichier** est refusé avec sa cause et les trois valeurs admises,
+   quand un cran inconnu **relu du dehors** retombe sur `humain` ;
 ⑥ **arbitrage au vol** (#583) : le même hook suspend un appel classé `ask`,
    et c'est **l'attente et sa borne** qui sont éprouvées ici — le reste de la
    couverture du chantier #573 est différé au lot final (#579). Trois choses
@@ -40,7 +47,15 @@ violations tracées » :
    jamais le CLI par échéance) ; la demande expirée n'est **pas annulée** — la
    décision tardive arrive et est absorbée sans casser quoi que ce soit ; et
    les **deux fail-safe** tiennent, un outil `ask` sans canal d'arbitrage ou
-   avec un canal en panne étant refusé et jamais approuvé par défaut.
+   avec un canal en panne étant refusé et jamais approuvé par défaut. Depuis
+   #586 s'y ajoute le cran `auto`, qui ne **désigne personne** : le hook le
+   tranche lui-même, sans canal et sans attente, mais en laissant la trace qui
+   le distingue d'un `allow` ;
+⑦ **la décision au journal** (#586) : l'étape `:refus-outil` nomme le décideur
+   dans son **nom** — le champ qui porte une provenance sans qu'on la déduise —,
+   et le tient de la politique plutôt que du texte du motif. S'y joue aussi le
+   pendant de bout en bout du garde-fou : un orchestrateur qui approuverait tout
+   ne fait pas passer un acte classé `humain`.
 """
 
 import asyncio
@@ -53,11 +68,13 @@ from maestro.agents import QA_PROFILE, AgentRuntime
 from maestro.agents.mcp import ServeurMcp
 from maestro.agents.permissions import (
     DecisionOutil,
+    EntreeArbitrage,
     PermissionStore,
     PolitiqueOutils,
     Verdict,
 )
 from maestro.config import ConfigError, Settings
+from maestro.decideur import Decideur, decideur_depuis
 from maestro.engine import OrchestrationEngine
 from maestro.engine.executor import (
     STATUT_ARBITRAGE_OUTIL,
@@ -370,7 +387,80 @@ def test_une_politique_sans_ask_se_relit_a_l_identique():
 
 
 def test_to_dict_porte_toujours_les_trois_listes():
-    assert PolitiqueOutils().to_dict() == {"allow": [], "ask": [], "deny": []}
+    # `ask` sort en **objet** depuis #586 : une seule forme en écriture, celle
+    # qui porte l'entrée *et* son décideur, même quand toutes sont au défaut.
+    assert PolitiqueOutils().to_dict() == {"allow": [], "ask": {}, "deny": []}
+
+
+# --- ①ter Qui décide, par entrée `ask` (#586) -------------------------------------------
+
+
+def test_une_entree_ask_porte_son_decideur_et_le_defaut_est_humain():
+    politique = PolitiqueOutils(
+        ask=(
+            EntreeArbitrage("Bash", Decideur.ORCHESTRATEUR),
+            EntreeArbitrage("mcp__slack__send_message", Decideur.AUTO),
+            "Write",  # chaîne nue : le cran non précisé escalade, il ne s'auto-approuve pas
+        )
+    )
+
+    assert politique.decide("Bash").decideur is Decideur.ORCHESTRATEUR
+    assert politique.decide("mcp__slack__send_message").decideur is Decideur.AUTO
+    assert politique.decide("Write").decideur is Decideur.HUMAIN
+    # Le motif le dit aussi : c'est lui que le journal consigne et que l'écran rend.
+    assert "orchestrateur" in politique.decide("Bash").motif
+
+
+def test_le_decideur_n_est_renseigne_que_sur_un_arbitrage():
+    # Pendant exact du motif vide sur `PASSE` : un appel qu'on laisse passer ou
+    # qu'on refuse d'office n'est soumis à personne, il n'a pas de décideur.
+    politique = PolitiqueOutils(ask=("Bash",), deny=("Write",))
+
+    assert politique.decide("Read").decideur is None
+    assert politique.decide("Write").decideur is None
+    assert politique.decideur("Bash") is Decideur.HUMAIN
+
+
+def test_une_entree_ask_reste_son_nom_d_outil():
+    # `EntreeArbitrage` est une chaîne : le préfixage aux frontières `__`, la
+    # comparaison de deux politiques et la sérialisation JSON continuent de
+    # fonctionner sans rien savoir du cran.
+    politique = PolitiqueOutils(ask=(EntreeArbitrage("mcp__slack", Decideur.AUTO),))
+
+    assert politique.ask == ("mcp__slack",)
+    assert politique.decide("mcp__slack__send_message").decideur is Decideur.AUTO
+    assert politique.decide("mcp__slackbot__envoyer").verdict is Verdict.PASSE
+    assert json.dumps(politique.to_dict()) == json.dumps(
+        {"allow": [], "ask": {"mcp__slack": "auto"}, "deny": []}
+    )
+
+
+def test_la_premiere_entree_ask_qui_couvre_l_outil_donne_son_cran():
+    # Ordre du fichier, comme pour `allow`/`deny` : l'auteur d'une politique met
+    # son cas particulier d'abord, il n'a pas de règle de précision à deviner.
+    politique = PolitiqueOutils(
+        ask=(
+            EntreeArbitrage("mcp__slack__chat_delete", Decideur.HUMAIN),
+            EntreeArbitrage("mcp__slack", Decideur.AUTO),
+        )
+    )
+
+    assert politique.decide("mcp__slack__chat_delete").decideur is Decideur.HUMAIN
+    assert politique.decide("mcp__slack__send_message").decideur is Decideur.AUTO
+
+
+def test_l_aller_retour_dict_preserve_les_decideurs():
+    politique = PolitiqueOutils(
+        allow=("Read",),
+        ask=(EntreeArbitrage("Bash", Decideur.ORCHESTRATEUR), "Write"),
+        deny=("mcp__slack",),
+    )
+
+    relue = PolitiqueOutils.from_dict(politique.to_dict())
+
+    assert relue == politique
+    assert relue.decide("Bash").decideur is Decideur.ORCHESTRATEUR
+    assert relue.decide("Write").decideur is Decideur.HUMAIN
 
 
 # --- ② Dépôt : validation à la lecture --------------------------------------------------
@@ -412,6 +502,59 @@ def test_entree_ask_malformee_refusee_en_bloc(store, entree):
 
     with pytest.raises(ValueError, match="entrée ask"):
         store.lire("qa")
+
+
+def test_lire_une_politique_qui_nomme_ses_decideurs(store):
+    _ecrire_politique(
+        store.racine, "qa", {"ask": {"Bash": "orchestrateur", "Write": "auto"}}
+    )
+
+    politique = store.lire("qa")
+
+    assert politique.decide("Bash").decideur is Decideur.ORCHESTRATEUR
+    assert politique.decide("Write").decideur is Decideur.AUTO
+
+
+def test_une_liste_ask_se_relit_sous_le_cran_par_defaut(store):
+    # Le fichier d'avant #586, au bit près : la forme liste ne portait aucun
+    # cran, et ce qui n'en porte pas attend une personne.
+    _ecrire_politique(store.racine, "qa", {"ask": ["Bash"]})
+
+    politique = store.lire("qa")
+
+    assert politique == PolitiqueOutils(ask=("Bash",))
+    assert politique.decide("Bash").decideur is Decideur.HUMAIN
+
+
+@pytest.mark.parametrize("cran", ["humains", "AUTO", "", 42, None])
+def test_un_decideur_inconnu_est_refuse_avec_sa_cause(store, cran):
+    # Une politique de garde-fou qu'on ne sait pas lire ne s'applique jamais à
+    # moitié — le repli tolérant existe, mais pour ce qui se relit après coup
+    # (`decideur_depuis`) et ne peut plus être corrigé.
+    _ecrire_politique(store.racine, "qa", {"ask": {"Bash": cran}})
+
+    with pytest.raises(ValueError, match="décideur"):
+        store.lire("qa")
+
+
+def test_le_message_d_un_decideur_inconnu_nomme_les_trois_crans(store):
+    # Sans les valeurs admises, la seule façon de corriger le fichier est
+    # d'aller les chercher dans le code.
+    _ecrire_politique(store.racine, "qa", {"ask": {"Bash": "chef"}})
+
+    with pytest.raises(ValueError) as capture:
+        store.lire("qa")
+
+    for cran in ("auto", "orchestrateur", "humain"):
+        assert cran in str(capture.value)
+
+
+@pytest.mark.parametrize("brut", ["dieu", "", "AUTO", None, 42])
+def test_un_cran_relu_du_dehors_retombe_sur_humain(brut):
+    # Régime de **relecture** : ce qui vient d'un journal rejoué ou d'un
+    # producteur plus récent n'a pas à faire échouer un arbitrage. Le défaut est
+    # le seul qui soit sûr — une valeur inconnue escalade, elle n'ouvre rien.
+    assert decideur_depuis(brut) is Decideur.HUMAIN
 
 
 def test_agent_sans_politique_rend_none(store):
@@ -975,6 +1118,50 @@ def test_l_arbitrage_ne_change_rien_aux_deux_autres_crans():
     assert "deny" in refus["hookSpecificOutput"]["permissionDecision"]
 
 
+# ⑥e — le cran `auto` ne dépend d'aucun canal (#586)
+
+
+def test_le_cran_auto_passe_sans_canal_d_arbitrage_et_laisse_sa_trace():
+    """Sans lui, `auto` serait refusé faute de trouver quelqu'un à déranger.
+
+    La configuration est celle de tout appelant hors Control Tower : aucun
+    `on_arbitrage_acte` câblé. Un outil classé `humain` y est refusé — c'est le
+    fail-safe éprouvé plus haut —, mais `auto` ne **désigne personne** : le
+    refuser reviendrait à refuser un acte dont la politique dit qu'il n'a aucun
+    décideur à consulter.
+
+    La trace est l'autre moitié, et la seule chose qui distingue ce cran d'un
+    `allow` : l'appel passe, mais il se voit.
+    """
+    vues: list[tuple[str, str]] = []
+    hook = claude_mod._hook_permissions(
+        PolitiqueOutils(ask=(EntreeArbitrage("Bash", Decideur.AUTO),)),
+        lambda outil, motif: vues.append((outil, motif)),
+        None,
+    )
+
+    assert _appelle(hook) == {}
+    assert [outil for outil, _ in vues] == ["Bash"]
+    assert "auto" in vues[0][1]
+
+
+def test_le_cran_auto_n_attend_pas_le_canal_meme_quand_il_existe():
+    # Le hook tranche `auto` lui-même : le canal est câblé et n'est pas appelé,
+    # donc aucune attente n'est ouverte pour un acte que personne n'a à trancher.
+    appels: list[str] = []
+
+    async def arbitrage(outil, arguments, motif):  # pragma: no cover - ne doit pas courir
+        appels.append(outil)
+        return True, "approuvée par le validateur humain"
+
+    hook = claude_mod._hook_permissions(
+        PolitiqueOutils(ask=(EntreeArbitrage("Bash", Decideur.AUTO),)), None, arbitrage
+    )
+
+    assert _appelle(hook) == {}
+    assert appels == []
+
+
 # ⑥d — l'issue vue du moteur : une trace qui ne se fait pas passer pour un refus
 
 
@@ -1021,6 +1208,62 @@ def test_un_refus_de_politique_garde_son_statut_d_avant(store):
     (trace,) = [r for r in journal.records if r.etape == f"tache-unique{SUFFIXE_ETAPE_REFUS}"]
     assert trace.statut == STATUT_REFUS_OUTIL
     assert trace.nom.startswith("Outil refusé")
+
+
+@pytest.mark.parametrize(
+    ("cran", "attendu"), [("humain", "humain"), ("orchestrateur", "orchestrateur")]
+)
+def test_le_journal_nomme_qui_a_tranche(store, cran, attendu):
+    """Le critère du lot : *qui a tranché se lit, il ne se déduit pas*.
+
+    Le décideur est dans le **nom** de l'étape — le seul champ du journal qui
+    porte une provenance sans qu'un consommateur ait à la deviner d'une tournure
+    de phrase, comme il distingue déjà les deux producteurs d'un `:validation`
+    (#582) — et il est redemandé à la politique au moment de consigner, jamais
+    déduit du texte du motif : changer une phrase ne doit pas changer la nature
+    d'une ligne.
+    """
+    _ecrire_politique(store.racine, "developpeur", {"ask": {"Bash": cran}})
+    journal = RunJournal(run_id=f"run-{cran}")
+    moteur = OrchestrationEngine(
+        ArbitreProvider(),
+        Orchestrator(ConstantProvider(_plan_json()), model="claude-opus-4-8"),
+        permissions=store,
+        guardrails=Guardrails(
+            validateur=lambda demande: True, orchestrateur=lambda demande: True
+        ),
+    )
+
+    asyncio.run(moteur.run("Objectif", journal=journal))
+
+    (trace,) = [r for r in journal.records if r.etape == f"tache-unique{SUFFIXE_ETAPE_REFUS}"]
+    assert trace.nom.startswith(f"Outil arbitré ({attendu})")
+    assert trace.statut == STATUT_ARBITRAGE_OUTIL
+    # Et la décision elle-même, dans la sortie : approuvée, et **par qui**.
+    assert attendu in trace.sortie
+
+
+def test_l_orchestrateur_ne_tranche_pas_un_acte_classe_humain_bout_en_bout(store):
+    # Le pendant de bout en bout du test unitaire des garde-fous : la politique
+    # classe l'outil `humain`, un orchestrateur qui approuverait tout est câblé,
+    # et aucune personne ne l'est. L'acte doit être écarté.
+    _ecrire_politique(store.racine, "developpeur", {"ask": {"Bash": "humain"}})
+    provider = ArbitreProvider()
+    moteur = OrchestrationEngine(
+        provider,
+        Orchestrator(ConstantProvider(_plan_json()), model="claude-opus-4-8"),
+        permissions=store,
+        guardrails=Guardrails(orchestrateur=lambda demande: True),
+    )
+
+    asyncio.run(moteur.run("Objectif"))
+
+    (arbitrage,) = [
+        appel["arbitrage"] for appel in provider.run_calls if "arbitrage" in appel
+    ]
+    approuve, detail = arbitrage
+    assert not approuve
+    assert "aucun validateur humain configuré" in detail
 
 
 def test_le_fail_safe_du_moteur_tient_sans_validateur(store):
