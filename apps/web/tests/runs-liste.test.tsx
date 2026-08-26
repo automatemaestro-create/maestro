@@ -95,10 +95,12 @@ describe("le régime d'un run — ce que « en cours » cachait", () => {
     ).toBe(REGIME_SUSPENDU);
   });
 
-  it("range la troisième attente, qui ne se lit pas sur le run", () => {
-    // Une demande de validation porte sa **tâche**, jamais son run, et le statut
-    // du run reste `en_cours` pendant qu'elle dort : l'appariement passe par les
-    // tâches, sur les deux listes que le shell tient déjà.
+  it("range la troisième attente que l'appariement lui apprend", () => {
+    // ⚠ Depuis #571 la troisième attente se lit **d'abord sur le statut du run**
+    // (`en_attente_arbitrage`), et c'est là qu'elle est éprouvée, avec les deux
+    // autres : `tests/arbitrage.test.tsx`. Ce qui reste ici est le **filet** —
+    // une trace d'avant ce lot, ou un producteur qui ne porte pas son run (#570) :
+    // le run affiche `en_cours` et seul l'appariement par les tâches répond.
     expect(regimeDuRun(runFactice(), true)).toBe(REGIME_SUSPENDU);
     expect(causeDAttente(runFactice(), true)).toBe(ATTENTE_VALIDATION);
   });
