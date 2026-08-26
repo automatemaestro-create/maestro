@@ -238,7 +238,18 @@ Ensuite seulement, apporte ce que la sortie ne dit pas :
    détail brut de la session en cours.
 3. Si des tickets ont réussi, enchaîne sur la **file de revue** :
    `bash scripts/gitlab/lib.sh review-queue` — c'est là que le travail du run attend un humain.
-4. **Ne rappelle aucun ménage de worktrees** : ils sont ramassés d'office dès que la forge confirme
+4. **Si le run est TERMINÉ, propose l'audit** (#530, docs/10 §11.12) — et propose seulement :
+   « veux-tu que je lance `/run-audit <run-id>` ? ». **Ne le lance jamais d'office**, y compris si
+   l'utilisateur a l'air pressé : le jugement (séparer le coût attendu de ce qui ne l'est pas, puis
+   proposer des tickets de correction) coûte du quota et ouvre une session, et c'est précisément la
+   question qu'on veut voir posée. Sur un run **en cours**, ne la pose pas : il n'a pas fini de
+   dépenser son temps, et l'audit se relit une fois. Nomme au passage
+   **`.maestro/orchestrate/<run-id>/audit.txt`** : le pilote y a figé le rapport chiffré en
+   terminant, il est déjà là et sa lecture ne coûte rien. S'il manque (run d'avant #530, écriture
+   éteinte par `MAESTRO_AUDIT_FIN_RUN=0`, ou `journal.sh` en échec), dis-le et renvoie sur
+   `bash scripts/orchestrate/journal.sh audit <run-id>`, qui le recalcule — tant que la rétention
+   n'a pas emporté les flux (`journal.sh gc` ne garde que les dix derniers runs, #198).
+5. **Ne rappelle aucun ménage de worktrees** : ils sont ramassés d'office dès que la forge confirme
    leur PR mergée (`worktree.sh gc`, câblé dans `/ticket-start`, `/branch-cleanup` et au début de
    chaque run — docs/10 §9.2). La seule chose à relayer, c'est une **alerte** de `gc` : un worktree
    conservé parce qu'il porte du travail non sauvegardé.

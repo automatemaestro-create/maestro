@@ -37,14 +37,14 @@ suite. Si aucun IID n'est fourni dans `$ARGUMENTS`, demande-le à l'utilisateur 
      démarrables maintenant »** de la sortie : elle liste **tous** les lots « À faire » que rien ne
      bloque — pas seulement le premier, les lots marqués **« (parallèle) »** ne se bloquant pas
      entre eux (docs/10 §5.1). Démarre le **premier de cette liste** en reprenant l'étape 1 avec
-     son iid, et **annonce les autres** comme prenables en parallèle par quelqu'un d'autre (si le
-     parent était « À faire », passe-le « En cours » via
-     `bash scripts/gitlab/lib.sh set-workflow <iid-parent> "En cours"`). Si la liste est vide, rien à
-     démarrer : le travail est déjà en route (« En cours ») ou livré et on n'attend plus que des
-     merges. **Ne propose pas de fermer le parent** — il se ferme tout seul quand son dernier lot
-     se ferme (#515, docs/10 §5.1) ; un parent encore ouvert avec des lots tous fermés est une
-     anomalie à signaler (`bash scripts/gitlab/lib.sh lots-ouverts <iid-parent>` le confirme en
-     lecture seule), pas un geste à faire à la main.
+     son iid, et **annonce les autres** comme prenables en parallèle par quelqu'un d'autre. **Ne
+     pose pas l'état du parent à la main** : le `begin` du lot (étape 4) le passe « En cours » s'il
+     était « À faire », et le saute sans écriture s'il l'est déjà (#517, docs/10 §5.1). Si la liste
+     est vide, rien à démarrer : le travail est déjà en route (« En cours ») ou livré et on n'attend
+     plus que des merges. **Ne propose pas de fermer le parent** — il se ferme tout seul quand son
+     dernier lot se ferme (#515, docs/10 §5.1) ; un parent encore ouvert avec des lots tous fermés
+     est une anomalie à signaler (`bash scripts/gitlab/lib.sh lots-ouverts <iid-parent>` le
+     confirme en lecture seule), pas un geste à faire à la main.
    - **Sous-ticket** : la sortie donne le parent, le rang (« lot n/total »), le marqueur
      « parallèle » éventuel, les tests différés et le contrôle des lots précédents. Si elle
      signale des lots précédents non livrés (⚠ — encore « À faire » ou « En cours »), arrête-toi :
