@@ -112,8 +112,8 @@ class MontageEnregistreur(ModelProvider):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage=None,
-        on_activite=None, on_etapes=None,
+        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None,
         plafond_tours=None, projet=None,
     ):
         self.run_calls.append(
@@ -140,8 +140,8 @@ class ViolateurProvider(MontageEnregistreur):
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage=None,
-        on_activite=None, on_etapes=None,
+        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None,
         plafond_tours=None, projet=None,
     ):
         if politique is not None and not politique.autorise("Bash") and on_refus is not None:
@@ -157,22 +157,25 @@ class ArbitreProvider(MontageEnregistreur):
     """Exécutant factice qui appelle un outil classé `ask` : simule l'arbitrage au vol.
 
     C'est le comportement du fournisseur réel (hook PreToolUse) vu du moteur :
-    l'appel est suspendu, la demande part sur `on_arbitrage`, et l'issue est
+    l'appel est suspendu, la demande part sur `on_arbitrage_acte`, et l'issue est
     tracée par `on_refus` — le canal qui existe depuis #110. Le double s'arrête
     là : borner l'attente est le travail du vrai hook, éprouvé à part.
+
+    ⚠ `on_arbitrage_acte` et non `on_arbitrage` (#582) : celui-ci relaie une
+    demande que l'agent a formulée, celui-là un acte qu'on a intercepté.
     """
 
     name = "arbitre"
 
     async def run_agent(
         self, prompt, *, model, system_prompt=None, workspace, tools,
-        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage=None,
-        on_activite=None, on_etapes=None,
+        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None,
         plafond_tours=None, projet=None,
     ):
         decision = None if politique is None else politique.decide("Bash")
         if decision is not None and decision.verdict is Verdict.ARBITRAGE:
-            approuve, detail = await on_arbitrage(
+            approuve, detail = await on_arbitrage_acte(
                 "Bash", {"command": "rm -rf /srv"}, decision.motif
             )
             self.run_calls.append({"arbitrage": (approuve, detail)})
@@ -717,10 +720,10 @@ def test_run_agent_sans_politique_n_arme_aucun_hook(monkeypatch, tmp_path):
 # --- ⑥ Arbitrage au vol : l'attente, sa borne, et qui rend le verdict (#583) ------------
 
 
-def _hook_arbitre(on_arbitrage, on_refus=None, bornes=None):
+def _hook_arbitre(on_arbitrage_acte, on_refus=None, bornes=None):
     """Le hook armé sur une politique qui met `Bash` en arbitrage."""
     return claude_mod._hook_permissions(
-        PolitiqueOutils(ask=("Bash",)), on_refus, on_arbitrage, bornes
+        PolitiqueOutils(ask=("Bash",)), on_refus, on_arbitrage_acte, bornes
     )
 
 

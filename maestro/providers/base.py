@@ -19,7 +19,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, TypeVar
 
-from maestro.providers.arbitrage import Arbitre
+from maestro.providers.arbitrage import Arbitre, ArbitreActe
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -283,9 +283,10 @@ class ModelProvider(ABC):
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
-        on_arbitrage: Arbitre | None = None,
+        on_arbitrage_acte: ArbitreActe | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
+        on_arbitrage: Arbitre | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
     ) -> str:
@@ -322,8 +323,8 @@ class ModelProvider(ABC):
         c'est le canal de traçage de l'appelant (journal, fil temps réel) ; un
         échec du callback ne doit jamais casser l'exécution observée.
 
-        `on_arbitrage` (#583) est le canal du **troisième cran** de cette même
-        politique (`ask`, #580) : un appel qu'elle soumet à arbitrage est
+        `on_arbitrage_acte` (#583) est le canal du **troisième cran** de cette
+        même politique (`ask`, #580) : un appel qu'elle soumet à arbitrage est
         **suspendu**, l'outil et ses arguments partent sur ce canal, et l'issue
         décide — `(True, détail)` laisse l'appel passer, `(False, détail)` le
         refuse avec son motif. C'est l'appelant qui compose la demande et la
@@ -340,6 +341,12 @@ class ModelProvider(ABC):
         par un comportement qui n'est pas le nôtre. À l'expiration, le
         fournisseur rend un refus **motivé par l'attente** — la demande, elle,
         reste en vol.
+
+        ⚠ Ce canal-ci et `on_arbitrage` (#582, plus bas) aboutissent au même
+        validateur mais ne transportent pas la même chose, et ce n'est pas un
+        doublon : l'un porte **l'acte qu'on a intercepté**, l'autre **la raison
+        qu'un agent a rédigée**. Le second est un canal *de plus*, dont le
+        silence ne dispense de rien (cadrage du parent #573).
 
         `on_activite` (#479) est le canal de « ce que l'agent fait **pendant**
         qu'il le fait » : le fournisseur l'appelle avec une ligne déjà composée
@@ -382,6 +389,24 @@ class ModelProvider(ABC):
 
         Même règle que les deux autres canaux sur les échecs : un callback qui
         lève ne casse jamais l'exécution observée.
+
+        `on_arbitrage` (#582, `maestro.providers.arbitrage`) est le seul canal
+        des quatre qui aille **dans l'autre sens** : les trois précédents
+        rapportent ce que le fournisseur observe, celui-ci porte une question de
+        l'agent et rapporte la réponse. Un fournisseur qui l'honore expose à
+        l'agent un outil `demander_arbitrage(raison)`, appelle ce canal quand
+        l'agent s'en sert, **attend** la décision et la lui rend — approuvée, il
+        poursuit ; refusée, il reçoit un motif exploitable et poursuit sans
+        l'action. Capacité optionnelle au second degré, comme `on_etapes` : un
+        fournisseur sans outillage n'expose rien et le moteur ne s'en aperçoit
+        pas.
+
+        L'exigence n'est pas non plus la même : ici, un callback qui lève ne
+        peut pas être avalé en silence — le fournisseur doit rendre à l'agent un
+        **refus** motivé (`maestro.providers.arbitrage.CANAL_EN_ERREUR`). Une
+        panne d'observation ne coûte qu'une ligne de journal ; une panne du
+        canal de décision laisserait l'agent sans réponse devant l'action même
+        qu'il jugeait irréversible.
 
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de
