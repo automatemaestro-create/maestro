@@ -975,9 +975,11 @@ export async function relancerExecution(
  * #185) — un **résumé** par run, sans son brief ni sa trace.
  *
  * C'est ce qui rend un run suspendu **visible** (#322) : `statut` vaut alors
- * `en_attente_brief` (ou `en_attente_reponses`, #321) et rien d'autre ne le dirait
- * — un run arrêté sur son brief n'a créé aucune tâche, donc il n'apparaît ni au
- * Kanban ni dans les grands livres, qui se dérivent des tâches.
+ * `en_attente_brief` (ou `en_attente_reponses`, #321 ; ou `en_attente_arbitrage`,
+ * #571) et rien d'autre ne le dirait — un run arrêté sur son brief n'a créé aucune
+ * tâche, donc il n'apparaît ni au Kanban ni dans les grands livres, qui se
+ * dérivent des tâches ; et un run arrêté sur un arbitrage n'y bouge plus, ce qui
+ * le rend indiscernable d'un run qui travaille partout ailleurs (#568).
  */
 export function chargerExecutions(
   portee: PorteeProjet,

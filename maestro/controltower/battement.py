@@ -127,11 +127,18 @@ def vitalite(
 
     `statut` est celui de la projection (`EtatExecution.statut`) et
     `dernier_battement` l'horodatage lu au registre, `None` si le run n'y figure
-    pas. Les deux attentes humaines (`en_attente_brief`, `en_attente_reponses`)
-    ne sont **pas** terminales et reçoivent donc un verdict comme les autres :
-    un run suspendu sur un humain est porté par un hôte, qui bat — c'est même le
-    seul moyen de distinguer « personne n'a encore répondu » de « le process qui
-    posait la question est mort », les deux cas de #347.
+    pas. Les trois attentes humaines (`en_attente_brief`, `en_attente_reponses`,
+    `en_attente_arbitrage`) ne sont **pas** terminales et reçoivent donc un
+    verdict comme les autres : un run suspendu sur un humain est porté par un
+    hôte, qui bat — c'est même le seul moyen de distinguer « personne n'a encore
+    répondu » de « le process qui posait la question est mort », les deux cas de
+    #347.
+
+    ⚠ La vitalité **n'est donc pas** ce qui distingue un run bloqué d'un run qui
+    travaille, et c'est précisément le constat de #568 : pendant treize minutes
+    d'attente d'arbitrage, le cœur battait et le verdict disait `vivant`, à
+    raison. Ce que la vitalité répond est « son hôte est-il encore là ? » ;
+    « attend-il quelqu'un ? » se lit sur le **statut** (#571), jamais ici.
 
     Trois écarts à connaître, tous du même côté :
 

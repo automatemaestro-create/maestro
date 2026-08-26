@@ -108,13 +108,31 @@ EXECUTION_EN_ATTENTE_BRIEF = "en_attente_brief"
 #: pose des questions.
 EXECUTION_EN_ATTENTE_REPONSES = "en_attente_reponses"
 
-#: Les deux états où le run est **suspendu sur un humain** (#320, #321) : en vol,
-#: mais rien ne bougera sans un geste. Rassemblés parce que plusieurs endroits ont
-#: besoin de la question « ce run attend-il quelqu'un ? » — l'ancienneté de l'attente
-#: se pose et se lève sur cet ensemble, et une vue qui veut lister ce qui bloque n'a
-#: pas à connaître les deux noms.
+#: Le run **s'est arrêté sur un arbitrage de tâche** (#571) : une action sensible
+#: attend qu'un humain l'approuve ou la refuse (#48), et rien de ce run n'avance
+#: d'ici là. Troisième exemplaire du motif ci-dessus, et non un cas particulier —
+#: même statut d'attente, même `attente_depuis`, même non-terminalité (le run
+#: reste annulable pendant qu'il attend).
+#:
+#: Il vient tard parce qu'il manquait le chaînon : une demande de validation porte
+#: sa **tâche**, jamais son run, si bien que la projection n'avait pas de quoi
+#: savoir *quel* run attendait — #570 l'a posé sur la demande. Sans lui, un run
+#: bloqué et un run qui travaille rendaient exactement la même réponse : statut
+#: `en_cours`, 0 tâche, coût figé, cœur battant (#568, treize minutes de blocage
+#: muet).
+EXECUTION_EN_ATTENTE_ARBITRAGE = "en_attente_arbitrage"
+
+#: Les trois états où le run est **suspendu sur un humain** (#320, #321, #571) :
+#: en vol, mais rien ne bougera sans un geste. Rassemblés parce que plusieurs
+#: endroits ont besoin de la question « ce run attend-il quelqu'un ? » —
+#: l'ancienneté de l'attente se pose et se lève sur cet ensemble, et une vue qui
+#: veut lister ce qui bloque n'a pas à connaître les trois noms.
 STATUTS_EXECUTION_EN_ATTENTE = frozenset(
-    {EXECUTION_EN_ATTENTE_BRIEF, EXECUTION_EN_ATTENTE_REPONSES}
+    {
+        EXECUTION_EN_ATTENTE_BRIEF,
+        EXECUTION_EN_ATTENTE_REPONSES,
+        EXECUTION_EN_ATTENTE_ARBITRAGE,
+    }
 )
 
 #: Statuts d'exécution **terminaux** : le run ne bouge plus, il n'est plus
@@ -401,8 +419,9 @@ class EtatExecution:
     # l'événement qui l'a suspendu, None dès qu'il repart ou qu'il est soldé. C'est
     # l'**ancienneté** de la troisième exigence : sans elle, une attente est
     # indiscernable d'un run planté, et savoir *depuis quand* est ce qui permet d'en
-    # juger. Posée pour les **deux** attentes (questions et validation) : c'est une
-    # seule question, elle mérite une seule réponse.
+    # juger. Posée pour les **trois** attentes (questions, décision sur le brief,
+    # arbitrage de tâche #571) : c'est une seule question, elle mérite une seule
+    # réponse.
     attente_depuis: str | None = None
     # Le rang de l'aller-retour de clarification en cours et le plafond annoncé
     # (#321) — 0 tant que le run n'en a joué aucun. C'est l'annonce du plafond, telle
@@ -1331,6 +1350,7 @@ class ControlTowerState:
             run_id=event.run_id,
             horodatage=event.horodatage,
         )
+        self._suspend_sur_arbitrage(event.run_id, event.horodatage)
 
     def _applique_validation_decision(self, event: Event) -> None:
         """Tranche une demande de validation (#48) : approuvée ou refusée.
@@ -1339,6 +1359,12 @@ class ControlTowerState:
         l'endpoint puis rediffusion par la pompe) laisse l'état inchangé. Une
         décision sur une demande inconnue est ignorée — la projection est un
         miroir, pas une source de vérité.
+
+        Le **run** que la demande retenait repart ici (#571), et son identité se
+        lit sur la demande projetée plutôt que sur l'événement de décision : c'est
+        `validation.demande` qui porte le run (#570), et la décision peut venir
+        d'ailleurs — l'endpoint, une rediffusion, un journal durable rejoué. Une
+        seule source, celle qui a suspendu.
         """
         demande = self._validations.get(event.tache_id)
         if demande is None:
@@ -1349,3 +1375,74 @@ class ControlTowerState:
         )
         demande.decision = event.detail or demande.decision
         demande.horodatage = event.horodatage or demande.horodatage
+        self._libere_de_arbitrage(demande.run_id)
+
+    def _suspend_sur_arbitrage(self, run_id: str, horodatage: str) -> None:
+        """Le run s'arrête sur un arbitrage de tâche (#571) : statut et ancienneté.
+
+        Pendant exact de `_applique_brief_demande` sur la troisième attente, et
+        c'est tout le ticket : le motif existait deux fois et fonctionnait bien,
+        il manquait ce troisième exemplaire. Sans lui, un run arrêté sur une
+        action sensible restait `en_cours` — indiscernable d'un run qui travaille,
+        y compris pour la vitalité, dont le cœur bat normalement (#568).
+
+        Trois abstentions, chacune pour sa raison :
+
+        - **sans run connu**, rien à suspendre — une demande venue d'un producteur
+          qui ne porte pas son run (moteur antérieur à #570, double d'un test) est
+          projetée comme avant, simplement sans rendre le run bavard ;
+        - **sur un run soldé**, on ne remet rien en vol : une demande arrivée après
+          coup — rediffusion, journal rejoué dans le désordre — ferait repartir un
+          run annulé, et c'est la garde que `_applique_brief_decision` pose déjà
+          sur l'autre bout de la chaîne ;
+        - **sur un run qui attend déjà**, l'ancienneté ne se **réécrit pas**. Un run
+          peut porter plusieurs demandes en vol (#568 : trois tâches sensibles sur
+          trois), et « depuis quand attend-il ? » se répond depuis la **première** :
+          la repousser à chaque nouvelle demande rajeunirait indéfiniment une
+          attente qui dure, ce qui est exactement l'information qu'on vient poser.
+        """
+        execution = self._executions.get(run_id) if run_id else None
+        if execution is None or execution.statut in STATUTS_EXECUTION_TERMINAUX:
+            return
+        if execution.statut == EXECUTION_EN_ATTENTE_ARBITRAGE:
+            return
+        execution.statut = EXECUTION_EN_ATTENTE_ARBITRAGE
+        execution.fin = None
+        execution.attente_depuis = horodatage
+
+    def _libere_de_arbitrage(self, run_id: str) -> None:
+        """Le run repart une fois l'arbitrage rendu (#571) — approbation **ou** refus.
+
+        Les deux issues lèvent l'attente, et c'est le critère : un refus rend la
+        main au moteur aussi sûrement qu'une approbation (il annule la tâche
+        proprement), donc le run cesse d'attendre dans les deux cas. Ne garder que
+        l'approbation laisserait un run refusé « en attente d'arbitrage » pour
+        toujours, avec un compteur d'ancienneté qui court.
+
+        Il repart en `en_cours`, et c'est bien **le statut qu'il avait** : une
+        demande de validation ne naît que d'une tâche en vol, donc d'un run que son
+        brief a déjà libéré — les deux autres attentes précèdent toute tâche. Rien
+        n'est mémorisé pour un état qui ne peut pas se produire.
+
+        Deux gardes :
+
+        - la décision d'un run qui **n'attendait pas** ne le touche pas — run
+          annulé pendant l'attente (son statut terminal a déjà effacé l'ancienneté,
+          cf. `_applique_execution_statut`), ou décision rejouée une seconde fois ;
+        - une **autre demande encore en attente** sur le même run le laisse
+          suspendu. C'est la moitié qui manque à une lecture littérale de « les
+          retire à la décision » : trancher la première de trois demandes rendrait
+          au run un statut « en cours » qu'il ne mérite pas, et referait la promesse
+          fausse que ce ticket supprime.
+        """
+        execution = self._executions.get(run_id) if run_id else None
+        if execution is None or execution.statut != EXECUTION_EN_ATTENTE_ARBITRAGE:
+            return
+        if any(
+            demande.run_id == run_id and demande.en_attente
+            for demande in self._validations.values()
+        ):
+            return
+        execution.statut = EXECUTION_EN_COURS
+        execution.fin = None
+        execution.attente_depuis = None
