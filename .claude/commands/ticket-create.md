@@ -54,6 +54,14 @@ lieu d'inventer.
      marqueur est **facultatif** ; un lot **sans** marqueur reste barré tant que tout ce qui le
      précède n'est pas livré — c'est ce qu'on veut pour le **lot final « tests + doc »** (jamais
      marqué) et pour un lot socle dont les suivants dépendent réellement.
+
+     **La question se pose toujours, et sa réponse s'enregistre** (#562) : une fois la checklist
+     remplie, enregistre l'arbitrage sur le **parent** — `bash scripts/gitlab/lib.sh arbitre
+     <iid-parent>`, qui pose le label `lot::arbitre` — **quel qu'ait été ton verdict**, y compris
+     « aucun lot n'est parallélisable ». Sans ce label, « aucun marqueur » est ambigu : il veut dire indifféremment
+     « les lots dépendent vraiment les uns des autres » ou « personne n'y a pensé », et
+     `/orchestrate` reproposera l'arbitrage à chaque run. Le poser ici est ce qui fait que le manque
+     ne se reproduit pas — 16 des 42 parents du dépôt n'ont jamais été arbitrés faute de ce geste.
    - **Mécanique** : crée d'abord le **parent** (étapes 5 à 9, section `## Sous-tickets` encore
      vide), puis chaque **sous-ticket** (étapes 5 à 9 pour chacun), lie chaque sous-ticket au
      parent — `bash scripts/gitlab/lib.sh issue-link <iid-parent> <iid-sous-ticket>` — et termine

@@ -829,6 +829,101 @@ gl_subtickets_startables() {
   '
 }
 
+# --- Arbitrage des lots parallélisables (#562, docs/10 §5.1) ------------------------------------
+# Le marqueur « (parallèle) » est FACULTATIF (#160), et c'est ce qui rend son absence AMBIGUË : un
+# lot non marqué veut dire « il dépend réellement de ce qui le précède » (l'intention du marqueur, et
+# le cas du lot final « tests + doc ») ou « personne n'y a pensé », et rien ne les distingue. Un run
+# part alors en séquentiel sans que ce séquentiel ait jamais été décidé.
+#
+# CE VERBE NE TRANCHE QUE LA MOITIÉ QU'UNE MACHINE PEUT TRANCHER — « ce parent a-t-il été
+# arbitré ? » —, jamais « ces deux lots sont-ils indépendants ? », qui reste un jugement rendu une
+# fois par parent. Marquer sans juger enverrait un lot partir d'une base incomplète : le sens sûr est
+# le séquentiel (docs/10 §5.1), et une détection qui marquerait d'office ferait l'inverse.
+#
+# DEUX SOURCES POUR UNE SEULE QUESTION, ET AUCUNE N'EST DE TROP :
+#   1. le label `lot::arbitre` sur le PARENT — posé par l'arbitrage QUEL QUE SOIT SON VERDICT ;
+#   2. à défaut, « au moins un lot marqué » — la règle de FAIT, qui évite de signaler comme
+#      non arbitrés les 25 parents arbitrés à la main avant que ce label n'existe.
+# Sans la première, un parent dont la réponse juste est « aucun lot n'est parallélisable » ne
+# pourrait JAMAIS être déclaré arbitré : il serait proposé à chaque run, pour toujours — le défaut
+# symétrique de celui qu'on corrige, et la règle de `gc --auto` prise à l'envers (signaler
+# l'abstention nominale apprend à ne plus lire les signalements).
+GL_LABEL_ARBITRE="${GL_LABEL_ARBITRE:-lot::arbitre}"
+
+# gl_arbitrage <iid-parent> -> « <verdict><TAB><marqués><TAB><lots><TAB><source> », source valant
+# `label`, `marqueur` ou `-`.
+# Codes : 0 = arbitré · 3 = jamais arbitré · 1 = pas un parent, ou lecture impossible. Le 3 plutôt
+# qu'un 1, pour la raison de gl_lots_ouverts : « jamais arbitré » est une RÉPONSE, pas une panne.
+#
+# UNE SEULE LECTURE : `gl_issue_raw` rend les labels ET le corps, donc les deux sources se lisent
+# dans la même réponse.
+#
+# gl_arbitrage_de — cœur du verdict, rejoué sur un ticket DÉJÀ LU (stdin = sortie de gl_issue_raw),
+# exactement comme `gl_parent_marqueur` l'est pour `gl_parent_of` et `gl_subticket_rows` pour
+# `gl_subtickets`. Ce n'est pas une commodité : `queue.sh` a déjà la vue de chaque parent de son plan
+# en cache (`vue`), et sans cette moitié il paierait une lecture de forge par parent pour une
+# question dont la réponse est dans un fichier qu'il vient d'écrire.
+gl_arbitrage_de() {
+  local raw rows labels nb_lots nb_marques verdict source
+  raw="$(cat)"
+  rows="$(printf '%s\n' "$raw" | gl_subticket_rows)"
+  [ -n "$rows" ] || return 1
+  # Comptage en awk et non en `wc -l` : `printf '%s\n' ""` compte une ligne pour zéro résultat, et
+  # « 1 lot marqué » au lieu de « 0 » rendrait arbitré exactement le parent qu'on cherche.
+  nb_lots="$(printf '%s\n' "$rows" | awk 'END { print NR }')"
+  nb_marques="$(printf '%s\n' "$rows" | awk -F '\t' '$3 == "∥" { n++ } END { print n + 0 }')"
+  labels="$(printf '%s\n' "$raw" | sed -n 's/^labels:[[:space:]]*//p' | head -1)"
+
+  source="-"
+  case ",$(printf '%s' "$labels" | tr -d '[:space:]')," in
+    *",$GL_LABEL_ARBITRE,"*) source="label" ;;
+  esac
+  if [ "$source" = "label" ]; then verdict="arbitré"
+  elif [ "$nb_marques" -gt 0 ]; then verdict="arbitré"; source="marqueur"
+  else verdict="jamais"
+  fi
+
+  printf '%s\t%s\t%s\t%s\n' "$verdict" "$nb_marques" "$nb_lots" "$source"
+  [ "$verdict" = "arbitré" ] || return 3
+  return 0
+}
+
+gl_arbitrage() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_arbitrage <iid-parent>" >&2; return 2; fi
+  local raw code
+  raw="$(gl_issue_raw "$iid")" || return 1
+  printf '%s\n' "$raw" | gl_arbitrage_de
+  code=$?
+  if [ "$code" = 1 ]; then
+    echo "Pas de section « ## Sous-tickets » dans #$iid — pas un ticket parent." >&2
+  fi
+  return "$code"
+}
+
+# gl_arbitre <iid-parent> -> ENREGISTRE que l'arbitrage a eu lieu, en posant `lot::arbitre`.
+# Codes : 0 = posé (ou déjà là) · 1 = pas un parent, ou échec d'écriture.
+#
+# C'EST UN VERBE, ET PAS UN `gh issue edit --add-label` DANS UN PROMPT, pour deux raisons dont une
+# seule est visible tout de suite. La visible : `tests/test_cycle_de_vie.py` interdit `--add-label`
+# dans `.claude/commands/**`, parce que c'est par là qu'un prompt remettrait le CYCLE DE VIE sur
+# l'issue, à côté de `set-workflow` — la garde est plus large que son motif, et elle a raison de
+# l'être. L'autre : #389 fera passer le marqueur `(parallèle)` au label `lot::parallele`, donc
+# l'écriture de l'arbitrage bougera ; un prompt qui appelle `gh` directement serait à retrouver, un
+# verbe non.
+#
+# IL NE POSE RIEN SUR UN NON-PARENT : le label dit quelque chose du DÉCOUPAGE, et le poser sur un
+# ticket ordinaire en ferait une décoration que la lecture prendrait pour un fait.
+gl_arbitre() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_arbitre <iid-parent>" >&2; return 2; fi
+  local avant
+  avant="$(gl_arbitrage "$iid")" || [ $? = 3 ] || return 1
+  gh_add_label "$iid" "$GL_LABEL_ARBITRE" || return 1
+  printf '#%s : arbitrage enregistré (« %s »)%s\n' "$iid" "$GL_LABEL_ARBITRE" \
+    "$(printf '%s' "$avant" | awk -F '\t' '$2 == 0 { printf " — aucun lot parallélisable" }')"
+}
+
 # --- Fermeture du parent (#515, docs/10 §5.1) ---------------------------------------------------
 # Un parent de suivi ne porte ni branche ni code : aucune PR ne le ferme par un `Closes #`, et sa
 # fermeture était le SEUL geste du cycle d'un chantier resté manuel — §5.1 la décrivait comme « une
@@ -4339,6 +4434,18 @@ gh_set_description() {
   printf 'Description de #%s mise à jour.\n' "$iid"
 }
 
+# gh_add_label <iid> <label> -> ajoute UN label sans toucher aux autres.
+# L'API `POST /issues/<n>/labels` ajoute et ne remplace pas — c'est le point : un `gh issue edit
+# --add-label` relit puis réécrit la liste, et deux écritures concurrentes s'y perdraient l'une
+# l'autre. Idempotent côté forge : reposer un label déjà là ne fait rien et ne rend pas d'erreur.
+gh_add_label() {
+  local iid="$1" label="$2"
+  if [ -z "$iid" ] || [ -z "$label" ]; then echo "usage: gh_add_label <iid> <label>" >&2; return 2; fi
+  if ! gh api -X POST "repos/$GL_GH_REPO/issues/$iid/labels" -f "labels[]=$label" >/dev/null 2>&1; then
+    echo "Échec de la pose du label « $label » sur #$iid" >&2; return 1
+  fi
+}
+
 gh_get_mr_description() {
   local mr="$1"
   if [ -z "$mr" ]; then echo "usage: gh_get_mr_description <mr>" >&2; return 2; fi
@@ -5499,6 +5606,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     subtickets)     gl_subtickets "$@" ;;
     startables)     gl_subtickets "$@" | tail -n +2 | gl_subtickets_startables ;;
     lots-ouverts)   gl_lots_ouverts "$@" ;;
+    arbitrage)      gl_arbitrage "$@" ;;
+    arbitre)        gl_arbitre "$@" ;;
     ferme-parent)   gl_ferme_parent "$@" ;;
     demarre-parent) gl_demarre_parent "$@" ;;
     start-brief)    gl_start_brief "$@" ;;

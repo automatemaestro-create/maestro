@@ -27,13 +27,14 @@ toi-même.
 
 ### Aucun argument, ou `--max <n>` — préparer et faire lancer un run
 
-0. **Sur quoi va porter le run ?** *Avant tout le reste*, trois lectures — hors ligne pour la
-   première, en lecture seule pour les trois — qui préparent les **seules** questions que cette
+0. **Sur quoi va porter le run ?** *Avant tout le reste*, quatre lectures — hors ligne pour la
+   première, en lecture seule pour les quatre — qui préparent les **seules** questions que cette
    commande pose (au point 3) :
    ```
    bash scripts/orchestrate/status.sh --reprenables    # un run inachevé traîne-t-il ?
    bash scripts/orchestrate/queue.sh  --milestones     # quels milestones ont du travail ?
    bash scripts/orchestrate/queue.sh  --orphelins      # des tickets qu'une session morte a laissés ?
+   bash scripts/orchestrate/queue.sh  --non-arbitres   # des parents dont les lots n'ont jamais été arbitrés ?
    ```
    - **`--reprenables`** — sortie vide (le cas courant) : rien à reprendre, n'en parle pas. Une ou
      plusieurs lignes : un run précédent n'a pas fini son plan. TSV — `run-id`, `état`
@@ -53,6 +54,14 @@ toi-même.
      ticket a déjà été rendu prenable), `plafond` (`atteint` = **ne le propose pas**), `run`
      d'origine et son `verdict` (`-` s'il n'y a jamais eu de run : session interactive), `détail`
      (depuis quand son worktree est muet, et où il est), `titre`.
+   - **`--non-arbitres`** — sortie vide (le cas courant) : n'en parle pas. Une ou plusieurs lignes :
+     ce sont des **parents de suivi dont personne n'a jamais tranché** quels lots sont
+     parallélisables (#562). Le marqueur `(parallèle)` étant **facultatif** (#160), leurs lots
+     partiront un par un — un séquentiel que le run n'a pas choisi, qu'il a **subi**, et qui ne se
+     distingue d'un séquentiel voulu par rien. TSV — `parent`, `au-plan` (combien de ses lots sont
+     dans ce plan), `marques` (toujours 0, sinon il ne serait pas listé), `lots` (sa checklist
+     entière), `titre`. ⚠ La liste **dépend du milestone** : si la question (b) en retient un autre
+     que le défaut, rejoue `--non-arbitres --milestone "<titre>"` avant de poser la question (d).
 
 1. **Montre le plan** de ce qui partirait par défaut : `bash scripts/orchestrate/run.sh --dry-run`
    (lecture seule, aucun quota). Il imprime l'ordre de traitement figé, ce qui serait fait pour
@@ -112,6 +121,44 @@ toi-même.
    fois, il retombe à chaque run — `bash scripts/gitlab/lib.sh reprises <iid>` pour sa trace, et
    `reprendre-en-cours --force <iid>` pour insister ») et passe. C'est ce qui empêche un ticket
    cassé de brûler une session à chaque run.
+
+   **(d) Arbitrer les lots des parents qui ne l'ont jamais été ?** — seulement si le point 0 en a
+   listé, et seulement pour un run **neuf** (le plan d'une reprise est figé : un marqueur posé
+   maintenant n'y entrerait pas — dis-le si le cas se présente). Question **oui/non par parent**,
+   **rien coché par défaut** : le séquentiel est le sens sûr (docs/10 §5.1), et un « non » est une
+   réponse valable qui laisse le run partir tel quel.
+
+   Ce qu'un « oui » engage, et qu'il faut annoncer : **tu vas lire les lots et trancher**, lot par
+   lot, lesquels ne dépendent pas de ceux qui les précèdent. C'est un **jugement**, pas une
+   détection — aucune machine ne peut le rendre à ta place, et c'est pourquoi il se demande ici
+   plutôt que de se déduire. Mets dans la description ce que la ligne TSV t'a appris : combien de
+   lots de ce parent sont au plan sur combien au total.
+
+   Une fois le go donné, **pour chaque parent retenu** :
+   1. lis ses lots — `bash scripts/gitlab/lib.sh subtickets <parent>` pour la checklist, et la
+      description de chaque lot si son titre ne suffit pas à trancher ;
+   2. décide, lot par lot, s'il **ne dépend pas** des lots parallèles qui le précèdent. Le cas
+      courant est qu'il n'en dépende pas — les lots sont additifs et mergeables seuls sur `main` —
+      mais un **lot socle** dont les suivants héritent, et le **lot final « tests + doc »**, ne se
+      marquent jamais ;
+   3. écris les marqueurs **par les helpers**, jamais à la main :
+      ```
+      bash scripts/gitlab/lib.sh get-description <parent> > <fichier>   # tu édites le fichier
+      bash scripts/gitlab/lib.sh set-description <parent> <fichier>
+      ```
+      suffixe ` (parallèle)` aux titres retenus **dans la checklist `## Sous-tickets`**, et ne
+      touche à rien d'autre — surtout pas aux coches, tenues au fil de l'eau par `/ticket-ship` ;
+   4. enregistre l'arbitrage sur le parent, **quel qu'ait été ton verdict** :
+      ```
+      bash scripts/gitlab/lib.sh arbitre <parent>
+      ```
+      C'est lui qui rend la réponse « aucun lot n'est parallélisable » **enregistrable**. Sans lui,
+      un parent légitimement séquentiel reviendrait dans cette question à chaque run, pour toujours.
+      Le verbe refuse un ticket qui n'est pas un parent, et reposer le label ne coûte rien.
+
+   L'ordre compte, comme pour les orphelins : **tout ceci a lieu AVANT le lancement**, sans quoi le
+   run figerait son plan sur une checklist non arbitrée et les marqueurs ne serviraient qu'au run
+   suivant.
 
    **Dis ce qui va être arrêté.** Lancer ou reprendre commence par **tuer les runs encore en vol**
    (#213, docs/10 §11.9) : `bash scripts/orchestrate/status.sh --list` marque d'un `● en cours`

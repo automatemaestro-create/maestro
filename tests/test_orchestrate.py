@@ -179,6 +179,18 @@ if [ "$1" = "api" ]; then
       done
       printf '{"merged":true,"sha":"deadbeef"}'
       exit 0 ;;
+    *"-X POST"*"/labels"*)
+      # La pose d'un label (#562, `gh_add_label`). Le bouchon l'écrit dans la fixture du ticket,
+      # sur sa ligne `labels:` — sans quoi `arbitre` puis `--non-arbitres` ne pourraient pas se
+      # lire l'un l'autre, et le seul aller-retour qui compte (« l'arbitrage enregistré fait taire
+      # le signalement ») ne serait pas observable.
+      iid="${requete#*issues/}"; iid="${iid%%/labels*}"
+      label="${requete#*labels[]=}"; label="${label%% *}"
+      [ -f "$FIX/issue-$iid.txt" ] || exit 1
+      grep -q "^labels:.*$label" "$FIX/issue-$iid.txt" ||
+        sed -i "s/^\\(labels:.*\\)$/\\1, $label/" "$FIX/issue-$iid.txt"
+      printf '[]'
+      exit 0 ;;
     *"actions/runs?branch="*)
       branche="${requete#*actions/runs?branch=}"; branche="${branche%%&*}"
       if [ -f "$FIX/run-${branche//\//__}.json" ]; then
@@ -336,15 +348,24 @@ class Depot:
         assigne: str = "",
         parent: int | None = None,
         lots: list[tuple[int, str, bool]] | None = None,
+        labels_sup: str = "",
     ) -> None:
-        """Déclare un ticket : son statut, ses labels, et son rôle éventuel de lot ou de parent."""
+        """Déclare un ticket : son statut, ses labels, et son rôle éventuel de lot ou de parent.
+
+        `labels_sup` ajoute des labels à la liste de base — il n'existe que pour `lot::arbitre`
+        (#562), qui est un fait porté par le PARENT et non par sa checklist : sans lui, le seul
+        chemin testable serait celui du marqueur, c'est-à-dire la moitié de la règle.
+        """
         corps = f"Sous-ticket de #{parent} — lot 1/5.\n" if parent else ""
         if lots:
             corps += "\n## Sous-tickets\n\n" + "".join(
                 f"- [ ] #{i} — {t}{' (parallèle)' if p else ''}\n" for i, t, p in lots
             )
+        labels = f"agent::dev, prio::{prio}, type::{type_}"
+        if labels_sup:
+            labels += f", {labels_sup}"
         (self.fixtures / f"issue-{iid}.txt").write_text(
-            f"title:\t{titre}\nstate:\topen\nlabels:\tagent::dev, prio::{prio}, type::{type_}\n"
+            f"title:\t{titre}\nstate:\topen\nlabels:\t{labels}\n"
             f"assignees:\t{assigne}\n--\n{corps}\n",
             encoding="utf-8",
         )
@@ -485,6 +506,19 @@ class Depot:
             # soit les quatre sessions d'un test de concurrence renonçant l'une après l'autre à leur
             # barrière de 45 s (#313). En deçà, une vraie régression de l'ordonnanceur sortirait en
             # `TimeoutExpired` — le seul échec de ce fichier qui ne dise pas ce qu'il a constaté.
+            timeout=240,
+        )
+
+    def lib(self, *args: str) -> subprocess.CompletedProcess:
+        """Comme `lance`, mais pour `scripts/gitlab/lib.sh` — dont queue.sh tient ses verdicts."""
+        return subprocess.run(
+            [BASH, str(self.racine / "scripts/gitlab/lib.sh"), *args],
+            cwd=self.racine,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=240,
         )
 
@@ -5486,6 +5520,134 @@ def test_le_check_rend_les_groupes_lisibles(depot: Depot) -> None:
     assert "groupes de dépendance" in r.stderr
     assert "(parallélisables)" in r.stderr, "un groupe à plusieurs membres est nommé comme tel"
     assert "#502, #503" in r.stderr, "et ses membres listés dans l'ordre du plan"
+
+
+# --- L'arbitrage manquant : ce que la colonne « groupe » ne peut pas dire (#562) ------------------
+#
+# Le marqueur est FACULTATIF (#160). Un parent sans un seul marqueur rend donc autant de vagues que
+# de lots — un plan parfaitement séquentiel, indiscernable d'un séquentiel VOULU. Ces tests portent
+# sur la seule question qu'une machine tranche : « ce parent a-t-il été arbitré ? ».
+
+
+def _non_arbitres(sortie: str) -> list[list[str]]:
+    return [ligne.split("\t") for ligne in sortie.splitlines()
+            if ligne and not ligne.startswith("#")]
+
+
+def test_un_parent_sans_aucun_marqueur_est_dit_jamais_arbitre(depot: Depot) -> None:
+    """Le cas nominal du signalement, avec ses comptes.
+
+    `au-plan` et `lots` sont distincts à dessein : un parent dont un seul lot reste à faire est
+    aussi peu arbitré qu'un autre, mais ce qu'un run en verra tient à ce qui est au plan.
+    """
+    _parent_a_vagues(depot, [False, False, False])
+    lignes = _non_arbitres(depot.lance("queue.sh", "--non-arbitres").stdout)
+    assert lignes == [["500", "3", "0", "3", "Parent de suivi"]], lignes
+
+
+def test_un_seul_lot_marque_suffit_a_tenir_le_parent_pour_arbitre(depot: Depot) -> None:
+    """La règle de FAIT, et ce qu'elle protège.
+
+    Les 25 parents arbitrés à la main avant que `lot::arbitre` n'existe portent des marqueurs et
+    rien d'autre. Sans cette moitié, le premier run les signalerait tous — et un signalement qui
+    nomme 25 parents dont 24 vont bien n'est plus lu.
+    """
+    _parent_a_vagues(depot, [False, True, False])
+    assert _non_arbitres(depot.lance("queue.sh", "--non-arbitres").stdout) == []
+
+
+def test_le_label_arbitre_enregistre_le_verdict_tout_est_sequentiel(depot: Depot) -> None:
+    """LE test du ticket : sans lui, la réponse « aucun lot n'est parallélisable » est inexprimable.
+
+    Ce parent est arbitré et sa réponse est « rien n'est parallélisable » — exactement la forme
+    qu'aucun marqueur ne peut porter, puisque le marqueur ne sait dire que l'inverse. S'il
+    ressortait ici, /orchestrate reposerait la question à chaque run, pour toujours : le défaut
+    symétrique de celui qu'on corrige.
+    """
+    lots = [(501, "Lot 1", False), (502, "Lot 2", False)]
+    depot.milestone("Phase X")
+    depot.ticket(500, "Parent de suivi", lots=lots, labels_sup="lot::arbitre")
+    for iid, titre, _ in lots:
+        depot.ticket(iid, titre, parent=500)
+    depot.publie()
+    assert _non_arbitres(depot.lance("queue.sh", "--non-arbitres").stdout) == []
+    assert depot.lib("arbitrage", "500").stdout.split("\t")[:1] == ["arbitré"]
+
+
+def test_arbitrer_un_parent_fait_taire_le_signalement(depot: Depot) -> None:
+    """L'aller-retour complet, et la seule preuve que le dispositif CONVERGE.
+
+    Un signalement qu'on ne peut pas éteindre est un signalement qu'on apprend à ignorer : ce test
+    part d'un parent signalé, joue le geste que /orchestrate propose (`lib.sh arbitre`), et exige
+    que le signalement disparaisse — sans qu'un seul lot ait été marqué, puisque le verdict était
+    « tout est séquentiel ».
+    """
+    _parent_a_vagues(depot, [False, False])
+    assert _non_arbitres(depot.lance("queue.sh", "--non-arbitres").stdout) != []
+    r = depot.lib("arbitre", "500")
+    assert r.returncode == 0, r.stderr
+    assert "aucun lot parallélisable" in r.stdout, "le verbe dit ce qu'il vient d'enregistrer"
+    assert _non_arbitres(depot.lance("queue.sh", "--non-arbitres").stdout) == []
+
+
+def test_le_verbe_darbitrage_refuse_un_ticket_qui_nest_pas_un_parent(depot: Depot) -> None:
+    """Le label dit quelque chose du DÉCOUPAGE. Sur un ticket ordinaire il deviendrait une
+    décoration que la lecture prendrait pour un fait."""
+    _parent_a_vagues(depot, [False, True])
+    assert depot.lib("arbitre", "501").returncode == 1, "un lot n'est pas un parent"
+
+
+def test_les_trois_codes_du_verbe_darbitrage(depot: Depot) -> None:
+    """0 arbitré · 3 jamais · 1 pas un parent — éprouvés UN PAR UN.
+
+    Le 3 plutôt qu'un 1 pour « jamais » suit `lots-ouverts` : c'est une RÉPONSE, pas une panne, et
+    l'appelant n'a pas à trancher entre les deux sur la même valeur.
+    """
+    _parent_a_vagues(depot, [False, True])
+    assert depot.lib("arbitrage", "500").returncode == 0
+    depot.ticket(700, "Parent nu", lots=[(701, "Lot 1", False)])
+    depot.ticket(701, "Lot 1", parent=700)
+    depot.publie()
+    assert depot.lib("arbitrage", "700").returncode == 3, "aucun marqueur, aucun label"
+    assert depot.lib("arbitrage", "701").returncode == 1, "un lot n'est pas un parent"
+
+
+def test_le_plan_porte_la_reserve_sans_que_ses_lignes_de_ticket_bougent(depot: Depot) -> None:
+    """La réserve voyage DANS le plan, en commentaire — c'est ce qui évite à run.sh de replanifier.
+
+    Les deux lectures du plan par run.sh écartent déjà les lignes « # » ; ce test garde qu'elles
+    n'ont rien de nouveau à écarter du côté des tickets, et qu'un lecteur naïf du plan compte le
+    même nombre de tickets qu'avant.
+    """
+    _parent_a_vagues(depot, [False, False])
+    sortie = depot.lance("queue.sh").stdout
+    assert "# non-arbitre\t500\t" in sortie, "la réserve est là"
+    assert [ligne[1] for ligne in _lignes_du_plan(sortie)] == ["501", "502"], (
+        "et elle n'ajoute aucun ticket au plan"
+    )
+
+
+def test_le_plan_reste_identique_a_deux_appels_avec_la_reserve(depot: Depot) -> None:
+    """La règle 4 de queue.sh tient : la détection ne consulte que le backlog, jamais une horloge,
+    un journal ou un jugement. Deux appels rendent le même plan, réserve comprise."""
+    _parent_a_vagues(depot, [False, False])
+    assert depot.lance("queue.sh").stdout == depot.lance("queue.sh").stdout
+
+
+def test_le_check_nomme_les_parents_jamais_arbitres(depot: Depot) -> None:
+    _parent_a_vagues(depot, [False, False])
+    r = depot.lance("queue.sh", "--check")
+    assert "parents jamais arbitrés" in r.stderr
+    assert "#500" in r.stderr
+
+
+def test_le_check_est_muet_quand_tout_est_arbitre(depot: Depot) -> None:
+    """Règle de `gc --auto` : signaler l'abstention nominale apprend à ne plus lire les
+    signalements. Un plan entièrement arbitré ne dit rien du tout."""
+    _parent_a_vagues(depot, [False, True, True])
+    r = depot.lance("queue.sh", "--check")
+    assert "jamais arbitrés" not in r.stderr
+    assert "non-arbitre" not in depot.lance("queue.sh").stdout
 
 
 # --- Lot 2 : l'ordonnanceur (#289) ----------------------------------------------------------------

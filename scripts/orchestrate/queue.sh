@@ -83,6 +83,7 @@ CHECK=0
 MILESTONE=""
 LISTE_MILESTONES=0
 LISTE_ORPHELINS=0
+LISTE_NON_ARBITRES=0
 
 usage() {
   cat <<'USAGE'
@@ -105,6 +106,12 @@ Options :
                        explicite peut rendre prenable (`lib.sh reprendre-en-cours <iid>`). TSV :
                        iid, reprises, plafond, run d'origine, verdict, détail, titre. C'est ce que
                        /orchestrate lit pour PROPOSER la reprise avant un run neuf.
+  --non-arbitres       N'imprime pas de plan : liste les PARENTS du plan dont les lots n'ont jamais
+                       été arbitrés — personne n'a tranché lesquels sont parallélisables, si bien
+                       que leur séquentiel n'a pas été décidé, il a été subi. TSV : parent, lots
+                       au plan, lots marqués, lots au total, titre. C'est ce que /orchestrate lit
+                       pour PROPOSER l'arbitrage avant un run neuf. Aucune lecture de forge de
+                       plus : le plan a déjà lu chacun de ces parents.
   -h, --help           Cette aide.
 
 Sortie (stdout, TSV) : rang, iid, parent, prio, groupe, titre. Lecture seule — n'écrit rien.
@@ -119,6 +126,7 @@ while [ $# -gt 0 ]; do
     --milestone) MILESTONE="${2:-}"; shift ;;
     --milestones | --jalons) LISTE_MILESTONES=1 ;;
     --orphelins) LISTE_ORPHELINS=1 ;;
+    --non-arbitres) LISTE_NON_ARBITRES=1 ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -387,6 +395,39 @@ while IFS=$'\t' read -r iid prio titre; do
   fi
 done <"$TMP/candidats.tsv"
 
+# --- 5 bis. L'arbitrage : ce que le plan ne peut pas savoir tout seul (#562, docs/10 §5.1) --------
+# La colonne `groupe` ne dit que ce que la checklist du parent DÉCLARE. Le marqueur « (parallèle) »
+# étant facultatif (#160), un parent sans aucun marqueur rend une chaîne de vagues à un lot chacune —
+# c'est-à-dire un plan parfaitement séquentiel, indiscernable d'un séquentiel VOULU. Mesure du
+# 2026-08-26 : 16 parents sur 42 n'ont jamais reçu un seul marqueur.
+#
+# Ce bloc ne CORRIGE rien et n'infère rien : il nomme les parents sur lesquels la question n'a pas
+# été posée. Marquer d'office enverrait un lot partir d'une base incomplète, et le sens sûr est le
+# séquentiel — c'est la règle de docs/10 §5.1, et la raison pour laquelle l'arbitrage reste un
+# jugement que /orchestrate PROPOSE au feu vert, exactement comme la reprise des orphelins (#327).
+#
+# LA RÈGLE N'EST PAS RECOPIÉE ICI : le verdict est celui de `gl_arbitrage_de`, rejoué sur la vue que
+# `chaine_du_parent` a déjà mise en cache. Zéro lecture de forge en plus, et une seule définition de
+# « arbitré » — ce qui compte quand #389 fera passer le marqueur au label `lot::parallele`.
+: >"$TMP/non-arbitres.tsv"
+cut -f4 "$TMP/membres.tsv" | sort -u | while read -r parent; do
+  [ -n "$parent" ] && [ "$parent" != "-" ] || continue
+  vue_parent="$(vue "$parent")" || continue
+  verdict="$(gl_arbitrage_de <"$vue_parent")"
+  [ "$(printf '%s' "$verdict" | cut -f1)" = "jamais" ] || continue
+  au_plan="$(awk -F '\t' -v p="$parent" '$4 == p { n++ } END { print n + 0 }' "$TMP/membres.tsv")"
+  titre_parent="$(sed -n 's/^title:[[:space:]]*//p' "$vue_parent" | head -1)"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$parent" "$au_plan" "$(printf '%s' "$verdict" | cut -f2)" \
+    "$(printf '%s' "$verdict" | cut -f3)" "$titre_parent" >>"$TMP/non-arbitres.tsv"
+done
+
+if [ "$LISTE_NON_ARBITRES" = 1 ]; then
+  printf '# parent\tau-plan\tmarques\tlots\ttitre\n'
+  [ -s "$TMP/non-arbitres.tsv" ] && sort -t$'\t' -k1,1n "$TMP/non-arbitres.tsv"
+  exit 0
+fi
+
 if [ ! -s "$TMP/membres.tsv" ]; then
   diag "tous les candidats ont été écartés."
   printf '# rang\tiid\tparent\tprio\tgroupe\ttitre\n'
@@ -415,6 +456,18 @@ awk -F '\t' -v OFS='\t' '
 ' "$TMP/blocs.tsv" "$TMP/membres.tsv" |
   sort -t$'\t' -k1,1n -k2,2n -k3,3n |
   awk -F '\t' -v OFS='\t' '{ print NR, $4, $5, $6, $7, $8 }'
+
+# Le plan porte sa propre réserve (#562). Ces lignes sont des COMMENTAIRES : les deux lectures du
+# plan par run.sh les écartent déjà (`grep -v '^#'`, puis `case "$rang" in '#'*`), et un plan
+# ANTÉRIEUR à ce lot n'en porte simplement aucune — même dégradation douce que la colonne `groupe`
+# sur un plan d'avant #288. C'est ce qui permet à la ligne `plan :` d'un run de signaler l'arbitrage
+# manquant SANS repayer une planification : le fichier qu'il vient de recevoir le lui dit.
+if [ -s "$TMP/non-arbitres.tsv" ]; then
+  sort -t$'\t' -k1,1n "$TMP/non-arbitres.tsv" |
+    while IFS=$'\t' read -r p au_plan marques lots t; do
+      printf '# non-arbitre\t%s\t%s\t%s\t%s\t%s\n' "$p" "$au_plan" "$marques" "$lots" "$t"
+    done
+fi
 
 # --- 8. Diagnostic ---------------------------------------------------------------------------------
 if [ "$CHECK" = 1 ]; then
@@ -451,4 +504,16 @@ if [ "$CHECK" = 1 ]; then
     { liste = liste (nb ? ", " : "") "#" $3; nb++ }
     END { vide() }
   ' >&2
+
+  # Et ce que ces groupes ne peuvent pas dire (#562) : un parent sans un seul marqueur rend autant
+  # de vagues que de lots, donc un séquentiel qui a l'air décidé. MUET quand tout est arbitré —
+  # signaler l'abstention nominale apprend à ne plus lire les signalements (règle de `gc --auto`).
+  if [ -s "$TMP/non-arbitres.tsv" ]; then
+    printf '\nparents jamais arbitrés — leur séquentiel n'\''a pas été décidé, il a été subi :\n' >&2
+    sort -t$'\t' -k1,1n "$TMP/non-arbitres.tsv" |
+      while IFS=$'\t' read -r p au_plan _ lots t; do
+        printf '  #%-5s %s lot(s) au plan sur %s, aucun marqué — %s\n' "$p" "$au_plan" "$lots" "$t" >&2
+      done
+    printf '  → les arbitrer : bash scripts/orchestrate/queue.sh --non-arbitres\n' >&2
+  fi
 fi
