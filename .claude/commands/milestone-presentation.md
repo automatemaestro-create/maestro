@@ -1,20 +1,24 @@
 ---
-description: Génère une présentation HTML autonome des travaux d'un milestone (fonctionnalités, corrections, captures de la Control Tower)
+description: Génère une présentation HTML autonome des travaux d'un milestone (fonctionnalités, corrections, écrans touchés, démonstrations filmées)
 argument-hint: "[milestone]  (titre ou fragment, ex. « Phase 3 » — défaut : la phase courante)"
 allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Bash(node:*), Bash(npm:*), Bash(.venv/Scripts/python.exe:*), Bash(.venv/bin/python:*)
 ---
 
 Tu vas produire une **présentation HTML** de ce qui a été construit pendant un milestone :
 à montrer à un sponsor, à l'équipe, en fin de phase. Le fichier est **autonome** (CSS en ligne,
-captures en base64) — il s'ouvre et se partage tel quel.
+captures et clips en base64) — il s'ouvre et se partage tel quel.
 
 Commande **de supervision côté forge** : tu **lis** le backlog et tu **écris un fichier** dans le
 dépôt. Tu ne touches **jamais** au cycle de vie — ni statut, ni PR, ni merge, ni commit.
 
-Trois scripts font le travail ; ton rôle est de choisir le milestone, d'**écrire la matière
-rédactionnelle** (le résumé du milestone, une phrase par ticket) et de **rattacher les captures
-aux tickets qu'elles illustrent**. Ne réécris pas le HTML à la main : le gabarit vit dans
-`build.py`, c'est ce qui rend le rendu stable d'une génération à l'autre.
+Quatre scripts font le travail ; ton rôle est de choisir le milestone, d'**écrire la matière
+rédactionnelle** (le résumé du milestone, une phrase par ticket) et de **relayer** ce que les
+scripts dérivent. Ne réécris pas le HTML à la main : le gabarit vit dans `build.py`, c'est ce qui
+rend le rendu stable d'une génération à l'autre.
+
+⚠ **Ce que tu ne devines plus** (#543) : le rattachement d'un ticket à un écran **se lit** dans
+`ecrans-touches.sh`, qui le dérive des commits. Ne pose plus de clé de capture au jugé — la seule
+chose qui te reste à juger est la **prose**.
 
 1. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Arrête-toi si non authentifié.
 
@@ -33,20 +37,54 @@ aux tickets qu'elles illustrent**. Ne réécris pas le HTML à la main : le gaba
    les tickets : le rendu les regroupe lui-même par état (Livré / En revue / En cours / À venir /
    Écarté). N'invente aucun ticket et n'en écarte aucun de ton propre chef.
 
-4. **Prends les captures de la Control Tower** — un seul appel, qui installe `playwright-core`
-   dans un dossier temporaire, démarre la stack, photographie les pages du menu principal et
-   l'arrête :
+4. **Dérive les écrans touchés** — un seul appel, avec **tous** les iid de l'étape 3 :
+   ```
+   bash scripts/presentation/ecrans-touches.sh --check <iid> <iid> …
+   ```
+   Lecture seule, hors réseau. Sortie TSV (`iid`, `route`, `cle`, `fichiers`, en-tête `#` à
+   ignorer) : **une ligne par (ticket, écran)**, dérivée des `Refs #<iid>` / `Closes #<iid>` que
+   le hook `commit-msg` impose à tout commit. `--check` ajoute sur stderr la ref lue et les
+   tickets dont **aucun commit** ne porte de référence sur cette ref (pas encore mergés) — à
+   distinguer d'un ticket sans écran.
+
+   Trois résultats, et il faut les lire différemment :
+   - **une ou plusieurs lignes avec une `cle`** → ce sont les écrans du ticket. La `cle` est
+     **exactement** celle du manifeste de captures : c'est par elle que le rendu retrouve l'image.
+   - **une ligne dont `route` et `cle` valent `-`** → le ticket a une surface visible mais
+     **indéterminée** : il n'a touché que des composants partagés (`apps/web/components/**`) ou la
+     coquille commune (`app/layout.tsx`, `globals.css`). Garde-la : le rendu la nomme
+     « Composants partagés ». La taire dirait « ce ticket n'a rien changé à l'écran », ce qui est
+     faux.
+   - **aucune ligne** → le ticket **n'a pas de surface visible** (moteur, CI, doc, outillage).
+     C'est un résultat, pas un échec : il n'aura ni vignette ni écran, et c'est voulu.
+
+   Son échec n'arrête pas la commande : continue sans écrans dérivés et note-le à l'étape 7.
+
+5. **Prends les captures et les démonstrations filmées** — un seul appel, qui installe
+   `playwright-core` dans un dossier temporaire, démarre la stack de démo, photographie les pages
+   du menu principal, **filme les parcours de démonstration** et l'arrête :
    ```
    bash scripts/presentation/captures.sh --sortie <dossier-de-travail>/captures
    ```
    Utilise le **dossier de scratchpad** de la session comme dossier de travail, jamais le dépôt.
-   Le script écrit un manifeste `captures.json` (`cle`, `libelle`, `fichier`, `complet`,
-   `erreur`). `complet: false` signale une page photographiée avant d'être peuplée : regarde-la
-   avant de la retenir.
-   **Son échec n'arrête pas la commande** : continue sans visuels et note-le à l'étape 6
+   Compte plusieurs minutes : build de production, série de captures, puis un clip par parcours.
+   `--sans-videos` s'en passe (série plus courte, manifeste sans clip) — à réserver aux cas où
+   seules les captures sont demandées.
+
+   Le script écrit un manifeste `captures.json` à **deux listes** :
+   - `pages` — `cle`, `href`, `libelle`, `fichier`, `complet`, `erreur`. `complet: false` signale
+     une page photographiée avant d'être peuplée : regarde-la avant de la retenir.
+   - `videos` — `cle`, `libelle`, `fichier`, `duree_ms`, `octets`, `complet`, `erreur`. Les
+     parcours sont déclarés dans `scripts/presentation/parcours.mjs`.
+
+   **Un parcours en échec laisse sa ligne** avec son erreur : c'est ainsi qu'on sait qu'il a été
+   tenté. Lis-la, ne la recopie pas telle quelle — voir l'étape 6.
+
+   **Son échec n'arrête pas la commande** : continue sans visuels et note-le à l'étape 7
    (`notes`) pour que la présentation le dise elle-même.
 
-5. **Rédige la matière.** C'est la seule partie qui demande ton jugement :
+6. **Rédige la matière, et sélectionne les visuels.** C'est la seule partie qui demande ton
+   jugement :
    - `milestone.resume` — 2 à 4 phrases : ce que cette phase a apporté, vu de l'utilisateur.
      Pas une paraphrase de la liste des tickets ; ce qui est vrai maintenant et ne l'était pas
      avant.
@@ -55,47 +93,93 @@ aux tickets qu'elles illustrent**. Ne réécris pas le HTML à la main : le gaba
      suffit et que tu n'as rien à ajouter, laisse `null` plutôt que de délayer. Pour les tickets
      dont l'intitulé est opaque, va lire le ticket (`bash scripts/gitlab/lib.sh issue-brief <iid>`)
      — cible les quelques-uns qui le méritent, pas les trente.
-   - `tickets[].capture` — la **clé** d'une capture (colonne `cle` du manifeste) **quand la page
-     illustre vraiment le ticket** : un ticket sur la page Coûts → `couts`, sur les validations →
-     `validations`. Laisse `null` dès qu'il y a un doute, et pour tout ce qui n'a pas de surface
-     visible (moteur, CI, doc). Une vignette qui n'illustre rien dessert la présentation.
+   - `tickets[].ecrans` — **recopie** les `cle` que l'étape 4 rend pour cet iid, dans l'ordre. Pas
+     de jugement ici : liste vide si le ticket n'a aucune ligne.
+   - `tickets[].capture` — la clé de la vignette de la carte. **Prends la première `cle` de
+     `tickets[].ecrans` qui existe dans `pages`**, et `null` sinon. Ce n'est plus un pari : un
+     ticket sans écran dérivé n'a pas de vignette, un écran sans capture non plus (`/projets` est
+     servi mais hors menu — il n'est photographié par personne).
+   - `videos[]` — **quels parcours retenir**. Reprends du manifeste ceux qui ont un `fichier`, et
+     **écarte** :
+     - un parcours **sans `fichier`** (`erreur` renseignée) : la démonstration n'a pas eu lieu,
+       il n'y a rien à jouer ;
+     - un parcours dont le clip **ne démontre rien de la phase** — la règle d'abstention est
+       celle des captures, en plus stricte : *pas de surface visible, pas de visuel*. Si aucun
+       ticket du milestone n'a touché l'écran du parcours (étape 4), le clip illustre une
+       fonctionnalité que cette phase n'a pas changée. Une vignette hors sujet dessert la
+       présentation ; une vidéo hors sujet la dessert deux fois plus.
+     Un parcours `complet: false` a été **écourté** (page non prête, geste en échec) mais son clip
+     existe : regarde-le avant de le retenir — il montre ce qu'il a eu le temps de montrer.
+     Renseigne `affiche` seulement si tu veux imposer une image de repli : sans elle, le rendu
+     prend la capture de même clé, et à défaut un cartouche qui nomme le clip.
 
-6. **Écris le JSON** dans le dossier de travail (jamais dans le dépôt), à ce schéma :
+7. **Écris le JSON** dans le dossier de travail (jamais dans le dépôt), à ce schéma :
    ```json
    {
      "milestone": {"titre": "Phase 3 — V2", "etat": "active",
                    "debut": "2026-11-05", "echeance": "2026-12-16", "resume": "…"},
-     "projet": {"url": "https://gitlab.com/<groupe>/<projet>"},
+     "projet": {"url": "https://github.com/<compte>/<dépôt>"},
      "tickets": [{"iid": 96, "titre": "…", "statut": "Terminé", "type": "feature",
-                  "agent": "dev", "prio": "haute", "resume": "…", "capture": null}],
+                  "agent": "dev", "prio": "haute", "resume": "…",
+                  "capture": "couts", "ecrans": ["couts", "-"]}],
      "captures": [{"cle": "accueil", "libelle": "Tableau de bord",
                    "fichier": "<…>/captures/accueil.png"}],
-     "notes": []
+     "ecrans":   [{"cle": "couts", "libelle": "Coûts & analytics", "route": "/couts"}],
+     "videos":   [{"cle": "couts", "libelle": "Coûts & analytics : la dépense, période par période",
+                   "fichier": "<…>/captures/couts.webm", "affiche": null}],
+     "notes":    []
    }
    ```
    `projet.url` se déduit du dépôt : la base est `https://<hôte>/<dépôt>`, où l'hôte vient de
    `bash scripts/gitlab/lib.sh host` — il **suit la forge active** et non le remote, précisément
    pour rester juste tant qu'`origin` pointe encore ailleurs (#343). Les liens vers les tickets sont
-   construits par le script. Ne reprends dans `captures` que les entrées du manifeste **sans
-   erreur**.
+   construits par le script. Ne reprends dans `captures` que les entrées **sans erreur** de
+   `pages`. `ecrans` donne un **libellé** et une **route** aux clés dérivées à l'étape 4 : reprends
+   le `libelle` de la page de même clé quand il y en a une, et la colonne `route` de l'étape 4 ;
+   une clé citée par un ticket mais absente d'ici est rendue quand même, sous sa clé nue.
 
-7. **Génère la présentation** avec le python du venv (jamais le python système) :
+8. **Génère la présentation** avec le python du venv (jamais le python système) :
    ```
    .venv/Scripts/python.exe scripts/presentation/build.py <dossier-de-travail>/presentation.json
    ```
    Sans `--sortie`, le fichier va dans `docs/presentations/<slug-du-milestone>.html`. Le script
-   imprime le chemin écrit et sa taille.
+   imprime le chemin écrit, sa taille, et **le compte de clips intégrés sur clips demandés** avec
+   les deux plafonds appliqués. Un clip trop lourd, ou qui ne tient plus dans le budget du
+   fichier, est **écarté avec son motif** — il garde sa place dans la page, sous son affiche de
+   repli. `MAESTRO_PRESENTATION_VIDEO_MAX` (Mio, par clip) et `MAESTRO_PRESENTATION_MAX` (Mio,
+   fichier entier) déplacent les plafonds ; `0` vaut « aucun ».
 
-8. **Regarde le résultat avant de le livrer** : ouvre le fichier produit et vérifie qu'il tient
-   debout (pas de section vide, pas de vignette hors sujet, pas de `null` affiché tel quel). Si
-   le skill `verify` est disponible, un coup d'œil au rendu via navigateur vaut mieux qu'une
-   lecture du HTML.
+9. **Regarde le résultat avant de le livrer** : ouvre le fichier produit et vérifie qu'il tient
+   debout (pas de section vide, pas de vignette hors sujet, pas de `null` affiché tel quel, les
+   clips se lisent). Si le skill `verify` est disponible, un coup d'œil au rendu via navigateur
+   vaut mieux qu'une lecture du HTML.
 
-9. Termine par un **résumé court** : le milestone présenté, le nombre de tickets par état, le
-   nombre de captures effectivement intégrées, le **chemin du fichier** et sa taille. Signale ce
-   qui a échoué (captures manquantes, tickets sans résumé) plutôt que de le taire. Le fichier
-   est écrit dans le dépôt mais **non commité** — dis-le, et laisse la décision de le versionner
-   à l'utilisateur.
+10. Termine par un **résumé court** : le milestone présenté, le nombre de tickets par état, le
+    nombre de captures intégrées, le nombre d'**écrans touchés** dérivés (et combien de tickets
+    n'en ont aucun), les **clips retenus**, les **clips écartés et leur cause** (parcours en
+    échec, hors sujet, plafond de taille), le **chemin du fichier** et sa taille. Signale ce
+    qui a échoué plutôt que de le taire. Le fichier est écrit dans le dépôt mais **non commité**
+    — dis-le, et laisse la décision de le versionner à l'utilisateur.
+
+## Ce que la commande ne sait pas
+
+À dire dans le résumé quand le cas se présente, plutôt que de le laisser deviner :
+
+- **Un composant partagé ne se rattache à aucune route.** `apps/web/components/**` touche
+  potentiellement plusieurs écrans sans qu'aucun ne le dise : la dérivation rend une ligne
+  « indéterminée » (`-`) au lieu d'attribuer l'écran au hasard. Elle ne **compte pas**
+  `apps/web/lib/**` ni `apps/web/hooks/**`, qui sont de la plomberie — presque tous les tickets de
+  la Control Tower y touchent, et les compter n'apprendrait plus rien.
+- **Le MCP `chrome-maestro` ne filme pas.** Il n'expose que `browser_take_screenshot`, aucun verbe
+  d'enregistrement : les clips passent par le `recordVideo` de Playwright dans `captures.mjs`. Ce
+  n'est pas un renoncement au MCP — c'est le même moteur, appelé là où le contexte du navigateur
+  est déjà construit. Il n'y a donc **aucun** moyen de filmer un parcours depuis cette commande
+  sans passer par `captures.sh`.
+- **Les captures et les clips montrent la stack de démonstration d'aujourd'hui**, pas l'écran tel
+  qu'il était pendant la phase. Ce que la dérivation rend, c'est *quels écrans la phase a touchés*
+  — jamais *à quoi ils ressemblaient avant*.
+- **Un ticket non mergé n'a pas de commit sur `origin/main`** : il ne rend donc aucun écran, comme
+  un ticket sans surface visible. C'est `--check` qui les distingue, sur stderr.
 
 Ne lance aucune commande d'écriture côté forge (`gh issue edit`, `gh pr create`, `set-workflow`,
 `log-time`…) ni aucun `git commit`/`git push` : cette commande observe et produit un fichier.
