@@ -456,12 +456,16 @@ export type PoolMcp = {
 
 /**
  * La politique de permissions d'un agent (`PolitiqueOutils.to_dict`, #110) :
- * allow/deny par outil — noms d'outils intégrés, `mcp__<serveur>` pour un
+ * allow/ask/deny par outil — noms d'outils intégrés, `mcp__<serveur>` pour un
  * serveur MCP entier, `mcp__<serveur>__<outil>` pour un outil MCP précis.
- * `deny` l'emporte ; `allow` vide = tout ce que le profil expose est permis.
+ * Priorité `deny` > `ask` > `allow` (#580) ; `allow` vide = tout ce que le
+ * profil expose est permis ; `ask` suspend l'appel le temps qu'une personne
+ * tranche — l'outil n'est pas interdit, il est arbitré. Une politique écrite
+ * avant #580 arrive avec `ask` vide, donc sous le régime d'hier.
  */
 export type PolitiquePermissions = {
   allow: string[];
+  ask: string[];
   deny: string[];
 };
 

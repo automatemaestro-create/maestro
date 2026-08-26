@@ -71,7 +71,12 @@ from maestro.agents.designer import DESIGNER_PROFILE
 from maestro.agents.developer import DEVELOPER_PROFILE
 from maestro.agents.devops import DEVOPS_PROFILE
 from maestro.agents.mcp import TYPES_SERVEUR, IntegrationMcp, McpStore, ServeurMcp
-from maestro.agents.permissions import PermissionStore, PolitiqueOutils
+from maestro.agents.permissions import (
+    DecisionOutil,
+    PermissionStore,
+    PolitiqueOutils,
+    Verdict,
+)
 from maestro.agents.playbooks import (
     PLAYBOOK_DEFAUTS,
     PlaybookDefaut,
@@ -159,6 +164,7 @@ __all__ = [
     "AgentStore",
     "CapaciteAgent",
     "CapacityStore",
+    "DecisionOutil",
     "EtatSecret",
     "IntegrationMcp",
     "JaugeInstances",
@@ -171,6 +177,7 @@ __all__ = [
     "RoleProfile",
     "SecretStore",
     "ServeurMcp",
+    "Verdict",
     "agents_pour",
     "avec_playbooks",
     "catalogue",

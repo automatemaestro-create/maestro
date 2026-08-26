@@ -514,9 +514,14 @@ export function McpEtPermissionsAgent({ nom }: { nom: string }) {
 
 /**
  * La politique de permissions d'un agent (#110), en lecture seule : la
- * politique allow/deny par outil que le moteur applique à l'exécution
+ * politique allow/ask/deny par outil que le moteur applique à l'exécution
  * (`core/permissions/<agent>.json`, versionnée avec le dépôt). Une politique
  * invalide affiche sa cause exacte.
+ *
+ * Les **trois** listes sont rendues depuis #580, `ask` comprise, alors même
+ * qu'aucun appelant ne consulte encore le verdict d'arbitrage : n'en montrer
+ * que deux ferait passer un outil arbitré pour un outil sans contrainte,
+ * puisqu'il n'apparaîtrait dans aucune.
  *
  * L'absence de politique se dit désormais explicitement : la section était
  * muette quand tout allait bien, ce qui se lisait comme un panneau de plus tout
@@ -556,6 +561,12 @@ function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
               classeEntree="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
             />
             <ListeEntreesPolitique
+              libelle="ask"
+              vide="vide — aucun outil soumis à arbitrage"
+              entrees={fiche.permissions.ask}
+              classeEntree="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+            />
+            <ListeEntreesPolitique
               libelle="deny"
               vide="vide — aucun outil interdit"
               entrees={fiche.permissions.deny}
@@ -565,9 +576,9 @@ function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
         )
       )}
       <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-        Politique effective, appliquée à l&apos;exécution (deny l&apos;emporte ;
-        un appel refusé est tracé au fil d&apos;activité sans condamner le
-        run). Déclarée dans{" "}
+        Politique effective, appliquée à l&apos;exécution (deny l&apos;emporte
+        sur ask, qui l&apos;emporte sur allow ; un appel refusé est tracé au fil
+        d&apos;activité sans condamner le run). Déclarée dans{" "}
         <code className="font-mono">core/permissions/{fiche.nom}.json</code> —
         lecture seule à ce lot.
       </p>
@@ -575,7 +586,7 @@ function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
   );
 }
 
-/** Une liste d'entrées (allow ou deny) de la politique, ou son état « vide ». */
+/** Une liste d'entrées (allow, ask ou deny) de la politique, ou son état « vide ». */
 function ListeEntreesPolitique({
   libelle,
   vide,

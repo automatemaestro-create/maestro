@@ -790,7 +790,7 @@ def create_app(
     (`MAESTRO_SECRETS_DIR`, sinon `core/secrets/` du dépôt), le même que résolvent
     moteur et workers au montage. Les tests en injectent un coffre temporaire.
 
-    `permissions` (#110) est le dépôt des politiques allow/deny par agent,
+    `permissions` (#110) est le dépôt des politiques allow/ask/deny par agent,
     affichées en **lecture seule** sur les fiches du catalogue (`permissions`,
     la politique effective appliquée à l'exécution) — par défaut celui de la
     config (`MAESTRO_PERMISSIONS_DIR`, sinon `core/permissions/` du dépôt) :
@@ -2198,11 +2198,13 @@ def create_app(
     def _volet_permissions(nom: str) -> dict[str, Any]:
         """Le volet « permissions » d'une fiche catalogue (#110), lecture seule.
 
-        `permissions` porte la politique allow/deny effective (celle que le
+        `permissions` porte la politique allow/ask/deny effective (celle que le
         moteur applique à l'exécution — None : aucune politique, tout ce que
         le profil expose est permis) ; `permissions_erreur` porte la cause
         exacte si la politique stockée est invalide — même contrat de
-        visibilité que `mcp_erreur`.
+        visibilité que `mcp_erreur`. Les **trois** listes sont servies depuis
+        #580, `ask` comprise et vide par défaut : une politique écrite avant ce
+        lot se relit sous le régime d'hier.
         """
         try:
             politique = permissions.lire(nom)
