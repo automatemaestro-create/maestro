@@ -19,6 +19,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, TypeVar
 
+from maestro.providers.arbitrage import Arbitre
+
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
     from maestro.agents.permissions import PolitiqueOutils
@@ -281,6 +283,7 @@ class ModelProvider(ABC):
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
         on_refus: Callable[[str, str], None] | None = None,
+        on_arbitrage: Arbitre | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
@@ -318,6 +321,25 @@ class ModelProvider(ABC):
         refus est signalé via `on_refus(outil, raison)` quand il est fourni —
         c'est le canal de traçage de l'appelant (journal, fil temps réel) ; un
         échec du callback ne doit jamais casser l'exécution observée.
+
+        `on_arbitrage` (#583) est le canal du **troisième cran** de cette même
+        politique (`ask`, #580) : un appel qu'elle soumet à arbitrage est
+        **suspendu**, l'outil et ses arguments partent sur ce canal, et l'issue
+        décide — `(True, détail)` laisse l'appel passer, `(False, détail)` le
+        refuse avec son motif. C'est l'appelant qui compose la demande et la
+        soumet au validateur configuré : le fournisseur ne connaît ni la tâche,
+        ni le run, ni qui tranche.
+
+        Deux exigences pèsent sur le fournisseur qui l'honore, et aucune n'est
+        négociable. Il doit **refuser** un appel à arbitrer quand le canal est
+        absent ou en panne — jamais l'approuver par défaut (EF-08, ENF-04) — et
+        il doit **borner son attente sous la borne de son propre runtime**, de
+        sorte que l'issue vienne toujours de lui et jamais d'une échéance. Un
+        runtime qui borne la durée d'un point de contrôle (c'est le cas du CLI
+        Claude Code, 60 s par défaut) déciderait sinon du sort d'un acte sensible
+        par un comportement qui n'est pas le nôtre. À l'expiration, le
+        fournisseur rend un refus **motivé par l'attente** — la demande, elle,
+        reste en vol.
 
         `on_activite` (#479) est le canal de « ce que l'agent fait **pendant**
         qu'il le fait » : le fournisseur l'appelle avec une ligne déjà composée

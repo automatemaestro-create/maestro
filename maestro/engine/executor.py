@@ -28,7 +28,7 @@ from maestro.agents import default_runtimes
 from maestro.agents.capacity import CapacityStore, JaugeInstances
 from maestro.agents.catalog import DEFAULT_AGENTS, Agent
 from maestro.agents.mcp import McpStore, ServeurMcp
-from maestro.agents.permissions import PermissionStore, PolitiqueOutils
+from maestro.agents.permissions import PermissionStore, PolitiqueOutils, Verdict
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
@@ -38,6 +38,7 @@ from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.orchestrator.schema import Task
 from maestro.projets.modele import Projet
 from maestro.projets.store import ProjetStore
+from maestro.providers.arbitrage import Arbitre
 from maestro.providers.base import ModelProvider, UnsupportedCapability, stderr_de
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
@@ -78,6 +79,22 @@ SUFFIXE_ETAPE_REFUS = ":refus-outil"
 #: étapes annexes (`:validation` porte approuve/refuse) mais distinct : ici
 #: c'est un appel d'outil qui est refusé, pas la tâche.
 STATUT_REFUS_OUTIL = "refus_outil"
+
+#: Statut des étapes d'**arbitrage** d'outil (#583) — même étape `:refus-outil`,
+#: statut à part, et c'est la seule chose qui les sépare à l'écran.
+#:
+#: Il fallait le distinguer parce que le fil rend `refus_outil` par « <agent>
+#: s'est vu refuser un outil », phrase **fausse** sur les deux tiers des issues
+#: d'un arbitrage : un appel approuvé par une personne n'a pas été refusé, et un
+#: appel écarté faute de décision ne l'a pas été non plus — sa demande est encore
+#: en attente. Le motif, lui, dit laquelle des trois issues c'est
+#: (`maestro.providers.arbitrage`), et c'est le `detail` que le fil affiche.
+#:
+#: Le **suffixe d'étape ne change pas** (`:refus-outil`) : le pont range déjà ces
+#: étapes en activité d'agent sans les faire changer de colonne, et lui en donner
+#: un second à connaître ferait deux vocabulaires à tenir d'accord pour une
+#: distinction que le statut porte très bien.
+STATUT_ARBITRAGE_OUTIL = "arbitrage_outil"
 
 #: Suffixe des étapes d'activité au journal (#479) : `<task.id>:activite`, une
 #: par salve publiée par le fournisseur pendant que la tâche tourne — le pont
@@ -792,27 +809,97 @@ class LocalExecutor(TaskExecutor):
         outil: str,
         raison: str,
         journal: RunJournal,
+        politique: PolitiqueOutils | None = None,
     ) -> None:
-        """Trace un refus d'outil au journal (#110) — donc au fil temps réel de la Control Tower.
+        """Trace une issue de politique d'outil (#110, #583) — donc au fil temps réel.
 
         Étape dédiée `<task.id>:refus-outil` (même modèle que `:validation` et
         `:relance`), que le pont (`maestro.controltower.bridge`) mue en
-        activité d'agent : la violation est visible au moment où elle se
-        produit — l'agent, lui, a reçu le motif et poursuit sa tâche. `entree`
-        porte l'outil demandé, `sortie` le motif du refus. Usage nul : le coût
+        activité d'agent : ce qui s'est joué sur l'appel est visible au moment
+        où ça se produit — l'agent, lui, a reçu le motif et poursuit sa tâche.
+        `entree` porte l'outil demandé, `sortie` le motif. Usage nul : le coût
         de la tâche est porté par son étape finale.
+
+        Depuis #583 ce canal porte **deux natures** d'issue, et il faut les
+        séparer parce que l'écran les rendrait autrement toutes les deux comme
+        un refus : un appel écarté par la politique (`refus_outil`, le cas de
+        #110) et l'issue d'un **arbitrage humain** (`arbitrage_outil`), qui vaut
+        aussi bien pour un appel approuvé que refusé ou encore en attente.
+
+        Laquelle des deux, c'est la **politique** qui le dit — `decide(outil)`,
+        le verbe de #580 — et pas le texte du motif. Un `startswith` sur le motif
+        aurait fait de la mise en forme la source de vérité de la
+        classification : le jour où l'on change une phrase, la ligne change de
+        nature en silence. La politique, elle, rend le même verdict au moment de
+        consigner qu'au moment où le hook l'a rendu.
         """
+        arbitrage = (
+            politique is not None
+            and politique.decide(outil).verdict is Verdict.ARBITRAGE
+        )
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_REFUS}",
-            nom=f"Outil refusé — {task.titre}",
+            nom=(
+                f"Outil arbitré — {task.titre}"
+                if arbitrage
+                else f"Outil refusé — {task.titre}"
+            ),
             agent=agent.nom,
             role=agent.role,
-            statut=STATUT_REFUS_OUTIL,
+            statut=STATUT_ARBITRAGE_OUTIL if arbitrage else STATUT_REFUS_OUTIL,
             entree=outil,
             sortie=raison,
             usage=StepUsage(),
             projet_id=task.projet_id,
         )
+
+    def _arbitre_outil(
+        self,
+        task: Task,
+        agent: Agent,
+        journal: RunJournal | None,
+    ) -> Arbitre:
+        """Le canal d'arbitrage confié au fournisseur (#583) : l'acte, puis la décision.
+
+        C'est ici que l'arbitrage **sur l'acte** rejoint le garde-fou qui existe
+        depuis #9 : on compose une `DemandeValidation` de plus — comme la
+        validation d'une tâche (#48) ou l'application d'un diff (#227) — et on la
+        soumet au **même** validateur. Le chantier #573 n'invente donc pas de
+        mécanisme de décision humaine, il branche un déclencheur de plus sur
+        celui qui existe, et hérite de son fail-safe : pas de validateur ⇒ refus,
+        validateur en panne ⇒ refus (EF-08, ENF-04).
+
+        Ce que la demande porte de neuf est l'**acte** : `outil` et `arguments`
+        (#581) plutôt que le seul titre de la tâche. C'est tout l'objet du parent
+        — « Rédiger le README » n'aide personne à trancher un `rm -rf`. La
+        `raison`, elle, est le motif rendu par la politique : il nomme l'outil et
+        la liste qui l'a mis en arbitrage.
+
+        Le fournisseur reste seul à borner l'attente : il répond avant l'échéance
+        de son propre runtime, et ce n'est pas quelque chose que l'exécuteur peut
+        garantir à sa place (`maestro.providers.arbitrage`).
+        """
+
+        async def arbitre(
+            outil: str, arguments: dict[str, str], motif: str
+        ) -> tuple[bool, str]:
+            demande = DemandeValidation(
+                task_id=task.id,
+                titre=task.titre,
+                description=task.description,
+                agent=agent.nom,
+                role=agent.role,
+                raison=motif,
+                # D'où vient la demande (#570) : sans run ni projet, elle sort du
+                # journal du run et de toutes les vues, qui sont cadrées dessus.
+                run_id="" if journal is None else journal.run_id,
+                projet_id=task.projet_id,
+                outil=outil,
+                arguments=arguments,
+            )
+            return await self._guardrails.demande_validation(demande)
+
+        return arbitre
 
     def _consigne_activite(
         self,
@@ -943,6 +1030,14 @@ class LocalExecutor(TaskExecutor):
         (étape `:refus-outil`), donc visible au fil temps réel, sans jamais
         condamner la tâche.
 
+        Son **troisième cran** (#580) part d'ici aussi (#583) : un outil classé
+        `ask` est suspendu par le hook du fournisseur, et `_arbitre_outil` porte
+        la demande jusqu'au validateur configuré. L'issue — approuvée, refusée,
+        ou encore en attente à l'expiration de l'attente du fournisseur — revient
+        par `on_refus`, donc au même journal et au même fil, sous un statut à
+        elle. C'est le déplacement du déclencheur voulu par le parent #573 : ce
+        qu'on fait trancher est l'**acte**, pas le texte de la tâche.
+
         L'**activité** (#479) suit exactement ce chemin-là, et n'équipe donc que
         le chemin outillé : c'est celui qui dure. Le fournisseur publie à débit
         borné ce que l'agent fait, chaque salve est consignée au `journal`
@@ -977,8 +1072,16 @@ class LocalExecutor(TaskExecutor):
                         None
                         if journal is None
                         else lambda outil, raison: self._consigne_refus(
-                            task, agent, outil, raison, journal
+                            task, agent, outil, raison, journal, politique
                         )
+                    ),
+                    # L'arbitrage ne dépend pas du journal (#583) : c'est la
+                    # **décision** qui garde l'acte, et un run sans journal doit
+                    # la demander comme les autres — seule sa trace manquerait.
+                    # Sans politique en revanche, aucun outil n'est classé `ask` :
+                    # il n'y a rien à arbitrer, et le hook n'existe même pas.
+                    on_arbitrage=(
+                        None if politique is None else self._arbitre_outil(task, agent, journal)
                     ),
                     on_activite=(
                         None
