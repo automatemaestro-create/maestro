@@ -219,11 +219,15 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
       revenu parce que `main` a avancé pendant l'attente. **N'y retourne pas dans le même appel** —
       tes tentatives sont consommées. Rends le constat ; relancer `/mr-fix` est une décision, pas
       une boucle.
-    - `6` → **anomalie** : PR absente, fermée, encore **brouillon**, sans `Closes`, ou commits non
-      poussés. Nomme-la telle que le helper l'a rendue et n'y touche pas — en particulier **ne lève
-      pas le brouillon** : « Draft » dit « pas fini », et le lever ici ferait déclarer terminé, par
-      une commande de remédiation, un travail qu'elle n'a pas fait. C'est `/ticket-ship` /
-      `/ticket-finish` qui le lèvent (#415).
+    - `6` → **anomalie** : PR absente, fermée sans merge, encore **brouillon**, sans `Closes`, ou
+      commits non poussés. Nomme-la telle que le helper l'a rendue et n'y touche pas — en
+      particulier **ne lève pas le brouillon** : « Draft » dit « pas fini », et le lever ici ferait
+      déclarer terminé, par une commande de remédiation, un travail qu'elle n'a pas fait. C'est
+      `/ticket-ship` / `/ticket-finish` qui le lèvent (#415).
+    - `7` → **la PR était déjà mergée** : quelqu'un l'a fait passer dans `main` pendant que tu
+      débloquais. Rien à faire et **rien qui ait échoué** — ta remédiation a peut-être même servi.
+      Rends-le comme un merge dans le tableau de l'étape 13, en disant qu'il n'est **pas le tien**
+      (#593) : « déjà mergée » n'est ni « mergée par moi », ni un refus.
     - `1`/`2` → prérequis outil manquant / usage : signale-le, ne merge pas.
 
 13. **Résumé final — les trois issues, séparément.** N'annonce **jamais** un ✅ global sur la foi
@@ -233,7 +237,7 @@ cas de doute). Les **garde-fous** priment sur l'automatisation : suis les étape
     |---|---|
     | **Conflit** | ✅ aucun / ✅ résolu (fichiers + hash du commit de merge) / ❌ conflit laissé en place (fichiers + pourquoi la résolution n'était pas claire) |
     | **Pipeline** | ✅ vert / ❌ rouge (lien, jobs concernés, correctif appliqué le cas échéant, nombre de tentatives) |
-    | **Merge** | ✅ mergée (numéro de PR, ticket fermé par son `Closes`, état « Terminé » posé par le workflow) / ❌ **refusée** — la cause telle que `merge-mr` l'a rendue / ⊘ **non tenté** — sur quel arrêt la commande s'est arrêtée avant l'étape 12 |
+    | **Merge** | ✅ mergée (numéro de PR, ticket fermé par son `Closes`, état « Terminé » posé par le workflow) / ✅ **déjà mergée** (`7`) — dans `main` sans que ce soit ton fait / ❌ **refusée** — la cause telle que `merge-mr` l'a rendue / ⊘ **non tenté** — sur quel arrêt la commande s'est arrêtée avant l'étape 12 |
     « Non tenté » et « refusé » ne se disent pas du même mot : le premier est la conséquence de
     **ton** abandon, le second un verdict sur **la PR**. Les confondre ferait chercher un problème
     de PR là où il y a une remédiation inachevée. Conclus par ce qu'il reste à faire, et par qui.

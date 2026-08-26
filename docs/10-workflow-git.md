@@ -1126,10 +1126,29 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
   | # | Prérequis | Ce qu'il empêche | Refus |
   |---|---|---|---|
-  | 1 | une PR **ouverte**, **non brouillon**, qui **ferme le ticket** | un merge qui laisserait le ticket ouvert **et sans état** — plus personne ne le poserait, le workflow `issues: closed` (§9.2) n'ayant aucun événement à écouter | `6` — geste humain |
+  | 1 | une PR **ouverte**, **non brouillon**, qui **ferme le ticket** | un merge qui laisserait le ticket ouvert **et sans état** — plus personne ne le poserait, le workflow `issues: closed` (§9.2) n'ayant aucun événement à écouter | `6` — geste humain · **`7` si elle est déjà mergée** |
   | 2 | rien de **non poussé** sur la branche | merger **moins que ce qui existe**, la seule perte que rien ne rattrape | `6` |
   | 3 | **aucun conflit réel** avec `origin/main` — verdict `git merge-tree --write-tree`, jamais l'heuristique de `behind-main` ni le champ asynchrone de la forge (§8.3) | un merge qui casserait `main` | `5` → `/mr-fix` |
   | 4 | un **pipeline vert**, et vert **sur la tête de la PR** | le merge au rouge, et le faux vert d'un **run périmé** (le cas nominal juste après un push : le run précédent est fini, le nouveau n'a pas démarré) | `4` rouge → `/mr-fix` · `3` pas encore rendu → repasser |
+
+  ⚠ **Le `7` n'est pas un refus, et c'est tout son intérêt** (#593). Le prérequis 1 couvre six
+  façons de ne pas avoir « une PR ouverte », dont **cinq appellent un geste humain** — PR absente,
+  fermée sans merge, brouillon, sans `Closes`, commits non poussés — et **une seule est un
+  succès** : la PR est **déjà mergée**, l'état visé est atteint, il l'a simplement été par un autre
+  chemin (une session voisine, un `/mr-fix`, un run jumeau). Les confondre coûtait cher là où le
+  code est *lu* : le pilote, qui décide sur lui, annonçait « PR #590 (#582) non mergée » à propos
+  d'une PR mergée, comptait un ticket **livré** parmi les bloqués de son bilan, et **sautait le
+  ramassage** de son worktree, accroché au seul `0` (run `20260826-183242`). Ce n'est pas un cas de
+  bord : une **reprise** de run le rend courant, une PR pouvant être mergée entre la coupure et la
+  reprise. Ce n'est pas `0` non plus — `0` dit « j'ai mergé », et un appelant qui s'attribue un
+  merge qu'il n'a pas commis rend un compte rendu faux. D'où un **code à lui**, que ses trois
+  appelants traitent comme un succès **à un mot près** : « déjà mergée ».
+
+  ⚠ Un piège de lecture qui vaut pour les deux formes de cible : `merge-mr <iid>` résolvait l'iid
+  par les **PR ouvertes** seulement, où une PR mergée est indiscernable d'une PR jamais créée. La
+  question est donc posée à la forge — « quelle PR **ferme** ce ticket ? », PR mergées comprises —
+  avant de conclure au `6`, faute de quoi le `7` n'aurait existé que pour le pilote (qui, lui,
+  cible la branche) et jamais pour `/ticket-finish`.
 
   Le merge est un **squash**, et la branche distante part avec (`delete_branch_on_merge`, plus bas).
   `--check` rend le même verdict **sans rien écrire**. Le PUT porte le `sha` vérifié, si bien qu'une
@@ -1184,7 +1203,8 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   Ce que cela **ne change pas** : `merge-mr` reste seul à décider qu'un merge a lieu — ce qui merge
   au terme d'un déblocage est l'étape 12 de `/mr-fix` (§8.3), avec les mêmes quatre prérequis, si
   bien que la clôture **ne repasse pas** `merge-mr` derrière lui (sur une PR qu'il vient de merger,
-  le verbe rendrait `6` « PR fermée », une anomalie fabriquée par la relecture) ; et ce que le
+  le verbe rend `7` « déjà mergée », c'est-à-dire un appel qui ne peut rien apprendre — avant #593
+  il rendait `6`, et la relecture fabriquait en plus une fausse anomalie) ; et ce que le
   déblocage n'a pas su lever laisse la PR **ouverte** et le ticket **« En revue »**. Le résumé de
   clôture rend donc le **déblocage sur sa propre ligne**, jamais fondu dans le verdict du merge —
   ⊘ **non tenté** (verdict non réparable, ou run autonome), ✅ **tenté et abouti**, ❌ **tenté sans
@@ -2757,8 +2777,10 @@ prompts, de doc et de garde-fous de test.
 
 Trois propriétés partagées avec le quatrième déclencheur, et une qui est propre au cinquième :
 
-- **sur `0` seulement** — sur `3`/`4`/`5`/`6` la PR est encore ouverte et le travail vit encore dans
-  ce worktree : rien n'est retiré, et la session y reste ;
+- **sur `0` et `7` seulement** — sur `3`/`4`/`5`/`6` la PR est encore ouverte et le travail vit
+  encore dans ce worktree : rien n'est retiré, et la session y reste. Le `7` (§6, #593) est du côté
+  du ménage parce que le ramassage suit le **verdict** et non l'auteur du merge : une branche mergée
+  est tout aussi inutile ici, qu'on l'ait mergée ou qu'on l'ait trouvée mergée ;
 - **ciblé**, et dans **cet ordre** : `git branch -D` refuse une branche encore empruntée (§9.5) ;
 - **la garde du travail non sauvegardé n'est ni contournée ni doublée** — c'est `gc` qui la tient, et
   ce qu'il refuse remonte tel quel dans le résumé de clôture, avec la cause qu'il a nommée ;
@@ -5129,9 +5151,21 @@ que ce qu'il ferait gagner.
 | Code | État en file | Suite |
 |---|---|---|
 | `0` | `mergee` | le ticket se ferme par son `Closes`, le workflow `issues: closed` pose « Terminé » (§9.2) |
+| `7` | `mergee` | **déjà mergée hors du run** — même état, même ramassage, et le journal dit que le merge n'est pas le sien |
 | `3` | `attente` | verdict pas encore rendu (en cours, absent, ou **périmé**) — la seule réponse qui laisse en file |
 | `4` / `5` | `bloquee` | pipeline rouge / conflit — **réparables**, d'où une session de déblocage |
 | autre | `bloquee` | geste humain : rien ne le tente, la PR est nommée au bilan avec sa cause |
+
+⚠ **Le `7` a longtemps voyagé dans la dernière ligne, et il y était faux** (#593). Rangé sous
+« geste humain », il faisait annoncer « PR #590 (#582) non mergée » à propos d'une PR **mergée**,
+comptait un ticket **livré** parmi les bloqués du bilan, et laissait derrière lui le worktree et la
+branche qu'aucun `merge_tente` ne repasserait — le ramassage n'étant accroché qu'au `0`. Une
+**reprise** rend le cas courant : entre la coupure d'un run et sa reprise, une PR peut être mergée
+par une session interactive, un `/mr-fix` ou un run jumeau. Le pilote applique donc au drain la
+conduite qu'il tenait **déjà** au solde d'une session dont la PR était mergée (« un garde-fou qui se
+trompe de sens coûte plus cher que celui qui manque ») — même situation, vue d'un autre point du
+cycle. Ce qui sépare `0` de `7` tient dans le **code** et la **cause**, tous deux déjà écrits dans
+`merge.tsv` : l'état est le même parce qu'il dit « la PR est dans `main` », ce qui est vrai des deux.
 
 Un `4` ou un `5` **sort de la file** : ni un pipeline rouge ni un conflit ne se défont tout seuls, et
 y repasser à chaque passe coûterait des appels pour reconfirmer ce qu'on sait déjà. Une PR débloquée

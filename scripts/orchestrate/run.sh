@@ -2869,6 +2869,17 @@ merge_tente() { # <index> [attendre]
     # de l'eau et final — passent par `merge_tente`, donc un seul point d'accroche les sert tous
     # deux, et il n'y a aucun instant où « mergé » est vrai sans que le ménage ait été tenté (#438).
     0) Q_ETAT[$i]=mergee;  Q_RAISON[$i]='-'; merge_ramasse "$iid" "$branche" ;;
+    # 7 : la PR est dans `main`, mais ce n'est pas ce run qui l'y a mise — une session interactive,
+    # un /mr-fix, un run jumeau. C'est un SUCCÈS, pas un blocage (#593) : le ticket est livré et
+    # fermé, et le compter bloqué le ferait remonter dans le bilan comme du travail à reprendre.
+    # Même état que le 0 — `mergee` dit « la PR est dans main », ce qui est vrai des deux —, et
+    # même ramassage, le worktree et la branche étant tout aussi inutiles ici que là. Ce qui les
+    # sépare tient dans le code et la raison, tous deux déjà écrits dans `merge.tsv` : le run ne
+    # s'attribue pas un merge qu'il n'a pas commis.
+    #
+    # Le pilote applique donc au drain la conduite qu'il tenait déjà au solde d'une session (voir
+    # « PR déjà mergée » plus bas) — c'est la même situation, vue d'un autre point du cycle.
+    7) Q_ETAT[$i]=mergee;  Q_RAISON[$i]='déjà mergée hors du run'; merge_ramasse "$iid" "$branche" ;;
     # « pas encore rendu » (en cours, absent, ou périmé) : la seule réponse qui laisse en file.
     3) Q_ETAT[$i]=attente; Q_RAISON[$i]="${cause:-verdict de pipeline pas encore rendu}" ;;
     # 4 et 5 sont réparables — c'est `mrfix_relance` (#420) qui s'en saisit, en ouvrant une session
@@ -2892,7 +2903,15 @@ merge_annonce() { # <index>
   local i="$1"
   local iid="${Q_IID[$i]}" pr="${Q_PR[$i]}"
   case "${Q_ETAT[$i]}" in
-    mergee)  dit '  %s⇈%s PR #%s mergée — #%s est livré et fermé.\n' "$C_G" "$C_0" "$pr" "$iid" ;;
+    # « mergée » est vrai des deux verdicts de merge, mais un seul est l'œuvre du run : sur 7 la PR
+    # était déjà dans `main` quand on l'a retentée (#593). Le dire au lieu de s'en attribuer le
+    # mérite — le journal du run est ce qu'on relit pour savoir ce qu'il a fait.
+    mergee)
+      if [ "${Q_CODE[$i]}" = 7 ]; then
+        dit '  %s⇈%s PR #%s déjà mergée hors du run — #%s est livré et fermé.\n' "$C_G" "$C_0" "$pr" "$iid"
+      else
+        dit '  %s⇈%s PR #%s mergée — #%s est livré et fermé.\n' "$C_G" "$C_0" "$pr" "$iid"
+      fi ;;
     bloquee) dit '  %s⚠%s PR #%s (#%s) non mergée — %s\n' "$C_Y" "$C_0" "$pr" "$iid" "${Q_RAISON[$i]}" ;;
   esac
   return 0
@@ -3700,7 +3719,11 @@ juge_ticket() { # <index> <code rendu par le sous-shell>
       "$C_G" "$C_0" "${mr:-?}" "$(duree_lisible "$duree")" "$(arrondi_cout "${cout:-?}")"
     solde_ticket "$i" OK "${mr:--}" "$duree" "${cout:-0}" "PR mergée hors du pilote"
     ecrit_resultat "$iid" "${P_TITRE[$i]}" OK "${mr:--}" "$duree" "PR mergée"
-    merge_enfile "$iid" "${mr:--}" "$branche" mergee '-'
+    merge_enfile "$iid" "${mr:--}" "$branche" mergee 'déjà mergée hors du run'
+    # Entrée en file à l'état `mergee`, donc AUCUN `merge_tente` ne passera dessus : sans cet appel,
+    # le worktree et la branche d'un ticket livré survivraient au run entier (#593). C'est le même
+    # ménage que sur les codes 0 et 7, au troisième endroit où « la PR est dans main » devient vrai.
+    [ "$MERGE" = 1 ] && merge_ramasse "$iid" "$branche"
     vue_recompose
   else
     raison="PR « ${etat_mr:-aucune} », cycle de vie « ${statut:-?} »"

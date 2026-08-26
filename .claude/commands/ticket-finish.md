@@ -276,7 +276,7 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
         « Terminé » tout seul via le workflow `issues: closed` (#377) : **ne pose rien**, ne
         repasse pas `set-workflow`, ne ferme rien à la main. La branche distante part avec le merge
         (`delete_branch_on_merge`, #384) ; la branche locale et le worktree, eux, partent à
-        l'**étape 14** — c'est le seul des six verdicts qui la déclenche (#519).
+        l'**étape 14** — que seul ce verdict déclenche, avec le `7` (#519, #593).
       - `3` → le verdict n'est **pas encore rendu** : run en cours, absent, ou **périmé** — un vert
         porté par un commit antérieur au tien. Ce dernier cas est le plus fréquent, et il est
         normal : `pipeline-wait` ne compare pas les sha (il le dit lui-même), donc il a pu rendre
@@ -287,14 +287,21 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
       - `4` → **pipeline rouge** · `5` → **conflit avec `origin/main`** → **enchaîne sur `/mr-fix
         <numéro>`, sans demander** (#460). Ne corrige rien toi-même : réparer un pipeline ou
         résoudre un conflit est un métier à part, et c'est le sien — invoque la commande, elle est
-        autosuffisante. Ces deux causes sont les seules **réparables** des six, et un run autonome
+        autosuffisante. Ces deux causes sont les seules **réparables** des sept, et un run autonome
         les fait réparer d'office depuis #420 : laisser la clôture interactive *proposer* ce que le
         pilote *fait* traitait la même cause de deux façons selon l'appelant. Le détail est à
         l'étape 13.3.
-      - `6` → **anomalie** : PR absente, fermée, encore brouillon, sans `Closes`, ou commits non
-        poussés. **Nomme-la telle que le helper l'a rendue**, et ne la contourne pas — ni un
-        `gh pr ready` « au cas où », ni un push de rattrapage, ni un merge par un autre chemin. Un
-        `6` dit qu'une hypothèse de la clôture est fausse : le remède est de la regarder.
+      - `6` → **anomalie** : PR absente, fermée sans merge, encore brouillon, sans `Closes`, ou
+        commits non poussés. **Nomme-la telle que le helper l'a rendue**, et ne la contourne pas —
+        ni un `gh pr ready` « au cas où », ni un push de rattrapage, ni un merge par un autre
+        chemin. Un `6` dit qu'une hypothèse de la clôture est fausse : le remède est de la regarder.
+      - `7` → **la PR était déjà mergée** — quelqu'un d'autre l'a fait passer dans `main` pendant
+        que tu travaillais (une session voisine, un `/mr-fix`, le drain d'un run). Ce n'est **pas
+        une anomalie et il n'y a rien à faire** : le ticket est fermé par son `Closes`, son état
+        passe « Terminé » par le workflow `issues: closed`. Traite-le comme un `0` **à un mot
+        près** — le ménage de l'**étape 14** a lieu (la branche et le worktree sont tout aussi
+        inutiles), mais le résumé dit « déjà mergée » et non « mergée » : t'attribuer un merge que
+        tu n'as pas fait est ce qui rendrait le compte rendu faux (#593).
       - `1`/`2` → prérequis outil manquant / usage : signale-le, ne merge pas.
    3. **Le déblocage — sur `4` et `5` seulement** (#460). `/mr-fix` traite les deux blocages dans
       l'ordre qui est le sien (conflit d'abord, pipeline ensuite) et, depuis #418, **merge ce qu'il
@@ -304,9 +311,10 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
         attente de pipeline ». #418 a choisi d'annoncer cette attente plutôt que de la masquer ;
         elle s'allonge ici, la règle ne change pas.
       - **Ne repasse pas `merge-mr` derrière lui.** Son étape 12 *est* l'appel à `merge-mr`, donc
-        son verdict de merge est le tien — le relire n'ajouterait aucune vérification et en
-        inventerait une fausse : sur une PR qu'il vient de merger, `merge-mr` rend `6` (PR fermée),
-        soit une « anomalie » fabriquée par la relecture elle-même.
+        son verdict de merge est le tien — le relire n'ajouterait aucune vérification : sur une PR
+        qu'il vient de merger, `merge-mr` rend `7` (déjà mergée), c'est-à-dire un appel qui ne peut
+        rien apprendre. Depuis #593 il ne fabrique plus de fausse anomalie — il rendait `6` —, mais
+        la règle ne change pas pour autant : la question a déjà été posée et tranchée.
       - **Deux tentatives au plus**, et la seconde n'est due que si la première a **fait bouger la
         PR** — correctif poussé, conflit résolu, run relancé. Rejouer la commande sur un état
         inchangé ne peut rendre que le même verdict : c'est un abandon, pas une seconde tentative,
@@ -389,6 +397,7 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
    |---|---|
    | **Mergé** (`0`, du premier appel **ou** au terme du déblocage) | « PR #N mergée (squash) — #<iid> fermé, état « Terminé » posé par le workflow `issues: closed` » ; puis le **ramassage** de l'étape 14 — worktree et branche locale retirés, ou la cause que `gc` a nommée en s'abstenant (travail non sauvegardé : gardé, c'est voulu) —, et le fait que la session travaille désormais depuis le **clone principal** (#519) |
    | **Déblocage** (étape 13.3) | ⊘ **non tenté** — le verdict n'était pas réparable (`3`/`6`/`1`/`2`), ou un run autonome l'interdisait · ✅ **tenté et abouti** — ce que `/mr-fix` a réparé (conflit résolu, job remis au vert) et le nombre de tentatives · ❌ **tenté sans succès** — sur quel arrêt `/mr-fix` s'est arrêté, et combien de tentatives ont été consommées |
+   | **Déjà mergé** (`7`) | « PR #N **déjà mergée** — dans `main` sans que ce soit mon fait » : le ticket est fermé et son état posé comme pour un `0`, le **ramassage** de l'étape 14 a lieu de même, et le mot « déjà » est ce qui empêche le résumé de s'attribuer un merge qu'il n'a pas commis (#593) |
    | **Non mergé** (`3`/`4`/`5`/`6`) | la **cause telle que `merge-mr` l'a rendue** (jamais reformulée en « il faudra revoir ça »), l'**état laissé** — PR **ouverte** et prête, ticket **« En revue »** — et la **suite** : repasser plus tard sur `3`, le geste humain nommé sur `6`, et sur `4`/`5` ce que le déblocage n'a pas su lever |
 
    **« Non tenté » et « refusé » ne se disent pas du même mot** — c'est la distinction que #303 a

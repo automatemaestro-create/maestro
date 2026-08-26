@@ -3203,9 +3203,22 @@ gl_mr_conflict() {
 # pilote (#419) décide entre « repasser plus tard », « faire réparer » et « laisser à un humain ».
 #   0 = mergé (en --check : mergeable)     4 = pipeline ROUGE          → réparer (/mr-fix)
 #   3 = pipeline pas encore rendu          5 = CONFLIT avec origin/main → résoudre (/mr-fix)
-#       (en cours, absent, ou périmé)      6 = PR absente/fermée/brouillon/sans « Closes »,
-#       → repasser plus tard                   commits non poussés      → geste humain
+#       (en cours, absent, ou périmé)      6 = PR absente/fermée sans merge/brouillon/
+#       → repasser plus tard                   sans « Closes »/commits non poussés
+#   7 = PR DÉJÀ mergée — rien à faire          → geste humain
 #   1 = pré-requis outil manquant          2 = usage
+#
+# ⚠ POURQUOI 7 EXISTE (#593). « Déjà mergée » a longtemps voyagé dans le 6, avec cinq causes qui
+# appellent toutes un geste humain — PR absente, fermée sans merge, brouillon, sans « Closes »,
+# commits non poussés. Elle n'en est pas une : l'état visé est ATTEINT, il l'a simplement été par
+# un autre chemin — une session interactive, un /mr-fix, un run jumeau. Personne n'a rien à faire,
+# et le confondre avec les cinq autres faisait annoncer au pilote « PR #590 (#582) non mergée » à
+# propos d'une PR mergée, compter un ticket LIVRÉ parmi les bloqués de son bilan, et sauter le
+# ramassage de son worktree (accroché au seul code 0). Ce n'est pas un cas de bord : une REPRISE de
+# run le rend courant, une PR pouvant être mergée entre la coupure et la reprise.
+#
+# Ce n'est pas 0 non plus, et la nuance n'est pas cosmétique : 0 dit « j'ai mergé », ce que le verbe
+# n'a pas fait. Un appelant qui attribue au run un merge qu'il n'a pas commis raconte un run faux.
 #
 # À appeler en `bash … merge-mr <iid> || verdict=$?` pour lire le verdict sans interrompre une
 # boucle sous `set -e`.
@@ -3245,6 +3258,33 @@ gh_merge_facts() {
   fermetures="$(printf '%s' "$raw" | gh_bloc closingIssuesReferences \
                 | grep -o '"number":[0-9]*' | sed 's/.*://' | paste -sd, - 2>/dev/null)"
   printf '%s\t%s\t%s\t%s\t%s\n' "$etat" "$mr" "${sha:--}" "$brouillon" "${fermetures:--}"
+}
+
+# gh_branche_fermante <iid> -> la branche de tête de la PR qui FERME ce ticket, PR déjà mergées ou
+# fermées comprises ; rien (code 1) si aucune ne le ferme.
+#
+# C'est le MIROIR de `closingIssuesReferences` (gh_merge_facts) : là on part de la PR pour savoir
+# quels tickets elle fermera, ici on part du ticket pour savoir quelle PR le ferme. La forge répond
+# dans les deux sens et c'est elle qui fait autorité — recalculer un nom de branche depuis le titre
+# dériverait, pour la raison déjà écrite sous `gl_branche_du_ticket`.
+#
+# Sert au seul cas où `gl_branche_du_ticket` ne peut rien dire : il ne regarde que les PR OUVERTES,
+# donc une PR mergée y est indiscernable d'une PR jamais créée (#593) — deux situations qui n'ont
+# ni le même verdict ni le même remède.
+#
+# La PR MERGÉE l'emporte quand plusieurs ferment le ticket (une tentative fermée sans merge peut
+# coexister avec celle qui a abouti) : c'est celle qui décrit l'état du dépôt.
+gh_branche_fermante() {
+  local iid="$1" raw branche
+  if [ -z "$iid" ]; then echo "usage: gh_branche_fermante <iid>" >&2; return 2; fi
+  case "$iid" in *[!0-9]*) echo "gh_branche_fermante : iid attendu, reçu « $iid »" >&2; return 2 ;; esac
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number: '"$iid"') { closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { state headRefName } } } } }')" || return 1
+  branche="$(printf '%s' "$raw" | grep -o '"state":"MERGED","headRefName":"[^"]*"' \
+             | head -1 | sed 's/.*"headRefName":"//; s/"$//')"
+  [ -n "$branche" ] || branche="$(printf '%s' "$raw" | grep -o '"headRefName":"[^"]*"' \
+                                  | head -1 | sed 's/.*:"//; s/"$//')"
+  [ -n "$branche" ] || return 1
+  printf '%s\n' "$branche"
 }
 
 # gl_branche_du_ticket <iid> -> la branche SOURCE de la PR ouverte du ticket, rien (code 1) sinon.
@@ -3291,8 +3331,14 @@ gl_merge_mr() {
     *[!0-9]*) branche="$cible" ;;
     *)
       if ! branche="$(gl_branche_du_ticket "$cible")"; then
-        printf '✗ #%s : aucune PR ouverte dont la branche porte ce ticket.\n' "$cible" >&2
-        return 6
+        # Aucune PR OUVERTE — mais « aucune PR ouverte » n'est pas un verdict, c'est l'absence de
+        # deux verdicts opposés : le ticket n'a jamais eu de PR (geste humain), ou la sienne est
+        # déjà mergée (rien à faire). On demande donc à la forge laquelle des deux (#593), et on
+        # laisse le flux normal juger la branche trouvée — une seule voie de sortie pour le 7.
+        if ! branche="$(gh_branche_fermante "$cible")" || [ -z "$branche" ]; then
+          printf '✗ #%s : aucune PR ouverte dont la branche porte ce ticket, et aucune PR ne le ferme.\n' "$cible" >&2
+          return 6
+        fi
       fi ;;
   esac
   case "$branche" in
@@ -3310,6 +3356,13 @@ gl_merge_mr() {
   fi
   IFS=$'\t' read -r etat mr sha brouillon fermetures <<< "$faits"
 
+  if [ "$etat" = "merged" ]; then
+    # Le seul « pas ouverte » qui soit un SUCCÈS (#593) : le travail est dans `main`, le ticket est
+    # fermé par son « Closes ». Sur stdout et sous « ✓ », comme les deux autres verdicts positifs du
+    # verbe — un refus s'imprime sur stderr, et ceci n'en est pas un.
+    printf '✓ PR #%s (%s) : déjà mergée — rien à faire.\n' "$mr" "$branche"
+    return 7
+  fi
   if [ "$etat" != "opened" ]; then
     printf '✗ PR #%s (%s) : état « %s » — seule une PR ouverte se merge.\n' "$mr" "$branche" "$etat" >&2
     return 6
