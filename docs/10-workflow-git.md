@@ -3729,7 +3729,7 @@ bash scripts/orchestrate/run.sh --dry-run   # le plan et ce qui serait fait — 
 bash scripts/orchestrate/run.sh             # le run, dans un terminal laissé ouvert
 bash scripts/orchestrate/run.sh --detach    # idem, dans une console indépendante — rend la main
 bash scripts/orchestrate/run.sh --resume    # reprend un run qui ne s'est pas terminé (§11.8)
-bash scripts/orchestrate/run.sh --concurrence 3  # jusqu'à 3 tickets INDÉPENDANTS en vol (§11.10)
+bash scripts/orchestrate/run.sh --concurrence 3  # impose 3 créneaux — sinon dérivés du plan (§11.10)
 bash scripts/orchestrate/status.sh --watch  # où en est le run, depuis n'importe quel terminal
 bash scripts/orchestrate/journal.sh audit   # où est passé son temps, pendant ou après (§11.12)
 touch .maestro/orchestrate/STOP             # arrêt d'urgence
@@ -3814,8 +3814,9 @@ précède ») ; deux lots marqués séparés par un lot non marqué tombent donc
 indépendance de principe étant de toute façon sans effet — la barrière qui les sépare les ordonne
 déjà.
 
-C'est la seule source d'indépendance du run : `run.sh --concurrence <n>` la **lit** et ne recalcule
-rien (§11.10). Sans l'option, il la lit et l'ignore — le run reste séquentiel.
+C'est la seule source d'indépendance du run : `run.sh` la **lit** et ne recalcule rien (§11.10).
+Depuis #455 il la lit **même sans `--concurrence`** — c'est d'elle que le nombre de créneaux se
+dérive, là où l'option ne servait qu'à en imposer un.
 
 **Et le plan dit ce qu'il ne sait pas** (#562). La colonne `groupe` ne relaie que ce que la checklist
 **déclare** : un parent dont aucun lot ne porte le marqueur rend autant de vagues que de lots, donc
@@ -4897,10 +4898,9 @@ redevient candidat immédiatement, la carte l'emportant sur la fraîcheur de ses
 
 ### 11.10 N tickets en vol dans un run — `--concurrence` (chantier #287)
 
-Un run traitait le plan **un ticket à la fois**. `--concurrence <n>` (défaut **1**) en laisse partir
-jusqu'à `n` — même run, même pilote, jamais N runs (§11.9 reste entier). Ce qui borne le parallélisme
-n'est pas décidé ici : le plan le **déclare** (§11.2, colonne `groupe`), et la boucle ne fait que le
-lire.
+Un run traitait le plan **un ticket à la fois**. `--concurrence <n>` en laisse partir jusqu'à `n` —
+même run, même pilote, jamais N runs (§11.9 reste entier). Ce qui borne le parallélisme n'est pas
+décidé ici : le plan le **déclare** (§11.2, colonne `groupe`), et la boucle ne fait que le lire.
 
 > Deux tickets peuvent être en vol en même temps si leurs **`parent` diffèrent**, ou si leur
 > **`groupe` est identique**.
@@ -4909,10 +4909,63 @@ Ne pas recalculer la règle ici est le point : elle vit dans `queue.sh`, elle es
 et deux formulations finiraient par diverger — c'est exactement ce que #288 s'était donné pour but
 d'éviter en publiant une colonne plutôt qu'un marqueur.
 
-**Défaut 1, et ce n'est pas de la prudence d'ingénieur.** Toutes les sessions tirent sur le **même
-quota d'abonnement** : N en parallèle épuisent la fenêtre de 5 h N fois plus vite. Le gain est en
-**temps de mur**, jamais en quota — et c'est aussi ce qui rend le lot mergeable seul, un run sans
-l'option étant celui d'avant, au bit près.
+**Le gain est en temps de mur, jamais en quota.** Toutes les sessions tirent sur le **même quota
+d'abonnement** : N en parallèle épuisent la fenêtre de 5 h N fois plus vite. C'est la seule limite
+qu'aucun lot du chantier ne rattrape — la vue rend bien les N tickets (#290) et l'attente de limite
+d'usage est partagée (#291), mais le mur est divisé sans que la fenêtre le soit.
+
+#### Sans l'option, la concurrence se **dérive du plan** (#455)
+
+⚠ **Le défaut ne vaut plus 1**, et ce renversement est le contenu de #455. Il valait 1 depuis #289 —
+ce qui rendait ce lot-là mergeable seul, un run sans l'option étant celui d'avant au bit près — et
+cette prudence de livraison a survécu au chantier : le mécanisme était construit, testé (#292, #313)
+et documenté, et **éteint pour tout le monde**. Constat qui a déclenché la correction : le run
+`20260826-153909` est parti **séquentiel** sur un plan qui désignait **cinq** tickets simultanables
+(un groupe de trois lots marqués `(parallèle)`, plus deux tickets hors lot). Une fonctionnalité
+livrée et jamais exercée pourrit — ni son code ni ses tests ne rencontrent la réalité d'un run.
+
+Sans consigne, la valeur est donc `min(ce que le plan offre, une borne)` :
+
+> **Ce que le plan offre** = la somme, **sur chaque parent**, de son **plus gros groupe**.
+
+La formule tombe de la règle d'indépendance, elle n'en est pas une seconde : au sein d'un même
+parent, un ensemble simultanable est forcément inclus dans **un** groupe (deux groupes d'un même
+parent ne sont jamais compatibles) ; entre parents différents, tout est compatible. Sur le plan
+ci-dessus : `max(3,1,1,1,1,1) = 3` pour le parent #573, plus `2` pour les deux tickets hors lot, soit
+**5**. Ce n'est pas une moyenne mais un **plafond** — au-delà, un créneau de plus ne peut jamais
+servir ; en dessous, l'ordonnanceur fait le reste ticket par ticket, et un créneau vide ne coûte rien.
+
+**La borne, elle, ne parle pas du plan mais de la machine** — et c'est la moitié que le cadrage du
+ticket ne nommait pas. Le quota Claude ne borne rien (il se consomme plus vite, il ne casse pas) ; ce
+qui casse, ce sont les ressources du **poste** : le run `20260826-155709`, à trois sessions `xhigh`
+en vol, a épuisé les ressources de fork de MSYS après trois heures (« fork: Resource temporarily
+unavailable »), **pilote mort en cours de route**, sessions orphelines et travail non poussé laissés
+derrière. Même leçon que le plafond `-n 8` de pytest (§8.4) : une constante **mesurée** puis figée,
+jamais une mesure à chaud. Défaut **2**, choisi par l'asymétrie des erreurs — trop haut, un run meurt
+en plein travail et perd ce qui n'était pas poussé ; trop bas, on perd du temps de mur.
+`--concurrence-max <n>` / `MAESTRO_ORCHESTRATE_CONCURRENCE_MAX` la déplacent.
+
+**Trois choses l'emportent sur la dérivation, jamais l'inverse** : `--concurrence`,
+`MAESTRO_ORCHESTRATE_CONCURRENCE`, et la concurrence **relue du run repris** (§11.8) — dériver
+par-dessus une consigne serait le défaut symétrique de celui qu'on corrige, et recalculer sur le plan
+d'aujourd'hui déferait ce que #291 protège. `--concurrence 1` rend donc toujours le run séquentiel au
+bit près.
+
+**Le régime est annoncé avec son ORIGINE**, dans la ligne `plan :` comme dans `--dry-run` :
+
+| ce qui s'affiche | ce que ça veut dire |
+| --- | --- |
+| `3 en vol (dérivé du plan)` | le plan offrait 3, la borne ne l'a pas écrêté |
+| `2 en vol (dérivé du plan : 5 simultanables, borné à 2)` | il y a du parallélisme laissé sur la table |
+| `séquentiel — aucun ticket simultanable dans ce plan` | **verdict** sur les checklists des parents |
+| `séquentiel — ce plan est antérieur à la colonne « groupe »…` | on ne peut pas savoir : plan d'avant #288 |
+| `3 en vol (imposé)` / `séquentiel (imposé)` | consigne : option ou variable |
+| `3 en vol (du run repris)` | rejoué tel quel par `--resume` |
+
+Les deux « séquentiel » du milieu comptent séparément : « il n'y en a pas » et « on ne peut pas
+savoir » mènent au même 1 par deux chemins, et les confondre enverrait chercher un défaut de
+dérivation là où il n'y a qu'un vieux plan. Sans cette moitié « origine », un run dérivé à 1 serait
+de toute façon indiscernable du défaut d'avant ce ticket — c'est ce qui a laissé la panne durer.
 
 **Le créneau qui se libère prend le prochain ticket *éligible*, pas le suivant.** L'ordonnanceur
 balaye **tout** le plan à chaque passage : un lot barré par son prédécesseur est enjambé, et c'est le

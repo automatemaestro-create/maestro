@@ -1686,7 +1686,11 @@ def test_une_attente_trop_longue_est_lue_comme_la_limite_hebdomadaire(depot: Dep
     """)
     plan = _plan(depot, [(1, 130, "-", "moyenne"), (2, 131, "-", "moyenne")])
     debut = time.monotonic()
-    r = depot.lance("run.sh", "--plan", plan, "--run-id", "hebdo",
+    # `--concurrence 1` explicite depuis #455 : deux tickets hors lot sont indépendants, donc la
+    # dérivation les ferait partir ensemble et #131 se retrouverait au bilan — ce que la dernière
+    # assertion vérifie justement ne PAS arriver. Ce test regarde le plafond d'attente, pas
+    # l'ordonnanceur : il demande le régime dans lequel sa question a un sens.
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "hebdo", "--concurrence", "1",
                     env={"MAESTRO_CLAUDE_BIN": claude})
     assert time.monotonic() - debut < 60, "le run ne doit jamais attendre une limite hebdomadaire"
     assert "Limite hebdomadaire" in r.stdout
@@ -2191,7 +2195,10 @@ def test_la_checklist_porte_les_verdicts_deja_rendus_et_le_cumul_du_run(depot: D
         depot.mr(f"feat/{iid}-ticket-{iid}", "opened")
     console = _console(depot)
     plan = _plan(depot, [(1, 130, "-", "haute"), (2, 131, "-", "haute")])
-    r = depot.lance("run.sh", "--plan", plan, "--run-id", "checklist",
+    # `--concurrence 1` explicite depuis #455 : « au deuxième ticket, le premier n'est plus à
+    # venir » suppose que le premier soit soldé quand le second démarre. Dérivés à deux, ils
+    # partent ensemble et la question ne se pose plus. La vue à N tickets a ses tests, plus bas.
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "checklist", "--concurrence", "1",
                     env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
                          "MAESTRO_ORCHESTRATE_CONSOLE": str(console)})
     assert r.returncode == 0, r.stdout + r.stderr
@@ -5889,12 +5896,20 @@ def test_la_cascade_d_echec_saute_ce_qui_n_est_pas_parti_et_laisse_finir_ce_qui_
     assert "lot précédent de #500 a échoué" in r.stdout
 
 
-def test_sans_l_option_le_run_reste_sequentiel_au_bit_pres(depot: Depot) -> None:
-    """Le défaut est 1, et c'est ce qui rend tout le chantier mergeable : deux tickets hors lot sont
-    indépendants par le plan, et pourtant rien ne part à deux."""
+def test_avec_concurrence_1_le_run_reste_sequentiel_au_bit_pres(depot: Depot) -> None:
+    """⚠ Ce test gardait « SANS l'option, le run reste séquentiel » — l'invariant que #455 a
+    délibérément renversé, et qu'il ne faut pas restaurer ici.
+
+    Le défaut à 1 rendait le chantier #288-#292 mergeable seul, puis l'a éteint pour de bon : le
+    mécanisme n'a jamais tourné jusqu'à ce que quelqu'un pense à passer l'option. Ce qui reste vrai,
+    et qui est le deuxième critère d'acceptation de #455, est que la consigne explicite rend le run
+    d'hier au bit près — pic de 1, et aucun régime particulier à annoncer.
+
+    Le pendant, « sans l'option la dérivation fait partir deux tickets ensemble », est plus bas.
+    """
     _livrables(depot, (130, 131))
     plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-")])
-    r = depot.lance("run.sh", "--plan", plan, "--run-id", "seq",
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "seq", "--concurrence", "1",
                     env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, ())})
     assert r.returncode == 0, r.stdout + r.stderr
     assert _pic(depot) == 1
@@ -5935,6 +5950,128 @@ def test_un_plan_d_avant_la_colonne_groupe_retombe_en_sequentiel_en_le_disant(
     assert r.returncode == 0, r.stdout + r.stderr
     assert "antérieur à la colonne « groupe »" in r.stdout
     assert _pic(depot) == 1
+
+
+# --- La concurrence se dérive du plan au lieu de valoir 1 (#455) ----------------------------------
+#
+# Ce que ces tests gardent n'est PAS « le parallélisme marche » — #289 s'en charge depuis des mois,
+# et c'est bien le problème : il marchait sans jamais tourner, parce que son plafond valait 1. Ce
+# qui se garde ici est le DÉFAUT, et la chaîne de précédence autour de lui : une consigne (option,
+# variable) et un run repris l'emportent tous trois sur la dérivation, jamais l'inverse.
+#
+# Le premier test est le seul qui mesure ; les autres lisent l'annonce. La distinction compte —
+# un affichage juste sur un ordonnanceur mort passerait tous les seconds.
+
+
+def test_sans_option_deux_tickets_independants_partent_vraiment_ensemble(depot: Depot) -> None:
+    """Le critère central : la dérivation produit du parallélisme RÉEL, pas une ligne d'annonce.
+
+    Même barrière qu'à #289 (`test_deux_tickets_independants_partent_vraiment_ensemble`), à ceci
+    près qu'aucun `--concurrence` n'est passé : le pic vaut 2 parce que le plan le disait, et lui
+    seul. Un pic de 1 signifierait que le défaut est resté à 1 — exactement la panne que ce ticket
+    corrige.
+    """
+    _livrables(depot, (130, 131))
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "derive-duo",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_barriere(depot, (130, 131))})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _pic(depot) == 2, "le plan les disait indépendants, rien n'a été imposé"
+
+
+def test_la_derivation_annonce_sa_valeur_et_son_origine(depot: Depot) -> None:
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-dit")
+    assert "2 en vol (dérivé du plan)" in r.stdout
+
+
+def test_un_plan_sans_ticket_simultanable_reste_sequentiel_et_le_dit(depot: Depot) -> None:
+    """« séquentiel » doit être un VERDICT sur le plan, jamais un silence.
+
+    Sans cette phrase, un run dérivé à 1 est indiscernable du défaut d'avant ce ticket : personne
+    ne peut distinguer « ce plan ne s'y prête pas » de « la dérivation ne marche plus ».
+    """
+    plan = _plan_groupes(depot, [(1, 130, "500", "haute", "500.1"),
+                                 (2, 131, "500", "haute", "500.2")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-seq")
+    assert "séquentiel — aucun ticket simultanable dans ce plan" in r.stdout
+
+
+def test_un_plan_muet_sur_l_independance_ne_se_confond_pas_avec_un_plan_sans_independance(
+    depot: Depot,
+) -> None:
+    """Deux causes, un même 1, deux phrases : « on ne peut pas savoir » ≠ « il n'y en a pas ».
+
+    Les confondre enverrait chercher un défaut de dérivation là où il n'y a qu'un plan d'avant #288,
+    et tairait qu'un run repris tourne en aveugle sur l'indépendance.
+    """
+    chemin = depot.racine / "plan-muet.tsv"
+    chemin.write_text(
+        "# rang\tiid\tparent\tprio\ttitre\n1\t130\t-\thaute\tTicket 130\n"
+        "2\t131\t-\thaute\tTicket 131\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    r = depot.lance("run.sh", "--dry-run", "--plan", str(chemin), "--run-id", "derive-muet")
+    assert "antérieur à la colonne « groupe »" in r.stdout
+    assert "aucun ticket simultanable" not in r.stdout
+
+
+def test_la_derivation_est_bornee_et_l_annonce_dit_qu_elle_l_a_ete(depot: Depot) -> None:
+    """Le plan dit ce qui est simultanable ; il ne dit rien de ce que la machine tient.
+
+    Et l'écrêtage se DIT : sans ce chiffre, une borne basse se lirait comme un plan pauvre, et
+    personne ne saurait qu'il y a du parallélisme laissé sur la table.
+    """
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
+                                 (3, 132, "-", "haute", "-"), (4, 133, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-borne")
+    assert "2 en vol (dérivé du plan : 4 simultanables, borné à 2)" in r.stdout
+
+
+def test_la_borne_se_deplace_par_l_environnement(depot: Depot) -> None:
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
+                                 (3, 132, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-max",
+                    env={"MAESTRO_ORCHESTRATE_CONCURRENCE_MAX": "3"})
+    assert "3 en vol (dérivé du plan)" in r.stdout
+
+
+@pytest.mark.parametrize("consigne", ["option", "variable"])
+def test_une_consigne_l_emporte_sur_la_derivation(depot: Depot, consigne: str) -> None:
+    """`--concurrence 1` sur un plan qui offrait 4 : dériver PAR-DESSUS une consigne serait le
+    défaut symétrique de celui qu'on corrige."""
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
+                                 (3, 132, "-", "haute", "-"), (4, 133, "-", "haute", "-")])
+    args = ["run.sh", "--dry-run", "--plan", plan, "--run-id", f"impose-{consigne}"]
+    env = {}
+    if consigne == "option":
+        args += ["--concurrence", "1"]
+    else:
+        env["MAESTRO_ORCHESTRATE_CONCURRENCE"] = "1"
+    r = depot.lance(*args, env=env)
+    assert "séquentiel (imposé)" in r.stdout
+    assert "dérivé" not in r.stdout
+
+
+def test_une_reprise_l_emporte_sur_la_derivation(depot: Depot) -> None:
+    """La concurrence est un trait DU RUN (#291), et la dérivation ne doit pas le défaire.
+
+    Le cas n'est pas théorique : la borne peut avoir changé entre les deux runs (autre poste,
+    variable posée depuis), et le run repris rejouerait alors un régime que personne n'a choisi
+    pour lui.
+    """
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
+                                 (3, 132, "-", "haute", "-"), (4, 133, "-", "haute", "-")])
+    dossier = depot.racine / ".maestro" / "orchestrate" / "coupe-455"
+    dossier.mkdir(parents=True, exist_ok=True)
+    (dossier / "plan.tsv").write_text(Path(plan).read_text(encoding="utf-8"),
+                                      encoding="utf-8", newline="\n")
+    (dossier / "concurrence").write_text("1\n", encoding="utf-8", newline="\n")
+    os.utime(dossier / "concurrence", (time.time() - 7200,) * 2)
+    r = depot.lance("run.sh", "--resume", "coupe-455", "--dry-run", "--run-id", "reprise-455")
+    assert "séquentiel (du run repris)" in r.stdout
+    assert "dérivé" not in r.stdout
 
 
 # --- Lot 3 : la vue rend N tickets en vol, et c'est le pilote qui dessine (#290) ------------------
@@ -6424,7 +6561,11 @@ def test_le_bloc_se_repositionne_depuis_le_bas_des_qu_il_y_touche(depot: Depot) 
     _livrables(depot, (130, 131))
     console = _console(depot)
     plan = _plan_titres(depot, [(1, 130, "Ticket 130"), (2, 131, "Ticket 131")])
-    r = depot.lance("run.sh", "--plan", plan, "--run-id", "ancre",
+    # `--concurrence 1` explicite depuis #455 : le régime ancré ne s'atteint qu'après quelques
+    # lignes permanentes, et deux tickets menés ENSEMBLE en produisent moitié moins — le bloc ne
+    # touche jamais le bas des dix rangées, et l'assertion échoue sur un run par ailleurs correct.
+    # Ce test mesure le repère de la vue, pas l'ordonnanceur.
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "ancre", "--concurrence", "1",
                     env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
                          "MAESTRO_ORCHESTRATE_LARGEUR": "100",
                          "MAESTRO_ORCHESTRATE_HAUTEUR": "10",

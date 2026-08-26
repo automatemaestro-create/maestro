@@ -205,6 +205,18 @@ toi-même.
    existent aussi, mais **ne les propose pas** : aucun des deux ne s'applique par défaut, et
    atteints ils coupent la session en plein travail — sans commit ni PR, comptée en échec, lots
    suivants du parent sabordés. Ne les passe que si l'utilisateur le demande, et dis-le alors.
+
+   **La concurrence, elle, ne se propose pas non plus — mais pour la raison inverse** (#455,
+   [docs/10 §11.10](../../docs/10-workflow-git.md)) : depuis ce ticket elle se **dérive du plan**,
+   bornée à 2 par défaut, et la ligne `plan :` annonce la valeur **et son origine** (`dérivé du
+   plan` · `imposé` · `du run repris`). Il n'y a donc rien à décider au feu vert — **relaie ce que
+   cette ligne dit**, c'est tout. Deux formes méritent un mot : « `dérivé du plan : N simultanables,
+   borné à 2` » signale du parallélisme laissé sur la table (`--concurrence-max <n>` le relève, sur
+   demande explicite et en disant ce que ça coûte — le run `20260826-155709` a tué son pilote à
+   trois sessions en vol), et « `séquentiel — aucun ticket simultanable dans ce plan` » est un
+   **verdict** sur les checklists des parents, à ne pas confondre avec « ce plan est antérieur à la
+   colonne groupe », qui dit qu'on ne peut pas savoir. `--concurrence <n>` reste là pour imposer un
+   régime : ne le passe que si l'utilisateur le demande.
    Puis le **suivi** — `bash scripts/orchestrate/status.sh --watch` (où en est le run, depuis
    n'importe quel terminal) ou `tail -f .maestro/orchestrate/<run-id>/run.log` (la
    sortie brute de la console) — et l'**arrêt d'urgence** : `touch .maestro/orchestrate/STOP` — pris

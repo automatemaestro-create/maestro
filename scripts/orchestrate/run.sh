@@ -212,16 +212,47 @@ CLAUDE_BIN="${MAESTRO_CLAUDE_BIN:-claude}"   # surchargeable : stub dans les tes
 DRY=0
 DETACH=0
 MAX=0
-# Le nombre de tickets en vol (#289). Défaut 1 : sans l'option, le run est celui d'hier, strictement
-# séquentiel. C'est la valeur qui rend ce lot mergeable seul, et elle reste le bon défaut — toutes les
-# sessions tirent sur le MÊME quota d'abonnement, donc N en parallèle épuisent la fenêtre de 5 h N fois
-# plus vite : le gain est en temps de mur, jamais en quota (parent #287).
+# Le nombre de tickets en vol (#289). Il n'a plus de défaut en dur (#455) : sans l'option, il se
+# DÉRIVE du plan — voir `concurrence_du_plan` plus bas —, borné par `CONCURRENCE_MAX`. La valeur 1
+# reste le REPLI, celui d'un plan qui ne dit rien d'exploitable (plan antérieur à la colonne
+# « groupe », ou plan dont aucun ticket n'est simultanable).
+#
+# Ce que le défaut à 1 coûtait : le mécanisme de #289 est construit, testé (#292, #313) et documenté
+# (docs/10 §11.10) depuis des mois, et il était éteint pour tout le monde — le run 20260826-153909 est
+# parti séquentiel sur un plan qui désignait CINQ tickets simultanables. Une fonctionnalité livrée et
+# jamais exercée pourrit : ni son code ni ses tests ne rencontrent la réalité d'un run.
 CONCURRENCE="${MAESTRO_ORCHESTRATE_CONCURRENCE:-1}"
 # Posé dès que quelqu'un a dit lequel il voulait — option ou variable d'environnement. C'est ce qui
 # permet à `--resume` de rejouer la concurrence du run repris sans jamais écraser un choix explicite
-# (#291) : « non demandé » et « demandé à 1 » ne sont pas la même chose.
+# (#291) : « non demandé » et « demandé à 1 » ne sont pas la même chose. Depuis #455 il départage
+# aussi « demandé » de « dérivé », la dérivation ne devant jamais écraser un choix.
 CONCURRENCE_EXPLICITE=0
-[ -n "${MAESTRO_ORCHESTRATE_CONCURRENCE:-}" ] && CONCURRENCE_EXPLICITE=1
+# D'où vient la valeur effective, pour l'annoncer plutôt que de la laisser deviner (#455) :
+# `imposee` (option ou variable), `reprise` (relue du run repris, #291) ou `derivee` (lue du plan).
+# « séquentiel » n'a pas le même sens selon l'origine — un verdict sur le plan, ou une consigne.
+CONCURRENCE_ORIGINE=derivee
+[ -n "${MAESTRO_ORCHESTRATE_CONCURRENCE:-}" ] && { CONCURRENCE_EXPLICITE=1; CONCURRENCE_ORIGINE=imposee; }
+# La BORNE de la dérivation (#455). Le plan dit ce qui est simultanable ; il ne dit rien de ce que la
+# machine tient, et c'est l'autre moitié — celle que le cadrage du ticket ne nommait pas. La
+# contrainte n'est pas le quota Claude (déjà annoncé plus bas, et qui ne borne rien : il se consomme
+# plus vite, il ne casse pas) mais les ressources du POSTE : le run 20260826-155709, à trois sessions
+# `xhigh` en vol, a épuisé les ressources de fork de MSYS après trois heures — « fork: Resource
+# temporarily unavailable », pilote mort en cours de route, sessions orphelines et travail non poussé
+# laissés derrière. Même leçon que le plafond `-n 8` de pytest (#285) : la borne est une constante
+# MESURÉE puis figée, jamais une mesure à chaud, et elle se déplace par l'environnement.
+#
+# Défaut 2, et l'asymétrie des erreurs le choisit : trop haut, un run meurt en plein travail et perd
+# ce qui n'était pas poussé ; trop bas, on perd du temps de mur. C'est déjà le double du régime
+# d'avant ce ticket.
+CONCURRENCE_MAX="${MAESTRO_ORCHESTRATE_CONCURRENCE_MAX:-2}"
+# Ce que le plan offrait, avant écrêtage par la borne — gardé pour l'annonce, qui doit pouvoir dire
+# « borné » plutôt que de laisser croire que le plan n'offrait pas mieux. Déclarée vide ici parce que
+# `set -u` fait sortir sans un mot sur une globale absente, et qu'elle n'est calculée que sur la
+# branche dérivée.
+CONCURRENCE_PLAN=0
+# Le plan est-il d'avant la colonne « groupe » (#288) ? Alors il ne dit RIEN de l'indépendance, ce qui
+# n'est pas la même chose que dire qu'il n'y en a aucune — voir l'annonce.
+CONCURRENCE_PLAN_MUET=0
 # Le budget n'a plus de défaut (#286) : sans `--budget`, AUCUN `--max-budget-usd` n'est passé au
 # CLI, et une session s'arrête sur son ticket, son timeout ou la limite d'usage — jamais sur un
 # montant. Les 15 $/ticket d'origine étaient le garde-fou d'une boucle neuve, quand on craignait
@@ -393,7 +424,8 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1 ;;
     --detach | --detache | --détaché) DETACH=1 ;;
     --max) MAX="${2:-0}"; shift ;;
-    --concurrence | --concurrency) CONCURRENCE="${2:-1}"; CONCURRENCE_EXPLICITE=1; shift ;;
+    --concurrence | --concurrency) CONCURRENCE="${2:-1}"; CONCURRENCE_EXPLICITE=1; CONCURRENCE_ORIGINE=imposee; shift ;;
+    --concurrence-max) CONCURRENCE_MAX="${2:-2}"; shift ;;
     --budget) BUDGET="${2:-}"; shift ;;
     --timeout) TIMEOUT_BRUT="${2:-}"; shift ;;
     --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
@@ -2338,11 +2370,17 @@ if [ "$REPRISE" = 1 ]; then
   #
   # Un choix explicite l'emporte, lui : `--resume --concurrence 1` reste la façon de dérouler en
   # séquentiel un run qui tournait à N (pour l'observer, ou parce que le quota est serré).
+  #
+  # Et la valeur relue l'emporte sur la DÉRIVATION de #455, sans quoi une reprise recalculerait la
+  # concurrence sur le plan d'aujourd'hui — ce que ce bloc existe précisément pour empêcher. Le cas
+  # n'est pas théorique : la borne `CONCURRENCE_MAX` peut avoir changé entre les deux runs (poste
+  # différent, variable posée depuis), et un run repris rejouerait alors un régime que personne n'a
+  # choisi pour lui.
   if [ "$CONCURRENCE_EXPLICITE" = 0 ] && [ -r "$REPRISE_DIR/concurrence" ]; then
     read -r conc_reprise <"$REPRISE_DIR/concurrence" 2>/dev/null || conc_reprise=""
     case "${conc_reprise:-}" in
       '' | *[!0-9]* | 0) ;;
-      *) CONCURRENCE="$conc_reprise" ;;
+      *) CONCURRENCE="$conc_reprise"; CONCURRENCE_ORIGINE=reprise ;;
     esac
   fi
 fi
@@ -2552,6 +2590,93 @@ else
 fi
 
 nb_plan="$(grep -cv '^#' "$PLAN")"
+
+# --- L'indépendance du plan, en un nombre (#455) -------------------------------------------------
+# Combien de tickets de CE plan peuvent être en vol ensemble, au mieux. La règle n'est pas
+# recalculée : c'est celle que `queue.sh` a figée dans la colonne `groupe` (#288) et que
+# `independants()` applique plus bas — deux tickets partent ensemble si leurs `parent` DIFFÈRENT, ou
+# si leur `groupe` est IDENTIQUE.
+#
+# Ce que cette règle implique, et qui donne la formule : au sein d'un même parent, un ensemble
+# simultanable est forcément inclus dans UN groupe (deux groupes d'un même parent ne sont jamais
+# compatibles) ; entre parents différents, tout est compatible. Le plus grand ensemble mutuellement
+# indépendant est donc la SOMME, sur chaque parent, de son plus gros groupe.
+#
+#   #580 #581 #582 → 573.1 ┐
+#   #583 → 573.2           ├ parent 573 : max(3,1,1,1,1,1) = 3   ┐
+#   #584 → 573.3 …         ┘                                     ├ 5
+#   #577 #578 → parent « - », groupe « - » : max(2) = 2          ┘
+#
+# Ce n'est pas une moyenne : c'est un PLAFOND, et c'est bien ce qu'on cherche — au-delà, un créneau
+# de plus ne peut jamais servir. En dessous, l'ordonnanceur fait le reste, ticket par ticket : un
+# plan qui n'offre 3 qu'à son premier tiers tourne à 1 le reste du temps sans que rien n'ait à le
+# prévoir, et un créneau vide ne coûte rien.
+#
+# Un plan ANTÉRIEUR à la colonne `groupe` (cinq colonnes, rejoué par `--resume`) rend 1 : son
+# cinquième champ est un TITRE, et le lire comme un groupe ferait partir ensemble deux lots qui se
+# suivent. Même repli que la garde de #289 plus bas, ici pour la même raison.
+concurrence_du_plan() { # <fichier-plan>
+  grep -v '^#' "$1" 2>/dev/null | awk -F'\t' '
+    NF < 6 { court = 1; next }
+    { vu[$3 SUBSEP $5]++; }
+    END {
+      if (court) { print 1; exit }
+      for (k in vu) {
+        split(k, a, SUBSEP)
+        if (vu[k] > mieux[a[1]]) mieux[a[1]] = vu[k]
+      }
+      total = 0
+      for (p in mieux) total += mieux[p]
+      print (total < 1 ? 1 : total)
+    }'
+}
+
+# La dérivation elle-même. Elle ne s'applique QUE si personne n'a choisi — ni option, ni variable
+# (`imposee`), ni run repris (`reprise`) : « dériver » est ce qu'on fait faute de consigne, jamais
+# par-dessus une consigne.
+if [ "$CONCURRENCE_ORIGINE" = derivee ]; then
+  case "${CONCURRENCE_MAX:-}" in '' | *[!0-9]* | 0) CONCURRENCE_MAX=2 ;; esac
+  # « Ce plan ne dit rien » et « ce plan dit qu'il n'y a rien » mènent tous deux à 1, et ce ne sont
+  # pas les mêmes phrases : la première est un aveu d'ignorance sur un plan d'avant #288, la seconde
+  # un verdict sur la checklist des parents. Les confondre enverrait chercher un défaut de dérivation
+  # là où il n'y a qu'un vieux plan — et taire qu'un run repris tourne en aveugle.
+  colonnes_plan="$(grep -v '^#' "$PLAN" | head -1 | awk -F'\t' '{ print NF }')"
+  case "${colonnes_plan:-}" in '' | *[!0-9]*) colonnes_plan=0 ;; esac
+  [ "$colonnes_plan" -lt 6 ] && [ "$nb_plan" -gt 0 ] && CONCURRENCE_PLAN_MUET=1
+  CONCURRENCE_PLAN="$(concurrence_du_plan "$PLAN")"
+  case "${CONCURRENCE_PLAN:-}" in '' | *[!0-9]* | 0) CONCURRENCE_PLAN=1 ;; esac
+  if [ "$CONCURRENCE_PLAN" -gt "$CONCURRENCE_MAX" ]; then
+    CONCURRENCE="$CONCURRENCE_MAX"
+  else
+    CONCURRENCE="$CONCURRENCE_PLAN"
+  fi
+fi
+
+# Le régime de concurrence, dit avec SON ORIGINE (#455). « séquentiel » n'a pas le même sens selon
+# qu'il vient d'un verdict sur le plan (aucun ticket simultanable) ou d'une consigne : sans cette
+# moitié, un run dérivé à 1 redevient indiscernable du défaut d'avant ce ticket, et personne ne peut
+# distinguer « le plan ne s'y prête pas » de « la dérivation ne marche plus ».
+concurrence_libelle() {
+  local base
+  if [ "$CONCURRENCE" -gt 1 ]; then base="$CONCURRENCE en vol"; else base='séquentiel'; fi
+  case "$CONCURRENCE_ORIGINE" in
+    imposee) printf '%s (imposé)' "$base" ;;
+    reprise) printf '%s (du run repris)' "$base" ;;
+    *)
+      if [ "$CONCURRENCE_PLAN" -gt "$CONCURRENCE" ]; then
+        printf '%s (dérivé du plan : %s simultanables, borné à %s)' \
+          "$base" "$CONCURRENCE_PLAN" "$CONCURRENCE_MAX"
+      elif [ "$CONCURRENCE" -gt 1 ]; then
+        printf '%s (dérivé du plan)' "$base"
+      elif [ "$CONCURRENCE_PLAN_MUET" = 1 ]; then
+        printf '%s — ce plan est antérieur à la colonne « groupe », rien n'\''y dit ce qui est indépendant' "$base"
+      else
+        printf '%s — aucun ticket simultanable dans ce plan' "$base"
+      fi
+      ;;
+  esac
+}
+
 printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
 [ "$REPRISE" = 1 ] && printf 'reprise du run %s — son plan, rejoué tel quel\n' "$REPRISE_ID"
 # Les deux plafonds de session sont ANNONCÉS dans les deux sens (#286 pour le budget, #326 pour le
@@ -2566,7 +2691,7 @@ printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · %s · %s\n' \
   "$nb_plan" "$MODELE" "$EFFORT" \
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
   "$([ "$TIMEOUT_S" -gt 0 ] && printf 'timeout %s/ticket' "$(duree_lisible "$TIMEOUT_S")" || printf 'sans délai')" \
-  "$([ "$CONCURRENCE" -gt 1 ] && printf '%s en vol' "$CONCURRENCE" || printf 'séquentiel')"
+  "$(concurrence_libelle)"
 printf 'journal : %s\n\n' "$RUN_DIR"
 
 if [ "$nb_plan" -eq 0 ]; then
@@ -2610,12 +2735,15 @@ if [ "$DRY" = 1 ]; then
   printf '                        tickets en vol compris\n'
   # Le régime de concurrence est annoncé dans les deux sens, comme le budget juste au-dessus :
   # « séquentiel » est un choix, pas un oubli, et c'est le réglage qui change le plus ce qu'on
-  # verra à l'écran.
+  # verra à l'écran. Depuis #455 il porte AUSSI son origine — un `--dry-run` sert à voir ce qui
+  # partirait, donc à voir d'où vient le régime autant que sa valeur.
+  printf '  7. concurrence        %s\n' "$(concurrence_libelle)"
   if [ "$CONCURRENCE" -gt 1 ]; then
-    printf '  7. concurrence        jusqu'\''à %s tickets en vol — deux ne partent ensemble que si le plan\n' "$CONCURRENCE"
-    printf '                        les dit indépendants (parents différents, ou même « groupe »)\n'
+    printf '                        deux ne partent ensemble que si le plan les dit indépendants\n'
+    printf '                        (parents différents, ou même « groupe ») — le gain est en temps\n'
+    printf '                        de mur, JAMAIS en quota : les sessions partagent la fenêtre de 5 h\n'
   else
-    printf '  7. concurrence        1 — run séquentiel (--concurrence <n> pour en mener plusieurs)\n'
+    printf '                        --concurrence <n> pour en imposer un autre\n'
   fi
   rm -rf "$RUN_DIR"
   exit 0
