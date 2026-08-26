@@ -334,6 +334,15 @@ class EtatValidation:
     question que le panneau ne pouvait pas poser — « quel run attend ? » — et
     c'est par lui que le run saura dire qu'il attend (#571). Vide quand la
     demande ne relève d'aucun run.
+
+    `outil` et `arguments` (#581) portent l'**acte** qui a déclenché la demande,
+    déjà expurgé par `evenement_demande`. Ce sont eux que l'écran d'arbitrage
+    montre quand ils sont là — et le titre de la tâche seulement sinon : depuis
+    que le déclencheur est l'acte (#573), afficher « Rédiger le README » au-dessus
+    d'un `rm -rf` serait la même perte de sens que le défaut qu'on répare, dans
+    l'autre sens. `outil` vide et `arguments` à None pour une demande qui n'en
+    porte pas — validation de tâche, application d'un diff —, qui reste alors
+    rendue exactement comme avant ce lot.
     """
 
     tache_id: str
@@ -347,6 +356,8 @@ class EtatValidation:
     diff: DiffProjet | None = None
     projet_id: str | None = None
     run_id: str = ""
+    outil: str = ""
+    arguments: dict[str, str] | None = None
     horodatage: str = ""
 
     @property
@@ -368,6 +379,8 @@ class EtatValidation:
             "diff": self.diff.to_dict() if self.diff is not None else None,
             "projet_id": self.projet_id,
             "run_id": self.run_id,
+            "outil": self.outil,
+            "arguments": dict(self.arguments) if self.arguments is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -1348,6 +1361,10 @@ class ControlTowerState:
             diff=event.diff,
             projet_id=projet_id,
             run_id=event.run_id,
+            # L'acte (#581) est repris tel quel : il a été borné et expurgé à la
+            # publication, et la projection est un miroir — elle ne rejuge rien.
+            outil=event.outil,
+            arguments=event.arguments,
             horodatage=event.horodatage,
         )
         self._suspend_sur_arbitrage(event.run_id, event.horodatage)

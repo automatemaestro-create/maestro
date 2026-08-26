@@ -70,6 +70,15 @@ def evenement_demande(demande: DemandeValidation) -> Event:
     contient pas et les vues, cadrées sur le projet actif, l'écartent. Ni l'un ni
     l'autre n'est expurgé : ce sont des identifiants que nous produisons, pas du
     texte d'agent.
+
+    Depuis #581, **l'acte** enfin : `outil` et ses `arguments`, quand la demande
+    en porte. Les **valeurs** des arguments sont expurgées — c'est le texte que
+    l'agent a composé, et une ligne de commande peut très bien embarquer un jeton
+    —, et c'est le même filet que `titre`/`description` ci-dessus et que le
+    journal (#8). Le **nom de l'outil** et les **clés**, eux, ne le sont pas, pour
+    la raison qui vaut déjà pour le diff : ce sont des identifiants — celui de
+    l'acte à trancher et ceux du schéma de l'outil —, et les masquer reviendrait à
+    faire disparaître de l'écran l'objet même de la question.
     """
     return Event(
         type=EVENEMENT_VALIDATION_DEMANDE,
@@ -87,6 +96,12 @@ def evenement_demande(demande: DemandeValidation) -> Event:
         # si bien qu'il n'y a rien à y masquer, et le passer au rédacteur de
         # secrets abîmerait des noms de fichiers légitimes (`config/secret.md`).
         diff=demande.diff,
+        outil=demande.outil,
+        arguments=(
+            {cle: redact_secrets(valeur) for cle, valeur in demande.arguments.items()}
+            if demande.arguments is not None
+            else None
+        ),
     )
 
 

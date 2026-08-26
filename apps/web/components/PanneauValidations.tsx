@@ -14,6 +14,13 @@
  * fusionner — qui remplace alors la description libre. Sans lui la question
  * serait une signature à l'aveugle ; le refus, lui, n'écrit rien et laisse le
  * travail consultable.
+ *
+ * Depuis #581 elle peut porter un **acte** — l'outil appelé et ses arguments —,
+ * et c'est lui qui prend alors la tête de la carte. Le titre de la tâche ne
+ * disparaît pas, il descend d'un cran : depuis que le déclencheur de l'arbitrage
+ * est l'acte et non le texte de la tâche (#573), l'afficher en tête ferait lire
+ * « Rédiger le README » au-dessus d'un `rm -rf` — la question qu'on pose n'est
+ * plus celle-là. Une demande sans acte est rendue exactement comme avant.
  */
 
 import { useState } from "react";
@@ -97,19 +104,35 @@ function CarteValidation({
     }
   };
 
+  // L'acte a la tête quand il y en a un (#581) ; sinon on retombe sur le titre
+  // de la tâche, qui est ce que la demande portait de plus parlant avant #573.
+  const acte = validation.outil;
+
   return (
     <Carte ton="attentionClaire" className="text-corps">
       <p className="font-medium" title={validation.tache_id}>
-        {validation.titre || validation.tache_id}
+        {acte ? (
+          <>
+            <span className="text-neutral-500 dark:text-neutral-400">Appel de </span>
+            <span className="font-mono">{acte}</span>
+          </>
+        ) : (
+          validation.titre || validation.tache_id
+        )}
       </p>
-      <p className="mt-1 flex items-center gap-1 text-annexe text-neutral-500 dark:text-neutral-400">
+      <p className="mt-1 flex flex-wrap items-center gap-1 text-annexe text-neutral-500 dark:text-neutral-400">
         <IconeAgent className="size-3.5 shrink-0" />
         Agent {validation.agent}
         {validation.role ? ` · ${validation.role}` : ""}
         {validation.horodatage ? ` · ${formatHeure(validation.horodatage)}` : ""}
+        {/* Le titre de la tâche reste lisible, une place plus bas : il dit d'où
+            vient l'acte, il ne dit pas ce qu'on approuve. */}
+        {acte && validation.titre ? ` · ${validation.titre}` : ""}
       </p>
       {validation.diff ? (
         <DiffApplication diff={validation.diff} />
+      ) : acte ? (
+        <ArgumentsActe arguments={validation.arguments} />
       ) : (
         validation.description && (
           <p className="mt-2 whitespace-pre-wrap text-annexe text-neutral-600 dark:text-neutral-300">
@@ -139,6 +162,46 @@ function CarteValidation({
         <p className="mt-2 text-annexe text-rose-600 dark:text-rose-400">{erreur}</p>
       )}
     </Carte>
+  );
+}
+
+/**
+ * Ce qu'on passe à l'outil (#581) : une ligne par argument, la clé puis sa
+ * valeur. Le nom de l'outil n'y est pas répété — il est en tête de la carte,
+ * c'est lui la question.
+ *
+ * La valeur est rendue **telle qu'elle a été composée**, sauts de ligne compris
+ * (`whitespace-pre-wrap`) : un script passé à `Bash` aplati en une ligne se lit
+ * autrement qu'il ne s'exécutera, et approuver ce qu'on lit mal n'est pas
+ * approuver. Le backend l'a déjà bornée et expurgée (`maestro.acte`,
+ * `evenement_demande`) — il n'y a donc rien à couper ici.
+ *
+ * Comme le diff, le bloc **défile** au-delà d'une poignée de lignes plutôt que
+ * de pousser Approuver/Refuser hors de l'écran : une demande dont on ne voit
+ * plus la réponse n'en est plus une.
+ */
+function ArgumentsActe({ arguments: args }: { arguments: Record<string, string> | null }) {
+  const entrees = Object.entries(args ?? {});
+  if (entrees.length === 0) {
+    // Un outil sans paramètre existe, et un producteur qui n'en rapporte aucun
+    // aussi : les deux se disent du même mot, aucun n'est une anomalie à signaler.
+    return (
+      <p className="mt-2 text-annexe italic text-neutral-500 dark:text-neutral-400">
+        Aucun argument
+      </p>
+    );
+  }
+  return (
+    <dl className="mt-2 max-h-48 overflow-y-auto rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1.5 font-mono text-annexe dark:border-neutral-700 dark:bg-neutral-950/60">
+      {entrees.map(([cle, valeur]) => (
+        <div key={cle} className="flex items-baseline gap-2 py-0.5">
+          <dt className="shrink-0 text-neutral-500 dark:text-neutral-400">{cle}</dt>
+          <dd className="min-w-0 flex-1 whitespace-pre-wrap break-words text-neutral-700 dark:text-neutral-300">
+            {valeur}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
