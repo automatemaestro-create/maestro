@@ -138,6 +138,17 @@ chose qui te reste à juger est la **prose**.
    le `libelle` de la page de même clé quand il y en a une, et la colonne `route` de l'étape 4 ;
    une clé citée par un ticket mais absente d'ici est rendue quand même, sous sa clé nue.
 
+   ⚠ **`notes` ne porte que ce qui a MANQUÉ à cette génération-ci** (#563) — captures non prises,
+   parcours non filmé, dérivation en erreur : des faits sur *ce fichier*, que son lecteur ne peut
+   pas deviner en le regardant. Le script y ajoute lui-même les clips écartés par un plafond de
+   taille ; le plus souvent, **`notes` reste vide, et c'est le cas nominal**. N'y mets **jamais**
+   les limites méthodologiques de la commande — « un composant partagé ne se rattache à aucune
+   route », « les captures montrent la stack d'aujourd'hui », « tel ticket n'a pas de commit sur
+   `origin/main` ». Elles sont listées sous « Ce que la commande ne sait pas » et vont au **résumé
+   de l'étape 10**, dans le terminal : ce sont des réserves de production, destinées à qui lance la
+   commande. La page, elle, se partage à un sponsor — un pied de page qui explique comment
+   l'outillage a été dérivé ne lui apprend rien et lui coûte la fin du document.
+
 8. **Génère la présentation** avec le python du venv (jamais le python système) :
    ```
    .venv/Scripts/python.exe scripts/presentation/build.py <dossier-de-travail>/presentation.json
@@ -151,8 +162,10 @@ chose qui te reste à juger est la **prose**.
 
 9. **Regarde le résultat avant de le livrer** : ouvre le fichier produit et vérifie qu'il tient
    debout (pas de section vide, pas de vignette hors sujet, pas de `null` affiché tel quel, les
-   clips se lisent). Si le skill `verify` est disponible, un coup d'œil au rendu via navigateur
-   vaut mieux qu'une lecture du HTML.
+   clips se lisent, **une image s'ouvre en grand au clic et se referme par `Échap`**). Si le skill
+   `verify` est disponible, un coup d'œil au rendu via navigateur vaut mieux qu'une lecture du
+   HTML — le MCP `chrome-maestro` refusant le protocole `file:`, sers le dossier
+   (`python -m http.server`) et ouvre le fichier par `http://127.0.0.1:<port>/`.
 
 10. Termine par un **résumé court** : le milestone présenté, le nombre de tickets par état, le
     nombre de captures intégrées, le nombre d'**écrans touchés** dérivés (et combien de tickets
