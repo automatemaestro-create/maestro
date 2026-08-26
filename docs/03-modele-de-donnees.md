@@ -89,7 +89,13 @@ erDiagram
     APPROVAL {
         uuid id PK
         uuid run_id FK
+        uuid task_id FK
+        uuid projet_id FK
+        string outil
+        json arguments
         string action
+        string origine
+        string decideur
         string statut
         uuid decide_par FK
     }
@@ -236,7 +242,17 @@ Une **exécution** concrète d'une tâche par un agent. Trace les tokens, le **c
 Les **événements détaillés** d'un run (appel d'outil, étape de raisonnement, erreur…). Alimente l'observabilité et l'UI. Synchronisé avec Langfuse.
 
 ### APPROVAL
-Une **demande de validation humaine** (human-in-the-loop) sur une action sensible. `statut` : `en_attente`, `approuve`, `refuse`.
+Une **demande d'arbitrage** (human-in-the-loop) sur une action sensible. `statut` : `en_attente`, `approuve`, `refuse`.
+
+**Ce qui la déclenche est l'acte, pas le texte de la tâche** (chantier #573). Le déclencheur nominal est l'**appel d'outil** que l'agent s'apprête à commettre : la politique de permissions de l'agent classe l'outil en `ask` (`core/permissions/<agent>.json`, [docs/04 §1.4](./04-specifications-agents.md)) et le hook `PreToolUse` suspend l'appel avant qu'il ne parte. D'où `outil` et `arguments`, qui portent l'acte soumis : sans eux, « Rédiger le README » se retrouverait au-dessus d'un `rm -rf`, ce qu'aucun humain ne peut trancher. Ils sont **vides** pour les demandes qui ne portent pas d'acte — validation d'une tâche, application d'un diff dans un projet (EF-37) —, `action` restant la description en texte.
+
+`origine` dit **qui a demandé** : `politique` (nous l'avons déduite d'une de nos règles — le défaut) ou `agent` (l'agent a levé la main lui-même, #582). Les deux ne valent pas la même chose : une demande déduite tient quand l'agent se trompe ou se fait manipuler, la sienne ne prouve que ce qu'il a bien voulu dire. La distinction est un **champ** et non une tournure de phrase, faute de quoi elle se perdrait au premier reformulage.
+
+`decideur` dit **qui tranche** : `auto` (personne n'est sollicité, mais l'appel est tracé — c'est ce qui le distingue d'un `allow`, qui passe en silence), `orchestrateur` (la machine tranche seule) ou `humain` (une personne, et personne d'autre). C'est **`humain` par défaut**, y compris pour une valeur qu'on ne sait pas relire : *un cran non précisé escalade, il ne s'auto-approuve pas*. Et l'asymétrie d'EF-08/ENF-04 tient par construction — sur le cran `humain`, le canal de l'orchestrateur n'est **pas sur le chemin**, il n'est pas consulté du tout.
+
+`run_id` et `projet_id` (#570) disent d'où elle vient : ce sont les deux critères de filtre de la Control Tower, et sans eux la demande sort du journal du run et de toutes les vues, qui sont cadrées dessus.
+
+**Ce qui reste du régime par mots-clés.** Le mécanisme est intact (`Guardrails.raison_sensible`) mais il n'est plus **armé** : la liste est vide par défaut depuis #585, et le régime d'avant s'obtient en la renseignant. Le motif du désarmement est mesuré (#568) — le mot cherché vient du **brief** et se propage à toutes les descriptions que la décomposition en tire, si bien qu'un objectif demandant « une sous-commande **supprimer** une note » rendait 3 tâches sur 3 sensibles, « Rédiger le README » comprise. Développer une fonction de suppression n'est pas exécuter une suppression.
 
 ### TOOL & TOOL_BINDING
 Les **outils** disponibles (souvent des serveurs MCP) et leur **liaison** à un agent avec des **permissions** scopées.
@@ -258,7 +274,7 @@ stateDiagram-v2
     backlog --> bloquee: dépendance en échec (ou elle-même bloquée)
     prete --> assignee: routeur choisit un agent
     assignee --> en_cours: worker disponible
-    en_cours --> en_attente_validation: action sensible
+    en_cours --> en_attente_validation: appel d'outil classé « ask »
     en_attente_validation --> en_cours: approuvée
     en_attente_validation --> echec: refusée
     en_cours --> terminee: objectif atteint

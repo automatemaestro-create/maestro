@@ -45,6 +45,25 @@ cran **inconnu** est une erreur franche, comme toute politique douteuse — le
 repli tolérant vit chez `decideur_depuis`, pour ce qui se relit après coup et ne
 peut plus être corrigé.
 
+**Ce module est devenu le déclencheur de l'arbitrage humain, et le déclencheur
+est l'acte.** C'est le renversement du parent #573 : ce qui suspend un appel est
+l'**outil que l'agent s'apprête à appeler**, jugé ici, et non le texte de ce
+qu'on lui a demandé d'écrire. La chaîne est courte — `decide` rend `ARBITRAGE`,
+le hook `PreToolUse` suspend l'appel (#583), la demande part avec l'outil et ses
+arguments (#581, `maestro.acte`) et aboutit à
+`maestro.engine.guardrails.Guardrails.demande_validation`, donc au fail-safe
+commun : sans personne pour trancher, l'acte est **refusé** (EF-08, ENF-04).
+
+**Ce qui reste du régime par mots-clés** vit ailleurs et n'est plus armé : une
+tâche pouvait être classée sensible sur des radicaux cherchés dans son titre et
+sa description (`Guardrails.raison_sensible`, `MOTS_SENSIBLES`). Le mécanisme est
+intact, mais sa liste est **vide par défaut** depuis #585 — le mot venait du
+brief et se propageait à toutes les descriptions que la décomposition en tirait
+(#568 : 3 tâches sur 3 sensibles, « Rédiger le README » comprise). Développer une
+fonction de suppression n'est pas exécuter une suppression. Les deux régimes ne
+se disputent donc rien : celui-ci juge un **acte**, l'autre un **énoncé**, et
+c'est le premier qui est branché.
+
 Le dépôt suit le pattern des voisins (`maestro.agents.mcp`, `capacity`) : un
 fichier JSON par agent (`core/permissions/<agent>.json`, versionné avec le
 dépôt Git), **validé à la lecture** (une politique douteuse est refusée avec

@@ -63,6 +63,22 @@ Le régime sénior élargit les **choix techniques réversibles**. Il ne touche 
 | 🎨 Designer | **propose** une évolution de la charte, ne la remplace ni ne la réécrit sans accord |
 | 🧪 QA / Testeur | **évalue** et ne réécrit pas le livrable d'un autre rôle : la correction se propose, l'appliquer revient à qui l'a produit |
 
+Ce tableau est de la **prose**, donc un prompt : il ne lie que l'agent qui le lit et le respecte. Ce qui l'oppose à un agent qui se trompe, ou qu'on manipule, est le mécanisme ci-dessous.
+
+#### 1.4bis L'arbitrage se déclenche sur l'**acte**, pas sur le texte de la tâche
+
+La frontière du tableau a un pendant **opposable** : la politique de permissions par agent (`core/permissions/<agent>.json`, [son README](../core/permissions/README.md)), qui classe chaque outil en `allow`, `ask` ou `deny` — outils intégrés (`Bash`, `Write`) comme outils MCP (`mcp__slack__send_message`). `deny` l'emporte sur `ask`, qui l'emporte sur `allow`.
+
+Le cran du milieu est celui de l'arbitrage : un outil classé `ask` **suspend l'appel** au hook `PreToolUse` — le seul point de contrôle consulté sous `bypassPermissions` — le temps qu'on tranche. Ce que la demande porte est alors l'**outil et ses arguments**, et non le titre de la tâche : « Rédiger le README » au-dessus d'un `rm -rf` n'est pas une question qu'on peut trancher. Le déclencheur est donc *ce que l'agent s'apprête à faire*, pas *ce qu'on lui a demandé d'écrire* — c'est le renversement du chantier #573.
+
+Qui tranche est posé dans la politique, à froid, entrée par entrée (`maestro.decideur`) : `auto` (personne n'est sollicité, mais l'appel laisse une trace — la seule raison de préférer `ask` + `auto` à un `allow`, qui passe en silence), `orchestrateur` (la machine tranche seule) ou `humain` (une personne, et personne d'autre). Le défaut est **`humain`** : *un cran non précisé escalade, il ne s'auto-approuve pas*. Et l'orchestrateur **ne peut jamais approuver un acte classé `humain`** — non par une vérification qu'on aurait pu oublier d'écrire, mais parce que son canal n'est pas sur ce chemin (EF-08, ENF-04). Sans personne pour trancher, l'acte est **refusé** ; approuver n'est jamais le défaut sûr.
+
+Un **quatrième canal** repart vers l'agent : `demander_arbitrage(raison)` (#582), par lequel un agent qui *sait* qu'il va au-delà de ce que sa tâche prévoyait peut le dire au lieu de choisir seul. C'est un canal **de plus**, jamais un remplaçant — son silence ne prouve rien, et une demande qu'il formule ne vaut pas une règle à nous. Elle aboutit au même garde-fou, donc au même refus par défaut.
+
+**Ce qui reste du régime par mots-clés.** Une tâche pouvait être classée sensible sur des **radicaux** cherchés dans son titre et sa description (`deploi`, `supprim`, `destructi`…). Le mécanisme est intact, mais il n'est plus **armé** : la liste est vide par défaut depuis #585, et le renseigner rearme l'ancien régime. Le motif est mesuré (#568) — le mot vient du **brief** et se propage à toutes les descriptions que la décomposition en tire, si bien qu'un objectif demandant « une sous-commande **supprimer** une note » rendait 3 tâches sur 3 sensibles, « Rédiger le README » comprise. Développer une fonction de suppression n'est pas exécuter une suppression. Désarmer ne retire donc pas un garde-fou : ça retire un déclencheur qui jugeait le mauvais objet, et seulement après que l'arbitrage sur l'acte est vivant.
+
+⚠ Tout ceci ne vaut que sur le **chemin outillé** (§1.5) : une exécution texte n'a ni outils ni répertoire, donc aucun acte à intercepter. C'est le playbook, et lui seul, qui l'y tient.
+
 ### 1.5 Deux chemins d'exécution, un seul rôle
 
 Un même agent s'exécute de deux façons, et les deux doivent porter le même métier :

@@ -84,6 +84,11 @@ C'est le **premier run 6/6** de « Dépensio » — l'objectif que la démo V1 n
 `en_attente → approuvée` au journal (`plan-deploiement-local:validation [approuve]`) et relancé
 l'exécution — la mécanique human-in-the-loop de bout en bout, depuis un vrai navigateur.
 
+> ⚠ Relevé **à sa date**, et conservé tel quel. Depuis #585 la classification par mots-clés
+> n'est plus armée par défaut : le déclencheur nominal est l'**acte** — un outil classé `ask`
+> dans la politique de l'agent (chantier #573, [docs/04 §1.4bis](./04-specifications-agents.md)) —
+> et le motif nommerait aujourd'hui l'outil appelé, non un mot de la tâche.
+
 ![Validation humaine en attente dans la Control Tower](./assets/demo-v2/validation-en-attente.png)
 
 ![Grand livre du run 6/6](./assets/demo-v2/grand-livre-6sur6.png)
