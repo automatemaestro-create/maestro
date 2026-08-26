@@ -5134,7 +5134,7 @@ fréquente. Huit sections, toutes tirées des mêmes faits extraits une seule fo
 | **Le poids d'une forme** de commande | invisible appel par appel — mesure du 2026-08-24 : `lib.sh` pèse 22,9 min en 93 invocations de 14,8 s, premier poste du run |
 | **Le pré-vol** de `/ticket-start` | ~2 min payées **une fois par ticket**, donc N fois par run, qu'aucune vue ne totalisait ; le détail dit lequel des quatre gestes coûte |
 | **Le temps mort** | ce qui est hors de **tout** appel — du temps qui n'est pas lent, et qu'on confondait avec du temps d'outil |
-| **Les commandes rejouées** à l'identique | soit une reprise après échec, soit du temps qui n'apprend rien |
+| **Les commandes rejouées** dans un **même ticket** | soit une reprise après échec, soit du temps qui n'apprend rien — un appel joué une fois par ticket n'en est pas un (#578, ci-dessous) |
 | **Les appels restés sans retour** | la session s'est arrêtée pendant — les taire ferait passer un run coupé en plein `local.sh` pour un run sans incident |
 
 **Ce qu'il ne répond pas, et c'est la portée que #495 s'est donnée : il ne corrige pas.** Il mesure
@@ -5153,6 +5153,25 @@ séparer le coût **attendu** — le filet CI (16,5 min en 6 appels sur le run d
 le prix du verdict avant push), un `Agent` de recherche, le pré-vol, un temps mort de plusieurs
 heures qui **est** une limite d'usage — de ce qui ne l'est pas. Mettre le filet CI et `lib.sh` sur
 la même ligne sans les distinguer ferait chercher l'économie du mauvais côté.
+
+⚠ **Un rejeu se compte dans un ticket, jamais sur le run** (#578). La clé de la section était la
+commande **seule**, agrégée sur tout le run : un appel joué **une fois par ticket** y remontait donc
+« 2x … au-delà du premier passage » dès que le run en portait deux. Mesuré sur `20260826-134119`
+(deux lots d'un même parent), le premier poste de la section était `bash scripts/ci/local.sh` à
+**7,3 min** — c'est-à-dire le coût le plus attendu du run, présenté comme du temps en trop ; venaient
+ensuite `lib.sh subtickets` et `lib.sh issue-raw`, interrogeant le parent commun une fois depuis
+chaque lot. La chaîne est identique ; le rejeu ne l'est pas.
+
+Ce n'était **pas un défaut de calcul** — « au-delà du premier passage » était exact au sens littéral
+— mais de **lecture**, et il grandissait avec le run : sur douze tickets la section aurait été
+dominée par les douze passages du filet CI, dans la section faite précisément pour montrer
+l'inattendu. La clé est donc le couple **(ticket, commande)**, la ligne **nomme son ticket** (une
+commande rejouée sans dire où ne se vérifie pas), et le total du titre est calculé sur les **mêmes
+entrées** que les lignes en dessous — c'est le chiffre qu'on lit en premier, et un total qui
+compterait aussi le structurel annoncerait un gisement d'économie que rien de ce qui suit ne
+montrerait (4,2 min avant, **5,4 s** après, sur le même run). Le coût d'un appel une-fois-par-ticket
+n'est pas perdu pour autant : il se lit « par forme de commande », et pour le pré-vol dans sa propre
+section. La mécanique était déjà là — le regroupement par forme sépare les tickets depuis #496/#497.
 
 ⚠ **Le temps mort se mesure, il ne se départage pas.** Un trou de plusieurs heures est une limite
 d'usage ; quelques minutes, de la réflexion. L'audit nomme les trous au-delà de
@@ -5175,6 +5194,17 @@ renvoyer par un chemin absolu ferait refuser la lecture.
 > même coup le désescapage de #496 ; et l'**absence de `jq` et de Python** dans le chemin
 > d'exécution — prouvée par trois bouchons en tête de `PATH` plutôt que par un `grep`, le script
 > nommant les deux dans ses commentaires.
+>
+> Deux de plus pour #578, sur un journal de **deux lots d'un même parent** qui est un **échantillon
+> fautif** : il porte côte à côte les deux appels qui remontaient à tort — le filet CI joué avant
+> chaque push, un verbe `lib.sh` sur le parent commun — et un rejeu qui, lui, en est un (une suite de
+> tests rouge, relancée à l'identique). Le test prouve d'abord que l'échantillon porte **bien** le
+> piège (les deux chaînes structurelles comptent deux appels chacune dans la table des formes),
+> **puis** que seul le vrai rejeu survit dans la section, **avec son ticket** — sans cette première
+> moitié, un échantillon adouci plus tard laisserait les deux absences passer pour un verdict, et une
+> section vide ou un parser mal branché rendraient un ✓ sur une question jamais posée. Le second
+> tient le **total** du titre (20 s de rejeu réel, là où la clé d'avant en annonçait 1,8 min) et sa
+> **portée** écrite dans l'intitulé.
 >
 > S'y ajoutent, pour l'écriture de fin de run (#530), trois questions posées **sur un vrai run** du
 > harnais et non sur un journal fabriqué — c'est le pilote qu'elles gardent, pas l'audit : le
