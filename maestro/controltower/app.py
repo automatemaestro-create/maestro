@@ -2355,6 +2355,29 @@ def create_app(
         """
         return [e.to_dict() for e in registre_mcp.rechercher(q)]
 
+    @app.get("/api/mcp/registre/provenance")
+    async def mcp_registre_provenance() -> dict[str, Any]:
+        """D'où vient la bibliothèque, quand elle a été revue, et par quoi chercher (#271).
+
+        Le critère 1 demande que la provenance de la liste et sa date de revue
+        soient **dites à l'écran** : un registre curé sans provenance affichée
+        demande une confiance qu'il ne justifie pas. `tags` est la sortie du
+        cul-de-sac du critère 2 — les pistes qu'une recherche sans résultat
+        propose, plutôt que de répéter qu'elle n'a rien trouvé.
+
+        ⚠ La forme de `GET /api/mcp/registre` n'a **pas** bougé : elle rend
+        toujours une liste nue. Emballer la liste pour y loger la provenance
+        aurait cassé tous ses appelants pour une donnée qui ne change qu'à
+        chaque revue — d'où une route sœur. `provenance` est un id **réservé**
+        du registre (`ID_RESERVES`), donc aucune entrée ne peut être masquée par
+        cette route et l'ordre de déclaration ci-dessous ne porte aucune règle.
+        """
+        return {
+            **registre_mcp.provenance.to_dict(),
+            "tags": list(registre_mcp.tags()),
+            "total": len(registre_mcp.lister()),
+        }
+
     @app.get("/api/mcp/registre/{id}")
     async def mcp_registre_entree(id: str) -> dict[str, Any]:
         """Une entrée curée du registre MCP (#131) — 404 si l'id est hors allowlist."""
