@@ -29,13 +29,11 @@ ceux du chat — aucun contrat REST supplémentaire à apprendre côté UI.
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
-from maestro.controltower.chat import MessageChat, RepondeurChat
+from maestro.controltower.chat import MessageChat, RepondeurChat, normaliser
 
 #: Le nom du fil d'assistance — la clé de stockage (`core/chat/assistance.jsonl`),
 #: le segment d'URL des endpoints `/api/chat/{agent}` et le `agent` des événements
@@ -69,25 +67,11 @@ AGENT_ASSISTANCE = Agent(
 )
 
 
-def _normaliser(texte: str) -> str:
-    """Le texte réduit pour la comparaison : minuscules, sans accents ni ponctuation.
-
-    « Où sont les COÛTS ? » et « ou est le cout » doivent tomber sur le même sujet :
-    l'utilisateur tape vite, souvent sans accents.
-    """
-    sans_accents = "".join(
-        c
-        for c in unicodedata.normalize("NFD", texte.lower())
-        if unicodedata.category(c) != "Mn"
-    )
-    return re.sub(r"[^a-z0-9]+", " ", sans_accents).strip()
-
-
 @dataclass(frozen=True)
 class SujetAssistance:
     """Un sujet d'aide : les mots qui le déclenchent et la réponse à rendre.
 
-    `mots` sont cherchés dans la question **normalisée** (`_normaliser`) : ils
+    `mots` sont cherchés dans la question **normalisée** (`chat.normaliser`) : ils
     s'écrivent donc en minuscules sans accents, et peuvent tenir en plusieurs
     mots (« prise en main »). Le nombre de mots trouvés fait le score — le sujet
     le mieux couvert répond.
@@ -214,7 +198,7 @@ _ORIENTATION = (
 
 def repondre_assistance(question: str) -> str:
     """La réponse d'aide à `question` : le sujet le mieux couvert, sinon l'orientation."""
-    normalisee = _normaliser(question)
+    normalisee = normaliser(question)
     meilleur: SujetAssistance | None = None
     meilleur_score = 0
     for sujet in SUJETS_ASSISTANCE:

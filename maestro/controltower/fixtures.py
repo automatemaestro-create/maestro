@@ -17,16 +17,19 @@ Phase 5, #184+) :
 - **registre de configuration** — réglages produit éditables, versionnés côté
   serveur (couche 1 du cadrage sécurité #182) ;
 - **propositions de playbook globales** — l'agrégat transverse qui alimente
-  badge et notifications (chantier *Journal*, item 8/9) ;
-- **flux SSE d'un fil de chat** — les fragments d'une réponse en streaming
-  (chantier *Conversation*, items 2/4/12).
+  badge et notifications (chantier *Journal*, item 8/9).
 
-Deux contrats sont **partis** d'ici, dans l'ordre où leur lot a été livré : les
-**exécutions** (#185, `maestro.controltower.executions`) puis le **journal
-requêtable** (#478, `maestro.controltower.journal`). C'est le cycle de vie
-normal d'une fixture — elle tient la place d'une implémentation, puis lui cède
-la sienne : garder les deux ferait de la démo un écran nourri de faux à côté
-d'un vrai, et de la forme figée une seconde source à tenir d'accord.
+Trois contrats sont **partis** d'ici, dans l'ordre où leur lot a été livré : les
+**exécutions** (#185, `maestro.controltower.executions`), le **journal
+requêtable** (#478, `maestro.controltower.journal`) puis le **flux SSE d'un fil
+de chat** (#268, `maestro.controltower.chat.ServiceChat.diffuser`). C'est le
+cycle de vie normal d'une fixture — elle tient la place d'une implémentation,
+puis lui cède la sienne : garder les deux ferait de la démo un écran nourri de
+faux à côté d'un vrai, et de la forme figée une seconde source à tenir d'accord.
+
+Les quatre types de trame du flux sont **réexportés** ici (`FRAGMENT_CHAT_*`) :
+ils vivent désormais avec le canal qui les émet, et ce module en garde le nom
+d'import pour ne pas casser ce qui les lisait à cette adresse.
 
 La référence de ticket externe (#187) portée par une tâche n'est **pas** ici :
 c'est un champ de données (`Event.ticket`, `EtatTache.ticket`) servi par
@@ -36,17 +39,25 @@ du `projet_id` (#222).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
-from maestro.controltower.chat import AUTEUR_AGENT
+from maestro.controltower.chat import (
+    FRAGMENT_CHAT_DEBUT,
+    FRAGMENT_CHAT_DELTA,
+    FRAGMENT_CHAT_ERREUR,
+    FRAGMENT_CHAT_FIN,
+)
 
-#: Types de fragments d'un flux SSE de chat (chantier *Conversation*, Phase 5) :
-#: ouverture du flux, incrément de texte, clôture (message complet), erreur.
-FRAGMENT_CHAT_DEBUT = "debut"
-FRAGMENT_CHAT_DELTA = "fragment"
-FRAGMENT_CHAT_FIN = "fin"
-FRAGMENT_CHAT_ERREUR = "erreur"
+#: Les types de trame du flux de chat, définis avec le canal qui les émet
+#: (`maestro.controltower.chat`) depuis #268 et réexportés ici : le nom d'import
+#: de #183 continue de répondre, sans qu'il existe deux vocabulaires.
+__all__ = [
+    "FRAGMENT_CHAT_DEBUT",
+    "FRAGMENT_CHAT_DELTA",
+    "FRAGMENT_CHAT_ERREUR",
+    "FRAGMENT_CHAT_FIN",
+    "FixturesControlTower",
+]
 
 
 class FixturesControlTower:
@@ -87,50 +98,6 @@ class FixturesControlTower:
         aller-retour par le catalogue.
         """
         return list(_PROPOSITIONS_PLAYBOOK)
-
-    # ----------------------------------------------------------------- flux de chat
-
-    def flux_chat(self, agent: str, role: str, contenu: str) -> Iterator[dict[str, Any]]:
-        """Les fragments d'une réponse de chat en streaming (`GET /api/chat/{agent}/flux`, SSE).
-
-        Rend la séquence de trames d'un flux `text/event-stream` : un `debut`
-        (ouverture), des `fragment` (incréments de texte, `delta`), puis un `fin`
-        portant le `MessageChat` complet reconstitué. La démo répond par un texte
-        scripté découpé en mots — la forme des trames est le contrat ; le contenu
-        réel (modèle en streaming) vient dans le lot *Conversation* de la Phase 5.
-        """
-        reponse = (
-            f"Bonjour, ici {role or agent}. J'ai bien reçu votre message et je le "
-            "traite morceau par morceau — ceci est un flux de démonstration."
-        )
-        yield {
-            "type": FRAGMENT_CHAT_DEBUT,
-            "agent": agent,
-            "auteur": AUTEUR_AGENT,
-            "delta": "",
-            "message": None,
-        }
-        mots = reponse.split(" ")
-        for i, mot in enumerate(mots):
-            yield {
-                "type": FRAGMENT_CHAT_DELTA,
-                "agent": agent,
-                "auteur": AUTEUR_AGENT,
-                "delta": mot if i == 0 else f" {mot}",
-                "message": None,
-            }
-        yield {
-            "type": FRAGMENT_CHAT_FIN,
-            "agent": agent,
-            "auteur": AUTEUR_AGENT,
-            "delta": "",
-            "message": {
-                "agent": agent,
-                "auteur": AUTEUR_AGENT,
-                "contenu": reponse,
-                "horodatage": "2026-07-31T10:10:00+00:00",
-            },
-        }
 
 
 def _reglage(

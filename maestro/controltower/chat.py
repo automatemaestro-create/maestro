@@ -1,4 +1,4 @@
-"""Canal de chat utilisateur ↔ agent — fil persisté et répondeur (ticket #84).
+"""Canal de chat utilisateur ↔ agent — fil persisté, répondeur et flux (#84, #268).
 
 Premier lot du chat de la Control Tower (#82) : un utilisateur envoie un message
 à un agent du catalogue et reçoit sa réponse, le fil étant **persisté** et
@@ -25,6 +25,33 @@ La réponse est générée **dans la requête** (POC mono-process) : le POST ren
 paire message/réponse, les clients temps réel voient le message utilisateur dès
 sa publication puis la réponse quand elle tombe. Un agent-processus autonome
 abonné à sa boîte pourra plus tard prendre le relais sans changer le contrat.
+
+## Le streaming est un canal, pas une particularité d'un fil (#268)
+
+`ServiceChat.diffuser` rend la réponse **au fur et à mesure**, en trames
+`FragmentChat` (`debut` · `fragment` · `fin` · `erreur`, docs/05 §6.5) que
+`GET /api/chat/{agent}/flux` sérialise en `text/event-stream`. Il ne connaît ni
+l'orchestration, ni l'assistance, ni le catalogue : **tout fil** s'y diffuse, ce
+qui fait de ce module le lieu du streaming et de #268 son premier appelant, non
+son propriétaire.
+
+Le point d'extension est `RepondeurChat.produire`, qui reçoit un `Incrementeur`
+— « voici un morceau de plus » — et rend une `ReponseChat` complète. Son
+implémentation par défaut appelle `repondre` et publie le texte **en un seul
+incrément** : tout répondeur existant se diffuse donc sans changer une ligne, et
+celui qui sait produire par morceaux (l'orchestration, #268 ; un fournisseur
+capable de streamer le jour où la frontière `ModelProvider` l'exposera) n'a que
+`produire` à surcharger. Le canal ne devient jamais un second chemin : `envoyer`
+et `diffuser` passent tous deux par lui, donc persistent, acheminent et
+diffusent exactement de la même façon.
+
+## Ce qui découle d'un message est rattaché au fil (#268)
+
+Un `MessageChat` peut porter un `run_id` et un `tache_id` : la réponse de
+l'orchestration au message « ajoute la pagination » nomme ainsi le run qu'elle a
+ouvert. Vides partout ailleurs (une conversation ordinaire ne rattache rien), ils
+voyagent avec le message — stockage, REST, et `Event.run_id`/`Event.tache_id` sur
+le bus, où ils existaient déjà.
 """
 
 from __future__ import annotations
@@ -32,9 +59,10 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import unicodedata
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -83,6 +111,22 @@ UTILISATEUR = "utilisateur"
 AUTEUR_UTILISATEUR = "utilisateur"
 AUTEUR_AGENT = "agent"
 
+#: Les quatre types de trame d'un flux de réponse (docs/05 §6.5) : `debut` ouvre,
+#: `fragment` incrémente, `fin` clôt en portant le message complet, `erreur` dit
+#: qu'aucune réponse ne viendra. Ils vivent **ici**, avec le canal qui les émet,
+#: et non dans les fixtures qui les imitaient avant #268 : deux vocabulaires pour
+#: le même contrat, c'est la démo qui finit par diverger de ce que l'API sert.
+FRAGMENT_CHAT_DEBUT = "debut"
+FRAGMENT_CHAT_DELTA = "fragment"
+FRAGMENT_CHAT_FIN = "fin"
+FRAGMENT_CHAT_ERREUR = "erreur"
+
+#: La publication d'un incrément de réponse — le seul geste que le canal demande
+#: à un répondeur qui sait produire par morceaux. Attendable, parce que publier
+#: peut céder la main (file, socket) ; sans valeur de retour, parce que le
+#: répondeur n'a rien à apprendre de la diffusion.
+Incrementeur = Callable[[str], Awaitable[None]]
+
 #: Nom d'agent admissible comme fichier de stockage : slug sûr, sans séparateur
 #: ni point — verrouille toute traversée de chemin depuis un nom venu de l'API
 #: (même garde que `maestro.agents.store`).
@@ -108,6 +152,23 @@ def _horodatage() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def normaliser(texte: str) -> str:
+    """Le texte réduit pour la comparaison : minuscules, sans accents ni ponctuation.
+
+    « Où sont les COÛTS ? » et « ou est le cout » doivent tomber sur le même
+    sujet : l'utilisateur tape vite, souvent sans accents. Deux canaux lisent du
+    texte humain de cette façon — l'assistance (#123) pour trouver le sujet,
+    l'orchestration (#268) pour reconnaître une demande de travail —, d'où une
+    seule définition, ici, dans le socle qu'ils partagent déjà.
+    """
+    sans_accents = "".join(
+        c
+        for c in unicodedata.normalize("NFD", texte.lower())
+        if unicodedata.category(c) != "Mn"
+    )
+    return re.sub(r"[^a-z0-9]+", " ", sans_accents).strip()
+
+
 class ReponseIndisponible(RuntimeError):
     """L'agent n'a pas pu produire de réponse (fournisseur en échec, réponse vide).
 
@@ -125,7 +186,14 @@ class MessageChat:
     l'émetteur : `UTILISATEUR` ou ce même nom d'agent. C'est la forme du REST
     (`GET /api/chat/{agent}`) et du stockage (`ChatStore`).
 
-    Trois champs sont venus avec les **sources** (#482, lot 1 de #481), et ils
+    `run_id` et `tache_id` (#268) rattachent au message **ce qui en découle** :
+    le run que l'orchestration a ouvert en réponse à une demande, la tâche dont
+    il est question. Chaînes vides partout ailleurs — un message ordinaire ne
+    rattache rien, et une ligne écrite avant ce lot se relit à l'identique.
+
+    Trois autres champs sont venus avec les **sources** (#482, lot 1 de #481) —
+    ce que le message **embarque**, là où les deux précédents disent ce qu'il
+    **ouvre** —, et ils
     n'ont de valeur que sur un message d'utilisateur :
 
     - `sources` — la matière **résolue** que le message embarque (fichiers
@@ -151,6 +219,8 @@ class MessageChat:
     auteur: str
     contenu: str
     horodatage: str = field(default_factory=_horodatage)
+    run_id: str = ""
+    tache_id: str = ""
     sources: tuple[Source, ...] = ()
     rapport: RapportLecture | None = None
     contexte: str = ""
@@ -168,6 +238,8 @@ class MessageChat:
             "auteur": self.auteur,
             "contenu": self.contenu,
             "horodatage": self.horodatage,
+            "run_id": self.run_id,
+            "tache_id": self.tache_id,
             "sources": sources_en_liste(self.sources),
             "rapport": self.rapport.to_dict() if self.rapport is not None else None,
         }
@@ -215,10 +287,57 @@ class MessageChat:
             auteur=data.get("auteur", UTILISATEUR),
             contenu=data.get("contenu", ""),
             horodatage=data.get("horodatage", ""),
+            run_id=data.get("run_id", ""),
+            tache_id=data.get("tache_id", ""),
             sources=tuple(sources_depuis(data.get("sources"))),
             rapport=rapport_depuis(rapport) if isinstance(rapport, Mapping) else None,
             contexte=str(data.get("contexte") or ""),
         )
+
+
+@dataclass(frozen=True)
+class ReponseChat:
+    """Ce qu'un répondeur rend : le texte, et ce qu'il a **ouvert** en le rendant.
+
+    Le texte seul ne suffisait plus dès lors qu'un répondeur peut agir (#268) :
+    l'orchestration qui lance un run doit pouvoir en nommer l'identifiant, sans
+    quoi le fil dirait « c'est parti » sans dire vers quoi. `run_id`/`tache_id`
+    sont vides pour tout répondeur qui se contente de parler — c'est-à-dire pour
+    tous ceux d'avant ce lot, que l'implémentation par défaut de
+    `RepondeurChat.produire` enveloppe sans qu'ils aient à la connaître.
+    """
+
+    contenu: str
+    run_id: str = ""
+    tache_id: str = ""
+
+
+@dataclass(frozen=True)
+class FragmentChat:
+    """Une trame du flux d'une réponse (docs/05 §6.5) — la forme du SSE.
+
+    `type` est l'un des `FRAGMENT_CHAT_*` ; `delta` porte l'incrément de texte
+    (vide hors `fragment`), `message` le `MessageChat` complet sur la seule trame
+    `fin` (`None` ailleurs). Sur `erreur`, `delta` porte la cause : une trame
+    plutôt qu'une socket coupée, pour que le client sache **pourquoi** rien ne
+    vient — le message utilisateur, lui, reste acquis.
+    """
+
+    type: str
+    agent: str
+    auteur: str = AUTEUR_AGENT
+    delta: str = ""
+    message: MessageChat | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet la trame en dict JSON-sérialisable (le `data:` du SSE)."""
+        return {
+            "type": self.type,
+            "agent": self.agent,
+            "auteur": self.auteur,
+            "delta": self.delta,
+            "message": self.message.to_dict() if self.message is not None else None,
+        }
 
 
 class ChatStore:
@@ -301,6 +420,31 @@ class RepondeurChat(ABC):
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
         """La réponse de `agent` au dernier message utilisateur du fil."""
         raise NotImplementedError
+
+    async def produire(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        incrementer: Incrementeur | None = None,
+    ) -> ReponseChat:
+        """La réponse complète, diffusée au passage si un `incrementer` est fourni.
+
+        Le point d'extension du canal (#268), et le **seul** que `ServiceChat`
+        appelle : `envoyer` le fait sans incrémenteur, `diffuser` avec. Par
+        défaut il délègue à `repondre` et publie le texte en **un seul**
+        incrément — un répondeur qui ne sait pas produire par morceaux se
+        diffuse donc quand même, en une trame plutôt qu'en dix, sans rien
+        connaître du flux.
+
+        Le surcharger sert à deux choses, indépendantes : publier de vrais
+        incréments au fil de la production, et rattacher au message ce que la
+        réponse a **ouvert** (`ReponseChat.run_id`).
+        """
+        texte = await self.repondre(agent, fil)
+        if incrementer is not None and texte:
+            await incrementer(texte)
+        return ReponseChat(contenu=texte)
 
 
 class RepondeurModele(RepondeurChat):
@@ -435,6 +579,83 @@ class ServiceChat:
         avec son motif. C'est la distinction de #316 — « rien à lire ici » et
         « je refuse de lire ça » ne se disent jamais pareil.
         """
+        message = await self._ouvrir(agent, contenu, sources)
+        return message, await self._repondre(agent)
+
+    async def diffuser(self, agent: Agent, contenu: str) -> AsyncIterator[FragmentChat]:
+        """Envoie `contenu` à `agent` et rend la réponse **au fur et à mesure** (#268).
+
+        Le même échange que `envoyer` — mêmes persistance, messagerie et
+        diffusion `chat.message` —, rendu en trames : `debut`, autant de
+        `fragment` que le répondeur produit d'incréments, puis `fin` portant le
+        message complet. Une réponse impossible sort en trame `erreur` plutôt
+        qu'en exception : la socket est déjà ouverte et le message utilisateur
+        déjà acquis, dire pourquoi vaut mieux que couper. `ValueError` sur un
+        contenu vide reste levée **avant** la première trame, là où l'appelant
+        peut encore répondre 422.
+
+        La production tourne dans une tâche à part et publie ses incréments dans
+        une file que ce générateur draine : c'est ce qui fait qu'un fragment part
+        vers le client dès qu'il existe, sans attendre le suivant. Un client qui
+        se déconnecte en cours de route **ne l'annule pas** — la réponse a coûté
+        ce qu'elle a coûté, elle finit d'être persistée et diffusée, et le fil la
+        rendra à la reconnexion.
+        """
+        await self._ouvrir(agent, contenu)
+        yield FragmentChat(type=FRAGMENT_CHAT_DEBUT, agent=agent.nom)
+
+        file: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def incrementer(delta: str) -> None:
+            await file.put(delta)
+
+        async def produire() -> MessageChat:
+            try:
+                return await self._repondre(agent, incrementer=incrementer)
+            finally:
+                # La sentinelle passe par le même canal que les incréments : elle
+                # arrive donc **après** eux, et le drainage ne peut pas s'arrêter
+                # sur une file qui n'a pas encore reçu son dernier fragment.
+                await file.put(None)
+
+        tache = asyncio.create_task(produire())
+        try:
+            while True:
+                delta = await file.get()
+                if delta is None:
+                    break
+                yield FragmentChat(type=FRAGMENT_CHAT_DELTA, agent=agent.nom, delta=delta)
+            try:
+                reponse = await tache
+            except ReponseIndisponible as exc:
+                yield FragmentChat(type=FRAGMENT_CHAT_ERREUR, agent=agent.nom, delta=str(exc))
+                return
+            yield FragmentChat(type=FRAGMENT_CHAT_FIN, agent=agent.nom, message=reponse)
+        finally:
+            if not tache.done():
+                # Fermeture prématurée (client parti) : on laisse la réponse
+                # s'achever, mais plus personne n'attend son résultat — sans ce
+                # rattrapage, une `ReponseIndisponible` finirait en « exception
+                # never retrieved » dans les journaux de l'API.
+                tache.add_done_callback(lambda achevee: achevee.exception())
+
+    async def _ouvrir(
+        self,
+        agent: Agent,
+        contenu: str,
+        sources: Sequence[Mapping[str, Any] | Source] | None = None,
+    ) -> MessageChat:
+        """Persiste, achemine et diffuse le message utilisateur — le début des deux voies.
+
+        C'est ici que la matière du message est résolue et lue (#482), et donc ici
+        que le refus tombe : **avant** toute écriture, sans laisser ni message au
+        fil ni événement sur le bus. Le placer sur la voie commune plutôt que dans
+        `envoyer` est ce qui fait qu'un fil diffusé (#268) applique les mêmes
+        plafonds qu'un fil posté — deux entrées, un seul jeu de garde-fous.
+
+        `sources` est vide sur la voie du flux : `GET …/flux` ne porte qu'un
+        `contenu`, et rien ne déclare de matière sur une requête sans corps.
+        """
         contenu = contenu.strip()
         declarees = list(sources or ())
         if not contenu and not declarees:
@@ -450,21 +671,41 @@ class ServiceChat:
             contexte=contexte_markdown(rapport) if rapport is not None else "",
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REQUETE)
+        return message
 
+    async def _repondre(
+        self, agent: Agent, *, incrementer: Incrementeur | None = None
+    ) -> MessageChat:
+        """Produit la réponse, la persiste, l'achemine et la diffuse.
+
+        Le seul endroit où le répondeur est appelé — `envoyer` et `diffuser` s'y
+        rejoignent, à l'incrémenteur près. Toute erreur du répondeur, comme une
+        réponse vide, devient `ReponseIndisponible` : le message utilisateur est
+        déjà acquis, relancer ne perd pas le fil.
+        """
         try:
-            texte = (await self._repondeur.repondre(agent, self._store.fil(agent.nom))).strip()
+            reponse = await self._repondeur.produire(
+                agent, self._store.fil(agent.nom), incrementer=incrementer
+            )
         except Exception as exc:
             raise ReponseIndisponible(
                 f"l'agent {agent.nom} n'a pas pu répondre : {exc}"
             ) from exc
+        texte = reponse.contenu.strip()
         if not texte:
             raise ReponseIndisponible(
                 f"l'agent {agent.nom} a rendu une réponse vide."
             )
 
-        reponse = MessageChat(agent=agent.nom, auteur=agent.nom, contenu=texte)
-        await self._acheminer(reponse, agent, type_message=MESSAGE_REPONSE)
-        return message, reponse
+        message = MessageChat(
+            agent=agent.nom,
+            auteur=agent.nom,
+            contenu=texte,
+            run_id=reponse.run_id,
+            tache_id=reponse.tache_id,
+        )
+        await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
+        return message
 
     async def _lire(
         self, declarees: Sequence[Mapping[str, Any] | Source]
@@ -537,6 +778,11 @@ class ServiceChat:
                 role=agent.role,
                 statut=AUTEUR_UTILISATEUR if utilisateur_emet else AUTEUR_AGENT,
                 detail=message.resume,
+                # Ce que le message a ouvert (#268) voyage sur les champs que
+                # l'événement portait déjà : un client temps réel apprend le run
+                # en même temps que la réponse, sans relire le fil.
+                run_id=message.run_id,
+                tache_id=message.tache_id,
                 horodatage=message.horodatage,
             )
         )

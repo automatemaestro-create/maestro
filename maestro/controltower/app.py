@@ -122,7 +122,12 @@ Endpoints :
   paire message/réponse (le fil est aussi diffusé en `chat.message` sur le
   WebSocket, réponse comprise) ; `assistance` (#123) y désigne le **canal
   d'aide** — mêmes endpoints, fiche hors catalogue et réponses sans modèle
-  (`maestro.controltower.assistance`) ;
+  (`maestro.controltower.assistance`) — et `orchestrateur` (#268) le **fil
+  global** : on y adresse une demande à l'orchestration, qui répond et **ouvre
+  un run** quand c'en est une (`maestro.controltower.orchestration`) ;
+- `GET  /api/chat/{agent}/flux` — la même réponse rendue **au fur et à mesure**
+  (SSE, trames `debut`/`fragment`/`fin`/`erreur`, #268) : un canal, valable pour
+  les trois fils ;
 - `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
   des agents, messages inter-agents, validations, chat), au format
   `Event.to_dict`.
@@ -138,9 +143,7 @@ par la démo ; **501** en production tant que leur lot n'est pas livré) :
 - `GET  /api/configuration` — le registre de configuration éditable (réglages
   produit, couche 1 du cadrage sécurité #182) ;
 - `GET  /api/playbooks/propositions` — les propositions d'auto-amélioration
-  **tous agents confondus** (badge + notifications) ;
-- `GET  /api/chat/{agent}/flux` — le flux **SSE** d'une réponse de chat (trames
-  `debut`/`fragment`/`fin`).
+  **tous agents confondus** (badge + notifications).
 
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
 événement sur l'état (`ControlTowerState`), l'ajoute au journal requêtable
@@ -253,6 +256,12 @@ from maestro.controltower.journal import (
     TRIS_JOURNAL,
     ServiceJournal,
 )
+from maestro.controltower.orchestration import (
+    AGENT_ORCHESTRATION,
+    NOM_ORCHESTRATION,
+    RepondeurOrchestration,
+    apercu_de,
+)
 from maestro.controltower.persistence import (
     EventLog,
     InMemoryEventLog,
@@ -283,7 +292,7 @@ from maestro.controltower.state import (
     VALIDATION_REFUSEE,
     ControlTowerState,
 )
-from maestro.engine.brief import MODE_BRIEF_HUMAIN
+from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
@@ -722,6 +731,7 @@ def create_app(
     chat_store: ChatStore | None = None,
     chat_repondeur: RepondeurChat | None = None,
     assistance_repondeur: RepondeurChat | None = None,
+    orchestration_repondeur: RepondeurChat | None = None,
     analyseur: AnalyseurEchecs | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
@@ -768,6 +778,14 @@ def create_app(
     bus que le chat, mais avec son propre répondeur — par défaut
     `RepondeurAssistance`, déterministe et sans modèle (les questions portent sur
     l'outil, pas sur le projet ; voir `maestro.controltower.assistance`).
+
+    `orchestration_repondeur` (#268) porte le **fil global**
+    `/api/chat/orchestrateur` : un troisième `ServiceChat` sur les mêmes rouages,
+    dont le répondeur par défaut (`RepondeurOrchestration`) **agit** — une demande
+    de travail y ouvre un run par le service d'exécutions de cette app, et la
+    réponse en porte l'identifiant. Il est construit **après** `executions`, dont
+    il tient son lanceur ; les tests en injectent un répondeur sans lanceur, ou un
+    lanceur factice, pour exercer le fil sans lancer de moteur.
 
     `analyseur` (#139) produit les propositions d'auto-amélioration servies par
     `POST /api/playbooks/{agent}/propositions` : à la demande, il analyse les
@@ -838,9 +856,10 @@ def create_app(
     redémarrage de l'API**, la lecture ne dépendant alors d'aucun process.
 
     `fixtures` (#183) branche les **contrats d'API v2** (routes des Phases 5/6 :
-    registre de configuration, propositions de playbook globales, flux SSE d'un
-    fil de chat) sur des **données factices**. Les exécutions (#185) puis le
-    journal requêtable (#478) en sont sortis à mesure que leur lot était livré.
+    registre de configuration, propositions de playbook globales) sur des
+    **données factices**. Les exécutions (#185), le journal requêtable (#478)
+    puis le flux SSE d'un fil de chat (#268) en sont sortis à mesure que leur lot
+    était livré.
     None (production) : ces routes répondent **501** — le contrat est stable, son
     lot d'implémentation n'est pas encore livré. Fourni (la démo, #65) : elles
     servent les fixtures, et la voie front code contre elles sans backend réel.
@@ -937,6 +956,32 @@ def create_app(
         lecteur_sources=lecteur_sources,
         battements=battements,
         hote=hote_run,
+    )
+
+    async def ouvrir_un_run(objectif: str) -> dict[str, Any]:
+        """Le lanceur du fil global (#268) — un run sur l'objectif dicté au chat.
+
+        `MODE_BRIEF_AUTO` et non le `humain` des lancements par l'écran : le
+        cadrage d'une demande **est** la conversation qu'on est en train d'avoir,
+        et renvoyer vers un écran de validation de brief pour la poursuivre
+        couperait le fil en deux. Le run part donc, brief rédigé sans attendre ;
+        l'écran des exécutions reste la voie de celui qui veut le valider avant.
+        """
+        return await executions.lancer(objectif, mode_brief=MODE_BRIEF_AUTO)
+
+    # Le fil global (#268) : mêmes rouages que le chat — persistance, messagerie,
+    # bus —, un répondeur qui peut ouvrir un run, et rien de plus côté REST. Il se
+    # construit ici, et pas avec les deux autres, parce qu'il tient son lanceur du
+    # service d'exécutions ci-dessus.
+    orchestration = ServiceChat(
+        store=chat_store,
+        repondeur=(
+            orchestration_repondeur
+            if orchestration_repondeur is not None
+            else RepondeurOrchestration(lanceur=ouvrir_un_run, apercu=apercu_de(state))
+        ),
+        mailbox=mailbox,
+        bus=bus,
     )
 
     @asynccontextmanager
@@ -2787,15 +2832,20 @@ def create_app(
         return definition.to_agent()
 
     def _canal_chat(nom: str) -> tuple[Agent, ServiceChat]:
-        """La fiche et le service qui portent le fil `nom` — agent, ou assistant (#123).
+        """La fiche et le service du fil `nom` — agent, assistant (#123), orchestration (#268).
 
-        Le canal d'aide se sert des mêmes endpoints que le chat : `assistance`
-        résout sur une fiche hors catalogue et sur son propre `ServiceChat`, tout
-        autre nom sur l'agent du catalogue et le chat ordinaire. L'UI n'a donc
-        qu'un seul contrat REST à connaître, le nom du fil départage.
+        Les trois canaux se servent des mêmes endpoints : `assistance` résout sur
+        une fiche hors catalogue et sur son propre `ServiceChat`, `orchestrateur`
+        de même, tout autre nom sur l'agent du catalogue et le chat ordinaire.
+        L'UI n'a donc qu'un seul contrat REST à connaître, le nom du fil départage
+        — et les deux noms système sont **réservés** côté catalogue
+        (`maestro.agents.store.NOMS_RESERVES`), donc aucun agent personnalisé ne
+        peut venir prendre l'un de ces fils.
         """
         if nom == NOM_ASSISTANCE:
             return AGENT_ASSISTANCE, assistance
+        if nom == NOM_ORCHESTRATION:
+            return AGENT_ORCHESTRATION, orchestration
         return _exige_agent_du_catalogue(nom), chat
 
     @app.get("/api/chat/{agent}")
@@ -2854,24 +2904,43 @@ def create_app(
 
     @app.get("/api/chat/{agent}/flux")
     async def flux_chat(agent: str, contenu: str = "") -> StreamingResponse:
-        """Flux SSE d'une réponse de chat (#183, chantier *Conversation* Phase 5).
+        """Flux SSE d'une réponse de chat — le contrat #183, servi pour de bon (#268).
 
         `GET /api/chat/{agent}/flux?contenu=…` ouvre un `text/event-stream` : une
         trame `debut`, des trames `fragment` (incréments `delta`), puis une trame
-        `fin` portant le `MessageChat` complet — chacune en `data: <json>`. 404 si
-        l'agent n'est pas au catalogue (`assistance` désigne le canal d'aide) ;
-        501 tant que le streaming réel n'est pas livré (servi en fixtures par la
-        démo). La forme des trames est le contrat ; le contenu réel (modèle en
-        streaming) vient dans le lot dédié.
+        `fin` portant le `MessageChat` complet — chacune en `data: <json>`. Une
+        réponse impossible sort en trame `erreur` plutôt qu'en statut HTTP : les
+        en-têtes sont déjà partis quand elle se découvre, et le message
+        utilisateur, lui, est déjà persisté et diffusé.
+
+        Même échange que `POST …/messages` — même persistance, même messagerie,
+        mêmes `chat.message` sur le WebSocket —, rendu au fur et à mesure. Le
+        canal vaut pour les **trois** fils : un agent du catalogue, `assistance`
+        (#123) et `orchestrateur` (#268). 404 si le fil n'existe pas, 422 sur un
+        `contenu` vide (rien n'est persisté, et la question se tranche avant la
+        première trame).
         """
-        fx = _exige_fixtures()
-        fiche, _ = _canal_chat(agent)
+        fiche, service = _canal_chat(agent)
 
         async def flux() -> AsyncIterator[str]:
-            for trame in fx.flux_chat(fiche.nom, fiche.role, contenu):
-                yield f"data: {json.dumps(trame, ensure_ascii=False)}\n\n"
+            async for trame in service.diffuser(fiche, contenu):
+                yield f"data: {json.dumps(trame.to_dict(), ensure_ascii=False)}\n\n"
 
-        return StreamingResponse(flux(), media_type="text/event-stream")
+        try:
+            # Le premier fragment est tiré **ici**, avant de rendre la réponse :
+            # c'est ce qui fait qu'un contenu vide sort en 422 et non en flux
+            # ouvert sur une erreur — `diffuser` lève avant sa première trame.
+            trames = flux()
+            premiere = await anext(trames)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        async def flux_complet() -> AsyncIterator[str]:
+            yield premiere
+            async for trame in trames:
+                yield trame
+
+        return StreamingResponse(flux_complet(), media_type="text/event-stream")
 
     @app.websocket("/ws/evenements")
     async def evenements(websocket: WebSocket, projet: str | None = None) -> None:

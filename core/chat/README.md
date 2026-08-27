@@ -7,11 +7,19 @@ est consigné ici et le fil se relit par agent.
 ## Fonctionnement
 
 - Un fichier par agent : `<agent>.jsonl` (append-only, une ligne JSON par
-  message — auteur « utilisateur » ou l'agent, contenu, horodatage).
+  message — auteur « utilisateur » ou l'agent, contenu, horodatage, et depuis
+  #268 le `run_id`/`tache_id` que la réponse a **ouverts**, vides le reste du
+  temps).
+- Deux fils ne sont pas ceux d'un agent du catalogue, et portent les **noms
+  réservés** correspondants : `assistance.jsonl` (le canal d'aide, #123) et
+  `orchestrateur.jsonl` (le fil global, #268 — on y parle à l'orchestration,
+  qui peut y ouvrir un run).
 - Lecture/écriture par le code : `maestro.controltower.chat.ChatStore` ; par
   HTTP : les endpoints `/api/chat` de l'API Control Tower
   (`maestro/controltower/app.py`) — `POST /api/chat/{agent}/messages` envoie
-  et persiste la paire message/réponse, `GET /api/chat/{agent}` relit le fil.
+  et persiste la paire message/réponse, `GET /api/chat/{agent}` relit le fil,
+  `GET /api/chat/{agent}/flux` rend la même réponse en SSE, au fur et à mesure
+  (#268 : un canal, valable pour les trois fils).
 - Chaque message est aussi diffusé en événement `chat.message` sur le bus
   (#46) — le WebSocket `/ws/evenements` porte le fil en temps réel — et
   transite par la messagerie inter-agents (#44, boîte de l'agent).

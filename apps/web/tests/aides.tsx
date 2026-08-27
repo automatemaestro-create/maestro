@@ -178,6 +178,10 @@ export function messageFactice(partiel: Partial<MessageChat> = {}): MessageChat 
     auteur: "utilisateur",
     contenu: "Bonjour",
     horodatage: "2026-07-28T10:00:00Z",
+    // Ce qu'un message rattache (#268) : vide par défaut, comme dans un fil
+    // ordinaire — seule une réponse de l'orchestration en porte.
+    run_id: "",
+    tache_id: "",
     ...partiel,
   };
 }

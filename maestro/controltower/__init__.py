@@ -61,6 +61,10 @@ Sept briques, assemblées par l'app FastAPI (`maestro.controltower.app`) :
   — même infrastructure que le chat sur le fil réservé `assistance`, mais une
   fiche hors catalogue (`AGENT_ASSISTANCE`) et un répondeur déterministe
   (`RepondeurAssistance`) : les questions portent sur l'outil, pas sur le projet ;
+- `maestro.controltower.orchestration` : le **fil global** (#268) — même
+  infrastructure encore, sur le fil réservé `orchestrateur`, avec un répondeur
+  qui **agit** (`RepondeurOrchestration`) : une demande de travail y ouvre un
+  run, dont l'identifiant reste attaché au message ;
 - `create_app` / `create_default_app` : l'app FastAPI (REST + WebSocket) et sa
   déclinaison de production (`maestro-api`).
 """
@@ -122,14 +126,22 @@ from maestro.controltower.causes import (
     detail_avec_cause,
 )
 from maestro.controltower.chat import (
+    FRAGMENT_CHAT_DEBUT,
+    FRAGMENT_CHAT_DELTA,
+    FRAGMENT_CHAT_ERREUR,
+    FRAGMENT_CHAT_FIN,
     UTILISATEUR,
     ChatStore,
+    FragmentChat,
+    Incrementeur,
     MessageChat,
     RepondeurChat,
     RepondeurModele,
     RepondeurScripte,
+    ReponseChat,
     ReponseIndisponible,
     ServiceChat,
+    normaliser,
 )
 from maestro.controltower.events import (
     CANAL_EVENEMENTS,
@@ -181,6 +193,18 @@ from maestro.controltower.hote import (
 )
 from maestro.controltower.hote_en_process import DerouleurRun, HoteRunEnProcess
 from maestro.controltower.journal import EntreeJournal, ServiceJournal
+from maestro.controltower.orchestration import (
+    AGENT_ORCHESTRATION,
+    INTENTION_ECHANGE,
+    INTENTION_TRAVAIL,
+    NOM_ORCHESTRATION,
+    ROLE_ORCHESTRATION,
+    ApercuOrchestration,
+    LanceurRun,
+    RepondeurOrchestration,
+    apercu_de,
+    intention,
+)
 from maestro.controltower.persistence import (
     CLE_JOURNAL_EVENEMENTS,
     EventLog,
@@ -213,6 +237,7 @@ from maestro.controltower.validation import (
 
 __all__ = [
     "AGENT_ASSISTANCE",
+    "AGENT_ORCHESTRATION",
     "ARETE_ATTENDUE",
     "ARETE_FRANCHIE",
     "ARETE_ROMPUE",
@@ -244,15 +269,23 @@ __all__ = [
     "EXECUTION_ECHEC",
     "EXECUTION_EN_COURS",
     "EXECUTION_TERMINEE",
+    "FRAGMENT_CHAT_DEBUT",
+    "FRAGMENT_CHAT_DELTA",
+    "FRAGMENT_CHAT_ERREUR",
+    "FRAGMENT_CHAT_FIN",
     "HOTES_RUN",
     "HOTE_RUN_DETACHE",
     "HOTE_RUN_EN_PROCESS",
+    "INTENTION_ECHANGE",
+    "INTENTION_TRAVAIL",
     "NOM_ASSISTANCE",
+    "NOM_ORCHESTRATION",
     "PAS_HEURE",
     "PAS_JOUR",
     "PAS_MINUTE",
     "PAS_VALIDES",
     "PERIODE_BATTEMENT_S",
+    "ROLE_ORCHESTRATION",
     "SEUIL_ORPHELIN_S",
     "STATUTS_EXECUTION_TERMINAUX",
     "STATUTS_TACHE_TERMINAUX",
@@ -265,6 +298,7 @@ __all__ = [
     "VITALITE_ORPHELIN",
     "VITALITE_VIVANT",
     "AnalyticsCouts",
+    "ApercuOrchestration",
     "AreteGraphe",
     "ChatStore",
     "CoeurRun",
@@ -286,13 +320,16 @@ __all__ = [
     "EventLog",
     "FabriqueMoteur",
     "FixturesControlTower",
+    "FragmentChat",
     "GrapheRun",
     "HoteMort",
     "HoteRun",
     "HoteRunEnProcess",
     "InMemoryEventBus",
     "InMemoryEventLog",
+    "Incrementeur",
     "JournalEventHandler",
+    "LanceurRun",
     "LienUtile",
     "MessageChat",
     "NoeudGraphe",
@@ -308,7 +345,9 @@ __all__ = [
     "RepondeurAssistance",
     "RepondeurChat",
     "RepondeurModele",
+    "RepondeurOrchestration",
     "RepondeurScripte",
+    "ReponseChat",
     "ReponseIndisponible",
     "ServiceChat",
     "ServiceExecutions",
@@ -317,6 +356,7 @@ __all__ = [
     "ValidateurControlTower",
     "activer_publication",
     "agrege_couts",
+    "apercu_de",
     "appliquer_sous_validation",
     "batteur_redis",
     "cause_de",
@@ -325,7 +365,9 @@ __all__ = [
     "detail_avec_cause",
     "evenements_depuis_step",
     "graphe_du_run",
+    "intention",
     "moteur_par_defaut",
+    "normaliser",
     "oublieur_redis",
     "publieur_redis",
     "repondre_assistance",

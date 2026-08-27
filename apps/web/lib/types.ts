@@ -543,12 +543,19 @@ export type DefinitionAgent = {
  * Le Markdown extrait, lui, ne vient **pas** : il est fait pour un prompt et non
  * pour un écran (`Lecture.to_dict` applique déjà la même règle). Ce qui se lit
  * ici, c'est ce que Maestro a lu et ce que ça coûte — pas le contenu.
+ *
+ * `run_id`/`tache_id` (#268) rattachent au message **ce qui en découle** : le run
+ * que l'orchestration a ouvert en répondant. Chaînes vides partout ailleurs — un
+ * message ordinaire ne rattache rien. Ce que le message **embarque** et ce qu'il
+ * **ouvre** sont deux questions distinctes, portées par le même objet.
  */
 export type MessageChat = {
   agent: string;
   auteur: string;
   contenu: string;
   horodatage: string;
+  run_id: string;
+  tache_id: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
   sources?: SourceResolue[];
   /** Le rapport de lecture de cette matière (#316) — `null` quand il n'y en a pas. */

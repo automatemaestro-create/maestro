@@ -5,10 +5,11 @@ Couvre les trois critères d'acceptation, sans réseau ni backend réel :
 ① les **routes de contrat répondent 501** sans fixtures (le contrat est stable,
   le lot d'implémentation n'est pas livré) et **servent des données factices**
   une fois `create_app(fixtures=…)` fourni — ce que fait `maestro.controltower.demo`.
-  Deux contrats en sont sortis à mesure que leur lot était livré : les
-  **exécutions** (#185, `maestro.controltower.executions`) puis le **journal
-  requêtable** (#478, `maestro.controltower.journal`), tous deux servis pour de
-  vrai, fixtures ou pas ;
+  Trois contrats en sont sortis à mesure que leur lot était livré : les
+  **exécutions** (#185, `maestro.controltower.executions`), le **journal
+  requêtable** (#478, `maestro.controltower.journal`) puis le **flux SSE d'un
+  fil de chat** (#268, `ServiceChat.diffuser`), tous servis pour de vrai,
+  fixtures ou pas ;
 ② les **formes** servies sont celles documentées (docs/05 §6) et typées
   (`apps/web/lib/types.ts`), filtres/tri/pagination du journal compris — ce
   dernier éprouvé sur son **implémentation réelle** depuis #478, l'historique
@@ -29,15 +30,18 @@ from maestro.controltower import (
     EVENEMENT_PLAYBOOK_PROPOSITION,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DEMANDE,
+    FRAGMENT_CHAT_DEBUT,
+    FRAGMENT_CHAT_FIN,
+    ChatStore,
     ControlTowerState,
     Event,
     FixturesControlTower,
     InMemoryEventLog,
     ReferenceTicket,
+    RepondeurScripte,
     create_app,
     demo,
 )
-from maestro.controltower.fixtures import FRAGMENT_CHAT_DEBUT, FRAGMENT_CHAT_FIN
 from maestro.controltower.journal import TAILLE_PAGE_MAX
 from maestro.orchestrator.errors import TaskValidationError
 from maestro.orchestrator.schema import validate_plan, validate_task
@@ -48,7 +52,6 @@ from maestro.orchestrator.schema import validate_plan, validate_task
 ROUTES_V2 = [
     ("get", "/api/configuration", {}),
     ("get", "/api/playbooks/propositions", {}),
-    ("get", "/api/chat/qa/flux", {}),
 ]
 
 #: Le run et le projet du scénario de la démo — ceux que portaient les fixtures
@@ -149,6 +152,24 @@ def client_nu():
 def client():
     """App branchée sur les fixtures : les routes servent des données factices (la démo)."""
     with TestClient(create_app(fixtures=FixturesControlTower())) as client:
+        yield client
+
+
+@pytest.fixture()
+def client_flux(tmp_path):
+    """App **sans fixtures** dont le flux de chat est servi par le vrai canal (#268).
+
+    Le pendant de `client_journal` pour le troisième contrat sorti d'ici : la
+    route ne dépend plus d'aucune fixture, et ce qu'elle rend vient de
+    `ServiceChat.diffuser`. Deux injections, pour la raison qui vaut dans toute
+    la suite — le répondeur **scripté** parce qu'aucun test n'appelle de
+    fournisseur (`tests/conftest.py`, #195), et un dépôt de fil **temporaire**
+    parce qu'un flux persiste ce qu'il diffuse : sans lui, jouer la suite
+    écrirait dans le `core/chat/` du dépôt.
+    """
+    with TestClient(
+        create_app(chat_store=ChatStore(tmp_path), chat_repondeur=RepondeurScripte())
+    ) as client:
         yield client
 
 
@@ -323,8 +344,8 @@ def test_propositions_de_playbook_globales(client):
 # --- ② Flux SSE d'un fil de chat ----------------------------------------------------
 
 
-def test_flux_chat_sse(client):
-    reponse = client.get("/api/chat/qa/flux", params={"contenu": "salut"})
+def test_flux_chat_sse(client_flux):
+    reponse = client_flux.get("/api/chat/qa/flux", params={"contenu": "salut"})
     assert reponse.status_code == 200
     assert reponse.headers["content-type"].startswith("text/event-stream")
     trames = [
@@ -339,8 +360,8 @@ def test_flux_chat_sse(client):
     assert "".join(t["delta"] for t in trames) == complet
 
 
-def test_flux_chat_agent_inconnu_404(client):
-    assert client.get("/api/chat/inconnu/flux").status_code == 404
+def test_flux_chat_agent_inconnu_404(client_flux):
+    assert client_flux.get("/api/chat/inconnu/flux").status_code == 404
 
 
 # --- ③ Référence de ticket externe (#187) -------------------------------------------
