@@ -654,16 +654,21 @@ gl_issue_brief_render() {
 }
 
 # --- Milestone de phase ---------------------------------------------------------------------------
-# gl_current_milestone -> imprime le TITRE du milestone de la « phase courante » : le milestone
-# ACTIF le plus ancien (tri par échéance croissante) qui n'est pas déjà soldé — c'est-à-dire ayant
-# au moins un ticket ouvert, OU aucun ticket (phase pas encore entamée). Un milestone actif dont
-# tous les tickets sont fermés est SAUTÉ : la phase est finie, seule sa fermeture — décision
-# humaine (jalon go/no-go de la roadmap) — reste à faire, et doctor.sh la suggère. La règle est
-# volontairement indépendante des dates prévisionnelles des milestones : le réel peut être en
-# avance sur elles. Sortie vide + code 1 si aucun candidat (aucun milestone actif, ou tous
-# soldés) ; /ticket-create omet alors simplement --milestone à la création.
+# gl_current_milestone [rail] -> imprime le TITRE du milestone de la « phase courante » : le
+# milestone ACTIF le plus ancien (tri par échéance croissante) qui n'est pas déjà soldé —
+# c'est-à-dire ayant au moins un ticket ouvert, OU aucun ticket (phase pas encore entamée). Un
+# milestone actif dont tous les tickets sont fermés est SAUTÉ : la phase est finie, seule sa
+# fermeture — décision humaine (jalon go/no-go de la roadmap) — reste à faire, et doctor.sh la
+# suggère. La règle est volontairement indépendante des dates prévisionnelles des milestones : le
+# réel peut être en avance sur elles. Sortie vide + code 1 si aucun candidat (aucun milestone
+# actif, ou tous soldés) ; /ticket-create omet alors simplement --milestone à la création.
+#
+# `rail` vaut « produit » (défaut) ou « outillage » et restreint la recherche aux milestones de ce
+# rail — voir GL_RAIL_MOTIF. Le défaut est « produit » pour que tout appelant qui ne connaît pas
+# encore les rails garde EXACTEMENT le comportement d'avant #617 sur un dépôt dont aucun milestone
+# n'est marqué. Code 2 sur un rail inconnu, avant toute lecture de forge.
 gl_current_milestone() {
-  gh_current_milestone
+  gh_current_milestone "$@"
 }
 
 # gl_milestones -> table plate des milestones du projet, du plus ancien au plus récent (tri par
@@ -671,10 +676,15 @@ gl_current_milestone() {
 # milestone à présenter, et lever une ambiguïté quand l'utilisateur donne un fragment de titre.
 #
 # Sortie TSV (en-tête préfixée « # » ignorable par les consommateurs machine) :
-#     titre <TAB> etat <TAB> debut <TAB> echeance <TAB> fermes <TAB> total
+#     titre <TAB> etat <TAB> debut <TAB> echeance <TAB> fermes <TAB> total <TAB> rail
 # `etat` vaut `active`/`closed` ; une date absente vaut « - ». Le titre vient EN PREMIER parce
 # qu'il est la clé (c'est lui qu'on repasse à gl_milestone_issues), et en dernier viennent les
 # compteurs, de largeur fixe.
+#
+# ⚠ `rail` (#617) est ajouté EN DERNIÈRE POSITION, et pas auprès du titre où il se lirait mieux :
+# les six premières colonnes sont un contrat, que `queue.sh` lit par leur RANG ($1, $4, $5, $6).
+# Insérer une colonne au milieu ferait rendre à `milestones_traitables` l'échéance à la place du
+# compte de tickets, sans rien casser de visible.
 gl_milestones() {
   gh_milestones
 }
@@ -697,6 +707,74 @@ gl_milestone_issues() {
   local title="$1"
   if [ -z "$title" ]; then echo "usage: gl_milestone_issues <titre-exact-du-milestone>" >&2; return 2; fi
   st_milestone_issues "$@"
+}
+
+# gl_milestone_rail <titre-exact> [produit|outillage] -> LIT le rail d'un milestone (sans second
+# argument : imprime « produit » ou « outillage ») ou le POSE, en ajoutant ou retirant la ligne
+# « rail: outillage » de sa description. Poser est idempotent : reposer le même rail ne réécrit rien
+# et rend 0.
+#
+# Un seul verbe pour les deux gestes, à la différence de l'arbitrage des lots qui en a deux
+# (`arbitrage` lit, `arbitre` écrit, #562) : là-bas la lecture rend quatre champs et trois codes de
+# retour, ici elle rend un mot, et un verbe de lecture séparé pour un mot serait un nom de plus à
+# retenir pour rien. L'écriture reste reconnaissable à son second argument.
+#
+# C'est un VERBE et non un `gh api ... --field description=…` recopié dans les prompts, pour la
+# raison exacte qui a fait de l'arbitrage un verbe (#562) : `tests/test_cycle_de_vie.py` interdit
+# les écritures de forge dans `.claude/commands/**`, et le support du marqueur peut bouger — un
+# prompt qui appellerait `gh` directement serait à retrouver, un verbe non.
+#
+# La description existante est PRÉSERVÉE : elle porte le cadrage du milestone (parent de suivi,
+# dépendances, décisions), et l'écraser pour poser un marqueur d'une ligne serait payer un rail au
+# prix d'un bilan.
+gl_milestone_rail() {
+  local title="$1" rail="${2:-}" numero desc courant nouvelle
+  if [ -z "$title" ]; then
+    echo "usage: gl_milestone_rail <titre-exact-du-milestone> [produit|outillage]" >&2; return 2
+  fi
+  if [ -n "$rail" ] && ! gl_rail_valide "$rail"; then
+    echo "gl_milestone_rail : rail inconnu « $rail » (attendu : produit | outillage)" >&2; return 2
+  fi
+  gh_require || return 1
+
+  # LECTURE : par gl_milestones, qui porte déjà la colonne `rail`. Pas par une seconde requête à
+  # soi — la règle du marqueur vivrait alors à deux endroits, et c'est le jalon d'un ticket qui
+  # dépend de leur accord. Un aller, celui que la table fait déjà.
+  courant="$(gl_milestones | awk -F'\t' -v cible="$title" '$1 == cible { print $7; exit }')"
+  if [ -z "$courant" ]; then
+    echo "gl_milestone_rail : aucun milestone intitulé « $title »" >&2; return 1
+  fi
+  if [ -z "$rail" ]; then
+    printf '%s\n' "$courant"
+    return 0
+  fi
+
+  # ÉCRITURE : en REST, la seule voie qui sache modifier la description d'un jalon.
+  numero="$(gh api "repos/$GL_GH_REPO/milestones?state=all&per_page=100" \
+    --jq ".[] | select(.title == \"$title\") | .number" 2>/dev/null | head -1)"
+  if [ -z "$numero" ]; then
+    echo "gl_milestone_rail : aucun milestone intitulé « $title »" >&2; return 1
+  fi
+  desc="$(gh api "repos/$GL_GH_REPO/milestones/$numero" --jq '.description // ""' 2>/dev/null)"
+  if [ "$courant" = "$rail" ]; then
+    printf 'milestone « %s » : déjà sur le rail « %s » — rien à écrire.\n' "$title" "$rail"
+    return 0
+  fi
+
+  if [ "$rail" = outillage ]; then
+    # Le marqueur va EN TÊTE : une description longue se lit tronquée dans l'interface, et un
+    # marqueur qu'on ne voit qu'en déroulant est un marqueur qu'on croit absent.
+    nouvelle="rail: outillage"
+    [ -n "$desc" ] && nouvelle="$nouvelle
+$desc"
+  else
+    nouvelle="$(printf '%s' "$desc" | grep -Eiv "^[[:space:]]*${GL_RAIL_MOTIF}[[:space:]]*\$")"
+  fi
+
+  gh api --method PATCH "repos/$GL_GH_REPO/milestones/$numero" \
+    --field description="$nouvelle" >/dev/null || {
+      echo "gl_milestone_rail : échec de l'écriture sur « $title »" >&2; return 1; }
+  printf 'milestone « %s » : rail « %s » → « %s ».\n' "$title" "$courant" "$rail"
 }
 
 # --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
@@ -5030,13 +5108,78 @@ gh_merge_settings() {
 
 # --- Jalons et lots ---------------------------------------------------------------------------------
 
-# gh_current_milestone -> le titre du jalon de la phase courante. MÊME règle que côté GitLab : le
-# jalon OUVERT le plus ancien par échéance qui n'est pas déjà soldé (au moins un ticket ouvert, ou
-# aucun ticket du tout).
+# --- Rail d'un jalon (#617) -------------------------------------------------------------------------
+# Le RAIL sépare les jalons d'OUTILLAGE de la forge (workflow git, lib.sh, orchestrate, filet CI,
+# worktrees, prompts .claude/**) des jalons PRODUIT (moteur, API, Control Tower). Sans lui,
+# `current-milestone` n'a qu'une réponse — « l'actif le plus ancien non soldé » — et TOUT ticket créé
+# tombe dans le jalon produit courant, qui devient la décharge des deux (mesuré le 2026-08-27 :
+# 15 des 28 tickets de « Boucle fermée : du brief au livrable » étaient de l'outillage, et ses
+# 8 tickets ouverts l'étaient tous).
+#
+# ⚠ Le rail est POSÉ, jamais DÉRIVÉ des labels, et c'est une mesure qui l'a décidé — pas un
+# principe. Vérité terrain établie sur 113 tickets en classant chacun par les FICHIERS que ses
+# commits ont touchés (même technique que #544 : le rattachement se lit, il ne se devine pas) :
+#
+#     type::infra                        81 %   rate 17 outillages
+#     agent::orchestrateur|devops        91 %   rate 9
+#     type::infra OU agent::orch|devops  91 %   rate 5, sur-classe 5 produits
+#     type::infra ET agent::orch|devops  81 %   rate 21
+#
+# Aucun critère ne dépasse 91 %, soit ~1 ticket sur 10 mal aiguillé, et les manques sont
+# SYSTÉMATIQUES : le lot final « tests + doc » d'un chantier d'outillage porte `agent::qa` (#345,
+# #363, #366, #414) et l'outillage de présentation porte `agent::dev` (#544→#547). Hériter du
+# PARENT ne corrige rien — mesuré aussi, 91 % à l'identique : les labels du parent sont tout aussi
+# trompeurs que ceux du lot. Ce qui EST vrai, c'est que le rail est cohérent au sein d'un chantier
+# (8 lots sur 8 du même rail que leur parent) : le rail d'un lot s'hérite donc de son parent, mais
+# c'est le RAIL du parent qu'il hérite, pas ses labels.
+#
+# Support : une ligne « rail: outillage » dans la DESCRIPTION du jalon. Pas un titre (les titres
+# sont lus par les humains et par /milestone-presentation), pas un identifiant figé dans le dépôt
+# (règle de #358 : tout se résout par son nom), pas une variable d'environnement nommant UN jalon
+# (il faudrait la changer à chaque jalon d'outillage soldé). Un jalon SANS marqueur est du PRODUIT :
+# c'est le rail historique, et le défaut évite d'avoir à marquer les 14 jalons déjà fermés, dont le
+# bilan est écrit.
+GL_RAIL_MOTIF='rail:[[:space:]]*outillage'
+
+# gl_rail_de <texte> -> « outillage » si le texte porte le marqueur, « produit » sinon. UNE seule
+# définition de la règle, rejouée telle quelle par les deux lecteurs (gh_current_milestone la
+# filtre, gh_milestones la rend en colonne) : deux formulations finiraient par ne plus rendre le
+# même verdict, et c'est le jalon d'un ticket qui en dépend (même raison que gl_arbitrage_de, #562).
+gl_rail_de() {
+  if printf '%s' "$1" | grep -Eqi "$GL_RAIL_MOTIF"; then
+    printf 'outillage\n'
+  else
+    printf 'produit\n'
+  fi
+}
+
+# gl_rail_valide <rail> -> 0 si le rail est l'un des deux connus. Un rail inconnu est refusé AVANT
+# la lecture de forge : « produit »/« outillage » est un ensemble fermé de deux valeurs, comme
+# l'effort de run l'est de cinq (#217), et une faute de frappe rendrait sinon le jalon par défaut
+# en silence — soit exactement le mélange qu'on corrige.
+gl_rail_valide() {
+  case "$1" in
+    produit|outillage) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# gh_current_milestone [rail] -> le titre du jalon de la phase courante. MÊME règle que côté GitLab :
+# le jalon OUVERT le plus ancien par échéance qui n'est pas déjà soldé (au moins un ticket ouvert, ou
+# aucun ticket du tout) — appliquée À L'INTÉRIEUR du rail demandé (défaut « produit », voir
+# GL_RAIL_MOTIF ci-dessus).
 gh_current_milestone() {
-  local raw title
-  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { milestones(first: 20, states: OPEN, orderBy: {field: DUE_DATE, direction: ASC}) { nodes { title total: issues { totalCount } fermes: issues(states: CLOSED) { totalCount } } } } }')" || return 1
-  title="$(printf '%s' "$raw" | awk '
+  local raw title rail="${1:-produit}"
+  if ! gl_rail_valide "$rail"; then
+    echo "gh_current_milestone : rail inconnu « $rail » (attendu : produit | outillage)" >&2
+    return 2
+  fi
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { milestones(first: 20, states: OPEN, orderBy: {field: DUE_DATE, direction: ASC}) { nodes { title description total: issues { totalCount } fermes: issues(states: CLOSED) { totalCount } } } } }')" || return 1
+  # Le motif et le rail voyagent par ENVIRON et jamais par `awk -v`, qui INTERPRÈTE les
+  # échappements de la valeur (leçon de #340, où un `-v` a failli importer trois phases de tickets
+  # sans jalon, en silence).
+  title="$(printf '%s' "$raw" | GL_RAIL_MOTIF="$GL_RAIL_MOTIF" GL_RAIL_CIBLE="$rail" awk '
+    BEGIN { motif = ENVIRON["GL_RAIL_MOTIF"]; cible = ENVIRON["GL_RAIL_CIBLE"] }
     {
       n = split($0, parts, /\{"title":"/)
       for (i = 2; i <= n; i++) {
@@ -5046,12 +5189,17 @@ gh_current_milestone() {
         total = 0; closed = 0
         if (match(node, /"total":\{"totalCount":[0-9]+/))  { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); total = m + 0 }
         if (match(node, /"fermes":\{"totalCount":[0-9]+/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); closed = m + 0 }
+        # Le marqueur ne peut vivre que dans la description : le titre a déjà été coupé, et les
+        # autres champs du nœud sont des compteurs. Chercher dans le nœud entier évite d`extraire
+        # une description qui porte, elle, des guillemets échappés.
+        rail = (tolower(node) ~ motif) ? "outillage" : "produit"
+        if (rail != cible) continue
         if (total == 0 || closed < total) { print t; exit }
       }
     }
   ')"
   if [ -z "$title" ]; then
-    echo "gh_current_milestone : aucun jalon ouvert non soldé (rien à poser)" >&2
+    echo "gh_current_milestone : aucun jalon ouvert non soldé sur le rail « $rail » (rien à poser)" >&2
     return 1
   fi
   printf '%s\n' "$title"
@@ -5063,9 +5211,10 @@ gh_current_milestone() {
 # — un consommateur qui compte ses champs ne doit pas changer de code selon la forge.
 gh_milestones() {
   local raw
-  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { milestones(first: 50, orderBy: {field: DUE_DATE, direction: ASC}) { nodes { title state dueOn total: issues { totalCount } fermes: issues(states: CLOSED) { totalCount } } } } }')" || return 1
-  printf '# titre\tetat\tdebut\techeance\tfermes\ttotal\n'
-  printf '%s' "$raw" | awk '
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { milestones(first: 50, orderBy: {field: DUE_DATE, direction: ASC}) { nodes { title description state dueOn total: issues { totalCount } fermes: issues(states: CLOSED) { totalCount } } } } }')" || return 1
+  printf '# titre\tetat\tdebut\techeance\tfermes\ttotal\trail\n'
+  printf '%s' "$raw" | GL_RAIL_MOTIF="$GL_RAIL_MOTIF" awk '
+    BEGIN { motif = ENVIRON["GL_RAIL_MOTIF"] }
     {
       n = split($0, parts, /\{"title":"/)
       for (i = 2; i <= n; i++) {
@@ -5086,7 +5235,9 @@ gh_milestones() {
         if (match(node, /"total":\{"totalCount":[0-9]+/))  { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); total = m + 0 }
         if (match(node, /"fermes":\{"totalCount":[0-9]+/)) { m = substr(node, RSTART, RLENGTH); sub(/.*:/, "", m); fermes = m + 0 }
 
-        printf "%s\t%s\t%s\t%s\t%d\t%d\n", title, etat, "-", echeance, fermes, total
+        rail = (tolower(node) ~ motif) ? "outillage" : "produit"
+
+        printf "%s\t%s\t%s\t%s\t%d\t%d\t%s\n", title, etat, "-", echeance, fermes, total, rail
       }
     }
   '
@@ -6171,9 +6322,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issue-owner)    gl_issue_owner "$@" ;;
     statuts)        st_statuts "$@" ;;
     issue-taken)    gl_issue_taken "$@" ;;
-    current-milestone) gl_current_milestone ;;
+    current-milestone) gl_current_milestone "$@" ;;
     milestones)        gl_milestones ;;
     milestone-issues)  gl_milestone_issues "$@" ;;
+    milestone-rail)    gl_milestone_rail "$@" ;;
     issue-link)     gl_issue_link "$@" ;;
     parent-of)      gl_parent_of "$@" ;;
     subtickets)     gl_subtickets "$@" ;;
@@ -6264,9 +6416,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                      « - » = hors projet ou Status vide, aucune ligne = ticket inexistant." >&2
       echo "                                      Pendant unitaire de backlog-table, sans sa fenêtre de 100 — docs/10 §3.6)" >&2
       echo "  issue-taken <iid> [username]       (0 + assignés si le ticket est « En cours » chez quelqu'un d'autre)" >&2
-      echo "  current-milestone                  (titre du milestone de la phase courante — actif le plus ancien non soldé)" >&2
+      echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — actif le plus ancien non soldé ; défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
       echo "  milestone-issues <titre-exact>     (tickets d'un milestone : iid/statut/type/agent/prio/titre, TSV)" >&2
+      echo "  milestone-rail <titre> <rail>      (pose le rail produit|outillage d'un milestone — idempotent)" >&2
       echo "  slug <titre> | branch-prefix <type> | host   (hôte de la forge, déduit du remote)" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
       echo "    issue-link <iid> <iid-cible>    (lie deux tickets — relates to, idempotent)" >&2

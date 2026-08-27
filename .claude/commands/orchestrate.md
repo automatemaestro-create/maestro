@@ -42,9 +42,12 @@ toi-même.
      (secondes depuis la dernière écriture), `ticket en vol` (vide s'il n'y en a pas) ; le
      **dernier** de la liste est le plus récent, c'est le candidat.
    - **`--milestones`** — TSV (en-tête `#` à ignorer) : `titre`, `courant` (0/1), `à faire et
-     libres`, `ouverts`, `échéance`. Les candidats sont les lignes dont `à faire` **> 0** ; celle
-     à `courant = 1` est le défaut historique. Le compte est **indicatif** sur un point : un parent
-     de suivi y compte pour un, alors que le run traitera ses lots.
+     libres`, `ouverts`, `échéance`, `rail`. Les candidats sont les lignes dont `à faire` **> 0**.
+     ⚠ Depuis #617 il y a **deux** lignes à `courant = 1`, une par **rail** — `produit` (moteur,
+     API, Control Tower) et `outillage` (workflow git, scripts, CI, orchestration) : un run porte
+     sur un rail, et le défaut sans consigne est le courant du rail **produit**. Le compte est
+     **indicatif** sur un point : un parent de suivi y compte pour un, alors que le run traitera
+     ses lots.
    - **`--orphelins`** — sortie vide (le cas courant) : n'en parle pas. Une ou plusieurs lignes :
      ce sont des tickets **« En cours » dont plus personne ne s'occupe** (#329) — une session morte
      (délai, pilote tué, console fermée, session interactive laissée en plan) les y a laissés, et
@@ -101,9 +104,16 @@ toi-même.
    au moins **deux** milestones à `à faire > 0` au point 0. Un seul candidat ne se demande pas, il
    s'**annonce** (« le run portera sur *Phase N*, seule phase active avec des tickets à faire ») ;
    aucun candidat, dis-le et ne lance rien. Quand la question se pose : le milestone `courant = 1`
-   en premier et recommandé, les autres ensuite, chacun avec **son nombre de tickets à faire** en
-   description. Si la question (a) est posée en même temps, précise dans l'intitulé que ce choix ne
-   vaut **que** pour un run neuf — une reprise rejoue le plan de son run, milestone compris.
+   **du rail produit** en premier et recommandé, les autres ensuite, chacun avec **son nombre de
+   tickets à faire** ET **son rail** en description. Si la question (a) est posée en même temps,
+   précise dans l'intitulé que ce choix ne vaut **que** pour un run neuf — une reprise rejoue le
+   plan de son run, milestone compris.
+
+   ⚠ **Nommer le rail dans les intitulés n'est pas cosmétique** (#617) : un milestone d'outillage
+   se traite mal en autonomie — une bonne part de ses tickets touche `.claude/**`, où l'écriture
+   est **bloquée par le CLI** en amont de l'allowlist (#229/#238), donc la session rend son
+   correctif dans sa PR au lieu de l'appliquer. Si l'utilisateur choisit le rail `outillage`,
+   **dis-le en une phrase** avant de lancer — ce n'est pas un refus, c'est un régime à connaître.
 
    **(c) Reprendre des tickets orphelins ?** — seulement si le point 0 en a listé dont le `plafond`
    n'est **pas** `atteint`, et seulement pour un run **neuf** : le plan d'une reprise est figé, un
@@ -257,9 +267,10 @@ groupes de lots, ce qui a été écarté et pourquoi (`bash scripts/orchestrate/
 le détail des écartés — parents de suivi, tickets assignés, statuts autres que « À faire »).
 Rien n'est lancé, aucun répertoire de run n'est laissé derrière.
 
-Le plan porte par défaut sur la **phase courante**. Pour en voir un autre, ajoute
-`--milestone "<titre>"` — et `bash scripts/orchestrate/queue.sh --milestones` dit lesquels ont du
-travail (titre, courant, à faire et libres, ouverts, échéance).
+Le plan porte par défaut sur la **phase courante du rail produit** (#617). Pour en voir un autre,
+ajoute `--milestone "<titre>"` — et `bash scripts/orchestrate/queue.sh --milestones` dit lesquels
+ont du travail (titre, courant, à faire et libres, ouverts, échéance, rail). L'en-tête du run
+annonce le milestone retenu **et son rail**.
 
 ### `--status` — où en est le dernier run
 

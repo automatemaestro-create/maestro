@@ -23,9 +23,14 @@ chose qui te reste à juger est la **prose**.
 1. Vérifie les pré-requis : `bash scripts/gitlab/lib.sh require`. Arrête-toi si non authentifié.
 
 2. **Résous le milestone.** Liste-les : `bash scripts/gitlab/lib.sh milestones` (TSV :
-   `titre`, `etat`, `debut`, `echeance`, `fermes`, `total` — la ligne d'en-tête `#` s'ignore).
-   - `$ARGUMENTS` vide → prends le milestone de la phase courante
-     (`bash scripts/gitlab/lib.sh current-milestone`).
+   `titre`, `etat`, `debut`, `echeance`, `fermes`, `total`, `rail` — la ligne d'en-tête `#`
+   s'ignore).
+   - `$ARGUMENTS` vide → prends le milestone de la phase courante **du rail produit**
+     (`bash scripts/gitlab/lib.sh current-milestone`, dont c'est le défaut). Une présentation de
+     milestone présente **le produit** : elle joint des captures d'écran et des démonstrations
+     filmées, que l'outillage de la forge n'a pas (#617). Un milestone de rail `outillage` se
+     présente très bien si on le **nomme** explicitement — il rendra simplement des sections sans
+     vignettes, ce que l'étape des écrans touchés sait déjà dire.
    - `$ARGUMENTS` renseigné → cherche le milestone dont le titre **contient** ce fragment, sans
      tenir compte de la casse (`Phase 3` → `Phase 3 — V2`). **Zéro ou plusieurs correspondances :
      arrête-toi**, affiche la liste des milestones et demande lequel — ne devine pas.

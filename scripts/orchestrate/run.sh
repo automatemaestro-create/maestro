@@ -2705,6 +2705,16 @@ printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
 # Le DÉPÔT y figure pour la même raison (#341) : c'est là que les N PR vont s'ouvrir, et rien
 # d'autre dans le journal ne le dirait.
 printf 'dépôt : %s (%s)\n' "$(gl_forge_nom)" "$(gl_depot_courant)"
+# Sur QUOI porte ce run (#617). Le rail vient du plan lui-même, en ligne de commentaire, et n'est
+# donc ni relu ni recalculé ici — même mécanique que la réserve d'arbitrage plus bas, et même
+# dégradation douce : un plan d'avant ce lot, rejoué par `--resume`, n'en porte aucune et la ligne
+# se tait. L'annoncer est ce qui distingue « ce run traite le produit » de « ce run traite
+# l'outillage », deux régimes que rien ne séparait quand `current-milestone` n'avait qu'une réponse.
+if grep -q '^# milestone	' "$PLAN" 2>/dev/null; then
+  # shellcheck disable=SC2034  # `_` est le marqueur de la ligne, lu puis jeté.
+  IFS=$'\t' read -r _ ms_titre ms_rail < <(grep -m1 '^# milestone	' "$PLAN")
+  printf 'milestone : %s · rail %s\n' "$ms_titre" "$ms_rail"
+fi
 printf 'plan : %s ticket(s) · modèle %s · effort %s · %s · %s · %s\n' \
   "$nb_plan" "$MODELE" "$EFFORT" \
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \

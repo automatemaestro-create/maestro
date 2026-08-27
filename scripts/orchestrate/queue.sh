@@ -152,7 +152,13 @@ mkdir -p "$TMP/vue" "$TMP/chaine"
 # toujours le bon choix : plusieurs milestones actifs peuvent porter du travail en même temps.
 #
 # Sortie TSV, du plus ancien au plus récent (l'ordre de gl_milestones), en-tête « # » ignorable :
-#     titre <TAB> courant <TAB> a_faire <TAB> ouverts <TAB> echeance
+#     titre <TAB> courant <TAB> a_faire <TAB> ouverts <TAB> echeance <TAB> rail
+#
+# `rail` (#617) vaut « produit » ou « outillage » et sépare les milestones de PRODUIT de ceux de
+# l'OUTILLAGE de la forge. Il change la lecture de `courant`, qui vaut désormais 1 pour le milestone
+# courant **de son rail** : il y en a donc DEUX à 1, un par rail, et non plus un seul. C'est voulu —
+# un run porte sur un rail, et proposer « le » courant sans dire lequel est ce qui a laissé un run
+# « produit » traiter de l'outillage.
 #
 # `a_faire` compte ce que la boucle POURRAIT prendre — « À faire » ET libre, exactement le filtre du
 # §3 ci-dessous — et non les tickets ouverts : un milestone dont les « À faire » sont tous assignés
@@ -163,12 +169,15 @@ mkdir -p "$TMP/vue" "$TMP/chaine"
 # Seuls les milestones ACTIFS sont listés : un milestone fermé est une phase soldée, on n'y lance pas
 # un run. Coût : deux lectures fixes (milestones, backlog ouvert) plus une par milestone actif.
 milestones_traitables() {
-  local courant titre echeance ouverts a_faire
-  courant="$(gl_current_milestone 2>/dev/null)" || courant=""
+  local courant_produit courant_outillage titre echeance ouverts rail a_faire courant
+  # Deux lectures et non une : le courant d'un rail ne se déduit pas de celui de l'autre. Elles ne
+  # coûtent rien de plus en allers de forge — gl_current_milestone lit la même page de jalons.
+  courant_produit="$(gl_current_milestone produit 2>/dev/null)" || courant_produit=""
+  courant_outillage="$(gl_current_milestone outillage 2>/dev/null)" || courant_outillage=""
   gl_backlog_table opened >"$TMP/backlog.tsv" || return 1
-  printf '# titre\tcourant\ta_faire\touverts\techeance\n'
-  gl_milestones | awk -F'\t' -v OFS='\t' '$1 !~ /^#/ && $2 == "active" { print $1, $4, $6 - $5 }' |
-    while IFS=$'\t' read -r titre echeance ouverts; do
+  printf '# titre\tcourant\ta_faire\touverts\techeance\trail\n'
+  gl_milestones | awk -F'\t' -v OFS='\t' '$1 !~ /^#/ && $2 == "active" { print $1, $4, $6 - $5, $7 }' |
+    while IFS=$'\t' read -r titre echeance ouverts rail; do
       [ -n "$titre" ] || continue
       gl_milestone_issues "$titre" >"$TMP/milestone-liste.tsv" 2>/dev/null ||
         : >"$TMP/milestone-liste.tsv"
@@ -177,9 +186,11 @@ milestones_traitables() {
         /^#/ { next }
         $2 == "À faire" && (!($1 in assigne) || assigne[$1] == "-" || assigne[$1] == "") { n++ }
         END { print n + 0 }' "$TMP/backlog.tsv" "$TMP/milestone-liste.tsv")"
-      printf '%s\t%s\t%s\t%s\t%s\n' \
-        "$titre" "$([ "$titre" = "$courant" ] && printf 1 || printf 0)" \
-        "$a_faire" "$ouverts" "$echeance"
+      courant=0
+      [ "$rail" = outillage ] && [ "$titre" = "$courant_outillage" ] && courant=1
+      [ "$rail" = produit ] && [ "$titre" = "$courant_produit" ] && courant=1
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$titre" "$courant" "$a_faire" "$ouverts" "$echeance" "$rail"
     done
 }
 
@@ -456,6 +467,13 @@ awk -F '\t' -v OFS='\t' '
 ' "$TMP/blocs.tsv" "$TMP/membres.tsv" |
   sort -t$'\t' -k1,1n -k2,2n -k3,3n |
   awk -F '\t' -v OFS='\t' '{ print NR, $4, $5, $6, $7, $8 }'
+
+# Le plan dit SUR QUOI il porte (#617), par la même mécanique de commentaire que la réserve
+# ci-dessous : le milestone et son rail. Sans cette ligne, la seule façon pour le pilote d'annoncer
+# le rail serait de redemander le milestone courant à la forge — donc de reposer, après coup, une
+# question déjà tranchée ici, avec le risque de rendre une AUTRE réponse si un milestone s'est soldé
+# entre-temps. Le plan est la source : c'est lui qui est rejoué à l'identique par `--resume` (#204).
+printf '# milestone\t%s\t%s\n' "$MILESTONE" "$(gl_milestone_rail "$MILESTONE" 2>/dev/null || printf 'produit')"
 
 # Le plan porte sa propre réserve (#562). Ces lignes sont des COMMENTAIRES : les deux lectures du
 # plan par run.sh les écartent déjà (`grep -v '^#'`, puis `case "$rang" in '#'*`), et un plan

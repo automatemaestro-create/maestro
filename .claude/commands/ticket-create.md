@@ -100,12 +100,30 @@ lieu d'inventer.
    directement, sans attendre de validation. Ne demande confirmation **que** s'il a fallu deviner
    une information structurante (type ambigu, doute sur l'intention, contenu largement inventé).
 
-8. Détermine le **milestone de phase** : celui de la phase courante, résolu par
-   `bash scripts/gitlab/lib.sh current-milestone` (= le milestone **actif le plus ancien non
-   soldé** — un milestone dont tous les tickets sont fermés est sauté, sa fermeture étant une
-   décision humaine). Si l'utilisateur a explicitement demandé un autre milestone, respecte son
-   choix. Si le helper ne retourne rien (aucun milestone actif non soldé), **omets** simplement
-   l'option — ne bloque pas la création pour ça.
+8. Détermine le **rail**, puis le **milestone**.
+
+   **Le rail d'abord** (#617, docs/10 §3.4) : ce ticket touche-t-il l'**outillage de la forge** —
+   workflow git, `scripts/**`, `.claude/**`, `.github/**`, filet CI, worktrees, orchestration — ou
+   le **produit Maestro** (moteur, API, Control Tower, agents) ? C'est un **jugement**, au même
+   titre que le choix d'`agent::` à l'étape 6, et il ne se dérive **pas** des labels : mesuré sur
+   113 tickets classés par les fichiers que leurs commits ont touchés, le meilleur critère de
+   labels plafonne à **91 %**, et il se trompe **systématiquement** sur le lot final « tests + doc »
+   d'un chantier d'outillage (`agent::qa`, cf. #345/#363/#366/#414) et sur l'outillage de
+   présentation (`agent::dev`, cf. #544→#547). Deux repères pour trancher :
+   - **Un lot hérite du rail de son PARENT**, toujours — un « tests + doc » d'un chantier
+     d'outillage est de l'outillage, quels que soient ses labels (vérifié : 8 lots sur 8 sont du
+     rail de leur parent). Lis le rail du parent avec
+     `bash scripts/gitlab/lib.sh milestone-rail "<son milestone>"`.
+   - Dans le doute, demande — se tromper de rail range le ticket dans un backlog que personne ne
+     regarde pour ce sujet.
+
+   **Puis le milestone** : `bash scripts/gitlab/lib.sh current-milestone <rail>` avec `produit` ou
+   `outillage` (= le milestone **actif le plus ancien non soldé de ce rail** — un milestone dont
+   tous les tickets sont fermés est sauté, sa fermeture étant une décision humaine). **Signale le
+   rail retenu dans le résumé de l'étape 10** : c'est un jugement, il doit pouvoir être contredit.
+   Si l'utilisateur a explicitement demandé un autre milestone, respecte son choix. Si le helper ne
+   retourne rien (aucun milestone actif non soldé sur ce rail), **omets** simplement l'option — ne
+   bloque pas la création pour ça.
 
 9. Crée le ticket. Le corps multi-lignes passe **par un fichier**, jamais sur la ligne de commande :
    la couche permissions découpe un appel sur ses sauts de ligne et ne matche aucune substitution
