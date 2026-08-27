@@ -2,7 +2,7 @@
 
 /**
  * La page Chat de la Control Tower — le chat **global**, non lié à un agent
- * (#269, lot 2 de #244).
+ * (#269, lot 2 de #244), et le **cadrage d'un run** (#483, lot 2 de #481).
  *
  * Le chat *par agent* (#85) a rejoint la fiche agent en onglet (#190) : c'était
  * la même intention que « Agents » vue par une autre facette, et le menu n'en
@@ -12,13 +12,35 @@
  * lui gardaient leur place depuis #190, annoncées et inertes ; c'est ce lot qui
  * les remplit, sur le canal `orchestrateur` livré par le lot 1 (#268).
  *
+ * **Le cadrage se décide ici aussi**, et les deux lots se sont rejoints sur
+ * cette page comme `components/chat/CadrageDansLeFil` l'annonçait — « les deux
+ * fils se rejoindront sur cette page, ils ne se remplacent pas ». Le brief
+ * (#320), ses questions de clarification (#321) et la décision qui les clôt ont
+ * quitté `/brief` pour la conversation (arbitrage du 2026-08-24, revue #470,
+ * docs/29 §4) : un point de contrôle ne vaut que s'il est **lu**, et une
+ * décision se lit mieux là où on a la conversation qui l'a produite que dans un
+ * écran qu'il faut aller ouvrir. C'est un déménagement, pas une levée : la
+ * décision **D5** de #218 tient, rien n'est décomposé avant validation humaine,
+ * et les deux routes de §6.10 sont celles d'avant.
+ *
+ * **Le cadrage passe avant le fil**, et l'ordre est le contenu de la décision :
+ * c'est un run **arrêté** qui attend là, et les trois surfaces d'acheminement
+ * (§2.1 — panneau du tableau de bord, cloche, carte de run) mènent ici par
+ * `PAGE_DU_CADRAGE`. Y arriver pour trouver le brief sous le pli reviendrait à
+ * éteindre le renvoi qui vient de nous amener. Il reste visible quand la file
+ * est vide, où il dit *pourquoi* elle l'est : la page ne recopie pas la règle de
+ * `runsEnAttente` pour se cacher elle-même, et deux blocs de corps sur les trois
+ * que la règle de sobriété autorise (#539, docs/30 §4) laissent la place.
+ *
  * ## Trois choix, et ce qu'ils écartent
  *
  * **Un seul composant de fil.** La mise en page conversationnelle vit dans
  * `components/Conversation`, que l'onglet Chat d'un agent monte aussi
  * (`components/FilChat`). C'est l'arbitrage de #620 rendu concret : ce milestone
  * passe le premier, le lot 13 de « Control Tower v3 — agents » (#265) réutilisera
- * ce composant au lieu de le fournir.
+ * ce composant au lieu de le fournir. Et jusqu'à la **bulle** : celle du fil et
+ * celle du cadrage sont la même (`components/chat/BulleFil`), sans quoi un seul
+ * écran donnerait deux conversations à l'œil.
  *
  * **La mention change de destinataire, elle ne duplique rien.** `@dev …` envoie
  * dans le fil de `dev` — celui-là même que sert sa fiche —, et l'écran bascule
@@ -43,11 +65,13 @@
 
 import { useMemo, useState } from "react";
 
+import { FilDeCadrage } from "@/components/chat/FilDeCadrage";
 import { Conversation } from "@/components/Conversation";
 import {
   IconeAgent,
   IconeChat,
   IconeFermer,
+  IconeObjectif,
   IconeRuns,
 } from "@/components/Icones";
 import {
@@ -101,55 +125,69 @@ export default function PageChat() {
   };
 
   return (
-    // Le corps à gauche, la colonne de propriétés à droite (#539) — une seule
-    // place de corps, le fil, et tout ce qui l'accompagne dans la troisième
-    // place, qui est la seule sans plafond. `items-start` : la colonne se cale
-    // en haut plutôt que de s'étirer sur la hauteur du fil.
+    // Le corps à gauche, la colonne de propriétés à droite (#539) — deux places
+    // de corps (le cadrage, puis le fil) et tout ce qui les accompagne dans la
+    // troisième, la seule sans plafond. `items-start` : la colonne se cale en
+    // haut plutôt que de s'étirer sur la hauteur du fil.
     <div className="grid gap-6 @4xl:grid-cols-3 @4xl:items-start">
-      <Conversation
-        className="@4xl:col-span-2"
-        fil={fil}
-        interlocuteur={interlocuteur}
-        libelle="Chat global"
-        titre={global ? "Chat global" : `Aparté avec ${destinataire}`}
-        icone={IconeChat}
-        accueil={global ? ACCUEIL_ORCHESTRATION : undefined}
-        amorces={global ? AMORCES_ORCHESTRATION : []}
-        surSaisie={detacherLaMention}
-        entete={
-          !global && (
-            <BadgeEtat ton="info" contour>
-              @{destinataire}
-            </BadgeEtat>
-          )
-        }
-        bandeau={
-          !global && (
-            <div className="flex flex-wrap items-center gap-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200">
-              <span className="min-w-0">
-                Ce message part dans le fil de <strong>{destinataire}</strong> —
-                le même que sert sa fiche. Rien n&apos;est recopié ici.
-              </span>
-              <span className="ml-auto flex flex-wrap items-center gap-3">
-                <LienRenvoi
-                  renvoi={{
-                    href: cheminOnglet(destinataire, "chat"),
-                    libelle: "Vue détaillée",
-                  }}
-                />
-                <Bouton
-                  variante="contour"
-                  ton="neutre"
-                  icone={IconeFermer}
-                  onClick={() => setDestinataire(AGENT_ORCHESTRATION)}
-                >
-                  Revenir à l&apos;orchestration
-                </Bouton>
-              </span>
-            </div>
-          )
-        }
-      />
+      <div className="flex min-w-0 flex-col gap-6 @4xl:col-span-2">
+        <section
+          aria-label="Cadrage en attente"
+          className="flex min-w-0 flex-col gap-3"
+        >
+          <EnTeteSection titre="Cadrage en attente" icone={IconeObjectif} />
+          <p className="text-corps text-neutral-600 dark:text-neutral-400">
+            Avant de parler du travail, on le cadre : le brief se relit et se
+            corrige ici même, les questions du Chef de projet s&apos;y répondent,
+            et l&apos;accord — ou le refus — s&apos;y donne. Rien n&apos;est
+            décomposé avant.
+          </p>
+          <FilDeCadrage />
+        </section>
+        <Conversation
+          fil={fil}
+          interlocuteur={interlocuteur}
+          libelle="Chat global"
+          titre={global ? "Chat global" : `Aparté avec ${destinataire}`}
+          icone={IconeChat}
+          accueil={global ? ACCUEIL_ORCHESTRATION : undefined}
+          amorces={global ? AMORCES_ORCHESTRATION : []}
+          surSaisie={detacherLaMention}
+          entete={
+            !global && (
+              <BadgeEtat ton="info" contour>
+                @{destinataire}
+              </BadgeEtat>
+            )
+          }
+          bandeau={
+            !global && (
+              <div className="flex flex-wrap items-center gap-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200">
+                <span className="min-w-0">
+                  Ce message part dans le fil de <strong>{destinataire}</strong>{" "}
+                  — le même que sert sa fiche. Rien n&apos;est recopié ici.
+                </span>
+                <span className="ml-auto flex flex-wrap items-center gap-3">
+                  <LienRenvoi
+                    renvoi={{
+                      href: cheminOnglet(destinataire, "chat"),
+                      libelle: "Vue détaillée",
+                    }}
+                  />
+                  <Bouton
+                    variante="contour"
+                    ton="neutre"
+                    icone={IconeFermer}
+                    onClick={() => setDestinataire(AGENT_ORCHESTRATION)}
+                  >
+                    Revenir à l&apos;orchestration
+                  </Bouton>
+                </span>
+              </div>
+            )
+          }
+        />
+      </div>
       <aside
         aria-label="Propriétés du fil"
         className="flex min-w-0 flex-col gap-6"

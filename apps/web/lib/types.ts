@@ -388,6 +388,12 @@ export type ServeurMcp = {
 export const MCP_MODE_TOKEN = "token_statique";
 export const MCP_MODE_APPAIRAGE = "appairage";
 export const MCP_MODE_OAUTH = "oauth_importe";
+/**
+ * …et le cas dégénéré (#271) : un serveur qui n'émet aucun secret (utilitaire
+ * local, endpoint public). Ce n'est pas un quatrième parcours de saisie — c'est
+ * l'absence de saisie, et le formulaire de configuration n'a donc aucun champ.
+ */
+export const MCP_MODE_SANS_SECRET = "sans_secret";
 
 /**
  * Une variable `${VAR}` à fournir pour instancier une entrée du registre
@@ -423,7 +429,31 @@ export type EntreeRegistreMcp = {
   secrets: VariableSecret[];
   procedure_url: string;
   optionnel: boolean;
+  /** Qui publie ce serveur (#271) — une intégration se choisit aussi sur son éditeur. */
+  editeur: string;
+  /** Palier d'usage (#271) : plus grand = plus courant. C'est la clé du tri. */
+  popularite: number;
   curee: boolean;
+};
+
+/** Une source citée par la curation (#271) : d'où vient une entrée, où la revérifier. */
+export type SourceCitee = {
+  libelle: string;
+  url: string;
+};
+
+/**
+ * D'où vient la bibliothèque et quand elle a été revue
+ * (`GET /api/mcp/registre/provenance`, #271). `tags` porte les pistes de
+ * recherche — ce qu'on propose quand une recherche ne rend rien, plutôt que de
+ * répéter qu'elle n'a rien trouvé.
+ */
+export type ProvenanceRegistreMcp = {
+  resume: string;
+  sources: SourceCitee[];
+  revue_le: string;
+  tags: string[];
+  total: number;
 };
 
 /**

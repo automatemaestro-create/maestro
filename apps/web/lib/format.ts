@@ -148,6 +148,46 @@ export function formatHeureRelative(
   return formatDateHeure(horodatage);
 }
 
+/**
+ * Depuis **combien de temps** quelque chose attend (#272) — « depuis 3 min »,
+ * « depuis 2 h ».
+ *
+ * Voisine de `formatHeureRelative` et pourtant distincte, parce que la question
+ * n'est pas la même : « il y a 3 min » situe un fait passé (une ligne du fil, un
+ * événement), « depuis 3 min » mesure une attente **qui dure**. Sur une demande
+ * de validation, qui met un moteur en pause, c'est la seconde qui décide — et
+ * écrire « il y a 3 min » à côté de « en attente » ferait lire l'heure d'arrivée
+ * là où on cherche l'ancienneté.
+ *
+ * Sous la minute, on dit « depuis moins d'une minute » plutôt que l'heure exacte
+ * (l'inverse du choix de `formatHeureRelative`) : sur une file, l'heure absolue
+ * oblige à faire la soustraction soi-même, et c'est justement ce que ce format
+ * évite. Au-delà de la semaine on repasse à la date complète, une attente de
+ * plusieurs semaines n'étant plus une attente mais un oubli qu'il faut dater.
+ *
+ * `maintenant` vient de l'appelant (`useHorloge`) pour les mêmes raisons qu'au-
+ * dessus : fonction pure, un seul instant partagé par toute une liste, et `null`
+ * tant que l'horloge n'a pas démarré — on rend alors l'heure absolue, identique
+ * sur le serveur et dans le navigateur.
+ */
+export function formatAttente(
+  horodatage: string,
+  maintenant: number | null,
+): string {
+  if (!horodatage) return "";
+  const date = new Date(horodatage);
+  if (Number.isNaN(date.getTime())) return horodatage;
+  if (maintenant === null) return `depuis ${formatHeure(horodatage)}`;
+  // Une attente négative (horloges désaccordées entre le poste et le backend)
+  // tombe dans le même cas que « à la minute » : on n'écrit pas « depuis -2 min ».
+  const age = maintenant - date.getTime();
+  if (age < MINUTE_MS) return "depuis moins d'une minute";
+  if (age < HEURE_MS) return `depuis ${Math.floor(age / MINUTE_MS)} min`;
+  if (age < JOUR_MS) return `depuis ${Math.floor(age / HEURE_MS)} h`;
+  if (age < SEMAINE_MS) return `depuis ${Math.floor(age / JOUR_MS)} j`;
+  return `depuis le ${formatDateHeure(horodatage)}`;
+}
+
 /** Libellés français des statuts de tâche (machine à états docs/03 §3). */
 const LIBELLES_STATUT: Record<string, string> = {
   assignee: "Assignée",

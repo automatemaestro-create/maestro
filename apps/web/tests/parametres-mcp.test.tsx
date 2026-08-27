@@ -58,6 +58,8 @@ function entree(
     ],
     procedure_url: "",
     optionnel: false,
+    editeur: `Éditeur ${nom}`,
+    popularite: 50,
     curee: true,
     ...options,
   };
@@ -77,14 +79,25 @@ const REGISTRE = [
 const chargerRegistreMcp = vi.fn();
 const chargerPoolMcp = vi.fn();
 const ajouterIntegrationPoolMcp = vi.fn();
+const chargerProvenanceRegistreMcp = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   chargerRegistreMcp: (q?: string) => chargerRegistreMcp(q),
   chargerPoolMcp: () => chargerPoolMcp(),
+  chargerProvenanceRegistreMcp: () => chargerProvenanceRegistreMcp(),
   ajouterIntegrationPoolMcp: (charge: unknown) =>
     ajouterIntegrationPoolMcp(charge),
   supprimerIntegrationPoolMcp: vi.fn(() => Promise.resolve()),
 }));
+
+/** La provenance servie par l'API sœur (#271) — d'où vient la liste, et quand. */
+const PROVENANCE = {
+  resume: "Sélection curée à la main.",
+  sources: [{ libelle: "Dépôt MCP", url: "https://example.invalid/mcp" }],
+  revue_le: "2026-08-28",
+  tags: ["forge", "design", "recherche"],
+  total: REGISTRE.length,
+};
 
 /** Le registre curé, filtré comme le fait l'API (`?q=`). */
 function registreFiltre(q?: string) {
@@ -103,6 +116,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   chargerRegistreMcp.mockImplementation(registreFiltre);
   chargerPoolMcp.mockResolvedValue({ integrations: [], erreur: null });
+  chargerProvenanceRegistreMcp.mockResolvedValue(PROVENANCE);
   ajouterIntegrationPoolMcp.mockResolvedValue(undefined);
 });
 
@@ -274,5 +288,45 @@ describe("le formulaire de configuration comme formulaire", () => {
       within(formulaire).getByRole("button", { name: "Ajouter au pool" }),
     );
     expect(ajouterIntegrationPoolMcp).not.toHaveBeenCalled();
+  });
+});
+
+describe("la bibliothèque élargie (#271)", () => {
+  it("dit d'où vient la liste et quand elle a été revue", async () => {
+    const region = await bibliotheque();
+
+    // La date est une date **pure** : rendue telle quelle, sans passer par
+    // `Date` — qui la lirait en UTC et la ferait reculer d'un jour à l'ouest.
+    expect(await within(region).findByText(/Revue le/)).toHaveTextContent(
+      "28/08/2026",
+    );
+    expect(
+      within(region).getByRole("link", { name: "Dépôt MCP" }),
+    ).toHaveAttribute("href", "https://example.invalid/mcp");
+  });
+
+  it("montre l'éditeur de chaque intégration", async () => {
+    const region = await bibliotheque();
+    expect(
+      await within(region).findByText(/Éditeur GitLab/),
+    ).toBeInTheDocument();
+  });
+
+  it("rend une piste plutôt qu'un cul-de-sac quand rien ne correspond", async () => {
+    const utilisateur = userEvent.setup();
+    const region = await bibliotheque();
+    // On attend la première réponse : avant elle, « aucun résultat » serait
+    // l'état d'avant la question.
+    await within(region).findByText(/Éditeur GitLab/);
+    await utilisateur.type(champRecherche(), "kubernetes");
+
+    await within(region).findByText(/Aucune intégration ne correspond/);
+    // La sortie du cul-de-sac : des pistes cliquables, et le retour à la liste
+    // entière. Un clic sur une piste relance la recherche sur ce tag.
+    await utilisateur.click(within(region).getByRole("button", { name: "forge" }));
+    await waitFor(() => expect(chargerRegistreMcp).toHaveBeenCalledWith("forge"));
+    expect(
+      within(region).getByRole("button", { name: /Voir toute la bibliothèque/ }),
+    ).toBeInTheDocument();
   });
 });

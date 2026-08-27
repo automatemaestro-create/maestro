@@ -68,6 +68,13 @@ export function mocksApi() {
     chargerCatalogue: async () => CATALOGUE,
     chargerSante: async () => ({ statut: "ok" }),
     chargerRegistreMcp: async () => [],
+    chargerProvenanceRegistreMcp: async () => ({
+      resume: "",
+      sources: [],
+      revue_le: "2026-08-28",
+      tags: [],
+      total: 0,
+    }),
     chargerPoolMcp: async () => ({ integrations: [], erreur: null }),
     chargerExplorateur: async () => pageExplorateurFactice(),
     chargerDisponibiliteSelecteur: async () => ({

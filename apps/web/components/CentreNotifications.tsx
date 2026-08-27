@@ -43,12 +43,12 @@ import {
   IconeNotifications,
 } from "@/components/Icones";
 import { LigneActivite } from "@/components/LigneActivite";
-import { BadgeEtat, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
+import { BadgeEtat, Bouton, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
 import { resumeArbitrages } from "@/lib/annonces";
-import { runsEnAttente } from "@/lib/brief";
+import { PAGE_DU_CADRAGE, runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
-import { entreeParLibelle, PAGE_DU_FIL } from "@/lib/navigation";
+import { entreeParLibelle } from "@/lib/navigation";
 import { useSurfaceDeroulee } from "@/lib/useSurfaceDeroulee";
 import {
   EXECUTION_EN_ATTENTE_REPONSES,
@@ -237,10 +237,11 @@ export function CentreNotifications() {
  * se referme au clic — laisser une cloche ouverte par-dessus l'écran qu'elle
  * vient d'ouvrir masque justement ce qu'on est venu lire.
  *
- * Le chemin est celui du **fil** depuis #484, où le brief se décide (#483) —
- * même raison qu'au panneau du tableau de bord : un renvoi résolu par le menu
- * s'éteint le jour où l'entrée part, et une cloche muette sur un run bloqué est
- * précisément le défaut contre lequel elle existe.
+ * Le chemin est celui du **fil** depuis #483 (`PAGE_DU_CADRAGE`), où le brief se
+ * décide désormais — même raison qu'au panneau du tableau de bord : un renvoi
+ * résolu par le menu s'éteint le jour où l'entrée part, et une cloche muette sur
+ * un run bloqué est le défaut que le critère 3 interdit. L'entrée est partie le
+ * 2026-08-28 (#484) sans que cette carte change.
  */
 function CarteBriefCompacte({
   run,
@@ -249,9 +250,7 @@ function CarteBriefCompacte({
   run: ResumeExecution;
   surOuverture: () => void;
 }) {
-  // ⚠ #483 remplace cette ligne par `entreeParLibelle(PAGE_DU_CADRAGE)`
-  // (`lib/brief`) — même valeur. Au merge des deux lots : prendre sa version.
-  const page = entreeParLibelle(PAGE_DU_FIL);
+  const page = entreeParLibelle(PAGE_DU_CADRAGE);
   const reponses = run.statut === EXECUTION_EN_ATTENTE_REPONSES;
   if (page === undefined) return null;
 
@@ -331,28 +330,34 @@ function CarteValidationCompacte({
           Motif : {validation.raison}
         </p>
       )}
+      {/* Les primitives du socle et non deux `<button>` recopiés (#272) : ces
+          deux-là étaient les derniers `bg-emerald-600`/`border-rose-300` bruts
+          du canal des validations, c'est-à-dire exactement le contraste de
+          3,65:1 que #535 a retiré des dix-huit autres recopies. Le plancher de
+          cible est déclaré ici parce que la taille `petite` porte son propre pas
+          typographique (`text-annexe`) sans atteindre 24 px. */}
       <div className="mt-2 flex gap-1.5">
-        <button
-          type="button"
-          disabled={enCours}
+        <Bouton
+          taille="petite"
+          className={CIBLE_MINIMALE}
+          occupe={enCours}
           onClick={() => void surDecision(true)}
-          className="rounded bg-emerald-600 px-2 py-1 text-micro font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           {enCours ? "Envoi…" : "Approuver"}
-        </button>
-        <button
-          type="button"
+        </Bouton>
+        <Bouton
+          variante="contour"
+          ton="alerte"
+          taille="petite"
+          className={CIBLE_MINIMALE}
           disabled={enCours}
           onClick={() => void surDecision(false)}
-          className="rounded border border-rose-300 px-2 py-1 text-micro font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950"
         >
           Refuser
-        </button>
+        </Bouton>
       </div>
       {erreur && (
-        <p className="mt-1 text-micro text-rose-600 dark:text-rose-400">
-          {erreur}
-        </p>
+        <p className="mt-1 text-micro font-medium text-alerte-texte">{erreur}</p>
       )}
     </Carte>
   );

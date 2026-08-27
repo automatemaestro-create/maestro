@@ -18,22 +18,27 @@
  * inviterait à trancher sans lire, c'est-à-dire à défaire le point de contrôle
  * qu'on vient de poser.
  *
- * ⚠ **Il achemine vers le fil depuis #484**, où le brief se décide (#483). Le
- * changement n'est pas cosmétique : la destination est résolue par le **menu**
- * (`entreeParLibelle`, règle de #191), donc retirer l'entrée « Valider le
- * brief » sans toucher à cette ligne aurait rendu ce panneau `null` — un run
- * bloqué que plus rien ne montre, exactement ce contre quoi ce composant a été
- * écrit. Le renvoi bouge **dans le même commit** que l'entrée de menu.
+ * ⚠ **Il achemine vers le fil depuis #483**, où le brief se décide. Le
+ * changement n'est pas cosmétique et c'est le critère 3 du lot : la destination
+ * est résolue par le **menu** (`entreeParLibelle`), donc le jour où #484 retire
+ * l'entrée « Valider le brief », ce panneau serait rendu `null` et un run bloqué
+ * deviendrait invisible — exactement ce que « un run bloqué ne doit pas dépendre
+ * d'un écran qu'on n'a pas ouvert » interdit. Le renvoi suit le geste, et il le
+ * suit **avant** que l'écran parte, pas après.
+ *
+ * Ce jour est le 2026-08-28 (#484) : l'entrée est partie, ce panneau n'a pas
+ * bougé d'une ligne, et c'est exactement ce que la précaution ci-dessus
+ * achetait.
  */
 
 import Link from "next/link";
 
 import { IconeBrief, IconeFlecheDroite } from "@/components/Icones";
 import { BadgeEtat, Carte, EnTeteSection } from "@/components/Primitives";
-import { runsEnAttente } from "@/lib/brief";
+import { PAGE_DU_CADRAGE, runsEnAttente } from "@/lib/brief";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
-import { entreeParLibelle, PAGE_DU_FIL } from "@/lib/navigation";
+import { entreeParLibelle } from "@/lib/navigation";
 import {
   EXECUTION_EN_ATTENTE_REPONSES,
   type ResumeExecution,
@@ -46,10 +51,7 @@ export function PanneauBriefs({
 }) {
   const maintenant = useHorloge();
   const runs = runsEnAttente(executions);
-  // ⚠ #483 (« En revue » au moment d'écrire) remplace cette ligne par
-  // `entreeParLibelle(PAGE_DU_CADRAGE)`, sa constante de `lib/brief` — même
-  // valeur, question mieux nommée. Au merge des deux lots : prendre sa version.
-  const page = entreeParLibelle(PAGE_DU_FIL);
+  const page = entreeParLibelle(PAGE_DU_CADRAGE);
   if (runs.length === 0 || page === undefined) return null;
 
   return (

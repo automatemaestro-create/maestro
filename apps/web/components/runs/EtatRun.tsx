@@ -57,6 +57,7 @@ import {
   type TonBadge,
   type TonCarte,
 } from "@/components/Primitives";
+import { PAGE_DU_CADRAGE } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   ATTENTE_BRIEF,
@@ -82,7 +83,7 @@ import {
   libelleStatutExecution,
 } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
-import { entreeParLibelle, hrefRun, PAGE_DU_FIL } from "@/lib/navigation";
+import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import {
   EXECUTION_ECHEC,
   EXECUTION_TERMINEE,
@@ -103,28 +104,30 @@ import {
  * « Validations ». Le jour où la vue d'un run portera ces gestes, c'est cette
  * table qu'il faudra changer, et elle seule.
  *
- * C'est exactement ce qui vient d'arriver à ses deux premières lignes (#484, le
- * geste ayant déménagé avec #483), et la meilleure preuve que ce point-là était
- * juste : le libellé a changé ici, et nulle part ailleurs. Il ne pouvait pas ne
- * pas changer — résolu par le menu, « Valider le brief » ne rend plus rien, donc
- * l'attente la plus bloquante du produit aurait perdu son renvoi en silence.
+ * C'est précisément ce qui vient d'arriver aux deux premières lignes (#483) : le
+ * geste a déménagé de « Valider le brief » vers le fil, donc la table suit. Le
+ * libellé passe par `PAGE_DU_CADRAGE` (`lib/brief`) plutôt que d'être écrit ici,
+ * les trois surfaces qui acheminent vers le brief devant bouger ensemble.
+ *
+ * Et la preuve est venue vite : #484 a retiré « Valider le brief » du menu le
+ * 2026-08-28 sans toucher à cette table. Un libellé écrit ici aurait rendu
+ * `undefined`, donc `null`, donc l'attente la plus bloquante du produit sans
+ * renvoi — en silence.
  */
 export const ATTENTES: Record<
   CauseAttente,
   { libelle: string; phrase: string; page: string; action: string }
 > = {
-  // ⚠ #483 pose `PAGE_DU_CADRAGE` (`lib/brief`) sur ces deux lignes — même
-  // valeur. Au merge des deux lots : prendre sa version.
   [ATTENTE_BRIEF]: {
     libelle: "Brief à valider",
     phrase: "Le brief attend votre décision",
-    page: PAGE_DU_FIL,
+    page: PAGE_DU_CADRAGE,
     action: "Relire",
   },
   [ATTENTE_REPONSES]: {
     libelle: "Questions en attente",
     phrase: "Le Chef de projet attend vos réponses",
-    page: PAGE_DU_FIL,
+    page: PAGE_DU_CADRAGE,
     action: "Répondre",
   },
   [ATTENTE_VALIDATION]: {

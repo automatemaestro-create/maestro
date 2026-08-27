@@ -47,11 +47,11 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { BulleFil } from "@/components/chat/BulleFil";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
 import { SourcesDuMessage } from "@/components/chat/SourcesDuMessage";
 import { RefusSource } from "@/components/composer/RefusSource";
 import { IconeRuns, IconeTache, IconeValidations } from "@/components/Icones";
-import { Infobulle } from "@/components/Infobulle";
 import {
   BadgeEtat,
   Bouton,
@@ -64,7 +64,6 @@ import { RegionLive } from "@/components/RegionLive";
 import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurSource } from "@/lib/api";
 import { useEtatGlobal } from "@/lib/etatGlobal";
-import { formatDateHeure, formatHeure } from "@/lib/format";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import {
   CHAT_AUTEUR_UTILISATEUR,
@@ -361,50 +360,39 @@ export function Conversation({
   );
 }
 
-/** Une bulle du fil : l'utilisateur à droite, son interlocuteur à gauche. */
+/**
+ * Une bulle du fil : l'utilisateur à droite, son interlocuteur à gauche.
+ *
+ * L'enveloppe — côté, surface, pied — ne vit pas ici mais dans
+ * `components/chat/BulleFil` (#483) : le **cadrage** d'un run se lit dans le
+ * fil lui aussi, sur cette même page, et deux enveloppes auraient donné deux
+ * conversations à l'œil sur un seul écran. Ce qui reste ici est ce qu'un
+ * *message* porte, et lui seul — c'est la même raison qui a fait sortir la mise
+ * en page de `FilChat` vers ce fichier, appliquée d'un cran plus bas.
+ */
 function Bulle({ message }: { message: MessageChat }) {
   const utilisateur = message.auteur === CHAT_AUTEUR_UTILISATEUR;
   return (
-    <li className={"flex " + (utilisateur ? "justify-end" : "justify-start")}>
-      <div
-        className={
-          "max-w-[85%] rounded-lg px-3 py-2 text-sm shadow-sm sm:max-w-[70%] " +
-          (utilisateur
-            ? "bg-emerald-600 text-white dark:bg-emerald-700"
-            : "border border-neutral-200 bg-white text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100")
-        }
-      >
-        {message.contenu !== "" && (
-          <p className="whitespace-pre-wrap break-words">{message.contenu}</p>
-        )}
-        {/* Ce que le message a porté, et ce qui en a été lu (#482, critères 1 et
-            3) — sous le texte parce que c'est la pièce jointe qui accompagne le
-            propos, et non l'inverse. Rend `null` quand il n'y a aucune source :
-            une bulle ordinaire est exactement celle d'avant ce lot. */}
-        <SourcesDuFil message={message} />
-        {/* Ce que la réponse a ouvert (#269), du seul côté de l'interlocuteur :
-            c'est sa réponse qui ouvre un run, jamais la demande
-            (`ServiceChat._repondre`, #268) — et le fond plein de la bulle
-            utilisateur n'est pas une surface pour du texte secondaire et des
-            liens. */}
-        {!utilisateur && <Suite message={message} />}
-        <p
-          className={
-            "mt-1 text-right text-[10px] " +
-            (utilisateur
-              ? "text-emerald-100"
-              : "text-neutral-400 dark:text-neutral-500")
-          }
-        >
-          {utilisateur ? "vous" : message.auteur} ·{" "}
-          <Infobulle texte={formatDateHeure(message.horodatage)}>
-            <time dateTime={message.horodatage}>
-              {formatHeure(message.horodatage)}
-            </time>
-          </Infobulle>
-        </p>
-      </div>
-    </li>
+    <BulleFil
+      auteur={message.auteur}
+      utilisateur={utilisateur}
+      horodatage={message.horodatage}
+    >
+      {message.contenu !== "" && (
+        <p className="whitespace-pre-wrap break-words">{message.contenu}</p>
+      )}
+      {/* Ce que le message a porté, et ce qui en a été lu (#482, critères 1 et
+          3) — sous le texte parce que c'est la pièce jointe qui accompagne le
+          propos, et non l'inverse. Rend `null` quand il n'y a aucune source :
+          une bulle ordinaire est exactement celle d'avant ce lot. */}
+      <SourcesDuFil message={message} />
+      {/* Ce que la réponse a ouvert (#269), du seul côté de l'interlocuteur :
+          c'est sa réponse qui ouvre un run, jamais la demande
+          (`ServiceChat._repondre`, #268) — et le fond plein de la bulle
+          utilisateur n'est pas une surface pour du texte secondaire et des
+          liens. */}
+      {!utilisateur && <Suite message={message} />}
+    </BulleFil>
   );
 }
 
