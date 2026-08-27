@@ -4109,6 +4109,7 @@ tient pour cela une **file de merge**, drainée au fil de l'eau puis en fin de r
 ```bash
 bash scripts/orchestrate/queue.sh --check   # l'ordre de traitement, et ce qui a été écarté
 bash scripts/orchestrate/queue.sh --milestones  # sur quel milestone lancer un run (§11.2)
+bash scripts/orchestrate/queue.sh --touche-claude  # les tickets du plan où la session ne pourra pas écrire (§11.2)
 bash scripts/orchestrate/run.sh --dry-run   # le plan et ce qui serait fait — rien n'est lancé
 bash scripts/orchestrate/run.sh             # le run, dans un terminal laissé ouvert
 bash scripts/orchestrate/run.sh --detach    # idem, dans une console indépendante — rend la main
@@ -4225,6 +4226,60 @@ règle de `gc --auto` : signaler l'abstention nominale apprend à ne plus lire l
 le lancement (§11.3, question (d)), dans la forme exacte de la reprise des orphelins de #327 — un
 « oui » explicite, jamais un contournement d'office. L'ordre compte pour la même raison : arbitrer
 **après** le lancement ne servirait qu'au run suivant, le plan étant figé au départ.
+
+**Et il dit ce qu'une session ne pourra pas écrire** (#612). Une session autonome se fait refuser
+toute écriture sous `.claude/` — blocage dur du CLI, en amont de l'allowlist (§11.7) —, donc elle
+rend son correctif dans la description de sa PR (#188), que le pilote merge depuis #418/#419 sans
+que personne ne l'ouvre : le résidu ne disparaît pas, il devient **invisible**. §11.7 en tirait la
+conclusion depuis #238 (« Mieux vaut ne pas l'y envoyer […] **`queue.sh` ne le détecte pas** —
+c'est au rédacteur du ticket de le dire ») sans l'avoir jamais outillée. Mêmes trois surfaces, même
+règle unique — celle de `lib.sh touche-claude`, rejouée par `gl_touche_claude_de` sur la vue que
+`queue.sh` a **déjà** en cache, donc sans une lecture de forge de plus :
+
+| Surface | Ce qu'elle rend |
+|---|---|
+| `queue.sh --touche-claude` | TSV `iid`, `parent`, `titre` — ce que `/orchestrate` lit au point 0 |
+| `queue.sh --check` | les mêmes, en clair sur stderr, sous les parents non arbitrés |
+| le **plan lui-même** | des lignes `# touche-claude⇥…` en fin de fichier, relayées par l'en-tête du run |
+
+Mêmes propriétés que ci-dessus, pour les mêmes raisons : ce sont des **commentaires** (les deux
+lectures de `run.sh` les écartent déjà), un plan **antérieur** n'en porte aucune, la **règle 4**
+tient — deux appels sur le même backlog rendent le même plan, à l'octet près — et tout est **muet**
+quand aucun ticket du plan n'est concerné. Le signalement n'**écarte** aucun ticket : écarter est
+une décision, et le geste existe déjà — l'**assigner**, que le filtre « À faire **et** libre » du
+tableau ci-dessus suffit à tenir dehors.
+
+⚠ **Le motif est large, et c'est une mesure qui l'a tranché.** Il cherche `.claude/` dans tout ce
+que le ticket dit de lui-même — titre comme corps — sans distinguer un **usage** d'une **mention** :
+distinguer serait impossible à l'heure du plan, aucun fichier n'étant écrit et aucun diff n'existant
+(même impossibilité que « déduire l'indépendance du contenu des lots », #562). Restait à savoir
+**où** chercher, et l'intuition — restreindre aux critères d'acceptation, comme §11.7 le formule —
+est fausse. Mesure du 2026-08-27 sur les **120 tickets ayant des commits** sur `main`, vérité
+établie par les **fichiers de leurs commits** (technique de #544), dont **25 ont touché `.claude/`** :
+
+| variante | VP | FP | FN | précision | rappel |
+|---|---|---|---|---|---|
+| titre seul | 2 | 1 | 23 | 67 % | 8 % |
+| titre ou critères d'acceptation | 9 | 1 | 16 | **90 %** | 36 % |
+| partout, ≥ 3 lignes | 8 | 2 | 17 | 80 % | 32 % |
+| partout, ≥ 2 lignes | 13 | 4 | 12 | 76 % | 52 % |
+| **partout** (retenu) | 17 | 10 | 8 | 63 % | **68 %** |
+
+Les **8 que « titre ou critères » rate** sont exactement les gros chantiers d'outillage — #344,
+#388, #417, #418, #460, #498, #562, #617 —, dont les critères parlent du **comportement** et jamais
+du fichier : un signalement qui laisse passer #418 et #562 ne sert à rien, et c'est ce qui écarte la
+variante la plus précise. Le seuil sur le nombre de lignes perd du rappel plus vite qu'il ne gagne
+en précision. Et les **63 % sont un plancher** que la mesure ne peut pas relever : un ticket dont le
+résidu `.claude/` n'a **jamais** été appliqué ne laisse aucun commit sous `.claude/`, donc y compte
+pour un faux positif alors que le signalement était juste — le cas même que #608 documente.
+
+⚠ **Le trou est mesuré, lui aussi, et il est irréductible** : **8 des 25 (32 %)** ont touché
+`.claude/` sans que leur ticket le nomme **nulle part** (#361, #364, #365, #400, #414, #438, #455,
+#593). Aucun motif ne les attrapera — ce qui se découvre en travaillant n'est pas dans la
+description, et le cinquième emplacement de #599 a été trouvé par un balayage **pendant** le ticket.
+Ce signalement réduit la **fréquence** du résidu ; il ne le supprime pas, et c'est la raison d'être
+des deux autres ancrages du chantier #608 — le ticket de reprise créé **à l'acte** (#610) et le
+filet du pilote **en fin de run** (#611).
 
 **Le milestone, lui, se choisit** (#204). La phase courante reste le défaut — c'est presque toujours
 le bon — mais plusieurs milestones actifs peuvent porter du travail en même temps, et le run partait
@@ -5093,8 +5148,14 @@ Trois conséquences pratiques :
   main », plus un commentaire sur le ticket. Un humain l'applique ensuite en session interactive.
 - **Mieux vaut ne pas l'y envoyer.** Un ticket dont un critère touche `.claude/**` se traite en
   session interactive dès le départ ; le mettre dans le périmètre d'un run autonome, c'est en
-  garantir la part manquante. `queue.sh` ne le détecte pas — c'est au rédacteur du ticket de le
-  dire, comme #229 le fait dans ses notes.
+  garantir la part manquante. ⚠ **Cette ligne disait « `queue.sh` ne le détecte pas — c'est au
+  rédacteur du ticket de le dire » : ce n'est plus vrai depuis #612.** Le plan **signale** les
+  tickets qui nomment `.claude/`, en TSV (`--touche-claude`), en clair (`--check`), en lignes de
+  commentaire dans le plan, et l'en-tête du run les relaie — voir §11.2 pour les trois surfaces, la
+  mesure qui a tranché le motif, et le **trou irréductible** de 32 % que ce signalement ne verra
+  jamais. Deux choses qu'il ne fait toujours pas, et qui restent au rédacteur : il n'**écarte** rien
+  (le geste est d'**assigner** le ticket, filtre « À faire et libre » de `queue.sh`), et il ne voit
+  que ce que le ticket **dit** — ce qui se découvre en travaillant lui échappe par construction.
 
 **Le repli, étudié et écarté** (#238). Le verdict étant négatif, restait à examiner un script du
 dépôt — `scripts/claude/appliquer.sh <source> <cible>`, borné à `skills`/`commands`/`agents` et

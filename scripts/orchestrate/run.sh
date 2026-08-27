@@ -2063,6 +2063,16 @@ lance_session() {
 # ARGUMENT là où une règle borne un PRÉFIXE, et `python -` est un heredoc doublé d'un interpréteur
 # hors venv. Le prompt fait donc ici ce que #307 avait fait pour `/tmp` — il ne se contente pas
 # d'interdire, il NOMME la forme couverte de chacun, qui existe déjà tout entière dans la liste.
+#
+# Et un refus de plus, celui qui ne s'instruit PAS (#610, chantier #608) : écrire sous `.claude/`.
+# Le prompt ne l'avait jamais nommé — la conduite (#188 : rendre le correctif au lieu de contourner)
+# vivait dans docs/10 §11.7 et dans la mémoire des sessions qui y avaient buté. Ce qui a changé n'est
+# pas le refus mais son AVAL : depuis #418/#419 le pilote merge sans attendre personne, donc la
+# description de PR où le correctif était rendu se ferme dans l'heure et plus personne ne l'ouvre.
+# Mesure du run `20260827-094044` : trois tickets, DEUX résidus (#599, #595), mergés en vingt minutes,
+# encore en place le lendemain — rien n'échoue, rien n'est rouge, et c'est ce qui rend la perte
+# invisible. Le prompt prescrit donc l'appel à `lib.sh reste-claude` EN PLUS du rendu dans la PR, et
+# jamais à sa place : la PR reste le lieu de la revue, le ticket est ce qui lui survit.
 prompt_ticket() {
   cat <<PROMPT
 Tu traites intégralement le ticket GitLab #$1 de ce dépôt, seul et sans supervision humaine.
@@ -2114,6 +2124,19 @@ Règles de ce run autonome :
     ton API locale avec node, autorisé ici :
     node -e "fetch('http://127.0.0.1:<port>/api/x').then(r=>r.text()).then(console.log)" — sur une
     seule ligne et sans accent grave, que le CLI lit comme une substitution.
+- ÉCRIRE SOUS « .claude/ » T'EST REFUSÉ, et aucune règle ne le lèvera : le garde-fou est celui du
+  CLI, en amont de l'allowlist comme des hooks — c'est lui qui empêche une boucle sans surveillance
+  de réécrire les instructions que la boucle suivante exécutera. Ne le contourne pas (ni « printf >
+  fichier », ni « cp », ni script tiers) : mesuré, il déborde les outils de fichier. Fais DEUX
+  choses, jamais l'une À LA PLACE de l'autre :
+  · RENDS le correctif intégral dans la description de ta PR, sous « Reste à appliquer à la main » —
+    c'est là qu'il se relit ;
+  · CONSIGNE-LE dans un ticket de reprise, parce qu'une PR se ferme au merge et que le pilote merge
+    sans attendre personne : écris le correctif dans un fichier avec l'outil Write (dans
+    « .maestro/session/ »), puis « bash scripts/gitlab/lib.sh reste-claude <iid-du-ticket>
+    <chemin-du-fichier> ». Le ticket de reprise naît assigné — donc hors des plans d'un run, qui s'y
+    ferait refuser la même écriture — et avec son état ; rejoué dans le même ticket, il complète le
+    même ticket de reprise au lieu d'en ouvrir un second. Nomme-le dans ton résumé final.
 - POUR JOUER DES TESTS, l'endroit se choisit PAR FAMILLE DE SUITE, et l'écart se paie sur ton
   quota. Une suite d'OUTILLAGE — elle nomme un script du dépôt (worktree.sh, lib.sh, run.sh…) —
   se joue dans le conteneur Linux, « bash scripts/ci/pytest.sh tests/test_<suite>.py -q » : vingt
@@ -2745,6 +2768,24 @@ if grep -q '^# non-arbitre	' "$PLAN" 2>/dev/null; then
     printf '            #%-5s %s lot(s) au plan sur %s — %s\n' "$p" "$au_plan" "$lots" "$t"
   done
   printf '            les arbitrer avant de lancer : /orchestrate le propose au feu vert.\n\n'
+fi
+
+# Les tickets du plan qui nomment « .claude/ » (#612, docs/10 §11.7). Même mécanique et mêmes
+# propriétés que l'arbitrage ci-dessus — le plan porte l'information, rien n'est relu ni recalculé,
+# un plan d'avant ce lot ne dit rien, et c'est MUET quand aucun ticket n'est concerné.
+#
+# Ce n'est ni un refus ni un écart : ces tickets partent avec les autres, et l'en-tête dit ce qui
+# leur arrivera pour que le résidu ne se découvre pas après coup, dans une PR déjà mergée.
+if grep -q '^# touche-claude	' "$PLAN" 2>/dev/null; then
+  printf '.claude/ : ces tickets nomment « .claude/ », où une session ne peut PAS écrire (blocage dur\n'
+  printf '           du CLI, en amont de l'\''allowlist — #229/#238) : leur correctif partira dans la\n'
+  printf '           description de la PR au lieu d'\''être appliqué, et le pilote merge sans la lire.\n'
+  grep '^# touche-claude	' "$PLAN" | while IFS=$'\t' read -r _ i p t; do
+    printf '           #%-5s %s%s\n' "$i" "$t" \
+      "$([ "$p" != "-" ] && printf ' (lot de #%s)' "$p")"
+  done
+  printf '           ils restent au plan : les écarter est une décision, et le geste est de les\n'
+  printf '           assigner. /orchestrate le signale au feu vert.\n\n'
 fi
 
 if [ "$DRY" = 1 ]; then
