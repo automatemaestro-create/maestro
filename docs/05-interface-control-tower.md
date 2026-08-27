@@ -1082,6 +1082,15 @@ l'arbitrage ; `apps/web/tests/arbitrage.test.tsx` côté UI — le contrat d'`ex
 trois attentes, et cet écran-ci rendant la demande **sans rien changer de son côté**, ce qui est la
 preuve que le chantier a réparé la donnée et non l'affichage.
 
+Couverture de la refonte (#273, lot 6 de #244) : `apps/web/tests/validations.test.tsx` — l'ordre de
+la file (dont la demande **sans horodatage** en queue), `formatAttente` sur ses paliers et ses deux
+cas où l'on ne compte pas (horloge non démarrée, horloges désaccordées), ce qu'on lit avant de
+trancher, et les trois gestes. Deux contrôles y valent d'être nommés, parce qu'ils gardent ce qu'une
+relecture du composant ne montre pas : le motif **refermé est effacé** — sinon un texte que plus
+personne n'a sous les yeux partirait au journal du run avec le refus —, et la **clé par `tache_id`**
+est prouvée en retirant la tête de file pendant qu'un motif est en cours de frappe, c'est-à-dire en
+rejouant exactement le décalage d'un cran contre lequel elle existe.
+
 ### 2.7 📁 Projets et composition d'un objectif *(retenu — [docs/24](./24-projets-locaux-et-poste-de-travail.md), **Phases 7 et 8**)*
 
 > Écrans **retenus** — décisions D1, D2 et D5 de
@@ -1511,7 +1520,19 @@ message porte.
 
 Implémentation : `apps/web/app/chat/page.tsx`, `apps/web/components/Conversation.tsx`,
 `apps/web/lib/orchestration.ts` (nom du canal, accueil, amorces, lecture d'une
-mention). Tests différés au **lot 6** de #244 (#273).
+mention).
+
+Couverture (#273, lot 6 de #244) : `apps/web/tests/chat-global.test.tsx`. Ce qu'il
+observe n'est pas le texte rendu mais **le canal demandé** à `useChat` — le double
+du harnais le note (`canauxDemandes`, même dessin que `porteesDemandees` de #281),
+et c'est le seul endroit où « à qui l'on parle » soit observable, le contenu
+affiché venant de `poserFilAssistance` quoi qu'il arrive. C'est ce qui rend
+opposable la décision la plus facile à défaire de cet écran : **la mention change
+de destinataire, elle ne recopie rien**. Le reste suit les quatre décisions de
+`mentionEnTete` — en tête, close par une espace, destinataire connu, casse
+ignorée, et rien dans le doute — puis « Ouvert depuis ce fil », qui **lit** les
+`run_id` du fil et n'y range jamais un run qui a simplement tourné pendant qu'on
+avait l'écran ouvert.
 
 ---
 
@@ -2426,6 +2447,18 @@ couperait le fil en deux — cet écran reste la voie de qui veut valider avant.
   "tache_id": ""              // idem, pour une tâche
 }
 ```
+
+Couverture (#273, lot 6 de #244) : [`tests/test_chat_global.py`](../tests/test_chat_global.py),
+sans réseau, sans modèle et **sans moteur** — le canal n'exige qu'un `LanceurRun` (« ouvre un run
+sur cet objectif »), donc un double suffit à éprouver ce qu'il ouvre. Quatre choses y sont gardées
+qu'aucun autre test ne voyait : la **règle d'intention** dans ses deux moitiés — ce qui doit ouvrir
+un run, et ce qui ne doit surtout pas, le doute compris —, l'**aperçu** relu à chaque question
+plutôt que figé à la construction de l'app, un **lancement en échec raconté dans le fil** au lieu
+d'être levé (levé, il deviendrait un 502 sans trace alors que la demande, elle, est déjà persistée),
+et le **contrat SSE** vu des deux bouts : côté répondeur, la concaténation des incréments *est* le
+texte final ; côté endpoint, les `delta` du flux reconstituent la trame `fin`, sur les deux voies du
+canal — celle qui ouvre un run et celle qui converse, l'écriture par morceaux n'étant pas la même de
+part et d'autre.
 
 ### 6.6 Référence de ticket externe portée par une tâche (#187)
 
