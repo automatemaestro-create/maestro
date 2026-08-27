@@ -256,8 +256,8 @@ describe("la carte d'un run — la même sur les trois écrans", () => {
   });
 
   it("mène l'attente vers l'écran qui porte le geste qui la lève", () => {
-    // La vue d'un run *montre* l'attente sans la débloquer : le renvoi vise
-    // « Valider le brief » ou « Validations », jamais la vue elle-même.
+    // La vue d'un run *montre* l'attente sans la débloquer : le renvoi vise le
+    // fil (#483) ou « Validations », jamais la vue elle-même.
     carte(runFactice({ statut: EXECUTION_EN_ATTENTE_BRIEF }));
 
     expect(screen.getByText(ATTENTES[ATTENTE_BRIEF].phrase)).toBeInTheDocument();
@@ -666,8 +666,15 @@ describe("les attentes et leurs renvois", () => {
   it("mènent chacune à l'écran qui porte le geste", () => {
     // Deux attentes se lèvent au même endroit — c'est le même écran qui porte le
     // brief et ses questions —, la troisième ailleurs.
-    expect(entreeParLibelle(ATTENTES[ATTENTE_BRIEF].page)?.href).toBe("/brief");
-    expect(entreeParLibelle(ATTENTES[ATTENTE_REPONSES].page)?.href).toBe("/brief");
+    //
+    // Depuis #483 cet endroit est **le fil** et non plus `/brief` : le geste a
+    // déménagé (arbitrage du 2026-08-24), la table l'a suivi. C'est cette
+    // assertion-là qui rend le déménagement opposable — sans elle, le jour où
+    // #484 retire l'entrée « Valider le brief » du menu, les trois renvois
+    // s'éteindraient en silence et un run suspendu ne serait plus montré nulle
+    // part.
+    expect(entreeParLibelle(ATTENTES[ATTENTE_BRIEF].page)?.href).toBe("/chat");
+    expect(entreeParLibelle(ATTENTES[ATTENTE_REPONSES].page)?.href).toBe("/chat");
     expect(entreeParLibelle(ATTENTES[ATTENTE_VALIDATION].page)?.href).toBe(
       "/validations",
     );
