@@ -421,25 +421,21 @@ class Depot:
         """Déclare un ticket : son statut, ses labels, et son rôle éventuel de lot ou de parent.
 
         `labels_sup` ajoute des labels à la liste de base — il n'existe que pour `lot::arbitre`
-        (#562), qui est un fait porté par le PARENT et non par sa checklist : sans lui, le seul
+        (#562), qui est un fait porté par le PARENT et non par son découpage : sans lui, le seul
         chemin testable serait celui du marqueur, c'est-à-dire la moitié de la règle.
 
-        LE TICKET PORTE LES DEUX SUPPORTS DU DÉCOUPAGE (#393) : la prose et la checklist dans le
-        corps, les lignes d'en-tête `parent:` / `lot:` que `gh_issue_raw` pose en régime `natif` —
-        celui du défaut depuis ce lot. C'est la forme d'un vrai ticket depuis le backfill (#392),
-        `/ticket-create` écrivant les deux et seule la LECTURE ayant basculé ; un double qui n'en
-        porterait qu'un ferait dépendre le plan du régime, alors que tout l'enjeu est qu'il n'en
-        dépende pas.
+        LE DÉCOUPAGE VIT DANS L'EN-TÊTE ET NULLE PART AILLEURS (#395) : les lignes `parent:` et
+        `lot:` que `gh_issue_raw` pose depuis `Issue.parent` et `Issue.subIssues`. Le corps garde
+        la phrase « Sous-ticket de #<parent> » — écrite pour le lecteur humain, et portée ici pour
+        que rien n'en dépende : un plan qui changerait selon sa présence trahirait un parseur resté
+        branché sur la prose.
         """
         corps = f"Sous-ticket de #{parent} — lot 1/5.\n" if parent else ""
         entetes = f"parent:\t{parent}\n" if parent else ""
         if lots:
-            corps += "\n## Sous-tickets\n\n" + "".join(
-                f"- [ ] #{i} — {t}{' (parallèle)' if p else ''}\n" for i, t, p in lots
-            )
-            # La coche vaut « - » des deux côtés : le `state:` de ces doubles est toujours `open`,
-            # et c'est de l'état que le natif la dérive (#390). Le `statut` d'un lot est son CYCLE
-            # DE VIE, qui ne ferme rien.
+            # La coche vaut « - » : le `state:` de ces doubles est toujours `open`, et c'est de
+            # l'état que la coche est dérivée (#390). Le `statut` d'un lot est son CYCLE DE VIE, qui
+            # ne ferme rien.
             entetes += "".join(
                 f"lot:\t{i}\t-\t{'∥' if p else '-'}\t{t}\n" for i, t, p in lots
             )
@@ -725,7 +721,7 @@ def test_le_plan_ecarte_le_parent_et_garde_les_lots_dans_l_ordre(depot: Depot) -
     iids = [ligne[1] for ligne in _lignes_du_plan(r.stdout)]
     assert "500" not in iids, "le parent de suivi ne porte ni branche ni code : il ne se traite pas"
     assert iids == ["600", "501", "502", "503"], (
-        "le ticket prioritaire passe devant, puis les lots dans l'ordre de la checklist"
+        "le ticket prioritaire passe devant, puis les lots dans l'ordre du parent"
     )
 
 
@@ -5915,7 +5911,7 @@ def _groupes_du_plan(sortie: str) -> dict[str, str]:
 
 
 def test_une_suite_de_lots_marques_forme_une_seule_vague(depot: Depot) -> None:
-    """Le cœur de #288 : le marqueur de la checklist cesse d'être jeté après le tri.
+    """Le cœur de #288 : le marqueur du lot cesse d'être jeté après le tri.
 
     Deux lots marqués qui se suivent tombent dans la MÊME vague, donc dans le même groupe — c'est
     exactement ce que le run pourra mener de front. Le lot non marqué qui les précède et celui qui
@@ -5952,7 +5948,7 @@ def test_les_tickets_hors_lot_partagent_le_groupe_neutre(depot: Depot) -> None:
     assert set(groupes.values()) == {"-"}, f"un seul groupe pour tout le hors-lot — {groupes}"
 
 
-def test_la_vague_se_compte_sur_toute_la_checklist_lots_livres_compris(depot: Depot) -> None:
+def test_la_vague_se_compte_sur_tous_les_lots_livres_compris(depot: Depot) -> None:
     """Un lot déjà livré ne disparaît pas de la chaîne : il continue de faire barrière.
 
     Sans cela le groupe d'un lot dépendrait de ce qui reste à faire au moment du calcul — deux runs
@@ -5969,7 +5965,7 @@ def test_la_vague_se_compte_sur_toute_la_checklist_lots_livres_compris(depot: De
     groupes = _groupes_du_plan(depot.lance("queue.sh").stdout)
     assert "501" not in groupes, "le lot livré n'est plus à traiter"
     assert groupes["502"] == groupes["503"] == "500.2", (
-        f"la vague reste comptée depuis le premier lot de la checklist — {groupes}"
+        f"la vague reste comptée depuis le premier lot du parent — {groupes}"
     )
 
 
