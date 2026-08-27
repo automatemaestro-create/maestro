@@ -1063,6 +1063,66 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
   question à poser : la liste se lit dans `/backlog`, et fermer un chantier est un geste qu'on veut
   relire un par un.
 
+  **La garde de fermeture, et ce qu'elle ne peut pas être** (ticket #394). Le pendant de #515 sur le
+  même événement et dans l'autre sens : celui-là ferme un parent que ses lots ont soldé, celle-ci
+  **rouvre** un parent que personne n'avait le droit de fermer. Un parent fermé alors qu'il lui
+  reste des lots ouverts est **rouvert dans la foulée**, avec un commentaire **nommant** les lots
+  restants — quel que soit l'auteur de la fermeture, un clic dans l'interface GitHub compris.
+
+  ⚠ **Ce n'est pas un verrou, et ça ne peut pas en être un.** La demande d'origine était
+  d'*empêcher* la fermeture ; c'est impossible sur ce dépôt, pour deux raisons indépendantes
+  mesurées le 2026-08-20 : les **rulesets ne visent que branches et tags** — il n'existe aucune
+  règle portant sur la fermeture d'une issue —, et ils sont de toute façon **indisponibles**
+  (`GET /repos/:owner/:repo/rulesets` répond **HTTP 403** « Upgrade to GitHub Pro or make this
+  repository public », le mur de #338, §8.8). D'où une **correction a posteriori** : la fermeture a
+  lieu, puis elle est annulée. C'est à annoncer ainsi partout — un verrou annoncé qui n'en est pas
+  un est pire que pas de verrou. Cinq choses à connaître avant d'y toucher :
+
+  - **elle passe AVANT les deux autres questions, et c'est un veto et non un troisième point de la
+    liste.** Si la fermeture est annulée, tout ce qui en découle est faux : la question 1 poserait
+    « Terminé » sur un ticket qu'on vient de rouvrir (dérive que rien ne rattrape, `reconcile-workflow`
+    ne jugeant que les tickets *fermés*), et la question 2 compterait ce parent comme un lot soldé
+    de **son propre** parent, propageant la fermeture illégitime d'un cran vers le haut. Sur un
+    veto, `ticket-ferme.sh` sort donc immédiatement, **en 0** — une réouverture est le dispositif
+    qui fonctionne, pas un incident. C'est aussi ce qu'un workflow séparé n'aurait eu aucun moyen
+    d'obtenir, et la meilleure justification a posteriori du « un seul script » de #515 ;
+  - **elle est aveugle à la raison de fermeture**, exactement comme la question 2. Une fermeture est
+    une fermeture : un parent fermé « as not planned » sur des lots ouverts est rouvert comme un
+    parent fermé par mégarde. Ce n'est pas une rigidité, parce que le geste correct existe déjà et
+    ne passe pas par là — **abandonner un chantier, c'est abandonner ses lots**, après quoi #515
+    ferme le parent tout seul. Le commentaire le dit, et nomme l'autre issue (détacher les lots) ;
+  - **un lot abandonné compte comme soldé**, même définition qu'en #515 — et la mesure du lot 1
+    (#390, 2026-08-27) l'a confirmée par les deux bouts : `subIssuesSummary.completed` compte un lot
+    fermé en `not_planned` (`total = 3 · completed = 2` sur un banc à un lot livré, un abandonné, un
+    ouvert), donc la colonne dit « fermé » et non « réalisé ». C'était la réponse favorable —
+    l'inverse aurait fait rouvrir **pour toujours** un parent dont le dernier lot est abandonné. La
+    garde n'utilise pourtant **pas** l'agrégat, et pour trois raisons qui ne sont pas de la
+    méfiance : le commentaire doit **nommer** les lots restants (des compteurs n'y suffisent pas),
+    « soldé » se définirait alors deux fois, et `subIssuesSummary` n'existe qu'en régime natif quand
+    ce verbe doit répondre des deux côtés tant que #393 n'a pas basculé le défaut. Le vrai piège que
+    la mesure laisse derrière elle est ailleurs, et il vaut pour tout le monde : **ne jamais lire
+    `completed` comme « réalisé »** — un chantier à `3/3` peut n'avoir livré aucun de ses lots ;
+  - **rien ne boucle, et deux remparts le tiennent.** Rouvrir produit `issues: reopened`, que le
+    workflow n'écoute pas (`types: [closed]`) : c'est le rempart qui agit, et il vit dans le YAML.
+    Le second est dans le verbe, qui n'agit **que sur un ticket qu'il trouve fermé** — redondant
+    tant que personne n'ajoute `reopened` aux types écoutés, et là pour le jour où quelqu'un
+    l'ajoutera pour une autre raison, le diff qui créerait la boucle ne passant pas par `lib.sh`.
+    Il rend au passage le verbe **idempotent** : rejoué sur un parent déjà rouvert, il s'abstient au
+    lieu de poster un second commentaire ;
+  - **l'asymétrie des deux échecs** est reprise telle quelle de `ferme-parent`. Tant qu'on ignore si
+    le ticket est un parent, un ticket illisible est une **abstention** : ce verbe passe à chaque
+    fermeture du dépôt, dont l'immense majorité ne sont pas des parents, et un run rouge une fois
+    sur deux n'apprend plus rien à personne. Une fois qu'on **sait** qu'il y a un parent, des lots
+    illisibles rendent **1** et laissent le run rouge — c'est là qu'un silence serait la panne
+    invisible que la garde existe pour nommer. Et un lot dont l'état ne revient pas est compté
+    **ouvert**, donc fait rouvrir : la prudence va toujours vers « le chantier n'est pas fini ».
+
+  Verbe à la main : `lib.sh garde-fermeture [--check] <iid>`, où `<iid>` est **le ticket qui vient
+  de se fermer**, comme le porte l'événement — `0` = rouvert (ou le serait), `3` = abstention
+  nommée (ticket ouvert, pas un parent, tous les lots soldés), `1` = échec.
+  `MAESTRO_GARDE_FERMETURE=0` éteint l'automatisme sans retirer le verbe : c'est aussi la seule
+  sortie d'une garde qui ne se contourne pas, pour le chantier qu'on veut fermer malgré elle.
+
   **L'entrée en travail, l'autre bout du même cycle** (ticket #517). Le pendant exact du paragraphe
   précédent, à l'autre extrémité : **démarrer un lot fait passer son parent de « À faire » à
   « En cours »**, dans le même geste et sans qu'aucune commande ne le demande. Avant #517 un parent
@@ -1201,7 +1261,7 @@ Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subti
 | `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, marqueur `(parallèle)` sur les lots indépendants, lot tests en dernier) et pose `lot::arbitre` sur le parent, **quel qu'ait été le verdict** (#562) | — | — |
 | `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ le travail est en route (« En cours ») ou livré et on n'attend plus que des merges — un parent dont tout est fermé s'est fermé tout seul (#515) | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête. Et **fait passer le parent « En cours »** s'il était « À faire » (#515 à l'autre bout, ici #517, `lib.sh begin` → `demarre-parent`) |
 | `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou, si c'était le dernier, que le parent **se fermera de lui-même** au merge, #515), et coche les lots terminés dans la checklist du parent |
-| l'événement `issues: closed` | — | **ferme le parent** dès que son dernier lot se ferme (#515, `lib.sh ferme-parent`) — quels que soient l'auteur du merge et la machine | pose « Terminé » (#377) |
+| l'événement `issues: closed` | — | **ferme le parent** dès que son dernier lot se ferme (#515, `lib.sh ferme-parent`) — quels que soient l'auteur du merge et la machine —, et **le rouvre** s'il a été fermé alors qu'il lui restait des lots (#394, `lib.sh garde-fermeture`, qui passe **avant** les deux autres questions) | pose « Terminé » (#377) |
 
 **Voie « non réalisé ».** À tout moment (depuis `À faire`, `En cours` ou `En revue`), un ticket
 peut être clos sans être réalisé avec **`/ticket-abandon <iid> [doublon]`** : statut `Abandonné`
@@ -3267,15 +3327,25 @@ voyait. Constat du 2026-08-19, celui qui a ouvert le ticket : trois tickets merg
 | [`scripts/github/ticket-ferme.sh`](../scripts/github/ticket-ferme.sh) | **décide** : filtre, délègue, ou s'abstient en le disant |
 | `lib.sh reconcile-workflow <iid>` | **pose**, inchangé — le verbe de #275 ci-dessus |
 | `lib.sh ferme-parent <iid>` | **ferme le parent** dont ce ticket était le dernier lot (#515, §5.1) |
+| `lib.sh garde-fermeture <iid>` | **rouvre** ce ticket si c'est un parent aux lots incomplets (#394, §5.1) |
 
-**Deux questions, un seul événement, un seul script** (#515). « Ce ticket mérite-t-il "Terminé" ? »
-et « était-il le dernier lot de son parent ? » ne partagent que le déclencheur : la première n'ouvre
-que sur `completed`, la seconde vaut pour **toute** raison de fermeture, un lot abandonné soldant
-son parent comme un lot livré. Elles sont donc **indépendantes** — une pose en échec n'empêche pas
-la fermeture d'être tentée — et le second workflow qu'aurait pu appeler la seconde n'a **pas** été
-écrit : deux workflows sur `issues: closed` se relisent mal, chacun ignorant ce que l'autre vient
-d'écrire sur le même ticket. Conséquence assumée d'ordre : le **jeton est vérifié avant la raison**,
-là où #377 faisait l'inverse — sans lui la seconde question ne pourrait rien écrire non plus.
+**Trois questions, un seul événement, un seul script** (#515 puis #394). « Cette fermeture est-elle
+légitime ? », « ce ticket mérite-t-il "Terminé" ? » et « était-il le dernier lot de son parent ? ».
+Les deux dernières ne partagent que le déclencheur : la première n'ouvre que sur `completed`, la
+seconde vaut pour **toute** raison de fermeture, un lot abandonné soldant son parent comme un lot
+livré. Elles sont donc **indépendantes** — une pose en échec n'empêche pas la fermeture d'être
+tentée — et les workflows qu'elles auraient pu appeler chacune n'ont **pas** été écrits : plusieurs
+workflows sur `issues: closed` se relisent mal, chacun ignorant ce que l'autre vient d'écrire sur le
+même ticket. Conséquence assumée d'ordre : le **jeton est vérifié avant la raison**, là où #377
+faisait l'inverse — sans lui les deux autres questions ne pourraient rien écrire non plus.
+
+⚠ **La garde de #394, elle, n'est pas une troisième question rangée à côté des deux autres : c'est
+un VETO, et il passe en premier.** Si elle rouvre, la fermeture est annulée, donc les deux autres
+n'ont plus d'objet — poser « Terminé » sur un ticket rouvert, ou solder le parent d'un chantier
+inachevé, sont des dérives que rien derrière ne rattrape. Le script sort alors immédiatement, **en
+0**. C'est la meilleure justification a posteriori du « un seul script » : l'ordre entre les trois
+questions est une décision, et deux workflows séparés n'auraient eu aucun moyen de la porter. Voir
+§5.1 pour la règle elle-même, et pour la raison qui interdit d'en faire un vrai verrou.
 
 La décision est dans le **script** et non dans un `if:` du YAML, pour une raison qui n'est pas de
 style : un `if:` ne se rejoue ni en local ni dans la suite pytest, si bien que le filtre y serait un
@@ -3286,7 +3356,11 @@ second exemplaire qu'aucun test ne joue. Le script, lui, tourne sur le dépôt j
 `main`, ne relance aucun test, et ne coûte que les quelques secondes d'un checkout. Seul `closed`
 est écouté — `reopened` n'est pas son symétrique et n'a rien à faire là : rendre son état à un
 ticket rouvert demanderait de savoir lequel il portait avant, et « À faire » serait une valeur
-inventée.
+inventée. ⚠ **Depuis #394 cette liste porte aussi la sûreté de la boucle** : la garde de fermeture
+*rouvre* le parent qu'elle refuse de laisser fermé, donc écouter `reopened` — pour rendre un état,
+pour notifier, pour n'importe quelle autre raison — rendrait cette réouverture infiniment récursive,
+et le diff qui l'ajoute ne passerait pas par `lib.sh`. Le second rempart est dans le verbe, qui
+n'agit que sur un ticket qu'il trouve **fermé** ; celui-ci reste le premier.
 
 **Deux barrières devant « Abandonné »/« Doublon », et chacune arrête ce que l'autre ne voit pas.**
 Écraser l'état d'un ticket abandonné est la dérive « sans retour possible » nommée plus haut :

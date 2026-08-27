@@ -2,14 +2,32 @@
 # CE QU'ON FAIT QUAND UN TICKET SE FERME — la décision du workflow GitHub Actions
 # `.github/workflows/cycle-de-vie.yml` (tickets #377 et #515, docs/10 §9.2 et §5.1).
 #
-# DEUX QUESTIONS INDÉPENDANTES, sur un seul et même événement :
-#   1. ce ticket mérite-t-il « Terminé » ?      (#377 — ci-dessous)
-#   2. était-il le dernier lot de son parent ?  (#515 — `lib.sh ferme-parent`)
+# TROIS QUESTIONS, sur un seul et même événement :
+#   0. cette fermeture est-elle seulement légitime ?  (#394 — `lib.sh garde-fermeture`)
+#   1. ce ticket mérite-t-il « Terminé » ?            (#377 — ci-dessous)
+#   2. était-il le dernier lot de son parent ?        (#515 — `lib.sh ferme-parent`)
 #
-# Elles ne partagent que le déclencheur, et surtout PAS leurs filtres : la n°1 n'ouvre que sur
-# « completed », la n°2 vaut pour TOUTE raison de fermeture — un lot abandonné est soldé comme un
-# lot livré. Les enchaîner derrière un seul filtre laisserait un chantier abandonné lot par lot
-# garder son parent ouvert pour toujours.
+# Les deux dernières ne partagent que le déclencheur, et surtout PAS leurs filtres : la n°1 n'ouvre
+# que sur « completed », la n°2 vaut pour TOUTE raison de fermeture — un lot abandonné est soldé
+# comme un lot livré. Les enchaîner derrière un seul filtre laisserait un chantier abandonné lot par
+# lot garder son parent ouvert pour toujours.
+#
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# LA QUESTION 0 PASSE D'ABORD, ET C'EST TOUT SON CONTENU (#394)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# Elle n'est pas une troisième question rangée à côté des deux autres : c'est un VETO sur
+# l'événement. Un parent fermé alors que des lots restent ouverts est rouvert, donc la fermeture
+# n'a pas eu lieu — et TOUT CE QUI EN DÉCOULE devient faux :
+#
+#   · la n°1 poserait « Terminé » sur un ticket qu'on vient de rouvrir, dérive qu'aucun mécanisme
+#     du dépôt ne rattrape ensuite (`reconcile-workflow` ne juge que les tickets FERMÉS) ;
+#   · la n°2 compterait ce parent comme un lot soldé de SON propre parent, propageant la fermeture
+#     illégitime d'un cran vers le haut.
+#
+# Sur un veto, ce script sort donc immédiatement, en 0 : la réouverture est un SUCCÈS, pas un
+# incident — c'est le dispositif qui fonctionne. Ce qui reste rouge est l'ÉCHEC de la garde, où
+# l'on ne sait pas si la fermeture était légitime : on poursuit alors comme avant #394, faute de
+# mieux, et le run rouge dit qu'on a poursuivi sans savoir.
 #
 # Le merge d'une PR FERME le ticket (`Closes #<iid>`) mais ne touche à aucun état : « Terminé »
 # n'était posé qu'ensuite, par `worktree.sh gc` (#275) — donc au prochain `/ticket-start`, au
@@ -25,9 +43,10 @@
 # Usage :
 #   bash scripts/github/ticket-ferme.sh <iid> [<state_reason>]
 #
-# Codes de retour : 0 = les deux questions ont été traitées, pose et fermeture comprises, ou
-# ABSTENTION voulue (raison non « completed », secret absent, état déjà final, ticket qui n'est pas
-# un lot, lots encore ouverts) ; 1 = l'une des deux a ÉCHOUÉ ; 2 = usage. Le 1 laisse le run ROUGE
+# Codes de retour : 0 = les questions dues ont été traitées — pose, fermeture et RÉOUVERTURE
+# comprises —, ou ABSTENTION voulue (raison non « completed », secret absent, état déjà final,
+# ticket qui n'est pas un lot, lots encore ouverts) ; 1 = l'une d'elles a ÉCHOUÉ ; 2 = usage. Une
+# réouverture (question 0) rend 0 et court-circuite les deux autres. Le 1 laisse le run ROUGE
 # dans l'onglet Actions — c'est là toute la visibilité qu'on peut lui donner, et il ne casse rien :
 # ce workflow ne conditionne aucun merge, `worktree.sh gc` gardant son rôle de filet de rattrapage.
 # Une question en échec n'empêche pas l'autre d'être posée : elles sont indépendantes.
@@ -95,6 +114,44 @@ if [ ! -f "$lib" ]; then
 fi
 
 code=0
+
+# ── Question 0 : cette fermeture est-elle légitime ? (#394) ──────────────────────────────────────
+# LA DÉCISION N'EST PAS ÉCRITE ICI — même règle que pour les deux suivantes. `garde-fermeture <iid>`
+# lit le ticket, s'abstient s'il n'est pas un parent (le cas de l'immense majorité des fermetures)
+# ou si tous ses lots sont soldés, et rouvre sinon en commentant lesquels restent.
+#
+# Le code est relevé par un `if`, jamais par un `$?` nu : sous `set -e`, un verbe qui rend 3 —
+# l'abstention, c'est-à-dire le cas nominal — sortirait du script avant la ligne qui le lit.
+#
+# L'INTERRUPTEUR EST AU POINT DE GREFFE ET NON DANS LE VERBE, comme `MAESTRO_PARENT_EN_COURS` l'est
+# dans `gl_begin` : ce qu'on veut pouvoir éteindre est l'AUTOMATISME, jamais la possibilité de poser
+# la question à la main. Il a ici un second usage, et c'est le seul moyen de sortir d'une garde qui
+# ne se laisse pas contourner : un chantier qu'on veut vraiment fermer sur des lots ouverts se solde
+# en soldant ses lots (abandon compris) ou en les détachant — et si aucun des deux ne convient, on
+# éteint la garde le temps de le fermer plutôt que de lutter contre elle.
+if [ "${MAESTRO_GARDE_FERMETURE:-1}" = 0 ]; then
+  rc_garde=3
+elif bash "$lib" garde-fermeture "$iid"; then
+  rc_garde=0
+else
+  rc_garde=$?
+fi
+case "$rc_garde" in
+  0)
+    # Rouvert : la fermeture est ANNULÉE, donc les questions 1 et 2 n'ont plus d'objet. Sortie en 0
+    # — le dispositif vient de faire exactement ce pour quoi il existe.
+    echo "Fermeture annulée sur #$iid — les questions suivantes ne s'appliquent pas."
+    exit 0
+    ;;
+  3) : ;;  # abstention nommée : la fermeture tient, on poursuit.
+  *)
+    # On ne SAIT PAS si la fermeture était légitime. Poursuivre est le comportement d'avant #394, et
+    # c'est le moins mauvais des deux : s'abstenir de poser « Terminé » sur tous les tickets du
+    # dépôt parce qu'une lecture a échoué coûterait bien plus que de rattraper un parent à la main.
+    echo "Garde de fermeture en échec sur #$iid — on poursuit sans savoir, le run reste rouge." >&2
+    code=1
+    ;;
+esac
 
 # ── Question 1 : ce ticket mérite-t-il « Terminé » ? (#377) ──────────────────────────────────────
 # LA POSE N'EST PAS RÉÉCRITE ICI, elle est déléguée. `reconcile-workflow <iid>` est le verbe de
