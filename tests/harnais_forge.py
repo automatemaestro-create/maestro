@@ -129,21 +129,48 @@ def vue_texte_en_json(texte):
     """
     entete, _, corps = texte.partition("\n--\n")
     champs = {}
+    lots = []
     for ligne in entete.splitlines():
         cle, _, valeur = ligne.partition(":\t")
+        # Le DÉCOUPAGE NATIF (#390) : plusieurs lignes « lot: », donc une liste et pas une clé de
+        # plus dans `champs`, où elles s'écraseraient l'une l'autre.
+        if cle == "lot":
+            lots.append(valeur.split("\t"))
+            continue
         champs[cle] = valeur
     def nodes(cle, brut):
         valeurs = [v.strip() for v in brut.split(",") if v.strip()]
         return {"nodes": [{cle: v} for v in valeurs]}
-    return {"data": {"repository": {"issue": {
+    issue = {
         "title": champs.get("title", ""),
         "state": "CLOSED" if champs.get("state") == "closed" else "OPEN",
         "author": {"login": champs.get("author", "")},
         "labels": nodes("name", champs.get("labels", "")),
         "assignees": nodes("login", champs.get("assignees", "")),
         "milestone": {"jalon": champs.get("milestone", "")},
-        "body": corps.rstrip("\n"),
-    }}}}
+    }
+    # `parent` et `lots` ne sont rendus QUE si le test les a décrits, parce que le vrai `gh` ne rend
+    # que les champs demandés : en régime `checklist` la requête ne les porte pas, et une réponse
+    # qui les porterait quand même laisserait passer un code qui les lit hors régime.
+    #
+    # L'ORDRE DES CLÉS EST DU CONTRAT ICI, pas de la mise en forme (cf. l'en-tête de cette section).
+    # `gh_lots_natifs` borne le titre d'un lot par `","state":`, et le bloc des lots par le champ
+    # suivant : insérer `lots` après `body`, ou `state` ailleurs qu'après `title`, rendrait le
+    # double vert sur un JSON que GitHub n'émet pas.
+    if "parent" in champs:
+        issue["parent"] = {"pnum": int(champs["parent"])} if champs["parent"] else None
+    if lots:
+        issue["lots"] = {"nodes": [
+            {
+                "number": int(iid),
+                "title": titre,
+                "state": "CLOSED" if coche == "x" else "OPEN",
+                "labels": {"nodes": [{"name": "lot::parallele"}] if par == "∥" else []},
+            }
+            for iid, coche, par, titre in lots
+        ]}
+    issue["body"] = corps.rstrip("\n")
+    return {"data": {"repository": {"issue": issue}}}
 
 
 if args[:2] == ["auth", "status"]:
@@ -614,7 +641,14 @@ def regle_merge(pr: int = 42, merge: bool = True) -> dict:
     return {"contient": [f"pulls/{pr}/merge"], "reponse": corps}
 
 
-def corps_ticket(titre: str, labels: str, description: str, etat: str = "open") -> str:
+def corps_ticket(
+    titre: str,
+    labels: str,
+    description: str,
+    etat: str = "open",
+    parent: str | None = None,
+    lots: tuple[tuple[str, str, str, str], ...] = (),
+) -> str:
     """La VUE CANONIQUE d'un ticket : en-têtes `clé:<TAB>valeur`, séparateur `--`, puis le corps.
 
     C'est le format de sortie de `lib.sh issue-raw`, dont six verbes descendent — et c'est lui que
@@ -623,7 +657,18 @@ def corps_ticket(titre: str, labels: str, description: str, etat: str = "open") 
     `etat` (« open »/« closed ») sert la mesure de #515 : un lot est soldé quand il est FERMÉ, quel
     que soit son cycle de vie. C'est donc ici, et pas dans la carte du projet, que se décrit un lot
     livré — ou abandonné, qui est fermé au même titre.
+
+    `parent` et `lots` décrivent le DÉCOUPAGE NATIF (#390) — les deux lignes d'en-tête que
+    `gh_issue_raw` pose sous `MAESTRO_LOTS=natif`, depuis `Issue.parent` et `Issue.subIssues`. Un
+    lot est un quadruplet « iid, coche(x|-), par(∥|-), titre », c'est-à-dire EXACTEMENT les quatre
+    colonnes que `gl_subticket_rows` rend des deux côtés : c'est ce qui permet à un test de décrire
+    un parent portant les DEUX supports et de comparer les deux sorties.
     """
+    decoupage = ""
+    if parent is not None:
+        decoupage += f"parent:\t{parent}\n"
+    for iid, coche, par, titre_lot in lots:
+        decoupage += f"lot:\t{iid}\t{coche}\t{par}\t{titre_lot}\n"
     return (
         f"title:\t{titre}\n"
         f"state:\t{etat}\n"
@@ -632,6 +677,7 @@ def corps_ticket(titre: str, labels: str, description: str, etat: str = "open") 
         "comments:\t0\n"
         "assignees:\t\n"
         "milestone:\tPhase 4 — Control Tower UX\n"
+        f"{decoupage}"
         "--\n"
         f"{description}\n"
     )
