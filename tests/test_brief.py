@@ -44,6 +44,7 @@ from maestro.controltower.brief import (
     ACTEUR_BRIEF,
     ROLE_BRIEF,
     ArbitreBriefControlTower,
+    ArbitreClarificationControlTower,
     arbitre_brief_redis,
     evenement_demande_brief,
 )
@@ -927,3 +928,93 @@ def test_un_mode_de_brief_inconnu_est_refuse_au_lancement(client):
     assert detail["motif"] == "requete-invalide"
     assert "manuel" in detail["message"]
     assert "sans, auto, humain" in detail["message"]
+
+
+# --- ⑦ Le cadrage joué dans le fil (#481, lot final #485) -----------------------------
+#
+# Depuis #483 le brief se lit, se corrige et se tranche **dans la conversation**,
+# et non plus sur son écran (#322, dont le chemin est désormais redirigé —
+# docs/05 §1.1). Le transport n'a pas bougé d'une ligne : le fil rappelle les
+# routes de #320/#321, avec le même corps. Ce qui doit donc être éprouvé n'est
+# pas un second canal, c'est que le déménagement n'a **rien** desserré des deux
+# garanties qui font tout le prix du point de contrôle — et aucune des deux ne se
+# voit depuis l'écran qu'on regarde.
+
+
+def test_rien_n_est_decompose_tant_que_la_decision_n_est_pas_rendue():
+    """D5 mesurée **pendant** l'attente, et pas seulement à la fin du run.
+
+    Les tests d'à côté prouvent qu'un *refus* ne coûte aucune tâche ; celui-ci
+    prouve l'autre moitié, celle qui tient le run suspendu : à l'instant où
+    l'arbitre est appelé — c'est-à-dire tant que personne n'a tranché — le plan
+    n'a pas été demandé et aucun exécutant n'a tourné. Sans cette mesure, une
+    décomposition « optimiste » lancée en parallèle de l'attente passerait tous
+    les tests existants, puisqu'elle rendrait le même rapport final.
+    """
+    vu: dict[str, int] = {}
+
+    async def arbitre_qui_regarde(demande: DemandeBrief) -> DecisionBrief:
+        vu["plans"] = len(cadrage.prompts_plan)
+        vu["taches"] = execution.appels
+        return DecisionBrief(approuve=True)
+
+    engine, cadrage, execution = moteur(arbitre=arbitre_qui_regarde)
+    rapport = asyncio.run(
+        engine.run("Prototyper un mini-CRM", mode_brief=MODE_BRIEF_HUMAIN)
+    )
+
+    assert vu == {"plans": 0, "taches": 0}
+    # … et une fois la décision rendue, le run décompose pour de bon : la garantie
+    # porte sur l'**ordre**, pas sur un run qui ne ferait rien.
+    assert len(cadrage.prompts_plan) == 1
+    assert execution.appels == 1
+    assert rapport.mode_brief == MODE_BRIEF_HUMAIN
+
+
+def test_un_bus_referme_pendant_le_cadrage_fait_echouer_le_run_sans_rien_decomposer():
+    """Le fail-safe, joué **de bout en bout** : le moteur, pas seulement l'arbitre.
+
+    L'arbitre lève quand le bus se tarit (section ⑤), mais lever n'est utile que
+    si le moteur en fait un **échec de run**. C'est la seule des deux moitiés qui
+    puisse mal tourner en silence : une erreur avalée quelque part sur le chemin
+    rendrait un run qui décompose sans approbation, c'est-à-dire l'inverse exact
+    de D5, et le rapport final ne le dirait pas.
+    """
+    engine, cadrage, execution = moteur(
+        arbitre=ArbitreBriefControlTower(BusQuiSeReferme())
+    )
+
+    with pytest.raises(RuntimeError) as capture:
+        asyncio.run(engine.run("Prototyper un mini-CRM", mode_brief=MODE_BRIEF_HUMAIN))
+
+    assert "sans décision" in str(capture.value)
+    # Le brief a été payé (il est la moitié gratuite), la décomposition non.
+    assert len(cadrage.prompts_brief) == 1
+    assert cadrage.prompts_plan == []
+    assert execution.appels == 0
+
+
+def test_un_bus_referme_sans_reponse_aux_questions_echoue_de_meme():
+    """Même fail-safe sur l'autre canal du fil : les questions (#321).
+
+    Le cadrage dans le fil pose les questions **et** tranche ; les deux attentes
+    ont le même patron et doivent avoir la même issue. Un tour silencieusement
+    sauté enverrait le brief en validation avec ses questions intactes, en
+    laissant croire qu'on les a posées — ce qui est pire qu'un échec, parce que
+    l'humain approuverait alors un cadrage qu'on lui présente comme éclairci.
+    """
+    cadrage = ProviderCadrage()
+    execution = ProviderExecution()
+    engine = OrchestrationEngine(
+        execution,
+        Orchestrator(cadrage, model="claude-opus-4-8"),
+        arbitre_brief=arbitre_qui(DecisionBrief(approuve=True)),
+        arbitre_clarification=ArbitreClarificationControlTower(BusQuiSeReferme()),
+    )
+
+    with pytest.raises(RuntimeError) as capture:
+        asyncio.run(engine.run("Prototyper un mini-CRM", mode_brief=MODE_BRIEF_HUMAIN))
+
+    assert "sans réponse" in str(capture.value)
+    assert cadrage.prompts_plan == []
+    assert execution.appels == 0

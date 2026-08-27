@@ -1444,10 +1444,19 @@ Implémentation : `apps/web/app/chat/page.tsx`, `components/chat/FilDeCadrage.ts
 sélecteur), `components/chat/CadrageDansLeFil.tsx` (la conversation, le chargement du détail et les
 deux gestes) et `components/chat/BulleFil.tsx` — l'enveloppe de bulle sortie du composant de fil
 (`components/Conversation.tsx` depuis #269) pour que les messages (#482) et le cadrage n'aient pas
-deux formes sur le même écran. Couverture partielle —
-la logique critique du lot — dans
-[`apps/web/tests/fil-cadrage.test.tsx`](../apps/web/tests/fil-cadrage.test.tsx) ; le reste est
-différé au lot #485.
+deux formes sur le même écran.
+
+**Couverture** (#485, lot final) — l'écran est gardé par
+[`apps/web/tests/fil-cadrage.test.tsx`](../apps/web/tests/fil-cadrage.test.tsx) (les sept sections
+éditables, l'approbation *telle quelle* ou *corrigée* par le canal existant, le refus qui n'emporte
+jamais de brief, les questions et leur plafond, les trois surfaces d'acheminement). Mais **ce que le
+déménagement ne devait pas desserrer ne se voit pas de cet écran-là**, et c'est ce que
+[`tests/test_brief.py`](../tests/test_brief.py) ⑦ mesure sur le moteur : à l'instant où l'humain est
+sollicité, **aucun plan n'a été demandé et aucun exécutant n'a tourné** (D5, #218) — une
+décomposition « optimiste » lancée en parallèle de l'attente rendrait pourtant le même rapport final
+—, et un **bus refermé sans décision fait échouer le run** au lieu d'approuver par défaut, jusqu'au
+bout de la chaîne et non seulement dans l'arbitre. Le canal des questions (§6.10) suit la même règle :
+un tour silencieusement sauté ferait approuver un cadrage qu'on présenterait comme éclairci.
 
 ### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
@@ -3175,7 +3184,20 @@ L'emplacement d'ingestion d'un message est le sien — `chat-<identifiant>/` à 
 Implémentation : [`maestro/sources/composition.py`](../maestro/sources/composition.py) (la chaîne
 partagée) et [`maestro/controltower/chat.py`](../maestro/controltower/chat.py). Côté écran :
 `FilChat`, `components/chat/SourcesDuMessage.tsx` (la composition, glisser-déposer et collage
-compris) et `components/chat/SourcesDuFil.tsx` (ce qui a été lu, replié sous le message). Couverture
-partielle — la logique critique — dans
-[`apps/web/tests/fil-sources.test.tsx`](../apps/web/tests/fil-sources.test.tsx) ; le reste est
-différé au lot #485.
+compris) et `components/chat/SourcesDuFil.tsx` (ce qui a été lu, replié sous le message).
+
+**Couverture** (#485, lot final) — les trois temps que ce paragraphe décrit sont gardés **des deux
+côtés**, et c'est ce que le critère demandait : rien ne sert de vérifier le dépôt à l'écran si la
+route accepte ce qu'elle devrait refuser.
+
+| ce qui est gardé | côté API | côté `apps/web` |
+| --- | --- | --- |
+| le **dépôt** — un fichier voyage par son identifiant, ses octets atterrissent dans l'emplacement d'ingestion **du message** | [`tests/test_chat.py`](../tests/test_chat.py) ④, [`tests/test_controltower.py`](../tests/test_controltower.py) ⑧ | [`apps/web/tests/fil-sources.test.tsx`](../apps/web/tests/fil-sources.test.tsx) |
+| les **plafonds refusés** — `SourceRefusee` avant toute écriture, `422 {motif, message, index}` | idem | le refus sur la source visée, et celui qui n'en vise aucune |
+| le **rapport de lecture** — ce qui a été lu, ce qui a été ignoré, ce que le REST ne rapatrie pas | idem | replié sous le message, dépliable sur place |
+
+Trois d'entre eux ne se voient d'aucun écran et sont ceux qui comptent le plus : un refus laisse le
+fil **strictement vide** (ni message, ni lettre inter-agents, ni événement sur le bus) ; deux messages
+n'ont **jamais le même emplacement d'ingestion** ; et un fil relu du disque perd le `markdown` de son
+rapport — à dessein — mais **retrouve son contenu** par le champ `contexte`, sans quoi l'agent
+cesserait de voir le document dès le tour suivant.

@@ -56,8 +56,12 @@ critères d'acceptation du ticket #46 :
    `chat.message` sur le WebSocket, réponse comprise), chat avec un agent
    personnalisé du catalogue — et les refus : agent hors catalogue (404, sans
    fil orphelin), message vide (422), réponse indisponible (502, le message
-   utilisateur restant acquis et diffusé). Le canal lui-même (persistance,
-   répondeurs, messagerie) est couvert dans `tests/test_chat.py` ;
+   utilisateur restant acquis et diffusé). Depuis #482 (couverture due au lot
+   final #485) un message peut porter des **sources** : le 201 rend leur rapport
+   de lecture, un refus est un **422 motivé** (`{motif, message, index}`) qui ne
+   persiste rien, et le REST ne rapatrie jamais le contenu extrait. Le canal
+   lui-même (persistance, répondeurs, messagerie, chaîne d'ingestion) est couvert
+   dans `tests/test_chat.py` ;
 ⑨ vue coûts & analytics (#87) : agrégats transverses par tâche (cumul des
    re-tentatives), par agent (planification comprise) et par exécution, série
    temporelle en seaux (minute/heure/jour), fenêtre `depuis` (période
@@ -66,6 +70,7 @@ critères d'acceptation du ticket #46 :
 """
 
 import asyncio
+import io
 import json
 import logging
 from pathlib import Path
@@ -105,6 +110,7 @@ from maestro.controltower import (
 from maestro.controltower.chat import AUTEUR_AGENT, AUTEUR_UTILISATEUR
 from maestro.controltower.validation import evenement_demande
 from maestro.engine.guardrails import DemandeValidation
+from maestro.sources import DepotTeleversements
 from maestro.telemetry import LOGGER_NAME, RunCost, RunJournal, StepUsage
 
 
@@ -1617,6 +1623,114 @@ def test_reponse_indisponible_502_le_message_reste_acquis(bus, depot_chat):
 
     assert recu["type"] == EVENEMENT_CHAT_MESSAGE
     assert recu["statut"] == AUTEUR_UTILISATEUR
+
+
+@pytest.fixture()
+def client_chat_sources(bus, depot_chat, tmp_path, monkeypatch):
+    """Le même client, mais capable de recevoir des sources (#482).
+
+    Deux réglages, et les deux sont nécessaires : le **dépôt de téléversement**
+    est injecté (une seule instance pour la route qui reçoit les octets et pour
+    le fil qui les rattache) et l'**emplacement d'ingestion** est déplacé sur un
+    dossier jetable — sans quoi le rattachement écrirait dans le `core/ingestion/`
+    du dépôt.
+    """
+    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(tmp_path / "ingestion"))
+    app = create_app(
+        bus=bus,
+        chat_store=depot_chat,
+        chat_repondeur=RepondeurScripte(),
+        televersements=DepotTeleversements(tmp_path / "depot"),
+    )
+    with TestClient(app) as client:
+        yield client
+
+
+def test_un_message_porte_ses_sources_et_rend_leur_rapport(client_chat_sources):
+    """Le contrat complet d'un dépôt dans le fil : `POST /api/sources` puis le message.
+
+    Un fichier voyage par l'**identifiant** que le téléversement lui a rendu —
+    jamais par ses octets, jamais par un chemin du poste —, et le message rendu
+    porte ce que Maestro en a **réellement lu**. Le contenu extrait, lui, ne
+    revient pas : le rapatrier enverrait les documents entiers à chaque relecture
+    du fil.
+    """
+    depose = client_chat_sources.post(
+        "/api/sources",
+        files=[("fichier", ("cdc.md", io.BytesIO(b"# Cahier\n\nDeux mots."), "text/markdown"))],
+    ).json()
+
+    reponse = client_chat_sources.post(
+        "/api/chat/qa/messages",
+        json={
+            "contenu": "Voici le cahier.",
+            "sources": [{"type": "fichier", "id": depose["sources"][0]["id"]}],
+        },
+    )
+
+    assert reponse.status_code == 201
+    envoye, _ = reponse.json()["messages"]
+    assert [source["nom"] for source in envoye["sources"]] == ["cdc.md"]
+    (lecture,) = envoye["rapport"]["lectures"]
+    assert lecture["etat"] == "lu" and lecture["tokens"] > 0
+    assert "contexte" not in envoye and "markdown" not in lecture
+
+    # Le fil relu par le GET rend le même message, sources et rapport compris.
+    (relu, _) = client_chat_sources.get("/api/chat/qa").json()["messages"]
+    assert relu == envoye
+
+
+def test_une_source_refusee_rend_un_422_motive_et_ne_persiste_rien(
+    client_chat_sources, depot_chat
+):
+    """La forme du refus est celle que l'écran sait afficher **sur la source fautive**.
+
+    `{motif, message, index}` — le même corps que `POST /api/sources` et
+    `POST /api/executions`, et c'est ce qui permet à #482 de rendre le refus dans
+    le fil plutôt que dans une console. Aplatir en chaîne perdrait l'`index`,
+    donc l'endroit.
+    """
+    reponse = client_chat_sources.post(
+        "/api/chat/qa/messages",
+        json={
+            "contenu": "Et cette adresse ?",
+            "sources": [{"type": "url", "valeur": "ftp://exemple.test/spec"}],
+        },
+    )
+
+    assert reponse.status_code == 422
+    detail = reponse.json()["detail"]
+    assert detail["motif"] == "url-non-suivable"
+    assert detail["index"] == 0
+    assert "ftp://exemple.test/spec" in detail["message"]
+    # Le refus tombe avant toute écriture : ni fil, ni fichier de fil.
+    assert client_chat_sources.get("/api/chat/qa").json()["messages"] == []
+    assert not depot_chat.racine.exists()
+
+
+def test_un_message_de_sources_seules_est_accepte_par_la_route(client_chat_sources):
+    """Sans texte mais avec des sources, le POST rend 201 : le dépôt *est* le message.
+
+    Le pendant HTTP de la règle du canal — et la distinction qui compte : sans
+    texte **ni** source, c'est toujours un 422.
+    """
+    depose = client_chat_sources.post(
+        "/api/sources",
+        files=[("fichier", ("notes.md", io.BytesIO(b"trois mots ici"), "text/markdown"))],
+    ).json()
+
+    reponse = client_chat_sources.post(
+        "/api/chat/qa/messages",
+        json={"contenu": "", "sources": [{"type": "fichier", "id": depose["sources"][0]["id"]}]},
+    )
+
+    assert reponse.status_code == 201
+    envoye, _ = reponse.json()["messages"]
+    assert envoye["contenu"] == ""
+    assert [source["nom"] for source in envoye["sources"]] == ["notes.md"]
+    assert client_chat_sources.post(
+        "/api/chat/qa/messages", json={"contenu": "", "sources": []}
+    ).status_code == 422
 
 
 # --------------------------------------------------------- Bus & modèle
