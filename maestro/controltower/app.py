@@ -547,9 +547,19 @@ class SelecteurRequete(BaseModel):
 
 
 class ChatEnvoiRequete(BaseModel):
-    """Corps d'un envoi de chat (#84) : le message de l'utilisateur à l'agent."""
+    """Corps d'un envoi de chat (#84) : le message de l'utilisateur à l'agent.
+
+    `sources` (#482) est la matière que le message embarque — fichiers déposés,
+    dossier de références, adresses —, **dans l'ordre où l'écran l'a composée** :
+    c'est lui qui décide de ce qui entre quand le budget de tokens s'épuise
+    (#316). Même forme qu'au lancement (`LancementExecutionRequete.sources`), et
+    pour la même raison : un fichier y voyage par l'`id` que `POST /api/sources`
+    lui a rendu, seule façon d'en désigner de vrais octets. Absente ou vide, le
+    fil est exactement celui d'avant ce lot.
+    """
 
     contenu: str
+    sources: list[dict[str, Any]] | None = None
 
 
 class SecretPoolRequete(BaseModel):
@@ -902,6 +912,15 @@ def create_app(
     analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
     chat_store = chat_store if chat_store is not None else ChatStore.default()
+    # Un seul dépôt de téléversement (#317) pour la route qui reçoit les octets et
+    # pour tout service qui les rattache : deux instances pointeraient le même
+    # disque, mais l'injection des tests n'en tiendrait qu'une. Résolu **avant**
+    # les services parce que le fil en dépend désormais aussi (#482) — un message
+    # peut porter des sources, et il les résout par la même chaîne qu'un
+    # lancement.
+    televersements = (
+        televersements if televersements is not None else DepotTeleversements.default()
+    )
     chat = ServiceChat(
         store=chat_store,
         repondeur=(
@@ -909,10 +928,13 @@ def create_app(
         ),
         mailbox=mailbox,
         bus=bus,
+        televersements=televersements,
     )
     # Le canal d'aide (#123) : mêmes rouages que le chat — persistance, messagerie,
     # bus — pour que le fil se relise et se diffuse à l'identique ; seul le
-    # répondeur change, l'assistant ne parlant pas du projet mais de l'outil.
+    # répondeur change, l'assistant ne parlant pas du projet mais de l'outil. Le
+    # dépôt en fait partie : l'assistance sert les mêmes endpoints, donc le même
+    # contrat, et lui refuser les sources ferait dépendre un 422 du nom du fil.
     assistance = ServiceChat(
         store=chat_store,
         repondeur=(
@@ -920,14 +942,9 @@ def create_app(
         ),
         mailbox=mailbox,
         bus=bus,
+        televersements=televersements,
     )
     diffusion = Diffusion()
-    # Un seul dépôt de téléversement (#317) pour la route qui reçoit les octets
-    # et pour le service qui les rattache au run : deux instances pointeraient le
-    # même disque, mais l'injection des tests n'en tiendrait qu'une.
-    televersements = (
-        televersements if televersements is not None else DepotTeleversements.default()
-    )
     # Pilotage des exécutions (#185) : lance sur le bus et la projection de
     # cette app — le run est donc suivi par les mêmes rouages que n'importe
     # quelle orchestration observée.
@@ -2856,10 +2873,25 @@ def create_app(
         422 sur un message vide, 502 si la réponse n'a pas pu être produite
         (le message utilisateur reste acquis : relancer ne perd pas le fil).
         `assistance` (#123) désigne le canal d'aide, qui répond sans modèle.
+
+        Le message peut porter des **sources** (#482) : elles empruntent la chaîne
+        d'ingestion du lancement — mêmes plafonds, mêmes racines interdites, mêmes
+        motifs — et le message rendu porte leur **rapport de lecture** (#316). Un
+        refus est un **422 motivé** (`{motif, message, index}`), la forme déjà
+        servie par `POST /api/sources` et `POST /api/executions` : c'est ce qui
+        permet à l'écran de l'afficher sur la source fautive. Un message **sans
+        texte mais avec des sources** est accepté — le dépôt *est* le message.
         """
         fiche, service = _canal_chat(agent)
         try:
-            message, reponse = await service.envoyer(fiche, requete.contenu)
+            message, reponse = await service.envoyer(
+                fiche, requete.contenu, requete.sources
+            )
+        except SourceRefusee as exc:
+            # Avant le `ValueError` nu dont elle hérite : une source refusée porte
+            # un motif et un index, et les aplatir en chaîne perdrait l'endroit où
+            # l'écran doit afficher le refus.
+            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ReponseIndisponible as exc:

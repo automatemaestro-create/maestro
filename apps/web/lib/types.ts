@@ -535,9 +535,19 @@ export type DefinitionAgent = {
  * `agent` est le fil d'appartenance (le nom d'agent du catalogue), `auteur`
  * l'émetteur — `utilisateur` ou ce même nom d'agent.
  *
+ * Depuis #482 un message peut porter des **sources** — la matière que
+ * l'utilisateur y a déposée, telle que la chaîne d'ingestion l'a résolue — et le
+ * **rapport de lecture** (#316) de cette matière. Les deux sont facultatifs : un
+ * fil écrit avant ce lot n'en a pas, et un message de texte rend `[]` et `null`.
+ *
+ * Le Markdown extrait, lui, ne vient **pas** : il est fait pour un prompt et non
+ * pour un écran (`Lecture.to_dict` applique déjà la même règle). Ce qui se lit
+ * ici, c'est ce que Maestro a lu et ce que ça coûte — pas le contenu.
+ *
  * `run_id`/`tache_id` (#268) rattachent au message **ce qui en découle** : le run
  * que l'orchestration a ouvert en répondant. Chaînes vides partout ailleurs — un
- * message ordinaire ne rattache rien.
+ * message ordinaire ne rattache rien. Ce que le message **embarque** et ce qu'il
+ * **ouvre** sont deux questions distinctes, portées par le même objet.
  */
 export type MessageChat = {
   agent: string;
@@ -546,6 +556,10 @@ export type MessageChat = {
   horodatage: string;
   run_id: string;
   tache_id: string;
+  /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
+  sources?: SourceResolue[];
+  /** Le rapport de lecture de cette matière (#316) — `null` quand il n'y en a pas. */
+  rapport?: RapportLecture | null;
 };
 
 /** Le fil complet d'un agent (`GET /api/chat/{agent}`, #84). */
@@ -822,6 +836,25 @@ export type SourceDeclaree = {
   chemin?: string;
   valeur?: string;
   taille?: number;
+};
+
+/**
+ * Une source **résolue** (`Source.to_dict`, #315) : ce qu'une déclaration est
+ * devenue une fois confrontée au disque, au réseau et aux plafonds. C'est la
+ * forme que rend le backend — un message du fil (#482) la porte telle quelle.
+ *
+ * À ne pas confondre avec `SourceDeclaree`, qui est ce que l'écran **envoie** :
+ * l'une déclare une intention, l'autre constate un résultat. `chemin` est
+ * l'emplacement d'ingestion d'un fichier ou le dossier canonicalisé ; `valeur`
+ * l'adresse d'une URL ; `taille` les octets d'un fichier, `null` sinon.
+ */
+export type SourceResolue = {
+  type: string;
+  nom: string;
+  chemin: string;
+  valeur: string;
+  taille: number | null;
+  lecture_seule: boolean;
 };
 
 /**

@@ -39,6 +39,7 @@ import type {
   PageJournal,
   Projet,
   ResumeExecution,
+  SourceDeclaree,
   Tache,
   Usage,
   Validation,
@@ -146,7 +147,8 @@ export type FilFactice = {
   chargement: boolean;
   erreur: string | null;
   envoi: boolean;
-  envoyer: (contenu: string) => Promise<void>;
+  /** Depuis #482 l'envoi porte aussi les **sources** déclarées du message. */
+  envoyer: (contenu: string, sources?: SourceDeclaree[]) => Promise<void>;
 };
 
 function filParDefaut(): FilFactice {

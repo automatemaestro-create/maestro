@@ -26,9 +26,13 @@ Le contrôle est **actif**, pas seulement un défaut bien choisi : un
 
 ## Fonctionnement
 
-- Un sous-dossier par run : `<run_id>/`, le `run_id` étant celui du lancement.
-  Ce qui appartient à une exécution se retrouve, se trace et se ramasse sans
-  toucher à la matière d'un run voisin.
+- Un sous-dossier par **acte**, et non un dossier commun : ce qui appartient à
+  une exécution se retrouve, se trace et se ramasse sans toucher à la matière
+  d'un voisin. Deux gestes en produisent aujourd'hui — un **lancement**, sous son
+  `<run_id>/`, et un **message du fil** qui porte des sources (#482), sous
+  `chat-<identifiant>/`. Les deux passent par la même chaîne
+  (`maestro.sources.composer_sources`) et donc par les mêmes garde-fous : le
+  préfixe distingue la provenance, il ne change aucune règle.
 - **Rien n'est créé tant que rien n'est téléversé** : la résolution d'une source
   (#315) ne fait que *calculer* la destination. La création revient au
   téléversement (#317), qui écrit les octets.
@@ -56,8 +60,13 @@ Le contrôle est **actif**, pas seulement un défaut bien choisi : un
   (`racine_ingestion`, `emplacement_ingestion`, `resoudre_sources`) ;
 - `maestro.engine.guardrails` — `GardeFousIngestion`, avec les autres limites du
   run ;
+- `maestro.sources.composition` — l'**enchaînement** déclarer → résoudre →
+  rattacher, partagé par tous ceux qui portent des sources : une seule chaîne,
+  donc un seul jeu de plafonds ;
 - `maestro.controltower.executions` — le lancement, qui résout **avant** de
-  partir : refuser après coup reviendrait à annuler un run déjà lancé.
+  partir : refuser après coup reviendrait à annuler un run déjà lancé ;
+- `maestro.controltower.chat` — le fil (#482), qui résout de même **avant**
+  d'écrire au fil : un refus ne laisse ni message persisté, ni événement.
 
 Les sources rejoignent ensuite la projection par l'événement de lancement, comme
 le ticket externe (#187) et le projet (#222) — elles survivent donc au rejeu du

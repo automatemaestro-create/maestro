@@ -60,8 +60,9 @@ import asyncio
 import json
 import re
 import unicodedata
+import uuid
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,6 +72,7 @@ from maestro.agents.catalog import Agent
 from maestro.agents.playbooks import PlaybookStore
 from maestro.config import Settings, load_settings
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, Event, EventBus
+from maestro.engine.guardrails import GardeFousIngestion
 from maestro.messaging import (
     MESSAGE_REPONSE,
     MESSAGE_REQUETE,
@@ -78,6 +80,26 @@ from maestro.messaging import (
     Mailbox,
 )
 from maestro.providers.base import ModelProvider
+from maestro.sources import (
+    DepotTeleversements,
+    RapportLecture,
+    Source,
+    composer_sources,
+    contexte_markdown,
+    extraire_sources,
+    sources_depuis,
+    sources_en_liste,
+)
+
+#: Relecture d'un rapport de lecture persisté — l'aller-retour JSON de #316,
+#: aliasé ici pour que `MessageChat.from_dict` se lise comme `Source.from_dict`.
+rapport_depuis = RapportLecture.from_dict
+
+#: Lecture de la matière d'un message : des sources **résolues** au rapport de
+#: lecture (#316). Même alias et même raison d'être que côté lancement
+#: (`maestro.controltower.executions.LecteurSources`) — une source `url` part sur
+#: le réseau, et `tests/conftest.py` (#195) exige qu'aucun test n'en ait besoin.
+LecteurSources = Callable[[Sequence[Source]], RapportLecture]
 
 #: L'acteur humain du chat : l'expéditeur des requêtes, le destinataire des
 #: réponses — le pendant « utilisateur » d'un nom d'agent, côté messagerie (#44)
@@ -168,6 +190,29 @@ class MessageChat:
     le run que l'orchestration a ouvert en réponse à une demande, la tâche dont
     il est question. Chaînes vides partout ailleurs — un message ordinaire ne
     rattache rien, et une ligne écrite avant ce lot se relit à l'identique.
+
+    Trois autres champs sont venus avec les **sources** (#482, lot 1 de #481) —
+    ce que le message **embarque**, là où les deux précédents disent ce qu'il
+    **ouvre** —, et ils
+    n'ont de valeur que sur un message d'utilisateur :
+
+    - `sources` — la matière **résolue** que le message embarque (fichiers
+      déposés, dossier de références, adresses), telle que la chaîne d'ingestion
+      l'a rendue. Une liste vide dit « aucune source », et le fil est alors
+      exactement celui d'avant ce lot ;
+    - `rapport` — le **rapport de lecture** (#316) de cette matière : ce qui a
+      été lu, tronqué ou ignoré, et ce que ça coûte. C'est lui que le critère 3
+      demande de pouvoir consulter depuis le message qui a porté les sources ;
+    - `contexte` — le Markdown extrait, **encadré comme donnée** par
+      `contexte_markdown` (ENF-13) et par lui seul. Il est persisté et non
+      recalculé, pour la raison qui rend le champ nécessaire : `Lecture.to_dict`
+      **n'emporte pas** le `markdown` (à dessein — un rapport dit ce qu'une source
+      coûte, pas ce qu'elle raconte), donc un fil relu du disque aurait un rapport
+      complet et un contenu perdu, et l'agent cesserait de voir le document dès le
+      tour suivant.
+
+    Ils sont **absents des lignes JSONL écrites avant #482**, que `from_dict`
+    relit sans broncher : un fil persisté ne se réécrit pas.
     """
 
     agent: str
@@ -176,9 +221,18 @@ class MessageChat:
     horodatage: str = field(default_factory=_horodatage)
     run_id: str = ""
     tache_id: str = ""
+    sources: tuple[Source, ...] = ()
+    rapport: RapportLecture | None = None
+    contexte: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet le message en dict JSON-sérialisable (la forme du REST)."""
+        """Réémet le message en dict JSON-sérialisable (la forme du REST).
+
+        Le `contexte` n'y est **pas** : il est fait pour un prompt, pas pour un
+        écran, et le rapatrier au navigateur enverrait le contenu intégral des
+        documents à chaque relecture du fil — ce que `Lecture.to_dict` refuse déjà
+        de faire, pour la même raison. Le stockage, lui, le garde (`to_ligne`).
+        """
         return {
             "agent": self.agent,
             "auteur": self.auteur,
@@ -186,11 +240,48 @@ class MessageChat:
             "horodatage": self.horodatage,
             "run_id": self.run_id,
             "tache_id": self.tache_id,
+            "sources": sources_en_liste(self.sources),
+            "rapport": self.rapport.to_dict() if self.rapport is not None else None,
         }
+
+    @property
+    def resume(self) -> str:
+        """Ce que le message dit en une ligne — son texte, ou ce qu'il embarque.
+
+        Un message peut n'être fait que de sources (#482 : déposer un cahier des
+        charges *est* le message). Son texte est alors vide, et le rendre tel quel
+        écrirait « Vous avez écrit à dev » sur une ligne vide du fil d'activité et
+        laisserait une lettre inter-agents sans objet. Nommer les sources est la
+        seule chose vraie à dire — jamais une phrase inventée, jamais un silence.
+        """
+        if self.contenu:
+            return self.contenu
+        if not self.sources:
+            return ""
+        noms = ", ".join(source.nom for source in self.sources if source.nom)
+        return f"{len(self.sources)} source(s) jointe(s){f' : {noms}' if noms else ''}"
+
+    def to_ligne(self) -> dict[str, Any]:
+        """La forme **stockée** : celle du REST, plus le contexte extrait.
+
+        Deux formes plutôt qu'une parce que les deux lecteurs n'ont pas le même
+        besoin : l'écran veut savoir ce qui a été lu, le répondeur veut le lire.
+        """
+        ligne = self.to_dict()
+        if self.contexte:
+            ligne["contexte"] = self.contexte
+        return ligne
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MessageChat:
-        """Reconstruit un message depuis sa forme `to_dict` (la ligne stockée)."""
+        """Reconstruit un message depuis sa forme stockée (la ligne du JSONL).
+
+        **Ne rejuge rien**, exactement comme `Source.from_dict` (#315) : c'est la
+        relecture d'un message déjà accepté, et un fil écrit avant que les sources
+        n'existent doit rester lisible après un durcissement des garde-fous. Les
+        clés absentes retombent sur les défauts.
+        """
+        rapport = data.get("rapport")
         return cls(
             agent=data["agent"],
             auteur=data.get("auteur", UTILISATEUR),
@@ -198,6 +289,9 @@ class MessageChat:
             horodatage=data.get("horodatage", ""),
             run_id=data.get("run_id", ""),
             tache_id=data.get("tache_id", ""),
+            sources=tuple(sources_depuis(data.get("sources"))),
+            rapport=rapport_depuis(rapport) if isinstance(rapport, Mapping) else None,
+            contexte=str(data.get("contexte") or ""),
         )
 
 
@@ -276,7 +370,11 @@ class ChatStore:
         chemin = self._chemin(message.agent)
         self._racine.mkdir(parents=True, exist_ok=True)
         with chemin.open("a", encoding="utf-8") as fichier:
-            fichier.write(json.dumps(message.to_dict(), ensure_ascii=False) + "\n")
+            # `to_ligne` et non `to_dict` : le stockage garde en plus le contexte
+            # extrait des sources (#482), que le REST n'emporte pas — sans lui, un
+            # fil relu du disque perdrait le contenu des documents joints et
+            # l'agent cesserait de les voir dès le tour suivant.
+            fichier.write(json.dumps(message.to_ligne(), ensure_ascii=False) + "\n")
         return message
 
     def fil(self, agent: str) -> tuple[MessageChat, ...]:
@@ -425,24 +523,63 @@ class ServiceChat:
         repondeur: RepondeurChat,
         mailbox: Mailbox,
         bus: EventBus,
+        televersements: DepotTeleversements | None = None,
+        garde_fous_ingestion: GardeFousIngestion | None = None,
+        lecteur_sources: LecteurSources | None = None,
     ) -> None:
         self._store = store
         self._repondeur = repondeur
         self._mailbox = mailbox
         self._bus = bus
+        # Résolus paresseusement : un service qui ne reçoit jamais de source ne
+        # touche pas au dépôt de téléversement et ne crée aucun dossier.
+        self._televersements = televersements
+        self._ingestion = (
+            garde_fous_ingestion if garde_fous_ingestion is not None else GardeFousIngestion()
+        )
+        # Injectable pour la même raison qu'au lancement (#317) : une source `url`
+        # part sur le réseau, et `tests/conftest.py` (#195) exige qu'aucun test
+        # n'en ait besoin.
+        self._lecteur = lecteur_sources if lecteur_sources is not None else extraire_sources
 
     def fil(self, agent: str) -> tuple[MessageChat, ...]:
         """Le fil persisté de `agent`, dans l'ordre d'écriture."""
         return self._store.fil(agent)
 
-    async def envoyer(self, agent: Agent, contenu: str) -> tuple[MessageChat, MessageChat]:
-        """Envoie `contenu` à `agent` et rend la paire (message, réponse).
+    async def envoyer(
+        self,
+        agent: Agent,
+        contenu: str,
+        sources: Sequence[Mapping[str, Any] | Source] | None = None,
+    ) -> tuple[MessageChat, MessageChat]:
+        """Envoie `contenu` et ses `sources` à `agent` ; rend la paire (message, réponse).
 
-        Lève `ValueError` sur un contenu vide (rien n'est persisté) et
-        `ReponseIndisponible` si la réponse ne peut pas être produite (le
-        message utilisateur, lui, est déjà persisté et diffusé).
+        `sources` est la matière que le message embarque (#482), déclarée dans
+        **l'ordre où l'écran l'a composée** — celui qui décide de ce qui entre
+        quand le budget de tokens s'épuise (#316). Un fichier y voyage par
+        l'`id` que `POST /api/sources` lui a rendu, comme au lancement : le fil
+        emprunte la chaîne d'ingestion existante, il n'en ouvre pas une seconde.
+
+        Un message **sans texte mais avec des sources** est accepté : déposer un
+        cahier des charges *est* le message. Sans texte **ni** sources, il n'y a
+        rien à envoyer et c'est toujours un `ValueError`.
+
+        Trois façons d'échouer, et elles ne se confondent pas :
+
+        - `SourceRefusee` (donc `ValueError`) — une saisie que l'utilisateur peut
+          corriger : plafond dépassé, racine interdite, type inconnu. Elle est
+          levée **avant toute écriture**, comme au lancement : un refus ne doit
+          laisser ni message au fil, ni événement sur le bus ;
+        - `ValueError` nu — message vide ;
+        - `ReponseIndisponible` — le message utilisateur, lui, est déjà acquis
+          (persisté et diffusé) : relancer ne perd pas le fil.
+
+        Ce qui est simplement **illisible** n'échoue pas : une source au format
+        non géré (une image, aujourd'hui) ressort en ligne « ignoré » du rapport,
+        avec son motif. C'est la distinction de #316 — « rien à lire ici » et
+        « je refuse de lire ça » ne se disent jamais pareil.
         """
-        message = await self._ouvrir(agent, contenu)
+        message = await self._ouvrir(agent, contenu, sources)
         return message, await self._repondre(agent)
 
     async def diffuser(self, agent: Agent, contenu: str) -> AsyncIterator[FragmentChat]:
@@ -502,12 +639,37 @@ class ServiceChat:
                 # never retrieved » dans les journaux de l'API.
                 tache.add_done_callback(lambda achevee: achevee.exception())
 
-    async def _ouvrir(self, agent: Agent, contenu: str) -> MessageChat:
-        """Persiste, achemine et diffuse le message utilisateur — le début des deux voies."""
+    async def _ouvrir(
+        self,
+        agent: Agent,
+        contenu: str,
+        sources: Sequence[Mapping[str, Any] | Source] | None = None,
+    ) -> MessageChat:
+        """Persiste, achemine et diffuse le message utilisateur — le début des deux voies.
+
+        C'est ici que la matière du message est résolue et lue (#482), et donc ici
+        que le refus tombe : **avant** toute écriture, sans laisser ni message au
+        fil ni événement sur le bus. Le placer sur la voie commune plutôt que dans
+        `envoyer` est ce qui fait qu'un fil diffusé (#268) applique les mêmes
+        plafonds qu'un fil posté — deux entrées, un seul jeu de garde-fous.
+
+        `sources` est vide sur la voie du flux : `GET …/flux` ne porte qu'un
+        `contenu`, et rien ne déclare de matière sur une requête sans corps.
+        """
         contenu = contenu.strip()
-        if not contenu:
+        declarees = list(sources or ())
+        if not contenu and not declarees:
             raise ValueError("message vide : rien à envoyer à l'agent.")
-        message = MessageChat(agent=agent.nom, auteur=UTILISATEUR, contenu=contenu)
+
+        matiere, rapport = await self._lire(declarees)
+        message = MessageChat(
+            agent=agent.nom,
+            auteur=UTILISATEUR,
+            contenu=contenu,
+            sources=matiere,
+            rapport=rapport,
+            contexte=contexte_markdown(rapport) if rapport is not None else "",
+        )
         await self._acheminer(message, agent, type_message=MESSAGE_REQUETE)
         return message
 
@@ -545,6 +707,38 @@ class ServiceChat:
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message
 
+    async def _lire(
+        self, declarees: Sequence[Mapping[str, Any] | Source]
+    ) -> tuple[tuple[Source, ...], RapportLecture | None]:
+        """Résout puis lit la matière d'un message — `((), None)` s'il n'y en a pas.
+
+        Le pendant, pour un message, de ce que `ServiceExecutions` fait pour un
+        run : la **même** chaîne (`composer_sources`, #482) et le **même** lecteur
+        (#316). Aucune source, aucun fil et aucun dossier : un message de texte
+        garde exactement son coût d'avant ce lot, et c'est ce qui rend le
+        changement invisible pour qui ne joint rien.
+
+        La `cle` d'ingestion est propre au **message** — un dossier par acte, comme
+        `core/ingestion/<run_id>/` en est un par run. Elle suit le régime de
+        rétention des runs, c'est-à-dire aucun ramassage aujourd'hui : ce lot
+        hérite d'une question ouverte, il n'en ouvre pas une nouvelle.
+        """
+        if not declarees:
+            return (), None
+        if self._televersements is None:
+            self._televersements = DepotTeleversements.default()
+        # Le refus a lieu ici, **avant** toute écriture au fil : une source hors
+        # bornes ne doit laisser ni message persisté, ni événement sur le bus.
+        matiere = composer_sources(
+            declarees,
+            cle=f"chat-{uuid.uuid4().hex[:12]}",
+            depot=self._televersements,
+            garde_fous=self._ingestion,
+        )
+        # Dans un fil : la lecture ouvre des fichiers et peut récupérer une page
+        # (#316), ce que la boucle de l'API ne doit pas porter.
+        return matiere, await asyncio.to_thread(self._lecteur, matiere)
+
     async def _acheminer(self, message: MessageChat, agent: Agent, *, type_message: str) -> None:
         """Persiste `message`, le poste dans la messagerie (#44) et le diffuse (#46).
 
@@ -559,8 +753,22 @@ class ServiceChat:
                 type=type_message,
                 de_agent=UTILISATEUR if utilisateur_emet else agent.nom,
                 a_agent=agent.nom if utilisateur_emet else UTILISATEUR,
-                objet=message.contenu[:_LONGUEUR_OBJET],
-                payload={"contenu": message.contenu},
+                objet=message.resume[:_LONGUEUR_OBJET],
+                # Les sources voyagent **déclarées** et non lues : la lettre dit ce
+                # que le message embarque, le contenu extrait a son seul chemin
+                # (`contexte_markdown`, ENF-13) et n'a rien à faire dans une
+                # boîte aux lettres. La clé est **absente** quand il n'y en a pas,
+                # et non posée à `[]` : un message de texte doit produire la lettre
+                # exacte d'avant #482, sans quoi un abonné de #44 verrait passer un
+                # champ que rien dans le message ne justifie.
+                payload={
+                    "contenu": message.contenu,
+                    **(
+                        {"sources": sources_en_liste(message.sources)}
+                        if message.sources
+                        else {}
+                    ),
+                },
             )
         )
         await self._bus.publish(
@@ -569,7 +777,7 @@ class ServiceChat:
                 agent=agent.nom,
                 role=agent.role,
                 statut=AUTEUR_UTILISATEUR if utilisateur_emet else AUTEUR_AGENT,
-                detail=message.contenu,
+                detail=message.resume,
                 # Ce que le message a ouvert (#268) voyage sur les champs que
                 # l'événement portait déjà : un client temps réel apprend le run
                 # en même temps que la réponse, sans relire le fil.
@@ -582,9 +790,19 @@ class ServiceChat:
 
 def _transcription(fil: Sequence[MessageChat]) -> str:
     """Le fil rendu en prompt : la conversation puis la consigne de réponse."""
-    lignes = [
-        f"{'Utilisateur' if m.auteur == UTILISATEUR else 'Toi'} : {m.contenu}" for m in fil
-    ]
+    lignes: list[str] = []
+    for message in fil:
+        lignes.append(
+            f"{'Utilisateur' if message.auteur == UTILISATEUR else 'Toi'} : {message.resume}"
+        )
+        # Le contenu des sources **sous le message qui les a portées**, et jamais
+        # rassemblé en fin de fil : c'est ce qui dit de quel tour de conversation
+        # un document relève. Il entre déjà encadré comme donnée — `contexte` est
+        # la sortie de `contexte_markdown` (ENF-13) et de rien d'autre, si bien
+        # qu'il n'y a pas ici de second endroit où l'encadrement pourrait être
+        # oublié.
+        if message.contexte:
+            lignes.append(message.contexte)
     return (
         "Fil de conversation avec l'utilisateur :\n\n"
         + "\n".join(lignes)
