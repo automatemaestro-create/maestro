@@ -21,7 +21,9 @@ import {
   entreeParLibelle,
   HORS_MENU,
   MENU,
+  PAGE_DU_FIL,
 } from "@/lib/navigation";
+import { REDIRECTIONS_PORTE_UNIQUE } from "@/next.config";
 
 import {
   agentFactice,
@@ -37,27 +39,18 @@ describe("le menu (lib/navigation)", () => {
     // « Agents » : ce sont désormais des onglets de la fiche agent. « Chat »
     // subsiste pour le chat global, qui est une autre intention.
     //
-    // « Composer un objectif » (#319) ouvre la liste, juste après l'accueil :
-    // c'est le geste par lequel on entre dans un run, et une action qu'on ne
-    // trouve pas est une action qui n'existe pas — le poste vide renvoyait
-    // jusque-là à `curl`.
+    // « Chat » ouvre le groupe de tête depuis #484 : c'est le geste par lequel
+    // on entre dans un run, et une action qu'on ne trouve pas est une action qui
+    // n'existe pas — l'argument de #319, qui vaut désormais pour le fil.
     //
-    // « Valider le brief » (#322) la suit, dont elle est l'autre moitié : on
-    // compose, le Chef de projet rédige, on tranche. Elle est **au menu** bien
-    // qu'on y arrive surtout par la cloche ou le tableau de bord — un run
-    // suspendu sur son brief ne crée aucune tâche, donc rien d'autre ne le
-    // montre.
-    //
-    // « Runs » (#474) ferme ce groupe de tête : un run n'était l'objet d'aucun
-    // écran — on y entrait par « Composer un objectif » et on n'y revenait
-    // jamais, les runs passés n'étant listés nulle part (revue #470).
+    // « Runs » (#474) ferme ce groupe : un run n'était l'objet d'aucun écran —
+    // on y entrait par « Composer un objectif » et on n'y revenait jamais, les
+    // runs passés n'étant listés nulle part (revue #470).
     expect(MENU.map((entree) => entree.libelle)).toEqual([
       "Tableau de bord",
-      "Composer un objectif",
-      "Valider le brief",
+      "Chat",
       "Runs",
       "Agents",
-      "Chat",
       "Coûts & analytics",
       "Validations",
       "Journal",
@@ -112,6 +105,60 @@ describe("le menu (lib/navigation)", () => {
     expect(new Set(chemins).size).toBe(chemins.length);
     const libelles = MENU.map((entree) => entree.libelle);
     expect(new Set(libelles).size).toBe(libelles.length);
+  });
+
+  // --- La porte unique (#484) : ce que le fil a absorbé ---------------------
+  //
+  // Couverture **partielle et volontaire** — la logique dont l'échec serait
+  // silencieux. Le reste (le rendu des écrans vides, la cloche, le panneau) est
+  // différé au lot final : tests différés → #485.
+
+  it("ne propose plus qu'une porte d'entrée (#484)", () => {
+    // Le retrait proprement dit. Les deux entrées portaient le geste d'entrée
+    // dans un run ; #482 et #483 l'ont déménagé dans le fil, et deux portes vers
+    // un même geste sont la question « laquelle ? » posée à chaque lancement.
+    const chemins = MENU.map((entree) => entree.href);
+    expect(chemins).not.toContain("/composer");
+    expect(chemins).not.toContain("/brief");
+    expect(chemins).toContain("/chat");
+  });
+
+  it("laisse résoudre la page du fil par son libellé", () => {
+    // La contrepartie du retrait, et la moitié qui casse en silence : cinq
+    // surfaces acheminent vers cette page par `entreeParLibelle` (règle de
+    // #191). Un libellé qui ne résout plus rend `undefined`, donc `null`, donc
+    // un bloc qui disparaît sans un mot — un run suspendu que plus rien ne
+    // montre. Ce contrôle est là pour que le jour où « Chat » est renommée,
+    // c'est ici que ça rougit et pas sur un écran que personne ne regarde.
+    expect(entreeParLibelle(PAGE_DU_FIL)?.href).toBe("/chat");
+  });
+
+  it("garde les deux anciens chemins servis, et en 307", () => {
+    // « Servis » et non « supprimés » : les deux chemins sont écrits dans la
+    // doc, dans des tickets et dans des signets, et un 404 ne dit pas où le
+    // geste est parti. 307 et jamais 308 — un 308 est mis en cache par le
+    // navigateur pour de bon, et le fil est un chantier en cours (#481) dont la
+    // destination n'est pas figée.
+    for (const source of ["/composer", "/brief"]) {
+      const regle = REDIRECTIONS_PORTE_UNIQUE.find(
+        (regle) => regle.source === source,
+      );
+      expect(regle, `« ${source} » n'est plus repris`).toBeDefined();
+      expect(regle?.destination).toBe("/chat");
+      expect(regle?.permanent, `« ${source} » redirige en permanent`).toBe(
+        false,
+      );
+    }
+  });
+
+  it("ne redirige aucune entrée de menu vers une autre", () => {
+    // Le piège de #190 repris ici : une entrée qui se redirigerait elle-même est
+    // un aller simple. `/chat` est la destination des deux règles — il doit donc
+    // rester au menu **et** hors des sources.
+    const sources = REDIRECTIONS_PORTE_UNIQUE.map((regle) => regle.source);
+    for (const { href, libelle } of MENU) {
+      expect(sources, `l'entrée « ${libelle} » se redirige`).not.toContain(href);
+    }
   });
 
   it("ne propose que des pages que l'application sert vraiment", async () => {

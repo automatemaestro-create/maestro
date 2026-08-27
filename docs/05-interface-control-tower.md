@@ -15,25 +15,46 @@ en **une** fiche agent à onglets, et un agent se consulte d'un seul endroit.
 Deux entrées se sont ajoutées depuis — **Projets** (#225) et **Journal** (#249),
 où le fil d'activité s'est installé en plein format —, puis **Projets en est
 ressortie** (#280, §2.0.1). Le menu est déclaré une seule fois
-(`apps/web/lib/navigation.ts`) et fait aujourd'hui **dix entrées** — les deux
+(`apps/web/lib/navigation.ts`) et fait aujourd'hui **huit entrées** : les deux
 écrans de la Phase 8, « Composer un objectif » (#319) et « Valider le brief »
-(#322), s'y sont ajoutés, puis **« Runs »** (#474, §2.4.1) ; le Kanban des tâches
-n'en est pas une (il est l'objet de la **vue d'un run**, servie sous « Runs »
-depuis #476 — §2.4.2) et l'écran Projets non plus (il est servi, mais atteint
-depuis le sélecteur du shell).
+(#322), s'y étaient ajoutés puis **en sont repartis** (#484, ci-dessous), tandis
+que **« Runs »** (#474, §2.4.1) y est restée. Le Kanban des tâches n'en est pas
+une (il est l'objet de la **vue d'un run**, servie sous « Runs » depuis #476 —
+§2.4.2) et l'écran Projets non plus (il est servi, mais atteint depuis le
+sélecteur du shell).
 
-> ⚠ **Ce menu change deux fois, et les deux ont été décidées le 2026-08-24**
+> ⚠ **Ce menu a changé deux fois, et les deux ont été décidées le 2026-08-24**
 > (revue #470, [docs/29](./29-decision-run-objet-de-premier-plan.md)). Une entrée
 > **« Runs »** s'ajoute — **c'est fait** (#474, §2.4.1) : un run n'était l'objet
 > d'aucun écran, il a désormais le sien, et **sa vue** depuis #475 (§2.4.2), servie
 > sous cette entrée à `/runs/<run_id>` sans en réclamer une nouvelle. La seconde
 > moitié de l'arbitrage ① est **livrée elle aussi** : le Kanban a **cessé d'être** le
 > tableau de bord (#476 — ce qui renverse #248), qui montre désormais l'état des runs
-> (§2.1.2). Les deux entrées de la Phase 8 **partent** en
-> sens inverse (#484, arbitrage ②) : composer et valider le brief déménagent dans
-> le chat, qui devient la seule porte d'entrée. Rien n'est supprimé de ce que ces
-> écrans savent faire ; les chemins restent servis et redirigés. Tant que **ce**
-> lot-là n'est pas livré, c'est le texte ci-dessus qui décrit l'écran.
+> (§2.1.2).
+>
+> **Arbitrage ② — livré le 2026-08-28** (#484, lot 3 de #481) : les deux entrées
+> de la Phase 8 **sont parties**, et « Chat » a pris leur place en tête de menu.
+> C'est un **renversement**, pas un rangement, et il se lit comme tel : #319 et
+> #322 avaient été mises au menu avec leurs raisons écrites — « une action qu'on
+> ne trouve pas est une action qui n'existe pas » pour composer, « un run
+> suspendu sur son brief ne crée aucune tâche, donc rien d'autre ne le montre »
+> pour valider. **Les deux arguments tiennent toujours** ; ce qui a changé est
+> leur conclusion, parce que le fil sait désormais faire ce qu'elles faisaient :
+> #482 lui a donné les pièces jointes et les sources (§6.12), #483 le cadrage et
+> sa décision (§2.7.5). Deux portes vers un même geste, c'est la question
+> « laquelle ? » posée à chaque lancement.
+>
+> **Rien n'est supprimé de ce que ces écrans savaient faire** — c'est un
+> déménagement, D5 tient (#218), le point de contrôle reste. Les chemins
+> `/composer` et `/brief` **restent servis et redirigés** (§1.1), et les pages
+> elles-mêmes restent en place sous `app/`, simplement plus atteintes par leur
+> URL. Ce que le lot a coûté en plus du retrait est **le corollaire** : cinq
+> surfaces acheminaient vers ces deux écrans en résolvant leur destination par le
+> **menu** (règle de #191) — le poste vide, la liste de runs vide, la file de
+> briefs vide, la cloche et la table `ATTENTES` de la carte de run. Un libellé
+> retiré rend `undefined`, donc `null`, donc un bloc qui disparaît **sans un
+> mot** : retirer une entrée de menu n'est jamais un geste local, et les cinq ont
+> bougé dans le même commit.
 
 ```mermaid
 flowchart LR
@@ -47,7 +68,7 @@ flowchart LR
     Home --> Settings[Paramètres]
     Runs --> RunDetail[Vue d'un run]
     RunDetail --> Tasks[Kanban des tâches]
-    Runs -. suspendu .-> Brief[Valider le brief]
+    Runs -. suspendu .-> Chat
     Runs -. suspendu .-> Approve
     Agents --> AgentDetail[Fiche agent]
     AgentDetail --> Profil[Onglet Profil]
@@ -84,6 +105,26 @@ lié à un agent — c'est une intention distincte, et il la sert pour de bon de
 Les redirections sont temporaires (307) et non permanentes (308) : un 308 est mis
 en cache par le navigateur pour de bon, et ces chemins ne pourraient plus être
 corrigés côté serveur.
+
+**Et les deux écrans de la Phase 8 les ont rejoints le 2026-08-28** (#484), pour
+la même raison et sous la même règle :
+
+| Chemin | Redirigé vers | Remarque |
+| --- | --- | --- |
+| `/composer` | `/chat` | le geste de #319 se fait dans le fil depuis #482 (§6.12) |
+| `/brief` | `/chat` | le point de contrôle de #322 s'y joue depuis #483 (§2.7.5) |
+
+Le 307 compte **plus encore** ici : le fil est un chantier **en cours** (#481), et
+un 308 mis en cache par les postes figerait sa destination avant qu'elle soit
+stabilisée. La garantie de durée vit dans `next.config.ts`, jamais dans un cache
+de navigateur.
+
+⚠ Les dossiers `app/composer/` et `app/brief/` **restent en place**, et ce n'est
+pas un oubli : une redirection de `next.config` est évaluée **avant** le routage
+par fichiers, donc elle l'emporte et personne n'atteint plus ces pages par leur
+URL. Leurs **composants**, eux, sont toujours montés — `components/brief/` par le
+fil du cadrage (#483), `components/composer/` par ses suites. Supprimer les
+coquilles est une décision à part, qui ne relève ni du menu ni des chemins.
 
 ---
 
@@ -264,6 +305,16 @@ une panne ; l'écran est donc remplacé par **ce qu'il faut faire pour le rempli
   geste en ligne de commande, mais **sans rattachement** : ses tâches n'entrent
   dans la vue d'aucun projet (§2.0), et l'écran le dit plutôt que de le laisser
   chercher ;
+
+  > ⚠ **Le geste a changé le 2026-08-28** (#484) : le bouton menait à l'écran de
+  > composition (#319), il **ouvre le chat**. C'est un critère à part du lot, et
+  > il ne va pas de soi — un premier démarrage est le seul moment où l'écran est
+  > la **seule** source de ce qu'il faut faire, donc le seul où un renvoi périmé
+  > ne se rattrape pas ailleurs. Laisser « Composer un objectif » aurait produit
+  > un rebond (le chemin redirige, §1.1), et retirer le lien aurait ramené le
+  > poste vide à ce que #186 avait corrigé : un écran qui ne nomme aucun geste.
+  > La destination est résolue par le menu (`PAGE_DU_FIL`), donc elle suivra le
+  > prochain déménagement toute seule ;
 - **juste explorer l'interface** — `bash scripts/controltower/start.sh --demo`,
   scénario factice sur bus mémoire, qui **dit** que ses données le sont.
 
@@ -1064,7 +1115,8 @@ preuve que le chantier a réparé la donnée et non l'affichage.
   hypothèses) et **ses questions**. C'est le point de contrôle le plus rentable du produit :
   corriger un plan coûte un message, corriger douze tâches coûte douze exécutions. L'écran est au
   §2.7.4 ; il sert les deux attentes du run — répondre aux questions (#321) puis approuver, corriger
-  ou refuser (#320) — et met le **coût déjà engagé** en face de la décision.
+  ou refuser (#320) — et met le **coût déjà engagé** en face de la décision. Depuis #483 le même
+  point de contrôle se joue **dans le fil** (§2.7.5), par les mêmes routes et les mêmes composants.
 - **Appliquer dans le projet** *(livré — #227, EF-37)* — la remise des livrables dans le dossier
   de l'utilisateur est une **action sensible** : elle emprunte l'écran de validation ci-dessus
   (§2.6), diff à l'appui. Rien de neuf côté mécanisme, un nouveau type d'action côté contenu —
@@ -1072,6 +1124,16 @@ preuve que le chantier a réparé la donnée et non l'affichage.
   ajoutées/supprimées, branche fusionnée), que le panneau des validations affiche avant la
   décision. Sur refus, **rien n'est écrit** et le travail reste consultable : la branche de tâche
   n'est jamais supprimée, la copie reste où elle est.
+
+> ⚠ **Les deux écrans de la Phase 8 ont quitté le menu le 2026-08-28** (#484, lot 3 de #481) —
+> « Composer un objectif » et « Valider le brief » —, et l'encadré ci-dessus décrit donc l'état
+> **d'origine**, celui du 2026-08-04. Ce n'est pas une réserve levée puis reposée : les deux écrans
+> sont **spécifiés et livrés**, ils ont simplement cessé d'être des **destinations**. Ce qu'ils
+> savent faire vit dans le fil — les sources depuis #482 (§6.12), le cadrage et sa décision depuis
+> #483 (§2.7.5) —, `/composer` et `/brief` restent servis et redirigés (§1.1), et les §2.7.3 et
+> §2.7.4 gardent tout leur contenu : ils disent **pourquoi** chaque parti pris a été tranché comme
+> il l'a été, et ces raisons ont traversé le déménagement sans changer d'un mot. Ce qui serait faux
+> est de lire ces deux sections comme la description d'un écran qu'on ouvre.
 
 Le sélecteur de projet devient alors un élément permanent de la barre supérieure : le Kanban,
 les coûts et le journal se lisent **par projet**. C'est **fait** — les écrans sont cadrés sur le
@@ -1164,14 +1226,15 @@ Implémentation : `maestro/controltower/selecteur.py` et `projets.py` (`points_e
 
 #### 2.7.3 Composer un objectif (#319) — **livré**
 
-> ⚠ **Cet écran a été condamné le 2026-08-24, et ce qu'il fait ne l'est pas** (revue #470,
-> [docs/29 §4](./29-decision-run-objet-de-premier-plan.md)). Le **chat devient la seule porte
-> d'entrée** : objectif, fichiers, dossiers et liens se déposent dans le fil (#482), et l'écran part
-> une fois qu'il n'a plus rien d'unique (#484). C'est un **déménagement**, pas une suppression —
-> l'ingestion, l'aperçu et leurs contrats (§6.8, §6.9) sont rebranchés tels quels, et `/composer`
-> reste servi et redirigé. Le paragraphe « Place dans la navigation » ci-dessous est celui qui
-> tombe : l'argument « une action qu'on ne trouve pas est une action qui n'existe pas » reste vrai,
-> mais l'endroit où on la trouve devient le fil.
+> ⚠ **Cet écran a quitté le menu le 2026-08-28, et ce qu'il fait ne l'a pas quitté** (condamné par
+> la revue #470 du 2026-08-24, [docs/29 §4](./29-decision-run-objet-de-premier-plan.md) ; exécuté
+> par #484). Le **chat est la seule porte d'entrée** : objectif, fichiers, dossiers et liens se
+> déposent dans le fil (#482, §6.12). C'est un **déménagement**, pas une suppression — l'ingestion,
+> l'aperçu et leurs contrats (§6.8, §6.9) sont rebranchés tels quels, et `/composer` reste servi et
+> redirigé (§1.1, 307). Le paragraphe « Place dans la navigation » ci-dessous est celui qui est
+> tombé : l'argument « une action qu'on ne trouve pas est une action qui n'existe pas » reste vrai,
+> et c'est **lui** qui a fait monter « Chat » en tête de menu — l'endroit où on trouve l'action a
+> changé, la règle qui décide de cet endroit non. **Ce qui suit décrit l'écran d'origine.**
 
 Le troisième des quatre écrans, et celui par lequel on **entre** dans un run. Jusqu'ici lancer une
 orchestration passait par `curl` : `POST /api/executions` ne prenait qu'un objectif **texte** et le
@@ -1179,7 +1242,8 @@ poste vide (§2.1.1) renvoyait à la ligne de commande. Un cahier des charges de
 qu'un chemin, le copier-coller — et un objectif flou produisait un plan flou dont l'erreur ne se
 voyait qu'après N tâches payées.
 
-**Place dans la navigation** — au **menu**, juste après le tableau de bord, et c'est un choix.
+**Place dans la navigation** *(caduc depuis #484 — voir l'encadré ; la règle, elle, a survécu et
+c'est « Chat » qui en hérite)* — au **menu**, juste après le tableau de bord, et c'est un choix.
 « Projets » en est sorti (#280) parce qu'un projet est le **cadre** des écrans et non l'un d'eux ;
 composer, à l'inverse, est une **action**, et une action qu'on ne trouve pas est une action qui
 n'existe pas. Le poste vide y renvoie désormais par un bouton, à la place de la commande `curl`

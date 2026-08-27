@@ -55,7 +55,7 @@ import {
   type CauseAttente,
 } from "@/lib/execution";
 import { libelleCause, libelleStatutExecution } from "@/lib/format";
-import { entreeParLibelle, hrefRun } from "@/lib/navigation";
+import { entreeParLibelle, hrefRun, PAGE_DU_FIL } from "@/lib/navigation";
 import {
   CAUSE_ANNULATION,
   CAUSE_EXTINCTION,
@@ -256,8 +256,8 @@ describe("la carte d'un run — la même sur les trois écrans", () => {
   });
 
   it("mène l'attente vers l'écran qui porte le geste qui la lève", () => {
-    // La vue d'un run *montre* l'attente sans la débloquer : le renvoi vise
-    // « Valider le brief » ou « Validations », jamais la vue elle-même.
+    // La vue d'un run *montre* l'attente sans la débloquer : le renvoi vise le
+    // fil (#483) ou « Validations », jamais la vue elle-même.
     carte(runFactice({ statut: EXECUTION_EN_ATTENTE_BRIEF }));
 
     expect(screen.getByText(ATTENTES[ATTENTE_BRIEF].phrase)).toBeInTheDocument();
@@ -628,9 +628,12 @@ describe("la liste des runs (l'écran)", () => {
     monter();
 
     expect(screen.getByText(/Aucun run sur Dépensio/)).toBeInTheDocument();
+    // Le geste qui remplit cette liste est le fil depuis #484 : le renvoi passe
+    // par `PAGE_DU_FIL`, jamais par un chemin écrit ici — sans quoi le test
+    // resterait vert le jour où l'écran, lui, renverrait ailleurs.
     expect(
-      screen.getByRole("link", { name: "Composer un objectif" }),
-    ).toHaveAttribute("href", entreeParLibelle("Composer un objectif")?.href);
+      screen.getByRole("link", { name: "Ouvrir le chat" }),
+    ).toHaveAttribute("href", entreeParLibelle(PAGE_DU_FIL)?.href);
   });
 
   it("ne conseille pas de lancer un run à qui n'a pas de backend", () => {
@@ -641,7 +644,7 @@ describe("la liste des runs (l'écran)", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent(/API injoignable/);
     expect(
-      screen.queryByRole("link", { name: "Composer un objectif" }),
+      screen.queryByRole("link", { name: "Ouvrir le chat" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/Aucun run sur/)).not.toBeInTheDocument();
   });
@@ -666,8 +669,15 @@ describe("les attentes et leurs renvois", () => {
   it("mènent chacune à l'écran qui porte le geste", () => {
     // Deux attentes se lèvent au même endroit — c'est le même écran qui porte le
     // brief et ses questions —, la troisième ailleurs.
-    expect(entreeParLibelle(ATTENTES[ATTENTE_BRIEF].page)?.href).toBe("/brief");
-    expect(entreeParLibelle(ATTENTES[ATTENTE_REPONSES].page)?.href).toBe("/brief");
+    //
+    // Depuis #483 cet endroit est **le fil** et non plus `/brief` : le geste a
+    // déménagé (arbitrage du 2026-08-24), la table l'a suivi. C'est cette
+    // assertion-là qui rend le déménagement opposable — sans elle, le jour où
+    // #484 retire l'entrée « Valider le brief » du menu, les trois renvois
+    // s'éteindraient en silence et un run suspendu ne serait plus montré nulle
+    // part.
+    expect(entreeParLibelle(ATTENTES[ATTENTE_BRIEF].page)?.href).toBe("/chat");
+    expect(entreeParLibelle(ATTENTES[ATTENTE_REPONSES].page)?.href).toBe("/chat");
     expect(entreeParLibelle(ATTENTES[ATTENTE_VALIDATION].page)?.href).toBe(
       "/validations",
     );

@@ -8,11 +8,9 @@ import type { ComponentType, SVGProps } from "react";
 
 import {
   IconeAgents,
-  IconeBrief,
   IconeChat,
   IconeCouts,
   IconeJournal,
-  IconeObjectif,
   IconeParametres,
   IconeProjets,
   IconeRuns,
@@ -34,8 +32,12 @@ export type EntreeMenu = {
  * le même objet par une autre facette — elles sont devenues des onglets, leurs
  * chemins restant servis par les redirections de `next.config.ts`.
  *
- * « Chat » subsiste et vise le chat **global**, non lié à un agent : c'est une
- * intention distincte, portée par le chantier « Chat » de la Phase 6.
+ * « Chat » vise le chat **global**, non lié à un agent : c'est une intention
+ * distincte, portée par le chantier « Chat » de la Phase 6. Depuis #484 elle
+ * **ouvre le menu**, juste après l'accueil, à la place qu'occupaient les deux
+ * entrées dont elle a absorbé le geste — c'est le déplacement qui donne son sens
+ * au retrait : une porte d'entrée en quatrième position n'est pas une porte
+ * d'entrée, et le tableau de bord vide y renvoie désormais (`PosteVide`).
  *
  * « Projets » (#225) y a figuré un temps, juste après l'accueil ; elle n'y est
  * plus (#280) — voir `HORS_MENU`.
@@ -46,42 +48,78 @@ export type EntreeMenu = {
  * ici est ce qui **allume** le renvoi de cet aperçu — `entreeParLibelle`
  * (ci-dessous) le résout par le menu, `FilActivite` n'a rien à savoir du chemin.
  *
- * « Composer un objectif » (#319) ouvre la liste, juste après l'accueil, et **au
- * menu** plutôt que dans `HORS_MENU` : c'est le geste par lequel on entre dans
- * un run, pas une destination où l'on passe. L'y ranger n'est pas revenir sur
- * #280 — « Projets » en est sorti parce qu'un projet est le **cadre** des
- * écrans ; composer, c'est une action, et une action qu'on ne trouve pas est une
- * action qui n'existe pas (le tableau de bord vide renvoyait à `curl`).
+ * ⚠ **« Composer un objectif » (#319) et « Valider le brief » (#322) sont
+ * parties le 2026-08-28** (#484, lot 3 de #481), et c'est un **renversement**
+ * assumé de la Phase 8, pas un rangement : les deux étaient ici en toutes lettres
+ * — composer parce qu'« une action qu'on ne trouve pas est une action qui
+ * n'existe pas », valider parce qu'« un run suspendu sur son brief ne crée aucune
+ * tâche, donc rien d'autre ne le montre ». Les deux arguments **tiennent
+ * toujours** ; ce qui a changé est leur conclusion. La revue d'usage du
+ * 2026-08-24 (#470, [docs/29 §4]) a tranché que le fil serait la **seule** porte
+ * d'entrée : #482 lui a donné les pièces jointes et les sources, #483 le cadrage
+ * et sa décision. Les deux entrées ne portaient donc plus rien d'unique, et deux
+ * portes vers un même geste sont la question « laquelle ? » posée à chaque
+ * lancement.
  *
- * « Valider le brief » (#322) suit « Composer un objectif », dont elle est
- * l'autre moitié : on compose, le Chef de projet rédige, on tranche. **Au menu**
- * et non dans `HORS_MENU` bien qu'on y arrive le plus souvent par la cloche ou
- * par le tableau de bord — un run suspendu sur son brief ne crée aucune tâche,
- * donc rien d'autre ne le montre, et une destination qui n'apparaît que le jour
- * où quelque chose l'appelle est une destination qu'on ne pense pas à ouvrir. La
- * file y est vide la plupart du temps, et le dit : c'est le prix de savoir qu'on
- * n'a rien laissé en plan.
+ * Ce n'est pas non plus #280 rejoué : « Projets » a quitté le menu **en gardant
+ * son écran** (`HORS_MENU` ci-dessous), parce que le projet est le cadre des
+ * destinations et non l'une d'elles. Ici l'écran ne reste pas une destination du
+ * tout — `/composer` et `/brief` **redirigent** vers le fil (307,
+ * `next.config.ts`) —, d'où leur absence des deux listes : les ranger dans
+ * `HORS_MENU` leur donnerait un titre de barre supérieure qu'aucun rendu
+ * n'atteindrait, et laisserait `entreeParLibelle` résoudre un libellé vers un
+ * chemin qui se dérobe.
  *
- * « Runs » (#474, lot 2 de #472) **ferme ce groupe de tête** : on compose, le Chef
- * de projet rédige, on tranche — puis on regarde ce qui tourne. Elle est au menu
- * parce qu'un run n'était l'objet d'**aucun** écran : on y entrait par « Composer
- * un objectif » et on n'y revenait jamais, les runs passés n'étant listés nulle
- * part (revue #470, docs/29 §3). Sa place **avant** « Agents » suit le principe des
- * deux précédentes — le haut du menu porte le travail en cours, le bas les
- * ressources qui le servent et ce qu'on observe après coup.
+ * Corollaire à ne pas défaire : les cinq surfaces qui **acheminaient** vers ces
+ * deux écrans visent désormais « Chat », et elles ont bougé **dans le même
+ * commit**. Un renvoi résolu par le menu (règle de #191) rend `undefined` quand
+ * son libellé part, donc `null`, donc un bloc qui disparaît sans un mot — un run
+ * suspendu que plus rien ne montre, c'est-à-dire le défaut même que l'argument
+ * de #322 ci-dessus interdisait. Retirer une entrée de menu n'est jamais un
+ * geste local.
+ *
+ * « Runs » (#474, lot 2 de #472) **ferme ce groupe de tête** : on parle à
+ * Maestro dans le fil, puis on regarde ce qui tourne. Elle est au menu parce
+ * qu'un run n'était l'objet d'**aucun** écran : on y entrait par « Composer un
+ * objectif » et on n'y revenait jamais, les runs passés n'étant listés nulle
+ * part (revue #470, docs/29 §3). Le groupe a perdu deux entrées sur trois, le
+ * principe de l'ordre ne bouge pas — le haut du menu porte le travail en cours,
+ * le bas les ressources qui le servent et ce qu'on observe après coup.
  */
 export const MENU: EntreeMenu[] = [
   { href: "/", libelle: "Tableau de bord", Icone: IconeTableauDeBord },
-  { href: "/composer", libelle: "Composer un objectif", Icone: IconeObjectif },
-  { href: "/brief", libelle: "Valider le brief", Icone: IconeBrief },
+  { href: "/chat", libelle: "Chat", Icone: IconeChat },
   { href: "/runs", libelle: "Runs", Icone: IconeRuns },
   { href: "/agents", libelle: "Agents", Icone: IconeAgents },
-  { href: "/chat", libelle: "Chat", Icone: IconeChat },
   { href: "/couts", libelle: "Coûts & analytics", Icone: IconeCouts },
   { href: "/validations", libelle: "Validations", Icone: IconeValidations },
   { href: "/journal", libelle: "Journal", Icone: IconeJournal },
   { href: "/parametres", libelle: "Paramètres", Icone: IconeParametres },
 ];
+
+/**
+ * Le **libellé de menu du fil** — la seule porte d'entrée depuis #484.
+ *
+ * Il existe pour la raison qui a fait exister `PAGE_DU_CADRAGE` (`lib/brief`, la
+ * moitié de #483) : plusieurs surfaces **acheminent** vers cette page sans
+ * décider, et elles doivent bouger ensemble ou pas du tout. Ici ce sont celles
+ * qui nommaient le geste de **lancement** — le poste vide (`PosteVide`), la
+ * liste de runs vide (`runs/ListeRuns`) et la file de briefs vide
+ * (`brief/ValidationBriefs`) —, qui renvoyaient toutes à « Composer un
+ * objectif ». Recopier le libellé dans les trois, c'est se donner trois chances
+ * d'en oublier une, et une seule oubliée est un écran vide qui ne nomme plus
+ * aucun geste : exactement ce que #186 avait corrigé en renvoyant à `curl`.
+ *
+ * C'est un **libellé** et non un chemin, comme partout depuis #191 : le renvoi
+ * suit sa page si elle déménage, et ne s'allume pas vers une page absente.
+ *
+ * ⚠ Il vaut « Chat » comme `PAGE_DU_CADRAGE`, et les deux ne sont pas à fondre :
+ * ils répondent à deux questions — « d'où lance-t-on ? » et « où tranche-t-on un
+ * brief ? » — que le fil réunit **aujourd'hui**, ce qui est le sujet de #481, pas
+ * une propriété acquise. Les fondre reviendrait à décréter qu'elles ne pourront
+ * plus jamais diverger.
+ */
+export const PAGE_DU_FIL = "Chat";
 
 /**
  * Les pages **servies mais hors navigation** (#280) : elles ont un titre de

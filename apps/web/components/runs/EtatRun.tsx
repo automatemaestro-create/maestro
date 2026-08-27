@@ -82,7 +82,7 @@ import {
   libelleStatutExecution,
 } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
-import { entreeParLibelle, hrefRun } from "@/lib/navigation";
+import { entreeParLibelle, hrefRun, PAGE_DU_FIL } from "@/lib/navigation";
 import {
   EXECUTION_ECHEC,
   EXECUTION_TERMINEE,
@@ -99,24 +99,32 @@ import {
  *
  * Chaque attente mène à l'écran qui porte **le geste** qui la lève, et non à la
  * vue du run : celle-ci existe depuis #475, mais elle *montre* le run, elle ne le
- * débloque pas — un brief se tranche à « Valider le brief », un arbitrage de tâche
- * à « Validations ». Le jour où la vue d'un run portera ces gestes, c'est cette
+ * débloque pas — un brief se tranche dans le fil, un arbitrage de tâche à
+ * « Validations ». Le jour où la vue d'un run portera ces gestes, c'est cette
  * table qu'il faudra changer, et elle seule.
+ *
+ * C'est exactement ce qui vient d'arriver à ses deux premières lignes (#484, le
+ * geste ayant déménagé avec #483), et la meilleure preuve que ce point-là était
+ * juste : le libellé a changé ici, et nulle part ailleurs. Il ne pouvait pas ne
+ * pas changer — résolu par le menu, « Valider le brief » ne rend plus rien, donc
+ * l'attente la plus bloquante du produit aurait perdu son renvoi en silence.
  */
 export const ATTENTES: Record<
   CauseAttente,
   { libelle: string; phrase: string; page: string; action: string }
 > = {
+  // ⚠ #483 pose `PAGE_DU_CADRAGE` (`lib/brief`) sur ces deux lignes — même
+  // valeur. Au merge des deux lots : prendre sa version.
   [ATTENTE_BRIEF]: {
     libelle: "Brief à valider",
     phrase: "Le brief attend votre décision",
-    page: "Valider le brief",
+    page: PAGE_DU_FIL,
     action: "Relire",
   },
   [ATTENTE_REPONSES]: {
     libelle: "Questions en attente",
     phrase: "Le Chef de projet attend vos réponses",
-    page: "Valider le brief",
+    page: PAGE_DU_FIL,
     action: "Répondre",
   },
   [ATTENTE_VALIDATION]: {
