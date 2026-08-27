@@ -230,8 +230,9 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
    **signale et achemine, il ne décide pas** — sept sections, des questions et un
    coût ne tiennent pas dans une carte. Il achemine vers le **fil** depuis #483
    (§2.7.5), où le geste vit désormais ; ce panneau, la cloche et la carte de run
-   partagent une seule constante pour le dire, faute de quoi ils s'éteindraient tous
-   les trois en silence quand #484 retirera l'entrée de menu qu'ils nommaient.
+   partagent une seule constante pour le dire, faute de quoi ils se seraient éteints
+   tous les trois en silence le 2026-08-28, quand #484 a retiré l'entrée de menu
+   qu'ils nommaient — ce jour-là aucun des trois n'a eu à changer.
 2. **Validations en attente** — ce qui demande un arbitrage humain.
 3. **Runs interrompus** (#349, #486, §6.1) — les runs **orphelins ou éteints dont
    le brief a été approuvé**, avec le bouton qui les reprend sur ce cadrage. Après
@@ -1350,8 +1351,9 @@ côté API — le reste de la Phase 8 est différé au lot final #323.
 > décompose pas avant validation humaine —, et c'est précisément ce qui a été tranché : supprimer
 > l'écran de composition était clair, supprimer le **point de contrôle** ne l'était pas, et il ne
 > l'est pas. Les questions de clarification et les sept sections se décident **dans le fil**
-> depuis #483 (**livré**, §2.7.5) ; l'entrée de menu part avec celle de « Composer » (#484), et
-> `/brief` reste servi et redirigé. **Ce qui suit décrit donc l'écran d'origine**, qui vit encore et
+> depuis #483 (**livré**, §2.7.5) ; l'entrée de menu **est partie** avec celle de « Composer » le
+> 2026-08-28 (#484, **livré**), et `/brief` reste servi et redirigé (§1.1, 307). **Ce qui suit
+> décrit donc l'écran d'origine**, qui vit encore et
 > dont ce §2.7.5 reprend les partis pris un à un : ils n'ont pas changé de contenu, seulement de
 > surface. Un paragraphe ci-dessous garde toute sa force et devient un argument **pour** le
 > déménagement : « un run suspendu sur son brief ne crée aucune tâche, donc ni le Kanban, ni les
@@ -1363,13 +1365,22 @@ Le dernier des quatre écrans, et le **point de contrôle le plus rentable du pr
 brief coûte un message, corriger douze tâches coûte douze exécutions (décision D5, #218). Le run est
 arrêté ici — en vol, mais immobile — et rien ne repartira sans un geste.
 
-**Place dans la navigation** — au **menu**, juste après « Composer un objectif », dont il est
+**Place dans la navigation** *(caduc depuis #484 ; l'argument, lui, a été tenu — voir ci-dessous)* —
+au **menu**, juste après « Composer un objectif », dont il est
 l'autre moitié : on compose, le Chef de projet rédige, on tranche. Au menu bien qu'on y arrive le
 plus souvent par la cloche ou par le tableau de bord, et pour une raison qui n'est pas de confort :
 un run suspendu sur son brief **ne crée aucune tâche**, donc ni le Kanban, ni les grands livres, ni
 le fil d'activité ne le montrent. Une destination qui n'apparaît que le jour où quelque chose
 l'appelle est une destination qu'on ne pense pas à ouvrir. La file y est vide la plupart du temps,
 et le dit en nommant le projet (#281).
+
+> ⚠ **L'entrée est partie le 2026-08-28** (#484), et l'argument ci-dessus est exactement ce qui a
+> rendu ce retrait coûteux plutôt qu'anodin. Un run suspendu ne se montre que par **trois** surfaces
+> — le panneau du tableau de bord, la cloche, la carte de run —, toutes trois résolvant leur
+> destination par le **menu**. Retirer l'entrée sans elles les aurait éteintes en silence : c'est
+> pourquoi #483 les avait déjà fait pointer sur `PAGE_DU_CADRAGE` (§2.7.5), **avant** le retrait et
+> non après. Résultat mesurable : #484 n'a touché **aucun** de ces trois fichiers, et un run
+> suspendu se voit toujours aux trois mêmes endroits — c'est ce que la précaution achetait.
 
 **Deux attentes, deux écrans, et jamais le même geste proposé.** Le statut du run tranche :
 
@@ -1479,8 +1490,8 @@ depuis l'écran qu'on regarde.** Un run suspendu sur son brief ne crée **aucune
 Kanban, ni les grands livres, ni le fil d'activité ne le montrent. Ses trois seules surfaces sont le
 **panneau du tableau de bord**, la **cloche** et la carte de run (§2.1) — et toutes trois résolvent
 leur destination par le **menu** (`entreeParLibelle`, règle de #191). Laissées sur « Valider le
-brief », elles se seraient éteintes **en silence** le jour où #484 retire l'entrée : `undefined`,
-donc `null`, donc un run bloqué que plus rien ne montre. Elles partagent donc une seule constante,
+brief », elles se seraient éteintes **en silence** le 2026-08-28, jour où #484 a retiré l'entrée :
+`undefined`, donc `null`, donc un run bloqué que plus rien ne montre. Elles partagent donc une seule constante,
 `PAGE_DU_CADRAGE` (`lib/brief.ts`), et bougent ensemble ou pas du tout. Elles continuent d'**acheminer
 sans décider**, pour la raison d'origine : sept sections, des questions et un coût ne tiennent pas
 dans une carte.
@@ -2967,9 +2978,10 @@ circule déjà en clair sur le même canal — mais corromprait l'entrée de la 
 ⚠ **Deux surfaces les appellent depuis #483, et le contrat n'a pas bougé pour autant** : l'écran
 `/brief` (§2.7.4) et le **fil** (§2.7.5) passent tous deux par ces deux routes-ci, par le même client
 et avec le même corps. C'est le critère 1 du lot, écrit en toutes lettres — « la décision emprunte le
-canal existant, pas un second » —, et c'est ce qui permet à #484 de retirer un écran sans toucher à
-une ligne de ce paragraphe. Le `409` (« le run n'attend plus ») reste la réponse juste quand les deux
-surfaces sont ouvertes côte à côte et que l'une tranche.
+canal existant, pas un second » —, et c'est ce qui a permis à #484 de retirer un écran du menu le
+2026-08-28 sans toucher à une ligne de ce paragraphe. Le `409` (« le run n'attend plus ») reste la
+réponse juste quand les deux surfaces sont ouvertes côte à côte et que l'une tranche — les deux
+restent joignables, `/brief` par sa redirection (§1.1) et le fil par le menu.
 
 Implémentation : [`maestro/controltower/app.py`](../maestro/controltower/app.py) pour les routes,
 [`maestro/controltower/brief.py`](../maestro/controltower/brief.py) pour les arbitres et

@@ -186,6 +186,21 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   agent — servi pour de bon depuis #269 (voir ci-dessous). Les onglets sont
   déclarés une seule fois (`lib/agents.ts`), comme le menu l'est dans
   `lib/navigation.ts` ;
+- **Une seule porte d'entrée** (#484, lot 3 de #481, docs/05 §1) : « Composer un
+  objectif » (#319) et « Valider le brief » (#322) **ont quitté le menu** le
+  2026-08-28, et « Chat » a pris leur place en tête — le fil sait faire ce
+  qu'elles faisaient (les sources depuis #482, le cadrage depuis #483), et deux
+  portes vers un même geste sont la question « laquelle ? » posée à chaque
+  lancement. Même mécanique qu'au-dessus : `/composer` et `/brief` sont
+  **redirigés** vers `/chat` (307, `next.config.ts`), donc aucun signet ne casse.
+  Le vrai coût du lot est ailleurs — **cinq** surfaces acheminaient vers ces deux
+  écrans en résolvant leur destination par le **menu** (le poste vide, la liste
+  de runs vide, la file de briefs vide, la cloche, la table `ATTENTES`) ; un
+  libellé retiré rend `undefined`, donc `null`, donc un bloc qui disparaît sans
+  un mot. Les trois du **cadrage** avaient été déplacées d'avance par #483
+  (`PAGE_DU_CADRAGE`), les deux du **lancement** l'ont été ici (`PAGE_DU_FIL`,
+  `lib/navigation.ts`) : retirer une entrée de menu n'est jamais un geste
+  local ;
 - **Éditeur de playbooks** (#77, EF-24/EF-25) : l'onglet **Playbook** d'une fiche
   agent porte son playbook versionné (#76, API `/api/playbooks`), publie une nouvelle
   version depuis un éditeur plein texte et montre l'historique, chaque version
@@ -561,7 +576,7 @@ format), mêmes champs dans le même ordre : ce qu'on lit pour trancher ne doit 
 dépendre de l'écran d'où l'on vient, et c'était le cas quand trois rendus
 divergents décrivaient la même demande (le panneau, la page, la cloche).
 
-**Ce qui la garde** : `tests/sobriete.test.tsx`, qui monte les dix écrans du menu
+**Ce qui la garde** : `tests/sobriete.test.tsx`, qui monte les huit écrans du menu
 et compte. L'arbitrage n'y est pas déclaré, il se **prouve** : chaque écran est
 monté deux fois, files pleines puis files vides, et ce qui survit aux deux est ce
 que le plafond compte. Un bloc qui prétendrait arbitrer sans disparaître compte
@@ -853,7 +868,7 @@ les octets de `globals.css`, #534) ; `html-has-lang`, `html-lang-valid` et
 `document-title`, parce qu'elles jugent le **document qui enveloppe** l'écran —
 le `<html lang="fr">` et le `metadata.title` de `app/layout.tsx`, que le rendu
 d'un composant ne monte pas. Les garder ferait rapporter une faute du **harnais**
-comme une faute du produit, sur les dix écrans à la fois. Elles ne disparaissent
+comme une faute du produit, sur les huit écrans à la fois. Elles ne disparaissent
 pas pour autant : elles changent de juge, et `tests/a11y.test.tsx` les vérifie
 sur la source du layout.
 
@@ -870,7 +885,7 @@ configuration : un `off` dans `eslint.config.mjs` ferait taire la règle sur les
 
 #### Les deux exemptions de fond — arrêtées, écrites, et non découvertes plus tard
 
-Le niveau visé est **WCAG 2.2 niveau AA sur les dix écrans**. Deux exemptions
+Le niveau visé est **WCAG 2.2 niveau AA sur les huit écrans**. Deux exemptions
 sortent de ce périmètre. Elles ont été arrêtées par la recherche #471 (docs/30
 §3.5) et sont écrites ici parce qu'une exemption qu'on ne trouve pas dans la doc
 du produit est une exemption que le prochain ticket prendra pour un oubli — ou,
@@ -905,7 +920,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 
 | Fichier | Ce qu'il couvre |
 | --- | --- |
-| `tests/navigation.test.tsx` | Le menu unique, la sidebar, la barre supérieure (#117) ; une entrée par intention et les renvois par libellé (#189) |
+| `tests/navigation.test.tsx` | Le menu unique, la sidebar, la barre supérieure (#117) ; une entrée par intention et les renvois par libellé (#189) ; la **porte unique** (#484, **logique critique du lot seule**, le reste différé à #485) — les deux entrées parties, les deux chemins encore servis en 307, aucune entrée de menu parmi les sources de redirection, et le libellé du fil qui **résout** (un `undefined` y éteindrait cinq renvois sans un mot) |
 | `tests/theme.test.tsx` | Choix clair/sombre/système, script d'init, accord des deux contrôles (#118) |
 | `tests/notifications.test.tsx` | Tri du notable, badge, décision depuis le panneau (#119) |
 | `tests/identite.test.tsx` | Le monogramme et ses déclinaisons favicon/ICO/PNG (#120) |
@@ -937,7 +952,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/etat-des-runs.test.tsx` | L'état des runs au tableau de bord (#476, testé en #480) : **l'exhaustivité de la table des groupes**, balayée sur `regimeDuRun` plutôt qu'énumérée — un régime sans groupe fait disparaître ces runs-là de l'écran, ce qui est arrivé à « en pause » entre #476 et #477 — puis le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` sur ses trois entrées, et l'écran qui ne porte **aucun** geste |
 | `tests/a11y.test.tsx` | Le **filet d'accessibilité** (#537) en trois étages : `axe-core` joué sur les **10 écrans** montés dans leur shell réel, verdict **0 violation `serious`/`critical`** — table d'écrans **dérivée de `MENU`**, donc une page ajoutée au menu sans cas d'audit rougit ; puis ce qu'axe ne sait pas voir — le **lien d'évitement** (premier dans l'ordre du DOM, visant un `<main>` que le focus peut atteindre), la **garde de mouvement** sur chaque utilité `transition`/`animate-` du produit, et le **plancher de 24 px** des cibles en petit corps. Comme `contraste.test.ts`, **la sonde est prouvée avant de servir** : sur un fragment fautif (image sans alternative, bouton sans nom, champ sans étiquette), puis sur un fragment sain |
 | `tests/regions-live.test.tsx` | Les régions live des écrans temps réel (#538) : le **vocabulaire sans DOM** (seules les hausses parlent, un franchissement dit le total, les deux attentes humaines **absentes** du relevé des runs) ; la **présence** écran par écran, comptée sur l'attribut `aria-live` comme la sonde du ticket — une polie, zéro assertive ; le **contenu** après un événement simulé ; le **débit**, où une rafale de trois tâches ne coûte que deux phrases et douze événements du journal une seule ; et l'**assertive** avec sa réserve — unique dans le shell, muette sur une tâche terminée, et jamais redite par la région polie de l'écran qui montre l'arbitrage |
-| `tests/sobriete.test.tsx` | La **règle des trois places** (#539, voir « Le langage visuel » ci-dessus) rendue opposable : les 10 écrans du menu recensés, bandeau de tête ≤ 4 chiffres, corps ≤ 3 blocs, une seule colonne de propriétés, aucun bloc anonyme. Rien n'y est **déclaré** — le bandeau se reconnaît à ses `TuileChiffre`, la colonne à sa balise `<aside>`, et l'**arbitrage se prouve** en montant chaque écran une seconde fois files vides : un bloc qui prétendrait arbitrer sans disparaître compterait comme les autres. Sonde prouvée sur un échantillon fautif avant de balayer, comme `contraste.test.ts` |
+| `tests/sobriete.test.tsx` | La **règle des trois places** (#539, voir « Le langage visuel » ci-dessus) rendue opposable : les écrans du menu recensés — 10 jusqu'à #484, **8** depuis —, bandeau de tête ≤ 4 chiffres, corps ≤ 3 blocs, une seule colonne de propriétés, aucun bloc anonyme. Rien n'y est **déclaré** — le bandeau se reconnaît à ses `TuileChiffre`, la colonne à sa balise `<aside>`, et l'**arbitrage se prouve** en montant chaque écran une seconde fois files vides : un bloc qui prétendrait arbitrer sans disparaître compterait comme les autres. Sonde prouvée sur un échantillon fautif avant de balayer, comme `contraste.test.ts` |
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
 
 Cinq fichiers portent l'outillage plutôt que des tests :
@@ -955,7 +970,7 @@ Cinq fichiers portent l'outillage plutôt que des tests :
   lequel tout rendu du shell s'arrête à la porte) et `rendreAvecEtat`, qui monte
   un composant sous le **vrai** fournisseur d'état du shell avec une source temps
   réel factice ;
-- `tests/ecrans.tsx` — **les dix écrans** (#537, extrait ici par #539) : quel
+- `tests/ecrans.tsx` — **les huit écrans** (#537, extrait ici par #539 ; dix jusqu'à #484) : quel
   composant chaque route rend, l'état partagé dans lequel on les monte
   (`peuplerEtat`, files d'arbitrage pleines, et `peuplerEtatSansArbitrage`, files
   vides mais projet toujours peuplé — tout vider ferait basculer le tableau de
@@ -979,7 +994,7 @@ Cinq fichiers portent l'outillage plutôt que des tests :
   reviendrait à auditer des composants là où on veut auditer des écrans.
 
 ⚠ Trois pièges de ce harnais, les deux premiers apparus en écrivant les trois
-suites de runs, le troisième en montant les dix écrans de #537 :
+suites de runs, le troisième en montant les huit écrans de #537 :
 
 - **`chargerTaches` n'est pas mocké par `tests/setup.ts`**, contrairement à
   `chargerProjets` et `chargerJournal` — et **`chargerGrapheExecution` non plus**
@@ -1012,6 +1027,13 @@ qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
   redirections v1 (`next.config.ts`) et les ancres `data-guide` visées par la
   visite guidée. Une page supprimée laisserait sinon une entrée de menu vers un
   404, un signet redirigé vers le vide et une étape de visite sans cible ;
+- ceux de la **porte unique** (#484) : qu'aucune entrée de menu ne porte plus
+  `/composer` ni `/brief`, que les deux chemins soient **encore servis** en 307
+  (jamais 308 — un 308 est mis en cache pour de bon), qu'aucune entrée de menu ne
+  figure parmi les **sources** de redirection (une entrée qui se redirige
+  elle-même est un aller simple, le piège de #190), et que le libellé du fil
+  **résolve** — c'est cette dernière qui garde les cinq renvois, dont l'échec
+  serait `null` et donc silencieux ;
 - celui qui vérifie que chaque redirection v1 vise un **onglet déclaré**
   (`lib/agents.ts`). Le contrôle de route ne suffit pas ici : `[onglet]` répond à
   *n'importe quel* segment, si bien qu'une faute de frappe rendrait bien une page

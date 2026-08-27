@@ -70,13 +70,20 @@ export type EntreeMenu = {
  * n'atteindrait, et laisserait `entreeParLibelle` résoudre un libellé vers un
  * chemin qui se dérobe.
  *
- * Corollaire à ne pas défaire : les cinq surfaces qui **acheminaient** vers ces
- * deux écrans visent désormais « Chat », et elles ont bougé **dans le même
- * commit**. Un renvoi résolu par le menu (règle de #191) rend `undefined` quand
- * son libellé part, donc `null`, donc un bloc qui disparaît sans un mot — un run
+ * Corollaire à ne pas défaire : **cinq** surfaces acheminaient vers ces deux
+ * écrans, et toutes visent « Chat » avant que ce retrait ne prenne effet. Un
+ * renvoi résolu par le menu (règle de #191) rend `undefined` quand son libellé
+ * part, donc `null`, donc un bloc qui disparaît **sans un mot** — un run
  * suspendu que plus rien ne montre, c'est-à-dire le défaut même que l'argument
  * de #322 ci-dessus interdisait. Retirer une entrée de menu n'est jamais un
  * geste local.
+ *
+ * Elles ont bougé en **deux temps**, et l'ordre était le bon : les trois du
+ * **cadrage** — le panneau du tableau de bord, la cloche, la table `ATTENTES` —
+ * l'ont fait dans #483, qui les a rangées derrière `PAGE_DU_CADRAGE`
+ * (`lib/brief`) *avant* que l'entrée parte ; les deux du **lancement** le font
+ * ici, derrière `PAGE_DU_FIL` (ci-dessous). Preuve que la précaution valait :
+ * #484 n'a eu à toucher **aucun** des trois fichiers du cadrage.
  *
  * « Runs » (#474, lot 2 de #472) **ferme ce groupe de tête** : on parle à
  * Maestro dans le fil, puis on regarde ce qui tourne. Elle est au menu parce
