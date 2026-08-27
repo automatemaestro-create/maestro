@@ -47,7 +47,7 @@ flowchart LR
     Home --> Settings[Paramètres]
     Runs --> RunDetail[Vue d'un run]
     RunDetail --> Tasks[Kanban des tâches]
-    Runs -. suspendu .-> Brief[Valider le brief]
+    Runs -. suspendu .-> Chat
     Runs -. suspendu .-> Approve
     Agents --> AgentDetail[Fiche agent]
     AgentDetail --> Profil[Onglet Profil]
@@ -186,7 +186,10 @@ reste que ce qui se lit d'un coup d'œil, dans cet ordre :
 1. **Briefs en attente** (#322, §2.7.4) — un run arrêté sur son brief bloque le run
    entier, là où une validation ne retient qu'une tâche : il passe donc devant. Il
    **signale et achemine, il ne décide pas** — sept sections, des questions et un
-   coût ne tiennent pas dans une carte.
+   coût ne tiennent pas dans une carte. Il achemine vers le **fil** depuis #483
+   (§2.7.5), où le geste vit désormais ; ce panneau, la cloche et la carte de run
+   partagent une seule constante pour le dire, faute de quoi ils s'éteindraient tous
+   les trois en silence quand #484 retirera l'entrée de menu qu'ils nommaient.
 2. **Validations en attente** — ce qui demande un arbitrage humain.
 3. **Runs interrompus** (#349, #486, §6.1) — les runs **orphelins ou éteints dont
    le brief a été approuvé**, avec le bouton qui les reprend sur ce cadrage. Après
@@ -585,11 +588,14 @@ Enfin, **une carte s'ouvre** (#475) : son titre mène à la vue du run, §2.4.2.
 chemin est dérivé de l'entrée de menu (`hrefRun`, `apps/web/lib/navigation.ts`) et
 non écrit en dur — c'est la règle de #191 tenue dans l'autre sens, celui de la
 fabrication : une page à segment dynamique n'a pas d'entrée à elle, elle vit **sous**
-celle de sa liste. L'autre renvoi, lui, ne change pas : une **attente** mène toujours
-à l'écran qui porte **le geste** qui la lève — « Valider le brief » pour un brief ou
-des questions, « Validations » pour un arbitrage de tâche —, parce que la vue d'un run
-le *montre* sans le débloquer. Le jour où elle portera ces gestes, c'est la table
-`ATTENTES` (`components/runs/EtatRun.tsx`) qu'il faudra changer, et elle seule.
+celle de sa liste. L'autre renvoi, lui, ne change pas dans son **principe** : une
+**attente** mène toujours à l'écran qui porte **le geste** qui la lève — le **fil**
+pour un brief ou des questions (#483, §2.7.5 — c'était « Valider le brief » jusque-là),
+« Validations » pour un arbitrage de tâche —, parce que la vue d'un run le *montre*
+sans le débloquer. Le jour où elle portera ces gestes, c'est la table `ATTENTES`
+(`components/runs/EtatRun.tsx`) qu'il faudra changer, et elle seule — ce qui vient
+d'arriver à ses deux premières lignes, et la meilleure preuve que ce point-là était
+juste.
 
 Couverture (#480) : `apps/web/tests/runs-liste.test.tsx` — les cinq régimes et
 **l'ordre dans lequel ils sont décidés**, l'appariement des validations, la carte
@@ -1063,7 +1069,8 @@ preuve que le chantier a réparé la donnée et non l'affichage.
   hypothèses) et **ses questions**. C'est le point de contrôle le plus rentable du produit :
   corriger un plan coûte un message, corriger douze tâches coûte douze exécutions. L'écran est au
   §2.7.4 ; il sert les deux attentes du run — répondre aux questions (#321) puis approuver, corriger
-  ou refuser (#320) — et met le **coût déjà engagé** en face de la décision.
+  ou refuser (#320) — et met le **coût déjà engagé** en face de la décision. Depuis #483 le même
+  point de contrôle se joue **dans le fil** (§2.7.5), par les mêmes routes et les mêmes composants.
 - **Appliquer dans le projet** *(livré — #227, EF-37)* — la remise des livrables dans le dossier
   de l'utilisateur est une **action sensible** : elle emprunte l'écran de validation ci-dessus
   (§2.6), diff à l'appui. Rien de neuf côté mécanisme, un nouveau type d'action côté contenu —
@@ -1228,16 +1235,19 @@ côté API — le reste de la Phase 8 est différé au lot final #323.
 
 #### 2.7.4 Valider le brief (#322) — **livré**
 
-> ⚠ **Le brief déménage dans le chat le 2026-08-24 ; il ne disparaît pas** (revue #470,
+> ⚠ **Le brief a déménagé dans le chat ; il n'a pas disparu** (revue #470,
 > [docs/29 §4](./29-decision-run-objet-de-premier-plan.md)). La décision **D5** tient — on ne
 > décompose pas avant validation humaine —, et c'est précisément ce qui a été tranché : supprimer
 > l'écran de composition était clair, supprimer le **point de contrôle** ne l'était pas, et il ne
-> l'est pas. Les questions de clarification et les sept sections se décident **dans le fil** (#483),
-> l'entrée de menu part avec celle de « Composer » (#484), `/brief` reste servi et redirigé. Un
-> paragraphe ci-dessous garde toute sa force et devient un argument **pour** le déménagement : « un
-> run suspendu sur son brief ne crée aucune tâche, donc ni le Kanban, ni les grands livres, ni le
-> fil d'activité ne le montrent » — c'est le constat qui fait du run un objet de premier plan
-> (#472, §2.4).
+> l'est pas. Les questions de clarification et les sept sections se décident **dans le fil**
+> depuis #483 (**livré**, §2.7.5) ; l'entrée de menu part avec celle de « Composer » (#484), et
+> `/brief` reste servi et redirigé. **Ce qui suit décrit donc l'écran d'origine**, qui vit encore et
+> dont ce §2.7.5 reprend les partis pris un à un : ils n'ont pas changé de contenu, seulement de
+> surface. Un paragraphe ci-dessous garde toute sa force et devient un argument **pour** le
+> déménagement : « un run suspendu sur son brief ne crée aucune tâche, donc ni le Kanban, ni les
+> grands livres, ni le fil d'activité ne le montrent » — c'est le constat qui fait du run un objet
+> de premier plan (#472, §2.4), et c'est lui qui fait du critère 3 de #483 le plus important des
+> trois.
 
 Le dernier des quatre écrans, et le **point de contrôle le plus rentable du produit** : corriger un
 brief coûte un message, corriger douze tâches coûte douze exécutions (décision D5, #218). Le run est
@@ -1312,6 +1322,74 @@ brief se donne à corriger, comment se relit un aller-retour) et `apps/web/lib/e
 de grandeur avec sa source. Couverture : `apps/web/tests/brief.test.tsx` et
 `apps/web/tests/composer-sources.test.tsx` côté UI, [`tests/test_brief.py`](../tests/test_brief.py)
 et [`tests/test_clarifications.py`](../tests/test_clarifications.py) côté API (#323).
+
+#### 2.7.5 Le cadrage se décide dans le fil (#483) — **livré**
+
+Deuxième lot du déménagement de #481 : le point de contrôle du §2.7.4 quitte son écran pour la
+**conversation**. Un point de contrôle ne vaut que s'il est **lu**, et une décision se lit mieux là
+où on a l'échange qui l'a produite que dans un écran qu'il faut aller ouvrir. Rien dans **D5**
+n'exige un écran : elle exige un **arrêt** avant décomposition, et un fil arrête aussi bien
+([docs/29 §4](./29-decision-run-objet-de-premier-plan.md)).
+
+**Le transport n'a pas bougé d'une ligne, et c'est le critère 1.** Le fil appelle les deux routes du
+§6.10 — `POST /api/executions/{run_id}/brief/decision` (#320) et `.../brief/reponses` (#321) — par
+le `trancherBrief` / `repondreAuBrief` du contexte global, exactement comme l'écran. **Pas de second
+canal** : un canal de décision qui double le premier est un canal dont l'un des deux finit par ne
+plus appliquer la même garde, et le fail-safe est ici *hérité* — un bus refermé sans décision fait
+lever l'attente et refuser l'action sensible, jamais l'inverse (`controltower/brief.py`). Les
+composants non plus ne sont pas réécrits : les sept sections, le formulaire de réponses et le coût
+sont ceux de `components/brief/`, montés tels quels — 763 lignes déménagées, zéro recopiée.
+
+**Ce qui change vraiment est l'ordre de lecture**, et c'est tout le gain :
+
+- les **allers-retours déjà joués sont le fil**, déroulés du plus ancien au plus récent, une bulle
+  pour les questions du tour et une pour les réponses. Sur `/brief` ils vivent dans un accordéon
+  replié (« Voir les échanges ») parce qu'ils y sont un à-côté du geste ; ici ils *sont* la
+  conversation, et les replier reviendrait à cacher le fil dans le fil. La règle d'appariement, elle,
+  ne bouge pas : `toursDeClarification` est partagée, et le **rang numérote les deux bulles**, la
+  position étant la seule identité d'une question (#318) ;
+- le **dernier message est ce que le Chef de projet vient de dire** : le brief complet, éditable sur
+  place et **en pleine largeur** (sept sections comprimées dans 70 % de colonne feraient de la
+  correction une contorsion — c'est-à-dire la friction qui fait approuver sans lire), ou le brief en
+  cours de rédaction quand des questions attendent ;
+- ce qu'on **écrit** est en bas, à la place de la zone de saisie : le formulaire de réponses, ou le
+  coût et les deux boutons.
+
+**Les partis pris du §2.7.4 traversent tous** : un brief **touché** part corrigé (« Approuver la
+version corrigée »), un brief **intact** part en `null` — le moteur retient alors sa propre
+proposition sans la faire retraverser la validation de schéma —, un **refus n'emporte jamais de
+brief**, une réponse **vide** est licite et part en hypothèse explicite, le **plafond est annoncé**
+(« tour 1 sur 2 »), et le **coût est en face de la décision**. Aucun n'est reformulé : ils vivent
+dans `lib/brief.ts` et dans les composants, que les deux surfaces partagent — `manquesDuBrief` y a
+rejoint le reste au passage, parce qu'un contrôle recopié aurait fini par désactiver le bouton d'un
+côté et pas de l'autre.
+
+⚠ **Le critère 3 est le plus important des trois, et c'est le seul dont l'échec ne se voit pas
+depuis l'écran qu'on regarde.** Un run suspendu sur son brief ne crée **aucune tâche** : ni le
+Kanban, ni les grands livres, ni le fil d'activité ne le montrent. Ses trois seules surfaces sont le
+**panneau du tableau de bord**, la **cloche** et la carte de run (§2.1) — et toutes trois résolvent
+leur destination par le **menu** (`entreeParLibelle`, règle de #191). Laissées sur « Valider le
+brief », elles se seraient éteintes **en silence** le jour où #484 retire l'entrée : `undefined`,
+donc `null`, donc un run bloqué que plus rien ne montre. Elles partagent donc une seule constante,
+`PAGE_DU_CADRAGE` (`lib/brief.ts`), et bougent ensemble ou pas du tout. Elles continuent d'**acheminer
+sans décider**, pour la raison d'origine : sept sections, des questions et un coût ne tiennent pas
+dans une carte.
+
+⚠ **Ce lot ne monte aucun fil de messages** et ne double donc pas #268/#269 : il n'y a ni `useChat`,
+ni route `/api/chat` dans le cadrage. Ce qui est livré est le **cadrage en forme de conversation** ;
+le fil de messages avec l'orchestration reste son chantier, et la page le dit. Deux conséquences
+assumées : la page ne monte **pas de région polie** à elle — ce qui entre dans la file est déjà
+annoncé par la région **assertive** du shell (« Arbitrage requis : … », #538), et le redire poliment
+le dirait deux fois —, et le renvoi du panneau ne désigne **pas un run précis** (`?run=…`) : il ouvre
+le fil sur le plus ancien en attente, avec le sélecteur pour les autres, exactement comme `/brief`.
+
+Implémentation : `apps/web/app/chat/page.tsx`, `components/chat/FilDeCadrage.tsx` (la file et son
+sélecteur), `components/chat/CadrageDansLeFil.tsx` (la conversation, le chargement du détail et les
+deux gestes) et `components/chat/BulleFil.tsx` — l'enveloppe de bulle sortie de `FilChat` pour que
+les messages (#482) et le cadrage n'aient pas deux formes sur le même écran. Couverture partielle —
+la logique critique du lot — dans
+[`apps/web/tests/fil-cadrage.test.tsx`](../apps/web/tests/fil-cadrage.test.tsx) ; le reste est
+différé au lot #485.
 
 ### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
@@ -2264,7 +2342,12 @@ retirées, par un verbe d'action (« ajoute… », « peux-tu corriger… ») �
 ne coûtent pas la même chose : ne pas reconnaître une demande coûte une reformulation, la
 reconnaître à tort lance un run. Le run part en **brief `auto`** et non `humain` : le cadrage
 d'une demande *est* la conversation en cours, et renvoyer vers l'écran de validation de brief
-couperait le fil en deux — cet écran reste la voie de qui veut valider avant.
+couperait le fil en deux — un lancement en `humain` reste la voie de qui veut valider avant.
+
+> ⚠ **Depuis #483 (§2.7.5), cette réserve ne coupe plus rien** : un run lancé en brief `humain` se
+> valide **dans le fil**, pas sur un écran à part. Ce qui motivait le `auto` par défaut tient
+> toujours — une demande déjà formulée en conversation n'a pas à être recadrée —, mais le repli
+> n'est plus un aller-retour hors du fil, et c'est ce qui rend les deux régimes compatibles.
 
 ```jsonc
 // MessageChat — deux champs de plus depuis #268, vides dans un fil ordinaire
@@ -2655,6 +2738,13 @@ titre que le brief (#320). Elles n'y voyagent pas pour être affichées mais pou
 moteur**, qui les intègre au brief régénéré ; les masquer ne protégerait rien — le brief qui en sort
 circule déjà en clair sur le même canal — mais corromprait l'entrée de la régénération, et un
 `[REDACTED]` au milieu d'une réponse produirait un brief faux sans que personne le voie.
+
+⚠ **Deux surfaces les appellent depuis #483, et le contrat n'a pas bougé pour autant** : l'écran
+`/brief` (§2.7.4) et le **fil** (§2.7.5) passent tous deux par ces deux routes-ci, par le même client
+et avec le même corps. C'est le critère 1 du lot, écrit en toutes lettres — « la décision emprunte le
+canal existant, pas un second » —, et c'est ce qui permet à #484 de retirer un écran sans toucher à
+une ligne de ce paragraphe. Le `409` (« le run n'attend plus ») reste la réponse juste quand les deux
+surfaces sont ouvertes côte à côte et que l'une tranche.
 
 Implémentation : [`maestro/controltower/app.py`](../maestro/controltower/app.py) pour les routes,
 [`maestro/controltower/brief.py`](../maestro/controltower/brief.py) pour les arbitres et

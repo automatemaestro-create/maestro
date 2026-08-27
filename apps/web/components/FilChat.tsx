@@ -32,16 +32,15 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { BulleFil } from "@/components/chat/BulleFil";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
 import { SourcesDuMessage } from "@/components/chat/SourcesDuMessage";
 import { RefusSource } from "@/components/composer/RefusSource";
 import { IconeChat } from "@/components/Icones";
-import { Infobulle } from "@/components/Infobulle";
 import { BadgeEtat, Bouton, EnTeteSection } from "@/components/Primitives";
 import { RegionLive } from "@/components/RegionLive";
 import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurSource } from "@/lib/api";
-import { formatDateHeure, formatHeure } from "@/lib/format";
 import { CHAT_AUTEUR_UTILISATEUR, type MessageChat } from "@/lib/types";
 import { useChat } from "@/lib/useChat";
 import { useSourcesComposees } from "@/lib/useSourcesComposees";
@@ -272,43 +271,29 @@ export function FilChat({
   );
 }
 
-/** Une bulle du fil : l'utilisateur à droite, l'agent à gauche. */
+/**
+ * Une bulle du fil : l'utilisateur à droite, l'agent à gauche.
+ *
+ * L'enveloppe — côté, surface, pied — a quitté ce fichier au lot 2 de #481
+ * (`components/chat/BulleFil`) : le cadrage se lit dans le **même** fil depuis
+ * #483, et deux enveloppes auraient donné deux conversations à l'œil sur le
+ * même écran. Ce qui reste ici est ce qu'un *message* porte, et lui seul.
+ */
 function Bulle({ message }: { message: MessageChat }) {
-  const utilisateur = message.auteur === CHAT_AUTEUR_UTILISATEUR;
   return (
-    <li className={"flex " + (utilisateur ? "justify-end" : "justify-start")}>
-      <div
-        className={
-          "max-w-[85%] rounded-lg px-3 py-2 text-sm shadow-sm sm:max-w-[70%] " +
-          (utilisateur
-            ? "bg-emerald-600 text-white dark:bg-emerald-700"
-            : "border border-neutral-200 bg-white text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100")
-        }
-      >
-        {message.contenu !== "" && (
-          <p className="whitespace-pre-wrap break-words">{message.contenu}</p>
-        )}
-        {/* Ce que le message a porté, et ce qui en a été lu (#482, critères 1 et
-            3) — sous le texte parce que c'est la pièce jointe qui accompagne le
-            propos, et non l'inverse. Rend `null` quand il n'y a aucune source :
-            une bulle ordinaire est exactement celle d'avant ce lot. */}
-        <SourcesDuFil message={message} />
-        <p
-          className={
-            "mt-1 text-right text-[10px] " +
-            (utilisateur
-              ? "text-emerald-100"
-              : "text-neutral-400 dark:text-neutral-500")
-          }
-        >
-          {utilisateur ? "vous" : message.auteur} ·{" "}
-          <Infobulle texte={formatDateHeure(message.horodatage)}>
-            <time dateTime={message.horodatage}>
-              {formatHeure(message.horodatage)}
-            </time>
-          </Infobulle>
-        </p>
-      </div>
-    </li>
+    <BulleFil
+      auteur={message.auteur}
+      utilisateur={message.auteur === CHAT_AUTEUR_UTILISATEUR}
+      horodatage={message.horodatage}
+    >
+      {message.contenu !== "" && (
+        <p className="whitespace-pre-wrap break-words">{message.contenu}</p>
+      )}
+      {/* Ce que le message a porté, et ce qui en a été lu (#482, critères 1 et
+          3) — sous le texte parce que c'est la pièce jointe qui accompagne le
+          propos, et non l'inverse. Rend `null` quand il n'y a aucune source :
+          une bulle ordinaire est exactement celle d'avant ce lot. */}
+      <SourcesDuFil message={message} />
+    </BulleFil>
   );
 }

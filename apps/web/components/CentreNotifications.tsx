@@ -45,7 +45,7 @@ import {
 import { LigneActivite } from "@/components/LigneActivite";
 import { BadgeEtat, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
 import { resumeArbitrages } from "@/lib/annonces";
-import { runsEnAttente } from "@/lib/brief";
+import { PAGE_DU_CADRAGE, runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle } from "@/lib/navigation";
@@ -236,6 +236,11 @@ export function CentreNotifications() {
  * sections, des questions et un coût depuis une pastille de 20 rem. Le panneau
  * se referme au clic — laisser une cloche ouverte par-dessus l'écran qu'elle
  * vient d'ouvrir masque justement ce qu'on est venu lire.
+ *
+ * Le chemin est celui du **fil** depuis #483 (`PAGE_DU_CADRAGE`), où le brief se
+ * décide désormais — même raison qu'au panneau du tableau de bord : un renvoi
+ * résolu par le menu s'éteint le jour où l'entrée part, et une cloche muette sur
+ * un run bloqué est le défaut que le critère 3 interdit.
  */
 function CarteBriefCompacte({
   run,
@@ -244,7 +249,7 @@ function CarteBriefCompacte({
   run: ResumeExecution;
   surOuverture: () => void;
 }) {
-  const page = entreeParLibelle("Valider le brief");
+  const page = entreeParLibelle(PAGE_DU_CADRAGE);
   const reponses = run.statut === EXECUTION_EN_ATTENTE_REPONSES;
   if (page === undefined) return null;
 

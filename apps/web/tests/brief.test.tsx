@@ -332,8 +332,12 @@ describe("critère 2 — ce qui attend se voit", () => {
     // tiennent pas dans une carte, et approuver sans lire est exactement ce que
     // le point de contrôle empêche.
     expect(within(panneau).queryByRole("button")).toBeNull();
+    // Et il achemine vers **le fil** depuis #483, où le brief se décide : le
+    // renvoi suit le geste. Il le suit avant que `/brief` ne parte (#484) —
+    // résolu par le menu, il s'éteindrait avec l'entrée qu'il nommait, et un run
+    // suspendu n'aurait alors plus aucune surface pour se montrer.
     expect(
       within(panneau).getByRole("link", { name: /Relire/ }),
-    ).toHaveProperty("pathname", "/brief");
+    ).toHaveProperty("pathname", "/chat");
   });
 });
