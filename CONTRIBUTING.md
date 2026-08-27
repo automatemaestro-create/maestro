@@ -82,6 +82,14 @@ lire du code ou relire une PR pendant que le ticket avance à côté ([docs/10 �
 > Besoin d'un ticket qui n'existe pas encore ? `/ticket-create <type> <titre>`. Au-delà d'environ
 > une session de travail, il propose un **découpage** en sous-tickets ([docs/10 §5.1](./docs/10-workflow-git.md)).
 
+Sur un **parent de suivi**, `/ticket-start` ne démarre rien : il vous renvoie vers les **lots
+démarrables**, et il peut y en avoir plusieurs. Les lots sont des **sub-issues** GitHub — ils
+apparaissent dans le panneau du parent, avec leur ordre et leur avancement, et il n'y a **aucune
+liste à tenir à jour** dans les descriptions. Un lot qui porte le label **`lot::parallele`** ne
+dépend pas des autres lots marqués qui le précèdent : deux personnes peuvent les prendre en même
+temps. Un lot non marqué attend tout ce qui le précède — c'est ce qui garde le lot final
+« tests + doc » derrière l'ensemble ([docs/10 §5.1](./docs/10-workflow-git.md)).
+
 ---
 
 ## 3. Travailler
@@ -212,6 +220,14 @@ Ce qu'aucune commande — et personne — ne fait automatiquement :
   s'arrêtent avant toute écriture si l'iid visé ne correspond pas à la branche courante, ou si le
   ticket est assigné à quelqu'un d'autre — de sorte qu'on ne pose jamais une PR, un statut ni un
   temps sur le travail d'un collègue.
+
+Un dernier, qui n'en est **pas tout à fait un** : fermer un **parent de suivi** dont il reste des
+lots ouverts n'est pas empêché — c'est **annulé après coup**. La fermeture a lieu, puis le parent est
+**rouvert** dans la foulée avec un commentaire nommant les lots restants, quel que soit l'auteur du
+clic ([docs/10 §5.1](./docs/10-workflow-git.md)). Ce n'est pas un verrou et ça ne peut pas en être
+un : les règles de dépôt de GitHub ne visent que branches et tags, et elles sont de toute façon
+indisponibles ici ([§8.8](./docs/10-workflow-git.md)). À l'inverse, il n'y a **rien à faire** pour
+fermer un chantier fini : le parent se ferme tout seul quand son dernier lot se ferme.
 
 Ces règles sont doublées par la couche permissions de [`.claude/settings.json`](./.claude/settings.json)
 (`deny` sur les force-push et `gh pr merge`/`close`) — un filet, pas un remplacement du jugement. Le

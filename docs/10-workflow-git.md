@@ -586,7 +586,7 @@ puis le nouveau `lib.sh` :
 | **tous leurs lots rendus « ? » avant, aucun après** | **8** | **57** |
 | écart inattendu | 0 | — |
 
-Autrement dit : **passé la centième issue la plus récente, la checklist d'un parent ne portait plus
+Autrement dit : **passé la centième issue la plus récente, les lots d'un parent ne portaient plus
 aucun état**, et le verbe le disait sans le dire. Demander les lots par leur numéro n'a pas de
 fenêtre.
 
@@ -1008,14 +1008,70 @@ il aurait dû être découpé (correctif ticket #54) ; à l'inverse, un script +
 une session et restent un **ticket unique**, au besoin avec une **checklist interne** dans sa
 description (pas de parent ni de sous-tickets). Au-delà d'une session (plusieurs couches
 substantielles, plus de 3-4 critères d'acceptation, plusieurs livrables indépendants), le besoin
-est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit par le ticket #53) :
+est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit par le ticket #53).
+
+**Le support : les sub-issues natives** (chantier #389, lots #390 à #396). La relation parent/lot
+est portée par la **forge**, dans les deux sens — `Issue.parent` d'un côté, `Issue.subIssues` de
+l'autre — et avec elle l'**ordre** des lots (`reprioritizeSubIssue`) et leur **état**. Jusqu'à #395
+elle était portée par de la **prose**, et par rien d'autre : un `grep` du marqueur
+« Sous-ticket de #N » dans le corps du lot pour le sens montant, le parsing d'une section
+`## Sous-tickets` du parent — une checklist `- [ ] #<iid> — <titre>` — pour le sens descendant. Cette
+section n'existe plus, ni dans le code ni dans les **47 descriptions** qui la portaient (retrait joué
+le 2026-08-27 par `scripts/github/retire-checklist-sous-tickets.sh` : 254 lignes retirées, et
+**10 parents** dont la section portait aussi de la prose l'ont gardée sous un titre `## Découpage` —
+c'est de là que vient ce titre quand on le croise).
+
+Ce que la migration a coûté, et ce qu'elle n'a pas coûté :
+
+- **la coche n'a rien perdu, parce qu'elle ne portait rien.** `- [x]` était décoratif pour la
+  machine : `gl_subtickets_startables` lisait l'iid, le cycle de vie et le marqueur — jamais la
+  case. La colonne `coche` de `lib.sh subtickets` existe toujours, **dérivée de l'état** du lot
+  (fermé = `x`), et plus rien n'est à synchroniser à la main ;
+- **le marqueur `(parallèle)` était le seul vrai trou** : les sub-issues portent la relation, l'ordre
+  et l'état, rien qui dise « ce lot ne dépend pas du précédent ». Il ne pouvait pas vivre dans le
+  **titre** du lot — `lib.sh` en dérive le slug de branche, et un « (parallèle) » aurait sali tous les
+  noms de branches —, d'où le label scopé **`lot::parallele`**, cohérent avec `type::`/`agent::`/
+  `prio::` et avec le `lot::arbitre` de #562. Il se pose sur le **lot** (`lot::arbitre` se pose sur le
+  parent), par `lib.sh issue-link <parent> <lot> --parallele` ;
+- **aucun aller de forge en plus.** `parent` et `subIssues` sont demandés **dans** la requête de
+  `gh_issue_raw`, donc la relation voyage dans la vue texte canonique, en lignes d'en-tête `parent:`
+  et `lot:` — les cinq verbes qui rejouent le parsing sur un ticket déjà lu (`arbitrage`,
+  `ferme-parent`, `demarre-parent`, `start-brief`, et `queue.sh` sur sa vue en cache) n'ont pas payé
+  une lecture de plus. Mesuré avant la bascule et non déduit après (#393), sur deux milestones réels,
+  en **comptant les allers** et en chronométrant en **alternance** — la latence d'un aller variant du
+  simple au double dans la journée (§9.8), deux séries consécutives auraient surtout mesuré l'heure
+  qu'il est : **17 et 30 allers des deux côtés**, requêtes plus grosses de 3,1 % et 5,6 %, plans
+  **identiques à l'octet**, écart de temps changeant de **signe** d'une série à l'autre tout en
+  restant plus petit que la dispersion d'un même régime. Aucun cache n'a donc été posé : contre un
+  écart qu'on ne sait pas distinguer du bruit, ce serait de la complexité avec sa péremption à tenir ;
+- **il n'y a plus de retour arrière, et c'est une décision.** Le chantier a suivi le patron du
+  commutateur, validé deux fois (#335 `MAESTRO_FORGE`, #358 `MAESTRO_CYCLE`) : `MAESTRO_LOTS` a tenu
+  les deux régimes le temps que les 41 parents soient rattachés (#392) et que le défaut bascule
+  (#393). Il est parti avec la checklist (#395), en dernier et seul, comme les six labels
+  `workflow::*` de #365 — rebasculer coûterait désormais une migration. Ne pas réintroduire un
+  second support « au cas où » : le premier symptôme de deux supports est un parent dont la moitié
+  des lots vient d'un côté et l'autre moitié de l'autre.
+
+⚠ **La phrase « Sous-ticket de #\<parent\> — lot \<n\>/\<total\>. » reste écrite** en tête de chaque
+description de lot. Elle est là pour le **lecteur humain**, qui ouvre un ticket sans son panneau
+latéral ; plus aucun parseur ne la lit. Écrivez-la juste, elle ne décide de rien.
+
+Verbes (`lib.sh`) : `issue-link <parent> <lot> [--parallele]` **rattache** (idempotent : un lot déjà
+rattaché à ce parent est un succès qui n'écrit rien ; un lot rattaché à un **autre** parent est
+refusé en nommant celui-là — `addSubIssue` porte un `replaceParent` dont on ne se sert pas, déplacer
+un lot en silence étant l'inverse de ce qu'on veut) ; `subticket-order <parent> <iid>…` **ordonne**
+en un seul aller, les lots nommés se retrouvant contigus et dans l'ordre donné, **rien n'étant écrit**
+si la liste est fautive ; `parent-of`, `subtickets`, `startables`, `lots-ouverts`, `arbitrage`
+**lisent**. Couverts par [`tests/test_decoupage_natif.py`](../tests/test_decoupage_natif.py).
+
+Ce que chacun porte :
 
 - **Parent de suivi** — pas de branche, pas de code, pas de PR. Sa description porte l'objectif
-  global et une section `## Sous-tickets` : la checklist **ordonnée** (ordre de réalisation) des
-  lots, au format `- [ ] #<iid> — <titre>`. Il **passe « En cours » dès qu'un de ses lots démarre**
+  global, et ses lots lui sont rattachés en **sub-issues natives** (ci-dessus) : la
+  relation, son **ordre** et l'**état** de chaque lot viennent tous trois de la forge, plus d'une
+  section à tenir dans le texte. Il **passe « En cours » dès qu'un de ses lots démarre**
   (ticket #517), reste ouvert tant qu'un lot l'est, et **se ferme tout seul quand le dernier se
-  ferme** (ticket #515). Les cases sont cochées au fil de l'eau par les commandes (synchronisation
-  idempotente : cocher les lots « Terminé », jamais décocher).
+  ferme** (ticket #515).
 
   **Son état, aux deux bouts — et personne d'autre ne l'écrit.** Un parent ne porte ni branche ni
   code : rien dans le cycle d'un ticket ordinaire ne passe jamais par lui. `/ticket-create` le pose
@@ -1041,9 +1097,12 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
     que la pose passe), et surtout « Abandonné » et « Doublon » ferment le ticket au même titre que
     « Terminé » : un chantier qui se termine sur un lot qu'on renonce à faire se solde comme les
     autres. Mesurer le cycle de vie laisserait ce parent-là ouvert pour toujours ;
-  - **la coche ne décide de rien.** Elle est tenue au fil de l'eau, donc best-effort — un lot mergé
-    depuis l'interface web n'en coche aucune. Faire dépendre la fermeture d'une synchronisation qui
-    peut manquer reconstruirait le geste manuel qu'on retire ;
+  - **la coche ne décide de rien**, et c'est resté vrai en changeant de nature. Du temps de la
+    checklist elle était tenue au fil de l'eau, donc best-effort — un lot mergé depuis l'interface
+    web n'en cochait aucune ; depuis #395 la colonne `coche` de `subtickets` est **dérivée de
+    l'état** du lot, donc toujours juste et toujours redondante avec lui. Dans les deux cas, faire
+    dépendre la fermeture d'un affichage plutôt que de l'état reconstruirait le geste manuel qu'on
+    retire ;
   - **la question 2 n'est pas rangée sous le filtre de la question 1.** « Terminé » n'est posé que
     sur `completed` (liste blanche, §9.2) ; la fermeture du parent, elle, vaut pour **toute** raison
     de fermeture. Les enchaîner est le plus court des deux chemins, et le faux ;
@@ -1098,8 +1157,9 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
     l'inverse aurait fait rouvrir **pour toujours** un parent dont le dernier lot est abandonné. La
     garde n'utilise pourtant **pas** l'agrégat, et pour trois raisons qui ne sont pas de la
     méfiance : le commentaire doit **nommer** les lots restants (des compteurs n'y suffisent pas),
-    « soldé » se définirait alors deux fois, et `subIssuesSummary` n'existe qu'en régime natif quand
-    ce verbe doit répondre des deux côtés tant que #393 n'a pas basculé le défaut. Le vrai piège que
+    « soldé » se définirait alors deux fois, et `subIssuesSummary` n'existait qu'en régime natif
+    quand ce verbe devait répondre des deux côtés — #393 n'avait pas encore basculé le défaut, et
+    les deux premières raisons lui survivent. Le vrai piège que
     la mesure laisse derrière elle est ailleurs, et il vaut pour tout le monde : **ne jamais lire
     `completed` comme « réalisé »** — un chantier à `3/3` peut n'avoir livré aucun de ses lots ;
   - **rien ne boucle, et deux remparts le tiennent.** Rouvrir produit `issues: reopened`, que le
@@ -1162,10 +1222,10 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
   posé, `3` = abstention nommée, `1` = échec) ; `MAESTRO_PARENT_EN_COURS=0` éteint la greffe.
 - **Sous-tickets** — un lot = ~1 session, **1 à 3 critères d'acceptation**, et surtout chaque lot
   est **mergeable directement sur `main` sans casser l'existant** (code additif ou inoffensif tant
-  que les lots suivants manquent). La description de chaque sous-ticket **commence par**
-  `Sous-ticket de #<parent> — lot <n>/<total>.` (marqueur parsé par `lib.sh parent-of`), et le
-  sous-ticket est **lié** au parent (issue link « relates to », posé par
-  `lib.sh issue-link <parent> <sous-iid>`). C'est cette propriété (lots additifs, branchés depuis
+  que les lots suivants manquent). Le sous-ticket est **rattaché** au parent en sub-issue native
+  (`lib.sh issue-link <parent> <sous-iid>`, ci-dessus), et sa description **commence par**
+  `Sous-ticket de #<parent> — lot <n>/<total>.` — une phrase pour le lecteur, que `lib.sh parent-of`
+  ne lit plus depuis #395. C'est cette propriété (lots additifs, branchés depuis
   `main`) qui permet d'**enchaîner les lots sans attendre le merge** du précédent : un lot
   « En revue » (PR ouverte) ne bloque pas le suivant, seul un lot encore « À faire » ou
   « En cours » l'arrête (recalibrage ticket #63).
@@ -1174,20 +1234,13 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
   critique, et portent la mention « Tests différés → #<iid-du-lot-tests> » — livrer un lot
   intermédiaire sans tests est donc **prévu**, pas un oubli (la case « Tests » de la checklist de
   PR reste vide, le relecteur sait pourquoi).
-- **Lots parallélisables** (ticket #160) — la sérialisation des lots protège les vraies
-  dépendances, mais elle est souvent **artificielle** : les lots sont déjà additifs et mergeables
-  seuls sur `main`, et deux personnes se bloquent alors mutuellement pour rien. Un lot dont le
-  titre dans la checklist du parent se termine par **`(parallèle)`** déclare qu'il **ne dépend pas
-  des autres lots marqués qui le précèdent** :
-
-  ```markdown
-  ## Sous-tickets
-
-  - [x] #157 — Filet CI local + contrôle doctor du runner
-  - [ ] #158 — Runner CI partagé toujours en ligne (parallèle)
-  - [ ] #159 — Anti-collision sur les tickets (parallèle)
-  - [ ] #156 — Tests + doc du chantier
-  ```
+- **Lots parallélisables** (ticket #160, support changé par #389) — la sérialisation des lots
+  protège les vraies dépendances, mais elle est souvent **artificielle** : les lots sont déjà
+  additifs et mergeables seuls sur `main`, et deux personnes se bloquent alors mutuellement pour
+  rien. Un lot qui porte le label **`lot::parallele`** déclare qu'il **ne dépend pas des autres lots
+  marqués qui le précèdent** — dans l'ordre du parent, celui que la forge tient. Sur le chantier
+  #155, par exemple : un socle (#157) puis deux lots marqués (#158, #159) puis le lot final
+  « tests + doc » (#156), non marqué.
 
   La règle de blocage appliquée par `lib.sh start-brief` est alors : **un lot précédent non livré
   (ni « Terminé » ni « En revue ») bloque, sauf si le lot visé *et* ce lot précédent sont tous
@@ -1196,7 +1249,7 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
     l'autre ;
   - un lot **non marqué** reste barré par tout ce qui le précède — le lot final **« tests + doc »
     n'est donc jamais marqué**, et attend bien l'ensemble des lots ;
-  - un lot non marqué en milieu de checklist (#157 ci-dessus) fait **barrière** : les lots
+  - un lot non marqué au milieu des lots (#157 ci-dessus) fait **barrière** : les lots
     parallèles qui le suivent l'attendent, ce qui permet d'exprimer un socle commun.
 
   Le marqueur est **facultatif** : sans lui, le comportement séquentiel d'origine est conservé.
@@ -1204,6 +1257,14 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
   liste directement les lots « À faire » que rien ne bloque — c'est ce que `/ticket-start` affiche
   sur un parent (tous les lots démarrables, plus seulement le premier) et ce que `/ticket-ship`
   annonce après un lot.
+
+  ⚠ **Il se pose au rattachement, et c'est le seul endroit où on y pense.**
+  `lib.sh issue-link <parent> <lot> --parallele` est le geste, parce que `/ticket-create` appelle
+  déjà `issue-link` une fois par lot, à l'instant exact où il vient de décider quels lots sont
+  indépendants — un verbe séparé aurait été un second geste à ne pas oublier, celui-là même qui
+  manquait. Le drapeau est **additif** : sans lui, rien ne bouge. Et la dégradation est du **côté
+  sûr** — un marqueur oublié rend le lot séquentiel, donc coûte du temps de mur, jamais un lot parti
+  d'une base incomplète.
 
 - **L'arbitrage, et pourquoi « pas de marqueur » ne voulait rien dire** (ticket #562) — le marqueur
   étant facultatif, son **absence est ambiguë** : elle dit indifféremment « ce lot dépend réellement
@@ -1245,7 +1306,7 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
   ⚠ Deux fausses pistes, écartées **après mesure** plutôt qu'en principe :
   - *« distinguer un lot ajouté depuis l'arbitrage »* — l'ordre des iid ne le dit pas (un lot non
     marqué d'iid supérieur aux marqués est simplement la queue non marquée du même lot de
-    création), et les dates non plus : **41 parents sur 42 ont toute leur checklist créée en moins
+    création), et les dates non plus : **41 parents sur 42 ont tous leurs lots créés en moins
     de 8 minutes**, le seul écart au-delà de l'heure étant #472 → #479 (1,9 h, même session). Les
     lots naissent d'un seul geste ; le cas n'existe pas ici.
   - *« déduire l'indépendance du contenu des lots »* — à l'heure du plan les lots ne sont pas
@@ -1253,14 +1314,14 @@ est porté par un **ticket parent de suivi** + des **sous-tickets** (introduit p
     (deux appels sur le même backlog rendent le même plan), dont dépend la reprise d'un run sur
     *son* plan.
 
-Comportement des commandes (helpers `lib.sh` : `issue-link`, `parent-of`, `subtickets`,
-`arbitrage`) :
+Comportement des commandes (helpers `lib.sh` : `issue-link`, `subticket-order`, `parent-of`,
+`subtickets`, `arbitrage`) :
 
 | Commande | Besoin/ticket trop gros | Ticket parent | Sous-ticket |
 |---|---|---|---|
-| `/ticket-create` | crée le parent **+** les sous-tickets liés (checklist ordonnée, marqueur `(parallèle)` sur les lots indépendants, lot tests en dernier) et pose `lot::arbitre` sur le parent, **quel qu'ait été le verdict** (#562) | — | — |
-| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier (en synchronisant la checklist) ; **rien à démarrer** ⇒ le travail est en route (« En cours ») ou livré et on n'attend plus que des merges — un parent dont tout est fermé s'est fermé tout seul (#515) | vérifie que les lots **précédents** de la checklist sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `(parallèle)` quand le lot visé l'est aussi** ; sinon s'arrête. Et **fait passer le parent « En cours »** s'il était « À faire » (#515 à l'autre bout, ici #517, `lib.sh begin` → `demarre-parent`) |
-| `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou, si c'était le dernier, que le parent **se fermera de lui-même** au merge, #515), et coche les lots terminés dans la checklist du parent |
+| `/ticket-create` | crée le parent **+** les sous-tickets, les lui **rattache dans l'ordre** (`lib.sh issue-link`, `--parallele` sur les lots indépendants, lot tests en dernier) et pose `lot::arbitre` sur le parent, **quel qu'ait été le verdict** (#562) | — | — |
+| `/ticket-start` | **propose le découpage** au lieu d'enchaîner (vraie pause) | affiche **tous les lots démarrables** (`lib.sh startables`) et **redirige** vers le premier ; **rien à démarrer** ⇒ le travail est en route (« En cours ») ou livré et on n'attend plus que des merges — un parent dont tout est fermé s'est fermé tout seul (#515) | vérifie que les lots **précédents** sont livrés (« Terminé » ou « En revue » — une PR en attente de merge ne bloque pas), **hors lots marqués `lot::parallele` quand le lot visé l'est aussi** ; sinon s'arrête. Et **fait passer le parent « En cours »** s'il était « À faire » (#515 à l'autre bout, ici #517, `lib.sh begin` → `demarre-parent`) |
+| `/ticket-ship` | — | — | **annonce les lots démarrables** dès maintenant sans attendre le merge — plusieurs si des lots sont parallèles — (ou, si c'était le dernier, que le parent **se fermera de lui-même** au merge, #515). Rien à synchroniser sur le parent : l'avancement s'y lit tout seul (#395) |
 | l'événement `issues: closed` | — | **ferme le parent** dès que son dernier lot se ferme (#515, `lib.sh ferme-parent`) — quels que soient l'auteur du merge et la machine —, et **le rouvre** s'il a été fermé alors qu'il lui restait des lots (#394, `lib.sh garde-fermeture`, qui passe **avant** les deux autres questions) | pose « Terminé » (#377) |
 
 **Voie « non réalisé ».** À tout moment (depuis `À faire`, `En cours` ou `En revue`), un ticket
@@ -4136,7 +4197,7 @@ est traité et pourquoi il existe.
 | Deux sessions sur le même clone se marchent dessus (`HEAD` partagé) | un **worktree par session** — ports Control Tower et profil de navigateur dédiés | §9 |
 | Deux personnes démarrent le **même ticket** ; `begin` remplace les assignés et le retire à son propriétaire | **anti-collision** : `start-brief` dit « libre » ou « ⚠ déjà pris par … », `/backlog` sépare les tickets libres | §5 |
 | Une session clôture un ticket **qui n'est pas le sien** (PR et temps posés à la place d'un autre) | **garde-fou de clôture** : `close-guard` compare l'iid visé à la branche courante *et* aux assignés | §6 |
-| Les lots d'un parent s'attendent en file alors qu'ils sont indépendants | marqueur **`(parallèle)`** dans la checklist ; `startables` liste **tous** les lots prenables | §5.1 |
+| Les lots d'un parent s'attendent en file alors qu'ils sont indépendants | label **`lot::parallele`** sur le lot ; `startables` liste **tous** les lots prenables | §5.1 |
 | Une branche vieillit pendant qu'`origin/main` avance ; le conflit se découvre au merge | **alerte de retard** avant le push : `behind-main` (commits de retard + fichiers modifiés des deux côtés) | §6 |
 | Une PR ouverte n'est relue par personne, faute de savoir qu'elle attend | **revue best-effort outillée** : **file de revue** en tête de `/backlog`, la plus ancienne d'abord (aucun relecteur posé d'office, #196 ; `set-reviewer` reste là pour une pose manuelle) | §6 |
 | Une session meurt sur un ticket : il reste « En cours » et assigné, donc **invisible de tous** — travail compris | **détection + reprise** : `reconcile-en-cours` signale d'office, `reprendre-en-cours` le rend prenable sans toucher au worktree | §9.6 |
@@ -4256,7 +4317,7 @@ même plan, et un run reste reproductible même si le backlog évolue pendant qu
 | Règle | Pourquoi |
 |---|---|
 | Seuls les tickets **« À faire » et non assignés** du **milestone courant** | un ticket assigné est le travail de quelqu'un (§5) ; un autre milestone n'est pas la phase en cours |
-| Les **parents de suivi sont écartés**, remplacés par leurs lots **dans l'ordre de la checklist** | un parent ne porte ni branche ni code (§5.1) ; c'est la checklist qui encode les dépendances |
+| Les **parents de suivi sont écartés**, remplacés par leurs lots **dans l'ordre du parent** | un parent ne porte ni branche ni code (§5.1) ; c'est cet ordre, tenu par la forge, qui encode les dépendances |
 | Les lots d'un même parent restent **contigus**, le parent héritant de leur priorité maximale | s'intercaler ferait partir le lot suivant d'un `origin/main` qui a bougé pour rien |
 | Le reste trié par `prio::` puis iid croissant | pour que l'ordre soit reproductible |
 | Chaque ticket porte son **groupe de dépendance** (colonne `groupe`) | l'ordre dit ce qui passe après quoi, jamais ce qui pourrait partir **en même temps** |
@@ -4274,9 +4335,9 @@ le plan ne dit pas d'elle-même ce qu'elle a conclu.
 
 Le groupe est la **vague** du lot dans la chaîne de son parent — `<parent>.<n>` pour un lot, `-` pour
 un ticket qui n'en est pas un (tous mutuellement indépendants, comme ils l'étaient déjà). Une suite
-maximale de lots **consécutifs** marqués `(parallèle)` (§5.1) forme une vague ; un lot non marqué
-forme la sienne et sert de **barrière**. La vague se compte sur toute la checklist, lots déjà livrés
-compris : c'est une propriété de la checklist, pas du plan.
+maximale de lots **consécutifs** marqués `lot::parallele` (§5.1) forme une vague ; un lot non marqué
+forme la sienne et sert de **barrière**. La vague se compte sur **tous** les lots du parent, lots
+déjà livrés compris : c'est une propriété du découpage, pas du plan.
 
 Pourquoi une vague plutôt que le marqueur recopié tel quel : la règle « même parent et tous deux
 marqués » n'est **pas une relation d'équivalence** — deux lots marqués sont indépendants entre eux
@@ -4290,7 +4351,7 @@ C'est la seule source d'indépendance du run : `run.sh` la **lit** et ne recalcu
 Depuis #455 il la lit **même sans `--concurrence`** — c'est d'elle que le nombre de créneaux se
 dérive, là où l'option ne servait qu'à en imposer un.
 
-**Et le plan dit ce qu'il ne sait pas** (#562). La colonne `groupe` ne relaie que ce que la checklist
+**Et le plan dit ce qu'il ne sait pas** (#562). La colonne `groupe` ne relaie que ce que le découpage
 **déclare** : un parent dont aucun lot ne porte le marqueur rend autant de vagues que de lots, donc
 un plan parfaitement séquentiel qu'aucune lecture ne distingue d'un séquentiel voulu (§5.1). Trois
 surfaces, une seule règle — celle de `lib.sh arbitrage`, rejouée par `gl_arbitrage_de` sur la vue que
@@ -5641,7 +5702,7 @@ bit près.
 | --- | --- |
 | `3 en vol (dérivé du plan)` | le plan offrait 3, la borne ne l'a pas écrêté |
 | `3 en vol (dérivé du plan : 5 simultanables, borné à 3)` | il y a du parallélisme laissé sur la table |
-| `séquentiel — aucun ticket simultanable dans ce plan` | **verdict** sur les checklists des parents |
+| `séquentiel — aucun ticket simultanable dans ce plan` | **verdict** sur les lots des parents |
 | `séquentiel — ce plan est antérieur à la colonne « groupe »…` | on ne peut pas savoir : plan d'avant #288 |
 | `3 en vol (imposé)` / `séquentiel (imposé)` | consigne : option ou variable |
 | `3 en vol (du run repris)` | rejoué tel quel par `--resume` |
