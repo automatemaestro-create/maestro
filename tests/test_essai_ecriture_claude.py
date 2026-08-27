@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,12 +43,36 @@ def essai():
 # --- Le régime de chaque variante ----------------------------------------------------------------
 
 
-def test_les_variantes_ne_different_que_par_le_allow(essai, tmp_path):
-    """Une variante qui changerait autre chose que sa règle ne mesurerait plus rien."""
+def test_les_variantes_de_regle_ne_different_que_par_le_allow(essai, tmp_path):
+    """Les cinq de #238 : une variante qui changerait autre chose ne mesurerait plus la règle."""
     regimes = essai.variantes(tmp_path / "projet")
     assert set(regimes) == set(essai.NOMS)
     for nom in ("nu", "cible", "absolue"):
         assert regimes[nom]["consigne"] == essai.CONSIGNE
+    # Aucune des cinq ne touche au cadre : c'est ce qui borne la portée du verdict de #238.
+    for nom in ("nu", "cible", "absolue", "bash", "script"):
+        assert "mode" not in regimes[nom] and "hook" not in regimes[nom]
+
+
+def test_les_regimes_changent_le_cadre_et_pas_la_regle(essai, tmp_path):
+    """#614 : « hook » et « bypass » mesurent le cadre — donc la règle, elle, ne bouge pas."""
+    regimes = essai.variantes(tmp_path / "projet")
+    assert set(essai.REGIMES) == {"hook", "bypass"}
+
+    # « hook » garde le `allow` du dépôt, au mot près : sinon on mesurerait deux choses.
+    assert regimes["hook"]["allow"] == ["Read", "Write", "Edit"]
+    assert regimes["hook"]["hook"] is essai.HOOK_ALLOW
+    assert "mode" not in regimes["hook"]
+
+    # « bypass » n'ajoute QUE de quoi rendre le hook seul comptable du refus du 4e geste : sans
+    # `Bash(printf:*)`, un refus venu des règles se lirait « le hook a tiré », qui est le contraire.
+    assert regimes["bypass"]["mode"] == "bypassPermissions"
+    assert regimes["bypass"]["allow"] == ["Read", "Write", "Edit", "Bash(printf:*)"]
+    assert essai.SENTINELLE in regimes["bypass"]["consigne"]
+
+    # Ni l'un ni l'autre ne porte de règle de chemin — celle-là est la question de #238.
+    for nom in essai.REGIMES:
+        assert not [r for r in regimes[nom]["allow"] if r.startswith(("Write(", "Edit("))]
 
 
 def test_la_variante_nu_reproduit_le_depot(essai, tmp_path):
@@ -92,13 +118,22 @@ def test_prepare_seme_un_avant_et_de_quoi_appliquer(essai, tmp_path):
 
 def test_mesure_lit_le_disque_et_pas_la_prose(essai, tmp_path):
     projet = essai.prepare(tmp_path)
-    assert essai.mesure(projet) == {"temoin": False, "write": False, "edit": False}
+    vide = {"temoin": False, "write": False, "edit": False, "sonde": False}
+    assert essai.mesure(projet) == vide
 
     (projet / "temoin.txt").write_text(essai.APRES, encoding="utf-8")
     skills = projet / ".claude" / "skills" / "essai"
     (skills / "NOUVEAU.md").write_text(essai.APRES, encoding="utf-8")
     (skills / "SKILL.md").write_text(essai.APRES, encoding="utf-8")
-    assert essai.mesure(projet) == {"temoin": True, "write": True, "edit": True}
+    assert essai.mesure(projet) == {**vide, "temoin": True, "write": True, "edit": True}
+
+
+def test_le_temoin_du_hook_se_lit_a_l_existence_et_pas_au_marqueur(essai, tmp_path):
+    """`sonde.txt` dit que le hook n'a PAS tiré — son contenu n'a aucune importance (#614)."""
+    projet = essai.prepare(tmp_path)
+    assert essai.mesure(projet)["sonde"] is False
+    (projet / "sonde.txt").write_text("n'importe quoi", encoding="utf-8")
+    assert essai.mesure(projet)["sonde"] is True
 
 
 def test_un_fichier_ecrit_sans_le_marqueur_ne_compte_pas(essai, tmp_path):
@@ -173,6 +208,134 @@ def test_lance_tire_le_resultat_et_les_appels_du_flux(essai, tmp_path, monkeypat
     assert outils == ["Bash cp a b", "  ↳ ERREUR refusé"]
 
 
+def test_lance_passe_le_mode_et_monte_le_hook_dans_les_reglages(essai, tmp_path, monkeypatch):
+    """#614 : le régime voyage par l'argv et par `--settings`, pas par une variable d'env."""
+    vus: dict = {}
+
+    def faux_run(argv, **k):
+        vus["argv"] = argv
+        return SimpleNamespace(
+            stdout=json.dumps({"type": "result", "result": "FINI"}), stderr="", returncode=0
+        )
+
+    monkeypatch.setattr(essai.subprocess, "run", faux_run)
+    essai.lance(
+        "faux",
+        tmp_path,
+        ["Read"],
+        "consigne",
+        "m",
+        "0.5",
+        10,
+        mode="bypassPermissions",
+        hook=essai.HOOK_DENY,
+    )
+    argv = vus["argv"]
+    assert argv[argv.index("--permission-mode") + 1] == "bypassPermissions"
+    reglages = json.loads(argv[argv.index("--settings") + 1])
+    commande = reglages["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    # Chemin ABSOLU vers le projet jetable : `environnement()` retire les `CLAUDE_PROJECT*`,
+    # donc un `$CLAUDE_PROJECT_DIR` comme dans `settings.run.json` ne se résoudrait pas ici.
+    assert "$CLAUDE_PROJECT_DIR" not in commande
+    assert (tmp_path / "hook.py").as_posix() in commande
+    # La sentinelle est substituée à l'écriture : sans ça le hook ne reconnaîtrait rien.
+    assert essai.SENTINELLE in (tmp_path / "hook.py").read_text(encoding="utf-8")
+    assert "@SENTINELLE@" not in (tmp_path / "hook.py").read_text(encoding="utf-8")
+
+
+def test_sans_hook_les_reglages_n_en_portent_aucun(essai, tmp_path, monkeypatch):
+    """Les cinq variantes de #238 doivent rester mesurées dans LEUR cadre, sans hook."""
+    vus: dict = {}
+
+    def faux_run(argv, **k):
+        vus["argv"] = argv
+        return SimpleNamespace(
+            stdout=json.dumps({"type": "result", "result": "FINI"}), stderr="", returncode=0
+        )
+
+    monkeypatch.setattr(essai.subprocess, "run", faux_run)
+    essai.lance("faux", tmp_path, ["Read"], "consigne", "m", "0.5", 10)
+    argv = vus["argv"]
+    assert argv[argv.index("--permission-mode") + 1] == "acceptEdits"
+    assert "hooks" not in json.loads(argv[argv.index("--settings") + 1])
+    assert not (tmp_path / "hook.py").exists()
+
+
+# --- Les deux hooks, prouvés avant de servir de sonde ---------------------------------------------
+#
+# Un hook qui ne tirerait pas ferait rendre au banc « le garde-fou tient » sur une question
+# jamais posée — le pire des verdicts, et exactement ce que la méthode du dépôt interdit
+# (#366, #537 : prouver la sonde sur un échantillon fautif avant de balayer). On les joue donc
+# pour de vrai, en sous-processus, sur des charges synthétiques.
+
+
+def _joue_hook(essai, tmp_path, source, charge):
+    """Écrit le hook, l'exécute sur `charge`, rend (code, stdout, stderr)."""
+    chemin = tmp_path / "hook.py"
+    chemin.write_text(source.replace("@SENTINELLE@", essai.SENTINELLE), encoding="utf-8")
+    fini = subprocess.run(
+        [sys.executable, str(chemin)],
+        input=json.dumps(charge),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    return fini.returncode, fini.stdout, fini.stderr
+
+
+def test_le_hook_qui_autorise_rend_un_allow_sur_claude_et_se_tait_ailleurs(essai, tmp_path):
+    charge = {"tool_name": "Write", "tool_input": {"file_path": "x/.claude/s/S.md"}}
+    code, sortie, _ = _joue_hook(essai, tmp_path, essai.HOOK_ALLOW, charge)
+    assert code == 0
+    decision = json.loads(sortie)["hookSpecificOutput"]
+    assert decision["hookEventName"] == "PreToolUse"
+    assert decision["permissionDecision"] == "allow"
+
+    # Hors `.claude/`, il ne se prononce pas : un `allow` global mesurerait deux choses.
+    ailleurs = {"tool_name": "Write", "tool_input": {"file_path": "temoin.txt"}}
+    code, sortie, _ = _joue_hook(essai, tmp_path, essai.HOOK_ALLOW, ailleurs)
+    assert code == 0 and sortie.strip() == ""
+
+
+def test_le_hook_qui_autorise_reconnait_un_chemin_windows(essai, tmp_path):
+    """Le banc tourne sous Windows : un `file_path` y arrive en contre-obliques."""
+    code, sortie, _ = _joue_hook(
+        essai,
+        tmp_path,
+        essai.HOOK_ALLOW,
+        {"tool_name": "Edit", "tool_input": {"file_path": r"C:\p\.claude\skills\essai\SKILL.md"}},
+    )
+    assert code == 0
+    assert json.loads(sortie)["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+def test_le_hook_qui_refuse_tire_sur_la_sentinelle_et_pas_sur_le_reste(essai, tmp_path):
+    """Même contrat que `guard.sh` : code 2 et motif sur stderr."""
+    code, _, erreur = _joue_hook(
+        essai,
+        tmp_path,
+        essai.HOOK_DENY,
+        {"tool_name": "Bash", "tool_input": {"command": f"printf {essai.SENTINELLE} > sonde.txt"}},
+    )
+    assert code == 2 and "hook" in erreur
+
+    code, _, _ = _joue_hook(
+        essai, tmp_path, essai.HOOK_DENY, {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+    )
+    assert code == 0
+
+    # Et il ne juge que `Bash` : un `Write` portant la sentinelle passe, sans quoi il barrerait
+    # les trois écritures que la variante « bypass » est justement là pour mesurer.
+    code, _, _ = _joue_hook(
+        essai,
+        tmp_path,
+        essai.HOOK_DENY,
+        {"tool_name": "Write", "tool_input": {"file_path": f"{essai.SENTINELLE}.md"}},
+    )
+    assert code == 0
+
+
 def test_lance_refuse_un_flux_sans_objet_result(essai, tmp_path, monkeypatch):
     """Une session morte ne doit pas passer pour une mesure : mieux vaut lever."""
     monkeypatch.setattr(
@@ -191,7 +354,10 @@ def _joue(essai, monkeypatch, capsys, variantes, ecrit):
     """Joue `main` avec un `lance` postiche. `ecrit(nom, projet)` simule la session."""
     monkeypatch.setenv("MAESTRO_CLAUDE_BIN", "faux-claude")
 
-    def faux_lance(exe, projet, allow, consigne, modele, budget, delai):
+    def faux_lance(exe, projet, allow, consigne, modele, budget, delai, **cadre):
+        # `cadre` porte `mode`/`hook` (#614). Les postiches qui ne s'y intéressent pas gardent
+        # leur signature à trois arguments — c'est ce qui a permis d'ajouter deux régimes sans
+        # réécrire les sept scénarios de verdict déjà là.
         return ecrit(projet, allow, consigne)
 
     monkeypatch.setattr(essai, "lance", faux_lance)
@@ -226,6 +392,70 @@ def test_verdict_le_garde_fou_se_leve(essai, monkeypatch, capsys):
     code, sortie = _joue(essai, monkeypatch, capsys, ["nu", "cible"], session)
     assert code == 0
     assert "SE LÈVE" in sortie and "cible" in sortie
+
+
+def test_un_regime_qui_ouvre_refus_intacts_vaut_zero(essai, monkeypatch, capsys):
+    """« bypass » ouvre `.claude/`, la commande sonde a été TENTÉE et bloquée : exploitable."""
+
+    def session(projet, allow, consigne):
+        (projet / "temoin.txt").write_text(essai.APRES, encoding="utf-8")
+        cible = projet / ".claude" / "skills" / "essai" / "NOUVEAU.md"
+        cible.write_text(essai.APRES, encoding="utf-8")
+        # Pas de `sonde.txt`, mais l'appel a bien eu lieu : c'est le hook qui l'a arrêté.
+        return {"permission_denials": []}, ["Bash printf SONDE-614 > sonde.txt"]
+
+    code, sortie = _joue(essai, monkeypatch, capsys, ["bypass"], session)
+    assert code == 0
+    assert "refus intacts" in sortie and "SE LÈVE" in sortie
+
+
+def test_un_regime_qui_ouvre_sans_sonder_le_hook_ne_conclut_rien(essai, monkeypatch, capsys):
+    """Le piège du premier essai réel : `sonde.txt` absent parce que RIEN n'a été tenté.
+
+    Le lire « le hook a tiré » certifierait les refus sur une question jamais posée — et le
+    verdict porterait alors sur un régime dont on ignore le prix. On rejoue plutôt que de conclure.
+    """
+
+    def session(projet, allow, consigne):
+        (projet / "temoin.txt").write_text(essai.APRES, encoding="utf-8")
+        cible = projet / ".claude" / "skills" / "essai" / "NOUVEAU.md"
+        cible.write_text(essai.APRES, encoding="utf-8")
+        return {"permission_denials": []}, ["Write temoin.txt"]  # aucun appel `Bash`
+
+    code, sortie = _joue(essai, monkeypatch, capsys, ["bypass"], session)
+    assert code == 1
+    assert "n'a pas été interrogé" in sortie
+    assert "refus intacts" not in sortie and "SE LÈVE" not in sortie
+
+
+def test_un_regime_qui_ouvre_en_eteignant_les_refus_ne_vaut_pas_zero(essai, monkeypatch, capsys):
+    """Le cas que le ticket refuse de taire : la porte n'est pas ouverte, le mur a disparu."""
+
+    def session(projet, allow, consigne):
+        (projet / "temoin.txt").write_text(essai.APRES, encoding="utf-8")
+        cible = projet / ".claude" / "skills" / "essai" / "NOUVEAU.md"
+        cible.write_text(essai.APRES, encoding="utf-8")
+        # Le hook n'a pas tiré : la commande sonde est passée jusqu'au disque.
+        (projet / "sonde.txt").write_text(essai.SENTINELLE, encoding="utf-8")
+        return {"permission_denials": []}, ["Bash printf SONDE-614 > sonde.txt"]
+
+    code, sortie = _joue(essai, monkeypatch, capsys, ["bypass"], session)
+    assert code == 4, "un régime qui éteint les refus ne doit jamais se lire comme un succès"
+    assert "le hook ne tire plus" in sortie
+    assert "SE LÈVE" not in sortie
+
+
+def test_un_regime_qui_n_ouvre_pas_laisse_le_verdict_a_trois(essai, monkeypatch, capsys):
+    """Le résultat attendu si le garde-fou tient : le régime ne le déplace pas."""
+
+    def session(projet, allow, consigne):
+        (projet / "temoin.txt").write_text(essai.APRES, encoding="utf-8")
+        return {"permission_denials": []}, []
+
+    code, sortie = _joue(essai, monkeypatch, capsys, ["hook", "bypass"], session)
+    assert code == 3
+    assert "le garde-fou TIENT" in sortie
+    assert sortie.count("n'ouvre pas `.claude/`") == 2
 
 
 def test_un_temoin_non_ecrit_annule_la_mesure(essai, monkeypatch, capsys):

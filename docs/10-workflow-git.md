@@ -4995,6 +4995,50 @@ Ce qui reste à faire est donc inchangé — rendre le contenu dans la PR (#188)
 être gagné est **en amont** : ne pas envoyer un tel ticket dans un run, ce que `queue.sh` ne détecte
 toujours pas.
 
+⚠ **Un régime ouvre bien `.claude/`, et il a fallu le mesurer pour le savoir** (#614, 2026-08-27).
+La conclusion de #238 était juste **et bornée** : son banc n'a jamais comparé que des `allow`, dans
+un projet monté « ni `.claude/settings.json`, ni hooks » — c'est écrit dans son protocole. Deux
+régimes restaient donc hors de sa portée, et le banc les porte désormais (`--variante hook`,
+`--variante bypass`). Mesure du **2026-08-27**, CLI **2.1.215**, `claude-haiku-4-5`, 0,16 $ pour cinq
+variantes, **reproduite deux fois** :
+
+| variante | régime | écriture sous `.claude/` |
+| --- | --- | --- |
+| `nu` · `cible` · `absolue` | `acceptEdits`, règles `allow` | **refusée** — la conclusion de #238 tient, trois semaines et une version de CLI plus tard |
+| `hook` | `allow` nu + hook `PreToolUse` rendant `permissionDecision: allow` | **refusée** — le garde-fou est en amont des hooks comme il l'est du `allow` |
+| `bypass` | `--permission-mode bypassPermissions` + hook | **aboutit** (`Write` **et** `Edit`), **et le hook refuse toujours** |
+
+Trois choses à ne pas confondre en lisant ce tableau. La ligne `hook` **ferme** une voie au lieu de
+l'ouvrir, et c'est un résultat : le contrat JSON des hooks admet `allow` et pas seulement `deny`, donc
+la question se posait — elle ne se posera plus. La ligne `bypass` n'est **pas** « les garde-fous
+sautent » : la commande sonde que le hook devait refuser n'a pas atteint le disque. ⚠ Ce qui a été
+éprouvé là est le **contrat** dont `guard.sh` dépend — un hook `PreToolUse` qui sort en `2` — et non
+`guard.sh` lui-même : le banc tourne **hors du dépôt**, par construction (§11.7 ci-dessus), donc il
+emploie un hook doublure au même contrat. L'inférence est solide et se dit comme une inférence ;
+la vérifier sur le vrai script demanderait un banc dans le dépôt, que ce ticket n'a pas monté. Ce qui
+rend ce régime seulement envisageable est de toute façon ailleurs : les refus durs sont **recopiés**
+dans le hook et `guard.sh --check` les tient alignés sur les `deny` du dépôt (§11.6) — une redondance
+écrite pour une autre raison. Et le banc distingue **trois** états sur la sonde, pas
+deux — « a tiré », « muet », « jamais tentée » — parce que le premier essai réel a vu la session
+refuser la consigne entière : un `sonde.txt` absent parce que rien n'a été tenté se lirait « le hook
+a tiré », c'est-à-dire un ✓ sur une question jamais posée.
+
+⚠ **Le prix n'est pas celui qu'on croit, et c'est lui qui décide.** Ce que `bypassPermissions` coûte
+n'est pas d'ouvrir `.claude/` : c'est que **le `allow` cesse de contraindre quoi que ce soit**. Tout
+le travail d'instruction de cette section — les familles de refus, les trous comblés un par un, la
+forme des appels — porte sur une liste qui, dans ce régime, ne dit plus rien ; ne subsistent que les
+refus **durs** de `guard.sh`. On échange une liste blanche contre une liste noire, ce qui est un
+renversement de politique et pas un réglage.
+
+**Rien n'a donc été levé ici** : #614 mesure, il ne décide pas (même partage que l'audit de run,
+§11.12). Trois suites possibles, dans l'ordre où elles élargissent la surface — garder la conduite
+actuelle (le résidu devient un ticket de reprise, #608) ; n'employer `bypassPermissions` que pour les
+**tickets qui touchent `.claude/`**, choisis au lancement de la session puisque `run.sh` construit son
+argv ticket par ticket, ce qui confine le renversement à quelques tickets par mois et donne à la
+détection amont de `queue.sh` (#612) un usage qu'elle n'avait pas ; ou l'employer partout, ce que
+rien dans cette mesure ne recommande. Dans les deux derniers cas, le merge automatique de ces PR-là
+demanderait un lecteur humain — c'est #418 qui l'a retiré, pas l'écriture qui l'a rendu inutile.
+
 ### 11.8 Reprendre un run qui ne s'est pas terminé — `--resume`
 
 Un run s'interrompt de plusieurs façons, et aucune n'est rare : console fermée, machine éteinte,
