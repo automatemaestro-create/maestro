@@ -1,5 +1,6 @@
 /**
- * Ce qu'il faut débrancher pour monter les dix écrans sans backend (#537, #539).
+ * Ce qu'il faut débrancher pour monter les écrans du menu sans backend (#537,
+ * #539).
  *
  * ⚠ Le réseau est débranché **deux fois**, et il faut les deux : `tests/setup.ts`
  * mocke `useControlTower`/`useChat`, mais **ni `chargerCatalogue`, ni
@@ -19,8 +20,12 @@
 
 import {
   EXECUTION_EN_ATTENTE_BRIEF,
+  MCP_MODE_OAUTH,
+  MCP_MODE_TOKEN,
   type AnalyticsCouts,
   type DetailExecution,
+  type EntreeRegistreMcp,
+  type IntegrationPoolMcp,
 } from "@/lib/types";
 
 import {
@@ -34,9 +39,106 @@ import {
   usageFactice,
 } from "./aides";
 
+/**
+ * Le catalogue des deux sondes. `dev` a **activé une intégration** et `qa` non
+ * (#270) : c'est de cette liste que l'écran « Intégrations » tire son « utilisée
+ * par », et les deux cas doivent être à l'écran — celui qui nomme des agents et
+ * celui qui dit « aucun », qui ne rendent pas les mêmes balises.
+ */
 const CATALOGUE = [
-  ficheCatalogueFactice({ nom: "dev", role: "Développeur" }),
+  ficheCatalogueFactice({
+    nom: "dev",
+    role: "Développeur",
+    mcp_activations: ["figma-officiel"],
+  }),
   ficheCatalogueFactice({ nom: "qa", role: "Testeur" }),
+];
+
+/** Un serveur MCP monté, réduit à ce dont l'UI se sert. */
+function serveurFactice(nom: string) {
+  return {
+    nom,
+    type: "stdio",
+    commande: "npx",
+    args: [],
+    url: "",
+    env: {},
+    headers: {},
+    optionnel: false,
+  };
+}
+
+/**
+ * Le pool projet des deux sondes (#270). **Deux intégrations et pas zéro** :
+ * `chargerPoolMcp` rendait un pool vide, si bien que la ligne du pool — ses
+ * badges, son bouton « Retirer », ses agents — n'était montée par aucune des
+ * deux suites. Un écran vide n'a presque pas de balises : l'auditer rend un
+ * vert qui ne parle que du vide (même raison que `peuplerEtat`).
+ *
+ * Les deux états qui comptent y sont : un secret **valide** sur une intégration
+ * qu'un agent utilise, un secret **à configurer** sur une intégration que
+ * personne n'a activée.
+ */
+const POOL: IntegrationPoolMcp[] = [
+  {
+    id: "figma-officiel",
+    serveur: serveurFactice("figma-officiel"),
+    mode_auth: MCP_MODE_OAUTH,
+    procedure_url: "https://www.figma.com/developers",
+    curee: true,
+    secrets: [
+      {
+        cle: "FIGMA_TOKEN",
+        description: "Jeton OAuth",
+        secret: true,
+        present: true,
+        valide: true,
+        ephemere: false,
+        expire_le: "2026-12-31T23:00:00Z",
+      },
+    ],
+  },
+  {
+    id: "gitlab",
+    serveur: serveurFactice("gitlab"),
+    mode_auth: MCP_MODE_TOKEN,
+    procedure_url: "",
+    curee: true,
+    secrets: [
+      {
+        cle: "GITLAB_TOKEN",
+        description: "Jeton d'accès",
+        secret: true,
+        present: false,
+        valide: false,
+        ephemere: false,
+        expire_le: null,
+      },
+    ],
+  },
+];
+
+/** La bibliothèque curée des deux sondes : une entrée, dépliable. */
+const REGISTRE: EntreeRegistreMcp[] = [
+  {
+    id: "slack",
+    nom: "Slack",
+    description: "Lire et écrire dans les canaux de l'espace de travail.",
+    mode_auth: MCP_MODE_TOKEN,
+    transport: "stdio",
+    commande: "npx",
+    args: [],
+    url: "",
+    env: {},
+    headers: {},
+    tags: ["slack", "messagerie"],
+    secrets: [{ cle: "SLACK_TOKEN", description: "Jeton", secret: true }],
+    procedure_url: "",
+    optionnel: false,
+    editeur: "Slack",
+    popularite: 90,
+    curee: true,
+  },
 ];
 
 /** Le détail que l'écran « Valider le brief » ouvre sur le run en attente. */
@@ -57,17 +159,17 @@ export function detailFactice(): DetailExecution {
   };
 }
 
-/** Ce que `@/lib/api` doit rendre pour que les dix écrans se montent peuplés. */
+/** Ce que `@/lib/api` doit rendre pour que les écrans se montent peuplés. */
 export function mocksApi() {
   return {
     // Reconduits : ces mocks **remplacent** ceux de `tests/setup.ts`.
     chargerProjets: async () => projetsDeclares(),
     chargerJournal: async () => pageJournalCourante(),
-    // Ce que le setup ne couvre pas, et sans quoi quatre des dix écrans se
-    // liraient à l'état « bannière d'erreur ».
+    // Ce que le setup ne couvre pas, et sans quoi plusieurs écrans se liraient
+    // à l'état « bannière d'erreur ».
     chargerCatalogue: async () => CATALOGUE,
     chargerSante: async () => ({ statut: "ok" }),
-    chargerRegistreMcp: async () => [],
+    chargerRegistreMcp: async () => REGISTRE,
     chargerProvenanceRegistreMcp: async () => ({
       resume: "",
       sources: [],
@@ -75,7 +177,7 @@ export function mocksApi() {
       tags: [],
       total: 0,
     }),
-    chargerPoolMcp: async () => ({ integrations: [], erreur: null }),
+    chargerPoolMcp: async () => ({ integrations: POOL, erreur: null }),
     chargerExplorateur: async () => pageExplorateurFactice(),
     chargerDisponibiliteSelecteur: async () => ({
       disponible: false,
