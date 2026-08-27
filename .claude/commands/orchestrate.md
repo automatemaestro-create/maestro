@@ -212,10 +212,13 @@ toi-même.
    plan` · `imposé` · `du run repris`). Il n'y a donc rien à décider au feu vert — **relaie ce que
    cette ligne dit**, c'est tout. Deux formes méritent un mot : « `dérivé du plan : N simultanables,
    borné à 2` » signale du parallélisme laissé sur la table (`--concurrence-max <n>` le relève, sur
-   demande explicite et en disant ce que ça coûte — le run `20260826-155709` a tué son pilote à
-   trois sessions en vol), et « `séquentiel — aucun ticket simultanable dans ce plan` » est un
-   **verdict** sur les checklists des parents, à ne pas confondre avec « ce plan est antérieur à la
-   colonne groupe », qui dit qu'on ne peut pas savoir. `--concurrence <n>` reste là pour imposer un
+   demande explicite et en disant ce qu'on **ignore** : ce plafond **n'est pas mesuré** (#599,
+   [docs/10 §11.10](../../docs/10-workflow-git.md)) — il tient de la seule **asymétrie des erreurs**,
+   et un run à concurrence 3 a tenu plus de 1 h 45 sans incident le 2026-08-26 ; ne relaie donc pas
+   « le run `20260826-155709` a tué son pilote », qui était faux), et « `séquentiel — aucun ticket
+   simultanable dans ce plan` » est un **verdict** sur les checklists des parents, à ne pas confondre
+   avec « ce plan est antérieur à la colonne groupe », qui dit qu'on ne peut pas savoir.
+   `--concurrence <n>` reste là pour imposer un
    régime : ne le passe que si l'utilisateur le demande.
    Puis le **suivi** — `bash scripts/orchestrate/status.sh --watch` (où en est le run, depuis
    n'importe quel terminal) ou `tail -f .maestro/orchestrate/<run-id>/run.log` (la
