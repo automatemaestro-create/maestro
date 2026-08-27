@@ -186,6 +186,21 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   agent — servi pour de bon depuis #269 (voir ci-dessous). Les onglets sont
   déclarés une seule fois (`lib/agents.ts`), comme le menu l'est dans
   `lib/navigation.ts` ;
+- **Une seule porte d'entrée** (#484, lot 3 de #481, docs/05 §1) : « Composer un
+  objectif » (#319) et « Valider le brief » (#322) **ont quitté le menu** le
+  2026-08-28, et « Chat » a pris leur place en tête — le fil sait faire ce
+  qu'elles faisaient (les sources depuis #482, le cadrage depuis #483), et deux
+  portes vers un même geste sont la question « laquelle ? » posée à chaque
+  lancement. Même mécanique qu'au-dessus : `/composer` et `/brief` sont
+  **redirigés** vers `/chat` (307, `next.config.ts`), donc aucun signet ne casse.
+  Le vrai coût du lot est ailleurs — **cinq** surfaces acheminaient vers ces deux
+  écrans en résolvant leur destination par le **menu** (le poste vide, la liste
+  de runs vide, la file de briefs vide, la cloche, la table `ATTENTES`) ; un
+  libellé retiré rend `undefined`, donc `null`, donc un bloc qui disparaît sans
+  un mot. Les trois du **cadrage** avaient été déplacées d'avance par #483
+  (`PAGE_DU_CADRAGE`), les deux du **lancement** l'ont été ici (`PAGE_DU_FIL`,
+  `lib/navigation.ts`) : retirer une entrée de menu n'est jamais un geste
+  local ;
 - **Éditeur de playbooks** (#77, EF-24/EF-25) : l'onglet **Playbook** d'une fiche
   agent porte son playbook versionné (#76, API `/api/playbooks`), publie une nouvelle
   version depuis un éditeur plein texte et montre l'historique, chaque version
@@ -905,7 +920,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 
 | Fichier | Ce qu'il couvre |
 | --- | --- |
-| `tests/navigation.test.tsx` | Le menu unique, la sidebar, la barre supérieure (#117) ; une entrée par intention et les renvois par libellé (#189) |
+| `tests/navigation.test.tsx` | Le menu unique, la sidebar, la barre supérieure (#117) ; une entrée par intention et les renvois par libellé (#189) ; la **porte unique** (#484, **logique critique du lot seule**, le reste différé à #485) — les deux entrées parties, les deux chemins encore servis en 307, aucune entrée de menu parmi les sources de redirection, et le libellé du fil qui **résout** (un `undefined` y éteindrait cinq renvois sans un mot) |
 | `tests/theme.test.tsx` | Choix clair/sombre/système, script d'init, accord des deux contrôles (#118) |
 | `tests/notifications.test.tsx` | Tri du notable, badge, décision depuis le panneau (#119) |
 | `tests/identite.test.tsx` | Le monogramme et ses déclinaisons favicon/ICO/PNG (#120) |
@@ -929,6 +944,9 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/selecteur-projet.test.tsx` | Le sélecteur du shell : bascule sans quitter la page, gestion atteinte sans chemin en dur, et « Projets » sorti de la sidebar sans que son écran cesse d'être servi ni titré (#280) |
 | `tests/composer.test.tsx` | Composer un objectif : dossier pris dans l'explorateur (jamais saisi), aperçu gratuit qui ne lance rien et se périme dès qu'une source change, refus posé **sur la source qu'il vise** sans perdre la saisie, et « ignoré » qui n'est pas un refus (#319) |
 | `tests/fil-sources.test.tsx` | Le fil qui accepte des sources (#482, **complété par #485**) : un fichier glissé sur la conversation part par son **identifiant de téléversement** et jamais par ses octets ni son nom — c'est ce qui garantit qu'il n'atterrit pas dans le dossier de l'utilisateur, et rien à l'écran ne le dirait s'il cessait d'être vrai ; un message fait de **sources seules** est légitime ; un **refus reste dans le fil**, sur la source qu'il vise, sans perdre ni le texte ni la matière ; le **rapport de lecture** est replié sous le message qui l'a porté et se déplie sur place, l'image y ressortant « Ignoré / `format-non-gere` » au lieu de disparaître ; et une bulle sans source reste **strictement** celle d'avant le lot. #485 y ajoute les **deux autres types** que le titre du lot nomme — un dossier pris dans l'explorateur (jamais saisi) et une adresse, ni l'un ni l'autre ne passant par le téléversement —, le **cycle de la composition** (retirer avant l'envoi sans décaler les identifiants, vidée par un succès, conservée par un échec) et le refus **sans index**, qui n'a pas de ligne où se poser et se rend une seule fois sous la saisie |
+| `tests/integrations-pool.test.tsx` | Le **pool projet** de l'écran Intégrations (#270, testé en #273 — la part que son propre lot avait différée ici) : le renversement du catalogue (`usageDuPool`, rangé *par agent* côté API), les quatre modes d'auth, les quatre états du bloc, le retrait et son échec. Ce qui s'y joue vraiment est la **troisième** réponse de « qui l'utilise » : un catalogue muet ne s'écrit **jamais** « aucun agent » — le rendre ainsi ferait retirer une intégration en croyant qu'elle ne sert à rien, c'est-à-dire se tromper sur la question même que l'écran pose |
+| `tests/chat-global.test.tsx` | Le **chat global** (#268/#269, testé en #273) : `mentionEnTete` et ses quatre décisions, toutes du même ordre — ne rien faire dans le doute, une mention mal reconnue détournant un message vers le mauvais fil ; puis l'écran, où ce qui est observé est **le canal demandé** à `useChat` (`canauxDemandes`, même dessin que `porteesDemandees` de #281) et non le texte rendu, seule façon de prouver que `@dev` **change de destinataire au lieu de recopier** — le raccourci inverse donnerait deux historiques d'une même conversation, désaccordés dès le premier rechargement, sans que rien à l'écran ne le montre ; enfin « Ouvert depuis ce fil », qui **lit** les `run_id` des messages et ne déduit jamais un run de ce qui a tourné pendant qu'on regardait |
+| `tests/validations.test.tsx` | L'écran qui **se décide vite** (#272, testé en #273) : l'ordre de la file (la plus ancienne d'abord, une demande sans horodatage en queue — elle n'a pas d'âge à faire valoir), `formatAttente` et ses paliers (« depuis » et non « il y a »), ce qu'on lit avant de trancher (l'**acte** en tête quand il y en a un, #581), et les gestes — approuver, refuser sec, refuser motivé. Deux garanties qui ne se voient pas à la relecture du composant : le motif **refermé est effacé** (« sans motif » doit vouloir dire sans motif, sinon un texte que plus personne n'a sous les yeux part au journal du run), et la **clé par `tache_id`**, prouvée en retirant la tête de file pendant qu'un motif est en cours de frappe — sans elle il s'attacherait à la demande suivante |
 | `tests/brief.test.tsx` | Valider le brief, **logique critique du lot seule** (#322, le reste différé à #323) : approuvé **corrigé** vs approuvé **tel quel** (`brief: null`, qui fait retenir au moteur sa propre proposition), refus qui n'emporte jamais de brief, réponses appariées **par position** aux questions (chaînes vides comprises), et le coût engagé rendu face à la décision |
 | `tests/fil-cadrage.test.tsx` | Le cadrage décidé **dans le fil** (#483 ; ce que #485 y ajoute est **côté moteur**, `tests/test_brief.py` ⑦ — D5 mesurée pendant l'attente et le bus refermé qui fait échouer le run, deux garanties qu'aucun écran ne montre) : le **canal reste le canal** — le fil rappelle `trancherBrief`/`repondreAuBrief`, donc les deux routes de #320/#321, avec le contrat entier (`brief: null` tel quel, brief corrigé sinon, jamais de brief sur un refus, une réponse par question) ; le **rang du tour et son plafond** restent en clair ; les tours joués se **déroulent** au lieu de se replier, le sans-réponse nommé ; et surtout le critère 3, seul dont l'échec est **invisible depuis l'écran qu'on regarde** — les trois surfaces qui montrent un run suspendu résolvent leur destination par le menu, donc un renvoi resté sur « Valider le brief » s'éteindrait sans un mot le jour où #484 retire l'entrée |
 | `tests/runs-perdus.test.tsx` | Les runs perdus (#349, testés en #351) : **la règle avant le panneau** (`lib/execution.ts`), qui n'est proposé que sur un `orphelin` **au brief approuvé** — l'API accepte pourtant de relancer un `indetermine`, et cet écart entre *accepter* et *proposer* est le sujet ; puis le panneau, absent quand rien n'est récupérable, désarmé pendant la reprise (un double clic partirait deux fois) et rendant le refus de l'API tel quel |
@@ -947,7 +965,12 @@ Cinq fichiers portent l'outillage plutôt que des tests :
   `scrollIntoView`), la remise à zéro entre deux tests (stockage, `data-theme`,
   DOM), et le **réseau débranché** : `useControlTower`, `useChat` et la lecture
   des projets déclarés sont mockés globalement, si bien qu'aucun test n'a besoin
-  de backend ni de faux serveur ;
+  de backend ni de faux serveur. Les deux hooks **notent ce qu'on leur demande**
+  au passage — la portée d'une lecture (`porteesDemandees`, #281) et le canal
+  d'un fil (`canauxDemandes`, #273) — parce que c'est là qu'est la promesse dans
+  les deux cas : « aucun écran ne montre autre chose que le projet actif » et
+  « une mention change de destinataire » ne s'observent qu'au **paramètre** de
+  l'appel, le contenu rendu venant du `poser…` correspondant quoi qu'il arrive ;
 - `tests/aides.tsx` — les fabriques du domaine (agent, événement, validation,
   message, projet, **run** depuis #480, **nœud et graphe** depuis #491 — ce
   dernier *dérivé* de ses nœuds : `niveaux` regroupe sur le `niveau` que chaque
@@ -1025,6 +1048,13 @@ qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
   redirections v1 (`next.config.ts`) et les ancres `data-guide` visées par la
   visite guidée. Une page supprimée laisserait sinon une entrée de menu vers un
   404, un signet redirigé vers le vide et une étape de visite sans cible ;
+- ceux de la **porte unique** (#484) : qu'aucune entrée de menu ne porte plus
+  `/composer` ni `/brief`, que les deux chemins soient **encore servis** en 307
+  (jamais 308 — un 308 est mis en cache pour de bon), qu'aucune entrée de menu ne
+  figure parmi les **sources** de redirection (une entrée qui se redirige
+  elle-même est un aller simple, le piège de #190), et que le libellé du fil
+  **résolve** — c'est cette dernière qui garde les cinq renvois, dont l'échec
+  serait `null` et donc silencieux ;
 - celui qui vérifie que chaque redirection v1 vise un **onglet déclaré**
   (`lib/agents.ts`). Le contrôle de route ne suffit pas ici : `[onglet]` répond à
   *n'importe quel* segment, si bien qu'une faute de frappe rendrait bien une page

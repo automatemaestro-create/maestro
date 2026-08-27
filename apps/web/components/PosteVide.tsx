@@ -34,6 +34,7 @@
 
 import { Bouton, BoutonLien, Carte } from "@/components/Primitives";
 import { lancerGuide } from "@/lib/guide";
+import { entreeParLibelle, PAGE_DU_FIL } from "@/lib/navigation";
 import type { Projet } from "@/lib/types";
 
 /** Ce que le poste montre dès qu'un run publie — l'inventaire de ce qui manque. */
@@ -51,6 +52,13 @@ export function PosteVide({
   projet: Projet;
   connecte: boolean;
 }) {
+  // Le geste qui remplit cet écran, résolu par le menu et jamais écrit en dur
+  // (règle de #191). C'est le **fil** depuis #484 : le renvoi vers « Composer un
+  // objectif » menait à un écran qui redirige désormais ici, et un premier
+  // démarrage est justement le moment où l'on ne peut pas se permettre un
+  // rebond. Le lien s'éteint plutôt que de mentir si la page n'est pas là.
+  const fil = entreeParLibelle(PAGE_DU_FIL);
+
   return (
     <Carte
       balise="section"
@@ -76,9 +84,9 @@ export function PosteVide({
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         <Action
           titre="Lancer une orchestration dans ce projet"
-          detail="Le moteur découpe l'objectif en tâches, les assigne aux agents et publie chaque étape ici."
-          lien={{ href: "/composer", libelle: "Composer un objectif" }}
-          note="L'écran compose l'objectif — texte, fichiers déposés, dossier de références, adresses — et montre ce qui sera lu avant de lancer (#319). L'API reste servie pour les scripts."
+          detail="Dites à Maestro ce que vous voulez : il cadre l'objectif avec vous, puis le moteur le découpe en tâches, les assigne aux agents et publie chaque étape ici."
+          lien={fil && { href: fil.href, libelle: "Ouvrir le chat" }}
+          note="Tout se passe dans le fil (#481) — l'objectif, les fichiers déposés, le dossier de références, les adresses, puis la validation du cadrage. L'API reste servie pour les scripts."
         />
         <Action
           titre="Juste explorer l'interface"
@@ -136,8 +144,11 @@ export function PosteVide({
 /**
  * Une porte de sortie du poste vide : une commande à copier, ou — depuis #319 —
  * un **écran** de l'interface quand il en existe un. Les deux et pas l'un ou
- * l'autre : le formulaire de lancement existe désormais, la ligne de commande
- * reste ce dont un script a besoin.
+ * l'autre : le geste de lancement existe désormais dans l'interface, la ligne de
+ * commande reste ce dont un script a besoin.
+ *
+ * L'écran visé a changé avec #484 — c'était le formulaire de #319, c'est le fil
+ * — sans que ce composant-ci en sache rien : il reçoit un lien déjà résolu.
  */
 function Action({
   titre,

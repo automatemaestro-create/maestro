@@ -38,11 +38,13 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
+  canauxDemandes,
   cheminCourant,
   etatGlobalCourant,
   filAssistanceCourant,
   installerMatchMedia,
   navigations,
+  noterCanal,
   noterPortee,
   pageJournalCourante,
   porteesDemandees,
@@ -89,8 +91,15 @@ vi.mock("@/lib/useControlTower", async (original) => ({
   },
 }));
 
+// Le **canal** demandé est noté au passage (#273), pour la raison qui vaut déjà
+// pour la portée de `useControlTower` : le fil rendu est factice, mais celui
+// qu'on demande est exactement ce que le chat global promet — une mention
+// `@agent` change de destinataire au lieu de recopier le message (#269).
 vi.mock("@/lib/useChat", () => ({
-  useChat: () => filAssistanceCourant(),
+  useChat: (canal: string) => {
+    noterCanal(canal);
+    return filAssistanceCourant();
+  },
 }));
 
 // La porte d'entrée (#279) lit les projets déclarés à chaque montage du shell :
@@ -145,6 +154,7 @@ beforeEach(() => {
   poserJournal([]);
   navigations.length = 0;
   porteesDemandees.length = 0;
+  canauxDemandes.length = 0;
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
   window.ResizeObserver = ResizeObserverFactice as unknown as typeof ResizeObserver;

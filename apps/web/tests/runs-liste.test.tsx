@@ -55,7 +55,7 @@ import {
   type CauseAttente,
 } from "@/lib/execution";
 import { libelleCause, libelleStatutExecution } from "@/lib/format";
-import { entreeParLibelle, hrefRun } from "@/lib/navigation";
+import { entreeParLibelle, hrefRun, PAGE_DU_FIL } from "@/lib/navigation";
 import {
   CAUSE_ANNULATION,
   CAUSE_EXTINCTION,
@@ -628,9 +628,12 @@ describe("la liste des runs (l'écran)", () => {
     monter();
 
     expect(screen.getByText(/Aucun run sur Dépensio/)).toBeInTheDocument();
+    // Le geste qui remplit cette liste est le fil depuis #484 : le renvoi passe
+    // par `PAGE_DU_FIL`, jamais par un chemin écrit ici — sans quoi le test
+    // resterait vert le jour où l'écran, lui, renverrait ailleurs.
     expect(
-      screen.getByRole("link", { name: "Composer un objectif" }),
-    ).toHaveAttribute("href", entreeParLibelle("Composer un objectif")?.href);
+      screen.getByRole("link", { name: "Ouvrir le chat" }),
+    ).toHaveAttribute("href", entreeParLibelle(PAGE_DU_FIL)?.href);
   });
 
   it("ne conseille pas de lancer un run à qui n'a pas de backend", () => {
@@ -641,7 +644,7 @@ describe("la liste des runs (l'écran)", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent(/API injoignable/);
     expect(
-      screen.queryByRole("link", { name: "Composer un objectif" }),
+      screen.queryByRole("link", { name: "Ouvrir le chat" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/Aucun run sur/)).not.toBeInTheDocument();
   });

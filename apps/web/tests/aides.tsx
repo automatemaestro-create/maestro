@@ -172,6 +172,28 @@ export function filAssistanceCourant(): FilFactice {
   return fil;
 }
 
+/**
+ * Les canaux passés à `useChat` depuis le début du test (#273).
+ *
+ * Même dessin que `porteesDemandees` (#281), et pour la même raison : le hook
+ * est factice — son va-et-vient réseau ne peut pas être observé —, mais **ce
+ * qu'on lui demande** l'est, et c'est là qu'est la promesse du chat global
+ * (#269). « `@dev` change de destinataire, il ne recopie rien » ne se vérifie
+ * qu'au nom du fil lu, le contenu rendu venant de `poserFilAssistance` quoi
+ * qu'il arrive. Une liste et non la dernière valeur : c'est l'enchaînement qui
+ * compte quand on bascule d'un interlocuteur à l'autre.
+ */
+export const canauxDemandes: string[] = [];
+
+export function noterCanal(canal: string): void {
+  canauxDemandes.push(canal);
+}
+
+/** Le dernier fil demandé — le destinataire courant de l'écran. */
+export function canalCourant(): string | undefined {
+  return canauxDemandes[canauxDemandes.length - 1];
+}
+
 export function messageFactice(partiel: Partial<MessageChat> = {}): MessageChat {
   return {
     agent: "assistance",
