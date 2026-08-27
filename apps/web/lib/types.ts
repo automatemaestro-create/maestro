@@ -534,12 +534,18 @@ export type DefinitionAgent = {
  * Un message du fil de chat utilisateur ↔ agent (`MessageChat.to_dict`, #84) :
  * `agent` est le fil d'appartenance (le nom d'agent du catalogue), `auteur`
  * l'émetteur — `utilisateur` ou ce même nom d'agent.
+ *
+ * `run_id`/`tache_id` (#268) rattachent au message **ce qui en découle** : le run
+ * que l'orchestration a ouvert en répondant. Chaînes vides partout ailleurs — un
+ * message ordinaire ne rattache rien.
  */
 export type MessageChat = {
   agent: string;
   auteur: string;
   contenu: string;
   horodatage: string;
+  run_id: string;
+  tache_id: string;
 };
 
 /** Le fil complet d'un agent (`GET /api/chat/{agent}`, #84). */

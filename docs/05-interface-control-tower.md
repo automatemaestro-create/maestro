@@ -1521,9 +1521,10 @@ elles sans attendre le backend réel (ticket #183).
 que leur lot n'est pas livré (Phase 5, #184+). Fournir des fixtures (`create_app(fixtures=…)`, ce
 que fait la démo) les fait servir des données factices cohérentes avec le scénario existant. La
 forme est le contrat ; le backend réel la remplira **à contrat identique** — les **exécutions**
-(§6.1, lot #185) puis le **journal requêtable** (§6.2, lot #478) l'ont déjà fait : ils ne passent
-plus ni par le `501` ni par les fixtures, et se servent de
-`maestro.controltower.executions` / `maestro.controltower.journal`. Une fixture livrée **quitte**
+(§6.1, lot #185), le **journal requêtable** (§6.2, lot #478) puis le **flux SSE d'un fil de chat**
+(§6.5, lot #268) l'ont déjà fait : ils ne passent plus ni par le `501` ni par les fixtures, et se
+servent de `maestro.controltower.executions` / `maestro.controltower.journal` /
+`maestro.controltower.chat`. Une fixture livrée **quitte**
 donc ce module au lieu d'y rester en double : garder les deux ferait de la démo un écran nourri
 de faux à côté d'un vrai. Miroir TypeScript :
 [`apps/web/lib/types.ts`](../apps/web/lib/types.ts) ; fixtures : `maestro/controltower/fixtures.py`.
@@ -2203,13 +2204,21 @@ badge d'attente et des notifications (items 8/9 du cadrage).
 }
 ```
 
-### 6.5 Flux SSE d'un fil de chat
+### 6.5 Flux SSE d'un fil de chat — et le **fil global** (#268) — **livré**
 
 Le rendu **en streaming** d'une réponse de chat (items 2/4/12 : assistant, chat global, chat
-direct).
+direct), et le troisième canal qui s'y branche.
+
+#### Le streaming est un canal, pas une particularité d'un fil
+
+`ServiceChat.diffuser` (`maestro/controltower/chat.py`) rend la réponse au fur et à mesure, pour
+**n'importe quel** fil : un agent du catalogue, `assistance` (#123), `orchestrateur` (#268). Même
+échange que `POST …/messages` — même persistance, même messagerie inter-agents, mêmes
+`chat.message` sur le WebSocket —, rendu en trames plutôt qu'en une fois.
 
 - `GET /api/chat/{agent}/flux?contenu=…` → `text/event-stream` — chaque `data: <json>` est un
-  `FragmentChat`. `404` si l'agent n'est pas au catalogue (`assistance` désigne le canal d'aide).
+  `FragmentChat`. `404` si le fil n'existe pas, `422` sur un `contenu` vide (tranché **avant** la
+  première trame : rien n'est persisté).
 
 ```jsonc
 // FragmentChat (une trame SSE)
@@ -2217,8 +2226,55 @@ direct).
   "type": "fragment",        // debut (ouvre) | fragment (incrémente) | fin (clôt) | erreur
   "agent": "qa",
   "auteur": "agent",         // l'émetteur
-  "delta": " morceau",       // incrément de texte ; vide hors `fragment`
+  "delta": " morceau",       // incrément de texte ; vide hors `fragment` — porte la cause sur `erreur`
   "message": null            // MessageChat complet sur la seule trame `fin`, null ailleurs
+}
+```
+
+Deux propriétés à ne pas défaire. La concaténation des `delta` **reconstitue** le contenu de la
+trame `fin` : c'est ce qui permet à un client d'afficher pendant que ça arrive sans rien
+réconcilier ensuite. Et une réponse impossible sort en trame **`erreur`**, jamais en statut HTTP :
+les en-têtes sont déjà partis quand elle se découvre, et le message utilisateur, lui, est déjà
+acquis — le fil ne perd rien, relancer suffit.
+
+Le point d'extension est `RepondeurChat.produire(agent, fil, *, incrementer=…)`, dont
+l'implémentation par défaut publie le texte de `repondre` en **un seul** incrément : tout répondeur
+existant se diffuse donc sans changer une ligne. Le jour où la frontière `ModelProvider` exposera
+du streaming (elle ne le fait pas : `generate` rend un `str`), `RepondeurModele` n'aura que cette
+méthode à surcharger — le canal, lui, ne bouge pas.
+
+#### Le fil global — parler à l'orchestration (#268)
+
+Un troisième canal sur les mêmes endpoints, sous le nom réservé **`orchestrateur`** : on n'y
+parle pas à un exécutant mais à l'orchestration.
+
+- `GET /api/chat/orchestrateur` · `POST /api/chat/orchestrateur/messages` ·
+  `GET /api/chat/orchestrateur/flux` — le contrat REST est **inchangé**, le nom du fil départage
+  (comme `assistance`). Le fil est persisté (`core/chat/orchestrateur.jsonl`) et diffusé en
+  `chat.message` comme les autres.
+- Une **demande de travail** y ouvre un run : la réponse porte alors son `run_id`, que
+  `MessageChat` et l'événement `chat.message` transportent tous deux. Les tâches apparaissent
+  ensuite au Kanban par les événements du run — la Control Tower n'a pas de `POST /api/taches`, et
+  n'en a pas besoin : une tâche naît de la décomposition, pas d'une écriture directe.
+- Une **question** n'ouvre rien : elle est traitée en conversation (état des runs en cours, des
+  tâches, des validations en attente).
+
+La reconnaissance est **délibérément conservatrice** — la demande doit commencer, politesses
+retirées, par un verbe d'action (« ajoute… », « peux-tu corriger… ») — parce que les deux erreurs
+ne coûtent pas la même chose : ne pas reconnaître une demande coûte une reformulation, la
+reconnaître à tort lance un run. Le run part en **brief `auto`** et non `humain` : le cadrage
+d'une demande *est* la conversation en cours, et renvoyer vers l'écran de validation de brief
+couperait le fil en deux — cet écran reste la voie de qui veut valider avant.
+
+```jsonc
+// MessageChat — deux champs de plus depuis #268, vides dans un fil ordinaire
+{
+  "agent": "orchestrateur",
+  "auteur": "orchestrateur",
+  "contenu": "J'ouvre un run sur cette demande. Run 4f2a… ouvert, statut « en_cours ».",
+  "horodatage": "2026-08-27T20:08:06+00:00",
+  "run_id": "4f2a91c07b3d",   // ce que la réponse a ouvert ; "" quand rien
+  "tache_id": ""              // idem, pour une tâche
 }
 ```
 
