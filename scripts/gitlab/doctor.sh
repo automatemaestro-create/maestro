@@ -389,7 +389,7 @@ EOF
   if [ -n "$courant" ]; then
     ok "phase courante : « $courant » (milestone posé par /ticket-create sur les nouveaux tickets)"
   else
-    warn "aucun milestone actif non soldé — /ticket-create créera les prochains tickets sans milestone"
+    warn "aucun milestone utilisable sur le rail produit (tous soldés ou vides, #619) — /ticket-create créera les prochains tickets sans milestone"
   fi
 fi
 

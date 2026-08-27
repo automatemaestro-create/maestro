@@ -655,13 +655,14 @@ gl_issue_brief_render() {
 
 # --- Milestone de phase ---------------------------------------------------------------------------
 # gl_current_milestone [rail] -> imprime le TITRE du milestone de la « phase courante » : le
-# milestone ACTIF le plus ancien (tri par échéance croissante) qui n'est pas déjà soldé —
-# c'est-à-dire ayant au moins un ticket ouvert, OU aucun ticket (phase pas encore entamée). Un
-# milestone actif dont tous les tickets sont fermés est SAUTÉ : la phase est finie, seule sa
-# fermeture — décision humaine (jalon go/no-go de la roadmap) — reste à faire, et doctor.sh la
-# suggère. La règle est volontairement indépendante des dates prévisionnelles des milestones : le
-# réel peut être en avance sur elles. Sortie vide + code 1 si aucun candidat (aucun milestone
-# actif, ou tous soldés) ; /ticket-create omet alors simplement --milestone à la création.
+# milestone ACTIF le plus ancien (tri par échéance croissante) qui porte encore du travail —
+# c'est-à-dire ayant AU MOINS UN TICKET OUVERT. Deux milestones sont sautés, et pour deux raisons
+# NOMMÉES SÉPARÉMENT sur stderr (#619) : le SOLDÉ (N fermés / N total) — la phase est finie, seule
+# sa fermeture reste, décision humaine que doctor.sh suggère — et le VIDE (0 / 0) — la phase n'est
+# pas découpée, parfois à dessein (docs/06-roadmap.md, « la Phase 9 reste un contenant vide à
+# dessein »). La règle est volontairement indépendante des dates prévisionnelles des milestones :
+# le réel peut être en avance sur elles. Sortie vide + code 1 si aucun candidat ; /ticket-create
+# omet alors simplement --milestone à la création. Détail et prix assumé : gh_current_milestone.
 #
 # `rail` vaut « produit » (défaut) ou « outillage » et restreint la recherche aux milestones de ce
 # rail — voir GL_RAIL_MOTIF. Le défaut est « produit » pour que tout appelant qui ne connaît pas
@@ -2064,6 +2065,32 @@ gl_reste_ancre() {
 Écriture refusée sous \`.claude/\` : le correctif est rendu dans la description de la PR, mais une PR
 se ferme au merge. Il vit donc aussi dans son **ticket de reprise #$1**, qui lui survit (#608).
 ANCRE
+}
+
+# gl_reste_claude_de <iid-source> -> l'iid du ticket de reprise, ou rien. LECTURE SEULE.
+# Codes : 0 il en a un (imprimé) · 3 aucun · 1 illisible (source inconnue, forge muette) · 2 usage.
+#
+# LE PENDANT EN LECTURE de gl_reste_claude, et la moitié dont le pilote a besoin (#611) : « ce ticket
+# a-t-il bien son ticket de reprise ? ». Il ne réinterroge rien de plus — `gh_reste_source` répond
+# déjà aux deux questions en UN aller, et c'est lui qui porte la forme de l'ancre (« ticket de
+# reprise #<n> »). La relire ici, ne serait-ce qu'en `grep`, ferait deux définitions d'un contrat que
+# l'écriture et la lecture doivent partager au caractère près.
+#
+# TOUT CE QUI N'EST PAS UNE LECTURE PROPRE VAUT 1, source introuvable comprise : l'appelant a trois
+# conduites et pas quatre — nommer le ticket de reprise, dire qu'il manque, ou dire qu'il n'a pas pu
+# regarder. Confondre « pas de reprise » et « je n'ai pas su lire » ferait annoncer un résidu perdu
+# sur une forge momentanément muette, c'est-à-dire crier au loup depuis un signalement best-effort.
+gl_reste_claude_de() {
+  local source="$1" vue rc reprise
+  if [ -z "$source" ]; then echo "usage: gl_reste_claude_de <iid-source>" >&2; return 2; fi
+  case "$source" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  vue="$(gh_reste_source "$source" 2>/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] || return 1
+  reprise="${vue##*$'\t'}"
+  [ -n "$reprise" ] || return 3
+  printf '%s\n' "$reprise"
 }
 
 # --- Pipelines CI ---------------------------------------------------------------------------------
@@ -5569,11 +5596,33 @@ gl_rail_valide() {
 }
 
 # gh_current_milestone [rail] -> le titre du jalon de la phase courante. MÊME règle que côté GitLab :
-# le jalon OUVERT le plus ancien par échéance qui n'est pas déjà soldé (au moins un ticket ouvert, ou
-# aucun ticket du tout) — appliquée À L'INTÉRIEUR du rail demandé (défaut « produit », voir
-# GL_RAIL_MOTIF ci-dessus).
+# le jalon OUVERT le plus ancien par échéance qui porte ENCORE DU TRAVAIL — appliquée À L'INTÉRIEUR
+# du rail demandé (défaut « produit », voir GL_RAIL_MOTIF ci-dessus).
+#
+# ⚠ DEUX ABSTENTIONS, NOMMÉES SÉPARÉMENT (#619). Un jalon écarté l'est pour l'une OU pour l'autre,
+# et les confondre en une seule (« non soldé ») est ce qui faisait tomber tout ticket produit dans
+# un contenant qu'on garde vide exprès :
+#
+#   · SOLDÉ — N fermés / N total, N > 0. La phase est finie ; seule sa FERMETURE reste à faire, et
+#     c'est une décision humaine (jalon go/no-go de la roadmap) que `doctor.sh` suggère. Sauté
+#     depuis toujours.
+#   · VIDE — 0 / 0. La phase n'est pas découpée, et parfois à dessein : `docs/06-roadmap.md` pose
+#     que la « Phase 9 reste un contenant vide à dessein : on n'empaquette pas une cible mouvante ».
+#     Un contenant vide n'est pas un contenant courant — y ranger un ticket défait le découpage
+#     différé. Mesuré le 2026-08-27, au lendemain de #617 : `current-milestone produit` rendait
+#     « Phase 9 — Poste de travail : distribution », 0 ouvert et 0 fermé, et RIEN ne le signalait ;
+#     un run au défaut y planifiait zéro ticket. Sauté depuis #619.
+#
+# Chaque saut est donc NOMMÉ sur stderr avec sa cause, et l'abstention finale compte les deux
+# séparément : « aucun jalon utilisable » ne dit pas s'il faut fermer une phase ou en découper une.
+#
+# Le prix est assumé et se dit plutôt que de se découvrir : le PREMIER ticket d'une phase neuve ne
+# s'y range plus tout seul — il se crée avec `--milestone "<titre>"` explicite, et les suivants
+# suivent d'eux-mêmes puisque le jalon n'est alors plus vide. Ne rien rendre (code 1) reste normal
+# et non bloquant : `/ticket-create` omet simplement l'option.
 gh_current_milestone() {
-  local raw title rail="${1:-produit}"
+  local raw verdicts title rail="${1:-produit}"
+  local genre champ titre_saute fermes total n_solde=0 n_vide=0
   if ! gl_rail_valide "$rail"; then
     echo "gh_current_milestone : rail inconnu « $rail » (attendu : produit | outillage)" >&2
     return 2
@@ -5582,8 +5631,20 @@ gh_current_milestone() {
   # Le motif et le rail voyagent par ENVIRON et jamais par `awk -v`, qui INTERPRÈTE les
   # échappements de la valeur (leçon de #340, où un `-v` a failli importer trois phases de tickets
   # sans jalon, en silence).
-  title="$(printf '%s' "$raw" | GL_RAIL_MOTIF="$GL_RAIL_MOTIF" GL_RAIL_CIBLE="$rail" awk '
+  #
+  # L'awk ne DÉCIDE pas de la sortie, il rend un verdict par jalon du rail — « T<TAB>titre » pour
+  # le candidat retenu (et il s'arrête là), « S<TAB>cause<TAB>titre<TAB>fermés<TAB>total » pour
+  # chaque jalon sauté avant lui. Le shell en fait un titre sur stdout et des lignes de diagnostic
+  # sur stderr : mêler les deux flux dans awk rendrait la cause d'un saut indissociable du titre.
+  verdicts="$(printf '%s' "$raw" | GL_RAIL_MOTIF="$GL_RAIL_MOTIF" GL_RAIL_CIBLE="$rail" awk '
     BEGIN { motif = ENVIRON["GL_RAIL_MOTIF"]; cible = ENVIRON["GL_RAIL_CIBLE"] }
+    # La règle vit ICI et nulle part ailleurs — un second endroit qui répondrait « ce jalon est-il
+    # courant ? » finirait par ne plus rendre le même verdict (même raison que gl_rail_de, #617).
+    function etat_jalon(nb_fermes, nb_total) {
+      if (nb_total == 0)       return "vide"
+      if (nb_fermes >= nb_total) return "solde"
+      return "candidat"
+    }
     {
       n = split($0, parts, /\{"title":"/)
       for (i = 2; i <= n; i++) {
@@ -5598,12 +5659,29 @@ gh_current_milestone() {
         # une description qui porte, elle, des guillemets échappés.
         rail = (tolower(node) ~ motif) ? "outillage" : "produit"
         if (rail != cible) continue
-        if (total == 0 || closed < total) { print t; exit }
+        etat = etat_jalon(closed, total)
+        if (etat == "candidat") { print "T\t" t; exit }
+        print "S\t" etat "\t" t "\t" closed "\t" total
       }
     }
   ')"
+  title=""
+  while IFS=$'\t' read -r genre champ titre_saute fermes total; do
+    case "$genre" in
+      T) title="$champ" ;;
+      S)
+        if [ "$champ" = vide ]; then
+          n_vide=$((n_vide + 1))
+          echo "gh_current_milestone : « $titre_saute » sautée — VIDE (aucun ticket) : un contenant vide n'est pas un contenant courant (#619)." >&2
+        else
+          n_solde=$((n_solde + 1))
+          echo "gh_current_milestone : « $titre_saute » sautée — SOLDÉE ($fermes/$total fermés) : sa fermeture est une décision humaine." >&2
+        fi
+        ;;
+    esac
+  done <<< "$verdicts"
   if [ -z "$title" ]; then
-    echo "gh_current_milestone : aucun jalon ouvert non soldé sur le rail « $rail » (rien à poser)" >&2
+    echo "gh_current_milestone : aucun jalon utilisable sur le rail « $rail » — $n_solde soldé(s) à fermer, $n_vide vide(s) à découper (rien à poser)" >&2
     return 1
   fi
   printf '%s\n' "$title"
@@ -6797,6 +6875,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issue-note)     gl_issue_note "$@" ;;
     issue-url)      gl_issue_url "$@" ;;
     reste-claude)   gl_reste_claude "$@" ;;
+    reste-claude-de) gl_reste_claude_de "$@" ;;
     project-add)      gl_project_add "$@" ;;
     pipeline-latest)      gl_pipeline_latest "$@" ;;
     pipeline-status)      gl_pipeline_status "$@" ;;
@@ -6838,7 +6917,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  issue-taken <iid> [username]       (0 + assignés si le ticket est « En cours » chez quelqu'un d'autre)" >&2
       echo "  touche-claude <iid>                (ce ticket nomme-t-il « .claude/ », où une session autonome ne peut" >&2
       echo "                                      pas écrire ? verdict + lignes. 0=touche, 3=non — docs/10 §11.7)" >&2
-      echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — actif le plus ancien non soldé ; défaut produit)" >&2
+      echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — le plus ancien actif portant" >&2
+      echo "                                      encore un ticket ouvert ; soldé et vide sont sautés, chacun nommé sur stderr. Défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
       echo "  milestone-issues <titre-exact>     (tickets d'un milestone : iid/statut/type/agent/prio/titre, TSV)" >&2
       echo "  milestone-rail <titre> <rail>      (pose le rail produit|outillage d'un milestone — idempotent)" >&2
@@ -6884,6 +6964,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                         0=créé/complété/déjà à jour, 2=usage, 3=iid source" >&2
       echo "                                         inconnu, 4=fichier absent ou vide, 1=échec de forge." >&2
       echo "                                         3 et 4 tombent AVANT toute écriture)" >&2
+      echo "    reste-claude-de <iid-source>       (LIT : imprime l'iid du ticket de reprise, ou rien." >&2
+      echo "                                         0=il en a un, 3=aucun, 1=illisible. C'est ce que le" >&2
+      echo "                                         pilote demande en fin de run (#611) — même ancre que" >&2
+      echo "                                         l'écriture, jamais un second motif)" >&2
       echo "  Peuplement du projet Projects v2 (le Status vit sur l'ITEM, pas sur l'issue — #361) :" >&2
       echo "    project-add <iid> [valeur]  (fait du ticket un item du projet \$MAESTRO_PROJECT_TITRE —" >&2
       echo "                                 défaut « $GL_PROJET_TITRE » — et pose son Status. Défaut « À faire » ;" >&2

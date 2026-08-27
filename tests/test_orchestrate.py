@@ -4334,6 +4334,154 @@ def test_le_listing_des_milestones_n_imprime_aucun_plan(depot: Depot) -> None:
 
 
 # =====================================================================================
+# Soldé et vide : deux abstentions, jamais une seule (#619)
+# =====================================================================================
+# « Non soldé » recouvrait DEUX situations que rien ne séparait :
+#
+#   · SOLDÉ  — N fermés / N total, N > 0 : la phase est FINIE, seule sa fermeture reste (décision
+#     humaine). Sauté depuis toujours.
+#   · VIDE   — 0 / 0 : la phase n'est PAS DÉCOUPÉE, et parfois à dessein — docs/06-roadmap.md pose
+#     que « la Phase 9 reste un contenant vide à dessein : on n'empaquette pas une cible mouvante ».
+#
+# Le second était RETENU (0 fermés < 0 total étant faux, la condition retombait sur total == 0), si
+# bien que tout nouveau ticket produit tombait dans le contenant qu'on garde vide exprès et qu'un
+# run au défaut y planifiait zéro ticket — mesuré le 2026-08-27, au lendemain de #617.
+#
+# UN TEST PAR CAUSE, et chacun PROUVE SON MOTIF sur son propre échantillon avant de conclure : il
+# vérifie dans la table des jalons que celui qui va être sauté est bien CELUI QUE L'ORDRE AURAIT
+# DÉSIGNÉ (premier, actif, du rail demandé) et qu'il porte bien le compte de sa cause. Sans cette
+# moitié, « le suivant est rendu » serait tout aussi vrai d'un échantillon où le jalon fautif
+# n'existe pas — un ✓ sur une question jamais posée.
+
+
+def _table_jalons(depot: Depot) -> list[list[str]]:
+    """`lib.sh milestones` en lignes : titre, etat, debut, echeance, fermes, total, rail."""
+    r = depot.lib("milestones")
+    assert r.returncode == 0, r.stderr
+    return [ligne.split("\t") for ligne in r.stdout.splitlines()
+            if ligne and not ligne.startswith("#")]
+
+
+def test_un_jalon_solde_est_saute_et_nomme_comme_tel(depot: Depot) -> None:
+    """La cause historique : la phase est finie, il ne reste qu'à la fermer."""
+    depot.milestones([("Phase finie", "active", 5, 5), ("Phase en cours", "active", 1, 4)])
+    depot.publie()
+
+    # Le motif d'abord : « Phase finie » est bien le PREMIER jalon actif du rail produit — c'est
+    # donc l'ordre qui la désignerait — et elle porte bien la forme d'un soldé (5 fermés sur 5).
+    premier = _table_jalons(depot)[0]
+    assert premier[0] == "Phase finie" and premier[1] == "active" and premier[6] == "produit"
+    assert (premier[4], premier[5]) == ("5", "5"), "l'échantillon porte bien un SOLDÉ"
+
+    r = depot.lib("current-milestone")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "Phase en cours", "un soldé est sauté au profit du suivant"
+    assert "Phase finie" in r.stderr and "SOLDÉE" in r.stderr, "le saut est nommé avec sa cause"
+    assert "5/5" in r.stderr, "... et avec le compte qui l'établit"
+    assert "VIDE" not in r.stderr, \
+        "un soldé n'est pas un vide : les deux causes ne se mélangent pas"
+
+
+def test_un_jalon_vide_est_saute_au_meme_titre_qu_un_solde(depot: Depot) -> None:
+    """Le cœur du ticket : un contenant vide n'est pas un contenant courant."""
+    depot.milestones([("Phase 9 — Poste de travail : distribution", "active", 0, 0),
+                      ("Control Tower v3 — conversation & intégrations", "active", 1, 4)])
+    depot.publie()
+
+    # Le motif d'abord : le jalon vide est le PREMIER actif du rail produit — c'est bien lui que la
+    # règle rendait, et pas un artefact d'ordre — et il porte 0 ticket, ni fermé ni ouvert.
+    premier = _table_jalons(depot)[0]
+    assert premier[0].startswith("Phase 9") and premier[1] == "active"
+    assert (premier[4], premier[5]) == ("0", "0"), "l'échantillon porte bien un VIDE (0 / 0)"
+
+    r = depot.lib("current-milestone")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "Control Tower v3 — conversation & intégrations", \
+        "un jalon sans aucun ticket est sauté comme un soldé, et le suivant du rail est rendu"
+    assert "Phase 9" in r.stderr and "VIDE" in r.stderr, "le saut est nommé avec sa cause"
+    assert "SOLDÉE" not in r.stderr, "un vide n'est pas une phase finie : rien à fermer ici"
+
+
+def test_les_deux_causes_restent_comptees_a_part_quand_il_ne_reste_rien(depot: Depot) -> None:
+    """L'abstention finale ne dit pas « aucun candidat » et s'arrête là : elle dit COMBIEN de
+    phases sont à fermer et combien sont à découper — deux gestes différents. Et ne rien rendre
+    reste le contrat, non bloquant : `/ticket-create` omet simplement l'option."""
+    depot.milestones([("Phase finie", "active", 5, 5), ("Phase pas découpée", "active", 0, 0)])
+    depot.publie()
+
+    lignes = _table_jalons(depot)
+    assert [(ligne[4], ligne[5]) for ligne in lignes] == [("5", "5"), ("0", "0")], \
+        "l'échantillon porte UNE cause de chaque, et rien d'autre"
+
+    r = depot.lib("current-milestone")
+    assert r.returncode == 1, "aucun candidat : l'abstention est un code 1, pas une erreur franche"
+    assert r.stdout.strip() == "", "rien sur stdout — c'est ce que /ticket-create lit"
+    assert "1 soldé(s) à fermer" in r.stderr and "1 vide(s) à découper" in r.stderr, \
+        "les deux causes sont comptées séparément : un seul mot ne dirait pas quoi faire"
+
+
+def test_un_jalon_vide_de_l_autre_rail_ne_masque_rien(depot: Depot) -> None:
+    """Le saut joue À L'INTÉRIEUR d'un rail, comme la règle qu'il complète (#617) : un contenant
+    vide d'outillage n'a jamais barré le produit, et il ne le débloque pas non plus."""
+    depot.milestones([("Outillage vide", "active", 0, 0, "outillage"),
+                      ("Phase produit", "active", 1, 4),
+                      ("Outillage plein", "active", 1, 4, "outillage")])
+    depot.publie()
+
+    assert depot.lib("current-milestone").stdout.strip() == "Phase produit", \
+        "le rail produit ne voit ni le vide ni le plein de l'autre rail"
+    r = depot.lib("current-milestone", "outillage")
+    assert r.stdout.strip() == "Outillage plein", "le vide de CE rail est sauté, pas ignoré"
+    assert "Outillage vide" in r.stderr and "VIDE" in r.stderr
+    assert "Phase produit" not in r.stderr, "on ne rapporte que les sauts du rail demandé"
+
+
+def test_un_courant_sans_rien_a_prendre_n_est_plus_le_defaut_d_un_run(depot: Depot) -> None:
+    """`courant` désigne ce qu'un run prendrait SANS CONSIGNE. Un milestone dont la boucle ne peut
+    rien tirer n'est pas un défaut, c'est un plan vide — et le critère est celui de la BOUCLE
+    (« À faire » ET libre), strictement plus étroit que « au moins un ticket ouvert »."""
+    depot.milestones([("Phase A", "active", 0, 2), ("Phase B", "active", 0, 1)])
+    depot.ticket(501, "Pris par alice", assigne="alice")
+    depot.ticket(502, "Pris par bob", assigne="bob")
+    depot.ticket(503, "Libre, mais ailleurs")
+    depot.publie()
+    depot.milestone_tickets("Phase A", [501, 502])
+    depot.milestone_tickets("Phase B", [503])
+
+    # Le motif d'abord : « Phase A » EST le courant du rail — elle porte deux tickets ouverts, donc
+    # le helper la rend. Sans cette moitié, un `courant = 0` pourrait n'être qu'un jalon écarté en
+    # amont, et le test ne dirait rien de la garde qu'il prétend éprouver.
+    assert depot.lib("current-milestone").stdout.strip() == "Phase A"
+
+    lignes = {ligne[0]: ligne for ligne in _milestones(depot)}
+    assert lignes["Phase A"][2] == "0", "rien que la boucle pourrait prendre (tout est assigné)"
+    assert lignes["Phase A"][3] == "2", "... alors que la forge, elle, la voit ouverte"
+    assert lignes["Phase A"][1] == "0", \
+        "donc pas de `courant` : le proposer enverrait un run sur un plan vide"
+    assert lignes["Phase B"][1] == "0", \
+        "et le `courant` n'est pas DÉPLACÉ sur le suivant — ce serait une seconde règle, qui " \
+        "finirait par diverger de current-milestone (leçon de gl_rail_de)"
+
+
+def test_un_jalon_vide_ne_devient_plus_le_courant_du_listing(depot: Depot) -> None:
+    """Bout en bout : le saut de lib.sh remonte jusqu'à la colonne que /orchestrate lit pour
+    recommander un milestone."""
+    depot.milestones([("Phase vide", "active", 0, 0), ("Phase pleine", "active", 0, 2)])
+    depot.ticket(501, "A faire")
+    depot.publie()
+    depot.milestone_tickets("Phase vide", [])
+    depot.milestone_tickets("Phase pleine", [501])
+
+    premier = _table_jalons(depot)[0]
+    assert premier[0] == "Phase vide" and (premier[4], premier[5]) == ("0", "0"), \
+        "l'échantillon porte bien, en tête, le contenant vide"
+
+    courants = {ligne[0]: ligne[1] for ligne in _milestones(depot)}
+    assert courants == {"Phase vide": "0", "Phase pleine": "1"}, \
+        "le défaut d'un run neuf tombe sur le jalon qui a du travail"
+
+
+# =====================================================================================
 # Proposer les orphelins sans les prendre — queue.sh --orphelins (#329, parent #327)
 # =====================================================================================
 # La règle 1 écarte les tickets « En cours » et assignés : c'est ce qui protège le travail des
@@ -6167,20 +6315,39 @@ def test_la_derivation_est_bornee_et_l_annonce_dit_qu_elle_l_a_ete(depot: Depot)
     """Le plan dit ce qui est simultanable ; il ne dit rien de ce que la machine tient.
 
     Et l'écrêtage se DIT : sans ce chiffre, une borne basse se lirait comme un plan pauvre, et
-    personne ne saurait qu'il y a du parallélisme laissé sur la table.
+    personne ne saurait qu'il y a du parallélisme laissé sur la table. C'est CE fait que le test
+    garde — pas la valeur de la borne, qui est une décision et a bougé (2 → 3, #626).
+    """
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
+                                 (3, 132, "-", "haute", "-"), (4, 133, "-", "haute", "-"),
+                                 (5, 134, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-borne")
+    assert "3 en vol (dérivé du plan : 5 simultanables, borné à 3)" in r.stdout
+
+
+@pytest.mark.parametrize(
+    ("borne", "attendu"),
+    [
+        ("2", "2 en vol (dérivé du plan : 4 simultanables, borné à 2)"),
+        ("4", "4 en vol (dérivé du plan)"),
+    ],
+    ids=["sous-le-defaut", "au-dessus-du-defaut"],
+)
+def test_la_borne_se_deplace_par_l_environnement(depot: Depot, borne: str, attendu: str) -> None:
+    """La variable doit déplacer la borne DANS LES DEUX SENS, et viser une valeur ≠ du défaut.
+
+    Le piège que ce test a failli devenir (#626) : il posait
+    `MAESTRO_ORCHESTRATE_CONCURRENCE_MAX=3` sur un plan qui offrait 3, ce qui prouvait la
+    variable tant que le défaut valait 2 — et plus rien le jour où le défaut est passé à 3, le
+    même verdict tombant sans elle. Un test qui ne peut plus échouer n'est pas un test qui passe,
+    c'est un ✓ sur une question qui n'est plus posée. D'où un plan qui offre 4 et deux bornes
+    encadrant le défaut : chaque cas rend une valeur INATTEIGNABLE sans la variable.
     """
     plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
                                  (3, 132, "-", "haute", "-"), (4, 133, "-", "haute", "-")])
-    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-borne")
-    assert "2 en vol (dérivé du plan : 4 simultanables, borné à 2)" in r.stdout
-
-
-def test_la_borne_se_deplace_par_l_environnement(depot: Depot) -> None:
-    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
-                                 (3, 132, "-", "haute", "-")])
-    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-max",
-                    env={"MAESTRO_ORCHESTRATE_CONCURRENCE_MAX": "3"})
-    assert "3 en vol (dérivé du plan)" in r.stdout
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", f"derive-max-{borne}",
+                    env={"MAESTRO_ORCHESTRATE_CONCURRENCE_MAX": borne})
+    assert attendu in r.stdout
 
 
 @pytest.mark.parametrize("consigne", ["option", "variable"])

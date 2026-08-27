@@ -237,32 +237,42 @@ CONCURRENCE_ORIGINE=derivee
 # contrainte n'est pas le quota Claude (déjà annoncé plus bas, et qui ne borne rien : il se consomme
 # plus vite, il ne casse pas) mais les ressources du POSTE.
 #
-# Défaut 2, et c'est l'ASYMÉTRIE DES ERREURS qui le choisit, seule : trop haut, un run meurt en plein
-# travail et perd ce qui n'était pas poussé ; trop bas, on ne perd que du temps de mur. Les deux
-# issues ne se valent pas, donc dans le doute la valeur basse. Ce raisonnement se suffit à lui-même,
-# et c'est déjà le double du régime d'avant #455.
+# ⚠ DÉFAUT 3, ET C'EST UNE DÉCISION — PAS UNE MESURE (#626). L'écrire autrement serait commettre une
+# troisième fois l'erreur que #599 puis #623 ont corrigée deux fois : la valeur 2 a d'abord été
+# donnée pour une « constante MESURÉE puis figée, même leçon que le `-n 8` de pytest (#285) » (#455),
+# puis rétrogradée en « signal daté » (#599) — les deux s'appuyant sur le run `20260826-155709`.
+# #623 a établi ce qui s'y est réellement passé : ce run n'a PAS épuisé les ressources du poste, il a
+# été arrêté par l'EXTINCTION du PC. Ses lignes « fork: retry: Resource temporarily unavailable » sont
+# les SEPT DERNIÈRES du fichier et portent le code `0xC000026B` = `STATUS_DLL_INIT_FAILED_LOGOFF`
+# (« the application failed to initialize because the window station is shutting down »). MSYS mappe
+# ce code sur `errno 11` (EAGAIN) et imprime son message de retry générique : c'est ce message, et lui
+# seul, qui a fait lire « épuisement ». Un vrai épuisement porterait `STATUS_NO_MEMORY`.
 #
-# ⚠ CE PLAFOND N'EST PAS MESURÉ (#599, docs/10 §11.10). #455 écrivait ici que le run 20260826-155709,
-# à trois sessions `xhigh` en vol, avait « épuisé les ressources de fork de MSYS après trois heures »,
-# pilote mort en cours de route — et rangeait la borne sous « constante MESURÉE puis figée, même
-# leçon que le `-n 8` de pytest (#285) ». Trois choses n'y tenaient pas : ce run a duré 58 min
-# (démarré à 15:57, dernières écritures à 16:55) et non trois heures ; ce qui est mort sur
-# l'épuisement de forks vers 16:02 est une BOUCLE DE SURVEILLANCE de la session interactive (un
-# `until` avec `ls`/`wc` toutes les 5 s) et non le pilote, qui a travaillé 53 min de plus (#583
-# démarré à 16:38) ; le lien de causalité n'est donc pas établi. Le parallèle avec #285 est retiré —
-# là-bas les chiffres sont dans le ticket, ici la mesure n'existe pas.
+# Ce qui fonde 3, dit pour ce que ça vaut et pas davantage :
+#   - DEUX runs à concurrence 3, zéro incident imputable à la concurrence — `20260826-155709`
+#     (58 min, 4 tickets livrés, arrêté par l'extinction) et `20260826-183242` (18:32 → 21:23, soit
+#     2 h 51, cinq tickets à « Terminé », sortie propre).
+#   - DEUX arrêts durs sans AUCUNE perte : la session est rouverte par son propre uuid — #580
+#     (`10343531-…87`, coupé à 15 min) et #583 (`d947772d-…1a`, coupé à 16 min) —, worktrees et
+#     commits intacts, plan de dix tickets mené à terme.
+#   - Une décision, prise le 2026-08-27 en connaissance de ce qui précède.
 #
-# Ce qui reste vaut d'être gardé, sous son vrai nom : un SIGNAL, daté. Le 2026-08-26, un épuisement
-# de forks MSYS a bien été OBSERVÉ sur ce poste pendant qu'un run tournait à trois sessions `xhigh` —
-# un signal sur une machine, jamais une mesure et jamais une cause. Et le CONTRE-EXEMPLE est du même
-# jour : le run 20260826-183242, reprise du même plan à la même concurrence 3 et aux mêmes sessions
-# `xhigh`, a tenu plus de 1 h 45 sans incident et mené cinq tickets à « Terminé » (#579, #583, #584,
-# #585, #586).
+# L'ASYMÉTRIE DES ERREURS de #455 reste vraie EN TANT QUE PRINCIPE : trop haut, un run meurt en plein
+# travail et perd ce qui n'était pas poussé ; trop bas, on ne perd que du temps de mur ; les deux
+# issues ne se valent pas. Ce qui a changé est double — aucune observation ne place plus le point de
+# bascule à 2 plutôt qu'à 3, et sa PRÉMISSE IMPLICITE (« une interruption perd du travail ») est
+# contredite par les deux seuls arrêts durs qu'on ait pu observer, où elle n'a coûté qu'une reprise.
 #
-# Conséquence pour qui voudra y toucher : fonder ce plafond reste un SUJET OUVERT. On ne le relève
-# pas sans la mesure qui manque, et on ne le rebaisse pas en invoquant celle qui n'a jamais existé.
+# ⚠ CE PLAFOND N'EST TOUJOURS PAS MESURÉ, et passer de 2 à 3 ne le mesure pas davantage : deux runs
+# sans incident sont encourageants, jamais concluants. Surtout, la REPRISE À N TICKETS EN VOL n'a
+# jamais tourné pour de vrai — aux deux coupures observées il n'y avait qu'UN ticket en vol (l'un des
+# runs était à concurrence 1 ; l'autre a été coupé quand ses trois autres tickets s'étaient déjà
+# soldés). C'est #625 qui doit produire le chiffre manquant, le prix réel d'une interruption à N en
+# vol, et il pourra confirmer 3, le relever ou le ramener. D'ici là on ne le déplace pas en invoquant
+# une mesure qui n'existe pas — dans un sens comme dans l'autre.
+#
 # Elle se déplace par l'environnement ou par --concurrence-max.
-CONCURRENCE_MAX="${MAESTRO_ORCHESTRATE_CONCURRENCE_MAX:-2}"
+CONCURRENCE_MAX="${MAESTRO_ORCHESTRATE_CONCURRENCE_MAX:-3}"
 # Ce que le plan offrait, avant écrêtage par la borne — gardé pour l'annonce, qui doit pouvoir dire
 # « borné » plutôt que de laisser croire que le plan n'offrait pas mieux. Déclarée vide ici parce que
 # `set -u` fait sortir sans un mot sur une globale absente, et qu'elle n'est calculée que sur la
@@ -443,7 +453,7 @@ while [ $# -gt 0 ]; do
     --detach | --detache | --détaché) DETACH=1 ;;
     --max) MAX="${2:-0}"; shift ;;
     --concurrence | --concurrency) CONCURRENCE="${2:-1}"; CONCURRENCE_EXPLICITE=1; CONCURRENCE_ORIGINE=imposee; shift ;;
-    --concurrence-max) CONCURRENCE_MAX="${2:-2}"; shift ;;
+    --concurrence-max) CONCURRENCE_MAX="${2:-3}"; shift ;;
     --budget) BUDGET="${2:-}"; shift ;;
     --timeout) TIMEOUT_BRUT="${2:-}"; shift ;;
     --modele | --model) MODELE="${2:-claude-opus-5}"; shift ;;
@@ -2676,7 +2686,7 @@ concurrence_du_plan() { # <fichier-plan>
 # (`imposee`), ni run repris (`reprise`) : « dériver » est ce qu'on fait faute de consigne, jamais
 # par-dessus une consigne.
 if [ "$CONCURRENCE_ORIGINE" = derivee ]; then
-  case "${CONCURRENCE_MAX:-}" in '' | *[!0-9]* | 0) CONCURRENCE_MAX=2 ;; esac
+  case "${CONCURRENCE_MAX:-}" in '' | *[!0-9]* | 0) CONCURRENCE_MAX=3 ;; esac
   # « Ce plan ne dit rien » et « ce plan dit qu'il n'y a rien » mènent tous deux à 1, et ce ne sont
   # pas les mêmes phrases : la première est un aveu d'ignorance sur un plan d'avant #288, la seconde
   # un verdict sur la checklist des parents. Les confondre enverrait chercher un défaut de dérivation
@@ -4300,6 +4310,79 @@ audit_ecrit() {
 }
 audit_ecrit
 
+# --- Les résidus `.claude/` du run, et leur ticket de reprise (#611, chantier #608) --------------------
+# Une session ne peut pas écrire sous `.claude/` — garde-fou du CLI, en amont de l'allowlist comme des
+# hooks (#238, re-mesuré par #614) —, et la conduite prescrite est de RENDRE le correctif au lieu de
+# contourner (#188). Depuis #610 elle le consigne EN PLUS dans un ticket de reprise, parce que la
+# description de PR où il était rendu se ferme au merge et que le pilote merge sans attendre personne.
+#
+# CE BLOC EST LE FILET DERRIÈRE CETTE CONDUITE, et il existe parce qu'un mécanisme qui ne tient que
+# par une seule de ses deux extrémités a DÉJÀ échoué : run `20260827-094044`, trois tickets, DEUX
+# résidus (#599 et #595), mergés dans les vingt minutes, encore en place le lendemain. Les deux
+# sessions avaient fait exactement ce qu'il fallait — ce qui a manqué n'était pas la bonne volonté,
+# c'est qu'aucun second regard ne se posait là. Le pilote, lui, ne peut pas l'oublier : il termine
+# toujours ici.
+#
+# LA FAMILLE DE REFUS EST LUE, JAMAIS REDÉFINIE : `journal.sh refus --claude` rend le « blocage dur
+# .claude/ » que #307 classe déjà, sur les `<iid>.json` du run. Un `grep .claude/` recopié ici aurait
+# marché le premier jour et divergé le suivant — et c'est CETTE version-là qui se serait tue.
+#
+# IL NE COÛTE RIEN QUAND IL N'Y A RIEN : la détection est hors ligne, et la seule lecture de forge est
+# UNE par ticket qui a effectivement buté — donc zéro sur la quasi-totalité des runs.
+#
+# IL LIT AUSSI LE RUN REPRIS, et ce n'est pas un cas de bord (leçon de #593, dont une reprise rendait
+# le cas courant) : c'est même LE cas que ce filet doit attraper. Un run tué n'imprime aucun résumé,
+# donc ses résidus n'ont jamais été nommés ; la reprise rouvre les sessions en vol, qui peuvent finir
+# sans rebuter sur `.claude/` — le résidu passerait alors entre les deux runs. Les deux journaux sont
+# donc demandés ensemble, `refus` les agrégeant lui-même. Une chaîne de reprises ne remonte QU'UN
+# cran : au-delà, c'est `refus --tous` qui répond, et personne n'a mesuré que ça se produise.
+#
+# IL CONSTATE, IL NE CRÉE PAS. Un ticket de reprise manquant est NOMMÉ, avec la commande qui le pose,
+# jamais ouvert d'office : son corps EST le correctif, que le pilote n'a pas. Il ouvrirait un ticket
+# vide de la seule chose qui compte, et le résidu serait perdu sous les apparences d'un rattrapage.
+#
+# BEST-EFFORT ET MUET, au même titre qu'`audit.txt` (#530) et que `gc` : ni le verdict du run ni son
+# code de sortie n'en dépendent, et un run sans refus de cette famille ne dit rien — un signalement
+# qui parle à chaque run cesse d'être lu.
+# MAESTRO_ORCHESTRATE_RESTE_CLAUDE=0 l'éteint.
+residus_claude() {
+  [ "${MAESTRO_ORCHESTRATE_RESTE_CLAUDE:-1}" != 0 ] || return 0
+  local lignes iid n cible reprise rc
+  local -a runs=("$RUN_ID")
+  [ "$REPRISE" = 1 ] && [ -n "$REPRISE_ID" ] && runs+=("$REPRISE_ID")
+  # Code 3 = aucun résidu, et c'est le cas nominal : le `|| return 0` le couvre comme il couvre un
+  # journal illisible. Les distinguer ne servirait à rien ici — il n'y a rien à dire des deux.
+  lignes="$(bash "$RACINE/scripts/orchestrate/journal.sh" refus --claude "${runs[@]}" \
+    2>/dev/null </dev/null)" || return 0
+  [ -n "$lignes" ] || return 0
+  printf '\n  %sReste à appliquer sous .claude/%s — une session y a buté, et une PR meurt au merge (#608) :\n' \
+    "$C_Y" "$C_0"
+  while IFS=$'\t' read -r iid n cible; do
+    [ -n "${iid:-}" ] || continue
+    rc=0
+    # `</dev/null` : le corps de la boucle a le heredoc pour stdin, et un `gh` qui le lirait
+    # mangerait les lignes suivantes — donc les tickets suivants, en silence.
+    reprise="$(gl_reste_claude_de "$iid" 2>/dev/null </dev/null)" || rc=$?
+    case "$rc" in
+      0) printf '    %s✓%s #%-5s %s refus — ticket de reprise #%s\n' \
+           "$C_G" "$C_0" "$iid" "$n" "$reprise" ;;
+      # Le seul cas qui appelle un geste, donc le seul qui porte sa cible ET sa commande : sans savoir
+      # QUEL fichier a été refusé, « poser un ticket de reprise » n'est pas une instruction exécutable.
+      3) printf '    %s⚠%s #%-5s %s refus — AUCUN ticket de reprise : le correctif ne vit plus que dans la PR\n' \
+           "$C_R" "$C_0" "$iid" "$n"
+         printf '           ex. %s\n' "$cible"
+         printf '           le poser : bash scripts/gitlab/lib.sh reste-claude %s <fichier-du-correctif>\n' "$iid" ;;
+      # « Je n'ai pas su lire » n'est pas « il n'y en a pas » : annoncer un résidu perdu sur une forge
+      # momentanément muette, c'est apprendre à ne plus lire ce bloc.
+      *) printf '    %s?%s #%-5s %s refus — forge muette : bash scripts/gitlab/lib.sh reste-claude-de %s\n' \
+           "$C_Y" "$C_0" "$iid" "$n" "$iid" ;;
+    esac
+  done <<EOF
+$lignes
+EOF
+  return 0
+}
+
 printf '%sRésumé du run %s%s\n' "$C_B" "$RUN_ID" "$C_0"
 printf '  %s✓%s %s réussi(s) · %s✗%s %s en échec · %s~%s %s sauté(s)\n' \
   "$C_G" "$C_0" "$NB_OK" "$C_R" "$C_0" "$NB_ECHEC" "$C_Y" "$C_0" "$NB_SAUTE"
@@ -4333,6 +4416,9 @@ if [ -n "$WORKTREES" ]; then
   for i in $WORKTREES; do printf '    #%s\n' "$i"; done
 fi
 merge_bilan
+# JUSTE APRÈS LES MERGES, et c'est le seul endroit qui a du sens : le bloc ci-dessus vient de dire
+# quelles PR sont parties dans `main`, et celui-ci dit ce que ces merges viennent d'enterrer.
+residus_claude
 # « Aucun merge non vérifié » n'a jamais voulu dire « aucun merge » — depuis #417 c'est l'inverse,
 # et le run merge désormais lui-même. Ce qui reste vrai, et qui est la seule chose à dire ici :
 # chaque merge est passé par `merge-mr`, qui vérifie avant de merger, et rien n'a été fermé.

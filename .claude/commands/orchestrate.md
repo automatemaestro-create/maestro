@@ -218,16 +218,22 @@ toi-même.
 
    **La concurrence, elle, ne se propose pas non plus — mais pour la raison inverse** (#455,
    [docs/10 §11.10](../../docs/10-workflow-git.md)) : depuis ce ticket elle se **dérive du plan**,
-   bornée à 2 par défaut, et la ligne `plan :` annonce la valeur **et son origine** (`dérivé du
-   plan` · `imposé` · `du run repris`). Il n'y a donc rien à décider au feu vert — **relaie ce que
-   cette ligne dit**, c'est tout. Deux formes méritent un mot : « `dérivé du plan : N simultanables,
-   borné à 2` » signale du parallélisme laissé sur la table (`--concurrence-max <n>` le relève, sur
-   demande explicite et en disant ce qu'on **ignore** : ce plafond **n'est pas mesuré** (#599,
-   [docs/10 §11.10](../../docs/10-workflow-git.md)) — il tient de la seule **asymétrie des erreurs**,
-   et un run à concurrence 3 a tenu plus de 1 h 45 sans incident le 2026-08-26 ; ne relaie donc pas
-   « le run `20260826-155709` a tué son pilote », qui était faux), et « `séquentiel — aucun ticket
-   simultanable dans ce plan` » est un **verdict** sur les checklists des parents, à ne pas confondre
-   avec « ce plan est antérieur à la colonne groupe », qui dit qu'on ne peut pas savoir.
+   bornée à **3** par défaut (#626), et la ligne `plan :` annonce la valeur **et son origine**
+   (`dérivé du plan` · `imposé` · `du run repris`). Il n'y a donc rien à décider au feu vert —
+   **relaie ce que cette ligne dit**, c'est tout. Deux formes méritent un mot : « `dérivé du plan :
+   N simultanables, borné à 3` » signale du parallélisme laissé sur la table (`--concurrence-max <n>`
+   le relève, sur demande explicite et en disant ce qu'on **ignore** : ce plafond **n'est pas
+   mesuré**, et le passage de 2 à 3 ne l'a pas mesuré — c'est une **décision** prise sur deux runs à
+   concurrence 3 sans incident, l'**asymétrie des erreurs** ne tranchant plus entre les deux valeurs,
+   et **#625** doit produire le chiffre qui manque), et « `séquentiel — aucun ticket simultanable
+   dans ce plan` » est un **verdict** sur les checklists des parents, à ne pas confondre avec « ce
+   plan est antérieur à la colonne groupe », qui dit qu'on ne peut pas savoir.
+
+   ⚠ **Deux choses à ne relayer sous aucune forme**, l'une et l'autre démenties : « le run
+   `20260826-155709` a tué son pilote » (#599) et « un épuisement de forks a été observé pendant un
+   run à trois sessions » (#623) — ce run a été arrêté par l'**extinction du poste**, ses lignes
+   `fork: retry: Resource temporarily unavailable` portant le code `0xC000026B`
+   (`STATUS_DLL_INIT_FAILED_LOGOFF`), message MSYS générique et trompeur.
    `--concurrence <n>` reste là pour imposer un
    régime : ne le passe que si l'utilisateur le demande.
    Puis le **suivi** — `bash scripts/orchestrate/status.sh --watch` (où en est le run, depuis
