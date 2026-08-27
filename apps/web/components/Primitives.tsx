@@ -236,9 +236,21 @@ export type TailleBouton = keyof typeof TAILLE_BOUTON;
  * Ce que toute forme de bouton porte. Le contour de focus est ici et pas dans
  * l'appelant : c'est le seul endroit d'où l'on peut promettre qu'aucune action
  * du produit n'est invisible au clavier (WCAG 2.2, 2.4.7).
+ *
+ * `CIBLE_MINIMALE` y a rejoint le contour de focus (#269), et pour exactement la
+ * même raison : c'est d'ici, et de nulle part ailleurs, qu'on peut promettre
+ * qu'aucune action du produit n'est sous 24 px (WCAG 2.2 §2.5.8). La taille
+ * `petite` écrit son propre pas typographique (`text-annexe`) avec un `py-1`, et
+ * ne déclarait donc **aucun plancher** — le balayage de `a11y.test.tsx` la juge
+ * sur ce qu'elle promet, pas sur ce qu'elle mesure, et il a raison : la hauteur
+ * réelle y dépend d'un interligne que rien ne fixe. Le défaut n'était visible
+ * d'aucun des dix écrans jusqu'à ce que le fil de conversation arrive sur
+ * `/chat` avec les boutons de sources de #482 — c'est le filet qui a servi, pas
+ * la relecture. Un plancher, jamais une hauteur : un libellé qui passe à la
+ * ligne doit pouvoir grandir.
  */
 const BOUTON_SOCLE =
-  "inline-flex shrink-0 cursor-pointer items-center justify-center font-medium " +
+  `inline-flex ${CIBLE_MINIMALE} shrink-0 cursor-pointer items-center justify-center font-medium ` +
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent " +
   "disabled:cursor-not-allowed disabled:opacity-50";
 
