@@ -2080,6 +2080,17 @@ gl_mr_brief() {
   gh_mr_brief "$branche"
 }
 
+# gl_mr_briefs <branche…> -> le même brief, pour N branches, en UNE lecture :
+#     <branche><TAB>etat<TAB>numéro<TAB>sha
+# Une branche sans PR ne rend AUCUNE LIGNE (cf. gh_mr_briefs pour le contrat complet). Quatrième
+# primitive du commutateur de forge, et la seule dont l'existence tient à un COÛT et non à une
+# question nouvelle : elle répond exactement ce que gl_mr_brief répond, pour N branches au prix
+# d'une (#602).
+gl_mr_briefs() {
+  if [ "$#" -eq 0 ]; then echo "usage: gl_mr_briefs <branche…>" >&2; return 2; fi
+  gh_mr_briefs "$@"
+}
+
 # gl_open_mr_branches -> la branche SOURCE de chaque PR ouverte, une par ligne (non triées).
 # Répond à « ce ticket "En revue" a-t-il bien une PR ouverte ? » (doctor.sh §4a) en UNE lecture, là
 # où un gl_mr_state par ticket en ferait autant que de tickets en revue.
@@ -2135,11 +2146,19 @@ gl_cleanup_merged() {
   # chacune — le nom d'une branche n'a jamais valu preuve de merge (docs/10 §6), et ce n'est pas
   # parce que l'appelant croit savoir qu'on cesse de demander.
   local -a cibles=()
+  # `--sans-fetch` : l'appelant vient de rafraîchir les refs et n'a pas à le repayer (#602). Le
+  # `fetch` ci-dessous est du pruning COSMÉTIQUE — la décision s'appuie sur l'état de la PR côté
+  # forge, jamais sur lui —, et `worktree.sh ensure` le fait précéder de `sync-main`, qui fetche.
+  # C'était donc ~5 s de doublon à chaque /ticket-start. Le drapeau est EXPLICITE et non une
+  # fraîcheur devinée d'un horodatage de `FETCH_HEAD` : seul l'appelant sait ce qu'il vient de
+  # faire, et une heuristique se tromperait dans le sens qui coûte (sauter un fetch nécessaire).
+  local sans_fetch=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --auto) auto=1 ;;
+      --sans-fetch) sans_fetch=1 ;;
       '') ;;
-      -*) echo "usage: gl_cleanup_merged [--auto] [<branche>…]" >&2; return 2 ;;
+      -*) echo "usage: gl_cleanup_merged [--auto] [--sans-fetch] [<branche>…]" >&2; return 2 ;;
       *) cibles+=("$1") ;;
     esac
     shift
@@ -2156,9 +2175,16 @@ gl_cleanup_merged() {
   fi
   # Pruning cosmétique des refs de suivi ; non bloquant (jamais de prompt d'identifiants) et non
   # fatal : la décision de suppression s'appuie sur l'état de la PR côté forge, pas sur ce fetch.
-  GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch --prune origin >/dev/null 2>&1
+  [ "$sans_fetch" = 1 ] || GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch --prune origin >/dev/null 2>&1
   local current branch state porteur deleted=0 kept=0 empruntees=0
   current="$(git -C "$principal" branch --show-current 2>/dev/null)"
+
+  # DEUX TEMPS : on retient d'abord les branches à interroger, puis on les interroge TOUTES EN UNE
+  # LECTURE (#602). Une lecture par branche coûtait un aller réseau chacune — 8 branches sur le
+  # poste de référence, ~2,5 s l'aller, soit 21 s des 25 que pesait cette purge dans `ensure`.
+  # Les filtres LOCAUX (main, branche courante, ref absente) restent AVANT : ils ne coûtent rien et
+  # retirent autant de branches de la question.
+  local -a examinees=()
   while IFS= read -r branch; do
     [ -z "$branch" ] && continue
     [ "$branch" = "main" ] && continue
@@ -2167,7 +2193,28 @@ gl_cleanup_merged() {
     # `git branch -D` échouerait et la ligne « conservée, suppression refusée par git » dirait le
     # contraire de ce qui s'est passé. Sans objet pour le balayage, dont git dicte la liste.
     git -C "$principal" show-ref --verify --quiet "refs/heads/$branch" || continue
-    state="$(gl_mr_state "$branch")"
+    examinees+=("$branch")
+  done < <(if [ "${#cibles[@]}" -gt 0 ]; then
+             printf '%s\n' "${cibles[@]}"
+           else
+             git -C "$principal" branch --format='%(refname:short)'
+           fi)
+
+  if [ "${#examinees[@]}" -eq 0 ]; then
+    [ "$auto" = 1 ] && return 0
+    printf 'Nettoyage des branches : 0 supprimée(s), 0 conservée(s).\n'
+    return 0
+  fi
+
+  # Une branche absente de la réponse n'a pas de PR — donc pas « merged », donc conservée : le
+  # silence de gl_mr_briefs vaut exactement ce que valait l'échec de gl_mr_state, et le garde-fou
+  # est inchangé (on ne supprime QUE ce que la forge confirme mergé, docs/10 §6). Si la lecture
+  # échoue EN ENTIER, la table est vide et tout est conservé : ne rien savoir n'autorise rien.
+  local etats
+  etats="$(gl_mr_briefs "${examinees[@]}" 2>/dev/null)" || etats=""
+
+  for branch in "${examinees[@]}"; do
+    state="$(printf '%s\n' "$etats" | ST_BRANCHE="$branch" awk -F'\t' '$1 == ENVIRON["ST_BRANCHE"] { print $2; exit }')"
     if [ "$state" != "merged" ]; then
       kept=$((kept + 1))
       continue
@@ -2184,11 +2231,7 @@ gl_cleanup_merged() {
       printf '  ⚠ conservée : %s (PR merged, suppression refusée par git)\n' "$branch"
     fi
     empruntees=$((empruntees + 1))
-  done < <(if [ "${#cibles[@]}" -gt 0 ]; then
-             printf '%s\n' "${cibles[@]}"
-           else
-             git -C "$principal" branch --format='%(refname:short)'
-           fi)
+  done
 
   [ "$auto" = 1 ] && [ "$deleted" -eq 0 ] && [ "$empruntees" -eq 0 ] && return 0
   if [ "$empruntees" -gt 0 ]; then
@@ -2219,33 +2262,106 @@ gl_cleanup_merged() {
 # BLANC, donc deux tabulations consécutives comptent pour une seule et le champ suivant se décale
 # (le sha atterrirait dans la raison). Même convention que le plan de scripts/orchestrate/run.sh.
 #
-# Une seule lecture dans le cas nominal (PR mergée) ; deux quand il faut départager par le ticket.
+# DEUX LECTURES AU PLUS, quel que soit le nombre de worktrees : ce verbe délègue à
+# `gl_worktree_done_lot`, qui est la SEULE écriture de la règle (#602). Une seconde formule ici — la
+# même question posée d'une autre façon — finirait par ne plus rendre le même verdict que celle qui
+# décide, et c'est le ramassage d'un worktree qui en dépend.
 gl_worktree_done() {
-  local iid="$1" branche="${2:-}" brief etat="" mr sha raw etat_ticket
+  local iid="$1" branche="${2:-}" ligne
   if [ -z "$iid" ]; then echo "usage: gl_worktree_done <iid> [branche]" >&2; return 2; fi
-  gl_require >/dev/null 2>&1 || { printf 'inconnu\t-\tCLI de forge indisponible ou non authentifiée\n'; return 1; }
+  ligne="$(gl_worktree_done_lot "$iid:$branche")"
+  # La colonne iid, qui n'a de sens qu'en lot, est retirée : le contrat de CE verbe reste
+  # « <verdict><TAB><sha><TAB><raison> », inchangé pour worktree.sh et pour /branch-cleanup.
+  ligne="${ligne#*$'\t'}"
+  printf '%s\n' "$ligne"
+  case "$ligne" in inconnu*) return 1 ;; esac
+  return 0
+}
 
-  if [ -n "$branche" ] && brief="$(gl_mr_brief "$branche")"; then
-    IFS=$'\t' read -r etat mr sha <<< "$brief"
-    if [ "$etat" = "merged" ]; then
-      printf 'fini\t%s\tPR #%s mergée\n' "${sha:--}" "${mr:-?}"
-      return 0
-    fi
-  fi
+# gl_worktree_done_lot <iid>:<branche> … -> le verdict de N worktrees en DEUX LECTURES AU PLUS, une
+# ligne TSV par paire, dans l'ordre demandé :
+#     <iid><TAB><verdict><TAB><sha><TAB><raison>
+# Verdicts, sha et raisons : voir `gl_worktree_done` ci-dessus, dont c'est le corps.
+#
+# POURQUOI GROUPER (#602, docs/10 §9.8). `worktree.sh gc` posait la question une fois par worktree,
+# et chaque appel était un sous-processus complet : chargement de lib.sh, vérification du jeton,
+# puis une lecture de la PR et, si elle n'était pas mergée, une lecture du ticket. Soit jusqu'à
+# DEUX ALLERS PAR WORKTREE, à 2,5 s l'aller (latence mesurée le 2026-08-27, irréductible). Le prix
+# ne se voit pas sur un poste qui n'a qu'un worktree ; il se voit après un run, qui en laisse un par
+# ticket traité — 14 worktrees, c'est 28 allers, soit plus d'une minute pour une question qui tient
+# en deux. Ici : UNE lecture des PR (`gl_mr_briefs`), puis UNE lecture des tickets que la première
+# n'a pas tranchés (`gh_issues_state`) — et la seconde est SAUTÉE quand tout est déjà tranché.
+#
+# L'ORDRE DES DEUX LECTURES EST LA RÈGLE, et il ne s'inverse pas : la PR d'abord, le ticket ensuite
+# et seulement pour ce qu'elle n'a pas soldé. C'est ce qui fait que le sha de merge — la seule
+# référence locale exploitable quand le projet merge en squash — accompagne toujours le verdict qui
+# en a besoin.
+gl_worktree_done_lot() {
+  if [ "$#" -eq 0 ]; then echo "usage: gl_worktree_done_lot <iid>:<branche> …" >&2; return 2; fi
+  local paire iid branche
+  local -a numeros=() branches=()
+  for paire in "$@"; do
+    iid="${paire%%:*}"; branche="${paire#*:}"
+    [ "$branche" = "$paire" ] && branche=""
+    case "$iid" in
+      ''|*[!0-9]*) echo "gl_worktree_done_lot : iid invalide « $iid »" >&2; return 2 ;;
+    esac
+    numeros+=("$iid"); branches+=("$branche")
+  done
 
-  # Pas de PR mergée : le ticket tranche. Lecture en TEXTE et non en JSON — la ligne « state: » y est
-  # de premier niveau, là où le JSON d'un ticket imbrique le `state` de son jalon (« closed » sur
-  # toute phase soldée), qu'un grep prendrait pour celui du ticket.
-  raw="$(gl_issue_raw "$iid" 2>/dev/null)"
-  if [ -z "$raw" ]; then
-    printf 'inconnu\t-\tticket #%s illisible dans %s\n' "$iid" "$(gl_depot_courant)"
+  if ! gl_require >/dev/null 2>&1; then
+    for iid in "${numeros[@]}"; do
+      printf '%s\tinconnu\t-\tCLI de forge indisponible ou non authentifiée\n' "$iid"
+    done
     return 1
   fi
-  etat_ticket="$(printf '%s\n' "$raw" | sed -n 's/^state:[[:space:]]*//p' | head -1)"
-  case "$etat_ticket" in
-    closed) printf 'fini\t-\tticket #%s fermé (PR « %s »)\n' "$iid" "${etat:-aucune}" ;;
-    ''|*)   printf 'actif\t-\tticket #%s « %s » (PR « %s »)\n' "$iid" "${etat_ticket:-?}" "${etat:-aucune}" ;;
-  esac
+
+  # 1. Les PR, en une lecture. Une branche vide n'est pas demandée (il n'y a rien à demander) ;
+  #    une branche sans PR ne rend simplement aucune ligne.
+  local etats='' i
+  local -a interrogeables=()
+  for i in "${!branches[@]}"; do
+    [ -n "${branches[$i]}" ] && interrogeables+=("${branches[$i]}")
+  done
+  if [ "${#interrogeables[@]}" -gt 0 ]; then
+    etats="$(gl_mr_briefs "${interrogeables[@]}" 2>/dev/null)" || etats=""
+  fi
+
+  # 2. Les tickets que la première lecture n'a pas soldés, en une lecture — et zéro si la liste est
+  #    vide. C'est le cas nominal d'un run tout mergé : une seule lecture pour tous ses worktrees.
+  local brief etat mr sha
+  local -a restants=()
+  local -a v_etat=() v_mr=() v_sha=()
+  for i in "${!numeros[@]}"; do
+    etat=""; mr=""; sha=""
+    if [ -n "${branches[$i]}" ]; then
+      brief="$(printf '%s\n' "$etats" | ST_BRANCHE="${branches[$i]}" awk -F'\t' '$1 == ENVIRON["ST_BRANCHE"] { print $2 "\t" $3 "\t" $4; exit }')"
+      if [ -n "$brief" ]; then IFS=$'\t' read -r etat mr sha <<< "$brief"; fi
+    fi
+    v_etat+=("$etat"); v_mr+=("$mr"); v_sha+=("$sha")
+    [ "$etat" = "merged" ] || restants+=("${numeros[$i]}")
+  done
+
+  local ouverts=''
+  if [ "${#restants[@]}" -gt 0 ]; then
+    ouverts="$(gh_issues_state "${restants[@]}" 2>/dev/null)" || ouverts=""
+  fi
+
+  local etat_ticket
+  for i in "${!numeros[@]}"; do
+    if [ "${v_etat[$i]}" = "merged" ]; then
+      printf '%s\tfini\t%s\tPR #%s mergée\n' "${numeros[$i]}" "${v_sha[$i]:--}" "${v_mr[$i]:-?}"
+      continue
+    fi
+    # Un iid absent de la réponse est un ticket illisible — même parti pris que gh_issues_state, et
+    # `inconnu` est exactement ce que le ramassage doit en faire : ne rien savoir n'autorise rien.
+    etat_ticket="$(printf '%s\n' "$ouverts" | ST_IID="${numeros[$i]}" awk -F'\t' '$1 == ENVIRON["ST_IID"] { print $2; exit }')"
+    case "$etat_ticket" in
+      closed) printf '%s\tfini\t-\tticket #%s fermé (PR « %s »)\n' "${numeros[$i]}" "${numeros[$i]}" "${v_etat[$i]:-aucune}" ;;
+      open)   printf '%s\tactif\t-\tticket #%s « open » (PR « %s »)\n' "${numeros[$i]}" "${numeros[$i]}" "${v_etat[$i]:-aucune}" ;;
+      *)      printf '%s\tinconnu\t-\tticket #%s illisible dans %s\n' "${numeros[$i]}" "${numeros[$i]}" "$(gl_depot_courant)" ;;
+    esac
+  done
 }
 
 # --- Réglages du dépôt : garde-fous de merge (#341) -----------------------------------------------
@@ -2716,6 +2832,43 @@ gl_worktree_activite() {
   printf '%s' "$max"
 }
 
+# gl_en_cours_des_worktrees <clone-principal> -> les tickets « En cours » PARMI CEUX QUI ONT UN
+# WORKTREE ICI, dans la forme de `gl_backlog_table` (colonne pour colonne, titre vide) pour que
+# `gl_reconcile_en_cours` les lise sans changer d'une ligne la règle qui départage un vivant d'un
+# orphelin (#602).
+#
+# LA LECTURE EST BORNÉE PAR LE DISQUE, ET C'EST TOUT LE GAIN : les iid viennent de `git worktree
+# list` — local, gratuit —, et un seul aller (`st_statuts`, #577) rend leur état. La table complète
+# en demandait sept, dont cinq de pagination, pour finir par écarter tout ce qui n'a pas de worktree.
+#
+# Rend zéro ligne — et le code 0 — quand aucun worktree ne porte d'iid : il n'y a rien à demander,
+# et une lecture pour l'apprendre serait une lecture de trop. Le code 1 est réservé à la LECTURE EN
+# ÉCHEC, que l'appelant annonce comme un contrôle sauté.
+gl_en_cours_des_worktrees() {
+  local principal="$1" ligne branche nom iid
+  if [ -z "$principal" ]; then echo "usage: gl_en_cours_des_worktrees <clone-principal>" >&2; return 2; fi
+
+  local -a numeros=()
+  while IFS= read -r ligne; do
+    case "$ligne" in
+      branch\ refs/heads/*)
+        branche="${ligne#branch refs/heads/}"
+        nom="${branche#*/}"; iid="${nom%%-*}"
+        case "$iid" in ''|*[!0-9]*) continue ;; esac
+        numeros+=("$iid") ;;
+    esac
+  done < <(git -C "$principal" worktree list --porcelain 2>/dev/null)
+
+  [ "${#numeros[@]}" -gt 0 ] || return 0
+
+  local statuts
+  statuts="$(st_statuts "${numeros[@]}" 2>/dev/null)" || return 1
+  # « - » aux trois colonnes du milieu et non deux tabulations d'affilée : dans un TSV lu par
+  # `IFS=$'\t' read`, la tabulation est un séparateur BLANC, donc un champ vide décalerait tous les
+  # suivants (même convention que le plan de run.sh et que gl_worktree_done).
+  printf '%s\n' "$statuts" | awk -F'\t' '$2 == "En cours" { print $1 "\t" $2 "\t-\t-\t-\t" }'
+}
+
 gl_reconcile_en_cours() {
   local auto=0 tsv=0 sauf=""
   while [ $# -gt 0 ]; do
@@ -2735,12 +2888,35 @@ gl_reconcile_en_cours() {
     echo "reconcile-en-cours : hors d'un dépôt git — contrôle sauté." >&2
     return 1
   }
-  # UNE lecture pour tout le monde : le cycle de vie est dans le backlog ouvert, déjà projeté en TSV.
+  # DEUX LECTURES POSSIBLES, ET C'EST LE MODE QUI TRANCHE (#602, docs/10 §9.8).
+  #
+  # `--auto` — l'appel d'office, celui de `worktree.sh gc`, donc de tout /ticket-start — ne peut
+  # rendre QU'UN ORPHELIN : il sort muet sur les vivants comme sur les hors-de-portée (voir plus
+  # bas). Or « orphelin » est un verdict qui se déduit d'un WORKTREE PRÉSENT ICI et de son silence :
+  # un ticket sans worktree sur cette machine est hors de portée, par construction et quel que soit
+  # son état. Partir des worktrees ne peut donc RIEN perdre en `--auto` — et ça évite de payer le
+  # backlog entier pour une question qui ne porte que sur deux ou trois tickets.
+  # Le prix, lui, était le poste le plus lourd de tout `ensure` : `gl_backlog_table` résout le
+  # projet puis en pagine les items (5 pages à 577 tickets) et lit les issues ouvertes, soit SEPT
+  # allers — 29,5 s mesurées le 2026-08-27, sur un `ensure` qui en pesait 68,7. `st_statuts` répond
+  # à la même question pour des iid NOMMÉS en un seul aller (#577).
+  #
+  # Les modes HUMAIN et `--tsv`, eux, gardent la lecture d'ensemble : ils rendent un RECENSEMENT,
+  # avec ses lignes « hors de portée » et son compte des trois verdicts, et c'est justement ce que
+  # la lecture bornée ne peut pas produire. Ils sont demandés explicitement, par quelqu'un qui lit —
+  # jamais sur le chemin d'un démarrage de ticket.
   local table
-  table="$(gl_backlog_table opened)" || {
-    echo "reconcile-en-cours : backlog illisible — contrôle sauté." >&2
-    return 1
-  }
+  if [ "$auto" = 1 ]; then
+    table="$(gl_en_cours_des_worktrees "$principal")" || {
+      echo "reconcile-en-cours : états des worktrees illisibles — contrôle sauté." >&2
+      return 1
+    }
+  else
+    table="$(gl_backlog_table opened)" || {
+      echo "reconcile-en-cours : backlog illisible — contrôle sauté." >&2
+      return 1
+    }
+  fi
   # Une lecture des cartes pour tout le monde aussi : `pilotes_vivants` balaie tous les runs.
   local pilotes
   pilotes="$(gl_pilotes_en_vol 2>/dev/null)" || pilotes=""
@@ -3890,13 +4066,30 @@ gh_depot_gql() {
   printf 'repository(owner:"%s", name:"%s")' "${GL_GH_REPO%%/*}" "${GL_GH_REPO##*/}"
 }
 
-# gh_require -> gh installé ET authentifié. C'est le corps de gl_require.
+# gh_require -> gh installé ET un jeton configuré. C'est le corps de gl_require.
+#
+# ⚠ `gh auth token` ET NON `gh auth status` (#602) : le second VALIDE le jeton par un aller vers
+# l'API — 4,3 à 5,3 s mesurées le 2026-08-27, soit plus cher qu'un aller GraphQL (2,5 s) —, et il
+# est payé UNE FOIS PAR SOUS-PROCESSUS. Comme chaque verbe de ce fichier est son propre processus,
+# un seul `worktree.sh ensure` en enchaînait cinq : ~24 s à re-vérifier une authentification déjà
+# vérifiée, invisibles d'une décomposition par poste. `gh auth token` lit `hosts.yml` EN LOCAL
+# (0,35 s), et c'est ce coup-là qui a été mesuré sur les deux formes avant de trancher.
+#
+# CE QU'ON PERD, ET POURQUOI CE N'EST PAS UN GARDE-FOU EN MOINS. La question posée ici est « peut-on
+# parler à la forge ? », et sa réponse utile est « un jeton est configuré » : sans jeton, le message
+# est le même qu'avant, au mot près. Le VERDICT d'authentification, lui, est rendu par le premier
+# appel d'API — que tout verbe fait de toute façon, et dont l'échec est déjà traité chez chacun. Un
+# jeton RÉVOQUÉ n'est donc plus nommé ici mais à la première lecture : un message de moins sur un
+# chemin d'échec, jamais une écriture de plus ni une vérification sautée.
+#
+# On lit le CODE DE RETOUR et jamais la sortie : `gh auth token` imprime le jeton, qui n'a rien à
+# faire dans une variable de ce fichier ni dans une trace de session.
 gh_require() {
   if ! command -v gh >/dev/null 2>&1; then
     echo "gh n'est pas installé. Voir https://cli.github.com" >&2
     return 1
   fi
-  if ! gh auth status >/dev/null 2>&1; then
+  if ! gh auth token >/dev/null 2>&1; then
     echo "gh non authentifié. Lancer d'abord : gh auth login" >&2
     return 1
   fi
@@ -5293,6 +5486,84 @@ gh_mr_brief() {
   printf '%s\t%s\t%s\n' "$etat" "$mr" "${sha:--}"
 }
 
+# gh_mr_briefs <branche…> -> le brief de la PR de N branches en UNE lecture, une ligne TSV par
+# branche QUI EN A UNE : « <branche><TAB><etat><TAB><numéro><TAB><sha> ». Contrat de sortie
+# identique à gh_mr_brief, colonne pour colonne, aux deux différences près qui font tout l'intérêt :
+# la branche est rendue en tête (l'appelant ne peut plus se fier à l'ordre) et une branche SANS PR
+# ne rend AUCUNE LIGNE — même parti pris que gh_issues_state, et c'est l'appelant qui décide de ce
+# que vaut ce silence (gl_cleanup_merged garde la branche, gl_worktree_done interroge le ticket).
+#
+# C'EST LE PENDANT GROUPÉ DE gh_mr_brief, ET IL RÉPOND À LA MÊME QUESTION POUR N BRANCHES (#602,
+# docs/10 §9.8). Deux appelants la posaient une branche à la fois : `gl_cleanup_merged`, une lecture
+# par branche locale (8 sur le poste de référence), et le ramassage de `worktree.sh gc`, une par
+# worktree. À 2,5 s l'aller — latence réseau mesurée, irréductible — le nombre d'allers faisait tout
+# le prix, exactement comme dans #577.
+#
+# Les branches sont demandées sous des ALIAS INDEXÉS (`b0:`, `b1:`…) et non sous leur nom : un nom
+# de branche porte des `/` et des `-`, qu'un alias GraphQL n'accepte pas. C'est donc le RANG qui
+# fait le lien, et il est tenu des deux côtés — d'où le parsing par `"b<N>":` plutôt que par
+# l'ordre des réponses, que rien dans le contrat de l'API n'oblige à conserver.
+#
+# Parsing en awk et non par `--jq`, pour la raison de st_statuts : une réponse partiellement en
+# erreur fait recracher à `gh api graphql --jq` le JSON BRUT sans appliquer le filtre, et le
+# résultat serait zéro ligne — c'est-à-dire « aucune PR nulle part », avec le code de succès. Sur ce
+# verbe-ci, cela se traduirait par « aucune branche mergée » : une purge qui ne supprime rien passe
+# inaperçue, là où l'inverse détruirait du travail. On ne parie pas là-dessus.
+gh_mr_briefs() {
+  if [ "$#" -eq 0 ]; then echo "usage: gh_mr_briefs <branche…>" >&2; return 2; fi
+  local branche champs='' raw rang=0 table=''
+  for branche in "$@"; do
+    case "$branche" in
+      ''|*'"'*) echo "gh_mr_briefs : nom de branche invalide « $branche »" >&2; return 2 ;;
+    esac
+    champs="$champs b$rang: pullRequests(headRefName: \"$branche\", first: 1, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state headRefOid } }"
+    table="$table$rang"$'\t'"$branche"$'\n'
+    rang=$((rang + 1))
+  done
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' {'"$champs"' } }')" || return 1
+  case "$raw" in
+    *'"repository":null'*) echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
+  esac
+
+  # Le rang est retraduit en nom de branche par la table ci-dessus, jamais par un `awk -v` : elle
+  # porte des noms de branche, et `-v` interpréterait leurs échappements (#340).
+  printf '%s' "$raw" | awk '
+    {
+      s = $0
+      while (match(s, /"b[0-9]+":\{"nodes":\[/)) {
+        tag = substr(s, RSTART, RLENGTH)
+        rang = tag; sub(/^"b/, "", rang); sub(/":.*/, "", rang)
+        s = substr(s, RSTART + RLENGTH)
+        fin = index(s, "]")
+        corps = (fin > 0) ? substr(s, 1, fin - 1) : ""
+        if (corps == "") continue          # nodes vide : aucune PR sur cette branche
+        num = ""; etat = ""; sha = ""
+        if (match(corps, /"number":[0-9]+/))          num  = substr(corps, RSTART + 9,  RLENGTH - 9)
+        if (match(corps, /"state":"[A-Z_]+"/))        etat = substr(corps, RSTART + 9,  RLENGTH - 10)
+        if (match(corps, /"headRefOid":"[0-9a-f]*"/)) sha  = substr(corps, RSTART + 14, RLENGTH - 15)
+        if (num == "" || etat == "") continue
+        print rang "\t" etat "\t" num "\t" sha
+      }
+    }
+  ' | ST_TABLE="$table" awk -F'\t' '
+    BEGIN {
+      n = split(ENVIRON["ST_TABLE"], lignes, "\n")
+      for (i = 1; i <= n; i++) {
+        if (lignes[i] == "") continue
+        p = index(lignes[i], "\t")
+        nom[substr(lignes[i], 1, p - 1)] = substr(lignes[i], p + 1)
+      }
+    }
+    {
+      # Vocabulaire GITLAB en sortie, comme gh_mr_brief : les comparaisons en dur des appelants
+      # (« merged ») sont ainsi hors du chantier de la migration.
+      etat = ($2 == "MERGED") ? "merged" : (($2 == "CLOSED") ? "closed" : (($2 == "OPEN") ? "opened" : ""))
+      if (etat == "" || !($1 in nom)) next
+      print nom[$1] "\t" etat "\t" $3 "\t" (($4 == "") ? "-" : $4)
+    }
+  '
+}
+
 gh_mr_iid() {
   local ref="$1" mr
   if [ -z "$ref" ]; then echo "gh_mr_iid : branche manquante" >&2; return 2; fi
@@ -5931,6 +6202,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     review-queue)   gl_review_queue "$@" ;;
     cleanup-merged) gl_cleanup_merged "$@" ;;
     worktree-done)  gl_worktree_done "$@" ;;
+    worktree-done-lot) gl_worktree_done_lot "$@" ;;
+    mr-briefs)      gl_mr_briefs "$@" ;;
     reconcile-en-cours) gl_reconcile_en_cours "$@" ;;
     reprendre-en-cours) gl_reprendre_en_cours "$@" ;;
     reprises)       gl_reprises "$@" ;;
@@ -6031,11 +6304,13 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                 réparation d'un ticket que doctor.sh signale hors projet ou sans état." >&2
       echo "                                 Rejouable sans doublon ; ÉCRASE un Status déjà posé)" >&2
       echo "  Branches :" >&2
-      echo "    cleanup-merged [--auto] [<branche>…]  (supprime les branches locales dont la PR est mergée ; sans argument, toutes ; --auto = muet si rien)" >&2
+      echo "    cleanup-merged [--auto] [--sans-fetch] [<branche>…]  (supprime les branches locales dont la PR est mergée ; sans argument, toutes ; --auto = muet si rien ; --sans-fetch quand l'appelant vient de fetcher)" >&2
       echo "    sync-main [--check]         (avance main du clone principal sur origin/main, fast-forward seul ; 0=à jour/fait, 3=divergent, 4=arbre sale)" >&2
       echo "    mr-state <branche>          (opened|closed|merged)" >&2
+      echo "    mr-briefs <branche>…        (etat+numéro+sha de N PR en UNE lecture ; aucune ligne pour une branche sans PR)" >&2
       echo "    open-mr-branches            (branche source de chaque PR ouverte, une par ligne)" >&2
       echo "    worktree-done <iid> [branche] (fini|actif|inconnu + sha de merge + raison — fin de vie d'un worktree)" >&2
+      echo "    worktree-done-lot <iid>:<branche>…  (le même verdict pour N worktrees, en DEUX lectures au plus)" >&2
       echo "    behind-main [branche]       (retard sur origin/main + conflit probable ; 0=à jour, 3=en retard, 4=+conflit)" >&2
       echo "  Tickets « En cours » orphelins (lecture seule — signale, ne répare rien) :" >&2
       echo "    reconcile-en-cours [--check] [--auto] [--tsv] [--sauf <iid>]" >&2

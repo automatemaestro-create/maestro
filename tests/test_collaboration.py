@@ -1652,6 +1652,60 @@ def test_auto_se_tait_sans_orphelin_et_parle_avec(depot: Depot) -> None:
     assert "vivant" not in bavard.stdout, "en --auto, seuls les orphelins sont une nouvelle"
 
 
+def _lectures(depot: Depot) -> list[str]:
+    """Les allers vers la forge — `gh api …` seul, `gh auth token` étant une lecture LOCALE."""
+    return [ligne for ligne in depot.appels() if ligne.startswith("api\t")]
+
+
+def test_auto_borne_sa_lecture_aux_worktrees_au_lieu_de_paginer_le_projet(depot: Depot) -> None:
+    """Le poste le plus lourd de `ensure`, et il n'était pas celui qu'on croyait (#602).
+
+    `--auto` ne peut rendre QU'UN ORPHELIN, et « orphelin » se déduit d'un worktree présent ici :
+    un ticket sans worktree sur cette machine est hors de portée, quel que soit son état. Partir
+    des worktrees ne peut donc rien perdre — et ça évite de payer le backlog entier (résolution du
+    projet, 5 pages d'items, issues ouvertes : sept allers, 29,5 s mesurées) pour une question qui
+    ne porte que sur deux tickets.
+
+    Le motif est prouvé avant de conclure : le backlog déclaré porte PLUSIEURS tickets « En cours »,
+    dont un seul a un worktree ici. Sans cette moitié, « une lecture » serait vrai d'un backlog
+    vide.
+    """
+    depot.pose_etat(
+        graphql=regles_backlog({"325": "En cours", "326": "En cours", "328": "En cours"})
+    )
+    _silence(_worktree(depot, "328"), 48 * 3600)
+
+    acheve = depot.lib("reconcile-en-cours", "--auto")
+    assert acheve.returncode == 3, acheve.stdout + acheve.stderr
+    assert "#328 orphelin" in acheve.stdout
+    # Les deux autres n'ont pas de worktree ici : hors de portée, donc muets — comme avant.
+    assert "#325" not in acheve.stdout
+    assert "#326" not in acheve.stdout
+
+    lectures = _lectures(depot)
+    assert len(lectures) == 1, f"un aller pour les iid qui ont un worktree, reçu : {lectures}"
+    assert not any("states: [OPEN]" in ligne for ligne in lectures), (
+        "le backlog ouvert n'a pas à être lu pour répondre sur deux worktrees"
+    )
+
+
+def test_le_recensement_garde_sa_lecture_d_ensemble(depot: Depot) -> None:
+    """Le pendant du test ci-dessus, et la raison pour laquelle il n'y a pas UN seul chemin.
+
+    Les modes humain et `--tsv` rendent un RECENSEMENT — avec ses lignes « hors de portée » et son
+    compte des trois verdicts —, ce que la lecture bornée ne peut pas produire : elle ne voit que
+    les tickets qui ont un worktree. Ils sont demandés explicitement, par quelqu'un qui lit, jamais
+    sur le chemin d'un démarrage de ticket.
+    """
+    depot.pose_etat(graphql=regles_backlog({"325": "En cours", "328": "En cours"}))
+    _worktree(depot, "328")
+
+    acheve = depot.lib("reconcile-en-cours")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#325" in acheve.stdout, "un « En cours » sans worktree ici reste recensé"
+    assert "hors de portée" in acheve.stdout
+
+
 def test_le_backlog_illisible_ne_fait_pas_conclure_a_l_orphelin(depot: Depot) -> None:
     """Ne rien savoir n'autorise rien — même règle que le ramassage devant une forge muette."""
     depot.pose_etat(graphql=[])
@@ -2603,15 +2657,43 @@ def test_un_ticket_sans_aucun_commentaire_cree_son_suivi(depot: Depot) -> None:
 
 
 def _regle_pr(etat: str, numero: int = 42) -> dict:
-    """La réponse du `gh` factice à `gh_mr_brief` — de quoi rendre « etat<TAB>numéro<TAB>sha »."""
+    """La réponse du `gh` factice à la lecture des PR — de quoi rendre « etat<TAB>numéro<TAB>sha ».
+
+    ⚠ SOUS ALIAS (`b0:`) depuis #602 : `worktree-done` passe par `gl_worktree_done_lot`, qui
+    demande N branches en UNE lecture. Le double rend donc la forme GROUPÉE — celle que la
+    production reçoit vraiment. Servir encore la forme unitaire laisserait ces deux tests verts sur
+    une réponse que plus personne ne demande, c'est-à-dire un ✓ sur une question jamais posée.
+    """
     return {
         "contient": ["pullRequests(headRefName:"],
         "reponse": {
             "data": {
                 "repository": {
-                    "pullRequests": {
+                    "b0": {
                         "nodes": [{"number": numero, "state": etat, "headRefOid": "a" * 40}]
                     }
+                }
+            }
+        },
+    }
+
+
+def _regle_pr_lot(etats: dict[str, str]) -> dict:
+    """La réponse du `gh` factice à `gh_mr_briefs` — N branches sous alias, en UNE lecture (#602).
+
+    Le RANG fait le lien entre la question et la réponse : un nom de branche porte des « / » et des
+    « - », qu'un alias GraphQL n'accepte pas. Le double doit donc numéroter comme la production
+    numérote, sinon il validerait un appariement qui n'existe pas.
+    """
+    return {
+        "contient": ["pullRequests(headRefName:"],
+        "reponse": {
+            "data": {
+                "repository": {
+                    f"b{rang}": {
+                        "nodes": [{"number": 40 + rang, "state": etat, "headRefOid": "a" * 40}]
+                    }
+                    for rang, etat in enumerate(etats.values())
                 }
             }
         },
@@ -2634,6 +2716,51 @@ def test_worktree_done_nomme_une_pr_et_jamais_une_mr(depot: Depot) -> None:
     assert verdict == "fini"
     assert sha == "a" * 40
     assert raison == "PR #42 mergée"
+
+
+def test_le_verdict_de_n_worktrees_tient_en_deux_lectures(depot: Depot) -> None:
+    """Le second poste de `ensure` : la question était posée une fois par worktree (#602).
+
+    Chaque appel était un sous-processus complet — chargement de lib.sh, vérification du jeton,
+    puis une lecture de la PR et, si elle n'était pas mergée, une lecture du ticket. Soit jusqu'à
+    DEUX ALLERS PAR WORKTREE, là où la question en demande deux EN TOUT. Le prix ne se voit pas sur
+    un poste qui n'a qu'un worktree ; il se voit après un run, qui en laisse un par ticket traité.
+
+    Trois paires, deux lectures : la PR de toutes les branches, puis l'état des tickets que la
+    première n'a pas soldés. Le compte des paires est asserté d'abord — c'est lui qui rend la
+    conclusion possible.
+    """
+    depot.pose_etat(
+        graphql=[_regle_pr_lot({"chore/401-a": "MERGED"})],
+        issues={"402": TICKET_SIMPLE, "403": TICKET_SIMPLE},
+    )
+    paires = ["401:chore/401-a", "402:chore/402-b", "403:chore/403-c"]
+    assert len(paires) > 1, "un lot d'une paire ne prouverait rien"
+
+    acheve = depot.lib("worktree-done-lot", *paires)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    verdicts = {ligne[0]: ligne[1] for ligne in colonnes(acheve.stdout)}
+    assert verdicts == {"401": "fini", "402": "actif", "403": "actif"}
+
+    lectures = _lectures(depot)
+    assert len(lectures) == 2, f"une lecture de PR, une de tickets — reçu : {lectures}"
+
+
+def test_un_lot_tout_merge_ne_coute_qu_une_lecture(depot: Depot) -> None:
+    """Le cas nominal d'un run qui se solde tout mergé : la seconde lecture est SAUTÉE.
+
+    Elle ne sert qu'à départager ce que la PR n'a pas tranché. La demander quand même serait un
+    aller pour une liste vide — et c'est exactement le genre de réflexe que ce ticket corrige.
+    """
+    depot.pose_etat(
+        graphql=[_regle_pr_lot({"chore/401-a": "MERGED", "chore/402-b": "MERGED"})]
+    )
+
+    acheve = depot.lib("worktree-done-lot", "401:chore/401-a", "402:chore/402-b")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert {ligne[1] for ligne in colonnes(acheve.stdout)} == {"fini"}
+    assert len(_lectures(depot)) == 1, _lectures(depot)
 
 
 def test_worktree_done_nomme_une_pr_dans_son_verdict_sans_merge(depot: Depot) -> None:

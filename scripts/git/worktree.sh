@@ -750,10 +750,11 @@ commande_ensure() {
   # /ticket-start (manuel comme autonome), qui la remet à niveau. Best-effort et muet quand elle est
   # déjà à jour ; ses abstentions (arbre porteur sale, divergence) sont relayées telles quelles et
   # n'empêchent jamais un ticket de démarrer.
-  local sortie_sync code_sync
+  local sortie_sync code_sync fetch_fait=0
   if [ "${MAESTRO_SYNC_MAIN:-1}" != 0 ]; then
     sortie_sync="$(bash "$ICI/../gitlab/lib.sh" sync-main 2>&1)"
     code_sync=$?
+    fetch_fait=1
     if [ -n "$sortie_sync" ]; then
       if [ "$code_sync" -eq 0 ]; then
         ok "$sortie_sync"
@@ -797,9 +798,17 @@ commande_ensure() {
   #
   # Seul stdout est repris, réindenté au niveau du rapport (les lignes du helper sont conçues pour
   # être lues seules) ; ses abstentions partent sur stderr et y restent, comme celles de sync-main.
+  #
+  # `--sans-fetch` quand `sync-main` vient de tourner (#602) : son `fetch --prune` est du pruning
+  # cosmétique — la décision s'appuie sur l'état de la PR côté forge, jamais sur lui — et
+  # `sync-main`, quelques lignes plus haut, a déjà rafraîchi les refs. C'était ~5 s de doublon à
+  # chaque /ticket-start. Le drapeau suit ce qui s'est RÉELLEMENT passé et non la valeur par défaut :
+  # avec `MAESTRO_SYNC_MAIN=0`, personne n'a fetché et la purge doit le faire pour son compte.
   local sortie_purge
+  local -a args_purge=(--auto)
+  [ "$fetch_fait" = 1 ] && args_purge+=(--sans-fetch)
   if [ "${MAESTRO_PURGE_BRANCHES:-1}" != 0 ]; then
-    sortie_purge="$(bash "$ICI/../gitlab/lib.sh" cleanup-merged --auto)" || true
+    sortie_purge="$(bash "$ICI/../gitlab/lib.sh" cleanup-merged "${args_purge[@]}")" || true
     [ -n "$sortie_purge" ] && printf '%s\n' "$sortie_purge" | sed 's/^ *//; s/^/  /'
   fi
 
@@ -1751,6 +1760,31 @@ commande_gc() {
 
   [ "$auto" = 1 ] || printf '\nRamassage des worktrees de %s\n\n' "$principal"
 
+  # LES VERDICTS SONT DEMANDÉS EN UNE FOIS, AVANT LA BOUCLE (#602, docs/10 §9.8). Ils l'étaient un
+  # par un, et chaque appel était un sous-processus complet — chargement de lib.sh, vérification du
+  # jeton, puis jusqu'à deux allers vers la forge. À 2,5 s l'aller, c'est le prix qui grandit avec le
+  # nombre de worktrees, donc avec la longueur du run qui vient de les laisser là : 14 worktrees
+  # coûtaient 28 allers pour une question qui en demande deux.
+  #
+  # La COUTURE DES TESTS NE BOUGE PAS : `MAESTRO_WORKTREE_VERDICT` reste appelée une fois par paire,
+  # avec les mêmes arguments et dans le même ordre. C'est la seule chose que le regroupement ne doit
+  # pas emporter — ces tests-là gardent quatre garde-fous (#197, #503, #275, #327), et un test qui
+  # change de forme en même temps que le code qu'il garde ne garde plus rien.
+  local -a paires_lot=()
+  local p_chemin p_branche p_nom p_iid
+  while IFS=$'\t' read -r p_chemin p_branche; do
+    [ -n "$p_chemin" ] || continue
+    p_nom="${p_branche#*/}"; p_iid="${p_nom%%-*}"
+    case "$p_iid" in ''|*[!0-9]*) continue ;; esac
+    [ -n "$courant" ] && [ "$p_chemin" = "$courant" ] && continue
+    paires_lot+=("$p_iid:$p_branche")
+  done <<< "$paires"
+
+  local VERDICTS_LOT=""
+  if [ "${#paires_lot[@]}" -gt 0 ] && [ -z "${MAESTRO_WORKTREE_VERDICT:-}" ]; then
+    VERDICTS_LOT="$(bash "$ICI/../gitlab/lib.sh" worktree-done-lot "${paires_lot[@]}" 2>/dev/null)" || VERDICTS_LOT=""
+  fi
+
   local branche nom iid brut verdict sha raison reste n_modifs n_commits detail cycle pose
   local n_sessions note
   local retires=0 gardes=0 signales=0 echecs=0 rapport=""
@@ -1775,7 +1809,9 @@ commande_gc() {
     if [ -n "${MAESTRO_WORKTREE_VERDICT:-}" ]; then
       brut="$("$MAESTRO_WORKTREE_VERDICT" "$iid" "$branche" 2>/dev/null)"
     else
-      brut="$(bash "$ICI/../gitlab/lib.sh" worktree-done "$iid" "$branche" 2>/dev/null)"
+      # La lecture groupée d'avant la boucle. Un iid absent de sa réponse rend une ligne vide, ce
+      # que la suite lit déjà comme « verdict indisponible » — donc « je n'y touche pas ».
+      brut="$(printf '%s\n' "$VERDICTS_LOT" | ST_IID="$iid" awk -F'\t' '$1 == ENVIRON["ST_IID"] { print $2 "\t" $3 "\t" $4; exit }')"
     fi
     # « - » marque un sha absent : dans un TSV lu par `read`, la tabulation est un séparateur BLANC
     # (deux d'affilée comptent pour une seule), donc un champ vide décalerait la raison dans le sha.
