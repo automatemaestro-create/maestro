@@ -189,7 +189,12 @@ if args[:2] == ["api", "graphql"]:
     requete = requete_graphql(args[2:])
     # La vue canonique d'un ticket est servie d'office quand le test l'a décrite : c'est la
     # requête la plus spécifique du lot, elle passe donc avant les règles.
-    if "issue(number:" in requete and '"body"' not in requete and "body }" in requete:
+    # ⚠ « qui ne demande PAS de commentaires » : un ticket décrit par un test n'en porte aucun, donc
+    # servir cette vue à une requête qui en demande répondrait « aucun commentaire » à qui pose la
+    # question — le contraire d'un silence, et un vert sur une question jamais posée. Deux lectures
+    # du dépôt les demandent (gh_issue_link, gh_reste_source), et elles passent par `graphql`.
+    if ("issue(number:" in requete and '"body"' not in requete and "body }" in requete
+            and "comments(" not in requete):
         iid = requete.split("issue(number:", 1)[1].split(")", 1)[0]
         texte = etat.get("issues", {}).get(iid)
         if texte is not None:

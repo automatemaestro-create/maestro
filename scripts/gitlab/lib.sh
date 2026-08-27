@@ -1727,6 +1727,14 @@ gl_mr_url() {
   printf 'https://%s/%s/pull/%s\n' "$(gl_host)" "$GL_GH_REPO" "$mr"
 }
 
+# gl_issue_url <iid> -> l'URL web du TICKET. Dérivée et jamais relue de la réponse de création : le
+# `html_url` d'une écriture est ce que la forge veut bien en dire, l'URL d'un ticket est une règle.
+gl_issue_url() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_issue_url <iid>" >&2; return 2; fi
+  printf 'https://%s/%s/issues/%s\n' "$(gl_host)" "$GL_GH_REPO" "$iid"
+}
+
 # gl_issue_note <iid> <fichier> -> poste le contenu du fichier en COMMENTAIRE sur le ticket <iid>.
 # Même raison d'être que gl_create_mr : un `-m "$(cat …)"` n'est pas matchable (#186).
 gl_issue_note() {
@@ -1735,6 +1743,242 @@ gl_issue_note() {
   if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
   if [ ! -s "$fichier" ]; then echo "gl_issue_note : $fichier est vide — rien à poster" >&2; return 1; fi
   gh_issue_note "$@"
+}
+
+# --- Le reste à appliquer sous `.claude/` devient un TICKET (#610, chantier #608) ------------------
+# Une session autonome ne peut pas écrire sous `.claude/` : garde-fou du CLI, EN AMONT de l'`allow`
+# comme des hooks — déduit par #229, mesuré par #238, re-mesuré par #614 trois semaines et une
+# version de CLI plus tard. On ne le contourne pas : c'est ce qui empêche une boucle sans
+# surveillance de réécrire les instructions que la boucle suivante exécutera. La conduite prescrite
+# (#188) est donc de RENDRE le correctif intégral au lieu de l'appliquer.
+#
+# CE QUI A CASSÉ, ET QUAND. Cette conduite avait un lecteur tant qu'un humain mergeait. #418/#419 le
+# lui ont retiré : le pilote merge, la PR se ferme, et la section « reste à appliquer » finit dans le
+# corps d'une PR mergée que plus personne n'ouvre. Le résidu ne disparaît pas — il devient
+# INVISIBLE, ce qui est pire : rien n'échoue, rien n'est rouge, le ticket passe « Terminé » et le run
+# se solde vert. Mesure du run `20260827-094044` : trois tickets, DEUX résidus (#599 → PR #603,
+# #595 → PR #605), tous deux mergés dans les vingt minutes, tous deux encore en place le lendemain.
+#
+# LE SUPPORT CHANGE, LA CONDUITE NON. La PR reste le lieu de la revue — #188 ne bouge pas, et le
+# prompt de `run.sh` prescrit l'appel EN PLUS du rendu dans la PR, jamais à sa place. Ce que le
+# ticket ajoute est la SURVIE : il vit après le merge, remonte dans `/backlog`, se démarre par
+# `/ticket-start`, et aucun `Closes` qui ne le vise pas ne peut le fermer.
+#
+# QUATRE PROPRIÉTÉS, dont trois se déduisent de règles déjà écrites du dépôt :
+#   - le corps voyage PAR UN FICHIER, jamais sur la ligne de commande — même raison que create-mr et
+#     issue-note juste au-dessus (#233, docs/10 §11.7) ;
+#   - le ticket naît ASSIGNÉ, donc hors de tout plan : `queue.sh` filtre sur « À faire ET libre », et
+#     un run qui le prendrait se ferait refuser exactement la même écriture. C'est le mécanisme
+#     d'exclusion que le dépôt emploie déjà, pas un label de plus ;
+#   - il porte son ÉTAT dans la foulée (`project-add`) — depuis #365 le champ Status est le seul
+#     support du cycle de vie, et rien ne rattrape un ticket qui naît sans état ;
+#   - il est IDEMPOTENT : une session qui bute deux fois sur `.claude/` dans le même ticket n'ouvre
+#     pas deux tickets de reprise.
+#
+# L'IDEMPOTENCE S'ANCRE SUR LE TICKET SOURCE, ET PAS SUR UNE RECHERCHE. L'API de recherche de GitHub
+# est indexée de façon ASYNCHRONE — deux appels rapprochés y trouveraient « rien », donc deux
+# tickets, c'est-à-dire le doublon que la propriété interdit. L'ancre est donc un COMMENTAIRE posé
+# sur le ticket SOURCE, relu à l'appel suivant : même mécanisme que `gh_issue_link`, immédiatement
+# lisible, et il rend au passage le lien visible dans les deux sens. Il est lu dans les COMMENTAIRES
+# et jamais dans la description : celle-ci est écrite par un humain, et un ticket qui PARLE de
+# tickets de reprise — le parent #608, par exemple — n'en a pas pour autant un.
+#
+# REJOUÉ, IL AJOUTE ET N'ÉCRASE PAS. Deux refus dans un même ticket, ce sont DEUX correctifs :
+# remplacer le corps perdrait le premier, c'est-à-dire exactement ce que ce chantier veut sauver.
+# Chaque correctif entre donc dans sa propre section, reconnue à l'EMPREINTE de son fichier
+# (`cksum`) — rejoué à l'identique, le verbe ne réécrit rien du tout et le dit.
+#
+# CE QU'IL NE FAIT PAS EN MISE À JOUR : ni réassigner, ni reposer l'état. Un ticket de reprise déjà
+# « En cours » chez quelqu'un ne doit pas retomber « À faire » parce que la session source a buté une
+# seconde fois — même raison que `reconcile-workflow`, qui n'écrase jamais un état qu'il n'a pas posé.
+GL_RESTE_LABELS="${MAESTRO_RESTE_CLAUDE_LABELS:-type::infra,agent::orchestrateur,prio::haute}"
+# Le rail est SU par construction : `.claude/**` est de l'outillage (#617, docs/10 §3.4). Il n'est
+# donc pas deviné, et le jalon suit la règle commune — l'actif le plus ancien non soldé de ce rail.
+GL_RESTE_RAIL="${MAESTRO_RESTE_CLAUDE_RAIL:-outillage}"
+
+# gl_reste_claude <iid-source> <fichier> -> crée (ou complète) le ticket de reprise du ticket source.
+# Codes : 0 créé / mis à jour / déjà à jour · 2 usage · 3 iid source inconnu · 4 fichier absent ou
+# vide · 1 échec côté forge. Les deux REFUS (3 et 4) tombent AVANT toute écriture : c'est ce qui rend
+# « refus » et « écriture partielle » mutuellement exclusifs.
+gl_reste_claude() {
+  local source="$1" fichier="$2"
+  if [ -z "$source" ] || [ -z "$fichier" ]; then
+    echo "usage: gl_reste_claude <iid-source> <fichier>" >&2; return 2
+  fi
+  # Le fichier d'abord : c'est le contrôle GRATUIT, et refuser sans avoir rien demandé à la forge
+  # est ce qui garantit qu'un refus ne laisse rien derrière lui.
+  if [ ! -f "$fichier" ]; then
+    echo "gl_reste_claude : fichier introuvable : $fichier" >&2
+    echo "  Le correctif EST le corps du ticket : l'écrire d'abord (outil Write), puis passer son CHEMIN." >&2
+    return 4
+  fi
+  if [ ! -s "$fichier" ]; then
+    echo "gl_reste_claude : $fichier est vide — un ticket de reprise sans correctif n'apprend rien." >&2
+    return 4
+  fi
+  case "$source" in
+    ''|*[!0-9]*)
+      echo "gl_reste_claude : « $source » n'est pas un iid de ticket — rien n'a été écrit." >&2
+      return 3 ;;
+  esac
+
+  local vue rc titre reprise empreinte
+  vue="$(gh_reste_source "$source")"; rc=$?
+  if [ "$rc" -ne 0 ]; then return "$rc"; fi
+  # La tabulation s'écrit `$'\t'` et jamais en littéral : un caractère invisible au milieu d'une
+  # expansion est ce qu'un éditeur ou un patch retransforme en espaces sans que rien ne le dise.
+  titre="${vue%%$'\t'*}"
+  reprise="${vue##*$'\t'}"
+
+  # L'empreinte identifie le CORRECTIF, pas la section qui l'enveloppe : elle doit rester la même
+  # d'un appel à l'autre, donc aucune date n'y entre. `cksum` lit sur stdin pour que son nom de
+  # fichier — qui change d'un appel à l'autre — ne compte pas dans la sortie.
+  empreinte="$(cksum < "$fichier" | awk '{ printf "%s-%s", $1, $2 }')"
+  if [ -z "$empreinte" ]; then
+    echo "gl_reste_claude : empreinte de « $fichier » illisible (cksum absent ?)" >&2; return 1
+  fi
+
+  if [ -n "$reprise" ]; then
+    gl_reste_complete "$source" "$reprise" "$fichier" "$empreinte"
+    return $?
+  fi
+  gl_reste_cree "$source" "$titre" "$fichier" "$empreinte"
+}
+
+# gl_reste_complete <source> <reprise> <fichier> <empreinte> — la voie du REJEU : le ticket de
+# reprise existe, on lui ajoute ce correctif-ci s'il ne l'a pas déjà.
+gl_reste_complete() {
+  local source="$1" reprise="$2" fichier="$3" empreinte="$4" corps
+  # Brouillon relu par personne — il repart tel quel vers la forge : temporaire du système, pas
+  # `.maestro/` (règle #234, docs/10 §8.5).
+  corps="$(mktemp "${TMPDIR:-/tmp}/maestro-reste.XXXXXX")" || return 1
+  # Un corps VIDE ne peut pas être un ticket de reprise que ce verbe a écrit : c'est un ticket
+  # supprimé ou une forge muette. Le dire franchement plutôt que d'écraser un corps qu'on n'a pas lu.
+  if ! gl_get_description "$reprise" > "$corps" || [ ! -s "$corps" ]; then
+    rm -f "$corps"
+    echo "gl_reste_claude : #$reprise (ticket de reprise de #$source) illisible ou vide — rien réécrit." >&2
+    return 1
+  fi
+  if grep -q "empreinte $empreinte" "$corps"; then
+    rm -f "$corps"
+    printf 'Ticket de reprise #%s : ce correctif y est déjà (empreinte %s) — rien à écrire.\n' \
+      "$reprise" "$empreinte"
+    gl_issue_url "$reprise"
+    return 0
+  fi
+  gl_reste_section "$fichier" "$empreinte" >> "$corps"
+  if ! gl_set_description "$reprise" "$corps" >/dev/null; then
+    rm -f "$corps"
+    echo "gl_reste_claude : échec de la mise à jour de #$reprise — le correctif n'y est PAS." >&2
+    return 1
+  fi
+  rm -f "$corps"
+  printf 'Ticket de reprise #%s complété (correctif ajouté, empreinte %s) — aucun doublon ouvert.\n' \
+    "$reprise" "$empreinte"
+  gl_issue_url "$reprise"
+}
+
+# gl_reste_cree <source> <titre-source> <fichier> <empreinte> — la voie de la CRÉATION.
+#
+# L'ORDRE DES TROIS ÉCRITURES EST LE CONTENU DE LA DÉCISION : création, puis ANCRE, puis état. Un
+# rejeu qui suit un échec ne doit jamais ouvrir un second ticket, donc l'ancre passe avant tout ce
+# qui peut encore échouer. Ce qui reste après elle — l'état — se répare par un verbe nommé dans le
+# message, sans rien dupliquer.
+gl_reste_cree() {
+  local source="$1" titre_source="$2" fichier="$3" empreinte="$4"
+  local user milestone corps nouveau note titre
+  user="$(gl_current_user)" || {
+    echo "gl_reste_claude : compte de la forge indéterminable — le ticket naîtrait LIBRE, donc prenable par un run. Rien n'a été écrit." >&2
+    return 1
+  }
+  # Le jalon est best-effort, comme dans /ticket-create : son absence est une dérive que doctor.sh
+  # signale, jamais une raison de perdre le correctif.
+  milestone="$(gl_current_milestone "$GL_RESTE_RAIL" 2>/dev/null)" || milestone=""
+
+  # Brouillon que personne ne relit — il part aussitôt vers la forge, où il devient le corps du
+  # ticket : temporaire du système, pas `.maestro/` (règle #234, docs/10 §8.5).
+  corps="$(mktemp "${TMPDIR:-/tmp}/maestro-reste.XXXXXX")" || return 1
+  gl_reste_entete "$source" "$titre_source" > "$corps"
+  gl_reste_section "$fichier" "$empreinte" >> "$corps"
+
+  titre="Reste à appliquer sous .claude/ (#$source) — $titre_source"
+  nouveau="$(gh_create_issue "$titre" "$corps" "$GL_RESTE_LABELS" "$milestone" "$user")" || {
+    rm -f "$corps"
+    echo "gl_reste_claude : création du ticket de reprise de #$source en échec — rien n'a été écrit." >&2
+    return 1
+  }
+  rm -f "$corps"
+
+  # Même raison que ci-dessus, et que gh_issue_link : un commentaire qui part n'a pas de lecteur
+  # local (règle #234).
+  note="$(mktemp "${TMPDIR:-/tmp}/maestro-reste-note.XXXXXX")" || return 1
+  gl_reste_ancre "$nouveau" > "$note"
+  if ! gl_issue_note "$source" "$note" >/dev/null; then
+    rm -f "$note"
+    printf 'Ticket de reprise #%s créé, MAIS #%s ne le nomme pas : un rejeu ouvrirait un doublon.\n' \
+      "$nouveau" "$source" >&2
+    printf '  Réparer en postant le lien sur #%s, ou vérifier avant de rejouer.\n' "$source" >&2
+    return 1
+  fi
+  rm -f "$note"
+
+  if ! gl_project_add "$nouveau" >/dev/null 2>&1; then
+    printf 'Ticket de reprise #%s créé et lié à #%s, MAIS SANS ÉTAT — il ne remonte dans aucune vue.\n' \
+      "$nouveau" "$source" >&2
+    printf '  Rejouer : bash scripts/gitlab/lib.sh project-add %s\n' "$nouveau" >&2
+    gl_issue_url "$nouveau"
+    return 1
+  fi
+
+  printf 'Ticket de reprise #%s créé pour #%s — assigné à @%s, « À faire »%s.\n' \
+    "$nouveau" "$source" "$user" "${milestone:+, jalon « $milestone »}"
+  printf '  Assigné À DESSEIN : c'\''est ce qui le tient hors des plans de queue.sh (« À faire ET libre »).\n'
+  gl_issue_url "$nouveau"
+}
+
+# gl_reste_entete <source> <titre-source> — l'en-tête du corps, écrit UNE FOIS à la création. Il
+# nomme la source et dit au lecteur ce qu'il a à faire : sans ça, un ticket de reprise trouvé six
+# semaines plus tard dans `/backlog` est un correctif sans contexte.
+gl_reste_entete() {
+  local source="$1" titre_source="$2"
+  cat <<ENTETE
+Reprise de #$source — $titre_source
+
+Ce ticket porte un **correctif qu'une session autonome n'a pas pu appliquer** : l'écriture sous
+\`.claude/\` est refusée par un garde-fou du CLI, en amont de l'allowlist comme des hooks (#238,
+re-mesuré par #614). La session a fait ce qu'il fallait — elle a rendu le contenu au lieu de
+contourner.
+
+Il existe parce qu'une **description de PR meurt au merge** (#608) : depuis #418/#419 le pilote merge
+sans attendre personne, et la section « reste à appliquer » finit dans le corps d'une PR fermée que
+plus rien ne rouvre. Le ticket, lui, survit.
+
+**Pour le solder** : \`/ticket-start\` sur ce ticket, en session **interactive** — un run autonome se
+ferait refuser exactement la même écriture et reproduirait le résidu. Appliquer chaque correctif
+ci-dessous, puis \`/ticket-ship\`.
+
+⚠ Il naît **assigné**, et c'est ce qui le tient hors des plans de \`queue.sh\`, qui filtre sur
+« À faire **et** libre ». Le libérer sans l'appliquer le rendrait prenable par un run.
+
+ENTETE
+}
+
+# gl_reste_section <fichier> <empreinte> — une section par correctif. L'empreinte est en clair dans
+# le titre de section : c'est elle que le rejeu relit, et elle doit rester greppable sur UNE ligne.
+gl_reste_section() {
+  local fichier="$1" empreinte="$2"
+  printf '\n## Correctif — empreinte %s\n\n' "$empreinte"
+  cat "$fichier"
+  printf '\n'
+}
+
+# gl_reste_ancre <iid-reprise> — le commentaire posé sur le ticket SOURCE. Sa forme est un contrat :
+# c'est « ticket de reprise #<n> » que relit gl_reste_claude au tour suivant.
+gl_reste_ancre() {
+  cat <<ANCRE
+Écriture refusée sous \`.claude/\` : le correctif est rendu dans la description de la PR, mais une PR
+se ferme au merge. Il vit donc aussi dans son **ticket de reprise #$1**, qui lui survit (#608).
+ANCRE
 }
 
 # --- Pipelines CI ---------------------------------------------------------------------------------
@@ -5045,6 +5289,81 @@ gh_issue_note() {
   printf 'Commentaire posté sur #%s.\n' "$iid"
 }
 
+# gh_reste_source <iid> -> « titre <TAB> iid-du-ticket-de-reprise » (second champ vide s'il n'y en a
+# pas encore). Code 3 si le ticket source n'existe pas, 1 si la forge est muette.
+#
+# UNE SEULE LECTURE répond aux DEUX questions de gl_reste_claude — « ce ticket existe-t-il ? » et
+# « a-t-il déjà son ticket de reprise ? » —, et c'est ce qui permet au refus de tomber avant toute
+# écriture sans rien coûter de plus (même souci de compte que #602 : ce n'est pas la durée qui se
+# garde, c'est le NOMBRE d'allers).
+#
+# Le marqueur est cherché APRÈS la clé « comments » : le titre voyage dans la même réponse, et un
+# ticket dont le titre parlerait de tickets de reprise ne doit pas passer pour en avoir un.
+gh_reste_source() {
+  local iid="$1" raw titre reprise
+  if [ -z "$iid" ]; then echo "usage: gh_reste_source <iid>" >&2; return 2; fi
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number:'"$iid"') { title comments(first: 100) { nodes { body } } } } }')" || return 1
+  case "$raw" in
+    *'"issue":null'*)
+      echo "gl_reste_claude : ticket source #$iid introuvable dans $GL_GH_REPO — rien n'a été écrit." >&2
+      return 3 ;;
+  esac
+  titre="$(printf '%s' "$raw" | gl_json_string_field title)"
+  if [ -z "$titre" ]; then
+    echo "gl_reste_claude : ticket source #$iid illisible (titre absent) — rien n'a été écrit." >&2
+    return 1
+  fi
+  reprise="$(printf '%s' "$raw" | sed 's/.*"comments"//' \
+             | grep -o 'ticket de reprise #[0-9][0-9]*' | head -1 | grep -o '[0-9][0-9]*$')"
+  printf '%s\t%s\n' "$titre" "$reprise"
+}
+
+# gh_create_issue <titre> <fichier-corps> <labels-csv> <jalon|""> <assigné|""> -> imprime l'iid créé.
+#
+# En REST (`gh api -X POST`) et non `gh issue create`, pour la raison qui vaut déjà à gh_create_pr et
+# gh_issue_close : c'est la forme que prennent toutes les écritures de ce fichier, elle nomme le
+# dépôt explicitement au lieu de le déduire du remote, et elle porte le corps par `-F body=@<fichier>`
+# — le seul chemin dont #141 a prouvé la fidélité aux octets.
+#
+# Le JALON entre PAR SON NUMÉRO : l'API REST ne connaît pas les titres. C'est ce qui vaut la
+# résolution en deux temps, exactement comme gh_milestone_issues — le contrat porte sur la sortie,
+# pas sur le nombre d'allers.
+gh_create_issue() {
+  local titre="$1" fichier="$2" labels="$3" jalon="$4" assigne="$5" out iid numero lbl
+  if [ -z "$titre" ] || [ -z "$fichier" ]; then
+    echo "usage: gh_create_issue <titre> <fichier> [labels] [jalon] [assigné]" >&2; return 2
+  fi
+  if [ ! -s "$fichier" ]; then echo "gh_create_issue : corps absent ou vide : $fichier" >&2; return 1; fi
+
+  local -a args
+  args=(-X POST "repos/$GL_GH_REPO/issues" -f "title=$titre" -F "body=@$fichier")
+  if [ -n "$labels" ]; then
+    local reste="$labels"
+    while [ -n "$reste" ]; do
+      lbl="${reste%%,*}"
+      if [ "$lbl" = "$reste" ]; then reste=""; else reste="${reste#*,}"; fi
+      [ -n "$lbl" ] && args+=(-f "labels[]=$lbl")
+    done
+  fi
+  [ -n "$assigne" ] && args+=(-f "assignees[]=$assigne")
+  if [ -n "$jalon" ]; then
+    if numero="$(gh_milestone_number "$jalon")"; then
+      args+=(-F "milestone=$numero")
+    else
+      echo "gh_create_issue : jalon « $jalon » non résolu — le ticket naîtra sans jalon." >&2
+    fi
+  fi
+
+  out="$(gh api "${args[@]}" 2>&1)"
+  iid="$(printf '%s' "$out" | grep -o '"number":[0-9]*' | head -1 | sed 's/.*://')"
+  if [ -z "$iid" ]; then
+    printf '%s\n' "$out" >&2
+    echo "gh_create_issue : création refusée par $GL_GH_REPO" >&2
+    return 1
+  fi
+  printf '%s\n' "$iid"
+}
+
 # gh_labels -> tous les labels du dépôt, un nom par ligne (cf. gl_labels).
 # `first: 100` comme partout ailleurs dans ce fichier : au-delà, la pagination — et le dépôt en porte
 # 29 aujourd'hui, dont les neuf labels par défaut de GitHub que personne n'a retirés.
@@ -5249,10 +5568,12 @@ gh_milestones() {
 #
 # ⚠ Comme gh_backlog_table, ce verbe répond à « qui existe ? » et rend la colonne `statut` VIDE :
 # c'est `st_milestone_issues` qui la recouvre depuis la carte des items du projet.
-gh_milestone_issues() {
-  local title="$1" raw numero rows
-  if [ -z "$title" ]; then echo "usage: gh_milestone_issues <titre-exact-du-milestone>" >&2; return 2; fi
-
+# gh_milestone_number <titre-exact> -> le NUMÉRO du jalon, la seule prise que l'API REST accepte.
+# Extrait de gh_milestone_issues, qui le résolvait déjà : gh_create_issue en a besoin pour la même
+# raison, et deux résolutions à tenir d'accord seraient le premier moyen d'en voir une se périmer.
+gh_milestone_number() {
+  local title="$1" raw numero
+  if [ -z "$title" ]; then echo "usage: gh_milestone_number <titre-exact-du-milestone>" >&2; return 2; fi
   raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { milestones(first: 50) { nodes { number title } } } }')" || return 1
   numero="$(printf '%s' "$raw" | awk -v cible="$title" '
     {
@@ -5267,9 +5588,20 @@ gh_milestone_issues() {
     }
   ')"
   if [ -z "$numero" ]; then
-    echo "gh_milestone_issues : aucun jalon « $title » dans $GL_GH_REPO (titre exact attendu — cf. lib.sh milestones)" >&2
+    echo "aucun jalon « $title » dans $GL_GH_REPO (titre exact attendu — cf. lib.sh milestones)" >&2
     return 1
   fi
+  printf '%s\n' "$numero"
+}
+
+gh_milestone_issues() {
+  local title="$1" raw numero rows
+  if [ -z "$title" ]; then echo "usage: gh_milestone_issues <titre-exact-du-milestone>" >&2; return 2; fi
+
+  numero="$(gh_milestone_number "$title")" || {
+    echo "gh_milestone_issues : jalon « $title » non résolu" >&2
+    return 1
+  }
 
   raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { milestone(number: '"$numero"') { issues(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number title labels(first: 30) { nodes { name } } } } } } }')" || return 1
   rows="$(printf '%s\n' "$raw" | awk '
@@ -6377,6 +6709,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issue-title)    gl_issue_title "$@" ;;
     create-mr)      gl_create_mr "$@" ;;
     issue-note)     gl_issue_note "$@" ;;
+    issue-url)      gl_issue_url "$@" ;;
+    reste-claude)   gl_reste_claude "$@" ;;
     project-add)      gl_project_add "$@" ;;
     pipeline-latest)      gl_pipeline_latest "$@" ;;
     pipeline-status)      gl_pipeline_status "$@" ;;
@@ -6450,6 +6784,18 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                         idempotent : met à jour la PR ouverte existante au lieu d'échouer)" >&2
       echo "    issue-note <iid> <fichier>          (poste le fichier en commentaire sur le ticket)" >&2
       echo "    issue-title <iid>                   (titre du ticket, UTF-8 intact)" >&2
+      echo "    issue-url <iid>                     (URL web du ticket)" >&2
+      echo "  Reste à appliquer sous .claude/ — le résidu devient un TICKET (#610, chantier #608) :" >&2
+      echo "    reste-claude <iid-source> <fichier> (crée le ticket de reprise portant le correctif du" >&2
+      echo "                                         fichier : ASSIGNÉ — donc hors des plans de queue.sh," >&2
+      echo "                                         qui filtre sur « À faire ET libre » —, état « À faire »" >&2
+      echo "                                         posé, source nommée, jalon du rail outillage." >&2
+      echo "                                         S'AJOUTE au rendu dans la PR, jamais à sa place (#188)." >&2
+      echo "                                         Rejoué : complète le même ticket au lieu d'en ouvrir" >&2
+      echo "                                         un second ; un correctif déjà présent ne réécrit rien." >&2
+      echo "                                         0=créé/complété/déjà à jour, 2=usage, 3=iid source" >&2
+      echo "                                         inconnu, 4=fichier absent ou vide, 1=échec de forge." >&2
+      echo "                                         3 et 4 tombent AVANT toute écriture)" >&2
       echo "  Peuplement du projet Projects v2 (le Status vit sur l'ITEM, pas sur l'issue — #361) :" >&2
       echo "    project-add <iid> [valeur]  (fait du ticket un item du projet \$MAESTRO_PROJECT_TITRE —" >&2
       echo "                                 défaut « $GL_PROJET_TITRE » — et pose son Status. Défaut « À faire » ;" >&2
