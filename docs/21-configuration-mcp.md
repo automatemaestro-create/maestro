@@ -220,13 +220,13 @@ registre — les pilotes historiques vérifiés par **inclusion** et non par ég
 elle rendrait le test faux à chaque intégration ajoutée, c'est-à-dire chaque fois
 qu'il a le plus de raisons d'être joué), le tri par palier puis par nom, la
 provenance qui ne masque aucune entrée, et le garde-fou d'allowlist inchangé ;
-`apps/web/tests/parametres-mcp.test.tsx` côté écran — la provenance affichée, le
-panneau de chaque intégration, et la recherche sans résultat qui rend une piste
-plutôt qu'un cul-de-sac. ⚠ Ce fichier **suit son sujet** : #270 sort la
-bibliothèque des Paramètres et le renomme en conséquence, ses scénarios inchangés.
-Le reste du comportement de l'**écran** Intégrations est suivi par **#663** — il
-n'a pas pu être écrit avec les autres, sa PR n'étant pas encore mergée quand le
-lot 6 s'est joué.
+`apps/web/tests/integrations-bibliotheque.test.tsx` côté écran — la provenance
+affichée, le panneau de chaque intégration, et la recherche sans résultat qui rend
+une piste plutôt qu'un cul-de-sac. ⚠ Ce fichier **a suivi son sujet** : #270 a
+sorti la bibliothèque des Paramètres et l'a renommé en conséquence
+(`parametres-mcp.test.tsx` avant lui), ses scénarios inchangés. Le **pool projet**
+du même écran est couvert à côté, par `apps/web/tests/integrations-pool.test.tsx`
+(#273) — dont les quatre modes d'auth du §2 ci-dessus, `sans_secret` compris.
 
 ---
 

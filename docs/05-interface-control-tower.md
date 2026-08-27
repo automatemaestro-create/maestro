@@ -18,7 +18,7 @@ ressortie** (#280, §2.0.1). Le menu est déclaré une seule fois
 (`apps/web/lib/navigation.ts`) et fait aujourd'hui **onze entrées** — les deux
 écrans de la Phase 8, « Composer un objectif » (#319) et « Valider le brief »
 (#322), s'y sont ajoutés, puis **« Runs »** (#474, §2.4.1) et
-**« Intégrations »** (#270, §2.9) ; le Kanban des tâches
+**« Intégrations »** (#270, §2.10) ; le Kanban des tâches
 n'en est pas une (il est l'objet de la **vue d'un run**, servie sous « Runs »
 depuis #476 — §2.4.2) et l'écran Projets non plus (il est servi, mais atteint
 depuis le sélecteur du shell).
@@ -112,7 +112,7 @@ notifications, et le **flux temps réel** qui les alimente tous.
 | le **catalogue** d'agents et les **playbooks** | ce sont des définitions, pas du travail — les partager entre projets est l'intérêt d'en avoir | — |
 | le **chat** et l'assistant | ils parlent de l'**outil**, pas du projet ; et un `chat.message` ne porte pas de `projet_id`, donc une socket cadrée ne le recevrait **jamais** (§6.0) — le fil se figerait sans rien dire | — |
 | les **paramètres** du poste (apparence, notifications) | réglages de l'installation, pas d'un projet | la dépense cumulée qui y figure, elle, est celle du projet |
-| les **intégrations MCP** (pool projet et bibliothèque) | elles ont quitté les Paramètres en #270 (§2.9) précisément parce qu'elles n'en sont pas : elles décident de ce qu'un agent sait faire. Le **pool** porte pourtant « projet » dans son nom — c'est un stockage unique (`core/mcp/pool.json`), non cadré à ce jour | — |
+| les **intégrations MCP** (pool projet et bibliothèque) | elles ont quitté les Paramètres en #270 (§2.10) précisément parce qu'elles n'en sont pas : elles décident de ce qu'un agent sait faire. Le **pool** porte pourtant « projet » dans son nom — c'est un stockage unique (`core/mcp/pool.json`), non cadré à ce jour | — |
 
 **Le coût cumulé change de source** avec ce lot. Il se lisait sur `agents[].cout_usd` — un total de
 **tous** les projets, puisque le parc est celui du poste. Il est désormais la somme des **grands
@@ -1631,7 +1631,7 @@ avait l'écran ouvert.
 
 ---
 
-### 2.9 🔌 Intégrations MCP — un écran, pas une section des Paramètres *(#270 — **livré**)*
+### 2.10 🔌 Intégrations MCP — un écran, pas une section des Paramètres *(#270 — **livré**)*
 
 Le pool projet et la bibliothèque curée vivaient dans **Paramètres → Intégrations
 MCP** depuis #133, empilés dans une colonne de réglages. Le reproche de la revue
@@ -1678,8 +1678,13 @@ nulle part — la page reste servie, l'ancre n'existe simplement plus.
 Implémentation : `apps/web/app/integrations/page.tsx` et
 `apps/web/components/integrations/` ; couverture `apps/web/tests/integrations.test.tsx`
 et `apps/web/tests/integrations-bibliotheque.test.tsx` (les scénarios #231,
-inchangés — ils ont suivi leur sujet). Le reste du comportement est différé au
-lot 6 du chantier (#273).
+inchangés — ils ont suivi leur sujet). Le reste du comportement est venu au lot 6
+(#273) : `apps/web/tests/integrations-pool.test.tsx` — le renversement du
+catalogue (`usageDuPool`), les quatre modes d'auth de [docs/21 §2](./21-configuration-mcp.md),
+les quatre états du bloc, le retrait et son échec, et surtout les **trois** états
+de « qui l'utilise », l'ignorance comprise : rendre un catalogue muet comme un
+pool sans utilisateur ferait retirer une intégration en croyant qu'elle ne sert à
+rien, c'est-à-dire se tromper **sur la question même** que cet écran pose.
 
 ---
 
