@@ -240,7 +240,8 @@ export function CentreNotifications() {
  * Le chemin est celui du **fil** depuis #483 (`PAGE_DU_CADRAGE`), où le brief se
  * décide désormais — même raison qu'au panneau du tableau de bord : un renvoi
  * résolu par le menu s'éteint le jour où l'entrée part, et une cloche muette sur
- * un run bloqué est le défaut que le critère 3 interdit.
+ * un run bloqué est le défaut que le critère 3 interdit. L'entrée est partie le
+ * 2026-08-28 (#484) sans que cette carte change.
  */
 function CarteBriefCompacte({
   run,

@@ -25,6 +25,10 @@
  * deviendrait invisible — exactement ce que « un run bloqué ne doit pas dépendre
  * d'un écran qu'on n'a pas ouvert » interdit. Le renvoi suit le geste, et il le
  * suit **avant** que l'écran parte, pas après.
+ *
+ * Ce jour est le 2026-08-28 (#484) : l'entrée est partie, ce panneau n'a pas
+ * bougé d'une ligne, et c'est exactement ce que la précaution ci-dessus
+ * achetait.
  */
 
 import Link from "next/link";

@@ -25,7 +25,7 @@ import { runsEnAttente } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
-import { entreeParLibelle } from "@/lib/navigation";
+import { entreeParLibelle, PAGE_DU_FIL } from "@/lib/navigation";
 import { EXECUTION_EN_ATTENTE_REPONSES } from "@/lib/types";
 
 export function ValidationBriefs() {
@@ -38,7 +38,11 @@ export function ValidationBriefs() {
   // brief le fait sortir de la file, et sans lui l'écran resterait planté sur un
   // run qui n'attend plus rien.
   const courant = runs.find((r) => r.run_id === choisi) ?? runs[0];
-  const composer = entreeParLibelle("Composer un objectif");
+  // Le geste qui remplirait cette file — le fil depuis #484, `PAGE_DU_FIL`.
+  // Écran vide, donc renvoi vers un geste : c'est la convention #186, et elle
+  // vaut ici même si l'écran est en train de partir (`next.config.ts` redirige
+  // `/brief`), ses composants restant montés par le fil du cadrage (#483).
+  const lancer = entreeParLibelle(PAGE_DU_FIL);
 
   return (
     <>
@@ -63,9 +67,9 @@ export function ValidationBriefs() {
           message={`Aucun brief en attente sur ${projet.nom}. Un run lancé depuis la Control Tower s'arrête ici avant de décomposer : c'est le moment où corriger coûte un message.`}
           icone={IconeObjectif}
           lien={
-            composer && {
-              href: composer.href,
-              libelle: "Composer un objectif",
+            lancer && {
+              href: lancer.href,
+              libelle: "Ouvrir le chat",
             }
           }
         />
