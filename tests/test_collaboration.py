@@ -263,28 +263,25 @@ def test_start_brief_signale_une_branche_sans_prefixe(depot: Depot) -> None:
 # Lots parallélisables d'un parent de suivi (#160)
 # =================================================================================================
 
-# LE PARENT DE RÉFÉRENCE PORTE LES DEUX SUPPORTS À LA FOIS — checklist dans le corps, lignes
-# « lot: » dans l'en-tête. C'est la forme d'un vrai ticket du dépôt depuis le backfill (#392) :
-# `/ticket-create` écrit la section ET rattache nativement, et seule la LECTURE bascule (#393).
+# LE PARENT DE RÉFÉRENCE NE PORTE QUE LE DÉCOUPAGE NATIF — des lignes « lot: » dans l'en-tête, et
+# rien dans le corps. C'est la forme d'un vrai ticket du dépôt depuis #395, qui a retiré la
+# checklist markdown des 47 parents : la relation, son ordre, l'état de chaque lot et le marqueur
+# « (parallèle) » viennent tous de la forge.
 #
-# Il n'y en a qu'UN, et c'est le point à ne pas défaire. Tant que le défaut était `checklist`, un
-# second parent « à deux supports » vivait à côté pour les seuls tests du chantier ; deux fixtures
-# à tenir d'accord auraient laissé les tests du régime par défaut se prononcer sur une forme de
-# ticket que l'autre a corrigée depuis — la raison même pour laquelle `tests/harnais_forge.py` est
-# partagé entre les deux suites.
+# Il n'y en a qu'UN, et c'est le point à ne pas défaire. Pendant la migration (#390→#393) un second
+# parent « à deux supports » a vécu à côté pour les seuls tests du chantier ; deux fixtures à tenir
+# d'accord auraient laissé les tests du régime par défaut se prononcer sur une forme de ticket que
+# l'autre a corrigée depuis — la raison même pour laquelle `tests/harnais_forge.py` est partagé
+# entre les deux suites.
+#
+# LE CORPS PORTE UNE AUTRE SECTION, ET ELLE EST LÀ POUR ÊTRE IGNORÉE : la lecture des lots est
+# bornée à l'EN-TÊTE de la vue, et un corps qui déborderait dans le découpage se verrait ici.
 PARENT = corps_ticket(
     "Travail à plusieurs",
     "agent::devops, prio::moyenne, type::infra",
-    """## Sous-tickets
+    """## Notes
 
-- [x] #201 — Socle du chantier
-- [ ] #202 — Écran de suivi (parallèle)
-- [ ] #203 — Endpoint de lecture (parallèle)
-- [ ] #204 — Tests + doc
-
-## Notes
-
-Rien à voir avec la checklist.
+Rien à voir avec le découpage.
 """,
     lots=(
         ("201", "x", "-", "Socle du chantier"),
@@ -309,7 +306,7 @@ def backlog_des_lots(statuts: dict[str, str]) -> list[dict]:
 
 
 def test_subtickets_lit_le_decoupage_et_le_marqueur_parallele(depot: Depot) -> None:
-    """Sans consigne, donc dans le régime PAR DÉFAUT — `natif` depuis #393."""
+    """Le contrat de sortie de `subtickets`, sur le seul support qui reste (#395)."""
     depot.pose_etat(
         issues={"155": PARENT},
         graphql=backlog_des_lots(
@@ -323,37 +320,10 @@ def test_subtickets_lit_le_decoupage_et_le_marqueur_parallele(depot: Depot) -> N
     assert [ligne[1] for ligne in lignes] == ["x", "-", "-", "-"]      # coche du découpage
     assert [ligne[2] for ligne in lignes] == ["Terminé", "À faire", "À faire", "À faire"]
     assert [ligne[3] for ligne in lignes] == ["-", "∥", "∥", "-"]      # marqueur « (parallèle) »
-    # Le marqueur est extrait dans sa colonne, pas laissé dans le titre.
+    # Le marqueur vit dans sa colonne, pas dans le titre.
     assert lignes[1][4] == "Écran de suivi"
-    # Et la section suivante du corps n'a pas débordé dans le découpage.
+    # Et le corps du ticket n'a pas débordé dans le découpage : la lecture est bornée à l'en-tête.
     assert "Rien à voir" not in acheve.stdout
-
-
-def test_le_defaut_est_natif_et_checklist_reste_joignable(depot: Depot) -> None:
-    """Le livrable de #393, et la seule chose qu'aucun autre test ne peut dire.
-
-    Ce qui est gardé ici n'est pas « les deux régimes marchent » — c'est
-    `test_les_deux_supports_rendent_exactement_le_meme_tsv` — mais LEQUEL DES DEUX répond quand
-    personne ne demande rien. Un défaut que rien n'exerce est le défaut de #455 : un mécanisme
-    construit, testé, documenté et éteint pour tout le monde, sans que rien ne le montre.
-
-    Le parent de référence portant les deux supports, ils ne se distinguent pas sur leur sortie :
-    on lit donc la REQUÊTE, seul endroit où le régime laisse une trace non ambiguë.
-    """
-    depot.pose_etat(
-        issues={"155": PARENT}, graphql=backlog_des_lots({"201": "Terminé", "202": "À faire"})
-    )
-    depot.lib("subtickets", "155")
-    par_defaut = [a for a in depot.appels() if "graphql" in a and "issue(number:155)" in a]
-    assert len(par_defaut) == 1, par_defaut
-    assert "subIssues(first: 100)" in par_defaut[0]
-
-    # Et le retour arrière coûte toujours une variable d'environnement, pas une migration : tant
-    # que la checklist est là (son retrait est le lot 6, #395), `checklist` reste accepté ET rend
-    # une table — un régime qui ne serait plus qu'accepté ne servirait à personne.
-    repli = depot.lib("subtickets", "155", reglages={"MAESTRO_LOTS": "checklist"})
-    assert repli.returncode == 0, repli.stderr
-    assert [ligne[0] for ligne in colonnes(repli.stdout)] == ["201", "202", "203", "204"]
 
 
 def test_subtickets_refuse_un_ticket_sans_decoupage(depot: Depot) -> None:
@@ -403,109 +373,64 @@ def test_startables_barre_un_lot_parallele_derriere_un_lot_non_marque(depot: Dep
     assert acheve.stdout.strip() == ""
 
 
-# --- Deux supports, un seul contrat (#390, chantier #389) ----------------------------------------
+# --- Le découpage natif, seul support (#390→#395, chantier #389) ---------------------------------
 # Les tests de ce chantier sont différés au lot 7 (#396) — SAUF ceux-ci. Ce que le passage aux
-# sub-issues natives déplace sans équivalent, c'est le MARQUEUR « (parallèle) » : il vivait dans le
-# titre d'une ligne de checklist, donc dans de la prose, donc nulle part une fois la checklist
-# retirée. Il devient le label `lot::parallele`, et c'est la seule logique du lot qu'on ne peut pas
-# livrer sur parole (docs/10 §5.1 : un lot intermédiaire porte des tests quand sa logique est
-# critique).
+# sub-issues natives a déplacé sans équivalent, c'est le MARQUEUR « (parallèle) » : il vivait dans
+# le titre d'une ligne de checklist, donc dans de la prose, donc nulle part une fois la checklist
+# retirée. Il est devenu le label `lot::parallele`, et c'est la seule logique du chantier qu'on ne
+# pouvait pas livrer sur parole (docs/10 §5.1 : un lot intermédiaire porte des tests quand sa
+# logique est critique).
 #
-# LE PARENT DE RÉFÉRENCE EST CELUI DE TOUTE LA SUITE (`PARENT`, plus haut) : il porte les deux
-# supports à la fois — checklist dans le corps, lignes « lot: » dans l'en-tête —, ce qui est la
-# seule façon de comparer les deux régimes sur le MÊME ticket, et la forme sous laquelle la mesure
-# réelle a été faite (parent jetable #629, rattaché nativement pour l'occasion). Il en portait une
-# copie à lui tant que le défaut était `checklist` ; #393 a supprimé la copie plutôt que le contrat.
+# ⚠ CE QUI A DISPARU AVEC #395, ET POURQUOI CE N'EST PAS UNE PERTE DE COUVERTURE : quatre tests
+# comparaient ici les DEUX régimes de `MAESTRO_LOTS` — même TSV des deux côtés, requête allégée du
+# côté checklist, régime inconnu refusé avant lecture. Leur sujet était la MIGRATION, pas le
+# découpage : il n'y a plus de second régime à comparer, et un test qui compare le natif à lui-même
+# serait vert sans rien prouver. Ce qu'ils gardaient de durable — le marqueur vient du label, la
+# lecture est bornée à l'en-tête, la vue ne coûte qu'un aller — est gardé ci-dessous, sur le seul
+# support qui reste.
 STATUTS_DES_LOTS = {"201": "Terminé", "202": "À faire", "203": "À faire", "204": "À faire"}
 
 
-def test_les_deux_supports_rendent_exactement_le_meme_tsv(depot: Depot) -> None:
-    """Le critère du lot : colonnes comprises, marqueur compris, sur un parent de référence.
+def test_le_marqueur_vient_du_label_et_jamais_de_la_prose(depot: Depot) -> None:
+    """Le SUPPORT est le label, pas le titre : sans `lot::parallele`, un lot est séquentiel.
 
-    ⚠ LES DEUX RÉGIMES SONT NOMMÉS, aucun n'est laissé au défaut. Depuis #393 le défaut vaut
-    `natif` : s'en remettre à lui pour le côté gauche comparerait le natif à lui-même, et l'égalité
-    serait vraie sans rien prouver.
-    """
-    depot.pose_etat(issues={"155": PARENT}, graphql=backlog_des_lots(STATUTS_DES_LOTS))
-    checklist = depot.lib("subtickets", "155", reglages={"MAESTRO_LOTS": "checklist"})
-    natif = depot.lib("subtickets", "155", reglages={"MAESTRO_LOTS": "natif"})
-    assert checklist.returncode == 0, checklist.stderr
-    assert natif.returncode == 0, natif.stderr
-    assert natif.stdout == checklist.stdout
-    # …et ce n'est pas deux fois le même silence : sans cette moitié, deux sorties VIDES seraient
-    # égales et le test serait vert sur une question jamais posée.
-    assert [ligne[3] for ligne in colonnes(natif.stdout)] == ["-", "∥", "∥", "-"]
-    assert [ligne[0] for ligne in colonnes(natif.stdout)] == ["201", "202", "203", "204"]
-
-
-def test_en_natif_le_marqueur_vient_du_label_et_jamais_de_la_prose(depot: Depot) -> None:
-    """Le SUPPORT change, pas seulement la source : sans label, un lot n'est pas parallélisable.
-
-    Le piège que ce test ferme est le repli — lire nativement quand des sub-issues existent, dans
-    la prose sinon. Il rendrait deux supports actifs en même temps, et ici un lot marqué dans la
-    checklist mais non labellisé sortirait « ∥ » d'un régime qui n'a pas à lire la checklist.
+    Le piège que ce test ferme est le repli — lire le label quand il y en a un, la prose sinon. Ici
+    le corps porte le mot « (parallèle) » à l'endroit exact où la checklist le portait, et le lot
+    n'est pas labellisé : sortir « ∥ » voudrait dire qu'un parseur lit encore la prose.
     """
     parent = corps_ticket(
         "Travail à plusieurs",
         "type::infra",
-        "## Sous-tickets\n\n- [ ] #202 — Écran de suivi (parallèle)\n",
+        "## Notes\n\n- [ ] #202 — Écran de suivi (parallèle)\n",
         lots=(("202", "-", "-", "Écran de suivi"),),
     )
     depot.pose_etat(issues={"155": parent}, graphql=backlog_des_lots({"202": "À faire"}))
-    # Sous `checklist`, la prose marque — régime NOMMÉ et non laissé au défaut, qui vaut `natif`
-    # depuis #393 : les deux moitiés du test comparent deux régimes, pas un régime avec lui-même.
-    checklist = depot.lib("subtickets", "155", reglages={"MAESTRO_LOTS": "checklist"})
-    assert colonnes(checklist.stdout)[0][3] == "∥"
-    # Sous `natif`, le label fait foi, et il est absent.
-    natif = depot.lib("subtickets", "155", reglages={"MAESTRO_LOTS": "natif"})
-    assert natif.returncode == 0, natif.stderr
-    assert colonnes(natif.stdout)[0][3] == "-"
+    acheve = depot.lib("subtickets", "155")
+    assert acheve.returncode == 0, acheve.stderr
+    assert colonnes(acheve.stdout)[0][3] == "-"
+    # …et ce n'est pas un silence : le lot est bien là, c'est son seul marqueur qui manque.
+    assert colonnes(acheve.stdout)[0][0] == "202"
 
 
-def test_le_natif_ne_coute_aucun_aller_de_plus(depot: Depot) -> None:
+def test_le_decoupage_ne_coute_aucun_aller_de_plus(depot: Depot) -> None:
     """`parent` et `subIssues` voyagent DANS la requête de la vue canonique, pas à côté.
 
-    C'est ce qui fait que les verbes qui rejouent le parsing sur un ticket déjà lu basculent sans
+    C'est ce qui fait que les verbes qui rejouent le parsing sur un ticket déjà lu ont basculé sans
     changement, et que le coût de lecture du chantier (#389, risque technique) se mesure en taille
     de requête et jamais en nombre d'allers.
     """
     depot.pose_etat(issues={"155": PARENT}, graphql=backlog_des_lots(STATUTS_DES_LOTS))
-    depot.lib("subtickets", "155", reglages={"MAESTRO_LOTS": "natif"})
+    depot.lib("subtickets", "155")
     vues = [a for a in depot.appels() if "graphql" in a and "issue(number:155)" in a]
     assert len(vues) == 1, vues
     assert "subIssues(first: 100)" in vues[0]
 
 
-def test_en_regime_checklist_la_requete_ne_demande_pas_les_sub_issues(depot: Depot) -> None:
-    """Le REPLI est soustractif au sens strict : la question posée à la forge redevient l'ancienne.
-
-    Le corollaire du retour arrière à une variable d'environnement près (#393) : `checklist` ne
-    doit pas seulement rendre la bonne table, il doit redemander exactement ce qu'il redemandait —
-    sans quoi le repli traînerait le coût du régime qu'il est censé annuler.
-    """
-    depot.pose_etat(issues={"155": PARENT}, graphql=backlog_des_lots(STATUTS_DES_LOTS))
-    depot.lib("subtickets", "155", reglages={"MAESTRO_LOTS": "checklist"})
-    vues = [a for a in depot.appels() if "graphql" in a and "issue(number:155)" in a]
-    assert len(vues) == 1, vues
-    assert "subIssues" not in vues[0]
-    assert "pnum" not in vues[0]
-
-
-def test_un_regime_de_lots_inconnu_est_refuse_avant_toute_lecture(depot: Depot) -> None:
-    """`MAESTRO_LOTS` est un ensemble FERMÉ : une faute de frappe ne traite pas le backlog dans le
-    mauvais régime en silence — elle fait échouer la première lecture, avec son message."""
-    depot.pose_etat(issues={"155": PARENT})
-    acheve = depot.lib("subtickets", "155", reglages={"MAESTRO_LOTS": "checkliste"})
-    assert acheve.returncode != 0
-    assert "MAESTRO_LOTS" in acheve.stderr
-    assert not [a for a in depot.appels() if "graphql" in a]
-
-
-def test_le_parent_natif_se_lit_dans_l_entete_et_jamais_dans_le_corps(depot: Depot) -> None:
-    """`parent-of` change de source, et la lecture est bornée à l'en-tête de la vue.
+def test_le_parent_se_lit_dans_l_entete_et_jamais_dans_le_corps(depot: Depot) -> None:
+    """`parent-of` lit `Issue.parent`, et la lecture est bornée à l'en-tête de la vue.
 
     Un corps qui parle d'un autre ticket — une note technique, un extrait de vue collé dans une
-    description — ne doit pas fabriquer un parent sous un régime qui ne lit plus la prose.
+    description — ne doit pas fabriquer un parent maintenant que plus rien ne lit la prose.
     """
     lot = corps_ticket(
         "Écran de suivi",
@@ -514,13 +439,12 @@ def test_le_parent_natif_se_lit_dans_l_entete_et_jamais_dans_le_corps(depot: Dep
         parent="155",
     )
     depot.pose_etat(issues={"202": lot})
-    checklist = depot.lib("parent-of", "202", reglages={"MAESTRO_LOTS": "checklist"})
-    assert checklist.stdout.strip() == "155"
-    natif = depot.lib("parent-of", "202", reglages={"MAESTRO_LOTS": "natif"})
-    assert natif.stdout.strip() == "155"
-    # …et le natif ne s'est pas contenté de tomber sur la même réponse par la prose : c'est
-    # l'en-tête `parent:` qui répond, borné, sans quoi le « parent:\t999 » du corps l'emporterait.
-    sans_entete = corps_ticket("Écran de suivi", "type::feature", "parent:\t999\n")
+    assert depot.lib("parent-of", "202").stdout.strip() == "155"
+    # …et la réponse ne vient pas de la phrase « Sous-ticket de #155 » du corps : c'est l'en-tête
+    # `parent:` qui répond, borné, sans quoi le « parent:\t999 » plus bas l'emporterait.
+    sans_entete = corps_ticket(
+        "Écran de suivi", "type::feature", "Sous-ticket de #155.\n\nparent:\t999\n"
+    )
     depot.pose_etat(issues={"203": sans_entete})
     assert depot.lib("parent-of", "203").stdout.strip() == ""
 
@@ -537,7 +461,7 @@ def test_le_parent_natif_se_lit_dans_l_entete_et_jamais_dans_le_corps(depot: Dep
 
 
 def test_subtickets_demande_les_lots_par_leur_numero_et_pas_le_backlog(depot: Depot) -> None:
-    """Deux lectures en tout : la checklist du parent, puis l'état des lots nommés."""
+    """Deux lectures en tout : la vue du parent (lots compris), puis l'état des lots nommés."""
     depot.pose_etat(
         issues={"155": PARENT},
         graphql=backlog_des_lots({"201": "Terminé", "202": "À faire", "203": "À faire"}),
@@ -596,8 +520,8 @@ def test_statuts_distingue_le_hors_projet_du_ticket_inexistant(depot: Depot) -> 
     """« - » = le ticket existe mais n'a pas d'état ; aucune ligne = il n'existe pas.
 
     C'est le contrat de `gh_issues_state`, et la raison en est la même : ce que vaut le silence
-    d'un alias appartient à l'appelant. `gl_subtickets_enrich` le compte « ? » — un iid de
-    checklist qui ne désigne aucun ticket n'est pas un état, c'est une checklist à corriger.
+    d'un alias appartient à l'appelant. `gl_subtickets_enrich` le compte « ? » — un lot qui ne
+    désigne aucun ticket n'est pas un état, c'est un rattachement à corriger.
 
     ⚠ Le double rend ici la réponse du PIRE cas — les alias inexistants s'accompagnant d'un
     tableau `errors` —, et c'est ce qui donne son sens au test : sur cette réponse-là,

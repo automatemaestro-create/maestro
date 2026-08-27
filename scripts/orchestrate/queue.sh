@@ -32,10 +32,11 @@
 #    entre lots, et lui seul (le marqueur « (parallèle) » dit que deux lots peuvent être pris en
 #    même temps, pas qu'ils peuvent être pris à l'envers).
 #
-#    « L'ordre du parent » est celui de sa CHECKLIST en régime `MAESTRO_LOTS=checklist`, celui de
-#    ses SUB-ISSUES en `natif` — le défaut depuis #393. Ce fichier n'a pas à le savoir : il demande
-#    les lots à `gl_subticket_rows` et le parent à `gl_parent_marqueur`, qui rendent le même TSV des
-#    deux côtés (même contrat de surface que la colonne `statut` ci-dessus, et même raison).
+#    « L'ordre du parent » est celui de ses SUB-ISSUES, seul support du découpage depuis #395 (il
+#    fut celui d'une checklist markdown jusqu'à la bascule de #393). Ce fichier n'a pas à le savoir :
+#    il demande les lots à `gl_subticket_rows` et le parent à `gl_parent_marqueur`, dont le TSV n'a
+#    bougé à aucun des deux changements (même contrat de surface que la colonne `statut` ci-dessus,
+#    et même raison).
 #
 # 3. Les lots d'un même parent restent CONTIGUS, le parent héritant de la priorité maximale de ses
 #    lots. S'intercaler entre le lot 3 et le lot 4 ferait partir le lot 4 d'un `origin/main` qui a
@@ -46,7 +47,7 @@
 #    l'ordre soit REPRODUCTIBLE : deux appels sur le même backlog rendent le même plan.
 #
 # 5. Le plan DIT, en plus, ce qui pourrait partir en même temps — colonne `groupe` (#288, parent
-#    #287). Jusqu'ici le marqueur « (parallèle) » de la checklist servait à ordonner puis était jeté,
+#    #287). Jusqu'ici le marqueur « (parallèle) » servait à ordonner puis était jeté,
 #    si bien que rien dans le plan figé ne portait l'indépendance ; la boucle du lot suivant n'aurait
 #    eu qu'un ordre plat sur quoi décider, ou aurait dû recalculer la règle à chaud alors que le plan,
 #    lui, ne bouge plus une fois écrit.
@@ -68,8 +69,8 @@
 #    non marqué tombent donc dans deux vagues — leur indépendance de principe était de toute façon sans
 #    effet, la barrière qui les sépare les ordonnant déjà.
 #
-#    La vague se compte sur TOUTE la checklist du parent, lots déjà livrés compris : c'est une
-#    propriété de la checklist, pas du plan, et deux plans successifs doivent la donner pareille.
+#    La vague se compte sur TOUS les lots du parent, lots déjà livrés compris : c'est une propriété
+#    du découpage, pas du plan, et deux plans successifs doivent la donner pareille.
 #
 # --- Coût en appels -------------------------------------------------------------------------------
 # Deux lectures GraphQL (les tickets du milestone, les assignés du backlog ouvert) puis UNE lecture
@@ -343,7 +344,7 @@ fi
 # forge (en-tête de lib.sh), et son format est le MÊME des deux côtés — d'où les deux projections
 # ci-dessous, inchangées. L'appel direct, lui, aurait interrogé la mauvaise forge à la bascule, et
 # le plan d'un run se serait construit sur les descriptions du mauvais dépôt : les marqueurs
-# « Sous-ticket de #N » et « ## Sous-tickets » auraient été lus ailleurs que là où le run travaille.
+# du découpage auraient été lus ailleurs que là où le run travaille.
 vue() {
   # Deux instructions, et non `local iid="$1" f="…$iid…"` : `local` est une commande, dont bash
   # développe TOUS les mots avant d'exécuter la moindre affectation — `$iid` y vaudrait donc encore
@@ -358,24 +359,22 @@ vue() {
 
 # parent_de <iid> -> iid du parent si le ticket est un lot, rien sinon. Réutilise
 # gl_parent_marqueur (lib.sh) pour que le sens lot → parent n'existe qu'à un seul endroit — c'est
-# lui qui sait dans quel RÉGIME lire (`MAESTRO_LOTS`, #390) : la ligne d'en-tête `parent:` de la vue
-# canonique en natif, le marqueur « Sous-ticket de #<iid> » de la description en checklist.
+# lui qui sait où lire : la ligne d'en-tête `parent:` de la vue canonique, posée depuis `Issue.parent`.
 #
-# LE MOTIF ÉTAIT RECOPIÉ ICI JUSQU'À #393, et ce n'était pas une redondance inoffensive : le plan
-# d'un run se serait construit sur la prose alors que tout le reste du fichier lisait déjà le natif
-# (est_parent, chaine_du_parent), c'est-à-dire deux supports actifs dans le MÊME script — la panne
-# exacte que le principe « le régime décide, jamais la présence » interdit. Elle n'aurait rien
-# affiché de faux tant que les deux supports coexistent sur chaque ticket ; elle aurait rendu des
-# lots isolés, un par un, dès le premier ticket créé sans la phrase (lot 6).
+# LE MOTIF ÉTAIT RECOPIÉ ICI JUSQU'À #393 — un `grep` de « Sous-ticket de #<iid> » dans la prose —,
+# et ce n'était pas une redondance inoffensive : le plan d'un run se serait construit sur la prose
+# alors que tout le reste du fichier lisait déjà le natif (est_parent, chaine_du_parent), c'est-à-dire
+# deux supports actifs dans le MÊME script. Elle n'aurait rien affiché de faux tant que les deux
+# supports coexistaient sur chaque ticket ; elle aurait rendu des lots isolés, un par un, dès le
+# premier ticket créé sans la phrase.
 parent_de() {
   local f
   f="$(vue "$1")" || return 1
   gl_parent_marqueur <"$f"
 }
 
-# est_parent <iid> -> 0 si le ticket porte un découpage non vide (section « ## Sous-tickets » en
-# régime checklist, sub-issues rattachées en natif). Réutilise gl_subticket_rows (lib.sh) pour que
-# ce parsing n'existe qu'à un seul endroit.
+# est_parent <iid> -> 0 si le ticket porte un découpage non vide (au moins une sub-issue rattachée).
+# Réutilise gl_subticket_rows (lib.sh) pour que ce parsing n'existe qu'à un seul endroit.
 est_parent() {
   local f
   f="$(vue "$1")" || return 1
@@ -409,8 +408,8 @@ rang_prio() { # <prio> -> clé de tri numérique (haute d'abord)
 # deux le marqueur — c'est ce qui agrège une suite de lots « (parallèle) » en une seule vague et fait
 # de tout lot non marqué une barrière. Le marqueur est lu dans la colonne que gl_subticket_rows
 # extrait déjà (« ∥ ») : ce parsing n'existe qu'à un seul endroit, lib.sh — et c'est ce qui fait que
-# la bascule de #393 ne change pas une ligne ici, la colonne venant du titre de la checklist en
-# régime `checklist` et du label `lot::parallele` en `natif`.
+# ni la bascule de #393 ni le retrait de #395 n'ont changé une ligne ici, la colonne étant passée du
+# titre d'une ligne de checklist au label `lot::parallele` sans changer de forme.
 chaine_du_parent() {
   local parent="$1"
   local f="$TMP/chaine/$parent.tsv"
@@ -444,11 +443,10 @@ while IFS=$'\t' read -r iid prio titre; do
   # mieux vaut un ordre visiblement plat qu'un ordre faux qui a l'air juste. Son groupe suit — un
   # lot dont on ne sait pas dire la place ne peut pas non plus se voir attribuer une vague.
   #
-  # « DÉCOUPAGE » ET NON « CHECKLIST » (#393) : le message nommait le support historique, et l'aurait
-  # nommé à contretemps en régime natif — la faute de `gl_pas_un_parent`, qui parle pour cette raison
-  # dans les mots du régime courant. Le cas est d'ailleurs presque impossible en natif, la relation y
-  # étant bidirectionnelle : un lot que `Issue.parent` désigne figure toujours dans les `subIssues`
-  # de ce parent. Il reste vrai en checklist, où la ligne s'ajoute à la main.
+  # « DÉCOUPAGE » ET NON « CHECKLIST » (#393) : le message nommait le support historique, celui d'une
+  # ligne ajoutée à la main dans une liste markdown. Le cas est devenu presque impossible en natif,
+  # la relation y étant bidirectionnelle — un lot que `Issue.parent` désigne figure toujours dans les
+  # `subIssues` de ce parent —, mais le garde-fou reste : une lecture partielle le rendrait vrai.
   if [ -n "$parent" ] && [ -z "$rang" ]; then
     diag "  ⚠ #$iid se déclare lot de #$parent mais n'est pas dans son découpage — traité isolément"
     parent=""
@@ -463,7 +461,7 @@ while IFS=$'\t' read -r iid prio titre; do
 done <"$TMP/candidats.tsv"
 
 # --- 5 bis. L'arbitrage : ce que le plan ne peut pas savoir tout seul (#562, docs/10 §5.1) --------
-# La colonne `groupe` ne dit que ce que la checklist du parent DÉCLARE. Le marqueur « (parallèle) »
+# La colonne `groupe` ne dit que ce que le découpage du parent DÉCLARE. Le marqueur « (parallèle) »
 # étant facultatif (#160), un parent sans aucun marqueur rend une chaîne de vagues à un lot chacune —
 # c'est-à-dire un plan parfaitement séquentiel, indiscernable d'un séquentiel VOULU. Mesure du
 # 2026-08-26 : 16 parents sur 42 n'ont jamais reçu un seul marqueur.

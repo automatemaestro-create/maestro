@@ -150,8 +150,8 @@ def vue_texte_en_json(texte):
         "milestone": {"jalon": champs.get("milestone", "")},
     }
     # `parent` et `lots` ne sont rendus QUE si le test les a décrits, parce que le vrai `gh` ne rend
-    # que les champs demandés : en régime `checklist` la requête ne les porte pas, et une réponse
-    # qui les porterait quand même laisserait passer un code qui les lit hors régime.
+    # que ce qui existe : un ticket sans parent rend `null`, un ticket sans sub-issue une liste
+    # vide. Les servir d'office ferait d'un ticket ordinaire un lot, et d'un lot un parent.
     #
     # L'ORDRE DES CLÉS EST DU CONTRAT ICI, pas de la mise en forme (cf. l'en-tête de cette section).
     # `gh_lots_natifs` borne le titre d'un lot par `","state":`, et le bloc des lots par le champ
@@ -218,8 +218,8 @@ if args[:2] == ["api", "graphql"]:
     # requête la plus spécifique du lot, elle passe donc avant les règles.
     # ⚠ « qui ne demande PAS de commentaires » : un ticket décrit par un test n'en porte aucun, donc
     # servir cette vue à une requête qui en demande répondrait « aucun commentaire » à qui pose la
-    # question — le contraire d'un silence, et un vert sur une question jamais posée. Deux lectures
-    # du dépôt les demandent (gh_issue_link, gh_reste_source), et elles passent par `graphql`.
+    # question — le contraire d'un silence, et un vert sur une question jamais posée. Les lectures
+    # du dépôt qui les demandent (gh_reste_source, gh_issue_notes) passent par `graphql`.
     if ("issue(number:" in requete and '"body"' not in requete and "body }" in requete
             and "comments(" not in requete):
         iid = requete.split("issue(number:", 1)[1].split(")", 1)[0]
@@ -448,8 +448,8 @@ def regle_statuts(statuts: dict[str, str], inexistants: tuple[str, ...] = ()) ->
     `statuts` est « iid -> libellé », même convention que `regles_carte` : un libellé VIDE est un
     ticket présent dans le projet au Status non posé (« - » en sortie).
 
-    `inexistants` porte les iid qui NE DÉSIGNENT AUCUNE ISSUE — le cas d'un numéro de PR recopié
-    dans une checklist. C'est le pire cas du verbe, et il n'est pas cosmétique : l'API rend alors
+    `inexistants` porte les iid qui NE DÉSIGNENT AUCUNE ISSUE — le cas d'un numéro de PR rattaché
+    par erreur. C'est le pire cas du verbe, et il n'est pas cosmétique : l'API rend alors
     l'alias à `null` **et un tableau `errors`**, sur quoi `gh api graphql --jq` recrache la réponse
     NON FILTRÉE. Un `st_statuts` écrit avec `--jq` aurait donc rendu zéro ligne — « aucun état »
     pour tous les lots — avec le code de succès. D'où le parsing en awk sur le JSON brut, et d'où
@@ -658,11 +658,10 @@ def corps_ticket(
     que soit son cycle de vie. C'est donc ici, et pas dans la carte du projet, que se décrit un lot
     livré — ou abandonné, qui est fermé au même titre.
 
-    `parent` et `lots` décrivent le DÉCOUPAGE NATIF (#390) — les deux lignes d'en-tête que
-    `gh_issue_raw` pose sous `MAESTRO_LOTS=natif`, depuis `Issue.parent` et `Issue.subIssues`. Un
-    lot est un quadruplet « iid, coche(x|-), par(∥|-), titre », c'est-à-dire EXACTEMENT les quatre
-    colonnes que `gl_subticket_rows` rend des deux côtés : c'est ce qui permet à un test de décrire
-    un parent portant les DEUX supports et de comparer les deux sorties.
+    `parent` et `lots` décrivent le DÉCOUPAGE (#390) — les deux lignes d'en-tête que `gh_issue_raw`
+    pose depuis `Issue.parent` et `Issue.subIssues`, seul support depuis #395. Un lot est un
+    quadruplet « iid, coche(x|-), par(∥|-), titre », c'est-à-dire EXACTEMENT les quatre colonnes que
+    `gl_subticket_rows` rend : un parent se décrit donc ici, et jamais dans le corps.
     """
     decoupage = ""
     if parent is not None:

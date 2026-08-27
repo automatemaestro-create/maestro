@@ -58,9 +58,10 @@
 #
 # CE QUE GITHUB N'A PAS, et comment on le remplace :
 #   • Pas de lien « relates to » — mais un `#<n>` mentionné dans un corps y CRÉE une référence
-#     croisée native, sur quoi `gh_issue_link` s'appuyait. ⚠ Le seul couple que le dépôt liait
-#     jamais était parent/lot, et GitHub porte CELUI-LÀ nativement : depuis #391, `issue-link`
-#     rattache une sub-issue (cf. gl_issue_link) au lieu de poster une mention.
+#     croisée native, sur quoi le `gh_issue_link` de l'ère checklist s'appuyait. ⚠ Le seul couple
+#     que le dépôt liait jamais était parent/lot, et GitHub porte CELUI-LÀ nativement : depuis #391,
+#     `issue-link` rattache une sub-issue (cf. gl_issue_link) au lieu de poster une mention, et le
+#     verbe de repli est parti avec le support qu'il servait (#395).
 #   • Pas de date de début ni d'échéance, PAS DE TEMPS PASSÉ (263/330 tickets, 603 h — docs/27 §5) :
 #     c'est la seule vraie perte, et elle est comblée par le SUIVI MAISON ci-dessous.
 #   • Pas de date de début sur un jalon : la colonne `debut` de `milestones` vaut « - ».
@@ -782,64 +783,58 @@ $desc"
 
 # --- Sous-tickets (découpage parent / lots) -------------------------------------------------------
 # Convention (docs/10-workflow-git.md §5.1) : un besoin qui dépasse ~1 session de travail est porté
-# par un ticket PARENT de suivi dont la description contient une section « ## Sous-tickets » :
-# checklist ORDONNÉE « - [ ] #<iid> — <titre> » (ordre de réalisation, lot final tests+doc).
-# Chaque sous-ticket commence sa description par « Sous-ticket de #<parent> » (marqueur parsé par
-# gl_parent_of) et est lié au parent via un issue link « relates to » (gl_issue_link).
+# par un ticket PARENT de suivi auquel ses lots sont rattachés en SUB-ISSUES natives — `Issue.parent`
+# d'un côté, `Issue.subIssues` de l'autre, la relation, son ordre et son état venant tous trois de la
+# forge (gl_issue_link pour l'écriture, gl_parent_of / gl_subtickets pour la lecture). Chaque
+# sous-ticket commence en outre sa description par « Sous-ticket de #<parent> » : une phrase pour le
+# lecteur humain, que plus aucun parseur ne lit.
 #
-# MARQUEUR « (parallèle) » (ticket #160) — un lot dont le titre de checklist se termine par
-# « (parallèle) » déclare qu'il **ne dépend pas** des autres lots parallèles qui le précèdent :
-# deux personnes peuvent les prendre en même temps sans que /ticket-start n'en bloque un. Le
-# marqueur est FACULTATIF, et son absence conserve le comportement séquentiel d'origine. D'où la
-# règle de blocage, appliquée par gl_start_brief et gl_subtickets_startables :
+# MARQUEUR « (parallèle) » (ticket #160) — un lot qui porte le label `lot::parallele` déclare qu'il
+# **ne dépend pas** des autres lots parallèles qui le précèdent : deux personnes peuvent les prendre
+# en même temps sans que /ticket-start n'en bloque un. Le marqueur est FACULTATIF, et son absence
+# conserve le comportement séquentiel d'origine. D'où la règle de blocage, appliquée par
+# gl_start_brief et gl_subtickets_startables :
 #   un lot précédent non livré (ni « Terminé » ni « En revue ») bloque, SAUF si le lot visé ET ce
 #   lot précédent portent tous deux le marqueur.
 # Un lot NON marqué reste donc barré par tout ce qui le précède — c'est ce qui garde le lot final
 # « tests + doc » derrière l'ensemble des lots, marqueurs compris.
 #
 # ================================================================================================
-# DEUX SUPPORTS, UN COMMUTATEUR — `MAESTRO_LOTS=checklist|natif` (#390, chantier #389)
+# UN SEUL SUPPORT — les sub-issues natives (#395, chantier #389)
 # ================================================================================================
-# Tout ce qui précède décrit le support HISTORIQUE : de la PROSE, et rien d'autre. Le sens
-# enfant → parent est un `grep` du marqueur « Sous-ticket de #N » dans le corps, le sens
-# parent → enfants un parsing awk de la section « ## Sous-tickets ». GitHub porte nativement cette
-# relation depuis les SUB-ISSUES (`Issue.parent`, `Issue.subIssues`), et #389 en fait le seul
-# support ; #390 a posé le second régime et l'a laissé ÉTEINT, #393 l'ALLUME.
+# Le support HISTORIQUE était de la PROSE, et rien d'autre : le sens enfant → parent, un `grep` du
+# marqueur « Sous-ticket de #N » dans le corps ; le sens parent → enfants, un parsing awk d'une
+# section « ## Sous-tickets » portant une checklist « - [ ] #<iid> — <titre> ». GitHub porte
+# nativement cette relation depuis les SUB-ISSUES, et le chantier #389 en a fait le seul support en
+# quatre temps : #390 a posé la lecture native derrière un commutateur `MAESTRO_LOTS` laissé ÉTEINT,
+# #391 l'écriture, #392 le backfill des 41 parents, #393 la bascule du défaut — et #395, ici, le
+# RETRAIT, en dernier et seul.
 #
-# LE COMMUTATEUR EST LA CLÉ DU DÉCOUPAGE, patron validé deux fois (#335 `MAESTRO_FORGE`, #358
-# `MAESTRO_CYCLE`) : réécrire les lectures d'un bloc aurait cassé `/ticket-start` et `/orchestrate`
-# entre deux merges, tant que les 41 parents du dépôt n'étaient pas rattachés nativement. Ils le
-# sont depuis le backfill (#392), d'où la bascule ici — et le RETRAIT vient en dernier et seul
-# (lot 6) : comme pour les labels de #365, tant que la checklist est là un retour arrière coûte une
-# variable d'environnement (`MAESTRO_LOTS=checklist`), et pas une migration.
+# POURQUOI EN DERNIER ET SEUL, ET CE QUE ÇA COÛTE MAINTENANT : tant que la checklist était là, un
+# retour arrière coûtait une variable d'environnement ; il coûte désormais une migration. C'est la
+# même décision qu'au retrait des six labels `workflow::*` (#365), et elle se prend une fois : ne pas
+# réintroduire un second support « au cas où », le premier symptôme de deux supports étant un parent
+# dont la moitié des lots vient d'un côté et l'autre moitié de l'autre.
 #
-# CE QUE LA BASCULE NE TOUCHE PAS : L'ÉCRITURE. `/ticket-create` continue d'écrire la section
-# « ## Sous-tickets » ET de rattacher nativement (`issue-link`, non commuté — cf. plus bas). Écrire
-# les deux supports est le propre d'une migration ; en LIRE deux est la panne que le principe
-# ci-dessous interdit, et c'est bien la lecture, elle seule, qui bascule ici.
-#
-# LE RÉGIME DÉCIDE, JAMAIS LA PRÉSENCE, et c'est le seul point de conception qui vaille d'être
-# défendu. Il aurait été tentant de lire « nativement si des sub-issues existent, dans la prose
-# sinon » : c'est exactement ce qui fabrique DEUX SUPPORTS ACTIFS EN MÊME TEMPS — un parent
-# rattaché à moitié rendrait la moitié de ses lots, sans que rien ne le dise, et l'ordre des lots
-# viendrait tantôt de la checklist tantôt de la priorisation native. Un régime inconnu est refusé
-# AVANT toute lecture, comme l'effort de `run.sh` : le repli silencieux sur un régime est ce qu'on
-# ne veut pas ici.
+# CE QUE LE PRINCIPE « LE RÉGIME DÉCIDE, JAMAIS LA PRÉSENCE » devient : sans objet, et c'est le seul
+# gain de conception du retrait. Il gardait, pendant la migration, contre la tentation de lire
+# « nativement si des sub-issues existent, dans la prose sinon » — c'est-à-dire deux supports actifs
+# en même temps. Avec un support unique la question ne peut plus se poser : un parent sans sub-issue
+# n'est pas un parent, et c'est tout.
 #
 # CE QUE LE NATIF NE COÛTE PAS : UN SEUL ALLER. `parent` et `subIssues` sont demandés DANS la
 # requête de `gh_issue_raw` (cf. son en-tête), donc la relation voyage dans la vue TEXTE canonique,
 # en lignes d'en-tête `parent:` et `lot:`. C'est ce qui fait que les cinq verbes qui rejouent
 # `gl_parent_marqueur`/`gl_subticket_rows` sur un ticket DÉJÀ LU — `gl_arbitrage_de`,
 # `gl_ferme_parent`, `gl_demarre_parent`, `gl_start_brief`, et `queue.sh` sur sa vue en cache —
-# basculent sans payer une lecture de forge de plus.
+# n'ont pas payé une lecture de forge de plus à la bascule.
 #
-# ET C'EST MESURÉ, PAS DÉDUIT (#393 ; la doc du dispositif vient au lot 7, #396). Le coût de lecture
-# était nommé comme le seul vrai risque technique du chantier (#389), et la leçon du lot 4 de #358
-# est de le mesurer AVANT de basculer. `queue.sh` est sur le chemin critique d'`/orchestrate` : il a
-# donc été joué dans les deux
-# régimes, sur deux milestones réels, en COMPTANT les allers de forge et en chronométrant en
-# ALTERNANCE — la latence d'un aller variant du simple au double dans la journée (#602), deux
-# séries consécutives auraient surtout mesuré l'heure qu'il est.
+# ET C'EST MESURÉ, PAS DÉDUIT (#393). Le coût de lecture était nommé comme le seul vrai risque
+# technique du chantier (#389), et la leçon du lot 4 de #358 est de le mesurer AVANT de basculer.
+# `queue.sh` étant sur le chemin critique d'`/orchestrate`, il a été joué dans les deux régimes, sur
+# deux milestones réels, en COMPTANT les allers de forge et en chronométrant en ALTERNANCE — la
+# latence d'un aller variant du simple au double dans la journée (#602), deux séries consécutives
+# auraient surtout mesuré l'heure qu'il est.
 #
 #   « Outillage de la forge » (3 lots au plan)  : 17 allers des deux côtés · 52 218 → 53 856 o (+3,1 %)
 #   « Control Tower v3 — agents » (16 tickets)  : 30 allers des deux côtés · 68 542 → 72 376 o (+5,6 %)
@@ -847,21 +842,17 @@ $desc"
 #     avant la bascule  46,08 s / 45,55 s   (−0,53 s ; minimums +1,25 s ; dispersion interne 3,4 s)
 #     après la bascule  43,07 s / 44,20 s   (+1,14 s ; minimums +0,38 s ; dispersion interne 1,3 s)
 #
-# Les deux plans sont IDENTIQUES À L'OCTET, le nombre d'allers ne bouge pas, et l'écart de temps
-# change de SIGNE d'une série à l'autre tout en restant plus petit que la dispersion d'un même
-# régime d'un tour à l'autre : il n'y a rien à en conclure sinon qu'il n'y a rien. Les deux séries
-# entières se déplacent de 3 s entre elles, sur un code inchangé pour le régime `checklist` — c'est
-# la latence de l'aller qui bouge dans la journée (#602), et la raison de l'alternance : deux séries
-# consécutives auraient mesuré l'heure qu'il est.
+# Les deux plans étaient IDENTIQUES À L'OCTET, le nombre d'allers ne bougeait pas, et l'écart de
+# temps changeait de SIGNE d'une série à l'autre tout en restant plus petit que la dispersion d'un
+# même régime d'un tour à l'autre : il n'y avait rien à en conclure sinon qu'il n'y avait rien.
 #
-# AUCUN CACHE N'A DONC ÉTÉ POSÉ. Le critère du ticket le prévoyait « si l'écart est significatif » ;
+# AUCUN CACHE N'A DONC ÉTÉ POSÉ. Le critère de #393 le prévoyait « si l'écart est significatif » ;
 # poser un cache contre un écart qu'on ne sait pas distinguer du bruit serait de la complexité payée
 # pour rien, avec sa péremption à tenir. Ce qui rend le résultat prévisible plutôt que chanceux : le
 # natif demande une requête PLUS GROSSE, jamais des allers EN PLUS, et c'est le nombre d'allers qui
 # fait le temps (#602 : ~1,2 à 2,5 s l'aller, 38 ms le chargement du script). Le cache que le
 # critère évoquait existe d'ailleurs déjà là où il compte — `queue.sh` met en cache la vue de chaque
 # ticket qu'il lit (son §4), si bien qu'un parent relu comme candidat est gratuit.
-GL_LOTS_DEFAUT="${GL_LOTS_DEFAUT:-natif}"
 
 # LE MARQUEUR « (parallèle) » EST LE SEUL VRAI TROU DU CHANGEMENT DE SUPPORT (#389) : les
 # sub-issues natives portent la relation, l'ordre et l'état, mais rien qui dise « ce lot ne dépend
@@ -876,24 +867,12 @@ GL_LOTS_DEFAUT="${GL_LOTS_DEFAUT:-natif}"
 # suivants. Tant que la lecture était la checklist, l'absence ne se voyait pas ; le jour de la
 # bascule elle aurait rendu séquentiel tout parent créé depuis. L'écriture vit dans
 # `gl_issue_link --parallele`, c'est-à-dire dans le verbe que `/ticket-create` appelle DÉJÀ une fois
-# par lot — ⚠ reste à lui faire passer le drapeau, sous `.claude/commands/ticket-create.md`, où une
-# session autonome ne peut pas écrire (#229/#238). D'ici là un parent NEUF part séquentiel, ce qui
-# est la dégradation sûre (docs/10 §5.1) et non un plan faux ; les 42 parents du dépôt, eux, portent
-# leurs labels depuis #392.
+# par lot. ⚠ RESTE À LUI FAIRE PASSER LE DRAPEAU, sous `.claude/commands/ticket-create.md`, où une
+# session autonome ne peut pas écrire (#229/#238) : c'est la moitié du critère 2 de #395 qu'un run
+# ne peut pas livrer lui-même, rendue dans sa PR et consignée dans son ticket de reprise. D'ici là un
+# parent NEUF part séquentiel, ce qui est la dégradation sûre (docs/10 §5.1) et non un plan faux ;
+# les 42 parents du dépôt, eux, portent leurs labels depuis #392.
 GL_LABEL_LOT_PARALLELE="${GL_LABEL_LOT_PARALLELE:-lot::parallele}"
-
-# gl_lots_regime -> « checklist » ou « natif ». Code 2 sur une valeur inconnue, avec son message :
-# `MAESTRO_LOTS` est un ensemble FERMÉ de deux valeurs (même raison que l'effort de `run.sh`, et pas
-# celle du nom de modèle, qui est une chaîne ouverte). L'échec remonte jusqu'à `gh_issue_raw`, donc
-# une faute de frappe fait échouer la première lecture de ticket au lieu de traiter en silence le
-# backlog dans le mauvais régime.
-gl_lots_regime() {
-  local regime="${MAESTRO_LOTS:-$GL_LOTS_DEFAUT}"
-  case "$regime" in
-    checklist|natif) printf '%s\n' "$regime" ;;
-    *) echo "MAESTRO_LOTS : régime inconnu « $regime » (checklist|natif)" >&2; return 2 ;;
-  esac
-}
 
 # gl_issue_link <iid-parent> <iid-lot> -> RATTACHE un lot à son parent (sub-issue native).
 # Idempotent : un lot déjà rattaché à ce parent est un succès, comme un lien déjà posé l'était.
@@ -902,28 +881,21 @@ gl_lots_regime() {
 # le pendant du « relates to » de GitLab, qui n'existe pas côté GitHub : un « #<n> » écrit dans un
 # commentaire, dont la seule vertu est d'apparaître dans la chronologie du ticket cité. La relation
 # elle-même n'était portée par personne. Les sub-issues la portent, dans les deux sens et sans prose.
-# `gh_issue_link` reste en place : c'est l'implémentation de l'ère checklist, que le lot 6 (#395)
-# retirera avec le reste de ce support, et non un repli qu'on garderait « au cas où ».
+# `gh_issue_link`, l'implémentation de l'ère checklist, est partie avec le reste de ce support (#395)
+# et non gardée « au cas où ».
 #
 # SON UNIQUE APPELANT PASSE DÉJÀ LE COUPLE DANS CET ORDRE — `/ticket-create` écrit
 # `issue-link <iid-parent> <iid-sous-ticket>` (docs/10 §5.1), et c'est la seule invocation du dépôt.
-# La bascule ne réinterprète donc AUCUN appel existant : elle donne au même couple, dans le même
+# La bascule n'a donc réinterprété AUCUN appel existant : elle a donné au même couple, dans le même
 # sens, un support qui tient. Le seul changement observable est qu'un lot déjà rattaché AILLEURS
 # échoue là où un commentaire de plus réussissait — c'est-à-dire qu'une anomalie cesse d'être muette.
 #
-# ⚠ ET CE N'EST PAS COMMUTÉ PAR `MAESTRO_LOTS`, à la différence des LECTURES de #390. La raison est
-# dans l'ordre des lots, pas dans une préférence : le backfill des 41 parents (#392) tourne AVANT la
-# bascule (#393), c'est-à-dire pendant que le régime par défaut est encore `checklist`. Un
-# rattachement gouverné par le régime serait donc impossible à faire au moment exact où il doit
-# avoir lieu. Rien ne s'y oppose, et ce n'est pas une entorse au principe « le régime décide, jamais
-# la présence » : celui-ci tranche COMMENT ON LIT, et tant que le régime est `checklist` la relation
-# native est écrite sans être lue. Écrire les deux supports est le propre d'une migration ; en lire
-# deux est la panne que le principe interdit.
 # ⚠ `--parallele` FERME LE TROU QUE LA BASCULE OUVRE (#393). Le marqueur « (parallèle) » est le seul
-# élément du découpage que le natif ne porte pas tout seul (cf. `GL_LABEL_LOT_PARALLELE` plus bas) :
+# élément du découpage que le natif ne porte pas tout seul (cf. `GL_LABEL_LOT_PARALLELE` plus haut) :
 # il vient du label `lot::parallele`, que #392 a posé sur les lots EXISTANTS et que PERSONNE
 # n'écrivait pour les suivants. Tant que la lecture était la checklist, ça ne se voyait pas ; le jour
-# où elle devient native, un parent créé après la bascule perdrait ses marqueurs — silencieusement.
+# où elle est devenue native, un parent créé après la bascule aurait perdu ses marqueurs —
+# silencieusement.
 #
 # LA DÉGRADATION EST DU CÔTÉ SÛR, ET C'EST CE QUI A PERMIS DE LIVRER SANS ATTENDRE #395 : un marqueur
 # perdu rend le lot SÉQUENTIEL (docs/10 §5.1), donc coûte du temps de mur et jamais un lot parti sur
@@ -958,8 +930,8 @@ gl_issue_link() {
   fi
 }
 
-# gl_parent_of <iid> -> imprime l'iid du ticket PARENT si <iid> est un sous-ticket (marqueur
-# « Sous-ticket de #<parent> » dans sa description), rien (code 1) sinon.
+# gl_parent_of <iid> -> imprime l'iid du ticket PARENT si <iid> est un sous-ticket (sub-issue
+# rattachée), rien (code 1) sinon.
 gl_parent_of() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_parent_of <iid>" >&2; return 2; fi
@@ -977,29 +949,24 @@ gl_parent_of() {
 # nominal (la plupart des tickets ne sont pas des lots), le second une panne à ne pas annoncer comme
 # une réponse. L'appelant lit donc le ticket lui-même et rejoue le marqueur sur ce qu'il a lu.
 #
-# EN RÉGIME NATIF, LE MARQUEUR EST UNE LIGNE D'EN-TÊTE (`parent:<TAB><iid>`), posée par
-# `gh_issue_raw` depuis `Issue.parent` — pas une phrase du corps. La lecture est BORNÉE À L'EN-TÊTE
-# (`/^--$/ { exit }`) et non lâchée sur tout le texte : un corps qui contiendrait une ligne
-# « parent:	42 » — une note technique, un extrait de vue collé dans une description — rendrait
-# sinon un parent qui n'existe pas, et c'est précisément le genre de faux positif que le support
-# natif est censé supprimer.
+# LE MARQUEUR EST UNE LIGNE D'EN-TÊTE (`parent:<TAB><iid>`), posée par `gh_issue_raw` depuis
+# `Issue.parent` — pas une phrase du corps. La lecture est BORNÉE À L'EN-TÊTE (`/^--$/ { exit }`) et
+# non lâchée sur tout le texte : un corps qui contiendrait une ligne « parent:	42 » — une note
+# technique, un extrait de vue collé dans une description — rendrait sinon un parent qui n'existe
+# pas, et c'est précisément le genre de faux positif que le support natif a supprimé. La phrase
+# « Sous-ticket de #<parent> » reste écrite en tête des descriptions, pour le lecteur humain : plus
+# aucun parseur ne la lit depuis #395.
 gl_parent_marqueur() {
-  local regime
-  regime="$(gl_lots_regime)" || return 2
-  if [ "$regime" = natif ]; then
-    awk -F '\t' '/^--$/ { exit } $1 == "parent:" { print $2; exit }'
-    return
-  fi
-  grep -o 'Sous-ticket de #[0-9]\+' | head -1 | grep -o '[0-9]\+$'
+  awk -F '\t' '/^--$/ { exit } $1 == "parent:" { print $2; exit }'
 }
 
-# gl_subtickets <iid-parent> -> liste ORDONNÉE des sous-tickets déclarés dans la checklist
-# « ## Sous-tickets » du parent, enrichie du cycle de vie (une seule requête backlog, pas N).
+# gl_subtickets <iid-parent> -> liste ORDONNÉE des sub-issues du parent, enrichie du cycle de vie
+# (une seule requête backlog, pas N).
 # Sortie TSV : iid <TAB> coche(x|-) <TAB> statut <TAB> par(∥|-) <TAB> titre  (ligne d'en-tête « # »
-# à ignorer). La colonne « par » porte le marqueur « (parallèle) », retiré du titre pour que le
-# marqueur ne soit lu qu'à un seul endroit.
-# Code 1 si le ticket n'a pas de section « ## Sous-tickets » (ce n'est pas un ticket parent) —
-# c'est le test utilisé par /ticket-start pour détecter un parent de suivi.
+# à ignorer). La colonne « coche » est dérivée de l'ÉTAT du lot (fermé = « x ») et la colonne « par »
+# du label `lot::parallele`, pour que le marqueur ne soit lu qu'à un seul endroit.
+# Code 1 si aucune sub-issue n'est rattachée au ticket (ce n'est pas un ticket parent) — c'est le
+# test utilisé par /ticket-start pour détecter un parent de suivi.
 gl_subtickets() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_subtickets <iid-parent>" >&2; return 2; fi
@@ -1013,68 +980,32 @@ gl_subtickets() {
   printf '%s\n' "$rows" | gl_subtickets_enrich
 }
 
-# gl_pas_un_parent <iid> -> le message de « ce ticket n'est pas un parent de suivi », dans les mots
-# du RÉGIME COURANT. Le verdict est le même des deux côtés (aucun lot), sa cause ne l'est pas :
-# envoyer quelqu'un chercher une section « ## Sous-tickets » dans un dépôt qui lit les sub-issues
-# natives, c'est le faire corriger le mauvais support — et l'inverse au lot 6, quand la section
-# n'existera plus nulle part. Deux appelants, `gl_subtickets` et `gl_arbitrage`.
+# gl_pas_un_parent <iid> -> le message de « ce ticket n'est pas un parent de suivi ». Un seul texte
+# depuis #395, le support étant unique : envoyer quelqu'un chercher une section « ## Sous-tickets »
+# qui n'existe plus nulle part, ce serait le faire corriger un support disparu. Deux appelants,
+# `gl_subtickets` et `gl_arbitrage`.
 gl_pas_un_parent() {
-  local iid="$1" regime
-  regime="$(gl_lots_regime)" || return 2
-  if [ "$regime" = natif ]; then
-    printf 'Aucune sub-issue rattachée à #%s — pas un ticket parent.\n' "$iid"
-  else
-    printf 'Pas de section « ## Sous-tickets » dans #%s — pas un ticket parent.\n' "$iid"
-  fi
+  printf 'Aucune sub-issue rattachée à #%s — pas un ticket parent.\n' "$1"
 }
 
 # gl_subticket_rows — cœur du parsing de gl_subtickets, séparé pour être rejoué sur un ticket DÉJÀ
-# LU (stdin = sortie brute de gl_issue_raw) : imprime les lignes de la checklist
-# « ## Sous-tickets » en TSV brut (iid <TAB> coche(x|-) <TAB> par(∥|-) <TAB> titre), rien si la
-# section est absente. gl_start_brief s'en sert pour détecter un parent de suivi sans relire le
-# ticket. Le marqueur « (parallèle) » de fin de titre est extrait dans sa propre colonne : détection
-# sur le titre minusculé et motif « parall[^)]* » plutôt qu'une classe [eè], parce qu'un awk orienté
-# octets (mawk) ne sait pas faire tenir le « è » (2 octets en UTF-8) dans une classe de caractères.
+# LU (stdin = sortie brute de gl_issue_raw) : imprime les lots en TSV brut
+# (iid <TAB> coche(x|-) <TAB> par(∥|-) <TAB> titre), rien si le ticket n'a pas de sub-issue.
+# gl_start_brief s'en sert pour détecter un parent de suivi sans relire le ticket.
 #
-# EN RÉGIME NATIF, LES LIGNES SONT DÉJÀ FAITES : `gh_issue_raw` a écrit un `lot:<TAB>…` par
-# sub-issue dans l'en-tête de la vue, aux MÊMES QUATRE COLONNES. Ce verbe n'a donc plus qu'à les
-# recueillir — et c'est tout le gain de faire porter la relation par la vue texte plutôt que par un
-# appel réseau de plus : le contrat de sortie est le même au caractère près, si bien que
-# `gl_subtickets_enrich`, `gl_subtickets_startables`, `gl_arbitrage_de` et `queue.sh` ne
-# distinguent pas les deux régimes.
+# LES LIGNES SONT DÉJÀ FAITES : `gh_issue_raw` a écrit un `lot:<TAB>…` par sub-issue dans l'en-tête
+# de la vue, aux quatre colonnes ci-dessus. Ce verbe n'a donc plus qu'à les recueillir — et c'est
+# tout le gain de faire porter la relation par la vue texte plutôt que par un appel réseau de plus :
+# `gl_subtickets_enrich`, `gl_subtickets_startables`, `gl_arbitrage_de` et `queue.sh` n'ont pas eu à
+# bouger d'une ligne à la bascule (#393), ni au retrait de la checklist (#395).
 #
 # La lecture est BORNÉE À L'EN-TÊTE, pour la raison de `gl_parent_marqueur` : un corps qui
 # contiendrait une ligne « lot:	… » fabriquerait sinon des lots à partir d'une description.
 gl_subticket_rows() {
-  local regime
-  regime="$(gl_lots_regime)" || return 2
-  if [ "$regime" = natif ]; then
-    # `substr($0, 6)` — après « lot: » et sa tabulation — plutôt que `$2, $3, $4, $5` : un titre
-    # qui porterait une tabulation (aucun sur GitHub, mais le contrat ne le promet pas) serait
-    # tronqué par la reconstruction, jamais par la coupe brute.
-    awk -F '\t' '/^--$/ { exit } $1 == "lot:" { print substr($0, 6) }'
-    return
-  fi
-  awk '
-    insec {
-      if ($0 ~ /^#+[ \t]/) { insec = 0; next }
-      if ($0 ~ /^- \[[ xX]\] #[0-9]+/) {
-        coche = ($0 ~ /^- \[[xX]\]/) ? "x" : "-"
-        match($0, /#[0-9]+/)
-        id = substr($0, RSTART + 1, RLENGTH - 1)
-        titre = substr($0, RSTART + RLENGTH)
-        sub(/^[-—–: \t]+/, "", titre)
-        par = "-"
-        if (tolower(titre) ~ /\([ \t]*parall[^)]*\)[ \t]*$/) {
-          par = "∥"
-          sub(/[ \t]*\([ \t]*[Pp]arall[^)]*\)[ \t]*$/, "", titre)
-        }
-        printf "%s\t%s\t%s\t%s\n", id, coche, par, titre
-      }
-      next
-    }
-    /^#+[ \t]+Sous-tickets/ { insec = 1 }
-  '
+  # `substr($0, 6)` — après « lot: » et sa tabulation — plutôt que `$2, $3, $4, $5` : un titre qui
+  # porterait une tabulation (aucun sur GitHub, mais le contrat ne le promet pas) serait tronqué par
+  # la reconstruction, jamais par la coupe brute.
+  awk -F '\t' '/^--$/ { exit } $1 == "lot:" { print substr($0, 6) }'
 }
 
 # gl_subtickets_enrich — enrichit du CYCLE DE VIE les lignes TSV de gl_subticket_rows (stdin) et
@@ -1245,14 +1176,11 @@ gl_arbitre() {
 # le porte désormais elle-même.
 #
 # L'ORDRE N'EST PAS DE L'AFFICHAGE, C'EST CE QUI FAIT LE PLAN. `queue.sh` garde les lots d'un parent
-# CONTIGUS et dans l'ordre de la checklist, et `gl_subtickets_startables` juge « ce lot est-il
+# CONTIGUS et dans l'ordre du parent, et `gl_subtickets_startables` juge « ce lot est-il
 # démarrable ? » sur ce qui le PRÉCÈDE. Rattacher sans ordonner ne casserait donc pas l'affichage
 # d'une page, mais l'orchestration : des lots rendus dans un ordre arbitraire feraient partir le
 # dernier en premier, et le lot final « tests + doc » avant ce qu'il teste. D'où deux verbes, et
 # non un.
-#
-# AUCUN DES DEUX N'EST COMMUTÉ PAR `MAESTRO_LOTS` — voir `gl_issue_link` ci-dessus, même raison : le
-# backfill (#392) écrit pendant que le régime par défaut est encore `checklist`.
 
 # gl_subticket_add <iid-parent> <iid-lot> -> rattache <iid-lot> comme sub-issue de <iid-parent>.
 # Codes : 0 = rattaché, ou DÉJÀ rattaché à ce parent · 1 = ticket inexistant, lot déjà rattaché à un
@@ -1421,7 +1349,7 @@ gl_touche_claude() {
 # celle de ces deux verbes — « ce lot était-il le dernier de son parent ? ».
 
 # gl_lots_ouverts <iid-parent> -> les lots du parent encore OUVERTS, « <iid><TAB><titre> », dans
-# l'ordre du découpage (checklist ou sub-issues natives, selon `MAESTRO_LOTS`).
+# l'ordre du découpage (celui des sub-issues).
 # Codes : 0 = aucun, le parent est soldé · 3 = il en reste (listés sur stdout) · 1 = pas un parent,
 # ou lecture impossible. Le 3 plutôt qu'un 1 : « il reste des lots » est une RÉPONSE, pas une panne,
 # et l'appelant n'a pas à trancher entre les deux sur la même valeur.
@@ -1432,8 +1360,8 @@ gl_touche_claude() {
 # un lot a été abandonné garderait son parent ouvert pour toujours — et le ferait dépendre d'une
 # pose qui, sur le lot qu'on vient de fermer, n'a pas encore eu lieu.
 #
-# LA COCHE NE DÉCIDE DE RIEN NON PLUS : elle est tenue au fil de l'eau par /ticket-ship, donc
-# best-effort. Un parent dont la checklist a pris du retard doit se fermer quand même.
+# LA COCHE NE DÉCIDE DE RIEN NON PLUS : dérivée de l'état du lot depuis #390, elle n'est qu'un
+# affichage — et rien ne la lit ici.
 gl_lots_ouverts() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "usage: gl_lots_ouverts <iid-parent>" >&2; return 2; fi
@@ -1441,10 +1369,8 @@ gl_lots_ouverts() {
   raw="$(gl_issue_raw "$iid")" || return 1
   rows="$(printf '%s\n' "$raw" | gl_subticket_rows)"
   if [ -z "$rows" ]; then
-    # Par `gl_pas_un_parent` et non par un message écrit ici (#393) : le verdict est le même des
-    # deux côtés, sa cause non — envoyer chercher une section « ## Sous-tickets » dans un dépôt qui
-    # lit les sub-issues natives fait corriger le mauvais support. C'était le troisième et dernier
-    # endroit qui nommait la checklist en dur, après `gl_subtickets` et `gl_arbitrage`.
+    # Par `gl_pas_un_parent` et non par un message écrit ici (#393) : un seul texte, pour les trois
+    # verbes qui posent la question — `gl_subtickets`, `gl_arbitrage` et celui-ci.
     gl_pas_un_parent "$iid" >&2
     return 1
   fi
@@ -1507,11 +1433,11 @@ gl_ferme_parent() {
     return 3
   fi
 
-  # L'état du parent AVANT sa description : un parent déjà fermé n'a pas à faire lire sa checklist,
-  # et surtout pas à recevoir un second commentaire. Le cas se produit dès qu'un chantier finit par
+  # L'état du parent AVANT ses lots : un parent déjà fermé n'a pas à faire lire son découpage, et
+  # surtout pas à recevoir un second commentaire. Le cas se produit dès qu'un chantier finit par
   # deux lots fermés coup sur coup — le second repasse ici quand le premier a déjà tout soldé.
   # Capture PUIS découpe : `gh_issues_state | cut` rendrait le code de `cut`, toujours 0 — un parent
-  # illisible passerait alors pour un parent ouvert, et on lui lirait sa checklist pour rien.
+  # illisible passerait alors pour un parent ouvert, et on lui lirait ses lots pour rien.
   local petat brut
   brut="$(gh_issues_state "$parent")" || return 1
   petat="${brut##*$'\t'}"
@@ -1660,13 +1586,13 @@ gl_demarre_parent() {
 
 # gl_start_brief <iid> -> préflight complet de /ticket-start en un appel et UNE SEULE lecture du
 # ticket (un unique gl_issue_raw, rejoué pour toutes les projections ; autres lectures : le
-# statut/assigné du ticket, et la checklist du parent si <iid> est un sous-ticket). Vérifie les
+# statut/assigné du ticket, et les lots du parent si <iid> est un sous-ticket). Vérifie les
 # pré-requis (gl_require), signale un arbre sale, puis imprime un bloc compact : titre/labels/
 # critères (gl_issue_brief_render), la ligne « statut : … — libre / pris par … » (gl_issue_owner,
-# avec ⚠ si le ticket est « En cours » chez quelqu'un d'autre), selon le cas marqueur sous-ticket
-# (parent, rang « lot n/total », tests différés, contrôle du statut des lots précédents) ou
-# checklist « ## Sous-tickets » (parent de suivi — qui ne porte ni branche ni code : pas de branche
-# proposée dans ce cas), et enfin la branche proposée (gl_branch_prefix depuis le label type:: +
+# avec ⚠ si le ticket est « En cours » chez quelqu'un d'autre), selon le cas le rattachement
+# sous-ticket (parent, rang « lot n/total », tests différés, contrôle du statut des lots précédents)
+# ou la table des lots (parent de suivi — qui ne porte ni branche ni code : pas de branche proposée
+# dans ce cas), et enfin la branche proposée (gl_branch_prefix depuis le label type:: +
 # gl_slug du titre).
 # Informatif : les avertissements (ticket déjà pris, lot précédent non livré, label type:: absent)
 # sont dans la sortie ; la décision — démarrer, rediriger, s'arrêter — reste à l'appelant. Code
@@ -1715,7 +1641,7 @@ gl_start_brief() {
     fi
   fi
 
-  # Parent de suivi ? (section « ## Sous-tickets » dans la description déjà lue)
+  # Parent de suivi ? (lignes « lot: » de l'en-tête de la vue déjà lue)
   local rows
   rows="$(printf '%s\n' "$raw" | gl_subticket_rows)"
   if [ -n "$rows" ]; then
@@ -1770,7 +1696,7 @@ gl_start_brief() {
         printf 'lots précédents : OK (aucun lot bloquant — livrés ou marqués « parallèle »)\n'
       fi
     else
-      printf 'sous-ticket de #%s (checklist du parent illisible — contrôler les lots précédents à la main)\n' "$parent"
+      printf 'sous-ticket de #%s (lots du parent illisibles — contrôler les lots précédents à la main)\n' "$parent"
     fi
     deferred="$(printf '%s\n' "$raw" | grep -o '[Tt]ests différés[^#]*#[0-9]\+' | head -1 | grep -o '[0-9]\+$')"
     if [ -n "$deferred" ]; then printf 'tests différés → #%s\n' "$deferred"; fi
@@ -1922,8 +1848,8 @@ gl_log_time() {
 }
 
 # --- Descriptions : lecture/écriture fidèles aux octets (ticket #141) ------------------------------
-# Relire puis réécrire une description (cocher la checklist d'un parent, mettre à jour celle
-# d'une PR) est un aller-retour à risque : il a corrompu #111 le 2026-07-22 en y repoussant du
+# Relire puis réécrire une description (mettre à jour la checklist d'une PR, corriger le périmètre
+# d'un ticket) est un aller-retour à risque : il a corrompu #111 le 2026-07-22 en y repoussant du
 # mojibake (« â€” » au lieu de « — », « Ã© » au lieu de « é »).
 #
 # La cause n'est PAS glab, qui émet du bon UTF-8 : c'est un consommateur qui re-décode les octets —
@@ -2163,7 +2089,8 @@ gl_issue_note() {
 # L'IDEMPOTENCE S'ANCRE SUR LE TICKET SOURCE, ET PAS SUR UNE RECHERCHE. L'API de recherche de GitHub
 # est indexée de façon ASYNCHRONE — deux appels rapprochés y trouveraient « rien », donc deux
 # tickets, c'est-à-dire le doublon que la propriété interdit. L'ancre est donc un COMMENTAIRE posé
-# sur le ticket SOURCE, relu à l'appel suivant : même mécanisme que `gh_issue_link`, immédiatement
+# sur le ticket SOURCE, relu à l'appel suivant : même mécanisme que le lien par mention de l'ère
+# checklist (`gh_issue_link`, parti avec elle à #395), immédiatement
 # lisible, et il rend au passage le lien visible dans les deux sens. Il est lu dans les COMMENTAIRES
 # et jamais dans la description : celle-ci est écrite par un humain, et un ticket qui PARLE de
 # tickets de reprise — le parent #608, par exemple — n'en a pas pour autant un.
@@ -2294,8 +2221,7 @@ gl_reste_cree() {
   }
   rm -f "$corps"
 
-  # Même raison que ci-dessus, et que gh_issue_link : un commentaire qui part n'a pas de lecteur
-  # local (règle #234).
+  # Même raison que ci-dessus : un commentaire qui part n'a pas de lecteur local (règle #234).
   note="$(mktemp "${TMPDIR:-/tmp}/maestro-reste-note.XXXXXX")" || return 1
   gl_reste_ancre "$nouveau" > "$note"
   if ! gl_issue_note "$source" "$note" >/dev/null; then
@@ -5305,7 +5231,7 @@ st_carte_lire() {
 # changent pas : un ticket qui existe mais n'est pas un item du projet (ou dont le Status est vide)
 # sort « - », comme le rendait `st_overlay_statut`. Un ticket qui N'EXISTE PAS ne rend AUCUNE LIGNE —
 # même parti pris que `gh_issues_state`, et c'est l'appelant qui décide de ce que vaut ce silence
-# (`gl_subtickets_enrich` le compte « ? », un iid de checklist illisible n'étant pas un état).
+# (`gl_subtickets_enrich` le compte « ? », un iid de lot illisible n'étant pas un état).
 #
 # LE LIBELLÉ SORT TEL QUEL, sans renormalisation, exactement comme `st_carte_statuts` : une option
 # renommée à la main dans l'UI traverse, et la signaler est le rôle de `doctor.sh` (#363). C'est
@@ -5323,7 +5249,7 @@ st_statuts() {
     *'"repository":null'*) echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
   esac
   # Parsing en awk et non par `--jq`, et ce n'est pas le goût de la maison : un alias NOT_FOUND
-  # (un iid de checklist qui ne désigne aucune issue — le cas d'un numéro de PR) fait rendre à
+  # (un iid qui ne désigne aucune issue — le cas d'un numéro de PR) fait rendre à
   # l'API un tableau `errors`, sur quoi `gh api graphql --jq` recrache la réponse BRUTE sans
   # appliquer le filtre. Le résultat aurait été zéro ligne, c'est-à-dire « aucun état » pour tous
   # les lots, avec le code de succès. Même raison, et même forme, que `gh_issues_state`.
@@ -5490,21 +5416,16 @@ gh_backlog_table() {
 # Le corps voyage par gl_json_string_field, donc déséchappé et byte-transparent — c'est le même
 # décodeur que celui de get-description, écrit pour le piège d'encodage de #141.
 gh_issue_raw() {
-  local iid="$1" raw etat titre corps labels assignes auteur jalon regime champs_lots='' lots=''
+  local iid="$1" raw etat titre corps labels assignes auteur jalon champs_lots='' lots=''
   if [ -z "$iid" ]; then echo "usage: gh_issue_raw <iid>" >&2; return 2; fi
-  regime="$(gl_lots_regime)" || return 2
-  # LES DEUX CHAMPS DU DÉCOUPAGE NATIF (#390) ne sont demandés QU'EN RÉGIME `natif` : en défaut, la
-  # requête reste identique au caractère près, donc rien de ce que ce fichier lit ne change avant la
-  # bascule du lot 4. Ils sont placés AVANT `body` et non après, pour deux raisons qui se répondent :
-  # le bloc des lots est ainsi borné par le champ suivant (`]},"body":`) au lieu de courir jusqu'à
-  # la fin de la réponse — où le CORPS du ticket le suivrait —, et la requête garde sa terminaison
-  # `body } } }`, sur laquelle le double de `tests/harnais_forge.py` reconnaît la vue canonique.
-  # `parent` voyage sous l'ALIAS `pnum`, exactement pour la raison du `jalon:` ci-dessous : sans lui
-  # la clé `"number"` désignerait à la fois le parent et chaque lot, et le découpage du bloc des
-  # lots prendrait le parent pour un premier lot.
-  if [ "$regime" = natif ]; then
-    champs_lots=' parent { pnum: number } lots: subIssues(first: 100) { nodes { number title state labels(first: 20) { nodes { name } } } }'
-  fi
+  # LES DEUX CHAMPS DU DÉCOUPAGE NATIF (#390) sont placés AVANT `body` et non après, pour deux
+  # raisons qui se répondent : le bloc des lots est ainsi borné par le champ suivant (`]},"body":`)
+  # au lieu de courir jusqu'à la fin de la réponse — où le CORPS du ticket le suivrait —, et la
+  # requête garde sa terminaison `body } } }`, sur laquelle le double de `tests/harnais_forge.py`
+  # reconnaît la vue canonique. `parent` voyage sous l'ALIAS `pnum`, exactement pour la raison du
+  # `jalon:` ci-dessous : sans lui la clé `"number"` désignerait à la fois le parent et chaque lot,
+  # et le découpage du bloc des lots prendrait le parent pour un premier lot.
+  champs_lots=' parent { pnum: number } lots: subIssues(first: 100) { nodes { number title state labels(first: 20) { nodes { name } } } }'
   # Le titre du JALON voyage sous un ALIAS (`jalon:`) et non sous `title` : sans lui, les deux
   # champs partagent la même clé et `gl_json_string_field title` rend le premier trouvé — c'est-à-dire
   # le titre du TICKET quand le jalon est `null`, puisqu'il n'y a alors aucun objet à isoler. Un
@@ -5581,7 +5502,7 @@ gh_issue_raw() {
   assignes="${plats[3]-}"
   jalon="$(printf '%s' "$raw" | gl_json_string_field jalon)"
   corps="$(printf '%s' "$raw" | gl_json_string_field body)"
-  [ "$regime" = natif ] && lots="$(printf '%s' "$raw" | gh_lots_natifs)"
+  lots="$(printf '%s' "$raw" | gh_lots_natifs)"
 
   printf 'title:\t%s\n' "$titre"
   printf 'state:\t%s\n' "$etat"
@@ -5606,13 +5527,14 @@ gh_issue_raw() {
 # verbes descendent, et sous MSYS un fork coûte ~120 ms. Deux fonctions se liraient mieux et
 # coûteraient le double sur le chemin le plus chaud du fichier.
 #
-# LA COCHE EST DÉRIVÉE DE L'ÉTAT, ET C'EST UN CHOIX (#390). En checklist, `[x]` est posée à la main
-# — tenue au fil de l'eau, donc best-effort : un lot mergé depuis l'interface web n'en coche
-# aucune (#515). En natif il n'y a rien à cocher, et la seule source honnête est « ce lot est-il
-# FERMÉ ? » — la même définition de « soldé » que `gl_lots_ouverts` et `gl_ferme_parent`, où un lot
-# abandonné solde au même titre qu'un lot terminé. La coche cesse donc de pouvoir mentir, ce qui
-# est un gain et non une perte : aucune règle ne la lit (`gl_subtickets_startables` ne lit que
-# l'iid, le cycle de vie et le marqueur — jamais la coche), elle n'est qu'un affichage.
+# LA COCHE EST DÉRIVÉE DE L'ÉTAT, ET C'EST UN CHOIX (#390). Du temps de la checklist, `[x]` était
+# posée à la main — tenue au fil de l'eau, donc best-effort : un lot mergé depuis l'interface web
+# n'en cochait aucune (#515). En natif il n'y a rien à cocher, et la seule source honnête est « ce
+# lot est-il FERMÉ ? » — la même définition de « soldé » que `gl_lots_ouverts` et `gl_ferme_parent`,
+# où un lot abandonné solde au même titre qu'un lot terminé. La coche a donc cessé de pouvoir
+# mentir, ce qui est un gain et non une perte : aucune règle ne la lit (`gl_subtickets_startables`
+# ne lit que l'iid, le cycle de vie et le marqueur — jamais la coche), elle n'est qu'un affichage.
+# C'est pour ça que #395 n'a rien eu à reconduire en la retirant des descriptions.
 #
 # LE MARQUEUR VIENT DU LABEL `lot::parallele`, provisionné par `scripts/gitlab/bootstrap.sh`. Il ne
 # pouvait PAS vivre dans le titre du sous-ticket : `gl_branch_from_raw` en dérive le slug de
@@ -6186,37 +6108,6 @@ gh_milestone_issues() {
   fi
   printf '# iid\tstatut\ttype\tagent\tprio\ttitre\n'
   printf '%s\n' "$rows"
-}
-
-# gh_issue_link <iid> <iid-cible> -> le pendant du lien « relates to », qui n'existe pas côté GitHub.
-#
-# Ce qui existe, et qui fait le même travail : une RÉFÉRENCE CROISÉE. Un « #<n> » écrit dans un corps
-# ou un commentaire apparaît dans la chronologie du ticket cité — c'est nativement bidirectionnel, et
-# c'est déjà ce que produit la convention de découpage (« Sous-ticket de #<parent> » en tête de
-# description). La fonction se contente donc de garantir la mention, et ne poste un commentaire que
-# s'il n'y en a aucune : idempotent comme son jumeau, qui traite un lien déjà posé comme un succès.
-gh_issue_link() {
-  local iid="$1" target="$2" raw note
-  if [ -z "$iid" ] || [ -z "$target" ]; then echo "usage: gh_issue_link <iid> <iid-cible>" >&2; return 2; fi
-  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number:'"$iid"') { body comments(first: 100) { nodes { body } } } } }')" || return 1
-  case "$raw" in
-    *'"issue":null'*) echo "Ticket #$iid introuvable dans $GL_GH_REPO" >&2; return 1 ;;
-  esac
-  # Borné à droite : « #33 » ne doit pas passer pour une mention de « #339 ».
-  if printf '%s' "$raw" | grep -qE "#$target([^0-9]|$)"; then
-    printf 'Lien déjà présent : #%s ↔ #%s\n' "$iid" "$target"
-    return 0
-  fi
-  # Brouillon que personne ne relit : répertoire temporaire du système, pas .maestro/ (règle #234).
-  note="$(mktemp "${TMPDIR:-/tmp}/maestro-lien.XXXXXX")" || return 1
-  printf 'Lié à #%s.\n' "$target" > "$note"
-  if ! gh_issue_note "$iid" "$note" >/dev/null; then
-    rm -f "$note"
-    echo "Échec du lien #$iid ↔ #$target" >&2
-    return 1
-  fi
-  rm -f "$note"
-  printf 'Lien posé : #%s ↔ #%s\n' "$iid" "$target"
 }
 
 # gh_subticket_add <iid-parent> <iid-lot> -> le rattachement natif, corps de gl_subticket_add.

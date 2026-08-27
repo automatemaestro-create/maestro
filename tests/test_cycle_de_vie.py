@@ -1395,37 +1395,32 @@ def test_aucune_expression_du_workflow_n_atterrit_dans_un_run() -> None:
 # dans la foulée, et il ne reste personne pour fermer le parent.
 #
 # CE QUI SE TESTE ICI EST LA MESURE, et elle tient en une phrase : un lot est soldé quand il est
-# FERMÉ. Ni son cycle de vie (posé après coup, par l'événement d'où l'on vient), ni sa coche dans la
-# checklist (tenue au fil de l'eau, donc best-effort) n'entrent dans la décision — et les deux tests
-# qui le prouvent sont les seuls de la section à décrire un chantier incohérent exprès.
+# FERMÉ. Son cycle de vie n'entre pas dans la décision — il est posé après coup, par l'événement
+# d'où l'on vient —, et le test qui le prouve est le seul de la section à décrire un chantier
+# incohérent exprès. La COCHE non plus n'y entre pas, mais depuis #390 elle est DÉRIVÉE de l'état :
+# elle ne peut plus le contredire, donc plus être décrite de travers, donc plus être testée. Le test
+# qui s'en chargeait est parti avec la checklist (#395).
 
 #: Le parent de suivi des chantiers de cette section, et la base de ses lots.
 PARENT_SUIVI = "600"
 PREMIER_LOT = 601
 
 
-def chantier(*etats: str, coche: str = " ") -> dict[str, str]:
+def chantier(*etats: str) -> dict[str, str]:
     """Un parent et ses lots, décrits par l'ÉTAT de chacun (« open »/« closed »), dans l'ordre.
 
-    La coche de la checklist est un paramètre séparé, et par défaut FAUSSE (aucune case cochée,
-    lots fermés compris) : c'est l'état d'un parent dont personne n'a synchronisé la description,
-    et il ne doit rien changer au verdict. Un test le prouve explicitement ; tous les autres
-    travaillent dessus sans y penser, ce qui est la meilleure garantie qu'elle ne sert à rien ici.
-
-    LE CHANTIER PORTE LES DEUX SUPPORTS (#393) : checklist et prose dans les corps, en-têtes
-    `parent:` / `lot:` du régime `natif`, qui est le défaut depuis ce lot. La coche NATIVE, elle,
-    est dérivée de l'état (#390) et donc juste par construction — ce qui ne change rien au verdict,
-    et le montre : les deux régimes concluent pareil sur des coches qui se contredisent.
+    LA COCHE N'EST PLUS UN PARAMÈTRE (#395). Tant que la checklist markdown existait, elle était
+    posée à la main dans la description et pouvait donc mentir — d'où un paramètre `coche`, faux par
+    défaut, dont le seul rôle était de prouver que le verdict ne la lit pas. Elle est dérivée de
+    l'état depuis #390, et n'a plus d'autre source que celui-ci : il n'y a plus de coche
+    contradictoire à décrire, et le verdict continue de ne lire que `state:`.
     """
     lots = [str(PREMIER_LOT + i) for i in range(len(etats))]
-    checklist = "\n".join(
-        f"- [{coche}] #{iid} — Lot {rang}" for rang, iid in enumerate(lots, start=1)
-    )
     issues = {
         PARENT_SUIVI: corps_ticket(
             "Chantier de suivi",
             "type::infra",
-            f"## Sous-tickets\n\n{checklist}\n",
+            "Parent de suivi — ne porte ni branche ni code.",
             lots=tuple(
                 (iid, "x" if etat == "closed" else "-", "-", f"Lot {rang}")
                 for rang, (iid, etat) in enumerate(zip(lots, etats, strict=True), start=1)
@@ -1521,14 +1516,14 @@ def test_un_lot_encore_ouvert_laisse_le_parent_intact(depot: Depot) -> None:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert not fermeture_du_parent(depot), "un lot ouvert, donc un parent resté ouvert"
     assert not commentaires(depot, PARENT_SUIVI)
-    # Le lot qui bloque est NOMMÉ : « il en reste » sans dire lequel oblige à rouvrir la checklist.
+    # Le lot qui bloque est NOMMÉ : « il en reste » sans dire lequel oblige à rouvrir le parent.
     assert f"#{PREMIER_LOT + 1}" in acheve.stdout
 
 
 def test_un_ticket_qui_n_est_pas_un_lot_ne_coute_qu_une_lecture(depot: Depot) -> None:
     """L'abstention est le cas NOMINAL : la plupart des tickets fermés ne sont pas des lots.
 
-    Ce verbe passe à chaque fermeture du dépôt. S'il lisait une checklist à chaque fois, il paierait
+    Ce verbe passe à chaque fermeture du dépôt. S'il lisait un découpage à chaque fois, il paierait
     sur tous les tickets le prix d'une question qui n'en concerne qu'une minorité — d'où un contrôle
     sur le NOMBRE DE LECTURES, et pas seulement sur l'absence d'écriture.
     """
@@ -1567,24 +1562,6 @@ def test_un_lot_abandonne_ferme_son_parent_comme_un_lot_livre(depot: Depot, rais
     assert "rien à poser" in acheve.stdout, "la question 1 s'abstient toujours"
     assert not mutations(depot), "un abandon ne pose aucun cycle de vie"
     assert len(fermeture_du_parent(depot)) == 1, "la question 2, elle, a bien été posée"
-
-
-def test_la_coche_de_la_checklist_ne_decide_de_rien(depot: Depot) -> None:
-    """Deux chantiers identiques aux cases près : elles ne changent pas le verdict.
-
-    La coche est tenue au fil de l'eau par `/ticket-ship`, donc best-effort — un lot mergé depuis
-    l'interface web n'en coche aucune. Faire dépendre une fermeture d'une synchronisation qui peut
-    manquer reconstruirait à l'identique le geste manuel qu'on retire.
-    """
-    for coche in (" ", "x"):
-        depot.journal.unlink(missing_ok=True)
-        depot.pose_etat(
-            graphql=[regle_owner("En revue", []), regle_pose_status()],
-            issues=chantier("closed", "closed", coche=coche),
-        )
-        acheve = depot.ticket_ferme(str(PREMIER_LOT + 1), "completed")
-        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-        assert len(fermeture_du_parent(depot)) == 1, f"coche « {coche} »"
 
 
 def test_un_lot_dont_l_etat_ne_revient_pas_est_compte_ouvert(depot: Depot) -> None:
@@ -1635,7 +1612,7 @@ def test_lots_ouverts_repond_par_son_code_de_retour(depot: Depot) -> None:
         graphql=[regle_owner("En revue", []), regle_pose_status()],
         issues={
             **chantier("closed", "open"),
-            "700": corps_ticket("Ticket ordinaire", "type::infra", "Pas de checklist."),
+            "700": corps_ticket("Ticket ordinaire", "type::infra", "Aucun lot rattaché."),
         },
     )
 

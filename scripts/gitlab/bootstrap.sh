@@ -77,11 +77,11 @@ create_label "prio::basse"   "#388e3c" "Peut attendre"
 create_label "lot::arbitre"  "#0e8a16" "Parent de suivi : lots parallélisables arbitrés"
 # `lot::parallele` (#390, chantier #389) est le PENDANT sur le LOT, et il remplace un support qui
 # n'en était pas un : le marqueur « (parallèle) » vivait dans le titre de la ligne de checklist du
-# parent, donc dans de la prose, donc nulle part une fois la checklist retirée (lot 6). Il ne peut
+# parent, donc dans de la prose, donc nulle part une fois la checklist retirée (#395). Il ne peut
 # pas déménager dans le titre du sous-ticket — `lib.sh` en dérive le slug de branche, et un
-# « (parallèle) » salirait tous les noms de branches —, d'où ce label-ci, lu par `subtickets` en
-# régime `MAESTRO_LOTS=natif`. Même famille et même couleur que son voisin : tous deux disent
-# quelque chose du DÉCOUPAGE, jamais du ticket qui le porte.
+# « (parallèle) » salirait tous les noms de branches —, d'où ce label-ci, lu par `subtickets`. Même
+# famille et même couleur que son voisin : tous deux disent quelque chose du DÉCOUPAGE, jamais du
+# ticket qui le porte.
 create_label "lot::parallele" "#0e8a16" "Lot parallélisable : ne dépend pas des lots marqués qui le précèdent"
 
 echo "Labels prêts."
