@@ -321,18 +321,30 @@ class Depot:
     def milestone(self, titre: str) -> None:
         self.milestones([(titre, "active", 3, 10)])
 
-    def milestones(self, jalons: list[tuple[str, str, int, int]]) -> None:
-        """La table des milestones du projet : (titre, état, fermés, total) chacun.
+    def milestones(self, jalons: list[tuple]) -> None:
+        """La table des milestones du projet : (titre, état, fermés, total[, rail]) chacun.
 
         Les dates sont fixes : `gl_current_milestone` trie déjà côté API (`sort: DUE_DATE_ASC`) et
         le bouchon rend les nœuds dans l'ordre où on les écrit — c'est donc cet ordre-là qui fait
         foi dans les tests, pas les dates.
+
+        Le 5e champ est le RAIL (#617) et il est FACULTATIF : sans lui, la description du jalon est
+        vide, donc son rail est « produit » — le défaut du dépôt. Ce n'est pas une commodité
+        d'écriture, c'est le contrat qu'on veut garder testé : un jalon non marqué reste du produit,
+        et les dizaines d'appels existants du harnais le vérifient sans une ligne de plus.
         """
+        def _noeud(t: str, etat: str, fermes: int, total: int, rail: str) -> str:
+            marqueur = "rail: outillage" if rail == "outillage" else ""
+            return (
+                f'{{"title":"{t}","description":"{marqueur}",'
+                f'"state":"{"OPEN" if etat == "active" else "CLOSED"}",'
+                f'"dueOn":"2026-12-31T00:00:00Z",'
+                f'"total":{{"totalCount":{total}}},"fermes":{{"totalCount":{fermes}}}}}'
+            )
+
         noeuds = ",".join(
-            f'{{"title":"{t}","state":"{"OPEN" if etat == "active" else "CLOSED"}",'
-            f'"dueOn":"2026-12-31T00:00:00Z",'
-            f'"total":{{"totalCount":{total}}},"fermes":{{"totalCount":{fermes}}}}}'
-            for t, etat, fermes, total in jalons
+            _noeud(t, etat, fermes, total, rail[0] if rail else "produit")
+            for t, etat, fermes, total, *rail in jalons
         )
         (self.fixtures / "milestones.json").write_text(
             f'{{"data":{{"repository":{{"milestones":{{"nodes":[{noeuds}]}}}}}}}}',
@@ -342,14 +354,14 @@ class Depot:
         # GraphQL rend les clés dans l'ordre demandé et les parsers de lib.sh découpent dessus —
         # une seule fixture pour les deux requêtes ne pourrait donc pas convenir aux deux.
         numeros = ",".join(
-            f'{{"number":{numero},"title":"{t}"}}'
-            for numero, (t, _, _, _) in enumerate(jalons, 1)
+            f'{{"number":{numero},"title":"{jalon[0]}"}}'
+            for numero, jalon in enumerate(jalons, 1)
         )
         (self.fixtures / "milestones-numeros.json").write_text(
             f'{{"data":{{"repository":{{"milestones":{{"nodes":[{numeros}]}}}}}}}}',
             encoding="utf-8",
         )
-        self.numeros_jalons = {t: n for n, (t, _, _, _) in enumerate(jalons, 1)}
+        self.numeros_jalons = {jalon[0]: n for n, jalon in enumerate(jalons, 1)}
 
     def milestone_tickets(self, titre: str, iids: list[int]) -> None:
         """Les tickets d'UN milestone donné (les autres gardent la table de `publie`).
@@ -4178,10 +4190,11 @@ def test_seuls_les_milestones_actifs_sont_proposes_avec_leur_reste(depot: Depot)
     assert [x[0] for x in lignes] == ["Phase A", "Phase B"], \
         "une phase soldée n'est pas un run à lancer"
 
-    titre, courant, a_faire, ouverts, echeance = lignes[0]
+    titre, courant, a_faire, ouverts, echeance, rail = lignes[0]
     assert (titre, courant) == ("Phase A", "1"), "la phase courante est marquée, pas devinée"
     assert a_faire == "2", "les « À faire » et libres, pas les ouverts"
     assert ouverts == "7" and echeance == "2026-12-31"
+    assert rail == "produit", "un jalon non marqué reste du produit (#617)"
 
     assert lignes[1][1] == "0", "les autres phases actives sont proposables sans être le défaut"
     assert lignes[1][2] == "2"
@@ -4199,6 +4212,111 @@ def test_un_milestone_dont_les_tickets_sont_deja_pris_n_a_rien_a_traiter(depot: 
     lignes = _milestones(depot)
     assert lignes[0][2] == "0", "aucun ticket que la boucle pourrait prendre"
     assert lignes[0][3] == "2", "... alors qu'il reste bien deux tickets ouverts"
+
+
+# =====================================================================================
+# Deux rails de milestone : outillage de la forge vs produit (#617)
+# =====================================================================================
+# Le rail est POSÉ dans la description du jalon (« rail: outillage »), jamais dérivé des labels du
+# ticket — mesuré sur 113 tickets classés par les fichiers de leurs commits, le meilleur critère de
+# labels plafonne à 91 %. Ce que ces tests gardent est le MÉCANISME : deux réponses de
+# `current-milestone`, un défaut inchangé, et un rail qui voyage jusqu'au plan.
+
+def test_sans_marqueur_le_rail_est_produit_et_le_courant_ne_bouge_pas(depot: Depot) -> None:
+    """Le défaut est le comportement d'AVANT #617 : sur un dépôt dont aucun jalon n'est marqué,
+    `current-milestone` sans argument rend exactement ce qu'il rendait."""
+    depot.milestones([("Phase A", "active", 3, 10), ("Phase B", "active", 0, 4)])
+    depot.publie()
+
+    r = depot.lib("current-milestone")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "Phase A", "le plus ancien non soldé, comme avant le rail"
+
+    r = depot.lib("current-milestone", "produit")
+    assert r.stdout.strip() == "Phase A", "« produit » explicite est le même que le défaut"
+
+
+def test_le_rail_outillage_ecarte_les_jalons_produit(depot: Depot) -> None:
+    """Le cœur du ticket : deux jalons actifs, deux réponses. Sans le rail, « Outillage » serait
+    inatteignable — c'est ce qui faisait tomber tout ticket créé dans le jalon produit courant."""
+    depot.milestones([("Phase A", "active", 3, 10),
+                      ("Outillage", "active", 0, 4, "outillage")])
+    depot.publie()
+
+    # Le motif d'abord : sans rail, c'est bien « Phase A » qui gagne — donc le test qui suit
+    # constate un CHANGEMENT et pas une coïncidence d'ordre.
+    assert depot.lib("current-milestone").stdout.strip() == "Phase A"
+
+    r = depot.lib("current-milestone", "outillage")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "Outillage", "le rail écarte les jalons de l'autre rail"
+
+
+def test_chaque_rail_a_son_courant_et_ils_ne_se_confondent_pas(depot: Depot) -> None:
+    """Un jalon d'outillage plus ANCIEN ne devient pas le courant du produit, et réciproquement :
+    la règle « le plus ancien non soldé » joue à l'intérieur d'un rail, jamais au travers."""
+    depot.milestones([("Outillage 1", "active", 0, 4, "outillage"),
+                      ("Phase A", "active", 3, 10),
+                      ("Outillage 2", "active", 0, 4, "outillage"),
+                      ("Phase B", "active", 0, 4)])
+    depot.publie()
+
+    assert depot.lib("current-milestone").stdout.strip() == "Phase A", \
+        "le premier jalon PRODUIT, même précédé d'un jalon d'outillage"
+    assert depot.lib("current-milestone", "outillage").stdout.strip() == "Outillage 1", \
+        "le premier jalon OUTILLAGE, même précédé d'aucun"
+
+
+def test_un_rail_inconnu_est_refuse_avant_toute_lecture(depot: Depot) -> None:
+    """« produit »/« outillage » est un ensemble fermé de deux valeurs (même raison que les cinq
+    efforts de #217) : une faute de frappe qui rendrait le jalon par défaut en silence recréerait
+    le mélange qu'on corrige."""
+    depot.milestones([("Phase A", "active", 3, 10)])
+    depot.publie()
+
+    r = depot.lib("current-milestone", "outilage")
+    assert r.returncode == 2, "un rail inconnu n'est pas un rail par défaut"
+    assert "outilage" in r.stderr and "produit" in r.stderr, \
+        "le message nomme la faute ET les valeurs attendues"
+
+
+def test_le_listing_des_milestones_porte_le_rail_de_chacun(depot: Depot) -> None:
+    """`--milestones` sert à CHOISIR : sans la colonne, on choisirait un rail sans le savoir."""
+    depot.milestones([("Phase A", "active", 0, 2),
+                      ("Outillage", "active", 0, 2, "outillage")])
+    depot.ticket(501, "produit a faire")
+    depot.ticket(502, "outillage a faire")
+    depot.publie()
+    depot.milestone_tickets("Phase A", [501])
+    depot.milestone_tickets("Outillage", [502])
+
+    rails = {ligne[0]: ligne[5] for ligne in _milestones(depot)}
+    assert rails == {"Phase A": "produit", "Outillage": "outillage"}
+
+    # Et il y a DEUX courants, un par rail — c'est le changement de lecture que #617 introduit.
+    courants = {ligne[0]: ligne[1] for ligne in _milestones(depot)}
+    assert courants == {"Phase A": "1", "Outillage": "1"}, \
+        "chaque rail a son courant ; n'en marquer qu'un cacherait l'autre"
+
+
+def test_le_plan_dit_sur_quel_rail_il_porte(depot: Depot) -> None:
+    """Le rail voyage jusqu'au plan en ligne de COMMENTAIRE, comme la réserve d'arbitrage de #562 :
+    le pilote l'annonce sans redemander quoi que ce soit à la forge."""
+    depot.milestones([("Outillage", "active", 0, 2, "outillage")])
+    depot.ticket(501, "un ticket d'outillage")
+    depot.publie()
+    depot.milestone_tickets("Outillage", [501])
+
+    r = depot.lance("queue.sh", "--milestone", "Outillage")
+    assert r.returncode == 0, r.stderr
+    entete = [ligne for ligne in r.stdout.splitlines() if ligne.startswith("# milestone\t")]
+    assert entete == ["# milestone\tOutillage\toutillage"], \
+        "le plan nomme son jalon et son rail"
+
+    # C'est un commentaire : la lecture du plan par run.sh l'écarte déjà, donc il ne devient pas un
+    # ticket fantôme en tête de run.
+    tickets = [ligne for ligne in r.stdout.splitlines() if ligne and not ligne.startswith("#")]
+    assert len(tickets) == 1 and "\t501\t" in tickets[0]
 
 
 def test_le_listing_des_milestones_n_imprime_aucun_plan(depot: Depot) -> None:

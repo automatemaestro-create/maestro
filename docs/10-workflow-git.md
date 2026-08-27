@@ -247,6 +247,82 @@ que la vue par milestone reflète l'avancement réel de chaque phase.
   commande ne ferme un milestone. `doctor.sh` (§7) signale les milestones actifs entièrement
   soldés à fermer, ainsi que les tickets ouverts sans milestone.
 
+#### Deux rails : outillage de la forge et produit (#617)
+
+Cette règle a longtemps eu **une seule réponse**, indépendante du sujet du ticket — donc tout
+ticket créé tombait dans le milestone **produit** courant, qui devenait la décharge des deux. Mesuré
+le **2026-08-27** sur « Boucle fermée : du brief au livrable » : **15 de ses 28 tickets** étaient de
+l'outillage (10 `agent::orchestrateur` + 5 `devops` contre 11 `dev` + 2 `qa`), et ses **8 tickets
+ouverts l'étaient tous** — un milestone qui ne contenait plus rien de la boucle qu'il nommait,
+pendant qu'un milestone « Outillage de la forge » existait déjà sans plus rien attirer, son échéance
+étant postérieure. Ce qui manquait n'était pas le milestone, c'était l'**aiguillage**.
+
+Un milestone porte donc un **rail** — `produit` (moteur, API, Control Tower, agents) ou `outillage`
+(workflow git, `scripts/**`, `.claude/**`, `.github/**`, filet CI, worktrees, orchestration) — et
+la règle « l'actif le plus ancien non soldé » joue **à l'intérieur** de son rail :
+
+```
+bash scripts/gitlab/lib.sh current-milestone              # défaut : rail produit
+bash scripts/gitlab/lib.sh current-milestone outillage
+bash scripts/gitlab/lib.sh milestone-rail "<titre>"           # lit  le rail d'un milestone
+bash scripts/gitlab/lib.sh milestone-rail "<titre>" outillage # pose le rail (idempotent)
+```
+
+⚠ **Le rail est POSÉ, jamais DÉRIVÉ des labels — et c'est une mesure qui l'a décidé, pas un
+principe.** Vérité terrain établie sur **113 tickets**, chacun classé par les **fichiers que ses
+commits ont touchés** (même technique que #544 : le rattachement se lit, il ne se devine pas) :
+
+| critère candidat | exactitude | ce qu'il manque |
+|---|---|---|
+| `type::infra` | 81 % | rate 17 outillages |
+| `agent::orchestrateur\|devops` | **91 %** | rate 9, sur-classe 1 |
+| `type::infra` OU `agent::orch\|devops` | **91 %** | rate 5, sur-classe 5 |
+| `type::infra` ET `agent::orch\|devops` | 81 % | rate 21 |
+
+Aucun ne dépasse **91 %**, soit ~1 ticket sur 10 mal aiguillé, et les manques sont
+**systématiques** : le lot final « tests + doc » d'un chantier d'outillage porte `agent::qa` (#345,
+#363, #366, #414) et l'outillage de présentation porte `agent::dev` (#544→#547). **Hériter des
+labels du parent ne corrige rien** — mesuré aussi, **91 % à l'identique** : les labels du parent
+sont tout aussi trompeurs que ceux du lot. Ce qui **est** vrai, c'est que le rail est cohérent au
+sein d'un chantier (**8 lots sur 8** du rail de leur parent) : un lot hérite donc du **rail** de son
+parent, pas de ses labels. `/ticket-create` tranche le rail par **jugement**, au même titre qu'il
+choisit `agent::`, et le **signale** dans son résumé pour qu'il puisse être contredit.
+
+Quatre choses à ne pas défaire :
+
+- Le support est une ligne **`rail: outillage` dans la DESCRIPTION** du milestone. Pas son titre
+  (lu par les humains et par `/milestone-presentation`), pas un identifiant figé dans le dépôt
+  (règle de #358 : tout se résout par son nom), pas une variable d'environnement nommant **un**
+  milestone — il faudrait la changer à chaque milestone d'outillage soldé, alors que le marqueur
+  suit les milestones qui se succèdent.
+- Un milestone **sans marqueur est du produit**, et `current-milestone` **sans argument** rend
+  exactement ce qu'il rendait avant : sur un dépôt dont rien n'est marqué, le comportement est au
+  bit près celui d'avant #617. C'est ce qui a évité de marquer les **14 milestones déjà fermés**,
+  dont le bilan est écrit et dont des présentations ont été tirées.
+- La règle du marqueur vit **une fois**, dans `gl_rail_de` / `GL_RAIL_MOTIF`, rejouée telle quelle
+  par les deux lecteurs — le filtre de `current-milestone` et la colonne de `milestones`. La
+  **lecture** de `milestone-rail` passe elle-même par cette colonne plutôt que par une requête à
+  elle : deux formulations finiraient par ne plus rendre le même verdict, et c'est le milestone
+  d'un ticket qui en dépend (même raison que `gl_arbitrage_de`, #562).
+- La colonne `rail` de `lib.sh milestones` est en **dernière position**, et pas auprès du titre où
+  elle se lirait mieux : les six premières sont un contrat que `queue.sh` lit par leur **rang**
+  (`$1`, `$4`, `$5`, `$6`). Insérer au milieu lui ferait rendre l'échéance à la place d'un compte,
+  sans rien casser de visible.
+
+Côté run, `queue.sh --milestones` gagne la colonne `rail` et **deux** lignes à `courant = 1`, une
+par rail — un run porte sur un rail, et proposer « le » courant sans dire lequel est ce qui a laissé
+un run « produit » traiter de l'outillage. Le plan porte son milestone et son rail en **ligne de
+commentaire** (`# milestone<TAB>titre<TAB>rail`, même mécanique que la réserve d'arbitrage de #562 :
+les deux lectures de `run.sh` écartent déjà les `#`), et l'en-tête du run l'annonce — sans rien
+redemander à la forge, et en se taisant sur un plan antérieur rejoué par `--resume`. Le défaut d'un
+run sans consigne reste le **rail produit**.
+
+⚠ Un milestone d'outillage se traite **mal en autonomie** : une bonne part de ses tickets touche
+`.claude/**`, où l'écriture est **bloquée par le CLI** en amont de l'allowlist (#229/#238) — la
+session rend alors son correctif dans sa PR au lieu de l'appliquer (§11.7). `/orchestrate` le **dit
+en une phrase** quand le rail `outillage` est choisi : ce n'est pas un refus, c'est un régime à
+connaître.
+
 ### 3.5 Socle Projects v2 — le champ Status qui porte le cycle de vie
 
 Le cycle de vie décrit en §3.1 est porté par six labels **parce que GitLab Free ne proposait rien
