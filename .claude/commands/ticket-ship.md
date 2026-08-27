@@ -13,7 +13,8 @@ délègue la suite à `/ticket-finish`.
 
 ⚠ **Depuis #418 (chantier #413), « clore » veut dire « merger ».** La chaîne va jusqu'au bout, ce
 qui a un prix en temps de mur : le pipeline naît **après** la PR et tourne 2-4 min, donc la commande
-ne rend plus la main dans la seconde qui suit le commit. L'attente est **bornée** (15 min) et
+ne rend plus la main dans la seconde qui suit le commit. L'attente est **bornée** (15 min pour un
+run qui tourne, **jusqu'à 30 min** quand le run n'est pas encore né — #595, docs/10 §8.9) et
 **annoncée** pendant qu'elle dure. Elle n'est pas non plus une promesse : un pipeline rouge ou un
 conflit laisse la PR **ouverte** et le ticket **« En revue »**, et c'est un état normal — jamais un
 ✅ global.
