@@ -49,7 +49,9 @@ Endpoints :
   d'**application dans le projet** (#227, EF-37) y porte en plus son `diff` :
   les fichiers que l'accord écrirait et la branche qu'il fusionnerait ;
 - `POST /api/validations/{tache_id}/decision` — la décision humaine
-  (approuver/refuser) : le moteur, en attente sur le bus, reprend ou annule ;
+  (approuver/refuser) : le moteur, en attente sur le bus, reprend ou annule. Un
+  refus peut porter un `motif` (#272), facultatif, qui rejoint le `detail` de
+  l'événement — donc le journal et la `decision` de la demande ;
 - `GET  /api/playbooks` — les playbooks des agents (#76 : version courante et
   provenance — défaut du code ou stockage versionné) ;
 - `GET  /api/playbooks/{agent}` — le playbook courant d'un agent (contenu) ;
@@ -402,9 +404,23 @@ class ReassignationRequete(BaseModel):
 
 
 class DecisionRequete(BaseModel):
-    """Corps de la décision humaine (#48) : approuver ou refuser l'action sensible."""
+    """Corps de la décision humaine (#48) : approuver ou refuser l'action sensible.
+
+    `motif` (#272) est la raison **facultative** d'un refus, telle que la personne
+    l'a écrite. Il ne change rien à ce que le moteur fait — celui-ci ne lit que
+    `statut` — mais il rejoint le `detail` de l'événement, donc le journal durable
+    et la `decision` de la demande projetée : sans lui, un refus revenait plus tard
+    comme un fait sans cause, et rien ne distinguait « trop risqué avant la démo »
+    d'une erreur de clic.
+
+    Sur une **approbation** il est ignoré, comme le `brief` d'une décision de brief
+    l'est sur un refus (`DecisionBriefRequete`) : le canal porte les deux gestes,
+    chacun ne lit que ce qui le concerne. Vide ou absent, la décision est celle
+    d'avant ce lot, au caractère près.
+    """
 
     approuve: bool
+    motif: str = ""
 
 
 class DecisionBriefRequete(BaseModel):
@@ -1926,6 +1942,13 @@ def create_app(
         tâche (approbation) ou l'annule proprement (refus), et la pompe
         réapplique l'événement sans effet (idempotence). 404 si aucune demande
         pour cette tâche, 409 si elle est déjà tranchée (jamais deux décisions).
+
+        Le `motif` d'un refus (#272) voyage dans le `detail` de l'événement, et
+        nulle part ailleurs : c'est le champ que la projection recopie dans
+        `decision`, donc celui que l'UI relit et que le journal durable conserve.
+        Lui ouvrir un champ d'événement à lui aurait demandé de le faire traverser
+        le schéma du journal pour un texte que `detail` porte déjà — au prix d'un
+        second endroit où lire « pourquoi ce refus ».
         """
         demande = state.validation(tache_id)
         if demande is None:
@@ -1938,6 +1961,7 @@ def create_app(
                 detail=f"demande déjà tranchée ({demande.statut}) : {tache_id}",
             )
         approuve = requete.approuve
+        motif = "" if approuve else requete.motif.strip()
         event = Event(
             type=EVENEMENT_VALIDATION_DECISION,
             tache_id=tache_id,
@@ -1948,6 +1972,8 @@ def create_app(
             detail=(
                 "approuvée depuis la Control Tower"
                 if approuve
+                else f"refusée depuis la Control Tower — {motif}"
+                if motif
                 else "refusée depuis la Control Tower"
             ),
             # Le projet de la validation (#277), recollé par la projection depuis

@@ -548,6 +548,19 @@ information — les deux écrans qui dépassaient sont là pour servir d'exemple
 | `/couts` | **5 blocs** : évolution, répartition, table par tâche, table par exécution, grand livre | **3** — la répartition passe en **colonne de propriétés**, les deux tables deviennent un **second niveau** (`BasculeDeVues`) du bloc « Détail de la période », le grand livre reste à part (la période ne le borne pas) |
 | `/parametres` | **7 sections** de plein format | **3 familles** (`lib/parametres.ts`), dont les sept sections deviennent les sous-parties. Les ancres, l'impression et le Ctrl+F sont intacts — c'est ce qu'un passage aux **onglets** aurait coûté |
 
+**Et la troisième réponse — « une ligne avec un renvoi » — a son exemple depuis
+#272** : le panneau des validations. Il empilait **toute** la file sur le tableau
+de bord, ce qui refaisait l'écran Validations à l'intérieur d'un aperçu ; il rend
+désormais la demande **la plus ancienne** — entière et décidable sur place, c'est
+elle qui retient un moteur depuis le plus longtemps — puis une ligne « N autres
+demandes attendent leur tour » et un renvoi vers la page. Le prix est assumé et
+se dit : depuis le tableau de bord on ne tranche plus que la plus urgente. Ce qui
+ne change **pas** d'une surface à l'autre est la **carte** — `CarteValidation`,
+montée par `PanneauValidations` (aperçu) comme par `FileValidations` (plein
+format), mêmes champs dans le même ordre : ce qu'on lit pour trancher ne doit pas
+dépendre de l'écran d'où l'on vient, et c'était le cas quand trois rendus
+divergents décrivaient la même demande (le panneau, la page, la cloche).
+
 **Ce qui la garde** : `tests/sobriete.test.tsx`, qui monte les dix écrans du menu
 et compte. L'arbitrage n'y est pas déclaré, il se **prouve** : chaque écran est
 monté deux fois, files pleines puis files vides, et ce qui survit aux deux est ce

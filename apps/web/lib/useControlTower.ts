@@ -115,8 +115,16 @@ export type ControlTower = {
   /** API injoignable au dernier chargement (null si tout va bien). */
   erreur: string | null;
   reassigner: (tacheId: string, agent: string) => Promise<void>;
-  /** Tranche une demande de validation : le moteur reprend ou annule la tâche. */
-  decider: (tacheId: string, approuve: boolean) => Promise<void>;
+  /**
+   * Tranche une demande de validation : le moteur reprend ou annule la tâche.
+   * `motif` (#272) accompagne un **refus** et reste facultatif — omis, la
+   * décision est celle d'avant ce lot ; sur une approbation il est ignoré.
+   */
+  decider: (
+    tacheId: string,
+    approuve: boolean,
+    motif?: string,
+  ) => Promise<void>;
   /**
    * Tranche le brief d'un run (#320) : approuver tel quel ou corrigé, ou refuser.
    * Le run reprend sur la décomposition, ou se solde sans qu'aucune tâche n'ait
@@ -301,8 +309,8 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
   );
 
   const decider = useCallback(
-    async (tacheId: string, approuve: boolean) => {
-      await deciderValidation(tacheId, approuve);
+    async (tacheId: string, approuve: boolean, motif = "") => {
+      await deciderValidation(tacheId, approuve, motif);
       // Même mécanique que la réassignation : le WebSocket confirmera, le
       // rechargement direct fait disparaître la demande sans attendre.
       await recharger();

@@ -1,11 +1,17 @@
 "use client";
 
 /**
- * La page Validations (#117, lot 1 de #116) : les demandes de validation
- * humaine (#48) sorties du tableau de bord — celles en attente pour trancher,
- * et l'historique de celles déjà tranchées. Page provisoire : la refonte du
- * centre de notifications (#119) rebrassera la façon dont ces demandes
- * remontent à l'utilisateur ; l'API et les décisions, elles, sont définitives.
+ * La page Validations (#117, lot 1 de #116 ; refondue par #272, lot 5 de #244) :
+ * les demandes de validation humaine (#48) en **plein format** — celles qui
+ * attendent d'abord, la plus ancienne en tête, puis la trace de celles qui ont
+ * été tranchées.
+ *
+ * Elle ne porte **aucune présentation à elle** : la file est rendue par
+ * `FileValidations`, jumelle de l'aperçu du tableau de bord (`PanneauValidations`,
+ * critère 3 de #272). Ce qui change entre les deux surfaces est la place —
+ * ici toute la file, là-bas la plus urgente et un renvoi —, jamais ce qu'on lit
+ * pour trancher. Deux rendus divergents de la même demande, c'était l'état
+ * d'avant : on décidait sur moins d'information selon l'écran d'où l'on venait.
  *
  * Les demandes viennent du contexte du shell, cadrées sur le projet actif
  * (`?projet=`, #277/#281) : ce qui vaut pour la file en attente vaut pour
@@ -15,8 +21,9 @@
  */
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
-import { PanneauValidations } from "@/components/PanneauValidations";
-import { Carte } from "@/components/Primitives";
+import { IconeHistorique, IconeValidations } from "@/components/Icones";
+import { FileValidations } from "@/components/PanneauValidations";
+import { Carte, EnTeteSection, EtatVide } from "@/components/Primitives";
 import { RegionLive } from "@/components/RegionLive";
 import { mesureDesValidationsTranchees } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -41,7 +48,9 @@ export default function PageValidations() {
     <>
       <BanniereErreurApi erreur={erreur} />
       {chargement ? (
-        <p className="text-sm text-neutral-500">Chargement des demandes…</p>
+        <p className="text-corps text-texte-secondaire">
+          Chargement des demandes…
+        </p>
       ) : (
         <>
           {/* La région live de l'écran (#538) : elle annonce les décisions
@@ -54,17 +63,16 @@ export default function PageValidations() {
             mesures={[mesureDesValidationsTranchees(validations)]}
           />
           {enAttente.length === 0 ? (
-            <Carte
-              balise="p"
-              densite="aeree"
-              className="text-sm text-neutral-500 dark:text-neutral-400"
-            >
-              {validations.length === 0
-                ? `Rien encore sur ${projet.nom} : aucune demande d'arbitrage n'y a été faite.`
-                : `Aucune validation en attente sur ${projet.nom} — les moteurs y tournent sans demander d'arbitrage.`}
-            </Carte>
+            <EtatVide
+              icone={IconeValidations}
+              message={
+                validations.length === 0
+                  ? `Rien encore sur ${projet.nom} : aucune demande d'arbitrage n'y a été faite.`
+                  : `Aucune validation en attente sur ${projet.nom} — les moteurs y tournent sans demander d'arbitrage.`
+              }
+            />
           ) : (
-            <PanneauValidations validations={validations} decider={decider} />
+            <FileValidations validations={validations} decider={decider} />
           )}
           <HistoriqueValidations validations={tranchees} />
         </>
@@ -73,18 +81,34 @@ export default function PageValidations() {
   );
 }
 
-/** Ce qui a déjà été tranché : la trace des arbitrages, la plus récente en tête. */
+/**
+ * Ce qui a déjà été tranché : la trace des arbitrages, **la plus récente en
+ * tête** — ce que le commentaire de cet écran promettait depuis #117 sans que
+ * rien ne le fasse, la liste sortant dans l'ordre du backend.
+ *
+ * Chaque ligne porte sa `decision` (#272), la phrase que le backend a écrite au
+ * moment de trancher : c'est elle qui dit *d'où* la décision est venue et, pour
+ * un refus motivé, **pourquoi**. Sans elle un refus revenait comme un fait sans
+ * cause, et rien ne distinguait un arbitrage réfléchi d'une erreur de clic.
+ */
 function HistoriqueValidations({ validations }: { validations: Validation[] }) {
   if (validations.length === 0) return null;
+  // Copie avant tri : `validations` vient du contexte partagé, et le trier sur
+  // place réordonnerait la liste que les autres écrans lisent.
+  const recentes = [...validations].sort((a, b) =>
+    a.horodatage === b.horodatage ? 0 : a.horodatage < b.horodatage ? 1 : -1,
+  );
   return (
     <Carte balise="section" densite="aeree" aria-label="Validations tranchées">
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-        Déjà tranchées
-      </h2>
+      <EnTeteSection
+        titre="Déjà tranchées"
+        icone={IconeHistorique}
+        className="mb-2"
+      />
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+        <table className="w-full text-annexe">
           <thead>
-            <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
+            <tr className="border-b border-bord text-left text-texte-secondaire">
               <th className="py-1 pr-3 font-medium">Tâche</th>
               <th className="py-1 pr-3 font-medium">Agent</th>
               <th className="py-1 pr-3 font-medium">Issue</th>
@@ -92,33 +116,31 @@ function HistoriqueValidations({ validations }: { validations: Validation[] }) {
             </tr>
           </thead>
           <tbody>
-            {validations.map((validation) => (
-              <tr
-                key={validation.tache_id}
-                className="border-b border-neutral-100 dark:border-neutral-800/60"
-              >
+            {recentes.map((validation) => (
+              <tr key={validation.tache_id} className="border-b border-bord">
                 <td
                   className="max-w-64 truncate py-1 pr-3"
                   title={validation.tache_id}
                 >
                   {validation.titre || validation.tache_id}
                 </td>
-                <td className="py-1 pr-3 text-neutral-500 dark:text-neutral-400">
+                <td className="py-1 pr-3 text-texte-secondaire">
                   {validation.agent}
                   {validation.role ? ` · ${validation.role}` : ""}
                 </td>
                 <td className="py-1 pr-3">
                   {validation.statut === VALIDATION_APPROUVEE ? (
-                    <span className="text-emerald-700 dark:text-emerald-400">
-                      Approuvée
-                    </span>
+                    <span className="text-positif-texte">Approuvée</span>
                   ) : (
-                    <span className="text-rose-700 dark:text-rose-400">
-                      Refusée
+                    <span className="text-alerte-texte">Refusée</span>
+                  )}
+                  {validation.decision && (
+                    <span className="block text-micro text-texte-secondaire">
+                      {validation.decision}
                     </span>
                   )}
                 </td>
-                <td className="py-1 text-neutral-500 dark:text-neutral-400">
+                <td className="py-1 text-texte-secondaire">
                   {formatDateHeure(validation.horodatage) || "—"}
                 </td>
               </tr>
