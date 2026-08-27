@@ -1173,7 +1173,8 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     `/mr-review` gardent leur usage et perdent leur place dans le cycle : on relit ce qui est déjà
     dans `main`, et un problème trouvé se corrige par un ticket, plus par un blocage de PR.
   - ⚠ **Ceci renverse « pas d'attente pipeline à la clôture ».** `/ticket-finish` attend désormais le
-    verdict (~2-4 min, borné à 15 min par `pipeline-wait`) **avant** de merger, et `/ticket-ship`
+    verdict (~2-4 min, borné par `pipeline-wait` — 15 min pour un run qui tourne, jusqu'à 30 min
+    quand le run n'est **pas encore né**, §8.9) **avant** de merger, et `/ticket-ship`
     avec lui : ces commandes ne rendent plus la main dans la seconde. L'ancienne règle disait qu'une
     attente de pipeline en fin de ticket était du temps perdu — elle avait raison tant que le merge
     venait plus tard et de quelqu'un d'autre. Elle est **fausse depuis #418**, et on l'écrit plutôt
@@ -1722,7 +1723,8 @@ hasard* avant `main`. Une PR qui attend coûte infiniment moins qu'une résoluti
 dans `lib.sh` : `pipeline-latest <ref>`, `pipeline-status <id>`, `pipeline-failed-jobs <id>`,
 `job-trace <job-id> [lignes]`, `pipeline-wait <ref|run-id> [--timeout <s>]` (parsing shell pur,
 comme le reste du fichier ; la forme `<id> <timeout-s>` que cette commande emploie reste acceptée
-— #416 lui a ajouté la cible **ref** et les codes `4`/`5`, elle ne lui en a rien retiré). Le job
+— #416 lui a ajouté la cible **ref** et les codes `4`/`5`, #595 le code `6` et le second délai de
+naissance (§8.9), aucun des deux ne lui a rien retiré). Le job
 rouge se rejoue en local par le **filet CI** — `bash scripts/ci/local.sh --only
 <job>` —, jamais par une recette recopiée à côté : le filet lit les jobs dans le workflow,
 passe par le venv du repo, analyse un miroir LF pour shellcheck (la CI checkout en LF, une copie
@@ -2521,6 +2523,115 @@ rendant jamais un numéro consommé. La recette attend donc #340 (décision util
 partent bien sur `pull_request`, que `perimetre` calcule le bon périmètre depuis
 `base.sha` (c'est le seul point du fichier qui n'a jamais tourné sous cet événement), et que
 `web-build` ressort `skipped` — et non absent — sur une PR hors périmètre.
+
+### 8.9 Quand l'événement arrive en retard — l'attente de naissance (#595)
+
+**La mesure, d'abord.** Le 2026-08-26 en fin d'après-midi, l'événement `pull_request` a cessé de
+déclencher la CI dans la minute pour la déclencher **vingt minutes plus tard**. Trois PR
+consécutives, sur le même dépôt et dans la même heure :
+
+| PR | ouverte | run `pull_request` | délai |
+|---|---|---|---|
+| #591 (#577) | 16:03:54Z | 16:22:15Z | **18 min 21 s** |
+| #592 (#583) | 16:05:46Z | 16:25:41Z | **19 min 55 s** |
+| #594 (#584) | 16:50:17Z | rien à 16:55Z | **> 5 min, débloqué à la main** |
+
+Le **matin même**, sur le même dépôt, le run naissait dans la minute (PR de #578, #580, #581, #582,
+entre 13:07 et 13:49). Actions n'était ni désactivé ni à court de quota — `actions/permissions` rend
+`{"enabled":true}` — et un `workflow_dispatch` lancé à la main **partait immédiatement** et rendait
+un vert en ~3 min.
+
+**Ce que la mesure établit** : ce n'est pas le workflow qui refuse de se déclencher, c'est
+l'**événement** qui arrive en retard ; et notre outillage n'avait **aucune défense** contre une
+latence de déclenchement supérieure à son plafond d'attente. **Ce qu'elle n'établit pas** : la cause
+côté GitHub, qui reste **inconnue** et sur laquelle nous n'avons aucune prise. Elle est peut-être
+déjà passée à la lecture de ces lignes — ce qui ne change rien à ce qui suit, écrit contre la classe
+de panne et non contre son occurrence.
+
+**Le mode de panne est le plus coûteux qui soit : rien n'est rouge.** Aucun job ne casse, aucune PR
+n'est en conflit, tout attend. La file de merge du run `20260826-183242` l'a payé en **24 tentatives**
+de merge sur la seule PR #592, sans que la console dise autre chose que « attente ». Et le remède
+existait, à une commande — `gh workflow run ci.yml --ref <branche>`, nommé par `ci.yml` et par
+`/mr-fix` — mais **aucun des deux chemins automatiques ne l'atteignait** : il a fallu le trouver à la
+main, deux fois.
+
+**Ce que #595 change, et pourquoi.** Trois défauts distincts, dont deux étaient invisibles au
+chronomètre :
+
+1. **Un seul chiffre bornait deux attentes qui n'ont pas la même échelle.** `pipeline-wait` (#416)
+   avait un plafond (15 min, pour un run qui *tourne*) et un délai de naissance (120 s, pour un run
+   qui *apparaît*), le second étant justifié par un raisonnement juste — « un run qui n'est pas né
+   deux minutes après le push ne naîtra pas, faute d'événement pour le déclencher ». Ce raisonnement
+   ne vaut que quand **aucun événement n'est dû**. Une PR ouverte le rend faux : l'événement *est*
+   dû, seule son heure est inconnue. D'où **deux délais de naissance** — `MAESTRO_PIPELINE_NAISSANCE`
+   (120 s, aucune PR ouverte : la réponse est acquise en deux minutes, inutile d'en payer quinze) et
+   `MAESTRO_PIPELINE_NAISSANCE_PR` (**1800 s**, une PR ouverte : la mesure ci-dessus, avec sa marge).
+   Le second n'est **pas** ramené au plafond, et c'est tout l'objet du ticket : les faire partager un
+   chiffre est exactement ce qui faisait déclarer anormale une attente normale.
+2. **Le plafond mangeait la naissance.** Il courait depuis l'appel ; il court désormais **depuis le
+   moment où le run est vu**. Sans quoi une naissance de vingt minutes aurait consommé les quinze
+   minutes du run qu'elle venait de faire apparaître, et le remède aurait fabriqué le défaut suivant.
+3. **`pipeline-wait` ne savait pas QUEL run il attendait**, et c'est la moitié que le chronomètre ne
+   montre pas. Il tenait pour « vu » n'importe quel run de la branche, y compris celui de la push
+   précédente : sur une branche portant un vieux vert, il rendait **`0` instantanément**. La reprise
+   unique que `/ticket-finish` s'accorde sur un `3` (§6) repassait alors **sans avoir attendu une
+   seule seconde**, et les deux appels rendaient le même verdict pour la même raison — une reprise
+   qui a l'air d'en être une sans jamais rien laisser arriver. Le verbe lit désormais **une fois**,
+   avant sa boucle, la PR de la ref (`gh_merge_facts`) : cette lecture répond du même coup à « un
+   événement est-il dû ? » et à « quel sha attend-on ? ». Une ref sans PR — ou une forge muette —
+   retombe exactement sur le régime d'avant.
+
+> ⚠ **Il ne juge toujours pas la mergeabilité.** Savoir quel run on attend n'est pas décider qu'un
+> vert vaut merge : cette décision reste entière chez `merge-mr`, qui compare les sha et rend `3`
+> « verdict périmé » (§6). Deux endroits qui diraient « mergeable » vaudraient toujours moins qu'un.
+
+**Un code de retour à part, `6` — et il ne route vers rien.** Le verbe distinguait déjà « plafond
+atteint » (`4`) de « aucun pipeline » (`5`) ; il distingue maintenant, dans le second, « il n'y en
+aura pas » (`5`, aucune PR ouverte) de « il n'est pas là, mais il vient » (`6`, une PR le rend dû).
+Ce n'est pas de la taxonomie : `pipeline-wait` et `merge-mr` ont deux tables de codes qui partagent
+leurs chiffres, et **le `5` de `merge-mr` est un conflit avec `origin/main`, donc une cause
+réparable qui enchaîne d'office sur `/mr-fix`** (§6, #460). Un `5` de naissance lu dans la mauvaise
+table envoyait donc une remédiation sur une PR **qui n'a ni conflit ni job rouge à réparer**, et lui
+faisait consommer ses deux tentatives pour rien. Le `6` ferme cette porte des deux côtés : dans la
+table de `merge-mr` il désigne une **anomalie à nommer**, que rien ne tente de réparer.
+
+**Le dispatch de secours reste un geste humain, et c'est un arbitrage.** Le câbler après N minutes
+sans run était la piste évidente — c'est littéralement ce qui a débloqué #591 et #594. Elle est
+**écartée**, pour deux raisons dont une seule suffirait :
+
+- `pipeline-wait` **ne relance rien, ne corrige rien, n'écrit nulle part** (#416), et c'est ce qui
+  justifie qu'une session de run puisse l'appeler là où `merge-mr` lui est refusé (§11.6). En faire
+  un verbe qui déclenche, c'est rouvrir cette question-là pour un gain de quelques minutes.
+- Un `workflow_dispatch` tourne sur **`refs/heads/<branche>`**, là où `pull_request` tourne sur la
+  **ref de merge** (`refs/pull/N/merge`, §8.8). Les deux portent le **même `head_sha`**, donc
+  `merge-mr` accepterait le run de dispatch sans broncher — il vérifierait la branche seule quand on
+  croyait avoir vérifié son merge avec `main`. Substituer **en silence** une vérification plus faible
+  à celle qu'on attendait est le contraire exact de « aucun merge non vérifié » (§6, #417). Le
+  déclencher **en connaissance de cause** reste parfaitement légitime ; le déclencher à la place de
+  quelqu'un, non.
+
+Ce qui manquait n'était donc pas le remède mais de le connaître **au moment où il sert** : le message
+du code `6` le nomme, avec la branche déjà substituée dans la commande.
+
+**Et l'attente se nomme au lieu de se fondre dans « attente ».** Trois endroits, trois moments :
+
+| Où | Quand | Ce qui est dit |
+|---|---|---|
+| `pipeline-wait`, sur `6` | le délai de naissance est épuisé | la durée, le numéro de la PR, et la commande de dispatch |
+| `pipeline-wait`, sur `0`/`3` | le run est né **après** le délai court | « run né après 18min21 — le déclencheur a tardé » : sans cette ligne, une clôture qui aboutit ne dirait jamais qu'elle a attendu vingt minutes |
+| console du run | une PR reste en naissance plus de 10 min (`MAESTRO_ORCHESTRATE_NAISSANCE_SIGNAL`) | la durée, le nombre de tentatives, **« ce n'est ni un rouge ni un conflit, rien à débloquer »**, et la commande de dispatch — **une seule fois**, la règle de `merge_annonce` valant ici aussi : un drain qui répète « pas encore » à chaque passe est un drain qu'on cesse de lire |
+
+Le drain final annonce en outre **avant** chaque attente qu'elle peut tenir une demi-heure : c'est le
+seul endroit où le run patiente pour une naissance (une passe ne repasse pas sur une PR qui n'a rien
+donné), donc un silence de cette longueur s'y lit comme une panne. Le bilan de fin de run, lui, porte
+la durée d'attente sur la ligne de chaque PR restée en file — « en attente » sans chiffre ne dit pas
+si le pipeline tarde d'une minute ou d'une heure, et c'est ce chiffre qui décide si le dispatch vaut
+la peine au réveil.
+
+**Ce que le pilote faisait déjà bien, et qu'on n'a pas touché** : sa file de merge remet en file un
+`3` (« verdict pas encore rendu ») au lieu de le compter bloqué — c'est ce comportement, et lui seul,
+qui a fini par merger #592 après 24 passes. Le ticket n'a pas changé la conduite, il a changé ce que
+la console en dit et ce que l'attente coûte.
 
 ## 9. Deux tickets en parallèle — un worktree par session
 
@@ -5212,9 +5323,9 @@ n'existe jamais), et ceux qui restent deviennent résolubles pendant le run plut
 | | Pendant le run | En fin de run |
 |---|---|---|
 | Déclenchement | dans la boucle d'attente, une passe toutes les `MAESTRO_ORCHESTRATE_MERGE_INTERVALLE` s (60) | le plan épuisé, plus aucun ticket en vol |
-| Attente de pipeline | **non** — le pilote doit continuer à moissonner et à tenir l'écran | **oui** (`pipeline-wait`), sauf si l'arrêt a été demandé |
+| Attente de pipeline | **non** — le pilote doit continuer à moissonner et à tenir l'écran | **oui** (`pipeline-wait`), sauf si l'arrêt a été demandé. C'est le **seul** endroit où le run patiente pour une naissance, une passe ne repassant pas sur une PR qui n'a rien donné : l'appel peut donc tenir une demi-heure, et s'annonce PR par PR avant de commencer (§8.9) |
 | Ordre | celui d'entrée | `lib.sh merge-order` (voir plus bas), **recalculé après chaque merge** |
-| Bornes | — | plafond global `MAESTRO_ORCHESTRATE_MERGE_PLAFOND` (3600 s) |
+| Bornes | — | plafond global `MAESTRO_ORCHESTRATE_MERGE_PLAFOND` (3600 s), relu entre deux passes **et avant chaque PR** (#595 : une attente de naissance pouvant tenir une demi-heure, une passe de cinq PR sous une panne de déclencheur vaudrait deux heures et demie sans ce second contrôle) |
 
 ⚠ **Une passe s'arrête au PREMIER merge réussi**, et ce n'est pas une économie : un merge déplace
 `origin/main` et **périme le verdict de conflit de toutes les autres PR**. Les juger dans la même
@@ -5243,7 +5354,7 @@ que ce qu'il ferait gagner.
 |---|---|---|
 | `0` | `mergee` | le ticket se ferme par son `Closes`, le workflow `issues: closed` pose « Terminé » (§9.2) |
 | `7` | `mergee` | **déjà mergée hors du run** — même état, même ramassage, et le journal dit que le merge n'est pas le sien |
-| `3` | `attente` | verdict pas encore rendu (en cours, absent, ou **périmé**) — la seule réponse qui laisse en file |
+| `3` | `attente` | verdict pas encore rendu (en cours, absent, ou **périmé**) — la seule réponse qui laisse en file. Absent et périmé sont deux formes d'une **attente de naissance**, que la console nomme au bout de dix minutes au lieu de la laisser sous le mot « attente » (§8.9) |
 | `4` / `5` | `bloquee` | pipeline rouge / conflit — **réparables**, d'où une session de déblocage |
 | autre | `bloquee` | geste humain : rien ne le tente, la PR est nommée au bilan avec sa cause |
 
@@ -5312,12 +5423,14 @@ relu **entre** deux passes : il n'interrompt ni un merge ni une session de débl
 couper une résolution de conflit au milieu n'économiserait que du temps de mur.
 
 > **Tests.** [`tests/test_merge_automatique.py`](../tests/test_merge_automatique.py) garde les
-> verbes (les quatre prérequis un par un, les quatre codes de `pipeline-wait`, l'ordre de
+> verbes (les quatre prérequis un par un, les codes de `pipeline-wait` — **naissance comprise**,
+> avec l'A/B qui prouve qu'un vieux vert n'est plus pris pour le run attendu (§8.9) —, l'ordre de
 > `merge-order` sur le graphe de #299, le `deny` et son message) ;
 > [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) garde le pilote — l'entrée en file, le
 > merge qui aboutit, la **sérialisation** (mesurée par une barrière et des relevés par écrivain,
 > jamais par un `sleep` ni un compteur partagé — #292, puis #313), la seconde PR rejugée après le
-> premier merge, le plafond de deux déblocages, et la reprise qui ne rejoue pas un merge fait.
+> premier merge, le plafond de deux déblocages, la reprise qui ne rejoue pas un merge fait, et
+> l'attente de naissance **nommée une fois** sur la console avec son contre-échantillon (§8.9).
 
 ### 11.12 Après un run : où est passé son temps — `journal.sh audit` et `/run-audit` (chantier #495)
 
