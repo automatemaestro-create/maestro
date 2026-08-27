@@ -48,7 +48,7 @@ import { RegionLive } from "@/components/RegionLive";
 import { mesuresDesRuns } from "@/lib/annonces";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { runsEnAttenteDeValidation } from "@/lib/execution";
-import { entreeParLibelle } from "@/lib/navigation";
+import { entreeParLibelle, PAGE_DU_FIL } from "@/lib/navigation";
 
 export function ListeRuns() {
   const { projet, executions, validations, taches, chargement, erreur } =
@@ -58,7 +58,10 @@ export function ListeRuns() {
   // demande de validation porte sa tâche, jamais son run. Calculé une fois pour
   // toute la liste plutôt qu'une fois par carte.
   const enValidation = runsEnAttenteDeValidation(validations, taches);
-  const composer = entreeParLibelle("Composer un objectif");
+  // Où l'on lance un run — le fil depuis #484, « Composer un objectif » avant
+  // lui. Le libellé vient de `PAGE_DU_FIL` et non de ce fichier : les trois
+  // écrans vides qui nomment ce geste bougent ensemble ou pas du tout.
+  const lancer = entreeParLibelle(PAGE_DU_FIL);
 
   return (
     <>
@@ -113,9 +116,9 @@ export function ListeRuns() {
           message={`Aucun run sur ${projet.nom}. Chaque exécution lancée dans ce projet s'inscrira ici — son état, son objectif, sa progression et son coût — et y restera une fois terminée.`}
           icone={IconeRuns}
           lien={
-            composer && {
-              href: composer.href,
-              libelle: "Composer un objectif",
+            lancer && {
+              href: lancer.href,
+              libelle: "Ouvrir le chat",
             }
           }
           releve="La Control Tower est branchée : la liste se remplira d'elle-même, sans recharger la page."

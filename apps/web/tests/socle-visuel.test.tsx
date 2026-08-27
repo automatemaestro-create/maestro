@@ -238,10 +238,10 @@ describe("le bouton (Bouton)", () => {
   it("rend une navigation comme un lien, et non comme un bouton", () => {
     // `BoutonLien` en a l'allure ; ce doit rester ce qui s'ouvre dans un onglet
     // et se copie. Un `<button>` qui navigue perdrait les deux.
-    render(<BoutonLien href="/composer">Composer un objectif</BoutonLien>);
+    render(<BoutonLien href="/chat">Ouvrir le chat</BoutonLien>);
     expect(
-      screen.getByRole("link", { name: "Composer un objectif" }),
-    ).toHaveAttribute("href", "/composer");
+      screen.getByRole("link", { name: "Ouvrir le chat" }),
+    ).toHaveAttribute("href", "/chat");
     expect(screen.queryByRole("button")).toBeNull();
   });
 });

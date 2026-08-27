@@ -7,7 +7,16 @@
  * (`a11y`, `sobriete`), donc c'est `MENU` qui fait foi. Il y en a eu dix de #537
  * à #270 ; les compter en prose était le plus court chemin vers une doc fausse
  * au prochain écran — c'est le reproche que docs/30 §4.2 fait déjà au tableau
- * compté à la main.
+ * compté à la main. #484 l'a confirmé aussitôt, dans l'autre sens : « Composer
+ * un objectif » et « Valider le brief » ont quitté le menu, donc cette table.
+ *
+ * Leur retrait d'ici n'est d'ailleurs pas un choix mais la **conséquence** de ce
+ * que la table est dérivée : leurs écrans redirigent (`next.config.ts`), plus
+ * personne ne les atteint, et les auditer reviendrait à rendre un verdict sur
+ * une page que le produit ne sert plus. Leurs composants, eux, restent couverts
+ * là où ils vivent encore — `brief/` par le fil du cadrage (#483) et par
+ * `brief.test.tsx`, `composer/` par `composer.test.tsx` et
+ * `composer-sources.test.tsx`.
  *
  * Il est né avec le filet d'accessibilité (#537) et vit ici depuis #539, quand
  * la sonde de sobriété a eu besoin des mêmes écrans dans le même état. Deux
@@ -32,9 +41,7 @@ import {
 } from "@/lib/types";
 
 import PageTableauDeBord from "@/app/page";
-import PageBrief from "@/app/brief/page";
 import PageChat from "@/app/chat/page";
-import PageComposer from "@/app/composer/page";
 import PageCouts from "@/app/couts/page";
 import PageIntegrations from "@/app/integrations/page";
 import PageJournalEcran from "@/app/journal/page";
@@ -165,15 +172,13 @@ export type Ecran = { href: string; rendu: () => React.ReactElement };
  */
 export const ECRANS: Ecran[] = [
   { href: "/", rendu: () => <PageTableauDeBord /> },
-  { href: "/composer", rendu: () => <PageComposer /> },
-  { href: "/brief", rendu: () => <PageBrief /> },
+  { href: "/chat", rendu: () => <PageChat /> },
   { href: "/runs", rendu: () => <PageRuns /> },
   {
     href: "/agents",
     rendu: () => <ListeAgents ongletCible={ongletAgentOuDefaut(undefined)} />,
   },
   { href: "/integrations", rendu: () => <PageIntegrations /> },
-  { href: "/chat", rendu: () => <PageChat /> },
   { href: "/couts", rendu: () => <PageCouts /> },
   { href: "/validations", rendu: () => <PageValidations /> },
   { href: "/journal", rendu: () => <PageJournalEcran /> },

@@ -91,11 +91,12 @@ export function IconeBrief(props: Props) {
 /**
  * Les runs (#474) : le triangle de lecture dans son cercle — ce qui **s'exécute**.
  *
- * Il côtoie `IconeObjectif` au menu, juste sous « Valider le brief », et s'en
- * distingue par son asymétrie : la cible est parfaitement radiale (trois cercles
+ * Elle côtoyait `IconeObjectif` au menu, juste sous « Valider le brief », et s'en
+ * distinguait par son asymétrie : la cible est parfaitement radiale (trois cercles
  * concentriques), celle-ci porte un triangle décentré, reconnaissable à 20 px dans
- * une sidebar repliée. Le rapport entre les deux est le bon : on vise un objectif,
- * puis on regarde le run qui l'exécute.
+ * une sidebar repliée. Depuis #484 sa voisine est `IconeChat`, les deux entrées
+ * qu'elle suivait étant parties avec leurs écrans ; le contraste vaut aussi bien —
+ * on parle, puis on regarde le run qui en sort.
  */
 export function IconeRuns(props: Props) {
   return (

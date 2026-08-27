@@ -108,6 +108,11 @@ import {
  * geste a déménagé de « Valider le brief » vers le fil, donc la table suit. Le
  * libellé passe par `PAGE_DU_CADRAGE` (`lib/brief`) plutôt que d'être écrit ici,
  * les trois surfaces qui acheminent vers le brief devant bouger ensemble.
+ *
+ * Et la preuve est venue vite : #484 a retiré « Valider le brief » du menu le
+ * 2026-08-28 sans toucher à cette table. Un libellé écrit ici aurait rendu
+ * `undefined`, donc `null`, donc l'attente la plus bloquante du produit sans
+ * renvoi — en silence.
  */
 export const ATTENTES: Record<
   CauseAttente,

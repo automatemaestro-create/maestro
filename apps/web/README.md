@@ -186,6 +186,21 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   agent — servi pour de bon depuis #269 (voir ci-dessous). Les onglets sont
   déclarés une seule fois (`lib/agents.ts`), comme le menu l'est dans
   `lib/navigation.ts` ;
+- **Une seule porte d'entrée** (#484, lot 3 de #481, docs/05 §1) : « Composer un
+  objectif » (#319) et « Valider le brief » (#322) **ont quitté le menu** le
+  2026-08-28, et « Chat » a pris leur place en tête — le fil sait faire ce
+  qu'elles faisaient (les sources depuis #482, le cadrage depuis #483), et deux
+  portes vers un même geste sont la question « laquelle ? » posée à chaque
+  lancement. Même mécanique qu'au-dessus : `/composer` et `/brief` sont
+  **redirigés** vers `/chat` (307, `next.config.ts`), donc aucun signet ne casse.
+  Le vrai coût du lot est ailleurs — **cinq** surfaces acheminaient vers ces deux
+  écrans en résolvant leur destination par le **menu** (le poste vide, la liste
+  de runs vide, la file de briefs vide, la cloche, la table `ATTENTES`) ; un
+  libellé retiré rend `undefined`, donc `null`, donc un bloc qui disparaît sans
+  un mot. Les trois du **cadrage** avaient été déplacées d'avance par #483
+  (`PAGE_DU_CADRAGE`), les deux du **lancement** l'ont été ici (`PAGE_DU_FIL`,
+  `lib/navigation.ts`) : retirer une entrée de menu n'est jamais un geste
+  local ;
 - **Éditeur de playbooks** (#77, EF-24/EF-25) : l'onglet **Playbook** d'une fiche
   agent porte son playbook versionné (#76, API `/api/playbooks`), publie une nouvelle
   version depuis un éditeur plein texte et montre l'historique, chaque version
@@ -905,7 +920,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 
 | Fichier | Ce qu'il couvre |
 | --- | --- |
-| `tests/navigation.test.tsx` | Le menu unique, la sidebar, la barre supérieure (#117) ; une entrée par intention et les renvois par libellé (#189) |
+| `tests/navigation.test.tsx` | Le menu unique, la sidebar, la barre supérieure (#117) ; une entrée par intention et les renvois par libellé (#189) ; la **porte unique** (#484, **logique critique du lot seule**, le reste différé à #485) — les deux entrées parties, les deux chemins encore servis en 307, aucune entrée de menu parmi les sources de redirection, et le libellé du fil qui **résout** (un `undefined` y éteindrait cinq renvois sans un mot) |
 | `tests/theme.test.tsx` | Choix clair/sombre/système, script d'init, accord des deux contrôles (#118) |
 | `tests/notifications.test.tsx` | Tri du notable, badge, décision depuis le panneau (#119) |
 | `tests/identite.test.tsx` | Le monogramme et ses déclinaisons favicon/ICO/PNG (#120) |
@@ -1033,6 +1048,13 @@ qu'aucun outil n'attrape — ni le lint, ni le build, ni un rendu :
   redirections v1 (`next.config.ts`) et les ancres `data-guide` visées par la
   visite guidée. Une page supprimée laisserait sinon une entrée de menu vers un
   404, un signet redirigé vers le vide et une étape de visite sans cible ;
+- ceux de la **porte unique** (#484) : qu'aucune entrée de menu ne porte plus
+  `/composer` ni `/brief`, que les deux chemins soient **encore servis** en 307
+  (jamais 308 — un 308 est mis en cache pour de bon), qu'aucune entrée de menu ne
+  figure parmi les **sources** de redirection (une entrée qui se redirige
+  elle-même est un aller simple, le piège de #190), et que le libellé du fil
+  **résolve** — c'est cette dernière qui garde les cinq renvois, dont l'échec
+  serait `null` et donc silencieux ;
 - celui qui vérifie que chaque redirection v1 vise un **onglet déclaré**
   (`lib/agents.ts`). Le contrôle de route ne suffit pas ici : `[onglet]` répond à
   *n'importe quel* segment, si bien qu'une faute de frappe rendrait bien une page
