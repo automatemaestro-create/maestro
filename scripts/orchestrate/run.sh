@@ -235,15 +235,33 @@ CONCURRENCE_ORIGINE=derivee
 # La BORNE de la dérivation (#455). Le plan dit ce qui est simultanable ; il ne dit rien de ce que la
 # machine tient, et c'est l'autre moitié — celle que le cadrage du ticket ne nommait pas. La
 # contrainte n'est pas le quota Claude (déjà annoncé plus bas, et qui ne borne rien : il se consomme
-# plus vite, il ne casse pas) mais les ressources du POSTE : le run 20260826-155709, à trois sessions
-# `xhigh` en vol, a épuisé les ressources de fork de MSYS après trois heures — « fork: Resource
-# temporarily unavailable », pilote mort en cours de route, sessions orphelines et travail non poussé
-# laissés derrière. Même leçon que le plafond `-n 8` de pytest (#285) : la borne est une constante
-# MESURÉE puis figée, jamais une mesure à chaud, et elle se déplace par l'environnement.
+# plus vite, il ne casse pas) mais les ressources du POSTE.
 #
-# Défaut 2, et l'asymétrie des erreurs le choisit : trop haut, un run meurt en plein travail et perd
-# ce qui n'était pas poussé ; trop bas, on perd du temps de mur. C'est déjà le double du régime
-# d'avant ce ticket.
+# Défaut 2, et c'est l'ASYMÉTRIE DES ERREURS qui le choisit, seule : trop haut, un run meurt en plein
+# travail et perd ce qui n'était pas poussé ; trop bas, on ne perd que du temps de mur. Les deux
+# issues ne se valent pas, donc dans le doute la valeur basse. Ce raisonnement se suffit à lui-même,
+# et c'est déjà le double du régime d'avant #455.
+#
+# ⚠ CE PLAFOND N'EST PAS MESURÉ (#599, docs/10 §11.10). #455 écrivait ici que le run 20260826-155709,
+# à trois sessions `xhigh` en vol, avait « épuisé les ressources de fork de MSYS après trois heures »,
+# pilote mort en cours de route — et rangeait la borne sous « constante MESURÉE puis figée, même
+# leçon que le `-n 8` de pytest (#285) ». Trois choses n'y tenaient pas : ce run a duré 58 min
+# (démarré à 15:57, dernières écritures à 16:55) et non trois heures ; ce qui est mort sur
+# l'épuisement de forks vers 16:02 est une BOUCLE DE SURVEILLANCE de la session interactive (un
+# `until` avec `ls`/`wc` toutes les 5 s) et non le pilote, qui a travaillé 53 min de plus (#583
+# démarré à 16:38) ; le lien de causalité n'est donc pas établi. Le parallèle avec #285 est retiré —
+# là-bas les chiffres sont dans le ticket, ici la mesure n'existe pas.
+#
+# Ce qui reste vaut d'être gardé, sous son vrai nom : un SIGNAL, daté. Le 2026-08-26, un épuisement
+# de forks MSYS a bien été OBSERVÉ sur ce poste pendant qu'un run tournait à trois sessions `xhigh` —
+# un signal sur une machine, jamais une mesure et jamais une cause. Et le CONTRE-EXEMPLE est du même
+# jour : le run 20260826-183242, reprise du même plan à la même concurrence 3 et aux mêmes sessions
+# `xhigh`, a tenu plus de 1 h 45 sans incident et mené cinq tickets à « Terminé » (#579, #583, #584,
+# #585, #586).
+#
+# Conséquence pour qui voudra y toucher : fonder ce plafond reste un SUJET OUVERT. On ne le relève
+# pas sans la mesure qui manque, et on ne le rebaisse pas en invoquant celle qui n'a jamais existé.
+# Elle se déplace par l'environnement ou par --concurrence-max.
 CONCURRENCE_MAX="${MAESTRO_ORCHESTRATE_CONCURRENCE_MAX:-2}"
 # Ce que le plan offrait, avant écrêtage par la borne — gardé pour l'annonce, qui doit pouvoir dire
 # « borné » plutôt que de laisser croire que le plan n'offrait pas mieux. Déclarée vide ici parce que
