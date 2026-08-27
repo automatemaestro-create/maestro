@@ -12,6 +12,7 @@ export const LIBELLE_MODE: Record<string, string> = {
   token_statique: "Token statique",
   appairage: "Appairage (sans token)",
   oauth_importe: "Token OAuth importé",
+  sans_secret: "Sans secret",
 };
 
 /** Le mode d'auth d'une intégration, dit en clair. */

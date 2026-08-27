@@ -82,7 +82,8 @@ elles sont **redirigées vers l'onglet qu'elles visaient**
 | `/chat/<agent>` | `/agents/<agent>/chat` | |
 
 `/chat` **nu n'est pas redirigé** : il reste au menu pour le chat **global**, non
-lié à un agent (chantier « Chat » de la Phase 6) — c'est une intention distincte.
+lié à un agent — c'est une intention distincte, et il la sert pour de bon depuis
+#269 (§2.9), sur le canal `orchestrateur` du lot 1 (#268, §6.5).
 Les redirections sont temporaires (307) et non permanentes (308) : un 308 est mis
 en cache par le navigateur pour de bon, et ces chemins ne pourraient plus être
 corrigés côté serveur.
@@ -1031,6 +1032,52 @@ laisserait un run refusé « en attente » pour toujours) ; et une **autre deman
 laisse suspendu, faute de quoi trancher la première de trois lui rendrait un « en cours » qu'il ne
 mérite pas.
 
+**Un écran qui se décide vite** (#272, lot 5 de #244). Une validation est bloquante : le moteur est
+en pause et un run attend derrière. Trois décisions le disent, et une seule fois chacune.
+
+- **La plus ancienne d'abord.** La file est triée par horodatage croissant et sa tête est rendue en
+  plein. Il n'y avait aucun tri : l'ordre était celui du backend, donc celui de personne, et rien
+  dans la carte ne disait laquelle retenait un moteur depuis le plus longtemps. Une demande **sans
+  horodatage** (donnée ancienne, événement amputé) passe **en dernier** — elle n'a pas d'âge à faire
+  valoir, et la mettre en tête ferait traiter d'abord celle dont on sait le moins.
+- **Le temps d'attente au premier plan.** La carte n'affichait que l'heure de la demande, un chiffre
+  dont il fallait faire la soustraction soi-même. Elle porte désormais l'**ancienneté**
+  (`formatAttente`, « depuis 3 min »), voisine de `formatHeureRelative` et pourtant distincte :
+  « il y a 3 min » situe un fait passé, « depuis 3 min » mesure une attente **qui dure**, et c'est
+  la seconde qui décide. Sous la minute elle dit « depuis moins d'une minute » plutôt que l'heure
+  exacte — c'est le choix inverse de sa voisine, et pour la raison qui les sépare.
+- **Deux surfaces, une carte.** Le panneau du tableau de bord (`PanneauValidations`) est l'**aperçu**
+  — la plus ancienne, décidable sur place, et une ligne de renvoi pour le reste, ce que la règle des
+  trois places prescrit ([docs/30 §4](./30-cible-visuelle-control-tower.md)) —, la page Validations
+  (`FileValidations`) le **plein format**. Les deux montent la même `CarteValidation`, mêmes champs
+  dans le même ordre. Le prix est assumé et se dit : depuis le tableau de bord on ne tranche plus
+  que la plus urgente, les autres étant à un clic. ⚠ Il restait une **troisième** présentation de la
+  même demande — la carte compacte de la cloche —, qui portait les derniers boutons `bg-emerald-600`
+  bruts du produit, c'est-à-dire le 3,65:1 que #535 avait retiré de dix-huit autres recopies ; elle
+  passe aux primitives du socle sans changer de forme, la cloche n'ayant pas la place d'un motif.
+
+**Le refus peut être motivé** (critère 2), et il ne coûte pas un geste à qui n'en veut pas :
+« Refuser » refuse en un clic, comme avant ; un bouton discret ouvre à côté un motif **facultatif**,
+qui part avec ce même bouton. Rendre le refus conditionnel à une saisie ferait payer à chaque
+demande le prix de celles qu'on veut expliquer. Côté API, `POST /api/validations/{tache_id}/decision`
+accepte un `motif` optionnel qui rejoint le `detail` de l'événement — donc le journal durable et la
+`decision` de la demande projetée, que l'historique de l'écran affiche ligne à ligne. Il ne voyage
+**nulle part ailleurs** : lui ouvrir un champ d'événement aurait demandé de le faire traverser le
+schéma du journal pour un texte que `detail` porte déjà, au prix d'un second endroit où lire
+« pourquoi ce refus ». Sur une approbation il est ignoré, comme le `brief` d'une décision de brief
+l'est sur un refus (§2.7.4) ; absent, la décision est celle d'avant ce lot, au caractère près. Le
+moteur, lui, ne lit que `statut` : le motif n'a jamais le pouvoir de changer ce qui se passe.
+
+**La cohérence en temps réel** tient à la **clé de React**, et à elle seule : chaque carte est keyée
+sur `tache_id`, donc une demande tranchée ailleurs démonte *sa* carte et emporte son état local —
+motif en cours de frappe, erreur, envoi en vol. Sans cette clé, la file se décalant d'un cran, un
+motif écrit pour une demande se retrouverait attaché à la suivante : un refus motivé à côté de la
+plaque, sans que rien ne le signale. Et **rien n'anticipe une décision** (note technique du ticket) :
+un formulaire de motif ouvert n'est pas une décision prise, les boutons ne se rallument qu'**en cas
+d'échec** (un rechargement lent rouvrirait sinon la porte à un second clic, qui reviendrait en 409),
+et une demande tranchée entre-temps se dit par le 409 du backend plutôt que par une carte qui
+disparaît sans explication.
+
 Couverture (#572) : [`tests/test_arbitrage_visible.py`](../tests/test_arbitrage_visible.py) — l'ordre
 nominal joué sur un vrai run (la demande publiée avant le premier `tache.statut` de sa tâche, avec
 le motif prouvé sur l'échantillon d'avant le correctif), les trois attentes humaines éprouvées
@@ -1367,6 +1414,108 @@ débounce — et pas ce que #478 devait rendre.
 Le **journal d'un run** est le même dispositif au filtre près (`?run_id=`) : voir
 §2.4.2, où il est **la troisième lecture** de la vue d'un run — son propre onglet
 depuis #516, à côté du pipeline et du Kanban.
+
+### 2.9 💬 Chat global — l'écran *(#269, lot 2 de #244 — **livré**)*
+
+`/chat` servait un texte d'attente depuis #190 : l'entrée de menu et la route
+étaient réservées pour le chat **global**, annoncées et inertes. Elles portent
+désormais le fil, branché sur le canal `orchestrateur` du lot 1 (#268, §6.5) —
+« poser une demande sans avoir à choisir d'abord à qui la poser ».
+
+**Ce que l'écran met en place**, dans les deux places de la règle de sobriété
+(docs/30 §4) : le **fil** occupe la seule place de corps, tout ce qui
+l'accompagne va dans la **colonne de propriétés**, qui est la seule sans plafond.
+
+- **Le fil** — conversation avec l'orchestration, historique persisté (donc
+  retrouvé au rechargement) et réponse en direct par le WebSocket
+  (`chat.message`). Un fil vide s'ouvre sur un mot d'accueil et quatre amorces
+  choisies pour montrer la **frontière qui compte** : les deux premières ouvrent
+  un run, les deux dernières sont des questions et n'ouvrent rien.
+- **La colonne** — « Parler à » (les destinataires, l'orchestration en tête) et
+  « Ouvert depuis ce fil » (les runs que les messages du fil rattachent, du plus
+  récent au plus ancien, avec leur nombre de tâches et le renvoi vers le run).
+
+#### La mention change de destinataire, elle ne recopie rien
+
+Écrire `@dev …` **depuis le fil global** envoie dans le fil de `dev` — celui-là
+même que sert l'onglet Chat de sa fiche — et l'écran bascule dessus **sans
+navigation** : un bandeau dit où part le message, un renvoi mène à la vue
+détaillée, un bouton revient à l'orchestration. La mention se reconnaît en tête
+de brouillon, une fois close par une espace, et seulement sur un nom connu ; dans
+tous les autres cas le texte reste tel quel, une mention avalée en silence valant
+moins qu'une mention non reconnue.
+
+C'est le seul dessin qui tienne « le fil par agent reste la vue détaillée, et les
+deux ne divergent pas ». Recopier le message dans les deux fils aurait donné deux
+historiques d'une même conversation, désaccordés dès le premier rechargement :
+l'un porte la réponse, l'autre la copie d'avant. Ici il n'y a qu'un stockage, lu
+par le même chemin des deux côtés (`GET /api/chat/{agent}`).
+
+#### Un seul composant de fil
+
+La mise en page conversationnelle vit dans `apps/web/components/Conversation.tsx`
+et **n'existe qu'une fois** : l'onglet Chat d'un agent
+(`apps/web/components/FilChat.tsx`, réduit à son branchement) et cet écran la
+montent tous deux, et le lot 13 de « Control Tower v3 — agents » (#265) la
+réutilisera plutôt que la fournir — c'est l'arbitrage de #620, ce milestone
+passant le premier.
+
+Le **dépôt de sources** (#482 : fichiers glissés ou collés, dossier du poste,
+adresse) y a déménagé du même geste, et le chat global en hérite sans une ligne
+à lui : c'est ce que `lib/useSourcesComposees` annonçait en se posant hors des
+composants — « les deux surfaces de fil n'auront pas à s'accorder sur une copie
+chacune ». Elles n'en ont plus qu'une.
+
+Le panneau d'assistance flottant (#123) reste **à part**, à dessein : ce n'est pas
+le même objet — une carte bornée posée par-dessus la page qu'on utilise, sans
+en-tête de section ni région live —, et les fondre reviendrait à donner à ce
+composant un mode « petit », c'est-à-dire deux mises en page dans un fichier qui
+existe pour n'en porter qu'une.
+
+> **Le filet a servi au passage** : mettre le fil sur un écran du menu l'a fait
+> entrer dans le balayage des cibles de `a11y.test.tsx` (#537), qui a trouvé les
+> boutons de sources sous les 24 px de WCAG 2.2 §2.5.8 — `Bouton taille="petite"`
+> écrit son propre pas typographique sans déclarer de plancher. Corrigé **à la
+> primitive** (`CIBLE_MINIMALE` rejoint `BOUTON_SOCLE`), là où vit déjà le contour
+> de focus et pour la même raison : c'est le seul endroit d'où l'on peut promettre
+> qu'aucune action du produit n'y échappe. Le défaut n'était visible d'aucun des
+> dix écrans tant que le fil vivait dans une fiche agent.
+
+#### Ce qui découle d'un échange est dans le fil
+
+Deux sources, et l'ordre entre elles est le dessin. Le message porte lui-même
+`run_id`/`tache_id` (#268, §6.5) : c'est le **rattachement**, persisté, il
+survit au rechargement, et c'est lui qui décide s'il y a quelque chose à montrer.
+Le reste — combien de tâches ce run a produites, s'il attend un arbitrage — se lit
+dans l'**état temps réel du projet actif**, vivant là où le message est figé : une
+réponse écrite il y a dix minutes ne pouvait pas savoir qu'une validation serait
+demandée depuis. Sous la bulle, donc : le run, ses tâches, la ou les validations
+en attente, et les renvois vers l'écran concerné (`/runs/<run_id>`,
+`/validations`). Rien à montrer ⇒ rien à rendre — un message ordinaire ne
+rattache rien et ne laisse aucun cadre vide.
+
+> **Le renvoi vers une tâche est celui de son run**, et ce n'est pas un raccourci :
+> les trois lectures d'un run sont une **bascule** et non trois routes
+> (`apps/web/lib/vuesRun.ts`), il n'existe donc aucune URL qui ouvre une tâche.
+
+#### Le direct passe par le WebSocket, pas encore par le flux SSE
+
+Le lot 1 a construit le canal de streaming (`GET /api/chat/{agent}/flux`, §6.5) et
+il attend son consommateur. Deux raisons de ne pas le brancher **ici**, et la
+seconde est dirimante. Ce serait un **second chemin d'envoi** côté navigateur,
+donc deux façons de parler à un fil — l'inverse de ce que ce lot vient d'unifier.
+Et surtout, ce chemin-là **ne sait pas porter de sources** : le flux prend son
+`contenu` en paramètre d'URL, quand `POST …/messages` accepte les `sources[]` de
+#482 — y basculer le fil ferait perdre en silence les pièces jointes, c'est-à-dire
+échanger un rendu incrémental contre une fonctionnalité. La réponse arrive donc
+dès qu'elle tombe, l'attente étant dite par « … répond… » ; le rendu incrémental
+appartient au lot qui consommera le canal, **dans le composant de fil partagé** —
+donc pour les deux fils à la fois, et une fois que le canal saura porter ce qu'un
+message porte.
+
+Implémentation : `apps/web/app/chat/page.tsx`, `apps/web/components/Conversation.tsx`,
+`apps/web/lib/orchestration.ts` (nom du canal, accueil, amorces, lecture d'une
+mention). Tests différés au **lot 6** de #244 (#273).
 
 ---
 

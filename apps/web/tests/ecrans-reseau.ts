@@ -135,6 +135,8 @@ const REGISTRE: EntreeRegistreMcp[] = [
     secrets: [{ cle: "SLACK_TOKEN", description: "Jeton", secret: true }],
     procedure_url: "",
     optionnel: false,
+    editeur: "Slack",
+    popularite: 90,
     curee: true,
   },
 ];
@@ -168,6 +170,13 @@ export function mocksApi() {
     chargerCatalogue: async () => CATALOGUE,
     chargerSante: async () => ({ statut: "ok" }),
     chargerRegistreMcp: async () => REGISTRE,
+    chargerProvenanceRegistreMcp: async () => ({
+      resume: "",
+      sources: [],
+      revue_le: "2026-08-28",
+      tags: [],
+      total: 0,
+    }),
     chargerPoolMcp: async () => ({ integrations: POOL, erreur: null }),
     chargerExplorateur: async () => pageExplorateurFactice(),
     chargerDisponibiliteSelecteur: async () => ({

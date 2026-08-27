@@ -60,6 +60,35 @@ officiel** — et l'enregistrement dynamique de client OAuth est fermé
 token par l'utilisateur, ni mener son propre flux OAuth : il **importe** le
 token d'un client approuvé.
 
+### 2.1 Le quatrième mode : `sans_secret` (#271)
+
+L'élargissement de la bibliothèque curée (#271, [§3.4](#34-la-bibliothèque-élargie-271))
+a ajouté une quatrième valeur à `MODES_AUTH` : **`sans_secret`**.
+
+⚠ **La classification ci-dessus n'a pas bougé pour autant, et il faut lire
+pourquoi avant d'en ajouter une cinquième.** Les trois modes classent *comment
+un secret s'obtient* — question qui n'a **aucun objet** quand le serveur n'en
+demande aucun. `sans_secret` est donc le **cas dégénéré** de la classification,
+pas une extension de sa règle : rien à émettre, rien à saisir, rien à stocker,
+rien à faire expirer. Un serveur y entre parce qu'il tourne en local
+(`fetch`, `memory`, Playwright…) ou parce que son endpoint est **public**
+(documentation Cloudflare, DeepWiki).
+
+Trois choses à ne pas défaire :
+
+- il est porté par **`mode_auth`** et non par un booléen à côté, pour que l'UI
+  n'ait **qu'un** champ à regarder pour choisir son formulaire — le sien
+  n'ayant, précisément, aucun champ ;
+- l'invariant « toute entrée déclare au moins une variable » ne vaut donc
+  **pas** ici, et c'est délibéré : l'y forcer reviendrait à inventer une
+  variable pour satisfaire un test, et surtout à **fermer la bibliothèque aux
+  utilitaires locaux**, qui sont parmi les serveurs les plus utilisés de
+  l'écosystème. Sans ce mode, le critère « couvrir les plus utilisés » était
+  inatteignable ;
+- il élargit ce que `maestro.agents.secrets` **accepte** sans que rien ne l'y
+  amène : une entrée `sans_secret` ne déclare aucune variable, donc aucun
+  secret n'est jamais enregistré sous ce mode.
+
 ## 3. Cible Control Tower : configurer les MCP pour tout modèle
 
 Objectif produit (consigné au ticket #126) : la configuration des serveurs MCP
@@ -86,7 +115,9 @@ construire.
 ### 3.2 Les trois parcours de saisie dans l'UI
 
 La classification du §2 impose à la page de configuration de distinguer
-**trois parcours**, un par mode d'auth (tous trois livrés par #132/#133, §3.3) :
+**trois parcours**, un par mode d'auth (tous trois livrés par #132/#133, §3.3)
+— plus un **quatrième cas qui n'est pas un parcours** : `sans_secret` (§2.1),
+où le formulaire ne porte aucun champ et où « ajouter au pool » suffit :
 
 1. **Secret statique saisissable** (GitLab, Slack, la plupart des PAT) : un
    champ secret + un lien vers la procédure de création côté outil. Stockage
@@ -133,6 +164,55 @@ place. L'architecture livrée, détaillée dans [docs/04 §6.4](./04-specificati
 Tests sans réseau (#134) : composition et rétro-compat, registre et garde-fou,
 secrets chiffrés et 3 parcours, et le **parcours de bout en bout** bibliothèque →
 pool → activation → coffre → montage ([tests/test_mcp_config.py](../tests/test_mcp_config.py)).
+
+### 3.4 La bibliothèque élargie (#271)
+
+Le registre de #131 tenait en **quatre** entrées — les pilotes déjà versionnés
+dans `core/mcp/`. Suffisant pour prouver le mécanisme, trop étroit pour ce que
+la bibliothèque promet : rien n'y mettait en avant ce que l'écosystème utilise
+réellement, et on ne pouvait donc **rien y découvrir**. #271 l'élargit à une
+trentaine d'intégrations, sans toucher au garde-fou.
+
+**Ce qui est curé, et comment.** Le registre reste **curé, jamais moissonné** :
+aucun annuaire distant n'est branché, chaque entrée est écrite à la main, relue
+en revue de code et versionnée. La `PROVENANCE` (module `mcp_registry`) porte
+les sources et la **date de revue**, servies par
+`GET /api/mcp/registre/provenance` et **affichées** au pied de la bibliothèque —
+un registre curé qui ne dit pas d'où il vient demande une confiance qu'il ne
+justifie pas. Cette date se met à jour **dans le même commit** que la liste :
+une date qui ne bouge pas quand la liste bouge atteste une fraîcheur que
+personne n'a vérifiée.
+
+**La règle de curation, qui est une règle de sécurité.** Un gabarit qu'on ne
+sait pas écrire **exactement** n'entre pas. Écrire `npx -y <paquet>` de mémoire,
+c'est écrire une invitation au *typosquatting* dans une allowlist — l'inverse
+exact de ce que [docs/19](./19-securite-modele-de-menace.md) protège. En
+pratique cela privilégie les **endpoints HTTP officiels** (rien à exécuter,
+l'URL est vérifiable) et les paquets attestés par une source. Deux serveurs de
+référence très utilisés sont **écartés** pour cette raison, et c'est une limite
+à connaître plutôt qu'un oubli : `filesystem` et `postgres` prennent leur
+paramètre (racine, chaîne de connexion) **en argv**, or `maestro.agents.mcp.resolus`
+ne résout les `${VAR}` que dans `env` et `headers` — une variable en argv ne
+serait jamais remplacée, et le serveur démarrerait sur la chaîne littérale.
+
+**Ce que l'élargissement ajoute au contrat d'une entrée** : `editeur` (qui
+publie — c'est ce qui distingue un serveur officiel d'un pont communautaire, et
+la recherche porte dessus) et `popularite`, un **palier** d'usage à quatre
+valeurs (`USAGE_*`) qui met les plus courants en tête. Des paliers et non un
+rang : les annuaires publics s'accordent sur l'ordre de grandeur, pas sur un
+classement, et un palier n'oblige jamais à renuméroter ses voisins. À palier
+égal l'ordre est **alphabétique** — stable, sans faux gagnant.
+
+**Et la recherche ne rend plus un cul-de-sac** : sans résultat, l'écran propose
+les **tags** des intégrations les plus courantes (cliquables) et le retour à la
+liste entière, plutôt que de répéter que la requête ne donne rien.
+
+**Le garde-fou, lui, n'a pas bougé d'une ligne** : `instancier` reste l'unique
+voie template → liaison, l'allowlist *est* le registre, et `POST /api/mcp/pool`
+refuse toujours un id inconnu. Figurer dans la bibliothèque ne configure rien —
+le parcours reste bibliothèque → pool (geste humain, secret saisi) → activation
+par agent. Un registre trois fois plus grand rend ce point **plus** important,
+pas moins : c'est la découverte qui s'élargit, jamais l'installation.
 
 ---
 

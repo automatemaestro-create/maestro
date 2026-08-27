@@ -183,8 +183,9 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   sont **redirigés vers le bon onglet** (`next.config.ts`, aucun signet ne casse)
   et `?onglet=` porte l'intention jusqu'à la liste quand l'URL d'origine ne
   nommait pas d'agent. `/chat` reste au menu pour le chat **global**, non lié à un
-  agent (chantier « Chat » de la Phase 6). Les onglets sont déclarés une seule
-  fois (`lib/agents.ts`), comme le menu l'est dans `lib/navigation.ts` ;
+  agent — servi pour de bon depuis #269 (voir ci-dessous). Les onglets sont
+  déclarés une seule fois (`lib/agents.ts`), comme le menu l'est dans
+  `lib/navigation.ts` ;
 - **Éditeur de playbooks** (#77, EF-24/EF-25) : l'onglet **Playbook** d'une fiche
   agent porte son playbook versionné (#76, API `/api/playbooks`), publie une nouvelle
   version depuis un éditeur plein texte et montre l'historique, chaque version
@@ -204,6 +205,23 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   réponse de l'agent (cadrée par son playbook courant) et réception en temps
   réel par le WebSocket (`chat.message`). Le fil est persisté côté backend :
   l'historique se recharge au retour sur l'onglet ;
+- **Chat global** (#269, lot 2 de #244, docs/05 §2.9) : `/chat` sert le fil avec
+  l'**orchestration** (canal `orchestrateur`, #268) — poser une demande sans avoir
+  à choisir d'abord à qui la poser. Trois choses à connaître avant d'y toucher.
+  **Un seul composant de fil** : la mise en page conversationnelle vit dans
+  `components/Conversation.tsx`, que l'onglet Chat d'un agent monte aussi
+  (`components/FilChat.tsx` n'est plus que son branchement) — le **dépôt de
+  sources** (#482) y a déménagé du même geste, donc le chat global en hérite sans
+  une ligne à lui, ce que `lib/useSourcesComposees` annonçait déjà ; le panneau
+  d'assistance flottant reste à part, c'est une carte posée par-dessus la page et
+  non un écran. **La mention change de destinataire, elle ne recopie rien** :
+  `@dev …` part dans le fil de `dev`, sans navigation et sans second historique —
+  c'est ce qui rend « les deux ne divergent pas » vérifiable plutôt que promis.
+  **Ce qu'un message a ouvert est sous sa bulle** : le rattachement vient du
+  message (`run_id`/`tache_id`, persisté), le compte des tâches et les validations
+  en attente de l'état temps réel, avec renvoi vers `/runs/<run_id>` et
+  `/validations` — un message ordinaire ne rattache rien et ne laisse aucun cadre
+  vide ;
 - **Page Paramètres** (#121) : la configuration regroupée en six sections
   navigables par ancres (Général · Apparence · Agents & capacité · Fournisseurs &
   modèles · Coûts & plafonds · Notifications), avec un sous-menu qui suit le
@@ -436,7 +454,7 @@ elle est testée : les attentes humaines sont **absentes** de `mesuresDesRuns`, 
 la région polie de `/validations` ne dit que ce qui a été **tranché** — les dire
 des deux côtés les dirait deux fois, une fois en coupant la parole.
 
-Les huit écrans temps réel et ce que chacun annonce :
+Les neuf écrans temps réel et ce que chacun annonce :
 
 | Écran | Région polie | Ce qu'elle dit |
 | --- | --- | --- |
@@ -448,6 +466,7 @@ Les huit écrans temps réel et ce que chacun annonce :
 | `/journal` | Activité du journal | « 12 nouveaux événements », sur le fil **non filtré** |
 | `/brief` | Activité des briefs | ce qui **sort** de la file — un brief approuvé fait démarrer son run |
 | `/agents/<nom>/chat` | Activité du fil avec `<nom>` | le compte de messages, jamais leur contenu |
+| `/chat` | Activité du fil avec l'orchestration | idem — le libellé suit le destinataire courant (#269) |
 
 Quatre choses à ne pas défaire :
 
@@ -528,6 +547,19 @@ information — les deux écrans qui dépassaient sont là pour servir d'exemple
 | --- | --- | --- |
 | `/couts` | **5 blocs** : évolution, répartition, table par tâche, table par exécution, grand livre | **3** — la répartition passe en **colonne de propriétés**, les deux tables deviennent un **second niveau** (`BasculeDeVues`) du bloc « Détail de la période », le grand livre reste à part (la période ne le borne pas) |
 | `/parametres` | **7 sections** de plein format | **3 familles** (`lib/parametres.ts`), dont les sept sections deviennent les sous-parties. Les ancres, l'impression et le Ctrl+F sont intacts — c'est ce qu'un passage aux **onglets** aurait coûté |
+
+**Et la troisième réponse — « une ligne avec un renvoi » — a son exemple depuis
+#272** : le panneau des validations. Il empilait **toute** la file sur le tableau
+de bord, ce qui refaisait l'écran Validations à l'intérieur d'un aperçu ; il rend
+désormais la demande **la plus ancienne** — entière et décidable sur place, c'est
+elle qui retient un moteur depuis le plus longtemps — puis une ligne « N autres
+demandes attendent leur tour » et un renvoi vers la page. Le prix est assumé et
+se dit : depuis le tableau de bord on ne tranche plus que la plus urgente. Ce qui
+ne change **pas** d'une surface à l'autre est la **carte** — `CarteValidation`,
+montée par `PanneauValidations` (aperçu) comme par `FileValidations` (plein
+format), mêmes champs dans le même ordre : ce qu'on lit pour trancher ne doit pas
+dépendre de l'écran d'où l'on vient, et c'était le cas quand trois rendus
+divergents décrivaient la même demande (le panneau, la page, la cloche).
 
 **Ce qui la garde** : `tests/sobriete.test.tsx`, qui monte les écrans du menu
 et compte. L'arbitrage n'y est pas déclaré, il se **prouve** : chaque écran est
@@ -885,7 +917,7 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/tableau-de-bord.test.tsx` | Le tableau de bord épuré — ce qui reste, ce qui renvoie ailleurs — et le ticket externe dans les tables de coûts (#191/#192, testés en #193) ; puis le **second niveau de `/couts`** (#539) : la vue par tâche à l'ouverture, la bascule vers la vue par exécution **sans quitter le bloc** (c'est un second niveau, pas une navigation), la répartition par agent rangée dans la colonne de propriétés, et le bloc qui s'efface quand la période n'a ni tâche ni exécution — les chiffres, eux, restent |
 | `tests/ticket-externe.test.tsx` | Le filtrage d'URL et les cartes du Kanban (#192, livré avec le lot : logique critique) |
 | `tests/detail-tache.test.tsx` | Le panneau de détail d'une tâche : description, étapes en checklist, liens filtrés et rendus selon leur nature, et la carte laissée intacte quand il n'y a rien à ouvrir (#251, livré avec le lot : filtrage d'URL et absence totale) |
-| `tests/integrations-bibliotheque.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231). Le fichier a suivi son sujet en #270 (`parametres-mcp.test.tsx` avant lui) — ses quatre scénarios sont inchangés, et c'est le but : un déménagement qui aurait « rangé » la structure au passage rejouerait le bug |
+| `tests/integrations-bibliotheque.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231), puis la bibliothèque élargie — provenance, éditeur, pistes d'une recherche infructueuse (#271). Le fichier a suivi son sujet en #270 (`parametres-mcp.test.tsx` avant lui) — les scénarios de #231 y sont inchangés, et c'est le but : un déménagement qui aurait « rangé » la structure au passage rejouerait le bug |
 | `tests/integrations.test.tsx` | L'écran **Intégrations** (#270) à son plus mince — l'entrée de menu à sa place, les blocs montés **peuplés**, « qui utilise quoi » et son lien vers la fiche, l'ancre `/parametres#mcp` rattrapée en `replace` et les autres ancres laissées tranquilles. Il garde surtout le **drain de `monterEcran`** : sans lui, tout écran chargeant en différé était audité sur son « Chargement… », donc `a11y` et `sobriete` restaient vertes **et muettes**. Le reste du comportement de l'écran revient au lot 6 (#273) |
 | `tests/projets.test.tsx` | L'écran Projets : racine choisie dans l'explorateur servi par l'API (jamais saisie), refus motivé qui ne casse ni la liste ni la navigation, dossier vide distinct d'un refus (#225) |
 | `tests/journal.test.tsx` | La page Journal : fil sans limite, filtres par type/agent/tâche, recherche jusque dans le détail, « notable seulement » aligné sur la cloche (#249) |
