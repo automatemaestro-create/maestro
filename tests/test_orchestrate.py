@@ -6167,20 +6167,39 @@ def test_la_derivation_est_bornee_et_l_annonce_dit_qu_elle_l_a_ete(depot: Depot)
     """Le plan dit ce qui est simultanable ; il ne dit rien de ce que la machine tient.
 
     Et l'écrêtage se DIT : sans ce chiffre, une borne basse se lirait comme un plan pauvre, et
-    personne ne saurait qu'il y a du parallélisme laissé sur la table.
+    personne ne saurait qu'il y a du parallélisme laissé sur la table. C'est CE fait que le test
+    garde — pas la valeur de la borne, qui est une décision et a bougé (2 → 3, #626).
+    """
+    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
+                                 (3, 132, "-", "haute", "-"), (4, 133, "-", "haute", "-"),
+                                 (5, 134, "-", "haute", "-")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-borne")
+    assert "3 en vol (dérivé du plan : 5 simultanables, borné à 3)" in r.stdout
+
+
+@pytest.mark.parametrize(
+    ("borne", "attendu"),
+    [
+        ("2", "2 en vol (dérivé du plan : 4 simultanables, borné à 2)"),
+        ("4", "4 en vol (dérivé du plan)"),
+    ],
+    ids=["sous-le-defaut", "au-dessus-du-defaut"],
+)
+def test_la_borne_se_deplace_par_l_environnement(depot: Depot, borne: str, attendu: str) -> None:
+    """La variable doit déplacer la borne DANS LES DEUX SENS, et viser une valeur ≠ du défaut.
+
+    Le piège que ce test a failli devenir (#626) : il posait
+    `MAESTRO_ORCHESTRATE_CONCURRENCE_MAX=3` sur un plan qui offrait 3, ce qui prouvait la
+    variable tant que le défaut valait 2 — et plus rien le jour où le défaut est passé à 3, le
+    même verdict tombant sans elle. Un test qui ne peut plus échouer n'est pas un test qui passe,
+    c'est un ✓ sur une question qui n'est plus posée. D'où un plan qui offre 4 et deux bornes
+    encadrant le défaut : chaque cas rend une valeur INATTEIGNABLE sans la variable.
     """
     plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
                                  (3, 132, "-", "haute", "-"), (4, 133, "-", "haute", "-")])
-    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-borne")
-    assert "2 en vol (dérivé du plan : 4 simultanables, borné à 2)" in r.stdout
-
-
-def test_la_borne_se_deplace_par_l_environnement(depot: Depot) -> None:
-    plan = _plan_groupes(depot, [(1, 130, "-", "haute", "-"), (2, 131, "-", "haute", "-"),
-                                 (3, 132, "-", "haute", "-")])
-    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", "derive-max",
-                    env={"MAESTRO_ORCHESTRATE_CONCURRENCE_MAX": "3"})
-    assert "3 en vol (dérivé du plan)" in r.stdout
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--run-id", f"derive-max-{borne}",
+                    env={"MAESTRO_ORCHESTRATE_CONCURRENCE_MAX": borne})
+    assert attendu in r.stdout
 
 
 @pytest.mark.parametrize("consigne", ["option", "variable"])

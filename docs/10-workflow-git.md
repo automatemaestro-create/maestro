@@ -5376,51 +5376,70 @@ servir ; en dessous, l'ordonnanceur fait le reste ticket par ticket, et un crén
 
 **La borne, elle, ne parle pas du plan mais de la machine** — et c'est la moitié que le cadrage du
 ticket ne nommait pas. Le quota Claude ne borne rien (il se consomme plus vite, il ne casse pas) ; ce
-qui *peut* casser, ce sont les ressources du **poste**. Défaut **2**, et ce qui le choisit est
-l'**asymétrie des erreurs**, seule : trop haut, un run meurt en plein travail et perd ce qui n'était
-pas poussé ; trop bas, on ne perd que du temps de mur. Les deux issues ne se valent pas, donc dans le
-doute on prend la valeur basse — ce raisonnement **se suffit à lui-même** et n'a jamais eu besoin
-d'une mesure. `--concurrence-max <n>` / `MAESTRO_ORCHESTRATE_CONCURRENCE_MAX` la déplacent.
+qui *peut* casser, ce sont les ressources du **poste**. Défaut **3** depuis le 2026-08-27 (#626).
+`--concurrence-max <n>` / `MAESTRO_ORCHESTRATE_CONCURRENCE_MAX` la déplacent.
 
-⚠ **Ce plafond n'est PAS mesuré** — #455 le présentait comme tel, et **#599 a retiré cette
-justification**. Le texte mergé affirmait que le run `20260826-155709`, à trois sessions `xhigh` en
-vol, avait « épuisé les ressources de fork de MSYS **après trois heures** » (« fork: Resource
-temporarily unavailable »), **pilote mort en cours de route** — et rangeait la borne sous « une
-constante **mesurée** puis figée, même leçon que le plafond `-n 8` de pytest (§8.4) ». Trois choses
-n'y tenaient pas :
+⚠ **Cette valeur est une DÉCISION, pas une mesure**, et il faut le lire ainsi — l'écrire autrement
+serait commettre une troisième fois l'erreur que #599 puis #623 ont corrigée deux fois. Ce qui la
+fonde, dit pour ce que ça vaut et pas davantage :
 
-1. **« Après trois heures » est faux.** Le run a démarré à 15:57 et ses dernières écritures
-   (`run.log`, `583.json`, `merge.log`) datent de **16:55** — 58 minutes.
-2. **Ce qui est mort sur l'épuisement de forks n'est pas le pilote.** C'est une **boucle de
-   surveillance** lancée depuis la session interactive (un `until` avec `ls`/`wc` toutes les 5 s),
-   sortie vers 16:02 sur `dofork: child -1 … exit code 0xC000026B` puis `fork: retry: Resource
-   temporarily unavailable`. Le pilote, lui, a continué à travailler **53 minutes de plus** (#583
-   démarré à 16:38) avant de cesser d'écrire à 16:55, **sans laisser de trace**.
-3. **Le lien de causalité n'est donc pas établi** — la mort du pilote est survenue près d'une heure
-   après l'épuisement observé, et rien ne la relie à lui.
+- **Deux runs à concurrence 3, zéro incident imputable à la concurrence.** `20260826-155709`
+  (15:57 → 16:55, quatre tickets livrés, arrêté par l'extinction du poste) et `20260826-183242`
+  (18:32 → 21:23, soit **2 h 51**, cinq tickets à « Terminé » — #579, #583, #584, #585, #586 —, et
+  **sortie propre** : pas de carte `pid` laissée, résumé de fin écrit).
+- **Deux arrêts durs sans aucune perte.** La session coupée est rouverte **par son propre uuid** :
+  #580 (`10343531-…87`, coupé à 15 min de travail) et #583 (`d947772d-…1a`, coupé à 16 min) ont
+  repris là où ils s'étaient arrêtés, worktrees et commits intacts, et le plan de dix tickets a été
+  mené à terme.
 
-Le **parallèle avec le `-n 8` de #285 est retiré**, et c'est lui qui rendait l'affirmation
-trompeuse : là-bas, les chiffres de la mesure sont dans le ticket (§8.4). Ici, la mesure n'existe
-pas. C'est le motif que ce dépôt applique partout ailleurs — un ✓ sur une question jamais posée est
-plus dangereux qu'une question ouverte (le harnais de `tests/test_cycle_de_vie.py`, le garde-fou de
-#333, le `_pic` de `tests/test_orchestrate.py`) — appliqué cette fois à une justification écrite dans
-le même mouvement que le code qu'elle justifie, sans que rien ne la relise.
+⚠ **La justification de l'ancienne valeur 2 a été retirée deux fois, et la seconde fois pour de
+bon.** #455 présentait la borne comme une « constante **mesurée** puis figée, même leçon que le
+plafond `-n 8` de pytest (§8.4) », en s'appuyant sur le run `20260826-155709` qui aurait « épuisé les
+ressources de fork de MSYS **après trois heures**, pilote mort en cours de route ». #599 a corrigé la
+forme — le run a duré **58 minutes** et non trois heures, le parallèle avec §8.4 est retiré, le lien
+de causalité n'est pas établi — mais a conservé le fond sous le nom de « **signal daté** » : un
+épuisement de forks *observé* sur ce poste pendant qu'un run tournait à trois sessions `xhigh`.
 
-**Ce qui reste vaut d'être gardé, sous son vrai nom : un signal.** Le **2026-08-26**, un épuisement
-de forks MSYS a bel et bien été **observé sur ce poste** pendant qu'un run tournait à trois sessions
-`xhigh`. Un signal, daté, sur une machine — pas une mesure, et pas une cause.
+**#623 a établi que ce signal n'en est pas un**, et le journal du run le dit de quatre façons :
 
-⚠ **Et le contre-exemple est du même jour.** Le run `20260826-183242` — reprise du même plan, **même
-concurrence 3**, mêmes sessions `xhigh` — a tourné **plus de 1 h 45 sans incident** et mené **cinq**
-tickets jusqu'à « Terminé » : #579, #583, #584, #585 et #586, pour **2 h 41** de mur cumulé par
-ticket (`journal.sh audit 20260826-183242`). Il contredit frontalement la thèse que trois sessions
-épuisent le poste, et il est consigné **ici** pour que la prochaine personne qui voudra fonder le
-plafond parte de ce qui est **su** plutôt que de ce qui a été **affirmé**.
+1. **Les lignes de fork sont les sept DERNIÈRES du fichier** (`run.log`, l. 179-185 sur 185),
+   écrites juste après `#583 … 16min00`, dernière écriture à **16:55:40**. Elles ne précèdent pas
+   53 minutes de travail : elles le closent.
+2. **Le code d'erreur est la signature d'une extinction, pas d'un épuisement.**
+   `exit code 0xC000026B` = `STATUS_DLL_INIT_FAILED_LOGOFF` — « the application failed to initialize
+   because the window station is shutting down ». MSYS mappe ce code sur `errno 11` (EAGAIN) et
+   imprime son message de retry **générique**, « `fork: retry: Resource temporarily unavailable` » :
+   c'est ce message, et lui seul, qui a fait lire « épuisement ». Les erreurs compagnes disent la
+   même chose — Win32 **299** (`ERROR_PARTIAL_COPY`) et Win32 **5** (`ACCESS_DENIED`), soit des
+   processus démontés sous le pied. Un vrai épuisement porterait `STATUS_NO_MEMORY`.
+3. **La carte `pid` est restée en place** — aucun trap n'a tourné, donc arrêt dur, ce qu'est une
+   extinction.
+4. **L'utilisateur a confirmé avoir éteint le poste** (2026-08-27), et le bilan du run n'est pas
+   celui d'un run qui s'effondre : quatre tickets livrés, #583 à 16 min de travail à la coupure.
 
-⚠ **Rien de tout cela ne remet le plafond en cause, et rien ne propose de le relever.** Le mesurer
-sérieusement est un autre sujet, et **ouvert** ; « dans le doute, la valeur basse » reste le bon
-réflexe. Ce qui a changé est le **statut** de la justification : l'asymétrie des erreurs suffit, et
-elle n'a besoin d'aucune mesure inventée pour tenir.
+Au passage, la lecture de #599 était inexacte dans l'autre sens : ces lignes nomment `bash 144831`,
+c'est-à-dire le **PID du pilote lui-même** (carte `pid` : `pid=144831`). Écrire que « ce qui est mort
+est une boucle de surveillance de la session interactive et non le pilote » ne tient pas — le pilote
+en a reçu aussi. Ça ne sauve pas la thèse de #455 pour autant : ce que le pilote a reçu, c'est
+l'extinction.
+
+**L'asymétrie des erreurs de #455 reste vraie en tant que PRINCIPE** : trop haut, un run meurt en
+plein travail et perd ce qui n'était pas poussé ; trop bas, on ne perd que du temps de mur ; les deux
+issues ne se valent pas. Ce qui a changé est double — plus aucune observation ne place le point de
+bascule à 2 plutôt qu'à 3, et sa **prémisse implicite** (« une interruption perd du travail ») est
+contredite par les deux seuls arrêts durs qu'on ait pu observer, où elle n'a coûté qu'une **reprise
+automatique**.
+
+⚠ **Ce plafond n'est toujours pas mesuré, et passer de 2 à 3 ne le mesure pas davantage.** Deux runs
+sans incident sont encourageants, jamais concluants. Surtout, la **reprise à N tickets en vol n'a
+jamais tourné pour de vrai** : aux deux coupures observées il n'y avait qu'**un** ticket en vol —
+`20260826-153909` tournait à concurrence 1, et `20260826-155709` a été coupé à 16:55 alors que #578
+s'était soldé à 16:34, #581 et #582 à 16:37 et la session `/mr-fix` de #582 à 16:50, ne laissant que
+#583. Le chemin qui compte quand on relève la concurrence — reprendre **N** sessions d'un coup, N
+rendez-vous `.limite`, N worktrees à remonter — n'est couvert que par les tests **synthétiques** de
+#292/#313. **#625** doit produire le chiffre manquant (le prix réel d'une interruption à N en vol) et
+pourra confirmer 3, le relever ou le ramener. D'ici là, on ne déplace ce plafond **dans aucun sens**
+en invoquant une mesure qui n'existe pas.
 
 **Trois choses l'emportent sur la dérivation, jamais l'inverse** : `--concurrence`,
 `MAESTRO_ORCHESTRATE_CONCURRENCE`, et la concurrence **relue du run repris** (§11.8) — dériver
@@ -5433,7 +5452,7 @@ bit près.
 | ce qui s'affiche | ce que ça veut dire |
 | --- | --- |
 | `3 en vol (dérivé du plan)` | le plan offrait 3, la borne ne l'a pas écrêté |
-| `2 en vol (dérivé du plan : 5 simultanables, borné à 2)` | il y a du parallélisme laissé sur la table |
+| `3 en vol (dérivé du plan : 5 simultanables, borné à 3)` | il y a du parallélisme laissé sur la table |
 | `séquentiel — aucun ticket simultanable dans ce plan` | **verdict** sur les checklists des parents |
 | `séquentiel — ce plan est antérieur à la colonne « groupe »…` | on ne peut pas savoir : plan d'avant #288 |
 | `3 en vol (imposé)` / `séquentiel (imposé)` | consigne : option ou variable |
