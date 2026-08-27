@@ -279,7 +279,7 @@ lots sont mergeables un à un sur `main` ; les tests sont différés au lot fina
 | --- | --- | --- | --- |
 | Le run se liste, s'ouvre, se suit et se pilote | **#472** | #473, #474, #475, #476, #477 ∥, #478 ∥, #479 ∥, #480 (tests + doc) — **les huit livrés** | Le run, objet de premier plan |
 | Suivre un run comme un pipeline | **#488** | #489, #490 ∥, #491, #492 (tests + doc) — **les quatre livrés** | Le run, objet de premier plan |
-| Le chat, seule porte d'entrée | **#481** | #482, #483, #484, #485 (tests + doc) | Control Tower v3 — conversation & intégrations |
+| Le chat, seule porte d'entrée | **#481** | #482, #483, #484, #485 (tests + doc) — **les quatre livrés** | Control Tower v3 — conversation & intégrations |
 | L'extinction solde les runs | — (lot seul) | **#486** | Résilience des runs |
 | Détecter ce que le poste a | — (lot seul) | **#487** | Control Tower v3 — agents |
 

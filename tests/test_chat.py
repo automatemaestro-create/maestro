@@ -19,14 +19,22 @@ du parent #82) :
    message utilisateur comme pour la réponse — l'état persisté **avant** la
    diffusion — et les refus : message vide (rien n'est écrit), répondeur en
    échec ou réponse vide (`ReponseIndisponible`, le message utilisateur reste
-   acquis : relancer ne perd pas le fil).
+   acquis : relancer ne perd pas le fil) ;
+④ **les sources qu'un message embarque** (#482, lot 1 de #481 — couverture due au
+   lot final #485) : le dépôt (un fichier voyage par son identifiant de
+   téléversement, ses octets sont rattachés à l'emplacement d'ingestion **du
+   message**), les **plafonds refusés** (le refus tombe avant toute écriture —
+   ni fil, ni lettre, ni événement) et le **rapport de lecture** (ce qui a été lu,
+   ce qui a été ignoré, ce que le REST rend et ce que seul le stockage garde).
 
 L'exposition HTTP du canal (REST `/api/chat` + WebSocket `chat.message`) est
-couverte dans `tests/test_controltower.py` (section ⑧).
+couverte dans `tests/test_controltower.py` (section ⑧), sources comprises.
 """
 
 import asyncio
+import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -46,8 +54,14 @@ from maestro.controltower.chat import (
     ServiceChat,
 )
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, InMemoryEventBus
+from maestro.engine.guardrails import GardeFousIngestion
 from maestro.messaging import MESSAGE_REPONSE, MESSAGE_REQUETE, InMemoryMailbox
 from maestro.providers.base import ModelProvider
+from maestro.sources import (
+    DepotTeleversements,
+    SourceRefusee,
+    racine_ingestion,
+)
 
 
 def _agent(nom="qa", role="QA / Testeur", competences=("qualite", "tests"),
@@ -436,5 +450,356 @@ def test_la_reponse_est_epuree_avant_persistance(tmp_path):
 
         assert reponse.contenu == "Voilà mon analyse."
         assert store.fil("qa")[1].contenu == "Voilà mon analyse."
+
+    asyncio.run(scenario())
+
+
+# ------------------------------------------------- ④ Les sources d'un message
+
+
+@pytest.fixture(autouse=True)
+def _ingestion_jetable(tmp_path, monkeypatch):
+    """L'emplacement d'ingestion pointé sur un dossier jetable, jamais `core/`.
+
+    Autouse et non demandée au cas par cas : le service résout son dépôt
+    **paresseusement** (`DepotTeleversements.default()`), donc un test qui
+    oublierait de la poser écrirait dans le dépôt du dépôt — et
+    `test_un_message_sans_source_ne_cree_aucun_dossier` ne pourrait rien
+    prouver, la racine réelle existant déjà.
+    """
+    racine = tmp_path / "ingestion"
+    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(racine))
+    return racine
+
+
+def _service_a_sources(tmp_path, *, garde_fous=None, repondeur=None):
+    """Le service câblé pour recevoir des sources — dépôt de téléversement injecté.
+
+    Deux jeux de plafonds, à dessein : le **dépôt** reste permissif (il plafonne
+    à la réception des octets, ce que `tests/test_televersement.py` couvre déjà)
+    et le **service** porte ceux que la composition applique. C'est ce qui permet
+    de faire refuser une source par la chaîne d'ingestion du fil sans que le
+    refus vienne d'ailleurs.
+    """
+    store = ChatStore(tmp_path / "chat")
+    mailbox = InMemoryMailbox()
+    bus = BusEspion()
+    depot = DepotTeleversements(tmp_path / "depot")
+    service = ServiceChat(
+        store=store,
+        repondeur=repondeur if repondeur is not None else RepondeurScripte(),
+        mailbox=mailbox,
+        bus=bus,
+        televersements=depot,
+        garde_fous_ingestion=garde_fous,
+    )
+    return service, store, mailbox, bus, depot
+
+
+def _televerser(depot, nom, contenu):
+    """Le renvoi `{"type": "fichier", "id": …}` que l'écran envoie après dépôt."""
+    recu = depot.accueillir(nom, io.BytesIO(contenu))
+    return {"type": "fichier", "id": recu.id}
+
+
+def test_un_message_porte_ses_sources_lues_et_leurs_octets_rattaches(tmp_path):
+    """Le chemin complet d'un dépôt : identifiant → résolution → octets → rapport.
+
+    Le critère 1 de #482 pris au mot — « la chaîne d'ingestion existante, jamais
+    une seconde » : la source ressort **résolue** (chemin calculé par le backend,
+    jamais celui du navigateur), ses octets sont **dans l'emplacement
+    d'ingestion**, et ce qui a été lu se lit dans le rapport.
+    """
+
+    async def scenario():
+        service, _, _, _, depot = _service_a_sources(tmp_path)
+        contenu = "# Cahier des charges\n\nRefondre l'écran de lancement.".encode()
+
+        message, _ = await service.envoyer(
+            _agent(), "Voici le cahier.", [_televerser(depot, "cdc.md", contenu)]
+        )
+
+        (source,) = message.sources
+        assert source.type == "fichier" and source.nom == "cdc.md"
+        # Le chemin est **calculé** : sous la racine d'ingestion, dans un dossier
+        # propre au message, et les octets y sont pour de bon.
+        chemin = Path(source.chemin)
+        assert chemin.is_file() and chemin.read_bytes() == contenu
+        assert racine_ingestion() in chemin.parents
+
+        # Le rapport dit ce qui a été lu, et le contexte porte le contenu encadré.
+        assert message.rapport is not None
+        (lecture,) = message.rapport.lectures
+        assert lecture.etat == "lu" and lecture.tokens > 0
+        assert "Refondre l'écran de lancement." in message.contexte
+        assert message.contexte.startswith("## Sources fournies")
+
+    asyncio.run(scenario())
+
+
+def test_chaque_message_a_son_propre_emplacement_d_ingestion(tmp_path):
+    """Un dossier par **acte**, comme `core/ingestion/<run_id>/` en est un par run.
+
+    Deux messages qui partageraient leur dossier rendraient impossible de dire de
+    quel tour de conversation un document relève — et de le ramasser sans toucher
+    à celui du voisin.
+    """
+
+    async def scenario():
+        service, _, _, _, depot = _service_a_sources(tmp_path)
+
+        premier, _ = await service.envoyer(
+            _agent(), "Un", [_televerser(depot, "a.md", b"alpha")]
+        )
+        second, _ = await service.envoyer(
+            _agent(), "Deux", [_televerser(depot, "b.md", b"beta")]
+        )
+
+        dossiers = {Path(m.sources[0].chemin).parent for m in (premier, second)}
+        assert len(dossiers) == 2
+        assert all(dossier.name.startswith("chat-") for dossier in dossiers)
+
+    asyncio.run(scenario())
+
+
+def test_un_message_de_sources_seules_est_accepte_et_se_resume_par_elles(tmp_path):
+    """Déposer un cahier des charges *est* le message (#482).
+
+    Sans texte, le fil d'activité écrirait une ligne vide et la lettre
+    inter-agents partirait sans objet : nommer les sources est la seule chose
+    vraie à dire.
+    """
+
+    async def scenario():
+        service, store, mailbox, bus, depot = _service_a_sources(tmp_path)
+        boite = await mailbox.subscribe("qa")
+
+        message, _ = await service.envoyer(
+            _agent(), "   ", [_televerser(depot, "cdc.md", b"# Cahier\n")]
+        )
+
+        assert message.contenu == ""
+        assert message.resume == "1 source(s) jointe(s) : cdc.md"
+        (persiste, _) = store.fil("qa")
+        assert persiste.contenu == "" and persiste.resume == message.resume
+        # Ce que le résumé sert : l'objet de la lettre et le détail de l'événement.
+        assert (await anext(boite)).objet == message.resume
+        assert bus.publies[0].detail == message.resume
+
+    asyncio.run(scenario())
+
+
+def test_une_source_hors_bornes_ne_laisse_ni_message_ni_lettre_ni_evenement(tmp_path):
+    """Le refus tombe **avant toute écriture** — c'est le point du critère.
+
+    Un plafond franchi est une saisie que l'utilisateur peut corriger : elle ne
+    doit laisser derrière elle ni ligne au fil, ni lettre dans une boîte, ni
+    événement sur le bus, faute de quoi le fil montrerait un message qui n'a
+    jamais été envoyé.
+    """
+
+    async def scenario():
+        service, store, mailbox, bus, depot = _service_a_sources(
+            tmp_path, garde_fous=GardeFousIngestion(taille_max_source_octets=16)
+        )
+        boite = await mailbox.subscribe("qa")
+
+        with pytest.raises(SourceRefusee) as refus:
+            await service.envoyer(
+                _agent(),
+                "Voici le cahier.",
+                [_televerser(depot, "cdc.md", b"x" * 4096)],
+            )
+
+        # Le motif et l'**index** : « une source est trop grosse » sans dire
+        # laquelle obligerait à tout relire pour savoir quoi retirer.
+        assert refus.value.motif == "source-trop-volumineuse"
+        assert refus.value.index == 0
+        assert store.fil("qa") == ()
+        assert bus.publies == []
+        assert boite.file.empty()  # aucune lettre n'est partie non plus
+
+    asyncio.run(scenario())
+
+
+def test_un_refus_est_un_value_error_et_reste_distinct_du_message_vide(tmp_path):
+    """Trois façons d'échouer qui ne se confondent pas (docstring d'`envoyer`).
+
+    `SourceRefusee` hérite de `ValueError` — donc la route qui traduit l'un
+    traduit l'autre —, mais elle porte un motif : les aplatir en chaîne perdrait
+    l'endroit où l'écran doit afficher le refus.
+    """
+
+    async def scenario():
+        service, _, _, _, depot = _service_a_sources(
+            tmp_path, garde_fous=GardeFousIngestion(nb_max_sources=1)
+        )
+
+        with pytest.raises(ValueError) as refus:
+            await service.envoyer(
+                _agent(),
+                "Deux documents",
+                [
+                    _televerser(depot, "a.md", b"alpha"),
+                    _televerser(depot, "b.md", b"beta"),
+                ],
+            )
+        assert isinstance(refus.value, SourceRefusee)
+        assert refus.value.motif == "trop-de-sources"
+
+        # Le message vide, lui, reste un `ValueError` nu : rien à envoyer.
+        with pytest.raises(ValueError) as vide:
+            await service.envoyer(_agent(), "   ")
+        assert not isinstance(vide.value, SourceRefusee)
+
+    asyncio.run(scenario())
+
+
+def test_un_format_non_gere_est_ignore_au_rapport_et_ne_refuse_rien(tmp_path):
+    """« Rien à lire ici » et « je refuse de lire ça » ne se disent jamais pareil.
+
+    Une image se joint comme n'importe quel fichier — la chaîne est unique — mais
+    l'extraction ne lit que le texte, le Markdown, le `.docx` et le `.pdf` : elle
+    ressort **ligne du rapport**, avec son motif, et le message part quand même.
+    """
+
+    async def scenario():
+        service, store, _, _, depot = _service_a_sources(tmp_path)
+
+        message, _ = await service.envoyer(
+            _agent(),
+            "La maquette :",
+            [_televerser(depot, "maquette.png", b"\x89PNG\r\n\x1a\n binaire")],
+        )
+
+        (lecture,) = message.rapport.lectures
+        assert lecture.etat == "ignore" and lecture.motif == "format-non-gere"
+        assert lecture.tokens == 0
+        # Rien de lu, donc pas de contexte : un en-tête sans contenu coûterait des
+        # tokens pour ne rien dire.
+        assert message.contexte == ""
+        assert len(store.fil("qa")) == 2  # le message et sa réponse
+
+    asyncio.run(scenario())
+
+
+def test_le_rest_rend_le_rapport_et_le_stockage_seul_garde_le_contexte(tmp_path):
+    """Deux formes plutôt qu'une : l'écran veut savoir, le répondeur veut lire.
+
+    Le `contexte` est fait pour un prompt, pas pour un écran : le rapatrier au
+    navigateur enverrait le contenu intégral des documents à chaque relecture du
+    fil. Il est en revanche **persisté** — sans lui, un fil relu du disque aurait
+    un rapport complet et un contenu perdu, et l'agent cesserait de voir le
+    document dès le tour suivant.
+    """
+
+    async def scenario():
+        service, store, _, _, depot = _service_a_sources(tmp_path)
+
+        message, _ = await service.envoyer(
+            _agent(), "Voici.", [_televerser(depot, "cdc.md", b"# Cahier\n\nDeux mots.")]
+        )
+
+        vers_ecran = message.to_dict()
+        assert "contexte" not in vers_ecran
+        assert vers_ecran["rapport"]["lectures"][0]["etat"] == "lu"
+        # Le rapport lui-même ne rapatrie pas le contenu (`Lecture.to_dict`).
+        assert "markdown" not in vers_ecran["rapport"]["lectures"][0]
+        # Le stockage, lui, le garde — c'est la seule différence entre les deux formes.
+        assert message.to_ligne()["contexte"] == message.contexte
+        assert message.to_ligne().keys() - vers_ecran.keys() == {"contexte"}
+
+        # Relu du disque par une autre instance : sources, rapport et contexte
+        # intacts — **sauf** le `markdown` de la lecture, que `Lecture.to_dict`
+        # n'emporte pas (un rapport dit ce qu'une source coûte, pas ce qu'elle
+        # raconte). C'est exactement ce qui rend le champ `contexte` nécessaire :
+        # sans lui, le fil relu aurait un rapport complet et un contenu perdu, et
+        # l'agent cesserait de voir le document dès le tour suivant.
+        (relu, _) = ChatStore(tmp_path / "chat").fil("qa")
+        assert relu.sources == message.sources
+        assert relu.contexte == message.contexte
+        assert relu.rapport.lectures[0].markdown == ""
+        assert message.rapport.lectures[0].markdown != ""
+        assert relu.rapport.to_dict() == message.rapport.to_dict()
+
+    asyncio.run(scenario())
+
+
+def test_le_contenu_lu_entre_sous_le_message_qui_l_a_porte(tmp_path):
+    """Le contexte suit son tour de conversation, il n'est jamais rassemblé en fin de fil.
+
+    C'est ce qui dit de quel tour un document relève ; et il entre **encadré
+    comme donnée** (ENF-13), par `contexte_markdown` et par lui seul.
+    """
+
+    async def scenario():
+        fournisseur = FournisseurEnregistreur()
+        service, _, _, _, depot = _service_a_sources(
+            tmp_path, repondeur=RepondeurModele(provider=fournisseur)
+        )
+
+        await service.envoyer(
+            _agent(),
+            "Le cahier :",
+            [_televerser(depot, "cdc.md", b"Refondre l'ecran de lancement.")],
+        )
+        await service.envoyer(_agent(), "Et maintenant ?")
+
+        second = fournisseur.appels[-1]["prompt"]
+        # Le contenu est sous la ligne du message qui l'a porté, avant le tour suivant.
+        assert second.index("Utilisateur : Le cahier :") < second.index(
+            "Refondre l'ecran de lancement."
+        )
+        assert second.index("Refondre l'ecran de lancement.") < second.index(
+            "Utilisateur : Et maintenant ?"
+        )
+        # Encadré comme donnée : le préambule et le bloc viennent de l'extraction.
+        assert "## Sources fournies" in second
+
+    asyncio.run(scenario())
+
+
+def test_la_lettre_porte_les_sources_declarees_et_jamais_leur_contenu(tmp_path):
+    """La messagerie (#44) dit ce que le message **embarque**, pas ce qu'il raconte.
+
+    Le contenu extrait a son seul chemin (`contexte_markdown`) et n'a rien à
+    faire dans une boîte aux lettres ; et sans source, la clé est **absente** —
+    non posée à `[]` —, sans quoi un abonné verrait passer un champ que rien dans
+    le message ne justifie.
+    """
+
+    async def scenario():
+        service, _, mailbox, _, depot = _service_a_sources(tmp_path)
+        boite = await mailbox.subscribe("qa")
+
+        await service.envoyer(
+            _agent(), "Avec source", [_televerser(depot, "cdc.md", b"# Cahier\n")]
+        )
+        avec = await anext(boite)
+        assert [s["nom"] for s in avec.payload["sources"]] == ["cdc.md"]
+        assert "# Cahier" not in json.dumps(avec.payload, ensure_ascii=False)
+
+        await service.envoyer(_agent(), "Sans source")
+        sans = await anext(boite)
+        assert sans.payload == {"contenu": "Sans source"}
+
+    asyncio.run(scenario())
+
+
+def test_un_message_sans_source_ne_cree_aucun_dossier(tmp_path):
+    """Un message de texte garde exactement son coût d'avant #482.
+
+    C'est ce qui rend le changement invisible pour qui ne joint rien : ni dépôt
+    de téléversement résolu, ni emplacement d'ingestion créé.
+    """
+
+    async def scenario():
+        # Sans dépôt injecté : celui du défaut serait résolu au premier besoin.
+        service, store, _, _ = _service(tmp_path)
+
+        await service.envoyer(_agent(), "Bonjour")
+
+        assert len(store.fil("qa")) == 2
+        assert not racine_ingestion().exists()
 
     asyncio.run(scenario())

@@ -204,6 +204,36 @@ contrat de [docs/17 §3](./17-isolation-execution.md) tient inchangé.
 > été construit sont **signalés sur place** — un cadrage qu'on relit plus tard doit dire lequel
 > des deux on est en train de lire.
 
+> ⚠ **La porte d'entrée a changé le 2026-08-28** (chantier #481, revue d'usage #470 du
+> 2026-08-24 — [docs/29 §4](./29-decision-run-objet-de-premier-plan.md)). Tout ce que ce chapitre
+> décrit reste vrai **du contrat** ; ce qui a bougé est **l'endroit où on le fait**. La Phase 8
+> avait donné deux écrans dédiés — composer un objectif ([docs/05 §2.7.3](./05-interface-control-tower.md))
+> et valider le brief ([§2.7.4](./05-interface-control-tower.md)) — et l'entrée dans un run passe
+> désormais par **le chat, seule porte d'entrée** : on dépose ses sources dans le fil (#482,
+> [§6.12](./05-interface-control-tower.md)), on y lit son brief, on y répond aux questions et on y
+> tranche (#483, [§2.7.5](./05-interface-control-tower.md)). Les deux écrans ont quitté le menu
+> (#484) et leurs chemins **restent servis et redirigés** vers `/chat`
+> ([§1.1](./05-interface-control-tower.md), 307) : ils sont écrits ici, dans des tickets et dans des
+> signets.
+>
+> **C'est un déménagement, pas une suppression, et la nuance porte tout le §3.3 :** le point de
+> contrôle reste, **D5 tient** — rien n'est décomposé avant validation humaine —, la boucle de
+> questions reste bornée et annoncée, et le mode `humain` demeure le défaut des lancements par la
+> Control Tower. Ce que le fil change est l'**ordre de lecture** : les allers-retours joués sont la
+> conversation, déroulés, et le brief en est le dernier message — sur `/brief` ils vivaient dans un
+> accordéon replié, parce qu'ils y étaient un à-côté du geste. Rien de l'ingestion n'a été réécrit :
+> le modèle et la résolution (#315), l'extraction et son rapport (#316), le lancement porteur de
+> sources (#317) et l'aperçu (#319) sont **rebranchés tels quels** sur le fil, par la même chaîne
+> (`maestro.sources.composer_sources`) — une seconde chaîne aurait fini par ne plus appliquer les
+> mêmes plafonds, et c'est celle des deux qui en oublie un qui aurait fait la faille.
+>
+> Ce que le §3.4 appelait « deux précautions » vaut donc **inchangé dans le fil** : les plafonds
+> refusent avant toute écriture (ni message persisté, ni événement sur le bus), et le contenu extrait
+> entre **encadré comme donnée** et par ce seul chemin, message par message. C'est ce que garde le
+> lot final du chantier (#485) — `tests/test_chat.py` ④ et `tests/test_controltower.py` ⑧ côté API,
+> `apps/web/tests/fil-sources.test.tsx` et `fil-cadrage.test.tsx` côté écran, `tests/test_brief.py` ⑦
+> pour D5 et le fail-safe du bus.
+
 ### 3.1 Ce qui manque *(comblé)*
 
 `POST /api/executions` ne prenait qu'un `objectif` **texte** ; aucune route n'acceptait de fichier,
@@ -287,8 +317,9 @@ moteur ne savait pas faire (il décomposait ou il échouait).
 > est réglable au lancement — `humain` (défaut à la Control Tower), `auto` (le brief est rédigé
 > sans attendre) ou `sans` — de sorte que le point de contrôle n'est pas imposé aux voies de
 > lancement qui n'ont personne devant. Détail au
-> [§6.10 de docs/05](./05-interface-control-tower.md), écran au
-> [§2.7.4](./05-interface-control-tower.md).
+> [§6.10 de docs/05](./05-interface-control-tower.md) ; l'écran d'origine est décrit au
+> [§2.7.4](./05-interface-control-tower.md), **et le geste se fait dans le fil depuis #483**
+> ([§2.7.5](./05-interface-control-tower.md) — voir l'encadré en tête de ce chapitre).
 
 ### 3.4 Deux précautions *(prises)*
 
