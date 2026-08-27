@@ -99,8 +99,11 @@ Options :
                        (lib.sh current-milestone).
   --milestones         N'imprime pas de plan : liste les milestones ACTIFS sur lesquels un run
                        peut porter, avec ce qu'ils ont de traitable — titre, courant (0/1),
-                       « À faire » et libres, ouverts, échéance. C'est ce que /orchestrate lit
-                       pour proposer le choix du milestone avant un run neuf.
+                       « À faire » et libres, ouverts, échéance, rail. C'est ce que /orchestrate lit
+                       pour proposer le choix du milestone avant un run neuf. `courant` vaut 1 pour
+                       AU PLUS un milestone par rail, et pour aucun si celui du rail n'a rien à
+                       prendre (#619) : un défaut sur lequel un run planifierait zéro ticket n'est
+                       pas un défaut.
   --orphelins          N'imprime pas de plan : liste les tickets « En cours » du milestone dont
                        plus personne ne s'occupe — ce que le plan N'INCLUT PAS et qu'un geste
                        explicite peut rendre prenable (`lib.sh reprendre-en-cours <iid>`). TSV :
@@ -156,9 +159,14 @@ mkdir -p "$TMP/vue" "$TMP/chaine"
 #
 # `rail` (#617) vaut « produit » ou « outillage » et sépare les milestones de PRODUIT de ceux de
 # l'OUTILLAGE de la forge. Il change la lecture de `courant`, qui vaut désormais 1 pour le milestone
-# courant **de son rail** : il y en a donc DEUX à 1, un par rail, et non plus un seul. C'est voulu —
-# un run porte sur un rail, et proposer « le » courant sans dire lequel est ce qui a laissé un run
-# « produit » traiter de l'outillage.
+# courant **de son rail** : il y en a donc AU PLUS DEUX à 1, un par rail, et non plus un seul. C'est
+# voulu — un run porte sur un rail, et proposer « le » courant sans dire lequel est ce qui a laissé
+# un run « produit » traiter de l'outillage.
+#
+# « AU PLUS » et non « exactement » depuis #619 : `courant` est retiré d'un milestone à
+# `a_faire = 0`, où il désignerait un défaut sur lequel un run planifierait zéro ticket. Un rail
+# peut donc n'avoir aucune ligne à 1 — ce n'est pas une donnée manquante, c'est le verdict « rien à
+# prendre sur ce rail », et /orchestrate le dit.
 #
 # `a_faire` compte ce que la boucle POURRAIT prendre — « À faire » ET libre, exactement le filtre du
 # §3 ci-dessous — et non les tickets ouverts : un milestone dont les « À faire » sont tous assignés
@@ -189,6 +197,15 @@ milestones_traitables() {
       courant=0
       [ "$rail" = outillage ] && [ "$titre" = "$courant_outillage" ] && courant=1
       [ "$rail" = produit ] && [ "$titre" = "$courant_produit" ] && courant=1
+      # #619 : `courant` désigne CE QU'UN RUN PRENDRAIT SANS CONSIGNE, et un milestone dont la
+      # boucle ne peut rien tirer n'est pas un défaut, c'est un piège — le run partirait sur un
+      # plan vide. Le critère est celui de `a_faire` (« À faire » ET libre, le filtre du §3) et non
+      # celui de `current-milestone` (au moins un ticket ouvert) : il est STRICTEMENT plus étroit,
+      # et c'est voulu — un milestone dont tout est assigné est ouvert pour la forge et vide pour
+      # la boucle. Ce n'est donc pas la règle du §3.4 recopiée ici, c'est la question d'à côté.
+      # Conséquence assumée : un rail peut n'avoir AUCUNE ligne à `courant = 1` — /orchestrate le
+      # dit alors au lieu de proposer un défaut qui ne planifierait rien.
+      [ "$a_faire" = 0 ] && courant=0
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$titre" "$courant" "$a_faire" "$ouverts" "$echeance" "$rail"
     done
@@ -202,7 +219,9 @@ fi
 # --- 1. Le milestone ------------------------------------------------------------------------------
 if [ -z "$MILESTONE" ]; then
   MILESTONE="$(gl_current_milestone)" || {
-    echo "queue.sh : aucun milestone actif non soldé — rien à planifier." >&2; exit 1
+    # Le helper vient de nommer sur stderr CE QU'IL A SAUTÉ et pourquoi (soldé / vide, #619) : on
+    # ne le paraphrase pas, on dit seulement la conséquence ici.
+    echo "queue.sh : aucun milestone utilisable sur le rail produit — rien à planifier." >&2; exit 1
   }
 fi
 diag "milestone : $MILESTONE — seuls ses tickets sont lus ; un ticket d'un autre milestone n'est pas candidat."
