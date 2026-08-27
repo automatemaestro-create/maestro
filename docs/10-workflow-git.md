@@ -3675,6 +3675,131 @@ repli hors session, son silence sur le verdict `ICI`, et la cause portée par le
 
 ---
 
+### 9.8 Le pré-vol se paie en allers vers la forge (#602)
+
+`worktree.sh ensure` — le premier des quatre gestes de `/ticket-start` — coûtait **48,9 s par
+ticket** sur le run `20260826-183242`, soit **58 % du pré-vol**. Le prix est payé une fois par
+ticket, donc il grandit avec la longueur du run : les mêmes 49 s vaudraient ~11 min sur un run de
+14 tickets.
+
+**Ce qui n'était pas su, et qui était le vrai objet du ticket** : lequel des cinq postes pèse. La
+mesure d'abord, le remède ensuite — c'est la recette de [#577](#36-trois-lectures-et-la-bonne-dépend-de-la-question-posée),
+et elle a servi deux fois, parce que **l'hypothèse de départ n'était juste qu'à moitié**.
+
+#### La décomposition, mesurée le 2026-08-27 (poste au repos, 3 worktrees, 10 branches locales)
+
+| poste de `ensure` | temps | ce qu'il demande à la forge |
+|---|---|---|
+| `lib.sh branch-for` | 7,0 s | `auth status` + 1 aller |
+| `lib.sh sync-main` | 5,3 s | un `git fetch` |
+| `setup.sh --derive` | 0,7 s | rien (annoncé sans réseau, et c'est vrai) |
+| **`worktree.sh gc`** | **32,4 s** | `auth status` + 1 à 2 allers **par worktree** + **7 allers** pour les orphelins |
+| **`lib.sh cleanup-merged`** | **21,8 s** | un `git fetch` + `auth status` + **1 aller par branche locale** |
+| **total `ensure`** | **68,7 s** | |
+
+Et les coûts unitaires, qui expliquent tout le reste :
+
+| brique | coût |
+|---|---|
+| démarrage de `gh` | 0,14 s |
+| **`gh auth status`** | **4,3 à 5,3 s** — il VALIDE le jeton auprès de l'API |
+| `gh auth token` | 0,35 s — il lit `hosts.yml` en local |
+| **un aller GraphQL** | **2,5 à 2,7 s** |
+| chargement de `lib.sh` | 0,10 s |
+
+⚠ **Les 2,5 s d'un aller sont de la latence réseau et non un défaut de `gh`** : un `fetch` en `node`
+vers `api.github.com` coûte la même chose depuis ce poste. Le seul levier est donc le **nombre
+d'allers** — exactement la conclusion de #577, sur un autre objet.
+
+#### Ce que la décomposition a renversé
+
+L'hypothèse écrite dans le ticket était que `gc` dominait **parce qu'il interroge la forge worktree
+par worktree**. Il domine bien (47 % de `ensure`), mais la boucle par worktree n'en est pas le plus
+gros poste : c'est le **signalement des orphelins** (#327), **29,5 s à lui seul**, qui résout le
+projet puis en **pagine les 577 items sur 5 pages** puis lit le backlog ouvert — **sept allers** —
+pour répondre à une question qui ne porte que sur les deux ou trois tickets ayant un worktree ici.
+
+Et la décomposition par poste **cachait un coût transversal** : `gh auth status`, payé une fois par
+**sous-processus** `lib.sh`, soit cinq fois dans un seul `ensure` — près de 24 s à re-vérifier une
+authentification déjà vérifiée, que ni le chronomètre par poste ni l'audit du run ne pouvaient
+montrer, chaque poste ne portant que sa part.
+
+#### Les quatre remèdes, et le seul principe qui les tient
+
+Tous disent la même chose : **ne pas demander N fois ce qui se demande une fois.**
+
+1. **`gh_require` ne repaie plus le réseau** — `gh auth token` (local) au lieu de `gh auth status`
+   (un aller). La question posée ici est « peut-on parler à la forge ? », et sa réponse utile est
+   « un jeton est configuré » : sans jeton, le message n'a pas bougé d'un mot. Le **verdict**
+   d'authentification, lui, est rendu par le premier appel d'API — que tout verbe fait de toute
+   façon, et dont l'échec est déjà traité. Un jeton **révoqué** est donc nommé une lecture plus
+   tard : un message de moins sur un chemin d'échec, jamais une vérification sautée.
+2. **Le signalement des orphelins part des worktrees** en `--auto`, au lieu de paginer le projet :
+   sept allers → **un** (`st_statuts`, #577). C'est démontrable et non prudent — `--auto` ne peut
+   rendre **qu'un orphelin**, et « orphelin » se déduit d'un worktree présent ici ; un ticket sans
+   worktree sur cette machine est *hors de portée* quel que soit son état. Les modes **humain** et
+   **`--tsv`** gardent la lecture d'ensemble : ils rendent un **recensement**, avec ses lignes
+   « hors de portée » et son compte des trois verdicts, que la lecture bornée ne peut pas produire.
+3. **La purge des branches demande tout en un aller** — `gl_mr_briefs`, N branches sous alias
+   GraphQL. Le garde-fou ne bouge pas : une branche absente de la réponse n'a pas de PR, donc n'est
+   pas mergée, donc reste ; et si la lecture échoue **en entier**, tout reste.
+4. **Les verdicts des worktrees aussi** — `gl_worktree_done_lot`, **deux allers au plus** quels que
+   soient N : la PR de toutes les branches, puis l'état des seuls tickets que la première n'a pas
+   soldés (et **zéro** quand elle les a tous soldés, le cas nominal d'un run tout mergé). `ensure`
+   passe en outre `--sans-fetch` à la purge, `sync-main` venant de fetcher trois lignes plus haut.
+
+`gl_worktree_done` **est réécrit par-dessus le verbe en lot** plutôt qu'à côté : deux formules pour
+la même question finiraient par ne plus rendre le même verdict, et c'est le ramassage d'un worktree
+qui en dépend.
+
+#### Ce que ça donne, et ce que ça ne donne pas
+
+`ensure` passe de **68,7 s à 18,4 s**, et de **~19 appels à `gh` dont 14 allers réseau** à **6 appels
+dont 3 allers**. Exprimé en allers, avec `W` worktrees et `B` branches locales : `2 + 3W + 8 + 1 + B`
+devient `1 + 2 + 1 + 1`, soit **30 allers → 5** sur le poste de la mesure d'origine.
+
+Le **pré-vol entier** passe de ~31 appels à `gh` (26 allers) à **21 appels, 16 allers**.
+
+⚠ **Et c'est ici que la règle « compter, jamais chronométrer » cesse d'être une précaution de style
+pour devenir le seul énoncé vrai.** Le même pré-vol, aux **mêmes 16 allers**, a été mesuré à
+**60 s** en début d'après-midi et à **33 s** deux heures plus tard (deux relevés concordants :
+32,9 s et 33,1 s) — la latence d'un aller était passée de ~2,5 s à ~1,2 s. Le seuil de 30 s est donc
+**franchi ou manqué selon le moment de la journée, à code identique**. Un critère exprimé en
+secondes n'aurait pas dit si le remède avait marché ; le compte d'allers, lui, le dit sans
+ambiguïté — et c'est pourquoi c'est lui, et lui seul, que les tests épinglent.
+
+Ce qui reste au-dessus du seuil quand le réseau est lent est nommé et mesuré : **`lib.sh begin`
+(9 allers)** et **`lib.sh start-brief` (4 allers)**, les deux gestes que ce ticket met hors
+périmètre. Aucun réglage ne les rapprocherait du seuil dans le mauvais cas : à 2,5 s l'aller, tenir
+30 s demande **huit allers pour tout le pré-vol**, quand `begin` en fait neuf à lui seul pour poser
+un état, une assignation et deux dates. C'est un chantier à part, sur des **écritures** et non des
+lectures — donc sans la marge que laisse une lecture qu'on peut grouper ou borner.
+
+#### Le gain est gardé par un COMPTE, jamais par un chronomètre
+
+Même règle que `tests/test_cycle_de_vie.py` depuis #577 : un chronomètre en CI mesure la charge de
+la machine, jamais le code. [`test_worktree.py`](../tests/test_worktree.py) compte les invocations
+de `gh` — quatre branches examinées pour **une** lecture, `auth token` présent et `auth status`
+absent, le `fetch` non refait après `sync-main` — et
+[`test_collaboration.py`](../tests/test_collaboration.py) fait de même sur les verbes :
+`reconcile-en-cours --auto` en **un** aller sans jamais lire le backlog ouvert, `worktree-done-lot`
+en **deux** allers pour trois worktrees et **un seul** quand tout est mergé. Chacun **prouve son
+motif avant de conclure** — il vérifie qu'il y a bien *plusieurs* éléments à interroger, faute de
+quoi « une seule lecture » serait vrai d'un dépôt à une branche et resterait vert quoi qu'on fasse.
+
+Les doubles de forge ont dû apprendre la **forme groupée** ([`harnais_forge.py`](../tests/harnais_forge.py),
+`test_worktree.py`, `test_orchestrate.py`) : servir encore la forme unitaire les aurait laissés
+verts sur une réponse que plus personne ne demande.
+
+**Aucun garde-fou n'est perdu**, et c'est ce que les suites existantes attestent sans qu'une seule
+assertion ait été touchée : le refus de ramasser un worktree porteur de travail non sauvegardé
+(#197), celui d'un worktree occupé par une autre session vivante (#503), la pose de « Terminé » sur
+un ticket soldé (#275) et le signalement des orphelins (#327) répondent comme avant. La couture
+`MAESTRO_WORKTREE_VERDICT` est appelée une fois par paire, avec les mêmes arguments : un test qui
+changerait de forme en même temps que le code qu'il garde ne garderait plus rien.
+
+---
+
 ## 10. Travail à plusieurs — plusieurs personnes, plusieurs clones
 
 Le workflow décrit plus haut a d'abord été réglé pour **une personne, un clone**. Passer à

@@ -62,6 +62,50 @@ fi
 exit "${MAESTRO_FAUX_SETUP_CODE:-0}"
 """
 
+# Le corps du faux `gh` qui sert les lectures de PR (#602). Il vit dans SON FICHIER awk, jamais
+# entre guillemets simples dans le shim shell : une apostrophe de commentaire francais y refermerait
+# la chaine du shell, et awk se plaindrait a la ligne du commentaire — un diagnostic qui ne nomme
+# pas sa cause. `@TABLE@` est remplace par le chemin de la table « branche<TAB>ETAT ».
+#
+# Les DEUX formes de la requete sont servies : celle de `gh_mr_brief` (une branche, sans alias) et
+# celle de `gh_mr_briefs` (N branches sous les alias b0:, b1:…). La groupee est essayee en premier,
+# son motif portant un alias donc etant le plus specifique.
+PROGRAMME_MR_AWK = r"""BEGIN {
+  while ((getline ligne < "@TABLE@") > 0) {
+    p = index(ligne, "\t")
+    if (p > 0) etat[substr(ligne, 1, p - 1)] = substr(ligne, p + 1)
+  }
+  q = ENVIRON["GH_REQUETE"]
+  out = ""
+  reste = q
+  while (match(reste, /b[0-9]+: pullRequests\(headRefName: "[^"]*"/)) {
+    bloc = substr(reste, RSTART, RLENGTH)
+    reste = substr(reste, RSTART + RLENGTH)
+    alias = bloc; sub(/:.*/, "", alias)
+    br = bloc; sub(/.*headRefName: "/, "", br); sub(/"$/, "", br)
+    out = out (out == "" ? "" : ",") "\"" alias "\":{\"nodes\":[" noeuds(br) "]}"
+  }
+  if (out != "") {
+    printf "{\"data\":{\"repository\":{%s}}}\n", out
+    exit 0
+  }
+  if (match(q, /headRefName: "[^"]*"/)) {
+    br = substr(q, RSTART, RLENGTH)
+    sub(/.*headRefName: "/, "", br); sub(/"$/, "", br)
+    printf "{\"data\":{\"repository\":{\"pullRequests\":{\"nodes\":[%s]}}}}\n", noeuds(br)
+    exit 0
+  }
+  printf "{\"data\":{\"repository\":{}}}\n"
+}
+
+# Une branche absente de la table n'a pas de PR du tout, ce que le vrai `gh` rend par une liste de
+# noeuds vide. Le vocabulaire reste celui de GitHub : c'est `lib.sh` qui le retraduit.
+function noeuds(br) {
+  if (!(br in etat)) return ""
+  return "{\"number\":42,\"state\":\"" etat[br] "\",\"headRefOid\":\"deadbeef\"}"
+}
+"""
+
 
 @dataclass
 class Depot:
@@ -240,13 +284,21 @@ class Depot:
     def impose_mr(self, etats: dict[str, str]) -> None:
         """Impose l'état de la PR de chaque branche — et rallume la purge.
 
-        Un faux `gh` sert la seule lecture dont `gl_mr_state` a besoin : la requête GraphQL de
-        `gh_mr_brief`, dont on ne retient que le `headRefName`. Une branche absente de la table
-        n'a pas de PR du tout, ce que le vrai `gh` rend par une liste de nœuds vide.
+        Un faux `gh` sert les deux formes de la lecture des PR : celle de `gh_mr_brief` (une
+        branche, sans alias) et celle de `gh_mr_briefs` (N branches sous les alias `b0:`, `b1:`…,
+        #602). Les DEUX, parce que les deux existent encore — la première reste le chemin de
+        `gl_mr_state`, la seconde est celle qu'emprunte la purge depuis qu'elle groupe. Un shim qui
+        n'en servirait qu'une rendrait vert un code qui a cessé d'appeler l'autre.
+
+        Une branche absente de la table n'a pas de PR du tout, ce que le vrai `gh` rend par une
+        liste de nœuds vide.
 
         Le vocabulaire de sortie est celui de GitHub (`OPEN`/`MERGED`/`CLOSED`) : c'est `lib.sh`
         qui le retraduit en `opened`/`merged`/`closed`, et le shim n'a pas à connaître ce
         contrat — sans quoi le test passerait quoi que fasse la traduction.
+
+        Chaque invocation est JOURNALISÉE (verbe seul, une ligne) : c'est ce qui permet de compter
+        les lectures de forge plutôt que de chronométrer (#602, cf. `appels_gh`).
         """
         self.mrs = dict(etats)
         table = self.fauxbin / "etats-mr.tsv"
@@ -255,26 +307,50 @@ class Depot:
             encoding="utf-8",
             newline="\n",
         )
+        journal = self.fauxbin / "appels-gh.txt"
+        # Le programme awk vit dans SON FICHIER, jamais entre guillemets simples dans le shim : une
+        # apostrophe de commentaire francais y refermerait la chaine du shell, et awk se plaindrait
+        # a la ligne du commentaire — un diagnostic qui ne nomme pas sa cause.
+        programme = self.fauxbin / "mr.awk"
+        programme.write_text(
+            PROGRAMME_MR_AWK.replace("@TABLE@", table.as_posix()),
+            encoding="utf-8",
+            newline="\n",
+        )
         shim = self.fauxbin / "gh"
         corps = f"""#!/usr/bin/env bash
-# Faux `gh` : sert la requête GraphQL de `gh_mr_brief`, et rien d'autre.
+# Faux `gh` : sert les lectures de PR (une branche, ou N sous alias), et rien d'autre.
+printf '%s %s\\n' "$1" "$2" >> "{journal.as_posix()}"
 [ "$1" = auth ] && exit 0
 if [ "$1" = api ] && [ "$2" = graphql ]; then
-  # La requête arrive en « -f query=… » : on en extrait le headRefName visé.
-  branche="$(printf '%s' "$*" | sed -n 's/.*headRefName: "\\([^"]*\\)".*/\\1/p')"
-  etat="$(awk -F'\\t' -v b="$branche" 'b == $1 {{ print $2; exit }}' "{table.as_posix()}")"
-  if [ -z "$etat" ]; then
-    printf '{{"data":{{"repository":{{"pullRequests":{{"nodes":[]}}}}}}}}\\n'
-    exit 0
-  fi
-  noeud='{{"number":42,"state":"'"$etat"'","headRefOid":"deadbeef"}}'
-  printf '{{"data":{{"repository":{{"pullRequests":{{"nodes":[%s]}}}}}}}}\\n' "$noeud"
+  GH_REQUETE="$*" awk -f "{programme.as_posix()}" </dev/null
   exit 0
 fi
 exit 1
 """
         shim.write_text(corps, encoding="utf-8", newline="\n")
         shim.chmod(0o755)
+
+    def appels_gh(self) -> list[str]:
+        """Les invocations du faux `gh`, une par ligne (« <verbe> <sous-verbe> »).
+
+        C'est la mesure que #602 demande : on compte CE QUI EST DEMANDÉ À LA FORGE, jamais une
+        durée. Un chronomètre en CI mesure la charge de la machine (même règle que
+        `tests/test_cycle_de_vie.py` depuis #577).
+        """
+        journal = self.fauxbin / "appels-gh.txt"
+        if not journal.exists():
+            return []
+        return [ligne for ligne in journal.read_text(encoding="utf-8").splitlines() if ligne]
+
+    def lectures_forge(self) -> list[str]:
+        """Les seuls appels qui coûtent un ALLER RÉSEAU : `gh api …`.
+
+        `gh auth token` en est exclu à dessein — c'est une lecture LOCALE de `hosts.yml`, et c'est
+        tout l'objet du remède (#602). Les compter ensemble rendrait le test aveugle à la
+        différence qu'il doit garder.
+        """
+        return [ligne for ligne in self.appels_gh() if ligne.startswith("api ")]
 
     # --- couture du signalement des orphelins (#328) ---
     def impose_orphelins(self, lignes: str, *, code: str = "0") -> None:
@@ -1655,6 +1731,97 @@ def test_ensure_purge_la_branche_du_worktree_qu_il_vient_de_ramasser(depot: Depo
     assert "#152 retiré" in acheve.stdout
     assert f"supprimée : {BRANCHE}" in acheve.stdout
     assert depot.git("branch", "--list", BRANCHE) == ""
+
+
+# --- Le prix du pré-vol se compte en LECTURES DE FORGE (#602) -----------------------------------
+# `worktree.sh ensure` coûtait 48,9 s par ticket sur le run `20260826-183242`, soit 58 % du pré-vol.
+# La décomposition (docs/10 §9.8) a désigné deux postes, et un seul et même défaut dans les deux :
+# une question posée UNE FOIS PAR ÉLÉMENT là où un aller groupé suffit — 1 lecture par branche
+# locale pour la purge, 7 lectures (le projet paginé entier) pour le signalement des orphelins.
+#
+# ⚠ CES TESTS COMPTENT, ILS NE CHRONOMÈTRENT PAS, et c'est la règle de #577 : un chronomètre en CI
+# mesure la charge de la machine, jamais le code. Ce qui est épinglé est le NOMBRE d'appels à `gh`,
+# la seule grandeur qui porte à la fois le gain et sa cause — la latence d'un aller (2,5 s mesurées
+# le 2026-08-27) n'étant pas de notre ressort, et le nombre d'allers l'étant entièrement.
+#
+# Chaque test PROUVE SON MOTIF avant de conclure : il vérifie d'abord qu'il y a bien PLUSIEURS
+# éléments à interroger. Sans cette moitié, « une seule lecture » serait vrai d'un dépôt à une
+# branche et le test resterait vert quoi qu'on fasse.
+
+
+def test_la_purge_demande_l_etat_de_toutes_les_branches_en_une_lecture(depot: Depot) -> None:
+    """Le premier des deux postes : une lecture par branche locale.
+
+    Quatre branches examinées, UNE lecture de forge. Le compte des branches est asserté d'abord :
+    c'est lui qui rend la conclusion possible.
+    """
+    depot.git("branch", "chore/140-livree")
+    depot.git("branch", "chore/141-en-cours")
+    depot.git("branch", "chore/142-sans-pr")
+    depot.git("branch", "experimentation")
+    depot.impose_mr({"chore/140-livree": "merged", "chore/141-en-cours": "opened"})
+
+    # Le motif : `main` et la branche courante sont écartées localement, il reste bien PLUSIEURS
+    # branches à faire trancher par la forge.
+    examinees = [
+        b.lstrip("*+ ").strip()
+        for b in depot.git("branch", "--format=%(refname:short)").splitlines()
+    ]
+    assert len(examinees) >= 5, examinees
+
+    acheve = depot.lib("cleanup-merged")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    lectures = depot.lectures_forge()
+    assert len(lectures) == 1, f"une lecture pour toutes les branches, reçu : {lectures}"
+    # Et le verdict n'a pas bougé : seule part celle que la forge confirme mergée.
+    assert "supprimée : chore/140-livree" in acheve.stdout
+    assert depot.git("branch", "--list", "chore/141-en-cours") != ""
+    assert depot.git("branch", "--list", "chore/142-sans-pr") != ""
+
+
+def test_verifier_le_jeton_ne_coute_plus_un_aller_reseau(depot: Depot) -> None:
+    """Le poste transversal, invisible d'une décomposition par poste.
+
+    `gh auth status` VALIDE le jeton auprès de l'API — plus cher qu'un aller GraphQL — et
+    `gl_require` le payait une fois par sous-processus, soit cinq fois dans un seul `ensure`.
+    `gh auth token` lit `hosts.yml` en local. Le test épingle la FORME de la question, pas sa
+    durée : c'est elle qui décide s'il y a réseau ou non.
+    """
+    depot.impose_mr({BRANCHE: "merged"})
+
+    acheve = depot.lib("worktree-done", "152", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+
+    appels = depot.appels_gh()
+    assert appels, "le faux gh doit avoir été appelé, sinon le test ne prouve rien"
+    assert "auth token" in appels, "le pré-requis se vérifie encore — en local"
+    assert "auth status" not in appels, (
+        "re-valider le jeton auprès de l'API coûte un aller de plus par sous-processus"
+    )
+    # Et le pré-requis garde son mordant : sans jeton, le verbe refuse et nomme le geste.
+    assert len(depot.lectures_forge()) == 1, depot.appels_gh()
+
+
+def test_ensure_ne_refetche_pas_ce_que_sync_main_vient_de_fetcher(depot: Depot) -> None:
+    """Le troisième doublon : deux `git fetch` d'affilée dans un seul `ensure`.
+
+    Le `fetch --prune` de la purge est du pruning cosmétique — la décision s'appuie sur l'état de
+    la PR côté forge — et `sync-main` le précède de quelques lignes. `ensure` passe donc
+    `--sans-fetch`, et le contrat de sortie ne bouge pas.
+    """
+    depot.git("branch", "chore/140-livree")
+    depot.impose_mr({"chore/140-livree": "merged"})
+
+    acheve = depot.lance("ensure", "152", "--branche", BRANCHE)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "supprimée : chore/140-livree" in acheve.stdout
+    assert _verdict(acheve).startswith("WORKTREE ")
+
+    # L'abstention est portée par un DRAPEAU EXPLICITE et non par une fraîcheur devinée d'un
+    # horodatage : seul l'appelant sait ce qu'il vient de faire. Un helper qu'on ne trouve pas
+    # n'existe pas — il est donc annoncé par l'usage.
+    assert "--sans-fetch" in depot.lib().stderr
 
 
 def test_purge_compte_et_nomme_une_branche_retenue_par_un_worktree(depot: Depot) -> None:

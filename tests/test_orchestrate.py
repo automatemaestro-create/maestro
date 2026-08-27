@@ -71,6 +71,10 @@ FIX="$MAESTRO_FIXTURES"
 printf '%s\n' "$*" >> "$FIX/gh.log"
 case "$1 $2" in
   "auth status") exit 0 ;;
+  # La lecture LOCALE du jeton, par laquelle `gh_require` remplace depuis #602 le `gh auth status`
+  # qui coûtait un aller réseau. Les deux formes sont servies : l'ancienne vit encore dans
+  # setup.sh, env-pull.sh et les deux bootstrap.
+  "auth token") echo "gho_jeton-de-test"; exit 0 ;;
 esac
 if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
   requete="$*"
@@ -106,6 +110,30 @@ if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
       # Une branche sans fixture n'a pas de PR du tout — c'est ce qui distingue un ticket livré
       # d'un ticket dont la session n'a rien clos.
       case "$requete" in
+        # Forme GROUPÉE (#602) : N branches sous les alias `b0:`, `b1:`… Chaque alias reprend les
+        # nœuds de la fixture de SA branche — c'est le RANG qui fait le lien, comme en production,
+        # un nom de branche portant des « / » qu'un alias GraphQL n'accepte pas. Testée AVANT la
+        # forme unitaire, dont le motif est plus large et l'absorberait.
+        *": pullRequests(headRefName:"*)
+          sep=': pullRequests(headRefName: "'
+          reste="$requete"; corps=""
+          while :; do
+            case "$reste" in *"$sep"*) ;; *) break ;; esac
+            tete="${reste%%"$sep"*}"; alias="${tete##* }"
+            reste="${reste#*"$sep"}"; branche="${reste%%\"*}"
+            noeuds="[]"
+            fixture="$FIX/mr-${branche//\//__}.json"
+            if [ -f "$fixture" ]; then
+              contenu="$(cat "$fixture")"
+              # Découpage par expansion et non par sed : `closingIssuesReferences` porte un second
+              # « nodes », qu'un motif gourmand prendrait pour celui de la PR.
+              noeuds="${contenu#*'"pullRequests":{"nodes":'}"
+              noeuds="${noeuds%'}}}}'}"
+            fi
+            corps="$corps${corps:+,}\"$alias\":{\"nodes\":$noeuds}"
+          done
+          printf '{"data":{"repository":{%s}}}' "$corps"
+          exit 0 ;;
         *"headRefName:"*)
           branche="${requete#*headRefName: \"}"; branche="${branche%%\"*}"
           if [ -f "$FIX/mr-${branche//\//__}.json" ]; then

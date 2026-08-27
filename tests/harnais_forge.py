@@ -149,6 +149,15 @@ def vue_texte_en_json(texte):
 if args[:2] == ["auth", "status"]:
     sortie(code=0 if etat.get("authentifie", True) else 1)
 
+# `gh auth token` : la lecture LOCALE du jeton, par laquelle `gh_require` remplace depuis #602 le
+# `gh auth status` qui coûtait un aller réseau. Le double répond sur les DEUX formes — l'ancienne
+# vit encore dans setup.sh, env-pull.sh et les deux bootstrap — et sur le même drapeau, pour qu'un
+# dépôt déclaré non authentifié le reste quelle que soit la question posée.
+if args[:2] == ["auth", "token"]:
+    if not etat.get("authentifie", True):
+        sortie(code=1)
+    sortie("gho_jeton-de-test")
+
 if args[:2] == ["api", "user"]:
     sortie(compact({"login": etat.get("moi", "inconnu"), "id": 4242}))
 
@@ -293,8 +302,14 @@ def regles_backlog(statuts: dict[str, str], labels: list[str] | None = None) -> 
     QUI EXISTE, la carte du projet dit QUEL ÉTAT. Un iid dont le libellé est vide est un item au
     Status non posé ; un iid absent du dictionnaire est un ticket hors projet — les deux sortent
     « - » de la table, et les distinguer est le travail de doctor.sh (#363).
+
+    ⚠ LA LECTURE BORNÉE EST SERVIE AUSSI (`regle_statuts`, #602). Un appelant qui connaît ses iid
+    n'a plus à payer la table entière : `reconcile-en-cours --auto` demande l'état des seuls
+    tickets qui ont un worktree ici, en un aller. Les deux lectures répondent donc au MÊME
+    dictionnaire — c'est la seule façon qu'elles ne puissent pas se contredire selon le mode, et
+    c'est déjà le parti pris de la vue canonique et de `gh_issues_state` plus haut.
     """
-    return regles_carte(statuts) + [
+    return regles_carte(statuts) + [regle_statuts(statuts)] + [
         {
             "contient": ["states: [OPEN]"],
             "reponse": reponse_backlog(
