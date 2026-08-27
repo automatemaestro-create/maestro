@@ -2770,6 +2770,24 @@ if grep -q '^# non-arbitre	' "$PLAN" 2>/dev/null; then
   printf '            les arbitrer avant de lancer : /orchestrate le propose au feu vert.\n\n'
 fi
 
+# Les tickets du plan qui nomment « .claude/ » (#612, docs/10 §11.7). Même mécanique et mêmes
+# propriétés que l'arbitrage ci-dessus — le plan porte l'information, rien n'est relu ni recalculé,
+# un plan d'avant ce lot ne dit rien, et c'est MUET quand aucun ticket n'est concerné.
+#
+# Ce n'est ni un refus ni un écart : ces tickets partent avec les autres, et l'en-tête dit ce qui
+# leur arrivera pour que le résidu ne se découvre pas après coup, dans une PR déjà mergée.
+if grep -q '^# touche-claude	' "$PLAN" 2>/dev/null; then
+  printf '.claude/ : ces tickets nomment « .claude/ », où une session ne peut PAS écrire (blocage dur\n'
+  printf '           du CLI, en amont de l'\''allowlist — #229/#238) : leur correctif partira dans la\n'
+  printf '           description de la PR au lieu d'\''être appliqué, et le pilote merge sans la lire.\n'
+  grep '^# touche-claude	' "$PLAN" | while IFS=$'\t' read -r _ i p t; do
+    printf '           #%-5s %s%s\n' "$i" "$t" \
+      "$([ "$p" != "-" ] && printf ' (lot de #%s)' "$p")"
+  done
+  printf '           ils restent au plan : les écarter est une décision, et le geste est de les\n'
+  printf '           assigner. /orchestrate le signale au feu vert.\n\n'
+fi
+
 if [ "$DRY" = 1 ]; then
   printf 'Mode --dry-run : rien n'\''a été lancé — « main » elle-même reste où elle est (#283 : un\n'
   printf 'vrai run l'\''avance d'\''abord sur origin/main, fetch + fast-forward, lib.sh sync-main).\n\n'

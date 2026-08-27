@@ -1035,6 +1035,91 @@ gl_arbitre() {
     "$(printf '%s' "$avant" | awk -F '\t' '$2 == 0 { printf " — aucun lot parallélisable" }')"
 }
 
+# --- Ce qui touche « .claude/ » : la moitié AMONT du reste à appliquer (#612, docs/10 §11.7) -----
+# Une session autonome ne peut pas écrire sous `.claude/` — blocage dur du CLI, EN AMONT de
+# l'`allow`, déduit par #229 puis mesuré par #238 —, donc elle rend son correctif dans la
+# description de sa PR (#188). Depuis #418/#419 cette PR est mergée sans que personne ne l'ouvre :
+# le résidu ne disparaît pas, il devient INVISIBLE, ce qui est pire — rien n'échoue, rien n'est
+# rouge, le run se solde vert. docs/10 §11.7 tire depuis #238 la conclusion qui va avec (« Mieux
+# vaut ne pas l'y envoyer […] **`queue.sh` ne le détecte pas** — c'est au rédacteur du ticket de le
+# dire ») sans l'avoir jamais outillée. Ce verbe l'outille.
+#
+# CE VERBE NE TRANCHE QUE CE QUI EST CONNU À L'HEURE DU PLAN, limite assumée plutôt que masquée : il
+# lit ce que le ticket dit de lui-même, jamais ce qu'un diff révélera — le cinquième emplacement de
+# #599 a été trouvé par un balayage PENDANT le ticket, et aucune lecture de sa description ne
+# pouvait l'annoncer. Il réduit la fréquence du résidu ; il ne le supprime pas, et c'est pourquoi
+# #610/#611 traitent le cas où il ne voit rien.
+#
+# IL NE DÉCIDE RIEN NON PLUS : le verdict n'écarte aucun ticket d'aucun plan. Écarter est une
+# décision, et le geste existe déjà — assigner le ticket, que le filtre « À faire ET libre » de
+# `queue.sh` suffit à tenir dehors. Ce verbe DIT, comme tous les signalements du dépôt.
+#
+# --- LE MOTIF EST LARGE, ET C'EST UNE MESURE QUI L'A TRANCHÉ, PAS UN PRINCIPE (#612) -------------
+# Il cherche `.claude/` dans TOUT ce que le ticket dit de lui-même — titre comme corps — et ne
+# distingue pas un USAGE d'une MENTION. Distinguer serait de toute façon impossible ici : à l'heure
+# du plan aucun fichier n'est écrit, il n'y a aucun diff à lire (même impossibilité que « déduire
+# l'indépendance du contenu des lots », #562). Restait à savoir OÙ chercher, et l'intuition
+# — « restreindre aux critères d'acceptation, comme le dit §11.7 » — est fausse.
+#
+# Mesure du 2026-08-27 sur les 120 tickets ayant des commits sur `main`, vérité établie par les
+# FICHIERS de leurs commits (technique de #544 : tout commit porte `Refs`/`Closes #<iid>`) —
+# 25 d'entre eux ont touché `.claude/` :
+#
+#     variante                          VP   FP   FN   précision   rappel
+#     titre seul                         2    1   23        67 %      8 %
+#     titre ou critères d'acceptation    9    1   16        90 %     36 %
+#     partout, ≥ 3 lignes                8    2   17        80 %     32 %
+#     partout, ≥ 2 lignes               13    4   12        76 %     52 %
+#     partout  (ce qui est retenu)      17   10    8        63 %     68 %
+#
+# LES 8 QUE « TITRE OU CRITÈRES » RATE SONT EXACTEMENT LES GROS CHANTIERS D'OUTILLAGE — #344, #388,
+# #417, #418, #460, #498, #562, #617 —, dont les critères parlent du COMPORTEMENT et jamais du
+# fichier : un signalement qui laisse passer #418 et #562 ne sert à rien, et c'est ce qui écarte la
+# variante la plus précise. Le seuil sur le nombre de lignes n'achète rien de mieux : il perd du
+# rappel plus vite qu'il ne gagne en précision.
+#
+# LES 63 % SONT UN PLANCHER, et la mesure ne peut pas faire mieux : un ticket dont le résidu
+# `.claude/` n'a JAMAIS été appliqué ne laisse aucun commit sous `.claude/`, donc compte ici comme
+# un faux positif alors que le signalement était juste — c'est précisément le cas que #608
+# documente (#599 et #595, résidus encore en place au moment de l'écrire).
+#
+# ET LE TROU EST MESURÉ, LUI AUSSI : 8 des 25 (32 %) ont touché `.claude/` sans que leur ticket le
+# nomme NULLE PART (#361, #364, #365, #400, #414, #438, #455, #593). Aucun motif ne les attrapera,
+# c'est la limite que #612 assume en prose et que ce chiffre chiffre — la raison d'être des lots
+# #610 (le ticket de reprise à l'acte) et #611 (le filet en fin de run).
+#
+# La BARRE FINALE, elle, fait tout le tri utile : elle sépare le CHEMIN du mot « Claude »,
+# omniprésent dans ce dépôt.
+GL_CLAUDE_MOTIF="${GL_CLAUDE_MOTIF:-\.claude/}"
+
+# gl_touche_claude_de — cœur du verdict, rejoué sur un ticket DÉJÀ LU (stdin = sortie de
+# gl_issue_raw), exactement comme `gl_arbitrage_de` l'est pour `gl_arbitrage`. Ce n'est pas une
+# commodité : `queue.sh` a déjà la vue de chaque candidat de son plan en cache, et sans cette moitié
+# il paierait une lecture de forge PAR TICKET pour une question dont la réponse est dans un fichier
+# qu'il vient d'écrire.
+# Rend « <verdict><TAB><lignes> », verdict valant `touche` ou `-`.
+# Codes : 0 = le ticket nomme `.claude/` · 3 = il ne le nomme pas. Le 3 plutôt qu'un 1, pour la
+# raison de gl_arbitrage_de : « il ne le nomme pas » est une RÉPONSE, pas une panne.
+gl_touche_claude_de() {
+  local n
+  n="$(grep -c -e "$GL_CLAUDE_MOTIF")" || n=0
+  if [ "${n:-0}" -gt 0 ]; then
+    printf 'touche\t%s\n' "$n"
+    return 0
+  fi
+  printf -- '-\t0\n'
+  return 3
+}
+
+# gl_touche_claude <iid> -> le même verdict sur un ticket qu'on lit pour l'occasion. UNE lecture.
+gl_touche_claude() {
+  local iid="$1"
+  if [ -z "$iid" ]; then echo "usage: gl_touche_claude <iid>" >&2; return 2; fi
+  local raw
+  raw="$(gl_issue_raw "$iid")" || return 1
+  printf '%s\n' "$raw" | gl_touche_claude_de
+}
+
 # --- Fermeture du parent (#515, docs/10 §5.1) ---------------------------------------------------
 # Un parent de suivi ne porte ni branche ni code : aucune PR ne le ferme par un `Closes #`, et sa
 # fermeture était le SEUL geste du cycle d'un chantier resté manuel — §5.1 la décrivait comme « une
@@ -6665,6 +6750,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     lots-ouverts)   gl_lots_ouverts "$@" ;;
     arbitrage)      gl_arbitrage "$@" ;;
     arbitre)        gl_arbitre "$@" ;;
+    touche-claude)  gl_touche_claude "$@" ;;
     ferme-parent)   gl_ferme_parent "$@" ;;
     demarre-parent) gl_demarre_parent "$@" ;;
     start-brief)    gl_start_brief "$@" ;;
@@ -6750,6 +6836,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                      « - » = hors projet ou Status vide, aucune ligne = ticket inexistant." >&2
       echo "                                      Pendant unitaire de backlog-table, sans sa fenêtre de 100 — docs/10 §3.6)" >&2
       echo "  issue-taken <iid> [username]       (0 + assignés si le ticket est « En cours » chez quelqu'un d'autre)" >&2
+      echo "  touche-claude <iid>                (ce ticket nomme-t-il « .claude/ », où une session autonome ne peut" >&2
+      echo "                                      pas écrire ? verdict + lignes. 0=touche, 3=non — docs/10 §11.7)" >&2
       echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — actif le plus ancien non soldé ; défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2
       echo "  milestone-issues <titre-exact>     (tickets d'un milestone : iid/statut/type/agent/prio/titre, TSV)" >&2
