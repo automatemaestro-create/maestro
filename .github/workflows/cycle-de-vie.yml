@@ -1,10 +1,12 @@
 # Ce qu'on fait à la fermeture d'un ticket (tickets #377 et #515, docs/10 §9.2 et §5.1).
 #
-# DEUX QUESTIONS, UN SEUL ÉVÉNEMENT, UN SEUL SCRIPT : « ce ticket mérite-t-il Terminé ? » (#377) et
-# « était-il le dernier lot de son parent ? » (#515). Le second workflow qu'appelait cette seconde
-# question n'a pas été écrit, et c'est délibéré — deux workflows sur `issues: closed` se relisent
-# mal, chacun ignorant ce que l'autre vient d'écrire sur le même ticket. Ils partagent donc le job,
-# le secret et le script, qui décide pour les deux.
+# TROIS QUESTIONS, UN SEUL ÉVÉNEMENT, UN SEUL SCRIPT : « cette fermeture est-elle légitime ? »
+# (#394), « ce ticket mérite-t-il Terminé ? » (#377) et « était-il le dernier lot de son parent ? »
+# (#515). Les workflows qu'appelaient les deux dernières n'ont pas été écrits, et c'est délibéré —
+# plusieurs workflows sur `issues: closed` se relisent mal, chacun ignorant ce que l'autre vient
+# d'écrire sur le même ticket. Ils partagent donc le job, le secret et le script, qui décide pour
+# les trois. #394 en est la démonstration : sa question doit passer AVANT les deux autres, ce qu'un
+# workflow séparé n'aurait eu aucun moyen d'obtenir.
 #
 # Le merge d'une PR ferme le ticket (`Closes #<iid>`) mais ne touche à AUCUN état. « Terminé »
 # n'était posé qu'ensuite, par `worktree.sh gc` (#275) — donc au prochain `/ticket-start`, au
@@ -42,6 +44,13 @@ name: Cycle de vie
 # `closed` seulement. `reopened` n'est pas son symétrique et n'a rien à faire ici : rendre son état
 # à un ticket rouvert demanderait de savoir lequel il portait avant, ce que ce workflow ne sait pas
 # — et « À faire » serait une valeur inventée. C'est un geste humain (`lib.sh set-workflow`).
+#
+# ⚠ DEPUIS #394 CETTE LISTE PORTE AUSSI LA SÛRETÉ DE LA BOUCLE, et ce n'est plus qu'une question de
+# vocabulaire. La garde de fermeture ROUVRE le parent qu'elle refuse de laisser fermé ; si
+# `reopened` figurait ici, cette réouverture rejouerait le script, qui rouvrirait, qui rejouerait.
+# Ajouter le type pour une autre raison — rendre un état, notifier — rendrait donc la boucle
+# infinie, et le diff qui l'ajoute ne passerait pas par `lib.sh`. Le second rempart est dans le
+# verbe, qui n'agit que sur un ticket qu'il trouve FERMÉ ; celui-ci reste le premier.
 #
 # `issues:` ne se déclenche PAS sur les pull requests, et c'est exactement ce qu'on veut : le
 # chemin nominal est le merge d'une PR portant `Closes #<iid>`, qui fait FERMER L'ISSUE par GitHub
