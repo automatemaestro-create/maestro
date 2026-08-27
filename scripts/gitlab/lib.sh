@@ -58,7 +58,9 @@
 #
 # CE QUE GITHUB N'A PAS, et comment on le remplace :
 #   • Pas de lien « relates to » — mais un `#<n>` mentionné dans un corps y CRÉE une référence
-#     croisée native. `issue-link` s'appuie dessus (cf. gh_issue_link).
+#     croisée native, sur quoi `gh_issue_link` s'appuyait. ⚠ Le seul couple que le dépôt liait
+#     jamais était parent/lot, et GitHub porte CELUI-LÀ nativement : depuis #391, `issue-link`
+#     rattache une sub-issue (cf. gl_issue_link) au lieu de poster une mention.
 #   • Pas de date de début ni d'échéance, PAS DE TEMPS PASSÉ (263/330 tickets, 603 h — docs/27 §5) :
 #     c'est la seule vraie perte, et elle est comblée par le SUIVI MAISON ci-dessous.
 #   • Pas de date de début sur un jalon : la colonne `debut` de `milestones` vaut « - ».
@@ -851,12 +853,34 @@ gl_lots_regime() {
   esac
 }
 
-# gl_issue_link <iid> <iid-cible> -> lie deux tickets du projet (issue link « relates to »).
-# Idempotent : un lien déjà présent (409 « already assigned ») est traité comme un succès.
+# gl_issue_link <iid-parent> <iid-lot> -> RATTACHE un lot à son parent (sub-issue native).
+# Idempotent : un lot déjà rattaché à ce parent est un succès, comme un lien déjà posé l'était.
+#
+# LE VERBE A CHANGÉ DE FOND, PAS DE SIGNATURE (#391, chantier #389). Ce qu'il posait jusqu'ici était
+# le pendant du « relates to » de GitLab, qui n'existe pas côté GitHub : un « #<n> » écrit dans un
+# commentaire, dont la seule vertu est d'apparaître dans la chronologie du ticket cité. La relation
+# elle-même n'était portée par personne. Les sub-issues la portent, dans les deux sens et sans prose.
+# `gh_issue_link` reste en place : c'est l'implémentation de l'ère checklist, que le lot 6 (#395)
+# retirera avec le reste de ce support, et non un repli qu'on garderait « au cas où ».
+#
+# SON UNIQUE APPELANT PASSE DÉJÀ LE COUPLE DANS CET ORDRE — `/ticket-create` écrit
+# `issue-link <iid-parent> <iid-sous-ticket>` (docs/10 §5.1), et c'est la seule invocation du dépôt.
+# La bascule ne réinterprète donc AUCUN appel existant : elle donne au même couple, dans le même
+# sens, un support qui tient. Le seul changement observable est qu'un lot déjà rattaché AILLEURS
+# échoue là où un commentaire de plus réussissait — c'est-à-dire qu'une anomalie cesse d'être muette.
+#
+# ⚠ ET CE N'EST PAS COMMUTÉ PAR `MAESTRO_LOTS`, à la différence des LECTURES de #390. La raison est
+# dans l'ordre des lots, pas dans une préférence : le backfill des 41 parents (#392) tourne AVANT la
+# bascule (#393), c'est-à-dire pendant que le régime par défaut est encore `checklist`. Un
+# rattachement gouverné par le régime serait donc impossible à faire au moment exact où il doit
+# avoir lieu. Rien ne s'y oppose, et ce n'est pas une entorse au principe « le régime décide, jamais
+# la présence » : celui-ci tranche COMMENT ON LIT, et tant que le régime est `checklist` la relation
+# native est écrite sans être lue. Écrire les deux supports est le propre d'une migration ; en lire
+# deux est la panne que le principe interdit.
 gl_issue_link() {
   local iid="$1" target="$2"
-  if [ -z "$iid" ] || [ -z "$target" ]; then echo "usage: gl_issue_link <iid> <iid-cible>" >&2; return 2; fi
-  gh_issue_link "$@"
+  if [ -z "$iid" ] || [ -z "$target" ]; then echo "usage: gl_issue_link <iid-parent> <iid-lot>" >&2; return 2; fi
+  gl_subticket_add "$@"
 }
 
 # gl_parent_of <iid> -> imprime l'iid du ticket PARENT si <iid> est un sous-ticket (marqueur
@@ -1137,6 +1161,92 @@ gl_arbitre() {
   gh_add_label "$iid" "$GL_LABEL_ARBITRE" || return 1
   printf '#%s : arbitrage enregistré (« %s »)%s\n' "$iid" "$GL_LABEL_ARBITRE" \
     "$(printf '%s' "$avant" | awk -F '\t' '$2 == 0 { printf " — aucun lot parallélisable" }')"
+}
+
+# --- ÉCRITURE DU DÉCOUPAGE : rattacher et ordonner les lots (#391, chantier #389) -----------------
+# Le pendant en ÉCRITURE de ce que #390 a appris à lire. Deux mutations, vérifiées disponibles sur
+# ce dépôt : `addSubIssue` rattache, `reprioritizeSubIssue` ordonne. Ce que la convention faisait
+# avec une phrase en tête de description et une ligne ajoutée à la main dans une checklist, la forge
+# le porte désormais elle-même.
+#
+# L'ORDRE N'EST PAS DE L'AFFICHAGE, C'EST CE QUI FAIT LE PLAN. `queue.sh` garde les lots d'un parent
+# CONTIGUS et dans l'ordre de la checklist, et `gl_subtickets_startables` juge « ce lot est-il
+# démarrable ? » sur ce qui le PRÉCÈDE. Rattacher sans ordonner ne casserait donc pas l'affichage
+# d'une page, mais l'orchestration : des lots rendus dans un ordre arbitraire feraient partir le
+# dernier en premier, et le lot final « tests + doc » avant ce qu'il teste. D'où deux verbes, et
+# non un.
+#
+# AUCUN DES DEUX N'EST COMMUTÉ PAR `MAESTRO_LOTS` — voir `gl_issue_link` ci-dessus, même raison : le
+# backfill (#392) écrit pendant que le régime par défaut est encore `checklist`.
+
+# gl_subticket_add <iid-parent> <iid-lot> -> rattache <iid-lot> comme sub-issue de <iid-parent>.
+# Codes : 0 = rattaché, ou DÉJÀ rattaché à ce parent · 1 = ticket inexistant, lot déjà rattaché à un
+# AUTRE parent, ou échec d'écriture · 2 = usage.
+#
+# IDEMPOTENT COMME `issue-link` L'ÉTAIT, ET PAR LE MÊME GESTE : on LIT avant d'écrire.
+# `addSubIssue` rendrait bien une erreur sur un lot déjà parenté — il porte pour cela un
+# `replaceParent` dont on ne se sert PAS, remplacer un parent en silence étant l'inverse de ce qu'on
+# veut ici —, mais son message ne nomme pas le parent en place, et c'est précisément ce qu'il faut
+# dire à qui rattache le mauvais lot. La lecture préalable rend les deux identifiants de nœud ET le
+# parent courant en UN SEUL ALLER : le cas nominal coûte une lecture et une écriture, le cas
+# déjà-rattaché une lecture seule.
+gl_subticket_add() {
+  local parent="$1" lot="$2"
+  if [ -z "$parent" ] || [ -z "$lot" ]; then echo "usage: gl_subticket_add <iid-parent> <iid-lot>" >&2; return 2; fi
+  case "$parent$lot" in
+    *[!0-9]*) echo "gl_subticket_add : « $parent » et « $lot » doivent être des iid." >&2; return 2 ;;
+  esac
+  # Un ticket qui serait son propre lot rendrait un cycle, que rien en aval ne sait lire : la
+  # question « quel lot précède celui-ci ? » n'aurait plus de fin. La forge le refuse aussi, mais
+  # après un aller et dans ses mots à elle.
+  if [ "$parent" = "$lot" ]; then
+    echo "#$parent ne peut pas être son propre lot." >&2
+    return 1
+  fi
+  gh_subticket_add "$parent" "$lot"
+}
+
+# gl_subticket_order <iid-parent> <iid…> -> impose aux lots nommés l'ordre où ils sont donnés.
+# Codes : 0 = ordre posé, ou rien à ordonner · 1 = pas un parent, iid qui n'est pas un lot de ce
+# parent, lot nommé deux fois, ou échec d'écriture · 2 = usage.
+#
+# CE QU'IL PROMET, EXACTEMENT : les lots nommés se retrouvent CONTIGUS et dans l'ordre donné, à la
+# place qu'occupe le premier d'entre eux. Il ne prétend pas les pousser en tête, et c'est délibéré —
+# un appelant qui ne nomme qu'une partie des lots déplacerait sinon ceux dont il n'a rien dit. Les
+# deux appelants réels (le backfill #392, la création d'un parent) nomment TOUS les lots, et la
+# distinction n'y paraît pas ; elle protège le troisième.
+#
+# « EN UNE PASSE » EST À PRENDRE AU PIED DE LA LETTRE. `reprioritizeSubIssue` ne déplace qu'UN lot à
+# la fois, mais les champs de premier niveau d'une mutation GraphQL sont exécutés EN SÉRIE et dans
+# l'ordre écrit : les N-1 déplacements voyagent donc dans un seul document, sous alias, en un seul
+# aller. C'est la règle de #577/#602 — ne pas demander N fois ce qui se demande une fois — appliquée
+# à une écriture, et la sérialisation est ici une garantie du langage, pas un pari sur la forge.
+#
+# RIEN N'EST ÉCRIT AVANT QUE TOUT SOIT VALIDÉ, et c'est le point à ne pas défaire : un iid qui n'est
+# pas un lot de ce parent, ou nommé deux fois, arrête le verbe AVANT la mutation. Un ordre posé à
+# moitié serait pire que pas d'ordre du tout — il laisserait le plan dans un état que personne n'a
+# voulu, sur un parent que plus rien ne repasse.
+gl_subticket_order() {
+  local parent="$1" iid
+  if [ -z "$parent" ] || [ -z "$2" ]; then echo "usage: gl_subticket_order <iid-parent> <iid>…" >&2; return 2; fi
+  shift
+  case "$parent" in
+    *[!0-9]*) echo "gl_subticket_order : « $parent » doit être un iid." >&2; return 2 ;;
+  esac
+  for iid in "$@"; do
+    case "$iid" in
+      ''|*[!0-9]*) echo "gl_subticket_order : « $iid » n'est pas un iid." >&2; return 2 ;;
+    esac
+  done
+  # UN SEUL LOT N'A PAS D'ORDRE : l'ordre est une relation entre au moins deux éléments, et vérifier
+  # qu'il appartient bien à ce parent est la question de `subtickets`, pas celle-ci. On s'abstient
+  # donc SANS parler à la forge — ce qui rend triviale la boucle du backfill (#392), qui rencontrera
+  # des parents à un lot sans avoir à les distinguer.
+  if [ "$#" = 1 ]; then
+    printf '#%s : un seul lot (#%s) — rien à ordonner.\n' "$parent" "$1"
+    return 0
+  fi
+  gh_subticket_order "$parent" "$@"
 }
 
 # --- Ce qui touche « .claude/ » : la moitié AMONT du reste à appliquer (#612, docs/10 §11.7) -----
@@ -6023,6 +6133,141 @@ gh_issue_link() {
   printf 'Lien posé : #%s ↔ #%s\n' "$iid" "$target"
 }
 
+# gh_subticket_add <iid-parent> <iid-lot> -> le rattachement natif, corps de gl_subticket_add.
+#
+# LES DEUX IDENTIFIANTS DE NŒUD ET LE PARENT COURANT VIENNENT D'UNE SEULE LECTURE, SOUS ALIAS, pour
+# la raison du `jalon:` de gh_issue_raw : sans eux, la clé `id` désignerait à la fois le parent et le
+# lot, et `number` à la fois le lot et le parent qu'il porte déjà — un `grep` global prendrait le
+# premier trouvé, c'est-à-dire tantôt l'un tantôt l'autre selon l'ordre de la réponse. Un alias
+# tranche à la source ; une extraction plus fine ne ferait que déplacer l'ambiguïté.
+#
+# LES DEUX ABSENCES SE DISTINGUENT (`"p":null` / `"l":null`), et ce n'est pas de la coquetterie :
+# « #392 introuvable » envoie vérifier le lot, « #389 introuvable » envoie vérifier le parent, et
+# c'est le backfill (#392) qui lira ces messages sur 41 parents.
+gh_subticket_add() {
+  local parent="$1" lot="$2" raw pid lid actuel mutation out
+  if [ -z "$parent" ] || [ -z "$lot" ]; then echo "usage: gh_subticket_add <iid-parent> <iid-lot>" >&2; return 2; fi
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { p: issue(number:'"$parent"') { pid: id } l: issue(number:'"$lot"') { lid: id parent { ppnum: number } } } }')" || return 1
+  case "$raw" in
+    *'"repository":null'*) echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
+    *'"p":null'*) echo "Ticket #$parent introuvable dans $GL_GH_REPO" >&2; return 1 ;;
+    *'"l":null'*) echo "Ticket #$lot introuvable dans $GL_GH_REPO" >&2; return 1 ;;
+  esac
+  pid="$(printf '%s' "$raw" | grep -o '"pid":"[^"]*"' | head -1 | sed 's/.*:"//; s/"$//')"
+  lid="$(printf '%s' "$raw" | grep -o '"lid":"[^"]*"' | head -1 | sed 's/.*:"//; s/"$//')"
+  if [ -z "$pid" ] || [ -z "$lid" ]; then
+    echo "gh_subticket_add : identifiants de nœud illisibles pour #$parent / #$lot" >&2
+    return 1
+  fi
+  # Absent quand `parent` est `null` : le motif ne matche alors rien et la variable reste vide, ce
+  # qui est exactement « ce lot n'a pas encore de parent ».
+  actuel="$(printf '%s' "$raw" | grep -o '"ppnum":[0-9]*' | head -1 | sed 's/.*://')"
+  if [ -n "$actuel" ]; then
+    if [ "$actuel" = "$parent" ]; then
+      printf 'Lot déjà rattaché : #%s → #%s\n' "$lot" "$parent"
+      return 0
+    fi
+    echo "#$lot est déjà un lot de #$actuel — le rattacher à #$parent le lui retirerait." >&2
+    echo "  Si c'est voulu, détacher d'abord côté forge ; sinon, vérifier les deux iid." >&2
+    return 1
+  fi
+  # `gh_graphql_read` n'est PAS utilisé ici : son retry sur réponse vide ré-appliquerait la mutation
+  # (règle posée avec lui, et valable pour toutes les écritures du fichier). Les identifiants sont
+  # interpolés directement, comme partout ici — ce sont des valeurs opaques que l'API vient de
+  # rendre, aucune ne peut porter de guillemet.
+  mutation="mutation { addSubIssue(input: {issueId: \"$pid\", subIssueId: \"$lid\"}) { subIssue { number } } }"
+  out="$(gh api graphql -f query="$mutation" 2>&1)"
+  case "$out" in
+    *'"errors"'*)   printf '%s\n' "$out" >&2; echo "Échec du rattachement de #$lot à #$parent" >&2; return 1 ;;
+    *'"subIssue"'*) ;;
+    *)              printf '%s\n' "$out" >&2; echo "Échec du rattachement de #$lot à #$parent" >&2; return 1 ;;
+  esac
+  printf 'Lot rattaché : #%s → #%s\n' "$lot" "$parent"
+}
+
+# gh_subticket_order <iid-parent> <iid…> -> la pose de l'ordre, corps de gl_subticket_order.
+#
+# UNE LECTURE, UNE ÉCRITURE, quel que soit le nombre de lots. La lecture rend l'identifiant de nœud
+# du parent ET celui de chacun de ses lots — c'est ce que la vue texte de #390 ne peut pas porter,
+# elle ne transporte que des numéros, là où les mutations veulent des identifiants de nœud. Les
+# deux verbes lisent donc la même relation par deux chemins, sans que l'un puisse remplacer l'autre.
+#
+# TOUT LE CALCUL TIENT DANS UN SEUL AWK : appariement numéro → identifiant, validation, puis
+# construction du document de mutation. Un fork par lot serait le réflexe, et coûterait ~120 ms
+# pièce sous MSYS (#577) sur un verbe que le backfill appellera 41 fois. La liste demandée voyage
+# par ENVIRON et jamais par `awk -v`, qui interprète les échappements (#340) — elle n'en porte
+# aucun, les iid étant validés en chiffres par l'appelant, mais la règle du fichier ne souffre pas
+# d'exception qu'il faudrait ensuite justifier.
+#
+# LA RÉPONSE EST ACCUMULÉE AVANT D'ÊTRE LUE (`buf = buf $0`), comme dans `gh_lots_natifs` : rien ne
+# promet que `gh api` rende son JSON sur une seule ligne, et une paire numéro/identifiant coupée en
+# deux par un saut de ligne ferait disparaître un lot — donc échouer la validation sur un parent
+# parfaitement sain.
+gh_subticket_order() {
+  local parent="$1" raw pid mutation out ordre
+  # IFS est fixé pour que le `$*` ci-dessous joigne les iid par un espace, quel qu'ait été l'IFS de
+  # l'appelant : c'est ce séparateur exact que le `split` de l'awk attend.
+  local IFS=' '
+  if [ -z "$parent" ] || [ -z "$2" ]; then echo "usage: gh_subticket_order <iid-parent> <iid>…" >&2; return 2; fi
+  shift
+  ordre="$*"
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issue(number:'"$parent"') { pid: id lots: subIssues(first: 100) { nodes { number lid: id } } } } }')" || return 1
+  case "$raw" in
+    *'"repository":null'*) echo "Dépôt $GL_GH_REPO illisible (inconnu ou droits insuffisants)" >&2; return 1 ;;
+    *'"issue":null'*)      echo "Ticket #$parent introuvable dans $GL_GH_REPO" >&2; return 1 ;;
+  esac
+  pid="$(printf '%s' "$raw" | grep -o '"pid":"[^"]*"' | head -1 | sed 's/.*:"//; s/"$//')"
+  if [ -z "$pid" ]; then
+    echo "gh_subticket_order : identifiant de nœud illisible pour #$parent" >&2
+    return 1
+  fi
+  mutation="$(printf '%s' "$raw" | LC_ALL=C GL_ORDRE="$ordre" GL_PID="$pid" awk '
+    { buf = buf $0 }
+    END {
+      s = buf
+      while (match(s, /"number":[0-9]+,"lid":"[^"]*"/)) {
+        paire = substr(s, RSTART, RLENGTH)
+        s = substr(s, RSTART + RLENGTH)
+        split(paire, ch, /,"lid":"/)
+        num = ch[1]; sub(/^"number":/, "", num)
+        nid = ch[2]; sub(/"$/, "", nid)
+        id[num] = nid
+      }
+
+      n = split(ENVIRON["GL_ORDRE"], veut, / /)
+      manque = ""
+      for (k = 1; k <= n; k++) {
+        if (veut[k] in vu) { printf "!#%s est nommé deux fois dans la liste demandée.\n", veut[k]; exit }
+        vu[veut[k]] = 1
+        if (!(veut[k] in id)) manque = manque " #" veut[k]
+      }
+      if (manque != "") { printf "!Pas des lots de ce parent :%s\n", manque; exit }
+
+      # Chaque lot est déplacé APRÈS son prédécesseur dans la liste demandée. Le premier ne bouge
+      # pas : il est le point fixe dont tout le reste hérite sa place.
+      out = "mutation {"
+      for (k = 2; k <= n; k++)
+        out = out sprintf(" m%d: reprioritizeSubIssue(input: {issueId: \"%s\", subIssueId: \"%s\", afterId: \"%s\"}) { issue { number } }", \
+                          k, ENVIRON["GL_PID"], id[veut[k]], id[veut[k - 1]])
+      print out " }"
+    }
+  ')"
+  case "$mutation" in
+    '!'*)       printf '%s\n' "${mutation#'!'}" >&2
+                echo "  Aucun ordre n'a été posé sur #$parent." >&2
+                return 1 ;;
+    'mutation'*) ;;
+    *)          echo "gh_subticket_order : ordre incalculable pour #$parent" >&2; return 1 ;;
+  esac
+  out="$(gh api graphql -f query="$mutation" 2>&1)"
+  case "$out" in
+    *'"errors"'*) printf '%s\n' "$out" >&2; echo "Échec de la pose de l'ordre des lots de #$parent" >&2; return 1 ;;
+    *'"issue"'*)  ;;
+    *)            printf '%s\n' "$out" >&2; echo "Échec de la pose de l'ordre des lots de #$parent" >&2; return 1 ;;
+  esac
+  printf 'Ordre posé sur les %s lots de #%s : %s\n' "$#" "$parent" "$ordre"
+}
+
 gh_prio() {
   local iid="$1"
   if [ -z "$iid" ]; then echo "gh_prio : iid manquant" >&2; return 2; fi
@@ -7015,6 +7260,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     milestone-issues)  gl_milestone_issues "$@" ;;
     milestone-rail)    gl_milestone_rail "$@" ;;
     issue-link)     gl_issue_link "$@" ;;
+    subticket-add)   gl_subticket_add "$@" ;;
+    subticket-order) gl_subticket_order "$@" ;;
     parent-of)      gl_parent_of "$@" ;;
     subtickets)     gl_subtickets "$@" ;;
     startables)     gl_subtickets "$@" | tail -n +2 | gl_subtickets_startables ;;
@@ -7117,7 +7364,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  milestone-rail <titre> <rail>      (pose le rail produit|outillage d'un milestone — idempotent)" >&2
       echo "  slug <titre> | branch-prefix <type> | host   (hôte de la forge, déduit du remote)" >&2
       echo "  Sous-tickets (découpage parent/lots, docs/10 §5.1) :" >&2
-      echo "    issue-link <iid> <iid-cible>    (lie deux tickets — relates to, idempotent)" >&2
+      echo "    issue-link <iid-parent> <iid-lot>  (rattache un lot à son parent — alias de subticket-add)" >&2
+      echo "    subticket-add <iid-parent> <iid-lot>   (rattache un lot — sub-issue native, idempotent ;" >&2
+      echo "                                      refuse un lot déjà rattaché à un AUTRE parent)" >&2
+      echo "    subticket-order <iid-parent> <iid>…    (impose cet ordre aux lots nommés, en un seul aller ;" >&2
+      echo "                                      ne pose rien si l'un des iid n'est pas un lot de ce parent)" >&2
       echo "    parent-of <iid>                 (iid du parent si <iid> est un sous-ticket)" >&2
       echo "    subtickets <iid-parent>         (checklist ## Sous-tickets : iid/coche/statut/par/titre)" >&2
       echo "    startables <iid-parent>         (lots « À faire » démarrables maintenant)" >&2
