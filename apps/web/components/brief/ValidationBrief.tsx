@@ -53,6 +53,7 @@ import {
   briefDepuisEdition,
   editionDepuis,
   estCorrige,
+  manquesDuBrief,
   toursDeClarification,
   type BriefEdite,
   type CleSectionListe,
@@ -66,28 +67,6 @@ import {
   type DetailExecution,
   type ResumeExecution,
 } from "@/lib/types";
-
-/**
- * Ce que le schéma partagé exige et qu'un formulaire peut vider — le miroir
- * **minimal** de `packages/shared/schemas/brief.schema.json`.
- *
- * On ne revalide pas le schéma ici, et c'est délibéré : le backend le fait, il
- * le fait sur la version qui fait foi, et sa réponse 422 nomme ce qui cloche.
- * Ce contrôle-ci ne couvre que les trois manques qu'un humain produit en
- * effaçant un champ, et sert à **désactiver** le bouton en le disant — pas à
- * remplacer l'API. Les doublons (`uniqueItems`), eux, partent exprès : les
- * nettoyer en silence modifierait ce que quelqu'un a écrit.
- */
-function manquesDe(edite: BriefEdite): string[] {
-  const propose = briefDepuisEdition(edite);
-  const manques: string[] = [];
-  if (propose.objectif.length === 0) manques.push("un objectif");
-  if (propose.perimetre.length === 0) manques.push("au moins une entrée de périmètre");
-  if (propose.criteres_acceptation.length === 0) {
-    manques.push("au moins un critère d'acceptation");
-  }
-  return manques;
-}
 
 export function ValidationBrief({ execution }: { execution: ResumeExecution }) {
   const { trancherBrief, repondreAuBrief } = useEtatGlobal();
@@ -219,7 +198,7 @@ export function ValidationBrief({ execution }: { execution: ResumeExecution }) {
   }
 
   const tours = toursDeClarification(detail.evenements);
-  const manques = manquesDe(edite);
+  const manques = manquesDuBrief(edite);
   const corrige = estCorrige(brief, edite);
 
   return (
