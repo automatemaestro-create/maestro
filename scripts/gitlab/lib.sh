@@ -1724,9 +1724,21 @@ gl_job_trace() {
 # --- Attendre un verdict de pipeline (#416, parent #413) ----------------------------------------
 # Défauts du régime d'attente, surchargeables par l'environnement — jamais figés dans un appelant :
 # un plafond recopié dans un prompt se périme le jour où la CI change de durée.
-GL_PIPELINE_TIMEOUT="${MAESTRO_PIPELINE_TIMEOUT:-900}"     # plafond de l'attente entière
+#
+# ⚠ TROIS RÉGLAGES ET NON DEUX DEPUIS #595, parce qu'il y a trois échelles et pas deux. Le plafond
+# borne un run QUI TOURNE (~2-4 min ici) ; la naissance borne l'APPARITION du run, et cette
+# apparition n'a pas la même échelle selon qu'un événement est dû ou non :
+#   · aucune PR ouverte → aucun événement ne viendra jamais, la réponse est acquise en deux minutes ;
+#   · une PR ouverte → l'événement est dû, il ne reste qu'à savoir QUAND. Le 2026-08-26, GitHub a
+#     mis 18 à 20 min à le livrer sur trois PR consécutives (§8.9) — sous les 120 s d'alors,
+#     `pipeline-wait` déclarait anormal le cas normal du jour, et le remède était un
+#     `gh workflow run` trouvé à la main. 1800 s tient la mesure avec de la marge.
+# Les fondre en un seul chiffre est exactement ce qui a cassé : un plafond censé borner une attente
+# anormale devenait le mécanisme qui déclarait anormale une attente normale.
+GL_PIPELINE_TIMEOUT="${MAESTRO_PIPELINE_TIMEOUT:-900}"     # plafond d'un run QUI TOURNE
 GL_PIPELINE_SONDAGE="${MAESTRO_PIPELINE_SONDAGE:-15}"      # intervalle entre deux lectures
-GL_PIPELINE_NAISSANCE="${MAESTRO_PIPELINE_NAISSANCE:-120}" # délai laissé au run pour APPARAÎTRE
+GL_PIPELINE_NAISSANCE="${MAESTRO_PIPELINE_NAISSANCE:-120}" # naissance quand AUCUN événement n'est dû
+GL_PIPELINE_NAISSANCE_PR="${MAESTRO_PIPELINE_NAISSANCE_PR:-1800}" # naissance quand une PR est ouverte
 
 # gl_pipeline_wait <ref|run-id> [--timeout <s>] -> attend un VERDICT et imprime le statut final.
 #
@@ -1745,30 +1757,57 @@ GL_PIPELINE_NAISSANCE="${MAESTRO_PIPELINE_NAISSANCE:-120}" # délai laissé au r
 # pipeline qu'il vient de déclencher et veut suivre CELUI-LÀ, pas le plus récent de la branche. Un
 # id est tout en chiffres, une branche de ticket ne l'est jamais (`<type>/<iid>-<slug>`, §2).
 #
-# DEUX BORNES, PARCE QU'IL Y A DEUX IGNORANCES. Le plafond (défaut 15 min) couvre une file
+# TROIS BORNES, PARCE QU'IL Y A TROIS IGNORANCES (#595). Le plafond (défaut 15 min) couvre une file
 # d'attente, pas une panne : un pipeline complet tourne en ~2-4 min. Mais l'attendre en entier pour
-# conclure « aucun pipeline » serait payer quinze minutes une réponse acquise en deux — un run qui
-# n'est pas né deux minutes après le push ne naîtra pas, faute d'événement pour le déclencher (pas
-# de PR ouverte, le cas le plus fréquent). D'où un délai de NAISSANCE plus court, qui ne borne que
-# la première apparition : une fois un run vu, la question est tranchée et seul le plafond compte.
-# Il est ramené au plafond quand celui-ci est plus court, de sorte qu'un seul endroit décide de 5.
+# conclure « aucun pipeline » serait payer quinze minutes une réponse acquise en deux. D'où un délai
+# de NAISSANCE, qui ne borne que la première apparition — et qui vaut, lui, DEUX chiffres :
+#   · AUCUNE PR OUVERTE (120 s) : rien ne déclenchera jamais ce run, la CI ne se déclenchant que sur
+#     les PR (§8). Attendre plus longtemps serait attendre un événement sans émetteur. Ce délai-là
+#     reste ramené au plafond quand celui-ci est plus court, comme avant.
+#   · UNE PR OUVERTE (30 min) : l'événement est DÛ, seule son heure est inconnue — et le 2026-08-26
+#     GitHub l'a livré 18 à 20 min après l'ouverture de la PR, trois fois de suite (§8.9). Ce
+#     délai-là n'est PAS ramené au plafond : les deux ne mesurent pas la même chose, et leur faire
+#     partager un chiffre est exactement ce qui a fait déclarer anormale une attente normale.
+# Le plafond, lui, court À PARTIR DU MOMENT OÙ LE RUN EST VU et non depuis l'appel — sans quoi une
+# naissance de vingt minutes mangerait les quinze minutes du run qu'elle vient de faire apparaître.
 #
-# Codes de retour — une cause, une conduite. `4` et `5` sont deux ignorances, et les confondre
+# Codes de retour — une cause, une conduite. `4`, `5` et `6` sont trois ignorances, et les confondre
 # serait le faux verdict que ce verbe existe pour éviter : un plafond dit « pas encore », une
-# absence dit « il n'y en aura pas ». Ni l'un ni l'autre n'est un échec du ticket.
+# absence dit « il n'y en aura pas », une naissance dit « il n'est pas là, mais il vient ». Aucun
+# des trois n'est un échec du ticket, et aucun des trois n'appelle `/mr-fix` — il n'y a là ni
+# conflit ni job rouge à réparer.
 #   0 = vert (success)                    4 = plafond atteint, run toujours en cours
-#   3 = verdict terminal NON vert         5 = aucun pipeline pour cette ref
-#       (failed/canceled/skipped/manual   2 = usage
-#        — le statut imprimé dit lequel)  1 = lecture impossible (outil, run introuvable)
+#   3 = verdict terminal NON vert         5 = aucun pipeline, et aucun n'est dû (pas de PR ouverte)
+#       (failed/canceled/skipped/manual   6 = run PAS ENCORE NÉ, alors qu'une PR le rend dû
+#        — le statut imprimé dit lequel)  2 = usage
+#                                         1 = lecture impossible (outil, run introuvable)
 #
-# `--timeout 0` sonde UNE fois et rend le verdict sans attendre — de quoi relire l'état d'une
+# `--timeout 0` n'est pas un plafond mais un RÉGIME : « sonde une fois, ne dors jamais ». Il éteint
+# donc les deux délais de naissance en même temps que le plafond — de quoi relire l'état d'une
 # branche avec les mêmes codes, sans dupliquer la table de correspondance chez l'appelant.
 #
-# ⚠ CE QU'IL NE VÉRIFIE PAS : que le run porte bien la TÊTE de la PR. Un vert sur un commit
-# antérieur est un vert, et ce verbe le rend comme tel — c'est `merge-mr` qui compare les sha et
-# rend 3 « verdict périmé » (§6). Le mettre ici en ferait un juge, et deux endroits diraient
-# « mergeable » au lieu d'un. L'appelant qui enchaîne les deux doit donc être prêt à repasser :
-# un `0` ici n'est pas une promesse de merge, c'est la fin d'une attente.
+# ⚠ IL NE JUGE TOUJOURS PAS LA MERGEABILITÉ, mais il sait désormais QUEL run il attend, et la nuance
+# tient en une phrase : c'est `merge-mr` qui décide qu'un vert vaut merge (il compare les sha et rend
+# 3 « verdict périmé », §6) ; ici on se contente de ne pas prendre le run de la PUSH PRÉCÉDENTE pour
+# celui qu'on attend. Sans cette distinction, un vieux vert faisait rendre `0` INSTANTANÉMENT — la
+# reprise unique de `/ticket-finish` (§6) repassait alors sans avoir attendu une seule seconde, et
+# les deux appels rendaient le même verdict pour la même raison. Un `0` ici n'est toujours pas une
+# promesse de merge, c'est la fin d'une attente.
+#
+# LA LECTURE QUI DIT LES DEUX. `gh_merge_facts <ref>`, UNE fois avant la boucle et jamais par tour,
+# répond du même coup à « un événement est-il dû ? » (une PR ouverte) et à « quel sha attend-on ? »
+# (sa tête). Une ref sans PR — ou une forge muette — retombe exactement sur le régime d'avant #595 :
+# aucun sha attendu, délai court, code `5`.
+#
+# ⚠ ET IL NE DÉCLENCHE RIEN, surtout pas ici. Le remède du 2026-08-26 fut un `gh workflow run
+# ci.yml --ref <branche>` lancé à la main, et le câbler dans ce verbe était la piste évidente : elle
+# est écartée (§8.9). Deux raisons, dont une seule suffirait — ce verbe ne relance rien par
+# construction (`guard.sh` l'autorise en session parce qu'il n'écrit pas), et un run de dispatch
+# porte `refs/heads/<branche>` là où l'événement `pull_request` porte la ref de MERGE : il a le même
+# `head_sha`, donc `merge-mr` l'accepterait, mais il n'a pas vérifié la même chose. Substituer en
+# silence une vérification plus faible à celle qu'on attendait est le contraire de « aucun merge non
+# vérifié ». Le geste reste donc humain — et le message du code `6` le NOMME, au seul moment où il
+# sert : ce qui manquait n'était pas le remède, c'était de le connaître à cet instant-là.
 #
 # À appeler en `bash … pipeline-wait <ref> || verdict=$?` pour lire le verdict sans interrompre une
 # boucle sous `set -e`.
@@ -1814,12 +1853,34 @@ gl_pipeline_wait() {
   local mode="ref"
   case "$cible" in *[!0-9]*) ;; *) mode="id" ;; esac
 
-  local naissance="$GL_PIPELINE_NAISSANCE"
-  [ "$naissance" -le "$timeout" ] || naissance="$timeout"
   local poll="$GL_PIPELINE_SONDAGE"
   [ "$poll" -ge 1 ] || poll=1
 
-  local attendu=0 vu=0 statut="" ligne id sha url=""
+  # --- Un événement est-il DÛ, et pour quel sha ? UNE lecture, avant la boucle (#595) -----------
+  # Deux questions, une réponse : `gh_merge_facts` rend l'état de la PR de cette ref ET la tête
+  # qu'elle porte. Muet ou sans PR, on retombe sur le régime d'avant — délai court, aucun sha
+  # attendu —, ce qui fait de cette lecture un enrichissement et jamais un prérequis.
+  local naissance="$GL_PIPELINE_NAISSANCE" attendu_sha="" du=0 mr=""
+  if [ "$mode" = "ref" ]; then
+    local faits etat_pr sha_pr
+    if faits="$(gh_merge_facts "$cible" 2>/dev/null)" && [ -n "$faits" ]; then
+      # Les deux derniers champs (brouillon, fermetures) relèvent de `merge-mr` : ici on n'a besoin
+      # que de « la PR est-elle ouverte ? » et « quelle tête porte-t-elle ? ».
+      IFS=$'\t' read -r etat_pr mr sha_pr _ _ <<< "$faits"
+      if [ "$etat_pr" = "opened" ]; then
+        du=1
+        naissance="$GL_PIPELINE_NAISSANCE_PR"
+        case "$sha_pr" in '' | -) ;; *) attendu_sha="$sha_pr" ;; esac
+      fi
+    fi
+  fi
+  # Le délai « aucun événement dû » se range sous le plafond ; celui de la PR, non — c'est tout
+  # l'objet de #595. `--timeout 0` les éteint tous les deux : il ne dit pas « plafond nul », il dit
+  # « ne dors pas ».
+  [ "$du" -eq 1 ] || [ "$naissance" -le "$timeout" ] || naissance="$timeout"
+  [ "$timeout" -gt 0 ] || naissance=0
+
+  local attendu=0 vu=0 vu_a=0 statut="" ligne id sha url=""
   while :; do
     statut=""
     if [ "$mode" = "id" ]; then
@@ -1832,7 +1893,22 @@ gl_pipeline_wait() {
       vu=1
     elif ligne="$(gl_pipeline_latest "$cible" 2>/dev/null)" && [ -n "$ligne" ]; then
       IFS=$'\t' read -r id statut sha url <<< "$ligne"
-      vu=1
+      if [ -n "$attendu_sha" ] && [ "$sha" != "$attendu_sha" ]; then
+        # Le run de la push précédente n'est PAS celui qu'on attend : le nôtre n'est pas né. On
+        # l'écarte au lieu de le prendre pour un verdict — c'est la moitié de #595 que le
+        # chronomètre ne montre pas, un vieux vert faisant sinon rendre `0` en une seconde.
+        statut=""; url=""
+      elif [ "$vu" -eq 0 ]; then
+        vu=1
+        vu_a="$attendu"
+        # Une naissance qui a DURÉ se dit, même quand elle aboutit : c'est ce qui permet au compte
+        # rendu de l'appelant de la nommer au lieu de la fondre dans « attente » (#595). Le seuil
+        # est le délai court — au-delà, la naissance n'est plus celle du régime normal.
+        if [ "$attendu" -gt "$GL_PIPELINE_NAISSANCE" ]; then
+          printf 'gl_pipeline_wait : run né après %s d'\''attente — le déclencheur a tardé (§8.9).\n' \
+            "$(gl_duree_lisible "$attendu")" >&2
+        fi
+      fi
     fi
 
     case "$statut" in
@@ -1849,11 +1925,22 @@ gl_pipeline_wait() {
     esac
 
     if [ "$vu" -eq 0 ] && [ "$attendu" -ge "$naissance" ]; then
+      if [ "$du" -eq 1 ]; then
+        # `6` et non `5` : une PR est ouverte, donc l'événement était dû — ce run n'est pas
+        # « inexistant », il est EN RETARD, et la conduite n'est pas la même (§8.9). Le remède
+        # manuel est nommé ICI parce que c'est le seul instant où il sert ; le câbler ferait de ce
+        # verbe un verbe qui écrit, et vérifierait la branche au lieu de la ref de merge.
+        printf 'gl_pipeline_wait : run pas encore né pour « %s » après %s — PR #%s ouverte, l'\''événement est dû.\n' \
+          "$cible" "$(gl_duree_lisible "$attendu")" "${mr:-?}" >&2
+        printf '  le déclencher à la main si l'\''attente n'\''est plus tenable : gh workflow run ci.yml --ref %s\n' \
+          "$cible" >&2
+        return 6
+      fi
       printf 'gl_pipeline_wait : aucun pipeline pour « %s » après %ss — la CI ne se déclenche que sur les PR (§8).\n' \
         "$cible" "$attendu" >&2
       return 5
     fi
-    if [ "$attendu" -ge "$timeout" ]; then
+    if [ "$vu" -eq 1 ] && [ $((attendu - vu_a)) -ge "$timeout" ]; then
       printf 'gl_pipeline_wait : plafond atteint (%ss) — dernier statut : %s\n' "$timeout" "${statut:-inconnu}" >&2
       [ -z "$url" ] || printf '  %s\n' "$url" >&2
       printf '%s\n' "${statut:-inconnu}"
@@ -3440,14 +3527,17 @@ gl_merge_mr() {
   # --- Prérequis 4 : un pipeline vert, SUR LA TÊTE DE LA PR ------------------------------------
   local pl id statut sha_run url
   if ! pl="$(gl_pipeline_latest "$branche" 2>/dev/null)"; then
-    printf '⏳ PR #%s (%s) : aucun pipeline pour cette branche — le run naît après la PR.\n' "$mr" "$branche" >&2
+    printf '⏳ PR #%s (%s) : pipeline pas encore né — aucun pipeline pour cette branche.\n' "$mr" "$branche" >&2
     return 3
   fi
   IFS=$'\t' read -r id statut sha_run url <<< "$pl"
   if [ "$sha_run" != "$sha" ]; then
     # Un vert porté par un commit antérieur ne dit RIEN du commit qu'on merge. C'est le cas
     # nominal juste après un push : le run précédent est terminé, le nouveau n'a pas démarré.
-    printf '⏳ PR #%s (%s) : verdict périmé — run sur %s, tête de la PR %s.\n' \
+    # Les DEUX branches disent « pas encore né », et c'est voulu (#595) : ce sont deux formes de la
+    # même attente — celle de l'événement — et l'appelant qui la nomme les traite pareil, là où
+    # « périmé » (conservé, il dit la cause) ne se rapproche d'aucune des deux tout seul.
+    printf '⏳ PR #%s (%s) : pipeline pas encore né — verdict périmé, run sur %s, tête de la PR %s.\n' \
       "$mr" "$branche" "${sha_run:0:8}" "${sha:0:8}" >&2
     return 3
   fi
@@ -5990,8 +6080,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    job-trace <job-id> [lignes]      (queue de la trace du job)" >&2
       echo "    pipeline-wait <ref|run-id> [--timeout <s>]" >&2
       echo "                                (ATTEND un verdict, de façon bornée — ne relance ni ne corrige rien." >&2
-      echo "                                 Défauts : plafond ${GL_PIPELINE_TIMEOUT}s, sondage ${GL_PIPELINE_SONDAGE}s, naissance ${GL_PIPELINE_NAISSANCE}s." >&2
-      echo "                                 0=vert, 3=terminal non vert, 4=plafond atteint, 5=aucun pipeline)" >&2
+      echo "                                 Défauts : plafond ${GL_PIPELINE_TIMEOUT}s (un run qui TOURNE, compté depuis qu'il est vu)," >&2
+      echo "                                 sondage ${GL_PIPELINE_SONDAGE}s, naissance ${GL_PIPELINE_NAISSANCE}s sans PR ouverte / ${GL_PIPELINE_NAISSANCE_PR}s avec (#595)." >&2
+      echo "                                 0=vert, 3=terminal non vert, 4=plafond atteint," >&2
+      echo "                                 5=aucun pipeline et aucun n'est dû, 6=pas encore né mais dû)" >&2
       exit 2 ;;
   esac
 fi

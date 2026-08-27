@@ -2851,9 +2851,21 @@ consigne() { # <iid> <verdict> <mr> <duree> <cout> <raison>
 # qui le lit en dépend (le bilan de `status.sh`, la vue, et `reprend_en_vol`, qui déduit d'une ligne
 # absente qu'un ticket était en vol à la coupure). Une ligne de plus au nom d'un ticket y ferait
 # compter un traité de plus et, pour `reprend_en_vol`, mentirait sur ce que la coupure a interrompu.
+#
+# `Q_NAISSANCE` et `Q_DIT_NAISSANCE` sont l'horloge et le témoin de l'attente de NAISSANCE (#595) :
+# depuis quand cette PR attend un pipeline qui n'existe pas encore, et l'a-t-on déjà dit. Les deux
+# ne vont pas dans `merge.tsv` — ils ne décrivent pas l'état de la file mais ce que la CONSOLE en a
+# déjà rendu, et une reprise doit pouvoir le redire une fois plutôt que d'hériter d'un silence.
 Q_IID=(); Q_PR=(); Q_BRANCHE=(); Q_ETAT=(); Q_CODE=(); Q_ESSAIS=(); Q_RAISON=(); Q_VU=()
-Q_MRFIX=(); Q_COUT=()
+Q_MRFIX=(); Q_COUT=(); Q_NAISSANCE=(); Q_DIT_NAISSANCE=()
 declare -A MERGE_ETAT=()
+
+# Au bout de combien de temps d'attente de naissance la console le NOMME. Le 2026-08-26, GitHub a
+# mis 18 à 20 min à déclencher trois PR consécutives (docs/10 §8.9) : plus court, on nommerait le
+# régime normal (le run naît après la PR, c'est la règle et pas une anomalie) ; plus long, on
+# laisserait un run entier dire « attente » sans jamais dire de quoi.
+MERGE_NAISSANCE_SIGNAL_S="${MAESTRO_ORCHESTRATE_NAISSANCE_SIGNAL:-600}"
+case "$MERGE_NAISSANCE_SIGNAL_S" in '' | *[!0-9]*) MERGE_NAISSANCE_SIGNAL_S=600 ;; esac
 
 # merge_ecrit : la file, en entier, à chaque changement. Réécrire plutôt que d'ajouter parce qu'une
 # ligne CHANGE d'état (attente → mergée) et qu'un journal en append demanderait de savoir laquelle
@@ -2900,7 +2912,7 @@ merge_enfile() { # <iid> <pr> <branche> [<état>] [<cause>] [<mrfix>] [<coût>]
   merge_index "$iid" >/dev/null && return 0
   Q_IID+=("$iid"); Q_PR+=("$pr"); Q_BRANCHE+=("$branche")
   Q_ETAT+=("$etat"); Q_CODE+=('-'); Q_ESSAIS+=(0); Q_RAISON+=("$cause"); Q_VU+=(-1)
-  Q_MRFIX+=("$mrfix"); Q_COUT+=("$cout")
+  Q_MRFIX+=("$mrfix"); Q_COUT+=("$cout"); Q_NAISSANCE+=(-1); Q_DIT_NAISSANCE+=(0)
   MERGE_ETAT["$iid"]="$etat"
   merge_ecrit
   return 0
@@ -2914,6 +2926,40 @@ merge_enfile() { # <iid> <pr> <branche> [<état>] [<cause>] [<mrfix>] [<coût>]
 merge_cause() {
   printf '%s\n' "$1" | grep -m1 -e '^✗' -e '^⏳' |
     sed 's/^[^:]*: *//; s/[[:space:]]\{1,\}/ /g; s/[[:space:]]*$//' | cut -c1-140
+}
+
+# merge_naissance <index> <cause> : l'attente de NAISSANCE, tenue et nommée UNE fois (#595).
+#
+# CE QU'ELLE CORRIGE. « attente » ne distinguait pas un pipeline qui TOURNE d'un pipeline qui
+# N'EXISTE PAS ENCORE, et les deux n'appellent pas la même conduite : le premier se laisse finir, le
+# second peut avoir besoin d'un `gh workflow run` — c'est le geste qui a débloqué deux PR à la main
+# le 2026-08-26 (docs/10 §8.9), après 24 tentatives de merge dont la console ne disait rien d'autre
+# que « attente ». Le mode de panne le plus coûteux est celui où rien n'est rouge.
+#
+# DEUX CAUSES, UN SEUL ÉTAT : `merge-mr` dit « pas encore né » aussi bien quand aucun run n'existe
+# pour la branche que quand le dernier porte un sha antérieur — dans les deux cas, le run de la tête
+# n'est pas là. C'est ce marqueur-là qu'on lit, et pas le détail qui suit.
+#
+# UNE SEULE FOIS, et c'est la règle de `merge_annonce` juste en dessous : un drain qui répète « pas
+# encore » à chaque passe est un drain qu'on cesse de lire. L'horloge est REMISE À ZÉRO dès que la
+# cause change — une PR dont le run finit par naître ne doit pas garder son compteur d'attente, et
+# si elle retombe en naissance plus tard, elle a droit à sa ligne.
+merge_naissance() { # <index> <cause>
+  local i="$1" cause="$2"
+  case "$cause" in
+    *"pas encore né"*)
+      [ "${Q_NAISSANCE[$i]}" -ge 0 ] || { Q_NAISSANCE[$i]=$SECONDS; Q_DIT_NAISSANCE[$i]=0; }
+      local depuis=$((SECONDS - Q_NAISSANCE[i]))
+      if [ "${Q_DIT_NAISSANCE[$i]}" = 0 ] && [ "$depuis" -ge "$MERGE_NAISSANCE_SIGNAL_S" ]; then
+        Q_DIT_NAISSANCE[$i]=1
+        dit '  %s⏳%s PR #%s (#%s) — le pipeline n'\''est pas encore né (%s, %s tentative(s)) : ce n'\''est ni un rouge ni un conflit, rien à débloquer.\n' \
+          "$C_Y" "$C_0" "${Q_PR[$i]}" "${Q_IID[$i]}" "$(duree_lisible "$depuis")" "${Q_ESSAIS[$i]}"
+        dit '     le déclencher à la main si l'\''attente n'\''est plus tenable : gh workflow run ci.yml --ref %s\n' \
+          "${Q_BRANCHE[$i]}"
+      fi ;;
+    *) Q_NAISSANCE[$i]=-1; Q_DIT_NAISSANCE[$i]=0 ;;
+  esac
+  return 0
 }
 
 # merge_ramasse <iid> <branche> : ce que le merge vient de rendre inutile ICI (#438).
@@ -2979,9 +3025,16 @@ merge_tente() { # <index> [attendre]
   local sortie code=0 cause
   Q_VU[$i]=$SECONDS
   if [ "$attendre" = 1 ]; then
-    # Le verdict de `pipeline-wait` n'est pas lu : il ne juge pas la mergeabilité (il ne compare
-    # même pas les sha — §8.3), il ne fait que rendre la main quand il y a quelque chose à décider.
-    # C'est `merge-mr`, juste après, qui tranche, et lui seul.
+    # Le verdict de `pipeline-wait` n'est pas lu : il ne juge pas la mergeabilité — il sait quel run
+    # il attend depuis #595, mais c'est `merge-mr`, juste après, qui décide qu'un vert vaut merge, et
+    # lui seul. Le verbe ne fait que rendre la main quand il y a quelque chose à décider.
+    #
+    # L'ATTENTE S'ANNONCE AVANT DE COMMENCER, et pas seulement dans l'en-tête du drain : c'est le
+    # SEUL endroit où le run patiente pour une naissance (une passe du drain final ne repasse pas
+    # sur une PR qui n'a rien donné), donc l'appel peut à lui seul tenir une demi-heure — un
+    # silence de cette longueur au milieu d'un drain se lit comme une panne (#595).
+    dit '  %s⏳%s PR #%s (#%s) — attente du pipeline (jusqu'\''à %s s'\''il n'\''est pas encore né)…\n' \
+      "$C_Y" "$C_0" "$pr" "$iid" "$(duree_lisible "${MAESTRO_PIPELINE_NAISSANCE_PR:-1800}")"
     sortie="$(gl_pipeline_wait "$branche" 2>&1)" || true
     { printf -- '--- #%s (%s) : attente du pipeline\n' "$iid" "$branche"
       printf '%s\n' "$sortie"; } >>"$MERGE_LOG" 2>/dev/null || true
@@ -3009,7 +3062,10 @@ merge_tente() { # <index> [attendre]
     # « PR déjà mergée » plus bas) — c'est la même situation, vue d'un autre point du cycle.
     7) Q_ETAT[$i]=mergee;  Q_RAISON[$i]='déjà mergée hors du run'; merge_ramasse "$iid" "$branche" ;;
     # « pas encore rendu » (en cours, absent, ou périmé) : la seule réponse qui laisse en file.
-    3) Q_ETAT[$i]=attente; Q_RAISON[$i]="${cause:-verdict de pipeline pas encore rendu}" ;;
+    # Les deux dernières formes sont une attente de NAISSANCE, que `merge_naissance` nomme au bout
+    # de quelques passes plutôt que de la laisser sous le mot « attente » (#595).
+    3) Q_ETAT[$i]=attente; Q_RAISON[$i]="${cause:-verdict de pipeline pas encore rendu}"
+       merge_naissance "$i" "${Q_RAISON[$i]}" ;;
     # 4 et 5 sont réparables — c'est `mrfix_relance` (#420) qui s'en saisit, en ouvrant une session
     # `/mr-fix` ; 6 est un geste humain, et rien ne le tente. Les trois sortent de la file : ni un
     # pipeline rouge ni un conflit ne se défont tout seuls, et y repasser à chaque passe coûterait
@@ -3352,6 +3408,17 @@ merge_draine_final() {
     progres=0
     # shellcheck disable=SC2046  # des indices numériques : le découpage de mots est voulu
     for i in $(merge_ordre $restants); do
+      # Le plafond se relit AUSSI ici, avant chaque PR (#595) — et pas seulement entre deux passes.
+      # Une attente peut désormais tenir une demi-heure quand le run n'est pas encore né, si bien
+      # qu'une passe de N PR toutes en naissance vaudrait N × 30 min avant le prochain contrôle :
+      # cinq PR sous une panne de déclencheur retiendraient le pilote deux heures et demie pour un
+      # plafond annoncé à une heure. Lu avant de COMMENCER une attente, il n'interrompt toujours ni
+      # un merge ni une session en cours — la règle du bloc ci-dessus est tenue, pas contournée.
+      if [ $((SECONDS - debut)) -ge "$MERGE_PLAFOND_S" ]; then
+        printf '  %s⚠%s plafond du drain atteint (%s) — le reste est laissé en file.\n' \
+          "$C_Y" "$C_0" "$(duree_lisible "$MERGE_PLAFOND_S")"
+        break 2
+      fi
       if merge_tente "$i" "$attendre"; then
         merge_annonce "$i"
         progres=1
@@ -3400,8 +3467,13 @@ merge_bilan() {
     case "${Q_ETAT[$i]}" in
       mergee)  printf '    %s✓%s #%-5s PR #%-5s mergée%s\n' \
                  "$C_G" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "$essais" ;;
-      attente) printf '    %s⏳%s #%-5s PR #%-5s en attente — %s%s\n' \
-                 "$C_Y" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_RAISON[$i]}" "$essais" ;;
+      # Une attente de NAISSANCE porte sa durée (#595) : « en attente » sans chiffre ne dit pas si
+      # le pipeline tarde d'une minute ou d'une heure, et c'est ce chiffre-là qui décide si le
+      # `gh workflow run` vaut la peine d'être lancé au réveil.
+      attente) printf '    %s⏳%s #%-5s PR #%-5s en attente — %s%s%s\n' \
+                 "$C_Y" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_RAISON[$i]}" \
+                 "$([ "${Q_NAISSANCE[$i]}" -ge 0 ] && printf ' (depuis %s)' "$(duree_lisible $((SECONDS - Q_NAISSANCE[i])))")" \
+                 "$essais" ;;
       *)       printf '    %s✗%s #%-5s PR #%-5s bloquée — %s%s%s\n' \
                  "$C_R" "$C_0" "${Q_IID[$i]}" "${Q_PR[$i]}" "${Q_RAISON[$i]}" "$essais" \
                  "$([ "${Q_MRFIX[$i]}" -ge "$MRFIX_MAX" ] && printf ' — plafond de %s tentative(s) atteint' "$MRFIX_MAX")" ;;

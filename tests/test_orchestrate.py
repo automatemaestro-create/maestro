@@ -6850,6 +6850,99 @@ def test_un_merge_refuse_ne_ramasse_rien(depot: Depot) -> None:
     assert "ramassage après merge" not in (dossier / "merge.log").read_text(encoding="utf-8")
 
 
+# --- L'attente de NAISSANCE, nommée sur la console (#595) ----------------------------------------
+# Le 2026-08-26, la file de merge du run `20260826-183242` a passé 24 tentatives sur une seule PR
+# sans que la console dise autre chose que « attente » — parce que rien n'était rouge, rien n'était
+# en conflit, et que le pipeline n'existait tout simplement pas encore (docs/10 §8.9). Le mode de
+# panne le plus coûteux est celui qui ne fait rougir personne.
+#
+# Le pilote avait déjà la bonne CONDUITE (un `3` reste en file, et c'est ce qui a fini par merger) :
+# ce qui manquait était le mot. Ces deux tests gardent le mot, et l'absence du mot.
+
+# Le run n'attend pas : ce qu'on observe est la ligne, jamais une durée. Le seuil à 0 la fait
+# paraître dès la première passe, la naissance à 1 s empêche le drain final de patienter pour de
+# bon — sans quoi le test mesurerait le défaut d'un chronomètre plutôt que le comportement.
+_SANS_ATTENDRE = {
+    "MAESTRO_ORCHESTRATE_MERGE": "1",
+    "MAESTRO_ORCHESTRATE_NAISSANCE_SIGNAL": "0",
+    "MAESTRO_PIPELINE_NAISSANCE": "1",
+    "MAESTRO_PIPELINE_NAISSANCE_PR": "1",
+    "MAESTRO_PIPELINE_SONDAGE": "1",
+}
+
+
+def _pr_sans_pipeline(depot: Depot, iid: int) -> str:
+    """Une PR par ailleurs mergeable, dont le run n'est PAS ENCORE NÉ — le cas du 2026-08-26.
+
+    C'est `_pr_mergeables` moins la seule chose qui compte ici : `run_actions`. Les trois autres
+    prérequis de `merge-mr` passent, si bien que le verdict vient du quatrième et de lui seul.
+    """
+    branche = f"feat/{iid}-ticket-{iid}"
+    _init_git_sur_main(depot)
+    depot.ticket(iid, f"Ticket {iid}")
+    depot.mr(branche, "opened", iid=800 + iid, brouillon=False, ferme=(iid,))
+    _git(depot, "branch", branche, "main")
+    return branche
+
+
+@besoin_git
+def test_une_attente_de_naissance_est_nommee_et_non_fondue_dans_attente(depot: Depot) -> None:
+    """Le troisième critère de #595 : la console NOMME l'attente de naissance.
+
+    Trois choses doivent y être, et chacune répond à une question que « attente » laissait ouverte :
+    de quoi s'agit-il (le pipeline n'est pas né), faut-il agir (non — ni rouge ni conflit, donc rien
+    que `/mr-fix` sache réparer), et que faire si l'attente devient intenable (le dispatch, avec la
+    branche déjà substituée). Sans la deuxième, la ligne enverrait ouvrir une session de remédiation
+    sur une PR qui n'a rien à remédier — c'est-à-dire exactement le geste que le ticket supprime.
+    """
+    branche = _pr_sans_pipeline(depot, 130)
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "naissance",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot), **_SANS_ATTENDRE})
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    ligne = _merge_tsv(depot.racine / ".maestro/orchestrate/naissance")[0]
+    assert ligne[3] == "attente", f"un `3` laisse la PR en file : {ligne}"
+    assert ligne[4] == "3", "ni un rouge (4) ni un conflit (5) : le code sépare les conduites"
+    assert "pas encore né" in ligne[6], f"la cause vient de merge-mr : {ligne}"
+
+    assert "pas encore né" in r.stdout, (
+        "la console fond encore l'attente de naissance dans « attente » — c'est le silence qui a "
+        f"coûté 24 tentatives le 2026-08-26\n{r.stdout}"
+    )
+    assert "rien à débloquer" in r.stdout, (
+        "la ligne doit dire qu'il n'y a NI rouge NI conflit : sans ça, elle envoie chercher une "
+        "remédiation là où il n'y a qu'à attendre"
+    )
+    assert f"gh workflow run ci.yml --ref {branche}" in r.stdout, (
+        "le remède est nommé au moment où il sert, branche substituée — il a dû être retrouvé à la "
+        "main deux fois faute d'être écrit là"
+    )
+    # UNE fois, et c'est la règle de `merge_annonce` : un drain qui répète « pas encore » à chaque
+    # passe est un drain qu'on cesse de lire. Le seuil à 0 rend la répétition possible s'il n'y a
+    # pas de témoin, donc l'assertion mord.
+    assert r.stdout.count("rien à débloquer") == 1, (
+        f"l'attente est annoncée {r.stdout.count('rien à débloquer')} fois au lieu d'une"
+    )
+
+
+@besoin_git
+def test_un_pipeline_vert_ne_declenche_aucune_annonce_de_naissance(depot: Depot) -> None:
+    """Le contre-échantillon, sans lequel le test précédent ne dirait pas d'où vient la ligne.
+
+    Le run naît après la PR : c'est la RÈGLE (#165, docs/10 §8), pas une anomalie. Annoncer chaque
+    naissance apprendrait à ne plus lire l'annonce — ce qui se dit est celle qui DURE.
+    """
+    _pr_mergeables(depot, (130,))
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "nee",
+                    env={"MAESTRO_CLAUDE_BIN": _stub_livre(depot), **_SANS_ATTENDRE})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _merge_tsv(depot.racine / ".maestro/orchestrate/nee")[0][3] == "mergee", \
+        "sans merge, l'absence d'annonce ne prouverait rien"
+    assert "pas encore né" not in r.stdout, "une naissance normale ne s'annonce pas"
+
+
 @besoin_git
 def test_une_pr_mergee_entre_temps_est_livree_et_non_bloquee(depot: Depot) -> None:
     """Le scénario exact de #593, rejoué : une REPRISE dont la PR a été mergée entre-temps.

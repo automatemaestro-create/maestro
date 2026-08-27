@@ -9,7 +9,8 @@ Trois verbes de [`scripts/gitlab/lib.sh`](../scripts/gitlab/lib.sh) et un hook :
 * **`merge-mr`** (#415) — le SEUL chemin de merge du dépôt, et ses quatre prérequis. Chacun est
   éprouvé **isolément** : un test qui les vérifierait tous ensemble ne dirait pas lequel garde, et
   c'est précisément ce qu'on veut savoir le jour où l'un d'eux tombe.
-* **`pipeline-wait`** (#416) — quatre situations, quatre codes ; le plafond n'est pas un rouge.
+* **`pipeline-wait`** (#416, étendu par #595) — une situation, un code ; le plafond n'est pas un
+  rouge, et une **attente de naissance** n'est ni l'un ni l'autre.
 * **`merge-order`** (#416) — l'ordre le moins conflictuel, sur le graphe mesuré de #299.
 * **`guard.sh`** (#417) — le `deny` tient, et aucun prompt du dépôt ne prescrit `gh pr merge`.
 
@@ -37,6 +38,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -433,12 +435,12 @@ def test_un_iid_se_resout_en_branche_par_les_pr_ouvertes(depot: Depot) -> None:
 
 
 # =====================================================================================
-# `pipeline-wait` — quatre situations, quatre codes (#416)
+# `pipeline-wait` — une situation, un code (#416, étendu par #595)
 # =====================================================================================
 # Le plafond N'EST PAS un rouge, et c'est tout l'enjeu de la table : `4` dit « pas encore »,
-# `3` dit « verdict rendu, défavorable », `5` dit « il n'y en aura pas ». Les confondre enverrait
-# ouvrir une session de remédiation sur une PR qui n'a rien à réparer — ou, dans l'autre sens,
-# attendre indéfiniment un verdict déjà tombé.
+# `3` dit « verdict rendu, défavorable », `5` dit « il n'y en aura pas », `6` dit « il n'est pas là,
+# mais il vient » (#595, plus bas). Les confondre enverrait ouvrir une remédiation sur une PR qui
+# n'a rien à réparer — ou, dans l'autre sens, attendre indéfiniment un verdict déjà tombé.
 
 VITE = {"MAESTRO_PIPELINE_SONDAGE": "1", "MAESTRO_PIPELINE_NAISSANCE": "1"}
 
@@ -511,6 +513,190 @@ def test_un_run_id_illisible_n_est_pas_une_attente(depot: Depot) -> None:
     r = depot.lib("pipeline-wait", "12345", "--timeout", "0", reglages=VITE)
     assert r.returncode == 1, r.stdout + r.stderr
     assert "illisible" in r.stderr
+
+
+# =====================================================================================
+# L'attente de NAISSANCE — quand l'événement arrive en retard (#595)
+# =====================================================================================
+# La mesure qui a ouvert le ticket est dans docs/10 §8.9 : le 2026-08-26, `pull_request` a mis 18 à
+# 20 min à déclencher la CI sur trois PR consécutives. Sous les 120 s du délai de naissance d'alors,
+# `pipeline-wait` déclarait donc anormal le cas normal du jour.
+#
+# Ce que ces tests gardent n'est PAS un chronomètre — un test qui mesurerait des minutes mesurerait
+# la charge de la machine. Ce sont les trois décisions : deux délais qui ne partagent pas un
+# chiffre, un run identifié par le sha qu'on attend, et un code qui ne route vers rien.
+
+# Deux délais volontairement DIFFÉRENTS et tous deux courts : ce qu'on observe est lequel des deux
+# s'applique, jamais leur valeur de production.
+NAISSANCE = {"MAESTRO_PIPELINE_SONDAGE": "1",
+             "MAESTRO_PIPELINE_NAISSANCE": "1",
+             "MAESTRO_PIPELINE_NAISSANCE_PR": "4"}
+SHA_TETE = "a" * 40
+SHA_AVANT = "0" * 40
+
+
+def test_un_run_pas_encore_ne_sous_une_pr_ouverte_rend_six_et_non_cinq(depot: Depot) -> None:
+    """`6` et non `5` : « il n'est pas là » et « il n'y en aura pas » n'appellent pas la même suite.
+
+    Le chiffre compte au-delà de la taxonomie. `pipeline-wait` et `merge-mr` ont deux tables qui
+    partagent leurs codes, et le `5` de `merge-mr` est un **conflit** — une cause réparable qui
+    enchaîne d'office sur `/mr-fix` (#460). Un `5` de naissance lu dans la mauvaise table envoyait
+    donc une remédiation sur une PR qui n'a ni conflit ni job rouge, et lui faisait consommer ses
+    deux tentatives pour rien. Le `6`, lui, désigne des deux côtés un geste humain que rien ne
+    tente.
+    """
+    depot.pose_etat(
+        graphql=[regle_pr("chore/1-x", pr=PR, sha=SHA_TETE, ferme=(1,))],
+        rest=[regle_run_absent("chore/1-x")],
+    )
+    r = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
+    assert r.returncode == 6, r.stdout + r.stderr
+    assert "pas encore né" in r.stderr
+    assert f"#{PR}" in r.stderr, "la PR qui rend l'événement dû est nommée"
+    # Le remède du 2026-08-26 était su de `ci.yml` et de /mr-fix, et introuvable au moment où il
+    # servait : il est imprimé ICI, branche déjà substituée. Ce qui manquait n'était pas le geste.
+    assert "gh workflow run ci.yml --ref chore/1-x" in r.stderr
+
+
+def test_sans_pr_ouverte_le_delai_court_garde_son_motif(depot: Depot) -> None:
+    """Le contre-échantillon, sans lequel le test précédent ne dirait pas D'OÙ vient le `6`.
+
+    Le raisonnement de #416 — « un run qui n'est pas né deux minutes après le push ne naîtra pas » —
+    reste JUSTE quand aucun événement n'est dû : il n'y a pas d'émetteur. Allonger l'attente dans ce
+    cas-là serait payer quinze minutes une réponse acquise en deux, c'est-à-dire réintroduire le
+    défaut symétrique de celui que #595 corrige.
+    """
+    depot.pose_etat(graphql=[regle_pr("chore/1-x", etat="")], rest=[regle_run_absent("chore/1-x")])
+    r = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
+    assert r.returncode == 5, r.stdout + r.stderr
+    assert "aucun pipeline" in r.stderr
+
+
+def test_le_delai_de_naissance_sous_pr_ne_se_range_pas_sous_le_plafond(depot: Depot) -> None:
+    """Les deux bornes ne mesurent pas la même chose, donc elles ne partagent pas un chiffre.
+
+    C'est le défaut nommé par le ticket : un plafond censé borner une attente ANORMALE était devenu
+    le mécanisme qui déclarait anormale une attente de naissance normale. Le plafond vaut ici 1 s et
+    la naissance sous PR 4 s — si le second était ramené au premier, l'appel sortirait en `4` (« le
+    run tourne toujours »), verdict qui n'a aucun sens sur un run qui n'existe pas.
+    """
+    depot.pose_etat(
+        graphql=[regle_pr("chore/1-x", pr=PR, sha=SHA_TETE, ferme=(1,))],
+        rest=[regle_run_absent("chore/1-x")],
+    )
+    r = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "1", reglages=NAISSANCE)
+    assert r.returncode == 6, (
+        "le délai de naissance sous PR a été ramené au plafond — c'est le bug de #595, à l'envers"
+        f"\n{r.stdout}{r.stderr}"
+    )
+
+
+def test_un_vieux_vert_n_est_pas_le_run_qu_on_attend(depot: Depot) -> None:
+    """La moitié de #595 que le chronomètre ne montre pas.
+
+    `pipeline-wait` tenait pour « vu » n'importe quel run de la branche, celui de la push
+    précédente compris : sur une branche portant un vieux vert, il rendait `0` INSTANTANÉMENT. La
+    reprise unique que `/ticket-finish` s'accorde sur un `3` (docs/10 §6) repassait alors sans avoir
+    attendu une seule seconde, et les deux appels rendaient le même verdict pour la même raison —
+    une reprise qui a l'air d'en être une sans jamais laisser rien arriver.
+
+    L'A/B est le test : même vieux vert, seule la PR change. Ouverte, elle dit quel sha on attend et
+    le vert est écarté ; absente, on retombe sur le régime d'avant #595 et il est pris tel quel.
+    """
+    vieux_vert = regle_run("chore/1-x", sha=SHA_AVANT)
+
+    depot.pose_etat(graphql=[regle_pr("chore/1-x", etat="")], rest=[vieux_vert])
+    temoin = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
+    assert temoin.returncode == 0, (
+        "sans PR, aucun sha n'est attendu : le dernier run de la branche fait foi, comme avant"
+        f"\n{temoin.stdout}{temoin.stderr}"
+    )
+
+    depot.pose_etat(graphql=[regle_pr("chore/1-x", pr=PR, sha=SHA_TETE, ferme=(1,))])
+    r = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
+    assert r.returncode == 6, (
+        "un vert porté par le sha précédent a été pris pour le run attendu — le `0` instantané est "
+        f"de retour\n{r.stdout}{r.stderr}"
+    )
+
+
+def test_une_naissance_qui_aboutit_le_dit_quand_meme(depot: Depot) -> None:
+    """Le troisième critère du ticket, côté clôture : une attente qui DURE se nomme, même réussie.
+
+    Sans cette ligne, une clôture qui aboutit après vingt minutes est indiscernable d'une clôture
+    qui a mergé tout de suite — et le compte rendu ne dirait jamais que le déclencheur a tardé. Le
+    seuil est le délai COURT : en deçà, la naissance est celle du régime normal (le run naît après
+    la PR, c'est la règle et non une anomalie) et l'annoncer apprendrait à ne plus lire l'annonce.
+
+    Le run apparaît en cours de route, comme dans la vraie vie : l'état du `gh` factice est réécrit
+    pendant que le verbe boucle. C'est la seule façon d'observer la TRANSITION, qu'un état figé ne
+    peut pas produire.
+    """
+    depot.pose_etat(
+        graphql=[regle_pr("chore/1-x", pr=PR, sha=SHA_TETE, ferme=(1,))],
+        rest=[regle_run_absent("chore/1-x")],
+    )
+    # Deux secondes : au-delà du délai court (1 s), en deçà de la naissance sous PR (4 s).
+    minuteur = threading.Timer(
+        2.0, lambda: depot.pose_etat(rest=[regle_run("chore/1-x", sha=SHA_TETE)])
+    )
+    minuteur.start()
+    try:
+        r = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
+    finally:
+        minuteur.cancel()
+    assert r.returncode == 0, f"le run est né, l'attente doit aboutir\n{r.stdout}{r.stderr}"
+    assert r.stdout.strip() == "success"
+    assert "run né après" in r.stderr, (
+        "une naissance plus longue que le délai court doit être NOMMÉE — c'est ce que le résumé de "
+        f"clôture relaie\n{r.stderr}"
+    )
+
+
+def test_le_verbe_ne_declenche_jamais_le_pipeline_lui_meme(depot: Depot) -> None:
+    """L'arbitrage de #595 : le dispatch de secours reste un geste HUMAIN.
+
+    Deux raisons, dont une seule suffirait — `pipeline-wait` ne relance rien par construction (c'est
+    ce qui lui vaut d'être autorisé en session de run là où `merge-mr` est refusé), et un
+    `workflow_dispatch` tourne sur `refs/heads/<branche>` quand `pull_request` tourne sur la ref de
+    MERGE. Les deux portent le même `head_sha`, donc `merge-mr` accepterait le run de dispatch sans
+    broncher : il aurait vérifié la branche seule là où on croyait avoir vérifié son merge avec
+    `main`. Substituer en silence une vérification plus faible est le contraire de « aucun merge non
+    vérifié » (#417).
+    """
+    depot.pose_etat(
+        graphql=[regle_pr("chore/1-x", pr=PR, sha=SHA_TETE, ferme=(1,))],
+        rest=[regle_run_absent("chore/1-x")],
+    )
+    depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
+    assert ecritures(depot) == [], f"aucune écriture côté forge : {ecritures(depot)}"
+    declenchements = [ligne for ligne in depot.appels()
+                      if "workflow" in ligne or "rerun" in ligne or "dispatch" in ligne]
+    assert declenchements == [], (
+        f"le verbe a déclenché quelque chose : {declenchements}. Il le NOMME, il ne le fait pas."
+    )
+
+
+def test_merge_mr_nomme_la_naissance_dans_ses_deux_formes(depot: Depot) -> None:
+    """Un seul marqueur pour deux causes, parce que l'appelant les traite pareil (#595).
+
+    « Aucun run pour la branche » et « le dernier run porte un sha antérieur » sont deux formes
+    d'une MÊME attente : le run de la tête n'est pas né. Le pilote s'en sert pour nommer l'attente
+    sur sa console (`merge_naissance`), et il ne peut le faire que si les deux messages portent le
+    même marqueur — « périmé », conservé parce qu'il dit la cause, ne se rapproche d'aucune des deux
+    tout seul.
+    """
+    _mergeable(depot, run=regle_run_absent(BRANCHE))
+    absent = depot.lib("merge-mr", BRANCHE)
+    assert absent.returncode == 3, absent.stdout + absent.stderr
+    assert "pas encore né" in absent.stderr
+
+    # Le même décor, dont on ne change QUE le run : la branche et sa PR sont déjà en place.
+    depot.pose_etat(rest=[regle_run(BRANCHE, sha=SHA_AVANT)])
+    perime = depot.lib("merge-mr", BRANCHE)
+    assert perime.returncode == 3, perime.stdout + perime.stderr
+    assert "pas encore né" in perime.stderr
+    assert "périmé" in perime.stderr, "la cause reste distinguable dans le même message"
 
 
 # =====================================================================================
