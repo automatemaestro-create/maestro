@@ -1027,6 +1027,52 @@ laisserait un run refusé « en attente » pour toujours) ; et une **autre deman
 laisse suspendu, faute de quoi trancher la première de trois lui rendrait un « en cours » qu'il ne
 mérite pas.
 
+**Un écran qui se décide vite** (#272, lot 5 de #244). Une validation est bloquante : le moteur est
+en pause et un run attend derrière. Trois décisions le disent, et une seule fois chacune.
+
+- **La plus ancienne d'abord.** La file est triée par horodatage croissant et sa tête est rendue en
+  plein. Il n'y avait aucun tri : l'ordre était celui du backend, donc celui de personne, et rien
+  dans la carte ne disait laquelle retenait un moteur depuis le plus longtemps. Une demande **sans
+  horodatage** (donnée ancienne, événement amputé) passe **en dernier** — elle n'a pas d'âge à faire
+  valoir, et la mettre en tête ferait traiter d'abord celle dont on sait le moins.
+- **Le temps d'attente au premier plan.** La carte n'affichait que l'heure de la demande, un chiffre
+  dont il fallait faire la soustraction soi-même. Elle porte désormais l'**ancienneté**
+  (`formatAttente`, « depuis 3 min »), voisine de `formatHeureRelative` et pourtant distincte :
+  « il y a 3 min » situe un fait passé, « depuis 3 min » mesure une attente **qui dure**, et c'est
+  la seconde qui décide. Sous la minute elle dit « depuis moins d'une minute » plutôt que l'heure
+  exacte — c'est le choix inverse de sa voisine, et pour la raison qui les sépare.
+- **Deux surfaces, une carte.** Le panneau du tableau de bord (`PanneauValidations`) est l'**aperçu**
+  — la plus ancienne, décidable sur place, et une ligne de renvoi pour le reste, ce que la règle des
+  trois places prescrit ([docs/30 §4](./30-cible-visuelle-control-tower.md)) —, la page Validations
+  (`FileValidations`) le **plein format**. Les deux montent la même `CarteValidation`, mêmes champs
+  dans le même ordre. Le prix est assumé et se dit : depuis le tableau de bord on ne tranche plus
+  que la plus urgente, les autres étant à un clic. ⚠ Il restait une **troisième** présentation de la
+  même demande — la carte compacte de la cloche —, qui portait les derniers boutons `bg-emerald-600`
+  bruts du produit, c'est-à-dire le 3,65:1 que #535 avait retiré de dix-huit autres recopies ; elle
+  passe aux primitives du socle sans changer de forme, la cloche n'ayant pas la place d'un motif.
+
+**Le refus peut être motivé** (critère 2), et il ne coûte pas un geste à qui n'en veut pas :
+« Refuser » refuse en un clic, comme avant ; un bouton discret ouvre à côté un motif **facultatif**,
+qui part avec ce même bouton. Rendre le refus conditionnel à une saisie ferait payer à chaque
+demande le prix de celles qu'on veut expliquer. Côté API, `POST /api/validations/{tache_id}/decision`
+accepte un `motif` optionnel qui rejoint le `detail` de l'événement — donc le journal durable et la
+`decision` de la demande projetée, que l'historique de l'écran affiche ligne à ligne. Il ne voyage
+**nulle part ailleurs** : lui ouvrir un champ d'événement aurait demandé de le faire traverser le
+schéma du journal pour un texte que `detail` porte déjà, au prix d'un second endroit où lire
+« pourquoi ce refus ». Sur une approbation il est ignoré, comme le `brief` d'une décision de brief
+l'est sur un refus (§2.7.4) ; absent, la décision est celle d'avant ce lot, au caractère près. Le
+moteur, lui, ne lit que `statut` : le motif n'a jamais le pouvoir de changer ce qui se passe.
+
+**La cohérence en temps réel** tient à la **clé de React**, et à elle seule : chaque carte est keyée
+sur `tache_id`, donc une demande tranchée ailleurs démonte *sa* carte et emporte son état local —
+motif en cours de frappe, erreur, envoi en vol. Sans cette clé, la file se décalant d'un cran, un
+motif écrit pour une demande se retrouverait attaché à la suivante : un refus motivé à côté de la
+plaque, sans que rien ne le signale. Et **rien n'anticipe une décision** (note technique du ticket) :
+un formulaire de motif ouvert n'est pas une décision prise, les boutons ne se rallument qu'**en cas
+d'échec** (un rechargement lent rouvrirait sinon la porte à un second clic, qui reviendrait en 409),
+et une demande tranchée entre-temps se dit par le 409 du backend plutôt que par une carte qui
+disparaît sans explication.
+
 Couverture (#572) : [`tests/test_arbitrage_visible.py`](../tests/test_arbitrage_visible.py) — l'ordre
 nominal joué sur un vrai run (la demande publiée avant le premier `tache.statut` de sa tâche, avec
 le motif prouvé sur l'échantillon d'avant le correctif), les trois attentes humaines éprouvées

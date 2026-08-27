@@ -43,7 +43,7 @@ import {
   IconeNotifications,
 } from "@/components/Icones";
 import { LigneActivite } from "@/components/LigneActivite";
-import { BadgeEtat, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
+import { BadgeEtat, Bouton, Carte, CIBLE_MINIMALE } from "@/components/Primitives";
 import { resumeArbitrages } from "@/lib/annonces";
 import { runsEnAttente } from "@/lib/brief";
 import { estNotableNotification, grouperEvenements } from "@/lib/evenements";
@@ -324,28 +324,34 @@ function CarteValidationCompacte({
           Motif : {validation.raison}
         </p>
       )}
+      {/* Les primitives du socle et non deux `<button>` recopiés (#272) : ces
+          deux-là étaient les derniers `bg-emerald-600`/`border-rose-300` bruts
+          du canal des validations, c'est-à-dire exactement le contraste de
+          3,65:1 que #535 a retiré des dix-huit autres recopies. Le plancher de
+          cible est déclaré ici parce que la taille `petite` porte son propre pas
+          typographique (`text-annexe`) sans atteindre 24 px. */}
       <div className="mt-2 flex gap-1.5">
-        <button
-          type="button"
-          disabled={enCours}
+        <Bouton
+          taille="petite"
+          className={CIBLE_MINIMALE}
+          occupe={enCours}
           onClick={() => void surDecision(true)}
-          className="rounded bg-emerald-600 px-2 py-1 text-micro font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           {enCours ? "Envoi…" : "Approuver"}
-        </button>
-        <button
-          type="button"
+        </Bouton>
+        <Bouton
+          variante="contour"
+          ton="alerte"
+          taille="petite"
+          className={CIBLE_MINIMALE}
           disabled={enCours}
           onClick={() => void surDecision(false)}
-          className="rounded border border-rose-300 px-2 py-1 text-micro font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950"
         >
           Refuser
-        </button>
+        </Bouton>
       </div>
       {erreur && (
-        <p className="mt-1 text-micro text-rose-600 dark:text-rose-400">
-          {erreur}
-        </p>
+        <p className="mt-1 text-micro font-medium text-alerte-texte">{erreur}</p>
       )}
     </Carte>
   );

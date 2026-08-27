@@ -486,14 +486,22 @@ export async function envoyerMessageChat(
  * Tranche une demande de validation humaine (#48) : approuve ou refuse
  * l'action sensible (`POST /api/validations/{tache_id}/decision`). Le moteur,
  * en pause sur cette demande, reprend la tâche ou l'annule proprement.
+ *
+ * `motif` (#272) est la raison **facultative** d'un refus. Vide, la clé n'est
+ * pas envoyée du tout : un refus sans motif produit l'appel d'avant ce lot, à
+ * l'octet près — le backend la déclare optionnelle, mais l'omettre garde le
+ * contrat lisible pour qui relit une trace réseau. Ignoré sur une approbation,
+ * côté backend comme ici : approuver ne se motive pas dans ce canal.
  */
 export function deciderValidation(
   tacheId: string,
   approuve: boolean,
+  motif = "",
 ): Promise<void> {
+  const raison = approuve ? "" : motif.trim();
   return envoyerJson(
     `/api/validations/${encodeURIComponent(tacheId)}/decision`,
-    { approuve },
+    { approuve, ...(raison !== "" && { motif: raison }) },
     "décision refusée",
   );
 }
