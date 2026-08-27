@@ -74,6 +74,17 @@
 # corollaire : ce sont les règles D'AUJOURD'HUI, donc sur un vieux run « inclassé » dit souvent
 # « déjà instruit depuis ». C'est le dernier run qui se lit pour agir.
 #
+# --- La famille `.claude/` se LIT, elle ne se redéfinit pas (#611, chantier #608) ----------------------
+# `refus --claude` rend la même famille en TSV — une ligne par ticket, « iid <TAB> refus <TAB> exemple
+# de cible » — pour le pilote, qui la nomme en terminant son run. C'est un MODE DE SORTIE et pas une
+# seconde lecture : il se branche sur `famille`, une fois le classement rendu, si bien que la question
+# « ce refus vient-il du blocage dur ? » n'a toujours qu'une réponse dans le dépôt. La redéfinir chez
+# l'appelant — un `grep .claude/` sur les `<iid>.json` — aurait marché le premier jour et divergé le
+# suivant, et c'est la version silencieuse (celle du pilote) qui se serait trompée sans le dire.
+#
+# Rien à imprimer = RIEN, et le code 3 : le silence est le cas nominal d'un run sans résidu, et un
+# appelant best-effort doit pouvoir distinguer « aucun » (3) de « je n'ai pas pu lire » (1, 2).
+#
 # --- Réglages -----------------------------------------------------------------------------------------
 # MAESTRO_ORCHESTRATE_JOURNAL_RUNS   nombre de runs conservés (défaut 10)
 # MAESTRO_ORCHESTRATE_JOURNAL_GC=0   désactive le passage automatique appelé par `run.sh`
@@ -125,7 +136,7 @@ usage() {
 Le journal d'orchestration — .maestro/orchestrate/
 
   bash scripts/orchestrate/journal.sh gc [--check] [--auto] [--courant <run-id>]
-  bash scripts/orchestrate/journal.sh refus [<run-id> | --tous]
+  bash scripts/orchestrate/journal.sh refus [<run-id>… | --tous] [--claude]
   bash scripts/orchestrate/journal.sh audit [<run-id> | --tous]
   bash scripts/orchestrate/journal.sh origine <iid>
 
@@ -145,6 +156,11 @@ MAESTRO_ORCHESTRATE_JOURNAL_GC=0 désactive le passage automatique.
 maillon d'une chaîne comptant pour lui-même. Sans argument : le dernier run qui en porte.
 Lecture seule ; les instruire au cas par cas se fait en docs/10-workflow-git.md §11.7.
 
+  --claude     la seule famille « blocage dur .claude/ », en TSV et par TICKET :
+               « iid <TAB> refus <TAB> exemple de cible ». Rien (code 3) s'il n'y en a
+               aucun. C'est ce que le pilote lit pour nommer les résidus en fin de run
+               (#611) — la famille se LIT ici, elle ne se redéfinit pas ailleurs.
+
 `audit` dit OÙ PASSE LE TEMPS d'un run : part du mur passée sous outil (ticket par ticket, puis
 pour le run), détail par outil et par forme de commande Bash, palmarès des appels les plus longs,
 pré-vol de /ticket-start, temps mort et commandes rejouées DANS UN MÊME TICKET. Sans argument : le
@@ -156,7 +172,9 @@ Il MESURE, il ne corrige pas : chaque remède est son propre ticket (portée de 
 Le journal lu est TOUJOURS celui du clone principal, y compris appelé depuis un worktree : c'est
 là que le pilote écrit, et y renvoyer par un chemin absolu ferait refuser la lecture (§11.7).
 
-  <run-id>     un run précis, plutôt que le dernier
+  <run-id>     un run précis, plutôt que le dernier. `refus` en accepte PLUSIEURS et les
+               agrège : un run repris et le run qu'il reprend sont deux répertoires
+               pour un même travail (#611)
   --tous       tout le journal, tous runs confondus
 
 `origine` dit d'où sort un ticket : « run-id <TAB> verdict <TAB> raison » du dernier run qui
@@ -563,6 +581,12 @@ function tri(compte, cles,   n, i, j, k, tmp) {
   return n
 }
 
+# ticket_de(id) : le TICKET derrière une clé de session. Une session de déblocage journalise sous
+# `<iid>-mrfix` (#420) ; le correctif qu'elle n'a pas pu écrire appartient au ticket, qui est ce qui
+# porte un ticket de reprise — une tentative de déblocage n'en a pas. Le rapport HUMAIN, lui, garde
+# la distinction : c'est là qu'on veut savoir quelle session a buté.
+function ticket_de(id) { sub(/-mrfix[0-9]*$/, "", id); return id }
+
 # provenance(cle) : « #130 x3, #131 » — de quels tickets vient une entrée, et combien de fois.
 function provenance(cle, par_ticket, ordre,   n, t, i, s, iid) {
   n = split(ordre[cle], t, " ")
@@ -658,9 +682,30 @@ NF >= 3 {
     }
   }
   fam_n[famille]++
+
+  # Le mode machine (#611) se branche ICI, sur la famille DÉJÀ décidée, et jamais sur un second
+  # motif : c'est ce qui garantit qu'il n'existe pas deux définitions de « blocage dur .claude/ »
+  # dans le dépôt — et la seconde aurait été la muette, celle que le pilote lit sans que personne
+  # relise sa sortie.
+  if (famille == "claude") {
+    tk = ticket_de(iid)
+    if (!(tk in claude_par)) claude_ordre[++n_claude] = tk
+    claude_par[tk]++
+    if (!(tk in claude_ex)) claude_ex[tk] = cible
+  }
 }
 
 END {
+  # Le mode MACHINE sort avant tout le reste — pas une ligne d'en-tête, pas une portée : sa sortie
+  # est lue par un `while read`, et le silence y vaut « aucun résidu ». Une ligne par TICKET, dans
+  # l'ordre où le journal les a rendus (les `<iid>.json` sont lus triés, donc c'est reproductible).
+  if (mode == "claude") {
+    for (i = 1; i <= n_claude; i++) {
+      tk = claude_ordre[i]
+      printf "%s\t%s\t%s\n", tk, claude_par[tk], tronque(claude_ex[tk], 70)
+    }
+    exit
+  }
   print ""
   print portee
   if (total == 0) {
@@ -758,18 +803,26 @@ AWK
 )
 
 commande_refus() {
-  local cible="" tous=0
+  # PLUSIEURS run-id sont acceptés, et pas un seul (#611) : un run repris et le run qu'il reprend
+  # sont deux répertoires pour un même travail, et les sessions du premier ne sont journalisées que
+  # là-bas. Les agréger ensemble se fait ICI, où l'agrégation vit déjà — les additionner chez
+  # l'appelant reviendrait à en écrire une seconde, sur des comptes cette fois.
+  local cibles="" tous=0 mode=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --tous) tous=1 ;;
+      --claude) mode=claude ;;
       -h | --help) usage; return 0 ;;
       -*) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
-      *) cible="$1" ;;
+      *) cibles="$cibles$1"$'\n' ;;
     esac
     shift
   done
 
+  # En mode machine, « pas de journal » et « aucun refus » sont la MÊME réponse — aucun résidu à
+  # nommer — et elle s'écrit avec un code, pas avec une phrase que personne ne lit.
   [ -d "$ORCH_DIR" ] || {
+    [ -z "$mode" ] || return 3
     printf '\nAucun journal d'\''orchestration — aucun run n'\''a encore tourné ici.\n\n'
     return 0
   }
@@ -783,14 +836,23 @@ commande_refus() {
       dirs="$dirs${d%/}"$'\n'
     done
     portee="Refus de permission — tout le journal"
-  elif [ -n "$cible" ]; then
-    [ -d "$ORCH_DIR/$cible" ] || {
-      printf 'journal.sh refus : run inconnu — %s\n' "$cible" >&2
-      printf 'Les runs présents : %s\n' "$(ls -1 "$ORCH_DIR" 2>/dev/null | tr '\n' ' ')" >&2
-      return 2
-    }
-    dirs="$ORCH_DIR/$cible"$'\n'
-    portee="Refus de permission — run $cible"
+  elif [ -n "$cibles" ]; then
+    # Un run-id inconnu reste une ERREUR FRANCHE, même noyé dans une liste : le taire rendrait un
+    # agrégat amputé sous les mots d'un agrégat complet, ce qui est le seul verdict qu'on ne veut pas.
+    local noms=""
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      [ -d "$ORCH_DIR/$id" ] || {
+        printf 'journal.sh refus : run inconnu — %s\n' "$id" >&2
+        printf 'Les runs présents : %s\n' "$(ls -1 "$ORCH_DIR" 2>/dev/null | tr '\n' ' ')" >&2
+        return 2
+      }
+      dirs="$dirs$ORCH_DIR/$id"$'\n'
+      noms="$noms${noms:+ + }$id"
+    done <<EOF
+$cibles
+EOF
+    portee="Refus de permission — run $noms"
   else
     # Sans argument : le dernier run qui porte un RÉSULTAT. Un run tout frais dont aucune session
     # n'a encore rendu la main masquerait sinon le seul run qu'on puisse lire.
@@ -804,6 +866,7 @@ commande_refus() {
       done
     done
     [ -n "$dirs" ] || {
+      [ -z "$mode" ] || return 3
       printf '\nAucun résultat de session dans le journal — rien à lire.\n\n'
       return 0
     }
@@ -838,6 +901,16 @@ EOF
   fi
 
   # LC_ALL=C : le tri et les comptes se font sur des octets, comme partout ailleurs dans ce dépôt.
+  if [ -n "$mode" ]; then
+    # Capturé plutôt qu'imprimé au fil de l'eau : c'est le seul moyen de rendre « aucun » par un
+    # CODE (3) plutôt que par une sortie vide, qu'un appelant ne pourrait pas distinguer d'un échec.
+    local tsv
+    tsv="$(printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" -v regles="$regles" \
+      -v mode="$mode" "$AWK_AGREGE")"
+    [ -n "$tsv" ] || return 3
+    printf '%s\n' "$tsv"
+    return 0
+  fi
   printf '%s' "$brut" | LC_ALL=C awk -v portee="$portee" -v regles="$regles" "$AWK_AGREGE"
   return 0
 }

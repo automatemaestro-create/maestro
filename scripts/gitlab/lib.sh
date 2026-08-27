@@ -1981,6 +1981,32 @@ se ferme au merge. Il vit donc aussi dans son **ticket de reprise #$1**, qui lui
 ANCRE
 }
 
+# gl_reste_claude_de <iid-source> -> l'iid du ticket de reprise, ou rien. LECTURE SEULE.
+# Codes : 0 il en a un (imprimé) · 3 aucun · 1 illisible (source inconnue, forge muette) · 2 usage.
+#
+# LE PENDANT EN LECTURE de gl_reste_claude, et la moitié dont le pilote a besoin (#611) : « ce ticket
+# a-t-il bien son ticket de reprise ? ». Il ne réinterroge rien de plus — `gh_reste_source` répond
+# déjà aux deux questions en UN aller, et c'est lui qui porte la forme de l'ancre (« ticket de
+# reprise #<n> »). La relire ici, ne serait-ce qu'en `grep`, ferait deux définitions d'un contrat que
+# l'écriture et la lecture doivent partager au caractère près.
+#
+# TOUT CE QUI N'EST PAS UNE LECTURE PROPRE VAUT 1, source introuvable comprise : l'appelant a trois
+# conduites et pas quatre — nommer le ticket de reprise, dire qu'il manque, ou dire qu'il n'a pas pu
+# regarder. Confondre « pas de reprise » et « je n'ai pas su lire » ferait annoncer un résidu perdu
+# sur une forge momentanément muette, c'est-à-dire crier au loup depuis un signalement best-effort.
+gl_reste_claude_de() {
+  local source="$1" vue rc reprise
+  if [ -z "$source" ]; then echo "usage: gl_reste_claude_de <iid-source>" >&2; return 2; fi
+  case "$source" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  vue="$(gh_reste_source "$source" 2>/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] || return 1
+  reprise="${vue##*$'\t'}"
+  [ -n "$reprise" ] || return 3
+  printf '%s\n' "$reprise"
+}
+
 # --- Pipelines CI ---------------------------------------------------------------------------------
 # Helpers REST pour le diagnostic de pipeline (/mr-fix — voir docs/10-workflow-git.md §8.3).
 # Même parti pris que le reste du fichier : parsing shell pur (grep/sed/awk), pas de jq/python.
@@ -6711,6 +6737,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issue-note)     gl_issue_note "$@" ;;
     issue-url)      gl_issue_url "$@" ;;
     reste-claude)   gl_reste_claude "$@" ;;
+    reste-claude-de) gl_reste_claude_de "$@" ;;
     project-add)      gl_project_add "$@" ;;
     pipeline-latest)      gl_pipeline_latest "$@" ;;
     pipeline-status)      gl_pipeline_status "$@" ;;
@@ -6796,6 +6823,10 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                         0=créé/complété/déjà à jour, 2=usage, 3=iid source" >&2
       echo "                                         inconnu, 4=fichier absent ou vide, 1=échec de forge." >&2
       echo "                                         3 et 4 tombent AVANT toute écriture)" >&2
+      echo "    reste-claude-de <iid-source>       (LIT : imprime l'iid du ticket de reprise, ou rien." >&2
+      echo "                                         0=il en a un, 3=aucun, 1=illisible. C'est ce que le" >&2
+      echo "                                         pilote demande en fin de run (#611) — même ancre que" >&2
+      echo "                                         l'écriture, jamais un second motif)" >&2
       echo "  Peuplement du projet Projects v2 (le Status vit sur l'ITEM, pas sur l'issue — #361) :" >&2
       echo "    project-add <iid> [valeur]  (fait du ticket un item du projet \$MAESTRO_PROJECT_TITRE —" >&2
       echo "                                 défaut « $GL_PROJET_TITRE » — et pose son Status. Défaut « À faire » ;" >&2
