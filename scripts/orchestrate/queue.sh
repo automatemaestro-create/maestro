@@ -84,6 +84,7 @@ MILESTONE=""
 LISTE_MILESTONES=0
 LISTE_ORPHELINS=0
 LISTE_NON_ARBITRES=0
+LISTE_TOUCHE_CLAUDE=0
 
 usage() {
   cat <<'USAGE'
@@ -112,6 +113,13 @@ Options :
                        au plan, lots marqués, lots au total, titre. C'est ce que /orchestrate lit
                        pour PROPOSER l'arbitrage avant un run neuf. Aucune lecture de forge de
                        plus : le plan a déjà lu chacun de ces parents.
+  --touche-claude      N'imprime pas de plan : liste les tickets DU PLAN qui nomment « .claude/ »,
+                       où une session autonome ne peut pas écrire (blocage dur du CLI, en amont de
+                       l'allowlist — #229/#238). Leur correctif partira dans la description de la
+                       PR au lieu d'être appliqué, et depuis #418/#419 cette PR est mergée sans que
+                       personne ne l'ouvre. TSV : iid, parent, titre. Ils RESTENT au plan — écarter
+                       est une décision, et le geste existe déjà : les assigner. Aucune lecture de
+                       forge de plus : le plan a déjà lu chacun de ces tickets.
   -h, --help           Cette aide.
 
 Sortie (stdout, TSV) : rang, iid, parent, prio, groupe, titre. Lecture seule — n'écrit rien.
@@ -127,6 +135,7 @@ while [ $# -gt 0 ]; do
     --milestones | --jalons) LISTE_MILESTONES=1 ;;
     --orphelins) LISTE_ORPHELINS=1 ;;
     --non-arbitres) LISTE_NON_ARBITRES=1 ;;
+    --touche-claude) LISTE_TOUCHE_CLAUDE=1 ;;
     -h | --help) usage; exit 0 ;;
     *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -439,6 +448,36 @@ if [ "$LISTE_NON_ARBITRES" = 1 ]; then
   exit 0
 fi
 
+# --- 5 ter. Ce qui touche « .claude/ » : la moitié AMONT du résidu (#612, docs/10 §11.7) ---------
+# Une session autonome ne peut pas écrire sous `.claude/` — blocage dur du CLI, en amont de
+# l'allowlist (#229/#238) —, donc elle rend son correctif dans la description de sa PR (#188), que
+# depuis #418/#419 le pilote merge sans que personne ne l'ouvre. §11.7 le dit depuis #238 sans
+# l'avoir jamais outillé : « Mieux vaut ne pas l'y envoyer. […] **`queue.sh` ne le détecte pas** —
+# c'est au rédacteur du ticket de le dire. » Il le détecte désormais.
+#
+# CE BLOC N'ÉCARTE RIEN, exactement comme le 5 bis ne marque rien : le ticket reste au plan et le
+# signalement le DIT. Écarter est une décision, et le geste existe déjà — l'assigner, que le filtre
+# « À faire ET libre » du §3 suffit à tenir dehors. Décider ici reviendrait à retirer d'un run,
+# sans que personne l'ait voulu, un ticket dont une part est peut-être parfaitement traitable.
+#
+# LA RÈGLE N'EST PAS RECOPIÉE ICI : le verdict est celui de `gl_touche_claude_de`, rejoué sur la vue
+# que `vue` a déjà mise en cache pour chaque candidat (§4). Zéro lecture de forge en plus, et une
+# seule définition de « touche `.claude/` » — même raison que `gl_arbitrage_de` (#562).
+: >"$TMP/touche-claude.tsv"
+# shellcheck disable=SC2034  # les champs non lus sont nommés : c'est la disposition de membres.tsv
+while IFS=$'\t' read -r bloc rang iid parent prio groupe titre; do
+  [ -n "$iid" ] || continue
+  vue_iid="$(vue "$iid")" || continue
+  gl_touche_claude_de <"$vue_iid" >/dev/null || continue
+  printf '%s\t%s\t%s\n' "$iid" "$parent" "$titre" >>"$TMP/touche-claude.tsv"
+done <"$TMP/membres.tsv"
+
+if [ "$LISTE_TOUCHE_CLAUDE" = 1 ]; then
+  printf '# iid\tparent\ttitre\n'
+  [ -s "$TMP/touche-claude.tsv" ] && sort -t$'\t' -k1,1n "$TMP/touche-claude.tsv"
+  exit 0
+fi
+
 if [ ! -s "$TMP/membres.tsv" ]; then
   diag "tous les candidats ont été écartés."
   printf '# rang\tiid\tparent\tprio\tgroupe\ttitre\n'
@@ -484,6 +523,17 @@ if [ -s "$TMP/non-arbitres.tsv" ]; then
   sort -t$'\t' -k1,1n "$TMP/non-arbitres.tsv" |
     while IFS=$'\t' read -r p au_plan marques lots t; do
       printf '# non-arbitre\t%s\t%s\t%s\t%s\t%s\n' "$p" "$au_plan" "$marques" "$lots" "$t"
+    done
+fi
+
+# Et ce que le plan sait déjà de ce qu'une session ne pourra pas écrire (#612). Même mécanique de
+# commentaire, même dégradation douce — un plan ANTÉRIEUR à ce lot n'en porte aucune —, et surtout
+# la même règle 4 : ces lignes sont calculées sur la vue des mêmes tickets, donc deux appels sur le
+# même backlog rendent toujours le même plan, à l'octet près.
+if [ -s "$TMP/touche-claude.tsv" ]; then
+  sort -t$'\t' -k1,1n "$TMP/touche-claude.tsv" |
+    while IFS=$'\t' read -r i p t; do
+      printf '# touche-claude\t%s\t%s\t%s\n' "$i" "$p" "$t"
     done
 fi
 
@@ -533,5 +583,21 @@ if [ "$CHECK" = 1 ]; then
         printf '  #%-5s %s lot(s) au plan sur %s, aucun marqué — %s\n' "$p" "$au_plan" "$lots" "$t" >&2
       done
     printf '  → les arbitrer : bash scripts/orchestrate/queue.sh --non-arbitres\n' >&2
+  fi
+
+  # Et ce qu'une session autonome ne pourra pas écrire (#612). MUET quand aucun ticket du plan n'est
+  # concerné, même raison que juste au-dessus. Le verbe de la ligne compte : ces tickets sont
+  # SIGNALÉS et restent au plan — un `--check` qui dirait « écartés » mentirait sur ce que le run
+  # va faire.
+  if [ -s "$TMP/touche-claude.tsv" ]; then
+    printf '\ntickets qui nomment « .claude/ » — une session autonome ne peut pas y écrire :\n' >&2
+    sort -t$'\t' -k1,1n "$TMP/touche-claude.tsv" |
+      while IFS=$'\t' read -r i p t; do
+        printf '  #%-5s %s%s\n' "$i" "$t" \
+          "$([ "$p" != "-" ] && printf ' (lot de #%s)' "$p")" >&2
+      done
+    printf '  → leur correctif partira dans la description de la PR au lieu d'\''être appliqué (#188),\n' >&2
+    printf '    et depuis #418/#419 cette PR est mergée sans que personne ne l'\''ouvre. Ils RESTENT au\n' >&2
+    printf '    plan : les écarter est une décision, et le geste est de les assigner.\n' >&2
   fi
 fi
