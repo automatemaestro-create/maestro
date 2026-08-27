@@ -3681,6 +3681,19 @@ un état que personne n'a voulu. Le verdict n'est jamais redéduit ici : il est 
 ci-dessus, seul à savoir départager. « vivant » et « hors de portée » ferment la porte ; `--force`
 la rouvre, **jamais en silence**, pour qui sait quelque chose que la machine ignore.
 
+⚠ **Ce que ces deux verbes ne jugent pas, et pourquoi ça compte** (#621). `reconcile-en-cours` ne
+regarde que les tickets **« En cours »** — un `[ "$statut" = "En cours" ] || continue` en tête de sa
+boucle. Un ticket **« À faire » et assigné** lui est donc invisible : ni orphelin, ni « hors de
+portée », il n'entre pas dans le recensement. Ce n'est pas un angle mort mais la **frontière** du
+dispositif, et elle protège une convention : assigner un ticket est le geste par lequel on le tient
+**hors des runs** (§11.2), pour `.claude/` ou pour un arbitrage humain. Les deux situations se
+ressemblent — un assigné qui ne travaille pas —, l'**état** les sépare : « En cours » est un
+abandon, « À faire » est une protection. `reprendre-en-cours` refuse en conséquence tout ticket qui
+n'est pas « En cours » (« n'est pas « En cours » — il n'y a rien à reprendre »), et c'est ce qui
+compte le plus ici : son geste — poser « À faire », vider les assignés — est l'**inverse exact** de
+la mise à l'écart, donc le proposer contre elle la défairait en une commande. Ce qui l'en empêche
+n'est pas une consigne à tenir, c'est le filtre.
+
 **Ce que la reprise ne touche pas — et c'est tout son intérêt.** Elle n'écrit **que** dans GitLab.
 Worktree, branche, commits non poussés, fichiers non commités : intacts, et `worktree.sh ensure`
 les retrouve au démarrage suivant. C'est exactement ce qu'on veut des 2047 lignes de #316 — un
@@ -4280,6 +4293,54 @@ description, et le cinquième emplacement de #599 a été trouvé par un balayag
 Ce signalement réduit la **fréquence** du résidu ; il ne le supprime pas, et c'est la raison d'être
 des deux autres ancrages du chantier #608 — le ticket de reprise créé **à l'acte** (#610) et le
 filet du pilote **en fin de run** (#611).
+
+**Assigner un ticket le tient hors des runs, et c'est un geste voulu** (#621). La première ligne du
+tableau ci-dessus a deux lectures. Vue du travail à plusieurs, c'est de l'**anti-collision** : un
+ticket assigné est le travail de quelqu'un (§5). Vue d'ici, c'est le **seul geste de mise à
+l'écart** dont on dispose — il ne demande ni marqueur, ni option, ni ligne de plus dans `queue.sh`,
+et deux motifs l'appellent :
+
+| Motif | Pourquoi un run est le mauvais endroit | Exemple |
+|---|---|---|
+| Le ticket touche **`.claude/`** | blocage dur du CLI, en amont de l'allowlist (§11.7) : la session **rend** son correctif dans sa PR au lieu de l'appliquer, et le pilote la merge depuis #418/#419 sans que personne ne l'ouvre — le résidu ne disparaît pas, il devient invisible | #613 |
+| Le ticket appelle un **arbitrage humain** | une session autonome tranche seule ou ne tranche pas, et aucune des deux n'est ce qu'on attend d'un arbitrage | #568 (quatre arbitrages) |
+
+C'est la contrepartie exacte du signalement de #612 ci-dessus, et les deux se répondent :
+`--touche-claude` **désigne** sans jamais écarter, l'assignation **écarte** sans jamais désigner. Le
+premier est une détection, le second une décision — raison pour laquelle ils ne sont pas le même
+geste, et pour laquelle le signalement laisse le ticket au plan.
+
+**Son prix, qui n'est pas nul.** L'assignation est un support **emprunté** : elle sert déjà à dire
+« quelqu'un travaille là-dessus », et rien ne distingue les deux usages. Trois conséquences à
+connaître avant de s'en servir :
+
+- le ticket sort aussi de la section **🆓 Libres** de [`/backlog`](../.claude/commands/backlog.md)
+  et passe en **🔒 Réservés** (« pris par @… — ne pas les prendre sans en parler »), donc se lit
+  comme attribué à quelqu'un **qui ne le traite pas** ;
+- `queue.sh --check` nomme bien l'écart (« écarté #613 assigné à … ») mais jamais sa **raison** :
+  celle-ci ne vit que dans le corps du ticket, où elle s'écrit donc en toutes lettres — #613 porte
+  le ⚠ qui la dit, et c'est la moitié de la convention qui reste manuelle ;
+- rien ne le **lève** : l'écart dure tant que dure l'assignation, y compris après que son motif a
+  disparu.
+
+Un marqueur dédié (label `run::exclu` ou équivalent) a été **écarté du périmètre** de #621 : l'écart
+est déjà obtenu, seule sa lisibilité manquait, et un second support en concurrence avec le premier
+est très exactement la panne que #365 a supprimée sur le cycle de vie. À rouvrir si la convention se
+révèle insuffisante à l'usage.
+
+⚠ **Ce n'est pas la dérive de #327, et surtout ça ne se traite pas comme elle.** Un ticket resté
+« En cours » **et** assigné après une session morte est un **abandon** (§9.6) ; un ticket « À faire »
+**et** assigné est une **protection**. Les deux se ressemblent à l'œil — un assigné qui ne travaille
+pas —, c'est l'**état** qui les sépare, et le code le fait déjà : `reconcile-en-cours` ne considère
+que les tickets « En cours » (`[ "$statut" = "En cours" ] || continue`, en tête de sa boucle), si
+bien qu'une mise à l'écart volontaire n'est jamais un orphelin — elle n'entre même pas dans le
+recensement, pas même en « hors de portée ». `reprendre-en-cours` refuse en conséquence, et le dit :
+« #613 n'est pas « En cours » — il n'y a rien à reprendre ». Ce qui empêche le remède de défaire la
+protection n'est donc pas une consigne que quelqu'un devrait tenir, c'est le filtre du verbe : celui
+qui la défairait — poser « À faire » et vider la liste des assignés, l'inverse trait pour trait du
+geste — ne peut pas l'atteindre. `--check` tient déjà les deux écarts séparés pour la même raison :
+il n'oriente vers `--orphelins` que sur un écart « cycle de vie « En cours » », jamais sur un écart
+« assigné à ».
 
 **Le milestone, lui, se choisit** (#204). La phase courante reste le défaut — c'est presque toujours
 le bon — mais plusieurs milestones actifs peuvent porter du travail en même temps, et le run partait
@@ -4901,7 +4962,7 @@ désormais sur un **classement**, et il range chaque refus dans **une seule** fa
 | --- | --- | --- |
 | **Trou d'allowlist** | un maillon qu'aucune règle ne couvre | `settings.run.json` |
 | **Échappée de chemin** | tous les maillons couverts, mais la cible sort du répertoire de travail | `prompt_ticket`, jamais la liste — une règle de **préfixe** ne borne pas une cible |
-| **Blocage dur `.claude/`** | refus du CLI, en amont de la liste (#229, mesuré par #238) | rien : le ticket se traite en session interactive |
+| **Blocage dur `.claude/`** | refus du CLI, en amont de la liste (#229, mesuré par #238) | rien sur la liste : le ticket se traite en session interactive, et s'**assigne** pour ne pas y retourner (§11.2) |
 | **Refus voulu (`ask`/`deny`)** | une règle du dépôt le demande, personne ne peut approuver | rien : c'est le contrat de la règle |
 | **Forme immatchable** | saut de ligne, `$(…)`, heredoc — quoi qu'elle habille | l'outil `Write`, puis le **chemin** (tableau ci-dessous) |
 
@@ -5154,8 +5215,10 @@ Trois conséquences pratiques :
   commentaire dans le plan, et l'en-tête du run les relaie — voir §11.2 pour les trois surfaces, la
   mesure qui a tranché le motif, et le **trou irréductible** de 32 % que ce signalement ne verra
   jamais. Deux choses qu'il ne fait toujours pas, et qui restent au rédacteur : il n'**écarte** rien
-  (le geste est d'**assigner** le ticket, filtre « À faire et libre » de `queue.sh`), et il ne voit
-  que ce que le ticket **dit** — ce qui se découvre en travaillant lui échappe par construction.
+  — le geste est d'**assigner** le ticket (filtre « À faire et libre » de `queue.sh`), convention
+  décrite en §11.2 avec ses deux motifs, son prix et ce qui la distingue d'une dérive —, et il ne
+  voit que ce que le ticket **dit**, ce qui se découvre en travaillant lui échappant par
+  construction.
 
 **Le repli, étudié et écarté** (#238). Le verdict étant négatif, restait à examiner un script du
 dépôt — `scripts/claude/appliquer.sh <source> <cible>`, borné à `skills`/`commands`/`agents` et
@@ -5179,8 +5242,9 @@ retenu, et c'est bien la mesure qui permet de le dire plutôt que de le supposer
   un humain aurait pu voir le diff avant `main` a disparu du chemin nominal.
 
 Ce qui reste à faire est donc inchangé — rendre le contenu dans la PR (#188). Ce qui pourrait encore
-être gagné est **en amont** : ne pas envoyer un tel ticket dans un run, ce que `queue.sh` ne détecte
-toujours pas.
+être gagné est **en amont** : ne pas envoyer un tel ticket dans un run. ⚠ Cette ligne finissait par
+« ce que `queue.sh` ne détecte toujours pas » — **faux depuis #612**, qui signale les tickets nommant
+`.claude/`, et le geste qui les écarte pour de bon est de les **assigner** (§11.2).
 
 ⚠ **Un régime ouvre bien `.claude/`, et il a fallu le mesurer pour le savoir** (#614, 2026-08-27).
 La conclusion de #238 était juste **et bornée** : son banc n'a jamais comparé que des `allow`, dans
