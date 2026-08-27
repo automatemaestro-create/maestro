@@ -2746,3 +2746,72 @@ L'écran qui consomme ce contrat est la **vue pipeline** (§2.4.4, #491) : un ni
 colonne ; un nœud, une boîte ; une arête, une courbe orientée. C'est aussi elle qui
 ajoute les deux questions que ce contrat ne pose pas — « ce nœud attend-il un humain ? »
 (la file des validations, pas le compartiment) et « quelle est la branche courante ? ».
+
+### 6.12 Le fil accepte des sources — fichiers, dossiers, adresses (#482) — **livré**
+
+Le premier lot du déménagement de `/composer` dans la conversation (#481) : un message du fil peut
+**embarquer de la matière**, là où il ne portait que du texte.
+
+- `POST /api/chat/{agent}/messages` gagne un champ `sources` **facultatif**, la même liste qu'au
+  §6.1 et dans le **même ordre** — celui de l'écran, qui décide de ce qui entre quand le budget de
+  tokens s'épuise (§6.8). Absent ou vide, l'appel est exactement celui d'avant ce lot.
+- La réponse et `GET /api/chat/{agent}` rendent, sur chaque `MessageChat`, deux champs de plus :
+  `sources` (la matière **résolue**, forme du §6.1) et `rapport` (le `RapportLecture` du §6.8,
+  `null` quand il n'y en a pas).
+
+```jsonc
+// POST /api/chat/qa/messages
+{
+  "contenu": "Voici le cahier des charges.",
+  "sources": [
+    { "type": "fichier", "id": "tv-9f2c…" },        // l'id rendu par POST /api/sources (§6.8)
+    { "type": "dossier", "chemin": "D:/refs/maquettes" },
+    { "type": "url",     "valeur": "https://…/spec" }
+  ]
+}
+```
+
+**Des identifiants, pas des octets — le contrat du lancement et non celui de l'aperçu.** Un fichier
+passe d'abord par `POST /api/sources` (§6.8), puis le message ne porte que l'`id` rendu. C'est la
+seule forme qui désigne de **vrais** octets mesurés par le serveur : nom et taille viennent du dépôt,
+jamais du navigateur, sans quoi le plafond par source se contournerait en déclarant douze octets.
+L'aperçu (§6.9) reste l'exception qui porte des octets, parce que lui ne dépose rien.
+
+**Une seule chaîne d'ingestion, et c'est le critère du ticket.** Le fil ne résout rien lui-même : il
+appelle `maestro.sources.composer_sources` — déclarer, résoudre, rattacher —, la fonction que le
+lancement appelle aussi depuis ce lot. Mêmes plafonds (ENF-07), mêmes racines interdites (EF-38),
+mêmes motifs, même `index`. Une seconde chaîne aurait fini par ne plus appliquer les mêmes plafonds,
+et c'est celle des deux qui en oublie un qui aurait fait la faille.
+
+**Un refus est un `422` motivé** (`{motif, message, index}`, la forme du §6.1) et il tombe **avant
+toute écriture** : ni message persisté, ni événement `chat.message` sur le bus. Un plafond dépassé ne
+laisse donc pas un demi-tour de conversation derrière lui. L'`index` est ce qui permet à l'écran de
+rendre le refus **sur la source fautive** plutôt qu'en bloc.
+
+**Ce qui est refusé et ce qui est seulement dit** — même partage qu'au §6.9, et il compte
+particulièrement ici : une **image** se joint comme n'importe quel fichier (le critère l'exige), mais
+l'extraction ne lit aujourd'hui que le texte, le Markdown, le `.docx` et le `.pdf`. Une image
+ressort donc `ignore` / `format-non-gere` **dans le rapport**, en `201` — un constat, pas une faute.
+C'est exactement ce que le rapport existe pour dire, et c'est pourquoi l'écran ne promet nulle part
+qu'une image sera lue.
+
+**Un message sans texte mais avec des sources est accepté** : déposer un cahier des charges *est* le
+message. Sans texte **ni** sources, c'est toujours un `422` (« message vide »).
+
+**Le contenu extrait ne revient pas au navigateur.** Le `rapport` dit ce qui a été lu et ce que ça
+coûte ; le Markdown, lui, est fait pour un prompt — il est persisté à côté du message et entre dans
+la transcription **encadré comme donnée** (`contexte_markdown`, ENF-13), par ce seul chemin. Même
+règle que `Lecture.to_dict` au §6.8, et pour la même raison : un fil rechargé n'a pas à rapatrier le
+contenu intégral des documents.
+
+L'emplacement d'ingestion d'un message est le sien — `chat-<identifiant>/` à côté des `<run_id>/` de
+`core/ingestion/` —, et il suit le **même régime de rétention** que celui d'un run : aucun ramassage
+à ce jour. Ce lot hérite d'une question ouverte, il n'en ouvre pas une nouvelle.
+
+Implémentation : [`maestro/sources/composition.py`](../maestro/sources/composition.py) (la chaîne
+partagée) et [`maestro/controltower/chat.py`](../maestro/controltower/chat.py). Côté écran :
+`FilChat`, `components/chat/SourcesDuMessage.tsx` (la composition, glisser-déposer et collage
+compris) et `components/chat/SourcesDuFil.tsx` (ce qui a été lu, replié sous le message). Couverture
+partielle — la logique critique — dans
+[`apps/web/tests/fil-sources.test.tsx`](../apps/web/tests/fil-sources.test.tsx) ; le reste est
+différé au lot #485.

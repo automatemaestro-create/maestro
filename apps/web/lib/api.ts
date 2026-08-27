@@ -453,16 +453,33 @@ export function chargerFilChat(agent: string): Promise<FilChat> {
  * #84) : la réponse est produite dans la requête, la paire message/réponse
  * rejoint le fil persisté et part en `chat.message` sur le WebSocket. Un échec
  * de réponse (502) ne perd pas le message utilisateur, déjà acquis au fil.
+ *
+ * `sources` (#482) est la matière que le message embarque, **dans l'ordre où
+ * l'écran l'a composée** : un fichier y voyage par l'`id` que
+ * `televerserSources` lui a rendu, un dossier par son `chemin`, une page par sa
+ * `valeur`. Omise ou vide, l'appel est exactement celui d'avant ce lot.
+ *
+ * Le refus emprunte le chemin motivé des sources et **non** celui d'`envoyerJson`
+ * : une source refusée porte un `motif` et un `index`, et c'est l'index qui
+ * permet au fil d'afficher le refus sur la source fautive plutôt qu'en bloc.
  */
-export function envoyerMessageChat(
+export async function envoyerMessageChat(
   agent: string,
   contenu: string,
+  sources: SourceDeclaree[] = [],
 ): Promise<void> {
-  return envoyerJson(
-    `/api/chat/${encodeURIComponent(agent)}/messages`,
-    { contenu },
-    "envoi refusé",
+  const reponse = await fetch(
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/messages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contenu,
+        ...(sources.length > 0 && { sources }),
+      }),
+    },
   );
+  if (!reponse.ok) throw await refusSource(reponse, "envoi refusé");
 }
 
 /**

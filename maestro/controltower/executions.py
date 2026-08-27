@@ -161,7 +161,6 @@ import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from maestro.appartenance import projet_id_valide
@@ -221,9 +220,8 @@ from maestro.sources import (
     DepotTeleversements,
     RapportLecture,
     Source,
-    declarer_televersements,
+    composer_sources,
     extraire_sources,
-    resoudre_sources,
 )
 from maestro.telemetry import LOGGER_NAME, RunJournal, redact_secrets
 
@@ -1216,31 +1214,19 @@ class ServiceExecutions:
     ) -> tuple[Source, ...]:
         """La matière du run : sources résolues, octets téléversés rattachés (#317).
 
-        Trois temps, et leur ordre est le contenu de la méthode.
+        Les trois temps — compléter depuis le dépôt, résoudre, rattacher — vivent
+        depuis #482 dans `maestro.sources.composer_sources`, parce qu'un
+        lancement n'est plus le seul geste capable de porter des sources : un
+        message du fil en porte aussi (#482), et deux chaînes qui se ressemblent
+        finiraient par ne plus appliquer les mêmes plafonds.
 
-        1. **Compléter** — un `{"type": "fichier", "id": …}` ne dit ni nom ni
-           taille ; le dépôt les lui donne, et ce sont ceux des octets reçus, pas
-           ceux qu'un client annonce. Sans quoi le plafond par source se
-           contournerait en déclarant douze octets.
-        2. **Résoudre** (#315) — canonicalisation, racines interdites, plafonds.
-           C'est le seul endroit qui refuse, et il refuse **avant** toute
-           écriture : rien de ce qui suit ne doit laisser un run à moitié inscrit.
-        3. **Rattacher** — la résolution vient de calculer *où* la matière doit
-           être ; les octets y sont copiés. Cet ordre est obligé : l'emplacement
-           d'ingestion dépend du `run_id`, qui n'existe pas au téléversement.
-
-        Une source déclarée sans `id` traverse les trois temps sans octets : elle
-        ressortira `ignore` / `source-absente` au rapport de lecture, ce qui est
-        exactement ce qu'on veut qu'elle dise.
+        Ce qui reste ici est ce qui est **propre au run** : l'emplacement
+        d'ingestion est le sien (`run_id`), et les garde-fous sont ceux du
+        service.
         """
-        declarees, identifiants = declarer_televersements(
-            sources, depot=self._televersements
+        return composer_sources(
+            sources, cle=run_id, depot=self._televersements, garde_fous=self._ingestion
         )
-        matiere = resoudre_sources(declarees, run_id=run_id, garde_fous=self._ingestion)
-        for source, identifiant in zip(matiere, identifiants, strict=False):
-            if identifiant:
-                self._televersements.rattacher(identifiant, Path(source.chemin))
-        return matiere
 
     def _demarrer(self) -> None:
         """Arme le câblage du service — idempotent, au premier lancement seulement.

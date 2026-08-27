@@ -225,6 +225,36 @@ class Lecture:
             "entrees": [entree.to_dict() for entree in self.entrees],
         }
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Lecture:
+        """Reconstruit une lecture depuis sa forme `to_dict` (aller-retour JSON).
+
+        **Ne rejuge rien**, même règle que `Source.from_dict` (#315) : c'est la
+        relecture d'un constat déjà rendu — un fil de chat persisté (#482), un
+        journal durable rejoué — et non une extraction. Les clés absentes
+        retombent sur les défauts.
+
+        `markdown` ne revient **pas**, parce qu'il n'est jamais parti : le rapport
+        dit ce qu'une source coûte, pas ce qu'elle raconte. Qui a besoin du
+        contenu le garde à part, encadré par `contexte_markdown` — c'est ce que
+        fait `MessageChat.contexte`.
+        """
+        tokens = data.get("tokens")
+        return cls(
+            nom=str(data.get("nom") or ""),
+            type=str(data.get("type") or ""),
+            etat=str(data.get("etat") or ""),
+            tokens=tokens if isinstance(tokens, int) and not isinstance(tokens, bool) else 0,
+            motif=str(data.get("motif") or ""),
+            message=str(data.get("message") or ""),
+            limite=str(data.get("limite") or ""),
+            entrees=tuple(
+                cls.from_dict(entree)
+                for entree in _entrees(data.get("entrees"))
+                if isinstance(entree, Mapping)
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class RapportLecture:
@@ -269,6 +299,23 @@ class RapportLecture:
             "lectures": [lecture.to_dict() for lecture in self.lectures],
         }
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> RapportLecture:
+        """Reconstruit un rapport depuis sa forme `to_dict` (aller-retour JSON).
+
+        Le `tokens` de la forme sérialisée est **ignoré** et non relu : c'est une
+        propriété calculée (la somme des lectures de premier rang), et la relire
+        laisserait entrer un total qui ne correspond pas à ses lignes — un rapport
+        qui se contredirait lui-même.
+        """
+        return cls(
+            lectures=tuple(
+                Lecture.from_dict(lecture)
+                for lecture in _entrees(data.get("lectures"))
+                if isinstance(lecture, Mapping)
+            )
+        )
+
     def synthese(self) -> str:
         """Le rapport en quelques lignes lisibles — une par source, plus le total.
 
@@ -287,6 +334,18 @@ class RapportLecture:
             lignes.extend(f"  {_ligne_rapport(entree)}" for entree in lecture.entrees)
         lignes.append(f"Total estimé : {self.tokens} tokens.")
         return "\n".join(lignes)
+
+
+def _entrees(data: Any) -> tuple[Any, ...]:
+    """Les entrées d'une valeur brute censée être une liste — `()` sinon.
+
+    Pendant exact de `_sequence` (`maestro.sources.modele`), et pour la même
+    raison : une chaîne est une `Sequence`, l'exclure explicitement évite de lire
+    un texte comme une liste de caractères.
+    """
+    if isinstance(data, Sequence) and not isinstance(data, str | bytes):
+        return tuple(data)
+    return ()
 
 
 def estimer_tokens(texte: str) -> int:

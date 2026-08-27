@@ -35,6 +35,7 @@ import {
   EVENEMENT_CHAT_MESSAGE,
   type Evenement,
   type MessageChat,
+  type SourceDeclaree,
 } from "./types";
 
 /** Fenêtre de coalescence des rechargements sur rafale d'événements (ms). */
@@ -54,8 +55,13 @@ export type Chat = {
   erreur: string | null;
   /** Envoi en cours : le message est parti, la réponse se fait attendre. */
   envoi: boolean;
-  /** Envoie un message à l'agent ; rejette si la réponse n'a pas pu être produite. */
-  envoyer: (contenu: string) => Promise<void>;
+  /**
+   * Envoie un message à l'agent, avec les **sources** qu'il embarque (#482).
+   * Rejette si la réponse n'a pas pu être produite, ou sur une `ErreurSource`
+   * quand une source est refusée — motif et index compris, pour que le fil
+   * l'affiche à l'endroit du geste refusé.
+   */
+  envoyer: (contenu: string, sources?: SourceDeclaree[]) => Promise<void>;
 };
 
 export function useChat(agent: string): Chat {
@@ -151,10 +157,10 @@ export function useChat(agent: string): Chat {
   }, [agent, recharger, planifierRechargement]);
 
   const envoyer = useCallback(
-    async (contenu: string) => {
+    async (contenu: string, sources: SourceDeclaree[] = []) => {
       setEnvoi(true);
       try {
-        await envoyerMessageChat(agent, contenu);
+        await envoyerMessageChat(agent, contenu, sources);
         // La paire message/réponse arrivera aussi par le WebSocket ; ce
         // rechargement direct rend l'UI réactive même si la socket est coupée.
         await recharger();
