@@ -28,9 +28,14 @@
 #    Les comparaisons ci-dessous n'ont bougé à aucun des trois changements de support.
 #
 # 2. Les PARENTS DE SUIVI sont écartés : ils ne portent ni branche ni code (docs/10 §5.1). À leur
-#    place viennent leurs lots, DANS L'ORDRE DE LEUR CHECKLIST — c'est cet ordre qui encode les
-#    dépendances entre lots, et lui seul (le marqueur « (parallèle) » dit que deux lots peuvent
-#    être pris en même temps, pas qu'ils peuvent être pris à l'envers).
+#    place viennent leurs lots, DANS L'ORDRE DU PARENT — c'est cet ordre qui encode les dépendances
+#    entre lots, et lui seul (le marqueur « (parallèle) » dit que deux lots peuvent être pris en
+#    même temps, pas qu'ils peuvent être pris à l'envers).
+#
+#    « L'ordre du parent » est celui de sa CHECKLIST en régime `MAESTRO_LOTS=checklist`, celui de
+#    ses SUB-ISSUES en `natif` — le défaut depuis #393. Ce fichier n'a pas à le savoir : il demande
+#    les lots à `gl_subticket_rows` et le parent à `gl_parent_marqueur`, qui rendent le même TSV des
+#    deux côtés (même contrat de surface que la colonne `statut` ci-dessus, et même raison).
 #
 # 3. Les lots d'un même parent restent CONTIGUS, le parent héritant de la priorité maximale de ses
 #    lots. S'intercaler entre le lot 3 et le lot 4 ferait partir le lot 4 d'un `origin/main` qui a
@@ -69,9 +74,14 @@
 # --- Coût en appels -------------------------------------------------------------------------------
 # Deux lectures GraphQL (les tickets du milestone, les assignés du backlog ouvert) puis UNE lecture
 # par candidat, mise en cache : la même sortie de `lib.sh issue-raw` sert à répondre aux deux
-# questions « ce ticket est-il un lot ? » (marqueur « Sous-ticket de #N ») et « ce ticket est-il un
-# parent ? » (section « ## Sous-tickets »). C'est l'approche de gl_start_brief — une lecture,
-# plusieurs projections — plutôt qu'un appel de helper par question.
+# questions « ce ticket est-il un lot ? » et « ce ticket est-il un parent ? ». C'est l'approche de
+# gl_start_brief — une lecture, plusieurs projections — plutôt qu'un appel de helper par question.
+#
+# LE DÉCOUPAGE NATIF NE CHANGE RIEN À CE COMPTE (#393) : `parent` et `subIssues` voyagent DANS la
+# requête de `gh_issue_raw`, donc dans la vue déjà mise en cache ici. Mesuré des deux côtés sur deux
+# milestones réels — 17 allers et 30 allers, identiques au régime près ; seule la réponse grossit
+# (+3,1 % et +5,6 %), et le plan sort identique à l'octet. Détail et chrono : en-tête du commutateur
+# « DEUX SUPPORTS, UN COMMUTATEUR » dans scripts/gitlab/lib.sh.
 
 set -uo pipefail
 
@@ -346,16 +356,26 @@ vue() {
   printf '%s\n' "$f"
 }
 
-# parent_de <iid> -> iid du parent si le ticket est un lot, rien sinon (même marqueur que
-# gl_parent_of : « Sous-ticket de #<iid> » en tête de description).
+# parent_de <iid> -> iid du parent si le ticket est un lot, rien sinon. Réutilise
+# gl_parent_marqueur (lib.sh) pour que le sens lot → parent n'existe qu'à un seul endroit — c'est
+# lui qui sait dans quel RÉGIME lire (`MAESTRO_LOTS`, #390) : la ligne d'en-tête `parent:` de la vue
+# canonique en natif, le marqueur « Sous-ticket de #<iid> » de la description en checklist.
+#
+# LE MOTIF ÉTAIT RECOPIÉ ICI JUSQU'À #393, et ce n'était pas une redondance inoffensive : le plan
+# d'un run se serait construit sur la prose alors que tout le reste du fichier lisait déjà le natif
+# (est_parent, chaine_du_parent), c'est-à-dire deux supports actifs dans le MÊME script — la panne
+# exacte que le principe « le régime décide, jamais la présence » interdit. Elle n'aurait rien
+# affiché de faux tant que les deux supports coexistent sur chaque ticket ; elle aurait rendu des
+# lots isolés, un par un, dès le premier ticket créé sans la phrase (lot 6).
 parent_de() {
   local f
   f="$(vue "$1")" || return 1
-  grep -o 'Sous-ticket de #[0-9]\+' "$f" | head -1 | grep -o '[0-9]\+$'
+  gl_parent_marqueur <"$f"
 }
 
-# est_parent <iid> -> 0 si le ticket porte une section « ## Sous-tickets » non vide. Réutilise
-# gl_subticket_rows (lib.sh) pour que le parsing de la checklist n'existe qu'à un seul endroit.
+# est_parent <iid> -> 0 si le ticket porte un découpage non vide (section « ## Sous-tickets » en
+# régime checklist, sub-issues rattachées en natif). Réutilise gl_subticket_rows (lib.sh) pour que
+# ce parsing n'existe qu'à un seul endroit.
 est_parent() {
   local f
   f="$(vue "$1")" || return 1
@@ -382,13 +402,15 @@ rang_prio() { # <prio> -> clé de tri numérique (haute d'abord)
 }
 
 # chaine_du_parent <parent> -> chemin d'un fichier « iid <TAB> rang <TAB> vague », une ligne par lot
-# de la checklist DANS SON ORDRE, mis en cache. Deux réponses en une lecture : la position du lot
-# (l'ordre, règle 2) et sa vague de dépendance (règle 5).
+# du parent DANS SON ORDRE, mis en cache. Deux réponses en une lecture : la position du lot (l'ordre,
+# règle 2) et sa vague de dépendance (règle 5).
 #
 # La vague s'incrémente à chaque lot, SAUF quand le lot et son prédécesseur immédiat portent tous
 # deux le marqueur — c'est ce qui agrège une suite de lots « (parallèle) » en une seule vague et fait
 # de tout lot non marqué une barrière. Le marqueur est lu dans la colonne que gl_subticket_rows
-# extrait déjà (« ∥ ») : le parsing de la checklist n'existe qu'à un seul endroit, lib.sh.
+# extrait déjà (« ∥ ») : ce parsing n'existe qu'à un seul endroit, lib.sh — et c'est ce qui fait que
+# la bascule de #393 ne change pas une ligne ici, la colonne venant du titre de la checklist en
+# régime `checklist` et du label `lot::parallele` en `natif`.
 chaine_du_parent() {
   local parent="$1"
   local f="$TMP/chaine/$parent.tsv"
@@ -418,11 +440,17 @@ while IFS=$'\t' read -r iid prio titre; do
       IFS=$'\t' read -r rang vague < <(awk -F '\t' -v OFS='\t' -v cible="$iid" \
         '$1 == cible { print $2, $3; exit }' "$chaine")
   fi
-  # Un lot absent de la checklist de son parent est traité comme isolé plutôt que placé au hasard :
+  # Un lot absent du découpage de son parent est traité comme isolé plutôt que placé au hasard :
   # mieux vaut un ordre visiblement plat qu'un ordre faux qui a l'air juste. Son groupe suit — un
   # lot dont on ne sait pas dire la place ne peut pas non plus se voir attribuer une vague.
+  #
+  # « DÉCOUPAGE » ET NON « CHECKLIST » (#393) : le message nommait le support historique, et l'aurait
+  # nommé à contretemps en régime natif — la faute de `gl_pas_un_parent`, qui parle pour cette raison
+  # dans les mots du régime courant. Le cas est d'ailleurs presque impossible en natif, la relation y
+  # étant bidirectionnelle : un lot que `Issue.parent` désigne figure toujours dans les `subIssues`
+  # de ce parent. Il reste vrai en checklist, où la ligne s'ajoute à la main.
   if [ -n "$parent" ] && [ -z "$rang" ]; then
-    diag "  ⚠ #$iid se déclare lot de #$parent mais n'est pas dans sa checklist — traité isolément"
+    diag "  ⚠ #$iid se déclare lot de #$parent mais n'est pas dans son découpage — traité isolément"
     parent=""
   fi
   if [ -n "$parent" ]; then

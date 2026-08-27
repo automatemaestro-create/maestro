@@ -1411,6 +1411,11 @@ def chantier(*etats: str, coche: str = " ") -> dict[str, str]:
     lots fermés compris) : c'est l'état d'un parent dont personne n'a synchronisé la description,
     et il ne doit rien changer au verdict. Un test le prouve explicitement ; tous les autres
     travaillent dessus sans y penser, ce qui est la meilleure garantie qu'elle ne sert à rien ici.
+
+    LE CHANTIER PORTE LES DEUX SUPPORTS (#393) : checklist et prose dans les corps, en-têtes
+    `parent:` / `lot:` du régime `natif`, qui est le défaut depuis ce lot. La coche NATIVE, elle,
+    est dérivée de l'état (#390) et donc juste par construction — ce qui ne change rien au verdict,
+    et le montre : les deux régimes concluent pareil sur des coches qui se contredisent.
     """
     lots = [str(PREMIER_LOT + i) for i in range(len(etats))]
     checklist = "\n".join(
@@ -1418,7 +1423,13 @@ def chantier(*etats: str, coche: str = " ") -> dict[str, str]:
     )
     issues = {
         PARENT_SUIVI: corps_ticket(
-            "Chantier de suivi", "type::infra", f"## Sous-tickets\n\n{checklist}\n"
+            "Chantier de suivi",
+            "type::infra",
+            f"## Sous-tickets\n\n{checklist}\n",
+            lots=tuple(
+                (iid, "x" if etat == "closed" else "-", "-", f"Lot {rang}")
+                for rang, (iid, etat) in enumerate(zip(lots, etats, strict=True), start=1)
+            ),
         )
     }
     for rang, (iid, etat) in enumerate(zip(lots, etats, strict=True), start=1):
@@ -1427,6 +1438,7 @@ def chantier(*etats: str, coche: str = " ") -> dict[str, str]:
             "type::infra",
             f"Sous-ticket de #{PARENT_SUIVI} — lot {rang}/{len(etats)}.\n\nCorps.",
             etat,
+            parent=PARENT_SUIVI,
         )
     return issues
 

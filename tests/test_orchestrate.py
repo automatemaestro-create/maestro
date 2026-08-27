@@ -232,6 +232,16 @@ fi
 exit 1
 """
 
+# ⚠ IL REND AUSSI LE DÉCOUPAGE NATIF (#390, allumé par défaut depuis #393) : les lignes d'en-tête
+# « parent: » et « lot: » d'une vue écrite par un test redeviennent `Issue.parent` et
+# `Issue.subIssues`. Sans elles, `queue.sh` ne verrait plus aucun parent — donc plus aucun lot —,
+# et la moitié des tests du plan seraient verts sur un backlog sans découpage.
+#
+# L'ORDRE DES CLÉS EST DU CONTRAT, pas de la mise en forme : `gh_lots_natifs` borne le bloc des lots
+# par le champ SUIVANT (`]},"body":`) et le titre d'un lot par `","state":`. Même raison, mêmes
+# règles et mêmes mots que `vue_texte_en_json` dans tests/harnais_forge.py — deux doubles à tenir
+# d'accord, dont ni l'un ni l'autre ne peut être supprimé (ce dépôt-ci est jetable et sans mémoire,
+# celui de l'autre suite tient une séquence).
 VUE_EN_JSON = "\n".join([
     "# Rend, au format que lit `gh_issue_raw`, la vue canonique d'un ticket écrite par un test.",
     "import json",
@@ -240,8 +250,12 @@ VUE_EN_JSON = "\n".join([
     'texte = open(sys.argv[1], encoding="utf-8").read()',
     'entete, _, corps = texte.partition("\\n--\\n")',
     "champs = {}",
+    "lots = []",
     "for ligne in entete.splitlines():",
     '    cle, _, valeur = ligne.partition(":\\t")',
+    '    if cle == "lot":',
+    '        lots.append(valeur.split("\\t"))',
+    "        continue",
     "    champs[cle] = valeur",
     "",
     "",
@@ -249,15 +263,29 @@ VUE_EN_JSON = "\n".join([
     '    return {"nodes": [{cle: v.strip()} for v in brut.split(",") if v.strip()]}',
     "",
     "",
-    'sys.stdout.buffer.write(json.dumps({"data": {"repository": {"issue": {',
+    "issue = {",
     '    "title": champs.get("title", ""),',
     '    "state": "CLOSED" if champs.get("state") == "closed" else "OPEN",',
     '    "author": {"login": champs.get("author", "MaestroAgents")},',
     '    "labels": nodes("name", champs.get("labels", "")),',
     '    "assignees": nodes("login", champs.get("assignees", "")),',
     '    "milestone": {"jalon": champs.get("milestone", "")},',
-    '    "body": corps.rstrip("\\n"),',
-    '}}}}, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))',
+    "}",
+    'if "parent" in champs:',
+    '    issue["parent"] = {"pnum": int(champs["parent"])} if champs["parent"] else None',
+    "if lots:",
+    '    issue["lots"] = {"nodes": [',
+    "        {",
+    '            "number": int(iid),',
+    '            "title": titre,',
+    '            "state": "CLOSED" if coche == "x" else "OPEN",',
+    '            "labels": {"nodes": [{"name": "lot::parallele"}] if par == "\\u2225" else []},',
+    "        }",
+    "        for iid, coche, par, titre in lots",
+    "    ]}",
+    'issue["body"] = corps.rstrip("\\n")',
+    'sys.stdout.buffer.write(json.dumps({"data": {"repository": {"issue": issue}}},',
+    '    separators=(",", ":"), ensure_ascii=False).encode("utf-8"))',
     "",
 ])
 
@@ -395,18 +423,32 @@ class Depot:
         `labels_sup` ajoute des labels à la liste de base — il n'existe que pour `lot::arbitre`
         (#562), qui est un fait porté par le PARENT et non par sa checklist : sans lui, le seul
         chemin testable serait celui du marqueur, c'est-à-dire la moitié de la règle.
+
+        LE TICKET PORTE LES DEUX SUPPORTS DU DÉCOUPAGE (#393) : la prose et la checklist dans le
+        corps, les lignes d'en-tête `parent:` / `lot:` que `gh_issue_raw` pose en régime `natif` —
+        celui du défaut depuis ce lot. C'est la forme d'un vrai ticket depuis le backfill (#392),
+        `/ticket-create` écrivant les deux et seule la LECTURE ayant basculé ; un double qui n'en
+        porterait qu'un ferait dépendre le plan du régime, alors que tout l'enjeu est qu'il n'en
+        dépende pas.
         """
         corps = f"Sous-ticket de #{parent} — lot 1/5.\n" if parent else ""
+        entetes = f"parent:\t{parent}\n" if parent else ""
         if lots:
             corps += "\n## Sous-tickets\n\n" + "".join(
                 f"- [ ] #{i} — {t}{' (parallèle)' if p else ''}\n" for i, t, p in lots
+            )
+            # La coche vaut « - » des deux côtés : le `state:` de ces doubles est toujours `open`,
+            # et c'est de l'état que le natif la dérive (#390). Le `statut` d'un lot est son CYCLE
+            # DE VIE, qui ne ferme rien.
+            entetes += "".join(
+                f"lot:\t{i}\t-\t{'∥' if p else '-'}\t{t}\n" for i, t, p in lots
             )
         labels = f"agent::dev, prio::{prio}, type::{type_}"
         if labels_sup:
             labels += f", {labels_sup}"
         (self.fixtures / f"issue-{iid}.txt").write_text(
             f"title:\t{titre}\nstate:\topen\nlabels:\t{labels}\n"
-            f"assignees:\t{assigne}\n--\n{corps}\n",
+            f"assignees:\t{assigne}\n{entetes}--\n{corps}\n",
             encoding="utf-8",
         )
         (self.fixtures / f"owner-{iid}.json").write_text(
