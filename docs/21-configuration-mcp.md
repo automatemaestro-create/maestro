@@ -214,6 +214,20 @@ le parcours reste bibliothèque → pool (geste humain, secret saisi) → activa
 par agent. Un registre trois fois plus grand rend ce point **plus** important,
 pas moins : c'est la découverte qui s'élargit, jamais l'installation.
 
+**Couverture** : [tests/test_mcp_registry.py](../tests/test_mcp_registry.py) côté
+registre — les pilotes historiques vérifiés par **inclusion** et non par égalité
+(la liste exacte était le contrat tant que le registre tenait en quatre entrées ;
+elle rendrait le test faux à chaque intégration ajoutée, c'est-à-dire chaque fois
+qu'il a le plus de raisons d'être joué), le tri par palier puis par nom, la
+provenance qui ne masque aucune entrée, et le garde-fou d'allowlist inchangé ;
+`apps/web/tests/integrations-bibliotheque.test.tsx` côté écran — la provenance
+affichée, le panneau de chaque intégration, et la recherche sans résultat qui rend
+une piste plutôt qu'un cul-de-sac. ⚠ Ce fichier **a suivi son sujet** : #270 a
+sorti la bibliothèque des Paramètres et l'a renommé en conséquence
+(`parametres-mcp.test.tsx` avant lui), ses scénarios inchangés. Le **pool projet**
+du même écran est couvert à côté, par `apps/web/tests/integrations-pool.test.tsx`
+(#273) — dont les quatre modes d'auth du §2 ci-dessus, `sans_secret` compris.
+
 ---
 
 *Références : [docs/15](./15-pilote-mcp-slack.md) (Slack), [docs/16](./16-pilote-mcp-tickets-gitlab.md) (GitLab), [docs/20](./20-pilote-mcp-figma.md) (Figma, dont §6 pour la voie officielle), [core/mcp/README.md](../core/mcp/README.md) (socle des déclarations).*

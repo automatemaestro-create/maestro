@@ -18,7 +18,7 @@ ressortie** (#280, §2.0.1). Le menu est déclaré une seule fois
 (`apps/web/lib/navigation.ts`) et fait aujourd'hui **neuf entrées** : les deux
 écrans de la Phase 8, « Composer un objectif » (#319) et « Valider le brief »
 (#322), s'y étaient ajoutés puis **en sont repartis** (#484, ci-dessous), tandis
-que **« Runs »** (#474, §2.4.1) et **« Intégrations »** (#270, §2.9) y sont
+que **« Runs »** (#474, §2.4.1) et **« Intégrations »** (#270, §2.10) y sont
 entrées. Le Kanban des tâches n'en est pas une (il est l'objet de la **vue d'un
 run**, servie sous « Runs » depuis #476 — §2.4.2) et l'écran Projets non plus
 (il est servi, mais atteint depuis le sélecteur du shell).
@@ -152,7 +152,7 @@ notifications, et le **flux temps réel** qui les alimente tous.
 | le **catalogue** d'agents et les **playbooks** | ce sont des définitions, pas du travail — les partager entre projets est l'intérêt d'en avoir | — |
 | le **chat** et l'assistant | ils parlent de l'**outil**, pas du projet ; et un `chat.message` ne porte pas de `projet_id`, donc une socket cadrée ne le recevrait **jamais** (§6.0) — le fil se figerait sans rien dire | — |
 | les **paramètres** du poste (apparence, notifications) | réglages de l'installation, pas d'un projet | la dépense cumulée qui y figure, elle, est celle du projet |
-| les **intégrations MCP** (pool projet et bibliothèque) | elles ont quitté les Paramètres en #270 (§2.9) précisément parce qu'elles n'en sont pas : elles décident de ce qu'un agent sait faire. Le **pool** porte pourtant « projet » dans son nom — c'est un stockage unique (`core/mcp/pool.json`), non cadré à ce jour | — |
+| les **intégrations MCP** (pool projet et bibliothèque) | elles ont quitté les Paramètres en #270 (§2.10) précisément parce qu'elles n'en sont pas : elles décident de ce qu'un agent sait faire. Le **pool** porte pourtant « projet » dans son nom — c'est un stockage unique (`core/mcp/pool.json`), non cadré à ce jour | — |
 
 **Le coût cumulé change de source** avec ce lot. Il se lisait sur `agents[].cout_usd` — un total de
 **tous** les projets, puisque le parc est celui du poste. Il est désormais la somme des **grands
@@ -1143,6 +1143,15 @@ l'arbitrage ; `apps/web/tests/arbitrage.test.tsx` côté UI — le contrat d'`ex
 trois attentes, et cet écran-ci rendant la demande **sans rien changer de son côté**, ce qui est la
 preuve que le chantier a réparé la donnée et non l'affichage.
 
+Couverture de la refonte (#273, lot 6 de #244) : `apps/web/tests/validations.test.tsx` — l'ordre de
+la file (dont la demande **sans horodatage** en queue), `formatAttente` sur ses paliers et ses deux
+cas où l'on ne compte pas (horloge non démarrée, horloges désaccordées), ce qu'on lit avant de
+trancher, et les trois gestes. Deux contrôles y valent d'être nommés, parce qu'ils gardent ce qu'une
+relecture du composant ne montre pas : le motif **refermé est effacé** — sinon un texte que plus
+personne n'a sous les yeux partirait au journal du run avec le refus —, et la **clé par `tache_id`**
+est prouvée en retirant la tête de file pendant qu'un motif est en cours de frappe, c'est-à-dire en
+rejouant exactement le décalage d'un cran contre lequel elle existe.
+
 ### 2.7 📁 Projets et composition d'un objectif *(retenu — [docs/24](./24-projets-locaux-et-poste-de-travail.md), **Phases 7 et 8**)*
 
 > Écrans **retenus** — décisions D1, D2 et D5 de
@@ -1679,11 +1688,23 @@ message porte.
 
 Implémentation : `apps/web/app/chat/page.tsx`, `apps/web/components/Conversation.tsx`,
 `apps/web/lib/orchestration.ts` (nom du canal, accueil, amorces, lecture d'une
-mention). Tests différés au **lot 6** de #244 (#273).
+mention).
+
+Couverture (#273, lot 6 de #244) : `apps/web/tests/chat-global.test.tsx`. Ce qu'il
+observe n'est pas le texte rendu mais **le canal demandé** à `useChat` — le double
+du harnais le note (`canauxDemandes`, même dessin que `porteesDemandees` de #281),
+et c'est le seul endroit où « à qui l'on parle » soit observable, le contenu
+affiché venant de `poserFilAssistance` quoi qu'il arrive. C'est ce qui rend
+opposable la décision la plus facile à défaire de cet écran : **la mention change
+de destinataire, elle ne recopie rien**. Le reste suit les quatre décisions de
+`mentionEnTete` — en tête, close par une espace, destinataire connu, casse
+ignorée, et rien dans le doute — puis « Ouvert depuis ce fil », qui **lit** les
+`run_id` du fil et n'y range jamais un run qui a simplement tourné pendant qu'on
+avait l'écran ouvert.
 
 ---
 
-### 2.9 🔌 Intégrations MCP — un écran, pas une section des Paramètres *(#270 — **livré**)*
+### 2.10 🔌 Intégrations MCP — un écran, pas une section des Paramètres *(#270 — **livré**)*
 
 Le pool projet et la bibliothèque curée vivaient dans **Paramètres → Intégrations
 MCP** depuis #133, empilés dans une colonne de réglages. Le reproche de la revue
@@ -1730,8 +1751,13 @@ nulle part — la page reste servie, l'ancre n'existe simplement plus.
 Implémentation : `apps/web/app/integrations/page.tsx` et
 `apps/web/components/integrations/` ; couverture `apps/web/tests/integrations.test.tsx`
 et `apps/web/tests/integrations-bibliotheque.test.tsx` (les scénarios #231,
-inchangés — ils ont suivi leur sujet). Le reste du comportement est différé au
-lot 6 du chantier (#273).
+inchangés — ils ont suivi leur sujet). Le reste du comportement est venu au lot 6
+(#273) : `apps/web/tests/integrations-pool.test.tsx` — le renversement du
+catalogue (`usageDuPool`), les quatre modes d'auth de [docs/21 §2](./21-configuration-mcp.md),
+les quatre états du bloc, le retrait et son échec, et surtout les **trois** états
+de « qui l'utilise », l'ignorance comprise : rendre un catalogue muet comme un
+pool sans utilisateur ferait retirer une intégration en croyant qu'elle ne sert à
+rien, c'est-à-dire se tromper **sur la question même** que cet écran pose.
 
 ---
 
@@ -2651,6 +2677,18 @@ couperait le fil en deux — un lancement en `humain` reste la voie de qui veut 
   "tache_id": ""              // idem, pour une tâche
 }
 ```
+
+Couverture (#273, lot 6 de #244) : [`tests/test_chat_global.py`](../tests/test_chat_global.py),
+sans réseau, sans modèle et **sans moteur** — le canal n'exige qu'un `LanceurRun` (« ouvre un run
+sur cet objectif »), donc un double suffit à éprouver ce qu'il ouvre. Quatre choses y sont gardées
+qu'aucun autre test ne voyait : la **règle d'intention** dans ses deux moitiés — ce qui doit ouvrir
+un run, et ce qui ne doit surtout pas, le doute compris —, l'**aperçu** relu à chaque question
+plutôt que figé à la construction de l'app, un **lancement en échec raconté dans le fil** au lieu
+d'être levé (levé, il deviendrait un 502 sans trace alors que la demande, elle, est déjà persistée),
+et le **contrat SSE** vu des deux bouts : côté répondeur, la concaténation des incréments *est* le
+texte final ; côté endpoint, les `delta` du flux reconstituent la trame `fin`, sur les deux voies du
+canal — celle qui ouvre un run et celle qui converse, l'écriture par morceaux n'étant pas la même de
+part et d'autre.
 
 ### 6.6 Référence de ticket externe portée par une tâche (#187)
 
