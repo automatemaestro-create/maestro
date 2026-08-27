@@ -183,8 +183,9 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   sont **redirigés vers le bon onglet** (`next.config.ts`, aucun signet ne casse)
   et `?onglet=` porte l'intention jusqu'à la liste quand l'URL d'origine ne
   nommait pas d'agent. `/chat` reste au menu pour le chat **global**, non lié à un
-  agent (chantier « Chat » de la Phase 6). Les onglets sont déclarés une seule
-  fois (`lib/agents.ts`), comme le menu l'est dans `lib/navigation.ts` ;
+  agent — servi pour de bon depuis #269 (voir ci-dessous). Les onglets sont
+  déclarés une seule fois (`lib/agents.ts`), comme le menu l'est dans
+  `lib/navigation.ts` ;
 - **Éditeur de playbooks** (#77, EF-24/EF-25) : l'onglet **Playbook** d'une fiche
   agent porte son playbook versionné (#76, API `/api/playbooks`), publie une nouvelle
   version depuis un éditeur plein texte et montre l'historique, chaque version
@@ -204,6 +205,23 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   réponse de l'agent (cadrée par son playbook courant) et réception en temps
   réel par le WebSocket (`chat.message`). Le fil est persisté côté backend :
   l'historique se recharge au retour sur l'onglet ;
+- **Chat global** (#269, lot 2 de #244, docs/05 §2.9) : `/chat` sert le fil avec
+  l'**orchestration** (canal `orchestrateur`, #268) — poser une demande sans avoir
+  à choisir d'abord à qui la poser. Trois choses à connaître avant d'y toucher.
+  **Un seul composant de fil** : la mise en page conversationnelle vit dans
+  `components/Conversation.tsx`, que l'onglet Chat d'un agent monte aussi
+  (`components/FilChat.tsx` n'est plus que son branchement) — le **dépôt de
+  sources** (#482) y a déménagé du même geste, donc le chat global en hérite sans
+  une ligne à lui, ce que `lib/useSourcesComposees` annonçait déjà ; le panneau
+  d'assistance flottant reste à part, c'est une carte posée par-dessus la page et
+  non un écran. **La mention change de destinataire, elle ne recopie rien** :
+  `@dev …` part dans le fil de `dev`, sans navigation et sans second historique —
+  c'est ce qui rend « les deux ne divergent pas » vérifiable plutôt que promis.
+  **Ce qu'un message a ouvert est sous sa bulle** : le rattachement vient du
+  message (`run_id`/`tache_id`, persisté), le compte des tâches et les validations
+  en attente de l'état temps réel, avec renvoi vers `/runs/<run_id>` et
+  `/validations` — un message ordinaire ne rattache rien et ne laisse aucun cadre
+  vide ;
 - **Page Paramètres** (#121) : la configuration regroupée en six sections
   navigables par ancres (Général · Apparence · Agents & capacité · Fournisseurs &
   modèles · Coûts & plafonds · Notifications), avec un sous-menu qui suit le
@@ -436,7 +454,7 @@ elle est testée : les attentes humaines sont **absentes** de `mesuresDesRuns`, 
 la région polie de `/validations` ne dit que ce qui a été **tranché** — les dire
 des deux côtés les dirait deux fois, une fois en coupant la parole.
 
-Les huit écrans temps réel et ce que chacun annonce :
+Les neuf écrans temps réel et ce que chacun annonce :
 
 | Écran | Région polie | Ce qu'elle dit |
 | --- | --- | --- |
@@ -448,6 +466,7 @@ Les huit écrans temps réel et ce que chacun annonce :
 | `/journal` | Activité du journal | « 12 nouveaux événements », sur le fil **non filtré** |
 | `/brief` | Activité des briefs | ce qui **sort** de la file — un brief approuvé fait démarrer son run |
 | `/agents/<nom>/chat` | Activité du fil avec `<nom>` | le compte de messages, jamais leur contenu |
+| `/chat` | Activité du fil avec l'orchestration | idem — le libellé suit le destinataire courant (#269) |
 
 Quatre choses à ne pas défaire :
 

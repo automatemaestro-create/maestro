@@ -79,7 +79,8 @@ elles sont **redirigées vers l'onglet qu'elles visaient**
 | `/chat/<agent>` | `/agents/<agent>/chat` | |
 
 `/chat` **nu n'est pas redirigé** : il reste au menu pour le chat **global**, non
-lié à un agent (chantier « Chat » de la Phase 6) — c'est une intention distincte.
+lié à un agent — c'est une intention distincte, et il la sert pour de bon depuis
+#269 (§2.9), sur le canal `orchestrateur` du lot 1 (#268, §6.5).
 Les redirections sont temporaires (307) et non permanentes (308) : un 308 est mis
 en cache par le navigateur pour de bon, et ces chemins ne pourraient plus être
 corrigés côté serveur.
@@ -1376,17 +1377,24 @@ sans décider**, pour la raison d'origine : sept sections, des questions et un c
 dans une carte.
 
 ⚠ **Ce lot ne monte aucun fil de messages** et ne double donc pas #268/#269 : il n'y a ni `useChat`,
-ni route `/api/chat` dans le cadrage. Ce qui est livré est le **cadrage en forme de conversation** ;
-le fil de messages avec l'orchestration reste son chantier, et la page le dit. Deux conséquences
-assumées : la page ne monte **pas de région polie** à elle — ce qui entre dans la file est déjà
-annoncé par la région **assertive** du shell (« Arbitrage requis : … », #538), et le redire poliment
-le dirait deux fois —, et le renvoi du panneau ne désigne **pas un run précis** (`?run=…`) : il ouvre
-le fil sur le plus ancien en attente, avec le sélecteur pour les autres, exactement comme `/brief`.
+ni route `/api/chat` dans le cadrage. Ce qui est livré est le **cadrage en forme de conversation**.
+**#269 a atterri entre-temps** (§2.9) et les deux se sont rejoints sur la page comme
+`CadrageDansLeFil` l'annonçait — « les deux fils se rejoindront sur cette page, ils ne se remplacent
+pas » : le cadrage en tête, le fil de messages en dessous, et la frontière n'a pas bougé pour
+autant — le cadrage n'a toujours ni `useChat` ni route `/api/chat`, et le fil ne tranche aucun
+brief. Ce qu'ils partagent est l'**enveloppe de bulle** (`components/chat/BulleFil`), et rien
+d'autre : deux formes de bulle auraient donné deux conversations à l'œil sur un seul écran. Deux
+conséquences assumées : le cadrage ne monte **pas de région polie** à lui — ce qui entre dans la file
+est déjà annoncé par la région **assertive** du shell (« Arbitrage requis : … », #538), et le redire
+poliment le dirait deux fois ; celle du fil, elle, compte les messages et rien d'autre —, et le
+renvoi du panneau ne désigne **pas un run précis** (`?run=…`) : il ouvre le cadrage sur le plus
+ancien en attente, avec le sélecteur pour les autres, exactement comme `/brief`.
 
 Implémentation : `apps/web/app/chat/page.tsx`, `components/chat/FilDeCadrage.tsx` (la file et son
 sélecteur), `components/chat/CadrageDansLeFil.tsx` (la conversation, le chargement du détail et les
-deux gestes) et `components/chat/BulleFil.tsx` — l'enveloppe de bulle sortie de `FilChat` pour que
-les messages (#482) et le cadrage n'aient pas deux formes sur le même écran. Couverture partielle —
+deux gestes) et `components/chat/BulleFil.tsx` — l'enveloppe de bulle sortie du composant de fil
+(`components/Conversation.tsx` depuis #269) pour que les messages (#482) et le cadrage n'aient pas
+deux formes sur le même écran. Couverture partielle —
 la logique critique du lot — dans
 [`apps/web/tests/fil-cadrage.test.tsx`](../apps/web/tests/fil-cadrage.test.tsx) ; le reste est
 différé au lot #485.
@@ -1441,6 +1449,114 @@ débounce — et pas ce que #478 devait rendre.
 Le **journal d'un run** est le même dispositif au filtre près (`?run_id=`) : voir
 §2.4.2, où il est **la troisième lecture** de la vue d'un run — son propre onglet
 depuis #516, à côté du pipeline et du Kanban.
+
+### 2.9 💬 Chat global — l'écran *(#269, lot 2 de #244 — **livré**)*
+
+`/chat` servait un texte d'attente depuis #190 : l'entrée de menu et la route
+étaient réservées pour le chat **global**, annoncées et inertes. Elles portent
+désormais le fil, branché sur le canal `orchestrateur` du lot 1 (#268, §6.5) —
+« poser une demande sans avoir à choisir d'abord à qui la poser ».
+
+**Ce que l'écran met en place**, dans les deux places de la règle de sobriété
+(docs/30 §4) : le **cadrage** (§2.7.5) puis le **fil** occupent deux des trois
+places de corps, tout ce qui les accompagne va dans la **colonne de propriétés**,
+qui est la seule sans plafond.
+
+- **Le cadrage en attente** (§2.7.5) — en tête, parce que c'est un run
+  **arrêté** qui attend là et que les trois surfaces d'acheminement du §2.1 mènent
+  ici : y arriver pour trouver le brief sous le pli éteindrait le renvoi qui vient
+  de nous y amener. Il reste visible quand la file est vide, où il dit *pourquoi*
+  elle l'est.
+- **Le fil** — conversation avec l'orchestration, historique persisté (donc
+  retrouvé au rechargement) et réponse en direct par le WebSocket
+  (`chat.message`). Un fil vide s'ouvre sur un mot d'accueil et quatre amorces
+  choisies pour montrer la **frontière qui compte** : les deux premières ouvrent
+  un run, les deux dernières sont des questions et n'ouvrent rien.
+- **La colonne** — « Parler à » (les destinataires, l'orchestration en tête) et
+  « Ouvert depuis ce fil » (les runs que les messages du fil rattachent, du plus
+  récent au plus ancien, avec leur nombre de tâches et le renvoi vers le run).
+
+#### La mention change de destinataire, elle ne recopie rien
+
+Écrire `@dev …` **depuis le fil global** envoie dans le fil de `dev` — celui-là
+même que sert l'onglet Chat de sa fiche — et l'écran bascule dessus **sans
+navigation** : un bandeau dit où part le message, un renvoi mène à la vue
+détaillée, un bouton revient à l'orchestration. La mention se reconnaît en tête
+de brouillon, une fois close par une espace, et seulement sur un nom connu ; dans
+tous les autres cas le texte reste tel quel, une mention avalée en silence valant
+moins qu'une mention non reconnue.
+
+C'est le seul dessin qui tienne « le fil par agent reste la vue détaillée, et les
+deux ne divergent pas ». Recopier le message dans les deux fils aurait donné deux
+historiques d'une même conversation, désaccordés dès le premier rechargement :
+l'un porte la réponse, l'autre la copie d'avant. Ici il n'y a qu'un stockage, lu
+par le même chemin des deux côtés (`GET /api/chat/{agent}`).
+
+#### Un seul composant de fil
+
+La mise en page conversationnelle vit dans `apps/web/components/Conversation.tsx`
+et **n'existe qu'une fois** : l'onglet Chat d'un agent
+(`apps/web/components/FilChat.tsx`, réduit à son branchement) et cet écran la
+montent tous deux, et le lot 13 de « Control Tower v3 — agents » (#265) la
+réutilisera plutôt que la fournir — c'est l'arbitrage de #620, ce milestone
+passant le premier.
+
+Le **dépôt de sources** (#482 : fichiers glissés ou collés, dossier du poste,
+adresse) y a déménagé du même geste, et le chat global en hérite sans une ligne
+à lui : c'est ce que `lib/useSourcesComposees` annonçait en se posant hors des
+composants — « les deux surfaces de fil n'auront pas à s'accorder sur une copie
+chacune ». Elles n'en ont plus qu'une.
+
+Le panneau d'assistance flottant (#123) reste **à part**, à dessein : ce n'est pas
+le même objet — une carte bornée posée par-dessus la page qu'on utilise, sans
+en-tête de section ni région live —, et les fondre reviendrait à donner à ce
+composant un mode « petit », c'est-à-dire deux mises en page dans un fichier qui
+existe pour n'en porter qu'une.
+
+> **Le filet a servi au passage** : mettre le fil sur un écran du menu l'a fait
+> entrer dans le balayage des cibles de `a11y.test.tsx` (#537), qui a trouvé les
+> boutons de sources sous les 24 px de WCAG 2.2 §2.5.8 — `Bouton taille="petite"`
+> écrit son propre pas typographique sans déclarer de plancher. Corrigé **à la
+> primitive** (`CIBLE_MINIMALE` rejoint `BOUTON_SOCLE`), là où vit déjà le contour
+> de focus et pour la même raison : c'est le seul endroit d'où l'on peut promettre
+> qu'aucune action du produit n'y échappe. Le défaut n'était visible d'aucun des
+> dix écrans tant que le fil vivait dans une fiche agent.
+
+#### Ce qui découle d'un échange est dans le fil
+
+Deux sources, et l'ordre entre elles est le dessin. Le message porte lui-même
+`run_id`/`tache_id` (#268, §6.5) : c'est le **rattachement**, persisté, il
+survit au rechargement, et c'est lui qui décide s'il y a quelque chose à montrer.
+Le reste — combien de tâches ce run a produites, s'il attend un arbitrage — se lit
+dans l'**état temps réel du projet actif**, vivant là où le message est figé : une
+réponse écrite il y a dix minutes ne pouvait pas savoir qu'une validation serait
+demandée depuis. Sous la bulle, donc : le run, ses tâches, la ou les validations
+en attente, et les renvois vers l'écran concerné (`/runs/<run_id>`,
+`/validations`). Rien à montrer ⇒ rien à rendre — un message ordinaire ne
+rattache rien et ne laisse aucun cadre vide.
+
+> **Le renvoi vers une tâche est celui de son run**, et ce n'est pas un raccourci :
+> les trois lectures d'un run sont une **bascule** et non trois routes
+> (`apps/web/lib/vuesRun.ts`), il n'existe donc aucune URL qui ouvre une tâche.
+
+#### Le direct passe par le WebSocket, pas encore par le flux SSE
+
+Le lot 1 a construit le canal de streaming (`GET /api/chat/{agent}/flux`, §6.5) et
+il attend son consommateur. Deux raisons de ne pas le brancher **ici**, et la
+seconde est dirimante. Ce serait un **second chemin d'envoi** côté navigateur,
+donc deux façons de parler à un fil — l'inverse de ce que ce lot vient d'unifier.
+Et surtout, ce chemin-là **ne sait pas porter de sources** : le flux prend son
+`contenu` en paramètre d'URL, quand `POST …/messages` accepte les `sources[]` de
+#482 — y basculer le fil ferait perdre en silence les pièces jointes, c'est-à-dire
+échanger un rendu incrémental contre une fonctionnalité. La réponse arrive donc
+dès qu'elle tombe, l'attente étant dite par « … répond… » ; le rendu incrémental
+appartient au lot qui consommera le canal, **dans le composant de fil partagé** —
+donc pour les deux fils à la fois, et une fois que le canal saura porter ce qu'un
+message porte.
+
+Implémentation : `apps/web/app/chat/page.tsx`, `apps/web/components/Conversation.tsx`,
+`apps/web/lib/orchestration.ts` (nom du canal, accueil, amorces, lecture d'une
+mention). Tests différés au **lot 6** de #244 (#273).
 
 ---
 
