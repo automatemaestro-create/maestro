@@ -116,10 +116,12 @@ la même raison et sous la même règle :
 | `/composer` | `/chat` | le geste de #319 se fait dans le fil depuis #482 (§6.12) |
 | `/brief` | `/chat` | le point de contrôle de #322 s'y joue depuis #483 (§2.7.5) |
 
-Le 307 compte **plus encore** ici : le fil est un chantier **en cours** (#481), et
-un 308 mis en cache par les postes figerait sa destination avant qu'elle soit
-stabilisée. La garantie de durée vit dans `next.config.ts`, jamais dans un cache
-de navigateur.
+Le 307 compte **plus encore** ici : le fil venait d'être ouvert quand ces deux
+chemins y ont été renvoyés, et un 308 mis en cache par les postes figerait sa
+destination avant qu'elle soit stabilisée. La garantie de durée vit dans
+`next.config.ts`, jamais dans un cache de navigateur — et elle reste la bonne
+réponse maintenant que le chantier #481 est **soldé** (#485), le fil ayant
+vocation à continuer de bouger.
 
 ⚠ Les dossiers `app/composer/` et `app/brief/` **restent en place**, et ce n'est
 pas un oubli : une redirection de `next.config` est évaluée **avant** le routage
