@@ -12,6 +12,7 @@ import {
   IconeChat,
   IconeCouts,
   IconeJournal,
+  IconeMcp,
   IconeObjectif,
   IconeParametres,
   IconeProjets,
@@ -69,6 +70,15 @@ export type EntreeMenu = {
  * part (revue #470, docs/29 §3). Sa place **avant** « Agents » suit le principe des
  * deux précédentes — le haut du menu porte le travail en cours, le bas les
  * ressources qui le servent et ce qu'on observe après coup.
+ *
+ * « Intégrations » (#270, lot 3 de #244) se range **juste après « Agents »**, et
+ * cette place est l'argument du ticket : une intégration MCP n'est pas un
+ * réglage du poste — c'est ce qui détermine ce qu'un agent sait faire, au même
+ * titre que son playbook. Elle appartient donc au groupe des ressources qui
+ * servent le travail, contre la fiche d'agent d'où on l'active, et non au fond
+ * des Paramètres où elle a vécu depuis #133. Même raisonnement que la sortie de
+ * « Projets » du menu (#280), pris par l'autre bout : ce qui n'est pas un
+ * réglage d'installation n'a rien à faire dans les réglages de l'installation.
  */
 export const MENU: EntreeMenu[] = [
   { href: "/", libelle: "Tableau de bord", Icone: IconeTableauDeBord },
@@ -76,6 +86,7 @@ export const MENU: EntreeMenu[] = [
   { href: "/brief", libelle: "Valider le brief", Icone: IconeBrief },
   { href: "/runs", libelle: "Runs", Icone: IconeRuns },
   { href: "/agents", libelle: "Agents", Icone: IconeAgents },
+  { href: "/integrations", libelle: "Intégrations", Icone: IconeMcp },
   { href: "/chat", libelle: "Chat", Icone: IconeChat },
   { href: "/couts", libelle: "Coûts & analytics", Icone: IconeCouts },
   { href: "/validations", libelle: "Validations", Icone: IconeValidations },

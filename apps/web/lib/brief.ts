@@ -8,6 +8,13 @@
  * dépôt : elles sont **partagées** — le badge de la cloche, le panneau du tableau
  * de bord et l'écran lui-même posent tous la question « ce run attend-il un
  * geste ? », et trois formulations finiraient par diverger.
+ *
+ * Depuis #483 elles servent **deux** surfaces : l'écran `/brief` (#322) et le fil
+ * du cadrage (`components/chat/CadrageDansLeFil`), où le même brief se lit, se
+ * corrige et se tranche dans la conversation. C'est la raison d'être du module qui
+ * se vérifie — le déménagement n'a rien eu à réécrire de ce qui est ici, et les
+ * deux surfaces ne peuvent pas diverger sur ce qu'est un brief corrigé, un run en
+ * attente ou un tour de clarification.
  */
 
 import {
@@ -177,6 +184,62 @@ export function estCorrige(origine: Brief, edite: BriefEdite): boolean {
     ({ cle }) => versTexte(propose[cle]) !== versTexte(origine[cle]),
   );
 }
+
+/**
+ * Ce que le schéma partagé exige et qu'un formulaire peut vider — le miroir
+ * **minimal** de `packages/shared/schemas/brief.schema.json`.
+ *
+ * On ne revalide pas le schéma ici, et c'est délibéré : le backend le fait, il
+ * le fait sur la version qui fait foi, et sa réponse 422 nomme ce qui cloche.
+ * Ce contrôle-ci ne couvre que les trois manques qu'un humain produit en
+ * effaçant un champ, et sert à **désactiver** le bouton en le disant — pas à
+ * remplacer l'API. Les doublons (`uniqueItems`), eux, partent exprès : les
+ * nettoyer en silence modifierait ce que quelqu'un a écrit.
+ *
+ * Il vit ici depuis #483, où le brief se corrige à **deux** endroits : l'écran et
+ * le fil. Recopié, il aurait fini par désactiver le bouton d'un côté et pas de
+ * l'autre — la version la plus laxiste des deux décidant alors de ce qui part
+ * chercher un 422.
+ */
+export function manquesDuBrief(edite: BriefEdite): string[] {
+  const propose = briefDepuisEdition(edite);
+  const manques: string[] = [];
+  if (propose.objectif.length === 0) manques.push("un objectif");
+  if (propose.perimetre.length === 0) {
+    manques.push("au moins une entrée de périmètre");
+  }
+  if (propose.criteres_acceptation.length === 0) {
+    manques.push("au moins un critère d'acceptation");
+  }
+  return manques;
+}
+
+/**
+ * Qui parle quand le cadrage s'affiche dans le fil (#483).
+ *
+ * Le brief est publié par l'**Orchestrateur** côté bus (`ROLE_BRIEF`,
+ * `controltower/brief.py`), mais toute l'interface le nomme « Chef de projet »
+ * depuis #321 — « Le Chef de projet attend vos réponses », au panneau comme à la
+ * cloche. C'est ce nom-là qui va dans les bulles : une conversation où l'auteur
+ * change de nom selon l'écran est une conversation avec deux interlocuteurs.
+ */
+export const AUTEUR_CADRAGE = "Chef de projet";
+
+/**
+ * Le **libellé de menu** de la page où un brief se tranche — « Chat » depuis
+ * #483, « Valider le brief » avant lui.
+ *
+ * Trois surfaces acheminent vers cette page sans décider : le panneau du tableau
+ * de bord, la cloche et la table `ATTENTES` de la vue d'un run (§2.1). Le nom vit
+ * ici parce que ces trois-là doivent bouger **ensemble** : un renvoi resté sur
+ * l'ancien écran mènerait vers un chemin que #484 redirige, et un renvoi vers une
+ * entrée de menu retirée rend `undefined`, donc `null`, donc un run suspendu que
+ * plus rien ne montre — le défaut même que le critère 3 du lot interdit.
+ *
+ * C'est un **libellé** et non un chemin, comme partout depuis #191 : le renvoi
+ * suit sa page si elle déménage, et ne s'allume pas vers une page absente.
+ */
+export const PAGE_DU_CADRAGE = "Chat";
 
 /**
  * Un aller-retour de clarification déjà joué (#321), reconstitué de la trace du

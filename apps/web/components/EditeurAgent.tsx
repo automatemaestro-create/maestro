@@ -677,12 +677,12 @@ function SectionServeursMcp({ fiche }: { fiche: AgentCatalogueDetail }) {
       )}
       {fiche.mcp_pool.length === 0 ? (
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          Aucune intégration au pool projet. Ajoutez-en depuis les{" "}
+          Aucune intégration au pool projet. Ajoutez-en depuis l&apos;écran{" "}
           <Link
-            href="/parametres#mcp"
+            href="/integrations"
             className="font-medium text-emerald-700 underline dark:text-emerald-400"
           >
-            Paramètres → Intégrations MCP
+            Intégrations
           </Link>
           , puis activez-les ici pour cet agent.
         </p>
@@ -788,7 +788,7 @@ function LigneActivation({
       </span>
       {actif && secretManquant && (
         <Infobulle
-          texte="Configurer le secret dans Paramètres → Intégrations MCP"
+          texte="Configurer le secret sur l'écran Intégrations"
           className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
         >
           secret à configurer

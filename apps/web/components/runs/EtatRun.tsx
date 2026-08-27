@@ -57,6 +57,7 @@ import {
   type TonBadge,
   type TonCarte,
 } from "@/components/Primitives";
+import { PAGE_DU_CADRAGE } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   ATTENTE_BRIEF,
@@ -99,9 +100,14 @@ import {
  *
  * Chaque attente mène à l'écran qui porte **le geste** qui la lève, et non à la
  * vue du run : celle-ci existe depuis #475, mais elle *montre* le run, elle ne le
- * débloque pas — un brief se tranche à « Valider le brief », un arbitrage de tâche
- * à « Validations ». Le jour où la vue d'un run portera ces gestes, c'est cette
+ * débloque pas — un brief se tranche dans le fil, un arbitrage de tâche à
+ * « Validations ». Le jour où la vue d'un run portera ces gestes, c'est cette
  * table qu'il faudra changer, et elle seule.
+ *
+ * C'est précisément ce qui vient d'arriver aux deux premières lignes (#483) : le
+ * geste a déménagé de « Valider le brief » vers le fil, donc la table suit. Le
+ * libellé passe par `PAGE_DU_CADRAGE` (`lib/brief`) plutôt que d'être écrit ici,
+ * les trois surfaces qui acheminent vers le brief devant bouger ensemble.
  */
 export const ATTENTES: Record<
   CauseAttente,
@@ -110,13 +116,13 @@ export const ATTENTES: Record<
   [ATTENTE_BRIEF]: {
     libelle: "Brief à valider",
     phrase: "Le brief attend votre décision",
-    page: "Valider le brief",
+    page: PAGE_DU_CADRAGE,
     action: "Relire",
   },
   [ATTENTE_REPONSES]: {
     libelle: "Questions en attente",
     phrase: "Le Chef de projet attend vos réponses",
-    page: "Valider le brief",
+    page: PAGE_DU_CADRAGE,
     action: "Répondre",
   },
   [ATTENTE_VALIDATION]: {

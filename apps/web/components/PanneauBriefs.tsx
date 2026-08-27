@@ -17,13 +17,21 @@
  * non : sept sections, des questions et un coût. Proposer d'approuver ici
  * inviterait à trancher sans lire, c'est-à-dire à défaire le point de contrôle
  * qu'on vient de poser.
+ *
+ * ⚠ **Il achemine vers le fil depuis #483**, où le brief se décide. Le
+ * changement n'est pas cosmétique et c'est le critère 3 du lot : la destination
+ * est résolue par le **menu** (`entreeParLibelle`), donc le jour où #484 retire
+ * l'entrée « Valider le brief », ce panneau serait rendu `null` et un run bloqué
+ * deviendrait invisible — exactement ce que « un run bloqué ne doit pas dépendre
+ * d'un écran qu'on n'a pas ouvert » interdit. Le renvoi suit le geste, et il le
+ * suit **avant** que l'écran parte, pas après.
  */
 
 import Link from "next/link";
 
 import { IconeBrief, IconeFlecheDroite } from "@/components/Icones";
 import { BadgeEtat, Carte, EnTeteSection } from "@/components/Primitives";
-import { runsEnAttente } from "@/lib/brief";
+import { PAGE_DU_CADRAGE, runsEnAttente } from "@/lib/brief";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle } from "@/lib/navigation";
@@ -39,7 +47,7 @@ export function PanneauBriefs({
 }) {
   const maintenant = useHorloge();
   const runs = runsEnAttente(executions);
-  const page = entreeParLibelle("Valider le brief");
+  const page = entreeParLibelle(PAGE_DU_CADRAGE);
   if (runs.length === 0 || page === undefined) return null;
 
   return (

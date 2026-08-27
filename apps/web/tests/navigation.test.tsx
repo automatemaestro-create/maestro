@@ -51,12 +51,18 @@ describe("le menu (lib/navigation)", () => {
     // « Runs » (#474) ferme ce groupe de tête : un run n'était l'objet d'aucun
     // écran — on y entrait par « Composer un objectif » et on n'y revenait
     // jamais, les runs passés n'étant listés nulle part (revue #470).
+    //
+    // « Intégrations » (#270) se range juste après « Agents », et cette place
+    // est l'argument du ticket : une intégration MCP décide de ce qu'un agent
+    // sait faire, au même titre que son playbook — ce n'est pas un réglage du
+    // poste, donc ce n'était pas une section des Paramètres.
     expect(MENU.map((entree) => entree.libelle)).toEqual([
       "Tableau de bord",
       "Composer un objectif",
       "Valider le brief",
       "Runs",
       "Agents",
+      "Intégrations",
       "Chat",
       "Coûts & analytics",
       "Validations",

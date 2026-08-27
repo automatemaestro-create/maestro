@@ -1,9 +1,16 @@
 /**
- * Le harnais des dix écrans : quel composant chaque route rend, dans quel état
- * l'état partagé les met, et comment les monter dans leur shell réel.
+ * Le harnais des écrans du menu : quel composant chaque route rend, dans quel
+ * état l'état partagé les met, et comment les monter dans leur shell réel.
+ *
+ * ⚠ Le nombre n'est **pas** écrit ici, et depuis #270 il n'est plus écrit nulle
+ * part : la table est confrontée à `MENU` par les deux suites qui s'en servent
+ * (`a11y`, `sobriete`), donc c'est `MENU` qui fait foi. Il y en a eu dix de #537
+ * à #270 ; les compter en prose était le plus court chemin vers une doc fausse
+ * au prochain écran — c'est le reproche que docs/30 §4.2 fait déjà au tableau
+ * compté à la main.
  *
  * Il est né avec le filet d'accessibilité (#537) et vit ici depuis #539, quand
- * la sonde de sobriété a eu besoin des mêmes dix écrans dans le même état. Deux
+ * la sonde de sobriété a eu besoin des mêmes écrans dans le même état. Deux
  * harnais à tenir d'accord seraient le premier moyen pour qu'une suite rende un
  * verdict sur un produit que l'autre ne monte plus — c'est la leçon de
  * `tests/harnais_forge.py` côté outillage, et elle vaut ici.
@@ -13,7 +20,7 @@
  * une factory `vi.mock` qui importerait une page se rappellerait elle-même).
  */
 
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 
 import { Shell } from "@/components/Shell";
 import { ListeAgents } from "@/components/ListeAgents";
@@ -29,6 +36,7 @@ import PageBrief from "@/app/brief/page";
 import PageChat from "@/app/chat/page";
 import PageComposer from "@/app/composer/page";
 import PageCouts from "@/app/couts/page";
+import PageIntegrations from "@/app/integrations/page";
 import PageJournalEcran from "@/app/journal/page";
 import PageParametres from "@/app/parametres/page";
 import PageRuns from "@/app/runs/page";
@@ -142,7 +150,7 @@ export function peuplerEtatSansArbitrage(): void {
   poserJournalDuProjet();
 }
 
-// --- Les dix écrans ---------------------------------------------------------
+// --- Les écrans du menu -----------------------------------------------------
 
 export type Ecran = { href: string; rendu: () => React.ReactElement };
 
@@ -164,6 +172,7 @@ export const ECRANS: Ecran[] = [
     href: "/agents",
     rendu: () => <ListeAgents ongletCible={ongletAgentOuDefaut(undefined)} />,
   },
+  { href: "/integrations", rendu: () => <PageIntegrations /> },
   { href: "/chat", rendu: () => <PageChat /> },
   { href: "/couts", rendu: () => <PageCouts /> },
   { href: "/validations", rendu: () => <PageValidations /> },
@@ -171,11 +180,32 @@ export const ECRANS: Ecran[] = [
   { href: "/parametres", rendu: () => <PageParametres /> },
 ];
 
-/** Monte un écran dans son shell réel et attend que la garde du projet ouvre. */
+/**
+ * Monte un écran dans son shell réel, attend que la garde du projet ouvre, puis
+ * **laisse passer le tick de chargement différé**.
+ *
+ * ⚠ Cette seconde attente a manqué de #537 à #270, et son absence coûtait la
+ * moitié de ce que les deux sondes prétendent mesurer. Le `h1` de la barre
+ * supérieure est là **dès le premier rendu** — il vient du menu, pas des
+ * données —, donc `findByRole` rendait la main avant qu'aucun écran chargeant
+ * en différé n'ait reçu quoi que ce soit : `/integrations` était audité sur
+ * « Chargement des intégrations… », et `/agents` sur sa propre attente. Un
+ * écran vide n'a presque pas de balises, donc axe n'y trouvait rien et le
+ * comptage de sobriété n'y voyait aucun bloc — un vert qui ne parle que du
+ * vide, exactement ce que `peuplerEtat` existe pour éviter.
+ *
+ * Le tick est celui des écrans eux-mêmes (`setTimeout(…, 0)` puis la promesse
+ * de `@/lib/api`), d'où une attente de la même forme plutôt qu'un `waitFor` sur
+ * un texte, qui demanderait à ce harnais de connaître le contenu de chaque
+ * écran.
+ */
 export async function monterEcran(ecran: Ecran) {
   poserChemin(ecran.href);
   render(<Shell>{ecran.rendu()}</Shell>);
   // La barre supérieure titre la page depuis le menu : sa présence dit que la
   // garde du projet a tranché et que l'écran est monté sous le cadre.
   await screen.findByRole("heading", { level: 1 });
+  await act(async () => {
+    await new Promise((resoudre) => setTimeout(resoudre, 0));
+  });
 }

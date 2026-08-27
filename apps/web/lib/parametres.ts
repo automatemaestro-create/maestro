@@ -20,6 +20,14 @@
  * `SECTIONS_PARAMETRES` est **dérivé** des familles et non écrit à côté : deux
  * listes à tenir d'accord seraient le premier moyen qu'une section entre au
  * sommaire sans entrer dans une famille — donc sans être rendue nulle part.
+ *
+ * ⚠ **Six sections depuis #270**, et non plus sept : « Intégrations MCP » est
+ * partie tenir son propre écran (`/integrations`), une intégration décidant de
+ * ce qu'un agent sait faire plutôt que de la façon dont ce poste-ci est réglé.
+ * Ce n'est pas un épurement de plus au sens de #539 — le corps tenait déjà dans
+ * ses trois familles —, c'est un déménagement : rien n'a été retiré au produit,
+ * et l'ancre `/parametres#mcp` reste servie par
+ * `components/parametres/RedirectionAncreMcp`.
  */
 
 /**
@@ -32,7 +40,6 @@ export type IdSection =
   | "apparence"
   | "agents"
   | "fournisseurs"
-  | "mcp"
   | "couts"
   | "notifications";
 
@@ -105,12 +112,6 @@ export const FAMILLES_PARAMETRES: FamilleParametres[] = [
         id: "fournisseurs",
         libelle: "Fournisseurs & modèles",
         description: "Le fournisseur et le modèle de chaque agent du catalogue.",
-      },
-      {
-        id: "mcp",
-        libelle: "Intégrations MCP",
-        description:
-          "Configurer les serveurs MCP depuis la bibliothèque et alimenter le pool projet (#133).",
       },
     ],
   },

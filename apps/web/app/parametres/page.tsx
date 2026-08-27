@@ -35,8 +35,8 @@ import { ParametresApparence } from "@/components/parametres/ParametresApparence
 import { ParametresCouts } from "@/components/parametres/ParametresCouts";
 import { ParametresFournisseurs } from "@/components/parametres/ParametresFournisseurs";
 import { ParametresGeneral } from "@/components/parametres/ParametresGeneral";
-import { ParametresMcp } from "@/components/parametres/ParametresMcp";
 import { ParametresNotifications } from "@/components/parametres/ParametresNotifications";
+import { RedirectionAncreMcp } from "@/components/parametres/RedirectionAncreMcp";
 import {
   EspaceDefilement,
   SectionParametres,
@@ -53,7 +53,6 @@ const CONTENUS: Record<IdSection, () => React.ReactNode> = {
   apparence: ParametresApparence,
   agents: ParametresAgents,
   fournisseurs: ParametresFournisseurs,
-  mcp: ParametresMcp,
   couts: ParametresCouts,
   notifications: ParametresNotifications,
 };
@@ -61,6 +60,12 @@ const CONTENUS: Record<IdSection, () => React.ReactNode> = {
 export default function PageParametres() {
   return (
     <div className="flex flex-col gap-6 @3xl:flex-row @3xl:items-start @3xl:gap-8">
+      {/*
+        Ne rend rien : rattrape les signets `/parametres#mcp`, dont la section
+        est partie sur son propre écran en #270. Un fragment n'atteignant jamais
+        le serveur, la redirection ne peut pas vivre dans `next.config.ts`.
+      */}
+      <RedirectionAncreMcp />
       <NavigationParametres />
       <div className="flex min-w-0 flex-1 flex-col gap-6">
         {FAMILLES_PARAMETRES.map((famille) => (
