@@ -1,54 +1,49 @@
 "use client";
 
 /**
- * Section « Intégrations MCP » des Paramètres (#133, lot 4/5 de #129) : la
- * Control Tower en **écriture** pour la configuration MCP. Deux blocs :
+ * La **bibliothèque** de l'écran « Intégrations » (#270, lot 3/6 de #244) : le
+ * registre curé recherchable (`GET /api/mcp/registre`, #131). On cherche une
+ * intégration (« figma », « gitlab »…), on la configure **selon son mode
+ * d'auth** (token statique / appairage / token OAuth importé, docs/21) et on
+ * l'**ajoute au pool** (`POST /api/mcp/pool`).
  *
- * 1. le **pool projet** — les intégrations déjà configurées (secret saisi une
- *    seule fois, chiffré côté serveur), retirables ; l'état de chaque secret
- *    (présent / valide / expiré) y est visible sans jamais réémettre de valeur ;
- * 2. la **bibliothèque** — le registre curé recherchable (`GET /api/mcp/registre`,
- *    #131) : on cherche une intégration (« figma », « gitlab »…), on la configure
- *    **selon son mode d'auth** (token statique / appairage / token OAuth importé,
- *    docs/21) et on l'**ajoute au pool** (`POST /api/mcp/pool`).
+ * Le bloc vient de `parametres/ParametresMcp.tsx` (#133), dont il était la
+ * seconde moitié, et il en garde **la structure au détail près**. Ce n'est pas
+ * de la paresse : tout ce que #231 a corrigé face au gestionnaire de mots de
+ * passe du navigateur tient dans cette structure — le `<form>` qui borne la
+ * détection, la recherche laissée **dehors**, `autoComplete="new-password"` sur
+ * le champ masqué (Chrome ignore délibérément `off` sur un champ de mot de
+ * passe), le panneau **oublié** quand son entrée quitte les résultats. Un
+ * déménagement qui « en profiterait pour ranger » rejouerait le bug.
  *
- * L'activation d'une intégration **par agent** (l'autre moitié du ticket) vit sur
- * la fiche de l'agent, onglet « MCP & permissions » depuis #190
- * (`McpEtPermissionsAgent`), là où elle remplace l'affichage lecture seule des
- * serveurs MCP.
+ * Ce qui change : les deux actions passent par `Bouton`, comme partout ailleurs
+ * sur l'écran.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { Bouton } from "@/components/Primitives";
+import { IconeMcp } from "@/components/Icones";
+import {
+  BadgeEtat,
+  Bouton,
+  CIBLE_MINIMALE,
+  EnTeteSection,
+} from "@/components/Primitives";
 import {
   ajouterIntegrationPoolMcp,
-  chargerPoolMcp,
   chargerProvenanceRegistreMcp,
   chargerRegistreMcp,
-  supprimerIntegrationPoolMcp,
 } from "@/lib/api";
-import { formatDateHeure } from "@/lib/format";
 import {
   MCP_MODE_APPAIRAGE,
   MCP_MODE_OAUTH,
   MCP_MODE_SANS_SECRET,
   type EntreeRegistreMcp,
-  type EtatSecretPool,
-  type IntegrationPoolMcp,
   type ProvenanceRegistreMcp,
   type VariableSecret,
 } from "@/lib/types";
 
-import { EtatVide } from "./SectionParametres";
-
-/** Libellé lisible d'un mode d'auth (docs/21 §2) — l'inconnu retombe sur sa clé. */
-const LIBELLE_MODE: Record<string, string> = {
-  token_statique: "Token statique",
-  appairage: "Appairage (sans token)",
-  oauth_importe: "Token OAuth importé",
-  sans_secret: "Sans secret",
-};
+import { libelleMode } from "./modes";
 
 /** Combien de pistes proposer quand une recherche ne rend rien (#271). */
 const PISTES_MAX = 10;
@@ -65,211 +60,15 @@ function formatDateSeule(iso: string): string {
 }
 
 const CLASSE_CHAMP =
-  "w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm " +
+  "w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-corps " +
   "text-neutral-900 shadow-sm focus:border-neutral-400 focus:outline-none disabled:opacity-50 " +
   "dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-600";
 
 const CLASSE_LIBELLE =
-  "flex flex-col gap-1 text-xs font-medium text-neutral-600 dark:text-neutral-400";
-
-export function ParametresMcp() {
-  const [pool, setPool] = useState<IntegrationPoolMcp[]>([]);
-  const [poolErreur, setPoolErreur] = useState<string | null>(null);
-  const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  const rechargerPool = useCallback(async () => {
-    const rendu = await chargerPoolMcp();
-    setPool(rendu.integrations);
-    setPoolErreur(rendu.erreur);
-  }, []);
-
-  // Chargement différé d'un tick (même mécanique que les autres sections) :
-  // l'effet lui-même ne déclenche aucun setState synchrone.
-  useEffect(() => {
-    const tick = setTimeout(() => {
-      void (async () => {
-        try {
-          await rechargerPool();
-          setErreur(null);
-        } catch (e) {
-          setErreur(e instanceof Error ? e.message : String(e));
-        } finally {
-          setChargement(false);
-        }
-      })();
-    }, 0);
-    return () => clearTimeout(tick);
-  }, [rechargerPool]);
-
-  if (chargement) {
-    return <p className="text-sm text-neutral-500">Chargement des intégrations MCP…</p>;
-  }
-  if (erreur !== null) {
-    return (
-      <EtatVide
-        message={`Intégrations MCP illisibles : ${erreur}`}
-        releve="Vérifier que le backend répond (section Général) — la configuration MCP passe par son API."
-      />
-    );
-  }
-
-  const idsPool = new Set(pool.map((i) => i.id));
-
-  return (
-    <div className="flex flex-col gap-6">
-      <PoolProjet
-        pool={pool}
-        erreur={poolErreur}
-        onChangement={() => void rechargerPool()}
-      />
-      <Bibliotheque idsPool={idsPool} onAjout={() => void rechargerPool()} />
-    </div>
-  );
-}
-
-/** Le pool projet : les intégrations configurées, avec l'état de leurs secrets. */
-function PoolProjet({
-  pool,
-  erreur,
-  onChangement,
-}: {
-  pool: IntegrationPoolMcp[];
-  erreur: string | null;
-  onChangement: () => void;
-}) {
-  return (
-    <section aria-label="Pool projet des intégrations MCP" className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-        Pool projet
-      </h3>
-      {erreur !== null ? (
-        <p
-          role="alert"
-          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
-        >
-          Pool invalide : {erreur}
-        </p>
-      ) : pool.length === 0 ? (
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Aucune intégration configurée. Cherchez-en une dans la bibliothèque
-          ci-dessous et ajoutez-la au pool — son secret n&apos;est saisi
-          qu&apos;une fois, puis partagé par les agents qui l&apos;activent.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {pool.map((integration) => (
-            <LignePool
-              key={integration.id}
-              integration={integration}
-              onRetrait={onChangement}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-/** Une intégration du pool : identité, état des secrets, retrait. */
-function LignePool({
-  integration,
-  onRetrait,
-}: {
-  integration: IntegrationPoolMcp;
-  onRetrait: () => void;
-}) {
-  const [enCours, setEnCours] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  const retirer = async () => {
-    setEnCours(true);
-    setErreur(null);
-    try {
-      await supprimerIntegrationPoolMcp(integration.id);
-      onRetrait();
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
-      setEnCours(false);
-    }
-  };
-
-  return (
-    <li className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">{integration.serveur.nom}</span>
-        <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-          {integration.id}
-        </span>
-        {integration.mode_auth && (
-          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-300">
-            {LIBELLE_MODE[integration.mode_auth] ?? integration.mode_auth}
-          </span>
-        )}
-        <button
-          type="button"
-          disabled={enCours}
-          onClick={() => void retirer()}
-          className="ml-auto rounded-md border border-rose-300 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900 dark:text-rose-400 dark:hover:bg-rose-950"
-        >
-          {enCours ? "Retrait…" : "Retirer"}
-        </button>
-      </div>
-      {integration.secrets.length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-          {integration.secrets.map((secret) => (
-            <li key={secret.cle}>
-              <EtatSecretPuce secret={secret} />
-            </li>
-          ))}
-        </ul>
-      )}
-      {erreur && (
-        <p className="mt-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
-          {erreur}
-        </p>
-      )}
-    </li>
-  );
-}
-
-/** L'état d'un secret d'une intégration : configuré, à configurer, ou expiré. */
-function EtatSecretPuce({ secret }: { secret: EtatSecretPool }) {
-  const [classe, texte] = !secret.present
-    ? [
-        "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-        "à configurer",
-      ]
-    : !secret.valide
-      ? [
-          "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300",
-          secret.expire_le
-            ? `expiré le ${formatDateHeure(secret.expire_le)}`
-            : "expiré",
-        ]
-      : secret.ephemere
-        ? [
-            "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
-            "appairage (jetable)",
-          ]
-        : [
-            "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
-            secret.expire_le
-              ? `valide jusqu'au ${formatDateHeure(secret.expire_le)}`
-              : "configuré",
-          ];
-  return (
-    <span className="inline-flex items-baseline gap-1 text-xs">
-      <code className="font-mono text-neutral-500 dark:text-neutral-400">
-        {secret.cle}
-      </code>
-      <span className={`rounded-full px-2 py-0.5 ${classe}`}>{texte}</span>
-    </span>
-  );
-}
+  "flex flex-col gap-1 text-annexe font-medium text-neutral-600 dark:text-neutral-400";
 
 /** La bibliothèque : recherche du registre curé + configuration d'une entrée. */
-function Bibliotheque({
+export function BibliothequeMcp({
   idsPool,
   onAjout,
 }: {
@@ -311,6 +110,14 @@ function Bibliotheque({
 
   // Recherche différée : un court délai après la frappe évite un appel par
   // caractère (l'effet lui-même ne déclenche aucun setState synchrone).
+  //
+  // ⚠ Le délai ne vaut que pour une **recherche**. Une recherche vide n'est pas
+  // une frappe — c'est l'arrivée sur l'écran, ou le champ qu'on vient de vider —
+  // et elle ne peut pas partir en rafale, puisqu'on n'entre qu'une fois dans cet
+  // état. Le seul effet du délai y était de retarder de 200 ms l'affichage de la
+  // bibliothèque au chargement de la page, ce qui n'a jamais été le but.
+  const delai = q.trim() === "" ? 0 : 200;
+
   useEffect(() => {
     const tick = setTimeout(() => {
       void (async () => {
@@ -334,9 +141,9 @@ function Bibliotheque({
           setCharge(true);
         }
       })();
-    }, 200);
+    }, delai);
     return () => clearTimeout(tick);
-  }, [q]);
+  }, [q, delai]);
 
   // Les pistes : les tags des intégrations les plus courantes d'abord (le
   // registre est déjà trié par palier d'usage), à défaut ceux que la provenance
@@ -349,10 +156,11 @@ function Bibliotheque({
   ).slice(0, PISTES_MAX);
 
   return (
-    <section aria-label="Bibliothèque de serveurs MCP" className="flex flex-col gap-3">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-        Bibliothèque
-      </h3>
+    <section
+      aria-label="Bibliothèque de serveurs MCP"
+      className="flex flex-col gap-3"
+    >
+      <EnTeteSection titre="Bibliothèque" icone={IconeMcp} />
       <label className={CLASSE_LIBELLE}>
         Rechercher une intégration (nom, éditeur, tag…)
         {/*
@@ -375,12 +183,12 @@ function Bibliotheque({
       {erreur !== null ? (
         <p
           role="alert"
-          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
+          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-annexe text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300"
         >
           Registre illisible : {erreur}
         </p>
       ) : !charge ? (
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
+        <p className="text-corps text-neutral-500 dark:text-neutral-400">
           Chargement de la bibliothèque…
         </p>
       ) : entrees.length === 0 ? (
@@ -435,7 +243,7 @@ function Bibliotheque({
           ))}
         </ul>
       )}
-      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+      <p className="text-annexe text-neutral-500 dark:text-neutral-400">
         Seules les intégrations curées de cette bibliothèque sont installables
         (découverte ≠ installation, docs/19). Les secrets sont chiffrés côté
         serveur — jamais dans le dépôt Git.
@@ -491,27 +299,23 @@ function EntreeBibliotheque({
   onAjout: () => void;
 }) {
   return (
-    <li className="rounded-md border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900">
+    <li className="rounded-lg border border-neutral-200 bg-white px-3 py-2.5 dark:border-neutral-800 dark:bg-neutral-900">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium">{entree.nom}</span>
-        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-300">
-          {LIBELLE_MODE[entree.mode_auth] ?? entree.mode_auth}
-        </span>
-        {dejaAuPool && (
-          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-            au pool
-          </span>
-        )}
-        <button
-          type="button"
+        <span className="text-corps font-medium">{entree.nom}</span>
+        <BadgeEtat ton="info">{libelleMode(entree.mode_auth)}</BadgeEtat>
+        {dejaAuPool && <BadgeEtat ton="positif">au pool</BadgeEtat>}
+        <Bouton
+          variante="contour"
+          ton="neutre"
+          taille="petite"
           onClick={basculer}
           aria-expanded={ouverte}
-          className="ml-auto rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
+          className={`ml-auto ${CIBLE_MINIMALE}`}
         >
           {ouverte ? "Fermer" : dejaAuPool ? "Reconfigurer" : "Configurer"}
-        </button>
+        </Bouton>
       </div>
-      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+      <p className="mt-1 text-annexe text-neutral-500 dark:text-neutral-400">
         {entree.editeur && (
           <span className="text-neutral-600 dark:text-neutral-300">
             {entree.editeur} —{" "}
@@ -607,7 +411,7 @@ function FormulaireConfiguration({
       className="mt-3 flex flex-col gap-3 border-t border-neutral-100 pt-3 dark:border-neutral-800"
     >
       {entree.secrets.length === 0 ? (
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        <p className="text-annexe text-neutral-500 dark:text-neutral-400">
           Cette intégration ne demande aucun secret — l&apos;ajouter au pool
           suffit.
         </p>
@@ -638,7 +442,7 @@ function FormulaireConfiguration({
         </label>
       )}
       {entree.procedure_url && (
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        <p className="text-annexe text-neutral-500 dark:text-neutral-400">
           Procédure d&apos;obtention côté outil :{" "}
           {/*
             Cliquable si c'est une URL, en clair si c'est un chemin du dépôt : la
@@ -667,7 +471,7 @@ function FormulaireConfiguration({
               ? "Enregistrer la configuration"
               : "Ajouter au pool"}
         </Bouton>
-        <span className="text-xs text-neutral-500 dark:text-neutral-400">
+        <span className="text-annexe text-neutral-500 dark:text-neutral-400">
           {entree.mode_auth === MCP_MODE_APPAIRAGE
             ? "Valeur d'appairage jetable, à renouveler à chaque session."
             : entree.mode_auth === MCP_MODE_SANS_SECRET
@@ -676,7 +480,7 @@ function FormulaireConfiguration({
         </span>
       </div>
       {erreur && (
-        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+        <p className="text-annexe text-rose-600 dark:text-rose-400" role="alert">
           {erreur}
         </p>
       )}

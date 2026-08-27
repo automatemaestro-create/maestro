@@ -42,17 +42,25 @@ const racine = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 describe("le sommaire des Paramètres (lib/parametres)", () => {
   it("couvre les domaines de configuration annoncés", () => {
     // L'ordre est celui des familles depuis #539 : « Notifications » a suivi
-    // « Le poste », dont elle règle ce qui remonte à l'utilisateur. Les sept
-    // sections sont les mêmes, et aucune n'a quitté le sommaire.
+    // « Le poste », dont elle règle ce qui remonte à l'utilisateur.
+    //
+    // Six sections depuis #270, et non plus sept : « Intégrations MCP » a
+    // quitté le sommaire pour son propre écran (`/integrations`), une
+    // intégration décidant de ce qu'un agent sait faire plutôt que de la façon
+    // dont ce poste-ci est réglé. C'est le seul départ du sommaire à ce jour, et
+    // il n'a rien retiré au produit — l'ancre `#mcp` est rattrapée par
+    // `RedirectionAncreMcp`.
     expect(SECTIONS_PARAMETRES.map((section) => section.id)).toEqual([
       "general",
       "apparence",
       "notifications",
       "agents",
       "fournisseurs",
-      "mcp",
       "couts",
     ]);
+    expect(SECTIONS_PARAMETRES.map((section) => section.id)).not.toContain(
+      "mcp",
+    );
   });
 
   it("range chaque section sous une famille, et une seule (#539)", () => {

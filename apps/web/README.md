@@ -561,7 +561,7 @@ format), mêmes champs dans le même ordre : ce qu'on lit pour trancher ne doit 
 dépendre de l'écran d'où l'on vient, et c'était le cas quand trois rendus
 divergents décrivaient la même demande (le panneau, la page, la cloche).
 
-**Ce qui la garde** : `tests/sobriete.test.tsx`, qui monte les dix écrans du menu
+**Ce qui la garde** : `tests/sobriete.test.tsx`, qui monte les écrans du menu
 et compte. L'arbitrage n'y est pas déclaré, il se **prouve** : chaque écran est
 monté deux fois, files pleines puis files vides, et ce qui survit aux deux est ce
 que le plafond compte. Un bloc qui prétendrait arbitrer sans disparaître compte
@@ -828,9 +828,9 @@ Quatre mécanismes, et chacun garde ce que les autres ne voient pas :
 | Mécanisme | Où | Ce qu'il refuse |
 | --- | --- | --- |
 | `plugin:jsx-a11y/recommended` en **`error`** | `eslint.config.mjs` | les ~36 règles du preset, contre **6 en `warn`** auparavant — un `warn` ne fait pas rougir un pipeline, donc ne garde rien |
-| `axe-core` sur les **10 écrans** | `tests/a11y.test.tsx` | toute violation `serious`/`critical` sur un écran monté dans son shell réel |
+| `axe-core` sur les **écrans du menu** | `tests/a11y.test.tsx` | toute violation `serious`/`critical` sur un écran monté dans son shell réel |
 | `motion-reduce:` | balayage des sources, même fichier | une utilité `transition`/`animate-` écrite **sans sa garde** dans la même chaîne de classes |
-| `CIBLE_MINIMALE` | rendu des 10 écrans, même fichier | un lien ou bouton **en petit corps** sans plancher de 24 px |
+| `CIBLE_MINIMALE` | rendu des écrans du menu, même fichier | un lien ou bouton **en petit corps** sans plancher de 24 px |
 
 Trois règles à connaître avant de toucher à un écran :
 
@@ -853,7 +853,7 @@ les octets de `globals.css`, #534) ; `html-has-lang`, `html-lang-valid` et
 `document-title`, parce qu'elles jugent le **document qui enveloppe** l'écran —
 le `<html lang="fr">` et le `metadata.title` de `app/layout.tsx`, que le rendu
 d'un composant ne monte pas. Les garder ferait rapporter une faute du **harnais**
-comme une faute du produit, sur les dix écrans à la fois. Elles ne disparaissent
+comme une faute du produit, sur tous les écrans à la fois. Elles ne disparaissent
 pas pour autant : elles changent de juge, et `tests/a11y.test.tsx` les vérifie
 sur la source du layout.
 
@@ -870,7 +870,7 @@ configuration : un `off` dans `eslint.config.mjs` ferait taire la règle sur les
 
 #### Les deux exemptions de fond — arrêtées, écrites, et non découvertes plus tard
 
-Le niveau visé est **WCAG 2.2 niveau AA sur les dix écrans**. Deux exemptions
+Le niveau visé est **WCAG 2.2 niveau AA sur les écrans du menu**. Deux exemptions
 sortent de ce périmètre. Elles ont été arrêtées par la recherche #471 (docs/30
 §3.5) et sont écrites ici parce qu'une exemption qu'on ne trouve pas dans la doc
 du produit est une exemption que le prochain ticket prendra pour un oubli — ou,
@@ -917,7 +917,8 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/tableau-de-bord.test.tsx` | Le tableau de bord épuré — ce qui reste, ce qui renvoie ailleurs — et le ticket externe dans les tables de coûts (#191/#192, testés en #193) ; puis le **second niveau de `/couts`** (#539) : la vue par tâche à l'ouverture, la bascule vers la vue par exécution **sans quitter le bloc** (c'est un second niveau, pas une navigation), la répartition par agent rangée dans la colonne de propriétés, et le bloc qui s'efface quand la période n'a ni tâche ni exécution — les chiffres, eux, restent |
 | `tests/ticket-externe.test.tsx` | Le filtrage d'URL et les cartes du Kanban (#192, livré avec le lot : logique critique) |
 | `tests/detail-tache.test.tsx` | Le panneau de détail d'une tâche : description, étapes en checklist, liens filtrés et rendus selon leur nature, et la carte laissée intacte quand il n'y a rien à ouvrir (#251, livré avec le lot : filtrage d'URL et absence totale) |
-| `tests/parametres-mcp.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231) |
+| `tests/integrations-bibliotheque.test.tsx` | La bibliothèque MCP face au gestionnaire de mots de passe du navigateur : cloisonnement des champs secrets et panneau oublié quand son entrée quitte les résultats (#231), puis la bibliothèque élargie — provenance, éditeur, pistes d'une recherche infructueuse (#271). Le fichier a suivi son sujet en #270 (`parametres-mcp.test.tsx` avant lui) — les scénarios de #231 y sont inchangés, et c'est le but : un déménagement qui aurait « rangé » la structure au passage rejouerait le bug |
+| `tests/integrations.test.tsx` | L'écran **Intégrations** (#270) à son plus mince — l'entrée de menu à sa place, les blocs montés **peuplés**, « qui utilise quoi » et son lien vers la fiche, l'ancre `/parametres#mcp` rattrapée en `replace` et les autres ancres laissées tranquilles. Il garde surtout le **drain de `monterEcran`** : sans lui, tout écran chargeant en différé était audité sur son « Chargement… », donc `a11y` et `sobriete` restaient vertes **et muettes**. Le reste du comportement de l'écran revient au lot 6 (#273) |
 | `tests/projets.test.tsx` | L'écran Projets : racine choisie dans l'explorateur servi par l'API (jamais saisie), refus motivé qui ne casse ni la liste ni la navigation, dossier vide distinct d'un refus (#225) |
 | `tests/journal.test.tsx` | La page Journal : fil sans limite, filtres par type/agent/tâche, recherche jusque dans le détail, « notable seulement » aligné sur la cloche (#249) |
 | `tests/activite.test.tsx` | Les lignes d'activité : repli des rafales, horodatage relatif, détail brut à un clic, garde des types inconnus (#250) |
@@ -935,9 +936,9 @@ géométrie celui du skill `/banc-mise-en-page` (voir ci-dessus).
 | `tests/runs-vue.test.tsx` | La vue d'un run (#475/#478, testée en #480) : les tâches lues **avec `?run=`** et non filtrées sur `Tache.run_id` — le champ porte le *dernier* run qui les a touchées, une relance volerait celles du run repris —, la relecture au **pouls** du shell sans seconde WebSocket, les trois vides (autre projet, arrêt sur brief, API muette) et le journal persisté fusionné au direct sans doublon — atteint **par son onglet** depuis #516, avec le contrôle qu'il ne s'affiche ni sous le pipeline ni sous le Kanban |
 | `tests/pipeline.test.tsx` | La vue pipeline d'un run (#491, testée en #492) en **trois étages**, parce qu'ils ne se gardent pas de la même façon : les règles hors JSX (`lib/graphe` — le backend sert tout ce qui se dessine, ce module ne porte que les trois questions qu'il ne pose pas, et l'**ordre** dans lequel elles sont posées *est* la décision ; `lib/vuesRun` — le pipeline ouvre) ; la checklist rendue (`components/EtapesTache` — **une case par étape**, le contrôle qui compte étant le dénominateur qui grandit sans que le numérateur bouge) ; puis la vue montée : le nœud en cours, l'étape qui se coche au battement suivant, l'arête qui s'allume, et l'attente humaine qui ne se lit plus « en cours » |
 | `tests/etat-des-runs.test.tsx` | L'état des runs au tableau de bord (#476, testé en #480) : **l'exhaustivité de la table des groupes**, balayée sur `regimeDuRun` plutôt qu'énumérée — un régime sans groupe fait disparaître ces runs-là de l'écran, ce qui est arrivé à « en pause » entre #476 et #477 — puis le plafond des soldés et ce qu'il annonce, `soldeAujourdHui` sur ses trois entrées, et l'écran qui ne porte **aucun** geste |
-| `tests/a11y.test.tsx` | Le **filet d'accessibilité** (#537) en trois étages : `axe-core` joué sur les **10 écrans** montés dans leur shell réel, verdict **0 violation `serious`/`critical`** — table d'écrans **dérivée de `MENU`**, donc une page ajoutée au menu sans cas d'audit rougit ; puis ce qu'axe ne sait pas voir — le **lien d'évitement** (premier dans l'ordre du DOM, visant un `<main>` que le focus peut atteindre), la **garde de mouvement** sur chaque utilité `transition`/`animate-` du produit, et le **plancher de 24 px** des cibles en petit corps. Comme `contraste.test.ts`, **la sonde est prouvée avant de servir** : sur un fragment fautif (image sans alternative, bouton sans nom, champ sans étiquette), puis sur un fragment sain |
+| `tests/a11y.test.tsx` | Le **filet d'accessibilité** (#537) en trois étages : `axe-core` joué sur les **écrans du menu** montés dans leur shell réel, verdict **0 violation `serious`/`critical`** — table d'écrans **dérivée de `MENU`**, donc une page ajoutée au menu sans cas d'audit rougit ; puis ce qu'axe ne sait pas voir — le **lien d'évitement** (premier dans l'ordre du DOM, visant un `<main>` que le focus peut atteindre), la **garde de mouvement** sur chaque utilité `transition`/`animate-` du produit, et le **plancher de 24 px** des cibles en petit corps. Comme `contraste.test.ts`, **la sonde est prouvée avant de servir** : sur un fragment fautif (image sans alternative, bouton sans nom, champ sans étiquette), puis sur un fragment sain |
 | `tests/regions-live.test.tsx` | Les régions live des écrans temps réel (#538) : le **vocabulaire sans DOM** (seules les hausses parlent, un franchissement dit le total, les deux attentes humaines **absentes** du relevé des runs) ; la **présence** écran par écran, comptée sur l'attribut `aria-live` comme la sonde du ticket — une polie, zéro assertive ; le **contenu** après un événement simulé ; le **débit**, où une rafale de trois tâches ne coûte que deux phrases et douze événements du journal une seule ; et l'**assertive** avec sa réserve — unique dans le shell, muette sur une tâche terminée, et jamais redite par la région polie de l'écran qui montre l'arbitrage |
-| `tests/sobriete.test.tsx` | La **règle des trois places** (#539, voir « Le langage visuel » ci-dessus) rendue opposable : les 10 écrans du menu recensés, bandeau de tête ≤ 4 chiffres, corps ≤ 3 blocs, une seule colonne de propriétés, aucun bloc anonyme. Rien n'y est **déclaré** — le bandeau se reconnaît à ses `TuileChiffre`, la colonne à sa balise `<aside>`, et l'**arbitrage se prouve** en montant chaque écran une seconde fois files vides : un bloc qui prétendrait arbitrer sans disparaître compterait comme les autres. Sonde prouvée sur un échantillon fautif avant de balayer, comme `contraste.test.ts` |
+| `tests/sobriete.test.tsx` | La **règle des trois places** (#539, voir « Le langage visuel » ci-dessus) rendue opposable : les écrans du menu recensés, bandeau de tête ≤ 4 chiffres, corps ≤ 3 blocs, une seule colonne de propriétés, aucun bloc anonyme. Rien n'y est **déclaré** — le bandeau se reconnaît à ses `TuileChiffre`, la colonne à sa balise `<aside>`, et l'**arbitrage se prouve** en montant chaque écran une seconde fois files vides : un bloc qui prétendrait arbitrer sans disparaître compterait comme les autres. Sonde prouvée sur un échantillon fautif avant de balayer, comme `contraste.test.ts` |
 | `tests/contraste.test.ts` | Le contraste de la palette sémantique (#534) : les **36 paires légitimes par thème** de #533 mesurées en octets dans `globals.css`, au seuil 4,5:1 (texte) ou 3:1 (contour, aplat d'état) — **et la sonde prouvée avant de servir**, sur les ratios que #471 avait mesurés au navigateur puis sur une faute glissée exprès. Le contrôle qui en fait un filet plutôt qu'un instantané est le dernier : un token ajouté sans paire **rougit** au lieu d'être vert par construction |
 
 Cinq fichiers portent l'outillage plutôt que des tests :
@@ -955,15 +956,27 @@ Cinq fichiers portent l'outillage plutôt que des tests :
   lequel tout rendu du shell s'arrête à la porte) et `rendreAvecEtat`, qui monte
   un composant sous le **vrai** fournisseur d'état du shell avec une source temps
   réel factice ;
-- `tests/ecrans.tsx` — **les dix écrans** (#537, extrait ici par #539) : quel
+- `tests/ecrans.tsx` — **les écrans du menu** (#537, extrait ici par #539) : quel
   composant chaque route rend, l'état partagé dans lequel on les monte
   (`peuplerEtat`, files d'arbitrage pleines, et `peuplerEtatSansArbitrage`, files
   vides mais projet toujours peuplé — tout vider ferait basculer le tableau de
   bord sur `PosteVide`, donc mesurer un autre écran), et `monterEcran`, qui monte
-  sous le **vrai** `Shell` et attend que la garde du projet ouvre. `a11y` et
-  `sobriete` s'en servent tous les deux : deux tables recopiées seraient le
-  premier moyen qu'une suite rende un verdict sur un produit que l'autre ne monte
-  plus ;
+  sous le **vrai** `Shell`, attend que la garde du projet ouvre **puis laisse
+  passer le tick de chargement différé**. `a11y` et `sobriete` s'en servent tous
+  les deux : deux tables recopiées seraient le premier moyen qu'une suite rende
+  un verdict sur un produit que l'autre ne monte plus. Leur nombre n'est écrit
+  nulle part — la table est confrontée à `MENU` des deux côtés, donc c'est `MENU`
+  qui fait foi (ils ont été dix de #537 à #270) ;
+
+  ⚠ **La seconde attente a manqué jusqu'à #270**, et son absence coûtait la
+  moitié de ce que les deux sondes prétendent mesurer : le `h1` de la barre
+  supérieure vient du **menu** et non des données, donc il est là au premier
+  rendu et `findByRole` rendait la main avant qu'aucun écran chargeant en
+  différé n'ait reçu quoi que ce soit. Mesuré en ajoutant `/integrations` :
+  l'écran était audité sur « Chargement des intégrations… » — un écran vide n'a
+  presque pas de balises, donc axe n'y trouvait rien et le comptage n'y voyait
+  aucun bloc. Un vert qui ne parle que du vide, exactement ce que `peuplerEtat`
+  existe pour éviter ;
 - `tests/ecrans-reseau.ts` — les fabriques de mock des mêmes écrans, **séparées**
   du fichier ci-dessus et pas par confort : `vi.mock` est hissé en tête du
   fichier de test, ses fabriques ne peuvent donc charger leurs dépendances que
@@ -979,7 +992,7 @@ Cinq fichiers portent l'outillage plutôt que des tests :
   reviendrait à auditer des composants là où on veut auditer des écrans.
 
 ⚠ Trois pièges de ce harnais, les deux premiers apparus en écrivant les trois
-suites de runs, le troisième en montant les dix écrans de #537 :
+suites de runs, le troisième en montant les écrans du menu (#537) :
 
 - **`chargerTaches` n'est pas mocké par `tests/setup.ts`**, contrairement à
   `chargerProjets` et `chargerJournal` — et **`chargerGrapheExecution` non plus**

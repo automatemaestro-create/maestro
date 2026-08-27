@@ -115,10 +115,11 @@ function CadreControlTower({
     // d'affichage, elle ne change pas avec le projet.
     <FournisseurEtatGlobal key={projet.id} projet={projet}>
       {/* Le lien d'évitement (#537, WCAG 2.2 §2.4.1). Le produit n'en avait
-          aucun (docs/30 §3.4) : au clavier, chaque écran commençait par les
-          **dix entrées** du menu, puis la barre supérieure, avant d'atteindre
-          quoi que ce soit de la page — et le menu est identique partout, donc
-          c'était dix tabulations à repayer à chaque navigation.
+          aucun (docs/30 §3.4) : au clavier, chaque écran commençait par
+          **toutes les entrées** du menu (dix à l'époque, onze depuis #270),
+          puis la barre supérieure, avant d'atteindre quoi que ce soit de la
+          page — et le menu est identique partout, donc c'était autant de
+          tabulations à repayer à chaque navigation.
           Il est **premier dans l'ordre du DOM** et non seulement à l'écran :
           c'est sa position ici, avant la barre latérale, qui en fait le premier
           arrêt de la touche Tab.
