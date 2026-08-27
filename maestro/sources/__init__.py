@@ -5,7 +5,7 @@ parent #314) : un lancement ne portait qu'un objectif texte, il porte désormais
 ce que cet objectif embarque — fichiers téléversés, dossier de références, URL
 (EF-39, entité SOURCE de [docs/03](../../docs/03-modele-de-donnees.md)).
 
-Cinq modules, cinq responsabilités qui ne se mélangent pas :
+Six modules, six responsabilités qui ne se mélangent pas :
 
 - `modele` — la **forme** (`Source`, `SourceRefusee`), module feuille, relue
   sans jamais être rejugée : un journal durable rejoué ne se refuse pas ;
@@ -19,7 +19,12 @@ Cinq modules, cinq responsabilités qui ne se mélangent pas :
   octets : c'est le seul moyen qu'une source `fichier` en désigne de vrais ;
 - `apercu` (#319) — ce que des sources **donneraient**, joué à vide : la même
   lecture, rendue avant le lancement et sans rien conserver, pour que composer un
-  objectif reste réversible tant que c'est gratuit.
+  objectif reste réversible tant que c'est gratuit ;
+- `composition` (#482) — l'**enchaînement** des trois précédents (déclarer,
+  résoudre, rattacher), qui vivait en privé dans le lancement tant que celui-ci
+  était le seul geste capable de porter des sources. Le fil de chat en est un
+  second : ils appellent la même chaîne, et c'est le sens littéral du critère
+  « jamais par une seconde ».
 
 Les deux régimes sont opposés à dessein : la résolution **refuse** (une saisie se
 corrige), l'extraction **ignore ou tronque en le disant** (un contenu n'est pas
@@ -31,6 +36,7 @@ au [§6.8 et au §6.1 de docs/05](../../docs/05-interface-control-tower.md).
 """
 
 from maestro.sources.apercu import RUN_APERCU, apercu_sources
+from maestro.sources.composition import composer_sources
 from maestro.sources.extraction import (
     ETAT_IGNORE,
     ETAT_LU,
@@ -97,6 +103,7 @@ __all__ = [
     "SourceRefusee",
     "Televersement",
     "apercu_sources",
+    "composer_sources",
     "contexte_markdown",
     "declarer_televersements",
     "emplacement_ingestion",
