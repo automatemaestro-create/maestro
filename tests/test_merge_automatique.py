@@ -1070,6 +1070,17 @@ def _verdicts_de_cloture() -> dict[str, str]:
 # est tout l'objet du motif — le bloc réécrit nomme `/mr-fix` à chaque ligne.
 _PROPOSITION = re.compile(r"propos\w+[^.\n]{0,24}`?/mr-fix")
 
+# Un DÉCLENCHEMENT route vers la commande : « enchaîne sur /mr-fix », « lance /mr-fix ». Une
+# INTERDICTION emploie les MÊMES verbes pour dire le contraire — « n'enchaîne JAMAIS sur /mr-fix » —
+# et depuis #595 le bloc `3` en porte une, précisément pour la conduite que ce test garde. Un motif
+# qui ne lit que le nom de la commande rougit donc sur le texte qui LUI donne raison : c'est la
+# distinction usage/mention du dépôt (#365, #599), et elle se tient ici au verbe et à sa négation.
+# En français la négation précède le verbe (« ne »/« n' »), ce qui suffit à les séparer.
+_DECLENCHEMENT = re.compile(
+    r"(?<!\bne )(?<!\bn')(?:enchaîn|lanc|invoqu|propos|déclench)\w*[^.\n]{0,32}`?/mr-fix",
+    re.I,
+)
+
 
 def test_sur_une_cause_reparable_la_cloture_enchaine_au_lieu_de_proposer() -> None:
     """Le critère du ticket : sur `4` et `5`, on répare sans demander.
@@ -1097,6 +1108,11 @@ def test_sur_une_cause_reparable_la_cloture_enchaine_au_lieu_de_proposer() -> No
         assert not _PROPOSITION.search(bloc), (
             f"le verdict {code} propose encore `/mr-fix` au lieu de l'enchaîner"
         )
+        # …et le motif du test voisin se prouve ici sur le VRAI texte : c'est le seul endroit du
+        # prompt qui prescrit `/mr-fix`, donc s'il ne le voit pas, son « aucun » ne dit plus rien.
+        assert _DECLENCHEMENT.search(bloc), (
+            f"le verdict {code} ne route plus vers `/mr-fix` — ou le motif a cessé de le voir"
+        )
     # `4` et `5` partagent la même conduite : le découpage doit le rendre visible, sans quoi la
     # moitié du critère pourrait tomber sans que rien ne rougisse.
     assert blocs["4"] == blocs["5"], "les deux causes réparables ne partagent plus leur conduite"
@@ -1108,10 +1124,29 @@ def test_les_autres_verdicts_ne_declenchent_aucun_deblocage() -> None:
     Un `6` est un geste humain PAR DÉFINITION (#415) — lui envoyer une remédiation ferait payer une
     session entière pour qu'elle reconfirme qu'elle ne peut rien. Un `3` n'a pas de correctif à
     écrire : il attend un verdict, et sa reprise unique lui suffit.
+
+    Ce qui est gardé est le DÉCLENCHEMENT, jamais le nom de la commande : depuis #595 le bloc `3`
+    interdit `/mr-fix` en toutes lettres, parce qu'une PR dont le pipeline n'est pas encore né n'a
+    ni conflit ni job rouge. Exiger l'absence du mot ferait rougir l'interdiction en même temps que
+    la prescription — et le remède serait de retirer la garde, c'est-à-dire l'inverse du critère.
     """
+    # Le motif prouve d'abord son motif : il voit la prescription, et laisse passer l'interdiction.
+    for fautif in (
+        "sur un `3`, enchaîne sur `/mr-fix <numéro>`",
+        "lance `/mr-fix` et reprends",
+        "invoque /mr-fix, elle est autosuffisante",
+    ):
+        assert _DECLENCHEMENT.search(fautif), f"le motif ne voit pas le déclenchement : {fautif!r}"
+    for licite in (
+        "⚠ **N'enchaîne JAMAIS sur `/mr-fix` ici** (#595)",
+        "rien que `/mr-fix` sache réparer",
+        "ne lance pas `/mr-fix` : il n'y a ni conflit ni job rouge",
+    ):
+        assert not _DECLENCHEMENT.search(licite), f"le motif confond mention et usage : {licite!r}"
+
     blocs = _verdicts_de_cloture()
     for code in ("0", "1", "2", "3", "6"):
-        assert "/mr-fix" not in blocs[code], (
+        assert not _DECLENCHEMENT.search(blocs[code]), (
             f"le verdict {code} déclenche un déblocage qu'il ne devrait pas — "
             "seuls `4` et `5` sont réparables"
         )

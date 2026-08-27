@@ -12,8 +12,9 @@ n'est pas clair.
 
 ⚠ **Depuis #418 (chantier #413), cette commande va jusqu'au merge** : elle passe la PR en « prête »,
 **attend le pipeline** puis appelle `merge-mr`. Deux conséquences à assumer plutôt qu'à masquer —
-elle ne rend plus la main dans la seconde (l'attente est bornée à 15 min, annoncée pendant qu'elle
-dure), et **la revue avant merge disparaît de fait** (docs/10 §6). Ce qui disparaît est l'attente
+elle ne rend plus la main dans la seconde (l'attente est bornée — 15 min pour un run qui tourne,
+**jusqu'à 30 min** quand le run n'est pas encore né (#595, docs/10 §8.9) — et annoncée pendant
+qu'elle dure), et **la revue avant merge disparaît de fait** (docs/10 §6). Ce qui disparaît est l'attente
 d'un humain pour *vérifier*, pas la vérification : les quatre prérequis vivent dans `merge-mr`
 (#415), et **aucun merge non vérifié** n'a lieu (#417).
 
@@ -257,13 +258,24 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
       ```
       bash scripts/gitlab/lib.sh pipeline-wait <branche> || verdict=$?
       ```
-      **Dis-le avant de lancer l'appel** — « pipeline en cours, attente bornée à 15 min » : c'est
-      2-4 min en régime normal, mais une commande qui ne rend pas la main pendant trois minutes
-      sans avoir prévenu passe pour bloquée. `pipeline-wait` **n'écrit nulle part, ne relance rien
-      et ne juge rien** (#416) ; ses codes (`0` vert, `3` verdict terminal non vert, `4` plafond
-      atteint, `5` aucun pipeline) servent à **formuler**, jamais à décider. Enchaîne sur `merge-mr`
-      **dans tous les cas** : deux endroits qui disent « mergeable » valent moins qu'un, et c'est
-      `merge-mr` qui tranche.
+      **Dis-le avant de lancer l'appel** — « pipeline attendu : 2-4 min en régime normal, jusqu'à
+      15 min s'il tourne, jusqu'à 30 min s'il n'est pas encore né » : une commande qui ne rend pas
+      la main pendant trois minutes sans avoir prévenu passe pour bloquée. `pipeline-wait` **n'écrit
+      nulle part, ne relance rien et ne juge rien** (#416) ; ses codes (`0` vert, `3` verdict
+      terminal non vert, `4` plafond atteint, `5` aucun pipeline et aucun n'est dû, `6` **pas encore
+      né alors qu'une PR le rend dû**) servent à **formuler**, jamais à décider. Enchaîne sur
+      `merge-mr` **dans tous les cas** : deux endroits qui disent « mergeable » valent moins qu'un,
+      et c'est `merge-mr` qui tranche.
+
+      ⚠ **Le `6` est le verdict de #595, et il n'est pas un échec.** Le 2026-08-26, l'événement
+      `pull_request` a mis 18 à 20 min à déclencher la CI sur trois PR consécutives (docs/10 §8.9) —
+      rien de rouge, rien en conflit, juste un run qui n'était pas encore né. Le verbe attend
+      désormais jusqu'à 30 min dans ce cas précis, donc il aboutit tout seul ; s'il rend quand même
+      `6`, **note la durée** pour le résumé (étape 15) et enchaîne sur `merge-mr`, qui rendra `3`.
+      Le remède manuel que le verbe imprime — `gh workflow run ci.yml --ref <branche>` — n'est
+      **pas** à jouer d'office : il vérifie `refs/heads/<branche>` et non la ref de merge de la PR,
+      donc il substituerait en silence une vérification plus faible à celle qu'on attendait.
+      Mentionne-le dans le résumé comme le geste disponible, sans le poser.
    2. **Merge** :
       ```
       bash scripts/gitlab/lib.sh merge-mr <iid> || verdict=$?
@@ -278,12 +290,22 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
         (`delete_branch_on_merge`, #384) ; la branche locale et le worktree, eux, partent à
         l'**étape 14** — que seul ce verdict déclenche, avec le `7` (#519, #593).
       - `3` → le verdict n'est **pas encore rendu** : run en cours, absent, ou **périmé** — un vert
-        porté par un commit antérieur au tien. Ce dernier cas est le plus fréquent, et il est
-        normal : `pipeline-wait` ne compare pas les sha (il le dit lui-même), donc il a pu rendre
-        `0` sur le run précédent de la branche pendant que le tien démarrait. **Repasse une fois,
+        porté par un commit antérieur au tien. C'est `merge-mr` qui compare les sha et rend ce `3`
+        (docs/10 §6). `pipeline-wait`, lui, **sait depuis #595 quel run il attend** dès qu'une PR
+        est ouverte : il écarte celui de la push précédente au lieu d'en faire un `0`, donc la
+        reprise ci-dessous **attend enfin quelque chose** — avant, les deux appels rendaient le même
+        verdict pour la même raison, sans qu'une seconde se soit écoulée. **Repasse une fois,
         pas plus** — `pipeline-wait <branche>` puis `merge-mr <iid>` à nouveau. Toujours `3` :
         laisse la PR **ouverte**, le ticket **« En revue »**, et dis-le — quelqu'un repassera, ou
         le drain de fin de run (#419).
+
+        ⚠ **N'enchaîne JAMAIS sur `/mr-fix` ici** (#595), même quand l'attente s'éternise : une PR
+        dont le pipeline **n'existe pas encore** n'a ni conflit ni job rouge, donc rien que `/mr-fix`
+        sache réparer — les deux tentatives seraient consommées pour rien. `merge-mr` dit « pipeline
+        pas encore né » dans ses deux formes (aucun run pour la branche, ou dernier run sur un sha
+        antérieur) : dans les deux cas le run de la tête vient, et le résumé le **nomme** au lieu de
+        parler d'« attente » — avec sa durée, et en disant que le geste disponible est un
+        `gh workflow run ci.yml --ref <branche>` que tu n'as pas posé.
       - `4` → **pipeline rouge** · `5` → **conflit avec `origin/main`** → **enchaîne sur `/mr-fix
         <numéro>`, sans demander** (#460). Ne corrige rien toi-même : réparer un pipeline ou
         résoudre un conflit est un métier à part, et c'est le sien — invoque la commande, elle est
@@ -295,6 +317,9 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
         commits non poussés. **Nomme-la telle que le helper l'a rendue**, et ne la contourne pas —
         ni un `gh pr ready` « au cas où », ni un push de rattrapage, ni un merge par un autre
         chemin. Un `6` dit qu'une hypothèse de la clôture est fausse : le remède est de la regarder.
+        ⚠ **Ce n'est pas le `6` de 13.1** : les deux tables partagent leurs chiffres (#595), et
+        celui de `pipeline-wait` dit « pas encore né », ce qui n'est pas une anomalie. Lis le code
+        dans la table du verbe qui vient de le rendre.
       - `7` → **la PR était déjà mergée** — quelqu'un d'autre l'a fait passer dans `main` pendant
         que tu travaillais (une session voisine, un `/mr-fix`, le drain d'un run). Ce n'est **pas
         une anomalie et il n'y a rien à faire** : le ticket est fermé par son `Closes`, son état
@@ -307,7 +332,7 @@ session **finit dans le clone principal**, pas là où elle a travaillé. C'est 
       l'ordre qui est le sien (conflit d'abord, pipeline ensuite) et, depuis #418, **merge ce qu'il
       vient de débloquer**. Quatre choses à tenir :
       - **Annonce l'attente avant de lancer.** `/mr-fix` attend un pipeline à son tour, qui
-        s'ajoute aux 15 min de 13.1 : dis-le — « pipeline rouge, je lance `/mr-fix` : nouvelle
+        s'ajoute à celle de 13.1 : dis-le — « pipeline rouge, je lance `/mr-fix` : nouvelle
         attente de pipeline ». #418 a choisi d'annoncer cette attente plutôt que de la masquer ;
         elle s'allonge ici, la règle ne change pas.
       - **Ne repasse pas `merge-mr` derrière lui.** Son étape 12 *est* l'appel à `merge-mr`, donc
