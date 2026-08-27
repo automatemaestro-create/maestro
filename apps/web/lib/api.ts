@@ -32,6 +32,7 @@ import type {
   Projet,
   PropositionPlaybook,
   PropositionPlaybookDetail,
+  ProvenanceRegistreMcp,
   RapportLecture,
   RefusProjet,
   ReponsesBrief,
@@ -543,6 +544,16 @@ async function envoyerJsonEtLire<T>(
 export function chargerRegistreMcp(q = ""): Promise<EntreeRegistreMcp[]> {
   const requete = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
   return chargerJson<EntreeRegistreMcp[]>(`/api/mcp/registre${requete}`);
+}
+
+/**
+ * La provenance de la bibliothèque (`GET /api/mcp/registre/provenance`, #271) :
+ * d'où vient la liste, quand elle a été revue, et les tags par lesquels
+ * chercher. Route sœur et non enveloppe : `chargerRegistreMcp` rend toujours
+ * une liste nue.
+ */
+export function chargerProvenanceRegistreMcp(): Promise<ProvenanceRegistreMcp> {
+  return chargerJson<ProvenanceRegistreMcp>("/api/mcp/registre/provenance");
 }
 
 /**

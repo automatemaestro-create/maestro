@@ -41,8 +41,48 @@ from maestro.controltower.events import InMemoryEventBus
 
 
 def test_seed_expose_les_pilotes_et_les_deux_forges() -> None:
-    registre = RegistreMcp.curee()
-    assert [e.id for e in registre.lister()] == ["github", "gitlab", "slack", "figma-officiel"]
+    """Les quatre pilotes d'origine sont toujours là — **inclusion**, plus égalité (#271).
+
+    La liste exacte était le contrat tant que le registre tenait en quatre
+    entrées ; depuis l'élargissement elle rendrait ce test faux à chaque
+    intégration ajoutée, c'est-à-dire à chaque fois qu'il a le plus de raisons
+    d'être joué. Ce qui doit rester vrai est qu'aucun ajout ne fait *disparaître*
+    un pilote historique.
+    """
+    ids = {e.id for e in RegistreMcp.curee().lister()}
+    assert {"github", "gitlab", "slack", "figma-officiel"} <= ids
+
+
+def test_lister_met_les_plus_courants_en_tete() -> None:
+    """Le tri du critère 2 : palier d'usage décroissant, puis nom (jamais l'ordre du seed)."""
+    entrees = RegistreMcp.curee().lister()
+    paliers = [e.popularite for e in entrees]
+    assert paliers == sorted(paliers, reverse=True)
+    # À palier égal, l'ordre est alphabétique — stable, sans faux gagnant.
+    tetes = [e.nom for e in entrees if e.popularite == paliers[0]]
+    assert tetes == sorted(tetes, key=str.casefold)
+
+
+def test_recherche_par_editeur() -> None:
+    """« nom, éditeur et tags » (critère 2) : un éditeur qui n'est dans aucun nom se trouve."""
+    resultats = RegistreMcp.curee().rechercher("microsoft")
+    assert [e.id for e in resultats] == ["playwright"]
+
+
+def test_provenance_dit_ses_sources_et_sa_date() -> None:
+    """Critère 1 : la liste dit d'où elle vient et quand elle a été revue."""
+    provenance = RegistreMcp.curee().provenance
+    assert provenance.revue_le
+    assert provenance.sources
+    assert all(s.url.startswith("https://") for s in provenance.sources)
+    assert "resume" in provenance.to_dict()
+
+
+def test_tags_rend_les_pistes_de_recherche() -> None:
+    """La sortie du cul-de-sac (critère 2) : par quoi chercher, dédoublonné et trié."""
+    tags = RegistreMcp.curee().tags()
+    assert "forge" in tags and "recherche" in tags
+    assert list(tags) == sorted(set(tags))
 
 
 def test_les_deux_forges_cohabitent_dans_la_bibliotheque() -> None:
@@ -68,10 +108,35 @@ def test_chaque_entree_porte_ses_metadonnees() -> None:
         assert entree.transport in ("stdio", "sse", "http")
         assert entree.mode_auth  # classé docs/21
         assert entree.procedure_url  # lien de procédure côté outil
+        assert entree.editeur  # qui publie ce serveur (#271, critère 1)
+        assert entree.description  # ce que l'intégration apporte (#271, critère 1)
+        if entree.mode_auth == "sans_secret":
+            # Le cas dégénéré (#271) : rien à saisir, donc rien à guider. Exiger
+            # une variable ici reviendrait à en inventer une pour satisfaire le
+            # test — et à fermer la bibliothèque aux utilitaires locaux, qui sont
+            # parmi les serveurs les plus utilisés.
+            assert entree.secrets == ()
+            continue
         assert entree.secrets  # au moins une variable à fournir
         # Le gabarit d'exécution porte au moins une référence ${VAR}.
         gabarit = " ".join((*entree.env.values(), *entree.headers.values()))
         assert "${" in gabarit
+
+
+def test_chaque_variable_declaree_est_referencee_par_le_gabarit() -> None:
+    """Aucune variable orpheline : ce qu'on fait saisir doit servir au montage (#271).
+
+    Le piège d'une liste qui grandit : déclarer un secret dans `secrets` sans le
+    référencer dans `env`/`headers`. L'UI le ferait saisir, `resolus` ne le
+    lirait jamais, et l'intégration échouerait au montage en accusant autre
+    chose. `resolus` ne résout **que** `env` et `headers` — jamais `args` —,
+    d'où un gabarit qui ne porte aucune variable en ligne de commande.
+    """
+    for entree in RegistreMcp.curee().lister():
+        gabarit = " ".join((*entree.env.values(), *entree.headers.values()))
+        for variable in entree.secrets:
+            assert f"${{{variable.cle}}}" in gabarit, f"{entree.id} : {variable.cle} orpheline"
+        assert not any("${" in arg for arg in entree.args), f"{entree.id} : ${{VAR}} en args"
 
 
 def test_figma_est_optionnel_et_oauth_importe() -> None:
@@ -97,15 +162,20 @@ def test_to_dict_reemet_le_gabarit_tel_quel() -> None:
 
 
 def test_recherche_par_nom() -> None:
+    # Les deux voies Figma (serveur officiel et pont communautaire, #271) — et
+    # la plus courante d'abord, ce que le tri garantit.
     resultats = RegistreMcp.curee().rechercher("figma")
-    assert [e.id for e in resultats] == ["figma-officiel"]
+    assert [e.id for e in resultats] == ["figma-officiel", "figma-pont"]
 
 
 def test_recherche_par_tag() -> None:
-    # « tickets » est porté par les deux forges (#412) : la recherche rend les
-    # deux, dans l'ordre du seed — elle filtre, elle ne départage pas.
+    # « tickets » est porté par les deux forges (#412) et par les gestionnaires
+    # de projet (#271) : la recherche filtre, et le tri met le plus courant en
+    # tête. L'inclusion plutôt que l'égalité — la liste grandit à chaque revue.
     resultats = RegistreMcp.curee().rechercher("tickets")
-    assert [e.id for e in resultats] == ["github", "gitlab"]
+    ids = [e.id for e in resultats]
+    assert ids[0] == "github"
+    assert {"github", "gitlab", "linear", "atlassian"} <= set(ids)
 
 
 def test_recherche_insensible_casse_et_accents() -> None:
@@ -114,7 +184,7 @@ def test_recherche_insensible_casse_et_accents() -> None:
     assert [e.id for e in registre.rechercher("MESSAGERIE")] == ["slack"]
     # « maquettes » (tag Figma, sans accent) et sa variante accentuée coïncident.
     assert registre.rechercher("maquëttes") == registre.rechercher("maquettes")
-    assert [e.id for e in registre.rechercher("maquëttes")] == ["figma-officiel"]
+    assert [e.id for e in registre.rechercher("maquëttes")] == ["figma-officiel", "figma-pont"]
 
 
 def test_recherche_vide_rend_tout() -> None:
@@ -201,7 +271,17 @@ def test_variable_secret_to_dict() -> None:
 
 def test_seed_est_un_registre_valide() -> None:
     # Le seed en clair du module se construit sans erreur (allowlist saine).
-    assert RegistreMcp(SEED).lister() == SEED
+    # `lister()` trie par palier d'usage (#271), donc l'égalité porte sur le
+    # contenu et non sur l'ordre de déclaration (une entrée n'est pas hachable :
+    # elle porte des dicts, d'où la comparaison sur les ids).
+    listees = RegistreMcp(SEED).lister()
+    assert sorted(e.id for e in listees) == sorted(e.id for e in SEED)
+
+
+def test_id_reserve_par_une_route_refuse() -> None:
+    """Un id que l'API prend pour une de ses routes rendrait l'entrée injoignable (#271)."""
+    with pytest.raises(ValueError, match="réservé"):
+        RegistreMcp([_entree(id="provenance")])
 
 
 # ── ⑤ API ─────────────────────────────────────────────────────────────────────
@@ -217,14 +297,34 @@ def test_api_liste_le_registre(client: TestClient) -> None:
     reponse = client.get("/api/mcp/registre")
     assert reponse.status_code == 200
     corps = reponse.json()
-    assert [e["id"] for e in corps] == ["github", "gitlab", "slack", "figma-officiel"]
+    assert {"github", "gitlab", "slack", "figma-officiel"} <= {e["id"] for e in corps}
     assert all(e["curee"] is True for e in corps)
+    # L'éditeur et le palier d'usage voyagent jusqu'à l'UI (#271, critères 1 et 2).
+    assert all(e["editeur"] for e in corps)
+    paliers = [e["popularite"] for e in corps]
+    assert paliers == sorted(paliers, reverse=True)
 
 
 def test_api_recherche_par_q(client: TestClient) -> None:
     reponse = client.get("/api/mcp/registre", params={"q": "design"})
     assert reponse.status_code == 200
-    assert [e["id"] for e in reponse.json()] == ["figma-officiel"]
+    assert [e["id"] for e in reponse.json()] == ["figma-officiel", "figma-pont"]
+
+
+def test_api_provenance(client: TestClient) -> None:
+    """La provenance a sa route (#271) : l'écran ne peut pas la dire s'il ne l'a pas."""
+    reponse = client.get("/api/mcp/registre/provenance")
+    assert reponse.status_code == 200
+    corps = reponse.json()
+    assert corps["revue_le"]
+    assert corps["sources"]
+    assert corps["tags"]  # les pistes de recherche, pour un résultat vide
+
+
+def test_api_provenance_ne_masque_aucune_entree(client: TestClient) -> None:
+    """L'id `provenance` est réservé, donc la route ne peut voler la place de personne."""
+    ids = {e["id"] for e in client.get("/api/mcp/registre").json()}
+    assert "provenance" not in ids
 
 
 def test_api_fiche_entree(client: TestClient) -> None:

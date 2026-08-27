@@ -24,6 +24,7 @@ import { Bouton } from "@/components/Primitives";
 import {
   ajouterIntegrationPoolMcp,
   chargerPoolMcp,
+  chargerProvenanceRegistreMcp,
   chargerRegistreMcp,
   supprimerIntegrationPoolMcp,
 } from "@/lib/api";
@@ -31,9 +32,11 @@ import { formatDateHeure } from "@/lib/format";
 import {
   MCP_MODE_APPAIRAGE,
   MCP_MODE_OAUTH,
+  MCP_MODE_SANS_SECRET,
   type EntreeRegistreMcp,
   type EtatSecretPool,
   type IntegrationPoolMcp,
+  type ProvenanceRegistreMcp,
   type VariableSecret,
 } from "@/lib/types";
 
@@ -44,7 +47,22 @@ const LIBELLE_MODE: Record<string, string> = {
   token_statique: "Token statique",
   appairage: "Appairage (sans token)",
   oauth_importe: "Token OAuth importé",
+  sans_secret: "Sans secret",
 };
+
+/** Combien de pistes proposer quand une recherche ne rend rien (#271). */
+const PISTES_MAX = 10;
+
+/**
+ * Une date **pure** (`AAAA-MM-JJ`) rendue en français, sans passer par `Date` :
+ * `new Date("2026-08-28")` est lu en UTC, donc rendrait la veille sur tout
+ * fuseau négatif. La date de revue n'a pas d'heure — la traiter comme un
+ * instant est ce qui la ferait reculer d'un jour.
+ */
+function formatDateSeule(iso: string): string {
+  const jour = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return jour ? `${jour[3]}/${jour[2]}/${jour[1]}` : iso;
+}
 
 const CLASSE_CHAMP =
   "w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm " +
@@ -262,6 +280,34 @@ function Bibliotheque({
   const [entrees, setEntrees] = useState<EntreeRegistreMcp[]>([]);
   const [erreur, setErreur] = useState<string | null>(null);
   const [ouverte, setOuverte] = useState<string | null>(null);
+  // Le catalogue complet, mémorisé au premier chargement (la recherche part
+  // toujours d'une requête vide) : c'est de lui que sortent les **pistes** d'une
+  // recherche infructueuse (#271), sans un appel de plus.
+  const [catalogue, setCatalogue] = useState<EntreeRegistreMcp[]>([]);
+  const [provenance, setProvenance] = useState<ProvenanceRegistreMcp | null>(
+    null,
+  );
+  // Tant que la première recherche n'a pas répondu, « aucun résultat » serait
+  // faux : c'est l'état d'avant la question, pas sa réponse. Invisible tant que
+  // la liste tenait en quatre entrées et que le vide n'était qu'une phrase ;
+  // avec des pistes et un bouton dessous (#271), le clignotement se voit.
+  const [charge, setCharge] = useState(false);
+
+  // La provenance ne dépend pas de la recherche : un seul chargement, hors du
+  // débounce. Son échec n'est pas une panne de la bibliothèque — la liste reste
+  // lisible sans elle, seul le pied de section manque.
+  useEffect(() => {
+    const tick = setTimeout(() => {
+      void (async () => {
+        try {
+          setProvenance(await chargerProvenanceRegistreMcp());
+        } catch {
+          setProvenance(null);
+        }
+      })();
+    }, 0);
+    return () => clearTimeout(tick);
+  }, []);
 
   // Recherche différée : un court délai après la frappe évite un appel par
   // caractère (l'effet lui-même ne déclenche aucun setState synchrone).
@@ -271,6 +317,7 @@ function Bibliotheque({
         try {
           const rendu = await chargerRegistreMcp(q);
           setEntrees(rendu);
+          if (q.trim() === "") setCatalogue(rendu);
           // Un panneau de configuration ne survit pas à la disparition de son
           // entrée des résultats : on l'**oublie** au lieu de le rouvrir quand
           // l'entrée revient (#231). Sans cet oubli, effacer la recherche
@@ -283,11 +330,23 @@ function Bibliotheque({
           setErreur(null);
         } catch (e) {
           setErreur(e instanceof Error ? e.message : String(e));
+        } finally {
+          setCharge(true);
         }
       })();
     }, 200);
     return () => clearTimeout(tick);
   }, [q]);
+
+  // Les pistes : les tags des intégrations les plus courantes d'abord (le
+  // registre est déjà trié par palier d'usage), à défaut ceux que la provenance
+  // rend. Proposer *tous* les tags serait un second cul-de-sac, plus long.
+  const pistes = Array.from(
+    new Set([
+      ...catalogue.flatMap((entree) => entree.tags),
+      ...(provenance?.tags ?? []),
+    ]),
+  ).slice(0, PISTES_MAX);
 
   return (
     <section aria-label="Bibliothèque de serveurs MCP" className="flex flex-col gap-3">
@@ -295,7 +354,7 @@ function Bibliotheque({
         Bibliothèque
       </h3>
       <label className={CLASSE_LIBELLE}>
-        Rechercher une intégration (nom, tag…)
+        Rechercher une intégration (nom, éditeur, tag…)
         {/*
           `name` + `autoComplete="off"` : un champ anonyme est exactement ce
           qu'un gestionnaire de mots de passe prend pour un champ identifiant
@@ -320,10 +379,43 @@ function Bibliotheque({
         >
           Registre illisible : {erreur}
         </p>
-      ) : entrees.length === 0 ? (
+      ) : !charge ? (
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Aucune intégration ne correspond à « {q} ».
+          Chargement de la bibliothèque…
         </p>
+      ) : entrees.length === 0 ? (
+        // Un cul-de-sac se sort en montrant *par quoi* chercher (#271) : répéter
+        // qu'il n'y a rien laisse l'utilisateur sans geste suivant.
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
+            Aucune intégration ne correspond à « {q} ».
+          </p>
+          {pistes.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                Essayer plutôt :
+              </span>
+              {pistes.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => setQ(tag)}
+                  className="rounded-full border border-neutral-300 px-2 py-0.5 text-xs text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setQ("")}
+            className="self-start text-xs font-medium text-sky-700 underline hover:no-underline dark:text-sky-400"
+          >
+            Voir toute la bibliothèque
+            {provenance ? ` (${provenance.total} intégrations)` : ""}
+          </button>
+        </div>
       ) : (
         <ul className="flex flex-col gap-2">
           {entrees.map((entree) => (
@@ -348,7 +440,39 @@ function Bibliotheque({
         (découverte ≠ installation, docs/19). Les secrets sont chiffrés côté
         serveur — jamais dans le dépôt Git.
       </p>
+      {provenance && <Provenance provenance={provenance} />}
     </section>
+  );
+}
+
+/**
+ * D'où vient la liste, et quand elle a été revue (#271, critère 1). Un registre
+ * curé qui ne dit pas sa provenance demande une confiance qu'il ne justifie
+ * pas : « les plus utilisés » selon qui, et à quelle date ?
+ */
+function Provenance({ provenance }: { provenance: ProvenanceRegistreMcp }) {
+  return (
+    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+      {provenance.resume} Revue le{" "}
+      <time dateTime={provenance.revue_le}>
+        {formatDateSeule(provenance.revue_le)}
+      </time>{" "}
+      — {provenance.total} intégrations. Sources :{" "}
+      {provenance.sources.map((source, index) => (
+        <span key={source.url}>
+          {index > 0 ? ", " : ""}
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noreferrer"
+            className="underline hover:no-underline"
+          >
+            {source.libelle}
+          </a>
+        </span>
+      ))}
+      .
+    </p>
   );
 }
 
@@ -388,8 +512,25 @@ function EntreeBibliotheque({
         </button>
       </div>
       <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+        {entree.editeur && (
+          <span className="text-neutral-600 dark:text-neutral-300">
+            {entree.editeur} —{" "}
+          </span>
+        )}
         {entree.description}
       </p>
+      {entree.tags.length > 0 && (
+        <ul className="mt-1 flex flex-wrap gap-1" aria-label="Tags">
+          {entree.tags.map((tag) => (
+            <li
+              key={tag}
+              className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
+            >
+              {tag}
+            </li>
+          ))}
+        </ul>
+      )}
       {ouverte && (
         <FormulaireConfiguration
           entree={entree}
@@ -499,7 +640,23 @@ function FormulaireConfiguration({
       {entree.procedure_url && (
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
           Procédure d&apos;obtention côté outil :{" "}
-          <code className="font-mono">{entree.procedure_url}</code>
+          {/*
+            Cliquable si c'est une URL, en clair si c'est un chemin du dépôt : la
+            bibliothèque élargie (#271) renvoie surtout vers la documentation de
+            l'éditeur, qu'on ne recopie pas à la main dans une barre d'adresse.
+          */}
+          {entree.procedure_url.startsWith("https://") ? (
+            <a
+              href={entree.procedure_url}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono underline hover:no-underline"
+            >
+              {entree.procedure_url}
+            </a>
+          ) : (
+            <code className="font-mono">{entree.procedure_url}</code>
+          )}
         </p>
       )}
       <div className="flex flex-wrap items-center gap-3">
@@ -513,7 +670,9 @@ function FormulaireConfiguration({
         <span className="text-xs text-neutral-500 dark:text-neutral-400">
           {entree.mode_auth === MCP_MODE_APPAIRAGE
             ? "Valeur d'appairage jetable, à renouveler à chaque session."
-            : "Secret saisi une seule fois, chiffré côté serveur."}
+            : entree.mode_auth === MCP_MODE_SANS_SECRET
+              ? "Aucun secret : rien n'est stocké pour cette intégration."
+              : "Secret saisi une seule fois, chiffré côté serveur."}
         </span>
       </div>
       {erreur && (
