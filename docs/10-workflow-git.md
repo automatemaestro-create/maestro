@@ -237,15 +237,64 @@ réalisé (« Phase 0 — POC », « Phase 1 — MVP »… — voir [docs/06-roa
 que la vue par milestone reflète l'avancement réel de chaque phase.
 
 - **À la création** : `/ticket-create` pose le milestone de la **phase courante**, résolu par
-  `bash scripts/gitlab/lib.sh current-milestone` = le **milestone actif le plus ancien non soldé**
-  (ayant au moins un ticket ouvert, ou aucun ticket si la phase n'est pas entamée). La règle est
-  volontairement **indépendante des dates prévisionnelles** des milestones : le réel peut être en
-  avance sur elles. Un milestone explicitement demandé par l'utilisateur prime ; sans milestone
-  actif non soldé, l'option est simplement omise.
+  `bash scripts/gitlab/lib.sh current-milestone` = le **milestone actif le plus ancien qui porte
+  encore un ticket ouvert**. La règle est volontairement **indépendante des dates
+  prévisionnelles** des milestones : le réel peut être en avance sur elles. Un milestone
+  explicitement demandé par l'utilisateur prime ; s'il ne reste aucun candidat, l'option est
+  simplement omise.
 - **Fin de phase** : un milestone actif dont tous les tickets sont fermés est **sauté** par le
   helper ; sa **fermeture** reste une **décision humaine** (jalon go/no-go de la roadmap) — aucune
   commande ne ferme un milestone. `doctor.sh` (§7) signale les milestones actifs entièrement
   soldés à fermer, ainsi que les tickets ouverts sans milestone.
+
+#### Soldé et vide : deux abstentions, jamais une seule (#619)
+
+Un milestone est écarté pour **l'une ou l'autre** de deux raisons, que `current-milestone` **nomme
+séparément sur stderr** — les confondre en un unique « non soldé » est ce qui a fait tomber tout
+nouveau ticket produit dans un contenant qu'on garde vide **exprès** :
+
+| cause | ce qu'on lit | ce que ça veut dire | ce qui la lève |
+|---|---|---|---|
+| **soldé** | N fermés / N total, N > 0 | la phase est **finie** | la **fermer** — décision humaine, que `doctor.sh` suggère |
+| **vide** | 0 / 0 | la phase n'est **pas découpée** | la **découper**, ou y ranger un premier ticket à la main |
+
+Le cas « vide » n'est pas théorique et n'est pas une dérive du backlog : [docs/06-roadmap.md](./06-roadmap.md)
+pose que la « **Phase 9 reste un contenant vide à dessein** : on n'empaquette pas une cible
+mouvante », son découpage étant différé jusqu'à ce que la cible se stabilise. Mesuré le
+**2026-08-27**, au lendemain de #617 : `current-milestone produit` rendait « Phase 9 — Poste de
+travail : distribution », **0 ouvert et 0 fermé**, et **rien ne le signalait** — le rail `produit`
+n'avait plus de milestone d'accueil utilisable dès son premier ticket, pendant que le rail
+`outillage` allait bien (« Outillage de la forge », 12 à faire). Le défaut était donc **invisible
+tant qu'on ne créait que de l'outillage, et silencieux dès qu'on créait du produit**.
+
+Le sujet n'était **pas de remplir la Phase 9** — son vide est une décision documentée, et la
+remplir défairait le découpage différé. C'est la **règle de sélection** qui devait savoir qu'un
+contenant vide n'est pas un contenant courant.
+
+Trois choses à ne pas défaire :
+
+- Le **prix est assumé et il est écrit** : le **premier** ticket d'une phase neuve ne s'y range
+  plus tout seul, il se crée avec `--milestone "<titre>"` explicite — les suivants suivent d'
+  eux-mêmes, le jalon n'étant alors plus vide. Refaire tomber les tickets dans un jalon vide « pour
+  amorcer une phase » recréerait exactement le défaut, et sans le distinguer d'un contenant
+  volontaire : rien dans la donnée ne dit lequel des deux on a sous les yeux.
+- Les deux causes sont **nommées séparément partout** — une ligne stderr par saut (`sautée — VIDE`
+  / `sautée — SOLDÉE (N/M fermés)`), et l'abstention finale les **compte séparément**
+  (« 2 soldé(s) à fermer, 1 vide(s) à découper »). Un seul mot pour les deux ne dirait pas s'il
+  faut fermer une phase ou en découper une, c'est-à-dire ne dirait rien d'actionnable.
+- **Ne rien rendre reste normal et non bloquant** (code 1, sortie vide) : `/ticket-create` omet
+  l'option et crée le ticket quand même. L'abstention n'a jamais été une panne, c'est le contrat.
+
+Côté run, `queue.sh --milestones` retire du même geste `courant = 1` d'un milestone à
+`a_faire = 0` : `courant` désigne **ce qu'un run prendrait sans consigne**, et un milestone sur
+lequel la boucle ne peut rien prendre n'est pas un défaut, c'est un plan vide. Le critère y est
+celui de `a_faire` (« À faire » **et** libre, le filtre de la boucle) et **non** celui de
+`current-milestone` (au moins un ticket ouvert) : il est **strictement plus étroit**, et c'est
+voulu — un milestone dont tout est assigné est ouvert pour la forge et vide pour la boucle. Ce
+n'est donc pas la règle ci-dessus recopiée, c'est la question d'à côté. Conséquence : un rail peut
+n'avoir **aucune** ligne à `courant = 1`, ce qui n'est pas une donnée manquante mais le verdict
+« rien à prendre sur ce rail » — et `/orchestrate` le **dit** au lieu de proposer un défaut qui ne
+planifierait rien.
 
 #### Deux rails : outillage de la forge et produit (#617)
 
@@ -309,9 +358,10 @@ Quatre choses à ne pas défaire :
   (`$1`, `$4`, `$5`, `$6`). Insérer au milieu lui ferait rendre l'échéance à la place d'un compte,
   sans rien casser de visible.
 
-Côté run, `queue.sh --milestones` gagne la colonne `rail` et **deux** lignes à `courant = 1`, une
-par rail — un run porte sur un rail, et proposer « le » courant sans dire lequel est ce qui a laissé
-un run « produit » traiter de l'outillage. Le plan porte son milestone et son rail en **ligne de
+Côté run, `queue.sh --milestones` gagne la colonne `rail` et **au plus deux** lignes à
+`courant = 1`, une par rail — un run porte sur un rail, et proposer « le » courant sans dire lequel
+est ce qui a laissé un run « produit » traiter de l'outillage. « Au plus » et non « exactement » :
+un milestone sans rien à prendre perd son `courant` (#619, ci-dessus). Le plan porte son milestone et son rail en **ligne de
 commentaire** (`# milestone<TAB>titre<TAB>rail`, même mécanique que la réserve d'arbitrage de #562 :
 les deux lectures de `run.sh` écartent déjà les `#`), et l'en-tête du run l'annonce — sans rien
 redemander à la forge, et en se taisant sur un plan antérieur rejoué par `--resume`. Le défaut d'un
