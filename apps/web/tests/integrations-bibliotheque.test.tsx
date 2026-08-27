@@ -1,6 +1,13 @@
 /**
- * La section « Intégrations MCP » des Paramètres face au **gestionnaire de mots
- * de passe du navigateur** (#231).
+ * La bibliothèque MCP face au **gestionnaire de mots de passe du navigateur**
+ * (#231).
+ *
+ * Elle a été une section des Paramètres de #133 à #270, qui l'a déplacée sur
+ * l'écran « Intégrations » (`components/integrations/BibliothequeMcp`). Ce
+ * fichier n'a fait que **suivre son sujet** : les quatre scénarios sont ceux de
+ * #231, au mot près. C'est d'ailleurs tout l'intérêt de les avoir gardés
+ * intacts — un déménagement qui aurait « rangé » la structure au passage
+ * rejouerait le bug, et ce sont eux qui le disent.
  *
  * Le bug corrigé ici n'était pas une faute de rendu mais une conjonction : le
  * clic sur « Configurer » montait un `<input type="password">` sans
@@ -28,7 +35,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ParametresMcp } from "@/components/parametres/ParametresMcp";
+import { BibliothequeMcp } from "@/components/integrations/BibliothequeMcp";
 import {
   MCP_MODE_APPAIRAGE,
   MCP_MODE_TOKEN,
@@ -106,9 +113,13 @@ beforeEach(() => {
   ajouterIntegrationPoolMcp.mockResolvedValue(undefined);
 });
 
-/** La bibliothèque rendue, une fois le premier chargement passé. */
+/**
+ * La bibliothèque rendue, une fois le premier chargement passé. Montée **seule**
+ * et non par son écran : ce qui se teste ici est son cloisonnement interne, et
+ * le pool projet — l'autre bloc de `/integrations` — n'y prend aucune part.
+ */
 async function bibliotheque() {
-  render(<ParametresMcp />);
+  render(<BibliothequeMcp idsPool={new Set()} onAjout={() => {}} />);
   return await screen.findByRole("region", {
     name: "Bibliothèque de serveurs MCP",
   });

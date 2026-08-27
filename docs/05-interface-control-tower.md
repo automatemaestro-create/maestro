@@ -15,9 +15,10 @@ en **une** fiche agent à onglets, et un agent se consulte d'un seul endroit.
 Deux entrées se sont ajoutées depuis — **Projets** (#225) et **Journal** (#249),
 où le fil d'activité s'est installé en plein format —, puis **Projets en est
 ressortie** (#280, §2.0.1). Le menu est déclaré une seule fois
-(`apps/web/lib/navigation.ts`) et fait aujourd'hui **dix entrées** — les deux
+(`apps/web/lib/navigation.ts`) et fait aujourd'hui **onze entrées** — les deux
 écrans de la Phase 8, « Composer un objectif » (#319) et « Valider le brief »
-(#322), s'y sont ajoutés, puis **« Runs »** (#474, §2.4.1) ; le Kanban des tâches
+(#322), s'y sont ajoutés, puis **« Runs »** (#474, §2.4.1) et
+**« Intégrations »** (#270, §2.9) ; le Kanban des tâches
 n'en est pas une (il est l'objet de la **vue d'un run**, servie sous « Runs »
 depuis #476 — §2.4.2) et l'écran Projets non plus (il est servi, mais atteint
 depuis le sélecteur du shell).
@@ -40,6 +41,7 @@ flowchart LR
     Selecteur[Sélecteur de projet · shell] -. gérer .-> Projets[Projets]
     Home[Tableau de bord] --> Runs[Runs]
     Home --> Agents[Agents]
+    Home --> Integrations[Intégrations MCP]
     Home --> Chat[Chat global]
     Home --> Costs[Coûts & analytics]
     Home --> Approve[Validations]
@@ -53,6 +55,7 @@ flowchart LR
     AgentDetail --> Profil[Onglet Profil]
     AgentDetail --> Playbook[Onglet Playbook]
     AgentDetail --> Mcp[Onglet MCP & permissions]
+    Integrations -. qui l'utilise .-> Mcp
     AgentDetail --> AgentChat[Onglet Chat]
     Tasks --> TaskDetail[Détail d'une tâche]
     TaskDetail --> Approve
@@ -107,7 +110,8 @@ notifications, et le **flux temps réel** qui les alimente tous.
 | `GET /api/agents` — état du parc | un agent est une ressource du **poste** : son playbook, sa capacité et ses instances (#86) valent pour toute la Control Tower. Il n'appartient à aucun projet, et #277 ne lui a pas donné de portée | la tuile « Agents » compte les agents **au travail sur ce projet** (dérivé de ses tâches) et renvoie au détail le parc et les « occupés ailleurs » |
 | le **catalogue** d'agents et les **playbooks** | ce sont des définitions, pas du travail — les partager entre projets est l'intérêt d'en avoir | — |
 | le **chat** et l'assistant | ils parlent de l'**outil**, pas du projet ; et un `chat.message` ne porte pas de `projet_id`, donc une socket cadrée ne le recevrait **jamais** (§6.0) — le fil se figerait sans rien dire | — |
-| les **paramètres** du poste (apparence, notifications, MCP) | réglages de l'installation, pas d'un projet | la dépense cumulée qui y figure, elle, est celle du projet |
+| les **paramètres** du poste (apparence, notifications) | réglages de l'installation, pas d'un projet | la dépense cumulée qui y figure, elle, est celle du projet |
+| les **intégrations MCP** (pool projet et bibliothèque) | elles ont quitté les Paramètres en #270 (§2.9) précisément parce qu'elles n'en sont pas : elles décident de ce qu'un agent sait faire. Le **pool** porte pourtant « projet » dans son nom — c'est un stockage unique (`core/mcp/pool.json`), non cadré à ce jour | — |
 
 **Le coût cumulé change de source** avec ce lot. Il se lisait sur `agents[].cout_usd` — un total de
 **tous** les projets, puisque le parc est celui du poste. Il est désormais la somme des **grands
@@ -1363,6 +1367,58 @@ débounce — et pas ce que #478 devait rendre.
 Le **journal d'un run** est le même dispositif au filtre près (`?run_id=`) : voir
 §2.4.2, où il est **la troisième lecture** de la vue d'un run — son propre onglet
 depuis #516, à côté du pipeline et du Kanban.
+
+---
+
+### 2.9 🔌 Intégrations MCP — un écran, pas une section des Paramètres *(#270 — **livré**)*
+
+Le pool projet et la bibliothèque curée vivaient dans **Paramètres → Intégrations
+MCP** depuis #133, empilés dans une colonne de réglages. Le reproche de la revue
+d'usage du 2026-08-05 (parent #244) : elles y sont **au fond de l'écran le moins
+visité**, alors qu'elles conditionnent ce qu'un agent sait faire.
+
+**L'argument de la place** est celui qui a déjà sorti « Projets » du menu, pris
+par l'autre bout (§2.7.1) : déclarer *avec quoi* Maestro travaille n'est pas un
+réglage d'installation. Une intégration décide de ce qu'un agent **peut appeler**,
+au même titre que son playbook — d'où son entrée juste après « Agents », dans le
+groupe des ressources qui servent le travail, et non dans « Le poste ».
+
+**Ce que l'écran montre**, en trois places (docs/30 §4) :
+
+| Place | Contenu |
+|---|---|
+| Bandeau de tête | **3 chiffres** — au pool projet, agents équipés (`n / total`, avec renvoi vers « Agents »), secrets à revoir |
+| Corps | **2 blocs** — le **pool projet** (identité, mode d'auth, état de chaque secret, retrait, *qui l'utilise*) et la **bibliothèque** curée recherchable |
+| Colonne de propriétés | aucune — l'écran n'a pas de métadonnée à ranger, et s'en donner une ouvrirait la seule place sans plafond avant d'en avoir besoin |
+
+**« Qui l'utilise » est le troisième critère du ticket**, et c'est ce qui manquait
+des deux côtés : la fiche d'un agent listait le pool et l'activait (#133), mais
+rien ne disait l'inverse — donc rien ne répondait à « puis-je retirer cette
+intégration ? ». Chaque ligne du pool nomme donc les agents qui l'ont activée,
+chacun étant un lien vers son onglet **MCP & permissions** (`/agents/<nom>/mcp`,
+là où l'activation se défait — pas la fiche nue : on y va pour agir).
+
+⚠ **Sans route nouvelle.** L'index de l'API est unidirectionnel
+(`core/mcp/activations.json` est rangé *par agent*), mais `GET /api/catalogue`
+porte déjà `mcp_activations` sur chaque fiche depuis #133 : le renversement se
+fait côté front, en un seul aller. Le backend n'a pas été touché. Et le catalogue
+y est une source **secondaire** — s'il ne répond pas, l'écran le dit (« impossible
+de dire qui utilise cette intégration ») au lieu d'afficher « aucun agent », qui
+serait un contresens sur la question même que l'écran pose.
+
+**L'ancre `/parametres#mcp` reste servie**, et la redirection est **du client**
+(`components/parametres/RedirectionAncreMcp`) : un fragment d'URL n'atteint
+jamais le serveur, donc `next.config.ts` ne peut pas le voir — il ne saurait pas
+distinguer `#mcp` de `#apparence`. Elle emploie `replace` et non `push`, sans quoi
+le bouton « Précédent » ramènerait sur la page qui redirige. Prix assumé et
+mesuré : sans JavaScript, `/parametres#mcp` rend les Paramètres sans faire défiler
+nulle part — la page reste servie, l'ancre n'existe simplement plus.
+
+Implémentation : `apps/web/app/integrations/page.tsx` et
+`apps/web/components/integrations/` ; couverture `apps/web/tests/integrations.test.tsx`
+et `apps/web/tests/integrations-bibliotheque.test.tsx` (les scénarios #231,
+inchangés — ils ont suivi leur sujet). Le reste du comportement est différé au
+lot 6 du chantier (#273).
 
 ---
 
