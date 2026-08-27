@@ -4300,6 +4300,79 @@ audit_ecrit() {
 }
 audit_ecrit
 
+# --- Les résidus `.claude/` du run, et leur ticket de reprise (#611, chantier #608) --------------------
+# Une session ne peut pas écrire sous `.claude/` — garde-fou du CLI, en amont de l'allowlist comme des
+# hooks (#238, re-mesuré par #614) —, et la conduite prescrite est de RENDRE le correctif au lieu de
+# contourner (#188). Depuis #610 elle le consigne EN PLUS dans un ticket de reprise, parce que la
+# description de PR où il était rendu se ferme au merge et que le pilote merge sans attendre personne.
+#
+# CE BLOC EST LE FILET DERRIÈRE CETTE CONDUITE, et il existe parce qu'un mécanisme qui ne tient que
+# par une seule de ses deux extrémités a DÉJÀ échoué : run `20260827-094044`, trois tickets, DEUX
+# résidus (#599 et #595), mergés dans les vingt minutes, encore en place le lendemain. Les deux
+# sessions avaient fait exactement ce qu'il fallait — ce qui a manqué n'était pas la bonne volonté,
+# c'est qu'aucun second regard ne se posait là. Le pilote, lui, ne peut pas l'oublier : il termine
+# toujours ici.
+#
+# LA FAMILLE DE REFUS EST LUE, JAMAIS REDÉFINIE : `journal.sh refus --claude` rend le « blocage dur
+# .claude/ » que #307 classe déjà, sur les `<iid>.json` du run. Un `grep .claude/` recopié ici aurait
+# marché le premier jour et divergé le suivant — et c'est CETTE version-là qui se serait tue.
+#
+# IL NE COÛTE RIEN QUAND IL N'Y A RIEN : la détection est hors ligne, et la seule lecture de forge est
+# UNE par ticket qui a effectivement buté — donc zéro sur la quasi-totalité des runs.
+#
+# IL LIT AUSSI LE RUN REPRIS, et ce n'est pas un cas de bord (leçon de #593, dont une reprise rendait
+# le cas courant) : c'est même LE cas que ce filet doit attraper. Un run tué n'imprime aucun résumé,
+# donc ses résidus n'ont jamais été nommés ; la reprise rouvre les sessions en vol, qui peuvent finir
+# sans rebuter sur `.claude/` — le résidu passerait alors entre les deux runs. Les deux journaux sont
+# donc demandés ensemble, `refus` les agrégeant lui-même. Une chaîne de reprises ne remonte QU'UN
+# cran : au-delà, c'est `refus --tous` qui répond, et personne n'a mesuré que ça se produise.
+#
+# IL CONSTATE, IL NE CRÉE PAS. Un ticket de reprise manquant est NOMMÉ, avec la commande qui le pose,
+# jamais ouvert d'office : son corps EST le correctif, que le pilote n'a pas. Il ouvrirait un ticket
+# vide de la seule chose qui compte, et le résidu serait perdu sous les apparences d'un rattrapage.
+#
+# BEST-EFFORT ET MUET, au même titre qu'`audit.txt` (#530) et que `gc` : ni le verdict du run ni son
+# code de sortie n'en dépendent, et un run sans refus de cette famille ne dit rien — un signalement
+# qui parle à chaque run cesse d'être lu.
+# MAESTRO_ORCHESTRATE_RESTE_CLAUDE=0 l'éteint.
+residus_claude() {
+  [ "${MAESTRO_ORCHESTRATE_RESTE_CLAUDE:-1}" != 0 ] || return 0
+  local lignes iid n cible reprise rc
+  local -a runs=("$RUN_ID")
+  [ "$REPRISE" = 1 ] && [ -n "$REPRISE_ID" ] && runs+=("$REPRISE_ID")
+  # Code 3 = aucun résidu, et c'est le cas nominal : le `|| return 0` le couvre comme il couvre un
+  # journal illisible. Les distinguer ne servirait à rien ici — il n'y a rien à dire des deux.
+  lignes="$(bash "$RACINE/scripts/orchestrate/journal.sh" refus --claude "${runs[@]}" \
+    2>/dev/null </dev/null)" || return 0
+  [ -n "$lignes" ] || return 0
+  printf '\n  %sReste à appliquer sous .claude/%s — une session y a buté, et une PR meurt au merge (#608) :\n' \
+    "$C_Y" "$C_0"
+  while IFS=$'\t' read -r iid n cible; do
+    [ -n "${iid:-}" ] || continue
+    rc=0
+    # `</dev/null` : le corps de la boucle a le heredoc pour stdin, et un `gh` qui le lirait
+    # mangerait les lignes suivantes — donc les tickets suivants, en silence.
+    reprise="$(gl_reste_claude_de "$iid" 2>/dev/null </dev/null)" || rc=$?
+    case "$rc" in
+      0) printf '    %s✓%s #%-5s %s refus — ticket de reprise #%s\n' \
+           "$C_G" "$C_0" "$iid" "$n" "$reprise" ;;
+      # Le seul cas qui appelle un geste, donc le seul qui porte sa cible ET sa commande : sans savoir
+      # QUEL fichier a été refusé, « poser un ticket de reprise » n'est pas une instruction exécutable.
+      3) printf '    %s⚠%s #%-5s %s refus — AUCUN ticket de reprise : le correctif ne vit plus que dans la PR\n' \
+           "$C_R" "$C_0" "$iid" "$n"
+         printf '           ex. %s\n' "$cible"
+         printf '           le poser : bash scripts/gitlab/lib.sh reste-claude %s <fichier-du-correctif>\n' "$iid" ;;
+      # « Je n'ai pas su lire » n'est pas « il n'y en a pas » : annoncer un résidu perdu sur une forge
+      # momentanément muette, c'est apprendre à ne plus lire ce bloc.
+      *) printf '    %s?%s #%-5s %s refus — forge muette : bash scripts/gitlab/lib.sh reste-claude-de %s\n' \
+           "$C_Y" "$C_0" "$iid" "$n" "$iid" ;;
+    esac
+  done <<EOF
+$lignes
+EOF
+  return 0
+}
+
 printf '%sRésumé du run %s%s\n' "$C_B" "$RUN_ID" "$C_0"
 printf '  %s✓%s %s réussi(s) · %s✗%s %s en échec · %s~%s %s sauté(s)\n' \
   "$C_G" "$C_0" "$NB_OK" "$C_R" "$C_0" "$NB_ECHEC" "$C_Y" "$C_0" "$NB_SAUTE"
@@ -4333,6 +4406,9 @@ if [ -n "$WORKTREES" ]; then
   for i in $WORKTREES; do printf '    #%s\n' "$i"; done
 fi
 merge_bilan
+# JUSTE APRÈS LES MERGES, et c'est le seul endroit qui a du sens : le bloc ci-dessus vient de dire
+# quelles PR sont parties dans `main`, et celui-ci dit ce que ces merges viennent d'enterrer.
+residus_claude
 # « Aucun merge non vérifié » n'a jamais voulu dire « aucun merge » — depuis #417 c'est l'inverse,
 # et le run merge désormais lui-même. Ce qui reste vrai, et qui est la seule chose à dire ici :
 # chaque merge est passé par `merge-mr`, qui vérifie avant de merger, et rien n'a été fermé.
